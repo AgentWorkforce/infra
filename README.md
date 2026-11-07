@@ -10,7 +10,7 @@ This repository was renamed from `AgentWorkforce/helm-charts` to `AgentWorkforce
 Update existing clones with `git remote set-url origin git@github.com:AgentWorkforce/infra.git`;
 local directory names may stay unchanged. Existing Helm clients should run
 `helm repo add agentworkforce https://agentworkforce.github.io/infra --force-update`
-and `helm repo update`. Chart names, release tags and the
+and `helm repo update`. Chart names, release-tag format and the
 `ghcr.io/agentworkforce/charts` OCI coordinates stay the same. Historical evidence
 and the release gate’s `helm-charts` license-decision ID retain their original identifiers.
 
@@ -64,7 +64,7 @@ generated doc. A new chart version needs a `current` row in
 ## Quick start
 
 ```bash
-helm repo add agentworkforce https://agentworkforce.github.io/infra
+helm repo add agentworkforce https://agentworkforce.github.io/infra --force-update
 helm repo update
 ```
 

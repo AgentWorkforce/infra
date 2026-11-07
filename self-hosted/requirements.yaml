@@ -2226,7 +2226,7 @@ entries:
     verify: helm status relaycast; curl <baseUrl>/health
     sources:
       - "docs/self-hosted-reference-architecture.md:11"
-      - "README.md:67"
+      - "README.md:71"
 
   - id: opt.relaycast.service-backend-config
     kind: option

@@ -2255,7 +2255,7 @@ Relaycast is the required core of the self-hosted product; add-ons consume it an
 - Choices: `installed`
 - Provided by: operator
 - Verify: helm status relaycast; curl <baseUrl>/health
-- Sources: [`docs/self-hosted-reference-architecture.md:11`](../docs/self-hosted-reference-architecture.md#L11), [`README.md:67`](../README.md#L67)
+- Sources: [`docs/self-hosted-reference-architecture.md:11`](../docs/self-hosted-reference-architecture.md#L11), [`README.md:71`](../README.md#L71)
 
 #### opt.relaycast.service-backend-config
 
