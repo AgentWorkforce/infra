@@ -749,6 +749,33 @@ entries:
       artifacthub.io/license: Apache-2.0
     apiVersion: v2
     appVersion: 0.1.0
+    created: "2026-11-07T21:23:45.072813802Z"
+    description: 'AlleyOop ingest for the sessions pipeline: receives session manifests
+      and chunks from couriers and lands them in the Locker (S3). Hook-free; ready
+      only once the HoopDb migration ledger matches the image. '
+    digest: 730690265894d1d96347f17ba3e8590272b18a555300a94d1e27f27bf0680346
+    home: https://github.com/AgentWorkforce/sessions-pipeline
+    keywords:
+    - sessions-pipeline
+    - alleyoop
+    - ingest
+    - agentworkforce
+    maintainers:
+    - name: AgentWorkforce
+      url: https://github.com/AgentWorkforce/infra
+    name: alleyoop
+    sources:
+    - https://github.com/AgentWorkforce/infra/tree/main/charts/alleyoop
+    type: application
+    urls:
+    - https://github.com/AgentWorkforce/infra/releases/download/alleyoop-0.3.9/alleyoop-0.3.9.tgz
+    version: 0.3.9
+  - annotations:
+      agentworkforce.dev/license-scope: First-party chart code only; dependencies
+        and images retain their own licenses.
+      artifacthub.io/license: Apache-2.0
+    apiVersion: v2
+    appVersion: 0.1.0
     created: "2026-11-03T19:23:50.232606744Z"
     description: 'AlleyOop ingest for the sessions pipeline: receives session manifests
       and chunks from couriers and lands them in the Locker (S3). Hook-free; ready
@@ -1258,6 +1285,33 @@ entries:
       artifacthub.io/license: Apache-2.0
     apiVersion: v2
     appVersion: 0.2.34
+    created: "2026-11-07T21:23:45.22878221Z"
+    description: RelayAuth identity and token issuer for self-hosted Agent Relay stacks
+    digest: a5c407db450bd47ca78f8cfe4d669489edf191ed836b29fb4a99e6cbc0630fb3
+    home: https://github.com/AgentWorkforce/relayauth
+    keywords:
+    - relayauth
+    - oidc
+    - jwt
+    - jwks
+    - agentworkforce
+    maintainers:
+    - name: AgentWorkforce
+      url: https://github.com/AgentWorkforce/infra
+    name: relayauth
+    sources:
+    - https://github.com/AgentWorkforce/relayauth
+    - https://github.com/AgentWorkforce/infra/tree/main/charts/relayauth
+    type: application
+    urls:
+    - https://github.com/AgentWorkforce/infra/releases/download/relayauth-0.1.4/relayauth-0.1.4.tgz
+    version: 0.1.4
+  - annotations:
+      agentworkforce.dev/license-scope: First-party chart code only; dependencies
+        and images retain their own licenses.
+      artifacthub.io/license: Apache-2.0
+    apiVersion: v2
+    appVersion: 0.2.34
     created: "2026-11-04T01:47:14.703523142Z"
     description: RelayAuth identity and token issuer for self-hosted Agent Relay stacks
     digest: 4529f1cb03654f0cf79d389456b282868a3c7b076d9460ee7cac75fe50dcdee7
@@ -1353,6 +1407,34 @@ entries:
     - https://github.com/AgentWorkforce/helm-charts/releases/download/relayauth-0.1.0/relayauth-0.1.0.tgz
     version: 0.1.0
   relaycast:
+  - annotations:
+      agentworkforce.dev/license-scope: First-party chart code only; dependencies
+        and images retain their own licenses.
+      artifacthub.io/license: Apache-2.0
+    apiVersion: v2
+    appVersion: 12.7.0
+    created: "2026-11-07T21:23:45.376535253Z"
+    description: Portable Relaycast core for self-hosted Agent Relay deployments
+    digest: 79187e3a59b52b477c85f0bf491fcc50588cbe64eb4c431c25f0ecbaa0a95ca1
+    home: https://github.com/AgentWorkforce/relaycast
+    keywords:
+    - relaycast
+    - agents
+    - realtime
+    - self-hosted
+    - agentworkforce
+    kubeVersion: '>=1.22.0-0'
+    maintainers:
+    - name: AgentWorkforce
+      url: https://github.com/AgentWorkforce/infra
+    name: relaycast
+    sources:
+    - https://github.com/AgentWorkforce/relaycast
+    - https://github.com/AgentWorkforce/infra/tree/main/charts/relaycast
+    type: application
+    urls:
+    - https://github.com/AgentWorkforce/infra/releases/download/relaycast-0.3.5/relaycast-0.3.5.tgz
+    version: 0.3.5
   - annotations:
       agentworkforce.dev/license-scope: First-party chart code only; dependencies
         and images retain their own licenses.
@@ -1576,6 +1658,35 @@ entries:
       artifacthub.io/license: Apache-2.0
     apiVersion: v2
     appVersion: 0.1.0
+    created: "2026-11-07T21:23:45.635630542Z"
+    description: 'Relayfile — virtual filesystem sync for agents. A single Go binary
+      that serves a workspace file-sync API over HTTP, backed by Postgres in production
+      or in-memory for development. '
+    digest: 84a7b56e27ea10f17f6c6bc970c516cef79da9a386df7e4299a91ac5b86caf3b
+    home: https://github.com/AgentWorkforce/relayfile
+    keywords:
+    - relayfile
+    - vfs
+    - filesystem
+    - sync
+    - agents
+    - agentworkforce
+    maintainers:
+    - name: AgentWorkforce
+      url: https://github.com/AgentWorkforce/infra
+    name: relayfile
+    sources:
+    - https://github.com/AgentWorkforce/infra/tree/main/charts/relayfile
+    type: application
+    urls:
+    - https://github.com/AgentWorkforce/infra/releases/download/relayfile-0.2.2/relayfile-0.2.2.tgz
+    version: 0.2.2
+  - annotations:
+      agentworkforce.dev/license-scope: First-party chart code only; dependencies
+        and images retain their own licenses.
+      artifacthub.io/license: Apache-2.0
+    apiVersion: v2
+    appVersion: 0.1.0
     created: "2026-11-04T11:13:24.112457246Z"
     description: 'Relayfile — virtual filesystem sync for agents. A single Go binary
       that serves a workspace file-sync API over HTTP, backed by Postgres in production
@@ -1683,6 +1794,36 @@ entries:
     - https://github.com/AgentWorkforce/helm-charts/releases/download/relayfile-0.1.1/relayfile-0.1.1.tgz
     version: 0.1.1
   relayflows:
+  - annotations:
+      agentworkforce.dev/license-scope: First-party chart code only; dependencies
+        and images retain their own licenses.
+      artifacthub.io/license: Apache-2.0
+    apiVersion: v2
+    appVersion: 2.0.50
+    created: "2026-11-07T21:23:45.78594947Z"
+    description: Run durable Relayflows workflows locally on Kubernetes, with optional
+      Cloud assignment mode.
+    digest: 939db2649d089b37b9b734afd7881db0d8b0d73068d5ddf55367a3bbd4c4034a
+    home: https://github.com/AgentWorkforce/flows
+    keywords:
+    - relayflows
+    - workflows
+    - agents
+    - kubernetes
+    - agentworkforce
+    kubeVersion: '>=1.22.0-0'
+    maintainers:
+    - name: AgentWorkforce
+      url: https://github.com/AgentWorkforce/infra
+    name: relayflows
+    sources:
+    - https://github.com/AgentWorkforce/flows
+    - https://github.com/AgentWorkforce/cloud
+    - https://github.com/AgentWorkforce/infra/tree/main/charts/relayflows
+    type: application
+    urls:
+    - https://github.com/AgentWorkforce/infra/releases/download/relayflows-0.2.5/relayflows-0.2.5.tgz
+    version: 0.2.5
   - annotations:
       agentworkforce.dev/license-scope: First-party chart code only; dependencies
         and images retain their own licenses.
@@ -1905,6 +2046,58 @@ entries:
       artifacthub.io/license: Apache-2.0
     apiVersion: v2
     appVersion: 0.1.0
+    created: "2026-11-07T21:23:45.957171004Z"
+    dependencies:
+    - alias: worker
+      name: sessions-pipeline-worker
+      repository: file://../sessions-pipeline-worker
+      version: 0.6.1
+    - name: alleyoop
+      repository: file://../alleyoop
+      version: 0.3.9
+    - alias: hoopdb
+      condition: hoopdb.enabled
+      name: cluster
+      repository: https://cloudnative-pg.github.io/charts
+      version: 0.9.0
+    - alias: locker
+      condition: locker.enabled
+      name: minio
+      repository: https://charts.min.io/
+      version: 5.4.0
+    - alias: otel
+      condition: otel.enabled
+      name: opentelemetry-collector
+      repository: https://open-telemetry.github.io/opentelemetry-helm-charts
+      version: 0.178.0
+    description: 'The sessions pipeline in one release: the sessions-pipeline-worker
+      and alleyoop app charts, plus optional HoopDb (CloudNativePG Cluster), Locker
+      (MinIO) and an OpenTelemetry collector. Hook-free, so `helm install` and Alchemy''s
+      `helm template --no-hooks` + server-side apply behave the same. Requires the
+      CloudNativePG operator when hoopdb.enabled (see deps/PINS.md). '
+    digest: 1a9dbf37175cf46b50a3dac11ffd10d80229af586c6a74c9ba4fba53985376bc
+    home: https://github.com/AgentWorkforce/sessions-pipeline
+    keywords:
+    - sessions-pipeline
+    - sessions
+    - pipeline
+    - agentworkforce
+    maintainers:
+    - name: AgentWorkforce
+      url: https://github.com/AgentWorkforce/infra
+    name: sessions-pipeline
+    sources:
+    - https://github.com/AgentWorkforce/infra/tree/main/charts/sessions-pipeline
+    type: application
+    urls:
+    - https://github.com/AgentWorkforce/infra/releases/download/sessions-pipeline-0.6.1/sessions-pipeline-0.6.1.tgz
+    version: 0.6.1
+  - annotations:
+      agentworkforce.dev/license-scope: First-party chart code only; dependencies
+        and images retain their own licenses.
+      artifacthub.io/license: Apache-2.0
+    apiVersion: v2
+    appVersion: 0.1.0
     created: "2026-11-03T19:23:50.62731461Z"
     dependencies:
     - alias: worker
@@ -1958,6 +2151,34 @@ entries:
       artifacthub.io/license: Apache-2.0
     apiVersion: v2
     appVersion: 0.1.0
+    created: "2026-11-07T21:23:46.079484045Z"
+    description: 'sessions-pipeline workers: the HoopDb migration Job, the Locker
+      bucket init Job, and the stage workers (hoopdb-indexer, referee, bob-costas).
+      Hook-free: safe to render with `helm template --no-hooks` and apply with server-side
+      apply (Alchemy Kubernetes.HelmChart). '
+    digest: 7250d39cdb5d9d8e325b81488e6b91de5d8dd31ce40125321d53b886cac882db
+    home: https://github.com/AgentWorkforce/sessions-pipeline
+    keywords:
+    - sessions-pipeline
+    - sessions
+    - pipeline
+    - agentworkforce
+    maintainers:
+    - name: AgentWorkforce
+      url: https://github.com/AgentWorkforce/infra
+    name: sessions-pipeline-worker
+    sources:
+    - https://github.com/AgentWorkforce/infra/tree/main/charts/sessions-pipeline-worker
+    type: application
+    urls:
+    - https://github.com/AgentWorkforce/infra/releases/download/sessions-pipeline-worker-0.6.1/sessions-pipeline-worker-0.6.1.tgz
+    version: 0.6.1
+  - annotations:
+      agentworkforce.dev/license-scope: First-party chart code only; dependencies
+        and images retain their own licenses.
+      artifacthub.io/license: Apache-2.0
+    apiVersion: v2
+    appVersion: 0.1.0
     created: "2026-11-03T19:23:50.814304963Z"
     description: 'sessions-pipeline workers: the HoopDb migration Job, the Locker
       bucket init Job, and the stage workers (hoopdb-indexer, referee, bob-costas).
@@ -1980,4 +2201,4 @@ entries:
     urls:
     - https://github.com/AgentWorkforce/helm-charts/releases/download/sessions-pipeline-worker-0.6.0/sessions-pipeline-worker-0.6.0.tgz
     version: 0.6.0
-generated: "2026-11-04T11:13:24.112595182Z"
+generated: "2026-11-07T21:23:46.079627001Z"
