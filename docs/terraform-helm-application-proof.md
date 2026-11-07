@@ -71,13 +71,17 @@ separate evidence and recovery requirements.
    repeat the reads. Exercise erasure and require all read paths to stop
    returning the session.
 5. **All requested components and profiles.** Include RelayControl, Dashboard
-   (relay-app), Sessions Pipeline, RelayHistory and Relaycast backed by the
+   (target product relay-app; current chart `relay-dashboard`), Sessions Pipeline, RelayHistory and Relaycast backed by the
    first-party Terse/durable-actors runtime. Prove actor placement and durable
-   recovery. Run the core and enabled add-on profiles separately; exercise
-   Relayfile and Flows when enabled. Pin the reviewed authentication contract
-   for each profile. RelayAuth belongs to the transitional JWT profiles; it is
-   not a permanent core requirement. A replacement relaycontrol-introspection
-   profile must prove real caller, scope and tenant binding, expiry/revocation
+   recovery. Run the reviewed base values plus each selected add-on overlay as
+   separate proof runs; the add-on overlays are not standalone installations.
+   Exercise Relayfile and Flows when enabled. Pin the reviewed authentication
+   contract for each run. The current umbrella chart and requirements registry
+   still require RelayAuth for their JWT profile. The target architecture removes
+   it from core only after the replacement is implemented and qualified; this
+   document does not change those current requirements or define a new installable
+   profile. That replacement, using relaycontrol introspection, must prove real
+   caller, scope and tenant binding, expiry/revocation
    and fail-closed behavior on introspection failure. Disabling RelayAuth in
    Helm is not proof of replacement authentication. Read-access-only evidence
    does not establish ingest authorization: the complete trace still requires
