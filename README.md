@@ -548,6 +548,10 @@ The normal catalog profile remains unchanged. Each build captures its resulting
 artifact digest; the official Dockerfile's runtime npm dependency ranges mean
 that identical source does not guarantee identical rebuilt image bytes.
 MCP still requires the real endpoint proof; agent launch/release remains pending.
+The local bootstrap applies release objects client-side before final Helm
+reconciliation. On Helm 4 the wrapper explicitly selects its supported
+[`--server-side=false`](https://docs.helm.sh/docs/helm/helm_upgrade/) mode to keep
+that ownership model consistent; Helm 3 keeps its existing default.
 
 ### Local TLS and Desktop
 

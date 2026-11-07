@@ -515,8 +515,13 @@ class Stack:
         # owns its schema in a distinct database; never co-locate both in HoopDB.
         self.migration(docs, "relayhistory")
         self.verify_combined_acl(services_image)
+        # Bootstrap applies the same release objects client-side before Helm
+        # can wait for the whole suite. Keep that mode on Helm 4 as well; its
+        # default SSA conflicts when bootstrap changes the control image.
+        help_text = self.cmd(["helm", "upgrade", "--help"]).stdout
+        apply_mode = ["--server-side=false"] if "--server-side" in help_text else []
         self.cmd(["helm", "upgrade", "--install", RELEASE, "charts/agent-relay", "-n", NS,
-                  *self.values_args(), "--wait", "--wait-for-jobs", "--timeout", "10m"], timeout=660)
+                  *self.values_args(), *apply_mode, "--wait", "--wait-for-jobs", "--timeout", "10m"], timeout=660)
         from edge import install
         install(self, TRAEFIK_CHART, NS)
         private_json(ready, {"profile": self.profile, "recipeSha256": self.recipe_hash(),
