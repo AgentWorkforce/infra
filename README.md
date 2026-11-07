@@ -529,6 +529,26 @@ the legacy receipt, and updates only the local ownership record. It preserves
 the cluster and kubeconfig. Missing original identity or any mismatch fails;
 normal `kind-up` and `kind-down` never recover a receipt implicitly.
 
+To build and install the pinned MCP-capable control source without registry
+publication, use the same profile and local fixture with:
+
+```sh
+make kind-up-local-control PROFILE=core
+make kind-proof-core
+```
+
+This requires Docker BuildKit/buildx and GitHub access during preparation. It
+builds the official relaycontrol Dockerfile at `1f08cb6` using a pinned Node base,
+selects the native manifest digest in this worktree's private values, loads it
+into kind and uses `imagePullPolicy: Never`. The OCI manifest/config hashes,
+architecture and source revision are verified before installation. The build
+receipt is `.kind/core/control-build.json`. `make kind-build-control PROFILE=core`
+performs just the build/selection; it does not install or publish an image.
+The normal catalog profile remains unchanged. Each build captures its resulting
+artifact digest; the official Dockerfile's runtime npm dependency ranges mean
+that identical source does not guarantee identical rebuilt image bytes.
+MCP still requires the real endpoint proof; agent launch/release remains pending.
+
 ### Local TLS and Desktop
 
 The local edge binds loopback HTTP `8080` and HTTPS `8443`. The generated

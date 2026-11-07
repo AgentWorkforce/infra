@@ -117,7 +117,7 @@ class Stack:
     def recipe_hash(self):
         files = [ROOT / "Makefile", ROOT / "ci/agent-relay/kind/stack.py", ROOT / "ci/agent-relay/kind/addons.py",
                  ROOT / "ci/agent-relay/kind/edge.py", ROOT / "ci/agent-relay/kind/tls.py",
-                 ROOT / "ci/agent-relay/kind/bootstrap.mjs",
+                 ROOT / "ci/agent-relay/kind/bootstrap.mjs", ROOT / "ci/agent-relay/kind/control.py",
                  ROOT / "ci/agent-relay/kind/flows-sdk/package.json",
                  ROOT / "ci/agent-relay/kind/flows-sdk/package-lock.json"]
         return hashlib.sha256(b"".join(p.read_bytes() for p in files)).hexdigest()
@@ -168,8 +168,9 @@ class Stack:
         # cold registry cache. Measure cached native images instead of blocking
         # a small configuration fix behind the cold-install budget.
         size = 2 * 1024**3  # CNI, local volumes and unpacking headroom.
+        from control import resolve
         for image in set(images):
-            p = self.cmd([*self.docker_args, "image", "inspect", "--format", "{{.Size}} {{.Architecture}}", image], check=False)
+            p = self.cmd([*self.docker_args, "image", "inspect", "--format", "{{.Size}} {{.Architecture}}", resolve(self, image)], check=False)
             fields = p.stdout.split()
             if p.returncode or len(fields) != 2 or fields[1] != self.arch:
                 self.check_space(20 * 1024**3)
@@ -190,9 +191,16 @@ class Stack:
             return
         # Local add-on images have real tags and no remote registry. Keep their
         # native-platform archive transport separate from digest-only refs.
+        from control import REPOSITORY, resolve, inspect_archive, alias
+        local_tag = resolve(self, image)
         archive = self.state / "image.tar"
-        self.cmd([*self.docker_args, "image", "save", "--platform", f"linux/{self.arch}", "-o", archive, image], timeout=300)
+        self.cmd([*self.docker_args, "image", "save", "--platform", f"linux/{self.arch}", "-o", archive, local_tag], timeout=300)
+        metadata = inspect_archive(archive, self.arch) if image.startswith(REPOSITORY + "@") else None
+        if metadata and metadata["reference"] != image:
+            raise StackError("local control tag changed since its pinned build receipt")
         self.cmd(["kind", "load", "image-archive", "--name", self.name, archive], timeout=300)
+        if metadata:
+            alias(self, image, metadata)
         archive.unlink()  # Only our own transient image transport, not Docker data.
 
     def pull(self, image):
@@ -565,7 +573,7 @@ def pod_spec(doc):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("action", choices=("up", "down", "render", "build-addons", "recover"))
+    parser.add_argument("action", choices=("up", "down", "render", "build-addons", "build-control", "recover"))
     parser.add_argument("--profile", choices=("core", "addons"), default="core")
     parser.add_argument("--expected-cluster-uid", help="original readiness UID; required only for explicit recover")
     args = parser.parse_args()
@@ -578,6 +586,10 @@ def main():
             stack.dependencies()
             stack.render()
             print(stack.state / "rendered.yaml")
+        elif args.action == "build-control":
+            stack.docker(require_space=False)
+            from control import build
+            build(stack)
         elif args.action == "recover":
             stack.recover(args.expected_cluster_uid)
         elif args.action == "build-addons":

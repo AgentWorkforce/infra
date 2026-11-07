@@ -68,7 +68,7 @@ class Proof:
             self.record(item["result"], item["check"], item["detail"])
         self.require(not any(p["result"] == "FAIL" for p in result["proofs"]), f"{phase} failed")
 
-    def edge(self, host, path, token=None, method="GET", body=None):
+    def edge(self, host, path, token=None, method="GET", body=None, extra_headers=None, response_headers=None):
         context = ssl.create_default_context(cafile=str(self.stack.state / "ca.crt"))
         conn = http.client.HTTPSConnection(host, 8443, context=context, timeout=15)
         # Route locally without changing system DNS. TLS still verifies host/SNI.
@@ -78,13 +78,58 @@ class Proof:
             headers["authorization"] = "Bearer " + token
         if body is not None:
             headers.update({"content-type": "application/json", "if-match": "0"})
+        headers.update(extra_headers or {})
         try:
             conn.request(method, path, body=None if body is None else json.dumps(body), headers=headers)
             response = conn.getresponse()
+            if response_headers is not None:
+                response_headers.update(dict(response.getheaders()))
             text = response.read().decode()
             return response.status, text
         finally:
             conn.close()
+
+    def mcp(self):
+        token = self.state["a"]["accessToken"]
+        initialize = {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {
+            "protocolVersion": "2025-06-18", "capabilities": {},
+            "clientInfo": {"name": "kind-proof", "version": "1"}}}
+        expected_local = json.loads(self.stack.k("get", "deployment", "relaycontrol", "-o", "json").stdout)["spec"]["template"]["spec"]["containers"][0]["image"].startswith("agent-relay-kind/selfhost-api@")
+        for path in ("/api/v1/mcp/shared-sessions", "/cloud/api/v1/mcp/shared-sessions"):
+            headers = {"accept": "application/json, text/event-stream"}
+            response_headers = {}
+            status, body = self.edge("relay.kind.agentrelay.com", path, token, "POST", initialize, headers, response_headers)
+            if status == 404 and not expected_local:
+                self.record("PENDING", "mcp", "deployed catalog control image lacks MCP; select the pinned local control build and rerun setup/proof")
+                return
+            self.require(status == 200, f"MCP initialize failed status={status}")
+            result = json.loads(body).get("result", {})
+            self.require(result.get("serverInfo", {}).get("name") == "agent-relay-selfhost", "unexpected MCP server identity")
+            normalized = {key.lower(): value for key, value in response_headers.items()}
+            session = normalized.get("mcp-session-id", "")
+            self.require(bool(session) and len(session) <= 128, "MCP initialize did not return a session identity")
+            headers.update({"mcp-session-id": session, "mcp-protocol-version": result["protocolVersion"]})
+            status, body = self.edge("relay.kind.agentrelay.com", path, token, "POST",
+                                     {"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}}, headers)
+            tools = json.loads(body).get("result", {}).get("tools", [])
+            self.require(status == 200 and len(tools) == 19 and
+                         {"describe_capabilities", "send_relay_message", "search_shared_sessions", "get_shared_session"} <= {t["name"] for t in tools},
+                         "MCP tool discovery did not expose the expected self-host catalog")
+            status, body = self.edge("relay.kind.agentrelay.com", path, token, "POST",
+                                     {"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {"name": "describe_capabilities", "arguments": {}}}, headers)
+            result = json.loads(body).get("result", {})
+            capabilities = result.get("structuredContent", {})
+            self.require(status == 200 and not result.get("isError") and
+                         capabilities.get("workspace", {}).get("workspace_id") == self.state["a"]["workspaceId"] and
+                         capabilities.get("connection", {}).get("auth_mode") == "cli_login" and
+                         capabilities.get("endpoint", {}).get("url") == "https://relay.kind.agentrelay.com:8443/api/v1/mcp/shared-sessions",
+                         "MCP capabilities are not bound to the authenticated workspace/public origin")
+            status, _ = self.edge("relay.kind.agentrelay.com", path, method="POST", body=initialize, extra_headers={"accept": "application/json, text/event-stream"})
+            self.require(status == 401, "MCP accepted unauthenticated initialization")
+            status, _ = self.edge("relay.kind.agentrelay.com", path, token, "POST", initialize,
+                                  {"accept": "application/json, text/event-stream", "origin": "https://outside.kind.example"})
+            self.require(status == 403, "MCP accepted a foreign browser origin")
+        self.record("PASS", "mcp", "both trusted public TLS paths initialize, list19 tools and report the real workspace; missing auth401 and foreign origin403")
 
     def egress(self):
         s = self.stack
@@ -376,9 +421,8 @@ class Proof:
         if s.profile == "addons":
             self.flows()
             self.relayfile()
-        for check, owner in [("mcp", "layered-control: PR19 merged in source; catalog image9b80b04 lacks MCP; compatible build and endpoint proof pending"),
-                             ("agent_launch_release", "layered-control: launch/release API not implemented")]:
-            self.record("PENDING", check, owner)
+        self.mcp()
+        self.record("PENDING", "agent_launch_release", "layered-control: launch/release API not implemented")
         if s.profile == "addons":
             self.record("PENDING", "offline_license_enforcement", "layered-control: signed license verification is design only; Secret slot is not enforcement")
 
