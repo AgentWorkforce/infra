@@ -104,6 +104,10 @@ module "functions" {
   source = "../../modules/aws/functions"
   count  = var.enable_functions ? 1 : 0
 
+  # Shared-schema runtime/activation remains unqualified. This root can prepare
+  # the function and queues, but must not automatically process application data.
+  enabled = false
+
   name                   = var.name
   bucket_name            = module.sessions_bucket.bucket_name
   bucket_kms_key_arn     = var.kms_key_arn

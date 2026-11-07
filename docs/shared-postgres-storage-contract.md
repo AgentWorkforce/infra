@@ -45,7 +45,10 @@ services should be introduced as a dependency on today's colocation.
 ## Application integration still required
 
 The module validates bindings; **it does not execute SQL or establish application
-compatibility**. Its `application_sql_ready` output remains false. Current
+compatibility**. The existing Relaycast [PostgreSQL design PR602](https://github.com/AgentWorkforce/relaycast/pull/602)
+is documentation only; the engine owner confirmed no PostgreSQL adapter exists
+at reported main `ac38905a`. A SQLite-typed engine and migration line need a real
+dialect/schema/transaction port before any chart can select PostgreSQL. Its `application_sql_ready` output remains false. Current
 SQLite and separate-database development receipts do not qualify this target.
 
 - Relaycast needs the real PostgreSQL engine adapter, schema-qualified migrations,
@@ -70,6 +73,14 @@ SQLite and separate-database development receipts do not qualify this target.
   authoritative local journals/stores before claiming single-store acceptance.
   S3 may continue to hold file/transcript objects and OpenSearch derived indexes;
   neither substitutes for the shared authoritative relational database.
+
+Both AWS roots keep automatic Lambda processing inactive: the environment root
+refuses `activate_lambda=true`, including when artifact/TLS bindings are valid,
+and the thin AWS root explicitly sets the functions module inactive. Removing
+this hold requires reviewed shared-schema runtime/bootstrap qualification, not a
+boolean acknowledgement. Direct invocation by an already authorized identity
+remains possible; provisioning inactive queues is not an application access
+control boundary or readiness proof.
 
 The schema bootstrap, credentials/LOGIN activation, image compatibility and Helm
 binding must be reviewed together before any shared application install. A

@@ -359,7 +359,7 @@ run "lambda_provider_and_tls_bindings" {
   command = plan
   variables {
     pipeline_runtime            = "lambda"
-    activate_lambda             = true
+    activate_lambda             = false
     lambda_package              = { s3_bucket = "reviewed-artifacts", s3_key = "pipeline.zip", s3_object_version = "reviewed-version" }
     function_security_group_ids = ["sg-function"]
     lambda_runtime_bindings = {
@@ -380,9 +380,9 @@ run "lambda_provider_and_tls_bindings" {
       output.lambda_shared_environment.SESSION_POSTGRES_TLS_PROFILE == "custom-ca" &&
       output.lambda_shared_environment.SESSION_POSTGRES_CA_FILE == "/var/task/assets/postgres-ca.pem" &&
       output.lambda_shared_environment.SESSION_POSTGRES_CA_SHA256 == var.lambda_runtime_bindings.postgres_ca_sha256 &&
-      !contains(keys(output.lambda_shared_environment), "AWS_REGION") && output.pipeline.activation_enabled
+      !contains(keys(output.lambda_shared_environment), "AWS_REGION") && !output.pipeline.activation_enabled
     )
-    error_message = "Writer and reader must share explicit OpenSearch/projection/CA settings without a reserved AWS_REGION override; activation requires its explicit flag."
+    error_message = "Writer and reader must share explicit OpenSearch/projection/CA settings without a reserved AWS_REGION override; shared-database processing remains inactive."
   }
 }
 
@@ -467,7 +467,7 @@ run "artifact_refuses_dotted_index" {
   command = plan
   variables {
     pipeline_runtime            = "lambda"
-    activate_lambda             = true
+    activate_lambda             = false
     lambda_package              = { s3_bucket = "reviewed-artifacts", s3_key = "pipeline.zip", s3_object_version = "reviewed-version" }
     function_security_group_ids = ["sg-function"]
     lambda_runtime_bindings = {
@@ -484,7 +484,7 @@ run "artifact_refuses_202_character_index" {
   command = plan
   variables {
     pipeline_runtime            = "lambda"
-    activate_lambda             = true
+    activate_lambda             = false
     lambda_package              = { s3_bucket = "reviewed-artifacts", s3_key = "pipeline.zip", s3_object_version = "reviewed-version" }
     function_security_group_ids = ["sg-function"]
     lambda_runtime_bindings = {
@@ -501,7 +501,7 @@ run "artifact_accepts_201_character_index" {
   command = plan
   variables {
     pipeline_runtime            = "lambda"
-    activate_lambda             = true
+    activate_lambda             = false
     lambda_package              = { s3_bucket = "reviewed-artifacts", s3_key = "pipeline.zip", s3_object_version = "reviewed-version" }
     function_security_group_ids = ["sg-function"]
     lambda_runtime_bindings = {
@@ -512,7 +512,7 @@ run "artifact_accepts_201_character_index" {
     }
   }
   assert {
-    condition     = length(output.lambda_shared_environment.OPENSEARCH_INDEX) == 201 && output.pipeline.activation_enabled
+    condition     = length(output.lambda_shared_environment.OPENSEARCH_INDEX) == 201 && !output.pipeline.activation_enabled
     error_message = "The maximum index accepted by the matching private artifact must remain usable."
   }
 }
@@ -550,4 +550,21 @@ run "maintenance_application_database_refused" {
     application_database_name = "postgres"
   }
   expect_failures = [var.application_database_name]
+}
+
+run "shared_database_activation_refused_even_with_valid_bindings" {
+  command = plan
+  variables {
+    pipeline_runtime            = "lambda"
+    activate_lambda             = true
+    lambda_package              = { s3_bucket = "reviewed-artifacts", s3_key = "pipeline.zip", s3_object_version = "reviewed-version" }
+    function_security_group_ids = ["sg-function"]
+    lambda_runtime_bindings = {
+      search_index       = "agent-relay-dev-sessions-v2"
+      state_backend_id   = "agent-relay-dev-sessions"
+      complete_since     = "epoch"
+      postgres_ca_sha256 = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    }
+  }
+  expect_failures = [terraform_data.environment_contract]
 }

@@ -78,6 +78,11 @@ run "all_add_ons_plan" {
   command = plan
 
   assert {
+    condition     = !module.functions[0].activation_enabled
+    error_message = "Preparing shared-database infrastructure must not activate unqualified application processing."
+  }
+
+  assert {
     condition = toset(keys(module.search[0].pod_identity_association_ids)) == toset([
       "indexer/relay/agent-relay/agent-relay-search-indexer",
       "reader/relay/agent-relay/agent-relay-session-read",

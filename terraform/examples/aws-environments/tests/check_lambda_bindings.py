@@ -66,7 +66,12 @@ def main(engine):
     }
     require(all(values.get(k) == v for k, v in expected.items()), "Actual Lambda resource lost or changed a provider/TLS binding")
     require("AWS_REGION" not in values, "Reserved AWS_REGION must not be configured")
-    print(json.dumps({"ok": True, "resource": FUNCTION, "binding_count": len(expected), "computed_endpoint_matches_domain": True, "reserved_aws_region_absent": True, "provider_requests": 0}))
+    mapping = one("module.pipeline[0].aws_lambda_event_source_mapping.events")
+    require(mapping["after"].get("enabled") is False and not unknown(mapping.get("after_unknown", {}).get("enabled")), "Unqualified shared-database queue processing was activated")
+    for rule in ("reconcile", "brief"):
+        change = one("module.pipeline[0].aws_cloudwatch_event_rule." + rule)
+        require(change["after"].get("state") == "DISABLED" and not unknown(change.get("after_unknown", {}).get("state")), "Unqualified shared-database schedule was activated")
+    print(json.dumps({"ok": True, "resource": FUNCTION, "binding_count": len(expected), "computed_endpoint_matches_domain": True, "reserved_aws_region_absent": True, "automatic_processing_inactive": True, "provider_requests": 0}))
 
 
 if __name__ == "__main__":

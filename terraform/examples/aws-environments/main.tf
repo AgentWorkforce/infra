@@ -75,6 +75,10 @@ resource "terraform_data" "environment_contract" {
       error_message = "activate_lambda requires pipeline_runtime=lambda and explicit compatible artifact/provider/TLS bindings."
     }
     precondition {
+      condition     = !var.activate_lambda
+      error_message = "Automatic Lambda activation is held: the shared-database schema/bootstrap/runtime contract is not qualified. Provision inactive infrastructure; qualification requires a reviewed implementation change, not an acknowledgement flag."
+    }
+    precondition {
       condition = var.lambda_runtime_bindings == null ? true : (
         var.pipeline_runtime == "lambda" && startswith(var.lambda_runtime_bindings.search_index, "${local.name}-")
       )

@@ -156,7 +156,7 @@ variable "pipeline_runtime" {
 }
 
 variable "activate_lambda" {
-  description = "Enable automatic Lambda queue/schedule processing after secret/bootstrap/artifact checks and after disabling overlapping worker stages."
+  description = "Reserved activation input. This shared-database profile currently refuses true until schema/bootstrap/runtime support is qualified by a reviewed implementation change; provision inactive infrastructure meanwhile."
   type        = bool
   default     = false
 }

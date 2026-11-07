@@ -64,7 +64,7 @@ run "actual_lambda_environment" {
   command = plan
   variables {
     pipeline_runtime            = "lambda"
-    activate_lambda             = true
+    activate_lambda             = false
     lambda_package              = { s3_bucket = "reviewed-artifacts", s3_key = "pipeline.zip", s3_object_version = "reviewed-version" }
     function_security_group_ids = ["sg-function"]
     lambda_runtime_bindings = {

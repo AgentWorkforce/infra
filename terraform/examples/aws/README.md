@@ -8,6 +8,8 @@ identities on that same endpoint/database. It does not perform SQL bootstrap or
 prove current images support the target. See the
 [shared-store contract](../../../docs/shared-postgres-storage-contract.md).
 Older dedicated-HoopDb or SQLite examples are legacy compatibility paths.
+The functions module is explicitly inactive while shared-schema runtime/bootstrap
+qualification is missing; creating a Lambda does not activate queue processing.
 
 A thin root that composes the four AWS modules for one agent-relay install on an existing EKS cluster and VPC:
 

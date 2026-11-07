@@ -241,10 +241,12 @@ version), or a local ZIP with its base64 SHA-256. [`profiles/lambda.tfvars.json.
 shows an additive fragment to merge into an environment file. The Lambda module
 uses Node 24/arm64 for ZIPs; a Bun services image is not a Lambda handler package.
 
-`activate_lambda` defaults to false, disabling the queue event source mapping
-and both schedules. The queue and bucket notification still exist and can
+`activate_lambda` defaults to false. The shared-database profile currently
+**refuses true**, even with valid artifact/TLS settings, until schema-aware
+runtime/bootstrap qualification is implemented and reviewed. This keeps the
+queue event source mapping and both schedules disabled. The queue and bucket notification still exist and can
 accumulate messages. Direct authorized invocation remains possible. Before a
-separate reviewed activation plan:
+reviewed implementation can lift the shared-database activation hold:
 
 1. Verify package provenance, handler/schema assets, TLS support and actual
    provider adapter dispatch in the deployed pipeline **and** read API.
@@ -433,7 +435,7 @@ exact destroy inventory and recovery proof; do not remove state to bypass them.
 | search\_master\_user\_arn | Existing environment-specific IAM administrator for OpenSearch role bootstrap. Never a runtime role. | `string` | n/a | yes |
 | search\_security\_group\_ids | Search security groups allowing HTTPS only from approved application/proof runner identities. | `list(string)` | n/a | yes |
 | search\_subnet\_ids | Existing private OpenSearch subnets, one per AZ. Production requires three. | `list(string)` | n/a | yes |
-| activate\_lambda | Enable automatic Lambda queue/schedule processing after secret/bootstrap/artifact checks and after disabling overlapping worker stages. | `bool` | `false` | no |
+| activate\_lambda | Reserved activation input. This shared-database profile currently refuses true until schema/bootstrap/runtime support is qualified by a reviewed implementation change; provision inactive infrastructure meanwhile. | `bool` | `false` | no |
 | application\_database\_name | Single shared application database for control, HoopDb, Relaycast and other service schemas. Default preserves the existing RDS initial database identity; do not change it on an existing instance without reviewing replacement/data migration. | `string` | `"relaycontrol"` | no |
 | aurora\_engine\_version | Explicit region-supported Aurora PostgreSQL 17 minor version when Aurora is selected. | `string` | `null` | no |
 | database\_instance\_class | Override the environment tier's instance class. Aurora needs an Aurora-supported class. | `string` | `null` | no |
