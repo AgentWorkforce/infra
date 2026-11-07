@@ -51,6 +51,11 @@ of set a second time. Desktop and the CLI log in against that same origin. */ -}
 {{- $image := include "relay-cloud-api.image" . -}}
 {{- if ne (int .Values.replicaCount) 1 }}{{ fail "replicaCount must be 1: the self-host API pilot has process-local login/device rate limits and is not HA" }}{{ end -}}
 {{- if not .Values.existingSecret }}{{ fail "existingSecret is required; inline credentials are not supported" }}{{ end -}}
+{{- if .Values.license.existingSecret -}}
+{{- if not (regexMatch "^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$" .Values.license.existingSecret) }}{{ fail "license.existingSecret must be a Kubernetes Secret name" }}{{ end -}}
+{{- if not (regexMatch "^[A-Za-z0-9._-]+$" .Values.license.key) }}{{ fail "license.key must be a Kubernetes Secret data key" }}{{ end -}}
+{{- if and (eq .Values.license.existingSecret .Values.existingSecret) (eq .Values.license.key .Values.secretKeys.databaseMigrationsUrl) }}{{ fail "license must not mount the migration credential into the API pod" }}{{ end -}}
+{{- end -}}
 {{- $optionalSecretKeys := list "previousEncryptionKey" "internalToken" "telemetryInstallKey" "relaycastInternalSecret" "oidcClientSecret" "smtpPassword" -}}
 {{- range $name, $key := .Values.secretKeys }}{{ if and (has $name $optionalSecretKeys) (empty $key) }}{{ continue }}{{ end }}{{ if not (regexMatch "^[A-Za-z0-9._-]+$" (toString $key)) }}{{ fail (printf "secretKeys.%s must be a Kubernetes Secret data key" $name) }}{{ end }}{{ end -}}
 {{- /* Every non-empty secretKeys.* value must name a distinct Secret key. The

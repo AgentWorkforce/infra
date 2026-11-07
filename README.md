@@ -423,3 +423,130 @@ Every chart must install correctly through `helm template --no-hooks` plus serve
 - **A version bump** for any chart change outside `ci/`.
 
 Run the same checks locally with `scripts/ci/charts.sh static` and `scripts/ci/charts.sh dryrun` (the dry run needs a cluster in the current kube context).
+
+## Local kind profiles
+
+The local stack uses the existing `agent-relay` umbrella. Product names are
+**relaycontrol** (`relay-cloud-api` chart, `selfhost-api` image) and
+**relay-app** (`relay-dashboard` chart/image). The deprecated Cloud repository
+is not a dependency. These profiles are development/proof fixtures, separate
+from the customer release and AWS/GCP managed-infrastructure proofs.
+
+| Profile | Components |
+| --- | --- |
+| `core` | relaycontrol, relay-app, Relaycast, RelayHistory, sessions-pipeline ingest/workers, Postgres + pgvector, MinIO Locker |
+| `addons` | core + relayfile Go server with Postgres state, standalone Flows with Kubernetes CronJobs |
+
+Both currently include **real, internal-only temporary RelayAuth**. The
+`localKind.temporaryRelayauth` flag must match `components.relayauth`; this is
+an explicit compatibility component pending the owners' introspection work.
+There is no RelayAuth ingress, relaycron, hosted Flow worker, OpenSearch
+dependency, or durable-actors platform in either profile. Postgres search is
+selected explicitly. Locker stores session objects and is still needed.
+
+Prerequisites: Docker Engine 28+ (including native-platform image export),
+kind 0.31+, kubectl, Helm 3.10+, OpenSSL, Git, Python 3.9+, and PyYAML. Allocate
+enough Docker memory for the suite and CNI; budget 20 GiB free disk for a cold
+setup. Warm setup checks cached native image sizes plus unpacking headroom.
+Setup fetches public image/chart/source
+artifacts. Runtime suite pods receive no external egress. Run the checkout
+and its worktree on a writable volume; all generated state and `TMPDIR` live
+under its ignored `.kind/` directory.
+
+```sh
+python3 -m pip install -r ci/agent-relay/kind/requirements.txt
+make kind-render PROFILE=core
+make kind-up PROFILE=core
+make kind-proof-core
+make kind-down PROFILE=core
+
+# Add-ons need an owner-supplied license. Run one profile at a time (same ports).
+make kind-build-addons  # optional: prepare native images without starting a cluster
+KIND_LICENSE_FILE=/absolute/path/to/signed-license make kind-up PROFILE=addons
+KIND_RELAYFILE_TOKEN_FILE=/absolute/path/to/real-scoped-token make kind-proof-addons
+make kind-down PROFILE=addons
+```
+
+`kind-up` creates a named cluster (`agent-relay-core` or
+`agent-relay-addons`) and a private kubeconfig, installs checksum-verified
+Calico and a pinned Traefik chart, provisions local Postgres/Locker and
+generated Secrets, loads native-platform images, runs the chart's schema
+Jobs in order, bootstraps the installation and first workspace, installs the
+umbrella, and waits for readiness. PostgreSQL roles come from the exact
+services image's bootstrap SQL; no invented grant list or privileged runtime
+database connection is substituted. Its image/generation receipt is
+`.kind/<profile>/images.json`. Current catalog images are pinned by digest;
+their compatibility with current source remains subject to runtime proof.
+Relayfile and the pinned Flows runtime are built locally for the add-on profile.
+The Flows Rust kernel is compiled natively from release `v2.0.50`, commit
+`9a9086be16fd33eea15af2adf3ce0a7cf1239aa9`, with its locked dependencies.
+The SDK selects it through the supported `RELAYFLOWD_BIN` setting; neither
+emulation nor a replacement engine is used. Cargo caches and build outputs
+stay on the checkout volume. This path still needs the runtime proof below.
+
+Commands explicitly target their own kubeconfig and kind context. An existing
+cluster without this worktree's ownership record is refused. `kind-down`
+deletes only the named local cluster, including its node-backed data, and
+retains the private local state for inspection. It does not prune Docker or
+change a cloud account, registry, system trust store, or the caller's kubeconfig.
+
+### Local TLS and Desktop
+
+The local edge binds loopback HTTP `8080` and HTTPS `8443`. The generated
+`.kind/<profile>/hosts` file lists the host entries to add for Desktop:
+
+```text
+127.0.0.1 relay.kind.agentrelay.com cast.kind.agentrelay.com history.kind.agentrelay.com files.kind.agentrelay.com
+```
+
+Trust `.kind/<profile>/ca.crt` in the test machine's trust store. The CA private
+key stays on the host; Kubernetes receives only the separate server leaf key.
+The leaf certificate covers these hostnames for 30 days. Desktop builds can
+target `AGENT_RELAY_SITE_URL=https://relay.kind.agentrelay.com:8443` and
+`AGENT_RELAY_URL_SCHEME=agentrelay-kind`. The dashboard carries the matching
+Desktop link settings. The proof routes to loopback with verified TLS/SNI,
+so it requires neither editing `/etc/hosts` nor disabling certificate checks.
+
+There is no public self-signup endpoint. First boot creates the configured
+organization, owner (`owner@kind.example`), and Default workspace. The proof
+then exercises real device start/approval/token exchange as a CLI/Desktop
+client. OIDC/email login providers are optional and are not enabled in the
+offline profile.
+
+### Evidence and current gaps
+
+`kind-proof-core` and `kind-proof-addons` share
+[`ci/agent-relay/kind/proof.py`](ci/agent-relay/kind/proof.py). They reuse the
+existing real protocol drivers for device login, Relaycast DMs, History
+durable delivery/read-back, session API filters and isolation, and the real
+sessions courier/indexer path. The new wrapper checks the live namespace
+policy, compares an external connectivity baseline with a denied suite probe
+and a successful in-cluster probe, and reads the delivered session through
+relay-app's TLS origin. The add-on proof runs a manual Flow Job and observes
+a **new controller-scheduled** CronJob firing, then attempts authenticated
+relayfile write/read with a real temporary RelayAuth token. A manually
+instantiated CronJob Job cannot satisfy the scheduled-firing check.
+
+Proof exit codes: `0` all required checks passed, `1` failed, `2` pending.
+Driver skips become `PENDING`; neither readiness nor missing upstream work
+can produce an overall pass. Curated results go to `.kind/<profile>/proof.json`;
+credentials and protocol state remain in separate mode-0600 files. Never
+commit or attach those private state files. Test session data stays in the
+disposable kind cluster until `kind-down`.
+
+| Gap | Owner / current evidence |
+| --- | --- |
+| Combined database compatibility (blocks readiness) | layered-sessions-pipeline + History owner: the pinned pipeline and History migration Jobs each complete, but History then adds functions and `history_runtime` grants outside the pipeline function ACL manifest. The final strict check fails with 160 violations. No grant/guard bypass is used. See [captured local evidence](ci/agent-relay/kind/evidence.md). |
+| Full local end-to-end runs | infra-kind-stack: pending the database composition contract above. Live network preflight proves external TCP denial and allowed in-cluster DNS/service access, but is not a full stack pass. |
+| Current image/source compatibility | Component owners: record exact source SHA and migrator generation; a tag named `main` is insufficient. This run used services source `f1c2672581b6f88d26d0549b4d1cb78fce0d5f16`, generation `0dcd0e89bebbdad789a40fa61311c601b4c0e49e389e3b2b0167b6fd5fdf542e`. |
+| RelayAuth removal | layered-control + layered-sessions-pipeline: default-off introspection branch, `sh_at_`, `rth:read/rth:sync`; keep the temporary internal component until compatible images ship. |
+| Cost attribution data | sessions/control owners: identify and prove per-session usage/cost linked to workspace/user through the read API; pending, not inferred from an indexed session. |
+| MCP endpoint | layered-control: PR #19, `/api/v1/mcp/shared-sessions`, under review; pending until shipped and exercised. |
+| Agent launch/release | layered-control: API unimplemented; fleet node claim/release is not this proof. |
+| Signed offline license enforcement | layered-control: design only. `relay-cloud-api.license.existingSecret/key` reserves the `SELFHOST_LICENSE_FILE` mount; the file slot does not verify signatures or gate add-ons. |
+| relayfile control-token filesystem scopes | layered-relayfile + layered-control: current introspection lacks `fs:*`; use real temporary RelayAuth for now. Dev issuer tokens do not count as acceptance evidence. |
+| Native add-on runtime proof | infra-kind-stack + Flows owner: source build supports native runtime selection; full Job/CronJob and relayfile roundtrip remain unverified until the shared core and signed-license dependencies are resolved. |
+
+Track the local work in [issue #77](https://github.com/AgentWorkforce/infra/issues/77).
+For render/trust/schema checks without Docker (Helm and kubeconform required), run
+`python3 ci/agent-relay/kind/test_stack.py -v` after building chart dependencies.

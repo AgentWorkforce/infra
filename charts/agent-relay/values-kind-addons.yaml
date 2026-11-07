@@ -1,0 +1,53 @@
+# Overlay on values-kind-core.yaml. No relaycron or hosted cloud worker.
+localKind:
+  profile: addons
+components:
+  relayflows: true
+  relayfile: true
+relay-cloud-api:
+  # The owner-supplied signed license is mounted only into relaycontrol.
+  # Enforcement is PENDING in relaycontrol; this slot cannot enforce it.
+  license: { existingSecret: kind-addon-license, key: license }
+relayflows:
+  fullnameOverride: relayflows
+  mode: standalone
+  image: { repository: agent-relay-kind/flows, tag: "2.0.50", pullPolicy: Never }
+  runtimeInstaller: { enabled: false }
+  telemetry: { enabled: false }
+  persistence: { size: 1Gi, accessModes: [ReadWriteOnce] }
+  standalone:
+    localAgent: false
+    activeDeadlineSeconds: 180
+    args:
+      - |
+        set -eu
+        mkdir -p "${HOME}" "${RELAYFLOWS_DATA_DIR}"
+        exec flows run --json --no-observer-link --data-dir "${RELAYFLOWS_DATA_DIR}" "${RELAYFLOWS_FLOW_PATH}"
+    cron: { enabled: true, schedule: "* * * * *", timeZone: UTC }
+    flow:
+      content: |
+        version: "0.1.0"
+        name: kind-addons-proof
+        steps:
+          - id: control
+            type: deterministic
+            command: >-
+              node -e 'fetch("http://relaycontrol.agent-relay.svc.cluster.local/healthz").then(r=>{if(!r.ok)process.exit(1);console.log("kind-flow-proof")}).catch(()=>process.exit(1))'
+relayfile:
+  fullnameOverride: relayfile
+  runtime: { backend: go }
+  image: { repository: agent-relay-kind/relayfile, tag: local, pullPolicy: Never }
+  secrets: { existingSecret: kind-relayfile }
+  auth:
+    jwksUrl: http://relayauth.agent-relay.svc.cluster.local:8787/.well-known/jwks.json
+  server: { backendProfile: production }
+  networkPolicy: { enabled: false }
+  ingress:
+    enabled: true
+    className: traefik
+    hosts:
+      - host: files.kind.agentrelay.com
+        paths: [{ path: /, pathType: Prefix }]
+    tls:
+      - secretName: kind-tls
+        hosts: [files.kind.agentrelay.com]

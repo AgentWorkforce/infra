@@ -1,0 +1,294 @@
+#!/usr/bin/env python3
+"""Local profile acceptance: 0 complete, 1 failed, 2 pending upstream work.
+
+Health/readiness alone never passes this proof. Tokens stay in mode-0600 state;
+only curated driver proofs and resource identifiers are printed.
+"""
+from __future__ import annotations
+
+import argparse
+import datetime as dt
+import http.client
+import hashlib
+import json
+import os
+from pathlib import Path
+import secrets
+import socket
+import ssl
+import sys
+import time
+from urllib.parse import quote
+
+from stack import ROOT, NS, Stack, StackError, private_json
+
+
+def exit_code(checks):
+    if not checks or any(c["result"] == "FAIL" for c in checks):
+        return 1
+    return 2 if any(c["result"] == "PENDING" for c in checks) else 0
+
+
+class Proof:
+    def __init__(self, stack):
+        self.stack = stack
+        self.checks = []
+        self.state = {"emailDomain": "kind.example", "relaycast": {"mode": "sqlite"}}
+        self.path = stack.state / "proof-private.json"
+        self.marker = secrets.token_hex(6)
+
+    def record(self, result, check, detail):
+        if result == "SKIP":
+            result = "PENDING"
+        if result not in ("PASS", "FAIL", "PENDING"):
+            raise StackError("unknown proof outcome")
+        item = {"result": result, "check": check, "detail": detail}
+        self.checks.append(item)
+        print(f"{result} {check}: {detail}", flush=True)
+
+    def require(self, value, message):
+        if not value:
+            raise StackError(message)
+
+    def phase(self, phase):
+        s = self.stack
+        credentials = json.loads((s.state / "credentials.json").read_text())
+        body = dict(self.state, secrets={"relaycastInternalSecret": credentials["cast"]})
+        response = s.k("exec", "-i", "deploy/relaycontrol", "--", "env",
+                       "E2E_RELAYCAST_URL=http://relaycast.agent-relay.svc.cluster.local:8787",
+                       "E2E_RELAYHISTORY_URL=http://relayhistory.agent-relay.svc.cluster.local:8080",
+                       "E2E_RELAYAUTH_URL=http://relayauth.agent-relay.svc.cluster.local:8787",
+                       "node", "/tmp/kind-proof-driver.mjs", phase, data=json.dumps(body), sensitive=True)
+        result = json.loads(response.stdout)
+        self.state = result["state"]
+        private_json(self.path, self.state)
+        self.require(bool(result.get("proofs")), f"{phase} returned no proof")
+        for item in result["proofs"]:
+            self.record(item["result"], item["check"], item["detail"])
+        self.require(not any(p["result"] == "FAIL" for p in result["proofs"]), f"{phase} failed")
+
+    def edge(self, host, path, token=None, method="GET", body=None):
+        context = ssl.create_default_context(cafile=str(self.stack.state / "ca.crt"))
+        conn = http.client.HTTPSConnection(host, 8443, context=context, timeout=15)
+        # Route locally without changing system DNS. TLS still verifies host/SNI.
+        conn._create_connection = lambda address, timeout, source_address=None: socket.create_connection(("127.0.0.1", 8443), timeout)
+        headers = {"accept": "application/json"}
+        if token:
+            headers["authorization"] = "Bearer " + token
+        if body is not None:
+            headers.update({"content-type": "application/json", "if-match": "0"})
+        try:
+            conn.request(method, path, body=None if body is None else json.dumps(body), headers=headers)
+            response = conn.getresponse()
+            text = response.read().decode()
+            return response.status, text
+        finally:
+            conn.close()
+
+    def egress(self):
+        s = self.stack
+        policies = json.loads(s.k("get", "networkpolicies", "-o", "json").stdout)["items"]
+        egress = [p for p in policies if "Egress" in p["spec"].get("policyTypes", [])]
+        self.require(len(egress) == 1 and egress[0]["metadata"]["name"] == "kind-no-external-egress",
+                     "unexpected additive egress policy could invalidate the namespace isolation proof")
+        policy = egress[0]["spec"]
+        self.require(policy["podSelector"] == {}, "egress policy does not cover all suite/support pods")
+        self.require(policy["egress"] == [
+            {"to": [{"podSelector": {}}]},
+            {"to": [{"namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": "kube-system"}},
+                     "podSelector": {"matchLabels": {"k8s-app": "kube-dns"}}}],
+             "ports": [{"protocol": "UDP", "port": 53}, {"protocol": "TCP", "port": 53}]}],
+            "live policy differs from same-namespace plus DNS restriction")
+        image = next(i for i in json.loads((s.state / "images.json").read_text())["images"] if "/selfhost-api@" in i)
+        baseline = "kind-proof-" + self.marker
+        s.apply({"apiVersion": "v1", "kind": "Namespace", "metadata": {"name": baseline}})
+
+        def probe(namespace, host, port, name):
+            script = ("const net=require('node:net'); const s=net.createConnection({host:" + json.dumps(host) + ",port:" + str(port) + "});"
+                      "const fail=()=>{s.destroy();process.exit(23)};s.setTimeout(4000,fail);s.on('error',fail);"
+                      "s.on('connect',()=>{s.destroy();process.exit(0)})")
+            pod = {"apiVersion": "v1", "kind": "Pod", "metadata": {"name": name, "namespace": namespace},
+                   "spec": {"restartPolicy": "Never", "activeDeadlineSeconds": 30, "containers": [
+                       {"name": "probe", "image": image, "imagePullPolicy": "Never", "command": ["node", "-e", script]}]}}
+            s.apply(pod)
+            deadline = time.monotonic() + 60
+            try:
+                while time.monotonic() < deadline:
+                    d = json.loads(s.k("get", "pod", name, "-n", namespace, "-o", "json").stdout)
+                    for c in d.get("status", {}).get("containerStatuses", []):
+                        term = c.get("state", {}).get("terminated")
+                        if term:
+                            self.require(term.get("reason") != "OOMKilled", "network probe was OOM killed")
+                            return term["exitCode"]
+                    time.sleep(1)
+                raise StackError("network probe never executed")
+            finally:
+                s.k("delete", "pod", name, "-n", namespace, "--ignore-not-found", "--wait=false")
+
+        try:
+            self.require(probe(baseline, "1.1.1.1", 443, "external-baseline") == 0,
+                         "external baseline unreachable; cannot claim a policy denial")
+            self.require(probe(NS, "1.1.1.1", 443, "external-denied-"+self.marker) == 23,
+                         "suite namespace can reach external TCP/443")
+            self.require(probe(NS, "relaycontrol.agent-relay.svc.cluster.local", 80, "internal-allowed-"+self.marker) == 0,
+                         "in-cluster DNS/service connectivity broken")
+            self.record("PASS", "core.egress", "external baseline connects; suite external TCP denied; in-cluster DNS/service connects")
+        finally:
+            s.k("delete", "namespace", baseline, "--ignore-not-found", "--wait=false")
+
+    def tls_and_app(self):
+        status, html = self.edge("relay.kind.agentrelay.com", "/")
+        self.require(status == 200 and "<html" in html.lower(), "relay-app HTML missing through verified TLS edge")
+        a = self.state["a"]
+        status, text = self.edge("relay.kind.agentrelay.com", f"/cloud/api/v1/workspaces/{a['workspaceId']}/sessions", a["accessToken"])
+        self.require(status == 200 and any(x.get("sessionId") == self.state["session"]["sessionId"]
+                     for x in json.loads(text).get("items", [])), "delivered session missing through relay-app same-origin read API")
+        self.record("PASS", "app.tls_session_read", "trusted local TLS, relay-app HTML, and delivered session through /cloud/api")
+
+    def pipeline(self):
+        s = self.stack
+        tenant = json.loads((s.state / "tenant.json").read_text())
+        self.state["bulls"] = {"orgId": tenant["orgId"], "workspaceId": tenant["workspaceId"],
+                               "origin": "https://history.kind.agentrelay.com:8443", "machineId": "kind-" + self.marker}
+        self.phase("mint-sessions-pipeline")
+        source = (ROOT / "scripts/selfhost/e2e-gcp-proof-sessions-pipeline.ts").read_text()
+        s.k("exec", "-i", "deploy/alleyoop-ingest", "--", "sh", "-c", "cat > /tmp/kind-pipeline.ts", data=source)
+        result = s.k("exec", "-i", "deploy/alleyoop-ingest", "--", "bun", "/tmp/kind-pipeline.ts", "push", self.marker,
+                     self.state["bulls"]["machineId"], data=self.state.pop("bullsAssertion"), sensitive=True, check=False)
+        session = None
+        for line in result.stdout.splitlines():
+            if line.startswith("SESSION_ID="):
+                session = line.split("=", 1)[1]
+            if line.startswith("PROOF|"):
+                _, outcome, check, detail = line.split("|", 3)
+                self.record(outcome, check, detail)
+        self.require(result.returncode == 0 and session, "courier did not successfully upload a session")
+        s.k("exec", "-i", "deploy/alleyoop-ingest", "--", "sh", "-c", "cat > /tmp/kind-pipeline-read.ts",
+            data=(ROOT / "ci/agent-relay/kind/pipeline.ts").read_text())
+        result = s.k("exec", "deploy/alleyoop-ingest", "--", "bun", "/tmp/kind-pipeline-read.ts", self.marker, session,
+                     timeout=210, sensitive=True, check=False)
+        proofs = 0
+        for line in result.stdout.splitlines():
+            if line.startswith("PROOF|"):
+                _, outcome, check, detail = line.split("|", 3)
+                self.record(outcome, check, detail)
+                proofs += 1
+        self.require(result.returncode == 0 and proofs > 0, "offline pipeline readback failed")
+
+    def flows(self):
+        s = self.stack
+        cron = json.loads(s.k("get", "cronjob", "relayflows", "-o", "json").stdout)
+        self.require(not cron["spec"].get("suspend"), "scheduled Flow is suspended")
+        uid = cron["metadata"]["uid"]
+        # Suspend only while the separate manual run owns the shared journal.
+        s.k("patch", "cronjob", "relayflows", "--type=merge", "-p", '{"spec":{"suspend":true}}')
+        manual = "kind-flow-manual-" + self.marker
+        try:
+            s.k("create", "job", manual, "--from=cronjob/relayflows")
+            s.wait_job(manual, 180)
+            self.flow_result(manual)
+            self.record("PASS", "addons.flow_run", "Flow Job completed its deterministic service probe with completionReason=success")
+        finally:
+            s.k("patch", "cronjob", "relayflows", "--type=merge", "-p", '{"spec":{"suspend":false}}')
+        started = dt.datetime.now(dt.timezone.utc)
+        deadline = time.monotonic() + 180
+        while time.monotonic() < deadline:
+            jobs = json.loads(s.k("get", "jobs", "-o", "json").stdout)["items"]
+            for job in jobs:
+                owned = any(o.get("uid") == uid and o.get("kind") == "CronJob" for o in job["metadata"].get("ownerReferences", []))
+                scheduled = job["metadata"].get("annotations", {}).get("batch.kubernetes.io/cronjob-scheduled-timestamp")
+                actual_firing = scheduled and dt.datetime.fromisoformat(scheduled.replace("Z", "+00:00")) > started
+                if owned and job["metadata"]["name"] != manual and actual_firing and job.get("status", {}).get("succeeded"):
+                    self.flow_result(job["metadata"]["name"])
+                    self.record("PASS", "addons.flow_scheduled", "controller-created CronJob firing completed after proof start")
+                    return
+            time.sleep(3)
+        raise StackError("no real scheduled Flow firing completed within 180s")
+
+    def flow_result(self, job):
+        # The CLI journals command stdout; it does not echo it in pod logs.
+        # Assert the real runner's typed completion instead of grepping for a
+        # marker that only exists in the durable step output.
+        outcomes = []
+        for line in self.stack.k("logs", "job/"+job).stdout.splitlines():
+            try:
+                outcomes.append(json.loads(line))
+            except ValueError:
+                continue
+        self.require(any(isinstance(o, dict) and o.get("ok") is True and o.get("command") == "run"
+                         and o.get("runId") and o.get("status") == "completed"
+                         and o.get("completedSteps") == 1 and o.get("completionReason") == "success"
+                         for o in outcomes), "Flow runner did not report successful completion of its real step")
+
+    def relayfile(self):
+        path = os.environ.get("KIND_RELAYFILE_TOKEN_FILE")
+        if not path:
+            self.record("PENDING", "addons.relayfile_roundtrip", "needs real temporary RelayAuth fs:read/fs:write token for first workspace; dev issuer excluded")
+            return
+        token = Path(path).read_text().strip()
+        workspace = json.loads((self.stack.state / "tenant.json").read_text())["workspaceId"]
+        route = f"/v1/workspaces/{workspace}/fs/file?path=" + quote("/kind-proof-"+self.marker+".txt", safe="")
+        status, _ = self.edge("files.kind.agentrelay.com", route)
+        self.require(status in (401, 403), "relayfile accepted anonymous file read")
+        status, _ = self.edge("files.kind.agentrelay.com", route, token, "PUT", {"content": self.marker})
+        self.require(status == 202, f"relayfile write was not accepted status={status}")
+        status, text = self.edge("files.kind.agentrelay.com", route, token)
+        self.require(status == 200 and json.loads(text).get("content") == self.marker, "relayfile content roundtrip differs")
+        self.record("PASS", "addons.relayfile_roundtrip", "anonymous request denied; signed scoped write/read returned exact content")
+
+    def run(self):
+        s = self.stack
+        self.require(s.marker.exists(), "run make kind-up for this profile first")
+        self.require((s.state / "ready.json").exists(), "kind-up has not completed successfully for this profile")
+        ready = json.loads((s.state / "ready.json").read_text())
+        self.require(ready.get("profile") == s.profile and ready.get("recipeSha256") == s.recipe_hash(), "bootstrap recipe changed; rerun kind-up before acceptance")
+        s.docker(require_space=False)
+        uid = s.k("get", "namespace", "kube-system", "-o", "jsonpath={.metadata.uid}", namespace=None).stdout
+        self.require(ready.get("clusterUid") == uid, "ready receipt belongs to a different cluster")
+        s.render()
+        self.require(ready.get("renderSha256") == hashlib.sha256((s.state / "rendered.yaml").read_bytes()).hexdigest(), "profile render changed since readiness; rerun kind-up")
+        s.k("exec", "-i", "deploy/relaycontrol", "--", "sh", "-c", "cat > /tmp/kind-proof-driver.mjs",
+            data=(ROOT / "scripts/selfhost/e2e-gcp-proof-driver.mjs").read_text())
+        self.egress()
+        for phase in ("bootstrap", "messaging", "delivery", "reads", "sessions", "auth"):
+            self.phase(phase)
+        self.tls_and_app()
+        self.pipeline()
+        if s.profile == "addons":
+            self.flows()
+            self.relayfile()
+        for check, owner in [("cost_attribution", "sessions/control owners: offline usage/cost schema and read contract unproven"),
+                             ("mcp", "layered-control: PR19 endpoint/tools under review"),
+                             ("agent_launch_release", "layered-control: launch/release API not implemented")]:
+            self.record("PENDING", check, owner)
+        if s.profile == "addons":
+            self.record("PENDING", "offline_license_enforcement", "layered-control: signed license verification is design only; Secret slot is not enforcement")
+
+    def report(self):
+        code = exit_code(self.checks)
+        private_json(self.stack.state / "proof.json", {"profile": self.stack.profile,
+                     "result": {0: "PASS", 1: "FAIL", 2: "PENDING"}[code], "checks": self.checks})
+        return code
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--profile", choices=("core", "addons"), default="core")
+    args = parser.parse_args()
+    os.umask(0o077)
+    proof = Proof(Stack(args.profile))
+    try:
+        proof.run()
+    except (StackError, OSError, ValueError, KeyError) as e:
+        proof.record("FAIL", "proof.runtime", str(e))
+    finally:
+        if proof.state.get("a"):
+            try:
+                proof.phase("cleanup")
+            except (StackError, OSError, ValueError) as e:
+                proof.record("FAIL", "proof.cleanup", str(e))
+    return proof.report()
+
+
+if __name__ == "__main__":
+    sys.exit(main())
