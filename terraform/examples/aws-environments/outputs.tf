@@ -70,11 +70,11 @@ output "application_contract" {
       relayhistory     = true
       relaycast        = true
       relayauth        = true
-      durableActors    = true
+      durableActors    = false
       relayfile        = var.enable_relayfile
     }
-    relaycast_backend                             = "durable-actors"
-    hoopdb_bootstrap_profile                      = var.pipeline_runtime == "lambda" ? "private-reachable-managed-postgres-required" : "selfhosted-cloudnativepg"
+    relaycast_backend                             = "postgres-required-not-yet-qualified"
+    hoopdb_bootstrap_profile                      = "shared-rds-schema-review-required"
     overlapping_pipeline_workers_must_be_disabled = var.pipeline_runtime == "lambda"
   }
 }
@@ -101,4 +101,14 @@ output "runtime_role_policy_json" {
 output "lambda_shared_environment" {
   description = "Non-secret writer/reader bindings, or null until explicitly configured. Independently qualify the matching reader artifact, read-only DB identity, JWT settings, schema/FGAC bootstrap and worker retirement before activation."
   value       = var.lambda_runtime_bindings == null ? null : local.lambda_shared_environment
+}
+
+output "postgres_service_bindings" {
+  description = "Target per-service schemas and independent migration/runtime roles on the SAME RDS/database. Contains no credentials; schema-aware runtime/bootstrap and isolation proof remain required. Optional-service bindings do not enable those workloads."
+  value       = module.postgres_layout.bindings
+}
+
+output "postgres_topology" {
+  description = "Shared-database relational target; application_sql_ready=false until actual service integration and managed-RDS validation are completed."
+  value       = module.postgres_layout.topology
 }

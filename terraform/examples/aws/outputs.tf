@@ -44,3 +44,13 @@ output "functions" {
     secret_arn    = module.functions[0].secret_arn
   } : null
 }
+
+output "postgres_service_bindings" {
+  description = "Target per-service schemas and independent migration/runtime roles on the SAME RDS/database. Contains no credentials; schema-aware runtime/bootstrap and isolation proof remain required. Optional-service bindings do not enable those workloads."
+  value       = module.postgres_layout.bindings
+}
+
+output "postgres_topology" {
+  description = "Shared-database relational target; application_sql_ready=false until actual service integration and managed-RDS validation are completed."
+  value       = module.postgres_layout.topology
+}

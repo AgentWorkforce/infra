@@ -23,6 +23,25 @@ terraform/
 Azure is on hold. A `modules/azure/<capability>` set with the same four
 interfaces would slot in beside these.
 
+## Current main-store direction — 2026-11-07
+
+The required AWS application topology is **one RDS instance, one application
+PostgreSQL database, separate service schemas**. Control and HoopDb share that
+database; Relaycast must use it for authoritative relational state as well.
+The AWS roots now expose `postgres_service_bindings` from the provider-free
+[`postgres-layout`](modules/postgres-layout) contract. It rejects schema/role
+collisions and keeps complete independent bindings for a later service split.
+Read [the shared-store contract](../docs/shared-postgres-storage-contract.md)
+for exact target namespaces, missing application work and required proof.
+
+The default initial database name stays `relaycontrol` to preserve existing
+resource identity; `application_database_name` chooses an explicit name for a
+new installation. Changing it on an existing instance needs replacement/data
+migration review. Binding outputs do not bootstrap SQL or make current images
+schema-aware. `application_sql_ready` is false until that work is proved.
+Older separate-database, dedicated-HoopDb and SQLite examples below describe
+existing compatibility paths, not acceptance of this new target.
+
 ## Cloud mapping
 
 | Capability | AWS module | GCP module | Required by the charts? |
@@ -177,7 +196,11 @@ master secret, or from per-role Secrets Manager / Secret Manager entries.
 
 The example roots print the non-secret values-file paths as a `chart_values` output. `CLOUD_SQL_CONNECTION_NAME` is an `extraEnv` entry, not a values path, so the GCP example prints it as `postgres.connection_name` instead.
 
-## Postgres bootstrap (before the first migrate)
+## Legacy separate-database bootstrap (not the shared-store target)
+
+Do not run this dedicated-database bootstrap against the new shared application
+database. The shared schema/role/default-ACL bootstrap requires application-owner
+review and isolation proof described in the [new contract](../docs/shared-postgres-storage-contract.md).
 
 The modules create the server, and on GCP optionally the databases. They do
 not connect to Postgres. Before you install or upgrade the chart, run this from

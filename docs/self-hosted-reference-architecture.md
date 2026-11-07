@@ -14,6 +14,14 @@ matching an archive, open the same path at the revision recorded in its
 `RELEASE-MANIFEST.json`. The diagrams below ship in the archive under
 `docs/diagrams/`.
 
+## Current shared-store requirement
+
+The 2026-11-07 user direction is one RDS instance and one application database,
+with distinct service schemas and credentials, including Relaycast. See the
+[shared PostgreSQL contract](shared-postgres-storage-contract.md). The portable
+SQLite and separate-database descriptions below are existing implementation
+profiles, not proof or acceptance of the new target.
+
 ## Diagrams
 
 - [Architecture overview](diagrams/agent-relay-architecture.png)

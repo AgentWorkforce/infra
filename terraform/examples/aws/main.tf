@@ -1,5 +1,5 @@
 terraform {
-  required_version = ">= 1.6"
+  required_version = ">= 1.11"
 
   required_providers {
     aws = {
@@ -43,12 +43,13 @@ resource "terraform_data" "service_account_checks" {
   }
 }
 
-# Postgres for relaycontrol (relay-cloud-api), relayhistory, HoopDb (sessions)
-# and, if used, durable-actors. One instance, one database per component.
+# One RDS writer/database, with isolated service schemas. The layout output
+# is a target contract; schema-aware application bootstrap remains required.
 module "postgres" {
   source = "../../modules/aws/postgres"
 
   name                   = "${var.name}-pg"
+  database_name          = var.application_database_name
   engine_mode            = var.postgres_engine_mode
   engine_version         = var.postgres_engine_mode == "aurora" ? var.aurora_engine_version : "17"
   subnet_ids             = var.private_subnet_ids
@@ -114,4 +115,13 @@ module "functions" {
   search_index_enabled         = var.enable_search
   additional_policy_statements = var.enable_search ? jsondecode(module.search[0].indexer_policy_json).Statement : []
   tags                         = var.tags
+}
+
+# No SQL provider, passwords or privileged bootstrap credentials enter this
+# contract. Each service keeps its own complete binding for a later split.
+module "postgres_layout" {
+  source   = "../../modules/postgres-layout"
+  host     = module.postgres.host
+  port     = module.postgres.port
+  database = module.postgres.initial_database
 }

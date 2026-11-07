@@ -85,3 +85,15 @@ run "all_add_ons_plan" {
     error_message = "The indexer and reader ServiceAccounts each get their own role's Pod Identity association."
   }
 }
+
+run "shared_database_service_layout" {
+  command = apply
+  assert {
+    condition     = output.postgres_service_bindings.control.database == "relaycontrol" && output.postgres_service_bindings.hoopdb.database == "relaycontrol" && output.postgres_service_bindings.relaycast.database == "relaycontrol"
+    error_message = "The thin AWS composition must use one database for all service schemas."
+  }
+  assert {
+    condition     = output.postgres_service_bindings.control.schema != output.postgres_service_bindings.hoopdb.schema && !output.postgres_topology.application_sql_ready
+    error_message = "Distinct schema bindings are required, with no unsupported SQL-ready claim."
+  }
+}

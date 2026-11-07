@@ -244,3 +244,14 @@ variable "lambda_runtime_bindings" {
     error_message = "Supply a lowercase OpenSearch index of at most 201 characters without dots, backend ID of at most 114 identifier characters (the artifact adds .js-literal-v2), PostgreSQL schema identifier, lowercase SHA256, and epoch or a nonnegative RFC3339 completeness timestamp."
   }
 }
+
+variable "application_database_name" {
+  description = "Single shared application database for control, HoopDb, Relaycast and other service schemas. Default preserves the existing RDS initial database identity; do not change it on an existing instance without reviewing replacement/data migration."
+  type        = string
+  default     = "relaycontrol"
+  nullable    = false
+  validation {
+    condition     = can(regex("^[a-z][a-z0-9_]{0,62}$", var.application_database_name)) && !contains(["postgres", "template0", "template1"], var.application_database_name)
+    error_message = "application_database_name must be a lowercase application identifier, not a PostgreSQL maintenance database."
+  }
+}

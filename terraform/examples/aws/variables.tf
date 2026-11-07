@@ -143,3 +143,14 @@ variable "alarm_actions" {
   type        = list(string)
   default     = []
 }
+
+variable "application_database_name" {
+  description = "Single shared application database for control, HoopDb, Relaycast and other service schemas. Default preserves the existing RDS initial database identity; do not change it on an existing instance without reviewing replacement/data migration."
+  type        = string
+  default     = "relaycontrol"
+  nullable    = false
+  validation {
+    condition     = can(regex("^[a-z][a-z0-9_]{0,62}$", var.application_database_name)) && !contains(["postgres", "template0", "template1"], var.application_database_name)
+    error_message = "application_database_name must be a lowercase application identifier, not a PostgreSQL maintenance database."
+  }
+}
