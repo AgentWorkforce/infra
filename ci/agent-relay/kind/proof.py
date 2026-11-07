@@ -258,7 +258,7 @@ class Proof:
             self.flows()
             self.relayfile()
         for check, owner in [("cost_attribution", "sessions/control owners: offline usage/cost schema and read contract unproven"),
-                             ("mcp", "layered-control: PR19 endpoint/tools under review"),
+                             ("mcp", "layered-control: PR19 merged in source; catalog image9b80b04 lacks MCP; compatible build and endpoint proof pending"),
                              ("agent_launch_release", "layered-control: launch/release API not implemented")]:
             self.record("PENDING", check, owner)
         if s.profile == "addons":
