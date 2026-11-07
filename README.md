@@ -448,6 +448,10 @@ Prerequisites: Docker Engine 28+ (including native-platform image export),
 kind 0.31+, kubectl, Helm 3.10+, OpenSSL, Git, Python 3.9+, and PyYAML. Allocate
 enough Docker memory for the suite and CNI; budget 20 GiB free disk for a cold
 setup. Warm setup checks cached native image sizes plus unpacking headroom.
+On Linux the disk preflight measures the admitted daemon’s DockerRootDir. For
+a relocated Docker Desktop disk or another local VM, set
+`KIND_DOCKER_DATA_PATH` to the existing host-side Docker backing file or directory.
+An unavailable storage path refuses setup rather than skipping the check.
 Setup fetches public image/chart/source
 artifacts. Runtime suite pods receive no external egress. Run the checkout
 and its worktree on a writable volume; all generated state and `TMPDIR` live

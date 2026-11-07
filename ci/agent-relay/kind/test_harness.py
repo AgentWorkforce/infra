@@ -1,5 +1,6 @@
 """Causal harness checks; no Docker daemon, database or cluster contacted."""
 import json
+from types import SimpleNamespace
 from pathlib import Path
 import subprocess
 import sys
@@ -58,6 +59,32 @@ class Harness(unittest.TestCase):
         self.assertEqual([c["detail"] for c in result["checks"]], ["TypeError", "AttributeError"])
         self.assertNotIn("private", report.read_text())
         self.assertNotIn("never-print", report.read_text())
+
+    def test_linux_disk_preflight_uses_admitted_daemon_storage(self):
+        self.local.env.pop("KIND_DOCKER_DATA_PATH", None)
+        self.local.env["DOCKER_HOST"] = "unix:///owned/docker.sock"
+        calls = []
+        def command(args, **kwargs):
+            calls.append(args)
+            return subprocess.CompletedProcess(args, 0, str(self.root) + "\n", "")
+        self.local.cmd = command
+        with patch.object(stack.sys, "platform", "linux"), patch.object(stack.shutil, "disk_usage", return_value=SimpleNamespace(free=100)) as usage:
+            with self.assertRaisesRegex(stack.StackError, "needs"):
+                self.local.check_space(200)
+            usage.assert_called_once_with(self.root)
+        self.assertEqual(calls[0][1:3], ["--host", "unix:///owned/docker.sock"])
+
+    def test_unavailable_default_docker_storage_is_not_a_silent_pass(self):
+        self.local.env.pop("KIND_DOCKER_DATA_PATH", None)
+        with patch.object(stack.sys, "platform", "darwin"), patch.object(stack.Path, "home", return_value=self.root):
+            with self.assertRaisesRegex(stack.StackError, "KIND_DOCKER_DATA_PATH"):
+                self.local.check_space(1)
+
+    def test_explicit_vm_backing_path_is_measured(self):
+        self.local.env["KIND_DOCKER_DATA_PATH"] = str(self.root)
+        with patch.object(stack.shutil, "disk_usage", return_value=SimpleNamespace(free=100)) as usage:
+            self.local.check_space(99)
+            usage.assert_called_once_with(self.root)
 
     def test_failed_source_fetch_does_not_poison_retry_or_remove_other_state(self):
         source = self.local.state / "source"

@@ -128,6 +128,7 @@ class Stack:
             ["docker", "context", "inspect", "--format", "{{.Endpoints.docker.Host}}"], timeout=10).stdout.strip()
         if not host.startswith("unix://"):
             raise StackError("local kind requires a local unix Docker socket; remote Docker contexts are refused")
+        self.env["DOCKER_HOST"] = host
         if require_space:
             self.check_space(20 * 1024**3)
         self.cmd(["docker", "--host", host, "info", "--format", "{{.ServerVersion}}"], timeout=10)
@@ -143,11 +144,24 @@ class Stack:
             raise StackError(f"unsupported kind host architecture: {self.arch}")
 
     def check_space(self, needed):
-        desktop_disk = Path.home() / "Library/Containers/com.docker.docker/Data/vms/0/data/Docker.raw"
-        if sys.platform == "darwin" and desktop_disk.exists():
-            free = shutil.disk_usage(desktop_disk).free
-            if free < needed:
-                raise StackError(f"Docker backing volume has {free / 1024**3:.1f} GiB free; this image preparation needs {needed / 1024**3:.1f} GiB. No cleanup is performed.")
+        configured = self.env.get("KIND_DOCKER_DATA_PATH")
+        if configured:
+            backing = Path(configured).expanduser()
+        elif sys.platform == "darwin":
+            backing = Path.home() / "Library/Containers/com.docker.docker/Data/vms/0/data/Docker.raw"
+        else:
+            host = self.env.get("DOCKER_HOST", "")
+            if not host.startswith("unix://"):
+                raise StackError("disk preflight requires the admitted local Docker socket")
+            root = self.cmd(["docker", "--host", host, "info", "--format", "{{.DockerRootDir}}"], timeout=10).stdout.strip()
+            if not root or not Path(root).is_absolute():
+                raise StackError("Docker did not report an absolute storage path")
+            backing = Path(root)
+        if not backing.exists():
+            raise StackError("cannot inspect Docker backing storage; set KIND_DOCKER_DATA_PATH to its existing host-side backing file or directory")
+        free = shutil.disk_usage(backing).free
+        if free < needed:
+            raise StackError(f"Docker backing volume has {free / 1024**3:.1f} GiB free; this image preparation needs {needed / 1024**3:.1f} GiB. No cleanup is performed.")
 
     def image_space(self, images):
         # Warm setups need room for native node copies, not another complete
