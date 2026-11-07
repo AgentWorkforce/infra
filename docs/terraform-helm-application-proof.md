@@ -70,10 +70,19 @@ separate evidence and recovery requirements.
    tests, including direct runtime reads. Restart the relevant workloads and
    repeat the reads. Exercise erasure and require all read paths to stop
    returning the session.
-5. **All requested components.** Include RelayControl, Dashboard, RelayAuth,
-   Sessions Pipeline, RelayHistory and Relaycast backed by the first-party
-   Terse/durable-actors runtime. Prove actor placement and durable recovery.
-   Exercise Relayfile when enabled. Where functions/search are selected, prove
+5. **All requested components and profiles.** Include RelayControl, Dashboard
+   (relay-app), Sessions Pipeline, RelayHistory and Relaycast backed by the
+   first-party Terse/durable-actors runtime. Prove actor placement and durable
+   recovery. Run the core and enabled add-on profiles separately; exercise
+   Relayfile and Flows when enabled. Pin the reviewed authentication contract
+   for each profile. RelayAuth belongs to the transitional JWT profiles; it is
+   not a permanent core requirement. A replacement relaycontrol-introspection
+   profile must prove real caller, scope and tenant binding, expiry/revocation
+   and fail-closed behavior on introspection failure. Disabling RelayAuth in
+   Helm is not proof of replacement authentication. Read-access-only evidence
+   does not establish ingest authorization: the complete trace still requires
+   the reviewed write/machine-attestation path. Historical RelayAuth results
+   remain evidence only for the profile that produced them. Where functions/search are selected, prove
    the actual Lambda/SQS/OpenSearch or GCP function/search dispatch, retries,
    DLQ behavior, role separation and completeness semantics. Do not count a
    worker-only trace as proof of the event-driven mode. Keep exactly one
