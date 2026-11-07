@@ -10,6 +10,7 @@ import argparse
 import datetime as dt
 import http.client
 import hashlib
+import ipaddress
 import json
 import os
 from pathlib import Path
@@ -99,6 +100,22 @@ class Proof:
                      "podSelector": {"matchLabels": {"k8s-app": "kube-dns"}}}],
              "ports": [{"protocol": "UDP", "port": 53}, {"protocol": "TCP", "port": 53}]}],
             "live policy differs from same-namespace plus DNS restriction")
+        edge = json.loads(s.k("get", "networkpolicies", "-o", "json", namespace="kind-edge").stdout)["items"]
+        edge = [p for p in edge if "Egress" in p["spec"].get("policyTypes", [])]
+        self.require(len(edge) == 1 and edge[0]["metadata"]["name"] == "kind-edge-no-external-egress",
+                     "unexpected edge egress policy could invalidate isolation")
+        spec = edge[0]["spec"]
+        self.require(spec["podSelector"] == {} and len(spec["egress"]) == 3, "edge policy must cover every pod")
+        self.require(spec["egress"][0] == {"to": [{"namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": NS}}, "podSelector": {}}]}
+                     and spec["egress"][1] == policy["egress"][1], "edge may reach only stack backends and DNS")
+        api = spec["egress"][2]
+        endpoints = json.loads(s.k("get", "endpoints", "kubernetes", "-o", "json", namespace="default").stdout)
+        service = json.loads(s.k("get", "service", "kubernetes", "-o", "json", namespace="default").stdout)
+        allowed = {service["spec"]["clusterIP"]} | {a["ip"] for subset in endpoints["subsets"] for a in subset["addresses"]}
+        allowed_ports = {443} | {p["port"] for subset in endpoints["subsets"] for p in subset["ports"]}
+        self.require(all(set(peer) == {"ipBlock"} and ipaddress.ip_network(peer["ipBlock"]["cidr"]).num_addresses == 1
+                         and str(ipaddress.ip_network(peer["ipBlock"]["cidr"]).network_address) in allowed for peer in api["to"])
+                     and all(p["protocol"] == "TCP" and p["port"] in allowed_ports for p in api["ports"]), "edge API rule must target only this cluster's API endpoints")
         image = next(i for i in json.loads((s.state / "images.json").read_text())["images"] if "/selfhost-api@" in i)
         baseline = "kind-proof-" + self.marker
         s.apply({"apiVersion": "v1", "kind": "Namespace", "metadata": {"name": baseline}})
@@ -108,7 +125,7 @@ class Proof:
                       "const fail=()=>{s.destroy();process.exit(23)};s.setTimeout(4000,fail);s.on('error',fail);"
                       "s.on('connect',()=>{s.destroy();process.exit(0)})")
             pod = {"apiVersion": "v1", "kind": "Pod", "metadata": {"name": name, "namespace": namespace},
-                   "spec": {"restartPolicy": "Never", "activeDeadlineSeconds": 30, "containers": [
+                   "spec": {"restartPolicy": "Never", "automountServiceAccountToken": False, "activeDeadlineSeconds": 30, "containers": [
                        {"name": "probe", "image": image, "imagePullPolicy": "Never", "command": ["node", "-e", script]}]}}
             s.apply(pod)
             deadline = time.monotonic() + 60
@@ -132,7 +149,12 @@ class Proof:
                          "suite namespace can reach external TCP/443")
             self.require(probe(NS, "relaycontrol.agent-relay.svc.cluster.local", 80, "internal-allowed-"+self.marker) == 0,
                          "in-cluster DNS/service connectivity broken")
-            self.record("PASS", "core.egress", "external baseline connects; suite external TCP denied; in-cluster DNS/service connects")
+            self.require(probe("kind-edge", "1.1.1.1", 443, "edge-denied-"+self.marker) == 23,
+                         "edge namespace can reach external TCP/443")
+            self.require(probe("kind-edge", "relaycontrol.agent-relay.svc.cluster.local", 80, "edge-backend-"+self.marker) == 0
+                         and probe("kind-edge", "kubernetes.default.svc.cluster.local", 443, "edge-api-"+self.marker) == 0,
+                         "edge cannot reach its required backend/API endpoints")
+            self.record("PASS", "core.egress", "external baseline connects; suite and edge external TCP denied; internal DNS/backend/API connects")
         finally:
             s.k("delete", "namespace", baseline, "--ignore-not-found", "--wait=false")
 

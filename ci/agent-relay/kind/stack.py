@@ -116,7 +116,7 @@ class Stack:
 
     def recipe_hash(self):
         files = [ROOT / "Makefile", ROOT / "ci/agent-relay/kind/stack.py", ROOT / "ci/agent-relay/kind/addons.py",
-                 ROOT / "ci/agent-relay/kind/bootstrap.mjs"]
+                 ROOT / "ci/agent-relay/kind/edge.py", ROOT / "ci/agent-relay/kind/bootstrap.mjs"]
         return hashlib.sha256(b"".join(p.read_bytes() for p in files)).hexdigest()
 
     def docker(self, require_space=True):
@@ -422,11 +422,8 @@ class Stack:
         self.verify_combined_acl(services_image)
         self.cmd(["helm", "upgrade", "--install", RELEASE, "charts/agent-relay", "-n", NS,
                   *self.values_args(), "--wait", "--wait-for-jobs", "--timeout", "10m"], timeout=660)
-        edge = self.state / "edge-values.json"
-        private_json(edge, {"service": {"spec": {"type": "NodePort"}}, "ports": {"web": {"nodePort": 30080}, "websecure": {"nodePort": 30443}},
-                            "providers": {"kubernetesIngress": {"enabled": True}}, "ingressClass": {"enabled": True, "isDefaultClass": False}})
-        self.cmd(["helm", "upgrade", "--install", "kind-edge", "traefik/traefik", "--version", TRAEFIK_CHART,
-                  "-n", "kind-edge", "--create-namespace", "-f", edge, "--wait", "--timeout", "5m"], timeout=330)
+        from edge import install
+        install(self, TRAEFIK_CHART, NS)
         private_json(ready, {"profile": self.profile, "recipeSha256": self.recipe_hash(),
                      "renderSha256": hashlib.sha256((self.state / "rendered.yaml").read_bytes()).hexdigest(),
                      "clusterUid": self.k("get", "namespace", "kube-system", "-o", "jsonpath={.metadata.uid}", namespace=None).stdout})
