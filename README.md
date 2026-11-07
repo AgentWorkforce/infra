@@ -530,6 +530,13 @@ target `AGENT_RELAY_SITE_URL=https://relay.kind.agentrelay.com:8443` and
 `AGENT_RELAY_URL_SCHEME=agentrelay-kind`. The dashboard carries the matching
 Desktop link settings. The proof routes to loopback with verified TLS/SNI,
 so it requires neither editing `/etc/hosts` nor disabling certificate checks.
+Add-on SDK dependencies are committed in `ci/agent-relay/kind/flows-sdk/package-lock.json`
+and installed with `npm ci`; its version must match the pinned Flows source
+and local image tag. Cargo runs with the invoking host UID/GID, uses private
+checkout-volume caches, and removes only its allocated build container after
+a timeout. Old root-owned build caches from earlier runs require explicit
+operator recovery; setup does not change their ownership.
+
 Setup reissues old or expiring fixture certificates with strict-verifier key
 identifiers. If you trusted an earlier fixture CA manually, use the current
 `ca.crt`. The edge has its own egress-deny policy allowing only cluster DNS,

@@ -117,7 +117,9 @@ class Stack:
     def recipe_hash(self):
         files = [ROOT / "Makefile", ROOT / "ci/agent-relay/kind/stack.py", ROOT / "ci/agent-relay/kind/addons.py",
                  ROOT / "ci/agent-relay/kind/edge.py", ROOT / "ci/agent-relay/kind/tls.py",
-                 ROOT / "ci/agent-relay/kind/bootstrap.mjs"]
+                 ROOT / "ci/agent-relay/kind/bootstrap.mjs",
+                 ROOT / "ci/agent-relay/kind/flows-sdk/package.json",
+                 ROOT / "ci/agent-relay/kind/flows-sdk/package-lock.json"]
         return hashlib.sha256(b"".join(p.read_bytes() for p in files)).hexdigest()
 
     def docker(self, require_space=True):
