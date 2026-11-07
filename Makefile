@@ -1,7 +1,12 @@
+.DEFAULT_GOAL := help
 PROFILE ?= core
 PYTHON ?= python3
 
-.PHONY: kind-up kind-down kind-render kind-build-addons kind-proof kind-proof-core kind-proof-addons
+.PHONY: help kind-up kind-down kind-render kind-build-addons kind-proof kind-proof-core kind-proof-addons
+help:
+	@echo "Local kind: make kind-render, kind-up, kind-proof, or kind-down PROFILE=core|addons"
+	@echo "Provisioning requires an explicit target; kind readiness is not a full application proof."
+
 kind-up:
 	$(PYTHON) ci/agent-relay/kind/stack.py up --profile $(PROFILE)
 kind-down:

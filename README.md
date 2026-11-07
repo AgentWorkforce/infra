@@ -451,7 +451,13 @@ setup. Warm setup checks cached native image sizes plus unpacking headroom.
 Setup fetches public image/chart/source
 artifacts. Runtime suite pods receive no external egress. Run the checkout
 and its worktree on a writable volume; all generated state and `TMPDIR` live
-under its ignored `.kind/` directory.
+under its ignored `.kind/` directory. Helm dependency preparation also writes
+ignored archives under each chart’s `charts/` directory.
+
+These commands prepare a development fixture. Current core acceptance is
+**PENDING**, and add-on acceptance is not established; see
+[the pinned evidence and open checks](ci/agent-relay/kind/evidence.md). A
+successful `kind-up` means readiness, not full application acceptance.
 
 ```sh
 python3 -m pip install -r ci/agent-relay/kind/requirements.txt
@@ -472,9 +478,11 @@ make kind-down PROFILE=addons
 Calico and a pinned Traefik chart, provisions local Postgres/Locker and
 generated Secrets, loads native-platform images, runs the chart's schema
 Jobs in order, bootstraps the installation and first workspace, installs the
-umbrella, and waits for readiness. PostgreSQL roles come from the exact
-services image's bootstrap SQL; no invented grant list or privileged runtime
-database connection is substituted. Its image/generation receipt is
+umbrella, and waits for readiness. The fixture creates its own local database
+owners and dedicated runtime logins. Pipeline compatibility and guarded runtime
+roles then use the exact services image's bootstrap SQL. The local Postgres
+superuser initializes those databases and roles; application runtime connections
+use the separate runtime logins. Its image/generation receipt is
 `.kind/<profile>/images.json`. Current catalog images are pinned by digest;
 their compatibility with current source remains subject to runtime proof.
 History uses its own `relayhistory` database and migration owner; the pipeline
@@ -511,7 +519,11 @@ The local edge binds loopback HTTP `8080` and HTTPS `8443`. The generated
 127.0.0.1 relay.kind.agentrelay.com cast.kind.agentrelay.com history.kind.agentrelay.com files.kind.agentrelay.com
 ```
 
-Trust `.kind/<profile>/ca.crt` in the test machine's trust store. The CA private
+Only on a disposable test machine, trust `.kind/<profile>/ca.crt` in its trust
+store and remove that trust after testing. This fixture CA has no name
+constraints: trusting it authorizes its key for other domains too. For CLI
+probes, prefer the supplied per-request CA file without installing system trust.
+The CA private
 key stays on the host; Kubernetes receives only the separate server leaf key.
 The leaf certificate covers these hostnames for 30 days. Desktop builds can
 target `AGENT_RELAY_SITE_URL=https://relay.kind.agentrelay.com:8443` and

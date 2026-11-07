@@ -471,7 +471,9 @@ finally {await db.end();}'''
             "restartPolicy": "Never", "automountServiceAccountToken": False, "containers": [
                 {"name": "check", "image": image, "command": ["bun", "-e", code], "env": [
                     {"name": "HOOPDB_URL", "valueFrom": {"secretKeyRef": {"name": "kind-pipeline", "key": "HOOPDB_MIGRATION_URL"}}}]}]}}}
-        name = "kind-combined-acl-" + hashlib.sha256(json.dumps(spec, sort_keys=True).encode()).hexdigest()[:8]
+        # A terminal Job is not a current database check. Keep every attempt
+        # distinct, including failures, rather than adopting a prior result.
+        name = "kind-combined-acl-" + secrets.token_hex(8)
         self.apply({"apiVersion": "batch/v1", "kind": "Job", "metadata": {"name": name, "namespace": NS}, "spec": spec})
         self.wait_job(name, 90)
 

@@ -281,6 +281,7 @@ class Proof:
         s.k("patch", "cronjob", "relayflows", "--type=merge", "-p", '{"spec":{"suspend":true}}')
         manual = "kind-flow-manual-" + self.marker
         try:
+            self.drain_scheduled_flows(uid)
             s.k("create", "job", manual, "--from=cronjob/relayflows")
             s.wait_job(manual, 180)
             self.flow_result(manual)
@@ -301,6 +302,26 @@ class Proof:
                     return
             time.sleep(3)
         raise StackError("no real scheduled Flow firing completed within 180s")
+
+    def drain_scheduled_flows(self, uid, seconds=180):
+        # Suspension stops future scheduling, not a run already using the RWO
+        # journal. Never run the manual probe concurrently with that writer.
+        deadline = time.monotonic() + seconds
+        while time.monotonic() < deadline:
+            jobs = json.loads(self.stack.k("get", "jobs", "-o", "json").stdout)["items"]
+            pending = []
+            for job in jobs:
+                if not any(o.get("uid") == uid and o.get("kind") == "CronJob"
+                           for o in job["metadata"].get("ownerReferences", [])):
+                    continue
+                terminal = any(c.get("type") in ("Complete", "Failed") and c.get("status") == "True"
+                               for c in job.get("status", {}).get("conditions", []))
+                if not terminal:
+                    pending.append(job["metadata"]["name"])
+            if not pending:
+                return
+            time.sleep(2)
+        raise StackError("scheduled Flow still owns the journal; manual proof was not started")
 
     def flow_result(self, job):
         # The CLI journals command stdout; it does not echo it in pod logs.
@@ -370,23 +391,31 @@ class Proof:
         return code
 
 
+def execute(proof):
+    # Invalidate a previous run before any preflight can fail. Unexpected
+    # exceptions get a fresh FAIL receipt without dumping secret-bearing data.
+    (proof.stack.state / "proof.json").unlink(missing_ok=True)
+    try:
+        proof.run()
+    except Exception as e:
+        detail = str(e) if isinstance(e, StackError) else type(e).__name__
+        proof.record("FAIL", "proof.runtime", detail)
+    finally:
+        if proof.state.get("a"):
+            try:
+                proof.phase("cleanup")
+            except Exception as e:
+                detail = str(e) if isinstance(e, StackError) else type(e).__name__
+                proof.record("FAIL", "proof.cleanup", detail)
+    return proof.report()
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--profile", choices=("core", "addons"), default="core")
     args = parser.parse_args()
     os.umask(0o077)
-    proof = Proof(Stack(args.profile))
-    try:
-        proof.run()
-    except (StackError, OSError, ValueError, KeyError) as e:
-        proof.record("FAIL", "proof.runtime", str(e))
-    finally:
-        if proof.state.get("a"):
-            try:
-                proof.phase("cleanup")
-            except (StackError, OSError, ValueError) as e:
-                proof.record("FAIL", "proof.cleanup", str(e))
-    return proof.report()
+    return execute(Proof(Stack(args.profile)))
 
 
 if __name__ == "__main__":
