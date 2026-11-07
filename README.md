@@ -494,6 +494,14 @@ deletes only the named local cluster, including its node-backed data, and
 retains the private local state for inspection. It does not prune Docker or
 change a cloud account, registry, system trust store, or the caller's kubeconfig.
 
+Ownership records bind the profile, cluster name, node image, local Docker
+endpoint and native `kube-system` namespace UID. Reuse and teardown verify that
+identity through a temporary private kubeconfig before replacing this
+worktree's kubeconfig. Older name-only receipts are refused; they are never
+silently upgraded into authority over an existing cluster. Interrupted creation
+without a completed ownership record requires explicit operator recovery.
+Name or generic node-label matches alone do not authorize adoption or deletion.
+
 ### Local TLS and Desktop
 
 The local edge binds loopback HTTP `8080` and HTTPS `8443`. The generated
