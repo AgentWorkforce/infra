@@ -8,6 +8,7 @@ import sys
 import tempfile
 import unittest
 from unittest.mock import patch
+from urllib.parse import urlparse
 
 import yaml
 
@@ -67,6 +68,24 @@ class Profiles(unittest.TestCase):
             local.cmd = lambda *args, **kwargs: self.fail("remote daemon operation was attempted")
             with self.assertRaisesRegex(stack.StackError, "remote Docker contexts are refused"):
                 local.docker()
+
+    def test_history_and_pipeline_have_independent_database_ownership(self):
+        with tempfile.TemporaryDirectory(prefix="infra-kind-databases-") as directory, patch.object(stack, "ROOT", Path(directory)):
+            local = stack.Stack("core")
+            applied = []
+            local.apply = lambda doc, chart=False: applied.append(doc)
+            local.credentials()
+            secrets = {d["metadata"]["name"]: d["stringData"] for d in applied}
+            history = urlparse(secrets["kind-history-db"]["DATABASE_URL"])
+            history_owner = urlparse(secrets["kind-history-db"]["DATABASE_MIGRATIONS_URL"])
+            pipeline = urlparse(secrets["kind-pipeline"]["HOOPDB_URL"])
+            pipeline_owner = urlparse(secrets["kind-pipeline"]["HOOPDB_MIGRATION_URL"])
+            self.assertEqual(history.path, "/relayhistory")
+            self.assertEqual(pipeline.path, "/hoopdb")
+            self.assertEqual(history_owner.path, history.path)
+            self.assertEqual(pipeline_owner.path, pipeline.path)
+            self.assertEqual(len({history.username, history_owner.username, pipeline.username, pipeline_owner.username}), 4,
+                             "each database needs distinct runtime and migration-owner roles")
 
     def test_only_namespace_egress_policy_no_additive_allow_all(self):
         for profile in ("core", "addons"):

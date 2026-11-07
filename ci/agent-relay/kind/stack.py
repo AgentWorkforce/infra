@@ -220,7 +220,7 @@ class Stack:
     def credentials(self):
         path = self.state / "credentials.json"
         s = json.loads(path.read_text()) if path.exists() else {}
-        for k in ("postgres", "hoop", "runtime", "history_runtime", "control_owner", "control_api_runtime",
+        for k in ("postgres", "hoop", "runtime", "history_owner", "history_runtime", "control_owner", "control_api_runtime",
                   "relayfile", "bootstrap", "encryption", "internal", "auth_internal", "auth_key", "cast", "cast_bootstrap", "locker"):
             s.setdefault(k, secrets.token_hex(32))
         private_json(path, s)
@@ -239,7 +239,8 @@ class Stack:
         runtime = f"postgresql://sessions_pipeline_runtime:{s['runtime']}@postgres.{NS}.svc.cluster.local:5432/hoopdb"
         self.secret("kind-pipeline", {"HOOPDB_URL": runtime, "HOOPDB_MIGRATION_URL": db("hoop", "hoopdb"),
                     "rootUser": "locker", "rootPassword": s["locker"], "SUMMARY_MASTER_KEYS": "kind1:" + s["encryption"]})
-        self.secret("kind-history-db", {"DATABASE_URL": db("history_runtime", "hoopdb"), "DATABASE_MIGRATIONS_URL": db("hoop", "hoopdb")})
+        self.secret("kind-history-db", {"DATABASE_URL": db("history_runtime", "relayhistory"),
+                                       "DATABASE_MIGRATIONS_URL": db("history_owner", "relayhistory")})
         if self.profile == "addons":
             self.secret("kind-relayfile", {"RELAYFILE_INTERNAL_HMAC_SECRET": s["internal"],
                                           # lib/pq defaults to TLS; local Postgres has TLS off.
@@ -261,12 +262,14 @@ class Stack:
             "volumeClaimTemplates": [{"metadata": {"name": "data"}, "spec": {"accessModes": ["ReadWriteOnce"], "resources": {"requests": {"storage": "4Gi"}}}}]}})
         self.k("rollout", "status", "statefulset/postgres", "--timeout=180s", timeout=210)
         sql = []
-        for role in ("hoop", "history_runtime", "control_owner", "control_api_runtime", "relayfile"):
+        for role in ("hoop", "history_owner", "history_runtime", "control_owner", "control_api_runtime", "relayfile"):
             sql.append(f"SELECT 'CREATE ROLE {role} LOGIN PASSWORD ''{s[role]}''' WHERE NOT EXISTS (SELECT FROM pg_roles WHERE rolname='{role}') \\gexec")
-        for database, owner in (("hoopdb", "hoop"), ("relaycontrol", "control_owner"), ("relayfile", "relayfile")):
+        for database, owner in (("hoopdb", "hoop"), ("relayhistory", "history_owner"),
+                                ("relaycontrol", "control_owner"), ("relayfile", "relayfile")):
             sql.append(f"SELECT 'CREATE DATABASE {database} OWNER {owner}' WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname='{database}') \\gexec")
         self.psql("postgres", "\n".join(sql), sensitive=True)
-        self.psql("hoopdb", "CREATE EXTENSION IF NOT EXISTS vector; CREATE EXTENSION IF NOT EXISTS pg_trgm;")
+        for database in ("hoopdb", "relayhistory"):
+            self.psql(database, "CREATE EXTENSION IF NOT EXISTS vector; CREATE EXTENSION IF NOT EXISTS pg_trgm;")
         # The migration owner is deliberately not a superuser. Reuse the
         # CNPG chart's compatibility-role definitions before its role shim.
         fixture = yaml.safe_load((ROOT / "charts/sessions-pipeline/values.yaml").read_text())
@@ -413,8 +416,8 @@ class Stack:
         # Helm dependency alias "worker" is the rendered app name.
         self.migration(docs, "worker", "locker-init")
         self.migration(docs, "worker", "hoopdb-migrate")
-        # The pipeline owns its own migration ledger and refuses an unledgered
-        # pre-existing sessions schema. Let it create that schema first.
+        # Match the existing EKS installer's database isolation. Each migrator
+        # owns its schema in a distinct database; never co-locate both in HoopDB.
         self.migration(docs, "relayhistory")
         self.verify_combined_acl(services_image)
         self.cmd(["helm", "upgrade", "--install", RELEASE, "charts/agent-relay", "-n", NS,
@@ -431,8 +434,8 @@ class Stack:
         print(f"Desktop host entries: {self.state / 'hosts'}. Run make kind-proof PROFILE={self.profile}; readiness is not an E2E pass.")
 
     def verify_combined_acl(self, image):
-        # History's migrator also installs grants. Recheck the pipeline's own
-        # catalog contract after BOTH migrators; ordering must not hide drift.
+        # Recheck after BOTH migrators. Database isolation, rather than ordering
+        # or a manifest union, must preserve the pipeline's own ACL contract.
         code = '''import {runtimeRoleViolations,sessionsFunctionAclPreview} from "/app/src/hoopdb/migrate-guards.ts";
 import {openHoopDb} from "/app/src/shared/db.ts";
 const db=openHoopDb();
