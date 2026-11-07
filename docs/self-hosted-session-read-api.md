@@ -22,7 +22,9 @@ The services image runs Bun; compatible Node-only images can select
 `readApi.probeRuntime=node`. No Kubernetes API token is mounted by default.
 
 The configuration JSON must use the approved least-privilege read-role
-connection, not the migration-owner URL. Database role creation/ACLs remain with
+connection, not the migration-owner URL. The read image must be compatible with
+the deployed worker/migrator generation and published read-role/RPC contract;
+a container entry alone does not establish that image pair. Database role creation/ACLs remain with
 the pipeline owner. Provide explicit `RELAYAUTH_JWKS_URL`/issuer values so the
 runtime does not fall back to hosted defaults. Introspection requires the
 matching relaycontrol implementation, exact audience and Secret. The deployment
@@ -58,3 +60,5 @@ The affected chart static checks, existing profile matrix, registry/regression
 checks and normalized default-render goldens also pass. This work did not run
 kubectl, install the component, change a namespace policy or touch the existing
 kind fixture. The fake image appears only in the explicitly render-only fixture.
+
+The ten existing kind profile/schema/trust checks also pass in this worktree.
