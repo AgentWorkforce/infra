@@ -172,8 +172,10 @@ class Proof:
             status, _ = self.edge("cast.kind.agentrelay.com", "/v1/dm", sender["token"], "POST",
                                   {"to": receiver["name"], "text": message})
             self.require(status in (200, 201), f"public TLS DM send failed status={status}")
-            status, body = self.edge("cast.kind.agentrelay.com", "/v1/dm/" + self.state["dm"]["conversationId"] + "/messages?limit=50", receiver["token"])
-            data = json.loads(body).get("data", json.loads(body))
+            status, body = self.edge("cast.kind.agentrelay.com", "/v1/dm/" + quote(str(self.state["dm"]["conversationId"]), safe="") + "/messages?limit=50", receiver["token"])
+            parsed = json.loads(body)
+            data = parsed.get("data", parsed) if isinstance(parsed, dict) else parsed
+            self.require(status == 200 and isinstance(data, (list, dict)), "public TLS DM read returned an invalid response")
             messages = data if isinstance(data, list) else data.get("messages", data.get("items", []))
             self.require(status == 200 and any((m.get("text") or m.get("content") or m.get("body")) == message for m in messages),
                          "public TLS DM was not received")
