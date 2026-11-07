@@ -197,6 +197,28 @@ class Proof:
                 self.record(outcome, check, detail)
                 proofs += 1
         self.require(result.returncode == 0 and proofs > 0, "offline pipeline readback failed")
+        self.pipeline_app_visibility(session, tenant)
+
+    def pipeline_app_visibility(self, session, tenant):
+        s = self.stack
+        s.k("exec", "-i", "deploy/relaycontrol", "--", "sh", "-c", "cat > /tmp/kind-workspace-session.mjs",
+            data=(ROOT / "ci/agent-relay/kind/workspace-session.mjs").read_text())
+        result = s.k("exec", "-i", "deploy/relaycontrol", "--", "node", "/tmp/kind-workspace-session.mjs", sensitive=True,
+                     data=json.dumps({"userId": self.state["a"]["ownerUserId"], "workspaceId": tenant["workspaceId"]}))
+        token = json.loads(result.stdout)["accessToken"]
+        try:
+            deadline = time.monotonic() + 15
+            while time.monotonic() < deadline:
+                status, body = self.edge("relay.kind.agentrelay.com", f"/cloud/api/v1/workspaces/{tenant['workspaceId']}/sessions", token)
+                self.require(status == 200, f"courier application read failed status={status}")
+                if any(item.get("sessionId") == session for item in json.loads(body).get("items", [])):
+                    self.record("PASS", "pipeline.app_visibility", "courier-uploaded session returned by authenticated relay-app TLS read API")
+                    return
+                time.sleep(1)
+            self.record("PENDING", "pipeline.app_visibility", "courier upload/index/Locker verified, but authenticated Default workspace application API returned 200 without that session; read-path integration contract required")
+        finally:
+            status, body = self.edge("relay.kind.agentrelay.com", "/api/v1/auth/token/revoke", method="POST", body={"token": token})
+            self.require(status == 200 and json.loads(body).get("revoked") is True, "temporary pipeline-read device session was not revoked")
 
     def cost_attribution(self):
         s, a = self.stack, self.state["a"]
