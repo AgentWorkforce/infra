@@ -128,6 +128,33 @@ The excerpt omits the generated run ID and warning diagnostic. It is a native
 engine preflight only: Kubernetes Flow Job/CronJob scheduling, signed license
 enforcement, and relayfile authenticated roundtrip are still unproved.
 
+### Relayfile local PostgreSQL transport review
+
+The relayfile owner identified lib/pq's default TLS requirement against the
+local Postgres server (`SHOW ssl` returns `off`). The generated relayfile-only
+DSN now explicitly uses `?sslmode=disable`, matching the pinned relayfile
+repository's `docs/production-validation.md`. Other components' DSNs are
+unchanged.
+
+A one-off live preflight loaded the native relayfile image through the local
+archive path into the existing kind node. It ran separate temporary pods using
+the same production backend, internal JWKS endpoint and dedicated database,
+first without the parameter, then with it. It checked both HTTP health and the
+Postgres table catalog. Captured output:
+
+```text
+PASS relayfile.storage_before: /health HTTP 200 despite zero Postgres backing tables (load error ignored)
+PASS relayfile.storage_fixed: /health HTTP 200; Postgres backing tables=relayfile_envelope_queue,relayfile_state,relayfile_writeback_queue
+Scope: database initialization preflight only; no authenticated filesystem or full addon E2E pass
+```
+
+The unfixed image did **not** crashloop: the pinned `store.go:1035` ignores the
+initial `loadFromDisk()` error. `/health` alone therefore does not prove storage
+initialization. That source/runtime finding was sent to layered-relayfile;
+application code was not changed here. The temporary probe pods and their
+dedicated Secrets were removed; host images/volumes and the core cluster were
+retained. No filesystem token was minted and no auth path was bypassed.
+
 ## Static verification
 
 Captured commands and results (Helm 4.3.1, kubeconform 0.8.0):

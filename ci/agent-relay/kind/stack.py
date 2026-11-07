@@ -242,7 +242,8 @@ class Stack:
         self.secret("kind-history-db", {"DATABASE_URL": db("history_runtime", "hoopdb"), "DATABASE_MIGRATIONS_URL": db("hoop", "hoopdb")})
         if self.profile == "addons":
             self.secret("kind-relayfile", {"RELAYFILE_INTERNAL_HMAC_SECRET": s["internal"],
-                                          "RELAYFILE_PRODUCTION_DSN": db("relayfile", "relayfile")})
+                                          # lib/pq defaults to TLS; local Postgres has TLS off.
+                                          "RELAYFILE_PRODUCTION_DSN": db("relayfile", "relayfile") + "?sslmode=disable"})
             self.secret("kind-addon-license", {"license": Path(os.environ["KIND_LICENSE_FILE"]).read_text()})
         return s
 
