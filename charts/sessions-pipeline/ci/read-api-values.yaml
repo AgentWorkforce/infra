@@ -1,0 +1,47 @@
+# RENDER ONLY: fake image identity; never deploy this fixture.
+# New self-host install, in-cluster CNPG HoopDb (selfhosted mode).
+global:
+  tenant:
+    orgId: org_ci
+alleyoop:
+  auth:
+    jwksUrl: https://relayauth.example.com/.well-known/jwks.json
+worker:
+  migrations:
+    databaseMode: selfhosted
+    supabaseShim: true
+    runtimeRole: sessions_pipeline_runtime
+    runtimeRoleLogin: true
+    functionBoundaryMode: global-default-revoke
+    waitForRole:
+      enabled: true
+      functionDefault: true
+runtimeRole:
+  bootstrapJob:
+    enabled: true
+functionDefaultRevoke:
+  bootstrapJob:
+    enabled: true
+# The final 7d7229b services image (GHCR publish-image run 41375745173).
+privilegedSql:
+  sqlImage:
+    digest: "sha256:6f22ea17dff336e1431664542759fd27958649388b90a0b2f0881883caa7c6b2"
+
+readApi:
+  enabled: true
+  image:
+    repository: example.invalid/session-read-api
+    digest: sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff
+  config: { existingSecret: read-api-config }
+  origin: https://history.example.invalid
+  completeSince: epoch
+  directoryWorkspaces: render-workspace
+  allowInClusterHttp: true
+  auth:
+    relayauth:
+      jwksUrl: http://relayauth.ci.svc.cluster.local:8787/.well-known/jwks.json
+      issuer: http://relayauth.ci.svc.cluster.local:8787
+    relaycontrol:
+      enabled: true
+      url: http://relaycontrol.ci.svc.cluster.local
+      existingSecret: read-api-introspection

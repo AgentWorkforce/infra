@@ -642,3 +642,8 @@ a database row. See [captured evidence](ci/agent-relay/kind/evidence.md).
 Track the local work in [issue #77](https://github.com/AgentWorkforce/infra/issues/77).
 For render/trust/schema checks without Docker (Helm and kubeconform required), run
 `python3 ci/agent-relay/kind/test_stack.py -v` after building chart dependencies.
+
+The default-off [session read API chart preparation](docs/self-hosted-session-read-api.md)
+is available under `sessions-pipeline.readApi`. It remains disabled in both kind
+profiles pending the approved runtime assembly and image; the running core
+evidence does not prove this new component.

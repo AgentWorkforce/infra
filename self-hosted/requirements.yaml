@@ -185,6 +185,8 @@ ci_only_values:
     why: selfhost-postgres with CI tenant values.
   - file: ci/kind-values.yaml
     why: selfhost-postgres on kind (local JWKS, pullPolicy Never, small volumes).
+  - file: ci/read-api-values.yaml
+    why: Render-only read API fixture with a fake image identity; never install it.
   - file: ci/search-worker-bootstrap-values.yaml
     why: migration (existing cluster) with CI tenant values.
 
@@ -202,9 +204,31 @@ compatibility:
       digest: sha256:5bb6075240afa02a1b1797a81c07bffa029954eac7803d702ecba20db35d4db9
       built_by: publish-image-ecr run 41375747474
   releases:
-    - id: sessions-pipeline-0.6.1
+    - id: sessions-pipeline-0.6.2
       status: unreleased
       current: true
+      charts: { sessions-pipeline: 0.6.2, sessions-pipeline-worker: 0.6.1, alleyoop: 0.3.9 }
+      depends:
+        sessions-pipeline: { worker: 0.6.1, alleyoop: 0.3.9, hoopdb: 0.9.0, locker: 5.4.0, otel: 0.178.0 }
+      images:
+        sessions-pipeline-worker: { repository: agentworkforce/96bulls-services, digest: sha256:6f22ea17dff336e1431664542759fd27958649388b90a0b2f0881883caa7c6b2 }
+        alleyoop: { repository: agentworkforce/96bulls-services, digest: sha256:6f22ea17dff336e1431664542759fd27958649388b90a0b2f0881883caa7c6b2 }
+      services:
+        source_commit: 7d7229bb31c121ecb98cd4e35c248fc2cf5669ad
+        migration_generation: eff8b3be46565b57ad8fa5e4a066dbb6d1fe608313d9c1680bfbcd484add259b
+      notes: 'Adds a default-off read API Deployment and ClusterIP Service with explicit compatible image/config requirements and enabled-state readiness. Worker and ingest images, migration generation and roles are unchanged. Pipeline drafts 317/318 do not yet provide the approved Postgres/canonical/auth assembly; no read API deployment or runtime proof is claimed.'
+      db_combos:
+        - { db_mode: selfhosted, boundary: global-default-revoke, hoopdb: cnpg, status: shipped, profiles: [selfhost-postgres, migration, aws-cnpg], notes: chart Jobs install the runtime role and the function default }
+        - { db_mode: selfhosted, boundary: global-default-revoke, hoopdb: external, status: shipped, profiles: [external-selfhosted], notes: operator runs the bootstrap files as a superuser }
+        - { db_mode: cloudsql, boundary: global-default-revoke, hoopdb: external, status: shipped, profiles: [gcp-cloudsql], notes: operator runs the Cloud SQL bootstrap files as the migration owner; roleBootstrap false }
+        - { db_mode: supabase, boundary: event-trigger, hoopdb: external, status: held, profiles: [external-supabase], notes: supabaseActivation.hold; migrate refuses until the reviewed event trigger is installed and --activation-check passes }
+        - { db_mode: supabase, boundary: null, hoopdb: external, status: fails closed, profiles: [aws-supabase], notes: renders; migrate refuses with function_boundary_unproven }
+        - { db_mode: local, boundary: null, hoopdb: any, status: dev only, profiles: [], notes: local stack only; never a self-host install }
+      sources:
+        - "charts/sessions-pipeline/Chart.yaml:4"
+        - "ci/sessions-pipeline-profiles/matrix.sh:70"
+    - id: sessions-pipeline-0.6.1
+      status: planned
       charts: { sessions-pipeline: 0.6.1, sessions-pipeline-worker: 0.6.1, alleyoop: 0.3.9 }
       depends:
         sessions-pipeline: { worker: 0.6.1, alleyoop: 0.3.9, hoopdb: 0.9.0, locker: 5.4.0, otel: 0.178.0 }
@@ -413,9 +437,20 @@ compatibility:
       images:
         relayauth: { repository: ghcr.io/agentworkforce/relayauth, digest: sha256:eb71daa28e30eb7305f666d0bccc5a4002e53e8a574e3c4c32163d907a1b71df }
       notes: superseded by 0.1.1.
-    - id: agent-relay-0.3.15
+    - id: agent-relay-0.3.16
       status: unreleased
       current: true
+      charts: { agent-relay: 0.3.16, relayhistory: 0.1.1, relay-cloud-api: 0.2.6, relay-dashboard: 0.1.3 }
+      app_versions: { agent-relay: 0.1.0, relayhistory: 0.1.0, relay-cloud-api: 0.1.0, relay-dashboard: 0.1.0 }
+      depends:
+        agent-relay: { relaycast: 0.3.5, relayauth: 0.1.4, sessions-pipeline: 0.6.2, relayhistory: 0.1.1, relay-cloud-api: 0.2.6, relay-dashboard: 0.1.3, relayflows: 0.2.5, durable-actors: 0.14.6-awf.1, relayfile: 0.2.2 }
+      images:
+        relayhistory: { repository: ghcr.io/agentworkforce/relayhistory, digest_required: true }
+        relay-cloud-api: { repository: ghcr.io/agentworkforce/selfhost-api, digest_required: true }
+        relay-dashboard: { repository: ghcr.io/agentworkforce/relay-dashboard, digest_required: true }
+      notes: 'Bundles sessions-pipeline 0.6.2 default-off read API plumbing. No profile enables the component or reroutes relaycontrol. Compatible runtime assembly and image remain upstream dependencies. Existing kind evidence belongs to its pinned base revision, not this new chart version.'
+    - id: agent-relay-0.3.15
+      status: planned
       charts: { agent-relay: 0.3.15, relayhistory: 0.1.1, relay-cloud-api: 0.2.6, relay-dashboard: 0.1.3 }
       app_versions: { agent-relay: 0.1.0, relayhistory: 0.1.0, relay-cloud-api: 0.1.0, relay-dashboard: 0.1.0 }
       depends:
@@ -3286,3 +3321,38 @@ entries:
     sources:
       - "charts/relayfile/templates/actors/_helpers.tpl:71"
       - "charts/relayfile/templates/actors/session-broker.yaml:64"
+
+  - id: opt.sessions-read-api
+    kind: option
+    title: Default-off self-host session read API container
+    description: |
+      Chart plumbing for the pipeline session-read-api SERVICE. Requires an
+      explicitly pinned compatible image, read-role configuration JSON in a
+      Secret, an explicit coverage floor and workspace allowlist, a public token
+      audience, and explicitly configured temporary issuer. Introspection uses
+      its own Secret reference. Readiness requires health JSON enabled:true;
+      dormant HTTP 200 is insufficient. No install profile enables this option.
+      Pipeline drafts 317/318 still lack the approved PG-only/canonical/auth
+      assembly, so this entry does not claim runtime availability or proof.
+    chart: sessions-pipeline
+    values: [readApi.*]
+    env: [SERVICE, RELAYHISTORY_SELFHOST_READ_API, RELAYHISTORY_READ_API_PORT, RELAYHISTORY_READ_API_SECRET, READ_API_ORIGIN, READ_API_COMPLETE_SINCE, READ_API_DIRECTORY_WORKSPACES, ALLOW_IN_CLUSTER_HTTP, RELAYAUTH_JWKS_URL, RELAYAUTH_ISSUER, RELAYHISTORY_ACCEPT_RELAYCONTROL_TOKENS, RELAYCONTROL_INTROSPECT_URL, RELAYCONTROL_INTROSPECT_SECRET]
+    profiles: [selfhost-postgres, migration, external-selfhosted, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql]
+    status: shipped
+    provided_by: operator
+    default: disabled
+    choices: [disabled, enabled with an owner-approved compatible runtime]
+    secrets:
+      - name: "<read API configuration Secret>"
+        name_paths: [readApi.config.existingSecret]
+        keys:
+          - { key: RELAYHISTORY_READ_API_SECRET, key_path: readApi.config.key }
+      - name: "<read API introspection Secret>"
+        name_paths: [readApi.auth.relaycontrol.existingSecret]
+        keys:
+          - { key: RELAYCONTROL_INTROSPECT_SECRET, key_path: readApi.auth.relaycontrol.key }
+    verify: Leave disabled until the image and assembly contract land; render/schema/probe tests prove plumbing only. Authenticated workspace/session read acceptance remains required.
+    sources:
+      - "charts/sessions-pipeline/templates/read-api.yaml:1"
+      - "charts/sessions-pipeline/values.yaml:1"
+      - "docs/self-hosted-session-read-api.md:1"
