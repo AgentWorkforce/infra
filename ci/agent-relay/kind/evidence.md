@@ -61,6 +61,15 @@ The proof exercises two data paths separately:
   session visibility. Pipeline and RelayHistory owners, coordinated by
   pipeline-lead, have the concrete request and source/image identities.
 
+Pipeline owner clarification at main `d9c1cbad` / introspection merge `5cdc9d8f`:
+`src/session-read-api` is a Hono API with a Lambda adapter, and
+`packages/session-read-worker` is its Workers port. Neither is a supported
+container SERVICE in `docker/entrypoint.sh`; the large-read worker is a scan
+worker, not this API. A self-host deployment/interface decision is pending with
+Khaliq and service owners. A container entry alone would not establish the
+pipeline → RelayHistory workspace read contract required above. Kind does not
+substitute an ad hoc server command or deploy a cloud adapter to hide this gap.
+
 The edge class is explicitly `traefik`, matching the profile Ingress objects.
 Traefik's version/usage checks are disabled. Its own namespace denies external
 egress while allowing only stack backends, DNS and this cluster's API endpoint
