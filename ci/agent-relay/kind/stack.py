@@ -423,7 +423,7 @@ class Stack:
         self.cmd(["helm", "upgrade", "--install", RELEASE, "charts/agent-relay", "-n", NS,
                   *self.values_args(), "--wait", "--wait-for-jobs", "--timeout", "10m"], timeout=660)
         edge = self.state / "edge-values.json"
-        private_json(edge, {"service": {"type": "NodePort"}, "ports": {"web": {"nodePort": 30080}, "websecure": {"nodePort": 30443}},
+        private_json(edge, {"service": {"spec": {"type": "NodePort"}}, "ports": {"web": {"nodePort": 30080}, "websecure": {"nodePort": 30443}},
                             "providers": {"kubernetesIngress": {"enabled": True}}, "ingressClass": {"enabled": True, "isDefaultClass": False}})
         self.cmd(["helm", "upgrade", "--install", "kind-edge", "traefik/traefik", "--version", TRAEFIK_CHART,
                   "-n", "kind-edge", "--create-namespace", "-f", edge, "--wait", "--timeout", "5m"], timeout=330)
