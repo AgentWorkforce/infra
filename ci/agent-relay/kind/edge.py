@@ -1,6 +1,10 @@
 """Pinned local ingress with backend/API/DNS-only egress."""
 import ipaddress
+import http.client
 import json
+import socket
+import ssl
+import time
 
 
 def install(stack, version, namespace):
@@ -32,3 +36,25 @@ def install(stack, version, namespace):
     path.chmod(0o600)
     stack.cmd(["helm", "upgrade", "--install", "kind-edge", "traefik/traefik", "--version", version,
                "-n", "kind-edge", "-f", path, "--wait", "--timeout", "5m"], timeout=330)
+    # A ready ingress pod can still be serving its default certificate while
+    # loading providers. Require the actual trusted application route too.
+    deadline = time.monotonic() + 45
+    last = "route not ready"
+    while time.monotonic() < deadline:
+        context = ssl.create_default_context(cafile=str(stack.state / "ca.crt"))
+        context.verify_flags |= ssl.VERIFY_X509_STRICT
+        connection = http.client.HTTPSConnection("relay.kind.agentrelay.com", 8443, context=context, timeout=3)
+        connection._create_connection = lambda address, timeout, source_address=None: socket.create_connection(("127.0.0.1", 8443), timeout)
+        try:
+            connection.request("GET", "/")
+            response = connection.getresponse()
+            response.read()
+            if response.status == 200:
+                return
+            last = f"HTTP {response.status}"
+        except (OSError, http.client.HTTPException) as error:
+            last = type(error).__name__
+        finally:
+            connection.close()
+        time.sleep(1)
+    raise ValueError(f"local edge did not serve the application over verified TLS: {last}")

@@ -148,7 +148,7 @@ class Profiles(unittest.TestCase):
             applied = []
             local.apply = lambda doc, chart=False: applied.append(doc)
             local.tls()
-            p = local.cmd(["openssl", "verify", "-CAfile", local.state / "ca.crt", local.state / "tls.crt"])
+            p = local.cmd(["openssl", "verify", "-x509_strict", "-CAfile", local.state / "ca.crt", local.state / "tls.crt"])
             self.assertIn("OK", p.stdout)
             text = local.cmd(["openssl", "x509", "-in", local.state / "tls.crt", "-text", "-noout"]).stdout
             self.assertIn("CA:FALSE", text)

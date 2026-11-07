@@ -116,7 +116,8 @@ class Stack:
 
     def recipe_hash(self):
         files = [ROOT / "Makefile", ROOT / "ci/agent-relay/kind/stack.py", ROOT / "ci/agent-relay/kind/addons.py",
-                 ROOT / "ci/agent-relay/kind/edge.py", ROOT / "ci/agent-relay/kind/bootstrap.mjs"]
+                 ROOT / "ci/agent-relay/kind/edge.py", ROOT / "ci/agent-relay/kind/tls.py",
+                 ROOT / "ci/agent-relay/kind/bootstrap.mjs"]
         return hashlib.sha256(b"".join(p.read_bytes() for p in files)).hexdigest()
 
     def docker(self, require_space=True):
@@ -294,26 +295,8 @@ class Stack:
         return self.k(*args, data=text, sensitive=sensitive).stdout
 
     def tls(self):
-        cert, key = self.state / "tls.crt", self.state / "tls.key"
-        if not cert.exists():
-            # The CA key stays on the host. Only a CA:false leaf key is mounted.
-            ca, ca_key = self.state / "ca.crt", self.state / "ca.key"
-            if not ca.exists():
-                ca_config = self.state / "ca.cnf"
-                ca_config.write_text("[req]\ndistinguished_name=dn\nx509_extensions=ext\nprompt=no\n[dn]\nCN=Agent Relay kind local CA\n[ext]\nbasicConstraints=critical,CA:TRUE\nkeyUsage=critical,keyCertSign,cRLSign\n")
-                self.cmd(["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "365",
-                          "-config", ca_config, "-keyout", ca_key, "-out", ca])
-                ca_key.chmod(0o600)
-            config = self.state / "tls.cnf"
-            config.write_text("[req]\ndistinguished_name=dn\nreq_extensions=ext\nprompt=no\n[dn]\nCN=relay.kind.agentrelay.com\n[ext]\nbasicConstraints=critical,CA:FALSE\nkeyUsage=critical,digitalSignature,keyEncipherment\nextendedKeyUsage=serverAuth\nsubjectAltName=" + ",".join("DNS:"+h for h in HOSTS) + "\n")
-            csr = self.state / "tls.csr"
-            self.cmd(["openssl", "req", "-new", "-newkey", "rsa:2048", "-nodes", "-config", config, "-keyout", key, "-out", csr])
-            self.cmd(["openssl", "x509", "-req", "-in", csr, "-CA", ca, "-CAkey", ca_key, "-CAcreateserial",
-                      "-days", "30", "-extfile", config, "-extensions", "ext", "-out", cert])
-            key.chmod(0o600)
-        self.apply({"apiVersion": "v1", "kind": "Secret", "metadata": {"name": "kind-tls", "namespace": NS},
-                    "type": "kubernetes.io/tls", "stringData": {"tls.crt": cert.read_text(), "tls.key": key.read_text()}})
-        (self.state / "hosts").write_text("127.0.0.1 " + " ".join(HOSTS) + "\n")
+        from tls import create
+        create(self, HOSTS, NS)
 
     def migration(self, docs, app, component=None):
         print(f"Run chart Job {app}/{component or 'migration'}", flush=True)
