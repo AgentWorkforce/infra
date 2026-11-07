@@ -59,7 +59,7 @@ VALUES+=("${EXTRA[@]}")
 
 if [ -n "$FROM_VERSION" ]; then
   echo "--- install published relaycast $FROM_VERSION"
-  helm repo add agentworkforce https://agentworkforce.github.io/infra --force-update >/dev/null 2>&1
+  helm repo add agentworkforce https://agentworkforce.github.io/infra --force-update >/dev/null
   helm repo update agentworkforce >/dev/null
   helm install "$RELEASE" agentworkforce/relaycast --version "$FROM_VERSION" -n "$NS" \
     --set baseUrl=https://relay.example.com --wait --timeout 5m >/dev/null
