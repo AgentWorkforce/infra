@@ -55,8 +55,11 @@ The proof exercises two data paths separately:
   the real signed-in owner. A real device session for the Default workspace then
   reads the application API: HTTP 200, but the courier session is absent. This
   remains a **required pending application read-path integration**, not a pass
-  inferred from storage. Control and pipeline/read-API owners have the concrete
-  request and source/image identities.
+  inferred from storage. Relaycontrol already proxies these reads to
+  `RELAYHISTORY_URL`; it has no separate pipeline read path and needs no new
+  pipeline URL. The pending boundary is courier/pipeline → RelayHistory workspace
+  session visibility. Pipeline and RelayHistory owners, coordinated by
+  pipeline-lead, have the concrete request and source/image identities.
 
 The edge class is explicitly `traefik`, matching the profile Ingress objects.
 Traefik's version/usage checks are disabled. Its own namespace denies external
