@@ -2,7 +2,8 @@
 
 Status: **core setup READY; core proof PENDING (54 PASS, 0 FAIL, 4 PENDING); add-on E2E not run**.
 These are local development results, not the customer release or managed-cloud
-infrastructure proof. Worktree: `/Volumes/Paris Drive/infra-worktrees/kind-stack`,
+infrastructure proof. Reproduction uses the current repository checkout;
+source identities are pinned below.
 The first negative run used PR #76 at `73f9a0eb8ab52e390856e5bd5ca3812e19f5fe7a`; the current receipts below pin the successful setup and latest proof separately.
 No cloud account, registry publication, deployment outside kind, or image/volume
 pruning was performed.
@@ -23,8 +24,8 @@ A fresh lifecycle/bootstrap proof has not been run on this latest head.
 ## Current core setup and protocol proof
 
 ```sh
-make kind-up PROFILE=core PYTHON=/opt/homebrew/bin/python3
-make kind-proof-core PYTHON=/opt/homebrew/bin/python3
+make kind-up PROFILE=core PYTHON=python3
+make kind-proof-core PYTHON=python3
 ```
 
 Setup completed with exit 0 and a readiness receipt, including the application
@@ -127,7 +128,7 @@ remain pending; the core proof result and its four pending checks are unchanged.
 ## Historical unsupported database co-location (negative evidence)
 
 ```sh
-make kind-up PROFILE=core PYTHON=/opt/homebrew/bin/python3
+make kind-up PROFILE=core PYTHON=python3
 ```
 
 In the original incorrect co-located recipe, the pinned native ARM images pulled. The local kind node, Calico, Postgres,
@@ -235,7 +236,7 @@ the temporary control namespace were removed. No aggregate E2E pass was issued.
 ## Native add-on build preflight
 
 ```sh
-make kind-build-addons PYTHON=/opt/homebrew/bin/python3
+make kind-build-addons PYTHON=python3
 ```
 
 Completed with exit 0 on ARM. Built the actual Rust kernel from Flows release
@@ -267,7 +268,7 @@ first without the parameter, then with it. It checked both HTTP health and the
 Postgres table catalog. Captured output:
 
 ```text
-PASS relayfile.storage_before: /health HTTP 200 despite zero Postgres backing tables (load error ignored)
+NEGATIVE OBSERVATION relayfile.storage_before: /health HTTP 200 despite zero Postgres backing tables (load error ignored)
 PASS relayfile.storage_fixed: /health HTTP 200; Postgres backing tables=relayfile_envelope_queue,relayfile_state,relayfile_writeback_queue
 Scope: database initialization preflight only; no authenticated filesystem or full addon E2E pass
 ```

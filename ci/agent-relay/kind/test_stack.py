@@ -101,6 +101,7 @@ class Profiles(unittest.TestCase):
                 dns = spec["egress"][1]
                 self.assertEqual(dns["to"][0]["namespaceSelector"]["matchLabels"]["kubernetes.io/metadata.name"], "kube-system")
                 self.assertEqual(dns["to"][0]["podSelector"]["matchLabels"]["k8s-app"], "kube-dns")
+                self.assertEqual(dns["ports"], [{"protocol": "UDP", "port": 53}, {"protocol": "TCP", "port": 53}])
 
     def test_addons_use_real_cronjob_and_postgres_file_backend(self):
         docs = self.render("addons")
@@ -153,7 +154,8 @@ class Profiles(unittest.TestCase):
             text = local.cmd(["openssl", "x509", "-in", local.state / "tls.crt", "-text", "-noout"]).stdout
             self.assertIn("CA:FALSE", text)
             self.assertIn("DNS:relay.kind.agentrelay.com", text)
-            self.assertNotIn((local.state / "ca.key").read_text(), applied[0]["stringData"].values())
+            for value in applied[0]["stringData"].values():
+                self.assertNotIn((local.state / "ca.key").read_text(), value)
             self.assertEqual(applied[0]["stringData"]["tls.key"], (local.state / "tls.key").read_text())
             public_cert = local.cmd(["openssl", "x509", "-in", local.state / "tls.crt", "-pubkey", "-noout"]).stdout
             public_key = local.cmd(["openssl", "pkey", "-in", local.state / "tls.key", "-pubout"]).stdout
