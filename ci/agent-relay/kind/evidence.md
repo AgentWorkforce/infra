@@ -78,6 +78,15 @@ and app connections, with a successful unrestricted control and internal probes.
 TLS uses CA/leaf key identifiers and strict chain verification; only the server
 leaf key is mounted. Old fixture certificates are reissued by setup as needed.
 
+## Draft read-service review and fixture diagnosis
+
+[Read API contract review](read-api-contract.md) records draft #317/#318 inputs,
+readiness requirements and upstream blockers. Read-only catalog queries find one
+matching courier directory row and populated canonical identity columns in
+HoopDB; missing directory data is not the explanation for this fixture. The
+[diagnostic receipt](pipeline-directory.json) does not claim canonical RPC/object
+reads or application visibility. No chart component or service was enabled.
+
 ## Local MCP-capable control build (not installed)
 
 The official `relay-control` Dockerfile at source

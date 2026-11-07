@@ -1,0 +1,12 @@
+{
+  "scope": "read-only diagnostic; not application acceptance",
+  "sessionId": "824597d8-77f5-41f8-9ddc-328f2664b4c5",
+  "orgId": "48526e66-3e41-4667-ae23-a86921021579",
+  "workspaceId": "5d4f401e-ea08-4b7d-9e74-f87abbc7e580",
+  "database": "hoopdb",
+  "matchingDirectoryRows": 1,
+  "indexCanonicalSessionIdPresent": true,
+  "indexCanonicalMachineIdPresent": true,
+  "canonicalPointerRpcAndProjectionRead": "not verified",
+  "applicationVisibility": "pending"
+}
