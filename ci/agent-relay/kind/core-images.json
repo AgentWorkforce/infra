@@ -1,0 +1,14 @@
+{
+  "images": [
+    "ghcr.io/agentworkforce/96bulls-services@sha256:070fe6fd46ecd1e1f9db32ff22379f6df9b9e6c4d48ede5312c8fb986a95f3a9",
+    "ghcr.io/agentworkforce/relay-dashboard@sha256:c50005fcdd1fc5ab5ef3dac9b621db8e0c7e03480406bfe519743ae435d8f1ad",
+    "ghcr.io/agentworkforce/relayauth@sha256:c23c92d25fdffef3b5838a1eef4c226925f859706365d9ccece229795b877288",
+    "ghcr.io/agentworkforce/relaycast-self-host@sha256:81274dca7ab58673383dc7a9c777f422f29606c7422e81b5ea15724770f1455e",
+    "ghcr.io/agentworkforce/relayhistory@sha256:d3166bb14e1d6043426a4dd8cc05408b94574c8d79ad5fd6e789e0de00ab371b",
+    "ghcr.io/agentworkforce/selfhost-api@sha256:95c7877741054dc2f1cafa26be3faa9bfe4660ed85d637aef4524daa10481963",
+    "ghcr.io/cloudnative-pg/postgresql:17-standard-trixie@sha256:ed6923f9ba2399cf9070379a353c710c29ced8a294be73986a2c3dae7e599ce3"
+  ],
+  "servicesGeneration": "0dcd0e89bebbdad789a40fa61311c601b4c0e49e389e3b2b0167b6fd5fdf542e",
+  "servicesSourceRevision": "f1c2672581b6f88d26d0549b4d1cb78fce0d5f16",
+  "infraRevision": "791f664d60b2d2ff794701e148526837ee8f7e3e"
+}

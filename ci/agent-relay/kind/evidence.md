@@ -1,19 +1,78 @@
 # Local kind evidence — 2026-11-07
 
-Status: **blocked before full stack readiness; neither profile has an E2E pass**.
+Status: **core setup READY; core proof PENDING (54 PASS, 0 FAIL, 4 PENDING); add-on E2E not run**.
 These are local development results, not the customer release or managed-cloud
 infrastructure proof. Worktree: `/Volumes/Paris Drive/infra-worktrees/kind-stack`,
-based on infra PR #76 at `73f9a0eb8ab52e390856e5bd5ca3812e19f5fe7a`.
+The first negative run used PR #76 at `73f9a0eb8ab52e390856e5bd5ca3812e19f5fe7a`; the current receipts below pin the successful setup and latest proof separately.
 No cloud account, registry publication, deployment outside kind, or image/volume
 pruning was performed.
 
-## Core bootstrap and the blocking contract
+## Current core setup and protocol proof
+
+```sh
+make kind-up PROFILE=core PYTHON=/opt/homebrew/bin/python3
+make kind-proof-core PYTHON=/opt/homebrew/bin/python3
+```
+
+Setup completed with exit 0 and a readiness receipt, including the application
+returning HTTP 200 over verified TLS. The protocol proof exits 2 (**PENDING**),
+not 0. Its [complete credential-checked report](core-proof.json) records proof
+source `2efcca7`, 54 passing checks, no failed checks, and four pending checks.
+The [image/generation receipt](core-images.json) records the exact setup inputs.
+Selected literal proof output:
+
+```text
+PASS core.egress: external baseline connects; suite and edge external TCP denied; internal DNS/backend/API connects
+PASS app.tls_session_read: trusted local TLS, relay-app HTML, and delivered session through /cloud/api
+PASS app.cast_tls_dm: both agents send/receive through verified public Cast TLS origin; internal route denied at edge
+PASS cost_attribution: reported fixture usage/cost preserved through public History TLS ingest and application TLS read API; owner user/workspace match; other workspace denied
+PASS pipeline.owner_attribution: ingest and derived index match the real signed-in owner
+PENDING pipeline.app_visibility: courier upload/index/Locker verified, but authenticated Default workspace application API returned 200 without that session; read-path integration contract required
+PENDING mcp: layered-control: PR19 merged in source; catalog image9b80b04 lacks MCP; compatible build and endpoint proof pending
+PENDING agent_launch_release: layered-control: launch/release API not implemented
+```
+
+The fourth pending check is fixture workspace retention: the control API has
+no workspace deletion endpoint. Generated device sessions were revoked and
+their access/refresh failures verified; test workspaces remain in this
+worktree's disposable cluster until `kind-down`.
+
+Database isolation resolved the original setup failure. The existing
+`docs/self-hosted-eks.md:36` and `scripts/selfhost/eks-proof-install.sh` already
+use a distinct History database. Kind now uses one local Postgres instance with
+separate `relaycontrol`, `relayhistory` and `hoopdb` databases and distinct
+runtime/migration-owner roles. Both migration Jobs and the unchanged final
+`runtimeRoleViolations` / `sessionsFunctionAclPreview` check pass. No manifest
+union, grant widening or privileged runtime connection was substituted.
+
+The proof exercises two data paths separately:
+
+- History delivery → its database → relay-app/read API passes, including a
+  client-reported fixture of 320 input tokens, 52 output tokens and 125000 USD
+  micros, attributed to the real owner/workspace and denied to another workspace.
+  No external model call or vendor billing calculation is involved.
+- Courier → ingest → HoopDB/indexer/referee/Locker passes. Both index rows match
+  the real signed-in owner. A real device session for the Default workspace then
+  reads the application API: HTTP 200, but the courier session is absent. This
+  remains a **required pending application read-path integration**, not a pass
+  inferred from storage. Control and pipeline/read-API owners have the concrete
+  request and source/image identities.
+
+The edge class is explicitly `traefik`, matching the profile Ingress objects.
+Traefik's version/usage checks are disabled. Its own namespace denies external
+egress while allowing only stack backends, DNS and this cluster's API endpoint
+addresses/ports. The proof checks both namespace policies and real denied edge
+and app connections, with a successful unrestricted control and internal probes.
+TLS uses CA/leaf key identifiers and strict chain verification; only the server
+leaf key is mounted. Old fixture certificates are reissued by setup as needed.
+
+## Historical unsupported database co-location (negative evidence)
 
 ```sh
 make kind-up PROFILE=core PYTHON=/opt/homebrew/bin/python3
 ```
 
-The pinned native ARM images pulled. The local kind node, Calico, Postgres,
+In the original incorrect co-located recipe, the pinned native ARM images pulled. The local kind node, Calico, Postgres,
 MinIO, real internal RelayAuth, Relaycast, and relaycontrol became ready.
 relaycontrol's real first-boot API returned its organization and Default
 workspace. The control, pipeline, and History migration Jobs each completed.
@@ -58,8 +117,8 @@ History: ghcr.io/agentworkforce/relayhistory@sha256:d3166bb14e1d6043426a4dd8cc05
 ```
 
 The pipeline owner confirmed that **two migrators writing `sessions` is not a
-supported composition**. Its byte-exact ACL guard is a trust boundary and must
-remain intact. The supported design requires History-owned objects in a
+supported composition in one database**. Its byte-exact ACL guard is a trust boundary and must
+remain intact. A co-located design would require History-owned objects in a
 different schema, with pipeline data accessed through its published read/RPC
 contracts. Alternatively, functions that must live in `sessions` need a
 reviewed pipeline migration lane assigned by pipeline-lead and Khaliq, with
@@ -80,17 +139,21 @@ The repositories must not be confused:
 Namespacing the pinned History image requires application/migration work by
 its owner. This is not evidence that such a change is impossible, nor a reason
 to relax the pipeline guard. Owners have the exact repository/source identities
-and need to provide the supported implementation and image before kind can
-complete its proof.
+for any future unified-schema change. The existing EKS installer instead separates
+History and HoopDB into different databases; the corrected kind recipe follows
+that pattern and needs no application schema change to become ready. The
+pipeline schema owner does not own the separate `relayhistory-cloud` application
+repo; any work there needs its application owner. The remaining courier-to-app
+read-path integration is tracked separately below.
 
-The orchestrator stops before installing the rest of the umbrella and before
-issuing a readiness receipt. A subsequent `make kind-proof-core` captures:
+That historical attempt stopped before installing the rest of the umbrella and
+before issuing a readiness receipt. Its subsequent `make kind-proof-core` captured:
 
 ```text
 FAIL proof.runtime: kind-up has not completed successfully for this profile
 ```
 
-## Live network preflight (separate from full E2E)
+## Historical network preflight (the current proof also covers edge egress)
 
 ```sh
 python3 - <<'PY'
@@ -164,7 +227,7 @@ Captured commands and results (Helm 4.3.1, kubeconform 0.8.0):
 
 ```text
 python3 ci/agent-relay/kind/test_stack.py -v
-Ran 9 tests
+Ran 10 tests
 OK
 
 scripts/ci/charts.sh static

@@ -434,7 +434,7 @@ from the customer release and AWS/GCP managed-infrastructure proofs.
 
 | Profile | Components |
 | --- | --- |
-| `core` | relaycontrol, relay-app, Relaycast, RelayHistory, sessions-pipeline ingest/workers, Postgres + pgvector, MinIO Locker |
+| `core` | relaycontrol, relay-app, Relaycast, RelayHistory, sessions-pipeline ingest/workers, Postgres + pgvector with per-service databases, MinIO Locker |
 | `addons` | core + relayfile Go server with Postgres state, standalone Flows with Kubernetes CronJobs |
 
 Both currently include **real, internal-only temporary RelayAuth**. The
@@ -477,6 +477,10 @@ services image's bootstrap SQL; no invented grant list or privileged runtime
 database connection is substituted. Its image/generation receipt is
 `.kind/<profile>/images.json`. Current catalog images are pinned by digest;
 their compatibility with current source remains subject to runtime proof.
+History uses its own `relayhistory` database and migration owner; the pipeline
+is the sole migrator of `sessions` in `hoopdb`. This matches the existing EKS
+installer. Co-locating both migrators in HoopDB is unsupported and is rejected
+by the unchanged final ACL check.
 Relayfile and the pinned Flows runtime are built locally for the add-on profile.
 The Flows Rust kernel is compiled natively from release `v2.0.50`, commit
 `9a9086be16fd33eea15af2adf3ce0a7cf1239aa9`, with its locked dependencies.
@@ -506,6 +510,11 @@ target `AGENT_RELAY_SITE_URL=https://relay.kind.agentrelay.com:8443` and
 `AGENT_RELAY_URL_SCHEME=agentrelay-kind`. The dashboard carries the matching
 Desktop link settings. The proof routes to loopback with verified TLS/SNI,
 so it requires neither editing `/etc/hosts` nor disabling certificate checks.
+Setup reissues old or expiring fixture certificates with strict-verifier key
+identifiers. If you trusted an earlier fixture CA manually, use the current
+`ca.crt`. The edge has its own egress-deny policy allowing only cluster DNS,
+the local Kubernetes API and stack backends; version checks and usage export
+are disabled.
 
 There is no public self-signup endpoint. First boot creates the configured
 organization, owner (`owner@kind.example`), and Default workspace. The proof
@@ -534,13 +543,22 @@ credentials and protocol state remain in separate mode-0600 files. Never
 commit or attach those private state files. Test session data stays in the
 disposable kind cluster until `kind-down`.
 
+The captured [core report](ci/agent-relay/kind/core-proof.json) is **PENDING**:
+54 checks passed, none failed, and four remain pending. History delivery is
+visible through relay-app, and reported usage/cost is attributed to the real
+user/workspace. Courier upload, owner attribution, indexing and Locker readback
+also pass. The courier-uploaded session is **not yet returned by the application
+read API**; the proof checks that separately and does not infer visibility from
+a database row. See [captured evidence](ci/agent-relay/kind/evidence.md).
+
 | Gap | Owner / current evidence |
 | --- | --- |
-| Unsupported shared-schema composition (blocks readiness) | layered-sessions-pipeline + History owner: the pipeline is the sole migrator of `sessions`. The pinned History image also migrates that schema; the final strict check rejects 160 violations. History needs its own schema and the published read/RPC boundary, or an approved pipeline migration lane. There is no chart schema-prefix setting. No grant/guard bypass is used. See [captured local evidence](ci/agent-relay/kind/evidence.md). |
-| Full local end-to-end runs | infra-kind-stack: pending the database composition contract above. Live network preflight proves external TCP denial and allowed in-cluster DNS/service access, but is not a full stack pass. |
+| Courier → application read path | layered-control + pipeline/read-API owners: the real-owner courier session is indexed and stored, but the authenticated Default workspace application API returns HTTP 200 without it. A supported read-service routing/integration contract is required. This is a required pending check. |
+| Shared-schema ownership | The local recipe now isolates History and HoopDB, matching the existing EKS installer; both migrators and the exact final ACL check pass. The earlier 160 violations remain as negative evidence for unsupported co-location. A future shared-schema design requires the schema and History application owners; the pipeline owner does not own the separate `relayhistory-cloud` application repo. |
+| Add-on E2E | infra-kind-stack + license/file owners: native images and offline engine/storage preflights pass; the installed add-on profile, actual CronJob firing and authenticated file roundtrip remain unproved pending a signed license fixture and genuine filesystem-scoped authority. |
 | Current image/source compatibility | Component owners: record exact source SHA and migrator generation; a tag named `main` is insufficient. This run used services source `f1c2672581b6f88d26d0549b4d1cb78fce0d5f16`, generation `0dcd0e89bebbdad789a40fa61311c601b4c0e49e389e3b2b0167b6fd5fdf542e`. |
 | RelayAuth removal | layered-control + layered-sessions-pipeline: default-off introspection branch, `sh_at_`, `rth:read/rth:sync`; keep the temporary internal component until compatible images ship. |
-| Cost attribution data | sessions/control owners: identify and prove per-session usage/cost linked to workspace/user through the read API; pending, not inferred from an indexed session. |
+| Cost attribution data | History's client-reported fixture usage/cost passes authenticated ingest and TLS readback, including owner and workspace isolation. This does not claim live model billing or courier-session application visibility. |
 | Control image and MCP endpoint | layered-control: MCP PR #19 is merged in main `1f08cb624be66016eb0c135363553dd44e58f691`, but the catalog control image is release 0.3.0 / source `9b80b04` and lacks MCP. GHCR has no image tag for `1f08cb6` or `main`. A compatible build must be pinned and `/api/v1/mcp/shared-sessions` exercised before this can pass. No image publication is performed by the kind workflow. |
 | Agent launch/release | layered-control: API unimplemented; fleet node claim/release is not this proof. |
 | Signed offline license enforcement | layered-control: design only. `relay-cloud-api.license.existingSecret/key` reserves the `SELFHOST_LICENSE_FILE` mount; the file slot does not verify signatures or gate add-ons. |
