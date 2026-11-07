@@ -18,10 +18,10 @@ function check(ok: boolean, name: string, detail: string) {
 try {
   if (!org || !workspace || !marker || !sessionId) throw new Error("missing exact tenant/session identity");
   const deadline = Date.now() + 180_000;
-  let row: { manifest_key: string; state: string; session_uuid: string; last_trace_id: string } | undefined;
+  let row: { manifest_key: string; state: string; session_uuid: string; last_trace_id: string; index_user: string; derived_user: string } | undefined;
   while (Date.now() < deadline) {
     const { rows } = await db.query(
-      `SELECT i.manifest_key,i.state,e.session_uuid,e.last_trace_id
+      `SELECT i.manifest_key,i.state,e.session_uuid,e.last_trace_id,i.user_id AS index_user,e.user_id AS derived_user
          FROM sessions.session_index i JOIN sessions.session_index_ext e
            USING (org_id,workspace_id,harness,session_id,machine_id)
         WHERE i.org_id=$1 AND i.workspace_id=$2 AND i.session_id=$3`, [org, workspace, sessionId]);
@@ -31,6 +31,8 @@ try {
   }
   check(!!row?.session_uuid, "hoopdb_indexer", `session=${sessionId} indexed=${!!row?.session_uuid}`);
   if (row?.session_uuid) {
+    check(!!process.env.E2E_PIPELINE_USER_ID && row.index_user === process.env.E2E_PIPELINE_USER_ID
+          && row.derived_user === process.env.E2E_PIPELINE_USER_ID, "owner_attribution", "ingest and derived index match the real signed-in owner");
     check(["active", "done", "abandoned"].includes(row.state), "referee_state", `state=${row.state}`);
     const verdict = await db.query(
       "SELECT state FROM sessions.session_verdicts WHERE session_uuid=$1::uuid ORDER BY revision DESC,classified_at DESC,id DESC LIMIT 1", [row.session_uuid]);

@@ -171,12 +171,13 @@ class Proof:
         s = self.stack
         tenant = json.loads((s.state / "tenant.json").read_text())
         marker = self.state["marker"]  # matches the real issuer's sponsorId
-        self.state["bulls"] = {"orgId": tenant["orgId"], "workspaceId": tenant["workspaceId"],
+        self.state["bulls"] = {"orgId": tenant["orgId"], "workspaceId": tenant["workspaceId"], "userId": self.state["a"]["ownerUserId"],
                                "origin": "https://history.kind.agentrelay.com:8443", "machineId": "kind-" + self.marker}
         self.phase("mint-sessions-pipeline")
         source = (ROOT / "scripts/selfhost/e2e-gcp-proof-sessions-pipeline.ts").read_text()
         s.k("exec", "-i", "deploy/alleyoop-ingest", "--", "sh", "-c", "cat > /tmp/kind-pipeline.ts", data=source)
-        result = s.k("exec", "-i", "deploy/alleyoop-ingest", "--", "bun", "/tmp/kind-pipeline.ts", "push", marker,
+        result = s.k("exec", "-i", "deploy/alleyoop-ingest", "--", "env", "E2E_PIPELINE_USER_ID="+self.state["bulls"]["userId"],
+                     "bun", "/tmp/kind-pipeline.ts", "push", marker,
                      self.state["bulls"]["machineId"], data=self.state.pop("bullsAssertion"), sensitive=True, check=False)
         session = None
         for line in result.stdout.splitlines():
@@ -188,7 +189,8 @@ class Proof:
         self.require(result.returncode == 0 and session, "courier did not successfully upload a session")
         s.k("exec", "-i", "deploy/alleyoop-ingest", "--", "sh", "-c", "cat > /tmp/kind-pipeline-read.ts",
             data=(ROOT / "ci/agent-relay/kind/pipeline.ts").read_text())
-        result = s.k("exec", "deploy/alleyoop-ingest", "--", "bun", "/tmp/kind-pipeline-read.ts", marker, session,
+        result = s.k("exec", "deploy/alleyoop-ingest", "--", "env", "E2E_PIPELINE_USER_ID="+self.state["bulls"]["userId"],
+                     "bun", "/tmp/kind-pipeline-read.ts", marker, session,
                      timeout=210, sensitive=True, check=False)
         proofs = 0
         for line in result.stdout.splitlines():

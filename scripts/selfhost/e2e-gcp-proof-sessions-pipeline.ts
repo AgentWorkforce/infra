@@ -66,7 +66,7 @@ async function push() {
     CONCOURSE_DB: dbPath,
     COURIER_STATE: join(dir, "courier-state.json"),
     INGEST_URL: `http://127.0.0.1:${process.env.INGEST_PORT ?? "8080"}`,
-    USER_ID: `e2e-${marker}`,
+    USER_ID: process.env.E2E_PIPELINE_USER_ID ?? `e2e-${marker}`,
     MACHINE_ID: machineId,
     COURIER_START_MODE: "all",
     COURIER_CLOSE_AFTER_MINUTES: "0",
