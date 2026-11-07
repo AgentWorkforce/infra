@@ -10,6 +10,7 @@ import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import control
+from stack import tenant_values
 
 
 class ControlArchive(unittest.TestCase):
@@ -27,6 +28,19 @@ class ControlArchive(unittest.TestCase):
                 item = tarfile.TarInfo(name); item.size = len(data)
                 archive.addfile(item, io.BytesIO(data))
         return "sha256:" + digest
+
+    def test_bootstrap_preserves_selected_image_and_other_profile_settings(self):
+        image = {"repository": control.REPOSITORY, "digest": "sha256:" + "a" * 64, "pullPolicy": "Never"}
+        values = {"relay-cloud-api": {"image": image}, "global": {"otel": {"endpoint": ""}},
+                  "sessions-pipeline": {"worker": {"tenant": {"orgId": "keep"}, "podAnnotations": {"keep": "yes"}}},
+                  "relayflows": {"nodeSelector": {"keep": "yes"}}}
+        result = tenant_values(values, {"orgId": "real-org", "workspaceId": "real-workspace"}, "addons", "arm64", "recipe")
+        self.assertEqual(result["relay-cloud-api"]["image"], image)
+        self.assertEqual(result["global"]["otel"], {"endpoint": ""})
+        self.assertEqual(result["global"]["tenant"]["orgId"], "real-org")
+        self.assertEqual(result["sessions-pipeline"]["worker"]["tenant"], {"orgId": "keep", "workspaceId": "real-workspace"})
+        self.assertEqual(result["sessions-pipeline"]["worker"]["podAnnotations"]["keep"], "yes")
+        self.assertEqual(result["relayflows"]["nodeSelector"], {"keep": "yes", "kubernetes.io/arch": "arm64"})
 
     def test_valid_native_manifest_is_pinned_by_content_not_config_or_tag(self):
         with tempfile.TemporaryDirectory() as directory:

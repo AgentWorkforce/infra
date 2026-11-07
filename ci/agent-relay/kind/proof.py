@@ -94,7 +94,11 @@ class Proof:
         initialize = {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {
             "protocolVersion": "2025-06-18", "capabilities": {},
             "clientInfo": {"name": "kind-proof", "version": "1"}}}
-        expected_local = json.loads(self.stack.k("get", "deployment", "relaycontrol", "-o", "json").stdout)["spec"]["template"]["spec"]["containers"][0]["image"].startswith("agent-relay-kind/selfhost-api@")
+        containers = json.loads(self.stack.k("get", "deployment", "relaycontrol", "-o", "json").stdout)["spec"]["template"]["spec"]["containers"]
+        image = next(c["image"] for c in containers if c["name"] == "api")
+        selected = json.loads((self.stack.state / "images.json").read_text())["images"]
+        self.require(image in selected, "live control image differs from the setup image receipt")
+        expected_local = image.startswith("agent-relay-kind/selfhost-api@")
         for path in ("/api/v1/mcp/shared-sessions", "/cloud/api/v1/mcp/shared-sessions"):
             headers = {"accept": "application/json, text/event-stream"}
             response_headers = {}

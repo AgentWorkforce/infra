@@ -55,6 +55,19 @@ def private_json(path, value):
     path.chmod(0o600)
 
 
+def tenant_values(values, ids, profile, arch, recipe):
+    """Set discovered tenant IDs without dropping selected images or settings."""
+    values.setdefault("global", {}).setdefault("tenant", {})["orgId"] = ids["orgId"]
+    pipeline = values.setdefault("sessions-pipeline", {})
+    worker = pipeline.setdefault("worker", {})
+    worker.setdefault("tenant", {})["workspaceId"] = ids["workspaceId"]
+    worker.setdefault("podAnnotations", {})["kind.agentrelay.dev/bootstrap-source"] = recipe
+    pipeline.setdefault("alleyoop", {}).setdefault("tenant", {})["workspaceId"] = ids["workspaceId"]
+    if profile == "addons":
+        values.setdefault("relayflows", {}).setdefault("nodeSelector", {})["kubernetes.io/arch"] = arch
+    return values
+
+
 class Stack:
     def __init__(self, profile):
         if profile not in ("core", "addons"):
@@ -500,14 +513,12 @@ class Stack:
         self.k("exec", "-i", "deploy/relaycontrol", "--", "sh", "-c", "cat > /tmp/kind-bootstrap.mjs", data=bootstrap)
         ids = json.loads(self.k("exec", "deploy/relaycontrol", "--", "node", "/tmp/kind-bootstrap.mjs").stdout)
         private_json(self.state / "tenant.json", ids)
-        values = {"global": {"tenant": {"orgId": ids["orgId"]}}, "sessions-pipeline": {
-            "worker": {"tenant": {"workspaceId": ids["workspaceId"]},
-                       "podAnnotations": {"kind.agentrelay.dev/bootstrap-source": self.recipe_hash()}},
-            "alleyoop": {"tenant": {"workspaceId": ids["workspaceId"]}}}}
-        if self.profile == "addons":
-            values["relayflows"] = {"nodeSelector": {"kubernetes.io/arch": self.arch}}
-        private_json(self.overrides, values)
+        values = json.loads(self.overrides.read_text()) if self.overrides.exists() else {}
+        private_json(self.overrides, tenant_values(values, ids, self.profile, self.arch, self.recipe_hash()))
         docs = self.render()
+        final_images = sorted({c["image"] for d in docs for c in pod_spec(d).get("containers", []) + pod_spec(d).get("initContainers", [])})
+        if final_images != images:
+            raise StackError("tenant bootstrap changed the selected image set; readiness refused")
         # Helm dependency alias "worker" is the rendered app name.
         self.migration(docs, "worker", "locker-init")
         self.migration(docs, "worker", "hoopdb-migrate")
