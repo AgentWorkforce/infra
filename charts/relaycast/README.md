@@ -33,7 +33,7 @@ kubectl -n relaycast create secret generic relaycast-secrets \
   --from-literal=internal-secret="$(openssl rand -hex 32)" \
   --from-literal=workspace-bootstrap-secret="$(openssl rand -hex 32)"
 
-helm repo add agentworkforce https://agentworkforce.github.io/helm-charts
+helm repo add agentworkforce https://agentworkforce.github.io/infra
 helm install relaycast agentworkforce/relaycast -n relaycast \
   --set baseUrl=https://relay.example.com \
   --set existingSecret=relaycast-secrets

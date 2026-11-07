@@ -5,7 +5,7 @@
 ## TL;DR
 
 ```bash
-helm repo add agentworkforce https://AgentWorkforce.github.io/helm-charts
+helm repo add agentworkforce https://agentworkforce.github.io/infra
 # Development (in-memory, no Postgres):
 helm install relayfile agentworkforce/relayfile \
   --set server.backendProfile=memory \
@@ -37,7 +37,7 @@ Relayfile is a **single deployable binary** (`cmd/relayfile`). It:
 ### Add the Helm Repository
 
 ```bash
-helm repo add agentworkforce https://AgentWorkforce.github.io/helm-charts
+helm repo add agentworkforce https://agentworkforce.github.io/infra
 helm repo update
 ```
 
@@ -179,7 +179,7 @@ Charts are released via [helm/chart-releaser-action](https://github.com/helm/cha
 
 ```bash
 # Install from the repo after the first release has been published
-helm repo add agentworkforce https://AgentWorkforce.github.io/helm-charts
+helm repo add agentworkforce https://agentworkforce.github.io/infra
 helm repo update
 helm search repo relayfile
 ```

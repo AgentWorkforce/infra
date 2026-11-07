@@ -158,7 +158,7 @@ the shipped requirement
 [`req.db.postgres-17-extensions`](self-hosted-requirements.md#req-db-postgres-17-extensions)
 (`pg_trgm`, `btree_gin`) that the standard profile relies on.
 
-The Sessions Pipeline chart notes in the [README](https://github.com/AgentWorkforce/helm-charts/blob/main/README.md#transcript-search-profiles)
+The Sessions Pipeline chart notes in the [README](https://github.com/AgentWorkforce/infra/blob/main/README.md#transcript-search-profiles)
 point back to this section.
 
 ## Proof and commit gates

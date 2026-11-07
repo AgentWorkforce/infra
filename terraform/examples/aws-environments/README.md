@@ -10,7 +10,7 @@ The foundation supplies the private network, EKS, Pod Identity agent, security
 groups, administrative runner access, NAT/endpoints, state bucket, KMS grants
 and the OpenSearch service-linked role. Foundation and application lifecycle
 remain separate from this data state. Foundation automation is tracked in
-[helm-charts#59](https://github.com/AgentWorkforce/helm-charts/issues/59).
+[infra#59](https://github.com/AgentWorkforce/infra/issues/59).
 
 ## Environments and state
 
