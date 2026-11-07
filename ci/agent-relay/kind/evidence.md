@@ -7,6 +7,19 @@ The first negative run used PR #76 at `73f9a0eb8ab52e390856e5bd5ca3812e19f5fe7a`
 No cloud account, registry publication, deployment outside kind, or image/volume
 pruning was performed.
 
+## Lifecycle changes after the runtime receipt
+
+The PR branch subsequently received ownership hardening (`d5a6bc4`, composed at
+`a0b33f8`). Twenty offline tests pass on the composed tree: ten profile/schema/TLS
+checks and ten mocked ownership refusal/reuse/creation checks. The ownership
+suite contacts no Docker daemon or cluster; its deletion message refers only to
+a mocked fixture. The real cluster and its older ownership receipt were not
+changed or adopted. The new lifecycle refuses legacy name-only receipts.
+
+The 54 PASS / 4 PENDING runtime receipt below remains evidence for its pinned
+source revision, not a new acceptance run of the ownership-hardened lifecycle.
+A fresh lifecycle/bootstrap proof has not been run on this latest head.
+
 ## Current core setup and protocol proof
 
 ```sh
