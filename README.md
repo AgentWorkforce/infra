@@ -96,11 +96,20 @@ What each install profile must provide and can choose is in
 
 ### Install relayfile
 
+Provision `relayfile-secrets` through your approved secret-delivery system with
+`RELAYFILE_PRODUCTION_DSN`, `RELAYFILE_INTERNAL_HMAC_SECRET` and
+`RELAYFILE_JWT_SECRET`. Keep credential values out of Helm arguments and files.
+Create a non-secret `relayfile-values.yaml`:
+
+```yaml
+secrets:
+  existingSecret: relayfile-secrets
+auth:
+  jwksUrl: https://auth.relay.example.com/.well-known/jwks.json
+```
+
 ```bash
-helm install relayfile agentworkforce/relayfile \
-  --set secrets.internalHmacSecret=<strong-secret> \
-  --set secrets.productionDsn='postgres://user:pass@host:5432/dbname?sslmode=require' \
-  --set auth.jwksUrl=https://auth.relay.example.com/.well-known/jwks.json
+helm install relayfile agentworkforce/relayfile -f relayfile-values.yaml
 ```
 
 See [charts/relayfile/README.md](charts/relayfile/README.md) for the full parameter reference.
