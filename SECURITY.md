@@ -1,6 +1,6 @@
 # Security Policy
 
-Agent Relay Helm charts is part of Agent Relay. It handles credentials, tokens and agent
+Agent Relay infrastructure is part of Agent Relay. It handles credentials, tokens and agent
 session data, so we treat security reports as a priority over feature work.
 
 ## Reporting a vulnerability
@@ -10,7 +10,7 @@ request or discussion for a security problem.
 
 - **Email (preferred):** security@agentrelay.com
 - **GitHub private vulnerability reporting**, once it is enabled for this
-  repository: https://github.com/AgentWorkforce/helm-charts/security/advisories/new
+  repository: https://github.com/AgentWorkforce/infra/security/advisories/new
 
 Please include:
 

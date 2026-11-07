@@ -4,7 +4,7 @@
 # gateway (charts/relaycast runtime.durableActors.devRuntime). Build from a
 # checkout of the relaycast repo (branch selfhost/terse-actors-relaycast):
 #
-#   docker build -f <helm-charts>/ci/agent-relay/kind/relaycast-actors-dev.Dockerfile \
+#   docker build -f <infra>/ci/agent-relay/kind/relaycast-actors-dev.Dockerfile \
 #     -t relaycast-actors-dev:kind <relaycast checkout>
 #
 # Kept here until the relaycast repo ships its own dev-runtime image.

@@ -265,7 +265,7 @@ jobs:
           BULLS96_READ_TOKEN: ${{ secrets.BULLS96_READ_TOKEN }}
         run: |
           if [ -z "$BULLS96_READ_TOKEN" ]; then
-            echo "::error::BULLS96_READ_TOKEN is not available to this run (fork pull request, or the Actions secret is missing). This job builds the private sessions-pipeline services image and is required: it fails rather than skips. A maintainer must run it from a branch in AgentWorkforce/helm-charts."
+            echo "::error::BULLS96_READ_TOKEN is not available to this run (fork pull request, or the Actions secret is missing). This job builds the private sessions-pipeline services image and is required: it fails rather than skips. A maintainer must run it from a branch in AgentWorkforce/infra."
             exit 1
           fi
 

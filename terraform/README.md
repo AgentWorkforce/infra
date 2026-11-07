@@ -8,6 +8,8 @@ account or GCP project. Foundation, data and application installation have
 separate ownership and state; a successful source check is not live application
 or teardown proof.
 
+See [the complete Terraform + Helm application proof contract](../docs/terraform-helm-application-proof.md) for current evidence, outstanding live gates and the required provisioning, application, recovery and teardown lifecycle.
+
 ```
 terraform/
   modules/aws/{foundation,postgres,object-storage,search,functions}

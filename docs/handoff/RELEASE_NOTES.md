@@ -109,7 +109,7 @@ from 0.3.11.
 ## agent-relay 0.3.11 (2026-11-04): current images, every pin public
 
 Published from the `agent-relay-0.3.11` tag by `release-agent-relay.yml`
-([run 41812609280](https://github.com/AgentWorkforce/helm-charts/actions/runs/41812609280);
+([run 41812609280](https://github.com/AgentWorkforce/infra/actions/runs/41812609280);
 `oci://ghcr.io/agentworkforce/charts/agent-relay`, version 0.3.11). It
 supersedes the never-tagged 0.3.7, 0.3.8, 0.3.9 and 0.3.10 and includes their
 changes (below), so it covers everything since 0.3.6. The leaf charts are

@@ -11,7 +11,7 @@ PostgreSQL 17 for agent-relay on **RDS for PostgreSQL** (default) or **Aurora Po
 
 ```hcl
 module "postgres" {
-  source                 = "github.com/AgentWorkforce/helm-charts//terraform/modules/aws/postgres?ref=<tag>"
+  source                 = "github.com/AgentWorkforce/infra//terraform/modules/aws/postgres?ref=<tag>"
   name                   = "agent-relay-pg"
   subnet_ids             = ["subnet-a", "subnet-b"]
   vpc_security_group_ids = ["sg-db"]

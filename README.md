@@ -1,6 +1,18 @@
-# AgentWorkforce Helm Charts
+# AgentWorkforce Infrastructure
 
-Single Helm chart repository for all AgentWorkforce services. Each service lives under `charts/<service-name>/`.
+Terraform modules and Helm charts for customer-owned Agent Relay installations on AWS and GCP. Terraform provisions cloud foundations and managed services; Helm installs the application workloads.
+
+- [Terraform modules and examples](terraform/README.md): network, Kubernetes, PostgreSQL, object storage, optional search and functions.
+- [Helm charts](#charts): application configuration, deployment and versioned dependencies under `charts/<service-name>/`.
+- [Full application proof](docs/terraform-helm-application-proof.md): required lifecycle evidence and current gaps.
+
+This repository was renamed from `AgentWorkforce/helm-charts` to `AgentWorkforce/infra`.
+Update existing clones with `git remote set-url origin git@github.com:AgentWorkforce/infra.git`;
+local directory names may stay unchanged. Existing Helm clients should run
+`helm repo add agentworkforce https://agentworkforce.github.io/infra --force-update`
+and `helm repo update`. Chart names, release-tag format and the
+`ghcr.io/agentworkforce/charts` OCI coordinates stay the same. Historical evidence
+and the release gate’s `helm-charts` license-decision ID retain their original identifiers.
 
 ## Charts
 
@@ -52,7 +64,7 @@ generated doc. A new chart version needs a `current` row in
 ## Quick start
 
 ```bash
-helm repo add agentworkforce https://AgentWorkforce.github.io/helm-charts
+helm repo add agentworkforce https://agentworkforce.github.io/infra --force-update
 helm repo update
 ```
 
@@ -84,11 +96,20 @@ What each install profile must provide and can choose is in
 
 ### Install relayfile
 
+Provision `relayfile-secrets` through your approved secret-delivery system with
+`RELAYFILE_PRODUCTION_DSN`, `RELAYFILE_INTERNAL_HMAC_SECRET` and
+`RELAYFILE_JWT_SECRET`. Keep credential values out of Helm arguments and files.
+Create a non-secret `relayfile-values.yaml`:
+
+```yaml
+secrets:
+  existingSecret: relayfile-secrets
+auth:
+  jwksUrl: https://auth.relay.example.com/.well-known/jwks.json
+```
+
 ```bash
-helm install relayfile agentworkforce/relayfile \
-  --set secrets.internalHmacSecret=<strong-secret> \
-  --set secrets.productionDsn='postgres://user:pass@host:5432/dbname?sslmode=require' \
-  --set auth.jwksUrl=https://auth.relay.example.com/.well-known/jwks.json
+helm install relayfile agentworkforce/relayfile -f relayfile-values.yaml
 ```
 
 See [charts/relayfile/README.md](charts/relayfile/README.md) for the full parameter reference.

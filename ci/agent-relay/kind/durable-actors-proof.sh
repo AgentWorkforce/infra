@@ -10,7 +10,7 @@
 #   relaycast-actors-gateway                         relaycast repo:
 #     docker build -f docker/actors-gateway.Dockerfile -t relaycast-actors-gateway:kind .
 #   relaycast-actors-dev                             relaycast repo, this directory's Dockerfile:
-#     docker build -f <helm-charts>/ci/agent-relay/kind/relaycast-actors-dev.Dockerfile -t relaycast-actors-dev:kind .
+#     docker build -f <infra>/ci/agent-relay/kind/relaycast-actors-dev.Dockerfile -t relaycast-actors-dev:kind .
 #
 #   KIND_CLUSTER=aw-durable-actors MOUNT_BIN=/path/to/relayfile-mount \
 #   RELAYFILE_E2E=/path/to/relayfile/packages/durable-actors/test/e2e/mount-e2e.sh \
