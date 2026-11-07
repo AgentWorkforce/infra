@@ -78,6 +78,30 @@ and app connections, with a successful unrestricted control and internal probes.
 TLS uses CA/leaf key identifiers and strict chain verification; only the server
 leaf key is mounted. Old fixture certificates are reissued by setup as needed.
 
+## Local MCP-capable control build (not installed)
+
+The official `relay-control` Dockerfile at source
+`1f08cb624be66016eb0c135363553dd44e58f691` built successfully for native
+linux/arm64 as `agent-relay-kind/selfhost-api:1f08cb6`, with its supported
+`NODE_IMAGE` argument pinned to
+`node:22.23.3-bookworm-slim@sha256:3ed98443660ff48413b5af19ecefce3b9d50845a901a43420d47cc63a9fddbe9`.
+BuildKit is required for the official Dockerfile's cache mount; this host used
+Docker Desktop's bundled `docker-buildx` binary with the existing private
+public-image Docker configuration and local Unix socket. The source checkout,
+TMPDIR and captured build log remain on Paris Drive. No image was published.
+
+The [local build receipt](control-build.json) records the source, OCI index
+identity, native architecture and literal offline smoke output. A runtime
+container with `--network none` imports the compiled MCP handler and confirms
+migration `0012_hosted_relay_participants.sql` is packaged. This is build/module
+evidence, not endpoint or integration evidence. The source Dockerfile's own OCI
+source label spells the repository `relaycontrol`; the checkout actually used
+`AgentWorkforce/relay-control`, recorded separately in the receipt.
+
+The running kind cluster remains on its audited catalog control image. Local
+OCI transport/pinning, migration and authenticated public MCP endpoint checks
+remain pending; the core proof result and its four pending checks are unchanged.
+
 ## Historical unsupported database co-location (negative evidence)
 
 ```sh
