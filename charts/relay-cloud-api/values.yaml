@@ -291,3 +291,9 @@ nodeSelector: {}
 tolerations: []
 affinity: {}
 topologySpreadConstraints: []
+
+# Extra environment entries appended to the API container and the migration
+# container, after the chart-managed variables. Use this for site-specific
+# settings the structured values do not cover. Names the chart already sets
+# are rejected.
+extraEnv: []

@@ -254,6 +254,8 @@ expect_leaf_failure() { # chart expected-error helm-args...
   grep -Fq "$expected" <<<"$output" \
     || { echo "$chart: failed without expected error: $expected" >&2; echo "$output" >&2; exit 1; }
 }
+expect_leaf_failure relay-cloud-api "PORT is managed by structured chart values and must not appear in extraEnv" \
+  --set-json 'extraEnv=[{"name":"PORT","value":"1"}]'
 db_egress='[{"to":[{"ipBlock":{"cidr":"10.20.0.0/24"}}],"ports":[{"protocol":"TCP","port":5432}]}]'
 for child in relayhistory relay-cloud-api; do
   expect_leaf_failure "$child" "allowAllEgress=false requires networkPolicy.additionalEgress" \
@@ -316,6 +318,12 @@ rotation_items=$(helm template ci charts/relay-cloud-api -n ci --no-hooks -f cha
   yq 'select(.kind == "Deployment") | .spec.template.spec.containers[0].env[] | select(.name == "SELFHOST_ENCRYPTION_PREVIOUS_KEY_FILE" or .name == "SELFHOST_ENCRYPTION_PREVIOUS_KEY_ID") | .value')
 test "$rotation_items" = "$(printf 'ci-0\n/var/run/agent-relay/secrets/old-key')" \
   || { echo "relay-cloud-api: previous key id/file not rendered ($rotation_items)" >&2; exit 1; }
+feed_names=$(helm template ci charts/relay-cloud-api -n ci --no-hooks -f charts/relay-cloud-api/ci/default-values.yaml \
+  --set-json 'extraEnv=[{"name":"SELFHOST_DESKTOP_FEED_URL","value":"https://feed.example.com"}]' |
+  yq 'select(.kind == "Deployment" or .kind == "Job") | .spec.template.spec.containers[0].env[-1].name' |
+  grep -vx -- '---')
+test "$feed_names" = "$(printf 'SELFHOST_DESKTOP_FEED_URL\nSELFHOST_DESKTOP_FEED_URL')" \
+  || { echo "relay-cloud-api: extraEnv must be last on the API and migration containers (got $feed_names)" >&2; exit 1; }
 
 # The telemetry egress rule (TCP 443) renders only when telemetry is sent:
 # level != off and transport=https, under restricted egress.

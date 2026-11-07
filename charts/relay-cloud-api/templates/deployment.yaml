@@ -51,6 +51,9 @@ spec:
             {{- if .Values.integrations }}
             {{- include "relay-cloud-api.integrationEnv" . | nindent 12 }}
             {{- end }}
+            {{- with .Values.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
           volumeMounts:
             - { name: secrets, mountPath: /var/run/agent-relay/secrets, readOnly: true }
             {{- if .Values.license.existingSecret }}

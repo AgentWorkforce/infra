@@ -83,6 +83,21 @@ settings. */ -}}
 {{- range $key, $_ := include "relay-cloud-api.selectorLabels" . | fromYaml }}{{ if hasKey ($.Values.podLabels | default dict) $key }}{{ fail (printf "podLabels must not set selector label %s: the Deployment selector would no longer match its pods" $key) }}{{ end }}{{ end -}}
 {{- if ne .Values.service.type "ClusterIP" }}{{ fail "service.type must be ClusterIP" }}{{ end -}}
 {{- if .Values.ingress.enabled }}{{ if empty .Values.ingress.hosts }}{{ fail "ingress.enabled=true requires at least one host" }}{{ end }}{{ if not (has (urlParse (include "relay-cloud-api.publicUrl" .)).hostname .Values.ingress.hosts) }}{{ fail "ingress.hosts must include the publicUrl host" }}{{ end }}{{ if and (not .Values.ingress.externalTls) (empty .Values.ingress.tls) }}{{ fail "ingress.enabled=true requires ingress.tls unless externalTls=true" }}{{ end }}{{ if and .Values.networkPolicy.enabled (empty .Values.networkPolicy.ingressFrom) }}{{ fail "ingress with networkPolicy requires networkPolicy.ingressFrom" }}{{ end }}{{ end -}}
+{{- /* extraEnv is appended to the API and migration containers. Reject names
+the chart already sets, including duplicates inside extraEnv. */ -}}
+{{- $managed := list "PORT" "SELFHOST_PUBLIC_URL" "RELAYAUTH_URL" "RELAYCAST_URL" "RELAYCAST_PUBLIC_URL" "RELAYHISTORY_URL" "RELAYHISTORY_PUBLIC_URL" "DATABASE_MIGRATIONS_URL_FILE" "SELFHOST_RUNTIME_DATABASE_ROLE" "SELFHOST_LICENSE_FILE" -}}
+{{- range $src := list (include "relay-cloud-api.runtimeEnv" .) (include "relay-cloud-api.secretEnv" .) -}}
+{{- range $item := $src | fromYamlArray }}{{ $managed = append $managed (toString $item.name) }}{{ end -}}
+{{- end -}}
+{{- if .Values.integrations -}}
+{{- $integrationEnv := include "relay-cloud-api.integrationEnv" . -}}
+{{- if $integrationEnv }}{{ range $item := $integrationEnv | fromYamlArray }}{{ $managed = append $managed (toString $item.name) }}{{ end }}{{ end -}}
+{{- end -}}
+{{- range .Values.extraEnv -}}
+{{- if or (not (kindIs "map" .)) (not .name) }}{{ fail "every extraEnv entry must be an object with a name" }}{{ end -}}
+{{- if has (toString .name) $managed }}{{ fail (printf "%s is managed by structured chart values and must not appear in extraEnv" .name) }}{{ end -}}
+{{- $managed = append $managed (toString .name) -}}
+{{- end -}}
 {{- end -}}
 {{- /* Secret files mounted into the API pod: env name -> Secret data key.
 Optional keys are left out while empty. */ -}}
@@ -267,6 +282,9 @@ spec:
           value: /var/run/agent-relay/secrets/{{ .Values.secretKeys.databaseMigrationsUrl }}
         - name: SELFHOST_RUNTIME_DATABASE_ROLE
           value: {{ .Values.database.runtimeRole | quote }}
+        {{- with .Values.extraEnv }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
       volumeMounts:
         - { name: database, mountPath: /var/run/agent-relay/secrets, readOnly: true }
         - { name: tmp, mountPath: /tmp }

@@ -116,6 +116,7 @@ class Profiles(unittest.TestCase):
         self.assertIn("must be core or addons", self.render(extra=["--set", "localKind.profile=unknown"], ok=False))
         self.assertIn("license.key", self.render("addons", extra=["--set", "relay-cloud-api.license.key=../bad"], ok=False))
         self.assertIn("must not mount the migration credential", self.render("addons", extra=["--set", "relay-cloud-api.license.existingSecret=kind-control", "--set", "relay-cloud-api.license.key=database-migrations-url"], ok=False))
+        self.assertIn("SELFHOST_LICENSE_FILE is managed", self.render("addons", extra=["--set", "relay-cloud-api.extraEnv[0].name=SELFHOST_LICENSE_FILE", "--set", "relay-cloud-api.extraEnv[0].value=/other-license"], ok=False))
 
     def test_pending_can_never_be_aggregate_success(self):
         self.assertEqual(exit_code([]), 1)
