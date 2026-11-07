@@ -30,7 +30,10 @@ FAIL: Job kind-combined-acl-134671fd failed; inspect its redacted application er
 The check calls the deployed services image's `runtimeRoleViolations` and
 `sessionsFunctionAclPreview`; it does not invent a replacement grant policy.
 It found 160 function ACL violations, including 18 `history_runtime:EXECUTE`
-entries. Selected captured entries:
+entries. The [complete captured diagnostic](combined-acl-failure.json) contains
+only function signatures and role/privilege identifiers: 142 owner entries and
+18 History runtime entries. No credentials or tenant data are included.
+Selected captured entries:
 
 ```text
 sessions.accept_conversation_turns(text,text,text,text,text,jsonb): <owner>:EXECUTE
