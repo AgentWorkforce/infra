@@ -183,13 +183,51 @@ class Stack:
         print(f"Pull {image}", flush=True)
         self.cmd([*self.docker_args, "pull", image], timeout=900)
 
+    def cluster_uid(self, kubeconfig):
+        uid = self.cmd(["kubectl", "--kubeconfig", kubeconfig,
+                        "--context", f"kind-{self.name}", "get", "namespace", "kube-system",
+                        "-o", "jsonpath={.metadata.uid}"], sensitive=True).stdout.strip()
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}", uid):
+            raise StackError("cluster returned a missing or malformed native identity")
+        return uid
+
+    def require_owned_cluster(self):
+        """Validate native identity before replacing kubeconfig or mutating a cluster.
+
+        A name and a generic node label survive cluster replacement. Old receipts
+        without a native UID cannot be upgraded implicitly into deletion authority.
+        """
+        try:
+            record = json.loads(self.marker.read_text())
+        except (OSError, ValueError):
+            raise StackError("missing or malformed cluster ownership receipt; explicit recovery required") from None
+        expected = {"version": 1, "name": self.name, "profile": self.profile,
+                    "nodeImage": NODE, "dockerHost": self.env.get("DOCKER_HOST")}
+        if (not isinstance(record, dict) or type(record.get("version")) is not int or not expected["dockerHost"]
+                or not expected["dockerHost"].startswith("unix://")
+                or any(record.get(k) != v for k, v in expected.items())
+                or not isinstance(record.get("clusterUid"), str)
+                or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}", record["clusterUid"])):
+            raise StackError("cluster ownership receipt does not match this profile and Docker endpoint")
+        candidate = self.state / ("ownership-" + secrets.token_hex(8) + ".kubeconfig")
+        try:
+            self.cmd(["kind", "export", "kubeconfig", "--name", self.name,
+                      "--kubeconfig", candidate], sensitive=True)
+            if self.cluster_uid(candidate) != record["clusterUid"]:
+                raise StackError("cluster UID differs from the ownership receipt; refusing replacement cluster")
+            nodes = json.loads(self.cmd(["kubectl", "--kubeconfig", candidate,
+                "--context", f"kind-{self.name}", "get", "nodes", "-o", "json"], sensitive=True).stdout)["items"]
+            if not nodes or any(n["metadata"].get("labels", {}).get("agentrelay-kind-owner") != "infra" for n in nodes):
+                raise StackError("cluster node ownership labels do not match")
+            candidate.chmod(0o600)
+            os.replace(candidate, self.kubeconfig)
+        finally:
+            candidate.unlink(missing_ok=True)
+
     def cluster(self):
         clusters = self.cmd(["kind", "get", "clusters"], timeout=30).stdout.splitlines()
         if self.name in clusters:
-            if not self.marker.exists():
-                raise StackError(f"refusing to adopt existing unowned kind cluster {self.name}")
-            self.cmd(["kind", "export", "kubeconfig", "--name", self.name,
-                      "--kubeconfig", self.kubeconfig])
+            self.require_owned_cluster()
             return
         config = {"kind": "Cluster", "apiVersion": "kind.x-k8s.io/v1alpha4",
                   "networking": {"disableDefaultCNI": True, "podSubnet": "192.168.0.0/16"},
@@ -200,7 +238,9 @@ class Stack:
         path.write_text(yaml.safe_dump(config))
         self.cmd(["kind", "create", "cluster", "--name", self.name, "--image", NODE,
                   "--config", path, "--kubeconfig", self.kubeconfig], timeout=300)
-        private_json(self.marker, {"name": self.name, "nodeImage": NODE, "profile": self.profile})
+        private_json(self.marker, {"version": 1, "name": self.name, "nodeImage": NODE,
+                     "profile": self.profile, "dockerHost": self.env["DOCKER_HOST"],
+                     "clusterUid": self.cluster_uid(self.kubeconfig)})
 
     def cni(self):
         print("Install and wait for enforcing Calico CNI", flush=True)
@@ -441,11 +481,7 @@ finally {await db.end();}'''
 
     def down(self):
         self.docker(require_space=False)
-        if not self.marker.exists() or json.loads(self.marker.read_text()).get("name") != self.name:
-            raise StackError("refusing to delete a cluster without this profile's ownership record")
-        nodes = json.loads(self.k("get", "nodes", "-o", "json", namespace=None).stdout)["items"]
-        if not nodes or any(n["metadata"].get("labels", {}).get("agentrelay-kind-owner") != "infra" for n in nodes):
-            raise StackError("refusing to delete a cluster whose node ownership labels do not match")
+        self.require_owned_cluster()
         self.cmd(["kind", "delete", "cluster", "--name", self.name, "--kubeconfig", self.kubeconfig], timeout=180)
         self.marker.unlink()
         ready = self.state / "ready.json"
