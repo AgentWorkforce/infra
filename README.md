@@ -536,7 +536,7 @@ disposable kind cluster until `kind-down`.
 
 | Gap | Owner / current evidence |
 | --- | --- |
-| Combined database compatibility (blocks readiness) | layered-sessions-pipeline + History owner: the pinned pipeline and History migration Jobs each complete, but History then adds functions and `history_runtime` grants outside the pipeline function ACL manifest. The final strict check fails with 160 violations. No grant/guard bypass is used. See [captured local evidence](ci/agent-relay/kind/evidence.md). |
+| Unsupported shared-schema composition (blocks readiness) | layered-sessions-pipeline + History owner: the pipeline is the sole migrator of `sessions`. The pinned History image also migrates that schema; the final strict check rejects 160 violations. History needs its own schema and the published read/RPC boundary, or an approved pipeline migration lane. There is no chart schema-prefix setting. No grant/guard bypass is used. See [captured local evidence](ci/agent-relay/kind/evidence.md). |
 | Full local end-to-end runs | infra-kind-stack: pending the database composition contract above. Live network preflight proves external TCP denial and allowed in-cluster DNS/service access, but is not a full stack pass. |
 | Current image/source compatibility | Component owners: record exact source SHA and migrator generation; a tag named `main` is insufficient. This run used services source `f1c2672581b6f88d26d0549b4d1cb78fce0d5f16`, generation `0dcd0e89bebbdad789a40fa61311c601b4c0e49e389e3b2b0167b6fd5fdf542e`. |
 | RelayAuth removal | layered-control + layered-sessions-pipeline: default-off introspection branch, `sh_at_`, `rth:read/rth:sync`; keep the temporary internal component until compatible images ship. |

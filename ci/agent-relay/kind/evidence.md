@@ -54,8 +54,32 @@ generation: 0dcd0e89bebbdad789a40fa61311c601b4c0e49e389e3b2b0167b6fd5fdf542e
 History: ghcr.io/agentworkforce/relayhistory@sha256:d3166bb14e1d6043426a4dd8cc05408b94574c8d79ad5fd6e789e0de00ab371b
 ```
 
-Owner request: layered-sessions-pipeline / pipeline-lead / History owner must
-provide a supported schema composition contract or compatible image pair.
+The pipeline owner confirmed that **two migrators writing `sessions` is not a
+supported composition**. Its byte-exact ACL guard is a trust boundary and must
+remain intact. The supported design requires History-owned objects in a
+different schema, with pipeline data accessed through its published read/RPC
+contracts. Alternatively, functions that must live in `sessions` need a
+reviewed pipeline migration lane assigned by pipeline-lead and Khaliq, with
+History no longer migrating those objects. Kind does not choose that lane.
+
+The repositories must not be confused:
+
+- `96bulls-services@070fe6fd…` comes from
+  `AgentWorkforce/sessions-pipeline@f1c2672…`, now resolved by GitHub as
+  `AgentWorkforce/relayhistory-pipeline`.
+- `relayhistory@d3166bb…` comes from
+  `AgentWorkforce/relayhistory-cloud@53c333349cb9210832013cd3a2423f5f19062d36`.
+  At that pinned source, `packages/relayhistory/src/db/schema.ts:21` uses
+  `pgSchema("sessions")`, and `src/lib/database-health.ts:75` calls
+  `sessions.database_health_v1()`. The migrator requires runtime access to the
+  migrated sessions schema. There is no chart switch to namespace these objects.
+
+Namespacing the pinned History image requires application/migration work by
+its owner. This is not evidence that such a change is impossible, nor a reason
+to relax the pipeline guard. Owners have the exact repository/source identities
+and need to provide the supported implementation and image before kind can
+complete its proof.
+
 The orchestrator stops before installing the rest of the umbrella and before
 issuing a readiness receipt. A subsequent `make kind-proof-core` captures:
 
