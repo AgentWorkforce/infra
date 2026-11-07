@@ -1,6 +1,6 @@
-# Local kind evidence — 2026-11-07
+# Local kind evidence — 2026-11-08 (Europe/Oslo)
 
-Status: **core setup READY; core proof PENDING (54 PASS, 0 FAIL, 4 PENDING); add-on E2E not run**.
+Status: **core setup READY; core proof PENDING (55 PASS, 0 FAIL, 3 PENDING); add-on E2E not run**.
 These are local development results, not the customer release or managed-cloud
 infrastructure proof. Reproduction uses the current repository checkout;
 source identities are pinned below.
@@ -10,32 +10,35 @@ pruning was performed.
 
 ## Current ownership and live reuse validation
 
-At source `3686081`, explicit recovery required the native UID already captured
-in the original readiness receipt, matched it against the live cluster and node
-labels, backed up the legacy record and wrote versioned local ownership. It did
-not recreate the cluster or replace the kubeconfig. Normal reuse still refuses
-legacy receipts; the explicit action does not derive ownership from live labels
-or a live UID alone.
+Explicit recovery at `1c7838b` required the native UID already captured in the
+original readiness receipt, matched it against the live cluster and node labels,
+backed up the legacy record and wrote versioned local ownership. It did not
+recreate the cluster or replace the kubeconfig. Normal reuse refuses legacy
+receipts and does not infer ownership from live labels or a live UID alone.
 
-The hardened `kind-up` then completed with exit 0, including a newly created
-combined ACL-check Job. The full core proof reran on that source: 54 PASS,
-0 FAIL, 4 PENDING, exit 2. The [lifecycle receipt](lifecycle-proof.json) records
-this live recovery/reuse validation and the fresh ACL Job. This was not a fresh
-cluster creation/deletion cycle. Thirty-two offline checks also pass: 15 ownership,
-5 harness, 10 profile/schema/TLS and 2 bootstrap checks. Those offline suites do
-not operate on the real cluster.
+At source `d87aefb`, the one-command local-control build/install completed with
+exit 0 and Helm status `deployed`. The harness emits the [raw readiness
+receipt](core-ready.json), including source revision, ownership version, native
+identity, recipe/render hashes and the newly completed exact-ACL Job. The full
+proof on the same source records 55 PASS, 0 FAIL, 3 PENDING, exit 2. This is live
+recovery/reuse validation, not a fresh cluster creation/deletion cycle.
+
+All 42 offline checks pass: 15 ownership, 12 harness, 10 profile/schema/TLS,
+3 native-control admission/tenant preservation and 2 bootstrap checks. Those
+suites do not operate on the real cluster. The earlier curated lifecycle summary
+was removed in favor of the raw readiness artifact emitted by `stack.py`.
 
 ## Current core setup and protocol proof
 
 ```sh
-make kind-up PROFILE=core PYTHON=python3
+make kind-up-local-control PROFILE=core PYTHON=python3
 make kind-proof-core PYTHON=python3
 ```
 
 Setup completed with exit 0 and a readiness receipt, including the application
 returning HTTP 200 over verified TLS. The protocol proof exits 2 (**PENDING**),
 not 0. Its [complete credential-checked report](core-proof.json) records proof
-source `3686081`, 54 passing checks, no failed checks, and four pending checks.
+source `d87aefb`, 55 passing checks, no failed checks, and three pending checks.
 The [image/generation receipt](core-images.json) records the exact setup inputs.
 Selected literal proof output:
 
@@ -46,11 +49,11 @@ PASS app.cast_tls_dm: both agents send/receive through verified public Cast TLS 
 PASS cost_attribution: reported fixture usage/cost preserved through public History TLS ingest and application TLS read API; owner user/workspace match; other workspace denied
 PASS pipeline.owner_attribution: ingest and derived index match the real signed-in owner
 PENDING pipeline.app_visibility: courier upload/index/Locker verified, but authenticated Default workspace application API returned 200 without that session; read-path integration contract required
-PENDING mcp: layered-control: PR19 merged in source; catalog image9b80b04 lacks MCP; compatible build and endpoint proof pending
+PASS mcp: both trusted public TLS paths initialize, list19 tools and report the real workspace; missing auth401 and foreign origin403
 PENDING agent_launch_release: layered-control: launch/release API not implemented
 ```
 
-The fourth pending check is fixture workspace retention: the control API has
+The third pending check is fixture workspace retention: the control API has
 no workspace deletion endpoint. Generated device sessions were revoked and
 their access/refresh failures verified; test workspaces remain in this
 worktree's disposable cluster until `kind-down`.
@@ -105,29 +108,42 @@ HoopDB; missing directory data is not the explanation for this fixture. The
 [diagnostic receipt](pipeline-directory.json) does not claim canonical RPC/object
 reads or application visibility. No chart component or service was enabled.
 
-## Local MCP-capable control build (not installed)
+## Local MCP-capable control build and public endpoint proof
 
-The official `relay-control` Dockerfile at source
-`1f08cb624be66016eb0c135363553dd44e58f691` built successfully for native
-linux/arm64 as `agent-relay-kind/selfhost-api:1f08cb6`, with its supported
-`NODE_IMAGE` argument pinned to
-`node:22.23.3-bookworm-slim@sha256:3ed98443660ff48413b5af19ecefce3b9d50845a901a43420d47cc63a9fddbe9`.
-BuildKit is required for the official Dockerfile's cache mount; this host used
-Docker Desktop's bundled `docker-buildx` binary with the existing private
-public-image Docker configuration and local Unix socket. The source checkout,
-TMPDIR and captured build log remain on Paris Drive. No image was published.
+The optional `kind-up-local-control` target builds the official Dockerfile at
+`relay-control@1f08cb624be66016eb0c135363553dd44e58f691`, with a pinned native
+Node base. The [raw build receipt](control-build.json) records the native manifest
+and config digests, source revision, tag, architecture and base image. It was
+built and tested on linux/arm64. No registry publication occurred.
 
-The [local build receipt](control-build.json) records the source, OCI index
-identity, native architecture and literal offline smoke output. A runtime
-container with `--network none` imports the compiled MCP handler and confirms
-migration `0012_hosted_relay_participants.sql` is packaged. This is build/module
-evidence, not endpoint or integration evidence. The source Dockerfile's own OCI
-source label spells the repository `relaycontrol`; the checkout actually used
-`AgentWorkforce/relay-control`, recorded separately in the receipt.
+The native manifest, rather than a config ID or multi-platform index ID, is used
+as the chart digest. The loader verifies metadata bytes and source/architecture,
+checks the node's imported manifest, registers the matching digest reference and
+verifies CRI resolution. The workload uses pull policy Never. Tenant bootstrap
+preserves the chosen image and overrides stale component org IDs with the
+organization actually discovered from control. Setup refuses an image-set
+change during bootstrap; the MCP proof compares the live API container with the
+exact selected control image.
 
-The running kind cluster remains on its audited catalog control image. Local
-OCI transport/pinning, migration and authenticated public MCP endpoint checks
-remain pending; the core proof result and its four pending checks are unchanged.
+Both `/api/v1/mcp/shared-sessions` and `/cloud/api/v1/mcp/shared-sessions` pass
+real-device-token initialization, nineteen-tool discovery and
+`describe_capabilities`, including exact workspace and each alias's public URL.
+Missing authentication returns 401 and a foreign Origin returns 403. This proves
+the endpoint/discovery/authorization contract, not every tool's backend or agent
+launch/release. The remaining required courier-read integration is unchanged.
+
+The first native-image attempt exposed Helm 4 server-side field conflicts with
+bootstrap's client-side apply. The local wrapper selects the supported
+client-side reconciliation mode. A subsequent proof caught tenant bootstrap
+resetting the image selection; preservation and exact-image guards were added.
+The cloud alias advertises its own public path, which the proof now validates.
+Repeated device-login runs reached the real 10-starts/5-minute limit; a full quiet
+window was honored before this final complete run. Limits were not disabled or
+reset, and diagnostic device sessions were revoked.
+
+The catalog values remain on their audited published image. A clean catalog-only
+fixture therefore still reports MCP pending; the local-control command above is
+the exact reproducible variant used for this successful MCP endpoint check.
 
 ## Historical unsupported database co-location (negative evidence)
 

@@ -547,7 +547,9 @@ performs just the build/selection; it does not install or publish an image.
 The normal catalog profile remains unchanged. Each build captures its resulting
 artifact digest; the official Dockerfile's runtime npm dependency ranges mean
 that identical source does not guarantee identical rebuilt image bytes.
-MCP still requires the real endpoint proof; agent launch/release remains pending.
+Both public MCP paths now pass real-token initialization, nineteen-tool discovery,
+workspace/public-origin binding and negative auth/origin checks in the recorded
+local-control proof. Agent launch/release remains pending.
 The local bootstrap applies release objects client-side before final Helm
 reconciliation. On Helm 4 the wrapper explicitly selects its supported
 [`--server-side=false`](https://docs.helm.sh/docs/helm/helm_upgrade/) mode to keep
@@ -614,7 +616,9 @@ commit or attach those private state files. Test session data stays in the
 disposable kind cluster until `kind-down`.
 
 The captured [core report](ci/agent-relay/kind/core-proof.json) is **PENDING**:
-54 checks passed, none failed, and four remain pending. History delivery is
+55 checks passed, none failed, and three remain pending in the local-control variant.
+Both public MCP aliases pass real-device authentication, discovery and workspace
+binding checks. History delivery is
 visible through relay-app, and reported usage/cost is attributed to the real
 user/workspace. Courier upload, owner attribution, indexing and Locker readback
 also pass. The courier-uploaded session is **not yet returned by the application
@@ -629,7 +633,7 @@ a database row. See [captured evidence](ci/agent-relay/kind/evidence.md).
 | Current image/source compatibility | Component owners: record exact source SHA and migrator generation; a tag named `main` is insufficient. This run used services source `f1c2672581b6f88d26d0549b4d1cb78fce0d5f16`, generation `0dcd0e89bebbdad789a40fa61311c601b4c0e49e389e3b2b0167b6fd5fdf542e`. |
 | RelayAuth removal | layered-control + layered-sessions-pipeline: default-off introspection branch, `sh_at_`, `rth:read/rth:sync`; keep the temporary internal component until compatible images ship. |
 | Cost attribution data | History's client-reported fixture usage/cost passes authenticated ingest and TLS readback, including owner and workspace isolation. This does not claim live model billing or courier-session application visibility. |
-| Control image and MCP endpoint | layered-control: MCP PR #19 is merged in main `1f08cb624be66016eb0c135363553dd44e58f691`, but the catalog control image is release 0.3.0 / source `9b80b04` and lacks MCP. GHCR has no image tag for `1f08cb6` or `main`. A local native ARM build of `1f08cb6` and offline MCP module/migration smoke now pass ([receipt](ci/agent-relay/kind/control-build.json)); it is not installed. Its OCI image must be loaded/pinned and `/api/v1/mcp/shared-sessions` exercised before this can pass. No image publication is performed by the kind workflow. |
+| Control image and MCP endpoint | PASS for the optional `kind-up-local-control` variant: pinned source `1f08cb6`, verified native manifest transport, both public MCP aliases, nineteen-tool discovery, real workspace binding and auth/origin rejection ([raw receipts](ci/agent-relay/kind/evidence.md)). The catalog default remains source `9b80b04` and reports MCP pending. This does not claim agent launch/release or every MCP tool backend. No image publication is performed. |
 | Agent launch/release | layered-control: API unimplemented; fleet node claim/release is not this proof. |
 | Signed offline license enforcement | layered-control: design only. `relay-cloud-api.license.existingSecret/key` reserves the `SELFHOST_LICENSE_FILE` mount; the file slot does not verify signatures or gate add-ons. |
 | relayfile control-token filesystem scopes | layered-relayfile + layered-control: current introspection lacks `fs:*`; use real temporary RelayAuth for now. Dev issuer tokens do not count as acceptance evidence. |

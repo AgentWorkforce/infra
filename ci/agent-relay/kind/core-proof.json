@@ -1,7 +1,7 @@
 {
   "profile": "core",
-  "infraRevision": "3686081d2c2cb62ede297e989a623b653d85d8c0",
-  "recipeSha256": "625a5978ea79d2aefb70f1c4aefba6fedf843ebb5e7a760ea57a5dd29dfb1e72",
+  "infraRevision": "d87aefbbb69a057a9d35357c88f7c4327121f9dd",
+  "recipeSha256": "886ac02e03d2c658dbaebabd021fe43386202ab5db3078ae74a0cbf13eeb160e",
   "result": "PENDING",
   "checks": [
     {
@@ -27,12 +27,12 @@
     {
       "result": "PASS",
       "check": "bootstrap.relaycast_workspaces",
-      "detail": "mode=sqlite create=true delete=true create_ms=15,18"
+      "detail": "mode=sqlite create=true delete=true create_ms=14,15"
     },
     {
       "result": "PASS",
       "check": "bootstrap.tenant_a",
-      "detail": "relaycast_ws=244957996358279168 org=48526e66-3e41-4667-ae23-a86921021579 workspace=89f74e41-652e-4e81-bbf3-1eeb168e781b name=e2e-e2emw704wx4bbdc59-a owner=7e1b18ac-dca6-47a5-a968-5bc333b78ebc scope=cli:auth,rth:read,rth:sync"
+      "detail": "relaycast_ws=244965875270262784 org=48526e66-3e41-4667-ae23-a86921021579 workspace=417893d6-6f59-4961-89c3-0447067dc552 name=e2e-e2emw7196d2c1fdc9-a owner=7e1b18ac-dca6-47a5-a968-5bc333b78ebc scope=cli:auth,rth:read,rth:sync"
     },
     {
       "result": "PASS",
@@ -42,7 +42,7 @@
     {
       "result": "PASS",
       "check": "bootstrap.tenant_b",
-      "detail": "relaycast_ws=244957996396027904 org=48526e66-3e41-4667-ae23-a86921021579 workspace=aa9ed6a9-bffe-4bb3-886f-e9000915eab0 name=e2e-e2emw704wx4bbdc59-b owner=7e1b18ac-dca6-47a5-a968-5bc333b78ebc scope=cli:auth,rth:read,rth:sync"
+      "detail": "relaycast_ws=244965875274457088 org=48526e66-3e41-4667-ae23-a86921021579 workspace=5b0c3283-c363-43e8-ac7f-09a2a9e1aa4e name=e2e-e2emw7196d2c1fdc9-b owner=7e1b18ac-dca6-47a5-a968-5bc333b78ebc scope=cli:auth,rth:read,rth:sync"
     },
     {
       "result": "PASS",
@@ -52,17 +52,17 @@
     {
       "result": "PASS",
       "check": "bootstrap.workspaces_listed",
-      "detail": "org_workspaces=13 contains_a_and_b=true"
+      "detail": "org_workspaces=22 contains_a_and_b=true"
     },
     {
       "result": "PASS",
       "check": "bootstrap.membership_gate",
-      "detail": "unknown_user=403/not_member removed_member=403/not_member removed_member_poll=authorization_pending a_token_for_b=404/workspace_not_found denied_poll=access_denied outsider=86274bc4-c2a4-4a65-b903-ddd214223dc5"
+      "detail": "unknown_user=403/not_member removed_member=403/not_member removed_member_poll=authorization_pending a_token_for_b=404/workspace_not_found denied_poll=access_denied outsider=a9d8c2b9-6819-488c-83b8-e3e49ebf5f0e"
     },
     {
       "result": "PASS",
       "check": "messaging.register",
-      "detail": "agents=244957997281026048,244957997339746304"
+      "detail": "agents=244965876050403328,244965876113317888"
     },
     {
       "result": "PASS",
@@ -72,17 +72,17 @@
     {
       "result": "PASS",
       "check": "messaging.a_to_b",
-      "detail": "conversation=dm_cc14b3e376a279d98f67b3a0 message=244957997411049472"
+      "detail": "conversation=dm_19cc40ac20d4857b17aa259b message=244965876159455232"
     },
     {
       "result": "PASS",
       "check": "messaging.b_to_a_same_conversation",
-      "detail": "conversation=dm_cc14b3e376a279d98f67b3a0 message=244957997557850112"
+      "detail": "conversation=dm_19cc40ac20d4857b17aa259b message=244965876239147008"
     },
     {
       "result": "PASS",
       "check": "messaging.history",
-      "detail": "conversation=dm_cc14b3e376a279d98f67b3a0 both_agents_see_ping_and_reply=true"
+      "detail": "conversation=dm_19cc40ac20d4857b17aa259b both_agents_see_ping_and_reply=true"
     },
     {
       "result": "PASS",
@@ -92,12 +92,12 @@
     {
       "result": "PASS",
       "check": "delivery.first",
-      "detail": "batch=5bd5691bcbca91c1a890897b112a4e54 receipt=rhr_d610ba7ba84ca05c745b7075af3452ec53f3fb8bd111bd67f7e74a08b1469635 accepted=5 level=durable"
+      "detail": "batch=299d84f88e65e5f38f490ec98a9afcd5 receipt=rhr_9dd9a8f6578784b654a9a353acfaff992bbc4932e12a1d96f20e2905e2926e80 accepted=5 level=durable"
     },
     {
       "result": "PASS",
       "check": "delivery.retry_same_receipt",
-      "detail": "receipt=rhr_d610ba7ba84ca05c745b7075af3452ec53f3fb8bd111bd67f7e74a08b1469635"
+      "detail": "receipt=rhr_9dd9a8f6578784b654a9a353acfaff992bbc4932e12a1d96f20e2905e2926e80"
     },
     {
       "result": "PASS",
@@ -207,17 +207,17 @@
     {
       "result": "PASS",
       "check": "pipeline.mint_assertion",
-      "detail": "org=48526e66-3e41-4667-ae23-a86921021579 workspace=5d4f401e-ea08-4b7d-9e74-f87abbc7e580 machine=kind-77d81968c335 aud=https://history.kind.agentrelay.com:8443 ttl=60s"
+      "detail": "org=48526e66-3e41-4667-ae23-a86921021579 workspace=5d4f401e-ea08-4b7d-9e74-f87abbc7e580 machine=kind-86616efd5617 aud=https://history.kind.agentrelay.com:8443 ttl=60s"
     },
     {
       "result": "PASS",
       "check": "pipeline.courier_push",
-      "detail": "session=a5c37b5e-76bd-4a48-b0ed-1804fec27009 machine=kind-77d81968c335 sessions=1 uploaded=1 chunks=1"
+      "detail": "session=c9d7fde1-b1bc-4ade-bd4c-63645a998fb0 machine=kind-86616efd5617 sessions=1 uploaded=1 chunks=1"
     },
     {
       "result": "PASS",
       "check": "pipeline.hoopdb_indexer",
-      "detail": "session=a5c37b5e-76bd-4a48-b0ed-1804fec27009 indexed=true"
+      "detail": "session=c9d7fde1-b1bc-4ade-bd4c-63645a998fb0 indexed=true"
     },
     {
       "result": "PASS",
@@ -255,9 +255,9 @@
       "detail": "courier upload/index/Locker verified, but authenticated Default workspace application API returned 200 without that session; read-path integration contract required"
     },
     {
-      "result": "PENDING",
+      "result": "PASS",
       "check": "mcp",
-      "detail": "layered-control: PR19 merged in source; catalog image9b80b04 lacks MCP; compatible build and endpoint proof pending"
+      "detail": "both trusted public TLS paths initialize, list19 tools and report the real workspace; missing auth401 and foreign origin403"
     },
     {
       "result": "PENDING",
@@ -272,12 +272,12 @@
     {
       "result": "PASS",
       "check": "cleanup.relaycast_a",
-      "detail": "deleted=244957996358279168"
+      "detail": "deleted=244965875270262784"
     },
     {
       "result": "PASS",
       "check": "cleanup.relaycast_b",
-      "detail": "deleted=244957996396027904"
+      "detail": "deleted=244965875274457088"
     },
     {
       "result": "PASS",
@@ -292,7 +292,7 @@
     {
       "result": "PENDING",
       "check": "cleanup.control_plane_workspaces",
-      "detail": "no workspace delete API (DELETE answered 404); kept e2e-e2emw704wx4bbdc59-a,e2e-e2emw704wx4bbdc59-b in org 48526e66-3e41-4667-ae23-a86921021579; outsider user 86274bc4-c2a4-4a65-b903-ddd214223dc5 has no membership"
+      "detail": "no workspace delete API (DELETE answered 404); kept e2e-e2emw7196d2c1fdc9-a,e2e-e2emw7196d2c1fdc9-b in org 48526e66-3e41-4667-ae23-a86921021579; outsider user a9d8c2b9-6819-488c-83b8-e3e49ebf5f0e has no membership"
     }
   ]
 }

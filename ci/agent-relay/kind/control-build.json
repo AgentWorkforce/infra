@@ -1,28 +1,9 @@
 {
-  "scope": "local build and offline module smoke only; not installed or endpoint-proven",
-  "sourceRepository": "https://github.com/AgentWorkforce/relay-control",
   "sourceRevision": "1f08cb624be66016eb0c135363553dd44e58f691",
   "tag": "agent-relay-kind/selfhost-api:1f08cb6",
   "architecture": "arm64",
-  "ociDescriptor": {
-    "mediaType": "application/vnd.oci.image.index.v1+json",
-    "digest": "sha256:d75343045bc1f984de1046e59965da1814b63ac70a73704c0525cf52f721153e",
-    "size": 856
-  },
-  "labels": {
-    "org.opencontainers.image.licenses": "Apache-2.0",
-    "org.opencontainers.image.revision": "1f08cb624be66016eb0c135363553dd44e58f691",
-    "org.opencontainers.image.source": "https://github.com/AgentWorkforce/relaycontrol",
-    "org.opencontainers.image.version": "0.3.0-kind.1f08cb6"
-  },
-  "smoke": {
-    "node": "v22.23.3",
-    "architecture": "arm64",
-    "mcpModuleExports": [
-      "createMcpHandler"
-    ],
-    "mcpMigration": [
-      "0012_hosted_relay_participants.sql"
-    ]
-  }
+  "reference": "agent-relay-kind/selfhost-api@sha256:fcc8c437eda85f7bf99608645d1e488811d3c52050bd21bde5a7d4a61a0e04e3",
+  "manifestDigest": "sha256:fcc8c437eda85f7bf99608645d1e488811d3c52050bd21bde5a7d4a61a0e04e3",
+  "configDigest": "sha256:d087e9f803fe2295d1f944d6ac9a5d3bd11cae2bcfc6e93121547fb5346ebe7f",
+  "node": "node:22.23.3-bookworm-slim@sha256:3ed98443660ff48413b5af19ecefce3b9d50845a901a43420d47cc63a9fddbe9"
 }
