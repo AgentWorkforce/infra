@@ -448,6 +448,10 @@ Prerequisites: Docker Engine 28+ (including native-platform image export),
 kind 0.31+, kubectl, Helm 3.10+, OpenSSL, Git, Python 3.9+, and PyYAML. Allocate
 enough Docker memory for the suite and CNI; budget 20 GiB free disk for a cold
 setup. Warm setup checks cached native image sizes plus unpacking headroom.
+On Linux the disk preflight measures the admitted daemon’s DockerRootDir. For
+a relocated Docker Desktop disk or another local VM, set
+`KIND_DOCKER_DATA_PATH` to the existing host-side Docker backing file or directory.
+An unavailable storage path refuses setup rather than skipping the check.
 Setup fetches public image/chart/source
 artifacts. Runtime suite pods receive no external egress. Run the checkout
 and its worktree on a writable volume; all generated state and `TMPDIR` live
@@ -545,6 +549,13 @@ target `AGENT_RELAY_SITE_URL=https://relay.kind.agentrelay.com:8443` and
 `AGENT_RELAY_URL_SCHEME=agentrelay-kind`. The dashboard carries the matching
 Desktop link settings. The proof routes to loopback with verified TLS/SNI,
 so it requires neither editing `/etc/hosts` nor disabling certificate checks.
+Add-on SDK dependencies are committed in `ci/agent-relay/kind/flows-sdk/package-lock.json`
+and installed with `npm ci`; its version must match the pinned Flows source
+and local image tag. Cargo runs with the invoking host UID/GID, uses private
+checkout-volume caches, and removes only its allocated build container after
+a timeout. Old root-owned build caches from earlier runs require explicit
+operator recovery; setup does not change their ownership.
+
 Setup reissues old or expiring fixture certificates with strict-verifier key
 identifiers. If you trusted an earlier fixture CA manually, use the current
 `ca.crt`. The edge has its own egress-deny policy allowing only cluster DNS,

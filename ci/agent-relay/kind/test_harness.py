@@ -1,5 +1,6 @@
 """Causal harness checks; no Docker daemon, database or cluster contacted."""
 import json
+from types import SimpleNamespace
 from pathlib import Path
 import subprocess
 import sys
@@ -10,6 +11,7 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import proof
 import stack
+import addons
 
 
 class Harness(unittest.TestCase):
@@ -57,6 +59,88 @@ class Harness(unittest.TestCase):
         self.assertEqual([c["detail"] for c in result["checks"]], ["TypeError", "AttributeError"])
         self.assertNotIn("private", report.read_text())
         self.assertNotIn("never-print", report.read_text())
+
+    def test_linux_disk_preflight_uses_admitted_daemon_storage(self):
+        self.local.env.pop("KIND_DOCKER_DATA_PATH", None)
+        self.local.env["DOCKER_HOST"] = "unix:///owned/docker.sock"
+        calls = []
+        def command(args, **kwargs):
+            calls.append(args)
+            return subprocess.CompletedProcess(args, 0, str(self.root) + "\n", "")
+        self.local.cmd = command
+        with patch.object(stack.sys, "platform", "linux"), patch.object(stack.shutil, "disk_usage", return_value=SimpleNamespace(free=100)) as usage:
+            with self.assertRaisesRegex(stack.StackError, "needs"):
+                self.local.check_space(200)
+            usage.assert_called_once_with(self.root)
+        self.assertEqual(calls[0][1:3], ["--host", "unix:///owned/docker.sock"])
+
+    def test_unavailable_default_docker_storage_is_not_a_silent_pass(self):
+        self.local.env.pop("KIND_DOCKER_DATA_PATH", None)
+        with patch.object(stack.sys, "platform", "darwin"), patch.object(stack.Path, "home", return_value=self.root):
+            with self.assertRaisesRegex(stack.StackError, "KIND_DOCKER_DATA_PATH"):
+                self.local.check_space(1)
+
+    def test_explicit_vm_backing_path_is_measured(self):
+        self.local.env["KIND_DOCKER_DATA_PATH"] = str(self.root)
+        with patch.object(stack.shutil, "disk_usage", return_value=SimpleNamespace(free=100)) as usage:
+            self.local.check_space(99)
+            usage.assert_called_once_with(self.root)
+
+    def test_failed_source_fetch_does_not_poison_retry_or_remove_other_state(self):
+        source = self.local.state / "source"
+        unrelated = self.local.state / "keep"
+        unrelated.write_text("preserve")
+        failing = True
+        def command(args, **kwargs):
+            if "fetch" in args and failing:
+                raise stack.StackError("fetch interrupted")
+            return subprocess.CompletedProcess(args, 0, "revision\n" if "rev-parse" in args else "", "")
+        self.local.cmd = command
+        with self.assertRaisesRegex(stack.StackError, "interrupted"):
+            addons.checkout(self.local, "flows", "revision", source)
+        self.assertFalse(source.exists())
+        self.assertFalse(list(self.local.state.glob("source-fetch-*")))
+        self.assertEqual(unrelated.read_text(), "preserve")
+        failing = False
+        addons.checkout(self.local, "flows", "revision", source)
+        self.assertTrue(source.exists())
+
+    def test_cargo_timeout_removes_only_the_allocated_container(self):
+        calls = []
+        self.local.arch = "arm64"
+        self.local.pull = lambda image: None
+        def command(args, **kwargs):
+            calls.append(args)
+            if "run" in args:
+                raise stack.StackError("build timed out")
+            return subprocess.CompletedProcess(args, 0, "", "")
+        self.local.cmd = command
+        with self.assertRaisesRegex(stack.StackError, "timed out"):
+            addons.cargo_build(self.local, self.local.state / "source", self.local.state / "native")
+        run, remove = calls
+        name = run[run.index("--name") + 1]
+        self.assertTrue(name.startswith("agent-relay-kind-cargo-"))
+        self.assertEqual(remove, [*self.local.docker_args, "rm", "-f", name])
+        self.assertIn("--user", run)
+        self.assertIn("CARGO_HOME=/cargo", run)
+
+    def test_cargo_cleanup_failure_is_reported(self):
+        self.local.arch = "amd64"
+        self.local.pull = lambda image: None
+        self.local.cmd = lambda args, **kwargs: subprocess.CompletedProcess(args, 1 if "rm" in args else 0, "", "daemon unavailable")
+        with self.assertRaisesRegex(RuntimeError, "cleanup failed"):
+            addons.cargo_build(self.local, self.local.state / "source", self.local.state / "native")
+
+    def test_mismatched_pinned_source_version_refused_before_cargo(self):
+        self.local.check_space = lambda needed: None
+        def checkout(local, repository, revision, path):
+            package = path / "packages/relayflows/package.json"
+            package.parent.mkdir(parents=True)
+            package.write_text('{"version":"0.0.0"}')
+        with patch.object(addons, "checkout", checkout), patch.object(addons, "cargo_build") as cargo:
+            with self.assertRaisesRegex(ValueError, "disagree"):
+                addons.build(self.local)
+            cargo.assert_not_called()
 
     def test_leaf_failing_expiry_check_is_reissued_with_the_existing_host_ca(self):
         applied = []
