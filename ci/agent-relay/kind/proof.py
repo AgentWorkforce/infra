@@ -126,7 +126,7 @@ class Proof:
             self.require(status == 200 and not result.get("isError") and
                          capabilities.get("workspace", {}).get("workspace_id") == self.state["a"]["workspaceId"] and
                          capabilities.get("connection", {}).get("auth_mode") == "cli_login" and
-                         capabilities.get("endpoint", {}).get("url") == "https://relay.kind.agentrelay.com:8443/api/v1/mcp/shared-sessions",
+                         capabilities.get("endpoint", {}).get("url") == "https://relay.kind.agentrelay.com:8443" + path,
                          "MCP capabilities are not bound to the authenticated workspace/public origin")
             status, _ = self.edge("relay.kind.agentrelay.com", path, method="POST", body=initialize, extra_headers={"accept": "application/json, text/event-stream"})
             self.require(status == 401, "MCP accepted unauthenticated initialization")
