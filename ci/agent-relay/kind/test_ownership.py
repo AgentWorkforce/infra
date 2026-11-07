@@ -170,5 +170,67 @@ class Ownership(unittest.TestCase):
         self.assertFalse(self.local.marker.exists())
 
 
+    def legacy_receipts(self):
+        legacy = {k: self.record[k] for k in ("name", "profile", "nodeImage")}
+        self.write_record(legacy)
+        ready = {"profile": "core", "clusterUid": self.record["clusterUid"],
+                 "recipeSha256": "a" * 64, "renderSha256": "b" * 64}
+        (self.local.state / "ready.json").write_text(json.dumps(ready))
+        return legacy, ready
+
+    def assert_recovery_refused(self, expected_uid):
+        before = self.local.marker.read_bytes()
+        with self.assertRaises(stack.StackError):
+            self.local.recover(expected_uid)
+        self.assertEqual(self.local.marker.read_bytes(), before)
+        self.assertEqual(self.local.kubeconfig.read_text(), "original kubeconfig")
+        self.assertFalse(list(self.local.state.glob("ownership-*")))
+        self.assertFalse(list(self.local.state.glob("legacy-ownership-*")))
+        self.assertFalse(any(c[:3] == ["kind", "delete", "cluster"] for c in self.calls))
+
+    def test_explicit_recovery_requires_prior_receipt_and_live_identity(self):
+        legacy, _ = self.legacy_receipts()
+        self.local.recover(self.live_uid)
+        self.assertEqual(json.loads(self.local.marker.read_text()), self.record)
+        backups = list(self.local.state.glob("legacy-ownership-*.json"))
+        self.assertEqual(len(backups), 1)
+        self.assertEqual(json.loads(backups[0].read_text()), legacy)
+        self.assertEqual(self.local.kubeconfig.read_text(), "original kubeconfig")
+        self.assertFalse(list(self.local.state.glob("ownership-*")))
+        self.assertFalse(any(c[:2] in (["kind", "delete"], ["kind", "create"]) for c in self.calls))
+
+    def test_recovery_cannot_adopt_live_replacement_even_with_same_name(self):
+        self.legacy_receipts()
+        self.live_uid = "c5a7f64f-34ad-4857-ac23-41729278f2f1"
+        self.assert_recovery_refused(self.record["clusterUid"])
+
+    def test_recovery_cannot_use_live_uid_without_original_anchor(self):
+        _, ready = self.legacy_receipts()
+        for invalid in (None, {}, [], dict(ready, clusterUid="other"), dict(ready, profile="addons"),
+                        dict(ready, recipeSha256=None), dict(ready, renderSha256="bad")):
+            with self.subTest(ready=invalid):
+                path = self.local.state / "ready.json"
+                path.unlink(missing_ok=True)
+                if invalid is not None:
+                    path.write_text(json.dumps(invalid))
+                self.assert_recovery_refused(self.live_uid)
+
+    def test_recovery_requires_explicit_matching_uid(self):
+        self.legacy_receipts()
+        for uid in (None, "", "live-guess", "bad uid", self.live_uid + "\n"):
+            with self.subTest(uid=uid):
+                self.assert_recovery_refused(uid)
+
+    def test_recovery_refuses_versioned_foreign_or_label_mismatch(self):
+        legacy, _ = self.legacy_receipts()
+        for record in (self.record, dict(legacy, profile="addons"), {"name": self.local.name}):
+            with self.subTest(record=record):
+                self.write_record(record)
+                self.assert_recovery_refused(self.live_uid)
+        self.write_record(legacy)
+        self.labels = {}
+        self.assert_recovery_refused(self.live_uid)
+
+
 if __name__ == "__main__":
     unittest.main()

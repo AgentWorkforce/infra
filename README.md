@@ -510,6 +510,21 @@ silently upgraded into authority over an existing cluster. Interrupted creation
 without a completed ownership record requires explicit operator recovery.
 Name or generic node-label matches alone do not authorize adoption or deletion.
 
+For a cluster created by this worktree before versioned ownership receipts,
+explicit recovery is available only when its original `.kind/core/ready.json`
+still records the independently captured native UID. Supply that original UID
+(the live cluster UID alone is insufficient):
+
+```sh
+python3 ci/agent-relay/kind/stack.py recover --profile core --expected-cluster-uid '<original readiness clusterUid>'
+make kind-up PROFILE=core
+```
+
+Recovery compares the prior receipt and live UID, checks node labels, backs up
+the legacy receipt, and updates only the local ownership record. It preserves
+the cluster and kubeconfig. Missing original identity or any mismatch fails;
+normal `kind-up` and `kind-down` never recover a receipt implicitly.
+
 ### Local TLS and Desktop
 
 The local edge binds loopback HTTP `8080` and HTTPS `8443`. The generated

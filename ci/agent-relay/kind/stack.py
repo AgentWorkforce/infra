@@ -226,6 +226,54 @@ class Stack:
         finally:
             candidate.unlink(missing_ok=True)
 
+    def recover(self, expected_uid):
+        """Explicitly recover our legacy receipt from a prior readiness identity.
+
+        Never derive authority from a name, labels or the live UID alone. The
+        operator's expected UID must also exist in the pre-existing ready receipt.
+        This action changes local records only; normal reuse still refuses legacy
+        records and validates the native identity again on every invocation.
+        """
+        if not isinstance(expected_uid, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}", expected_uid):
+            raise StackError("recover requires --expected-cluster-uid from the original readiness receipt")
+        try:
+            legacy_bytes = self.marker.read_bytes()
+            legacy = json.loads(legacy_bytes)
+            ready = json.loads((self.state / "ready.json").read_text())
+        except (OSError, ValueError):
+            raise StackError("recovery needs the original legacy ownership and readiness receipts") from None
+        if legacy != {"name": self.name, "profile": self.profile, "nodeImage": NODE}:
+            raise StackError("recovery requires this profile's exact legacy receipt; versioned or foreign receipts are refused")
+        if (not isinstance(ready, dict) or ready.get("profile") != self.profile
+                or ready.get("clusterUid") != expected_uid
+                or any(not isinstance(ready.get(k), str) or not re.fullmatch(r"[a-f0-9]{64}", ready[k])
+                       for k in ("recipeSha256", "renderSha256"))):
+            raise StackError("expected UID is not anchored in this profile's original readiness receipt")
+        self.docker(require_space=False)
+        candidate = self.state / ("ownership-" + secrets.token_hex(8) + ".kubeconfig")
+        pending = self.state / ("ownership-" + secrets.token_hex(8) + ".json")
+        try:
+            self.cmd(["kind", "export", "kubeconfig", "--name", self.name,
+                      "--kubeconfig", candidate], sensitive=True)
+            if self.cluster_uid(candidate) != expected_uid:
+                raise StackError("live cluster UID differs from the original receipt; recovery refused")
+            nodes = json.loads(self.cmd(["kubectl", "--kubeconfig", candidate,
+                "--context", f"kind-{self.name}", "get", "nodes", "-o", "json"], sensitive=True).stdout)["items"]
+            if not nodes or any(n["metadata"].get("labels", {}).get("agentrelay-kind-owner") != "infra" for n in nodes):
+                raise StackError("cluster node ownership labels do not match; recovery refused")
+            backup = self.state / ("legacy-ownership-" + secrets.token_hex(8) + ".json")
+            backup.write_bytes(legacy_bytes)
+            backup.chmod(0o600)
+            private_json(pending, {"version": 1, "name": self.name, "nodeImage": NODE,
+                         "profile": self.profile, "dockerHost": self.env["DOCKER_HOST"],
+                         "clusterUid": expected_uid})
+            os.replace(pending, self.marker)
+            print(f"Recovered local ownership receipt from prior UID; backup: {backup}")
+            print("Cluster and kubeconfig unchanged. Rerun kind-up before acceptance.")
+        finally:
+            candidate.unlink(missing_ok=True)
+            pending.unlink(missing_ok=True)
+
     def cluster(self):
         clusters = self.cmd(["kind", "get", "clusters"], timeout=30).stdout.splitlines()
         if self.name in clusters:
@@ -503,9 +551,12 @@ def pod_spec(doc):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("action", choices=("up", "down", "render", "build-addons"))
+    parser.add_argument("action", choices=("up", "down", "render", "build-addons", "recover"))
     parser.add_argument("--profile", choices=("core", "addons"), default="core")
+    parser.add_argument("--expected-cluster-uid", help="original readiness UID; required only for explicit recover")
     args = parser.parse_args()
+    if args.expected_cluster_uid and args.action != "recover":
+        parser.error("--expected-cluster-uid is only valid for recover")
     os.umask(0o077)
     try:
         stack = Stack(args.profile)
@@ -513,6 +564,8 @@ def main():
             stack.dependencies()
             stack.render()
             print(stack.state / "rendered.yaml")
+        elif args.action == "recover":
+            stack.recover(args.expected_cluster_uid)
         elif args.action == "build-addons":
             stack.docker(require_space=False)
             stack.build_addons()
