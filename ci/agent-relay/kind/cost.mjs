@@ -16,7 +16,7 @@ const session = await request(
   input.accessToken, { mode: "sync", label: "kind-cost-fixture" });
 if (typeof session.accessToken !== "string") throw new Error("missing real History sync session");
 const fixture = { eventId: `assistant:kind-cost-${input.marker}`, inputTokens: 320, outputTokens: 52, costUsdMicros: 125000 };
-const result = await request("http://relayhistory.agent-relay.svc.cluster.local:8080/v1/ingest", session.accessToken, {
+const payload = {
   batchId: `kind-cost-${input.marker}`, machine: { id: `kind-cost-${input.marker}` }, records: [{
     kind: "assistant", source: "claude", sessionId: input.sessionId,
     eventId: fixture.eventId, ts: new Date().toISOString(),
@@ -24,6 +24,7 @@ const result = await request("http://relayhistory.agent-relay.svc.cluster.local:
     provider: "kind-fixture", model: "kind-cost-fixture",
     usage: { input: fixture.inputTokens, output: fixture.outputTokens }, costUsdMicros: fixture.costUsdMicros,
   }],
-});
-if (result.accepted !== 1) throw new Error("reported cost record was not accepted");
-process.stdout.write(JSON.stringify(fixture));
+};
+// The caller sends this through the verified public History TLS origin.
+// This stdout is private protocol state, never a public proof detail.
+process.stdout.write(JSON.stringify({ ...fixture, accessToken: session.accessToken, payload }));

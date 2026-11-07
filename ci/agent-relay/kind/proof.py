@@ -166,6 +166,20 @@ class Proof:
         self.require(status == 200 and any(x.get("sessionId") == self.state["session"]["sessionId"]
                      for x in json.loads(text).get("items", [])), "delivered session missing through relay-app same-origin read API")
         self.record("PASS", "app.tls_session_read", "trusted local TLS, relay-app HTML, and delivered session through /cloud/api")
+        alpha, beta = self.state["agents"]["alpha"], self.state["agents"]["beta"]
+        for sender, receiver in ((alpha, beta), (beta, alpha)):
+            message = self.marker + " public TLS DM from " + sender["name"]
+            status, _ = self.edge("cast.kind.agentrelay.com", "/v1/dm", sender["token"], "POST",
+                                  {"to": receiver["name"], "text": message})
+            self.require(status in (200, 201), f"public TLS DM send failed status={status}")
+            status, body = self.edge("cast.kind.agentrelay.com", "/v1/dm/" + self.state["dm"]["conversationId"] + "/messages?limit=50", receiver["token"])
+            data = json.loads(body).get("data", json.loads(body))
+            messages = data if isinstance(data, list) else data.get("messages", data.get("items", []))
+            self.require(status == 200 and any((m.get("text") or m.get("content") or m.get("body")) == message for m in messages),
+                         "public TLS DM was not received")
+        status, _ = self.edge("cast.kind.agentrelay.com", "/internal/capabilities")
+        self.require(status in (404, 503), "public cast ingress did not deny the internal route")
+        self.record("PASS", "app.cast_tls_dm", "both agents send/receive through verified public Cast TLS origin; internal route denied at edge")
 
     def pipeline(self):
         s = self.stack
@@ -230,6 +244,8 @@ class Proof:
                      data=json.dumps({"accessToken": a["accessToken"], "workspaceId": a["workspaceId"],
                                       "sessionId": self.state["session"]["sessionId"], "marker": self.marker}))
         expected = json.loads(result.stdout)
+        status, body = self.edge("history.kind.agentrelay.com", "/v1/ingest", expected.pop("accessToken"), "POST", expected.pop("payload"))
+        self.require(status == 200 and json.loads(body).get("accepted") == 1, "public History TLS ingest did not accept reported cost fixture")
         route = f"/cloud/api/v1/workspaces/{a['workspaceId']}/sessions"
         deadline = time.monotonic() + 30
         while time.monotonic() < deadline:
@@ -249,7 +265,7 @@ class Proof:
                 b = self.state["b"]
                 status, _ = self.edge("relay.kind.agentrelay.com", route, b["accessToken"])
                 self.require(status == 404, "another workspace could read the attributed cost")
-                self.record("PASS", "cost_attribution", "reported fixture usage/cost preserved through ingest and TLS read API; owner user/workspace match; other workspace denied")
+                self.record("PASS", "cost_attribution", "reported fixture usage/cost preserved through public History TLS ingest and application TLS read API; owner user/workspace match; other workspace denied")
                 return
             time.sleep(1)
         raise StackError("reported cost/usage or owner attribution missing from the session read API")
