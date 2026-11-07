@@ -198,6 +198,38 @@ class Proof:
                 proofs += 1
         self.require(result.returncode == 0 and proofs > 0, "offline pipeline readback failed")
 
+    def cost_attribution(self):
+        s, a = self.stack, self.state["a"]
+        s.k("exec", "-i", "deploy/relaycontrol", "--", "sh", "-c", "cat > /tmp/kind-cost.mjs",
+            data=(ROOT / "ci/agent-relay/kind/cost.mjs").read_text())
+        result = s.k("exec", "-i", "deploy/relaycontrol", "--", "node", "/tmp/kind-cost.mjs", sensitive=True,
+                     data=json.dumps({"accessToken": a["accessToken"], "workspaceId": a["workspaceId"],
+                                      "sessionId": self.state["session"]["sessionId"], "marker": self.marker}))
+        expected = json.loads(result.stdout)
+        route = f"/cloud/api/v1/workspaces/{a['workspaceId']}/sessions"
+        deadline = time.monotonic() + 30
+        while time.monotonic() < deadline:
+            status, text = self.edge("relay.kind.agentrelay.com", route, a["accessToken"])
+            self.require(status == 200, f"cost session list failed status={status}")
+            summary = next((item for item in json.loads(text).get("items", [])
+                            if item.get("sessionId") == self.state["session"]["sessionId"]), {})
+            status, text = self.edge("relay.kind.agentrelay.com", route + "/" + quote(self.state["session"]["sessionId"], safe="")
+                                     + "/events?source=claude", a["accessToken"])
+            self.require(status == 200, f"cost event read failed status={status}")
+            event = next((item for item in json.loads(text).get("events", []) if item.get("eventId") == expected["eventId"]), {})
+            if (event.get("userId") == a["ownerUserId"] and event.get("costUsdMicros") == expected["costUsdMicros"]
+                    and event.get("usage", {}).get("input") == expected["inputTokens"]
+                    and event.get("usage", {}).get("output") == expected["outputTokens"]
+                    and summary.get("totalCostUsdMicros") == expected["costUsdMicros"]
+                    and a["ownerUserId"] in summary.get("userIds", [])):
+                b = self.state["b"]
+                status, _ = self.edge("relay.kind.agentrelay.com", route, b["accessToken"])
+                self.require(status == 404, "another workspace could read the attributed cost")
+                self.record("PASS", "cost_attribution", "reported fixture usage/cost preserved through ingest and TLS read API; owner user/workspace match; other workspace denied")
+                return
+            time.sleep(1)
+        raise StackError("reported cost/usage or owner attribution missing from the session read API")
+
     def flows(self):
         s = self.stack
         cron = json.loads(s.k("get", "cronjob", "relayflows", "-o", "json").stdout)
@@ -276,12 +308,12 @@ class Proof:
         for phase in ("bootstrap", "messaging", "delivery", "reads", "sessions", "auth"):
             self.phase(phase)
         self.tls_and_app()
+        self.cost_attribution()
         self.pipeline()
         if s.profile == "addons":
             self.flows()
             self.relayfile()
-        for check, owner in [("cost_attribution", "sessions/control owners: offline usage/cost schema and read contract unproven"),
-                             ("mcp", "layered-control: PR19 merged in source; catalog image9b80b04 lacks MCP; compatible build and endpoint proof pending"),
+        for check, owner in [("mcp", "layered-control: PR19 merged in source; catalog image9b80b04 lacks MCP; compatible build and endpoint proof pending"),
                              ("agent_launch_release", "layered-control: launch/release API not implemented")]:
             self.record("PENDING", check, owner)
         if s.profile == "addons":
@@ -290,6 +322,8 @@ class Proof:
     def report(self):
         code = exit_code(self.checks)
         private_json(self.stack.state / "proof.json", {"profile": self.stack.profile,
+                     "infraRevision": self.stack.cmd(["git", "rev-parse", "HEAD"]).stdout.strip(),
+                     "recipeSha256": self.stack.recipe_hash(),
                      "result": {0: "PASS", 1: "FAIL", 2: "PENDING"}[code], "checks": self.checks})
         return code
 
