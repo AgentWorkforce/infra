@@ -60,9 +60,9 @@ def tenant_values(values, ids, profile, arch, recipe):
     values.setdefault("global", {}).setdefault("tenant", {})["orgId"] = ids["orgId"]
     pipeline = values.setdefault("sessions-pipeline", {})
     worker = pipeline.setdefault("worker", {})
-    worker.setdefault("tenant", {})["workspaceId"] = ids["workspaceId"]
+    worker.setdefault("tenant", {}).update({"orgId": ids["orgId"], "workspaceId": ids["workspaceId"]})
     worker.setdefault("podAnnotations", {})["kind.agentrelay.dev/bootstrap-source"] = recipe
-    pipeline.setdefault("alleyoop", {}).setdefault("tenant", {})["workspaceId"] = ids["workspaceId"]
+    pipeline.setdefault("alleyoop", {}).setdefault("tenant", {}).update({"orgId": ids["orgId"], "workspaceId": ids["workspaceId"]})
     if profile == "addons":
         values.setdefault("relayflows", {}).setdefault("nodeSelector", {})["kubernetes.io/arch"] = arch
     return values
@@ -458,9 +458,6 @@ class Stack:
         if self.profile == "addons":
             if not os.environ.get("KIND_LICENSE_FILE"):
                 raise StackError("PENDING: set KIND_LICENSE_FILE to the owner-supplied signed offline license; enforcement is not shipped yet")
-            values = json.loads(self.overrides.read_text()) if self.overrides.exists() else {}
-            values["relayflows"] = {"nodeSelector": {"kubernetes.io/arch": self.arch}}
-            private_json(self.overrides, values)
         self.dependencies()
         docs = self.render()
         images = sorted({c["image"] for d in docs for c in pod_spec(d).get("containers", []) + pod_spec(d).get("initContainers", [])})
@@ -525,7 +522,7 @@ class Stack:
         # Match the existing EKS installer's database isolation. Each migrator
         # owns its schema in a distinct database; never co-locate both in HoopDB.
         self.migration(docs, "relayhistory")
-        self.verify_combined_acl(services_image)
+        acl_job = self.verify_combined_acl(services_image)
         # Bootstrap applies the same release objects client-side before Helm
         # can wait for the whole suite. Keep that mode on Helm 4 as well; its
         # default SSA conflicts when bootstrap changes the control image.
@@ -537,7 +534,10 @@ class Stack:
         install(self, TRAEFIK_CHART, NS)
         private_json(ready, {"profile": self.profile, "recipeSha256": self.recipe_hash(),
                      "renderSha256": hashlib.sha256((self.state / "rendered.yaml").read_bytes()).hexdigest(),
-                     "clusterUid": self.k("get", "namespace", "kube-system", "-o", "jsonpath={.metadata.uid}", namespace=None).stdout})
+                     "clusterUid": self.k("get", "namespace", "kube-system", "-o", "jsonpath={.metadata.uid}", namespace=None).stdout,
+                     "ownershipVersion": json.loads(self.marker.read_text())["version"],
+                     "combinedAclJob": acl_job, "nodeImage": NODE,
+                     "infraRevision": self.cmd(["git", "rev-parse", "HEAD"]).stdout.strip()})
         print(f"Ready: https://{HOSTS[0]}:8443; local trust certificate: {self.state / 'ca.crt'}")
         print(f"Desktop host entries: {self.state / 'hosts'}. Run make kind-proof PROFILE={self.profile}; readiness is not an E2E pass.")
 
@@ -564,6 +564,7 @@ finally {await db.end();}'''
         name = "kind-combined-acl-" + secrets.token_hex(8)
         self.apply({"apiVersion": "batch/v1", "kind": "Job", "metadata": {"name": name, "namespace": NS}, "spec": spec})
         self.wait_job(name, 90)
+        return name
 
     def build_addons(self):
         from addons import build

@@ -38,8 +38,9 @@ class ControlArchive(unittest.TestCase):
         self.assertEqual(result["relay-cloud-api"]["image"], image)
         self.assertEqual(result["global"]["otel"], {"endpoint": ""})
         self.assertEqual(result["global"]["tenant"]["orgId"], "real-org")
-        self.assertEqual(result["sessions-pipeline"]["worker"]["tenant"], {"orgId": "keep", "workspaceId": "real-workspace"})
+        self.assertEqual(result["sessions-pipeline"]["worker"]["tenant"], {"orgId": "real-org", "workspaceId": "real-workspace"})
         self.assertEqual(result["sessions-pipeline"]["worker"]["podAnnotations"]["keep"], "yes")
+        self.assertEqual(result["sessions-pipeline"]["alleyoop"]["tenant"]["orgId"], "real-org")
         self.assertEqual(result["relayflows"]["nodeSelector"], {"keep": "yes", "kubernetes.io/arch": "arm64"})
 
     def test_valid_native_manifest_is_pinned_by_content_not_config_or_tag(self):

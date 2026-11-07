@@ -97,7 +97,8 @@ class Proof:
         containers = json.loads(self.stack.k("get", "deployment", "relaycontrol", "-o", "json").stdout)["spec"]["template"]["spec"]["containers"]
         image = next(c["image"] for c in containers if c["name"] == "api")
         selected = json.loads((self.stack.state / "images.json").read_text())["images"]
-        self.require(image in selected, "live control image differs from the setup image receipt")
+        controls = [i for i in selected if "/selfhost-api@" in i]
+        self.require(len(controls) == 1 and image == controls[0], "live control image differs from the selected control image receipt")
         expected_local = image.startswith("agent-relay-kind/selfhost-api@")
         for path in ("/api/v1/mcp/shared-sessions", "/cloud/api/v1/mcp/shared-sessions"):
             headers = {"accept": "application/json, text/event-stream"}
