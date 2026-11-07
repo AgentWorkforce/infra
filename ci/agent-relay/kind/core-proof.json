@@ -1,7 +1,7 @@
 {
   "profile": "core",
-  "infraRevision": "2efcca7cb6653dddec3136f814b4f025aba6ad8f",
-  "recipeSha256": "b967d3a0d544ff214e245ceaaa8e49de63d372a3516396cd5eee0e3a502ee295",
+  "infraRevision": "3686081d2c2cb62ede297e989a623b653d85d8c0",
+  "recipeSha256": "625a5978ea79d2aefb70f1c4aefba6fedf843ebb5e7a760ea57a5dd29dfb1e72",
   "result": "PENDING",
   "checks": [
     {
@@ -27,12 +27,12 @@
     {
       "result": "PASS",
       "check": "bootstrap.relaycast_workspaces",
-      "detail": "mode=sqlite create=true delete=true create_ms=16,15"
+      "detail": "mode=sqlite create=true delete=true create_ms=15,18"
     },
     {
       "result": "PASS",
       "check": "bootstrap.tenant_a",
-      "detail": "relaycast_ws=244944106169802752 org=48526e66-3e41-4667-ae23-a86921021579 workspace=61f8b188-ae1f-4d02-925c-f00ab014cebe name=e2e-e2emw6y5xlo239d44-a owner=7e1b18ac-dca6-47a5-a968-5bc333b78ebc scope=cli:auth,rth:read,rth:sync"
+      "detail": "relaycast_ws=244957996358279168 org=48526e66-3e41-4667-ae23-a86921021579 workspace=89f74e41-652e-4e81-bbf3-1eeb168e781b name=e2e-e2emw704wx4bbdc59-a owner=7e1b18ac-dca6-47a5-a968-5bc333b78ebc scope=cli:auth,rth:read,rth:sync"
     },
     {
       "result": "PASS",
@@ -42,7 +42,7 @@
     {
       "result": "PASS",
       "check": "bootstrap.tenant_b",
-      "detail": "relaycast_ws=244944106173997056 org=48526e66-3e41-4667-ae23-a86921021579 workspace=a22007e9-a7c5-4a5f-8851-032ad76c72f7 name=e2e-e2emw6y5xlo239d44-b owner=7e1b18ac-dca6-47a5-a968-5bc333b78ebc scope=cli:auth,rth:read,rth:sync"
+      "detail": "relaycast_ws=244957996396027904 org=48526e66-3e41-4667-ae23-a86921021579 workspace=aa9ed6a9-bffe-4bb3-886f-e9000915eab0 name=e2e-e2emw704wx4bbdc59-b owner=7e1b18ac-dca6-47a5-a968-5bc333b78ebc scope=cli:auth,rth:read,rth:sync"
     },
     {
       "result": "PASS",
@@ -52,17 +52,17 @@
     {
       "result": "PASS",
       "check": "bootstrap.workspaces_listed",
-      "detail": "org_workspaces=11 contains_a_and_b=true"
+      "detail": "org_workspaces=13 contains_a_and_b=true"
     },
     {
       "result": "PASS",
       "check": "bootstrap.membership_gate",
-      "detail": "unknown_user=403/not_member removed_member=403/not_member removed_member_poll=authorization_pending a_token_for_b=404/workspace_not_found denied_poll=access_denied outsider=326a840d-510f-40a8-a113-26a1e38e14eb"
+      "detail": "unknown_user=403/not_member removed_member=403/not_member removed_member_poll=authorization_pending a_token_for_b=404/workspace_not_found denied_poll=access_denied outsider=86274bc4-c2a4-4a65-b903-ddd214223dc5"
     },
     {
       "result": "PASS",
       "check": "messaging.register",
-      "detail": "agents=244944107541340160,244944107579088896"
+      "detail": "agents=244957997281026048,244957997339746304"
     },
     {
       "result": "PASS",
@@ -72,17 +72,17 @@
     {
       "result": "PASS",
       "check": "messaging.a_to_b",
-      "detail": "conversation=dm_293b53d82f844497fe828196 message=244944107646197760"
+      "detail": "conversation=dm_cc14b3e376a279d98f67b3a0 message=244957997411049472"
     },
     {
       "result": "PASS",
       "check": "messaging.b_to_a_same_conversation",
-      "detail": "conversation=dm_293b53d82f844497fe828196 message=244944107792998400"
+      "detail": "conversation=dm_cc14b3e376a279d98f67b3a0 message=244957997557850112"
     },
     {
       "result": "PASS",
       "check": "messaging.history",
-      "detail": "conversation=dm_293b53d82f844497fe828196 both_agents_see_ping_and_reply=true"
+      "detail": "conversation=dm_cc14b3e376a279d98f67b3a0 both_agents_see_ping_and_reply=true"
     },
     {
       "result": "PASS",
@@ -92,12 +92,12 @@
     {
       "result": "PASS",
       "check": "delivery.first",
-      "detail": "batch=55feac93be0817cba6adabd9afff063b receipt=rhr_cd5ebb6f90c9e5603bb27eed68987c5d1163eec829651c5730367dbbd7322d6c accepted=5 level=durable"
+      "detail": "batch=5bd5691bcbca91c1a890897b112a4e54 receipt=rhr_d610ba7ba84ca05c745b7075af3452ec53f3fb8bd111bd67f7e74a08b1469635 accepted=5 level=durable"
     },
     {
       "result": "PASS",
       "check": "delivery.retry_same_receipt",
-      "detail": "receipt=rhr_cd5ebb6f90c9e5603bb27eed68987c5d1163eec829651c5730367dbbd7322d6c"
+      "detail": "receipt=rhr_d610ba7ba84ca05c745b7075af3452ec53f3fb8bd111bd67f7e74a08b1469635"
     },
     {
       "result": "PASS",
@@ -207,17 +207,17 @@
     {
       "result": "PASS",
       "check": "pipeline.mint_assertion",
-      "detail": "org=48526e66-3e41-4667-ae23-a86921021579 workspace=5d4f401e-ea08-4b7d-9e74-f87abbc7e580 machine=kind-7701baf27db9 aud=https://history.kind.agentrelay.com:8443 ttl=60s"
+      "detail": "org=48526e66-3e41-4667-ae23-a86921021579 workspace=5d4f401e-ea08-4b7d-9e74-f87abbc7e580 machine=kind-77d81968c335 aud=https://history.kind.agentrelay.com:8443 ttl=60s"
     },
     {
       "result": "PASS",
       "check": "pipeline.courier_push",
-      "detail": "session=824597d8-77f5-41f8-9ddc-328f2664b4c5 machine=kind-7701baf27db9 sessions=1 uploaded=1 chunks=1"
+      "detail": "session=a5c37b5e-76bd-4a48-b0ed-1804fec27009 machine=kind-77d81968c335 sessions=1 uploaded=1 chunks=1"
     },
     {
       "result": "PASS",
       "check": "pipeline.hoopdb_indexer",
-      "detail": "session=824597d8-77f5-41f8-9ddc-328f2664b4c5 indexed=true"
+      "detail": "session=a5c37b5e-76bd-4a48-b0ed-1804fec27009 indexed=true"
     },
     {
       "result": "PASS",
@@ -272,12 +272,12 @@
     {
       "result": "PASS",
       "check": "cleanup.relaycast_a",
-      "detail": "deleted=244944106169802752"
+      "detail": "deleted=244957996358279168"
     },
     {
       "result": "PASS",
       "check": "cleanup.relaycast_b",
-      "detail": "deleted=244944106173997056"
+      "detail": "deleted=244957996396027904"
     },
     {
       "result": "PASS",
@@ -292,7 +292,7 @@
     {
       "result": "PENDING",
       "check": "cleanup.control_plane_workspaces",
-      "detail": "no workspace delete API (DELETE answered 404); kept e2e-e2emw6y5xlo239d44-a,e2e-e2emw6y5xlo239d44-b in org 48526e66-3e41-4667-ae23-a86921021579; outsider user 326a840d-510f-40a8-a113-26a1e38e14eb has no membership"
+      "detail": "no workspace delete API (DELETE answered 404); kept e2e-e2emw704wx4bbdc59-a,e2e-e2emw704wx4bbdc59-b in org 48526e66-3e41-4667-ae23-a86921021579; outsider user 86274bc4-c2a4-4a65-b903-ddd214223dc5 has no membership"
     }
   ]
 }

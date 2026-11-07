@@ -1,0 +1,18 @@
+{
+  "scope": "explicit legacy receipt recovery plus live reuse-up and current proof; not a fresh create/down cycle",
+  "infraRevision": "3686081d2c2cb62ede297e989a623b653d85d8c0",
+  "profile": "core",
+  "nativeIdentityMatchesPriorAndCurrentReceipts": true,
+  "ownershipVersion": 1,
+  "recipeSha256": "625a5978ea79d2aefb70f1c4aefba6fedf843ebb5e7a760ea57a5dd29dfb1e72",
+  "kindUpExit": 0,
+  "proofExit": 2,
+  "proofResult": "PENDING",
+  "checks": {
+    "PASS": 54,
+    "PENDING": 4
+  },
+  "freshCombinedAclJob": "kind-combined-acl-4c967ab423eab51b",
+  "freshCombinedAclJobComplete": true,
+  "offlineChecksPassed": 32
+}

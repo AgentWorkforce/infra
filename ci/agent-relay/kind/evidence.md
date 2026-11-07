@@ -8,18 +8,22 @@ The first negative run used PR #76 at `73f9a0eb8ab52e390856e5bd5ca3812e19f5fe7a`
 No cloud account, registry publication, deployment outside kind, or image/volume
 pruning was performed.
 
-## Lifecycle changes after the runtime receipt
+## Current ownership and live reuse validation
 
-The PR branch subsequently received ownership hardening (`d5a6bc4`, composed at
-`a0b33f8`). Twenty offline tests pass on the composed tree: ten profile/schema/TLS
-checks and ten mocked ownership refusal/reuse/creation checks. The ownership
-suite contacts no Docker daemon or cluster; its deletion message refers only to
-a mocked fixture. The real cluster and its older ownership receipt were not
-changed or adopted. The new lifecycle refuses legacy name-only receipts.
+At source `3686081`, explicit recovery required the native UID already captured
+in the original readiness receipt, matched it against the live cluster and node
+labels, backed up the legacy record and wrote versioned local ownership. It did
+not recreate the cluster or replace the kubeconfig. Normal reuse still refuses
+legacy receipts; the explicit action does not derive ownership from live labels
+or a live UID alone.
 
-The 54 PASS / 4 PENDING runtime receipt below remains evidence for its pinned
-source revision, not a new acceptance run of the ownership-hardened lifecycle.
-A fresh lifecycle/bootstrap proof has not been run on this latest head.
+The hardened `kind-up` then completed with exit 0, including a newly created
+combined ACL-check Job. The full core proof reran on that source: 54 PASS,
+0 FAIL, 4 PENDING, exit 2. The [lifecycle receipt](lifecycle-proof.json) records
+this live recovery/reuse validation and the fresh ACL Job. This was not a fresh
+cluster creation/deletion cycle. Thirty-two offline checks also pass: 15 ownership,
+5 harness, 10 profile/schema/TLS and 2 bootstrap checks. Those offline suites do
+not operate on the real cluster.
 
 ## Current core setup and protocol proof
 
@@ -31,7 +35,7 @@ make kind-proof-core PYTHON=python3
 Setup completed with exit 0 and a readiness receipt, including the application
 returning HTTP 200 over verified TLS. The protocol proof exits 2 (**PENDING**),
 not 0. Its [complete credential-checked report](core-proof.json) records proof
-source `2efcca7`, 54 passing checks, no failed checks, and four pending checks.
+source `3686081`, 54 passing checks, no failed checks, and four pending checks.
 The [image/generation receipt](core-images.json) records the exact setup inputs.
 Selected literal proof output:
 
