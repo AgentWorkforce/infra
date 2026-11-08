@@ -222,7 +222,21 @@ class StagedPlanLifecycleTests(unittest.TestCase):
         self.shows = []
         self.environment = {"TF_BIN": "terraform"}
 
+    def test_owner_checked_before_init_and_only_owner_dropped_from_backend(self):
+        self.command("plan")
+        backend, env, position = self.owner_checks[0]
+        args, init_env = self.calls[position]
+        self.assertEqual(args[2], "init")
+        self.assertEqual(env, init_env)
+        path = Path(next(x.split("=", 1)[1] for x in args if x.startswith("-backend-config=")))
+        self.assertNotEqual(path, self.backend)
+        self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+        expected = {key: value for key, value in backend.items() if key != "expected_bucket_owner"}
+        self.assertEqual(json.loads(path.read_text()), expected)
+        self.assertIn("expected_bucket_owner", backend)
+
     def command(self, command, approval=None):
+        self.owner_checks = getattr(self, "owner_checks", [])
         args = [command, "--variables", str(self.variables), "--backend", str(self.backend), "--run-dir", str(self.root / "runs")]
         if approval is not None:
             args += ["--approve-plan", approval]
@@ -253,7 +267,7 @@ class StagedPlanLifecycleTests(unittest.TestCase):
                 self.hook(operation, args, kwargs["env"])
             if operation == "apply" and self.fail_apply:
                 raise subprocess.CalledProcessError(1, args)
-        with patch.dict(runner.os.environ, self.environment, clear=True), patch.object(runner, "verify_bucket_owner"), patch.object(runner, "ROOT", self.source), patch.object(runner, "STACK", self.stack), patch.object(runner.subprocess, "check_output", side_effect=output), patch.object(runner.subprocess, "run", side_effect=run), contextlib.redirect_stdout(io.StringIO()):
+        with patch.dict(runner.os.environ, self.environment, clear=True), patch.object(runner, "verify_bucket_owner", side_effect=lambda backend, env: self.owner_checks.append((backend, env, len(self.calls)))), patch.object(runner, "ROOT", self.source), patch.object(runner, "STACK", self.stack), patch.object(runner.subprocess, "check_output", side_effect=output), patch.object(runner.subprocess, "run", side_effect=run), contextlib.redirect_stdout(io.StringIO()):
             return runner.main(args)
 
     def receipt(self):

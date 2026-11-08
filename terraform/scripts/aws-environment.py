@@ -137,10 +137,7 @@ def read_inputs(variables_path, backend_path):
 def terraform_backend_config(directory, backend):
     """Write the backend settings Terraform accepts; the wrapper enforces the bucket owner itself."""
     path = Path(directory) / "backend-config.json"
-    settings = {key: value for key, value in backend.items() if key != "expected_bucket_owner"}
-    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(descriptor, "w") as handle:
-        json.dump(settings, handle)
+    private_json(path, {key: value for key, value in backend.items() if key != "expected_bucket_owner"})
     return path
 
 
