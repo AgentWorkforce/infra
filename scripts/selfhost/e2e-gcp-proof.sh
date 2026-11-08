@@ -627,7 +627,7 @@ case_begin 8 "Sessions Pipeline"
 if $SKIP_SESSIONS_PIPELINE; then
   case_skip "--skip-sessions-pipeline"
 else
-  BULLS_POD="$(find_pod "$BULLS_NAMESPACE" 'app.kubernetes.io/name=session-ingest-api')"
+  BULLS_POD="$("${KB[@]}" get pods --field-selector=status.phase=Running -o json 2>/dev/null | python3 "$HERE/session-identities.py" ingest-pod)"
   if [[ -z "$BULLS_POD" ]]; then
     emit FAIL pipeline.ingest_pod "no running alleyoop ingest pod"
   else
@@ -668,10 +668,13 @@ else
         emit FAIL pipeline.trace "verify returned no trace id; worker logs not checked"
       else
         for worker in hoopdb-indexer referee bob-costas; do
-          # bulls96-worker-<w> in the GKE proof's own Sessions namespace,
-          # <release>-worker-<w> under the umbrella chart (EKS).
-          dep="$("${KB[@]}" get deploy -o name 2>/dev/null | grep -E -- "-worker-${worker}\$" | head -n 1)"
-          dep="${dep:-deploy/bulls96-worker-$worker}"
+          # Resolve the unchanged engine SERVICE, independent of legacy/new
+          # public resource names. Ambiguous matches fail instead of guessing.
+          dep="$("${KB[@]}" get deploy -o json 2>/dev/null | python3 "$HERE/session-identities.py" worker "$worker")"
+          if [[ -z "$dep" ]]; then
+            emit FAIL "pipeline.logs_$worker" "expected one deployment for engine stage $worker"
+            continue
+          fi
           lines="$("${KB[@]}" logs "$dep" --since-time="$pushed_at" 2>/dev/null | grep -c -- "$trace")"
           leaks="$("${KB[@]}" logs "$dep" --since-time="$pushed_at" 2>/dev/null | grep -c -- "$marker")"
           if ((lines > 0 && leaks == 0)); then

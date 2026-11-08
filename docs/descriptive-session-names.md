@@ -12,6 +12,11 @@ application images, database migrations or internal engine entrypoints.
 | Session metadata indexing | `session-metadata-indexer` | Deployment in `sessions-pipeline-worker` |
 | Session status updates | `session-status-worker` | Deployment in `sessions-pipeline-worker` |
 
+Default worker Deployment names are scoped by the chart fullname; the local
+kind profile explicitly pins the five short public names. Each worker accepts
+`components.<internal-stage>.fullnameOverride` for an explicit identity.
+Different standalone releases retain separate defaults and fullname overrides.
+
 The three workers still share a chart; they are not three new chart packages.
 The engine still selects `bob-costas`, `hoopdb-indexer`, `referee` and
 `alleyoop-ingest` through `SERVICE`. Storage adapter environment names and
@@ -61,3 +66,9 @@ cutover: stop the old indexer before creating its replacement (Deployment
 old storage claim explicitly, update DNS consumers, and verify seeded data and
 rollback before removing old resources. Do not delete a PVC to make the rename
 work. The current running QA installation is not renamed by this PR.
+
+The local `kind-up` driver refuses existing `kind-locker` resources before
+invalidating readiness or changing resources. It never adopts a differently
+named Helm release or silently switches an existing installation to an empty
+claim. Preserve the old release and complete a reviewed data-preserving cutover
+before rerunning the new recipe.

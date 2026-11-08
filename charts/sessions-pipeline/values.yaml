@@ -8,7 +8,7 @@
 ## ("hoopdb-app", key "uri"); nothing else to create.
 ##
 ## One release per namespace: dependency objects use fixed names (hoopdb,
-## locker, otel-collector) so the app charts can address them.
+## session-object-storage, otel-collector) so the app charts can address them.
 
 global:
   imageRegistry: ghcr.io

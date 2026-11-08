@@ -516,6 +516,15 @@ class Stack:
             time.sleep(2)
         raise StackError(f"Job {name} did not complete in {seconds}s")
 
+    def require_no_legacy_storage(self):
+        if not self.k("get", "namespace", NS, "--ignore-not-found", "-o", "json", namespace=None).stdout.strip():
+            return  # A previously created, owned cluster may still be empty.
+        objects = json.loads(self.k("get", "deploy,pvc", "-o", "json").stdout).get("items", [])
+        for item in objects:
+            metadata = item.get("metadata", {})
+            if metadata.get("name") == "locker" or metadata.get("annotations", {}).get("meta.helm.sh/release-name") == "kind-locker":
+                raise StackError("legacy kind-locker storage exists: preserve its release/PVC and complete a reviewed data-preserving cutover before kind-up; no reset or replacement was attempted")
+
     def up(self):
         for tool in ("docker", "kind", "kubectl", "helm", "openssl", "git"):
             if not shutil.which(tool):
@@ -526,6 +535,7 @@ class Stack:
         # preparing any images/resources; cluster() checks again before use.
         if self.name in self.cmd(["kind", "get", "clusters"], timeout=30).stdout.splitlines():
             self.require_owned_cluster()
+            self.require_no_legacy_storage()
         ready = self.state / "ready.json"
         if ready.exists():
             ready.unlink()

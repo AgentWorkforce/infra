@@ -146,6 +146,7 @@ REQUIRED_FILES = (
     "scripts/release/validate-customer-release.py",
     "scripts/selfhost/README.md",
     "scripts/selfhost/verify-agent-relay.sh",
+    "scripts/selfhost/session-identities.py",
     "LICENSE",
     "THIRD_PARTY_NOTICES.md",
 )

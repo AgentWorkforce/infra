@@ -226,6 +226,8 @@ workerHealth:
 # ledger is complete, so apply order does not matter.
 components:
   hoopdb-indexer:
+    # Optional explicit Deployment identity; otherwise fullname-scoped.
+    fullnameOverride: ""
     enabled: true
     # Keep at 1: the manifest reconcile is not leader-elected yet.
     replicas: 1
@@ -234,6 +236,8 @@ components:
       requests: { cpu: 50m, memory: 128Mi }
       limits: { memory: 512Mi }
   referee:
+    # Optional explicit Deployment identity; otherwise fullname-scoped.
+    fullnameOverride: ""
     enabled: true
     replicas: 1
     env: []
@@ -241,6 +245,8 @@ components:
       requests: { cpu: 25m, memory: 96Mi }
       limits: { memory: 384Mi }
   bob-costas:
+    # Optional explicit Deployment identity; otherwise fullname-scoped.
+    fullnameOverride: ""
     enabled: true
     replicas: 1
     env:

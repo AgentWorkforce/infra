@@ -29,7 +29,12 @@ Component object name. Usage: include "sessions-pipeline-worker.componentName" (
 */}}
 {{- define "sessions-pipeline-worker.componentName" -}}
 {{- if and (not .context.Values.legacyResourceNames) (hasKey (dict "bob-costas" "" "hoopdb-indexer" "" "referee" "") .component) -}}
-{{- include "sessions-pipeline-worker.publicComponent" . -}}
+{{- $override := dig .component "fullnameOverride" "" .context.Values.components -}}
+{{- if $override -}}
+{{- include "sessions-pipeline-worker.fit" $override -}}
+{{- else -}}
+{{- include "sessions-pipeline-worker.fit" (printf "%s-%s" (include "sessions-pipeline-worker.fullname" .context) (include "sessions-pipeline-worker.publicComponent" .)) -}}
+{{- end -}}
 {{- else -}}
 {{- include "sessions-pipeline-worker.fit" (printf "%s-%s" (include "sessions-pipeline-worker.fullname" .context) .component) }}
 {{- end -}}

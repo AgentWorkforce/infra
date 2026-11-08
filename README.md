@@ -159,20 +159,20 @@ helm install sessions-pipeline agentworkforce/sessions-pipeline -n sessions-pipe
 
 #### Upgrading a release of the former `96bulls` chart
 
-The umbrella was renamed from `96bulls` (last released as 0.5.4) to
-`sessions-pipeline` (0.6.0). An existing release upgrades in place:
-`helm upgrade <release> agentworkforce/sessions-pipeline -f <your values>`.
-Resource names and selectors are unchanged, because the worker subchart alias
-is still `worker`. Only the `helm.sh/chart` and `app.kubernetes.io/part-of`
-labels change. Two renamed defaults need a value if you relied on them. Set
-`worker.existingSecret`, `alleyoop.existingSecret` and
-`session-object-storage.existingSecret` to your current Secret name (the old default was
-`96bulls-locker`). Set
-`worker.migrations.runtimeRole` to the role your database already has. A
-standalone `96bulls-worker` release keeps its selectors only with
-`nameOverride: 96bulls-worker`; otherwise, install it fresh. Under the
-`agent-relay` umbrella (0.3.0), move your `96bulls:` overrides to
-`sessions-pipeline:`.
+The current `sessions-pipeline` 0.7.0 / `agent-relay` 0.4.0 rename changes
+resource defaults. Before upgrading, migrate values as described in the
+[descriptive-name upgrade guide](docs/descriptive-session-names.md). Retain your
+existing release name, Secret names, runtime role and storage claim. Set
+`worker.legacyResourceNames: true`, `alleyoop.legacyResourceNames: true`, and
+move the old MinIO `locker` values block to `session-object-storage` with the
+recorded old `fullnameOverride` and `nameOverride`. Do not use `--reuse-values`.
+
+A standalone former `96bulls-worker` release also needs
+`legacyResourceNames: true` together with `nameOverride: 96bulls-worker` to retain
+its old Deployment names and selectors. `nameOverride` alone is insufficient.
+Under the `agent-relay` umbrella, move old `96bulls:` overrides to
+`sessions-pipeline:`. A deliberate resource rename requires a separate drained,
+seeded upgrade/rollback test; these source changes do not establish that proof.
 
 The charts default to `ghcr.io/agentworkforce/96bulls-services`, pinned by
 digest. That hosted-service package is private. For direct installs, create a
@@ -394,11 +394,11 @@ native AWS S3 endpoint.
 ```bash
 helm install sessions-pipeline-worker agentworkforce/sessions-pipeline-worker -n sessions-pipeline --create-namespace \
   --set existingSecret=sessions-pipeline \
-  --set locker.endpoint=http://locker:9000 \
+  --set locker.endpoint=http://session-object-storage:9000 \
   --set tenant.orgId=<org>
 helm install session-ingest-api agentworkforce/session-ingest-api -n sessions-pipeline \
   --set existingSecret=sessions-pipeline \
-  --set locker.endpoint=http://locker:9000 \
+  --set locker.endpoint=http://session-object-storage:9000 \
   --set tenant.orgId=<org> \
   --set auth.jwksUrl=https://<relayauth>/.well-known/jwks.json
 ```
