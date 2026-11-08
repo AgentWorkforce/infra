@@ -72,6 +72,12 @@ DOMAIN="${DOMAIN%/}"
 if [[ -z "$DOMAIN" || "$DOMAIN" == "$api_url" ]]; then
   echo "E2E_RESULT=FAIL"; echo "reason: installed Control SELFHOST_PUBLIC_URL is not https://api.<domain> (got ${api_url:-none})"; exit 1
 fi
+if [[ -n "${EKS_PROOF_CONTROL_DEPLOYMENT:-}" && -z "${E2E_CONTROL_DEPLOYMENT:-}" ]]; then
+  export E2E_CONTROL_DEPLOYMENT="$EKS_PROOF_CONTROL_DEPLOYMENT"
+fi
+if [[ -n "${EKS_ALB_CONTROL_SERVICE:-}" && -z "${E2E_CONTROL_SERVICE:-}" ]]; then
+  export E2E_CONTROL_SERVICE="$EKS_ALB_CONTROL_SERVICE"
+fi
 DASHBOARD="https://$DOMAIN"
 API="https://api.$DOMAIN"
 CAST="https://cast.$DOMAIN"
