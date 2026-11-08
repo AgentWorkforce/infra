@@ -24,24 +24,25 @@ terraform/
 Azure is on hold. A `modules/azure/<capability>` set with the same four
 interfaces would slot in beside these.
 
-## Current main-store direction — 2026-11-07
+## Current main-store direction
 
-The required AWS application topology is **one RDS instance, one application
-PostgreSQL database, separate service schemas**. Control and HoopDb share that
-database; Relaycast must use it for authoritative relational state as well.
-The AWS roots now expose `postgres_service_bindings` from the provider-free
-[`postgres-layout`](modules/postgres-layout) contract. It rejects schema/role
-collisions and keeps complete independent bindings for a later service split.
-Read [the shared-store contract](../docs/shared-postgres-storage-contract.md)
-for exact target namespaces, missing application work and required proof.
+The AWS application target is **one RDS instance with separate service databases**:
+`relaycontrol` for Control, `hoopdb` for pipeline state, `relaycast` for messaging,
+and `relayfile` for the optional add-on. Keep independent migration/runtime roles
+and each service's canonical schema. History remains a pipeline capability;
+standalone legacy History/Auth services are not new target dependencies.
 
-The default initial database name stays `relaycontrol` to preserve existing
-resource identity, including for new installations. Set
-`application_database_name` to choose a different name for a new installation. Changing it on an existing instance needs replacement/data
-migration review. Binding outputs do not bootstrap SQL or make current images
-schema-aware. `application_sql_ready` is false until that work is proved.
-Older separate-database, dedicated-HoopDb and SQLite examples below describe
-existing compatibility paths, not acceptance of this new target.
+The roots expose non-secret `postgres_service_bindings` from
+[`postgres-layout`](modules/postgres-layout). Binding validation does not create
+SQL objects or qualify runtime images. `application_sql_ready` stays false.
+The [storage contract](../docs/shared-postgres-storage-contract.md) defines the
+remaining managed-bootstrap, TLS, cross-database isolation and application proof.
+
+`application_database_name` keeps the existing initial Control database name,
+`relaycontrol`, by default. It does not rename the other service databases.
+Changing an existing RDS db_name may replace infrastructure and is never an
+implicit migration. An empty module `service_databases` map retains the older
+shared-database contract for compatibility; AWS roots explicitly use separate DBs.
 
 ## Cloud mapping
 
@@ -80,7 +81,12 @@ For dedicated Relay Chief EC2 hosts, see
 [`aws/relay-chief-slots`](modules/aws/relay-chief-slots). It stands alone and is
 not part of the Helm install. It has not been applied or qualified.
 
-### What the stack consumes
+### What current compatibility profiles consume
+
+This inventory includes the published legacy History and durable-actors
+profiles. For a fresh installation, use the separate-service database bindings
+in the [current target contract](../docs/shared-postgres-storage-contract.md).
+Legacy components in this inventory do not become new target dependencies.
 
 - **Postgres.** Every database is PostgreSQL 17:
   - relay-control (relaycontrol): Secret keys `database-url` (runtime role `control_api_runtime`) and `database-migrations-url` (owner).
@@ -203,11 +209,9 @@ The example roots print the non-secret values-file paths as a `chart_values` out
 
 <a id="postgres-bootstrap-before-the-first-migrate"></a>
 
-## Legacy separate-database bootstrap (not the shared-store target)
+## PostgreSQL bootstrap before the first migrate
 
-Do not run this dedicated-database bootstrap against the new shared application
-database. The shared schema/role/default-ACL bootstrap requires application-owner
-review and isolation proof described in the [new contract](../docs/shared-postgres-storage-contract.md).
+This PR provides no runnable bootstrap for the complete target. Database creation, owner/runtime LOGIN activation and migrations require an accepted per-service bootstrap artifact before installation; bindings or manual Secret URL edits do not supply one. The historical prerequisites below describe scope only and are not a complete RDS install procedure. Preserve existing data and verify the exact image/profile before running any step.
 
 The modules create the server, and on GCP optionally the databases. They do
 not connect to Postgres. Before you install or upgrade the chart, run this from
@@ -216,19 +220,15 @@ user, `rds_superuser`, read from `master_user_secret_arn`; or the Cloud SQL
 `admin_user`, `cloudsqlsuperuser`):
 
 1. **Databases and roles.**
-   - Create one database per component: `relaycontrol`, `relayhistory`, `hoopdb`, and optionally the durable-actors database. On RDS, `database_name` creates only the first; on Cloud SQL, use `databases`.
-   - Create each owner role (the `*-migrations-url` user) and runtime login role: `control_api_runtime`, `relayhistory_runtime`, and the HoopDb runtime role (`sessions_runtime`).
+   - Target databases are `relaycontrol`, `hoopdb`, `relaycast` and optionally `relayfile`. Retain a legacy `relayhistory` or durable-actors database until its separately reviewed cutover; do not create those as new target dependencies. On RDS, `database_name` creates only the first; on Cloud SQL, use `databases`.
+   - The target migration owners are `control_owner`, `hoop`, `relaycast_owner`, and (when enabled) `relayfile_owner`. Their runtime logins are `control_api_runtime`, `sessions_pipeline_runtime`, `relaycast_runtime`, and `relayfile_runtime`, respectively. Keep legacy `relayhistory_runtime` only for an existing legacy deployment, outside the new target.
    - Store their passwords in Secrets Manager or Secret Manager. They become the URLs in the release Secret.
-2. **Extensions.** In `relayhistory` and `hoopdb`, run `CREATE EXTENSION IF NOT
-   EXISTS vector; CREATE EXTENSION IF NOT EXISTS pg_trgm;`. `vector` is not a
-   trusted extension, so the migrations' own `IF NOT EXISTS` must find it
-   already created. On RDS both are allowed by default. If you set
-   `allowed_extensions`, the module always adds them.
+2. **Extensions.** Install only the extension manifest required by each pinned service generation. HoopDb's accepted bootstrap must supply its required extensions (for example `vector`, `pg_trgm` and, when required by that generation, `btree_gin`). The older `relayhistory` extension instructions apply only to an existing legacy History database; fresh target installations do not create one. Confirm managed-provider support and administrator ownership before migration.
 3. **HoopDb role bootstrap, before the sessions-pipeline migrate Job.** Run the
    SQL shipped in the services image you deploy (`/app/supabase/bootstrap/`).
    Otherwise migrate fails with `42501` or waits for roles:
    - **Cloud SQL** (`migrations.databaseMode: cloudsql`, `roleBootstrap: false`, `values-gcp.yaml`): run `cloudsql_migration_roles.sql`, `session_directory_search_worker.sql` and `cloudsql_owner_function_default_revoke.sql` as the migration owner (`charts/sessions-pipeline/ci/gcp-cloudsql-values.yaml`).
-   - **HoopDb on AWS:** run HoopDb on the chart's in-cluster CloudNativePG (as `values-eks.yaml` does), and use RDS or Aurora for relaycontrol and relayhistory. The chart's pre-migrate Jobs then create the HoopDb runtime role and the function-default revoke; `session_token_verifier.sql` and `session_ingest_roles.sql` (next bullet) stay an operator step. The external-Postgres steps (`databaseMode: selfhosted`, `charts/sessions-pipeline/profiles/external-selfhosted.yaml`: `session_directory_search_worker.sql`, `hoopdb_runtime_role.sql`, `hoopdb_function_default_revoke.sql`) need a true superuser. RDS and Aurora provide `rds_superuser` instead, which cannot run the function-default revoke, so keep HoopDb off RDS until that bootstrap is adapted to the `rds_superuser` model.
+   - **HoopDb on AWS:** the older `values-eks.yaml` profile uses CloudNativePG and is a legacy compatibility path. The target is a dedicated HoopDb database on the shared RDS instance. Use the reviewed `rds` migrator/profile and its RDS-specific bootstrap/activation contract; never reuse the `selfhosted` true-superuser function-boundary bootstrap on RDS. The RDS chart profile is tracked in [infra#104](https://github.com/AgentWorkforce/infra/pull/104); its source validation does not qualify a live installation, and Aurora support must be reviewed separately. Until the RDS profile and bootstrap/activation artifact are reviewed, available and qualified together, keep HoopDb on its existing supported database. Do not migrate it to RDS from these binding outputs or run the true-superuser bootstrap there.
    - **Both:** images newer than 7d7229b also need `session_token_verifier.sql` and `session_ingest_roles.sql` (`docs/self-hosted-eks.md`; `scripts/selfhost/eks-proof-install.sh hoopdb-roles` does this for CNPG).
 4. Then `helm upgrade --install` the chart, whose migrate Jobs run as the owners.
 
