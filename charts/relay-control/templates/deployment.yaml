@@ -21,6 +21,9 @@ spec:
     spec:
       serviceAccountName: {{ include "relay-control.serviceAccountName" . }}
       automountServiceAccountToken: false
+      {{- with .Values.services.relayhistoryHostAliases }}
+      hostAliases: {{ toYaml . | nindent 8 }}
+      {{- end }}
       terminationGracePeriodSeconds: {{ .Values.terminationGracePeriodSeconds }}
       securityContext: {{ toYaml .Values.podSecurityContext | nindent 8 }}
       {{- with .Values.imagePullSecrets }}
@@ -45,6 +48,9 @@ spec:
             - { name: RELAYCAST_PUBLIC_URL, value: {{ .Values.services.relaycastPublicUrl | quote }} }
             - { name: RELAYHISTORY_URL, value: {{ .Values.services.relayhistoryUrl | quote }} }
             - { name: RELAYHISTORY_PUBLIC_URL, value: {{ .Values.services.relayhistoryPublicUrl | quote }} }
+            {{- if .Values.services.relayhistoryReadApiUrl }}
+            {{- include "relay-control.historyConnectionEnv" . | nindent 12 }}
+            {{- end }}
             {{- include "relay-control.runtimeEnv" . | nindent 12 }}
             {{- include "relay-control.secretEnv" . | nindent 12 }}
             {{- if (.Values.postgresCa | default dict).enabled }}

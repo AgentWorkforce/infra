@@ -196,6 +196,7 @@ class Stack:
     def recipe_hash(self):
         files = [ROOT / "Makefile", ROOT / "ci/agent-relay/kind/stack.py", ROOT / "ci/agent-relay/kind/addons.py",
                  ROOT / "ci/agent-relay/kind/edge.py", ROOT / "ci/agent-relay/kind/tls.py",
+                 ROOT / "ci/agent-relay/kind/native_network.py",
                  ROOT / "ci/agent-relay/kind/bootstrap.mjs", ROOT / "ci/agent-relay/kind/control.py",
                  ROOT / "ci/agent-relay/kind/flows-sdk/package.json",
                  ROOT / "ci/agent-relay/kind/flows-sdk/package-lock.json"]
@@ -546,6 +547,17 @@ class Stack:
         for tool in ("docker", "kind", "kubectl", "helm", "openssl", "git"):
             if not shutil.which(tool):
                 raise StackError(f"missing prerequisite: {tool}")
+        from native_network import refuse_legacy_bootstrap
+        try:
+            layers = [yaml.safe_load((ROOT / "charts/agent-relay/values.yaml").read_text())]
+            args = self.values_args()
+            for index in range(0, len(args), 2):
+                if args[index] != "-f":
+                    raise StackError("unrecognized bootstrap values argument")
+                layers.append(yaml.safe_load(Path(args[index + 1]).read_text()))
+        except yaml.YAMLError:
+            raise StackError("malformed bootstrap values; no runtime mutation attempted") from None
+        refuse_legacy_bootstrap(layers)
         self.docker(require_space=False)
         # Legacy recovery needs the original ready.json as an independent UID
         # anchor. Refuse foreign/legacy ownership BEFORE invalidating it or
@@ -674,6 +686,39 @@ finally {await db.end();}'''
         from addons import build
         build(self)
 
+    def prepare_native_network(self, values_path):
+        """Prepare source-owned local networking, never install the app/profile."""
+        from native_network import preflight, ensure, selected_values, selection
+        from edge import install
+        path = Path(values_path)
+        if path.is_symlink() or not path.is_file():
+            raise StackError("--native-values must be a regular selected-values JSON file")
+        values = json.loads(path.read_text())
+        if selection(values) is None:
+            raise StackError("prepare-native-network requires an enabled nativeRouting selection")
+        self.docker(require_space=False)
+        # This explicit preparation command operates on an existing owned
+        # fixture. Full native first-boot/bootstrap is a separate recipe.
+        self.require_owned_cluster()
+        preflight(self, values)  # no gateway/ready/images mutation on refusal
+        self.dependencies()
+        base_args = ["-f", ROOT / "charts/agent-relay/values-kind-core.yaml"]
+        if self.profile == "addons":
+            base_args += ["-f", ROOT / "charts/agent-relay/values-kind-addons.yaml"]
+        selected_args = [*base_args, "-f", path.resolve()]
+        self.cmd(["helm", "template", RELEASE, "charts/agent-relay", "-n", NS, *selected_args])
+        install(self, TRAEFIK_CHART, NS, wait_for_route=False)
+        observation = ensure(self, values)
+        selected = selected_values(values, observation)
+        proposal = self.state / "native-network-values.json"
+        private_json(proposal, selected)
+        # Validate the allocated mapping too, before presenting the proposal.
+        self.cmd(["helm", "template", RELEASE, "charts/agent-relay", "-n", NS,
+                  *base_args, "-f", proposal])
+        print("Prepared owned edge networking and proposed values at " + str(proposal))
+        print("Active values, Helm app release, database, readiness and proof were not changed. "
+              "Review/install the complete selected app values separately.")
+
     def down(self):
         self.docker(require_space=False)
         self.require_owned_cluster()
@@ -694,12 +739,15 @@ def pod_spec(doc):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("action", choices=("up", "down", "render", "build-addons", "build-control", "recover"))
+    parser.add_argument("action", choices=("up", "down", "render", "build-addons", "build-control", "recover", "prepare-native-network"))
     parser.add_argument("--profile", choices=("core", "addons"), default="core")
     parser.add_argument("--expected-cluster-uid", help="original readiness UID; required only for explicit recover")
+    parser.add_argument("--native-values", help="selected values JSON; required only for prepare-native-network")
     args = parser.parse_args()
     if args.expected_cluster_uid and args.action != "recover":
         parser.error("--expected-cluster-uid is only valid for recover")
+    if (args.action == "prepare-native-network") != bool(args.native_values):
+        parser.error("prepare-native-network requires --native-values; other actions must omit it")
     os.umask(0o077)
     try:
         stack = Stack(args.profile)
@@ -716,6 +764,8 @@ def main():
         elif args.action == "build-addons":
             stack.docker(require_space=False)
             stack.build_addons()
+        elif args.action == "prepare-native-network":
+            stack.prepare_native_network(args.native_values)
         else:
             getattr(stack, args.action)()
     except (StackError, OSError, ValueError) as e:

@@ -100,6 +100,12 @@ jobs:
         run: |
           python3 -m pip install -r ci/agent-relay/kind/requirements.txt
           python3 ci/agent-relay/test_control_webapp_names.py -v
+          python3 ci/agent-relay/test_native_history_connection.py -v
+          python3 ci/agent-relay/test_native_kind_policy.py -v
+          python3 ci/sessions-pipeline-native-routing/test_native_routing.py -v
+          python3 ci/agent-relay/kind/test_native_network.py -v
+          python3 ci/agent-relay/kind/test_native_network_command.py -v
+          python3 ci/agent-relay/kind/test_native_bootstrap_guard.py -v
           python3 ci/agent-relay/kind/test_stack.py -v
           python3 ci/agent-relay/kind/test_ownership.py -v
           python3 ci/agent-relay/kind/test_control.py -v

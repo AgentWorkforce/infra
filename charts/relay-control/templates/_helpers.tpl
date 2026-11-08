@@ -77,6 +77,7 @@ settings. */ -}}
 {{- include "relay-control.validateSingleHost" . -}}
 {{- include "relay-control.validateIdentity" . -}}
 {{- include "relay-control.validateIntegrations" . -}}
+{{- include "relay-control.validateHistoryConnection" . -}}
 {{- if not (regexMatch "^https://[^/?#]+$" (include "relay-control.publicUrl" .)) }}{{ fail "publicUrl must be an HTTPS origin with no path" }}{{ end -}}
 {{- $serviceUrls := dict "relaycastUrl" .Values.services.relaycastUrl "relayhistoryUrl" .Values.services.relayhistoryUrl -}}
 {{- if .Values.services.relayauthEnabled }}{{ $_ := set $serviceUrls "relayauthUrl" .Values.services.relayauthUrl }}{{ end -}}
@@ -110,6 +111,7 @@ the chart already sets, including duplicates inside extraEnv. */ -}}
   "SELFHOST_ENCRYPTION_PREVIOUS_KEY_FILE" "SELFHOST_INTERNAL_TOKEN_FILE" "SELFHOST_OIDC_CLIENT_SECRET_FILE" "SELFHOST_SMTP_PASSWORD_FILE"
   "SELFHOST_TELEMETRY_INSTALL_KEY_FILE" -}}
 {{- if (.Values.postgresCa | default dict).enabled }}{{ $managed = append $managed "NODE_EXTRA_CA_CERTS" }}{{ end -}}
+{{- if .Values.services.relayhistoryReadApiUrl }}{{ $managed = concat $managed (list "RELAYHISTORY_READ_API_URL" "RELAYHISTORY_READ_API_EVENTS") }}{{ end -}}
 {{- range $name := $managed }}{{ if hasSuffix "_FILE" $name }}{{ $managed = append $managed (trimSuffix "_FILE" $name) }}{{ end }}{{ end -}}
 {{- range $src := list (include "relay-control.runtimeEnv" .) (include "relay-control.secretEnv" .) -}}
 {{- range $item := $src | fromYamlArray }}{{ $managed = append $managed (toString $item.name) }}{{ end -}}
