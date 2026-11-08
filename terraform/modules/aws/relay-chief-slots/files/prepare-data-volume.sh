@@ -31,10 +31,12 @@ if ! signatures="$(wipefs --no-act --noheadings "$device")"; then
 fi
 if [ -z "$signatures" ]; then
   # wipefs also reports nothing, and exits 0, when the device cannot be read, so
-  # an empty result alone does not mean blank. cmp exits 0 only if the first MiB
-  # was read and is all zeros, 1 if it differs, and 2 on a read error.
+  # an empty result alone does not mean blank. cmp exits 0 only if the first 4 KiB
+  # was read and is all zeros, 1 if it differs, and 2 on a read error. That range
+  # holds the ext4 superblock. Do not widen it: a new encrypted EBS volume was
+  # seen returning non-zero data from byte 4097 onward.
   zero_status=0
-  cmp -s -n 1048576 "$device" /dev/zero || zero_status=$?
+  cmp -s -n 4096 "$device" /dev/zero || zero_status=$?
   if [ "$zero_status" -ne 0 ]; then
     fail "the data volume is not verifiably blank (cmp status $zero_status); refusing to format it"
   fi

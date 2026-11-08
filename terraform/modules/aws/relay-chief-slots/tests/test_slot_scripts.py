@@ -453,6 +453,26 @@ class DataVolume(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertTrue(self.uuid())
 
+    def test_formats_a_new_volume_with_data_after_the_first_4_kib(self):
+        # A new encrypted EBS volume read as zeros for 4 KiB and non-zero after that.
+        with self.device.open("r+b") as handle:
+            handle.seek(4096)
+            handle.write(b"\xa5" * (2 * 1024 * 1024))
+        result = self.prepare()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(self.uuid())
+
+    def test_silent_wipefs_never_formats_with_data_in_the_first_4_kib(self):
+        with self.device.open("r+b") as handle:
+            handle.seek(4095)
+            handle.write(b"\x01")
+        before_bytes = self.device.read_bytes()
+        self.silent_wipefs()
+        result = self.prepare()
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("not verifiably blank", result.stderr)
+        self.assertEqual(self.device.read_bytes(), before_bytes, "the image must be untouched")
+
     def test_read_error_during_the_blank_check_never_formats(self):
         self.silent_wipefs()
         executable(self.bin / "cmp", "#!/usr/bin/env bash\nexit 2\n")
