@@ -6,6 +6,14 @@ The PR was open and draft when checked. This is source review and a read-only
 PostgreSQL catalog lookup, not a writer deployment or bootstrap execution.
 The kind reader and writer remain disabled.
 
+The reader's #330 head subsequently advanced to
+`0f2e866395c9122721262bb16d1430084955c878`, including tenant-RLS/admission and
+bare-pool fail-closed fixes. Those changes do not alter the three reader
+bootstrap SQL files in the source checksum list, but the writer at `e680a29a`
+has not been qualified together with that newer adapter/runtime source. A
+single approved combined image and generation must replace separate-head
+assumptions before operator wiring.
+
 ## Confirmed bootstrap defects
 
 1. `src/session-pipeline/consumer-bootstrap.ts:136` calls

@@ -3,10 +3,16 @@
 This is source review and read-only diagnosis, not an enabled deployment or an
 end-to-end pass. Core local-control proof at `fd8565c` records 57 PASS, 0 FAIL, 3 PENDING.
 
-The reviewed drafts are pipeline [#317 at a7d7a5db](https://github.com/AgentWorkforce/relayhistory-pipeline/pull/317),
+The originally reviewed source heads were pipeline [#317 at a7d7a5db](https://github.com/AgentWorkforce/relayhistory-pipeline/pull/317),
 [#318 at 441e4862](https://github.com/AgentWorkforce/relayhistory-pipeline/pull/318)
 and the additional PG-only source in [#330 at 44b81b56](https://github.com/AgentWorkforce/relayhistory-pipeline/pull/330).
-All three were open drafts when checked; no merge, enablement or deployment was done.
+They were open drafts at that source review. Subsequent status verification
+confirmed #317 merged as `d33bfdaa665f1ea5da7eac33e96b3522fa177b06` and #318 as
+`a1e1473be4174d1b26c1506159abcbd97b39fa4f`. #330 remains an open draft and has
+advanced to `0f2e866395c9122721262bb16d1430084955c878`. Its intervening commits
+add reader role admission, forced tenant RLS and fail-closed tenant-bound
+operations; that combined runtime is not qualified by the older source review.
+No enablement or deployment was done by infra.
 Relaycontrol remains a proxy to `RELAYHISTORY_URL`, with no pipeline URL added.
 
 ## Proposed chart inputs
@@ -45,11 +51,13 @@ establish a replacement for every legacy History delivery/ingest route.
 3. `readAppFromSecret` does not bind a canonical object source. Catalog therefore
    returns 501 `catalog_not_configured`; canonical transcript/object readback is
    not established by the route implementation alone.
-4. Draft CLI login accepts relaycontrol `sh_at_` tokens through introspection.
-   Current control still exchanges RelayAuth assertions. Control #20 was checked
-   open and unmerged at `4075a088`; the local MCP-capable build also predates it.
-   A compatible control/read-service auth pair is required before repointing the
-   existing History URL. No auth bridge is implemented in infra.
+4. CLI login source accepts relaycontrol `sh_at_` tokens through introspection.
+   The installed fixture still exchanges RelayAuth assertions. Control #20 has
+   merged as `bae78a524fbce4fb3ab231372417bc2dfac04cad`; infra #91 qualifies a
+   local candidate artifact, without installing it or proving replacement
+   upload/read compatibility. A compatible control/read-service auth pair is
+   required before repointing the existing History URL. No auth bridge is
+   implemented in infra.
 
 These belong to the pipeline/control/History service owners. The chart must not
 invent missing runtime composition, bypass grants, mirror session rows between
