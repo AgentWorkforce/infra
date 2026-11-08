@@ -21,6 +21,7 @@
 #                            EKS_PROOF_CNPG_CLUSTERS (space separated) when
 #                            some databases are external, such as RDS
 #                            or to "none" to require that no CNPG cluster exists
+#                            (it fails if the clusters cannot be listed)
 #
 # Run it under the Pippen lease, so kubectl and aws use the session role:
 #
@@ -173,6 +174,7 @@ done
 # proven by the application cases, which read and write through them.
 read -r -a cnpg_wanted <<<"${EKS_PROOF_CNPG_CLUSTERS:-control-api-pg hoopdb relayhistory-pg}"
 cnpg="$("${K[@]}" get cluster.postgresql.cnpg.io -o jsonpath='{range .items[*]}{.metadata.name}={.status.phase}{";"}{end}' 2>/dev/null)"
+cnpg_rc=$?
 cnpg_ok=true
 cnpg_detail=""
 # A blank override names nothing, and a check of nothing must not pass.
@@ -182,7 +184,10 @@ if ((${#cnpg_wanted[@]} == 0)); then
 fi
 if [[ "${cnpg_wanted[*]-}" == none ]]; then
   cnpg_wanted=()
-  if [[ -n "$cnpg" ]]; then
+  if ((cnpg_rc != 0)); then
+    cnpg_ok=false
+    cnpg_detail="could not list CNPG clusters;"
+  elif [[ -n "$cnpg" ]]; then
     cnpg_ok=false
     cnpg_detail="expected none, found ${cnpg};"
   else
