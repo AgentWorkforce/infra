@@ -29,5 +29,8 @@ dependencies:
 - name: telemetry-collector
   repository: file://../telemetry-collector
   version: 0.1.0
-digest: sha256:66c9f7ca2ce25b262500e5d04a112b9834a0c689c1d65d7070d30471e72012fc
-generated: "2026-11-08T11:07:19.995507266-08:00"
+- name: relay-chief
+  repository: file://../relay-chief
+  version: 0.1.0
+digest: sha256:63a316e3366b395054942d80b26000ac469b47894f3d16ff27c8e98758bd1a08
+generated: "2026-11-08T12:15:08.109277348-08:00"
