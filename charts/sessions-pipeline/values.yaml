@@ -377,3 +377,50 @@ readApi:
   resources:
     requests: { cpu: 50m, memory: 128Mi }
     limits: { memory: 512Mi }
+
+# Separate public upload edge from merged pipeline #363. This is NOT the
+# internal alleyoop-ingest worker. No profile enables it or supplies an image.
+# Initial supported assembly is test/pilot only; deletion/privacy is incomplete.
+ingestEdge:
+  enabled: false
+  fullnameOverride: ""
+  image:
+    repository: ghcr.io/agentworkforce/96bulls-services
+    digest: ""
+    pullPolicy: IfNotPresent
+  imagePullSecrets: []
+  port: 8081
+  # Normalized public HTTPS origin; must equal the reader's READ_API_ORIGIN.
+  origin: ""
+  allowInClusterHttp: false
+  relaycontrol:
+    # Base origin only; the client appends /internal/v1/auth/introspect.
+    url: ""
+  config:
+    existingSecret: ""
+    databaseUrlKey: database-url
+    introspectSecretKey: introspect-secret
+  postgres:
+    # The server must already serve TLS under this CA, with matching DNS.
+    caConfigMap: ""
+    caKey: ca.crt
+    caSha256: ""
+    poolMax: 4
+  locker:
+    # S3/MinIO only in this slot. Use a qualified Service DNS for HTTP.
+    bucket: ""
+    endpoint: ""
+    region: us-east-1
+    existingSecret: ""
+    accessKeyIdKey: access-key-id
+    secretAccessKeyKey: secret-access-key
+  maxPerUser: 4
+  maxPerOrg: 32
+  serviceAccountName: ""
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  podAnnotations: {}
+  resources:
+    requests: { cpu: 50m, memory: 128Mi }
+    limits: { memory: 512Mi }

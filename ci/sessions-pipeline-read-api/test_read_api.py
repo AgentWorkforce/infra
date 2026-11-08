@@ -182,5 +182,138 @@ class ReadApi(unittest.TestCase):
             server.shutdown(); server.server_close(); thread.join(timeout=5)
 
 
+class IngestEdge(unittest.TestCase):
+    """Merged native ingest contract; no image, database or cluster executed."""
+
+    def render(self, *, overlay=None, fail=False):
+        with tempfile.TemporaryDirectory(prefix="ingest-edge-render-") as directory:
+            cmd = ["helm", "template", "test", str(ROOT / "charts/sessions-pipeline"), "-n", "ci",
+                   "-f", str(ROOT / "charts/sessions-pipeline/ci/ingest-edge-values.yaml")]
+            if overlay:
+                f = Path(directory) / "extra.yaml"
+                f.write_text(yaml.safe_dump({"ingestEdge": overlay}))
+                cmd += ["-f", str(f)]
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+        if fail:
+            self.assertNotEqual(result.returncode, 0)
+            return result.stderr
+        self.assertEqual(result.returncode, 0, result.stderr)
+        return [d for d in yaml.safe_load_all(result.stdout) if d and
+                d.get("metadata", {}).get("labels", {}).get("app.kubernetes.io/component") == "ingest-edge"]
+
+    def test_disabled_needs_no_image_secrets_or_ca(self):
+        self.assertEqual(self.render(overlay={"enabled": False, "image": {"digest": ""},
+                         "config": {"existingSecret": ""}, "postgres": {"caConfigMap": "", "caSha256": ""}}), [])
+
+    def test_edge_is_distinct_internal_service_with_secret_refs_and_ca(self):
+        docs = self.render()
+        self.assertEqual({d["kind"] for d in docs}, {"Deployment", "Service"})
+        deploy = next(d for d in docs if d["kind"] == "Deployment")
+        service = next(d for d in docs if d["kind"] == "Service")
+        pod = deploy["spec"]["template"]["spec"]
+        c = pod["containers"][0]
+        env = {e["name"]: e for e in c["env"]}
+        self.assertEqual(deploy["metadata"]["name"], "test-ingest-edge")
+        self.assertEqual(service["spec"]["type"], "ClusterIP")
+        self.assertEqual(service["spec"]["selector"], deploy["spec"]["selector"]["matchLabels"])
+        self.assertEqual(c["ports"][0]["containerPort"], 8081)
+        self.assertEqual(env["SERVICE"]["value"], "session-ingest")
+        self.assertEqual(env["RELAYHISTORY_SELFHOST_INGEST"]["value"], "true")
+        self.assertEqual(env["RELAYHISTORY_INGEST_ORIGIN"]["value"], "https://history.kind.agentrelay.com:8443")
+        self.assertEqual(env["RELAYCONTROL_INTROSPECT_URL"]["value"], "http://relay-control.ci.svc.cluster.local")
+        self.assertEqual(env["INGEST_ACCEPTANCE_MODE"]["value"], "canonical")
+        self.assertEqual(env["INGEST_KEY_ROOT"]["value"], "96bulls")
+        self.assertEqual(env["SESSION_POSTGRES_TLS_PROFILE"]["value"], "custom-ca")
+        self.assertFalse(pod["automountServiceAccountToken"])
+        self.assertTrue(c["securityContext"]["readOnlyRootFilesystem"])
+        for name in ["RELAYCONTROL_INTROSPECT_SECRET", "RELAYHISTORY_INGEST_DATABASE_URL",
+                     "LOCKER_ACCESS_KEY_ID", "LOCKER_SECRET_ACCESS_KEY"]:
+            self.assertNotIn("value", env[name])
+            self.assertIn("secretKeyRef", env[name]["valueFrom"])
+        self.assertEqual(env["RELAYHISTORY_INGEST_DATABASE_URL"]["valueFrom"]["secretKeyRef"],
+                         {"name": "ingest-runtime", "key": "database-url"})
+        ca = next(v for v in pod["volumes"] if v["name"] == "postgres-ca")
+        self.assertEqual(ca["configMap"], {"name": "postgres-ca", "items": [{"key": "ca.crt", "path": "ca.crt"}]})
+        self.assertEqual(c["readinessProbe"]["httpGet"]["path"], "/readyz")
+        self.assertEqual(c["livenessProbe"]["httpGet"]["path"], "/healthz")
+        self.assertFalse(any(e.startswith(("RELAYAUTH_", "PG", "AWS_", "INGEST_PUBLISH")) for e in env))
+        self.assertNotIn("INGEST_SIGNING_KEY", env)
+        self.assertNotIn("INGEST_CUSTODY_SOURCE", env)
+        self.assertNotIn("INGEST_PRIVACY_AUTHORITY", env)
+
+    def test_missing_qualification_and_bad_numeric_inputs_refuse(self):
+        for overlay in [{"image": {"digest": ""}}, {"image": {"digest": "latest"}},
+                        {"config": {"existingSecret": ""}}, {"config": {"databaseUrlKey": ""}},
+                        {"config": {"existingSecret": "Bad Name"}},
+                        {"locker": {"existingSecret": ""}}, {"locker": {"bucket": ""}},
+                        {"postgres": {"caConfigMap": ""}}, {"postgres": {"caSha256": "not-a-hash"}},
+                        {"postgres": {"caKey": "../ca.crt"}},
+                        {"port": 0}, {"port": 65536}, {"port": 8081.5},
+                        {"postgres": {"poolMax": 33}}, {"maxPerOrg": 1001},
+                        {"enabled": "false"}, {"allowInClusterHttp": "true"}]:
+            with self.subTest(overlay=overlay):
+                self.assertIn("ingestEdge", self.render(overlay=overlay, fail=True))
+
+    def test_public_origin_is_normalized_and_keeps_nondefault_port(self):
+        for origin in ["http://history.agentrelay.com", "https://history.agentrelay.com/",
+                       "https://history.agentrelay.com:443", "https://history.agentrelay.com:0443",
+                       "https://history.agentrelay.com:08443", "https://History.agentrelay.com",
+                       "https://127.0.0.1", "https://history.internal", "https://history.example.com",
+                       "https://history.agentrelay.com:65536", "https://history.agentrelay.com?x=y"]:
+            with self.subTest(origin=origin):
+                self.assertIn("ingestEdge.origin", self.render(overlay={"origin": origin}, fail=True))
+
+    def test_endpoint_policy_refuses_external_plaintext_and_duplicate_path(self):
+        for group, field in [("locker", "endpoint"), ("relaycontrol", "url")]:
+            for url in ["http://metadata.example.com", "http://169.254.169.254", "https://127.0.0.1",
+                        "http://locker:9000", "https://user:do-not-leak@control.agentrelay.com",
+                        "https://control.agentrelay.com/internal/v1/auth/introspect",
+                        "https://control.agentrelay.com?query=1", "https://control.agentrelay.com:0"]:
+                with self.subTest(group=group, url=url):
+                    error = self.render(overlay={group: {field: url}}, fail=True)
+                    self.assertIn("ingestEdge", error)
+                    self.assertNotIn("do-not-leak", error)
+        self.assertIn("ingestEdge", self.render(overlay={"allowInClusterHttp": False}, fail=True))
+        self.render(overlay={"allowInClusterHttp": False,
+                            "relaycontrol": {"url": "https://control.agentrelay.com"},
+                            "locker": {"endpoint": "https://objects.agentrelay.com"}})
+
+    def test_no_extra_env_can_replace_auth_or_transport(self):
+        for name in ["SERVICE", "RELAYHISTORY_SELFHOST_INGEST", "INGEST_SIGNING_KEY",
+                     "PGOPTIONS", "SESSION_POSTGRES_TLS_PROFILE"]:
+            self.assertIn("extraEnv is not supported", self.render(
+                overlay={"extraEnv": [{"name": name, "value": "unsafe"}]}, fail=True))
+
+    def test_standard_kubernetes_schema(self):
+        result = subprocess.run(["kubeconform", "-strict", "-summary"], input=yaml.safe_dump_all(self.render()),
+                                capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("Valid: 2", result.stdout)
+        self.assertIn("Skipped: 0", result.stdout)
+
+    def test_umbrella_default_off_and_enabled_slot_preserve_existing_specs(self):
+        fixture = yaml.safe_load((ROOT / "charts/sessions-pipeline/ci/ingest-edge-values.yaml").read_text())
+        command = ["helm", "template", "agent-relay", str(ROOT / "charts/agent-relay"),
+                   "-n", "agent-relay", "--is-upgrade", "-f", str(ROOT / "charts/agent-relay/values-kind-core.yaml"),
+                   "-f", str(ROOT / "charts/agent-relay/upgrade/kind-control-webapp-identities.yaml")]
+        before = subprocess.run(command, capture_output=True, text=True, timeout=30)
+        self.assertEqual(before.returncode, 0, before.stderr)
+        with tempfile.TemporaryDirectory(prefix="ingest-edge-umbrella-") as directory:
+            overlay = Path(directory) / "edge.yaml"
+            overlay.write_text(yaml.safe_dump({"sessions-pipeline": {"ingestEdge": fixture["ingestEdge"]}}))
+            after = subprocess.run(command + ["-f", str(overlay)], capture_output=True, text=True, timeout=30)
+        self.assertEqual(after.returncode, 0, after.stderr)
+        def objects(raw):
+            return {(d["kind"], d["metadata"]["name"]): d for d in yaml.safe_load_all(raw) if d}
+        old, new = objects(before.stdout), objects(after.stdout)
+        self.assertFalse(any(d.get("metadata", {}).get("labels", {}).get("app.kubernetes.io/component") == "ingest-edge"
+                             for d in old.values()))
+        self.assertEqual(set(new) - set(old), {("Deployment", "agent-relay-ingest-edge"),
+                                              ("Service", "agent-relay-ingest-edge")})
+        self.assertEqual(set(old) - set(new), set())
+        for key, value in old.items():
+            self.assertEqual(new[key], value, key)
+
+
 if __name__ == "__main__":
     unittest.main()
