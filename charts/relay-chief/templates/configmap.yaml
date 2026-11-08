@@ -1,0 +1,10 @@
+{{- include "relay-chief.validate" . -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "relay-chief.fullname" . }}
+  labels:
+    {{- include "relay-chief.labels" . | nindent 4 }}
+data:
+  config.json: |
+    {{- toPrettyJson .Values.config | nindent 4 }}
