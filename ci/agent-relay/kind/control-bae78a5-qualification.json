@@ -1,0 +1,22 @@
+{
+  "scope": "config validation and pure MCP protocol only; no cluster update, migrations, or real auth/upload/read proof",
+  "sourceRevision": "bae78a524fbce4fb3ab231372417bc2dfac04cad",
+  "manifestDigest": "sha256:c8870203c31d73d6c5f489e86a410485aaa4f34862bc22e3ff85de4147aecef9",
+  "configDigest": "sha256:09efa3000dc5ce0c0fe0244a388f1db267ab2271712476653f6ee5ebc3a5f59f",
+  "dockerImageId": "sha256:ef8687dd67d8852d834752b1c969ae80411bd1158ff52d8a394689ff8df3f15e",
+  "network": "none",
+  "filesystem": "read-only with bounded ephemeral /tmp",
+  "exitCode": 0,
+  "sourceTestSha256": {
+    "config.test.ts": "078f9733336af9b0afc05bc2d085e378d53fee1225d97ee8331276b6f7e038e9",
+    "mcp-oauth-protocol.test.ts": "bcc6338686ed449e61f647ad7c6f0f71f9f785c699c3aac7dc5d45fdbda05d0a"
+  },
+  "compiledModuleSha256": {
+    "config.js": "3724f4b607077f29a37c97691254bef262fe75758de91434d8135dd434371b03",
+    "mcp/oauth/protocol.js": "8b22e967753b082f85cfb1454ea9af19da0538e8276f869efba09106268ca2b5"
+  },
+  "tests": 23,
+  "passed": 23,
+  "failed": 0,
+  "skipped": 0
+}

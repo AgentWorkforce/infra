@@ -1,0 +1,9 @@
+{
+  "sourceRevision": "bae78a524fbce4fb3ab231372417bc2dfac04cad",
+  "tag": "agent-relay-kind/selfhost-api:bae78a5",
+  "architecture": "arm64",
+  "reference": "agent-relay-kind/selfhost-api@sha256:c8870203c31d73d6c5f489e86a410485aaa4f34862bc22e3ff85de4147aecef9",
+  "manifestDigest": "sha256:c8870203c31d73d6c5f489e86a410485aaa4f34862bc22e3ff85de4147aecef9",
+  "configDigest": "sha256:09efa3000dc5ce0c0fe0244a388f1db267ab2271712476653f6ee5ebc3a5f59f",
+  "node": "node:22.23.3-bookworm-slim@sha256:3ed98443660ff48413b5af19ecefce3b9d50845a901a43420d47cc63a9fddbe9"
+}
