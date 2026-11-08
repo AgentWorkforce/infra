@@ -137,4 +137,51 @@ class History(unittest.TestCase):
             with self.subTest(case=i), self.assertRaises(g.SearchModeError): g.admit(p)
 
 
+ROLE = g.PREFIX + 'aws_iam_role.workload["indexer"]'
+ROLE_POLICY = g.PREFIX + 'aws_iam_role_policy.workload["indexer"]'
+DOC = json.dumps({'Version': '2012-10-17', 'Statement': [{'Effect': 'Allow', 'Action': ['es:ESHttpGet'], 'Resource': '*'}]})
+SAME_DOC = json.dumps({'Statement': {'Resource': '*', 'Action': 'es:ESHttpGet', 'Effect': 'Allow'}, 'Version': '2012-10-17'})
+
+
+def sibling_plan():
+    p = fixture(mode=False)
+    next(r for r in state(p) if r['address'] == POLICY)['values']['access_policies'] = DOC
+    for address, kind, values in [(ROLE, 'aws_iam_role', {'id': 'role'}), (ROLE_POLICY, 'aws_iam_role_policy', {'id': 'role:p', 'name': 'p', 'policy': DOC})]:
+        state(p).append({'address': address, 'mode': 'managed', 'type': kind, 'values': values})
+        p['resource_changes'].append({'address': address, 'mode': 'managed', 'type': kind, 'change': {'actions': ['no-op'], 'before': values, 'after': values, 'after_unknown': {}}})
+    p['resource_drift'] = [
+        {'address': g.PROTECTED, 'change': {'actions': ['update'], 'before': {'id': 'domain-id', 'access_policies': None}, 'after': {'id': 'domain-id', 'access_policies': SAME_DOC}}},
+        {'address': ROLE, 'change': {'actions': ['update'], 'before': {'id': 'role', 'inline_policy': []}, 'after': {'id': 'role', 'inline_policy': [{'name': 'p', 'policy': SAME_DOC}]}}},
+    ]
+    return p
+
+
+class SiblingDrift(unittest.TestCase):
+    def test_sibling_written_fields_are_admitted(self):
+        self.assertEqual(g.admit(sibling_plan()), 'enrolled')
+
+    def test_everything_else_still_holds(self):
+        def domain(p): return p['resource_drift'][0]['change']
+        def role(p): return p['resource_drift'][1]['change']
+        cases = {
+            'other field': lambda p: domain(p)['after'].update(engine_version='x'),
+            'domain value differs': lambda p: domain(p)['after'].update(access_policies=json.dumps({'Statement': []})),
+            'invalid document': lambda p: domain(p)['after'].update(access_policies='{'),
+            'replace action': lambda p: domain(p).update(actions=['delete', 'create']),
+            'identity changed': lambda p: domain(p)['after'].update(id='other'),
+            'unknown after': lambda p: domain(p).update(after_unknown={'access_policies': True}),
+            'domain policy absent': lambda p: state(p).__setitem__(1, {**state(p)[1], 'address': g.PREFIX + 'aws_opensearch_domain_policy.gone'}),
+            'extra inline policy': lambda p: role(p)['after']['inline_policy'].append({'name': 'extra', 'policy': DOC}),
+            'inline name differs': lambda p: role(p)['after'].update(inline_policy=[{'name': 'q', 'policy': DOC}]),
+            'inline value differs': lambda p: role(p)['after'].update(inline_policy=[{'name': 'p', 'policy': json.dumps({'Statement': []})}]),
+            'role field': lambda p: role(p)['after'].update(max_session_duration=7200),
+            'sibling drift': lambda p: p['resource_drift'].append({'address': POLICY, 'change': {'actions': ['update'], 'before': {'id': 'policy-id'}, 'after': {'id': 'policy-id'}}}),
+            'other search object': lambda p: p['resource_drift'].append({'address': g.PREFIX + 'aws_iam_role.other', 'change': {'actions': ['update'], 'before': {'id': 'x'}, 'after': {'id': 'x', 'inline_policy': []}}}),
+            'no change object': lambda p: p['resource_drift'][0].pop('change'),
+        }
+        for name, mutate in cases.items():
+            p = sibling_plan(); mutate(p)
+            with self.subTest(case=name), self.assertRaises(g.SearchModeError): g.admit(p)
+
+
 if __name__ == '__main__': unittest.main()

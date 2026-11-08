@@ -3,6 +3,7 @@
 Consumes native `show -json SAVED_PLAN`, never test UI output or caller mode
 assertions. This is plan-history validation, not backend or operator attestation.
 """
+import json
 import re
 
 PREFIX = 'module.search.'
@@ -11,6 +12,8 @@ LEGACY = PREFIX + 'aws_opensearch_domain.this'
 DISPOSABLE = PREFIX + 'aws_opensearch_domain.disposable[0]'
 MARKER = PREFIX + 'terraform_data.creation_mode'
 DOMAINS = {PROTECTED, LEGACY, DISPOSABLE}
+DOMAIN_POLICY = PREFIX + 'aws_opensearch_domain_policy.this'
+WORKLOAD_ROLE = re.compile(re.escape(PREFIX) + r'aws_iam_role\.workload\["([^"]+)"\]')
 
 
 class SearchModeError(ValueError):
@@ -46,6 +49,51 @@ def _id(values):
 def _mode(values):
     require(isinstance(values, dict) and type(values.get('input')) is bool, 'unknown stored/requested marker input')
     return values['input']
+
+
+def _canonical(value):
+    """Compare IAM documents as AWS returns them: key order and one-item lists do not matter."""
+    if isinstance(value, dict):
+        return {k: _canonical(v) for k, v in sorted(value.items())}
+    if isinstance(value, list):
+        items = sorted((_canonical(v) for v in value), key=lambda v: json.dumps(v, sort_keys=True))
+        return items[0] if len(items) == 1 else items
+    return value
+
+
+def _same_document(left, right):
+    try:
+        return isinstance(left, str) and isinstance(right, str) and _canonical(json.loads(left)) == _canonical(json.loads(right))
+    except ValueError:
+        return False
+
+
+def _sibling_written_drift(row, state):
+    """True only for a field written by a separate managed resource, holding that resource's value.
+
+    Terraform records these attributes as drift on the first refresh after create.
+    An out-of-band edit also changes the sibling, which reports its own drift and
+    still holds, as does any other changed field or an extra inline policy.
+    """
+    change, address = row.get('change'), row['address']
+    if not isinstance(change, dict) or change.get('actions') != ['update'] or change.get('after_unknown'):
+        return False
+    before, after = change.get('before'), change.get('after')
+    if not isinstance(before, dict) or not isinstance(after, dict) or not before.get('id') or before.get('id') != after.get('id'):
+        return False
+    changed = {key for key in set(before) | set(after) if before.get(key) != after.get(key)}
+    role = WORKLOAD_ROLE.fullmatch(address)
+    if address in (PROTECTED, DISPOSABLE) and changed == {'access_policies'}:
+        sibling = state.get(DOMAIN_POLICY)
+        return bool(sibling) and sibling.get('mode') == 'managed' and _same_document(after['access_policies'], sibling.get('values', {}).get('access_policies'))
+    if role and changed == {'inline_policy'}:
+        sibling = state.get(PREFIX + 'aws_iam_role_policy.workload["' + role.group(1) + '"]')
+        inline = after['inline_policy']
+        if not sibling or sibling.get('mode') != 'managed' or not isinstance(inline, list) or len(inline) != 1 or not isinstance(inline[0], dict):
+            return False
+        values = sibling.get('values', {})
+        return inline[0].get('name') == values.get('name') and _same_document(inline[0].get('policy'), values.get('policy'))
+    return False
 
 
 def admit(plan):
@@ -103,7 +151,7 @@ def admit(plan):
             require(row['address'] in DOMAINS and row.get('mode') == 'managed', 'unsupported prior domain address')
     drift = plan.get('resource_drift', [])
     require(isinstance(drift, list), 'malformed drift inventory')
-    require(all(isinstance(r, dict) and isinstance(r.get('address'), str) and not r['address'].startswith(PREFIX) for r in drift), 'search drift requires reconciliation')
+    require(all(isinstance(r, dict) and isinstance(r.get('address'), str) and (not r['address'].startswith(PREFIX) or _sibling_written_drift(r, all_state)) for r in drift), 'search drift requires reconciliation')
     domain_changes = [a for a in scoped if a in DOMAINS]
     domain_state = [a for a in scoped_state if a in DOMAINS]
     require(len(domain_changes) == 1 and len(domain_state) <= 1 and MARKER in scoped, 'mixed/lost/missing domain or marker')
