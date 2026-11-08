@@ -8,7 +8,8 @@ routing, grant database privileges or establish a new runtime proof.
 
 The existing sessions-pipeline chart now accepts `readApi.*`. With `enabled:false`
 (the default), it renders no read API objects. Enabling it requires an explicit
-compatible image digest, a configuration Secret, bare public HTTPS origin,
+compatible image digest, a configuration Secret, public HTTPS origin with multi-label DNS (no credentials, IP/single-label/local
+host, path, query or fragment; optional port 1–65535),
 coverage floor (`completeSince`), workspace allowlist and temporary issuer.
 A separate Secret supplies the optional relaycontrol introspection credential.
 `readApi.search.backend` defaults to `postgres` and renders `SEARCH_INDEX_BACKEND`.
@@ -61,7 +62,7 @@ The `ci/read-api-values.yaml` file uses an intentionally fake image identity for
 render/schema tests. Never install it. No compatible published read API image
 or runtime enablement is claimed by these checks.
 
-Validation in the isolated chart worktree: ten focused render/admission/schema
+Validation in the isolated chart worktree: eleven focused render/admission/schema
 and executable probe checks pass. Both kind profiles render no read API workload.
 The affected chart static checks, existing profile matrix, registry/regression
 checks and normalized default-render goldens also pass. This work did not run
@@ -70,7 +71,7 @@ kind fixture. The fake image appears only in the explicitly render-only fixture.
 
 After composing the reviewed PR79 base, all 60 base offline checks also pass
 in this worktree, including its thirteen profile/schema/trust checks. Together
-with the ten read API checks, this is 70 offline checks; it is not runtime
+with the eleven read API checks, this is 71 offline checks; it is not runtime
 acceptance of the new service.
 
 Control [#27](https://github.com/AgentWorkforce/relay-control/pull/27), reviewed

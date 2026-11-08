@@ -9,7 +9,12 @@
 {{- $secret := required "readApi.config.existingSecret is required" $c.config.existingSecret -}}
 {{- $key := required "readApi.config.key is required" $c.config.key -}}
 {{- $origin := required "readApi.origin is required" $c.origin -}}
-{{- if not (regexMatch "^https://[^/?#]+$" $origin) }}{{ fail "readApi.origin must be a bare public HTTPS origin" }}{{ end -}}
+{{- /* Same public service-origin contract as relay-cloud-api. Keep this
+standalone chart independent of the API subchart's template namespace. */ -}}
+{{- $publicOriginPattern := "^https://([A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?\\.)+[A-Za-z]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?(:[0-9]{1,5})?$" -}}
+{{- if or (not (regexMatch $publicOriginPattern $origin)) (regexMatch "(?i)\\.(localhost|local|internal|lan|invalid|test|example|home\\.arpa|onion)(:[0-9]{1,5})?$" $origin) (regexMatch "(?i)\\.example\\.(com|net|org)(:[0-9]{1,5})?$" $origin) }}{{ fail "readApi.origin must be a public HTTPS origin with multi-label DNS and no credentials, path, query, or fragment" }}{{ end -}}
+{{- $portToken := regexFind ":[0-9]+$" $origin -}}
+{{- if and $portToken (or (lt (int (trimPrefix ":" $portToken)) 1) (gt (int (trimPrefix ":" $portToken)) 65535)) }}{{ fail "readApi.origin port must be between 1 and 65535" }}{{ end -}}
 {{- $backend := required "readApi.search.backend requires an explicit registered adapter" (trim $c.search.backend) -}}
 {{- $since := required "readApi.completeSince requires an explicit coverage floor" $c.completeSince -}}
 {{- if not (kindIs "string" $c.directoryWorkspaces) }}{{ fail "readApi.directoryWorkspaces must be a string" }}{{ end -}}

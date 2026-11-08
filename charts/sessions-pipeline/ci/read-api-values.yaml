@@ -33,7 +33,7 @@ readApi:
     repository: example.invalid/session-read-api
     digest: sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff
   config: { existingSecret: read-api-config }
-  origin: https://history.example.invalid
+  origin: https://history.kind.agentrelay.com:8443
   completeSince: epoch
   directoryWorkspaces: render-workspace
   allowInClusterHttp: true

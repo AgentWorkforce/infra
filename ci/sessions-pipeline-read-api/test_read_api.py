@@ -71,6 +71,29 @@ class ReadApi(unittest.TestCase):
             with self.subTest(setting=setting):
                 self.render("--set", setting, fail=True)
 
+    def test_public_origin_rejects_credentials_private_hosts_and_invalid_ports(self):
+        invalid = [
+            "http://history.agentrelay.com", "https://user:example@history.agentrelay.com",
+            "https://user@history.agentrelay.com", "https://127.0.0.1", "https://8.8.8.8",
+            "https://[::1]", "https://[2606:4700:4700::1111]", "https://history", "https://localhost",
+            *["https://history." + suffix for suffix in
+              ("localhost", "local", "internal", "lan", "invalid", "test", "example", "home.arpa", "onion")],
+            *["https://history.example." + suffix for suffix in ("com", "net", "org")],
+            *["https://history.agentrelay.com:" + port for port in ("0", "65536", "999999", "abc", "-1", "1.5", "")],
+            "https://history.agentrelay.com/", "https://history.agentrelay.com/path",
+            "https://history.agentrelay.com?query=x", "https://history.agentrelay.com#fragment",
+        ]
+        for origin in invalid:
+            with self.subTest(origin=origin):
+                message = self.render(fail=True, overlay={"origin": origin})
+                self.assertIn("readApi.origin", message)
+        for origin in ["https://history.agentrelay.com", *["https://history.kind.agentrelay.com:" + str(port)
+                       for port in (1, 443, 8443, 65535)]]:
+            with self.subTest(origin=origin):
+                deploy = next(d for d in self.render(overlay={"origin": origin}) if d["kind"] == "Deployment")
+                env = {e["name"]: e for e in deploy["spec"]["template"]["spec"]["containers"][0]["env"]}
+                self.assertEqual(env["READ_API_ORIGIN"]["value"], origin)
+
     def test_search_backend_comes_from_config_with_postgres_default(self):
         for overlay, expected in [(None, "postgres"), ({"search": {"backend": "clickhouse"}}, "clickhouse")]:
             with self.subTest(backend=expected):
