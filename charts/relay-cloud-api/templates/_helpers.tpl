@@ -78,9 +78,24 @@ settings. */ -}}
 {{- range $key, $_ := include "relay-cloud-api.selectorLabels" . | fromYaml }}{{ if hasKey ($.Values.podLabels | default dict) $key }}{{ fail (printf "podLabels must not set selector label %s: the Deployment selector would no longer match its pods" $key) }}{{ end }}{{ end -}}
 {{- if ne .Values.service.type "ClusterIP" }}{{ fail "service.type must be ClusterIP" }}{{ end -}}
 {{- if .Values.ingress.enabled }}{{ if empty .Values.ingress.hosts }}{{ fail "ingress.enabled=true requires at least one host" }}{{ end }}{{ if not (has (urlParse (include "relay-cloud-api.publicUrl" .)).hostname .Values.ingress.hosts) }}{{ fail "ingress.hosts must include the publicUrl host" }}{{ end }}{{ if and (not .Values.ingress.externalTls) (empty .Values.ingress.tls) }}{{ fail "ingress.enabled=true requires ingress.tls unless externalTls=true" }}{{ end }}{{ if and .Values.networkPolicy.enabled (empty .Values.networkPolicy.ingressFrom) }}{{ fail "ingress with networkPolicy requires networkPolicy.ingressFrom" }}{{ end }}{{ end -}}
-{{- /* extraEnv is appended to the API and migration containers. Reject names
-the chart already sets, including duplicates inside extraEnv. */ -}}
-{{- $managed := list "PORT" "SELFHOST_PUBLIC_URL" "RELAYAUTH_URL" "RELAYCAST_URL" "RELAYCAST_PUBLIC_URL" "RELAYHISTORY_URL" "RELAYHISTORY_PUBLIC_URL" "DATABASE_MIGRATIONS_URL_FILE" "SELFHOST_RUNTIME_DATABASE_ROLE" -}}
+{{- /* extraEnv is appended to the API and migration containers. Reserve every
+name the chart owns, including optional ones that are not rendered while their
+setting is empty, and reject duplicates inside extraEnv. A valueFrom may not
+read the migration credential out of existingSecret. */ -}}
+{{- $managed := list
+  "PORT" "SELFHOST_PUBLIC_URL" "RELAYAUTH_URL" "RELAYCAST_URL" "RELAYCAST_PUBLIC_URL" "RELAYHISTORY_URL" "RELAYHISTORY_PUBLIC_URL"
+  "DATABASE_URL_FILE" "RELAYAUTH_API_KEY_FILE" "SELFHOST_BOOTSTRAP_TOKEN_FILE" "SELFHOST_ENCRYPTION_KEY_FILE"
+  "SELFHOST_ENCRYPTION_PREVIOUS_KEY_FILE" "SELFHOST_INTERNAL_TOKEN_FILE" "RELAYCAST_INTERNAL_SECRET_FILE"
+  "SELFHOST_OIDC_CLIENT_SECRET_FILE" "SELFHOST_SMTP_PASSWORD_FILE" "SELFHOST_TELEMETRY_INSTALL_KEY_FILE"
+  "DATABASE_MIGRATIONS_URL_FILE" "SELFHOST_RUNTIME_DATABASE_ROLE"
+  "SELFHOST_ENCRYPTION_KEY_ID" "SELFHOST_ENCRYPTION_PREVIOUS_KEY_ID" "SELFHOST_DASHBOARD_URL"
+  "SELFHOST_FLOWS_STORAGE" "SELFHOST_FLOWS_GCS_BUCKET" "SELFHOST_FLOWS_GCS_PREFIX" "SELFHOST_FLOWS_WORKER_RELAYCAST_URL" "SELFHOST_FLOWS_QUEUE_PING_MS"
+  "SELFHOST_TELEMETRY_LEVEL" "SELFHOST_TELEMETRY_TRANSPORT" "SELFHOST_TELEMETRY_ENDPOINT" "SELFHOST_TELEMETRY_INSTALL_ID" "SELFHOST_TELEMETRY_PROBES" "SELFHOST_TELEMETRY_DEPLOYMENT"
+  "SELFHOST_BOOTSTRAP_ORG_NAME" "SELFHOST_BOOTSTRAP_ADMIN_EMAIL" "SELFHOST_BOOTSTRAP_ADMIN_NAME" "SELFHOST_BOOTSTRAP_WORKSPACE_NAME"
+  "SELFHOST_OIDC_ISSUER" "SELFHOST_OIDC_CLIENT_ID" "SELFHOST_OIDC_ALLOWED_DOMAINS" "SELFHOST_OIDC_DISPLAY_NAME" "SELFHOST_OIDC_SCOPES" "SELFHOST_OIDC_REDIRECT_URL" "SELFHOST_OIDC_ALLOW_HTTP_ISSUER"
+  "SELFHOST_SMTP_HOST" "SELFHOST_SMTP_PORT" "SELFHOST_SMTP_SECURITY" "SELFHOST_SMTP_USERNAME" "SELFHOST_EMAIL_FROM" "SELFHOST_EMAIL_LOGIN"
+  "SELFHOST_AUTO_JOIN_DOMAINS" "SELFHOST_INVITE_TTL_HOURS"
+-}}
 {{- range $src := list (include "relay-cloud-api.runtimeEnv" .) (include "relay-cloud-api.secretEnv" .) -}}
 {{- range $item := $src | fromYamlArray }}{{ $managed = append $managed (toString $item.name) }}{{ end -}}
 {{- end -}}
@@ -89,9 +104,23 @@ the chart already sets, including duplicates inside extraEnv. */ -}}
 {{- if $integrationEnv }}{{ range $item := $integrationEnv | fromYamlArray }}{{ $managed = append $managed (toString $item.name) }}{{ end }}{{ end -}}
 {{- end -}}
 {{- range .Values.extraEnv -}}
-{{- if or (not (kindIs "map" .)) (not .name) }}{{ fail "every extraEnv entry must be an object with a name" }}{{ end -}}
-{{- if has (toString .name) $managed }}{{ fail (printf "%s is managed by structured chart values and must not appear in extraEnv" .name) }}{{ end -}}
-{{- $managed = append $managed (toString .name) -}}
+{{- if not (kindIs "map" .) }}{{ fail "every extraEnv entry must be an object" }}{{ end -}}
+{{- if or (not (kindIs "string" .name)) (not .name) }}{{ fail "every extraEnv name must be a non-empty string" }}{{ end -}}
+{{- if regexMatch "^SELFHOST_OAUTH_[A-Z0-9]+(_[A-Z0-9]+)*_(CLIENT_ID|CLIENT_SECRET_FILE|SCOPES)$" .name }}{{ fail (printf "%s is managed by structured chart values and must not appear in extraEnv" .name) }}{{ end -}}
+{{- $hasValue := hasKey . "value" -}}
+{{- $hasFrom := hasKey . "valueFrom" -}}
+{{- if and $hasValue $hasFrom }}{{ fail "extraEnv entry requires a string value or a valueFrom, not both" }}{{ end -}}
+{{- if and (not $hasValue) (not $hasFrom) }}{{ fail "extraEnv entry requires a string value or a valueFrom" }}{{ end -}}
+{{- if and $hasValue (not (kindIs "string" .value)) }}{{ fail "extraEnv value must be a string" }}{{ end -}}
+{{- if $hasFrom -}}
+{{- if not (kindIs "map" .valueFrom) }}{{ fail "extraEnv valueFrom must be an object" }}{{ end -}}
+{{- if and (hasKey .valueFrom "secretKeyRef") (kindIs "map" .valueFrom.secretKeyRef) -}}
+{{- $ref := .valueFrom.secretKeyRef -}}
+{{- if and (eq (toString $ref.name) (toString $.Values.existingSecret)) (eq (toString $ref.key) (toString $.Values.secretKeys.databaseMigrationsUrl)) }}{{ fail "extraEnv must not reference the migration credential secretKeys.databaseMigrationsUrl" }}{{ end -}}
+{{- end -}}
+{{- end -}}
+{{- if has .name $managed }}{{ fail (printf "%s is managed by structured chart values and must not appear in extraEnv" .name) }}{{ end -}}
+{{- $managed = append $managed .name -}}
 {{- end -}}
 {{- end -}}
 {{- /* Secret files mounted into the API pod: env name -> Secret data key.

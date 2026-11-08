@@ -256,6 +256,31 @@ expect_leaf_failure() { # chart expected-error helm-args...
 }
 expect_leaf_failure relay-cloud-api "PORT is managed by structured chart values and must not appear in extraEnv" \
   --set-json 'extraEnv=[{"name":"PORT","value":"1"}]'
+# Optional structured names stay reserved while unset. internalToken is empty
+# in the CI values, so the Ingress does not deny /internal; extraEnv must not
+# be able to turn the internal routes on by supplying the token file itself.
+expect_leaf_failure relay-cloud-api "SELFHOST_INTERNAL_TOKEN_FILE is managed by structured chart values and must not appear in extraEnv" \
+  --set-json 'extraEnv=[{"name":"SELFHOST_INTERNAL_TOKEN_FILE","value":"/tmp/token"}]'
+expect_leaf_failure relay-cloud-api "SELFHOST_DASHBOARD_URL is managed by structured chart values and must not appear in extraEnv" \
+  --set-json 'extraEnv=[{"name":"SELFHOST_DASHBOARD_URL","value":"https://dash.example.com"}]'
+expect_leaf_failure relay-cloud-api "SELFHOST_OAUTH_GITHUB_CLIENT_ID is managed by structured chart values and must not appear in extraEnv" \
+  --set-json 'extraEnv=[{"name":"SELFHOST_OAUTH_GITHUB_CLIENT_ID","value":"id"}]'
+expect_leaf_failure relay-cloud-api "SELFHOST_OAUTH_GITHUB_SCOPES is managed by structured chart values and must not appear in extraEnv" \
+  -f charts/relay-cloud-api/ci/integrations-values.yaml \
+  --set-json 'extraEnv=[{"name":"SELFHOST_OAUTH_GITHUB_SCOPES","value":"repo"}]'
+expect_leaf_failure relay-cloud-api "extraEnv must not reference the migration credential secretKeys.databaseMigrationsUrl" \
+  --set-json 'extraEnv=[{"name":"SITE_DATABASE_URL","valueFrom":{"secretKeyRef":{"name":"relay-cloud-api","key":"database-migrations-url"}}}]'
+expect_leaf_failure relay-cloud-api "extraEnv value must be a string" \
+  --set-json 'extraEnv=[{"name":"SITE_PORT","value":8080}]'
+expect_leaf_failure relay-cloud-api "every extraEnv name must be a non-empty string" \
+  --set-json 'extraEnv=[{"name":8080,"value":"1"}]'
+expect_leaf_failure relay-cloud-api "SELFHOST_DESKTOP_FEED_URL is managed by structured chart values and must not appear in extraEnv" \
+  --set-json 'extraEnv=[{"name":"SELFHOST_DESKTOP_FEED_URL","value":"https://a.example.com"},{"name":"SELFHOST_DESKTOP_FEED_URL","value":"https://b.example.com"}]'
+other_secret=$(helm template ci charts/relay-cloud-api -n ci --no-hooks -f charts/relay-cloud-api/ci/default-values.yaml \
+  --set-json 'extraEnv=[{"name":"SITE_DATABASE_URL","valueFrom":{"secretKeyRef":{"name":"other-secret","key":"database-migrations-url"}}}]' |
+  yq 'select(.kind == "Deployment") | .spec.template.spec.containers[0].env[-1].valueFrom.secretKeyRef.name')
+test "$other_secret" = other-secret \
+  || { echo "relay-cloud-api: a valueFrom from another Secret must still render (got $other_secret)" >&2; exit 1; }
 db_egress='[{"to":[{"ipBlock":{"cidr":"10.20.0.0/24"}}],"ports":[{"protocol":"TCP","port":5432}]}]'
 for child in relayhistory relay-cloud-api; do
   expect_leaf_failure "$child" "allowAllEgress=false requires networkPolicy.additionalEgress" \

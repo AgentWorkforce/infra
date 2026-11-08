@@ -25,7 +25,8 @@ scripts/ci/deps.sh
 
 Run these checks before you open a pull request. CI runs these and more (see
 `.github/workflows/lint.yml`), including a chart version-bump check: bump a
-chart's `version` in `Chart.yaml` when you change it.
+chart's `version` in `Chart.yaml` when you change it, unless that version has
+no release tag yet. An unpublished version still ships the change.
 
 Terraform module and example checks run through `terraform/scripts/check.sh`;
 see [terraform/README.md](terraform/README.md) for tools and provider interfaces.
