@@ -25,12 +25,19 @@ and the release gate’s `helm-charts` license-decision ID retain their original
 | [relaycast](charts/relaycast) | Portable self-hosted Relaycast core — realtime agent communication with single-writer SQLite persistence |
 | [relayfile](charts/relayfile) | Relayfile server — single Go binary, HTTP on :8080, Postgres-backed in production |
 | [relayflows](charts/relayflows) | Durable workflows running locally in Kubernetes, with optional Cloud assignment mode |
-| [sessions-pipeline-worker](charts/sessions-pipeline-worker) | Sessions Pipeline workers: HoopDb migrations, Locker bucket init, and the indexer/referee/bob-costas stage workers |
-| [sessions-pipeline](charts/sessions-pipeline) | The whole Sessions Pipeline in one release: sessions-pipeline-worker + alleyoop, with optional HoopDb (CloudNativePG), Locker (MinIO) and an OTel collector |
-| [alleyoop](charts/alleyoop) | Sessions Pipeline ingest: receives session manifests and chunks and lands them in the Locker (S3) |
+| [sessions-pipeline-worker](charts/sessions-pipeline-worker) | Session summary, metadata indexing and status workers, plus migration and storage initialization Jobs |
+| [sessions-pipeline](charts/sessions-pipeline) | Session workers and ingest API, with optional Postgres, session-object-storage (MinIO) and an OTel collector |
+| [session-ingest-api](charts/session-ingest-api) | Receives session manifests and chunks and stores them in S3-compatible object storage |
 | [relayauth](charts/relayauth) | Self-hosted RelayAuth issuer: immutable image, externally managed keys, single-writer SQLite, and optional JWKS ingress |
 
 ## Self-hosted requirements registry
+
+The public session resource names are `session-object-storage`,
+`session-ingest-api`, `session-summary-worker`, `session-metadata-indexer` and
+`session-status-worker`. See the [actual chart and workload rename](docs/descriptive-session-names.md)
+for internal stage mappings and existing-release compatibility values. The three
+workers share the `sessions-pipeline-worker` chart; MinIO uses the descriptive
+dependency alias rather than a new wrapper chart.
 
 [`self-hosted/requirements.yaml`](self-hosted/requirements.yaml) is the single
 source of truth for what a self-hosted install needs: every **requirement**
@@ -159,7 +166,7 @@ Resource names and selectors are unchanged, because the worker subchart alias
 is still `worker`. Only the `helm.sh/chart` and `app.kubernetes.io/part-of`
 labels change. Two renamed defaults need a value if you relied on them. Set
 `worker.existingSecret`, `alleyoop.existingSecret` and
-`locker.existingSecret` to your current Secret name (the old default was
+`session-object-storage.existingSecret` to your current Secret name (the old default was
 `96bulls-locker`). Set
 `worker.migrations.runtimeRole` to the role your database already has. A
 standalone `96bulls-worker` release keeps its selectors only with
@@ -389,7 +396,7 @@ helm install sessions-pipeline-worker agentworkforce/sessions-pipeline-worker -n
   --set existingSecret=sessions-pipeline \
   --set locker.endpoint=http://locker:9000 \
   --set tenant.orgId=<org>
-helm install alleyoop agentworkforce/alleyoop -n sessions-pipeline \
+helm install session-ingest-api agentworkforce/session-ingest-api -n sessions-pipeline \
   --set existingSecret=sessions-pipeline \
   --set locker.endpoint=http://locker:9000 \
   --set tenant.orgId=<org> \

@@ -566,10 +566,10 @@ class Stack:
                      "infraRevision": self.cmd(["git", "rev-parse", "HEAD"]).stdout.strip()})
         self.postgres(s, services_image)
         locker_values = self.state / "locker-values.json"
-        defaults = yaml.safe_load((ROOT / "charts/sessions-pipeline/values.yaml").read_text())["locker"]
+        defaults = yaml.safe_load((ROOT / "charts/sessions-pipeline/values.yaml").read_text())["session-object-storage"]
         defaults.update(existingSecret="kind-pipeline", persistence={"enabled": True, "size": "2Gi"})
         private_json(locker_values, defaults)
-        self.cmd(["helm", "upgrade", "--install", "kind-locker", "charts/sessions-pipeline/charts/minio-5.4.0.tgz", "-n", NS,
+        self.cmd(["helm", "upgrade", "--install", "kind-session-object-storage", "charts/sessions-pipeline/charts/minio-5.4.0.tgz", "-n", NS,
                   "-f", locker_values, "--wait", "--timeout", "5m"], timeout=330)
         for d in docs:
             if d["kind"] in ("Deployment", "Service") and d["metadata"]["name"] in ("relaycast", "relayauth"):

@@ -1,0 +1,4 @@
+{{- /* Refuse a legacy dependency key instead of silently enabling new MinIO defaults. */ -}}
+{{- if hasKey .Values "locker" -}}
+{{- fail "sessions-pipeline: locker dependency values were renamed to session-object-storage; move that block (worker.locker and alleyoop.locker remain internal adapter configuration). Do not use --reuse-values for this rename." -}}
+{{- end -}}

@@ -186,7 +186,7 @@ sessions-pipeline:
       # Same services image repository and digest as worker.
       repository: ghcr.io/agentworkforce/96bulls-services
       digest: sha256:070fe6fd46ecd1e1f9db32ff22379f6df9b9e6c4d48ede5312c8fb986a95f3a9
-  locker:
+  session-object-storage:
     enabled: false
 
 relayhistory:

@@ -627,7 +627,7 @@ case_begin 8 "Sessions Pipeline"
 if $SKIP_SESSIONS_PIPELINE; then
   case_skip "--skip-sessions-pipeline"
 else
-  BULLS_POD="$(find_pod "$BULLS_NAMESPACE" 'app.kubernetes.io/name=alleyoop')"
+  BULLS_POD="$(find_pod "$BULLS_NAMESPACE" 'app.kubernetes.io/name=session-ingest-api')"
   if [[ -z "$BULLS_POD" ]]; then
     emit FAIL pipeline.ingest_pod "no running alleyoop ingest pod"
   else

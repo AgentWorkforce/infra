@@ -64,7 +64,7 @@ const STATUSES = ['shipped', 'planned'];
 const PROVIDERS = ['operator', 'chart', 'migrator', 'stack'];
 
 // Umbrella value paths under worker./alleyoop. belong to the subcharts.
-const UMBRELLA_ALIASES = { worker: 'sessions-pipeline-worker', alleyoop: 'alleyoop' };
+const UMBRELLA_ALIASES = { worker: 'sessions-pipeline-worker', alleyoop: 'session-ingest-api' };
 function normPath(chart, p) {
   let c = chart, q = p;
   const m = /^([a-z0-9-]+):(.+)$/.exec(p);
@@ -81,7 +81,7 @@ const entryValues = (e) => asList(e.values).map((p) => normPath(entryCharts(e)[0
 const entryEnv = (e) => asList(e.env);
 const perProfile = (v, p) => (v && typeof v === 'object' && !Array.isArray(v) ? (p in v ? v[p] : v.default) : v);
 // The charts whose templates an entry's chart covers (the umbrella renders its subcharts).
-const chartFamily = (c) => (c === 'sessions-pipeline' ? ['sessions-pipeline', 'sessions-pipeline-worker', 'alleyoop'] : [c]);
+const chartFamily = (c) => (c === 'sessions-pipeline' ? ['sessions-pipeline', 'sessions-pipeline-worker', 'session-ingest-api'] : [c]);
 
 // ---------------------------------------------------------------------------
 // Template scan
@@ -347,7 +347,7 @@ checks.matrix = () => {
   const file = (p) => fs.readFileSync(abs(p), 'utf8').trim();
   if (file('ci/sessions-pipeline-search-worker-role/services-commit') !== img.source_commit) err(c, `services source_commit ${img.source_commit} != ci/sessions-pipeline-search-worker-role/services-commit`);
   if (file('ci/sessions-pipeline-search-worker-role/services-generation') !== img.migration_generation) err(c, `migration_generation ${img.migration_generation} != ci/sessions-pipeline-search-worker-role/services-generation`);
-  for (const ch of ['sessions-pipeline-worker', 'alleyoop']) if (chartValues[ch].image.digest !== img.ghcr?.digest) err(c, `charts/${ch}/values.yaml image.digest is ${chartValues[ch].image.digest}, not the registry GHCR digest`);
+  for (const ch of ['sessions-pipeline-worker', 'session-ingest-api']) if (chartValues[ch].image.digest !== img.ghcr?.digest) err(c, `charts/${ch}/values.yaml image.digest is ${chartValues[ch].image.digest}, not the registry GHCR digest`);
   // Every sessions-pipeline profile pins the image the registry names for it.
   for (const p of profiles.filter((x) => x.chart === 'sessions-pipeline')) {
     const want = img[p.services_image];
@@ -409,7 +409,7 @@ checks.matrix = () => {
       }
     }
     if (r.current && r.services && (r.services.source_commit !== img.source_commit || r.services.migration_generation !== img.migration_generation)) err(c, `release ${r.id}: services pins differ from compatibility.services_images`);
-    if (r.current && r.services) for (const ch of ['sessions-pipeline-worker', 'alleyoop']) {
+    if (r.current && r.services) for (const ch of ['sessions-pipeline-worker', 'session-ingest-api']) {
       if (r.images?.[ch]?.digest !== img.ghcr?.digest) err(c, `release ${r.id}: ${ch} image digest is not compatibility.services_images.ghcr`);
     }
   }

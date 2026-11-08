@@ -28,6 +28,11 @@ imagePullSecrets: []
 nameOverride: ""
 fullnameOverride: ""
 
+# Only for retaining an already installed release's workload names/selectors.
+# New installs use the three descriptive session-* workload names. This does
+# not migrate a running release or prove data survival across a rename.
+legacyResourceNames: false
+
 # Secret containing Locker credentials in secret mode and, unless
 # hoopdb.existingSecret is set, HOOPDB_URL. May be empty in podIdentity mode
 # when HoopDb uses its own Secret.

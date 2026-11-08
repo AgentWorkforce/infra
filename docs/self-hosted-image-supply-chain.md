@@ -24,7 +24,7 @@ also runs a CloudNativePG PostgreSQL wait-for-role init container.
 `values-gcp.yaml` pins all seven by digest, and every one is public on GHCR
 (anonymous pull verified for both platforms).
 
-Images disabled by this profile are not active: MinIO (`locker.enabled=false`),
+Images disabled by this profile are not active: MinIO (`session-object-storage.enabled=false`),
 the OpenTelemetry collector (`otel.enabled=false`), the HoopDb Cluster, and
 `alpine/k8s` for the three disabled privileged SQL Jobs. Durable actors,
 Relayfile and Relayflows are optional components, off in this profile, and are

@@ -5,7 +5,7 @@
 {{- if dig "networkPolicy" "enabled" false (index $.Values $name | default dict) }}{{ fail (printf "localKind requires %s.networkPolicy.enabled=false: child egress policies can add external allows" $name) }}{{ end -}}
 {{- end -}}
 {{- $pipeline := index .Values "sessions-pipeline" | default dict -}}
-{{- range $name := list "worker" "alleyoop" "locker" -}}
+{{- range $name := list "worker" "alleyoop" "session-object-storage" -}}
 {{- if dig $name "networkPolicy" "enabled" false $pipeline }}{{ fail (printf "localKind requires sessions-pipeline.%s.networkPolicy.enabled=false: child egress policies can add external allows" $name) }}{{ end -}}
 {{- end -}}
 {{- if not (has $local.profile (list "core" "addons")) }}{{ fail "localKind.profile must be core or addons" }}{{ end -}}

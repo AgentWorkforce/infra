@@ -86,12 +86,12 @@ eks() { # result check detail
 assoc="$(aws --region "$REGION" eks list-pod-identity-associations --cluster-name "$NAME" --namespace "$NS" \
   --query 'associations[].serviceAccount' --output text 2>/dev/null | tr '\t' ' ')"
 missing=""
-for sa in "${RELEASE}-worker" "${RELEASE}-alleyoop"; do
+for sa in "${RELEASE}-worker" "${RELEASE}-session-ingest-api"; do
   [[ " $assoc " == *" $sa "* ]] || missing+="$sa "
 done
 [[ -z "$missing" ]] && eks PASS eks.pod_identity "associations=${assoc}" || eks FAIL eks.pod_identity "missing=${missing% }"
 
-alleyoop="$("${K[@]}" get pod -l app.kubernetes.io/name=alleyoop --field-selector=status.phase=Running \
+alleyoop="$("${K[@]}" get pod -l app.kubernetes.io/name=session-ingest-api --field-selector=status.phase=Running \
   -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)"
 s3_out=""
 [[ -n "$alleyoop" ]] && s3_out="$("${K[@]}" exec -i "$alleyoop" -- sh -c \
