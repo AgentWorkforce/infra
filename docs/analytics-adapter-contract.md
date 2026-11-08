@@ -25,6 +25,14 @@ Service or a server filesystem. Hosted project keys remain in the appropriate
 server/client configuration contract; no credentials belong in Relay messages,
 Helm values, Terraform outputs or exported events.
 
+The installation uses **one in-cluster collector Service that owns the durable
+NDJSON files**. Server adapters POST events to that Service; they do not each
+mount an analytics PVC. A direct file writer is a collector implementation or
+an optional development adapter, not the production producer contract. See the
+[collector interface](analytics-collector-interface.md) for batching,
+authentication, persistence and gateway boundaries. This clarifies the file
+destination; it does not claim a collector implementation exists.
+
 A common export envelope needs a version, stable event identifier, UTC occurrence
 time, component and deployment identity, event kind, correlation/trace identity,
 and explicitly permitted properties. Existing native event names can remain.
