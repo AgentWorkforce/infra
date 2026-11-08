@@ -46,7 +46,8 @@ this default-off plumbing; no kind profile enables the read service.
 
 Those are the #81 parent versions. The composed public-name branch #97 uses
 agent-relay `0.5.0`, relay-control `0.3.0`, relay-webapp `0.2.0` and
-sessions-pipeline `0.7.2` (Secret-reference review follow-up); see
+sessions-pipeline `0.7.2` (Secret-reference review follow-up). Its native-ingest
+child #102 uses umbrella `0.5.1` and pipeline `0.7.3`; see
 [its upgrade map](../../../docs/control-webapp-chart-rename.md).
 
 | Input | Draft contract |
