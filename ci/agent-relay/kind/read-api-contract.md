@@ -1,7 +1,9 @@
 # Pending self-host read API contract
 
 This is source review and read-only diagnosis, not an enabled deployment or an
-end-to-end pass. Historical ar-lap proof at `1c203f59` records 57 PASS, 0 FAIL, 3 PENDING.
+end-to-end pass. Historical ar-lap proof at `1c203f59` records 57 PASS, 0 FAIL,
+3 PENDING. It predates the `core.flows_disabled` gate and was not rerun or
+reattributed. That count is not the result of the current core verifier.
 
 The originally reviewed source heads were pipeline [#317 at a7d7a5db](https://github.com/AgentWorkforce/relayhistory-pipeline/pull/317),
 [#318 at 441e4862](https://github.com/AgentWorkforce/relayhistory-pipeline/pull/318)
