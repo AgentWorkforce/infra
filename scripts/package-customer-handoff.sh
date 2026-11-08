@@ -58,6 +58,7 @@ INCLUDE_TREES = (
 INCLUDE_FILES = (
     "LICENSE",
     "THIRD_PARTY_NOTICES.md",
+    "docs/control-webapp-chart-rename.md",
     "docs/self-hosted-image-supply-chain.md",
     "docs/self-hosted-reference-architecture.md",
     "docs/self-hosted-relayflows.md",
@@ -131,6 +132,7 @@ REQUIRED_FILES = (
     "docs/conformance/adapter-contract.md",
     "docs/licenses/AGPL-3.0-only.txt",
     "docs/licenses/Apache-2.0.txt",
+    "docs/control-webapp-chart-rename.md",
     "docs/self-hosted-image-supply-chain.md",
     "docs/self-hosted-reference-architecture.md",
     "docs/self-hosted-requirements.md",
