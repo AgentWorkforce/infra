@@ -20,6 +20,7 @@
 #                            control-api-pg, hoopdb and relayhistory-pg; set
 #                            EKS_PROOF_CNPG_CLUSTERS (space separated) when
 #                            some databases are external, such as RDS
+#                            or to "none" to require that no CNPG cluster exists
 #
 # Run it under the Pippen lease, so kubectl and aws use the session role:
 #
@@ -178,6 +179,15 @@ cnpg_detail=""
 if ((${#cnpg_wanted[@]} == 0)); then
   cnpg_ok=false
   cnpg_detail="EKS_PROOF_CNPG_CLUSTERS names no clusters;"
+fi
+if [[ "${cnpg_wanted[*]-}" == none ]]; then
+  cnpg_wanted=()
+  if [[ -n "$cnpg" ]]; then
+    cnpg_ok=false
+    cnpg_detail="expected none, found ${cnpg};"
+  else
+    cnpg_detail="no CNPG clusters, as expected;"
+  fi
 fi
 for want in ${cnpg_wanted[@]+"${cnpg_wanted[@]}"}; do
   phase="$(tr ';' '\n' <<<"$cnpg" | sed -n "s/^${want}=//p")"
