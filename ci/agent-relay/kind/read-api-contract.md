@@ -8,7 +8,7 @@ The originally reviewed source heads were pipeline [#317 at a7d7a5db](https://gi
 and the additional PG-only source in [#330 at 44b81b56](https://github.com/AgentWorkforce/relayhistory-pipeline/pull/330).
 They were open drafts at that source review. Subsequent status verification
 confirmed #317 merged as `d33bfdaa665f1ea5da7eac33e96b3522fa177b06` and #318 as
-`a1e1473be4174d1b26c1506159abcbd97b39fa4f`. #330 remains an open draft and has
+`a1e1473be4174d1b26c1506159abcbd97b39fa4f`. #330 is open and non-draft at the later status check, and has
 advanced to `0f2e866395c9122721262bb16d1430084955c878`. Its intervening commits
 add reader role admission, forced tenant RLS and fail-closed tenant-bound
 operations; that combined runtime is not qualified by the older source review.
@@ -40,7 +40,7 @@ establish a replacement for every legacy History delivery/ingest route.
 
 ## Remaining integration blockers
 
-1. Draft #330 adds a Postgres-only reader composition through the existing adapter
+1. PR #330 adds a Postgres-only reader composition through the existing adapter
    registry, without constructing ClickHouse. A compatible approved immutable
    image is still required, together with owner-provided schema/bootstrap/grants
    and a real canonical reconciliation writer. Missing relations/grants return

@@ -51,7 +51,7 @@ relay-dashboard:
   fullnameOverride: relay-app
   image:
     repository: ghcr.io/agentworkforce/relay-dashboard
-    digest: sha256:c50005fcdd1fc5ab5ef3dac9b621db8e0c7e03480406bfe519743ae435d8f1ad
+    digest: sha256:e4de2c628e72e906e809fd32e6192baa7c93a404eb019964cd7706805e316e6a
   runtime:
     publicUrl: https://relay.kind.agentrelay.com:8443
   api: { serviceName: relaycontrol }
