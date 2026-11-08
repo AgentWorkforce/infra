@@ -13,13 +13,17 @@ data:
       access_log off;
       client_body_temp_path /tmp/client_temp;
       proxy_temp_path /tmp/proxy_temp;
+      fastcgi_temp_path /tmp/fastcgi_temp;
+      uwsgi_temp_path /tmp/uwsgi_temp;
+      scgi_temp_path /tmp/scgi_temp;
+      server_tokens off;
       server {
         listen 8443 ssl;
         ssl_protocols TLSv1.2 TLSv1.3;
         ssl_certificate /var/run/secrets/telemetry-tls/tls.crt;
         ssl_certificate_key /var/run/secrets/telemetry-tls/tls.key;
-        client_max_body_size 0;
-        client_body_timeout 10s;
+        client_max_body_size {{ .Values.limits.maxBatchBytes }};
+        client_body_timeout {{ div (add (int .Values.limits.requestTimeoutMs) 999) 1000 }}s;
         location = /v1/events {
           proxy_pass http://127.0.0.1:4319;
           proxy_http_version 1.1;
@@ -30,6 +34,14 @@ data:
         location = /healthz {
           proxy_pass http://127.0.0.1:4319;
         }
-        location / { return 404; }
+        error_page 413 = @too_large;
+        location @too_large {
+          default_type application/json;
+          return 413 '{"error":"payload_too_large"}';
+        }
+        location / {
+          default_type application/json;
+          return 404 '{"error":"not_found"}';
+        }
       }
     }

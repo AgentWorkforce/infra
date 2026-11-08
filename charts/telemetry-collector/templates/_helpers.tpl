@@ -20,8 +20,12 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- printf "%s@%s" (required "telemetry-collector: image repository is required" .repository) .digest -}}
 {{- end -}}
 {{- define "telemetry-collector.validate" -}}
+{{- range .Values.imagePullSecrets -}}
+{{- if empty .name }}{{ fail "telemetry-collector: imagePullSecrets.name must be non-empty" }}{{ end -}}
+{{- end -}}
 {{- if ne (int .Values.replicaCount) 1 }}{{ fail "telemetry-collector: exactly one writer replica is required" }}{{ end -}}
 {{- if not (regexMatch "^[a-f0-9]{40}$" .Values.image.sourceRevision) }}{{ fail "telemetry-collector: image.sourceRevision must record the exact 40-character source revision" }}{{ end -}}
+{{- if ne .Values.image.sourceRevision "8359483d2666c1f374190c102237c3022ca3d466" }}{{ fail "telemetry-collector: declared source revision is not in the reviewed allowlist" }}{{ end -}}
 {{- if empty .Values.producersSecret }}{{ fail "telemetry-collector: producersSecret is required" }}{{ end -}}
 {{- if empty .Values.tlsSecret }}{{ fail "telemetry-collector: tlsSecret is required" }}{{ end -}}
 {{- if eq .Values.tlsSecret .Values.producersSecret }}{{ fail "telemetry-collector: producer credentials and TLS keys require distinct Secrets" }}{{ end -}}

@@ -30,7 +30,10 @@ HTTP readiness alone is not a durable-write or power-loss test.
 ## Before installation
 
 Supply accepted immutable collector and TLS-proxy image digests and record the
-collector source SHA. The collector image must contain Node 22 or later and
+collector source SHA. The declared source is pinned to the reviewed revision
+`8359483d2666c1f374190c102237c3022ca3d466`; accepting a different runtime requires
+a reviewed allowlist update. This declaration is not cryptographic verification
+of image contents: verify the actual archive/OCI source label separately. The collector image must contain Node 22 or later and
 `node_modules/@cloud/selfhost-api/dist/collector-cli.js`; the proxy must contain
 nginx and run this chart's configuration as UID/GID 1000. No runnable images
 are selected by default. The `ci/` image identities are render-only fixtures.
@@ -115,3 +118,8 @@ pod cannot write the claim and that removing the release preserves it. Test
 each component adapter and the client gateway separately; a gateway's queued
 202 is not the collector's durable 204. Chart render tests establish none of
 these installed lifecycle results.
+
+The umbrella enforces Kubernetes 1.29+ when this component is enabled; other
+default-off installations retain their existing Kubernetes compatibility.
+Ingress peers must use non-empty label or expression selectors; empty pod or
+namespace selectors are refused.

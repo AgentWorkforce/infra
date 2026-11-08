@@ -502,7 +502,7 @@ function renderDoc() {
   for (const p of profiles) {
     L(`### Profile: ${p.id}`, '', `**${p.title}.** ${cell(p.summary)}`, '');
     const meta = [`chart ${code(p.chart)}`];
-    if (p.values_file) meta.push(`values ${asList(p.values_file).map((f) => `[${code(f)}](../charts/${p.chart}/${f})`).join(', ')}`);
+    if (asList(p.values_file).length) meta.push(`values ${asList(p.values_file).map((f) => `[${code(f)}](../charts/${p.chart}/${f})`).join(', ')}`);
     if (p.db) meta.push(`dbMode ${code(p.db.db_mode)}`, `boundary ${p.db.boundary ? code(p.db.boundary) : '(unset)'}`, `HoopDb ${p.db.hoopdb}`);
     if (p.services_image) meta.push(`services image ${p.services_image.toUpperCase()}`);
     if (p.install) meta.push(`install: ${code(p.install)}`);

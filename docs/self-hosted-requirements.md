@@ -758,7 +758,7 @@ chart `agent-relay` · values [`values-eks-actors.yaml`](../charts/agent-relay/v
 
 **Self-hosted analytics file collector.** one writer, an exclusive persistent volume, internal TLS and no outbound analytics destination. Requires runtime image and lifecycle acceptance separately.
 
-chart `telemetry-collector` · values  · install: `helm upgrade --install telemetry agentworkforce/telemetry-collector -f <accepted images, TLS and producer Secret references>`
+chart `telemetry-collector` · install: `helm upgrade --install telemetry agentworkforce/telemetry-collector -f <accepted images, TLS and producer Secret references>`
 
 **Requirements (provide these)**
 
@@ -1493,7 +1493,7 @@ Internal producer-authenticated NDJSON collector. Immutable images and exact sou
 - Values: `imagePullSecrets`, `image.*`, `tlsProxy.image.*`, `persistence.*`, `limits.*`, `retention.*`, `terminationGracePeriodSeconds`, `networkPolicy.allowedFrom`, `rolloutRevision`
 - Env: `ANALYTICS_COLLECTOR_HOST`, `ANALYTICS_COLLECTOR_PORT`, `ANALYTICS_COLLECTOR_DATA_DIR`, `ANALYTICS_COLLECTOR_PRODUCERS_FILE`, `ANALYTICS_COLLECTOR_MAX_BATCH_BYTES`, `ANALYTICS_COLLECTOR_MAX_BATCH_EVENTS`, `ANALYTICS_COLLECTOR_MAX_EVENT_BYTES`, `ANALYTICS_COLLECTOR_REQUEST_TIMEOUT_MS`, `ANALYTICS_COLLECTOR_MAX_IN_FLIGHT`, `ANALYTICS_COLLECTOR_MAX_SEGMENTS`, `ANALYTICS_COLLECTOR_MAX_DISK_BYTES`, `ANALYTICS_COLLECTOR_SHUTDOWN_DEADLINE_MS`, `ANALYTICS_COLLECTOR_RETENTION`, `ANALYTICS_COLLECTOR_RETENTION_MAX_AGE_MS`
 - Verify: Verify the accepted collector entrypoint, authenticated TLS intake, durable files after restart and failure-before-acknowledgement cases on the installed volume.
-- Sources: [`charts/telemetry-collector/templates/deployment.yaml:1`](../charts/telemetry-collector/templates/deployment.yaml#L1)
+- Sources: [`charts/telemetry-collector/templates/deployment.yaml:37`](../charts/telemetry-collector/templates/deployment.yaml#L37)
 
 #### req.telemetry-collector.secrets
 
@@ -1506,7 +1506,7 @@ Operator-managed producers.json plus dedicated token files, and a separate TLS k
 - Provided by: operator
 - Values: `producersSecret`, `tlsSecret`
 - Verify: Verify distinct mounted producer credentials and TLS keys, exact certificate SAN and issuer, and a restart after rotation; never print values.
-- Sources: [`charts/telemetry-collector/templates/deployment.yaml:1`](../charts/telemetry-collector/templates/deployment.yaml#L1)
+- Sources: [`charts/telemetry-collector/templates/deployment.yaml:104`](../charts/telemetry-collector/templates/deployment.yaml#L104)
 
 ### Options
 

@@ -10,6 +10,7 @@ sources:
   - https://github.com/AgentWorkforce/infra/tree/main/charts/telemetry-collector
 annotations:
   artifacthub.io/license: Apache-2.0
+  agentworkforce.dev/license-scope: "First-party chart code only; dependencies and images retain their own licenses."
 maintainers:
   - name: AgentWorkforce
     url: https://github.com/AgentWorkforce/infra
