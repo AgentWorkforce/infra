@@ -167,8 +167,14 @@ private repository for explicit `KIND_CONTROL_SOURCE=historical` reproduction.
 Current builds instead pin public `relay-control@e74413b9ebc8a679f9e4ef64627ccd6340ec8ddb`
 in a separate cache. Existing build and runtime receipts below are unchanged and
 have not been rerun or attributed to the current source.
-This infra change provides no actual image build or runtime test for `e74413b`;
-those remain prerequisites for current-source acceptance. The historical command
+The [current native candidate receipt](control-e74413b-smoke.json) records an
+actual arm64 build through this helper and a disposable PostgreSQL 17 upgrade
+test: synthetic rows survive 17-to-23 migrations, a second run applies zero,
+and health, readiness and an authenticated organization read return 200 with
+the supported runtime role while migration-ledger SELECT remains denied.
+The fixture uses private plaintext transport, not TLS, and qualifies neither
+an installed profile nor MCP, Desktop, cloud or full pipeline readback.
+The historical command
 above requires `KIND_CONTROL_SOURCE=historical`; its default now selects `e74413b`.
 
 The retired public pin `a659ac4` fails readiness with the supported runtime
