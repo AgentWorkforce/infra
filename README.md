@@ -5,6 +5,8 @@ Terraform modules and Helm charts for customer-owned Agent Relay installations o
 - [Terraform modules and examples](terraform/README.md): network, Kubernetes, PostgreSQL, object storage, optional search and functions.
 - [Helm charts](#charts): application configuration, deployment and versioned dependencies under `charts/<service-name>/`.
 - [Full application proof](docs/terraform-helm-application-proof.md): required lifecycle evidence and current gaps.
+- [Enterprise AWS installation and first-user guide](docs/enterprise-aws-install.md): customer roles, SSO, Desktop downloads, device approval and acceptance; release preparation with explicit remaining gates.
+- [Enterprise operator controls](docs/enterprise-customer-controls.md): generic operator controls, profile-specific downloads and disabled-Flows acceptance.
 
 This repository was renamed from `AgentWorkforce/helm-charts` to `AgentWorkforce/infra`.
 Update existing clones with `git remote set-url origin git@github.com:AgentWorkforce/infra.git`;
