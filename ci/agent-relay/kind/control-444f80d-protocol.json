@@ -1,0 +1,15 @@
+{
+  "scope": "pure protocol module only; no HTTP OAuth integration or cluster proof",
+  "sourceRevision": "444f80d68878d9ae7efdd1ebb160123c4045c5b3",
+  "manifestDigest": "sha256:00540bb9aec69564c8ec87aa1c796c6dabe59b1fb94592da1100e218fb6dfbed",
+  "configDigest": "sha256:4258cc4bee46d18a3520d4ade8e8519929d0cf863cb299f6de1f60499492a645",
+  "architecture": "arm64",
+  "upstreamTestSha256": "bcc6338686ed449e61f647ad7c6f0f71f9f785c699c3aac7dc5d45fdbda05d0a",
+  "compiledModuleSha256": "8b22e967753b082f85cfb1454ea9af19da0538e8276f869efba09106268ca2b5",
+  "network": "none",
+  "filesystem": "read-only",
+  "exitCode": 0,
+  "tests": 15,
+  "passed": 15,
+  "failed": 0
+}

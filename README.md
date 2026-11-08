@@ -546,7 +546,7 @@ make kind-proof-core
 ```
 
 This requires Docker BuildKit/buildx and GitHub access during preparation. It
-builds the official relaycontrol Dockerfile at `1f08cb6` using a pinned Node base,
+builds the official relaycontrol Dockerfile at `444f80d` using a pinned Node base,
 selects the native manifest digest in this worktree's private values, loads it
 into kind and uses `imagePullPolicy: Never`. The OCI manifest/config hashes,
 architecture and source revision are verified before installation. The build
@@ -555,6 +555,10 @@ performs just the build/selection; it does not install or publish an image.
 The normal catalog profile remains unchanged. Each build captures its resulting
 artifact digest; the official Dockerfile's runtime npm dependency ranges mean
 that identical source does not guarantee identical rebuilt image bytes.
+The [candidate qualification](ci/agent-relay/kind/control-444f80d.md) records the
+native build and pure protocol tests for this pin. Upstream PR #26 does not mount
+OAuth routes or issue tokens; its module tests do not establish an OAuth runtime
+flow. The captured installation proofs below still identify their older source.
 Both public MCP paths now pass real-token initialization, nineteen-tool discovery,
 workspace/public-origin binding and negative auth/origin checks in the recorded
 local-control proof. Agent launch/release remains pending.
