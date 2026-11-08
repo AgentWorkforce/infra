@@ -8,7 +8,7 @@ import tarfile
 from addons import NODE, checkout
 from stack import private_json
 
-REVISION = "1f08cb624be66016eb0c135363553dd44e58f691"
+REVISION = "32d1e4477f0203611e756e5df45fc5d74798bff3"
 REPOSITORY = "agent-relay-kind/selfhost-api"
 TAG = REPOSITORY + ":" + REVISION[:7]
 
