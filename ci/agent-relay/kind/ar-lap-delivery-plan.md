@@ -22,6 +22,34 @@ Add-ons remain in the overall two-profile scope, after this core handoff.
 | Component analytics adapters — each producer owner; owner map coordinated with infragrok | **NOT COMMITTED** for complete producer coverage | **NOT COMMITTED** for the local collector/adapter assembly | **NOT COMMITTED** for local event capture from every component with hosted egress denied | Self-host routes to local/in-cluster file collection; hosted uses the approved PostHog endpoint. Telemetry disabled is not analytics coverage. A pipeline OTLP file exporter alone does not cover product analytics or Desktop/browser intake. |
 | Add-ons — infra-kind-stack (profiles/proof), layered-control (signed license), layered-relayfile (filesystem authority), Flows runtime owner to be named | **NOT COMMITTED** for complete gated runtime | Native Flows/file build preparation exists; signed-license/scoped-authority artifact dates **NOT COMMITTED** | **NOT COMMITTED** for installed Flow run, controller-scheduled CronJob firing and authenticated file read/write | Deferred from the first cofounder core handoff, not removed from the overall goal. No dev issuer, fake license or manually instantiated CronJob counts as acceptance. |
 
+## Relaycast Postgres acceptance contract
+
+The [runtime task contract](https://github.com/AgentWorkforce/relaycast/pull/602#issuecomment-6715685515)
+requires a PostgreSQL-only, single-replica path in the same application database
+as the other services. Platform provisioning supplies schema `relaycast`, owner
+`relaycast_owner` and runtime `relaycast_runtime`; the service must not create or
+adopt schemas or roles, or silently fall back to SQLite.
+
+Infra wiring must wait for a qualified runtime head. It then needs an ordinary
+template-hashed migration Job with a separate owner credential and ServiceAccount,
+not a Helm hook. The server receives runtime credentials only and verifies its
+binding without migrations or DDL. Expected identities are supplied independently
+of the database URL, with schema-scoped migration ledger and advisory locking.
+Explicit CA-file TLS must verify the server hostname and certificate chain.
+
+Required qualification includes real runtime LOGIN access, tenant isolation,
+restart/readback, transaction/concurrency behavior, migration replay, and denial
+against seeded Control/pipeline schemas. Role membership, SET ROLE, effective
+DDL/TEMP privileges, ownership and cross-schema access must fail closed when
+misbound. Search ordering/public response behavior and existing SQLite/D1/actor
+checks remain part of the runtime owner's gate.
+
+An early slice must name its missing features. It is not full conformance,
+multi-replica safety or managed-RDS restore/rollback evidence, and supplies no
+authorization to switch a chart backend or publish/deploy an image. File/object
+storage stays behind its existing port, with later S3/import/export and
+ledger/image rollback compatibility explicitly tracked.
+
 ## Desktop owner build and trust contract
 
 Layered-relay-desktop supplied readiness information against source
