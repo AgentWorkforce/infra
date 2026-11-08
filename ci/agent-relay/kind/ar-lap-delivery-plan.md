@@ -84,10 +84,13 @@ collector `POST /v1/events`. Native Desktop egress also needs its own proof;
 the kind pod NetworkPolicy test does not constrain the host application.
 
 The browser/device operator flow is compatible with this site build and requires
-no public OIDC/SMTP. History origin and pushed-history host admission still need
-explicit source confirmation for `history.kind.agentrelay.com:8443`; an untrusted
-origin opt-in is not an acceptance substitute. The release owner has been asked
-for a reviewable non-secret build manifest and this admission clarification.
+no public OIDC/SMTP. The [candidate request](ar-lap-desktop-request.md) records
+proposed non-secret build inputs and the missing distinct public release-repository
+choice. Source confirms conditional read admission for a control-named kind
+History origin, including local addresses beside a genuine site build. Pushed
+History still rejects this host/port and requires a scoped Desktop code change
+and tests. An untrusted-origin opt-in is not an acceptance substitute, and a
+profile build alone does not resolve the pipeline-to-dashboard read gap.
 
 ## Relayfile owner dates and gates
 
