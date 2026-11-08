@@ -28,7 +28,25 @@ Usage: include "sessions-pipeline-worker.fit" "<name>"
 Component object name. Usage: include "sessions-pipeline-worker.componentName" (dict "context" . "component" "referee")
 */}}
 {{- define "sessions-pipeline-worker.componentName" -}}
+{{- if and (not .context.Values.legacyResourceNames) (hasKey (dict "bob-costas" "" "hoopdb-indexer" "" "referee" "") .component) -}}
+{{- $override := dig .component "fullnameOverride" "" .context.Values.components -}}
+{{- if $override -}}
+{{- include "sessions-pipeline-worker.fit" $override -}}
+{{- else -}}
+{{- include "sessions-pipeline-worker.fit" (printf "%s-%s" (include "sessions-pipeline-worker.fullname" .context) (include "sessions-pipeline-worker.publicComponent" .)) -}}
+{{- end -}}
+{{- else -}}
 {{- include "sessions-pipeline-worker.fit" (printf "%s-%s" (include "sessions-pipeline-worker.fullname" .context) .component) }}
+{{- end -}}
+{{- end }}
+
+{{/* Engine SERVICE keys remain internal; public workload names are descriptive. */}}
+{{- define "sessions-pipeline-worker.publicComponent" -}}
+{{- if .context.Values.legacyResourceNames -}}
+{{- .component -}}
+{{- else -}}
+{{- get (dict "bob-costas" "session-summary-worker" "hoopdb-indexer" "session-metadata-indexer" "referee" "session-status-worker") .component | default .component -}}
+{{- end -}}
 {{- end }}
 
 {{- define "sessions-pipeline-worker.serviceAccountName" -}}

@@ -103,6 +103,7 @@ jobs:
           python3 ci/agent-relay/kind/test_ownership.py -v
           python3 ci/agent-relay/kind/test_control.py -v
           python3 ci/agent-relay/kind/test_harness.py -v
+          python3 ci/session-component-names/test_names.py -v
           node --test ci/agent-relay/kind/test_bootstrap.mjs
           node --test ci/agent-relay/kind/test_pipeline.mjs
         env:

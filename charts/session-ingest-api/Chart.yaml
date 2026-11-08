@@ -1,10 +1,10 @@
 apiVersion: v2
-name: alleyoop
+name: session-ingest-api
 type: application
-version: 0.3.9
+version: 0.4.0
 appVersion: "0.1.0"
 description: >
-  AlleyOop ingest for the sessions pipeline: receives session
+  Session ingest API for the sessions pipeline: receives session
   manifests and chunks from couriers and lands them in the Locker (S3).
   Hook-free; ready only once the HoopDb migration ledger matches the image.
 annotations:
@@ -16,4 +16,4 @@ maintainers:
   - name: AgentWorkforce
     url: https://github.com/AgentWorkforce/infra
 sources:
-  - https://github.com/AgentWorkforce/infra/tree/main/charts/alleyoop
+  - https://github.com/AgentWorkforce/infra/tree/main/charts/session-ingest-api

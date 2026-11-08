@@ -34,7 +34,7 @@ spec:
       terminationGracePeriodSeconds: {{ $.Values.terminationGracePeriodSeconds }}
       {{- include "sessions-pipeline-worker.podSpecCommon" (dict "context" $ "component" $component) | nindent 6 }}
       containers:
-        - name: {{ $component }}
+        - name: {{ include "sessions-pipeline-worker.publicComponent" (dict "context" $ "component" $component) }}
           image: {{ include "sessions-pipeline-worker.image" $ | quote }}
           imagePullPolicy: {{ $.Values.image.pullPolicy }}
           env:

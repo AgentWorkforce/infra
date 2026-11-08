@@ -1,7 +1,7 @@
 sessions-pipeline {{ .Chart.Version }} in namespace {{ .Release.Namespace }}
 
 One sessions-pipeline release per namespace: dependency objects use fixed names
-(hoopdb, locker, otel-collector) so the app charts can reference them.
+(hoopdb, session-object-storage, otel-collector) so the app charts can reference them.
 {{- if .Values.hoopdb.enabled }}
 
 HoopDb: CloudNativePG Cluster "hoopdb" (needs the CloudNativePG operator).

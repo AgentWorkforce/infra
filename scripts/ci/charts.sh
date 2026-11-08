@@ -96,7 +96,7 @@ for chart in "${charts[@]}"; do
             ' <<<"$out"
           }
           case $chart in
-            alleyoop) expected_shared=1; component_env=INGEST_RETRY_LIMIT ;;
+            session-ingest-api) expected_shared=1; component_env=INGEST_RETRY_LIMIT ;;
             sessions-pipeline-worker) expected_shared=5; component_env=REFEREE_RETRY_LIMIT ;;
             *) err "$label: numeric env fixture is unsupported for $chart"; expected_shared=0; component_env=UNKNOWN ;;
           esac
@@ -191,8 +191,8 @@ for chart in "${charts[@]}"; do
         expect_render_failure "$chart" "$v" "extraEnv in-cluster http" "extraEnv must not set ALLOW_IN_CLUSTER_HTTP" --set-json 'extraEnv=[{"name":"ALLOW_IN_CLUSTER_HTTP","value":"true"}]'
         expect_render_failure "$chart" "$v" "component in-cluster http" "components.referee.env must not set ALLOW_IN_CLUSTER_HTTP" --set-json 'components.referee.env=[{"name":"ALLOW_IN_CLUSTER_HTTP","value":"true"}]'
         ;;
-      alleyoop)
-        v=charts/alleyoop/ci/pod-identity-values.yaml
+      session-ingest-api)
+        v=charts/session-ingest-api/ci/pod-identity-values.yaml
         expect_render_failure "$chart" "$v" "unknown credential mode" "locker.credentials.mode must be secret or podIdentity" --set locker.credentials.mode=invalid
         expect_render_failure "$chart" "$v" "missing database Secret" "hoopdb.existingSecret or existingSecret is required for HOOPDB_URL" --set hoopdb.existingSecret=
         expect_render_failure "$chart" "$v" "secret mode without endpoint" "locker.endpoint is required when locker.credentials.mode=secret" --set locker.credentials.mode=secret --set existingSecret=sessions-pipeline

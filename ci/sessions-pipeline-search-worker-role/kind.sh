@@ -187,9 +187,9 @@ prepare_ns() { # ns with_role(fresh|absent|drifted)
   fi
 }
 app_ready() { # ns -> total readyReplicas over the four app Deployments
-  k -n "$1" get deploy -l 'app.kubernetes.io/name in (worker,alleyoop)' -o json | jq '[.items[].status.readyReplicas // 0] | add // 0'
+  k -n "$1" get deploy -l 'app.kubernetes.io/name in (worker,session-ingest-api)' -o json | jq '[.items[].status.readyReplicas // 0] | add // 0'
 }
-app_count() { k -n "$1" get deploy -l 'app.kubernetes.io/name in (worker,alleyoop)' -o name | wc -l; }
+app_count() { k -n "$1" get deploy -l 'app.kubernetes.io/name in (worker,session-ingest-api)' -o name | wc -l; }
 job_name() { k -n "$1" get jobs -l "app.kubernetes.io/component=$2" -o jsonpath='{.items[0].metadata.name}'; }
 pod_of() { k -n "$1" get pods -l "batch.kubernetes.io/job-name=$2" -o jsonpath='{.items[0].metadata.name}'; }
 cstat() { # ns pod jsonpath-under-status
@@ -230,7 +230,7 @@ k -n flow-existing wait --for=condition=complete "job/$bj" --timeout=300s >/dev/
 k -n flow-existing wait --for=condition=complete "job/$rj" --timeout=300s >/dev/null || { k -n flow-existing logs "job/$rj" -c bootstrap; echo "flow-existing: runtime role bootstrap failed"; exit 1; }
 k -n flow-existing wait --for=condition=complete "job/$fj" --timeout=300s >/dev/null || { k -n flow-existing logs "job/$fj" -c bootstrap; echo "flow-existing: function default bootstrap failed"; exit 1; }
 k -n flow-existing wait --for=condition=complete "job/$mj" --timeout=900s >/dev/null || { k -n flow-existing logs "job/$mj" --all-containers; echo "flow-existing: migrate failed"; exit 1; }
-k -n flow-existing rollout status deploy -l 'app.kubernetes.io/name in (worker,alleyoop)' --timeout=600s >/dev/null
+k -n flow-existing rollout status deploy -l 'app.kubernetes.io/name in (worker,session-ingest-api)' --timeout=600s >/dev/null
 [ "$(app_ready flow-existing)" -ge 4 ] || { echo "flow-existing: workloads not ready after bootstrap+migrate"; exit 1; }
 bp=$(pod_of flow-existing "$bj"); mp=$(pod_of flow-existing "$mj")
 b_start=$(epoch "$(cstat flow-existing "$bp" 'containerStatuses[?(@.name=="bootstrap")].state.terminated.startedAt')")
@@ -296,7 +296,7 @@ grep '"message":"role check failed"' <<<"$mlog" | grep -F '"reason":"verify:sess
 # Running pods drop out (probe re-reads the marker) and new pods never become ready.
 for i in $(seq 1 18); do [ "$(app_ready flow-existing)" = 0 ] && break; sleep 10; done
 [ "$(app_ready flow-existing)" = 0 ] || { echo "phase2: running workloads stayed ready after the phase 2 failure"; exit 1; }
-k -n flow-existing delete pods -l 'app.kubernetes.io/name in (worker,alleyoop)' --wait=false >/dev/null
+k -n flow-existing delete pods -l 'app.kubernetes.io/name in (worker,session-ingest-api)' --wait=false >/dev/null
 for i in $(seq 1 9); do sleep 10; [ "$(app_ready flow-existing)" = 0 ] || { echo "phase2: a workload became ready while phase 2 fails"; exit 1; }; done
 echo "flow-existing phase2: ledger complete ($ledger_before rows, unchanged); phase 1 passed, phase 2 55000; marker pending|${gen:0:12}; 0 app pods ready (running and restarted, 90s)"
 

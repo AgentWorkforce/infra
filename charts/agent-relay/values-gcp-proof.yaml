@@ -100,7 +100,7 @@ sessions-pipeline:
     auth:
       jwksUrl: http://relayauth:8787/.well-known/jwks.json
   hoopdb: { enabled: false }
-  locker: { enabled: false }
+  session-object-storage: { enabled: false }
 
 relayhistory:
   fullnameOverride: relayhistory

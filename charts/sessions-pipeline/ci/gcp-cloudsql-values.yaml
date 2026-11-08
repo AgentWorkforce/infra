@@ -70,5 +70,5 @@ alleyoop:
     jwksUrl: https://relayauth.example.com/.well-known/jwks.json
 hoopdb:
   enabled: false
-locker:
+session-object-storage:
   enabled: false

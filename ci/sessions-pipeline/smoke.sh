@@ -71,7 +71,7 @@ apply otel $(pin otel)
 IMG_REPO=${IMAGE%:*} IMG_TAG=${IMAGE##*:}
 IMG_ARGS=(--set global.imageRegistry= --set "image.repository=$IMG_REPO" --set "image.tag=$IMG_TAG" --set image.digest=)
 apply bulls "$ROOT/charts/sessions-pipeline-worker" -f "$ROOT/ci/sessions-pipeline/values.yaml" "${IMG_ARGS[@]}"
-apply oop "$ROOT/charts/alleyoop" -f "$ROOT/ci/sessions-pipeline/values.yaml" "${IMG_ARGS[@]}"
+apply oop "$ROOT/charts/session-ingest-api" -f "$ROOT/ci/sessions-pipeline/values.yaml" "${IMG_ARGS[@]}"
 
 $K wait --for=condition=complete job -l app.kubernetes.io/component=hoopdb-migrate --timeout=300s
 $K wait --for=condition=complete job -l app.kubernetes.io/component=locker-init --timeout=300s

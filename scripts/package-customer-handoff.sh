@@ -108,8 +108,8 @@ REQUIRED_FILES = (
     "charts/sessions-pipeline/Chart.lock",
     "charts/sessions-pipeline/Chart.yaml",
     "charts/sessions-pipeline/values.yaml",
-    "charts/alleyoop/Chart.yaml",
-    "charts/alleyoop/values.yaml",
+    "charts/session-ingest-api/Chart.yaml",
+    "charts/session-ingest-api/values.yaml",
     "charts/agent-relay/Chart.lock",
     "charts/agent-relay/Chart.yaml",
     "charts/agent-relay/README.md",
@@ -146,6 +146,7 @@ REQUIRED_FILES = (
     "scripts/release/validate-customer-release.py",
     "scripts/selfhost/README.md",
     "scripts/selfhost/verify-agent-relay.sh",
+    "scripts/selfhost/session-identities.py",
     "LICENSE",
     "THIRD_PARTY_NOTICES.md",
 )
