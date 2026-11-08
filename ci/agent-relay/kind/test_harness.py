@@ -26,6 +26,24 @@ class Harness(unittest.TestCase):
         self.addCleanup(scope.stop)
         self.local = stack.Stack("core")
 
+    def test_public_docker_config_selects_anonymous_file_store_without_inherited_auth(self):
+        self.local.env["DOCKER_HOST"] = "unix:///fixture/docker.sock"
+        self.local.env["DOCKER_AUTH_CONFIG"] = "private-inherited-auth"
+        self.local.cmd = lambda argv, **kw: subprocess.CompletedProcess(
+            argv, 0, "aarch64" if "{{.Architecture}}" in argv else "29.9.2", "")
+        self.local.docker(require_space=False)
+        config = self.local.state / "docker-public" / "config.json"
+        value = json.loads(config.read_text())
+        # Docker ContainsAuth considers a nonempty map configured even though
+        # these entries contain no credentials; it must not auto-select a helper.
+        self.assertTrue(value["auths"])
+        self.assertEqual(value["auths"], {"https://index.docker.io/v1/": {}, "ghcr.io": {}})
+        self.assertNotIn("credsStore", value)
+        self.assertNotIn("credHelpers", value)
+        self.assertNotIn("DOCKER_AUTH_CONFIG", self.local.env)
+        self.assertEqual(self.local.env["DOCKER_CONFIG"], str(config.parent))
+        self.assertEqual(config.stat().st_mode & 0o777, 0o600)
+
     def test_each_acl_attempt_is_fresh_and_a_later_failure_is_not_hidden(self):
         jobs, waited = [], []
         self.local.apply = jobs.append

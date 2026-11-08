@@ -168,8 +168,14 @@ class Stack:
         self.cmd(["docker", "--host", host, "info", "--format", "{{.ServerVersion}}"], timeout=10)
         config = self.state / "docker-public"
         config.mkdir(mode=0o700, exist_ok=True)
-        private_json(config / "config.json", {"auths": {}})
-        # Only public images are pulled. Avoid touching the user's credential helper.
+        # An empty auths map makes Docker CLI auto-detect the native credential
+        # helper, which can prompt for a locked login keychain over SSH. Explicit
+        # anonymous entries select the file store without supplying credentials.
+        private_json(config / "config.json", {"auths": {
+            "https://index.docker.io/v1/": {}, "ghcr.io": {}}})
+        # Only public images are pulled. Do not inherit a separate credential
+        # source or touch the user's credential helper/global configuration.
+        self.env.pop("DOCKER_AUTH_CONFIG", None)
         self.docker_args = ["docker", "--config", config, "--host", host]
         self.env.update(DOCKER_HOST=host, DOCKER_CONFIG=str(config))
         arch = self.cmd([*self.docker_args, "info", "--format", "{{.Architecture}}"], timeout=10).stdout.strip()

@@ -457,8 +457,12 @@ a relocated Docker Desktop disk or another local VM, set
 `KIND_DOCKER_DATA_PATH` to the existing host-side Docker backing file or directory.
 An unavailable storage path refuses setup rather than skipping the check.
 Setup fetches public image/chart/source
-artifacts. Runtime suite pods receive no external egress. Run the checkout
-and its worktree on a writable volume; all generated state and `TMPDIR` live
+artifacts. Runtime suite pods receive no external egress.
+Public image pulls use a private anonymous Docker configuration with explicit
+registry entries, so SSH setup does not invoke a locked native keychain helper
+or inherit `DOCKER_AUTH_CONFIG`. No Docker login or global configuration changes
+are performed.
+Run the checkout and its worktree on a writable volume; all generated state and `TMPDIR` live
 under its ignored `.kind/` directory. Helm dependency preparation also writes
 ignored archives under each chart’s `charts/` directory.
 
