@@ -60,7 +60,10 @@ session-object-storage:
 ```
 
 The two storage overrides above describe the former default; use the actual
-recorded names if the old release overrides them. Identity render tests verify
+recorded names if the old release overrides them. The upgrade check recognizes
+only `locker`, so recorded names other than `locker` must also set
+`acknowledgeStorageRename: true`; never pin `locker` on such a release, because
+Helm would prune its real claim. Identity render tests verify
 that these values still reference the original PVC. They do not create, delete
 or inspect a real volume.
 
@@ -71,8 +74,8 @@ overrides above to keep it. Do not use `persistence.existingClaim: locker` for
 a claim the release created: no PVC is rendered, so Helm still deletes it unless
 the live claim is first annotated `helm.sh/resource-policy: keep`. Set
 `acknowledgeStorageRename: true` only for a release installed at 0.7.0 or later,
-one whose objects are disposable, or one whose claim already carries that
-annotation. The check needs a real upgrade: it does not run under `helm template`
+one whose objects are disposable, one whose claim already carries that
+annotation, or one pinned to its recorded non-`locker` names as above. The check needs a real upgrade: it does not run under `helm template`
 without `--is-upgrade`, so manifest-based pipelines must apply these values
 themselves.
 
