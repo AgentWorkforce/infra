@@ -68,7 +68,9 @@ done
 # stays held) and the GCP values pin the GHCR image too. The chart
 # defaults (worker and alleyoop image.digest) are the same GHCR image, so a path
 # that pins nothing still gets it. The row loop below asserts that every
-# matrix row renders only the final images.
+# matrix row's 96bulls-services containers use those final images. The native
+# ingest-edge and read-api render fixtures carry separate synthetic image refs;
+# they do not qualify a native artifact or assert its provenance/final pin.
 GHCR="ghcr.io/agentworkforce/96bulls-services@sha256:6f22ea17dff336e1431664542759fd27958649388b90a0b2f0881883caa7c6b2"
 ECR="500268966557.dkr.ecr.us-west-2.amazonaws.com/96bulls-services@sha256:5bb6075240afa02a1b1797a81c07bffa029954eac7803d702ecba20db35d4db9"
 pins_of() { yq -r '[.worker.image.tag, .worker.image.digest, .alleyoop.image.tag, .alleyoop.image.digest, .privilegedSql.sqlImage.digest, .searchWorkerRole.bootstrapJob.sqlImage.digest, .runtimeRole.bootstrapJob.sqlImage.digest, .functionDefaultRevoke.bootstrapJob.sqlImage.digest] | map(select(. != null and . != "")) | join(",")' "$1"; }

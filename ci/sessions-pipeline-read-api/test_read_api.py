@@ -461,6 +461,17 @@ class IngestEdge(unittest.TestCase):
                             "relaycontrol": {"url": "https://control.agentrelay.com"},
                             "locker": {"endpoint": "https://objects.agentrelay.com"}})
 
+    def test_endpoint_host_and_service_labels_have_dns_bounds(self):
+        longest_host = ".".join(["a" * 63] * 3 + ["b" * 57, "com"])
+        for group, field in [("locker", "endpoint"), ("relaycontrol", "url")]:
+            with self.subTest(group=group):
+                self.render(overlay={group: {field: "https://" + longest_host + ":8443"}})
+                self.render(overlay={group: {field: "http://" + "s" * 63 + "." + "n" * 63 + ".svc.cluster.local:8080"}})
+                for url in ["https://" + longest_host.replace("b" * 57, "b" * 58),
+                            "http://" + "s" * 64 + ".ns.svc:8080",
+                            "http://service." + "n" * 64 + ".svc:8080"]:
+                    self.assertIn("ingestEdge", self.render(overlay={group: {field: url}}, fail=True))
+
     def test_no_extra_env_can_replace_auth_or_transport(self):
         for name in ["SERVICE", "RELAYHISTORY_SELFHOST_INGEST", "INGEST_SIGNING_KEY",
                      "INGEST_ACCEPTANCE_MODE", "INGEST_REPLICA_MODE", "INGEST_CUSTODY_SOURCE",
