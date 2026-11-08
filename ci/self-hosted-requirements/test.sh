@@ -46,9 +46,9 @@ expect_fail "planned: umbrella index .Values.worker \"sessionBrief\"" planned \
 
 # (c) A planned umbrella value read from the umbrella's own templates.
 fresh
-echo '{{- if .Values.search.backend }}{{ end }}' >> "$WORK/r/charts/sessions-pipeline/templates/NOTES.txt"
-expect_fail "planned: umbrella reads .Values.search.backend" planned \
-  "opt.sessions-pipeline.search-backend is planned, but charts/sessions-pipeline/templates reads sessions-pipeline:search.backend"
+echo '{{- if .Values.worker.sessionBrief.model }}{{ end }}' >> "$WORK/r/charts/sessions-pipeline/templates/NOTES.txt"
+expect_fail "planned: umbrella reads .Values.worker.sessionBrief.model" planned \
+  "opt.sessions-pipeline.session-briefs is planned, but charts/sessions-pipeline/templates reads sessions-pipeline:worker.sessionBrief.model"
 
 # (c) A planned entry owned by a SUBCHART (chart: sessions-pipeline-worker) whose path is
 # read only by the umbrella templates: every chart's reads are scanned.
@@ -61,7 +61,7 @@ expect_fail "planned: subchart entry read only by the umbrella" planned \
 # A template comment that names a planned env or value is not a reference.
 fresh
 printf '%s\n' '{{/* SESSION_BRIEF_ENABLED and .Values.worker.sessionBrief.enabled come with the re-pin */}}' \
-  '{{- /* .Values.search.backend: planned */ -}}' >> "$WORK/r/charts/sessions-pipeline/templates/NOTES.txt"
+  '{{- /* .Values.worker.sessionBrief.model: planned */ -}}' >> "$WORK/r/charts/sessions-pipeline/templates/NOTES.txt"
 expect_pass "planned: template comments are not references" planned
 
 # Shipped env whose only mention left is a values.yaml COMMENT.
