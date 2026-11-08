@@ -14,14 +14,17 @@ from stack import tenant_values
 
 
 class ControlArchive(unittest.TestCase):
-    def archive(self, path, *, arch="arm64", revision=control.REVISION, corrupt=False):
-        config = json.dumps({"architecture": arch, "os": "linux", "config": {"Labels": {
+    def archive(self, path, *, arch="arm64", revision=control.REVISION, corrupt=False,
+                include_platform=True, descriptor_arch=None, image_os="linux"):
+        config = json.dumps({"architecture": arch, "os": image_os, "config": {"Labels": {
             "org.opencontainers.image.revision": revision}}}).encode()
         config_hash = hashlib.sha256(config).hexdigest()
         manifest = json.dumps({"config": {"digest": "sha256:" + config_hash}}).encode()
         digest = hashlib.sha256(manifest).hexdigest()
-        index = json.dumps({"manifests": [{"digest": "sha256:" + digest,
-                            "platform": {"architecture": arch, "os": "linux"}}]}).encode()
+        descriptor = {"digest": "sha256:" + digest}
+        if include_platform:
+            descriptor["platform"] = {"architecture": descriptor_arch or arch, "os": "linux"}
+        index = json.dumps({"manifests": [descriptor]}).encode()
         with tarfile.open(path, "w") as archive:
             for name, data in [("index.json", index), ("blobs/sha256/" + digest, manifest),
                                ("blobs/sha256/" + config_hash, config + (b" " if corrupt else b""))]:
@@ -59,6 +62,28 @@ class ControlArchive(unittest.TestCase):
                     self.archive(path, **options)
                     with self.assertRaises(ValueError):
                         control.inspect_archive(path, "arm64")
+
+    def test_native_config_is_required_when_optional_descriptor_platform_is_absent(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "image.tar"
+            digest = self.archive(path, include_platform=False)
+            receipt = control.inspect_archive(path, "arm64")
+            self.assertEqual(receipt["manifestDigest"], digest)
+            self.assertEqual(receipt["architecture"], "arm64")
+            self.assertEqual(receipt["sourceRevision"], control.REVISION)
+            for options in ({"arch": "amd64"}, {"image_os": "windows"},
+                            {"revision": "other"}, {"corrupt": True}):
+                with self.subTest(options=options):
+                    self.archive(path, include_platform=False, **options)
+                    with self.assertRaises(ValueError):
+                        control.inspect_archive(path, "arm64")
+
+    def test_conflicting_present_platform_is_refused_despite_native_config(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "image.tar"
+            self.archive(path, arch="arm64", descriptor_arch="amd64")
+            with self.assertRaises(ValueError):
+                control.inspect_archive(path, "arm64")
 
 
 if __name__ == "__main__":
