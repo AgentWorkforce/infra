@@ -8,10 +8,10 @@ import tarfile
 from addons import NODE, checkout
 from stack import private_json
 
-REVISION = "df4b3901768809407c7c6e1e0d28031e2c2fa25d"
+REVISION = "4f1dcb0166f2febb070a86dfdbe1c9416e662271"
 HISTORICAL_REVISION = "1f08cb624be66016eb0c135363553dd44e58f691"
 SOURCES = {
-    REVISION: ("relay-control", "0.4.0"),
+    REVISION: ("relay-control", "0.5.1"),
     HISTORICAL_REVISION: ("relay-control-internal", "0.3.0"),
 }
 REPOSITORY = "agent-relay-kind/selfhost-api"
