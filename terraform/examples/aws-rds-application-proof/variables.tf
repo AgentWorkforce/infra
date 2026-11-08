@@ -131,3 +131,18 @@ variable "deadline" {
     error_message = "Require a canonical UTC millisecond deadline."
   }
 }
+
+variable "application_activation" {
+  description = "Reviewed schema-aware Sessions activation artifact for the shared-database application path (source commit, artifact sha256, generation, contract id). Null keeps application execution refused. Must name an entry of local.approved_activations, which is empty until a reviewed artifact exists."
+  type = object({
+    sessions_commit = string
+    artifact_sha256 = string
+    generation      = string
+    contract        = string
+  })
+  default = null
+  validation {
+    condition     = var.application_activation == null ? true : can(regex("^[a-f0-9]{40}$", var.application_activation.sessions_commit)) && can(regex("^[a-f0-9]{64}$", var.application_activation.artifact_sha256)) && can(regex("^[a-f0-9]{64}$", var.application_activation.generation)) && can(regex("^[a-z0-9][a-z0-9._-]{0,63}$", var.application_activation.contract))
+    error_message = "application_activation needs a 40-hex Sessions commit, 64-hex artifact and generation digests and a bounded contract id."
+  }
+}

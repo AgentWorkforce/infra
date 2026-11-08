@@ -108,7 +108,7 @@ module "postgres" {
 
   name                                = "${local.name}-pg"
   engine_version                      = var.postgres_version
-  database_name                       = "applicationproof"
+  database_name                       = "relaycontrol" # postgres-layout contract: ONE application database
   master_username                     = "proof_admin"
   instance_class                      = "db.t4g.micro"
   subnet_ids                          = local.private_ids
@@ -132,6 +132,34 @@ module "postgres" {
   tags       = local.tags
   depends_on = [terraform_data.guard, aws_route_table_association.private_first, aws_route_table_association.private_second]
 }
+# Expected application identities come from the reviewed layout contract, never
+# from a connection URL. The RDS master is the narrowly used provisioning
+# executor only and is a forbidden application identity.
+module "layout" {
+  source          = "../../modules/postgres-layout"
+  host            = module.postgres.host
+  port            = module.postgres.port
+  database        = module.postgres.initial_database
+  forbidden_roles = [module.postgres.master_username]
+}
+locals {
+  # Reviewed activation artifacts by sha256. Intentionally empty: none exists yet.
+  approved_activations = {}
+  application          = merge(module.layout.bindings["hoopdb"], { database = module.postgres.initial_database })
+}
+# F1: the application path (non-master owner/runtime in the shared database) has
+# no reviewed, schema-aware Sessions activation artifact yet. Compute that would
+# run the guest is refused until one is registered in approved_activations.
+resource "terraform_data" "application_gate" {
+  input = { activation = var.application_activation, payload = var.payload_version_id }
+  lifecycle {
+    precondition {
+      condition     = var.payload_version_id == null || (var.application_activation != null && contains(keys(local.approved_activations), try(var.application_activation.artifact_sha256, "")))
+      error_message = "Application SQL execution is refused: no reviewed schema-aware Sessions activation artifact is registered (application_sql_ready=false). See README 'F1 status'."
+    }
+  }
+}
+
 module "objects" {
   source = "../../modules/aws/object-storage"
 

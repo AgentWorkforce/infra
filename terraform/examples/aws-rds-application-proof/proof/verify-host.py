@@ -132,6 +132,25 @@ class HostIo:
             checks[name]=not self.docker('ps','-a','--filter','name=^/'+name+'$','--format','{{.ID}}').stdout.strip()
         require(all(checks.values()),'runtime_containers_not_absent');return checks
 
+# F1: expected application identities come from the reviewed postgres-layout
+# contract, carried as non-secret config. The RDS master is only the narrowly
+# used provisioning executor and is a forbidden application identity.
+EXPECTED_APPLICATION={'database':'relaycontrol','schema':'sessions','migration_role':'hoop','runtime_role':'sessions_pipeline_runtime'}
+
+def application_identity(c):
+    a=c.get('application');require(isinstance(a,dict),'application_binding_missing')
+    for key,value in EXPECTED_APPLICATION.items():require(a.get(key)==value,'application_binding_mismatch')
+    master=c.get('provisioning_executor');forbidden=c.get('forbidden_roles')
+    require(isinstance(master,str) and master and isinstance(forbidden,list) and master in forbidden,'provisioning_executor_not_forbidden')
+    for role in (a['migration_role'],a['runtime_role']):
+        require(role!=master and role not in forbidden,'application_identity_is_master_or_forbidden')
+    require(a['migration_role']!=a['runtime_role'],'application_owner_runtime_shared')
+    # No reviewed schema-aware Sessions activation artifact exists, and the guest
+    # flow has not been ported to a non-master owner. Refuse before any AWS call
+    # or credential read; never fall back to the master as application migrator.
+    require(c.get('application_activation') is not None,'application_activation_artifact_missing')
+    require(False,'application_activation_not_implemented')
+
 def read_seed(c,root):
     path=root.parent/'seed.json'
     meta=cli(c,'s3api','get-object','--bucket',c['bucket'],'--key','receipts/seed.json','--version-id',c['seed_receipt_version_id'],str(path))
@@ -144,7 +163,7 @@ def main():
     require(platform.system()=='Linux' and platform.machine()=='aarch64','owned_linux_arm_host_required')
     require(len(Path('/proc/swaps').read_text().splitlines())<=1,'swap_must_be_disabled_before_credentials')
     root=Path(__file__).resolve().parent;c=json.loads((root.parent/'inputs.json').read_text());check_deadline(c)
-    require(re.fullmatch(r'[0-9]{12}',c['account_id']) and re.fullmatch(r'[a-f0-9]{40}',c['source_sha']) and c['owner']=='proof_admin' and c['runtime_role']=='proof_runtime','closed_host_identity')
+    require(re.fullmatch(r'[0-9]{12}',c['account_id']) and re.fullmatch(r'[a-f0-9]{40}',c['source_sha']),'closed_host_identity');application_identity(c)
     require(c['phase'] in ['seed','restore'] and c['guest_sources']['composition_commit']=='292359f0c68b1e4615704fd51d303b7f6b4db445','closed_guest_source')
     sources=json.loads((root/'guest-sources.json').read_text());outer=json.loads((root/'archive-manifest.json').read_text())
     require(outer['format']=='actual-rds-application-archive-v1' and outer.get('test_only') is False and outer['helm_commit']==c['source_sha'] and outer['guest_manifest_sha256']==c['guest_sources']['manifest_sha256'] and sources['compositionCommit']==c['guest_sources']['composition_commit'] and sources['generation']==c['guest_sources']['generation'],'frozen_source_manifest')

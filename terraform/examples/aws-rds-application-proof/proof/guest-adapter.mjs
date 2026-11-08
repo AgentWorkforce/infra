@@ -31,8 +31,9 @@ async function refused(role,password,mode,allowed){
  try{await client.end();}finally{throw new Error('negative_connection_succeeded');}
 }
 async function readiness(client){
- deadline();const row=(await client.query('SELECT current_user AS role,current_database() AS database,coalesce((SELECT ssl FROM pg_stat_ssl WHERE pid=pg_backend_pid()),false) AS tls')).rows[0];
- requireOk(row.role===cfg.scope.runtimeRole&&row.database===cfg.scope.database&&row.tls===true);
+ deadline();const row=(await client.query('SELECT session_user AS login,current_user AS role,current_database() AS database,coalesce((SELECT ssl FROM pg_stat_ssl WHERE pid=pg_backend_pid()),false) AS tls')).rows[0];
+ // SET ROLE / role=... substitution: the authenticated LOGIN must itself be the runtime.
+ requireOk(row.login===cfg.scope.runtimeRole&&row.role===cfg.scope.runtimeRole&&row.database===cfg.scope.database&&row.tls===true);
  const expected={generation:cfg.scope.generation,dbMode:'rds',names:(await plan({mode:'rds',shim:false,bootstrap:false,verify:true,runtimeRole:cfg.scope.runtimeRole,runtimeLogin:true,functionBoundary:'global-default-revoke'})).map(s=>s.name)};
  const verdict=await schemaVerdict(expected,async work=>{await client.query('BEGIN');try{const value=await work(client);await client.query('COMMIT');return value;}catch(error){await client.query('ROLLBACK').catch(()=>{});throw error;}});
  requireOk(verdict.ok);deadline();

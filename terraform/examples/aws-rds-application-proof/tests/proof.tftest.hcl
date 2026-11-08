@@ -56,7 +56,7 @@ variables {
   postgres_version   = "17.5"
   source_sha         = "0000000000000000000000000000000000000000"
   payload_sha256     = "0000000000000000000000000000000000000000000000000000000000000000"
-  payload_version_id = "synthetic-transport-version"
+  payload_version_id = null # F1: no compute until a reviewed activation artifact exists
   rds_ca_sha256      = "0000000000000000000000000000000000000000000000000000000000000000"
 }
 run "actual_modules_private_managed_secret_and_versioned_bucket" {
@@ -66,11 +66,11 @@ run "actual_modules_private_managed_secret_and_versioned_bucket" {
     error_message = "The sentinel contract requires a real version reference and explicit SSE-KMS."
   }
   assert {
-    condition     = module.postgres.master_user_secret_arn != null && module.postgres.initial_database == "applicationproof" && output.proof_contract.database.retained_automated_backups && output.proof_contract.database.skip_final_snapshot
+    condition     = module.postgres.master_user_secret_arn != null && module.postgres.initial_database == "relaycontrol" && output.proof_contract.database.retained_automated_backups && output.proof_contract.database.skip_final_snapshot
     error_message = "Expose only a managed-secret reference and explicit module cleanup obligations."
   }
   assert {
-    condition     = aws_iam_role.verifier.path == "/pippen/workload/" && aws_iam_role.verifier.permissions_boundary == "arn:aws:iam::111111111111:policy/pippen-agent-session-boundary" && startswith(aws_iam_instance_profile.verifier.name, "eks-") && aws_instance.verifier[0].instance_initiated_shutdown_behavior == "terminate"
+    condition     = aws_iam_role.verifier.path == "/pippen/workload/" && aws_iam_role.verifier.permissions_boundary == "arn:aws:iam::111111111111:policy/pippen-agent-session-boundary" && startswith(aws_iam_instance_profile.verifier.name, "eks-")
     error_message = "Verifier must retain existing Pippen path/boundary/profile and shutdown retirement."
   }
   assert {
@@ -85,6 +85,35 @@ run "actual_modules_private_managed_secret_and_versioned_bucket" {
     condition     = output.proof_contract.phase == "seed" && output.proof_contract.snapshot == null && strcontains(aws_iam_role_policy.verifier.policy, "s3:DeleteObjectVersion") && !strcontains(aws_iam_role_policy.verifier.policy, "secretsmanager:*") && aws_s3_object.sentinel.key == "unrelated/sentinel"
     error_message = "Seed must be isolated, version cleanup scoped and unrelated sentinel preserved."
   }
+}
+run "application_binding_comes_from_postgres_layout" {
+  command = plan
+  assert {
+    condition     = output.application_binding.database == "relaycontrol" && output.application_binding.schema == "sessions" && output.application_binding.owner == "hoop" && output.application_binding.runtime == "sessions_pipeline_runtime" && output.application_binding.provisioning_executor == "proof_admin" && output.application_binding.activation == null
+    error_message = "Application identities must come from the reviewed postgres-layout hoopdb binding, distinct from the RDS master."
+  }
+  assert {
+    condition     = !contains(flatten([for b in values(module.layout.bindings) : [b.migration_role, b.runtime_role]]), "proof_admin") && module.layout.topology.application_sql_ready == false && output.application_sql_ready == false
+    error_message = "The RDS master must be a forbidden application role and application SQL must stay not-ready."
+  }
+}
+run "application_execution_refused_without_reviewed_activation" {
+  command = plan
+  variables { payload_version_id = "synthetic-transport-version" }
+  expect_failures = [terraform_data.application_gate]
+}
+run "unregistered_activation_artifact_still_refused" {
+  command = plan
+  variables {
+    payload_version_id     = "synthetic-transport-version"
+    application_activation = { sessions_commit = "1111111111111111111111111111111111111111", artifact_sha256 = "2222222222222222222222222222222222222222222222222222222222222222", generation = "3333333333333333333333333333333333333333333333333333333333333333", contract = "unreviewed" }
+  }
+  expect_failures = [terraform_data.application_gate]
+}
+run "malformed_activation_refused" {
+  command = plan
+  variables { application_activation = { sessions_commit = "not-a-commit", artifact_sha256 = "x", generation = "y", contract = "Bad Contract" } }
+  expect_failures = [var.application_activation]
 }
 run "restore_requires_explicit_checkpoint_and_remains_private" {
   command = plan

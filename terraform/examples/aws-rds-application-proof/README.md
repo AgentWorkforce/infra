@@ -188,6 +188,67 @@ prove exact container/all versions gone. Denied, untyped empty responses, refres
 failure and recovery schedules never count. State0 plus independent specific native
 absence closes the fixture; existing VPC/routes/apps/resources remain outside scope.
 
+## F1 status: shared-database application path (refused)
+
+The fixture now consumes the landed `postgres-layout` contract (#80):
+- one application database, `relaycontrol`;
+- the pipeline binding `sessions` / `hoop` / `sessions_pipeline_runtime`;
+- the RDS master (`proof_admin`) as a forbidden application role.
+
+Expected identities come from `module.layout.bindings["hoopdb"]`, never from a
+connection URL. The master is only the narrowly used provisioning executor. It is
+never the application migrator or runtime: the host refuses that before any AWS
+call or credential read (`application_identity`). The guest's runtime readiness
+also requires `session_user` to equal the runtime role, so a `SET ROLE` or
+`options=-c role=…` substitution can't pass.
+
+Other services' schemas (`relaycontrol`, `relaycast`, `relayhistory`,
+`relayfile`) stay separately owned. A binding existing doesn't mean the service is
+implemented.
+
+**Application execution is refused** and `application_sql_ready` is `false`.
+`terraform_data.application_gate` refuses any verifier compute unless
+`application_activation` names an entry of `local.approved_activations`, which
+is intentionally empty. The host additionally refuses a missing activation
+(`application_activation_artifact_missing`) and any supplied one
+(`application_activation_not_implemented`), because the guest flow hasn't been
+ported to a non-master owner.
+
+Remaining dependencies (source/design inventory; nothing here is a proof):
+1. **A reviewed, schema-aware Sessions source and artifact.** The pinned
+   composition `292359f0c68b1e4615704fd51d303b7f6b4db445` is not retrievable from
+   any AgentWorkforce GitHub repository (`relayhistory-pipeline`,
+   `sessions-pipeline`, `96BullSessions`, `sessions-pipeline-cloud` all return 422)
+   or from this host. It can't be reviewed for non-master owner support.
+   Owner: pipeline (`relayhistory-pipeline`).
+2. **The RDS application activation contract.** A narrowly privileged, named and
+   authenticated provisioning executor creates `hoop` and
+   `sessions_pipeline_runtime` with an exact grantor-specific graph. Then, in one
+   explicit transaction:
+   - LOGIN and default changes;
+   - `RESET ROLE`;
+   - creator cleanup;
+   - final graph validation.
+
+   No helper creator or capability may survive into the ready state. Candidate
+   upstream sources to review are `supabase/bootstrap/rds_migration_roles.sql`
+   and `hoopdb_runtime_role_rds.sql` in `relayhistory-pipeline`. They must not be
+   run as standalone `BEGIN`/`COMMIT` files inside an outer transaction. The
+   `rds-profile-proof.ts` emulation is not an activation. Owner: pipeline.
+3. **A durable application-readiness result.** The application grants and the
+   retention, privacy and read-api verifiers must pass, then publish a result
+   bound to source, profile, generation and verifier. Ordinary `migrate` and a
+   generic schema PASS can't stand in for it. Missing, pending or stale readiness
+   must block service startup. Owner: pipeline and control.
+4. **Execution proof (later, separate).** Actual non-owner LOGINs, cross-schema
+   denials with unchanged foreign objects, and bootstrap failure, crash and
+   resume. Ordinary migrate must not substitute for activation. Then real
+   auth/TLS/password rotation and restore, then Helm and application behaviour.
+
+Immutable schema steps (including `042000`), historical migration, verifier and
+function ACLs are unchanged here, and no migration slot or privilege edge is
+added.
+
 <!-- BEGIN_TF_DOCS -->
 ### Requirements
 
@@ -208,6 +269,7 @@ absence closes the fixture; existing VPC/routes/apps/resources remain outside sc
 
 | Name | Source | Version |
 | ---- | ------ | ------- |
+| layout | ../../modules/postgres-layout | n/a |
 | objects | ../../modules/aws/object-storage | n/a |
 | postgres | ../../modules/aws/postgres | n/a |
 
@@ -234,6 +296,7 @@ absence closes the fixture; existing VPC/routes/apps/resources remain outside sc
 | [aws_vpc_security_group_egress_rule.database](https://registry.terraform.io/providers/hashicorp/aws/6.72.0/docs/resources/vpc_security_group_egress_rule) | resource |
 | [aws_vpc_security_group_egress_rule.https](https://registry.terraform.io/providers/hashicorp/aws/6.72.0/docs/resources/vpc_security_group_egress_rule) | resource |
 | [aws_vpc_security_group_ingress_rule.database](https://registry.terraform.io/providers/hashicorp/aws/6.72.0/docs/resources/vpc_security_group_ingress_rule) | resource |
+| [terraform_data.application_gate](https://registry.terraform.io/providers/hashicorp/terraform/latest/docs/resources/data) | resource |
 | [terraform_data.execution](https://registry.terraform.io/providers/hashicorp/terraform/latest/docs/resources/data) | resource |
 | [terraform_data.guard](https://registry.terraform.io/providers/hashicorp/terraform/latest/docs/resources/data) | resource |
 | [terraform_data.network_guard](https://registry.terraform.io/providers/hashicorp/terraform/latest/docs/resources/data) | resource |
@@ -265,6 +328,7 @@ absence closes the fixture; existing VPC/routes/apps/resources remain outside sc
 | run\_id | Lease-unique bounded slug; do not reuse while old resources or sessions exist. | `string` | n/a | yes |
 | source\_sha | Exact committed source of the reviewed transport payload. | `string` | n/a | yes |
 | vpc\_id | Reviewed existing VPC; unchanged by this proof. | `string` | n/a | yes |
+| application\_activation | Reviewed schema-aware Sessions activation artifact for the shared-database application path (source commit, artifact sha256, generation, contract id). Null keeps application execution refused. Must name an entry of local.approved\_activations, which is empty until a reviewed artifact exists. | ```object({ sessions_commit = string artifact_sha256 = string generation = string contract = string })``` | `null` | no |
 | create\_private\_subnets | Optional two owned local-only private subnets in the existing default VPC. Explicit reviewed non-overlapping /24-/28 IPv4 CIDRs and distinct available AZs; mutually exclusive with private\_subnet\_ids. | `object({ first = object({ cidr = string, az = string }), second = object({ cidr = string, az = string }) })` | `null` | no |
 | payload\_version\_id | Null provisions data without compute. Exact immutable transport VersionId enables the verifier in a separate reviewed apply. | `string` | `null` | no |
 | private\_subnet\_ids | Exactly two reviewed existing private subnets in distinct AZs; null when create\_private\_subnets is selected. | `set(string)` | `null` | no |
@@ -275,6 +339,7 @@ absence closes the fixture; existing VPC/routes/apps/resources remain outside sc
 
 | Name | Description |
 | ---- | ----------- |
+| application\_binding | Expected application identities from the postgres-layout contract (non-secret). Metadata only: not SQL, bootstrap or application proof. |
 | application\_sql\_ready | False: this synthetic master-role fixture does not qualify the shared-database application layout or its activation. |
 | proof\_contract | Non-secret source/lease/module/transport identities. Capture before guest termination. |
 <!-- END_TF_DOCS -->

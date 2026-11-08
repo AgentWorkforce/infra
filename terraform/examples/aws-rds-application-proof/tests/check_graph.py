@@ -36,7 +36,7 @@ pairs=[
  ('aws_db_instance.restored','module.postgres.aws_db_instance.this'),
  ('aws_db_instance.restored','module.postgres.aws_db_parameter_group.this'),
  ('aws_db_instance.restored','module.postgres.aws_db_subnet_group.this'),
- *[('aws_instance.verifier',x) for x in ['aws_db_instance.restored','module.postgres.aws_db_instance.this','aws_iam_role_policy.verifier','aws_iam_instance_profile.verifier','aws_vpc_security_group_ingress_rule.database','aws_vpc_security_group_egress_rule.database','aws_vpc_security_group_egress_rule.https','terraform_data.execution','terraform_data.guard']]
+ *[('aws_instance.verifier',x) for x in ['aws_db_instance.restored','module.postgres.aws_db_instance.this','aws_iam_role_policy.verifier','aws_iam_instance_profile.verifier','aws_vpc_security_group_ingress_rule.database','aws_vpc_security_group_egress_rule.database','aws_vpc_security_group_egress_rule.https','terraform_data.execution','terraform_data.guard','terraform_data.application_gate']]
 ]
 missing=[(source,target) for source,target in pairs if not reachable(source,target)]
 if missing:raise SystemExit(json.dumps({'missing_prerequisites':missing}))

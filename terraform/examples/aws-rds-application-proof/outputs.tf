@@ -1,3 +1,8 @@
+output "application_binding" {
+  description = "Expected application identities from the postgres-layout contract (non-secret). Metadata only: not SQL, bootstrap or application proof."
+  value       = { database = local.application.database, schema = local.application.schema, owner = local.application.migration_role, runtime = local.application.runtime_role, provisioning_executor = module.postgres.master_username, activation = var.application_activation }
+}
+
 output "application_sql_ready" {
   description = "False: this synthetic master-role fixture does not qualify the shared-database application layout or its activation."
   value       = false

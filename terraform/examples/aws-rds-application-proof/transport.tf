@@ -55,9 +55,12 @@ locals {
     runtime_secret_arn        = aws_secretsmanager_secret.runtime.arn
     runtime_secret_version_id = try(var.restore_checkpoint.runtime_secret_version_id, null)
     seed_evidence_sha256      = try(var.restore_checkpoint.seed_evidence_sha256, null)
-    runtime_role              = "proof_runtime"
-    owner                     = "proof_admin"
-    pending_receipt_key       = "receipts/${local.phase}.pending.json"
+    # Provisioning executor (RDS master) is distinct from the application owner/runtime.
+    provisioning_executor  = module.postgres.master_username
+    forbidden_roles        = [module.postgres.master_username]
+    application            = local.application
+    application_activation = var.application_activation
+    pending_receipt_key    = "receipts/${local.phase}.pending.json"
   }
   bootstrap = templatefile("${path.module}/bootstrap.sh.tftpl", { config = jsonencode(local.guest), extractor = file("${path.module}/proof/extract_payload.py") })
 }
@@ -119,7 +122,7 @@ resource "aws_instance" "verifier" {
   ebs_optimized                        = true
   monitoring                           = true
   tags                                 = local.tags
-  depends_on                           = [aws_iam_role_policy.verifier, aws_vpc_security_group_ingress_rule.database, aws_vpc_security_group_egress_rule.database, aws_vpc_security_group_egress_rule.https]
+  depends_on                           = [terraform_data.application_gate, aws_iam_role_policy.verifier, aws_vpc_security_group_ingress_rule.database, aws_vpc_security_group_egress_rule.database, aws_vpc_security_group_egress_rule.https]
 }
 
 resource "terraform_data" "execution" {
