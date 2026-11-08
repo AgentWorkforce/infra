@@ -39,12 +39,13 @@ class ReadApi(unittest.TestCase):
         self.assertEqual(self.render(fixture=False), [])
 
     def test_credentials_require_secret_key_references(self):
-        for entry in [{"value": "not-a-real-secret"},
-                      {"valueFrom": {"configMapKeyRef": {"name": "config", "key": "token"}}},
-                      {"valueFrom": {"fieldRef": {"fieldPath": "metadata.name"}}}]:
-            with self.subTest(entry=entry):
-                self.assertIn("require valueFrom.secretKeyRef", self.render(
-                    overlay={"extraEnv": [{"name": "CUSTOM_TOKEN", **entry}]}, fail=True))
+        for name in ["CUSTOM_TOKEN", "DATABASE_URL", "PRIVATE_KEY", "LOCKER_SECRET_ACCESS_KEY", "PGPASSWORD"]:
+            for entry in [{"value": "not-a-real-secret"},
+                          {"valueFrom": {"configMapKeyRef": {"name": "config", "key": "token"}}},
+                          {"valueFrom": {"fieldRef": {"fieldPath": "metadata.name"}}}]:
+                with self.subTest(name=name, entry=entry):
+                    self.assertIn("require valueFrom.secretKeyRef", self.render(
+                        overlay={"extraEnv": [{"name": name, **entry}]}, fail=True))
         self.render(overlay={"extraEnv": [{"name": "CUSTOM_TOKEN", "valueFrom": {
             "secretKeyRef": {"name": "custom", "key": "token"}}}]})
 

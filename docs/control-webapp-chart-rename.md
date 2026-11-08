@@ -68,7 +68,7 @@ For the historical kind profile, the supplied
 [identity overlay](../charts/agent-relay/upgrade/kind-control-webapp-identities.yaml)
 keeps `relaycontrol` and `relay-app`, with selectors `relay-cloud-api` and
 `relay-dashboard`. Layer it after translated old values. This file targets the observed pre-#94 ar-lap 0.3.16 fixture, whose internal
-ingest Deployment/Service is `alleyoop`; it is not a universal overlay for newer
+ingest Deployment is `alleyoop-ingest` and Service is `alleyoop`; it is not a universal overlay for newer
 releases already named `session-ingest-api`. The overlay also retains #94's legacy session workload/storage identities
 and the original Locker endpoint byte for byte, preserving the old migration
 Job hashes. Both kind preflights allow an empty owned cluster and refuse

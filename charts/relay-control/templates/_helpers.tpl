@@ -125,13 +125,13 @@ the chart already sets, including duplicates inside extraEnv. */ -}}
 {{- if has (toString .name) $managed }}{{ fail (printf "%s is managed by structured chart values and must not appear in extraEnv" .name) }}{{ end -}}
 {{- if ne (hasKey . "value") (not (hasKey . "valueFrom")) }}{{ fail "extraEnv requires exactly one of value or valueFrom" }}{{ end -}}
 {{- if and (hasKey . "value") (not (kindIs "string" .value)) }}{{ fail "extraEnv.value must be a string; quote numbers and booleans" }}{{ end -}}
-{{- if and (hasKey . "value") (regexMatch "(?i)(^|_)(SECRET|TOKEN|PASSWORD|CREDENTIAL|DSN|API_KEY)$" .name) }}{{ fail "sensitive extraEnv settings require valueFrom.secretKeyRef, never inline values" }}{{ end -}}
+{{- if and (hasKey . "value") (regexMatch "(?i)(^|_)(SECRET|TOKEN|PASSWORD|CREDENTIAL|DSN|API_KEY|PRIVATE_KEY|ACCESS_KEY|ACCESS_KEY_ID|DATABASE_URL|DB_URL|HOOPDB_URL|POSTGRES_URL|POSTGRESQL_URL|PGPASSWORD)$" .name) }}{{ fail "sensitive extraEnv settings require valueFrom.secretKeyRef, never inline values" }}{{ end -}}
 {{- if hasKey . "valueFrom" -}}
 {{- if not (kindIs "map" .valueFrom) }}{{ fail "extraEnv valueFrom must be an object" }}{{ end -}}
 {{- $fromKeys := keys .valueFrom -}}
 {{- if ne (len $fromKeys) 1 }}{{ fail "extraEnv valueFrom must set exactly one of secretKeyRef, configMapKeyRef, fieldRef, or resourceFieldRef" }}{{ end -}}
 {{- $fromKey := index $fromKeys 0 -}}
-{{- if and (regexMatch "(?i)(^|_)(SECRET|TOKEN|PASSWORD|CREDENTIAL|DSN|API_KEY)$" .name) (ne $fromKey "secretKeyRef") }}{{ fail "sensitive extraEnv settings require valueFrom.secretKeyRef" }}{{ end -}}
+{{- if and (regexMatch "(?i)(^|_)(SECRET|TOKEN|PASSWORD|CREDENTIAL|DSN|API_KEY|PRIVATE_KEY|ACCESS_KEY|ACCESS_KEY_ID|DATABASE_URL|DB_URL|HOOPDB_URL|POSTGRES_URL|POSTGRESQL_URL|PGPASSWORD)$" .name) (ne $fromKey "secretKeyRef") }}{{ fail "sensitive extraEnv settings require valueFrom.secretKeyRef" }}{{ end -}}
 {{- if not (has $fromKey (list "secretKeyRef" "configMapKeyRef" "fieldRef" "resourceFieldRef")) }}{{ fail "extraEnv valueFrom must set exactly one of secretKeyRef, configMapKeyRef, fieldRef, or resourceFieldRef" }}{{ end -}}
 {{- $src := index .valueFrom $fromKey -}}
 {{- if not (kindIs "map" $src) }}{{ fail (printf "extraEnv valueFrom.%s must be an object" $fromKey) }}{{ end -}}
