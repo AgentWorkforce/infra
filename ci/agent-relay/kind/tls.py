@@ -8,8 +8,8 @@ def create(stack, hosts, namespace):
     def current(path, extension, seconds):
         if not path.exists():
             return False
-        text = stack.cmd(["openssl", "x509", "-in", path, "-noout", "-text"]).stdout
-        return extension in text and stack.cmd(
+        parsed = stack.cmd(["openssl", "x509", "-in", path, "-noout", "-text"], check=False)
+        return parsed.returncode == 0 and extension in parsed.stdout and stack.cmd(
             ["openssl", "x509", "-in", path, "-checkend", str(seconds), "-noout"], check=False).returncode == 0
 
     renew_ca = not current(ca, "Subject Key Identifier", 31 * 86400)

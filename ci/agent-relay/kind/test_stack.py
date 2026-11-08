@@ -141,6 +141,8 @@ class Profiles(unittest.TestCase):
 
     def test_local_scope_guard_and_configurable_api_ingress(self):
         self.assertIn("allowLocalOnly", self.render(extra=["--set", "localKind.allowLocalOnly=false"], ok=False))
+        self.assertIn("ingress.enabled=true", self.render(extra=["--set", "relay-dashboard.ingress.enabled=false"], ok=False))
+        self.assertIn("ingress.host", self.render(extra=["--set", "relay-dashboard.ingress.host="], ok=False))
         self.assertIn("child egress", self.render("addons", extra=["--set", "relayflows.networkPolicy.enabled=true"], ok=False))
         docs = self.render(extra=["--set", "relay-cloud-api.fullnameOverride=other-control",
                                   "--set", "relay-dashboard.api.serviceName=other-control",

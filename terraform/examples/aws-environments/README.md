@@ -1,5 +1,14 @@
 # AWS environments
 
+The current application target is **one RDS instance and one PostgreSQL database
+with isolated service schemas**, including control, HoopDb and Relaycast.
+`application_database_name` retains `relaycontrol` by default; the new
+`postgres_service_bindings` output publishes separate schema/owner/runtime
+identities on that same endpoint/database. It does not perform SQL bootstrap or
+prove current images support the target. See the
+[shared-store contract](../../../docs/shared-postgres-storage-contract.md).
+Older dedicated-HoopDb or SQLite examples are legacy compatibility paths.
+
 An environment-aware data stack for self-hosted Agent Relay. It composes RDS
 PostgreSQL 17 (or explicitly selected Aurora PostgreSQL), S3, private OpenSearch,
 and optionally the sessions-pipeline Lambda/SQS/EventBridge runtime. This is
@@ -232,10 +241,12 @@ version), or a local ZIP with its base64 SHA-256. [`profiles/lambda.tfvars.json.
 shows an additive fragment to merge into an environment file. The Lambda module
 uses Node 24/arm64 for ZIPs; a Bun services image is not a Lambda handler package.
 
-`activate_lambda` defaults to false, disabling the queue event source mapping
-and both schedules. The queue and bucket notification still exist and can
+`activate_lambda` defaults to false. The shared-database profile currently
+**refuses true**, even with valid artifact/TLS settings, until schema-aware
+runtime/bootstrap qualification is implemented and reviewed. This keeps the
+queue event source mapping and both schedules disabled. The queue and bucket notification still exist and can
 accumulate messages. Direct authorized invocation remains possible. Before a
-separate reviewed activation plan:
+reviewed implementation can lift the shared-database activation hold:
 
 1. Verify package provenance, handler/schema assets, TLS support and actual
    provider adapter dispatch in the deployed pipeline **and** read API.
@@ -252,13 +263,15 @@ separate reviewed activation plan:
    queued messages, and verify no second pipeline owner will run. Lambda is an
    alternative for those stages; the remaining application workers still run.
 
-The `application_contract` output records the required full suite:
+The `application_contract` output records the target full suite:
 relaycontrol API, relay-dashboard, sessions-pipeline, relayhistory, Relaycast
-backed by first-party Terse/durable-actors, RelayAuth, and optional Relayfile.
-It is not a deployable Helm overlay. Actor placement/runtime identities, actor
-storage buckets, component databases and Secrets, Redis where required,
-DNS/TLS, authentication and application wiring still belong in the reviewed
-foundation/application installation. ServiceAccount outputs must match actual
+with PostgreSQL authoritative state, the current auth compatibility path, and
+optional Relayfile. A separate durable-actors store is not a dependency of the
+shared-database target. The output is not a deployable Helm overlay and labels
+the Relaycast PostgreSQL backend as required but unqualified. Schema-qualified
+migrations, per-service runtime identities and Secrets, shared-database ACLs,
+Redis where required, DNS/TLS, authentication and application wiring still belong
+in the reviewed foundation/application installation. ServiceAccount outputs must match actual
 chart component identities; creating Pod Identity associations alone grants no
 running workload the intended binding.
 
@@ -398,6 +411,7 @@ exact destroy inventory and recovery proof; do not remove state to bypass them.
 | ---- | ------ | ------- |
 | pipeline | ../../modules/aws/functions | n/a |
 | postgres | ../../modules/aws/postgres | n/a |
+| postgres\_layout | ../../modules/postgres-layout | n/a |
 | search | ../../modules/aws/search | n/a |
 | sessions\_bucket | ../../modules/aws/object-storage | n/a |
 
@@ -421,7 +435,8 @@ exact destroy inventory and recovery proof; do not remove state to bypass them.
 | search\_master\_user\_arn | Existing environment-specific IAM administrator for OpenSearch role bootstrap. Never a runtime role. | `string` | n/a | yes |
 | search\_security\_group\_ids | Search security groups allowing HTTPS only from approved application/proof runner identities. | `list(string)` | n/a | yes |
 | search\_subnet\_ids | Existing private OpenSearch subnets, one per AZ. Production requires three. | `list(string)` | n/a | yes |
-| activate\_lambda | Enable automatic Lambda queue/schedule processing after secret/bootstrap/artifact checks and after disabling overlapping worker stages. | `bool` | `false` | no |
+| activate\_lambda | Reserved activation input. This shared-database profile currently refuses true until schema/bootstrap/runtime support is qualified by a reviewed implementation change; provision inactive infrastructure meanwhile. | `bool` | `false` | no |
+| application\_database\_name | Single shared application database for control, HoopDb, Relaycast and other service schemas. Default preserves the existing RDS initial database identity; do not change it on an existing instance without reviewing replacement/data migration. | `string` | `"relaycontrol"` | no |
 | aurora\_engine\_version | Explicit region-supported Aurora PostgreSQL 17 minor version when Aurora is selected. | `string` | `null` | no |
 | database\_instance\_class | Override the environment tier's instance class. Aurora needs an Aurora-supported class. | `string` | `null` | no |
 | deletion\_protection | Database API deletion protection. Production refuses false. Final snapshots and S3 versioning remain enabled. | `bool` | `true` | no |
@@ -450,6 +465,8 @@ exact destroy inventory and recovery proof; do not remove state to bypass them.
 | environment | Environment identity to compare with the separately configured backend before apply. |
 | lambda\_shared\_environment | Non-secret writer/reader bindings, or null until explicitly configured. Independently qualify the matching reader artifact, read-only DB identity, JWT settings, schema/FGAC bootstrap and worker retirement before activation. |
 | pipeline | Lambda runtime bindings, or null in worker mode. Populate the secret out of band and verify actual handler compatibility before activation. |
+| postgres\_service\_bindings | Target per-service schemas and independent migration/runtime roles on the SAME RDS/database. Contains no credentials; schema-aware runtime/bootstrap and isolation proof remain required. Optional-service bindings do not enable those workloads. |
+| postgres\_topology | Shared-database relational target; application\_sql\_ready=false until actual service integration and managed-RDS validation are completed. |
 | runtime\_role\_policy\_json | Proposed search and Lambda runtime permissions for operator review. External mode does not attach them or validate existing IAM configuration. Values may be unknown until service resources exist. |
 | service\_accounts | Distinct environment-scoped workload bindings; the application chart must use these identities. |
 | verification | Non-secret input for the private-runner data-path verifier. Contains secret references, never secret values. |

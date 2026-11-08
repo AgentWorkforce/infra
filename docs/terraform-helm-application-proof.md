@@ -5,6 +5,14 @@ repository's Terraform roots and installed through its Helm charts. Passing
 module validation, a healthy pod, a mock provider test or an older Alchemy
 installation does not establish that result.
 
+## Required relational storage
+
+The current target is [one RDS instance and one application database with isolated
+service schemas](shared-postgres-storage-contract.md), including Control, HoopDb
+and Relaycast. SQLite and separate-database receipts remain historical evidence;
+they do not satisfy this target. Verify schema-aware migrations, owner/runtime
+separation and cross-schema access refusals on actual managed RDS.
+
 ## Evidence status — 2026-11-07
 
 | Layer | Evidence available | Remaining requirement |
@@ -71,10 +79,12 @@ separate evidence and recovery requirements.
    repeat the reads. Exercise erasure and require all read paths to stop
    returning the session.
 5. **All requested components and profiles.** Include RelayControl, Dashboard
-   (target product relay-app; current chart `relay-dashboard`), Sessions Pipeline, RelayHistory and Relaycast backed by the
-   first-party Terse/durable-actors runtime. Prove actor placement and durable
-   recovery. Run the reviewed base values plus each selected add-on overlay as
-   separate proof runs; the add-on overlays are not standalone installations.
+   (target product relay-app; current chart `relay-dashboard`), Sessions Pipeline,
+   RelayHistory and Relaycast with authoritative PostgreSQL state in its own
+   schema on the shared RDS/database. Prove runtime placement, transaction
+   semantics and durable recovery; do not count a SQLite-backed profile. Run the
+   reviewed base values plus each selected add-on overlay as separate proof runs;
+   the add-on overlays are not standalone installations.
    Exercise Relayfile and Flows when enabled. Pin the reviewed authentication
    contract for each run. The current umbrella chart and requirements registry
    still require RelayAuth for their JWT profile. The target architecture removes

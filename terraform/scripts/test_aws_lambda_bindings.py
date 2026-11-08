@@ -38,6 +38,8 @@ BINDINGS = {
 FUNCTION = "module.pipeline[0].aws_lambda_function.this"
 DOMAIN = "module.search.aws_opensearch_domain.this[0]"
 RUN = "actual_lambda_environment"
+MAPPING = "module.pipeline[0].aws_lambda_event_source_mapping.events"
+RULES = ["module.pipeline[0].aws_cloudwatch_event_rule." + name for name in ("reconcile", "brief")]
 
 
 def baseline(engine="terraform"):
@@ -46,6 +48,8 @@ def baseline(engine="terraform"):
         "type": "test_plan", "@testfile": "tests/lambda-environment." + suffix,
         "@testrun": RUN,
         "test_plan": {"resource_changes": [
+            {"address": MAPPING, "change": {"after": {"enabled": False}, "after_unknown": {"enabled": False}}},
+            *[{"address": address, "change": {"after": {"state": "DISABLED"}, "after_unknown": {"state": False}}} for address in RULES],
             {"address": FUNCTION, "change": {
                 "after": {"environment": [{"variables": dict(BINDINGS)}]},
                 "after_unknown": {"environment": [{"variables": {}}]},
@@ -89,7 +93,7 @@ class LambdaBindings(unittest.TestCase):
                 self.assertEqual(result, {
                     "ok": True, "resource": FUNCTION, "binding_count": 11,
                     "computed_endpoint_matches_domain": True,
-                    "reserved_aws_region_absent": True, "provider_requests": 0,
+                    "reserved_aws_region_absent": True, "automatic_processing_inactive": True, "provider_requests": 0,
                 })
 
     def test_missing_or_duplicate_selected_native_plan_refuses(self):
@@ -117,7 +121,7 @@ class LambdaBindings(unittest.TestCase):
             with self.subTest(value=value): self.refuses(event, "Missing native resource changes")
 
     def test_missing_duplicate_or_malformed_actual_resources_refuse(self):
-        for address in [FUNCTION, DOMAIN]:
+        for address in [FUNCTION, DOMAIN, MAPPING, *RULES]:
             for mutation in ["missing", "duplicate", "change"]:
                 event = baseline(); rows = event["test_plan"]["resource_changes"]
                 selected = next(r for r in rows if r["address"] == address)
@@ -166,6 +170,16 @@ class LambdaBindings(unittest.TestCase):
                 event = baseline(); row(event, address)["after_unknown"][key] = value
                 with self.subTest(address=address, value=value):
                     self.refuses(event, "Malformed native unknown metadata")
+
+    def test_automatic_processing_activation_or_unknown_refuses(self):
+        for address, key, active, diagnostic in [(MAPPING, "enabled", True, "queue processing"), *[(r, "state", "ENABLED", "schedule") for r in RULES]]:
+            for mutation in ["active", "unknown", "missing"]:
+                event = baseline(); change = row(event, address)
+                if mutation == "active": change["after"][key] = active
+                if mutation == "unknown": change["after_unknown"][key] = True
+                if mutation == "missing": del change["after"][key]
+                with self.subTest(address=address, mutation=mutation):
+                    self.refuses(event, "Unqualified shared-database " + diagnostic + " was activated")
 
     def test_native_failure_refuses_before_parsing_an_event(self):
         with self.assertRaisesRegex(SystemExit, "Native mock test failed: synthetic native failure"):

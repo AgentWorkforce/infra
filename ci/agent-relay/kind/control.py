@@ -18,9 +18,14 @@ def inspect_archive(path, arch):
     with tarfile.open(path) as archive:
         index = json.load(archive.extractfile("index.json"))
         manifests = index.get("manifests", [])
-        if len(manifests) != 1 or manifests[0].get("platform") != {"architecture": arch, "os": "linux"}:
+        if len(manifests) != 1:
             raise ValueError("local control archive must contain exactly the native Linux manifest")
         descriptor = manifests[0]
+        # OCI makes descriptor.platform optional, and Docker 29 can omit it
+        # when re-exporting a loaded image. If present it must match; regardless,
+        # the hash-verified image config below must prove native Linux + source.
+        if "platform" in descriptor and descriptor["platform"] != {"architecture": arch, "os": "linux"}:
+            raise ValueError("local control archive must contain exactly the native Linux manifest")
         digest = descriptor.get("digest", "")
         if not re.fullmatch(r"sha256:[a-f0-9]{64}", digest):
             raise ValueError("local control manifest has no valid digest")

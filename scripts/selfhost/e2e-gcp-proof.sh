@@ -657,10 +657,10 @@ else
     emit_probe_output push "$push_rc" "$push_out" pipeline.courier_push
     bulls_session="$(sed -n 's/^SESSION_ID=//p' <<<"$push_out")"
     if [[ -n "$bulls_session" ]]; then
-      verify_out="$("${KB[@]}" exec "$BULLS_POD" -- sh -c "cd /app && bun run /tmp/e2e-gcp-proof-sessions-pipeline.ts verify '$marker' '$bulls_session' '$PIPELINE_TIMEOUT'" 2>/dev/null)"
+      verify_out="$("${KB[@]}" exec "$BULLS_POD" -- env "E2E_PIPELINE_USER_ID=$pipeline_user" sh -c "cd /app && bun run /tmp/e2e-gcp-proof-sessions-pipeline.ts verify '$marker' '$bulls_session' '$PIPELINE_TIMEOUT'" 2>/dev/null)"
       verify_rc=$?
       emit_probe_output verify "$verify_rc" "$verify_out" \
-        pipeline.hoopdb_indexer pipeline.referee_state pipeline.referee_verdict \
+        pipeline.hoopdb_indexer pipeline.owner_attribution pipeline.referee_state pipeline.referee_verdict \
         pipeline.bob_costas_summaries pipeline.events pipeline.no_dead_letters \
         pipeline.bucket_objects pipeline.technical_foul_scrub
       trace="$(sed -n 's/^TRACE_ID=//p' <<<"$verify_out")"

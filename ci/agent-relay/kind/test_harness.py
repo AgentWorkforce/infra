@@ -26,6 +26,57 @@ class Harness(unittest.TestCase):
         self.addCleanup(scope.stop)
         self.local = stack.Stack("core")
 
+    def test_public_docker_config_selects_anonymous_file_store_without_inherited_auth(self):
+        self.local.env["DOCKER_HOST"] = "unix:///fixture/docker.sock"
+        self.local.env["DOCKER_AUTH_CONFIG"] = "private-inherited-auth"
+        self.local.cmd = lambda argv, **kw: subprocess.CompletedProcess(
+            argv, 0, "aarch64" if "{{.Architecture}}" in argv else "29.9.2", "")
+        self.local.docker(require_space=False)
+        config = self.local.state / "docker-public" / "config.json"
+        value = json.loads(config.read_text())
+        # Docker ContainsAuth considers a nonempty map configured even though
+        # these entries contain no credentials; it must not auto-select a helper.
+        self.assertTrue(value["auths"])
+        self.assertEqual(value["auths"], {"https://index.docker.io/v1/": {}, "ghcr.io": {}})
+        self.assertNotIn("credsStore", value)
+        self.assertNotIn("credHelpers", value)
+        self.assertNotIn("DOCKER_AUTH_CONFIG", self.local.env)
+        self.assertEqual(self.local.env["DOCKER_CONFIG"], str(config.parent))
+        self.assertEqual(config.stat().st_mode & 0o777, 0o600)
+
+    def test_auth_signing_key_is_pkcs8_and_reuse_keeps_identity(self):
+        key = stack.auth_signing_key(self.local)
+        before = key.read_bytes()
+        self.assertTrue(before.startswith(b"-----BEGIN PRIVATE KEY-----"))
+        self.assertEqual(key.stat().st_mode & 0o777, 0o600)
+        self.assertEqual(stack.auth_signing_key(self.local).read_bytes(), before)
+
+    def test_legacy_auth_key_conversion_preserves_public_identity_and_original_backup(self):
+        key = self.local.state / "auth-signing.pem"
+        version = self.local.cmd(["openssl", "version"]).stdout
+        flags = ["-traditional"] if version.startswith("OpenSSL ") and int(version.split()[1].split(".")[0]) >= 3 else []
+        self.local.cmd(["openssl", "genrsa", *flags, "-out", key, "2048"], sensitive=True)
+        original = key.read_bytes()
+        self.assertTrue(original.startswith(b"-----BEGIN RSA PRIVATE KEY-----"))
+        public = self.local.cmd(["openssl", "pkey", "-in", key, "-pubout"], sensitive=True).stdout
+        stack.auth_signing_key(self.local)
+        self.assertTrue(key.read_bytes().startswith(b"-----BEGIN PRIVATE KEY-----"))
+        self.assertEqual(self.local.cmd(["openssl", "pkey", "-in", key, "-pubout"], sensitive=True).stdout, public)
+        backup = key.with_name("auth-signing.pkcs1-backup.pem")
+        self.assertEqual(backup.read_bytes(), original)
+        self.assertEqual(backup.stat().st_mode & 0o777, 0o600)
+        self.assertFalse(list(self.local.state.glob("auth-signing-*.pem")))
+
+    def test_failed_auth_conversion_keeps_original_and_removes_only_temporary(self):
+        key = self.local.state / "auth-signing.pem"
+        original = b"-----BEGIN RSA PRIVATE KEY-----\nfixture\n"
+        key.write_bytes(original)
+        self.local.cmd = lambda *args, **kw: (_ for _ in ()).throw(stack.StackError("conversion failed"))
+        with self.assertRaisesRegex(stack.StackError, "conversion failed"):
+            stack.auth_signing_key(self.local)
+        self.assertEqual(key.read_bytes(), original)
+        self.assertFalse(list(self.local.state.glob("auth-signing-*.pem")))
+
     def test_each_acl_attempt_is_fresh_and_a_later_failure_is_not_hidden(self):
         jobs, waited = [], []
         self.local.apply = jobs.append
@@ -258,6 +309,15 @@ class Harness(unittest.TestCase):
                          "-checkend", "86400", "-noout"], check=False)
         self.assertEqual(valid.returncode, 0)
         self.assertEqual(len(applied), 2)
+
+    def test_truncated_cached_leaf_is_reissued_without_replacing_ca(self):
+        self.local.apply = lambda *args, **kwargs: None
+        self.local.tls()
+        ca = (self.local.state / "ca.crt").read_bytes()
+        (self.local.state / "tls.crt").write_text("truncated certificate")
+        self.local.tls()
+        self.assertEqual((self.local.state / "ca.crt").read_bytes(), ca)
+        self.local.cmd(["openssl", "verify", "-x509_strict", "-CAfile", self.local.state / "ca.crt", self.local.state / "tls.crt"])
 
     def test_scheduled_writer_drains_before_manual_flow_starts(self):
         calls = []

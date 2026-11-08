@@ -1,6 +1,6 @@
 # Local kind evidence — 2026-11-08 (Europe/Oslo)
 
-Status: **core setup READY; core proof PENDING (55 PASS, 0 FAIL, 3 PENDING); add-on E2E not run**.
+Status: **core setup READY; core proof PENDING (57 PASS, 0 FAIL, 3 PENDING); add-on E2E not run**.
 These are local development results, not the customer release or managed-cloud
 infrastructure proof. Reproduction uses the current repository checkout;
 source identities are pinned below.
@@ -8,7 +8,50 @@ The first negative run used PR #76 at `73f9a0eb8ab52e390856e5bd5ca3812e19f5fe7a`
 No cloud account, registry publication, deployment outside kind, or image/volume
 pruning was performed.
 
-## Current ownership and live reuse validation
+## Fresh ar-lap setup and protocol proof
+
+At source `1c203f59fd22c4355fe309244593eef24e40d1ea`, a subagent performed
+a fresh install on ar-lap, a native ARM Mac, following Khaliq's explicit setup
+request. `make kind-up PROFILE=core` exited 0; all ten suite deployments and
+Traefik were ready. A single real `make kind-proof PROFILE=core` run recorded
+**57 PASS, 0 FAIL, 3 PENDING**, exit 2. The byte-identical, credential-checked
+[proof](ar-lap-proof.json), [readiness](ar-lap-ready.json),
+[image/generation](ar-lap-images.json) and
+[control artifact transport](ar-lap-control-transport.json) receipts are separate
+from the earlier Finn reuse receipts below.
+
+The native control image was reused from the verified Finn build at `1f08cb6`,
+not built on ar-lap. The archive SHA-256, native platform, source revision,
+manifest digest and config digest were checked before import. No registry
+publication or credential transfer was needed. Three portability fixes were
+exercised on the actual Mac: anonymous public Docker pulls without keychain
+access; Docker exports without optional descriptor platform metadata, while
+mandatory native image-config and digest checks remain; and LibreSSL signing
+keys converted to PKCS#8 with the same public identity and a private backup.
+The final source also passes 58 Python and 9 Node checks locally; the three auth
+key tests additionally passed against macOS LibreSSL. GitHub Actions completion
+is a separate requirement and is not implied by these local results.
+
+The new courier session `7b847789-498a-4e30-8188-cd5cb504407e` was uploaded,
+indexed and verified through Locker/referee with real owner attribution, trace
+and processing events. The Default workspace application API returned HTTP 200
+without that session, so `pipeline.app_visibility` is still pending. Launch/
+release and fixture workspace deletion are the other two pending checks. Cast
+uses SQLite in this baseline; this does not qualify the final shared-Postgres
+target, a custom Desktop artifact, component analytics adapters or add-ons.
+
+On ar-lap, the running fixture is in
+`~/Projects/AgentWorkforce/infra-worktrees/kind-core`. Source its private scoped
+`.kind/ar-lap-env.sh` for local tools and kubeconfig. Its login endpoint is
+`https://relay.kind.agentrelay.com:8443/login`; a verified-CA request returned
+200. The public CA and hosts entries are `.kind/core/ca.crt` and
+`.kind/core/hosts`. No system trust or DNS changes were made. The local operator
+login helper verifies this installation's own organization, workspace and real
+owner before approving a human's own pending device code; no human code was
+approved during setup. The machine-local `.kind/ar-lap-setup.md` contains the
+complete access instructions. The cluster remains running for the cofounder.
+
+## Earlier Finn ownership and live reuse validation
 
 Explicit recovery at `1c7838b` required the native UID already captured in the
 original readiness receipt, matched it against the live cluster and node labels,
@@ -16,36 +59,37 @@ backed up the legacy record and wrote versioned local ownership. It did not
 recreate the cluster or replace the kubeconfig. Normal reuse refuses legacy
 receipts and does not infer ownership from live labels or a live UID alone.
 
-At source `d87aefb`, the one-command local-control build/install completed with
-exit 0 and Helm status `deployed`. The harness emits private
-`.kind/core/ready.json`; the manually copied, byte-identical
-[snapshot](core-ready.json) from that run records source revision, ownership version, native
-identity, recipe/render hashes and the newly completed exact-ACL Job. The full
-proof on the same source records 55 PASS, 0 FAIL, 3 PENDING, exit 2. This is live
-recovery/reuse validation, not a fresh cluster creation/deletion cycle.
-
-At that recorded live source, all 42 offline checks passed: 15 ownership, 12 harness, 10 profile/schema/TLS,
-3 native-control admission/tenant preservation and 2 bootstrap checks. Those
-suites do not operate on the real cluster. The earlier curated lifecycle summary
-was removed in favor of the manually copied snapshot of the raw readiness artifact emitted by `stack.py`.
+At source `c6184d6`, `make kind-up PROFILE=core` completed with exit 0,
+using the already selected native control image built from `1f08cb6`. The
+harness emits private `.kind/core/ready.json`; its manually copied, byte-identical
+[snapshot](core-ready.json) records source revision, ownership version, native
+identity, recipe/render hashes and fresh exact-ACL Job
+`kind-combined-acl-009152af5378a8aa`. The full proof at `fd8565c` records
+57 PASS, 0 FAIL, 3 PENDING, exit 2. This is live recovery/reuse validation,
+not a fresh cluster creation/deletion cycle. Setup and proof source revisions
+are recorded separately because the later change corrects the verifier's
+handling of the explicitly disabled optional transform, without changing setup.
 
 ## Current core setup and protocol proof
 
 ```sh
-make kind-up-local-control PROFILE=core PYTHON=python3
+# Existing fixture with the native control selection already present:
+make kind-up PROFILE=core PYTHON=python3
 make kind-proof-core PYTHON=python3
+# Fresh-host variant builds that pinned native control image first:
+# make kind-up-local-control PROFILE=core PYTHON=python3
 ```
 
 Setup completed with exit 0 and a readiness receipt, including the application
 returning HTTP 200 over verified TLS. The protocol proof exits 2 (**PENDING**),
 not 0. Its [complete credential-checked report](core-proof.json) records proof
-source `d87aefb`, 55 passing checks, no failed checks, and three pending checks.
+source `fd8565c`, 57 passing checks, no failed checks, and three pending checks.
 The [image/generation receipt](core-images.json) records the rendered suite chart images and services generation.
 The node image is in `core-ready.json`; support Postgres/probe image pins are
-in `stack.py`. This historical snapshot is not automatically refreshed by a
+in `stack.py`. This captured snapshot is not automatically refreshed by a
 subsequent setup invocation. The same manual copy applies to `core-proof.json`,
 `core-images.json` and `control-build.json`; their embedded revisions identify
-the original runs, not later source-only review fixes.
+the recorded setup/proof/build runs; they are not automatically rewritten by later edits.
 Selected literal proof output:
 
 ```text
@@ -340,23 +384,29 @@ skipped schemas. Existing static fixtures retain their declared custom-CRD
 schema skips. These local tool adapters are ignored and are not shipped.
 
 
-## Subsequent review fixes (source validation only)
+## Review fixes and current-source runtime validation
 
 The review fixes preserve the original recovery anchor before ownership refusal,
 use version-checked Secret create/replace instead of plaintext last-applied
 annotations, renew TLS leaves for missing hosts or mismatched keys, and share
 one hosted/offline courier verifier. Offline verification still requires a
-trace, processing events, owner identity and a stored marked transcript; only
-model summaries are optional. Temporary cost sync sessions are revoked via
+trace, processing events, owner identity and a stored marked transcript. Model
+summaries are optional in offline mode. The pinned raw-pointer path also
+explicitly disables its optional derived file-normalize transform; the proof
+accepts only `file-normalize/skipped/not_enabled` with no error, and rejects
+errors and unknown skips. This does not claim derived normalization. An initial
+`c6184d6` proof rejected that documented non-error skip; its negative receipt was
+preserved privately before the corrected `fd8565c` run above. Temporary cost sync sessions are revoked via
 History's supported `/v1/auth/token/revoke` route, including ingest failure.
 
-These changes have offline regression/render checks and server-side dry runs
-of Secret replacement against the five owned core Secrets. The dry runs prove
-that the old annotation is absent from the proposed object without changing
-cluster resources. The full live setup/proof receipts above remain pinned to
-`d87aefb`; they are not evidence of a rerun of these later source changes.
+These changes have offline regression/render checks, server-side dry runs and
+the current-source warm setup/protocol run above. The actual setup removed the
+old plaintext last-applied annotation from all five inspected core Secrets;
+subsequent reads confirmed its absence. The protocol run also exercised the
+History sync-session revoke path after cost ingest. No auth/ACL guard, runtime
+feature flag, image source, or external-egress restriction was bypassed.
 
-Review validation: 60 offline checks pass (16 ownership, 19 harness, 13
+Review validation: 61 offline checks pass (16 ownership, 20 harness, 13
 profile/schema/TLS, 3 control admission/tenant, 4 bootstrap and 5 shared pipeline
 verifier checks). The nine JavaScript checks also pass inside the pinned native
 Node 22.23.3 image with networking disabled and read-only source mounts.

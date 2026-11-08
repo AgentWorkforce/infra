@@ -449,14 +449,20 @@ selected explicitly. Locker stores session objects and is still needed.
 Prerequisites: Docker Engine 28+ (including native-platform image export),
 kind 0.31+, kubectl, Helm 3.10+, OpenSSL, Git, Python 3.9+, and PyYAML. Allocate
 enough Docker memory for the suite and CNI; budget 20 GiB free disk for a cold
-setup. Warm setup checks cached native image sizes plus unpacking headroom.
+setup. The optional native control build also needs authenticated Git read
+access to `AgentWorkforce/relay-control`. Warm setup checks cached native image
+sizes plus unpacking headroom.
 On Linux the disk preflight measures the admitted daemon’s DockerRootDir. For
 a relocated Docker Desktop disk or another local VM, set
 `KIND_DOCKER_DATA_PATH` to the existing host-side Docker backing file or directory.
 An unavailable storage path refuses setup rather than skipping the check.
 Setup fetches public image/chart/source
-artifacts. Runtime suite pods receive no external egress. Run the checkout
-and its worktree on a writable volume; all generated state and `TMPDIR` live
+artifacts. Runtime suite pods receive no external egress.
+Public image pulls use a private anonymous Docker configuration with explicit
+registry entries, so SSH setup does not invoke a locked native keychain helper
+or inherit `DOCKER_AUTH_CONFIG`. No Docker login or global configuration changes
+are performed.
+Run the checkout and its worktree on a writable volume; all generated state and `TMPDIR` live
 under its ignored `.kind/` directory. Helm dependency preparation also writes
 ignored archives under each chart’s `charts/` directory.
 
@@ -618,7 +624,7 @@ commit or attach those private state files. Test session data stays in the
 disposable kind cluster until `kind-down`.
 
 The captured [core report](ci/agent-relay/kind/core-proof.json) is **PENDING**:
-55 checks passed, none failed, and three remain pending in the local-control variant.
+57 checks passed, none failed, and three remain pending in the refreshed local-control variant.
 Both public MCP aliases pass real-device authentication, discovery and workspace
 binding checks. History delivery is
 visible through relay-app, and reported usage/cost is attributed to the real
@@ -636,6 +642,7 @@ a database row. See [captured evidence](ci/agent-relay/kind/evidence.md).
 | RelayAuth removal | layered-control + layered-sessions-pipeline: default-off introspection branch, `sh_at_`, `rth:read/rth:sync`; keep the temporary internal component until compatible images ship. |
 | Cost attribution data | History's client-reported fixture usage/cost passes authenticated ingest and TLS readback, including owner and workspace isolation. This does not claim live model billing or courier-session application visibility. |
 | Control image and MCP endpoint | PASS for the optional `kind-up-local-control` variant: pinned source `1f08cb6`, verified native manifest transport, both public MCP aliases, nineteen-tool discovery, real workspace binding and auth/origin rejection ([raw receipts](ci/agent-relay/kind/evidence.md)). The catalog default remains source `9b80b04` and reports MCP pending. This does not claim agent launch/release or every MCP tool backend. No image publication is performed. |
+| Custom Desktop package for ar-lap | layered-relay-desktop: target build/artifact and real browser/Desktop handoff plus courier-to-app trace are not qualified by the infra proof. Device auth and site TLS endpoint checks do not substitute for that custom application run. |
 | Agent launch/release | layered-control: API unimplemented; fleet node claim/release is not this proof. |
 | Signed offline license enforcement | layered-control: design only. `relay-cloud-api.license.existingSecret/key` reserves the `SELFHOST_LICENSE_FILE` mount; the file slot does not verify signatures or gate add-ons. |
 | relayfile control-token filesystem scopes | layered-relayfile + layered-control: current introspection lacks `fs:*`; use real temporary RelayAuth for now. Dev issuer tokens do not count as acceptance evidence. |

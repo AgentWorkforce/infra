@@ -40,8 +40,12 @@ test("offline verifier requires all non-model stages and exact workspace/owner",
   assert.equal(result.code, 0);
   assert.ok(result.lines.some(line => line.startsWith("PROOF|PASS|pipeline.events|")));
   assert.deepEqual(result.queries[0].params, ["org", "session", "workspace"]);
-  const wrongOwner = await run({ row: { derived_user: "other" } });
-  assert.equal(wrongOwner.code, 1);
+  assert.match(result.queries[0].sql, /i\.workspace_id::text=\$3::text/);
+  for (const field of ["index_user", "derived_user"]) {
+    const wrongOwner = await run({ row: { [field]: "other" } });
+    assert.equal(wrongOwner.code, 1);
+    assert.ok(wrongOwner.lines.some(line => line.startsWith("PROOF|FAIL|pipeline.owner_attribution|")));
+  }
 });
 test("null trace cannot produce a dead-letter PASS", async () => {
   const result = await run({ row: { trace: null } });
@@ -50,11 +54,24 @@ test("null trace cannot produce a dead-letter PASS", async () => {
   assert.ok(!result.queries.some(query => query.sql.includes("pipeline_dead_letters")));
 });
 test("missing or failed non-summary processing events fail offline proof", async () => {
-  for (const events of [[], [{ stage: "object-landed", status: "error" }]]) {
+  for (const events of [[], [{ stage: "object-landed", status: "error" }],
+    [...["object-landed", "session-indexed", "status-classify"].map(stage => ({ stage, status: "ok" })), { stage: "new-non-summary-stage", status: "error" }]]) {
     const result = await run({ events });
     assert.equal(result.code, 1);
     assert.ok(result.lines.some(line => line.startsWith("PROOF|FAIL|pipeline.events|")));
   }
+  const requiredOk = ["object-landed", "session-indexed", "status-classify"].map(stage => ({ stage, status: "ok" }));
+  const optional = { stage: "file-normalize", status: "skipped", reason: "not_enabled", has_error: false };
+  assert.equal((await run({ events: [...requiredOk, optional] })).code, 0);
+  for (const invalid of [{ ...optional, reason: "unknown" }, { ...optional, has_error: true },
+                         { ...optional, status: "error" }, { ...optional, stage: "unknown-stage" }]) {
+    assert.equal((await run({ events: [...requiredOk, invalid] })).code, 1);
+  }
+  const summariesOff = await run({ events: [
+    ...["object-landed", "session-indexed", "status-classify"].map(stage => ({ stage, status: "ok" })),
+    { stage: "summary-short", status: "disabled" }, { stage: "summary-long", status: "error" },
+  ] });
+  assert.equal(summariesOff.code, 0);
 });
 test("empty raw objects cannot pass the scrub check", async () => {
   const result = await run({ empty: true });
@@ -64,6 +81,10 @@ test("empty raw objects cannot pass the scrub check", async () => {
 test("hosted verification still requires summary events and objects", async () => {
   const result = await run({}, true);
   assert.equal(result.code, 1);
+  const notReady = await run({ row: { kinds: "long:disabled,short:ready" } }, true);
+  assert.ok(notReady.lines.some(line => line.startsWith("PROOF|FAIL|pipeline.bob_costas_summaries|")));
+  const wrongOwner = await run({ row: { index_user: "other" } }, true);
+  assert.ok(wrongOwner.lines.some(line => line.startsWith("PROOF|FAIL|pipeline.owner_attribution|")));
   assert.ok(result.lines.some(line => line.startsWith("PROOF|FAIL|pipeline.events|")));
   assert.ok(result.lines.some(line => line.startsWith("PROOF|FAIL|pipeline.bucket_objects|")));
 });
