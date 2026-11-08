@@ -12,8 +12,10 @@ This repository was renamed from `AgentWorkforce/helm-charts` to `AgentWorkforce
 Update existing clones with `git remote set-url origin git@github.com:AgentWorkforce/infra.git`;
 local directory names may stay unchanged. Existing Helm clients should run
 `helm repo add agentworkforce https://agentworkforce.github.io/infra --force-update`
-and `helm repo update`. Chart names, release-tag format and the
-`ghcr.io/agentworkforce/charts` OCI coordinates stay the same. Historical evidence
+and `helm repo update`. The chart namespace and release-tag format stay the
+same; the two public chart names change from `relay-cloud-api` /
+`relay-dashboard` to `relay-control` / `relay-webapp` as described in the
+[rename guide](docs/control-webapp-chart-rename.md). Historical evidence
 and the release gate’s `helm-charts` license-decision ID retain their original identifiers.
 
 ## Charts

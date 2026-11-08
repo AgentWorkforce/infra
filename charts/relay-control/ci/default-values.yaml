@@ -1,4 +1,5 @@
 image:
+  repository: example.invalid/relay-control
   digest: sha256:2222222222222222222222222222222222222222222222222222222222222222
 publicUrl: https://api.gcp-proof.agentrelay.com
 existingSecret: relay-cloud-api

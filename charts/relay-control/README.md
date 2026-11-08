@@ -1,5 +1,8 @@
 # relay-control
 
+Supply both `image.repository` and `image.digest` explicitly for the same
+verified publication; a chart rename does not republish an old digest.
+
 Public chart names and existing-release compatibility: [Control/Webapp rename](../../docs/control-webapp-chart-rename.md).
 
 Maintained packaging for `packages/selfhost-api` from the Cloud repository.
@@ -55,7 +58,7 @@ whatever the API would refuse at startup:
 | `telemetry.egressTo` | (NetworkPolicy) | Destinations of the telemetry egress rule; empty by default. It must not be empty when the level is not `off`, the transport is `https`, `networkPolicy.enabled=true` and `networkPolicy.allowAllEgress=false`, and is unused otherwise. |
 | `telemetry.probes` | `SELFHOST_TELEMETRY_PROBES` | Up to 20 extra health probes; `name` is a string of lowercase letters, digits and dashes (quote numeric names). |
 | `telemetry.deployment` | `SELFHOST_TELEMETRY_DEPLOYMENT` | Extra flat deployment-shape keys (at most 32): string, number or boolean values only, version-like strings without `//`; the chart-rendered keys (`chart`, `chartVersion`, `appVersion`, `replicas`, `flowsStorage`, `networkPolicy`, `ingress`) cannot be overridden. |
-| `extraEnv` | caller-chosen | Non-secret string values or one supported Kubernetes `valueFrom` source appended to API and migration containers. Default `[]`. Chart-managed names, raw FILE aliases and unset OAuth provider names (including consecutive underscores) are reserved. `valueFrom` requires exactly one of `secretKeyRef`, `configMapKeyRef`, `fieldRef`, or `resourceFieldRef`, with its required fields. Literal values are rejected for names ending at an underscore boundary in `SECRET`, `TOKEN`, `PASSWORD`, `CREDENTIAL`, `DSN` or `API_KEY`; this heuristic is not a complete credential classifier. Operators must use Secret references for credentials, never literals or ConfigMaps. References to the main migration credential are refused. |
+| `extraEnv` | caller-chosen | Non-secret string values or one supported Kubernetes `valueFrom` source appended to API and migration containers. Default `[]`. Chart-managed names, raw FILE aliases and unset OAuth provider names (including consecutive underscores) are reserved. `valueFrom` requires exactly one of `secretKeyRef`, `configMapKeyRef`, `fieldRef`, or `resourceFieldRef`, with its required fields. Literal values are rejected for names ending at an underscore boundary in `SECRET`, `TOKEN`, `PASSWORD`, `CREDENTIAL`, `DSN` or `API_KEY`; this heuristic is not a complete credential classifier. Matching credential names require `secretKeyRef` for every source. `resourceFieldRef.containerName` is refused because the API and migration containers share this list. Operators must use Secret references for credentials, never literals or ConfigMaps. References to the main migration credential are refused. |
 | `license.existingSecret`, `license.key` | `SELFHOST_LICENSE_FILE` | Optional license Secret (key defaults to `license`), mounted only into the API pod. Must not reuse a `secretKeys.*` key from the main Secret. This mounts a file; signature verification and add-on enforcement remain upstream work. |
 
 Every non-empty `secretKeys.*` value must name a distinct Secret key; the

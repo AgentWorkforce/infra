@@ -38,7 +38,10 @@ The operator supplies:
 The flow can reach the suite's in-cluster services (`relaycast`,
 `relay-control`, `relayhistory`) over plain ClusterIP service DNS; nothing
 in the chart hard-codes those URLs, so credentials and endpoints are passed
-explicitly as env.
+explicitly as env. These are fresh-layout examples: existing releases retain
+their observed Service names (for example `relaycontrol` or `relay-cloud-api`).
+Use those names in endpoint values; see the
+[Control/Webapp rename guide](control-webapp-chart-rename.md).
 
 ## What is blocked: cloudWorker mode
 

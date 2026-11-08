@@ -8,7 +8,7 @@ data:
   nginx.conf: |
     pid /tmp/nginx.pid;
     error_log /dev/stderr warn;
-    events { worker_connections 256; }
+    events { worker_connections {{ add (mul (int .Values.limits.maxInFlight) 2) 32 }}; }
     http {
       access_log off;
       client_body_temp_path /tmp/client_temp;
@@ -22,7 +22,7 @@ data:
         ssl_protocols TLSv1.2 TLSv1.3;
         ssl_certificate /var/run/secrets/telemetry-tls/tls.crt;
         ssl_certificate_key /var/run/secrets/telemetry-tls/tls.key;
-        client_max_body_size {{ .Values.limits.maxBatchBytes }};
+        client_max_body_size {{ int .Values.limits.maxBatchBytes }};
         client_body_timeout {{ div (add (int .Values.limits.requestTimeoutMs) 999) 1000 }}s;
         location = /v1/events {
           proxy_pass http://127.0.0.1:4319;

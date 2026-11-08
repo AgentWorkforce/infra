@@ -4,6 +4,7 @@ global:
   singleHost:
     host: relay.gcp-proof.agentrelay.com
 image:
+  repository: example.invalid/relay-control
   digest: sha256:2222222222222222222222222222222222222222222222222222222222222222
 existingSecret: relay-cloud-api
 database:

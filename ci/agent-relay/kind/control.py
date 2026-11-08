@@ -58,7 +58,25 @@ def resolve(stack, image):
     return TAG
 
 
+def translate_local_image_override(values):
+    """Remove only the obsolete image-only override emitted by this builder."""
+    if "relay-cloud-api" not in values:
+        return
+    legacy = values["relay-cloud-api"]
+    if not isinstance(legacy, dict) or set(legacy) != {"image"}:
+        raise ValueError("translate relay-cloud-api overrides explicitly before building Control")
+    image = legacy["image"]
+    if (not isinstance(image, dict) or set(image) != {"repository", "digest", "pullPolicy"}
+            or image["repository"] != REPOSITORY or image["pullPolicy"] != "Never"
+            or not isinstance(image["digest"], str)
+            or not re.fullmatch(r"sha256:[a-f0-9]{64}", image["digest"])):
+        raise ValueError("relay-cloud-api is not this builder's image-only override; translate it explicitly")
+    del values["relay-cloud-api"]
+
+
 def build(stack):
+    values = json.loads(stack.overrides.read_text()) if stack.overrides.exists() else {}
+    translate_local_image_override(values)
     stack.check_space(6 * 1024**3)
     source = stack.state / "control-source"
     # The public relay-control repository is a squashed release snapshot; the
@@ -81,7 +99,6 @@ def build(stack):
     finally:
         archive.unlink(missing_ok=True)  # This attempt's transport only.
     private_json(stack.state / "control-build.json", receipt)
-    values = json.loads(stack.overrides.read_text()) if stack.overrides.exists() else {}
     values.setdefault("relay-control", {})["image"] = {
         "repository": REPOSITORY, "digest": receipt["manifestDigest"], "pullPolicy": "Never"}
     private_json(stack.overrides, values)

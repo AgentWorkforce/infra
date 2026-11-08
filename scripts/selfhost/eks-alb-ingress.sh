@@ -37,6 +37,12 @@ DOMAIN="${EKS_ALB_DOMAIN:?EKS_ALB_DOMAIN=<base domain> is required}"
 CERT="${EKS_ALB_CERT_ARN:?EKS_ALB_CERT_ARN=<ACM certificate ARN> is required}"
 HISTORY="${EKS_ALB_HISTORY:-true}"
 NAME="${EKS_ALB_INGRESS_NAME:-agent-relay}"
+CONTROL_SVC="${EKS_ALB_CONTROL_SERVICE:-relay-control}"
+WEBAPP_SVC="${EKS_ALB_WEBAPP_SERVICE:-relay-webapp}"
+for service in "$CONTROL_SVC" "$WEBAPP_SVC"; do
+  [[ ${#service} -le 63 && "$service" =~ ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$ ]] ||
+    { printf '%s\n' 'Control/Webapp Service overrides must be DNS labels' >&2; exit 2; }
+done
 
 deny() {
   printf '%s\n' \
@@ -80,14 +86,14 @@ spec:
 EOF
 
 host "$DOMAIN"
-route /cloud/api relay-control 80
-route /login relay-control 80
-route / relay-webapp 8080
+route /cloud/api "$CONTROL_SVC" 80
+route /login "$CONTROL_SVC" 80
+route / "$WEBAPP_SVC" 8080
 
 host "api.$DOMAIN"
 deny /internal Prefix
 deny '"//internal*"' ImplementationSpecific
-route '"/*"' relay-control 80 ImplementationSpecific
+route '"/*"' "$CONTROL_SVC" 80 ImplementationSpecific
 
 host "cast.$DOMAIN"
 deny /internal Prefix

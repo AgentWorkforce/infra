@@ -31,6 +31,8 @@ relayhistory:
     issuer: http://relayauth.relayauth.svc:8787
 
 relay-control:
+  nameOverride: relay-cloud-api
+  fullnameOverride: relay-cloud-api
   image:
     # Proof build of AgentWorkforce/relaycontrol 17bdc78 (selfhost/desktop-auth).
     # Proof-only: not in self-hosted/customer-images.yaml, which audits the
@@ -60,6 +62,10 @@ relay-control:
     runtimeRole: bulls96_runtime
 
 relay-webapp:
+  nameOverride: relay-dashboard
+  fullnameOverride: relay-dashboard
+  api:
+    serviceName: relay-cloud-api
   image:
     # Proof build of AgentWorkforce/relay-webapp 53d484b
     # (selfhost/device-approval; the self-host build served at /). Proof-only.

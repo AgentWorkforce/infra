@@ -293,6 +293,15 @@ them into target-namespace `VolumeSnapshot` objects, then create RWO PVCs.
 Requested sizes must be at least the source sizes. Never bind source PVs or
 PVCs into the target.
 
+Keep the restore on the recorded chart version. For pre-rename charts, use
+`relay-cloud-api.migrations.enabled=false` and keep the original recorded values
+keys. The `relay-control` example below applies only to a recorded version with
+the renamed chart. If an upgrade is explicitly part of a separately reviewed
+drill, first translate recorded values using the
+[rename guide](control-webapp-chart-rename.md), retain observed identities, and
+verify the selected chart reads every migration-disable key before applying.
+Do not combine old recorded values with renamed keys that the chart ignores.
+
 Install with an isolated overlay. The migration and Locker initialization Jobs
 are plain Kubernetes Jobs, not Helm hooks, so `--no-hooks` does not stop them;
 the overlay must disable them explicitly. The restored databases already carry

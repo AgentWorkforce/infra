@@ -14,6 +14,22 @@ from stack import tenant_values
 
 
 class ControlArchive(unittest.TestCase):
+    def test_only_the_builders_legacy_image_override_is_removed(self):
+        image = {"repository": control.REPOSITORY, "digest": "sha256:" + "a" * 64, "pullPolicy": "Never"}
+        values = {"relay-cloud-api": {"image": image}, "relay-control": {"existingSecret": "runtime"},
+                  "other": {"keep": True}}
+        control.translate_local_image_override(values)
+        self.assertNotIn("relay-cloud-api", values)
+        self.assertEqual(values["relay-control"], {"existingSecret": "runtime"})
+        self.assertEqual(values["other"], {"keep": True})
+        for legacy in [{"image": image, "existingSecret": "keep"},
+                       {"image": {**image, "repository": "another/image"}}, {}, False]:
+            with self.subTest(legacy=legacy):
+                original = {"relay-cloud-api": legacy}
+                with self.assertRaises(ValueError):
+                    control.translate_local_image_override(original)
+                self.assertEqual(original, {"relay-cloud-api": legacy})
+
     def archive(self, path, *, arch="arm64", revision=control.REVISION, corrupt=False,
                 include_platform=True, descriptor_arch=None, image_os="linux"):
         config = json.dumps({"architecture": arch, "os": image_os, "config": {"Labels": {
