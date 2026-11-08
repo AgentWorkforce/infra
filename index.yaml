@@ -1024,6 +1024,33 @@ entries:
       artifacthub.io/license: Apache-2.0
     apiVersion: v2
     appVersion: 0.1.0
+    created: "2026-11-08T04:20:30.55380714Z"
+    description: Self-hosted Agent Relay control-plane API for messaging and sessions
+    digest: 176dfcdadb607ab991a1687c5e985bc03ccba4992d287a1bac7f7ac9d0b36eb5
+    home: https://github.com/AgentWorkforce/cloud
+    keywords:
+    - agent-relay
+    - control-plane
+    - api
+    - self-hosted
+    kubeVersion: '>=1.28.0-0'
+    maintainers:
+    - name: AgentWorkforce
+      url: https://github.com/AgentWorkforce
+    name: relay-cloud-api
+    sources:
+    - https://github.com/AgentWorkforce/cloud
+    type: application
+    urls:
+    - https://github.com/AgentWorkforce/infra/releases/download/relay-cloud-api-0.2.5/relay-cloud-api-0.2.5.tgz
+    version: 0.2.5
+  - annotations:
+      agentworkforce.dev/license-scope: First-party chart code only; dependencies
+        and images retain their own licenses.
+      agentworkforce.dev/min-helm-version: 3.10.0
+      artifacthub.io/license: Apache-2.0
+    apiVersion: v2
+    appVersion: 0.1.0
     created: "2026-11-04T08:36:20.365459729Z"
     description: Self-hosted Agent Relay control-plane API for messaging and sessions
     digest: 454ed2636864f3708367b2d2cdc1b8a8be15040982b1a93b4039bb08273fcc5d
@@ -2201,4 +2228,4 @@ entries:
     urls:
     - https://github.com/AgentWorkforce/helm-charts/releases/download/sessions-pipeline-worker-0.6.0/sessions-pipeline-worker-0.6.0.tgz
     version: 0.6.0
-generated: "2026-11-07T21:23:46.079627001Z"
+generated: "2026-11-08T04:20:30.553952115Z"
