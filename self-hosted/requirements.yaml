@@ -238,9 +238,33 @@ compatibility:
       current: true
       charts: { telemetry-collector: 0.1.0 }
       notes: 'Default-off umbrella analytics file collector. Requires accepted immutable collector and TLS-proxy images, producer and TLS Secrets and an exclusive persistent volume. Source rendering does not prove image entrypoint, TLS, durable acknowledgement, power-loss recovery or whole-application analytics coverage. The currently reviewed collector CLI registers relaycontrol events only.'
-    - id: sessions-pipeline-0.7.5
+    - id: sessions-pipeline-0.7.6
       status: unreleased
       current: true
+      charts: { sessions-pipeline: 0.7.6, sessions-pipeline-worker: 0.7.2, session-ingest-api: 0.4.1 }
+      depends:
+        sessions-pipeline: { worker: 0.7.2, alleyoop: 0.4.1, hoopdb: 0.9.0, session-object-storage: 5.4.0, otel: 0.178.0 }
+      images:
+        sessions-pipeline-worker: { repository: agentworkforce/96bulls-services, digest: sha256:6f22ea17dff336e1431664542759fd27958649388b90a0b2f0881883caa7c6b2 }
+        session-ingest-api: { repository: agentworkforce/96bulls-services, digest: sha256:6f22ea17dff336e1431664542759fd27958649388b90a0b2f0881883caa7c6b2 }
+      images_note: "Native ingest edge (SERVICE=session-ingest): unqualified; an explicit qualified combined-image digest is required. Pins above belong to the existing internal worker/ingest services, not ingestEdge."
+      services:
+        source_commit: 7d7229bb31c121ecb98cd4e35c248fc2cf5669ad
+        migration_generation: eff8b3be46565b57ad8fa5e4a066dbb6d1fe608313d9c1680bfbcd484add259b
+      notes: 'Adds default-off readApi.search.clickhouse: external ClickHouse for search reads, from one existing JSON Secret. With it off, every render differs only in the helm.sh/chart labels. Read side only; no chart workload writes ClickHouse.'
+      db_combos:
+        - { db_mode: selfhosted, boundary: global-default-revoke, hoopdb: cnpg, status: shipped, profiles: [selfhost-postgres, migration, aws-cnpg], notes: chart Jobs install the runtime role and the function default }
+        - { db_mode: selfhosted, boundary: global-default-revoke, hoopdb: external, status: shipped, profiles: [external-selfhosted], notes: operator runs the bootstrap files as a superuser }
+        - { db_mode: rds, boundary: global-default-revoke, hoopdb: external, status: shipped, profiles: [external-rds], notes: the RDS master runs the rds_*.sql bootstrap first }
+        - { db_mode: cloudsql, boundary: global-default-revoke, hoopdb: external, status: shipped, profiles: [gcp-cloudsql], notes: operator runs the Cloud SQL bootstrap files as the migration owner; roleBootstrap false }
+        - { db_mode: supabase, boundary: event-trigger, hoopdb: external, status: held, profiles: [external-supabase], notes: supabaseActivation.hold; migrate refuses until the reviewed event trigger is installed and --activation-check passes }
+        - { db_mode: supabase, boundary: null, hoopdb: external, status: fails closed, profiles: [aws-supabase], notes: renders; migrate refuses with function_boundary_unproven }
+        - { db_mode: local, boundary: null, hoopdb: any, status: dev only, profiles: [], notes: local stack only; never a self-host install }
+      sources:
+        - "charts/sessions-pipeline/Chart.yaml:4"
+        - "ci/sessions-pipeline-profiles/matrix.sh:70"
+    - id: sessions-pipeline-0.7.5
+      status: shipped
       charts: { sessions-pipeline: 0.7.5, sessions-pipeline-worker: 0.7.2, session-ingest-api: 0.4.1 }
       depends:
         sessions-pipeline: { worker: 0.7.2, alleyoop: 0.4.1, hoopdb: 0.9.0, session-object-storage: 5.4.0, otel: 0.178.0 }
@@ -519,9 +543,20 @@ compatibility:
       images:
         relayauth: { repository: ghcr.io/agentworkforce/relayauth, digest: sha256:eb71daa28e30eb7305f666d0bccc5a4002e53e8a574e3c4c32163d907a1b71df }
       notes: superseded by 0.1.1.
-    - id: agent-relay-0.5.3
+    - id: agent-relay-0.5.4
       status: unreleased
       current: true
+      charts: { agent-relay: 0.5.4, relayhistory: 0.1.2, relay-control: 0.3.1, relay-webapp: 0.2.0 }
+      app_versions: { agent-relay: 0.1.0, relayhistory: 0.1.0, relay-control: 0.1.0, relay-webapp: 0.1.0 }
+      depends:
+        agent-relay: { relaycast: 0.3.5, relayauth: 0.1.4, sessions-pipeline: 0.7.6, relayhistory: 0.1.2, relay-control: 0.3.1, relay-webapp: 0.2.0, relayflows: 0.2.5, durable-actors: 0.14.6-awf.1, relayfile: 0.2.2, telemetry-collector: 0.1.0 }
+      images:
+        relayhistory: { repository: ghcr.io/agentworkforce/relayhistory, digest_required: true }
+        relay-control: { repository: '', digest_required: true }
+        relay-webapp: { repository: ghcr.io/agentworkforce/relay-webapp, digest_required: true }
+      notes: 'Carries sessions-pipeline 0.7.6 (default-off readApi.search.clickhouse). With it off, every render differs only in the helm.sh/chart labels.'
+    - id: agent-relay-0.5.3
+      status: planned
       charts: { agent-relay: 0.5.3, relayhistory: 0.1.2, relay-control: 0.3.1, relay-webapp: 0.2.0 }
       app_versions: { agent-relay: 0.1.0, relayhistory: 0.1.0, relay-control: 0.1.0, relay-webapp: 0.1.0 }
       depends:
@@ -530,7 +565,7 @@ compatibility:
         relayhistory: { repository: ghcr.io/agentworkforce/relayhistory, digest_required: true }
         relay-control: { repository: '', digest_required: true }
         relay-webapp: { repository: ghcr.io/agentworkforce/relay-webapp, digest_required: true }
-      notes: 'Adds default-off postgresCa so Node workloads and migrate Jobs can verify the Postgres server certificate (NODE_EXTRA_CA_CERTS); with it unset every render differs only in the helm.sh/chart labels and the relayhistory checksum/config annotation, which hashes the ConfigMap including that label and so rolls the relayhistory pods on upgrade. Adds the default-off native ingest slot from pipeline #363 without an accepted artifact or rollout. Composes landed session naming/main bfcf6050, default-off telemetry #95/a45dbb2d and default-off reader #81/01dc7aee; preserves the standalone Chief registry outside the umbrella/kind profiles. Source-only Control/Webapp public chart rename. The Control chart requires both repository and digest explicitly; Webapp requires a verified digest; real profile image coordinates remain explicitly pinned to their existing repositories until those publishers supply new receipts. Existing releases must translate values keys and preserve names/selectors/DNS with a reviewed compatibility overlay. Kind refuses the old Control/Webapp layout before mutation. No RelayAuth or standalone History removal, publisher dispatch, rollout or new runtime proof is included; the sessions-native replacement remains dependency-gated.'
+      notes: 'Never released; superseded by 0.5.4. Adds default-off postgresCa so Node workloads and migrate Jobs can verify the Postgres server certificate (NODE_EXTRA_CA_CERTS); with it unset every render differs only in the helm.sh/chart labels and the relayhistory checksum/config annotation, which hashes the ConfigMap including that label and so rolls the relayhistory pods on upgrade. Adds the default-off native ingest slot from pipeline #363 without an accepted artifact or rollout. Composes landed session naming/main bfcf6050, default-off telemetry #95/a45dbb2d and default-off reader #81/01dc7aee; preserves the standalone Chief registry outside the umbrella/kind profiles. Source-only Control/Webapp public chart rename. The Control chart requires both repository and digest explicitly; Webapp requires a verified digest; real profile image coordinates remain explicitly pinned to their existing repositories until those publishers supply new receipts. Existing releases must translate values keys and preserve names/selectors/DNS with a reviewed compatibility overlay. Kind refuses the old Control/Webapp layout before mutation. No RelayAuth or standalone History removal, publisher dispatch, rollout or new runtime proof is included; the sessions-native replacement remains dependency-gated.'
     - id: agent-relay-0.5.2
       status: planned
       charts: { agent-relay: 0.5.2, relayhistory: 0.1.1, relay-control: 0.3.0, relay-webapp: 0.2.0 }
@@ -1782,28 +1817,40 @@ entries:
 
   - id: opt.sessions-pipeline.search-backend
     kind: option
-    title: Transcript search backend (search.backend)
+    title: Transcript search backend (readApi.search.backend, readApi.search.clickhouse)
     description: |
       Operator decision 2026-11-01: postgres (PostgreSQL 17 + pg_trgm, the default and
-      what every profile does today) or self-managed ClickHouse OSS as a derived index
-      for high-volume installs, with Postgres kept as the source of truth and the
-      single-switch rollback. No chart reads a search.* value yet; the proposed values
-      and Secret boundary (search.clickhouse.mode external|operator, endpoint,
-      database, table, user, existingSecret/secretKeys) are in the reference
-      architecture.
+      what every profile does today) or an external ClickHouse as a derived index,
+      with Postgres kept as the source of truth and the single-switch rollback.
+      readApi.search.clickhouse.enabled (default false) renders
+      SEARCH_INDEX_BACKEND=clickhouse and takes RELAYHISTORY_READ_API_SECRET from
+      readApi.search.clickhouse.existingSecret/key, a JSON document with supabase_url
+      and a clickhouse block (url, user, password, database). The service reads no
+      CLICKHOUSE_* env; those belong to the Cloudflare read Worker. Read side only:
+      the native pipeline consumer is Postgres-only and no chart workload writes
+      ClickHouse; the hosted Lambda pipeline does. No chart installs ClickHouse.
     chart: sessions-pipeline
-    values: [search.backend, search.clickhouse.*]
+    values: [readApi.search.backend, readApi.search.clickhouse.*]
+    env: [SEARCH_INDEX_BACKEND, RELAYHISTORY_READ_API_SECRET]
     profiles: [selfhost-postgres, migration, external-selfhosted, external-rds, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql]
-    status: planned
+    status: shipped
     provided_by: operator
     default: postgres
     choices:
-      - { value: postgres, note: "behavior shipped (pg_trgm on HoopDb); the value itself is planned" }
-      - { value: clickhouse, status: planned }
-    verify: not applicable until charted
+      - { value: postgres }
+      - { value: clickhouse, note: "External ClickHouse the operator keeps populated; read side only" }
+    secrets:
+      - name: "<read API ClickHouse Secret>"
+        name_paths: [readApi.search.clickhouse.existingSecret]
+        keys:
+          - { key: RELAYHISTORY_READ_API_SECRET, key_path: readApi.search.clickhouse.key }
+    verify: Rendered by ci/sessions-pipeline-read-api/test_read_api.py only; no live ClickHouse read acceptance
     sources:
-      - "docs/self-hosted-reference-architecture.md:68"
-      - "docs/self-hosted-reference-architecture.md:105"
+      - "charts/sessions-pipeline/templates/read-api.yaml:1"
+      - "charts/sessions-pipeline/values.yaml:352"
+      - "docs/self-hosted-session-read-api.md:1"
+      - "sessions-pipeline@9caae68d:src/session-read-api/service-config.ts:13"
+      - "sessions-pipeline@9caae68d:src/session-pipeline/consumer-config.ts:15"
 
   - id: opt.sessions-pipeline.session-briefs
     kind: option

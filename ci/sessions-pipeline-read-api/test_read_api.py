@@ -38,6 +38,34 @@ class ReadApi(unittest.TestCase):
     def test_default_off_renders_no_read_api_objects(self):
         self.assertEqual(self.render(fixture=False), [])
 
+    def env_of(self, documents):
+        deployment = next(d for d in documents if d["kind"] == "Deployment")
+        return {e["name"]: e for e in deployment["spec"]["template"]["spec"]["containers"][0]["env"]}
+
+    def test_clickhouse_is_default_off(self):
+        env = self.env_of(self.render())
+        self.assertEqual(env["SEARCH_INDEX_BACKEND"]["value"], "postgres")
+        self.assertEqual(env["RELAYHISTORY_READ_API_SECRET"]["valueFrom"]["secretKeyRef"]["name"], "read-api-config")
+
+    def test_clickhouse_wires_the_read_secret_and_backend_only(self):
+        enabled = {"search": {"clickhouse": {"enabled": True, "existingSecret": "read-api-clickhouse"}},
+                   "extraEnv": [{"name": "SESSION_POSTGRES_TLS_PROFILE", "value": "supabase"}]}
+        env = self.env_of(self.render(overlay=enabled))
+        self.assertEqual(env["SEARCH_INDEX_BACKEND"]["value"], "clickhouse")
+        self.assertEqual(env["RELAYHISTORY_READ_API_SECRET"]["valueFrom"]["secretKeyRef"],
+                         {"name": "read-api-clickhouse", "key": "RELAYHISTORY_READ_API_SECRET"})
+        self.assertFalse([name for name in env if name.startswith("CLICKHOUSE_")])
+
+    def test_clickhouse_refuses_incomplete_settings(self):
+        tls = [{"name": "SESSION_POSTGRES_TLS_PROFILE", "value": "supabase"}]
+        for overlay, message in [
+                ({"search": {"clickhouse": {"enabled": True}}, "extraEnv": tls}, "clickhouse.existingSecret is required"),
+                ({"search": {"clickhouse": {"enabled": True, "existingSecret": "s"}}}, "SESSION_POSTGRES_TLS_PROFILE"),
+                ({"search": {"backend": "opensearch", "clickhouse": {"enabled": True, "existingSecret": "s"}}, "extraEnv": tls}, "conflicts"),
+                ({"search": {"clickhouse": {"enabled": "true", "existingSecret": "s"}}, "extraEnv": tls}, "must be a boolean")]:
+            with self.subTest(overlay=overlay):
+                self.assertIn(message, self.render(overlay=overlay, fail=True))
+
     def test_credentials_require_secret_key_references(self):
         for name in ["CUSTOM_TOKEN", "DATABASE_URL", "PRIVATE_KEY", "LOCKER_SECRET_ACCESS_KEY", "PGPASSWORD"]:
             for entry in [{"value": "not-a-real-secret"},

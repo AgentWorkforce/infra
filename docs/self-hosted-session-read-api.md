@@ -19,6 +19,39 @@ only when that image registers them. Hosted ClickHouse stays behind the same
 upstream seam. OpenSearch work is upstream pipeline PR #315, not implemented or
 proved by this chart. The kind core profile explicitly selects postgres while
 leaving the component disabled.
+
+### External ClickHouse search
+
+`readApi.search.clickhouse.enabled` (default `false`) selects an external
+ClickHouse for search reads. This chart installs no ClickHouse, and Postgres
+remains the source of truth. Set:
+
+| Value | Setting |
+| --- | --- |
+| `readApi.search.clickhouse.enabled` | `true` (renders `SEARCH_INDEX_BACKEND=clickhouse`) |
+| `readApi.search.clickhouse.existingSecret` | Existing Secret name; replaces `readApi.config.existingSecret` while enabled |
+| `readApi.search.clickhouse.key` | Key in that Secret, default `RELAYHISTORY_READ_API_SECRET` |
+| `readApi.extraEnv` | `SESSION_POSTGRES_TLS_PROFILE=supabase` for Supabase, or `custom-ca` with its CA variables |
+
+The Secret key holds one JSON document, because the service reads no
+`CLICKHOUSE_*` environment variables; those belong to the Cloudflare read Worker:
+
+```json
+{"supabase_url": "postgresql://bulls96_read_api:<password>@<host>:<port>/<db>",
+ "clickhouse": {"url": "https://<host>:8443", "user": "<SELECT-only user>",
+                "password": "<password>", "database": "<database>"}}
+```
+
+The URL must be `https` (or loopback), and all four `clickhouse` fields are
+required at startup. `SEARCH_INDEX_POSTGRES_BACKEND_ID` applies only to the
+`postgres` backend.
+
+This is the read side only. The native pipeline consumer
+(`session-pipeline-consumer`) accepts only `SEARCH_INDEX_BACKEND=postgres` and
+refuses a `clickhouse` block, so no workload in this chart writes ClickHouse.
+Only the hosted Lambda pipeline does. Point this at a ClickHouse that writer
+keeps populated, and set `readApi.completeSince` to the coverage it provides;
+otherwise search returns incomplete results.
 These configuration values are passed to the existing upstream service entry;
 infra implements no token verification or data-path bridge.
 

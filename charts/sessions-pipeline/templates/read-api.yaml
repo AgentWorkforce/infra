@@ -6,8 +6,19 @@
 {{- $repository := required "readApi.image.repository is required" $c.image.repository -}}
 {{- $digest := required "readApi.image.digest requires an owner-approved compatible image" $c.image.digest -}}
 {{- if not (regexMatch "^sha256:[a-f0-9]{64}$" $digest) }}{{ fail "readApi.image.digest must be sha256:<64 lowercase hex characters>" }}{{ end -}}
-{{- $secret := required "readApi.config.existingSecret is required" $c.config.existingSecret -}}
-{{- $key := required "readApi.config.key is required" $c.config.key -}}
+{{- $clickhouse := $c.search.clickhouse -}}
+{{- if not (kindIs "bool" $clickhouse.enabled) }}{{ fail "readApi.search.clickhouse.enabled must be a boolean" }}{{ end -}}
+{{- /* The service reads ClickHouse only from the clickhouse block of its one
+JSON secret, so the switch selects that Secret; there is no CLICKHOUSE_* env. */ -}}
+{{- $secret := "" -}}
+{{- $key := "" -}}
+{{- if $clickhouse.enabled -}}
+{{- $secret = required "readApi.search.clickhouse.existingSecret is required when ClickHouse search is enabled" $clickhouse.existingSecret -}}
+{{- $key = required "readApi.search.clickhouse.key is required when ClickHouse search is enabled" $clickhouse.key -}}
+{{- else -}}
+{{- $secret = required "readApi.config.existingSecret is required" $c.config.existingSecret -}}
+{{- $key = required "readApi.config.key is required" $c.config.key -}}
+{{- end -}}
 {{- $origin := required "readApi.origin is required" $c.origin -}}
 {{- /* Same public service-origin contract as relay-cloud-api. Keep this
 standalone chart independent of the API subchart's template namespace. */ -}}
@@ -16,6 +27,10 @@ standalone chart independent of the API subchart's template namespace. */ -}}
 {{- $portToken := regexFind ":[0-9]+$" $origin -}}
 {{- if and $portToken (or (lt (int (trimPrefix ":" $portToken)) 1) (gt (int (trimPrefix ":" $portToken)) 65535)) }}{{ fail "readApi.origin port must be between 1 and 65535" }}{{ end -}}
 {{- $backend := required "readApi.search.backend requires an explicit registered adapter" (trim $c.search.backend) -}}
+{{- if $clickhouse.enabled -}}
+{{- if not (has $backend (list "postgres" "clickhouse")) }}{{ fail "readApi.search.clickhouse.enabled selects clickhouse and conflicts with readApi.search.backend" }}{{ end -}}
+{{- $backend = "clickhouse" -}}
+{{- end -}}
 {{- $since := required "readApi.completeSince requires an explicit coverage floor" $c.completeSince -}}
 {{- if not (kindIs "string" $c.directoryWorkspaces) }}{{ fail "readApi.directoryWorkspaces must be a string" }}{{ end -}}
 {{- $workspaces := required "readApi.directoryWorkspaces requires an explicit workspace allowlist" (trim $c.directoryWorkspaces) -}}
@@ -52,6 +67,7 @@ standalone chart independent of the API subchart's template namespace. */ -}}
 {{- $_ := set $seen $envName true -}}
 {{- if has $envName (list "LOCKER_BUCKET" "PIPELINE_ORG_FROM_PREFIX" "PIPELINE_KEY_PREFIX") }}{{ $_ := set $canonical $envName $e }}{{ end -}}
 {{- end -}}
+{{- if and $clickhouse.enabled (not (hasKey $seen "SESSION_POSTGRES_TLS_PROFILE")) }}{{ fail "readApi.search.clickhouse.enabled requires SESSION_POSTGRES_TLS_PROFILE in readApi.extraEnv; the service refuses to start without it" }}{{ end -}}
 {{- if hasKey $canonical "LOCKER_BUCKET" -}}
 {{- $bucket := index $canonical "LOCKER_BUCKET" -}}
 {{- if or (not (hasKey $bucket "value")) (not (kindIs "string" $bucket.value)) }}{{ fail "readApi LOCKER_BUCKET requires an explicit nonempty literal value for canonical layout admission" }}{{ end -}}

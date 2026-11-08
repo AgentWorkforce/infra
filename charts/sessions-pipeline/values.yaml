@@ -352,6 +352,23 @@ readApi:
   search:
     # Selected by the upstream adapter registry; requires a compatible image.
     backend: postgres
+    # Default off. Reads search from an external ClickHouse; this chart installs
+    # none and Postgres stays the source of truth. When true, the chart renders
+    # SEARCH_INDEX_BACKEND=clickhouse and takes RELAYHISTORY_READ_API_SECRET
+    # from this Secret key instead of readApi.config. The key holds one JSON
+    # document, because the service reads no CLICKHOUSE_* environment:
+    #   {"supabase_url": "postgresql://<read role>:...",
+    #    "clickhouse": {"url": "https://<host>:8443", "user": "<SELECT-only user>",
+    #                   "password": "...", "database": "..."}}
+    # The url must be https (or loopback). Set SESSION_POSTGRES_TLS_PROFILE in
+    # extraEnv; rendering refuses without it. This is the read side only: the
+    # native pipeline consumer is Postgres-only, so no workload in this chart
+    # writes ClickHouse. Something else must keep it populated, up to
+    # readApi.completeSince. See docs/self-hosted-session-read-api.md.
+    clickhouse:
+      enabled: false
+      existingSecret: ""
+      key: RELAYHISTORY_READ_API_SECRET
   config:
     existingSecret: ""
     key: RELAYHISTORY_READ_API_SECRET
