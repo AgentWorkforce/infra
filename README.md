@@ -457,8 +457,12 @@ Prerequisites: Docker Engine 28+ (including native-platform image export),
 kind 0.31+, kubectl, Helm 3.10+, OpenSSL, Git, Python 3.9+, and PyYAML. Allocate
 enough Docker memory for the suite and CNI; budget 20 GiB free disk for a cold
 setup. The optional native control build also needs authenticated Git read
-access to `AgentWorkforce/relay-control`. Warm setup checks cached native image
-sizes plus unpacking headroom.
+access to `AgentWorkforce/relay-control-internal`. The public
+`AgentWorkforce/relay-control` repository contains a squashed release snapshot,
+not the historical commit pinned by this builder. Existing cached checkouts are
+still checked against the exact revision and clean-tree requirements; this does
+not change their remotes or select a newer image. Warm setup checks cached native
+image sizes plus unpacking headroom.
 On Linux the disk preflight measures the admitted daemon’s DockerRootDir. For
 a relocated Docker Desktop disk or another local VM, set
 `KIND_DOCKER_DATA_PATH` to the existing host-side Docker backing file or directory.

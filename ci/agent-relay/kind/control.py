@@ -61,7 +61,9 @@ def resolve(stack, image):
 def build(stack):
     stack.check_space(6 * 1024**3)
     source = stack.state / "control-source"
-    checkout(stack, "relay-control", REVISION, source)
+    # The public relay-control repository is a squashed release snapshot; the
+    # pinned historical commit remains in the private development repository.
+    checkout(stack, "relay-control-internal", REVISION, source)
     builder = [*stack.docker_args, "buildx"]
     if stack.cmd([*builder, "version"], check=False).returncode:
         bundled = Path("/Applications/Docker.app/Contents/Resources/cli-plugins/docker-buildx")
