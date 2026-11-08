@@ -442,6 +442,9 @@ class Proof:
         if s.profile == "addons":
             self.flows()
             self.relayfile()
+        else:
+            self.record("PENDING", "core.flows_disabled",
+                        "needs reviewed server-derived Flows capability plus authenticated API refusal, hidden UI/direct-route checks and workload absence; components.relayflows=false alone is not product disablement")
         self.mcp()
         self.record("PENDING", "agent_launch_release", "layered-control: launch/release API not implemented")
         if s.profile == "addons":

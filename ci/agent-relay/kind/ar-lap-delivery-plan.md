@@ -11,6 +11,11 @@ installed and proved; that is distinct from the complete product acceptance
 requested originally. Static receipts do not monitor current host availability.
 Add-ons remain in the overall two-profile scope, after this core handoff.
 
+The historical 57/0/3 receipt predates the explicit `core.flows_disabled` proof
+gate. New core proofs also report that requirement pending until the UI, API
+and workload checks below are supported and executed; this source change has
+not rerun or reattributed the historical fixture evidence.
+
 | Milestone and owner | Code complete | Artifact available | Actual proof PASS | Remaining dependency / disposition |
 | --- | --- | --- | --- | --- |
 | Core fixture — infra-kind-stack | 2026-11-08: tested source `1c203f59`; three fresh-Mac portability fixes included | 2026-11-08: pinned baseline images loaded on ar-lap; native control reused from the verified Finn build, not built anew | 2026-11-08: setup exit 0; protocol **57 PASS / 0 FAIL / 3 PENDING**, exit 2; complete acceptance remains pending | [Fresh receipts](ar-lap-proof.json), [readiness](ar-lap-ready.json), [images](ar-lap-images.json), [transport](ar-lap-control-transport.json). All ten deployments and edge were ready at that run. PR #79 subsequently merged as `2a64b173`; that merge does not requalify the historical runtime receipt. |
@@ -21,6 +26,28 @@ Add-ons remain in the overall two-profile scope, after this core handoff.
 | One application database / isolated service schemas — component migrator owners, coordinated by infragrok | **NOT COMMITTED** for SQL/bootstrap and application compatibility | **NOT COMMITTED** for a compatible service image set | **NOT COMMITTED** | Infra #80 merged the [binding contract](../../../docs/shared-postgres-storage-contract.md), not runtime SQL. Control, pipeline, History and optional services must implement their own namespace/role contracts together; do not run the dedicated-database HoopDB bootstrap unchanged in the shared database. |
 | Component analytics adapters — each producer owner; owner map coordinated with infragrok | **NOT COMMITTED** for complete producer coverage | **NOT COMMITTED** for the local collector/adapter assembly | **NOT COMMITTED** for local event capture from every component with hosted egress denied | Self-host routes to local/in-cluster file collection; hosted uses the approved PostHog endpoint. Telemetry disabled is not analytics coverage. A pipeline OTLP file exporter alone does not cover product analytics or Desktop/browser intake. |
 | Add-ons — infra-kind-stack (profiles/proof), layered-control (signed license), layered-relayfile (filesystem authority), Flows runtime owner to be named | **NOT COMMITTED** for complete gated runtime | Native Flows/file build preparation exists; signed-license/scoped-authority artifact dates **NOT COMMITTED** | **NOT COMMITTED** for installed Flow run, controller-scheduled CronJob firing and authenticated file read/write | Deferred from the first cofounder core handoff, not removed from the overall goal. No dev issuer, fake license or manually instantiated CronJob counts as acceptance. |
+
+## Core profile hides and disables Flows
+
+The [customer controls proposal in infra #90](https://github.com/AgentWorkforce/infra/pull/90)
+requires UI, server and workload evidence, not only
+`components.relayflows: false`. Effective capability must combine installation
+selection and entitlement on the server. Core must hide Flows navigation,
+worker/run/schedule links and settings/onboarding; direct URLs must show a
+disabled state without fetching or running Flows. Authenticated creation, run,
+schedule, worker and other Flows APIs must refuse under an owner-reviewed
+status contract. Query parameters or local storage cannot enable the feature.
+Selected add-on installations need their own positive tests.
+
+This is an unresolved control/app contract, not an implemented chart input.
+At control source `bae78a5`, `src/server.ts` constructs `FlowsStore`
+unconditionally and passes it into `createApp`; `src/app.ts` then mounts its
+handler, including authenticated `GET /api/v1/flows`. The chart's Flows storage
+settings do not disable that API. The dashboard chart exposes runtime URLs and
+branding, but no effective Flows capability setting. Product owners must supply
+the reviewed capability/status behavior before infra wires it and replaces the
+explicit pending proof gate. No runtime flag, reverse-proxy workaround or
+client-only hiding is used here.
 
 ## Relaycast Postgres acceptance contract
 
