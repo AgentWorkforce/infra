@@ -44,6 +44,7 @@ run() {
 if want fmt; then run "$TF_BIN" fmt -check -recursive -diff "$ROOT"; fi
 if want test && have python3; then
   run python3 -m unittest discover -s "$ROOT/scripts" -p 'test_aws_*.py'
+  run python3 -m unittest discover -s "$ROOT/modules/aws/search/tests" -p 'test_*.py'
 fi
 
 for d in "${dirs[@]}"; do
@@ -64,6 +65,17 @@ for d in "${dirs[@]}"; do
   fi
   if want validate; then run -C "$ROOT/$d" "$TF_BIN" validate -no-color; fi
   if want test && [ -d "$ROOT/$d/tests" ]; then run -C "$ROOT/$d" "$TF_BIN" test -no-color; fi
+  if want test && [ "$d" = "modules/aws/search" ]; then
+    run python3 "$ROOT/$d/tests/check_lifecycle.py"
+    run python3 "$ROOT/$d/tests/check_mode_history.py" "$TF_BIN"
+  fi
+  if want test && [ "$d" = "examples/aws-environments" ] && have python3; then
+    run -C "$ROOT/$d" python3 tests/check_lambda_bindings.py "$TF_BIN"
+  fi
+  if want test && [ "$d" = "examples/aws-search-proof" ] && have python3; then
+    run -C "$ROOT/$d" python3 -m unittest discover -s proof -p 'test_*.py'
+    run -C "$ROOT/$d" python3 tests/check_first_plan.py "$TF_BIN"
+  fi
   if want tflint && have tflint; then
     run -C "$ROOT/$d" tflint --config "$ROOT/.tflint.hcl" --no-color
   fi

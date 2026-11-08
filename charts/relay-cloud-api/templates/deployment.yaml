@@ -45,11 +45,20 @@ spec:
             - { name: RELAYHISTORY_PUBLIC_URL, value: {{ .Values.services.relayhistoryPublicUrl | quote }} }
             {{- include "relay-cloud-api.runtimeEnv" . | nindent 12 }}
             {{- include "relay-cloud-api.secretEnv" . | nindent 12 }}
+            {{- if .Values.license.existingSecret }}
+            - { name: SELFHOST_LICENSE_FILE, value: /var/run/agent-relay/license/license }
+            {{- end }}
             {{- if .Values.integrations }}
             {{- include "relay-cloud-api.integrationEnv" . | nindent 12 }}
             {{- end }}
+            {{- with .Values.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
           volumeMounts:
             - { name: secrets, mountPath: /var/run/agent-relay/secrets, readOnly: true }
+            {{- if .Values.license.existingSecret }}
+            - { name: license, mountPath: /var/run/agent-relay/license, readOnly: true }
+            {{- end }}
             {{- range $provider := keys (.Values.integrations | default dict) | sortAlpha }}
             - { name: {{ printf "oauth-%s" $provider | quote }}, mountPath: {{ printf "/var/run/agent-relay/integrations/%s" $provider | quote }}, readOnly: true }
             {{- end }}
@@ -62,6 +71,14 @@ spec:
             {{- toYaml .Values.livenessProbe | nindent 12 }}
           resources: {{ toYaml .Values.resources | nindent 12 }}
       volumes:
+        {{- if .Values.license.existingSecret }}
+        - name: license
+          secret:
+            secretName: {{ .Values.license.existingSecret | quote }}
+            defaultMode: 0440
+            items:
+              - { key: {{ .Values.license.key | quote }}, path: license }
+        {{- end }}
         - name: secrets
           secret:
             secretName: {{ .Values.existingSecret }}

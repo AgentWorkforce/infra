@@ -2,7 +2,7 @@
 
 Current release: `agent-relay` chart 0.3.12, published from the
 `agent-relay-0.3.12` tag by `release-agent-relay.yml`
-([release run](https://github.com/AgentWorkforce/helm-charts/actions/runs/41985579885)).
+([release run](https://github.com/AgentWorkforce/infra/actions/runs/41985579885)).
 It is pullable anonymously from `oci://ghcr.io/agentworkforce/charts/agent-relay`.
 0.3.12 adds durable actors on AWS EKS (`values-eks-actors.yaml`, off by
 default) on top of 0.3.11. Every image
@@ -22,9 +22,9 @@ Published versions of the umbrella chart:
 |---|---|---|
 | 0.3.1 | `agent-relay-0.3.1` | First published version. Relaycast `a05732ad…` (no SBOM, min-mode provenance). |
 | 0.3.3 | `agent-relay-0.3.3` | Pins the attested Relaycast image `81274dca…` (engine 12.7.0) and the GKE proof-overlay refresh. 0.3.2 was never tagged. |
-| 0.3.4 | `agent-relay-0.3.4` | Documentation patch of 0.3.3 (Relaycast `ar_` credentials guidance). Published by [run 41754926487](https://github.com/AgentWorkforce/helm-charts/actions/runs/41754926487). |
-| 0.3.6 | `agent-relay-0.3.6` | Opt-in single-host mode and optional dashboard `customerProfile` branding (relay-dashboard 0.1.2); 0.3.5 was never tagged. Published by [run 41769269329](https://github.com/AgentWorkforce/helm-charts/actions/runs/41769269329). |
-| 0.3.11 | `agent-relay-0.3.11` | Public release digests for every customer image (selfhost-api 0.3.0, dashboard redesign, RelayHistory, Sessions services with origin-bound ingest auth). Includes the never-tagged 0.3.7 (Desktop deep links), 0.3.8 (integration OAuth apps), 0.3.9 (bootstrap, OIDC / email sign-in, invites) and 0.3.10 (AWS EKS profile). Published by [run 41812609280](https://github.com/AgentWorkforce/helm-charts/actions/runs/41812609280). |
+| 0.3.4 | `agent-relay-0.3.4` | Documentation patch of 0.3.3 (Relaycast `ar_` credentials guidance). Published by [run 41754926487](https://github.com/AgentWorkforce/infra/actions/runs/41754926487). |
+| 0.3.6 | `agent-relay-0.3.6` | Opt-in single-host mode and optional dashboard `customerProfile` branding (relay-dashboard 0.1.2); 0.3.5 was never tagged. Published by [run 41769269329](https://github.com/AgentWorkforce/infra/actions/runs/41769269329). |
+| 0.3.11 | `agent-relay-0.3.11` | Public release digests for every customer image (selfhost-api 0.3.0, dashboard redesign, RelayHistory, Sessions services with origin-bound ingest auth). Includes the never-tagged 0.3.7 (Desktop deep links), 0.3.8 (integration OAuth apps), 0.3.9 (bootstrap, OIDC / email sign-in, invites) and 0.3.10 (AWS EKS profile). Published by [run 41812609280](https://github.com/AgentWorkforce/infra/actions/runs/41812609280). |
 | 0.3.12 | `agent-relay-0.3.12` | Durable actors on AWS EKS: S3 actor storage, per-actor STS by default, `values-eks-actors.yaml` with six public GHCR actor images, `scripts/selfhost/eks-actors-install.sh`. Actor components stay off by default; customer images and `values-gcp.yaml` are unchanged from 0.3.11. |
 
 This release is for **review by a company evaluating a self-hosted Agent Relay

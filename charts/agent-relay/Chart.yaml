@@ -2,7 +2,7 @@ apiVersion: v2
 name: agent-relay
 description: Self-hosted Agent Relay messaging and sessions suite
 type: application
-version: 0.3.12
+version: 0.3.15
 appVersion: "0.1.0"
 kubeVersion: ">=1.28.0-0"
 annotations:
@@ -10,22 +10,22 @@ annotations:
   agentworkforce.dev/license-scope: "First-party chart code only; dependencies and images retain their own licenses."
   # Templates use {{ continue }} (Helm 3.10+).
   agentworkforce.dev/min-helm-version: "3.10.0"
-home: https://github.com/AgentWorkforce/helm-charts
+home: https://github.com/AgentWorkforce/infra
 keywords: [agent-relay, messaging, sessions, self-hosted]
 maintainers:
   - name: AgentWorkforce
     url: https://github.com/AgentWorkforce
 dependencies:
   - name: relaycast
-    version: 0.3.4
+    version: 0.3.5
     repository: file://../relaycast
     condition: components.relaycast
   - name: relayauth
-    version: 0.1.3
+    version: 0.1.4
     repository: file://../relayauth
     condition: components.relayauth
   - name: sessions-pipeline
-    version: 0.6.0
+    version: 0.6.1
     repository: file://../sessions-pipeline
     condition: components.sessionsPipeline
   - name: relayhistory
@@ -33,7 +33,7 @@ dependencies:
     repository: file://../relayhistory
     condition: components.relayhistory
   - name: relay-cloud-api
-    version: 0.2.4
+    version: 0.2.6
     repository: file://../relay-cloud-api
     condition: components.cloudApi
   - name: relay-dashboard
@@ -41,7 +41,7 @@ dependencies:
     repository: file://../relay-dashboard
     condition: components.dashboard
   - name: relayflows
-    version: 0.2.4
+    version: 0.2.5
     repository: file://../relayflows
     condition: components.relayflows
   # Vendored upstream TerseAI chart (charts/durable-actors/UPSTREAM.md); its
@@ -51,6 +51,6 @@ dependencies:
     repository: file://../durable-actors
     condition: components.durableActors
   - name: relayfile
-    version: 0.2.1
+    version: 0.2.2
     repository: file://../relayfile
     condition: components.relayfile

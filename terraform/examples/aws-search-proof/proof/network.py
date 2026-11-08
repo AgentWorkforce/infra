@@ -78,7 +78,7 @@ def network(runner, operation):
         checks[identifier] = response.returncode != 0 and native_error(response.stderr, 'DescribeNetworkInterfaces', 'InvalidNetworkInterfaceID.NotFound')
     require(checks and all(checks.values()), 'Exact captured ENI absence unproved; Denied/empty/refresh errors do not count')
     receipt = {'ok': True, 'context_sha256': context_sha256, 'caller': identity, 'checks': checks, 'original_packet_sha256': created['original_packet_sha256']}
-    save(runner.path('network-absence.json'), receipt)
     domain = read(runner.path('domain-absence.json'))
     require(domain.get('ok') is True and domain.get('context_sha256') == context_sha256 and domain['original_packet_sha256'] == created['original_packet_sha256'], 'Separate capability-role typed domain absence still required')
+    save(runner.path('network-absence.json'), receipt)
     return {'ok': True, 'scope': 'exact disposable domain and captured service ENIs only; external VPC/subnets/SGs/roles/SLR preserved'}

@@ -2,7 +2,7 @@ apiVersion: v2
 name: relayauth
 description: RelayAuth identity and token issuer for self-hosted Agent Relay stacks
 type: application
-version: 0.1.3
+version: 0.1.4
 appVersion: "0.2.34"
 annotations:
   artifacthub.io/license: Apache-2.0
@@ -16,7 +16,7 @@ keywords:
   - agentworkforce
 maintainers:
   - name: AgentWorkforce
-    url: https://github.com/AgentWorkforce/helm-charts
+    url: https://github.com/AgentWorkforce/infra
 sources:
   - https://github.com/AgentWorkforce/relayauth
-  - https://github.com/AgentWorkforce/helm-charts/tree/main/charts/relayauth
+  - https://github.com/AgentWorkforce/infra/tree/main/charts/relayauth

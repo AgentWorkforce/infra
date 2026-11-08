@@ -2,7 +2,7 @@
 """Private-runner RDS/S3/OpenSearch data-path checks against Terraform outputs.
 
 Uses boto3 and psycopg[binary] supplied by the approved verification runner.
-Every live invocation needs explicit account/environment confirmations. Secret
+Every live invocation needs a separately confirmed installation identity. Secret
 values stay in process memory; this emits only bounded non-secret receipts.
 """
 import argparse
@@ -11,6 +11,7 @@ from pathlib import Path
 import re
 import ssl
 import sys
+from typing import NamedTuple, Optional
 from urllib.error import HTTPError
 from urllib.parse import urlsplit
 from urllib.request import Request, build_opener, HTTPSHandler, ProxyHandler, HTTPRedirectHandler
@@ -25,38 +26,115 @@ def require(condition):
         raise Failed("Verification gate failed")
 
 
-def validate(config, account, environment, run_id):
-    require(isinstance(config, dict) and config.get("account_id") == account and config.get("environment") == environment)
-    require(bool(re.fullmatch(r"[0-9]{12}", account)))
-    require(bool(re.fullmatch(r"[a-z][a-z0-9]*(?:-[a-z0-9]+)*", environment)))
-    require(bool(re.fullmatch(r"[0-9a-f]{32}", run_id)))
-    require(bool(re.fullmatch(r"[a-z]{2}(?:-[a-z]+)+-[0-9]+", config["region"])))
+class ConfirmedInstallation(NamedTuple):
+    """Operator-supplied installation identity, separate from exported targets.
+
+    This is an explicit confirmation, not IAM authorization or attestation.
+    Every phase revalidates it and the untrusted exported configuration.
+    """
+    account: str
+    region: str
+    environment: str
+    environment_class: str
+    name_prefix: str
+    search_url: str
+    pippen_agent: Optional[str] = None
+    pippen_session: Optional[str] = None
+
+
+def matches(pattern, value):
+    return isinstance(value, str) and re.fullmatch(pattern, value) is not None
+
+
+def confirm_installation(account, region, environment, environment_class, name_prefix, search_url, pippen_agent=None, pippen_session=None):
+    require(matches(r"[0-9]{12}", account))
+    require(matches(r"[a-z]{2}(?:-[a-z]+)+-[0-9]+", region))
+    require(matches(r"[a-z][a-z0-9]*(?:-[a-z0-9]+)*", environment) and len(environment) <= 16)
+    require(environment_class in ("development", "staging", "production"))
+    require(matches(r"[a-z][a-z0-9]*(?:-[a-z0-9]+)*", name_prefix) and len(name_prefix + "-" + environment) <= 21)
+    require(isinstance(search_url, str))
+    origin = urlsplit(search_url)
+    require(origin.scheme == "https" and origin.port in (None, 443) and origin.username is None and origin.password is None and origin.path in ("", "/") and not origin.query and not origin.fragment)
+    require(matches(rf"vpc-{re.escape(name_prefix + '-' + environment)}-search-[a-z0-9]+\.{re.escape(region)}\.es\.amazonaws\.com", origin.hostname))
+    require((pippen_agent is None) == (pippen_session is None))
+    if pippen_agent is not None:
+        require(name_prefix.startswith("pippen-sbx-") and matches(r"[a-z0-9][a-z0-9-]{1,40}", pippen_agent))
+        require(matches(r"[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}", pippen_session))
+    return ConfirmedInstallation(account, region, environment, environment_class, name_prefix, search_url, pippen_agent, pippen_session)
+
+
+def fields(value, keys):
+    require(isinstance(value, dict) and set(value) == set(keys))
+
+
+def validate(config, installation, run_id=None):
+    require(isinstance(installation, ConfirmedInstallation))
+    confirm_installation(*installation) # Reject invalid directly constructed tuples too.
+    account, region, environment, environment_class, prefix, search_url, agent, lease = installation
+    if run_id is not None:
+        require(matches(r"[0-9a-f]{32}", run_id))
+    fields(config, ("account_id", "region", "environment", "environment_class", "name_prefix", "pippen", "postgres", "storage", "search", "pipeline"))
+    require((config["account_id"], config["region"], config["environment"], config["environment_class"], config["name_prefix"]) == installation[:5])
+    require(config["pippen"] == (None if agent is None else {"agent": agent, "session_id": lease}))
+    name = prefix + "-" + environment
     search, pg, storage = (config[k] for k in ("search", "postgres", "storage"))
+    fields(search, ("url", "domain_name", "domain_arn", "index_prefix", "master_role_arn", "indexer_role_arn", "reader_role_arn", "lambda_role_arn"))
+    fields(pg, ("identifier", "host", "port", "database", "master_username", "secret_arn", "resource_arn", "engine_mode", "deletion_protection", "backup_retention_days"))
+    fields(storage, ("bucket", "prefix", "role_arn"))
+    require(search["domain_name"] == name + "-search" and search["index_prefix"] == name + "-")
+    require(search["domain_arn"] == f"arn:aws:es:{region}:{account}:domain/{name}-search")
+    require(search["url"] == search_url)
     url = urlsplit(search["url"])
     require(url.scheme == "https" and url.port in (None, 443) and url.username is None and url.password is None and url.path in ("", "/") and not url.query and not url.fragment)
-    require(url.hostname is not None and url.hostname.endswith(f".{config['region']}.es.amazonaws.com"))
-    require(search["domain_arn"] == f"arn:aws:es:{config['region']}:{account}:domain/{search['domain_name']}")
-    require(bool(re.fullmatch(r"[a-z][a-z0-9-]{2,27}", search["domain_name"])))
-    require(search["index_prefix"].endswith(f"-{environment}-"))
-    require(bool(re.fullmatch(r"[a-z][a-z0-9-]+-", search["index_prefix"])))
-    require(search["domain_name"] == search["index_prefix"] + "search")
+    require(matches(rf"vpc-{re.escape(name)}-search-[a-z0-9]+\.{re.escape(region)}\.es\.amazonaws\.com", url.hostname))
+    role_pattern = rf"arn:aws:iam::{account}:role/(?:[A-Za-z0-9+=,.@_-]+/)*[A-Za-z0-9+=,.@_-]+"
     for key in ("master_role_arn", "indexer_role_arn", "reader_role_arn"):
-        require(bool(re.fullmatch(f"arn:aws:iam::{account}:role/.+", search[key])))
-    require(search["indexer_role_arn"] != search["reader_role_arn"])
-    require(search["master_role_arn"] not in (search["indexer_role_arn"], search["reader_role_arn"]))
-    require(storage["prefix"] == f"proofs/{environment}/")
-    require(storage["bucket"] == f"{search['index_prefix']}{account}-{config['region']}-sessions")
-    require(bool(re.fullmatch(f"arn:aws:iam::{account}:role/.+", storage["role_arn"])))
-    require(storage["role_arn"] != search["master_role_arn"])
-    require(pg["secret_arn"].startswith(f"arn:aws:secretsmanager:{config['region']}:{account}:secret:"))
-    require(pg["resource_arn"].startswith(f"arn:aws:rds:{config['region']}:{account}:"))
-    require(pg["host"].endswith(f".{config['region']}.rds.amazonaws.com"))
-    pipeline = config.get("pipeline")
+        require(matches(role_pattern, search[key]))
+    require(len({search[k] for k in ("master_role_arn", "indexer_role_arn", "reader_role_arn")}) == 3)
+    require(storage["prefix"] == f"proofs/{environment}/" and storage["bucket"] == f"{name}-{account}-{region}-sessions")
+    require(len(storage["bucket"]) <= 63 and matches(role_pattern, storage["role_arn"]) and storage["role_arn"] != search["master_role_arn"])
+    require(pg["engine_mode"] in ("rds", "aurora") and pg["identifier"] == name + "-pg")
+    kind = "db" if pg["engine_mode"] == "rds" else "cluster"
+    require(pg["resource_arn"] == f"arn:aws:rds:{region}:{account}:{kind}:{name}-pg")
+    require(matches(rf"{re.escape(name)}-pg\.[a-z0-9-]+\.{re.escape(region)}\.rds\.amazonaws\.com", pg["host"]))
+    require(matches(rf"arn:aws:secretsmanager:{region}:{account}:secret:[A-Za-z0-9/_+=.@!-]+-[A-Za-z0-9]{{6}}", pg["secret_arn"]))
+    require(pg["port"] == 5432 and type(pg["port"]) is int and pg["database"] == "relaycontrol" and pg["master_username"] == "relay_admin")
+    require(type(pg["deletion_protection"]) is bool and pg["backup_retention_days"] == {"development": 7, "staging": 14, "production": 35}[environment_class])
+    require(environment_class != "production" or pg["deletion_protection"] is True)
+    pipeline = config["pipeline"]
     if pipeline is not None:
-        require(pipeline["function_arn"].startswith(f"arn:aws:lambda:{config['region']}:{account}:function:"))
-        require(bool(re.fullmatch(f"arn:aws:iam::{account}:role/.+", search["lambda_role_arn"])))
-        require(search["lambda_role_arn"] not in (search["master_role_arn"], search["reader_role_arn"]))
+        fields(pipeline, ("function_name", "function_arn", "image_uri"))
+        function_name = name + "-session-pipeline"
+        require(pipeline["function_name"] == function_name and pipeline["function_arn"] == f"arn:aws:lambda:{region}:{account}:function:{function_name}")
+        require(pipeline["image_uri"] is None or matches(r"[^\s]+@sha256:[a-f0-9]{64}", pipeline["image_uri"]))
+        require(matches(role_pattern, search["lambda_role_arn"]) and search["lambda_role_arn"] not in (search["master_role_arn"], search["reader_role_arn"]))
+    else:
+        require(search["lambda_role_arn"] is None)
     return config
+
+
+def native_tags(rows, installation):
+    require(isinstance(rows, list) and all(isinstance(row, dict) and set(row) == {"Key", "Value"} and isinstance(row["Key"], str) and isinstance(row["Value"], str) for row in rows))
+    require(len({row["Key"] for row in rows}) == len(rows))
+    values = {row["Key"]: row["Value"] for row in rows}
+    expected = {"Environment": installation.environment, "EnvironmentClass": installation.environment_class, "ManagedBy": "terraform"}
+    if installation.pippen_agent is not None:
+        expected.update({"pippen:sandbox": "true", "pippen:agent": installation.pippen_agent, "pippen:session": installation.pippen_session})
+    else:
+        require(not any(key.startswith("pippen:") for key in values))
+    require(all(values.get(key) == value for key, value in expected.items()))
+
+
+def phase_identity(session, config, installation, run_id=None, role=None):
+    validate(config, installation, run_id) # Always before creating even an SDK client.
+    caller = session.client("sts").get_caller_identity()
+    require(caller["Account"] == installation.account and matches(rf"arn:aws:(?:sts|iam)::{installation.account}:[A-Za-z0-9+=,.@_/-]+", caller["Arn"]))
+    if installation.pippen_session is None:
+        require(not matches(r"arn:aws:sts::[0-9]{12}:assumed-role/agent-session/[^/]+", caller["Arn"]))
+    if installation.pippen_session is not None and role is None:
+        require(caller["Arn"] == f"arn:aws:sts::{installation.account}:assumed-role/agent-session/agent-{installation.pippen_session}")
+    if role is not None:
+        require(role_matches(caller["Arn"], role))
 
 
 def role_matches(caller, expected):
@@ -95,16 +173,34 @@ def document_ack(status, body, index, identifier):
 
 
 class Search:
-    def __init__(self, session, url, region):
-        self.session, self.url, self.region = session, url.rstrip("/"), region
+    def __init__(self, session, config, *, installation):
+        validate(config, installation)
+        self.installation = installation # Immutable scalar confirmation; no nested target config.
+        self.session, self.url, self.region = session, config["search"]["url"].rstrip("/"), installation.region
         self.http = build_opener(ProxyHandler({}), NoRedirect(), HTTPSHandler(context=ssl.create_default_context()))
 
     def call(self, method, path, body=None, ndjson=False):
+        # A direct-import caller must not turn the approved base into userinfo
+        # (e.g. base + "@foreign") or introduce alternate URL interpretation.
+        require(isinstance(path, str) and 1 <= len(path) <= 4096 and path.startswith("/") and not path.startswith("//"))
+        require(all(0x21 <= ord(character) <= 0x7e for character in path) and "\\" not in path and "#" not in path)
+        require(method in ("GET", "HEAD", "POST", "PUT", "DELETE", "PATCH"))
+        require(self.url == self.installation.search_url.rstrip("/"))
+        origin, target = urlsplit(self.url), urlsplit(self.url + path)
+        require(target.scheme == origin.scheme == "https" and target.netloc == origin.netloc and target.hostname == origin.hostname)
+        require(target.username is None and target.password is None and origin.username is None and origin.password is None and not target.fragment)
+        # Direct imports cannot bypass the account/common-lease gate. Exact
+        # phase-role checks remain in search_phase; this is not IAM authority.
+        caller = self.session.client("sts").get_caller_identity()
+        account = self.installation.account
+        require(isinstance(caller, dict) and caller.get("Account") == account and matches(rf"arn:aws:(?:sts|iam)::{account}:[A-Za-z0-9+=,.@_/-]+", caller.get("Arn")))
+        if matches(rf"arn:aws:sts::{account}:assumed-role/agent-session/[^/]+", caller["Arn"]):
+            require(self.installation.pippen_session is not None and caller["Arn"] == f"arn:aws:sts::{account}:assumed-role/agent-session/agent-{self.installation.pippen_session}")
         from botocore.auth import SigV4Auth
         from botocore.awsrequest import AWSRequest
         data = body.encode() if ndjson else (json.dumps(body).encode() if body is not None else None)
         headers = {"Content-Type": "application/x-ndjson" if ndjson else "application/json"}
-        aws = AWSRequest(method=method, url=self.url + path, data=data, headers=headers)
+        aws = AWSRequest(method=method, url=target.geturl(), data=data, headers=headers)
         credentials = self.session.get_credentials()
         require(credentials is not None)
         SigV4Auth(credentials.get_frozen_credentials(), "es", self.region).add_auth(aws)
@@ -122,28 +218,49 @@ class Search:
         return status, result
 
 
-def postgres(session, config, ca_path):
+def postgres(session, config, ca_path, *, installation):
+    validate(config, installation)
     require(ca_path is not None and ca_path.is_file())
-    import psycopg
+    phase_identity(session, config, installation)
     pg = config["postgres"]
-    arn = pg["resource_arn"]
-    kind, identifier = arn.split(":", 6)[5:]
+    arn, identifier = pg["resource_arn"], pg["identifier"]
     rds = session.client("rds")
-    if kind == "db":
-        database = rds.describe_db_instances(DBInstanceIdentifier=identifier)["DBInstances"][0]
-        require(database["DBInstanceArn"] == arn and database["PubliclyAccessible"] is False)
+    def one(response, key):
+        rows = response[key]
+        require(isinstance(rows, list) and len(rows) == 1 and isinstance(rows[0], dict))
+        return rows[0]
+    def instance(row, expected, engine):
+        require(row["DBInstanceIdentifier"] == expected and row["DBInstanceArn"] == f"arn:aws:rds:{installation.region}:{installation.account}:db:{expected}")
+        require(row["Engine"] == engine and matches(r"17(?:\.[0-9]+)*", row["EngineVersion"]) and row["DBInstanceStatus"] == "available")
+        require(row["PubliclyAccessible"] is False and row["StorageEncrypted"] is True and row["Endpoint"]["Port"] == pg["port"])
+        native_tags(row["TagList"], installation)
+    if pg["engine_mode"] == "rds":
+        database = one(rds.describe_db_instances(DBInstanceIdentifier=identifier), "DBInstances")
+        instance(database, identifier, "postgres")
+        require(database["DBName"] == pg["database"] and not database.get("DBClusterIdentifier"))
         host = database["Endpoint"]["Address"]
     else:
-        require(kind == "cluster")
-        database = rds.describe_db_clusters(DBClusterIdentifier=identifier)["DBClusters"][0]
-        require(database["DBClusterArn"] == arn)
-        for member in database["DBClusterMembers"]:
-            instance = rds.describe_db_instances(DBInstanceIdentifier=member["DBInstanceIdentifier"])["DBInstances"][0]
-            require(instance["PubliclyAccessible"] is False)
+        database = one(rds.describe_db_clusters(DBClusterIdentifier=identifier), "DBClusters")
+        require(database["DBClusterIdentifier"] == identifier and database["DBClusterArn"] == arn and database["Engine"] == "aurora-postgresql" and matches(r"17(?:\.[0-9]+)*", database["EngineVersion"]) and database["Status"] == "available")
+        require(database["Port"] == pg["port"] and database["DatabaseName"] == pg["database"])
+        native_tags(database["TagList"], installation)
+        members = database["DBClusterMembers"]
+        require(isinstance(members, list) and 1 <= len(members) <= 16 and all(isinstance(m, dict) and matches(rf"{re.escape(identifier)}-[1-9][0-9]*", m.get("DBInstanceIdentifier")) and type(m.get("IsClusterWriter")) is bool for m in members))
+        require(len({m["DBInstanceIdentifier"] for m in members}) == len(members) and sum(m["IsClusterWriter"] for m in members) == 1)
+        for member in members:
+            row = one(rds.describe_db_instances(DBInstanceIdentifier=member["DBInstanceIdentifier"]), "DBInstances")
+            instance(row, member["DBInstanceIdentifier"], "aurora-postgresql")
+            require(row["DBClusterIdentifier"] == identifier)
         host = database["Endpoint"]
-    require(host == pg["host"] and database["MasterUserSecret"]["SecretArn"] == pg["secret_arn"])
-    require(database["StorageEncrypted"] is True and database["BackupRetentionPeriod"] == pg["backup_retention_days"] and database["DeletionProtection"] == pg["deletion_protection"])
-    secret = json.loads(session.client("secretsmanager").get_secret_value(SecretId=pg["secret_arn"])["SecretString"])
+    require(host == pg["host"] and database["MasterUserSecret"]["SecretArn"] == pg["secret_arn"] and database["MasterUserSecret"]["SecretStatus"] == "active")
+    require(database["StorageEncrypted"] is True and type(database["BackupRetentionPeriod"]) is int and database["BackupRetentionPeriod"] == pg["backup_retention_days"] and database["DeletionProtection"] is pg["deletion_protection"])
+    require(database["MasterUsername"] == pg["master_username"])
+    # No secret API or SQL driver import occurs until ALL native identity gates pass.
+    reply = session.client("secretsmanager").get_secret_value(SecretId=pg["secret_arn"])
+    require(reply["ARN"] == pg["secret_arn"])
+    secret = json.loads(reply["SecretString"])
+    require(isinstance(secret, dict) and secret.get("username") == database["MasterUsername"] and isinstance(secret.get("password"), str) and secret["password"])
+    import psycopg
     with psycopg.connect(host=host, port=pg["port"], dbname=pg["database"], user=secret["username"], password=secret["password"], sslmode="verify-full", sslrootcert=str(ca_path.resolve()), connect_timeout=15) as connection:
         with connection.cursor() as cursor:
             cursor.execute("SELECT current_database(), current_setting('server_version_num')::int, ssl FROM pg_stat_ssl WHERE pid=pg_backend_pid()")
@@ -155,15 +272,16 @@ def postgres(session, config, ca_path):
             require(cursor.fetchone() == ("authenticated-private-tls",))
 
 
-def configuration(session, config):
+def configuration(session, config, *, installation):
+    phase_identity(session, config, installation)
     client = session.client("s3")
     bucket = config["storage"]["bucket"]
-    public = client.get_public_access_block(Bucket=bucket)["PublicAccessBlockConfiguration"]
+    public = client.get_public_access_block(Bucket=bucket, ExpectedBucketOwner=installation.account)["PublicAccessBlockConfiguration"]
     require(all(public.get(k) is True for k in ("BlockPublicAcls", "IgnorePublicAcls", "BlockPublicPolicy", "RestrictPublicBuckets")))
-    require(client.get_bucket_versioning(Bucket=bucket).get("Status") == "Enabled")
-    rules = client.get_bucket_encryption(Bucket=bucket)["ServerSideEncryptionConfiguration"]["Rules"]
+    require(client.get_bucket_versioning(Bucket=bucket, ExpectedBucketOwner=installation.account).get("Status") == "Enabled")
+    rules = client.get_bucket_encryption(Bucket=bucket, ExpectedBucketOwner=installation.account)["ServerSideEncryptionConfiguration"]["Rules"]
     require(len(rules) == 1 and rules[0]["ApplyServerSideEncryptionByDefault"]["SSEAlgorithm"] == "aws:kms" and rules[0].get("BucketKeyEnabled") is True)
-    policy = json.loads(client.get_bucket_policy(Bucket=bucket)["Policy"])
+    policy = json.loads(client.get_bucket_policy(Bucket=bucket, ExpectedBucketOwner=installation.account)["Policy"])
     require(any(s.get("Effect") == "Deny" and s.get("Condition", {}).get("Bool", {}).get("aws:SecureTransport") in (False, "false") for s in policy.get("Statement", [])))
     search = config["search"]
     domain = session.client("opensearch").describe_domain(DomainName=search["domain_name"])["DomainStatus"]
@@ -171,12 +289,16 @@ def configuration(session, config):
     require(domain["DomainEndpointOptions"]["EnforceHTTPS"] and domain["EncryptionAtRestOptions"]["Enabled"] and domain["NodeToNodeEncryptionOptions"]["Enabled"] and domain["AdvancedSecurityOptions"]["Enabled"])
 
 
-def lambda_smoke(session, config, code_sha):
+def lambda_smoke(session, config, code_sha, *, installation):
+    phase_identity(session, config, installation)
     pipeline = config.get("pipeline")
     require(isinstance(pipeline, dict))
     client = session.client("lambda")
     function = client.get_function(FunctionName=pipeline["function_arn"])
     deployed = function["Configuration"]
+    require(deployed["FunctionName"] == pipeline["function_name"] and deployed["Role"] == config["search"]["lambda_role_arn"])
+    require(isinstance(function.get("Tags"), dict) and function.get("TagsError") is None)
+    native_tags([{"Key": key, "Value": value} for key, value in function["Tags"].items()], installation)
     require(deployed["FunctionArn"] == pipeline["function_arn"] and deployed["State"] == "Active" and deployed["LastUpdateStatus"] == "Successful")
     require(deployed["Architectures"] == ["arm64"] and deployed["VpcConfig"]["SubnetIds"] and deployed["VpcConfig"]["SecurityGroupIds"])
     if pipeline.get("image_uri"):
@@ -193,7 +315,9 @@ def lambda_smoke(session, config, code_sha):
     require(isinstance(body, dict) and body.get("ok") is True)
 
 
-def storage(session, config, run_id):
+def storage(session, config, run_id, *, installation):
+    validate(config, installation, run_id)
+    phase_identity(session, config, installation, run_id, config["storage"]["role_arn"])
     value = config["storage"]
     key = value["prefix"] + run_id + "/marker.json"
     client = session.client("s3")
@@ -201,17 +325,21 @@ def storage(session, config, run_id):
     # Only the synthetic current key is deleted. Version history remains under
     # normal retention; an approved administrator cleans versions at retirement.
     try:
-        client.put_object(Bucket=value["bucket"], Key=key, Body=body)
-        result = client.get_object(Bucket=value["bucket"], Key=key)
+        client.put_object(Bucket=value["bucket"], Key=key, Body=body, ExpectedBucketOwner=installation.account)
+        result = client.get_object(Bucket=value["bucket"], Key=key, ExpectedBucketOwner=installation.account)
         require(result["Body"].read() == body)
-        require(any(x["Key"] == key for x in client.list_objects_v2(Bucket=value["bucket"], Prefix=key).get("Contents", [])))
+        require(any(x["Key"] == key for x in client.list_objects_v2(Bucket=value["bucket"], Prefix=key, ExpectedBucketOwner=installation.account).get("Contents", [])))
     finally:
-        client.delete_object(Bucket=value["bucket"], Key=key)
+        client.delete_object(Bucket=value["bucket"], Key=key, ExpectedBucketOwner=installation.account)
 
 
-def search_phase(session, config, phase, run_id):
+def search_phase(session, config, phase, run_id, *, installation):
+    validate(config, installation, run_id)
+    roles = {"search-bootstrap": "master_role_arn", "search-write": "indexer_role_arn", "search-read": "reader_role_arn", "search-cleanup": "master_role_arn"}
+    require(phase in roles)
     search = config["search"]
-    client = Search(session, search["url"], config["region"])
+    phase_identity(session, config, installation, run_id, search[roles[phase]])
+    client = Search(session, config, installation=installation)
     index = search["index_prefix"] + "proof-" + run_id
     denied = "denied-proof-" + run_id
     role = f"agent_relay_proof_{config['environment']}_{run_id}"
@@ -259,29 +387,30 @@ def main(argv=None):
     parser.add_argument("--run-id", required=True, help="One shared random UUID in 32-character lowercase hex form")
     parser.add_argument("--confirm-account", required=True)
     parser.add_argument("--confirm-environment", required=True)
+    parser.add_argument("--confirm-region", required=True)
+    parser.add_argument("--confirm-environment-class", required=True, choices=["development", "staging", "production"])
+    parser.add_argument("--confirm-name-prefix", required=True, help="Independently reviewed installation prefix; do not copy from untrusted target JSON")
+    parser.add_argument("--confirm-search-url", required=True, help="Exact private HTTPS URL from a separately reviewed native installation record; never auto-copy target JSON")
+    parser.add_argument("--confirm-pippen-agent")
+    parser.add_argument("--confirm-pippen-session")
     parser.add_argument("--confirm-live", action="store_true", required=True)
     parser.add_argument("--rds-ca", type=Path)
     parser.add_argument("--lambda-code-sha256", help="Reviewed Lambda ZIP CodeSha256 in base64; required for ZIP smoke")
     args = parser.parse_args(argv)
-    config = validate(json.loads(args.config.read_text()), args.confirm_account, args.confirm_environment, args.run_id)
+    installation = confirm_installation(args.confirm_account, args.confirm_region, args.confirm_environment, args.confirm_environment_class, args.confirm_name_prefix, args.confirm_search_url, args.confirm_pippen_agent, args.confirm_pippen_session)
+    config = validate(json.loads(args.config.read_text()), installation, args.run_id)
     import boto3
     session = boto3.Session(region_name=config["region"])
-    caller = session.client("sts").get_caller_identity()
-    require(caller["Account"] == config["account_id"])
-    role_keys = {"storage": ("storage", "role_arn"), "search-bootstrap": ("search", "master_role_arn"), "search-write": ("search", "indexer_role_arn"), "search-read": ("search", "reader_role_arn"), "search-cleanup": ("search", "master_role_arn")}
-    if args.phase in role_keys:
-        section, key = role_keys[args.phase]
-        require(role_matches(caller["Arn"], config[section][key]))
     if args.phase == "configuration":
-        configuration(session, config)
+        configuration(session, config, installation=installation)
     elif args.phase == "lambda-smoke":
-        lambda_smoke(session, config, args.lambda_code_sha256)
+        lambda_smoke(session, config, args.lambda_code_sha256, installation=installation)
     elif args.phase == "postgres":
-        postgres(session, config, args.rds_ca)
+        postgres(session, config, args.rds_ca, installation=installation)
     elif args.phase == "storage":
-        storage(session, config, args.run_id)
+        storage(session, config, args.run_id, installation=installation)
     else:
-        search_phase(session, config, args.phase, args.run_id)
+        search_phase(session, config, args.phase, args.run_id, installation=installation)
     print(json.dumps({"result": "PASS", "phase": args.phase, "environment": config["environment"], "run_id": args.run_id}))
 
 

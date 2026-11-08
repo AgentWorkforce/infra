@@ -1,0 +1,164 @@
+# Local development only. make kind-up creates the referenced Secrets and
+# Postgres/Locker. Same-namespace traffic and cluster DNS are the only egress.
+localKind:
+  enabled: true
+  allowLocalOnly: true
+  profile: core
+  temporaryRelayauth: true
+components:
+  cloudApi: true
+  dashboard: true
+  relaycast: true
+  relayhistory: true
+  sessionsPipeline: true
+  relayauth: true
+  relayflows: false
+  relayfile: false
+  durableActors: false
+global:
+  tenant: { orgId: kind-bootstrap }
+  otel: { endpoint: "" }
+relay-cloud-api:
+  fullnameOverride: relaycontrol
+  image:
+    repository: ghcr.io/agentworkforce/selfhost-api
+    digest: sha256:95c7877741054dc2f1cafa26be3faa9bfe4660ed85d637aef4524daa10481963
+  existingSecret: kind-control
+  publicUrl: https://relay.kind.agentrelay.com:8443
+  dashboardUrl: https://relay.kind.agentrelay.com:8443
+  encryption: { keyId: kind-1 }
+  database: { runtimeRole: control_api_runtime }
+  migrations: { backoffLimit: 0 }
+  bootstrap:
+    orgName: Kind proof
+    adminEmail: owner@kind.example
+    workspaceName: Default
+  secretKeys:
+    relaycastInternalSecret: relaycast-internal-secret
+    internalToken: selfhost-internal-token
+  services:
+    relayauthUrl: http://relayauth.agent-relay.svc.cluster.local:8787
+    relaycastUrl: http://relaycast.agent-relay.svc.cluster.local:8787
+    relaycastPublicUrl: https://cast.kind.agentrelay.com:8443
+    relayhistoryUrl: http://relayhistory.agent-relay.svc.cluster.local:8080
+    relayhistoryPublicUrl: https://history.kind.agentrelay.com:8443
+  telemetry: { level: "off" }
+  # The namespace-wide local policy applies to every pod, including Jobs.
+  networkPolicy: { enabled: false }
+  resources:
+    requests: { cpu: 50m, memory: 128Mi }
+relay-dashboard:
+  fullnameOverride: relay-app
+  image:
+    repository: ghcr.io/agentworkforce/relay-dashboard
+    digest: sha256:c50005fcdd1fc5ab5ef3dac9b621db8e0c7e03480406bfe519743ae435d8f1ad
+  runtime:
+    publicUrl: https://relay.kind.agentrelay.com:8443
+  api: { serviceName: relaycontrol }
+  ingress:
+    enabled: true
+    className: traefik
+    host: relay.kind.agentrelay.com
+    tls:
+      - secretName: kind-tls
+        hosts: [relay.kind.agentrelay.com]
+  customerProfile:
+    desktop:
+      siteUrl: https://relay.kind.agentrelay.com:8443
+      urlScheme: agentrelay-kind
+  networkPolicy: { enabled: false }
+relaycast:
+  fullnameOverride: relaycast
+  baseUrl: https://cast.kind.agentrelay.com:8443
+  existingSecret: kind-cast
+  persistence: { size: 1Gi, annotations: {} }
+  networkPolicy: { enabled: false }
+  ingress:
+    enabled: true
+    className: traefik
+    hosts: [cast.kind.agentrelay.com]
+    tls:
+      - secretName: kind-tls
+        hosts: [cast.kind.agentrelay.com]
+relayauth:
+  fullnameOverride: relayauth
+  existingSecret: kind-auth
+  baseUrl: http://relayauth.agent-relay.svc.cluster.local:8787
+  issuer: http://relayauth.agent-relay.svc.cluster.local:8787
+  jwksIngress: { enabled: false }
+  persistence: { size: 1Gi, annotations: {} }
+  networkPolicy: { enabled: false }
+relayhistory:
+  fullnameOverride: relayhistory
+  image:
+    repository: ghcr.io/agentworkforce/relayhistory
+    digest: sha256:d3166bb14e1d6043426a4dd8cc05408b94574c8d79ad5fd6e789e0de00ab371b
+  database:
+    existingSecret: kind-history-db
+    runtimeRole: history_runtime
+  podAnnotations:
+    kind.agentrelay.dev/database-role: history_runtime
+  migrations: { backoffLimit: 0 }
+  relayauth:
+    historyOrigin: https://history.kind.agentrelay.com:8443
+    jwksUrl: http://relayauth.agent-relay.svc.cluster.local:8787/.well-known/jwks.json
+    issuer: http://relayauth.agent-relay.svc.cluster.local:8787
+  agentRelayCloud: { apiUrl: "http://relaycontrol.agent-relay.svc.cluster.local" }
+  networkPolicy: { enabled: false }
+  resources:
+    requests: { cpu: 50m, memory: 128Mi }
+  ingress:
+    enabled: true
+    className: traefik
+    hosts: [history.kind.agentrelay.com]
+    tls:
+      - secretName: kind-tls
+        hosts: [history.kind.agentrelay.com]
+sessions-pipeline:
+  # Local Postgres is created before any schema migration; no CNPG operator.
+  hoopdb: { enabled: false }
+  locker: { enabled: false }
+  otel: { enabled: false }
+  worker:
+    fullnameOverride: sessions
+    image:
+      repository: ghcr.io/agentworkforce/96bulls-services
+      digest: sha256:070fe6fd46ecd1e1f9db32ff22379f6df9b9e6c4d48ede5312c8fb986a95f3a9
+    existingSecret: kind-pipeline
+    secretKeys: { lockerAccessKeyId: rootUser, lockerSecretAccessKey: rootPassword }
+    hoopdb: { existingSecret: kind-pipeline, key: HOOPDB_URL }
+    environment: local
+    allowInClusterHttp: true
+    migrations:
+      backoffLimit: 0
+      hoopdb: { existingSecret: kind-pipeline, key: HOOPDB_MIGRATION_URL }
+      databaseMode: selfhosted
+      supabaseShim: true
+      runtimeRole: sessions_pipeline_runtime
+      runtimeRoleLogin: true
+      functionBoundaryMode: global-default-revoke
+      waitForRole: { enabled: true, functionDefault: true }
+    lockerInit: { backoffLimit: 0 }
+    extraEnv:
+      - { name: SEARCH_INDEX_ENABLED, value: "1" }
+      - { name: SEARCH_INDEX_BACKEND, value: postgres }
+    networkPolicy: { enabled: false }
+  alleyoop:
+    fullnameOverride: alleyoop
+    image:
+      repository: ghcr.io/agentworkforce/96bulls-services
+      digest: sha256:070fe6fd46ecd1e1f9db32ff22379f6df9b9e6c4d48ede5312c8fb986a95f3a9
+    existingSecret: kind-pipeline
+    secretKeys: { lockerAccessKeyId: rootUser, lockerSecretAccessKey: rootPassword }
+    hoopdb: { existingSecret: kind-pipeline, key: HOOPDB_URL }
+    environment: local
+    allowInClusterHttp: true
+    auth:
+      jwksUrl: http://relayauth.agent-relay.svc.cluster.local:8787/.well-known/jwks.json
+      issuer: http://relayauth.agent-relay.svc.cluster.local:8787
+      historyOrigin: https://history.kind.agentrelay.com:8443
+    extraEnv:
+      - { name: READ_API_ORIGIN, value: "https://history.kind.agentrelay.com:8443" }
+      - { name: SEARCH_INDEX_ENABLED, value: "1" }
+      - { name: SEARCH_INDEX_BACKEND, value: postgres }
+    networkPolicy: { enabled: false }

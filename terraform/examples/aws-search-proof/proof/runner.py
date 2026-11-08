@@ -4,6 +4,8 @@
 Tests inject a transport. Importing this file never invokes a tool/provider.
 Capability metadata is inherited from the selected Pippen CLI, never obtained
 by inspecting its credential_process or accepting a client approval file.
+Catchable TERM/HUP/INT interrupt through owned-group settlement; SIGKILL and host
+crash/power loss cannot provide cleanup or completed evidence guarantees.
 """
 import argparse
 import configparser
@@ -22,6 +24,11 @@ from files import read, save, sha
 
 ROOT = Path(__file__).resolve().parents[1]
 MODULE = ROOT.parents[1] / 'modules/aws/search'
+
+class CommandInterrupted(InterruptedError):
+    def __init__(self, signum):
+        self.signum = signum
+        super().__init__(f'Owned command interrupted by signal {signum}')
 
 class Runner:
     def __init__(self, execution, variables, terraform, env=None, transport=None):
@@ -73,29 +80,62 @@ class Runner:
         prefix = self.path('commands') / str(time.time_ns()); prefix.parent.mkdir(mode=0o700, exist_ok=True)
         metadata = {'args': args, 'outcome': 'launching'}; save(prefix.with_suffix('.json'), metadata)
         process = None; self.settled = False
+        requested = None
+        previous = {}
+        def interrupt(signum, _frame):
+            nonlocal requested
+            # Record only: an asynchronous raise could interrupt exception-entry
+            # cleanup or Popen before its owned PID has been assigned.
+            if requested is None: requested = signum
+        def pending_signal():
+            if requested is not None: raise CommandInterrupted(requested)
         def settle():
             if process is None: return True
             for sig in [signal.SIGTERM, signal.SIGKILL]:
                 process.poll()
                 try: os.killpg(process.pid, sig)
                 except ProcessLookupError: return True
+                except PermissionError: pass # Unknown, not absence; still reap/probe within the bound.
                 end = time.monotonic() + 5
                 while time.monotonic() < end:
                     process.poll()
                     try: os.killpg(process.pid, 0)
                     except ProcessLookupError: return True
+                    except PermissionError: pass # May be transient while the group exits.
                     time.sleep(.1)
             return False
         try:
+            for sig in [signal.SIGTERM, signal.SIGHUP, signal.SIGINT]:
+                previous[sig] = signal.signal(sig, interrupt)
             with prefix.with_suffix('.stdout').open('w') as out, prefix.with_suffix('.stderr').open('w') as err:
                 os.chmod(out.name, 0o600); os.chmod(err.name, 0o600)
+                pending_signal() # A signal before launch must not create a child.
                 process = subprocess.Popen(args, cwd=ROOT, env=self.env, stdout=out, stderr=err, start_new_session=True, text=True)
-                metadata.update(pid=process.pid, pgid=process.pid, outcome='running'); save(prefix.with_suffix('.json'), metadata)
-                process.wait(timeout=timeout); self.settled = settle()
+                metadata.update(pid=process.pid, pgid=process.pid, outcome='running')
+                pending_signal() # Includes signals deferred during Popen/assignment.
+                save(prefix.with_suffix('.json'), metadata)
+                deadline = time.monotonic() + timeout
+                while True:
+                    pending_signal()
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        if process.poll() is not None: break
+                        raise subprocess.TimeoutExpired(args, timeout)
+                    try:
+                        process.wait(timeout=min(.1, remaining))
+                        break
+                    except subprocess.TimeoutExpired: pass
+                pending_signal()
+                self.settled = settle()
+                pending_signal()
                 require(self.settled, 'Unsettled owned process group; quarantine before recovery')
         except BaseException as error:
             self.settled = settle(); metadata.update(outcome='interrupted', error_type=type(error).__name__, process_group_absent=self.settled)
+            if process is not None: metadata.update(pid=process.pid, pgid=process.pid)
+            if requested is not None: metadata['signal'] = requested
             save(prefix.with_suffix('.json'), metadata); raise
+        finally:
+            for sig, handler in previous.items(): signal.signal(sig, handler)
         metadata.update(outcome='completed', exit_code=process.returncode, process_group_absent=self.settled); save(prefix.with_suffix('.json'), metadata)
         result = subprocess.CompletedProcess(args, process.returncode, prefix.with_suffix('.stdout').read_text(), prefix.with_suffix('.stderr').read_text())
         require(not check or result.returncode == 0, 'Tool failed; preserve private command evidence')
@@ -180,9 +220,9 @@ class Runner:
         if destroy: args.append('-destroy')
         self.run(args)
         plan = json.loads(self.run([self.terraform, 'show', '-json', str(saved)]).stdout)
-        changes(plan, self.v, destroy, ledger)
+        history = changes(plan, self.v, destroy, ledger)
         after = self.bindings(); require(after == before, 'Source/input/provider/backend/state changed while preparing the saved plan')
-        packet = {**after, 'plan_sha256': sha(saved), 'plan_json_sha256': digest(canonical(plan)), 'operation': name}
+        packet = {**after, 'plan_sha256': sha(saved), 'plan_json_sha256': digest(canonical(plan)), 'operation': name, 'search_mode_history': history}
         if destroy:
             packet.update(context_sha256=self.sealed_context(original)[1], original_packet_sha256=sha(self.path('create.packet.json')), created_sha256=sha(self.path('created.json')), network_created_sha256=sha(self.path('network-created.json')))
         save(self.path(name + '.plan.json'), plan); save(self.path(name + '.packet.json'), packet)
@@ -199,7 +239,7 @@ class Runner:
         plan = json.loads(self.run([self.terraform, 'show', '-json', str(self.path(name + '.tfplan'))]).stdout)
         require(digest(canonical(plan)) == packet['plan_json_sha256'], 'Saved plan JSON changed')
         ledger = read(self.path('created.json')) if destroy else None
-        changes(plan, self.v, destroy, ledger)
+        require(changes(plan, self.v, destroy, ledger) == packet.get('search_mode_history'), 'Search history qualification differs from the reviewed packet')
         expiry = dt.datetime.fromisoformat(cap['profile_expires_at'].replace('Z', '+00:00'))
         require((expiry - dt.datetime.now(dt.timezone.utc)).total_seconds() >= (3600 if destroy else 7200), 'Immutable profile needs adequate creation/cleanup time; no expiry extension/fallback')
         if destroy:

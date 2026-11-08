@@ -1,5 +1,16 @@
 # examples/aws
 
+The current application target is **one RDS instance and one PostgreSQL database
+with isolated service schemas**, including control, HoopDb and Relaycast.
+`application_database_name` retains `relaycontrol` by default; the new
+`postgres_service_bindings` output publishes separate schema/owner/runtime
+identities on that same endpoint/database. It does not perform SQL bootstrap or
+prove current images support the target. See the
+[shared-store contract](../../../docs/shared-postgres-storage-contract.md).
+Older dedicated-HoopDb or SQLite examples are legacy compatibility paths.
+The functions module is explicitly inactive while shared-schema runtime/bootstrap
+qualification is missing; creating a Lambda does not activate queue processing.
+
 A thin root that composes the four AWS modules for one agent-relay install on an existing EKS cluster and VPC:
 
 - `aws/postgres` (RDS by default; `postgres_engine_mode = "aurora"`).
@@ -20,7 +31,7 @@ terraform init && terraform plan
 
 | Name | Version |
 | ---- | ------- |
-| terraform | >= 1.6 |
+| terraform | >= 1.11 |
 | aws | >= 6.0, < 7.0 |
 
 ### Providers
@@ -35,6 +46,7 @@ terraform init && terraform plan
 | ---- | ------ | ------- |
 | functions | ../../modules/aws/functions | n/a |
 | postgres | ../../modules/aws/postgres | n/a |
+| postgres\_layout | ../../modules/postgres-layout | n/a |
 | search | ../../modules/aws/search | n/a |
 | sessions\_bucket | ../../modules/aws/object-storage | n/a |
 
@@ -54,8 +66,9 @@ terraform init && terraform plan
 | region | AWS region. | `string` | n/a | yes |
 | sessions\_bucket\_name | Globally unique S3 bucket name for session objects. | `string` | n/a | yes |
 | alarm\_actions | SNS topics for the pipeline alarms. | `list(string)` | `[]` | no |
+| application\_database\_name | Single shared application database for control, HoopDb, Relaycast and other service schemas. Default preserves the existing RDS initial database identity; do not change it on an existing instance without reviewing replacement/data migration. | `string` | `"relaycontrol"` | no |
 | aurora\_engine\_version | Aurora PostgreSQL version when postgres\_engine\_mode is aurora. | `string` | `"17.9"` | no |
-| enable\_functions | Create the optional event-driven pipeline (Lambda). | `bool` | `false` | no |
+| enable\_functions | Create the optional pipeline Lambda resources; automatic queue and schedule processing remains disabled until the shared-database application is qualified. | `bool` | `false` | no |
 | enable\_search | Create the optional OpenSearch domain. | `bool` | `false` | no |
 | function\_security\_group\_ids | Existing security groups for the pipeline function ENIs (egress to Postgres and, with enable\_search, to the OpenSearch security groups on 443). | `list(string)` | `[]` | no |
 | indexer\_service\_account | ServiceAccount (in namespace) of the search indexer (the hoopdb-indexer worker), bound to the write role. Must differ from reader\_service\_account and the sessions worker/alleyoop ServiceAccounts. null creates the role without an association. | `string` | `null` | no |
@@ -78,6 +91,8 @@ terraform init && terraform plan
 | chart\_values | Non-secret agent-relay chart values (values-eks.yaml) these resources feed. Database URLs go in the release Secret, not here; see terraform/README.md. |
 | functions | Pipeline function, queue, DLQ and secret (null unless enable\_functions). |
 | postgres | Postgres host, port, master secret and URL template. |
+| postgres\_service\_bindings | Target per-service schemas and independent migration/runtime roles on the SAME RDS/database. Contains no credentials; schema-aware runtime/bootstrap and isolation proof remain required. Optional-service bindings do not enable those workloads. |
+| postgres\_topology | Shared-database relational target; application\_sql\_ready=false until actual service integration and managed-RDS validation are completed. |
 | search | OpenSearch endpoint and the roles to map as backend\_roles with the master user: indexer\_role\_arn and lambda\_indexer\_role\_arn (event mode) to the write role, reader\_role\_arn to the read-only role (null unless enable\_search). |
 | sessions\_role\_arn | Pod Identity role for the worker and alleyoop ServiceAccounts. |
 <!-- END_TF_DOCS -->

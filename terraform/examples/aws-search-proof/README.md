@@ -79,6 +79,8 @@ integrity and mint/revocation remain Pippen's authority. Local guards reduce
 mistakes; an operator who holds credentials is not constrained by plan hashes in
 AWS IAM. Do not claim otherwise.
 
+The creation packet now records `search_mode_history`, rechecked from native saved-plan prior state and before IDs immediately before apply. The mandatory shared pure classifier and this root's closed contract allow only the fresh disposable domain, its exact domain policy, root guard and the new built-in creation-mode marker; no new AWS address/action is allowed. Full captured destroy includes both built-in markers. Old/unmarked domain retirement first requires separately reviewed unchanged-mode enrollment; this fresh-lifecycle root does not adopt or enroll an old domain. Do not repin an existing fixture's immutable source/inputs to add a marker. Raw Terraform first-enrollment provenance and the pinned Tofu legacy shared-state harness gap remain limits documented by the module.
+
 The creation packet binds the actual original plan, inputs, source, provider
 lock/binaries, artifact and backend/state digests. Here `artifact_sha256` covers
 the committed public product source/runner plus fresh network baseline and the
@@ -180,7 +182,13 @@ and mock teardown to fail. OpenTofu 1.11 lacks this test feature, so its portabl
 module mocks are separate evidence. No real migration or domain was performed.
 
 `python3 tests/check_first_plan.py /path/to/terraform` (repeat with OpenTofu)
-feeds the actual native first-create mocked plan into the production contract.
+validates the actual native first-create mocked `test_plan` UI with the same
+private fixed product-configuration checks used after strict runtime history
+admission. UI output is not saved-plan/prior-state evidence: this helper does
+not call history admission, prove ownership or authorize apply. Runtime
+`changes()` always performs strict native saved-plan history admission first,
+then those same closed address/policy/FGAC/disposable-boolean checks. The helper
+is mandatory in the known search-proof CI block on both pinned engines.
 Only the generic AWS mock's computed `tags_all` is explicitly substituted with
 the configured tags in this test helper. Policy/security values and nested
 account/region/partition data are never overridden or normalized. No production

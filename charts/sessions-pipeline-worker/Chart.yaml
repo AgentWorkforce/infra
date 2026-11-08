@@ -1,7 +1,7 @@
 apiVersion: v2
 name: sessions-pipeline-worker
 type: application
-version: 0.6.0
+version: 0.6.1
 # appVersion tracks the default services image tag. Pin image.digest in
 # production values.
 appVersion: "0.1.0"
@@ -21,6 +21,6 @@ keywords:
   - agentworkforce
 maintainers:
   - name: AgentWorkforce
-    url: https://github.com/AgentWorkforce/helm-charts
+    url: https://github.com/AgentWorkforce/infra
 sources:
-  - https://github.com/AgentWorkforce/helm-charts/tree/main/charts/sessions-pipeline-worker
+  - https://github.com/AgentWorkforce/infra/tree/main/charts/sessions-pipeline-worker

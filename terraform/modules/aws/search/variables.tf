@@ -1,5 +1,5 @@
 variable "disposable" {
-  description = "Explicitly create a new disposable domain with Terraform destruction enabled. Defaults to protected; immutable for an existing domain. Protected domains cannot be converted by toggling this input."
+  description = "Explicitly create a new disposable domain with Terraform destruction enabled. Defaults to protected. Stored-mode enrollment blocks later ordinary flips; unmarked existing states require independently reviewed unchanged-mode enrollment. Raw Terraform cannot prove first-enrollment history."
   type        = bool
   default     = false
   nullable    = false

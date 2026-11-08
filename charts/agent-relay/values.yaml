@@ -98,6 +98,13 @@ relayflows: {}
 # placement.zone, storage.bucket and serviceAccount.googleServiceAccount.
 durable-actors: {}
 relayfile: {}
+# Local kind fixtures only; production profiles leave this disabled. The
+# values-kind-*.yaml profiles opt in to namespace-wide external-egress denial.
+localKind:
+  enabled: false
+  allowLocalOnly: false
+  profile: core
+  temporaryRelayauth: true
 # Umbrella NetworkPolicy for the durable-actors control plane (port 7100):
 # release-namespace pods, the actor sandbox namespace and, with
 # gkeIngress.hosts.actors, the GKE load balancer ranges.

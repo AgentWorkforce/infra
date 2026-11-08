@@ -1,0 +1,24 @@
+{
+  "scope": "read-only diagnostic; not application acceptance",
+  "sessionId": "824597d8-77f5-41f8-9ddc-328f2664b4c5",
+  "orgId": "48526e66-3e41-4667-ae23-a86921021579",
+  "workspaceId": "5d4f401e-ea08-4b7d-9e74-f87abbc7e580",
+  "database": "hoopdb",
+  "matchingDirectoryRows": 1,
+  "indexCanonicalSessionIdPresent": true,
+  "indexCanonicalMachineIdPresent": true,
+  "canonicalPointerRpcAndProjectionRead": "not verified",
+  "applicationVisibility": "pending",
+  "capturedAt": "2026-11-08T00:40:27.502481+00:00",
+  "sourceInfraRevision": "40af8bff1f40ba160adfc56e3d3e200f99515608",
+  "sourceWorkingTreeModified": true,
+  "servicesSourceRevision": "f1c2672581b6f88d26d0549b4d1cb78fce0d5f16",
+  "transaction": "BEGIN READ ONLY; SELECT ...; COMMIT",
+  "query": "SELECT json_build_object('matchingDirectoryRows',(SELECT count(*) FROM sessions.session_directory WHERE org_id=$1 AND workspace_id=$2 AND session_id=$3),'indexCanonicalSessionIdPresent',(SELECT bool_or(canonical_session_id IS NOT NULL) FROM sessions.session_index WHERE org_id=$1 AND workspace_id=$2 AND session_id=$3),'indexCanonicalMachineIdPresent',(SELECT bool_or(canonical_machine_id IS NOT NULL) FROM sessions.session_index WHERE org_id=$1 AND workspace_id=$2 AND session_id=$3))",
+  "queryParameters": [
+    "48526e66-3e41-4667-ae23-a86921021579",
+    "5d4f401e-ea08-4b7d-9e74-f87abbc7e580",
+    "824597d8-77f5-41f8-9ddc-328f2664b4c5"
+  ],
+  "queryExecution": "psql -U postgres -d hoopdb in local postgres-0; parameters substituted as SQL string literals"
+}

@@ -1,4 +1,8 @@
-"""Run the real product guard against a native mock first-create plan, offline.
+"""Validate compiled native mock first-create product configuration, offline.
+
+Test UI output is not a saved-plan/prior-state history object. This calls only
+the same fixed configuration checks used AFTER strict runtime history admission;
+it never establishes history, ownership or apply authority.
 
 AWS mock providers leave computed tags_all unknown or empty even though AWS
 planning derives it from the explicit tags/default-tags configuration. The ONLY
@@ -12,7 +16,7 @@ import sys
 
 root = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(root / 'proof'))
-from contract import DOMAIN, POLICY, changes, require
+from contract import DOMAIN, POLICY, _configuration_changes, require
 from test_contract import inputs
 
 result = subprocess.run([sys.argv[1], 'test', '-filter=tests/proof.tftest.hcl', '-json', '-verbose'], cwd=root, capture_output=True, text=True, timeout=120)
@@ -30,5 +34,5 @@ if domain['after'].get('tags_all') != domain['after']['tags']:
     domain['after']['tags_all'] = domain['after']['tags']
     substitutions.append(DOMAIN + '.tags_all=explicit_tags (test only; generic mock computed metadata)')
 v = inputs(); v['subnet_ids'] = ['subnet-a']; v['vpc_id'] = 'vpc-example' # Existing HCL fixture.
-changes(plan, v) # EXACT production guard, with only the recorded mock substitution.
-print(json.dumps({'ok': True, 'first_create_policy_json_known': True, 'native_plan_production_guard_passes': True, 'test_only_substitutions': substitutions, 'remaining_domain_unknown_fields': domain.get('after_unknown', {}), 'remaining_policy_unknown_fields': policy.get('after_unknown', {}), 'aws_calls': 0}))
+_configuration_changes(plan, v) # Same fixed payload checks; NOT saved-plan/history admission.
+print(json.dumps({'ok': True, 'first_create_policy_json_known': True, 'native_compiled_configuration_passes': True, 'history_admission_tested': False, 'scope': 'native test_plan UI compiled policy/configuration only; no saved-plan/history/ownership proof', 'test_only_substitutions': substitutions, 'remaining_domain_unknown_fields': domain.get('after_unknown', {}), 'remaining_policy_unknown_fields': policy.get('after_unknown', {}), 'aws_calls': 0}))

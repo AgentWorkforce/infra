@@ -6,11 +6,18 @@
 - Encryption at rest (customer key optional), node-to-node encryption, HTTPS enforced with `Policy-Min-TLS-1-2-PFS-2023-10`.
 - Fine-grained access control with an **IAM master user** (`master_user_arn`). There is no internal user database and no anonymous access.
 - Sized for per-event transcript text: 3 `r7g.large.search` data nodes (4 with two subnets, a multiple of the AZ count) with 200 GiB gp3 each, plus 3 dedicated `m7g.large.search` cluster managers. Every size is a variable.
-- **Destroy guard:** default domains retain literal `prevent_destroy=true`. The unindexed historical address moves to `aws_opensearch_domain.this[0]` without recreation. A protected domain cannot be converted by toggling `disposable`. For new synthetic fixtures only, `disposable=true` selects a separate identically configured resource from creation; retire it through a reviewed Terraform destroy with state intact. Do not use that mode for durable/customer data, switch modes, remove state, or issue a native deletion to bypass protection. Protected-domain retirement requires a separately reviewed source/lifecycle change.
+- **Destroy guard:** default domains retain literal `prevent_destroy=true`; the unindexed historical address moves to `aws_opensearch_domain.this[0]`. New synthetic fixtures may explicitly select `disposable=true` and retire through a reviewed Terraform destroy with state intact. An unconditional built-in `terraform_data.creation_mode` stores the selected mode and rejects ordinary flips after correct enrollment. Its destruction remains allowed so disposable teardown works. Never use disposable mode for durable/customer data.
+- **Old/unmarked states remain held for independently reviewed unchanged-mode enrollment.** The marker cannot prove historical mode when first added. The two known reviewed AWS runners additionally classify exact native saved-plan prior state and before IDs: an unmarked domain may enroll only its existing branch, with the same ID, all search AWS resources no-op and only the fixed marker created. The qualification is `legacy-or-missing-marker unchanged-domain`: a single snapshot cannot distinguish genuine legacy from an earlier lost marker. Unmarked destroy, a mode flip, mixed/deposed/unknown history, mismatched IDs, marker replacement or marker-only removal while the domain survives is refused. An enrolled full owned disposable destroy deletes its marker and all managed search objects together. Protected retirement still needs a separately reviewed source/lifecycle change.
+- This is source/plan history validation, not remote backend attestation or a guard against an operator removing source/state or replacing the marker with raw Terraform. Standalone Terraform cannot enforce first legacy-enrollment provenance. Do not state-rm, natively delete, blindly upgrade/adopt old state, or silently repin existing proof source/inputs to bypass a refusal.
+
 - Two workload roles trusted by EKS Pod Identity (and IRSA): **indexer** (the sessions-pipeline search stage: `ESHttpGet/Head/Post/Put/Delete/Patch`) and **reader** (the session read API: `ESHttpGet/Head/Post`). With the master user, map them as `backend_roles` to OpenSearch roles scoped to the transcript indices.
 - Pod Identity allows one role per ServiceAccount. When the pod already has a role, set `workload_roles = { create = false }`, attach `indexer_policy_json` / `reader_policy_json` to that role, and list it in `additional_principal_arns`. Do not attach the indexer policy to a role shared with pods that only read. `examples/aws` binds the two roles to their own `indexer_service_account` and `reader_service_account`.
 - Application, search-slow and index-slow logs go to CloudWatch. Add `AUDIT_LOGS` once audit logging is configured in the security plugin.
 - Prerequisite: the `AWSServiceRoleForAmazonOpenSearchService` service-linked role.
+
+The mandatory pure classifier is `creation_mode.py`; it accepts only native saved-plan `show -json` objects for exact `module.search` addresses used by `examples/aws-environments` and `examples/aws-search-proof`. It accepts no caller mode, path override, skip flag or digest as authority. Both runner paths check before publishing the plan receipt and again before apply; existing exact-plan review, source/input seals and state locks remain required. Search-proof's closed AWS address/action contract remains unchanged apart from the new built-in marker.
+
+Offline validation separates native HCL history from classifier fixtures. Both pinned engines run shared-root creation/flip/same-mode/ordinary disposable mock-teardown checks. The separate manual Terraform legacy cross-module harness requires historical Git commit `d3040fa209ef5c90ce61bde2a776f783c01cfaba`; it was replayed locally, and is not newly required by shallow-checkout CI. OpenTofu 1.11.14 lacks `state_key`, so equivalent native legacy history remains unproven. `test_plan` UI output is not saved-plan JSON and omits prior state. Pure classifier tests use explicit saved-plan schema fixtures and exact native built-in marker fragments from offline `show -json`; they do not claim a full AWS saved-plan or cloud proof. Primary schemas: [lifecycle](https://developer.hashicorp.com/terraform/language/meta-arguments/lifecycle), [saved-plan JSON](https://developer.hashicorp.com/terraform/internals/json-format).
 
 <!-- BEGIN_TF_DOCS -->
 ### Requirements
@@ -25,6 +32,7 @@
 | Name | Version |
 | ---- | ------- |
 | aws | >= 6.0, < 7.0 |
+| terraform | n/a |
 
 ### Resources
 
@@ -38,6 +46,7 @@
 | [aws_opensearch_domain.disposable](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/opensearch_domain) | resource |
 | [aws_opensearch_domain.this](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/opensearch_domain) | resource |
 | [aws_opensearch_domain_policy.this](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/opensearch_domain_policy) | resource |
+| [terraform_data.creation_mode](https://registry.terraform.io/providers/hashicorp/terraform/latest/docs/resources/data) | resource |
 | [aws_caller_identity.current](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/caller_identity) | data source |
 | [aws_partition.current](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/partition) | data source |
 | [aws_region.current](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/region) | data source |
@@ -58,7 +67,7 @@
 | dedicated\_master\_count | Cluster manager nodes (3 or 5). | `number` | `3` | no |
 | dedicated\_master\_enabled | Dedicated cluster manager nodes (recommended for production). | `bool` | `true` | no |
 | dedicated\_master\_type | Cluster manager node type. | `string` | `"m7g.large.search"` | no |
-| disposable | Explicitly create a new disposable domain with Terraform destruction enabled. Defaults to protected; immutable for an existing domain. Protected domains cannot be converted by toggling this input. | `bool` | `false` | no |
+| disposable | Explicitly create a new disposable domain with Terraform destruction enabled. Defaults to protected. Stored-mode enrollment blocks later ordinary flips; unmarked existing states require independently reviewed unchanged-mode enrollment. Raw Terraform cannot prove first-enrollment history. | `bool` | `false` | no |
 | ebs\_iops | Provisioned IOPS for gp3 (null uses the baseline). | `number` | `null` | no |
 | ebs\_throughput | Provisioned throughput (MiB/s) for gp3 (null uses the baseline). | `number` | `null` | no |
 | ebs\_volume\_size | gp3 volume per data node in GiB. Size for the transcript text plus replicas plus ~25% headroom. | `number` | `200` | no |

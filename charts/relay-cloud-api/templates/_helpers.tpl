@@ -51,6 +51,15 @@ of set a second time. Desktop and the CLI log in against that same origin. */ -}
 {{- $image := include "relay-cloud-api.image" . -}}
 {{- if ne (int .Values.replicaCount) 1 }}{{ fail "replicaCount must be 1: the self-host API pilot has process-local login/device rate limits and is not HA" }}{{ end -}}
 {{- if not .Values.existingSecret }}{{ fail "existingSecret is required; inline credentials are not supported" }}{{ end -}}
+{{- if .Values.license.existingSecret -}}
+{{- if or (gt (len (toString .Values.license.existingSecret)) 253) (not (regexMatch "^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\\.)*[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$" (toString .Values.license.existingSecret))) }}{{ fail "license.existingSecret must be a Kubernetes Secret name" }}{{ end -}}
+{{- if not (regexMatch "^[A-Za-z0-9._-]+$" (toString .Values.license.key)) }}{{ fail "license.key must be a Kubernetes Secret data key" }}{{ end -}}
+{{- if eq (toString .Values.license.existingSecret) (toString .Values.existingSecret) -}}
+{{- range $name, $key := .Values.secretKeys -}}
+{{- if eq (toString $.Values.license.key) (toString $key) }}{{ fail "license must not mount the migration credential or reuse any secretKeys credential" }}{{ end -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
 {{- $optionalSecretKeys := list "previousEncryptionKey" "internalToken" "telemetryInstallKey" "relaycastInternalSecret" "oidcClientSecret" "smtpPassword" -}}
 {{- range $name, $key := .Values.secretKeys }}{{ if and (has $name $optionalSecretKeys) (empty $key) }}{{ continue }}{{ end }}{{ if not (regexMatch "^[A-Za-z0-9._-]+$" (toString $key)) }}{{ fail (printf "secretKeys.%s must be a Kubernetes Secret data key" $name) }}{{ end }}{{ end -}}
 {{- /* Every non-empty secretKeys.* value must name a distinct Secret key. The
@@ -78,6 +87,46 @@ settings. */ -}}
 {{- range $key, $_ := include "relay-cloud-api.selectorLabels" . | fromYaml }}{{ if hasKey ($.Values.podLabels | default dict) $key }}{{ fail (printf "podLabels must not set selector label %s: the Deployment selector would no longer match its pods" $key) }}{{ end }}{{ end -}}
 {{- if ne .Values.service.type "ClusterIP" }}{{ fail "service.type must be ClusterIP" }}{{ end -}}
 {{- if .Values.ingress.enabled }}{{ if empty .Values.ingress.hosts }}{{ fail "ingress.enabled=true requires at least one host" }}{{ end }}{{ if not (has (urlParse (include "relay-cloud-api.publicUrl" .)).hostname .Values.ingress.hosts) }}{{ fail "ingress.hosts must include the publicUrl host" }}{{ end }}{{ if and (not .Values.ingress.externalTls) (empty .Values.ingress.tls) }}{{ fail "ingress.enabled=true requires ingress.tls unless externalTls=true" }}{{ end }}{{ if and .Values.networkPolicy.enabled (empty .Values.networkPolicy.ingressFrom) }}{{ fail "ingress with networkPolicy requires networkPolicy.ingressFrom" }}{{ end }}{{ end -}}
+{{- /* extraEnv is appended to the API and migration containers. Reject names
+the chart already sets, including duplicates inside extraEnv. */ -}}
+{{- $managed := list
+  "DATABASE_MIGRATIONS_URL_FILE" "PORT" "RELAYAUTH_URL" "RELAYCAST_PUBLIC_URL"
+  "RELAYCAST_URL" "RELAYHISTORY_PUBLIC_URL" "RELAYHISTORY_URL" "SELFHOST_AUTO_JOIN_DOMAINS"
+  "SELFHOST_BOOTSTRAP_ADMIN_EMAIL" "SELFHOST_BOOTSTRAP_ADMIN_NAME" "SELFHOST_BOOTSTRAP_ORG_NAME" "SELFHOST_BOOTSTRAP_WORKSPACE_NAME"
+  "SELFHOST_DASHBOARD_URL" "SELFHOST_EMAIL_FROM" "SELFHOST_EMAIL_LOGIN" "SELFHOST_ENCRYPTION_KEY_ID"
+  "SELFHOST_ENCRYPTION_PREVIOUS_KEY_ID" "SELFHOST_FLOWS_GCS_BUCKET" "SELFHOST_FLOWS_GCS_PREFIX" "SELFHOST_FLOWS_QUEUE_PING_MS"
+  "SELFHOST_FLOWS_STORAGE" "SELFHOST_FLOWS_WORKER_RELAYCAST_URL" "SELFHOST_INVITE_TTL_HOURS" "SELFHOST_LICENSE_FILE"
+  "SELFHOST_OIDC_ALLOWED_DOMAINS" "SELFHOST_OIDC_ALLOW_HTTP_ISSUER" "SELFHOST_OIDC_CLIENT_ID" "SELFHOST_OIDC_DISPLAY_NAME"
+  "SELFHOST_OIDC_ISSUER" "SELFHOST_OIDC_REDIRECT_URL" "SELFHOST_OIDC_SCOPES" "SELFHOST_PUBLIC_URL"
+  "SELFHOST_RUNTIME_DATABASE_ROLE" "SELFHOST_SMTP_HOST" "SELFHOST_SMTP_PORT" "SELFHOST_SMTP_SECURITY"
+  "SELFHOST_SMTP_USERNAME" "SELFHOST_TELEMETRY_DEPLOYMENT" "SELFHOST_TELEMETRY_ENDPOINT" "SELFHOST_TELEMETRY_INSTALL_ID"
+  "SELFHOST_TELEMETRY_LEVEL" "SELFHOST_TELEMETRY_PROBES" "SELFHOST_TELEMETRY_TRANSPORT" "DATABASE_URL_FILE"
+  "RELAYAUTH_API_KEY_FILE" "RELAYCAST_INTERNAL_SECRET_FILE" "SELFHOST_BOOTSTRAP_TOKEN_FILE" "SELFHOST_ENCRYPTION_KEY_FILE"
+  "SELFHOST_ENCRYPTION_PREVIOUS_KEY_FILE" "SELFHOST_INTERNAL_TOKEN_FILE" "SELFHOST_OIDC_CLIENT_SECRET_FILE" "SELFHOST_SMTP_PASSWORD_FILE"
+  "SELFHOST_TELEMETRY_INSTALL_KEY_FILE" -}}
+{{- range $name := $managed }}{{ if hasSuffix "_FILE" $name }}{{ $managed = append $managed (trimSuffix "_FILE" $name) }}{{ end }}{{ end -}}
+{{- range $src := list (include "relay-cloud-api.runtimeEnv" .) (include "relay-cloud-api.secretEnv" .) -}}
+{{- range $item := $src | fromYamlArray }}{{ $managed = append $managed (toString $item.name) }}{{ end -}}
+{{- end -}}
+{{- if .Values.integrations -}}
+{{- $integrationEnv := include "relay-cloud-api.integrationEnv" . -}}
+{{- if $integrationEnv }}{{ range $item := $integrationEnv | fromYamlArray }}{{ $managed = append $managed (toString $item.name) }}{{ end }}{{ end -}}
+{{- end -}}
+{{- range .Values.extraEnv -}}
+{{- if or (not (kindIs "map" .)) (not .name) }}{{ fail "every extraEnv entry must be an object with a name" }}{{ end -}}
+{{- if or (not (kindIs "string" .name)) (not (regexMatch "^[A-Za-z_][A-Za-z0-9_]*$" (toString .name))) }}{{ fail "extraEnv.name must be a valid environment variable string" }}{{ end -}}
+{{- if has (toString .name) $managed }}{{ fail (printf "%s is managed by structured chart values and must not appear in extraEnv" .name) }}{{ end -}}
+{{- if ne (hasKey . "value") (not (hasKey . "valueFrom")) }}{{ fail "extraEnv requires exactly one of value or valueFrom" }}{{ end -}}
+{{- if and (hasKey . "value") (not (kindIs "string" .value)) }}{{ fail "extraEnv.value must be a string; quote numbers and booleans" }}{{ end -}}
+{{- if and (hasKey . "value") (regexMatch "(?i)(^|_)(SECRET|TOKEN|PASSWORD|CREDENTIAL|DSN|API_KEY)$" .name) }}{{ fail "sensitive extraEnv settings require valueFrom.secretKeyRef, never inline values" }}{{ end -}}
+{{- if hasKey . "valueFrom" -}}
+{{- if not (kindIs "map" .valueFrom) }}{{ fail "extraEnv.valueFrom must be an object" }}{{ end -}}
+{{- $ref := .valueFrom.secretKeyRef | default dict -}}
+{{- if not (kindIs "map" $ref) }}{{ fail "extraEnv.valueFrom.secretKeyRef must be an object" }}{{ end -}}
+{{- if and (eq (toString ($ref.name | default "")) (toString $.Values.existingSecret)) (eq (toString ($ref.key | default "")) (toString $.Values.secretKeys.databaseMigrationsUrl)) }}{{ fail "extraEnv must not expose the migration credential to the API pod" }}{{ end -}}
+{{- end -}}
+{{- $managed = append $managed (toString .name) -}}
+{{- end -}}
 {{- end -}}
 {{- /* Secret files mounted into the API pod: env name -> Secret data key.
 Optional keys are left out while empty. */ -}}
@@ -262,6 +311,9 @@ spec:
           value: /var/run/agent-relay/secrets/{{ .Values.secretKeys.databaseMigrationsUrl }}
         - name: SELFHOST_RUNTIME_DATABASE_ROLE
           value: {{ .Values.database.runtimeRole | quote }}
+        {{- with .Values.extraEnv }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
       volumeMounts:
         - { name: database, mountPath: /var/run/agent-relay/secrets, readOnly: true }
         - { name: tmp, mountPath: /tmp }

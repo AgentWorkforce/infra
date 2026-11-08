@@ -1,6 +1,8 @@
 """Pure product guards. No credential provider, AWS SDK, network or side effects."""
 import datetime as dt
 import hashlib
+import importlib.util
+from pathlib import Path
 import json
 import re
 
@@ -10,7 +12,11 @@ CONTEXT_KEYS = set('agent_id account_id session_id region profile mode approval_
 UUID = r'[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}'
 DOMAIN = 'module.search.aws_opensearch_domain.disposable[0]'
 POLICY = 'module.search.aws_opensearch_domain_policy.this'
-ADDRESSES = {DOMAIN, POLICY, 'terraform_data.guard'}
+MARKER = 'module.search.terraform_data.creation_mode'
+ADDRESSES = {DOMAIN, POLICY, 'terraform_data.guard', MARKER}
+_MODE_SPEC = importlib.util.spec_from_file_location('search_creation_mode', Path(__file__).resolve().parents[3] / 'modules/aws/search/creation_mode.py')
+_MODE = importlib.util.module_from_spec(_MODE_SPEC)
+_MODE_SPEC.loader.exec_module(_MODE)
 BINDINGS = {
     'source_commit': 'source_commit', 'plan_sha256': 'plan_sha256',
     'inputs_sha256': 'inputs_sha256', 'provider_lock_sha256': 'provider_lock_sha256',
@@ -82,20 +88,44 @@ def context(raw, original, v, now=None):
     return c
 
 def changes(plan, v, destroy=False, ledger=None):
+    try:
+        history = _MODE.admit(plan)
+    except _MODE.SearchModeError as exc:
+        raise RuntimeError(str(exc)) from exc
+    _configuration_changes(plan, v, destroy, ledger)
+    return history
+
+
+def _configuration_changes(plan, v, destroy=False, ledger=None):
+    """Fixed product payload checks, shared with native compiler tests only.
+
+    This private function establishes no prior-state/history or apply authority.
+    Every runtime caller must use changes(), which always admits history first.
+    """
     require(plan.get('errored', False) is False and plan.get('complete', True) is True, 'Errored/incomplete plan cannot be reviewed as a complete operation')
     managed = [r for r in plan.get('resource_changes', []) if r.get('mode') == 'managed']
     require(managed and all(r['address'] in ADDRESSES for r in managed), 'Unexpected managed address; no IAM/log/network authoring is allowed')
+    expected_types = {DOMAIN: 'aws_opensearch_domain', POLICY: 'aws_opensearch_domain_policy', MARKER: 'terraform_data', 'terraform_data.guard': 'terraform_data'}
+    require(all(r.get('type') == expected_types[r['address']] for r in managed), 'Wrong fixed product resource type')
     changed = [r for r in managed if r['change']['actions'] != ['no-op']]
     if destroy:
         require(ledger and ledger.get('domain_name') == domain_name(v['pippen']['session_id']), 'Captured exact owned domain required')
-        require({r['address'] for r in changed} == ADDRESSES and all(r['change']['actions'] == ['delete'] for r in changed), 'Teardown must delete exactly the reviewed three managed addresses; no updates/creates/replacements')
+        require({r['address'] for r in changed} == ADDRESSES and all(r['change']['actions'] == ['delete'] for r in changed), 'Teardown must delete exactly the reviewed domain/policy and two builtin markers; no updates/creates/replacements')
         rows = {r['address']: r['change']['before'] for r in changed}
         require(rows[DOMAIN]['domain_name'] == ledger['domain_name'] and rows[DOMAIN]['arn'] == ledger['domain_arn'] and rows[DOMAIN]['tags'] == expected_tags(v), 'Destroy before-identity is not the captured owned domain')
         require(rows[POLICY]['domain_name'] == ledger['domain_name'], 'Foreign policy destroy')
+        _disposable_inputs(rows)
         return
     require({r['address'] for r in managed} == ADDRESSES and all(r['change']['actions'] == ['create'] for r in managed), 'Creation must be fresh; no adoption/update/import/replacement')
     require(not plan.get('resource_drift') and not plan.get('deferred_changes') and not any(r['change'].get('importing') for r in managed), 'Drift/import/deferred work is not an empty-state create proof')
     rows = {r['address']: r['change']['after'] for r in managed}; d = rows[DOMAIN]
+    _disposable_inputs(rows)
+    for r in managed:
+        if r['address'] not in {MARKER, 'terraform_data.guard'}: continue
+        unknown = r['change'].get('after_unknown', {})
+        require(isinstance(unknown, dict), 'Unknown fixed disposable configuration')
+        input_unknown = unknown.get('input', False)
+        require(input_unknown is False or (r['address'] == 'terraform_data.guard' and isinstance(input_unknown, dict) and input_unknown.get('disposable', False) is False), 'Disposable mode must be known in native configuration')
     require(d['domain_name'] == domain_name(v['pippen']['session_id']) and d['engine_version'] == v['engine_version'], 'Wrong exact domain/version')
     require(d['tags'] == expected_tags(v) and d.get('tags_all') == expected_tags(v), 'Metadata must be immutable and exact')
     require(set(expected_tags(v)) <= set(v['approved_tag_keys']) and 7 <= len(set(v['approved_tag_keys'])) <= 8, 'Tags exceed the approved closed key set')
@@ -112,6 +142,13 @@ def changes(plan, v, destroy=False, ledger=None):
     require(p.get('Version') == '2012-10-17' and len(statement) == 1, 'Unexpected domain policy statements')
     s = statement[0]
     require(set(s) == {'Sid', 'Effect', 'Principal', 'Action', 'Resource'} and s['Effect'] == 'Allow' and s['Action'] == 'es:ESHttp*' and s['Resource'] == arn and set(s['Principal']) == {'AWS'} and set(s['Principal']['AWS']) == set(v['roles'].values()) and len(s['Principal']['AWS']) == 3, 'Domain policy must name exactly the external admin/indexer/reader; no public/session/control grant')
+
+
+def _disposable_inputs(rows):
+    require(isinstance(rows[MARKER], dict) and rows[MARKER].get('input') is True, 'Mode marker must contain literal boolean true')
+    guard = rows['terraform_data.guard'].get('input')
+    require(isinstance(guard, dict) and guard.get('disposable') is True, 'Root configuration must contain literal disposable boolean true')
+
 
 def native_error(stderr, operation, code):
     match = re.search(r'An error occurred \(([^)]+)\) when calling the ([A-Za-z0-9]+) operation', stderr)

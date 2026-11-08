@@ -10,7 +10,7 @@ An S3 bucket for agent-relay objects: the sessions pipeline Locker (`sessions-pi
 
 ```hcl
 module "sessions_bucket" {
-  source      = "github.com/AgentWorkforce/helm-charts//terraform/modules/aws/object-storage?ref=<tag>"
+  source      = "github.com/AgentWorkforce/infra//terraform/modules/aws/object-storage?ref=<tag>"
   bucket_name = "example-agent-relay-sessions"
   access_role = {
     name = "agent-relay-sessions"

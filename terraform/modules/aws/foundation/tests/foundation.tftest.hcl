@@ -123,15 +123,21 @@ run "pippen_lease_contract" {
 }
 run "reject_wrong_account" {
   command = plan
-  variables {
-    account_id = "222222222222"
+  # Change only the observed caller. Changing var.account_id would also make
+  # the operator-role/KMS guard fail and mask removal of the caller guard.
+  override_data {
+    target = data.aws_caller_identity.current
+    values = { account_id = "222222222222", arn = "arn:aws:iam::222222222222:role/example-operator" }
   }
   expect_failures = [terraform_data.guard]
 }
 run "reject_wrong_region" {
   command = plan
-  variables {
-    region = "us-east-1"
+  # Keep subnet AZs and KMS inputs valid for the reviewed target; only the
+  # observed provider region may trigger the expected failure.
+  override_data {
+    target = data.aws_region.current
+    values = { region = "us-east-1" }
   }
   expect_failures = [terraform_data.guard]
 }
@@ -176,6 +182,12 @@ run "reject_pippen_wrong_name" {
   command = plan
   variables {
     pippen = { agent = "example", session_id = "example-session" }
+  }
+  # A valid lease caller isolates the unscoped name_prefix rejection. Without
+  # this override the wrong caller could hide a removed prefix check.
+  override_data {
+    target = data.aws_caller_identity.current
+    values = { account_id = "111111111111", arn = "arn:aws:sts::111111111111:assumed-role/agent-session/agent-example-session" }
   }
   expect_failures = [terraform_data.guard]
 }

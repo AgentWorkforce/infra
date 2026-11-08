@@ -153,6 +153,20 @@ resource "aws_cloudwatch_log_resource_policy" "this" {
 # Domain
 # ---------------------------------------------------------------------------
 
+# Persist the creation mode. This blocks ordinary flips only after correct
+# enrollment; reviewed runners additionally check native prior-state history.
+# No prevent_destroy here: an owned disposable lifecycle must retire normally.
+resource "terraform_data" "creation_mode" {
+  input = var.disposable
+  lifecycle {
+    ignore_changes = [input]
+    postcondition {
+      condition     = self.input == var.disposable
+      error_message = "OpenSearch creation mode cannot change for an enrolled state."
+    }
+  }
+}
+
 # Preserve the existing protected domain's state address without recreation.
 moved {
   from = aws_opensearch_domain.this

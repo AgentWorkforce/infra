@@ -23,7 +23,11 @@ install, invented lockfile or dependency symlink.
 - Full source parity check compares every domain argument/security block across
   protected/disposable branches, excluding only count and the literal guard.
 - Native first-create plans under both engines resolve the policy ARN/JSON and
-  pass the exact production plan guard. Only deterministic computed `tags_all`
+  passed the then-current fixed product-configuration guard. The current helper
+  uses those same private configuration checks only; native `test_plan` UI does
+  not establish strict saved-plan/prior-state history admission or apply
+  authority. Runtime callers always admit that history separately first. Only
+  deterministic computed `tags_all`
   is explicitly supplied in the test helper; no policy/security/nested identity
   overrides or production normalization occur. The original `fd5799c` apply-first
   native tests plus synthetic JSON did not catch the module-wide dependency's

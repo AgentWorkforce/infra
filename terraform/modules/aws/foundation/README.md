@@ -4,6 +4,24 @@ Creates an environment VPC with two or three AZs, one **public NAT gateway per A
 
 Use the thin [aws-foundation example](../../../examples/aws-foundation). The root sets `allowed_account_ids`; this module additionally refuses a caller/account or provider/region mismatch. A caller using the module directly must configure the same provider account allow-list. Kubernetes version, compatible add-on versions and AL2023 AMI release are mandatory, execution-plan inputs: mocks contain synthetic versions and prove no regional availability.
 
+## Capacity, cost and log retention
+
+This foundation creates metered resources even before an application is installed:
+an EKS control plane, one public NAT gateway and Elastic IP per selected AZ, the
+EKS Auth interface endpoint, encrypted node disks, and general and actor managed
+node groups. The defaults start two general and one actor `m6i.large` instances;
+both groups require nonzero capacity. VPC flow logs capture `ALL` traffic, and
+flow/control-plane log groups retain events for 365 days. Review the exact
+region, capacity, traffic and retention inputs before budgeting a real run;
+source/mock checks are not a cost estimate.
+
+The module does not set an EKS upgrade support policy. Review the pinned
+provider/AWS support behavior and the selected version's support window before
+applying; no standard-support-only cost policy is enforced here. The owned log
+groups also have no `skip_destroy` override: their retention period does not
+preserve them when foundation state is destroyed. Export any required audit and
+recovery evidence to its separately owned destination before retirement.
+
 ## Access, identity and encryption
 
 The private API needs an operator network route (VPN, approved connected runner or equivalent); access entries grant only the explicitly listed same-account operator roles cluster administration. Public API opt-in requires operator IPv4 CIDRs `/8` or narrower and rejects world access. Setting a CIDR creates no connectivity or DNS integration. Operator SG references must be valid for this VPC/approved connected topology.

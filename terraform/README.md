@@ -1,20 +1,46 @@
 # Terraform modules for self-hosted Agent Relay
 
-Unopinionated Terraform (and OpenTofu) modules for the managed cloud services a
-self-hosted Agent Relay install uses next to the `agent-relay` Helm chart. They
-assume you already have a VPC and the baseline around it. They create the data
-services and the identities that reach them, and nothing else.
+Terraform (and OpenTofu) modules for the infrastructure a self-hosted Agent Relay
+install uses next to the `agent-relay` Helm chart. The four capability modules
+consume an existing network and cluster identity. Separate foundation modules
+can create the network and Kubernetes baseline in an approved existing AWS
+account or GCP project. Foundation, data and application installation have
+separate ownership and state; a successful source check is not live application
+or teardown proof.
+
+See [the complete Terraform + Helm application proof contract](../docs/terraform-helm-application-proof.md) for current evidence, outstanding live gates and the required provisioning, application, recovery and teardown lifecycle.
 
 ```
 terraform/
-  modules/aws/{postgres,object-storage,search,functions}
-  modules/gcp/{postgres,object-storage,search,functions}
-  examples/aws   examples/gcp        # thin roots: all four together
+  modules/aws/{foundation,postgres,object-storage,search,functions}
+  modules/gcp/{foundation,postgres,object-storage,search,functions}
+  examples/{aws,gcp}                 # thin roots: four capabilities together
+  examples/{aws,gcp}-foundation      # network and Kubernetes foundation roots
+  examples/aws-environments          # environment-scoped AWS data composition
   scripts/check.sh                   # fmt, validate, tflint, test, docs, checkov
 ```
 
 Azure is on hold. A `modules/azure/<capability>` set with the same four
 interfaces would slot in beside these.
+
+## Current main-store direction — 2026-11-07
+
+The required AWS application topology is **one RDS instance, one application
+PostgreSQL database, separate service schemas**. Control and HoopDb share that
+database; Relaycast must use it for authoritative relational state as well.
+The AWS roots now expose `postgres_service_bindings` from the provider-free
+[`postgres-layout`](modules/postgres-layout) contract. It rejects schema/role
+collisions and keeps complete independent bindings for a later service split.
+Read [the shared-store contract](../docs/shared-postgres-storage-contract.md)
+for exact target namespaces, missing application work and required proof.
+
+The default initial database name stays `relaycontrol` to preserve existing
+resource identity, including for new installations. Set
+`application_database_name` to choose a different name for a new installation. Changing it on an existing instance needs replacement/data
+migration review. Binding outputs do not bootstrap SQL or make current images
+schema-aware. `application_sql_ready` is false until that work is proved.
+Older separate-database, dedicated-HoopDb and SQLite examples below describe
+existing compatibility paths, not acceptance of this new target.
 
 ## Cloud mapping
 
@@ -27,6 +53,21 @@ interfaces would slot in beside these.
 
 Every module stands alone. The examples compose them, but nothing forces you to
 use all four, or to use them together.
+
+For a new network and cluster, start with
+[`aws/foundation`](modules/aws/foundation) and
+[`examples/aws-foundation`](examples/aws-foundation), or
+[`gcp/foundation`](modules/gcp/foundation) and
+[`examples/gcp-foundation`](examples/gcp-foundation). AWS foundation covers the
+owned VPC, private nodes, egress and EKS identities. GCP foundation covers the
+owned VPC, GKE, NAT and Private Services Access, with optional Serverless VPC
+Access, pipeline Memorystore and Pub/Sub prerequisites. These modules do not
+vend accounts/projects, bootstrap application databases, install Helm, or
+establish application runtime compatibility. Keep the foundation backend
+separate from data/application state and review each module's external
+prerequisites, retained resources and recovery rules before an apply or destroy.
+In particular, the GCP Memorystore AUTH option requires explicit acknowledgment
+of its sensitive value in Terraform state; that state is not secret-free.
 
 For separate development, staging, production or named installations, see
 [`examples/aws-environments`](examples/aws-environments). It adds account/region/
@@ -69,14 +110,20 @@ live full-suite proof or replace the foundation/application installation.
   `src/session-pipeline/lambda.ts`. The GCP handler, a Cloud Run entry point
   for Pub/Sub push envelopes and scheduler bodies, comes with the pipeline's
   `PipelineRuntimeAdapter`.
-- **Not covered here.** The GCP sessions data path in `values-gcp.yaml` also
+- **Additional GCP prerequisites.** The sessions data path in `values-gcp.yaml` also
   needs Memorystore (Redis) and Pub/Sub settings (`REDIS_*`, `PUBSUB_*` in
-  `extraEnv`). Those resources are outside this module set.
+  `extraEnv`). These are outside the four capability modules; the optional
+  pipeline resources in `gcp/foundation` supply infrastructure references.
+  Application bindings, secret delivery and actual queue/Redis compatibility
+  still need separate verification.
 
-## Bring your own network
+## Network inputs for the capability modules
 
-The modules never create VPCs, subnets, NAT, peering, PSA or PSC connections,
-DNS zones, KMS keys, or anything at the org level. They take these as inputs:
+The four capability modules take networks and identities as inputs rather than
+creating VPCs, subnets, NAT or Private Services Access. Use the separate
+foundation modules above or an existing approved foundation. Shared DNS zones,
+KMS keys, organization/account/project administration and required platform
+permissions remain external prerequisites. The capability inputs are:
 
 | Input | AWS | GCP |
 |---|---|---|
@@ -149,7 +196,13 @@ master secret, or from per-role Secrets Manager / Secret Manager entries.
 
 The example roots print the non-secret values-file paths as a `chart_values` output. `CLOUD_SQL_CONNECTION_NAME` is an `extraEnv` entry, not a values path, so the GCP example prints it as `postgres.connection_name` instead.
 
-## Postgres bootstrap (before the first migrate)
+<a id="postgres-bootstrap-before-the-first-migrate"></a>
+
+## Legacy separate-database bootstrap (not the shared-store target)
+
+Do not run this dedicated-database bootstrap against the new shared application
+database. The shared schema/role/default-ACL bootstrap requires application-owner
+review and isolation proof described in the [new contract](../docs/shared-postgres-storage-contract.md).
 
 The modules create the server, and on GCP optionally the databases. They do
 not connect to Postgres. Before you install or upgrade the chart, run this from
