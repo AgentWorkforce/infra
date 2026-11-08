@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import vm from "node:vm";
 import test from "node:test";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
@@ -114,6 +115,33 @@ test("a partial bootstrap can clean its one recorded workspace", async (t) => {
   const result = await fixture(t, { rows: [row(OTHER, "Default"), row(A, `e2e-${MARKER}-a`)], state: { b: undefined } });
   assert.equal(check(result)?.result, "PASS");
   assert.deepEqual(result.deletes, [A]);
+});
+
+test("a login failure after creation retains the workspace identity for cleanup", async (t) => {
+  const source = await readFile(DRIVER, "utf8");
+  const start = source.indexOf("async function createTenant(");
+  const end = source.indexOf("\nasync function phaseBootstrap(", start);
+  assert.ok(start >= 0 && end > start);
+  const state = { marker: MARKER, b: { relaycastWorkspaceId: "synthetic-cast-b" } };
+  const context = {
+    state, API: "http://unused-loopback-fixture", bootstrapToken: () => "synthetic-bootstrap",
+    call: async () => ({ status: 201, json: { id: B, organizationId: ORG, name: `e2e-${MARKER}-b` } }),
+    must: (value, message) => { if (!value) throw new Error(message); },
+    errorCode: () => "none", deviceLogin: async () => { throw new Error("synthetic login failed"); },
+  };
+  // Execute the actual function with a failed-login dependency; production
+  // remains a single-file driver that can be copied into the Control pod.
+  vm.runInNewContext(source.slice(start, end), context);
+  await assert.rejects(() => context.createTenant("b", { organizationId: ORG, ownerUserId: OTHER },
+    { workspaceId: "synthetic-cast-b", apiKey: "synthetic-cast-key-b", ms: 1 }), /synthetic login failed/);
+  assert.equal(state.b.workspaceId, B);
+  assert.equal(state.b.organizationId, ORG);
+  assert.equal(state.b.workspaceName, `e2e-${MARKER}-b`);
+  assert.equal(state.b.accessToken, undefined);
+  const result = await fixture(t, { state: { b: state.b } });
+  assert.equal(check(result)?.result, "PASS");
+  assert.deepEqual(result.deletes, [A, B]);
+  assert.deepEqual(result.rows, [row(OTHER, "Default")]);
 });
 
 test("204 without removal is a failure, never a cleanup pass", async (t) => {

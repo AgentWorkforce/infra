@@ -217,8 +217,7 @@ async function createTenant(label, org, rcWorkspace) {
   must(ws.status === 201, `workspace create status=${ws.status} error=${errorCode(ws)}`);
   must(ws.json?.organizationId === org.organizationId, "workspace was created in another organization");
 
-  const tokens = await deviceLogin(bootstrap, org.ownerUserId, ws.json.id, `e2e-${marker}-${label}`);
-  return {
+  const tenant = {
     relaycastWorkspaceId: rcWorkspace.workspaceId,
     relaycastCreateMs: rcWorkspace.ms,
     relaycastKey: rcKey,
@@ -226,6 +225,13 @@ async function createTenant(label, org, rcWorkspace) {
     ownerUserId: org.ownerUserId,
     workspaceId: ws.json.id,
     workspaceName: ws.json.name,
+  };
+  // The workspace already exists. Preserve its cleanup identity even when
+  // the following device login fails before returning a token.
+  state[label] = tenant;
+  const tokens = await deviceLogin(bootstrap, org.ownerUserId, ws.json.id, `e2e-${marker}-${label}`);
+  return {
+    ...tenant,
     accessToken: tokens.access_token,
     refreshToken: tokens.refresh_token,
     scope: tokens.scope,
