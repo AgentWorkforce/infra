@@ -48,7 +48,7 @@ expect_fail "planned: umbrella index .Values.worker \"sessionBrief\"" planned \
 fresh
 echo '{{- if .Values.worker.sessionBrief.model }}{{ end }}' >> "$WORK/r/charts/sessions-pipeline/templates/NOTES.txt"
 expect_fail "planned: umbrella reads .Values.worker.sessionBrief.model" planned \
-  "opt.sessions-pipeline.session-briefs is planned, but charts/sessions-pipeline/templates reads sessions-pipeline:worker.sessionBrief.model"
+  "opt.sessions-pipeline.session-briefs is planned, but charts/sessions-pipeline/templates reads sessions-pipeline-worker:sessionBrief.model"
 
 # (c) A planned entry owned by a SUBCHART (chart: sessions-pipeline-worker) whose path is
 # read only by the umbrella templates: every chart's reads are scanned.
