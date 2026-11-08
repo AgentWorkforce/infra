@@ -186,7 +186,7 @@ run "lambda_composition" {
     error_message = "Lambda mode must create its runtime and explicitly require overlapping worker stages to be disabled."
   }
   assert {
-    condition     = alltrue([for component in ["cloudApi", "dashboard", "sessionsPipeline", "relayhistory", "relaycast", "relayfile"] : output.application_contract.components[component]]) && !output.application_contract.components.durableActors
+    condition     = alltrue([for component in ["cloudApi", "dashboard", "sessionsPipeline", "relayhistory", "relaycast", "relayauth", "relayfile"] : output.application_contract.components[component]]) && !output.application_contract.components.durableActors
     error_message = "The target suite includes control, dashboard, pipeline, History, Relaycast and optional Relayfile; a separate actor store is not required by the shared PostgreSQL target."
   }
   assert {
@@ -567,4 +567,10 @@ run "shared_database_activation_refused_even_with_valid_bindings" {
     }
   }
   expect_failures = [terraform_data.environment_contract]
+}
+
+run "rds_internal_database_refused" {
+  command = plan
+  variables { application_database_name = "rdsadmin" }
+  expect_failures = [var.application_database_name]
 }

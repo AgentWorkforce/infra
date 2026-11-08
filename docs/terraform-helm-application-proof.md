@@ -79,10 +79,12 @@ separate evidence and recovery requirements.
    repeat the reads. Exercise erasure and require all read paths to stop
    returning the session.
 5. **All requested components and profiles.** Include RelayControl, Dashboard
-   (target product relay-app; current chart `relay-dashboard`), Sessions Pipeline, RelayHistory and Relaycast with authoritative PostgreSQL state in its own
+   (target product relay-app; current chart `relay-dashboard`), Sessions Pipeline,
+   RelayHistory and Relaycast with authoritative PostgreSQL state in its own
    schema on the shared RDS/database. Prove runtime placement, transaction
-   semantics and durable recovery; do not count a SQLite-backed profile. Run the reviewed base values plus each selected add-on overlay as
-   separate proof runs; the add-on overlays are not standalone installations.
+   semantics and durable recovery; do not count a SQLite-backed profile. Run the
+   reviewed base values plus each selected add-on overlay as separate proof runs;
+   the add-on overlays are not standalone installations.
    Exercise Relayfile and Flows when enabled. Pin the reviewed authentication
    contract for each run. The current umbrella chart and requirements registry
    still require RelayAuth for their JWT profile. The target architecture removes

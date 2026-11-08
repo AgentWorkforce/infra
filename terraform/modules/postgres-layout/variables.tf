@@ -3,8 +3,8 @@ variable "host" {
   type        = string
   nullable    = false
   validation {
-    condition     = length(trimspace(var.host)) > 0 && !strcontains(var.host, "://") && !strcontains(var.host, "@")
-    error_message = "host must be a nonempty endpoint, not a connection URL or credential."
+    condition     = can(regex("^[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(\\.[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$", var.host)) && length(var.host) <= 253
+    error_message = "host must be a DNS name or IPv4 host without whitespace, URL delimiters, credentials or a port."
   }
 }
 
@@ -24,12 +24,20 @@ variable "database" {
   type        = string
   nullable    = false
   validation {
-    condition     = can(regex("^[a-z][a-z0-9_]{0,62}$", var.database)) && !contains(["postgres", "template0", "template1"], var.database)
+    condition     = can(regex("^[a-z][a-z0-9_]{0,62}$", var.database)) && !contains(["postgres", "template0", "template1", "rdsadmin"], var.database)
     error_message = "database must be a lowercase application identifier of at most 63 characters, not a maintenance database."
   }
 }
 
+variable "forbidden_roles" {
+  description = "Administrator/bootstrap identities forbidden in service bindings. Roots must include their configured database master username."
+  type        = set(string)
+  nullable    = false
+  default     = ["relay_admin"]
+}
+
 variable "services" {
+  nullable    = false
   description = "Per-service target schemas and independent owner/runtime roles. This is a non-secret binding contract; it does not create SQL objects, change app migrations or prove runtime support."
   type = map(object({
     schema         = string
@@ -40,19 +48,27 @@ variable "services" {
     control   = { schema = "relaycontrol", migration_role = "control_owner", runtime_role = "control_api_runtime" }
     hoopdb    = { schema = "sessions", migration_role = "hoop", runtime_role = "sessions_pipeline_runtime" }
     relaycast = { schema = "relaycast", migration_role = "relaycast_owner", runtime_role = "relaycast_runtime" }
-    history   = { schema = "relayhistory", migration_role = "history_owner", runtime_role = "history_runtime" }
+    history   = { schema = "relayhistory", migration_role = "history_owner", runtime_role = "relayhistory_runtime" }
     relayfile = { schema = "relayfile", migration_role = "relayfile_owner", runtime_role = "relayfile_runtime" }
   }
   validation {
-    condition     = length(var.services) > 0 && alltrue([for name in keys(var.services) : can(regex("^[a-z][a-z0-9_-]*$", name))])
+    condition     = length(var.services) > 0
     error_message = "services must contain at least one explicitly named component."
+  }
+  validation {
+    condition     = alltrue([for name in keys(var.services) : can(regex("^[a-z][a-z0-9_-]*$", name))])
+    error_message = "Service keys must start with a lowercase letter and contain only lowercase letters, digits, underscores or hyphens."
   }
   validation {
     condition = alltrue(flatten([for service in values(var.services) : [
       for identifier in [service.schema, service.migration_role, service.runtime_role] :
-      can(regex("^[a-z][a-z0-9_]{0,62}$", identifier)) && !startswith(identifier, "pg_") && !contains(["public", "information_schema", "postgres", "rdsadmin", "rds_superuser"], identifier)
+      can(regex("^[a-z][a-z0-9_]{0,62}$", identifier)) && !startswith(identifier, "pg_") && !startswith(identifier, "rds_") && !contains(["public", "information_schema", "postgres", "rdsadmin", "rdstopmgr"], identifier)
     ]]))
     error_message = "Schemas and roles must be bounded service identifiers, never public/platform/administrator identities."
+  }
+  validation {
+    condition     = alltrue(flatten([for service in values(var.services) : [for role in [service.migration_role, service.runtime_role] : !contains(var.forbidden_roles, role)]]))
+    error_message = "Service roles must not reuse any configured database administrator/bootstrap identity."
   }
   validation {
     condition     = length(distinct([for service in values(var.services) : service.schema])) == length(var.services)

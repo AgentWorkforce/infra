@@ -68,7 +68,7 @@ terraform init && terraform plan
 | alarm\_actions | SNS topics for the pipeline alarms. | `list(string)` | `[]` | no |
 | application\_database\_name | Single shared application database for control, HoopDb, Relaycast and other service schemas. Default preserves the existing RDS initial database identity; do not change it on an existing instance without reviewing replacement/data migration. | `string` | `"relaycontrol"` | no |
 | aurora\_engine\_version | Aurora PostgreSQL version when postgres\_engine\_mode is aurora. | `string` | `"17.9"` | no |
-| enable\_functions | Create the optional event-driven pipeline (Lambda). | `bool` | `false` | no |
+| enable\_functions | Create the optional pipeline Lambda resources; automatic queue and schedule processing remains disabled until the shared-database application is qualified. | `bool` | `false` | no |
 | enable\_search | Create the optional OpenSearch domain. | `bool` | `false` | no |
 | function\_security\_group\_ids | Existing security groups for the pipeline function ENIs (egress to Postgres and, with enable\_search, to the OpenSearch security groups on 443). | `list(string)` | `[]` | no |
 | indexer\_service\_account | ServiceAccount (in namespace) of the search indexer (the hoopdb-indexer worker), bound to the write role. Must differ from reader\_service\_account and the sessions worker/alleyoop ServiceAccounts. null creates the role without an association. | `string` | `null` | no |

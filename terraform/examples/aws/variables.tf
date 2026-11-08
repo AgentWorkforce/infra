@@ -119,7 +119,7 @@ variable "search_master_user_arn" {
 }
 
 variable "enable_functions" {
-  description = "Create the optional event-driven pipeline (Lambda)."
+  description = "Create the optional pipeline Lambda resources; automatic queue and schedule processing remains disabled until the shared-database application is qualified."
   type        = bool
   default     = false
 }
@@ -150,7 +150,7 @@ variable "application_database_name" {
   default     = "relaycontrol"
   nullable    = false
   validation {
-    condition     = can(regex("^[a-z][a-z0-9_]{0,62}$", var.application_database_name)) && !contains(["postgres", "template0", "template1"], var.application_database_name)
+    condition     = can(regex("^[a-z][a-z0-9_]{0,62}$", var.application_database_name)) && !contains(["postgres", "template0", "template1", "rdsadmin"], var.application_database_name)
     error_message = "application_database_name must be a lowercase application identifier, not a PostgreSQL maintenance database."
   }
 }

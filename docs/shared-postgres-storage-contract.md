@@ -19,7 +19,7 @@ images already support them.
 | Control | `relaycontrol` | `control_owner` | `control_api_runtime` |
 | HoopDb/pipeline | `sessions` | `hoop` | `sessions_pipeline_runtime` |
 | Relaycast | `relaycast` | `relaycast_owner` | `relaycast_runtime` |
-| History | `relayhistory` | `history_owner` | `history_runtime` |
+| History | `relayhistory` | `history_owner` | `relayhistory_runtime` |
 | Relayfile, when enabled | `relayfile` | `relayfile_owner` | `relayfile_runtime` |
 
 A Relayfile binding does not enable that add-on. Runtime roles and migration

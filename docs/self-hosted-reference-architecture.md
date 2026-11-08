@@ -18,9 +18,9 @@ matching an archive, open the same path at the revision recorded in its
 
 The 2026-11-07 user direction is one RDS instance and one application database,
 with distinct service schemas and credentials, including Relaycast. See the
-[shared PostgreSQL contract](shared-postgres-storage-contract.md). The portable
-SQLite and separate-database descriptions below are existing implementation
-profiles, not proof or acceptance of the new target.
+[shared PostgreSQL contract](https://github.com/AgentWorkforce/infra/blob/main/docs/shared-postgres-storage-contract.md).
+The SQLite-backed `portable-single` profile is implemented; `aws-ha` and `gcp-ha`
+are planned. None proves or satisfies the new shared-store target.
 
 ## Diagrams
 

@@ -102,3 +102,9 @@ run "shared_database_service_layout" {
     error_message = "Distinct schema bindings are required, with no unsupported SQL-ready claim."
   }
 }
+
+run "rds_internal_database_refused" {
+  command = plan
+  variables { application_database_name = "rdsadmin" }
+  expect_failures = [var.application_database_name]
+}

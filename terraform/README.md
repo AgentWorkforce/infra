@@ -35,8 +35,8 @@ Read [the shared-store contract](../docs/shared-postgres-storage-contract.md)
 for exact target namespaces, missing application work and required proof.
 
 The default initial database name stays `relaycontrol` to preserve existing
-resource identity; `application_database_name` chooses an explicit name for a
-new installation. Changing it on an existing instance needs replacement/data
+resource identity, including for new installations. Set
+`application_database_name` to choose a different name for a new installation. Changing it on an existing instance needs replacement/data
 migration review. Binding outputs do not bootstrap SQL or make current images
 schema-aware. `application_sql_ready` is false until that work is proved.
 Older separate-database, dedicated-HoopDb and SQLite examples below describe
@@ -195,6 +195,8 @@ master secret, or from per-role Secrets Manager / Secret Manager entries.
 | `aws/functions.*`, `gcp/functions.*` | No chart value. The pipeline secret's JSON holds the same HoopDb URL as `HOOPDB_URL` |
 
 The example roots print the non-secret values-file paths as a `chart_values` output. `CLOUD_SQL_CONNECTION_NAME` is an `extraEnv` entry, not a values path, so the GCP example prints it as `postgres.connection_name` instead.
+
+<a id="postgres-bootstrap-before-the-first-migrate"></a>
 
 ## Legacy separate-database bootstrap (not the shared-store target)
 

@@ -200,8 +200,9 @@ module "pipeline" {
 # No SQL provider, passwords or privileged bootstrap credentials enter this
 # contract. Each service keeps its own complete binding for a later split.
 module "postgres_layout" {
-  source   = "../../modules/postgres-layout"
-  host     = module.postgres.host
-  port     = module.postgres.port
-  database = module.postgres.initial_database
+  source          = "../../modules/postgres-layout"
+  host            = module.postgres.host
+  port            = module.postgres.port
+  database        = module.postgres.initial_database
+  forbidden_roles = [module.postgres.master_username]
 }
