@@ -2,7 +2,8 @@
 {{- if not (kindIs "bool" $c.enabled) }}{{ fail "searchIndexer.enabled must be a boolean" }}{{ end -}}
 {{- if $c.enabled -}}
 {{- $name := default (printf "%s-search-indexer" .Release.Name) $c.fullnameOverride -}}
-{{- if or (gt (len $name) 52) (not (regexMatch "^[a-z]([-a-z0-9]*[a-z0-9])?$" $name)) }}{{ fail "searchIndexer.fullnameOverride must be a DNS-1035 label of at most 52 characters" }}{{ end -}}
+{{- /* The bootstrap Job appends 19 characters; Job names are DNS-1123 labels. */ -}}
+{{- if or (gt (len $name) 44) (not (regexMatch "^[a-z]([-a-z0-9]*[a-z0-9])?$" $name)) }}{{ fail "searchIndexer.fullnameOverride must be a DNS-1035 label of at most 44 characters" }}{{ end -}}
 {{- $repository := required "searchIndexer.image.repository is required" $c.image.repository -}}
 {{- $digest := required "searchIndexer.image.digest requires an owner-approved services image with the OpenSearch writer" $c.image.digest -}}
 {{- if not (regexMatch "^sha256:[a-f0-9]{64}$" $digest) }}{{ fail "searchIndexer.image.digest must be sha256:<64 lowercase hex characters>" }}{{ end -}}
@@ -103,8 +104,9 @@ spec:
 apiVersion: batch/v1
 kind: Job
 metadata:
-  # A new image or schema input is a new Job: Jobs are immutable.
-  name: {{ printf "%s-bootstrap-%s" $name (printf "%s/%s/%s" $digest $backendId $c.search.backend | sha256sum | trunc 8) }}
+  # Any change to this block is a new Job: a Job's pod template is immutable,
+  # and the bootstrap is idempotent.
+  name: {{ printf "%s-bootstrap-%s" $name (toJson $c | sha256sum | trunc 8) }}
   namespace: {{ .Release.Namespace | quote }}
   labels:
     app.kubernetes.io/name: session-search-indexer
