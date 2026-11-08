@@ -1,0 +1,105 @@
+{
+  "scope": "same actual compiled runtime modules and unchanged upstream introspection tests, split into bounded batches under the same 2GiB test limit after shared-worker SIGKILL; no live auth/read qualification",
+  "sourceRevision": "74054cb22584178ddb70697c059af1e64809e51c",
+  "manifestDigest": "sha256:0097ff037cd5b477ca9bd1352b0aea8154df3d73f004de13f2aefd4a05f13653",
+  "configDigest": "sha256:3de165e17957ad1210553e9ad42f59bfd61f69a22b9d06103a93c672137a2cb2",
+  "compiledModuleTreeSha256": "91814e48e3c0c1a3d9cf5b7e3e8b6991b035d1958894a1291a90851d885db00b",
+  "testDependencyImageId": "sha256:4722f7ff00444d26c6ff391a6f4754eb36afe4a7640e22a9a6234c43d9c837d1",
+  "testSourceSha256": {
+    "config.test.ts": "078f9733336af9b0afc05bc2d085e378d53fee1225d97ee8331276b6f7e038e9",
+    "introspect.test.ts": "ab80ac3dd03d23f8cef466ec657758a80515861903b5d2cbac762e5b53fe6369",
+    "sessions.test.ts": "ae658c6fd8c05350078c63416af7c7ec49fc5e927b9ba7f6c2d8861ec825f63b",
+    "mcp-oauth-protocol.test.ts": "bcc6338686ed449e61f647ad7c6f0f71f9f785c699c3aac7dc5d45fdbda05d0a"
+  },
+  "network": "none",
+  "filesystem": "read-only with bounded ephemeral /tmp",
+  "sharedRun": {
+    "tests": 44,
+    "passed": 43,
+    "failed": 1,
+    "failure": "introspect worker SIGKILL, retained in shared-run-qualification.log"
+  },
+  "introspection": {
+    "uniqueTests": 17,
+    "passed": 17,
+    "failed": 0,
+    "batches": [
+      {
+        "selectedTests": [
+          "introspection describes an active access token and rotates token_id on refresh",
+          "introspection names exactly one inactive reason, in contract order",
+          "introspection requires its own secret and a well-formed body",
+          "introspection is a 404 like any unknown route while its secret is unset"
+        ],
+        "exitCode": 0,
+        "log": "introspect-batch-1.log",
+        "tests": 4,
+        "passed": 4,
+        "failed": 0,
+        "skipped": 0
+      },
+      {
+        "selectedTests": [
+          "introspection audiences compare normalized origins and echo the configured value",
+          "readyz lists exactly the audiences introspection accepts, never the secret",
+          "introspection responses and server logs never contain token material",
+          "without RelayAuth, relayhistory/session forwards the caller's own access token"
+        ],
+        "exitCode": 0,
+        "log": "introspect-batch-2.log",
+        "tests": 4,
+        "passed": 4,
+        "failed": 0,
+        "skipped": 0
+      },
+      {
+        "selectedTests": [
+          "without RelayAuth, a History login failure never echoes the caller token",
+          "without RelayAuth, session reads exchange the caller token and cache per token session",
+          "with RelayAuth configured, History still receives an assertion, not the caller token",
+          "introspection verifies a supplied machine against the token user's node claims"
+        ],
+        "exitCode": 0,
+        "log": "introspect-batch-3.log",
+        "tests": 4,
+        "passed": 4,
+        "failed": 0,
+        "skipped": 0
+      },
+      {
+        "selectedTests": [
+          "introspection answers machine_unclaimed once a machine's claim is released",
+          "an inactive token never reveals machine state: the token reason wins",
+          "introspection rejects a malformed machine with 400 invalid_request",
+          "introspection without a workspace answers for the token session's workspace (v1.2)"
+        ],
+        "exitCode": 0,
+        "log": "introspect-batch-4.log",
+        "tests": 4,
+        "passed": 4,
+        "failed": 0,
+        "skipped": 0
+      },
+      {
+        "selectedTests": [
+          "introspection without a workspace verifies machines in the session's workspace"
+        ],
+        "exitCode": 0,
+        "log": "introspect-batch-5.log",
+        "tests": 1,
+        "passed": 1,
+        "failed": 0,
+        "skipped": 0
+      }
+    ]
+  },
+  "otherSuites": {
+    "config": 8,
+    "sessions": 10,
+    "pureMcpProtocol": 15,
+    "source": "passing cases in shared-run-qualification.log"
+  },
+  "uniqueCoveredTests": 50,
+  "runtimeChangePerformed": false,
+  "infraRevisionAtBuild": "c83d32207f76711de0a7d608ec1f4d80ccae73f7"
+}
