@@ -15,8 +15,8 @@ repository, not routes confirmed to exist in relaycontrol.
 | Value | Purpose |
 | --- | --- |
 | `image.digest` | Immutable image digest (`sha256:...`) |
-| `relay.baseUrl` | Rendered as `RELAY_BASE_URL`. Required, because the runtime otherwise uses the hosted Relay |
-| `controlPlane.url` | Rendered as `CHIEF_CONTROL_PLANE_URL` |
+| `relay.baseUrl` | Rendered as `RELAY_BASE_URL`. A bare `https://` origin. Required, because the runtime otherwise uses the hosted Relay |
+| `controlPlane.url` | Rendered as `CHIEF_CONTROL_PLANE_URL`. A bare `https://` origin |
 | `existingSecret` | Secret holding the three credentials below |
 | `config` | Relay Chief configuration, identifiers only |
 
@@ -30,13 +30,19 @@ repository, not routes confirmed to exist in relaycontrol.
 
 ## Behavior to know
 
-- `dispatch` is `false` by default, so a cycle sends no Relay assignments. Set it
-  to `true` only after the execution side is integrated.
+- The CronJob is suspended by default. The runtime has no observe-only mode, so
+  every cycle runs with `--dispatch` and may send real Relay assignments. Set
+  `suspend: false` only after the execution side is integrated.
+- The runtime refuses plain `http` for any non-loopback host, so in-cluster
+  Relay and control-plane Services need a TLS origin.
+- Classification calls `https://api.typesafe.ai`, which is hardcoded in the
+  runtime. `relay.baseUrl` does not change it, so a restricted-egress cluster
+  must allow it.
 - The schedule defaults to one minute, the finest Kubernetes cron allows. The
   repository's reference systemd timer runs every 30 seconds.
 - A failed cycle is not retried by Kubernetes. The next firing resumes from
   durable state.
 - The volume defaults to `ReadWriteOncePod` and is kept on uninstall. Back it up:
   it holds the durable claims and task state.
-- The image must run as a non-root user with a read-only root filesystem, and
+- The image must work as UID 1000 with a read-only root filesystem, and
   must provide `node` and `/opt/relay-chief/dist/cli.js` unless `command` is set.

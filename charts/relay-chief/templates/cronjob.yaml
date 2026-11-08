@@ -36,9 +36,10 @@ spec:
           {{- end }}
           securityContext:
             runAsNonRoot: true
-            runAsUser: 65532
-            runAsGroup: 65532
-            fsGroup: 65532
+            runAsUser: 1000
+            runAsGroup: 1000
+            fsGroup: 1000
+            fsGroupChangePolicy: OnRootMismatch
             seccompProfile: { type: RuntimeDefault }
           containers:
             - name: relay-chief
@@ -50,9 +51,8 @@ spec:
                 - run-once
                 - /etc/relay-chief/config.json
                 - /var/lib/relay-chief/chief.db
-                {{- if .Values.dispatch }}
+                # The runtime accepts run-once only with this flag.
                 - --dispatch
-                {{- end }}
               env:
                 - { name: RELAY_BASE_URL, value: {{ .Values.relay.baseUrl | quote }} }
                 - { name: CHIEF_CONTROL_PLANE_URL, value: {{ .Values.controlPlane.url | quote }} }

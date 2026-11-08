@@ -13,22 +13,22 @@ command: [node, /opt/relay-chief/dist/cli.js]
 
 # One bounded cycle per firing. Kubernetes cron has one-minute resolution.
 schedule: "* * * * *"
-suspend: false
+# Suspended by default. The runtime has no observe-only mode: every cycle runs
+# with --dispatch and may send real Relay assignments. Set false to start it.
+suspend: true
 startingDeadlineSeconds: 45
 activeDeadlineSeconds: 120
 successfulJobsHistoryLimit: 1
 failedJobsHistoryLimit: 3
 
-# Off by default: a cycle observes and plans but sends no Relay assignments.
-# true passes --dispatch, which permits assignments for each cycle.
-dispatch: false
-
-# REQUIRED: RELAY_BASE_URL. Relay Chief falls back to the hosted Relay origin
-# when this is unset, so the chart refuses to render without it.
+# REQUIRED: RELAY_BASE_URL, a bare https origin. Relay Chief falls back to the
+# hosted Relay origin when this is unset, so the chart refuses to render
+# without it. The runtime refuses plain http, so an in-cluster Service needs TLS.
 relay:
   baseUrl: ""
 
-# REQUIRED: CHIEF_CONTROL_PLANE_URL, the authoritative evidence origin.
+# REQUIRED: CHIEF_CONTROL_PLANE_URL, the authoritative evidence origin. Also a
+# bare https origin.
 controlPlane:
   url: ""
 
@@ -41,6 +41,7 @@ secretKeys:
 
 # REQUIRED: the Relay Chief configuration (see examples/chief.config.json in
 # the relay-chief repository). It must contain identifiers only, no secrets.
+# The chart checks its top-level keys; the runtime validates the rest.
 config: {}
 
 # SQLite state (chief.db). It survives uninstall because of the keep policy.

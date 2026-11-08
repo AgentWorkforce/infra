@@ -658,7 +658,7 @@ chart `relayflows` · install: `helm install relayflows agentworkforce/relayflow
 
 ### Profile: relay-chief
 
-**Relay Chief (scheduled coordination cycles).** Not qualified and not part of the suite yet; no image is published. Runs one bounded cycle per CronJob firing against SQLite on a persistent volume.
+**Relay Chief (scheduled coordination cycles).** Not qualified and not part of the suite yet; no image is published. Suspended by default. Runs one bounded cycle per CronJob firing against SQLite on a persistent volume, and every cycle may dispatch.
 
 chart `relay-chief` · values [`ci/default-values.yaml`](../charts/relay-chief/ci/default-values.yaml) · install: `helm install relay-chief agentworkforce/relay-chief -f <your values>`
 
@@ -1493,13 +1493,13 @@ different Secret; only the session broker and the deploy Job mount it.
 
 **Relay and control-plane origins** · shipped · chart `relay-chief` · profiles relay-chief
 
-RELAY_BASE_URL and CHIEF_CONTROL_PLANE_URL. The chart refuses to render without RELAY_BASE_URL because the runtime otherwise falls back to the hosted Relay.
+RELAY_BASE_URL and CHIEF_CONTROL_PLANE_URL, each a bare https origin (the runtime refuses plain http for non-loopback hosts). The chart refuses to render without RELAY_BASE_URL because the runtime otherwise falls back to the hosted Relay. Classification separately calls https://api.typesafe.ai, which is hardcoded and must be reachable.
 
 - Provided by: operator
 - Values: `relay.baseUrl`, `controlPlane.url`
 - Env: `RELAY_BASE_URL`, `CHIEF_CONTROL_PLANE_URL`
 - Verify: helm template fails with "relay.baseUrl is required" when it is unset
-- Sources: [`charts/relay-chief/values.yaml:28`](../charts/relay-chief/values.yaml#L28), [`charts/relay-chief/templates/cronjob.yaml:57`](../charts/relay-chief/templates/cronjob.yaml#L57)
+- Sources: [`charts/relay-chief/values.yaml:27`](../charts/relay-chief/values.yaml#L27), [`charts/relay-chief/templates/cronjob.yaml:57`](../charts/relay-chief/templates/cronjob.yaml#L57)
 
 #### req.relay-chief.credentials
 
@@ -2801,7 +2801,7 @@ Pull Secrets for a private registry or customer mirror.
 - Provided by: operator
 - Values: `imagePullSecrets`
 - Verify: the cycle's Job pulls its image without ImagePullBackOff
-- Sources: [`charts/relay-chief/values.yaml:9`](../charts/relay-chief/values.yaml#L9), [`charts/relay-chief/templates/cronjob.yaml:33`](../charts/relay-chief/templates/cronjob.yaml#L33)
+- Sources: [`charts/relay-chief/values.yaml:9`](../charts/relay-chief/values.yaml#L9), [`charts/relay-chief/templates/cronjob.yaml:34`](../charts/relay-chief/templates/cronjob.yaml#L34)
 
 ## Pod plumbing env (not operator-facing)
 

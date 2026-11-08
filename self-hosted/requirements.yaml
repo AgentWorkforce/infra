@@ -152,7 +152,7 @@ profiles:
     chart: relay-chief
     values_file: ci/default-values.yaml
     install: helm install relay-chief agentworkforce/relay-chief -f <your values>
-    summary: Not qualified and not part of the suite yet; no image is published. Runs one bounded cycle per CronJob firing against SQLite on a persistent volume.
+    summary: Not qualified and not part of the suite yet; no image is published. Suspended by default. Runs one bounded cycle per CronJob firing against SQLite on a persistent volume, and every cycle may dispatch.
 
   - id: durable-actors
     title: TerseAI durable-actors control plane (vendored upstream chart)
@@ -3280,7 +3280,7 @@ entries:
   - id: req.relay-chief.origins
     kind: requirement
     title: Relay and control-plane origins
-    description: RELAY_BASE_URL and CHIEF_CONTROL_PLANE_URL. The chart refuses to render without RELAY_BASE_URL because the runtime otherwise falls back to the hosted Relay.
+    description: RELAY_BASE_URL and CHIEF_CONTROL_PLANE_URL, each a bare https origin (the runtime refuses plain http for non-loopback hosts). The chart refuses to render without RELAY_BASE_URL because the runtime otherwise falls back to the hosted Relay. Classification separately calls https://api.typesafe.ai, which is hardcoded and must be reachable.
     chart: relay-chief
     values: [relay.baseUrl, controlPlane.url]
     env: [RELAY_BASE_URL, CHIEF_CONTROL_PLANE_URL]
@@ -3289,7 +3289,7 @@ entries:
     provided_by: operator
     verify: helm template fails with "relay.baseUrl is required" when it is unset
     sources:
-      - "charts/relay-chief/values.yaml:28"
+      - "charts/relay-chief/values.yaml:27"
       - "charts/relay-chief/templates/cronjob.yaml:57"
 
   - id: req.relay-chief.credentials
@@ -3329,4 +3329,4 @@ entries:
     verify: the cycle's Job pulls its image without ImagePullBackOff
     sources:
       - "charts/relay-chief/values.yaml:9"
-      - "charts/relay-chief/templates/cronjob.yaml:33"
+      - "charts/relay-chief/templates/cronjob.yaml:34"

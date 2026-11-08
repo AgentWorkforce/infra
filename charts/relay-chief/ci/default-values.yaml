@@ -1,9 +1,17 @@
 image:
   digest: sha256:0000000000000000000000000000000000000000000000000000000000000000
 relay:
-  baseUrl: http://relaycast.relay.svc.cluster.local:8080
+  baseUrl: https://cast.relay.example.com
 controlPlane:
-  url: http://relay-control.relay.svc.cluster.local:8080
+  url: https://api.relay.example.com
 existingSecret: relay-chief-credentials
 config:
+  revision: 1
   chiefId: ci-chief
+  organizationId: ci-organization
+  workspaceId: ci-workspace
+  projectId: ci-project
+  relayCallerId: ci-caller
+  repositories: []
+  workers: []
+  policy: {}
