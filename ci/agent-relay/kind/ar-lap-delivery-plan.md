@@ -58,13 +58,21 @@ feature/license endpoints or statuses is implemented on the reviewed main.
 Implementation and app-owner assignment remain pending; the existing Chief
 503 response is not a disabled-feature proof.
 
-The proposal's signed-license/configuration precedence still needs clarification.
-The original add-on contract requires a signed offline license, and #90 combines
-installation selection with entitlement. A selection flag cannot grant unsigned
-add-on authority, and a license cannot implicitly enable a feature omitted by
-the core installation. Infra requested that clarification and has not created
-a `SELFHOST_FEATURES` values slot or treated the proposed flag as implemented.
-No unsigned development exception is assumed.
+The control owner adopted `effective[f] = selected[f] AND entitled[f]`, replacing
+the earlier precedence wording. Its proposed read would expose selected,
+entitled and effective capabilities separately, with license status
+`absent|valid|invalid`. No API can change selection, and an absent selection
+cannot be enabled by a license. These remain design-only contracts.
+
+Classification still needs alignment with this task's already-decided profiles:
+core excludes Flows/Relayfile; the add-on profile adds both under signed offline
+license enforcement. A proposed classification of Flows as entitled by definition
+does not satisfy that add-on contract. For kind acceptance, both Flows and
+Relayfile require explicit selection and verified signed entitlement. Infra sent
+that distinction back to the control owner rather than changing the existing
+decision or enabling unsigned features. There is no `SELFHOST_FEATURES` values
+slot or implemented capability proof yet. No unsigned development exception is
+assumed.
 
 ## Relaycast Postgres acceptance contract
 
