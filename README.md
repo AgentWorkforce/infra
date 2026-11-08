@@ -420,6 +420,6 @@ Every chart must install correctly through `helm template --no-hooks` plus serve
 - **No Helm hooks.** Hooks never run under `--no-hooks`; use a plain Job instead (see `sessions-pipeline-worker`).
 - **Deterministic renders.** No `randAlphaNum`, `lookup` or `now`, or every render looks like drift.
 - `kubeconform`, plus a server-side dry-run apply on kind.
-- **A version bump** for any chart change outside `ci/`.
+- **A version bump** for any chart change outside `ci/`, unless that chart version has no release tag yet. An unpublished version still ships the change.
 
 Run the same checks locally with `scripts/ci/charts.sh static` and `scripts/ci/charts.sh dryrun` (the dry run needs a cluster in the current kube context).

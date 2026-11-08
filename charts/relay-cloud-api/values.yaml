@@ -289,7 +289,10 @@ topologySpreadConstraints: []
 # Extra environment entries appended to the API container and the migration
 # container, after the chart-managed variables. Use this for site-specific
 # settings the structured values do not cover. Names the chart owns are
-# rejected even when that setting is empty, as are duplicate names. value
-# must be a string. A valueFrom.secretKeyRef must not read the migration
-# credential from existingSecret.
+# rejected even when that setting is empty, including OAuth names for provider
+# ids with consecutive hyphens (a--b -> SELFHOST_OAUTH_A__B_*), as are
+# duplicate names. When value is set it must be a string. valueFrom must set
+# exactly one of secretKeyRef, configMapKeyRef, fieldRef, or resourceFieldRef.
+# A valueFrom.secretKeyRef must not read the migration credential from
+# existingSecret.
 extraEnv: []

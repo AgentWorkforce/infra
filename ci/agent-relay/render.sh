@@ -307,6 +307,12 @@ unset_structured_names=(
   SELFHOST_OAUTH_GOOGLE_MAIL_CLIENT_ID
   SELFHOST_OAUTH_GOOGLE_MAIL_CLIENT_SECRET_FILE
   SELFHOST_OAUTH_GOOGLE_MAIL_SCOPES
+  SELFHOST_OAUTH_SLACK_CLIENT_ID
+  SELFHOST_OAUTH_SLACK_CLIENT_SECRET_FILE
+  SELFHOST_OAUTH_SLACK_SCOPES
+  SELFHOST_OAUTH_A__B_CLIENT_ID
+  SELFHOST_OAUTH_A__B_CLIENT_SECRET_FILE
+  SELFHOST_OAUTH_A__B_SCOPES
 )
 for name in "${unset_structured_names[@]}"; do
   grep -qx "$name" <<<"$default_env_names" \
@@ -318,8 +324,17 @@ done
 expect_leaf_failure relay-cloud-api "SELFHOST_OAUTH_GITHUB_SCOPES is managed by structured chart values and must not appear in extraEnv" \
   -f charts/relay-cloud-api/ci/integrations-values.yaml \
   --set-json 'extraEnv=[{"name":"SELFHOST_OAUTH_GITHUB_SCOPES","value":"repo"}]'
+# Provider ids may contain consecutive hyphens (a--b -> A__B). Scopes stay
+# reserved when that integration is configured and scopes are empty.
+expect_leaf_failure relay-cloud-api "SELFHOST_OAUTH_A__B_SCOPES is managed by structured chart values and must not appear in extraEnv" \
+  --set-json 'integrations={"a--b":{"existingSecret":"oauth-app"}}' \
+  --set-json 'extraEnv=[{"name":"SELFHOST_OAUTH_A__B_SCOPES","value":"repo"}]'
 expect_leaf_failure relay-cloud-api "extraEnv must not reference the migration credential secretKeys.databaseMigrationsUrl" \
   --set-json 'extraEnv=[{"name":"SITE_DATABASE_URL","valueFrom":{"secretKeyRef":{"name":"relay-cloud-api","key":"database-migrations-url"}}}]'
+expect_leaf_failure relay-cloud-api "extraEnv valueFrom must set exactly one of secretKeyRef, configMapKeyRef, fieldRef, or resourceFieldRef" \
+  --set-json 'extraEnv=[{"name":"SITE_DATABASE_URL","valueFrom":{}}]'
+expect_leaf_failure relay-cloud-api "extraEnv valueFrom.secretKeyRef requires a non-empty string name and key" \
+  --set-json 'extraEnv=[{"name":"SITE_DATABASE_URL","valueFrom":{"secretKeyRef":{"name":"other-secret"}}}]'
 expect_leaf_failure relay-cloud-api "extraEnv value must be a string" \
   --set-json 'extraEnv=[{"name":"SITE_PORT","value":8080}]'
 expect_leaf_failure relay-cloud-api "extraEnv value must be a string" \
@@ -330,11 +345,12 @@ expect_leaf_failure relay-cloud-api "every extraEnv name must be a non-empty str
   --set-json 'extraEnv=[{"name":"","value":"1"}]'
 expect_leaf_failure relay-cloud-api "SELFHOST_DESKTOP_FEED_URL is managed by structured chart values and must not appear in extraEnv" \
   --set-json 'extraEnv=[{"name":"SELFHOST_DESKTOP_FEED_URL","value":"https://a.example.com"},{"name":"SELFHOST_DESKTOP_FEED_URL","value":"https://b.example.com"}]'
-other_secret=$(helm template ci charts/relay-cloud-api -n ci --no-hooks -f charts/relay-cloud-api/ci/default-values.yaml \
+other_ref=$(helm template ci charts/relay-cloud-api -n ci --no-hooks -f charts/relay-cloud-api/ci/default-values.yaml \
   --set-json 'extraEnv=[{"name":"SITE_DATABASE_URL","valueFrom":{"secretKeyRef":{"name":"other-secret","key":"database-migrations-url"}}}]' |
-  yq 'select(.kind == "Deployment") | .spec.template.spec.containers[0].env[-1].valueFrom.secretKeyRef.name')
-test "$other_secret" = other-secret \
-  || { echo "relay-cloud-api: a valueFrom from another Secret must still render (got $other_secret)" >&2; exit 1; }
+  yq 'select(.kind == "Deployment" or .kind == "Job") | .spec.template.spec.containers[0].env[] | select(.name == "SITE_DATABASE_URL") | .valueFrom.secretKeyRef | .name + " " + .key' |
+  grep -vx -- '---' | sort -u)
+test "$other_ref" = "other-secret database-migrations-url" \
+  || { echo "relay-cloud-api: a valueFrom from another Secret must still render name and key (got $other_ref)" >&2; exit 1; }
 db_egress='[{"to":[{"ipBlock":{"cidr":"10.20.0.0/24"}}],"ports":[{"protocol":"TCP","port":5432}]}]'
 for child in relayhistory relay-cloud-api; do
   expect_leaf_failure "$child" "allowAllEgress=false requires networkPolicy.additionalEgress" \
