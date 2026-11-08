@@ -1,4 +1,5 @@
 import importlib.util
+from unittest import mock
 import base64
 import contextlib
 import io
@@ -38,6 +39,20 @@ class EnvironmentBoundaryTests(unittest.TestCase):
         variables, backend = runner.read_inputs(self.variables, self.backend)
         self.assertEqual(variables["environment"], "dev")
         self.assertIn("/dev/", backend["key"])
+
+    def test_terraform_backend_config_omits_the_wrapper_only_owner_setting(self):
+        _, backend = runner.read_inputs(self.variables, self.backend)
+        written = json.loads(runner.terraform_backend_config(self.root, backend).read_text())
+        self.assertNotIn("expected_bucket_owner", written)
+        self.assertEqual(written["bucket"], backend["bucket"])
+        self.assertEqual(written["key"], backend["key"])
+
+    def test_wrong_bucket_owner_is_refused_before_init(self):
+        _, backend = runner.read_inputs(self.variables, self.backend)
+        with mock.patch.object(runner.subprocess, "run", return_value=mock.Mock(returncode=254)) as run:
+            with self.assertRaises(runner.Refused):
+                runner.verify_bucket_owner(backend, {})
+        self.assertIn("--expected-bucket-owner", run.call_args.args[0])
 
     def test_production_backend_cannot_be_used_for_dev(self):
         self.config["key"] = self.config["key"].replace("/dev/", "/prod/")
@@ -168,7 +183,7 @@ class EnvironmentBoundaryTests(unittest.TestCase):
 
     def test_cached_workspace_stops_before_plan_or_apply(self):
         replies = [json.dumps({"Account": "111111111111"}).encode(), b"prod\n"]
-        with patch.dict(runner.os.environ, {"TF_BIN": "terraform", "TF_WORKSPACE": "default"}), patch.object(runner.subprocess, "check_output", side_effect=replies), patch.object(runner.subprocess, "run") as run:
+        with patch.object(runner, "verify_bucket_owner"), patch.dict(runner.os.environ, {"TF_BIN": "terraform", "TF_WORKSPACE": "default"}), patch.object(runner.subprocess, "check_output", side_effect=replies), patch.object(runner.subprocess, "run") as run:
             with self.assertRaises(runner.Refused):
                 runner.main(["plan", "--variables", str(self.variables), "--backend", str(self.backend), "--run-dir", str(self.root / "runs")])
             self.assertEqual(run.call_count, 1)
@@ -176,7 +191,7 @@ class EnvironmentBoundaryTests(unittest.TestCase):
 
     def test_injected_flags_and_variables_are_removed(self):
         replies = [json.dumps({"Account": "111111111111"}).encode(), b"default\n"]
-        with patch.dict(runner.os.environ, {"TF_BIN": "terraform", "TF_WORKSPACE": "default", "TF_CLI_ARGS_init": "-backend=false", "TF_VAR_account_id": "222222222222"}), patch.object(runner.subprocess, "check_output", side_effect=replies), patch.object(runner.subprocess, "run") as run:
+        with patch.object(runner, "verify_bucket_owner"), patch.dict(runner.os.environ, {"TF_BIN": "terraform", "TF_WORKSPACE": "default", "TF_CLI_ARGS_init": "-backend=false", "TF_VAR_account_id": "222222222222"}), patch.object(runner.subprocess, "check_output", side_effect=replies), patch.object(runner.subprocess, "run") as run:
             runner.main(["init", "--variables", str(self.variables), "--backend", str(self.backend), "--run-dir", str(self.root / "runs")])
             environment = run.call_args.kwargs["env"]
             self.assertNotIn("TF_CLI_ARGS_init", environment)
@@ -238,7 +253,7 @@ class StagedPlanLifecycleTests(unittest.TestCase):
                 self.hook(operation, args, kwargs["env"])
             if operation == "apply" and self.fail_apply:
                 raise subprocess.CalledProcessError(1, args)
-        with patch.dict(runner.os.environ, self.environment, clear=True), patch.object(runner, "ROOT", self.source), patch.object(runner, "STACK", self.stack), patch.object(runner.subprocess, "check_output", side_effect=output), patch.object(runner.subprocess, "run", side_effect=run), contextlib.redirect_stdout(io.StringIO()):
+        with patch.dict(runner.os.environ, self.environment, clear=True), patch.object(runner, "verify_bucket_owner"), patch.object(runner, "ROOT", self.source), patch.object(runner, "STACK", self.stack), patch.object(runner.subprocess, "check_output", side_effect=output), patch.object(runner.subprocess, "run", side_effect=run), contextlib.redirect_stdout(io.StringIO()):
             return runner.main(args)
 
     def receipt(self):

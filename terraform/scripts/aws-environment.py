@@ -134,6 +134,23 @@ def read_inputs(variables_path, backend_path):
     return variables, backend
 
 
+def terraform_backend_config(directory, backend):
+    """Write the backend settings Terraform accepts; the wrapper enforces the bucket owner itself."""
+    path = Path(directory) / "backend-config.json"
+    settings = {key: value for key, value in backend.items() if key != "expected_bucket_owner"}
+    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(descriptor, "w") as handle:
+        json.dump(settings, handle)
+    return path
+
+
+def verify_bucket_owner(backend, child_env):
+    """Terraform's S3 backend has no owner setting, so confirm the owner before init."""
+    command = ["aws", "s3api", "head-bucket", "--bucket", backend["bucket"], "--expected-bucket-owner", str(backend["expected_bucket_owner"]), "--region", backend["region"]]
+    if subprocess.run(command, env=child_env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode != 0:
+        raise Refused("The state bucket is missing or not owned by expected_bucket_owner")
+
+
 def verify_caller(variables, caller, environ):
     account = variables["account_id"]
     if not isinstance(caller, dict) or caller.get("Account") != account:
@@ -286,7 +303,7 @@ def main(argv=None):
     variables_path, backend_path = checked_path(args.variables), checked_path(args.backend)
     # Read and seal before any caller command; refuse even selection drift here.
     initial = plan_binding(variables_path, backend_path, ROOT)
-    variables, _ = read_inputs(variables_path, backend_path)
+    variables, backend = read_inputs(variables_path, backend_path)
     if plan_binding(variables_path, backend_path, ROOT) != initial:
         raise Refused("Inputs changed while selecting the installation")
     tool = os.environ.get("TF_BIN", "terraform")
@@ -339,7 +356,8 @@ def main(argv=None):
             effective, artifact = stage(variables, binding, directory, attempt)
             seals = staged_binding(effective, artifact)
             assert_sealed(binding, variables_path, backend_path, rc, tool)
-        subprocess.run(prefix + ["init", "-reconfigure", "-input=false", "-lockfile=readonly", f"-backend-config={backend_path}"], env=child_env, check=True)
+        verify_bucket_owner(backend, child_env)
+        subprocess.run(prefix + ["init", "-reconfigure", "-input=false", "-lockfile=readonly", f"-backend-config={terraform_backend_config(directory, backend)}"], env=child_env, check=True)
         actual_workspace = subprocess.check_output(prefix + ["workspace", "show"], env=child_env).decode().strip()
         if actual_workspace != "default":
             raise Refused("Cached Terraform CLI workspace is not default; refuse environment aliasing")
