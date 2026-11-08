@@ -100,7 +100,21 @@ on the reader. Selection/reset/recovery/onboarding are not working features;
 probe and custody endpoints stay private. The edge re-introspects the bearer and
 requires `rth:sync` on every request, ignoring client identity/signature headers.
 The reader's sync-login flag must be enabled only when both services actually
-serve the same origin. This PR adds no ingress or reader-auth-mode workaround.
+serve the same origin. This PR adds no ingress. For a compatible image containing
+merged pipeline #364 (`8a075b26`), select `readApi.auth.mode=relaycontrol_only`,
+enable `readApi.auth.relaycontrol.enabled`, supply its URL and Secret reference,
+and clear both `readApi.auth.relayauth` fields. The chart emits
+`READ_API_AUTH_MODE=relaycontrol_only` and omits `RELAYAUTH_JWKS_URL` and
+`RELAYAUTH_ISSUER`; contradictory settings and extraEnv overrides are refused.
+The default `legacy` chart mode preserves the existing explicit issuer behavior.
+This selects backend behavior; chart checks do not prove the image's verifier.
+
+Merged #364 also binds detail reads through `LOCKER_*`, with S3 static keys or
+Pod Identity supported. Whenever `LOCKER_BUCKET` is supplied, upstream startup
+requires `PIPELINE_ORG_FROM_PREFIX=true`; the bare root rule above still applies.
+Transport and object-store settings remain explicit operator configuration via
+the existing reader extraEnv/CA mounts, with credentials in Secret references.
+No store, credentials, auth mode, image or reader is enabled in a profile here.
 
 Readiness calls `/readyz`, not the always-200 `/healthz`: it requires an enabled
 service and a database `SELECT 1`. It does not prove complete grants, schema,

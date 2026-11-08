@@ -87,6 +87,38 @@ class ReadApi(unittest.TestCase):
             with self.subTest(setting=setting):
                 self.render("--set", setting, fail=True)
 
+    def test_control_only_omits_legacy_verifier_settings(self):
+        docs = self.render(overlay={"auth": {"mode": "relaycontrol_only",
+            "relayauth": {"jwksUrl": "", "issuer": ""}}})
+        deploy = next(d for d in docs if d["kind"] == "Deployment")
+        env = {e["name"]: e for e in deploy["spec"]["template"]["spec"]["containers"][0]["env"]}
+        self.assertEqual(env["READ_API_AUTH_MODE"]["value"], "relaycontrol_only")
+        self.assertEqual(env["RELAYHISTORY_ACCEPT_RELAYCONTROL_TOKENS"]["value"], "true")
+        self.assertNotIn("RELAYAUTH_JWKS_URL", env)
+        self.assertNotIn("RELAYAUTH_ISSUER", env)
+        self.assertEqual(env["RELAYCONTROL_INTROSPECT_SECRET"]["valueFrom"]["secretKeyRef"],
+                         {"name": "read-api-introspection", "key": "RELAYCONTROL_INTROSPECT_SECRET"})
+        result = subprocess.run(["kubeconform", "-strict", "-summary"],
+            input=yaml.safe_dump_all(docs), text=True, capture_output=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        legacy = next(d for d in self.render() if d["kind"] == "Deployment")
+        legacy_env = {e["name"] for e in legacy["spec"]["template"]["spec"]["containers"][0]["env"]}
+        self.assertNotIn("READ_API_AUTH_MODE", legacy_env)
+        self.assertTrue({"RELAYAUTH_JWKS_URL", "RELAYAUTH_ISSUER"} <= legacy_env)
+
+    def test_control_only_requires_introspection_and_refuses_legacy_settings(self):
+        auth = {"mode": "relaycontrol_only", "relayauth": {"jwksUrl": "", "issuer": ""}}
+        for setting in ["readApi.auth.relaycontrol.enabled=false", "readApi.auth.relaycontrol.url=",
+                        "readApi.auth.relaycontrol.existingSecret=", "readApi.auth.relaycontrol.key=",
+                        "readApi.auth.relayauth.jwksUrl=https://auth.agentrelay.com/jwks",
+                        "readApi.auth.relayauth.issuer=https://auth.agentrelay.com"]:
+            with self.subTest(setting=setting):
+                self.render("--set", setting, overlay={"auth": auth}, fail=True)
+        for mode in ["", "default", "RELAYCONTROL_ONLY", False, 1]:
+            with self.subTest(mode=mode):
+                self.assertIn("readApi.auth.mode must be", self.render(
+                    overlay={"auth": {"mode": mode}}, fail=True))
+
     def test_public_origin_rejects_credentials_private_hosts_and_invalid_ports(self):
         invalid = [
             "http://history.agentrelay.com", "https://user:example@history.agentrelay.com",
@@ -120,6 +152,9 @@ class ReadApi(unittest.TestCase):
 
     def test_extra_env_cannot_replace_flag_or_duplicate_credentials(self):
         for env in [[{"name": "SERVICE", "value": "other"}],
+                    [{"name": "READ_API_AUTH_MODE", "value": "relaycontrol_only"}],
+                    [{"name": "RELAYAUTH_JWKS_URL", "valueFrom": {"secretKeyRef": {"name": "x", "key": "x"}}}],
+                    [{"name": "RELAYAUTH_ISSUER", "value": "https://auth.agentrelay.com"}],
                     [{"name": "RELAYHISTORY_SELFHOST_READ_API", "value": "false"}],
                     [{"name": "SEARCH_INDEX_BACKEND", "value": "clickhouse"}],
                     [{"name": "CUSTOM", "value": "a"}, {"name": "CUSTOM", "value": "b"}],

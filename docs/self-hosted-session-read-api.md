@@ -1,6 +1,6 @@
 # Session read API chart preparation
 
-This is default-off chart plumbing for pipeline draft
+This is default-off chart plumbing for merged pipeline
 [#317](https://github.com/AgentWorkforce/relayhistory-pipeline/pull/317) (reviewed
 at `a7d7a5db`) and [#318](https://github.com/AgentWorkforce/relayhistory-pipeline/pull/318)
 (reviewed at `441e4862`). It does not enable a read service, change relaycontrol
@@ -10,7 +10,7 @@ The existing sessions-pipeline chart now accepts `readApi.*`. With `enabled:fals
 (the default), it renders no read API objects. Enabling it requires an explicit
 compatible image digest, a configuration Secret, public HTTPS origin with multi-label DNS (no credentials, IP/single-label/local
 host, path, query or fragment; optional port 1–65535),
-coverage floor (`completeSince`), workspace allowlist and temporary issuer.
+coverage floor (`completeSince`), workspace allowlist and an explicit auth mode.
 A separate Secret supplies the optional relaycontrol introspection credential.
 `readApi.search.backend` defaults to `postgres` and renders `SEARCH_INDEX_BACKEND`.
 It selects the registered adapter in the compatible upstream image; it does not
@@ -33,11 +33,33 @@ The configuration JSON must use the approved least-privilege read-role
 connection, not the migration-owner URL. The read image must be compatible with
 the deployed worker/migrator generation and published read-role/RPC contract;
 a container entry alone does not establish that image pair. Database role creation/ACLs remain with
-the pipeline owner. Provide explicit `RELAYAUTH_JWKS_URL`/issuer values so the
-runtime does not fall back to hosted defaults. Introspection requires the
+the pipeline owner. The default `readApi.auth.mode=legacy` requires explicit
+`readApi.auth.relayauth.jwksUrl` and `.issuer` values so the runtime does not fall
+back to hosted defaults. Introspection requires the
 matching relaycontrol implementation, exact audience and Secret. The deployment
 inherits the namespace network policy; kind already denies external egress to
 every pod. No new egress allow rule is introduced.
+
+For an image containing merged pipeline
+[#364](https://github.com/AgentWorkforce/relayhistory-pipeline/pull/364)
+(`8a075b26ca8ff693e068bec4f1e22bcb9dbb8413`),
+`readApi.auth.mode=relaycontrol_only` selects the backend's Control-only verifier.
+It requires `readApi.auth.relaycontrol.enabled=true`, its URL and Secret
+reference, and empty `readApi.auth.relayauth.jwksUrl` and `.issuer` settings.
+The chart emits `READ_API_AUTH_MODE=relaycontrol_only` and omits both legacy
+issuer variables. It rejects contradictory settings and managed-variable
+extraEnv overrides. The default legacy mode emits no `READ_API_AUTH_MODE`,
+preserving compatibility with earlier reader images. Neither mode is enabled
+by a profile, and the earlier reader-only image predates this backend feature.
+
+The same backend merge adds canonical detail reads from `LOCKER_*` (S3 static
+keys or Pod Identity supported). When `LOCKER_BUCKET` is configured, upstream
+requires `PIPELINE_ORG_FROM_PREFIX=true`. For the inline test/pilot assembly,
+`PIPELINE_KEY_PREFIX` is the bare `INGEST_KEY_ROOT` (`96bulls`), never an org
+suffix. These transport settings still use explicit extraEnv and CA mounts;
+credential settings require Secret key references. This auth-mode change adds
+no object-store configuration or native image acceptance. See the
+[native composition contract](self-hosted-native-ingest.md).
 
 A dormant service returns HTTP 200 with `enabled:false`. The readiness exec
 checks `ok:true` and `enabled:true` using plain JavaScript in the selected
@@ -52,8 +74,9 @@ its workspace list/search/events/catalog contract, upload path, reported usage
 and tenant isolation all pass together. The new read service does not silently
 delegate legacy History ingest/delivery routes.
 
-Current blockers remain: Postgres-only read assembly, PostgreSQL TLS, canonical
-object-source binding, and compatible login/introspection. See the base
+Runtime blockers remain: qualified combined reader/writer image and schema,
+native PostgreSQL TLS and canonical-object binding proof, and authenticated
+upload-to-readback acceptance. Source support alone does not close them. See the base
 [kind contract review](../ci/agent-relay/kind/read-api-contract.md). The kind core
 and addon profiles leave readApi disabled; their existing running fixture is
 untouched by this preparation.
@@ -62,7 +85,7 @@ The `ci/read-api-values.yaml` file uses an intentionally fake image identity for
 render/schema tests. Never install it. No compatible published read API image
 or runtime enablement is claimed by these checks.
 
-Validation in the isolated chart worktree: eleven focused render/admission/schema
+Historical validation of the initial chart preparation: eleven focused render/admission/schema
 and executable probe checks pass. Both kind profiles render no read API workload.
 The affected chart static checks, existing profile matrix, registry/regression
 checks and normalized default-render goldens also pass. This work did not run

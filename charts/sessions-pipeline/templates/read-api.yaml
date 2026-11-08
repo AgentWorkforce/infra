@@ -23,9 +23,17 @@ standalone chart independent of the API subchart's template namespace. */ -}}
 {{- if or (not (regexMatch "^[0-9]+$" (toString $c.port))) (lt (int $c.port) 1) (gt (int $c.port) 65535) }}{{ fail "readApi.port must be an integer from 1 to 65535" }}{{ end -}}
 {{- if not (has $c.probeRuntime (list "bun" "node")) }}{{ fail "readApi.probeRuntime must be bun or node" }}{{ end -}}
 {{- if not (kindIs "bool" $c.auth.relaycontrol.enabled) }}{{ fail "readApi.auth.relaycontrol.enabled must be a boolean" }}{{ end -}}
-{{- $jwks := required "readApi.auth.relayauth.jwksUrl must explicitly configure the temporary issuer" (trim $c.auth.relayauth.jwksUrl) -}}
-{{- $issuer := required "readApi.auth.relayauth.issuer must explicitly configure the temporary issuer" (trim $c.auth.relayauth.issuer) -}}
-{{- $reserved := list "SERVICE" "RELAYHISTORY_SELFHOST_READ_API" "RELAYHISTORY_READ_API_PORT" "RELAYHISTORY_READ_API_SECRET" "READ_API_ORIGIN" "READ_API_COMPLETE_SINCE" "READ_API_DIRECTORY_WORKSPACES" "SEARCH_INDEX_BACKEND" "ALLOW_IN_CLUSTER_HTTP" "RELAYAUTH_JWKS_URL" "RELAYAUTH_ISSUER" "RELAYHISTORY_ACCEPT_RELAYCONTROL_TOKENS" "RELAYCONTROL_INTROSPECT_URL" "RELAYCONTROL_INTROSPECT_SECRET" -}}
+{{- if not (has $c.auth.mode (list "legacy" "relaycontrol_only")) }}{{ fail "readApi.auth.mode must be legacy or relaycontrol_only" }}{{ end -}}
+{{- $jwks := trim $c.auth.relayauth.jwksUrl -}}
+{{- $issuer := trim $c.auth.relayauth.issuer -}}
+{{- if eq $c.auth.mode "relaycontrol_only" -}}
+{{- if or $jwks $issuer }}{{ fail "readApi.auth.mode=relaycontrol_only requires empty relayauth.jwksUrl and relayauth.issuer" }}{{ end -}}
+{{- if not $c.auth.relaycontrol.enabled }}{{ fail "readApi.auth.mode=relaycontrol_only requires auth.relaycontrol.enabled=true" }}{{ end -}}
+{{- else -}}
+{{- $_ := required "readApi.auth.relayauth.jwksUrl must explicitly configure the temporary issuer" $jwks -}}
+{{- $_ := required "readApi.auth.relayauth.issuer must explicitly configure the temporary issuer" $issuer -}}
+{{- end -}}
+{{- $reserved := list "SERVICE" "RELAYHISTORY_SELFHOST_READ_API" "RELAYHISTORY_READ_API_PORT" "RELAYHISTORY_READ_API_SECRET" "READ_API_ORIGIN" "READ_API_AUTH_MODE" "READ_API_COMPLETE_SINCE" "READ_API_DIRECTORY_WORKSPACES" "SEARCH_INDEX_BACKEND" "ALLOW_IN_CLUSTER_HTTP" "RELAYAUTH_JWKS_URL" "RELAYAUTH_ISSUER" "RELAYHISTORY_ACCEPT_RELAYCONTROL_TOKENS" "RELAYCONTROL_INTROSPECT_URL" "RELAYCONTROL_INTROSPECT_SECRET" -}}
 {{- $seen := dict -}}
 {{- range $e := $c.extraEnv -}}
 {{- $envName := required "readApi.extraEnv entries require name" $e.name -}}
@@ -115,8 +123,12 @@ spec:
             - { name: READ_API_DIRECTORY_WORKSPACES, value: {{ $workspaces | quote }} }
             - { name: SEARCH_INDEX_BACKEND, value: {{ $backend | quote }} }
             - { name: ALLOW_IN_CLUSTER_HTTP, value: {{ $c.allowInClusterHttp | quote }} }
+            {{- if eq $c.auth.mode "relaycontrol_only" }}
+            - { name: READ_API_AUTH_MODE, value: relaycontrol_only }
+            {{- else }}
             - { name: RELAYAUTH_JWKS_URL, value: {{ $jwks | quote }} }
             - { name: RELAYAUTH_ISSUER, value: {{ $issuer | quote }} }
+            {{- end }}
             - { name: RELAYHISTORY_ACCEPT_RELAYCONTROL_TOKENS, value: {{ $c.auth.relaycontrol.enabled | quote }} }
             {{- if $c.auth.relaycontrol.enabled }}
             - name: RELAYCONTROL_INTROSPECT_URL
