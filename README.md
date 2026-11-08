@@ -391,15 +391,21 @@ native AWS S3 endpoint.
 > commands. If you override `image.repository` or
 > `image.tag`, also set `image.digest=` or supply the matching digest.
 
+Use the actual object-storage Service name in the namespace. The examples below
+assume `session-object-storage`; the retained standalone kind fixture in
+[`deps/minio-values.yaml`](deps/minio-values.yaml) explicitly sets
+`fullnameOverride: locker`, so use `http://locker:9000` with that fixture.
+Changing these application endpoint values does not rename or migrate storage.
 
 ```bash
+OBJECT_STORAGE_ENDPOINT=http://session-object-storage:9000
 helm install sessions-pipeline-worker agentworkforce/sessions-pipeline-worker -n sessions-pipeline --create-namespace \
   --set existingSecret=sessions-pipeline \
-  --set locker.endpoint=http://session-object-storage:9000 \
+  --set-string "locker.endpoint=$OBJECT_STORAGE_ENDPOINT" \
   --set tenant.orgId=<org>
 helm install session-ingest-api agentworkforce/session-ingest-api -n sessions-pipeline \
   --set existingSecret=sessions-pipeline \
-  --set locker.endpoint=http://session-object-storage:9000 \
+  --set-string "locker.endpoint=$OBJECT_STORAGE_ENDPOINT" \
   --set tenant.orgId=<org> \
   --set auth.jwksUrl=https://<relayauth>/.well-known/jwks.json
 ```
