@@ -59,6 +59,19 @@ app.kubernetes.io/part-of: sessions-pipeline
 {{- $_ := required "session-read-api: config.existingSecret is required" $c.config.existingSecret -}}
 {{- $_ := required "session-read-api: config.key is required" $c.config.key -}}
 {{- end -}}
+{{- $effective := ternary "clickhouse" $backend $clickhouse.enabled -}}
+{{- if not (has $effective (list "postgres" "clickhouse" "opensearch")) }}{{ fail "session-read-api: search.backend must be postgres, clickhouse or opensearch" }}{{ end -}}
+{{- if has $effective (list "postgres" "opensearch") -}}
+{{- if not (regexMatch "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$" (toString $c.search.backendId)) }}{{ fail "session-read-api: search.backendId is required for postgres and opensearch and must match the indexer" }}{{ end -}}
+{{- end -}}
+{{- if eq $effective "opensearch" -}}
+{{- if not (regexMatch "^https://[A-Za-z0-9.-]+(:[0-9]{1,5})?$" (toString $c.search.opensearch.url)) }}{{ fail "session-read-api: search.opensearch.url must be a base https origin" }}{{ end -}}
+{{- if not (regexMatch "^[a-z]{2}(-[a-z]+)+-[0-9]+$" (toString $c.search.opensearch.region)) }}{{ fail "session-read-api: search.opensearch.region must be an AWS region" }}{{ end -}}
+{{- if and $c.search.opensearch.indexPrefix (not (regexMatch "^[a-z0-9][a-z0-9_-]{0,63}$" (toString $c.search.opensearch.indexPrefix))) }}{{ fail "session-read-api: search.opensearch.indexPrefix must be lowercase letters, digits, _ or -" }}{{ end -}}
+{{- end -}}
+{{- if not (kindIs "bool" $c.turns.assumeNoLegacy) }}{{ fail "session-read-api: turns.assumeNoLegacy must be a boolean" }}{{ end -}}
+{{- if not (kindIs "bool" $c.serviceAccountCreate) }}{{ fail "session-read-api: serviceAccountCreate must be a boolean" }}{{ end -}}
+{{- if and $c.serviceAccountCreate (not $c.serviceAccountName) }}{{ fail "session-read-api: serviceAccountCreate requires serviceAccountName" }}{{ end -}}
 {{- /* Postgres TLS: always verified, against the image's pin or a mounted CA. */ -}}
 {{- $profile := required "session-read-api: postgres.tlsProfile is required (supabase or custom-ca); the service refuses to start without it" $c.postgres.tlsProfile -}}
 {{- if not (has $profile (list "supabase" "custom-ca")) }}{{ fail "session-read-api: postgres.tlsProfile must be supabase or custom-ca" }}{{ end -}}
@@ -104,7 +117,7 @@ app.kubernetes.io/part-of: sessions-pipeline
 {{- if not (or (regexMatch "^https://[a-z0-9]([-a-z0-9.]*[a-z0-9])?(:[0-9]{1,5})?$" $o) (regexMatch "^http://(localhost|127\\.0\\.0\\.1)(:[0-9]{1,5})?$" $o)) }}{{ fail "session-read-api: cors.allowedOrigins must be exact lowercase https origins (http only on loopback), with no wildcard, path or trailing slash" }}{{ end -}}
 {{- end -}}
 {{- /* extraEnv: nothing managed above can be overridden or hidden here. */ -}}
-{{- $reserved := list "SERVICE" "RELAYHISTORY_SELFHOST_READ_API" "RELAYHISTORY_READ_API_PORT" "RELAYHISTORY_READ_API_SECRET" "READ_API_ORIGIN" "READ_API_AUTH_MODE" "READ_API_COMPLETE_SINCE" "READ_API_DIRECTORY_WORKSPACES" "READ_API_CORS_ALLOWED_ORIGINS" "RELAYHISTORY_SELFHOST_LOGIN_ADVERTISES_SYNC" "READ_API_INTERNAL_SECRET" "READ_API_INTERNAL_SECRET_PREVIOUS" "READ_API_ACCESS_TOKEN_TTL_SECONDS" "SEARCH_INDEX_BACKEND" "ALLOW_IN_CLUSTER_HTTP" "RELAYAUTH_JWKS_URL" "RELAYAUTH_ISSUER" "RELAYHISTORY_ACCEPT_RELAYCONTROL_TOKENS" "RELAYCONTROL_INTROSPECT_URL" "RELAYCONTROL_INTROSPECT_SECRET" "SESSION_POSTGRES_TLS_PROFILE" "SESSION_POSTGRES_CA_FILE" "SESSION_POSTGRES_CA_SHA256" -}}
+{{- $reserved := list "SERVICE" "RELAYHISTORY_SELFHOST_READ_API" "RELAYHISTORY_READ_API_PORT" "RELAYHISTORY_READ_API_SECRET" "READ_API_ORIGIN" "READ_API_AUTH_MODE" "READ_API_COMPLETE_SINCE" "READ_API_DIRECTORY_WORKSPACES" "READ_API_CORS_ALLOWED_ORIGINS" "RELAYHISTORY_SELFHOST_LOGIN_ADVERTISES_SYNC" "READ_API_TURNS_ASSUME_NO_LEGACY" "SEARCH_INDEX_POSTGRES_BACKEND_ID" "SEARCH_INDEX_OPENSEARCH_URL" "SEARCH_INDEX_OPENSEARCH_AUTH" "SEARCH_INDEX_OPENSEARCH_AWS_REGION" "SEARCH_INDEX_OPENSEARCH_INDEX_PREFIX" "READ_API_INTERNAL_SECRET" "READ_API_INTERNAL_SECRET_PREVIOUS" "READ_API_ACCESS_TOKEN_TTL_SECONDS" "SEARCH_INDEX_BACKEND" "ALLOW_IN_CLUSTER_HTTP" "RELAYAUTH_JWKS_URL" "RELAYAUTH_ISSUER" "RELAYHISTORY_ACCEPT_RELAYCONTROL_TOKENS" "RELAYCONTROL_INTROSPECT_URL" "RELAYCONTROL_INTROSPECT_SECRET" "SESSION_POSTGRES_TLS_PROFILE" "SESSION_POSTGRES_CA_FILE" "SESSION_POSTGRES_CA_SHA256" -}}
 {{- $seen := dict -}}
 {{- $canonical := dict -}}
 {{- range $e := $c.extraEnv -}}

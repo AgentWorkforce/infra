@@ -75,6 +75,20 @@ spec:
             - { name: RELAYHISTORY_SELFHOST_LOGIN_ADVERTISES_SYNC, value: "true" }
             {{- end }}
             - { name: SEARCH_INDEX_BACKEND, value: {{ $backend | quote }} }
+            {{- if has $backend (list "postgres" "opensearch") }}
+            - { name: SEARCH_INDEX_POSTGRES_BACKEND_ID, value: {{ $c.search.backendId | quote }} }
+            {{- end }}
+            {{- if eq $backend "opensearch" }}
+            - { name: SEARCH_INDEX_OPENSEARCH_URL, value: {{ $c.search.opensearch.url | quote }} }
+            - { name: SEARCH_INDEX_OPENSEARCH_AUTH, value: sigv4 }
+            - { name: SEARCH_INDEX_OPENSEARCH_AWS_REGION, value: {{ $c.search.opensearch.region | quote }} }
+            {{- with $c.search.opensearch.indexPrefix }}
+            - { name: SEARCH_INDEX_OPENSEARCH_INDEX_PREFIX, value: {{ . | quote }} }
+            {{- end }}
+            {{- end }}
+            {{- if $c.turns.assumeNoLegacy }}
+            - { name: READ_API_TURNS_ASSUME_NO_LEGACY, value: "true" }
+            {{- end }}
             - { name: ALLOW_IN_CLUSTER_HTTP, value: {{ $c.allowInClusterHttp | quote }} }
             - { name: SESSION_POSTGRES_TLS_PROFILE, value: {{ $c.postgres.tlsProfile | quote }} }
             {{- if $c.postgresCa.enabled }}

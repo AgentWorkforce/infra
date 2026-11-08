@@ -36,6 +36,7 @@ sessionReadApi:
   origin: https://history.kind.agentrelay.com:8443
   completeSince: epoch
   directoryWorkspaces: render-workspace
+  search: { backendId: render-backend }
   allowInClusterHttp: true
   postgres: { tlsProfile: custom-ca }
   postgresCa:

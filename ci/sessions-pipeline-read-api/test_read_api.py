@@ -103,6 +103,41 @@ class ReadApi(unittest.TestCase):
         self.assertIn("must be a boolean", self.render(overlay={"login": {"advertisesSync": "true"}}, fail=True))
         self.assertIn("managed", self.render(overlay={"extraEnv": [{"name": "RELAYHISTORY_SELFHOST_LOGIN_ADVERTISES_SYNC", "value": "true"}]}, fail=True))
 
+    def test_opensearch_backend_renders_sigv4_settings(self):
+        search = {"backend": "opensearch", "backendId": "idx-1",
+                  "opensearch": {"url": "https://search.agentrelay.com", "region": "us-east-1", "indexPrefix": "prod_"}}
+        env = self.env_of(self.render(overlay={"search": search, "serviceAccountName": "agent-relay-session-read", "serviceAccountCreate": True}))
+        self.assertEqual(env["SEARCH_INDEX_BACKEND"]["value"], "opensearch")
+        self.assertEqual(env["SEARCH_INDEX_POSTGRES_BACKEND_ID"]["value"], "idx-1")
+        self.assertEqual(env["SEARCH_INDEX_OPENSEARCH_URL"]["value"], "https://search.agentrelay.com")
+        self.assertEqual(env["SEARCH_INDEX_OPENSEARCH_AUTH"]["value"], "sigv4")
+        self.assertEqual(env["SEARCH_INDEX_OPENSEARCH_AWS_REGION"]["value"], "us-east-1")
+        self.assertEqual(env["SEARCH_INDEX_OPENSEARCH_INDEX_PREFIX"]["value"], "prod_")
+        no_prefix = dict(search, opensearch={"url": "https://search.agentrelay.com", "region": "us-east-1", "indexPrefix": ""})
+        self.assertNotIn("SEARCH_INDEX_OPENSEARCH_INDEX_PREFIX", self.env_of(self.render(overlay={"search": no_prefix})))
+        for overlay, message in [
+                ({"search": {"backend": "opensearch", "backendId": ""}}, "backendId is required"),
+                ({"search": {"backendId": ""}}, "backendId is required"),
+                ({"search": {"backend": "opensearch", "opensearch": {"url": "http://x.agentrelay.com", "region": "us-east-1"}}}, "opensearch.url"),
+                ({"search": {"backend": "opensearch", "opensearch": {"url": "https://x.agentrelay.com", "region": "nowhere"}}}, "opensearch.region"),
+                ({"search": {"backend": "nope"}}, "search.backend must be"),
+                ({"extraEnv": [{"name": "SEARCH_INDEX_OPENSEARCH_URL", "value": "https://x"}]}, "managed"),
+                ({"serviceAccountCreate": True, "serviceAccountName": ""}, "serviceAccountCreate requires")]:
+            with self.subTest(overlay=overlay):
+                self.assertIn(message, self.render(overlay=overlay, fail=True))
+
+    def test_service_account_is_created_only_when_asked(self):
+        docs = self.render(overlay={"serviceAccountName": "agent-relay-session-read", "serviceAccountCreate": True})
+        account = next(d for d in docs if d["kind"] == "ServiceAccount")
+        self.assertEqual(account["metadata"]["name"], "agent-relay-session-read")
+        self.assertFalse(account["automountServiceAccountToken"])
+        deploy = next(d for d in docs if d["kind"] == "Deployment")
+        self.assertEqual(deploy["spec"]["template"]["spec"]["serviceAccountName"], "agent-relay-session-read")
+
+    def test_turns_no_legacy_is_a_dedicated_default_off_value(self):
+        self.assertNotIn("READ_API_TURNS_ASSUME_NO_LEGACY", self.env_of(self.render()))
+        self.assertEqual(self.env_of(self.render(overlay={"turns": {"assumeNoLegacy": True}}))["READ_API_TURNS_ASSUME_NO_LEGACY"]["value"], "true")
+
     def test_cors_allowlist_is_exact_and_off_by_default(self):
         self.assertNotIn("READ_API_CORS_ALLOWED_ORIGINS", self.env_of(self.render()))
         env = self.env_of(self.render(overlay={"cors": {"allowedOrigins": ["https://app.agentrelay.com", "http://localhost:3000"]}}))
@@ -313,7 +348,7 @@ class ReadApi(unittest.TestCase):
                 self.assertEqual(env["READ_API_ORIGIN"]["value"], origin)
 
     def test_search_backend_comes_from_config_with_postgres_default(self):
-        for overlay, expected in [(None, "postgres"), ({"search": {"backend": "clickhouse"}}, "clickhouse")]:
+        for overlay, expected in [(None, "postgres"), ({"search": {"backend": "clickhouse", "backendId": ""}}, "clickhouse")]:
             with self.subTest(backend=expected):
                 deploy = next(d for d in self.render(overlay=overlay) if d["kind"] == "Deployment")
                 env = {e["name"]: e for e in deploy["spec"]["template"]["spec"]["containers"][0]["env"]}
