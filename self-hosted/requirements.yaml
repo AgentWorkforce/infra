@@ -859,7 +859,7 @@ entries:
     verify:
       default: kubectl get secret hoopdb-app -o jsonpath='{.data.uri}' is non-empty once the CNPG Cluster is ready
       external-selfhosted: kubectl get secret sessions-pipeline-hoopdb -o jsonpath='{.data.HOOPDB_URL}' | base64 -d | psql -X -c 'select 1'
-      external-rds: kubectl get secret sessions-pipeline-hoopdb -o jsonpath='{.data.HOOPDB_URL}' | base64 -d | psql -X -c 'select 1'
+      external-rds: psql "$(kubectl get secret sessions-pipeline-hoopdb -o jsonpath='{.data.HOOPDB_URL}' | base64 -d | sed 's/uselibpqcompat=true&//')" -X -c 'select 1'
       external-supabase: kubectl get secret sessions-pipeline-hoopdb -o jsonpath='{.data.HOOPDB_URL}' | base64 -d | psql -X -c 'select current_user'
     sources:
       - "charts/sessions-pipeline/values.yaml:39"
@@ -885,7 +885,9 @@ entries:
         name_paths: [worker.migrations.hoopdb.existingSecret]
         keys:
           - { key: HOOPDB_MIGRATION_URL, key_path: worker.migrations.hoopdb.key }
-    verify: kubectl get secret 96bulls-gcp -o jsonpath='{.data.HOOPDB_MIGRATION_URL}' connects as the migration owner (select current_user)
+    verify:
+      default: kubectl get secret 96bulls-gcp -o jsonpath='{.data.HOOPDB_MIGRATION_URL}' connects as the migration owner (select current_user)
+      external-rds: psql "$(kubectl get secret sessions-pipeline-hoopdb -o jsonpath='{.data.HOOPDB_MIGRATION_URL}' | base64 -d | sed 's/uselibpqcompat=true&//')" -Atc 'select current_user' is the RDS master
     sources:
       - "charts/sessions-pipeline/ci/gcp-cloudsql-values.yaml:33"
       - "charts/sessions-pipeline-worker/values.yaml:93"
@@ -1060,7 +1062,9 @@ entries:
     profiles: [selfhost-postgres, migration, external-selfhosted, external-rds, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql]
     status: shipped
     provided_by: { default: chart, external-selfhosted: operator, external-rds: operator, external-supabase: operator, aws-supabase: operator, gcp-cloudsql: stack }
-    verify: psql "$HOOPDB_URL" -Atc "select name from pg_available_extensions where name in ('pg_trgm','btree_gin','vector')" lists all three; server_version_num >= 170000
+    verify:
+      default: psql "$HOOPDB_URL" -Atc "select name from pg_available_extensions where name in ('pg_trgm','btree_gin','vector')" lists all three; server_version_num >= 170000
+      external-rds: with uselibpqcompat=true removed from the URL (psql rejects it), psql "$HOOPDB_URL" -Atc "select name from pg_available_extensions where name in ('pg_trgm','btree_gin','vector')" lists all three; server_version_num >= 160000
     sources:
       - "charts/sessions-pipeline/values.yaml:99"
       - "charts/sessions-pipeline/values.yaml:119"
@@ -1080,7 +1084,9 @@ entries:
     profiles: [selfhost-postgres, migration, aws-cnpg, external-selfhosted, external-rds, gcp-cloudsql]
     status: shipped
     provided_by: { default: chart, external-selfhosted: operator, external-rds: operator, gcp-cloudsql: stack }
-    verify: psql "$HOOPDB_URL" -Atc "select nspname from pg_namespace where nspname not like 'pg_%' and nspname <> 'information_schema'" shows only HoopDb schemas
+    verify:
+      default: psql "$HOOPDB_URL" -Atc "select nspname from pg_namespace where nspname not like 'pg_%' and nspname <> 'information_schema'" shows only HoopDb schemas
+      external-rds: with uselibpqcompat=true removed from the URL (psql rejects it), psql "$HOOPDB_URL" -Atc "select nspname from pg_namespace where nspname not like 'pg_%' and nspname <> 'information_schema'" shows only HoopDb schemas
     sources:
       - "charts/sessions-pipeline/profiles/external-selfhosted.yaml:2"
       - "charts/sessions-pipeline/values.yaml:275"
@@ -1099,7 +1105,9 @@ entries:
     profiles: [selfhost-postgres, migration, aws-cnpg, external-selfhosted, external-rds, external-supabase, aws-supabase, gcp-cloudsql]
     status: shipped
     provided_by: { default: chart, external-selfhosted: migrator, external-rds: operator, external-supabase: operator, aws-supabase: operator, gcp-cloudsql: operator }
-    verify: psql "$HOOPDB_URL" -Atc "select count(*) from pg_roles where rolname in ('anon','authenticated','service_role')" is 3
+    verify:
+      default: psql "$HOOPDB_URL" -Atc "select count(*) from pg_roles where rolname in ('anon','authenticated','service_role')" is 3
+      external-rds: with uselibpqcompat=true removed from the URL (psql rejects it), psql "$HOOPDB_URL" -Atc "select count(*) from pg_roles where rolname in ('anon','authenticated','service_role')" is 3
     sources:
       - "charts/sessions-pipeline/values.yaml:122"
       - "charts/sessions-pipeline/ci/gcp-cloudsql-values.yaml:5"
@@ -1125,7 +1133,7 @@ entries:
     verify:
       default: psql "$HOOPDB_URL" -Atc "select rolcanlogin, rolconfig from pg_roles where rolname='session_directory_search_worker'" is f|{statement_timeout=2s}
       external-selfhosted: run supabase/bootstrap/session_directory_search_worker.sql as a superuser; then the same query
-      external-rds: run supabase/bootstrap/session_directory_search_worker.sql as the RDS master; then the same query
+      external-rds: the master runs supabase/bootstrap/rds_migration_roles.sql; then, with uselibpqcompat=true removed from the URL (psql rejects it), the same query
       external-supabase: run supabase/bootstrap/session_directory_search_worker_supabase.sql as postgres; then the same query
       gcp-cloudsql: run supabase/bootstrap/session_directory_search_worker.sql as the migration owner; then the same query
     sources:
@@ -1160,7 +1168,9 @@ entries:
       external-rds: { worker.migrations.runtimeRole: "", worker.migrations.runtimeRoleLogin: null }
       external-supabase: { worker.migrations.runtimeRole: sessions_pipeline_runtime, worker.migrations.runtimeRoleLogin: true }
       gcp-cloudsql: { worker.migrations.runtimeRole: sessions_pipeline_runtime }
-    verify: psql "$HOOPDB_URL" -Atc "select rolsuper, rolcreatedb, rolcreaterole, rolreplication, rolbypassrls, rolcanlogin from pg_roles where rolname='sessions_pipeline_runtime'" is f|f|f|f|f|t; migrate refuses otherwise
+    verify:
+      default: psql "$HOOPDB_URL" -Atc "select rolsuper, rolcreatedb, rolcreaterole, rolreplication, rolbypassrls, rolcanlogin from pg_roles where rolname='sessions_pipeline_runtime'" is f|f|f|f|f|t; migrate refuses otherwise
+      external-rds: with uselibpqcompat=true removed from the URL (psql rejects it), psql "$HOOPDB_URL" -Atc "select rolsuper, rolcreatedb, rolcreaterole, rolreplication, rolbypassrls, rolcanlogin from pg_roles where rolname='sessions_pipeline_runtime'" is f|f|f|f|f|t; migrate refuses otherwise
     sources:
       - "charts/sessions-pipeline/templates/hoopdb-runtime-role-bootstrap.yaml:17"
       - "charts/sessions-pipeline/values.yaml:250"
@@ -1196,6 +1206,7 @@ entries:
       external-supabase: { functionDefaultRevoke.bootstrapJob.enabled: false }
     verify:
       default: 'the function-default Job completes and migrate''s wait-for-role logs "present: ... + owner function default"'
+      external-rds: migrate completes; it refuses with function_boundary_unproven unless rds_owner_function_default_revoke.sql has run
       external-supabase: migrate.ts --activation-check with HOOPDB_DB_MODE=supabase HOOPDB_FUNCTION_BOUNDARY_MODE=event-trigger reports event_trigger.verified true
       aws-supabase: no boundary is selected in this shape; migrate refuses with function_boundary_unproven until one is
     sources:
@@ -1286,10 +1297,11 @@ entries:
     status: shipped
     provided_by: operator
     default: null
-    profile_default: { default: selfhosted, external-supabase: supabase, aws-supabase: supabase, gcp-cloudsql: cloudsql }
+    profile_default: { default: selfhosted, external-supabase: supabase, aws-supabase: supabase, gcp-cloudsql: cloudsql, external-rds: rds }
     choices:
       - { value: selfhosted }
       - { value: cloudsql }
+      - { value: rds, note: Amazon RDS for PostgreSQL 16+, not Aurora }
       - { value: supabase }
       - { value: local, note: dev stack only }
     verify: the migrate Job env has exactly one HOOPDB_DB_MODE (ci/sessions-pipeline-profiles/matrix.sh asserts the profile env)
@@ -1339,11 +1351,11 @@ entries:
     status: shipped
     provided_by: operator
     default: null
-    profile_default: { default: true, external-supabase: false, aws-supabase: false, gcp-cloudsql: false }
+    profile_default: { default: true, external-supabase: false, aws-supabase: false, gcp-cloudsql: false, external-rds: false }
     choices:
       - { value: true }
       - { value: false }
-    verify: helm template refuses supabaseShim=true in supabase mode
+    verify: helm template refuses supabaseShim=true in supabase and rds mode
     sources:
       - "charts/sessions-pipeline-worker/values.yaml:115"
       - "charts/sessions-pipeline-worker/templates/_env.tpl:198"
@@ -1452,7 +1464,7 @@ entries:
     kind: option
     title: Separate migration-owner URL for migrate
     description: |
-      Optional everywhere except Cloud SQL (see req.secret.hoopdb-migration-url): when
+      Optional everywhere except Cloud SQL and RDS (see req.secret.hoopdb-migration-url): when
       both migrations.hoopdb.existingSecret and key are set, only migrate and its
       wait-for-role read that URL, and long-running workloads keep the least-privilege
       worker.hoopdb URL. Set both or neither.
@@ -1462,6 +1474,7 @@ entries:
     status: shipped
     provided_by: operator
     default: ""
+    profile_default: { default: "", external-rds: sessions-pipeline-hoopdb/HOOPDB_MIGRATION_URL }
     choices:
       - { value: "", note: migrate uses HOOPDB_URL }
       - { value: "<secret>/<key>", note: owner URL for migrate only }
