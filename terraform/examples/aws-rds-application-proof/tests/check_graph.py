@@ -8,7 +8,11 @@ base=root/'.terraform';base.mkdir(exist_ok=True)
 with tempfile.TemporaryDirectory(prefix='offline-graph-',dir=base) as directory:
     temporary=Path(directory)
     env={k:v for k,v in os.environ.items() if not k.startswith(('AWS_','TF_'))}
-    env.update(AWS_CONFIG_FILE='/dev/null',AWS_SHARED_CREDENTIALS_FILE='/dev/null',AWS_EC2_METADATA_DISABLED='true',TF_DATA_DIR=str(temporary/'data'),TF_PLUGIN_CACHE_DIR='/Volumes/T7/Projects/AgentWorkforce/.cache/terraform-providers')
+    env.update(AWS_CONFIG_FILE='/dev/null',AWS_SHARED_CREDENTIALS_FILE='/dev/null',AWS_EC2_METADATA_DISABLED='true',TF_DATA_DIR=str(temporary/'data'))
+    # Honor only the caller's non-secret provider cache, not local CLI/state
+    # configuration. With no cache supplied, init uses its normal data folder.
+    if os.environ.get('TF_PLUGIN_CACHE_DIR'):
+        env['TF_PLUGIN_CACHE_DIR']=os.environ['TF_PLUGIN_CACHE_DIR']
     rc=temporary/'terraform.rc';rc.write_text('disable_checkpoint = true\n');env['TF_CLI_CONFIG_FILE']=str(rc)
     binary=sys.argv[1] if len(sys.argv)>1 else 'terraform'
     subprocess.run([binary,'init','-input=false','-no-color','-lockfile=readonly','-reconfigure','-backend-config=path='+str(temporary/'offline.tfstate')],cwd=root,env=env,capture_output=True,text=True,check=True,timeout=120)

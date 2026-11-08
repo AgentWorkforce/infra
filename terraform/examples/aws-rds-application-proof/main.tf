@@ -120,7 +120,7 @@ module "postgres" {
   skip_final_snapshot                 = true # Synthetic-only. Explicit TF-owned snapshot below; no orphan final snapshots.
   performance_insights_enabled        = false
   enabled_cloudwatch_logs_exports     = [] # No transcript-bearing SQL logs or unmanaged log group lifecycle.
-  auto_minor_version_upgrade          = true
+  auto_minor_version_upgrade          = false
   iam_database_authentication_enabled = true
   allowed_extensions                  = ["pg_trgm", "btree_gin"] # The actual frozen migration set needs btree_gin; module also adds vector.
   parameters = [
@@ -183,7 +183,7 @@ resource "aws_db_instance" "restored" {
   delete_automated_backups            = true
   deletion_protection                 = !var.retire
   skip_final_snapshot                 = true
-  auto_minor_version_upgrade          = true
+  auto_minor_version_upgrade          = false
   iam_database_authentication_enabled = true
   copy_tags_to_snapshot               = true
   ca_cert_identifier                  = "rds-ca-rsa2048-g1"

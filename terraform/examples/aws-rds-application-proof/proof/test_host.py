@@ -36,4 +36,22 @@ class Host(unittest.TestCase):
         c=self.cfg();c['deadline']='2000-01-01T00:00:00.000Z'
         with patch.object(h,'run') as child,self.assertRaisesRegex(SecretIoError,'expired'):h.cli(c,'secretsmanager','get-secret-value','--secret-id',ARN)
         child.assert_not_called()
+    def test_native_database_requires_exact_minor_and_no_automatic_upgrade(self):
+        c={**self.cfg(),'postgres_version':'17.5','vpc_id':'vpc-synthetic'}
+        identifier='pippen-sbx-synthetic-pg'
+        row={'DBInstanceIdentifier':identifier,'DBInstanceArn':f"arn:aws:rds:{c['region']}:{c['account_id']}:db:{identifier}",'DBInstanceStatus':'available','Engine':'postgres','EngineVersion':'17.5','AutoMinorVersionUpgrade':False,'PubliclyAccessible':False,'StorageEncrypted':True,'DeletionProtection':True,'DBSubnetGroup':{'VpcId':c['vpc_id']},'DbiResourceId':'db-SYNTHETIC'}
+        tags={'TagList':[{'Key':k,'Value':v} for k,v in c['expected_tags'].items()]}
+        with patch.object(h,'cli',side_effect=[{'DBInstances':[row]},tags]):
+            self.assertEqual(h.database(c,identifier),row)
+        for change in [{'EngineVersion':'17.6'},{'EngineVersion':'18.1'},{'AutoMinorVersionUpgrade':True},{'AutoMinorVersionUpgrade':None}]:
+            with self.subTest(change=change),patch.object(h,'cli',return_value={'DBInstances':[{**row,**change}]}) as call,self.assertRaisesRegex(SecretIoError,'native_database_refused'):
+                h.database(c,identifier)
+            self.assertEqual(call.call_count,1)
+    def test_restore_requires_distinct_native_resource_arn_and_endpoint(self):
+        source={'DbiResourceId':'db-SEED','DBInstanceArn':'arn:synthetic:seed','Endpoint':{'Address':'seed.example.invalid'}}
+        target={'DbiResourceId':'db-RESTORED','DBInstanceArn':'arn:synthetic:restored','Endpoint':{'Address':'restored.example.invalid'}}
+        h.require_distinct_restore(source,target)
+        for key in source:
+            with self.subTest(reused=key),self.assertRaisesRegex(SecretIoError,'restored_target_identity_not_distinct'):
+                h.require_distinct_restore(source,{**target,key:source[key]})
 if __name__=='__main__':unittest.main()

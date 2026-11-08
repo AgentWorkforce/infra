@@ -1,3 +1,8 @@
+output "application_sql_ready" {
+  description = "False: this synthetic master-role fixture does not qualify the shared-database application layout or its activation."
+  value       = false
+}
+
 output "proof_contract" {
   description = "Non-secret source/lease/module/transport identities. Capture before guest termination."
   value = {

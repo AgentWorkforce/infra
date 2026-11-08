@@ -60,10 +60,13 @@ def database(c,identifier):
     rows=cli(c,'rds','describe-db-instances','--db-instance-identifier',identifier).get('DBInstances')
     require(isinstance(rows,list) and len(rows)==1,'database_metadata_incomplete');d=rows[0]
     arn=f"arn:aws:rds:{c['region']}:{c['account_id']}:db:{identifier}"
-    require(d.get('DBInstanceIdentifier')==identifier and d.get('DBInstanceArn')==arn and d.get('DBInstanceStatus')=='available' and d.get('Engine')=='postgres' and d.get('EngineVersion','').startswith('17.') and d.get('PubliclyAccessible') is False and d.get('StorageEncrypted') is True and d.get('DeletionProtection') is True and d.get('DBSubnetGroup',{}).get('VpcId')==c['vpc_id'] and re.fullmatch(r'db-[A-Z0-9]+',d.get('DbiResourceId','')),'native_database_refused')
+    require(d.get('DBInstanceIdentifier')==identifier and d.get('DBInstanceArn')==arn and d.get('DBInstanceStatus')=='available' and d.get('Engine')=='postgres' and d.get('EngineVersion')==c['postgres_version'] and d.get('AutoMinorVersionUpgrade') is False and d.get('PubliclyAccessible') is False and d.get('StorageEncrypted') is True and d.get('DeletionProtection') is True and d.get('DBSubnetGroup',{}).get('VpcId')==c['vpc_id'] and re.fullmatch(r'db-[A-Z0-9]+',d.get('DbiResourceId','')),'native_database_refused')
     tags=cli(c,'rds','list-tags-for-resource','--resource-name',arn).get('TagList')
     require(isinstance(tags,list) and {v['Key']:v['Value'] for v in tags}==c['expected_tags'],'database_ownership_refused')
     return d
+
+def require_distinct_restore(source,target):
+    require(source['DbiResourceId']!=target['DbiResourceId'] and source['DBInstanceArn']!=target['DBInstanceArn'] and source['Endpoint']['Address']!=target['Endpoint']['Address'],'restored_target_identity_not_distinct')
 
 class HostIo:
     def __init__(self,c,root,owner_password,source_db,target,scope):
@@ -156,6 +159,7 @@ def main():
     who=cli(c,'sts','get-caller-identity')
     require(who.get('Account')==c['account_id'] and re.fullmatch(f"arn:aws:sts::{c['account_id']}:assumed-role/{role.rsplit('/',1)[1]}/i-(?:[a-f0-9]{{8}}|[a-f0-9]{{17}})",who.get('Arn','')),'fresh_owned_host_caller')
     source_db=database(c,c['source_instance_id']);target=source_db if c['phase']=='seed' else database(c,c['instance_id'])
+    if c['phase']=='restore':require_distinct_restore(source_db,target)
     require(target['Endpoint']['Address']==c['host'] and target['EngineVersion']==c['postgres_version'] and source_db.get('MasterUserSecret',{}).get('SecretArn')==c['secret_arn'],'native_target_or_master_mapping')
     owner,master_version=secret(c,c['secret_arn'],c['secret_version_id'])
     require(owner.get('username')==c['owner'] and isinstance(owner.get('password'),str) and owner['password'] and not re.search(r'[\r\n\0]',owner['password']),'owner_credential_shape')
@@ -188,7 +192,7 @@ def main():
     # AWS transport. They never invoke the legacy module DB/ACL helper.
     s3_probe.cli=cli
     with tempfile.TemporaryDirectory(prefix='owned-s3-synthetic-') as folder:s3=s3_probe.prove_s3(c,Path(folder))
-    return {'ok':True,'scope':'actual original HoopDB RDS bootstrap/migration/runtime readiness + module S3; no search/provider/Lambda/full-app/retirement proof','phase':c['phase'],'source_sha':c['source_sha'],'marker':c['marker'],'guest_sources':c['guest_sources'],'payload_sha256':c['payload_sha256'],'payload_version_id':c['payload_version_id'],'ca_sha256':c['ca_sha256'],'secret_version_id':master_version,'runtime_secret_arn':c['runtime_secret_arn'],'runtime_secret_version_id':broker.result['secretRef']['versionId'],'source_database_resource_id':source_db['DbiResourceId'],'database_resource_id':target['DbiResourceId'],'guest':broker.result,'s3':s3,'ordered_events':io.events,'pending_object_versions':io.pending_versions,'containers':io.containers,'runtime_versions':io.versions,'host_arch':platform.machine(),'python_version':platform.python_version(),'aws_cli_version':run(['aws','--version'],env=ENV,timeout=15).stdout.decode().strip(),'container_absence':cleanup,'infrastructureRetired':False,'requiresInstanceRetirement':True}
+    return {'ok':True,'application_sql_ready':False,'migration_identity':'synthetic_rds_master','scope':'actual original HoopDB RDS bootstrap/migration/runtime readiness + module S3; no shared-database/search/provider/Lambda/full-app/retirement proof','phase':c['phase'],'source_sha':c['source_sha'],'marker':c['marker'],'guest_sources':c['guest_sources'],'payload_sha256':c['payload_sha256'],'payload_version_id':c['payload_version_id'],'ca_sha256':c['ca_sha256'],'secret_version_id':master_version,'runtime_secret_arn':c['runtime_secret_arn'],'runtime_secret_version_id':broker.result['secretRef']['versionId'],'source_database_resource_id':source_db['DbiResourceId'],'database_resource_id':target['DbiResourceId'],'guest':broker.result,'s3':s3,'ordered_events':io.events,'pending_object_versions':io.pending_versions,'containers':io.containers,'runtime_versions':io.versions,'host_arch':platform.machine(),'python_version':platform.python_version(),'aws_cli_version':run(['aws','--version'],env=ENV,timeout=15).stdout.decode().strip(),'container_absence':cleanup,'infrastructureRetired':False,'requiresInstanceRetirement':True}
 
 if __name__=='__main__':
     try:print(json.dumps(main()))

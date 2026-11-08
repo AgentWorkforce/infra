@@ -14,6 +14,29 @@ Actual execution remains held for complete TF/host/payload/private parent-driver
 review and separate exact saved-plan admission. No platform grant, account/project,
 existing app/role, parent DNS, publication or deployment change is made here.
 
+## Shared-database qualification remains blocked
+
+`application_sql_ready` is always `false`. This fixture currently migrates the
+synthetic `applicationproof` database as its RDS master, `proof_admin`, with
+`proof_runtime` for runtime checks. It does not implement the
+[shared PostgreSQL application contract](../../../docs/shared-postgres-storage-contract.md):
+one application database, independent service schemas, non-master schema owners
+and restricted runtime logins. A successful run of these selected checks must
+not qualify that contract or a Terraform-to-Helm application installation.
+
+Closing this gap requires a supported application composition and reviewed
+bootstrap/activation path for the non-master owner and runtime, native tests of
+the service bindings and cross-schema denials, then a digest-pinned Helm
+installation and the real application acceptance cases. Metadata-only schema
+bindings are not SQL/bootstrap proof. The private parent saved-plan driver also
+still requires independent review. Managed execution remains held.
+
+Both source and restore instances disable automatic minor upgrades. The host
+requires the exact selected PostgreSQL version and native upgrade flag, and
+requires the restore resource ID, ARN and endpoint to differ from the seed.
+These checks prevent version drift or seed substitution from being accepted;
+they are not managed restore or cleanup evidence without a real run.
+
 ## Ownership and external prerequisites
 
 Use fresh isolated state and a unique run in an existing reviewed account/region/
@@ -252,5 +275,6 @@ absence closes the fixture; existing VPC/routes/apps/resources remain outside sc
 
 | Name | Description |
 | ---- | ----------- |
+| application\_sql\_ready | False: this synthetic master-role fixture does not qualify the shared-database application layout or its activation. |
 | proof\_contract | Non-secret source/lease/module/transport identities. Capture before guest termination. |
 <!-- END_TF_DOCS -->
