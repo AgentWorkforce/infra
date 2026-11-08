@@ -467,8 +467,10 @@ On Linux the disk preflight measures the admitted daemon’s DockerRootDir. For
 a relocated Docker Desktop disk or another local VM, set
 `KIND_DOCKER_DATA_PATH` to the existing host-side Docker backing file or directory.
 An unavailable storage path refuses setup rather than skipping the check.
-Setup fetches public image/chart/source
-artifacts. Runtime suite pods receive no external egress.
+Setup fetches public image/chart/source artifacts; the optional
+`kind-up-local-control` flow additionally fetches private historical source from
+`AgentWorkforce/relay-control-internal`. Runtime suite pods receive no external
+egress.
 Public image pulls use a private anonymous Docker configuration with explicit
 registry entries, so SSH setup does not invoke a locked native keychain helper
 or inherit `DOCKER_AUTH_CONFIG`. No Docker login or global configuration changes
