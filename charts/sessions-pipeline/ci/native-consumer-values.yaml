@@ -1,0 +1,53 @@
+# RENDER ONLY: synthetic native image/CA identities; never install.
+global:
+  tenant:
+    orgId: org_ci
+alleyoop:
+  auth:
+    jwksUrl: https://relayauth.example.com/.well-known/jwks.json
+worker:
+  migrations:
+    databaseMode: selfhosted
+    supabaseShim: true
+    runtimeRole: sessions_pipeline_runtime
+    runtimeRoleLogin: true
+    functionBoundaryMode: global-default-revoke
+    waitForRole:
+      enabled: true
+      functionDefault: true
+  components:
+    hoopdb-indexer:
+      enabled: false
+runtimeRole:
+  bootstrapJob:
+    enabled: true
+functionDefaultRevoke:
+  bootstrapJob:
+    enabled: true
+privilegedSql:
+  sqlImage:
+    digest: sha256:6f22ea17dff336e1431664542759fd27958649388b90a0b2f0881883caa7c6b2
+readApi:
+  enabled: false
+ingestEdge:
+  enabled: false
+nativeConsumer:
+  enabled: true
+  legacyIndexerDrained: true
+  image:
+    repository: example.invalid/native-consumer
+    digest: sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff
+  backendId: render-only-native
+  completeSince: '2026-11-08T00:00:00Z'
+  allowInClusterHttp: true
+  config:
+    existingSecret: consumer-runtime
+  postgres:
+    host: postgres.ci.svc.cluster.local
+    database: hoopdb
+    caConfigMap: postgres-ca
+    caSha256: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+  locker:
+    bucket: pilot-sessions
+    endpoint: http://session-object-storage.ci.svc.cluster.local:9000
+    existingSecret: consumer-store

@@ -1,0 +1,27 @@
+{{- $c := .Values.nativeConsumer -}}
+{{- if and $c.enabled $c.bootstrap.enabled -}}
+{{- include "sessions-pipeline.nativeConsumer.validate" . -}}
+{{- $spec := include "sessions-pipeline.nativeConsumer.pod" (dict "root" . "bootstrap" true) -}}
+{{- $name := include "sessions-pipeline.nativeConsumer.name" . -}}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ printf "%s-bootstrap-%s" ($name | trunc 44 | trimSuffix "-") (printf "%s\n%d\nbackoff=0" $spec (int $c.bootstrap.activeDeadlineSeconds) | sha256sum | trunc 8) }}
+  namespace: {{ .Release.Namespace | quote }}
+  labels:
+    app.kubernetes.io/name: session-pipeline-consumer
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: native-consumer-bootstrap
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: {{ $c.bootstrap.activeDeadlineSeconds }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: session-pipeline-consumer
+        app.kubernetes.io/instance: {{ .Release.Name }}
+        app.kubernetes.io/component: native-consumer-bootstrap
+    spec:
+      restartPolicy: Never
+      {{- $spec | nindent 6 }}
+{{- end }}

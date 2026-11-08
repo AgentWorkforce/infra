@@ -48,6 +48,7 @@ MATRIX=(
   "ci/default-values.yaml|yes|yes|selfhosted|fresh"
   "ci/read-api-values.yaml|yes|yes|selfhosted|fresh"
   "ci/ingest-edge-values.yaml|yes|yes|selfhosted|fresh"
+  "ci/native-consumer-values.yaml|yes|yes|selfhosted|fresh"
   "ci/kind-values.yaml|yes|yes|selfhosted|fresh"
   "ci/search-worker-bootstrap-values.yaml|yes|yes|selfhosted|existing"
   "ci/aws-cnpg-values.yaml|yes|no|selfhosted|fresh"
@@ -152,7 +153,14 @@ for row in "${MATRIX[@]}"; do
   done <<<"$imgs"
 
   # App workloads and the migrate Job, in every profile.
-  for d in ci-worker-session-status-worker ci-worker-session-summary-worker ci-worker-session-metadata-indexer ci-session-ingest-api; do
+  deployments="ci-worker-session-status-worker ci-worker-session-summary-worker ci-session-ingest-api"
+  if [ "$rel" = ci/native-consumer-values.yaml ]; then
+    deployments="$deployments ci-native-consumer"
+    none '.kind == "Deployment" and .metadata.name == "ci-worker-session-metadata-indexer"' || err "$label: old indexer overlaps native consumer"
+  else
+    deployments="$deployments ci-worker-session-metadata-indexer"
+  fi
+  for d in $deployments; do
     has ".kind == \"Deployment\" and .metadata.name == \"$d\"" || err "$label: Deployment $d missing"
   done
   has ".kind == \"Job\" and $(comp hoopdb-migrate)" || err "$label: migrate Job missing"
@@ -172,7 +180,7 @@ for row in "${MATRIX[@]}"; do
   got=$(profile_env)
   [ "$got" = "$want" ] || err "$label: migrate profile env is [$(tr '\n' ' ' <<<"$got")], want [$(tr '\n' ' ' <<<"$want")]"
   for n in $PROFILE_ENV HOOPDB_FUNCTION_BOUNDARY_APPROVED; do
-    c=$(yq -r "[.. | select(type == \"!!map\" and .name == \"$n\" and has(\"value\"))] | length" <<<"$out" | awk '{s+=$1} END {print s+0}')
+    c=$(yq -r "select(.metadata.labels.\"app.kubernetes.io/name\" != \"session-pipeline-consumer\") | [.. | select(type == \"!!map\" and .name == \"$n\" and has(\"value\"))] | length" <<<"$out" | awk '{s+=$1} END {print s+0}')
     case $n in HOOPDB_FUNCTION_BOUNDARY_APPROVED) w=0 ;; *) w=$(grep -c "^$n=" <<<"$want" || true) ;; esac
     [ "$c" = "$w" ] || err "$label: $n rendered $c times, want $w (migrate only)"
   done
