@@ -1,0 +1,23 @@
+apiVersion: v2
+name: relay-chief
+type: application
+version: 0.1.0
+kubeVersion: ">=1.27.0-0"
+appVersion: "0.1.0"
+description: >-
+  Run Relay Chief coordination cycles on Kubernetes as a scheduled single-writer job.
+annotations:
+  artifacthub.io/license: Apache-2.0
+  agentworkforce.dev/license-scope: "First-party chart code only; dependencies and images retain their own licenses."
+home: https://github.com/AgentWorkforce/relay-chief
+keywords:
+  - relay-chief
+  - agents
+  - kubernetes
+  - agentworkforce
+maintainers:
+  - name: AgentWorkforce
+    url: https://github.com/AgentWorkforce/infra
+sources:
+  - https://github.com/AgentWorkforce/relay-chief
+  - https://github.com/AgentWorkforce/infra/tree/main/charts/relay-chief

@@ -147,6 +147,12 @@ profiles:
     chart: relayflows
     install: helm install relayflows agentworkforce/relayflows --set image.repository=<flow image> --set standalone.flow.path=<flow>
     summary: Off by default in the product. standalone runs a flow in a Kubernetes Job with no Agent Relay Cloud contact; cloudWorker enrolls a Cloud worker.
+  - id: relay-chief
+    title: Relay Chief (scheduled coordination cycles)
+    chart: relay-chief
+    values_file: ci/default-values.yaml
+    install: helm install relay-chief agentworkforce/relay-chief -f <your values>
+    summary: Not qualified and not part of the suite yet; no image is published. Runs one bounded cycle per CronJob firing against SQLite on a persistent volume.
 
   - id: durable-actors
     title: TerseAI durable-actors control plane (vendored upstream chart)
@@ -526,6 +532,12 @@ compatibility:
       images:
         relayfile: { repository: ghcr.io/agentworkforce/relayfile }
       notes: image by tag (Chart.appVersion), not digest. Superseded by 0.2.0.
+    - id: relay-chief-0.1.0
+      status: unreleased
+      current: true
+      charts: { relay-chief: 0.1.0 }
+      app_versions: { relay-chief: 0.1.0 }
+      notes: First chart, rendered only. No Relay Chief image is published and the digest is operator-supplied until one exists.
     - id: relayflows-0.2.5
       status: unreleased
       current: true
@@ -3264,3 +3276,57 @@ entries:
     sources:
       - "charts/relayfile/templates/actors/_helpers.tpl:71"
       - "charts/relayfile/templates/actors/session-broker.yaml:64"
+
+  - id: req.relay-chief.origins
+    kind: requirement
+    title: Relay and control-plane origins
+    description: RELAY_BASE_URL and CHIEF_CONTROL_PLANE_URL. The chart refuses to render without RELAY_BASE_URL because the runtime otherwise falls back to the hosted Relay.
+    chart: relay-chief
+    values: [relay.baseUrl, controlPlane.url]
+    env: [RELAY_BASE_URL, CHIEF_CONTROL_PLANE_URL]
+    profiles: [relay-chief]
+    status: shipped
+    provided_by: operator
+    verify: helm template fails with "relay.baseUrl is required" when it is unset
+    sources:
+      - "charts/relay-chief/values.yaml:28"
+      - "charts/relay-chief/templates/cronjob.yaml:57"
+
+  - id: req.relay-chief.credentials
+    kind: requirement
+    title: Relay Chief runtime credentials
+    description: A pre-provisioned chief identity (not a workspace admin key), the classification API key and a scoped control-plane service credential, from one existing Secret.
+    chart: relay-chief
+    values: [existingSecret, "secretKeys.*"]
+    env: [RELAY_AGENT_TOKEN, TYPESAFE_API_KEY, CHIEF_CONTROL_PLANE_TOKEN]
+    profiles: [relay-chief]
+    status: shipped
+    provided_by: operator
+    secrets:
+      - name: "<existingSecret>"
+        keys:
+          - { key: relay-agent-token, key_path: secretKeys.relayAgentToken }
+          - { key: typesafe-api-key, key_path: secretKeys.typesafeApiKey }
+          - { key: control-plane-token, key_path: secretKeys.controlPlaneToken }
+    verify: helm template fails with "existingSecret is required" when it is unset; a cycle's Job starts without a CreateContainerConfigError
+    sources:
+      - "charts/relay-chief/values.yaml:36"
+      - "charts/relay-chief/templates/cronjob.yaml:59"
+
+  - id: opt.relay-chief.image-pull-secrets
+    kind: option
+    title: Relay Chief image pull Secrets
+    description: Pull Secrets for a private registry or customer mirror.
+    chart: relay-chief
+    values: [imagePullSecrets]
+    profiles: [relay-chief]
+    status: shipped
+    provided_by: operator
+    default: none
+    choices:
+      - { value: none }
+      - { value: listed }
+    verify: the cycle's Job pulls its image without ImagePullBackOff
+    sources:
+      - "charts/relay-chief/values.yaml:9"
+      - "charts/relay-chief/templates/cronjob.yaml:33"

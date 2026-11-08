@@ -1,0 +1,60 @@
+nameOverride: ""
+fullnameOverride: ""
+
+# REQUIRED: image.digest. Relay Chief is deployed by immutable digest only.
+image:
+  repository: ghcr.io/agentworkforce/relay-chief
+  digest: ""
+  pullPolicy: IfNotPresent
+imagePullSecrets: []
+
+# The entrypoint inside the image. run-once and its arguments are chart-owned.
+command: [node, /opt/relay-chief/dist/cli.js]
+
+# One bounded cycle per firing. Kubernetes cron has one-minute resolution.
+schedule: "* * * * *"
+suspend: false
+startingDeadlineSeconds: 45
+activeDeadlineSeconds: 120
+successfulJobsHistoryLimit: 1
+failedJobsHistoryLimit: 3
+
+# Off by default: a cycle observes and plans but sends no Relay assignments.
+# true passes --dispatch, which permits assignments for each cycle.
+dispatch: false
+
+# REQUIRED: RELAY_BASE_URL. Relay Chief falls back to the hosted Relay origin
+# when this is unset, so the chart refuses to render without it.
+relay:
+  baseUrl: ""
+
+# REQUIRED: CHIEF_CONTROL_PLANE_URL, the authoritative evidence origin.
+controlPlane:
+  url: ""
+
+# REQUIRED: an existing Secret holding the runtime credentials below.
+existingSecret: ""
+secretKeys:
+  relayAgentToken: relay-agent-token
+  typesafeApiKey: typesafe-api-key
+  controlPlaneToken: control-plane-token
+
+# REQUIRED: the Relay Chief configuration (see examples/chief.config.json in
+# the relay-chief repository). It must contain identifiers only, no secrets.
+config: {}
+
+# SQLite state (chief.db). It survives uninstall because of the keep policy.
+persistence:
+  existingClaim: ""
+  storageClassName: ""
+  accessModes: [ReadWriteOncePod]
+  size: 1Gi
+
+resources:
+  requests: { cpu: 100m, memory: 128Mi }
+  limits: { cpu: "1", memory: 512Mi }
+
+podAnnotations: {}
+nodeSelector: {}
+tolerations: []
+affinity: {}

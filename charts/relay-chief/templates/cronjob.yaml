@@ -1,0 +1,98 @@
+{{- include "relay-chief.validate" . -}}
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "relay-chief.fullname" . }}
+  labels:
+    {{- include "relay-chief.labels" . | nindent 4 }}
+spec:
+  schedule: {{ .Values.schedule | quote }}
+  suspend: {{ .Values.suspend }}
+  # chief.db has one writer: an overlapping cycle must never start.
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: {{ int .Values.startingDeadlineSeconds }}
+  successfulJobsHistoryLimit: {{ int .Values.successfulJobsHistoryLimit }}
+  failedJobsHistoryLimit: {{ int .Values.failedJobsHistoryLimit }}
+  jobTemplate:
+    spec:
+      # The next firing is the retry; the runtime resumes from durable state.
+      backoffLimit: 0
+      activeDeadlineSeconds: {{ int .Values.activeDeadlineSeconds }}
+      template:
+        metadata:
+          labels:
+            {{- include "relay-chief.selectorLabels" . | nindent 12 }}
+          annotations:
+            checksum/config: {{ toJson .Values.config | sha256sum }}
+            {{- with .Values.podAnnotations }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+        spec:
+          restartPolicy: Never
+          automountServiceAccountToken: false
+          {{- with .Values.imagePullSecrets }}
+          imagePullSecrets:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65532
+            runAsGroup: 65532
+            fsGroup: 65532
+            seccompProfile: { type: RuntimeDefault }
+          containers:
+            - name: relay-chief
+              image: "{{ .Values.image.repository }}@{{ .Values.image.digest }}"
+              imagePullPolicy: {{ .Values.image.pullPolicy }}
+              command:
+                {{- toYaml .Values.command | nindent 16 }}
+              args:
+                - run-once
+                - /etc/relay-chief/config.json
+                - /var/lib/relay-chief/chief.db
+                {{- if .Values.dispatch }}
+                - --dispatch
+                {{- end }}
+              env:
+                - { name: RELAY_BASE_URL, value: {{ .Values.relay.baseUrl | quote }} }
+                - { name: CHIEF_CONTROL_PLANE_URL, value: {{ .Values.controlPlane.url | quote }} }
+                - name: RELAY_AGENT_TOKEN
+                  valueFrom:
+                    secretKeyRef: { name: {{ .Values.existingSecret | quote }}, key: {{ .Values.secretKeys.relayAgentToken | quote }} }
+                - name: TYPESAFE_API_KEY
+                  valueFrom:
+                    secretKeyRef: { name: {{ .Values.existingSecret | quote }}, key: {{ .Values.secretKeys.typesafeApiKey | quote }} }
+                - name: CHIEF_CONTROL_PLANE_TOKEN
+                  valueFrom:
+                    secretKeyRef: { name: {{ .Values.existingSecret | quote }}, key: {{ .Values.secretKeys.controlPlaneToken | quote }} }
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities: { drop: [ALL] }
+              resources:
+                {{- toYaml .Values.resources | nindent 16 }}
+              volumeMounts:
+                - { name: config, mountPath: /etc/relay-chief, readOnly: true }
+                - { name: state, mountPath: /var/lib/relay-chief }
+                - { name: tmp, mountPath: /tmp }
+          volumes:
+            - name: config
+              configMap:
+                name: {{ include "relay-chief.fullname" . }}
+            - name: state
+              persistentVolumeClaim:
+                claimName: {{ include "relay-chief.claimName" . }}
+            - name: tmp
+              emptyDir: {}
+          {{- with .Values.nodeSelector }}
+          nodeSelector:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.tolerations }}
+          tolerations:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.affinity }}
+          affinity:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
