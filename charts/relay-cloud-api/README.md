@@ -100,6 +100,11 @@ The bootstrap token (`secretKeys.bootstrapToken`) remains the operator
 break-glass. It approves the **Operator sign-in** code on `/login` for a
 member, and can create invites through the API.
 
+The [operator device-approval runbook](../../docs/operator-device-login.md)
+provides runnable inventory, lookup, explicit member/workspace selection and
+approve/deny commands. Its helper keeps the bootstrap credential inside the
+API pod; normal users sign in and approve Desktop through the customer site.
+
 With `networkPolicy.allowAllEgress=false`, add `networkPolicy.additionalEgress`
 rules for the identity provider (HTTPS) and the SMTP server.
 

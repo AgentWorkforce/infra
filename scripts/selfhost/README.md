@@ -1,5 +1,10 @@
 # Agent Relay self-host safety checks
 
+For first-admin recovery and device-code inventory, lookup and approve/deny,
+use the [operator login runbook](../../docs/operator-device-login.md). Its
+standalone in-pod helper is separate from the read-only safety checks below;
+only its explicit approve/deny actions change a device request.
+
 `verify-agent-relay.sh` performs a read-only, non-secret smoke check of an
 installed agent-relay Helm suite. It exits nonzero if it cannot prove the
 required release, migration, workload, ingress, health, or certificate state.

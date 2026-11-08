@@ -234,12 +234,14 @@ use the bootstrap bearer already mounted in the API pod:
 5. Return to the original browser tab. Confirm the correct organization and
    owner, then configure/test SSO before inviting other users.
 
-The API contract is implemented in
+For runnable lookup, explicit identity selection, approve/deny commands and
+troubleshooting, use the [operator runbook](operator-device-login.md) and its
+reusable in-pod helper. The API contract is implemented in
 [Control's device approval tests](https://github.com/AgentWorkforce/relay-control/blob/92cd27d58df395be050809431f21707016557899/test/device-approval.test.ts).
-**The packaged, tested customer operator command is still a release deliverable.**
-Do not hand customers the ignored `.kind/.../approve-login.mjs` fixture helper
-as a supported enterprise tool. Codes expire; inspect a newly generated code
-after expiry instead of retrying an old approval.
+Bind the helper's reviewed version and compatible Control image in the release
+packet. Do not hand customers the ignored `.kind/.../approve-login.mjs` fixture
+helper as a supported enterprise tool. Codes expire; inspect a newly generated
+code after expiry instead of retrying an old approval.
 
 ## 5. Download and sign in to Desktop
 

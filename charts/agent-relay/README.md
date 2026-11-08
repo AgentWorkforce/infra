@@ -85,6 +85,11 @@ a device code. Set the commented `relay-cloud-api` block in `values-gcp.yaml`
 to get a working team straight from `helm install`. This needs a selfhost-api
 image from relaycontrol #13 or later.
 
+For runnable first-admin recovery and device-code lookup/approval, see the
+[operator runbook](../../docs/operator-device-login.md). Its reusable helper
+keeps the bootstrap bearer inside Control and requires explicit member and
+workspace selection; the local kind helper is not the enterprise procedure.
+
 - `relay-cloud-api.bootstrap.{orgName,adminEmail}`,
   `relay-cloud-api.secretKeys.relaycastInternalSecret: relaycast-internal-secret`
   and `relay-cloud-api.dashboardUrl: https://<root host>/`. On its first start

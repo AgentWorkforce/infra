@@ -93,6 +93,20 @@ customers who selected it. Check direct API calls in addition to the sidebar.
 The current `components.relayflows` Helm toggle alone does not establish these
 UI and server behaviors. Coordinate chart/profile versions through the release owner.
 
+## Chief is optional and defaults off
+
+Apply the same capability, navigation and direct-route rules to Chief. Without
+an explicit authorized enablement, the installation must have no Chief agent,
+background scans, model calls or scheduled work, and no Chief sidebar entry.
+Authenticated direct API/URL requests must report the disabled state rather
+than starting work. Test explicit enablement separately.
+
+The current Control gateway can return `503 chief_unavailable` when no
+`ChiefBackend` is configured. UI/API hooks are not an embedded running Chief,
+and the current infra charts contain no Chief workload or documented
+`components.chief` switch. Do not invent a working chart setting: the released
+capability/configuration contract must be implemented and documented first.
+
 ## Ownership and release evidence
 
 | Work | Implementation owner / coordination |
