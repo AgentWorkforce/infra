@@ -76,8 +76,8 @@ handling of the explicitly disabled optional transform, without changing setup.
 # Existing fixture with the native control selection already present:
 make kind-up PROFILE=core PYTHON=python3
 make kind-proof-core PYTHON=python3
-# Fresh-host variant builds that pinned native control image first:
-# make kind-up-local-control PROFILE=core PYTHON=python3
+# Historical reproduction builds the recorded 1f08cb6 source first:
+# KIND_CONTROL_SOURCE=historical make kind-up-local-control PROFILE=core PYTHON=python3
 ```
 
 Setup completed with exit 0 and a readiness receipt, including the application
@@ -167,6 +167,9 @@ private repository for explicit `KIND_CONTROL_SOURCE=historical` reproduction.
 Current builds instead pin public `relay-control@a659ac4fbc2c73c57ccb87b6947cee2fdb78e92d`
 in a separate cache. Existing build and runtime receipts below are unchanged and
 have not been rerun or attributed to the current source.
+This infra change provides no actual image build or runtime test for `a659ac4`;
+those remain prerequisites for current-source acceptance. The historical command
+above requires `KIND_CONTROL_SOURCE=historical`; its default now selects `a659ac4`.
 The [raw build receipt](control-build.json) records the native manifest
 and config digests, source revision, tag, architecture and base image. It was
 built and tested on linux/arm64. No registry publication occurred.
@@ -197,8 +200,11 @@ window was honored before this final complete run. Limits were not disabled or
 reset, and diagnostic device sessions were revoked.
 
 The catalog values remain on their audited published image. A clean catalog-only
-fixture therefore still reports MCP pending; the local-control command above is
-the exact reproducible variant used for this successful MCP endpoint check.
+fixture therefore still reports MCP pending. To reproduce the source selection
+for the recorded MCP check, use the local-control command above with
+`KIND_CONTROL_SOURCE=historical`. The default current-source command does not
+reproduce this historical proof; rebuilt image bytes and a new run need their
+own receipts.
 
 ## Historical unsupported database co-location (negative evidence)
 

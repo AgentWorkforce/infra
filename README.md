@@ -572,10 +572,13 @@ architecture and source revision are verified before installation. The build
 receipt is `.kind/core/control-build.json`. `make kind-build-control PROFILE=core`
 performs just the build/selection; it does not install or publish an image.
 For the previous source, use `KIND_CONTROL_SOURCE=historical make kind-build-control PROFILE=core`.
-This selects the archived `1f08cb6` pin explicitly. Existing
-historical image receipts remain admissible only with their exact source, native
-architecture, tag and manifest reference; selecting current source does not
-silently rewrite a historical receipt or reuse its source cache.
+This selects the archived `1f08cb6` pin explicitly. Existing historical image
+receipts remain admissible only with their exact source, native architecture,
+tag and manifest reference. Each build deliberately replaces the single active
+`.kind/<profile>/control-build.json` receipt and selected image override. A current
+build therefore replaces the historical selection; rerun the historical build
+to select that source again and capture its resulting digest. Source caches stay
+separate, and checked-in historical evidence is unchanged.
 The normal catalog profile remains unchanged. Each build captures its resulting
 artifact digest; the official Dockerfile's runtime npm dependency ranges mean
 that identical source does not guarantee identical rebuilt image bytes.
