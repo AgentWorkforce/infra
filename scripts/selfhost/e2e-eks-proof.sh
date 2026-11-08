@@ -160,7 +160,12 @@ read -r -a cnpg_wanted <<<"${EKS_PROOF_CNPG_CLUSTERS:-control-api-pg hoopdb rela
 cnpg="$("${K[@]}" get cluster.postgresql.cnpg.io -o jsonpath='{range .items[*]}{.metadata.name}={.status.phase}{";"}{end}' 2>/dev/null)"
 cnpg_ok=true
 cnpg_detail=""
-for want in "${cnpg_wanted[@]}"; do
+# A blank override names nothing, and a check of nothing must not pass.
+if ((${#cnpg_wanted[@]} == 0)); then
+  cnpg_ok=false
+  cnpg_detail="EKS_PROOF_CNPG_CLUSTERS names no clusters;"
+fi
+for want in ${cnpg_wanted[@]+"${cnpg_wanted[@]}"}; do
   phase="$(tr ';' '\n' <<<"$cnpg" | sed -n "s/^${want}=//p")"
   cnpg_detail+="${want}=${phase:-missing};"
   [[ "$phase" == "Cluster in healthy state" ]] || cnpg_ok=false
