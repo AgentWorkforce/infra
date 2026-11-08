@@ -4,7 +4,10 @@
   "scope": "static render identity/stage inventory; no upgrade or data-survival proof",
   "targetNames": {
     "locker": "session-object-storage",
-    "alleyoop-ingest": "session-ingest-api"
+    "alleyoop-ingest": "session-ingest-api",
+    "bob-costas": "session-summary-worker",
+    "hoopdb-indexer": "session-metadata-indexer",
+    "referee": "session-status-worker"
   },
   "profiles": {
     "core": [

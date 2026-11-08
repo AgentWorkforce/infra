@@ -1,7 +1,6 @@
 # Chart rename compatibility and upgrade map
 
-Status: preparation only. The requested public names are `locker` →
-`session-object-storage` and `alleyoop-ingest` → `session-ingest-api`.
+Status: preparation only. Five requested public names are recorded below.
 The exact package/values-key versus Service/display-name implementation boundary
 still needs confirmation. No chart is renamed, no release is upgraded, and no
 fixture state is changed by this inventory. Public names do not automatically
@@ -13,10 +12,21 @@ rename data-bearing Kubernetes objects, SQL schemas or internal pipeline command
 | --- | --- | --- |
 | `locker` | `session-object-storage` | MinIO dependency/value alias and separate kind storage release. Preserve its existing StatefulSet/claims and legacy Service DNS; do not move or replace stored objects to obtain the name. |
 | `alleyoop-ingest` | `session-ingest-api` | Ingest chart/workload identity, currently backed by Service `alleyoop`. Keep internal `SERVICE=alleyoop-ingest`, existing routing and stage entrypoints unchanged. |
+| `bob-costas` | `session-summary-worker` | Component key in `sessions-pipeline-worker`, rendered as `sessions-bob-costas` in kind. Preserve the existing selector/component key and internal `SERVICE=bob-costas`; no summary model or runtime behavior changes with the name. |
+| `hoopdb-indexer` | `session-metadata-indexer` | Component key in the same worker chart, rendered as `sessions-hoopdb-indexer`. Preserve its selector, migration/startup barrier, single replica and internal `SERVICE=hoopdb-indexer`. |
+| `referee` | `session-status-worker` | Component key in the same worker chart, rendered as `sessions-referee`. Preserve selector/component identity, lifecycle/status behavior and internal `SERVICE=referee`. |
 
 Control, dashboard and parent pipeline package renames are not inferred from
-this two-name request. They appear below only because their bindings/callers are
+this five-name request. They appear below only because their bindings/callers are
 part of the baseline that must remain stable.
+
+The three worker names are components of one existing chart, not three new
+functional chart packages. Their current values live under
+`sessions-pipeline.worker.components.<legacy-name>` in the umbrella. The
+worker's `_names.tpl`, `_labels.tpl`, `_env.tpl` and `deployments.yaml` couple
+those component keys to resource names, immutable selectors and SERVICE values.
+Implementing descriptive public labels must separate those concerns explicitly;
+changing the keys in place would change more than the public name.
 
 An additive public Service/display alias is distinct from a Helm package,
 dependency alias or workload rename. The source implementation must specify which
