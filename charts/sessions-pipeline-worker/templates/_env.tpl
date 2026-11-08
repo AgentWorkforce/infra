@@ -242,6 +242,7 @@ Role names follow the migrator's pattern exactly.
 {{- else if eq $m.databaseMode "rds" }}
 {{- if eq $m.supabaseShim true }}{{ fail "sessions-pipeline-worker: migrations.supabaseShim must not be true in rds mode (supabase/bootstrap/rds_migration_roles.sql replaces it)" }}{{ end -}}
 {{- if eq $m.roleBootstrap true }}{{ fail "sessions-pipeline-worker: migrations.roleBootstrap must not be true in rds mode (the operator runs the rds_*.sql bootstrap as the master)" }}{{ end -}}
+{{- if $m.waitForRole.enabled }}{{ fail "sessions-pipeline-worker: migrations.waitForRole must be disabled in rds mode (psql and the migrator cannot share a TLS URL there; the migrator verifies the roles)" }}{{ end -}}
 {{- if $m.runtimeWorkloadRole }}{{ fail "sessions-pipeline-worker: migrations.runtimeWorkloadRole is not supported in rds mode; the runtime role must log in itself" }}{{ end -}}
 {{- if and (kindIs "bool" $m.runtimeRoleLogin) (not $m.runtimeRoleLogin) }}{{ fail "sessions-pipeline-worker: migrations.runtimeRoleLogin must be true in rds mode" }}{{ end -}}
 {{- else if kindIs "invalid" $m.supabaseShim }}{{ fail (printf "sessions-pipeline-worker: migrations.supabaseShim must be set (true or false) in %s mode" $m.databaseMode) }}{{ end -}}

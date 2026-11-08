@@ -291,6 +291,55 @@ chart `sessions-pipeline` · values [`profiles/external-selfhosted.yaml`](../cha
 
 chart `sessions-pipeline` · values [`profiles/external-rds.yaml`](../charts/sessions-pipeline/profiles/external-rds.yaml) · dbMode `rds` · boundary `global-default-revoke` · HoopDb external · services image GHCR-RDS · install: `helm install sessions-pipeline agentworkforce/sessions-pipeline -f profiles/external-rds.yaml --set global.tenant.orgId=<org> --set alleyoop.auth.jwksUrl=<jwks url> --set worker.migrations.runtimeRole=<role> --set worker.migrations.runtimeRoleLogin=true`
 
+**Requirements (provide these)**
+
+| | requirement | provided by | maps to | verify |
+| --- | --- | --- | --- | --- |
+| shipped | [External Secrets Operator and a ClusterSecretStore (only with externalSecrets.enabled)](#req-k8s-external-secrets-operator) | operator | values `sessions-pipeline-worker:externalSecrets.*`, `session-ingest-api:externalSecrets.*` | kubectl get crd externalsecrets.external-secrets.io && kubectl get clustersecretstore <name>; the ExternalSecret reports Ready |
+| shipped | [Pull Secret for the private GHCR services image](#req-secret-image-pull) | operator | values `worker.imagePullSecrets`, `alleyoop.imagePullSecrets`; Secret `<pull secret>` (type kubernetes.io/dockerconfigjson with read access to ghcr.io/agentworkforce/96bulls-services) | kubectl get secret <pull secret> -o jsonpath='{.type}' is kubernetes.io/dockerconfigjson; pods are not ImagePullBackOff |
+| shipped | [Locker credential Secret (MinIO root / S3 static keys)](#req-secret-locker-credentials) | operator | values `worker.existingSecret`, `alleyoop.existingSecret`, `session-object-storage.existingSecret`, `worker.secretKeys.lockerAccessKeyId`, `worker.secretKeys.lockerSecretAccessKey`, `alleyoop.secretKeys.lockerAccessKeyId`, `alleyoop.secretKeys.lockerSecretAccessKey`; env `LOCKER_ACCESS_KEY_ID`, `LOCKER_SECRET_ACCESS_KEY`; Secret `sessions-pipeline-locker` keys `rootUser`, `rootPassword`; Secret `sessions-pipeline-locker` (the bundled upstream MinIO requires literal Secret data keys rootUser and rootPassword) | kubectl get secret sessions-pipeline-locker -o jsonpath='{.data}' has rootUser and rootPassword |
+| shipped | [Summary encryption keyring (SUMMARY_MASTER_KEYS)](#req-secret-summary-master-keys) | operator | values `worker.summaryEncryption.existingSecret`, `worker.summaryEncryption.key`, `worker.summaryEncryption.mountPath`, `worker.summaryEncryption.fileName`; env `SUMMARY_MASTER_KEYS_FILE`, `SUMMARY_MASTER_KEYS`; Secret `sessions-pipeline-locker` keys `SUMMARY_MASTER_KEYS` | kubectl exec deploy/<release>-worker-bob-costas -- test -r /var/run/secrets/sessions-pipeline/summary-master-keys; the Secret key parses as <id>:<64 hex> |
+| shipped | [HoopDb connection Secret (HOOPDB_URL)](#req-secret-hoopdb-url) | operator | values `worker.hoopdb.existingSecret`, `worker.hoopdb.key`, `worker.secretKeys.hoopdbUrl`, `alleyoop.hoopdb.existingSecret`, `alleyoop.hoopdb.key`, `alleyoop.secretKeys.hoopdbUrl`; env `HOOPDB_URL`; Secret `sessions-pipeline-hoopdb` keys `HOOPDB_URL` | kubectl get secret sessions-pipeline-hoopdb -o jsonpath='{.data.HOOPDB_URL}' \| base64 -d \| psql -X -c 'select 1' |
+| shipped | [Separate migration-owner connection Secret (HOOPDB_MIGRATION_URL)](#req-secret-hoopdb-migration-url) | operator | values `worker.migrations.hoopdb.existingSecret`, `worker.migrations.hoopdb.key`; Secret `sessions-pipeline-hoopdb` keys `HOOPDB_MIGRATION_URL` | kubectl get secret 96bulls-gcp -o jsonpath='{.data.HOOPDB_MIGRATION_URL}' connects as the migration owner (select current_user) |
+| shipped | [Agent Relay org id (TENANT_ORG_ID)](#req-sessions-pipeline-tenant-org-id) | operator | values `global.tenant.orgId`, `worker.tenant.orgId`, `alleyoop.tenant.orgId`; env `TENANT_ORG_ID` | helm template renders (it fails with "tenant.orgId (or global.tenant.orgId) is required" otherwise) |
+| shipped | [A RelayAuth JWKS URL reachable from alleyoop](#req-sessions-pipeline-relayauth-jwks) | operator | values `alleyoop.auth.jwksUrl`; env `RELAYAUTH_JWKS_URL` | kubectl run -it --rm curl --image=curlimages/curl -- curl -fsS <jwksUrl> returns {"keys":[...]} |
+| shipped | [PostgreSQL 17 with pg_trgm and btree_gin (and vector) available](#req-db-postgres-17-extensions) | operator | values `hoopdb.cluster.imageName`, `hoopdb.cluster.initdb.postInitApplicationSQL` | psql "$HOOPDB_URL" -Atc "select name from pg_available_extensions where name in ('pg_trgm','btree_gin','vector')" lists all three; server_version_num >= 170000 |
+| shipped | [A database dedicated to HoopDb](#req-db-dedicated-database) | operator | values `hoopdb.cluster.initdb.database`, `hoopdb.cluster.initdb.owner` | psql "$HOOPDB_URL" -Atc "select nspname from pg_namespace where nspname not like 'pg_%' and nspname <> 'information_schema'" shows only HoopDb schemas |
+| shipped | [Supabase compatibility roles (anon, authenticated, service_role)](#req-db-compat-roles) | operator | values `hoopdb.cluster.initdb.postInitApplicationSQL`, `worker.migrations.supabaseShim` | psql "$HOOPDB_URL" -Atc "select count(*) from pg_roles where rolname in ('anon','authenticated','service_role')" is 3 |
+| shipped | [The session directory search Worker role (session_directory_search_worker)](#req-db-search-worker-role) | operator | values `hoopdb.cluster.initdb.postInitApplicationSQL`, `searchWorkerRole.bootstrapJob.enabled`, `searchWorkerRole.bootstrapJob.sqlPath`, `worker.migrations.waitForRole.role` | run supabase/bootstrap/session_directory_search_worker.sql as the RDS master; then the same query |
+| shipped | [The dedicated HoopDb runtime role (HOOPDB_RUNTIME_ROLE, e.g. sessions_pipeline_runtime)](#req-db-runtime-role) | operator | values `worker.migrations.runtimeRole`, `worker.migrations.runtimeRoleLogin`, `runtimeRole.bootstrapJob.enabled`, `runtimeRole.bootstrapJob.sqlPath`; env `HOOPDB_RUNTIME_ROLE`, `HOOPDB_RUNTIME_ROLE_LOGIN` | psql "$HOOPDB_URL" -Atc "select rolsuper, rolcreatedb, rolcreaterole, rolreplication, rolbypassrls, rolcanlogin from pg_roles where rolname='sessions_pipeline_runtime'" is f\|f\|f\|f\|f\|t; migrate refuses otherwise |
+| shipped | [The durable function boundary installed before the first migrate](#req-db-function-boundary) | operator | values `functionDefaultRevoke.bootstrapJob.enabled`, `functionDefaultRevoke.bootstrapJob.sqlPath`, `worker.migrations.waitForRole.functionDefault` | the function-default Job completes and migrate's wait-for-role logs "present: ... + owner function default" |
+| shipped | [migrate always runs the phase 2 role verify (HOOPDB_ROLE_VERIFY=true)](#req-sessions-pipeline-role-verify) | chart | env `HOOPDB_ROLE_VERIFY` | kubectl get job -l app.kubernetes.io/component=hoopdb-migrate -o yaml shows HOOPDB_ROLE_VERIFY "true"; workloads go ready after migrate |
+| **planned** | [Model API key Secret for session briefs (OPENAI_API_KEY)](#req-secret-model-api-key) | operator | values `worker.sessionBrief.existingSecret`, `worker.sessionBrief.secretKeys.*`; env `OPENAI_API_KEY`; Secret `<model key Secret>` keys `OPENAI_API_KEY` | not applicable until charted |
+
+**Options (choose)**
+
+| | option | choices | default here | maps to |
+| --- | --- | --- | --- | --- |
+| shipped | [alleyoop token verification source](#opt-alleyoop-auth-mode) | `jwksUrl`, `localJwks` | `jwksUrl` | values `alleyoop.auth.jwksUrl`, `alleyoop.auth.localJwks`, `alleyoop.auth.issuer`, `alleyoop.auth.audience`, `alleyoop.secretKeys.jwksJson`; env `RELAYAUTH_JWKS_URL`, `JWKS_JSON`, `AUTH_ISSUER`, `AUTH_AUDIENCE`; Secret `<existingSecret>` keys `JWKS_JSON` (only with auth.localJwks=true) |
+| shipped | [Plain http to in-cluster Service FQDNs](#opt-sessions-pipeline-in-cluster-http) | `false`, `true` | `false` | values `alleyoop.allowInClusterHttp`, `worker.allowInClusterHttp`; env `ALLOW_IN_CLUSTER_HTTP` |
+| shipped | [RelayHistory origin expected by the ingest](#opt-alleyoop-history-origin) | `unset`, `origin` | `unset` | values `alleyoop.auth.historyOrigin`; env `RELAYHISTORY_ORIGIN` |
+| shipped | [Interim RelayAuth bearer compatibility (local only)](#opt-alleyoop-interim-relayauth-bearer) | `false`, `true` | `false` | values `alleyoop.auth.allowInterimRelayAuthBearer`; env `ALLOW_INTERIM_RELAYAUTH_BEARER` |
+| shipped | [HoopDb backend](#opt-sessions-pipeline-hoopdb-backend) | `cnpg`, `external` | `external` | values `hoopdb.enabled` |
+| shipped | [Migrator database mode (HOOPDB_DB_MODE)](#opt-sessions-pipeline-db-mode) | `selfhosted`, `cloudsql`, `supabase`, `local` | `selfhosted` | values `worker.migrations.databaseMode`; env `HOOPDB_DB_MODE` |
+| shipped | [Function boundary mode (HOOPDB_FUNCTION_BOUNDARY_MODE)](#opt-sessions-pipeline-function-boundary-mode) | `global-default-revoke`, `event-trigger` | `global-default-revoke` | values `worker.migrations.functionBoundaryMode`; env `HOOPDB_FUNCTION_BOUNDARY_MODE`, `HOOPDB_FUNCTION_BOUNDARY_APPROVED` |
+| shipped | [Plain-Postgres role shim (HOOPDB_SUPABASE_SHIM)](#opt-sessions-pipeline-supabase-shim) | `true`, `false` | `true` | values `worker.migrations.supabaseShim`; env `HOOPDB_SUPABASE_SHIM` |
+| shipped | [Migrator role bootstrap (HOOPDB_ROLE_BOOTSTRAP)](#opt-sessions-pipeline-role-bootstrap) | `true`, `false`, `unset` | (no default) | values `worker.migrations.roleBootstrap`; env `HOOPDB_ROLE_BOOTSTRAP` |
+| shipped | [Runtime workload role (HOOPDB_RUNTIME_WORKLOAD_ROLE)](#opt-sessions-pipeline-runtime-workload-role) | `""`, `<role>` | `""` | values `worker.migrations.runtimeWorkloadRole`; env `HOOPDB_RUNTIME_WORKLOAD_ROLE` |
+| shipped | [migrate's wait-for-role ordering](#opt-sessions-pipeline-wait-for-role) | `true`, `false` | `false` | values `worker.migrations.waitForRole.enabled`, `worker.migrations.waitForRole.functionDefault`, `worker.migrations.waitForRole.image`, `worker.migrations.waitForRole.intervalSeconds`, `worker.migrations.waitForRole.role` |
+| shipped | [Separate migration-owner URL for migrate](#opt-hoopdb-migration-owner-url) | `""`, `<secret>/<key>` | `""` | values `worker.migrations.hoopdb.existingSecret`, `worker.migrations.hoopdb.key` |
+| shipped | [Locker object store](#opt-sessions-pipeline-locker-backend) | `minio`, `external` | `minio` | values `session-object-storage.enabled`, `worker.locker.endpoint`, `worker.locker.bucket`, `worker.locker.region`, `alleyoop.locker.endpoint`, `alleyoop.locker.bucket`, `alleyoop.locker.region`, `worker.lockerInit.enabled`; env `LOCKER_ENDPOINT`, `LOCKER_BUCKET`, `LOCKER_REGION` |
+| shipped | [Locker credentials mode](#opt-sessions-pipeline-locker-credentials-mode) | `secret`, `podIdentity` | `secret` | values `worker.locker.credentials.mode`, `alleyoop.locker.credentials.mode` |
+| shipped | [Locker provider (S3-compatible or native GCS)](#opt-sessions-pipeline-locker-provider) | `s3`, `gcs` | `s3` | values `worker.locker.provider`, `alleyoop.locker.provider`, `worker.extraEnv`, `alleyoop.extraEnv`; env `LOCKER_PROVIDER`, `PIPELINE_RAW_PROVIDER`, `CLOUD_SQL_CONNECTION_NAME`, `REDIS_HOST`, `REDIS_PORT`, `REDIS_AUTH_ENABLED`, `REDIS_TRANSIT_ENCRYPTION`, `REDIS_TLS_CA_PEM`, `PUBSUB_TOPIC`, `PUBSUB_SUBSCRIPTION` |
+| shipped | [Services image registry](#opt-sessions-pipeline-services-image) | `ghcr`, `ecr` | `ghcr` | values `worker.image.repository`, `worker.image.digest`, `worker.image.tag`, `alleyoop.image.repository`, `alleyoop.image.digest`, `alleyoop.image.tag`, `global.imageRegistry` |
+| shipped | [OpenTelemetry export](#opt-sessions-pipeline-otel) | `""`, `<your OTLP endpoint>`, `http://otel-collector:4318` | `""` | values `global.otel.endpoint`, `otel.enabled`, `otel.config.*`; env `OTEL_EXPORTER_OTLP_ENDPOINT` |
+| shipped | [Workspace, deployment and environment labels](#opt-sessions-pipeline-deployment-identity) | `<any>` | `workspaceId=default`, `deployment=selfhost`, `environment=production` | values `worker.tenant.workspaceId`, `worker.deployment.name`, `worker.deployment.id`, `worker.environment`, `alleyoop.tenant.workspaceId`, `alleyoop.deployment.name`, `alleyoop.deployment.id`, `alleyoop.environment`; env `WORKSPACE_ID`, `DEPLOYMENT`, `DEPLOYMENT_ID`, `ENVIRONMENT` |
+| shipped | [Stage worker health server](#opt-sessions-pipeline-worker-health) | `true`, `false` | `true` | values `worker.workerHealth.*`; env `WORKER_HEALTH_PORT`, `WORKER_UNHEALTHY_AFTER_FAILURES`, `WORKER_MAX_TICK_AGE_MS` |
+| shipped | [Bob Costas summariser model (BOB_COSTAS_MODEL)](#opt-sessions-pipeline-bob-costas-model) | `off` | `off` | values `worker.components.bob-costas.env`; env `BOB_COSTAS_MODEL` |
+| **planned** | [Transcript search backend (search.backend)](#opt-sessions-pipeline-search-backend) | `postgres`, `clickhouse` (**planned**) | `postgres` | values `search.backend`, `search.clickhouse.*` |
+| **planned** | [Model session briefs](#opt-sessions-pipeline-session-briefs) | `false`, `true` (**planned**) | `false` | values `worker.sessionBrief.enabled`, `worker.sessionBrief.model`; env `SESSION_BRIEF_ENABLED`, `SESSION_BRIEF_MODEL` |
+| shipped | [Default-off self-host session read API container](#opt-sessions-read-api) | `disabled`, `enabled` | `disabled` | values `readApi.*`; env `SERVICE`, `RELAYHISTORY_SELFHOST_READ_API`, `RELAYHISTORY_READ_API_PORT`, `RELAYHISTORY_READ_API_SECRET`, `READ_API_ORIGIN`, `READ_API_COMPLETE_SINCE`, `READ_API_DIRECTORY_WORKSPACES`, `SEARCH_INDEX_BACKEND`, `ALLOW_IN_CLUSTER_HTTP`, `RELAYAUTH_JWKS_URL`, `RELAYAUTH_ISSUER`, `RELAYHISTORY_ACCEPT_RELAYCONTROL_TOKENS`, `RELAYCONTROL_INTROSPECT_URL`, `RELAYCONTROL_INTROSPECT_SECRET`; Secret `<read API configuration Secret>` keys `RELAYHISTORY_READ_API_SECRET`; Secret `<read API introspection Secret>` keys `RELAYCONTROL_INTROSPECT_SECRET` |
+
 ### Profile: external-supabase
 
 **External Supabase project as HoopDb (fail-closed).** Held by supabaseActivation.hold until the pinned image is confirmed as the production-Supabase pin and the live Supabase activation steps are approved. No shim, no wait-for-role, no privileged Jobs.
@@ -863,7 +912,7 @@ lockerInit is disabled.
 
 <a id="req-k8s-external-secrets-operator"></a>
 
-**External Secrets Operator and a ClusterSecretStore (only with externalSecrets.enabled)** · shipped · chart `sessions-pipeline-worker`, `session-ingest-api` · profiles selfhost-postgres, migration, external-selfhosted, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql
+**External Secrets Operator and a ClusterSecretStore (only with externalSecrets.enabled)** · shipped · chart `sessions-pipeline-worker`, `session-ingest-api` · profiles selfhost-postgres, migration, external-selfhosted, external-rds, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql
 
 externalSecrets.enabled renders an ExternalSecret (external-secrets.io/v1) whose
 target is existingSecret. The ESO CRDs and the named secretStoreRef must exist,
@@ -878,7 +927,7 @@ and every consumed key must be mapped in externalSecrets.data.
 
 <a id="req-secret-image-pull"></a>
 
-**Pull Secret for the private GHCR services image** · shipped · chart `sessions-pipeline` · profiles selfhost-postgres, migration, external-selfhosted, external-supabase, aws-supabase, gcp-cloudsql
+**Pull Secret for the private GHCR services image** · shipped · chart `sessions-pipeline` · profiles selfhost-postgres, migration, external-selfhosted, external-rds, external-supabase, aws-supabase, gcp-cloudsql
 
 ghcr.io/agentworkforce/96bulls-services is a private package. Create a
 docker-registry Secret and list it in the umbrella's shared imagePullSecrets
@@ -895,7 +944,7 @@ The ECR path (EKS node role) needs none.
 
 <a id="req-secret-locker-credentials"></a>
 
-**Locker credential Secret (MinIO root / S3 static keys)** · shipped · chart `sessions-pipeline` · profiles selfhost-postgres, migration, external-selfhosted, external-supabase
+**Locker credential Secret (MinIO root / S3 static keys)** · shipped · chart `sessions-pipeline` · profiles selfhost-postgres, migration, external-selfhosted, external-rds, external-supabase
 
 In secret mode the workers and alleyoop read the Locker access key pair from
 existingSecret, and the bundled MinIO reads its root credential from the same
@@ -914,7 +963,7 @@ Secret (session-object-storage.existingSecret). Not used with locker.credentials
 
 <a id="req-secret-summary-master-keys"></a>
 
-**Summary encryption keyring (SUMMARY_MASTER_KEYS)** · shipped · chart `sessions-pipeline` · profiles selfhost-postgres, migration, external-selfhosted, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql
+**Summary encryption keyring (SUMMARY_MASTER_KEYS)** · shipped · chart `sessions-pipeline` · profiles selfhost-postgres, migration, external-selfhosted, external-rds, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql
 
 Bob Costas encrypts summary objects before they reach the Locker. The keyring
 ("<key-id>:<64 hex>[,<key-id>:<64 hex>...]", first is current) comes only from
@@ -933,7 +982,7 @@ worker.existingSecret; pod-identity installs with no shared Secret must set it.
 
 <a id="req-secret-hoopdb-url"></a>
 
-**HoopDb connection Secret (HOOPDB_URL)** · shipped · chart `sessions-pipeline` · profiles selfhost-postgres, migration, external-selfhosted, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql
+**HoopDb connection Secret (HOOPDB_URL)** · shipped · chart `sessions-pipeline` · profiles selfhost-postgres, migration, external-selfhosted, external-rds, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql
 
 Every workload and migrate read HOOPDB_URL from hoopdb.existingSecret/key (else
 existingSecret / secretKeys.hoopdbUrl). With the in-cluster HoopDb it is the
@@ -941,27 +990,27 @@ Secret CloudNativePG generates (hoopdb-app, key uri): nothing to create. With an
 external database the operator (or the stack) creates it; for supabase it is the
 migration role's connection string unless migrations.hoopdb separates them.
 
-- Provided by: default: chart, external-selfhosted: operator, external-supabase: operator, aws-supabase: stack, gcp-cloudsql: stack
+- Provided by: default: chart, external-selfhosted: operator, external-rds: operator, external-supabase: operator, aws-supabase: stack, gcp-cloudsql: stack
 - Values: `worker.hoopdb.existingSecret`, `worker.hoopdb.key`, `worker.secretKeys.hoopdbUrl`, `alleyoop.hoopdb.existingSecret`, `alleyoop.hoopdb.key`, `alleyoop.secretKeys.hoopdbUrl`
 - Env: `HOOPDB_URL`
-- Secret: `hoopdb-app` (default), `sessions-pipeline-hoopdb` (external-selfhosted), `sessions-pipeline-hoopdb` (external-supabase), `96bulls-gcp` (gcp-cloudsql) from `worker.hoopdb.existingSecret` then `worker.existingSecret`; keys `uri` (default), `HOOPDB_URL` (external-selfhosted), `HOOPDB_URL` (external-supabase), `HOOPDB_URL` (gcp-cloudsql) from `worker.hoopdb.key,worker.secretKeys.hoopdbUrl`
-- Secret: `hoopdb-app` (default), `sessions-pipeline-hoopdb` (external-selfhosted), `sessions-pipeline-hoopdb` (external-supabase), `96bulls-gcp` (gcp-cloudsql) from `alleyoop.hoopdb.existingSecret` then `alleyoop.existingSecret`; keys `uri` (default), `HOOPDB_URL` (external-selfhosted), `HOOPDB_URL` (external-supabase), `HOOPDB_URL` (gcp-cloudsql) from `alleyoop.hoopdb.key,alleyoop.secretKeys.hoopdbUrl`
-- Verify: default: kubectl get secret hoopdb-app -o jsonpath='{.data.uri}' is non-empty once the CNPG Cluster is ready / external-selfhosted: kubectl get secret sessions-pipeline-hoopdb -o jsonpath='{.data.HOOPDB_URL}' \| base64 -d \| psql -X -c 'select 1' / external-supabase: kubectl get secret sessions-pipeline-hoopdb -o jsonpath='{.data.HOOPDB_URL}' \| base64 -d \| psql -X -c 'select current_user'
+- Secret: `hoopdb-app` (default), `sessions-pipeline-hoopdb` (external-selfhosted), `sessions-pipeline-hoopdb` (external-rds), `sessions-pipeline-hoopdb` (external-supabase), `96bulls-gcp` (gcp-cloudsql) from `worker.hoopdb.existingSecret` then `worker.existingSecret`; keys `uri` (default), `HOOPDB_URL` (external-selfhosted), `HOOPDB_URL` (external-rds), `HOOPDB_URL` (external-supabase), `HOOPDB_URL` (gcp-cloudsql) from `worker.hoopdb.key,worker.secretKeys.hoopdbUrl`
+- Secret: `hoopdb-app` (default), `sessions-pipeline-hoopdb` (external-selfhosted), `sessions-pipeline-hoopdb` (external-rds), `sessions-pipeline-hoopdb` (external-supabase), `96bulls-gcp` (gcp-cloudsql) from `alleyoop.hoopdb.existingSecret` then `alleyoop.existingSecret`; keys `uri` (default), `HOOPDB_URL` (external-selfhosted), `HOOPDB_URL` (external-rds), `HOOPDB_URL` (external-supabase), `HOOPDB_URL` (gcp-cloudsql) from `alleyoop.hoopdb.key,alleyoop.secretKeys.hoopdbUrl`
+- Verify: default: kubectl get secret hoopdb-app -o jsonpath='{.data.uri}' is non-empty once the CNPG Cluster is ready / external-selfhosted: kubectl get secret sessions-pipeline-hoopdb -o jsonpath='{.data.HOOPDB_URL}' \| base64 -d \| psql -X -c 'select 1' / external-rds: kubectl get secret sessions-pipeline-hoopdb -o jsonpath='{.data.HOOPDB_URL}' \| base64 -d \| psql -X -c 'select 1' / external-supabase: kubectl get secret sessions-pipeline-hoopdb -o jsonpath='{.data.HOOPDB_URL}' \| base64 -d \| psql -X -c 'select current_user'
 - Sources: [`charts/sessions-pipeline/values.yaml:39`](../charts/sessions-pipeline/values.yaml#L39), [`charts/sessions-pipeline/profiles/external-selfhosted.yaml:11`](../charts/sessions-pipeline/profiles/external-selfhosted.yaml#L11), [`charts/sessions-pipeline/profiles/external-supabase.yaml:24`](../charts/sessions-pipeline/profiles/external-supabase.yaml#L24), [`charts/sessions-pipeline-worker/templates/_env.tpl:162`](../charts/sessions-pipeline-worker/templates/_env.tpl#L162), [`charts/session-ingest-api/templates/_env.tpl:54`](../charts/session-ingest-api/templates/_env.tpl#L54)
 
 #### req.secret.hoopdb-migration-url
 
 <a id="req-secret-hoopdb-migration-url"></a>
 
-**Separate migration-owner connection Secret (HOOPDB_MIGRATION_URL)** · shipped · chart `sessions-pipeline` · profiles gcp-cloudsql
+**Separate migration-owner connection Secret (HOOPDB_MIGRATION_URL)** · shipped · chart `sessions-pipeline` · profiles gcp-cloudsql, external-rds
 
-On Cloud SQL the services connect as the least-privilege runtime role and only
+On Cloud SQL and RDS the services connect as the least-privilege runtime role and only
 the migrate Job (and its wait-for-role) connects as the migration owner, from
 migrations.hoopdb.existingSecret/key.
 
-- Provided by: stack
+- Provided by: default: stack, external-rds: operator
 - Values: `worker.migrations.hoopdb.existingSecret`, `worker.migrations.hoopdb.key`
-- Secret: `96bulls-gcp` from `worker.migrations.hoopdb.existingSecret`; keys `HOOPDB_MIGRATION_URL` from `worker.migrations.hoopdb.key`
+- Secret: `96bulls-gcp` (default), `sessions-pipeline-hoopdb` (external-rds) from `worker.migrations.hoopdb.existingSecret`; keys `HOOPDB_MIGRATION_URL` from `worker.migrations.hoopdb.key`
 - Verify: kubectl get secret 96bulls-gcp -o jsonpath='{.data.HOOPDB_MIGRATION_URL}' connects as the migration owner (select current_user)
 - Sources: [`charts/sessions-pipeline/ci/gcp-cloudsql-values.yaml:33`](../charts/sessions-pipeline/ci/gcp-cloudsql-values.yaml#L33), [`charts/sessions-pipeline-worker/values.yaml:93`](../charts/sessions-pipeline-worker/values.yaml#L93), `sessions-pipeline@7d7229b:stacks/gcp/config.ts:1002`
 
@@ -969,7 +1018,7 @@ migrations.hoopdb.existingSecret/key.
 
 <a id="req-sessions-pipeline-tenant-org-id"></a>
 
-**Agent Relay org id (TENANT_ORG_ID)** · shipped · chart `sessions-pipeline` · profiles selfhost-postgres, migration, external-selfhosted, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql
+**Agent Relay org id (TENANT_ORG_ID)** · shipped · chart `sessions-pipeline` · profiles selfhost-postgres, migration, external-selfhosted, external-rds, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql
 
 The org this install ingests for; every profile leaves it to the operator and the render fails without it.
 
@@ -983,7 +1032,7 @@ The org this install ingests for; every profile leaves it to the operator and th
 
 <a id="req-sessions-pipeline-relayauth-jwks"></a>
 
-**A RelayAuth JWKS URL reachable from alleyoop** · shipped · chart `sessions-pipeline` · profiles selfhost-postgres, migration, external-selfhosted, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql
+**A RelayAuth JWKS URL reachable from alleyoop** · shipped · chart `sessions-pipeline` · profiles selfhost-postgres, migration, external-selfhosted, external-rds, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql
 
 alleyoop verifies courier tokens against RelayAuth's JWKS (RELAYAUTH_JWKS_URL).
 Point it at a RelayAuth install (the relayauth profile, with its JWKS ingress or
@@ -999,7 +1048,7 @@ in-cluster Service) or the hosted issuer. Every profile leaves it to the operato
 
 <a id="req-db-postgres-17-extensions"></a>
 
-**PostgreSQL 17 with pg_trgm and btree_gin (and vector) available** · shipped · chart `sessions-pipeline` · profiles selfhost-postgres, migration, external-selfhosted, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql
+**PostgreSQL 17 with pg_trgm and btree_gin (and vector) available** · shipped · chart `sessions-pipeline` · profiles selfhost-postgres, migration, external-selfhosted, external-rds, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql
 
 The session directory migrations run CREATE EXTENSION IF NOT EXISTS pg_trgm and
 btree_gin WITH SCHEMA public (both trusted, so the migration owner can create
@@ -1008,7 +1057,7 @@ them. The chart's in-cluster HoopDb uses the CNPG standard Postgres 17 image and
 also creates vector and pg_trgm at initdb; the chart documents vector for
 external databases too, though the migrations at 7d7229b do not use it.
 
-- Provided by: default: chart, external-selfhosted: operator, external-supabase: operator, aws-supabase: operator, gcp-cloudsql: stack
+- Provided by: default: chart, external-selfhosted: operator, external-rds: operator, external-supabase: operator, aws-supabase: operator, gcp-cloudsql: stack
 - Values: `hoopdb.cluster.imageName`, `hoopdb.cluster.initdb.postInitApplicationSQL`
 - Verify: psql "$HOOPDB_URL" -Atc "select name from pg_available_extensions where name in ('pg_trgm','btree_gin','vector')" lists all three; server_version_num >= 170000
 - Sources: [`charts/sessions-pipeline/values.yaml:99`](../charts/sessions-pipeline/values.yaml#L99), [`charts/sessions-pipeline/values.yaml:119`](../charts/sessions-pipeline/values.yaml#L119), [`docs/self-hosted-reference-architecture.md:75`](../docs/self-hosted-reference-architecture.md#L75), `sessions-pipeline@7d7229b:supabase/migrations/20261030010000_session_directory.sql:9`, `sessions-pipeline@7d7229b:supabase/migrations/20261030020000_session_directory_short_summary.sql:177`
@@ -1017,13 +1066,13 @@ external databases too, though the migrations at 7d7229b do not use it.
 
 <a id="req-db-dedicated-database"></a>
 
-**A database dedicated to HoopDb** · shipped · chart `sessions-pipeline` · profiles selfhost-postgres, migration, aws-cnpg, external-selfhosted, gcp-cloudsql
+**A database dedicated to HoopDb** · shipped · chart `sessions-pipeline` · profiles selfhost-postgres, migration, aws-cnpg, external-selfhosted, external-rds, gcp-cloudsql
 
 global-default-revoke sets the global function default of the migration owner
 and every superuser in the HoopDb database; that is safe only because the
 database holds nothing else. The in-cluster HoopDb is dedicated by construction.
 
-- Provided by: default: chart, external-selfhosted: operator, gcp-cloudsql: stack
+- Provided by: default: chart, external-selfhosted: operator, external-rds: operator, gcp-cloudsql: stack
 - Values: `hoopdb.cluster.initdb.database`, `hoopdb.cluster.initdb.owner`
 - Verify: psql "$HOOPDB_URL" -Atc "select nspname from pg_namespace where nspname not like 'pg_%' and nspname <> 'information_schema'" shows only HoopDb schemas
 - Sources: [`charts/sessions-pipeline/profiles/external-selfhosted.yaml:2`](../charts/sessions-pipeline/profiles/external-selfhosted.yaml#L2), [`charts/sessions-pipeline/values.yaml:275`](../charts/sessions-pipeline/values.yaml#L275)
@@ -1032,14 +1081,15 @@ database holds nothing else. The in-cluster HoopDb is dedicated by construction.
 
 <a id="req-db-compat-roles"></a>
 
-**Supabase compatibility roles (anon, authenticated, service_role)** · shipped · chart `sessions-pipeline` · profiles selfhost-postgres, migration, aws-cnpg, external-selfhosted, external-supabase, aws-supabase, gcp-cloudsql
+**Supabase compatibility roles (anon, authenticated, service_role)** · shipped · chart `sessions-pipeline` · profiles selfhost-postgres, migration, aws-cnpg, external-selfhosted, external-rds, external-supabase, aws-supabase, gcp-cloudsql
 
 The migrations GRANT to the Supabase roles. CNPG initdb creates them as
 superuser; on plain external Postgres the migrator's shim creates them
 (HOOPDB_SUPABASE_SHIM=true); on Cloud SQL the operator's
-cloudsql_migration_roles.sql does (shim off); Supabase has them natively.
+cloudsql_migration_roles.sql does (shim off); on RDS the master's
+rds_migration_roles.sql does (shim off); Supabase has them natively.
 
-- Provided by: default: chart, external-selfhosted: migrator, external-supabase: operator, aws-supabase: operator, gcp-cloudsql: operator
+- Provided by: default: chart, external-selfhosted: migrator, external-rds: operator, external-supabase: operator, aws-supabase: operator, gcp-cloudsql: operator
 - Values: `hoopdb.cluster.initdb.postInitApplicationSQL`, `worker.migrations.supabaseShim`
 - Verify: psql "$HOOPDB_URL" -Atc "select count(*) from pg_roles where rolname in ('anon','authenticated','service_role')" is 3
 - Sources: [`charts/sessions-pipeline/values.yaml:122`](../charts/sessions-pipeline/values.yaml#L122), [`charts/sessions-pipeline/ci/gcp-cloudsql-values.yaml:5`](../charts/sessions-pipeline/ci/gcp-cloudsql-values.yaml#L5), `sessions-pipeline@7d7229b:supabase/bootstrap/cloudsql_migration_roles.sql:1`
@@ -1048,7 +1098,7 @@ cloudsql_migration_roles.sql does (shim off); Supabase has them natively.
 
 <a id="req-db-search-worker-role"></a>
 
-**The session directory search Worker role (session_directory_search_worker)** · shipped · chart `sessions-pipeline` · profiles selfhost-postgres, migration, aws-cnpg, external-selfhosted, external-supabase, aws-supabase, gcp-cloudsql
+**The session directory search Worker role (session_directory_search_worker)** · shipped · chart `sessions-pipeline` · profiles selfhost-postgres, migration, aws-cnpg, external-selfhosted, external-rds, external-supabase, aws-supabase, gcp-cloudsql
 
 NOLOGIN NOINHERIT NOBYPASSRLS NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION,
 exactly statement_timeout=2s, no memberships. The migration only verifies it
@@ -1056,26 +1106,26 @@ exactly statement_timeout=2s, no memberships. The migration only verifies it
 initdb; existing CNPG clusters from searchWorkerRole.bootstrapJob; external
 databases from the operator (Supabase uses the transactional _supabase wrapper).
 
-- Provided by: default: chart, external-selfhosted: operator, external-supabase: operator, aws-supabase: operator, gcp-cloudsql: operator
+- Provided by: default: chart, external-selfhosted: operator, external-rds: operator, external-supabase: operator, aws-supabase: operator, gcp-cloudsql: operator
 - Values: `hoopdb.cluster.initdb.postInitApplicationSQL`, `searchWorkerRole.bootstrapJob.enabled`, `searchWorkerRole.bootstrapJob.sqlPath`, `worker.migrations.waitForRole.role`
-- Verify: default: psql "$HOOPDB_URL" -Atc "select rolcanlogin, rolconfig from pg_roles where rolname='session_directory_search_worker'" is f\|{statement_timeout=2s} / external-selfhosted: run supabase/bootstrap/session_directory_search_worker.sql as a superuser; then the same query / external-supabase: run supabase/bootstrap/session_directory_search_worker_supabase.sql as postgres; then the same query / gcp-cloudsql: run supabase/bootstrap/session_directory_search_worker.sql as the migration owner; then the same query
+- Verify: default: psql "$HOOPDB_URL" -Atc "select rolcanlogin, rolconfig from pg_roles where rolname='session_directory_search_worker'" is f\|{statement_timeout=2s} / external-selfhosted: run supabase/bootstrap/session_directory_search_worker.sql as a superuser; then the same query / external-rds: run supabase/bootstrap/session_directory_search_worker.sql as the RDS master; then the same query / external-supabase: run supabase/bootstrap/session_directory_search_worker_supabase.sql as postgres; then the same query / gcp-cloudsql: run supabase/bootstrap/session_directory_search_worker.sql as the migration owner; then the same query
 - Sources: [`charts/sessions-pipeline/values.yaml:131`](../charts/sessions-pipeline/values.yaml#L131), [`charts/sessions-pipeline/values.yaml:218`](../charts/sessions-pipeline/values.yaml#L218), [`charts/sessions-pipeline/templates/search-worker-role-bootstrap.yaml:7`](../charts/sessions-pipeline/templates/search-worker-role-bootstrap.yaml#L7), [`README.md:259`](../README.md#L259), `sessions-pipeline@7d7229b:supabase/bootstrap/session_directory_search_worker.sql:1`, `sessions-pipeline@7d7229b:runbooks/session-directory-search-worker-bootstrap.md:1`
 
 #### req.db.runtime-role
 
 <a id="req-db-runtime-role"></a>
 
-**The dedicated HoopDb runtime role (HOOPDB_RUNTIME_ROLE, e.g. sessions_pipeline_runtime)** · shipped · chart `sessions-pipeline` · profiles selfhost-postgres, migration, aws-cnpg, external-selfhosted, external-supabase, aws-supabase, gcp-cloudsql
+**The dedicated HoopDb runtime role (HOOPDB_RUNTIME_ROLE, e.g. sessions_pipeline_runtime)** · shipped · chart `sessions-pipeline` · profiles selfhost-postgres, migration, aws-cnpg, external-selfhosted, external-rds, external-supabase, aws-supabase, gcp-cloudsql
 
 The role the services connect as: never the migration owner or the search
 Worker; NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS, LOGIN as
 configured, CONNECT granted, TEMPORARY revoked from PUBLIC (Supabase keeps its
 PUBLIC TEMPORARY baseline). On CNPG runtimeRole.bootstrapJob creates or verifies
-it; external databases pre-provision it (hoopdb_runtime_role.sql, or the
-_supabase wrapper with -v runtime_role=sessions_pipeline_runtime -v runtime_login=true).
+it; external databases pre-provision it (hoopdb_runtime_role.sql, the _rds
+variant on RDS, or the _supabase wrapper with -v runtime_role=sessions_pipeline_runtime -v runtime_login=true).
 Never the drifted legacy relayhistory_runtime.
 
-- Provided by: default: chart, external-selfhosted: operator, external-supabase: operator, aws-supabase: operator, gcp-cloudsql: operator
+- Provided by: default: chart, external-selfhosted: operator, external-rds: operator, external-supabase: operator, aws-supabase: operator, gcp-cloudsql: operator
 - Values: `worker.migrations.runtimeRole`, `worker.migrations.runtimeRoleLogin`, `runtimeRole.bootstrapJob.enabled`, `runtimeRole.bootstrapJob.sqlPath`
 - Env: `HOOPDB_RUNTIME_ROLE`, `HOOPDB_RUNTIME_ROLE_LOGIN`
 - Verify: psql "$HOOPDB_URL" -Atc "select rolsuper, rolcreatedb, rolcreaterole, rolreplication, rolbypassrls, rolcanlogin from pg_roles where rolname='sessions_pipeline_runtime'" is f\|f\|f\|f\|f\|t; migrate refuses otherwise
@@ -1085,20 +1135,21 @@ Never the drifted legacy relayhistory_runtime.
 
 <a id="req-db-function-boundary"></a>
 
-**The durable function boundary installed before the first migrate** · shipped · chart `sessions-pipeline` · profiles selfhost-postgres, migration, aws-cnpg, external-selfhosted, external-supabase, aws-supabase, gcp-cloudsql
+**The durable function boundary installed before the first migrate** · shipped · chart `sessions-pipeline` · profiles selfhost-postgres, migration, aws-cnpg, external-selfhosted, external-rds, external-supabase, aws-supabase, gcp-cloudsql
 
 The migrator's function-boundary gate refuses (function_boundary_unproven)
 without a catalog-proven control. global-default-revoke: on CNPG
 functionDefaultRevoke.bootstrapJob runs hoopdb_function_default_revoke.sql
 (-v migration_owner=hoop) and migrate waits for the exact default; external
 Postgres runs the same file as a superuser; Cloud SQL runs
-cloudsql_owner_function_default_revoke.sql as the migration owner.
+cloudsql_owner_function_default_revoke.sql as the migration owner; RDS runs
+rds_owner_function_default_revoke.sql as the master.
 event-trigger (Supabase only): hoopdb_sessions_function_boundary_supabase.sql as
 postgres (-v runtime_role=sessions_pipeline_runtime), then migrate.ts --activation-check
 must report event_trigger.verified true. Never run the default-revoke file on
 Supabase.
 
-- Provided by: default: chart, external-selfhosted: operator, external-supabase: operator, aws-supabase: operator, gcp-cloudsql: operator
+- Provided by: default: chart, external-selfhosted: operator, external-rds: operator, external-supabase: operator, aws-supabase: operator, gcp-cloudsql: operator
 - Values: `functionDefaultRevoke.bootstrapJob.enabled`, `functionDefaultRevoke.bootstrapJob.sqlPath`, `worker.migrations.waitForRole.functionDefault`
 - Verify: default: the function-default Job completes and migrate's wait-for-role logs "present: ... + owner function default" / external-supabase: migrate.ts --activation-check with HOOPDB_DB_MODE=supabase HOOPDB_FUNCTION_BOUNDARY_MODE=event-trigger reports event_trigger.verified true / aws-supabase: no boundary is selected in this shape; migrate refuses with function_boundary_unproven until one is
 - Sources: [`charts/sessions-pipeline/templates/hoopdb-function-default-revoke.yaml:17`](../charts/sessions-pipeline/templates/hoopdb-function-default-revoke.yaml#L17), [`charts/sessions-pipeline/values.yaml:283`](../charts/sessions-pipeline/values.yaml#L283), [`charts/sessions-pipeline/profiles/external-supabase.yaml:38`](../charts/sessions-pipeline/profiles/external-supabase.yaml#L38), [`charts/sessions-pipeline/profiles/external-selfhosted.yaml:17`](../charts/sessions-pipeline/profiles/external-selfhosted.yaml#L17), `sessions-pipeline@7d7229b:supabase/bootstrap/hoopdb_function_default_revoke.sql:1`, `sessions-pipeline@7d7229b:supabase/bootstrap/hoopdb_sessions_function_boundary_supabase.sql:1`, `sessions-pipeline@7d7229b:supabase/bootstrap/cloudsql_owner_function_default_revoke.sql:1`, `sessions-pipeline@7d7229b:runbooks/session-directory-search-worker-bootstrap.md:374`
@@ -1123,7 +1174,7 @@ without it. The profiles pin the same digest as the workloads.
 
 <a id="req-sessions-pipeline-role-verify"></a>
 
-**migrate always runs the phase 2 role verify (HOOPDB_ROLE_VERIFY=true)** · shipped · chart `sessions-pipeline` · profiles selfhost-postgres, migration, external-selfhosted, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql
+**migrate always runs the phase 2 role verify (HOOPDB_ROLE_VERIFY=true)** · shipped · chart `sessions-pipeline` · profiles selfhost-postgres, migration, external-selfhosted, external-rds, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql
 
 Readiness needs the PASS marker for the image's migration generation that only
 a verifying migrate writes, so the chart always sets it and refuses an override
@@ -1138,7 +1189,7 @@ via extraEnv or component env.
 
 <a id="req-secret-model-api-key"></a>
 
-**Model API key Secret for session briefs (OPENAI_API_KEY)** · **planned** · chart `sessions-pipeline` · profiles selfhost-postgres, migration, external-selfhosted, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql
+**Model API key Secret for session briefs (OPENAI_API_KEY)** · **planned** · chart `sessions-pipeline` · profiles selfhost-postgres, migration, external-selfhosted, external-rds, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql
 
 With session briefs enabled the worker needs the model credential
 (OPENAI_API_KEY, relayhistory's binding name); unset, blank or ending in
@@ -1583,7 +1634,7 @@ A pre-provisioned chief identity (not a workspace admin key), the classification
 
 <a id="opt-alleyoop-auth-mode"></a>
 
-**alleyoop token verification source** · shipped · chart `sessions-pipeline` · profiles selfhost-postgres, migration, external-selfhosted, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql
+**alleyoop token verification source** · shipped · chart `sessions-pipeline` · profiles selfhost-postgres, migration, external-selfhosted, external-rds, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql
 
 jwksUrl (RelayAuth) for every real install; localJwks reads a JWKS document from
 existingSecret (secretKeys.jwksJson) for kind/local only. Exactly one is set.
@@ -1602,7 +1653,7 @@ issuer/audience are the expected token claims.
 
 <a id="opt-sessions-pipeline-in-cluster-http"></a>
 
-**Plain http to in-cluster Service FQDNs** · shipped · chart `sessions-pipeline` · profiles selfhost-postgres, migration, external-selfhosted, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql
+**Plain http to in-cluster Service FQDNs** · shipped · chart `sessions-pipeline` · profiles selfhost-postgres, migration, external-selfhosted, external-rds, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql
 
 allowInClusterHttp renders ALLOW_IN_CLUSTER_HTTP for alleyoop and every
 worker component. false (default) keeps the validated destination URLs
@@ -1625,7 +1676,7 @@ bundled MinIO at http://session-object-storage:9000 works with the default false
 
 <a id="opt-alleyoop-history-origin"></a>
 
-**RelayHistory origin expected by the ingest** · shipped · chart `sessions-pipeline` · profiles selfhost-postgres, migration, external-selfhosted, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql
+**RelayHistory origin expected by the ingest** · shipped · chart `sessions-pipeline` · profiles selfhost-postgres, migration, external-selfhosted, external-rds, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql
 
 alleyoop.auth.historyOrigin renders RELAYHISTORY_ORIGIN on the ingest: the
 bare origin expected as the History assertion audience. It must be
@@ -1649,7 +1700,7 @@ refuses every courier upload.
 
 <a id="opt-alleyoop-interim-relayauth-bearer"></a>
 
-**Interim RelayAuth bearer compatibility (local only)** · shipped · chart `sessions-pipeline` · profiles selfhost-postgres, migration, external-selfhosted, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql
+**Interim RelayAuth bearer compatibility (local only)** · shipped · chart `sessions-pipeline` · profiles selfhost-postgres, migration, external-selfhosted, external-rds, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql
 
 alleyoop.auth.allowInterimRelayAuthBearer renders
 ALLOW_INTERIM_RELAYAUTH_BEARER on the ingest. false (default) keeps the
@@ -1674,7 +1725,7 @@ through extraEnv or ingest.env fails the render.
 
 <a id="opt-sessions-pipeline-hoopdb-backend"></a>
 
-**HoopDb backend** · shipped · chart `sessions-pipeline` · profiles selfhost-postgres, migration, external-selfhosted, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql
+**HoopDb backend** · shipped · chart `sessions-pipeline` · profiles selfhost-postgres, migration, external-selfhosted, external-rds, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql
 
 cnpg runs HoopDb as a CloudNativePG Cluster in the release (hoopdb.enabled=true,
 selfhosted mode only). external points worker.hoopdb and alleyoop.hoopdb at a
@@ -1692,7 +1743,7 @@ these eks.hoopdb.backend cnpg|external (cnpg is proof/sandbox stages only there)
 
 <a id="opt-sessions-pipeline-db-mode"></a>
 
-**Migrator database mode (HOOPDB_DB_MODE)** · shipped · chart `sessions-pipeline` · profiles selfhost-postgres, migration, external-selfhosted, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql
+**Migrator database mode (HOOPDB_DB_MODE)** · shipped · chart `sessions-pipeline` · profiles selfhost-postgres, migration, external-selfhosted, external-rds, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql
 
 The migrator's database profile (sessions-pipeline migrationProfile()). No
 default: the render fails without it. selfhosted for CNPG, RDS or any
@@ -1712,7 +1763,7 @@ selfhosted.
 
 <a id="opt-sessions-pipeline-function-boundary-mode"></a>
 
-**Function boundary mode (HOOPDB_FUNCTION_BOUNDARY_MODE)** · shipped · chart `sessions-pipeline` · profiles selfhost-postgres, migration, external-selfhosted, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql
+**Function boundary mode (HOOPDB_FUNCTION_BOUNDARY_MODE)** · shipped · chart `sessions-pipeline` · profiles selfhost-postgres, migration, external-selfhosted, external-rds, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql
 
 Which catalog-proven function boundary the migrator requires.
 global-default-revoke (required in selfhosted and cloudsql) or event-trigger
@@ -1732,7 +1783,7 @@ HOOPDB_FUNCTION_BOUNDARY_APPROVED is refused, including via extraEnv.
 
 <a id="opt-sessions-pipeline-supabase-shim"></a>
 
-**Plain-Postgres role shim (HOOPDB_SUPABASE_SHIM)** · shipped · chart `sessions-pipeline` · profiles selfhost-postgres, migration, external-selfhosted, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql
+**Plain-Postgres role shim (HOOPDB_SUPABASE_SHIM)** · shipped · chart `sessions-pipeline` · profiles selfhost-postgres, migration, external-selfhosted, external-rds, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql
 
 true makes the migrator create the Supabase compatibility roles on plain
 Postgres. Required (true or false) in local, selfhosted and cloudsql (Cloud SQL:
@@ -1750,11 +1801,11 @@ false); in supabase mode it must be unset or false and renders "false".
 
 <a id="opt-sessions-pipeline-role-bootstrap"></a>
 
-**Migrator role bootstrap (HOOPDB_ROLE_BOOTSTRAP)** · shipped · chart `sessions-pipeline` · profiles selfhost-postgres, migration, external-selfhosted, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql
+**Migrator role bootstrap (HOOPDB_ROLE_BOOTSTRAP)** · shipped · chart `sessions-pipeline` · profiles selfhost-postgres, migration, external-selfhosted, external-rds, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql
 
 Optional; the migrator defaults it to the shim choice. Refused as true in
-supabase mode. Cloud SQL sets false (no customer superuser; the operator
-provisions the search Worker role).
+supabase and rds mode. Cloud SQL sets false (no customer superuser; the
+operator provisions the search Worker role).
 
 - Default: (no default) (by profile: default (no default), gcp-cloudsql `false`)
 - Choices: `true`; `false`; `unset`: follows supabaseShim
@@ -1768,7 +1819,7 @@ provisions the search Worker role).
 
 <a id="opt-sessions-pipeline-runtime-workload-role"></a>
 
-**Runtime workload role (HOOPDB_RUNTIME_WORKLOAD_ROLE)** · shipped · chart `sessions-pipeline` · profiles selfhost-postgres, migration, external-selfhosted, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql
+**Runtime workload role (HOOPDB_RUNTIME_WORKLOAD_ROLE)** · shipped · chart `sessions-pipeline` · profiles selfhost-postgres, migration, external-selfhosted, external-rds, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql
 
 The one role allowed to be a member of the runtime role (for example a pooler login role). Empty means none.
 
@@ -1784,15 +1835,16 @@ The one role allowed to be a member of the runtime role (for example a pooler lo
 
 <a id="opt-sessions-pipeline-wait-for-role"></a>
 
-**migrate's wait-for-role ordering** · shipped · chart `sessions-pipeline` · profiles selfhost-postgres, migration, external-selfhosted, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql
+**migrate's wait-for-role ordering** · shipped · chart `sessions-pipeline` · profiles selfhost-postgres, migration, external-selfhosted, external-rds, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql
 
 An init container (by digest, the pinned CNPG Postgres image) holds migrate until
 the search Worker role and, outside local mode, the runtime role exist; with
 functionDefault also until the owner's function default is exact. On by default
-in the umbrella; required with the in-cluster HoopDb; refused in supabase mode.
+in the umbrella; required with the in-cluster HoopDb; refused in supabase and
+rds mode.
 
-- Default: `true` (by profile: default `true`, external-supabase `false`, aws-supabase `false`)
-- Choices: `true`; `false`: supabase mode only
+- Default: `true` (by profile: default `true`, external-supabase `false`, aws-supabase `false`, external-rds `false`)
+- Choices: `true`; `false`: supabase and rds mode only
 - Provided by: chart
 - Values: `worker.migrations.waitForRole.enabled`, `worker.migrations.waitForRole.functionDefault`, `worker.migrations.waitForRole.image`, `worker.migrations.waitForRole.intervalSeconds`, `worker.migrations.waitForRole.role`
 - Verify: kubectl logs job/<migrate> -c wait-for-role ends with "present"
@@ -1820,7 +1872,7 @@ bootstrap and --activation-check) are approved.
 
 <a id="opt-hoopdb-migration-owner-url"></a>
 
-**Separate migration-owner URL for migrate** · shipped · chart `sessions-pipeline` · profiles selfhost-postgres, migration, external-selfhosted, external-supabase, aws-cnpg, aws-supabase
+**Separate migration-owner URL for migrate** · shipped · chart `sessions-pipeline` · profiles selfhost-postgres, migration, external-selfhosted, external-rds, external-supabase, aws-cnpg, aws-supabase
 
 Optional everywhere except Cloud SQL (see req.secret.hoopdb-migration-url): when
 both migrations.hoopdb.existingSecret and key are set, only migrate and its
@@ -1838,7 +1890,7 @@ worker.hoopdb URL. Set both or neither.
 
 <a id="opt-sessions-pipeline-locker-backend"></a>
 
-**Locker object store** · shipped · chart `sessions-pipeline` · profiles selfhost-postgres, migration, external-selfhosted, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql
+**Locker object store** · shipped · chart `sessions-pipeline` · profiles selfhost-postgres, migration, external-selfhosted, external-rds, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql
 
 minio runs the bundled MinIO (session-object-storage.enabled; Chainguard image, digest-pinned) and
 the locker-init Job creates the bucket. external uses your S3-compatible bucket:
@@ -1858,7 +1910,7 @@ versioned.
 
 <a id="opt-sessions-pipeline-locker-credentials-mode"></a>
 
-**Locker credentials mode** · shipped · chart `sessions-pipeline` · profiles selfhost-postgres, migration, external-selfhosted, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql
+**Locker credentials mode** · shipped · chart `sessions-pipeline` · profiles selfhost-postgres, migration, external-selfhosted, external-rds, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql
 
 secret reads the LOCKER_* keys from existingSecret; podIdentity omits both static credential env vars so the SDK uses workload identity.
 
@@ -1873,7 +1925,7 @@ secret reads the LOCKER_* keys from existingSecret; podIdentity omits both stati
 
 <a id="opt-sessions-pipeline-locker-provider"></a>
 
-**Locker provider (S3-compatible or native GCS)** · shipped · chart `sessions-pipeline` · profiles selfhost-postgres, migration, external-selfhosted, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql
+**Locker provider (S3-compatible or native GCS)** · shipped · chart `sessions-pipeline` · profiles selfhost-postgres, migration, external-selfhosted, external-rds, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql
 
 s3 (default) leaves LOCKER_PROVIDER unset: MinIO, AWS S3 or another
 S3-compatible store. gcs renders LOCKER_PROVIDER=gcs and
@@ -1900,7 +1952,7 @@ render fails.
 
 <a id="opt-sessions-pipeline-services-image"></a>
 
-**Services image registry** · shipped · chart `sessions-pipeline` · profiles selfhost-postgres, migration, external-selfhosted, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql
+**Services image registry** · shipped · chart `sessions-pipeline` · profiles selfhost-postgres, migration, external-selfhosted, external-rds, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql
 
 ghcr (the chart default, private: needs req.secret.image-pull) or the immutable
 ECR digest of the same build for hosted EKS (node role pulls, no pull Secret).
@@ -1918,7 +1970,7 @@ compatibility matrix for the pinned digests.
 
 <a id="opt-sessions-pipeline-otel"></a>
 
-**OpenTelemetry export** · shipped · chart `sessions-pipeline` · profiles selfhost-postgres, migration, external-selfhosted, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql
+**OpenTelemetry export** · shipped · chart `sessions-pipeline` · profiles selfhost-postgres, migration, external-selfhosted, external-rds, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql
 
 Off by default. Set global.otel.endpoint to your OTLP/HTTP backend, or enable the
 bundled collector (otel.enabled) with endpoint http://otel-collector:4318; its
@@ -1936,7 +1988,7 @@ default exporter drops telemetry.
 
 <a id="opt-sessions-pipeline-deployment-identity"></a>
 
-**Workspace, deployment and environment labels** · shipped · chart `sessions-pipeline` · profiles selfhost-postgres, migration, external-selfhosted, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql
+**Workspace, deployment and environment labels** · shipped · chart `sessions-pipeline` · profiles selfhost-postgres, migration, external-selfhosted, external-rds, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql
 
 WORKSPACE_ID, DEPLOYMENT, DEPLOYMENT_ID (default <namespace>/<release>) and ENVIRONMENT stamped on every record.
 
@@ -1952,7 +2004,7 @@ WORKSPACE_ID, DEPLOYMENT, DEPLOYMENT_ID (default <namespace>/<release>) and ENVI
 
 <a id="opt-sessions-pipeline-worker-health"></a>
 
-**Stage worker health server** · shipped · chart `sessions-pipeline` · profiles selfhost-postgres, migration, external-selfhosted, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql
+**Stage worker health server** · shipped · chart `sessions-pipeline` · profiles selfhost-postgres, migration, external-selfhosted, external-rds, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql
 
 /readyz and /healthz on workerHealth.port for every stage worker; a slow migration never restarts a worker.
 
@@ -1968,7 +2020,7 @@ WORKSPACE_ID, DEPLOYMENT, DEPLOYMENT_ID (default <namespace>/<release>) and ENVI
 
 <a id="opt-sessions-pipeline-bob-costas-model"></a>
 
-**Bob Costas summariser model (BOB_COSTAS_MODEL)** · shipped · chart `sessions-pipeline` · profiles selfhost-postgres, migration, external-selfhosted, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql
+**Bob Costas summariser model (BOB_COSTAS_MODEL)** · shipped · chart `sessions-pipeline` · profiles selfhost-postgres, migration, external-selfhosted, external-rds, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql
 
 off (the extractive summariser) is the only value wired at 7d7229b; any other value fails at start.
 
@@ -1984,7 +2036,7 @@ off (the extractive summariser) is the only value wired at 7d7229b; any other va
 
 <a id="opt-sessions-pipeline-search-backend"></a>
 
-**Transcript search backend (search.backend)** · **planned** · chart `sessions-pipeline` · profiles selfhost-postgres, migration, external-selfhosted, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql
+**Transcript search backend (search.backend)** · **planned** · chart `sessions-pipeline` · profiles selfhost-postgres, migration, external-selfhosted, external-rds, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql
 
 Operator decision 2026-11-01: postgres (PostgreSQL 17 + pg_trgm, the default and
 what every profile does today) or self-managed ClickHouse OSS as a derived index
@@ -2005,7 +2057,7 @@ architecture.
 
 <a id="opt-sessions-pipeline-session-briefs"></a>
 
-**Model session briefs** · **planned** · chart `sessions-pipeline` · profiles selfhost-postgres, migration, external-selfhosted, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql
+**Model session briefs** · **planned** · chart `sessions-pipeline` · profiles selfhost-postgres, migration, external-selfhosted, external-rds, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql
 
 sessions-pipeline #127 (main 475d503, generation 5ed11913...) adds the
 session-brief worker (SERVICE=session-brief) and SESSION_BRIEF_ENABLED, which
@@ -2853,7 +2905,7 @@ DURABLE_ACTORS_S3_*). devRuntime runs `durable-actors dev` as a sidecar for kind
 
 <a id="opt-sessions-read-api"></a>
 
-**Default-off self-host session read API container** · shipped · chart `sessions-pipeline` · profiles selfhost-postgres, migration, external-selfhosted, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql
+**Default-off self-host session read API container** · shipped · chart `sessions-pipeline` · profiles selfhost-postgres, migration, external-selfhosted, external-rds, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql
 
 Chart plumbing for the pipeline session-read-api SERVICE. Requires an
 explicitly pinned compatible image, read-role configuration JSON in a

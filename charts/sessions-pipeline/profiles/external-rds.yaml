@@ -17,8 +17,10 @@
 #      session_read_api_roles.sql.
 #   5. Secret sessions-pipeline-hoopdb: HOOPDB_URL for the runtime role and
 #      HOOPDB_MIGRATION_URL for the master. RDS requires TLS. node-pg treats
-#      sslmode=require as full verification, and the image does not carry the RDS
-#      CA, so use sslmode=require&uselibpqcompat=true or mount the CA.
+#      sslmode=require as full verification and the image does not carry the RDS
+#      CA, so these URLs need sslmode=require&uselibpqcompat=true. That encrypts
+#      the connection but does NOT verify the server certificate, including for
+#      the master password; the charts cannot mount a CA yet.
 # Pinned: GHCR, built from sessions-pipeline main 78511e03, the first published
 # image containing rds mode (publish-image run 42462161615).
 hoopdb:
@@ -38,8 +40,8 @@ worker:
     runtimeRole: ""
     runtimeRoleLogin: null
     functionBoundaryMode: global-default-revoke
-    # Off: psql (wait-for-role) and node-pg (migrate) read sslmode differently, so
-    # no URL suits both without a mounted CA. The migrator proves the roles itself.
+    # Off, and refused in rds mode: psql (wait-for-role) and node-pg (migrate) read
+    # sslmode differently, so no URL suits both. The migrator proves the roles itself.
     waitForRole:
       enabled: false
       functionDefault: false

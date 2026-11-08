@@ -38,6 +38,7 @@ RUNTIME=(--set worker.migrations.runtimeRole=sessions_pipeline_runtime --set wor
 #   existing  in-cluster, existing cluster: fresh plus the search Worker Job
 #   external  external plain Postgres: no SQL Jobs; wait for the roles only
 #   supabase  external Supabase: no SQL Jobs, no wait-for-role, no shim
+#   rds       external Amazon RDS: no SQL Jobs, no wait-for-role, no shim
 MATRIX=(
   "profiles/selfhost-postgres.yaml|yes|yes|selfhosted|fresh"
   "profiles/migration.yaml|yes|yes|selfhosted|existing"
@@ -265,6 +266,7 @@ if [ "$mode" = static ]; then
   expect_fail "functionDefaultRevoke.bootstrapJob is for the in-cluster CNPG HoopDb only" "${GCP[@]}" --set functionDefaultRevoke.bootstrapJob.enabled=true
   expect_fail "runtimeRoleLogin must be set (true or false) in supabase mode" "${SB[@]}" --set worker.migrations.runtimeRoleLogin=null
   RDS=(-f "$CHART/profiles/external-rds.yaml" "${REQUIRED[@]}" "${RUNTIME[@]}")
+  expect_fail "waitForRole must be disabled in rds mode" "${RDS[@]}" --set worker.migrations.waitForRole.enabled=true
   expect_fail "supabaseShim must not be true in rds mode" "${RDS[@]}" --set worker.migrations.supabaseShim=true
   expect_fail "roleBootstrap must not be true in rds mode" "${RDS[@]}" --set worker.migrations.roleBootstrap=true
   expect_fail "runtimeWorkloadRole is not supported in rds mode" "${RDS[@]}" --set worker.migrations.runtimeWorkloadRole=app
