@@ -150,8 +150,8 @@ def sibling_plan():
         state(p).append({'address': address, 'mode': 'managed', 'type': kind, 'values': values})
         p['resource_changes'].append({'address': address, 'mode': 'managed', 'type': kind, 'change': {'actions': ['no-op'], 'before': values, 'after': values, 'after_unknown': {}}})
     p['resource_drift'] = [
-        {'address': g.PROTECTED, 'change': {'actions': ['update'], 'before': {'id': 'domain-id', 'access_policies': None}, 'after': {'id': 'domain-id', 'access_policies': SAME_DOC}}},
-        {'address': ROLE, 'change': {'actions': ['update'], 'before': {'id': 'role', 'inline_policy': []}, 'after': {'id': 'role', 'inline_policy': [{'name': 'p', 'policy': SAME_DOC}]}}},
+        {'address': g.PROTECTED, 'mode': 'managed', 'type': 'aws_opensearch_domain', 'change': {'actions': ['update'], 'before': {'id': 'domain-id', 'access_policies': None}, 'after': {'id': 'domain-id', 'access_policies': SAME_DOC}}},
+        {'address': ROLE, 'mode': 'managed', 'type': 'aws_iam_role', 'change': {'actions': ['update'], 'before': {'id': 'role', 'inline_policy': []}, 'after': {'id': 'role', 'inline_policy': [{'name': 'p', 'policy': SAME_DOC}]}}},
     ]
     return p
 
@@ -178,6 +178,16 @@ class SiblingDrift(unittest.TestCase):
             'sibling drift': lambda p: p['resource_drift'].append({'address': POLICY, 'change': {'actions': ['update'], 'before': {'id': 'policy-id'}, 'after': {'id': 'policy-id'}}}),
             'other search object': lambda p: p['resource_drift'].append({'address': g.PREFIX + 'aws_iam_role.other', 'change': {'actions': ['update'], 'before': {'id': 'x'}, 'after': {'id': 'x', 'inline_policy': []}}}),
             'no change object': lambda p: p['resource_drift'][0].pop('change'),
+            'data mode': lambda p: p['resource_drift'][0].update(mode='data'),
+            'deposed': lambda p: p['resource_drift'][0].update(deposed='abc'),
+            'wrong type': lambda p: p['resource_drift'][0].update(type='aws_iam_role'),
+            'other-mode address': lambda p: p['resource_drift'][0].update(address=g.DISPOSABLE),
+            'domain policy changing': lambda p: change(p, POLICY).update(actions=['update']),
+            'role policy deleted': lambda p: change(p, ROLE_POLICY).update(actions=['delete']),
+            'null sibling values': lambda p: next(r for r in state(p) if r['address'] == POLICY).update(values=None),
+            'after lacks field': lambda p: domain(p)['after'].pop('access_policies'),
+            'domain replaced': lambda p: change(p, g.PROTECTED).update(actions=['delete', 'create']),
+            'marker flipped': lambda p: change(p, g.MARKER)['after'].update(input=True),
         }
         for name, mutate in cases.items():
             p = sibling_plan(); mutate(p)

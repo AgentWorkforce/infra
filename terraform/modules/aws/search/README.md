@@ -15,7 +15,7 @@
 - Application, search-slow and index-slow logs go to CloudWatch. Add `AUDIT_LOGS` once audit logging is configured in the security plugin.
 - Prerequisite: the `AWSServiceRoleForAmazonOpenSearchService` service-linked role.
 
-Search drift holds a plan, with one exception: the domain's `access_policies` and a workload role's `inline_policy`, which separate managed resources write, so Terraform reports them as drift after create. Each is admitted only when it is the sole changed field and holds exactly the managed resource's value. An out-of-band edit reports drift on that managed resource and still holds.
+Search drift holds a plan, with one exception: the domain's `access_policies` and a workload role's `inline_policy`, which separate managed resources write, so Terraform reports them as drift after create. Each is admitted only as the sole changed field, while the managed resource is a no-op. The control is that an out-of-band edit makes the managed resource report its own drift, which still holds. Comparing values only ties the field to that resource's refreshed read; it does not prove the value matches the configuration.
 
 The mandatory pure classifier is `creation_mode.py`; it accepts only native saved-plan `show -json` objects for exact `module.search` addresses used by `examples/aws-environments` and `examples/aws-search-proof`. It accepts no caller mode, path override, skip flag or digest as authority. Both runner paths check before publishing the plan receipt and again before apply; existing exact-plan review, source/input seals and state locks remain required. Search-proof's closed AWS address/action contract remains unchanged apart from the new built-in marker.
 
