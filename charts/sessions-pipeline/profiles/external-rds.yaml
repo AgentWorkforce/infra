@@ -25,8 +25,13 @@
 #      sslmode=verify-full in both URLs, with no uselibpqcompat. Without a CA
 #      bundle these URLs need sslmode=require&uselibpqcompat=true, which encrypts
 #      but does NOT verify the server certificate. psql (the prerequisites
-#      above) needs sslrootcert=<bundle> with verify-full. The read API and
-#      ingest edge pin their own CA (readApi/ingestEdge .postgres.ca*).
+#      above) needs sslrootcert=<bundle> with verify-full. The bundle is read
+#      at process start, so rotating it needs a pod restart. postgresCa does not
+#      reach the read API or ingest edge, which set an explicit CA: the read API
+#      takes SESSION_POSTGRES_TLS_PROFILE=custom-ca, SESSION_POSTGRES_CA_FILE and
+#      SESSION_POSTGRES_CA_SHA256 through readApi.extraEnv, with the file from
+#      readApi.extraVolumes and extraVolumeMounts; the ingest edge takes
+#      ingestEdge.postgres.caConfigMap, caKey and caSha256.
 # Pinned: GHCR, built from sessions-pipeline main 78511e03, the first published
 # image containing rds mode (publish-image run 42462161615).
 hoopdb:
@@ -46,8 +51,12 @@ worker:
     runtimeRole: ""
     runtimeRoleLogin: null
     functionBoundaryMode: global-default-revoke
-    # Off, and refused in rds mode: psql (wait-for-role) and node-pg (migrate) read
-    # sslmode differently, so no URL suits both. The migrator proves the roles itself.
+    # Off, and refused in rds mode. A URL with uselibpqcompat=true, the shape used
+    # without a CA bundle, is rejected by psql (wait-for-role). sslmode=verify-full
+    # works for both clients with a bundle (PGSSLROOTCERT for psql,
+    # NODE_EXTRA_CA_CERTS for node-pg), but the chart cannot see the URL in the
+    # Secret; allowing it would mean lifting the refusal when worker.postgresCa is
+    # on and requiring verify-full from the operator. The migrator proves the roles.
     waitForRole:
       enabled: false
       functionDefault: false
