@@ -639,14 +639,25 @@ class FetchArtifact(unittest.TestCase):
         self.destination.parent.mkdir()
         executable(self.bin / "aws", r"""#!/usr/bin/env bash
 printf 'aws %s\n' "$*" >>"$MOCK_LOG"
-[ -z "${MOCK_FAIL:-}" ] || exit 1
+count=$(($(cat "$MOCK_COUNT" 2>/dev/null || echo 0) + 1))
+echo "$count" >"$MOCK_COUNT"
+if [ "$count" -le "${MOCK_FAIL_TIMES:-0}" ]; then
+  echo partial >"${@: -1}"
+  exit 1
+fi
 cp -- "$MOCK_SOURCE" "${@: -1}"
 """)
+        executable(self.bin / "sleep", '#!/usr/bin/env bash\nprintf "sleep %s\\n" "$*" >>"$MOCK_LOG"\n')
         executable(self.bin / "curl", r"""#!/usr/bin/env bash
 printf 'curl %s\n' "$*" >>"$MOCK_LOG"
-[ -z "${MOCK_FAIL:-}" ] || exit 22
 while [ $# -gt 0 ]; do
-  if [ "$1" = -o ]; then cp -- "$MOCK_SOURCE" "$2"; fi
+  if [ "$1" = -o ]; then
+    if [ -n "${MOCK_FAIL:-}" ]; then
+      echo partial >"$2"
+      exit 22
+    fi
+    cp -- "$MOCK_SOURCE" "$2"
+  fi
   shift
 done
 """)
@@ -656,7 +667,7 @@ done
             ["bash", str(FETCH_ARTIFACT), url, sha256 or self.sha256, "us-west-2", str(self.destination)],
             capture_output=True, text=True, check=False,
             env={**os.environ, "PATH": f"{self.bin}:{os.environ['PATH']}", "MOCK_LOG": str(self.log),
-                 "MOCK_SOURCE": str(self.source), **environment},
+                 "MOCK_SOURCE": str(self.source), "MOCK_COUNT": str(self.base / "count"), **environment},
         )
 
     def commands(self):
@@ -685,11 +696,40 @@ done
                 self.assertIn("does not match", result.stderr)
                 self.assertFalse(self.destination.exists(), "an unverified file must not remain")
 
-    def test_download_failure_is_refused(self):
-        for url in ("s3://example-artifacts/build.tar.gz", "https://example.test/build.tar.gz"):
-            with self.subTest(url=url):
-                self.assertEqual(self.fetch(url, MOCK_FAIL="1").returncode, 1)
-                self.assertFalse(self.destination.exists())
+    def output_files(self):
+        return sorted(path.name for path in self.destination.parent.iterdir())
+
+    def test_failed_https_download_leaves_no_partial_file(self):
+        result = self.fetch("https://example.test/build.tar.gz", MOCK_FAIL="1")
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(self.output_files(), [])
+        self.assertEqual(len([c for c in self.commands() if c.startswith("curl ")]), 1)
+
+    def test_s3_retries_are_bounded_and_leave_no_partial_file(self):
+        result = self.fetch("s3://example-artifacts/build.tar.gz", MOCK_FAIL_TIMES="99")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("could not download", result.stderr)
+        self.assertEqual(self.output_files(), [])
+        self.assertEqual(len([c for c in self.commands() if c.startswith("aws ")]), 12)
+        self.assertEqual(len([c for c in self.commands() if c.startswith("sleep ")]), 11)
+
+    def test_s3_retry_recovers_from_a_late_grant(self):
+        result = self.fetch("s3://example-artifacts/build.tar.gz", MOCK_FAIL_TIMES="3")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.output_files(), ["artifact.tar"])
+        self.assertEqual(self.destination.read_bytes(), self.source.read_bytes())
+        self.assertEqual(len([c for c in self.commands() if c.startswith("aws ")]), 4)
+
+    def test_mismatch_is_never_retried(self):
+        result = self.fetch("s3://example-artifacts/build.tar.gz", sha256="0" * 64)
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(self.output_files(), [])
+        self.assertEqual(len([c for c in self.commands() if c.startswith("aws ")]), 1)
+        self.assertEqual([c for c in self.commands() if c.startswith("sleep ")], [])
+
+    def test_download_goes_to_a_part_file_first(self):
+        self.assertEqual(self.fetch("s3://example-artifacts/build.tar.gz").returncode, 0)
+        self.assertTrue(self.commands()[0].endswith(f"{self.destination}.part"), self.commands()[0])
 
     def test_unknown_scheme_downloads_nothing(self):
         for url in ("http://example.test/build.tar.gz", "file:///etc/passwd", "ftp://example.test/x"):
@@ -781,6 +821,11 @@ class FetchCredentials(unittest.TestCase):
 
 
 class Contracts(unittest.TestCase):
+    def test_instances_wait_for_the_artifact_grant(self):
+        main = (MODULE / "main.tf").read_text()
+        instance = main[main.index('resource "aws_instance" "slot"'):main.index('resource "aws_volume_attachment"')]
+        self.assertIn("depends_on = [aws_iam_role_policy.artifact]", instance)
+
     def test_placement_pattern_matches_the_runtime_schema(self):
         self.assertIn("PLACEMENT_PATTERN='^[a-z0-9][a-z0-9-]{0,39}$'", BIND.read_text())
 

@@ -8,15 +8,15 @@
 # starts cycles that reserve work and send nothing. --dispatch-opt-in, which needs
 # --enable-timer, also installs the drop-in that lets those cycles send real Relay
 # assignments. Do not pass it for a customer binding until the execution bridge
-# exists. Any bind without it removes that drop-in.
+# exists. A successful bind without it removes that drop-in.
 #
 # A slot is single-use: it refuses a ledger or binding record for a different
 # chief, and rebinding the same chief is allowed (for example after a host
 # replacement, which loses /etc/relay-chief but keeps the data volume).
 #
 # Exit codes: 0 bound, 1 failure, 2 malformed input, 3 slot already bound or not
-# this host's slot, 4 --dispatch-opt-in without --enable-timer. A refusal
-# changes nothing.
+# this host's slot, 4 --dispatch-opt-in without --enable-timer. A bind refused
+# by its checks changes nothing; one that fails after them leaves the timer off.
 set -euo pipefail
 umask 077
 

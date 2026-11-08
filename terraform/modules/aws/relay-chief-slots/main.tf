@@ -218,6 +218,10 @@ resource "aws_instance" "slot" {
     delete_on_termination = true
   }
 
+  # Bootstrap runs once and reads the artifact with this role, so the grant must
+  # exist first. The instance's profile alone orders it after the role, not this.
+  depends_on = [aws_iam_role_policy.artifact]
+
   lifecycle {
     # Replacing a host stops its chief and reattaches its ledger, so it is
     # always a deliberate -replace, never a side effect of a new AMI or template.

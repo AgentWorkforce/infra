@@ -4,7 +4,7 @@ Dedicated EC2 hosts ("slots") for [Relay Chief](https://github.com/AgentWorkforc
 
 **Status: not qualified.** This module has passed static checks and mock-provider tests only. It has never been applied, and no host has booted from its bootstrap. The runtime's own [readiness document](https://github.com/AgentWorkforce/relay-chief/blob/main/docs/readiness.md) lists what must exist before customer use. Applying this module needs the approvals that document requires for IAM, secrets and deployment.
 
-**Dispatch is off by default. Do not turn it on for a customer binding until the execution bridge exists.** The reference service copied into this module reserves work and sends nothing unless a drop-in sets `RELAY_CHIEF_RUN_FLAGS=--dispatch`, which only `--dispatch-opt-in` installs. With dispatch on, an enabled timer sends real Relay assignments every 30 seconds.
+**Dispatch is off by default. Do not turn it on for a customer binding until the execution bridge exists.** The reference service copied into this module reserves work and sends nothing unless a drop-in sets `RELAY_CHIEF_RUN_FLAGS=--dispatch`, which only `--dispatch-opt-in` installs. With dispatch on, an enabled timer sends real Relay assignments every 30 seconds. This default applies only to hosts bootstrapped from this version of the module. Earlier hosts keep the old unit, which always dispatches when its timer runs, and need `-replace` to change.
 
 ## What it creates
 
@@ -86,7 +86,7 @@ The script validates the configuration with the runtime's own schema, records th
 - `--enable-timer` starts cycles that reserve work and send nothing. They still read evidence, call the classifier and hold reservations against the chief's budget.
 - `--dispatch-opt-in` also installs the drop-in that lets those cycles send assignments. It requires `--enable-timer`. Read the warning at the top of this page first.
 
-Every bind without `--dispatch-opt-in` removes that drop-in, so dispatch never carries over from an earlier bind. A replaced host has none either. A secret cannot turn dispatch on: `RELAY_CHIEF_RUN_FLAGS` is not an accepted key.
+A successful bind without `--dispatch-opt-in` removes that drop-in, so dispatch never carries over from an earlier bind; a refused bind changes nothing. A replaced host has none either. A secret cannot turn dispatch on: `RELAY_CHIEF_RUN_FLAGS` is not an accepted key.
 
 A slot is single-use. Binding is refused if the host is not that slot, or if the data volume has a ledger or binding record for a different chief. A refusal changes nothing, so a running chief is not disturbed. Rebinding the same chief is allowed. Reusing a slot for another chief requires deliberately wiping its volume.
 
