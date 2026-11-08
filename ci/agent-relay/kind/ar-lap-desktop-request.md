@@ -59,9 +59,14 @@ does not widen that rule. A scoped Desktop implementation and tests are needed
 before pushed History/flush can work against this local HTTPS origin. No such
 runtime qualification is supplied by a profile build.
 
-Install the fixture public CA in ar-lap's System keychain through the operator
-procedure before native Desktop/LaunchAgent calls. The application installs no
-trust. The current dashboard also reads the legacy History service, while
+Only on an operator-designated disposable fixture host, install the fixture
+public CA in the System keychain through the operator procedure before native
+Desktop/LaunchAgent calls. This CA has no name constraints and must not be
+installed on a general workstation. Record its fingerprint; after testing remove
+its System-keychain trust and the exact fixture certificate, without touching
+unrelated trust roots. Retain the public certificate until removal is verified.
+A non-disposable host needs a properly trusted site certificate instead. The
+application installs no trust, and this work performs no trust-store change. The current dashboard also reads the legacy History service, while
 courier data is in the pipeline database. The compatible pipeline reader,
 canonical writer, control auth and upload/read integration gates remain in the
 [delivery checklist](ar-lap-delivery-plan.md). A Desktop candidate alone cannot

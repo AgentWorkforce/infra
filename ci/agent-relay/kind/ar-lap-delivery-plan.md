@@ -1,7 +1,8 @@
 # ar-lap delivery checklist
 
-Updated 2026-11-08. Dates below are executed evidence or explicit
-owner commitments, never inferred from an open PR or an estimated hosted rollout.
+Updated 2026-11-08. Dates in the milestone table are executed evidence or explicit
+owner commitments, never inferred from an open PR. Uncommitted planning estimates
+are kept in their own section below the table.
 **NOT COMMITTED** means that the owner has not supplied that date. Requests for
 code, artifact and proof dates have been sent to the existing component owners.
 
@@ -19,13 +20,22 @@ not rerun or reattributed the historical fixture evidence.
 | Milestone and owner | Code complete | Artifact available | Actual proof PASS | Remaining dependency / disposition |
 | --- | --- | --- | --- | --- |
 | Core fixture — infra-kind-stack | 2026-11-08: tested source `1c203f59`; three fresh-Mac portability fixes included | 2026-11-08: pinned baseline images loaded on ar-lap; native control reused from the verified Finn build, not built anew | 2026-11-08: setup exit 0; protocol **57 PASS / 0 FAIL / 3 PENDING**, exit 2; complete acceptance remains pending | [Fresh receipts](ar-lap-proof.json), [readiness](ar-lap-ready.json), [images](ar-lap-images.json), [transport](ar-lap-control-transport.json). All ten deployments and edge were ready at that run. PR #79 subsequently merged as `2a64b173`; that merge does not requalify the historical runtime receipt. |
-| Pipeline-to-app session reads — pipeline-lead coordinates Muse (writer author) and layered-sessions-pipeline (review/schema boundary); infra-kind-stack owns operator wiring | **NOT COMMITTED** for the complete writer/read/canonical/TLS/auth assembly | **NOT COMMITTED** for a compatible, source-pinned OCI assembly | **NOT COMMITTED**; `pipeline.app_visibility` remains pending | #317/#318 merged as `d33bfdaa`/`a1e1473b`. PG reader #330 remains draft `0f2e8663`; writer #336 draft `4bec3158` fixes the two earlier source defects but re-review needs fixes: missing invoker-trigger write privilege and function grants rejected by the exact manifest guard. Native PG17/dogpatch/CI, full-bootstrap failure proof and a matching combined image/generation remain gates. TLS, canonical catalog and compatible control auth/upload/cost contracts are still needed. |
+| Pipeline-to-app session reads — pipeline-lead coordinates Muse (writer author) and layered-sessions-pipeline (review/schema boundary); infra-kind-stack owns operator wiring | **NOT COMMITTED** for the complete writer/read/canonical/TLS/auth assembly | **NOT COMMITTED** for a compatible, source-pinned OCI assembly | **NOT COMMITTED**; `pipeline.app_visibility` remains pending | #317/#318 merged as `d33bfdaa`/`a1e1473b`. PG reader #330 is open/non-draft at `0f2e8663`. Writer #336 is open/draft at `518ed0fa`, not yet re-reviewed here; the last reviewed `4bec3158` needs fixes for an invoker-trigger privilege and function grants outside the exact manifest. Native PG17/dogpatch/CI and full-bootstrap failure proof remain gates. Operator wiring requires a matching approved image/ACL migration generation and a final exact-manifest receipt. TLS, canonical catalog and compatible control auth/upload/cost contracts are still needed. |
 | Control completion — layered-control | **NOT COMMITTED** for launch/release, workspace delete and compatible auth/read assembly | **NOT COMMITTED** for the complete installed assembly; merged-main `bae78a5` local candidate qualified separately in draft infra #91 | **NOT COMMITTED**; `agent_launch_release` and `cleanup.control_plane_workspaces` remain pending | Native `1f08cb6` MCP discovery/auth passes. #20 introspection merged as `bae78a5`, but is not installed in this fixture; #27 read integration remains separate. A reader-only route must not silently replace working upload/cost routes. |
 | Custom Desktop — layered-relay-desktop | **NOT COMMITTED** | **NOT COMMITTED** for a site build and ar-lap install/trust instructions | **NOT COMMITTED** for installed Desktop login, upload and visible readback | Site URL `https://relay.kind.agentrelay.com:8443`, scheme `agentrelay-kind`; local public CA available. Browser/device protocol tests are not a custom Desktop artifact proof. Depends on the pipeline/control assembly and the approved local analytics path. |
-| Shared-Postgres Relaycast target — layered-relaycast; ownership and estimate relayed by codex-helm-charts-check-codex | **NOT COMMITTED** | **NOT COMMITTED** | **NOT COMMITTED** | Running Cast is SQLite. Its real DM proof is useful baseline evidence, not final Postgres acceptance. Accepted task `relay-244997589034848256`, branch `agent/pg-backend`; no pushed runtime or image reported. Owner estimate: first runnable head **2026-11-10** (updated from about two working days); full conformance about a week after the first slice. No pushed SHA or artifact is supplied. These are estimates, not code/artifact/proof commitments or a full-stack delivery date. Owner-reported #633 merge `2599154` is search-port preparation, not the PG backend. |
+| Shared-Postgres Relaycast target — layered-relaycast; ownership and estimate relayed by codex-helm-charts-check-codex | **NOT COMMITTED** | **NOT COMMITTED** | **NOT COMMITTED** | Running Cast is SQLite. Its real DM proof is useful baseline evidence, not final Postgres acceptance. Accepted task `relay-244997589034848256`, branch `agent/pg-backend`; no pushed runtime or image reported. No pushed SHA or artifact is supplied. Planning estimates are recorded separately below; no code/artifact/proof date is committed. Owner-reported #633 merge `2599154` is search-port preparation, not the PG backend. |
 | One application database / isolated service schemas — component migrator owners, coordinated by infragrok | **NOT COMMITTED** for SQL/bootstrap and application compatibility | **NOT COMMITTED** for a compatible service image set | **NOT COMMITTED** | Infra #80 merged the [binding contract](../../../docs/shared-postgres-storage-contract.md), not runtime SQL. Control, pipeline, History and optional services must implement their own namespace/role contracts together; do not run the dedicated-database HoopDB bootstrap unchanged in the shared database. |
 | Component analytics adapters — each producer owner; owner map coordinated with infragrok | **NOT COMMITTED** for complete producer coverage | **NOT COMMITTED** for the local collector/adapter assembly | **NOT COMMITTED** for local event capture from every component with hosted egress denied | Self-host routes to local/in-cluster file collection; hosted uses the approved PostHog endpoint. Telemetry disabled is not analytics coverage. A pipeline OTLP file exporter alone does not cover product analytics or Desktop/browser intake. |
 | Add-ons — infra-kind-stack (profiles/proof), layered-control (signed license), layered-relayfile (filesystem authority), Flows runtime owner to be named | **NOT COMMITTED** for complete gated runtime | Native Flows/file build preparation exists; signed-license/scoped-authority artifact dates **NOT COMMITTED** | **NOT COMMITTED** for installed Flow run, controller-scheduled CronJob firing and authenticated file read/write | Deferred from the first cofounder core handoff, not removed from the overall goal. No dev issuer, fake license or manually instantiated CronJob counts as acceptance. |
+
+## Attributed planning estimates, not commitments
+
+On 2026-11-08, codex-helm-charts-check-codex relayed layered-relaycast's
+estimate for the first runnable PG source head: about two working days, with
+calendar estimate **2026-11-10**. No UTC delivery time or timezone was supplied.
+Full conformance was estimated about a week after that first slice. These are
+uncommitted source-effort estimates, not artifact, proof or full-stack delivery
+dates. The milestone table deliberately keeps those dates NOT COMMITTED.
 
 ## Core profile hides and disables Flows
 
@@ -51,7 +61,7 @@ client-only hiding is used here.
 
 The control owner confirmed those source facts and supplied a design-only
 proposal: member-readable `GET /api/v1/license`, capabilities for Flows/Chief/
-Relayfile, `403 {error:"feature_not_licensed"}` across disabled feature routes
+Relayfile, `403 {"error":"feature_not_licensed"}` across disabled feature routes
 (including worker enrollment/heartbeat), and 503 only for enabled-but-unavailable
 backends. The proposed `/readyz` would echo effective features. None of these
 feature/license endpoints or statuses is implemented on the reviewed main.
@@ -141,7 +151,7 @@ logs or handoff reports:
 | GitHub feed, reported working option | `RELEASE_FEED=github:<owner>/<name>`, `RELEASES_REPOSITORY`, and publisher credential references `DESKTOP_RELEASES_APP_ID` / `DESKTOP_RELEASES_PRIVATE_KEY`, or `RELEASES_TOKEN`. Feed/repository and release approval remain owner decisions. |
 | Cloud feed alternative | Owner reports the signing-cap fix remains unlanded; this is not an available substitute for the first ar-lap artifact. No cloud-feed action is requested. |
 | Platform and signing | macOS ARM64 DMG/pkg; existing repository Apple signing/notarization identity, not a new per-profile identity. |
-| Trust and hostname resolution | Fixture public CA installed as trusted in ar-lap's **System** keychain before Desktop/LaunchAgent calls. Login-keychain trust is insufficient. Desktop uses native OS roots and exposes no custom-CA/pinning bypass. The local hostname entries are still required. |
+| Trust and hostname resolution | Only on an operator-designated disposable fixture host, the fixture CA may be trusted in the **System** keychain for Desktop/LaunchAgent calls; remove its trust and exact certificate after testing. Do not install this unconstrained fixture CA on a general workstation. Login-keychain trust is insufficient. Use a properly trusted site certificate for a non-disposable host; no bypass is provided. |
 
 On the reported main, a telemetry key without a host still selects the public
 PostHog default. The current safe partial-fixture configuration has **no telemetry
@@ -172,9 +182,10 @@ the introspection/scoped-authority slice, not an installed add-on or a license.
 | Compatible server artifact | **NOT COMMITTED**. No published server image is supplied by the actors/npm publishing paths. Kind can use a local source build after the approved code lands; registry publication is a separate release decision. The older native `731ea459` build does not prove the new authority contract. |
 | Authenticated file write/read proof | **NOT COMMITTED**. Needs the real relaycontrol relayfile-agent token class and introspection pair, approved #568 code, chart endpoint/audience/mode and Secret inputs, the separate false-readiness fix, and an actual add-on roundtrip with genuine filesystem scopes. |
 
-The control token-class dependency is draft [#22](https://github.com/AgentWorkforce/relay-control/pull/22)
-at `bf529f8d7aa9a148660009a6aa0a79811c374b47`; control introspection #20 is also
-still a draft. The backend-load/readiness issue is relayfile #569, a separate
+The control token-class dependency [#22](https://github.com/AgentWorkforce/relay-control/pull/22)
+is open/non-draft at `e202195fecafb8c51ee7cdd39e13263cc5cccd8b`.
+Control introspection #20 merged as `bae78a5`, but is not installed in this
+fixture; its source merge alone does not qualify the relayfile authority pair. The backend-load/readiness issue is relayfile #569, a separate
 follow-up after #568. A static `/health` 200 must not count as storage readiness.
 Signed offline license enforcement remains with the control owner. No dev issuer
 or token minting is authorized by these dates.

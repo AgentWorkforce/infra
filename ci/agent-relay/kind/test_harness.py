@@ -216,6 +216,41 @@ class Harness(unittest.TestCase):
             p.pipeline_app_visibility("session", {"workspaceId": "workspace"})
         self.assertEqual(p.checks, [{"result": "FAIL", "check": "pipeline.read_session_cleanup", "detail": "ValueError"}])
 
+    def test_pipeline_visibility_clock_jump_before_first_poll_stays_pending_and_revokes(self):
+        p = proof.Proof(self.local)
+        p.state["a"] = {"ownerUserId": "owner"}
+        self.local.k = lambda *args, **kwargs: subprocess.CompletedProcess(args, 0, '{"accessToken":"private-token"}', "")
+        calls = []
+        def edge(host, path, *args, **kwargs):
+            calls.append((path, kwargs))
+            self.assertEqual(path, "/api/v1/auth/token/revoke", "a skipped poll must not invent an application read")
+            return 200, '{"revoked":true}'
+        p.edge = edge
+        with patch.object(proof.time, "monotonic", side_effect=[0, 30]), patch.object(proof.time, "sleep") as sleep:
+            p.pipeline_app_visibility("session", {"workspaceId": "workspace"})
+        sleep.assert_not_called()
+        self.assertEqual(len(p.checks), 1)
+        self.assertEqual(p.checks[0]["result"], "PENDING")
+        self.assertIn("last HTTP=not_attempted", p.checks[0]["detail"])
+        self.assertNotIn("private-token", p.checks[0]["detail"])
+        self.assertEqual(calls[0][1]["body"], {"token": "private-token"})
+
+    def test_pipeline_visibility_keeps_last_actual_http_outcome(self):
+        p = proof.Proof(self.local)
+        p.state["a"] = {"ownerUserId": "owner"}
+        self.local.k = lambda *args, **kwargs: subprocess.CompletedProcess(args, 0, '{"accessToken":"private-token"}', "")
+        calls = []
+        def edge(host, path, *args, **kwargs):
+            calls.append(path)
+            return (200, '{"revoked":true}') if "revoke" in path else (200, '{"items":[]}')
+        p.edge = edge
+        with patch.object(proof.time, "monotonic", side_effect=[0, 0, 16]), patch.object(proof.time, "sleep"):
+            p.pipeline_app_visibility("session", {"workspaceId": "workspace"})
+        self.assertEqual(p.checks[0]["result"], "PENDING")
+        self.assertIn("last HTTP=200", p.checks[0]["detail"])
+        self.assertNotIn("not_attempted", p.checks[0]["detail"])
+        self.assertEqual(calls, ["/cloud/api/v1/workspaces/workspace/sessions", "/api/v1/auth/token/revoke"])
+
     def test_cost_sync_session_is_revoked_even_when_ingest_fails(self):
         p = proof.Proof(self.local)
         p.state.update(a={"accessToken": "control-token", "workspaceId": "workspace"}, session={"sessionId": "session"})

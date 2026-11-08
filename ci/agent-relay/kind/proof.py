@@ -278,15 +278,17 @@ class Proof:
                      data=json.dumps({"userId": self.state["a"]["ownerUserId"], "workspaceId": tenant["workspaceId"]}))
         token = json.loads(result.stdout)["accessToken"]
         try:
+            last_status = "not_attempted"
             deadline = time.monotonic() + 15
             while time.monotonic() < deadline:
                 status, body = self.edge("relay.kind.agentrelay.com", f"/cloud/api/v1/workspaces/{tenant['workspaceId']}/sessions", token)
+                last_status = status
                 self.require(status == 200, f"courier application read failed status={status}")
                 if any(item.get("sessionId") == session for item in json.loads(body).get("items", [])):
                     self.record("PASS", "pipeline.app_visibility", "courier-uploaded session returned by authenticated relay-app TLS read API")
                     return
                 time.sleep(1)
-            self.record("PENDING", "pipeline.app_visibility", f"courier upload/index/Locker verified, but authenticated Default workspace application API omitted the session after 15s; last HTTP={status}; read-path integration contract required")
+            self.record("PENDING", "pipeline.app_visibility", f"courier upload/index/Locker verified, but authenticated Default workspace application visibility was not established within 15s; last HTTP={last_status}; read-path integration contract required")
         finally:
             # Preserve any original read exception and report cleanup as a
             # separate failure instead of replacing the causal diagnostic.
