@@ -73,6 +73,28 @@ or URL. A helper-pool TLS success cannot qualify the second pool silently. A sub
 ConfigMap update cannot change the generic pool's trust; a new init/rollout must
 validate the new CA pin. An init retry refuses a different already-frozen CA.
 
+## Active legacy services share the schema generation
+
+Before migrating, stop incompatible legacy workers/ingest or qualify them
+against the selected composed image. The old indexer always stays disabled and
+drained. Other worker components may be disabled or scaled to zero; the legacy
+`alleyoop` ingest may be scaled to zero. Every remaining active component must
+resolve through its actual child-chart image helper to exactly the consumer's
+repository and immutable digest, with no tag fallback. Both prepare and serve
+refuse a mismatch.
+
+Active legacy services also require `postgresCa.enabled=true`, the same public
+ConfigMap/key as the consumer, and `nativeConsumer.legacyRuntimesQualified=true`
+after operator validation. Their opaque HOOPDB_URL Secrets must name the intended
+database and dedicated runtime role and use `sslmode=verify-full` plus
+`sslrootcert=/etc/postgres-ca/ca.crt`. Verify the actual CA ConfigMap is immutable,
+its bytes match the selected pin, the mounts are read-only, and genuine native
+pool logins pass TLS, database/identity and exact-generation probes; wrong CA
+and hostname must refuse. The legacy templates project the CA directly and do
+not use this slot's frozen-copy init. The chart can verify image/reference
+metadata but cannot inspect opaque Secret URL contents or prove these external
+runtime checks. Keep those services at zero until their proof exists.
+
 ## Owner bootstrap and ordering
 
 Use ordinary operator/driver phases, with the same image and trusted CA:
@@ -80,6 +102,11 @@ Use ordinary operator/driver phases, with the same image and trusted CA:
 1. Apply and verify the official schema/role prerequisites and migrator for the
    selected database/generation. Preserve any historical ledger; an unsupported
    migration history must be repaired by its source owner, not this chart.
+   Run the selected official driver a second time and verify it applies zero
+   steps. Set `worker.migrations.enabled=false` and only then acknowledge
+   `nativeConsumer.migrationDriverVerified=true`; this slot never starts a
+   second, stale-image migration Job. These acknowledgements do not replace
+   the runtime's actual generation/PASS admission.
 2. If using the optional Job, set `bootstrap.enabled=true`, a DIFFERENT
    `bootstrap.existingSecret` containing owner JSON `{hoopdb_url:<owner URL>}`,
    and its explicit `ownerRole`. Keep `bootstrap.phase=prepare`: this renders
@@ -90,6 +117,9 @@ Use ordinary operator/driver phases, with the same image and trusted CA:
    exact consumer grants/verification. Its source must admit this schema
    owner and role-creation authority. An unsupported owner fails; the chart
    does not grant CREATEROLE, SUPERUSER or substitute a different authority.
+   The isolated TLS helper's owner fixture is `postgres`; it does not qualify
+   first role promotion by an existing non-superuser schema owner. That path
+   needs its own source-owned proof before enabling this Job.
 4. Provision the dedicated runtime password through the supported operator
    step AFTER its NOLOGIN-to-LOGIN promotion; inject only its runtime JSON
    Secret. A preset credential before promotion may be refused by source.

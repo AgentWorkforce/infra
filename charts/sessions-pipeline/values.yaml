@@ -445,6 +445,12 @@ nativeConsumer:
   # Both the chart's legacy indexer and the installed old indexer must be off.
   # Recreate cannot coordinate two differently named writers.
   legacyIndexerDrained: false
+  # Driver/migrations stay outside this slot; verify the selected image's
+  # migration run AND zero-step rerun before prepare/serve. Disable old Job.
+  migrationDriverVerified: false
+  # Only needed with active legacy Bob/referee/ingest. Match their image and
+  # CA, validate immutable CA object and opaque verify-full URLs/roles/DB/gates.
+  legacyRuntimesQualified: false
   image:
     repository: ghcr.io/agentworkforce/96bulls-services
     digest: ""

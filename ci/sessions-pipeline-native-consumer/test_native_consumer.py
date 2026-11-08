@@ -66,6 +66,20 @@ class Consumer(unittest.TestCase):
         ca=next(v for v in p['volumes'] if v['name']=='postgres-ca-source')['configMap']
         self.assertEqual(ca['items'],[{'key':'ca.crt','path':'ca.crt'}]);self.assertEqual(ca['defaultMode'],292)
         self.assertEqual(self.env(p['containers'][0])['SERVICE']['value'],'session-pipeline-consumer')
+    def test_native_slot_renders_under_umbrella_scope(self):
+        values=yaml.safe_load(FIXTURE.read_text())
+        image=values['nativeConsumer']['image'];ca={'enabled':True,'configMap':'postgres-ca','key':'ca.crt','secret':''}
+        values['nativeConsumer']['legacyRuntimesQualified']=True
+        values['worker']['image']=copy.deepcopy(image);values['worker']['postgresCa']=copy.deepcopy(ca)
+        values['worker']['components']['referee']['replicas']=1
+        values['alleyoop']['image']=copy.deepcopy(image);values['alleyoop']['postgresCa']=copy.deepcopy(ca);values['alleyoop']['ingest']['replicas']=1
+        with tempfile.TemporaryDirectory(prefix='native-consumer-umbrella-') as folder:
+            f=Path(folder)/'values.yaml'
+            f.write_text(yaml.safe_dump({'components':{'telemetryCollector':False,'relaycast':False,'relayauth':False,'sessionsPipeline':True,'relayhistory':False,'control':False,'webapp':False,'relayflows':False,'durableActors':False,'relayfile':False,'relayChief':False},'sessions-pipeline':values}))
+            result=subprocess.run(['helm','template','test',str(ROOT/'charts/agent-relay'),'-f',str(f)],capture_output=True,text=True)
+            self.assertEqual(result.returncode,0,result.stderr)
+            docs=list(yaml.safe_load_all(result.stdout))
+            self.assertTrue(any(d and d['kind']=='Deployment' and d['metadata']['labels'].get('app.kubernetes.io/name')=='session-pipeline-consumer' for d in docs))
     def test_public_ca_is_frozen_across_source_updates_and_init_retries(self):
         with tempfile.TemporaryDirectory(prefix='public-ca-freeze-') as folder:
             target=Path(folder)/'ca.crt'
@@ -116,6 +130,26 @@ class Consumer(unittest.TestCase):
             with self.subTest(name=name):self.render(self.native(**{name:[]}),fail=True)
         self.render({'worker':{'components':{'hoopdb-indexer':{'enabled':True}}}},fail=True)
         self.render(self.native(legacyIndexerDrained=False),fail=True)
+    def test_old_migrator_and_unqualified_active_legacy_runtimes_refuse(self):
+        self.render({'worker':{'migrations':{'enabled':True}}},fail=True)
+        self.render(self.native(migrationDriverVerified=False),fail=True)
+        for entry in [{'worker':{'components':{'referee':{'replicas':1}}}},{'alleyoop':{'ingest':{'replicas':1}}}]:
+            self.render(entry,fail=True)
+        image=yaml.safe_load(FIXTURE.read_text())['nativeConsumer']['image']
+        ca={'enabled':True,'configMap':'postgres-ca','key':'ca.crt','secret':''}
+        good={'worker':{'components':{'referee':{'replicas':1}},'image':image,'postgresCa':ca},
+              'alleyoop':{'ingest':{'replicas':1},'image':image,'postgresCa':ca},'nativeConsumer':{'legacyRuntimesQualified':True}}
+        self.render(good)
+        for key in ['worker','alleyoop']:
+            bad=copy.deepcopy(good);bad[key]['image']['digest']='';bad[key]['image']['tag']='latest';self.render(bad,fail=True)
+            bad=copy.deepcopy(good);bad[key]['postgresCa']['configMap']='wrong-ca';self.render(bad,fail=True)
+            bad=copy.deepcopy(good);bad['nativeConsumer']['legacyRuntimesQualified']=False;self.render(bad,fail=True)
+        # Relative repositories resolve through the actual child helper/global registry.
+        relative=copy.deepcopy(good)
+        relative['nativeConsumer']['image']=copy.deepcopy(image)
+        relative['nativeConsumer']['image']['repository']='ghcr.io/agentworkforce/qualified-services'
+        for key in ['worker','alleyoop']:relative[key]['image']['repository']='agentworkforce/qualified-services'
+        self.render(relative)
     def test_secret_and_pod_identity_are_mutually_exclusive(self):
         overlay=self.native(serviceAccountName='consumer-role',locker={'credentials':{'mode':'podIdentity'},'existingSecret':'','endpoint':''})
         p=self.pod(self.render(overlay));env=self.env(p['containers'][0])

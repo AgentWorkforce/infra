@@ -1,12 +1,17 @@
 # RENDER ONLY: synthetic native image/CA identities; never install.
+hoopdb:
+  enabled: false # external operator-qualified database; no SQL bootstrap Jobs
 global:
   tenant:
     orgId: org_ci
 alleyoop:
+  ingest:
+    replicas: 0
   auth:
     jwksUrl: https://relayauth.example.com/.well-known/jwks.json
 worker:
   migrations:
+    enabled: false
     databaseMode: selfhosted
     supabaseShim: true
     runtimeRole: sessions_pipeline_runtime
@@ -18,12 +23,16 @@ worker:
   components:
     hoopdb-indexer:
       enabled: false
+    referee:
+      replicas: 0
+    bob-costas:
+      replicas: 0
 runtimeRole:
   bootstrapJob:
-    enabled: true
+    enabled: false
 functionDefaultRevoke:
   bootstrapJob:
-    enabled: true
+    enabled: false
 privilegedSql:
   sqlImage:
     digest: sha256:6f22ea17dff336e1431664542759fd27958649388b90a0b2f0881883caa7c6b2
@@ -34,6 +43,7 @@ ingestEdge:
 nativeConsumer:
   enabled: true
   legacyIndexerDrained: true
+  migrationDriverVerified: true # synthetic render-only acknowledgement
   image:
     repository: example.invalid/native-consumer
     digest: sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff

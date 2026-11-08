@@ -3531,7 +3531,10 @@ entries:
       qualified immutable composed image, a dedicated runtime JSON Secret, explicit
       PostgreSQL target and pinned public custom CA, S3/MinIO static Secret or
       Pod Identity, typed backend/floor/bare root, and a drained disabled old
-      hoopdb-indexer. One replica with Recreate. The bounded init contract checks
+      hoopdb-indexer. Old migrator Job must be disabled after an external official
+      driver plus zero-step rerun. Active legacy workers/ingest must match the
+      immutable image and CA references and carry operator strict-URL/TLS/generation
+      qualification; otherwise stop them. One replica with Recreate. The bounded init contract checks
       both actual pool TLS transports, database/login, source role/schema/policy
       admission and exact generation/PASS. Opaque URLs must use verify-full plus
       the managed CA path; helper-pool trust alone is insufficient.

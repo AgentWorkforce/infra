@@ -13,7 +13,7 @@
 {{- end -}}
 {{- define "sessions-pipeline.nativeConsumer.validate" -}}
 {{- $c := .Values.nativeConsumer -}}
-{{- range $name, $flag := dict "enabled" $c.enabled "legacyIndexerDrained" $c.legacyIndexerDrained "allowInClusterHttp" $c.allowInClusterHttp "bootstrap.enabled" $c.bootstrap.enabled -}}
+{{- range $name, $flag := dict "enabled" $c.enabled "migrationDriverVerified" $c.migrationDriverVerified "legacyRuntimesQualified" $c.legacyRuntimesQualified "legacyIndexerDrained" $c.legacyIndexerDrained "allowInClusterHttp" $c.allowInClusterHttp "bootstrap.enabled" $c.bootstrap.enabled -}}
 {{- if not (kindIs "bool" $flag) }}{{ fail (printf "nativeConsumer.%s must be a boolean" $name) }}{{ end -}}
 {{- end -}}
 {{- if $c.enabled -}}
@@ -21,6 +21,26 @@
 {{- $indexer := index .Values.worker.components "hoopdb-indexer" -}}
 {{- if or (not (kindIs "bool" $indexer.enabled)) $indexer.enabled }}{{ fail "nativeConsumer requires worker.components.hoopdb-indexer.enabled=false" }}{{ end -}}
 {{- if not $c.legacyIndexerDrained }}{{ fail "nativeConsumer requires legacyIndexerDrained=true after the installed old indexer has been stopped" }}{{ end -}}
+{{- if .Values.worker.migrations.enabled }}{{ fail "nativeConsumer requires worker.migrations.enabled=false; run the selected official migration driver separately and verify its no-op rerun first" }}{{ end -}}
+{{- if not $c.migrationDriverVerified }}{{ fail "nativeConsumer requires migrationDriverVerified=true after the selected official migration driver and its no-op rerun passed" }}{{ end -}}
+{{- $activeWorker := false -}}
+{{- range $component, $entry := .Values.worker.components -}}
+{{- if or (not (kindIs "bool" $entry.enabled)) (not (regexMatch "^(0|[1-9][0-9]*)$" (toString $entry.replicas))) }}{{ fail "nativeConsumer requires explicit boolean worker component enablement and nonnegative integer replicas" }}{{ end -}}
+{{- if and $entry.enabled (gt (int $entry.replicas) 0) }}{{ $activeWorker = true }}{{ end -}}
+{{- end -}}
+{{- if not (regexMatch "^(0|[1-9][0-9]*)$" (toString .Values.alleyoop.ingest.replicas)) }}{{ fail "nativeConsumer requires nonnegative integer alleyoop.ingest.replicas" }}{{ end -}}
+{{- $activeIngest := gt (int .Values.alleyoop.ingest.replicas) 0 -}}
+{{- $nativeImage := printf "%s@%s" $c.image.repository $c.image.digest -}}
+{{- if and $activeWorker (ne (include "sessions-pipeline-worker.image" .Subcharts.worker) $nativeImage) }}{{ fail "nativeConsumer requires every active legacy worker to resolve to the same qualified immutable image; disable or scale it to zero otherwise" }}{{ end -}}
+{{- if and $activeIngest (ne (include "alleyoop.image" .Subcharts.alleyoop) $nativeImage) }}{{ fail "nativeConsumer requires active legacy alleyoop to resolve to the same qualified immutable image; scale it to zero otherwise" }}{{ end -}}
+{{- if or $activeWorker $activeIngest -}}
+{{- if not $c.legacyRuntimesQualified }}{{ fail "nativeConsumer requires legacyRuntimesQualified=true after active legacy runtimes pass strict URL/TLS/database/role/generation proof" }}{{ end -}}
+{{- range $legacyTarget := list (dict "active" $activeWorker "ca" .Values.worker.postgresCa) (dict "active" $activeIngest "ca" .Values.alleyoop.postgresCa) -}}
+{{- if $legacyTarget.active -}}
+{{- if or (ne $legacyTarget.ca.enabled true) (ne $legacyTarget.ca.configMap $c.postgres.caConfigMap) $legacyTarget.ca.secret (ne $legacyTarget.ca.key $c.postgres.caKey) }}{{ fail "nativeConsumer requires active legacy runtimes to mount the same public CA ConfigMap/key through postgresCa" }}{{ end -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
 {{- $name := include "sessions-pipeline.nativeConsumer.name" . -}}
 {{- if or (gt (len $name) 63) (not (regexMatch "^[a-z]([-a-z0-9]*[a-z0-9])?$" $name)) }}{{ fail "nativeConsumer.fullnameOverride must be a DNS-1035 label of at most 63 characters" }}{{ end -}}
 {{- if ne (toString $c.replicas) "1" }}{{ fail "nativeConsumer.replicas must be exactly 1" }}{{ end -}}
