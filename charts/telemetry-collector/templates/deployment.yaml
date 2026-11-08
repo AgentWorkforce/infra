@@ -1,0 +1,110 @@
+{{- include "telemetry-collector.validate" . -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "telemetry-collector.fullname" . }}
+  labels: {{ include "telemetry-collector.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  strategy: { type: Recreate }
+  selector:
+    matchLabels: {{ include "telemetry-collector.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels: {{ include "telemetry-collector.selectorLabels" . | nindent 8 }}
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        agentworkforce.dev/collector-source: {{ .Values.image.sourceRevision | quote }}
+        agentworkforce.dev/credential-revision: {{ .Values.rolloutRevision | quote }}
+    spec:
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: {{ .Values.terminationGracePeriodSeconds }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile: { type: RuntimeDefault }
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets: {{ toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: collector
+          image: {{ include "telemetry-collector.image" .Values.image | quote }}
+          imagePullPolicy: IfNotPresent
+          command: ["node", "node_modules/@cloud/selfhost-api/dist/collector-cli.js"]
+          env:
+            - { name: ANALYTICS_COLLECTOR_HOST, value: "127.0.0.1" }
+            - { name: ANALYTICS_COLLECTOR_PORT, value: "4319" }
+            - { name: ANALYTICS_COLLECTOR_DATA_DIR, value: /var/lib/telemetry }
+            - { name: ANALYTICS_COLLECTOR_PRODUCERS_FILE, value: /var/run/secrets/telemetry-producers/producers.json }
+            - name: ANALYTICS_COLLECTOR_MAX_BATCH_BYTES
+              value: {{ .Values.limits.maxBatchBytes | quote }}
+            - name: ANALYTICS_COLLECTOR_MAX_BATCH_EVENTS
+              value: {{ .Values.limits.maxBatchEvents | quote }}
+            - name: ANALYTICS_COLLECTOR_MAX_EVENT_BYTES
+              value: {{ .Values.limits.maxEventBytes | quote }}
+            - name: ANALYTICS_COLLECTOR_REQUEST_TIMEOUT_MS
+              value: {{ .Values.limits.requestTimeoutMs | quote }}
+            - name: ANALYTICS_COLLECTOR_MAX_IN_FLIGHT
+              value: {{ .Values.limits.maxInFlight | quote }}
+            - name: ANALYTICS_COLLECTOR_MAX_SEGMENTS
+              value: {{ .Values.limits.maxSegments | quote }}
+            - name: ANALYTICS_COLLECTOR_MAX_DISK_BYTES
+              value: {{ .Values.limits.maxDiskBytes | quote }}
+            - name: ANALYTICS_COLLECTOR_SHUTDOWN_DEADLINE_MS
+              value: {{ .Values.limits.shutdownDeadlineMs | quote }}
+            - { name: ANALYTICS_COLLECTOR_RETENTION, value: {{ .Values.retention.policy | quote }} }
+            {{- if .Values.retention.maxAgeMs }}
+            - { name: ANALYTICS_COLLECTOR_RETENTION_MAX_AGE_MS, value: {{ .Values.retention.maxAgeMs | quote }} }
+            {{- end }}
+          securityContext: &restricted
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ALL] }
+          resources: {{ toYaml .Values.resources | nindent 12 }}
+          volumeMounts:
+            - { name: data, mountPath: /var/lib/telemetry }
+            - { name: producers, mountPath: /var/run/secrets/telemetry-producers, readOnly: true }
+          startupProbe:
+            exec: &healthyExec
+              command: ["node", "-e", "fetch('http://127.0.0.1:4319/healthz',{signal:AbortSignal.timeout(1000)}).then(async r=>process.exit(r.ok&&(await r.json()).ok===true?0:1)).catch(()=>process.exit(1))"]
+            periodSeconds: 5
+            timeoutSeconds: 2
+            failureThreshold: 30
+          readinessProbe:
+            exec: *healthyExec
+            periodSeconds: 5
+            timeoutSeconds: 2
+            failureThreshold: 3
+          livenessProbe:
+            exec: *healthyExec
+            periodSeconds: 15
+            timeoutSeconds: 2
+            failureThreshold: 3
+        - name: tls-proxy
+          image: {{ include "telemetry-collector.image" .Values.tlsProxy.image | quote }}
+          imagePullPolicy: IfNotPresent
+          command: ["nginx", "-c", "/etc/telemetry/nginx.conf", "-g", "daemon off;"]
+          ports: [{ name: https, containerPort: 8443 }]
+          securityContext: *restricted
+          resources: {{ toYaml .Values.proxyResources | nindent 12 }}
+          volumeMounts:
+            - { name: proxy-config, mountPath: /etc/telemetry, readOnly: true }
+            - { name: tls, mountPath: /var/run/secrets/telemetry-tls, readOnly: true }
+            - { name: proxy-tmp, mountPath: /tmp }
+          readinessProbe:
+            httpGet: { path: /healthz, port: https, scheme: HTTPS }
+            periodSeconds: 5
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: {{ default (include "telemetry-collector.fullname" .) .Values.persistence.existingClaim }}
+        - name: producers
+          secret: { secretName: {{ .Values.producersSecret | quote }}, defaultMode: 0440 }
+        - name: tls
+          secret: { secretName: {{ .Values.tlsSecret | quote }}, defaultMode: 0440 }
+        - name: proxy-config
+          configMap: { name: {{ include "telemetry-collector.fullname" . }} }
+        - name: proxy-tmp
+          emptyDir: { sizeLimit: 32Mi }

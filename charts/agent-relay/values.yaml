@@ -2,6 +2,8 @@
 # Relayflows is an optional add-on via components.relayflows; Relayfile is not
 # a dependency.
 components:
+  # Enable after accepting the collector/proxy images, TLS and durable volume.
+  telemetryCollector: false
   relaycast: true
   relayauth: true
   sessionsPipeline: true
@@ -111,3 +113,8 @@ localKind:
 durableActorsNetworkPolicy:
   enabled: true
   extraIngressFrom: []
+
+# Dedicated analytics file collector. Producer adapters are configured on each
+# application; this chart does not enable them or redirect hosted PostHog.
+telemetry-collector:
+  fullnameOverride: telemetry-collector

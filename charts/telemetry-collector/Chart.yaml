@@ -1,0 +1,15 @@
+apiVersion: v2
+name: telemetry-collector
+type: application
+version: 0.1.0
+appVersion: "collector-v1"
+kubeVersion: ">=1.29.0-0"
+description: Authenticated self-hosted analytics collector with durable NDJSON storage and internal TLS
+home: https://github.com/AgentWorkforce/infra
+sources:
+  - https://github.com/AgentWorkforce/infra/tree/main/charts/telemetry-collector
+annotations:
+  artifacthub.io/license: Apache-2.0
+maintainers:
+  - name: AgentWorkforce
+    url: https://github.com/AgentWorkforce/infra

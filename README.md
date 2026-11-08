@@ -27,6 +27,7 @@ and the release gate’s `helm-charts` license-decision ID retain their original
 | [relayflows](charts/relayflows) | Durable workflows running locally in Kubernetes, with optional Cloud assignment mode |
 | [sessions-pipeline-worker](charts/sessions-pipeline-worker) | Session summary, metadata indexing and status workers, plus migration and storage initialization Jobs |
 | [sessions-pipeline](charts/sessions-pipeline) | Session workers and ingest API, with optional Postgres, session-object-storage (MinIO) and an OTel collector |
+| [telemetry-collector](charts/telemetry-collector) | Authenticated self-hosted analytics intake, internal TLS and durable NDJSON files |
 | [session-ingest-api](charts/session-ingest-api) | Receives session manifests and chunks and stores them in S3-compatible object storage |
 | [relayauth](charts/relayauth) | Self-hosted RelayAuth issuer: immutable image, externally managed keys, single-writer SQLite, and optional JWKS ingress |
 

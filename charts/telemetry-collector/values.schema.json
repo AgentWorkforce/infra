@@ -1,0 +1,250 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "image",
+    "tlsProxy",
+    "imagePullSecrets",
+    "nameOverride",
+    "fullnameOverride",
+    "replicaCount",
+    "producersSecret",
+    "tlsSecret",
+    "rolloutRevision",
+    "persistence",
+    "terminationGracePeriodSeconds",
+    "limits",
+    "retention",
+    "networkPolicy",
+    "resources",
+    "proxyResources"
+  ],
+  "properties": {
+    "global": {
+      "type": "object"
+    },
+    "image": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "repository",
+        "digest",
+        "sourceRevision"
+      ],
+      "properties": {
+        "repository": {
+          "type": "string"
+        },
+        "digest": {
+          "type": "string",
+          "pattern": "^$|^sha256:[a-f0-9]{64}$"
+        },
+        "sourceRevision": {
+          "type": "string",
+          "pattern": "^$|^[a-f0-9]{40}$"
+        }
+      }
+    },
+    "tlsProxy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "image"
+      ],
+      "properties": {
+        "image": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "repository",
+            "digest"
+          ],
+          "properties": {
+            "repository": {
+              "type": "string"
+            },
+            "digest": {
+              "type": "string",
+              "pattern": "^$|^sha256:[a-f0-9]{64}$"
+            }
+          }
+        }
+      }
+    },
+    "imagePullSecrets": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "name"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "nameOverride": {
+      "type": "string"
+    },
+    "fullnameOverride": {
+      "type": "string"
+    },
+    "replicaCount": {
+      "type": "integer",
+      "enum": [
+        1
+      ]
+    },
+    "producersSecret": {
+      "type": "string"
+    },
+    "tlsSecret": {
+      "type": "string"
+    },
+    "rolloutRevision": {
+      "type": "string"
+    },
+    "persistence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "existingClaim",
+        "size",
+        "storageClassName"
+      ],
+      "properties": {
+        "existingClaim": {
+          "type": "string"
+        },
+        "size": {
+          "type": "string",
+          "minLength": 1
+        },
+        "storageClassName": {
+          "type": "string"
+        }
+      }
+    },
+    "terminationGracePeriodSeconds": {
+      "type": "integer",
+      "minimum": 2,
+      "maximum": 120
+    },
+    "limits": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "maxBatchBytes",
+        "maxBatchEvents",
+        "maxEventBytes",
+        "requestTimeoutMs",
+        "maxInFlight",
+        "maxSegments",
+        "maxDiskBytes",
+        "shutdownDeadlineMs"
+      ],
+      "properties": {
+        "maxBatchBytes": {
+          "type": "integer",
+          "minimum": 1024,
+          "maximum": 16777216
+        },
+        "maxBatchEvents": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 10000
+        },
+        "maxEventBytes": {
+          "type": "integer",
+          "minimum": 256,
+          "maximum": 1048576
+        },
+        "requestTimeoutMs": {
+          "type": "integer",
+          "minimum": 100,
+          "maximum": 300000
+        },
+        "maxInFlight": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1024
+        },
+        "maxSegments": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 10000000
+        },
+        "maxDiskBytes": {
+          "type": "integer",
+          "minimum": 1048576,
+          "maximum": 17592186044416
+        },
+        "shutdownDeadlineMs": {
+          "type": "integer",
+          "minimum": 100,
+          "maximum": 60000
+        }
+      }
+    },
+    "retention": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "policy"
+      ],
+      "properties": {
+        "policy": {
+          "type": "string",
+          "enum": [
+            "reject-new",
+            "delete-oldest-closed"
+          ]
+        },
+        "maxAgeMs": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 60000,
+          "maximum": 3153600000000
+        }
+      }
+    },
+    "networkPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "allowedFrom"
+      ],
+      "properties": {
+        "allowedFrom": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "minProperties": 1,
+            "properties": {
+              "podSelector": {
+                "type": "object"
+              },
+              "namespaceSelector": {
+                "type": "object"
+              }
+            },
+            "additionalProperties": false
+          }
+        }
+      }
+    },
+    "resources": {
+      "type": "object"
+    },
+    "proxyResources": {
+      "type": "object"
+    }
+  }
+}
