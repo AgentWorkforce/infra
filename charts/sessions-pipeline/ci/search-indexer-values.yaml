@@ -27,6 +27,7 @@ privilegedSql:
 searchIndexer:
   enabled: true
   image:
+    repository: example.invalid/session-search-indexer
     digest: sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff
   completeSince: epoch
   config: { existingSecret: search-indexer-config }
