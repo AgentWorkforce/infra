@@ -27,6 +27,12 @@ tokens or Linux capabilities. Collector readiness checks JSON `ok: true`, not
 only an HTTP status. Startup opens/recovers the file store before listening.
 HTTP readiness alone is not a durable-write or power-loss test.
 
+The proxy accepts only `POST /v1/events` and `GET /healthz` on those routes;
+other methods receive JSON 405 without reaching the collector. Its HTTPS
+`/livez` probe answers locally, so an unavailable collector makes readiness
+fail without restarting a responsive proxy. An unresponsive proxy fails its
+own liveness probe.
+
 ## Before installation
 
 Supply accepted immutable collector and TLS-proxy image digests and record the
