@@ -1,7 +1,7 @@
 {
   "profile": "core",
-  "infraRevision": "d87aefbbb69a057a9d35357c88f7c4327121f9dd",
-  "recipeSha256": "886ac02e03d2c658dbaebabd021fe43386202ab5db3078ae74a0cbf13eeb160e",
+  "infraRevision": "fd8565caacec90be4596ddc0e7e79cd71de33104",
+  "recipeSha256": "1ae88d4bccf24cd687dae13617f2146cd78694229b76c298606a4074002124d5",
   "result": "PENDING",
   "checks": [
     {
@@ -27,12 +27,12 @@
     {
       "result": "PASS",
       "check": "bootstrap.relaycast_workspaces",
-      "detail": "mode=sqlite create=true delete=true create_ms=14,15"
+      "detail": "mode=sqlite create=true delete=true create_ms=11,12"
     },
     {
       "result": "PASS",
       "check": "bootstrap.tenant_a",
-      "detail": "relaycast_ws=244965875270262784 org=48526e66-3e41-4667-ae23-a86921021579 workspace=417893d6-6f59-4961-89c3-0447067dc552 name=e2e-e2emw7196d2c1fdc9-a owner=7e1b18ac-dca6-47a5-a968-5bc333b78ebc scope=cli:auth,rth:read,rth:sync"
+      "detail": "relaycast_ws=244997233254309888 org=48526e66-3e41-4667-ae23-a86921021579 workspace=709a14d9-775c-42ce-81a0-eac7424dfa88 name=e2e-e2emw75pf4tc56f24-a owner=7e1b18ac-dca6-47a5-a968-5bc333b78ebc scope=cli:auth,rth:read,rth:sync"
     },
     {
       "result": "PASS",
@@ -42,7 +42,7 @@
     {
       "result": "PASS",
       "check": "bootstrap.tenant_b",
-      "detail": "relaycast_ws=244965875274457088 org=48526e66-3e41-4667-ae23-a86921021579 workspace=5b0c3283-c363-43e8-ac7f-09a2a9e1aa4e name=e2e-e2emw7196d2c1fdc9-b owner=7e1b18ac-dca6-47a5-a968-5bc333b78ebc scope=cli:auth,rth:read,rth:sync"
+      "detail": "relaycast_ws=244997233254309889 org=48526e66-3e41-4667-ae23-a86921021579 workspace=b93daff7-ec32-422f-952c-bdc62cb5c337 name=e2e-e2emw75pf4tc56f24-b owner=7e1b18ac-dca6-47a5-a968-5bc333b78ebc scope=cli:auth,rth:read,rth:sync"
     },
     {
       "result": "PASS",
@@ -52,17 +52,17 @@
     {
       "result": "PASS",
       "check": "bootstrap.workspaces_listed",
-      "detail": "org_workspaces=22 contains_a_and_b=true"
+      "detail": "org_workspaces=26 contains_a_and_b=true"
     },
     {
       "result": "PASS",
       "check": "bootstrap.membership_gate",
-      "detail": "unknown_user=403/not_member removed_member=403/not_member removed_member_poll=authorization_pending a_token_for_b=404/workspace_not_found denied_poll=access_denied outsider=a9d8c2b9-6819-488c-83b8-e3e49ebf5f0e"
+      "detail": "unknown_user=403/not_member removed_member=403/not_member removed_member_poll=authorization_pending a_token_for_b=404/workspace_not_found denied_poll=access_denied outsider=6f8b133b-0149-4df4-9ac3-391219fe101d"
     },
     {
       "result": "PASS",
       "check": "messaging.register",
-      "detail": "agents=244965876050403328,244965876113317888"
+      "detail": "agents=244997233979924480,244997234009284608"
     },
     {
       "result": "PASS",
@@ -72,17 +72,17 @@
     {
       "result": "PASS",
       "check": "messaging.a_to_b",
-      "detail": "conversation=dm_19cc40ac20d4857b17aa259b message=244965876159455232"
+      "detail": "conversation=dm_9a96c1173991548064c23547 message=244997234042839040"
     },
     {
       "result": "PASS",
       "check": "messaging.b_to_a_same_conversation",
-      "detail": "conversation=dm_19cc40ac20d4857b17aa259b message=244965876239147008"
+      "detail": "conversation=dm_9a96c1173991548064c23547 message=244997234126725120"
     },
     {
       "result": "PASS",
       "check": "messaging.history",
-      "detail": "conversation=dm_19cc40ac20d4857b17aa259b both_agents_see_ping_and_reply=true"
+      "detail": "conversation=dm_9a96c1173991548064c23547 both_agents_see_ping_and_reply=true"
     },
     {
       "result": "PASS",
@@ -92,12 +92,12 @@
     {
       "result": "PASS",
       "check": "delivery.first",
-      "detail": "batch=299d84f88e65e5f38f490ec98a9afcd5 receipt=rhr_9dd9a8f6578784b654a9a353acfaff992bbc4932e12a1d96f20e2905e2926e80 accepted=5 level=durable"
+      "detail": "batch=d793d744206242f58f4c706ba5492783 receipt=rhr_812057ac517dc30e454bdf7dcb48847586b171b9c648c2bfdda83553454f6486 accepted=5 level=durable"
     },
     {
       "result": "PASS",
       "check": "delivery.retry_same_receipt",
-      "detail": "receipt=rhr_9dd9a8f6578784b654a9a353acfaff992bbc4932e12a1d96f20e2905e2926e80"
+      "detail": "receipt=rhr_812057ac517dc30e454bdf7dcb48847586b171b9c648c2bfdda83553454f6486"
     },
     {
       "result": "PASS",
@@ -152,7 +152,7 @@
     {
       "result": "PASS",
       "check": "sessions.activity",
-      "detail": "day=2026-11-07 conversations=1 claude=1 non_matching_q_total=0 reversed_range=400"
+      "detail": "day=2026-11-08 conversations=1 claude=1 non_matching_q_total=0 reversed_range=400"
     },
     {
       "result": "PASS",
@@ -207,17 +207,17 @@
     {
       "result": "PASS",
       "check": "pipeline.mint_assertion",
-      "detail": "org=48526e66-3e41-4667-ae23-a86921021579 workspace=5d4f401e-ea08-4b7d-9e74-f87abbc7e580 machine=kind-86616efd5617 aud=https://history.kind.agentrelay.com:8443 ttl=60s"
+      "detail": "org=48526e66-3e41-4667-ae23-a86921021579 workspace=5d4f401e-ea08-4b7d-9e74-f87abbc7e580 machine=kind-8c15b88a6543 aud=https://history.kind.agentrelay.com:8443 ttl=60s"
     },
     {
       "result": "PASS",
       "check": "pipeline.courier_push",
-      "detail": "session=c9d7fde1-b1bc-4ade-bd4c-63645a998fb0 machine=kind-86616efd5617 sessions=1 uploaded=1 chunks=1"
+      "detail": "session=d7150cce-892d-4c2d-b398-89ba23a12d7e machine=kind-8c15b88a6543 sessions=1 uploaded=1 chunks=1"
     },
     {
       "result": "PASS",
       "check": "pipeline.hoopdb_indexer",
-      "detail": "session=c9d7fde1-b1bc-4ade-bd4c-63645a998fb0 indexed=true"
+      "detail": "session=d7150cce-892d-4c2d-b398-89ba23a12d7e session_uuid=01a1b8c8-415b-77fb-8a12-eb424c3f42b3 trace=01a1b8c8-415b-7480-bfbd-84f6247c0c77"
     },
     {
       "result": "PASS",
@@ -232,22 +232,32 @@
     {
       "result": "PASS",
       "check": "pipeline.referee_verdict",
-      "detail": "state=done"
+      "detail": "verdicts=1 done/raw_closed"
+    },
+    {
+      "result": "PASS",
+      "check": "pipeline.trace",
+      "detail": "indexed session has a non-null processing trace"
+    },
+    {
+      "result": "PASS",
+      "check": "pipeline.events",
+      "detail": "ok_stages=object-landed,session-indexed,status-classify,summary-long,summary-short other=file-normalize:skipped optional_disabled=file-normalize:not_enabled"
     },
     {
       "result": "PASS",
       "check": "pipeline.no_dead_letters",
-      "detail": "count=0"
+      "detail": "dead_letters_for_trace=0"
     },
     {
       "result": "PASS",
       "check": "pipeline.bucket_objects",
-      "detail": "raw_chunks=1 marker_present=true metadata_matches=true"
+      "detail": "provider=s3 raw_chunks=1 summary_objects=2 manifest_meta_session_uuid_matches=true"
     },
     {
       "result": "PASS",
       "check": "pipeline.technical_foul_scrub",
-      "detail": "example secret absent from stored chunks"
+      "detail": "raw_chunks=1 marker_present=true fake_secret_in_stored_chunks=false"
     },
     {
       "result": "PENDING",
@@ -272,12 +282,12 @@
     {
       "result": "PASS",
       "check": "cleanup.relaycast_a",
-      "detail": "deleted=244965875270262784"
+      "detail": "deleted=244997233254309888"
     },
     {
       "result": "PASS",
       "check": "cleanup.relaycast_b",
-      "detail": "deleted=244965875274457088"
+      "detail": "deleted=244997233254309889"
     },
     {
       "result": "PASS",
@@ -292,7 +302,7 @@
     {
       "result": "PENDING",
       "check": "cleanup.control_plane_workspaces",
-      "detail": "no workspace delete API (DELETE answered 404); kept e2e-e2emw7196d2c1fdc9-a,e2e-e2emw7196d2c1fdc9-b in org 48526e66-3e41-4667-ae23-a86921021579; outsider user a9d8c2b9-6819-488c-83b8-e3e49ebf5f0e has no membership"
+      "detail": "no workspace delete API (DELETE answered 404); kept e2e-e2emw75pf4tc56f24-a,e2e-e2emw75pf4tc56f24-b in org 48526e66-3e41-4667-ae23-a86921021579; outsider user 6f8b133b-0149-4df4-9ac3-391219fe101d has no membership"
     }
   ]
 }

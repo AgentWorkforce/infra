@@ -1,7 +1,7 @@
 # Pending self-host read API contract
 
 This is source review and read-only diagnosis, not an enabled deployment or an
-end-to-end pass. Core local-control proof records 55 PASS, 0 FAIL, 3 PENDING.
+end-to-end pass. Core local-control proof at `fd8565c` records 57 PASS, 0 FAIL, 3 PENDING.
 
 The reviewed drafts are pipeline [#317 at 33f33c4e](https://github.com/AgentWorkforce/relayhistory-pipeline/pull/317)
 and [#318 at a4311806](https://github.com/AgentWorkforce/relayhistory-pipeline/pull/318).

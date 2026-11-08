@@ -1,6 +1,6 @@
 # Local kind evidence — 2026-11-08 (Europe/Oslo)
 
-Status: **core setup READY; core proof PENDING (55 PASS, 0 FAIL, 3 PENDING); add-on E2E not run**.
+Status: **core setup READY; core proof PENDING (57 PASS, 0 FAIL, 3 PENDING); add-on E2E not run**.
 These are local development results, not the customer release or managed-cloud
 infrastructure proof. Reproduction uses the current repository checkout;
 source identities are pinned below.
@@ -16,36 +16,37 @@ backed up the legacy record and wrote versioned local ownership. It did not
 recreate the cluster or replace the kubeconfig. Normal reuse refuses legacy
 receipts and does not infer ownership from live labels or a live UID alone.
 
-At source `d87aefb`, the one-command local-control build/install completed with
-exit 0 and Helm status `deployed`. The harness emits private
-`.kind/core/ready.json`; the manually copied, byte-identical
-[snapshot](core-ready.json) from that run records source revision, ownership version, native
-identity, recipe/render hashes and the newly completed exact-ACL Job. The full
-proof on the same source records 55 PASS, 0 FAIL, 3 PENDING, exit 2. This is live
-recovery/reuse validation, not a fresh cluster creation/deletion cycle.
-
-At that recorded live source, all 42 offline checks passed: 15 ownership, 12 harness, 10 profile/schema/TLS,
-3 native-control admission/tenant preservation and 2 bootstrap checks. Those
-suites do not operate on the real cluster. The earlier curated lifecycle summary
-was removed in favor of the manually copied snapshot of the raw readiness artifact emitted by `stack.py`.
+At source `c6184d6`, `make kind-up PROFILE=core` completed with exit 0,
+using the already selected native control image built from `1f08cb6`. The
+harness emits private `.kind/core/ready.json`; its manually copied, byte-identical
+[snapshot](core-ready.json) records source revision, ownership version, native
+identity, recipe/render hashes and fresh exact-ACL Job
+`kind-combined-acl-009152af5378a8aa`. The full proof at `fd8565c` records
+57 PASS, 0 FAIL, 3 PENDING, exit 2. This is live recovery/reuse validation,
+not a fresh cluster creation/deletion cycle. Setup and proof source revisions
+are recorded separately because the later change corrects the verifier's
+handling of the explicitly disabled optional transform, without changing setup.
 
 ## Current core setup and protocol proof
 
 ```sh
-make kind-up-local-control PROFILE=core PYTHON=python3
+# Existing fixture with the native control selection already present:
+make kind-up PROFILE=core PYTHON=python3
 make kind-proof-core PYTHON=python3
+# Fresh-host variant builds that pinned native control image first:
+# make kind-up-local-control PROFILE=core PYTHON=python3
 ```
 
 Setup completed with exit 0 and a readiness receipt, including the application
 returning HTTP 200 over verified TLS. The protocol proof exits 2 (**PENDING**),
 not 0. Its [complete credential-checked report](core-proof.json) records proof
-source `d87aefb`, 55 passing checks, no failed checks, and three pending checks.
+source `fd8565c`, 57 passing checks, no failed checks, and three pending checks.
 The [image/generation receipt](core-images.json) records the rendered suite chart images and services generation.
 The node image is in `core-ready.json`; support Postgres/probe image pins are
-in `stack.py`. This historical snapshot is not automatically refreshed by a
+in `stack.py`. This captured snapshot is not automatically refreshed by a
 subsequent setup invocation. The same manual copy applies to `core-proof.json`,
 `core-images.json` and `control-build.json`; their embedded revisions identify
-the original runs, not later source-only review fixes.
+the recorded setup/proof/build runs; they are not automatically rewritten by later edits.
 Selected literal proof output:
 
 ```text
@@ -340,21 +341,27 @@ skipped schemas. Existing static fixtures retain their declared custom-CRD
 schema skips. These local tool adapters are ignored and are not shipped.
 
 
-## Subsequent review fixes (source validation only)
+## Review fixes and current-source runtime validation
 
 The review fixes preserve the original recovery anchor before ownership refusal,
 use version-checked Secret create/replace instead of plaintext last-applied
 annotations, renew TLS leaves for missing hosts or mismatched keys, and share
 one hosted/offline courier verifier. Offline verification still requires a
-trace, processing events, owner identity and a stored marked transcript; only
-model summaries are optional. Temporary cost sync sessions are revoked via
+trace, processing events, owner identity and a stored marked transcript. Model
+summaries are optional in offline mode. The pinned raw-pointer path also
+explicitly disables its optional derived file-normalize transform; the proof
+accepts only `file-normalize/skipped/not_enabled` with no error, and rejects
+errors and unknown skips. This does not claim derived normalization. An initial
+`c6184d6` proof rejected that documented non-error skip; its negative receipt was
+preserved privately before the corrected `fd8565c` run above. Temporary cost sync sessions are revoked via
 History's supported `/v1/auth/token/revoke` route, including ingest failure.
 
-These changes have offline regression/render checks and server-side dry runs
-of Secret replacement against the five owned core Secrets. The dry runs prove
-that the old annotation is absent from the proposed object without changing
-cluster resources. The full live setup/proof receipts above remain pinned to
-`d87aefb`; they are not evidence of a rerun of these later source changes.
+These changes have offline regression/render checks, server-side dry runs and
+the current-source warm setup/protocol run above. The actual setup removed the
+old plaintext last-applied annotation from all five inspected core Secrets;
+subsequent reads confirmed its absence. The protocol run also exercised the
+History sync-session revoke path after cost ingest. No auth/ACL guard, runtime
+feature flag, image source, or external-egress restriction was bypassed.
 
 Review validation: 61 offline checks pass (16 ownership, 20 harness, 13
 profile/schema/TLS, 3 control admission/tenant, 4 bootstrap and 5 shared pipeline
