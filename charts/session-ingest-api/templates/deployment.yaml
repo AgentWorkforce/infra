@@ -3,7 +3,7 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ include "alleyoop.componentName" (dict "context" . "component" "ingest") }}
+  name: {{ include "alleyoop.deploymentName" . }}
   namespace: {{ .Release.Namespace | quote }}
   labels:
     {{- include "alleyoop.componentLabels" (dict "context" . "component" $component) | nindent 4 }}

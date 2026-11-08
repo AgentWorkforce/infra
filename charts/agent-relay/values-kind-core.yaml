@@ -121,10 +121,14 @@ sessions-pipeline:
     search: { backend: postgres }
   # Local Postgres is created before any schema migration; no CNPG operator.
   hoopdb: { enabled: false }
-  locker: { enabled: false }
+  session-object-storage: { enabled: false }
   otel: { enabled: false }
   worker:
     fullnameOverride: sessions
+    components:
+      bob-costas: { fullnameOverride: session-summary-worker }
+      hoopdb-indexer: { fullnameOverride: session-metadata-indexer }
+      referee: { fullnameOverride: session-status-worker }
     image:
       repository: ghcr.io/agentworkforce/96bulls-services
       digest: sha256:070fe6fd46ecd1e1f9db32ff22379f6df9b9e6c4d48ede5312c8fb986a95f3a9
@@ -148,7 +152,7 @@ sessions-pipeline:
       - { name: SEARCH_INDEX_BACKEND, value: postgres }
     networkPolicy: { enabled: false }
   alleyoop:
-    fullnameOverride: alleyoop
+    fullnameOverride: session-ingest-api
     image:
       repository: ghcr.io/agentworkforce/96bulls-services
       digest: sha256:070fe6fd46ecd1e1f9db32ff22379f6df9b9e6c4d48ede5312c8fb986a95f3a9

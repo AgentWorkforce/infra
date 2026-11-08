@@ -56,7 +56,7 @@ alleyoop:
   deployment:
     name: hosted
     id: ci
-locker:
+session-object-storage:
   enabled: false
 otel:
   enabled: true

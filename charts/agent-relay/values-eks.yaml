@@ -116,7 +116,7 @@ sessions-pipeline:
     # Session objects in S3 through EKS Pod Identity: create one IAM role
     # (s3:ListBucket on the bucket, Get/Put/DeleteObject on its objects) and
     # a Pod Identity association for the <release>-worker and
-    # <release>-alleyoop ServiceAccounts. EKS Auto Mode runs the Pod Identity
+    # <release>-session-ingest-api ServiceAccounts. EKS Auto Mode runs the Pod Identity
     # Agent; on other clusters install the eks-pod-identity-agent add-on.
     locker:
       provider: s3
@@ -186,7 +186,7 @@ sessions-pipeline:
       # Same services image repository and digest as worker.
       repository: ghcr.io/agentworkforce/96bulls-services
       digest: sha256:070fe6fd46ecd1e1f9db32ff22379f6df9b9e6c4d48ede5312c8fb986a95f3a9
-  locker:
+  session-object-storage:
     enabled: false
 
 relayhistory:

@@ -14,7 +14,7 @@ qualification is missing; creating a Lambda does not activate queue processing.
 A thin root that composes the four AWS modules for one agent-relay install on an existing EKS cluster and VPC:
 
 - `aws/postgres` (RDS by default; `postgres_engine_mode = "aurora"`).
-- `aws/object-storage` for the sessions Locker, with Pod Identity for `<release>-worker` and `<release>-alleyoop`.
+- `aws/object-storage` for session object storage, with Pod Identity for `<release>-worker`, legacy `<release>-alleyoop`, and descriptive `<release>-session-ingest-api`. Keep the actual installed ingest ServiceAccount bound until a deliberate naming cutover completes; override these defaults for custom chart identities.
 - `aws/search` (`enable_search`), with a write role for the indexer and a read-only role for the session read API. Set `indexer_service_account` and `reader_service_account` to bind them through Pod Identity. Pod Identity allows one role per ServiceAccount, and the worker and alleyoop ServiceAccounts already carry the sessions bucket role, so these must be separate ServiceAccounts. The agent-relay chart gives the sessions components one shared ServiceAccount, so these bindings take effect once the indexer and the read API run under their own `serviceAccount` names (a chart change outside this module set).
   - With `enable_functions` too, the pipeline Lambda gets the indexer permissions and is allowed by the domain policy. Map its role (`search.lambda_indexer_role_arn`) to the OpenSearch write role, and allow TCP 443 from `function_security_group_ids` in `search_security_group_ids`.
 - `aws/functions` (`enable_functions`).

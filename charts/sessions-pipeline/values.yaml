@@ -8,7 +8,7 @@
 ## ("hoopdb-app", key "uri"); nothing else to create.
 ##
 ## One release per namespace: dependency objects use fixed names (hoopdb,
-## locker, otel-collector) so the app charts can address them.
+## session-object-storage, otel-collector) so the app charts can address them.
 
 global:
   imageRegistry: ghcr.io
@@ -39,10 +39,10 @@ shared: &shared
     existingSecret: hoopdb-app
     key: uri
   locker:
-    # The bundled MinIO (locker.enabled). LOCKER_ENDPOINT is not subject to
+    # The bundled MinIO (session-object-storage.enabled). LOCKER_ENDPOINT is not subject to
     # ALLOW_IN_CLUSTER_HTTP, so this short http name is valid with
     # allowInClusterHttp=false.
-    endpoint: http://locker:9000
+    endpoint: http://session-object-storage:9000
     bucket: locker
     region: us-east-1
     credentials:
@@ -145,15 +145,21 @@ hoopdb:
   backups:
     enabled: false
 
+# Upgrades with the default MinIO name are refused until this is true, because
+# an upgrade from a release before 0.7.0 would replace its 'locker' volume. Set
+# it only if the release was installed at 0.7.0 or later or its objects are
+# disposable; see docs/descriptive-session-names.md.
+acknowledgeStorageRename: false
+
 # ---------------------------------------------------------------------------
-# Locker: MinIO (standalone). Disable to use your own S3: then set
+# Session object storage: MinIO (standalone). Disable to use your own S3: then set
 # worker.locker / alleyoop.locker and the credential Secret.
 # The bucket is created by sessions-pipeline-worker's locker-init Job, not MinIO's
 # post-install hook (hooks never run under --no-hooks).
 # ---------------------------------------------------------------------------
-locker:
+session-object-storage:
   enabled: true
-  fullnameOverride: locker
+  fullnameOverride: session-object-storage
   mode: standalone
   replicas: 1
   existingSecret: sessions-pipeline-locker

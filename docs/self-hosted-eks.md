@@ -31,7 +31,7 @@ Files:
 | `gkeIngress` (GCE Ingress, ManagedCertificate, FrontendConfig, static IP) | `gkeIngress.enabled=false`; one ALB Ingress from `eks-alb-ingress.sh` (EKS Auto Mode's built-in ALB controller, IngressClass `alb`; the AWS Load Balancer Controller takes the same annotations): host rules for `<domain>` (dashboard, with `/cloud/api` and `/login` to the control API), `api.`, `cast.`, `history.`; HTTPS 443 with an ACM certificate for the four names, HTTP 80 redirects (301). Edge denials (`/internal`, `//internal*`, Relaycast workspace create) are ALB fixed-response 404 actions. |
 | ManagedCertificate | ACM certificate, DNS-validated |
 | NEG annotations, BackendConfig | `alb.ingress.kubernetes.io/healthcheck-path` on each Service; ALB idle timeout 3600 s for WebSocket/SSE |
-| GKE Workload Identity | EKS Pod Identity associations for `<release>-worker` and `<release>-alleyoop` (one IAM role with S3 access to the bucket). No IRSA/OIDC provider needed. |
+| GKE Workload Identity | The pinned 0.3.11 proof uses `<release>-worker` and `<release>-alleyoop` (one IAM role with S3 access to the bucket). New descriptive-name charts use `<release>-session-ingest-api`; retain the actual legacy identity through a deliberate cutover. No IRSA/OIDC provider needed. |
 | GCS Locker bucket (`locker.provider: gcs`) | S3 bucket (`locker.provider: s3`, empty endpoint, `credentials.mode: podIdentity`) |
 | Cloud SQL (HoopDb, control API, RelayHistory) | HoopDb: the chart's in-cluster CloudNativePG cluster. Control API and RelayHistory: any PostgreSQL 17 (RelayHistory needs `vector` and `pg_trgm`); the proof used two more CNPG clusters. Production: RDS/Aurora PostgreSQL. |
 | Memorystore, Pub/Sub (GCS data-path env) | Not used: the services' S3 data path needs neither |
