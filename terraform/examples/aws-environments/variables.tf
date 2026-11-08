@@ -127,6 +127,15 @@ variable "database_instance_class" {
   default     = null
 }
 
+variable "search_sessions_bucket_read" {
+  description = "Exact ARNs of this environment's sessions bucket and, for a customer-managed key, its KMS key (null for AWS-managed encryption). Grants the search indexer and session-read roles read-only access. null changes nothing."
+  type = object({
+    bucket_arn  = string
+    kms_key_arn = optional(string)
+  })
+  default = null
+}
+
 variable "search_instance_type" {
   description = "Override the environment tier's OpenSearch data node type."
   type        = string

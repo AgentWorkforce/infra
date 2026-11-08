@@ -229,10 +229,40 @@ run "lambda_zip_must_be_immutable" {
 
 # Materialize only the local fence, so child-module data references are known
 # during subsequent mock plans. Never apply the protected service resources.
+run "sessions_bucket_read_unset_adds_nothing" {
+  command = plan
+  assert {
+    condition     = module.search.sessions_read_policy_json == null && !contains(keys(output.runtime_role_policy_json), "sessions_read")
+    error_message = "Existing environments must not change until the input is set."
+  }
+}
+
 run "external_contract_setup" {
   command = apply
   plan_options {
     target = [terraform_data.environment_contract]
+  }
+}
+
+run "sessions_bucket_read_is_scoped" {
+  command = plan
+  variables {
+    search_sessions_bucket_read = {
+      bucket_arn  = "arn:aws:s3:::agent-relay-dev-111111111111-us-west-2-sessions"
+      kms_key_arn = "arn:aws:kms:us-west-2:111111111111:key/11111111-2222-3333-4444-555555555555"
+    }
+  }
+  assert {
+    condition = toset(flatten([for s in jsondecode(module.search.sessions_read_policy_json).Statement : s.Resource])) == toset([
+      "arn:aws:s3:::agent-relay-dev-111111111111-us-west-2-sessions",
+      "arn:aws:s3:::agent-relay-dev-111111111111-us-west-2-sessions/*",
+      "arn:aws:kms:us-west-2:111111111111:key/11111111-2222-3333-4444-555555555555",
+    ])
+    error_message = "The search roles may read only this environment's bucket and key."
+  }
+  assert {
+    condition     = toset(flatten([for s in jsondecode(output.runtime_role_policy_json.sessions_read).Statement : s.Action])) == toset(["s3:ListBucket", "s3:GetObject", "kms:Decrypt"])
+    error_message = "The root must publish exactly the read-only actions."
   }
 }
 
