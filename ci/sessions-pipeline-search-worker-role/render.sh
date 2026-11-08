@@ -154,8 +154,8 @@ o=$(render "${on[@]}" --set 'worker.imagePullSecrets[0].name=ghcr-pull')
 [ "$(yq -r 'select(.kind == "Job" and .metadata.labels."app.kubernetes.io/component" == "hoopdb-runtime-role-bootstrap") | .spec.template.spec.imagePullSecrets[0].name' <<<"$o" | grep .)" = "ghcr-pull" ] || err "runtime-role Job has no imagePullSecrets"
 
 # Refusals: the migrator's own, and the chart's placement rules.
-expect_fail "databaseMode must be local, selfhosted, cloudsql or supabase" "${on[@]}" --set worker.migrations.databaseMode=
-expect_fail "databaseMode must be local, selfhosted, cloudsql or supabase" "${on[@]}" --set worker.migrations.databaseMode=cloud
+expect_fail "databaseMode must be local, selfhosted, cloudsql, supabase or rds" "${on[@]}" --set worker.migrations.databaseMode=
+expect_fail "databaseMode must be local, selfhosted, cloudsql, supabase or rds" "${on[@]}" --set worker.migrations.databaseMode=cloud
 expect_fail "supabaseShim must be set (true or false) in selfhosted mode" "${on[@]}" --set worker.migrations.supabaseShim=null
 expect_fail "supabaseShim must not be true in supabase mode" "${sb[@]}" --set worker.migrations.supabaseShim=true
 expect_fail "waitForRole must be disabled in supabase mode" "${sb[@]}" --set worker.migrations.waitForRole.enabled=true

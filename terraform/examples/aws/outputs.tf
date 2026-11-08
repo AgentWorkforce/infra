@@ -46,11 +46,11 @@ output "functions" {
 }
 
 output "postgres_service_bindings" {
-  description = "Target per-service schemas and independent migration/runtime roles on the SAME RDS/database. Contains no credentials; schema-aware runtime/bootstrap and isolation proof remain required. Optional-service bindings do not enable those workloads."
+  description = "Separate service databases and independent migration/runtime roles on the same RDS endpoint. Contains no credentials; reviewed database bootstrap, CONNECT/ACL isolation and runtime proof remain required. Optional-service bindings do not enable workloads."
   value       = module.postgres_layout.bindings
 }
 
 output "postgres_topology" {
-  description = "Shared-database relational target; application_sql_ready=false until actual service integration and managed-RDS validation are completed."
+  description = "Single-instance, separate-service-database target; application_sql_ready=false until actual service integration and managed-RDS validation are completed."
   value       = module.postgres_layout.topology
 }
