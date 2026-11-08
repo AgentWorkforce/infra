@@ -414,7 +414,16 @@ use version-checked Secret create/replace instead of plaintext last-applied
 annotations, renew TLS leaves for missing hosts or mismatched keys, and share
 one hosted/offline courier verifier. Offline verification still requires a
 trace, processing events, owner identity and a stored marked transcript. Model
-summaries are optional in offline mode. The pinned raw-pointer path also
+summaries are optional in offline mode.
+The proof's Python/JavaScript/TypeScript verifier code comes from the proving
+infra checkout; the service application, migrator and bootstrap SQL come from
+the separately pinned services image. These are deliberately distinct inputs.
+`infraRevision` is the proving checkout's HEAD, not a claim about the current PR
+head or that verifier bytes were supplied by the application image. Captured
+setup/proof revisions and image/generation receipts must be read together.
+The MCP fallback checks both public aliases before recording an unavailable
+catalog feature as pending; partial availability or a failing alias is a failure.
+The pinned raw-pointer path also
 explicitly disables its optional derived file-normalize transform; the proof
 accepts only `file-normalize/skipped/not_enabled` with no error, and rejects
 errors and unknown skips. This does not claim derived normalization. An initial
