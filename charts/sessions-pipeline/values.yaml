@@ -8,7 +8,7 @@
 ## ("hoopdb-app", key "uri"); nothing else to create.
 ##
 ## One release per namespace: dependency objects use fixed names (hoopdb,
-## locker, otel-collector) so the app charts can address them.
+## session-object-storage, otel-collector) so the app charts can address them.
 
 global:
   imageRegistry: ghcr.io
@@ -144,6 +144,12 @@ hoopdb:
         - ALTER ROLE session_directory_search_worker SET statement_timeout = '2s'
   backups:
     enabled: false
+
+# Upgrades with the default MinIO name are refused until this is true, because
+# an upgrade from a release before 0.7.0 would replace its 'locker' volume. Set
+# it only if the release was installed at 0.7.0 or later or its objects are
+# disposable; see docs/descriptive-session-names.md.
+acknowledgeStorageRename: false
 
 # ---------------------------------------------------------------------------
 # Session object storage: MinIO (standalone). Disable to use your own S3: then set

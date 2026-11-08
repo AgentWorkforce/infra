@@ -135,7 +135,7 @@ module "sessions_bucket" {
     name                     = "${local.name}-sessions"
     path                     = local.role_path
     permissions_boundary_arn = local.boundary
-    pod_identity_associations = [for sa in ["worker", "alleyoop"] : {
+    pod_identity_associations = [for sa in ["worker", "session-ingest-api"] : {
       cluster_name    = var.eks_cluster_name
       namespace       = local.namespace
       service_account = "${var.release_name}-${sa}"

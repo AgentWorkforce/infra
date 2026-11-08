@@ -73,7 +73,7 @@ output "identity_references" {
     service_accounts = {
       durable_actors = "${var.release_name}-durable-actors"
       worker         = "${var.release_name}-worker"
-      alleyoop       = "${var.release_name}-alleyoop"
+      alleyoop       = "${var.release_name}-session-ingest-api"
     }
   }
 }

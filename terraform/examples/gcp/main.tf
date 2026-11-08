@@ -81,7 +81,7 @@ module "sessions_bucket" {
   kms_key_name = var.kms_key_name
   workload_identity = {
     direct_kubernetes_service_accounts = [
-      for sa in ["worker", "alleyoop"] : { namespace = var.namespace, name = "${var.release_name}-${sa}" }
+      for sa in ["worker", "session-ingest-api"] : { namespace = var.namespace, name = "${var.release_name}-${sa}" }
     ]
   }
   labels = var.labels

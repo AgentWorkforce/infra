@@ -736,7 +736,7 @@ entries:
           - { key: rootPassword, key_path: alleyoop.secretKeys.lockerSecretAccessKey }
       - name: sessions-pipeline-locker
         name_paths: [session-object-storage.existingSecret]
-        note: the bundled MinIO's root credential
+        note: the bundled upstream MinIO requires literal Secret data keys rootUser and rootPassword
     verify: kubectl get secret sessions-pipeline-locker -o jsonpath='{.data}' has rootUser and rootPassword
     sources:
       - "charts/sessions-pipeline/values.yaml:3"
@@ -906,7 +906,7 @@ entries:
       <svc>.<ns>.svc.cluster.local, never public hosts, IPs or short names; for
       example alleyoop.auth.jwksUrl=http://relayauth.relayauth.svc:8787/.well-known/jwks.json.
       LOCKER_ENDPOINT and the OTLP endpoint are outside this policy, so the
-      bundled MinIO at http://locker:9000 works with the default false.
+      bundled MinIO at http://session-object-storage:9000 works with the default false.
     chart: sessions-pipeline
     values: [alleyoop.allowInClusterHttp, worker.allowInClusterHttp]
     env: [ALLOW_IN_CLUSTER_HTTP]

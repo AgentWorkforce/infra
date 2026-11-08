@@ -143,7 +143,7 @@ for row in "${MATRIX[@]}"; do
   done <<<"$imgs"
 
   # App workloads and the migrate Job, in every profile.
-  for d in session-status-worker session-summary-worker session-metadata-indexer ci-session-ingest-api; do
+  for d in ci-worker-session-status-worker ci-worker-session-summary-worker ci-worker-session-metadata-indexer ci-session-ingest-api; do
     has ".kind == \"Deployment\" and .metadata.name == \"$d\"" || err "$label: Deployment $d missing"
   done
   has ".kind == \"Job\" and $(comp hoopdb-migrate)" || err "$label: migrate Job missing"
@@ -283,7 +283,7 @@ if [ "$mode" = static ]; then
   # storage.googleapis.com, and locker.provider=gcs arms their data-path
   # readiness check. The GCP Cloud SQL file renders the native GCS shape.
   out=$(render "${GCP[@]}") || err "gcp-cloudsql did not render"
-  for w in session-status-worker session-summary-worker session-metadata-indexer ci-session-ingest-api; do
+  for w in ci-worker-session-status-worker ci-worker-session-summary-worker ci-worker-session-metadata-indexer ci-session-ingest-api; do
     gcs_env=$(yq "select(.kind == \"Deployment\" and .metadata.name == \"$w\") | .spec.template.spec.containers[0].env[] | select(.name == \"LOCKER_PROVIDER\" or .name == \"PIPELINE_RAW_PROVIDER\") | .name + \"=\" + .value" <<<"$out" | sort | tr '\n' ' ')
     [ "$gcs_env" = "LOCKER_PROVIDER=gcs PIPELINE_RAW_PROVIDER=gcs " ] || err "gcp-cloudsql: $w lacks LOCKER_PROVIDER=gcs/PIPELINE_RAW_PROVIDER=gcs (got: $gcs_env)"
   done
