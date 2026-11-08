@@ -56,19 +56,22 @@ The Relayfile owner reported no existing typed product-event port at source
 `731ea459`. The proposed `ProductEventSink` through `httpapi.ServerConfig` is a
 new port, not a claim about current code. Its implementation priority remains
 with the program/component owners; the first cofounder handoff prioritizes core.
+The owner reviewed the proposed wire ID, event name, installation-only scope
+and empty property allowlist against that inventory. This confirms those source
+choices; it does not authorize the new port or create a runtime registration.
 
 | Field | Proposed value / rule |
 | --- | --- |
-| Component | `relayfile`, proposed wire ID; enabled add-on only |
-| Event | `relayfile.addon.enabled`, proposed initial **synthetic transport-acceptance** event |
+| Component | `relayfile`, owner-reviewed wire ID; enabled add-on only |
+| Event | `relayfile.addon.enabled`, owner-reviewed proposed initial **synthetic transport-acceptance** event |
 | Record status | **PROPOSED**; no active producer registration or accepted runtime kind |
 | Event owner | Relayfile maintainers, coordinated by layered-relayfile |
 | Scope | Installation-only; `tenant_id` and `workspace_id` are absent and must not be supplied |
 | Properties | Empty strict allowlist (`{}`); no arbitrary fields, paths, names, content, tokens, credential hashes or exceptions |
 | Identity | `component` and opaque `deployment_id` bound by the future producer registration; the body cannot override them |
 | Envelope | Version `1`, fresh stable event ID, UTC occurrence time and opaque trace identity, following the collector interface; retries retain the event ID |
-| Emission boundary | An explicit synthetic acceptance hook with the component enabled and collection explicitly configured; preserve collection/privacy defaults |
-| Destination | Deployment-selected supported adapter; self-host uses the authenticated local collector, with no hosted fallback |
+| Emission boundary | An explicit synthetic acceptance hook with the add-on enabled and collection explicitly configured; process startup alone must not emit it; preserve collection/privacy defaults |
+| Destination | Default `none` when required collection inputs are absent; an explicitly configured self-host adapter uses the authenticated local collector, with no hosted fallback |
 
 This first synthetic event can test producer-to-collector transport. It does not
 prove a license was verified, storage is ready, a file was read/written, or the
@@ -80,7 +83,10 @@ events and their attribution require their own owner-reviewed registration.
 Future chart/application integration must agree the opaque `deployment_id`, full
 collector endpoint including `/v1/events`, per-producer Secret reference and
 explicit destination selection. No raw credential values belong in this catalog
-or Helm values. Collector producer registration, reviewed field projection,
+or Helm values. Relayfile at the reviewed source has neither deployment identity
+nor analytics configuration; these are new chart-supplied inputs, not existing
+environment wiring. Absent inputs select `none` and cannot trigger an event.
+Collector producer registration, reviewed field projection,
 authenticated client gateway and persistent single-writer collection remain
 implementation/proof work. A documentation row or chart render is not admission
 or durable ingestion evidence.
