@@ -20,6 +20,34 @@ hashes differ. Rebase-to-main alone does not supply a combined qualification. A
 single approved combined image and generation must replace separate-head
 assumptions before operator wiring.
 
+## Reviewer disposition at 4bec3158: needs fixes
+
+The pipeline review lane reports two runtime blockers, beyond the fixed earlier
+source defects:
+
+- The writer role has SELECT/UPDATE on
+  `sessions.session_directory_event_pending`, but the reachable SECURITY INVOKER
+  trigger `sessions.session_directory_events_changed` inserts there. The role
+  cannot complete that path. The writer author must correct and verify its
+  source-owned privilege surface, test `upsert_session_index` and tombstone
+  behavior through the real writer LOGIN, and audit reachable invoker triggers.
+  Infra does not install an extra grant as an operator workaround.
+- Eight function EXECUTE grants to `search_consumer_runtime` sit outside the
+  sessions function manifest. The non-local migration guard rejects the extra
+  ACL entries; event-trigger boundary mode can reject bootstrap itself. The
+  owner must use a supported runtime surface or supply a separately reviewed
+  explicit boundary/manifest change. Neither a 48-table-privilege assertion nor
+  operator permission can relax the guard.
+
+The review also reports queue dedupe/revision/backoff, privilege-verifier and
+restart-readiness findings in the author's lane. Its real-PG CI wiring needs
+correction: the test file consumes `SESSION_PIPELINE_TEST_PG_URL` and
+`SESSION_PIPELINE_TEST_WRITER_PG_URL`, while the reported workflow supplies the
+ingest-only variable. A green generic job is not evidence that these tests ran.
+The full-bootstrap rollback gap below remains open. Native PG17, dogpatch,
+exact-head CI and final matching-image/migration-ACL receipts remain gates; no
+assembly is requested or qualified by this review.
+
 ## Historical bootstrap defects, fixed in current source
 
 1. At `e680a29a`, `src/session-pipeline/consumer-bootstrap.ts:136` called
