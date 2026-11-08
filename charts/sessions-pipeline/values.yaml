@@ -386,6 +386,72 @@ readApi:
     requests: { cpu: 50m, memory: 128Mi }
     limits: { memory: 512Mi }
 
+# Optional self-host transcript search writer (pipeline SERVICE=session-pipeline-consumer):
+# reads the Locker and indexes sessions into the backend selected below. Off by
+# default. Run it with exactly one replica. Its ServiceAccount must carry the
+# Pod Identity association Terraform creates for the search indexer role.
+searchIndexer:
+  enabled: false
+  fullnameOverride: ""
+  image:
+    repository: ghcr.io/agentworkforce/96bulls-services
+    # Required: a services image built from a pipeline commit with the OpenSearch writer.
+    digest: ""
+    pullPolicy: IfNotPresent
+  imagePullSecrets: []
+  serviceAccount:
+    create: true
+    # Must match Terraform's indexer association ServiceAccount.
+    name: agent-relay-search-indexer
+    annotations: {}
+  # Same coverage floor as the read API: ISO timestamp or epoch.
+  completeSince: ""
+  # Bare Locker prefix; the org is appended at runtime.
+  keyPrefix: 96bulls
+  config:
+    # JSON { "hoopdb_url": "<search_consumer_runtime URL>" }.
+    existingSecret: ""
+    key: RELAYHISTORY_PIPELINE_CONSUMER_SECRET
+  search:
+    backend: opensearch
+    # Projection-state id; must equal the read API's SEARCH_INDEX_POSTGRES_BACKEND_ID.
+    backendId: ""
+    opensearch:
+      # https endpoint without path. Requests are signed with Pod Identity credentials.
+      url: ""
+      region: ""
+      indexPrefix: relayhistory
+  locker:
+    bucket: ""
+    region: us-east-1
+    # Empty uses the AWS S3 endpoint for the region (Pod Identity credentials).
+    endpoint: ""
+  postgres:
+    # supabase, or custom-ca with the bundle below (Amazon RDS).
+    tlsProfile: custom-ca
+    caConfigMap: ""
+    caKey: ca.crt
+    caSha256: ""
+  healthPort: 8081
+  bootstrap:
+    # One-shot owner-role Job: creates the Postgres state tables, the consumer
+    # role and the OpenSearch index. Otherwise an operator runs the
+    # session-pipeline-consumer-bootstrap service and sets acknowledgeRunByOperator.
+    enabled: false
+    acknowledgeRunByOperator: false
+    # JSON { "hoopdb_url": "<schema owner URL>" }.
+    existingSecret: ""
+    key: RELAYHISTORY_PIPELINE_CONSUMER_SECRET
+    backoffLimit: 3
+    activeDeadlineSeconds: 900
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  podAnnotations: {}
+  resources:
+    requests: { cpu: 50m, memory: 256Mi }
+    limits: { memory: 1Gi }
+
 # Separate public upload edge from merged pipeline #363. This is NOT the
 # internal alleyoop-ingest worker. No profile enables it or supplies an image.
 # Initial supported assembly is test/pilot only; deletion/privacy is incomplete.
