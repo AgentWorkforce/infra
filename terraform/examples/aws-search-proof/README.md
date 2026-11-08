@@ -171,6 +171,14 @@ qualified sweeper are mandatory; process timeouts alone do not retire resources.
 The runner persists partial logs and stops/reaps its own subprocess group before
 returning, but does not make account-wide cleanup claims.
 
+If an optional late-signal receipt amendment fails with `OSError` after the
+interruption record was saved, the original command exception is rethrown with
+that I/O error as its explicit cause. The
+earlier atomic interruption record remains, potentially without the late signal
+annotation; this is a failure requiring evidence reconciliation, never completion
+or retry authority. Mandatory receipt writes and unexpected amendment errors
+still propagate. This does not add a receipt durability guarantee.
+
 ## Offline validation and limits
 
 Use backend-disabled init/validate and native mocked Terraform/OpenTofu tests;

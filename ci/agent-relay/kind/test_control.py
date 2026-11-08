@@ -168,6 +168,13 @@ class ControlArchive(unittest.TestCase):
                         with self.assertRaises(ValueError):
                             control.resolve(stack, receipt["reference"])
 
+    def test_previous_current_archive_cannot_satisfy_the_workspace_delete_pin(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "previous-current.tar"
+            self.archive(path, revision="e74413b9ebc8a679f9e4ef64627ccd6340ec8ddb")
+            with self.assertRaisesRegex(ValueError, "architecture/source"):
+                control.inspect_archive(path, "arm64")
+
     def test_mismatched_receipt_cannot_select_another_source_or_tag(self):
         with tempfile.TemporaryDirectory() as directory:
             state = Path(directory)

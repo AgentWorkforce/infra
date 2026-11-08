@@ -164,10 +164,24 @@ The recorded historical `kind-up-local-control` run built the official Dockerfil
 `relay-control-internal@1f08cb624be66016eb0c135363553dd44e58f691`, with a pinned
 native Node base. This historical commit remains available from the archived
 private repository for explicit `KIND_CONTROL_SOURCE=historical` reproduction.
-Current builds instead pin public `relay-control@e74413b9ebc8a679f9e4ef64627ccd6340ec8ddb`
+Current builds instead pin public `relay-control@df4b3901768809407c7c6e1e0d28031e2c2fa25d`
 in a separate cache. Existing build and runtime receipts below are unchanged and
 have not been rerun or attributed to the current source.
-The [current native candidate receipt](control-e74413b-smoke.json) records an
+The [current native candidate receipt](control-df4b390-smoke.json) records the
+official helper build at infra `30270e7` and an owned PostgreSQL 17 fixture.
+Synthetic rows survive 17-to-23 migrations, the next migration run is a no-op,
+and the runtime role reads application data while migration-ledger reads remain
+denied. Native health, readiness and organization reads return 200. The actual
+workspace DELETE route returns 204 for owner, bootstrap and allowed-origin cookie
+requests, and refuses anonymous, member, foreign-org, Factory-bound and last
+workspace requests. The Default workspace and foreign seeded rows remain;
+deleted workspace sessions become invalid and delete audits remain org-scoped.
+The fixture, its synthetic secrets and its internal Docker network were removed.
+This is candidate behavior, not an installed-profile or external-object erasure
+receipt. The initial fixture omitted multi-tenant bootstrap settings and refused
+startup; the retained first-attempt receipt and corrected passing run are
+separate, with the same image bytes.
+The [previous readiness candidate receipt](control-e74413b-smoke.json) records an
 actual arm64 build through this helper and a disposable PostgreSQL 17 upgrade
 test: synthetic rows survive 17-to-23 migrations, a second run applies zero,
 and health, readiness and an authenticated organization read return 200 with
@@ -175,7 +189,7 @@ the supported runtime role while migration-ledger SELECT remains denied.
 The fixture uses private plaintext transport, not TLS, and qualifies neither
 an installed profile nor MCP, Desktop, cloud or full pipeline readback.
 The historical command
-above requires `KIND_CONTROL_SOURCE=historical`; its default now selects `e74413b`.
+above requires `KIND_CONTROL_SOURCE=historical`; its default now selects `df4b390`.
 
 The retired public pin `a659ac4` fails readiness with the supported runtime
 database role: readiness reads the migration ledger, which the runtime grants

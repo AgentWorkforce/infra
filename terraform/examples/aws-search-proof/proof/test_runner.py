@@ -223,7 +223,7 @@ class RunnerGuards(unittest.TestCase):
     def test_first_signal_at_exception_entry_cannot_skip_settlement_or_evidence(self):
         self.subject.transport=None
         lines,start=inspect.getsourcelines(r.Runner.run)
-        boundary=start+next(i for i,line in enumerate(lines) if "metadata.update(outcome='interrupted'" in line)
+        boundary=start+next(i for i,line in enumerate(lines) if 'if not self.settled:' in line)
         injected=False
         def trace(frame,event,arg):
             nonlocal injected
@@ -235,9 +235,12 @@ class RunnerGuards(unittest.TestCase):
                 frame.f_locals
             return trace
         fake=SimpleNamespace(pid=123456789,returncode=None,wait=Mock(side_effect=RuntimeError('synthetic wait error')),poll=Mock(return_value=None))
+        def absent(*args):
+            self.assertTrue(injected,'The first exception-entry signal must precede cleanup')
+            raise ProcessLookupError
         previous=sys.gettrace()
         try:
-            with patch.object(r.subprocess,'Popen',return_value=fake),patch.object(r.os,'killpg',side_effect=ProcessLookupError) as groups:
+            with patch.object(r.subprocess,'Popen',return_value=fake),patch.object(r.os,'killpg',side_effect=absent) as groups:
                 sys.settrace(trace)
                 with self.assertRaisesRegex(RuntimeError,'synthetic wait error'):self.subject.run(['inert'])
                 self.assertGreater(groups.call_count,0)
@@ -246,6 +249,111 @@ class RunnerGuards(unittest.TestCase):
         record=json.loads(next(self.subject.path('commands').glob('*.json')).read_text())
         self.assertEqual(record['outcome'],'interrupted');self.assertEqual(record['signal'],signal.SIGTERM)
         self.assertTrue(record['process_group_absent']);self.assertTrue(self.subject.settled)
+
+    def late_signal(self, boundary, signals=(signal.SIGTERM,), error=None):
+        self.subject.transport=None
+        original={sig:signal.getsignal(sig) for sig in [signal.SIGTERM,signal.SIGHUP,signal.SIGINT]}
+        fake=SimpleNamespace(pid=123456789,returncode=0,wait=Mock(side_effect=error),poll=Mock(return_value=0))
+        opened=Path.open;set_handler=signal.signal;injected=False
+        def inject():
+            nonlocal injected
+            if not injected:
+                injected=True
+                for sig in signals:signal.raise_signal(sig)
+        class Log:
+            def __init__(self, file):self.file=file
+            def __enter__(self):return self.file.__enter__()
+            def __exit__(self,*args):
+                result=self.file.__exit__(*args) # The real log is closed first.
+                inject()
+                return result
+        def open_log(path,*args,**kwargs):
+            file=opened(path,*args,**kwargs)
+            return Log(file) if boundary in ['stdout','stderr'] and path.suffix=='.'+boundary else file
+        def restore(sig,handler):
+            if boundary=='restore' and not injected and handler==original[sig]:
+                inject()
+            return set_handler(sig,handler)
+        save(self.subject.path('phase.json'),{'status':'pending'})
+        with patch.object(Path,'open',open_log),patch.object(r.signal,'signal',side_effect=restore),patch.object(r.subprocess,'Popen',return_value=fake),patch.object(r.os,'killpg',side_effect=ProcessLookupError) as groups:
+            with self.assertRaises(type(error) if error else r.CommandInterrupted) as caught:
+                self.subject.run(['inert'])
+                save(self.subject.path('phase.json'),{'status':'captured'})
+        self.assertTrue(injected)
+        record=json.loads(next(self.subject.path('commands').glob('*.json')).read_text())
+        self.assertEqual(record['outcome'],'interrupted');self.assertEqual(record['signal'],signals[0])
+        self.assertEqual(record['error_type'],type(error).__name__ if error else 'CommandInterrupted');self.assertTrue(record['process_group_absent'])
+        if error:self.assertIs(caught.exception,error)
+        self.assertTrue(self.subject.settled)
+        self.assertEqual(json.loads(self.subject.path('phase.json').read_text()),{'status':'pending'})
+        self.assertEqual({sig:signal.getsignal(sig) for sig in original},original)
+        groups.assert_called_once_with(fake.pid,signal.SIGTERM)
+
+    def test_signal_after_stdout_close_cannot_publish_command_success(self):self.late_signal('stdout')
+
+    def test_signal_after_stderr_close_cannot_publish_command_success(self):self.late_signal('stderr')
+
+    def test_signal_at_handler_restoration_entry_cannot_publish_command_success(self):self.late_signal('restore')
+
+    def test_repeated_signals_after_log_close_preserve_first_request(self):self.late_signal('stderr',(signal.SIGHUP,signal.SIGTERM,signal.SIGINT,signal.SIGHUP))
+
+    def test_repeated_signals_at_restore_entry_preserve_first_request(self):self.late_signal('restore',(signal.SIGINT,signal.SIGTERM,signal.SIGHUP,signal.SIGINT))
+
+    def test_late_log_signal_preserves_original_command_error(self):self.late_signal('stderr',error=RuntimeError('synthetic original wait error'))
+
+    def test_restore_entry_signal_preserves_original_command_error(self):self.late_signal('restore',error=RuntimeError('synthetic original wait error'))
+
+    def amendment_failure(self, failure):
+        self.subject.transport=None
+        primary=RuntimeError('synthetic primary command failure')
+        fake=SimpleNamespace(pid=123456789,returncode=0,wait=Mock(side_effect=primary),poll=Mock(return_value=0))
+        original={sig:signal.getsignal(sig) for sig in [signal.SIGTERM,signal.SIGHUP,signal.SIGINT]}
+        set_handler=signal.signal;write=r.save;injected=False;prior=[]
+        def restore(sig,handler):
+            nonlocal injected
+            if not injected and handler==original[sig]:
+                injected=True;signal.raise_signal(signal.SIGTERM)
+            return set_handler(sig,handler)
+        def receipt(path,value):
+            if value.get('outcome')=='interrupted' and value.get('signal')==signal.SIGTERM:raise failure
+            write(path,value)
+            if value.get('outcome')=='interrupted':prior.append((path,path.read_bytes()))
+        save(self.subject.path('phase.json'),{'status':'pending'})
+        expected=primary if isinstance(failure,OSError) else failure
+        with patch.object(r.signal,'signal',side_effect=restore),patch.object(r.subprocess,'Popen',return_value=fake),patch.object(r.os,'killpg',side_effect=ProcessLookupError),patch.object(r,'save',side_effect=receipt):
+            with self.assertRaises(type(expected)) as caught:
+                self.subject.run(['inert'])
+                save(self.subject.path('phase.json'),{'status':'captured'})
+        self.assertIs(caught.exception,expected);self.assertTrue(injected)
+        if isinstance(failure,OSError):self.assertIs(caught.exception.__cause__,failure)
+        self.assertEqual(len(prior),1);self.assertEqual(prior[0][0].read_bytes(),prior[0][1])
+        record=json.loads(prior[0][1]);self.assertEqual(record['outcome'],'interrupted')
+        self.assertEqual(record['error_type'],'RuntimeError');self.assertNotIn('signal',record)
+        self.assertTrue(record['process_group_absent']);self.assertTrue(self.subject.settled)
+        self.assertEqual(json.loads(self.subject.path('phase.json').read_text()),{'status':'pending'})
+        self.assertEqual({sig:signal.getsignal(sig) for sig in original},original)
+
+    def test_optional_late_receipt_io_failure_preserves_primary_error_and_record(self):self.amendment_failure(OSError('synthetic annotation IO failure'))
+
+    def test_optional_late_receipt_unexpected_error_is_not_swallowed(self):self.amendment_failure(ValueError('synthetic unexpected annotation failure'))
+
+    def test_optional_late_receipt_keyboard_interrupt_is_not_swallowed(self):self.amendment_failure(KeyboardInterrupt('synthetic annotation interruption'))
+
+    def test_mandatory_interruption_receipt_io_failure_still_propagates(self):
+        self.subject.transport=None
+        primary=RuntimeError('synthetic primary command failure');failure=OSError('synthetic mandatory receipt failure')
+        fake=SimpleNamespace(pid=123456789,returncode=0,wait=Mock(side_effect=primary),poll=Mock(return_value=0))
+        write=r.save
+        def receipt(path,value):
+            if value.get('outcome')=='interrupted':raise failure
+            write(path,value)
+        save(self.subject.path('phase.json'),{'status':'pending'})
+        with patch.object(r.subprocess,'Popen',return_value=fake),patch.object(r.os,'killpg',side_effect=ProcessLookupError),patch.object(r,'save',side_effect=receipt):
+            with self.assertRaises(OSError) as caught:self.subject.run(['inert'])
+        self.assertIs(caught.exception,failure)
+        record=json.loads(next(self.subject.path('commands').glob('*.json')).read_text())
+        self.assertEqual(record['outcome'],'running')
+        self.assertEqual(json.loads(self.subject.path('phase.json').read_text()),{'status':'pending'})
 
     def test_bounded_wait_slices_preserve_one_total_timeout(self):
         self.subject.transport=None

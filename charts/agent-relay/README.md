@@ -13,7 +13,9 @@ Umbrella chart for the self-hosted messaging and Sessions proof:
 Relayflows is an optional add-on (`components.relayflows`, off by default;
 see `docs/self-hosted-relayflows.md`). Relayfile (`components.relayfile`) and
 the durable-actors control plane (`components.durableActors`) are optional and
-off by default; see `docs/self-hosted-durable-actors.md`.
+off by default; see `docs/self-hosted-durable-actors.md`. Relay Chief
+(`components.relayChief`) is also off by default and configured under the
+`relay-chief` key; see `charts/relay-chief/README.md`.
 
 Requires Helm 3.10 or newer: the relay-control subchart uses
 `{{ continue }}`, which older Helm versions cannot parse.
