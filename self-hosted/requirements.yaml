@@ -215,6 +215,10 @@ ci_only_values:
     why: Render-only native ingest fixture with synthetic image/CA identities; never
       install it.
 
+  - file: ci/native-consumer-values.yaml
+    why: Render-only native canonical consumer with synthetic image/CA identities and
+      the legacy indexer disabled; never install it.
+
 compatibility:
   # The services image every sessions-pipeline profile, CI values file and chart default pins.
   services_images:
@@ -238,10 +242,10 @@ compatibility:
       current: true
       charts: { telemetry-collector: 0.1.0 }
       notes: 'Default-off umbrella analytics file collector. Requires accepted immutable collector and TLS-proxy images, producer and TLS Secrets and an exclusive persistent volume. Source rendering does not prove image entrypoint, TLS, durable acknowledgement, power-loss recovery or whole-application analytics coverage. The currently reviewed collector CLI registers relaycontrol events only.'
-    - id: sessions-pipeline-0.7.5
+    - id: sessions-pipeline-0.7.7
       status: unreleased
       current: true
-      charts: { sessions-pipeline: 0.7.5, sessions-pipeline-worker: 0.7.2, session-ingest-api: 0.4.1 }
+      charts: { sessions-pipeline: 0.7.7, sessions-pipeline-worker: 0.7.2, session-ingest-api: 0.4.1 }
       depends:
         sessions-pipeline: { worker: 0.7.2, alleyoop: 0.4.1, hoopdb: 0.9.0, session-object-storage: 5.4.0, otel: 0.178.0 }
       images:
@@ -251,7 +255,7 @@ compatibility:
       services:
         source_commit: 7d7229bb31c121ecb98cd4e35c248fc2cf5669ad
         migration_generation: eff8b3be46565b57ad8fa5e4a066dbb6d1fe608313d9c1680bfbcd484add259b
-      notes: 'Adds default-off postgresCa so Node workloads and migrate Jobs can verify the Postgres server certificate (NODE_EXTRA_CA_CERTS); with it unset every sessions-pipeline render differs only in the helm.sh/chart labels. The relayhistory checksum/config annotation also changes under agent-relay, which rolls those pods on upgrade (see the agent-relay 0.5.3 row). Adds the default-off native edge from merged pipeline #363; no compatible image or runtime acceptance is supplied. Adds Secret-only read API credentials and a true default-off regression. Normal composition with main bfcf6050 retains the descriptive session names and upgrade/IAM guards. Adds a default-off read API Deployment and ClusterIP Service with explicit compatible image/config requirements and enabled-state readiness. Worker and ingest images, migration generation and roles are unchanged. Pipeline PRs 317/318 are merged; their container/routes source does not establish the approved Postgres/canonical/auth assembly; no read API deployment or runtime proof is claimed.'
+      notes: 'Adds default-off nativeConsumer pointer/search Deployment and optional owner-only bootstrap with bounded two-pool TLS/schema admission with a frozen public CA, separate Secrets, single-writer drain and prepare/serve phases. No native image or runtime acceptance is selected. Adds default-off postgresCa so Node workloads and migrate Jobs can verify the Postgres server certificate (NODE_EXTRA_CA_CERTS); with it unset every sessions-pipeline render differs only in the helm.sh/chart labels. The relayhistory checksum/config annotation also changes under agent-relay, which rolls those pods on upgrade (see the agent-relay 0.5.3 row). Adds the default-off native edge from merged pipeline #363; no compatible image or runtime acceptance is supplied. Adds Secret-only read API credentials and a true default-off regression. Normal composition with main bfcf6050 retains the descriptive session names and upgrade/IAM guards. Adds a default-off read API Deployment and ClusterIP Service with explicit compatible image/config requirements and enabled-state readiness. Worker and ingest images, migration generation and roles are unchanged. Pipeline PRs 317/318 are merged; their container/routes source does not establish the approved Postgres/canonical/auth assembly; no read API deployment or runtime proof is claimed.'
       db_combos:
         - { db_mode: selfhosted, boundary: global-default-revoke, hoopdb: cnpg, status: shipped, profiles: [selfhost-postgres, migration, aws-cnpg], notes: chart Jobs install the runtime role and the function default }
         - { db_mode: selfhosted, boundary: global-default-revoke, hoopdb: external, status: shipped, profiles: [external-selfhosted], notes: operator runs the bootstrap files as a superuser }
@@ -519,18 +523,18 @@ compatibility:
       images:
         relayauth: { repository: ghcr.io/agentworkforce/relayauth, digest: sha256:eb71daa28e30eb7305f666d0bccc5a4002e53e8a574e3c4c32163d907a1b71df }
       notes: superseded by 0.1.1.
-    - id: agent-relay-0.5.4
+    - id: agent-relay-0.5.6
       status: unreleased
       current: true
-      charts: { agent-relay: 0.5.4, relayhistory: 0.1.2, relay-control: 0.3.1, relay-webapp: 0.2.0 }
+      charts: { agent-relay: 0.5.6, relayhistory: 0.1.2, relay-control: 0.3.1, relay-webapp: 0.2.0 }
       app_versions: { agent-relay: 0.1.0, relayhistory: 0.1.0, relay-control: 0.1.0, relay-webapp: 0.1.0 }
       depends:
-        agent-relay: { relaycast: 0.3.5, relayauth: 0.1.4, sessions-pipeline: 0.7.5, relayhistory: 0.1.2, relay-control: 0.3.1, relay-webapp: 0.2.0, relayflows: 0.2.5, durable-actors: 0.14.6-awf.1, relayfile: 0.2.2, telemetry-collector: 0.1.0, relay-chief: 0.1.0 }
+        agent-relay: { relaycast: 0.3.5, relayauth: 0.1.4, sessions-pipeline: 0.7.7, relayhistory: 0.1.2, relay-control: 0.3.1, relay-webapp: 0.2.0, relayflows: 0.2.5, durable-actors: 0.14.6-awf.1, relayfile: 0.2.2, telemetry-collector: 0.1.0, relay-chief: 0.1.0 }
       images:
         relayhistory: { repository: ghcr.io/agentworkforce/relayhistory, digest_required: true }
         relay-control: { repository: '', digest_required: true }
         relay-webapp: { repository: ghcr.io/agentworkforce/relay-webapp, digest_required: true }
-      notes: 'Adds relay-chief 0.1.0 as a default-off component (components.relayChief). With it off, every render differs only in the helm.sh/chart labels.'
+      notes: 'Adds default-off nativeConsumer pointer/search Deployment and optional owner-only bootstrap with bounded two-pool TLS/schema admission with a frozen public CA, separate Secrets, single-writer drain and prepare/serve phases. No native image or runtime acceptance is selected. Adds relay-chief 0.1.0 as a default-off component (components.relayChief). With it off, every render differs only in the helm.sh/chart labels.'
     - id: agent-relay-0.5.3
       status: planned
       charts: { agent-relay: 0.5.3, relayhistory: 0.1.2, relay-control: 0.3.1, relay-webapp: 0.2.0 }
@@ -3518,6 +3522,57 @@ entries:
       - "charts/sessions-pipeline/templates/ingest-edge.yaml:1"
       - "charts/sessions-pipeline/values.yaml:1"
       - "docs/self-hosted-native-ingest.md:1"
+
+  - id: opt.sessions-native-consumer
+    kind: option
+    title: Default-off native canonical pointer and search consumer
+    description: |
+      SERVICE=session-pipeline-consumer from merged pipeline 336. Requires a
+      qualified immutable composed image, a dedicated runtime JSON Secret, explicit
+      PostgreSQL target and pinned public custom CA, S3/MinIO static Secret or
+      Pod Identity, typed backend/floor/bare root, and a drained disabled old
+      hoopdb-indexer. Old migrator Job must be disabled after an external official
+      driver plus zero-step rerun. Active legacy workers/ingest must match the
+      immutable image and CA references and carry operator strict-URL/TLS/generation
+      qualification; otherwise stop them. One replica with Recreate. The bounded init contract checks
+      both actual pool TLS transports, database/login, source role/schema/policy
+      admission and exact generation/PASS. Opaque URLs must use verify-full plus
+      the managed CA path; helper-pool trust alone is insufficient.
+      Optional owner bootstrap uses a different Job-only JSON Secret and the
+      official SERVICE; no SQL grants are fabricated. Phase prepare renders
+      Job/contract only; serve is selected after completion and password setup.
+      No default image digest, install-profile enablement, public Service, hosted
+      fanout, buffered/publication/GC activation or deletion/privacy acceptance.
+    chart: sessions-pipeline
+    values: [nativeConsumer.*]
+    env: [SERVICE, RELAYHISTORY_SELFHOST_PIPELINE_CONSUMER, RELAYHISTORY_PIPELINE_CONSUMER_SECRET, HOOPDB_DB_MODE, SEARCH_INDEX_BACKEND, SEARCH_INDEX_POSTGRES_BACKEND_ID, READ_API_COMPLETE_SINCE, PIPELINE_RUNTIME, PIPELINE_FANOUT, PIPELINE_KEY_PREFIX, PIPELINE_ORG_FROM_PREFIX, CONSUMER_RECONCILE_EVERY_MINUTES, PIPELINE_RECONCILE_LOOKBACK_MINUTES, SESSION_POSTGRES_TLS_PROFILE, SESSION_POSTGRES_CA_FILE, SESSION_POSTGRES_CA_SHA256, ALLOW_IN_CLUSTER_HTTP, WORKER_HEALTH_PORT, CONSUMER_UNHEALTHY_FILE, LOCKER_PROVIDER, LOCKER_BUCKET, LOCKER_ENDPOINT, LOCKER_REGION, LOCKER_ACCESS_KEY_ID, LOCKER_SECRET_ACCESS_KEY, NATIVE_CONSUMER_CA_SOURCE_FILE, NATIVE_CONSUMER_PREFLIGHT_MODE, NATIVE_CONSUMER_EXPECTED_ROLE, NATIVE_CONSUMER_EXPECTED_DATABASE, NATIVE_CONSUMER_EXPECTED_HOST, NATIVE_CONSUMER_EXPECTED_PORT, NATIVE_CONSUMER_PREFLIGHT_TIMEOUT_SECONDS]
+    profiles: [selfhost-postgres, migration, external-selfhosted, aws-cnpg]
+    status: shipped
+    provided_by: operator
+    default: disabled
+    choices:
+      - { value: disabled }
+      - { value: enabled, note: Requires qualified image/generation and a drained canonical pilot plan. }
+    secrets:
+      - name: "<native consumer runtime JSON Secret>"
+        name_paths: [nativeConsumer.config.existingSecret]
+        keys:
+          - { key: RELAYHISTORY_PIPELINE_CONSUMER_SECRET, key_path: nativeConsumer.config.key }
+      - name: "<native consumer Job-only owner JSON Secret>"
+        name_paths: [nativeConsumer.bootstrap.existingSecret]
+        keys:
+          - { key: RELAYHISTORY_PIPELINE_CONSUMER_SECRET, key_path: nativeConsumer.bootstrap.key }
+      - name: "<native consumer S3 static Secret, secret mode only>"
+        name_paths: [nativeConsumer.locker.existingSecret]
+        keys:
+          - { key: access-key-id, key_path: nativeConsumer.locker.accessKeyIdKey }
+          - { key: secret-access-key, key_path: nativeConsumer.locker.secretAccessKeyKey }
+    verify: Leave off until exact source/image/generation, official bootstrap and native PG/TLS/MinIO upload-to-pointer-to-dashboard proof pass. Render and probe tests alone are not runtime acceptance.
+    sources:
+      - "charts/sessions-pipeline/templates/native-consumer.yaml:1"
+      - "charts/sessions-pipeline/templates/native-consumer-bootstrap.yaml:1"
+      - "charts/sessions-pipeline/templates/_native-consumer.tpl:1"
+      - "docs/self-hosted-native-consumer.md:1"
 
   - id: opt.sessions-read-api
     kind: option

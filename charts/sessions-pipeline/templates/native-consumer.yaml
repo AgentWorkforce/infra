@@ -1,0 +1,48 @@
+{{- include "sessions-pipeline.nativeConsumer.validate" . -}}
+{{- $c := .Values.nativeConsumer -}}
+{{- if $c.enabled -}}
+{{- $name := include "sessions-pipeline.nativeConsumer.name" . -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "sessions-pipeline.nativeConsumer.contractName" . }}
+  namespace: {{ .Release.Namespace | quote }}
+  labels:
+    app.kubernetes.io/name: session-pipeline-consumer
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: native-consumer
+immutable: true
+data:
+  preflight.mjs: |
+{{ .Files.Get "files/native-consumer/preflight.mjs" | indent 4 }}
+  probe.mjs: |
+{{ .Files.Get "files/native-consumer/probe.mjs" | indent 4 }}
+{{- if or (not $c.bootstrap.enabled) (eq $c.bootstrap.phase "serve") }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace | quote }}
+  labels:
+    app.kubernetes.io/name: session-pipeline-consumer
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: native-consumer
+spec:
+  replicas: 1
+  strategy: { type: Recreate }
+  selector:
+    matchLabels: &selector
+      app.kubernetes.io/name: session-pipeline-consumer
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/component: native-consumer
+  template:
+    metadata:
+      labels: *selector
+      {{- with $c.podAnnotations }}
+      annotations: {{ toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      {{- include "sessions-pipeline.nativeConsumer.pod" (dict "root" . "bootstrap" false) | nindent 6 }}
+{{- end }}
+{{- end }}

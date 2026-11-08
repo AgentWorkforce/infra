@@ -48,6 +48,7 @@ MATRIX=(
   "ci/default-values.yaml|yes|yes|selfhosted|fresh"
   "ci/read-api-values.yaml|yes|yes|selfhosted|fresh"
   "ci/ingest-edge-values.yaml|yes|yes|selfhosted|fresh"
+  "ci/native-consumer-values.yaml|no|yes|selfhosted|native"
   "ci/kind-values.yaml|yes|yes|selfhosted|fresh"
   "ci/search-worker-bootstrap-values.yaml|yes|yes|selfhosted|existing"
   "ci/aws-cnpg-values.yaml|yes|no|selfhosted|fresh"
@@ -152,13 +153,27 @@ for row in "${MATRIX[@]}"; do
   done <<<"$imgs"
 
   # App workloads and the migrate Job, in every profile.
-  for d in ci-worker-session-status-worker ci-worker-session-summary-worker ci-worker-session-metadata-indexer ci-session-ingest-api; do
+  deployments="ci-worker-session-status-worker ci-worker-session-summary-worker ci-session-ingest-api"
+  if [ "$rel" = ci/native-consumer-values.yaml ]; then
+    deployments="$deployments ci-native-consumer"
+    none '.kind == "Deployment" and .metadata.name == "ci-worker-session-metadata-indexer"' || err "$label: old indexer overlaps native consumer"
+  else
+    deployments="$deployments ci-worker-session-metadata-indexer"
+  fi
+  for d in $deployments; do
     has ".kind == \"Deployment\" and .metadata.name == \"$d\"" || err "$label: Deployment $d missing"
   done
-  has ".kind == \"Job\" and $(comp hoopdb-migrate)" || err "$label: migrate Job missing"
   none '.metadata.annotations."helm.sh/hook"' || err "$label: a Helm hook rendered"
   mig=$(yq "select(.kind == \"Job\" and $(comp hoopdb-migrate))" <<<"$out")
-  [ "$(yq -r '.spec.template.spec.containers[0].env[] | select(.name == "HOOPDB_ROLE_VERIFY") | .value' <<<"$mig")" = true ] || err "$label: migrate does not run the phase 2 role verify"
+  if [ "$shape" = native ]; then
+    none ".kind == \"Job\" and $(comp hoopdb-migrate)" || err "$label: legacy migration Job must be disabled for native driver ordering"
+    for d in ci-worker-session-status-worker ci-worker-session-summary-worker ci-session-ingest-api; do
+      [ "$(yq -r "select(.kind == \"Deployment\" and .metadata.name == \"$d\") | .spec.replicas" <<<"$out")" = 0 ] || err "$label: legacy runtime $d must be stopped in the native fixture"
+    done
+  else
+    has ".kind == \"Job\" and $(comp hoopdb-migrate)" || err "$label: migrate Job missing"
+    [ "$(yq -r '.spec.template.spec.containers[0].env[] | select(.name == "HOOPDB_ROLE_VERIFY") | .value' <<<"$mig")" = true ] || err "$label: migrate does not run the phase 2 role verify"
+  fi
 
   # The migrator profile (#99): exactly this env in migrate, nowhere else.
   case $dbmode in
@@ -169,10 +184,10 @@ for row in "${MATRIX[@]}"; do
   esac
   # The external-Supabase profile selects the event-trigger boundary (#125).
   [ "$rel" = profiles/external-supabase.yaml ] && want=$(printf '%s\nHOOPDB_FUNCTION_BOUNDARY_MODE=event-trigger\n' "$want" | sort)
-  got=$(profile_env)
+  if [ "$shape" = native ]; then want=""; got=""; else got=$(profile_env); fi
   [ "$got" = "$want" ] || err "$label: migrate profile env is [$(tr '\n' ' ' <<<"$got")], want [$(tr '\n' ' ' <<<"$want")]"
   for n in $PROFILE_ENV HOOPDB_FUNCTION_BOUNDARY_APPROVED; do
-    c=$(yq -r "[.. | select(type == \"!!map\" and .name == \"$n\" and has(\"value\"))] | length" <<<"$out" | awk '{s+=$1} END {print s+0}')
+    c=$(yq -r "select(.metadata.labels.\"app.kubernetes.io/name\" != \"session-pipeline-consumer\") | [.. | select(type == \"!!map\" and .name == \"$n\" and has(\"value\"))] | length" <<<"$out" | awk '{s+=$1} END {print s+0}')
     case $n in HOOPDB_FUNCTION_BOUNDARY_APPROVED) w=0 ;; *) w=$(grep -c "^$n=" <<<"$want" || true) ;; esac
     [ "$c" = "$w" ] || err "$label: $n rendered $c times, want $w (migrate only)"
   done
@@ -200,6 +215,7 @@ for row in "${MATRIX[@]}"; do
     external) jobs=""; roles="session_directory_search_worker sessions_pipeline_runtime"; fd=false ;;
     supabase) jobs=""; roles=""; fd="" ;;
     rds)      jobs=""; roles=""; fd="" ;;
+    native)   jobs=""; roles=""; fd="" ;;
   esac
   for c in search-worker-role-bootstrap hoopdb-runtime-role-bootstrap hoopdb-function-default-revoke; do
     if [[ " $jobs " == *" $c "* ]]; then
