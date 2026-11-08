@@ -1,0 +1,87 @@
+#!/usr/bin/env bash
+# First-boot bootstrap of one Relay Chief slot. Rendered by the relay-chief-slots
+# module. Holds identifiers and checksums only. It leaves relay-chief.timer
+# disabled: binding is a separate operator step (relay-chief-bind-slot).
+set -euo pipefail
+umask 022
+
+for tool in aws python3 curl tar sha256sum base64 blkid wipefs mkfs.ext4 mountpoint useradd runuser flock systemctl; do
+  command -v "$tool" >/dev/null 2>&1 || { echo "relay-chief bootstrap: missing tool: $tool" >&2; exit 1; }
+done
+python3 -I -c 'import sqlite3' || { echo "relay-chief bootstrap: python3 has no sqlite3 module" >&2; exit 1; }
+
+work="$(mktemp -d)"
+trap 'rm -rf "$work"' EXIT
+
+download() {
+  curl -fsSL --proto '=https' --tlsv1.2 --retry 5 -o "$2" "$1"
+  echo "$3  $2" | sha256sum --check --strict --quiet
+}
+
+install_file() {
+  install -d -m 0755 "$(dirname "$1")"
+  echo "$3" | base64 -d >"$1"
+  chmod "$2" "$1"
+}
+
+getent passwd relay-chief >/dev/null ||
+  useradd --system --user-group --no-create-home --home-dir /var/lib/relay-chief --shell /usr/sbin/nologin relay-chief
+
+# Node.js 24+ at /usr/bin/node, the path the reference unit requires.
+download '${node_url}' "$work/node.tar" '${node_sha256}'
+install -d -m 0755 /opt/relay-chief-node
+tar -xf "$work/node.tar" -C /opt/relay-chief-node --strip-components=1 --no-same-owner
+ln -sfn /opt/relay-chief-node/bin/node /usr/bin/node
+node_version="$(/usr/bin/node --version)"
+node_major="$${node_version#v}"
+node_major="$${node_major%%.*}"
+[ "$node_major" -ge 24 ] || { echo "relay-chief bootstrap: Node.js 24+ is required" >&2; exit 1; }
+
+install -d -m 0755 -o root -g root /opt/relay-chief
+%{ if artifact_url != "" ~}
+download '${artifact_url}' "$work/relay-chief.tar" '${artifact_sha256}'
+tar -xf "$work/relay-chief.tar" -C /opt/relay-chief --no-same-owner
+[ -f /opt/relay-chief/dist/cli.js ] || { echo "relay-chief bootstrap: the artifact has no dist/cli.js" >&2; exit 1; }
+%{ endif ~}
+
+install -d -m 0750 -o root -g relay-chief /etc/relay-chief
+cat >/etc/relay-chief/slot.env <<'SLOTENV'
+RELAY_CHIEF_SLOT_ID=${slot_id}
+RELAY_CHIEF_SECRET_ID=${secret_name}
+RELAY_CHIEF_REGION=${region}
+SLOTENV
+chown root:relay-chief /etc/relay-chief/slot.env
+chmod 0640 /etc/relay-chief/slot.env
+
+%{ for file in files ~}
+install_file '${file.path}' '${file.mode}' '${file.content}'
+%{ endfor ~}
+
+# The volume attaches after the instance starts, so wait for it. A filesystem
+# already on it is the previous host's ledger: it is mounted, never formatted.
+# Formatting happens only on a device with no signature at all.
+device='${data_device}'
+for _ in $(seq 1 120); do
+  [ -b "$device" ] && break
+  sleep 5
+done
+[ -b "$device" ] || { echo "relay-chief bootstrap: the data volume did not attach" >&2; exit 1; }
+device="$(readlink -f "$device")"
+if [ -z "$(wipefs --no-act --noheadings "$device")" ]; then
+  mkfs.ext4 -q -L relay-chief-data "$device"
+elif [ "$(blkid -p -o value -s TYPE "$device" || true)" != "ext4" ]; then
+  echo "relay-chief bootstrap: the data volume holds an unexpected filesystem" >&2
+  exit 1
+fi
+uuid="$(blkid -p -o value -s UUID "$device")"
+install -d -m 0700 /var/lib/relay-chief
+grep -q ' /var/lib/relay-chief ' /etc/fstab ||
+  echo "UUID=$uuid /var/lib/relay-chief ext4 defaults,noatime,nofail,x-systemd.device-timeout=30s 0 2" >>/etc/fstab
+systemctl daemon-reload
+mount /var/lib/relay-chief
+mountpoint -q /var/lib/relay-chief
+chown relay-chief:relay-chief /var/lib/relay-chief
+chmod 0700 /var/lib/relay-chief
+
+# Explicitly disabled. relay-chief-bind-slot enables it only with a dispatch opt-in.
+systemctl disable relay-chief.timer
