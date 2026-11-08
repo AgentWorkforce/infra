@@ -836,6 +836,16 @@ ca_gaps=$(yq 'select((.kind == "Deployment" or (.kind == "Job" and (.metadata.na
 test -z "$ca_gaps" || { echo "postgresCa missing from: $ca_gaps" >&2; exit 1; }
 test "$(yq 'select(.kind == "Deployment" or (.kind == "Job" and (.metadata.name | contains("migrate")))) | select(.spec.template.spec.containers[0].env[].name == "NODE_EXTRA_CA_CERTS") | .metadata.name' <<<"$ca_out" | grep -v '^---$' | grep -c .)" -ge 4
 
+# Relay Chief is default off in the umbrella and starts suspended when enabled.
+chief_values=$(mktemp)
+yq '{"relay-chief": .}' charts/relay-chief/ci/default-values.yaml >"$chief_values"
+chief_args=(-n agent-relay --no-hooks -f charts/agent-relay/values-gcp-proof.yaml -f charts/agent-relay/ci/gcp-proof-values.yaml -f "$chief_values")
+test -z "$(helm template proof charts/agent-relay "${chief_args[@]}" | yq 'select(.kind == "CronJob" and (.metadata.name | contains("chief"))) | .metadata.name')" \
+  || { echo "relay-chief rendered with components.relayChief off" >&2; exit 1; }
+test "$(helm template proof charts/agent-relay "${chief_args[@]}" --set components.relayChief=true | yq 'select(.kind == "CronJob" and (.metadata.name | contains("chief"))) | .spec.suspend')" = "true" \
+  || { echo "relay-chief is not a suspended CronJob when enabled" >&2; exit 1; }
+rm -f "$chief_values"
+
 # With single-host mode off, every default (subdomain) render is unchanged.
 ci/agent-relay/subdomain-golden.sh check
 
