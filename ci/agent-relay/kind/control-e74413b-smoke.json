@@ -26,5 +26,27 @@
     "cleanupErrors": [],
     "pass": true
   },
-  "scope": "Owned synthetic PostgreSQL 17 fixture on a private plaintext Docker network. Native build/export bytes and selected migration/runtime behavior only; unsigned, unpublished, not installed. Not TLS, MCP, Desktop, cloud or full pipeline acceptance."
+  "scope": "Owned synthetic PostgreSQL 17 fixture on a private plaintext Docker network. Native build/export bytes and selected migration/runtime behavior only; unsigned, unpublished, not installed. Not TLS, MCP, Desktop, cloud or full pipeline acceptance.",
+  "entrypointSelection": {
+    "builderInfraRevision": "5a72c6cee7acf4088b3a136f681ec160b702c4ae",
+    "sameNativeManifestVerified": true,
+    "server": {
+      "command": [
+        "node"
+      ],
+      "args": [
+        "node_modules/relay-control/dist/server.js"
+      ]
+    },
+    "migrations": {
+      "command": [
+        "node"
+      ],
+      "args": [
+        "node_modules/relay-control/dist/migrate-cli.js"
+      ]
+    },
+    "currentAndHistoricalRenderedCommandChecks": "PASS",
+    "offlineKindTests": 67
+  }
 }
