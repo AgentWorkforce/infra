@@ -1,19 +1,40 @@
 # Pending self-host read API contract
 
 This is source review and read-only diagnosis, not an enabled deployment or an
-end-to-end pass. Core local-control proof at `fd8565c` records 57 PASS, 0 FAIL, 3 PENDING.
+end-to-end pass. Historical local-control proof at `fd8565c` records 57 PASS,
+0 FAIL, 3 PENDING. This source-contract update does not rerun or reattribute it.
 
 The originally reviewed source heads were pipeline [#317 at a7d7a5db](https://github.com/AgentWorkforce/relayhistory-pipeline/pull/317),
 [#318 at 441e4862](https://github.com/AgentWorkforce/relayhistory-pipeline/pull/318)
 and the additional PG-only source in [#330 at 44b81b56](https://github.com/AgentWorkforce/relayhistory-pipeline/pull/330).
 They were open drafts at that source review. Subsequent status verification
 confirmed #317 merged as `d33bfdaa665f1ea5da7eac33e96b3522fa177b06` and #318 as
-`a1e1473be4174d1b26c1506159abcbd97b39fa4f`. #330 is open and non-draft at the later status check, and has
-advanced to `0f2e866395c9122721262bb16d1430084955c878`. Its intervening commits
+`a1e1473be4174d1b26c1506159abcbd97b39fa4f`. #330 subsequently merged as
+`992f9b17721a3208a1eaeb5933f53359b1919702` from head
+`0f2e866395c9122721262bb16d1430084955c878`. Its intervening commits
 add reader role admission, forced tenant RLS and fail-closed tenant-bound
 operations; that combined runtime is not qualified by the older source review.
 No enablement or deployment was done by infra.
 Relaycontrol remains a proxy to `RELAYHISTORY_URL`, with no pipeline URL added.
+
+## Supported self-host read scope
+
+Pipeline rollout 1 supports canonical published sessions only. Self-host
+owner-buffered reads are unsupported. The Node container assembles the Lambda
+read app, whose [source explicitly leaves owner-buffered reads unwired](https://github.com/AgentWorkforce/relayhistory-pipeline/blob/f7cfb90ecd8f03ad7d51ebd6291519ab69402597/src/session-read-api/lambda.ts#L24-L26).
+The hosted Worker privacy-head binding from pipeline #341 is outside this
+self-host assembly.
+
+Leave `RELAYHISTORY_READ_OWNER_BUFFERED` unset/off and
+`READ_API_OWNER_BUFFERED_WORKSPACES` unset. Supply no owner-buffered raw-S3
+configuration. Canonical MinIO configuration remains separately required; this
+scope does not qualify that binding or the pending courier-to-app proof.
+
+A future self-host owner-buffered design would require an authenticated
+in-cluster privacy-controls transport with an owner **TBD**. No supported
+transport or follow-up implementation exists for rollout 1. The Fetcher DI seam
+is not an approved public endpoint and must not be pointed at one. A new
+privacy-head transport is not a prerequisite for canonical-only acceptance.
 
 ## Proposed chart inputs
 
