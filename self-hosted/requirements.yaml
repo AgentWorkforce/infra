@@ -233,6 +233,7 @@ compatibility:
       images:
         sessions-pipeline-worker: { repository: agentworkforce/96bulls-services, digest: sha256:6f22ea17dff336e1431664542759fd27958649388b90a0b2f0881883caa7c6b2 }
         session-ingest-api: { repository: agentworkforce/96bulls-services, digest: sha256:6f22ea17dff336e1431664542759fd27958649388b90a0b2f0881883caa7c6b2 }
+      images_note: "Native ingest edge (SERVICE=session-ingest): unqualified; an explicit qualified combined-image digest is required. Pins above belong to the existing internal worker/ingest services, not ingestEdge."
       services:
         source_commit: 7d7229bb31c121ecb98cd4e35c248fc2cf5669ad
         migration_generation: eff8b3be46565b57ad8fa5e4a066dbb6d1fe608313d9c1680bfbcd484add259b

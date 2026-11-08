@@ -15,7 +15,8 @@ frontier rows are manufactured by the chart.
 
 ## Inputs
 
-Supply a qualified digest whose exact image contains the merged service. The
+Supply an explicit registry DNS host and image path, plus a qualified digest
+whose exact image contains the merged service. The
 previous reader-only image does not contain this entrypoint. Chart rendering
 does not verify an image's source, generation, role grants or behavior.
 
@@ -64,7 +65,8 @@ explicit in-cluster opt-in; public plaintext destinations are refused.
 `relaycontrol.url` is a **base origin**, without the introspection path: the
 client appends `/internal/v1/auth/introspect`. `origin` is a normalized public
 HTTPS origin (lowercase DNS, no `:443` default port or trailing slash) and must
-equal the reader's `READ_API_ORIGIN`. A generic `extraEnv` override is refused;
+equal the reader's `READ_API_ORIGIN`; rendering refuses unequal `readApi.origin`
+and `ingestEdge.origin` when both slots are enabled. A generic `extraEnv` override is refused;
 the source's enablement, auth, TLS, inline acceptance and Secret inputs are
 managed by the chart.
 

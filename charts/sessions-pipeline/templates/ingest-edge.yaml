@@ -6,14 +6,20 @@
 {{- $name := default (printf "%s-ingest-edge" .Release.Name) $c.fullnameOverride -}}
 {{- if or (gt (len $name) 63) (not (regexMatch "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$" $name)) }}{{ fail "ingestEdge.fullnameOverride must be a DNS label of at most 63 characters" }}{{ end -}}
 {{- $repository := required "ingestEdge.image.repository is required" $c.image.repository -}}
+{{- $repositoryPattern := "^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\\.)+[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(:[0-9]{1,5})?/[a-z0-9]+(([._]|__|-+)[a-z0-9]+)*(/[a-z0-9]+(([._]|__|-+)[a-z0-9]+)*)*$" -}}
+{{- if not (regexMatch $repositoryPattern $repository) }}{{ fail "ingestEdge.image.repository must include an explicit registry DNS host and image path, without a scheme, tag or digest" }}{{ end -}}
+{{- $registryPort := regexFind ":[0-9]+$" (first (splitList "/" $repository)) -}}
+{{- if and $registryPort (or (lt (int (trimPrefix ":" $registryPort)) 1) (gt (int (trimPrefix ":" $registryPort)) 65535)) }}{{ fail "ingestEdge.image.repository has an invalid registry port" }}{{ end -}}
 {{- $digest := required "ingestEdge.image.digest requires a qualified SERVICE=session-ingest image" $c.image.digest -}}
 {{- if not (regexMatch "^sha256:[a-f0-9]{64}$" $digest) }}{{ fail "ingestEdge.image.digest must be sha256:<64 lowercase hex characters>" }}{{ end -}}
 {{- $origin := required "ingestEdge.origin is required" $c.origin -}}
 {{- $originPattern := "^https://([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\\.)+[a-z]([a-z0-9-]{0,61}[a-z0-9])?(:[0-9]{1,5})?$" -}}
-{{- if or (not (regexMatch $originPattern $origin)) (regexMatch "\\.(localhost|local|internal|lan|invalid|test|example|home\\.arpa|onion)(:[0-9]{1,5})?$" $origin) (regexMatch "\\.example\\.(com|net|org)(:[0-9]{1,5})?$" $origin) (hasSuffix ":443" $origin) }}{{ fail "ingestEdge.origin must be a normalized public HTTPS origin (lowercase DNS, no default port, path, query or fragment)" }}{{ end -}}
+{{- $originHost := regexReplaceAll ":[0-9]+$" (trimPrefix "https://" $origin) "" -}}
+{{- if or (not (regexMatch $originPattern $origin)) (gt (len $originHost) 253) (regexMatch "\\.(localhost|local|internal|lan|invalid|test|example|home\\.arpa|onion)(:[0-9]{1,5})?$" $origin) (regexMatch "(^|\\.)example\\.(com|net|org)$" $originHost) (hasSuffix ":443" $origin) }}{{ fail "ingestEdge.origin must be a normalized public HTTPS origin (lowercase DNS, no default port, path, query or fragment)" }}{{ end -}}
 {{- $originPort := regexFind ":[0-9]+$" $origin -}}
 {{- if and $originPort (or (lt (int (trimPrefix ":" $originPort)) 1) (gt (int (trimPrefix ":" $originPort)) 65535)) }}{{ fail "ingestEdge.origin has an invalid port" }}{{ end -}}
 {{- if and $originPort (or (eq (int (trimPrefix ":" $originPort)) 443) (ne $originPort (printf ":%d" (int (trimPrefix ":" $originPort))))) }}{{ fail "ingestEdge.origin port must be normalized without leading zeros or the default HTTPS port" }}{{ end -}}
+{{- if and .Values.readApi.enabled (ne $origin .Values.readApi.origin) }}{{ fail "ingestEdge.origin must exactly equal readApi.origin when both services are enabled" }}{{ end -}}
 {{- $introspect := include "sessions-pipeline.ingestEdge.endpoint" (dict "name" "ingestEdge.relaycontrol.url" "url" $c.relaycontrol.url "allowHttp" $c.allowInClusterHttp) -}}
 {{- $endpoint := include "sessions-pipeline.ingestEdge.endpoint" (dict "name" "ingestEdge.locker.endpoint" "url" $c.locker.endpoint "allowHttp" $c.allowInClusterHttp) -}}
 {{- $bucket := required "ingestEdge.locker.bucket is required" $c.locker.bucket -}}

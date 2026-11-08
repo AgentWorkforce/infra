@@ -185,21 +185,24 @@ class ReadApi(unittest.TestCase):
 class IngestEdge(unittest.TestCase):
     """Merged native ingest contract; no image, database or cluster executed."""
 
-    def render(self, *, overlay=None, fail=False):
+    def render(self, *, overlay=None, read_api=None, fail=False, all_objects=False):
         with tempfile.TemporaryDirectory(prefix="ingest-edge-render-") as directory:
             cmd = ["helm", "template", "test", str(ROOT / "charts/sessions-pipeline"), "-n", "ci",
                    "-f", str(ROOT / "charts/sessions-pipeline/ci/ingest-edge-values.yaml")]
-            if overlay:
+            if overlay or read_api:
                 f = Path(directory) / "extra.yaml"
-                f.write_text(yaml.safe_dump({"ingestEdge": overlay}))
+                values = {"ingestEdge": overlay} if overlay else {}
+                if read_api:
+                    values["readApi"] = read_api
+                f.write_text(yaml.safe_dump(values))
                 cmd += ["-f", str(f)]
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
         if fail:
             self.assertNotEqual(result.returncode, 0)
             return result.stderr
         self.assertEqual(result.returncode, 0, result.stderr)
-        return [d for d in yaml.safe_load_all(result.stdout) if d and
-                d.get("metadata", {}).get("labels", {}).get("app.kubernetes.io/component") == "ingest-edge"]
+        return [d for d in yaml.safe_load_all(result.stdout) if d and (all_objects or
+                d.get("metadata", {}).get("labels", {}).get("app.kubernetes.io/component") == "ingest-edge")]
 
     def test_disabled_needs_no_image_secrets_or_ca(self):
         self.assertEqual(self.render(overlay={"enabled": False, "image": {"digest": ""},
@@ -255,13 +258,47 @@ class IngestEdge(unittest.TestCase):
                 self.assertIn("ingestEdge", self.render(overlay=overlay, fail=True))
 
     def test_public_origin_is_normalized_and_keeps_nondefault_port(self):
+        longest_host = ".".join(["a" * 63] * 3 + ["b" * 57, "com"])
+        self.assertEqual(len(longest_host), 253)
+        self.render(overlay={"origin": "https://" + longest_host})
         for origin in ["http://history.agentrelay.com", "https://history.agentrelay.com/",
                        "https://history.agentrelay.com:443", "https://history.agentrelay.com:0443",
                        "https://history.agentrelay.com:08443", "https://History.agentrelay.com",
                        "https://127.0.0.1", "https://history.internal", "https://history.example.com",
+                       "https://example.com", "https://example.net:8443", "https://example.org",
+                       "https://" + longest_host.replace("b" * 57, "b" * 58),
                        "https://history.agentrelay.com:65536", "https://history.agentrelay.com?x=y"]:
             with self.subTest(origin=origin):
                 self.assertIn("ingestEdge.origin", self.render(overlay={"origin": origin}, fail=True))
+
+    def test_image_repository_names_its_registry_explicitly(self):
+        for repository in ["session-ingest", "agentworkforce/session-ingest", "ghcr.io/image:latest",
+                           "https://ghcr.io/org/image", "ghcr.io/org/image@sha256:" + "f" * 64,
+                           "registry.agentrelay.com:65536/org/image"]:
+            with self.subTest(repository=repository):
+                self.assertIn("ingestEdge.image.repository", self.render(
+                    overlay={"image": {"repository": repository}}, fail=True))
+        for repository in ["ghcr.io/agentworkforce/96bulls-services",
+                           "registry.agentrelay.com:5000/team/session_ingest"]:
+            self.render(overlay={"image": {"repository": repository}})
+
+    def test_reader_and_ingest_require_the_same_audience(self):
+        reader = yaml.safe_load(FIXTURE.read_text())["readApi"]
+        self.render(read_api=reader)
+        for origin in ["https://other.agentrelay.com:8443", "https://history.kind.agentrelay.com:9443"]:
+            with self.subTest(origin=origin):
+                self.assertIn("must exactly equal readApi.origin", self.render(
+                    read_api={**reader, "origin": origin}, fail=True))
+
+    def test_fixture_endpoint_names_the_rendered_storage_service(self):
+        docs = self.render(all_objects=True)
+        storage = next(d for d in docs if d["kind"] == "Service" and
+                       d["metadata"]["name"] == "session-object-storage")
+        deploy = next(d for d in docs if d["kind"] == "Deployment" and
+                      d["metadata"].get("labels", {}).get("app.kubernetes.io/component") == "ingest-edge")
+        env = {e["name"]: e for e in deploy["spec"]["template"]["spec"]["containers"][0]["env"]}
+        self.assertEqual(env["LOCKER_ENDPOINT"]["value"],
+                         f'http://{storage["metadata"]["name"]}.ci.svc.cluster.local:9000')
 
     def test_endpoint_policy_refuses_external_plaintext_and_duplicate_path(self):
         for group, field in [("locker", "endpoint"), ("relaycontrol", "url")]:

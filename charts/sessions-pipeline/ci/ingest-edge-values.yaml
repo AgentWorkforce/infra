@@ -44,5 +44,5 @@ ingestEdge:
     caSha256: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
   locker:
     bucket: pilot-sessions
-    endpoint: http://locker.ci.svc.cluster.local:9000
+    endpoint: http://session-object-storage.ci.svc.cluster.local:9000
     existingSecret: ingest-store
