@@ -115,6 +115,10 @@ relayhistory:
       - secretName: kind-tls
         hosts: [history.kind.agentrelay.com]
 sessions-pipeline:
+  # Held until the approved read assembly/image and ingest/auth contract land.
+  readApi:
+    enabled: false
+    search: { backend: postgres }
   # Local Postgres is created before any schema migration; no CNPG operator.
   hoopdb: { enabled: false }
   session-object-storage: { enabled: false }

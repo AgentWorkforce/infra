@@ -60,7 +60,9 @@ of set a second time. Desktop and the CLI log in against that same origin. */ -}
 {{- end -}}
 {{- end -}}
 {{- end -}}
+{{- if not (kindIs "bool" .Values.services.relayauthEnabled) }}{{ fail "services.relayauthEnabled must be a boolean" }}{{ end -}}
 {{- $optionalSecretKeys := list "previousEncryptionKey" "internalToken" "telemetryInstallKey" "relaycastInternalSecret" "oidcClientSecret" "smtpPassword" -}}
+{{- if not .Values.services.relayauthEnabled }}{{ $optionalSecretKeys = append $optionalSecretKeys "relayauthApiKey" }}{{ end -}}
 {{- range $name, $key := .Values.secretKeys }}{{ if and (has $name $optionalSecretKeys) (empty $key) }}{{ continue }}{{ end }}{{ if not (regexMatch "^[A-Za-z0-9._-]+$" (toString $key)) }}{{ fail (printf "secretKeys.%s must be a Kubernetes Secret data key" $name) }}{{ end }}{{ end -}}
 {{- /* Every non-empty secretKeys.* value must name a distinct Secret key. The
 API pod projects the runtime and optional keys by key name, so a collision
@@ -75,7 +77,9 @@ settings. */ -}}
 {{- include "relay-cloud-api.validateIdentity" . -}}
 {{- include "relay-cloud-api.validateIntegrations" . -}}
 {{- if not (regexMatch "^https://[^/?#]+$" (include "relay-cloud-api.publicUrl" .)) }}{{ fail "publicUrl must be an HTTPS origin with no path" }}{{ end -}}
-{{- range $name, $url := dict "relayauthUrl" .Values.services.relayauthUrl "relaycastUrl" .Values.services.relaycastUrl "relayhistoryUrl" .Values.services.relayhistoryUrl }}{{ if not (regexMatch "^https?://[^/?#]+$" $url) }}{{ fail (printf "services.%s must be an HTTP(S) origin with no path" $name) }}{{ end }}{{ end -}}
+{{- $serviceUrls := dict "relaycastUrl" .Values.services.relaycastUrl "relayhistoryUrl" .Values.services.relayhistoryUrl -}}
+{{- if .Values.services.relayauthEnabled }}{{ $_ := set $serviceUrls "relayauthUrl" .Values.services.relayauthUrl }}{{ end -}}
+{{- range $name, $url := $serviceUrls }}{{ if not (regexMatch "^https?://[^/?#]+$" $url) }}{{ fail (printf "services.%s must be an HTTP(S) origin with no path" $name) }}{{ end }}{{ end -}}
 {{- $publicOriginPattern := "^https://([A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?\\.)+[A-Za-z]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?(:[0-9]{1,5})?$" -}}
 {{- range $name, $url := dict "relaycastPublicUrl" .Values.services.relaycastPublicUrl "relayhistoryPublicUrl" .Values.services.relayhistoryPublicUrl -}}
 {{- if or (not (regexMatch $publicOriginPattern $url)) (regexMatch "(?i)\\.(localhost|local|internal|lan|invalid|test|example|home\\.arpa|onion)(:[0-9]{1,5})?$" $url) (regexMatch "(?i)\\.example\\.(com|net|org)(:[0-9]{1,5})?$" $url) }}{{ fail (printf "services.%s must be a public HTTPS origin with multi-label DNS and no credentials, path, query, or fragment" $name) }}{{ end -}}
@@ -113,17 +117,29 @@ the chart already sets, including duplicates inside extraEnv. */ -}}
 {{- if $integrationEnv }}{{ range $item := $integrationEnv | fromYamlArray }}{{ $managed = append $managed (toString $item.name) }}{{ end }}{{ end -}}
 {{- end -}}
 {{- range .Values.extraEnv -}}
-{{- if or (not (kindIs "map" .)) (not .name) }}{{ fail "every extraEnv entry must be an object with a name" }}{{ end -}}
+{{- if not (kindIs "map" .) }}{{ fail "every extraEnv entry must be an object" }}{{ end -}}
+{{- if or (not (kindIs "string" .name)) (not .name) }}{{ fail "every extraEnv name must be a non-empty string" }}{{ end -}}
 {{- if or (not (kindIs "string" .name)) (not (regexMatch "^[A-Za-z_][A-Za-z0-9_]*$" (toString .name))) }}{{ fail "extraEnv.name must be a valid environment variable string" }}{{ end -}}
+{{- /* Provider hyphens become underscores; reserve unset OAuth names and raw secret FILE aliases. */ -}}
+{{- if regexMatch "^SELFHOST_OAUTH_[A-Z0-9]([A-Z0-9_]*[A-Z0-9])?_(CLIENT_ID|CLIENT_SECRET|CLIENT_SECRET_FILE|SCOPES)$" .name }}{{ fail (printf "%s is managed by structured chart values and must not appear in extraEnv" .name) }}{{ end -}}
 {{- if has (toString .name) $managed }}{{ fail (printf "%s is managed by structured chart values and must not appear in extraEnv" .name) }}{{ end -}}
 {{- if ne (hasKey . "value") (not (hasKey . "valueFrom")) }}{{ fail "extraEnv requires exactly one of value or valueFrom" }}{{ end -}}
 {{- if and (hasKey . "value") (not (kindIs "string" .value)) }}{{ fail "extraEnv.value must be a string; quote numbers and booleans" }}{{ end -}}
 {{- if and (hasKey . "value") (regexMatch "(?i)(^|_)(SECRET|TOKEN|PASSWORD|CREDENTIAL|DSN|API_KEY)$" .name) }}{{ fail "sensitive extraEnv settings require valueFrom.secretKeyRef, never inline values" }}{{ end -}}
 {{- if hasKey . "valueFrom" -}}
-{{- if not (kindIs "map" .valueFrom) }}{{ fail "extraEnv.valueFrom must be an object" }}{{ end -}}
-{{- $ref := .valueFrom.secretKeyRef | default dict -}}
-{{- if not (kindIs "map" $ref) }}{{ fail "extraEnv.valueFrom.secretKeyRef must be an object" }}{{ end -}}
-{{- if and (eq (toString ($ref.name | default "")) (toString $.Values.existingSecret)) (eq (toString ($ref.key | default "")) (toString $.Values.secretKeys.databaseMigrationsUrl)) }}{{ fail "extraEnv must not expose the migration credential to the API pod" }}{{ end -}}
+{{- if not (kindIs "map" .valueFrom) }}{{ fail "extraEnv valueFrom must be an object" }}{{ end -}}
+{{- $fromKeys := keys .valueFrom -}}
+{{- if ne (len $fromKeys) 1 }}{{ fail "extraEnv valueFrom must set exactly one of secretKeyRef, configMapKeyRef, fieldRef, or resourceFieldRef" }}{{ end -}}
+{{- $fromKey := index $fromKeys 0 -}}
+{{- if not (has $fromKey (list "secretKeyRef" "configMapKeyRef" "fieldRef" "resourceFieldRef")) }}{{ fail "extraEnv valueFrom must set exactly one of secretKeyRef, configMapKeyRef, fieldRef, or resourceFieldRef" }}{{ end -}}
+{{- $src := index .valueFrom $fromKey -}}
+{{- if not (kindIs "map" $src) }}{{ fail (printf "extraEnv valueFrom.%s must be an object" $fromKey) }}{{ end -}}
+{{- if or (eq $fromKey "secretKeyRef") (eq $fromKey "configMapKeyRef") -}}
+{{- if or (not (kindIs "string" $src.name)) (not $src.name) (not (kindIs "string" $src.key)) (not $src.key) }}{{ fail (printf "extraEnv valueFrom.%s requires a non-empty string name and key" $fromKey) }}{{ end -}}
+{{- end -}}
+{{- if and (eq $fromKey "fieldRef") (or (not (kindIs "string" $src.fieldPath)) (not $src.fieldPath)) }}{{ fail "extraEnv valueFrom.fieldRef requires a non-empty string fieldPath" }}{{ end -}}
+{{- if and (eq $fromKey "resourceFieldRef") (or (not (kindIs "string" $src.resource)) (not $src.resource)) }}{{ fail "extraEnv valueFrom.resourceFieldRef requires a non-empty string resource" }}{{ end -}}
+{{- if and (eq $fromKey "secretKeyRef") (eq (toString $src.name) (toString $.Values.existingSecret)) (eq (toString $src.key) (toString $.Values.secretKeys.databaseMigrationsUrl)) }}{{ fail "extraEnv must not reference the migration credential secretKeys.databaseMigrationsUrl" }}{{ end -}}
 {{- end -}}
 {{- $managed = append $managed (toString .name) -}}
 {{- end -}}
@@ -131,7 +147,8 @@ the chart already sets, including duplicates inside extraEnv. */ -}}
 {{- /* Secret files mounted into the API pod: env name -> Secret data key.
 Optional keys are left out while empty. */ -}}
 {{- define "relay-cloud-api.secretFiles" -}}
-{{- $files := dict "DATABASE_URL_FILE" .Values.secretKeys.databaseUrl "RELAYAUTH_API_KEY_FILE" .Values.secretKeys.relayauthApiKey "SELFHOST_BOOTSTRAP_TOKEN_FILE" .Values.secretKeys.bootstrapToken "SELFHOST_ENCRYPTION_KEY_FILE" .Values.secretKeys.encryptionKey -}}
+{{- $files := dict "DATABASE_URL_FILE" .Values.secretKeys.databaseUrl "SELFHOST_BOOTSTRAP_TOKEN_FILE" .Values.secretKeys.bootstrapToken "SELFHOST_ENCRYPTION_KEY_FILE" .Values.secretKeys.encryptionKey -}}
+{{- if .Values.services.relayauthEnabled }}{{ $_ := set $files "RELAYAUTH_API_KEY_FILE" .Values.secretKeys.relayauthApiKey }}{{ end -}}
 {{- with .Values.secretKeys.previousEncryptionKey }}{{ $_ := set $files "SELFHOST_ENCRYPTION_PREVIOUS_KEY_FILE" . }}{{ end -}}
 {{- with .Values.secretKeys.internalToken }}{{ $_ := set $files "SELFHOST_INTERNAL_TOKEN_FILE" . }}{{ end -}}
 {{- with .Values.secretKeys.relaycastInternalSecret }}{{ $_ := set $files "RELAYCAST_INTERNAL_SECRET_FILE" . }}{{ end -}}

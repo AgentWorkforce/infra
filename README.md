@@ -642,7 +642,7 @@ a database row. See [captured evidence](ci/agent-relay/kind/evidence.md).
 
 | Gap | Owner / current evidence |
 | --- | --- |
-| Courier → RelayHistory → application read path | Pipeline and RelayHistory owners, coordinated by pipeline-lead: the real-owner courier session is indexed and stored, but RelayHistory does not return it through the authenticated Default workspace application API. Relaycontrol already proxies to `RELAYHISTORY_URL`; it needs no pipeline URL or separate read API. The pipeline-to-History workspace session visibility contract is a required pending check. Draft pipeline #317/#318 add a default-off container entry and login/catalog routes; [source review and read-only diagnosis](ci/agent-relay/kind/read-api-contract.md) track remaining Postgres-only composition, TLS, canonical source and auth-pair blockers. The courier fixture already has a matching directory row. Nothing is enabled. |
+| Courier → RelayHistory → application read path | Pipeline and RelayHistory owners, coordinated by pipeline-lead: the real-owner courier session is indexed and stored, but RelayHistory does not return it through the authenticated Default workspace application API. Relaycontrol already proxies to `RELAYHISTORY_URL`; it needs no new pipeline URL in control, while the compatible History read service remains unqualified. The pipeline-to-History workspace session visibility contract is a required pending check. Merged pipeline #317/#318 add a default-off container entry and login/catalog routes; [source review and read-only diagnosis](ci/agent-relay/kind/read-api-contract.md) track remaining Postgres-only composition, TLS, canonical source and auth-pair blockers. The courier fixture already has a matching directory row. Nothing is enabled. |
 | Shared-schema ownership | The local recipe now isolates History and HoopDB, matching the existing EKS installer; both migrators and the exact final ACL check pass. The earlier 160 violations remain as negative evidence for unsupported co-location. A future shared-schema design requires the schema and History application owners; the pipeline owner does not own the separate `relayhistory-cloud` application repo. |
 | Add-on E2E | infra-kind-stack + license/file owners: native images and offline engine/storage preflights pass; the installed add-on profile, actual CronJob firing and authenticated file roundtrip remain unproved pending a signed license fixture and genuine filesystem-scoped authority. |
 | Current image/source compatibility | Component owners: record exact source SHA and migrator generation; a tag named `main` is insufficient. This run used services source `f1c2672581b6f88d26d0549b4d1cb78fce0d5f16`, generation `0dcd0e89bebbdad789a40fa61311c601b4c0e49e389e3b2b0167b6fd5fdf542e`. |
@@ -658,6 +658,11 @@ a database row. See [captured evidence](ci/agent-relay/kind/evidence.md).
 Track the local work in [issue #77](https://github.com/AgentWorkforce/infra/issues/77).
 For render/trust/schema checks without Docker (Helm and kubeconform required), run
 `python3 ci/agent-relay/kind/test_stack.py -v` after building chart dependencies.
+
+The default-off [session read API chart preparation](docs/self-hosted-session-read-api.md)
+is available under `sessions-pipeline.readApi`. It remains disabled in both kind
+profiles pending the approved runtime assembly and image; the running core
+evidence does not prove this new component.
 
 The local add-on Flow journal uses `ReadWriteOnce` because kind's local-path
 provisioner does not support CSI `ReadWriteOncePod`. Its CronJob uses `Forbid`;

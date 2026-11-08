@@ -44,6 +44,7 @@ MATRIX=(
   "profiles/external-supabase.yaml|no|yes|supabase|supabase"
   "profiles/external-selfhosted.yaml|no|yes|selfhosted|external"
   "ci/default-values.yaml|yes|yes|selfhosted|fresh"
+  "ci/read-api-values.yaml|yes|yes|selfhosted|fresh"
   "ci/kind-values.yaml|yes|yes|selfhosted|fresh"
   "ci/search-worker-bootstrap-values.yaml|yes|yes|selfhosted|existing"
   "ci/aws-cnpg-values.yaml|yes|no|selfhosted|fresh"
