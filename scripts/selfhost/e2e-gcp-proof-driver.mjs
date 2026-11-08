@@ -1648,21 +1648,63 @@ async function phaseCleanup() {
     pass(`cleanup.tokens_${label}`, `revoked=true whoami_after=${who.status} refresh_after=${refresh.status}`);
     });
   }
-  if (!state.a?.workspaceId || !state.b?.workspaceId || state.cleaned.workspaces) return;
-  // relaycontrol has no workspace (or user) delete route, so the two test
-  // workspaces and the removed outsider user stay in the organization.
-  const bootstrap = bootstrapToken();
-  const probe = await call("DELETE", `${API}/api/v1/organizations/${state.org.organizationId}/workspaces/${state.b.workspaceId}`, { token: bootstrap });
-  const listed = await call("GET", `${API}/api/v1/organizations/${state.org.organizationId}/workspaces`, { token: bootstrap });
-  must(listed.status === 200, `workspace list status=${listed.status}`);
-  const left = listed.json.workspaces.filter((workspace) => [state.a.workspaceId, state.b.workspaceId].includes(workspace.id));
-  state.cleaned.workspaces = true;
-  if (probe.status === 404 && left.length === 2) {
-    proof("SKIP", "cleanup.control_plane_workspaces",
-      `no workspace delete API (DELETE answered ${probe.status}); kept ${left.map((w) => w.name).join(",")} in org ${state.org.organizationId}; outsider user ${state.outsider?.userId ?? "n/a"} has no membership`);
-  } else {
-    fail("cleanup.control_plane_workspaces", `unexpected workspace delete status=${probe.status} remaining=${left.length}; update the e2e to use the delete API`);
-  }
+  const tracked = ["a", "b"].filter((label) => state[label]?.workspaceId)
+    .map((label) => ({ ...state[label], label }));
+  if (!tracked.length) return;
+  // Historical drivers set this flag even when DELETE was unsupported.
+  // Re-verify the rows instead of inheriting that false completion receipt.
+  state.cleaned.workspaces = false;
+  await step("cleanup.control_plane_workspaces", async () => {
+    // The bootstrap bearer can delete every workspace. Before using it,
+    // independently bind ALL tracked IDs to this run's unique names/org.
+    // Never delete an installation's Default workspace or discover targets
+    // by a broad name prefix. Partial bootstrap/cleanup remains retryable.
+    const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    const orgId = state.org?.organizationId;
+    must(typeof state.marker === "string" && /^[A-Za-z0-9_-]{1,128}$/.test(state.marker), "workspace cleanup needs this run's marker");
+    must(typeof orgId === "string" && uuid.test(orgId), "workspace cleanup needs this run's organization");
+    must(new Set(tracked.map((tenant) => tenant.workspaceId)).size === tracked.length, "workspace cleanup has duplicate tracked IDs");
+    for (const tenant of tracked) {
+      must(uuid.test(tenant.workspaceId), "workspace cleanup has an invalid tracked ID");
+      must(!tenant.organizationId || tenant.organizationId === orgId, "tracked workspace organization differs");
+      must(!tenant.workspaceName || tenant.workspaceName === `e2e-${state.marker}-${tenant.label}`, "tracked workspace name differs");
+    }
+    const bootstrap = bootstrapToken();
+    const collection = `${API}/api/v1/organizations/${encodeURIComponent(orgId)}/workspaces`;
+    const list = async () => {
+      const response = await call("GET", collection, { token: bootstrap });
+      must(response.status === 200 && Array.isArray(response.json?.workspaces), `workspace list status=${response.status}`);
+      return response.json.workspaces;
+    };
+    const before = await list();
+    const ids = new Set(tracked.map((tenant) => tenant.workspaceId));
+    const present = tracked.filter((tenant) => before.some((row) => row.id === tenant.workspaceId));
+    // Check every present target before sending even the first DELETE.
+    for (const tenant of present) {
+      const row = before.find((item) => item.id === tenant.workspaceId);
+      must(row.name === `e2e-${state.marker}-${tenant.label}`, "refusing to delete a workspace outside this run");
+      must(!row.organizationId || row.organizationId === orgId, "listed workspace organization differs");
+    }
+    const results = [];
+    for (const tenant of present) {
+      const removed = await call("DELETE", `${collection}/${encodeURIComponent(tenant.workspaceId)}`, { token: bootstrap });
+      must(removed.status === 204 || removed.status === 404, `workspace delete ${tenant.label} status=${removed.status}; no forced teardown attempted`);
+      results.push(removed.status);
+    }
+    const after = await list();
+    must(before.filter((row) => !ids.has(row.id)).every((row) => after.some((remaining) => remaining.id === row.id && remaining.name === row.name)), "workspace cleanup changed an untracked workspace");
+    const left = after.filter((row) => ids.has(row.id));
+    if (!left.length) {
+      state.cleaned.workspaces = true;
+      pass("cleanup.control_plane_workspaces", `delete_attempts=${present.length} verified_absent=${tracked.length} remaining_test=0 other_workspaces_preserved=true; external stores are handled separately`);
+    } else if (results.every((status) => status === 404) && left.length === present.length) {
+      // Older images still lack DELETE. Preserve the original PENDING gate
+      // without claiming cleanup or suppressing a later retry on a new image.
+      proof("SKIP", "cleanup.control_plane_workspaces", `workspace DELETE unavailable; retained_test_workspaces=${left.length}; no cleanup completion recorded`);
+    } else {
+      fail("cleanup.control_plane_workspaces", `workspace delete did not remove every tracked workspace; remaining_test=${left.length}`);
+    }
+  });
 }
 
 const phases = {

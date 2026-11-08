@@ -109,6 +109,7 @@ jobs:
           python3 ci/telemetry-collector/test_chart.py -v
           node --test ci/agent-relay/kind/test_bootstrap.mjs
           node --test ci/agent-relay/kind/test_pipeline.mjs
+          node --test ci/agent-relay/kind/test_workspace_cleanup.mjs
         env:
           TMPDIR: ${{ runner.temp }}
 
