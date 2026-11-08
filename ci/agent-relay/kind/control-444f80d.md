@@ -17,7 +17,8 @@ authorization/token handlers, grants, consent, admission and signing.
 
 The mounted-route/store/admission work belongs to **hosted-mcp-port**, not the
 owner of the pure protocol slice. Its [design PR #25](https://github.com/AgentWorkforce/relay-control/pull/25)
-was checked open/draft at `23332b73509e2e3154e90a7d6df9857fc7bcc8d1`.
+was originally checked open/draft at `23332b73509e2e3154e90a7d6df9857fc7bcc8d1`
+and is now open/draft at `a992cf33c838b9bfe39d304c1b61c2ace9372348`.
 The owner reports the design is accepted as a target and implementation is
 already assigned in its lane; it is dependency-gated, not awaiting a new broad
 implementation go-ahead. The reported implementation areas are `src/mcp/oauth/**`,
@@ -25,10 +26,27 @@ implementation go-ahead. The reported implementation areas are `src/mcp/oauth/**
 is supplied by this candidate. Control #20 has since merged as
 `bae78a524fbce4fb3ab231372417bc2dfac04cad`. The next dependency, control
 [#28](https://github.com/AgentWorkforce/relay-control/pull/28), remains open/draft
-at `a0d96af87d6e1acdbf1107cf2d60808d877219b3` when checked. The owner must then
-compose main, recheck combined interfaces, and implement/review the mounted slice.
+at `a0d96af87d6e1acdbf1107cf2d60808d877219b3` when checked. Isolated port work
+can proceed in parallel; final SQL/admission/mounting integration follows its
+landed interfaces and the owner/checker handoff.
 Code-complete, compatible-artifact and actual OAuth proof dates remain
 **NOT COMMITTED**; no calendar range was supplied.
+
+There is now a separate source milestone: draft control
+[#34](https://github.com/AgentWorkforce/relay-control/pull/34), checked at
+`7f5e53ba5e45ba1e5acbe987f5c3a087879dc8a4`. Its
+[execution map](https://github.com/AgentWorkforce/relay-control/blob/7f5e53ba5e45ba1e5acbe987f5c3a087879dc8a4/docs/mcp-oauth-cloud-port.md)
+records the direct source port of OIDC signing and public register/token/revoke
+handlers, plus consent/name helpers, behind injected dependencies. The inspected
+file list does not add app mounts or SQL migrations. Store, session adapter,
+admission and production mounting remain pending. These unmounted functions do
+not add working OAuth endpoints to either qualified local image.
+
+The revised owner estimate is **8–12 focused engineering hours** from the port
+work, with overlapping preparation rather than a serial wait for every
+dependency. This is uncommitted effort, not a UTC artifact/proof date; external
+review, CI, History acceptance, Events/pump and actual-client enablement remain
+separate. Infra has not rerun the isolated draft's tests or enabled its code.
 
 The owner-reported design requires tenant-bound sessions, live organization
 membership and stored issue-time scopes, denying trusted pending handoff/artifact
