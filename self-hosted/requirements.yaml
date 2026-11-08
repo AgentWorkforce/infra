@@ -415,10 +415,10 @@ compatibility:
       images:
         relayauth: { repository: ghcr.io/agentworkforce/relayauth, digest: sha256:eb71daa28e30eb7305f666d0bccc5a4002e53e8a574e3c4c32163d907a1b71df }
       notes: superseded by 0.1.1.
-    - id: agent-relay-0.3.16
+    - id: agent-relay-0.3.17
       status: unreleased
       current: true
-      charts: { agent-relay: 0.3.16, relayhistory: 0.1.1, relay-cloud-api: 0.2.7, relay-dashboard: 0.1.3 }
+      charts: { agent-relay: 0.3.17, relayhistory: 0.1.1, relay-cloud-api: 0.2.7, relay-dashboard: 0.1.3 }
       app_versions: { agent-relay: 0.1.0, relayhistory: 0.1.0, relay-cloud-api: 0.1.0, relay-dashboard: 0.1.0 }
       depends:
         agent-relay: { relaycast: 0.3.5, relayauth: 0.1.4, sessions-pipeline: 0.6.2, relayhistory: 0.1.1, relay-cloud-api: 0.2.7, relay-dashboard: 0.1.3, relayflows: 0.2.5, durable-actors: 0.14.6-awf.1, relayfile: 0.2.2 }
