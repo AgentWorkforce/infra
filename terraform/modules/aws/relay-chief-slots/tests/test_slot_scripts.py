@@ -427,6 +427,41 @@ class DataVolume(unittest.TestCase):
         self.assertIn("refusing to format", result.stderr)
         self.assertEqual(self.commands(), [], "must stop before formatting or mounting")
 
+    def silent_wipefs(self):
+        executable(self.bin / "wipefs", "#!/usr/bin/env bash\nexit 0\n")
+
+    def test_silent_wipefs_never_formats_a_real_filesystem(self):
+        real_mkfs = subprocess.run(
+            ["mkfs.ext4", "-q", str(self.device)], capture_output=True, text=True, check=False,
+            env={**os.environ, "PATH": f"{os.environ['PATH']}:/usr/sbin:/sbin"},
+        )
+        self.assertEqual(real_mkfs.returncode, 0, real_mkfs.stderr)
+        before_uuid = self.uuid()
+        before_bytes = self.device.read_bytes()
+        self.assertTrue(before_uuid)
+        self.silent_wipefs()
+        result = self.prepare()
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("not verifiably blank", result.stderr)
+        self.assertEqual(self.uuid(), before_uuid)
+        self.assertEqual(self.device.read_bytes(), before_bytes, "the image must be untouched")
+        self.assertEqual(self.commands(), [], "must stop before mounting")
+
+    def test_silent_wipefs_still_formats_a_blank_file(self):
+        self.silent_wipefs()
+        result = self.prepare()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(self.uuid())
+
+    def test_read_error_during_the_blank_check_never_formats(self):
+        self.silent_wipefs()
+        executable(self.bin / "cmp", "#!/usr/bin/env bash\nexit 2\n")
+        executable(self.bin / "mkfs.ext4", '#!/usr/bin/env bash\nprintf "mkfs\\n" >>"$MOCK_LOG"\n')
+        result = self.prepare()
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("cmp status 2", result.stderr)
+        self.assertEqual(self.commands(), [])
+
     def test_foreign_signature_is_refused(self):
         executable(self.bin / "wipefs", "#!/usr/bin/env bash\necho 'DEVICE OFFSET TYPE'\n")
         executable(self.bin / "blkid", "#!/usr/bin/env bash\necho xfs\n")
@@ -573,6 +608,11 @@ class Contracts(unittest.TestCase):
         self.assertNotRegex(template, r"systemctl\s+(enable|start)\s+(--now\s+)?relay-chief\.(timer|service)")
         self.assertIn("systemctl enable relay-chief-credentials.service", template)
         self.assertNotIn("mkfs.ext4 -", template, "formatting belongs in prepare-data-volume.sh")
+
+    def test_rotation_runbook_restarts_only_an_active_timer(self):
+        readme = (MODULE / "README.md").read_text()
+        self.assertIn("systemctl is-active relay-chief.timer", readme)
+        self.assertNotRegex(readme, r"(?m)^systemctl start relay-chief\.timer")
 
     def test_prepare_script_never_tests_wipefs_inline(self):
         self.assertNotRegex(PREPARE.read_text(), r'\[ -z "\$\(wipefs')

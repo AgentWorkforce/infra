@@ -5,8 +5,8 @@
 #   relay-chief-prepare-data-volume <device>
 #
 # A volume with any signature is the previous host's ledger or something
-# unexpected, so it is never formatted. If the check itself fails, nothing is
-# known about the volume and the script stops.
+# unexpected, so it is never formatted. Formatting needs positive proof of a
+# blank device; if a check fails, nothing is known and the script stops.
 set -euo pipefail
 umask 022
 
@@ -30,6 +30,14 @@ if ! signatures="$(wipefs --no-act --noheadings "$device")"; then
   fail "could not inspect the data volume; refusing to format it"
 fi
 if [ -z "$signatures" ]; then
+  # wipefs also reports nothing, and exits 0, when the device cannot be read, so
+  # an empty result alone does not mean blank. cmp exits 0 only if the first MiB
+  # was read and is all zeros, 1 if it differs, and 2 on a read error.
+  zero_status=0
+  cmp -s -n 1048576 "$device" /dev/zero || zero_status=$?
+  if [ "$zero_status" -ne 0 ]; then
+    fail "the data volume is not verifiably blank (cmp status $zero_status); refusing to format it"
+  fi
   mkfs.ext4 -q -L relay-chief-data "$device"
 elif [ "$(blkid -p -o value -s TYPE "$device" || true)" != "ext4" ]; then
   fail "the data volume holds an unexpected filesystem"

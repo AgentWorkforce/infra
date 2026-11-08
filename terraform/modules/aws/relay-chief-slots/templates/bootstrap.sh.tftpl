@@ -5,7 +5,7 @@
 set -euo pipefail
 umask 022
 
-for tool in aws python3 curl tar sha256sum base64 blkid wipefs mkfs.ext4 mountpoint useradd runuser flock systemctl; do
+for tool in aws python3 curl tar sha256sum base64 blkid wipefs cmp mkfs.ext4 mountpoint useradd runuser flock systemctl; do
   command -v "$tool" >/dev/null 2>&1 || { echo "relay-chief bootstrap: missing tool: $tool" >&2; exit 1; }
 done
 python3 -I -c 'import sqlite3' || { echo "relay-chief bootstrap: python3 has no sqlite3 module" >&2; exit 1; }

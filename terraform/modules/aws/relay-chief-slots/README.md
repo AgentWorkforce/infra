@@ -61,14 +61,15 @@ Bootstrap installs Node.js at `/usr/bin/node`, the `relay-chief` system user, `/
 
 ### Rotating a secret
 
-Never restart the credentials unit while a cycle may be running. The service `Requires=` it, so the restart stops an active cycle, and a cycle killed during a send leaves that task `uncertain`. Stop the timer and wait for the cycle first, as the bind script does:
+Never restart the credentials unit while a cycle may be running. The service `Requires=` it, so the restart stops an active cycle, and a cycle killed during a send leaves that task `uncertain`. Stop the timer and wait for the cycle first, as the bind script does. Restart the timer only if it was active before, because starting it on a slot bound without the dispatch opt-in would begin dispatching:
 
 ```sh
+timer_state="$(systemctl is-active relay-chief.timer || true)"
 systemctl stop relay-chief.timer
 # Repeat until this prints inactive or failed; a cycle can take up to two minutes.
 systemctl show -p ActiveState --value relay-chief.service
 systemctl restart relay-chief-credentials.service
-systemctl start relay-chief.timer
+if [ "$timer_state" = "active" ]; then systemctl start relay-chief.timer; fi
 ```
 
 ## Binding a slot
