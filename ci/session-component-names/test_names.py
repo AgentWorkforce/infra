@@ -90,18 +90,24 @@ class Names(unittest.TestCase):
 
     def test_default_storage_upgrade_refused_before_it_can_replace_the_claim(self):
         error = render(args=["--is-upgrade"], success=False)
-        self.assertIn("could replace MinIO's PersistentVolumeClaim 'locker'", error)
+        self.assertIn("could delete MinIO's PersistentVolumeClaim 'locker'", error)
 
     def test_storage_upgrade_allowed_once_the_claim_is_accounted_for(self):
         pin_name = ["--set", "session-object-storage.fullnameOverride=locker", "--set", "session-object-storage.nameOverride=locker"]
         cases = {
             "pinned name": pin_name,
-            "existing claim": ["--set", "session-object-storage.persistence.existingClaim=locker"],
+            "operator-owned claim": ["--set", "session-object-storage.persistence.existingClaim=operator-claim"],
             "acknowledged": ["--set", "acknowledgeStorageRename=true"],
+            "acknowledged locker claim": ["--set", "session-object-storage.persistence.existingClaim=locker", "--set", "acknowledgeStorageRename=true"],
         }
         for name, args in cases.items():
             with self.subTest(name):
                 self.assertTrue(render(args=["--is-upgrade", *args]))
+
+    def test_existing_claim_named_locker_is_refused_because_helm_would_prune_it(self):
+        args = ["--is-upgrade", "--set", "session-object-storage.persistence.existingClaim=locker"]
+        error = render(args=args, success=False)
+        self.assertIn("persistence.existingClaim=locker does not protect", error)
 
     def test_pinned_upgrade_keeps_the_original_claim(self):
         documents = render(args=["--is-upgrade", "--set", "session-object-storage.fullnameOverride=locker", "--set", "session-object-storage.nameOverride=locker"])
