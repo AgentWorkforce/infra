@@ -3323,7 +3323,9 @@ entries:
     status: shipped
     provided_by: operator
     default: disabled
-    choices: [disabled, enabled with an owner-approved compatible runtime]
+    choices:
+      - { value: disabled }
+      - { value: enabled, note: Requires an owner-approved compatible runtime. }
     secrets:
       - name: "<read API configuration Secret>"
         name_paths: [readApi.config.existingSecret]
@@ -3356,7 +3358,9 @@ entries:
     status: shipped
     provided_by: operator
     default: true
-    choices: [true, false with a compatible caller-token image]
+    choices:
+      - { value: true }
+      - { value: false, note: Requires a compatible caller-token image. }
     verify: Render the disabled legacy-client mode and confirm URL/key env and key projection are absent; runtime auth acceptance still requires compatible upstream source.
     sources:
       - "charts/relay-control/templates/_helpers.tpl:1"
