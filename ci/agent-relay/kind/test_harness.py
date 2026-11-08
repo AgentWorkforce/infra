@@ -44,6 +44,39 @@ class Harness(unittest.TestCase):
         self.assertEqual(self.local.env["DOCKER_CONFIG"], str(config.parent))
         self.assertEqual(config.stat().st_mode & 0o777, 0o600)
 
+    def test_auth_signing_key_is_pkcs8_and_reuse_keeps_identity(self):
+        key = stack.auth_signing_key(self.local)
+        before = key.read_bytes()
+        self.assertTrue(before.startswith(b"-----BEGIN PRIVATE KEY-----"))
+        self.assertEqual(key.stat().st_mode & 0o777, 0o600)
+        self.assertEqual(stack.auth_signing_key(self.local).read_bytes(), before)
+
+    def test_legacy_auth_key_conversion_preserves_public_identity_and_original_backup(self):
+        key = self.local.state / "auth-signing.pem"
+        version = self.local.cmd(["openssl", "version"]).stdout
+        flags = ["-traditional"] if version.startswith("OpenSSL ") and int(version.split()[1].split(".")[0]) >= 3 else []
+        self.local.cmd(["openssl", "genrsa", *flags, "-out", key, "2048"], sensitive=True)
+        original = key.read_bytes()
+        self.assertTrue(original.startswith(b"-----BEGIN RSA PRIVATE KEY-----"))
+        public = self.local.cmd(["openssl", "pkey", "-in", key, "-pubout"], sensitive=True).stdout
+        stack.auth_signing_key(self.local)
+        self.assertTrue(key.read_bytes().startswith(b"-----BEGIN PRIVATE KEY-----"))
+        self.assertEqual(self.local.cmd(["openssl", "pkey", "-in", key, "-pubout"], sensitive=True).stdout, public)
+        backup = key.with_name("auth-signing.pkcs1-backup.pem")
+        self.assertEqual(backup.read_bytes(), original)
+        self.assertEqual(backup.stat().st_mode & 0o777, 0o600)
+        self.assertFalse(list(self.local.state.glob("auth-signing-*.pem")))
+
+    def test_failed_auth_conversion_keeps_original_and_removes_only_temporary(self):
+        key = self.local.state / "auth-signing.pem"
+        original = b"-----BEGIN RSA PRIVATE KEY-----\nfixture\n"
+        key.write_bytes(original)
+        self.local.cmd = lambda *args, **kw: (_ for _ in ()).throw(stack.StackError("conversion failed"))
+        with self.assertRaisesRegex(stack.StackError, "conversion failed"):
+            stack.auth_signing_key(self.local)
+        self.assertEqual(key.read_bytes(), original)
+        self.assertFalse(list(self.local.state.glob("auth-signing-*.pem")))
+
     def test_each_acl_attempt_is_fresh_and_a_later_failure_is_not_hidden(self):
         jobs, waited = [], []
         self.local.apply = jobs.append

@@ -17,6 +17,7 @@ import secrets
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 import urllib.request
 
@@ -54,6 +55,50 @@ def run(argv, *, data=None, timeout=600, sensitive=False, check=True, env=None):
 def private_json(path, value):
     path.write_text(json.dumps(value, indent=2) + "\n")
     path.chmod(0o600)
+
+
+def auth_signing_key(stack):
+    """RelayAuth requires PKCS#8; preserve legacy RSA identity on conversion."""
+    key = stack.state / "auth-signing.pem"
+    legacy = key.exists() and key.read_bytes().startswith(b"-----BEGIN RSA PRIVATE KEY-----")
+    if key.exists() and not legacy:
+        key.chmod(0o600)
+        if not key.read_bytes().startswith(b"-----BEGIN PRIVATE KEY-----"):
+            raise StackError("local RelayAuth signing key is not unencrypted PKCS#8")
+        stack.cmd(["openssl", "pkey", "-in", key, "-pubout"], sensitive=True)
+        return key
+    fd, name = tempfile.mkstemp(prefix="auth-signing-", suffix=".pem", dir=stack.state)
+    os.close(fd)
+    temporary = Path(name)
+    try:
+        if legacy:
+            key.chmod(0o600)
+            original_public = stack.cmd(["openssl", "pkey", "-in", key, "-pubout"], sensitive=True).stdout
+            stack.cmd(["openssl", "pkcs8", "-topk8", "-nocrypt", "-in", key, "-out", temporary], sensitive=True)
+        else:
+            stack.cmd(["openssl", "genpkey", "-algorithm", "RSA", "-pkeyopt", "rsa_keygen_bits:2048", "-out", temporary], sensitive=True)
+        temporary.chmod(0o600)
+        if not temporary.read_bytes().startswith(b"-----BEGIN PRIVATE KEY-----"):
+            raise StackError("OpenSSL did not produce a PKCS#8 RelayAuth signing key")
+        public = stack.cmd(["openssl", "pkey", "-in", temporary, "-pubout"], sensitive=True).stdout
+        if legacy:
+            if public != original_public:
+                raise StackError("RelayAuth key conversion changed the signing identity")
+            backup = key.with_name("auth-signing.pkcs1-backup.pem")
+            if backup.exists():
+                if backup.read_bytes() != key.read_bytes():
+                    raise StackError("existing RelayAuth key backup differs; refusing to overwrite it")
+                backup.chmod(0o600)
+            else:
+                with backup.open("xb") as stream:
+                    os.chmod(backup, 0o600)
+                    stream.write(key.read_bytes())
+            os.replace(temporary, key)
+        else:
+            os.link(temporary, key)  # Refuse a concurrently created signing key.
+        return key
+    finally:
+        temporary.unlink(missing_ok=True)  # Only this conversion/generation's file.
 
 
 def tenant_values(values, ids, profile, arch, recipe):
@@ -377,10 +422,7 @@ class Stack:
                   "relayfile", "bootstrap", "encryption", "internal", "auth_internal", "auth_key", "cast", "cast_bootstrap", "locker"):
             s.setdefault(k, secrets.token_hex(32))
         private_json(path, s)
-        key = self.state / "auth-signing.pem"
-        if not key.exists():
-            self.cmd(["openssl", "genrsa", "-out", key, "2048"])
-            key.chmod(0o600)
+        key = auth_signing_key(self)
         db = lambda user, database: f"postgresql://{user}:{s[user]}@postgres.{NS}.svc.cluster.local:5432/{database}"
         self.secret("kind-postgres", {"password": s["postgres"]})
         self.secret("kind-cast", {"internal-secret": s["cast"], "workspace-bootstrap-secret": s["cast_bootstrap"]})
