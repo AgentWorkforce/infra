@@ -1,5 +1,10 @@
 # Self-hosted Agent Relay — architecture diagram (GCP)
 
+This page and its exported images retain the pre-rename GCP resource layout.
+For the new public chart names and explicit compatibility values, use the
+[Control/Webapp rename guide](../control-webapp-chart-rename.md). These
+diagrams do not describe the pending sessions-native provider cutover.
+
 Start with the overview: [agent-relay-architecture.png](agent-relay-architecture.png)
 ([SVG](agent-relay-architecture.svg), source [agent-relay-architecture.mmd](agent-relay-architecture.mmd))
 and the request flow [agent-relay-request-flow.png](agent-relay-request-flow.png)

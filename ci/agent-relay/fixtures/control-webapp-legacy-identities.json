@@ -1,0 +1,1257 @@
+{
+  "sourceRevision": "d8bbff820a6541593fa2e889cbf14e3aa1f0baa7",
+  "scope": "Static object identities only; no upgrade/data-survival/runtime proof.",
+  "profiles": {
+    "core": [
+      {
+        "kind": "ConfigMap",
+        "name": "relayhistory",
+        "namespace": "agent-relay",
+        "selector": null,
+        "podSelectors": {},
+        "claims": [],
+        "servicePorts": null,
+        "routeTargets": []
+      },
+      {
+        "kind": "Deployment",
+        "name": "alleyoop-ingest",
+        "namespace": "agent-relay",
+        "selector": {
+          "matchLabels": {
+            "app.kubernetes.io/name": "alleyoop",
+            "app.kubernetes.io/instance": "agent-relay",
+            "app.kubernetes.io/component": "alleyoop-ingest"
+          }
+        },
+        "podSelectors": {
+          "app.kubernetes.io/name": "alleyoop",
+          "app.kubernetes.io/instance": "agent-relay"
+        },
+        "claims": [],
+        "servicePorts": null,
+        "routeTargets": []
+      },
+      {
+        "kind": "Deployment",
+        "name": "relay-app",
+        "namespace": "agent-relay",
+        "selector": {
+          "matchLabels": {
+            "app.kubernetes.io/name": "relay-dashboard",
+            "app.kubernetes.io/instance": "agent-relay"
+          }
+        },
+        "podSelectors": {
+          "app.kubernetes.io/name": "relay-dashboard",
+          "app.kubernetes.io/instance": "agent-relay"
+        },
+        "claims": [],
+        "servicePorts": null,
+        "routeTargets": []
+      },
+      {
+        "kind": "Deployment",
+        "name": "relayauth",
+        "namespace": "agent-relay",
+        "selector": {
+          "matchLabels": {
+            "app.kubernetes.io/name": "relayauth",
+            "app.kubernetes.io/instance": "agent-relay"
+          }
+        },
+        "podSelectors": {
+          "app.kubernetes.io/name": "relayauth",
+          "app.kubernetes.io/instance": "agent-relay"
+        },
+        "claims": [
+          "relayauth-data"
+        ],
+        "servicePorts": null,
+        "routeTargets": []
+      },
+      {
+        "kind": "Deployment",
+        "name": "relaycast",
+        "namespace": "agent-relay",
+        "selector": {
+          "matchLabels": {
+            "app.kubernetes.io/name": "relaycast",
+            "app.kubernetes.io/instance": "agent-relay"
+          }
+        },
+        "podSelectors": {
+          "app.kubernetes.io/name": "relaycast",
+          "app.kubernetes.io/instance": "agent-relay"
+        },
+        "claims": [
+          "relaycast-data"
+        ],
+        "servicePorts": null,
+        "routeTargets": []
+      },
+      {
+        "kind": "Deployment",
+        "name": "relaycontrol",
+        "namespace": "agent-relay",
+        "selector": {
+          "matchLabels": {
+            "app.kubernetes.io/name": "relay-cloud-api",
+            "app.kubernetes.io/instance": "agent-relay",
+            "app.kubernetes.io/component": "api"
+          }
+        },
+        "podSelectors": {
+          "app.kubernetes.io/name": "relay-cloud-api",
+          "app.kubernetes.io/instance": "agent-relay"
+        },
+        "claims": [],
+        "servicePorts": null,
+        "routeTargets": []
+      },
+      {
+        "kind": "Deployment",
+        "name": "relayhistory",
+        "namespace": "agent-relay",
+        "selector": {
+          "matchLabels": {
+            "app.kubernetes.io/name": "relayhistory",
+            "app.kubernetes.io/instance": "agent-relay",
+            "app.kubernetes.io/component": "history"
+          }
+        },
+        "podSelectors": {
+          "app.kubernetes.io/name": "relayhistory",
+          "app.kubernetes.io/instance": "agent-relay"
+        },
+        "claims": [],
+        "servicePorts": null,
+        "routeTargets": []
+      },
+      {
+        "kind": "Deployment",
+        "name": "sessions-bob-costas",
+        "namespace": "agent-relay",
+        "selector": {
+          "matchLabels": {
+            "app.kubernetes.io/name": "worker",
+            "app.kubernetes.io/instance": "agent-relay",
+            "app.kubernetes.io/component": "bob-costas"
+          }
+        },
+        "podSelectors": {
+          "app.kubernetes.io/name": "worker",
+          "app.kubernetes.io/instance": "agent-relay"
+        },
+        "claims": [],
+        "servicePorts": null,
+        "routeTargets": []
+      },
+      {
+        "kind": "Deployment",
+        "name": "sessions-hoopdb-indexer",
+        "namespace": "agent-relay",
+        "selector": {
+          "matchLabels": {
+            "app.kubernetes.io/name": "worker",
+            "app.kubernetes.io/instance": "agent-relay",
+            "app.kubernetes.io/component": "hoopdb-indexer"
+          }
+        },
+        "podSelectors": {
+          "app.kubernetes.io/name": "worker",
+          "app.kubernetes.io/instance": "agent-relay"
+        },
+        "claims": [],
+        "servicePorts": null,
+        "routeTargets": []
+      },
+      {
+        "kind": "Deployment",
+        "name": "sessions-referee",
+        "namespace": "agent-relay",
+        "selector": {
+          "matchLabels": {
+            "app.kubernetes.io/name": "worker",
+            "app.kubernetes.io/instance": "agent-relay",
+            "app.kubernetes.io/component": "referee"
+          }
+        },
+        "podSelectors": {
+          "app.kubernetes.io/name": "worker",
+          "app.kubernetes.io/instance": "agent-relay"
+        },
+        "claims": [],
+        "servicePorts": null,
+        "routeTargets": []
+      },
+      {
+        "kind": "Ingress",
+        "name": "kind-control-api",
+        "namespace": "agent-relay",
+        "selector": null,
+        "podSelectors": {},
+        "claims": [],
+        "servicePorts": null,
+        "routeTargets": [
+          {
+            "name": "relaycontrol",
+            "port": {
+              "number": 80
+            }
+          }
+        ]
+      },
+      {
+        "kind": "Ingress",
+        "name": "relay-app",
+        "namespace": "agent-relay",
+        "selector": null,
+        "podSelectors": {},
+        "claims": [],
+        "servicePorts": null,
+        "routeTargets": [
+          {
+            "name": "relaycontrol",
+            "port": {
+              "number": 80
+            }
+          },
+          {
+            "name": "relaycontrol",
+            "port": {
+              "number": 80
+            }
+          },
+          {
+            "name": "relay-app",
+            "port": {
+              "name": "http"
+            }
+          }
+        ]
+      },
+      {
+        "kind": "Ingress",
+        "name": "relaycast",
+        "namespace": "agent-relay",
+        "selector": null,
+        "podSelectors": {},
+        "claims": [],
+        "servicePorts": null,
+        "routeTargets": [
+          {
+            "name": "relaycast-deny",
+            "port": {
+              "number": 8787
+            }
+          },
+          {
+            "name": "relaycast-deny",
+            "port": {
+              "number": 8787
+            }
+          },
+          {
+            "name": "relaycast-deny",
+            "port": {
+              "number": 8787
+            }
+          },
+          {
+            "name": "relaycast",
+            "port": {
+              "number": 8787
+            }
+          }
+        ]
+      },
+      {
+        "kind": "Ingress",
+        "name": "relayhistory",
+        "namespace": "agent-relay",
+        "selector": null,
+        "podSelectors": {},
+        "claims": [],
+        "servicePorts": null,
+        "routeTargets": [
+          {
+            "name": "relayhistory",
+            "port": {
+              "name": "http"
+            }
+          }
+        ]
+      },
+      {
+        "kind": "Job",
+        "name": "relaycontrol-migrate-f11dfd51",
+        "namespace": "agent-relay",
+        "selector": null,
+        "podSelectors": {
+          "app.kubernetes.io/name": "relay-cloud-api",
+          "app.kubernetes.io/instance": "agent-relay"
+        },
+        "claims": [],
+        "servicePorts": null,
+        "routeTargets": []
+      },
+      {
+        "kind": "Job",
+        "name": "relayhistory-migrate-f60b83b3",
+        "namespace": "agent-relay",
+        "selector": null,
+        "podSelectors": {
+          "app.kubernetes.io/name": "relayhistory",
+          "app.kubernetes.io/instance": "agent-relay"
+        },
+        "claims": [],
+        "servicePorts": null,
+        "routeTargets": []
+      },
+      {
+        "kind": "Job",
+        "name": "sessions-locker-init-e5cacad6",
+        "namespace": "agent-relay",
+        "selector": null,
+        "podSelectors": {
+          "app.kubernetes.io/name": "worker",
+          "app.kubernetes.io/instance": "agent-relay"
+        },
+        "claims": [],
+        "servicePorts": null,
+        "routeTargets": []
+      },
+      {
+        "kind": "Job",
+        "name": "sessions-migrate-f11dde74",
+        "namespace": "agent-relay",
+        "selector": null,
+        "podSelectors": {
+          "app.kubernetes.io/name": "worker",
+          "app.kubernetes.io/instance": "agent-relay"
+        },
+        "claims": [],
+        "servicePorts": null,
+        "routeTargets": []
+      },
+      {
+        "kind": "NetworkPolicy",
+        "name": "kind-no-external-egress",
+        "namespace": "agent-relay",
+        "selector": null,
+        "podSelectors": {},
+        "claims": [],
+        "servicePorts": null,
+        "routeTargets": []
+      },
+      {
+        "kind": "PersistentVolumeClaim",
+        "name": "relayauth-data",
+        "namespace": "agent-relay",
+        "selector": null,
+        "podSelectors": {},
+        "claims": [],
+        "servicePorts": null,
+        "routeTargets": []
+      },
+      {
+        "kind": "PersistentVolumeClaim",
+        "name": "relaycast-data",
+        "namespace": "agent-relay",
+        "selector": null,
+        "podSelectors": {},
+        "claims": [],
+        "servicePorts": null,
+        "routeTargets": []
+      },
+      {
+        "kind": "Service",
+        "name": "alleyoop",
+        "namespace": "agent-relay",
+        "selector": {
+          "app.kubernetes.io/name": "alleyoop",
+          "app.kubernetes.io/instance": "agent-relay",
+          "app.kubernetes.io/component": "alleyoop-ingest"
+        },
+        "podSelectors": {},
+        "claims": [],
+        "servicePorts": [
+          {
+            "name": "http",
+            "port": 8080,
+            "targetPort": "http",
+            "protocol": "TCP"
+          }
+        ],
+        "routeTargets": []
+      },
+      {
+        "kind": "Service",
+        "name": "relay-app",
+        "namespace": "agent-relay",
+        "selector": {
+          "app.kubernetes.io/name": "relay-dashboard",
+          "app.kubernetes.io/instance": "agent-relay"
+        },
+        "podSelectors": {},
+        "claims": [],
+        "servicePorts": [
+          {
+            "name": "http",
+            "port": 8080,
+            "targetPort": "http"
+          }
+        ],
+        "routeTargets": []
+      },
+      {
+        "kind": "Service",
+        "name": "relayauth",
+        "namespace": "agent-relay",
+        "selector": {
+          "app.kubernetes.io/name": "relayauth",
+          "app.kubernetes.io/instance": "agent-relay"
+        },
+        "podSelectors": {},
+        "claims": [],
+        "servicePorts": [
+          {
+            "name": "http",
+            "port": 8787,
+            "targetPort": "http",
+            "protocol": "TCP"
+          }
+        ],
+        "routeTargets": []
+      },
+      {
+        "kind": "Service",
+        "name": "relaycast",
+        "namespace": "agent-relay",
+        "selector": {
+          "app.kubernetes.io/name": "relaycast",
+          "app.kubernetes.io/instance": "agent-relay"
+        },
+        "podSelectors": {},
+        "claims": [],
+        "servicePorts": [
+          {
+            "name": "http",
+            "port": 8787,
+            "targetPort": "http",
+            "protocol": "TCP"
+          }
+        ],
+        "routeTargets": []
+      },
+      {
+        "kind": "Service",
+        "name": "relaycast-deny",
+        "namespace": "agent-relay",
+        "selector": null,
+        "podSelectors": {},
+        "claims": [],
+        "servicePorts": [
+          {
+            "name": "http",
+            "port": 8787,
+            "protocol": "TCP"
+          }
+        ],
+        "routeTargets": []
+      },
+      {
+        "kind": "Service",
+        "name": "relaycontrol",
+        "namespace": "agent-relay",
+        "selector": {
+          "app.kubernetes.io/name": "relay-cloud-api",
+          "app.kubernetes.io/instance": "agent-relay",
+          "app.kubernetes.io/component": "api"
+        },
+        "podSelectors": {},
+        "claims": [],
+        "servicePorts": [
+          {
+            "name": "http",
+            "port": 80,
+            "targetPort": "http",
+            "protocol": "TCP"
+          }
+        ],
+        "routeTargets": []
+      },
+      {
+        "kind": "Service",
+        "name": "relayhistory",
+        "namespace": "agent-relay",
+        "selector": {
+          "app.kubernetes.io/name": "relayhistory",
+          "app.kubernetes.io/instance": "agent-relay",
+          "app.kubernetes.io/component": "history"
+        },
+        "podSelectors": {},
+        "claims": [],
+        "servicePorts": [
+          {
+            "name": "http",
+            "port": 8080,
+            "targetPort": "http",
+            "protocol": "TCP"
+          }
+        ],
+        "routeTargets": []
+      },
+      {
+        "kind": "ServiceAccount",
+        "name": "alleyoop",
+        "namespace": "agent-relay",
+        "selector": null,
+        "podSelectors": {},
+        "claims": [],
+        "servicePorts": null,
+        "routeTargets": []
+      },
+      {
+        "kind": "ServiceAccount",
+        "name": "relay-app",
+        "namespace": "agent-relay",
+        "selector": null,
+        "podSelectors": {},
+        "claims": [],
+        "servicePorts": null,
+        "routeTargets": []
+      },
+      {
+        "kind": "ServiceAccount",
+        "name": "relayauth",
+        "namespace": "agent-relay",
+        "selector": null,
+        "podSelectors": {},
+        "claims": [],
+        "servicePorts": null,
+        "routeTargets": []
+      },
+      {
+        "kind": "ServiceAccount",
+        "name": "relaycast",
+        "namespace": "agent-relay",
+        "selector": null,
+        "podSelectors": {},
+        "claims": [],
+        "servicePorts": null,
+        "routeTargets": []
+      },
+      {
+        "kind": "ServiceAccount",
+        "name": "relaycontrol",
+        "namespace": "agent-relay",
+        "selector": null,
+        "podSelectors": {},
+        "claims": [],
+        "servicePorts": null,
+        "routeTargets": []
+      },
+      {
+        "kind": "ServiceAccount",
+        "name": "relayhistory",
+        "namespace": "agent-relay",
+        "selector": null,
+        "podSelectors": {},
+        "claims": [],
+        "servicePorts": null,
+        "routeTargets": []
+      },
+      {
+        "kind": "ServiceAccount",
+        "name": "sessions",
+        "namespace": "agent-relay",
+        "selector": null,
+        "podSelectors": {},
+        "claims": [],
+        "servicePorts": null,
+        "routeTargets": []
+      }
+    ],
+    "addons": [
+      {
+        "kind": "ConfigMap",
+        "name": "relayflows-flow",
+        "namespace": "agent-relay",
+        "selector": null,
+        "podSelectors": {},
+        "claims": [],
+        "servicePorts": null,
+        "routeTargets": []
+      },
+      {
+        "kind": "ConfigMap",
+        "name": "relayhistory",
+        "namespace": "agent-relay",
+        "selector": null,
+        "podSelectors": {},
+        "claims": [],
+        "servicePorts": null,
+        "routeTargets": []
+      },
+      {
+        "kind": "CronJob",
+        "name": "relayflows",
+        "namespace": "agent-relay",
+        "selector": null,
+        "podSelectors": {},
+        "claims": [],
+        "servicePorts": null,
+        "routeTargets": []
+      },
+      {
+        "kind": "Deployment",
+        "name": "alleyoop-ingest",
+        "namespace": "agent-relay",
+        "selector": {
+          "matchLabels": {
+            "app.kubernetes.io/name": "alleyoop",
+            "app.kubernetes.io/instance": "agent-relay",
+            "app.kubernetes.io/component": "alleyoop-ingest"
+          }
+        },
+        "podSelectors": {
+          "app.kubernetes.io/name": "alleyoop",
+          "app.kubernetes.io/instance": "agent-relay"
+        },
+        "claims": [],
+        "servicePorts": null,
+        "routeTargets": []
+      },
+      {
+        "kind": "Deployment",
+        "name": "relay-app",
+        "namespace": "agent-relay",
+        "selector": {
+          "matchLabels": {
+            "app.kubernetes.io/name": "relay-dashboard",
+            "app.kubernetes.io/instance": "agent-relay"
+          }
+        },
+        "podSelectors": {
+          "app.kubernetes.io/name": "relay-dashboard",
+          "app.kubernetes.io/instance": "agent-relay"
+        },
+        "claims": [],
+        "servicePorts": null,
+        "routeTargets": []
+      },
+      {
+        "kind": "Deployment",
+        "name": "relayauth",
+        "namespace": "agent-relay",
+        "selector": {
+          "matchLabels": {
+            "app.kubernetes.io/name": "relayauth",
+            "app.kubernetes.io/instance": "agent-relay"
+          }
+        },
+        "podSelectors": {
+          "app.kubernetes.io/name": "relayauth",
+          "app.kubernetes.io/instance": "agent-relay"
+        },
+        "claims": [
+          "relayauth-data"
+        ],
+        "servicePorts": null,
+        "routeTargets": []
+      },
+      {
+        "kind": "Deployment",
+        "name": "relaycast",
+        "namespace": "agent-relay",
+        "selector": {
+          "matchLabels": {
+            "app.kubernetes.io/name": "relaycast",
+            "app.kubernetes.io/instance": "agent-relay"
+          }
+        },
+        "podSelectors": {
+          "app.kubernetes.io/name": "relaycast",
+          "app.kubernetes.io/instance": "agent-relay"
+        },
+        "claims": [
+          "relaycast-data"
+        ],
+        "servicePorts": null,
+        "routeTargets": []
+      },
+      {
+        "kind": "Deployment",
+        "name": "relaycontrol",
+        "namespace": "agent-relay",
+        "selector": {
+          "matchLabels": {
+            "app.kubernetes.io/name": "relay-cloud-api",
+            "app.kubernetes.io/instance": "agent-relay",
+            "app.kubernetes.io/component": "api"
+          }
+        },
+        "podSelectors": {
+          "app.kubernetes.io/name": "relay-cloud-api",
+          "app.kubernetes.io/instance": "agent-relay"
+        },
+        "claims": [],
+        "servicePorts": null,
+        "routeTargets": []
+      },
+      {
+        "kind": "Deployment",
+        "name": "relayfile-server",
+        "namespace": "agent-relay",
+        "selector": {
+          "matchLabels": {
+            "app.kubernetes.io/name": "relayfile",
+            "app.kubernetes.io/instance": "agent-relay",
+            "app.kubernetes.io/component": "server"
+          }
+        },
+        "podSelectors": {
+          "app.kubernetes.io/name": "relayfile",
+          "app.kubernetes.io/instance": "agent-relay"
+        },
+        "claims": [],
+        "servicePorts": null,
+        "routeTargets": []
+      },
+      {
+        "kind": "Deployment",
+        "name": "relayhistory",
+        "namespace": "agent-relay",
+        "selector": {
+          "matchLabels": {
+            "app.kubernetes.io/name": "relayhistory",
+            "app.kubernetes.io/instance": "agent-relay",
+            "app.kubernetes.io/component": "history"
+          }
+        },
+        "podSelectors": {
+          "app.kubernetes.io/name": "relayhistory",
+          "app.kubernetes.io/instance": "agent-relay"
+        },
+        "claims": [],
+        "servicePorts": null,
+        "routeTargets": []
+      },
+      {
+        "kind": "Deployment",
+        "name": "sessions-bob-costas",
+        "namespace": "agent-relay",
+        "selector": {
+          "matchLabels": {
+            "app.kubernetes.io/name": "worker",
+            "app.kubernetes.io/instance": "agent-relay",
+            "app.kubernetes.io/component": "bob-costas"
+          }
+        },
+        "podSelectors": {
+          "app.kubernetes.io/name": "worker",
+          "app.kubernetes.io/instance": "agent-relay"
+        },
+        "claims": [],
+        "servicePorts": null,
+        "routeTargets": []
+      },
+      {
+        "kind": "Deployment",
+        "name": "sessions-hoopdb-indexer",
+        "namespace": "agent-relay",
+        "selector": {
+          "matchLabels": {
+            "app.kubernetes.io/name": "worker",
+            "app.kubernetes.io/instance": "agent-relay",
+            "app.kubernetes.io/component": "hoopdb-indexer"
+          }
+        },
+        "podSelectors": {
+          "app.kubernetes.io/name": "worker",
+          "app.kubernetes.io/instance": "agent-relay"
+        },
+        "claims": [],
+        "servicePorts": null,
+        "routeTargets": []
+      },
+      {
+        "kind": "Deployment",
+        "name": "sessions-referee",
+        "namespace": "agent-relay",
+        "selector": {
+          "matchLabels": {
+            "app.kubernetes.io/name": "worker",
+            "app.kubernetes.io/instance": "agent-relay",
+            "app.kubernetes.io/component": "referee"
+          }
+        },
+        "podSelectors": {
+          "app.kubernetes.io/name": "worker",
+          "app.kubernetes.io/instance": "agent-relay"
+        },
+        "claims": [],
+        "servicePorts": null,
+        "routeTargets": []
+      },
+      {
+        "kind": "Ingress",
+        "name": "kind-control-api",
+        "namespace": "agent-relay",
+        "selector": null,
+        "podSelectors": {},
+        "claims": [],
+        "servicePorts": null,
+        "routeTargets": [
+          {
+            "name": "relaycontrol",
+            "port": {
+              "number": 80
+            }
+          }
+        ]
+      },
+      {
+        "kind": "Ingress",
+        "name": "relay-app",
+        "namespace": "agent-relay",
+        "selector": null,
+        "podSelectors": {},
+        "claims": [],
+        "servicePorts": null,
+        "routeTargets": [
+          {
+            "name": "relaycontrol",
+            "port": {
+              "number": 80
+            }
+          },
+          {
+            "name": "relaycontrol",
+            "port": {
+              "number": 80
+            }
+          },
+          {
+            "name": "relay-app",
+            "port": {
+              "name": "http"
+            }
+          }
+        ]
+      },
+      {
+        "kind": "Ingress",
+        "name": "relaycast",
+        "namespace": "agent-relay",
+        "selector": null,
+        "podSelectors": {},
+        "claims": [],
+        "servicePorts": null,
+        "routeTargets": [
+          {
+            "name": "relaycast-deny",
+            "port": {
+              "number": 8787
+            }
+          },
+          {
+            "name": "relaycast-deny",
+            "port": {
+              "number": 8787
+            }
+          },
+          {
+            "name": "relaycast-deny",
+            "port": {
+              "number": 8787
+            }
+          },
+          {
+            "name": "relaycast",
+            "port": {
+              "number": 8787
+            }
+          }
+        ]
+      },
+      {
+        "kind": "Ingress",
+        "name": "relayfile-server",
+        "namespace": "agent-relay",
+        "selector": null,
+        "podSelectors": {},
+        "claims": [],
+        "servicePorts": null,
+        "routeTargets": [
+          {
+            "name": "relayfile-server",
+            "port": {
+              "number": 8080
+            }
+          }
+        ]
+      },
+      {
+        "kind": "Ingress",
+        "name": "relayhistory",
+        "namespace": "agent-relay",
+        "selector": null,
+        "podSelectors": {},
+        "claims": [],
+        "servicePorts": null,
+        "routeTargets": [
+          {
+            "name": "relayhistory",
+            "port": {
+              "name": "http"
+            }
+          }
+        ]
+      },
+      {
+        "kind": "Job",
+        "name": "relaycontrol-migrate-f11dfd51",
+        "namespace": "agent-relay",
+        "selector": null,
+        "podSelectors": {
+          "app.kubernetes.io/name": "relay-cloud-api",
+          "app.kubernetes.io/instance": "agent-relay"
+        },
+        "claims": [],
+        "servicePorts": null,
+        "routeTargets": []
+      },
+      {
+        "kind": "Job",
+        "name": "relayhistory-migrate-f60b83b3",
+        "namespace": "agent-relay",
+        "selector": null,
+        "podSelectors": {
+          "app.kubernetes.io/name": "relayhistory",
+          "app.kubernetes.io/instance": "agent-relay"
+        },
+        "claims": [],
+        "servicePorts": null,
+        "routeTargets": []
+      },
+      {
+        "kind": "Job",
+        "name": "sessions-locker-init-e5cacad6",
+        "namespace": "agent-relay",
+        "selector": null,
+        "podSelectors": {
+          "app.kubernetes.io/name": "worker",
+          "app.kubernetes.io/instance": "agent-relay"
+        },
+        "claims": [],
+        "servicePorts": null,
+        "routeTargets": []
+      },
+      {
+        "kind": "Job",
+        "name": "sessions-migrate-f11dde74",
+        "namespace": "agent-relay",
+        "selector": null,
+        "podSelectors": {
+          "app.kubernetes.io/name": "worker",
+          "app.kubernetes.io/instance": "agent-relay"
+        },
+        "claims": [],
+        "servicePorts": null,
+        "routeTargets": []
+      },
+      {
+        "kind": "NetworkPolicy",
+        "name": "kind-no-external-egress",
+        "namespace": "agent-relay",
+        "selector": null,
+        "podSelectors": {},
+        "claims": [],
+        "servicePorts": null,
+        "routeTargets": []
+      },
+      {
+        "kind": "PersistentVolumeClaim",
+        "name": "relayauth-data",
+        "namespace": "agent-relay",
+        "selector": null,
+        "podSelectors": {},
+        "claims": [],
+        "servicePorts": null,
+        "routeTargets": []
+      },
+      {
+        "kind": "PersistentVolumeClaim",
+        "name": "relaycast-data",
+        "namespace": "agent-relay",
+        "selector": null,
+        "podSelectors": {},
+        "claims": [],
+        "servicePorts": null,
+        "routeTargets": []
+      },
+      {
+        "kind": "PersistentVolumeClaim",
+        "name": "relayflows",
+        "namespace": "agent-relay",
+        "selector": null,
+        "podSelectors": {},
+        "claims": [],
+        "servicePorts": null,
+        "routeTargets": []
+      },
+      {
+        "kind": "Service",
+        "name": "alleyoop",
+        "namespace": "agent-relay",
+        "selector": {
+          "app.kubernetes.io/name": "alleyoop",
+          "app.kubernetes.io/instance": "agent-relay",
+          "app.kubernetes.io/component": "alleyoop-ingest"
+        },
+        "podSelectors": {},
+        "claims": [],
+        "servicePorts": [
+          {
+            "name": "http",
+            "port": 8080,
+            "targetPort": "http",
+            "protocol": "TCP"
+          }
+        ],
+        "routeTargets": []
+      },
+      {
+        "kind": "Service",
+        "name": "relay-app",
+        "namespace": "agent-relay",
+        "selector": {
+          "app.kubernetes.io/name": "relay-dashboard",
+          "app.kubernetes.io/instance": "agent-relay"
+        },
+        "podSelectors": {},
+        "claims": [],
+        "servicePorts": [
+          {
+            "name": "http",
+            "port": 8080,
+            "targetPort": "http"
+          }
+        ],
+        "routeTargets": []
+      },
+      {
+        "kind": "Service",
+        "name": "relayauth",
+        "namespace": "agent-relay",
+        "selector": {
+          "app.kubernetes.io/name": "relayauth",
+          "app.kubernetes.io/instance": "agent-relay"
+        },
+        "podSelectors": {},
+        "claims": [],
+        "servicePorts": [
+          {
+            "name": "http",
+            "port": 8787,
+            "targetPort": "http",
+            "protocol": "TCP"
+          }
+        ],
+        "routeTargets": []
+      },
+      {
+        "kind": "Service",
+        "name": "relaycast",
+        "namespace": "agent-relay",
+        "selector": {
+          "app.kubernetes.io/name": "relaycast",
+          "app.kubernetes.io/instance": "agent-relay"
+        },
+        "podSelectors": {},
+        "claims": [],
+        "servicePorts": [
+          {
+            "name": "http",
+            "port": 8787,
+            "targetPort": "http",
+            "protocol": "TCP"
+          }
+        ],
+        "routeTargets": []
+      },
+      {
+        "kind": "Service",
+        "name": "relaycast-deny",
+        "namespace": "agent-relay",
+        "selector": null,
+        "podSelectors": {},
+        "claims": [],
+        "servicePorts": [
+          {
+            "name": "http",
+            "port": 8787,
+            "protocol": "TCP"
+          }
+        ],
+        "routeTargets": []
+      },
+      {
+        "kind": "Service",
+        "name": "relaycontrol",
+        "namespace": "agent-relay",
+        "selector": {
+          "app.kubernetes.io/name": "relay-cloud-api",
+          "app.kubernetes.io/instance": "agent-relay",
+          "app.kubernetes.io/component": "api"
+        },
+        "podSelectors": {},
+        "claims": [],
+        "servicePorts": [
+          {
+            "name": "http",
+            "port": 80,
+            "targetPort": "http",
+            "protocol": "TCP"
+          }
+        ],
+        "routeTargets": []
+      },
+      {
+        "kind": "Service",
+        "name": "relayfile-server",
+        "namespace": "agent-relay",
+        "selector": {
+          "app.kubernetes.io/name": "relayfile",
+          "app.kubernetes.io/instance": "agent-relay",
+          "app.kubernetes.io/component": "server"
+        },
+        "podSelectors": {},
+        "claims": [],
+        "servicePorts": [
+          {
+            "port": 8080,
+            "targetPort": "http",
+            "protocol": "TCP",
+            "name": "http"
+          }
+        ],
+        "routeTargets": []
+      },
+      {
+        "kind": "Service",
+        "name": "relayhistory",
+        "namespace": "agent-relay",
+        "selector": {
+          "app.kubernetes.io/name": "relayhistory",
+          "app.kubernetes.io/instance": "agent-relay",
+          "app.kubernetes.io/component": "history"
+        },
+        "podSelectors": {},
+        "claims": [],
+        "servicePorts": [
+          {
+            "name": "http",
+            "port": 8080,
+            "targetPort": "http",
+            "protocol": "TCP"
+          }
+        ],
+        "routeTargets": []
+      },
+      {
+        "kind": "ServiceAccount",
+        "name": "alleyoop",
+        "namespace": "agent-relay",
+        "selector": null,
+        "podSelectors": {},
+        "claims": [],
+        "servicePorts": null,
+        "routeTargets": []
+      },
+      {
+        "kind": "ServiceAccount",
+        "name": "relay-app",
+        "namespace": "agent-relay",
+        "selector": null,
+        "podSelectors": {},
+        "claims": [],
+        "servicePorts": null,
+        "routeTargets": []
+      },
+      {
+        "kind": "ServiceAccount",
+        "name": "relayauth",
+        "namespace": "agent-relay",
+        "selector": null,
+        "podSelectors": {},
+        "claims": [],
+        "servicePorts": null,
+        "routeTargets": []
+      },
+      {
+        "kind": "ServiceAccount",
+        "name": "relaycast",
+        "namespace": "agent-relay",
+        "selector": null,
+        "podSelectors": {},
+        "claims": [],
+        "servicePorts": null,
+        "routeTargets": []
+      },
+      {
+        "kind": "ServiceAccount",
+        "name": "relaycontrol",
+        "namespace": "agent-relay",
+        "selector": null,
+        "podSelectors": {},
+        "claims": [],
+        "servicePorts": null,
+        "routeTargets": []
+      },
+      {
+        "kind": "ServiceAccount",
+        "name": "relayfile",
+        "namespace": "agent-relay",
+        "selector": null,
+        "podSelectors": {},
+        "claims": [],
+        "servicePorts": null,
+        "routeTargets": []
+      },
+      {
+        "kind": "ServiceAccount",
+        "name": "relayflows",
+        "namespace": "agent-relay",
+        "selector": null,
+        "podSelectors": {},
+        "claims": [],
+        "servicePorts": null,
+        "routeTargets": []
+      },
+      {
+        "kind": "ServiceAccount",
+        "name": "relayhistory",
+        "namespace": "agent-relay",
+        "selector": null,
+        "podSelectors": {},
+        "claims": [],
+        "servicePorts": null,
+        "routeTargets": []
+      },
+      {
+        "kind": "ServiceAccount",
+        "name": "sessions",
+        "namespace": "agent-relay",
+        "selector": null,
+        "podSelectors": {},
+        "claims": [],
+        "servicePorts": null,
+        "routeTargets": []
+      }
+    ]
+  }
+}

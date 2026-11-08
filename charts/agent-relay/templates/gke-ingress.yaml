@@ -4,17 +4,17 @@
 {{- $components := .Values.components | default dict -}}
 {{- $relaycast := .Values.relaycast | default dict -}}
 {{- $relayhistory := .Values.relayhistory | default dict -}}
-{{- $cloudApi := index .Values "relay-cloud-api" | default dict -}}
-{{- $dashboard := index .Values "relay-dashboard" | default dict -}}
-{{- if not (and $components.relaycast $components.relayhistory $components.cloudApi $components.dashboard) }}{{ fail "gkeIngress requires relaycast, relayhistory, cloudApi, and dashboard components" }}{{ end -}}
+{{- $cloudApi := index .Values "relay-control" | default dict -}}
+{{- $dashboard := index .Values "relay-webapp" | default dict -}}
+{{- if not (and $components.relaycast $components.relayhistory $components.control $components.webapp) }}{{ fail "gkeIngress requires relaycast, relayhistory, control, and webapp components" }}{{ end -}}
 {{- if or (dig "ingress" "enabled" false $relaycast) (dig "ingress" "enabled" false $relayhistory) (dig "ingress" "enabled" false $cloudApi) (dig "ingress" "enabled" false $dashboard) }}{{ fail "gkeIngress requires all leaf ingresses to be disabled" }}{{ end -}}
 {{- if and $components.relayauth (index ((.Values.relayauth | default dict).jwksIngress | default dict) "enabled" | default false) }}{{ fail "gkeIngress requires relayauth.jwksIngress.enabled=false" }}{{ end -}}
 {{- $apiBasePath := dig "runtime" "apiBasePath" "" $dashboard -}}
-{{- if and $apiBasePath (ne $apiBasePath "/cloud/api") }}{{ fail "gkeIngress routes /cloud/api to relay-cloud-api; relay-dashboard.runtime.apiBasePath must be /cloud/api" }}{{ end -}}
-{{- with dig "dashboardUrl" "" $cloudApi }}{{ $rootHost := dig "hosts" "root" "" $gke }}{{ $single := dig "singleHost" "host" "" ($.Values.global | default dict) }}{{ $want := $single | default $rootHost }}{{ if and $want (ne (trimSuffix ":443" (urlParse (toString .)).host) $want) }}{{ fail (printf "relay-cloud-api.dashboardUrl must be on the dashboard host https://%s/ (sign-in, OAuth and invite links land there)" $want) }}{{ end }}{{ end -}}
+{{- if and $apiBasePath (ne $apiBasePath "/cloud/api") }}{{ fail "gkeIngress routes /cloud/api to relay-control; relay-webapp.runtime.apiBasePath must be /cloud/api" }}{{ end -}}
+{{- with dig "dashboardUrl" "" $cloudApi }}{{ $rootHost := dig "hosts" "root" "" $gke }}{{ $single := dig "singleHost" "host" "" ($.Values.global | default dict) }}{{ $want := $single | default $rootHost }}{{ if and $want (ne (trimSuffix ":443" (urlParse (toString .)).host) $want) }}{{ fail (printf "relay-control.dashboardUrl must be on the dashboard host https://%s/ (sign-in, OAuth and invite links land there)" $want) }}{{ end }}{{ end -}}
 {{- $loginPath := dig "runtime" "loginPath" "" $dashboard -}}
-{{- if and $loginPath (ne $loginPath "/login") }}{{ fail "gkeIngress routes /login to relay-cloud-api; relay-dashboard.runtime.loginPath must be /login" }}{{ end -}}
-{{- $policyBackends := dict "relaycast" $relaycast "relayhistory" $relayhistory "relay-cloud-api" $cloudApi "relay-dashboard" $dashboard -}}
+{{- if and $loginPath (ne $loginPath "/login") }}{{ fail "gkeIngress routes /login to relay-control; relay-webapp.runtime.loginPath must be /login" }}{{ end -}}
+{{- $policyBackends := dict "relaycast" $relaycast "relayhistory" $relayhistory "relay-control" $cloudApi "relay-webapp" $dashboard -}}
 {{- if and (dig "hosts" "files" "" $gke) $components.relayfile }}
 {{- /* Relayfile behind the public files host gets the same GKE-only policy
 shape (hosts.files without components.relayfile fails further down). */ -}}
@@ -111,8 +111,8 @@ explicit backends.<name>.serviceName must equal that derived name. */ -}}
 {{- $castName := dig "nameOverride" "" $relaycast | default "relaycast" -}}
 {{- $castService := dig "fullnameOverride" "" $relaycast | default (ternary .Release.Name (printf "%s-%s" .Release.Name $castName) (contains $castName .Release.Name)) -}}
 {{- $children := dict
-  "dashboard" (list "relay-dashboard" $dashboard (dig "fullnameOverride" "" $dashboard | default (printf "%s-%s" .Release.Name (dig "nameOverride" "" $dashboard | default "relay-dashboard"))))
-  "api" (list "relay-cloud-api" $cloudApi (dig "fullnameOverride" "" $cloudApi | default (printf "%s-%s" .Release.Name (dig "nameOverride" "" $cloudApi | default "relay-cloud-api"))))
+  "dashboard" (list "relay-webapp" $dashboard (dig "fullnameOverride" "" $dashboard | default (printf "%s-%s" .Release.Name (dig "nameOverride" "" $dashboard | default "relay-webapp"))))
+  "api" (list "relay-control" $cloudApi (dig "fullnameOverride" "" $cloudApi | default (printf "%s-%s" .Release.Name (dig "nameOverride" "" $cloudApi | default "relay-control"))))
   "cast" (list "relaycast" $relaycast $castService)
   "history" (list "relayhistory" $relayhistory (dig "fullnameOverride" "" $relayhistory | default (printf "%s-%s" .Release.Name (dig "nameOverride" "" $relayhistory | default "relayhistory"))))
 -}}
@@ -130,8 +130,8 @@ explicit backends.<name>.serviceName must equal that derived name. */ -}}
 {{- /* The flows worker queue is a long-lived SSE stream through the api
 backend. GCE's default 30s backend timeout cuts every response at 30s, so
 the api Service gets a BackendConfig with a longer timeout, bound through the
-Service's cloud.google.com/backend-config annotation. relay-cloud-api renders
-that annotation from relay-cloud-api.service.backendConfig; a parent chart
+Service's cloud.google.com/backend-config annotation. relay-control renders
+that annotation from relay-control.service.backendConfig; a parent chart
 cannot template a child's values, so the name is checked here against the one
 derived from gkeIngress.name. The name is truncated to 59 characters before
 -api is appended, so the <name>-api contract holds for long names. */ -}}
@@ -140,15 +140,15 @@ derived from gkeIngress.name. The name is truncated to 59 characters before
 {{- if lt $apiTimeout 60 }}{{ fail "gkeIngress.backends.api.timeoutSec must be at least 60: the flows worker queue SSE stream needs a backend timeout above GCE's 30s default" }}{{ end -}}
 {{- if gt $apiTimeout 86400 }}{{ fail "gkeIngress.backends.api.timeoutSec must be at most 86400" }}{{ end -}}
 {{- $queuePing := dig "flows" "queuePingMs" "" $cloudApi | toString | default "20000" -}}
-{{- if and (regexMatch "^[0-9]+$" $queuePing) (ge (int64 $queuePing) (mul $apiTimeout 1000)) }}{{ fail "relay-cloud-api.flows.queuePingMs must be below gkeIngress.backends.api.timeoutSec" }}{{ end -}}
+{{- if and (regexMatch "^[0-9]+$" $queuePing) (ge (int64 $queuePing) (mul $apiTimeout 1000)) }}{{ fail "relay-control.flows.queuePingMs must be below gkeIngress.backends.api.timeoutSec" }}{{ end -}}
 {{- $wantBackendConfig := printf "{\"default\": \"%s\"}" $apiBackendConfig -}}
 {{- $haveBackendConfig := dig "service" "backendConfig" "" $cloudApi | toString -}}
 {{- if $haveBackendConfig }}
-{{- if ne $haveBackendConfig $apiBackendConfig }}{{ fail (printf "gkeIngress requires relay-cloud-api.service.backendConfig=%s (<gkeIngress.name>-api) so the api backend gets the BackendConfig timeout; got %s" $apiBackendConfig $haveBackendConfig) }}{{ end -}}
+{{- if ne $haveBackendConfig $apiBackendConfig }}{{ fail (printf "gkeIngress requires relay-control.service.backendConfig=%s (<gkeIngress.name>-api) so the api backend gets the BackendConfig timeout; got %s" $apiBackendConfig $haveBackendConfig) }}{{ end -}}
 {{- else }}
 {{- /* Legacy: a hand-written annotation is still accepted when it matches. */ -}}
 {{- $haveAnnotation := dig "service" "annotations" "cloud.google.com/backend-config" "" $cloudApi -}}
-{{- if ne (toString $haveAnnotation | nospace) (nospace $wantBackendConfig) }}{{ fail (printf "gkeIngress requires relay-cloud-api.service.backendConfig=%s (<gkeIngress.name>-api) so the api backend gets the BackendConfig timeout" $apiBackendConfig) }}{{ end -}}
+{{- if ne (toString $haveAnnotation | nospace) (nospace $wantBackendConfig) }}{{ fail (printf "gkeIngress requires relay-control.service.backendConfig=%s (<gkeIngress.name>-api) so the api backend gets the BackendConfig timeout" $apiBackendConfig) }}{{ end -}}
 {{- end }}
 apiVersion: cloud.google.com/v1
 kind: BackendConfig
@@ -338,7 +338,7 @@ spec:
     - host: {{ $hostApi | quote }}
       http:
         paths:
-          # relay-cloud-api /internal/v1 is for in-cluster callers holding
+          # relay-control /internal/v1 is for in-cluster callers holding
           # SELFHOST_INTERNAL_TOKEN only. GCE expands this Prefix path to
           # /internal and /internal/*, which covers /internal/.
           - path: /internal

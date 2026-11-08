@@ -24,3 +24,5 @@ addon_versions = {
 }
 # Pippen only: expected lease from external sandbox status; credentials stay external.
 # pippen = { agent = "<allocated-agent>", session_id = "<allocated-session>" }
+# Opt in to AWS Load Balancer Controller IAM and Pod Identity. Accounts where these already exist must import them first; see README.
+# enable_load_balancer_controller = true

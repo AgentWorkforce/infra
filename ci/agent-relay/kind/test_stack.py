@@ -43,14 +43,14 @@ class Profiles(unittest.TestCase):
     def test_core_contains_whole_product_and_internal_temporary_auth(self):
         docs = self.render()
         deployments = {d["metadata"]["name"] for d in docs if d["kind"] == "Deployment"}
-        self.assertTrue({"relaycontrol", "relay-app", "relaycast", "relayauth", "relayhistory", "alleyoop-ingest"} <= deployments)
+        self.assertTrue({"relay-control", "relay-webapp", "relaycast", "relayauth", "relayhistory", "session-ingest-api"} <= deployments)
         self.assertFalse(any("relayfile" in n or "relayflows" in n or "relaycron" in n for n in deployments))
         self.assertFalse(any(d["kind"] == "CronJob" for d in docs))
         for d in docs:
             if d["kind"] == "Ingress":
                 for rule in d["spec"]["rules"]:
                     self.assertFalse(any("relayauth" in p["backend"]["service"]["name"] for p in rule["http"]["paths"]))
-        workers = [d for d in docs if d["kind"] == "Deployment" and d["metadata"]["name"].startswith("sessions-")]
+        workers = [d for d in docs if d["kind"] == "Deployment" and d["metadata"]["name"].startswith(("session-summary-", "session-status-", "session-metadata-"))]
         self.assertEqual(len(workers), 3)
         for d in workers:
             env = {e["name"]: e.get("value") for e in stack.pod_spec(d)["containers"][0]["env"]}
@@ -119,7 +119,7 @@ class Profiles(unittest.TestCase):
 
     def test_license_only_mounted_in_api_not_migrator(self):
         docs = self.render("addons")
-        api = next(d for d in docs if d["kind"] == "Deployment" and d["metadata"]["name"] == "relaycontrol")
+        api = next(d for d in docs if d["kind"] == "Deployment" and d["metadata"]["name"] == "relay-control")
         spec = stack.pod_spec(api)
         self.assertIn({"name": "SELFHOST_LICENSE_FILE", "value": "/var/run/agent-relay/license/license"}, spec["containers"][0]["env"])
         secret = next(v for v in spec["volumes"] if v["name"] == "license")["secret"]
@@ -135,20 +135,20 @@ class Profiles(unittest.TestCase):
         self.assertIn("must explicitly match", self.render(extra=["--set", "localKind.temporaryRelayauth=false"], ok=False))
         self.assertIn("must agree", self.render("addons", extra=["--set", "components.relayfile=false"], ok=False))
         self.assertIn("must be core or addons", self.render(extra=["--set", "localKind.profile=unknown"], ok=False))
-        self.assertIn("license.key", self.render("addons", extra=["--set", "relay-cloud-api.license.key=../bad"], ok=False))
-        self.assertIn("must not mount the migration credential", self.render("addons", extra=["--set", "relay-cloud-api.license.existingSecret=kind-control", "--set", "relay-cloud-api.license.key=database-migrations-url"], ok=False))
-        self.assertIn("SELFHOST_LICENSE_FILE is managed", self.render("addons", extra=["--set", "relay-cloud-api.extraEnv[0].name=SELFHOST_LICENSE_FILE", "--set", "relay-cloud-api.extraEnv[0].value=/other-license"], ok=False))
+        self.assertIn("license.key", self.render("addons", extra=["--set", "relay-control.license.key=../bad"], ok=False))
+        self.assertIn("must not mount the migration credential", self.render("addons", extra=["--set", "relay-control.license.existingSecret=kind-control", "--set", "relay-control.license.key=database-migrations-url"], ok=False))
+        self.assertIn("SELFHOST_LICENSE_FILE is managed", self.render("addons", extra=["--set", "relay-control.extraEnv[0].name=SELFHOST_LICENSE_FILE", "--set", "relay-control.extraEnv[0].value=/other-license"], ok=False))
 
     def test_local_scope_guard_and_configurable_api_ingress(self):
         self.assertIn("allowLocalOnly", self.render(extra=["--set", "localKind.allowLocalOnly=false"], ok=False))
-        self.assertIn("ingress.enabled=true", self.render(extra=["--set", "relay-dashboard.ingress.enabled=false"], ok=False))
-        self.assertIn("ingress.host", self.render(extra=["--set", "relay-dashboard.ingress.host="], ok=False))
+        self.assertIn("ingress.enabled=true", self.render(extra=["--set", "relay-webapp.ingress.enabled=false"], ok=False))
+        self.assertIn("ingress.host", self.render(extra=["--set", "relay-webapp.ingress.host="], ok=False))
         self.assertIn("child egress", self.render("addons", extra=["--set", "relayflows.networkPolicy.enabled=true"], ok=False))
-        docs = self.render(extra=["--set", "relay-cloud-api.fullnameOverride=other-control",
-                                  "--set", "relay-dashboard.api.serviceName=other-control",
-                                  "--set", "relay-dashboard.ingress.host=custom.kind.agentrelay.com",
-                                  "--set", "relay-dashboard.ingress.className=custom",
-                                  "--set", "relay-dashboard.ingress.tls[0].secretName=custom-tls"])
+        docs = self.render(extra=["--set", "relay-control.fullnameOverride=other-control",
+                                  "--set", "relay-webapp.api.serviceName=other-control",
+                                  "--set", "relay-webapp.ingress.host=custom.kind.agentrelay.com",
+                                  "--set", "relay-webapp.ingress.className=custom",
+                                  "--set", "relay-webapp.ingress.tls[0].secretName=custom-tls"])
         ingress = next(d for d in docs if d["kind"] == "Ingress" and d["metadata"]["name"] == "kind-control-api")
         self.assertEqual(ingress["spec"]["ingressClassName"], "custom")
         self.assertEqual(ingress["spec"]["tls"][0]["secretName"], "custom-tls")
@@ -157,25 +157,25 @@ class Profiles(unittest.TestCase):
 
     def test_license_secret_shape_and_all_credential_collisions(self):
         for name in ("a.-b", "a" * 254):
-            self.assertIn("Kubernetes Secret name", self.render("addons", extra=["--set-string", "relay-cloud-api.license.existingSecret="+name], ok=False))
+            self.assertIn("Kubernetes Secret name", self.render("addons", extra=["--set-string", "relay-control.license.existingSecret="+name], ok=False))
         for key in ("database-url", "database-migrations-url", "relayauth-api-key"):
-            self.assertIn("must not mount", self.render("addons", extra=["--set", "relay-cloud-api.license.existingSecret=kind-control",
-                                                                      "--set", "relay-cloud-api.license.key="+key], ok=False))
-        self.render("addons", extra=["--set", "relay-cloud-api.license.key=2024"])
+            self.assertIn("must not mount", self.render("addons", extra=["--set", "relay-control.license.existingSecret=kind-control",
+                                                                      "--set", "relay-control.license.key="+key], ok=False))
+        self.render("addons", extra=["--set", "relay-control.license.key=2024"])
 
     def test_extra_env_cannot_bypass_validation_or_expose_migration_credentials(self):
         invalid = [
-            (["--set", "relay-cloud-api.extraEnv[0].name=SELFHOST_OIDC_ISSUER", "--set", "relay-cloud-api.extraEnv[0].value=http://bad"], "managed"),
-            (["--set", "relay-cloud-api.extraEnv[0].name=CUSTOM", "--set", "relay-cloud-api.extraEnv[0].value=true"], "must be a string"),
-            (["--set", "relay-cloud-api.extraEnv[0].name=CUSTOM_TOKEN", "--set", "relay-cloud-api.extraEnv[0].value=inline"], "never inline"),
-            (["--set", "relay-cloud-api.extraEnv[0].name=CUSTOM", "--set", "relay-cloud-api.extraEnv[0].valueFrom.secretKeyRef.name=kind-control",
-              "--set", "relay-cloud-api.extraEnv[0].valueFrom.secretKeyRef.key=database-migrations-url"], "migration credential"),
+            (["--set", "relay-control.extraEnv[0].name=SELFHOST_OIDC_ISSUER", "--set", "relay-control.extraEnv[0].value=http://bad"], "managed"),
+            (["--set", "relay-control.extraEnv[0].name=CUSTOM", "--set", "relay-control.extraEnv[0].value=true"], "must be a string"),
+            (["--set", "relay-control.extraEnv[0].name=CUSTOM_TOKEN", "--set", "relay-control.extraEnv[0].value=inline"], "never inline"),
+            (["--set", "relay-control.extraEnv[0].name=CUSTOM", "--set", "relay-control.extraEnv[0].valueFrom.secretKeyRef.name=kind-control",
+              "--set", "relay-control.extraEnv[0].valueFrom.secretKeyRef.key=database-migrations-url"], "migration credential"),
         ]
         for args, diagnostic in invalid:
             self.assertIn(diagnostic, self.render(extra=args, ok=False))
-        self.render(extra=["--set", "relay-cloud-api.extraEnv[0].name=CUSTOM_TOKEN",
-                           "--set", "relay-cloud-api.extraEnv[0].valueFrom.secretKeyRef.name=separate-secret",
-                           "--set", "relay-cloud-api.extraEnv[0].valueFrom.secretKeyRef.key=token"])
+        self.render(extra=["--set", "relay-control.extraEnv[0].name=CUSTOM_TOKEN",
+                           "--set", "relay-control.extraEnv[0].valueFrom.secretKeyRef.name=separate-secret",
+                           "--set", "relay-control.extraEnv[0].valueFrom.secretKeyRef.key=token"])
 
     def test_pending_can_never_be_aggregate_success(self):
         self.assertEqual(exit_code([]), 1)

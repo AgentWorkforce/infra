@@ -1,0 +1,13 @@
+{{- /* Refuse a legacy dependency key instead of silently enabling new MinIO defaults. */ -}}
+{{- if hasKey .Values "locker" -}}
+{{- fail "sessions-pipeline: locker dependency values were renamed to session-object-storage; move that block (worker.locker and alleyoop.locker remain internal adapter configuration). Do not use --reuse-values for this rename." -}}
+{{- end -}}
+{{- /* An upgrade from a release that used the old default name would prune PVC/locker and create an empty claim. */ -}}
+{{- $storage := index .Values "session-object-storage" | default dict -}}
+{{- $persistence := $storage.persistence | default dict -}}
+{{- /* existingClaim=locker renders no PVC, so Helm would still prune the release-owned claim. */ -}}
+{{- $claim := toString ($persistence.existingClaim | default "") -}}
+{{- $legacyPin := and (eq (toString $storage.fullnameOverride) "locker") (eq (toString $storage.nameOverride) "locker") -}}
+{{- if and .Release.IsUpgrade $storage.enabled $persistence.enabled (or (eq $claim "") (eq $claim "locker")) (not $legacyPin) (not .Values.acknowledgeStorageRename) -}}
+{{- fail "sessions-pipeline: this upgrade could delete MinIO's PersistentVolumeClaim 'locker' or replace it with an empty 'session-object-storage' claim. If the release predates chart 0.7.0, keep the data: set session-object-storage.fullnameOverride and nameOverride to the release's recorded MinIO names, which are locker by default (docs/descriptive-session-names.md). Recorded names other than locker also need acknowledgeStorageRename=true, and pinning locker on such a release would lose its claim. persistence.existingClaim=locker does not protect a claim this release created. If the release was installed at 0.7.0 or later, or its objects are disposable, set acknowledgeStorageRename=true." -}}
+{{- end -}}

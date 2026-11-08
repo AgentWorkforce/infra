@@ -73,7 +73,7 @@ expect_fail "shipped: env only in a values.yaml comment" shipped \
 
 # Shipped env whose only mention left is a template COMMENT.
 fresh
-sed -i 's/^            - name: AUTH_AUDIENCE$/            {{- \/* AUTH_AUDIENCE moved *\/}}\n            - name: AUTH_AUDIENCE_X/' "$WORK/r/charts/alleyoop/templates/deployment.yaml"
+sed -i 's/^            - name: AUTH_AUDIENCE$/            {{- \/* AUTH_AUDIENCE moved *\/}}\n            - name: AUTH_AUDIENCE_X/' "$WORK/r/charts/session-ingest-api/templates/deployment.yaml"
 expect_fail "shipped: env only in a template comment" shipped \
   "opt.alleyoop.auth-mode: env AUTH_AUDIENCE is neither rendered"
 

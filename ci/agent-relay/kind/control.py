@@ -8,9 +8,21 @@ import tarfile
 from addons import NODE, checkout
 from stack import private_json
 
-REVISION = "1f08cb624be66016eb0c135363553dd44e58f691"
+REVISION = "a659ac4fbc2c73c57ccb87b6947cee2fdb78e92d"
+HISTORICAL_REVISION = "1f08cb624be66016eb0c135363553dd44e58f691"
+SOURCES = {
+    REVISION: ("relay-control", "0.4.0"),
+    HISTORICAL_REVISION: ("relay-control-internal", "0.3.0"),
+}
 REPOSITORY = "agent-relay-kind/selfhost-api"
 TAG = REPOSITORY + ":" + REVISION[:7]
+
+
+def source_revision(stack):
+    mode = stack.env.get("KIND_CONTROL_SOURCE", "current")
+    if mode not in ("current", "historical"):
+        raise ValueError("KIND_CONTROL_SOURCE must be current or historical")
+    return HISTORICAL_REVISION if mode == "historical" else REVISION
 
 
 def inspect_archive(path, arch):
@@ -40,10 +52,12 @@ def inspect_archive(path, arch):
         if config_digest != "sha256:" + hashlib.sha256(raw).hexdigest():
             raise ValueError("local control config digest does not match its bytes")
         config = json.loads(raw)
+        revision = config.get("config", {}).get("Labels", {}).get("org.opencontainers.image.revision")
         if (config.get("architecture") != arch or config.get("os") != "linux"
-                or config.get("config", {}).get("Labels", {}).get("org.opencontainers.image.revision") != REVISION):
+                or not isinstance(revision, str) or revision not in SOURCES):
             raise ValueError("local control architecture/source does not match the pinned build")
-        return {"sourceRevision": REVISION, "tag": TAG, "architecture": arch,
+        return {"sourceRevision": revision, "sourceRepository": SOURCES[revision][0],
+                "tag": REPOSITORY + ":" + revision[:7], "architecture": arch,
                 "reference": REPOSITORY + "@" + digest, "manifestDigest": digest,
                 "configDigest": config_digest, "node": NODE}
 
@@ -52,42 +66,76 @@ def resolve(stack, image):
     if not image.startswith(REPOSITORY + "@"):
         return image
     receipt = json.loads((stack.state / "control-build.json").read_text())
-    if (receipt.get("reference") != image or receipt.get("sourceRevision") != REVISION
-            or receipt.get("architecture") != stack.arch or receipt.get("tag") != TAG):
+    revision = receipt.get("sourceRevision")
+    if not isinstance(revision, str):
         raise ValueError("local control reference needs a matching kind-build-control receipt")
-    return TAG
+    repository = SOURCES.get(revision, (None,))[0]
+    # Original historical receipts predate sourceRepository. No other source
+    # gets that compatibility exception, and both pins retain exact tag checks.
+    source_matches = repository and (receipt.get("sourceRepository") == repository or
+                                    (revision == HISTORICAL_REVISION and "sourceRepository" not in receipt))
+    if (receipt.get("reference") != image or not source_matches
+            or receipt.get("architecture") != stack.arch
+            or receipt.get("tag") != REPOSITORY + ":" + revision[:7]):
+        raise ValueError("local control reference needs a matching kind-build-control receipt")
+    return receipt["tag"]
+
+
+def translate_local_image_override(values):
+    """Remove only the obsolete image-only override emitted by this builder."""
+    if "relay-cloud-api" not in values:
+        return
+    legacy = values["relay-cloud-api"]
+    if not isinstance(legacy, dict) or set(legacy) != {"image"}:
+        raise ValueError("translate relay-cloud-api overrides explicitly before building Control")
+    image = legacy["image"]
+    if (not isinstance(image, dict) or set(image) != {"repository", "digest", "pullPolicy"}
+            or image["repository"] != REPOSITORY or image["pullPolicy"] != "Never"
+            or not isinstance(image["digest"], str)
+            or not re.fullmatch(r"sha256:[a-f0-9]{64}", image["digest"])):
+        raise ValueError("relay-cloud-api is not this builder's image-only override; translate it explicitly")
+    del values["relay-cloud-api"]
 
 
 def build(stack):
+    revision = source_revision(stack)
+    repository, version = SOURCES[revision]
+    tag = REPOSITORY + ":" + revision[:7]
+    values = json.loads(stack.overrides.read_text()) if stack.overrides.exists() else {}
+    translate_local_image_override(values)
     stack.check_space(6 * 1024**3)
-    source = stack.state / "control-source"
-    checkout(stack, "relay-control", REVISION, source)
+    # Current source has its own cache. Never repoint, overwrite or fetch into
+    # an existing historical checkout when selecting the public source.
+    source = stack.state / ("control-source" if revision == HISTORICAL_REVISION
+                            else "control-source-public-" + revision[:7])
+    checkout(stack, repository, revision, source)
     builder = [*stack.docker_args, "buildx"]
     if stack.cmd([*builder, "version"], check=False).returncode:
         bundled = Path("/Applications/Docker.app/Contents/Resources/cli-plugins/docker-buildx")
         if not bundled.is_file():
             raise ValueError("the official control Dockerfile requires Docker BuildKit/buildx")
         builder = [bundled]
-    print(f"Build native linux/{stack.arch} control from {REVISION}", flush=True)
+    print(f"Build native linux/{stack.arch} control from {repository}@{revision}", flush=True)
     stack.cmd([*builder, "build", "--load", "--platform", f"linux/{stack.arch}",
-               "--build-arg", "NODE_IMAGE=" + NODE, "--build-arg", "IMAGE_REVISION=" + REVISION,
-               "--build-arg", "IMAGE_VERSION=0.3.0-kind." + REVISION[:7], "-t", TAG, source], timeout=900)
+               "--build-arg", "NODE_IMAGE=" + NODE, "--build-arg", "IMAGE_REVISION=" + revision,
+               "--build-arg", "IMAGE_VERSION=" + version + "-kind." + revision[:7], "-t", tag, source], timeout=900)
     archive = stack.state / "control-image.tar"
     try:
-        stack.cmd([*stack.docker_args, "image", "save", "--platform", f"linux/{stack.arch}", "-o", archive, TAG], timeout=300)
+        stack.cmd([*stack.docker_args, "image", "save", "--platform", f"linux/{stack.arch}", "-o", archive, tag], timeout=300)
         receipt = inspect_archive(archive, stack.arch)
+        if receipt["sourceRevision"] != revision:
+            raise ValueError("built control archive differs from the selected source revision")
     finally:
         archive.unlink(missing_ok=True)  # This attempt's transport only.
     private_json(stack.state / "control-build.json", receipt)
-    values = json.loads(stack.overrides.read_text()) if stack.overrides.exists() else {}
-    values.setdefault("relay-cloud-api", {})["image"] = {
+    values.setdefault("relay-control", {})["image"] = {
         "repository": REPOSITORY, "digest": receipt["manifestDigest"], "pullPolicy": "Never"}
     private_json(stack.overrides, values)
     print("Built and selected " + receipt["reference"] + "; run kind-up to install. No image published.")
 
 
 def alias(stack, image, metadata):
-    tag = "docker.io/" + TAG
+    tag = "docker.io/" + metadata["tag"]
     reference = "docker.io/" + image
     for node in stack.cmd(["kind", "get", "nodes", "--name", stack.name]).stdout.splitlines():
         listing = stack.cmd([*stack.docker_args, "exec", node, "ctr", "--namespace", "k8s.io", "images", "ls", "name==" + tag]).stdout

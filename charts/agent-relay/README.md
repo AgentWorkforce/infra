@@ -1,5 +1,7 @@
 # agent-relay
 
+Public chart names and existing-release compatibility: [Control/Webapp rename](../../docs/control-webapp-chart-rename.md).
+
 Umbrella chart for the self-hosted messaging and Sessions proof:
 
 - Relaycast and RelayAuth
@@ -13,7 +15,7 @@ see `docs/self-hosted-relayflows.md`). Relayfile (`components.relayfile`) and
 the durable-actors control plane (`components.durableActors`) are optional and
 off by default; see `docs/self-hosted-durable-actors.md`.
 
-Requires Helm 3.10 or newer: the relay-cloud-api subchart uses
+Requires Helm 3.10 or newer: the relay-control subchart uses
 `{{ continue }}`, which older Helm versions cannot parse.
 
 ## Customer-neutral GCP template
@@ -38,8 +40,8 @@ before installing. The required value overrides are:
 | `relayauth.image.{repository,digest}` | Customer-accessible RelayAuth image mirror and its real immutable digest. |
 | `sessions-pipeline.worker.image.{repository,digest}` and `sessions-pipeline.alleyoop.image.{repository,digest}` | Repository path under `global.imageRegistry` and the same immutable Sessions services digest. |
 | `relayhistory.image.{repository,digest}` | Customer-accessible Relay History image mirror and its real immutable digest. |
-| `relay-cloud-api.image.{repository,digest}` | Customer-accessible control API image mirror and its real immutable digest. |
-| `relay-dashboard.image.{repository,digest}` | Customer-accessible dashboard image mirror and its real immutable digest. |
+| `relay-control.image.{repository,digest}` | Customer-accessible control API image mirror and its real immutable digest. |
+| `relay-webapp.image.{repository,digest}` | Customer-accessible dashboard image mirror and its real immutable digest. |
 | All `existingSecret` values set to `example-agent-relay-secrets` | Name of a pre-created Secret in the release namespace. Update every occurrence if separate Secrets are used. |
 | `sessions-pipeline.{worker,alleyoop}.locker.bucket` | Existing customer-owned GCS bucket used for session objects. Both values must match. |
 | `sessions-pipeline.{worker,alleyoop}.locker.region` | Region of that bucket. Both values must match. |
@@ -47,11 +49,11 @@ before installing. The required value overrides are:
 | `relaycast.baseUrl` | `https://` plus `gkeIngress.hosts.cast`. |
 | `relayhistory.relayauth.historyOrigin` | `https://` plus `gkeIngress.hosts.history`. |
 | `sessions-pipeline.alleyoop.auth.historyOrigin` | Same origin as `relayhistory.relayauth.historyOrigin` (the History assertion audience couriers use). The umbrella refuses to render when the two differ. |
-| `relay-cloud-api.publicUrl` | `https://` plus `gkeIngress.hosts.api`. |
-| `relay-cloud-api.services.relaycastPublicUrl` | Same origin as `relaycast.baseUrl`. |
-| `relay-cloud-api.services.relayhistoryPublicUrl` | Same origin as `relayhistory.relayauth.historyOrigin`. |
-| `relay-dashboard.runtime.publicUrl` | `https://` plus `gkeIngress.hosts.root`. |
-| `relay-cloud-api.service.backendConfig` | `<gkeIngress.name>-api` (the name truncated to 59 characters first). The umbrella renders that BackendConfig and refuses any other value. |
+| `relay-control.publicUrl` | `https://` plus `gkeIngress.hosts.api`. |
+| `relay-control.services.relaycastPublicUrl` | Same origin as `relaycast.baseUrl`. |
+| `relay-control.services.relayhistoryPublicUrl` | Same origin as `relayhistory.relayauth.historyOrigin`. |
+| `relay-webapp.runtime.publicUrl` | `https://` plus `gkeIngress.hosts.root`. |
+| `relay-control.service.backendConfig` | `<gkeIngress.name>-api` (the name truncated to 59 characters first). The umbrella renders that BackendConfig and refuses any other value. |
 | `relaycast.service.backendConfig` | `<gkeIngress.name>-cast` (the name truncated to 58 characters first), for the Relaycast WebSocket backend timeout. |
 
 The referenced Secret must provide these keys:
@@ -81,26 +83,26 @@ characters or base64.
 
 Without extra steps, a fresh install has no organization. It also has no way
 to sign in except the operator break-glass, where the bootstrap token approves
-a device code. Set the commented `relay-cloud-api` block in `values-gcp.yaml`
+a device code. Set the commented `relay-control` block in `values-gcp.yaml`
 to get a working team straight from `helm install`. This needs a selfhost-api
 image from relaycontrol #13 or later.
 
-- `relay-cloud-api.bootstrap.{orgName,adminEmail}`,
-  `relay-cloud-api.secretKeys.relaycastInternalSecret: relaycast-internal-secret`
-  and `relay-cloud-api.dashboardUrl: https://<root host>/`. On its first start
+- `relay-control.bootstrap.{orgName,adminEmail}`,
+  `relay-control.secretKeys.relaycastInternalSecret: relaycast-internal-secret`
+  and `relay-control.dashboardUrl: https://<root host>/`. On its first start
   the API:
   - creates the organization and makes the admin its owner;
   - creates a `Default` workspace bound to a new Relaycast workspace.
 
   This is idempotent and safe on an existing install.
-- `relay-cloud-api.auth.oidc.{issuer,clientId,allowedDomains}` plus
+- `relay-control.auth.oidc.{issuer,clientId,allowedDomains}` plus
   `secretKeys.oidcClientSecret`. Register
   `https://<root host>/login/oidc/callback` with the identity provider:
   - Google Workspace: an Internal Web-application OAuth client, issuer
     `https://accounts.google.com`;
   - Okta: `https://<org>.okta.com/oauth2/default`;
   - Entra ID: `https://login.microsoftonline.com/<tenant>/v2.0`.
-- Optional `relay-cloud-api.smtp.*`: invite emails, and email sign-in links
+- Optional `relay-control.smtp.*`: invite emails, and email sign-in links
   with `auth.emailLink.enabled`.
 
 The admin signs in at `https://<root host>/login`. Owners and admins then
@@ -208,18 +210,18 @@ For `global.singleHost.host: relay.example.com`:
   `gkeIngress.hosts.files`/`actors` when set) stay separate hosts, see below.
   The ManagedCertificate covers the single host plus those hosts.
 
-Set the host once. `relay-cloud-api.publicUrl` and
-`relay-dashboard.runtime.publicUrl` are derived as `https://<host>`, and
-`relay-dashboard.ingress.host` as the bare `<host>`; the chart fails if any of
+Set the host once. `relay-control.publicUrl` and
+`relay-webapp.runtime.publicUrl` are derived as `https://<host>`, and
+`relay-webapp.ingress.host` as the bare `<host>`; the chart fails if any of
 them is set to something else. `gkeIngress.hosts.root`
 must be empty (or equal the host) and `gkeIngress.hosts.api` must be empty.
-`relay-cloud-api.dashboardUrl` can stay empty: its default, `publicUrl + "/"`,
+`relay-control.dashboardUrl` can stay empty: its default, `publicUrl + "/"`,
 is the dashboard in this mode. Without the GKE Ingress, enable the
-`relay-dashboard` leaf Ingress: it routes the same four paths on the derived
-host. `relay-cloud-api.ingress.enabled` must stay `false`.
+`relay-webapp` leaf Ingress: it routes the same four paths on the derived
+host. `relay-control.ingress.enabled` must stay `false`.
 
 The api BackendConfig (flows worker queue SSE timeout) still binds the
-relay-cloud-api Service, so it covers `/cloud/api` and `/api` on the single
+relay-control Service, so it covers `/cloud/api` and `/api` on the single
 host; the cast BackendConfig (WebSocket timeout) and the edge-deny routes on the
 cast host are unchanged. With `global.singleHost.host` empty, every default
 render is byte-identical to the previous release apart from the
@@ -230,8 +232,8 @@ and `ci/agent-relay/subdomain-golden.sh diff origin/main` shows any change.
 
 | Service | Under a path prefix on the single host | Why |
 | --- | --- | --- |
-| relay-dashboard | Works as is, at `/` | Assets are built for `/`; it calls only same-origin `/cloud/api`. |
-| relaycontrol (relay-cloud-api) | Works as is, at `/cloud/api`, `/login`, `/api` | It serves those paths natively (`/cloud/api/v1/*` aliases `/api/v1/*`), so nothing is stripped. `publicUrl` is the single host. `/internal` is not routed. |
+| relay-webapp | Works as is, at `/` | Assets are built for `/`; it calls only same-origin `/cloud/api`. |
+| relaycontrol (relay-control) | Works as is, at `/cloud/api`, `/login`, `/api` | It serves those paths natively (`/cloud/api/v1/*` aliases `/api/v1/*`), so nothing is stripped. `publicUrl` is the single host. `/internal` is not routed. |
 | Relaycast | Needs an app change; stays on its own host | The relaycast-self-host entrypoint refuses a `--base-url` with a path. The TypeScript SDK joins with `new URL('/v1/...', base)`, which drops `/cast`. relaycontrol (`RELAYCAST_PUBLIC_URL`) and Desktop (`validated_base_url`, which silently falls back to `cast.agentrelay.com`) refuse a path-prefixed URL. The A2A, inbound-hook and relayfile-inbound URLs are built from the request origin. Prefix stripping alone fixes none of these. |
 | Relay History | Needs an app change; stays on its own host | The server would work behind prefix stripping, but `relayhistoryPublicUrl` is both the History assertion audience (a bare origin) and the base URL relaycontrol hands clients, and relaycontrol and Desktop refuse a path. |
 | Relayfile | Needs an app change; stays on its own host | The server and actors gateway would work behind prefix stripping, but the mount and `listen` clients build WebSocket URLs by replacing the path, which drops `/files`. |
@@ -239,7 +241,7 @@ and `ci/agent-relay/subdomain-golden.sh diff origin/main` shows any change.
 
 The chart enforces the last four rows: in single-host mode `gkeIngress.hosts.cast`
 and `history` are still required, and rendering fails when `relaycast.baseUrl`,
-`relayhistory.relayauth.historyOrigin`, `relay-cloud-api.services.*PublicUrl`,
+`relayhistory.relayauth.historyOrigin`, `relay-control.services.*PublicUrl`,
 `sessions-pipeline.alleyoop.auth.historyOrigin`, `durable-actors.publicUrl` or
 a Relaycast, Relay History or Relayfile leaf ingress host uses the single host.
 
@@ -257,7 +259,7 @@ all required immutable digests are present. The live proof
 (`values-gcp-proof-live.yaml`) pins these proof-registry builds:
 
 - dashboard: `sha256:23361e08b899f272ed5debcbd4e7d6c6555591029357d6fba6c54236063bca62`
-  (relay-dashboard `53d484b`, the self-host build served at `/`)
+  (relay-webapp `53d484b`, the self-host build served at `/`)
 - selfhost API: `sha256:99670d253b88c27499f6c4cca6ac1265ed97978ed7a9d5eaaeecd65de9e052dc`
   (relaycontrol `17bdc78`)
 - experimental RelayHistory: `sha256:f36ae1671bdcd88a2b8b2df62c8edecb1381237d9f968747b39298959ad33563`
@@ -304,7 +306,7 @@ The live overlay expects an existing Secret (the portable example names it
 - selfhost-api: `database-url`, `database-migrations-url`,
   `relayauth-api-key`, `selfhost-bootstrap-token`,
   `selfhost-encryption-key`, `selfhost-internal-token` (the live overlay sets
-  `relay-cloud-api.secretKeys.internalToken`, which enables `/internal/v1`;
+  `relay-control.secretKeys.internalToken`, which enables `/internal/v1`;
   the api host denies `/internal` at the edge)
 
 With `values-gcp-proof-durable-actors.yaml` (Relaycast in
@@ -341,7 +343,7 @@ helm dependency build charts/agent-relay
 helm install agent-relay charts/agent-relay -n agent-relay \
   --create-namespace --no-hooks -f charts/agent-relay/values-gcp-proof.yaml \
   -f charts/agent-relay/values-gcp-proof-live.yaml \
-  --set relay-cloud-api.image.digest=sha256:...
+  --set relay-control.image.digest=sha256:...
 ```
 
 The proof uses single-writer/single-replica components and makes no HA claim.

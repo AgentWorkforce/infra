@@ -16,7 +16,7 @@ operator's configuration location and export its path as
 relayhistory:
   migrations:
     enabled: false
-relay-cloud-api:
+relay-control:
   migrations:
     enabled: false
 sessions-pipeline:

@@ -46,6 +46,7 @@ if want test && have python3; then
   run python3 -m unittest discover -s "$ROOT/scripts" -p 'test_aws_*.py'
   run python3 -m unittest discover -s "$ROOT/modules/aws/search/tests" -p 'test_*.py'
   run python3 -m unittest discover -s "$ROOT/examples/aws-rds-application-proof/proof" -p 'test_*.py'
+  run python3 -m unittest discover -s "$ROOT/modules/aws/relay-chief-slots/tests" -p 'test_*.py'
 fi
 
 for d in "${dirs[@]}"; do

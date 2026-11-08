@@ -16,7 +16,12 @@
 #                            names all four hosts
 #     eks.tls.<host>         public DNS -> ALB, the certificate verifies with the
 #                            system trust store, http:// redirects to https://
-#     eks.cnpg               the CNPG clusters are healthy
+#     eks.cnpg               the expected CNPG clusters are healthy. Defaults to
+#                            control-api-pg, hoopdb and relayhistory-pg; set
+#                            EKS_PROOF_CNPG_CLUSTERS (space separated) when
+#                            some databases are external, such as RDS
+#                            or to "none" to require that no CNPG cluster exists
+#                            (it fails if the clusters cannot be listed)
 #
 # Run it under the Pippen lease, so kubectl and aws use the session role:
 #
@@ -25,7 +30,7 @@
 # Options it sets itself: --context (a temporary kubeconfig), --namespace,
 # --sessions-namespace (the same namespace: the umbrella installs the
 # Sessions Pipeline next to the rest), --secret, --edge alb and the four
-# https origins (from relay-cloud-api SELFHOST_PUBLIC_URL = https://api.<domain>),
+# https origins (from the observed Control SELFHOST_PUBLIC_URL = https://api.<domain>),
 # --require-public, and --relayauth-url (RelayAuth runs in the release
 # namespace under the umbrella). Any other option is passed through, e.g.
 # --skip-flows, --allow-known-gap NAME or --no-cleanup.
@@ -53,13 +58,27 @@ export KUBECONFIG="$KUBECONFIG_FILE"
 K=(kubectl --context eks-proof -n "$NS")
 
 # Public origins: the HTTPS hosts the control API was installed with
-# (relay-cloud-api SELFHOST_PUBLIC_URL = https://api.<domain>).
-api_url="$("${K[@]}" get deploy relay-cloud-api \
-  -o jsonpath='{.spec.template.spec.containers[0].env[?(@.name=="SELFHOST_PUBLIC_URL")].value}' 2>/dev/null)"
+# (Control SELFHOST_PUBLIC_URL = https://api.<domain>). An explicit
+# EKS_PROOF_CONTROL_DEPLOYMENT is tried first; otherwise relay-control is tried,
+# followed by the retained pre-rename relay-cloud-api Deployment.
+api_url=""
+if [[ -z "${EKS_PROOF_DOMAIN:-}" ]]; then
+  for control_deployment in "${EKS_PROOF_CONTROL_DEPLOYMENT:-relay-control}" relay-cloud-api; do
+    api_url="$("${K[@]}" get deploy "$control_deployment" \
+      -o jsonpath='{.spec.template.spec.containers[0].env[?(@.name=="SELFHOST_PUBLIC_URL")].value}' 2>/dev/null || true)"
+    [[ -n "$api_url" ]] && break
+  done
+fi
 DOMAIN="${EKS_PROOF_DOMAIN:-${api_url#https://api.}}"
 DOMAIN="${DOMAIN%/}"
 if [[ -z "$DOMAIN" || "$DOMAIN" == "$api_url" ]]; then
-  echo "E2E_RESULT=FAIL"; echo "reason: relay-cloud-api SELFHOST_PUBLIC_URL is not https://api.<domain> (got ${api_url:-none})"; exit 1
+  echo "E2E_RESULT=FAIL"; echo "reason: installed Control SELFHOST_PUBLIC_URL is not https://api.<domain> (got ${api_url:-none})"; exit 1
+fi
+if [[ -n "${EKS_PROOF_CONTROL_DEPLOYMENT:-}" && -z "${E2E_CONTROL_DEPLOYMENT:-}" ]]; then
+  export E2E_CONTROL_DEPLOYMENT="$EKS_PROOF_CONTROL_DEPLOYMENT"
+fi
+if [[ -n "${EKS_ALB_CONTROL_SERVICE:-}" && -z "${E2E_CONTROL_SERVICE:-}" ]]; then
+  export E2E_CONTROL_SERVICE="$EKS_ALB_CONTROL_SERVICE"
 fi
 DASHBOARD="https://$DOMAIN"
 API="https://api.$DOMAIN"
@@ -86,13 +105,17 @@ eks() { # result check detail
 assoc="$(aws --region "$REGION" eks list-pod-identity-associations --cluster-name "$NAME" --namespace "$NS" \
   --query 'associations[].serviceAccount' --output text 2>/dev/null | tr '\t' ' ')"
 missing=""
-for sa in "${RELEASE}-worker" "${RELEASE}-alleyoop"; do
+# Use the installed release's service accounts, including name overrides and
+# legacy compatibility mode. Do not infer them from chart package names.
+apps="$("${K[@]}" get deploy -l "app.kubernetes.io/instance=${RELEASE},app.kubernetes.io/part-of=sessions-pipeline" -o json 2>/dev/null)"
+accounts="$(printf %s "$apps" | python3 "$HERE/session-identities.py" service-accounts)"
+[[ -n "$accounts" ]] || missing="no installed app ServiceAccounts discovered "
+for sa in $accounts; do
   [[ " $assoc " == *" $sa "* ]] || missing+="$sa "
 done
 [[ -z "$missing" ]] && eks PASS eks.pod_identity "associations=${assoc}" || eks FAIL eks.pod_identity "missing=${missing% }"
 
-alleyoop="$("${K[@]}" get pod -l app.kubernetes.io/name=alleyoop --field-selector=status.phase=Running \
-  -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)"
+alleyoop="$("${K[@]}" get pods -l "app.kubernetes.io/instance=${RELEASE}" --field-selector=status.phase=Running -o json 2>/dev/null | python3 "$HERE/session-identities.py" ingest-pod)"
 s3_out=""
 [[ -n "$alleyoop" ]] && s3_out="$("${K[@]}" exec -i "$alleyoop" -- sh -c \
   'umask 077; cat > /tmp/e2e-eks-proof-s3.ts && cd /app && bun run /tmp/e2e-eks-proof-s3.ts; rm -f /tmp/e2e-eks-proof-s3.ts' \
@@ -147,11 +170,31 @@ for h in "$DOMAIN" "api.$DOMAIN" "cast.$DOMAIN" "history.$DOMAIN"; do
   fi
 done
 
-# All three expected CNPG clusters must exist and be healthy.
+# Every expected CNPG cluster must exist and be healthy. External databases are
+# proven by the application cases, which read and write through them.
+read -r -a cnpg_wanted <<<"${EKS_PROOF_CNPG_CLUSTERS:-control-api-pg hoopdb relayhistory-pg}"
 cnpg="$("${K[@]}" get cluster.postgresql.cnpg.io -o jsonpath='{range .items[*]}{.metadata.name}={.status.phase}{";"}{end}' 2>/dev/null)"
+cnpg_rc=$?
 cnpg_ok=true
 cnpg_detail=""
-for want in control-api-pg hoopdb relayhistory-pg; do
+# A blank override names nothing, and a check of nothing must not pass.
+if ((${#cnpg_wanted[@]} == 0)); then
+  cnpg_ok=false
+  cnpg_detail="EKS_PROOF_CNPG_CLUSTERS names no clusters;"
+fi
+if [[ "${cnpg_wanted[*]-}" == none ]]; then
+  cnpg_wanted=()
+  if ((cnpg_rc != 0)); then
+    cnpg_ok=false
+    cnpg_detail="could not list CNPG clusters;"
+  elif [[ -n "$cnpg" ]]; then
+    cnpg_ok=false
+    cnpg_detail="expected none, found ${cnpg};"
+  else
+    cnpg_detail="no CNPG clusters, as expected;"
+  fi
+fi
+for want in ${cnpg_wanted[@]+"${cnpg_wanted[@]}"}; do
   phase="$(tr ';' '\n' <<<"$cnpg" | sed -n "s/^${want}=//p")"
   cnpg_detail+="${want}=${phase:-missing};"
   [[ "$phase" == "Cluster in healthy state" ]] || cnpg_ok=false

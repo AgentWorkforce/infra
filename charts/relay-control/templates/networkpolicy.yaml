@@ -1,0 +1,68 @@
+{{- include "relay-control.validate" . }}
+{{- if .Values.networkPolicy.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "relay-control.fullname" . }}
+  namespace: {{ .Release.Namespace | quote }}
+  labels: {{ include "relay-control.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels: {{ include "relay-control.selectorLabels" . | nindent 6 }}
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        {{- if .Values.networkPolicy.ingressFrom }}
+        {{- toYaml .Values.networkPolicy.ingressFrom | nindent 8 }}
+        {{- else }}
+        - podSelector: {}
+        {{- end }}
+      ports: [{ port: http }]
+  egress:
+    {{- if .Values.networkPolicy.allowAllEgress }}
+    - {}
+    {{- else }}
+    - to: [{ podSelector: {} }]
+    - ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }
+    {{- if include "relay-control.telemetryEgress" . }}
+    # Telemetry delivery to telemetry.endpoint over HTTPS.
+    - to: {{ toYaml .Values.telemetry.egressTo | nindent 8 }}
+      ports:
+        - { protocol: TCP, port: 443 }
+    {{- end }}
+    {{- with .Values.networkPolicy.additionalEgress }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+    {{- end }}
+---
+{{- if .Values.migrations.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "relay-control.fullname" . }}-migration
+  namespace: {{ .Release.Namespace | quote }}
+  labels: {{ include "relay-control.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "relay-control.name" . }}
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/component: migration
+  policyTypes: [Ingress, Egress]
+  ingress: []
+  egress:
+    {{- if .Values.networkPolicy.allowAllEgress }}
+    - {}
+    {{- else }}
+    - to: [{ podSelector: {} }]
+    - ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }
+    {{- with .Values.networkPolicy.additionalEgress }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+    {{- end }}
+{{- end }}
+{{- end }}

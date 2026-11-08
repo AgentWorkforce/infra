@@ -36,7 +36,7 @@ Both archives unpack to one `agent-relay-customer-handoff/` directory:
 | Path | Contents |
 | --- | --- |
 | `charts/agent-relay/` | Umbrella chart source, with `values.yaml` and the structural `values-gcp.yaml` example |
-| `charts/relaycast/`, `charts/relayauth/`, `charts/sessions-pipeline/`, `charts/sessions-pipeline-worker/`, `charts/alleyoop/`, `charts/relayhistory/`, `charts/relay-cloud-api/`, `charts/relay-dashboard/`, `charts/relayflows/`, `charts/durable-actors/`, `charts/relayfile/` | Leaf chart sources the umbrella depends on (Relayflows opt-in; durable-actors and Relayfile preview) |
+| `charts/relaycast/`, `charts/relayauth/`, `charts/sessions-pipeline/`, `charts/sessions-pipeline-worker/`, `charts/session-ingest-api/`, `charts/relayhistory/`, `charts/relay-cloud-api/`, `charts/relay-dashboard/`, `charts/relayflows/`, `charts/durable-actors/`, `charts/relayfile/` | Leaf chart sources the umbrella depends on (Relayflows opt-in; durable-actors and Relayfile preview) |
 | `.agents/skills/setting-up-self-hosted-agent-relay-gcp/` | Setup, safety, preflight, deployment, Desktop, pre-upgrade, and public-verification skill |
 | `docs/` | Reference architecture, architecture and request-flow diagrams (`docs/diagrams/`), image supply chain, backup/restore runbook, conformance contract, and licenses |
 | `scripts/selfhost/`, `scripts/release/`, `scripts/conformance/` | Read-only verification, pre-upgrade gate, release validator, conformance tests, and the end-to-end harness (`e2e-gcp-proof.sh`) |

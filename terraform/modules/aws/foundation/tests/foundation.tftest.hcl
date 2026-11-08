@@ -9,6 +9,7 @@ mock_provider "aws" {
   mock_resource "aws_cloudwatch_log_group" { defaults = { arn = "arn:aws:logs:us-west-2:111111111111:log-group:example" } }
   mock_resource "aws_launch_template" { defaults = { id = "lt-0123456789abcdef0", latest_version = 1 } }
   mock_resource "aws_iam_role" { defaults = { arn = "arn:aws:iam::111111111111:role/example" } }
+  mock_resource "aws_iam_policy" { defaults = { arn = "arn:aws:iam::111111111111:policy/example" } }
 }
 variables {
   account_id               = "111111111111"
@@ -268,5 +269,69 @@ run "reviewed_retirement_toggle" {
   assert {
     condition     = !aws_eks_cluster.this.deletion_protection
     error_message = "Reviewed EKS retirement must be able to disable API deletion protection explicitly."
+  }
+}
+
+run "load_balancer_controller_off_by_default" {
+  command = plan
+  assert {
+    condition     = length(aws_iam_policy.lbc) == 0 && length(aws_iam_role_policy_attachment.lbc) == 0 && length(aws_eks_pod_identity_association.lbc) == 0 && join(",", sort(keys(aws_iam_role.this))) == "cluster,cni,ebs,node"
+    error_message = "Existing roots must not gain Load Balancer Controller resources unless they opt in."
+  }
+  assert {
+    condition     = output.load_balancer_controller == null
+    error_message = "The Helm references must be null while the controller is disabled."
+  }
+}
+run "load_balancer_controller_enabled" {
+  command = apply
+  variables { enable_load_balancer_controller = true }
+  assert {
+    condition     = aws_iam_policy.lbc[0].name == "agent-relay-dev-lbc" && aws_iam_policy.lbc[0].path == "/" && aws_iam_policy.lbc[0].tags["ManagedBy"] == "terraform" && aws_iam_role.this["lbc"].name == "agent-relay-dev-lbc" && aws_iam_role.this["lbc"].path == "/" && aws_iam_role.this["lbc"].tags["Environment"] == "dev"
+    error_message = "Policy and role must use the <cluster>-lbc name, module path and tags that imports expect."
+  }
+  assert {
+    condition     = jsondecode(aws_iam_role.this["lbc"].assume_role_policy).Statement[0].Principal.Service == "pods.eks.amazonaws.com" && jsondecode(aws_iam_role.this["lbc"].assume_role_policy).Statement[0].Action == ["sts:AssumeRole", "sts:TagSession"]
+    error_message = "The controller role must trust Pod Identity with AssumeRole and TagSession."
+  }
+  assert {
+    condition     = jsondecode(aws_iam_role.this["lbc"].assume_role_policy).Statement[0].Condition.StringEquals["aws:RequestTag/kubernetes-namespace"] == "kube-system" && jsondecode(aws_iam_role.this["lbc"].assume_role_policy).Statement[0].Condition.StringEquals["aws:RequestTag/kubernetes-service-account"] == "aws-load-balancer-controller" && jsondecode(aws_iam_role.this["lbc"].assume_role_policy).Statement[0].Condition.StringEquals["aws:RequestTag/eks-cluster-name"] == "agent-relay-dev"
+    error_message = "The controller role trust must be scoped to one cluster, namespace and ServiceAccount."
+  }
+  assert {
+    condition     = aws_iam_role_policy_attachment.lbc[0].role == aws_iam_role.this["lbc"].name && aws_iam_role_policy_attachment.lbc[0].policy_arn == aws_iam_policy.lbc[0].arn
+    error_message = "The controller policy must be attached to its own role."
+  }
+  assert {
+    condition     = aws_eks_pod_identity_association.lbc[0].cluster_name == aws_eks_cluster.this.name && aws_eks_pod_identity_association.lbc[0].namespace == "kube-system" && aws_eks_pod_identity_association.lbc[0].service_account == "aws-load-balancer-controller" && aws_eks_pod_identity_association.lbc[0].role_arn == aws_iam_role.this["lbc"].arn && aws_eks_pod_identity_association.lbc[0].tags["ManagedBy"] == "terraform"
+    error_message = "The association must bind the controller ServiceAccount to its role."
+  }
+  assert {
+    condition     = jsondecode(aws_iam_policy.lbc[0].policy).Version == "2012-10-17" && jsondecode(aws_iam_policy.lbc[0].policy).Statement[0].Condition.StringEquals["iam:AWSServiceName"] == "elasticloadbalancing.amazonaws.com" && contains(flatten([for s in jsondecode(aws_iam_policy.lbc[0].policy).Statement : s.Action]), "elasticloadbalancing:CreateLoadBalancer")
+    error_message = "The committed controller policy document must be used."
+  }
+  assert {
+    condition     = output.load_balancer_controller.cluster_name == aws_eks_cluster.this.name && output.load_balancer_controller.region == "us-west-2" && output.load_balancer_controller.vpc_id == aws_vpc.this.id && output.load_balancer_controller.namespace == "kube-system" && output.load_balancer_controller.service_account_name == "aws-load-balancer-controller" && output.load_balancer_controller.role_arn == aws_iam_role.this["lbc"].arn
+    error_message = "Outputs must carry every value the Helm install needs."
+  }
+  assert {
+    condition     = jsondecode(aws_iam_role.this["cni"].assume_role_policy).Statement[0].Condition.StringEquals["aws:RequestTag/kubernetes-service-account"] == "aws-node" && jsondecode(aws_iam_role.this["ebs"].assume_role_policy).Statement[0].Condition.StringEquals["aws:RequestTag/kubernetes-service-account"] == "ebs-csi-controller-sa" && jsondecode(aws_iam_role.this["node"].assume_role_policy).Statement[0].Action == ["sts:AssumeRole"]
+    error_message = "Enabling the controller must leave the other role trust policies unchanged."
+  }
+}
+run "load_balancer_controller_pippen_scope" {
+  command = apply
+  variables {
+    name_prefix                     = "pippen-sbx-ar"
+    pippen                          = { agent = "example-agent", session_id = "example-session" }
+    enable_load_balancer_controller = true
+  }
+  override_data {
+    target = data.aws_caller_identity.current
+    values = { account_id = "111111111111", arn = "arn:aws:sts::111111111111:assumed-role/agent-session/agent-example-session" }
+  }
+  assert {
+    condition     = aws_iam_policy.lbc[0].path == "/pippen/workload/" && aws_iam_policy.lbc[0].tags["pippen:session"] == "example-session" && aws_iam_role.this["lbc"].path == "/pippen/workload/" && aws_iam_role.this["lbc"].permissions_boundary == local.boundary
+    error_message = "Pippen controller IAM must use the workload path, boundary and lease tags."
   }
 }

@@ -60,7 +60,7 @@ TAG_SPEC_TAGS="{Key=${TAG_KEY},Value=true},{Key=Name,Value=${NAME}}"
 # (Relaycast runs SQLite on EBS in this profile and needs no bucket access.)
 POD_IDENTITY_SAS=(
   "${RELEASE}-worker"
-  "${RELEASE}-alleyoop"
+  "${RELEASE}-session-ingest-api"
 )
 
 # cluster_exists: 0 present, 1 absent (ResourceNotFoundException); any other

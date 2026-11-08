@@ -516,6 +516,32 @@ class Stack:
             time.sleep(2)
         raise StackError(f"Job {name} did not complete in {seconds}s")
 
+    def require_no_legacy_storage(self):
+        if not self.k("get", "namespace", NS, "--ignore-not-found", "-o", "json", namespace=None).stdout.strip():
+            return  # A previously created, owned cluster may still be empty.
+        objects = json.loads(self.k("get", "deploy,pvc", "-o", "json").stdout).get("items", [])
+        for item in objects:
+            metadata = item.get("metadata", {})
+            if metadata.get("name") == "locker" or metadata.get("annotations", {}).get("meta.helm.sh/release-name") == "kind-locker":
+                raise StackError("legacy kind-locker storage exists: preserve its release/PVC and complete a reviewed data-preserving cutover before kind-up; no reset or replacement was attempted")
+
+    def require_control_webapp_layout(self):
+        """A public-name change must not orphan the existing QA resources."""
+        if not self.k("get", "namespace", NS, "--ignore-not-found", "-o", "json", namespace=None).stdout.strip():
+            return
+        resources = json.loads(self.k("get", "deployments,services", "-o", "json").stdout)
+        legacy = []
+        for resource in resources.get("items", []):
+            meta = resource.get("metadata", {})
+            name = meta.get("name", "")
+            app = meta.get("labels", {}).get("app.kubernetes.io/name", "")
+            if name in ("relaycontrol", "relay-app") or app in ("relay-cloud-api", "relay-dashboard"):
+                legacy.append(resource.get("kind", "resource") + "/" + name)
+        if legacy:
+            raise StackError("existing Control/Webapp layout requires a reviewed identity-preserving upgrade; "
+                             "kind-up refuses before changing ready.json, images or cluster resources: "
+                             + ", ".join(sorted(legacy)))
+
     def up(self):
         for tool in ("docker", "kind", "kubectl", "helm", "openssl", "git"):
             if not shutil.which(tool):
@@ -526,6 +552,8 @@ class Stack:
         # preparing any images/resources; cluster() checks again before use.
         if self.name in self.cmd(["kind", "get", "clusters"], timeout=30).stdout.splitlines():
             self.require_owned_cluster()
+            self.require_no_legacy_storage()
+            self.require_control_webapp_layout()
         ready = self.state / "ready.json"
         if ready.exists():
             ready.unlink()
@@ -566,25 +594,25 @@ class Stack:
                      "infraRevision": self.cmd(["git", "rev-parse", "HEAD"]).stdout.strip()})
         self.postgres(s, services_image)
         locker_values = self.state / "locker-values.json"
-        defaults = yaml.safe_load((ROOT / "charts/sessions-pipeline/values.yaml").read_text())["locker"]
+        defaults = yaml.safe_load((ROOT / "charts/sessions-pipeline/values.yaml").read_text())["session-object-storage"]
         defaults.update(existingSecret="kind-pipeline", persistence={"enabled": True, "size": "2Gi"})
         private_json(locker_values, defaults)
-        self.cmd(["helm", "upgrade", "--install", "kind-locker", "charts/sessions-pipeline/charts/minio-5.4.0.tgz", "-n", NS,
+        self.cmd(["helm", "upgrade", "--install", "kind-session-object-storage", "charts/sessions-pipeline/charts/minio-5.4.0.tgz", "-n", NS,
                   "-f", locker_values, "--wait", "--timeout", "5m"], timeout=330)
         for d in docs:
             if d["kind"] in ("Deployment", "Service") and d["metadata"]["name"] in ("relaycast", "relayauth"):
                 self.apply(d, chart=True)
-        self.migration(docs, "relay-cloud-api")
+        self.migration(docs, "relay-control")
         for d in docs:
-            if d["kind"] in ("Deployment", "Service") and d["metadata"]["name"] == "relaycontrol":
+            if d["kind"] in ("Deployment", "Service") and d["metadata"]["name"] == "relay-control":
                 self.apply(d, chart=True)
-        self.k("rollout", "status", "deployment/relaycontrol", "--timeout=180s", timeout=210)
+        self.k("rollout", "status", "deployment/relay-control", "--timeout=180s", timeout=210)
         # Query the real first-boot records, not a fixture organization id.
         bootstrap = (ROOT / "ci/agent-relay/kind/bootstrap.mjs").read_text()
-        self.k("exec", "-i", "deploy/relaycontrol", "--", "sh", "-c", "cat > /tmp/kind-bootstrap.mjs", data=bootstrap)
-        bootstrap_name = next((e["value"] for d in docs if d["kind"] == "Deployment" and d["metadata"]["name"] == "relaycontrol"
+        self.k("exec", "-i", "deploy/relay-control", "--", "sh", "-c", "cat > /tmp/kind-bootstrap.mjs", data=bootstrap)
+        bootstrap_name = next((e["value"] for d in docs if d["kind"] == "Deployment" and d["metadata"]["name"] == "relay-control"
                               for e in pod_spec(d)["containers"][0]["env"] if e["name"] == "SELFHOST_BOOTSTRAP_WORKSPACE_NAME"), "Default")
-        ids = json.loads(self.k("exec", "deploy/relaycontrol", "--", "node", "/tmp/kind-bootstrap.mjs", bootstrap_name).stdout)
+        ids = json.loads(self.k("exec", "deploy/relay-control", "--", "node", "/tmp/kind-bootstrap.mjs", bootstrap_name).stdout)
         private_json(self.state / "tenant.json", ids)
         values = json.loads(self.overrides.read_text()) if self.overrides.exists() else {}
         private_json(self.overrides, tenant_values(values, ids, self.profile, self.arch, self.recipe_hash()))

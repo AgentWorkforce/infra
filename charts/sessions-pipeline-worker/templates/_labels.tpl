@@ -20,10 +20,10 @@ Usage: include "sessions-pipeline-worker.componentLabels" (dict "context" . "com
 */}}
 {{- define "sessions-pipeline-worker.componentLabels" -}}
 {{ include "sessions-pipeline-worker.labels" .context }}
-app.kubernetes.io/component: {{ .component }}
+app.kubernetes.io/component: {{ include "sessions-pipeline-worker.publicComponent" . }}
 {{- end }}
 
 {{- define "sessions-pipeline-worker.componentSelectorLabels" -}}
 {{ include "sessions-pipeline-worker.selectorLabels" .context }}
-app.kubernetes.io/component: {{ .component }}
+app.kubernetes.io/component: {{ include "sessions-pipeline-worker.publicComponent" . }}
 {{- end }}

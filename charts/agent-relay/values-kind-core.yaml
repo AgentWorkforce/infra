@@ -6,8 +6,8 @@ localKind:
   profile: core
   temporaryRelayauth: true
 components:
-  cloudApi: true
-  dashboard: true
+  control: true
+  webapp: true
   relaycast: true
   relayhistory: true
   sessionsPipeline: true
@@ -18,8 +18,8 @@ components:
 global:
   tenant: { orgId: kind-bootstrap }
   otel: { endpoint: "" }
-relay-cloud-api:
-  fullnameOverride: relaycontrol
+relay-control:
+  fullnameOverride: relay-control
   image:
     repository: ghcr.io/agentworkforce/selfhost-api
     digest: sha256:95c7877741054dc2f1cafa26be3faa9bfe4660ed85d637aef4524daa10481963
@@ -47,14 +47,14 @@ relay-cloud-api:
   networkPolicy: { enabled: false }
   resources:
     requests: { cpu: 50m, memory: 128Mi }
-relay-dashboard:
-  fullnameOverride: relay-app
+relay-webapp:
+  fullnameOverride: relay-webapp
   image:
     repository: ghcr.io/agentworkforce/relay-dashboard
-    digest: sha256:c50005fcdd1fc5ab5ef3dac9b621db8e0c7e03480406bfe519743ae435d8f1ad
+    digest: sha256:e4de2c628e72e906e809fd32e6192baa7c93a404eb019964cd7706805e316e6a
   runtime:
     publicUrl: https://relay.kind.agentrelay.com:8443
-  api: { serviceName: relaycontrol }
+  api: { serviceName: relay-control }
   ingress:
     enabled: true
     className: traefik
@@ -103,7 +103,7 @@ relayhistory:
     historyOrigin: https://history.kind.agentrelay.com:8443
     jwksUrl: http://relayauth.agent-relay.svc.cluster.local:8787/.well-known/jwks.json
     issuer: http://relayauth.agent-relay.svc.cluster.local:8787
-  agentRelayCloud: { apiUrl: "http://relaycontrol.agent-relay.svc.cluster.local" }
+  agentRelayCloud: { apiUrl: "http://relay-control.agent-relay.svc.cluster.local" }
   networkPolicy: { enabled: false }
   resources:
     requests: { cpu: 50m, memory: 128Mi }
@@ -115,12 +115,20 @@ relayhistory:
       - secretName: kind-tls
         hosts: [history.kind.agentrelay.com]
 sessions-pipeline:
+  # Held until the approved read assembly/image and ingest/auth contract land.
+  readApi:
+    enabled: false
+    search: { backend: postgres }
   # Local Postgres is created before any schema migration; no CNPG operator.
   hoopdb: { enabled: false }
-  locker: { enabled: false }
+  session-object-storage: { enabled: false }
   otel: { enabled: false }
   worker:
     fullnameOverride: sessions
+    components:
+      bob-costas: { fullnameOverride: session-summary-worker }
+      hoopdb-indexer: { fullnameOverride: session-metadata-indexer }
+      referee: { fullnameOverride: session-status-worker }
     image:
       repository: ghcr.io/agentworkforce/96bulls-services
       digest: sha256:070fe6fd46ecd1e1f9db32ff22379f6df9b9e6c4d48ede5312c8fb986a95f3a9
@@ -144,7 +152,7 @@ sessions-pipeline:
       - { name: SEARCH_INDEX_BACKEND, value: postgres }
     networkPolicy: { enabled: false }
   alleyoop:
-    fullnameOverride: alleyoop
+    fullnameOverride: session-ingest-api
     image:
       repository: ghcr.io/agentworkforce/96bulls-services
       digest: sha256:070fe6fd46ecd1e1f9db32ff22379f6df9b9e6c4d48ede5312c8fb986a95f3a9
