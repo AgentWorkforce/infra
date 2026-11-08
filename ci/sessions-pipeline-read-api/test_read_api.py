@@ -119,6 +119,67 @@ class ReadApi(unittest.TestCase):
                 self.assertIn("readApi.auth.mode must be", self.render(
                     overlay={"auth": {"mode": mode}}, fail=True))
 
+    def test_canonical_bucket_requires_explicit_org_layout_and_bare_writer_root(self):
+        correct = {"LOCKER_BUCKET": "sessions", "PIPELINE_ORG_FROM_PREFIX": "true",
+                   "PIPELINE_KEY_PREFIX": "96bulls"}
+        def entries(values):
+            return [{"name": name, "value": value} for name, value in values.items()]
+        for mode in ("legacy", "relaycontrol_only"):
+            auth = {"mode": mode}
+            if mode == "relaycontrol_only":
+                auth["relayauth"] = {"jwksUrl": "", "issuer": ""}
+            with self.subTest(mode=mode):
+                docs = self.render(overlay={"auth": auth, "extraEnv": entries(correct)})
+                deploy = next(d for d in docs if d["kind"] == "Deployment")
+                env = {e["name"]: e.get("value") for e in deploy["spec"]["template"]["spec"]["containers"][0]["env"]}
+                for name, value in correct.items():
+                    self.assertEqual(env[name], value)
+                invalid = [{"LOCKER_BUCKET": "sessions"}]
+                for name, values in (("PIPELINE_ORG_FROM_PREFIX", (None, "", "false", False, "TRUE", 1)),
+                                     ("PIPELINE_KEY_PREFIX", (None, "", "96bulls/org_ci", "other", "96bulls/"))):
+                    for value in values:
+                        config = dict(correct)
+                        if value is None:
+                            config.pop(name)
+                        else:
+                            config[name] = value
+                        invalid.append(config)
+                for config in invalid:
+                    with self.subTest(config=config):
+                        self.assertIn("readApi LOCKER_BUCKET requires literal PIPELINE_", self.render(
+                            overlay={"auth": auth, "extraEnv": entries(config)}, fail=True))
+
+    def test_canonical_layout_cannot_be_deferred_to_unknown_env_references(self):
+        correct = [{"name": "LOCKER_BUCKET", "value": "sessions"},
+                   {"name": "PIPELINE_ORG_FROM_PREFIX", "value": "true"},
+                   {"name": "PIPELINE_KEY_PREFIX", "value": "96bulls"}]
+        for index in range(len(correct)):
+            env = [dict(e) for e in correct]
+            env[index] = {"name": correct[index]["name"], "valueFrom": {
+                "configMapKeyRef": {"name": "unverified-layout", "key": "value"}}}
+            with self.subTest(name=correct[index]["name"]):
+                self.assertIn("readApi LOCKER_BUCKET requires", self.render(
+                    overlay={"extraEnv": env}, fail=True))
+        for bucket in ("", " ", False):
+            env = [dict(e) for e in correct]
+            env[0]["value"] = bucket
+            with self.subTest(bucket=bucket):
+                self.assertIn("explicit nonempty literal", self.render(overlay={"extraEnv": env}, fail=True))
+
+    def test_reader_service_name_and_unprivileged_container_port_boundaries(self):
+        for name in ("1-reader", "UPPER", "bad.name", "a" * 64):
+            with self.subTest(name=name):
+                self.assertIn("DNS-1035", self.render(overlay={"fullnameOverride": name}, fail=True))
+        for port in (1, 80, 1023, 65536):
+            with self.subTest(port=port):
+                self.assertIn("readApi.port", self.render(overlay={"port": port}, fail=True))
+        for port in (1024, 65535):
+            docs = self.render(overlay={"fullnameOverride": "a-reader-1", "port": port})
+            deploy = next(d for d in docs if d["kind"] == "Deployment")
+            service = next(d for d in docs if d["kind"] == "Service")
+            self.assertEqual(service["metadata"]["name"], "a-reader-1")
+            self.assertEqual(deploy["spec"]["template"]["spec"]["containers"][0]["ports"][0]["containerPort"], port)
+
     def test_public_origin_rejects_credentials_private_hosts_and_invalid_ports(self):
         invalid = [
             "http://history.agentrelay.com", "https://user:example@history.agentrelay.com",
@@ -258,6 +319,20 @@ class IngestEdge(unittest.TestCase):
     def test_disabled_needs_no_image_secrets_or_ca(self):
         self.assertEqual(self.render(overlay={"enabled": False, "image": {"digest": ""},
                          "config": {"existingSecret": ""}, "postgres": {"caConfigMap": "", "caSha256": ""}}), [])
+
+    def test_edge_service_name_and_unprivileged_container_port_boundaries(self):
+        for name in ("1-edge", "UPPER", "bad.name", "a" * 64):
+            with self.subTest(name=name):
+                self.assertIn("DNS-1035", self.render(overlay={"fullnameOverride": name}, fail=True))
+        for port in (1, 80, 1023, 65536):
+            with self.subTest(port=port):
+                self.assertIn("ingestEdge.port", self.render(overlay={"port": port}, fail=True))
+        for port in (1024, 65535):
+            docs = self.render(overlay={"fullnameOverride": "a-edge-1", "port": port})
+            deploy = next(d for d in docs if d["kind"] == "Deployment")
+            service = next(d for d in docs if d["kind"] == "Service")
+            self.assertEqual(service["metadata"]["name"], "a-edge-1")
+            self.assertEqual(deploy["spec"]["template"]["spec"]["containers"][0]["ports"][0]["containerPort"], port)
 
     def test_edge_is_distinct_internal_service_with_secret_refs_and_ca(self):
         docs = self.render()

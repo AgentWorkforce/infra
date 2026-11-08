@@ -19,6 +19,9 @@ Supply an explicit registry DNS host and image path, plus a qualified digest
 whose exact image contains the merged service. The
 previous reader-only image does not contain this entrypoint. Chart rendering
 does not verify an image's source, generation, role grants or behavior.
+The container port is restricted to 1024–65535 for the non-root, capability-free
+process; its default is 8081. This is independent of the public origin port.
+The shared Deployment/Service name must be a letter-first DNS-1035 label.
 
 The following is a configuration shape, not deployable values:
 
@@ -112,6 +115,10 @@ This selects backend behavior; chart checks do not prove the image's verifier.
 Merged #364 also binds detail reads through `LOCKER_*`, with S3 static keys or
 Pod Identity supported. Whenever `LOCKER_BUCKET` is supplied, upstream startup
 requires `PIPELINE_ORG_FROM_PREFIX=true`; the bare root rule above still applies.
+The chart enforces this before rendering: a `LOCKER_BUCKET` extraEnv entry must
+be a nonempty literal with literal `PIPELINE_ORG_FROM_PREFIX=true` and
+`PIPELINE_KEY_PREFIX=96bulls`. Missing/false flags, org-suffixed or other roots,
+and valueFrom references for these three layout inputs refuse rendering.
 Transport and object-store settings remain explicit operator configuration via
 the existing reader extraEnv/CA mounts, with credentials in Secret references.
 No store, credentials, auth mode, image or reader is enabled in a profile here.

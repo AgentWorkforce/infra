@@ -338,6 +338,7 @@ readApi:
     digest: ""
     pullPolicy: IfNotPresent
   imagePullSecrets: []
+  # Unprivileged container port: 1024-65535, independent of public origin port.
   port: 8080
   # The services image uses Bun; Node-only compatible images may select node.
   probeRuntime: bun
@@ -370,6 +371,9 @@ readApi:
       key: RELAYCONTROL_INTROSPECT_SECRET
   # TLS CA mounts, transport/adaptor configuration and other upstream options.
   # Credential values belong in Secret key refs, not literal extraEnv values.
+  # LOCKER_BUCKET requires a nonempty literal plus literal
+  # PIPELINE_ORG_FROM_PREFIX=true and PIPELINE_KEY_PREFIX=96bulls (bare root).
+  # These three layout inputs cannot use valueFrom: admission must see them.
   extraEnv: []
   extraVolumes: []
   extraVolumeMounts: []
@@ -393,6 +397,7 @@ ingestEdge:
     digest: ""
     pullPolicy: IfNotPresent
   imagePullSecrets: []
+  # Unprivileged container port: 1024-65535, independent of public origin port.
   port: 8081
   # Normalized public HTTPS origin; must equal the reader's READ_API_ORIGIN.
   origin: ""

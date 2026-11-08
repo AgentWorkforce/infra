@@ -3410,7 +3410,11 @@ entries:
       chart mode) or auth.mode=relaycontrol_only from merged pipeline #364.
       Control-only mode requires enabled introspection and empty legacy issuer
       settings, emits READ_API_AUTH_MODE, and omits both RELAYAUTH variables.
-      It cannot be injected through extraEnv. Search is selected
+      It cannot be injected through extraEnv. A LOCKER_BUCKET extraEnv entry
+      requires a nonempty literal bucket, literal PIPELINE_ORG_FROM_PREFIX=true
+      and PIPELINE_KEY_PREFIX=96bulls. Missing/false flags, org-suffixed roots
+      and valueFrom references for these layout inputs refuse rendering.
+      Search is selected
       via SEARCH_INDEX_BACKEND (postgres by default) through the upstream adapter
       registry, not implemented in this chart. Introspection uses
       its own Secret reference. Readiness requires health JSON enabled:true;
@@ -3419,7 +3423,7 @@ entries:
       runtime assembly remains unqualified, so this entry does not claim runtime availability or proof.
     chart: sessions-pipeline
     values: [readApi.*]
-    env: [SERVICE, RELAYHISTORY_SELFHOST_READ_API, RELAYHISTORY_READ_API_PORT, RELAYHISTORY_READ_API_SECRET, READ_API_ORIGIN, READ_API_AUTH_MODE, READ_API_COMPLETE_SINCE, READ_API_DIRECTORY_WORKSPACES, SEARCH_INDEX_BACKEND, ALLOW_IN_CLUSTER_HTTP, RELAYAUTH_JWKS_URL, RELAYAUTH_ISSUER, RELAYHISTORY_ACCEPT_RELAYCONTROL_TOKENS, RELAYCONTROL_INTROSPECT_URL, RELAYCONTROL_INTROSPECT_SECRET]
+    env: [SERVICE, RELAYHISTORY_SELFHOST_READ_API, RELAYHISTORY_READ_API_PORT, RELAYHISTORY_READ_API_SECRET, READ_API_ORIGIN, READ_API_AUTH_MODE, LOCKER_BUCKET, PIPELINE_ORG_FROM_PREFIX, PIPELINE_KEY_PREFIX, READ_API_COMPLETE_SINCE, READ_API_DIRECTORY_WORKSPACES, SEARCH_INDEX_BACKEND, ALLOW_IN_CLUSTER_HTTP, RELAYAUTH_JWKS_URL, RELAYAUTH_ISSUER, RELAYHISTORY_ACCEPT_RELAYCONTROL_TOKENS, RELAYCONTROL_INTROSPECT_URL, RELAYCONTROL_INTROSPECT_SECRET]
     profiles: [selfhost-postgres, migration, external-selfhosted, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql]
     status: shipped
     provided_by: operator

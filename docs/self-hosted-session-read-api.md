@@ -57,7 +57,11 @@ keys or Pod Identity supported). When `LOCKER_BUCKET` is configured, upstream
 requires `PIPELINE_ORG_FROM_PREFIX=true`. For the inline test/pilot assembly,
 `PIPELINE_KEY_PREFIX` is the bare `INGEST_KEY_ROOT` (`96bulls`), never an org
 suffix. These transport settings still use explicit extraEnv and CA mounts;
-credential settings require Secret key references. This auth-mode change adds
+the chart requires nonempty literal `LOCKER_BUCKET`, literal
+`PIPELINE_ORG_FROM_PREFIX=true` and `PIPELINE_KEY_PREFIX=96bulls` together when
+a bucket is supplied. Missing or false flags, org-suffixed roots and valueFrom
+references for these layout inputs are refused before a Deployment is rendered.
+Credential settings require Secret key references. This auth-mode change adds
 no object-store configuration or native image acceptance. See the
 [native composition contract](self-hosted-native-ingest.md).
 
@@ -68,7 +72,10 @@ backend data availability; the full authenticated session-read proof is still
 required.
 
 The Service is ClusterIP on port 80, targeting the configured container port
-(default 8080). No ingress or control backend is changed automatically. A future
+(default 8080, allowed range 1024–65535 for the non-root container). The shared
+Deployment/Service name must be a letter-first DNS-1035 label. The container
+port restriction does not change the public origin port contract. No ingress
+or control backend is changed automatically. A future
 approved deployment can point relaycontrol at the Service FQDN, but only after
 its workspace list/search/events/catalog contract, upload path, reported usage
 and tenant isolation all pass together. The new read service does not silently
