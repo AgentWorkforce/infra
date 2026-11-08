@@ -560,6 +560,18 @@ the legacy receipt, and updates only the local ownership record. It preserves
 the cluster and kubeconfig. Missing original identity or any mismatch fails;
 normal `kind-up` and `kind-down` never recover a receipt implicitly.
 
+After an operator has separately completed and qualified the public workload
+rename, use the explicit [named-layout reconciliation](docs/descriptive-session-names.md#reconcile-a-completed-local-kind-cutover)
+before reusing that existing fixture. It verifies the original cluster/readiness
+identity, live Helm ownership, the original storage claim, seeded objects and
+the selected native Control archive. It retains the original `kind-locker`
+release and PVC through a persistent postrenderer selection, preserves the
+existing Postgres server configuration, and refuses credential mismatches.
+It archives old local selection/readiness metadata and imports the actual
+installed values, including any later qualified site-origin settings. It does
+not perform the rename or issue a new acceptance result. Ordinary `kind-up`
+continues to refuse an unqualified old or mismatched layout.
+
 To build and install the pinned MCP-capable control source without registry
 publication, use the same profile and local fixture with:
 
