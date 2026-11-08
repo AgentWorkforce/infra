@@ -8,7 +8,50 @@ The first negative run used PR #76 at `73f9a0eb8ab52e390856e5bd5ca3812e19f5fe7a`
 No cloud account, registry publication, deployment outside kind, or image/volume
 pruning was performed.
 
-## Current ownership and live reuse validation
+## Fresh ar-lap setup and protocol proof
+
+At source `1c203f59fd22c4355fe309244593eef24e40d1ea`, a subagent performed
+a fresh install on ar-lap, a native ARM Mac, following Khaliq's explicit setup
+request. `make kind-up PROFILE=core` exited 0; all ten suite deployments and
+Traefik were ready. A single real `make kind-proof PROFILE=core` run recorded
+**57 PASS, 0 FAIL, 3 PENDING**, exit 2. The byte-identical, credential-checked
+[proof](ar-lap-proof.json), [readiness](ar-lap-ready.json),
+[image/generation](ar-lap-images.json) and
+[control artifact transport](ar-lap-control-transport.json) receipts are separate
+from the earlier Finn reuse receipts below.
+
+The native control image was reused from the verified Finn build at `1f08cb6`,
+not built on ar-lap. The archive SHA-256, native platform, source revision,
+manifest digest and config digest were checked before import. No registry
+publication or credential transfer was needed. Three portability fixes were
+exercised on the actual Mac: anonymous public Docker pulls without keychain
+access; Docker exports without optional descriptor platform metadata, while
+mandatory native image-config and digest checks remain; and LibreSSL signing
+keys converted to PKCS#8 with the same public identity and a private backup.
+The final source also passes 58 Python and 9 Node checks locally; the three auth
+key tests additionally passed against macOS LibreSSL. GitHub Actions completion
+is a separate requirement and is not implied by these local results.
+
+The new courier session `7b847789-498a-4e30-8188-cd5cb504407e` was uploaded,
+indexed and verified through Locker/referee with real owner attribution, trace
+and processing events. The Default workspace application API returned HTTP 200
+without that session, so `pipeline.app_visibility` is still pending. Launch/
+release and fixture workspace deletion are the other two pending checks. Cast
+uses SQLite in this baseline; this does not qualify the final shared-Postgres
+target, a custom Desktop artifact, component analytics adapters or add-ons.
+
+On ar-lap, the running fixture is in
+`~/Projects/AgentWorkforce/infra-worktrees/kind-core`. Source its private scoped
+`.kind/ar-lap-env.sh` for local tools and kubeconfig. Its login endpoint is
+`https://relay.kind.agentrelay.com:8443/login`; a verified-CA request returned
+200. The public CA and hosts entries are `.kind/core/ca.crt` and
+`.kind/core/hosts`. No system trust or DNS changes were made. The local operator
+login helper verifies this installation's own organization, workspace and real
+owner before approving a human's own pending device code; no human code was
+approved during setup. The machine-local `.kind/ar-lap-setup.md` contains the
+complete access instructions. The cluster remains running for the cofounder.
+
+## Earlier Finn ownership and live reuse validation
 
 Explicit recovery at `1c7838b` required the native UID already captured in the
 original readiness receipt, matched it against the live cluster and node labels,
