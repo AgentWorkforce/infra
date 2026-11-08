@@ -300,6 +300,9 @@ find_pod() { # namespace selector
 
 install_driver() {
   API_POD="$(find_pod "$NAMESPACE" 'app.kubernetes.io/name=relay-control,app.kubernetes.io/component=api')"
+  if [[ -z "$API_POD" ]]; then
+    API_POD="$(find_pod "$NAMESPACE" 'app.kubernetes.io/name=relay-cloud-api,app.kubernetes.io/component=api')"
+  fi
   [[ -n "$API_POD" ]] || return 1
   "${KN[@]}" exec -i "$API_POD" -- sh -c 'umask 077; cat > /tmp/e2e-gcp-proof-driver.mjs' <"$DRIVER"
 }

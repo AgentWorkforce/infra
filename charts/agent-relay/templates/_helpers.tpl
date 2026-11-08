@@ -3,7 +3,7 @@
 {{- if hasKey $.Values $old }}{{ fail (printf "values key %s was renamed to %s; translate overrides explicitly before upgrading (docs/control-webapp-chart-rename.md)" $old $new) }}{{ end }}
 {{- end }}
 {{- range $old, $new := dict "cloudApi" "control" "dashboard" "webapp" }}
-{{- if hasKey ($.Values.components | default dict) $old }}{{ fail (printf "components.%s was renamed to components.%s; translate overrides explicitly before upgrading" $old $new) }}{{ end }}
+{{- if hasKey ($.Values.components | default dict) $old }}{{ fail (printf "components.%s was renamed to components.%s; translate overrides explicitly before upgrading (docs/control-webapp-chart-rename.md)" $old $new) }}{{ end }}
 {{- end }}
 {{- if and (dig "relaycast" true (.Values.components | default dict)) (eq (dig "credentials" "authority" "" (.Values.relaycast | default dict)) "relayauth") (not (dig "relayauth" true (.Values.components | default dict))) }}
 {{- fail "relaycast.credentials.authority=relayauth requires components.relayauth=true: RelayAuth is the ar_ credential authority that pushes ar_ws_ keys into Relaycast" }}

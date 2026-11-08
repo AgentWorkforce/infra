@@ -28,7 +28,7 @@ app.kubernetes.io/component: api
 {{- define "relay-control.image" -}}
 {{- $digest := required "image.digest is required; relay-control images must be pinned by sha256 digest" .Values.image.digest -}}
 {{- if not (regexMatch "^sha256:[a-f0-9]{64}$" $digest) }}{{ fail "image.digest must be sha256:<64 lowercase hex characters>" }}{{ end -}}
-{{- printf "%s@%s" .Values.image.repository $digest -}}
+{{- printf "%s@%s" (required "image.repository is required; select the repository that published this digest" .Values.image.repository) $digest -}}
 {{- end -}}
 {{- /* Single-host mode (global.singleHost.host, set once on the agent-relay
 umbrella): the API is served on that host under /cloud/api, /login and /api
@@ -131,6 +131,7 @@ the chart already sets, including duplicates inside extraEnv. */ -}}
 {{- $fromKeys := keys .valueFrom -}}
 {{- if ne (len $fromKeys) 1 }}{{ fail "extraEnv valueFrom must set exactly one of secretKeyRef, configMapKeyRef, fieldRef, or resourceFieldRef" }}{{ end -}}
 {{- $fromKey := index $fromKeys 0 -}}
+{{- if and (regexMatch "(?i)(^|_)(SECRET|TOKEN|PASSWORD|CREDENTIAL|DSN|API_KEY)$" .name) (ne $fromKey "secretKeyRef") }}{{ fail "sensitive extraEnv settings require valueFrom.secretKeyRef" }}{{ end -}}
 {{- if not (has $fromKey (list "secretKeyRef" "configMapKeyRef" "fieldRef" "resourceFieldRef")) }}{{ fail "extraEnv valueFrom must set exactly one of secretKeyRef, configMapKeyRef, fieldRef, or resourceFieldRef" }}{{ end -}}
 {{- $src := index .valueFrom $fromKey -}}
 {{- if not (kindIs "map" $src) }}{{ fail (printf "extraEnv valueFrom.%s must be an object" $fromKey) }}{{ end -}}
@@ -139,6 +140,7 @@ the chart already sets, including duplicates inside extraEnv. */ -}}
 {{- end -}}
 {{- if and (eq $fromKey "fieldRef") (or (not (kindIs "string" $src.fieldPath)) (not $src.fieldPath)) }}{{ fail "extraEnv valueFrom.fieldRef requires a non-empty string fieldPath" }}{{ end -}}
 {{- if and (eq $fromKey "resourceFieldRef") (or (not (kindIs "string" $src.resource)) (not $src.resource)) }}{{ fail "extraEnv valueFrom.resourceFieldRef requires a non-empty string resource" }}{{ end -}}
+{{- if and (eq $fromKey "resourceFieldRef") (hasKey $src "containerName") }}{{ fail "extraEnv resourceFieldRef.containerName is not supported because api and migrate share these settings" }}{{ end -}}
 {{- if and (eq $fromKey "secretKeyRef") (eq (toString $src.name) (toString $.Values.existingSecret)) (eq (toString $src.key) (toString $.Values.secretKeys.databaseMigrationsUrl)) }}{{ fail "extraEnv must not reference the migration credential secretKeys.databaseMigrationsUrl" }}{{ end -}}
 {{- end -}}
 {{- $managed = append $managed (toString .name) -}}

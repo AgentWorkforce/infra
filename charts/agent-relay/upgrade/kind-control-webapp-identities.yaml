@@ -24,6 +24,7 @@ sessions-pipeline:
       endpoint: http://locker:9000
   alleyoop:
     legacyResourceNames: true
+    # Observed pre-#94 ar-lap 0.3.16 identity, not a fresh 0.4.x release.
     fullnameOverride: alleyoop
     locker:
       endpoint: http://locker:9000

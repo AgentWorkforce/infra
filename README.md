@@ -12,8 +12,10 @@ This repository was renamed from `AgentWorkforce/helm-charts` to `AgentWorkforce
 Update existing clones with `git remote set-url origin git@github.com:AgentWorkforce/infra.git`;
 local directory names may stay unchanged. Existing Helm clients should run
 `helm repo add agentworkforce https://agentworkforce.github.io/infra --force-update`
-and `helm repo update`. Chart names, release-tag format and the
-`ghcr.io/agentworkforce/charts` OCI coordinates stay the same. Historical evidence
+and `helm repo update`. The chart namespace and release-tag format stay the
+same; the two public chart names change from `relay-cloud-api` /
+`relay-dashboard` to `relay-control` / `relay-webapp` as described in the
+[rename guide](docs/control-webapp-chart-rename.md). Historical evidence
 and the release gate’s `helm-charts` license-decision ID retain their original identifiers.
 
 ## Charts
@@ -460,14 +462,20 @@ Prerequisites: Docker Engine 28+ (including native-platform image export),
 kind 0.31+, kubectl, Helm 3.10+, OpenSSL, Git, Python 3.9+, and PyYAML. Allocate
 enough Docker memory for the suite and CNI; budget 20 GiB free disk for a cold
 setup. The optional native control build also needs authenticated Git read
-access to `AgentWorkforce/relay-control`. Warm setup checks cached native image
-sizes plus unpacking headroom.
+access to `AgentWorkforce/relay-control-internal`. The public
+`AgentWorkforce/relay-control` repository contains a squashed release snapshot,
+not the historical commit pinned by this builder. Existing cached checkouts are
+still checked against the exact revision and clean-tree requirements; this does
+not change their remotes or select a newer image. Warm setup checks cached native
+image sizes plus unpacking headroom.
 On Linux the disk preflight measures the admitted daemon’s DockerRootDir. For
 a relocated Docker Desktop disk or another local VM, set
 `KIND_DOCKER_DATA_PATH` to the existing host-side Docker backing file or directory.
 An unavailable storage path refuses setup rather than skipping the check.
-Setup fetches public image/chart/source
-artifacts. Runtime suite pods receive no external egress.
+Setup fetches public image/chart/source artifacts; the optional
+`kind-up-local-control` flow additionally fetches private historical source from
+`AgentWorkforce/relay-control-internal`. Runtime suite pods receive no external
+egress.
 Public image pulls use a private anonymous Docker configuration with explicit
 registry entries, so SSH setup does not invoke a locked native keychain helper
 or inherit `DOCKER_AUTH_CONFIG`. No Docker login or global configuration changes

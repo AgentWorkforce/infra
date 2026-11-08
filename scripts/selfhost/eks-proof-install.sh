@@ -45,6 +45,12 @@ NS="${EKS_PROOF_NAMESPACE:-agent-relay}"
 RELEASE="${EKS_PROOF_RELEASE:-agent-relay}"
 CHART="${EKS_PROOF_CHART:-oci://ghcr.io/agentworkforce/charts/agent-relay}"
 CHART_VERSION="${EKS_PROOF_CHART_VERSION:-0.3.6}"
+# This historical proof emits pre-rename keys. The current source chart needs
+# a separately reviewed upgrade, not ignored legacy overrides.
+case "$CHART_VERSION" in
+  0.3.*|0.4.*) ;;
+  *) printf '%s\n' 'eks-proof-install supports pre-rename chart versions only (0.3.x/0.4.x)' >&2; exit 2 ;;
+esac
 SECRET="${EKS_PROOF_SECRET:-agent-relay-eks-proof}"
 ORG_ID="${EKS_PROOF_ORG_ID:-org_eks_proof}"
 VPC_CIDR="${EKS_PROOF_VPC_CIDR:-10.42.0.0/16}"
@@ -265,7 +271,7 @@ relayhistory:
     ingressFrom:
       - podSelector: {}
       - ipBlock: { cidr: ${VPC_CIDR} }
-relay-control:
+relay-cloud-api:
   existingSecret: ${SECRET}
   publicUrl: ${api}
   dashboardUrl: ${dash}/
@@ -276,7 +282,7 @@ relay-control:
     ingressFrom:
       - podSelector: {}
       - ipBlock: { cidr: ${VPC_CIDR} }
-relay-webapp:
+relay-dashboard:
   runtime:
     publicUrl: ${dash}
   networkPolicy:
@@ -287,8 +293,13 @@ EOF
 }
 
 helm_apply() {
+  local chart_dir
+  chart_dir="$(mktemp -d "$STATE_DIR/chart-${CHART_VERSION}.XXXXXX")"
+  helm pull "$CHART" --version "$CHART_VERSION" --untar --untardir "$chart_dir"
+  local base_values="$chart_dir/agent-relay/values-eks.yaml"
+  [[ -f "$base_values" ]] || { log 'selected chart does not ship values-eks.yaml'; return 1; }
   helm upgrade --install "$RELEASE" "$CHART" --version "$CHART_VERSION" --namespace "$NS" \
-    -f "$ROOT/charts/agent-relay/values-eks.yaml" -f "$STATE_DIR/values-eks-proof.yaml" \
+    -f "$base_values" -f "$STATE_DIR/values-eks-proof.yaml" \
     --wait --timeout 20m
 }
 
@@ -316,7 +327,9 @@ cmd_install() {
   else
     helm_apply
   fi
-  EKS_ALB_DOMAIN="$DOMAIN" EKS_ALB_CERT_ARN="$cert" "$HERE/eks-alb-ingress.sh" "$NS" | kubectl apply -f -
+  EKS_ALB_DOMAIN="$DOMAIN" EKS_ALB_CERT_ARN="$cert" \
+    EKS_ALB_CONTROL_SERVICE=relay-cloud-api EKS_ALB_WEBAPP_SERVICE=relay-dashboard \
+    "$HERE/eks-alb-ingress.sh" "$NS" | kubectl apply -f -
   log "waiting for the ALB hostname"
   local alb=""
   for _ in $(seq 1 60); do
@@ -331,7 +344,7 @@ cmd_install() {
 
 cmd_bootstrap_org() {
   local owner="${EKS_PROOF_OWNER_EMAIL:-owner@${DOMAIN}}"
-  kubectl -n "$NS" exec -i deploy/relay-control -- node --input-type=module - "$owner" <<'JS'
+  kubectl -n "$NS" exec -i deploy/relay-cloud-api -- node --input-type=module - "$owner" <<'JS'
 import { readFileSync } from "node:fs";
 const token = readFileSync("/var/run/agent-relay/secrets/selfhost-bootstrap-token", "utf8").trim();
 const api = "http://127.0.0.1:3000/api/v1/organizations";

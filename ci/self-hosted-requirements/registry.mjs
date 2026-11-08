@@ -483,7 +483,7 @@ function renderDoc() {
     const deps = r.depends ? `<br>(deps: ${Object.values(r.depends).flatMap((d) => Object.entries(d).map(([c, v]) => `${c} ${v}`)).join(', ')})` : '';
     // digest_required: the chart ships no default digest and refuses to render
     // without one, so there is no installable tag to show.
-    const imgs = Object.entries(r.images || {}).map(([c, i]) => `${c}: ${code(`${i.repository}${i.digest ? `@${short(i.digest)}` : i.digest_required ? '@sha256:<required>' : `:${i.tag ?? r.app_versions?.[c] ?? ''}`}`)}`);
+    const imgs = Object.entries(r.images || {}).map(([c, i]) => `${c}: ${code(`${i.repository || '<required repository>'}${i.digest ? `@${short(i.digest)}` : i.digest_required ? '@sha256:<required>' : `:${i.tag ?? r.app_versions?.[c] ?? ''}`}`)}`);
     const image = [...imgs, cell(r.images_note)].filter(Boolean).join('<br>');
     const svc = r.services ? `${code(r.services.source_commit.slice(0, 12))} / ${code(r.services.migration_generation.slice(0, 12))}` : '';
     const combos = asList(r.db_combos).map((k) => `${k.db_mode} + ${k.boundary ?? '(unset)'} (${k.hoopdb})${k.status && k.status !== 'shipped' ? ` (${k.status})` : ''}`).join('<br>');

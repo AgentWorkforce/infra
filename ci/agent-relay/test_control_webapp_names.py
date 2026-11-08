@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Real Helm renders and a causal no-mutation check for public chart names."""
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -43,6 +44,9 @@ class Names(unittest.TestCase):
         deployments = {d['metadata']['name']: d for d in docs if d['kind'] == 'Deployment'}
         self.assertTrue({'relay-control', 'relay-webapp'} <= deployments.keys())
         self.assertFalse({'relaycontrol', 'relay-app'} & deployments.keys())
+        services = {d['metadata']['name'] for d in docs if d['kind'] == 'Service'}
+        self.assertTrue({'relay-control', 'relay-webapp'} <= services)
+        self.assertFalse({'relaycontrol', 'relay-app'} & services)
         for name in ('relay-control', 'relay-webapp'):
             self.assertEqual(deployments[name]['spec']['selector']['matchLabels']['app.kubernetes.io/name'], name)
         targets = [x['backend']['service']['name'] for d in docs if d['kind'] == 'Ingress'
@@ -51,12 +55,94 @@ class Names(unittest.TestCase):
         self.assertIn('relay-webapp', targets)
         self.assertNotIn('relaycontrol', targets)
 
+    def test_control_credentials_and_container_specific_resource_refs_refuse(self):
+        command = ['helm', 'template', 'test', 'charts/relay-control',
+                   '-f', 'charts/relay-control/ci/default-values.yaml']
+        bad = [({'name': 'CUSTOM_TOKEN', 'valueFrom': {'configMapKeyRef': {'name': 'config', 'key': 'token'}}},
+                'require valueFrom.secretKeyRef'),
+               ({'name': 'MEMORY', 'valueFrom': {'resourceFieldRef': {'resource': 'limits.memory', 'containerName': 'api'}}},
+                'containerName is not supported')]
+        for entry, message in bad:
+            result = subprocess.run(command + ['--set-json', 'extraEnv=' + json.dumps([entry])],
+                                    cwd=ROOT, capture_output=True, text=True)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn(message, result.stderr)
+        good = [{'name': 'CUSTOM_TOKEN', 'valueFrom': {'secretKeyRef': {'name': 'custom', 'key': 'token'}}},
+                {'name': 'MEMORY', 'valueFrom': {'resourceFieldRef': {'resource': 'limits.memory'}}}]
+        result = subprocess.run(command + ['--set-json', 'extraEnv=' + json.dumps(good)],
+                                cwd=ROOT, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        result = subprocess.run(command + ['--set', 'image.repository='], cwd=ROOT, capture_output=True, text=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('image.repository is required', result.stderr)
+
+    def test_alb_backends_allow_retained_service_names(self):
+        env = {**os.environ, 'EKS_ALB_DOMAIN': 'relay.agentrelay.com',
+               'EKS_ALB_CERT_ARN': 'arn:aws:acm:render-only',
+               'EKS_ALB_CONTROL_SERVICE': 'relay-cloud-api', 'EKS_ALB_WEBAPP_SERVICE': 'relay-dashboard'}
+        result = subprocess.run(['bash', 'scripts/selfhost/eks-alb-ingress.sh'], cwd=ROOT,
+                                env=env, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        doc = yaml.safe_load(result.stdout)
+        names = [p['backend']['service']['name'] for rule in doc['spec']['rules'] for p in rule['http']['paths']]
+        self.assertIn('relay-cloud-api', names)
+        self.assertIn('relay-dashboard', names)
+        self.assertNotIn('relay-control', names)
+        self.assertNotIn('relay-webapp', names)
+
+    def test_historical_eks_installer_uses_its_selected_chart_values(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            tools = root / 'bin'; tools.mkdir()
+            (tools / 'aws').write_text('#!/bin/sh\nexit 0\n')
+            (tools / 'helm').write_text('''#!/usr/bin/env python3
+import json, os, sys
+from pathlib import Path
+args=sys.argv[1:]
+with open(os.environ['HELM_CALLS'], 'a') as f: f.write(json.dumps(args)+'\\n')
+if args[0]=='pull':
+    target=Path(args[args.index('--untardir')+1])/'agent-relay'
+    target.mkdir()
+    (target/'values-eks.yaml').write_text('relay-cloud-api: {}\\nrelay-dashboard: {}\\n')
+''')
+            for file in tools.iterdir(): file.chmod(0o755)
+            source = (ROOT / 'scripts/selfhost/eks-proof-install.sh').read_text()
+            definitions = source.rsplit('\ncase "${1:-}" in', 1)[0]
+            env = {**os.environ, 'PATH': str(tools) + os.pathsep + os.environ['PATH'],
+                   'PIPPEN_SANDBOX_ACCOUNT_ID': 'render-only', 'EKS_PROOF_CHART_VERSION': '0.3.11',
+                   'EKS_PROOF_STATE_DIR': str(root / 'state'), 'HELM_CALLS': str(root / 'helm.jsonl')}
+            result = subprocess.run(['bash', '-c', definitions + '\nproof_overlay\nhelm_apply\n'],
+                                    cwd=ROOT, env=env, capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            calls = [json.loads(line) for line in (root / 'helm.jsonl').read_text().splitlines()]
+            self.assertEqual([args[0] for args in calls], ['pull', 'upgrade'])
+            for args in calls:
+                self.assertEqual(args[args.index('--version') + 1], '0.3.11')
+            base = Path(calls[1][calls[1].index('-f') + 1])
+            self.assertTrue(base.is_relative_to(root / 'state'))
+            self.assertIn('relay-cloud-api', yaml.safe_load(base.read_text()))
+            overlay = yaml.safe_load((root / 'state/values-eks-proof.yaml').read_text())
+            self.assertTrue({'relay-cloud-api', 'relay-dashboard'} <= overlay.keys())
+            self.assertFalse({'relay-control', 'relay-webapp'} & overlay.keys())
+
     def test_old_overrides_are_refused_even_when_empty_or_disabled(self):
         for key, value in [('relay-cloud-api', '{}'), ('relay-dashboard', '{}'),
                            ('components.cloudApi', 'false'), ('components.dashboard', 'false')]:
             with self.subTest(key=key):
                 error = self.render(extra=['--set-json', key + '=' + value], ok=False)
                 self.assertIn('was renamed', error)
+
+    def test_gcp_live_overlay_retains_the_recorded_control_and_webapp_names(self):
+        result = subprocess.run(['helm', 'template', 'agent-relay', 'charts/agent-relay',
+                                 '-f', 'charts/agent-relay/values-gcp-proof.yaml',
+                                 '-f', 'charts/agent-relay/values-gcp-proof-live.yaml'],
+                                cwd=ROOT, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        docs = [d for d in yaml.safe_load_all(result.stdout) if d]
+        for name in ['relay-cloud-api', 'relay-dashboard']:
+            deployment = next(d for d in docs if d['kind'] == 'Deployment' and d['metadata']['name'] == name)
+            self.assertEqual(deployment['spec']['selector']['matchLabels']['app.kubernetes.io/name'], name)
+            self.assertTrue(any(d['kind'] == 'Service' and d['metadata']['name'] == name for d in docs))
 
     def test_kind_compatibility_keeps_all_old_selectors_services_claims_and_jobs(self):
         fixture = json.loads((ROOT / 'ci/agent-relay/fixtures/control-webapp-legacy-identities.json').read_text())
