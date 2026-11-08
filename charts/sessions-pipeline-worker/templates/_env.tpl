@@ -231,7 +231,7 @@ Role names follow the migrator's pattern exactly.
 {{- define "sessions-pipeline-worker.validateProfile" -}}
 {{- $m := .Values.migrations -}}
 {{- $ident := "^[A-Za-z_][A-Za-z0-9_$-]{0,62}$" -}}
-{{- if not (has $m.databaseMode (list "local" "selfhosted" "cloudsql" "supabase")) }}{{ fail "sessions-pipeline-worker: migrations.databaseMode must be local, selfhosted, cloudsql or supabase (HOOPDB_DB_MODE has no default)" }}{{ end -}}
+{{- if not (has $m.databaseMode (list "local" "selfhosted" "cloudsql" "supabase" "rds")) }}{{ fail "sessions-pipeline-worker: migrations.databaseMode must be local, selfhosted, cloudsql, supabase or rds (HOOPDB_DB_MODE has no default)" }}{{ end -}}
 {{- if not (or (kindIs "invalid" $m.roleBootstrap) (kindIs "bool" $m.roleBootstrap)) }}{{ fail "sessions-pipeline-worker: migrations.roleBootstrap must be true or false" }}{{ end -}}
 {{- if not (or (kindIs "invalid" $m.supabaseShim) (kindIs "bool" $m.supabaseShim)) }}{{ fail "sessions-pipeline-worker: migrations.supabaseShim must be true or false" }}{{ end -}}
 {{- if not (or (kindIs "invalid" $m.runtimeRoleLogin) (kindIs "bool" $m.runtimeRoleLogin)) }}{{ fail "sessions-pipeline-worker: migrations.runtimeRoleLogin must be true or false" }}{{ end -}}
@@ -239,6 +239,11 @@ Role names follow the migrator's pattern exactly.
 {{- if eq $m.supabaseShim true }}{{ fail "sessions-pipeline-worker: migrations.supabaseShim must not be true in supabase mode (the plain-Postgres role shim never runs there)" }}{{ end -}}
 {{- if $m.waitForRole.enabled }}{{ fail "sessions-pipeline-worker: migrations.waitForRole must be disabled in supabase mode (the roles are operator steps; the migrator verifies them)" }}{{ end -}}
 {{- if eq $m.roleBootstrap true }}{{ fail "sessions-pipeline-worker: migrations.roleBootstrap must not be true in supabase mode (the privileged role bootstrap never runs from the migrator there)" }}{{ end -}}
+{{- else if eq $m.databaseMode "rds" }}
+{{- if eq $m.supabaseShim true }}{{ fail "sessions-pipeline-worker: migrations.supabaseShim must not be true in rds mode (supabase/bootstrap/rds_migration_roles.sql replaces it)" }}{{ end -}}
+{{- if eq $m.roleBootstrap true }}{{ fail "sessions-pipeline-worker: migrations.roleBootstrap must not be true in rds mode (the operator runs the rds_*.sql bootstrap as the master)" }}{{ end -}}
+{{- if $m.runtimeWorkloadRole }}{{ fail "sessions-pipeline-worker: migrations.runtimeWorkloadRole is not supported in rds mode; the runtime role must log in itself" }}{{ end -}}
+{{- if and (kindIs "bool" $m.runtimeRoleLogin) (not $m.runtimeRoleLogin) }}{{ fail "sessions-pipeline-worker: migrations.runtimeRoleLogin must be true in rds mode" }}{{ end -}}
 {{- else if kindIs "invalid" $m.supabaseShim }}{{ fail (printf "sessions-pipeline-worker: migrations.supabaseShim must be set (true or false) in %s mode" $m.databaseMode) }}{{ end -}}
 {{- if not (regexMatch $ident ($m.runtimeRole | default "")) }}{{ fail "sessions-pipeline-worker: migrations.runtimeRole is required: the role the services connect as (HOOPDB_RUNTIME_ROLE)" }}{{ end -}}
 {{- if eq $m.runtimeRole "session_directory_search_worker" }}{{ fail "sessions-pipeline-worker: migrations.runtimeRole must not be the search Worker role" }}{{ end -}}
@@ -247,7 +252,7 @@ Role names follow the migrator's pattern exactly.
 {{- if hasKey $m "functionBoundaryApproved" }}{{ fail "sessions-pipeline-worker: migrations.functionBoundaryApproved was renamed functionBoundaryMode (HOOPDB_FUNCTION_BOUNDARY_MODE); remove it" }}{{ end -}}
 {{- if and (eq ($m.functionBoundaryMode | default "") "event-trigger") (ne $m.databaseMode "supabase") }}{{ fail (printf "sessions-pipeline-worker: migrations.functionBoundaryMode=event-trigger is supported only in supabase mode, not %s (selfhosted and cloudsql use global-default-revoke)" $m.databaseMode) }}{{ end -}}
 {{- if and $m.functionBoundaryMode (not (has $m.functionBoundaryMode (list "global-default-revoke" "event-trigger"))) }}{{ fail "sessions-pipeline-worker: migrations.functionBoundaryMode must be global-default-revoke or (supabase only) event-trigger" }}{{ end -}}
-{{- if and (has $m.databaseMode (list "selfhosted" "cloudsql")) (not $m.functionBoundaryMode) }}{{ fail (printf "sessions-pipeline-worker: migrations.functionBoundaryMode is required in %s mode (global-default-revoke; the migrator's function-boundary gate refuses without it)" $m.databaseMode) }}{{ end -}}
+{{- if and (has $m.databaseMode (list "selfhosted" "cloudsql" "rds")) (not $m.functionBoundaryMode) }}{{ fail (printf "sessions-pipeline-worker: migrations.functionBoundaryMode is required in %s mode (global-default-revoke; the migrator's function-boundary gate refuses without it)" $m.databaseMode) }}{{ end -}}
 {{- if and $m.waitForRole.functionDefault (not $m.waitForRole.enabled) }}{{ fail "sessions-pipeline-worker: migrations.waitForRole.functionDefault needs migrations.waitForRole.enabled" }}{{ end -}}
 {{- if and $m.waitForRole.functionDefault (ne ($m.functionBoundaryMode | default "") "global-default-revoke") }}{{ fail "sessions-pipeline-worker: migrations.waitForRole.functionDefault needs functionBoundaryMode global-default-revoke" }}{{ end -}}
 {{- end }}
