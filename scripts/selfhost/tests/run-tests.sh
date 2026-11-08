@@ -715,7 +715,7 @@ printf 'aws %s\n' "$*" >>"${MOCK_COMMAND_LOG}"
 case " $* " in
   *" get-login-password "*) printf 'mock-token\n' ;;
   *" describe-repositories "*) grep -qx "repo ${*: -1}" "${MOCK_ECR_STATE}" 2>/dev/null ;;
-  *" create-repository "*) printf 'repo %s\n' "$5" >>"${MOCK_ECR_STATE}" ;;
+  *" create-repository "*) printf 'repo %s\n' "$6" >>"${MOCK_ECR_STATE}" ;;
 esac
 MOCK
 cat >"${mock_bin}/crane" <<'MOCK'

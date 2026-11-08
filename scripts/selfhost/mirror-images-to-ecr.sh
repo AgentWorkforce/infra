@@ -65,7 +65,7 @@ manifests() {
 }
 
 images=$(manifests |
-  yq -r '.. | select(tag == "!!map") | select(has("image") or has("imageName")) | (.image // .imageName) | select(tag == "!!str")' |
+  yq -N -r '.. | select(tag == "!!map") | select(has("image") or has("imageName")) | (.image // .imageName) | select(tag == "!!str")' |
   sort -u)
 [ -n "$images" ] || die "the render contains no images"
 
