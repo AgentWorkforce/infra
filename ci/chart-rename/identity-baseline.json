@@ -1,0 +1,925 @@
+{
+  "sourceRevision": "91c9b7981d706969cd19dc7fab09f9fddb646959",
+  "chartTree": "2dbd3f63351b6e831b030abb1bdbeaf21b1bd06a",
+  "scope": "static render identity/stage inventory; no upgrade or data-survival proof",
+  "targetNames": "Awaiting owner confirmation; no rename implemented",
+  "profiles": {
+    "core": [
+      {
+        "kind": "ConfigMap",
+        "name": "relayhistory",
+        "namespace": "agent-relay"
+      },
+      {
+        "kind": "Deployment",
+        "name": "alleyoop-ingest",
+        "namespace": "agent-relay",
+        "selector": {
+          "matchLabels": {
+            "app.kubernetes.io/name": "alleyoop",
+            "app.kubernetes.io/instance": "agent-relay",
+            "app.kubernetes.io/component": "alleyoop-ingest"
+          }
+        },
+        "containers": [
+          {
+            "name": "ingest",
+            "image": "ghcr.io/agentworkforce/96bulls-services@sha256:070fe6fd46ecd1e1f9db32ff22379f6df9b9e6c4d48ede5312c8fb986a95f3a9",
+            "stageValues": [
+              "alleyoop-ingest"
+            ],
+            "commandArgsSha256": "ecdfd05433b30f3e11a38b2adbb2964ce97665055ac14e2be04d2c659d81153b"
+          }
+        ]
+      },
+      {
+        "kind": "Deployment",
+        "name": "relay-app",
+        "namespace": "agent-relay",
+        "selector": {
+          "matchLabels": {
+            "app.kubernetes.io/name": "relay-dashboard",
+            "app.kubernetes.io/instance": "agent-relay"
+          }
+        },
+        "containers": [
+          {
+            "name": "copy-dashboard",
+            "image": "ghcr.io/agentworkforce/relay-dashboard@sha256:c50005fcdd1fc5ab5ef3dac9b621db8e0c7e03480406bfe519743ae435d8f1ad",
+            "stageValues": [],
+            "commandArgsSha256": "b0d252763dc46fc2eacf3ee38d36fb63b3e77c3a6d0577c06b84d64524afaf63"
+          },
+          {
+            "name": "dashboard",
+            "image": "ghcr.io/agentworkforce/relay-dashboard@sha256:c50005fcdd1fc5ab5ef3dac9b621db8e0c7e03480406bfe519743ae435d8f1ad",
+            "stageValues": [],
+            "commandArgsSha256": "ecdfd05433b30f3e11a38b2adbb2964ce97665055ac14e2be04d2c659d81153b"
+          }
+        ]
+      },
+      {
+        "kind": "Deployment",
+        "name": "relayauth",
+        "namespace": "agent-relay",
+        "selector": {
+          "matchLabels": {
+            "app.kubernetes.io/name": "relayauth",
+            "app.kubernetes.io/instance": "agent-relay"
+          }
+        },
+        "persistentVolumeClaims": [
+          "relayauth-data"
+        ],
+        "containers": [
+          {
+            "name": "relayauth",
+            "image": "ghcr.io/agentworkforce/relayauth@sha256:c23c92d25fdffef3b5838a1eef4c226925f859706365d9ccece229795b877288",
+            "stageValues": [],
+            "commandArgsSha256": "ecdfd05433b30f3e11a38b2adbb2964ce97665055ac14e2be04d2c659d81153b"
+          }
+        ]
+      },
+      {
+        "kind": "Deployment",
+        "name": "relaycast",
+        "namespace": "agent-relay",
+        "selector": {
+          "matchLabels": {
+            "app.kubernetes.io/name": "relaycast",
+            "app.kubernetes.io/instance": "agent-relay"
+          }
+        },
+        "persistentVolumeClaims": [
+          "relaycast-data"
+        ],
+        "containers": [
+          {
+            "name": "relaycast",
+            "image": "ghcr.io/agentworkforce/relaycast-self-host@sha256:81274dca7ab58673383dc7a9c777f422f29606c7422e81b5ea15724770f1455e",
+            "stageValues": [],
+            "commandArgsSha256": "729bb56410a6b0c9daa066e91252bac400536996d5a5c2b44476a1833e65df82"
+          }
+        ]
+      },
+      {
+        "kind": "Deployment",
+        "name": "relaycontrol",
+        "namespace": "agent-relay",
+        "selector": {
+          "matchLabels": {
+            "app.kubernetes.io/name": "relay-cloud-api",
+            "app.kubernetes.io/instance": "agent-relay",
+            "app.kubernetes.io/component": "api"
+          }
+        },
+        "containers": [
+          {
+            "name": "api",
+            "image": "ghcr.io/agentworkforce/selfhost-api@sha256:95c7877741054dc2f1cafa26be3faa9bfe4660ed85d637aef4524daa10481963",
+            "stageValues": [],
+            "commandArgsSha256": "bb481ed4c49b9e9cc9edaaf4a8e3fbe6f9b08c4576348bd4c16dea08dd89bd06"
+          }
+        ]
+      },
+      {
+        "kind": "Deployment",
+        "name": "relayhistory",
+        "namespace": "agent-relay",
+        "selector": {
+          "matchLabels": {
+            "app.kubernetes.io/name": "relayhistory",
+            "app.kubernetes.io/instance": "agent-relay",
+            "app.kubernetes.io/component": "history"
+          }
+        },
+        "containers": [
+          {
+            "name": "history",
+            "image": "ghcr.io/agentworkforce/relayhistory@sha256:d3166bb14e1d6043426a4dd8cc05408b94574c8d79ad5fd6e789e0de00ab371b",
+            "stageValues": [],
+            "commandArgsSha256": "a3578da4e0b50fc397335e68c51cabc326e588037101df47c3cf0b6e90ef9b6f"
+          }
+        ]
+      },
+      {
+        "kind": "Deployment",
+        "name": "sessions-bob-costas",
+        "namespace": "agent-relay",
+        "selector": {
+          "matchLabels": {
+            "app.kubernetes.io/name": "worker",
+            "app.kubernetes.io/instance": "agent-relay",
+            "app.kubernetes.io/component": "bob-costas"
+          }
+        },
+        "containers": [
+          {
+            "name": "bob-costas",
+            "image": "ghcr.io/agentworkforce/96bulls-services@sha256:070fe6fd46ecd1e1f9db32ff22379f6df9b9e6c4d48ede5312c8fb986a95f3a9",
+            "stageValues": [
+              "bob-costas"
+            ],
+            "commandArgsSha256": "ecdfd05433b30f3e11a38b2adbb2964ce97665055ac14e2be04d2c659d81153b"
+          }
+        ]
+      },
+      {
+        "kind": "Deployment",
+        "name": "sessions-hoopdb-indexer",
+        "namespace": "agent-relay",
+        "selector": {
+          "matchLabels": {
+            "app.kubernetes.io/name": "worker",
+            "app.kubernetes.io/instance": "agent-relay",
+            "app.kubernetes.io/component": "hoopdb-indexer"
+          }
+        },
+        "containers": [
+          {
+            "name": "hoopdb-indexer",
+            "image": "ghcr.io/agentworkforce/96bulls-services@sha256:070fe6fd46ecd1e1f9db32ff22379f6df9b9e6c4d48ede5312c8fb986a95f3a9",
+            "stageValues": [
+              "hoopdb-indexer"
+            ],
+            "commandArgsSha256": "ecdfd05433b30f3e11a38b2adbb2964ce97665055ac14e2be04d2c659d81153b"
+          }
+        ]
+      },
+      {
+        "kind": "Deployment",
+        "name": "sessions-referee",
+        "namespace": "agent-relay",
+        "selector": {
+          "matchLabels": {
+            "app.kubernetes.io/name": "worker",
+            "app.kubernetes.io/instance": "agent-relay",
+            "app.kubernetes.io/component": "referee"
+          }
+        },
+        "containers": [
+          {
+            "name": "referee",
+            "image": "ghcr.io/agentworkforce/96bulls-services@sha256:070fe6fd46ecd1e1f9db32ff22379f6df9b9e6c4d48ede5312c8fb986a95f3a9",
+            "stageValues": [
+              "referee"
+            ],
+            "commandArgsSha256": "ecdfd05433b30f3e11a38b2adbb2964ce97665055ac14e2be04d2c659d81153b"
+          }
+        ]
+      },
+      {
+        "kind": "Ingress",
+        "name": "kind-control-api",
+        "namespace": "agent-relay"
+      },
+      {
+        "kind": "Ingress",
+        "name": "relay-app",
+        "namespace": "agent-relay"
+      },
+      {
+        "kind": "Ingress",
+        "name": "relaycast",
+        "namespace": "agent-relay"
+      },
+      {
+        "kind": "Ingress",
+        "name": "relayhistory",
+        "namespace": "agent-relay"
+      },
+      {
+        "kind": "Job",
+        "name": "relaycontrol-migrate-f11dfd51",
+        "namespace": "agent-relay",
+        "containers": [
+          {
+            "name": "migrate",
+            "image": "ghcr.io/agentworkforce/selfhost-api@sha256:95c7877741054dc2f1cafa26be3faa9bfe4660ed85d637aef4524daa10481963",
+            "stageValues": [],
+            "commandArgsSha256": "c029ca83aa90895be586c907cb665b5b0d4569ca3f2cd3a3b563215c8bbfad88"
+          }
+        ]
+      },
+      {
+        "kind": "Job",
+        "name": "relayhistory-migrate-f60b83b3",
+        "namespace": "agent-relay",
+        "containers": [
+          {
+            "name": "migrate",
+            "image": "ghcr.io/agentworkforce/relayhistory@sha256:d3166bb14e1d6043426a4dd8cc05408b94574c8d79ad5fd6e789e0de00ab371b",
+            "stageValues": [],
+            "commandArgsSha256": "50976771f3e23cce78718bedafb2f2827360374623090c3f76618a9c3ff6e338"
+          }
+        ]
+      },
+      {
+        "kind": "Job",
+        "name": "sessions-locker-init-e5cacad6",
+        "namespace": "agent-relay",
+        "containers": [
+          {
+            "name": "locker-init",
+            "image": "ghcr.io/agentworkforce/96bulls-services@sha256:070fe6fd46ecd1e1f9db32ff22379f6df9b9e6c4d48ede5312c8fb986a95f3a9",
+            "stageValues": [
+              "locker-init"
+            ],
+            "commandArgsSha256": "ecdfd05433b30f3e11a38b2adbb2964ce97665055ac14e2be04d2c659d81153b"
+          }
+        ]
+      },
+      {
+        "kind": "Job",
+        "name": "sessions-migrate-f11dde74",
+        "namespace": "agent-relay",
+        "containers": [
+          {
+            "name": "wait-for-role",
+            "image": "ghcr.io/cloudnative-pg/postgresql:17-standard-trixie@sha256:ed6923f9ba2399cf9070379a353c710c29ced8a294be73986a2c3dae7e599ce3",
+            "stageValues": [],
+            "commandArgsSha256": "b91c21939c23d4cd3fd2353d7fde206f0193e2adcf706433e4c8127c8cc1a702"
+          },
+          {
+            "name": "migrate",
+            "image": "ghcr.io/agentworkforce/96bulls-services@sha256:070fe6fd46ecd1e1f9db32ff22379f6df9b9e6c4d48ede5312c8fb986a95f3a9",
+            "stageValues": [
+              "hoopdb-migrate"
+            ],
+            "commandArgsSha256": "ecdfd05433b30f3e11a38b2adbb2964ce97665055ac14e2be04d2c659d81153b"
+          }
+        ]
+      },
+      {
+        "kind": "NetworkPolicy",
+        "name": "kind-no-external-egress",
+        "namespace": "agent-relay"
+      },
+      {
+        "kind": "PersistentVolumeClaim",
+        "name": "relayauth-data",
+        "namespace": "agent-relay",
+        "claimSpec": {
+          "accessModes": [
+            "ReadWriteOnce"
+          ],
+          "resources": {
+            "requests": {
+              "storage": "1Gi"
+            }
+          }
+        }
+      },
+      {
+        "kind": "PersistentVolumeClaim",
+        "name": "relaycast-data",
+        "namespace": "agent-relay",
+        "claimSpec": {
+          "accessModes": [
+            "ReadWriteOnce"
+          ],
+          "resources": {
+            "requests": {
+              "storage": "1Gi"
+            }
+          }
+        }
+      },
+      {
+        "kind": "Service",
+        "name": "alleyoop",
+        "namespace": "agent-relay",
+        "selector": {
+          "app.kubernetes.io/name": "alleyoop",
+          "app.kubernetes.io/instance": "agent-relay",
+          "app.kubernetes.io/component": "alleyoop-ingest"
+        }
+      },
+      {
+        "kind": "Service",
+        "name": "relay-app",
+        "namespace": "agent-relay",
+        "selector": {
+          "app.kubernetes.io/name": "relay-dashboard",
+          "app.kubernetes.io/instance": "agent-relay"
+        }
+      },
+      {
+        "kind": "Service",
+        "name": "relayauth",
+        "namespace": "agent-relay",
+        "selector": {
+          "app.kubernetes.io/name": "relayauth",
+          "app.kubernetes.io/instance": "agent-relay"
+        }
+      },
+      {
+        "kind": "Service",
+        "name": "relaycast",
+        "namespace": "agent-relay",
+        "selector": {
+          "app.kubernetes.io/name": "relaycast",
+          "app.kubernetes.io/instance": "agent-relay"
+        }
+      },
+      {
+        "kind": "Service",
+        "name": "relaycast-deny",
+        "namespace": "agent-relay"
+      },
+      {
+        "kind": "Service",
+        "name": "relaycontrol",
+        "namespace": "agent-relay",
+        "selector": {
+          "app.kubernetes.io/name": "relay-cloud-api",
+          "app.kubernetes.io/instance": "agent-relay",
+          "app.kubernetes.io/component": "api"
+        }
+      },
+      {
+        "kind": "Service",
+        "name": "relayhistory",
+        "namespace": "agent-relay",
+        "selector": {
+          "app.kubernetes.io/name": "relayhistory",
+          "app.kubernetes.io/instance": "agent-relay",
+          "app.kubernetes.io/component": "history"
+        }
+      },
+      {
+        "kind": "ServiceAccount",
+        "name": "alleyoop",
+        "namespace": "agent-relay"
+      },
+      {
+        "kind": "ServiceAccount",
+        "name": "relay-app",
+        "namespace": "agent-relay"
+      },
+      {
+        "kind": "ServiceAccount",
+        "name": "relayauth",
+        "namespace": "agent-relay"
+      },
+      {
+        "kind": "ServiceAccount",
+        "name": "relaycast",
+        "namespace": "agent-relay"
+      },
+      {
+        "kind": "ServiceAccount",
+        "name": "relaycontrol",
+        "namespace": "agent-relay"
+      },
+      {
+        "kind": "ServiceAccount",
+        "name": "relayhistory",
+        "namespace": "agent-relay"
+      },
+      {
+        "kind": "ServiceAccount",
+        "name": "sessions",
+        "namespace": "agent-relay"
+      }
+    ],
+    "addons": [
+      {
+        "kind": "ConfigMap",
+        "name": "relayflows-flow",
+        "namespace": "agent-relay"
+      },
+      {
+        "kind": "ConfigMap",
+        "name": "relayhistory",
+        "namespace": "agent-relay"
+      },
+      {
+        "kind": "CronJob",
+        "name": "relayflows",
+        "namespace": "agent-relay",
+        "persistentVolumeClaims": [
+          "relayflows"
+        ],
+        "containers": [
+          {
+            "name": "runner",
+            "image": "agent-relay-kind/flows:2.0.50",
+            "stageValues": [],
+            "commandArgsSha256": "a693e59c82bc1757c6beedd6dc3c6589bc45e777549635988768c65e17cd035d"
+          }
+        ]
+      },
+      {
+        "kind": "Deployment",
+        "name": "alleyoop-ingest",
+        "namespace": "agent-relay",
+        "selector": {
+          "matchLabels": {
+            "app.kubernetes.io/name": "alleyoop",
+            "app.kubernetes.io/instance": "agent-relay",
+            "app.kubernetes.io/component": "alleyoop-ingest"
+          }
+        },
+        "containers": [
+          {
+            "name": "ingest",
+            "image": "ghcr.io/agentworkforce/96bulls-services@sha256:070fe6fd46ecd1e1f9db32ff22379f6df9b9e6c4d48ede5312c8fb986a95f3a9",
+            "stageValues": [
+              "alleyoop-ingest"
+            ],
+            "commandArgsSha256": "ecdfd05433b30f3e11a38b2adbb2964ce97665055ac14e2be04d2c659d81153b"
+          }
+        ]
+      },
+      {
+        "kind": "Deployment",
+        "name": "relay-app",
+        "namespace": "agent-relay",
+        "selector": {
+          "matchLabels": {
+            "app.kubernetes.io/name": "relay-dashboard",
+            "app.kubernetes.io/instance": "agent-relay"
+          }
+        },
+        "containers": [
+          {
+            "name": "copy-dashboard",
+            "image": "ghcr.io/agentworkforce/relay-dashboard@sha256:c50005fcdd1fc5ab5ef3dac9b621db8e0c7e03480406bfe519743ae435d8f1ad",
+            "stageValues": [],
+            "commandArgsSha256": "b0d252763dc46fc2eacf3ee38d36fb63b3e77c3a6d0577c06b84d64524afaf63"
+          },
+          {
+            "name": "dashboard",
+            "image": "ghcr.io/agentworkforce/relay-dashboard@sha256:c50005fcdd1fc5ab5ef3dac9b621db8e0c7e03480406bfe519743ae435d8f1ad",
+            "stageValues": [],
+            "commandArgsSha256": "ecdfd05433b30f3e11a38b2adbb2964ce97665055ac14e2be04d2c659d81153b"
+          }
+        ]
+      },
+      {
+        "kind": "Deployment",
+        "name": "relayauth",
+        "namespace": "agent-relay",
+        "selector": {
+          "matchLabels": {
+            "app.kubernetes.io/name": "relayauth",
+            "app.kubernetes.io/instance": "agent-relay"
+          }
+        },
+        "persistentVolumeClaims": [
+          "relayauth-data"
+        ],
+        "containers": [
+          {
+            "name": "relayauth",
+            "image": "ghcr.io/agentworkforce/relayauth@sha256:c23c92d25fdffef3b5838a1eef4c226925f859706365d9ccece229795b877288",
+            "stageValues": [],
+            "commandArgsSha256": "ecdfd05433b30f3e11a38b2adbb2964ce97665055ac14e2be04d2c659d81153b"
+          }
+        ]
+      },
+      {
+        "kind": "Deployment",
+        "name": "relaycast",
+        "namespace": "agent-relay",
+        "selector": {
+          "matchLabels": {
+            "app.kubernetes.io/name": "relaycast",
+            "app.kubernetes.io/instance": "agent-relay"
+          }
+        },
+        "persistentVolumeClaims": [
+          "relaycast-data"
+        ],
+        "containers": [
+          {
+            "name": "relaycast",
+            "image": "ghcr.io/agentworkforce/relaycast-self-host@sha256:81274dca7ab58673383dc7a9c777f422f29606c7422e81b5ea15724770f1455e",
+            "stageValues": [],
+            "commandArgsSha256": "729bb56410a6b0c9daa066e91252bac400536996d5a5c2b44476a1833e65df82"
+          }
+        ]
+      },
+      {
+        "kind": "Deployment",
+        "name": "relaycontrol",
+        "namespace": "agent-relay",
+        "selector": {
+          "matchLabels": {
+            "app.kubernetes.io/name": "relay-cloud-api",
+            "app.kubernetes.io/instance": "agent-relay",
+            "app.kubernetes.io/component": "api"
+          }
+        },
+        "containers": [
+          {
+            "name": "api",
+            "image": "ghcr.io/agentworkforce/selfhost-api@sha256:95c7877741054dc2f1cafa26be3faa9bfe4660ed85d637aef4524daa10481963",
+            "stageValues": [],
+            "commandArgsSha256": "bb481ed4c49b9e9cc9edaaf4a8e3fbe6f9b08c4576348bd4c16dea08dd89bd06"
+          }
+        ]
+      },
+      {
+        "kind": "Deployment",
+        "name": "relayfile-server",
+        "namespace": "agent-relay",
+        "selector": {
+          "matchLabels": {
+            "app.kubernetes.io/name": "relayfile",
+            "app.kubernetes.io/instance": "agent-relay",
+            "app.kubernetes.io/component": "server"
+          }
+        },
+        "containers": [
+          {
+            "name": "server",
+            "image": "agent-relay-kind/relayfile:local",
+            "stageValues": [],
+            "commandArgsSha256": "ecdfd05433b30f3e11a38b2adbb2964ce97665055ac14e2be04d2c659d81153b"
+          }
+        ]
+      },
+      {
+        "kind": "Deployment",
+        "name": "relayhistory",
+        "namespace": "agent-relay",
+        "selector": {
+          "matchLabels": {
+            "app.kubernetes.io/name": "relayhistory",
+            "app.kubernetes.io/instance": "agent-relay",
+            "app.kubernetes.io/component": "history"
+          }
+        },
+        "containers": [
+          {
+            "name": "history",
+            "image": "ghcr.io/agentworkforce/relayhistory@sha256:d3166bb14e1d6043426a4dd8cc05408b94574c8d79ad5fd6e789e0de00ab371b",
+            "stageValues": [],
+            "commandArgsSha256": "a3578da4e0b50fc397335e68c51cabc326e588037101df47c3cf0b6e90ef9b6f"
+          }
+        ]
+      },
+      {
+        "kind": "Deployment",
+        "name": "sessions-bob-costas",
+        "namespace": "agent-relay",
+        "selector": {
+          "matchLabels": {
+            "app.kubernetes.io/name": "worker",
+            "app.kubernetes.io/instance": "agent-relay",
+            "app.kubernetes.io/component": "bob-costas"
+          }
+        },
+        "containers": [
+          {
+            "name": "bob-costas",
+            "image": "ghcr.io/agentworkforce/96bulls-services@sha256:070fe6fd46ecd1e1f9db32ff22379f6df9b9e6c4d48ede5312c8fb986a95f3a9",
+            "stageValues": [
+              "bob-costas"
+            ],
+            "commandArgsSha256": "ecdfd05433b30f3e11a38b2adbb2964ce97665055ac14e2be04d2c659d81153b"
+          }
+        ]
+      },
+      {
+        "kind": "Deployment",
+        "name": "sessions-hoopdb-indexer",
+        "namespace": "agent-relay",
+        "selector": {
+          "matchLabels": {
+            "app.kubernetes.io/name": "worker",
+            "app.kubernetes.io/instance": "agent-relay",
+            "app.kubernetes.io/component": "hoopdb-indexer"
+          }
+        },
+        "containers": [
+          {
+            "name": "hoopdb-indexer",
+            "image": "ghcr.io/agentworkforce/96bulls-services@sha256:070fe6fd46ecd1e1f9db32ff22379f6df9b9e6c4d48ede5312c8fb986a95f3a9",
+            "stageValues": [
+              "hoopdb-indexer"
+            ],
+            "commandArgsSha256": "ecdfd05433b30f3e11a38b2adbb2964ce97665055ac14e2be04d2c659d81153b"
+          }
+        ]
+      },
+      {
+        "kind": "Deployment",
+        "name": "sessions-referee",
+        "namespace": "agent-relay",
+        "selector": {
+          "matchLabels": {
+            "app.kubernetes.io/name": "worker",
+            "app.kubernetes.io/instance": "agent-relay",
+            "app.kubernetes.io/component": "referee"
+          }
+        },
+        "containers": [
+          {
+            "name": "referee",
+            "image": "ghcr.io/agentworkforce/96bulls-services@sha256:070fe6fd46ecd1e1f9db32ff22379f6df9b9e6c4d48ede5312c8fb986a95f3a9",
+            "stageValues": [
+              "referee"
+            ],
+            "commandArgsSha256": "ecdfd05433b30f3e11a38b2adbb2964ce97665055ac14e2be04d2c659d81153b"
+          }
+        ]
+      },
+      {
+        "kind": "Ingress",
+        "name": "kind-control-api",
+        "namespace": "agent-relay"
+      },
+      {
+        "kind": "Ingress",
+        "name": "relay-app",
+        "namespace": "agent-relay"
+      },
+      {
+        "kind": "Ingress",
+        "name": "relaycast",
+        "namespace": "agent-relay"
+      },
+      {
+        "kind": "Ingress",
+        "name": "relayfile-server",
+        "namespace": "agent-relay"
+      },
+      {
+        "kind": "Ingress",
+        "name": "relayhistory",
+        "namespace": "agent-relay"
+      },
+      {
+        "kind": "Job",
+        "name": "relaycontrol-migrate-f11dfd51",
+        "namespace": "agent-relay",
+        "containers": [
+          {
+            "name": "migrate",
+            "image": "ghcr.io/agentworkforce/selfhost-api@sha256:95c7877741054dc2f1cafa26be3faa9bfe4660ed85d637aef4524daa10481963",
+            "stageValues": [],
+            "commandArgsSha256": "c029ca83aa90895be586c907cb665b5b0d4569ca3f2cd3a3b563215c8bbfad88"
+          }
+        ]
+      },
+      {
+        "kind": "Job",
+        "name": "relayhistory-migrate-f60b83b3",
+        "namespace": "agent-relay",
+        "containers": [
+          {
+            "name": "migrate",
+            "image": "ghcr.io/agentworkforce/relayhistory@sha256:d3166bb14e1d6043426a4dd8cc05408b94574c8d79ad5fd6e789e0de00ab371b",
+            "stageValues": [],
+            "commandArgsSha256": "50976771f3e23cce78718bedafb2f2827360374623090c3f76618a9c3ff6e338"
+          }
+        ]
+      },
+      {
+        "kind": "Job",
+        "name": "sessions-locker-init-e5cacad6",
+        "namespace": "agent-relay",
+        "containers": [
+          {
+            "name": "locker-init",
+            "image": "ghcr.io/agentworkforce/96bulls-services@sha256:070fe6fd46ecd1e1f9db32ff22379f6df9b9e6c4d48ede5312c8fb986a95f3a9",
+            "stageValues": [
+              "locker-init"
+            ],
+            "commandArgsSha256": "ecdfd05433b30f3e11a38b2adbb2964ce97665055ac14e2be04d2c659d81153b"
+          }
+        ]
+      },
+      {
+        "kind": "Job",
+        "name": "sessions-migrate-f11dde74",
+        "namespace": "agent-relay",
+        "containers": [
+          {
+            "name": "wait-for-role",
+            "image": "ghcr.io/cloudnative-pg/postgresql:17-standard-trixie@sha256:ed6923f9ba2399cf9070379a353c710c29ced8a294be73986a2c3dae7e599ce3",
+            "stageValues": [],
+            "commandArgsSha256": "b91c21939c23d4cd3fd2353d7fde206f0193e2adcf706433e4c8127c8cc1a702"
+          },
+          {
+            "name": "migrate",
+            "image": "ghcr.io/agentworkforce/96bulls-services@sha256:070fe6fd46ecd1e1f9db32ff22379f6df9b9e6c4d48ede5312c8fb986a95f3a9",
+            "stageValues": [
+              "hoopdb-migrate"
+            ],
+            "commandArgsSha256": "ecdfd05433b30f3e11a38b2adbb2964ce97665055ac14e2be04d2c659d81153b"
+          }
+        ]
+      },
+      {
+        "kind": "NetworkPolicy",
+        "name": "kind-no-external-egress",
+        "namespace": "agent-relay"
+      },
+      {
+        "kind": "PersistentVolumeClaim",
+        "name": "relayauth-data",
+        "namespace": "agent-relay",
+        "claimSpec": {
+          "accessModes": [
+            "ReadWriteOnce"
+          ],
+          "resources": {
+            "requests": {
+              "storage": "1Gi"
+            }
+          }
+        }
+      },
+      {
+        "kind": "PersistentVolumeClaim",
+        "name": "relaycast-data",
+        "namespace": "agent-relay",
+        "claimSpec": {
+          "accessModes": [
+            "ReadWriteOnce"
+          ],
+          "resources": {
+            "requests": {
+              "storage": "1Gi"
+            }
+          }
+        }
+      },
+      {
+        "kind": "PersistentVolumeClaim",
+        "name": "relayflows",
+        "namespace": "agent-relay",
+        "claimSpec": {
+          "accessModes": [
+            "ReadWriteOnce"
+          ],
+          "resources": {
+            "requests": {
+              "storage": "1Gi"
+            }
+          }
+        }
+      },
+      {
+        "kind": "Service",
+        "name": "alleyoop",
+        "namespace": "agent-relay",
+        "selector": {
+          "app.kubernetes.io/name": "alleyoop",
+          "app.kubernetes.io/instance": "agent-relay",
+          "app.kubernetes.io/component": "alleyoop-ingest"
+        }
+      },
+      {
+        "kind": "Service",
+        "name": "relay-app",
+        "namespace": "agent-relay",
+        "selector": {
+          "app.kubernetes.io/name": "relay-dashboard",
+          "app.kubernetes.io/instance": "agent-relay"
+        }
+      },
+      {
+        "kind": "Service",
+        "name": "relayauth",
+        "namespace": "agent-relay",
+        "selector": {
+          "app.kubernetes.io/name": "relayauth",
+          "app.kubernetes.io/instance": "agent-relay"
+        }
+      },
+      {
+        "kind": "Service",
+        "name": "relaycast",
+        "namespace": "agent-relay",
+        "selector": {
+          "app.kubernetes.io/name": "relaycast",
+          "app.kubernetes.io/instance": "agent-relay"
+        }
+      },
+      {
+        "kind": "Service",
+        "name": "relaycast-deny",
+        "namespace": "agent-relay"
+      },
+      {
+        "kind": "Service",
+        "name": "relaycontrol",
+        "namespace": "agent-relay",
+        "selector": {
+          "app.kubernetes.io/name": "relay-cloud-api",
+          "app.kubernetes.io/instance": "agent-relay",
+          "app.kubernetes.io/component": "api"
+        }
+      },
+      {
+        "kind": "Service",
+        "name": "relayfile-server",
+        "namespace": "agent-relay",
+        "selector": {
+          "app.kubernetes.io/name": "relayfile",
+          "app.kubernetes.io/instance": "agent-relay",
+          "app.kubernetes.io/component": "server"
+        }
+      },
+      {
+        "kind": "Service",
+        "name": "relayhistory",
+        "namespace": "agent-relay",
+        "selector": {
+          "app.kubernetes.io/name": "relayhistory",
+          "app.kubernetes.io/instance": "agent-relay",
+          "app.kubernetes.io/component": "history"
+        }
+      },
+      {
+        "kind": "ServiceAccount",
+        "name": "alleyoop",
+        "namespace": "agent-relay"
+      },
+      {
+        "kind": "ServiceAccount",
+        "name": "relay-app",
+        "namespace": "agent-relay"
+      },
+      {
+        "kind": "ServiceAccount",
+        "name": "relayauth",
+        "namespace": "agent-relay"
+      },
+      {
+        "kind": "ServiceAccount",
+        "name": "relaycast",
+        "namespace": "agent-relay"
+      },
+      {
+        "kind": "ServiceAccount",
+        "name": "relaycontrol",
+        "namespace": "agent-relay"
+      },
+      {
+        "kind": "ServiceAccount",
+        "name": "relayfile",
+        "namespace": "agent-relay"
+      },
+      {
+        "kind": "ServiceAccount",
+        "name": "relayflows",
+        "namespace": "agent-relay"
+      },
+      {
+        "kind": "ServiceAccount",
+        "name": "relayhistory",
+        "namespace": "agent-relay"
+      },
+      {
+        "kind": "ServiceAccount",
+        "name": "sessions",
+        "namespace": "agent-relay"
+      }
+    ]
+  }
+}
