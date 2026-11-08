@@ -16,7 +16,10 @@
 #                            names all four hosts
 #     eks.tls.<host>         public DNS -> ALB, the certificate verifies with the
 #                            system trust store, http:// redirects to https://
-#     eks.cnpg               the CNPG clusters are healthy
+#     eks.cnpg               the expected CNPG clusters are healthy. Defaults to
+#                            control-api-pg, hoopdb and relayhistory-pg; set
+#                            EKS_PROOF_CNPG_CLUSTERS (space separated) when
+#                            some databases are external, such as RDS
 #
 # Run it under the Pippen lease, so kubectl and aws use the session role:
 #
@@ -151,11 +154,13 @@ for h in "$DOMAIN" "api.$DOMAIN" "cast.$DOMAIN" "history.$DOMAIN"; do
   fi
 done
 
-# All three expected CNPG clusters must exist and be healthy.
+# Every expected CNPG cluster must exist and be healthy. External databases are
+# proven by the application cases, which read and write through them.
+read -r -a cnpg_wanted <<<"${EKS_PROOF_CNPG_CLUSTERS:-control-api-pg hoopdb relayhistory-pg}"
 cnpg="$("${K[@]}" get cluster.postgresql.cnpg.io -o jsonpath='{range .items[*]}{.metadata.name}={.status.phase}{";"}{end}' 2>/dev/null)"
 cnpg_ok=true
 cnpg_detail=""
-for want in control-api-pg hoopdb relayhistory-pg; do
+for want in "${cnpg_wanted[@]}"; do
   phase="$(tr ';' '\n' <<<"$cnpg" | sed -n "s/^${want}=//p")"
   cnpg_detail+="${want}=${phase:-missing};"
   [[ "$phase" == "Cluster in healthy state" ]] || cnpg_ok=false
