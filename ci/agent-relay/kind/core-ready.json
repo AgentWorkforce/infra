@@ -1,0 +1,10 @@
+{
+  "profile": "core",
+  "recipeSha256": "1ae88d4bccf24cd687dae13617f2146cd78694229b76c298606a4074002124d5",
+  "renderSha256": "038f9e81c468a57e9ea46929b7f8d8acca2b0fbadfa716b3948b487bacf46aea",
+  "clusterUid": "4e5df2f8-a0c6-4fe0-9a69-a548d8fb4a95",
+  "ownershipVersion": 1,
+  "combinedAclJob": "kind-combined-acl-009152af5378a8aa",
+  "nodeImage": "kindest/node:v1.34.3@sha256:08497ee19eace7b4b5348db5c6a1591d7752b164530a36f855cb0f2bdcbadd48",
+  "infraRevision": "c6184d67c39b9c866ea31f0367318edea7d14163"
+}

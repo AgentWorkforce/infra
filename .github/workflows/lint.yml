@@ -92,6 +92,22 @@ jobs:
       - name: Install customer release gate dependencies
         run: python3 -m pip install -r ci/customer-release-gate/requirements.txt
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22.23.3"
+
+      - name: Local kind profile and trust contract tests (offline)
+        run: |
+          python3 -m pip install -r ci/agent-relay/kind/requirements.txt
+          python3 ci/agent-relay/kind/test_stack.py -v
+          python3 ci/agent-relay/kind/test_ownership.py -v
+          python3 ci/agent-relay/kind/test_control.py -v
+          python3 ci/agent-relay/kind/test_harness.py -v
+          node --test ci/agent-relay/kind/test_bootstrap.mjs
+          node --test ci/agent-relay/kind/test_pipeline.mjs
+        env:
+          TMPDIR: ${{ runner.temp }}
+
       - name: Customer release gate regression tests
         run: python3 ci/customer-release-gate/test.py
 

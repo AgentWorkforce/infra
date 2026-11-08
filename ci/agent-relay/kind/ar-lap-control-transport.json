@@ -1,0 +1,10 @@
+{
+  "sourceHost": "finn-mini",
+  "reusedBuild": true,
+  "builtOnArLap": false,
+  "archiveSha256": "51fc89cc010df3349fd33e259f488febf07ab2727096ff0516686e22aadd7a36",
+  "sourceRevision": "1f08cb624be66016eb0c135363553dd44e58f691",
+  "manifestDigest": "sha256:fcc8c437eda85f7bf99608645d1e488811d3c52050bd21bde5a7d4a61a0e04e3",
+  "configDigest": "sha256:d087e9f803fe2295d1f944d6ac9a5d3bd11cae2bcfc6e93121547fb5346ebe7f",
+  "receivedAt": "2026-11-08T01:59:42.158583+00:00"
+}
