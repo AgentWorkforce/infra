@@ -859,7 +859,7 @@ entries:
     verify:
       default: kubectl get secret hoopdb-app -o jsonpath='{.data.uri}' is non-empty once the CNPG Cluster is ready
       external-selfhosted: kubectl get secret sessions-pipeline-hoopdb -o jsonpath='{.data.HOOPDB_URL}' | base64 -d | psql -X -c 'select 1'
-      external-rds: psql "$(kubectl get secret sessions-pipeline-hoopdb -o jsonpath='{.data.HOOPDB_URL}' | base64 -d | sed 's/uselibpqcompat=true&//')" -X -c 'select 1'
+      external-rds: psql "$(kubectl get secret sessions-pipeline-hoopdb -o jsonpath='{.data.HOOPDB_URL}' | base64 -d | sed -E 's/&?uselibpqcompat=true//; s/\?&/?/')" -X -c 'select 1'
       external-supabase: kubectl get secret sessions-pipeline-hoopdb -o jsonpath='{.data.HOOPDB_URL}' | base64 -d | psql -X -c 'select current_user'
     sources:
       - "charts/sessions-pipeline/values.yaml:39"
@@ -887,7 +887,7 @@ entries:
           - { key: HOOPDB_MIGRATION_URL, key_path: worker.migrations.hoopdb.key }
     verify:
       default: kubectl get secret 96bulls-gcp -o jsonpath='{.data.HOOPDB_MIGRATION_URL}' connects as the migration owner (select current_user)
-      external-rds: psql "$(kubectl get secret sessions-pipeline-hoopdb -o jsonpath='{.data.HOOPDB_MIGRATION_URL}' | base64 -d | sed 's/uselibpqcompat=true&//')" -Atc 'select current_user' is the RDS master
+      external-rds: psql "$(kubectl get secret sessions-pipeline-hoopdb -o jsonpath='{.data.HOOPDB_MIGRATION_URL}' | base64 -d | sed -E 's/&?uselibpqcompat=true//; s/\?&/?/')" -Atc 'select current_user' is the RDS master
     sources:
       - "charts/sessions-pipeline/ci/gcp-cloudsql-values.yaml:33"
       - "charts/sessions-pipeline-worker/values.yaml:93"
