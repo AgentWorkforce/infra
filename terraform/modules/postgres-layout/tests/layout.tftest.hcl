@@ -42,7 +42,7 @@ run "schema_collision_refused" {
       hoopdb  = { schema = "shared", migration_role = "hoop_owner", runtime_role = "hoop_runtime" }
     }
   }
-  expect_failures = [output.bindings]
+  expect_failures = [var.services]
 }
 
 run "shared_migration_owner_refused" {
@@ -69,7 +69,7 @@ run "public_schema_refused" {
   variables {
     services = { control = { schema = "public", migration_role = "control_owner", runtime_role = "control_runtime" } }
   }
-  expect_failures = [output.bindings]
+  expect_failures = [var.services]
 }
 
 run "platform_role_refused" {
@@ -221,13 +221,13 @@ run "separate_database_collision_refused" {
 run "incomplete_database_map_refused" {
   command = plan
   variables { service_databases = { hoopdb = "hoopdb" } }
-  expect_failures = [var.service_databases]
+  expect_failures = [var.services]
 }
 
 run "unknown_service_database_refused" {
   command = plan
   variables { service_databases = { control = "relaycontrol", hoopdb = "hoopdb", relaycast = "relaycast", history = "relayhistory", relayfile = "relayfile", other = "other" } }
-  expect_failures = [var.service_databases]
+  expect_failures = [var.services]
 }
 
 run "maintenance_service_database_refused" {

@@ -5,7 +5,7 @@ per service**. Control uses `relaycontrol` by default; HoopDb uses `hoopdb`,
 Relaycast uses `relaycast`, and the optional Relayfile add-on uses `relayfile`.
 Each has independent migration/runtime roles and its own canonical schema.
 `application_database_name` names only the initial Control database; it stays
-unchanged on existing instances. `postgres_service_bindings` publishes complete
+unchanged on existing instances. Changing it forces replacement of an existing RDS instance; review the plan and explicit data migration/restore first. `postgres_service_bindings` publishes complete
 non-secret database/schema/role targets on the same endpoint. These outputs do
 not create SQL databases, prove application compatibility or enable add-ons.
 See the [storage contract](../../../docs/shared-postgres-storage-contract.md).
@@ -67,7 +67,7 @@ terraform init && terraform plan
 | region | AWS region. | `string` | n/a | yes |
 | sessions\_bucket\_name | Globally unique S3 bucket name for session objects. | `string` | n/a | yes |
 | alarm\_actions | SNS topics for the pipeline alarms. | `list(string)` | `[]` | no |
-| application\_database\_name | Initial Control database only, on the shared RDS instance. Other services use separate logical databases. Default preserves the existing RDS initial database identity; changing it is not an implicit data migration. | `string` | `"relaycontrol"` | no |
+| application\_database\_name | Initial Control database only, on the shared RDS instance. Other services use separate logical databases. Default preserves the existing identity. Changing this value on an existing RDS instance forces instance replacement; review the plan and an explicit data migration/restore before changing it. | `string` | `"relaycontrol"` | no |
 | aurora\_engine\_version | Aurora PostgreSQL version when postgres\_engine\_mode is aurora. | `string` | `"17.9"` | no |
 | enable\_functions | Create the optional pipeline Lambda resources; automatic queue and schedule processing remains disabled until the per-service-database application is qualified. | `bool` | `false` | no |
 | enable\_search | Create the optional OpenSearch domain. | `bool` | `false` | no |

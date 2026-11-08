@@ -206,7 +206,7 @@ The example roots print the non-secret values-file paths as a `chart_values` out
 
 ## PostgreSQL bootstrap before the first migrate
 
-Create and verify each dedicated service database using its accepted application bootstrap. The provider-free binding contract does not run these steps. The historical commands below are provider-specific prerequisites, not complete acceptance of the target; preserve existing data and use the reviewed image/profile for every migration.
+This PR provides no runnable bootstrap for the complete target. Database creation, owner/runtime LOGIN activation and migrations require an accepted per-service bootstrap artifact before installation; bindings or manual Secret URL edits do not supply one. The historical prerequisites below describe scope only and are not a complete RDS install procedure. Preserve existing data and verify the exact image/profile before running any step.
 
 The modules create the server, and on GCP optionally the databases. They do
 not connect to Postgres. Before you install or upgrade the chart, run this from
@@ -216,18 +216,14 @@ user, `rds_superuser`, read from `master_user_secret_arn`; or the Cloud SQL
 
 1. **Databases and roles.**
    - Target databases are `relaycontrol`, `hoopdb`, `relaycast` and optionally `relayfile`. Retain a legacy `relayhistory` or durable-actors database until its separately reviewed cutover; do not create those as new target dependencies. On RDS, `database_name` creates only the first; on Cloud SQL, use `databases`.
-   - Create each owner role (the `*-migrations-url` user) and runtime login role: `control_api_runtime`, `relayhistory_runtime`, and the HoopDb runtime role (`sessions_runtime`).
+   - The target migration owners are `control_owner`, `hoop`, `relaycast_owner`, and (when enabled) `relayfile_owner`. Their runtime logins are `control_api_runtime`, `sessions_pipeline_runtime`, `relaycast_runtime`, and `relayfile_runtime`, respectively. Keep legacy `relayhistory_runtime` only for an existing legacy deployment, outside the new target.
    - Store their passwords in Secrets Manager or Secret Manager. They become the URLs in the release Secret.
-2. **Extensions.** In `relayhistory` and `hoopdb`, run `CREATE EXTENSION IF NOT
-   EXISTS vector; CREATE EXTENSION IF NOT EXISTS pg_trgm;`. `vector` is not a
-   trusted extension, so the migrations' own `IF NOT EXISTS` must find it
-   already created. On RDS both are allowed by default. If you set
-   `allowed_extensions`, the module always adds them.
+2. **Extensions.** Install only the extension manifest required by each pinned service generation. HoopDb's accepted bootstrap must supply its required extensions (for example `vector`, `pg_trgm` and, when required by that generation, `btree_gin`). The older `relayhistory` extension instructions apply only to an existing legacy History database; fresh target installations do not create one. Confirm managed-provider support and administrator ownership before migration.
 3. **HoopDb role bootstrap, before the sessions-pipeline migrate Job.** Run the
    SQL shipped in the services image you deploy (`/app/supabase/bootstrap/`).
    Otherwise migrate fails with `42501` or waits for roles:
    - **Cloud SQL** (`migrations.databaseMode: cloudsql`, `roleBootstrap: false`, `values-gcp.yaml`): run `cloudsql_migration_roles.sql`, `session_directory_search_worker.sql` and `cloudsql_owner_function_default_revoke.sql` as the migration owner (`charts/sessions-pipeline/ci/gcp-cloudsql-values.yaml`).
-   - **HoopDb on AWS:** the older `values-eks.yaml` profile uses CloudNativePG and is a legacy compatibility path. The target is a dedicated HoopDb database on the shared RDS instance. Use the reviewed `rds` migrator/profile and its RDS-specific bootstrap/activation contract; never reuse the `selfhosted` true-superuser function-boundary bootstrap on RDS. The RDS chart profile is tracked in [infra#104](https://github.com/AgentWorkforce/infra/pull/104); its source validation does not qualify a live installation, and Aurora support must be reviewed separately.
+   - **HoopDb on AWS:** the older `values-eks.yaml` profile uses CloudNativePG and is a legacy compatibility path. The target is a dedicated HoopDb database on the shared RDS instance. Use the reviewed `rds` migrator/profile and its RDS-specific bootstrap/activation contract; never reuse the `selfhosted` true-superuser function-boundary bootstrap on RDS. The RDS chart profile is tracked in [infra#104](https://github.com/AgentWorkforce/infra/pull/104); its source validation does not qualify a live installation, and Aurora support must be reviewed separately. Until the RDS profile and bootstrap/activation artifact are reviewed, available and qualified together, keep HoopDb on its existing supported database. Do not migrate it to RDS from these binding outputs or run the true-superuser bootstrap there.
    - **Both:** images newer than 7d7229b also need `session_token_verifier.sql` and `session_ingest_roles.sql` (`docs/self-hosted-eks.md`; `scripts/selfhost/eks-proof-install.sh hoopdb-roles` does this for CNPG).
 4. Then `helm upgrade --install` the chart, whose migrate Jobs run as the owners.
 

@@ -5,7 +5,7 @@ per service**. Control uses `relaycontrol` by default; HoopDb uses `hoopdb`,
 Relaycast uses `relaycast`, and the optional Relayfile add-on uses `relayfile`.
 Each has independent migration/runtime roles and its own canonical schema.
 `application_database_name` names only the initial Control database; it stays
-unchanged on existing instances. `postgres_service_bindings` publishes complete
+unchanged on existing instances. Changing it forces replacement of an existing RDS instance; review the plan and explicit data migration/restore first. `postgres_service_bindings` publishes complete
 non-secret database/schema/role targets on the same endpoint. These outputs do
 not create SQL databases, prove application compatibility or enable add-ons.
 See the [storage contract](../../../docs/shared-postgres-storage-contract.md).
@@ -439,7 +439,7 @@ exact destroy inventory and recovery proof; do not remove state to bypass them.
 | search\_security\_group\_ids | Search security groups allowing HTTPS only from approved application/proof runner identities. | `list(string)` | n/a | yes |
 | search\_subnet\_ids | Existing private OpenSearch subnets, one per AZ. Production requires three. | `list(string)` | n/a | yes |
 | activate\_lambda | Reserved activation input. This per-service-database profile currently refuses true until schema/bootstrap/runtime support is qualified by a reviewed implementation change; provision inactive infrastructure meanwhile. | `bool` | `false` | no |
-| application\_database\_name | Initial Control database only, on the shared RDS instance. Other services use separate logical databases. Default preserves the existing RDS initial database identity; changing it is not an implicit data migration. | `string` | `"relaycontrol"` | no |
+| application\_database\_name | Initial Control database only, on the shared RDS instance. Other services use separate logical databases. Default preserves the existing identity. Changing this value on an existing RDS instance forces instance replacement; review the plan and an explicit data migration/restore before changing it. | `string` | `"relaycontrol"` | no |
 | aurora\_engine\_version | Explicit region-supported Aurora PostgreSQL 17 minor version when Aurora is selected. | `string` | `null` | no |
 | database\_instance\_class | Override the environment tier's instance class. Aurora needs an Aurora-supported class. | `string` | `null` | no |
 | deletion\_protection | Database API deletion protection. Production refuses false. Final snapshots and S3 versioning remain enabled. | `bool` | `true` | no |

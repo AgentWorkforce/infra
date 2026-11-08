@@ -18,8 +18,14 @@ identities. AWS roots explicitly select this layout:
 | Relaycast | `relaycast` | `public` | `relaycast_owner` | `relaycast_runtime` |
 | Relayfile, when enabled | `relayfile` | `public` | `relayfile_owner` | `relayfile_runtime` |
 
-A binding does not create a database or enable an add-on. Flows tables remain
-owned by Control where implemented; separate pods do not each need a database.
+The Control `public` schema is the current service's supported default; the older
+`relaycontrol` schema assignment was target metadata, not an executed migration.
+This table does not inspect existing databases or move data. Before adopting any
+existing installation, verify its catalog and preserve its actual namespace in
+reviewed bindings; a non-public installation needs compatible application support.
+
+A binding does not create a database or enable an add-on. Database bindings
+represent components with authoritative relational stores.
 History is a sessions-pipeline capability. Keep existing legacy History/Auth
 stores until their reviewed cutover; they are not new target dependencies.
 

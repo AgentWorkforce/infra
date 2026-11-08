@@ -145,7 +145,7 @@ variable "alarm_actions" {
 }
 
 variable "application_database_name" {
-  description = "Initial Control database only, on the shared RDS instance. Other services use separate logical databases. Default preserves the existing RDS initial database identity; changing it is not an implicit data migration."
+  description = "Initial Control database only, on the shared RDS instance. Other services use separate logical databases. Default preserves the existing identity. Changing this value on an existing RDS instance forces instance replacement; review the plan and an explicit data migration/restore before changing it."
   type        = string
   default     = "relaycontrol"
   nullable    = false

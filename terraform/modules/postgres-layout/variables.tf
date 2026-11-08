@@ -20,7 +20,7 @@ variable "port" {
 }
 
 variable "database" {
-  description = "The existing initial database name. With service_databases set, it is normally Control's database only; preserve it because changing RDS db_name may replace infrastructure."
+  description = "Validated existing initial database metadata. With service_databases set, bindings take their database names only from that map; this value is preserved as initial_database and is not a binding selector. Changing an RDS db_name forces instance replacement and requires a reviewed data migration."
   type        = string
   nullable    = false
   validation {
@@ -34,10 +34,6 @@ variable "service_databases" {
   type        = map(string)
   nullable    = false
   default     = {}
-  validation {
-    condition     = length(var.service_databases) == 0 || toset(keys(var.service_databases)) == toset(keys(var.services))
-    error_message = "service_databases must be empty for legacy compatibility or contain exactly the configured service keys."
-  }
   validation {
     condition     = alltrue([for database in values(var.service_databases) : can(regex("^[a-z][a-z0-9_]{0,62}$", database)) && !contains(["postgres", "template0", "template1", "rdsadmin"], database)])
     error_message = "Service databases must be bounded lowercase application identifiers, never maintenance databases."
@@ -69,6 +65,16 @@ variable "services" {
     relaycast = { schema = "relaycast", migration_role = "relaycast_owner", runtime_role = "relaycast_runtime" }
     history   = { schema = "relayhistory", migration_role = "history_owner", runtime_role = "relayhistory_runtime" }
     relayfile = { schema = "relayfile", migration_role = "relayfile_owner", runtime_role = "relayfile_runtime" }
+  }
+  # Keep cross-variable checks in one direction: services -> service_databases.
+  # Checking keys in service_databases as well would create a validation cycle.
+  validation {
+    condition     = length(var.service_databases) == 0 || toset(keys(var.service_databases)) == toset(keys(var.services))
+    error_message = "service_databases must be empty for legacy compatibility or contain exactly the configured service keys."
+  }
+  validation {
+    condition     = length(var.service_databases) > 0 || (alltrue([for service in values(var.services) : service.schema != "public"]) && length(distinct([for service in values(var.services) : service.schema])) == length(var.services))
+    error_message = "Legacy shared-database services require distinct non-public schemas; public or repeated schemas require explicit separate service databases."
   }
   validation {
     condition     = length(var.services) > 0

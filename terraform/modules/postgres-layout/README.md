@@ -33,7 +33,7 @@ complete binding to another endpoint with reviewed data migration and restore.
 
 | Name | Description | Type | Default | Required |
 | ---- | ----------- | ---- | ------- | :------: |
-| database | The existing initial database name. With service\_databases set, it is normally Control's database only; preserve it because changing RDS db\_name may replace infrastructure. | `string` | n/a | yes |
+| database | Validated existing initial database metadata. With service\_databases set, bindings take their database names only from that map; this value is preserved as initial\_database and is not a binding selector. Changing an RDS db\_name forces instance replacement and requires a reviewed data migration. | `string` | n/a | yes |
 | host | Shared PostgreSQL writer endpoint. No URL, user or credential. | `string` | n/a | yes |
 | forbidden\_roles | Administrator/bootstrap identities forbidden in service bindings. Roots must include their configured database master username. | `set(string)` | ```[ "relay_admin" ]``` | no |
 | port | Shared PostgreSQL port. | `number` | `5432` | no |

@@ -1,10 +1,6 @@
 output "bindings" {
   description = "Non-secret per-service connection identity. Databases, roles and schemas require reviewed bootstrap and compatible application support before use."
   value       = local.bindings
-  precondition {
-    condition     = length(var.service_databases) > 0 || (alltrue([for service in values(var.services) : service.schema != "public"]) && length(distinct([for service in values(var.services) : service.schema])) == length(var.services))
-    error_message = "Legacy shared-database services require distinct non-public schemas; public or repeated schemas require explicit separate service databases."
-  }
 }
 
 output "topology" {
