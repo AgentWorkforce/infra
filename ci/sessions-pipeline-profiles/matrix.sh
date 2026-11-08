@@ -43,7 +43,7 @@ MATRIX=(
   "profiles/migration.yaml|yes|yes|selfhosted|existing"
   "profiles/external-supabase.yaml|no|yes|supabase|supabase"
   "profiles/external-selfhosted.yaml|no|yes|selfhosted|external"
-  "profiles/external-rds.yaml|no|yes|rds|external"
+  "profiles/external-rds.yaml|no|yes|rds|rds"
   "ci/default-values.yaml|yes|yes|selfhosted|fresh"
   "ci/read-api-values.yaml|yes|yes|selfhosted|fresh"
   "ci/kind-values.yaml|yes|yes|selfhosted|fresh"
@@ -118,7 +118,7 @@ for row in "${MATRIX[@]}"; do
     args+=("${REQUIRED[@]}")
     # Operator inputs the profile leaves empty must fail the render; then supply them.
     case $shape in
-      external)
+      external|rds)
         expect_fail "migrations.runtimeRole is required" "${args[@]}"
         expect_fail "migrations.runtimeRoleLogin must be set (true or false) in $dbmode mode" "${args[@]}" --set worker.migrations.runtimeRole=sessions_pipeline_runtime
         args+=("${RUNTIME[@]}") ;;
@@ -195,6 +195,7 @@ for row in "${MATRIX[@]}"; do
     existing) jobs="search-worker-role-bootstrap hoopdb-runtime-role-bootstrap hoopdb-function-default-revoke"; roles="session_directory_search_worker sessions_pipeline_runtime"; fd=true ;;
     external) jobs=""; roles="session_directory_search_worker sessions_pipeline_runtime"; fd=false ;;
     supabase) jobs=""; roles=""; fd="" ;;
+    rds)      jobs=""; roles=""; fd="" ;;
   esac
   for c in search-worker-role-bootstrap hoopdb-runtime-role-bootstrap hoopdb-function-default-revoke; do
     if [[ " $jobs " == *" $c "* ]]; then
@@ -263,6 +264,11 @@ if [ "$mode" = static ]; then
   expect_fail "runtimeRole.bootstrapJob is for the in-cluster HoopDb only" "${SB[@]}" --set runtimeRole.bootstrapJob.enabled=true
   expect_fail "functionDefaultRevoke.bootstrapJob is for the in-cluster CNPG HoopDb only" "${GCP[@]}" --set functionDefaultRevoke.bootstrapJob.enabled=true
   expect_fail "runtimeRoleLogin must be set (true or false) in supabase mode" "${SB[@]}" --set worker.migrations.runtimeRoleLogin=null
+  RDS=(-f "$CHART/profiles/external-rds.yaml" "${REQUIRED[@]}" "${RUNTIME[@]}")
+  expect_fail "supabaseShim must not be true in rds mode" "${RDS[@]}" --set worker.migrations.supabaseShim=true
+  expect_fail "roleBootstrap must not be true in rds mode" "${RDS[@]}" --set worker.migrations.roleBootstrap=true
+  expect_fail "runtimeWorkloadRole is not supported in rds mode" "${RDS[@]}" --set worker.migrations.runtimeWorkloadRole=app
+  expect_fail "runtimeRoleLogin must be true in rds mode" "${RDS[@]}" --set worker.migrations.runtimeRoleLogin=false
   expect_fail "supabaseShim must be set (true or false) in cloudsql mode" "${GCP[@]}" --set worker.migrations.supabaseShim=null
   expect_fail "functionBoundaryMode is required in cloudsql mode" "${GCP[@]}" --set worker.migrations.functionBoundaryMode=
   expect_fail "functionBoundaryMode is required in selfhosted mode" "${IN[@]}" --set worker.migrations.functionBoundaryMode=

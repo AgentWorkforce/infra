@@ -1,7 +1,7 @@
 apiVersion: v2
 name: sessions-pipeline
 type: application
-version: 0.7.2
+version: 0.7.3
 # The Sessions Pipeline services image version the app subcharts default to.
 appVersion: "0.1.0"
 description: >
@@ -23,7 +23,7 @@ sources:
 # Third-party versions MUST match deps/pins.txt (scripts/ci/deps.sh checks).
 dependencies:
   - name: sessions-pipeline-worker
-    version: 0.7.0
+    version: 0.7.1
     repository: file://../sessions-pipeline-worker
     alias: worker
   - name: session-ingest-api
