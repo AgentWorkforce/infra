@@ -66,6 +66,14 @@ resource "aws_eks_pod_identity_association" "ebs" {
   role_arn        = aws_iam_role.this["ebs"].arn
   tags            = local.tags
 }
+resource "aws_eks_pod_identity_association" "lbc" {
+  count           = var.enable_load_balancer_controller ? 1 : 0
+  cluster_name    = aws_eks_cluster.this.name
+  namespace       = "kube-system"
+  service_account = local.pod_identity_service_accounts["lbc"]
+  role_arn        = aws_iam_role.this["lbc"].arn
+  tags            = local.tags
+}
 resource "aws_eks_addon" "bootstrap" {
   for_each                    = toset(["vpc-cni", "kube-proxy", "eks-pod-identity-agent"])
   cluster_name                = aws_eks_cluster.this.name

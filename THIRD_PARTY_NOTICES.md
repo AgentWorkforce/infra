@@ -96,7 +96,7 @@ cover an image's transitive packages.
 | --- | --- | --- |
 | Relaycast | [`AgentWorkforce/relaycast`](https://github.com/AgentWorkforce/relaycast) | Repository contains an [Apache-2.0 `LICENSE`](https://github.com/AgentWorkforce/relaycast/blob/main/LICENSE). |
 | RelayAuth | [`AgentWorkforce/relayauth`](https://github.com/AgentWorkforce/relayauth) | Repository contains an [Apache-2.0 `LICENSE`](https://github.com/AgentWorkforce/relayauth/blob/main/LICENSE). |
-| Relay Dashboard | [`AgentWorkforce/relay-dashboard`](https://github.com/AgentWorkforce/relay-dashboard) | Repository contains an [Apache-2.0 `LICENSE`](https://github.com/AgentWorkforce/relay-dashboard/blob/main/LICENSE). |
+| Relay Dashboard | [`AgentWorkforce/relay-webapp`](https://github.com/AgentWorkforce/relay-webapp) | Repository contains an [Apache-2.0 `LICENSE`](https://github.com/AgentWorkforce/relay-webapp/blob/main/LICENSE). |
 | Relayflows | [`AgentWorkforce/flows`](https://github.com/AgentWorkforce/flows) | Repository contains an [Apache-2.0 `LICENSE`](https://github.com/AgentWorkforce/flows/blob/main/LICENSE). |
 | Relayfile | [`AgentWorkforce/relayfile`](https://github.com/AgentWorkforce/relayfile) | Repository contains an [Apache-2.0 `LICENSE`](https://github.com/AgentWorkforce/relayfile/blob/main/LICENSE). |
 | Sessions Pipeline worker and AlleyOop | Chart metadata names the private `AgentWorkforce/sessions-pipeline` repository (formerly `AgentWorkforce/96BullSessions`) | No license or notice file was found in the inspected repository. License not established. |

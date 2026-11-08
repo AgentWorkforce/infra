@@ -1,13 +1,13 @@
 apiVersion: v2
 name: sessions-pipeline
 type: application
-version: 0.6.1
+version: 0.7.3
 # The Sessions Pipeline services image version the app subcharts default to.
 appVersion: "0.1.0"
 description: >
   The sessions pipeline in one release: the sessions-pipeline-worker and
-  alleyoop app charts, plus optional HoopDb (CloudNativePG Cluster), Locker
-  (MinIO) and an OpenTelemetry collector. Hook-free, so `helm install` and
+  session-ingest-api app charts, plus optional Postgres (CloudNativePG Cluster),
+  session-object-storage (MinIO) and an OpenTelemetry collector. Hook-free, so `helm install` and
   Alchemy's `helm template --no-hooks` + server-side apply behave the same.
   Requires the CloudNativePG operator when hoopdb.enabled (see deps/PINS.md).
 annotations:
@@ -23,12 +23,13 @@ sources:
 # Third-party versions MUST match deps/pins.txt (scripts/ci/deps.sh checks).
 dependencies:
   - name: sessions-pipeline-worker
-    version: 0.6.1
+    version: 0.7.0
     repository: file://../sessions-pipeline-worker
     alias: worker
-  - name: alleyoop
-    version: 0.3.9
-    repository: file://../alleyoop
+  - name: session-ingest-api
+    alias: alleyoop # retained values key; the published chart name is descriptive
+    version: 0.4.0
+    repository: file://../session-ingest-api
   - name: cluster
     version: 0.9.0
     repository: https://cloudnative-pg.github.io/charts
@@ -37,8 +38,8 @@ dependencies:
   - name: minio
     version: 5.4.0
     repository: https://charts.min.io/
-    alias: locker
-    condition: locker.enabled
+    alias: session-object-storage
+    condition: session-object-storage.enabled
   - name: opentelemetry-collector
     version: 0.178.0
     repository: https://open-telemetry.github.io/opentelemetry-helm-charts

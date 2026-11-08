@@ -199,7 +199,7 @@ For charts with another health route, set `--health-path`:
 ```
 
 The services behind the agent-relay GKE Ingress do not share a health path
-(relay-dashboard, relay-cloud-api, and relayhistory serve `/healthz`;
+(relay-webapp, relay-control, and relayhistory serve `/healthz`;
 relaycast serves `/health`), so no single `--health-path` passes for every
 host. For the GKE umbrella, supply one URL per host instead:
 
@@ -214,7 +214,7 @@ host. For the GKE umbrella, supply one URL per host instead:
 ```
 
 Here `relay.example.com` is `gkeIngress.hosts.root` (served by
-relay-dashboard), and `api`, `cast`, and `history` are the other
+relay-webapp), and `api`, `cast`, and `history` are the other
 `gkeIngress.hosts` values.
 
 Or supply one or more exact endpoints:

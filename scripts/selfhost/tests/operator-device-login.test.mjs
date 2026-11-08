@@ -8,7 +8,7 @@ const org = "10000000-0000-4000-8000-000000000001";
 const workspace = "20000000-0000-4000-8000-000000000002";
 const user = "30000000-0000-4000-8000-000000000003";
 const code = "ABCD-EFGH";
-const args = (action = "approve") => [action, code, org, workspace, user, "Desktop", "laptop"];
+const args = (action = "approve") => [action, code, org, workspace, user, "--client", "Desktop", "--host", "laptop"];
 function fixture(changes = {}) {
   const calls = [];
   const token = "synthetic-bootstrap-for-test-only";
@@ -72,10 +72,27 @@ for (const [label, mutation, expected] of [
   assert(!f.calls.some(c => ["approve", "deny"].includes(c.body?.action)));
 });
 
-test("browser requests with no host/client require an explicit dash in each corresponding argument", async () => {
+test("browser requests with no host/client require explicit null options", async () => {
   const f = fixture(); f.state.found.client_name = null; f.state.found.desktop_host_name = null;
-  const input = args(); input[5] = "-"; input[6] = "-";
+  const input = [...args().slice(0, 5), "--client-null", "--host-null"];
   assert.equal((await operatorDeviceLogin(input, f.deps)).status, "approved");
+});
+
+test("literal dash and shell-looking labels remain exact strings", async () => {
+  for (const value of ["-", "user's laptop $(not-a-command)"]) {
+    const f = fixture(); f.state.found.client_name = value; f.state.found.desktop_host_name = value;
+    const input = [...args().slice(0, 5), "--client", value, "--host", value];
+    assert.equal((await operatorDeviceLogin(input, f.deps)).status, "approved");
+  }
+});
+
+test("ambiguous or missing label selections refuse before reading the bearer", async () => {
+  const f = fixture(); f.deps.readToken = () => { throw new Error("must not be read"); };
+  for (const tail of [["--client-null"], ["--client-null", "--client", "Desktop", "--host-null"],
+    ["--client", "Desktop", "--host-null", "--host-null"], ["--client-null", "--host"]]) {
+    await assert.rejects(operatorDeviceLogin([...args().slice(0, 5), ...tail], f.deps), /invalid_arguments/);
+  }
+  assert.equal(f.calls.length, 0);
 });
 
 test("invalid actions, missing identity and unsafe ports are rejected before reading the bearer", async () => {
@@ -99,6 +116,17 @@ test("request and response errors do not expose external error text or retry an 
     return f.deps.request(url, init);
   };
   await assert.rejects(operatorDeviceLogin(args(), { ...f.deps, request }), /control_request_failed/);
+  assert.equal(decisions, 1);
+});
+
+test("an unexpected decision result is reported once without retry", async () => {
+  const f = fixture(); let decisions = 0;
+  const request = async (url, init) => {
+    const body = init.body && JSON.parse(init.body);
+    if (body?.action === "approve") { decisions++; return Response.json({ status: "pending" }); }
+    return f.deps.request(url, init);
+  };
+  await assert.rejects(operatorDeviceLogin(args(), { ...f.deps, request }), /unexpected_decision_result/);
   assert.equal(decisions, 1);
 });
 

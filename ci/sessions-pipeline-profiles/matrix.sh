@@ -44,6 +44,8 @@ MATRIX=(
   "profiles/external-supabase.yaml|no|yes|supabase|supabase"
   "profiles/external-selfhosted.yaml|no|yes|selfhosted|external"
   "ci/default-values.yaml|yes|yes|selfhosted|fresh"
+  "ci/read-api-values.yaml|yes|yes|selfhosted|fresh"
+  "ci/ingest-edge-values.yaml|yes|yes|selfhosted|fresh"
   "ci/kind-values.yaml|yes|yes|selfhosted|fresh"
   "ci/search-worker-bootstrap-values.yaml|yes|yes|selfhosted|existing"
   "ci/aws-cnpg-values.yaml|yes|no|selfhosted|fresh"
@@ -66,7 +68,9 @@ done
 # stays held) and the GCP values pin the GHCR image too. The chart
 # defaults (worker and alleyoop image.digest) are the same GHCR image, so a path
 # that pins nothing still gets it. The row loop below asserts that every
-# matrix row renders only the final images.
+# matrix row's 96bulls-services containers use those final images. The native
+# ingest-edge and read-api render fixtures carry separate synthetic image refs;
+# they do not qualify a native artifact or assert its provenance/final pin.
 GHCR="ghcr.io/agentworkforce/96bulls-services@sha256:6f22ea17dff336e1431664542759fd27958649388b90a0b2f0881883caa7c6b2"
 ECR="500268966557.dkr.ecr.us-west-2.amazonaws.com/96bulls-services@sha256:5bb6075240afa02a1b1797a81c07bffa029954eac7803d702ecba20db35d4db9"
 pins_of() { yq -r '[.worker.image.tag, .worker.image.digest, .alleyoop.image.tag, .alleyoop.image.digest, .privilegedSql.sqlImage.digest, .searchWorkerRole.bootstrapJob.sqlImage.digest, .runtimeRole.bootstrapJob.sqlImage.digest, .functionDefaultRevoke.bootstrapJob.sqlImage.digest] | map(select(. != null and . != "")) | join(",")' "$1"; }
@@ -75,7 +79,7 @@ services_refs() {
   render "$@" | yq -r 'select(.kind == "Deployment" or .kind == "Job") | .spec.template.spec | ((.initContainers // []) + .containers)[] | select(.image | test("96bulls-services")) | .image' | grep -v '^---$' | sort -u
 }
 # The chart defaults are the final GHCR image.
-for v in "$ROOT/charts/sessions-pipeline-worker/values.yaml" "$ROOT/charts/alleyoop/values.yaml"; do
+for v in "$ROOT/charts/sessions-pipeline-worker/values.yaml" "$ROOT/charts/session-ingest-api/values.yaml"; do
   [ "$(yq -r '.image.digest' "$v")" = "${GHCR#*@}" ] || err "${v#"$ROOT"/}: image.digest is not the final 7d7229b GHCR digest"
 done
 for pair in "profiles/selfhost-postgres.yaml|$GHCR" "profiles/migration.yaml|$GHCR" "profiles/external-supabase.yaml|$GHCR" "profiles/external-selfhosted.yaml|$GHCR" "ci/gcp-cloudsql-values.yaml|$GHCR" "ci/aws-cnpg-values.yaml|$ECR"; do
@@ -143,7 +147,7 @@ for row in "${MATRIX[@]}"; do
   done <<<"$imgs"
 
   # App workloads and the migrate Job, in every profile.
-  for d in ci-worker-referee ci-worker-bob-costas ci-worker-hoopdb-indexer ci-alleyoop-ingest; do
+  for d in ci-worker-session-status-worker ci-worker-session-summary-worker ci-worker-session-metadata-indexer ci-session-ingest-api; do
     has ".kind == \"Deployment\" and .metadata.name == \"$d\"" || err "$label: Deployment $d missing"
   done
   has ".kind == \"Job\" and $(comp hoopdb-migrate)" || err "$label: migrate Job missing"
@@ -177,10 +181,10 @@ for row in "${MATRIX[@]}"; do
 
   # Locker.
   if [ "$locker" = yes ]; then
-    has '.kind == "Deployment" and .metadata.name == "locker"' || err "$label: Locker Deployment missing"
+    has '.kind == "Deployment" and .metadata.name == "session-object-storage"' || err "$label: Locker Deployment missing"
     has ".kind == \"Job\" and $(comp locker-init)" || err "$label: locker-init Job missing"
   else
-    none '.kind == "Deployment" and .metadata.name == "locker"' || err "$label: Locker rendered with locker disabled"
+    none '.kind == "Deployment" and .metadata.name == "session-object-storage"' || err "$label: Locker rendered with locker disabled"
   fi
 
   # The bootstrap path: which privileged Jobs, and what migrate waits for.
@@ -283,8 +287,8 @@ if [ "$mode" = static ]; then
   # storage.googleapis.com, and locker.provider=gcs arms their data-path
   # readiness check. The GCP Cloud SQL file renders the native GCS shape.
   out=$(render "${GCP[@]}") || err "gcp-cloudsql did not render"
-  for w in worker-referee worker-bob-costas worker-hoopdb-indexer alleyoop-ingest; do
-    gcs_env=$(yq "select(.kind == \"Deployment\" and .metadata.name == \"ci-$w\") | .spec.template.spec.containers[0].env[] | select(.name == \"LOCKER_PROVIDER\" or .name == \"PIPELINE_RAW_PROVIDER\") | .name + \"=\" + .value" <<<"$out" | sort | tr '\n' ' ')
+  for w in ci-worker-session-status-worker ci-worker-session-summary-worker ci-worker-session-metadata-indexer ci-session-ingest-api; do
+    gcs_env=$(yq "select(.kind == \"Deployment\" and .metadata.name == \"$w\") | .spec.template.spec.containers[0].env[] | select(.name == \"LOCKER_PROVIDER\" or .name == \"PIPELINE_RAW_PROVIDER\") | .name + \"=\" + .value" <<<"$out" | sort | tr '\n' ' ')
     [ "$gcs_env" = "LOCKER_PROVIDER=gcs PIPELINE_RAW_PROVIDER=gcs " ] || err "gcp-cloudsql: $w lacks LOCKER_PROVIDER=gcs/PIPELINE_RAW_PROVIDER=gcs (got: $gcs_env)"
   done
   grep -Eq 'name: "?LOCKER_(ACCESS_KEY_ID|SECRET_ACCESS_KEY)"?$' <<<"$out" && err "gcp-cloudsql: GCS Locker renders a static HMAC credential"

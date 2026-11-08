@@ -1,381 +1,260 @@
 # Enterprise AWS installation and first-user guide
 
-This guide is for the customer's platform administrator, identity administrator,
-and pilot users. Record the approved change window in the private operator handoff.
+Use this guide with the customer's platform administrator, identity administrator
+and pilot users. `AgentWorkforce/infra` is the installation source of truth;
+customer names, account details and credentials belong in a private handoff.
 
-**Release preparation, not an installation-complete claim.** The local development
-stack works, but the requested single-database AWS stack, customer Desktop
-distribution, and all operator controls do not yet have complete acceptance
-evidence. Complete the [release checklist](#before-the-installation-meeting)
-before asking a customer to follow the installation steps. Do not substitute
-the kind/SQLite demonstration for this release.
+**Status: the complete AWS installation is not ready for customer handoff.**
+Terraform and the application charts exist, but the current target still needs
+managed-RDS bootstrap and a complete application acceptance run. Finish the
+release checks below before scheduling an installation. The historical EKS and
+local kind demonstrations are useful development evidence, not this release.
 
-## What people will use
+## Before you start
 
-The platform administrator provides a private application address, reachable
-through the customer's network access system. In this guide, replace
-`https://relay.customer.example` with that address everywhere. The release
-packet must select a separate API origin or the supported shared app/API-host
-profile explicitly. A shared app/API host still needs separate Relaycast and
-History origins; it does not put every service behind the app hostname.
+The release owner supplies one tested release packet:
 
-Record all origins, DNS names, trusted certificate coverage and exact health
-URLs in the private handoff. At minimum these include the app, the API (unless
-shared), Relaycast and History. Add selected file/object-upload and identity
-provider endpoints. Pilot laptops need approved VPN/ZTNA access to the
-client-facing service origins, not just the login page.
-
-| Address | Who uses it | Purpose |
-| --- | --- | --- |
-| `https://relay.customer.example/login` | Everyone | Sign in with the customer's identity provider. |
-| `https://relay.customer.example/downloads` | Pilot users and IT | Download the customer-branded Desktop installer. **This page and its signed artifact delivery are release requirements; this guide does not claim they exist today.** |
-| The sign-in approval link opened by Desktop | The person signing in | Check the requesting computer and workspace, then approve that device. |
-| API, Relaycast and History origins from the packet | Desktop and approved clients | Authenticated service access; these can be different hosts from the app. |
-| Settings → Members | Customer owners/admins | Invite people and manage access. |
-| Customer operator controls | Authorized customer administrators | Manage capture policy and deletion. Exact released navigation and implementation evidence must be supplied in the release packet. |
-
-Customers do not need an Agent Relay hosted account to approve devices in their
-own installation. They do not send a code or bootstrap secret to our engineers.
-
-## Before the installation meeting
-
-Our release owner supplies a **customer release packet** containing:
-
-- A pinned infra commit, chart package/version/digest, and image digests mirrored
-  into the customer's ECR. Include the supported CPU architectures.
-- One tested AWS foundation/data/application composition, a non-secret customer
-  values file, ordered migration/bootstrap instructions, and named rollback and
-  restore procedures. A Terraform module output alone is not this packet.
-- A completed acceptance report for that exact composition, including managed
-  RDS activation, real Desktop upload and application readback, cross-tenant
-  refusal, restart, upgrade and isolated restore. Preserve failed attempts.
-- Customer Desktop packages, verified hashes/signatures, the compiled site and
-  URL scheme, branding, update/feed ownership, and install/uninstall instructions
-  for each selected OS. A generic hosted installer is not a substitute.
-- A working customer `/downloads` page and first-admin recovery procedure.
-- An implemented/tested capture-policy and operator-deletion surface, and the
-  disabled-Flows behavior described below.
-- A named support contact and a non-secret evidence directory. Do not include
-  credentials, session contents, raw rendered Secrets, or Terraform state in a
-  support bundle.
-
-The current remaining work is tracked in
-[the application proof contract](terraform-helm-application-proof.md),
-[the shared database contract](shared-postgres-storage-contract.md), and
-[the customer controls acceptance checklist](enterprise-customer-controls.md).
-Missing evidence means **not yet ready**, not permission to skip that step.
-
-The customer supplies these inputs before the meeting:
-
-| Input | Customer owner | Record in the handoff |
-| --- | --- | --- |
-| AWS account, region, environment and permitted resource boundaries | Platform | Exact identifiers; distinguish existing resources from newly managed ones. |
-| Existing EKS/network or approval to provision the selected foundation | Platform | Private subnets, endpoint access, worker capacity, storage and IAM authority. |
-| App/API/Relaycast/History DNS names, trusted TLS certificates/CA, ZTNA/VPN access | Network/security | Confirm a pilot laptop resolves and reaches every selected client-facing origin, including selected file/object-upload endpoints. |
-| Customer ECR and approved artifact import path | Platform/security | No dependency on public registries at runtime. |
-| SSO issuer, client ID, approved domain/group policy and client Secret reference | Identity | Register `<app origin>/login/oidc/callback` with the IdP. |
-| First owner email, organization name and pilot workspace | Customer owner | Use a customer-controlled work email; this person receives first-admin access. |
-| Approved secret delivery system | Security/platform | Kubernetes Secret references only in the non-secret values file. |
-| Backup retention, recovery targets, audit export and allowed egress | Platform/security | Self-host analytics goes to the customer's collector, never hosted PostHog. |
-| Approved company name, logo, Desktop names and supported OSes | Customer/IT | Record the approved display name and artwork in the private handoff. |
-
-## 1. Provision the AWS environment
-
-**Who:** the customer platform administrator, using the approved customer AWS
-identity and change process.
-
-1. Check the account, region, Kubernetes context and resource inventory against
-   the release packet. Do not use an engineer's proof sandbox or credentials.
-2. Create or select the reviewed foundation first: private networking, EKS,
-   workload identities, storage prerequisites and administrative access. Use
-   the [foundation instructions](../terraform/examples/aws-foundation/README.md)
-   from the pinned release. If an existing EKS installation is supplied, document
-   its prerequisites rather than creating a second cluster.
-3. Prepare the private data variables and backend files using
-   [AWS environments](../terraform/examples/aws-environments/README.md).
-   Keep foundation, data and application state separate. State/backup storage
-   must survive application teardown.
-4. Generate and inspect the data plan:
-
-   ```sh
-   python3 terraform/scripts/aws-environment.py plan \
-     --variables /approved/private/customer.tfvars.json \
-     --backend /approved/private/customer.backend.json
-   python3 terraform/scripts/aws-environment.py show \
-     --variables /approved/private/customer.tfvars.json \
-     --backend /approved/private/customer.backend.json
-   ```
-
-5. After the customer approves that exact saved plan, apply it with the same
-   input paths and the reviewed plan digest. Set `PLAN_SHA256` to the exact
-   saved-plan digest from the reviewed receipt:
-
-   ```sh
-   python3 terraform/scripts/aws-environment.py apply \
-     --variables /approved/private/customer.tfvars.json \
-     --backend /approved/private/customer.backend.json \
-     --approve-plan "$PLAN_SHA256"
-   ```
-
-   Retain the apply receipt; reconcile a failed apply before preparing another plan.
-   Do not delete state to make a retry succeed.
-6. Export the wrapper's non-secret verification outputs. Confirm actual private
-   endpoints, resource IDs, backups and workload identities against the receipt.
-
-   ```sh
-   python3 terraform/scripts/aws-environment.py output \
-     --variables /approved/private/customer.tfvars.json \
-     --backend /approved/private/customer.backend.json
-   ```
-
-   Retain its `verification.json` with the plan/apply receipt in the private
-   evidence directory. It is not a complete Helm overlay or proof that SQL is
-   ready.
-
-**Expected result:** the selected Terraform-owned AWS foundation and data
-resources exist and are reachable from the approved administrative runner and
-workloads. No application has been qualified merely by reaching this point.
-
-The required relational store is **one RDS instance and one application
-database**, with distinct service schemas and owner/runtime roles. The default
-application database name is `relaycontrol`. Control uses schema `relaycontrol`,
-pipeline uses `sessions`, Relaycast uses `relaycast`, History uses `relayhistory`,
-and optional Relayfile uses `relayfile`. Follow the exact role table and SQL
-readiness gate in the shared database contract. Do not point existing
-dedicated-database migrators at this database without their reviewed shared
-schema implementation. Runtime roles must not own schemas or run DDL.
-
-## 2. Configure the customer profile and administrator
-
-**Who:** platform and identity administrators together.
-
-1. Deliver credentials through the approved secret system. The customer overlay
-   names existing Secrets; it contains no database passwords, bootstrap bearer,
-   SSO client secret, signing keys or application tokens.
-2. Configure the API's `bootstrap.orgName` and `bootstrap.adminEmail`; set the
-   optional administrator display name and workspace name. Set the matching
-   Relaycast internal-secret reference and dashboard origin. These are existing
-   [control chart inputs](../charts/relay-cloud-api/README.md#sign-in-bootstrap-and-invites).
-3. Configure `auth.oidc` for the customer's IdP and mount its client secret from
-   the selected Secret key. The callback is exactly
-   `https://relay.customer.example/login/oidc/callback`. Enable only the required
-   private network/IdP connectivity; do not enable unrestricted egress.
-4. Set the approved [dashboard customer profile](../charts/relay-dashboard/README.md)
-   and the matching Desktop profile. The Desktop site, deep-link scheme,
-   application identity, signing trust and update source must belong to this
-   customer profile. Never point its updater at a hosted Agent Relay build.
-5. Select the customer's core profile: `components.relayflows: false`. This
-   prevents Flows worker installation, but **does not by itself hide the current
-   dashboard sidebar or disable the API**. Require the corresponding released
-   server entitlement/capability and UI gating from the controls checklist.
-   Relayfile is also outside a core-only profile unless separately
-   selected. Keep add-ons available for other entitled deployments.
-
-**Expected result:** the reviewed values describe one customer installation,
-one first owner and one pilot workspace, with SSO and the selected add-ons
-explicitly configured.
-
-## 3. Install the pinned Helm release
-
-**Who:** the customer platform administrator.
-
-1. Import the exact release images into ECR and verify their digests. Distribute
-   customer Desktop installers through the approved artifact path as well.
-2. Render/lint the selected package with the supplied non-secret values. Check
-   the release packet's public/private origins, namespace, Secret references,
-   image digests and network restrictions before installation.
-3. Run the release packet's ordered SQL/bootstrap and migration procedure using
-   separate owner credentials. Wait for each required Job and the application
-   readiness barrier; never bypass a verifier or mark a pending generation PASS.
-4. Check the selected context, namespace, release identity and ownership.
-   Inspect `helm list --all` in that exact context/namespace; only a confirmed
-   absent release permits first install. A failed query is not proof of absence.
-   Use the packet's migration order and exact package/values. There is no
-   universal complete-stack command qualified by this document. Do not use
-   `--atomic`: Helm cannot undo database or object-data changes.
-
-   **First installation**, after confirmed absence and completion of required
-   pre-install Jobs (set every variable from the packet):
-
-   ```sh
-   helm install "$RELEASE" "$CHART_PACKAGE" \
-     --kube-context "$KUBE_CONTEXT" --namespace "$NAMESPACE" \
-     --create-namespace --values /approved/private/customer.values.yaml \
-     --no-hooks --wait --wait-for-jobs --timeout 20m
-   ```
-
-   **Upgrade an existing release** only after the matching backup, isolated
-   restore drill and migration-compatibility evidence pass the
-   [pre-upgrade gate](../scripts/selfhost/README.md#pre-upgrade-gate). Preserve
-   its verified namespace/release identity and use `helm upgrade` with the
-   reviewed package/values and `--no-hooks --wait --wait-for-jobs --timeout 20m`.
-   Never add `--install` to an upgrade: a mistyped release must not create a
-   second installation.
-
-5. Run `scripts/selfhost/verify-agent-relay.sh` with that exact context, namespace
-   and release. This checks infrastructure/workload readiness; it does not
-   replace the user tests below.
-
-   ```sh
-   scripts/selfhost/verify-agent-relay.sh \
-     --context "$KUBE_CONTEXT" --namespace "$NAMESPACE" --release "$RELEASE" \
-     --health-url "$APP_HEALTH_URL" --health-url "$API_HEALTH_URL" \
-     --health-url "$CAST_HEALTH_URL" --health-url "$HISTORY_HEALTH_URL"
-   ```
-
-   Set each full health URL from the release packet's verified image/ingress
-   route. The script's derived default is `/health`; it does not work for every
-   component, and a SPA HTML fallback must not count as an API health check.
-   Add selected add-on URLs separately.
-
-   For load-balancer-terminated TLS with empty Ingress `spec.tls`, also pass
-   `--external-tls-host "$APP_TLS_HOST"` and repeat it for the selected API,
-   Relaycast, History and add-on hosts. These are DNS names without scheme or
-   port, and must match selected Ingress rule hosts. The verifier then performs
-   the same real chain/hostname/minimum-expiry checks against each endpoint.
-   Do not use `--allow-no-tls` to make an external-TLS installation pass.
-
-**Expected result:** required Jobs completed, services ready, private ingress
-reachable, and normal TLS verification succeeds from the pilot laptop.
-
-## 4. Sign in as the first administrator
-
-**Who:** the customer employee whose email was configured as the first owner.
-
-1. Connect to the customer's VPN/ZTNA network.
-2. Open `https://relay.customer.example/login`.
-3. Choose the customer's SSO provider and sign in with the configured work email.
-4. Confirm the customer organization and pilot workspace are correct.
-5. Open Settings → Members, invite the pilot users, and assign only the intended
-   roles. Verify an uninvited/non-member account is refused.
-
-First boot creates the organization/owner and default Relaycast workspace
-idempotently; the API may still be retrying workspace creation while serving
-HTTP. An HTTP 200 login page does not establish that bootstrap completed.
-
-### If the page says “No sign-in method is configured”
-
-This means OIDC/email sign-in was not configured successfully. The normal fix
-is for the customer's identity/platform administrator to finish Step 2. It is
-not a request for our team to approve every employee manually.
-
-For first-admin recovery, the **customer's authorized Kubernetes operator** may
-use the bootstrap bearer already mounted in the API pod:
-
-1. The intended customer owner opens Operator sign-in and keeps that same
-   browser tab open. Record its current code.
-2. Inspect that exact code through `POST /api/v1/auth/device/approve` with
-   `{ "action": "lookup", "user_code": "OWN-CODE" }`. Authenticate from inside
-   the API pod with the mounted bootstrap bearer; never print/copy it into a
-   terminal argument, ticket, chat or browser.
-3. Check the returned client, computer (when present), pending status and
-   expiry with the person requesting access. Separately verify the intended
-   existing customer owner ID and workspace ID. Do not select the first row
-   blindly, create a replacement user, or approve an unknown request.
-4. Submit `{ "action": "approve", "user_code": "OWN-CODE", "user_id":
-   "VERIFIED-OWNER-ID", "workspace_id": "VERIFIED-WORKSPACE-ID" }` to the same
-   authenticated endpoint. The API enforces membership. The released operator
-   tool/procedure must keep the bearer inside the pod and redact responses.
-5. Return to the original browser tab. Confirm the correct organization and
-   owner, then configure/test SSO before inviting other users.
-
-For runnable lookup, explicit identity selection, approve/deny commands and
-troubleshooting, use the [operator runbook](operator-device-login.md) and its
-reusable in-pod helper. The API contract is implemented in
-[Control's device approval tests](https://github.com/AgentWorkforce/relay-control/blob/92cd27d58df395be050809431f21707016557899/test/device-approval.test.ts).
-Bind the helper's reviewed version and compatible Control image in the release
-packet. Do not hand customers the ignored `.kind/.../approve-login.mjs` fixture
-helper as a supported enterprise tool. Codes expire; inspect a newly generated
-code after expiry instead of retrying an old approval.
-
-## 5. Download and sign in to Desktop
-
-**Who:** each pilot user, with IT help for installation/trust if required.
-
-1. While signed in to the customer app, open **Download Desktop** at
-   `https://relay.customer.example/downloads`.
-2. Select the approved installer for the computer's OS and CPU architecture.
-   The page must show the approved customer brand, version, supported OS,
-   publisher/signature, checksum and the connected server address. It must
-   serve the entitled customer artifact, not redirect to a generic hosted app.
-3. Follow that package's IT-approved installation instructions. Public or
-   customer CA trust must work normally; do not bypass certificate validation,
-   Gatekeeper, signing or enterprise endpoint policy.
-4. Open the installed customer Desktop app and choose Sign in. It opens the
-   customer site in the browser. Sign in through SSO if requested.
-5. Check the computer, customer workspace and code on the approval page against
-   Desktop. Approve only your own request. Desktop should report the same
-   customer workspace and connected state.
-6. Confirm that capture settings show the administrator's policy. Managed
-   settings must be labelled and not silently overridden by the user.
-
-Normal Desktop approval is performed in the authenticated customer browser.
-It requires neither Kubernetes access nor disclosure of the bootstrap bearer.
-Browser login and Desktop device approval are separate steps; a signed-in
-browser is not proof that Desktop is installed or connected.
-
-## 6. Prove the real pilot workflow
-
-**Who:** one pilot user and one customer administrator, recording non-secret
-results with the release owner.
-
-1. Start a short real coding-agent session in the selected workspace. Include
-   a unique harmless marker and a synthetic secret-test value supplied by the
-   release test. Never use a real secret as the test marker.
-2. Confirm client-side scrubber evidence shows the synthetic secret was removed
-   **before upload**. Server-side scrubbing alone does not satisfy this check.
-3. Confirm that the marked session appears in the normal customer application
-   list, opens with the expected transcript, and is searchable. Check the real
-   owner/workspace and processing status. A row in a pipeline table alone fails
-   this test.
-4. Deliver the same session event again through the supported client retry path.
-   Confirm one logical result and durable readback after the selected service
-   restart.
-5. Register two agents, exchange a message and a reply, and verify both sides
-   read the same conversation using the customer's authoritative Postgres store.
-6. Use a second workspace/user to verify that lists, transcript, search, direct
-   APIs and object reads cannot expose the first workspace's data. Separately
-   verify that each service runtime role cannot access another service's
-   schema. Test workspace-specific database isolation only where that service
-   has a reviewed tenant-context/RLS contract; do not treat a service-wide
-   runtime role as if it were an end user's workspace identity.
-7. As the customer operator, change a managed capture setting and verify the
-   enrolled client enforces it. As a normal member, verify the same policy
-   mutation and operator-deletion API are refused.
-8. Delete the marked session through the authorized operator UI, confirm the
-   target and complete the explicit destructive confirmation. Check completion
-   across object storage, database/search projections and supported reads;
-   replay/retry must not resurrect it. Explain retained backup disposition.
-9. For a Flows-disabled profile, confirm there is no Flows sidebar item. A direct Flows URL
-   and API call must also be refused, with no Flows workloads/schedules running.
-10. Check that product analytics reaches only the approved local collector, and
-    that blocked hosted egress cannot fall back to `i.agentrelay.com`. Verify
-    agreed audit/operational telemetry in the customer's monitoring system.
-11. Verify the selected cost/usage views against known reported usage. Treat
-    usage attribution as distinct from an external provider invoice or enforced
-    budget limit. Include the customer's agreed team/project effectiveness
-    question in the POC handoff.
-
-**Expected result:** every selected requirement passes on the exact customer
-release. Record FAIL or PENDING honestly. The existing local receipt is
-57 PASS / 0 FAIL / 3 PENDING, not full acceptance of this workflow.
-
-## Troubleshooting and handoff
-
-| What the person sees | What to do |
+| Required item | What must be ready |
 | --- | --- |
-| Site cannot be reached | Check customer VPN/ZTNA, private DNS, ingress and network routes. |
-| TLS/certificate error | Correct the certificate chain/hostname or distribute the approved public CA through IT. Never disable verification. |
-| No sign-in method | Complete OIDC/SMTP configuration; use customer operator recovery only for the first owner/emergency. |
-| Code expired/denied | Start a fresh request in Desktop/browser and inspect that request. Never approve another person's pending code. |
-| Desktop connects to the hosted site or wrong scheme | Stop the pilot flow and install the correct customer-profile artifact. Changing an environment variable is not a replacement for a compiled profile. |
-| Download missing or wrong platform | Release owner imports the signed customer asset; do not substitute a hosted build. |
-| Upload succeeds but session is absent | Trace the same session through canonical storage, pipeline, approved reader and application route. Do not copy rows or bypass ACLs. |
-| A managed setting can be bypassed | Fail the policy acceptance case and report the exact version; a disabled UI alone is insufficient. |
-| Deletion still pending | Inspect the supported deletion job/status and read denials. Do not claim completion after hiding a list item. |
+| Infrastructure and application versions | An immutable infra commit, chart package and image inventory, including CPU architectures and customer ECR locations. |
+| RDS setup | A supported RDS bootstrap/LOGIN procedure, separate service databases, owner/runtime roles, verified TLS and completed migrations. |
+| Application wiring | Control sign-in, native ingest/read routes, authoritative PostgreSQL messaging, S3 and the selected OpenSearch/Lambda path tested together. |
+| Desktop | Signed customer-profile installers, a working download location and the correct server, URL scheme and update feed. |
+| Operator controls | Capture policy, pre-upload scrubbing, authorized deletion and disabled add-ons verified in the actual client and app. |
+| Recovery | A successful isolated restore and a reviewed upgrade/recovery procedure for this exact release. |
 
-Before ending the installation meeting, give the customer the app/download
-URLs, two named administrators, the selected policy and add-ons, release
-identifiers, verified backup/restore instructions, test results, remaining
-issues with owners, and a support contact. Do not describe the install as
-complete until the agreed acceptance cases actually pass.
+Open work is tracked in the [application proof](terraform-helm-application-proof.md),
+[database contract](shared-postgres-storage-contract.md) and
+[customer controls checklist](enterprise-customer-controls.md). A missing item
+blocks the corresponding installation step; do not substitute an older profile.
+
+The customer provides:
+
+- AWS account, region, existing EKS cluster/network, namespace, storage and
+  approved administrator/workload identities.
+- Private app, API, Relaycast and History origins, DNS, trusted TLS certificates
+  and laptop VPN/ZTNA access. A supported shared app/API host is optional;
+  Relaycast and History still need their own origins.
+- ECR/artifact import access, the secret delivery system, allowed egress and the
+  customer's telemetry destination.
+- SSO issuer/client configuration, first owner email, organization and pilot
+  workspace. Register `<app origin>/login/oidc/callback` with the IdP.
+- Supported Desktop operating systems, approved branding, retention and recovery
+  requirements. Keep all credentials in the approved secret system.
+
+## 1. Check the administrative environment
+
+**Who:** customer platform administrator.
+
+Use the approved admin runner. Import the pinned source bundle if that runner
+cannot reach GitHub. With a normal repository checkout:
+
+```sh
+git clone https://github.com/AgentWorkforce/infra.git
+cd infra
+git checkout --detach "$INFRA_REF"
+git rev-parse HEAD
+aws sts get-caller-identity
+kubectl config current-context
+```
+
+`INFRA_REF` comes from the release packet. Compare the commit, AWS account,
+region and Kubernetes context with the private handoff before continuing.
+Install the release's supported Terraform, Helm, kubectl, Node and Python tools.
+
+For an existing EKS cluster, inventory its private networking, load-balancer
+controller, storage, Pod Identity and required access. Follow the
+[foundation instructions](../terraform/examples/aws-foundation/README.md) for
+missing prerequisites; do not create or adopt a second cluster accidentally.
+
+**Checkpoint:** the admin runner and a pilot laptop can reach the intended
+network, and the deployment identity can manage only the approved resources.
+
+## 2. Provision or bind the AWS data services
+
+**Who:** customer platform administrator.
+
+Use the [AWS environment instructions](../terraform/examples/aws-environments/README.md)
+and the matching `profiles/*.example` files. Fill in the customer's existing
+resource IDs and approved sizing. Keep the private variables and backend files
+outside the checkout, with restricted permissions. Foundation, data and
+application state have separate keys.
+
+```sh
+python3 terraform/scripts/aws-environment.py plan \
+  --variables /approved/private/customer.tfvars.json \
+  --backend /approved/private/customer.backend.json
+python3 terraform/scripts/aws-environment.py show \
+  --variables /approved/private/customer.tfvars.json \
+  --backend /approved/private/customer.backend.json
+```
+
+Review the saved plan: account, region, existing versus new resources, cost,
+networking, backups and retention. After approval of that exact plan, use its
+recorded digest:
+
+```sh
+python3 terraform/scripts/aws-environment.py apply \
+  --variables /approved/private/customer.tfvars.json \
+  --backend /approved/private/customer.backend.json \
+  --approve-plan "$PLAN_SHA256"
+python3 terraform/scripts/aws-environment.py output \
+  --variables /approved/private/customer.tfvars.json \
+  --backend /approved/private/customer.backend.json
+```
+
+Retain the plan/apply receipt and non-secret `verification.json`. Reconcile a
+failed apply before preparing another plan. Preserve state and backup storage.
+
+**Checkpoint:** actual RDS, S3 and selected search/function resources match the
+reviewed inventory and are privately reachable from the intended workloads.
+
+## 3. Bootstrap the service databases
+
+**Who:** the named database provisioning operator, then each service's migration owner.
+
+The AWS target is **one RDS instance with separate logical databases**:
+
+| Service | Database | Schema | Migration owner | Runtime role |
+| --- | --- | --- | --- | --- |
+| Control | `relaycontrol` | `public` | `control_owner` | `control_api_runtime` |
+| Pipeline / HoopDb | `hoopdb` | `sessions` | `hoop` | `sessions_pipeline_runtime` |
+| Relaycast | `relaycast` | `public` | `relaycast_owner` | `relaycast_runtime` |
+| Relayfile, if selected | `relayfile` | `public` | `relayfile_owner` | `relayfile_runtime` |
+
+Use the accepted [database bootstrap contract](shared-postgres-storage-contract.md).
+Terraform creates only the initial RDS database; its binding outputs do not
+create the other databases, users or grants. This step is blocked until the
+release packet includes the supported, tested RDS SQL/activation procedure.
+Do not use the CNPG superuser bootstrap as an RDS substitute.
+
+For each service, create the dedicated database, install its owner/runtime
+identities and required extensions, then run its pinned migrations as the
+owner. Use real runtime LOGINs over verified TLS to prove allowed operations,
+denial of other service databases, and denial of DDL/owner access. Preserve an
+existing installation's actual database names until a reviewed migration changes them.
+
+History is a pipeline capability in the target. Keep legacy History/Auth stores
+where the selected profile still requires them until their reviewed cutover.
+
+**Checkpoint:** all required migrations and runtime-role checks pass on managed
+RDS. `application_sql_ready=false` or a pending generation means stop here.
+
+## 4. Configure the application and install it
+
+**Who:** platform and identity administrators.
+
+Use the release packet's complete RDS values overlay. The historical
+`values-eks.yaml` proof is not a substitute. Current umbrella names are
+`relay-control` and `relay-webapp`; older installations must follow the
+[naming upgrade guide](control-webapp-chart-rename.md).
+
+1. Deliver credentials through the approved secret system. Values contain
+   existing Secret references, never passwords, signing keys or bootstrap tokens.
+2. Set `relay-control.bootstrap.orgName` and `relay-control.bootstrap.adminEmail`, the selected
+   workspace, Relaycast internal-secret reference and app origin. Configure
+   `relay-control.auth.oidc` with the IdP callback from the handoff. See the
+   [Control chart](../charts/relay-control/README.md#sign-in-bootstrap-and-invites).
+3. Configure the approved [Webapp profile](../charts/relay-webapp/README.md),
+   all service origins, private DNS/TLS and permitted egress. Select the
+   qualified [native ingest](self-hosted-native-ingest.md) and
+   [session reader](self-hosted-session-read-api.md) profile from the packet.
+   Do not enable a slot without its supported image, role and authentication contract.
+4. For a core pilot, set `components.relayflows: false`; leave Relayfile and
+   Chief uninstalled unless selected. Verify the matching server and UI
+   capability behavior in the [controls checklist](enterprise-customer-controls.md).
+5. Import the full pinned image inventory into customer ECR through the approved
+   credential-helper/import procedure. Verify destination digests and use those
+   references in the overlay. Include migration and supporting images. See the
+   [image supply-chain guide](self-hosted-image-supply-chain.md).
+6. Render and lint the selected chart with that overlay. Check every namespace,
+   origin, Secret reference, image and network setting before installation.
+
+Set `RELEASE`, `CHART_PACKAGE`, `KUBE_CONTEXT` and `NAMESPACE` from the handoff.
+Run `helm list --all` in that exact context/namespace. Only confirmed absence
+permits this **first-install** command:
+
+```sh
+helm install "$RELEASE" "$CHART_PACKAGE" \
+  --kube-context "$KUBE_CONTEXT" --namespace "$NAMESPACE" \
+  --create-namespace --values /approved/private/customer.values.yaml \
+  --no-hooks --wait --wait-for-jobs --timeout 20m
+```
+
+Run the packet's ordered pre-install SQL/Jobs before this command where required.
+For an existing release, follow the [pre-upgrade gate](../scripts/selfhost/README.md#pre-upgrade-gate)
+and use `helm upgrade` with its reviewed package and values. Do not add `--install`
+to an upgrade, or `--atomic` to a database-changing installation.
+
+**Checkpoint:** required Jobs complete and workloads become ready. Inspect a
+failed Job or missing image/profile instead of bypassing a verifier.
+
+## 5. Verify ingress, TLS and services
+
+**Who:** platform administrator, with a pilot laptop on the customer network.
+
+Use the exact health URLs for the selected images, not a guessed common path:
+
+```sh
+scripts/selfhost/verify-agent-relay.sh \
+  --context "$KUBE_CONTEXT" --namespace "$NAMESPACE" --release "$RELEASE" \
+  --health-url "$APP_HEALTH_URL" --health-url "$API_HEALTH_URL" \
+  --health-url "$CAST_HEALTH_URL" --health-url "$HISTORY_HEALTH_URL"
+```
+
+For TLS terminated at the load balancer with no Ingress `spec.tls`, also repeat
+`--external-tls-host <hostname>` for each selected ingress host. The verifier
+checks the real certificate chain, hostname and expiry. Do not disable TLS
+verification or count a SPA HTML fallback as an API health response.
+
+**Checkpoint:** the script passes and a pilot laptop resolves and reaches all
+client-facing origins through VPN/ZTNA, including selected upload endpoints.
+
+## 6. Onboard the first owner and pilot users
+
+**Who:** the configured customer owner, then each invited user.
+
+1. Open the approved app's `/login` page and sign in through customer SSO.
+   Confirm the organization/workspace, then invite pilot users in Members.
+   Verify an uninvited account is refused.
+2. If no sign-in method is configured, have the identity administrator finish
+   OIDC/SMTP. For first-owner recovery, the customer's authorized Kubernetes
+   operator uses the [device approval runbook](operator-device-login.md).
+   The bootstrap bearer stays inside Control; employees do not send it or
+   their approval codes to our engineers.
+3. Open the release packet's customer download page (the intended route is
+   `/downloads`). Install the signed package for the selected OS/CPU. A missing
+   or wrong-profile package blocks onboarding; do not substitute a hosted build.
+4. Open Desktop and sign in to the customer site. Compare the computer,
+   workspace and code in the normal signed-in browser, approve only that
+   request, and verify Desktop connects to the same customer workspace.
+5. Confirm the effective administrator capture policy and pre-upload scrubber.
+   Browser sign-in alone does not prove Desktop is connected.
+
+**Checkpoint:** a real pilot user can complete SSO, install the correct Desktop
+profile and approve their own device without Kubernetes or bootstrap access.
+
+## 7. Prove the workflow and hand it over
+
+**Who:** pilot user, customer administrator and release owner.
+
+- Capture a short real agent session with a harmless unique marker and the
+  release's synthetic secret-test value. Verify removal **before upload**,
+  then find the same session in app list, transcript and search.
+- Retry the supported delivery once and verify one logical result. Restart the
+  relevant workloads and confirm durable readback and PostgreSQL messaging.
+- Use a second workspace/user to verify cross-tenant denial. Check that each
+  runtime role is denied other service databases and privileged operations.
+- Change capture policy as an authorized admin and verify client enforcement.
+  A normal member must be refused. Delete the test session through the
+  authorized operator flow and verify read denial, cleanup and no resurrection.
+- Verify disabled Flows/Chief navigation, direct routes and background work;
+  check that telemetry goes only to the approved customer collector.
+- Validate agreed usage/cost views against known reported activity. Complete
+  the [backup and isolated restore drill](selfhost-backup-restore.md), then the
+  approved upgrade check and a second Terraform plan with no unexpected drift.
+
+Give the customer the app/download URLs, two named administrators, pinned
+release identifiers, policy/add-on selection, recovery procedure, test results
+and support contact. List remaining failures with owners. Call the installation
+complete only when this exact release passes the agreed workflow.

@@ -84,12 +84,15 @@ information, not attestation of a trusted machine or its owner. Confirm the
 request through the authorized customer process as well as comparing labels.
 An expired, consumed, already approved or denied request must not be approved.
 
-Set the exact verified display strings from this lookup; use a literal `-` for
-a JSON `null`, not for an unknown or mismatched value:
+Read the exact verified display strings as data. Do not paste caller-controlled
+labels into shell source: labels can contain apostrophes or shell syntax.
+For a JSON `null`, use the explicit null option described below.
 
 ```sh
-LOGIN_CLIENT='EXACT-VERIFIED-CLIENT-NAME'
-LOGIN_HOST='EXACT-VERIFIED-COMPUTER-NAME'
+printf '%s\n' 'Enter the exact verified client label:'
+IFS= read -r LOGIN_CLIENT
+printf '%s\n' 'Enter the exact verified computer label:'
+IFS= read -r LOGIN_HOST
 ```
 
 ## 3. Approve or deny
@@ -101,8 +104,13 @@ kubectl --context "$KUBE_CONTEXT" --namespace "$NAMESPACE" \
   exec -i "deployment/$CONTROL_DEPLOYMENT" -- \
   node --input-type=module - approve "$LOGIN_USER_CODE" \
     "$LOGIN_ORG_ID" "$LOGIN_WORKSPACE_ID" "$LOGIN_USER_ID" \
-    "$LOGIN_CLIENT" "$LOGIN_HOST" < "$OPERATOR_TOOL"
+    --client "$LOGIN_CLIENT" --host "$LOGIN_HOST" < "$OPERATOR_TOOL"
 ```
+
+If lookup returned JSON `null`, replace that option/value pair with
+`--client-null` or `--host-null`. For example, a request with neither label uses
+`--client-null --host-null`. A literal `-` is an ordinary label: pass it with
+`--client "-"` or `--host "-"`. Never use null for an unknown or mismatched label.
 
 Expected result is `status: approved` plus the three verified IDs. The helper
 rechecks the organization/member/workspace and freshly looks up the pending
@@ -136,7 +144,9 @@ separately. Never create repeated codes while a valid request is pending.
 | `bootstrap_credential_unavailable` | Check the approved file mount and API image configuration inside the deployment; do not extract the credential. |
 | `control_http_401` / `control_http_403` | Correct the installation's credential/configuration or operator access. |
 | `control_http_404` / `invalid_control_response` | Check image/API compatibility, code and installation before retrying. |
-| `control_request_failed` / unexpected HTTP outcome | Inspect the current lookup state; do not blindly repeat an approval. |
+| `invalid_action` / `invalid_arguments` / `invalid_user_code` / `invalid_local_port` | Correct the command, explicit label/null selections and local image port before retrying. |
+| `control_request_failed` / other `control_http_*` / `operator_login_failed` | The decision outcome may be unknown. Inspect current request state before any further decision; do not retry an approval blindly. |
+| `unexpected_decision_result` | The server may already have applied the decision. Inspect the same request and originating client; preserve the result and reconcile before another action. |
 
 The API can reject a code that expires or is decided after the helper's final
 lookup. Its response is authoritative. This tool checks request state and

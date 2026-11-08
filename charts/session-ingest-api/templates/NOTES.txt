@@ -1,0 +1,4 @@
+session-ingest-api {{ .Chart.Version }} (image {{ include "alleyoop.image" . }})
+
+Ingest: http://{{ include "alleyoop.fullname" . }}.{{ .Release.Namespace }}.svc:{{ .Values.service.port }}
+Ready only once the HoopDb migration ledger matches this image (run sessions-pipeline-worker's migrate Job).

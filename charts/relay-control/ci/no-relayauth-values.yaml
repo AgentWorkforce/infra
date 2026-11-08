@@ -1,0 +1,36 @@
+# RENDER ONLY: fake image identity; requires an approved #20/#27 image to run.
+image:
+  digest: sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff
+  repository: example.invalid/control-no-relayauth-render-only
+publicUrl: https://api.gcp-proof.agentrelay.com
+existingSecret: relay-cloud-api
+database:
+  runtimeRole: selfhost_runtime
+services:
+  relayauthUrl: ''
+  relaycastUrl: http://ci-agent-relay-relaycast:8787
+  relaycastPublicUrl: https://cast.gcp-proof.agentrelay.com
+  relayhistoryUrl: http://ci-agent-relay-relayhistory:8080
+  relayhistoryPublicUrl: https://history.gcp-proof.agentrelay.com
+  relayauthEnabled: false
+ingress:
+  enabled: true
+  className: gce
+  hosts:
+  - api.gcp-proof.agentrelay.com
+  tls:
+  - secretName: api-gcp-proof-agentrelay-com-tls
+    hosts:
+    - api.gcp-proof.agentrelay.com
+networkPolicy:
+  ingressFrom:
+  - podSelector: {}
+  - ipBlock:
+      cidr: 35.191.0.0/16
+  - ipBlock:
+      cidr: 130.211.0.0/22
+  allowAllEgress: true
+encryption:
+  keyId: ci-1
+secretKeys:
+  relayauthApiKey: ''

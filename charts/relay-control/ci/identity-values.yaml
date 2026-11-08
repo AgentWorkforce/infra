@@ -1,0 +1,56 @@
+image:
+  repository: example.invalid/relay-control
+  digest: sha256:2222222222222222222222222222222222222222222222222222222222222222
+publicUrl: https://api.gcp-proof.agentrelay.com
+existingSecret: relay-cloud-api
+database:
+  runtimeRole: selfhost_runtime
+services:
+  relayauthUrl: http://ci-agent-relay-relayauth:8787
+  relaycastUrl: http://ci-agent-relay-relaycast:8787
+  relaycastPublicUrl: https://cast.gcp-proof.agentrelay.com
+  relayhistoryUrl: http://ci-agent-relay-relayhistory:8080
+  relayhistoryPublicUrl: https://history.gcp-proof.agentrelay.com
+ingress:
+  enabled: true
+  className: gce
+  hosts: [api.gcp-proof.agentrelay.com]
+  tls:
+    - secretName: api-gcp-proof-agentrelay-com-tls
+      hosts: [api.gcp-proof.agentrelay.com]
+networkPolicy:
+  # GCE Ingress traffic arrives from the Google Front End proxy and
+  # health-check ranges, not from pods; keep same-namespace callers too.
+  ingressFrom:
+    - podSelector: {}
+    - ipBlock: { cidr: 35.191.0.0/16 }
+    - ipBlock: { cidr: 130.211.0.0/22 }
+  allowAllEgress: true
+encryption:
+  keyId: ci-1
+# bootstrap-signup: first-boot bootstrap, OIDC, SMTP invites and email links.
+dashboardUrl: https://gcp-proof.agentrelay.com/
+secretKeys:
+  relaycastInternalSecret: relaycast-internal-secret
+  oidcClientSecret: oidc-client-secret
+  smtpPassword: smtp-password
+bootstrap:
+  orgName: Acme
+  adminEmail: Ops@Acme.com
+  adminName: Acme Ops
+auth:
+  oidc:
+    issuer: https://accounts.google.com
+    clientId: 1234567890-abc.apps.googleusercontent.com
+    allowedDomains: [Acme.com]
+    displayName: Google Workspace
+  emailLink:
+    enabled: true
+  autoJoinDomains: [acme.com]
+  inviteTtlHours: 72
+smtp:
+  host: smtp.acme.com
+  port: 465
+  security: tls
+  username: relay@acme.com
+  from: Agent Relay <relay@acme.com>

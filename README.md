@@ -1,5 +1,7 @@
 # AgentWorkforce Infrastructure
 
+Public chart names and existing-release compatibility: [Control/Webapp rename](docs/control-webapp-chart-rename.md).
+
 Terraform modules and Helm charts for customer-owned Agent Relay installations on AWS and GCP. Terraform provisions cloud foundations and managed services; Helm installs the application workloads.
 
 - [Terraform modules and examples](terraform/README.md): network, Kubernetes, PostgreSQL, object storage, optional search and functions.
@@ -12,8 +14,10 @@ This repository was renamed from `AgentWorkforce/helm-charts` to `AgentWorkforce
 Update existing clones with `git remote set-url origin git@github.com:AgentWorkforce/infra.git`;
 local directory names may stay unchanged. Existing Helm clients should run
 `helm repo add agentworkforce https://agentworkforce.github.io/infra --force-update`
-and `helm repo update`. Chart names, release-tag format and the
-`ghcr.io/agentworkforce/charts` OCI coordinates stay the same. Historical evidence
+and `helm repo update`. The chart namespace and release-tag format stay the
+same; the two public chart names change from `relay-cloud-api` /
+`relay-dashboard` to `relay-control` / `relay-webapp` as described in the
+[rename guide](docs/control-webapp-chart-rename.md). Historical evidence
 and the release gate’s `helm-charts` license-decision ID retain their original identifiers.
 
 ## Charts
@@ -21,18 +25,26 @@ and the release gate’s `helm-charts` license-decision ID retain their original
 | Chart | Description |
 |-------|-------------|
 | [agent-relay](charts/agent-relay) | Self-hosted Agent Relay suite umbrella — relaycast, relayauth, sessions-pipeline, relayhistory, control-plane API, dashboard (one GKE Ingress, no HA claim) |
-| [relay-cloud-api](charts/relay-cloud-api) | Self-host control-plane API — organizations, workspaces, device auth; existing-Secret file mounts only, separate migration Job |
-| [relay-dashboard](charts/relay-dashboard) | Static self-host dashboard — nginx SPA calling same-origin `/cloud/api` |
+| [relay-control](charts/relay-control) | Self-host control-plane API — organizations, workspaces, device auth; existing-Secret file mounts only, separate migration Job |
+| [relay-webapp](charts/relay-webapp) | Static self-host dashboard — nginx SPA calling same-origin `/cloud/api` |
 | [relayhistory](charts/relayhistory) | Relay History data plane — session delivery, search, replay on its own Postgres database (digest-pinned proof image) |
 | [relaycast](charts/relaycast) | Portable self-hosted Relaycast core — realtime agent communication with single-writer SQLite persistence |
 | [relayfile](charts/relayfile) | Relayfile server — single Go binary, HTTP on :8080, Postgres-backed in production |
 | [relayflows](charts/relayflows) | Durable workflows running locally in Kubernetes, with optional Cloud assignment mode |
-| [sessions-pipeline-worker](charts/sessions-pipeline-worker) | Sessions Pipeline workers: HoopDb migrations, Locker bucket init, and the indexer/referee/bob-costas stage workers |
-| [sessions-pipeline](charts/sessions-pipeline) | The whole Sessions Pipeline in one release: sessions-pipeline-worker + alleyoop, with optional HoopDb (CloudNativePG), Locker (MinIO) and an OTel collector |
-| [alleyoop](charts/alleyoop) | Sessions Pipeline ingest: receives session manifests and chunks and lands them in the Locker (S3) |
+| [sessions-pipeline-worker](charts/sessions-pipeline-worker) | Session summary, metadata indexing and status workers, plus migration and storage initialization Jobs |
+| [sessions-pipeline](charts/sessions-pipeline) | Session workers and ingest API, with optional Postgres, session-object-storage (MinIO) and an OTel collector |
+| [telemetry-collector](charts/telemetry-collector) | Default-off analytics intake for Control events, internal TLS and file storage; installed durability is unverified |
+| [session-ingest-api](charts/session-ingest-api) | Receives session manifests and chunks and stores them in S3-compatible object storage |
 | [relayauth](charts/relayauth) | Self-hosted RelayAuth issuer: immutable image, externally managed keys, single-writer SQLite, and optional JWKS ingress |
 
 ## Self-hosted requirements registry
+
+The public session resource names are `session-object-storage`,
+`session-ingest-api`, `session-summary-worker`, `session-metadata-indexer` and
+`session-status-worker`. See the [actual chart and workload rename](docs/descriptive-session-names.md)
+for internal stage mappings and existing-release compatibility values. The three
+workers share the `sessions-pipeline-worker` chart; MinIO uses the descriptive
+dependency alias rather than a new wrapper chart.
 
 [`self-hosted/requirements.yaml`](self-hosted/requirements.yaml) is the single
 source of truth for what a self-hosted install needs: every **requirement**
@@ -154,20 +166,20 @@ helm install sessions-pipeline agentworkforce/sessions-pipeline -n sessions-pipe
 
 #### Upgrading a release of the former `96bulls` chart
 
-The umbrella was renamed from `96bulls` (last released as 0.5.4) to
-`sessions-pipeline` (0.6.0). An existing release upgrades in place:
-`helm upgrade <release> agentworkforce/sessions-pipeline -f <your values>`.
-Resource names and selectors are unchanged, because the worker subchart alias
-is still `worker`. Only the `helm.sh/chart` and `app.kubernetes.io/part-of`
-labels change. Two renamed defaults need a value if you relied on them. Set
-`worker.existingSecret`, `alleyoop.existingSecret` and
-`locker.existingSecret` to your current Secret name (the old default was
-`96bulls-locker`). Set
-`worker.migrations.runtimeRole` to the role your database already has. A
-standalone `96bulls-worker` release keeps its selectors only with
-`nameOverride: 96bulls-worker`; otherwise, install it fresh. Under the
-`agent-relay` umbrella (0.3.0), move your `96bulls:` overrides to
-`sessions-pipeline:`.
+The current `sessions-pipeline` 0.7.0 / `agent-relay` 0.4.0 rename changes
+resource defaults. Before upgrading, migrate values as described in the
+[descriptive-name upgrade guide](docs/descriptive-session-names.md). Retain your
+existing release name, Secret names, runtime role and storage claim. Set
+`worker.legacyResourceNames: true`, `alleyoop.legacyResourceNames: true`, and
+move the old MinIO `locker` values block to `session-object-storage` with the
+recorded old `fullnameOverride` and `nameOverride`. Do not use `--reuse-values`.
+
+A standalone former `96bulls-worker` release also needs
+`legacyResourceNames: true` together with `nameOverride: 96bulls-worker` to retain
+its old Deployment names and selectors. `nameOverride` alone is insufficient.
+Under the `agent-relay` umbrella, move old `96bulls:` overrides to
+`sessions-pipeline:`. A deliberate resource rename requires a separate drained,
+seeded upgrade/rollback test; these source changes do not establish that proof.
 
 The charts default to `ghcr.io/agentworkforce/96bulls-services`, pinned by
 digest. That hosted-service package is private. For direct installs, create a
@@ -389,11 +401,11 @@ native AWS S3 endpoint.
 ```bash
 helm install sessions-pipeline-worker agentworkforce/sessions-pipeline-worker -n sessions-pipeline --create-namespace \
   --set existingSecret=sessions-pipeline \
-  --set locker.endpoint=http://locker:9000 \
+  --set locker.endpoint=http://session-object-storage:9000 \
   --set tenant.orgId=<org>
-helm install alleyoop agentworkforce/alleyoop -n sessions-pipeline \
+helm install session-ingest-api agentworkforce/session-ingest-api -n sessions-pipeline \
   --set existingSecret=sessions-pipeline \
-  --set locker.endpoint=http://locker:9000 \
+  --set locker.endpoint=http://session-object-storage:9000 \
   --set tenant.orgId=<org> \
   --set auth.jwksUrl=https://<relayauth>/.well-known/jwks.json
 ```
@@ -429,8 +441,8 @@ Run the same checks locally with `scripts/ci/charts.sh static` and `scripts/ci/c
 ## Local kind profiles
 
 The local stack uses the existing `agent-relay` umbrella. Product names are
-**relaycontrol** (`relay-cloud-api` chart, `selfhost-api` image) and
-**relay-app** (`relay-dashboard` chart/image). The deprecated Cloud repository
+**relaycontrol** (`relay-control` chart, `selfhost-api` image) and
+**relay-app** (`relay-webapp` chart/image). The deprecated Cloud repository
 is not a dependency. These profiles are development/proof fixtures, separate
 from the customer release and AWS/GCP managed-infrastructure proofs.
 
@@ -451,15 +463,22 @@ selected explicitly. Locker stores session objects and is still needed.
 Prerequisites: Docker Engine 28+ (including native-platform image export),
 kind 0.31+, kubectl, Helm 3.10+, OpenSSL, Git, Python 3.9+, and PyYAML. Allocate
 enough Docker memory for the suite and CNI; budget 20 GiB free disk for a cold
-setup. The optional native control build also needs authenticated Git read
-access to `AgentWorkforce/relay-control`. Warm setup checks cached native image
-sizes plus unpacking headroom.
+setup. Current optional native Control builds fetch public
+`AgentWorkforce/relay-control` at the exact `a659ac4` source pin. Explicit historical
+reproduction (`KIND_CONTROL_SOURCE=historical`) uses `1f08cb6` from the archived
+private `AgentWorkforce/relay-control-internal` repository and needs authenticated
+Git read access. Current and historical source caches are separate. Existing
+cached checkouts are checked against exact revision and clean-tree requirements;
+the builder does not repoint their remotes. Warm setup checks cached native
+image sizes plus unpacking headroom.
 On Linux the disk preflight measures the admitted daemon’s DockerRootDir. For
 a relocated Docker Desktop disk or another local VM, set
 `KIND_DOCKER_DATA_PATH` to the existing host-side Docker backing file or directory.
 An unavailable storage path refuses setup rather than skipping the check.
-Setup fetches public image/chart/source
-artifacts. Runtime suite pods receive no external egress.
+Setup fetches public image/chart/source artifacts. Only explicit historical
+Control reproduction additionally fetches private source from the archived
+repository. Runtime suite pods receive no external
+egress.
 Public image pulls use a private anonymous Docker configuration with explicit
 registry entries, so SSH setup does not invoke a locked native keychain helper
 or inherit `DOCKER_AUTH_CONFIG`. No Docker login or global configuration changes
@@ -548,18 +567,27 @@ make kind-proof-core
 ```
 
 This requires Docker BuildKit/buildx and GitHub access during preparation. It
-builds the official relaycontrol Dockerfile at `1f08cb6` using a pinned Node base,
+builds the official public Control Dockerfile at `a659ac4` using a pinned Node base,
 selects the native manifest digest in this worktree's private values, loads it
 into kind and uses `imagePullPolicy: Never`. The OCI manifest/config hashes,
 architecture and source revision are verified before installation. The build
 receipt is `.kind/core/control-build.json`. `make kind-build-control PROFILE=core`
 performs just the build/selection; it does not install or publish an image.
+For the previous source, use `KIND_CONTROL_SOURCE=historical make kind-build-control PROFILE=core`.
+This selects the archived `1f08cb6` pin explicitly. Existing historical image
+receipts remain admissible only with their exact source, native architecture,
+tag and manifest reference. Each build deliberately replaces the single active
+`.kind/<profile>/control-build.json` receipt and selected image override. A current
+build therefore replaces the historical selection; rerun the historical build
+to select that source again and capture its resulting digest. Source caches stay
+separate, and checked-in historical evidence is unchanged.
 The normal catalog profile remains unchanged. Each build captures its resulting
 artifact digest; the official Dockerfile's runtime npm dependency ranges mean
 that identical source does not guarantee identical rebuilt image bytes.
-Both public MCP paths now pass real-token initialization, nineteen-tool discovery,
+The historical `1f08cb6` proof covers both public MCP paths with real-token initialization, nineteen-tool discovery,
 workspace/public-origin binding and negative auth/origin checks in the recorded
-local-control proof. Agent launch/release remains pending.
+local-control proof. It has not been rerun for `a659ac4`; no current-build runtime
+acceptance is implied. Agent launch/release remains pending.
 The local bootstrap applies release objects client-side before final Helm
 reconciliation. On Helm 4 the wrapper explicitly selects its supported
 [`--server-side=false`](https://docs.helm.sh/docs/helm/helm_upgrade/) mode to keep
@@ -637,22 +665,27 @@ a database row. See [captured evidence](ci/agent-relay/kind/evidence.md).
 
 | Gap | Owner / current evidence |
 | --- | --- |
-| Courier → RelayHistory → application read path | Pipeline and RelayHistory owners, coordinated by pipeline-lead: the real-owner courier session is indexed and stored, but RelayHistory does not return it through the authenticated Default workspace application API. Relaycontrol already proxies to `RELAYHISTORY_URL`; it needs no pipeline URL or separate read API. The pipeline-to-History workspace session visibility contract is a required pending check. Draft pipeline #317/#318 add a default-off container entry and login/catalog routes; [source review and read-only diagnosis](ci/agent-relay/kind/read-api-contract.md) track remaining Postgres-only composition, TLS, canonical source and auth-pair blockers. The courier fixture already has a matching directory row. Nothing is enabled. |
+| Courier → RelayHistory → application read path | Pipeline and RelayHistory owners, coordinated by pipeline-lead: the real-owner courier session is indexed and stored, but RelayHistory does not return it through the authenticated Default workspace application API. Relaycontrol already proxies to `RELAYHISTORY_URL`; it needs no new pipeline URL in control, while the compatible History read service remains unqualified. The pipeline-to-History workspace session visibility contract is a required pending check. Merged pipeline #317/#318 add a default-off container entry and login/catalog routes; [source review and read-only diagnosis](ci/agent-relay/kind/read-api-contract.md) track remaining Postgres-only composition, TLS, canonical source and auth-pair blockers. The courier fixture already has a matching directory row. Nothing is enabled. |
 | Shared-schema ownership | The local recipe now isolates History and HoopDB, matching the existing EKS installer; both migrators and the exact final ACL check pass. The earlier 160 violations remain as negative evidence for unsupported co-location. A future shared-schema design requires the schema and History application owners; the pipeline owner does not own the separate `relayhistory-cloud` application repo. |
 | Add-on E2E | infra-kind-stack + license/file owners: native images and offline engine/storage preflights pass; the installed add-on profile, actual CronJob firing and authenticated file roundtrip remain unproved pending a signed license fixture and genuine filesystem-scoped authority. |
 | Current image/source compatibility | Component owners: record exact source SHA and migrator generation; a tag named `main` is insufficient. This run used services source `f1c2672581b6f88d26d0549b4d1cb78fce0d5f16`, generation `0dcd0e89bebbdad789a40fa61311c601b4c0e49e389e3b2b0167b6fd5fdf542e`. |
 | RelayAuth removal | layered-control + layered-sessions-pipeline: default-off introspection branch, `sh_at_`, `rth:read/rth:sync`; keep the temporary internal component until compatible images ship. |
 | Cost attribution data | History's client-reported fixture usage/cost passes authenticated ingest and TLS readback, including owner and workspace isolation. This does not claim live model billing or courier-session application visibility. |
-| Control image and MCP endpoint | PASS for the optional `kind-up-local-control` variant: pinned source `1f08cb6`, verified native manifest transport, both public MCP aliases, nineteen-tool discovery, real workspace binding and auth/origin rejection ([raw receipts](ci/agent-relay/kind/evidence.md)). The catalog default remains source `9b80b04` and reports MCP pending. This does not claim agent launch/release or every MCP tool backend. No image publication is performed. |
+| Control image and MCP endpoint | PASS for the recorded historical local-Control variant at pinned source `1f08cb6`: verified native manifest transport, both public MCP aliases, nineteen-tool discovery, real workspace binding and auth/origin rejection ([raw receipts](ci/agent-relay/kind/evidence.md)). Current public source `a659ac4` has not received that runtime proof. The catalog default remains source `9b80b04` and reports MCP pending. This does not claim agent launch/release or every MCP tool backend. No image publication is performed. |
 | Custom Desktop package for ar-lap | layered-relay-desktop: target build/artifact and real browser/Desktop handoff plus courier-to-app trace are not qualified by the infra proof. Device auth and site TLS endpoint checks do not substitute for that custom application run. |
 | Agent launch/release | layered-control: API unimplemented; fleet node claim/release is not this proof. |
-| Signed offline license enforcement | layered-control: design only. `relay-cloud-api.license.existingSecret/key` reserves the `SELFHOST_LICENSE_FILE` mount; the file slot does not verify signatures or gate add-ons. |
+| Signed offline license enforcement | layered-control: design only. `relay-control.license.existingSecret/key` reserves the `SELFHOST_LICENSE_FILE` mount; the file slot does not verify signatures or gate add-ons. |
 | relayfile control-token filesystem scopes | layered-relayfile + layered-control: current introspection lacks `fs:*`; use real temporary RelayAuth for now. Dev issuer tokens do not count as acceptance evidence. |
 | Native add-on runtime proof | infra-kind-stack + Flows owner: source build supports native runtime selection; full Job/CronJob and relayfile roundtrip remain unverified until the shared core and signed-license dependencies are resolved. |
 
 Track the local work in [issue #77](https://github.com/AgentWorkforce/infra/issues/77).
 For render/trust/schema checks without Docker (Helm and kubeconform required), run
 `python3 ci/agent-relay/kind/test_stack.py -v` after building chart dependencies.
+
+The default-off [session read API chart preparation](docs/self-hosted-session-read-api.md)
+is available under `sessions-pipeline.readApi`. It remains disabled in both kind
+profiles pending the approved runtime assembly and image; the running core
+evidence does not prove this new component.
 
 The local add-on Flow journal uses `ReadWriteOnce` because kind's local-path
 provisioner does not support CSI `ReadWriteOncePod`. Its CronJob uses `Forbid`;

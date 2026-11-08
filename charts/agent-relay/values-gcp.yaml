@@ -6,8 +6,8 @@ components:
   relayauth: true
   sessionsPipeline: true
   relayhistory: true
-  cloudApi: true
-  dashboard: true
+  control: true
+  webapp: true
   # Optional: run flows in-cluster. Off by default; see the relayflows block
   # below and docs/self-hosted-relayflows.md before enabling.
   relayflows: false
@@ -204,11 +204,11 @@ sessions-pipeline:
       # REQUIRED OVERRIDE: the bare origin couriers use as the History
       # assertion audience (byte-equal to RELAYAUTH_HISTORY_ORIGIN). It must
       # equal relayhistory.relayauth.historyOrigin (the chart refuses a
-      # mismatch) and relay-cloud-api.services.relayhistoryPublicUrl.
+      # mismatch) and relay-control.services.relayhistoryPublicUrl.
       historyOrigin: https://history.placeholder.company
   hoopdb:
     enabled: false
-  locker:
+  session-object-storage:
     enabled: false
 
 relayhistory:
@@ -226,7 +226,7 @@ relayhistory:
     jwksUrl: http://relayauth:8787/.well-known/jwks.json
     issuer: http://relayauth:8787
   agentRelayCloud:
-    apiUrl: http://relay-cloud-api
+    apiUrl: http://relay-control
   service:
     annotations:
       cloud.google.com/neg: '{"ingress": true}'
@@ -240,8 +240,8 @@ relayhistory:
       - ipBlock: { cidr: 130.211.0.0/22 }
     allowAllEgress: true
 
-relay-cloud-api:
-  fullnameOverride: relay-cloud-api
+relay-control:
+  fullnameOverride: relay-control
   image:
     # Release image (public GHCR, selfhost-api 0.3.0, relaycontrol 9b80b04). Mirror it by digest to your registry and override repository.
     repository: ghcr.io/agentworkforce/selfhost-api
@@ -280,7 +280,7 @@ relay-cloud-api:
       - ipBlock: { cidr: 35.191.0.0/16 }
       - ipBlock: { cidr: 130.211.0.0/22 }
     allowAllEgress: true
-  # First boot and sign-in (relay-cloud-api README "Sign-in, bootstrap and
+  # First boot and sign-in (relay-control README "Sign-in, bootstrap and
   # invites"). With these set, the first start creates the organization (the
   # admin email is its owner) and a Default workspace bound to a new Relaycast
   # workspace; the admin signs in at https://<root host>/login and invites
@@ -318,10 +318,10 @@ relay-cloud-api:
   #   oidcClientSecret: oidc-client-secret
   #   smtpPassword: smtp-password
 
-relay-dashboard:
-  fullnameOverride: relay-dashboard
+relay-webapp:
+  fullnameOverride: relay-webapp
   image:
-    # Release image (public GHCR, relay-dashboard main e5003d0). Mirror it by digest to your registry and override repository.
+    # Release image (public GHCR, relay-webapp main e5003d0). Mirror it by digest to your registry and override repository.
     repository: ghcr.io/agentworkforce/relay-dashboard
     digest: sha256:c50005fcdd1fc5ab5ef3dac9b621db8e0c7e03480406bfe519743ae435d8f1ad
   runtime:
@@ -330,9 +330,9 @@ relay-dashboard:
     appPath: /
     apiBasePath: /cloud/api
     loginPath: /login
-  # Optional enterprise branding (relay-dashboard customerProfile; README
+  # Optional enterprise branding (relay-webapp customerProfile; README
   # "Customer profile"). Empty keeps the Agent Relay look. It needs a
-  # dashboard image built from relay-dashboard 8eac2bd or later; older images
+  # dashboard image built from relay-webapp 8eac2bd or later; older images
   # ignore it.
   # customerProfile:
   #   productName: Acme Relay
@@ -345,7 +345,7 @@ relay-dashboard:
   #   supportUrl: mailto:support@acme.example
   #   poweredByAgentRelay: true
   api:
-    serviceName: relay-cloud-api
+    serviceName: relay-control
   service:
     annotations:
       cloud.google.com/neg: '{"ingress": true}'
@@ -389,12 +389,12 @@ relay-dashboard:
 #  # cloudWorker mode only. REQUIRED OVERRIDE: enrollment token Secret;
 #  # the worker reads AGENT_RELAY_WORKER_ENROLLMENT_TOKEN from
 #  # credentials.existingSecretKey. cloudUrl is the control-plane base URL the
-#  # CLI appends /api/v1/workers/* to: http://relay-cloud-api (or
-#  # http://relay-cloud-api/cloud) in-cluster, https://<gkeIngress.hosts.api>
+#  # CLI appends /api/v1/workers/* to: http://relay-control (or
+#  # http://relay-control/cloud) in-cluster, https://<gkeIngress.hosts.api>
 #  # from outside — once selfhost-api implements the worker endpoints.
 #  # mode: cloudWorker
 #  # worker:
-#  #   cloudUrl: http://relay-cloud-api
+#  #   cloudUrl: http://relay-control
 #  # credentials:
 #  #   existingSecret: example-agent-relay-secrets
 #  #   existingSecretKey: AGENT_RELAY_WORKER_ENROLLMENT_TOKEN

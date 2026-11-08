@@ -14,7 +14,7 @@ registered, every shipped entry must exist in the charts, planned entries must
 not be referenced by any template, and the compatibility matrix must equal
 the pinned digests.
 
-Source of truth: [`self-hosted/requirements.yaml`](../self-hosted/requirements.yaml). 105 entries: 40 requirements (39 shipped, 1 planned), 65 options (63 shipped, 2 planned).
+Source of truth: [`self-hosted/requirements.yaml`](../self-hosted/requirements.yaml). 113 entries: 44 requirements (43 shipped, 1 planned), 69 options (67 shipped, 2 planned).
 
 ## Contents
 
@@ -30,16 +30,18 @@ Source of truth: [`self-hosted/requirements.yaml`](../self-hosted/requirements.y
   - [relaycast](#profile-relaycast)
   - [relayauth](#profile-relayauth)
   - [relayhistory](#profile-relayhistory)
-  - [relay-cloud-api](#profile-relay-cloud-api)
-  - [relay-dashboard](#profile-relay-dashboard)
+  - [relay-control](#profile-relay-control)
+  - [relay-webapp](#profile-relay-webapp)
   - [agent-relay](#profile-agent-relay)
   - [relayfile](#profile-relayfile)
   - [relayflows](#profile-relayflows)
+  - [relay-chief](#profile-relay-chief)
   - [durable-actors](#profile-durable-actors)
   - [relaycast-durable-actors](#profile-relaycast-durable-actors)
   - [relayfile-durable-actors](#profile-relayfile-durable-actors)
   - [agent-relay-durable-actors](#profile-agent-relay-durable-actors)
   - [agent-relay-eks-durable-actors](#profile-agent-relay-eks-durable-actors)
+  - [telemetry-collector](#profile-telemetry-collector)
 - [All entries](#all-entries)
 
 ## Compatibility matrix
@@ -53,7 +55,10 @@ Services image (sessions-pipeline-worker, alleyoop and the privileged SQL Jobs):
 
 | row | status | charts | image | services source / generation | supported dbMode + boundary | notes |
 | --- | --- | --- | --- | --- | --- | --- |
-| sessions-pipeline-0.6.1 | unreleased | sessions-pipeline 0.6.1<br>sessions-pipeline-worker 0.6.1<br>alleyoop 0.3.9<br>(deps: worker 0.6.1, alleyoop 0.3.9, hoopdb 0.9.0, locker 5.4.0, otel 0.178.0) | sessions-pipeline-worker: `agentworkforce/96bulls-services@sha256:6f22ea17dff3…`<br>alleyoop: `agentworkforce/96bulls-services@sha256:6f22ea17dff3…` | `7d7229bb31c1` / `eff8b3be4656` | selfhosted + global-default-revoke (cnpg)<br>selfhosted + global-default-revoke (external)<br>cloudsql + global-default-revoke (external)<br>supabase + event-trigger (external) (held)<br>supabase + (unset) (external) (fails closed)<br>local + (unset) (any) (dev only) | Repository rename to AgentWorkforce/infra: canonical source and Helm repository URLs, with matching local dependency patch versions. Runtime images, application source, migration generation and deployment values are unchanged. This release has no new live application proof. |
+| telemetry-collector-0.1.0 | unreleased | telemetry-collector 0.1.0 |  |  |  | Default-off umbrella analytics file collector. Requires accepted immutable collector and TLS-proxy images, producer and TLS Secrets and an exclusive persistent volume. Source rendering does not prove image entrypoint, TLS, durable acknowledgement, power-loss recovery or whole-application analytics coverage. The currently reviewed collector CLI registers relaycontrol events only. |
+| sessions-pipeline-0.7.3 | unreleased | sessions-pipeline 0.7.3<br>sessions-pipeline-worker 0.7.0<br>session-ingest-api 0.4.0<br>(deps: worker 0.7.0, alleyoop 0.4.0, hoopdb 0.9.0, session-object-storage 5.4.0, otel 0.178.0) | sessions-pipeline-worker: `agentworkforce/96bulls-services@sha256:6f22ea17dff3…`<br>session-ingest-api: `agentworkforce/96bulls-services@sha256:6f22ea17dff3…`<br>Native ingest edge (SERVICE=session-ingest): unqualified; an explicit qualified combined-image digest is required. Pins above belong to the existing internal worker/ingest services, not ingestEdge. | `7d7229bb31c1` / `eff8b3be4656` | selfhosted + global-default-revoke (cnpg)<br>selfhosted + global-default-revoke (external)<br>cloudsql + global-default-revoke (external)<br>supabase + event-trigger (external) (held)<br>supabase + (unset) (external) (fails closed)<br>local + (unset) (any) (dev only) | Adds the default-off native edge from merged pipeline #363; no compatible image or runtime acceptance is supplied. Adds Secret-only read API credentials and a true default-off regression. Normal composition with main bfcf6050 retains the descriptive session names and upgrade/IAM guards. Adds a default-off read API Deployment and ClusterIP Service with explicit compatible image/config requirements and enabled-state readiness. Worker and ingest images, migration generation and roles are unchanged. Pipeline PRs 317/318 are merged; their container/routes source does not establish the approved Postgres/canonical/auth assembly; no read API deployment or runtime proof is claimed. |
+| sessions-pipeline-0.7.2 | **planned** | sessions-pipeline 0.7.2<br>sessions-pipeline-worker 0.7.0<br>session-ingest-api 0.4.0<br>(deps: worker 0.7.0, alleyoop 0.4.0, hoopdb 0.9.0, session-object-storage 5.4.0, otel 0.178.0) | sessions-pipeline-worker: `agentworkforce/96bulls-services@sha256:6f22ea17dff3…`<br>session-ingest-api: `agentworkforce/96bulls-services@sha256:6f22ea17dff3…` | `7d7229bb31c1` / `eff8b3be4656` | selfhosted + global-default-revoke (cnpg)<br>selfhosted + global-default-revoke (external)<br>cloudsql + global-default-revoke (external)<br>supabase + event-trigger (external) (held)<br>supabase + (unset) (external) (fails closed)<br>local + (unset) (any) (dev only) | Adds Secret-only read API credentials and a true default-off regression. Normal composition with main bfcf6050 retains the descriptive session names and upgrade/IAM guards. Adds a default-off read API Deployment and ClusterIP Service with explicit compatible image/config requirements and enabled-state readiness. Worker and ingest images, migration generation and roles are unchanged. Pipeline PRs 317/318 are merged; their container/routes source does not establish the approved Postgres/canonical/auth assembly; no read API deployment or runtime proof is claimed. |
+| sessions-pipeline-0.7.1 | shipped | sessions-pipeline 0.7.1<br>sessions-pipeline-worker 0.7.0<br>session-ingest-api 0.4.0<br>(deps: worker 0.7.0, alleyoop 0.4.0, hoopdb 0.9.0, session-object-storage 5.4.0, otel 0.178.0) | sessions-pipeline-worker: `agentworkforce/96bulls-services@sha256:6f22ea17dff3…`<br>session-ingest-api: `agentworkforce/96bulls-services@sha256:6f22ea17dff3…` | `7d7229bb31c1` / `eff8b3be4656` | selfhosted + global-default-revoke (cnpg)<br>selfhosted + global-default-revoke (external)<br>cloudsql + global-default-revoke (external)<br>supabase + event-trigger (external) (held)<br>supabase + (unset) (external) (fails closed)<br>local + (unset) (any) (dev only) | Normal composition with main bfcf6050 retains the descriptive session names and upgrade/IAM guards. Adds a default-off read API Deployment and ClusterIP Service with explicit compatible image/config requirements and enabled-state readiness. Worker and ingest images, migration generation and roles are unchanged. Pipeline PRs 317/318 are merged; their container/routes source does not establish the approved Postgres/canonical/auth assembly; no read API deployment or runtime proof is claimed. |
 | sessions-pipeline-0.6.0 | shipped | sessions-pipeline 0.6.0<br>sessions-pipeline-worker 0.6.0<br>alleyoop 0.3.8<br>(deps: worker 0.6.0, alleyoop 0.3.8, hoopdb 0.9.0, locker 5.4.0, otel 0.178.0) | sessions-pipeline-worker: `agentworkforce/96bulls-services@sha256:6f22ea17dff3…`<br>alleyoop: `agentworkforce/96bulls-services@sha256:6f22ea17dff3…` | `7d7229bb31c1` / `eff8b3be4656` | selfhosted + global-default-revoke (cnpg)<br>selfhosted + global-default-revoke (external)<br>cloudsql + global-default-revoke (external)<br>supabase + event-trigger (external) (held)<br>supabase + (unset) (external) (fails closed)<br>local + (unset) (any) (dev only) | Rename: the umbrella and worker charts were published as 96bulls (last 0.5.4) and 96bulls-worker (last 0.5.3); they continue here as sessions-pipeline 0.6.0 and sessions-pipeline-worker 0.6.0 (96bulls 0.5.5 was never released). alleyoop 0.3.8 only relabels part-of. Includes alleyoop 0.3.7 auth.allowInterimRelayAuthBearer (ALLOW_INTERIM_RELAYAUTH_BEARER, default false, environment=local only). Same services image and db combos as 0.5.4. Upgrade path: helm upgrade <existing 96bulls release> agentworkforce/sessions-pipeline keeps the release, resource names and selectors (the worker alias is unchanged; only chart and part-of labels change). A standalone 96bulls-worker release keeps its selectors only with nameOverride: 96bulls-worker. |
 | 96bulls-0.5.4 | shipped | 96bulls 0.5.4<br>96bulls-worker 0.5.3<br>alleyoop 0.3.6<br>(deps: worker 0.5.3, alleyoop 0.3.6, hoopdb 0.9.0, locker 5.4.0, otel 0.178.0) | 96bulls-worker: `agentworkforce/96bulls-services@sha256:6f22ea17dff3…`<br>alleyoop: `agentworkforce/96bulls-services@sha256:6f22ea17dff3…` | `7d7229bb31c1` / `eff8b3be4656` | selfhosted + global-default-revoke (cnpg)<br>selfhosted + global-default-revoke (external)<br>cloudsql + global-default-revoke (external)<br>supabase + event-trigger (external) (held)<br>supabase + (unset) (external) (fails closed)<br>local + (unset) (any) (dev only) | allowInClusterHttp (ALLOW_IN_CLUSTER_HTTP, default false) for alleyoop and the worker, and the optional alleyoop auth.historyOrigin (RELAYHISTORY_ORIGIN). Same services image and db combos. 96bulls 0.5.3 / alleyoop 0.3.5 were reserved for the interim-bearer PR and never released; it shipped as 0.5.5 / 0.3.7. Superseded by sessions-pipeline 0.6.0. |
 | 96bulls-0.5.2 | shipped | 96bulls 0.5.2<br>96bulls-worker 0.5.2<br>alleyoop 0.3.4<br>(deps: worker 0.5.2, alleyoop 0.3.4, hoopdb 0.9.0, locker 5.4.0, otel 0.178.0) | 96bulls-worker: `agentworkforce/96bulls-services@sha256:6f22ea17dff3…`<br>alleyoop: `agentworkforce/96bulls-services@sha256:6f22ea17dff3…` | `7d7229bb31c1` / `eff8b3be4656` | selfhosted + global-default-revoke (cnpg)<br>selfhosted + global-default-revoke (external)<br>cloudsql + global-default-revoke (external)<br>supabase + event-trigger (external) (held)<br>supabase + (unset) (external) (fails closed)<br>local + (unset) (any) (dev only) | License-annotation patch bump of 0.5.1; same services image and db combos. Superseded by 0.5.4. |
@@ -72,7 +77,9 @@ Services image (sessions-pipeline-worker, alleyoop and the privileged SQL Jobs):
 | relayauth-0.1.2 | shipped | relayauth 0.1.2 | relayauth: `ghcr.io/agentworkforce/relayauth@sha256:c23c92d25fdf…` |  |  | License-annotation patch bump of 0.1.1. Superseded by 0.1.3. |
 | relayauth-0.1.1 | shipped | relayauth 0.1.1 | relayauth: `ghcr.io/agentworkforce/relayauth@sha256:c23c92d25fdf…` |  |  | relayauth 784582ef (machine-bound History assertion contract, relayauth #113). Superseded by 0.1.2. |
 | relayauth-0.1.0 | shipped | relayauth 0.1.0 | relayauth: `ghcr.io/agentworkforce/relayauth@sha256:eb71daa28e30…` |  |  | superseded by 0.1.1. |
-| agent-relay-0.3.15 | unreleased | agent-relay 0.3.15<br>relayhistory 0.1.1<br>relay-cloud-api 0.2.6<br>relay-dashboard 0.1.3<br>(deps: relaycast 0.3.5, relayauth 0.1.4, sessions-pipeline 0.6.1, relayhistory 0.1.1, relay-cloud-api 0.2.6, relay-dashboard 0.1.3, relayflows 0.2.5, durable-actors 0.14.6-awf.1, relayfile 0.2.2) | relayhistory: `ghcr.io/agentworkforce/relayhistory@sha256:<required>`<br>relay-cloud-api: `ghcr.io/agentworkforce/selfhost-api@sha256:<required>`<br>relay-dashboard: `ghcr.io/agentworkforce/relay-dashboard@sha256:<required>` |  |  | Supersedes the untagged 0.3.14 source tree (including the 0.3.13 repository rename) and composes the API extraEnv change from PR 78. Local kind core/addons values, bootstrap and acceptance preparation. relay-cloud-api 0.2.6 adds a separate Secret-backed SELFHOST_LICENSE_FILE slot; license verification remains upstream work. Production defaults and image pins are unchanged. Local setup and bounded core protocols have pinned evidence; complete E2E remains pending. See README Local kind profiles and issue 77. |
+| agent-relay-0.5.1 | unreleased | agent-relay 0.5.1<br>relayhistory 0.1.1<br>relay-control 0.3.0<br>relay-webapp 0.2.0<br>(deps: relaycast 0.3.5, relayauth 0.1.4, sessions-pipeline 0.7.3, relayhistory 0.1.1, relay-control 0.3.0, relay-webapp 0.2.0, relayflows 0.2.5, durable-actors 0.14.6-awf.1, relayfile 0.2.2, telemetry-collector 0.1.0) | relayhistory: `ghcr.io/agentworkforce/relayhistory@sha256:<required>`<br>relay-control: `<required repository>@sha256:<required>`<br>relay-webapp: `ghcr.io/agentworkforce/relay-webapp@sha256:<required>` |  |  | Adds the default-off native ingest slot from pipeline #363 without an accepted artifact or rollout. Composes landed session naming/main bfcf6050, default-off telemetry #95/a45dbb2d and default-off reader #81/01dc7aee; preserves the standalone Chief registry outside the umbrella/kind profiles. Source-only Control/Webapp public chart rename. The Control chart requires both repository and digest explicitly; Webapp requires a verified digest; real profile image coordinates remain explicitly pinned to their existing repositories until those publishers supply new receipts. Existing releases must translate values keys and preserve names/selectors/DNS with a reviewed compatibility overlay. Kind refuses the old Control/Webapp layout before mutation. No RelayAuth or standalone History removal, publisher dispatch, rollout or new runtime proof is included; the sessions-native replacement remains dependency-gated. |
+| agent-relay-0.5.0 | **planned** | agent-relay 0.5.0<br>relayhistory 0.1.1<br>relay-control 0.3.0<br>relay-webapp 0.2.0<br>(deps: relaycast 0.3.5, relayauth 0.1.4, sessions-pipeline 0.7.2, relayhistory 0.1.1, relay-control 0.3.0, relay-webapp 0.2.0, relayflows 0.2.5, durable-actors 0.14.6-awf.1, relayfile 0.2.2, telemetry-collector 0.1.0) | relayhistory: `ghcr.io/agentworkforce/relayhistory@sha256:<required>`<br>relay-control: `<required repository>@sha256:<required>`<br>relay-webapp: `ghcr.io/agentworkforce/relay-webapp@sha256:<required>` |  |  | Composes landed session naming/main bfcf6050, default-off telemetry #95/a45dbb2d and default-off reader #81/01dc7aee; preserves the standalone Chief registry outside the umbrella/kind profiles. Source-only Control/Webapp public chart rename. The Control chart requires both repository and digest explicitly; Webapp requires a verified digest; real profile image coordinates remain explicitly pinned to their existing repositories until those publishers supply new receipts. Existing releases must translate values keys and preserve names/selectors/DNS with a reviewed compatibility overlay. Kind refuses the old Control/Webapp layout before mutation. No RelayAuth or standalone History removal, publisher dispatch, rollout or new runtime proof is included; the sessions-native replacement remains dependency-gated. |
+| agent-relay-0.3.17 | **planned** | agent-relay 0.3.17<br>relayhistory 0.1.1<br>relay-cloud-api 0.2.7<br>relay-dashboard 0.1.3<br>(deps: relaycast 0.3.5, relayauth 0.1.4, sessions-pipeline 0.6.2, relayhistory 0.1.1, relay-cloud-api 0.2.7, relay-dashboard 0.1.3, relayflows 0.2.5, durable-actors 0.14.6-awf.1, relayfile 0.2.2) | relayhistory: `ghcr.io/agentworkforce/relayhistory@sha256:<required>`<br>relay-cloud-api: `ghcr.io/agentworkforce/selfhost-api@sha256:<required>`<br>relay-dashboard: `ghcr.io/agentworkforce/relay-dashboard@sha256:<required>` |  |  | Historical untagged source proposal at d8bbff820a6541593fa2e889cbf14e3aa1f0baa7, superseded by the public-name source row; not a published or current release. Bundles sessions-pipeline 0.6.2 default-off read API plumbing and relay-cloud-api 0.2.7 legacy-client env omission. Supersedes the untagged 0.3.16 source and retains its kind core/addons relay-webapp b944a979 image pin at sha256:e4de2c628e72e906e809fd32e6192baa7c93a404eb019964cd7706805e316e6a; no new UI/runtime proof is claimed. Includes unset OAuth/raw FILE-alias reservation and strict valueFrom source validation from the reviewed extraEnv guard proposal. No profile enables the component or reroutes relaycontrol. Compatible runtime assembly and image remain upstream dependencies. Existing kind evidence belongs to its pinned base revision, not this new chart version. |
 | agent-relay-0.3.12 | shipped | agent-relay 0.3.12<br>relayhistory 0.1.1<br>relay-cloud-api 0.2.4<br>relay-dashboard 0.1.3<br>(deps: relaycast 0.3.4, relayauth 0.1.3, sessions-pipeline 0.6.0, relayhistory 0.1.1, relay-cloud-api 0.2.4, relay-dashboard 0.1.3, relayflows 0.2.4, durable-actors 0.14.6-awf.1, relayfile 0.2.1) | relayhistory: `ghcr.io/agentworkforce/relayhistory@sha256:<required>`<br>relay-cloud-api: `ghcr.io/agentworkforce/selfhost-api@sha256:<required>`<br>relay-dashboard: `ghcr.io/agentworkforce/relay-dashboard@sha256:<required>` |  |  | 0.3.12 is published from the tag agent-relay-0.3.12 (release run 41985579885). New in 0.3.12: Durable actors on AWS EKS. values-eks-actors.yaml is a standalone profile (Relaycast and Relayfile in actor mode on durable-actors with S3 storage, runc actor hosts on a tainted node group, EKS Pod Identity); scripts/selfhost/eks-actors-sandbox.sh and eks-actors-install.sh build the proof in a Pippen sandbox. Bundles durable-actors 0.14.6-awf.1 (UPSTREAM.md patches 10 and 11: storage.provider s3, storage.s3.*, AWS zones, sandbox.*; needs a control-plane image from the AgentWorkforce durable-actors fork), relaycast 0.3.4 and relayfile 0.2.1 (S3 deployer artifact store). NOTES warns when storage.s3.actorCredentials is control-plane. With none of these values set every render is byte-identical to 0.3.11 apart from the helm.sh/chart labels. values-eks-actors.yaml pins six public GHCR actor images by digest (durable-actors-control-plane and durable-actors-typescript from the fork tag awf-v0.14.6-aws.2, linux/amd64 only; relaycast-actors-gateway and relaycast-actors-deployer from relaycast 4e90b169; relayfile-actors and relayfile-actors-workspace from relayfile 30a5e007; anonymous pulls verified 2026-11-04), recorded as inactive entries in customer-images.yaml. The actor components stay off by default. Release images and values-gcp.yaml pins are unchanged from 0.3.11. |
 | agent-relay-0.3.11 | shipped | agent-relay 0.3.11<br>relayhistory 0.1.1<br>relay-cloud-api 0.2.4<br>relay-dashboard 0.1.3<br>(deps: relaycast 0.3.3, relayauth 0.1.3, sessions-pipeline 0.6.0, relayhistory 0.1.1, relay-cloud-api 0.2.4, relay-dashboard 0.1.3, relayflows 0.2.4, durable-actors 0.14.6, relayfile 0.2.0) | relayhistory: `ghcr.io/agentworkforce/relayhistory@sha256:<required>`<br>relay-cloud-api: `ghcr.io/agentworkforce/selfhost-api@sha256:<required>`<br>relay-dashboard: `ghcr.io/agentworkforce/relay-dashboard@sha256:<required>` |  |  | 0.3.11 is published from the tag agent-relay-0.3.11 (release run 41812609280). It pins public release images in values-gcp.yaml: selfhost-api 0.3.0 sha256:95c7877741054dc2f1cafa26be3faa9bfe4660ed85d637aef4524daa10481963 (relaycontrol 9b80b04: bootstrap, OIDC, invites, coding-agent credentials, device logins, Desktop sign-in origin, operator OAuth apps), relay-dashboard sha256:c50005fcdd1fc5ab5ef3dac9b621db8e0c7e03480406bfe519743ae435d8f1ad (relay-dashboard e5003d0: hosted Cloud look, Connections with Coding agents and visual parity #91, Members with email invites), RelayHistory sha256:d3166bb14e1d6043426a4dd8cc05408b94574c8d79ad5fd6e789e0de00ab371b (relayhistory-cloud 53c3333) and 96bulls-services sha256:070fe6fd46ecd1e1f9db32ff22379f6df9b9e6c4d48ede5312c8fb986a95f3a9 (sessions-pipeline f1c2672, origin-bound courier assertions) on worker and alleyoop, replacing the REQUIRED OVERRIDE zero digests; the services image needs its HoopDb role bootstraps (/app/supabase/bootstrap/session_directory_search_worker.sql, session_token_verifier.sql, session_ingest_roles.sql) before its first migrate. values-eks.yaml moves to the same selfhost-api and relay-dashboard digests. Leaf chart defaults are unchanged. Supersedes the never-tagged 0.3.10 and includes its changes: values-eks.yaml, the AWS EKS profile proven end to end on EKS Auto Mode with real DNS and TLS and the interim bearer off (docs/self-hosted-eks.md): one ALB Ingress with host rules and an ACM certificate (scripts/selfhost/eks-alb-ingress.sh), EKS Pod Identity to S3 for the Sessions Pipeline, in-cluster CloudNativePG for HoopDb, the control API and RelayHistory, Relaycast on SQLite, RelayHistory ghcr.io/agentworkforce/relayhistory@sha256:d3166bb1 (relayhistory-cloud 53c3333) and the services image 96bulls-services@sha256:070fe6fd (sessions-pipeline f1c2672, with #204). 0.3.10 in turn supersedes the never-tagged 0.3.9 and includes its changes: Bundles relay-cloud-api 0.2.4: first-boot bootstrap (bootstrap.orgName/adminEmail create the organization, its owner and a Default workspace bound to a new Relaycast workspace through secretKeys.relaycastInternalSecret; idempotent), sign-in (auth.oidc OpenID Connect with PKCE; auth.emailLink with smtp), invites (auth.inviteTtlHours, auth.autoJoinDomains) and smtp for invite emails; values-gcp.yaml carries a commented example. Requires a selfhost-api image from relaycontrol #13 or later and a dashboard image from relay-dashboard #92 or later for the Members invite UI; 0.3.11 pins both in values-gcp.yaml. With none of these values set every render is byte-identical apart from the helm.sh/chart labels. Supersedes the never-released 0.3.8 and includes its changes: Bundles relay-cloud-api 0.2.3, which adds integrations.<provider>.existingSecret: the customer's own OAuth app per integration (client ID from the Secret, client secret mounted as a file), for just-in-time connects from the CLI, flow onboarding and flow creation. Register <publicUrl>/api/v1/integrations/oauth/callback in each provider app. Requires a selfhost-api built from relaycontrol with operator OAuth apps (selfhost/jit-integrations). Supersedes the never-released 0.3.7 and includes its changes: A GKE proof-overlay and documentation patch of 0.3.6: values-gcp-proof-live.yaml sets relay-dashboard.customerProfile.desktop (urlScheme and siteUrl of the proof's custom Desktop build) (folds helm-charts #46), and relay-dashboard chart 0.1.3 documents customerProfile.desktop in its README. The Connect your agents link needs a dashboard image from relay-dashboard #88 or later; the overlay's own dashboard digest (53d484b) predates it, and the live proof deploy overrides that digest. Templates, images and values-gcp.yaml are unchanged from 0.3.6; renders differ only in the helm.sh/chart labels, plus DASHBOARD_CUSTOMER_PROFILE in the gcp-proof-live render. |
 | agent-relay-0.3.6 | shipped | agent-relay 0.3.6<br>relayhistory 0.1.1<br>relay-cloud-api 0.2.2<br>relay-dashboard 0.1.2<br>(deps: relaycast 0.3.3, relayauth 0.1.3, sessions-pipeline 0.6.0, relayhistory 0.1.1, relay-cloud-api 0.2.2, relay-dashboard 0.1.2, relayflows 0.2.4, durable-actors 0.14.6, relayfile 0.2.0) | relayhistory: `ghcr.io/agentworkforce/relayhistory@sha256:<required>`<br>relay-cloud-api: `ghcr.io/agentworkforce/selfhost-api@sha256:<required>`<br>relay-dashboard: `ghcr.io/agentworkforce/relay-dashboard@sha256:<required>` |  |  | 0.3.6 is published from the tag agent-relay-0.3.6 (release run 41769269329); it releases the never-tagged 0.3.5 together with dashboard branding. From 0.3.5: opt-in single-host mode (global.singleHost.host, off by default): the dashboard and the control API share one host (/, /cloud/api, /login, /api), relay-cloud-api 0.2.2 derives publicUrl and the dashboard derives runtime.publicUrl and ingress.host from it, and the GKE Ingress drops the api host; Relaycast, Relay History, Relayfile and durable-actors keep their own hosts (README Single-host mode). New in 0.3.6: relay-dashboard chart 0.1.2 adds the optional customerProfile (enterprise branding: product name and title, light/dark logo, favicon, accent and button colors, support link, Powered by Agent Relay) rendered into DASHBOARD_CUSTOMER_PROFILE and served in /runtime-config.js; values-gcp.yaml carries a commented example. Branding needs a dashboard image built from relay-dashboard 8eac2bd or later (which also fixes the sessions sidebar facets); the pinned customer dashboard digest predates it and ignores the value. With single-host mode off and no customerProfile every default render is byte-identical to 0.3.4 apart from the helm.sh/chart labels. Images unchanged from 0.3.4. |
@@ -84,6 +91,7 @@ Services image (sessions-pipeline-worker, alleyoop and the privileged SQL Jobs):
 | relayfile-0.2.0 | shipped | relayfile 0.2.0 | relayfile: `ghcr.io/agentworkforce/relayfile:0.1.0` |  |  | License-annotation bump of 0.1.1 (unreleased 0.1.2) plus runtime.backend=durable-actors (gateway, session broker: ghcr.io/agentworkforce/relayfile-actors by digest; deploy Job and dev sidecar: relayfile-actors-workspace by digest). Go server image by tag (Chart.appVersion), not digest; default render unchanged. |
 | durable-actors-0.14.6-awf.1 | unreleased | durable-actors 0.14.6-awf.1 |  |  |  | The vendored v0.14.6 chart plus UPSTREAM.md patch 10 (AWS: storage.provider s3, storage.s3.{region,actorCredentials,actorRoleArn,endpoint,forcePathStyle}, serviceAccount.annotations, sandbox.{runtimeClassName,nodeSelector,tolerations}, AWS availability zones in placement.zone) and patch 11 (the -awf.1 version suffix). The S3 values need a control-plane image from the AgentWorkforce durable-actors fork (selfhost/aws-s3, GHCR durable-actors-control-plane); upstream 0.14.6 images ignore them. GCS defaults render as the upstream chart apart from the helm.sh/chart label. Supersedes the never-released 0.14.6 row: Vendored TerseAI/durable-actors release chart v0.14.6 (tag commit 5f0a2d62, asset sha256 a489cd15...bee) with the local patches listed in charts/durable-actors/UPSTREAM.md (root global, invoke-only key, host idle timeout, pool-manager name length, zero-valued bounds, lowercase ingress host, schema patterns, README links). Never published by this repo; images pinned by upstream digest (charts/durable-actors/UPSTREAM.md). |
 | relayfile-0.1.1 | shipped | relayfile 0.1.1 | relayfile: `ghcr.io/agentworkforce/relayfile:0.1.0` |  |  | image by tag (Chart.appVersion), not digest. Superseded by 0.2.0. |
+| relay-chief-0.1.0 | unreleased | relay-chief 0.1.0 |  |  |  | First chart, rendered only. No Relay Chief image is published and the digest is operator-supplied until one exists. |
 | relayflows-0.2.5 | unreleased | relayflows 0.2.5 | relayflows: `node:22.23.3-bookworm-slim` |  |  | Repository rename to AgentWorkforce/infra: canonical source and Helm repository URLs, with matching local dependency patch versions. Runtime images, application source, migration generation and deployment values are unchanged. This release has no new live application proof. |
 | relayflows-0.2.4 | shipped | relayflows 0.2.4 | relayflows: `node:22.23.3-bookworm-slim` |  |  | License-annotation patch bump of 0.2.3; the stock image installs the pinned relayflows runtime at start. |
 | relayflows-0.2.3 | shipped | relayflows 0.2.3 | relayflows: `node:22.23.3-bookworm-slim` |  |  | the stock image installs the pinned relayflows runtime at start; production uses an immutable flow image. Superseded by 0.2.4. |
@@ -120,10 +128,10 @@ chart `sessions-pipeline` · values [`profiles/selfhost-postgres.yaml`](../chart
 | | requirement | provided by | maps to | verify |
 | --- | --- | --- | --- | --- |
 | shipped | [CloudNativePG operator installed](#req-k8s-cnpg-operator) | operator | values `hoopdb.enabled` | kubectl get crd clusters.postgresql.cnpg.io && kubectl get deploy -A -l app.kubernetes.io/name=cloudnative-pg |
-| shipped | [A default StorageClass for the in-cluster HoopDb and Locker volumes](#req-k8s-storage) | operator | values `hoopdb.cluster.storage.size`, `locker.persistence.size` | kubectl get storageclass (one marked default), then kubectl get pvc -n <ns> all Bound |
-| shipped | [External Secrets Operator and a ClusterSecretStore (only with externalSecrets.enabled)](#req-k8s-external-secrets-operator) | operator | values `sessions-pipeline-worker:externalSecrets.*`, `alleyoop:externalSecrets.*` | kubectl get crd externalsecrets.external-secrets.io && kubectl get clustersecretstore <name>; the ExternalSecret reports Ready |
+| shipped | [A default StorageClass for the in-cluster HoopDb and Locker volumes](#req-k8s-storage) | operator | values `hoopdb.cluster.storage.size`, `session-object-storage.persistence.size` | kubectl get storageclass (one marked default), then kubectl get pvc -n <ns> all Bound |
+| shipped | [External Secrets Operator and a ClusterSecretStore (only with externalSecrets.enabled)](#req-k8s-external-secrets-operator) | operator | values `sessions-pipeline-worker:externalSecrets.*`, `session-ingest-api:externalSecrets.*` | kubectl get crd externalsecrets.external-secrets.io && kubectl get clustersecretstore <name>; the ExternalSecret reports Ready |
 | shipped | [Pull Secret for the private GHCR services image](#req-secret-image-pull) | operator | values `worker.imagePullSecrets`, `alleyoop.imagePullSecrets`; Secret `<pull secret>` (type kubernetes.io/dockerconfigjson with read access to ghcr.io/agentworkforce/96bulls-services) | kubectl get secret <pull secret> -o jsonpath='{.type}' is kubernetes.io/dockerconfigjson; pods are not ImagePullBackOff |
-| shipped | [Locker credential Secret (MinIO root / S3 static keys)](#req-secret-locker-credentials) | operator | values `worker.existingSecret`, `alleyoop.existingSecret`, `locker.existingSecret`, `worker.secretKeys.lockerAccessKeyId`, `worker.secretKeys.lockerSecretAccessKey`, `alleyoop.secretKeys.lockerAccessKeyId`, `alleyoop.secretKeys.lockerSecretAccessKey`; env `LOCKER_ACCESS_KEY_ID`, `LOCKER_SECRET_ACCESS_KEY`; Secret `sessions-pipeline-locker` keys `rootUser`, `rootPassword`; Secret `sessions-pipeline-locker` (the bundled MinIO's root credential) | kubectl get secret sessions-pipeline-locker -o jsonpath='{.data}' has rootUser and rootPassword |
+| shipped | [Locker credential Secret (MinIO root / S3 static keys)](#req-secret-locker-credentials) | operator | values `worker.existingSecret`, `alleyoop.existingSecret`, `session-object-storage.existingSecret`, `worker.secretKeys.lockerAccessKeyId`, `worker.secretKeys.lockerSecretAccessKey`, `alleyoop.secretKeys.lockerAccessKeyId`, `alleyoop.secretKeys.lockerSecretAccessKey`; env `LOCKER_ACCESS_KEY_ID`, `LOCKER_SECRET_ACCESS_KEY`; Secret `sessions-pipeline-locker` keys `rootUser`, `rootPassword`; Secret `sessions-pipeline-locker` (the bundled upstream MinIO requires literal Secret data keys rootUser and rootPassword) | kubectl get secret sessions-pipeline-locker -o jsonpath='{.data}' has rootUser and rootPassword |
 | shipped | [Summary encryption keyring (SUMMARY_MASTER_KEYS)](#req-secret-summary-master-keys) | operator | values `worker.summaryEncryption.existingSecret`, `worker.summaryEncryption.key`, `worker.summaryEncryption.mountPath`, `worker.summaryEncryption.fileName`; env `SUMMARY_MASTER_KEYS_FILE`, `SUMMARY_MASTER_KEYS`; Secret `sessions-pipeline-locker` keys `SUMMARY_MASTER_KEYS` | kubectl exec deploy/<release>-worker-bob-costas -- test -r /var/run/secrets/sessions-pipeline/summary-master-keys; the Secret key parses as <id>:<64 hex> |
 | shipped | [HoopDb connection Secret (HOOPDB_URL)](#req-secret-hoopdb-url) | chart | values `worker.hoopdb.existingSecret`, `worker.hoopdb.key`, `worker.secretKeys.hoopdbUrl`, `alleyoop.hoopdb.existingSecret`, `alleyoop.hoopdb.key`, `alleyoop.secretKeys.hoopdbUrl`; env `HOOPDB_URL`; Secret `hoopdb-app` keys `uri` | kubectl get secret hoopdb-app -o jsonpath='{.data.uri}' is non-empty once the CNPG Cluster is ready |
 | shipped | [Agent Relay org id (TENANT_ORG_ID)](#req-sessions-pipeline-tenant-org-id) | operator | values `global.tenant.orgId`, `worker.tenant.orgId`, `alleyoop.tenant.orgId`; env `TENANT_ORG_ID` | helm template renders (it fails with "tenant.orgId (or global.tenant.orgId) is required" otherwise) |
@@ -154,7 +162,7 @@ chart `sessions-pipeline` · values [`profiles/selfhost-postgres.yaml`](../chart
 | shipped | [Runtime workload role (HOOPDB_RUNTIME_WORKLOAD_ROLE)](#opt-sessions-pipeline-runtime-workload-role) | `""`, `<role>` | `""` | values `worker.migrations.runtimeWorkloadRole`; env `HOOPDB_RUNTIME_WORKLOAD_ROLE` |
 | shipped | [migrate's wait-for-role ordering](#opt-sessions-pipeline-wait-for-role) | `true`, `false` | `true` | values `worker.migrations.waitForRole.enabled`, `worker.migrations.waitForRole.functionDefault`, `worker.migrations.waitForRole.image`, `worker.migrations.waitForRole.intervalSeconds`, `worker.migrations.waitForRole.role` |
 | shipped | [Separate migration-owner URL for migrate](#opt-hoopdb-migration-owner-url) | `""`, `<secret>/<key>` | `""` | values `worker.migrations.hoopdb.existingSecret`, `worker.migrations.hoopdb.key` |
-| shipped | [Locker object store](#opt-sessions-pipeline-locker-backend) | `minio`, `external` | `minio` | values `locker.enabled`, `worker.locker.endpoint`, `worker.locker.bucket`, `worker.locker.region`, `alleyoop.locker.endpoint`, `alleyoop.locker.bucket`, `alleyoop.locker.region`, `worker.lockerInit.enabled`; env `LOCKER_ENDPOINT`, `LOCKER_BUCKET`, `LOCKER_REGION` |
+| shipped | [Locker object store](#opt-sessions-pipeline-locker-backend) | `minio`, `external` | `minio` | values `session-object-storage.enabled`, `worker.locker.endpoint`, `worker.locker.bucket`, `worker.locker.region`, `alleyoop.locker.endpoint`, `alleyoop.locker.bucket`, `alleyoop.locker.region`, `worker.lockerInit.enabled`; env `LOCKER_ENDPOINT`, `LOCKER_BUCKET`, `LOCKER_REGION` |
 | shipped | [Locker credentials mode](#opt-sessions-pipeline-locker-credentials-mode) | `secret`, `podIdentity` | `secret` | values `worker.locker.credentials.mode`, `alleyoop.locker.credentials.mode` |
 | shipped | [Locker provider (S3-compatible or native GCS)](#opt-sessions-pipeline-locker-provider) | `s3`, `gcs` | `s3` | values `worker.locker.provider`, `alleyoop.locker.provider`, `worker.extraEnv`, `alleyoop.extraEnv`; env `LOCKER_PROVIDER`, `PIPELINE_RAW_PROVIDER`, `CLOUD_SQL_CONNECTION_NAME`, `REDIS_HOST`, `REDIS_PORT`, `REDIS_AUTH_ENABLED`, `REDIS_TRANSIT_ENCRYPTION`, `REDIS_TLS_CA_PEM`, `PUBSUB_TOPIC`, `PUBSUB_SUBSCRIPTION` |
 | shipped | [Services image registry](#opt-sessions-pipeline-services-image) | `ghcr`, `ecr` | `ghcr` | values `worker.image.repository`, `worker.image.digest`, `worker.image.tag`, `alleyoop.image.repository`, `alleyoop.image.digest`, `alleyoop.image.tag`, `global.imageRegistry` |
@@ -164,6 +172,8 @@ chart `sessions-pipeline` · values [`profiles/selfhost-postgres.yaml`](../chart
 | shipped | [Bob Costas summariser model (BOB_COSTAS_MODEL)](#opt-sessions-pipeline-bob-costas-model) | `off` | `off` | values `worker.components.bob-costas.env`; env `BOB_COSTAS_MODEL` |
 | **planned** | [Transcript search backend (search.backend)](#opt-sessions-pipeline-search-backend) | `postgres`, `clickhouse` (**planned**) | `postgres` | values `search.backend`, `search.clickhouse.*` |
 | **planned** | [Model session briefs](#opt-sessions-pipeline-session-briefs) | `false`, `true` (**planned**) | `false` | values `worker.sessionBrief.enabled`, `worker.sessionBrief.model`; env `SESSION_BRIEF_ENABLED`, `SESSION_BRIEF_MODEL` |
+| shipped | [Default-off native session upload edge](#opt-sessions-native-ingest) | `disabled`, `enabled` | `disabled` | values `ingestEdge.*`; env `SERVICE`, `RELAYHISTORY_SELFHOST_INGEST`, `RELAYHISTORY_INGEST_PORT`, `RELAYHISTORY_INGEST_ORIGIN`, `RELAYCONTROL_INTROSPECT_URL`, `RELAYCONTROL_INTROSPECT_SECRET`, `RELAYHISTORY_INGEST_DATABASE_URL`, `SESSION_POSTGRES_TLS_PROFILE`, `SESSION_POSTGRES_CA_FILE`, `SESSION_POSTGRES_CA_SHA256`, `RELAYHISTORY_INGEST_PG_POOL_MAX`, `ALLOW_IN_CLUSTER_HTTP`, `LOCKER_PROVIDER`, `LOCKER_BUCKET`, `LOCKER_ENDPOINT`, `LOCKER_REGION`, `LOCKER_ACCESS_KEY_ID`, `LOCKER_SECRET_ACCESS_KEY`, `INGEST_KEY_ROOT`, `INGEST_MAX_PER_USER`, `INGEST_MAX_PER_ORG`; Secret `<native ingest runtime Secret>` keys `database-url`, `introspect-secret`; Secret `<native ingest object-store Secret>` keys `access-key-id`, `secret-access-key` |
+| shipped | [Default-off self-host session read API container](#opt-sessions-read-api) | `disabled`, `enabled` | `disabled` | values `readApi.*`; env `SERVICE`, `RELAYHISTORY_SELFHOST_READ_API`, `RELAYHISTORY_READ_API_PORT`, `RELAYHISTORY_READ_API_SECRET`, `READ_API_ORIGIN`, `READ_API_AUTH_MODE`, `LOCKER_BUCKET`, `PIPELINE_ORG_FROM_PREFIX`, `PIPELINE_KEY_PREFIX`, `READ_API_COMPLETE_SINCE`, `READ_API_DIRECTORY_WORKSPACES`, `SEARCH_INDEX_BACKEND`, `ALLOW_IN_CLUSTER_HTTP`, `RELAYAUTH_JWKS_URL`, `RELAYAUTH_ISSUER`, `RELAYHISTORY_ACCEPT_RELAYCONTROL_TOKENS`, `RELAYCONTROL_INTROSPECT_URL`, `RELAYCONTROL_INTROSPECT_SECRET`; Secret `<read API configuration Secret>` keys `RELAYHISTORY_READ_API_SECRET`; Secret `<read API introspection Secret>` keys `RELAYCONTROL_INTROSPECT_SECRET` |
 
 ### Profile: migration
 
@@ -176,10 +186,10 @@ chart `sessions-pipeline` · values [`profiles/migration.yaml`](../charts/sessio
 | | requirement | provided by | maps to | verify |
 | --- | --- | --- | --- | --- |
 | shipped | [CloudNativePG operator installed](#req-k8s-cnpg-operator) | operator | values `hoopdb.enabled` | kubectl get crd clusters.postgresql.cnpg.io && kubectl get deploy -A -l app.kubernetes.io/name=cloudnative-pg |
-| shipped | [A default StorageClass for the in-cluster HoopDb and Locker volumes](#req-k8s-storage) | operator | values `hoopdb.cluster.storage.size`, `locker.persistence.size` | kubectl get storageclass (one marked default), then kubectl get pvc -n <ns> all Bound |
-| shipped | [External Secrets Operator and a ClusterSecretStore (only with externalSecrets.enabled)](#req-k8s-external-secrets-operator) | operator | values `sessions-pipeline-worker:externalSecrets.*`, `alleyoop:externalSecrets.*` | kubectl get crd externalsecrets.external-secrets.io && kubectl get clustersecretstore <name>; the ExternalSecret reports Ready |
+| shipped | [A default StorageClass for the in-cluster HoopDb and Locker volumes](#req-k8s-storage) | operator | values `hoopdb.cluster.storage.size`, `session-object-storage.persistence.size` | kubectl get storageclass (one marked default), then kubectl get pvc -n <ns> all Bound |
+| shipped | [External Secrets Operator and a ClusterSecretStore (only with externalSecrets.enabled)](#req-k8s-external-secrets-operator) | operator | values `sessions-pipeline-worker:externalSecrets.*`, `session-ingest-api:externalSecrets.*` | kubectl get crd externalsecrets.external-secrets.io && kubectl get clustersecretstore <name>; the ExternalSecret reports Ready |
 | shipped | [Pull Secret for the private GHCR services image](#req-secret-image-pull) | operator | values `worker.imagePullSecrets`, `alleyoop.imagePullSecrets`; Secret `<pull secret>` (type kubernetes.io/dockerconfigjson with read access to ghcr.io/agentworkforce/96bulls-services) | kubectl get secret <pull secret> -o jsonpath='{.type}' is kubernetes.io/dockerconfigjson; pods are not ImagePullBackOff |
-| shipped | [Locker credential Secret (MinIO root / S3 static keys)](#req-secret-locker-credentials) | operator | values `worker.existingSecret`, `alleyoop.existingSecret`, `locker.existingSecret`, `worker.secretKeys.lockerAccessKeyId`, `worker.secretKeys.lockerSecretAccessKey`, `alleyoop.secretKeys.lockerAccessKeyId`, `alleyoop.secretKeys.lockerSecretAccessKey`; env `LOCKER_ACCESS_KEY_ID`, `LOCKER_SECRET_ACCESS_KEY`; Secret `sessions-pipeline-locker` keys `rootUser`, `rootPassword`; Secret `sessions-pipeline-locker` (the bundled MinIO's root credential) | kubectl get secret sessions-pipeline-locker -o jsonpath='{.data}' has rootUser and rootPassword |
+| shipped | [Locker credential Secret (MinIO root / S3 static keys)](#req-secret-locker-credentials) | operator | values `worker.existingSecret`, `alleyoop.existingSecret`, `session-object-storage.existingSecret`, `worker.secretKeys.lockerAccessKeyId`, `worker.secretKeys.lockerSecretAccessKey`, `alleyoop.secretKeys.lockerAccessKeyId`, `alleyoop.secretKeys.lockerSecretAccessKey`; env `LOCKER_ACCESS_KEY_ID`, `LOCKER_SECRET_ACCESS_KEY`; Secret `sessions-pipeline-locker` keys `rootUser`, `rootPassword`; Secret `sessions-pipeline-locker` (the bundled upstream MinIO requires literal Secret data keys rootUser and rootPassword) | kubectl get secret sessions-pipeline-locker -o jsonpath='{.data}' has rootUser and rootPassword |
 | shipped | [Summary encryption keyring (SUMMARY_MASTER_KEYS)](#req-secret-summary-master-keys) | operator | values `worker.summaryEncryption.existingSecret`, `worker.summaryEncryption.key`, `worker.summaryEncryption.mountPath`, `worker.summaryEncryption.fileName`; env `SUMMARY_MASTER_KEYS_FILE`, `SUMMARY_MASTER_KEYS`; Secret `sessions-pipeline-locker` keys `SUMMARY_MASTER_KEYS` | kubectl exec deploy/<release>-worker-bob-costas -- test -r /var/run/secrets/sessions-pipeline/summary-master-keys; the Secret key parses as <id>:<64 hex> |
 | shipped | [HoopDb connection Secret (HOOPDB_URL)](#req-secret-hoopdb-url) | chart | values `worker.hoopdb.existingSecret`, `worker.hoopdb.key`, `worker.secretKeys.hoopdbUrl`, `alleyoop.hoopdb.existingSecret`, `alleyoop.hoopdb.key`, `alleyoop.secretKeys.hoopdbUrl`; env `HOOPDB_URL`; Secret `hoopdb-app` keys `uri` | kubectl get secret hoopdb-app -o jsonpath='{.data.uri}' is non-empty once the CNPG Cluster is ready |
 | shipped | [Agent Relay org id (TENANT_ORG_ID)](#req-sessions-pipeline-tenant-org-id) | operator | values `global.tenant.orgId`, `worker.tenant.orgId`, `alleyoop.tenant.orgId`; env `TENANT_ORG_ID` | helm template renders (it fails with "tenant.orgId (or global.tenant.orgId) is required" otherwise) |
@@ -210,7 +220,7 @@ chart `sessions-pipeline` · values [`profiles/migration.yaml`](../charts/sessio
 | shipped | [Runtime workload role (HOOPDB_RUNTIME_WORKLOAD_ROLE)](#opt-sessions-pipeline-runtime-workload-role) | `""`, `<role>` | `""` | values `worker.migrations.runtimeWorkloadRole`; env `HOOPDB_RUNTIME_WORKLOAD_ROLE` |
 | shipped | [migrate's wait-for-role ordering](#opt-sessions-pipeline-wait-for-role) | `true`, `false` | `true` | values `worker.migrations.waitForRole.enabled`, `worker.migrations.waitForRole.functionDefault`, `worker.migrations.waitForRole.image`, `worker.migrations.waitForRole.intervalSeconds`, `worker.migrations.waitForRole.role` |
 | shipped | [Separate migration-owner URL for migrate](#opt-hoopdb-migration-owner-url) | `""`, `<secret>/<key>` | `""` | values `worker.migrations.hoopdb.existingSecret`, `worker.migrations.hoopdb.key` |
-| shipped | [Locker object store](#opt-sessions-pipeline-locker-backend) | `minio`, `external` | `minio` | values `locker.enabled`, `worker.locker.endpoint`, `worker.locker.bucket`, `worker.locker.region`, `alleyoop.locker.endpoint`, `alleyoop.locker.bucket`, `alleyoop.locker.region`, `worker.lockerInit.enabled`; env `LOCKER_ENDPOINT`, `LOCKER_BUCKET`, `LOCKER_REGION` |
+| shipped | [Locker object store](#opt-sessions-pipeline-locker-backend) | `minio`, `external` | `minio` | values `session-object-storage.enabled`, `worker.locker.endpoint`, `worker.locker.bucket`, `worker.locker.region`, `alleyoop.locker.endpoint`, `alleyoop.locker.bucket`, `alleyoop.locker.region`, `worker.lockerInit.enabled`; env `LOCKER_ENDPOINT`, `LOCKER_BUCKET`, `LOCKER_REGION` |
 | shipped | [Locker credentials mode](#opt-sessions-pipeline-locker-credentials-mode) | `secret`, `podIdentity` | `secret` | values `worker.locker.credentials.mode`, `alleyoop.locker.credentials.mode` |
 | shipped | [Locker provider (S3-compatible or native GCS)](#opt-sessions-pipeline-locker-provider) | `s3`, `gcs` | `s3` | values `worker.locker.provider`, `alleyoop.locker.provider`, `worker.extraEnv`, `alleyoop.extraEnv`; env `LOCKER_PROVIDER`, `PIPELINE_RAW_PROVIDER`, `CLOUD_SQL_CONNECTION_NAME`, `REDIS_HOST`, `REDIS_PORT`, `REDIS_AUTH_ENABLED`, `REDIS_TRANSIT_ENCRYPTION`, `REDIS_TLS_CA_PEM`, `PUBSUB_TOPIC`, `PUBSUB_SUBSCRIPTION` |
 | shipped | [Services image registry](#opt-sessions-pipeline-services-image) | `ghcr`, `ecr` | `ghcr` | values `worker.image.repository`, `worker.image.digest`, `worker.image.tag`, `alleyoop.image.repository`, `alleyoop.image.digest`, `alleyoop.image.tag`, `global.imageRegistry` |
@@ -220,6 +230,8 @@ chart `sessions-pipeline` · values [`profiles/migration.yaml`](../charts/sessio
 | shipped | [Bob Costas summariser model (BOB_COSTAS_MODEL)](#opt-sessions-pipeline-bob-costas-model) | `off` | `off` | values `worker.components.bob-costas.env`; env `BOB_COSTAS_MODEL` |
 | **planned** | [Transcript search backend (search.backend)](#opt-sessions-pipeline-search-backend) | `postgres`, `clickhouse` (**planned**) | `postgres` | values `search.backend`, `search.clickhouse.*` |
 | **planned** | [Model session briefs](#opt-sessions-pipeline-session-briefs) | `false`, `true` (**planned**) | `false` | values `worker.sessionBrief.enabled`, `worker.sessionBrief.model`; env `SESSION_BRIEF_ENABLED`, `SESSION_BRIEF_MODEL` |
+| shipped | [Default-off native session upload edge](#opt-sessions-native-ingest) | `disabled`, `enabled` | `disabled` | values `ingestEdge.*`; env `SERVICE`, `RELAYHISTORY_SELFHOST_INGEST`, `RELAYHISTORY_INGEST_PORT`, `RELAYHISTORY_INGEST_ORIGIN`, `RELAYCONTROL_INTROSPECT_URL`, `RELAYCONTROL_INTROSPECT_SECRET`, `RELAYHISTORY_INGEST_DATABASE_URL`, `SESSION_POSTGRES_TLS_PROFILE`, `SESSION_POSTGRES_CA_FILE`, `SESSION_POSTGRES_CA_SHA256`, `RELAYHISTORY_INGEST_PG_POOL_MAX`, `ALLOW_IN_CLUSTER_HTTP`, `LOCKER_PROVIDER`, `LOCKER_BUCKET`, `LOCKER_ENDPOINT`, `LOCKER_REGION`, `LOCKER_ACCESS_KEY_ID`, `LOCKER_SECRET_ACCESS_KEY`, `INGEST_KEY_ROOT`, `INGEST_MAX_PER_USER`, `INGEST_MAX_PER_ORG`; Secret `<native ingest runtime Secret>` keys `database-url`, `introspect-secret`; Secret `<native ingest object-store Secret>` keys `access-key-id`, `secret-access-key` |
+| shipped | [Default-off self-host session read API container](#opt-sessions-read-api) | `disabled`, `enabled` | `disabled` | values `readApi.*`; env `SERVICE`, `RELAYHISTORY_SELFHOST_READ_API`, `RELAYHISTORY_READ_API_PORT`, `RELAYHISTORY_READ_API_SECRET`, `READ_API_ORIGIN`, `READ_API_AUTH_MODE`, `LOCKER_BUCKET`, `PIPELINE_ORG_FROM_PREFIX`, `PIPELINE_KEY_PREFIX`, `READ_API_COMPLETE_SINCE`, `READ_API_DIRECTORY_WORKSPACES`, `SEARCH_INDEX_BACKEND`, `ALLOW_IN_CLUSTER_HTTP`, `RELAYAUTH_JWKS_URL`, `RELAYAUTH_ISSUER`, `RELAYHISTORY_ACCEPT_RELAYCONTROL_TOKENS`, `RELAYCONTROL_INTROSPECT_URL`, `RELAYCONTROL_INTROSPECT_SECRET`; Secret `<read API configuration Secret>` keys `RELAYHISTORY_READ_API_SECRET`; Secret `<read API introspection Secret>` keys `RELAYCONTROL_INTROSPECT_SECRET` |
 
 ### Profile: external-selfhosted
 
@@ -231,9 +243,9 @@ chart `sessions-pipeline` · values [`profiles/external-selfhosted.yaml`](../cha
 
 | | requirement | provided by | maps to | verify |
 | --- | --- | --- | --- | --- |
-| shipped | [External Secrets Operator and a ClusterSecretStore (only with externalSecrets.enabled)](#req-k8s-external-secrets-operator) | operator | values `sessions-pipeline-worker:externalSecrets.*`, `alleyoop:externalSecrets.*` | kubectl get crd externalsecrets.external-secrets.io && kubectl get clustersecretstore <name>; the ExternalSecret reports Ready |
+| shipped | [External Secrets Operator and a ClusterSecretStore (only with externalSecrets.enabled)](#req-k8s-external-secrets-operator) | operator | values `sessions-pipeline-worker:externalSecrets.*`, `session-ingest-api:externalSecrets.*` | kubectl get crd externalsecrets.external-secrets.io && kubectl get clustersecretstore <name>; the ExternalSecret reports Ready |
 | shipped | [Pull Secret for the private GHCR services image](#req-secret-image-pull) | operator | values `worker.imagePullSecrets`, `alleyoop.imagePullSecrets`; Secret `<pull secret>` (type kubernetes.io/dockerconfigjson with read access to ghcr.io/agentworkforce/96bulls-services) | kubectl get secret <pull secret> -o jsonpath='{.type}' is kubernetes.io/dockerconfigjson; pods are not ImagePullBackOff |
-| shipped | [Locker credential Secret (MinIO root / S3 static keys)](#req-secret-locker-credentials) | operator | values `worker.existingSecret`, `alleyoop.existingSecret`, `locker.existingSecret`, `worker.secretKeys.lockerAccessKeyId`, `worker.secretKeys.lockerSecretAccessKey`, `alleyoop.secretKeys.lockerAccessKeyId`, `alleyoop.secretKeys.lockerSecretAccessKey`; env `LOCKER_ACCESS_KEY_ID`, `LOCKER_SECRET_ACCESS_KEY`; Secret `sessions-pipeline-locker` keys `rootUser`, `rootPassword`; Secret `sessions-pipeline-locker` (the bundled MinIO's root credential) | kubectl get secret sessions-pipeline-locker -o jsonpath='{.data}' has rootUser and rootPassword |
+| shipped | [Locker credential Secret (MinIO root / S3 static keys)](#req-secret-locker-credentials) | operator | values `worker.existingSecret`, `alleyoop.existingSecret`, `session-object-storage.existingSecret`, `worker.secretKeys.lockerAccessKeyId`, `worker.secretKeys.lockerSecretAccessKey`, `alleyoop.secretKeys.lockerAccessKeyId`, `alleyoop.secretKeys.lockerSecretAccessKey`; env `LOCKER_ACCESS_KEY_ID`, `LOCKER_SECRET_ACCESS_KEY`; Secret `sessions-pipeline-locker` keys `rootUser`, `rootPassword`; Secret `sessions-pipeline-locker` (the bundled upstream MinIO requires literal Secret data keys rootUser and rootPassword) | kubectl get secret sessions-pipeline-locker -o jsonpath='{.data}' has rootUser and rootPassword |
 | shipped | [Summary encryption keyring (SUMMARY_MASTER_KEYS)](#req-secret-summary-master-keys) | operator | values `worker.summaryEncryption.existingSecret`, `worker.summaryEncryption.key`, `worker.summaryEncryption.mountPath`, `worker.summaryEncryption.fileName`; env `SUMMARY_MASTER_KEYS_FILE`, `SUMMARY_MASTER_KEYS`; Secret `sessions-pipeline-locker` keys `SUMMARY_MASTER_KEYS` | kubectl exec deploy/<release>-worker-bob-costas -- test -r /var/run/secrets/sessions-pipeline/summary-master-keys; the Secret key parses as <id>:<64 hex> |
 | shipped | [HoopDb connection Secret (HOOPDB_URL)](#req-secret-hoopdb-url) | operator | values `worker.hoopdb.existingSecret`, `worker.hoopdb.key`, `worker.secretKeys.hoopdbUrl`, `alleyoop.hoopdb.existingSecret`, `alleyoop.hoopdb.key`, `alleyoop.secretKeys.hoopdbUrl`; env `HOOPDB_URL`; Secret `sessions-pipeline-hoopdb` keys `HOOPDB_URL` | kubectl get secret sessions-pipeline-hoopdb -o jsonpath='{.data.HOOPDB_URL}' \| base64 -d \| psql -X -c 'select 1' |
 | shipped | [Agent Relay org id (TENANT_ORG_ID)](#req-sessions-pipeline-tenant-org-id) | operator | values `global.tenant.orgId`, `worker.tenant.orgId`, `alleyoop.tenant.orgId`; env `TENANT_ORG_ID` | helm template renders (it fails with "tenant.orgId (or global.tenant.orgId) is required" otherwise) |
@@ -263,7 +275,7 @@ chart `sessions-pipeline` · values [`profiles/external-selfhosted.yaml`](../cha
 | shipped | [Runtime workload role (HOOPDB_RUNTIME_WORKLOAD_ROLE)](#opt-sessions-pipeline-runtime-workload-role) | `""`, `<role>` | `""` | values `worker.migrations.runtimeWorkloadRole`; env `HOOPDB_RUNTIME_WORKLOAD_ROLE` |
 | shipped | [migrate's wait-for-role ordering](#opt-sessions-pipeline-wait-for-role) | `true`, `false` | `true` | values `worker.migrations.waitForRole.enabled`, `worker.migrations.waitForRole.functionDefault`, `worker.migrations.waitForRole.image`, `worker.migrations.waitForRole.intervalSeconds`, `worker.migrations.waitForRole.role` |
 | shipped | [Separate migration-owner URL for migrate](#opt-hoopdb-migration-owner-url) | `""`, `<secret>/<key>` | `""` | values `worker.migrations.hoopdb.existingSecret`, `worker.migrations.hoopdb.key` |
-| shipped | [Locker object store](#opt-sessions-pipeline-locker-backend) | `minio`, `external` | `minio` | values `locker.enabled`, `worker.locker.endpoint`, `worker.locker.bucket`, `worker.locker.region`, `alleyoop.locker.endpoint`, `alleyoop.locker.bucket`, `alleyoop.locker.region`, `worker.lockerInit.enabled`; env `LOCKER_ENDPOINT`, `LOCKER_BUCKET`, `LOCKER_REGION` |
+| shipped | [Locker object store](#opt-sessions-pipeline-locker-backend) | `minio`, `external` | `minio` | values `session-object-storage.enabled`, `worker.locker.endpoint`, `worker.locker.bucket`, `worker.locker.region`, `alleyoop.locker.endpoint`, `alleyoop.locker.bucket`, `alleyoop.locker.region`, `worker.lockerInit.enabled`; env `LOCKER_ENDPOINT`, `LOCKER_BUCKET`, `LOCKER_REGION` |
 | shipped | [Locker credentials mode](#opt-sessions-pipeline-locker-credentials-mode) | `secret`, `podIdentity` | `secret` | values `worker.locker.credentials.mode`, `alleyoop.locker.credentials.mode` |
 | shipped | [Locker provider (S3-compatible or native GCS)](#opt-sessions-pipeline-locker-provider) | `s3`, `gcs` | `s3` | values `worker.locker.provider`, `alleyoop.locker.provider`, `worker.extraEnv`, `alleyoop.extraEnv`; env `LOCKER_PROVIDER`, `PIPELINE_RAW_PROVIDER`, `CLOUD_SQL_CONNECTION_NAME`, `REDIS_HOST`, `REDIS_PORT`, `REDIS_AUTH_ENABLED`, `REDIS_TRANSIT_ENCRYPTION`, `REDIS_TLS_CA_PEM`, `PUBSUB_TOPIC`, `PUBSUB_SUBSCRIPTION` |
 | shipped | [Services image registry](#opt-sessions-pipeline-services-image) | `ghcr`, `ecr` | `ghcr` | values `worker.image.repository`, `worker.image.digest`, `worker.image.tag`, `alleyoop.image.repository`, `alleyoop.image.digest`, `alleyoop.image.tag`, `global.imageRegistry` |
@@ -273,6 +285,8 @@ chart `sessions-pipeline` · values [`profiles/external-selfhosted.yaml`](../cha
 | shipped | [Bob Costas summariser model (BOB_COSTAS_MODEL)](#opt-sessions-pipeline-bob-costas-model) | `off` | `off` | values `worker.components.bob-costas.env`; env `BOB_COSTAS_MODEL` |
 | **planned** | [Transcript search backend (search.backend)](#opt-sessions-pipeline-search-backend) | `postgres`, `clickhouse` (**planned**) | `postgres` | values `search.backend`, `search.clickhouse.*` |
 | **planned** | [Model session briefs](#opt-sessions-pipeline-session-briefs) | `false`, `true` (**planned**) | `false` | values `worker.sessionBrief.enabled`, `worker.sessionBrief.model`; env `SESSION_BRIEF_ENABLED`, `SESSION_BRIEF_MODEL` |
+| shipped | [Default-off native session upload edge](#opt-sessions-native-ingest) | `disabled`, `enabled` | `disabled` | values `ingestEdge.*`; env `SERVICE`, `RELAYHISTORY_SELFHOST_INGEST`, `RELAYHISTORY_INGEST_PORT`, `RELAYHISTORY_INGEST_ORIGIN`, `RELAYCONTROL_INTROSPECT_URL`, `RELAYCONTROL_INTROSPECT_SECRET`, `RELAYHISTORY_INGEST_DATABASE_URL`, `SESSION_POSTGRES_TLS_PROFILE`, `SESSION_POSTGRES_CA_FILE`, `SESSION_POSTGRES_CA_SHA256`, `RELAYHISTORY_INGEST_PG_POOL_MAX`, `ALLOW_IN_CLUSTER_HTTP`, `LOCKER_PROVIDER`, `LOCKER_BUCKET`, `LOCKER_ENDPOINT`, `LOCKER_REGION`, `LOCKER_ACCESS_KEY_ID`, `LOCKER_SECRET_ACCESS_KEY`, `INGEST_KEY_ROOT`, `INGEST_MAX_PER_USER`, `INGEST_MAX_PER_ORG`; Secret `<native ingest runtime Secret>` keys `database-url`, `introspect-secret`; Secret `<native ingest object-store Secret>` keys `access-key-id`, `secret-access-key` |
+| shipped | [Default-off self-host session read API container](#opt-sessions-read-api) | `disabled`, `enabled` | `disabled` | values `readApi.*`; env `SERVICE`, `RELAYHISTORY_SELFHOST_READ_API`, `RELAYHISTORY_READ_API_PORT`, `RELAYHISTORY_READ_API_SECRET`, `READ_API_ORIGIN`, `READ_API_AUTH_MODE`, `LOCKER_BUCKET`, `PIPELINE_ORG_FROM_PREFIX`, `PIPELINE_KEY_PREFIX`, `READ_API_COMPLETE_SINCE`, `READ_API_DIRECTORY_WORKSPACES`, `SEARCH_INDEX_BACKEND`, `ALLOW_IN_CLUSTER_HTTP`, `RELAYAUTH_JWKS_URL`, `RELAYAUTH_ISSUER`, `RELAYHISTORY_ACCEPT_RELAYCONTROL_TOKENS`, `RELAYCONTROL_INTROSPECT_URL`, `RELAYCONTROL_INTROSPECT_SECRET`; Secret `<read API configuration Secret>` keys `RELAYHISTORY_READ_API_SECRET`; Secret `<read API introspection Secret>` keys `RELAYCONTROL_INTROSPECT_SECRET` |
 
 ### Profile: external-supabase
 
@@ -284,9 +298,9 @@ chart `sessions-pipeline` · values [`profiles/external-supabase.yaml`](../chart
 
 | | requirement | provided by | maps to | verify |
 | --- | --- | --- | --- | --- |
-| shipped | [External Secrets Operator and a ClusterSecretStore (only with externalSecrets.enabled)](#req-k8s-external-secrets-operator) | operator | values `sessions-pipeline-worker:externalSecrets.*`, `alleyoop:externalSecrets.*` | kubectl get crd externalsecrets.external-secrets.io && kubectl get clustersecretstore <name>; the ExternalSecret reports Ready |
+| shipped | [External Secrets Operator and a ClusterSecretStore (only with externalSecrets.enabled)](#req-k8s-external-secrets-operator) | operator | values `sessions-pipeline-worker:externalSecrets.*`, `session-ingest-api:externalSecrets.*` | kubectl get crd externalsecrets.external-secrets.io && kubectl get clustersecretstore <name>; the ExternalSecret reports Ready |
 | shipped | [Pull Secret for the private GHCR services image](#req-secret-image-pull) | operator | values `worker.imagePullSecrets`, `alleyoop.imagePullSecrets`; Secret `<pull secret>` (type kubernetes.io/dockerconfigjson with read access to ghcr.io/agentworkforce/96bulls-services) | kubectl get secret <pull secret> -o jsonpath='{.type}' is kubernetes.io/dockerconfigjson; pods are not ImagePullBackOff |
-| shipped | [Locker credential Secret (MinIO root / S3 static keys)](#req-secret-locker-credentials) | operator | values `worker.existingSecret`, `alleyoop.existingSecret`, `locker.existingSecret`, `worker.secretKeys.lockerAccessKeyId`, `worker.secretKeys.lockerSecretAccessKey`, `alleyoop.secretKeys.lockerAccessKeyId`, `alleyoop.secretKeys.lockerSecretAccessKey`; env `LOCKER_ACCESS_KEY_ID`, `LOCKER_SECRET_ACCESS_KEY`; Secret `sessions-pipeline-locker` keys `rootUser`, `rootPassword`; Secret `sessions-pipeline-locker` (the bundled MinIO's root credential) | kubectl get secret sessions-pipeline-locker -o jsonpath='{.data}' has rootUser and rootPassword |
+| shipped | [Locker credential Secret (MinIO root / S3 static keys)](#req-secret-locker-credentials) | operator | values `worker.existingSecret`, `alleyoop.existingSecret`, `session-object-storage.existingSecret`, `worker.secretKeys.lockerAccessKeyId`, `worker.secretKeys.lockerSecretAccessKey`, `alleyoop.secretKeys.lockerAccessKeyId`, `alleyoop.secretKeys.lockerSecretAccessKey`; env `LOCKER_ACCESS_KEY_ID`, `LOCKER_SECRET_ACCESS_KEY`; Secret `sessions-pipeline-locker` keys `rootUser`, `rootPassword`; Secret `sessions-pipeline-locker` (the bundled upstream MinIO requires literal Secret data keys rootUser and rootPassword) | kubectl get secret sessions-pipeline-locker -o jsonpath='{.data}' has rootUser and rootPassword |
 | shipped | [Summary encryption keyring (SUMMARY_MASTER_KEYS)](#req-secret-summary-master-keys) | operator | values `worker.summaryEncryption.existingSecret`, `worker.summaryEncryption.key`, `worker.summaryEncryption.mountPath`, `worker.summaryEncryption.fileName`; env `SUMMARY_MASTER_KEYS_FILE`, `SUMMARY_MASTER_KEYS`; Secret `sessions-pipeline-locker` keys `SUMMARY_MASTER_KEYS` | kubectl exec deploy/<release>-worker-bob-costas -- test -r /var/run/secrets/sessions-pipeline/summary-master-keys; the Secret key parses as <id>:<64 hex> |
 | shipped | [HoopDb connection Secret (HOOPDB_URL)](#req-secret-hoopdb-url) | operator | values `worker.hoopdb.existingSecret`, `worker.hoopdb.key`, `worker.secretKeys.hoopdbUrl`, `alleyoop.hoopdb.existingSecret`, `alleyoop.hoopdb.key`, `alleyoop.secretKeys.hoopdbUrl`; env `HOOPDB_URL`; Secret `sessions-pipeline-hoopdb` keys `HOOPDB_URL` | kubectl get secret sessions-pipeline-hoopdb -o jsonpath='{.data.HOOPDB_URL}' \| base64 -d \| psql -X -c 'select current_user' |
 | shipped | [Agent Relay org id (TENANT_ORG_ID)](#req-sessions-pipeline-tenant-org-id) | operator | values `global.tenant.orgId`, `worker.tenant.orgId`, `alleyoop.tenant.orgId`; env `TENANT_ORG_ID` | helm template renders (it fails with "tenant.orgId (or global.tenant.orgId) is required" otherwise) |
@@ -316,7 +330,7 @@ chart `sessions-pipeline` · values [`profiles/external-supabase.yaml`](../chart
 | shipped | [migrate's wait-for-role ordering](#opt-sessions-pipeline-wait-for-role) | `true`, `false` | `false` | values `worker.migrations.waitForRole.enabled`, `worker.migrations.waitForRole.functionDefault`, `worker.migrations.waitForRole.image`, `worker.migrations.waitForRole.intervalSeconds`, `worker.migrations.waitForRole.role` |
 | shipped | [External-Supabase activation hold](#opt-sessions-pipeline-supabase-activation-hold) | `true`, `false` | `true` | values `supabaseActivation.hold` |
 | shipped | [Separate migration-owner URL for migrate](#opt-hoopdb-migration-owner-url) | `""`, `<secret>/<key>` | `""` | values `worker.migrations.hoopdb.existingSecret`, `worker.migrations.hoopdb.key` |
-| shipped | [Locker object store](#opt-sessions-pipeline-locker-backend) | `minio`, `external` | `minio` | values `locker.enabled`, `worker.locker.endpoint`, `worker.locker.bucket`, `worker.locker.region`, `alleyoop.locker.endpoint`, `alleyoop.locker.bucket`, `alleyoop.locker.region`, `worker.lockerInit.enabled`; env `LOCKER_ENDPOINT`, `LOCKER_BUCKET`, `LOCKER_REGION` |
+| shipped | [Locker object store](#opt-sessions-pipeline-locker-backend) | `minio`, `external` | `minio` | values `session-object-storage.enabled`, `worker.locker.endpoint`, `worker.locker.bucket`, `worker.locker.region`, `alleyoop.locker.endpoint`, `alleyoop.locker.bucket`, `alleyoop.locker.region`, `worker.lockerInit.enabled`; env `LOCKER_ENDPOINT`, `LOCKER_BUCKET`, `LOCKER_REGION` |
 | shipped | [Locker credentials mode](#opt-sessions-pipeline-locker-credentials-mode) | `secret`, `podIdentity` | `secret` | values `worker.locker.credentials.mode`, `alleyoop.locker.credentials.mode` |
 | shipped | [Locker provider (S3-compatible or native GCS)](#opt-sessions-pipeline-locker-provider) | `s3`, `gcs` | `s3` | values `worker.locker.provider`, `alleyoop.locker.provider`, `worker.extraEnv`, `alleyoop.extraEnv`; env `LOCKER_PROVIDER`, `PIPELINE_RAW_PROVIDER`, `CLOUD_SQL_CONNECTION_NAME`, `REDIS_HOST`, `REDIS_PORT`, `REDIS_AUTH_ENABLED`, `REDIS_TRANSIT_ENCRYPTION`, `REDIS_TLS_CA_PEM`, `PUBSUB_TOPIC`, `PUBSUB_SUBSCRIPTION` |
 | shipped | [Services image registry](#opt-sessions-pipeline-services-image) | `ghcr`, `ecr` | `ghcr` | values `worker.image.repository`, `worker.image.digest`, `worker.image.tag`, `alleyoop.image.repository`, `alleyoop.image.digest`, `alleyoop.image.tag`, `global.imageRegistry` |
@@ -326,6 +340,8 @@ chart `sessions-pipeline` · values [`profiles/external-supabase.yaml`](../chart
 | shipped | [Bob Costas summariser model (BOB_COSTAS_MODEL)](#opt-sessions-pipeline-bob-costas-model) | `off` | `off` | values `worker.components.bob-costas.env`; env `BOB_COSTAS_MODEL` |
 | **planned** | [Transcript search backend (search.backend)](#opt-sessions-pipeline-search-backend) | `postgres`, `clickhouse` (**planned**) | `postgres` | values `search.backend`, `search.clickhouse.*` |
 | **planned** | [Model session briefs](#opt-sessions-pipeline-session-briefs) | `false`, `true` (**planned**) | `false` | values `worker.sessionBrief.enabled`, `worker.sessionBrief.model`; env `SESSION_BRIEF_ENABLED`, `SESSION_BRIEF_MODEL` |
+| shipped | [Default-off native session upload edge](#opt-sessions-native-ingest) | `disabled`, `enabled` | `disabled` | values `ingestEdge.*`; env `SERVICE`, `RELAYHISTORY_SELFHOST_INGEST`, `RELAYHISTORY_INGEST_PORT`, `RELAYHISTORY_INGEST_ORIGIN`, `RELAYCONTROL_INTROSPECT_URL`, `RELAYCONTROL_INTROSPECT_SECRET`, `RELAYHISTORY_INGEST_DATABASE_URL`, `SESSION_POSTGRES_TLS_PROFILE`, `SESSION_POSTGRES_CA_FILE`, `SESSION_POSTGRES_CA_SHA256`, `RELAYHISTORY_INGEST_PG_POOL_MAX`, `ALLOW_IN_CLUSTER_HTTP`, `LOCKER_PROVIDER`, `LOCKER_BUCKET`, `LOCKER_ENDPOINT`, `LOCKER_REGION`, `LOCKER_ACCESS_KEY_ID`, `LOCKER_SECRET_ACCESS_KEY`, `INGEST_KEY_ROOT`, `INGEST_MAX_PER_USER`, `INGEST_MAX_PER_ORG`; Secret `<native ingest runtime Secret>` keys `database-url`, `introspect-secret`; Secret `<native ingest object-store Secret>` keys `access-key-id`, `secret-access-key` |
+| shipped | [Default-off self-host session read API container](#opt-sessions-read-api) | `disabled`, `enabled` | `disabled` | values `readApi.*`; env `SERVICE`, `RELAYHISTORY_SELFHOST_READ_API`, `RELAYHISTORY_READ_API_PORT`, `RELAYHISTORY_READ_API_SECRET`, `READ_API_ORIGIN`, `READ_API_AUTH_MODE`, `LOCKER_BUCKET`, `PIPELINE_ORG_FROM_PREFIX`, `PIPELINE_KEY_PREFIX`, `READ_API_COMPLETE_SINCE`, `READ_API_DIRECTORY_WORKSPACES`, `SEARCH_INDEX_BACKEND`, `ALLOW_IN_CLUSTER_HTTP`, `RELAYAUTH_JWKS_URL`, `RELAYAUTH_ISSUER`, `RELAYHISTORY_ACCEPT_RELAYCONTROL_TOKENS`, `RELAYCONTROL_INTROSPECT_URL`, `RELAYCONTROL_INTROSPECT_SECRET`; Secret `<read API configuration Secret>` keys `RELAYHISTORY_READ_API_SECRET`; Secret `<read API introspection Secret>` keys `RELAYCONTROL_INTROSPECT_SECRET` |
 
 ### Profile: aws-cnpg
 
@@ -338,9 +354,9 @@ chart `sessions-pipeline` · values [`ci/aws-cnpg-values.yaml`](../charts/sessio
 | | requirement | provided by | maps to | verify |
 | --- | --- | --- | --- | --- |
 | shipped | [CloudNativePG operator installed](#req-k8s-cnpg-operator) | stack | values `hoopdb.enabled` | kubectl get crd clusters.postgresql.cnpg.io && kubectl get deploy -A -l app.kubernetes.io/name=cloudnative-pg |
-| shipped | [A default StorageClass for the in-cluster HoopDb and Locker volumes](#req-k8s-storage) | stack | values `hoopdb.cluster.storage.size`, `locker.persistence.size` | kubectl get storageclass (one marked default), then kubectl get pvc -n <ns> all Bound |
+| shipped | [A default StorageClass for the in-cluster HoopDb and Locker volumes](#req-k8s-storage) | stack | values `hoopdb.cluster.storage.size`, `session-object-storage.persistence.size` | kubectl get storageclass (one marked default), then kubectl get pvc -n <ns> all Bound |
 | shipped | [Workload identity for the Locker bucket (EKS Pod Identity / GKE Workload Identity)](#req-k8s-workload-identity) | stack | values `worker.locker.credentials.mode`, `alleyoop.locker.credentials.mode`, `worker.serviceAccount.annotations`, `alleyoop.serviceAccount.annotations` | aws eks list-pod-identity-associations --cluster-name <c> (one per worker/alleyoop ServiceAccount); then the locker-init Job (or a worker) reaches the bucket |
-| shipped | [External Secrets Operator and a ClusterSecretStore (only with externalSecrets.enabled)](#req-k8s-external-secrets-operator) | operator | values `sessions-pipeline-worker:externalSecrets.*`, `alleyoop:externalSecrets.*` | kubectl get crd externalsecrets.external-secrets.io && kubectl get clustersecretstore <name>; the ExternalSecret reports Ready |
+| shipped | [External Secrets Operator and a ClusterSecretStore (only with externalSecrets.enabled)](#req-k8s-external-secrets-operator) | operator | values `sessions-pipeline-worker:externalSecrets.*`, `session-ingest-api:externalSecrets.*` | kubectl get crd externalsecrets.external-secrets.io && kubectl get clustersecretstore <name>; the ExternalSecret reports Ready |
 | shipped | [Summary encryption keyring (SUMMARY_MASTER_KEYS)](#req-secret-summary-master-keys) | stack | values `worker.summaryEncryption.existingSecret`, `worker.summaryEncryption.key`, `worker.summaryEncryption.mountPath`, `worker.summaryEncryption.fileName`; env `SUMMARY_MASTER_KEYS_FILE`, `SUMMARY_MASTER_KEYS`; Secret `96bulls-runtime` keys `SUMMARY_MASTER_KEYS` | kubectl exec deploy/<release>-worker-bob-costas -- test -r /var/run/secrets/sessions-pipeline/summary-master-keys; the Secret key parses as <id>:<64 hex> |
 | shipped | [HoopDb connection Secret (HOOPDB_URL)](#req-secret-hoopdb-url) | chart | values `worker.hoopdb.existingSecret`, `worker.hoopdb.key`, `worker.secretKeys.hoopdbUrl`, `alleyoop.hoopdb.existingSecret`, `alleyoop.hoopdb.key`, `alleyoop.secretKeys.hoopdbUrl`; env `HOOPDB_URL`; Secret `hoopdb-app` keys `uri` | kubectl get secret hoopdb-app -o jsonpath='{.data.uri}' is non-empty once the CNPG Cluster is ready |
 | shipped | [Agent Relay org id (TENANT_ORG_ID)](#req-sessions-pipeline-tenant-org-id) | operator | values `global.tenant.orgId`, `worker.tenant.orgId`, `alleyoop.tenant.orgId`; env `TENANT_ORG_ID` | helm template renders (it fails with "tenant.orgId (or global.tenant.orgId) is required" otherwise) |
@@ -371,7 +387,7 @@ chart `sessions-pipeline` · values [`ci/aws-cnpg-values.yaml`](../charts/sessio
 | shipped | [Runtime workload role (HOOPDB_RUNTIME_WORKLOAD_ROLE)](#opt-sessions-pipeline-runtime-workload-role) | `""`, `<role>` | `""` | values `worker.migrations.runtimeWorkloadRole`; env `HOOPDB_RUNTIME_WORKLOAD_ROLE` |
 | shipped | [migrate's wait-for-role ordering](#opt-sessions-pipeline-wait-for-role) | `true`, `false` | `true` | values `worker.migrations.waitForRole.enabled`, `worker.migrations.waitForRole.functionDefault`, `worker.migrations.waitForRole.image`, `worker.migrations.waitForRole.intervalSeconds`, `worker.migrations.waitForRole.role` |
 | shipped | [Separate migration-owner URL for migrate](#opt-hoopdb-migration-owner-url) | `""`, `<secret>/<key>` | `""` | values `worker.migrations.hoopdb.existingSecret`, `worker.migrations.hoopdb.key` |
-| shipped | [Locker object store](#opt-sessions-pipeline-locker-backend) | `minio`, `external` | `external` | values `locker.enabled`, `worker.locker.endpoint`, `worker.locker.bucket`, `worker.locker.region`, `alleyoop.locker.endpoint`, `alleyoop.locker.bucket`, `alleyoop.locker.region`, `worker.lockerInit.enabled`; env `LOCKER_ENDPOINT`, `LOCKER_BUCKET`, `LOCKER_REGION` |
+| shipped | [Locker object store](#opt-sessions-pipeline-locker-backend) | `minio`, `external` | `external` | values `session-object-storage.enabled`, `worker.locker.endpoint`, `worker.locker.bucket`, `worker.locker.region`, `alleyoop.locker.endpoint`, `alleyoop.locker.bucket`, `alleyoop.locker.region`, `worker.lockerInit.enabled`; env `LOCKER_ENDPOINT`, `LOCKER_BUCKET`, `LOCKER_REGION` |
 | shipped | [Locker credentials mode](#opt-sessions-pipeline-locker-credentials-mode) | `secret`, `podIdentity` | `podIdentity` | values `worker.locker.credentials.mode`, `alleyoop.locker.credentials.mode` |
 | shipped | [Locker provider (S3-compatible or native GCS)](#opt-sessions-pipeline-locker-provider) | `s3`, `gcs` | `s3` | values `worker.locker.provider`, `alleyoop.locker.provider`, `worker.extraEnv`, `alleyoop.extraEnv`; env `LOCKER_PROVIDER`, `PIPELINE_RAW_PROVIDER`, `CLOUD_SQL_CONNECTION_NAME`, `REDIS_HOST`, `REDIS_PORT`, `REDIS_AUTH_ENABLED`, `REDIS_TRANSIT_ENCRYPTION`, `REDIS_TLS_CA_PEM`, `PUBSUB_TOPIC`, `PUBSUB_SUBSCRIPTION` |
 | shipped | [Services image registry](#opt-sessions-pipeline-services-image) | `ghcr`, `ecr` | `ecr` | values `worker.image.repository`, `worker.image.digest`, `worker.image.tag`, `alleyoop.image.repository`, `alleyoop.image.digest`, `alleyoop.image.tag`, `global.imageRegistry` |
@@ -381,6 +397,8 @@ chart `sessions-pipeline` · values [`ci/aws-cnpg-values.yaml`](../charts/sessio
 | shipped | [Bob Costas summariser model (BOB_COSTAS_MODEL)](#opt-sessions-pipeline-bob-costas-model) | `off` | `off` | values `worker.components.bob-costas.env`; env `BOB_COSTAS_MODEL` |
 | **planned** | [Transcript search backend (search.backend)](#opt-sessions-pipeline-search-backend) | `postgres`, `clickhouse` (**planned**) | `postgres` | values `search.backend`, `search.clickhouse.*` |
 | **planned** | [Model session briefs](#opt-sessions-pipeline-session-briefs) | `false`, `true` (**planned**) | `false` | values `worker.sessionBrief.enabled`, `worker.sessionBrief.model`; env `SESSION_BRIEF_ENABLED`, `SESSION_BRIEF_MODEL` |
+| shipped | [Default-off native session upload edge](#opt-sessions-native-ingest) | `disabled`, `enabled` | `disabled` | values `ingestEdge.*`; env `SERVICE`, `RELAYHISTORY_SELFHOST_INGEST`, `RELAYHISTORY_INGEST_PORT`, `RELAYHISTORY_INGEST_ORIGIN`, `RELAYCONTROL_INTROSPECT_URL`, `RELAYCONTROL_INTROSPECT_SECRET`, `RELAYHISTORY_INGEST_DATABASE_URL`, `SESSION_POSTGRES_TLS_PROFILE`, `SESSION_POSTGRES_CA_FILE`, `SESSION_POSTGRES_CA_SHA256`, `RELAYHISTORY_INGEST_PG_POOL_MAX`, `ALLOW_IN_CLUSTER_HTTP`, `LOCKER_PROVIDER`, `LOCKER_BUCKET`, `LOCKER_ENDPOINT`, `LOCKER_REGION`, `LOCKER_ACCESS_KEY_ID`, `LOCKER_SECRET_ACCESS_KEY`, `INGEST_KEY_ROOT`, `INGEST_MAX_PER_USER`, `INGEST_MAX_PER_ORG`; Secret `<native ingest runtime Secret>` keys `database-url`, `introspect-secret`; Secret `<native ingest object-store Secret>` keys `access-key-id`, `secret-access-key` |
+| shipped | [Default-off self-host session read API container](#opt-sessions-read-api) | `disabled`, `enabled` | `disabled` | values `readApi.*`; env `SERVICE`, `RELAYHISTORY_SELFHOST_READ_API`, `RELAYHISTORY_READ_API_PORT`, `RELAYHISTORY_READ_API_SECRET`, `READ_API_ORIGIN`, `READ_API_AUTH_MODE`, `LOCKER_BUCKET`, `PIPELINE_ORG_FROM_PREFIX`, `PIPELINE_KEY_PREFIX`, `READ_API_COMPLETE_SINCE`, `READ_API_DIRECTORY_WORKSPACES`, `SEARCH_INDEX_BACKEND`, `ALLOW_IN_CLUSTER_HTTP`, `RELAYAUTH_JWKS_URL`, `RELAYAUTH_ISSUER`, `RELAYHISTORY_ACCEPT_RELAYCONTROL_TOKENS`, `RELAYCONTROL_INTROSPECT_URL`, `RELAYCONTROL_INTROSPECT_SECRET`; Secret `<read API configuration Secret>` keys `RELAYHISTORY_READ_API_SECRET`; Secret `<read API introspection Secret>` keys `RELAYCONTROL_INTROSPECT_SECRET` |
 
 ### Profile: aws-supabase
 
@@ -393,7 +411,7 @@ chart `sessions-pipeline` · values [`ci/pod-identity-values.yaml`](../charts/se
 | | requirement | provided by | maps to | verify |
 | --- | --- | --- | --- | --- |
 | shipped | [Workload identity for the Locker bucket (EKS Pod Identity / GKE Workload Identity)](#req-k8s-workload-identity) | stack | values `worker.locker.credentials.mode`, `alleyoop.locker.credentials.mode`, `worker.serviceAccount.annotations`, `alleyoop.serviceAccount.annotations` | aws eks list-pod-identity-associations --cluster-name <c> (one per worker/alleyoop ServiceAccount); then the locker-init Job (or a worker) reaches the bucket |
-| shipped | [External Secrets Operator and a ClusterSecretStore (only with externalSecrets.enabled)](#req-k8s-external-secrets-operator) | operator | values `sessions-pipeline-worker:externalSecrets.*`, `alleyoop:externalSecrets.*` | kubectl get crd externalsecrets.external-secrets.io && kubectl get clustersecretstore <name>; the ExternalSecret reports Ready |
+| shipped | [External Secrets Operator and a ClusterSecretStore (only with externalSecrets.enabled)](#req-k8s-external-secrets-operator) | operator | values `sessions-pipeline-worker:externalSecrets.*`, `session-ingest-api:externalSecrets.*` | kubectl get crd externalsecrets.external-secrets.io && kubectl get clustersecretstore <name>; the ExternalSecret reports Ready |
 | shipped | [Pull Secret for the private GHCR services image](#req-secret-image-pull) | operator | values `worker.imagePullSecrets`, `alleyoop.imagePullSecrets`; Secret `<pull secret>` (type kubernetes.io/dockerconfigjson with read access to ghcr.io/agentworkforce/96bulls-services) | kubectl get secret <pull secret> -o jsonpath='{.type}' is kubernetes.io/dockerconfigjson; pods are not ImagePullBackOff |
 | shipped | [Summary encryption keyring (SUMMARY_MASTER_KEYS)](#req-secret-summary-master-keys) | stack | values `worker.summaryEncryption.existingSecret`, `worker.summaryEncryption.key`, `worker.summaryEncryption.mountPath`, `worker.summaryEncryption.fileName`; env `SUMMARY_MASTER_KEYS_FILE`, `SUMMARY_MASTER_KEYS`; Secret `sessions-pipeline-summary` keys `SUMMARY_MASTER_KEYS` | kubectl exec deploy/<release>-worker-bob-costas -- test -r /var/run/secrets/sessions-pipeline/summary-master-keys; the Secret key parses as <id>:<64 hex> |
 | shipped | [HoopDb connection Secret (HOOPDB_URL)](#req-secret-hoopdb-url) | stack | values `worker.hoopdb.existingSecret`, `worker.hoopdb.key`, `worker.secretKeys.hoopdbUrl`, `alleyoop.hoopdb.existingSecret`, `alleyoop.hoopdb.key`, `alleyoop.secretKeys.hoopdbUrl`; env `HOOPDB_URL`; Secret `hoopdb-app` keys `uri` | kubectl get secret hoopdb-app -o jsonpath='{.data.uri}' is non-empty once the CNPG Cluster is ready |
@@ -423,7 +441,7 @@ chart `sessions-pipeline` · values [`ci/pod-identity-values.yaml`](../charts/se
 | shipped | [Runtime workload role (HOOPDB_RUNTIME_WORKLOAD_ROLE)](#opt-sessions-pipeline-runtime-workload-role) | `""`, `<role>` | `""` | values `worker.migrations.runtimeWorkloadRole`; env `HOOPDB_RUNTIME_WORKLOAD_ROLE` |
 | shipped | [migrate's wait-for-role ordering](#opt-sessions-pipeline-wait-for-role) | `true`, `false` | `false` | values `worker.migrations.waitForRole.enabled`, `worker.migrations.waitForRole.functionDefault`, `worker.migrations.waitForRole.image`, `worker.migrations.waitForRole.intervalSeconds`, `worker.migrations.waitForRole.role` |
 | shipped | [Separate migration-owner URL for migrate](#opt-hoopdb-migration-owner-url) | `""`, `<secret>/<key>` | `""` | values `worker.migrations.hoopdb.existingSecret`, `worker.migrations.hoopdb.key` |
-| shipped | [Locker object store](#opt-sessions-pipeline-locker-backend) | `minio`, `external` | `external` | values `locker.enabled`, `worker.locker.endpoint`, `worker.locker.bucket`, `worker.locker.region`, `alleyoop.locker.endpoint`, `alleyoop.locker.bucket`, `alleyoop.locker.region`, `worker.lockerInit.enabled`; env `LOCKER_ENDPOINT`, `LOCKER_BUCKET`, `LOCKER_REGION` |
+| shipped | [Locker object store](#opt-sessions-pipeline-locker-backend) | `minio`, `external` | `external` | values `session-object-storage.enabled`, `worker.locker.endpoint`, `worker.locker.bucket`, `worker.locker.region`, `alleyoop.locker.endpoint`, `alleyoop.locker.bucket`, `alleyoop.locker.region`, `worker.lockerInit.enabled`; env `LOCKER_ENDPOINT`, `LOCKER_BUCKET`, `LOCKER_REGION` |
 | shipped | [Locker credentials mode](#opt-sessions-pipeline-locker-credentials-mode) | `secret`, `podIdentity` | `podIdentity` | values `worker.locker.credentials.mode`, `alleyoop.locker.credentials.mode` |
 | shipped | [Locker provider (S3-compatible or native GCS)](#opt-sessions-pipeline-locker-provider) | `s3`, `gcs` | `s3` | values `worker.locker.provider`, `alleyoop.locker.provider`, `worker.extraEnv`, `alleyoop.extraEnv`; env `LOCKER_PROVIDER`, `PIPELINE_RAW_PROVIDER`, `CLOUD_SQL_CONNECTION_NAME`, `REDIS_HOST`, `REDIS_PORT`, `REDIS_AUTH_ENABLED`, `REDIS_TRANSIT_ENCRYPTION`, `REDIS_TLS_CA_PEM`, `PUBSUB_TOPIC`, `PUBSUB_SUBSCRIPTION` |
 | shipped | [Services image registry](#opt-sessions-pipeline-services-image) | `ghcr`, `ecr` | `ghcr` | values `worker.image.repository`, `worker.image.digest`, `worker.image.tag`, `alleyoop.image.repository`, `alleyoop.image.digest`, `alleyoop.image.tag`, `global.imageRegistry` |
@@ -433,6 +451,8 @@ chart `sessions-pipeline` · values [`ci/pod-identity-values.yaml`](../charts/se
 | shipped | [Bob Costas summariser model (BOB_COSTAS_MODEL)](#opt-sessions-pipeline-bob-costas-model) | `off` | `off` | values `worker.components.bob-costas.env`; env `BOB_COSTAS_MODEL` |
 | **planned** | [Transcript search backend (search.backend)](#opt-sessions-pipeline-search-backend) | `postgres`, `clickhouse` (**planned**) | `postgres` | values `search.backend`, `search.clickhouse.*` |
 | **planned** | [Model session briefs](#opt-sessions-pipeline-session-briefs) | `false`, `true` (**planned**) | `false` | values `worker.sessionBrief.enabled`, `worker.sessionBrief.model`; env `SESSION_BRIEF_ENABLED`, `SESSION_BRIEF_MODEL` |
+| shipped | [Default-off native session upload edge](#opt-sessions-native-ingest) | `disabled`, `enabled` | `disabled` | values `ingestEdge.*`; env `SERVICE`, `RELAYHISTORY_SELFHOST_INGEST`, `RELAYHISTORY_INGEST_PORT`, `RELAYHISTORY_INGEST_ORIGIN`, `RELAYCONTROL_INTROSPECT_URL`, `RELAYCONTROL_INTROSPECT_SECRET`, `RELAYHISTORY_INGEST_DATABASE_URL`, `SESSION_POSTGRES_TLS_PROFILE`, `SESSION_POSTGRES_CA_FILE`, `SESSION_POSTGRES_CA_SHA256`, `RELAYHISTORY_INGEST_PG_POOL_MAX`, `ALLOW_IN_CLUSTER_HTTP`, `LOCKER_PROVIDER`, `LOCKER_BUCKET`, `LOCKER_ENDPOINT`, `LOCKER_REGION`, `LOCKER_ACCESS_KEY_ID`, `LOCKER_SECRET_ACCESS_KEY`, `INGEST_KEY_ROOT`, `INGEST_MAX_PER_USER`, `INGEST_MAX_PER_ORG`; Secret `<native ingest runtime Secret>` keys `database-url`, `introspect-secret`; Secret `<native ingest object-store Secret>` keys `access-key-id`, `secret-access-key` |
+| shipped | [Default-off self-host session read API container](#opt-sessions-read-api) | `disabled`, `enabled` | `disabled` | values `readApi.*`; env `SERVICE`, `RELAYHISTORY_SELFHOST_READ_API`, `RELAYHISTORY_READ_API_PORT`, `RELAYHISTORY_READ_API_SECRET`, `READ_API_ORIGIN`, `READ_API_AUTH_MODE`, `LOCKER_BUCKET`, `PIPELINE_ORG_FROM_PREFIX`, `PIPELINE_KEY_PREFIX`, `READ_API_COMPLETE_SINCE`, `READ_API_DIRECTORY_WORKSPACES`, `SEARCH_INDEX_BACKEND`, `ALLOW_IN_CLUSTER_HTTP`, `RELAYAUTH_JWKS_URL`, `RELAYAUTH_ISSUER`, `RELAYHISTORY_ACCEPT_RELAYCONTROL_TOKENS`, `RELAYCONTROL_INTROSPECT_URL`, `RELAYCONTROL_INTROSPECT_SECRET`; Secret `<read API configuration Secret>` keys `RELAYHISTORY_READ_API_SECRET`; Secret `<read API introspection Secret>` keys `RELAYCONTROL_INTROSPECT_SECRET` |
 
 ### Profile: gcp-cloudsql
 
@@ -445,7 +465,7 @@ chart `sessions-pipeline` · values [`ci/gcp-cloudsql-values.yaml`](../charts/se
 | | requirement | provided by | maps to | verify |
 | --- | --- | --- | --- | --- |
 | shipped | [Workload identity for the Locker bucket (EKS Pod Identity / GKE Workload Identity)](#req-k8s-workload-identity) | stack | values `worker.locker.credentials.mode`, `alleyoop.locker.credentials.mode`, `worker.serviceAccount.annotations`, `alleyoop.serviceAccount.annotations` | aws eks list-pod-identity-associations --cluster-name <c> (one per worker/alleyoop ServiceAccount); then the locker-init Job (or a worker) reaches the bucket |
-| shipped | [External Secrets Operator and a ClusterSecretStore (only with externalSecrets.enabled)](#req-k8s-external-secrets-operator) | operator | values `sessions-pipeline-worker:externalSecrets.*`, `alleyoop:externalSecrets.*` | kubectl get crd externalsecrets.external-secrets.io && kubectl get clustersecretstore <name>; the ExternalSecret reports Ready |
+| shipped | [External Secrets Operator and a ClusterSecretStore (only with externalSecrets.enabled)](#req-k8s-external-secrets-operator) | operator | values `sessions-pipeline-worker:externalSecrets.*`, `session-ingest-api:externalSecrets.*` | kubectl get crd externalsecrets.external-secrets.io && kubectl get clustersecretstore <name>; the ExternalSecret reports Ready |
 | shipped | [Pull Secret for the private GHCR services image](#req-secret-image-pull) | operator | values `worker.imagePullSecrets`, `alleyoop.imagePullSecrets`; Secret `<pull secret>` (type kubernetes.io/dockerconfigjson with read access to ghcr.io/agentworkforce/96bulls-services) | kubectl get secret <pull secret> -o jsonpath='{.type}' is kubernetes.io/dockerconfigjson; pods are not ImagePullBackOff |
 | shipped | [Summary encryption keyring (SUMMARY_MASTER_KEYS)](#req-secret-summary-master-keys) | stack | values `worker.summaryEncryption.existingSecret`, `worker.summaryEncryption.key`, `worker.summaryEncryption.mountPath`, `worker.summaryEncryption.fileName`; env `SUMMARY_MASTER_KEYS_FILE`, `SUMMARY_MASTER_KEYS`; Secret `96bulls-gcp` keys `SUMMARY_MASTER_KEYS` | kubectl exec deploy/<release>-worker-bob-costas -- test -r /var/run/secrets/sessions-pipeline/summary-master-keys; the Secret key parses as <id>:<64 hex> |
 | shipped | [HoopDb connection Secret (HOOPDB_URL)](#req-secret-hoopdb-url) | stack | values `worker.hoopdb.existingSecret`, `worker.hoopdb.key`, `worker.secretKeys.hoopdbUrl`, `alleyoop.hoopdb.existingSecret`, `alleyoop.hoopdb.key`, `alleyoop.secretKeys.hoopdbUrl`; env `HOOPDB_URL`; Secret `96bulls-gcp` keys `HOOPDB_URL` | kubectl get secret hoopdb-app -o jsonpath='{.data.uri}' is non-empty once the CNPG Cluster is ready |
@@ -476,7 +496,7 @@ chart `sessions-pipeline` · values [`ci/gcp-cloudsql-values.yaml`](../charts/se
 | shipped | [Migrator role bootstrap (HOOPDB_ROLE_BOOTSTRAP)](#opt-sessions-pipeline-role-bootstrap) | `true`, `false`, `unset` | `false` | values `worker.migrations.roleBootstrap`; env `HOOPDB_ROLE_BOOTSTRAP` |
 | shipped | [Runtime workload role (HOOPDB_RUNTIME_WORKLOAD_ROLE)](#opt-sessions-pipeline-runtime-workload-role) | `""`, `<role>` | `""` | values `worker.migrations.runtimeWorkloadRole`; env `HOOPDB_RUNTIME_WORKLOAD_ROLE` |
 | shipped | [migrate's wait-for-role ordering](#opt-sessions-pipeline-wait-for-role) | `true`, `false` | `true` | values `worker.migrations.waitForRole.enabled`, `worker.migrations.waitForRole.functionDefault`, `worker.migrations.waitForRole.image`, `worker.migrations.waitForRole.intervalSeconds`, `worker.migrations.waitForRole.role` |
-| shipped | [Locker object store](#opt-sessions-pipeline-locker-backend) | `minio`, `external` | `external` | values `locker.enabled`, `worker.locker.endpoint`, `worker.locker.bucket`, `worker.locker.region`, `alleyoop.locker.endpoint`, `alleyoop.locker.bucket`, `alleyoop.locker.region`, `worker.lockerInit.enabled`; env `LOCKER_ENDPOINT`, `LOCKER_BUCKET`, `LOCKER_REGION` |
+| shipped | [Locker object store](#opt-sessions-pipeline-locker-backend) | `minio`, `external` | `external` | values `session-object-storage.enabled`, `worker.locker.endpoint`, `worker.locker.bucket`, `worker.locker.region`, `alleyoop.locker.endpoint`, `alleyoop.locker.bucket`, `alleyoop.locker.region`, `worker.lockerInit.enabled`; env `LOCKER_ENDPOINT`, `LOCKER_BUCKET`, `LOCKER_REGION` |
 | shipped | [Locker credentials mode](#opt-sessions-pipeline-locker-credentials-mode) | `secret`, `podIdentity` | `podIdentity` | values `worker.locker.credentials.mode`, `alleyoop.locker.credentials.mode` |
 | shipped | [Locker provider (S3-compatible or native GCS)](#opt-sessions-pipeline-locker-provider) | `s3`, `gcs` | `gcs` | values `worker.locker.provider`, `alleyoop.locker.provider`, `worker.extraEnv`, `alleyoop.extraEnv`; env `LOCKER_PROVIDER`, `PIPELINE_RAW_PROVIDER`, `CLOUD_SQL_CONNECTION_NAME`, `REDIS_HOST`, `REDIS_PORT`, `REDIS_AUTH_ENABLED`, `REDIS_TRANSIT_ENCRYPTION`, `REDIS_TLS_CA_PEM`, `PUBSUB_TOPIC`, `PUBSUB_SUBSCRIPTION` |
 | shipped | [Services image registry](#opt-sessions-pipeline-services-image) | `ghcr`, `ecr` | `ghcr` | values `worker.image.repository`, `worker.image.digest`, `worker.image.tag`, `alleyoop.image.repository`, `alleyoop.image.digest`, `alleyoop.image.tag`, `global.imageRegistry` |
@@ -486,6 +506,8 @@ chart `sessions-pipeline` · values [`ci/gcp-cloudsql-values.yaml`](../charts/se
 | shipped | [Bob Costas summariser model (BOB_COSTAS_MODEL)](#opt-sessions-pipeline-bob-costas-model) | `off` | `off` | values `worker.components.bob-costas.env`; env `BOB_COSTAS_MODEL` |
 | **planned** | [Transcript search backend (search.backend)](#opt-sessions-pipeline-search-backend) | `postgres`, `clickhouse` (**planned**) | `postgres` | values `search.backend`, `search.clickhouse.*` |
 | **planned** | [Model session briefs](#opt-sessions-pipeline-session-briefs) | `false`, `true` (**planned**) | `false` | values `worker.sessionBrief.enabled`, `worker.sessionBrief.model`; env `SESSION_BRIEF_ENABLED`, `SESSION_BRIEF_MODEL` |
+| shipped | [Default-off native session upload edge](#opt-sessions-native-ingest) | `disabled`, `enabled` | `disabled` | values `ingestEdge.*`; env `SERVICE`, `RELAYHISTORY_SELFHOST_INGEST`, `RELAYHISTORY_INGEST_PORT`, `RELAYHISTORY_INGEST_ORIGIN`, `RELAYCONTROL_INTROSPECT_URL`, `RELAYCONTROL_INTROSPECT_SECRET`, `RELAYHISTORY_INGEST_DATABASE_URL`, `SESSION_POSTGRES_TLS_PROFILE`, `SESSION_POSTGRES_CA_FILE`, `SESSION_POSTGRES_CA_SHA256`, `RELAYHISTORY_INGEST_PG_POOL_MAX`, `ALLOW_IN_CLUSTER_HTTP`, `LOCKER_PROVIDER`, `LOCKER_BUCKET`, `LOCKER_ENDPOINT`, `LOCKER_REGION`, `LOCKER_ACCESS_KEY_ID`, `LOCKER_SECRET_ACCESS_KEY`, `INGEST_KEY_ROOT`, `INGEST_MAX_PER_USER`, `INGEST_MAX_PER_ORG`; Secret `<native ingest runtime Secret>` keys `database-url`, `introspect-secret`; Secret `<native ingest object-store Secret>` keys `access-key-id`, `secret-access-key` |
+| shipped | [Default-off self-host session read API container](#opt-sessions-read-api) | `disabled`, `enabled` | `disabled` | values `readApi.*`; env `SERVICE`, `RELAYHISTORY_SELFHOST_READ_API`, `RELAYHISTORY_READ_API_PORT`, `RELAYHISTORY_READ_API_SECRET`, `READ_API_ORIGIN`, `READ_API_AUTH_MODE`, `LOCKER_BUCKET`, `PIPELINE_ORG_FROM_PREFIX`, `PIPELINE_KEY_PREFIX`, `READ_API_COMPLETE_SINCE`, `READ_API_DIRECTORY_WORKSPACES`, `SEARCH_INDEX_BACKEND`, `ALLOW_IN_CLUSTER_HTTP`, `RELAYAUTH_JWKS_URL`, `RELAYAUTH_ISSUER`, `RELAYHISTORY_ACCEPT_RELAYCONTROL_TOKENS`, `RELAYCONTROL_INTROSPECT_URL`, `RELAYCONTROL_INTROSPECT_SECRET`; Secret `<read API configuration Secret>` keys `RELAYHISTORY_READ_API_SECRET`; Secret `<read API introspection Secret>` keys `RELAYCONTROL_INTROSPECT_SECRET` |
 
 ### Profile: relaycast
 
@@ -554,59 +576,61 @@ chart `relayhistory` · values [`ci/default-values.yaml`](../charts/relayhistory
 | --- | --- | --- | --- | --- |
 | shipped | [Relay History database and optional provider Secrets](#req-relayhistory-config) | operator | values `database.existingSecret`, `database.keys.*`, `relayauth.jwksUrl`, `ingress.tls`, `imagePullSecrets`, `embeddings.existingSecret`, `embeddings.key`, `sessionAnalysis.existingSecret`, `sessionAnalysis.key`, `telemetry.existingSecret`, `telemetry.key`; env `DATABASE_URL`, `DATABASE_MIGRATIONS_URL`, `DATABASE_RUNTIME_ROLE`, `EMBEDDING_API_KEY`, `OPENAI_API_KEY`, `POSTHOG_API_KEY`, `ALLOW_WRITE_HOLD`, `ROLLOUT_BUDGET_SECONDS`, `HISTORY_SELECTOR`, `DRAIN_WAIT_SECONDS`, `MAX_BODY_BYTES`, `MAX_INFLIGHT_BODY_BYTES`, `SHUTDOWN_GRACE_MS`, `SHUTDOWN_DRAIN_DELAY_MS`, `PG_POOL_MAX`, `CRON_ENABLED`, `RELAYAUTH_AUDIENCE`, `RELAYHISTORY_ORIGIN`, `AGENT_RELAY_CLOUD_API_URL`, `SESSION_EVENTS_ENABLED`, `POSTHOG_HOST`; Secret `<database.existingSecret>` keys `DATABASE_URL`, `DATABASE_MIGRATIONS_URL`; Secret `<optional provider Secret>` keys `EMBEDDING_API_KEY`, `OPENAI_API_KEY`, `POSTHOG_API_KEY`; Secret `<ingress.tls[].secretName>` (kubernetes.io/tls); Secret `<imagePullSecrets[].name>` (optional registry pull Secret) | the migration Job completes, then /readyz returns 200 through the history host |
 
-### Profile: relay-cloud-api
+### Profile: relay-control
 
 **Self-host control-plane API.** Single-replica self-host API with normal migration Job and existing Secrets only; no HA claim.
 
-chart `relay-cloud-api` · values [`ci/default-values.yaml`](../charts/relay-cloud-api/ci/default-values.yaml) · install: `helm install relay-cloud-api agentworkforce/relay-cloud-api -f values.yaml --set image.digest=sha256:<digest>`
+chart `relay-control` · values [`ci/default-values.yaml`](../charts/relay-control/ci/default-values.yaml) · install: `helm install relay-control agentworkforce/relay-control -f values.yaml --set image.repository=<verified-repository> --set image.digest=sha256:<digest>`
 
 **Requirements (provide these)**
 
 | | requirement | provided by | maps to | verify |
 | --- | --- | --- | --- | --- |
-| shipped | [Self-host control-plane existing Secret and service configuration](#req-relay-cloud-api-config) | operator | values `publicUrl`, `services.*`, `existingSecret`, `secretKeys.*`, `database.runtimeRole`, `encryption.keyId`, `ingress.tls`, `imagePullSecrets`; env `SELFHOST_ENCRYPTION_KEY_ID`, `DATABASE_URL_FILE`, `DATABASE_MIGRATIONS_URL_FILE`, `SELFHOST_RUNTIME_DATABASE_ROLE`, `RELAYAUTH_API_KEY_FILE`, `SELFHOST_BOOTSTRAP_TOKEN_FILE`, `SELFHOST_ENCRYPTION_KEY_FILE`, `SELFHOST_PUBLIC_URL`, `RELAYAUTH_URL`, `RELAYCAST_URL`, `RELAYCAST_PUBLIC_URL`, `RELAYHISTORY_URL`, `RELAYHISTORY_PUBLIC_URL`; Secret `<existingSecret>` keys `database-url`, `database-migrations-url`, `relayauth-api-key`, `selfhost-bootstrap-token`, `selfhost-encryption-key`; Secret `<ingress.tls[].secretName>` (kubernetes.io/tls, normally managed by the GKE ingress certificate path); Secret `<imagePullSecrets[].name>` (optional registry pull Secret) | helm template fails without existingSecret, encryption.keyId, immutable image digest or valid public service origins; the migration Job invokes migrate-cli.js directly and projects only database-migrations-url |
+| shipped | [Self-host control-plane existing Secret and service configuration](#req-relay-control-config) | operator | values `publicUrl`, `services.*`, `existingSecret`, `secretKeys.*`, `database.runtimeRole`, `encryption.keyId`, `ingress.tls`, `imagePullSecrets`; env `SELFHOST_ENCRYPTION_KEY_ID`, `DATABASE_URL_FILE`, `DATABASE_MIGRATIONS_URL_FILE`, `SELFHOST_RUNTIME_DATABASE_ROLE`, `RELAYAUTH_API_KEY_FILE`, `SELFHOST_BOOTSTRAP_TOKEN_FILE`, `SELFHOST_ENCRYPTION_KEY_FILE`, `SELFHOST_PUBLIC_URL`, `RELAYAUTH_URL`, `RELAYCAST_URL`, `RELAYCAST_PUBLIC_URL`, `RELAYHISTORY_URL`, `RELAYHISTORY_PUBLIC_URL`; Secret `<existingSecret>` keys `database-url`, `database-migrations-url`, `relayauth-api-key`, `selfhost-bootstrap-token`, `selfhost-encryption-key`; Secret `<ingress.tls[].secretName>` (kubernetes.io/tls, normally managed by the GKE ingress certificate path); Secret `<imagePullSecrets[].name>` (optional registry pull Secret) | helm template fails without existingSecret, encryption.keyId, immutable image digest or valid public service origins; the migration Job invokes migrate-cli.js directly and projects only database-migrations-url |
 
 **Options (choose)**
 
 | | option | choices | default here | maps to |
 | --- | --- | --- | --- | --- |
-| shipped | [Offline license file mount (verification pending upstream)](#opt-relay-cloud-api-license-file) | `disabled`, `mounted` | `disabled` | values `license.existingSecret`, `license.key`; env `SELFHOST_LICENSE_FILE`; Secret `<license.existingSecret>` keys `license` |
-| shipped | [Previous encryption key during a key rotation](#opt-relay-cloud-api-encryption-rotation) | `none`, `previous key` | `none` | values `encryption.previousKeyId`, `secretKeys.previousEncryptionKey`; env `SELFHOST_ENCRYPTION_PREVIOUS_KEY_ID`, `SELFHOST_ENCRYPTION_PREVIOUS_KEY_FILE`; Secret `<existingSecret>` keys `<operator-chosen, no default>` |
-| shipped | [Internal service token for /internal/v1](#opt-relay-cloud-api-internal-token) | `disabled`, `enabled` | `disabled` | values `secretKeys.internalToken`; env `SELFHOST_INTERNAL_TOKEN_FILE`; Secret `<existingSecret>` keys `<operator-chosen, no default>` |
-| shipped | [Dashboard URL for OAuth callbacks and flow run links](#opt-relay-cloud-api-dashboard-url) | `publicUrl + "/"`, `dashboard origin` | `publicUrl + "/"` | values `dashboardUrl`; env `SELFHOST_DASHBOARD_URL` |
-| shipped | [First-boot organization, owner and default workspace](#opt-relay-cloud-api-bootstrap) | `disabled`, `enabled` | `disabled (manual bootstrap with the bootstrap token)` | values `bootstrap.*`, `secretKeys.relaycastInternalSecret`; env `SELFHOST_BOOTSTRAP_ORG_NAME`, `SELFHOST_BOOTSTRAP_ADMIN_EMAIL`, `SELFHOST_BOOTSTRAP_ADMIN_NAME`, `SELFHOST_BOOTSTRAP_WORKSPACE_NAME`, `RELAYCAST_INTERNAL_SECRET_FILE`; Secret `<existingSecret>` keys `<operator-chosen, e.g. relaycast-internal-secret>` |
-| shipped | [Sign-in methods (OIDC, email links), invites and auto-join](#opt-relay-cloud-api-sign-in) | `none`, `oidc`, `email links`, `oidc and email links` | `none (operator break-glass only)` | values `auth.*`, `secretKeys.oidcClientSecret`; env `SELFHOST_OIDC_ISSUER`, `SELFHOST_OIDC_CLIENT_ID`, `SELFHOST_OIDC_CLIENT_SECRET_FILE`, `SELFHOST_OIDC_ALLOWED_DOMAINS`, `SELFHOST_OIDC_DISPLAY_NAME`, `SELFHOST_OIDC_SCOPES`, `SELFHOST_OIDC_REDIRECT_URL`, `SELFHOST_OIDC_ALLOW_HTTP_ISSUER`, `SELFHOST_EMAIL_LOGIN`, `SELFHOST_AUTO_JOIN_DOMAINS`, `SELFHOST_INVITE_TTL_HOURS`; Secret `<existingSecret>` keys `<operator-chosen, e.g. oidc-client-secret>` |
-| shipped | [SMTP for invite emails and sign-in links](#opt-relay-cloud-api-smtp) | `none`, `smtp` | `none (copy invite links)` | values `smtp.*`, `secretKeys.smtpPassword`; env `SELFHOST_SMTP_HOST`, `SELFHOST_SMTP_PORT`, `SELFHOST_SMTP_SECURITY`, `SELFHOST_SMTP_USERNAME`, `SELFHOST_SMTP_PASSWORD_FILE`, `SELFHOST_EMAIL_FROM`; Secret `<existingSecret>` keys `<operator-chosen, e.g. smtp-password>` |
-| shipped | [Integration OAuth apps for just-in-time connects](#opt-relay-cloud-api-integrations) | `none`, `one entry per provider with existingSecret` | `none (no integration can be connected until its app is configured)` | values `integrations`; Secret `<operator-chosen, integrations.<provider>.existingSecret>` keys `client-id`, `client-secret` |
-| shipped | [Relayflows control-plane storage and worker queue](#opt-relay-cloud-api-flows) | `postgres`, `gcs` | `postgres` | values `flows.*`; env `SELFHOST_FLOWS_STORAGE`, `SELFHOST_FLOWS_GCS_BUCKET`, `SELFHOST_FLOWS_GCS_PREFIX`, `SELFHOST_FLOWS_WORKER_RELAYCAST_URL`, `SELFHOST_FLOWS_QUEUE_PING_MS` |
-| shipped | [Self-host telemetry level and transport](#opt-relay-cloud-api-telemetry) | `errors`, `full`, `off` | `errors` | values `telemetry.*`, `secretKeys.telemetryInstallKey`; env `SELFHOST_TELEMETRY_LEVEL`, `SELFHOST_TELEMETRY_TRANSPORT`, `SELFHOST_TELEMETRY_ENDPOINT`, `SELFHOST_TELEMETRY_INSTALL_ID`, `SELFHOST_TELEMETRY_INSTALL_KEY_FILE`, `SELFHOST_TELEMETRY_PROBES`, `SELFHOST_TELEMETRY_DEPLOYMENT`; Secret `<existingSecret>` keys `<operator-chosen, no default>` |
+| shipped | [Offline license file mount (verification pending upstream)](#opt-relay-control-license-file) | `disabled`, `mounted` | `disabled` | values `license.existingSecret`, `license.key`; env `SELFHOST_LICENSE_FILE`; Secret `<license.existingSecret>` keys `license` |
+| shipped | [Previous encryption key during a key rotation](#opt-relay-control-encryption-rotation) | `none`, `previous key` | `none` | values `encryption.previousKeyId`, `secretKeys.previousEncryptionKey`; env `SELFHOST_ENCRYPTION_PREVIOUS_KEY_ID`, `SELFHOST_ENCRYPTION_PREVIOUS_KEY_FILE`; Secret `<existingSecret>` keys `<operator-chosen, no default>` |
+| shipped | [Internal service token for /internal/v1](#opt-relay-control-internal-token) | `disabled`, `enabled` | `disabled` | values `secretKeys.internalToken`; env `SELFHOST_INTERNAL_TOKEN_FILE`; Secret `<existingSecret>` keys `<operator-chosen, no default>` |
+| shipped | [Dashboard URL for OAuth callbacks and flow run links](#opt-relay-control-dashboard-url) | `publicUrl + "/"`, `dashboard origin` | `publicUrl + "/"` | values `dashboardUrl`; env `SELFHOST_DASHBOARD_URL` |
+| shipped | [First-boot organization, owner and default workspace](#opt-relay-control-bootstrap) | `disabled`, `enabled` | `disabled (manual bootstrap with the bootstrap token)` | values `bootstrap.*`, `secretKeys.relaycastInternalSecret`; env `SELFHOST_BOOTSTRAP_ORG_NAME`, `SELFHOST_BOOTSTRAP_ADMIN_EMAIL`, `SELFHOST_BOOTSTRAP_ADMIN_NAME`, `SELFHOST_BOOTSTRAP_WORKSPACE_NAME`, `RELAYCAST_INTERNAL_SECRET_FILE`; Secret `<existingSecret>` keys `<operator-chosen, e.g. relaycast-internal-secret>` |
+| shipped | [Sign-in methods (OIDC, email links), invites and auto-join](#opt-relay-control-sign-in) | `none`, `oidc`, `email links`, `oidc and email links` | `none (operator break-glass only)` | values `auth.*`, `secretKeys.oidcClientSecret`; env `SELFHOST_OIDC_ISSUER`, `SELFHOST_OIDC_CLIENT_ID`, `SELFHOST_OIDC_CLIENT_SECRET_FILE`, `SELFHOST_OIDC_ALLOWED_DOMAINS`, `SELFHOST_OIDC_DISPLAY_NAME`, `SELFHOST_OIDC_SCOPES`, `SELFHOST_OIDC_REDIRECT_URL`, `SELFHOST_OIDC_ALLOW_HTTP_ISSUER`, `SELFHOST_EMAIL_LOGIN`, `SELFHOST_AUTO_JOIN_DOMAINS`, `SELFHOST_INVITE_TTL_HOURS`; Secret `<existingSecret>` keys `<operator-chosen, e.g. oidc-client-secret>` |
+| shipped | [SMTP for invite emails and sign-in links](#opt-relay-control-smtp) | `none`, `smtp` | `none (copy invite links)` | values `smtp.*`, `secretKeys.smtpPassword`; env `SELFHOST_SMTP_HOST`, `SELFHOST_SMTP_PORT`, `SELFHOST_SMTP_SECURITY`, `SELFHOST_SMTP_USERNAME`, `SELFHOST_SMTP_PASSWORD_FILE`, `SELFHOST_EMAIL_FROM`; Secret `<existingSecret>` keys `<operator-chosen, e.g. smtp-password>` |
+| shipped | [Integration OAuth apps for just-in-time connects](#opt-relay-control-integrations) | `none`, `one entry per provider with existingSecret` | `none (no integration can be connected until its app is configured)` | values `integrations`; Secret `<operator-chosen, integrations.<provider>.existingSecret>` keys `client-id`, `client-secret` |
+| shipped | [Relayflows control-plane storage and worker queue](#opt-relay-control-flows) | `postgres`, `gcs` | `postgres` | values `flows.*`; env `SELFHOST_FLOWS_STORAGE`, `SELFHOST_FLOWS_GCS_BUCKET`, `SELFHOST_FLOWS_GCS_PREFIX`, `SELFHOST_FLOWS_WORKER_RELAYCAST_URL`, `SELFHOST_FLOWS_QUEUE_PING_MS` |
+| shipped | [Self-host telemetry level and transport](#opt-relay-control-telemetry) | `errors`, `full`, `off` | `errors` | values `telemetry.*`, `secretKeys.telemetryInstallKey`; env `SELFHOST_TELEMETRY_LEVEL`, `SELFHOST_TELEMETRY_TRANSPORT`, `SELFHOST_TELEMETRY_ENDPOINT`, `SELFHOST_TELEMETRY_INSTALL_ID`, `SELFHOST_TELEMETRY_INSTALL_KEY_FILE`, `SELFHOST_TELEMETRY_PROBES`, `SELFHOST_TELEMETRY_DEPLOYMENT`; Secret `<existingSecret>` keys `<operator-chosen, no default>` |
+| shipped | [Control legacy RelayAuth client environment](#opt-control-legacy-relayauth) | `true`, `false` | `true` | values `services.relayauthEnabled`; env `RELAYAUTH_URL`, `RELAYAUTH_API_KEY_FILE` |
 
-### Profile: relay-dashboard
+### Profile: relay-webapp
 
-**Self-host dashboard.** Static dashboard whose ingress sends same-origin /cloud/api to relay-cloud-api.
+**Self-host dashboard.** Static dashboard whose ingress sends same-origin /cloud/api to relay-control.
 
-chart `relay-dashboard` · values [`ci/default-values.yaml`](../charts/relay-dashboard/ci/default-values.yaml) · install: `helm install relay-dashboard agentworkforce/relay-dashboard -f values.yaml --set image.digest=sha256:<digest>`
+chart `relay-webapp` · values [`ci/default-values.yaml`](../charts/relay-webapp/ci/default-values.yaml) · install: `helm install relay-webapp agentworkforce/relay-webapp -f values.yaml --set image.digest=sha256:<digest>`
 
 **Options (choose)**
 
 | | option | choices | default here | maps to |
 | --- | --- | --- | --- | --- |
-| shipped | [Dashboard ingress and same-origin API proxy](#opt-relay-dashboard-ingress) | `enabled`, `disabled` | `enabled` | values `runtime.publicUrl`, `runtime.appPath`, `runtime.apiBasePath`, `runtime.loginPath`, `ingress.tls`, `imagePullSecrets`; env `DASHBOARD_PUBLIC_URL`, `DASHBOARD_APP_PATH`, `DASHBOARD_API_BASE_PATH`, `DASHBOARD_LOGIN_PATH`; Secret `<ingress.tls[].secretName>` (kubernetes.io/tls); Secret `<imagePullSecrets[].name>` (optional registry pull Secret) |
-| shipped | [Dashboard customer profile (enterprise branding)](#opt-relay-dashboard-customer-profile) | `none`, `customer profile` | `none` | values `customerProfile`; env `DASHBOARD_CUSTOMER_PROFILE` |
+| shipped | [Dashboard ingress and same-origin API proxy](#opt-relay-webapp-ingress) | `enabled`, `disabled` | `enabled` | values `runtime.publicUrl`, `runtime.appPath`, `runtime.apiBasePath`, `runtime.loginPath`, `ingress.tls`, `imagePullSecrets`; env `DASHBOARD_PUBLIC_URL`, `DASHBOARD_APP_PATH`, `DASHBOARD_API_BASE_PATH`, `DASHBOARD_LOGIN_PATH`; Secret `<ingress.tls[].secretName>` (kubernetes.io/tls); Secret `<imagePullSecrets[].name>` (optional registry pull Secret) |
+| shipped | [Dashboard customer profile (enterprise branding)](#opt-relay-webapp-customer-profile) | `none`, `customer profile` | `none` | values `customerProfile`; env `DASHBOARD_CUSTOMER_PROFILE` |
 
 ### Profile: agent-relay
 
 **GCP messaging and Sessions suite.** Relaycast, RelayAuth, Sessions Pipeline, Relay History, control-plane API and dashboard; Relayflows is opt-in via components.relayflows, Relayfile is excluded.
 
-chart `agent-relay` · values [`values-gcp-proof.yaml`](../charts/agent-relay/values-gcp-proof.yaml), [`values-gcp-proof-live.yaml`](../charts/agent-relay/values-gcp-proof-live.yaml), [`ci/gcp-proof-values.yaml`](../charts/agent-relay/ci/gcp-proof-values.yaml) · install: `helm install agent-relay agentworkforce/agent-relay -f values-gcp-proof.yaml -f values-gcp-proof-live.yaml --set relay-cloud-api.image.digest=sha256:<digest>`
+chart `agent-relay` · values [`values-gcp-proof.yaml`](../charts/agent-relay/values-gcp-proof.yaml), [`values-gcp-proof-live.yaml`](../charts/agent-relay/values-gcp-proof-live.yaml), [`ci/gcp-proof-values.yaml`](../charts/agent-relay/ci/gcp-proof-values.yaml) · install: `helm install agent-relay agentworkforce/agent-relay -f values-gcp-proof.yaml -f values-gcp-proof-live.yaml --set relay-control.image.digest=sha256:<digest>`
 
 **Options (choose)**
 
 | | option | choices | default here | maps to |
 | --- | --- | --- | --- | --- |
-| shipped | [Single-host mode for the dashboard and the control API](#opt-agent-relay-single-host) | `disabled`, `enabled` | `disabled` | values `global.singleHost.host`, `relay-cloud-api:global.singleHost.host`, `relay-cloud-api:publicUrl`, `relay-dashboard:global.singleHost.host`, `relay-dashboard:runtime.publicUrl`, `relay-dashboard:ingress.host`; env `SELFHOST_PUBLIC_URL`, `DASHBOARD_PUBLIC_URL` |
+| shipped | [Single-host mode for the dashboard and the control API](#opt-agent-relay-single-host) | `disabled`, `enabled` | `disabled` | values `global.singleHost.host`, `relay-control:global.singleHost.host`, `relay-control:publicUrl`, `relay-webapp:global.singleHost.host`, `relay-webapp:runtime.publicUrl`, `relay-webapp:ingress.host`; env `SELFHOST_PUBLIC_URL`, `DASHBOARD_PUBLIC_URL` |
 | shipped | [Single GKE ingress for the proof hosts](#opt-agent-relay-gke-ingress) | `enabled`, `disabled` | `disabled` | values `gkeIngress.enabled`, `gkeIngress.staticIpName`, `gkeIngress.managedCertificateName`, `gkeIngress.frontendConfigName`, `gkeIngress.hosts.*`, `gkeIngress.backends.*`, `relayauth.jwksIngress.enabled` |
 | shipped | [Optional Relayflows component in the suite](#opt-agent-relay-relayflows) | `enabled`, `disabled` | `disabled` | values `components.relayflows`, `relayflows.*` |
+| shipped | [Control legacy RelayAuth client environment](#opt-control-legacy-relayauth) | `true`, `false` | `true` | values `services.relayauthEnabled`; env `RELAYAUTH_URL`, `RELAYAUTH_API_KEY_FILE` |
 
 ### Profile: relayfile
 
@@ -653,6 +677,25 @@ chart `relayflows` · install: `helm install relayflows agentworkforce/relayflow
 | shipped | [Relayflows mode](#opt-relayflows-mode) | `standalone`, `cloudWorker` | `standalone` | values `mode`, `worker.name`, `worker.cloudUrl`; env `AGENT_RELAY_CLOUD_URL`, `AGENT_RELAY_WORKER_NAME`, `FLOWS_CLOUD_MIRROR`, `AGENT_RELAY_TELEMETRY_DISABLED` |
 | shipped | [Standalone flow source, input and resume](#opt-relayflows-flow-source) | `path`, `content`, `existingConfigMap` | (no default) | values `standalone.flow.*`, `standalone.input`, `standalone.resumeRunId`, `standalone.cron.*`; env `RELAYFLOWS_FLOW_PATH`, `RELAYFLOWS_INPUT`, `RELAYFLOWS_RUN_ID` |
 | shipped | [Relayflows runtime, local agents and model credentials](#opt-relayflows-runtime) | `<any>` | `runtimeInstaller=true`, `localAgent=true`, `agentCapacity=1` | values `runtimeInstaller.*`, `standalone.localAgent`, `standalone.agentCapacity`, `standalone.dataDir`, `extraEnvFrom`; env `RELAYFLOWS_VERSION`, `AGENT_RELAY_VERSION`, `RELAYFLOWS_AGENT_CAPACITY`, `RELAYFLOWS_DATA_DIR` |
+
+### Profile: relay-chief
+
+**Relay Chief (scheduled coordination cycles).** Not qualified and not part of the suite yet; no image is published. Suspended by default. Runs one bounded cycle per CronJob firing against SQLite on a persistent volume, and every cycle may dispatch.
+
+chart `relay-chief` · values [`ci/default-values.yaml`](../charts/relay-chief/ci/default-values.yaml) · install: `helm install relay-chief agentworkforce/relay-chief -f <your values>`
+
+**Requirements (provide these)**
+
+| | requirement | provided by | maps to | verify |
+| --- | --- | --- | --- | --- |
+| shipped | [Relay and control-plane origins](#req-relay-chief-origins) | operator | values `relay.baseUrl`, `controlPlane.url`; env `RELAY_BASE_URL`, `CHIEF_CONTROL_PLANE_URL` | helm template fails with "relay.baseUrl is required" when it is unset |
+| shipped | [Relay Chief runtime credentials](#req-relay-chief-credentials) | operator | values `existingSecret`, `secretKeys.*`; env `RELAY_AGENT_TOKEN`, `TYPESAFE_API_KEY`, `CHIEF_CONTROL_PLANE_TOKEN`; Secret `<existingSecret>` keys `relay-agent-token`, `typesafe-api-key`, `control-plane-token` | helm template fails with "existingSecret is required" when it is unset; after setting suspend to false, a cycle's Job starts without a CreateContainerConfigError |
+
+**Options (choose)**
+
+| | option | choices | default here | maps to |
+| --- | --- | --- | --- | --- |
+| shipped | [Relay Chief image pull Secrets](#opt-relay-chief-image-pull-secrets) | `none`, `listed` | `none` | values `imagePullSecrets` |
 
 ### Profile: durable-actors
 
@@ -752,6 +795,19 @@ chart `agent-relay` · values [`values-eks-actors.yaml`](../charts/agent-relay/v
 | shipped | [Relaycast runtime backend (sqlite or durable-actors)](#opt-relaycast-durable-actors) | `sqlite`, `durable-actors` | `sqlite` | values `runtime.backend`, `runtime.durableActors.projectId`, `runtime.durableActors.organizationId`, `runtime.durableActors.controlPlaneUrl`, `runtime.durableActors.homeRegion`, `runtime.durableActors.gateway.*`, `runtime.durableActors.maxUploadBytes`, `runtime.durableActors.shutdownGraceMs`, `runtime.durableActors.logFormat`, `runtime.durableActors.fileStore.*`, `runtime.durableActors.devRuntime.*`; env `DURABLE_ACTORS_CONTROL_PLANE_URL`, `DURABLE_ACTORS_PROJECT_ID`, `DURABLE_ACTORS_HOME_REGION`, `RELAYCAST_FILE_STORE`, `RELAYCAST_FILE_DIR`, `RELAYCAST_GCS_BUCKET`, `RELAYCAST_GCS_PREFIX`, `RELAYCAST_S3_BUCKET`, `RELAYCAST_S3_REGION`, `RELAYCAST_S3_ENDPOINT`, `RELAYCAST_S3_PREFIX`, `RELAYCAST_S3_FORCE_PATH_STYLE`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `RELAYCAST_MAX_UPLOAD_BYTES`, `RELAYCAST_SHUTDOWN_GRACE_MS`, `RELAYCAST_LOG_FORMAT`, `DURABLE_ACTORS_PORT`, `DURABLE_ACTORS_DATA_DIR`, `RELAYCAST_PUBLIC_URL`, `RELAYCAST_INTERNAL_SECRET`; Secret `<runtime.durableActors.fileStore.s3.existingSecret>` keys `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` (s3 file store only; empty uses the pod's ambient identity) |
 | shipped | [Relayfile runtime backend (go or durable-actors)](#opt-relayfile-durable-actors) | `go`, `durable-actors` | `go` | values `runtime.backend`, `runtime.durableActors.image.*`, `runtime.durableActors.projectId`, `runtime.durableActors.organizationId`, `runtime.durableActors.controlPlaneUrl`, `runtime.durableActors.gateway.*`, `runtime.durableActors.broker.*`, `runtime.durableActors.deployer.*`, `runtime.durableActors.blobStore.*`, `runtime.durableActors.devRuntime.*`; env `DURABLE_ACTORS_CONTROL_PLANE_URL`, `DURABLE_ACTORS_PROJECT_ID`, `DURABLE_ACTORS_ORGANIZATION_ID`, `DURABLE_ACTORS_ARTIFACT_BUCKET`, `RELAYFILE_ACTORS_BROKER_URL`, `RELAYFILE_ACTORS_ALLOW_ADMIN_KEY`, `RELAYFILE_BLOB_STORE`, `RELAYFILE_BLOB_BUCKET`, `RELAYFILE_BLOB_PREFIX`, `RELAYFILE_BLOB_INLINE_MAX_BYTES`, `RELAYFILE_S3_ENDPOINT`, `RELAYFILE_S3_REGION`, `RELAYFILE_S3_FORCE_PATH_STYLE`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `DURABLE_ACTORS_PORT`, `DURABLE_ACTORS_DATA_DIR`, `DURABLE_ACTORS_ARTIFACT_STORE`, `DURABLE_ACTORS_S3_REGION`, `DURABLE_ACTORS_S3_ENDPOINT`, `DURABLE_ACTORS_S3_FORCE_PATH_STYLE`; Secret `<runtime.durableActors.blobStore.s3.existingSecret>` keys `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` (s3 blob store only; empty uses the pod's ambient identity) |
 
+### Profile: telemetry-collector
+
+**Self-hosted analytics file collector.** one writer, an exclusive persistent volume, internal TLS and no outbound analytics destination. Requires runtime image and lifecycle acceptance separately.
+
+chart `telemetry-collector` · install: `helm upgrade --install telemetry agentworkforce/telemetry-collector -f <accepted images, TLS and producer Secret references>`
+
+**Requirements (provide these)**
+
+| | requirement | provided by | maps to | verify |
+| --- | --- | --- | --- | --- |
+| shipped | [Analytics collector image and bounded storage runtime](#req-telemetry-collector-runtime) | operator | values `imagePullSecrets`, `image.*`, `tlsProxy.image.*`, `persistence.*`, `limits.*`, `retention.*`, `terminationGracePeriodSeconds`, `networkPolicy.allowedFrom`, `rolloutRevision`; env `ANALYTICS_COLLECTOR_HOST`, `ANALYTICS_COLLECTOR_PORT`, `ANALYTICS_COLLECTOR_DATA_DIR`, `ANALYTICS_COLLECTOR_PRODUCERS_FILE`, `ANALYTICS_COLLECTOR_MAX_BATCH_BYTES`, `ANALYTICS_COLLECTOR_MAX_BATCH_EVENTS`, `ANALYTICS_COLLECTOR_MAX_EVENT_BYTES`, `ANALYTICS_COLLECTOR_REQUEST_TIMEOUT_MS`, `ANALYTICS_COLLECTOR_MAX_IN_FLIGHT`, `ANALYTICS_COLLECTOR_MAX_SEGMENTS`, `ANALYTICS_COLLECTOR_MAX_DISK_BYTES`, `ANALYTICS_COLLECTOR_SHUTDOWN_DEADLINE_MS`, `ANALYTICS_COLLECTOR_RETENTION`, `ANALYTICS_COLLECTOR_RETENTION_MAX_AGE_MS` | Exercise the accepted collector entrypoint, authenticated TLS intake, durable files after restart and failure-before-acknowledgement cases on the installed volume. |
+| shipped | [Separate analytics producer and TLS credential Secrets](#req-telemetry-collector-secrets) | operator | values `producersSecret`, `tlsSecret` | Check distinct mounted producer credentials and TLS keys, exact certificate SAN and issuer, and a restart after rotation; never print values. |
+
 ## All entries
 
 ### Requirements
@@ -778,10 +834,10 @@ operator values are in deps/cnpg-operator-values.yaml.
 **A default StorageClass for the in-cluster HoopDb and Locker volumes** · shipped · chart `sessions-pipeline` · profiles selfhost-postgres, migration, aws-cnpg
 
 The CNPG HoopDb claims hoopdb.cluster.storage.size (10Gi) and the MinIO Locker
-locker.persistence.size (20Gi) through the default StorageClass.
+session-object-storage.persistence.size (20Gi) through the default StorageClass.
 
 - Provided by: default: operator, aws-cnpg: stack
-- Values: `hoopdb.cluster.storage.size`, `locker.persistence.size`
+- Values: `hoopdb.cluster.storage.size`, `session-object-storage.persistence.size`
 - Verify: kubectl get storageclass (one marked default), then kubectl get pvc -n <ns> all Bound
 - Sources: [`charts/sessions-pipeline/values.yaml:102`](../charts/sessions-pipeline/values.yaml#L102), [`charts/sessions-pipeline/values.yaml:155`](../charts/sessions-pipeline/values.yaml#L155)
 
@@ -808,16 +864,16 @@ lockerInit is disabled.
 
 <a id="req-k8s-external-secrets-operator"></a>
 
-**External Secrets Operator and a ClusterSecretStore (only with externalSecrets.enabled)** · shipped · chart `sessions-pipeline-worker`, `alleyoop` · profiles selfhost-postgres, migration, external-selfhosted, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql
+**External Secrets Operator and a ClusterSecretStore (only with externalSecrets.enabled)** · shipped · chart `sessions-pipeline-worker`, `session-ingest-api` · profiles selfhost-postgres, migration, external-selfhosted, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql
 
 externalSecrets.enabled renders an ExternalSecret (external-secrets.io/v1) whose
 target is existingSecret. The ESO CRDs and the named secretStoreRef must exist,
 and every consumed key must be mapped in externalSecrets.data.
 
 - Provided by: operator
-- Values: `sessions-pipeline-worker:externalSecrets.*`, `alleyoop:externalSecrets.*`
+- Values: `sessions-pipeline-worker:externalSecrets.*`, `session-ingest-api:externalSecrets.*`
 - Verify: kubectl get crd externalsecrets.external-secrets.io && kubectl get clustersecretstore <name>; the ExternalSecret reports Ready
-- Sources: [`charts/sessions-pipeline-worker/values.yaml:248`](../charts/sessions-pipeline-worker/values.yaml#L248), [`charts/sessions-pipeline-worker/templates/externalsecret.yaml:20`](../charts/sessions-pipeline-worker/templates/externalsecret.yaml#L20), [`charts/alleyoop/templates/externalsecret.yaml:11`](../charts/alleyoop/templates/externalsecret.yaml#L11)
+- Sources: [`charts/sessions-pipeline-worker/values.yaml:248`](../charts/sessions-pipeline-worker/values.yaml#L248), [`charts/sessions-pipeline-worker/templates/externalsecret.yaml:20`](../charts/sessions-pipeline-worker/templates/externalsecret.yaml#L20), [`charts/session-ingest-api/templates/externalsecret.yaml:11`](../charts/session-ingest-api/templates/externalsecret.yaml#L11)
 
 #### req.secret.image-pull
 
@@ -832,7 +888,7 @@ The ECR path (EKS node role) needs none.
 
 - Provided by: operator
 - Values: `worker.imagePullSecrets`, `alleyoop.imagePullSecrets`
-- Secret: `<pull secret>`; keys . type kubernetes.io/dockerconfigjson with read access to ghcr.io/agentworkforce/96bulls-services
+- Secret: `<pull secret>`. type kubernetes.io/dockerconfigjson with read access to ghcr.io/agentworkforce/96bulls-services
 - Verify: kubectl get secret <pull secret> -o jsonpath='{.type}' is kubernetes.io/dockerconfigjson; pods are not ImagePullBackOff
 - Sources: [`README.md:128`](../README.md#L128), [`charts/sessions-pipeline/values.yaml:24`](../charts/sessions-pipeline/values.yaml#L24), [`charts/sessions-pipeline/templates/_privileged-sql-job.tpl:92`](../charts/sessions-pipeline/templates/_privileged-sql-job.tpl#L92)
 
@@ -844,16 +900,16 @@ The ECR path (EKS node role) needs none.
 
 In secret mode the workers and alleyoop read the Locker access key pair from
 existingSecret, and the bundled MinIO reads its root credential from the same
-Secret (locker.existingSecret). Not used with locker.credentials.mode=podIdentity.
+Secret (session-object-storage.existingSecret). Not used with locker.credentials.mode=podIdentity.
 
 - Provided by: operator
-- Values: `worker.existingSecret`, `alleyoop.existingSecret`, `locker.existingSecret`, `worker.secretKeys.lockerAccessKeyId`, `worker.secretKeys.lockerSecretAccessKey`, `alleyoop.secretKeys.lockerAccessKeyId`, `alleyoop.secretKeys.lockerSecretAccessKey`
+- Values: `worker.existingSecret`, `alleyoop.existingSecret`, `session-object-storage.existingSecret`, `worker.secretKeys.lockerAccessKeyId`, `worker.secretKeys.lockerSecretAccessKey`, `alleyoop.secretKeys.lockerAccessKeyId`, `alleyoop.secretKeys.lockerSecretAccessKey`
 - Env: `LOCKER_ACCESS_KEY_ID`, `LOCKER_SECRET_ACCESS_KEY`
 - Secret: `sessions-pipeline-locker` from `worker.existingSecret`; keys `rootUser` from `worker.secretKeys.lockerAccessKeyId`; `rootPassword` from `worker.secretKeys.lockerSecretAccessKey`
 - Secret: `sessions-pipeline-locker` from `alleyoop.existingSecret`; keys `rootUser` from `alleyoop.secretKeys.lockerAccessKeyId`; `rootPassword` from `alleyoop.secretKeys.lockerSecretAccessKey`
-- Secret: `sessions-pipeline-locker` from `locker.existingSecret`; keys . the bundled MinIO's root credential
+- Secret: `sessions-pipeline-locker` from `session-object-storage.existingSecret`. the bundled upstream MinIO requires literal Secret data keys rootUser and rootPassword
 - Verify: kubectl get secret sessions-pipeline-locker -o jsonpath='{.data}' has rootUser and rootPassword
-- Sources: [`charts/sessions-pipeline/values.yaml:3`](../charts/sessions-pipeline/values.yaml#L3), [`charts/sessions-pipeline/values.yaml:28`](../charts/sessions-pipeline/values.yaml#L28), [`charts/sessions-pipeline-worker/templates/_env.tpl:78`](../charts/sessions-pipeline-worker/templates/_env.tpl#L78), [`charts/alleyoop/templates/_env.tpl:66`](../charts/alleyoop/templates/_env.tpl#L66)
+- Sources: [`charts/sessions-pipeline/values.yaml:3`](../charts/sessions-pipeline/values.yaml#L3), [`charts/sessions-pipeline/values.yaml:28`](../charts/sessions-pipeline/values.yaml#L28), [`charts/sessions-pipeline-worker/templates/_env.tpl:78`](../charts/sessions-pipeline-worker/templates/_env.tpl#L78), [`charts/session-ingest-api/templates/_env.tpl:66`](../charts/session-ingest-api/templates/_env.tpl#L66)
 
 #### req.secret.summary-master-keys
 
@@ -892,7 +948,7 @@ migration role's connection string unless migrations.hoopdb separates them.
 - Secret: `hoopdb-app` (default), `sessions-pipeline-hoopdb` (external-selfhosted), `sessions-pipeline-hoopdb` (external-supabase), `96bulls-gcp` (gcp-cloudsql) from `worker.hoopdb.existingSecret` then `worker.existingSecret`; keys `uri` (default), `HOOPDB_URL` (external-selfhosted), `HOOPDB_URL` (external-supabase), `HOOPDB_URL` (gcp-cloudsql) from `worker.hoopdb.key,worker.secretKeys.hoopdbUrl`
 - Secret: `hoopdb-app` (default), `sessions-pipeline-hoopdb` (external-selfhosted), `sessions-pipeline-hoopdb` (external-supabase), `96bulls-gcp` (gcp-cloudsql) from `alleyoop.hoopdb.existingSecret` then `alleyoop.existingSecret`; keys `uri` (default), `HOOPDB_URL` (external-selfhosted), `HOOPDB_URL` (external-supabase), `HOOPDB_URL` (gcp-cloudsql) from `alleyoop.hoopdb.key,alleyoop.secretKeys.hoopdbUrl`
 - Verify: default: kubectl get secret hoopdb-app -o jsonpath='{.data.uri}' is non-empty once the CNPG Cluster is ready / external-selfhosted: kubectl get secret sessions-pipeline-hoopdb -o jsonpath='{.data.HOOPDB_URL}' \| base64 -d \| psql -X -c 'select 1' / external-supabase: kubectl get secret sessions-pipeline-hoopdb -o jsonpath='{.data.HOOPDB_URL}' \| base64 -d \| psql -X -c 'select current_user'
-- Sources: [`charts/sessions-pipeline/values.yaml:39`](../charts/sessions-pipeline/values.yaml#L39), [`charts/sessions-pipeline/profiles/external-selfhosted.yaml:11`](../charts/sessions-pipeline/profiles/external-selfhosted.yaml#L11), [`charts/sessions-pipeline/profiles/external-supabase.yaml:24`](../charts/sessions-pipeline/profiles/external-supabase.yaml#L24), [`charts/sessions-pipeline-worker/templates/_env.tpl:162`](../charts/sessions-pipeline-worker/templates/_env.tpl#L162), [`charts/alleyoop/templates/_env.tpl:54`](../charts/alleyoop/templates/_env.tpl#L54)
+- Sources: [`charts/sessions-pipeline/values.yaml:39`](../charts/sessions-pipeline/values.yaml#L39), [`charts/sessions-pipeline/profiles/external-selfhosted.yaml:11`](../charts/sessions-pipeline/profiles/external-selfhosted.yaml#L11), [`charts/sessions-pipeline/profiles/external-supabase.yaml:24`](../charts/sessions-pipeline/profiles/external-supabase.yaml#L24), [`charts/sessions-pipeline-worker/templates/_env.tpl:162`](../charts/sessions-pipeline-worker/templates/_env.tpl#L162), [`charts/session-ingest-api/templates/_env.tpl:54`](../charts/session-ingest-api/templates/_env.tpl#L54)
 
 #### req.secret.hoopdb-migration-url
 
@@ -938,7 +994,7 @@ in-cluster Service) or the hosted issuer. Every profile leaves it to the operato
 - Values: `alleyoop.auth.jwksUrl`
 - Env: `RELAYAUTH_JWKS_URL`
 - Verify: kubectl run -it --rm curl --image=curlimages/curl -- curl -fsS <jwksUrl> returns {"keys":[...]}
-- Sources: [`charts/sessions-pipeline/values.yaml:81`](../charts/sessions-pipeline/values.yaml#L81), [`charts/alleyoop/templates/deployment.yaml:46`](../charts/alleyoop/templates/deployment.yaml#L46), `sessions-pipeline@7d7229b:src/alleyoop/ingest.ts:118`
+- Sources: [`charts/sessions-pipeline/values.yaml:81`](../charts/sessions-pipeline/values.yaml#L81), [`charts/session-ingest-api/templates/deployment.yaml:46`](../charts/session-ingest-api/templates/deployment.yaml#L46), `sessions-pipeline@7d7229b:src/alleyoop/ingest.ts:118`
 
 #### req.db.postgres-17-extensions
 
@@ -1097,11 +1153,11 @@ from a Secret, never values. Secret and value names are proposed.
 - Verify: not applicable until charted
 - Sources: `sessions-pipeline@475d503:src/session-brief/config.ts:6`
 
-#### req.relay-cloud-api.config
+#### req.relay-control.config
 
-<a id="req-relay-cloud-api-config"></a>
+<a id="req-relay-control-config"></a>
 
-**Self-host control-plane existing Secret and service configuration** · shipped · chart `relay-cloud-api` · profiles relay-cloud-api
+**Self-host control-plane existing Secret and service configuration** · shipped · chart `relay-control` · profiles relay-control
 
 packages/selfhost-api reads its runtime database, RelayAuth API key,
 bootstrap token and encryption key only from an existing Secret mounted
@@ -1115,10 +1171,10 @@ RelayHistory public origins must use public multi-label HTTPS DNS.
 - Values: `publicUrl`, `services.*`, `existingSecret`, `secretKeys.*`, `database.runtimeRole`, `encryption.keyId`, `ingress.tls`, `imagePullSecrets`
 - Env: `SELFHOST_ENCRYPTION_KEY_ID`, `DATABASE_URL_FILE`, `DATABASE_MIGRATIONS_URL_FILE`, `SELFHOST_RUNTIME_DATABASE_ROLE`, `RELAYAUTH_API_KEY_FILE`, `SELFHOST_BOOTSTRAP_TOKEN_FILE`, `SELFHOST_ENCRYPTION_KEY_FILE`, `SELFHOST_PUBLIC_URL`, `RELAYAUTH_URL`, `RELAYCAST_URL`, `RELAYCAST_PUBLIC_URL`, `RELAYHISTORY_URL`, `RELAYHISTORY_PUBLIC_URL`
 - Secret: `<existingSecret>` from `existingSecret`; keys `database-url` from `secretKeys.databaseUrl`; `database-migrations-url` from `secretKeys.databaseMigrationsUrl`; `relayauth-api-key` from `secretKeys.relayauthApiKey`; `selfhost-bootstrap-token` from `secretKeys.bootstrapToken`; `selfhost-encryption-key` from `secretKeys.encryptionKey`
-- Secret: `<ingress.tls[].secretName>`; keys . kubernetes.io/tls, normally managed by the GKE ingress certificate path
-- Secret: `<imagePullSecrets[].name>`; keys . optional registry pull Secret
+- Secret: `<ingress.tls[].secretName>`. kubernetes.io/tls, normally managed by the GKE ingress certificate path
+- Secret: `<imagePullSecrets[].name>`. optional registry pull Secret
 - Verify: helm template fails without existingSecret, encryption.keyId, immutable image digest or valid public service origins; the migration Job invokes migrate-cli.js directly and projects only database-migrations-url
-- Sources: [`charts/relay-cloud-api/values.yaml`](../charts/relay-cloud-api/values.yaml), [`charts/relay-cloud-api/templates/_helpers.tpl`](../charts/relay-cloud-api/templates/_helpers.tpl)
+- Sources: [`charts/relay-control/values.yaml`](../charts/relay-control/values.yaml), [`charts/relay-control/templates/_helpers.tpl`](../charts/relay-control/templates/_helpers.tpl)
 
 #### req.relayhistory.config
 
@@ -1135,8 +1191,8 @@ also reference existing Secrets; no Secret is created by the chart.
 - Env: `DATABASE_URL`, `DATABASE_MIGRATIONS_URL`, `DATABASE_RUNTIME_ROLE`, `EMBEDDING_API_KEY`, `OPENAI_API_KEY`, `POSTHOG_API_KEY`, `ALLOW_WRITE_HOLD`, `ROLLOUT_BUDGET_SECONDS`, `HISTORY_SELECTOR`, `DRAIN_WAIT_SECONDS`, `MAX_BODY_BYTES`, `MAX_INFLIGHT_BODY_BYTES`, `SHUTDOWN_GRACE_MS`, `SHUTDOWN_DRAIN_DELAY_MS`, `PG_POOL_MAX`, `CRON_ENABLED`, `RELAYAUTH_AUDIENCE`, `RELAYHISTORY_ORIGIN`, `AGENT_RELAY_CLOUD_API_URL`, `SESSION_EVENTS_ENABLED`, `POSTHOG_HOST`
 - Secret: `<database.existingSecret>` from `database.existingSecret`; keys `DATABASE_URL` from `database.keys.url`; `DATABASE_MIGRATIONS_URL` from `database.keys.migrationsUrl`
 - Secret: `<optional provider Secret>`; keys `EMBEDDING_API_KEY` from `embeddings.key`; `OPENAI_API_KEY` from `sessionAnalysis.key`; `POSTHOG_API_KEY` from `telemetry.key`
-- Secret: `<ingress.tls[].secretName>`; keys . kubernetes.io/tls
-- Secret: `<imagePullSecrets[].name>`; keys . optional registry pull Secret
+- Secret: `<ingress.tls[].secretName>`. kubernetes.io/tls
+- Secret: `<imagePullSecrets[].name>`. optional registry pull Secret
 - Verify: the migration Job completes, then /readyz returns 200 through the history host
 - Sources: [`charts/relayhistory/values.yaml`](../charts/relayhistory/values.yaml), [`charts/relayhistory/templates/migrate-job.yaml`](../charts/relayhistory/templates/migrate-job.yaml)
 
@@ -1189,7 +1245,7 @@ and with networkPolicy networkPolicy.ingressFrom must allow it.
 
 - Provided by: operator
 - Values: `ingress.enabled`, `ingress.hosts`, `ingress.tls`, `ingress.externalTls`, `ingress.className`, `ingress.annotations`, `networkPolicy.ingressFrom`
-- Secret: `<ingress.tls[].secretName>`; keys . kubernetes.io/tls; created by cert-manager when annotated
+- Secret: `<ingress.tls[].secretName>`. kubernetes.io/tls; created by cert-manager when annotated
 - Verify: dig +short <host>; curl -fsS https://<host>/health; curl -s -o /dev/null -w '%{http_code}' https://<host>/internal is 503
 - Sources: [`charts/relaycast/values.yaml:107`](../charts/relaycast/values.yaml#L107), [`charts/relaycast/templates/_helpers.tpl:170`](../charts/relaycast/templates/_helpers.tpl#L170), [`charts/relaycast/templates/_helpers.tpl:173`](../charts/relaycast/templates/_helpers.tpl#L173)
 
@@ -1412,7 +1468,7 @@ BackendConfig timeout for sockets) or the chart's own ingress
 - Provided by: operator
 - Values: `publicUrl`, `ingress.enabled`, `ingress.className`, `ingress.tlsSecret`, `ingress.annotations`, `agent-relay:gkeIngress.hosts.actors`, `agent-relay:gkeIngress.actorsBackendTimeoutSec`
 - Env: `DURABLE_ACTORS_PUBLIC_URL`, `DURABLE_ACTORS_CONTROL_PLANE_URL`
-- Secret: `<ingress.tlsSecret>`; keys . kubernetes.io/tls, only with the chart's own ingress
+- Secret: `<ingress.tlsSecret>`. kubernetes.io/tls, only with the chart's own ingress
 - Verify: curl -fsS <publicUrl>/healthz
 - Sources: [`charts/durable-actors/templates/control-plane.yaml:97`](../charts/durable-actors/templates/control-plane.yaml#L97), [`charts/agent-relay/templates/gke-ingress.yaml:50`](../charts/agent-relay/templates/gke-ingress.yaml#L50)
 
@@ -1466,6 +1522,62 @@ different Secret; only the session broker and the deploy Job mount it.
 - Verify: helm template fails with "adminKeySecret must be a different Secret" when they match; the broker's /health is ready
 - Sources: [`charts/relayfile/templates/actors/_helpers.tpl:71`](../charts/relayfile/templates/actors/_helpers.tpl#L71), [`charts/relayfile/templates/actors/session-broker.yaml:64`](../charts/relayfile/templates/actors/session-broker.yaml#L64)
 
+#### req.telemetry-collector.runtime
+
+<a id="req-telemetry-collector-runtime"></a>
+
+**Analytics collector image and bounded storage runtime** · shipped · chart `telemetry-collector` · profiles telemetry-collector
+
+Internal producer-authenticated NDJSON collector. Immutable images and exact source identity are mandatory; one writer and a retained RWOP claim. TLS terminates in a sidecar; the collector binds loopback. No outbound sink or automatic producer enablement.
+
+- Provided by: operator
+- Values: `imagePullSecrets`, `image.*`, `tlsProxy.image.*`, `persistence.*`, `limits.*`, `retention.*`, `terminationGracePeriodSeconds`, `networkPolicy.allowedFrom`, `rolloutRevision`
+- Env: `ANALYTICS_COLLECTOR_HOST`, `ANALYTICS_COLLECTOR_PORT`, `ANALYTICS_COLLECTOR_DATA_DIR`, `ANALYTICS_COLLECTOR_PRODUCERS_FILE`, `ANALYTICS_COLLECTOR_MAX_BATCH_BYTES`, `ANALYTICS_COLLECTOR_MAX_BATCH_EVENTS`, `ANALYTICS_COLLECTOR_MAX_EVENT_BYTES`, `ANALYTICS_COLLECTOR_REQUEST_TIMEOUT_MS`, `ANALYTICS_COLLECTOR_MAX_IN_FLIGHT`, `ANALYTICS_COLLECTOR_MAX_SEGMENTS`, `ANALYTICS_COLLECTOR_MAX_DISK_BYTES`, `ANALYTICS_COLLECTOR_SHUTDOWN_DEADLINE_MS`, `ANALYTICS_COLLECTOR_RETENTION`, `ANALYTICS_COLLECTOR_RETENTION_MAX_AGE_MS`
+- Verify: Exercise the accepted collector entrypoint, authenticated TLS intake, durable files after restart and failure-before-acknowledgement cases on the installed volume.
+- Sources: [`charts/telemetry-collector/templates/deployment.yaml:37`](../charts/telemetry-collector/templates/deployment.yaml#L37)
+
+#### req.telemetry-collector.secrets
+
+<a id="req-telemetry-collector-secrets"></a>
+
+**Separate analytics producer and TLS credential Secrets** · shipped · chart `telemetry-collector` · profiles telemetry-collector
+
+Operator-managed producers.json plus dedicated token files, and a separate TLS key/certificate Secret. Mounted as files; no credentials in Helm values or ConfigMaps. Rotate with a controlled restart.
+
+- Provided by: operator
+- Values: `producersSecret`, `tlsSecret`
+- Verify: Check distinct mounted producer credentials and TLS keys, exact certificate SAN and issuer, and a restart after rotation; never print values.
+- Sources: [`charts/telemetry-collector/templates/deployment.yaml:104`](../charts/telemetry-collector/templates/deployment.yaml#L104)
+
+#### req.relay-chief.origins
+
+<a id="req-relay-chief-origins"></a>
+
+**Relay and control-plane origins** · shipped · chart `relay-chief` · profiles relay-chief
+
+RELAY_BASE_URL and CHIEF_CONTROL_PLANE_URL, each a bare https origin (the runtime refuses plain http for non-loopback hosts). The chart refuses to render without RELAY_BASE_URL because the runtime otherwise falls back to the hosted Relay. Classification separately calls https://api.typesafe.ai, which is hardcoded and must be reachable.
+
+- Provided by: operator
+- Values: `relay.baseUrl`, `controlPlane.url`
+- Env: `RELAY_BASE_URL`, `CHIEF_CONTROL_PLANE_URL`
+- Verify: helm template fails with "relay.baseUrl is required" when it is unset
+- Sources: [`charts/relay-chief/values.yaml:27`](../charts/relay-chief/values.yaml#L27), [`charts/relay-chief/templates/cronjob.yaml:57`](../charts/relay-chief/templates/cronjob.yaml#L57)
+
+#### req.relay-chief.credentials
+
+<a id="req-relay-chief-credentials"></a>
+
+**Relay Chief runtime credentials** · shipped · chart `relay-chief` · profiles relay-chief
+
+A pre-provisioned chief identity (not a workspace admin key), the classification API key and a scoped control-plane service credential, from one existing Secret.
+
+- Provided by: operator
+- Values: `existingSecret`, `secretKeys.*`
+- Env: `RELAY_AGENT_TOKEN`, `TYPESAFE_API_KEY`, `CHIEF_CONTROL_PLANE_TOKEN`
+- Secret: `<existingSecret>`; keys `relay-agent-token` from `secretKeys.relayAgentToken`; `typesafe-api-key` from `secretKeys.typesafeApiKey`; `control-plane-token` from `secretKeys.controlPlaneToken`
+- Verify: helm template fails with "existingSecret is required" when it is unset; after setting suspend to false, a cycle's Job starts without a CreateContainerConfigError
+- Sources: [`charts/relay-chief/values.yaml:36`](../charts/relay-chief/values.yaml#L36), [`charts/relay-chief/templates/cronjob.yaml:59`](../charts/relay-chief/templates/cronjob.yaml#L59)
+
 ### Options
 
 #### opt.alleyoop.auth-mode
@@ -1485,7 +1597,7 @@ issuer/audience are the expected token claims.
 - Env: `RELAYAUTH_JWKS_URL`, `JWKS_JSON`, `AUTH_ISSUER`, `AUTH_AUDIENCE`
 - Secret: `<existingSecret>`; keys `JWKS_JSON` from `alleyoop.secretKeys.jwksJson`. only with auth.localJwks=true
 - Verify: helm template fails with "set auth.jwksUrl OR auth.localJwks, not both" or with neither
-- Sources: [`charts/alleyoop/values.yaml:81`](../charts/alleyoop/values.yaml#L81), [`charts/alleyoop/templates/_env.tpl:18`](../charts/alleyoop/templates/_env.tpl#L18), [`charts/alleyoop/templates/deployment.yaml:49`](../charts/alleyoop/templates/deployment.yaml#L49)
+- Sources: [`charts/session-ingest-api/values.yaml:81`](../charts/session-ingest-api/values.yaml#L81), [`charts/session-ingest-api/templates/_env.tpl:18`](../charts/session-ingest-api/templates/_env.tpl#L18), [`charts/session-ingest-api/templates/deployment.yaml:49`](../charts/session-ingest-api/templates/deployment.yaml#L49)
 
 #### opt.sessions-pipeline.in-cluster-http
 
@@ -1500,7 +1612,7 @@ worker component. false (default) keeps the validated destination URLs
 <svc>.<ns>.svc.cluster.local, never public hosts, IPs or short names; for
 example alleyoop.auth.jwksUrl=http://relayauth.relayauth.svc:8787/.well-known/jwks.json.
 LOCKER_ENDPOINT and the OTLP endpoint are outside this policy, so the
-bundled MinIO at http://locker:9000 works with the default false.
+bundled MinIO at http://session-object-storage:9000 works with the default false.
 
 - Default: `false`
 - Choices: `false`; `true`
@@ -1508,7 +1620,7 @@ bundled MinIO at http://locker:9000 works with the default false.
 - Values: `alleyoop.allowInClusterHttp`, `worker.allowInClusterHttp`
 - Env: `ALLOW_IN_CLUSTER_HTTP`
 - Verify: helm template renders ALLOW_IN_CLUSTER_HTTP="false" by default and fails when extraEnv sets it
-- Sources: [`charts/alleyoop/values.yaml`](../charts/alleyoop/values.yaml), [`charts/alleyoop/templates/deployment.yaml`](../charts/alleyoop/templates/deployment.yaml), [`charts/sessions-pipeline-worker/templates/_env.tpl`](../charts/sessions-pipeline-worker/templates/_env.tpl)
+- Sources: [`charts/session-ingest-api/values.yaml`](../charts/session-ingest-api/values.yaml), [`charts/session-ingest-api/templates/deployment.yaml`](../charts/session-ingest-api/templates/deployment.yaml), [`charts/sessions-pipeline-worker/templates/_env.tpl`](../charts/sessions-pipeline-worker/templates/_env.tpl)
 
 #### opt.alleyoop.history-origin
 
@@ -1532,7 +1644,7 @@ refuses every courier upload.
 - Values: `alleyoop.auth.historyOrigin`
 - Env: `RELAYHISTORY_ORIGIN`
 - Verify: helm template fails when auth.historyOrigin is not a bare origin or extraEnv also sets RELAYHISTORY_ORIGIN
-- Sources: [`charts/alleyoop/values.yaml`](../charts/alleyoop/values.yaml), [`charts/alleyoop/templates/deployment.yaml`](../charts/alleyoop/templates/deployment.yaml)
+- Sources: [`charts/session-ingest-api/values.yaml`](../charts/session-ingest-api/values.yaml), [`charts/session-ingest-api/templates/deployment.yaml`](../charts/session-ingest-api/templates/deployment.yaml)
 
 #### opt.alleyoop.interim-relayauth-bearer
 
@@ -1557,7 +1669,7 @@ through extraEnv or ingest.env fails the render.
 - Values: `alleyoop.auth.allowInterimRelayAuthBearer`
 - Env: `ALLOW_INTERIM_RELAYAUTH_BEARER`
 - Verify: helm template renders ALLOW_INTERIM_RELAYAUTH_BEARER="false" by default and fails for true outside environment=local or when extraEnv/ingest.env sets it
-- Sources: [`charts/alleyoop/values.yaml`](../charts/alleyoop/values.yaml), [`charts/alleyoop/templates/_env.tpl`](../charts/alleyoop/templates/_env.tpl), [`charts/alleyoop/templates/deployment.yaml`](../charts/alleyoop/templates/deployment.yaml)
+- Sources: [`charts/session-ingest-api/values.yaml`](../charts/session-ingest-api/values.yaml), [`charts/session-ingest-api/templates/_env.tpl`](../charts/session-ingest-api/templates/_env.tpl), [`charts/session-ingest-api/templates/deployment.yaml`](../charts/session-ingest-api/templates/deployment.yaml)
 
 #### opt.sessions-pipeline.hoopdb-backend
 
@@ -1729,7 +1841,7 @@ worker.hoopdb URL. Set both or neither.
 
 **Locker object store** · shipped · chart `sessions-pipeline` · profiles selfhost-postgres, migration, external-selfhosted, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql
 
-minio runs the bundled MinIO (locker.enabled; Chainguard image, digest-pinned) and
+minio runs the bundled MinIO (session-object-storage.enabled; Chainguard image, digest-pinned) and
 the locker-init Job creates the bucket. external uses your S3-compatible bucket:
 set worker.locker / alleyoop.locker (endpoint empty = native AWS S3 for region),
 and set worker.lockerInit.enabled=false when the bucket already exists and is
@@ -1738,7 +1850,7 @@ versioned.
 - Default: `minio` (by profile: default `minio`, aws-cnpg `external`, aws-supabase `external`, gcp-cloudsql `external`)
 - Choices: `minio`; `external`: S3 / GCS bucket
 - Provided by: operator
-- Values: `locker.enabled`, `worker.locker.endpoint`, `worker.locker.bucket`, `worker.locker.region`, `alleyoop.locker.endpoint`, `alleyoop.locker.bucket`, `alleyoop.locker.region`, `worker.lockerInit.enabled`
+- Values: `session-object-storage.enabled`, `worker.locker.endpoint`, `worker.locker.bucket`, `worker.locker.region`, `alleyoop.locker.endpoint`, `alleyoop.locker.bucket`, `alleyoop.locker.region`, `worker.lockerInit.enabled`
 - Env: `LOCKER_ENDPOINT`, `LOCKER_BUCKET`, `LOCKER_REGION`
 - Verify: the locker-init Job completes (minio) or a worker writes to the bucket (external)
 - Sources: [`charts/sessions-pipeline/values.yaml:137`](../charts/sessions-pipeline/values.yaml#L137), [`charts/sessions-pipeline-worker/templates/_env.tpl:71`](../charts/sessions-pipeline-worker/templates/_env.tpl#L71)
@@ -1783,7 +1895,7 @@ render fails.
 - Values: `worker.locker.provider`, `alleyoop.locker.provider`, `worker.extraEnv`, `alleyoop.extraEnv`
 - Env: `LOCKER_PROVIDER`, `PIPELINE_RAW_PROVIDER`, `CLOUD_SQL_CONNECTION_NAME`, `REDIS_HOST`, `REDIS_PORT`, `REDIS_AUTH_ENABLED`, `REDIS_TRANSIT_ENCRYPTION`, `REDIS_TLS_CA_PEM`, `PUBSUB_TOPIC`, `PUBSUB_SUBSCRIPTION`
 - Verify: with gcs, the worker and Alleyoop /readyz return 200 and /datapathz reports ok
-- Sources: [`charts/sessions-pipeline-worker/values.yaml:64`](../charts/sessions-pipeline-worker/values.yaml#L64), [`charts/sessions-pipeline-worker/templates/_env.tpl:63`](../charts/sessions-pipeline-worker/templates/_env.tpl#L63), [`charts/sessions-pipeline-worker/templates/_env.tpl:108`](../charts/sessions-pipeline-worker/templates/_env.tpl#L108), [`charts/alleyoop/templates/_env.tpl:95`](../charts/alleyoop/templates/_env.tpl#L95)
+- Sources: [`charts/sessions-pipeline-worker/values.yaml:64`](../charts/sessions-pipeline-worker/values.yaml#L64), [`charts/sessions-pipeline-worker/templates/_env.tpl:63`](../charts/sessions-pipeline-worker/templates/_env.tpl#L63), [`charts/sessions-pipeline-worker/templates/_env.tpl:108`](../charts/sessions-pipeline-worker/templates/_env.tpl#L108), [`charts/session-ingest-api/templates/_env.tpl:95`](../charts/session-ingest-api/templates/_env.tpl#L95)
 
 #### opt.sessions-pipeline.services-image
 
@@ -1910,11 +2022,11 @@ key Secret (req.secret.model-api-key). Values names are proposed.
 - Verify: not applicable until charted
 - Sources: `sessions-pipeline@475d503:src/session-brief/config.ts:4`, `sessions-pipeline@475d503:src/session-brief/main.ts:2`
 
-#### opt.relay-cloud-api.license-file
+#### opt.relay-control.license-file
 
-<a id="opt-relay-cloud-api-license-file"></a>
+<a id="opt-relay-control-license-file"></a>
 
-**Offline license file mount (verification pending upstream)** · shipped · chart `relay-cloud-api` · profiles relay-cloud-api
+**Offline license file mount (verification pending upstream)** · shipped · chart `relay-control` · profiles relay-control
 
 Optional separate Secret projected only into the relaycontrol API, as
 SELFHOST_LICENSE_FILE. Empty existingSecret keeps the slot unmounted.
@@ -1928,13 +2040,13 @@ enforcement. Those features are owned by relaycontrol and are pending.
 - Env: `SELFHOST_LICENSE_FILE`
 - Secret: `<license.existingSecret>` from `license.existingSecret`; keys `license` from `license.key`
 - Verify: With license.existingSecret set, only the API mounts that Secret and SELFHOST_LICENSE_FILE; the migration Job receives neither. Do not infer license enforcement from a successful render.
-- Sources: [`charts/relay-cloud-api/values.yaml`](../charts/relay-cloud-api/values.yaml), [`charts/relay-cloud-api/templates/deployment.yaml`](../charts/relay-cloud-api/templates/deployment.yaml)
+- Sources: [`charts/relay-control/values.yaml`](../charts/relay-control/values.yaml), [`charts/relay-control/templates/deployment.yaml`](../charts/relay-control/templates/deployment.yaml)
 
-#### opt.relay-cloud-api.encryption-rotation
+#### opt.relay-control.encryption-rotation
 
-<a id="opt-relay-cloud-api-encryption-rotation"></a>
+<a id="opt-relay-control-encryption-rotation"></a>
 
-**Previous encryption key during a key rotation** · shipped · chart `relay-cloud-api` · profiles relay-cloud-api
+**Previous encryption key during a key rotation** · shipped · chart `relay-control` · profiles relay-control
 
 During a rotation the API decrypts with the previous key and encrypts
 with the active one. encryption.previousKeyId and
@@ -1948,13 +2060,13 @@ refuses one without the other); the id must differ from encryption.keyId.
 - Env: `SELFHOST_ENCRYPTION_PREVIOUS_KEY_ID`, `SELFHOST_ENCRYPTION_PREVIOUS_KEY_FILE`
 - Secret: `<existingSecret>` from `existingSecret`; keys `<operator-chosen, no default>` from `secretKeys.previousEncryptionKey` (optional: only during a key rotation, with encryption.previousKeyId)
 - Verify: helm template fails when only one of encryption.previousKeyId and secretKeys.previousEncryptionKey is set
-- Sources: [`charts/relay-cloud-api/values.yaml`](../charts/relay-cloud-api/values.yaml), [`charts/relay-cloud-api/templates/_helpers.tpl`](../charts/relay-cloud-api/templates/_helpers.tpl)
+- Sources: [`charts/relay-control/values.yaml`](../charts/relay-control/values.yaml), [`charts/relay-control/templates/_helpers.tpl`](../charts/relay-control/templates/_helpers.tpl)
 
-#### opt.relay-cloud-api.internal-token
+#### opt.relay-control.internal-token
 
-<a id="opt-relay-cloud-api-internal-token"></a>
+<a id="opt-relay-control-internal-token"></a>
 
-**Internal service token for /internal/v1** · shipped · chart `relay-cloud-api` · profiles relay-cloud-api
+**Internal service token for /internal/v1** · shipped · chart `relay-control` · profiles relay-control
 
 secretKeys.internalToken mounts SELFHOST_INTERNAL_TOKEN_FILE (at least 32
 bytes). It enables /internal/v1: flows reads workspace env vars and
@@ -1968,14 +2080,14 @@ ingress denies /internal on the api host.
 - Values: `secretKeys.internalToken`
 - Env: `SELFHOST_INTERNAL_TOKEN_FILE`
 - Secret: `<existingSecret>` from `existingSecret`; keys `<operator-chosen, no default>` from `secretKeys.internalToken` (optional: enables /internal/v1 (flows env delivery, telemetry issue reports))
-- Verify: kubectl exec deploy/<release>-relay-cloud-api (or the fullnameOverride, relay-cloud-api in the agent-relay GCP profiles) -- sh -c 'test "$(tr -d "\r\n" < "$SELFHOST_INTERNAL_TOKEN_FILE" \| wc -c)" -ge 32' (expanded inside the pod; at least 32 bytes); curl https://<api host>/internal/v1/... is refused at the edge
-- Sources: [`charts/relay-cloud-api/values.yaml`](../charts/relay-cloud-api/values.yaml), [`charts/relay-cloud-api/templates/_helpers.tpl`](../charts/relay-cloud-api/templates/_helpers.tpl), [`charts/agent-relay/templates/gke-ingress.yaml`](../charts/agent-relay/templates/gke-ingress.yaml)
+- Verify: kubectl exec deploy/<release>-relay-control (or the fullnameOverride, relay-control in the agent-relay GCP profiles) -- sh -c 'test "$(tr -d "\r\n" < "$SELFHOST_INTERNAL_TOKEN_FILE" \| wc -c)" -ge 32' (expanded inside the pod; at least 32 bytes); curl https://<api host>/internal/v1/... is refused at the edge
+- Sources: [`charts/relay-control/values.yaml`](../charts/relay-control/values.yaml), [`charts/relay-control/templates/_helpers.tpl`](../charts/relay-control/templates/_helpers.tpl), [`charts/agent-relay/templates/gke-ingress.yaml`](../charts/agent-relay/templates/gke-ingress.yaml)
 
-#### opt.relay-cloud-api.dashboard-url
+#### opt.relay-control.dashboard-url
 
-<a id="opt-relay-cloud-api-dashboard-url"></a>
+<a id="opt-relay-control-dashboard-url"></a>
 
-**Dashboard URL for OAuth callbacks and flow run links** · shipped · chart `relay-cloud-api` · profiles relay-cloud-api
+**Dashboard URL for OAuth callbacks and flow run links** · shipped · chart `relay-control` · profiles relay-control
 
 dashboardUrl (SELFHOST_DASHBOARD_URL) is where OAuth callback pages link
 back and where mirrored flow runs build their runUrl. Unset, the API uses
@@ -1988,13 +2100,13 @@ GKE profiles serve it on the root host).
 - Values: `dashboardUrl`
 - Env: `SELFHOST_DASHBOARD_URL`
 - Verify: helm template renders SELFHOST_DASHBOARD_URL only when dashboardUrl is set and fails on credentials, query or fragment
-- Sources: [`charts/relay-cloud-api/values.yaml`](../charts/relay-cloud-api/values.yaml), [`charts/relay-cloud-api/templates/_helpers.tpl`](../charts/relay-cloud-api/templates/_helpers.tpl)
+- Sources: [`charts/relay-control/values.yaml`](../charts/relay-control/values.yaml), [`charts/relay-control/templates/_helpers.tpl`](../charts/relay-control/templates/_helpers.tpl)
 
-#### opt.relay-cloud-api.bootstrap
+#### opt.relay-control.bootstrap
 
-<a id="opt-relay-cloud-api-bootstrap"></a>
+<a id="opt-relay-control-bootstrap"></a>
 
-**First-boot organization, owner and default workspace** · shipped · chart `relay-cloud-api` · profiles relay-cloud-api
+**First-boot organization, owner and default workspace** · shipped · chart `relay-control` · profiles relay-control
 
 bootstrap.orgName and bootstrap.adminEmail (set together) make the API
 create the installation's organization on its first start, with the
@@ -2014,14 +2126,14 @@ organization is created by hand with the bootstrap token.
 - Values: `bootstrap.*`, `secretKeys.relaycastInternalSecret`
 - Env: `SELFHOST_BOOTSTRAP_ORG_NAME`, `SELFHOST_BOOTSTRAP_ADMIN_EMAIL`, `SELFHOST_BOOTSTRAP_ADMIN_NAME`, `SELFHOST_BOOTSTRAP_WORKSPACE_NAME`, `RELAYCAST_INTERNAL_SECRET_FILE`
 - Secret: `<existingSecret>` from `existingSecret`; keys `<operator-chosen, e.g. relaycast-internal-secret>` from `secretKeys.relaycastInternalSecret` (optional: required with bootstrap.orgName; equal to Relaycast's internal secret)
-- Verify: kubectl logs deploy/<release>-relay-cloud-api shows "bootstrap: organization created" and "bootstrap: default workspace created" once; GET /api/v1/organizations with the bootstrap token lists the organization and its workspace (bootstrap.workspaceName, Default when empty)
-- Sources: [`charts/relay-cloud-api/values.yaml`](../charts/relay-cloud-api/values.yaml), [`charts/relay-cloud-api/templates/_helpers.tpl`](../charts/relay-cloud-api/templates/_helpers.tpl)
+- Verify: kubectl logs deploy/<release>-relay-control shows "bootstrap: organization created" and "bootstrap: default workspace created" once; GET /api/v1/organizations with the bootstrap token lists the organization and its workspace (bootstrap.workspaceName, Default when empty)
+- Sources: [`charts/relay-control/values.yaml`](../charts/relay-control/values.yaml), [`charts/relay-control/templates/_helpers.tpl`](../charts/relay-control/templates/_helpers.tpl)
 
-#### opt.relay-cloud-api.sign-in
+#### opt.relay-control.sign-in
 
-<a id="opt-relay-cloud-api-sign-in"></a>
+<a id="opt-relay-control-sign-in"></a>
 
-**Sign-in methods (OIDC, email links), invites and auto-join** · shipped · chart `relay-cloud-api` · profiles relay-cloud-api
+**Sign-in methods (OIDC, email links), invites and auto-join** · shipped · chart `relay-control` · profiles relay-control
 
 auth.oidc (issuer, clientId, secretKeys.oidcClientSecret; optional
 allowedDomains, displayName, scopes, redirectUrl) enables OpenID Connect
@@ -2042,13 +2154,13 @@ any method only the operator break-glass (bootstrap token approving a
 - Env: `SELFHOST_OIDC_ISSUER`, `SELFHOST_OIDC_CLIENT_ID`, `SELFHOST_OIDC_CLIENT_SECRET_FILE`, `SELFHOST_OIDC_ALLOWED_DOMAINS`, `SELFHOST_OIDC_DISPLAY_NAME`, `SELFHOST_OIDC_SCOPES`, `SELFHOST_OIDC_REDIRECT_URL`, `SELFHOST_OIDC_ALLOW_HTTP_ISSUER`, `SELFHOST_EMAIL_LOGIN`, `SELFHOST_AUTO_JOIN_DOMAINS`, `SELFHOST_INVITE_TTL_HOURS`
 - Secret: `<existingSecret>` from `existingSecret`; keys `<operator-chosen, e.g. oidc-client-secret>` from `secretKeys.oidcClientSecret` (optional: required with auth.oidc.issuer)
 - Verify: GET https://<root host>/login shows "Continue with <displayName>"; the admin email signs in and GET /cloud/api/v1/auth/whoami reports role owner
-- Sources: [`charts/relay-cloud-api/values.yaml`](../charts/relay-cloud-api/values.yaml), [`charts/relay-cloud-api/templates/_helpers.tpl`](../charts/relay-cloud-api/templates/_helpers.tpl)
+- Sources: [`charts/relay-control/values.yaml`](../charts/relay-control/values.yaml), [`charts/relay-control/templates/_helpers.tpl`](../charts/relay-control/templates/_helpers.tpl)
 
-#### opt.relay-cloud-api.smtp
+#### opt.relay-control.smtp
 
-<a id="opt-relay-cloud-api-smtp"></a>
+<a id="opt-relay-control-smtp"></a>
 
-**SMTP for invite emails and sign-in links** · shipped · chart `relay-cloud-api` · profiles relay-cloud-api
+**SMTP for invite emails and sign-in links** · shipped · chart `relay-control` · profiles relay-control
 
 smtp.host (+ port, security starttls|tls|none, from, and username with
 secretKeys.smtpPassword) lets the API email invites and, with
@@ -2062,13 +2174,13 @@ owners copy the single-use link from Settings > Members.
 - Env: `SELFHOST_SMTP_HOST`, `SELFHOST_SMTP_PORT`, `SELFHOST_SMTP_SECURITY`, `SELFHOST_SMTP_USERNAME`, `SELFHOST_SMTP_PASSWORD_FILE`, `SELFHOST_EMAIL_FROM`
 - Secret: `<existingSecret>` from `existingSecret`; keys `<operator-chosen, e.g. smtp-password>` from `secretKeys.smtpPassword` (optional: required with smtp.username)
 - Verify: an invite created in Settings > Members reports "Invitation emailed to <email>" (emailDelivery sent)
-- Sources: [`charts/relay-cloud-api/values.yaml`](../charts/relay-cloud-api/values.yaml), [`charts/relay-cloud-api/templates/_helpers.tpl`](../charts/relay-cloud-api/templates/_helpers.tpl)
+- Sources: [`charts/relay-control/values.yaml`](../charts/relay-control/values.yaml), [`charts/relay-control/templates/_helpers.tpl`](../charts/relay-control/templates/_helpers.tpl)
 
-#### opt.relay-cloud-api.integrations
+#### opt.relay-control.integrations
 
-<a id="opt-relay-cloud-api-integrations"></a>
+<a id="opt-relay-control-integrations"></a>
 
-**Integration OAuth apps for just-in-time connects** · shipped · chart `relay-cloud-api` · profiles relay-cloud-api
+**Integration OAuth apps for just-in-time connects** · shipped · chart `relay-control` · profiles relay-control
 
 integrations.<provider>.existingSecret supplies the customer's own OAuth
 app for an integration (github, slack, linear, notion, ...): the client ID
@@ -2090,13 +2202,13 @@ operator OAuth apps (relaycontrol #12 or later).
 - Values: `integrations`
 - Secret: `<operator-chosen, integrations.<provider>.existingSecret>`; keys `client-id`; `client-secret`
 - Verify: helm template renders the client ID from secretKeyRef and mounts only the client secret, and fails on a missing existingSecret, an inline clientId/clientSecret (unsupported field), equal key names, the migration credential key, or an invalid provider id
-- Sources: [`charts/relay-cloud-api/values.yaml`](../charts/relay-cloud-api/values.yaml), [`charts/relay-cloud-api/templates/_helpers.tpl`](../charts/relay-cloud-api/templates/_helpers.tpl), [`charts/relay-cloud-api/templates/deployment.yaml`](../charts/relay-cloud-api/templates/deployment.yaml)
+- Sources: [`charts/relay-control/values.yaml`](../charts/relay-control/values.yaml), [`charts/relay-control/templates/_helpers.tpl`](../charts/relay-control/templates/_helpers.tpl), [`charts/relay-control/templates/deployment.yaml`](../charts/relay-control/templates/deployment.yaml)
 
-#### opt.relay-cloud-api.flows
+#### opt.relay-control.flows
 
-<a id="opt-relay-cloud-api-flows"></a>
+<a id="opt-relay-control-flows"></a>
 
-**Relayflows control-plane storage and worker queue** · shipped · chart `relay-cloud-api` · profiles relay-cloud-api
+**Relayflows control-plane storage and worker queue** · shipped · chart `relay-control` · profiles relay-control
 
 flows.storage selects where run artifacts live: postgres (inline, the
 default) or gcs (flows.gcsBucket required, flows.gcsPrefix optional;
@@ -2112,13 +2224,13 @@ must stay below every proxy timeout in front of the API.
 - Values: `flows.*`
 - Env: `SELFHOST_FLOWS_STORAGE`, `SELFHOST_FLOWS_GCS_BUCKET`, `SELFHOST_FLOWS_GCS_PREFIX`, `SELFHOST_FLOWS_WORKER_RELAYCAST_URL`, `SELFHOST_FLOWS_QUEUE_PING_MS`
 - Verify: helm template fails for flows.storage=gcs without flows.gcsBucket, or flows.queuePingMs outside 1000-120000
-- Sources: [`charts/relay-cloud-api/values.yaml`](../charts/relay-cloud-api/values.yaml), [`charts/relay-cloud-api/templates/_helpers.tpl`](../charts/relay-cloud-api/templates/_helpers.tpl)
+- Sources: [`charts/relay-control/values.yaml`](../charts/relay-control/values.yaml), [`charts/relay-control/templates/_helpers.tpl`](../charts/relay-control/templates/_helpers.tpl)
 
-#### opt.relay-cloud-api.telemetry
+#### opt.relay-control.telemetry
 
-<a id="opt-relay-cloud-api-telemetry"></a>
+<a id="opt-relay-control-telemetry"></a>
 
-**Self-host telemetry level and transport** · shipped · chart `relay-cloud-api` · profiles relay-cloud-api
+**Self-host telemetry level and transport** · shipped · chart `relay-control` · profiles relay-control
 
 telemetry.level (SELFHOST_TELEMETRY_LEVEL) is errors (the chart default:
 scrubbed error metadata and health only, never content), full (adds
@@ -2141,20 +2253,20 @@ allowAllEgress=false, the level is not off and the transport is https.
 - Env: `SELFHOST_TELEMETRY_LEVEL`, `SELFHOST_TELEMETRY_TRANSPORT`, `SELFHOST_TELEMETRY_ENDPOINT`, `SELFHOST_TELEMETRY_INSTALL_ID`, `SELFHOST_TELEMETRY_INSTALL_KEY_FILE`, `SELFHOST_TELEMETRY_PROBES`, `SELFHOST_TELEMETRY_DEPLOYMENT`
 - Secret: `<existingSecret>` from `existingSecret`; keys `<operator-chosen, no default>` from `secretKeys.telemetryInstallKey` (optional: required once the install is registered unless telemetry.level is off)
 - Verify: the default render sets SELFHOST_TELEMETRY_LEVEL=off until installId, install key and (https) endpoint are set; helm template fails when only some of them are set; ci/agent-relay/render.sh checks both and that the egress rule renders only when telemetry is sent over https
-- Sources: [`charts/relay-cloud-api/values.yaml`](../charts/relay-cloud-api/values.yaml), [`charts/relay-cloud-api/templates/_helpers.tpl`](../charts/relay-cloud-api/templates/_helpers.tpl), [`charts/relay-cloud-api/templates/networkpolicy.yaml`](../charts/relay-cloud-api/templates/networkpolicy.yaml)
+- Sources: [`charts/relay-control/values.yaml`](../charts/relay-control/values.yaml), [`charts/relay-control/templates/_helpers.tpl`](../charts/relay-control/templates/_helpers.tpl), [`charts/relay-control/templates/networkpolicy.yaml`](../charts/relay-control/templates/networkpolicy.yaml)
 
 #### opt.agent-relay.single-host
 
 <a id="opt-agent-relay-single-host"></a>
 
-**Single-host mode for the dashboard and the control API** · shipped · chart `agent-relay`, `relay-cloud-api`, `relay-dashboard` · profiles agent-relay
+**Single-host mode for the dashboard and the control API** · shipped · chart `agent-relay`, `relay-control`, `relay-webapp` · profiles agent-relay
 
 global.singleHost.host (off when empty) puts the dashboard and the
 self-host control API on one host: / to the dashboard and /cloud/api,
-/login and /api to relay-cloud-api (flows workers and the integrations
-OAuth callback use <publicUrl>/api/v1/...). relay-cloud-api.publicUrl
-and relay-dashboard.runtime.publicUrl are derived as https://<host>, and
-relay-dashboard.ingress.host as the bare <host>; each must be left empty
+/login and /api to relay-control (flows workers and the integrations
+OAuth callback use <publicUrl>/api/v1/...). relay-control.publicUrl
+and relay-webapp.runtime.publicUrl are derived as https://<host>, and
+relay-webapp.ingress.host as the bare <host>; each must be left empty
 or equal its derived value. The GKE
 Ingress then renders no api host and its ManagedCertificate drops it;
 the api and cast BackendConfigs are unchanged. The leaf dashboard
@@ -2168,18 +2280,18 @@ rather than Gateway API.
 - Default: `disabled`
 - Choices: `disabled`: per-service hosts (gkeIngress.hosts.root/api/cast/history); `enabled`: global.singleHost.host plus gkeIngress.hosts.cast/history
 - Provided by: operator
-- Values: `global.singleHost.host`, `relay-cloud-api:global.singleHost.host`, `relay-cloud-api:publicUrl`, `relay-dashboard:global.singleHost.host`, `relay-dashboard:runtime.publicUrl`, `relay-dashboard:ingress.host`
+- Values: `global.singleHost.host`, `relay-control:global.singleHost.host`, `relay-control:publicUrl`, `relay-webapp:global.singleHost.host`, `relay-webapp:runtime.publicUrl`, `relay-webapp:ingress.host`
 - Env: `SELFHOST_PUBLIC_URL`, `DASHBOARD_PUBLIC_URL`
-- Verify: render has one rule for the single host (/cloud/api, /login, /api to relay-cloud-api, / to the dashboard), no api host, and SELFHOST_PUBLIC_URL = DASHBOARD_PUBLIC_URL = https://<host>
-- Sources: [`charts/agent-relay/templates/gke-ingress.yaml`](../charts/agent-relay/templates/gke-ingress.yaml), [`charts/agent-relay/templates/_helpers.tpl`](../charts/agent-relay/templates/_helpers.tpl), [`charts/agent-relay/values-single-host-example.yaml`](../charts/agent-relay/values-single-host-example.yaml), [`charts/relay-dashboard/templates/ingress.yaml`](../charts/relay-dashboard/templates/ingress.yaml), [`ci/agent-relay/render.sh`](../ci/agent-relay/render.sh), [`ci/agent-relay/subdomain-golden.sh`](../ci/agent-relay/subdomain-golden.sh)
+- Verify: render has one rule for the single host (/cloud/api, /login, /api to relay-control, / to the dashboard), no api host, and SELFHOST_PUBLIC_URL = DASHBOARD_PUBLIC_URL = https://<host>
+- Sources: [`charts/agent-relay/templates/gke-ingress.yaml`](../charts/agent-relay/templates/gke-ingress.yaml), [`charts/agent-relay/templates/_helpers.tpl`](../charts/agent-relay/templates/_helpers.tpl), [`charts/agent-relay/values-single-host-example.yaml`](../charts/agent-relay/values-single-host-example.yaml), [`charts/relay-webapp/templates/ingress.yaml`](../charts/relay-webapp/templates/ingress.yaml), [`ci/agent-relay/render.sh`](../ci/agent-relay/render.sh), [`ci/agent-relay/subdomain-golden.sh`](../ci/agent-relay/subdomain-golden.sh)
 
-#### opt.relay-dashboard.ingress
+#### opt.relay-webapp.ingress
 
-<a id="opt-relay-dashboard-ingress"></a>
+<a id="opt-relay-webapp-ingress"></a>
 
-**Dashboard ingress and same-origin API proxy** · shipped · chart `relay-dashboard` · profiles relay-dashboard
+**Dashboard ingress and same-origin API proxy** · shipped · chart `relay-webapp` · profiles relay-webapp
 
-The dashboard ingress routes /cloud/api to relay-cloud-api and / to the
+The dashboard ingress routes /cloud/api to relay-control and / to the
 dashboard. The GKE proof disables this leaf ingress and supplies the same
 routes through its single umbrella Ingress.
 
@@ -2188,16 +2300,16 @@ routes through its single umbrella Ingress.
 - Provided by: operator
 - Values: `runtime.publicUrl`, `runtime.appPath`, `runtime.apiBasePath`, `runtime.loginPath`, `ingress.tls`, `imagePullSecrets`
 - Env: `DASHBOARD_PUBLIC_URL`, `DASHBOARD_APP_PATH`, `DASHBOARD_API_BASE_PATH`, `DASHBOARD_LOGIN_PATH`
-- Secret: `<ingress.tls[].secretName>`; keys . kubernetes.io/tls
-- Secret: `<imagePullSecrets[].name>`; keys . optional registry pull Secret
-- Verify: render contains the configured dashboard runtime environment and routes /cloud/api to relay-cloud-api
-- Sources: [`charts/relay-dashboard/templates/ingress.yaml`](../charts/relay-dashboard/templates/ingress.yaml), [`ci/agent-relay/render.sh`](../ci/agent-relay/render.sh)
+- Secret: `<ingress.tls[].secretName>`. kubernetes.io/tls
+- Secret: `<imagePullSecrets[].name>`. optional registry pull Secret
+- Verify: render contains the configured dashboard runtime environment and routes /cloud/api to relay-control
+- Sources: [`charts/relay-webapp/templates/ingress.yaml`](../charts/relay-webapp/templates/ingress.yaml), [`ci/agent-relay/render.sh`](../ci/agent-relay/render.sh)
 
-#### opt.relay-dashboard.customer-profile
+#### opt.relay-webapp.customer-profile
 
-<a id="opt-relay-dashboard-customer-profile"></a>
+<a id="opt-relay-webapp-customer-profile"></a>
 
-**Dashboard customer profile (enterprise branding)** · shipped · chart `relay-dashboard` · profiles relay-dashboard
+**Dashboard customer profile (enterprise branding)** · shipped · chart `relay-webapp` · profiles relay-webapp
 
 customerProfile rebrands the dashboard without a new image: product
 name and title, light and dark logos, favicon, accent and primary
@@ -2205,7 +2317,7 @@ button colors, a support link and the "Powered by Agent Relay" line.
 The chart renders the map as JSON into DASHBOARD_CUSTOMER_PROFILE and
 the image serves it in /runtime-config.js; the browser ignores invalid
 fields. Empty (the default) keeps the Agent Relay look. Requires a
-dashboard image built from relay-dashboard #84 or later (its
+dashboard image built from relay-webapp #84 or later (its
 /runtime-config.js has a customerProfile key); older images ignore it.
 
 - Default: `none`
@@ -2214,7 +2326,7 @@ dashboard image built from relay-dashboard #84 or later (its
 - Values: `customerProfile`
 - Env: `DASHBOARD_CUSTOMER_PROFILE`
 - Verify: with customerProfile set, /runtime-config.js has customerProfile and the dashboard shows the product name and logo; without it, customerProfile is null
-- Sources: [`charts/relay-dashboard/templates/deployment.yaml`](../charts/relay-dashboard/templates/deployment.yaml), [`charts/relay-dashboard/README.md`](../charts/relay-dashboard/README.md), [`charts/relay-dashboard/ci/branding.profile.yaml`](../charts/relay-dashboard/ci/branding.profile.yaml)
+- Sources: [`charts/relay-webapp/templates/deployment.yaml`](../charts/relay-webapp/templates/deployment.yaml), [`charts/relay-webapp/README.md`](../charts/relay-webapp/README.md), [`charts/relay-webapp/ci/branding.profile.yaml`](../charts/relay-webapp/ci/branding.profile.yaml)
 
 #### opt.agent-relay.gke-ingress
 
@@ -2230,8 +2342,8 @@ denied at the edge on the cast and api hosts. The api Service is bound
 (gkeIngress.backends.api.timeoutSec, at least 60, default 3600) keeps the
 flows worker queue SSE stream open past GCE's 30s default. The
 BackendConfig is named <gkeIngress.name>-api (the name truncated to 59
-characters first); relay-cloud-api renders the annotation from
-relay-cloud-api.service.backendConfig, which must equal that name (the
+characters first); relay-control renders the annotation from
+relay-control.service.backendConfig, which must equal that name (the
 render fails with the expected name otherwise). The relaycast Service is
 bound the same way to <gkeIngress.name>-cast (the name truncated to 58
 characters; gkeIngress.backends.cast.timeoutSec, default 3600) through
@@ -2501,7 +2613,7 @@ ingressFrom.
 - Choices: `false`; `true`
 - Provided by: operator
 - Values: `jwksIngress.*`, `networkPolicy.enabled`, `networkPolicy.ingressFrom`
-- Secret: `<jwksIngress.tls[].secretName>`; keys . kubernetes.io/tls for the JWKS host
+- Secret: `<jwksIngress.tls[].secretName>`. kubernetes.io/tls for the JWKS host
 - Verify: curl -fsS https://<host>/.well-known/jwks.json; other paths are not routed
 - Sources: [`charts/relayauth/values.yaml:77`](../charts/relayauth/values.yaml#L77), [`charts/relayauth/templates/_helpers.tpl:103`](../charts/relayauth/templates/_helpers.tpl#L103)
 
@@ -2620,7 +2732,7 @@ Optional Ingress with your hosts and TLS Secrets.
 - Choices: `false`; `true`
 - Provided by: operator
 - Values: `ingress.*`
-- Secret: `<ingress.tls[].secretName>`; keys . kubernetes.io/tls
+- Secret: `<ingress.tls[].secretName>`. kubernetes.io/tls
 - Verify: curl -fsS https://<host>/health
 - Sources: [`charts/relayfile/values.yaml:113`](../charts/relayfile/values.yaml#L113)
 
@@ -2738,22 +2850,118 @@ DURABLE_ACTORS_S3_*). devRuntime runs `durable-actors dev` as a sidecar for kind
 - Verify: kubectl get deploy <fullname>-server -o jsonpath='{.metadata.labels.agentworkforce\.dev/relayfile-backend}' is durable-actors; curl <url>/health
 - Sources: [`charts/relayfile/values.yaml:14`](../charts/relayfile/values.yaml#L14), [`charts/relayfile/templates/actors/_helpers.tpl:90`](../charts/relayfile/templates/actors/_helpers.tpl#L90)
 
+#### opt.sessions-native-ingest
+
+<a id="opt-sessions-native-ingest"></a>
+
+**Default-off native session upload edge** · shipped · chart `sessions-pipeline` · profiles selfhost-postgres, migration, external-selfhosted, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql
+
+Separate SERVICE=session-ingest Deployment and ClusterIP from merged
+pipeline #363/974e6f74; does not replace internal alleyoop-ingest. Requires
+a qualified immutable image, normalized public origin, introspection base
+URL, runtime and S3 Secret references, and a pinned PostgreSQL custom CA.
+Canonical inline test/pilot assembly only. No ingress, role bootstrap,
+publication, GC, product deletion, provider removal or profile enablement.
+
+- Default: `disabled`
+- Choices: `disabled`; `enabled`: Requires a qualified native image and explicit pilot plan.
+- Provided by: operator
+- Values: `ingestEdge.*`
+- Env: `SERVICE`, `RELAYHISTORY_SELFHOST_INGEST`, `RELAYHISTORY_INGEST_PORT`, `RELAYHISTORY_INGEST_ORIGIN`, `RELAYCONTROL_INTROSPECT_URL`, `RELAYCONTROL_INTROSPECT_SECRET`, `RELAYHISTORY_INGEST_DATABASE_URL`, `SESSION_POSTGRES_TLS_PROFILE`, `SESSION_POSTGRES_CA_FILE`, `SESSION_POSTGRES_CA_SHA256`, `RELAYHISTORY_INGEST_PG_POOL_MAX`, `ALLOW_IN_CLUSTER_HTTP`, `LOCKER_PROVIDER`, `LOCKER_BUCKET`, `LOCKER_ENDPOINT`, `LOCKER_REGION`, `LOCKER_ACCESS_KEY_ID`, `LOCKER_SECRET_ACCESS_KEY`, `INGEST_KEY_ROOT`, `INGEST_MAX_PER_USER`, `INGEST_MAX_PER_ORG`
+- Secret: `<native ingest runtime Secret>` from `ingestEdge.config.existingSecret`; keys `database-url` from `ingestEdge.config.databaseUrlKey`; `introspect-secret` from `ingestEdge.config.introspectSecretKey`
+- Secret: `<native ingest object-store Secret>` from `ingestEdge.locker.existingSecret`; keys `access-key-id` from `ingestEdge.locker.accessKeyIdKey`; `secret-access-key` from `ingestEdge.locker.secretAccessKeyKey`
+- Verify: Keep disabled until merged composition and exact image/generation pass native PG/TLS/MinIO upload-to-readback proof. Helm readiness is not an authorization, schema, object-store or migration barrier.
+- Sources: [`charts/sessions-pipeline/templates/ingest-edge.yaml:1`](../charts/sessions-pipeline/templates/ingest-edge.yaml#L1), [`charts/sessions-pipeline/values.yaml:1`](../charts/sessions-pipeline/values.yaml#L1), [`docs/self-hosted-native-ingest.md:1`](../docs/self-hosted-native-ingest.md#L1)
+
+#### opt.sessions-read-api
+
+<a id="opt-sessions-read-api"></a>
+
+**Default-off self-host session read API container** · shipped · chart `sessions-pipeline` · profiles selfhost-postgres, migration, external-selfhosted, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql
+
+Chart plumbing for the pipeline session-read-api SERVICE. Requires an
+explicitly pinned compatible image, read-role configuration JSON in a
+Secret, an explicit coverage floor and workspace allowlist, a public token
+audience, and either an explicitly configured temporary issuer (legacy
+chart mode) or auth.mode=relaycontrol_only from merged pipeline #364.
+Control-only mode requires enabled introspection and empty legacy issuer
+settings, emits READ_API_AUTH_MODE, and omits both RELAYAUTH variables.
+It cannot be injected through extraEnv. A LOCKER_BUCKET extraEnv entry
+requires a nonempty literal bucket, literal PIPELINE_ORG_FROM_PREFIX=true
+and PIPELINE_KEY_PREFIX=96bulls. Missing/false flags, org-suffixed roots
+and valueFrom references for these layout inputs refuse rendering.
+Bucket literals reject surrounding whitespace; when both services are
+enabled, the configured reader bucket must equal ingestEdge.locker.bucket.
+Search is selected
+via SEARCH_INDEX_BACKEND (postgres by default) through the upstream adapter
+registry, not implemented in this chart. Introspection uses
+its own Secret reference. Readiness requires health JSON enabled:true;
+dormant HTTP 200 is insufficient. No install profile enables this option.
+Pipeline PRs 317/318 are merged; the approved PG-only/canonical/auth
+runtime assembly remains unqualified, so this entry does not claim runtime availability or proof.
+
+- Default: `disabled`
+- Choices: `disabled`; `enabled`: Requires an owner-approved compatible runtime.
+- Provided by: operator
+- Values: `readApi.*`
+- Env: `SERVICE`, `RELAYHISTORY_SELFHOST_READ_API`, `RELAYHISTORY_READ_API_PORT`, `RELAYHISTORY_READ_API_SECRET`, `READ_API_ORIGIN`, `READ_API_AUTH_MODE`, `LOCKER_BUCKET`, `PIPELINE_ORG_FROM_PREFIX`, `PIPELINE_KEY_PREFIX`, `READ_API_COMPLETE_SINCE`, `READ_API_DIRECTORY_WORKSPACES`, `SEARCH_INDEX_BACKEND`, `ALLOW_IN_CLUSTER_HTTP`, `RELAYAUTH_JWKS_URL`, `RELAYAUTH_ISSUER`, `RELAYHISTORY_ACCEPT_RELAYCONTROL_TOKENS`, `RELAYCONTROL_INTROSPECT_URL`, `RELAYCONTROL_INTROSPECT_SECRET`
+- Secret: `<read API configuration Secret>` from `readApi.config.existingSecret`; keys `RELAYHISTORY_READ_API_SECRET` from `readApi.config.key`
+- Secret: `<read API introspection Secret>` from `readApi.auth.relaycontrol.existingSecret`; keys `RELAYCONTROL_INTROSPECT_SECRET` from `readApi.auth.relaycontrol.key`
+- Verify: Leave disabled until the image and assembly contract land; render/schema/probe tests prove plumbing only. Authenticated workspace/session read acceptance remains required.
+- Sources: [`charts/sessions-pipeline/templates/read-api.yaml:1`](../charts/sessions-pipeline/templates/read-api.yaml#L1), [`charts/sessions-pipeline/values.yaml:1`](../charts/sessions-pipeline/values.yaml#L1), [`docs/self-hosted-session-read-api.md:1`](../docs/self-hosted-session-read-api.md#L1)
+
+#### opt.control-legacy-relayauth
+
+<a id="opt-control-legacy-relayauth"></a>
+
+**Control legacy RelayAuth client environment** · shipped · chart `relay-control` · profiles relay-control, agent-relay
+
+Keep services.relayauthEnabled true for the published legacy control
+images. False omits RELAYAUTH_URL and RELAYAUTH_API_KEY_FILE and removes
+the legacy key from the API Secret projection. It requires the approved
+no-RelayAuth/caller-token control image; this changes no verifier code,
+introspection logic or component enablement. Runtime flags are not changed
+in the kind profiles. Introspection config uses existing extraEnv refs.
+
+- Default: `true`
+- Choices: `true`; `false`: Requires a compatible caller-token image.
+- Provided by: operator
+- Values: `services.relayauthEnabled`
+- Env: `RELAYAUTH_URL`, `RELAYAUTH_API_KEY_FILE`
+- Verify: Render the disabled legacy-client mode and confirm URL/key env and key projection are absent; runtime auth acceptance still requires compatible upstream source.
+- Sources: [`charts/relay-control/templates/_helpers.tpl:1`](../charts/relay-control/templates/_helpers.tpl#L1), [`charts/relay-control/templates/deployment.yaml:1`](../charts/relay-control/templates/deployment.yaml#L1), [`docs/self-hosted-session-read-api.md:1`](../docs/self-hosted-session-read-api.md#L1)
+
+#### opt.relay-chief.image-pull-secrets
+
+<a id="opt-relay-chief-image-pull-secrets"></a>
+
+**Relay Chief image pull Secrets** · shipped · chart `relay-chief` · profiles relay-chief
+
+Pull Secrets for a private registry or customer mirror.
+
+- Default: `none`
+- Choices: `none`; `listed`
+- Provided by: operator
+- Values: `imagePullSecrets`
+- Verify: after setting suspend to false, the cycle's Job pulls its image without ImagePullBackOff
+- Sources: [`charts/relay-chief/values.yaml:9`](../charts/relay-chief/values.yaml#L9), [`charts/relay-chief/templates/cronjob.yaml:34`](../charts/relay-chief/templates/cronjob.yaml#L34)
+
 ## Pod plumbing env (not operator-facing)
 
 Rendered by the charts but not a requirement or an option: fixed by the chart or derived from other values.
 
 | env | chart | why |
 | --- | --- | --- |
-| `SERVICE` | sessions-pipeline-worker, alleyoop | selects the entry point of the one services image |
-| `OTEL_SERVICE_NAME` | sessions-pipeline-worker, alleyoop | equals SERVICE |
-| `TMPDIR` | sessions-pipeline-worker, alleyoop | the writable emptyDir under a read-only root filesystem |
+| `SERVICE` | sessions-pipeline-worker, session-ingest-api | selects the entry point of the one services image |
+| `OTEL_SERVICE_NAME` | sessions-pipeline-worker, session-ingest-api | equals SERVICE |
+| `TMPDIR` | sessions-pipeline-worker, session-ingest-api | the writable emptyDir under a read-only root filesystem |
 | `HOME` | sessions-pipeline, sessions-pipeline-worker, relayflows | a writable home under a read-only root filesystem |
 | `ROLES` | sessions-pipeline-worker | wait-for-role init container; derived from waitForRole.role and migrations.runtimeRole |
 | `FUNCTION_DEFAULT` | sessions-pipeline-worker | wait-for-role init container; derived from waitForRole.functionDefault |
 | `INTERVAL` | sessions-pipeline-worker | wait-for-role poll interval (waitForRole.intervalSeconds) |
 | `CLUSTER` | sessions-pipeline | privileged SQL Jobs; the CNPG cluster name (bootstrapJob.cluster) |
 | `DATABASE` | sessions-pipeline | privileged SQL Jobs; the HoopDb database (bootstrapJob.database) |
-| `INGEST_PORT` | alleyoop | from ingest.port |
+| `INGEST_PORT` | session-ingest-api | from ingest.port |
 | `PORT` | relaycast, relayauth | from server.port |
 | `RELAYCAST_DB_PATH` | relaycast | fixed /data/relaycast.db on the data PVC |
 | `RELAYCAST_ENV` | relaycast | reserved name in the extraEnv guard; the environment is passed as --env (server.environment) |

@@ -1,0 +1,21 @@
+# Single-host mode through the leaf (non-GKE) Ingress: runtime.publicUrl and
+# ingress.host are derived from global.singleHost.host, and /api joins
+# /cloud/api and /login on the API backend.
+global:
+  singleHost:
+    host: relay.gcp-proof.agentrelay.com
+image:
+  digest: sha256:1111111111111111111111111111111111111111111111111111111111111111
+api:
+  serviceName: ci-relay-control
+ingress:
+  enabled: true
+  className: nginx
+  tls:
+    - secretName: relay-gcp-proof-agentrelay-com-tls
+      hosts: [relay.gcp-proof.agentrelay.com]
+networkPolicy:
+  ingressFrom:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: ingress-nginx

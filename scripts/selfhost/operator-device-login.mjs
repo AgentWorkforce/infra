@@ -11,7 +11,22 @@ const codeValue = value => {
   if (typeof value !== "string" || !/^[A-Z0-9]{4}-[A-Z0-9]{4}$/i.test(value)) refuse("invalid_user_code");
   return value.toUpperCase();
 };
-const nullable = value => value === "-" ? null : value;
+function selectedLabels(args) {
+  const values = {};
+  for (let i = 0; i < args.length; i++) {
+    const option = args[i];
+    const match = /^--(client|host)(-null)?$/.exec(option);
+    if (!match || Object.hasOwn(values, match[1])) refuse("invalid_arguments");
+    if (match[2]) values[match[1]] = null;
+    else {
+      const value = args[++i];
+      if (typeof value !== "string") refuse("invalid_arguments");
+      values[match[1]] = value;
+    }
+  }
+  if (!Object.hasOwn(values, "client") || !Object.hasOwn(values, "host")) refuse("invalid_arguments");
+  return values;
+}
 const list = (value, key) => {
   if (!value || !Array.isArray(value[key])) refuse("invalid_control_response");
   return value[key];
@@ -24,7 +39,8 @@ export async function operatorDeviceLogin(args, {
   port = process.env.PORT || "3000",
   now = Date.now,
 } = {}) {
-  const [action, rawCode, orgId, workspaceId, userId, clientName, hostName] = args;
+  const [action, rawCode, orgId, workspaceId, userId, ...labelArgs] = args;
+  let labels;
   if (!/^[0-9]{1,5}$/.test(String(port)) || Number(port) < 1 || Number(port) > 65535) refuse("invalid_local_port");
   if (action === "inventory") {
     if (args.length !== 1) refuse("invalid_arguments");
@@ -32,8 +48,8 @@ export async function operatorDeviceLogin(args, {
     if (args.length !== 2) refuse("invalid_arguments");
     codeValue(rawCode);
   } else if (action === "approve" || action === "deny") {
-    if (args.length !== 7 || ![orgId, workspaceId, userId].every(uuid) ||
-        !clientName || !hostName) refuse("invalid_arguments");
+    if (![orgId, workspaceId, userId].every(uuid)) refuse("invalid_arguments");
+    labels = selectedLabels(labelArgs);
     codeValue(rawCode);
   } else refuse("invalid_action");
 
@@ -95,8 +111,8 @@ export async function operatorDeviceLogin(args, {
   const found = await lookup();
   if (found.status !== "pending") refuse("request_not_pending");
   if (Date.parse(found.expires_at) <= now()) refuse("request_expired");
-  if (found.client_name !== nullable(clientName)) refuse("client_mismatch");
-  if (found.desktop_host_name !== nullable(hostName)) refuse("host_mismatch");
+  if (found.client_name !== labels.client) refuse("client_mismatch");
+  if (found.desktop_host_name !== labels.host) refuse("host_mismatch");
   const decided = await call("/api/v1/auth/device/approve", {
     action, user_code: found.user_code, user_id: userId, workspace_id: workspaceId,
   });

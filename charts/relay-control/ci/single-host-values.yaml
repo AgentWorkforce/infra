@@ -1,0 +1,29 @@
+# Single-host mode: publicUrl is derived from global.singleHost.host and the
+# leaf Ingress stays off (the dashboard host routes /cloud/api, /login, /api).
+global:
+  singleHost:
+    host: relay.gcp-proof.agentrelay.com
+image:
+  repository: example.invalid/relay-control
+  digest: sha256:2222222222222222222222222222222222222222222222222222222222222222
+existingSecret: relay-cloud-api
+database:
+  runtimeRole: selfhost_runtime
+services:
+  relayauthUrl: http://ci-agent-relay-relayauth:8787
+  relaycastUrl: http://ci-agent-relay-relaycast:8787
+  relaycastPublicUrl: https://cast.gcp-proof.agentrelay.com
+  relayhistoryUrl: http://ci-agent-relay-relayhistory:8080
+  relayhistoryPublicUrl: https://history.gcp-proof.agentrelay.com
+ingress:
+  enabled: false
+networkPolicy:
+  # The umbrella GKE Ingress reaches the API from the Google Front End proxy
+  # and health-check ranges; keep same-namespace callers too.
+  ingressFrom:
+    - podSelector: {}
+    - ipBlock: { cidr: 35.191.0.0/16 }
+    - ipBlock: { cidr: 130.211.0.0/22 }
+  allowAllEgress: true
+encryption:
+  keyId: ci-1

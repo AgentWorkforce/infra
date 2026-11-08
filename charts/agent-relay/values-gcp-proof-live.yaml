@@ -3,7 +3,7 @@
 # The exposed components inherit the proof profile's GKE load-balancer
 # NetworkPolicy rules.
 #
-# Cross-namespace requirement: relayhistory and relay-cloud-api below call
+# Cross-namespace requirement: relayhistory and relay-control below call
 # http://relayauth.relayauth.svc:8787 from this namespace. If the RelayAuth
 # release in the relayauth namespace runs with networkPolicy.enabled, its
 # default ingressFrom admits same-namespace pods only and these calls are
@@ -18,6 +18,8 @@ components:
   sessionsPipeline: false
 
 relayhistory:
+  agentRelayCloud:
+    apiUrl: http://relay-cloud-api
   image:
     # Erasure-fix proof build of relayhistory-cloud 3cb76752 (experimental;
     # branch proof/erasure-turns-on-4b5839f). Its 0074 arms the write hold:
@@ -30,7 +32,9 @@ relayhistory:
     jwksUrl: http://relayauth.relayauth.svc:8787/.well-known/jwks.json
     issuer: http://relayauth.relayauth.svc:8787
 
-relay-cloud-api:
+relay-control:
+  nameOverride: relay-cloud-api
+  fullnameOverride: relay-cloud-api
   image:
     # Proof build of AgentWorkforce/relaycontrol 17bdc78 (selfhost/desktop-auth).
     # Proof-only: not in self-hosted/customer-images.yaml, which audits the
@@ -59,15 +63,19 @@ relay-cloud-api:
   database:
     runtimeRole: bulls96_runtime
 
-relay-dashboard:
+relay-webapp:
+  nameOverride: relay-dashboard
+  fullnameOverride: relay-dashboard
+  api:
+    serviceName: relay-cloud-api
   image:
-    # Proof build of AgentWorkforce/relay-dashboard 53d484b
+    # Proof build of AgentWorkforce/relay-webapp 53d484b
     # (selfhost/device-approval; the self-host build served at /). Proof-only.
     digest: sha256:23361e08b899f272ed5debcbd4e7d6c6555591029357d6fba6c54236063bca62
   # The proof's custom Agent Relay Desktop build (AGENT_RELAY_SITE_URL=
   # https://gcp-proof.agentrelay.com, AGENT_RELAY_URL_SCHEME=agentrelay-gcpproof)
   # refuses links for any other scheme or site. Settings > Workspace builds its
-  # connect link from this (relay-dashboard #88; chart relay-dashboard >= 0.1.2,
+  # connect link from this (relay-webapp #88; chart relay-webapp >= 0.1.2,
   # agent-relay >= 0.3.6, renders customerProfile, older charts ignore it).
   customerProfile:
     desktop:

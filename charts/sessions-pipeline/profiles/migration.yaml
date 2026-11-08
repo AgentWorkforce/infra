@@ -17,7 +17,7 @@
 # generation eff8b3be46565b57ad8fa5e4a066dbb6d1fe608313d9c1680bfbcd484add259b.
 hoopdb:
   enabled: true
-locker:
+session-object-storage:
   enabled: true
 otel:
   enabled: false

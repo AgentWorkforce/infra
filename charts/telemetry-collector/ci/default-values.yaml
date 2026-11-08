@@ -1,0 +1,12 @@
+# Render-only identities, never a runnable or accepted image proof.
+image:
+  repository: example.invalid/analytics-collector
+  digest: sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+  sourceRevision: 8359483d2666c1f374190c102237c3022ca3d466
+tlsProxy:
+  image:
+    repository: example.invalid/tls-proxy
+    digest: sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+producersSecret: ci-telemetry-producers
+tlsSecret: ci-telemetry-tls
+rolloutRevision: ci-render-only

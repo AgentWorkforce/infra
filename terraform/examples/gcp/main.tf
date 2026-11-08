@@ -56,7 +56,7 @@ provider "helm" {
   }
 }
 
-# Postgres for relaycontrol (relay-cloud-api), relayhistory and HoopDb
+# Postgres for relaycontrol (relay-control), relayhistory and HoopDb
 # (sessions). Add a database here if you enable durable-actors.
 module "postgres" {
   source = "../../modules/gcp/postgres"
@@ -81,7 +81,7 @@ module "sessions_bucket" {
   kms_key_name = var.kms_key_name
   workload_identity = {
     direct_kubernetes_service_accounts = [
-      for sa in ["worker", "alleyoop"] : { namespace = var.namespace, name = "${var.release_name}-${sa}" }
+      for sa in ["worker", "alleyoop", "session-ingest-api"] : { namespace = var.namespace, name = "${var.release_name}-${sa}" }
     ]
   }
   labels = var.labels

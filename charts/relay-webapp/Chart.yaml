@@ -1,0 +1,17 @@
+apiVersion: v2
+name: relay-webapp
+description: Static self-hosted Agent Relay sessions and messaging dashboard
+type: application
+version: 0.2.0
+appVersion: "0.1.0"
+kubeVersion: ">=1.28.0-0"
+annotations:
+  artifacthub.io/license: Apache-2.0
+  agentworkforce.dev/license-scope: "First-party chart code only; dependencies and images retain their own licenses."
+home: https://github.com/AgentWorkforce/relay-webapp
+keywords: [agent-relay, dashboard, self-hosted]
+maintainers:
+  - name: AgentWorkforce
+    url: https://github.com/AgentWorkforce
+sources:
+  - https://github.com/AgentWorkforce/relay-webapp

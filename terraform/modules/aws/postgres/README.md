@@ -97,7 +97,7 @@ module "postgres" {
 | database\_url\_template | Connection URL shape for the chart Secrets, with placeholders for role, password and database. sslmode=verify-full needs the RDS CA bundle in the trust store; sslmode=require is the minimum with force\_ssl. |
 | db\_subnet\_group\_name | DB subnet group in use. |
 | engine\_mode | "rds" or "aurora". |
-| host | Writer endpoint host name. The host part of every agent-relay database URL (relay-cloud-api database-url, relayhistory DATABASE\_URL, sessions-pipeline HOOPDB\_URL, durable-actors postgres-url). |
+| host | Writer endpoint host name. The host part of every agent-relay database URL (relay-control database-url, relayhistory DATABASE\_URL, sessions-pipeline HOOPDB\_URL, durable-actors postgres-url). |
 | initial\_database | The database created with the instance. |
 | instance\_identifier | RDS instance identifier (null for Aurora). |
 | master\_user\_secret\_arn | Secrets Manager secret (JSON keys username, password) that RDS manages and rotates for the master user. Read it from the bootstrap job or an External Secrets Operator ExternalSecret; the password never enters Terraform state. |

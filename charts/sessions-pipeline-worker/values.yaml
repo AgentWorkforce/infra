@@ -28,6 +28,15 @@ imagePullSecrets: []
 nameOverride: ""
 fullnameOverride: ""
 
+# Only for retaining an already installed release's workload names/selectors.
+# New installs use the three descriptive session-* workload names. This does
+# not migrate a running release or prove data survival across a rename.
+legacyResourceNames: false
+# Upgrades must retain legacyResourceNames or explicitly confirm a drained
+# workload cutover. Recreate does not coordinate differently named Deployments.
+# Persist true only after stopping the old indexer, or for an already-new release.
+acknowledgeWorkloadRename: false
+
 # Secret containing Locker credentials in secret mode and, unless
 # hoopdb.existingSecret is set, HOOPDB_URL. May be empty in podIdentity mode
 # when HoopDb uses its own Secret.
@@ -221,6 +230,8 @@ workerHealth:
 # ledger is complete, so apply order does not matter.
 components:
   hoopdb-indexer:
+    # Optional explicit Deployment identity; otherwise fullname-scoped.
+    fullnameOverride: ""
     enabled: true
     # Keep at 1: the manifest reconcile is not leader-elected yet.
     replicas: 1
@@ -229,6 +240,8 @@ components:
       requests: { cpu: 50m, memory: 128Mi }
       limits: { memory: 512Mi }
   referee:
+    # Optional explicit Deployment identity; otherwise fullname-scoped.
+    fullnameOverride: ""
     enabled: true
     replicas: 1
     env: []
@@ -236,6 +249,8 @@ components:
       requests: { cpu: 25m, memory: 96Mi }
       limits: { memory: 384Mi }
   bob-costas:
+    # Optional explicit Deployment identity; otherwise fullname-scoped.
+    fullnameOverride: ""
     enabled: true
     replicas: 1
     env:

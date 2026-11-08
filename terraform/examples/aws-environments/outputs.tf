@@ -67,14 +67,14 @@ output "application_contract" {
       cloudApi         = true
       dashboard        = true
       sessionsPipeline = true
-      relayhistory     = true
+      relayhistory     = false # History is a pipeline capability, not a standalone target server.
       relaycast        = true
-      relayauth        = true
+      relayauth        = false # Target services authenticate through Control.
       durableActors    = false
       relayfile        = var.enable_relayfile
     }
     relaycast_backend                             = "postgres-required-not-yet-qualified"
-    hoopdb_bootstrap_profile                      = "shared-rds-schema-review-required"
+    hoopdb_bootstrap_profile                      = "dedicated-rds-database-review-required"
     overlapping_pipeline_workers_must_be_disabled = var.pipeline_runtime == "lambda"
   }
 }
@@ -83,7 +83,7 @@ output "service_accounts" {
   description = "Distinct environment-scoped workload bindings; the application chart must use these identities."
   value = {
     namespace = local.namespace
-    storage   = ["${var.release_name}-worker", "${var.release_name}-alleyoop"]
+    storage   = ["${var.release_name}-worker", "${var.release_name}-alleyoop", "${var.release_name}-session-ingest-api"]
     indexer   = local.search_indexer_sa
     reader    = local.search_reader_sa
   }
@@ -104,11 +104,11 @@ output "lambda_shared_environment" {
 }
 
 output "postgres_service_bindings" {
-  description = "Target per-service schemas and independent migration/runtime roles on the SAME RDS/database. Contains no credentials; schema-aware runtime/bootstrap and isolation proof remain required. Optional-service bindings do not enable those workloads."
+  description = "Separate service databases and independent migration/runtime roles on the same RDS endpoint. Contains no credentials; reviewed database bootstrap, CONNECT/ACL isolation and runtime proof remain required. Optional-service bindings do not enable workloads."
   value       = module.postgres_layout.bindings
 }
 
 output "postgres_topology" {
-  description = "Shared-database relational target; application_sql_ready=false until actual service integration and managed-RDS validation are completed."
+  description = "Single-instance, separate-service-database target; application_sql_ready=false until actual service integration and managed-RDS validation are completed."
   value       = module.postgres_layout.topology
 }

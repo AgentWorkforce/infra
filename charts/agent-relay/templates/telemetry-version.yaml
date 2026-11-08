@@ -1,0 +1,3 @@
+{{- if and .Values.components.telemetryCollector (not (semverCompare ">=1.29.0-0" .Capabilities.KubeVersion.Version)) -}}
+{{- fail "telemetry-collector requires Kubernetes 1.29+ for ReadWriteOncePod; leave components.telemetryCollector=false on older clusters" -}}
+{{- end -}}

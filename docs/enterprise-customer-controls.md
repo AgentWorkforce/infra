@@ -93,7 +93,7 @@ customers who selected it. Check direct API calls in addition to the sidebar.
 The current `components.relayflows` Helm toggle alone does not establish these
 UI and server behaviors. Coordinate chart/profile versions through the release owner.
 
-## Chief is optional and defaults off
+## Chief must stay off until explicitly enabled
 
 Apply the same capability, navigation and direct-route rules to Chief. Without
 an explicit authorized enablement, the installation must have no Chief agent,
@@ -101,11 +101,15 @@ background scans, model calls or scheduled work, and no Chief sidebar entry.
 Authenticated direct API/URL requests must report the disabled state rather
 than starting work. Test explicit enablement separately.
 
-The current Control gateway can return `503 chief_unavailable` when no
-`ChiefBackend` is configured. UI/API hooks are not an embedded running Chief,
-and the current infra charts contain no Chief workload or documented
-`components.chief` switch. Do not invent a working chart setting: the released
-capability/configuration contract must be implemented and documented first.
+Chief is the optional service that schedules agent coordination work. The
+standalone [`relay-chief` chart](../charts/relay-chief/README.md) now exists and
+its CronJob defaults to `suspend: true`; it is not an umbrella
+`components.chief` switch. Leave the chart uninstalled for the core pilot.
+Suspending a CronJob prevents new jobs, not work already running.
+
+The Control gateway's `503 chief_unavailable` response without a backend is
+not an entitlement policy or a complete UI enablement contract. Qualify the
+Chief, Control and Webapp configuration together before enabling this add-on.
 
 ## Ownership and release evidence
 
@@ -117,6 +121,7 @@ capability/configuration contract must be implemented and documented first.
 | Branded Desktop build, managed capture and client scrubbing | Desktop maintainer. |
 | Authorized deletion, storage/index erasure and non-resurrection | Pipeline, History and Control maintainers together. |
 | Signed installer distribution/feed | Desktop release owner with Control/artifact-storage owner. |
+| Chief capability and optional runtime | Relay Chief maintainer; Control/Webapp maintainers for access and navigation, infrastructure maintainer for the chart/profile. |
 
 Require an exact source SHA, reviewed contract, supported artifact/digest and
 causal positive/negative test receipts for each row. A design ACK is not a
