@@ -108,7 +108,7 @@ module "postgres" {
 
   name                                = "${local.name}-pg"
   engine_version                      = var.postgres_version
-  database_name                       = "relaycontrol" # postgres-layout contract: ONE application database
+  database_name                       = "relaycontrol" # initial database, which Control binds to; HoopDb has its own
   master_username                     = "proof_admin"
   instance_class                      = "db.t4g.micro"
   subnet_ids                          = local.private_ids
@@ -141,13 +141,25 @@ module "layout" {
   port            = module.postgres.port
   database        = module.postgres.initial_database
   forbidden_roles = [module.postgres.master_username]
+  service_databases = {
+    control   = module.postgres.initial_database
+    hoopdb    = "hoopdb"
+    relaycast = "relaycast"
+    relayfile = "relayfile"
+  }
+  services = {
+    control   = { schema = "public", migration_role = "control_owner", runtime_role = "control_api_runtime" }
+    hoopdb    = { schema = "sessions", migration_role = "hoop", runtime_role = "sessions_pipeline_runtime" }
+    relaycast = { schema = "public", migration_role = "relaycast_owner", runtime_role = "relaycast_runtime" }
+    relayfile = { schema = "public", migration_role = "relayfile_owner", runtime_role = "relayfile_runtime" }
+  }
 }
 locals {
   # Reviewed activation artifacts by sha256. Intentionally empty: none exists yet.
   approved_activations = {}
-  application          = merge(module.layout.bindings["hoopdb"], { database = module.postgres.initial_database })
+  application          = module.layout.bindings["hoopdb"]
 }
-# F1: the application path (non-master owner/runtime in the shared database) has
+# F1: the application path (non-master owner/runtime in its own database) has
 # no reviewed, schema-aware Sessions activation artifact yet. Compute that would
 # run the guest is refused until one is registered in approved_activations.
 resource "terraform_data" "application_gate" {

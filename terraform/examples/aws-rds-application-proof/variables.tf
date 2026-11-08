@@ -133,7 +133,7 @@ variable "deadline" {
 }
 
 variable "application_activation" {
-  description = "Reviewed schema-aware Sessions activation artifact for the shared-database application path (source commit, artifact sha256, generation, contract id). Null keeps application execution refused. Must name an entry of local.approved_activations, which is empty until a reviewed artifact exists."
+  description = "Reviewed schema-aware Sessions activation artifact for the separate-database application path (source commit, artifact sha256, generation, contract id). Null keeps application execution refused. Must name an entry of local.approved_activations, which is empty until a reviewed artifact exists."
   type = object({
     sessions_commit = string
     artifact_sha256 = string

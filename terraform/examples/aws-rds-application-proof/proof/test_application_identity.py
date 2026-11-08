@@ -1,4 +1,4 @@
-"""F1 causal refusals: the shared-database application identities come from the
+"""F1 causal refusals: the separate-database application identities come from the
 postgres-layout contract, the RDS master is never the application migrator or
 runtime, and execution stays refused until a reviewed activation artifact exists."""
 import importlib.util
@@ -11,7 +11,7 @@ spec=importlib.util.spec_from_file_location('rds_host_f1',Path(__file__).with_na
 
 def cfg(**over):
     c={'provisioning_executor':'proof_admin','forbidden_roles':['proof_admin'],
-       'application':{'database':'relaycontrol','schema':'sessions','migration_role':'hoop','runtime_role':'sessions_pipeline_runtime','host':'db.example.invalid','port':5432},
+       'application':{'database':'hoopdb','schema':'sessions','migration_role':'hoop','runtime_role':'sessions_pipeline_runtime','host':'db.example.invalid','port':5432},
        'application_activation':None}
     c.update(over);return c
 

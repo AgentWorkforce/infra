@@ -89,7 +89,7 @@ run "actual_modules_private_managed_secret_and_versioned_bucket" {
 run "application_binding_comes_from_postgres_layout" {
   command = plan
   assert {
-    condition     = output.application_binding.database == "relaycontrol" && output.application_binding.schema == "sessions" && output.application_binding.owner == "hoop" && output.application_binding.runtime == "sessions_pipeline_runtime" && output.application_binding.provisioning_executor == "proof_admin" && output.application_binding.activation == null
+    condition     = output.application_binding.database == "hoopdb" && output.application_binding.schema == "sessions" && output.application_binding.owner == "hoop" && output.application_binding.runtime == "sessions_pipeline_runtime" && output.application_binding.provisioning_executor == "proof_admin" && output.application_binding.activation == null
     error_message = "Application identities must come from the reviewed postgres-layout hoopdb binding, distinct from the RDS master."
   }
   assert {

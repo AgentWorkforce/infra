@@ -20,13 +20,13 @@ existing app/role, parent DNS, publication or deployment change is made here.
 synthetic `applicationproof` database as its RDS master, `proof_admin`, with
 `proof_runtime` for runtime checks. It does not implement the
 [shared PostgreSQL application contract](../../../docs/shared-postgres-storage-contract.md):
-one application database, independent service schemas, non-master schema owners
+one RDS instance, a separate logical database per service, non-master owners
 and restricted runtime logins. A successful run of these selected checks must
 not qualify that contract or a Terraform-to-Helm application installation.
 
 Closing this gap requires a supported application composition and reviewed
 bootstrap/activation path for the non-master owner and runtime, native tests of
-the service bindings and cross-schema denials, then a digest-pinned Helm
+the service bindings and cross-database denials, then a digest-pinned Helm
 installation and the real application acceptance cases. Metadata-only schema
 bindings are not SQL/bootstrap proof. The private parent saved-plan driver also
 still requires independent review. Managed execution remains held.
@@ -188,11 +188,13 @@ prove exact container/all versions gone. Denied, untyped empty responses, refres
 failure and recovery schedules never count. State0 plus independent specific native
 absence closes the fixture; existing VPC/routes/apps/resources remain outside scope.
 
-## F1 status: shared-database application path (refused)
+## F1 status: separate-database application path (refused)
 
-The fixture now consumes the landed `postgres-layout` contract (#80):
-- one application database, `relaycontrol`;
-- the pipeline binding `sessions` / `hoop` / `sessions_pipeline_runtime`;
+The fixture consumes the `postgres-layout` contract with one logical database
+per service on one RDS instance (#107):
+- the initial database `relaycontrol`, which Control binds to;
+- the pipeline binding: database `hoopdb`, schema `sessions`, `hoop` /
+  `sessions_pipeline_runtime`;
 - the RDS master (`proof_admin`) as a forbidden application role.
 
 Expected identities come from `module.layout.bindings["hoopdb"]`, never from a
@@ -202,12 +204,13 @@ call or credential read (`application_identity`). The guest's runtime readiness
 also requires `session_user` to equal the runtime role, so a `SET ROLE` or
 `options=-c role=…` substitution can't pass.
 
-Other services' schemas (`relaycontrol`, `relaycast`, `relayhistory`,
-`relayfile`) stay separately owned. A binding existing doesn't mean the service is
-implemented.
-The legacy `relayhistory` binding preserves existing layout metadata, not an
-active self-host server target. Self-host history remains a sessions-pipeline
-capability; the standalone legacy History server is being removed separately.
+Other services keep their own databases (`relaycontrol`, `relaycast`,
+`relayfile`) and owners. A binding existing doesn't mean the service is
+implemented, and this fixture doesn't create the `hoopdb` database: that belongs
+to the activation contract below.
+The layout has no legacy History binding: self-host history remains a
+sessions-pipeline capability, and the standalone History server is being removed
+separately.
 
 **Application execution is refused** and `application_sql_ready` is `false`.
 `terraform_data.application_gate` refuses any verifier compute unless
@@ -225,7 +228,7 @@ Remaining dependencies (source/design inventory; nothing here is a proof):
    or from this host. It can't be reviewed for non-master owner support.
    Owner: pipeline (`relayhistory-pipeline`).
 2. **The RDS application activation contract.** A narrowly privileged, named and
-   authenticated provisioning executor creates `hoop` and
+   authenticated provisioning executor creates the `hoopdb` database, `hoop` and
    `sessions_pipeline_runtime` with an exact grantor-specific graph. Then, in one
    explicit transaction:
    - LOGIN and default changes;
@@ -243,8 +246,8 @@ Remaining dependencies (source/design inventory; nothing here is a proof):
    bound to source, profile, generation and verifier. Ordinary `migrate` and a
    generic schema PASS can't stand in for it. Missing, pending or stale readiness
    must block service startup. Owner: pipeline and control.
-4. **Execution proof (later, separate).** Actual non-owner LOGINs, cross-schema
-   denials with unchanged foreign objects, and bootstrap failure, crash and
+4. **Execution proof (later, separate).** Actual non-owner LOGINs, access
+   denials between databases with unchanged foreign objects, and bootstrap failure, crash and
    resume. Ordinary migrate must not substitute for activation. Then real
    auth/TLS/password rotation and restore, then Helm and application behaviour.
 
@@ -331,7 +334,7 @@ added.
 | run\_id | Lease-unique bounded slug; do not reuse while old resources or sessions exist. | `string` | n/a | yes |
 | source\_sha | Exact committed source of the reviewed transport payload. | `string` | n/a | yes |
 | vpc\_id | Reviewed existing VPC; unchanged by this proof. | `string` | n/a | yes |
-| application\_activation | Reviewed schema-aware Sessions activation artifact for the shared-database application path (source commit, artifact sha256, generation, contract id). Null keeps application execution refused. Must name an entry of local.approved\_activations, which is empty until a reviewed artifact exists. | ```object({ sessions_commit = string artifact_sha256 = string generation = string contract = string })``` | `null` | no |
+| application\_activation | Reviewed schema-aware Sessions activation artifact for the separate-database application path (source commit, artifact sha256, generation, contract id). Null keeps application execution refused. Must name an entry of local.approved\_activations, which is empty until a reviewed artifact exists. | ```object({ sessions_commit = string artifact_sha256 = string generation = string contract = string })``` | `null` | no |
 | create\_private\_subnets | Optional two owned local-only private subnets in the existing default VPC. Explicit reviewed non-overlapping /24-/28 IPv4 CIDRs and distinct available AZs; mutually exclusive with private\_subnet\_ids. | `object({ first = object({ cidr = string, az = string }), second = object({ cidr = string, az = string }) })` | `null` | no |
 | payload\_version\_id | Null provisions data without compute. A non-null immutable transport VersionId also requires a registered application activation; none is registered, so verifier execution stays refused. | `string` | `null` | no |
 | private\_subnet\_ids | Exactly two reviewed existing private subnets in distinct AZs; null when create\_private\_subnets is selected. | `set(string)` | `null` | no |
@@ -343,6 +346,6 @@ added.
 | Name | Description |
 | ---- | ----------- |
 | application\_binding | Expected application identities from the postgres-layout contract (non-secret). Metadata only: not SQL, bootstrap or application proof. |
-| application\_sql\_ready | False: this synthetic master-role fixture does not qualify the shared-database application layout or its activation. |
+| application\_sql\_ready | False: this synthetic master-role fixture does not qualify the separate-database application layout or its activation. |
 | proof\_contract | Non-secret source/lease/module/transport identities. Capture before guest termination. |
 <!-- END_TF_DOCS -->

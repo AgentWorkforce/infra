@@ -135,7 +135,7 @@ class HostIo:
 # F1: expected application identities come from the reviewed postgres-layout
 # contract, carried as non-secret config. The RDS master is only the narrowly
 # used provisioning executor and is a forbidden application identity.
-EXPECTED_APPLICATION={'database':'relaycontrol','schema':'sessions','migration_role':'hoop','runtime_role':'sessions_pipeline_runtime'}
+EXPECTED_APPLICATION={'database':'hoopdb','schema':'sessions','migration_role':'hoop','runtime_role':'sessions_pipeline_runtime'}
 
 def application_identity(c):
     a=c.get('application');require(isinstance(a,dict),'application_binding_missing')
