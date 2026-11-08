@@ -1,0 +1,147 @@
+{
+  "scope": "actual compiled runtime modules with official build-stage dependencies, synthetic HTTP/PGlite fixtures; focused batched qualification, not live fixture or full upstream-suite proof",
+  "sourceRevision": "32d1e4477f0203611e756e5df45fc5d74798bff3",
+  "manifestDigest": "sha256:fafb248b8f6d0d30facde49ee3bf4c3ca4ce49e36eb37508862a533b9e904e6c",
+  "configDigest": "sha256:d98e60882a565b8356ad307899d79e5a10d4d181f22237ec05ad9553b5bd5dea",
+  "dockerRuntimeId": "sha256:e33e5c1725e1c68cbbbe28e01ed8be6cef7a04dfcf09f0573ce91b40ccb7de9b",
+  "testDependencyImageId": "sha256:2504d4f2974ba56e0cffcf429a970dea37a6710ca1d835d2f7e2053f06906629",
+  "nodeBase": "node:22.23.3-bookworm-slim@sha256:3ed98443660ff48413b5af19ecefce3b9d50845a901a43420d47cc63a9fddbe9",
+  "network": "none",
+  "filesystem": "read-only with bounded ephemeral /tmp",
+  "memoryLimit": "2g",
+  "cpus": 2,
+  "testSourceSha256": {
+    "config.test.ts": "078f9733336af9b0afc05bc2d085e378d53fee1225d97ee8331276b6f7e038e9",
+    "introspect.test.ts": "ab80ac3dd03d23f8cef466ec657758a80515861903b5d2cbac762e5b53fe6369",
+    "sessions.test.ts": "ae658c6fd8c05350078c63416af7c7ec49fc5e927b9ba7f6c2d8861ec825f63b",
+    "mcp-oauth-protocol.test.ts": "bcc6338686ed449e61f647ad7c6f0f71f9f785c699c3aac7dc5d45fdbda05d0a"
+  },
+  "compiledModuleTreeSha256": "91814e48e3c0c1a3d9cf5b7e3e8b6991b035d1958894a1291a90851d885db00b",
+  "batches": [
+    {
+      "name": "config",
+      "file": "config.test.ts",
+      "selectedTests": null,
+      "expected": 8,
+      "exitCode": 0,
+      "log": "qualification-config.log",
+      "tests": 8,
+      "passed": 8,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "name": "sessions",
+      "file": "sessions.test.ts",
+      "selectedTests": null,
+      "expected": 10,
+      "exitCode": 0,
+      "log": "qualification-sessions.log",
+      "tests": 10,
+      "passed": 10,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "name": "pure-mcp",
+      "file": "mcp-oauth-protocol.test.ts",
+      "selectedTests": null,
+      "expected": 15,
+      "exitCode": 0,
+      "log": "qualification-pure-mcp.log",
+      "tests": 15,
+      "passed": 15,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "name": "introspect-1",
+      "file": "introspect.test.ts",
+      "selectedTests": [
+        "introspection describes an active access token and rotates token_id on refresh",
+        "introspection names exactly one inactive reason, in contract order",
+        "introspection requires its own secret and a well-formed body",
+        "introspection is a 404 like any unknown route while its secret is unset"
+      ],
+      "expected": 4,
+      "exitCode": 0,
+      "log": "qualification-introspect-1.log",
+      "tests": 4,
+      "passed": 4,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "name": "introspect-2",
+      "file": "introspect.test.ts",
+      "selectedTests": [
+        "introspection audiences compare normalized origins and echo the configured value",
+        "readyz lists exactly the audiences introspection accepts, never the secret",
+        "introspection responses and server logs never contain token material",
+        "without RelayAuth, relayhistory/session forwards the caller's own access token"
+      ],
+      "expected": 4,
+      "exitCode": 0,
+      "log": "qualification-introspect-2.log",
+      "tests": 4,
+      "passed": 4,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "name": "introspect-3",
+      "file": "introspect.test.ts",
+      "selectedTests": [
+        "without RelayAuth, a History login failure never echoes the caller token",
+        "without RelayAuth, session reads exchange the caller token and cache per token session",
+        "with RelayAuth configured, History still receives an assertion, not the caller token",
+        "introspection verifies a supplied machine against the token user's node claims"
+      ],
+      "expected": 4,
+      "exitCode": 0,
+      "log": "qualification-introspect-3.log",
+      "tests": 4,
+      "passed": 4,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "name": "introspect-4",
+      "file": "introspect.test.ts",
+      "selectedTests": [
+        "introspection answers machine_unclaimed once a machine's claim is released",
+        "an inactive token never reveals machine state: the token reason wins",
+        "introspection rejects a malformed machine with 400 invalid_request",
+        "introspection without a workspace answers for the token session's workspace (v1.2)"
+      ],
+      "expected": 4,
+      "exitCode": 0,
+      "log": "qualification-introspect-4.log",
+      "tests": 4,
+      "passed": 4,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "name": "introspect-5",
+      "file": "introspect.test.ts",
+      "selectedTests": [
+        "introspection without a workspace verifies machines in the session's workspace"
+      ],
+      "expected": 1,
+      "exitCode": 0,
+      "log": "qualification-introspect-5.log",
+      "tests": 1,
+      "passed": 1,
+      "failed": 0,
+      "skipped": 0
+    }
+  ],
+  "runtimeChangePerformed": false,
+  "uniqueCoveredTests": 50,
+  "complete": true,
+  "infraBaseRevision": "9445d2afa1d5990e3e1e50af7613e38c459568b2",
+  "qualificationHarnessSha256": "65fe9ebf77feeaffcce1b99fe5b0b1202c0fec05b9f435137108012e30ac06f4",
+  "compiledModulesMatchEarlierCandidate": true,
+  "earlierCandidateSource": "74054cb22584178ddb70697c059af1e64809e51c"
+}

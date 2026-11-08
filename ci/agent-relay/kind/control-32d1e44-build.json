@@ -1,0 +1,27 @@
+{
+  "sourceRevision": "32d1e4477f0203611e756e5df45fc5d74798bff3",
+  "tag": "agent-relay-kind/selfhost-api:32d1e44",
+  "architecture": "arm64",
+  "reference": "agent-relay-kind/selfhost-api@sha256:fafb248b8f6d0d30facde49ee3bf4c3ca4ce49e36eb37508862a533b9e904e6c",
+  "manifestDigest": "sha256:fafb248b8f6d0d30facde49ee3bf4c3ca4ce49e36eb37508862a533b9e904e6c",
+  "configDigest": "sha256:d98e60882a565b8356ad307899d79e5a10d4d181f22237ec05ad9553b5bd5dea",
+  "node": "node:22.23.3-bookworm-slim@sha256:3ed98443660ff48413b5af19ecefce3b9d50845a901a43420d47cc63a9fddbe9",
+  "transport": {
+    "file": "control-32d1e44-arm64.tar",
+    "bytes": 92574720,
+    "sha256": "ad4bb39df8669284113ce3c7483ad233809d1d000de2988b0269042652679f80",
+    "sourceRevision": "32d1e4477f0203611e756e5df45fc5d74798bff3",
+    "manifestDigest": "sha256:fafb248b8f6d0d30facde49ee3bf4c3ca4ce49e36eb37508862a533b9e904e6c",
+    "configDigest": "sha256:d98e60882a565b8356ad307899d79e5a10d4d181f22237ec05ad9553b5bd5dea"
+  },
+  "infraBaseRevision": "9445d2afa1d5990e3e1e50af7613e38c459568b2",
+  "migrationsTree": "5522ef7dd32dd1999b131f9ca2ca39c3f0eedba1",
+  "previousRuntimeSource": "1f08cb624be66016eb0c135363553dd44e58f691",
+  "migrationTreeUnchangedFromPreviousRuntime": true,
+  "imageAdmissionTests": {
+    "passed": 5,
+    "failed": 0,
+    "command": "python3 -m unittest discover -s ci/agent-relay/kind -p test_control.py -v"
+  },
+  "runtimeChangePerformed": false
+}

@@ -1,9 +1,15 @@
-# Native control candidate: bae78a5
+# Historical #20-only control candidate: bae78a5
+
+This receipt belongs to infra commit `832fbfd892fffa8cd51c3452bc2e08ba9cca957f`.
+The builder now pins merged #27 at `32d1e447`; see the separate
+[current candidate receipt](control-32d1e44.md). The `c8870203` image below remains
+the #20-only artifact and must not be described as including #27.
 
 This candidate is a local artifact qualification, not an ar-lap update or a
 replacement upload/read proof. It builds merged relaycontrol main at
 `bae78a524fbce4fb3ab231372417bc2dfac04cad` (#20, optional RelayAuth and
-introspection). The unmerged #27 read-API branch is not included.
+introspection). The #27 read-API branch was unmerged at build time and is not
+included in this historical image.
 The existing ar-lap fixture and its historical 57/0/3 receipt are unchanged.
 
 ## Build and qualification
@@ -29,7 +35,8 @@ with the installed legacy History upload/read service.
 
 ## Candidate values and operator boundary
 
-Build only from this candidate checkout:
+The command below built this historical image from infra commit `832fbfd`.
+Running it on the refreshed branch instead builds the current `32d1e447` pin:
 
 ```sh
 make kind-build-control PROFILE=core
