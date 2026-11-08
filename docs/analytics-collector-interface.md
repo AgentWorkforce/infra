@@ -46,7 +46,7 @@ The batch body is a JSON object with `schema` equal to
 | Field | Meaning |
 |---|---|
 | `version` | Event envelope version, initially `1` |
-| `event_id` | Stable producer-generated identifier, retained across retries |
+| `event_id` | Producer-generated ID unique within deployment/component across all replicas and restarts, retained across retries |
 | `occurred_at` | UTC event occurrence time |
 | `component` | Registered producer component |
 | `deployment_id` | Opaque installation/deployment identity |
@@ -66,8 +66,21 @@ reserved fields. Unregistered scope, missing required attribution, or an
 unauthorized attribution is invalid. Initial tests use synthetic/install-scoped
 identity; these fields add no user identities, names or credentials.
 
-Authenticate with a per-producer credential supplied through a Secret
-reference. The collector verifies it against its producer registration. Do not
+Create an event ID once at event creation, for example with a cryptographically
+random UUID, and retain it with the queued immutable event across retries. A
+process-local counter reset on restart is insufficient. A different event must
+never reuse the same `(deployment_id, component, event_id)` tuple. This is a
+producer requirement, not a collector deduplication guarantee.
+
+Authenticate every request with exactly one `Authorization: Bearer <producer-token>`
+header. The token is an opaque, case-sensitive per-producer credential supplied
+through a Secret reference; the adapter treats its value as opaque. Tokens in
+query strings, cookies or event bodies are not authentication. Malformed,
+unknown or revoked tokens receive `401` with `WWW-Authenticate: Bearer`; multiple
+Authorization headers are invalid. The collector verifies the credential
+against its producer registration using a constant-time secret comparison, then
+checks the registered deployment/component authority (`403` on mismatch).
+Never log, echo or export the header/token. Do not
 reuse a database, runtime user, Desktop session or migration credential.
 Helm wires the endpoint and Secret references; transport/TLS/CA and network
 policy must match the reviewed deployment profile. The Service is not a public
