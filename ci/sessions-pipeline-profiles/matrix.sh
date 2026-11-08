@@ -274,6 +274,12 @@ if [ "$mode" = static ]; then
   expect_fail "roleBootstrap must not be true in rds mode" "${RDS[@]}" --set worker.migrations.roleBootstrap=true
   expect_fail "runtimeWorkloadRole is not supported in rds mode" "${RDS[@]}" --set worker.migrations.runtimeWorkloadRole=app
   expect_fail "runtimeRoleLogin must be true in rds mode" "${RDS[@]}" --set worker.migrations.runtimeRoleLogin=false
+  # The RDS profile with a CA bundle: every app workload and migrate gets it.
+  out=$(render "${RDS[@]}" --set worker.postgresCa.enabled=true --set worker.postgresCa.configMap=rds-ca --set alleyoop.postgresCa.enabled=true --set alleyoop.postgresCa.configMap=rds-ca) || err "rds + postgresCa did not render"
+  ca_gaps=$(yq 'select((.kind == "Deployment" or (.kind == "Job" and (.metadata.name | contains("migrate")))) and (.spec.template.spec.containers[0].image | contains("96bulls-services"))) | select(([.spec.template.spec.containers[0].env[] | select(.name == "NODE_EXTRA_CA_CERTS")] | length) != 1) | .metadata.name' <<<"$out" | grep -v '^---$' || true)
+  [ -z "$ca_gaps" ] || err "rds + postgresCa: no CA in $ca_gaps"
+  [ "$(yq 'select(.kind == "Job" and (.metadata.name | contains("migrate"))) | .kind' <<<"$out" | grep -c Job)" = 1 ] || err "rds + postgresCa: expected one migrate Job"
+  ! render "${RDS[@]}" | grep -q NODE_EXTRA_CA_CERTS || err "rds profile must not set NODE_EXTRA_CA_CERTS by default"
   expect_fail "supabaseShim must be set (true or false) in cloudsql mode" "${GCP[@]}" --set worker.migrations.supabaseShim=null
   expect_fail "functionBoundaryMode is required in cloudsql mode" "${GCP[@]}" --set worker.migrations.functionBoundaryMode=
   expect_fail "functionBoundaryMode is required in selfhosted mode" "${IN[@]}" --set worker.migrations.functionBoundaryMode=

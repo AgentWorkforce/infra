@@ -36,6 +36,9 @@ spec:
               protocol: TCP
           env:
             {{- include "alleyoop.env" (dict "context" . "service" $component) | nindent 12 }}
+            {{- if (.Values.postgresCa | default dict).enabled }}
+            - { name: NODE_EXTRA_CA_CERTS, value: /etc/postgres-ca/ca.crt }
+            {{- end }}
             - name: INGEST_PORT
               value: {{ .Values.ingest.port | quote }}
             - name: AUTH_ISSUER
@@ -86,3 +89,6 @@ spec:
           volumeMounts:
             - name: tmp
               mountPath: /tmp
+            {{- if (.Values.postgresCa | default dict).enabled }}
+            - { name: postgres-ca, mountPath: /etc/postgres-ca, readOnly: true }
+            {{- end }}

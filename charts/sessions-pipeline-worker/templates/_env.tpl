@@ -38,6 +38,7 @@ unless a separate mark_pass step runs, which this chart does not have. */ -}}
 {{- if or (eq ($entry.name | default "") "SUMMARY_MASTER_KEYS") (eq ($entry.name | default "") "SUMMARY_MASTER_KEYS_FILE") }}{{ fail "sessions-pipeline-worker: configure summaryEncryption instead of components.bob-costas.env SUMMARY_MASTER_KEYS/SUMMARY_MASTER_KEYS_FILE" }}{{ end -}}
 {{- end }}
 {{- include "sessions-pipeline-worker.validateLocker" . }}
+{{- include "sessions-pipeline-worker.validatePostgresCa" . }}
 {{- end }}
 
 {{/*
@@ -197,6 +198,9 @@ volumes:
         - key: {{ $ctx.Values.summaryEncryption.key | quote }}
           path: {{ $ctx.Values.summaryEncryption.fileName | quote }}
 {{- end }}
+{{- if and ($ctx.Values.postgresCa | default dict).enabled (ne .component "locker-init") }}
+{{ include "sessions-pipeline-worker.postgresCaVolume" $ctx | indent 2 }}
+{{- end }}
 {{- end }}
 
 {{/*
@@ -285,3 +289,41 @@ The migrate container's profile env, each name exactly once (context: migrations
   value: {{ . | quote }}
 {{- end }}
 {{- end }}
+
+{{- /* Optional Postgres server CA bundle (postgresCa.*). NODE_EXTRA_CA_CERTS adds the
+mounted PEM to the roots node-pg verifies against for sslmode=verify-full. */ -}}
+{{- define "sessions-pipeline-worker.postgresCaVolume" -}}
+{{- $ca := .Values.postgresCa -}}
+- name: postgres-ca
+{{- if $ca.configMap }}
+  configMap:
+    name: {{ $ca.configMap | quote }}
+    items: [{ key: {{ $ca.key | quote }}, path: ca.crt }]
+{{- else }}
+  secret:
+    secretName: {{ $ca.secret | quote }}
+    # Public certificates, readable whatever the Pod's fsGroup is.
+    defaultMode: 0444
+    items: [{ key: {{ $ca.key | quote }}, path: ca.crt }]
+{{- end }}
+{{- end -}}
+
+{{- /* Fail closed on a half-configured bundle: a name without enabled=true would
+leave the certificate unverified while looking configured. */ -}}
+{{- define "sessions-pipeline-worker.validatePostgresCa" -}}
+{{- $ca := .Values.postgresCa | default dict -}}
+{{- $enabled := dig "enabled" false $ca -}}
+{{- if not (kindIs "bool" $enabled) }}{{ fail "sessions-pipeline-worker: postgresCa.enabled must be a boolean" }}{{ end -}}
+{{- $configMap := get $ca "configMap" | default "" | toString -}}
+{{- $secret := get $ca "secret" | default "" | toString -}}
+{{- if not $enabled -}}
+{{- if or $configMap $secret }}{{ fail "sessions-pipeline-worker: postgresCa.configMap and postgresCa.secret require postgresCa.enabled=true; a CA name while disabled would leave the certificate unverified" }}{{ end -}}
+{{- else -}}
+{{- if eq (empty $configMap) (empty $secret) }}{{ fail "sessions-pipeline-worker: postgresCa.enabled=true requires exactly one of postgresCa.configMap or postgresCa.secret" }}{{ end -}}
+{{- $ref := default $secret $configMap -}}
+{{- if or (gt (len $ref) 253) (not (regexMatch "^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?)*$" $ref)) }}{{ fail "sessions-pipeline-worker: postgresCa.configMap and postgresCa.secret must be a Kubernetes object name" }}{{ end -}}
+{{- if not (regexMatch "^[A-Za-z0-9._-]+$" (get $ca "key" | default "" | toString)) }}{{ fail "sessions-pipeline-worker: postgresCa.key must be a Kubernetes data key" }}{{ end -}}
+{{- range .Values.extraEnv }}{{ if eq (.name | default "") "NODE_EXTRA_CA_CERTS" }}{{ fail "sessions-pipeline-worker: extraEnv must not set NODE_EXTRA_CA_CERTS: postgresCa manages it" }}{{ end }}{{ end -}}
+{{- range $n, $c := .Values.components }}{{ range ($c.env | default list) }}{{ if eq (.name | default "") "NODE_EXTRA_CA_CERTS" }}{{ fail (printf "sessions-pipeline-worker: components.%s.env must not set NODE_EXTRA_CA_CERTS: postgresCa manages it" $n) }}{{ end }}{{ end }}{{ end -}}
+{{- end -}}
+{{- end -}}

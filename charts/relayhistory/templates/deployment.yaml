@@ -45,6 +45,9 @@ spec:
             - configMapRef: { name: {{ include "relayhistory.fullname" . }} }
           env:
             {{- include "relayhistory.secretEnv" . | nindent 12 }}
+            {{- if (.Values.postgresCa | default dict).enabled }}
+            - { name: NODE_EXTRA_CA_CERTS, value: /etc/postgres-ca/ca.crt }
+            {{- end }}
             {{- with .Values.extraEnv }}{{ toYaml . | nindent 12 }}{{- end }}
           startupProbe: {{ toYaml .Values.startupProbe | nindent 12 }}
           livenessProbe: {{ toYaml .Values.livenessProbe | nindent 12 }}
@@ -52,9 +55,15 @@ spec:
           resources: {{ toYaml .Values.resources | nindent 12 }}
           volumeMounts:
             - { name: tmp, mountPath: /tmp }
+            {{- if (.Values.postgresCa | default dict).enabled }}
+            - { name: postgres-ca, mountPath: /etc/postgres-ca, readOnly: true }
+            {{- end }}
       volumes:
         - name: tmp
           emptyDir: { sizeLimit: 64Mi }
+        {{- if (.Values.postgresCa | default dict).enabled }}
+        {{- include "relayhistory.postgresCaVolume" . | nindent 8 }}
+        {{- end }}
       {{- with .Values.nodeSelector }}
       nodeSelector: {{ toYaml . | nindent 8 }}
       {{- end }}
