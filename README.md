@@ -594,7 +594,7 @@ artifact digest; the official Dockerfile's runtime npm dependency ranges mean
 that identical source does not guarantee identical rebuilt image bytes.
 The historical `1f08cb6` proof covers both public MCP paths with real-token initialization, nineteen-tool discovery,
 workspace/public-origin binding and negative auth/origin checks in the recorded
-local-control proof. It has not been rerun for `df4b390`; no current-build runtime
+local-control proof. It has not been rerun for `df4b390`; no current-build MCP
 acceptance is implied. Agent launch/release remains pending.
 The current source includes the organization-scoped workspace DELETE route.
 Proof cleanup checks each tracked workspace's exact run name and organization
@@ -602,6 +602,10 @@ before deleting either one, then verifies their absence and preserves the
 installation's other workspaces. Older images that still return 404 retain the
 cleanup pending result. This removes only Control's workspace rows; separately
 owned Relaycast resources and external session/object cleanup remain separate.
+The [native candidate receipt](ci/agent-relay/kind/control-df4b390-smoke.json)
+qualifies the selected image's runtime-role migration/readiness and guarded
+workspace deletion against disposable PostgreSQL 17 data. It does not qualify
+an installed profile, TLS, MCP, Desktop, external erasure or the full pipeline.
 The local bootstrap applies release objects client-side before final Helm
 reconciliation. On Helm 4 the wrapper explicitly selects its supported
 [`--server-side=false`](https://docs.helm.sh/docs/helm/helm_upgrade/) mode to keep

@@ -1,0 +1,86 @@
+{
+  "sourceRevision": "df4b3901768809407c7c6e1e0d28031e2c2fa25d",
+  "sourceRepository": "AgentWorkforce/relay-control",
+  "builderInfraRevision": "30270e72941f1743f9528e87e16acd6cbcf5717c",
+  "buildCommand": "make kind-build-control PROFILE=core",
+  "architecture": "linux/arm64",
+  "nativeManifestDigest": "sha256:359487c447dfc22e79f96482866a14efb2de424266c5e8f029253b276e774c85",
+  "configDigest": "sha256:5e2a9d35735eb290b5c0b6fbb86199f4ae99fdc79af8c22f5abcd601958207bc",
+  "dockerIndexDigest": "sha256:7f304ebb5222592d2d2c5f8cf7ea23e75d9499e0ed8e5083740a60e76a607141",
+  "indexArchiveSha256": "0c379bd58cd4dab5935e9edaebd544ebc2242282c18e9592891c73c8fafdeaef",
+  "indexArchiveBytes": 93038080,
+  "nativeArchiveSha256": "79479cad522c0a8a5768a313f205f755b68c7cf8e05248326014966c38f09ab4",
+  "nativeArchiveBytes": 93031424,
+  "nodeImage": "node:22.23.3-bookworm-slim@sha256:3ed98443660ff48413b5af19ecefce3b9d50845a901a43420d47cc63a9fddbe9",
+  "schemaManifestSha256": "798a33e55eb1a516f565ba9a091b0cd942dd8beafbca553723689efcba9d6b8a",
+  "schemaManifestHashFormat": "SHA256 of UTF8 canonical JSON filename=>SQL-SHA256, sorted keys, compact separators",
+  "smoke": {
+    "startedUtc": "2026-11-08T20:50:28.817664+00:00",
+    "finishedUtc": "2026-11-08T20:50:33.380627+00:00",
+    "postgresVersionNum": 170011,
+    "baselineMigrationCount": 17,
+    "finalMigrationCount": 23,
+    "secondMigrateApplied": 0,
+    "syntheticRowsPreserved": true,
+    "runtimeMigrationMetadataDenied": true,
+    "runtimeLoginAppRead": true,
+    "healthHttp": 200,
+    "readinessHttp": 200,
+    "authenticatedOrganizationReadHttp": 200,
+    "workspaceDelete": {
+      "anonymousDelete": 401,
+      "foreignOrgAdmin": 404,
+      "foreignWorkspaceInOwnOrg": 404,
+      "memberDelete": 403,
+      "factoryDelete": 409,
+      "crossOriginCookieDelete": 403,
+      "sameOriginCookieDelete": 204,
+      "ownerDelete": 204,
+      "bootstrapDelete": 204,
+      "deletedSessionWhoami": 401,
+      "keptSessionWhoami": 200,
+      "repeatDelete": 404,
+      "lastDefaultDelete": 409,
+      "defaultPreserved": true,
+      "foreignSeedRowsPreserved": true,
+      "deletedAuditRows": 3,
+      "deleteAuditsOrgScoped": true,
+      "externalProviderOrBucketCleanupTested": false,
+      "pass": true
+    },
+    "appOomKilled": false,
+    "cleanupErrors": [],
+    "pass": true
+  },
+  "fixturePreparation": {
+    "initialMultiTenantStartRefusedMissingBootstrapConfig": true,
+    "initialFixtureCleaned": true,
+    "correctedFixtureResult": "PASS",
+    "imageRebuiltForCorrection": false
+  },
+  "entrypointSelection": {
+    "builderInfraRevision": "30270e72941f1743f9528e87e16acd6cbcf5717c",
+    "sameNativeManifestVerified": true,
+    "server": {
+      "command": [
+        "node"
+      ],
+      "args": [
+        "node_modules/relay-control/dist/server.js"
+      ]
+    },
+    "migrations": {
+      "command": [
+        "node"
+      ],
+      "args": [
+        "node_modules/relay-control/dist/migrate-cli.js"
+      ]
+    },
+    "actualSelectedValuesRenderedCommandChecks": "PASS",
+    "currentAndHistoricalRenderedCommandChecks": "PASS",
+    "offlineKindTests": 71,
+    "ownedWorkspaceCleanupRegressionTests": 9
+  },
+  "scope": "Owned disposable PostgreSQL17 fixture on an internal plaintext Docker network. Actual native build/export, runtime-role migration/readiness and synthetic workspace deletion/isolation only; unsigned and unpublished, not installed in kind. Not TLS, MCP, Desktop, cloud, full pipeline acceptance or external session/object erasure."
+}
