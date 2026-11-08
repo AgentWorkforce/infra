@@ -18,7 +18,7 @@ RELEASE = "kind-locker"
 RECORD = "named-layout.json"
 SHA = re.compile(r"[a-f0-9]{64}\Z")
 OLD = {"relaycontrol", "relay-app", "alleyoop-ingest", "sessions-bob-costas", "sessions-hoopdb-indexer", "sessions-referee", "locker"}
-EXPECTED = {"relay-control", "relay-webapp", "session-ingest-api", "session-summary-worker", "session-metadata-indexer", "session-status-worker", NAME}
+REQUIRED_BASE = {"relay-control", "relay-webapp"}
 
 
 def fail(message):
@@ -449,8 +449,40 @@ def verify_selection(stack, values, objects):
     values_validate(values, stack.profile)
     rendered = render_selected(stack, values)
     names = {d["metadata"]["name"] for d in rendered if d["kind"] == "Deployment"}
-    if not EXPECTED - {NAME} <= names or names & OLD:
+    if not REQUIRED_BASE <= names or names & OLD or ("Deployment", NAME) not in objects:
         fail("render does not select the completed public workload names")
+    pipeline = values["sessions-pipeline"]
+    worker = pipeline.get("worker", {})
+    indexer = worker.get("components", {}).get("hoopdb-indexer", {})
+    native = pipeline.get("nativeConsumer", {})
+    selected_consumer = isinstance(native, dict) and native.get("enabled") is True
+    indexer_disabled = isinstance(indexer, dict) and indexer.get("enabled") is False
+    if selected_consumer or indexer_disabled:
+        if not selected_consumer or not indexer_disabled or native.get("legacyIndexerDrained") is not True:
+            fail("disabled legacy indexer requires an explicitly selected, drained native replacement")
+        contract = {"SERVICE": "session-pipeline-consumer", "RELAYHISTORY_SELFHOST_PIPELINE_CONSUMER": "true",
+                    "SEARCH_INDEX_BACKEND": "postgres", "PIPELINE_FANOUT": "off",
+                    "NATIVE_CONSUMER_PREFLIGHT_MODE": "runtime", "NATIVE_CONSUMER_EXPECTED_ROLE": "search_consumer_runtime"}
+        replacements = []
+        for doc in rendered:
+            if doc["kind"] != "Deployment":
+                continue
+            if doc["metadata"].get("labels", {}).get("app.kubernetes.io/name") != "session-pipeline-consumer":
+                continue
+            for container in pod_spec(doc).get("containers", []):
+                env = {e["name"]: e.get("value") for e in container.get("env", [])}
+                if all(env.get(k) == v for k, v in contract.items()):
+                    replacements.append(doc["metadata"]["name"])
+        if len(replacements) != 1:
+            fail("selected native indexer replacement has no single rendered runtime Deployment")
+        previous_name = indexer.get("fullnameOverride") or "session-metadata-indexer"
+        for (kind, name), doc in objects.items():
+            if kind != "Deployment":
+                continue
+            services = {e.get("value") for c in pod_spec(doc).get("containers", [])
+                        for e in c.get("env", []) if e.get("name") == "SERVICE"}
+            if name == previous_name or "hoopdb-indexer" in services:
+                fail("old metadata indexer is still present beside the native replacement")
     for doc in rendered:
         if doc["kind"] != "Deployment":
             continue

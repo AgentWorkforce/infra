@@ -21,6 +21,7 @@ import stack
 import test_control as control_tests
 
 HERE = Path(__file__).resolve().parent
+DEFAULT_LEGACY = {"relay-control", "relay-webapp", "session-ingest-api", "session-summary-worker", "session-metadata-indexer", "session-status-worker"}
 
 
 class NamedUpgrade(unittest.TestCase):
@@ -80,7 +81,7 @@ class NamedUpgrade(unittest.TestCase):
         add("PersistentVolumeClaim", "data-postgres-0", {"volumeName": "original-pg-volume"})
         add("Service", "postgres", {"ports": [{"port": 5432}]})
         self.rendered = []
-        for name in sorted(named.EXPECTED-{named.NAME}):
+        for name in sorted(DEFAULT_LEGACY):
             image = control.REPOSITORY+"@"+native if name == "relay-control" else "fixture-service@sha256:"+"d"*64
             container = {"name": "api" if name == "relay-control" else "service", "image": image}
             if name == "relay-control":
@@ -301,6 +302,60 @@ class NamedUpgrade(unittest.TestCase):
         changed=copy.deepcopy(selected);changed['relay-control']['image']['digest']='sha256:'+'9'*64
         with self.assertRaisesRegex(stack.StackError,'more than discovered tenant'):named.stage_selection(self.local,changed)
         self.assertEqual((self.local.state/named.RECORD).read_bytes(),before)
+
+    def native_replacement(self):
+        worker=self.values['sessions-pipeline']['worker']
+        worker['components']={'hoopdb-indexer':{'enabled':False,'fullnameOverride':'session-metadata-indexer'}}
+        self.values['sessions-pipeline']['nativeConsumer']={'enabled':True,'legacyIndexerDrained':True}
+        self.rendered=[d for d in self.rendered if d['metadata']['name']!='session-metadata-indexer']
+        self.objects.pop(('Deployment','session-metadata-indexer'))
+        env={'SERVICE':'session-pipeline-consumer','RELAYHISTORY_SELFHOST_PIPELINE_CONSUMER':'true',
+             'SEARCH_INDEX_BACKEND':'postgres','PIPELINE_FANOUT':'off','NATIVE_CONSUMER_PREFLIGHT_MODE':'runtime',
+             'NATIVE_CONSUMER_EXPECTED_ROLE':'search_consumer_runtime'}
+        # A custom public name must work; deployment identity comes from render,
+        # not a frozen list of the previous profile's worker implementation.
+        doc={'kind':'Deployment','metadata':{'name':'qualified-native-writer','labels':{'app.kubernetes.io/name':'session-pipeline-consumer'}},
+             'spec':{'replicas':1,'selector':{'matchLabels':{'role':'native-consumer'}},'template':{'spec':{'containers':[
+                 {'name':'consumer','image':'fixture-native@sha256:'+'8'*64,'env':[{'name':k,'value':v} for k,v in env.items()]}]}}},
+             'status':{'readyReplicas':1}}
+        self.rendered.append(copy.deepcopy(doc));self.objects[('Deployment',doc['metadata']['name'])]=copy.deepcopy(doc)
+
+    def test_selected_legacy_default_requires_every_rendered_workload(self):
+        selected=named.verify_selection(self.local,self.values,self.objects)
+        self.assertTrue(DEFAULT_LEGACY<={d['metadata']['name'] for d in selected})
+        self.objects.pop(('Deployment','session-status-worker'))
+        with self.assertRaisesRegex(stack.StackError,'missing or unready'):named.verify_selection(self.local,self.values,self.objects)
+
+    def test_selected_native_writer_can_replace_the_disabled_legacy_indexer(self):
+        self.native_replacement()
+        selected=named.verify_selection(self.local,self.values,self.objects)
+        self.assertNotIn('session-metadata-indexer',{d['metadata']['name'] for d in selected})
+        self.assertIn('qualified-native-writer',{d['metadata']['name'] for d in selected})
+        self.objects.pop(('Deployment','qualified-native-writer'))
+        with self.assertRaisesRegex(stack.StackError,'missing or unready'):named.verify_selection(self.local,self.values,self.objects)
+
+    def test_disabling_legacy_indexer_without_a_serving_native_replacement_refuses(self):
+        self.native_replacement()
+        self.values['sessions-pipeline']['nativeConsumer']['enabled']=False
+        with self.assertRaisesRegex(stack.StackError,'drained native replacement'):named.verify_selection(self.local,self.values,self.objects)
+        self.values['sessions-pipeline']['nativeConsumer']['enabled']=True
+        self.rendered=[d for d in self.rendered if d['metadata']['name']!='qualified-native-writer']
+        with self.assertRaisesRegex(stack.StackError,'no single rendered runtime'):named.verify_selection(self.local,self.values,self.objects)
+
+    def test_native_label_alone_cannot_admit_the_owner_bootstrap_role(self):
+        self.native_replacement()
+        for doc in (self.rendered[-1],self.objects[('Deployment','qualified-native-writer')]):
+            for entry in stack.pod_spec(doc)['containers'][0]['env']:
+                if entry['name']=='NATIVE_CONSUMER_EXPECTED_ROLE':entry['value']='schema_owner'
+        with self.assertRaisesRegex(stack.StackError,'no single rendered runtime'):named.verify_selection(self.local,self.values,self.objects)
+
+    def test_native_replacement_refuses_an_undrained_or_remaining_legacy_indexer(self):
+        self.native_replacement()
+        self.values['sessions-pipeline']['nativeConsumer']['legacyIndexerDrained']=False
+        with self.assertRaisesRegex(stack.StackError,'drained native replacement'):named.verify_selection(self.local,self.values,self.objects)
+        self.values['sessions-pipeline']['nativeConsumer']['legacyIndexerDrained']=True
+        self.objects[('Deployment','session-metadata-indexer')]={'kind':'Deployment','metadata':{'name':'session-metadata-indexer'},'spec':{'replicas':0}}
+        with self.assertRaisesRegex(stack.StackError,'still present'):named.verify_selection(self.local,self.values,self.objects)
 
     def test_foreign_plugin_symlink_cannot_mutate_global_helm_configuration(self):
         self.local.named_layout=self.record

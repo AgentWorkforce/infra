@@ -171,6 +171,12 @@ active readiness/images; the old proof remains untouched and historical. A
 later qualified public-origin change is retained rather than replaced with the
 values from the earlier storage cutover. Only a complete subsequent `kind-up`
 can issue current readiness, and only a fresh proof can establish acceptance.
+Required application Deployment names come from the selected render rather than
+the previous implementation's fixed worker list. The default legacy profile
+still requires every selected role. Disabling the legacy metadata indexer is
+accepted only with an explicitly selected, drained native-consumer runtime
+replacement; a preparation-only Job, owner bootstrap role, missing selected
+Deployment, or remaining legacy indexer refuses.
 
 On reuse, `kind-up` rechecks the typed binding, original readiness archive,
 storage/Postgres identities and specifications, seeded readback, selected
