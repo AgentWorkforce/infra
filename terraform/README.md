@@ -81,7 +81,12 @@ For dedicated Relay Chief EC2 hosts, see
 [`aws/relay-chief-slots`](modules/aws/relay-chief-slots). It stands alone and is
 not part of the Helm install. It has not been applied or qualified.
 
-### What the stack consumes
+### What current compatibility profiles consume
+
+This inventory includes the published legacy History and durable-actors
+profiles. For a fresh installation, use the separate-service database bindings
+in the [current target contract](../docs/shared-postgres-storage-contract.md).
+Legacy components in this inventory do not become new target dependencies.
 
 - **Postgres.** Every database is PostgreSQL 17:
   - relay-control (relaycontrol): Secret keys `database-url` (runtime role `control_api_runtime`) and `database-migrations-url` (owner).
