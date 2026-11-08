@@ -46,5 +46,53 @@
     "path": "supabase/bootstrap/session_consumer_role_verify.sql",
     "gitBlob": "27454f29df6483b40b2c2db2ab895b6c31d1b3a9",
     "sha256": "acee86e2e76866947b6fcd21596dd44c527dcca5d691aa21ececeeb9b53260c3"
+  },
+  {
+    "sourceRevision": "4bec3158a446da080416b0291cb01cc42e4bf37b",
+    "path": "src/session-pipeline/consumer-bootstrap.ts",
+    "gitBlob": "a783d8d37fa25e99ee6927d7c107aa5885d5ac0a",
+    "sha256": "352563b0e8b86bb5b55bffd806b2a6c12a53bd5a498ff8c239cbd28c04d4cd4a"
+  },
+  {
+    "sourceRevision": "4bec3158a446da080416b0291cb01cc42e4bf37b",
+    "path": "src/session-pipeline/consumer-config.ts",
+    "gitBlob": "dacc81cc84fdc38a0ec1c7e6c1737ec3a6a8a20f",
+    "sha256": "1ac591ee246c317a891d6f10d98e5ca7838b9e9dd01cc22ed5b74ceaab83faac"
+  },
+  {
+    "sourceRevision": "4bec3158a446da080416b0291cb01cc42e4bf37b",
+    "path": "src/session-pipeline/consumer-service.ts",
+    "gitBlob": "6f91c6ca59e45580ad74dbd4a409d12ac8cd4641",
+    "sha256": "09b25e6a5a31a94620c3a77fdef6ebeca30ab4834fd89f87d691564f900bc5d0"
+  },
+  {
+    "sourceRevision": "4bec3158a446da080416b0291cb01cc42e4bf37b",
+    "path": "src/hoopdb/migrate-guards.ts",
+    "gitBlob": "d652fc5f38d62a442c3562a090c260852cb43893",
+    "sha256": "8caf4c1b8c0f9485f7ac6d2d809d48809d4308dc9c154fc9411713622b897597"
+  },
+  {
+    "sourceRevision": "4bec3158a446da080416b0291cb01cc42e4bf37b",
+    "path": "src/session-pipeline/__tests__/session-consumer-writer.postgres.test.ts",
+    "gitBlob": "7e3847e761e2a0cc351df724d7cfd154b1cc03eb",
+    "sha256": "5fe273d6cc6ed724b55272b04697b717705a42f3a39278e7f382d8c832159413"
+  },
+  {
+    "sourceRevision": "4bec3158a446da080416b0291cb01cc42e4bf37b",
+    "path": "supabase/bootstrap/session_consumer_role.sql",
+    "gitBlob": "3799260457a42692583ef915ebf001d16e7ff5f9",
+    "sha256": "a24f11a511b67e10d90fb79b57a97c964e6a557e6af1bd4369ad923216a8f0e4"
+  },
+  {
+    "sourceRevision": "4bec3158a446da080416b0291cb01cc42e4bf37b",
+    "path": "supabase/bootstrap/session_consumer_role_verify.sql",
+    "gitBlob": "72ccfb630d7e0b2f42850337f26e8084f47baa88",
+    "sha256": "e8d5ea24cc318e833e2ddba749a8836175e1d649da1a803076275548dc188a18"
+  },
+  {
+    "sourceRevision": "4bec3158a446da080416b0291cb01cc42e4bf37b",
+    "path": "src/hoopdb/sessions-function-acl.json",
+    "gitBlob": "acb29bd5df458a44610c761935aef661d3a6e75b",
+    "sha256": "bab8bd16ac0a12bb4b8f60c45cff6ba1ea22f8dc687fcb2150c893456781903a"
   }
 ]

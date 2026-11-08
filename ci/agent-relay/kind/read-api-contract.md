@@ -65,8 +65,9 @@ databases, or claim the service ready from its dormant health response.
 
 The proposed writer in pipeline #336 is tracked in the
 [bootstrap source review](writer-bootstrap-review.md). Its entrypoint is not
-ready for operator wiring: that review records two bootstrap defects and the
-remaining identity/ACL proof requirements. The accompanying source checksums
+ready for operator wiring: that review records the two now-fixed bootstrap
+source defects and the remaining full-bootstrap/function-ACL/combined-image
+proof requirements. The accompanying source checksums
 do not establish a compatible container image or migration generation.
 
 The #330 service also requires `SESSION_POSTGRES_TLS_PROFILE` explicitly and,
