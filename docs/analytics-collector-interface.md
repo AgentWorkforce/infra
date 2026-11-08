@@ -6,8 +6,14 @@ collector, chart, volume or gateway is implemented or enabled by this document.
 
 ## Placement and adapters
 
-One collector Service inside the installation owns the persistent, rotated
-NDJSON export. Server components send batches through their analytics adapter;
+One single-writer collector workload behind an installation-local Service owns
+the persistent, rotated NDJSON export. It has one replica, no overlapping
+writer during rollout/restart, and exclusive volume ownership. Two writer pods
+must never mount the same file store concurrently; replica count or an RWO
+access mode alone is not fencing. Failover needs demonstrated storage fencing.
+A multi-writer collector is outside this first contract.
+
+Server components send batches through their analytics adapter;
 they do not need an analytics PVC each. The collector's files are an export,
 separate from the single RDS application database. An application-local file or
 `emptyDir` may be a bounded spool, but is not durable collector acceptance.
@@ -46,13 +52,19 @@ The batch body is a JSON object with `schema` equal to
 | `deployment_id` | Opaque installation/deployment identity |
 | `event` | Registered event kind |
 | `trace_id` | Opaque correlation identity for the user trace |
+| `tenant_id` | Opaque, deployment-scoped tenant attribution when the event is tenant-scoped |
+| `workspace_id` | Opaque, deployment-scoped workspace attribution when the event is workspace-scoped |
 | `properties` | Versioned, event-specific allowlisted properties |
 
 Existing native observations are projected into this envelope. The producer
 registration binds component and deployment identity; body fields cannot
 override that binding. Tenant/workspace attribution is exported only through
-the reviewed projector after application authorization. Initial tests use
-synthetic/install-scoped identity; this adds no new user identity collection.
+the reviewed projector after application authorization. The event-kind registry
+requires `tenant_id` for tenant events and both IDs for workspace events;
+installation-only diagnostics omit both. `properties` cannot override these
+reserved fields. Unregistered scope, missing required attribution, or an
+unauthorized attribution is invalid. Initial tests use synthetic/install-scoped
+identity; these fields add no user identities, names or credentials.
 
 Authenticate with a per-producer credential supplied through a Secret
 reference. The collector verifies it against its producer registration. Do not
@@ -70,12 +82,41 @@ Validate the actual streamed body size, not only `Content-Length`. Reject
 oversized/invalid/unauthorized batches before writing their records. Tests
 must exercise each configured bound rather than assume unlimited memory/disk.
 
-Return success only after the accepted NDJSON records have been appended and
-flushed to the collector's persistent storage. Do not acknowledge an in-memory
-queue as durable export. Disk-full/backpressure returns an explicit failure;
-producers bound retries and report drops without failing product operations.
-Delivery is at least once: stable event IDs make retries identifiable, but no
-exactly-once or automatic deduplication guarantee is implied.
+Producer queue exhaustion drops the newest event and increments the explicit
+queue-full counter. Collector retention is configured separately: `reject-new`
+is the default at the file-count/byte cap. An explicit
+`delete-oldest-closed` policy may remove closed segments by configured age or
+capacity; this loses retained exports and increments retention-loss counters.
+No implicit deletion or unbounded growth is allowed. Never delete an active
+commit to make room for another batch.
+
+Validate each entire batch before persistence and accept it atomically: all
+events become committed or none do. One implementation is an immutable NDJSON
+batch segment written privately, synchronized, atomically renamed, and followed
+by directory synchronization. An equivalent journal must demonstrate the same
+crash recovery and visibility boundary. Return success only after the storage
+backend's durable-commit boundary, not merely a buffered stream flush. Recovery
+must discard incomplete private segments without exposing partial batches.
+Durability holds within the configured retention policy; no storage backend is
+qualified by this design alone.
+
+| Response | Producer behavior |
+|---|---|
+| `204` | Entire batch durably accepted; dequeue it |
+| `400` | Terminal invalid batch/version/scope; count rejected events, no unchanged retry |
+| `401` / `403` | Terminal authentication/authority failure; count and surface configuration failure |
+| `413` | Terminal oversized batch; bounded splitting is allowed, oversized individual events are dropped and counted |
+| `429` / `503` | Backpressure/unavailable; bounded retry, honoring bounded `Retry-After` |
+| `507` | Storage capacity exhausted; bounded retry and observable storage/drop failure |
+| Other `5xx`, timeout or connection loss | Bounded retry; the prior batch may already have committed |
+| Redirect | Do not follow or forward credentials; count export failure |
+
+Error responses carry a stable error code, never event content or credentials.
+There is no per-event partial-success response. Delivery is best effort with
+bounded retries: events may be dropped when queue or retry budgets expire.
+Retries preserve event IDs and can duplicate a committed batch after a lost
+acknowledgement. No exactly-once or automatic deduplication guarantee is implied.
+Export failures do not turn successful product operations into failures.
 
 Both producer and collector project a typed field allowlist. A private-key
 regex alone is insufficient. Never export credential hashes, tokens, raw

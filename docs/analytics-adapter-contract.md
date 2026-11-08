@@ -25,8 +25,9 @@ Service or a server filesystem. Hosted project keys remain in the appropriate
 server/client configuration contract; no credentials belong in Relay messages,
 Helm values, Terraform outputs or exported events.
 
-The installation uses **one in-cluster collector Service that owns the durable
-NDJSON files**. Server adapters POST events to that Service; they do not each
+The installation uses **one single-writer collector workload behind an
+in-cluster Service**. That workload owns the durable NDJSON files. Server
+adapters POST events to the Service; they do not each
 mount an analytics PVC. A direct file writer is a collector implementation or
 an optional development adapter, not the production producer contract. See the
 [collector interface](analytics-collector-interface.md) for batching,
