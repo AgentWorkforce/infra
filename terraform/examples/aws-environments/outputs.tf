@@ -83,7 +83,7 @@ output "service_accounts" {
   description = "Distinct environment-scoped workload bindings; the application chart must use these identities."
   value = {
     namespace = local.namespace
-    storage   = ["${var.release_name}-worker", "${var.release_name}-alleyoop"]
+    storage   = ["${var.release_name}-worker", "${var.release_name}-session-ingest-api"]
     indexer   = local.search_indexer_sa
     reader    = local.search_reader_sa
   }

@@ -45,10 +45,14 @@ umbrella (or at the root for the pipeline chart):
 ```yaml
 worker:
   legacyResourceNames: true
-  # Retain your existing fullnameOverride/nameOverride and adapter endpoint.
+  # Retain your existing fullnameOverride/nameOverride.
+  locker:
+    endpoint: http://locker:9000 # the former default; keep yours if it differs
 alleyoop:
   legacyResourceNames: true
-  # Retain your existing fullnameOverride/nameOverride and adapter endpoint.
+  # Retain your existing fullnameOverride/nameOverride.
+  locker:
+    endpoint: http://locker:9000 # the former default; keep yours if it differs
 session-object-storage:
   fullnameOverride: locker
   nameOverride: locker
@@ -59,6 +63,24 @@ The two storage overrides above describe the former default; use the actual
 recorded names if the old release overrides them. Identity render tests verify
 that these values still reference the original PVC. They do not create, delete
 or inspect a real volume.
+
+`helm upgrade` refuses a release that uses in-chart MinIO with the default
+`session-object-storage` name, because Helm would otherwise remove
+`PersistentVolumeClaim/locker` and create an empty claim. Set both storage
+overrides above to keep it. Do not use `persistence.existingClaim: locker` for
+a claim the release created: no PVC is rendered, so Helm still deletes it unless
+the live claim is first annotated `helm.sh/resource-policy: keep`. Set
+`acknowledgeStorageRename: true` only for a release installed at 0.7.0 or later,
+one whose objects are disposable, or one whose claim already carries that
+annotation. The check needs a real upgrade: it does not run under `helm template`
+without `--is-upgrade`, so manifest-based pipelines must apply these values
+themselves.
+
+The Terraform examples bind object storage to `<release>-session-ingest-api`.
+A release that keeps `legacyResourceNames` still runs as `<release>-alleyoop`, so
+change `"session-ingest-api"` to `"alleyoop"` in that root's ServiceAccount list
+before applying. For a cutover to the new name, list both until the old workload
+is gone, or ingest loses storage access during the switch.
 
 A live move to descriptive resource names requires a separate controlled
 cutover: stop the old indexer before creating its replacement (Deployment
