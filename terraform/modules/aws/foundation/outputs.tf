@@ -104,3 +104,15 @@ output "storage_class_manifest" {
     parameters           = { type = "gp3", encrypted = "true", kmsKeyId = var.kms_key_arn }
   }
 }
+
+output "load_balancer_controller" {
+  description = "Helm install references for the AWS Load Balancer Controller; null while disabled. No credentials."
+  value = var.enable_load_balancer_controller ? {
+    cluster_name         = aws_eks_cluster.this.name
+    region               = var.region
+    vpc_id               = aws_vpc.this.id
+    namespace            = "kube-system"
+    service_account_name = local.pod_identity_service_accounts["lbc"]
+    role_arn             = aws_iam_role.this["lbc"].arn
+  } : null
+}
