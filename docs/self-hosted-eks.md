@@ -14,7 +14,10 @@ whose keys are `relay-cloud-api` and `relay-dashboard`. The current source uses
 The proof installer loads the EKS base values from the selected published chart
 and emits legacy keys. See the [rename guide](control-webapp-chart-rename.md)
 for a separately reviewed upgrade. Existing ALB backends can be retained with
-`EKS_ALB_CONTROL_SERVICE` and `EKS_ALB_WEBAPP_SERVICE`.
+`EKS_ALB_CONTROL_SERVICE` and `EKS_ALB_WEBAPP_SERVICE`. For the recorded 0.3.11
+layout use `EKS_ALB_CONTROL_SERVICE=relay-cloud-api` and
+`EKS_ALB_WEBAPP_SERVICE=relay-dashboard`; these are also the historical installer
+defaults. Explicit overrides are forwarded to the generator.
 
 Scope: the core suite with Relaycast on SQLite and Relayfile off. For the
 separate AWS actor profile, see
