@@ -2,6 +2,7 @@
 postgres-layout contract, the RDS master is never the application migrator or
 runtime, and execution stays refused until a reviewed activation artifact exists."""
 import importlib.util
+import json
 from pathlib import Path
 import unittest
 from unittest.mock import patch
@@ -54,11 +55,31 @@ class ApplicationIdentity(unittest.TestCase):
     def test_missing_binding_is_refused(self):
         self.refused(cfg(application=None),'application_binding_missing')
 
-    def test_main_refuses_before_any_aws_call(self):
-        # The gate runs inside main() before sts/secrets; prove no CLI child starts.
-        with patch.object(h,'cli') as child,self.assertRaises(SecretIoError):
-            h.application_identity(cfg())
-        child.assert_not_called()
+    def test_main_refuses_before_aws_or_followup_file_reads(self):
+        # Invoke the actual entry point; calling the helper alone cannot prove
+        # its position before credential/CLI work in main().
+        activation={'sessions_commit':'a'*40,'artifact_sha256':'b'*64,'generation':'c'*64,'contract':'reviewed'}
+        for supplied,code in [(None,'application_activation_artifact_missing'),
+                              (activation,'application_activation_not_implemented')]:
+            with self.subTest(supplied=supplied is not None):
+                c=cfg(application_activation=supplied)
+                c.update(account_id='111111111111',source_sha='a'*40,deadline='2099-01-01T00:00:00.000Z')
+                reads=[]
+                def read_input(path,*args,**kwargs):
+                    reads.append(path.name)
+                    if str(path)=='/proc/swaps':return 'Filename\tType\tSize\tUsed\tPriority\n'
+                    if path.name=='inputs.json':return json.dumps(c)
+                    raise AssertionError('unexpected read after refused application gate')
+                with patch.object(h.platform,'system',return_value='Linux'), \
+                     patch.object(h.platform,'machine',return_value='aarch64'), \
+                     patch.object(h.Path,'read_text',new=read_input), \
+                     patch.object(h,'cli',side_effect=AssertionError('AWS CLI must not start')) as child, \
+                     patch.object(h,'run',side_effect=AssertionError('child process must not start')) as process:
+                    with self.assertRaises(SecretIoError) as raised:h.main()
+                self.assertEqual(raised.exception.code,code)
+                self.assertEqual(reads,['swaps','inputs.json'])
+                child.assert_not_called()
+                process.assert_not_called()
 
 class GuestRuntimeLogin(unittest.TestCase):
     def test_runtime_readiness_binds_session_user_not_only_current_user(self):

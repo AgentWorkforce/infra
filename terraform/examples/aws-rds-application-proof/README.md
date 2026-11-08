@@ -205,6 +205,9 @@ also requires `session_user` to equal the runtime role, so a `SET ROLE` or
 Other services' schemas (`relaycontrol`, `relaycast`, `relayhistory`,
 `relayfile`) stay separately owned. A binding existing doesn't mean the service is
 implemented.
+The legacy `relayhistory` binding preserves existing layout metadata, not an
+active self-host server target. Self-host history remains a sessions-pipeline
+capability; the standalone legacy History server is being removed separately.
 
 **Application execution is refused** and `application_sql_ready` is `false`.
 `terraform_data.application_gate` refuses any verifier compute unless
@@ -330,7 +333,7 @@ added.
 | vpc\_id | Reviewed existing VPC; unchanged by this proof. | `string` | n/a | yes |
 | application\_activation | Reviewed schema-aware Sessions activation artifact for the shared-database application path (source commit, artifact sha256, generation, contract id). Null keeps application execution refused. Must name an entry of local.approved\_activations, which is empty until a reviewed artifact exists. | ```object({ sessions_commit = string artifact_sha256 = string generation = string contract = string })``` | `null` | no |
 | create\_private\_subnets | Optional two owned local-only private subnets in the existing default VPC. Explicit reviewed non-overlapping /24-/28 IPv4 CIDRs and distinct available AZs; mutually exclusive with private\_subnet\_ids. | `object({ first = object({ cidr = string, az = string }), second = object({ cidr = string, az = string }) })` | `null` | no |
-| payload\_version\_id | Null provisions data without compute. Exact immutable transport VersionId enables the verifier in a separate reviewed apply. | `string` | `null` | no |
+| payload\_version\_id | Null provisions data without compute. A non-null immutable transport VersionId also requires a registered application activation; none is registered, so verifier execution stays refused. | `string` | `null` | no |
 | private\_subnet\_ids | Exactly two reviewed existing private subnets in distinct AZs; null when create\_private\_subnets is selected. | `set(string)` | `null` | no |
 | restore\_checkpoint | Null for seed. Supply only after a successful independently reviewed seed receipt; no secret values. | `object({ seed_receipt_sha256 = string, seed_receipt_version_id = string, secret_version_id = string, runtime_secret_version_id = string, seed_evidence_sha256 = string })` | `null` | no |
 | retire | Reviewed cleanup apply disables the verifier and releases database deletion protection. | `bool` | `false` | no |

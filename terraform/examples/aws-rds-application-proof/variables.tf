@@ -83,7 +83,7 @@ variable "payload_sha256" {
   }
 }
 variable "payload_version_id" {
-  description = "Null provisions data without compute. Exact immutable transport VersionId enables the verifier in a separate reviewed apply."
+  description = "Null provisions data without compute. A non-null immutable transport VersionId also requires a registered application activation; none is registered, so verifier execution stays refused."
   type        = string
   default     = null
   validation {

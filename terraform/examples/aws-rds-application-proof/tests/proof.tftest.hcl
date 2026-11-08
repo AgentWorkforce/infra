@@ -71,7 +71,7 @@ run "actual_modules_private_managed_secret_and_versioned_bucket" {
   }
   assert {
     condition     = aws_iam_role.verifier.path == "/pippen/workload/" && aws_iam_role.verifier.permissions_boundary == "arn:aws:iam::111111111111:policy/pippen-agent-session-boundary" && startswith(aws_iam_instance_profile.verifier.name, "eks-")
-    error_message = "Verifier must retain existing Pippen path/boundary/profile and shutdown retirement."
+    error_message = "Verifier must retain existing Pippen path/boundary/profile."
   }
   assert {
     condition     = aws_launch_template.verifier.iam_instance_profile[0].name == aws_iam_instance_profile.verifier.name && jsondecode(aws_iam_role.verifier.assume_role_policy).Statement[0].Principal.Service == "ec2.amazonaws.com"
