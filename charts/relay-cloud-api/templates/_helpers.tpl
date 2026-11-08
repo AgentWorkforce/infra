@@ -117,17 +117,29 @@ the chart already sets, including duplicates inside extraEnv. */ -}}
 {{- if $integrationEnv }}{{ range $item := $integrationEnv | fromYamlArray }}{{ $managed = append $managed (toString $item.name) }}{{ end }}{{ end -}}
 {{- end -}}
 {{- range .Values.extraEnv -}}
-{{- if or (not (kindIs "map" .)) (not .name) }}{{ fail "every extraEnv entry must be an object with a name" }}{{ end -}}
+{{- if not (kindIs "map" .) }}{{ fail "every extraEnv entry must be an object" }}{{ end -}}
+{{- if or (not (kindIs "string" .name)) (not .name) }}{{ fail "every extraEnv name must be a non-empty string" }}{{ end -}}
 {{- if or (not (kindIs "string" .name)) (not (regexMatch "^[A-Za-z_][A-Za-z0-9_]*$" (toString .name))) }}{{ fail "extraEnv.name must be a valid environment variable string" }}{{ end -}}
+{{- /* Provider hyphens become underscores; reserve unset OAuth names and raw secret FILE aliases. */ -}}
+{{- if regexMatch "^SELFHOST_OAUTH_[A-Z0-9]([A-Z0-9_]*[A-Z0-9])?_(CLIENT_ID|CLIENT_SECRET|CLIENT_SECRET_FILE|SCOPES)$" .name }}{{ fail (printf "%s is managed by structured chart values and must not appear in extraEnv" .name) }}{{ end -}}
 {{- if has (toString .name) $managed }}{{ fail (printf "%s is managed by structured chart values and must not appear in extraEnv" .name) }}{{ end -}}
 {{- if ne (hasKey . "value") (not (hasKey . "valueFrom")) }}{{ fail "extraEnv requires exactly one of value or valueFrom" }}{{ end -}}
 {{- if and (hasKey . "value") (not (kindIs "string" .value)) }}{{ fail "extraEnv.value must be a string; quote numbers and booleans" }}{{ end -}}
 {{- if and (hasKey . "value") (regexMatch "(?i)(^|_)(SECRET|TOKEN|PASSWORD|CREDENTIAL|DSN|API_KEY)$" .name) }}{{ fail "sensitive extraEnv settings require valueFrom.secretKeyRef, never inline values" }}{{ end -}}
 {{- if hasKey . "valueFrom" -}}
-{{- if not (kindIs "map" .valueFrom) }}{{ fail "extraEnv.valueFrom must be an object" }}{{ end -}}
-{{- $ref := .valueFrom.secretKeyRef | default dict -}}
-{{- if not (kindIs "map" $ref) }}{{ fail "extraEnv.valueFrom.secretKeyRef must be an object" }}{{ end -}}
-{{- if and (eq (toString ($ref.name | default "")) (toString $.Values.existingSecret)) (eq (toString ($ref.key | default "")) (toString $.Values.secretKeys.databaseMigrationsUrl)) }}{{ fail "extraEnv must not expose the migration credential to the API pod" }}{{ end -}}
+{{- if not (kindIs "map" .valueFrom) }}{{ fail "extraEnv valueFrom must be an object" }}{{ end -}}
+{{- $fromKeys := keys .valueFrom -}}
+{{- if ne (len $fromKeys) 1 }}{{ fail "extraEnv valueFrom must set exactly one of secretKeyRef, configMapKeyRef, fieldRef, or resourceFieldRef" }}{{ end -}}
+{{- $fromKey := index $fromKeys 0 -}}
+{{- if not (has $fromKey (list "secretKeyRef" "configMapKeyRef" "fieldRef" "resourceFieldRef")) }}{{ fail "extraEnv valueFrom must set exactly one of secretKeyRef, configMapKeyRef, fieldRef, or resourceFieldRef" }}{{ end -}}
+{{- $src := index .valueFrom $fromKey -}}
+{{- if not (kindIs "map" $src) }}{{ fail (printf "extraEnv valueFrom.%s must be an object" $fromKey) }}{{ end -}}
+{{- if or (eq $fromKey "secretKeyRef") (eq $fromKey "configMapKeyRef") -}}
+{{- if or (not (kindIs "string" $src.name)) (not $src.name) (not (kindIs "string" $src.key)) (not $src.key) }}{{ fail (printf "extraEnv valueFrom.%s requires a non-empty string name and key" $fromKey) }}{{ end -}}
+{{- end -}}
+{{- if and (eq $fromKey "fieldRef") (or (not (kindIs "string" $src.fieldPath)) (not $src.fieldPath)) }}{{ fail "extraEnv valueFrom.fieldRef requires a non-empty string fieldPath" }}{{ end -}}
+{{- if and (eq $fromKey "resourceFieldRef") (or (not (kindIs "string" $src.resource)) (not $src.resource)) }}{{ fail "extraEnv valueFrom.resourceFieldRef requires a non-empty string resource" }}{{ end -}}
+{{- if and (eq $fromKey "secretKeyRef") (eq (toString $src.name) (toString $.Values.existingSecret)) (eq (toString $src.key) (toString $.Values.secretKeys.databaseMigrationsUrl)) }}{{ fail "extraEnv must not reference the migration credential secretKeys.databaseMigrationsUrl" }}{{ end -}}
 {{- end -}}
 {{- $managed = append $managed (toString .name) -}}
 {{- end -}}
