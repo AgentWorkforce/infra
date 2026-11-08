@@ -15,6 +15,17 @@ that diff. The [upstream design](https://github.com/AgentWorkforce/relay-control
 explicitly separates the pure protocol/resource catalog from later mounted
 authorization/token handlers, grants, consent, admission and signing.
 
+The mounted-route/store/admission work belongs to **hosted-mcp-port**, not the
+owner of the pure protocol slice. Its [design PR #25](https://github.com/AgentWorkforce/relay-control/pull/25)
+was checked open/draft at `23332b73509e2e3154e90a7d6df9857fc7bcc8d1`.
+The owner-reported implementation areas are `src/mcp/oauth/**`,
+`src/mcp/events/**` and reserved migrations `0015`–`0017`; no implementation
+branch is supplied by this candidate. Design acceptance and implementation
+go-ahead remain separate gates. Code-complete, compatible-artifact and actual
+OAuth proof dates are **NOT COMMITTED** and must come from that lane.
+The existing basic MCP transport/CLI-auth result remains separate; this future
+OAuth work is not silently counted as a new passed or required core check.
+
 ## Executed qualification
 
 The official Dockerfile built successfully for native Linux ARM64 using the
