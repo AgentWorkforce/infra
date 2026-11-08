@@ -161,8 +161,11 @@ reads or application visibility. No chart component or service was enabled.
 ## Local MCP-capable control build and public endpoint proof
 
 The optional `kind-up-local-control` target builds the official Dockerfile at
-`relay-control@1f08cb624be66016eb0c135363553dd44e58f691`, with a pinned native
-Node base. The [raw build receipt](control-build.json) records the native manifest
+`relay-control-internal@1f08cb624be66016eb0c135363553dd44e58f691`, with a pinned
+native Node base. This historical commit is retained in the private repository
+after the repository split; the public `relay-control` snapshot does not contain
+it. Existing build and runtime receipts are unchanged and have not been rerun.
+The [raw build receipt](control-build.json) records the native manifest
 and config digests, source revision, tag, architecture and base image. It was
 built and tested on linux/arm64. No registry publication occurred.
 
