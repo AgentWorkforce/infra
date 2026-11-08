@@ -155,6 +155,15 @@ already indexed, rendered or searchable. Object-store failure refuses the
 upload; it must not silently fall back to synchronous admission. The configured
 store must pass the runtime's conditional-write startup check.
 
+Async and drain need object listing as well as the existing read/write access.
+At the pinned draft runtime, the consumer scans both `96bulls/.admission-inbox`
+and `96bulls/.admission-dlq`; an upload-only credential is insufficient. Scope
+listing to the runtime's required prefixes, and retain access for its privacy,
+outcome and startup-probe operations. The startup probe verifies conditional
+create and compare-and-swap, reads the result and attempts cleanup. Use the
+final runtime's permission contract when qualifying credentials; this chart
+does not grant storage permissions or broaden an existing policy.
+
 In `drain`, new uploads use synchronous admission while the consumer continues
 processing the existing inbox. Use this explicit mode to drain queued work
 before returning to `sync`; a chart rollback alone does not empty the inbox.
