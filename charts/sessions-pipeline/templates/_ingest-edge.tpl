@@ -14,3 +14,26 @@
 {{- end -}}
 {{- $url -}}
 {{- end -}}
+
+{{/* An older image can ignore a new environment variable. Require the real
+admission-consumer response before routing async/drain traffic to the Pod. */}}
+{{- define "sessions-pipeline.ingestEdge.admissionProbe" -}}
+const fail = () => { process.exitCode = 1; };
+const port = Number(process.env.RELAYHISTORY_INGEST_PORT);
+const mode = process.env.SELFHOST_INGEST_ADMISSION;
+const count = v => Number.isSafeInteger(v) && v >= 0;
+if (!["async", "drain"].includes(mode) || !Number.isInteger(port) || port < 1024 || port > 65535) {
+  fail();
+} else {
+  fetch(`http://127.0.0.1:${port}/readyz`, { redirect: "error", signal: AbortSignal.timeout(1500) })
+    .then(async response => {
+      if (!response.ok) return fail();
+      const body = await response.json();
+      const a = body?.consumer;
+      if (body?.ok !== true || body?.enabled !== true || body?.admission !== mode
+          || a?.ok !== true || a?.state !== "ok"
+          || ![a.backlog, a.deadLettered, a.inFlight, a.lastScanAgeMs].every(count)
+          || !(a.oldestAgeMs === null || count(a.oldestAgeMs))) fail();
+    }).catch(fail);
+}
+{{- end -}}

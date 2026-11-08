@@ -240,10 +240,10 @@ compatibility:
       current: true
       charts: { telemetry-collector: 0.1.0 }
       notes: 'Default-off umbrella analytics file collector. Requires accepted immutable collector and TLS-proxy images, producer and TLS Secrets and an exclusive persistent volume. Source rendering does not prove image entrypoint, TLS, durable acknowledgement, power-loss recovery or whole-application analytics coverage. The currently reviewed collector CLI registers relaycontrol events only.'
-    - id: sessions-pipeline-0.7.6
+    - id: sessions-pipeline-0.7.7
       status: unreleased
       current: true
-      charts: { sessions-pipeline: 0.7.6, sessions-pipeline-worker: 0.7.2, session-ingest-api: 0.4.1 }
+      charts: { sessions-pipeline: 0.7.7, sessions-pipeline-worker: 0.7.2, session-ingest-api: 0.4.1 }
       depends:
         sessions-pipeline: { worker: 0.7.2, alleyoop: 0.4.1, hoopdb: 0.9.0, session-object-storage: 5.4.0, otel: 0.178.0 }
       images:
@@ -253,7 +253,7 @@ compatibility:
       services:
         source_commit: 7d7229bb31c121ecb98cd4e35c248fc2cf5669ad
         migration_generation: eff8b3be46565b57ad8fa5e4a066dbb6d1fe608313d9c1680bfbcd484add259b
-      notes: 'Adds the default-off searchIndexer block (pipeline session-pipeline-consumer, OpenSearch by default). With it off, every render differs only in the helm.sh/chart labels.'
+      notes: 'Adds explicit ingestEdge admission modes (sync default, async and drain require a qualified runtime implementing pipeline #398), plus the default-off searchIndexer block. No image or runtime qualification is supplied. Default rendered workloads differ only in chart metadata.'
       db_combos:
         - { db_mode: selfhosted, boundary: global-default-revoke, hoopdb: cnpg, status: shipped, profiles: [selfhost-postgres, migration, aws-cnpg], notes: chart Jobs install the runtime role and the function default }
         - { db_mode: selfhosted, boundary: global-default-revoke, hoopdb: external, status: shipped, profiles: [external-selfhosted], notes: operator runs the bootstrap files as a superuser }
@@ -545,18 +545,18 @@ compatibility:
       images:
         relayauth: { repository: ghcr.io/agentworkforce/relayauth, digest: sha256:eb71daa28e30eb7305f666d0bccc5a4002e53e8a574e3c4c32163d907a1b71df }
       notes: superseded by 0.1.1.
-    - id: agent-relay-0.5.5
+    - id: agent-relay-0.5.6
       status: unreleased
       current: true
-      charts: { agent-relay: 0.5.5, relayhistory: 0.1.2, relay-control: 0.3.1, relay-webapp: 0.2.0 }
+      charts: { agent-relay: 0.5.6, relayhistory: 0.1.2, relay-control: 0.3.1, relay-webapp: 0.2.0 }
       app_versions: { agent-relay: 0.1.0, relayhistory: 0.1.0, relay-control: 0.1.0, relay-webapp: 0.1.0 }
       depends:
-        agent-relay: { relaycast: 0.3.5, relayauth: 0.1.4, sessions-pipeline: 0.7.6, relayhistory: 0.1.2, relay-control: 0.3.1, relay-webapp: 0.2.0, relayflows: 0.2.5, durable-actors: 0.14.6-awf.1, relayfile: 0.2.2, telemetry-collector: 0.1.0, relay-chief: 0.1.0 }
+        agent-relay: { relaycast: 0.3.5, relayauth: 0.1.4, sessions-pipeline: 0.7.7, relayhistory: 0.1.2, relay-control: 0.3.1, relay-webapp: 0.2.0, relayflows: 0.2.5, durable-actors: 0.14.6-awf.1, relayfile: 0.2.2, telemetry-collector: 0.1.0, relay-chief: 0.1.0 }
       images:
         relayhistory: { repository: ghcr.io/agentworkforce/relayhistory, digest_required: true }
         relay-control: { repository: '', digest_required: true }
         relay-webapp: { repository: ghcr.io/agentworkforce/relay-webapp, digest_required: true }
-      notes: 'Takes sessions-pipeline 0.7.6 (default-off searchIndexer). With it off, every render differs only in the helm.sh/chart labels.'
+      notes: 'Takes sessions-pipeline 0.7.7 (explicit sync/async/drain ingest admission and default-off searchIndexer). Native ingest remains disabled in profiles and no image is qualified. Default rendered workloads differ only in chart metadata.'
     - id: agent-relay-0.5.4
       status: planned
       charts: { agent-relay: 0.5.4, relayhistory: 0.1.2, relay-control: 0.3.1, relay-webapp: 0.2.0 }
@@ -3553,6 +3553,36 @@ entries:
     verify: Keep disabled until merged composition and exact image/generation pass native PG/TLS/MinIO upload-to-readback proof. Helm readiness is not an authorization, schema, object-store or migration barrier.
     sources:
       - "charts/sessions-pipeline/templates/ingest-edge.yaml:1"
+      - "charts/sessions-pipeline/values.yaml:1"
+      - "docs/self-hosted-native-ingest.md:1"
+
+  - id: opt.sessions-native-ingest-admission
+    kind: option
+    title: Native ingest admission mode
+    description: |
+      Chart configuration for the self-host runtime in pipeline #398, which
+      remains under review and requires a separately qualified image. Sync is
+      the unchanged default. Async acknowledges a durable create-only inbox
+      write, then admits to PostgreSQL in the background. Drain accepts new
+      uploads synchronously while consuming the existing inbox. Control
+      introspection remains per request; startup still verifies PostgreSQL.
+      Async/drain probes require the exact mode and healthy consumer counters;
+      an older image ignoring the setting fails readiness. No profile opts in.
+    chart: sessions-pipeline
+    values: [ingestEdge.admission.mode, ingestEdge.admission.concurrency, ingestEdge.admission.scanIntervalMs, ingestEdge.admission.maxAttempts]
+    env: [SELFHOST_INGEST_ADMISSION, SELFHOST_ADMISSION_CONCURRENCY, SELFHOST_ADMISSION_SCAN_MS, SELFHOST_ADMISSION_MAX_ATTEMPTS]
+    profiles: [selfhost-postgres, migration, external-selfhosted, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql]
+    status: shipped
+    provided_by: operator
+    default: sync
+    choices:
+      - { value: sync, note: Existing synchronous upload admission; emits no new mode variables. }
+      - { value: async, note: Requires a qualified conditional-write store and native async image. Queued is not indexed. }
+      - { value: drain, note: Keep the consumer running while new uploads use synchronous admission. }
+    verify: Prove durable queued receipt during admission database failure after startup, restart/retry recovery, dead-letter visibility and eventual indexed readback with the exact image. Rendering and readiness do not establish end-to-end acceptance.
+    sources:
+      - "charts/sessions-pipeline/templates/ingest-edge.yaml:1"
+      - "charts/sessions-pipeline/templates/_ingest-edge.tpl:1"
       - "charts/sessions-pipeline/values.yaml:1"
       - "docs/self-hosted-native-ingest.md:1"
 

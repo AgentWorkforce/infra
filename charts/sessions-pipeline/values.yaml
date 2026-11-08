@@ -457,6 +457,14 @@ searchIndexer:
 # Initial supported assembly is test/pilot only; deletion/privacy is incomplete.
 ingestEdge:
   enabled: false
+  # Requires an image implementing SELFHOST_INGEST_ADMISSION. Sync preserves
+  # the existing request path. Async acknowledges durable object storage and
+  # defers admission SQL; drain consumes the inbox but accepts new work sync.
+  admission:
+    mode: sync
+    concurrency: 4
+    scanIntervalMs: 15000
+    maxAttempts: 20
   fullnameOverride: ""
   image:
     repository: ghcr.io/agentworkforce/96bulls-services

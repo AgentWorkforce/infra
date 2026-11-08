@@ -1,7 +1,7 @@
 apiVersion: v2
 name: sessions-pipeline
 type: application
-version: 0.7.6
+version: 0.7.7
 # The Sessions Pipeline services image version the app subcharts default to.
 appVersion: "0.1.0"
 description: >

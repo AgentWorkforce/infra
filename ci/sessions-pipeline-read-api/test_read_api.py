@@ -320,6 +320,86 @@ class IngestEdge(unittest.TestCase):
         self.assertEqual(self.render(overlay={"enabled": False, "image": {"digest": ""},
                          "config": {"existingSecret": ""}, "postgres": {"caConfigMap": "", "caSha256": ""}}), [])
 
+    def test_admission_defaults_preserve_the_sync_container(self):
+        def container(docs):
+            return next(d for d in docs if d["kind"] == "Deployment")["spec"]["template"]["spec"]["containers"][0]
+        default = container(self.render())
+        self.assertEqual(default, container(self.render(overlay={"admission": {"mode": "sync"}})))
+        self.assertFalse(any(e["name"].startswith("SELFHOST_ADMISSION_") or
+                             e["name"] == "SELFHOST_INGEST_ADMISSION" for e in default["env"]))
+        self.assertIn("httpGet", default["startupProbe"])
+        self.assertIn("httpGet", default["readinessProbe"])
+
+    def test_async_and_drain_emit_only_managed_admission_settings(self):
+        for mode in ("async", "drain"):
+            with self.subTest(mode=mode):
+                docs = self.render(overlay={"admission": {"mode": mode, "concurrency": 2,
+                    "scanIntervalMs": 1000, "maxAttempts": 7}})
+                self.assertEqual({d["kind"] for d in docs}, {"Deployment", "Service"})
+                c = next(d for d in docs if d["kind"] == "Deployment")["spec"]["template"]["spec"]["containers"][0]
+                env = {e["name"]: e.get("value") for e in c["env"]}
+                self.assertEqual({k: env[k] for k in ("SELFHOST_INGEST_ADMISSION", "SELFHOST_ADMISSION_CONCURRENCY",
+                    "SELFHOST_ADMISSION_SCAN_MS", "SELFHOST_ADMISSION_MAX_ATTEMPTS")},
+                    {"SELFHOST_INGEST_ADMISSION": mode, "SELFHOST_ADMISSION_CONCURRENCY": "2",
+                     "SELFHOST_ADMISSION_SCAN_MS": "1000", "SELFHOST_ADMISSION_MAX_ATTEMPTS": "7"})
+                self.assertEqual(c["startupProbe"]["exec"], c["readinessProbe"]["exec"])
+                self.assertEqual(c["readinessProbe"]["exec"]["command"][:2], ["bun", "-e"])
+                self.assertEqual(c["livenessProbe"]["httpGet"]["path"], "/healthz")
+                schema = subprocess.run(["kubeconform", "-strict", "-summary"],
+                    input=yaml.safe_dump_all(docs), text=True, capture_output=True)
+                self.assertEqual(schema.returncode, 0, schema.stdout + schema.stderr)
+
+    def test_admission_modes_and_numeric_bounds_refuse_typos(self):
+        for mode in ("", "on", "ASYNC", True, 1):
+            with self.subTest(mode=mode):
+                self.assertIn("ingestEdge.admission.mode", self.render(overlay={"admission": {"mode": mode}}, fail=True))
+        for field, values in (("concurrency", (0, 33, 1.5, True)),
+                              ("scanIntervalMs", (999, 600001, 1000.5, False)),
+                              ("maxAttempts", (0, 101, -1, "unbounded"))):
+            for value in values:
+                with self.subTest(field=field, value=value):
+                    self.assertIn("ingestEdge.admission." + field, self.render(
+                        overlay={"admission": {"mode": "async", field: value}}, fail=True))
+
+    def test_admission_probe_refuses_legacy_or_unhealthy_responses(self):
+        docs = self.render(overlay={"admission": {"mode": "async"}})
+        c = next(d for d in docs if d["kind"] == "Deployment")["spec"]["template"]["spec"]["containers"][0]
+        script = c["readinessProbe"]["exec"]["command"][2]
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):
+                self.send_response(self.server.reply[0]); self.end_headers(); self.wfile.write(self.server.reply[1])
+            def log_message(self, *args):
+                pass
+        server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True); thread.start()
+        healthy = {"ok": True, "enabled": True, "admission": "async", "consumer": {"ok": True,
+            "state": "ok", "backlog": 2, "oldestAgeMs": 500, "deadLettered": 0, "inFlight": 1, "lastScanAgeMs": 10}}
+        try:
+            replies = [(200, healthy, 0), (503, healthy, 1),
+                       (200, {"ok": True, "enabled": True}, 1),
+                       (200, {**healthy, "enabled": False}, 1),
+                       (200, {**healthy, "admission": "sync"}, 1),
+                       (200, {**healthy, "admission": "drain"}, 1),
+                       (200, {**healthy, "consumer": {**healthy["consumer"], "ok": False}}, 1),
+                       (200, {**healthy, "consumer": {**healthy["consumer"], "state": "stale"}}, 1),
+                       (200, {**healthy, "consumer": {**healthy["consumer"], "backlog": -1}}, 1),
+                       (200, {**healthy, "consumer": {**healthy["consumer"], "deadLettered": "0"}}, 1),
+                       (200, {**healthy, "consumer": {**healthy["consumer"], "lastScanAgeMs": None}}, 1),
+                       (200, b"{", 1)]
+            cases = [("async", status, body, expected) for status, body, expected in replies]
+            cases += [("drain", 200, {**healthy, "admission": "drain", "consumer": {
+                **healthy["consumer"], "backlog": 0, "oldestAgeMs": None}}, 0),
+                ("drain", 200, healthy, 1), ("sync", 200, healthy, 1)]
+            for mode, status, body, expected in cases:
+                with self.subTest(mode=mode, status=status, body=body):
+                    server.reply = (status, body if isinstance(body, bytes) else json.dumps(body).encode())
+                    env = dict(os.environ, RELAYHISTORY_INGEST_PORT=str(server.server_port), SELFHOST_INGEST_ADMISSION=mode)
+                    result = subprocess.run(["node", "-e", script], env=env, capture_output=True, text=True, timeout=8)
+                    self.assertEqual(result.returncode, expected, result.stderr)
+                    self.assertEqual(result.stdout, "")
+        finally:
+            server.shutdown(); server.server_close(); thread.join(timeout=5)
+
     def test_edge_service_name_and_unprivileged_container_port_boundaries(self):
         for name in ("1-edge", "UPPER", "bad.name", "a" * 64):
             with self.subTest(name=name):

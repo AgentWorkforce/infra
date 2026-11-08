@@ -127,9 +127,68 @@ Transport and object-store settings remain explicit operator configuration via
 the existing reader extraEnv/CA mounts, with credentials in Secret references.
 No store, credentials, auth mode, image or reader is enabled in a profile here.
 
-Readiness calls `/readyz`, not the always-200 `/healthz`: it requires an enabled
-service and a database `SELECT 1`. It does not prove complete grants, schema,
-Control reachability or MinIO functionality. Before enabling any pilot, qualify
+## Admission modes
+
+`ingestEdge.admission.mode` defaults to `sync`. It preserves the existing
+request path and HTTP probes, emitting no admission-mode environment variables.
+The ingest edge itself remains disabled by default in every profile.
+
+The `async` and `drain` modes require the self-host admission implementation
+from pipeline [#398](https://github.com/AgentWorkforce/relayhistory-pipeline/pull/398).
+That runtime is still under review; this chart supplies configuration and does
+not qualify an image or enable a deployment. After that implementation lands,
+qualify an immutable combined image before selecting either mode:
+
+```yaml
+ingestEdge:
+  admission:
+    mode: async
+    concurrency: 4
+    scanIntervalMs: 15000
+    maxAttempts: 20
+```
+
+In `async`, a successful upload acknowledges a create-only object-store inbox
+write with the queued admission receipt. The in-process consumer performs
+database admission afterward. A queued receipt does not mean the session is
+already indexed, rendered or searchable. Object-store failure refuses the
+upload; it must not silently fall back to synchronous admission. The configured
+store must pass the runtime's conditional-write startup check.
+
+In `drain`, new uploads use synchronous admission while the consumer continues
+processing the existing inbox. Use this explicit mode to drain queued work
+before returning to `sync`; a chart rollback alone does not empty the inbox.
+Do not remove or repurpose its bucket while queued work remains.
+These two modes additionally serve `GET /v1/delivery/admission`, an authenticated
+object-store status read using the caller's verified tenant identity. Any public
+router must admit that exact path deliberately; this chart adds no route.
+
+The managed values map to `SELFHOST_INGEST_ADMISSION`,
+`SELFHOST_ADMISSION_CONCURRENCY` (1–32), `SELFHOST_ADMISSION_SCAN_MS`
+(1000–600000 milliseconds) and `SELFHOST_ADMISSION_MAX_ATTEMPTS` (1–100).
+Retries that reach the limit become dead letters; inspect and recover them
+through the runtime's supported operational procedure. The chart supplies no
+dead-letter deletion or replay command.
+
+Async admission removes admission SQL from the upload request path. Every
+request still uses Control introspection with no positive cache, and startup
+still verifies the PostgreSQL role and TLS connection. This is not a promise
+of database-independent authorization or startup.
+
+In sync mode, `/readyz` requires an enabled service and a database `SELECT 1`.
+Async and drain use an exec probe that requires HTTP 200, `ok:true`,
+`enabled:true`, the exact configured `admission` mode, and healthy `consumer`
+status with valid backlog, dead-letter and scan-age counters. An older image
+that ignores the mode fails readiness. Async readiness follows the inbox
+consumer; drain also requires the synchronous database check. Liveness remains
+`/healthz`, so a dependency outage removes readiness without creating a restart
+loop. None of these checks proves complete grants, schema, Control reachability,
+eventual admission or end-to-end object-store functionality.
+
+Before enabling any pilot, qualify
 the exact combined image/generation with native PG/TLS/MinIO upload, retries,
 writer indexing, reader/search, compressed objects and auth refusal cases.
-Helm/schema tests prove only this chart slot. No ar-lap operation is performed.
+For async, also prove database failure after startup still yields a durable
+queued receipt, restart/retry recovery without duplicate admission, dead-letter
+visibility, and successful readback after recovery. Helm/schema tests prove
+only this chart slot; this source change performs no runtime operation.
