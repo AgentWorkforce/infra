@@ -78,10 +78,33 @@ run "all_add_ons_plan" {
   command = plan
 
   assert {
+    condition     = !module.functions[0].activation_enabled
+    error_message = "Preparing shared-database infrastructure must not activate unqualified application processing."
+  }
+
+  assert {
     condition = toset(keys(module.search[0].pod_identity_association_ids)) == toset([
       "indexer/relay/agent-relay/agent-relay-search-indexer",
       "reader/relay/agent-relay/agent-relay-session-read",
     ])
     error_message = "The indexer and reader ServiceAccounts each get their own role's Pod Identity association."
   }
+}
+
+run "shared_database_service_layout" {
+  command = apply
+  assert {
+    condition     = output.postgres_service_bindings.control.database == "relaycontrol" && output.postgres_service_bindings.hoopdb.database == "relaycontrol" && output.postgres_service_bindings.relaycast.database == "relaycontrol"
+    error_message = "The thin AWS composition must use one database for all service schemas."
+  }
+  assert {
+    condition     = output.postgres_service_bindings.control.schema != output.postgres_service_bindings.hoopdb.schema && !output.postgres_topology.application_sql_ready
+    error_message = "Distinct schema bindings are required, with no unsupported SQL-ready claim."
+  }
+}
+
+run "rds_internal_database_refused" {
+  command = plan
+  variables { application_database_name = "rdsadmin" }
+  expect_failures = [var.application_database_name]
 }

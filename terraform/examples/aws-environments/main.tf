@@ -75,6 +75,10 @@ resource "terraform_data" "environment_contract" {
       error_message = "activate_lambda requires pipeline_runtime=lambda and explicit compatible artifact/provider/TLS bindings."
     }
     precondition {
+      condition     = !var.activate_lambda
+      error_message = "Automatic Lambda activation is held: the shared-database schema/bootstrap/runtime contract is not qualified. Provision inactive infrastructure; qualification requires a reviewed implementation change, not an acknowledgement flag."
+    }
+    precondition {
       condition = var.lambda_runtime_bindings == null ? true : (
         var.pipeline_runtime == "lambda" && startswith(var.lambda_runtime_bindings.search_index, "${local.name}-")
       )
@@ -103,6 +107,7 @@ module "postgres" {
   source = "../../modules/aws/postgres"
 
   name                   = "${local.name}-pg"
+  database_name          = var.application_database_name
   engine_mode            = var.postgres_engine_mode
   engine_version         = var.postgres_engine_mode == "aurora" ? coalesce(var.aurora_engine_version, "17") : "17"
   instance_class         = coalesce(var.database_instance_class, local.profile.database_class)
@@ -190,4 +195,14 @@ module "pipeline" {
   tags                         = local.tags
 
   depends_on = [terraform_data.environment_contract]
+}
+
+# No SQL provider, passwords or privileged bootstrap credentials enter this
+# contract. Each service keeps its own complete binding for a later split.
+module "postgres_layout" {
+  source          = "../../modules/postgres-layout"
+  host            = module.postgres.host
+  port            = module.postgres.port
+  database        = module.postgres.initial_database
+  forbidden_roles = [module.postgres.master_username]
 }
