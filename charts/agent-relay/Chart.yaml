@@ -33,7 +33,7 @@ dependencies:
     repository: file://../relayhistory
     condition: components.relayhistory
   - name: relay-cloud-api
-    version: 0.2.6
+    version: 0.2.7
     repository: file://../relay-cloud-api
     condition: components.cloudApi
   - name: relay-dashboard

@@ -14,7 +14,7 @@ registered, every shipped entry must exist in the charts, planned entries must
 not be referenced by any template, and the compatibility matrix must equal
 the pinned digests.
 
-Source of truth: [`self-hosted/requirements.yaml`](../self-hosted/requirements.yaml). 106 entries: 40 requirements (39 shipped, 1 planned), 66 options (64 shipped, 2 planned).
+Source of truth: [`self-hosted/requirements.yaml`](../self-hosted/requirements.yaml). 107 entries: 40 requirements (39 shipped, 1 planned), 67 options (65 shipped, 2 planned).
 
 ## Contents
 
@@ -73,7 +73,7 @@ Services image (sessions-pipeline-worker, alleyoop and the privileged SQL Jobs):
 | relayauth-0.1.2 | shipped | relayauth 0.1.2 | relayauth: `ghcr.io/agentworkforce/relayauth@sha256:c23c92d25fdf…` |  |  | License-annotation patch bump of 0.1.1. Superseded by 0.1.3. |
 | relayauth-0.1.1 | shipped | relayauth 0.1.1 | relayauth: `ghcr.io/agentworkforce/relayauth@sha256:c23c92d25fdf…` |  |  | relayauth 784582ef (machine-bound History assertion contract, relayauth #113). Superseded by 0.1.2. |
 | relayauth-0.1.0 | shipped | relayauth 0.1.0 | relayauth: `ghcr.io/agentworkforce/relayauth@sha256:eb71daa28e30…` |  |  | superseded by 0.1.1. |
-| agent-relay-0.3.16 | unreleased | agent-relay 0.3.16<br>relayhistory 0.1.1<br>relay-cloud-api 0.2.6<br>relay-dashboard 0.1.3<br>(deps: relaycast 0.3.5, relayauth 0.1.4, sessions-pipeline 0.6.2, relayhistory 0.1.1, relay-cloud-api 0.2.6, relay-dashboard 0.1.3, relayflows 0.2.5, durable-actors 0.14.6-awf.1, relayfile 0.2.2) | relayhistory: `ghcr.io/agentworkforce/relayhistory@sha256:<required>`<br>relay-cloud-api: `ghcr.io/agentworkforce/selfhost-api@sha256:<required>`<br>relay-dashboard: `ghcr.io/agentworkforce/relay-dashboard@sha256:<required>` |  |  | Bundles sessions-pipeline 0.6.2 default-off read API plumbing. No profile enables the component or reroutes relaycontrol. Compatible runtime assembly and image remain upstream dependencies. Existing kind evidence belongs to its pinned base revision, not this new chart version. |
+| agent-relay-0.3.16 | unreleased | agent-relay 0.3.16<br>relayhistory 0.1.1<br>relay-cloud-api 0.2.7<br>relay-dashboard 0.1.3<br>(deps: relaycast 0.3.5, relayauth 0.1.4, sessions-pipeline 0.6.2, relayhistory 0.1.1, relay-cloud-api 0.2.7, relay-dashboard 0.1.3, relayflows 0.2.5, durable-actors 0.14.6-awf.1, relayfile 0.2.2) | relayhistory: `ghcr.io/agentworkforce/relayhistory@sha256:<required>`<br>relay-cloud-api: `ghcr.io/agentworkforce/selfhost-api@sha256:<required>`<br>relay-dashboard: `ghcr.io/agentworkforce/relay-dashboard@sha256:<required>` |  |  | Bundles sessions-pipeline 0.6.2 default-off read API plumbing and relay-cloud-api 0.2.7 legacy-client env omission. No profile enables the component or reroutes relaycontrol. Compatible runtime assembly and image remain upstream dependencies. Existing kind evidence belongs to its pinned base revision, not this new chart version. |
 | agent-relay-0.3.15 | **planned** | agent-relay 0.3.15<br>relayhistory 0.1.1<br>relay-cloud-api 0.2.6<br>relay-dashboard 0.1.3<br>(deps: relaycast 0.3.5, relayauth 0.1.4, sessions-pipeline 0.6.1, relayhistory 0.1.1, relay-cloud-api 0.2.6, relay-dashboard 0.1.3, relayflows 0.2.5, durable-actors 0.14.6-awf.1, relayfile 0.2.2) | relayhistory: `ghcr.io/agentworkforce/relayhistory@sha256:<required>`<br>relay-cloud-api: `ghcr.io/agentworkforce/selfhost-api@sha256:<required>`<br>relay-dashboard: `ghcr.io/agentworkforce/relay-dashboard@sha256:<required>` |  |  | Composes the API extraEnv change from PR 78. Local kind core/addons values, bootstrap and acceptance preparation. relay-cloud-api 0.2.6 adds a separate Secret-backed SELFHOST_LICENSE_FILE slot; license verification remains upstream work. Production defaults and image pins are unchanged. Local runtime proof is not yet established; see README Local kind profiles and issue 77. |
 | agent-relay-0.3.14 | **planned** | agent-relay 0.3.14<br>relayhistory 0.1.1<br>relay-cloud-api 0.2.5<br>relay-dashboard 0.1.3<br>(deps: relaycast 0.3.5, relayauth 0.1.4, sessions-pipeline 0.6.1, relayhistory 0.1.1, relay-cloud-api 0.2.5, relay-dashboard 0.1.3, relayflows 0.2.5, durable-actors 0.14.6-awf.1, relayfile 0.2.2) | relayhistory: `ghcr.io/agentworkforce/relayhistory@sha256:<required>`<br>relay-cloud-api: `ghcr.io/agentworkforce/selfhost-api@sha256:<required>`<br>relay-dashboard: `ghcr.io/agentworkforce/relay-dashboard@sha256:<required>` |  |  | Planned predecessor from PR 78: relay-cloud-api 0.2.5 adds extraEnv to API and migration containers. Ordering is coordinated with its owner; this record does not claim a published chart. |
 | agent-relay-0.3.13 | **planned** | agent-relay 0.3.13<br>relayhistory 0.1.1<br>relay-cloud-api 0.2.4<br>relay-dashboard 0.1.3<br>(deps: relaycast 0.3.5, relayauth 0.1.4, sessions-pipeline 0.6.1, relayhistory 0.1.1, relay-cloud-api 0.2.4, relay-dashboard 0.1.3, relayflows 0.2.5, durable-actors 0.14.6-awf.1, relayfile 0.2.2) | relayhistory: `ghcr.io/agentworkforce/relayhistory@sha256:<required>`<br>relay-cloud-api: `ghcr.io/agentworkforce/selfhost-api@sha256:<required>`<br>relay-dashboard: `ghcr.io/agentworkforce/relay-dashboard@sha256:<required>` |  |  | Repository rename to AgentWorkforce/infra: canonical source and Helm repository URLs, with matching local dependency patch versions. Runtime images, application source, migration generation and deployment values are unchanged. This release has no new live application proof. |
@@ -168,7 +168,7 @@ chart `sessions-pipeline` · values [`profiles/selfhost-postgres.yaml`](../chart
 | shipped | [Bob Costas summariser model (BOB_COSTAS_MODEL)](#opt-sessions-pipeline-bob-costas-model) | `off` | `off` | values `worker.components.bob-costas.env`; env `BOB_COSTAS_MODEL` |
 | **planned** | [Transcript search backend (search.backend)](#opt-sessions-pipeline-search-backend) | `postgres`, `clickhouse` (**planned**) | `postgres` | values `search.backend`, `search.clickhouse.*` |
 | **planned** | [Model session briefs](#opt-sessions-pipeline-session-briefs) | `false`, `true` (**planned**) | `false` | values `worker.sessionBrief.enabled`, `worker.sessionBrief.model`; env `SESSION_BRIEF_ENABLED`, `SESSION_BRIEF_MODEL` |
-| shipped | [Default-off self-host session read API container](#opt-sessions-read-api) | (no default), (no default) | `disabled` | values `readApi.*`; env `SERVICE`, `RELAYHISTORY_SELFHOST_READ_API`, `RELAYHISTORY_READ_API_PORT`, `RELAYHISTORY_READ_API_SECRET`, `READ_API_ORIGIN`, `READ_API_COMPLETE_SINCE`, `READ_API_DIRECTORY_WORKSPACES`, `ALLOW_IN_CLUSTER_HTTP`, `RELAYAUTH_JWKS_URL`, `RELAYAUTH_ISSUER`, `RELAYHISTORY_ACCEPT_RELAYCONTROL_TOKENS`, `RELAYCONTROL_INTROSPECT_URL`, `RELAYCONTROL_INTROSPECT_SECRET`; Secret `<read API configuration Secret>` keys `RELAYHISTORY_READ_API_SECRET`; Secret `<read API introspection Secret>` keys `RELAYCONTROL_INTROSPECT_SECRET` |
+| shipped | [Default-off self-host session read API container](#opt-sessions-read-api) | (no default), (no default) | `disabled` | values `readApi.*`; env `SERVICE`, `RELAYHISTORY_SELFHOST_READ_API`, `RELAYHISTORY_READ_API_PORT`, `RELAYHISTORY_READ_API_SECRET`, `READ_API_ORIGIN`, `READ_API_COMPLETE_SINCE`, `READ_API_DIRECTORY_WORKSPACES`, `SEARCH_INDEX_BACKEND`, `ALLOW_IN_CLUSTER_HTTP`, `RELAYAUTH_JWKS_URL`, `RELAYAUTH_ISSUER`, `RELAYHISTORY_ACCEPT_RELAYCONTROL_TOKENS`, `RELAYCONTROL_INTROSPECT_URL`, `RELAYCONTROL_INTROSPECT_SECRET`; Secret `<read API configuration Secret>` keys `RELAYHISTORY_READ_API_SECRET`; Secret `<read API introspection Secret>` keys `RELAYCONTROL_INTROSPECT_SECRET` |
 
 ### Profile: migration
 
@@ -225,7 +225,7 @@ chart `sessions-pipeline` · values [`profiles/migration.yaml`](../charts/sessio
 | shipped | [Bob Costas summariser model (BOB_COSTAS_MODEL)](#opt-sessions-pipeline-bob-costas-model) | `off` | `off` | values `worker.components.bob-costas.env`; env `BOB_COSTAS_MODEL` |
 | **planned** | [Transcript search backend (search.backend)](#opt-sessions-pipeline-search-backend) | `postgres`, `clickhouse` (**planned**) | `postgres` | values `search.backend`, `search.clickhouse.*` |
 | **planned** | [Model session briefs](#opt-sessions-pipeline-session-briefs) | `false`, `true` (**planned**) | `false` | values `worker.sessionBrief.enabled`, `worker.sessionBrief.model`; env `SESSION_BRIEF_ENABLED`, `SESSION_BRIEF_MODEL` |
-| shipped | [Default-off self-host session read API container](#opt-sessions-read-api) | (no default), (no default) | `disabled` | values `readApi.*`; env `SERVICE`, `RELAYHISTORY_SELFHOST_READ_API`, `RELAYHISTORY_READ_API_PORT`, `RELAYHISTORY_READ_API_SECRET`, `READ_API_ORIGIN`, `READ_API_COMPLETE_SINCE`, `READ_API_DIRECTORY_WORKSPACES`, `ALLOW_IN_CLUSTER_HTTP`, `RELAYAUTH_JWKS_URL`, `RELAYAUTH_ISSUER`, `RELAYHISTORY_ACCEPT_RELAYCONTROL_TOKENS`, `RELAYCONTROL_INTROSPECT_URL`, `RELAYCONTROL_INTROSPECT_SECRET`; Secret `<read API configuration Secret>` keys `RELAYHISTORY_READ_API_SECRET`; Secret `<read API introspection Secret>` keys `RELAYCONTROL_INTROSPECT_SECRET` |
+| shipped | [Default-off self-host session read API container](#opt-sessions-read-api) | (no default), (no default) | `disabled` | values `readApi.*`; env `SERVICE`, `RELAYHISTORY_SELFHOST_READ_API`, `RELAYHISTORY_READ_API_PORT`, `RELAYHISTORY_READ_API_SECRET`, `READ_API_ORIGIN`, `READ_API_COMPLETE_SINCE`, `READ_API_DIRECTORY_WORKSPACES`, `SEARCH_INDEX_BACKEND`, `ALLOW_IN_CLUSTER_HTTP`, `RELAYAUTH_JWKS_URL`, `RELAYAUTH_ISSUER`, `RELAYHISTORY_ACCEPT_RELAYCONTROL_TOKENS`, `RELAYCONTROL_INTROSPECT_URL`, `RELAYCONTROL_INTROSPECT_SECRET`; Secret `<read API configuration Secret>` keys `RELAYHISTORY_READ_API_SECRET`; Secret `<read API introspection Secret>` keys `RELAYCONTROL_INTROSPECT_SECRET` |
 
 ### Profile: external-selfhosted
 
@@ -279,7 +279,7 @@ chart `sessions-pipeline` · values [`profiles/external-selfhosted.yaml`](../cha
 | shipped | [Bob Costas summariser model (BOB_COSTAS_MODEL)](#opt-sessions-pipeline-bob-costas-model) | `off` | `off` | values `worker.components.bob-costas.env`; env `BOB_COSTAS_MODEL` |
 | **planned** | [Transcript search backend (search.backend)](#opt-sessions-pipeline-search-backend) | `postgres`, `clickhouse` (**planned**) | `postgres` | values `search.backend`, `search.clickhouse.*` |
 | **planned** | [Model session briefs](#opt-sessions-pipeline-session-briefs) | `false`, `true` (**planned**) | `false` | values `worker.sessionBrief.enabled`, `worker.sessionBrief.model`; env `SESSION_BRIEF_ENABLED`, `SESSION_BRIEF_MODEL` |
-| shipped | [Default-off self-host session read API container](#opt-sessions-read-api) | (no default), (no default) | `disabled` | values `readApi.*`; env `SERVICE`, `RELAYHISTORY_SELFHOST_READ_API`, `RELAYHISTORY_READ_API_PORT`, `RELAYHISTORY_READ_API_SECRET`, `READ_API_ORIGIN`, `READ_API_COMPLETE_SINCE`, `READ_API_DIRECTORY_WORKSPACES`, `ALLOW_IN_CLUSTER_HTTP`, `RELAYAUTH_JWKS_URL`, `RELAYAUTH_ISSUER`, `RELAYHISTORY_ACCEPT_RELAYCONTROL_TOKENS`, `RELAYCONTROL_INTROSPECT_URL`, `RELAYCONTROL_INTROSPECT_SECRET`; Secret `<read API configuration Secret>` keys `RELAYHISTORY_READ_API_SECRET`; Secret `<read API introspection Secret>` keys `RELAYCONTROL_INTROSPECT_SECRET` |
+| shipped | [Default-off self-host session read API container](#opt-sessions-read-api) | (no default), (no default) | `disabled` | values `readApi.*`; env `SERVICE`, `RELAYHISTORY_SELFHOST_READ_API`, `RELAYHISTORY_READ_API_PORT`, `RELAYHISTORY_READ_API_SECRET`, `READ_API_ORIGIN`, `READ_API_COMPLETE_SINCE`, `READ_API_DIRECTORY_WORKSPACES`, `SEARCH_INDEX_BACKEND`, `ALLOW_IN_CLUSTER_HTTP`, `RELAYAUTH_JWKS_URL`, `RELAYAUTH_ISSUER`, `RELAYHISTORY_ACCEPT_RELAYCONTROL_TOKENS`, `RELAYCONTROL_INTROSPECT_URL`, `RELAYCONTROL_INTROSPECT_SECRET`; Secret `<read API configuration Secret>` keys `RELAYHISTORY_READ_API_SECRET`; Secret `<read API introspection Secret>` keys `RELAYCONTROL_INTROSPECT_SECRET` |
 
 ### Profile: external-supabase
 
@@ -333,7 +333,7 @@ chart `sessions-pipeline` · values [`profiles/external-supabase.yaml`](../chart
 | shipped | [Bob Costas summariser model (BOB_COSTAS_MODEL)](#opt-sessions-pipeline-bob-costas-model) | `off` | `off` | values `worker.components.bob-costas.env`; env `BOB_COSTAS_MODEL` |
 | **planned** | [Transcript search backend (search.backend)](#opt-sessions-pipeline-search-backend) | `postgres`, `clickhouse` (**planned**) | `postgres` | values `search.backend`, `search.clickhouse.*` |
 | **planned** | [Model session briefs](#opt-sessions-pipeline-session-briefs) | `false`, `true` (**planned**) | `false` | values `worker.sessionBrief.enabled`, `worker.sessionBrief.model`; env `SESSION_BRIEF_ENABLED`, `SESSION_BRIEF_MODEL` |
-| shipped | [Default-off self-host session read API container](#opt-sessions-read-api) | (no default), (no default) | `disabled` | values `readApi.*`; env `SERVICE`, `RELAYHISTORY_SELFHOST_READ_API`, `RELAYHISTORY_READ_API_PORT`, `RELAYHISTORY_READ_API_SECRET`, `READ_API_ORIGIN`, `READ_API_COMPLETE_SINCE`, `READ_API_DIRECTORY_WORKSPACES`, `ALLOW_IN_CLUSTER_HTTP`, `RELAYAUTH_JWKS_URL`, `RELAYAUTH_ISSUER`, `RELAYHISTORY_ACCEPT_RELAYCONTROL_TOKENS`, `RELAYCONTROL_INTROSPECT_URL`, `RELAYCONTROL_INTROSPECT_SECRET`; Secret `<read API configuration Secret>` keys `RELAYHISTORY_READ_API_SECRET`; Secret `<read API introspection Secret>` keys `RELAYCONTROL_INTROSPECT_SECRET` |
+| shipped | [Default-off self-host session read API container](#opt-sessions-read-api) | (no default), (no default) | `disabled` | values `readApi.*`; env `SERVICE`, `RELAYHISTORY_SELFHOST_READ_API`, `RELAYHISTORY_READ_API_PORT`, `RELAYHISTORY_READ_API_SECRET`, `READ_API_ORIGIN`, `READ_API_COMPLETE_SINCE`, `READ_API_DIRECTORY_WORKSPACES`, `SEARCH_INDEX_BACKEND`, `ALLOW_IN_CLUSTER_HTTP`, `RELAYAUTH_JWKS_URL`, `RELAYAUTH_ISSUER`, `RELAYHISTORY_ACCEPT_RELAYCONTROL_TOKENS`, `RELAYCONTROL_INTROSPECT_URL`, `RELAYCONTROL_INTROSPECT_SECRET`; Secret `<read API configuration Secret>` keys `RELAYHISTORY_READ_API_SECRET`; Secret `<read API introspection Secret>` keys `RELAYCONTROL_INTROSPECT_SECRET` |
 
 ### Profile: aws-cnpg
 
@@ -389,7 +389,7 @@ chart `sessions-pipeline` · values [`ci/aws-cnpg-values.yaml`](../charts/sessio
 | shipped | [Bob Costas summariser model (BOB_COSTAS_MODEL)](#opt-sessions-pipeline-bob-costas-model) | `off` | `off` | values `worker.components.bob-costas.env`; env `BOB_COSTAS_MODEL` |
 | **planned** | [Transcript search backend (search.backend)](#opt-sessions-pipeline-search-backend) | `postgres`, `clickhouse` (**planned**) | `postgres` | values `search.backend`, `search.clickhouse.*` |
 | **planned** | [Model session briefs](#opt-sessions-pipeline-session-briefs) | `false`, `true` (**planned**) | `false` | values `worker.sessionBrief.enabled`, `worker.sessionBrief.model`; env `SESSION_BRIEF_ENABLED`, `SESSION_BRIEF_MODEL` |
-| shipped | [Default-off self-host session read API container](#opt-sessions-read-api) | (no default), (no default) | `disabled` | values `readApi.*`; env `SERVICE`, `RELAYHISTORY_SELFHOST_READ_API`, `RELAYHISTORY_READ_API_PORT`, `RELAYHISTORY_READ_API_SECRET`, `READ_API_ORIGIN`, `READ_API_COMPLETE_SINCE`, `READ_API_DIRECTORY_WORKSPACES`, `ALLOW_IN_CLUSTER_HTTP`, `RELAYAUTH_JWKS_URL`, `RELAYAUTH_ISSUER`, `RELAYHISTORY_ACCEPT_RELAYCONTROL_TOKENS`, `RELAYCONTROL_INTROSPECT_URL`, `RELAYCONTROL_INTROSPECT_SECRET`; Secret `<read API configuration Secret>` keys `RELAYHISTORY_READ_API_SECRET`; Secret `<read API introspection Secret>` keys `RELAYCONTROL_INTROSPECT_SECRET` |
+| shipped | [Default-off self-host session read API container](#opt-sessions-read-api) | (no default), (no default) | `disabled` | values `readApi.*`; env `SERVICE`, `RELAYHISTORY_SELFHOST_READ_API`, `RELAYHISTORY_READ_API_PORT`, `RELAYHISTORY_READ_API_SECRET`, `READ_API_ORIGIN`, `READ_API_COMPLETE_SINCE`, `READ_API_DIRECTORY_WORKSPACES`, `SEARCH_INDEX_BACKEND`, `ALLOW_IN_CLUSTER_HTTP`, `RELAYAUTH_JWKS_URL`, `RELAYAUTH_ISSUER`, `RELAYHISTORY_ACCEPT_RELAYCONTROL_TOKENS`, `RELAYCONTROL_INTROSPECT_URL`, `RELAYCONTROL_INTROSPECT_SECRET`; Secret `<read API configuration Secret>` keys `RELAYHISTORY_READ_API_SECRET`; Secret `<read API introspection Secret>` keys `RELAYCONTROL_INTROSPECT_SECRET` |
 
 ### Profile: aws-supabase
 
@@ -442,7 +442,7 @@ chart `sessions-pipeline` · values [`ci/pod-identity-values.yaml`](../charts/se
 | shipped | [Bob Costas summariser model (BOB_COSTAS_MODEL)](#opt-sessions-pipeline-bob-costas-model) | `off` | `off` | values `worker.components.bob-costas.env`; env `BOB_COSTAS_MODEL` |
 | **planned** | [Transcript search backend (search.backend)](#opt-sessions-pipeline-search-backend) | `postgres`, `clickhouse` (**planned**) | `postgres` | values `search.backend`, `search.clickhouse.*` |
 | **planned** | [Model session briefs](#opt-sessions-pipeline-session-briefs) | `false`, `true` (**planned**) | `false` | values `worker.sessionBrief.enabled`, `worker.sessionBrief.model`; env `SESSION_BRIEF_ENABLED`, `SESSION_BRIEF_MODEL` |
-| shipped | [Default-off self-host session read API container](#opt-sessions-read-api) | (no default), (no default) | `disabled` | values `readApi.*`; env `SERVICE`, `RELAYHISTORY_SELFHOST_READ_API`, `RELAYHISTORY_READ_API_PORT`, `RELAYHISTORY_READ_API_SECRET`, `READ_API_ORIGIN`, `READ_API_COMPLETE_SINCE`, `READ_API_DIRECTORY_WORKSPACES`, `ALLOW_IN_CLUSTER_HTTP`, `RELAYAUTH_JWKS_URL`, `RELAYAUTH_ISSUER`, `RELAYHISTORY_ACCEPT_RELAYCONTROL_TOKENS`, `RELAYCONTROL_INTROSPECT_URL`, `RELAYCONTROL_INTROSPECT_SECRET`; Secret `<read API configuration Secret>` keys `RELAYHISTORY_READ_API_SECRET`; Secret `<read API introspection Secret>` keys `RELAYCONTROL_INTROSPECT_SECRET` |
+| shipped | [Default-off self-host session read API container](#opt-sessions-read-api) | (no default), (no default) | `disabled` | values `readApi.*`; env `SERVICE`, `RELAYHISTORY_SELFHOST_READ_API`, `RELAYHISTORY_READ_API_PORT`, `RELAYHISTORY_READ_API_SECRET`, `READ_API_ORIGIN`, `READ_API_COMPLETE_SINCE`, `READ_API_DIRECTORY_WORKSPACES`, `SEARCH_INDEX_BACKEND`, `ALLOW_IN_CLUSTER_HTTP`, `RELAYAUTH_JWKS_URL`, `RELAYAUTH_ISSUER`, `RELAYHISTORY_ACCEPT_RELAYCONTROL_TOKENS`, `RELAYCONTROL_INTROSPECT_URL`, `RELAYCONTROL_INTROSPECT_SECRET`; Secret `<read API configuration Secret>` keys `RELAYHISTORY_READ_API_SECRET`; Secret `<read API introspection Secret>` keys `RELAYCONTROL_INTROSPECT_SECRET` |
 
 ### Profile: gcp-cloudsql
 
@@ -496,7 +496,7 @@ chart `sessions-pipeline` · values [`ci/gcp-cloudsql-values.yaml`](../charts/se
 | shipped | [Bob Costas summariser model (BOB_COSTAS_MODEL)](#opt-sessions-pipeline-bob-costas-model) | `off` | `off` | values `worker.components.bob-costas.env`; env `BOB_COSTAS_MODEL` |
 | **planned** | [Transcript search backend (search.backend)](#opt-sessions-pipeline-search-backend) | `postgres`, `clickhouse` (**planned**) | `postgres` | values `search.backend`, `search.clickhouse.*` |
 | **planned** | [Model session briefs](#opt-sessions-pipeline-session-briefs) | `false`, `true` (**planned**) | `false` | values `worker.sessionBrief.enabled`, `worker.sessionBrief.model`; env `SESSION_BRIEF_ENABLED`, `SESSION_BRIEF_MODEL` |
-| shipped | [Default-off self-host session read API container](#opt-sessions-read-api) | (no default), (no default) | `disabled` | values `readApi.*`; env `SERVICE`, `RELAYHISTORY_SELFHOST_READ_API`, `RELAYHISTORY_READ_API_PORT`, `RELAYHISTORY_READ_API_SECRET`, `READ_API_ORIGIN`, `READ_API_COMPLETE_SINCE`, `READ_API_DIRECTORY_WORKSPACES`, `ALLOW_IN_CLUSTER_HTTP`, `RELAYAUTH_JWKS_URL`, `RELAYAUTH_ISSUER`, `RELAYHISTORY_ACCEPT_RELAYCONTROL_TOKENS`, `RELAYCONTROL_INTROSPECT_URL`, `RELAYCONTROL_INTROSPECT_SECRET`; Secret `<read API configuration Secret>` keys `RELAYHISTORY_READ_API_SECRET`; Secret `<read API introspection Secret>` keys `RELAYCONTROL_INTROSPECT_SECRET` |
+| shipped | [Default-off self-host session read API container](#opt-sessions-read-api) | (no default), (no default) | `disabled` | values `readApi.*`; env `SERVICE`, `RELAYHISTORY_SELFHOST_READ_API`, `RELAYHISTORY_READ_API_PORT`, `RELAYHISTORY_READ_API_SECRET`, `READ_API_ORIGIN`, `READ_API_COMPLETE_SINCE`, `READ_API_DIRECTORY_WORKSPACES`, `SEARCH_INDEX_BACKEND`, `ALLOW_IN_CLUSTER_HTTP`, `RELAYAUTH_JWKS_URL`, `RELAYAUTH_ISSUER`, `RELAYHISTORY_ACCEPT_RELAYCONTROL_TOKENS`, `RELAYCONTROL_INTROSPECT_URL`, `RELAYCONTROL_INTROSPECT_SECRET`; Secret `<read API configuration Secret>` keys `RELAYHISTORY_READ_API_SECRET`; Secret `<read API introspection Secret>` keys `RELAYCONTROL_INTROSPECT_SECRET` |
 
 ### Profile: relaycast
 
@@ -591,6 +591,7 @@ chart `relay-cloud-api` · values [`ci/default-values.yaml`](../charts/relay-clo
 | shipped | [Integration OAuth apps for just-in-time connects](#opt-relay-cloud-api-integrations) | `none`, `one entry per provider with existingSecret` | `none (no integration can be connected until its app is configured)` | values `integrations`; Secret `<operator-chosen, integrations.<provider>.existingSecret>` keys `client-id`, `client-secret` |
 | shipped | [Relayflows control-plane storage and worker queue](#opt-relay-cloud-api-flows) | `postgres`, `gcs` | `postgres` | values `flows.*`; env `SELFHOST_FLOWS_STORAGE`, `SELFHOST_FLOWS_GCS_BUCKET`, `SELFHOST_FLOWS_GCS_PREFIX`, `SELFHOST_FLOWS_WORKER_RELAYCAST_URL`, `SELFHOST_FLOWS_QUEUE_PING_MS` |
 | shipped | [Self-host telemetry level and transport](#opt-relay-cloud-api-telemetry) | `errors`, `full`, `off` | `errors` | values `telemetry.*`, `secretKeys.telemetryInstallKey`; env `SELFHOST_TELEMETRY_LEVEL`, `SELFHOST_TELEMETRY_TRANSPORT`, `SELFHOST_TELEMETRY_ENDPOINT`, `SELFHOST_TELEMETRY_INSTALL_ID`, `SELFHOST_TELEMETRY_INSTALL_KEY_FILE`, `SELFHOST_TELEMETRY_PROBES`, `SELFHOST_TELEMETRY_DEPLOYMENT`; Secret `<existingSecret>` keys `<operator-chosen, no default>` |
+| shipped | [Control legacy RelayAuth client environment](#opt-control-legacy-relayauth) | (no default), (no default) | `true` | values `services.relayauthEnabled`; env `RELAYAUTH_URL`, `RELAYAUTH_API_KEY_FILE` |
 
 ### Profile: relay-dashboard
 
@@ -618,6 +619,7 @@ chart `agent-relay` · values [`values-gcp-proof.yaml`](../charts/agent-relay/va
 | shipped | [Single-host mode for the dashboard and the control API](#opt-agent-relay-single-host) | `disabled`, `enabled` | `disabled` | values `global.singleHost.host`, `relay-cloud-api:global.singleHost.host`, `relay-cloud-api:publicUrl`, `relay-dashboard:global.singleHost.host`, `relay-dashboard:runtime.publicUrl`, `relay-dashboard:ingress.host`; env `SELFHOST_PUBLIC_URL`, `DASHBOARD_PUBLIC_URL` |
 | shipped | [Single GKE ingress for the proof hosts](#opt-agent-relay-gke-ingress) | `enabled`, `disabled` | `disabled` | values `gkeIngress.enabled`, `gkeIngress.staticIpName`, `gkeIngress.managedCertificateName`, `gkeIngress.frontendConfigName`, `gkeIngress.hosts.*`, `gkeIngress.backends.*`, `relayauth.jwksIngress.enabled` |
 | shipped | [Optional Relayflows component in the suite](#opt-agent-relay-relayflows) | `enabled`, `disabled` | `disabled` | values `components.relayflows`, `relayflows.*` |
+| shipped | [Control legacy RelayAuth client environment](#opt-control-legacy-relayauth) | (no default), (no default) | `true` | values `services.relayauthEnabled`; env `RELAYAUTH_URL`, `RELAYAUTH_API_KEY_FILE` |
 
 ### Profile: relayfile
 
@@ -2758,7 +2760,9 @@ DURABLE_ACTORS_S3_*). devRuntime runs `durable-actors dev` as a sidecar for kind
 Chart plumbing for the pipeline session-read-api SERVICE. Requires an
 explicitly pinned compatible image, read-role configuration JSON in a
 Secret, an explicit coverage floor and workspace allowlist, a public token
-audience, and explicitly configured temporary issuer. Introspection uses
+audience, and explicitly configured temporary issuer. Search is selected
+via SEARCH_INDEX_BACKEND (postgres by default) through the upstream adapter
+registry, not implemented in this chart. Introspection uses
 its own Secret reference. Readiness requires health JSON enabled:true;
 dormant HTTP 200 is insufficient. No install profile enables this option.
 Pipeline drafts 317/318 still lack the approved PG-only/canonical/auth
@@ -2768,11 +2772,32 @@ assembly, so this entry does not claim runtime availability or proof.
 - Choices: (no default); (no default)
 - Provided by: operator
 - Values: `readApi.*`
-- Env: `SERVICE`, `RELAYHISTORY_SELFHOST_READ_API`, `RELAYHISTORY_READ_API_PORT`, `RELAYHISTORY_READ_API_SECRET`, `READ_API_ORIGIN`, `READ_API_COMPLETE_SINCE`, `READ_API_DIRECTORY_WORKSPACES`, `ALLOW_IN_CLUSTER_HTTP`, `RELAYAUTH_JWKS_URL`, `RELAYAUTH_ISSUER`, `RELAYHISTORY_ACCEPT_RELAYCONTROL_TOKENS`, `RELAYCONTROL_INTROSPECT_URL`, `RELAYCONTROL_INTROSPECT_SECRET`
+- Env: `SERVICE`, `RELAYHISTORY_SELFHOST_READ_API`, `RELAYHISTORY_READ_API_PORT`, `RELAYHISTORY_READ_API_SECRET`, `READ_API_ORIGIN`, `READ_API_COMPLETE_SINCE`, `READ_API_DIRECTORY_WORKSPACES`, `SEARCH_INDEX_BACKEND`, `ALLOW_IN_CLUSTER_HTTP`, `RELAYAUTH_JWKS_URL`, `RELAYAUTH_ISSUER`, `RELAYHISTORY_ACCEPT_RELAYCONTROL_TOKENS`, `RELAYCONTROL_INTROSPECT_URL`, `RELAYCONTROL_INTROSPECT_SECRET`
 - Secret: `<read API configuration Secret>` from `readApi.config.existingSecret`; keys `RELAYHISTORY_READ_API_SECRET` from `readApi.config.key`
 - Secret: `<read API introspection Secret>` from `readApi.auth.relaycontrol.existingSecret`; keys `RELAYCONTROL_INTROSPECT_SECRET` from `readApi.auth.relaycontrol.key`
 - Verify: Leave disabled until the image and assembly contract land; render/schema/probe tests prove plumbing only. Authenticated workspace/session read acceptance remains required.
 - Sources: [`charts/sessions-pipeline/templates/read-api.yaml:1`](../charts/sessions-pipeline/templates/read-api.yaml#L1), [`charts/sessions-pipeline/values.yaml:1`](../charts/sessions-pipeline/values.yaml#L1), [`docs/self-hosted-session-read-api.md:1`](../docs/self-hosted-session-read-api.md#L1)
+
+#### opt.control-legacy-relayauth
+
+<a id="opt-control-legacy-relayauth"></a>
+
+**Control legacy RelayAuth client environment** · shipped · chart `relay-cloud-api` · profiles relay-cloud-api, agent-relay
+
+Keep services.relayauthEnabled true for the published legacy control
+images. False omits RELAYAUTH_URL and RELAYAUTH_API_KEY_FILE and removes
+the legacy key from the API Secret projection. It requires the approved
+no-RelayAuth/caller-token control image; this changes no verifier code,
+introspection logic or component enablement. Runtime flags are not changed
+in the kind profiles. Introspection config uses existing extraEnv refs.
+
+- Default: `true`
+- Choices: (no default); (no default)
+- Provided by: operator
+- Values: `services.relayauthEnabled`
+- Env: `RELAYAUTH_URL`, `RELAYAUTH_API_KEY_FILE`
+- Verify: Render the disabled legacy-client mode and confirm URL/key env and key projection are absent; runtime auth acceptance still requires compatible upstream source.
+- Sources: [`charts/relay-cloud-api/templates/_helpers.tpl:1`](../charts/relay-cloud-api/templates/_helpers.tpl#L1), [`charts/relay-cloud-api/templates/deployment.yaml:1`](../charts/relay-cloud-api/templates/deployment.yaml#L1), [`docs/self-hosted-session-read-api.md:1`](../docs/self-hosted-session-read-api.md#L1)
 
 ## Pod plumbing env (not operator-facing)
 

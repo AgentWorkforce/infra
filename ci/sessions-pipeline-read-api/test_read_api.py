@@ -71,9 +71,18 @@ class ReadApi(unittest.TestCase):
             with self.subTest(setting=setting):
                 self.render("--set", setting, fail=True)
 
+    def test_search_backend_comes_from_config_with_postgres_default(self):
+        for overlay, expected in [(None, "postgres"), ({"search": {"backend": "clickhouse"}}, "clickhouse")]:
+            with self.subTest(backend=expected):
+                deploy = next(d for d in self.render(overlay=overlay) if d["kind"] == "Deployment")
+                env = {e["name"]: e for e in deploy["spec"]["template"]["spec"]["containers"][0]["env"]}
+                self.assertEqual(env["SEARCH_INDEX_BACKEND"]["value"], expected)
+        self.render("--set", "readApi.search.backend=", fail=True)
+
     def test_extra_env_cannot_replace_flag_or_duplicate_credentials(self):
         for env in [[{"name": "SERVICE", "value": "other"}],
                     [{"name": "RELAYHISTORY_SELFHOST_READ_API", "value": "false"}],
+                    [{"name": "SEARCH_INDEX_BACKEND", "value": "clickhouse"}],
                     [{"name": "CUSTOM", "value": "a"}, {"name": "CUSTOM", "value": "b"}],
                     [{"name": "CUSTOM", "value": "a", "valueFrom": {"secretKeyRef": {"name": "x", "key": "x"}}}]]:
             with self.subTest(names=[e["name"] for e in env]):
@@ -87,6 +96,40 @@ class ReadApi(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("Valid: 2", result.stdout)
         self.assertIn("Skipped: 0", result.stdout)
+
+    def control(self, *args, fail=False):
+        command = ["helm", "template", "test", str(ROOT / "charts/relay-cloud-api"), "-n", "ci", "-f",
+                   str(ROOT / "charts/relay-cloud-api/ci/default-values.yaml"), *args]
+        result = subprocess.run(command, capture_output=True, text=True)
+        if fail:
+            self.assertNotEqual(result.returncode, 0)
+            return result.stderr
+        self.assertEqual(result.returncode, 0, result.stderr)
+        return [d for d in yaml.safe_load_all(result.stdout) if d]
+
+    def test_control_keeps_legacy_default_and_can_omit_unused_auth_credentials(self):
+        for disabled in (False, True):
+            with self.subTest(disabled=disabled):
+                args = ["--set", "services.relayauthEnabled=false", "--set", "services.relayauthUrl=",
+                        "--set", "secretKeys.relayauthApiKey="] if disabled else []
+                deploy = next(d for d in self.control(*args) if d["kind"] == "Deployment")
+                spec = deploy["spec"]["template"]["spec"]
+                env = {e["name"] for e in spec["containers"][0]["env"]}
+                keys = {i["key"] for volume in spec["volumes"] if volume["name"] == "secrets" for i in volume["secret"]["items"]}
+                self.assertEqual("RELAYAUTH_URL" in env, not disabled)
+                self.assertEqual("RELAYAUTH_API_KEY_FILE" in env, not disabled)
+                self.assertEqual("relayauth-api-key" in keys, not disabled)
+                self.assertIn("database-url", keys)
+                self.assertNotIn("database-migrations-url", keys)
+
+    def test_control_no_legacy_mode_cannot_reintroduce_auth_through_extra_env(self):
+        for name in ("RELAYAUTH_URL", "RELAYAUTH_API_KEY", "RELAYAUTH_API_KEY_FILE"):
+            with self.subTest(name=name):
+                message = self.control("--set", "services.relayauthEnabled=false", "--set", "extraEnv[0].name=" + name,
+                                       "--set", "extraEnv[0].value=not-used", fail=True)
+                self.assertIn("managed by structured chart values", message)
+        message = self.control("--set-string", "services.relayauthEnabled=false", fail=True)
+        self.assertIn("must be a boolean", message)
 
     def test_actual_readiness_program_rejects_dormant_and_bad_health(self):
         deploy = next(d for d in self.render() if d["kind"] == "Deployment")

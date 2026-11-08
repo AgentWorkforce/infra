@@ -10,6 +10,7 @@
 {{- $key := required "readApi.config.key is required" $c.config.key -}}
 {{- $origin := required "readApi.origin is required" $c.origin -}}
 {{- if not (regexMatch "^https://[^/?#]+$" $origin) }}{{ fail "readApi.origin must be a bare public HTTPS origin" }}{{ end -}}
+{{- $backend := required "readApi.search.backend requires an explicit registered adapter" (trim $c.search.backend) -}}
 {{- $since := required "readApi.completeSince requires an explicit coverage floor" $c.completeSince -}}
 {{- if not (kindIs "string" $c.directoryWorkspaces) }}{{ fail "readApi.directoryWorkspaces must be a string" }}{{ end -}}
 {{- $workspaces := required "readApi.directoryWorkspaces requires an explicit workspace allowlist" (trim $c.directoryWorkspaces) -}}
@@ -19,7 +20,7 @@
 {{- if not (kindIs "bool" $c.auth.relaycontrol.enabled) }}{{ fail "readApi.auth.relaycontrol.enabled must be a boolean" }}{{ end -}}
 {{- $jwks := required "readApi.auth.relayauth.jwksUrl must explicitly configure the temporary issuer" (trim $c.auth.relayauth.jwksUrl) -}}
 {{- $issuer := required "readApi.auth.relayauth.issuer must explicitly configure the temporary issuer" (trim $c.auth.relayauth.issuer) -}}
-{{- $reserved := list "SERVICE" "RELAYHISTORY_SELFHOST_READ_API" "RELAYHISTORY_READ_API_PORT" "RELAYHISTORY_READ_API_SECRET" "READ_API_ORIGIN" "READ_API_COMPLETE_SINCE" "READ_API_DIRECTORY_WORKSPACES" "ALLOW_IN_CLUSTER_HTTP" "RELAYAUTH_JWKS_URL" "RELAYAUTH_ISSUER" "RELAYHISTORY_ACCEPT_RELAYCONTROL_TOKENS" "RELAYCONTROL_INTROSPECT_URL" "RELAYCONTROL_INTROSPECT_SECRET" -}}
+{{- $reserved := list "SERVICE" "RELAYHISTORY_SELFHOST_READ_API" "RELAYHISTORY_READ_API_PORT" "RELAYHISTORY_READ_API_SECRET" "READ_API_ORIGIN" "READ_API_COMPLETE_SINCE" "READ_API_DIRECTORY_WORKSPACES" "SEARCH_INDEX_BACKEND" "ALLOW_IN_CLUSTER_HTTP" "RELAYAUTH_JWKS_URL" "RELAYAUTH_ISSUER" "RELAYHISTORY_ACCEPT_RELAYCONTROL_TOKENS" "RELAYCONTROL_INTROSPECT_URL" "RELAYCONTROL_INTROSPECT_SECRET" -}}
 {{- $seen := dict -}}
 {{- range $e := $c.extraEnv -}}
 {{- $envName := required "readApi.extraEnv entries require name" $e.name -}}
@@ -99,6 +100,7 @@ spec:
             - { name: READ_API_ORIGIN, value: {{ $origin | quote }} }
             - { name: READ_API_COMPLETE_SINCE, value: {{ $since | quote }} }
             - { name: READ_API_DIRECTORY_WORKSPACES, value: {{ $workspaces | quote }} }
+            - { name: SEARCH_INDEX_BACKEND, value: {{ $backend | quote }} }
             - { name: ALLOW_IN_CLUSTER_HTTP, value: {{ $c.allowInClusterHttp | quote }} }
             - { name: RELAYAUTH_JWKS_URL, value: {{ $jwks | quote }} }
             - { name: RELAYAUTH_ISSUER, value: {{ $issuer | quote }} }

@@ -342,6 +342,9 @@ readApi:
   # Exact upstream allowlist string; '*' is not a workspace authority.
   directoryWorkspaces: ""
   allowInClusterHttp: false
+  search:
+    # Selected by the upstream adapter registry; requires a compatible image.
+    backend: postgres
   config:
     existingSecret: ""
     key: RELAYHISTORY_READ_API_SECRET

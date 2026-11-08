@@ -440,15 +440,15 @@ compatibility:
     - id: agent-relay-0.3.16
       status: unreleased
       current: true
-      charts: { agent-relay: 0.3.16, relayhistory: 0.1.1, relay-cloud-api: 0.2.6, relay-dashboard: 0.1.3 }
+      charts: { agent-relay: 0.3.16, relayhistory: 0.1.1, relay-cloud-api: 0.2.7, relay-dashboard: 0.1.3 }
       app_versions: { agent-relay: 0.1.0, relayhistory: 0.1.0, relay-cloud-api: 0.1.0, relay-dashboard: 0.1.0 }
       depends:
-        agent-relay: { relaycast: 0.3.5, relayauth: 0.1.4, sessions-pipeline: 0.6.2, relayhistory: 0.1.1, relay-cloud-api: 0.2.6, relay-dashboard: 0.1.3, relayflows: 0.2.5, durable-actors: 0.14.6-awf.1, relayfile: 0.2.2 }
+        agent-relay: { relaycast: 0.3.5, relayauth: 0.1.4, sessions-pipeline: 0.6.2, relayhistory: 0.1.1, relay-cloud-api: 0.2.7, relay-dashboard: 0.1.3, relayflows: 0.2.5, durable-actors: 0.14.6-awf.1, relayfile: 0.2.2 }
       images:
         relayhistory: { repository: ghcr.io/agentworkforce/relayhistory, digest_required: true }
         relay-cloud-api: { repository: ghcr.io/agentworkforce/selfhost-api, digest_required: true }
         relay-dashboard: { repository: ghcr.io/agentworkforce/relay-dashboard, digest_required: true }
-      notes: 'Bundles sessions-pipeline 0.6.2 default-off read API plumbing. No profile enables the component or reroutes relaycontrol. Compatible runtime assembly and image remain upstream dependencies. Existing kind evidence belongs to its pinned base revision, not this new chart version.'
+      notes: 'Bundles sessions-pipeline 0.6.2 default-off read API plumbing and relay-cloud-api 0.2.7 legacy-client env omission. No profile enables the component or reroutes relaycontrol. Compatible runtime assembly and image remain upstream dependencies. Existing kind evidence belongs to its pinned base revision, not this new chart version.'
     - id: agent-relay-0.3.15
       status: planned
       charts: { agent-relay: 0.3.15, relayhistory: 0.1.1, relay-cloud-api: 0.2.6, relay-dashboard: 0.1.3 }
@@ -3329,14 +3329,16 @@ entries:
       Chart plumbing for the pipeline session-read-api SERVICE. Requires an
       explicitly pinned compatible image, read-role configuration JSON in a
       Secret, an explicit coverage floor and workspace allowlist, a public token
-      audience, and explicitly configured temporary issuer. Introspection uses
+      audience, and explicitly configured temporary issuer. Search is selected
+      via SEARCH_INDEX_BACKEND (postgres by default) through the upstream adapter
+      registry, not implemented in this chart. Introspection uses
       its own Secret reference. Readiness requires health JSON enabled:true;
       dormant HTTP 200 is insufficient. No install profile enables this option.
       Pipeline drafts 317/318 still lack the approved PG-only/canonical/auth
       assembly, so this entry does not claim runtime availability or proof.
     chart: sessions-pipeline
     values: [readApi.*]
-    env: [SERVICE, RELAYHISTORY_SELFHOST_READ_API, RELAYHISTORY_READ_API_PORT, RELAYHISTORY_READ_API_SECRET, READ_API_ORIGIN, READ_API_COMPLETE_SINCE, READ_API_DIRECTORY_WORKSPACES, ALLOW_IN_CLUSTER_HTTP, RELAYAUTH_JWKS_URL, RELAYAUTH_ISSUER, RELAYHISTORY_ACCEPT_RELAYCONTROL_TOKENS, RELAYCONTROL_INTROSPECT_URL, RELAYCONTROL_INTROSPECT_SECRET]
+    env: [SERVICE, RELAYHISTORY_SELFHOST_READ_API, RELAYHISTORY_READ_API_PORT, RELAYHISTORY_READ_API_SECRET, READ_API_ORIGIN, READ_API_COMPLETE_SINCE, READ_API_DIRECTORY_WORKSPACES, SEARCH_INDEX_BACKEND, ALLOW_IN_CLUSTER_HTTP, RELAYAUTH_JWKS_URL, RELAYAUTH_ISSUER, RELAYHISTORY_ACCEPT_RELAYCONTROL_TOKENS, RELAYCONTROL_INTROSPECT_URL, RELAYCONTROL_INTROSPECT_SECRET]
     profiles: [selfhost-postgres, migration, external-selfhosted, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql]
     status: shipped
     provided_by: operator
@@ -3355,4 +3357,28 @@ entries:
     sources:
       - "charts/sessions-pipeline/templates/read-api.yaml:1"
       - "charts/sessions-pipeline/values.yaml:1"
+      - "docs/self-hosted-session-read-api.md:1"
+
+  - id: opt.control-legacy-relayauth
+    kind: option
+    title: Control legacy RelayAuth client environment
+    description: |
+      Keep services.relayauthEnabled true for the published legacy control
+      images. False omits RELAYAUTH_URL and RELAYAUTH_API_KEY_FILE and removes
+      the legacy key from the API Secret projection. It requires the approved
+      no-RelayAuth/caller-token control image; this changes no verifier code,
+      introspection logic or component enablement. Runtime flags are not changed
+      in the kind profiles. Introspection config uses existing extraEnv refs.
+    chart: relay-cloud-api
+    values: [services.relayauthEnabled]
+    env: [RELAYAUTH_URL, RELAYAUTH_API_KEY_FILE]
+    profiles: [relay-cloud-api, agent-relay]
+    status: shipped
+    provided_by: operator
+    default: true
+    choices: [true, false with a compatible caller-token image]
+    verify: Render the disabled legacy-client mode and confirm URL/key env and key projection are absent; runtime auth acceptance still requires compatible upstream source.
+    sources:
+      - "charts/relay-cloud-api/templates/_helpers.tpl:1"
+      - "charts/relay-cloud-api/templates/deployment.yaml:1"
       - "docs/self-hosted-session-read-api.md:1"

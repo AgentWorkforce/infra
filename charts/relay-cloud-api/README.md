@@ -121,3 +121,15 @@ its database schema is unavailable.
 helm lint --strict charts/relay-cloud-api \
   -f charts/relay-cloud-api/ci/default-values.yaml
 ```
+
+### Compatible caller-token images
+
+`services.relayauthEnabled` defaults to true for the published legacy images.
+With an owner-approved no-RelayAuth/caller-token image (#20/#27), false omits
+`RELAYAUTH_URL`, `RELAYAUTH_API_KEY_FILE` and the legacy key from the API Secret
+projection. `secretKeys.relayauthApiKey` may then be empty. This selects existing
+application behavior; it implements no verification or introspection logic.
+Introspection configuration uses `extraEnv` with Secret refs. The switch does
+not disable the RelayAuth component or reroute History automatically, and old
+images that require RelayAuth must retain the default. Render-only no-RelayAuth
+fixtures are not compatible image releases or runtime acceptance evidence.

@@ -203,6 +203,9 @@ database:
   runtimeRole: ""
 
 services:
+  # Legacy client stays on for published images. False omits URL/key env and
+  # projection, requiring the owner-approved no-RelayAuth/caller-token image.
+  relayauthEnabled: true
   relayauthUrl: ""
   relaycastUrl: ""
   relaycastPublicUrl: ""

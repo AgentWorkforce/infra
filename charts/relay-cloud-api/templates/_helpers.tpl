@@ -56,7 +56,9 @@ of set a second time. Desktop and the CLI log in against that same origin. */ -}
 {{- if not (regexMatch "^[A-Za-z0-9._-]+$" .Values.license.key) }}{{ fail "license.key must be a Kubernetes Secret data key" }}{{ end -}}
 {{- if and (eq .Values.license.existingSecret .Values.existingSecret) (eq .Values.license.key .Values.secretKeys.databaseMigrationsUrl) }}{{ fail "license must not mount the migration credential into the API pod" }}{{ end -}}
 {{- end -}}
+{{- if not (kindIs "bool" .Values.services.relayauthEnabled) }}{{ fail "services.relayauthEnabled must be a boolean" }}{{ end -}}
 {{- $optionalSecretKeys := list "previousEncryptionKey" "internalToken" "telemetryInstallKey" "relaycastInternalSecret" "oidcClientSecret" "smtpPassword" -}}
+{{- if not .Values.services.relayauthEnabled }}{{ $optionalSecretKeys = append $optionalSecretKeys "relayauthApiKey" }}{{ end -}}
 {{- range $name, $key := .Values.secretKeys }}{{ if and (has $name $optionalSecretKeys) (empty $key) }}{{ continue }}{{ end }}{{ if not (regexMatch "^[A-Za-z0-9._-]+$" (toString $key)) }}{{ fail (printf "secretKeys.%s must be a Kubernetes Secret data key" $name) }}{{ end }}{{ end -}}
 {{- /* Every non-empty secretKeys.* value must name a distinct Secret key. The
 API pod projects the runtime and optional keys by key name, so a collision
@@ -71,7 +73,9 @@ settings. */ -}}
 {{- include "relay-cloud-api.validateIdentity" . -}}
 {{- include "relay-cloud-api.validateIntegrations" . -}}
 {{- if not (regexMatch "^https://[^/?#]+$" (include "relay-cloud-api.publicUrl" .)) }}{{ fail "publicUrl must be an HTTPS origin with no path" }}{{ end -}}
-{{- range $name, $url := dict "relayauthUrl" .Values.services.relayauthUrl "relaycastUrl" .Values.services.relaycastUrl "relayhistoryUrl" .Values.services.relayhistoryUrl }}{{ if not (regexMatch "^https?://[^/?#]+$" $url) }}{{ fail (printf "services.%s must be an HTTP(S) origin with no path" $name) }}{{ end }}{{ end -}}
+{{- $serviceUrls := dict "relaycastUrl" .Values.services.relaycastUrl "relayhistoryUrl" .Values.services.relayhistoryUrl -}}
+{{- if .Values.services.relayauthEnabled }}{{ $_ := set $serviceUrls "relayauthUrl" .Values.services.relayauthUrl }}{{ end -}}
+{{- range $name, $url := $serviceUrls }}{{ if not (regexMatch "^https?://[^/?#]+$" $url) }}{{ fail (printf "services.%s must be an HTTP(S) origin with no path" $name) }}{{ end }}{{ end -}}
 {{- $publicOriginPattern := "^https://([A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?\\.)+[A-Za-z]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?(:[0-9]{1,5})?$" -}}
 {{- range $name, $url := dict "relaycastPublicUrl" .Values.services.relaycastPublicUrl "relayhistoryPublicUrl" .Values.services.relayhistoryPublicUrl -}}
 {{- if or (not (regexMatch $publicOriginPattern $url)) (regexMatch "(?i)\\.(localhost|local|internal|lan|invalid|test|example|home\\.arpa|onion)(:[0-9]{1,5})?$" $url) (regexMatch "(?i)\\.example\\.(com|net|org)(:[0-9]{1,5})?$" $url) }}{{ fail (printf "services.%s must be a public HTTPS origin with multi-label DNS and no credentials, path, query, or fragment" $name) }}{{ end -}}
@@ -85,7 +89,9 @@ settings. */ -}}
 {{- if .Values.ingress.enabled }}{{ if empty .Values.ingress.hosts }}{{ fail "ingress.enabled=true requires at least one host" }}{{ end }}{{ if not (has (urlParse (include "relay-cloud-api.publicUrl" .)).hostname .Values.ingress.hosts) }}{{ fail "ingress.hosts must include the publicUrl host" }}{{ end }}{{ if and (not .Values.ingress.externalTls) (empty .Values.ingress.tls) }}{{ fail "ingress.enabled=true requires ingress.tls unless externalTls=true" }}{{ end }}{{ if and .Values.networkPolicy.enabled (empty .Values.networkPolicy.ingressFrom) }}{{ fail "ingress with networkPolicy requires networkPolicy.ingressFrom" }}{{ end }}{{ end -}}
 {{- /* extraEnv is appended to the API and migration containers. Reject names
 the chart already sets, including duplicates inside extraEnv. */ -}}
-{{- $managed := list "PORT" "SELFHOST_PUBLIC_URL" "RELAYAUTH_URL" "RELAYCAST_URL" "RELAYCAST_PUBLIC_URL" "RELAYHISTORY_URL" "RELAYHISTORY_PUBLIC_URL" "DATABASE_MIGRATIONS_URL_FILE" "SELFHOST_RUNTIME_DATABASE_ROLE" "SELFHOST_LICENSE_FILE" -}}
+{{- $managed := list "PORT" "SELFHOST_PUBLIC_URL" "RELAYAUTH_URL" "RELAYCAST_URL" "RELAYCAST_PUBLIC_URL" "RELAYHISTORY_URL" "RELAYHISTORY_PUBLIC_URL" "DATABASE_MIGRATIONS_URL_FILE" "SELFHOST_RUNTIME_DATABASE_ROLE" "SELFHOST_LICENSE_FILE" "RELAYAUTH_API_KEY_FILE" -}}
+{{- /* Reject the raw counterpart too when its legacy file setting is off. */ -}}
+{{- if not .Values.services.relayauthEnabled }}{{ $managed = append $managed (trimSuffix "_FILE" "RELAYAUTH_API_KEY_FILE") }}{{ end -}}
 {{- range $src := list (include "relay-cloud-api.runtimeEnv" .) (include "relay-cloud-api.secretEnv" .) -}}
 {{- range $item := $src | fromYamlArray }}{{ $managed = append $managed (toString $item.name) }}{{ end -}}
 {{- end -}}
@@ -102,7 +108,8 @@ the chart already sets, including duplicates inside extraEnv. */ -}}
 {{- /* Secret files mounted into the API pod: env name -> Secret data key.
 Optional keys are left out while empty. */ -}}
 {{- define "relay-cloud-api.secretFiles" -}}
-{{- $files := dict "DATABASE_URL_FILE" .Values.secretKeys.databaseUrl "RELAYAUTH_API_KEY_FILE" .Values.secretKeys.relayauthApiKey "SELFHOST_BOOTSTRAP_TOKEN_FILE" .Values.secretKeys.bootstrapToken "SELFHOST_ENCRYPTION_KEY_FILE" .Values.secretKeys.encryptionKey -}}
+{{- $files := dict "DATABASE_URL_FILE" .Values.secretKeys.databaseUrl "SELFHOST_BOOTSTRAP_TOKEN_FILE" .Values.secretKeys.bootstrapToken "SELFHOST_ENCRYPTION_KEY_FILE" .Values.secretKeys.encryptionKey -}}
+{{- if .Values.services.relayauthEnabled }}{{ $_ := set $files "RELAYAUTH_API_KEY_FILE" .Values.secretKeys.relayauthApiKey }}{{ end -}}
 {{- with .Values.secretKeys.previousEncryptionKey }}{{ $_ := set $files "SELFHOST_ENCRYPTION_PREVIOUS_KEY_FILE" . }}{{ end -}}
 {{- with .Values.secretKeys.internalToken }}{{ $_ := set $files "SELFHOST_INTERNAL_TOKEN_FILE" . }}{{ end -}}
 {{- with .Values.secretKeys.relaycastInternalSecret }}{{ $_ := set $files "RELAYCAST_INTERNAL_SECRET_FILE" . }}{{ end -}}

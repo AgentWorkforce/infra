@@ -2,8 +2,8 @@
 
 This is default-off chart plumbing for pipeline draft
 [#317](https://github.com/AgentWorkforce/relayhistory-pipeline/pull/317) (reviewed
-at `33f33c4e`) and [#318](https://github.com/AgentWorkforce/relayhistory-pipeline/pull/318)
-(reviewed at `a4311806`). It does not enable a read service, change relaycontrol
+at `a7d7a5db`) and [#318](https://github.com/AgentWorkforce/relayhistory-pipeline/pull/318)
+(reviewed at `441e4862`). It does not enable a read service, change relaycontrol
 routing, grant database privileges or establish a new runtime proof.
 
 The existing sessions-pipeline chart now accepts `readApi.*`. With `enabled:false`
@@ -11,6 +11,13 @@ The existing sessions-pipeline chart now accepts `readApi.*`. With `enabled:fals
 compatible image digest, a configuration Secret, bare public HTTPS origin,
 coverage floor (`completeSince`), workspace allowlist and temporary issuer.
 A separate Secret supplies the optional relaycontrol introspection credential.
+`readApi.search.backend` defaults to `postgres` and renders `SEARCH_INDEX_BACKEND`.
+It selects the registered adapter in the compatible upstream image; it does not
+implement an adapter or fall back to ClickHouse. Other backends may be configured
+only when that image registers them. Hosted ClickHouse stays behind the same
+upstream seam. OpenSearch work is upstream pipeline PR #315, not implemented or
+proved by this chart. The kind core profile explicitly selects postgres while
+leaving the component disabled.
 These configuration values are passed to the existing upstream service entry;
 infra implements no token verification or data-path bridge.
 
@@ -54,7 +61,7 @@ The `ci/read-api-values.yaml` file uses an intentionally fake image identity for
 render/schema tests. Never install it. No compatible published read API image
 or runtime enablement is claimed by these checks.
 
-Validation in the isolated chart worktree: seven focused render/admission/schema
+Validation in the isolated chart worktree: ten focused render/admission/schema
 and executable probe checks pass. Both kind profiles render no read API workload.
 The affected chart static checks, existing profile matrix, registry/regression
 checks and normalized default-render goldens also pass. This work did not run
@@ -62,3 +69,23 @@ kubectl, install the component, change a namespace policy or touch the existing
 kind fixture. The fake image appears only in the explicitly render-only fixture.
 
 The ten existing kind profile/schema/trust checks also pass in this worktree.
+
+Control [#27](https://github.com/AgentWorkforce/relay-control/pull/27), reviewed
+at `f879eedc`, is stacked on #20. It uses the existing `RELAYHISTORY_URL` and
+`RELAYHISTORY_PUBLIC_URL`, forwards caller tokens with RelayAuth unset, passes
+unsupported reads through as 501, and refuses `mode=sync` when the reader grants
+only `rth:read`. The replacement upload/auth contract must therefore be proved
+separately; no successful upload can be inferred from a read-only login. Pipeline
+[#316](https://github.com/AgentWorkforce/relayhistory-pipeline/pull/316) provides
+a default-off signing edge but its local upstream/runtime contract still needs
+owner confirmation. No URL is repointed by this PR.
+
+`relay-cloud-api.services.relayauthEnabled` stays true by default for published
+legacy control images. With a compatible #20/#27 image, false omits both the
+legacy URL and API-key-file environment variables and the unused legacy key from
+the API Secret projection. It does not toggle the RelayAuth component or change
+any verifier. The temporary issuer may still serve other consumers. Introspection
+URL/Secret/audience configuration uses the existing API extraEnv support; it must
+match the read service. Both modes are render-tested, with legacy reintroduction
+through extraEnv rejected when the legacy client is disabled. Neither mode is
+changed in the live kind fixture.
