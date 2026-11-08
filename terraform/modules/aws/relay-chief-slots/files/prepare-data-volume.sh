@@ -40,7 +40,16 @@ if [ -z "$signatures" ]; then
   if [ "$zero_status" -ne 0 ]; then
     fail "the data volume is not verifiably blank (cmp status $zero_status); refusing to format it"
   fi
-  mkfs.ext4 -q -L relay-chief-data "$device"
+  # An ext4 volume whose first blocks were zeroed still has its first backup
+  # superblock: group 1 at 4 KiB blocks, with the 0xEF53 magic 56 bytes in. An
+  # empty read means the device is too small to have one.
+  if ! backup_magic="$(dd if="$device" bs=4096 iflag=skip_bytes,count_bytes skip=$((32768 * 4096 + 56)) count=2 status=none | od -An -tx1 | tr -d ' \n')"; then
+    fail "could not read the backup superblock location; refusing to format it"
+  fi
+  if [ "$backup_magic" = "53ef" ]; then
+    fail "the data volume is not verifiably blank (backup ext4 superblock found); refusing to format it"
+  fi
+  mkfs.ext4 -q -b 4096 -L relay-chief-data "$device"
 elif [ "$(blkid -p -o value -s TYPE "$device" || true)" != "ext4" ]; then
   fail "the data volume holds an unexpected filesystem"
 fi

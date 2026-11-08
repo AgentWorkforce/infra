@@ -473,6 +473,30 @@ class DataVolume(unittest.TestCase):
         self.assertIn("not verifiably blank", result.stderr)
         self.assertEqual(self.device.read_bytes(), before_bytes, "the image must be untouched")
 
+    def test_never_formats_a_real_filesystem_with_its_first_4_kib_zeroed(self):
+        with self.device.open("r+b") as handle:
+            handle.truncate(1024 * 1024 * 1024)
+        real_mkfs = subprocess.run(
+            ["mkfs.ext4", "-q", "-b", "4096", str(self.device)], capture_output=True, text=True, check=False,
+            env={**os.environ, "PATH": f"{os.environ['PATH']}:/usr/sbin:/sbin"},
+        )
+        self.assertEqual(real_mkfs.returncode, 0, real_mkfs.stderr)
+        with self.device.open("r+b") as handle:
+            handle.write(b"\0" * 4096)
+        executable(self.bin / "mkfs.ext4", '#!/usr/bin/env bash\nprintf "mkfs\\n" >>"$MOCK_LOG"\n')
+        result = self.prepare()
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("backup ext4 superblock found", result.stderr)
+        self.assertEqual(self.commands(), [], "must stop before formatting or mounting")
+
+    def test_backup_superblock_read_error_never_formats(self):
+        executable(self.bin / "dd", "#!/usr/bin/env bash\nexit 1\n")
+        executable(self.bin / "mkfs.ext4", '#!/usr/bin/env bash\nprintf "mkfs\\n" >>"$MOCK_LOG"\n')
+        result = self.prepare()
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("could not read the backup superblock", result.stderr)
+        self.assertEqual(self.commands(), [], "must stop before formatting or mounting")
+
     def test_read_error_during_the_blank_check_never_formats(self):
         self.silent_wipefs()
         executable(self.bin / "cmp", "#!/usr/bin/env bash\nexit 2\n")
