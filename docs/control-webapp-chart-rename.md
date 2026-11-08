@@ -9,7 +9,10 @@ The umbrella selection keys are now `components.control` and
 including an empty map or a disabled component. They are never silently ignored.
 
 This source composes the five session-component names in infra #94 at
-`52a1126` and default-off telemetry #95 at `93fe26d` through a normal merge.
+`52a1126` (now landed on main `bfcf6050`) and refreshed default-off telemetry
+#95 at `a45dbb2d` through normal merges, plus the held reader parent #81 at
+`01dc7aee`. The standalone Chief chart/registry remains outside the umbrella
+and kind acceptance.
 Both storage/workload upgrade guards remain in place. The
 existing `RELAYHISTORY_*`, `SELFHOST_*`, `DASHBOARD_*` API/environment contracts,
 internal Node package paths, database names, schemas, roles, Secret names and
