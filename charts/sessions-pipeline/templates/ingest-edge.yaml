@@ -1,0 +1,180 @@
+{{- $c := .Values.ingestEdge -}}
+{{- if not (kindIs "bool" $c.enabled) }}{{ fail "ingestEdge.enabled must be a boolean" }}{{ end -}}
+{{- if $c.enabled -}}
+{{- if not (kindIs "bool" $c.allowInClusterHttp) }}{{ fail "ingestEdge.allowInClusterHttp must be a boolean" }}{{ end -}}
+{{- if hasKey $c "extraEnv" }}{{ fail "ingestEdge.extraEnv is not supported; use the managed configuration and Secret references" }}{{ end -}}
+{{- $name := default (printf "%s-ingest-edge" .Release.Name) $c.fullnameOverride -}}
+{{- if or (gt (len $name) 63) (not (regexMatch "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$" $name)) }}{{ fail "ingestEdge.fullnameOverride must be a DNS label of at most 63 characters" }}{{ end -}}
+{{- $repository := required "ingestEdge.image.repository is required" $c.image.repository -}}
+{{- $repositoryPattern := "^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\\.)+[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(:[0-9]{1,5})?/[a-z0-9]+(([._]|__|-+)[a-z0-9]+)*(/[a-z0-9]+(([._]|__|-+)[a-z0-9]+)*)*$" -}}
+{{- $registryHost := regexReplaceAll ":[0-9]+$" (first (splitList "/" $repository)) "" -}}
+{{- if or (gt (len $registryHost) 253) (not (regexMatch $repositoryPattern $repository)) }}{{ fail "ingestEdge.image.repository must include an explicit registry DNS host and image path, without a scheme, tag or digest" }}{{ end -}}
+{{- $registryPort := regexFind ":[0-9]+$" (first (splitList "/" $repository)) -}}
+{{- if and $registryPort (or (lt (int (trimPrefix ":" $registryPort)) 1) (gt (int (trimPrefix ":" $registryPort)) 65535)) }}{{ fail "ingestEdge.image.repository has an invalid registry port" }}{{ end -}}
+{{- $digest := required "ingestEdge.image.digest requires a qualified SERVICE=session-ingest image" $c.image.digest -}}
+{{- if not (regexMatch "^sha256:[a-f0-9]{64}$" $digest) }}{{ fail "ingestEdge.image.digest must be sha256:<64 lowercase hex characters>" }}{{ end -}}
+{{- $origin := required "ingestEdge.origin is required" $c.origin -}}
+{{- $originPattern := "^https://([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\\.)+[a-z]([a-z0-9-]{0,61}[a-z0-9])?(:[0-9]{1,5})?$" -}}
+{{- $originHost := regexReplaceAll ":[0-9]+$" (trimPrefix "https://" $origin) "" -}}
+{{- if or (not (regexMatch $originPattern $origin)) (gt (len $originHost) 253) (regexMatch "\\.(localhost|local|internal|lan|invalid|test|example|home\\.arpa|onion)(:[0-9]{1,5})?$" $origin) (regexMatch "(^|\\.)example\\.(com|net|org)$" $originHost) (hasSuffix ":443" $origin) }}{{ fail "ingestEdge.origin must be a normalized public HTTPS origin (lowercase DNS, no default port, path, query or fragment)" }}{{ end -}}
+{{- $originPort := regexFind ":[0-9]+$" $origin -}}
+{{- if and $originPort (or (lt (int (trimPrefix ":" $originPort)) 1) (gt (int (trimPrefix ":" $originPort)) 65535)) }}{{ fail "ingestEdge.origin has an invalid port" }}{{ end -}}
+{{- if and $originPort (or (eq (int (trimPrefix ":" $originPort)) 443) (ne $originPort (printf ":%d" (int (trimPrefix ":" $originPort))))) }}{{ fail "ingestEdge.origin port must be normalized without leading zeros or the default HTTPS port" }}{{ end -}}
+{{- if and .Values.readApi.enabled (ne $origin .Values.readApi.origin) }}{{ fail "ingestEdge.origin must exactly equal readApi.origin when both services are enabled" }}{{ end -}}
+{{- $introspect := include "sessions-pipeline.ingestEdge.endpoint" (dict "name" "ingestEdge.relaycontrol.url" "url" $c.relaycontrol.url "allowHttp" $c.allowInClusterHttp) -}}
+{{- $endpoint := include "sessions-pipeline.ingestEdge.endpoint" (dict "name" "ingestEdge.locker.endpoint" "url" $c.locker.endpoint "allowHttp" $c.allowInClusterHttp) -}}
+{{- $bucket := required "ingestEdge.locker.bucket is required" $c.locker.bucket -}}
+{{- $region := required "ingestEdge.locker.region is required" $c.locker.region -}}
+{{- $runtimeSecret := required "ingestEdge.config.existingSecret is required" $c.config.existingSecret -}}
+{{- $storeSecret := required "ingestEdge.locker.existingSecret is required" $c.locker.existingSecret -}}
+{{- $caMap := required "ingestEdge.postgres.caConfigMap is required" $c.postgres.caConfigMap -}}
+{{- $caHash := required "ingestEdge.postgres.caSha256 is required" $c.postgres.caSha256 -}}
+{{- if not (regexMatch "^[a-f0-9]{64}$" $caHash) }}{{ fail "ingestEdge.postgres.caSha256 must be 64 lowercase hex characters" }}{{ end -}}
+{{- range $ref := list $runtimeSecret $storeSecret $caMap -}}
+{{- if or (gt (len $ref) 253) (not (regexMatch "^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?)*$" $ref)) }}{{ fail "ingestEdge Secret and ConfigMap names must be Kubernetes DNS subdomains" }}{{ end -}}
+{{- end -}}
+{{- range $key := list $c.config.databaseUrlKey $c.config.introspectSecretKey $c.locker.accessKeyIdKey $c.locker.secretAccessKeyKey $c.postgres.caKey -}}
+{{- if or (not $key) (not (regexMatch "^[A-Za-z0-9._-]+$" $key)) }}{{ fail "ingestEdge Secret/CA keys must be nonempty Kubernetes key names" }}{{ end -}}
+{{- end -}}
+{{- range $field, $n := dict "port" $c.port "poolMax" $c.postgres.poolMax "maxPerUser" $c.maxPerUser "maxPerOrg" $c.maxPerOrg -}}
+{{- $max := ternary 65535 (ternary 32 1000 (eq $field "poolMax")) (eq $field "port") -}}
+{{- if or (not (regexMatch "^[0-9]+$" (toString $n))) (lt (int $n) 1) (gt (int $n) $max) }}{{ fail (printf "ingestEdge.%s is outside the supported integer range" $field) }}{{ end -}}
+{{- end -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace | quote }}
+  labels:
+    app.kubernetes.io/name: session-ingest-edge
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: ingest-edge
+    helm.sh/chart: {{ printf "%s-%s" .Chart.Name .Chart.Version | quote }}
+spec:
+  replicas: 1
+  # This does not order schema changes: an operator drain/migrate/verify barrier
+  # is still required before changing the image/generation.
+  strategy: { type: Recreate }
+  selector:
+    matchLabels: &selector
+      app.kubernetes.io/name: session-ingest-edge
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/component: ingest-edge
+  template:
+    metadata:
+      labels: *selector
+      {{- with $c.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 90
+      {{- with $c.serviceAccountName }}
+      serviceAccountName: {{ . | quote }}
+      {{- end }}
+      {{- with $c.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile: { type: RuntimeDefault }
+      {{- with $c.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $c.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $c.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: ingest-edge
+          image: {{ printf "%s@%s" $repository $digest | quote }}
+          imagePullPolicy: {{ $c.image.pullPolicy }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ALL] }
+          ports:
+            - { name: http, containerPort: {{ $c.port }}, protocol: TCP }
+          env:
+            - { name: SERVICE, value: session-ingest }
+            - { name: RELAYHISTORY_SELFHOST_INGEST, value: "true" }
+            - { name: RELAYHISTORY_INGEST_PORT, value: {{ $c.port | quote }} }
+            - { name: RELAYHISTORY_INGEST_ORIGIN, value: {{ $origin | quote }} }
+            - { name: RELAYCONTROL_INTROSPECT_URL, value: {{ $introspect | quote }} }
+            - name: RELAYCONTROL_INTROSPECT_SECRET
+              valueFrom:
+                secretKeyRef: { name: {{ $runtimeSecret | quote }}, key: {{ $c.config.introspectSecretKey | quote }} }
+            - name: RELAYHISTORY_INGEST_DATABASE_URL
+              valueFrom:
+                secretKeyRef: { name: {{ $runtimeSecret | quote }}, key: {{ $c.config.databaseUrlKey | quote }} }
+            - { name: SESSION_POSTGRES_TLS_PROFILE, value: custom-ca }
+            - { name: SESSION_POSTGRES_CA_FILE, value: /etc/session-ingest-postgres/ca.crt }
+            - { name: SESSION_POSTGRES_CA_SHA256, value: {{ $caHash | quote }} }
+            - { name: RELAYHISTORY_INGEST_PG_POOL_MAX, value: {{ $c.postgres.poolMax | quote }} }
+            - { name: ALLOW_IN_CLUSTER_HTTP, value: {{ $c.allowInClusterHttp | quote }} }
+            - { name: LOCKER_PROVIDER, value: s3 }
+            - { name: LOCKER_BUCKET, value: {{ $bucket | quote }} }
+            - { name: LOCKER_ENDPOINT, value: {{ $endpoint | quote }} }
+            - { name: LOCKER_REGION, value: {{ $region | quote }} }
+            - name: LOCKER_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef: { name: {{ $storeSecret | quote }}, key: {{ $c.locker.accessKeyIdKey | quote }} }
+            - name: LOCKER_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef: { name: {{ $storeSecret | quote }}, key: {{ $c.locker.secretAccessKeyKey | quote }} }
+            - { name: INGEST_KEY_ROOT, value: 96bulls }
+            - { name: INGEST_MAX_PER_USER, value: {{ $c.maxPerUser | quote }} }
+            - { name: INGEST_MAX_PER_ORG, value: {{ $c.maxPerOrg | quote }} }
+          startupProbe:
+            httpGet: { path: /readyz, port: http }
+            failureThreshold: 30
+            periodSeconds: 2
+          readinessProbe:
+            httpGet: { path: /readyz, port: http }
+            timeoutSeconds: 2
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: { path: /healthz, port: http }
+            timeoutSeconds: 2
+            periodSeconds: 10
+          resources:
+            {{- toYaml $c.resources | nindent 12 }}
+          volumeMounts:
+            - { name: tmp, mountPath: /tmp }
+            - { name: postgres-ca, mountPath: /etc/session-ingest-postgres, readOnly: true }
+      volumes:
+        - name: tmp
+          emptyDir: { sizeLimit: 64Mi }
+        - name: postgres-ca
+          configMap:
+            name: {{ $caMap | quote }}
+            items: [{ key: {{ $c.postgres.caKey | quote }}, path: ca.crt }]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace | quote }}
+  labels:
+    app.kubernetes.io/name: session-ingest-edge
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: ingest-edge
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: session-ingest-edge
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: ingest-edge
+  ports:
+    - { name: http, port: 80, targetPort: http, protocol: TCP }
+{{- end }}
