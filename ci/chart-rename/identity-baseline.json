@@ -2,7 +2,10 @@
   "sourceRevision": "91c9b7981d706969cd19dc7fab09f9fddb646959",
   "chartTree": "2dbd3f63351b6e831b030abb1bdbeaf21b1bd06a",
   "scope": "static render identity/stage inventory; no upgrade or data-survival proof",
-  "targetNames": "Awaiting owner confirmation; no rename implemented",
+  "targetNames": {
+    "locker": "session-object-storage",
+    "alleyoop-ingest": "session-ingest-api"
+  },
   "profiles": {
     "core": [
       {
@@ -921,5 +924,6 @@
         "namespace": "agent-relay"
       }
     ]
-  }
+  },
+  "implementationStatus": "Packaging versus Service/display alias boundary pending; no rename implemented"
 }

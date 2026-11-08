@@ -1,9 +1,29 @@
 # Chart rename compatibility and upgrade map
 
-Status: preparation only. Exact source-chart/target-name scope is awaiting owner
-confirmation. No chart is renamed, no release is upgraded, and no fixture state
-is changed by this inventory. Product names do not automatically rename Kubernetes
-objects, SQL schemas or internal pipeline commands.
+Status: preparation only. The requested public names are `locker` →
+`session-object-storage` and `alleyoop-ingest` → `session-ingest-api`.
+The exact package/values-key versus Service/display-name implementation boundary
+still needs confirmation. No chart is renamed, no release is upgraded, and no
+fixture state is changed by this inventory. Public names do not automatically
+rename data-bearing Kubernetes objects, SQL schemas or internal pipeline commands.
+
+## Requested name map
+
+| Current public name | Requested public name | Source boundary / upgrade requirement |
+| --- | --- | --- |
+| `locker` | `session-object-storage` | MinIO dependency/value alias and separate kind storage release. Preserve its existing StatefulSet/claims and legacy Service DNS; do not move or replace stored objects to obtain the name. |
+| `alleyoop-ingest` | `session-ingest-api` | Ingest chart/workload identity, currently backed by Service `alleyoop`. Keep internal `SERVICE=alleyoop-ingest`, existing routing and stage entrypoints unchanged. |
+
+Control, dashboard and parent pipeline package renames are not inferred from
+this two-name request. They appear below only because their bindings/callers are
+part of the baseline that must remain stable.
+
+An additive public Service/display alias is distinct from a Helm package,
+dependency alias or workload rename. The source implementation must specify which
+identities change and how old/new values and DNS names behave. Existing overrides
+must not silently disappear when a dependency key changes. A storage rename must
+not create empty replacement claims; stage names must not be changed by a global
+text replacement. Until that boundary is agreed, the inventory remains a plan.
 
 ## Baseline and compatibility identities
 
@@ -26,7 +46,7 @@ private installation state. It is not an executed upgrade/data-survival receipt.
 | Kind platform storage | Separate `postgres` StatefulSet/Service and `kind-locker` Helm release | Their resources are created outside the umbrella render; preserve their actual PVC/PV bindings separately. |
 | CNPG/MinIO profiles | Existing Cluster/release names and generated claims | These are not enabled in the kind umbrella baseline and need their own upgrade coverage. |
 
-The final name map must identify each source directory, package name, dependency
+The final implementation map must identify each source directory, package name, dependency
 entry/alias, values key, condition, repository/index/archive reference and version.
 Do not infer that changing documentation display names authorizes changing any
 of those identities. The existing strict chart version-bump policy still applies.
@@ -73,6 +93,7 @@ of those identities. The existing strict chart version-bump policy still applies
    claims. Refuse incompatible rollback rather than restoring a misleading
    healthy state. Preserve failed evidence and document any maintenance window.
 
-Only the baseline inventory has run. Target names, rename implementation,
-post-change renders and live upgrade/rollback proof remain pending. The running
+Only the baseline inventory has run. Public targets are recorded; the exact
+packaging/alias boundary, rename implementation, post-change renders and live
+upgrade/rollback proof remain pending. The running
 ar-lap fixture, its CA/tenant/operator tools and its existing data remain untouched.
