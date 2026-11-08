@@ -154,8 +154,8 @@ run "host_files_are_the_expected_set" {
   command = plan
 
   assert {
-    condition     = toset([for f in local.host_files : f.path]) == toset(["/etc/systemd/system/relay-chief.service", "/etc/systemd/system/relay-chief.timer", "/etc/systemd/system/relay-chief.service.d/10-slot.conf", "/etc/systemd/system/relay-chief-credentials.service", "/usr/local/sbin/relay-chief-fetch-credentials", "/usr/local/sbin/relay-chief-bind-slot"])
-    error_message = "Bootstrap must install exactly the reference units, the drop-in, the credentials unit and the two scripts."
+    condition     = toset([for f in local.host_files : f.path]) == toset(["/etc/systemd/system/relay-chief.service", "/etc/systemd/system/relay-chief.timer", "/etc/systemd/system/relay-chief.service.d/10-slot.conf", "/etc/systemd/system/relay-chief-credentials.service", "/usr/local/sbin/relay-chief-fetch-credentials", "/usr/local/sbin/relay-chief-bind-slot", "/usr/local/sbin/relay-chief-prepare-data-volume"])
+    error_message = "Bootstrap must install exactly the reference units, the drop-in, the credentials unit and the three scripts."
   }
   assert {
     condition     = alltrue([for f in local.host_files : length(f.content) > 0])
@@ -228,6 +228,32 @@ run "node_checksum_is_validated" {
   }
 
   expect_failures = [var.node_runtime]
+}
+
+run "quote_in_node_url_is_refused" {
+  command = plan
+
+  variables {
+    node_runtime = {
+      url    = "https://nodejs.example/node'.tar.xz"
+      sha256 = "0000000000000000000000000000000000000000000000000000000000000000"
+    }
+  }
+
+  expect_failures = [var.node_runtime]
+}
+
+run "quote_in_artifact_url_is_refused" {
+  command = plan
+
+  variables {
+    relay_chief_artifact = {
+      url    = "https://example.test/relay'chief.tar.gz"
+      sha256 = "0000000000000000000000000000000000000000000000000000000000000000"
+    }
+  }
+
+  expect_failures = [var.relay_chief_artifact]
 }
 
 run "plain_http_artifact_is_refused" {

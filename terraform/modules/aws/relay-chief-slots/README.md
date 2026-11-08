@@ -4,7 +4,7 @@ Dedicated EC2 hosts ("slots") for [Relay Chief](https://github.com/AgentWorkforc
 
 **Status: not qualified.** This module has passed static checks and mock-provider tests only. It has never been applied, and no host has booted from its bootstrap. The runtime's own [readiness document](https://github.com/AgentWorkforce/relay-chief/blob/main/docs/readiness.md) lists what must exist before customer use. Applying this module needs the approvals that document requires for IAM, secrets and deployment.
 
-**Do not enable a timer on a customer binding until the execution bridge exists.** The reference service always runs with `--dispatch`, so an enabled timer sends real Relay assignments every 30 seconds. The runtime has no no-dispatch run yet.
+**Do not enable a timer on a customer binding until the execution bridge exists.** The reference service copied into this module always runs with `--dispatch`, so an enabled timer sends real Relay assignments every 30 seconds. That stays true until this module ships a unit that runs without it, whatever the runtime itself gains.
 
 ## What it creates
 
@@ -21,7 +21,7 @@ The module creates no secret, secret value or KMS key.
 
 - **AMI** (arm64): `ami_id` or `ami_ssm_parameter`, with systemd, the SSM agent, AWS CLI v2, python3 with sqlite3, and util-linux. Bootstrap stops on a missing tool. No default image is offered.
 - **Node.js**: `node_runtime` is the URL and SHA-256 of a Node.js 24+ linux-arm64 tarball.
-- **Runtime build**: `relay_chief_artifact` is the URL and SHA-256 of a self-contained tarball with `dist/`, `node_modules/` and `package.json` at its root. Until one exists, leave it null: binding is refused because there is nothing to run.
+- **Runtime build**: `relay_chief_artifact` is the URL and SHA-256 of a self-contained tarball with `dist/`, `node_modules/` and `package.json` at its root. Until one exists, leave it null: binding is refused because there is nothing to run. User data is ignored after creation, so setting this later shows no diff; each existing slot then needs `-replace` to install the build.
 - **Network**: the subnet needs outbound HTTPS to AWS APIs (NAT or VPC endpoints), the download hosts, Relay, classification (`api.typesafe.ai`) and the control plane.
 - **KMS key policy**: must let the applying principal attach encrypted volumes, and must delegate to IAM or name the slot roles. Secrets must be encrypted with this key.
 - **Secret**: before binding, create `<secret_name_prefix>/<slot id>` as a JSON object:
@@ -57,7 +57,19 @@ Bootstrap installs Node.js at `/usr/bin/node`, the `relay-chief` system user, `/
 
 `files/relay-chief.service` and `files/relay-chief.timer` are unmodified copies of the units in relay-chief `deploy/` at commit `865f13949da25eadfdae4160a8a4ef6e293d6376`. Slot behavior is added with a drop-in, `relay-chief.service.d/10-slot.conf`, which requires the credentials unit and the mounted data volume. If the volume is missing, the cycle does not start, rather than creating an empty ledger on the root disk.
 
-`/run/relay-chief/credentials.env` is on tmpfs, so `relay-chief-credentials.service` re-fetches it after every reboot, before the service starts. It writes the file with mode 0600 and fails closed: it removes the old file first and leaves none on any error. Restart that unit to pick up a rotated secret.
+`/run/relay-chief/credentials.env` is on tmpfs, so `relay-chief-credentials.service` is enabled to re-fetch it at every boot, before the service starts. It writes the file with mode 0600 and fails closed: it removes the old file first and leaves none on any error. Until a slot's secret exists the unit shows as failed, which is expected.
+
+### Rotating a secret
+
+Never restart the credentials unit while a cycle may be running. The service `Requires=` it, so the restart stops an active cycle, and a cycle killed during a send leaves that task `uncertain`. Stop the timer and wait for the cycle first, as the bind script does:
+
+```sh
+systemctl stop relay-chief.timer
+# Repeat until this prints inactive or failed; a cycle can take up to two minutes.
+systemctl show -p ActiveState --value relay-chief.service
+systemctl restart relay-chief-credentials.service
+systemctl start relay-chief.timer
+```
 
 ## Binding a slot
 
@@ -135,7 +147,7 @@ Replacement is always deliberate: `ami` and user data are ignored after creation
 | instance\_type | arm64 instance type, one of those the relay-chief provisioning contract admits. | `string` | `"t4g.small"` | no |
 | name\_prefix | Prefix of IAM and security group names. | `string` | `"relay-chief"` | no |
 | permissions\_boundary\_arn | Optional permissions boundary for the slot roles. | `string` | `null` | no |
-| relay\_chief\_artifact | Self-contained relay-chief release tarball (dist/, node\_modules/, package.json at the root) and its SHA-256, extracted to /opt/relay-chief. null leaves /opt/relay-chief empty, and binding a slot is refused until a build is installed. | ```object({ url = string sha256 = string })``` | `null` | no |
+| relay\_chief\_artifact | Self-contained relay-chief release tarball (dist/, node\_modules/, package.json at the root) and its SHA-256, extracted to /opt/relay-chief. null leaves /opt/relay-chief empty, and binding a slot is refused until a build is installed. User data is ignored after creation, so setting this later shows no diff: each existing slot needs -replace. | ```object({ url = string sha256 = string })``` | `null` | no |
 | root\_volume\_size\_gb | Root volume size. | `number` | `20` | no |
 | secret\_name\_prefix | Secrets Manager path of the slot secrets. Each slot reads only <prefix>/<slot id>. This module never creates the secrets or their values. | `string` | `"relay-chief/slots"` | no |
 | tags | Tags applied to every resource. A relay:chief-slot key here is ignored; the module sets it per slot. | `map(string)` | `{}` | no |

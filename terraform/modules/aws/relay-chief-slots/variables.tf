@@ -53,13 +53,13 @@ variable "node_runtime" {
   })
 
   validation {
-    condition     = startswith(var.node_runtime.url, "https://") && can(regex("^[a-f0-9]{64}$", var.node_runtime.sha256))
-    error_message = "node_runtime needs an https:// url and a lowercase hex sha256."
+    condition     = can(regex("^https://[A-Za-z0-9._~:/?#@%+=,&-]+$", var.node_runtime.url)) && can(regex("^[a-f0-9]{64}$", var.node_runtime.sha256))
+    error_message = "node_runtime needs an https:// url without quotes or spaces and a lowercase hex sha256."
   }
 }
 
 variable "relay_chief_artifact" {
-  description = "Self-contained relay-chief release tarball (dist/, node_modules/, package.json at the root) and its SHA-256, extracted to /opt/relay-chief. null leaves /opt/relay-chief empty, and binding a slot is refused until a build is installed."
+  description = "Self-contained relay-chief release tarball (dist/, node_modules/, package.json at the root) and its SHA-256, extracted to /opt/relay-chief. null leaves /opt/relay-chief empty, and binding a slot is refused until a build is installed. User data is ignored after creation, so setting this later shows no diff: each existing slot needs -replace."
   type = object({
     url    = string
     sha256 = string
@@ -67,8 +67,8 @@ variable "relay_chief_artifact" {
   default = null
 
   validation {
-    condition     = var.relay_chief_artifact == null || (startswith(try(var.relay_chief_artifact.url, ""), "https://") && can(regex("^[a-f0-9]{64}$", try(var.relay_chief_artifact.sha256, ""))))
-    error_message = "relay_chief_artifact needs an https:// url and a lowercase hex sha256."
+    condition     = var.relay_chief_artifact == null || (can(regex("^https://[A-Za-z0-9._~:/?#@%+=,&-]+$", try(var.relay_chief_artifact.url, ""))) && can(regex("^[a-f0-9]{64}$", try(var.relay_chief_artifact.sha256, ""))))
+    error_message = "relay_chief_artifact needs an https:// url without quotes or spaces and a lowercase hex sha256."
   }
 }
 

@@ -5,6 +5,7 @@ import json
 import os
 import pathlib
 import re
+import shutil
 import sqlite3
 import stat
 import subprocess
@@ -14,6 +15,9 @@ import unittest
 MODULE = pathlib.Path(__file__).resolve().parents[1]
 BIND = MODULE / "files" / "bind-slot.sh"
 FETCH = MODULE / "files" / "fetch-credentials.sh"
+PREPARE = MODULE / "files" / "prepare-data-volume.sh"
+IN_CI = os.environ.get("CI") == "true"
+UNPRIVILEGED = 65534
 SLOT = "slot-aaaa1111"
 SCOPE_KEYS = ("chiefId", "organizationId", "workspaceId", "projectId", "relayCallerId")
 
@@ -27,6 +31,32 @@ if [ "$1" = restart ] && [ "$2" = relay-chief-credentials.service ]; then
 fi
 exit 0
 """
+
+
+# Node stand-in: opens the path it is given, as the runtime's plan command does.
+NODE = r"""#!/usr/bin/env bash
+printf '%s\n' "$3" >>"$MOCK_NODE_LOG"
+cat -- "$3" >/dev/null || exit 1
+exit "${MOCK_NODE:-0}"
+"""
+
+
+def privilege_prefix():
+    """The command prefix that runs as real root, or None if none is available."""
+    if os.geteuid() == 0:
+        return []
+    if shutil.which("sudo") and subprocess.run(["sudo", "-n", "true"], capture_output=True, check=False).returncode == 0:
+        return ["sudo", "-n"]
+    return None
+
+
+def require_root(test):
+    prefix = privilege_prefix()
+    if prefix is None:
+        if IN_CI:
+            test.fail("real-privilege tests must run in CI, but root is unavailable")
+        test.skipTest("needs root or passwordless sudo")
+    return prefix
 
 
 def config(chief_id="chief-one"):
@@ -66,7 +96,9 @@ class Host(unittest.TestCase):
         executable(self.bin / "chown", '#!/usr/bin/env bash\nexit 0\n')
         executable(self.bin / "mountpoint", '#!/usr/bin/env bash\nexit "${MOCK_MOUNTPOINT:-0}"\n')
         executable(self.bin / "runuser", '#!/usr/bin/env bash\nshift 3\nexec "$@"\n')
-        executable(self.root / "usr/bin/node", '#!/usr/bin/env bash\nexit "${MOCK_NODE:-0}"\n')
+        self.node_log = pathlib.Path(temp.name) / "node.log"
+        self.node_log.touch()
+        executable(self.root / "usr/bin/node", NODE)
         (self.root / "opt/relay-chief/dist").mkdir(parents=True)
         (self.root / "opt/relay-chief/dist/cli.js").touch()
         (self.root / "etc/relay-chief").mkdir(parents=True)
@@ -84,6 +116,7 @@ class Host(unittest.TestCase):
             "PATH": f"{self.bin}:{os.environ['PATH']}",
             "RELAY_CHIEF_ROOT": str(self.root),
             "MOCK_LOG": str(self.log),
+            "MOCK_NODE_LOG": str(self.node_log),
         }
 
     @property
@@ -208,6 +241,17 @@ class Refusals(Host):
 
 
 class Binding(Host):
+    def test_runtime_is_given_a_real_path_it_can_read(self):
+        executable(self.bin / "chown", '#!/usr/bin/env bash\nprintf "%s\\n" "$*" >>"$MOCK_CHOWN_LOG"\n')
+        chown_log = self.log.with_name("chown.log")
+        result = self.bind(MOCK_CHOWN_LOG=str(chown_log))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        path = self.node_log.read_text().strip()
+        self.assertNotEqual(path, "/dev/stdin")
+        self.assertTrue(path.endswith("/setup.json"), path)
+        work = str(pathlib.Path(path).parent)
+        self.assertIn(f"root:relay-chief {work} {path}", chown_log.read_text())
+
     def test_binds_with_the_timer_left_disabled(self):
         result = self.bind()
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -258,6 +302,169 @@ class Binding(Host):
         result = self.bind("--enable-timer", "--dispatch-opt-in")
         self.assertEqual(result.returncode, 1)
         self.assertNotIn("enable --now relay-chief.timer", self.commands())
+
+
+class RealPermissions(Host):
+    """Runs the bind as real root and the runtime stand-in as a real other user."""
+
+    def setUp(self):
+        self.prefix = require_root(self)
+        super().setUp()
+        self.addCleanup(subprocess.run, [*self.prefix, "rm", "-rf", str(self.root)], check=False)
+        base = self.root.parent
+        executable(self.bin / "chown", """#!/usr/bin/env bash
+args=()
+for argument in "$@"; do
+  case "$argument" in root:relay-chief) argument=root:65534 ;; esac
+  args+=("$argument")
+done
+PATH=/usr/sbin:/usr/bin:/sbin:/bin exec chown "${args[@]}"
+""")
+        executable(self.bin / "runuser", """#!/usr/bin/env bash
+shift 3
+exec setpriv --reuid=65534 --regid=65534 --clear-groups "$@"
+""")
+        (self.bin / "id").unlink()
+        base.chmod(0o755)
+        for parent in base.parents:
+            if not parent.stat().st_mode & stat.S_IXOTH:
+                if IN_CI:
+                    self.fail(f"{parent} is not traversable")
+                self.skipTest(f"{parent} is not traversable")
+        self.node_log.chmod(0o666)
+        self.run_root("chmod", "-R", "o+rX", str(self.root), str(self.bin))
+        self.run_root("chown", f"0:{UNPRIVILEGED}", str(self.root / "etc/relay-chief"))
+        self.run_root("chmod", "0750", str(self.root / "etc/relay-chief"))
+
+    def run_root(self, *command):
+        subprocess.run([*self.prefix, *command], check=True)
+
+    def test_runtime_user_can_read_the_setup_file(self):
+        environment = [f"{k}={v}" for k, v in self.env.items() if k in
+                       ("PATH", "RELAY_CHIEF_ROOT", "MOCK_LOG", "MOCK_NODE_LOG")]
+        result = subprocess.run(
+            [*self.prefix, "env", *environment, "bash", str(BIND), "--slot-id", SLOT, "--config", str(self.config_file)],
+            capture_output=True, text=True, check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(self.node_log.read_text().strip().endswith("/setup.json"))
+
+
+class DataVolume(unittest.TestCase):
+    """Uses the real wipefs, blkid and mkfs.ext4 against a regular file."""
+
+    def setUp(self):
+        for tool in ("wipefs", "blkid", "mkfs.ext4"):
+            if shutil.which(tool, path=f"{os.environ['PATH']}:/usr/sbin:/sbin") is None:
+                if IN_CI:
+                    self.fail(f"{tool} is not installed")
+                self.skipTest(f"{tool} is not installed")
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        self.base = pathlib.Path(temp.name)
+        self.root = self.base / "root"
+        self.bin = self.base / "bin"
+        self.log = self.base / "commands.log"
+        self.log.touch()
+        self.mounted = self.base / "mounted"
+        self.device = self.base / "volume.img"
+        with self.device.open("wb") as handle:
+            handle.truncate(16 * 1024 * 1024)
+        (self.root / "etc").mkdir(parents=True)
+        (self.root / "var/lib").mkdir(parents=True)
+        (self.root / "etc/fstab").touch()
+        for name, body in {
+            "systemctl": 'printf "systemctl %s\\n" "$*" >>"$MOCK_LOG"',
+            "chown": 'printf "chown %s\\n" "$*" >>"$MOCK_LOG"',
+            "mount": 'printf "mount %s\\n" "$*" >>"$MOCK_LOG"; touch "$MOCK_MOUNTED"',
+            "mountpoint": '[ -e "$MOCK_MOUNTED" ]',
+        }.items():
+            executable(self.bin / name, "#!/usr/bin/env bash\n" + body + "\n")
+
+    def prepare(self):
+        return subprocess.run(
+            ["bash", str(PREPARE), str(self.device)],
+            capture_output=True, text=True, check=False,
+            env={**os.environ, "PATH": f"{self.bin}:{os.environ['PATH']}:/usr/sbin:/sbin",
+                 "RELAY_CHIEF_ROOT": str(self.root), "MOCK_LOG": str(self.log), "MOCK_MOUNTED": str(self.mounted)},
+        )
+
+    def uuid(self):
+        return subprocess.run(["blkid", "-p", "-o", "value", "-s", "UUID", str(self.device)],
+                              capture_output=True, text=True, check=False,
+                              env={**os.environ, "PATH": f"{os.environ['PATH']}:/usr/sbin:/sbin"}).stdout.strip()
+
+    def commands(self):
+        return self.log.read_text().splitlines()
+
+    def test_formats_a_blank_volume_and_mounts_it(self):
+        result = self.prepare()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(self.uuid())
+        self.assertIn(f"UUID={self.uuid()} /var/lib/relay-chief ext4", (self.root / "etc/fstab").read_text())
+        self.assertIn("mount /var/lib/relay-chief", self.commands())
+        self.assertIn(f"chown -hR relay-chief:relay-chief {self.root}/var/lib/relay-chief", self.commands())
+
+    def test_never_reformats_an_existing_filesystem(self):
+        self.assertEqual(self.prepare().returncode, 0)
+        first = self.uuid()
+        self.mounted.unlink()
+        result = self.prepare()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.uuid(), first, "an existing filesystem was reformatted")
+        self.assertEqual(len((self.root / "etc/fstab").read_text().splitlines()), 1)
+
+    def test_rerun_does_not_mount_twice(self):
+        self.assertEqual(self.prepare().returncode, 0)
+        self.assertEqual(self.prepare().returncode, 0)
+        self.assertEqual(self.commands().count("mount /var/lib/relay-chief"), 1)
+
+    def test_wipefs_failure_never_formats(self):
+        executable(self.bin / "wipefs", "#!/usr/bin/env bash\nexit 1\n")
+        executable(self.bin / "mkfs.ext4", '#!/usr/bin/env bash\nprintf "mkfs\\n" >>"$MOCK_LOG"\n')
+        result = self.prepare()
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("refusing to format", result.stderr)
+        self.assertEqual(self.commands(), [], "must stop before formatting or mounting")
+
+    def test_foreign_signature_is_refused(self):
+        executable(self.bin / "wipefs", "#!/usr/bin/env bash\necho 'DEVICE OFFSET TYPE'\n")
+        executable(self.bin / "blkid", "#!/usr/bin/env bash\necho xfs\n")
+        executable(self.bin / "mkfs.ext4", '#!/usr/bin/env bash\nprintf "mkfs\\n" >>"$MOCK_LOG"\n')
+        result = self.prepare()
+        self.assertEqual(result.returncode, 1)
+        self.assertNotIn("mkfs", self.commands())
+
+    def test_real_ownership_follows_the_new_uid(self):
+        prefix = require_root(self)
+        self.addCleanup(subprocess.run, [*prefix, "rm", "-rf", str(self.root)], check=False)
+        executable(self.bin / "chown", """#!/usr/bin/env bash
+args=()
+for argument in "$@"; do
+  case "$argument" in relay-chief:relay-chief) argument=65534:65534 ;; esac
+  args+=("$argument")
+done
+PATH=/usr/sbin:/usr/bin:/sbin:/bin exec chown "${args[@]}"
+""")
+        data = self.root / "var/lib/relay-chief"
+        data.mkdir()
+        outside = self.base / "outside"
+        outside.touch()
+        (data / "chief.db").touch()
+        (data / ".slot-binding.json").touch()
+        (data / "link").symlink_to(outside)
+        before = outside.stat().st_uid
+        subprocess.run([*prefix, "chown", "-h", "12345:12345", str(data / "chief.db")], check=True)
+        environment = [f"PATH={self.bin}:{os.environ['PATH']}:/usr/sbin:/sbin", f"RELAY_CHIEF_ROOT={self.root}",
+                       f"MOCK_LOG={self.log}", f"MOCK_MOUNTED={self.mounted}"]
+        result = subprocess.run([*prefix, "env", *environment, "bash", str(PREPARE), str(self.device)],
+                                capture_output=True, text=True, check=False)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        listing = subprocess.run([*prefix, "stat", "-c", "%u %n", str(data / "chief.db"), str(data / ".slot-binding.json"), str(outside)],
+                                 capture_output=True, text=True, check=True).stdout.splitlines()
+        self.assertTrue(listing[0].startswith(f"{UNPRIVILEGED} "), listing)
+        self.assertTrue(listing[1].startswith("0 "), listing)
+        self.assertTrue(listing[2].startswith(f"{before} "), "chown followed a symlink off the volume")
 
 
 class FetchCredentials(unittest.TestCase):
@@ -363,14 +570,18 @@ class Contracts(unittest.TestCase):
         self.assertIn("RELAY_CHIEF_SLOT_ID=${slot_id}", template)
         self.assertIn("RELAY_CHIEF_SECRET_ID=${secret_name}", template)
         self.assertIn("systemctl disable relay-chief.timer", template)
-        self.assertNotRegex(template, r"systemctl\s+(enable|start)\b")
-        self.assertRegex(template, r'if \[ -z "\$\(wipefs [^\n]*\n\s*mkfs\.ext4', "format only a blank device")
-        self.assertEqual(template.count("mkfs.ext4 -"), 1)
+        self.assertNotRegex(template, r"systemctl\s+(enable|start)\s+(--now\s+)?relay-chief\.(timer|service)")
+        self.assertIn("systemctl enable relay-chief-credentials.service", template)
+        self.assertNotIn("mkfs.ext4 -", template, "formatting belongs in prepare-data-volume.sh")
+
+    def test_prepare_script_never_tests_wipefs_inline(self):
+        self.assertNotRegex(PREPARE.read_text(), r'\[ -z "\$\(wipefs')
 
     def test_credentials_unit_is_ordered_before_the_service(self):
         unit = (MODULE / "files/relay-chief-credentials.service").read_text()
         self.assertIn("Before=relay-chief.service", unit)
         self.assertIn("Type=oneshot", unit)
+        self.assertIn("WantedBy=multi-user.target", unit)
         self.assertIn("ExecStart=/usr/local/sbin/relay-chief-fetch-credentials", unit)
 
 

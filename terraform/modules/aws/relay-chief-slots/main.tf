@@ -40,6 +40,7 @@ locals {
     { path = "/etc/systemd/system/relay-chief-credentials.service", mode = "0644", content = filebase64("${path.module}/files/relay-chief-credentials.service") },
     { path = "/usr/local/sbin/relay-chief-fetch-credentials", mode = "0755", content = filebase64("${path.module}/files/fetch-credentials.sh") },
     { path = "/usr/local/sbin/relay-chief-bind-slot", mode = "0755", content = filebase64("${path.module}/files/bind-slot.sh") },
+    { path = "/usr/local/sbin/relay-chief-prepare-data-volume", mode = "0755", content = filebase64("${path.module}/files/prepare-data-volume.sh") },
   ]
 
   # Rendered per slot. Holds identifiers and checksums only, never a credential.

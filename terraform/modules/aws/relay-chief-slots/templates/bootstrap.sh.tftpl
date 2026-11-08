@@ -57,31 +57,19 @@ chmod 0640 /etc/relay-chief/slot.env
 install_file '${file.path}' '${file.mode}' '${file.content}'
 %{ endfor ~}
 
-# The volume attaches after the instance starts, so wait for it. A filesystem
-# already on it is the previous host's ledger: it is mounted, never formatted.
-# Formatting happens only on a device with no signature at all.
+# The volume attaches after the instance starts, so wait for it.
 device='${data_device}'
 for _ in $(seq 1 120); do
   [ -b "$device" ] && break
   sleep 5
 done
 [ -b "$device" ] || { echo "relay-chief bootstrap: the data volume did not attach" >&2; exit 1; }
-device="$(readlink -f "$device")"
-if [ -z "$(wipefs --no-act --noheadings "$device")" ]; then
-  mkfs.ext4 -q -L relay-chief-data "$device"
-elif [ "$(blkid -p -o value -s TYPE "$device" || true)" != "ext4" ]; then
-  echo "relay-chief bootstrap: the data volume holds an unexpected filesystem" >&2
-  exit 1
-fi
-uuid="$(blkid -p -o value -s UUID "$device")"
-install -d -m 0700 /var/lib/relay-chief
-grep -q ' /var/lib/relay-chief ' /etc/fstab ||
-  echo "UUID=$uuid /var/lib/relay-chief ext4 defaults,noatime,nofail,x-systemd.device-timeout=30s 0 2" >>/etc/fstab
+/usr/local/sbin/relay-chief-prepare-data-volume "$device"
+
+# Enabled so credentials are fetched at every boot. On a host with no secret yet
+# this unit fails, which is expected and keeps the service from starting.
 systemctl daemon-reload
-mount /var/lib/relay-chief
-mountpoint -q /var/lib/relay-chief
-chown relay-chief:relay-chief /var/lib/relay-chief
-chmod 0700 /var/lib/relay-chief
+systemctl enable relay-chief-credentials.service
 
 # Explicitly disabled. relay-chief-bind-slot enables it only with a dispatch opt-in.
 systemctl disable relay-chief.timer

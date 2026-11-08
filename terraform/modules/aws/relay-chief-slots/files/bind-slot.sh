@@ -202,7 +202,12 @@ check() {
 }
 
 check setup "${RELAY_CHIEF_REGION:-}" "$work/setup.json"
-if ! runuser -u relay-chief -- "$NODE" "$CLI" plan /dev/stdin <"$work/setup.json" >/dev/null 2>&1; then
+# The CLI opens the path itself as relay-chief, so that user needs real access:
+# /dev/stdin would re-open this file, not inherit the descriptor.
+chown root:relay-chief "$work" "$work/setup.json"
+chmod 0750 "$work"
+chmod 0640 "$work/setup.json"
+if ! (cd / && runuser -u relay-chief -- "$NODE" "$CLI" plan "$work/setup.json") >/dev/null 2>&1; then
   refuse 2 "the runtime rejected the configuration"
 fi
 
