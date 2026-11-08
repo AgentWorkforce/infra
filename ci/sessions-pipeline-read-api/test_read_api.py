@@ -19,13 +19,13 @@ class ReadApi(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix="read-api-render-") as directory:
             values = yaml.safe_load(FIXTURE.read_text())
             if not fixture:
-                values.pop("readApi", None)
+                values.pop("sessionReadApi", None)
             base = Path(directory) / "base.yaml"
             base.write_text(yaml.safe_dump(values))
             command = ["helm", "template", "test", str(ROOT / "charts/sessions-pipeline"), "-n", "ci", "-f", str(base)]
             if overlay:
                 extra = Path(directory) / "extra.yaml"
-                extra.write_text(yaml.safe_dump({"readApi": overlay}))
+                extra.write_text(yaml.safe_dump({"sessionReadApi": overlay}))
                 command += ["-f", str(extra)]
             result = subprocess.run(command + list(args), text=True, capture_output=True, check=False)
         if fail:
@@ -34,6 +34,111 @@ class ReadApi(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         return [d for d in yaml.safe_load_all(result.stdout) if d and
                 d.get("metadata", {}).get("labels", {}).get("app.kubernetes.io/component") == "read-api"]
+
+    def test_standalone_chart_renders_and_installs_on_its_own(self):
+        fixture = ROOT / "charts/session-read-api/ci/default-values.yaml"
+        result = subprocess.run(["helm", "template", "solo", str(ROOT / "charts/session-read-api"), "-n", "ci", "-f", str(fixture)],
+                                capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        docs = [d for d in yaml.safe_load_all(result.stdout) if d]
+        self.assertEqual(sorted(d["kind"] for d in docs), ["Deployment", "Service"])
+        self.assertEqual({d["metadata"]["name"] for d in docs}, {"solo-read-api"})
+        check = subprocess.run(["kubeconform", "-strict", "-summary"], input=yaml.safe_dump_all(docs), text=True, capture_output=True)
+        self.assertEqual(check.returncode, 0, check.stdout + check.stderr)
+
+    def test_old_read_api_key_fails_with_a_migration_message(self):
+        with tempfile.TemporaryDirectory(prefix="read-api-render-") as directory:
+            legacy = Path(directory) / "old.yaml"
+            legacy.write_text(yaml.safe_dump({"readApi": {"enabled": False}}))
+            result = subprocess.run(["helm", "template", "test", str(ROOT / "charts/sessions-pipeline"), "-n", "ci", "-f", str(FIXTURE), "-f", str(legacy)],
+                                    capture_output=True, text=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("moved to the session-read-api chart under sessionReadApi", result.stderr)
+
+    def test_service_name_is_preserved_from_the_old_block(self):
+        for doc in self.render():
+            self.assertEqual(doc["metadata"]["name"], "test-read-api")
+
+    def test_control_only_is_the_default_and_self_issued_is_not_offered(self):
+        env = self.env_of(self.render())
+        self.assertEqual(env["READ_API_AUTH_MODE"]["value"], "relaycontrol_only")
+        self.assertNotIn("READ_API_INTERNAL_SECRET", env)
+        self.assertIn("auth.mode must be", self.render(overlay={"auth": {"mode": "self_issued"}}, fail=True))
+        for name in ("READ_API_AUTH_MODE", "READ_API_INTERNAL_SECRET", "READ_API_ACCESS_TOKEN_TTL_SECONDS"):
+            with self.subTest(name=name):
+                self.assertIn("managed", self.render(overlay={"extraEnv": [{"name": name, "valueFrom": {"secretKeyRef": {"name": "x", "key": "x"}}}]}, fail=True))
+
+    def test_postgres_tls_requires_an_explicit_verified_profile(self):
+        self.assertEqual(self.env_of(self.render())["SESSION_POSTGRES_TLS_PROFILE"]["value"], "custom-ca")
+        docs = self.render(overlay={"postgres": {"tlsProfile": "supabase"}, "postgresCa": {"enabled": False, "configMap": "", "sha256": ""}})
+        env = self.env_of(docs)
+        self.assertEqual(env["SESSION_POSTGRES_TLS_PROFILE"]["value"], "supabase")
+        self.assertNotIn("SESSION_POSTGRES_CA_FILE", env)
+        for overlay, message in [
+                ({"postgres": {"tlsProfile": ""}}, "postgres.tlsProfile is required"),
+                ({"postgres": {"tlsProfile": "disable"}}, "must be supabase or custom-ca"),
+                ({"postgresCa": {"enabled": False, "configMap": "x", "sha256": ""}}, "requires postgresCa.enabled=true"),
+                ({"postgres": {"tlsProfile": "supabase"}}, "requires postgres.tlsProfile=custom-ca"),
+                ({"postgresCa": {"sha256": "abc"}}, "postgresCa.sha256"),
+                ({"postgresCa": {"configMap": "a", "secret": "b"}}, "exactly one of"),
+                ({"extraEnv": [{"name": "SESSION_POSTGRES_TLS_PROFILE", "value": "supabase"}]}, "managed")]:
+            with self.subTest(overlay=overlay):
+                self.assertIn(message, self.render(overlay=overlay, fail=True))
+
+    def test_postgres_ca_is_mounted_and_pinned(self):
+        deploy = next(d for d in self.render() if d["kind"] == "Deployment")
+        spec = deploy["spec"]["template"]["spec"]
+        env = self.env_of([deploy])
+        self.assertEqual(env["SESSION_POSTGRES_CA_FILE"]["value"], "/etc/session-read-postgres/ca.crt")
+        self.assertEqual(env["SESSION_POSTGRES_CA_SHA256"]["value"], "a" * 64)
+        volume = next(v for v in spec["volumes"] if v["name"] == "postgres-ca")
+        self.assertEqual(volume["configMap"]["name"], "read-api-postgres-ca")
+        self.assertIn({"name": "postgres-ca", "mountPath": "/etc/session-read-postgres", "readOnly": True},
+                      spec["containers"][0]["volumeMounts"])
+
+    def test_cors_allowlist_is_exact_and_off_by_default(self):
+        self.assertNotIn("READ_API_CORS_ALLOWED_ORIGINS", self.env_of(self.render()))
+        env = self.env_of(self.render(overlay={"cors": {"allowedOrigins": ["https://app.agentrelay.com", "http://localhost:3000"]}}))
+        self.assertEqual(env["READ_API_CORS_ALLOWED_ORIGINS"]["value"], "https://app.agentrelay.com,http://localhost:3000")
+        for origin in ("*", "https://*.agentrelay.com", "https://app.agentrelay.com/", "http://app.agentrelay.com", "HTTPS://APP.AGENTRELAY.COM"):
+            with self.subTest(origin=origin):
+                self.assertIn("cors.allowedOrigins", self.render(overlay={"cors": {"allowedOrigins": [origin]}}, fail=True))
+
+    def test_image_registry_and_control_url_guards(self):
+        for repository in ("session-read-api", "https://ghcr.io/a/b", "ghcr.io/a/b:tag"):
+            with self.subTest(repository=repository):
+                self.assertIn("image.repository", self.render(overlay={"image": {"repository": repository}}, fail=True))
+        for url, allow in (("http://relaycontrol.example.com", True), ("http://relaycontrol.ci.svc.cluster.local", False),
+                           ("https://user:x@relaycontrol.example.com", False), ("https://relaycontrol.example.com/path", False)):
+            with self.subTest(url=url):
+                self.assertIn("auth.relaycontrol.url", self.render(
+                    overlay={"allowInClusterHttp": allow, "auth": {"relaycontrol": {"url": url}}}, fail=True))
+
+    def env_of(self, documents):
+        deployment = next(d for d in documents if d["kind"] == "Deployment")
+        return {e["name"]: e for e in deployment["spec"]["template"]["spec"]["containers"][0]["env"]}
+
+    def test_clickhouse_is_default_off(self):
+        env = self.env_of(self.render())
+        self.assertEqual(env["SEARCH_INDEX_BACKEND"]["value"], "postgres")
+        self.assertEqual(env["RELAYHISTORY_READ_API_SECRET"]["valueFrom"]["secretKeyRef"]["name"], "read-api-config")
+
+    def test_clickhouse_wires_the_read_secret_and_backend_only(self):
+        enabled = {"search": {"clickhouse": {"enabled": True, "existingSecret": "read-api-clickhouse"}}}
+        env = self.env_of(self.render(overlay=enabled))
+        self.assertEqual(env["SEARCH_INDEX_BACKEND"]["value"], "clickhouse")
+        self.assertEqual(env["RELAYHISTORY_READ_API_SECRET"]["valueFrom"]["secretKeyRef"],
+                         {"name": "read-api-clickhouse", "key": "RELAYHISTORY_READ_API_SECRET"})
+        self.assertFalse([name for name in env if name.startswith("CLICKHOUSE_")])
+
+    def test_clickhouse_refuses_incomplete_settings(self):
+        for overlay, message in [
+                ({"search": {"clickhouse": {"enabled": True}}}, "clickhouse.existingSecret is required"),
+                ({"search": {"backend": "opensearch", "clickhouse": {"enabled": True, "existingSecret": "s"}}}, "conflicts"),
+                ({"search": {"clickhouse": {"enabled": "true", "existingSecret": "s"}}}, "must be a boolean"),
+                ({"extraEnv": [{"name": "CLICKHOUSE_URL", "value": "https://x"}]}, "no CLICKHOUSE_")]:
+            with self.subTest(overlay=overlay):
+                self.assertIn(message, self.render(overlay=overlay, fail=True))
 
     def test_default_off_renders_no_read_api_objects(self):
         self.assertEqual(self.render(fixture=False), [])
@@ -81,9 +186,8 @@ class ReadApi(unittest.TestCase):
         self.assertEqual(service["spec"]["selector"], deploy["spec"]["selector"]["matchLabels"])
 
     def test_missing_required_inputs_and_wildcard_workspace_are_refused(self):
-        for setting in ["readApi.image.digest=", "readApi.config.existingSecret=", "readApi.origin=https://history.example.invalid/path",
-                        "readApi.completeSince=", "readApi.directoryWorkspaces=*", "readApi.auth.relayauth.jwksUrl=",
-                        "readApi.auth.relaycontrol.existingSecret=", "readApi.port=65536", "readApi.probeRuntime=sh"]:
+        for setting in ["sessionReadApi.image.digest=", "sessionReadApi.config.existingSecret=", "sessionReadApi.origin=https://history.example.invalid/path",
+                        "sessionReadApi.completeSince=", "sessionReadApi.directoryWorkspaces=*",                         "sessionReadApi.auth.relaycontrol.existingSecret=", "sessionReadApi.port=65536", "sessionReadApi.probeRuntime=sh"]:
             with self.subTest(setting=setting):
                 self.render("--set", setting, fail=True)
 
@@ -101,22 +205,22 @@ class ReadApi(unittest.TestCase):
         result = subprocess.run(["kubeconform", "-strict", "-summary"],
             input=yaml.safe_dump_all(docs), text=True, capture_output=True)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        legacy = next(d for d in self.render() if d["kind"] == "Deployment")
+        legacy = next(d for d in self.render(overlay={"auth": {"mode": "legacy", "relayauth": {"jwksUrl": "https://auth.agentrelay.com/jwks", "issuer": "https://auth.agentrelay.com"}}}) if d["kind"] == "Deployment")
         legacy_env = {e["name"] for e in legacy["spec"]["template"]["spec"]["containers"][0]["env"]}
         self.assertNotIn("READ_API_AUTH_MODE", legacy_env)
         self.assertTrue({"RELAYAUTH_JWKS_URL", "RELAYAUTH_ISSUER"} <= legacy_env)
 
     def test_control_only_requires_introspection_and_refuses_legacy_settings(self):
         auth = {"mode": "relaycontrol_only", "relayauth": {"jwksUrl": "", "issuer": ""}}
-        for setting in ["readApi.auth.relaycontrol.enabled=false", "readApi.auth.relaycontrol.url=",
-                        "readApi.auth.relaycontrol.existingSecret=", "readApi.auth.relaycontrol.key=",
-                        "readApi.auth.relayauth.jwksUrl=https://auth.agentrelay.com/jwks",
-                        "readApi.auth.relayauth.issuer=https://auth.agentrelay.com"]:
+        for setting in ["sessionReadApi.auth.relaycontrol.enabled=false", "sessionReadApi.auth.relaycontrol.url=",
+                        "sessionReadApi.auth.relaycontrol.existingSecret=", "sessionReadApi.auth.relaycontrol.key=",
+                        "sessionReadApi.auth.relayauth.jwksUrl=https://auth.agentrelay.com/jwks",
+                        "sessionReadApi.auth.relayauth.issuer=https://auth.agentrelay.com"]:
             with self.subTest(setting=setting):
                 self.render("--set", setting, overlay={"auth": auth}, fail=True)
         for mode in ["", "default", "RELAYCONTROL_ONLY", False, 1]:
             with self.subTest(mode=mode):
-                self.assertIn("readApi.auth.mode must be", self.render(
+                self.assertIn("auth.mode must be", self.render(
                     overlay={"auth": {"mode": mode}}, fail=True))
 
     def test_canonical_bucket_requires_explicit_org_layout_and_bare_writer_root(self):
@@ -125,9 +229,7 @@ class ReadApi(unittest.TestCase):
         def entries(values):
             return [{"name": name, "value": value} for name, value in values.items()]
         for mode in ("legacy", "relaycontrol_only"):
-            auth = {"mode": mode}
-            if mode == "relaycontrol_only":
-                auth["relayauth"] = {"jwksUrl": "", "issuer": ""}
+            auth = {"mode": "legacy", "relayauth": {"jwksUrl": "https://auth.agentrelay.com/jwks", "issuer": "https://auth.agentrelay.com"}} if mode == "legacy" else {"mode": mode}
             with self.subTest(mode=mode):
                 docs = self.render(overlay={"auth": auth, "extraEnv": entries(correct)})
                 deploy = next(d for d in docs if d["kind"] == "Deployment")
@@ -146,7 +248,7 @@ class ReadApi(unittest.TestCase):
                         invalid.append(config)
                 for config in invalid:
                     with self.subTest(config=config):
-                        self.assertIn("readApi LOCKER_BUCKET requires literal PIPELINE_", self.render(
+                        self.assertIn("LOCKER_BUCKET requires literal PIPELINE_", self.render(
                             overlay={"auth": auth, "extraEnv": entries(config)}, fail=True))
 
     def test_canonical_layout_cannot_be_deferred_to_unknown_env_references(self):
@@ -158,7 +260,7 @@ class ReadApi(unittest.TestCase):
             env[index] = {"name": correct[index]["name"], "valueFrom": {
                 "configMapKeyRef": {"name": "unverified-layout", "key": "value"}}}
             with self.subTest(name=correct[index]["name"]):
-                self.assertIn("readApi LOCKER_BUCKET requires", self.render(
+                self.assertIn("LOCKER_BUCKET requires", self.render(
                     overlay={"extraEnv": env}, fail=True))
         for bucket in ("", " ", False, " sessions", "sessions ", "sessions\n", "\tsessions"):
             env = [dict(e) for e in correct]
@@ -172,7 +274,7 @@ class ReadApi(unittest.TestCase):
                 self.assertIn("DNS-1035", self.render(overlay={"fullnameOverride": name}, fail=True))
         for port in (1, 80, 1023, 65536):
             with self.subTest(port=port):
-                self.assertIn("readApi.port", self.render(overlay={"port": port}, fail=True))
+                self.assertIn("port must be an integer", self.render(overlay={"port": port}, fail=True))
         for port in (1024, 65535):
             docs = self.render(overlay={"fullnameOverride": "a-reader-1", "port": port})
             deploy = next(d for d in docs if d["kind"] == "Deployment")
@@ -195,7 +297,7 @@ class ReadApi(unittest.TestCase):
         for origin in invalid:
             with self.subTest(origin=origin):
                 message = self.render(fail=True, overlay={"origin": origin})
-                self.assertIn("readApi.origin", message)
+                self.assertIn("session-read-api: origin", message)
         for origin in ["https://history.agentrelay.com", *["https://history.kind.agentrelay.com:" + str(port)
                        for port in (1, 443, 8443, 65535)]]:
             with self.subTest(origin=origin):
@@ -209,7 +311,7 @@ class ReadApi(unittest.TestCase):
                 deploy = next(d for d in self.render(overlay=overlay) if d["kind"] == "Deployment")
                 env = {e["name"]: e for e in deploy["spec"]["template"]["spec"]["containers"][0]["env"]}
                 self.assertEqual(env["SEARCH_INDEX_BACKEND"]["value"], expected)
-        self.render("--set", "readApi.search.backend=", fail=True)
+        self.render("--set", "sessionReadApi.search.backend=", fail=True)
 
     def test_extra_env_cannot_replace_flag_or_duplicate_credentials(self):
         for env in [[{"name": "SERVICE", "value": "other"}],
@@ -305,7 +407,7 @@ class IngestEdge(unittest.TestCase):
                 f = Path(directory) / "extra.yaml"
                 values = {"ingestEdge": overlay} if overlay else {}
                 if read_api:
-                    values["readApi"] = read_api
+                    values["sessionReadApi"] = read_api
                 f.write_text(yaml.safe_dump(values))
                 cmd += ["-f", str(f)]
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
@@ -412,22 +514,22 @@ class IngestEdge(unittest.TestCase):
             self.render(overlay={"image": {"repository": repository}})
 
     def test_reader_and_ingest_require_the_same_audience(self):
-        reader = yaml.safe_load(FIXTURE.read_text())["readApi"]
+        reader = yaml.safe_load(FIXTURE.read_text())["sessionReadApi"]
         self.render(read_api=reader)
         for origin in ["https://other.agentrelay.com:8443", "https://history.kind.agentrelay.com:9443"]:
             with self.subTest(origin=origin):
-                self.assertIn("must exactly equal readApi.origin", self.render(
+                self.assertIn("must exactly equal sessionReadApi.origin", self.render(
                     read_api={**reader, "origin": origin}, fail=True))
 
     def test_reader_and_ingest_require_the_same_canonical_bucket(self):
-        reader = yaml.safe_load(FIXTURE.read_text())["readApi"]
+        reader = yaml.safe_load(FIXTURE.read_text())["sessionReadApi"]
         bucket = "same-canonical-bucket"
         reader["extraEnv"] = [{"name": "LOCKER_BUCKET", "value": bucket},
                               {"name": "PIPELINE_ORG_FROM_PREFIX", "value": "true"},
                               {"name": "PIPELINE_KEY_PREFIX", "value": "96bulls"}]
         self.render(overlay={"locker": {"bucket": bucket}}, read_api=reader)
         error = self.render(overlay={"locker": {"bucket": "different-bucket"}}, read_api=reader, fail=True)
-        self.assertIn("readApi LOCKER_BUCKET must equal ingestEdge.locker.bucket", error)
+        self.assertIn("sessionReadApi LOCKER_BUCKET must equal ingestEdge.locker.bucket", error)
         # A standalone reader may point to its own qualified canonical bucket.
         self.render(overlay={"enabled": False, "locker": {"bucket": "different-bucket"}}, read_api=reader)
 

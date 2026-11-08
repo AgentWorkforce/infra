@@ -1,0 +1,106 @@
+# Standalone chart for the session read API. sessions-pipeline carries it as a
+# default-off dependency under the sessionReadApi key.
+
+# Override the Deployment and Service name. Default: <release>-read-api, the
+# name the old sessions-pipeline readApi block used.
+fullnameOverride: ""
+replicas: 1
+image:
+  # Registry DNS host plus image path; no scheme, tag or digest.
+  repository: ghcr.io/agentworkforce/96bulls-services
+  # Required: an immutable digest of an owner-approved compatible image.
+  digest: ""
+  pullPolicy: IfNotPresent
+imagePullSecrets: []
+# Unprivileged container port: 1024-65535, independent of the public origin port.
+port: 8080
+# The services image uses Bun; Node-only compatible images may select node.
+probeRuntime: bun
+# Bare public HTTPS origin, used as the token audience.
+origin: ""
+# Explicit coverage floor: ISO timestamp, or epoch only when coverage is proven.
+completeSince: ""
+# Exact upstream allowlist string; '*' is not a workspace authority.
+directoryWorkspaces: ""
+# Allows plain http only to in-cluster Service names.
+allowInClusterHttp: false
+
+# The Secret holding RELAYHISTORY_READ_API_SECRET, one JSON document:
+#   {"supabase_url": "postgresql://bulls96_read_api:...@host:5432/db"}
+# plus a "clickhouse" block when search.clickhouse.enabled=true. The login must
+# be the reader role; the service refuses any other at startup.
+config:
+  existingSecret: ""
+  key: RELAYHISTORY_READ_API_SECRET
+
+postgres:
+  # Required, with no default: supabase (the image's pinned CA) or custom-ca
+  # (postgresCa below). The service verifies the server hostname in both.
+  tlsProfile: ""
+
+# The Postgres server CA for tlsProfile=custom-ca: exactly one of configMap or
+# secret, and the certificate's SHA-256.
+postgresCa:
+  enabled: false
+  configMap: ""
+  secret: ""
+  key: ca.crt
+  sha256: ""
+
+search:
+  # Selected by the upstream adapter registry; requires a compatible image.
+  backend: postgres
+  # Default off. Reads search from an external ClickHouse; this chart installs
+  # none, and something else must keep it populated up to completeSince. True
+  # renders SEARCH_INDEX_BACKEND=clickhouse and takes RELAYHISTORY_READ_API_SECRET
+  # from this Secret key instead of config above. The key holds one JSON document:
+  #   {"supabase_url": "postgresql://bulls96_read_api:...",
+  #    "clickhouse": {"url": "https://<host>:8443", "user": "<SELECT-only user>",
+  #                   "password": "...", "database": "..."}}
+  # The url must be https or loopback, and the service requires all four fields.
+  # The service reads no CLICKHOUSE_* environment variables.
+  clickhouse:
+    enabled: false
+    existingSecret: ""
+    key: RELAYHISTORY_READ_API_SECRET
+
+auth:
+  # relaycontrol_only: Control introspection with rth:read and no RelayAuth
+  # dependency. legacy: an explicitly configured temporary issuer, plus the
+  # optional Control path. No other mode is available from this chart yet.
+  mode: relaycontrol_only
+  relayauth:
+    # Required for legacy; must stay empty for relaycontrol_only.
+    jwksUrl: ""
+    issuer: ""
+  relaycontrol:
+    enabled: true
+    # Base origin only: https, or http to an in-cluster Service with
+    # allowInClusterHttp=true.
+    url: ""
+    existingSecret: ""
+    key: RELAYCONTROL_INTROSPECT_SECRET
+
+cors:
+  # Exact browser origins allowed to call the GET read routes directly, for
+  # example https://app.example.com. No wildcard, path or trailing slash; plain
+  # http only on loopback. Empty means no CORS. Honored only by images that
+  # include READ_API_CORS_ALLOWED_ORIGINS support; older images ignore it.
+  allowedOrigins: []
+
+# TLS CA mounts, adapter configuration and other upstream options. Credential
+# values belong in Secret key refs, not literal extraEnv values. LOCKER_BUCKET
+# requires a nonempty literal plus literal PIPELINE_ORG_FROM_PREFIX=true and
+# PIPELINE_KEY_PREFIX=96bulls (bare root); these three layout inputs cannot use
+# valueFrom, because admission must see them.
+extraEnv: []
+extraVolumes: []
+extraVolumeMounts: []
+serviceAccountName: ""
+nodeSelector: {}
+tolerations: []
+affinity: {}
+podAnnotations: {}
+resources:
+  requests: { cpu: 50m, memory: 128Mi }
+  limits: { memory: 512Mi }

@@ -325,66 +325,11 @@ functionDefaultRevoke:
 supabaseActivation:
   hold: false
 
-# Optional session read API container (merged pipeline #317/#318/#364).
-# Plumbing only: keep off until an owner-approved Postgres/canonical/auth
-# assembly and compatible immutable image exist. A reader-only publication
-# predates #364; no default digest or native assembly is selected here.
-readApi:
+# The session read API moved to its own chart (charts/session-read-api), carried
+# here as a default-off dependency. Its values, documented in that chart, go under
+# this key. The old readApi key refuses to render, so two readers cannot run.
+sessionReadApi:
   enabled: false
-  fullnameOverride: ""
-  replicas: 1
-  image:
-    repository: ghcr.io/agentworkforce/96bulls-services
-    digest: ""
-    pullPolicy: IfNotPresent
-  imagePullSecrets: []
-  # Unprivileged container port: 1024-65535, independent of public origin port.
-  port: 8080
-  # The services image uses Bun; Node-only compatible images may select node.
-  probeRuntime: bun
-  # Bare public HTTPS origin, used as the token audience.
-  origin: ""
-  # Explicit coverage floor: ISO timestamp or epoch only when coverage is proven.
-  completeSince: ""
-  # Exact upstream allowlist string; '*' is not a workspace authority.
-  directoryWorkspaces: ""
-  allowInClusterHttp: false
-  search:
-    # Selected by the upstream adapter registry; requires a compatible image.
-    backend: postgres
-  config:
-    existingSecret: ""
-    key: RELAYHISTORY_READ_API_SECRET
-  auth:
-    # legacy preserves the explicit temporary issuer and optional Control path.
-    # relaycontrol_only requires merged pipeline #364 in the pinned image,
-    # enabled Control introspection and empty relayauth settings; no JWKS env.
-    mode: legacy
-    # Explicit temporary in-cluster issuer avoids the upstream hosted defaults.
-    relayauth:
-      jwksUrl: ""
-      issuer: ""
-    relaycontrol:
-      enabled: false
-      url: ""
-      existingSecret: ""
-      key: RELAYCONTROL_INTROSPECT_SECRET
-  # TLS CA mounts, transport/adaptor configuration and other upstream options.
-  # Credential values belong in Secret key refs, not literal extraEnv values.
-  # LOCKER_BUCKET requires a nonempty literal plus literal
-  # PIPELINE_ORG_FROM_PREFIX=true and PIPELINE_KEY_PREFIX=96bulls (bare root).
-  # These three layout inputs cannot use valueFrom: admission must see them.
-  extraEnv: []
-  extraVolumes: []
-  extraVolumeMounts: []
-  serviceAccountName: ""
-  nodeSelector: {}
-  tolerations: []
-  affinity: {}
-  podAnnotations: {}
-  resources:
-    requests: { cpu: 50m, memory: 128Mi }
-    limits: { memory: 512Mi }
 
 # Separate public upload edge from merged pipeline #363. This is NOT the
 # internal alleyoop-ingest worker. No profile enables it or supplies an image.

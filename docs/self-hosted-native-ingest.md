@@ -68,7 +68,7 @@ explicit in-cluster opt-in; public plaintext destinations are refused.
 `relaycontrol.url` is a **base origin**, without the introspection path: the
 client appends `/internal/v1/auth/introspect`. `origin` is a normalized public
 HTTPS origin (lowercase DNS, no `:443` default port or trailing slash) and must
-equal the reader's `READ_API_ORIGIN`; rendering refuses unequal `readApi.origin`
+equal the reader's `READ_API_ORIGIN`; rendering refuses unequal `sessionReadApi.origin`
 and `ingestEdge.origin` when both slots are enabled. A generic `extraEnv` override is refused;
 the source's enablement, auth, TLS, inline acceptance and Secret inputs are
 managed by the chart.
@@ -104,12 +104,12 @@ probe and custody endpoints stay private. The edge re-introspects the bearer and
 requires `rth:sync` on every request, ignoring client identity/signature headers.
 The reader's sync-login flag must be enabled only when both services actually
 serve the same origin. This PR adds no ingress. For a compatible image containing
-merged pipeline #364 (`8a075b26`), select `readApi.auth.mode=relaycontrol_only`,
-enable `readApi.auth.relaycontrol.enabled`, supply its URL and Secret reference,
-and clear both `readApi.auth.relayauth` fields. The chart emits
+merged pipeline #364 (`8a075b26`), select `sessionReadApi.auth.mode=relaycontrol_only`,
+enable `sessionReadApi.auth.relaycontrol.enabled`, supply its URL and Secret reference,
+and clear both `sessionReadApi.auth.relayauth` fields. The chart emits
 `READ_API_AUTH_MODE=relaycontrol_only` and omits `RELAYAUTH_JWKS_URL` and
 `RELAYAUTH_ISSUER`; contradictory settings and extraEnv overrides are refused.
-The default `legacy` chart mode preserves the existing explicit issuer behavior.
+The `legacy` chart mode preserves the existing explicit issuer behavior; it is no longer the default.
 This selects backend behavior; chart checks do not prove the image's verifier.
 
 Merged #364 also binds detail reads through `LOCKER_*`, with S3 static keys or
