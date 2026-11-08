@@ -1016,6 +1016,35 @@ entries:
     urls:
     - https://github.com/AgentWorkforce/helm-charts/releases/download/alleyoop-0.1.0/alleyoop-0.1.0.tgz
     version: 0.1.0
+  relay-chief:
+  - annotations:
+      agentworkforce.dev/license-scope: First-party chart code only; dependencies
+        and images retain their own licenses.
+      artifacthub.io/license: Apache-2.0
+    apiVersion: v2
+    appVersion: 0.1.0
+    created: "2026-11-08T07:57:42.166988489Z"
+    description: Run Relay Chief coordination cycles on Kubernetes as a scheduled
+      single-writer job.
+    digest: 43703f4a54379b46eee1690e3a81c160b5a9bd4e583413cd2879028d70c66351
+    home: https://github.com/AgentWorkforce/relay-chief
+    keywords:
+    - relay-chief
+    - agents
+    - kubernetes
+    - agentworkforce
+    kubeVersion: '>=1.27.0-0'
+    maintainers:
+    - name: AgentWorkforce
+      url: https://github.com/AgentWorkforce/infra
+    name: relay-chief
+    sources:
+    - https://github.com/AgentWorkforce/relay-chief
+    - https://github.com/AgentWorkforce/infra/tree/main/charts/relay-chief
+    type: application
+    urls:
+    - https://github.com/AgentWorkforce/infra/releases/download/relay-chief-0.1.0/relay-chief-0.1.0.tgz
+    version: 0.1.0
   relay-cloud-api:
   - annotations:
       agentworkforce.dev/license-scope: First-party chart code only; dependencies
@@ -2255,4 +2284,4 @@ entries:
     urls:
     - https://github.com/AgentWorkforce/helm-charts/releases/download/sessions-pipeline-worker-0.6.0/sessions-pipeline-worker-0.6.0.tgz
     version: 0.6.0
-generated: "2026-11-08T04:38:51.500639939Z"
+generated: "2026-11-08T07:57:42.16718267Z"
