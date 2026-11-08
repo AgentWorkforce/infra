@@ -309,6 +309,11 @@ find_control_deployment() {
   return 1
 }
 
+control_worker_preflight() {
+  [[ -n "$CONTROL_SERVICE" && ${#CONTROL_SERVICE} -le 63 && "$CONTROL_SERVICE" =~ ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$ ]] || return 1
+  "${KN[@]}" get svc "$CONTROL_SERVICE" -o name >/dev/null 2>&1
+}
+
 install_driver() {
   API_POD="$(find_pod "$NAMESPACE" 'app.kubernetes.io/name=relay-control,app.kubernetes.io/component=api')"
   if [[ -z "$API_POD" ]]; then
@@ -460,14 +465,9 @@ if ! "${K[@]}" get namespace "$NAMESPACE" >/dev/null 2>&1; then
   printf 'E2E_RESULT=FAIL\nreason: cannot reach namespace %s with context %s\n' "$NAMESPACE" "$CONTEXT"
   exit 1
 fi
-CONTROL_DEPLOYMENT="$(find_control_deployment)" || {
-  printf 'E2E_RESULT=FAIL\nreason: Control Deployment not found\n'; exit 1;
-}
+CONTROL_DEPLOYMENT="$(find_control_deployment || true)"
 CONTROL_SERVICE="${E2E_CONTROL_SERVICE:-$CONTROL_DEPLOYMENT}"
-[[ ${#CONTROL_SERVICE} -le 63 && "$CONTROL_SERVICE" =~ ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$ ]] || {
-  printf 'E2E_RESULT=FAIL\nreason: Control Service must be a DNS label\n'; exit 1;
-}
-if [[ -z "$BASE_DOMAIN" ]]; then
+if [[ -z "$BASE_DOMAIN" && -n "$CONTROL_DEPLOYMENT" ]]; then
   api_url="$("${KN[@]}" get deploy "$CONTROL_DEPLOYMENT" \
     -o jsonpath='{.spec.template.spec.containers[0].env[?(@.name=="SELFHOST_PUBLIC_URL")].value}' 2>/dev/null)"
   host="${api_url#https://}"
@@ -943,6 +943,8 @@ elif ! has_capability flows; then
   # Only a control plane with the worker protocol (relaycontrol flows API)
   # can run this; one that declares it but fails still fails the case.
   case_skip "control plane has no worker protocol (/api/v1/workers/enrollment-tokens absent)"
+elif ! control_worker_preflight; then
+  emit FAIL flows.worker_service "observed Control Service is missing or invalid; worker not started"
 else
   marker="$(state_get marker)"
   WORKER_POD="e2e-flows-worker-$marker"
@@ -974,7 +976,7 @@ else
       emit FAIL flows.worker_pod "worker did not register within ${waited}s (phase=$(pod_phase))"
       worker_log_tail
     else
-      emit PASS flows.worker_pod "pod=$WORKER_POD image=$WORKER_IMAGE agent-relay=$AGENT_RELAY_VERSION base_url=http://relay-control started=$started registered_after=${waited}s"
+      emit PASS flows.worker_pod "pod=$WORKER_POD image=$WORKER_IMAGE agent-relay=$AGENT_RELAY_VERSION base_url=http://$CONTROL_SERVICE started=$started registered_after=${waited}s"
       run_phase flows-run
       # `start --once` exits after the one assignment.
       waited=0

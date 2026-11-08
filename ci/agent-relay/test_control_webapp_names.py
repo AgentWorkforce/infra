@@ -147,7 +147,7 @@ with open(os.environ['HELM_CALLS'], 'a') as f: f.write(json.dumps(call)+'\\n')
             (root / 'kubectl').write_text('''#!/usr/bin/env python3
 import json, os, sys
 with open(os.environ['KUBE_CALLS'], 'a') as f: f.write(json.dumps(sys.argv[1:])+'\\n')
-if 'relay-cloud-api' not in sys.argv: sys.exit(1)
+if os.environ.get('EXPECTED_CONTROL', 'relay-cloud-api') not in sys.argv: sys.exit(1)
 print('https://api.compat.agentrelay.com')
 ''')
             for file in root.iterdir(): file.chmod(0o755)
@@ -163,6 +163,15 @@ print('https://api.compat.agentrelay.com')
             self.assertEqual(len(calls), 2)
             self.assertIn('relay-control', calls[0])
             self.assertIn('relay-cloud-api', calls[1])
+            custom = {**env, 'EKS_PROOF_CONTROL_DEPLOYMENT': 'retained-control',
+                      'EKS_ALB_CONTROL_SERVICE': 'retained-api', 'EXPECTED_CONTROL': 'retained-control',
+                      'E2E_CONTROL_DEPLOYMENT': '', 'E2E_CONTROL_SERVICE': '',
+                      'KUBE_CALLS': str(root / 'custom.jsonl')}
+            result = subprocess.run(['bash', '-c', source +
+                                     '\nprintf "%s|%s|%s" "$DOMAIN" "$E2E_CONTROL_DEPLOYMENT" "$E2E_CONTROL_SERVICE"\n'],
+                                    cwd=ROOT, env=custom, capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(result.stdout, 'compat.agentrelay.com|retained-control|retained-api')
 
     def test_shared_proof_discovers_retained_control_for_worker_routing(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -170,6 +179,7 @@ print('https://api.compat.agentrelay.com')
             tool.write_text('''#!/bin/sh
 case "$*" in
   *"get deploy relay-cloud-api "*) printf relay-cloud-api ;;
+  *"get svc relay-cloud-api "*) exit 0 ;;
   *) exit 1 ;;
 esac
 ''')
@@ -180,6 +190,14 @@ esac
             result = subprocess.run(['bash', '-c', command], capture_output=True, text=True)
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(result.stdout, 'relay-cloud-api')
+            body = source.split('control_worker_preflight() {', 1)[1].split('\n}\n', 1)[0]
+            command = 'KN=("' + str(tool) + '")\ncontrol_worker_preflight() {' + body + '\n}\ncontrol_worker_preflight\n'
+            for name, code in [('relay-cloud-api', 0), ('missing-service', 1), ('', 1), ('Bad Name', 1)]:
+                with self.subTest(service=name):
+                    result = subprocess.run(['bash', '-c', command],
+                                            env={**os.environ, 'CONTROL_SERVICE': name},
+                                            capture_output=True, text=True)
+                    self.assertEqual(result.returncode, code)
 
     def test_old_overrides_are_refused_even_when_empty_or_disabled(self):
         for key, value in [('relay-cloud-api', '{}'), ('relay-dashboard', '{}'),
