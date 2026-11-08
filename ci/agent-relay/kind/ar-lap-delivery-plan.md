@@ -49,6 +49,23 @@ the reviewed capability/status behavior before infra wires it and replaces the
 explicit pending proof gate. No runtime flag, reverse-proxy workaround or
 client-only hiding is used here.
 
+The control owner confirmed those source facts and supplied a design-only
+proposal: member-readable `GET /api/v1/license`, capabilities for Flows/Chief/
+Relayfile, `403 {error:"feature_not_licensed"}` across disabled feature routes
+(including worker enrollment/heartbeat), and 503 only for enabled-but-unavailable
+backends. The proposed `/readyz` would echo effective features. None of these
+feature/license endpoints or statuses is implemented on the reviewed main.
+Implementation and app-owner assignment remain pending; the existing Chief
+503 response is not a disabled-feature proof.
+
+The proposal's signed-license/configuration precedence still needs clarification.
+The original add-on contract requires a signed offline license, and #90 combines
+installation selection with entitlement. A selection flag cannot grant unsigned
+add-on authority, and a license cannot implicitly enable a feature omitted by
+the core installation. Infra requested that clarification and has not created
+a `SELFHOST_FEATURES` values slot or treated the proposed flag as implemented.
+No unsigned development exception is assumed.
+
 ## Relaycast Postgres acceptance contract
 
 The [runtime task contract](https://github.com/AgentWorkforce/relaycast/pull/602#issuecomment-6715685515)
