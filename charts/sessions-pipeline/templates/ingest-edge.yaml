@@ -7,7 +7,8 @@
 {{- if or (gt (len $name) 63) (not (regexMatch "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$" $name)) }}{{ fail "ingestEdge.fullnameOverride must be a DNS label of at most 63 characters" }}{{ end -}}
 {{- $repository := required "ingestEdge.image.repository is required" $c.image.repository -}}
 {{- $repositoryPattern := "^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\\.)+[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(:[0-9]{1,5})?/[a-z0-9]+(([._]|__|-+)[a-z0-9]+)*(/[a-z0-9]+(([._]|__|-+)[a-z0-9]+)*)*$" -}}
-{{- if not (regexMatch $repositoryPattern $repository) }}{{ fail "ingestEdge.image.repository must include an explicit registry DNS host and image path, without a scheme, tag or digest" }}{{ end -}}
+{{- $registryHost := regexReplaceAll ":[0-9]+$" (first (splitList "/" $repository)) "" -}}
+{{- if or (gt (len $registryHost) 253) (not (regexMatch $repositoryPattern $repository)) }}{{ fail "ingestEdge.image.repository must include an explicit registry DNS host and image path, without a scheme, tag or digest" }}{{ end -}}
 {{- $registryPort := regexFind ":[0-9]+$" (first (splitList "/" $repository)) -}}
 {{- if and $registryPort (or (lt (int (trimPrefix ":" $registryPort)) 1) (gt (int (trimPrefix ":" $registryPort)) 65535)) }}{{ fail "ingestEdge.image.repository has an invalid registry port" }}{{ end -}}
 {{- $digest := required "ingestEdge.image.digest requires a qualified SERVICE=session-ingest image" $c.image.digest -}}

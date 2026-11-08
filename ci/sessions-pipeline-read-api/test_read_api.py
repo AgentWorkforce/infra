@@ -272,9 +272,12 @@ class IngestEdge(unittest.TestCase):
                 self.assertIn("ingestEdge.origin", self.render(overlay={"origin": origin}, fail=True))
 
     def test_image_repository_names_its_registry_explicitly(self):
+        longest_host = ".".join(["a" * 63] * 3 + ["b" * 57, "com"])
+        self.render(overlay={"image": {"repository": longest_host + "/i"}})
         for repository in ["session-ingest", "agentworkforce/session-ingest", "ghcr.io/image:latest",
                            "https://ghcr.io/org/image", "ghcr.io/org/image@sha256:" + "f" * 64,
-                           "registry.agentrelay.com:65536/org/image"]:
+                           "registry.agentrelay.com:65536/org/image",
+                           longest_host.replace("b" * 57, "b" * 58) + "/i"]:
             with self.subTest(repository=repository):
                 self.assertIn("ingestEdge.image.repository", self.render(
                     overlay={"image": {"repository": repository}}, fail=True))
