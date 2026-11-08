@@ -101,7 +101,7 @@ cover an image's transitive packages.
 | Relayfile | [`AgentWorkforce/relayfile`](https://github.com/AgentWorkforce/relayfile) | Repository contains an [Apache-2.0 `LICENSE`](https://github.com/AgentWorkforce/relayfile/blob/main/LICENSE). |
 | Sessions Pipeline worker and AlleyOop | Chart metadata names the private `AgentWorkforce/sessions-pipeline` repository (formerly `AgentWorkforce/96BullSessions`) | No license or notice file was found in the inspected repository. License not established. |
 | Relay History | Private [`AgentWorkforce/relayhistory-cloud`](https://github.com/AgentWorkforce/relayhistory-cloud) repository | No license or notice file was found in the inspected repository. License not established. |
-| Relay Cloud API | Private [`AgentWorkforce/cloud`](https://github.com/AgentWorkforce/cloud) repository | No license or notice file was found in the inspected repository. License not established. |
+| Relaycontrol API | [`AgentWorkforce/relay-control`](https://github.com/AgentWorkforce/relay-control) (canonical source now used by the API chart) | The previous inspection covered the deprecated `AgentWorkforce/cloud` port source, not this repository. License/redistribution status for the current application image is not established by that historical inspection. |
 
 ## Referenced runtime images
 

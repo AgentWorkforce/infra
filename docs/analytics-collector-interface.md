@@ -46,6 +46,11 @@ their existing application session/token, derives tenant/workspace authority,
 and invokes the producer port. It must not trust caller-supplied authority or
 repurpose the operator telemetry issue/export endpoints as analytics intake.
 
+Producer endpoint configuration is the complete URL, including `/v1/events`;
+Helm supplies that full URL and the adapter does not append the path again.
+Credentials, query parameters and fragments are not part of that URL. Transport
+and CA validation still follow the reviewed installation profile.
+
 The batch body is a JSON object with `schema` equal to
 `agent-relay.analytics.batch/v1` and an `events` array. Each event contains:
 
@@ -58,18 +63,33 @@ The batch body is a JSON object with `schema` equal to
 | `deployment_id` | Opaque installation/deployment identity |
 | `event` | Registered event kind |
 | `trace_id` | Opaque correlation identity for the user trace |
-| `tenant_id` | Opaque, deployment-scoped tenant attribution when the event is tenant-scoped |
-| `workspace_id` | Opaque, deployment-scoped workspace attribution when the event is workspace-scoped |
+| `tenant_id` | Opaque, authorized native tenant ID when required by the registered event kind |
+| `workspace_id` | Opaque, authorized native workspace ID when required by the registered event kind |
 | `properties` | Versioned, event-specific allowlisted properties |
 
 Existing native observations are projected into this envelope. The producer
 registration binds component and deployment identity; body fields cannot
 override that binding. Tenant/workspace attribution is exported only through
 the reviewed projector after application authorization. The event-kind registry
-requires `tenant_id` for tenant events and both IDs for workspace events;
-installation-only diagnostics omit both. `properties` cannot override these
-reserved fields. Unregistered scope, missing required attribution, or an
-unauthorized attribution is invalid. Initial tests use synthetic/install-scoped
+fixes each kind's identity model; callers cannot choose a weaker scope:
+
+| Registered event scope | Required attribution |
+|---|---|
+| Installation-only | Neither tenant nor workspace |
+| Tenant | `tenant_id` |
+| Workspace in a tenant model | Both `tenant_id` and `workspace_id` |
+| Native workspace with no separate tenant model | `workspace_id`; omit `tenant_id` |
+
+Relaycast uses the last model: its authorized native workspace is the boundary,
+so its registered workspace events omit `tenant_id`. Never invent a tenant ID,
+set it equal to the workspace ID, or reclassify a tenant event merely to omit
+required attribution. Native IDs retain their component/registration namespace;
+cross-component correlation uses `trace_id` and a verified identity mapping,
+not an assumption that different products' workspace IDs are identical.
+Tests must reject missing IDs and unauthorized scope/model substitution.
+
+`properties` cannot override these reserved fields. Unregistered scope, missing
+required attribution, or unauthorized attribution is invalid. Initial tests use synthetic/install-scoped
 identity; these fields add no user identities, names or credentials.
 
 Create an event ID once at event creation, for example with a cryptographically
@@ -95,8 +115,9 @@ ingress, and analytics does not create hosted egress in self-host mode.
 ## Limits, delivery and privacy
 
 The first implementation must publish finite configurable limits for batch
-bytes/event count, individual event bytes, producer queue bytes/count, request
-deadline, retries, shutdown flush, file size, file count and total disk use.
+bytes/event count, individual event bytes, producer queue bytes/count,
+per-attempt request timeout, total request/delivery deadline, retries, shutdown
+flush, file size, file count and total disk use.
 Validate the actual streamed body size, not only `Content-Length`. Reject
 oversized/invalid/unauthorized batches before writing their records. Tests
 must exercise each configured bound rather than assume unlimited memory/disk.
@@ -130,6 +151,26 @@ qualified by this design alone.
 | Other `5xx`, timeout or connection loss | Bounded retry; the prior batch may already have committed |
 | Redirect | Do not follow or forward credentials; count export failure |
 
+Only `204` acknowledges collector acceptance. Other `2xx` responses, including
+`200`, `202` and `206`, are protocol errors: never count them as accepted or
+dequeue them as a success; use the finite retry budget, then count the loss.
+This rule is for the collector adapter, not the separate PostHog protocol.
+
+The configured total request/delivery deadline starts when the event is
+enqueued and covers queued time, every request attempt and all retry waits.
+A batch uses its earliest event deadline; splitting or retrying never resets
+that budget. Each attempt's timeout is also clipped to the remaining total
+deadline, and shutdown may impose a shorter one. Exhaustion drops/counts the
+remaining events instead of starting another request or wait.
+
+For retryable responses, accept `Retry-After` only as unsigned decimal
+delta-seconds. The maximum honored delay is 30 seconds, further clipped to the
+remaining total request/delivery deadline or shutdown deadline; a producer may
+configure a smaller cap. Ignore malformed values and HTTP-date values and use the bounded local
+backoff instead. Waiting still consumes the finite retry/time budget. A zero
+delay never permits unbounded attempts. Tests cover malformed, date, zero and
+oversized values plus deadline exhaustion.
+
 Error responses carry a stable error code, never event content or credentials.
 There is no per-event partial-success response. Delivery is best effort with
 bounded retries: events may be dropped when queue or retry budgets expire.
@@ -140,7 +181,10 @@ Export failures do not turn successful product operations into failures.
 Both producer and collector project a typed field allowlist. A private-key
 regex alone is insufficient. Never export credential hashes, tokens, raw
 requests, product content, sender names or arbitrary exception context/stack.
-Exception events need their own scrubbed allowlist. An existing internal
+Exception events need their own scrubbed allowlist. Error names and codes must
+map to registered classifications; a code-shaped string alone is not a privacy
+allowlist. Unknown values become a fixed classification or are omitted, never
+raw exception names, messages or context. An existing internal
 credential-proof hop remains distinct from analytics and cannot be forwarded
 to this endpoint or PostHog. Operational telemetry retains its separate report,
 signature, consent/defaults and outbox contract.

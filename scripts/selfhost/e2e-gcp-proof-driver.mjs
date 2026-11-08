@@ -1532,7 +1532,7 @@ async function phaseMintSessionsPipeline() {
       orgId: bulls.orgId,
       workspaceId: bulls.workspaceId,
       machineId: bulls.machineId,
-      sponsorId: `e2e-${state.marker}`,
+      sponsorId: bulls.userId ?? `e2e-${state.marker}`,
       scopes: ["rth:sync", "rth:read"],
       expiresIn: 60,
       historyOrigin: bulls.origin,
