@@ -100,14 +100,15 @@ class Proof:
         controls = [i for i in selected if "/selfhost-api@" in i]
         self.require(len(controls) == 1 and image == controls[0], "live control image differs from the selected control image receipt")
         expected_local = image.startswith("agent-relay-kind/selfhost-api@")
+        unavailable = []
         for path in ("/api/v1/mcp/shared-sessions", "/cloud/api/v1/mcp/shared-sessions"):
             headers = {"accept": "application/json, text/event-stream"}
             response_headers = {}
             status, body = self.edge("relay.kind.agentrelay.com", path, token, "POST", initialize, headers, response_headers)
             if status == 404 and not expected_local:
-                self.record("PENDING", "mcp", "deployed catalog control image lacks MCP; select the pinned local control build and rerun setup/proof")
-                return
-            self.require(status == 200, f"MCP initialize failed status={status}")
+                unavailable.append(path)
+                continue
+            self.require(status == 200, f"MCP initialize failed path={path} status={status}")
             result = json.loads(body).get("result", {})
             self.require(result.get("serverInfo", {}).get("name") == "agent-relay-selfhost", "unexpected MCP server identity")
             normalized = {key.lower(): value for key, value in response_headers.items()}
@@ -134,6 +135,10 @@ class Proof:
             status, _ = self.edge("relay.kind.agentrelay.com", path, token, "POST", initialize,
                                   {"accept": "application/json, text/event-stream", "origin": "https://outside.kind.example"})
             self.require(status == 403, "MCP accepted a foreign browser origin")
+        if unavailable:
+            self.require(len(unavailable) == 2, "MCP is available through only one public alias")
+            self.record("PENDING", "mcp", "both public aliases returned 404 on the catalog control image; select the pinned local control build and rerun setup/proof")
+            return
         self.record("PASS", "mcp", "both trusted public TLS paths initialize, list19 tools and report the real workspace; missing auth401 and foreign origin403")
 
     def egress(self):
@@ -281,7 +286,7 @@ class Proof:
                     self.record("PASS", "pipeline.app_visibility", "courier-uploaded session returned by authenticated relay-app TLS read API")
                     return
                 time.sleep(1)
-            self.record("PENDING", "pipeline.app_visibility", "courier upload/index/Locker verified, but authenticated Default workspace application API returned 200 without that session; read-path integration contract required")
+            self.record("PENDING", "pipeline.app_visibility", f"courier upload/index/Locker verified, but authenticated Default workspace application API omitted the session after 15s; last HTTP={status}; read-path integration contract required")
         finally:
             # Preserve any original read exception and report cleanup as a
             # separate failure instead of replacing the causal diagnostic.

@@ -77,6 +77,52 @@ class Harness(unittest.TestCase):
         self.assertEqual(key.read_bytes(), original)
         self.assertFalse(list(self.local.state.glob("auth-signing-*.pem")))
 
+    def test_mcp_pending_requires_both_catalog_aliases_to_be_absent(self):
+        paths = ("/api/v1/mcp/shared-sessions", "/cloud/api/v1/mcp/shared-sessions")
+        for statuses, native, expected in [((404, 404), False, "PENDING"),
+                                           ((404, 503), False, "FAIL"),
+                                           ((404, 200), False, "FAIL"),
+                                           ((200, 200), False, "PASS"),
+                                           ((404, 404), True, "FAIL")]:
+            with self.subTest(statuses=statuses, native=native):
+                image = ("agent-relay-kind" if native else "ghcr.io/agentworkforce") + "/selfhost-api@sha256:" + "a" * 64
+                (self.local.state / "images.json").write_text(json.dumps({"images": [image]}))
+                self.local.k = lambda *a, **kw: subprocess.CompletedProcess(a, 0, json.dumps({
+                    "spec": {"template": {"spec": {"containers": [{"name": "api", "image": image}]}}}}), "")
+                initialized = []
+                def edge(host, path, token=None, method="GET", body=None, extra_headers=None, response_headers=None):
+                    if not token:
+                        return 401, "{}"
+                    if (extra_headers or {}).get("origin"):
+                        return 403, "{}"
+                    if body["method"] == "initialize":
+                        initialized.append(path)
+                        status = statuses[paths.index(path)]
+                        if status != 200:
+                            return status, "{}"
+                        response_headers["mcp-session-id"] = "fixture-session"
+                        result = {"serverInfo": {"name": "agent-relay-selfhost"}, "protocolVersion": "2025-06-18"}
+                    elif body["method"] == "tools/list":
+                        names = ["describe_capabilities", "send_relay_message", "search_shared_sessions", "get_shared_session"]
+                        result = {"tools": [{"name": n} for n in names + [f"fixture-{i}" for i in range(15)]]}
+                    else:
+                        result = {"structuredContent": {"workspace": {"workspace_id": "fixture-workspace"},
+                            "connection": {"auth_mode": "cli_login"},
+                            "endpoint": {"url": "https://relay.kind.agentrelay.com:8443" + path}}}
+                    return 200, json.dumps({"result": result})
+                p = proof.Proof(self.local)
+                p.state["a"] = {"accessToken": "fixture-access", "workspaceId": "fixture-workspace"}
+                p.edge = edge
+                if expected == "FAIL":
+                    with self.assertRaises(stack.StackError):
+                        p.mcp()
+                    self.assertFalse(any(c["result"] == "PENDING" for c in p.checks))
+                else:
+                    p.mcp()
+                    self.assertEqual([c["result"] for c in p.checks], [expected])
+                if not native:
+                    self.assertEqual(initialized, list(paths))
+
     def test_each_acl_attempt_is_fresh_and_a_later_failure_is_not_hidden(self):
         jobs, waited = [], []
         self.local.apply = jobs.append
