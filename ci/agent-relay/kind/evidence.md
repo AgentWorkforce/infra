@@ -356,7 +356,7 @@ that the old annotation is absent from the proposed object without changing
 cluster resources. The full live setup/proof receipts above remain pinned to
 `d87aefb`; they are not evidence of a rerun of these later source changes.
 
-Review validation: 60 offline checks pass (16 ownership, 19 harness, 13
+Review validation: 61 offline checks pass (16 ownership, 20 harness, 13
 profile/schema/TLS, 3 control admission/tenant, 4 bootstrap and 5 shared pipeline
 verifier checks). The nine JavaScript checks also pass inside the pinned native
 Node 22.23.3 image with networking disabled and read-only source mounts.

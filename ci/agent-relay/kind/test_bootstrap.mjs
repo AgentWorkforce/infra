@@ -28,9 +28,14 @@ test("persistent timeouts exhaust the deadline with a credential-free diagnostic
 test("reports the last HTTP status without echoing a response or token", async () => {
   let clock = 0;
   await assert.rejects(waitForDefaultWorkspace("test-secret", {
-    request: async () => ({ ok: false, status: 401 }),
+    request: async () => ({ ok: false, status: 401, body: "test-secret response credentials" }),
     now: () => clock, sleep: async ms => { clock += ms; }, timeoutMs: 2000,
-  }), /after 2s; last HTTP status=401$/);
+  }), error => {
+    assert.match(error.message, /after 2s; last HTTP status=401$/);
+    assert.ok(!error.message.includes("test-secret"));
+    assert.ok(!error.message.includes("response credentials"));
+    return true;
+  });
 });
 test("discovers an explicitly configured first workspace name", async () => {
   const replies = [ok({ organizations: [{ id: "org" }] }), ok({ workspaces: [{ name: "Custom", id: "workspace" }] })];

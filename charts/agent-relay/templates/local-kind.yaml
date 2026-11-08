@@ -15,6 +15,7 @@
 {{- if or (ne $addons .Values.components.relayflows) (ne $addons .Values.components.relayfile) }}{{ fail "localKind.profile and components.relayflows/relayfile must agree" }}{{ end -}}
 {{- $api := index .Values "relay-cloud-api" -}}
 {{- $dashboard := index .Values "relay-dashboard" -}}
+{{- if or (not $dashboard.ingress.enabled) (empty $dashboard.ingress.host) (empty $dashboard.ingress.className) (empty $dashboard.ingress.tls) }}{{ fail "localKind requires relay-dashboard.ingress.enabled=true with explicit host, className and TLS" }}{{ end -}}
 {{- $apiService := $api.fullnameOverride | default (printf "%s-%s" .Release.Name ($api.nameOverride | default "relay-cloud-api")) | trunc 63 | trimSuffix "-" -}}
 # This policy deliberately covers support pods and all migration Jobs too.
 # Calico must be running; the proof tests a real denial, not policy presence.

@@ -7,7 +7,8 @@
 //   bun run e2e-gcp-proof-sessions-pipeline.ts push   <marker> <machineId>  < assertion
 //   bun run e2e-gcp-proof-sessions-pipeline.ts verify <marker> <sessionId> [timeoutSec]
 //   bun run e2e-gcp-proof-sessions-pipeline.ts verify-offline <marker> <sessionId> [timeoutSec]
-// verify-offline requires exact WORKSPACE_ID and E2E_PIPELINE_USER_ID and
+// Both verify modes require E2E_PIPELINE_USER_ID; verify-offline also requires
+// exact WORKSPACE_ID and
 // excludes only model summary stages/objects; other stage errors still fail.
 //
 // `push` writes one marked Claude transcript and a minimal Concourse catalogue
@@ -131,10 +132,8 @@ export async function verify(summariesRequired = true, dependencies?: any) {
     }
     check(!!row?.su, "pipeline.hoopdb_indexer", `session=${sessionId} session_uuid=${row?.su ?? "none"} trace=${row?.trace ?? "none"}`);
     if (!row?.su) return;
-    if (!summariesRequired) {
-      check(!!process.env.E2E_PIPELINE_USER_ID && row.index_user === process.env.E2E_PIPELINE_USER_ID
-        && row.derived_user === process.env.E2E_PIPELINE_USER_ID, "pipeline.owner_attribution", "ingest and derived index match the real signed-in owner");
-    }
+    check(!!process.env.E2E_PIPELINE_USER_ID && row.index_user === process.env.E2E_PIPELINE_USER_ID
+      && row.derived_user === process.env.E2E_PIPELINE_USER_ID, "pipeline.owner_attribution", "ingest and derived index match the real signed-in owner");
     check(["active", "done", "abandoned"].includes(row.state), "pipeline.referee_state", `state=${row.state}`);
     const verdicts = await db.query<{ state: string; rule: string }>(
       "SELECT state, rule FROM sessions.session_verdicts WHERE session_uuid = $1::uuid ORDER BY revision DESC, classified_at DESC, id DESC", [row.su]);
@@ -152,7 +151,7 @@ export async function verify(summariesRequired = true, dependencies?: any) {
       "SELECT DISTINCT stage, status FROM sessions.pipeline_events WHERE org_id = $1 AND trace_id = $2::uuid ORDER BY stage", [ORG, row.trace]);
     const ok = events.rows.filter((e) => e.status === "ok").map((e) => e.stage);
     const requiredStages = ["object-landed", "session-indexed", "status-classify", ...(summariesRequired ? ["summary-short", "summary-long"] : [])];
-    check(requiredStages.every((s) => ok.includes(s)) && !events.rows.some(e => requiredStages.includes(e.stage) && e.status !== "ok"), "pipeline.events", `ok_stages=${ok.join(",")} other=${events.rows.filter((e) => e.status !== "ok").map((e) => `${e.stage}:${e.status}`).join(",") || "none"}`);
+    check(requiredStages.every((s) => ok.includes(s)) && !events.rows.some(e => e.status !== "ok" && (summariesRequired || !["summary-short", "summary-long"].includes(e.stage))), "pipeline.events", `ok_stages=${ok.join(",")} other=${events.rows.filter((e) => e.status !== "ok").map((e) => `${e.stage}:${e.status}`).join(",") || "none"}`);
     const dlq = await db.query<{ c: string }>(
       "SELECT count(*)::text AS c FROM sessions.pipeline_dead_letters WHERE org_id = $1 AND trace_id = $2::uuid", [ORG, row.trace]).catch(() => ({ rows: [{ c: "n/a" }] }));
     check(dlq.rows[0]?.c === "0", "pipeline.no_dead_letters", `dead_letters_for_trace=${dlq.rows[0]?.c}`);
@@ -166,7 +165,7 @@ export async function verify(summariesRequired = true, dependencies?: any) {
     const summaryObjects = await raw.store.list(objectKey(row.manifest_key.replace(/\/manifest\.json$/, "/summary")));
     check(listing.items.length > 0 && text.includes(marker!) && (!summariesRequired || summaryObjects.items.length >= 2) && head?.metadata?.["session-uuid"] === row.su, "pipeline.bucket_objects",
       `provider=${raw.provider} raw_chunks=${listing.items.length} summary_objects=${summaryObjects.items.length} manifest_meta_session_uuid_matches=${head?.metadata?.["session-uuid"] === row.su}`);
-    check(listing.items.length > 0 && text.includes(marker!) && !text.includes(FAKE_SECRET), "pipeline.technical_foul_scrub", `fake_secret_in_stored_chunks=${text.includes(FAKE_SECRET)}`);
+    check(listing.items.length > 0 && text.includes(marker!) && !text.includes(FAKE_SECRET), "pipeline.technical_foul_scrub", `raw_chunks=${listing.items.length} marker_present=${text.includes(marker!)} fake_secret_in_stored_chunks=${text.includes(FAKE_SECRET)}`);
     console.log(`TRACE_ID=${row.trace}`);
     console.log(`SESSION_UUID=${row.su}`);
   } finally {

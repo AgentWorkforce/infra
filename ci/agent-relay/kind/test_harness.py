@@ -259,6 +259,15 @@ class Harness(unittest.TestCase):
         self.assertEqual(valid.returncode, 0)
         self.assertEqual(len(applied), 2)
 
+    def test_truncated_cached_leaf_is_reissued_without_replacing_ca(self):
+        self.local.apply = lambda *args, **kwargs: None
+        self.local.tls()
+        ca = (self.local.state / "ca.crt").read_bytes()
+        (self.local.state / "tls.crt").write_text("truncated certificate")
+        self.local.tls()
+        self.assertEqual((self.local.state / "ca.crt").read_bytes(), ca)
+        self.local.cmd(["openssl", "verify", "-x509_strict", "-CAfile", self.local.state / "ca.crt", self.local.state / "tls.crt"])
+
     def test_scheduled_writer_drains_before_manual_flow_starts(self):
         calls = []
         scheduled = {"metadata": {"name": "scheduled", "ownerReferences": [{"kind": "CronJob", "uid": "owned"}]}, "status": {}}
