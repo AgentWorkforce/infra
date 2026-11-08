@@ -33,6 +33,9 @@ repository, not routes confirmed to exist in relaycontrol.
 - The CronJob is suspended by default. The runtime has no observe-only mode, so
   every cycle runs with `--dispatch` and may send real Relay assignments. Set
   `suspend: false` only after the execution side is integrated.
+- While suspended no pod exists, so on a `WaitForFirstConsumer` StorageClass the
+  volume stays Pending and `helm install --wait` (or Terraform `helm_release`)
+  times out. Install without waiting, or supply `persistence.existingClaim`.
 - The runtime refuses plain `http` for any non-loopback host, so in-cluster
   Relay and control-plane Services need a TLS origin.
 - Classification calls `https://api.typesafe.ai`, which is hardcoded in the

@@ -70,6 +70,9 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- fail (printf "config.%s is not a Relay Chief configuration key: the runtime refuses unknown keys" $key) -}}
 {{- end -}}
 {{- end -}}
+{{- if not (kindIs "bool" .Values.suspend) -}}
+{{- fail "suspend must be true or false: Kubernetes treats a blank value as false, which would start dispatching" -}}
+{{- end -}}
 {{- if not (regexMatch "^\\S+(\\s+\\S+){4}$" (toString .Values.schedule)) -}}
 {{- fail "schedule must have 5 whitespace-separated cron fields" -}}
 {{- end -}}

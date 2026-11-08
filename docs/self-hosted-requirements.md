@@ -667,7 +667,7 @@ chart `relay-chief` · values [`ci/default-values.yaml`](../charts/relay-chief/c
 | | requirement | provided by | maps to | verify |
 | --- | --- | --- | --- | --- |
 | shipped | [Relay and control-plane origins](#req-relay-chief-origins) | operator | values `relay.baseUrl`, `controlPlane.url`; env `RELAY_BASE_URL`, `CHIEF_CONTROL_PLANE_URL` | helm template fails with "relay.baseUrl is required" when it is unset |
-| shipped | [Relay Chief runtime credentials](#req-relay-chief-credentials) | operator | values `existingSecret`, `secretKeys.*`; env `RELAY_AGENT_TOKEN`, `TYPESAFE_API_KEY`, `CHIEF_CONTROL_PLANE_TOKEN`; Secret `<existingSecret>` keys `relay-agent-token`, `typesafe-api-key`, `control-plane-token` | helm template fails with "existingSecret is required" when it is unset; a cycle's Job starts without a CreateContainerConfigError |
+| shipped | [Relay Chief runtime credentials](#req-relay-chief-credentials) | operator | values `existingSecret`, `secretKeys.*`; env `RELAY_AGENT_TOKEN`, `TYPESAFE_API_KEY`, `CHIEF_CONTROL_PLANE_TOKEN`; Secret `<existingSecret>` keys `relay-agent-token`, `typesafe-api-key`, `control-plane-token` | helm template fails with "existingSecret is required" when it is unset; after setting suspend to false, a cycle's Job starts without a CreateContainerConfigError |
 
 **Options (choose)**
 
@@ -1513,7 +1513,7 @@ A pre-provisioned chief identity (not a workspace admin key), the classification
 - Values: `existingSecret`, `secretKeys.*`
 - Env: `RELAY_AGENT_TOKEN`, `TYPESAFE_API_KEY`, `CHIEF_CONTROL_PLANE_TOKEN`
 - Secret: `<existingSecret>`; keys `relay-agent-token` from `secretKeys.relayAgentToken`; `typesafe-api-key` from `secretKeys.typesafeApiKey`; `control-plane-token` from `secretKeys.controlPlaneToken`
-- Verify: helm template fails with "existingSecret is required" when it is unset; a cycle's Job starts without a CreateContainerConfigError
+- Verify: helm template fails with "existingSecret is required" when it is unset; after setting suspend to false, a cycle's Job starts without a CreateContainerConfigError
 - Sources: [`charts/relay-chief/values.yaml:36`](../charts/relay-chief/values.yaml#L36), [`charts/relay-chief/templates/cronjob.yaml:59`](../charts/relay-chief/templates/cronjob.yaml#L59)
 
 ### Options
@@ -2800,7 +2800,7 @@ Pull Secrets for a private registry or customer mirror.
 - Choices: `none`; `listed`
 - Provided by: operator
 - Values: `imagePullSecrets`
-- Verify: the cycle's Job pulls its image without ImagePullBackOff
+- Verify: after setting suspend to false, the cycle's Job pulls its image without ImagePullBackOff
 - Sources: [`charts/relay-chief/values.yaml:9`](../charts/relay-chief/values.yaml#L9), [`charts/relay-chief/templates/cronjob.yaml:34`](../charts/relay-chief/templates/cronjob.yaml#L34)
 
 ## Pod plumbing env (not operator-facing)

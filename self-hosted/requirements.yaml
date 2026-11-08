@@ -3308,7 +3308,7 @@ entries:
           - { key: relay-agent-token, key_path: secretKeys.relayAgentToken }
           - { key: typesafe-api-key, key_path: secretKeys.typesafeApiKey }
           - { key: control-plane-token, key_path: secretKeys.controlPlaneToken }
-    verify: helm template fails with "existingSecret is required" when it is unset; a cycle's Job starts without a CreateContainerConfigError
+    verify: helm template fails with "existingSecret is required" when it is unset; after setting suspend to false, a cycle's Job starts without a CreateContainerConfigError
     sources:
       - "charts/relay-chief/values.yaml:36"
       - "charts/relay-chief/templates/cronjob.yaml:59"
@@ -3326,7 +3326,7 @@ entries:
     choices:
       - { value: none }
       - { value: listed }
-    verify: the cycle's Job pulls its image without ImagePullBackOff
+    verify: after setting suspend to false, the cycle's Job pulls its image without ImagePullBackOff
     sources:
       - "charts/relay-chief/values.yaml:9"
       - "charts/relay-chief/templates/cronjob.yaml:34"
