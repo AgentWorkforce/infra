@@ -28,7 +28,7 @@
 # Options it sets itself: --context (a temporary kubeconfig), --namespace,
 # --sessions-namespace (the same namespace: the umbrella installs the
 # Sessions Pipeline next to the rest), --secret, --edge alb and the four
-# https origins (from relay-control SELFHOST_PUBLIC_URL = https://api.<domain>),
+# https origins (from the observed Control SELFHOST_PUBLIC_URL = https://api.<domain>),
 # --require-public, and --relayauth-url (RelayAuth runs in the release
 # namespace under the umbrella). Any other option is passed through, e.g.
 # --skip-flows, --allow-known-gap NAME or --no-cleanup.
@@ -56,7 +56,9 @@ export KUBECONFIG="$KUBECONFIG_FILE"
 K=(kubectl --context eks-proof -n "$NS")
 
 # Public origins: the HTTPS hosts the control API was installed with
-# (relay-control SELFHOST_PUBLIC_URL = https://api.<domain>).
+# (Control SELFHOST_PUBLIC_URL = https://api.<domain>). An explicit
+# EKS_PROOF_CONTROL_DEPLOYMENT is tried first; otherwise relay-control is tried,
+# followed by the retained pre-rename relay-cloud-api Deployment.
 api_url=""
 if [[ -z "${EKS_PROOF_DOMAIN:-}" ]]; then
   for control_deployment in "${EKS_PROOF_CONTROL_DEPLOYMENT:-relay-control}" relay-cloud-api; do

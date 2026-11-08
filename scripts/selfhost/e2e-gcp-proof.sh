@@ -298,6 +298,17 @@ find_pod() { # namespace selector
     -o jsonpath='{.items[0].metadata.name}' 2>/dev/null
 }
 
+# Override a custom fullname with E2E_CONTROL_DEPLOYMENT. The worker Service
+# defaults to this observed name; E2E_CONTROL_SERVICE can select a retained alias.
+find_control_deployment() {
+  local candidate name
+  for candidate in "${E2E_CONTROL_DEPLOYMENT:-relay-control}" relay-cloud-api; do
+    name="$("${KN[@]}" get deploy "$candidate" -o jsonpath='{.metadata.name}' 2>/dev/null || true)"
+    if [[ -n "$name" ]]; then printf '%s' "$name"; return 0; fi
+  done
+  return 1
+}
+
 install_driver() {
   API_POD="$(find_pod "$NAMESPACE" 'app.kubernetes.io/name=relay-control,app.kubernetes.io/component=api')"
   if [[ -z "$API_POD" ]]; then
@@ -449,8 +460,15 @@ if ! "${K[@]}" get namespace "$NAMESPACE" >/dev/null 2>&1; then
   printf 'E2E_RESULT=FAIL\nreason: cannot reach namespace %s with context %s\n' "$NAMESPACE" "$CONTEXT"
   exit 1
 fi
+CONTROL_DEPLOYMENT="$(find_control_deployment)" || {
+  printf 'E2E_RESULT=FAIL\nreason: Control Deployment not found\n'; exit 1;
+}
+CONTROL_SERVICE="${E2E_CONTROL_SERVICE:-$CONTROL_DEPLOYMENT}"
+[[ ${#CONTROL_SERVICE} -le 63 && "$CONTROL_SERVICE" =~ ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$ ]] || {
+  printf 'E2E_RESULT=FAIL\nreason: Control Service must be a DNS label\n'; exit 1;
+}
 if [[ -z "$BASE_DOMAIN" ]]; then
-  api_url="$("${KN[@]}" get deploy relay-control \
+  api_url="$("${KN[@]}" get deploy "$CONTROL_DEPLOYMENT" \
     -o jsonpath='{.spec.template.spec.containers[0].env[?(@.name=="SELFHOST_PUBLIC_URL")].value}' 2>/dev/null)"
   host="${api_url#https://}"
   BASE_DOMAIN="${host#api.}"
@@ -887,7 +905,7 @@ spec:
       env:
         - { name: AGENT_RELAY_VERSION, value: "$AGENT_RELAY_VERSION" }
         - { name: WORKER_NAME, value: "$3" }
-        - { name: BASE_URL, value: "http://relay-control" }
+        - { name: BASE_URL, value: "http://${CONTROL_SERVICE}" }
       resources:
         requests: { cpu: 250m, memory: 768Mi }
         limits: { memory: 2Gi }

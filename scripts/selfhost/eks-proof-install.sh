@@ -332,7 +332,8 @@ cmd_install() {
     helm_apply
   fi
   EKS_ALB_DOMAIN="$DOMAIN" EKS_ALB_CERT_ARN="$cert" \
-    EKS_ALB_CONTROL_SERVICE=relay-cloud-api EKS_ALB_WEBAPP_SERVICE=relay-dashboard \
+    EKS_ALB_CONTROL_SERVICE="${EKS_ALB_CONTROL_SERVICE:-relay-cloud-api}" \
+    EKS_ALB_WEBAPP_SERVICE="${EKS_ALB_WEBAPP_SERVICE:-relay-dashboard}" \
     "$HERE/eks-alb-ingress.sh" "$NS" | kubectl apply -f -
   log "waiting for the ALB hostname"
   local alb=""

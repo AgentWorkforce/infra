@@ -81,7 +81,9 @@ Until selfhost-api grows `POST /api/v1/workers/register`, the per-worker
 `heartbeat`, `queue`, `assignments/{runId}/ack|status|storage` endpoints and
 an enrollment-token minting path, `cloudWorker` can only point at a control
 plane that already implements the protocol (today: hosted Agent Relay Cloud —
-the chart's default `worker.cloudUrl`). Pointing it at `http://relay-control`
+the chart's default `worker.cloudUrl`). On a fresh layout, pointing it at `http://relay-control` (or the observed
+retained Service name on an existing release; see the
+[rename guide](control-webapp-chart-rename.md))
 renders and deploys but the worker exits: `register` gets a 404 and no
 registration state is persisted.
 

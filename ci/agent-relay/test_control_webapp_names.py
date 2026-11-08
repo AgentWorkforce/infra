@@ -164,6 +164,23 @@ print('https://api.compat.agentrelay.com')
             self.assertIn('relay-control', calls[0])
             self.assertIn('relay-cloud-api', calls[1])
 
+    def test_shared_proof_discovers_retained_control_for_worker_routing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tool = Path(tmp) / 'kubectl'
+            tool.write_text('''#!/bin/sh
+case "$*" in
+  *"get deploy relay-cloud-api "*) printf relay-cloud-api ;;
+  *) exit 1 ;;
+esac
+''')
+            tool.chmod(0o755)
+            source = (ROOT / 'scripts/selfhost/e2e-gcp-proof.sh').read_text()
+            body = source.split('find_control_deployment() {', 1)[1].split('\n}\n', 1)[0]
+            command = 'KN=("' + str(tool) + '")\nfind_control_deployment() {' + body + '\n}\nfind_control_deployment\n'
+            result = subprocess.run(['bash', '-c', command], capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(result.stdout, 'relay-cloud-api')
+
     def test_old_overrides_are_refused_even_when_empty_or_disabled(self):
         for key, value in [('relay-cloud-api', '{}'), ('relay-dashboard', '{}'),
                            ('components.cloudApi', 'false'), ('components.dashboard', 'false')]:

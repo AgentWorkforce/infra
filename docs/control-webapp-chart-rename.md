@@ -10,8 +10,8 @@ including an empty map or a disabled component. They are never silently ignored.
 
 This source composes the five session-component names in infra #94 at
 `52a1126` (now landed on main `bfcf6050`) and refreshed default-off telemetry
-#95 at `a45dbb2d` through normal merges, plus the held reader parent #81 at
-`01dc7aee`. The standalone Chief chart/registry remains outside the umbrella
+#95 at `a45dbb2d` through normal merges, plus merged reader #81 (historical
+source head `190a016`). The standalone Chief chart/registry remains outside the umbrella
 and kind acceptance.
 Both storage/workload upgrade guards remain in place. The
 existing `RELAYHISTORY_*`, `SELFHOST_*`, `DASHBOARD_*` API/environment contracts,
@@ -20,8 +20,9 @@ public URL paths retain their existing meanings.
 
 ## Images and provider replacement
 
-The new leaf-chart defaults name `ghcr.io/agentworkforce/relay-control` and
-`ghcr.io/agentworkforce/relay-webapp`, with no default digest. A release owner
+Control requires both `image.repository` and `image.digest` explicitly, with no
+usable default. Webapp defaults its repository to
+`ghcr.io/agentworkforce/relay-webapp` but also requires a verified digest. A release owner
 must publish or alias the reviewed image, then supply and verify the new
 repository's index/native manifest, config, source revision and digest before
 an operator selects it. A digest recorded for `selfhost-api` or
