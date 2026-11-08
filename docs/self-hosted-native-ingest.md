@@ -155,18 +155,37 @@ already indexed, rendered or searchable. Object-store failure refuses the
 upload; it must not silently fall back to synchronous admission. The configured
 store must pass the runtime's conditional-write startup check.
 
-Async and drain need object listing as well as the existing read/write access.
-At the pinned draft runtime, the consumer scans both `96bulls/.admission-inbox`
-and `96bulls/.admission-dlq`; an upload-only credential is insufficient. Scope
-listing to the runtime's required prefixes, and retain access for its privacy,
-outcome and startup-probe operations. The startup probe verifies conditional
-create and compare-and-swap, reads the result and attempts cleanup. Use the
-final runtime's permission contract when qualifying credentials; this chart
-does not grant storage permissions or broaden an existing policy.
+The configuration, health and permission contract was checked against pipeline
+[`8389e073`](https://github.com/AgentWorkforce/relayhistory-pipeline/blob/8389e073d05dcea66a257c265576e09c78cae563/docs/selfhost-composition.md#5-env-secret-and-ca-names),
+which is still a draft runtime. Recheck any successor before qualifying an image.
+The request handler and consumer currently share one credential, so it needs
+the union of their permissions; an upload-only credential is insufficient.
+For the chart's fixed `96bulls` root:
+
+| Path or operation | Required access in async/drain |
+| --- | --- |
+| Request privacy journal under `96bulls/.admission-inbox/<org>/v1/ws=<workspace>/m=srv_<machine>/privacy-journal.json` | Get; a missing journal must return 404. |
+| Inbox upload under the same machine prefix, `r=<receipt>/a=<time>-<nonce>.ndjson.zst` | Create-only Put. A 412 retry also needs Head, and Get if digest metadata is missing. |
+| Inbox consumer | List `96bulls/.admission-inbox`, Get inbox bytes, then overwrite them with a small tombstone after the terminal outcome. The consumer does not delete inbox objects. |
+| Admission outcome objects | Request/status Get and consumer overwrite Put for `outcome-admitted.json` and `outcome-refused.json`. |
+| Consumer privacy journal | Get and conditional Put using the current ETag, or create-only Put when missing. This permission remains required even when the pending-control repair path is dormant. |
+| Dead-letter markers | List `96bulls/.admission-dlq`, overwrite Put and best-effort Delete after later admission. Operator redrive also needs Delete on those markers. |
+| Tenant data | The synchronous path's existing Get, Head and conditional Put permissions; no buffered-batch staging prefix is added. |
+| Startup probe, `96bulls/.admission-probe/v1/ws=probe/m=srv_<random>/probe.json` | Create-only Put, Head/Get reconciliation, current and stale ETag conditional Put, Get, and best-effort Delete. |
+
+S3/MinIO also needs bucket listing with the runtime's required prefix scope.
+Without `s3:ListBucket`, a missing privacy journal can return 403 instead of 404,
+causing uploads to fail with 503. The startup probe refuses a backend that
+ignores conditional writes. Denied probe deletion alone does not fail startup;
+it can leave one roughly 60-byte probe object per process start. The upstream
+contract also covers GCS overwrite/delete permissions; this chart slot supplies
+S3/MinIO settings only. This chart grants no storage permissions and does not
+broaden an existing policy.
 
 In `drain`, new uploads use synchronous admission while the consumer continues
-processing the existing inbox. Use this explicit mode to drain queued work
-before returning to `sync`; a chart rollback alone does not empty the inbox.
+processing the existing inbox. Roll back `async` -> `drain`, wait until both
+`consumer.backlog` and `consumer.deadLettered` are zero, then select `sync`.
+A chart rollback alone does not empty the inbox.
 Do not remove or repurpose its bucket while queued work remains.
 These two modes additionally serve `GET /v1/delivery/admission`, an authenticated
 object-store status read using the caller's verified tenant identity. Any public
