@@ -2,9 +2,13 @@
 {{- if include "relaycast.postgres.enabled" . }}
 {{- $podTemplate := include "relaycast.postgres.migrationPodTemplate" . }}
 {{- $migrations := .Values.runtime.postgres.migrations }}
-{{- /* Job spec.template is immutable: any pod template change must yield a new
-Job name, so the identity hashes the fully rendered template. */}}
-{{- $identity := printf "%s|%s" $podTemplate $migrations.identitySalt | sha256sum | trunc 8 }}
+{{- /* podFailurePolicy is on by default from Kubernetes 1.26; older clusters use
+backoffLimit alone. */}}
+{{- $failurePolicy := semverCompare ">=1.26.0-0" .Capabilities.KubeVersion.Version }}
+{{- /* Job spec.template and podFailurePolicy are immutable: a change to either must
+yield a new Job name, so the identity hashes the rendered template and whether the
+policy is present (a cluster upgrade across 1.26 runs the Job again). */}}
+{{- $identity := printf "%s|%s|%t" $podTemplate $migrations.identitySalt $failurePolicy | sha256sum | trunc 8 }}
 {{- if .Values.serviceAccount.create }}
 apiVersion: v1
 kind: ServiceAccount
@@ -28,9 +32,7 @@ metadata:
 spec:
   backoffLimit: {{ $migrations.backoffLimit | int64 }}
   activeDeadlineSeconds: {{ $migrations.activeDeadlineSeconds | int64 }}
-  {{- /* Outside the pod template, so the Job name does not depend on the cluster
-  version. On by default from Kubernetes 1.26; older clusters use backoffLimit. */}}
-  {{- if semverCompare ">=1.26.0-0" .Capabilities.KubeVersion.Version }}
+  {{- if $failurePolicy }}
   # 64 (configuration) and 65 (identity) need an operator fix; retries cannot help.
   podFailurePolicy:
     rules:
