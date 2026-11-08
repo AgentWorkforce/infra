@@ -62,9 +62,13 @@ class Names(unittest.TestCase):
         fixture = json.loads((ROOT / 'ci/agent-relay/fixtures/control-webapp-legacy-identities.json').read_text())
         for profile in ('core', 'addons'):
             with self.subTest(profile=profile):
-                docs = self.render(profile, ['-f', 'charts/agent-relay/upgrade/kind-control-webapp-identities.yaml'])
+                docs = self.render(profile, ['--is-upgrade', '-f', 'charts/agent-relay/upgrade/kind-control-webapp-identities.yaml'])
                 actual = sorted([identity(d) for d in docs], key=lambda d: (d['kind'], d['name']))
                 self.assertEqual(actual, fixture['profiles'][profile])
+
+    def test_default_kind_upgrade_requires_explicit_worker_cutover(self):
+        error = self.render(extra=['--is-upgrade'], ok=False)
+        self.assertIn('workload rename requires a drained cutover', error)
 
     def test_real_profile_images_are_not_relabelled_as_unpublished_repositories(self):
         docs = self.render()
