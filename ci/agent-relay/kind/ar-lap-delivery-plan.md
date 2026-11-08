@@ -81,6 +81,23 @@ binding without migrations or DDL. Expected identities are supplied independentl
 of the database URL, with schema-scoped migration ledger and advisory locking.
 Explicit CA-file TLS must verify the server hostname and certificate chain.
 
+Chart/operator orchestration owns the migration-Job/Deployment barrier. The
+runtime owner reports verification before listen, not continuous detection of a
+raised compatibility floor. An already-running server's old readiness result
+cannot qualify it against a newly raised floor. The rollout plan must drain/stop
+that single replica before any incompatible floor change, wait for the matching
+migration Job and ledger/floor result, then restart and verify before restoring
+traffic. The current chart already uses one replica and `Recreate`; that alone
+does not serialize a separately created Job with the old server's shutdown.
+The exact migration/verification entrypoints and barrier implementation await the
+qualified PG head and reviewed compatibility contract. No barrier is claimed
+implemented by this plan.
+
+Qualification must exercise a blocked/failed migration, an existing old server
+during a floor raise, fresh startup after migration, and refusal of an older
+incompatible image after restart. Do not present a hot-readiness check or a
+successful Job as evidence that the old running process revalidated itself.
+
 Required qualification includes real runtime LOGIN access, tenant isolation,
 restart/readback, transaction/concurrency behavior, migration replay, and denial
 against seeded Control/pipeline schemas. Role membership, SET ROLE, effective
