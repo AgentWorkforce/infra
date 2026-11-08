@@ -42,6 +42,12 @@ ingestEdge:
     existingSecret: native-ingest-store
 ```
 
+Use the observed Service identities. The example's `relay-control` is the new
+layout name; the compatibility overlay retains `relaycontrol`, so its Control
+base URL is `http://relaycontrol.agent-relay.svc.cluster.local`. Keep the separate
+`kind-locker` release and its existing `locker` Service/PVC; this slot renames
+none of them.
+
 The runtime Secret needs `database-url` and `introspect-secret`. The database URL
 must authenticate as the genuine least-privilege `bulls96_session_ingest` login,
 not a migration owner or a connection that switches roles. The object-store
