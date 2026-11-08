@@ -143,5 +143,7 @@
   "infraBaseRevision": "9445d2afa1d5990e3e1e50af7613e38c459568b2",
   "qualificationHarnessSha256": "65fe9ebf77feeaffcce1b99fe5b0b1202c0fec05b9f435137108012e30ac06f4",
   "compiledModulesMatchEarlierCandidate": true,
-  "earlierCandidateSource": "74054cb22584178ddb70697c059af1e64809e51c"
+  "earlierCandidateSource": "74054cb22584178ddb70697c059af1e64809e51c",
+  "dockerRuntimeIdMediaType": "application/vnd.oci.image.index.v1+json",
+  "identityReconciliationReceipt": "control-identity-reconciliation.json"
 }

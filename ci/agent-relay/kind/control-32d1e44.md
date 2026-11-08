@@ -11,6 +11,7 @@ base, hash-verified OCI manifest/config, native architecture and local transport
 
 | Item | Value |
 | --- | --- |
+| Docker OCI index identity | `sha256:e33e5c1725e1c68cbbbe28e01ed8be6cef7a04dfcf09f0573ce91b40ccb7de9b` |
 | Manifest | `sha256:fafb248b8f6d0d30facde49ee3bf4c3ca4ce49e36eb37508862a533b9e904e6c` |
 | Config | `sha256:d98e60882a565b8356ad307899d79e5a10d4d181f22237ec05ad9553b5bd5dea` |
 | Archive SHA-256 | `ad4bb39df8669284113ce3c7483ad233809d1d000de2988b0269042652679f80` |
@@ -21,6 +22,21 @@ isolated `control-32d1e44` worktree. The branch's build command is
 `make kind-build-control PROFILE=core`; it selects this local candidate with
 `pullPolicy: Never`. It does not install it. Five image-admission tests passed,
 including refusal of mismatched architecture, source and metadata hashes.
+
+Docker's local containerd image store reports the OCI **index** digest as its
+image ID here. The native manifest digest identifies the Linux ARM64 manifest
+selected from that image, and the config digest identifies the configuration
+blob referenced by that manifest. They identify different objects and are not
+expected to be equal.
+
+The [identity reconciliation receipt](control-identity-reconciliation.json)
+records a fresh export by the immutable Docker ID, followed by native manifest
+and config byte/hash verification, architecture verification and the exact
+source label check. The compiled modules were re-read from that same immutable
+runtime ID and matched the tree hash used by the 50 tests. This connects the
+tested runtime to the archived native candidate. The same separate check maps
+the historical `ef8687dd` OCI index to its #20-only `c8870203` manifest and
+`09efa300` config; it does not relabel that earlier image or its test results.
 
 ## Focused actual-image checks
 

@@ -23,5 +23,8 @@
     "failed": 0,
     "command": "python3 -m unittest discover -s ci/agent-relay/kind -p test_control.py -v"
   },
-  "runtimeChangePerformed": false
+  "runtimeChangePerformed": false,
+  "dockerRuntimeId": "sha256:e33e5c1725e1c68cbbbe28e01ed8be6cef7a04dfcf09f0573ce91b40ccb7de9b",
+  "dockerRuntimeIdMediaType": "application/vnd.oci.image.index.v1+json",
+  "identityReconciliationReceipt": "control-identity-reconciliation.json"
 }

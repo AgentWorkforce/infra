@@ -5,6 +5,12 @@ The builder now pins merged #27 at `32d1e447`; see the separate
 [current candidate receipt](control-32d1e44.md). The `c8870203` image below remains
 the #20-only artifact and must not be described as including #27.
 
+Its qualification receipt's `dockerImageId` (`ef8687dd`) is an OCI index ID,
+not the `09efa300` config digest. A separate immutable-ID export and native
+manifest/config/source verification is recorded in the
+[identity reconciliation receipt](control-identity-reconciliation.json). The
+original build/test receipts and their source attribution are retained.
+
 This candidate is a local artifact qualification, not an ar-lap update or a
 replacement upload/read proof. It builds merged relaycontrol main at
 `bae78a524fbce4fb3ab231372417bc2dfac04cad` (#20, optional RelayAuth and

@@ -1,0 +1,47 @@
+{
+  "verifiedAtUTC": "2026-11-08T05:39:29.654473+00:00",
+  "scope": "local immutable-ID/native-archive provenance verification; no rebuild, new test execution, registry publication or cluster import",
+  "candidates": [
+    {
+      "candidate": "control-bae78a5",
+      "sourceRevision": "bae78a524fbce4fb3ab231372417bc2dfac04cad",
+      "dockerRuntimeId": "sha256:ef8687dd67d8852d834752b1c969ae80411bd1158ff52d8a394689ff8df3f15e",
+      "dockerDescriptor": {
+        "mediaType": "application/vnd.oci.image.index.v1+json",
+        "digest": "sha256:ef8687dd67d8852d834752b1c969ae80411bd1158ff52d8a394689ff8df3f15e",
+        "size": 856
+      },
+      "dockerIdentityMeaning": "OCI image index reported by the local Docker containerd image store; not the config digest",
+      "nativeManifestDigest": "sha256:c8870203c31d73d6c5f489e86a410485aaa4f34862bc22e3ff85de4147aecef9",
+      "configDigest": "sha256:09efa3000dc5ce0c0fe0244a388f1db267ab2271712476653f6ee5ebc3a5f59f",
+      "architecture": "arm64",
+      "os": "linux",
+      "immutableIdExportVerified": true,
+      "manifestAndConfigBytesHashVerified": true,
+      "sourceLabelVerified": true,
+      "imageRebuilt": false
+    },
+    {
+      "candidate": "control-32d1e44",
+      "sourceRevision": "32d1e4477f0203611e756e5df45fc5d74798bff3",
+      "dockerRuntimeId": "sha256:e33e5c1725e1c68cbbbe28e01ed8be6cef7a04dfcf09f0573ce91b40ccb7de9b",
+      "dockerDescriptor": {
+        "mediaType": "application/vnd.oci.image.index.v1+json",
+        "digest": "sha256:e33e5c1725e1c68cbbbe28e01ed8be6cef7a04dfcf09f0573ce91b40ccb7de9b",
+        "size": 856
+      },
+      "dockerIdentityMeaning": "OCI image index reported by the local Docker containerd image store; not the config digest",
+      "nativeManifestDigest": "sha256:fafb248b8f6d0d30facde49ee3bf4c3ca4ce49e36eb37508862a533b9e904e6c",
+      "configDigest": "sha256:d98e60882a565b8356ad307899d79e5a10d4d181f22237ec05ad9553b5bd5dea",
+      "architecture": "arm64",
+      "os": "linux",
+      "immutableIdExportVerified": true,
+      "manifestAndConfigBytesHashVerified": true,
+      "sourceLabelVerified": true,
+      "imageRebuilt": false,
+      "testedCompiledModuleTreeSha256": "91814e48e3c0c1a3d9cf5b7e3e8b6991b035d1958894a1291a90851d885db00b",
+      "compiledModulesReverifiedFromSameImmutableRuntimeId": true
+    }
+  ],
+  "runtimeChangePerformed": false
+}
