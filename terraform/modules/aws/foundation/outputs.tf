@@ -71,9 +71,10 @@ output "identity_references" {
     cluster_name             = aws_eks_cluster.this.name
     namespace                = local.namespace
     service_accounts = {
-      durable_actors = "${var.release_name}-durable-actors"
-      worker         = "${var.release_name}-worker"
-      alleyoop       = "${var.release_name}-alleyoop"
+      durable_actors     = "${var.release_name}-durable-actors"
+      worker             = "${var.release_name}-worker"
+      alleyoop           = "${var.release_name}-alleyoop"
+      session_ingest_api = "${var.release_name}-session-ingest-api"
     }
   }
 }

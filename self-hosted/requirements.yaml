@@ -178,6 +178,13 @@ profiles:
     values_file: [values-eks-actors.yaml]
     install: helm upgrade --install agent-relay agentworkforce/agent-relay -f values-eks-actors.yaml -f <your overrides> (proof in a Pippen sandbox - scripts/selfhost/eks-actors-sandbox.sh, then eks-actors-install.sh)
     summary: standalone profile; standard-mode EKS with runc actor hosts on a tainted node group, one S3 bucket, EKS Pod Identity (or IRSA), a durable-actors control-plane image from the AgentWorkforce fork. Every other suite component off.
+  - id: telemetry-collector
+    title: Self-hosted analytics file collector
+    chart: telemetry-collector
+    values_file: []
+    install: helm upgrade --install telemetry agentworkforce/telemetry-collector -f <accepted images, TLS and producer Secret references>
+    summary: one writer, an exclusive persistent volume, internal TLS and no outbound analytics destination. Requires runtime image and lifecycle acceptance separately.
+
 # charts/sessions-pipeline/ci/*-values.yaml rendered by ci/sessions-pipeline-profiles/matrix.sh that are
 # test variants of a profile above, not install shapes of their own.
 ci_only_values:
@@ -204,19 +211,24 @@ compatibility:
       digest: sha256:5bb6075240afa02a1b1797a81c07bffa029954eac7803d702ecba20db35d4db9
       built_by: publish-image-ecr run 41375747474
   releases:
-    - id: sessions-pipeline-0.6.2
+    - id: telemetry-collector-0.1.0
       status: unreleased
       current: true
-      charts: { sessions-pipeline: 0.6.2, sessions-pipeline-worker: 0.6.1, alleyoop: 0.3.9 }
+      charts: { telemetry-collector: 0.1.0 }
+      notes: 'Default-off umbrella analytics file collector. Requires accepted immutable collector and TLS-proxy images, producer and TLS Secrets and an exclusive persistent volume. Source rendering does not prove image entrypoint, TLS, durable acknowledgement, power-loss recovery or whole-application analytics coverage. The currently reviewed collector CLI registers relaycontrol events only.'
+    - id: sessions-pipeline-0.7.0
+      status: unreleased
+      current: true
+      charts: { sessions-pipeline: 0.7.0, sessions-pipeline-worker: 0.7.0, session-ingest-api: 0.4.0 }
       depends:
-        sessions-pipeline: { worker: 0.6.1, alleyoop: 0.3.9, hoopdb: 0.9.0, locker: 5.4.0, otel: 0.178.0 }
+        sessions-pipeline: { worker: 0.7.0, alleyoop: 0.4.0, hoopdb: 0.9.0, session-object-storage: 5.4.0, otel: 0.178.0 }
       images:
         sessions-pipeline-worker: { repository: agentworkforce/96bulls-services, digest: sha256:6f22ea17dff336e1431664542759fd27958649388b90a0b2f0881883caa7c6b2 }
-        alleyoop: { repository: agentworkforce/96bulls-services, digest: sha256:6f22ea17dff336e1431664542759fd27958649388b90a0b2f0881883caa7c6b2 }
+        session-ingest-api: { repository: agentworkforce/96bulls-services, digest: sha256:6f22ea17dff336e1431664542759fd27958649388b90a0b2f0881883caa7c6b2 }
       services:
         source_commit: 7d7229bb31c121ecb98cd4e35c248fc2cf5669ad
         migration_generation: eff8b3be46565b57ad8fa5e4a066dbb6d1fe608313d9c1680bfbcd484add259b
-      notes: 'Adds a default-off read API Deployment and ClusterIP Service with explicit compatible image/config requirements and enabled-state readiness. Worker and ingest images, migration generation and roles are unchanged. Pipeline PRs 317/318 are merged; their container/routes source does not establish the approved Postgres/canonical/auth assembly; no read API deployment or runtime proof is claimed.'
+      notes: 'Composes descriptive session names and explicit storage/workload upgrade guards from #94 with reader #81. Adds a default-off read API Deployment and ClusterIP Service with explicit compatible image/config requirements and enabled-state readiness. Worker and ingest images, migration generation and roles are unchanged. Pipeline PRs 317/318 are merged; their container/routes source does not establish the approved Postgres/canonical/auth assembly; no read API deployment or runtime proof is claimed.'
       db_combos:
         - { db_mode: selfhosted, boundary: global-default-revoke, hoopdb: cnpg, status: shipped, profiles: [selfhost-postgres, migration, aws-cnpg], notes: chart Jobs install the runtime role and the function default }
         - { db_mode: selfhosted, boundary: global-default-revoke, hoopdb: external, status: shipped, profiles: [external-selfhosted], notes: operator runs the bootstrap files as a superuser }
@@ -421,12 +433,12 @@ compatibility:
       charts: { agent-relay: 0.5.0, relayhistory: 0.1.1, relay-control: 0.3.0, relay-webapp: 0.2.0 }
       app_versions: { agent-relay: 0.1.0, relayhistory: 0.1.0, relay-control: 0.1.0, relay-webapp: 0.1.0 }
       depends:
-        agent-relay: { relaycast: 0.3.5, relayauth: 0.1.4, sessions-pipeline: 0.6.2, relayhistory: 0.1.1, relay-control: 0.3.0, relay-webapp: 0.2.0, relayflows: 0.2.5, durable-actors: 0.14.6-awf.1, relayfile: 0.2.2 }
+        agent-relay: { relaycast: 0.3.5, relayauth: 0.1.4, sessions-pipeline: 0.7.0, relayhistory: 0.1.1, relay-control: 0.3.0, relay-webapp: 0.2.0, relayflows: 0.2.5, durable-actors: 0.14.6-awf.1, relayfile: 0.2.2, telemetry-collector: 0.1.0 }
       images:
         relayhistory: { repository: ghcr.io/agentworkforce/relayhistory, digest_required: true }
         relay-control: { repository: ghcr.io/agentworkforce/relay-control, digest_required: true }
         relay-webapp: { repository: ghcr.io/agentworkforce/relay-webapp, digest_required: true }
-      notes: 'Source-only Control/Webapp public chart rename. New chart defaults require verified digests under relay-control and relay-webapp; real profile image coordinates remain explicitly pinned to their existing repositories until those publishers supply new receipts. Existing releases must translate values keys and preserve names/selectors/DNS with a reviewed compatibility overlay. Kind refuses the old Control/Webapp layout before mutation. No RelayAuth or standalone History removal, publisher dispatch, rollout or new runtime proof is included; the sessions-native replacement remains dependency-gated.'
+      notes: 'Composes session naming #94/52a1126 and default-off telemetry #95/93fe26d with default-off reader #81. Source-only Control/Webapp public chart rename. New chart defaults require verified digests under relay-control and relay-webapp; real profile image coordinates remain explicitly pinned to their existing repositories until those publishers supply new receipts. Existing releases must translate values keys and preserve names/selectors/DNS with a reviewed compatibility overlay. Kind refuses the old Control/Webapp layout before mutation. No RelayAuth or standalone History removal, publisher dispatch, rollout or new runtime proof is included; the sessions-native replacement remains dependency-gated.'
     - id: agent-relay-0.3.17
       status: planned
       charts: { agent-relay: 0.3.17, relayhistory: 0.1.1, relay-cloud-api: 0.2.7, relay-dashboard: 0.1.3 }
@@ -572,16 +584,16 @@ compatibility:
 
 # Env the charts render that is neither a requirement nor an option.
 internal_env:
-  - { name: SERVICE, chart: [sessions-pipeline-worker, alleyoop], why: selects the entry point of the one services image }
-  - { name: OTEL_SERVICE_NAME, chart: [sessions-pipeline-worker, alleyoop], why: equals SERVICE }
-  - { name: TMPDIR, chart: [sessions-pipeline-worker, alleyoop], why: the writable emptyDir under a read-only root filesystem }
+  - { name: SERVICE, chart: [sessions-pipeline-worker, session-ingest-api], why: selects the entry point of the one services image }
+  - { name: OTEL_SERVICE_NAME, chart: [sessions-pipeline-worker, session-ingest-api], why: equals SERVICE }
+  - { name: TMPDIR, chart: [sessions-pipeline-worker, session-ingest-api], why: the writable emptyDir under a read-only root filesystem }
   - { name: HOME, chart: [sessions-pipeline, sessions-pipeline-worker, relayflows], why: a writable home under a read-only root filesystem }
   - { name: ROLES, chart: sessions-pipeline-worker, why: wait-for-role init container; derived from waitForRole.role and migrations.runtimeRole }
   - { name: FUNCTION_DEFAULT, chart: sessions-pipeline-worker, why: wait-for-role init container; derived from waitForRole.functionDefault }
   - { name: INTERVAL, chart: sessions-pipeline-worker, why: wait-for-role poll interval (waitForRole.intervalSeconds) }
   - { name: CLUSTER, chart: sessions-pipeline, why: privileged SQL Jobs; the CNPG cluster name (bootstrapJob.cluster) }
   - { name: DATABASE, chart: sessions-pipeline, why: privileged SQL Jobs; the HoopDb database (bootstrapJob.database) }
-  - { name: INGEST_PORT, chart: alleyoop, why: from ingest.port }
+  - { name: INGEST_PORT, chart: session-ingest-api, why: from ingest.port }
   - { name: PORT, chart: [relaycast, relayauth], why: from server.port }
   - { name: RELAYCAST_DB_PATH, chart: relaycast, why: fixed /data/relaycast.db on the data PVC }
   - { name: RELAYCAST_ENV, chart: relaycast, why: reserved name in the extraEnv guard; the environment is passed as --env (server.environment) }
@@ -624,9 +636,9 @@ entries:
     title: A default StorageClass for the in-cluster HoopDb and Locker volumes
     description: |
       The CNPG HoopDb claims hoopdb.cluster.storage.size (10Gi) and the MinIO Locker
-      locker.persistence.size (20Gi) through the default StorageClass.
+      session-object-storage.persistence.size (20Gi) through the default StorageClass.
     chart: sessions-pipeline
-    values: [hoopdb.cluster.storage.size, locker.persistence.size]
+    values: [hoopdb.cluster.storage.size, session-object-storage.persistence.size]
     profiles: [selfhost-postgres, migration, aws-cnpg]
     status: shipped
     provided_by: { default: operator, aws-cnpg: stack }
@@ -668,8 +680,8 @@ entries:
       externalSecrets.enabled renders an ExternalSecret (external-secrets.io/v1) whose
       target is existingSecret. The ESO CRDs and the named secretStoreRef must exist,
       and every consumed key must be mapped in externalSecrets.data.
-    chart: [sessions-pipeline-worker, alleyoop]
-    values: ["sessions-pipeline-worker:externalSecrets.*", "alleyoop:externalSecrets.*"]
+    chart: [sessions-pipeline-worker, session-ingest-api]
+    values: ["sessions-pipeline-worker:externalSecrets.*", "session-ingest-api:externalSecrets.*"]
     profiles: [selfhost-postgres, migration, external-selfhosted, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql]
     status: shipped
     provided_by: operator
@@ -677,7 +689,7 @@ entries:
     sources:
       - "charts/sessions-pipeline-worker/values.yaml:248"
       - "charts/sessions-pipeline-worker/templates/externalsecret.yaml:20"
-      - "charts/alleyoop/templates/externalsecret.yaml:11"
+      - "charts/session-ingest-api/templates/externalsecret.yaml:11"
 
   # =========================================================================
   # sessions-pipeline: Secrets
@@ -710,12 +722,12 @@ entries:
     description: |
       In secret mode the workers and alleyoop read the Locker access key pair from
       existingSecret, and the bundled MinIO reads its root credential from the same
-      Secret (locker.existingSecret). Not used with locker.credentials.mode=podIdentity.
+      Secret (session-object-storage.existingSecret). Not used with locker.credentials.mode=podIdentity.
     chart: sessions-pipeline
     values:
       - worker.existingSecret
       - alleyoop.existingSecret
-      - locker.existingSecret
+      - session-object-storage.existingSecret
       - worker.secretKeys.lockerAccessKeyId
       - worker.secretKeys.lockerSecretAccessKey
       - alleyoop.secretKeys.lockerAccessKeyId
@@ -736,14 +748,14 @@ entries:
           - { key: rootUser, key_path: alleyoop.secretKeys.lockerAccessKeyId }
           - { key: rootPassword, key_path: alleyoop.secretKeys.lockerSecretAccessKey }
       - name: sessions-pipeline-locker
-        name_paths: [locker.existingSecret]
-        note: the bundled MinIO's root credential
+        name_paths: [session-object-storage.existingSecret]
+        note: the bundled upstream MinIO requires literal Secret data keys rootUser and rootPassword
     verify: kubectl get secret sessions-pipeline-locker -o jsonpath='{.data}' has rootUser and rootPassword
     sources:
       - "charts/sessions-pipeline/values.yaml:3"
       - "charts/sessions-pipeline/values.yaml:28"
       - "charts/sessions-pipeline-worker/templates/_env.tpl:78"
-      - "charts/alleyoop/templates/_env.tpl:66"
+      - "charts/session-ingest-api/templates/_env.tpl:66"
 
   - id: req.secret.summary-master-keys
     kind: requirement
@@ -806,7 +818,7 @@ entries:
       - "charts/sessions-pipeline/profiles/external-selfhosted.yaml:11"
       - "charts/sessions-pipeline/profiles/external-supabase.yaml:24"
       - "charts/sessions-pipeline-worker/templates/_env.tpl:162"
-      - "charts/alleyoop/templates/_env.tpl:54"
+      - "charts/session-ingest-api/templates/_env.tpl:54"
 
   - id: req.secret.hoopdb-migration-url
     kind: requirement
@@ -865,7 +877,7 @@ entries:
     verify: kubectl run -it --rm curl --image=curlimages/curl -- curl -fsS <jwksUrl> returns {"keys":[...]}
     sources:
       - "charts/sessions-pipeline/values.yaml:81"
-      - "charts/alleyoop/templates/deployment.yaml:46"
+      - "charts/session-ingest-api/templates/deployment.yaml:46"
       - "sessions-pipeline@7d7229b:src/alleyoop/ingest.ts:118"
 
   - id: opt.alleyoop.auth-mode
@@ -892,9 +904,9 @@ entries:
         note: only with auth.localJwks=true
     verify: helm template fails with "set auth.jwksUrl OR auth.localJwks, not both" or with neither
     sources:
-      - "charts/alleyoop/values.yaml:81"
-      - "charts/alleyoop/templates/_env.tpl:18"
-      - "charts/alleyoop/templates/deployment.yaml:49"
+      - "charts/session-ingest-api/values.yaml:81"
+      - "charts/session-ingest-api/templates/_env.tpl:18"
+      - "charts/session-ingest-api/templates/deployment.yaml:49"
 
   - id: opt.sessions-pipeline.in-cluster-http
     kind: option
@@ -907,7 +919,7 @@ entries:
       <svc>.<ns>.svc.cluster.local, never public hosts, IPs or short names; for
       example alleyoop.auth.jwksUrl=http://relayauth.relayauth.svc:8787/.well-known/jwks.json.
       LOCKER_ENDPOINT and the OTLP endpoint are outside this policy, so the
-      bundled MinIO at http://locker:9000 works with the default false.
+      bundled MinIO at http://session-object-storage:9000 works with the default false.
     chart: sessions-pipeline
     values: [alleyoop.allowInClusterHttp, worker.allowInClusterHttp]
     env: [ALLOW_IN_CLUSTER_HTTP]
@@ -920,8 +932,8 @@ entries:
       - { value: true }
     verify: helm template renders ALLOW_IN_CLUSTER_HTTP="false" by default and fails when extraEnv sets it
     sources:
-      - "charts/alleyoop/values.yaml"
-      - "charts/alleyoop/templates/deployment.yaml"
+      - "charts/session-ingest-api/values.yaml"
+      - "charts/session-ingest-api/templates/deployment.yaml"
       - "charts/sessions-pipeline-worker/templates/_env.tpl"
 
   - id: opt.alleyoop.history-origin
@@ -949,8 +961,8 @@ entries:
       - { value: origin }
     verify: helm template fails when auth.historyOrigin is not a bare origin or extraEnv also sets RELAYHISTORY_ORIGIN
     sources:
-      - "charts/alleyoop/values.yaml"
-      - "charts/alleyoop/templates/deployment.yaml"
+      - "charts/session-ingest-api/values.yaml"
+      - "charts/session-ingest-api/templates/deployment.yaml"
 
   - id: opt.alleyoop.interim-relayauth-bearer
     kind: option
@@ -978,9 +990,9 @@ entries:
       - { value: true, note: environment=local only }
     verify: helm template renders ALLOW_INTERIM_RELAYAUTH_BEARER="false" by default and fails for true outside environment=local or when extraEnv/ingest.env sets it
     sources:
-      - "charts/alleyoop/values.yaml"
-      - "charts/alleyoop/templates/_env.tpl"
-      - "charts/alleyoop/templates/deployment.yaml"
+      - "charts/session-ingest-api/values.yaml"
+      - "charts/session-ingest-api/templates/_env.tpl"
+      - "charts/session-ingest-api/templates/deployment.yaml"
 
   # =========================================================================
   # sessions-pipeline: database
@@ -1410,13 +1422,13 @@ entries:
     kind: option
     title: Locker object store
     description: |
-      minio runs the bundled MinIO (locker.enabled; Chainguard image, digest-pinned) and
+      minio runs the bundled MinIO (session-object-storage.enabled; Chainguard image, digest-pinned) and
       the locker-init Job creates the bucket. external uses your S3-compatible bucket:
       set worker.locker / alleyoop.locker (endpoint empty = native AWS S3 for region),
       and set worker.lockerInit.enabled=false when the bucket already exists and is
       versioned.
     chart: sessions-pipeline
-    values: [locker.enabled, worker.locker.endpoint, worker.locker.bucket, worker.locker.region, alleyoop.locker.endpoint, alleyoop.locker.bucket, alleyoop.locker.region, worker.lockerInit.enabled]
+    values: [session-object-storage.enabled, worker.locker.endpoint, worker.locker.bucket, worker.locker.region, alleyoop.locker.endpoint, alleyoop.locker.bucket, alleyoop.locker.region, worker.lockerInit.enabled]
     env: [LOCKER_ENDPOINT, LOCKER_BUCKET, LOCKER_REGION]
     profiles: [selfhost-postgres, migration, external-selfhosted, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql]
     status: shipped
@@ -1482,7 +1494,7 @@ entries:
       - "charts/sessions-pipeline-worker/values.yaml:64"
       - "charts/sessions-pipeline-worker/templates/_env.tpl:63"
       - "charts/sessions-pipeline-worker/templates/_env.tpl:108"
-      - "charts/alleyoop/templates/_env.tpl:95"
+      - "charts/session-ingest-api/templates/_env.tpl:95"
 
   - id: opt.sessions-pipeline.services-image
     kind: option
@@ -3338,3 +3350,27 @@ entries:
       - "charts/relay-control/templates/_helpers.tpl:1"
       - "charts/relay-control/templates/deployment.yaml:1"
       - "docs/self-hosted-session-read-api.md:1"
+
+  - id: req.telemetry-collector.runtime
+    kind: requirement
+    status: shipped
+    title: Analytics collector image and bounded storage runtime
+    chart: telemetry-collector
+    description: Internal producer-authenticated NDJSON collector. Immutable images and exact source identity are mandatory; one writer and a retained RWOP claim. TLS terminates in a sidecar; the collector binds loopback. No outbound sink or automatic producer enablement.
+    provided_by: operator
+    profiles: [telemetry-collector]
+    verify: Verify the accepted collector entrypoint, authenticated TLS intake, durable files after restart and failure-before-acknowledgement cases on the installed volume.
+    values: [imagePullSecrets, image.*, tlsProxy.image.*, persistence.*, limits.*, retention.*, terminationGracePeriodSeconds, networkPolicy.allowedFrom, rolloutRevision]
+    env: [ANALYTICS_COLLECTOR_HOST, ANALYTICS_COLLECTOR_PORT, ANALYTICS_COLLECTOR_DATA_DIR, ANALYTICS_COLLECTOR_PRODUCERS_FILE, ANALYTICS_COLLECTOR_MAX_BATCH_BYTES, ANALYTICS_COLLECTOR_MAX_BATCH_EVENTS, ANALYTICS_COLLECTOR_MAX_EVENT_BYTES, ANALYTICS_COLLECTOR_REQUEST_TIMEOUT_MS, ANALYTICS_COLLECTOR_MAX_IN_FLIGHT, ANALYTICS_COLLECTOR_MAX_SEGMENTS, ANALYTICS_COLLECTOR_MAX_DISK_BYTES, ANALYTICS_COLLECTOR_SHUTDOWN_DEADLINE_MS, ANALYTICS_COLLECTOR_RETENTION, ANALYTICS_COLLECTOR_RETENTION_MAX_AGE_MS]
+    sources: ["charts/telemetry-collector/templates/deployment.yaml:37"]
+  - id: req.telemetry-collector.secrets
+    kind: requirement
+    status: shipped
+    title: Separate analytics producer and TLS credential Secrets
+    chart: telemetry-collector
+    description: Operator-managed producers.json plus dedicated token files, and a separate TLS key/certificate Secret. Mounted as files; no credentials in Helm values or ConfigMaps. Rotate with a controlled restart.
+    provided_by: operator
+    profiles: [telemetry-collector]
+    verify: Verify distinct mounted producer credentials and TLS keys, exact certificate SAN and issuer, and a restart after rotation; never print values.
+    values: [producersSecret, tlsSecret]
+    sources: ["charts/telemetry-collector/templates/deployment.yaml:104"]

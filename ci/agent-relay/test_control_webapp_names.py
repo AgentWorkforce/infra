@@ -80,6 +80,7 @@ class Names(unittest.TestCase):
             ready.write_text('saved-independent-receipt')
             local.docker = Mock()
             local.require_owned_cluster = Mock()
+            local.require_no_legacy_storage = Mock()
             local.dependencies = Mock(side_effect=AssertionError('must refuse before dependencies'))
             local.cmd = Mock(return_value=subprocess.CompletedProcess([], 0, 'agent-relay-core\n', ''))
             local.k = Mock(return_value=subprocess.CompletedProcess([], 0, json.dumps({'items': [
@@ -89,7 +90,16 @@ class Names(unittest.TestCase):
             local.require_owned_cluster.assert_called_once()
             local.dependencies.assert_not_called()
             self.assertEqual(ready.read_text(), 'saved-independent-receipt')
-            local.k.assert_called_once_with('get', 'deployments,services', '-o', 'json')
+            local.require_no_legacy_storage.assert_called_once()
+            self.assertEqual(local.k.call_count, 2)
+            self.assertEqual(local.k.call_args_list[0].args, ('get', 'namespace', 'agent-relay', '--ignore-not-found', '-o', 'json'))
+            self.assertEqual(local.k.call_args_list[1].args, ('get', 'deployments,services', '-o', 'json'))
+
+    def test_control_webapp_preflight_allows_an_empty_owned_cluster(self):
+        local = object.__new__(stack.Stack)
+        local.k = Mock(return_value=subprocess.CompletedProcess([], 0, '', ''))
+        local.require_control_webapp_layout()
+        local.k.assert_called_once_with('get', 'namespace', 'agent-relay', '--ignore-not-found', '-o', 'json', namespace=None)
 
     def test_new_layout_preflight_accepts_only_observed_new_resources(self):
         local = object.__new__(stack.Stack)

@@ -86,13 +86,17 @@ eks() { # result check detail
 assoc="$(aws --region "$REGION" eks list-pod-identity-associations --cluster-name "$NAME" --namespace "$NS" \
   --query 'associations[].serviceAccount' --output text 2>/dev/null | tr '\t' ' ')"
 missing=""
-for sa in "${RELEASE}-worker" "${RELEASE}-alleyoop"; do
+# Use the installed release's service accounts, including name overrides and
+# legacy compatibility mode. Do not infer them from chart package names.
+apps="$("${K[@]}" get deploy -l "app.kubernetes.io/instance=${RELEASE},app.kubernetes.io/part-of=sessions-pipeline" -o json 2>/dev/null)"
+accounts="$(printf %s "$apps" | python3 "$HERE/session-identities.py" service-accounts)"
+[[ -n "$accounts" ]] || missing="no installed app ServiceAccounts discovered "
+for sa in $accounts; do
   [[ " $assoc " == *" $sa "* ]] || missing+="$sa "
 done
 [[ -z "$missing" ]] && eks PASS eks.pod_identity "associations=${assoc}" || eks FAIL eks.pod_identity "missing=${missing% }"
 
-alleyoop="$("${K[@]}" get pod -l app.kubernetes.io/name=alleyoop --field-selector=status.phase=Running \
-  -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)"
+alleyoop="$("${K[@]}" get pods -l "app.kubernetes.io/instance=${RELEASE}" --field-selector=status.phase=Running -o json 2>/dev/null | python3 "$HERE/session-identities.py" ingest-pod)"
 s3_out=""
 [[ -n "$alleyoop" ]] && s3_out="$("${K[@]}" exec -i "$alleyoop" -- sh -c \
   'umask 077; cat > /tmp/e2e-eks-proof-s3.ts && cd /app && bun run /tmp/e2e-eks-proof-s3.ts; rm -f /tmp/e2e-eks-proof-s3.ts' \

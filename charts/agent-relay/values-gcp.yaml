@@ -208,7 +208,7 @@ sessions-pipeline:
       historyOrigin: https://history.placeholder.company
   hoopdb:
     enabled: false
-  locker:
+  session-object-storage:
     enabled: false
 
 relayhistory:

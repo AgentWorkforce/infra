@@ -1,0 +1,426 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "image",
+    "tlsProxy",
+    "imagePullSecrets",
+    "nameOverride",
+    "fullnameOverride",
+    "replicaCount",
+    "producersSecret",
+    "tlsSecret",
+    "rolloutRevision",
+    "persistence",
+    "terminationGracePeriodSeconds",
+    "limits",
+    "retention",
+    "networkPolicy",
+    "resources",
+    "proxyResources"
+  ],
+  "properties": {
+    "global": {
+      "type": "object"
+    },
+    "image": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "repository",
+        "digest",
+        "sourceRevision"
+      ],
+      "properties": {
+        "repository": {
+          "type": "string"
+        },
+        "digest": {
+          "type": "string",
+          "pattern": "^$|^sha256:[a-f0-9]{64}$"
+        },
+        "sourceRevision": {
+          "type": "string",
+          "pattern": "^$|^[a-f0-9]{40}$",
+          "enum": [
+            "",
+            "8359483d2666c1f374190c102237c3022ca3d466"
+          ]
+        }
+      }
+    },
+    "tlsProxy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "image"
+      ],
+      "properties": {
+        "image": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "repository",
+            "digest"
+          ],
+          "properties": {
+            "repository": {
+              "type": "string"
+            },
+            "digest": {
+              "type": "string",
+              "pattern": "^$|^sha256:[a-f0-9]{64}$"
+            }
+          }
+        }
+      }
+    },
+    "imagePullSecrets": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "name"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "nameOverride": {
+      "type": "string"
+    },
+    "fullnameOverride": {
+      "type": "string"
+    },
+    "replicaCount": {
+      "type": "integer",
+      "enum": [
+        1
+      ]
+    },
+    "producersSecret": {
+      "type": "string"
+    },
+    "tlsSecret": {
+      "type": "string"
+    },
+    "rolloutRevision": {
+      "type": "string"
+    },
+    "persistence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "existingClaim",
+        "size",
+        "storageClassName"
+      ],
+      "properties": {
+        "existingClaim": {
+          "type": "string"
+        },
+        "size": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^[1-9][0-9]*(\\.[0-9]+)?([eE][+-]?[0-9]+|[EPTGMK]i|[EPTGMkmun])?$"
+        },
+        "storageClassName": {
+          "type": "string"
+        }
+      }
+    },
+    "terminationGracePeriodSeconds": {
+      "type": "integer",
+      "minimum": 2,
+      "maximum": 120
+    },
+    "limits": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "maxBatchBytes",
+        "maxBatchEvents",
+        "maxEventBytes",
+        "requestTimeoutMs",
+        "maxInFlight",
+        "maxSegments",
+        "maxDiskBytes",
+        "shutdownDeadlineMs"
+      ],
+      "properties": {
+        "maxBatchBytes": {
+          "type": "integer",
+          "minimum": 1024,
+          "maximum": 16777216
+        },
+        "maxBatchEvents": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 10000
+        },
+        "maxEventBytes": {
+          "type": "integer",
+          "minimum": 256,
+          "maximum": 1048576
+        },
+        "requestTimeoutMs": {
+          "type": "integer",
+          "minimum": 100,
+          "maximum": 300000
+        },
+        "maxInFlight": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1024
+        },
+        "maxSegments": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 10000000
+        },
+        "maxDiskBytes": {
+          "type": "integer",
+          "minimum": 1048576,
+          "maximum": 17592186044416
+        },
+        "shutdownDeadlineMs": {
+          "type": "integer",
+          "minimum": 100,
+          "maximum": 60000
+        }
+      }
+    },
+    "retention": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "policy"
+      ],
+      "properties": {
+        "policy": {
+          "type": "string",
+          "enum": [
+            "reject-new",
+            "delete-oldest-closed"
+          ]
+        },
+        "maxAgeMs": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 60000,
+          "maximum": 3153600000000
+        }
+      }
+    },
+    "networkPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "allowedFrom"
+      ],
+      "properties": {
+        "allowedFrom": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "minProperties": 1,
+            "properties": {
+              "podSelector": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "matchLabels": {
+                    "type": "object",
+                    "minProperties": 1,
+                    "additionalProperties": {
+                      "type": "string"
+                    }
+                  },
+                  "matchExpressions": {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {
+                      "type": "object",
+                      "required": [
+                        "key",
+                        "operator"
+                      ],
+                      "properties": {
+                        "key": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "operator": {
+                          "enum": [
+                            "In",
+                            "NotIn",
+                            "Exists",
+                            "DoesNotExist"
+                          ]
+                        },
+                        "values": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        }
+                      },
+                      "additionalProperties": false,
+                      "allOf": [
+                        {
+                          "if": {
+                            "properties": {
+                              "operator": {
+                                "enum": [
+                                  "In",
+                                  "NotIn"
+                                ]
+                              }
+                            }
+                          },
+                          "then": {
+                            "required": [
+                              "values"
+                            ],
+                            "properties": {
+                              "values": {
+                                "minItems": 1
+                              }
+                            }
+                          },
+                          "else": {
+                            "properties": {
+                              "values": {
+                                "maxItems": 0
+                              }
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  }
+                },
+                "anyOf": [
+                  {
+                    "required": [
+                      "matchLabels"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "matchExpressions"
+                    ]
+                  }
+                ]
+              },
+              "namespaceSelector": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "matchLabels": {
+                    "type": "object",
+                    "minProperties": 1,
+                    "additionalProperties": {
+                      "type": "string"
+                    }
+                  },
+                  "matchExpressions": {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {
+                      "type": "object",
+                      "required": [
+                        "key",
+                        "operator"
+                      ],
+                      "properties": {
+                        "key": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "operator": {
+                          "enum": [
+                            "In",
+                            "NotIn",
+                            "Exists",
+                            "DoesNotExist"
+                          ]
+                        },
+                        "values": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        }
+                      },
+                      "additionalProperties": false,
+                      "allOf": [
+                        {
+                          "if": {
+                            "properties": {
+                              "operator": {
+                                "enum": [
+                                  "In",
+                                  "NotIn"
+                                ]
+                              }
+                            }
+                          },
+                          "then": {
+                            "required": [
+                              "values"
+                            ],
+                            "properties": {
+                              "values": {
+                                "minItems": 1
+                              }
+                            }
+                          },
+                          "else": {
+                            "properties": {
+                              "values": {
+                                "maxItems": 0
+                              }
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  }
+                },
+                "anyOf": [
+                  {
+                    "required": [
+                      "matchLabels"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "matchExpressions"
+                    ]
+                  }
+                ]
+              }
+            },
+            "additionalProperties": false
+          }
+        }
+      }
+    },
+    "resources": {
+      "type": "object"
+    },
+    "proxyResources": {
+      "type": "object"
+    }
+  }
+}

@@ -8,7 +8,9 @@ The umbrella selection keys are now `components.control` and
 `relay-webapp`. Supplying any of the four old keys fails the umbrella render,
 including an empty map or a disabled component. They are never silently ignored.
 
-This is separate from the five session-component names in infra #94. The
+This source composes the five session-component names in infra #94 at
+`52a1126` and default-off telemetry #95 at `93fe26d` through a normal merge.
+Both storage/workload upgrade guards remain in place. The
 existing `RELAYHISTORY_*`, `SELFHOST_*`, `DASHBOARD_*` API/environment contracts,
 internal Node package paths, database names, schemas, roles, Secret names and
 public URL paths retain their existing meanings.
@@ -62,7 +64,10 @@ For each renamed child, explicitly set:
 For the historical kind profile, the supplied
 [identity overlay](../charts/agent-relay/upgrade/kind-control-webapp-identities.yaml)
 keeps `relaycontrol` and `relay-app`, with selectors `relay-cloud-api` and
-`relay-dashboard`. Layer it after translated old values. For addons, preserve
+`relay-dashboard`. Layer it after translated old values. The overlay also retains #94's legacy session workload/storage identities
+and the original Locker endpoint byte for byte, preserving the old migration
+Job hashes. Both kind preflights allow an empty owned cluster and refuse
+observed legacy resources before readiness invalidation. For addons, preserve
 the old `relayflows` command's `relaycontrol` URL as well. This overlay only
 expresses naming compatibility; it is not a migration or rollout approval.
 Other releases must use their own observed resource identities, not the kind

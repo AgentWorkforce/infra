@@ -3,7 +3,7 @@
 A thin root that composes the four GCP modules for one agent-relay install on an existing GKE cluster and VPC:
 
 - `gcp/postgres` (Cloud SQL with the `relaycontrol`, `relayhistory` and `hoopdb` databases).
-- `gcp/object-storage` for the sessions Locker, with direct Workload Identity for `<release>-worker` and `<release>-alleyoop`.
+- `gcp/object-storage` for the sessions Locker, with direct Workload Identity for `<release>-worker` and `<release>-session-ingest-api`.
 - `gcp/search` on the GKE cluster (`enable_search`).
 - `gcp/functions` (`enable_functions`).
 

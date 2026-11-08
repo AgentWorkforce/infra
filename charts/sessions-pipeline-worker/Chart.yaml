@@ -1,14 +1,14 @@
 apiVersion: v2
 name: sessions-pipeline-worker
 type: application
-version: 0.6.1
+version: 0.7.0
 # appVersion tracks the default services image tag. Pin image.digest in
 # production values.
 appVersion: "0.1.0"
 description: >
-  sessions-pipeline workers: the HoopDb migration Job, the Locker
-  bucket init Job, and the stage workers (hoopdb-indexer, referee,
-  bob-costas). Hook-free: safe to render with `helm template --no-hooks` and
+  Session workers: database migration and object-storage initialization Jobs,
+  session-metadata-indexer, session-status-worker and session-summary-worker.
+  Hook-free: safe to render with `helm template --no-hooks` and
   apply with server-side apply (Alchemy Kubernetes.HelmChart).
 annotations:
   artifacthub.io/license: Apache-2.0

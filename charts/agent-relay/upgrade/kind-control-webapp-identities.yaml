@@ -17,3 +17,16 @@ relayhistory:
 # For addons, retain the original caller URL inside the existing command.
 # Supply your translated old relayflows block after this overlay; it must use
 # relaycontrol while that Service identity is retained.
+sessions-pipeline:
+  worker:
+    legacyResourceNames: true
+    locker:
+      endpoint: http://locker:9000
+  alleyoop:
+    legacyResourceNames: true
+    fullnameOverride: alleyoop
+    locker:
+      endpoint: http://locker:9000
+  session-object-storage:
+    fullnameOverride: locker
+    nameOverride: locker

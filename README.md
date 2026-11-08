@@ -27,12 +27,20 @@ and the release gate’s `helm-charts` license-decision ID retain their original
 | [relaycast](charts/relaycast) | Portable self-hosted Relaycast core — realtime agent communication with single-writer SQLite persistence |
 | [relayfile](charts/relayfile) | Relayfile server — single Go binary, HTTP on :8080, Postgres-backed in production |
 | [relayflows](charts/relayflows) | Durable workflows running locally in Kubernetes, with optional Cloud assignment mode |
-| [sessions-pipeline-worker](charts/sessions-pipeline-worker) | Sessions Pipeline workers: HoopDb migrations, Locker bucket init, and the indexer/referee/bob-costas stage workers |
-| [sessions-pipeline](charts/sessions-pipeline) | The whole Sessions Pipeline in one release: sessions-pipeline-worker + alleyoop, with optional HoopDb (CloudNativePG), Locker (MinIO) and an OTel collector |
-| [alleyoop](charts/alleyoop) | Sessions Pipeline ingest: receives session manifests and chunks and lands them in the Locker (S3) |
+| [sessions-pipeline-worker](charts/sessions-pipeline-worker) | Session summary, metadata indexing and status workers, plus migration and storage initialization Jobs |
+| [sessions-pipeline](charts/sessions-pipeline) | Session workers and ingest API, with optional Postgres, session-object-storage (MinIO) and an OTel collector |
+| [telemetry-collector](charts/telemetry-collector) | Default-off analytics intake for Control events, internal TLS and file storage; installed durability is unverified |
+| [session-ingest-api](charts/session-ingest-api) | Receives session manifests and chunks and stores them in S3-compatible object storage |
 | [relayauth](charts/relayauth) | Self-hosted RelayAuth issuer: immutable image, externally managed keys, single-writer SQLite, and optional JWKS ingress |
 
 ## Self-hosted requirements registry
+
+The public session resource names are `session-object-storage`,
+`session-ingest-api`, `session-summary-worker`, `session-metadata-indexer` and
+`session-status-worker`. See the [actual chart and workload rename](docs/descriptive-session-names.md)
+for internal stage mappings and existing-release compatibility values. The three
+workers share the `sessions-pipeline-worker` chart; MinIO uses the descriptive
+dependency alias rather than a new wrapper chart.
 
 [`self-hosted/requirements.yaml`](self-hosted/requirements.yaml) is the single
 source of truth for what a self-hosted install needs: every **requirement**
@@ -154,20 +162,20 @@ helm install sessions-pipeline agentworkforce/sessions-pipeline -n sessions-pipe
 
 #### Upgrading a release of the former `96bulls` chart
 
-The umbrella was renamed from `96bulls` (last released as 0.5.4) to
-`sessions-pipeline` (0.6.0). An existing release upgrades in place:
-`helm upgrade <release> agentworkforce/sessions-pipeline -f <your values>`.
-Resource names and selectors are unchanged, because the worker subchart alias
-is still `worker`. Only the `helm.sh/chart` and `app.kubernetes.io/part-of`
-labels change. Two renamed defaults need a value if you relied on them. Set
-`worker.existingSecret`, `alleyoop.existingSecret` and
-`locker.existingSecret` to your current Secret name (the old default was
-`96bulls-locker`). Set
-`worker.migrations.runtimeRole` to the role your database already has. A
-standalone `96bulls-worker` release keeps its selectors only with
-`nameOverride: 96bulls-worker`; otherwise, install it fresh. Under the
-`agent-relay` umbrella (0.3.0), move your `96bulls:` overrides to
-`sessions-pipeline:`.
+The current `sessions-pipeline` 0.7.0 / `agent-relay` 0.4.0 rename changes
+resource defaults. Before upgrading, migrate values as described in the
+[descriptive-name upgrade guide](docs/descriptive-session-names.md). Retain your
+existing release name, Secret names, runtime role and storage claim. Set
+`worker.legacyResourceNames: true`, `alleyoop.legacyResourceNames: true`, and
+move the old MinIO `locker` values block to `session-object-storage` with the
+recorded old `fullnameOverride` and `nameOverride`. Do not use `--reuse-values`.
+
+A standalone former `96bulls-worker` release also needs
+`legacyResourceNames: true` together with `nameOverride: 96bulls-worker` to retain
+its old Deployment names and selectors. `nameOverride` alone is insufficient.
+Under the `agent-relay` umbrella, move old `96bulls:` overrides to
+`sessions-pipeline:`. A deliberate resource rename requires a separate drained,
+seeded upgrade/rollback test; these source changes do not establish that proof.
 
 The charts default to `ghcr.io/agentworkforce/96bulls-services`, pinned by
 digest. That hosted-service package is private. For direct installs, create a
@@ -389,11 +397,11 @@ native AWS S3 endpoint.
 ```bash
 helm install sessions-pipeline-worker agentworkforce/sessions-pipeline-worker -n sessions-pipeline --create-namespace \
   --set existingSecret=sessions-pipeline \
-  --set locker.endpoint=http://locker:9000 \
+  --set locker.endpoint=http://session-object-storage:9000 \
   --set tenant.orgId=<org>
-helm install alleyoop agentworkforce/alleyoop -n sessions-pipeline \
+helm install session-ingest-api agentworkforce/session-ingest-api -n sessions-pipeline \
   --set existingSecret=sessions-pipeline \
-  --set locker.endpoint=http://locker:9000 \
+  --set locker.endpoint=http://session-object-storage:9000 \
   --set tenant.orgId=<org> \
   --set auth.jwksUrl=https://<relayauth>/.well-known/jwks.json
 ```

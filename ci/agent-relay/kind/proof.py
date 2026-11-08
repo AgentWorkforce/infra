@@ -241,8 +241,8 @@ class Proof:
                                "origin": "https://history.kind.agentrelay.com:8443", "machineId": "kind-" + self.marker}
         self.phase("mint-sessions-pipeline")
         source = (ROOT / "scripts/selfhost/e2e-gcp-proof-sessions-pipeline.ts").read_text()
-        s.k("exec", "-i", "deploy/alleyoop-ingest", "--", "sh", "-c", "cat > /tmp/kind-pipeline.ts", data=source)
-        result = s.k("exec", "-i", "deploy/alleyoop-ingest", "--", "env", "E2E_PIPELINE_USER_ID="+self.state["bulls"]["userId"],
+        s.k("exec", "-i", "deploy/session-ingest-api", "--", "sh", "-c", "cat > /tmp/kind-pipeline.ts", data=source)
+        result = s.k("exec", "-i", "deploy/session-ingest-api", "--", "env", "E2E_PIPELINE_USER_ID="+self.state["bulls"]["userId"],
                      "bun", "/tmp/kind-pipeline.ts", "push", marker,
                      self.state["bulls"]["machineId"], data=self.state.pop("bullsAssertion"), sensitive=True, check=False)
         session = None
@@ -253,7 +253,7 @@ class Proof:
                 _, outcome, check, detail = line.split("|", 3)
                 self.record(outcome, check, detail)
         self.require(result.returncode == 0 and session, "courier did not successfully upload a session")
-        result = s.k("exec", "deploy/alleyoop-ingest", "--", "env", "E2E_PIPELINE_USER_ID="+self.state["bulls"]["userId"],
+        result = s.k("exec", "deploy/session-ingest-api", "--", "env", "E2E_PIPELINE_USER_ID="+self.state["bulls"]["userId"],
                      "bun", "/tmp/kind-pipeline.ts", "verify-offline", marker, session, "180",
                      timeout=210, sensitive=True, check=False)
         proofs = 0

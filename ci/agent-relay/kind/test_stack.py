@@ -43,14 +43,14 @@ class Profiles(unittest.TestCase):
     def test_core_contains_whole_product_and_internal_temporary_auth(self):
         docs = self.render()
         deployments = {d["metadata"]["name"] for d in docs if d["kind"] == "Deployment"}
-        self.assertTrue({"relay-control", "relay-webapp", "relaycast", "relayauth", "relayhistory", "alleyoop-ingest"} <= deployments)
+        self.assertTrue({"relay-control", "relay-webapp", "relaycast", "relayauth", "relayhistory", "session-ingest-api"} <= deployments)
         self.assertFalse(any("relayfile" in n or "relayflows" in n or "relaycron" in n for n in deployments))
         self.assertFalse(any(d["kind"] == "CronJob" for d in docs))
         for d in docs:
             if d["kind"] == "Ingress":
                 for rule in d["spec"]["rules"]:
                     self.assertFalse(any("relayauth" in p["backend"]["service"]["name"] for p in rule["http"]["paths"]))
-        workers = [d for d in docs if d["kind"] == "Deployment" and d["metadata"]["name"].startswith("sessions-")]
+        workers = [d for d in docs if d["kind"] == "Deployment" and d["metadata"]["name"].startswith(("session-summary-", "session-status-", "session-metadata-"))]
         self.assertEqual(len(workers), 3)
         for d in workers:
             env = {e["name"]: e.get("value") for e in stack.pod_spec(d)["containers"][0]["env"]}

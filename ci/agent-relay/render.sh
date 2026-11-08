@@ -565,7 +565,7 @@ grep -q 'gkeIngress.backends.history.serviceName=history does not match' <<<"$mi
 # The customer GCP profile stores Sessions objects in GCS through the native
 # adapter (Workload Identity), never AWS S3 or HMAC keys.
 gcp_out=$(helm template ar charts/agent-relay -n agent-relay --no-hooks -f charts/agent-relay/values-gcp.yaml)
-for w in ar-worker-referee ar-worker-bob-costas ar-worker-hoopdb-indexer ar-alleyoop-ingest; do
+for w in ar-worker-session-status-worker ar-worker-session-summary-worker ar-worker-session-metadata-indexer ar-session-ingest-api; do
   test "$(yq "select(.kind == \"Deployment\" and .metadata.name == \"$w\") |
     .spec.template.spec.containers[0].env[] | select(.name == \"LOCKER_PROVIDER\") | .value" <<<"$gcp_out")" = gcs \
     || { echo "values-gcp.yaml: $w does not select the GCS Locker" >&2; exit 1; }

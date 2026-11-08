@@ -1,17 +1,18 @@
 {{- define "alleyoop.name" -}}
-{{- default .Chart.Name .Values.nameOverride | trunc 63 | trimSuffix "-" }}
+{{- default (ternary "alleyoop" "session-ingest-api" .Values.legacyResourceNames) .Values.nameOverride | trunc 63 | trimSuffix "-" }}
 {{- end }}
 
 {{- define "alleyoop.fullname" -}}
 {{- if .Values.fullnameOverride }}
 {{- .Values.fullnameOverride | trunc 63 | trimSuffix "-" }}
 {{- else }}
-{{- $name := default .Chart.Name .Values.nameOverride }}
+{{- $name := include "alleyoop.name" . }}
 {{- if contains $name .Release.Name }}
 {{- .Release.Name | trunc 63 | trimSuffix "-" }}
 {{- else }}
 {{- printf "%s-%s" .Release.Name $name | trunc 63 | trimSuffix "-" }}
 {{- end }}
+
 {{- end }}
 {{- end }}
 
@@ -37,4 +38,12 @@ Component object name. Usage: include "alleyoop.componentName" (dict "context" .
 {{- else }}
 {{- default "default" .Values.serviceAccount.name }}
 {{- end }}
+{{- end }}
+
+{{- define "alleyoop.deploymentName" -}}
+{{- if .Values.legacyResourceNames -}}
+{{- include "alleyoop.componentName" (dict "context" . "component" "ingest") -}}
+{{- else -}}
+{{- include "alleyoop.fullname" . -}}
+{{- end -}}
 {{- end }}

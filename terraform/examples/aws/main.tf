@@ -19,9 +19,9 @@ provider "aws" {
 
 locals {
   # The ServiceAccounts the agent-relay chart creates for the sessions
-  # pipeline (<release>-worker, <release>-alleyoop; values-eks.yaml).
+  # pipeline, including the existing ingest identity through a naming cutover.
   sessions_service_accounts = [
-    for sa in ["worker", "alleyoop"] : {
+    for sa in ["worker", "alleyoop", "session-ingest-api"] : {
       cluster_name    = var.eks_cluster_name
       namespace       = var.namespace
       service_account = "${var.release_name}-${sa}"
@@ -38,7 +38,7 @@ resource "terraform_data" "service_account_checks" {
         toset(compact([var.indexer_service_account, var.reader_service_account])),
         toset([for sa in local.sessions_service_accounts : sa.service_account]),
       )) == 0
-      error_message = "indexer_service_account and reader_service_account must differ from each other and from <release>-worker / <release>-alleyoop (one Pod Identity association per ServiceAccount)."
+      error_message = "indexer_service_account and reader_service_account must differ from each other and from the worker, legacy ingest and descriptive ingest ServiceAccounts (one Pod Identity association per ServiceAccount)."
     }
   }
 }
