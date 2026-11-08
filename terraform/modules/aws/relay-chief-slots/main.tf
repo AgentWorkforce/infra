@@ -19,6 +19,11 @@ locals {
   region     = data.aws_region.current.region
   account_id = data.aws_caller_identity.current.account_id
 
+  # An s3:// URI maps directly onto the object ARN, so the grant is that object
+  # alone. Validation keeps IAM wildcards out of the key.
+  artifact_url        = try(var.relay_chief_artifact.url, "")
+  artifact_object_arn = startswith(local.artifact_url, "s3://") ? "arn:${local.partition}:s3:::${trimprefix(local.artifact_url, "s3://")}" : null
+
   # Secret names are <prefix>/<slot id>. "-??????" is the random suffix Secrets
   # Manager appends, so the pattern matches only this slot's secret: a longer
   # name that starts with the same slot id has more than six trailing characters.
@@ -40,6 +45,7 @@ locals {
     { path = "/etc/systemd/system/relay-chief-credentials.service", mode = "0644", content = filebase64("${path.module}/files/relay-chief-credentials.service") },
     { path = "/usr/local/sbin/relay-chief-fetch-credentials", mode = "0755", content = filebase64("${path.module}/files/fetch-credentials.sh") },
     { path = "/usr/local/sbin/relay-chief-bind-slot", mode = "0755", content = filebase64("${path.module}/files/bind-slot.sh") },
+    { path = "/usr/local/sbin/relay-chief-fetch-artifact", mode = "0755", content = filebase64("${path.module}/files/fetch-artifact.sh") },
     { path = "/usr/local/sbin/relay-chief-prepare-data-volume", mode = "0755", content = filebase64("${path.module}/files/prepare-data-volume.sh") },
   ]
 
@@ -49,12 +55,15 @@ locals {
       slot_id     = id
       secret_name = slot.secret_name
       region      = local.region
+      # Opaque to the runtime, which only checks its format. Infra owns the mapping.
+      placement  = local.region
+      size_class = split(".", var.instance_type)[1]
       # On Nitro instances the attached volume appears under its id, so a host
       # can only ever mount the volume created for its own slot.
       data_device     = "/dev/disk/by-id/nvme-Amazon_Elastic_Block_Store_${replace(aws_ebs_volume.data[id].id, "-", "")}"
       node_url        = var.node_runtime.url
       node_sha256     = var.node_runtime.sha256
-      artifact_url    = try(var.relay_chief_artifact.url, "")
+      artifact_url    = local.artifact_url
       artifact_sha256 = try(var.relay_chief_artifact.sha256, "")
       files           = local.host_files
     })
@@ -129,6 +138,23 @@ resource "aws_iam_role_policy" "slot_secret" {
   })
 }
 
+resource "aws_iam_role_policy" "artifact" {
+  for_each = local.artifact_object_arn == null ? {} : local.slots
+
+  name = "read-relay-chief-artifact"
+  role = aws_iam_role.slot[each.key].id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Sid      = "ReadRelayChiefArtifact"
+      Effect   = "Allow"
+      Action   = ["s3:GetObject"]
+      Resource = [local.artifact_object_arn]
+    }]
+  })
+}
+
 resource "aws_iam_role_policy_attachment" "ssm" {
   for_each = local.slots
 
@@ -191,6 +217,10 @@ resource "aws_instance" "slot" {
     volume_size           = var.root_volume_size_gb
     delete_on_termination = true
   }
+
+  # Bootstrap runs once and reads the artifact with this role, so the grant must
+  # exist first. The instance's profile alone orders it after the role, not this.
+  depends_on = [aws_iam_role_policy.artifact]
 
   lifecycle {
     # Replacing a host stops its chief and reattaches its ledger, so it is

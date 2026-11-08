@@ -154,8 +154,8 @@ run "host_files_are_the_expected_set" {
   command = plan
 
   assert {
-    condition     = toset([for f in local.host_files : f.path]) == toset(["/etc/systemd/system/relay-chief.service", "/etc/systemd/system/relay-chief.timer", "/etc/systemd/system/relay-chief.service.d/10-slot.conf", "/etc/systemd/system/relay-chief-credentials.service", "/usr/local/sbin/relay-chief-fetch-credentials", "/usr/local/sbin/relay-chief-bind-slot", "/usr/local/sbin/relay-chief-prepare-data-volume"])
-    error_message = "Bootstrap must install exactly the reference units, the drop-in, the credentials unit and the three scripts."
+    condition     = toset([for f in local.host_files : f.path]) == toset(["/etc/systemd/system/relay-chief.service", "/etc/systemd/system/relay-chief.timer", "/etc/systemd/system/relay-chief.service.d/10-slot.conf", "/etc/systemd/system/relay-chief-credentials.service", "/usr/local/sbin/relay-chief-fetch-credentials", "/usr/local/sbin/relay-chief-bind-slot", "/usr/local/sbin/relay-chief-fetch-artifact", "/usr/local/sbin/relay-chief-prepare-data-volume"])
+    error_message = "Bootstrap must install exactly the reference units, the drop-in, the credentials unit and the four scripts."
   }
   assert {
     condition     = alltrue([for f in local.host_files : length(f.content) > 0])
@@ -250,6 +250,111 @@ run "quote_in_artifact_url_is_refused" {
     relay_chief_artifact = {
       url    = "https://example.test/relay'chief.tar.gz"
       sha256 = "0000000000000000000000000000000000000000000000000000000000000000"
+    }
+  }
+
+  expect_failures = [var.relay_chief_artifact]
+}
+
+run "s3_artifact_grants_only_that_object" {
+  command = plan
+
+  variables {
+    relay_chief_artifact = {
+      url    = "s3://example-artifacts/relay-chief/build.tar.gz"
+      sha256 = "0000000000000000000000000000000000000000000000000000000000000000"
+    }
+  }
+
+  assert {
+    condition     = length(aws_iam_role_policy.artifact) == 2
+    error_message = "Every slot role needs the artifact grant."
+  }
+  assert {
+    condition     = alltrue([for p in aws_iam_role_policy.artifact : length(jsondecode(p.policy).Statement) == 1 && jsondecode(p.policy).Statement[0].Action == ["s3:GetObject"]])
+    error_message = "The artifact grant is s3:GetObject alone."
+  }
+  assert {
+    condition     = alltrue([for p in aws_iam_role_policy.artifact : jsondecode(p.policy).Statement[0].Resource == ["arn:aws:s3:::example-artifacts/relay-chief/build.tar.gz"]])
+    error_message = "The artifact grant is limited to that exact object."
+  }
+  assert {
+    condition     = alltrue([for k, p in aws_iam_role_policy.artifact : p.name == "read-relay-chief-artifact"])
+    error_message = "The artifact grant is its own inline policy."
+  }
+}
+
+run "https_artifact_grants_nothing" {
+  command = plan
+
+  variables {
+    relay_chief_artifact = {
+      url    = "https://example.test/relay-chief.tar.gz"
+      sha256 = "0000000000000000000000000000000000000000000000000000000000000000"
+    }
+  }
+
+  assert {
+    condition     = length(aws_iam_role_policy.artifact) == 0
+    error_message = "An https artifact needs no S3 access."
+  }
+}
+
+run "no_artifact_grants_nothing" {
+  command = plan
+
+  assert {
+    condition     = length(aws_iam_role_policy.artifact) == 0
+    error_message = "No artifact needs no S3 access."
+  }
+}
+
+run "s3_uri_without_a_key_is_refused" {
+  command = plan
+
+  variables {
+    relay_chief_artifact = {
+      url    = "s3://example-artifacts/"
+      sha256 = "0000000000000000000000000000000000000000000000000000000000000000"
+    }
+  }
+
+  expect_failures = [var.relay_chief_artifact]
+}
+
+run "s3_uri_with_an_iam_wildcard_is_refused" {
+  command = plan
+
+  variables {
+    relay_chief_artifact = {
+      url    = "s3://example-artifacts/relay-chief/*"
+      sha256 = "0000000000000000000000000000000000000000000000000000000000000000"
+    }
+  }
+
+  expect_failures = [var.relay_chief_artifact]
+}
+
+run "s3_uri_with_a_quote_is_refused" {
+  command = plan
+
+  variables {
+    relay_chief_artifact = {
+      url    = "s3://example-artifacts/relay'chief.tar.gz"
+      sha256 = "0000000000000000000000000000000000000000000000000000000000000000"
+    }
+  }
+
+  expect_failures = [var.relay_chief_artifact]
+}
+
+run "s3_artifact_checksum_is_validated" {
+  command = plan
+
+  variables {
+    relay_chief_artifact = {
+      url    = "s3://example-artifacts/relay-chief.tar.gz"
+      sha256 = "not-a-checksum"
     }
   }
 
