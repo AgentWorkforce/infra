@@ -256,15 +256,65 @@ expect_leaf_failure() { # chart expected-error helm-args...
 }
 expect_leaf_failure relay-cloud-api "PORT is managed by structured chart values and must not appear in extraEnv" \
   --set-json 'extraEnv=[{"name":"PORT","value":"1"}]'
-# Optional structured names stay reserved while unset. internalToken is empty
-# in the CI values, so the Ingress does not deny /internal; extraEnv must not
-# be able to turn the internal routes on by supplying the token file itself.
-expect_leaf_failure relay-cloud-api "SELFHOST_INTERNAL_TOKEN_FILE is managed by structured chart values and must not appear in extraEnv" \
-  --set-json 'extraEnv=[{"name":"SELFHOST_INTERNAL_TOKEN_FILE","value":"/tmp/token"}]'
-expect_leaf_failure relay-cloud-api "SELFHOST_DASHBOARD_URL is managed by structured chart values and must not appear in extraEnv" \
-  --set-json 'extraEnv=[{"name":"SELFHOST_DASHBOARD_URL","value":"https://dash.example.com"}]'
-expect_leaf_failure relay-cloud-api "SELFHOST_OAUTH_GITHUB_CLIENT_ID is managed by structured chart values and must not appear in extraEnv" \
-  --set-json 'extraEnv=[{"name":"SELFHOST_OAUTH_GITHUB_CLIENT_ID","value":"id"}]'
+# Every structured name the chart owns stays reserved while that setting is
+# empty. The default CI values leave these unset, so the default render must
+# not emit them, and extraEnv must not be able to set them. That includes
+# SELFHOST_INTERNAL_TOKEN_FILE (the Ingress does not deny /internal until
+# secretKeys.internalToken is set) and every owned OAuth name:
+# SELFHOST_OAUTH_<PROVIDER>_CLIENT_ID, _CLIENT_SECRET_FILE, and _SCOPES.
+default_env_names=$(helm template ci charts/relay-cloud-api -n ci --no-hooks -f charts/relay-cloud-api/ci/default-values.yaml |
+  yq 'select(.kind == "Deployment" or .kind == "Job") | .spec.template.spec.containers[0].env[].name' |
+  grep -vx -- '---' | sort -u)
+unset_structured_names=(
+  SELFHOST_ENCRYPTION_PREVIOUS_KEY_FILE
+  SELFHOST_INTERNAL_TOKEN_FILE
+  RELAYCAST_INTERNAL_SECRET_FILE
+  SELFHOST_OIDC_CLIENT_SECRET_FILE
+  SELFHOST_SMTP_PASSWORD_FILE
+  SELFHOST_TELEMETRY_INSTALL_KEY_FILE
+  SELFHOST_ENCRYPTION_PREVIOUS_KEY_ID
+  SELFHOST_DASHBOARD_URL
+  SELFHOST_FLOWS_GCS_BUCKET
+  SELFHOST_FLOWS_GCS_PREFIX
+  SELFHOST_FLOWS_WORKER_RELAYCAST_URL
+  SELFHOST_FLOWS_QUEUE_PING_MS
+  SELFHOST_TELEMETRY_ENDPOINT
+  SELFHOST_TELEMETRY_INSTALL_ID
+  SELFHOST_TELEMETRY_PROBES
+  SELFHOST_TELEMETRY_DEPLOYMENT
+  SELFHOST_BOOTSTRAP_ORG_NAME
+  SELFHOST_BOOTSTRAP_ADMIN_EMAIL
+  SELFHOST_BOOTSTRAP_ADMIN_NAME
+  SELFHOST_BOOTSTRAP_WORKSPACE_NAME
+  SELFHOST_OIDC_ISSUER
+  SELFHOST_OIDC_CLIENT_ID
+  SELFHOST_OIDC_ALLOWED_DOMAINS
+  SELFHOST_OIDC_DISPLAY_NAME
+  SELFHOST_OIDC_SCOPES
+  SELFHOST_OIDC_REDIRECT_URL
+  SELFHOST_OIDC_ALLOW_HTTP_ISSUER
+  SELFHOST_SMTP_HOST
+  SELFHOST_SMTP_PORT
+  SELFHOST_SMTP_SECURITY
+  SELFHOST_SMTP_USERNAME
+  SELFHOST_EMAIL_FROM
+  SELFHOST_EMAIL_LOGIN
+  SELFHOST_AUTO_JOIN_DOMAINS
+  SELFHOST_INVITE_TTL_HOURS
+  SELFHOST_OAUTH_GITHUB_CLIENT_ID
+  SELFHOST_OAUTH_GITHUB_CLIENT_SECRET_FILE
+  SELFHOST_OAUTH_GITHUB_SCOPES
+  SELFHOST_OAUTH_GOOGLE_MAIL_CLIENT_ID
+  SELFHOST_OAUTH_GOOGLE_MAIL_CLIENT_SECRET_FILE
+  SELFHOST_OAUTH_GOOGLE_MAIL_SCOPES
+)
+for name in "${unset_structured_names[@]}"; do
+  grep -qx "$name" <<<"$default_env_names" \
+    && { echo "relay-cloud-api: $name is present in the default render; the unset-name list is wrong" >&2; exit 1; }
+  expect_leaf_failure relay-cloud-api "$name is managed by structured chart values and must not appear in extraEnv" \
+    --set-json "$(printf 'extraEnv=[{"name":"%s","value":"blocked"}]' "$name")"
+done
+# A configured integration with empty scopes still owns SELFHOST_OAUTH_<PROVIDER>_SCOPES.
 expect_leaf_failure relay-cloud-api "SELFHOST_OAUTH_GITHUB_SCOPES is managed by structured chart values and must not appear in extraEnv" \
   -f charts/relay-cloud-api/ci/integrations-values.yaml \
   --set-json 'extraEnv=[{"name":"SELFHOST_OAUTH_GITHUB_SCOPES","value":"repo"}]'
@@ -272,8 +322,12 @@ expect_leaf_failure relay-cloud-api "extraEnv must not reference the migration c
   --set-json 'extraEnv=[{"name":"SITE_DATABASE_URL","valueFrom":{"secretKeyRef":{"name":"relay-cloud-api","key":"database-migrations-url"}}}]'
 expect_leaf_failure relay-cloud-api "extraEnv value must be a string" \
   --set-json 'extraEnv=[{"name":"SITE_PORT","value":8080}]'
+expect_leaf_failure relay-cloud-api "extraEnv value must be a string" \
+  --set-json 'extraEnv=[{"name":"SITE_FLAG","value":true}]'
 expect_leaf_failure relay-cloud-api "every extraEnv name must be a non-empty string" \
   --set-json 'extraEnv=[{"name":8080,"value":"1"}]'
+expect_leaf_failure relay-cloud-api "every extraEnv name must be a non-empty string" \
+  --set-json 'extraEnv=[{"name":"","value":"1"}]'
 expect_leaf_failure relay-cloud-api "SELFHOST_DESKTOP_FEED_URL is managed by structured chart values and must not appear in extraEnv" \
   --set-json 'extraEnv=[{"name":"SELFHOST_DESKTOP_FEED_URL","value":"https://a.example.com"},{"name":"SELFHOST_DESKTOP_FEED_URL","value":"https://b.example.com"}]'
 other_secret=$(helm template ci charts/relay-cloud-api -n ci --no-hooks -f charts/relay-cloud-api/ci/default-values.yaml \
