@@ -12,15 +12,25 @@ the kind/SQLite demonstration for this release.
 
 ## What people will use
 
-The platform administrator provides one private application address, reachable
+The platform administrator provides a private application address, reachable
 through the customer's network access system. In this guide, replace
-`https://relay.customer.example` with that address everywhere.
+`https://relay.customer.example` with that address everywhere. The release
+packet must select a separate API origin or the supported shared app/API-host
+profile explicitly. A shared app/API host still needs separate Relaycast and
+History origins; it does not put every service behind the app hostname.
+
+Record all origins, DNS names, trusted certificate coverage and exact health
+URLs in the private handoff. At minimum these include the app, the API (unless
+shared), Relaycast and History. Add selected file/object-upload and identity
+provider endpoints. Pilot laptops need approved VPN/ZTNA access to the
+client-facing service origins, not just the login page.
 
 | Address | Who uses it | Purpose |
 | --- | --- | --- |
 | `https://relay.customer.example/login` | Everyone | Sign in with the customer's identity provider. |
 | `https://relay.customer.example/downloads` | Pilot users and IT | Download the customer-branded Desktop installer. **This page and its signed artifact delivery are release requirements; this guide does not claim they exist today.** |
 | The sign-in approval link opened by Desktop | The person signing in | Check the requesting computer and workspace, then approve that device. |
+| API, Relaycast and History origins from the packet | Desktop and approved clients | Authenticated service access; these can be different hosts from the app. |
 | Settings → Members | Customer owners/admins | Invite people and manage access. |
 | Customer operator controls | Authorized customer administrators | Manage capture policy and deletion. Exact released navigation and implementation evidence must be supplied in the release packet. |
 
@@ -61,7 +71,7 @@ The customer supplies these inputs before the meeting:
 | --- | --- | --- |
 | AWS account, region, environment and permitted resource boundaries | Platform | Exact identifiers; distinguish existing resources from newly managed ones. |
 | Existing EKS/network or approval to provision the selected foundation | Platform | Private subnets, endpoint access, worker capacity, storage and IAM authority. |
-| Private app DNS name, trusted TLS certificate/CA, ZTNA/VPN access | Network/security | Confirm a pilot laptop can resolve and reach the app. |
+| App/API/Relaycast/History DNS names, trusted TLS certificates/CA, ZTNA/VPN access | Network/security | Confirm a pilot laptop resolves and reaches every selected client-facing origin, including selected file/object-upload endpoints. |
 | Customer ECR and approved artifact import path | Platform/security | No dependency on public registries at runtime. |
 | SSO issuer, client ID, approved domain/group policy and client Secret reference | Identity | Register `<app origin>/login/oidc/callback` with the IdP. |
 | First owner email, organization name and pilot workspace | Customer owner | Use a customer-controlled work email; this person receives first-admin access. |
@@ -111,6 +121,16 @@ identity and change process.
    Do not delete state to make a retry succeed.
 6. Export the wrapper's non-secret verification outputs. Confirm actual private
    endpoints, resource IDs, backups and workload identities against the receipt.
+
+   ```sh
+   python3 terraform/scripts/aws-environment.py output \
+     --variables /approved/private/customer.tfvars.json \
+     --backend /approved/private/customer.backend.json
+   ```
+
+   Retain its `verification.json` with the plan/apply receipt in the private
+   evidence directory. It is not a complete Helm overlay or proof that SQL is
+   ready.
 
 **Expected result:** the selected Terraform-owned AWS foundation and data
 resources exist and are reachable from the approved administrative runner and
@@ -167,19 +187,30 @@ explicitly configured.
 3. Run the release packet's ordered SQL/bootstrap and migration procedure using
    separate owner credentials. Wait for each required Job and the application
    readiness barrier; never bypass a verifier or mark a pending generation PASS.
-4. Install/upgrade the exact chart package with the packet's values, context,
-   namespace and release name. Use its specified migration order. There is no
-   universal complete-stack one-liner qualified by this document. Do not add
+4. Check the selected context, namespace, release identity and ownership.
+   Inspect `helm list --all` in that exact context/namespace; only a confirmed
+   absent release permits first install. A failed query is not proof of absence.
+   Use the packet's migration order and exact package/values. There is no
+   universal complete-stack command qualified by this document. Do not use
    `--atomic`: Helm cannot undo database or object-data changes.
-   Once the packet's required pre-install Jobs have completed, the Helm command
-   has this shape (set each variable from that packet first):
+
+   **First installation**, after confirmed absence and completion of required
+   pre-install Jobs (set every variable from the packet):
 
    ```sh
-   helm upgrade --install "$RELEASE" "$CHART_PACKAGE" \
+   helm install "$RELEASE" "$CHART_PACKAGE" \
      --kube-context "$KUBE_CONTEXT" --namespace "$NAMESPACE" \
      --create-namespace --values /approved/private/customer.values.yaml \
-     --wait --wait-for-jobs --timeout 20m
+     --no-hooks --wait --wait-for-jobs --timeout 20m
    ```
+
+   **Upgrade an existing release** only after the matching backup, isolated
+   restore drill and migration-compatibility evidence pass the
+   [pre-upgrade gate](../scripts/selfhost/README.md#pre-upgrade-gate). Preserve
+   its verified namespace/release identity and use `helm upgrade` with the
+   reviewed package/values and `--no-hooks --wait --wait-for-jobs --timeout 20m`.
+   Never add `--install` to an upgrade: a mistyped release must not create a
+   second installation.
 
 5. Run `scripts/selfhost/verify-agent-relay.sh` with that exact context, namespace
    and release. This checks infrastructure/workload readiness; it does not
@@ -187,8 +218,22 @@ explicitly configured.
 
    ```sh
    scripts/selfhost/verify-agent-relay.sh \
-     --context "$KUBE_CONTEXT" --namespace "$NAMESPACE" --release "$RELEASE"
+     --context "$KUBE_CONTEXT" --namespace "$NAMESPACE" --release "$RELEASE" \
+     --health-url "$APP_HEALTH_URL" --health-url "$API_HEALTH_URL" \
+     --health-url "$CAST_HEALTH_URL" --health-url "$HISTORY_HEALTH_URL"
    ```
+
+   Set each full health URL from the release packet's verified image/ingress
+   route. The script's derived default is `/health`; it does not work for every
+   component, and a SPA HTML fallback must not count as an API health check.
+   Add selected add-on URLs separately.
+
+   For load-balancer-terminated TLS with empty Ingress `spec.tls`, also pass
+   `--external-tls-host "$APP_TLS_HOST"` and repeat it for the selected API,
+   Relaycast, History and add-on hosts. These are DNS names without scheme or
+   port, and must match selected Ingress rule hosts. The verifier then performs
+   the same real chain/hostname/minimum-expiry checks against each endpoint.
+   Do not use `--allow-no-tls` to make an external-TLS installation pass.
 
 **Expected result:** required Jobs completed, services ready, private ingress
 reachable, and normal TLS verification succeeds from the pilot laptop.
@@ -289,7 +334,11 @@ results with the release owner.
 5. Register two agents, exchange a message and a reply, and verify both sides
    read the same conversation using the customer's authoritative Postgres store.
 6. Use a second workspace/user to verify that lists, transcript, search, direct
-   APIs and database runtime roles cannot read the first workspace's data.
+   APIs and object reads cannot expose the first workspace's data. Separately
+   verify that each service runtime role cannot access another service's
+   schema. Test workspace-specific database isolation only where that service
+   has a reviewed tenant-context/RLS contract; do not treat a service-wide
+   runtime role as if it were an end user's workspace identity.
 7. As the customer operator, change a managed capture setting and verify the
    enrolled client enforces it. As a normal member, verify the same policy
    mutation and operator-deletion API are refused.

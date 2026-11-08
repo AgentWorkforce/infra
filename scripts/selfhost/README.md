@@ -35,6 +35,13 @@ Neither script proves that a database migration is reversible. Helm rollback
 changes Kubernetes release resources; it does not reverse database schema or
 data changes.
 
+For load-balancer-terminated TLS without Ingress `spec.tls`, repeat
+`--external-tls-host <hostname>` for each expected endpoint. Each hostname must
+belong to the selected ingress rules (including any `--ingress-host` filter),
+and undergoes the normal chain, hostname and expiry checks. This adds a TLS
+verification target; it does not skip TLS checks. Supply explicit per-service
+`--health-url` paths when their health endpoints differ from `/health`.
+
 ## Requirements
 
 - Bash 4 or newer

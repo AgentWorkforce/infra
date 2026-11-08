@@ -119,6 +119,7 @@ MOCK
 cat >"${mock_bin}/openssl" <<'MOCK'
 #!/usr/bin/env bash
 if [[ "$1" == "s_client" ]]; then
+  [[ "${MOCK_TLS_FAIL:-false}" == true ]] && exit 1
   previous=""
   for arg in "$@"; do
     [[ "${previous}" == "-servername" ]] && printf 'openssl-servername %s\n' "${arg}" >>"${MOCK_COMMAND_LOG}"
@@ -673,5 +674,36 @@ out="$(eks_install EKS_ACTORS_ACTOR_CREDENTIALS=control-plane)"
 if eks_install EKS_ACTORS_ACTOR_CREDENTIALS=bogus >/dev/null; then fail "eks-actors-install accepted an unknown credential mode"; fi
 grep -q 'must be assume-role or control-plane' "${tmp_root}/eks.err" || fail "eks-actors-install did not explain the rejected mode"
 pass "eks-actors-install picks the actor credential mode and storage role ARN"
+
+# Externally terminated TLS has no spec.tls or ManagedCertificate reference.
+reset_fixtures
+write_verify_fixtures
+jq '.items[0].metadata.annotations = {} | .items[0].spec.tls = []' \
+  "${fixtures}/ingresses.networking.k8s.io.json" >"${tmp_root}/external-ingress.json"
+mv "${tmp_root}/external-ingress.json" "${fixtures}/ingresses.networking.k8s.io.json"
+if run_verify "${tmp_root}/external-no-host.out"; then
+  fail "external TLS silently passed without an explicit certificate target"
+fi
+run_verify "${tmp_root}/external-tls.out" --external-tls-host relay.example.com ||
+  { cat "${tmp_root}/external-tls.out" >&2; fail "explicit selected external TLS host was refused"; }
+grep -q 'certificate\[1\]|trusted_hostname_valid_and_not_expiring' "${tmp_root}/external-tls.out" ||
+  fail "external TLS did not run chain/hostname/expiry validation"
+if run_verify "${tmp_root}/external-foreign.out" --external-tls-host foreign.example.com; then
+  fail "external TLS accepted a host absent from the selected ingress"
+fi
+if run_verify "${tmp_root}/external-filtered.out" --ingress-host relay.example.com --external-tls-host api.example.com; then
+  fail "external TLS escaped the ingress host filter"
+fi
+for invalid in 'https://relay.example.com' 'relay.example.com:443' 'relay.example.com/path' '*.example.com'; do
+  if run_verify "${tmp_root}/external-invalid.out" --external-tls-host "$invalid"; then
+    fail "external TLS accepted a malformed hostname"
+  fi
+done
+export MOCK_TLS_FAIL=true
+if run_verify "${tmp_root}/external-failed-chain.out" --external-tls-host relay.example.com; then
+  fail "external TLS accepted a failed native TLS verification"
+fi
+unset MOCK_TLS_FAIL
+pass "external TLS targets are bound to selected ingress and never skip certificate verification"
 
 printf 'All self-hosted script tests passed.\n'
