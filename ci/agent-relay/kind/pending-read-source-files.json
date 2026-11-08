@@ -1,0 +1,50 @@
+[
+  {
+    "sourceRevision": "44b81b567f07a906b0092849c0051bfd0dde574a",
+    "path": "supabase/bootstrap/session_read_api_roles.sql",
+    "gitBlob": "5e1b238ad99869f3a4d1222f23b7028d2a7a64fb",
+    "sha256": "e38dedf541d889a808d1706bbc217a6ac1e22cc9ea3fa809f13595faf09704ec"
+  },
+  {
+    "sourceRevision": "44b81b567f07a906b0092849c0051bfd0dde574a",
+    "path": "supabase/bootstrap/session_read_api_role.sql",
+    "gitBlob": "0cc22f262f2834b28805039f67730b25b0623d68",
+    "sha256": "98b5acbd77c052e2378dc6b7c704a73ab9c1c9bd94a6814ed6e01bf466ea2428"
+  },
+  {
+    "sourceRevision": "44b81b567f07a906b0092849c0051bfd0dde574a",
+    "path": "supabase/bootstrap/session_read_api_role_verify.sql",
+    "gitBlob": "b5f8a303bab545cc2fb20aec0856bfd3805dd5c0",
+    "sha256": "aa2344451c8b7ce9cc8f18108367bf019aa4599f710a5453b8c5a34c7b139be2"
+  },
+  {
+    "sourceRevision": "e680a29aeffaa69029ed6ec4775ffd5c83f1136c",
+    "path": "src/session-pipeline/consumer-config.ts",
+    "gitBlob": "adce8df87fefbb9a8ddc7b0b4e8b108de3f3bb39",
+    "sha256": "cf48fd515fdce4a3c4ce8ad21663e0f1a370c964ff83871992a84208628df86a"
+  },
+  {
+    "sourceRevision": "e680a29aeffaa69029ed6ec4775ffd5c83f1136c",
+    "path": "src/session-pipeline/consumer-service.ts",
+    "gitBlob": "27d9331735a7788489c850bd1d4a08df5f44ddd1",
+    "sha256": "db7f818c44c3bedb66d34df104e1975b260a68dded553563c30993ea8d36eb88"
+  },
+  {
+    "sourceRevision": "e680a29aeffaa69029ed6ec4775ffd5c83f1136c",
+    "path": "src/session-pipeline/consumer-bootstrap.ts",
+    "gitBlob": "49b8f65b89519dae7c61b3bafa2a22fe12c38399",
+    "sha256": "4c1a8a667e8a58354c45a580557dd7fdc4ab0d60d5e36b81daa2d87c7316783d"
+  },
+  {
+    "sourceRevision": "e680a29aeffaa69029ed6ec4775ffd5c83f1136c",
+    "path": "supabase/bootstrap/session_consumer_role.sql",
+    "gitBlob": "51720959d5981942fbf6b862c5b97c140c36f275",
+    "sha256": "8abc16a5e4d76bd8899d5d2785c2c9bfacf5ce1139772927987c2b4ee9492276"
+  },
+  {
+    "sourceRevision": "e680a29aeffaa69029ed6ec4775ffd5c83f1136c",
+    "path": "supabase/bootstrap/session_consumer_role_verify.sql",
+    "gitBlob": "27454f29df6483b40b2c2db2ab895b6c31d1b3a9",
+    "sha256": "acee86e2e76866947b6fcd21596dd44c527dcca5d691aa21ececeeb9b53260c3"
+  }
+]

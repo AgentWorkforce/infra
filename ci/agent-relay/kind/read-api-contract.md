@@ -6,7 +6,7 @@ end-to-end pass. Core local-control proof at `fd8565c` records 57 PASS, 0 FAIL, 
 The reviewed drafts are pipeline [#317 at a7d7a5db](https://github.com/AgentWorkforce/relayhistory-pipeline/pull/317),
 [#318 at 441e4862](https://github.com/AgentWorkforce/relayhistory-pipeline/pull/318)
 and the additional PG-only source in [#330 at 44b81b56](https://github.com/AgentWorkforce/relayhistory-pipeline/pull/330).
-Both were open drafts when checked; no merge, enablement or deployment was done.
+All three were open drafts when checked; no merge, enablement or deployment was done.
 Relaycontrol remains a proxy to `RELAYHISTORY_URL`, with no pipeline URL added.
 
 ## Proposed chart inputs
@@ -54,6 +54,12 @@ establish a replacement for every legacy History delivery/ingest route.
 These belong to the pipeline/control/History service owners. The chart must not
 invent missing runtime composition, bypass grants, mirror session rows between
 databases, or claim the service ready from its dormant health response.
+
+The proposed writer in pipeline #336 is tracked in the
+[bootstrap source review](writer-bootstrap-review.md). Its entrypoint is not
+ready for operator wiring: that review records two bootstrap defects and the
+remaining identity/ACL proof requirements. The accompanying source checksums
+do not establish a compatible container image or migration generation.
 
 The #330 service also requires `SESSION_POSTGRES_TLS_PROFILE` explicitly and,
 when using Postgres search, a nonempty `SEARCH_INDEX_POSTGRES_BACKEND_ID` matching
