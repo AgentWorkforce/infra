@@ -60,6 +60,13 @@ test("missing or failed non-summary processing events fail offline proof", async
     assert.equal(result.code, 1);
     assert.ok(result.lines.some(line => line.startsWith("PROOF|FAIL|pipeline.events|")));
   }
+  const requiredOk = ["object-landed", "session-indexed", "status-classify"].map(stage => ({ stage, status: "ok" }));
+  const optional = { stage: "file-normalize", status: "skipped", reason: "not_enabled", has_error: false };
+  assert.equal((await run({ events: [...requiredOk, optional] })).code, 0);
+  for (const invalid of [{ ...optional, reason: "unknown" }, { ...optional, has_error: true },
+                         { ...optional, status: "error" }, { ...optional, stage: "unknown-stage" }]) {
+    assert.equal((await run({ events: [...requiredOk, invalid] })).code, 1);
+  }
   const summariesOff = await run({ events: [
     ...["object-landed", "session-indexed", "status-classify"].map(stage => ({ stage, status: "ok" })),
     { stage: "summary-short", status: "disabled" }, { stage: "summary-long", status: "error" },

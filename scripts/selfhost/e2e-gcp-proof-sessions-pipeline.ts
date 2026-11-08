@@ -147,11 +147,18 @@ export async function verify(summariesRequired = true, dependencies?: any) {
       "pipeline.bob_costas_summaries", `summaries=${row.kinds ?? "none"}`);
     check(!!row.trace, "pipeline.trace", "indexed session has a non-null processing trace");
     if (!row.trace) return;
-    const events = await db.query<{ stage: string; status: string }>(
-      "SELECT DISTINCT stage, status FROM sessions.pipeline_events WHERE org_id = $1 AND trace_id = $2::uuid ORDER BY stage", [ORG, row.trace]);
+    const events = await db.query<{ stage: string; status: string; reason: string | null; has_error: boolean }>(
+      "SELECT DISTINCT stage, status, attrs->>'reason' AS reason, (error IS NOT NULL) AS has_error FROM sessions.pipeline_events WHERE org_id = $1 AND trace_id = $2::uuid ORDER BY stage", [ORG, row.trace]);
     const ok = events.rows.filter((e) => e.status === "ok").map((e) => e.stage);
     const requiredStages = ["object-landed", "session-indexed", "status-classify", ...(summariesRequired ? ["summary-short", "summary-long"] : [])];
-    check(requiredStages.every((s) => ok.includes(s)) && !events.rows.some(e => e.status !== "ok" && (summariesRequired || !["summary-short", "summary-long"].includes(e.stage))), "pipeline.events", `ok_stages=${ok.join(",")} other=${events.rows.filter((e) => e.status !== "ok").map((e) => `${e.stage}:${e.status}`).join(",") || "none"}`);
+    // The pinned pointer path explicitly disables the OPTIONAL transform:
+    // src/session-pipeline/pointer.ts transformEnabled:false, and the shared
+    // object-landed handler records file-normalize/skipped/not_enabled.
+    // This exact non-error outcome is distinct from errors or unknown skips.
+    const optionalDisabled = (e: typeof events.rows[number]) => e.stage === "file-normalize"
+      && e.status === "skipped" && e.reason === "not_enabled" && e.has_error === false;
+    check(requiredStages.every((s) => ok.includes(s)) && !events.rows.some(e => e.status !== "ok"
+      && !optionalDisabled(e) && (summariesRequired || !["summary-short", "summary-long"].includes(e.stage))), "pipeline.events", `ok_stages=${ok.join(",")} other=${events.rows.filter((e) => e.status !== "ok").map((e) => `${e.stage}:${e.status}`).join(",") || "none"} optional_disabled=${events.rows.some(optionalDisabled) ? "file-normalize:not_enabled" : "none"}`);
     const dlq = await db.query<{ c: string }>(
       "SELECT count(*)::text AS c FROM sessions.pipeline_dead_letters WHERE org_id = $1 AND trace_id = $2::uuid", [ORG, row.trace]).catch(() => ({ rows: [{ c: "n/a" }] }));
     check(dlq.rows[0]?.c === "0", "pipeline.no_dead_letters", `dead_letters_for_trace=${dlq.rows[0]?.c}`);
