@@ -2,3 +2,9 @@
 {{- if hasKey .Values "locker" -}}
 {{- fail "sessions-pipeline: locker dependency values were renamed to session-object-storage; move that block (worker.locker and alleyoop.locker remain internal adapter configuration). Do not use --reuse-values for this rename." -}}
 {{- end -}}
+{{- /* An upgrade from a release that used the old default name would prune PVC/locker and create an empty claim. */ -}}
+{{- $storage := index .Values "session-object-storage" | default dict -}}
+{{- $persistence := $storage.persistence | default dict -}}
+{{- if and .Release.IsUpgrade $storage.enabled $persistence.enabled (not $persistence.existingClaim) (eq (toString $storage.fullnameOverride) "session-object-storage") (not .Values.acknowledgeStorageRename) -}}
+{{- fail "sessions-pipeline: this upgrade could replace MinIO's PersistentVolumeClaim 'locker' with an empty 'session-object-storage' claim. If the release predates chart 0.7.0, keep the data: set session-object-storage.fullnameOverride=locker with nameOverride=locker, or persistence.existingClaim (docs/descriptive-session-names.md). If the release was installed at 0.7.0 or later, or its objects are disposable, set acknowledgeStorageRename=true." -}}
+{{- end -}}

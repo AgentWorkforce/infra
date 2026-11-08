@@ -145,6 +145,12 @@ hoopdb:
   backups:
     enabled: false
 
+# Upgrades with the default MinIO name are refused until this is true, because
+# an upgrade from a release before 0.7.0 would replace its 'locker' volume. Set
+# it only if the release was installed at 0.7.0 or later or its objects are
+# disposable; see docs/descriptive-session-names.md.
+acknowledgeStorageRename: false
+
 # ---------------------------------------------------------------------------
 # Session object storage: MinIO (standalone). Disable to use your own S3: then set
 # worker.locker / alleyoop.locker and the credential Secret.

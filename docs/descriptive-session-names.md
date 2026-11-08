@@ -40,10 +40,14 @@ umbrella (or at the root for the pipeline chart):
 ```yaml
 worker:
   legacyResourceNames: true
-  # Retain your existing fullnameOverride/nameOverride and adapter endpoint.
+  # Retain your existing fullnameOverride/nameOverride.
+  locker:
+    endpoint: http://locker:9000 # the former default; keep yours if it differs
 alleyoop:
   legacyResourceNames: true
-  # Retain your existing fullnameOverride/nameOverride and adapter endpoint.
+  # Retain your existing fullnameOverride/nameOverride.
+  locker:
+    endpoint: http://locker:9000 # the former default; keep yours if it differs
 session-object-storage:
   fullnameOverride: locker
   nameOverride: locker
@@ -54,6 +58,15 @@ The two storage overrides above describe the former default; use the actual
 recorded names if the old release overrides them. Identity render tests verify
 that these values still reference the original PVC. They do not create, delete
 or inspect a real volume.
+
+`helm upgrade` refuses a release that uses in-chart MinIO with the default
+`session-object-storage` name and no `persistence.existingClaim`, because Helm
+would otherwise remove `PersistentVolumeClaim/locker` and create an empty claim.
+Set the storage overrides above, or `persistence.existingClaim`. Set
+`acknowledgeStorageRename: true` only for a release installed at 0.7.0 or later,
+or one whose objects are disposable. The check needs a real upgrade: it does not
+run under `helm template` without `--is-upgrade`, so manifest-based pipelines
+must apply these values themselves.
 
 A live move to descriptive resource names requires a separate controlled
 cutover: stop the old indexer before creating its replacement (Deployment

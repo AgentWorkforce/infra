@@ -88,6 +88,36 @@ class Names(unittest.TestCase):
         error = render(args=["--set", "locker.enabled=false"], success=False)
         self.assertIn("locker dependency values were renamed to session-object-storage", error)
 
+    def test_default_storage_upgrade_refused_before_it_can_replace_the_claim(self):
+        error = render(args=["--is-upgrade"], success=False)
+        self.assertIn("could replace MinIO's PersistentVolumeClaim 'locker'", error)
+
+    def test_storage_upgrade_allowed_once_the_claim_is_accounted_for(self):
+        pin_name = ["--set", "session-object-storage.fullnameOverride=locker", "--set", "session-object-storage.nameOverride=locker"]
+        cases = {
+            "pinned name": pin_name,
+            "existing claim": ["--set", "session-object-storage.persistence.existingClaim=locker"],
+            "acknowledged": ["--set", "acknowledgeStorageRename=true"],
+        }
+        for name, args in cases.items():
+            with self.subTest(name):
+                self.assertTrue(render(args=["--is-upgrade", *args]))
+
+    def test_pinned_upgrade_keeps_the_original_claim(self):
+        documents = render(args=["--is-upgrade", "--set", "session-object-storage.fullnameOverride=locker", "--set", "session-object-storage.nameOverride=locker"])
+        claims = [item["metadata"]["name"] for item in documents if item["kind"] == "PersistentVolumeClaim"]
+        self.assertEqual(claims, ["locker"])
+
+    def test_fresh_install_is_not_gated(self):
+        self.assertTrue(render())
+
+    def test_terraform_binds_storage_to_the_rendered_ingest_service_account(self):
+        documents = render()
+        accounts = {item["metadata"]["name"] for item in documents if item["kind"] == "ServiceAccount"}
+        self.assertIn("ci-session-ingest-api", accounts)
+        for path in ("terraform/examples/aws/main.tf", "terraform/examples/aws-environments/main.tf", "terraform/examples/gcp/main.tf"):
+            self.assertIn('["worker", "session-ingest-api"]', (ROOT / path).read_text(), path)
+
 
 if __name__ == "__main__":
     unittest.main()
