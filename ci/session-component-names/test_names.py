@@ -169,7 +169,7 @@ class Names(unittest.TestCase):
         self.assertIn("locker dependency values were renamed to session-object-storage", error)
 
     def test_default_storage_upgrade_refused_before_it_can_replace_the_claim(self):
-        error = render(args=["--is-upgrade"], success=False)
+        error = render(args=["--is-upgrade", "--set", "worker.legacyResourceNames=true"], success=False)
         self.assertIn("could delete MinIO's PersistentVolumeClaim 'locker'", error)
 
     def test_storage_upgrade_allowed_once_the_claim_is_accounted_for(self):
@@ -182,15 +182,15 @@ class Names(unittest.TestCase):
         }
         for name, args in cases.items():
             with self.subTest(name):
-                self.assertTrue(render(args=["--is-upgrade", *args]))
+                self.assertTrue(render(args=["--is-upgrade", "--set", "worker.legacyResourceNames=true", *args]))
 
     def test_existing_claim_named_locker_is_refused_because_helm_would_prune_it(self):
-        args = ["--is-upgrade", "--set", "session-object-storage.persistence.existingClaim=locker"]
+        args = ["--is-upgrade", "--set", "worker.legacyResourceNames=true", "--set", "session-object-storage.persistence.existingClaim=locker"]
         error = render(args=args, success=False)
         self.assertIn("persistence.existingClaim=locker does not protect", error)
 
     def test_pinned_upgrade_keeps_the_original_claim(self):
-        documents = render(args=["--is-upgrade", "--set", "session-object-storage.fullnameOverride=locker", "--set", "session-object-storage.nameOverride=locker"])
+        documents = render(args=["--is-upgrade", "--set", "worker.legacyResourceNames=true", "--set", "session-object-storage.fullnameOverride=locker", "--set", "session-object-storage.nameOverride=locker"])
         claims = [item["metadata"]["name"] for item in documents if item["kind"] == "PersistentVolumeClaim"]
         self.assertEqual(claims, ["locker"])
 
@@ -202,7 +202,26 @@ class Names(unittest.TestCase):
         accounts = {item["metadata"]["name"] for item in documents if item["kind"] == "ServiceAccount"}
         self.assertIn("ci-session-ingest-api", accounts)
         for path in ("terraform/examples/aws/main.tf", "terraform/examples/aws-environments/main.tf", "terraform/examples/gcp/main.tf"):
-            self.assertIn('["worker", "session-ingest-api"]', (ROOT / path).read_text(), path)
+            self.assertIn('["worker", "alleyoop", "session-ingest-api"]', (ROOT / path).read_text(), path)
+
+    def test_storage_upgrade_refuses_custom_empty_or_incomplete_legacy_pins(self):
+        for value in ["", "custom-storage", "locker"]:
+            with self.subTest(fullname=value):
+                error = render(args=["--is-upgrade", "--set", "worker.legacyResourceNames=true", "--set", "session-object-storage.fullnameOverride=" + value], success=False)
+                self.assertIn("could delete MinIO's PersistentVolumeClaim 'locker'", error)
+
+    def test_worker_upgrade_requires_legacy_names_or_explicit_cutover(self):
+        args = ["-f", "charts/sessions-pipeline-worker/ci/default-values.yaml", "--is-upgrade"]
+        self.assertIn("workload rename requires a drained cutover", render("sessions-pipeline-worker", args=args, success=False))
+        self.assertTrue(render("sessions-pipeline-worker", args=args + ["--set", "legacyResourceNames=true"]))
+        documents = render("sessions-pipeline-worker", args=args + ["--set", "acknowledgeWorkloadRename=true"])
+        names = {item["metadata"]["name"] for item in documents if item["kind"] == "Deployment"}
+        self.assertTrue(all(any(name.endswith(public) for public in WORKERS) for name in names))
+
+    def test_foundation_keeps_legacy_identity_output_and_adds_new_identity(self):
+        output = (ROOT / "terraform/modules/aws/foundation/outputs.tf").read_text()
+        self.assertRegex(output, r'alleyoop\s*=\s*"\$\{var.release_name\}-alleyoop"')
+        self.assertRegex(output, r'session_ingest_api\s*=\s*"\$\{var.release_name\}-session-ingest-api"')
 
 
 if __name__ == "__main__":

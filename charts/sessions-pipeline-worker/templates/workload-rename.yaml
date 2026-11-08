@@ -1,0 +1,3 @@
+{{- if and .Release.IsUpgrade (not .Values.legacyResourceNames) (not .Values.acknowledgeWorkloadRename) -}}
+{{- fail "sessions-pipeline-worker: workload rename requires a drained cutover. Retain legacyResourceNames=true, or stop the old indexer and set acknowledgeWorkloadRename=true after reviewing docs/descriptive-session-names.md. Recreate does not prevent overlap between differently named Deployments." -}}
+{{- end -}}
