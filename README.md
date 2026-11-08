@@ -461,20 +461,21 @@ selected explicitly. Locker stores session objects and is still needed.
 Prerequisites: Docker Engine 28+ (including native-platform image export),
 kind 0.31+, kubectl, Helm 3.10+, OpenSSL, Git, Python 3.9+, and PyYAML. Allocate
 enough Docker memory for the suite and CNI; budget 20 GiB free disk for a cold
-setup. The optional native control build also needs authenticated Git read
-access to `AgentWorkforce/relay-control-internal`. The public
-`AgentWorkforce/relay-control` repository contains a squashed release snapshot,
-not the historical commit pinned by this builder. Existing cached checkouts are
-still checked against the exact revision and clean-tree requirements; this does
-not change their remotes or select a newer image. Warm setup checks cached native
+setup. Current optional native Control builds fetch public
+`AgentWorkforce/relay-control` at the exact `a659ac4` source pin. Explicit historical
+reproduction (`KIND_CONTROL_SOURCE=historical`) uses `1f08cb6` from the archived
+private `AgentWorkforce/relay-control-internal` repository and needs authenticated
+Git read access. Current and historical source caches are separate. Existing
+cached checkouts are checked against exact revision and clean-tree requirements;
+the builder does not repoint their remotes. Warm setup checks cached native
 image sizes plus unpacking headroom.
 On Linux the disk preflight measures the admitted daemon’s DockerRootDir. For
 a relocated Docker Desktop disk or another local VM, set
 `KIND_DOCKER_DATA_PATH` to the existing host-side Docker backing file or directory.
 An unavailable storage path refuses setup rather than skipping the check.
-Setup fetches public image/chart/source artifacts; the optional
-`kind-up-local-control` flow additionally fetches private historical source from
-`AgentWorkforce/relay-control-internal`. Runtime suite pods receive no external
+Setup fetches public image/chart/source artifacts. Only explicit historical
+Control reproduction additionally fetches private source from the archived
+repository. Runtime suite pods receive no external
 egress.
 Public image pulls use a private anonymous Docker configuration with explicit
 registry entries, so SSH setup does not invoke a locked native keychain helper
@@ -564,18 +565,24 @@ make kind-proof-core
 ```
 
 This requires Docker BuildKit/buildx and GitHub access during preparation. It
-builds the official relaycontrol Dockerfile at `1f08cb6` using a pinned Node base,
+builds the official public Control Dockerfile at `a659ac4` using a pinned Node base,
 selects the native manifest digest in this worktree's private values, loads it
 into kind and uses `imagePullPolicy: Never`. The OCI manifest/config hashes,
 architecture and source revision are verified before installation. The build
 receipt is `.kind/core/control-build.json`. `make kind-build-control PROFILE=core`
 performs just the build/selection; it does not install or publish an image.
+For the previous source, use `KIND_CONTROL_SOURCE=historical make kind-build-control PROFILE=core`.
+This selects the archived `1f08cb6` pin explicitly. Existing
+historical image receipts remain admissible only with their exact source, native
+architecture, tag and manifest reference; selecting current source does not
+silently rewrite a historical receipt or reuse its source cache.
 The normal catalog profile remains unchanged. Each build captures its resulting
 artifact digest; the official Dockerfile's runtime npm dependency ranges mean
 that identical source does not guarantee identical rebuilt image bytes.
-Both public MCP paths now pass real-token initialization, nineteen-tool discovery,
+The historical `1f08cb6` proof covers both public MCP paths with real-token initialization, nineteen-tool discovery,
 workspace/public-origin binding and negative auth/origin checks in the recorded
-local-control proof. Agent launch/release remains pending.
+local-control proof. It has not been rerun for `a659ac4`; no current-build runtime
+acceptance is implied. Agent launch/release remains pending.
 The local bootstrap applies release objects client-side before final Helm
 reconciliation. On Helm 4 the wrapper explicitly selects its supported
 [`--server-side=false`](https://docs.helm.sh/docs/helm/helm_upgrade/) mode to keep
@@ -659,7 +666,7 @@ a database row. See [captured evidence](ci/agent-relay/kind/evidence.md).
 | Current image/source compatibility | Component owners: record exact source SHA and migrator generation; a tag named `main` is insufficient. This run used services source `f1c2672581b6f88d26d0549b4d1cb78fce0d5f16`, generation `0dcd0e89bebbdad789a40fa61311c601b4c0e49e389e3b2b0167b6fd5fdf542e`. |
 | RelayAuth removal | layered-control + layered-sessions-pipeline: default-off introspection branch, `sh_at_`, `rth:read/rth:sync`; keep the temporary internal component until compatible images ship. |
 | Cost attribution data | History's client-reported fixture usage/cost passes authenticated ingest and TLS readback, including owner and workspace isolation. This does not claim live model billing or courier-session application visibility. |
-| Control image and MCP endpoint | PASS for the optional `kind-up-local-control` variant: pinned source `1f08cb6`, verified native manifest transport, both public MCP aliases, nineteen-tool discovery, real workspace binding and auth/origin rejection ([raw receipts](ci/agent-relay/kind/evidence.md)). The catalog default remains source `9b80b04` and reports MCP pending. This does not claim agent launch/release or every MCP tool backend. No image publication is performed. |
+| Control image and MCP endpoint | PASS for the recorded historical local-Control variant at pinned source `1f08cb6`: verified native manifest transport, both public MCP aliases, nineteen-tool discovery, real workspace binding and auth/origin rejection ([raw receipts](ci/agent-relay/kind/evidence.md)). Current public source `a659ac4` has not received that runtime proof. The catalog default remains source `9b80b04` and reports MCP pending. This does not claim agent launch/release or every MCP tool backend. No image publication is performed. |
 | Custom Desktop package for ar-lap | layered-relay-desktop: target build/artifact and real browser/Desktop handoff plus courier-to-app trace are not qualified by the infra proof. Device auth and site TLS endpoint checks do not substitute for that custom application run. |
 | Agent launch/release | layered-control: API unimplemented; fleet node claim/release is not this proof. |
 | Signed offline license enforcement | layered-control: design only. `relay-control.license.existingSecret/key` reserves the `SELFHOST_LICENSE_FILE` mount; the file slot does not verify signatures or gate add-ons. |
