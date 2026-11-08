@@ -582,6 +582,22 @@ class Stack:
         for tool in ("docker", "kind", "kubectl", "helm", "openssl", "git"):
             if not shutil.which(tool):
                 raise StackError(f"missing prerequisite: {tool}")
+        # Native selection is not compatible with the legacy PostgreSQL and
+        # writer bootstrap below. Refuse before Docker config, ready.json,
+        # image or cluster mutation until the native adapter is integrated.
+        from native_recipe import NativeRecipeError, merge_values, refuse_legacy_up
+        try:
+            early_values = [yaml.safe_load((ROOT / "charts/agent-relay/values.yaml").read_text()) or {}]
+            args = self.values_args()
+            for index in range(0, len(args), 2):
+                if args[index] != "-f":
+                    raise StackError("unrecognized native preflight values argument")
+                early_values.append(yaml.safe_load(Path(args[index + 1]).read_text()) or {})
+            refuse_legacy_up(merge_values(*early_values))
+        except NativeRecipeError as err:
+            raise StackError(str(err)) from None
+        except (OSError, yaml.YAMLError):
+            raise StackError("native recipe preflight inputs unavailable; no mutation attempted") from None
         self.docker(require_space=False)
         # Legacy recovery needs the original ready.json as an independent UID
         # anchor. Refuse foreign/legacy ownership BEFORE invalidating it or
