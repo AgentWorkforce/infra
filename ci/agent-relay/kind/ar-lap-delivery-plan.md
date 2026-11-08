@@ -22,6 +22,45 @@ Add-ons remain in the overall two-profile scope, after this core handoff.
 | Component analytics adapters — each producer owner; owner map coordinated with infragrok | **NOT COMMITTED** for complete producer coverage | **NOT COMMITTED** for the local collector/adapter assembly | **NOT COMMITTED** for local event capture from every component with hosted egress denied | Self-host routes to local/in-cluster file collection; hosted uses the approved PostHog endpoint. Telemetry disabled is not analytics coverage. A pipeline OTLP file exporter alone does not cover product analytics or Desktop/browser intake. |
 | Add-ons — infra-kind-stack (profiles/proof), layered-control (signed license), layered-relayfile (filesystem authority), Flows runtime owner to be named | **NOT COMMITTED** for complete gated runtime | Native Flows/file build preparation exists; signed-license/scoped-authority artifact dates **NOT COMMITTED** | **NOT COMMITTED** for installed Flow run, controller-scheduled CronJob firing and authenticated file read/write | Deferred from the first cofounder core handoff, not removed from the overall goal. No dev issuer, fake license or manually instantiated CronJob counts as acceptance. |
 
+## Desktop owner build and trust contract
+
+Layered-relay-desktop supplied readiness information against source
+`6a5216749e6389c5c468db72c7ef2e4356b71e76`. **No qualified Desktop binary exists
+for this target. Code, artifact and real installed-app proof dates remain NOT
+COMMITTED.** A site Desktop Release dispatch is a separate release action gated
+by Khaliq; infra has not dispatched, published, created environment settings or
+installed System trust.
+
+The site is fixed at build time. A default-profile app cannot be retargeted with
+runtime environment variables. The site build must compile the exact origin
+`https://relay.kind.agentrelay.com:8443` and scheme `agentrelay-kind`; the port is
+part of the origin match. Its opaque profile id selects `desktop-<id>` in GitHub
+Environments. The release owner needs the following key names, not values in
+logs or handoff reports:
+
+| Input | Required contract |
+| --- | --- |
+| Site identity | `AGENT_RELAY_SITE_URL`, `AGENT_RELAY_URL_SCHEME`, `DESKTOP_PRODUCT_NAME`, `DESKTOP_BUNDLE_ID`; site-profile values must differ from the default profile. |
+| GitHub feed, reported working option | `RELEASE_FEED=github:<owner>/<name>`, `RELEASES_REPOSITORY`, and publisher credential references `DESKTOP_RELEASES_APP_ID` / `DESKTOP_RELEASES_PRIVATE_KEY`, or `RELEASES_TOKEN`. Feed/repository and release approval remain owner decisions. |
+| Cloud feed alternative | Owner reports the signing-cap fix remains unlanded; this is not an available substitute for the first ar-lap artifact. No cloud-feed action is requested. |
+| Platform and signing | macOS ARM64 DMG/pkg; existing repository Apple signing/notarization identity, not a new per-profile identity. |
+| Trust and hostname resolution | Fixture public CA installed as trusted in ar-lap's **System** keychain before Desktop/LaunchAgent calls. Login-keychain trust is insufficient. Desktop uses native OS roots and exposes no custom-CA/pinning bypass. The local hostname entries are still required. |
+
+On the reported main, a telemetry key without a host still selects the public
+PostHog default. The current safe partial-fixture configuration has **no telemetry
+key**; disabling telemetry does not satisfy full analytics coverage. The reviewed
+fail-closed changes are not assumed landed. Full acceptance needs the actual
+site adapter/gateway and local collector. The owner-reported proposed Desktop
+intake `/api/v1/telemetry/desktop` remains design work, distinct from the internal
+collector `POST /v1/events`. Native Desktop egress also needs its own proof;
+the kind pod NetworkPolicy test does not constrain the host application.
+
+The browser/device operator flow is compatible with this site build and requires
+no public OIDC/SMTP. History origin and pushed-history host admission still need
+explicit source confirmation for `history.kind.agentrelay.com:8443`; an untrusted
+origin opt-in is not an acceptance substitute. The release owner has been asked
+for a reviewable non-secret build manifest and this admission clarification.
+
 ## Relayfile owner dates and gates
 
 Layered-relayfile supplied the following UTC milestones. Code completion covers

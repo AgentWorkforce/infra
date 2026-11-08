@@ -580,7 +580,14 @@ The CA private
 key stays on the host; Kubernetes receives only the separate server leaf key.
 The leaf certificate covers these hostnames for 30 days. Desktop builds can
 target `AGENT_RELAY_SITE_URL=https://relay.kind.agentrelay.com:8443` and
-`AGENT_RELAY_URL_SCHEME=agentrelay-kind`. The dashboard carries the matching
+`AGENT_RELAY_URL_SCHEME=agentrelay-kind` as **compile-time site-build inputs**;
+runtime environment variables cannot retarget a default-profile Desktop.
+The Desktop owner reports that its LaunchAgent core requires the fixture CA in
+the macOS **System** keychain; login-keychain trust is insufficient. Desktop has
+no custom-CA or trust-bypass setting. No trust-store change is made by this
+installer. The [Desktop delivery contract](ci/agent-relay/kind/ar-lap-delivery-plan.md#desktop-owner-build-and-trust-contract)
+tracks the separate release/artifact gate and analytics requirements.
+The dashboard carries the matching
 Desktop link settings. The proof routes to loopback with verified TLS/SNI,
 so it requires neither editing `/etc/hosts` nor disabling certificate checks.
 Add-on SDK dependencies are committed in `ci/agent-relay/kind/flows-sdk/package-lock.json`
