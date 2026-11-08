@@ -3,16 +3,18 @@
 This is source review and read-only diagnosis, not an enabled deployment or an
 end-to-end pass. Core local-control proof at `fd8565c` records 57 PASS, 0 FAIL, 3 PENDING.
 
-The reviewed drafts are pipeline [#317 at 33f33c4e](https://github.com/AgentWorkforce/relayhistory-pipeline/pull/317)
-and [#318 at a4311806](https://github.com/AgentWorkforce/relayhistory-pipeline/pull/318).
+The reviewed drafts are pipeline [#317 at a7d7a5db](https://github.com/AgentWorkforce/relayhistory-pipeline/pull/317),
+[#318 at 441e4862](https://github.com/AgentWorkforce/relayhistory-pipeline/pull/318)
+and the additional PG-only source in [#330 at 44b81b56](https://github.com/AgentWorkforce/relayhistory-pipeline/pull/330).
 Both were open drafts when checked; no merge, enablement or deployment was done.
 Relaycontrol remains a proxy to `RELAYHISTORY_URL`, with no pipeline URL added.
 
 ## Proposed chart inputs
 
 Use the existing sessions-pipeline chart, with a default-off read API component.
-No new chart or runtime server wrapper is needed. Coordinate chart versions with
-the chart owners before adding the component; no version is reserved yet.
+No new chart or runtime server wrapper is needed. Draft infra #81 reserves
+sessions-pipeline `0.6.2`, relay-cloud-api `0.2.7` and agent-relay `0.3.16` for
+this default-off plumbing; no kind profile enables the read service.
 
 | Input | Draft contract |
 | --- | --- |
@@ -32,9 +34,12 @@ establish a replacement for every legacy History delivery/ingest route.
 
 ## Remaining integration blockers
 
-1. The draft container uses the Lambda assembly without a registered Postgres
-   search composition. Its documented search backend is still ClickHouse; core
-   requires a real Postgres-only composition, not a disabled or mocked search.
+1. Draft #330 adds a Postgres-only reader composition through the existing adapter
+   registry, without constructing ClickHouse. A compatible approved immutable
+   image is still required, together with owner-provided schema/bootstrap/grants
+   and a real canonical reconciliation writer. Missing relations/grants return
+   503 and missing/stale completeness remains partial; no seeded state or empty
+   success can satisfy search acceptance.
 2. The assembly requires Postgres TLS. Current kind Postgres deliberately has TLS
    off. A supported TLS configuration is needed; verification must stay enabled.
 3. `readAppFromSecret` does not bind a canonical object source. Catalog therefore
@@ -49,6 +54,18 @@ establish a replacement for every legacy History delivery/ingest route.
 These belong to the pipeline/control/History service owners. The chart must not
 invent missing runtime composition, bypass grants, mirror session rows between
 databases, or claim the service ready from its dormant health response.
+
+The #330 service also requires `SESSION_POSTGRES_TLS_PROFILE` explicitly and,
+when using Postgres search, a nonempty `SEARCH_INDEX_POSTGRES_BACKEND_ID` matching
+the writer. For kind's custom CA, the upstream inputs are
+`SESSION_POSTGRES_TLS_PROFILE=custom-ca`, `SESSION_POSTGRES_CA_FILE` and
+`SESSION_POSTGRES_CA_SHA256` over the exact mounted public PEM bytes. The chart's
+`readApi.extraEnv`, `extraVolumes` and `extraVolumeMounts` can carry these reviewed
+inputs; they do not create a server certificate, schema or writer. The coverage
+floor must agree with the writer. No TLS bypass or owner credential belongs in
+the reader. Complete upload/sync/cost compatibility must also be established
+before replacing the existing History read URL; control #27's read-only exchange
+does not provide a sync session.
 
 ## Read-only diagnosis of the existing courier fixture
 
