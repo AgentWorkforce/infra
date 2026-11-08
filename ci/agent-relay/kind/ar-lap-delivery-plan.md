@@ -1,18 +1,19 @@
 # ar-lap delivery checklist
 
-Updated 2026-11-08, 02:35 UTC. Dates below are executed evidence or explicit
+Updated 2026-11-08. Dates below are executed evidence or explicit
 owner commitments, never inferred from an open PR or an estimated hosted rollout.
 **NOT COMMITTED** means that the owner has not supplied that date. Requests for
 code, artifact and proof dates have been sent to the existing component owners.
 
 The first cofounder handoff prioritizes Relaycast, relayhistory-pipeline and
-relaycontrol, following Khaliq's setup request. A partial core fixture is running
-now; that is distinct from the complete product acceptance requested originally.
+relaycontrol, following Khaliq's setup request. A partial core fixture was
+installed and proved; that is distinct from the complete product acceptance
+requested originally. Static receipts do not monitor current host availability.
 Add-ons remain in the overall two-profile scope, after this core handoff.
 
 | Milestone and owner | Code complete | Artifact available | Actual proof PASS | Remaining dependency / disposition |
 | --- | --- | --- | --- | --- |
-| Core fixture — infra-kind-stack | 2026-11-08: tested source `1c203f59`; three fresh-Mac portability fixes included | 2026-11-08: pinned baseline images loaded on ar-lap; native control reused from the verified Finn build, not built anew | 2026-11-08: setup exit 0; protocol **57 PASS / 0 FAIL / 3 PENDING**, exit 2; complete acceptance remains pending | [Fresh receipts](ar-lap-proof.json), [readiness](ar-lap-ready.json), [images](ar-lap-images.json), [transport](ar-lap-control-transport.json). All ten deployments and edge ready. PR #79 publication `96fc3b7` is mergeable; all six Actions checks were still queued at this update. Merge approval is separate. |
+| Core fixture — infra-kind-stack | 2026-11-08: tested source `1c203f59`; three fresh-Mac portability fixes included | 2026-11-08: pinned baseline images loaded on ar-lap; native control reused from the verified Finn build, not built anew | 2026-11-08: setup exit 0; protocol **57 PASS / 0 FAIL / 3 PENDING**, exit 2; complete acceptance remains pending | [Fresh receipts](ar-lap-proof.json), [readiness](ar-lap-ready.json), [images](ar-lap-images.json), [transport](ar-lap-control-transport.json). All ten deployments and edge were ready at that run. CI completion at the current PR #79 head and merge approval are separate gates. |
 | Pipeline-to-app session reads — pipeline-lead coordinates layered-sessions-pipeline; infra-kind-stack owns operator wiring | **NOT COMMITTED** for the complete writer/read/canonical/TLS/auth assembly | **NOT COMMITTED** for a compatible, source-pinned OCI assembly | **NOT COMMITTED**; `pipeline.app_visibility` remains pending | #317/#318/#330 are drafts. #330 supplies a PG reader composition, but needs a real projection writer, approved schema/grants and verified TLS; canonical catalog binding and compatible control auth/upload/cost contracts remain. Operator wiring must follow a matching image/ACL generation. |
 | Control completion — layered-control | **NOT COMMITTED** for launch/release, workspace delete and compatible auth/read assembly | **NOT COMMITTED** | **NOT COMMITTED**; `agent_launch_release` and `cleanup.control_plane_workspaces` remain pending | Native `1f08cb6` MCP discovery/auth passes. #20/#27 are draft successors, not enabled. A reader-only route must not silently replace working upload/cost routes. |
 | Custom Desktop — layered-relay-desktop | **NOT COMMITTED** | **NOT COMMITTED** for a site build and ar-lap install/trust instructions | **NOT COMMITTED** for installed Desktop login, upload and visible readback | Site URL `https://relay.kind.agentrelay.com:8443`, scheme `agentrelay-kind`; local public CA available. Browser/device protocol tests are not a custom Desktop artifact proof. Depends on the pipeline/control assembly and the approved local analytics path. |
@@ -21,7 +22,32 @@ Add-ons remain in the overall two-profile scope, after this core handoff.
 | Component analytics adapters — each producer owner; owner map coordinated with infragrok | **NOT COMMITTED** for complete producer coverage | **NOT COMMITTED** for the local collector/adapter assembly | **NOT COMMITTED** for local event capture from every component with hosted egress denied | Self-host routes to local/in-cluster file collection; hosted uses the approved PostHog endpoint. Telemetry disabled is not analytics coverage. A pipeline OTLP file exporter alone does not cover product analytics or Desktop/browser intake. |
 | Add-ons — infra-kind-stack (profiles/proof), layered-control (signed license), layered-relayfile (filesystem authority), Flows runtime owner to be named | **NOT COMMITTED** for complete gated runtime | Native Flows/file build preparation exists; signed-license/scoped-authority artifact dates **NOT COMMITTED** | **NOT COMMITTED** for installed Flow run, controller-scheduled CronJob firing and authenticated file read/write | Deferred from the first cofounder core handoff, not removed from the overall goal. No dev issuer, fake license or manually instantiated CronJob counts as acceptance. |
 
-## Exact current pending trace
+## Relayfile owner dates and gates
+
+Layered-relayfile supplied the following UTC milestones. Code completion covers
+the introspection/scoped-authority slice, not an installed add-on or a license.
+
+| Milestone | Owner date / evidence |
+| --- | --- |
+| Auth code complete | Owner-reported **2026-11-07T19:52Z**, frozen [relayfile #568](https://github.com/AgentWorkforce/relayfile/pull/568) at `859a52a1cb62791f1ba1af9b3b597de5a9f73ea4`, based on `731ea459`. Source check confirmed the draft is open at that head with ten successful CI checks and CodeRabbit skipped. Required external review and merge dates remain **NOT COMMITTED**. |
+| Compatible server artifact | **NOT COMMITTED**. No published server image is supplied by the actors/npm publishing paths. Kind can use a local source build after the approved code lands; registry publication is a separate release decision. The older native `731ea459` build does not prove the new authority contract. |
+| Authenticated file write/read proof | **NOT COMMITTED**. Needs the real relaycontrol relayfile-agent token class and introspection pair, approved #568 code, chart endpoint/audience/mode and Secret inputs, the separate false-readiness fix, and an actual add-on roundtrip with genuine filesystem scopes. |
+
+The control token-class dependency is draft [#22](https://github.com/AgentWorkforce/relay-control/pull/22)
+at `bf529f8d7aa9a148660009a6aa0a79811c374b47`; control introspection #20 is also
+still a draft. The backend-load/readiness issue is relayfile #569, a separate
+follow-up after #568. A static `/health` 200 must not count as storage readiness.
+Signed offline license enforcement remains with the control owner. No dev issuer
+or token minting is authorized by these dates.
+
+The old kind Postgres TLS-off DSN blocker is already mitigated: `Stack.credentials`
+sets `RELAYFILE_PRODUCTION_DSN` with `?sslmode=disable`, and the earlier evidence
+records the separate false-health finding. That operator mitigation does not
+claim #569 is fixed or that authenticated persistence/readback has passed.
+Future relaycontrol introspection chart slots are still pending; they are not
+present merely because the old Go server boots.
+
+## Captured pending trace
 
 The new ar-lap courier session `7b847789-498a-4e30-8188-cd5cb504407e` passed
 upload, owner attribution, indexer, referee, Locker, trace/event and scrub checks.
