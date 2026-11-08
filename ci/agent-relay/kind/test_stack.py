@@ -108,6 +108,7 @@ class Profiles(unittest.TestCase):
         cron = next(d for d in docs if d["kind"] == "CronJob")
         self.assertEqual(cron["metadata"]["name"], "relayflows")
         self.assertEqual(cron["spec"]["schedule"], "* * * * *")
+        self.assertEqual(cron["spec"]["concurrencyPolicy"], "Forbid")
         self.assertFalse(stack.pod_spec(cron).get("initContainers"), "pod startup must not download a runtime")
         self.assertFalse(any(d["kind"] == "Job" and "relayflows" in d["metadata"]["name"] for d in docs))
         file = next(d for d in docs if d["kind"] == "Deployment" and d["metadata"]["name"] == "relayfile-server")
@@ -124,9 +125,9 @@ class Profiles(unittest.TestCase):
         secret = next(v for v in spec["volumes"] if v["name"] == "license")["secret"]
         self.assertEqual(secret["secretName"], "kind-addon-license")
         self.assertEqual(secret["items"], [{"key": "license", "path": "license"}])
-        for job in (d for d in docs if d["kind"] == "Job"):
-            self.assertNotIn("SELFHOST_LICENSE", json.dumps(job))
-            self.assertNotIn("kind-addon-license", json.dumps(job))
+        for workload in (d for d in docs if stack.pod_spec(d) and d is not api):
+            self.assertNotIn("SELFHOST_LICENSE", json.dumps(workload))
+            self.assertNotIn("kind-addon-license", json.dumps(workload))
         core = self.render()
         self.assertNotIn("SELFHOST_LICENSE", json.dumps(core))
 
@@ -137,6 +138,42 @@ class Profiles(unittest.TestCase):
         self.assertIn("license.key", self.render("addons", extra=["--set", "relay-cloud-api.license.key=../bad"], ok=False))
         self.assertIn("must not mount the migration credential", self.render("addons", extra=["--set", "relay-cloud-api.license.existingSecret=kind-control", "--set", "relay-cloud-api.license.key=database-migrations-url"], ok=False))
         self.assertIn("SELFHOST_LICENSE_FILE is managed", self.render("addons", extra=["--set", "relay-cloud-api.extraEnv[0].name=SELFHOST_LICENSE_FILE", "--set", "relay-cloud-api.extraEnv[0].value=/other-license"], ok=False))
+
+    def test_local_scope_guard_and_configurable_api_ingress(self):
+        self.assertIn("allowLocalOnly", self.render(extra=["--set", "localKind.allowLocalOnly=false"], ok=False))
+        self.assertIn("child egress", self.render("addons", extra=["--set", "relayflows.networkPolicy.enabled=true"], ok=False))
+        docs = self.render(extra=["--set", "relay-cloud-api.fullnameOverride=other-control",
+                                  "--set", "relay-dashboard.api.serviceName=other-control",
+                                  "--set", "relay-dashboard.ingress.host=custom.kind.agentrelay.com",
+                                  "--set", "relay-dashboard.ingress.className=custom",
+                                  "--set", "relay-dashboard.ingress.tls[0].secretName=custom-tls"])
+        ingress = next(d for d in docs if d["kind"] == "Ingress" and d["metadata"]["name"] == "kind-control-api")
+        self.assertEqual(ingress["spec"]["ingressClassName"], "custom")
+        self.assertEqual(ingress["spec"]["tls"][0]["secretName"], "custom-tls")
+        self.assertEqual(ingress["spec"]["rules"][0]["host"], "custom.kind.agentrelay.com")
+        self.assertEqual(ingress["spec"]["rules"][0]["http"]["paths"][0]["backend"]["service"]["name"], "other-control")
+
+    def test_license_secret_shape_and_all_credential_collisions(self):
+        for name in ("a.-b", "a" * 254):
+            self.assertIn("Kubernetes Secret name", self.render("addons", extra=["--set-string", "relay-cloud-api.license.existingSecret="+name], ok=False))
+        for key in ("database-url", "database-migrations-url", "relayauth-api-key"):
+            self.assertIn("must not mount", self.render("addons", extra=["--set", "relay-cloud-api.license.existingSecret=kind-control",
+                                                                      "--set", "relay-cloud-api.license.key="+key], ok=False))
+        self.render("addons", extra=["--set", "relay-cloud-api.license.key=2024"])
+
+    def test_extra_env_cannot_bypass_validation_or_expose_migration_credentials(self):
+        invalid = [
+            (["--set", "relay-cloud-api.extraEnv[0].name=SELFHOST_OIDC_ISSUER", "--set", "relay-cloud-api.extraEnv[0].value=http://bad"], "managed"),
+            (["--set", "relay-cloud-api.extraEnv[0].name=CUSTOM", "--set", "relay-cloud-api.extraEnv[0].value=true"], "must be a string"),
+            (["--set", "relay-cloud-api.extraEnv[0].name=CUSTOM_TOKEN", "--set", "relay-cloud-api.extraEnv[0].value=inline"], "never inline"),
+            (["--set", "relay-cloud-api.extraEnv[0].name=CUSTOM", "--set", "relay-cloud-api.extraEnv[0].valueFrom.secretKeyRef.name=kind-control",
+              "--set", "relay-cloud-api.extraEnv[0].valueFrom.secretKeyRef.key=database-migrations-url"], "migration credential"),
+        ]
+        for args, diagnostic in invalid:
+            self.assertIn(diagnostic, self.render(extra=args, ok=False))
+        self.render(extra=["--set", "relay-cloud-api.extraEnv[0].name=CUSTOM_TOKEN",
+                           "--set", "relay-cloud-api.extraEnv[0].valueFrom.secretKeyRef.name=separate-secret",
+                           "--set", "relay-cloud-api.extraEnv[0].valueFrom.secretKeyRef.key=token"])
 
     def test_pending_can_never_be_aggregate_success(self):
         self.assertEqual(exit_code([]), 1)

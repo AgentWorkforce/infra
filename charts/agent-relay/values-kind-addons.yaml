@@ -14,6 +14,10 @@ relayflows:
   image: { repository: agent-relay-kind/flows, tag: "2.0.50", pullPolicy: Never }
   runtimeInstaller: { enabled: false }
   telemetry: { enabled: false }
+  # kind local-path is not a CSI driver and cannot provide ReadWriteOncePod.
+  # This development fixture relies on CronJob Forbid plus the proof
+  # suspending/draining scheduled Jobs before its manual run. Operators must
+  # not launch concurrent writers; production retains the chart RWOP default.
   persistence: { size: 1Gi, accessModes: [ReadWriteOnce] }
   standalone:
     localAgent: false

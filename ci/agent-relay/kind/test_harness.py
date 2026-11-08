@@ -12,6 +12,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import proof
 import stack
 import addons
+import tls
+import control
 
 
 class Harness(unittest.TestCase):
@@ -38,6 +40,98 @@ class Harness(unittest.TestCase):
         self.assertEqual(len(jobs), 2)
         self.assertNotEqual(jobs[0]["metadata"]["name"], jobs[1]["metadata"]["name"])
         self.assertEqual(waited, [j["metadata"]["name"] for j in jobs])
+
+    def test_secret_apply_never_creates_plaintext_last_applied_annotation(self):
+        calls = []
+        def k(*args, **kwargs):
+            calls.append((args, kwargs))
+            return subprocess.CompletedProcess(args, 0, json.dumps({"metadata": {"name": "fixture", "namespace": "agent-relay", "resourceVersion": "42",
+                "annotations": {"keep": "yes", "kubectl.kubernetes.io/last-applied-configuration": "private-old-value"}}}) if args[0] == "get" else "", "")
+        self.local.k = k
+        self.local.secret("fixture", {"private": "secret-value"})
+        args, kwargs = calls[-1]
+        self.assertEqual(args[0], "replace")
+        self.assertTrue(kwargs["sensitive"])
+        doc = json.loads(kwargs["data"])
+        self.assertNotIn("stringData", doc)
+        self.assertNotIn("secret-value", kwargs["data"])
+        self.assertEqual(doc["metadata"]["resourceVersion"], "42")
+        self.assertEqual(doc["metadata"]["annotations"], {"keep": "yes"})
+        import base64
+        self.assertEqual(base64.b64decode(doc["data"]["private"]), b"secret-value")
+
+    def test_addon_build_checks_checkout_space_before_fetch_or_cargo(self):
+        self.local.check_space = lambda needed: None
+        with patch.object(addons.shutil, "disk_usage", return_value=SimpleNamespace(free=1)), patch.object(addons, "checkout") as checkout:
+            with self.assertRaisesRegex(ValueError, "checkout volume"):
+                addons.build(self.local)
+            checkout.assert_not_called()
+
+    def test_cached_leaf_with_missing_host_or_wrong_key_is_reissued(self):
+        self.local.apply = lambda *args, **kwargs: None
+        self.local.tls()
+        ca = (self.local.state / "ca.crt").read_bytes()
+        old = (self.local.state / "tls.crt").read_bytes()
+        tls.create(self.local, [*stack.HOSTS, "new.kind.agentrelay.com"], stack.NS)
+        self.assertNotEqual((self.local.state / "tls.crt").read_bytes(), old)
+        old = (self.local.state / "tls.crt").read_bytes()
+        self.local.cmd(["openssl", "genrsa", "-out", self.local.state / "tls.key", "2048"])
+        tls.create(self.local, [*stack.HOSTS, "new.kind.agentrelay.com"], stack.NS)
+        self.assertNotEqual((self.local.state / "tls.crt").read_bytes(), old)
+        self.assertEqual((self.local.state / "ca.crt").read_bytes(), ca)
+
+    def test_invalid_profile_cannot_inject_shell_commands_through_make(self):
+        sentinel = self.root / "injected"
+        result = subprocess.run(["make", "kind-render", "PYTHON=" + sys.executable,
+                                 "PROFILE=core'; touch " + str(sentinel) + "; #"],
+                                cwd=Path(__file__).resolve().parents[3], text=True, capture_output=True, timeout=30)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("invalid choice", result.stderr)
+        self.assertFalse(sentinel.exists())
+
+    def test_failed_archive_inspection_removes_only_own_transport(self):
+        self.local.arch = "arm64"
+        self.local.check_space = lambda needed: None
+        keep = self.local.state / "keep"
+        keep.write_text("preserve")
+        archive = self.local.state / "control-image.tar"
+        def command(args, **kwargs):
+            if "save" in args:
+                archive.write_text("transient image")
+            return subprocess.CompletedProcess(args, 0, "", "")
+        self.local.cmd = command
+        with patch.object(control, "checkout"), patch.object(control, "inspect_archive", side_effect=ValueError("wrong image")):
+            with self.assertRaisesRegex(ValueError, "wrong image"):
+                control.build(self.local)
+        self.assertFalse(archive.exists())
+        self.assertEqual(keep.read_text(), "preserve")
+
+    def test_pipeline_cleanup_error_preserves_original_read_failure(self):
+        p = proof.Proof(self.local)
+        p.state["a"] = {"ownerUserId": "owner"}
+        self.local.k = lambda *args, **kwargs: subprocess.CompletedProcess(args, 0, '{"accessToken":"private-token"}', "")
+        def edge(host, path, *args, **kwargs):
+            if "revoke" in path:
+                raise ValueError("private cleanup response")
+            raise stack.StackError("original read failure")
+        p.edge = edge
+        with self.assertRaisesRegex(stack.StackError, "original read failure"):
+            p.pipeline_app_visibility("session", {"workspaceId": "workspace"})
+        self.assertEqual(p.checks, [{"result": "FAIL", "check": "pipeline.read_session_cleanup", "detail": "ValueError"}])
+
+    def test_cost_sync_session_is_revoked_even_when_ingest_fails(self):
+        p = proof.Proof(self.local)
+        p.state.update(a={"accessToken": "control-token", "workspaceId": "workspace"}, session={"sessionId": "session"})
+        self.local.k = lambda *args, **kwargs: subprocess.CompletedProcess(args, 0, '{"accessToken":"sync-token","payload":{}}', "")
+        calls = []
+        def edge(host, path, *args, **kwargs):
+            calls.append((host, path, kwargs))
+            return (200, '{"revoked":true}') if "revoke" in path else (500, '{}')
+        p.edge = edge
+        with self.assertRaisesRegex(stack.StackError, "did not accept"):
+            p.cost_attribution()
+        self.assertEqual(calls[-1][1], "/v1/auth/token/revoke")
+        self.assertEqual(calls[-1][2]["body"], {"token": "sync-token"})
 
     def test_unexpected_run_and_cleanup_errors_replace_old_success(self):
         report = self.local.state / "proof.json"

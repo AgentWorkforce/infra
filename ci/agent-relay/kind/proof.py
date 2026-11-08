@@ -73,7 +73,7 @@ class Proof:
         conn = http.client.HTTPSConnection(host, 8443, context=context, timeout=15)
         # Route locally without changing system DNS. TLS still verifies host/SNI.
         conn._create_connection = lambda address, timeout, source_address=None: socket.create_connection(("127.0.0.1", 8443), timeout)
-        headers = {"accept": "application/json"}
+        headers = {"accept": "application/json", "X-Correlation-Id": "kind-proof-" + self.marker}
         if token:
             headers["authorization"] = "Bearer " + token
         if body is not None:
@@ -253,10 +253,8 @@ class Proof:
                 _, outcome, check, detail = line.split("|", 3)
                 self.record(outcome, check, detail)
         self.require(result.returncode == 0 and session, "courier did not successfully upload a session")
-        s.k("exec", "-i", "deploy/alleyoop-ingest", "--", "sh", "-c", "cat > /tmp/kind-pipeline-read.ts",
-            data=(ROOT / "ci/agent-relay/kind/pipeline.ts").read_text())
         result = s.k("exec", "deploy/alleyoop-ingest", "--", "env", "E2E_PIPELINE_USER_ID="+self.state["bulls"]["userId"],
-                     "bun", "/tmp/kind-pipeline-read.ts", marker, session,
+                     "bun", "/tmp/kind-pipeline.ts", "verify-offline", marker, session, "180",
                      timeout=210, sensitive=True, check=False)
         proofs = 0
         for line in result.stdout.splitlines():
@@ -285,8 +283,13 @@ class Proof:
                 time.sleep(1)
             self.record("PENDING", "pipeline.app_visibility", "courier upload/index/Locker verified, but authenticated Default workspace application API returned 200 without that session; read-path integration contract required")
         finally:
-            status, body = self.edge("relay.kind.agentrelay.com", "/api/v1/auth/token/revoke", method="POST", body={"token": token})
-            self.require(status == 200 and json.loads(body).get("revoked") is True, "temporary pipeline-read device session was not revoked")
+            # Preserve any original read exception and report cleanup as a
+            # separate failure instead of replacing the causal diagnostic.
+            try:
+                status, body = self.edge("relay.kind.agentrelay.com", "/api/v1/auth/token/revoke", method="POST", body={"token": token})
+                self.require(status == 200 and json.loads(body).get("revoked") is True, "temporary pipeline-read device session was not revoked")
+            except Exception as error:
+                self.record("FAIL", "pipeline.read_session_cleanup", type(error).__name__)
 
     def cost_attribution(self):
         s, a = self.stack, self.state["a"]
@@ -296,8 +299,16 @@ class Proof:
                      data=json.dumps({"accessToken": a["accessToken"], "workspaceId": a["workspaceId"],
                                       "sessionId": self.state["session"]["sessionId"], "marker": self.marker}))
         expected = json.loads(result.stdout)
-        status, body = self.edge("history.kind.agentrelay.com", "/v1/ingest", expected.pop("accessToken"), "POST", expected.pop("payload"))
-        self.require(status == 200 and json.loads(body).get("accepted") == 1, "public History TLS ingest did not accept reported cost fixture")
+        sync_token, payload = expected.pop("accessToken"), expected.pop("payload")
+        try:
+            status, body = self.edge("history.kind.agentrelay.com", "/v1/ingest", sync_token, "POST", payload)
+            self.require(status == 200 and json.loads(body).get("accepted") == 1, "public History TLS ingest did not accept reported cost fixture")
+        finally:
+            try:
+                status, body = self.edge("history.kind.agentrelay.com", "/v1/auth/token/revoke", method="POST", body={"token": sync_token})
+                self.require(status == 200 and json.loads(body).get("revoked") is True, "temporary cost sync session was not revoked")
+            except Exception as error:
+                self.record("FAIL", "cost.sync_session_cleanup", type(error).__name__)
         route = f"/cloud/api/v1/workspaces/{a['workspaceId']}/sessions"
         deadline = time.monotonic() + 30
         while time.monotonic() < deadline:

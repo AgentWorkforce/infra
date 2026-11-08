@@ -20,7 +20,7 @@ the chart owners before adding the component; no version is reserved yet.
 | Enablement | `RELAYHISTORY_SELFHOST_READ_API=true`, exactly; other accepted dormant values are unset, empty and `false`. |
 | Port | `RELAYHISTORY_READ_API_PORT`, default 8080. |
 | Database/search configuration | `RELAYHISTORY_READ_API_SECRET` from a Kubernetes Secret key containing the existing Lambda JSON shape; never inline credentials in values. |
-| Auth audience | `READ_API_ORIGIN`, matching the introspection audience. |
+| Auth audience | `READ_API_ORIGIN` is the exact `aud` sent in each introspection request. Include that same public History origin in relaycontrol `SELFHOST_INTROSPECT_AUDIENCES` (defaults to `RELAYHISTORY_PUBLIC_URL`). No separate reader audience environment variable is used. |
 | Workspace rollout | Explicit `READ_API_DIRECTORY_WORKSPACES` allowlist containing the real proof workspace. |
 | Temporary issuer | Explicit in-cluster `RELAYAUTH_JWKS_URL` and `RELAYAUTH_ISSUER`; do not inherit hosted defaults. |
 | Introspection | `RELAYHISTORY_ACCEPT_RELAYCONTROL_TOKENS=true`, configured `RELAYCONTROL_INTROSPECT_URL`, and `RELAYCONTROL_INTROSPECT_SECRET` from a Secret. `readApiAuthConfig` reads these environment variables separately from the JSON database/search secret. |

@@ -22,6 +22,19 @@ test("persistent timeouts exhaust the deadline with a credential-free diagnostic
   await assert.rejects(waitForDefaultWorkspace("test-secret", {
     request: async () => { throw new Error("test-secret"); },
     now: () => clock, sleep: async ms => { clock += ms; }, timeoutMs: 4000,
-  }), error => error.message === "first-boot organization/Default workspace not ready after 120s");
+  }), error => error.message === "first-boot organization/workspace not ready after 4s; last HTTP status=none");
   assert.equal(clock, 4000);
+});
+test("reports the last HTTP status without echoing a response or token", async () => {
+  let clock = 0;
+  await assert.rejects(waitForDefaultWorkspace("test-secret", {
+    request: async () => ({ ok: false, status: 401 }),
+    now: () => clock, sleep: async ms => { clock += ms; }, timeoutMs: 2000,
+  }), /after 2s; last HTTP status=401$/);
+});
+test("discovers an explicitly configured first workspace name", async () => {
+  const replies = [ok({ organizations: [{ id: "org" }] }), ok({ workspaces: [{ name: "Custom", id: "workspace" }] })];
+  assert.deepEqual(await waitForDefaultWorkspace("test-secret", {
+    workspaceName: "Custom", request: async () => replies.shift(),
+  }), { orgId: "org", workspaceId: "workspace" });
 });

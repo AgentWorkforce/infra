@@ -438,7 +438,9 @@ from the customer release and AWS/GCP managed-infrastructure proofs.
 | `addons` | core + relayfile Go server with Postgres state, standalone Flows with Kubernetes CronJobs |
 
 Both currently include **real, internal-only temporary RelayAuth**. The
-`localKind.temporaryRelayauth` flag must match `components.relayauth`; this is
+`localKind.allowLocalOnly=true` explicitly opts into the local policy/ingress;
+child network policies must stay disabled because Kubernetes combines egress
+allows. The `localKind.temporaryRelayauth` flag must match `components.relayauth`; this is
 an explicit compatibility component pending the owners' introspection work.
 There is no RelayAuth ingress, relaycron, hosted Flow worker, OpenSearch
 dependency, or durable-actors platform in either profile. Postgres search is
@@ -642,3 +644,9 @@ a database row. See [captured evidence](ci/agent-relay/kind/evidence.md).
 Track the local work in [issue #77](https://github.com/AgentWorkforce/infra/issues/77).
 For render/trust/schema checks without Docker (Helm and kubeconform required), run
 `python3 ci/agent-relay/kind/test_stack.py -v` after building chart dependencies.
+
+The local add-on Flow journal uses `ReadWriteOnce` because kind's local-path
+provisioner does not support CSI `ReadWriteOncePod`. Its CronJob uses `Forbid`;
+the proof suspends and drains scheduled Jobs before starting a manual run. Do
+not start other writers against this development journal. Production keeps
+the relayflows chart's `ReadWriteOncePod` default with a compatible CSI driver.

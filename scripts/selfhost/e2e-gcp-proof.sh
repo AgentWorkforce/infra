@@ -638,8 +638,9 @@ else
     marker="$(state_get marker)"
     [[ -n "$marker" ]] || marker="e2e$(date +%s)"
     machine="e2e-$marker"
-    state_set_json bulls "$(python3 -c 'import json,sys; print(json.dumps(dict(orgId=sys.argv[1], workspaceId=sys.argv[2] or "default", origin=sys.argv[3], machineId=sys.argv[4])))' \
-      "$(env_of TENANT_ORG_ID)" "$(env_of WORKSPACE_ID)" "$(env_of RELAYHISTORY_ORIGIN)" "$machine")"
+    pipeline_user="${E2E_PIPELINE_USER_ID:-$(state_get a.ownerUserId)}"
+    state_set_json bulls "$(python3 -c 'import json,sys; print(json.dumps(dict(orgId=sys.argv[1], workspaceId=sys.argv[2] or "default", origin=sys.argv[3], machineId=sys.argv[4], userId=sys.argv[5])))' \
+      "$(env_of TENANT_ORG_ID)" "$(env_of WORKSPACE_ID)" "$(env_of RELAYHISTORY_ORIGIN)" "$machine" "$pipeline_user")"
     [[ -n "$(state_get marker)" ]] || state_set_json marker "\"$marker\""
     # Remove any helper left by an earlier run first, so a failed copy can
     # never execute a stale probe.
@@ -649,7 +650,7 @@ else
     pushed_at="$(date -u +%FT%TZ)"
     run_phase mint-sessions-pipeline
     state_pop_to_file bullsAssertion "$WORK/assertion"
-    push_out="$("${KB[@]}" exec -i "$BULLS_POD" -- sh -c "cd /app && bun run /tmp/e2e-gcp-proof-sessions-pipeline.ts push '$marker' '$machine'" \
+    push_out="$("${KB[@]}" exec -i "$BULLS_POD" -- env "E2E_PIPELINE_USER_ID=$pipeline_user" sh -c "cd /app && bun run /tmp/e2e-gcp-proof-sessions-pipeline.ts push '$marker' '$machine'" \
       <"$WORK/assertion" 2>/dev/null)"
     push_rc=$?
     rm -f "$WORK/assertion"

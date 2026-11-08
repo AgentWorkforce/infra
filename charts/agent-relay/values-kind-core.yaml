@@ -2,6 +2,7 @@
 # Postgres/Locker. Same-namespace traffic and cluster DNS are the only egress.
 localKind:
   enabled: true
+  allowLocalOnly: true
   profile: core
   temporaryRelayauth: true
 components:
