@@ -53,6 +53,7 @@ whatever the API would refuse at startup:
 | `telemetry.egressTo` | (NetworkPolicy) | Destinations of the telemetry egress rule; empty by default. It must not be empty when the level is not `off`, the transport is `https`, `networkPolicy.enabled=true` and `networkPolicy.allowAllEgress=false`, and is unused otherwise. |
 | `telemetry.probes` | `SELFHOST_TELEMETRY_PROBES` | Up to 20 extra health probes; `name` is a string of lowercase letters, digits and dashes (quote numeric names). |
 | `telemetry.deployment` | `SELFHOST_TELEMETRY_DEPLOYMENT` | Extra flat deployment-shape keys (at most 32): string, number or boolean values only, version-like strings without `//`; the chart-rendered keys (`chart`, `chartVersion`, `appVersion`, `replicas`, `flowsStorage`, `networkPolicy`, `ingress`) cannot be overridden. |
+| `extraEnv` | caller-chosen | Env entries appended to the API container and the migration container after the chart-managed variables. Default `[]`. A name the chart already sets is rejected. |
 
 Every non-empty `secretKeys.*` value must name a distinct Secret key; the
 chart refuses collisions, so the migration credential
