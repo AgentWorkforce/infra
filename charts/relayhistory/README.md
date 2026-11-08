@@ -52,7 +52,7 @@ Drain through values instead of scaling by hand:
    Wait on the newest RelayHistory migrate Job by name. `app.kubernetes.io/name`
    (the chart name, or `nameOverride` if set) keeps the selector from matching
    other charts' migration Jobs in an umbrella release, such as
-   relay-control's; sorting picks the newest of this release's migrate Jobs.
+   relay-cloud-api's; sorting picks the newest of this release's migrate Jobs.
    `--for=condition=complete` does not return early when the Job fails (check
    `kubectl get "$job"` or wait `--for=condition=failed` in parallel). Failed
    Jobs are not garbage collected; delete a failed migrate Job before retrying
