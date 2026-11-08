@@ -96,6 +96,7 @@ resource "aws_vpc_security_group_egress_rule" "https" {
   tags              = local.tags
 }
 module "postgres" {
+  #checkov:skip=CKV_AWS_226:This bounded disposable proof pins the exact engine version for native identity and restore admission; production module defaults retain automatic minor upgrades.
   #checkov:skip=CKV_AWS_157:This synthetic disposable module proof intentionally uses one AZ; it makes no HA claim.
   #checkov:skip=CKV_AWS_293:Protection defaults on; retire=true explicitly releases it in a separately reviewed cleanup apply.
   #checkov:skip=CKV_AWS_139:Same protection expression; Aurora count is zero in this RDS-only proof.
@@ -162,6 +163,7 @@ resource "aws_db_snapshot" "marker" {
   tags                   = local.tags
 }
 resource "aws_db_instance" "restored" {
+  #checkov:skip=CKV_AWS_226:This bounded disposable restore must retain its admitted source engine version; this exception applies only to the synthetic proof clone.
   #checkov:skip=CKV_AWS_293:Protection defaults on and is released only through explicit retire=true.
   #checkov:skip=CKV_AWS_353:Short disposable restore clone; no performance/production claim.
   #checkov:skip=CKV_AWS_157:Synthetic single-AZ restore proof, not an HA environment.
