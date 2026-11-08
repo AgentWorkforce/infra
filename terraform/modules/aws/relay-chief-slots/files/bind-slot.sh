@@ -2,24 +2,27 @@
 # Bind a provisioned Relay Chief slot to one chief. Run as root on the slot host,
 # through SSM. Installed at /usr/local/sbin/relay-chief-bind-slot.
 #
-#   relay-chief-bind-slot --slot-id <id> --config <path|-> [--enable-timer --dispatch-opt-in]
+#   relay-chief-bind-slot --slot-id <id> --config <path|-> [--enable-timer [--dispatch-opt-in]]
 #
-# Writes /etc/relay-chief/config.json, fetches credentials and, only with both
-# flags, enables the timer. The reference service always runs with --dispatch,
-# so an enabled timer sends real Relay assignments every 30 seconds. Do not pass
-# the flags for a customer binding until the execution bridge exists.
+# Writes /etc/relay-chief/config.json and fetches credentials. --enable-timer
+# starts cycles that reserve work and send nothing. --dispatch-opt-in, which needs
+# --enable-timer, also installs the drop-in that lets those cycles send real Relay
+# assignments. Do not pass it for a customer binding until the execution bridge
+# exists. Any bind without it removes that drop-in.
 #
 # A slot is single-use: it refuses a ledger or binding record for a different
 # chief, and rebinding the same chief is allowed (for example after a host
 # replacement, which loses /etc/relay-chief but keeps the data volume).
 #
 # Exit codes: 0 bound, 1 failure, 2 malformed input, 3 slot already bound or not
-# this host's slot, 4 missing dispatch opt-in. A refusal changes nothing.
+# this host's slot, 4 --dispatch-opt-in without --enable-timer. A refusal
+# changes nothing.
 set -euo pipefail
 umask 077
 
 ROOT="${RELAY_CHIEF_ROOT:-}"
 SLOT_ID_PATTERN='^slot-[a-z0-9]{8,32}$'
+PLACEMENT_PATTERN='^[a-z0-9][a-z0-9-]{0,39}$'
 ETC_DIR="$ROOT/etc/relay-chief"
 SLOT_ENV="$ETC_DIR/slot.env"
 CONFIG="$ETC_DIR/config.json"
@@ -29,6 +32,7 @@ MARKER="$DATA_DIR/.slot-binding.json"
 CREDS_FILE="$ROOT/run/relay-chief/credentials.env"
 NODE="$ROOT/usr/bin/node"
 CLI="$ROOT/opt/relay-chief/dist/cli.js"
+DISPATCH_DROP_IN="$ROOT/etc/systemd/system/relay-chief.service.d/20-dispatch.conf"
 TIMER=relay-chief.timer
 SERVICE=relay-chief.service
 CREDENTIALS_UNIT=relay-chief-credentials.service
@@ -72,8 +76,8 @@ done
 
 [[ "$slot_id" =~ $SLOT_ID_PATTERN ]] || refuse 2 "malformed slot id"
 [ -n "$config_source" ] || usage
-if [ "$enable_timer" != "$dispatch_opt_in" ]; then
-  refuse 4 "--enable-timer and --dispatch-opt-in must be given together; the service always dispatches"
+if [ "$dispatch_opt_in" = "1" ] && [ "$enable_timer" != "1" ]; then
+  refuse 4 "--dispatch-opt-in requires --enable-timer"
 fi
 
 [ "$(id -u)" = "0" ] || refuse 1 "must run as root"
@@ -81,6 +85,11 @@ fi
 # shellcheck source=/dev/null
 . "$SLOT_ENV"
 [ "${RELAY_CHIEF_SLOT_ID:-}" = "$slot_id" ] || refuse 3 "this host is not that slot"
+[[ "${RELAY_CHIEF_PLACEMENT:-}" =~ $PLACEMENT_PATTERN ]] || refuse 2 "this host has an invalid placement"
+case "${RELAY_CHIEF_SIZE_CLASS:-}" in
+small | medium | large) ;;
+*) refuse 2 "this host has an invalid size class" ;;
+esac
 mountpoint -q "$DATA_DIR" || refuse 1 "the data volume is not mounted"
 if [ ! -x "$NODE" ] || [ ! -f "$CLI" ]; then
   refuse 1 "no relay-chief build is installed under /opt/relay-chief"
@@ -135,12 +144,12 @@ for key in SCOPE:
 
 
 if mode == "setup":
-    region = sys.argv[6]
-    with open(sys.argv[7], "w", encoding="utf-8") as handle:
+    placement, size_class = sys.argv[6:8]
+    with open(sys.argv[8], "w", encoding="utf-8") as handle:
         # The runtime has no validate command. Its side-effect-free plan command
         # applies the real configuration schema to a setup request.
         json.dump({"requestId": "bind-" + slot_id, "config": config,
-                   "region": region, "instanceType": "t4g.small"}, handle)
+                   "placement": placement, "sizeClass": size_class}, handle)
     sys.exit(0)
 
 
@@ -201,7 +210,7 @@ check() {
   python3 -I -c "$CHECK" "$1" "$slot_id" "$work/config.json" "$LEDGER" "$MARKER" "${@:2}"
 }
 
-check setup "${RELAY_CHIEF_REGION:-}" "$work/setup.json"
+check setup "$RELAY_CHIEF_PLACEMENT" "$RELAY_CHIEF_SIZE_CLASS" "$work/setup.json"
 # The CLI opens the path itself as relay-chief, so that user needs real access:
 # /dev/stdin would re-open this file, not inherit the descriptor.
 chown root:relay-chief "$work" "$work/setup.json"
@@ -225,6 +234,12 @@ for _ in $(seq 1 75); do
 done
 [ -z "$state" ] || refuse 1 "$SERVICE did not stop; the timer is disabled"
 
+# Dispatch never carries over from an earlier bind.
+if [ -e "$DISPATCH_DROP_IN" ]; then
+  rm -f -- "$DISPATCH_DROP_IN"
+  systemctl daemon-reload >/dev/null 2>&1 || refuse 1 "could not reload systemd after removing the dispatch drop-in"
+fi
+
 # Repeated now that no cycle can create or configure the ledger concurrently.
 check write
 
@@ -237,9 +252,19 @@ if [ ! -s "$CREDS_FILE" ] || [ "$(stat -c %a "$CREDS_FILE")" != "600" ]; then
   refuse 1 "credentials are missing or not mode 0600; the timer is disabled"
 fi
 
+if [ "$dispatch_opt_in" = "1" ]; then
+  install -d -m 0755 "$(dirname "$DISPATCH_DROP_IN")"
+  printf '[Service]\nEnvironment=RELAY_CHIEF_RUN_FLAGS=--dispatch\n' >"$DISPATCH_DROP_IN"
+  chmod 0644 "$DISPATCH_DROP_IN"
+  systemctl daemon-reload >/dev/null 2>&1 || refuse 1 "could not reload systemd after adding the dispatch drop-in"
+fi
 if [ "$enable_timer" = "1" ]; then
   systemctl enable --now "$TIMER" >/dev/null 2>&1 || refuse 1 "could not enable $TIMER"
-  printf 'relay-chief-bind-slot: bound %s; timer enabled, dispatching\n' "$slot_id"
+  if [ "$dispatch_opt_in" = "1" ]; then
+    printf 'relay-chief-bind-slot: bound %s; timer enabled, dispatching\n' "$slot_id"
+  else
+    printf 'relay-chief-bind-slot: bound %s; timer enabled, not dispatching\n' "$slot_id"
+  fi
 else
   printf 'relay-chief-bind-slot: bound %s; timer left disabled\n' "$slot_id"
 fi

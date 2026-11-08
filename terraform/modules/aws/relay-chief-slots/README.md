@@ -4,7 +4,7 @@ Dedicated EC2 hosts ("slots") for [Relay Chief](https://github.com/AgentWorkforc
 
 **Status: not qualified.** This module has passed static checks and mock-provider tests only. It has never been applied, and no host has booted from its bootstrap. The runtime's own [readiness document](https://github.com/AgentWorkforce/relay-chief/blob/main/docs/readiness.md) lists what must exist before customer use. Applying this module needs the approvals that document requires for IAM, secrets and deployment.
 
-**Do not enable a timer on a customer binding until the execution bridge exists.** The reference service copied into this module always runs with `--dispatch`, so an enabled timer sends real Relay assignments every 30 seconds. That stays true until this module ships a unit that runs without it, whatever the runtime itself gains.
+**Dispatch is off by default. Do not turn it on for a customer binding until the execution bridge exists.** The reference service copied into this module reserves work and sends nothing unless a drop-in sets `RELAY_CHIEF_RUN_FLAGS=--dispatch`, which only `--dispatch-opt-in` installs. With dispatch on, an enabled timer sends real Relay assignments every 30 seconds.
 
 ## What it creates
 
@@ -21,7 +21,7 @@ The module creates no secret, secret value or KMS key.
 
 - **AMI** (arm64): `ami_id` or `ami_ssm_parameter`, with systemd, the SSM agent, AWS CLI v2, python3 with sqlite3, and util-linux. Bootstrap stops on a missing tool. No default image is offered.
 - **Node.js**: `node_runtime` is the URL and SHA-256 of a Node.js 24+ linux-arm64 tarball.
-- **Runtime build**: `relay_chief_artifact` is the URL and SHA-256 of a self-contained tarball with `dist/`, `node_modules/` and `package.json` at its root. Until one exists, leave it null: binding is refused because there is nothing to run. User data is ignored after creation, so setting this later shows no diff; each existing slot then needs `-replace` to install the build.
+- **Runtime build**: `relay_chief_artifact` is the `https://` URL or `s3://bucket/key` URI, and SHA-256, of a self-contained tarball with `dist/`, `node_modules/` and `package.json` at its root. Bootstrap refuses a file that does not match the checksum. For an S3 object, each slot role gets `s3:GetObject` on that exact object only; an https URL gets no S3 access. If the bucket encrypts objects with a customer managed KMS key, this module does not grant `kms:Decrypt` on it: allow the slot roles in that key's policy or a separate policy. A bucket policy that restricts access must also admit them. Until one exists, leave it null: binding is refused because there is nothing to run. User data is ignored after creation, so setting this later shows no diff; each existing slot then needs `-replace` to install the build.
 - **Network**: the subnet needs outbound HTTPS to AWS APIs (NAT or VPC endpoints), the download hosts, Relay, classification (`api.typesafe.ai`) and the control plane.
 - **KMS key policy**: must let the applying principal attach encrypted volumes, and must delegate to IAM or name the slot roles. Secrets must be encrypted with this key.
 - **Secret**: before binding, create `<secret_name_prefix>/<slot id>` as a JSON object:
@@ -55,13 +55,13 @@ module "relay_chief_slots" {
 
 Bootstrap installs Node.js at `/usr/bin/node`, the `relay-chief` system user, `/opt/relay-chief`, the reference units and the scripts, then leaves `relay-chief.timer` disabled.
 
-`files/relay-chief.service` and `files/relay-chief.timer` are unmodified copies of the units in relay-chief `deploy/` at commit `865f13949da25eadfdae4160a8a4ef6e293d6376`. Slot behavior is added with a drop-in, `relay-chief.service.d/10-slot.conf`, which requires the credentials unit and the mounted data volume. If the volume is missing, the cycle does not start, rather than creating an empty ledger on the root disk.
+`files/relay-chief.service` and `files/relay-chief.timer` are unmodified copies of the units in relay-chief `deploy/` at commit `9a46584f7b75e2707765ea264ad718a4c0775567`. Slot behavior is added with a drop-in, `relay-chief.service.d/10-slot.conf`, which requires the credentials unit and the mounted data volume. If the volume is missing, the cycle does not start, rather than creating an empty ledger on the root disk.
 
 `/run/relay-chief/credentials.env` is on tmpfs, so `relay-chief-credentials.service` is enabled to re-fetch it at every boot, before the service starts. It writes the file with mode 0600 and fails closed: it removes the old file first and leaves none on any error. Until a slot's secret exists the unit shows as failed, which is expected.
 
 ### Rotating a secret
 
-Never restart the credentials unit while a cycle may be running. The service `Requires=` it, so the restart stops an active cycle, and a cycle killed during a send leaves that task `uncertain`. Stop the timer and wait for the cycle first, as the bind script does. Restart the timer only if it was active before, because starting it on a slot bound without the dispatch opt-in would begin dispatching:
+Never restart the credentials unit while a cycle may be running. The service `Requires=` it, so the restart stops an active cycle, and a cycle killed during a send leaves that task `uncertain`. Stop the timer and wait for the cycle first, as the bind script does. Restart the timer only if it was active before, because starting it on a slot an operator left off would begin running cycles:
 
 ```sh
 timer_state="$(systemctl is-active relay-chief.timer || true)"
@@ -81,7 +81,12 @@ printf %s '<base64 chief config>' | base64 -d \
   | relay-chief-bind-slot --slot-id slot-0a1b2c3d --config -
 ```
 
-The script validates the configuration with the runtime's own schema, records the binding on the data volume, writes `/etc/relay-chief/config.json`, fetches credentials, and leaves the timer off. To enable the timer, pass both `--enable-timer` and `--dispatch-opt-in`; either alone is refused. Read the warning at the top of this page first.
+The script validates the configuration with the runtime's own schema, records the binding on the data volume, writes `/etc/relay-chief/config.json`, fetches credentials, and leaves the timer off.
+
+- `--enable-timer` starts cycles that reserve work and send nothing. They still read evidence, call the classifier and hold reservations against the chief's budget.
+- `--dispatch-opt-in` also installs the drop-in that lets those cycles send assignments. It requires `--enable-timer`. Read the warning at the top of this page first.
+
+Every bind without `--dispatch-opt-in` removes that drop-in, so dispatch never carries over from an earlier bind. A replaced host has none either. A secret cannot turn dispatch on: `RELAY_CHIEF_RUN_FLAGS` is not an accepted key.
 
 A slot is single-use. Binding is refused if the host is not that slot, or if the data volume has a ledger or binding record for a different chief. A refusal changes nothing, so a running chief is not disturbed. Rebinding the same chief is allowed. Reusing a slot for another chief requires deliberately wiping its volume.
 
@@ -91,7 +96,7 @@ A slot is single-use. Binding is refused if the host is not that slot, or if the
 | 1 | Failure, such as the volume not mounted, no runtime build, or credentials unavailable |
 | 2 | Malformed slot id or configuration |
 | 3 | Slot already bound, or not this host's slot |
-| 4 | Dispatch opt-in missing |
+| 4 | `--dispatch-opt-in` without `--enable-timer` |
 
 ## Replacing a host
 
@@ -120,6 +125,7 @@ Replacement is always deliberate: `ami` and user data are ignored after creation
 | [aws_ebs_volume.data](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/ebs_volume) | resource |
 | [aws_iam_instance_profile.slot](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/iam_instance_profile) | resource |
 | [aws_iam_role.slot](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/iam_role) | resource |
+| [aws_iam_role_policy.artifact](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/iam_role_policy) | resource |
 | [aws_iam_role_policy.slot_secret](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/iam_role_policy) | resource |
 | [aws_iam_role_policy_attachment.ssm](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/iam_role_policy_attachment) | resource |
 | [aws_instance.slot](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/instance) | resource |
@@ -148,7 +154,7 @@ Replacement is always deliberate: `ami` and user data are ignored after creation
 | instance\_type | arm64 instance type, one of those the relay-chief provisioning contract admits. | `string` | `"t4g.small"` | no |
 | name\_prefix | Prefix of IAM and security group names. | `string` | `"relay-chief"` | no |
 | permissions\_boundary\_arn | Optional permissions boundary for the slot roles. | `string` | `null` | no |
-| relay\_chief\_artifact | Self-contained relay-chief release tarball (dist/, node\_modules/, package.json at the root) and its SHA-256, extracted to /opt/relay-chief. null leaves /opt/relay-chief empty, and binding a slot is refused until a build is installed. User data is ignored after creation, so setting this later shows no diff: each existing slot needs -replace. | ```object({ url = string sha256 = string })``` | `null` | no |
+| relay\_chief\_artifact | Self-contained relay-chief release tarball (dist/, node\_modules/, package.json at the root) and its SHA-256, extracted to /opt/relay-chief. url is https:// or s3://bucket/key; an S3 object is read with the instance role, which is granted that object alone. null leaves /opt/relay-chief empty, and binding a slot is refused until a build is installed. User data is ignored after creation, so setting this later shows no diff: each existing slot needs -replace. | ```object({ url = string sha256 = string })``` | `null` | no |
 | root\_volume\_size\_gb | Root volume size. | `number` | `20` | no |
 | secret\_name\_prefix | Secrets Manager path of the slot secrets. Each slot reads only <prefix>/<slot id>. This module never creates the secrets or their values. | `string` | `"relay-chief/slots"` | no |
 | tags | Tags applied to every resource. A relay:chief-slot key here is ignored; the module sets it per slot. | `map(string)` | `{}` | no |

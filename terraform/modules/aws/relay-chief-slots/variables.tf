@@ -59,7 +59,7 @@ variable "node_runtime" {
 }
 
 variable "relay_chief_artifact" {
-  description = "Self-contained relay-chief release tarball (dist/, node_modules/, package.json at the root) and its SHA-256, extracted to /opt/relay-chief. null leaves /opt/relay-chief empty, and binding a slot is refused until a build is installed. User data is ignored after creation, so setting this later shows no diff: each existing slot needs -replace."
+  description = "Self-contained relay-chief release tarball (dist/, node_modules/, package.json at the root) and its SHA-256, extracted to /opt/relay-chief. url is https:// or s3://bucket/key; an S3 object is read with the instance role, which is granted that object alone. null leaves /opt/relay-chief empty, and binding a slot is refused until a build is installed. User data is ignored after creation, so setting this later shows no diff: each existing slot needs -replace."
   type = object({
     url    = string
     sha256 = string
@@ -67,8 +67,8 @@ variable "relay_chief_artifact" {
   default = null
 
   validation {
-    condition     = var.relay_chief_artifact == null || (can(regex("^https://[A-Za-z0-9._~:/?#@%+=,&-]+$", try(var.relay_chief_artifact.url, ""))) && can(regex("^[a-f0-9]{64}$", try(var.relay_chief_artifact.sha256, ""))))
-    error_message = "relay_chief_artifact needs an https:// url without quotes or spaces and a lowercase hex sha256."
+    condition     = var.relay_chief_artifact == null || ((can(regex("^https://[A-Za-z0-9._~:/?#@%+=,&-]+$", try(var.relay_chief_artifact.url, ""))) || can(regex("^s3://[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]/[A-Za-z0-9._~/+=,@-]*[A-Za-z0-9._~+=,@-]$", try(var.relay_chief_artifact.url, "")))) && can(regex("^[a-f0-9]{64}$", try(var.relay_chief_artifact.sha256, ""))))
+    error_message = "relay_chief_artifact needs an https:// url or an s3://bucket/key uri, without quotes, spaces or IAM wildcards, and a lowercase hex sha256."
   }
 }
 

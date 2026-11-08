@@ -1,6 +1,7 @@
 """Offline tests for the slot host scripts. Every system command is mocked on
 PATH and every path sits under a throwaway root; nothing touches a host or AWS.
 """
+import hashlib
 import json
 import os
 import pathlib
@@ -16,6 +17,7 @@ MODULE = pathlib.Path(__file__).resolve().parents[1]
 BIND = MODULE / "files" / "bind-slot.sh"
 FETCH = MODULE / "files" / "fetch-credentials.sh"
 PREPARE = MODULE / "files" / "prepare-data-volume.sh"
+FETCH_ARTIFACT = MODULE / "files" / "fetch-artifact.sh"
 IN_CI = os.environ.get("CI") == "true"
 UNPRIVILEGED = 65534
 SLOT = "slot-aaaa1111"
@@ -37,6 +39,7 @@ exit 0
 NODE = r"""#!/usr/bin/env bash
 printf '%s\n' "$3" >>"$MOCK_NODE_LOG"
 cat -- "$3" >/dev/null || exit 1
+[ -z "${MOCK_NODE_CAPTURE:-}" ] || cp -- "$3" "$MOCK_NODE_CAPTURE"
 exit "${MOCK_NODE:-0}"
 """
 
@@ -108,6 +111,8 @@ class Host(unittest.TestCase):
             f"RELAY_CHIEF_SLOT_ID={SLOT}\n"
             f"RELAY_CHIEF_SECRET_ID=relay-chief/slots/{SLOT}\n"
             "RELAY_CHIEF_REGION=us-west-2\n"
+            "RELAY_CHIEF_PLACEMENT=placement-1\n"
+            "RELAY_CHIEF_SIZE_CLASS=small\n"
         )
         self.config_file = pathlib.Path(temp.name) / "input.json"
         self.config_file.write_text(json.dumps(config()))
@@ -165,10 +170,34 @@ class Refusals(Host):
                 self.assert_refused(result, 2)
                 self.assertEqual(self.commands(), [], "must refuse before touching systemd")
 
-    def test_timer_without_dispatch_opt_in(self):
-        self.assert_refused(self.bind("--enable-timer"), 4)
-        self.assertFalse(self.marker.exists())
+    def write_slot_env(self, placement, size_class):
+        lines = [f"RELAY_CHIEF_SLOT_ID={SLOT}", "RELAY_CHIEF_REGION=us-west-2"]
+        if placement is not None:
+            lines.append(f"RELAY_CHIEF_PLACEMENT={placement}")
+        if size_class is not None:
+            lines.append(f"RELAY_CHIEF_SIZE_CLASS={size_class}")
+        (self.root / "etc/relay-chief/slot.env").write_text("\n".join(lines) + "\n")
+
+    def assert_setup_refused(self):
+        self.assert_refused(self.bind(), 2)
         self.assertEqual(self.commands(), [])
+        self.assertEqual(self.node_log.read_text(), "", "must refuse before running the runtime")
+
+    def test_bad_placements(self):
+        for placement in ("", "-leading", "Upper", "under_score", "a" * 41, "has.dot"):
+            with self.subTest(placement=placement):
+                self.write_slot_env(placement, "small")
+                self.assert_setup_refused()
+
+    def test_bad_size_classes(self):
+        for size_class in ("", "xlarge", "Small", "t4g.small"):
+            with self.subTest(size_class=size_class):
+                self.write_slot_env("placement-1", size_class)
+                self.assert_setup_refused()
+
+    def test_host_from_the_old_contract_is_refused(self):
+        self.write_slot_env(None, None)
+        self.assert_setup_refused()
 
     def test_dispatch_opt_in_without_timer(self):
         self.assert_refused(self.bind("--dispatch-opt-in"), 4)
@@ -241,6 +270,53 @@ class Refusals(Host):
 
 
 class Binding(Host):
+    @property
+    def drop_in(self):
+        return self.root / "etc/systemd/system/relay-chief.service.d/20-dispatch.conf"
+
+    def test_setup_request_matches_the_runtime_contract(self):
+        capture = self.log.with_name("setup.json")
+        result = self.bind(MOCK_NODE_CAPTURE=str(capture))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        request = json.loads(capture.read_text())
+        self.assertEqual(sorted(request), ["config", "placement", "requestId", "sizeClass"])
+        self.assertEqual(request["placement"], "placement-1")
+        self.assertEqual(request["sizeClass"], "small")
+        self.assertEqual(request["config"]["chiefId"], "chief-one")
+
+    def test_longest_placement_and_each_size_class_are_accepted(self):
+        for size_class in ("small", "medium", "large"):
+            with self.subTest(size_class=size_class):
+                (self.root / "etc/relay-chief/slot.env").write_text(
+                    f"RELAY_CHIEF_SLOT_ID={SLOT}\nRELAY_CHIEF_PLACEMENT={'a' * 40}\nRELAY_CHIEF_SIZE_CLASS={size_class}\n")
+                result = self.bind()
+                self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_timer_alone_runs_without_dispatch(self):
+        result = self.bind("--enable-timer")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.commands()[-1], "enable --now relay-chief.timer")
+        self.assertFalse(self.drop_in.exists())
+        self.assertIn("not dispatching", result.stdout)
+
+    def test_opt_in_installs_the_dispatch_drop_in_before_the_timer(self):
+        result = self.bind("--enable-timer", "--dispatch-opt-in")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.drop_in.read_text(), "[Service]\nEnvironment=RELAY_CHIEF_RUN_FLAGS=--dispatch\n")
+        self.assertEqual(stat.S_IMODE(self.drop_in.stat().st_mode), 0o644)
+        self.assertEqual(self.commands()[-2:], ["daemon-reload", "enable --now relay-chief.timer"])
+
+    def test_rebind_without_opt_in_removes_dispatch(self):
+        self.assertEqual(self.bind("--enable-timer", "--dispatch-opt-in").returncode, 0)
+        result = self.bind("--enable-timer")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse(self.drop_in.exists())
+        self.assertIn("daemon-reload", self.commands())
+
+    def test_credential_failure_installs_no_dispatch_drop_in(self):
+        self.assertEqual(self.bind("--enable-timer", "--dispatch-opt-in", MOCK_CREDS_FAIL="1").returncode, 1)
+        self.assertFalse(self.drop_in.exists())
+
     def test_runtime_is_given_a_real_path_it_can_read(self):
         executable(self.bin / "chown", '#!/usr/bin/env bash\nprintf "%s\\n" "$*" >>"$MOCK_CHOWN_LOG"\n')
         chown_log = self.log.with_name("chown.log")
@@ -546,6 +622,82 @@ PATH=/usr/sbin:/usr/bin:/sbin:/bin exec chown "${args[@]}"
         self.assertTrue(listing[2].startswith(f"{before} "), "chown followed a symlink off the volume")
 
 
+class FetchArtifact(unittest.TestCase):
+    """Uses the real sha256sum; only the downloaders are mocked."""
+
+    def setUp(self):
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        self.base = pathlib.Path(temp.name)
+        self.bin = self.base / "bin"
+        self.log = self.base / "commands.log"
+        self.log.touch()
+        self.source = self.base / "source.tar"
+        self.source.write_bytes(b"synthetic artifact contents")
+        self.sha256 = hashlib.sha256(self.source.read_bytes()).hexdigest()
+        self.destination = self.base / "out" / "artifact.tar"
+        self.destination.parent.mkdir()
+        executable(self.bin / "aws", r"""#!/usr/bin/env bash
+printf 'aws %s\n' "$*" >>"$MOCK_LOG"
+[ -z "${MOCK_FAIL:-}" ] || exit 1
+cp -- "$MOCK_SOURCE" "${@: -1}"
+""")
+        executable(self.bin / "curl", r"""#!/usr/bin/env bash
+printf 'curl %s\n' "$*" >>"$MOCK_LOG"
+[ -z "${MOCK_FAIL:-}" ] || exit 22
+while [ $# -gt 0 ]; do
+  if [ "$1" = -o ]; then cp -- "$MOCK_SOURCE" "$2"; fi
+  shift
+done
+""")
+
+    def fetch(self, url, sha256=None, **environment):
+        return subprocess.run(
+            ["bash", str(FETCH_ARTIFACT), url, sha256 or self.sha256, "us-west-2", str(self.destination)],
+            capture_output=True, text=True, check=False,
+            env={**os.environ, "PATH": f"{self.bin}:{os.environ['PATH']}", "MOCK_LOG": str(self.log),
+                 "MOCK_SOURCE": str(self.source), **environment},
+        )
+
+    def commands(self):
+        return self.log.read_text().splitlines()
+
+    def test_s3_uses_the_instance_role_through_the_cli(self):
+        result = self.fetch("s3://example-artifacts/build.tar.gz")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.destination.read_bytes(), self.source.read_bytes())
+        self.assertEqual(len(self.commands()), 1)
+        self.assertIn("aws --region us-west-2 s3 cp --only-show-errors s3://example-artifacts/build.tar.gz", self.commands()[0])
+
+    def test_https_uses_curl_only(self):
+        result = self.fetch("https://example.test/build.tar.gz")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.destination.read_bytes(), self.source.read_bytes())
+        self.assertEqual(len(self.commands()), 1)
+        self.assertTrue(self.commands()[0].startswith("curl "))
+        self.assertIn("--proto =https", self.commands()[0])
+
+    def test_checksum_mismatch_is_refused_for_both_sources(self):
+        for url in ("s3://example-artifacts/build.tar.gz", "https://example.test/build.tar.gz"):
+            with self.subTest(url=url):
+                result = self.fetch(url, sha256="0" * 64)
+                self.assertEqual(result.returncode, 1)
+                self.assertIn("does not match", result.stderr)
+                self.assertFalse(self.destination.exists(), "an unverified file must not remain")
+
+    def test_download_failure_is_refused(self):
+        for url in ("s3://example-artifacts/build.tar.gz", "https://example.test/build.tar.gz"):
+            with self.subTest(url=url):
+                self.assertEqual(self.fetch(url, MOCK_FAIL="1").returncode, 1)
+                self.assertFalse(self.destination.exists())
+
+    def test_unknown_scheme_downloads_nothing(self):
+        for url in ("http://example.test/build.tar.gz", "file:///etc/passwd", "ftp://example.test/x"):
+            with self.subTest(url=url):
+                self.assertEqual(self.fetch(url).returncode, 1)
+        self.assertEqual(self.commands(), [])
+
+
 class FetchCredentials(unittest.TestCase):
     REQUIRED = {
         "RELAY_AGENT_TOKEN": "synthetic-token",
@@ -607,6 +759,7 @@ class FetchCredentials(unittest.TestCase):
             "empty": {**self.REQUIRED, "TYPESAFE_API_KEY": "  "},
             "non-string": {**self.REQUIRED, "TYPESAFE_API_KEY": 7},
             "newline": {**self.REQUIRED, "TYPESAFE_API_KEY": "a\nb"},
+            "dispatch-flag": {**self.REQUIRED, "RELAY_CHIEF_RUN_FLAGS": "--dispatch"},
             "not-an-object": ["RELAY_AGENT_TOKEN"],
         }
         for name, secret in cases.items():
@@ -628,6 +781,13 @@ class FetchCredentials(unittest.TestCase):
 
 
 class Contracts(unittest.TestCase):
+    def test_placement_pattern_matches_the_runtime_schema(self):
+        self.assertIn("PLACEMENT_PATTERN='^[a-z0-9][a-z0-9-]{0,39}$'", BIND.read_text())
+
+    def test_required_credentials_match_the_runtime_contract(self):
+        script = FETCH.read_text()
+        self.assertIn('REQUIRED = ("RELAY_AGENT_TOKEN", "TYPESAFE_API_KEY", "CHIEF_CONTROL_PLANE_URL", "CHIEF_CONTROL_PLANE_TOKEN")', script)
+
     def test_slot_id_pattern_matches_terraform(self):
         bind = re.search(r"SLOT_ID_PATTERN='([^']+)'", BIND.read_text()).group(1)
         self.assertIn(f'regex("{bind}"', (MODULE / "variables.tf").read_text())
@@ -635,7 +795,10 @@ class Contracts(unittest.TestCase):
     def test_reference_units_are_unmodified(self):
         service = (MODULE / "files/relay-chief.service").read_text()
         self.assertIn("EnvironmentFile=/run/relay-chief/credentials.env", service)
-        self.assertIn("run-once /etc/relay-chief/config.json /var/lib/relay-chief/chief.db --dispatch", service)
+        exec_start = next(line for line in service.splitlines() if line.startswith("ExecStart="))
+        self.assertTrue(exec_start.endswith("run-once /etc/relay-chief/config.json /var/lib/relay-chief/chief.db $RELAY_CHIEF_RUN_FLAGS"), exec_start)
+        self.assertNotIn("--dispatch", exec_start)
+        self.assertNotRegex(service, r"(?m)^Environment=")
         self.assertNotIn("relay-chief-credentials", service)
 
     def test_drop_in_guards_the_ledger_and_credentials(self):
@@ -648,7 +811,15 @@ class Contracts(unittest.TestCase):
         template = (MODULE / "templates/bootstrap.sh.tftpl").read_text()
         self.assertIn("RELAY_CHIEF_SLOT_ID=${slot_id}", template)
         self.assertIn("RELAY_CHIEF_SECRET_ID=${secret_name}", template)
+        self.assertIn("RELAY_CHIEF_PLACEMENT=${placement}", template)
+        self.assertIn("RELAY_CHIEF_SIZE_CLASS=${size_class}", template)
+        self.assertNotIn("RELAY_CHIEF_RUN_FLAGS", template)
         self.assertIn("systemctl disable relay-chief.timer", template)
+        fetch = template.index("relay-chief-fetch-artifact '${artifact_url}'")
+        unpack = template.index('tar -xf "$work/relay-chief.tar"')
+        install = template.index("install_file '${file.path}'")
+        self.assertLess(install, fetch, "the fetch script must be installed before it runs")
+        self.assertLess(fetch, unpack, "the artifact must be verified before it is unpacked")
         self.assertNotRegex(template, r"systemctl\s+(enable|start)\s+(--now\s+)?relay-chief\.(timer|service)")
         self.assertIn("systemctl enable relay-chief-credentials.service", template)
         self.assertNotIn("mkfs.ext4 -", template, "formatting belongs in prepare-data-volume.sh")
