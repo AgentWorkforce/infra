@@ -36,6 +36,7 @@ Fail early on missing required values (render time, not crash-loop time).
 {{- $originPort := regexFind ":[0-9]+$" $origin -}}
 {{- if and $originPort (or (lt (int (trimPrefix ":" $originPort)) 1) (gt (int (trimPrefix ":" $originPort)) 65535)) }}{{ fail $originError }}{{ end -}}
 {{- end -}}
+{{- include "alleyoop.validatePostgresCa" . -}}
 {{- $ingestEnvNames := list -}}
 {{- range concat (.Values.extraEnv | default list) (.Values.ingest.env | default list) }}{{ $ingestEnvNames = append $ingestEnvNames (.name | default "") }}{{ end -}}
 {{- if has "ALLOW_IN_CLUSTER_HTTP" $ingestEnvNames }}{{ fail "alleyoop: extraEnv/ingest.env must not set ALLOW_IN_CLUSTER_HTTP: use allowInClusterHttp" }}{{ end -}}
@@ -183,4 +184,44 @@ affinity:
 volumes:
   - name: tmp
     emptyDir: {}
+{{- if (.Values.postgresCa | default dict).enabled }}
+{{ include "alleyoop.postgresCaVolume" . | indent 2 }}
 {{- end }}
+{{- end }}
+
+{{- /* Optional Postgres server CA bundle (postgresCa.*). NODE_EXTRA_CA_CERTS adds the
+mounted PEM to the roots node-pg verifies against for sslmode=verify-full. */ -}}
+{{- define "alleyoop.postgresCaVolume" -}}
+{{- $ca := .Values.postgresCa -}}
+- name: postgres-ca
+{{- if $ca.configMap }}
+  configMap:
+    name: {{ $ca.configMap | quote }}
+    items: [{ key: {{ $ca.key | quote }}, path: ca.crt }]
+{{- else }}
+  secret:
+    secretName: {{ $ca.secret | quote }}
+    # Public certificates, readable whatever the Pod's fsGroup is.
+    defaultMode: 0444
+    items: [{ key: {{ $ca.key | quote }}, path: ca.crt }]
+{{- end }}
+{{- end -}}
+
+{{- /* Fail closed on a half-configured bundle: a name without enabled=true would
+leave the certificate unverified while looking configured. */ -}}
+{{- define "alleyoop.validatePostgresCa" -}}
+{{- $ca := .Values.postgresCa | default dict -}}
+{{- $enabled := dig "enabled" false $ca -}}
+{{- if not (kindIs "bool" $enabled) }}{{ fail "alleyoop: postgresCa.enabled must be a boolean" }}{{ end -}}
+{{- $configMap := get $ca "configMap" | default "" | toString -}}
+{{- $secret := get $ca "secret" | default "" | toString -}}
+{{- if not $enabled -}}
+{{- if or $configMap $secret }}{{ fail "alleyoop: postgresCa.configMap and postgresCa.secret require postgresCa.enabled=true; a CA name while disabled would leave the certificate unverified" }}{{ end -}}
+{{- else -}}
+{{- if eq (empty $configMap) (empty $secret) }}{{ fail "alleyoop: postgresCa.enabled=true requires exactly one of postgresCa.configMap or postgresCa.secret" }}{{ end -}}
+{{- $ref := default $secret $configMap -}}
+{{- if or (gt (len $ref) 253) (not (regexMatch "^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?)*$" $ref)) }}{{ fail "alleyoop: postgresCa.configMap and postgresCa.secret must be a Kubernetes object name" }}{{ end -}}
+{{- if not (regexMatch "^[A-Za-z0-9._-]+$" (get $ca "key" | default "" | toString)) }}{{ fail "alleyoop: postgresCa.key must be a Kubernetes data key" }}{{ end -}}
+{{- range concat (.Values.extraEnv | default list) (.Values.ingest.env | default list) }}{{ if eq (.name | default "") "NODE_EXTRA_CA_CERTS" }}{{ fail "alleyoop: extraEnv and ingest.env must not set NODE_EXTRA_CA_CERTS: postgresCa manages it" }}{{ end }}{{ end -}}
+{{- end -}}
+{{- end -}}

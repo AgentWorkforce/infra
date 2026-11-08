@@ -824,6 +824,18 @@ if out=$(helm template ci charts/relay-control -n ci --no-hooks -f charts/relay-
 fi
 grep -Fq "global.singleHost.host serves the API through the dashboard host" <<<"$out" || { echo "$out" >&2; sh_fail "relay-control ingress error"; }
 
+# postgresCa passes through the umbrella by subchart key.
+ca_out=$(helm template proof charts/agent-relay -n agent-relay --no-hooks \
+  -f charts/agent-relay/values-gcp-proof.yaml \
+  -f charts/agent-relay/ci/gcp-proof-values.yaml \
+  --set relay-control.postgresCa.enabled=true --set relay-control.postgresCa.configMap=rds-ca \
+  --set relayhistory.postgresCa.enabled=true --set relayhistory.postgresCa.configMap=rds-ca \
+  --set sessions-pipeline.worker.postgresCa.enabled=true --set sessions-pipeline.worker.postgresCa.configMap=rds-ca \
+  --set sessions-pipeline.alleyoop.postgresCa.enabled=true --set sessions-pipeline.alleyoop.postgresCa.configMap=rds-ca)
+ca_gaps=$(yq 'select((.kind == "Deployment" or (.kind == "Job" and (.metadata.name | contains("migrate")))) and (.spec.template.spec.containers[0].image | test("selfhost-api|/relayhistory@|96bulls-services"))) | select(([.spec.template.spec.containers[0].env[] | select(.name == "NODE_EXTRA_CA_CERTS")] | length) != 1) | .metadata.name' <<<"$ca_out" | grep -v '^---$' || true)
+test -z "$ca_gaps" || { echo "postgresCa missing from: $ca_gaps" >&2; exit 1; }
+test "$(yq 'select(.kind == "Deployment" or (.kind == "Job" and (.metadata.name | contains("migrate")))) | select(.spec.template.spec.containers[0].env[].name == "NODE_EXTRA_CA_CERTS") | .metadata.name' <<<"$ca_out" | grep -v '^---$' | grep -c .)" -ge 4
+
 # With single-host mode off, every default (subdomain) render is unchanged.
 ci/agent-relay/subdomain-golden.sh check
 
