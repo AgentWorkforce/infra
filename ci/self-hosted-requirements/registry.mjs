@@ -542,7 +542,7 @@ function renderDoc() {
       for (const s of asList(e.secrets)) {
         const name = typeof s.name === 'object' ? Object.entries(s.name).map(([k, v]) => `${code(v)} (${k})`).join(', ') : code(s.name);
         const keys = asList(s.keys).map((k) => (typeof k.key === 'object' ? Object.entries(k.key).map(([pk, v]) => `${code(v)} (${pk})`).join(', ') : code(k.key)) + (k.key_path ? ` from ${code(k.key_path)}` : '') + (k.optional ? ` (optional: ${k.optional})` : '')).join('; ');
-        L(`- Secret: ${name}${s.name_paths ? ` from ${asList(s.name_paths).map(code).join(' then ')}` : ''}; keys ${keys}${s.note ? `. ${s.note}` : ''}`);
+        L(`- Secret: ${name}${s.name_paths ? ` from ${asList(s.name_paths).map(code).join(' then ')}` : ''}${keys ? `; keys ${keys}` : ''}${s.note ? `. ${s.note}` : ''}`);
       }
       const verify = typeof e.verify === 'object' ? Object.entries(e.verify).map(([k, v]) => `${k}: ${v}`).join(' / ') : e.verify;
       L(`- Verify: ${cell(verify)}`);

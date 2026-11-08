@@ -724,10 +724,7 @@ entries:
           - { key: rootPassword, key_path: alleyoop.secretKeys.lockerSecretAccessKey }
       - name: sessions-pipeline-locker
         name_paths: [session-object-storage.existingSecret]
-        keys:
-          - { key: rootUser }
-          - { key: rootPassword }
-        note: the bundled MinIO's root credential
+        note: the bundled upstream MinIO requires literal Secret data keys rootUser and rootPassword
     verify: kubectl get secret sessions-pipeline-locker -o jsonpath='{.data}' has rootUser and rootPassword
     sources:
       - "charts/sessions-pipeline/values.yaml:3"
