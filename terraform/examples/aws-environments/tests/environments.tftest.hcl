@@ -186,12 +186,12 @@ run "lambda_composition" {
     error_message = "Lambda mode must create its runtime and explicitly require overlapping worker stages to be disabled."
   }
   assert {
-    condition     = alltrue(values(output.application_contract.components))
-    error_message = "The full-suite contract includes control API, dashboard, pipeline, History, Relaycast, auth, Terse and optional Relayfile."
+    condition     = alltrue([for component in ["cloudApi", "dashboard", "sessionsPipeline", "relayhistory", "relaycast", "relayauth", "relayfile"] : output.application_contract.components[component]]) && !output.application_contract.components.durableActors
+    error_message = "The target suite includes control, dashboard, pipeline, History, Relaycast and optional Relayfile; a separate actor store is not required by the shared PostgreSQL target."
   }
   assert {
-    condition     = !output.pipeline.activation_enabled && output.application_contract.hoopdb_bootstrap_profile == "private-reachable-managed-postgres-required"
-    error_message = "Lambda must start inactive and require a privately reachable managed-Postgres bootstrap profile."
+    condition     = !output.pipeline.activation_enabled && output.application_contract.hoopdb_bootstrap_profile == "shared-rds-schema-review-required"
+    error_message = "Lambda must start inactive and require the reviewed shared-RDS schema bootstrap."
   }
 }
 
@@ -359,7 +359,7 @@ run "lambda_provider_and_tls_bindings" {
   command = plan
   variables {
     pipeline_runtime            = "lambda"
-    activate_lambda             = true
+    activate_lambda             = false
     lambda_package              = { s3_bucket = "reviewed-artifacts", s3_key = "pipeline.zip", s3_object_version = "reviewed-version" }
     function_security_group_ids = ["sg-function"]
     lambda_runtime_bindings = {
@@ -380,9 +380,9 @@ run "lambda_provider_and_tls_bindings" {
       output.lambda_shared_environment.SESSION_POSTGRES_TLS_PROFILE == "custom-ca" &&
       output.lambda_shared_environment.SESSION_POSTGRES_CA_FILE == "/var/task/assets/postgres-ca.pem" &&
       output.lambda_shared_environment.SESSION_POSTGRES_CA_SHA256 == var.lambda_runtime_bindings.postgres_ca_sha256 &&
-      !contains(keys(output.lambda_shared_environment), "AWS_REGION") && output.pipeline.activation_enabled
+      !contains(keys(output.lambda_shared_environment), "AWS_REGION") && !output.pipeline.activation_enabled
     )
-    error_message = "Writer and reader must share explicit OpenSearch/projection/CA settings without a reserved AWS_REGION override; activation requires its explicit flag."
+    error_message = "Writer and reader must share explicit OpenSearch/projection/CA settings without a reserved AWS_REGION override; shared-database processing remains inactive."
   }
 }
 
@@ -467,7 +467,7 @@ run "artifact_refuses_dotted_index" {
   command = plan
   variables {
     pipeline_runtime            = "lambda"
-    activate_lambda             = true
+    activate_lambda             = false
     lambda_package              = { s3_bucket = "reviewed-artifacts", s3_key = "pipeline.zip", s3_object_version = "reviewed-version" }
     function_security_group_ids = ["sg-function"]
     lambda_runtime_bindings = {
@@ -484,7 +484,7 @@ run "artifact_refuses_202_character_index" {
   command = plan
   variables {
     pipeline_runtime            = "lambda"
-    activate_lambda             = true
+    activate_lambda             = false
     lambda_package              = { s3_bucket = "reviewed-artifacts", s3_key = "pipeline.zip", s3_object_version = "reviewed-version" }
     function_security_group_ids = ["sg-function"]
     lambda_runtime_bindings = {
@@ -501,7 +501,7 @@ run "artifact_accepts_201_character_index" {
   command = plan
   variables {
     pipeline_runtime            = "lambda"
-    activate_lambda             = true
+    activate_lambda             = false
     lambda_package              = { s3_bucket = "reviewed-artifacts", s3_key = "pipeline.zip", s3_object_version = "reviewed-version" }
     function_security_group_ids = ["sg-function"]
     lambda_runtime_bindings = {
@@ -512,7 +512,65 @@ run "artifact_accepts_201_character_index" {
     }
   }
   assert {
-    condition     = length(output.lambda_shared_environment.OPENSEARCH_INDEX) == 201 && output.pipeline.activation_enabled
+    condition     = length(output.lambda_shared_environment.OPENSEARCH_INDEX) == 201 && !output.pipeline.activation_enabled
     error_message = "The maximum index accepted by the matching private artifact must remain usable."
   }
+}
+
+run "shared_database_schema_bindings" {
+  command = apply
+  assert {
+    condition     = output.postgres_service_bindings.control.database == output.verification.postgres.database && output.postgres_service_bindings.hoopdb.database == output.verification.postgres.database && output.postgres_service_bindings.relaycast.database == output.verification.postgres.database
+    error_message = "Control, HoopDb and Relaycast must share the one RDS application database."
+  }
+  assert {
+    condition     = alltrue([for binding in values(output.postgres_service_bindings) : binding.host == output.verification.postgres.host && binding.port == output.verification.postgres.port])
+    error_message = "No service binding may silently point at another server."
+  }
+  assert {
+    condition     = output.postgres_service_bindings.control.schema != output.postgres_service_bindings.hoopdb.schema && output.postgres_service_bindings.relaycast.schema == "relaycast" && !output.postgres_topology.application_sql_ready
+    error_message = "Schemas must remain distinct and bindings must not imply completed SQL/runtime integration."
+  }
+}
+
+run "explicit_new_install_database_name" {
+  command = apply
+  variables {
+    application_database_name = "sharedapp"
+  }
+  assert {
+    condition     = output.verification.postgres.database == "sharedapp" && alltrue([for binding in values(output.postgres_service_bindings) : binding.database == "sharedapp"])
+    error_message = "The initial RDS database and all service bindings must agree on the explicitly reviewed name."
+  }
+}
+
+run "maintenance_application_database_refused" {
+  command = plan
+  variables {
+    application_database_name = "postgres"
+  }
+  expect_failures = [var.application_database_name]
+}
+
+run "shared_database_activation_refused_even_with_valid_bindings" {
+  command = plan
+  variables {
+    pipeline_runtime            = "lambda"
+    activate_lambda             = true
+    lambda_package              = { s3_bucket = "reviewed-artifacts", s3_key = "pipeline.zip", s3_object_version = "reviewed-version" }
+    function_security_group_ids = ["sg-function"]
+    lambda_runtime_bindings = {
+      search_index       = "agent-relay-dev-sessions-v2"
+      state_backend_id   = "agent-relay-dev-sessions"
+      complete_since     = "epoch"
+      postgres_ca_sha256 = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    }
+  }
+  expect_failures = [terraform_data.environment_contract]
+}
+
+run "rds_internal_database_refused" {
+  command = plan
+  variables { application_database_name = "rdsadmin" }
+  expect_failures = [var.application_database_name]
 }

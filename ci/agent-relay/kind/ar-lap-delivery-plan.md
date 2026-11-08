@@ -1,6 +1,6 @@
 # ar-lap delivery checklist
 
-Updated 2026-11-08, 02:16 UTC. Dates below are executed evidence or explicit
+Updated 2026-11-08, 02:35 UTC. Dates below are executed evidence or explicit
 owner commitments, never inferred from an open PR or an estimated hosted rollout.
 **NOT COMMITTED** means that the owner has not supplied that date. Requests for
 code, artifact and proof dates have been sent to the existing component owners.
@@ -17,6 +17,7 @@ Add-ons remain in the overall two-profile scope, after this core handoff.
 | Control completion — layered-control | **NOT COMMITTED** for launch/release, workspace delete and compatible auth/read assembly | **NOT COMMITTED** | **NOT COMMITTED**; `agent_launch_release` and `cleanup.control_plane_workspaces` remain pending | Native `1f08cb6` MCP discovery/auth passes. #20/#27 are draft successors, not enabled. A reader-only route must not silently replace working upload/cost routes. |
 | Custom Desktop — layered-relay-desktop | **NOT COMMITTED** | **NOT COMMITTED** for a site build and ar-lap install/trust instructions | **NOT COMMITTED** for installed Desktop login, upload and visible readback | Site URL `https://relay.kind.agentrelay.com:8443`, scheme `agentrelay-kind`; local public CA available. Browser/device protocol tests are not a custom Desktop artifact proof. Depends on the pipeline/control assembly and the approved local analytics path. |
 | Shared-Postgres Relaycast target — runtime owner to be named; owner/date request sent to codex-helm-charts-check-codex | **NOT COMMITTED** | **NOT COMMITTED** | **NOT COMMITTED** | Running Cast is SQLite. Its real DM proof is useful baseline evidence, not final Postgres acceptance. Prerequisite source tests such as #633 do not establish a deployed PG backend. |
+| One application database / isolated service schemas — component migrator owners, coordinated by infragrok | **NOT COMMITTED** for SQL/bootstrap and application compatibility | **NOT COMMITTED** for a compatible service image set | **NOT COMMITTED** | Infra #80 merged the [binding contract](../../../docs/shared-postgres-storage-contract.md), not runtime SQL. Control, pipeline, History and optional services must implement their own namespace/role contracts together; do not run the dedicated-database HoopDB bootstrap unchanged in the shared database. |
 | Component analytics adapters — each producer owner; owner map coordinated with infragrok | **NOT COMMITTED** for complete producer coverage | **NOT COMMITTED** for the local collector/adapter assembly | **NOT COMMITTED** for local event capture from every component with hosted egress denied | Self-host routes to local/in-cluster file collection; hosted uses the approved PostHog endpoint. Telemetry disabled is not analytics coverage. A pipeline OTLP file exporter alone does not cover product analytics or Desktop/browser intake. |
 | Add-ons — infra-kind-stack (profiles/proof), layered-control (signed license), layered-relayfile (filesystem authority), Flows runtime owner to be named | **NOT COMMITTED** for complete gated runtime | Native Flows/file build preparation exists; signed-license/scoped-authority artifact dates **NOT COMMITTED** | **NOT COMMITTED** for installed Flow run, controller-scheduled CronJob firing and authenticated file read/write | Deferred from the first cofounder core handoff, not removed from the overall goal. No dev issuer, fake license or manually instantiated CronJob counts as acceptance. |
 
@@ -33,6 +34,15 @@ The existing runtime's approved database composition is one Postgres instance
 with separate service databases/roles. The exact pipeline ACL guard is unchanged.
 No second migrator, manifest union, shared runtime role, fake completeness row
 or privileged application login may substitute for the supported composition.
+The running fixture's separate service databases do not qualify the final single
+application-database target. Infra #80's bindings keep `application_sql_ready`
+false. A reviewed owner-specific bootstrap and application migration path is
+required; changing only database URLs or `search_path` cannot establish it.
+
+The merged [collector interface](../../../docs/analytics-collector-interface.md)
+is likewise an implementation contract, not a running collector or producer
+coverage proof. The local app/desktop gateway must derive tenant authority and
+keep collector producer credentials away from clients.
 
 ## Date and ETA rule
 
