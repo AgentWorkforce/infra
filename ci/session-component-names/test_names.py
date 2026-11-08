@@ -1,6 +1,7 @@
 """Real Helm renders: public names, internal entrypoints and upgrade identity pins."""
 from pathlib import Path
 import subprocess
+import re
 import unittest
 
 import yaml
@@ -71,6 +72,17 @@ class Names(unittest.TestCase):
         self.assertTrue(any(item["kind"] == "PersistentVolumeClaim" and item["metadata"]["name"] == "locker" for item in documents))
         volumes = deployments["locker"]["spec"]["template"]["spec"]["volumes"]
         self.assertTrue(any(volume.get("persistentVolumeClaim", {}).get("claimName") == "locker" for volume in volumes))
+
+    def test_native_ci_selectors_include_all_four_renamed_app_deployments(self):
+        documents = render()
+        script = (ROOT / "ci/sessions-pipeline-search-worker-role/kind.sh").read_text()
+        selectors = re.findall(r"app.kubernetes.io/name in \(([^)]+)\)", script)
+        self.assertTrue(selectors)
+        for selector in selectors:
+            names = set(selector.split(","))
+            matches = [item for item in documents if item["kind"] == "Deployment"
+                       and item["metadata"]["labels"].get("app.kubernetes.io/name") in names]
+            self.assertEqual(len(matches), 4, "native admission/readiness CI must select ingest and all workers")
 
     def test_old_dependency_key_refused_instead_of_silent_new_storage(self):
         error = render(args=["--set", "locker.enabled=false"], success=False)
