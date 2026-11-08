@@ -109,8 +109,9 @@ ingress, and analytics does not create hosted egress in self-host mode.
 ## Limits, delivery and privacy
 
 The first implementation must publish finite configurable limits for batch
-bytes/event count, individual event bytes, producer queue bytes/count, request
-deadline, retries, shutdown flush, file size, file count and total disk use.
+bytes/event count, individual event bytes, producer queue bytes/count,
+per-attempt request timeout, total request/delivery deadline, retries, shutdown
+flush, file size, file count and total disk use.
 Validate the actual streamed body size, not only `Content-Length`. Reject
 oversized/invalid/unauthorized batches before writing their records. Tests
 must exercise each configured bound rather than assume unlimited memory/disk.
@@ -149,10 +150,17 @@ Only `204` acknowledges collector acceptance. Other `2xx` responses, including
 dequeue them as a success; use the finite retry budget, then count the loss.
 This rule is for the collector adapter, not the separate PostHog protocol.
 
+The configured total request/delivery deadline starts when the event is
+enqueued and covers queued time, every request attempt and all retry waits.
+A batch uses its earliest event deadline; splitting or retrying never resets
+that budget. Each attempt's timeout is also clipped to the remaining total
+deadline, and shutdown may impose a shorter one. Exhaustion drops/counts the
+remaining events instead of starting another request or wait.
+
 For retryable responses, accept `Retry-After` only as unsigned decimal
 delta-seconds. The maximum honored delay is 30 seconds, further clipped to the
-remaining delivery or shutdown deadline; a producer may configure a smaller
-cap. Ignore malformed values and HTTP-date values and use the bounded local
+remaining total request/delivery deadline or shutdown deadline; a producer may
+configure a smaller cap. Ignore malformed values and HTTP-date values and use the bounded local
 backoff instead. Waiting still consumes the finite retry/time budget. A zero
 delay never permits unbounded attempts. Tests cover malformed, date, zero and
 oversized values plus deadline exhaustion.
