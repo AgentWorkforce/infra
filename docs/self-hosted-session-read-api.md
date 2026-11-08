@@ -68,7 +68,10 @@ checks and normalized default-render goldens also pass. This work did not run
 kubectl, install the component, change a namespace policy or touch the existing
 kind fixture. The fake image appears only in the explicitly render-only fixture.
 
-The ten existing kind profile/schema/trust checks also pass in this worktree.
+After composing the reviewed PR79 base, all 60 base offline checks also pass
+in this worktree, including its thirteen profile/schema/trust checks. Together
+with the ten read API checks, this is 70 offline checks; it is not runtime
+acceptance of the new service.
 
 Control [#27](https://github.com/AgentWorkforce/relay-control/pull/27), reviewed
 at `f879eedc`, is stacked on #20. It uses the existing `RELAYHISTORY_URL` and

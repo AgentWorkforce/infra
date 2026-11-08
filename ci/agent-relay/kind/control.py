@@ -68,8 +68,11 @@ def build(stack):
                "--build-arg", "NODE_IMAGE=" + NODE, "--build-arg", "IMAGE_REVISION=" + REVISION,
                "--build-arg", "IMAGE_VERSION=0.3.0-kind." + REVISION[:7], "-t", TAG, source], timeout=900)
     archive = stack.state / "control-image.tar"
-    stack.cmd([*stack.docker_args, "image", "save", "--platform", f"linux/{stack.arch}", "-o", archive, TAG], timeout=300)
-    receipt = inspect_archive(archive, stack.arch)
+    try:
+        stack.cmd([*stack.docker_args, "image", "save", "--platform", f"linux/{stack.arch}", "-o", archive, TAG], timeout=300)
+        receipt = inspect_archive(archive, stack.arch)
+    finally:
+        archive.unlink(missing_ok=True)  # This attempt's transport only.
     private_json(stack.state / "control-build.json", receipt)
     values = json.loads(stack.overrides.read_text()) if stack.overrides.exists() else {}
     values.setdefault("relay-cloud-api", {})["image"] = {

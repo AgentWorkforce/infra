@@ -227,28 +227,6 @@ compatibility:
       sources:
         - "charts/sessions-pipeline/Chart.yaml:4"
         - "ci/sessions-pipeline-profiles/matrix.sh:70"
-    - id: sessions-pipeline-0.6.1
-      status: planned
-      charts: { sessions-pipeline: 0.6.1, sessions-pipeline-worker: 0.6.1, alleyoop: 0.3.9 }
-      depends:
-        sessions-pipeline: { worker: 0.6.1, alleyoop: 0.3.9, hoopdb: 0.9.0, locker: 5.4.0, otel: 0.178.0 }
-      images:
-        sessions-pipeline-worker: { repository: agentworkforce/96bulls-services, digest: sha256:6f22ea17dff336e1431664542759fd27958649388b90a0b2f0881883caa7c6b2 }
-        alleyoop: { repository: agentworkforce/96bulls-services, digest: sha256:6f22ea17dff336e1431664542759fd27958649388b90a0b2f0881883caa7c6b2 }
-      services:
-        source_commit: 7d7229bb31c121ecb98cd4e35c248fc2cf5669ad
-        migration_generation: eff8b3be46565b57ad8fa5e4a066dbb6d1fe608313d9c1680bfbcd484add259b
-      notes: 'Repository rename to AgentWorkforce/infra: canonical source and Helm repository URLs, with matching local dependency patch versions. Runtime images, application source, migration generation and deployment values are unchanged. This release has no new live application proof.'
-      db_combos:
-        - { db_mode: selfhosted, boundary: global-default-revoke, hoopdb: cnpg, status: shipped, profiles: [selfhost-postgres, migration, aws-cnpg], notes: chart Jobs install the runtime role and the function default }
-        - { db_mode: selfhosted, boundary: global-default-revoke, hoopdb: external, status: shipped, profiles: [external-selfhosted], notes: operator runs the bootstrap files as a superuser }
-        - { db_mode: cloudsql, boundary: global-default-revoke, hoopdb: external, status: shipped, profiles: [gcp-cloudsql], notes: operator runs the Cloud SQL bootstrap files as the migration owner; roleBootstrap false }
-        - { db_mode: supabase, boundary: event-trigger, hoopdb: external, status: held, profiles: [external-supabase], notes: supabaseActivation.hold; migrate refuses until the reviewed event trigger is installed and --activation-check passes }
-        - { db_mode: supabase, boundary: null, hoopdb: external, status: fails closed, profiles: [aws-supabase], notes: renders; migrate refuses with function_boundary_unproven }
-        - { db_mode: local, boundary: null, hoopdb: any, status: dev only, profiles: [], notes: local stack only; never a self-host install }
-      sources:
-        - "charts/sessions-pipeline/Chart.yaml:4"
-        - "ci/sessions-pipeline-profiles/matrix.sh:70"
     - id: sessions-pipeline-0.6.0
       status: shipped
       charts: { sessions-pipeline: 0.6.0, sessions-pipeline-worker: 0.6.0, alleyoop: 0.3.8 }
@@ -449,39 +427,6 @@ compatibility:
         relay-cloud-api: { repository: ghcr.io/agentworkforce/selfhost-api, digest_required: true }
         relay-dashboard: { repository: ghcr.io/agentworkforce/relay-dashboard, digest_required: true }
       notes: 'Bundles sessions-pipeline 0.6.2 default-off read API plumbing and relay-cloud-api 0.2.7 legacy-client env omission. No profile enables the component or reroutes relaycontrol. Compatible runtime assembly and image remain upstream dependencies. Existing kind evidence belongs to its pinned base revision, not this new chart version.'
-    - id: agent-relay-0.3.15
-      status: planned
-      charts: { agent-relay: 0.3.15, relayhistory: 0.1.1, relay-cloud-api: 0.2.6, relay-dashboard: 0.1.3 }
-      app_versions: { agent-relay: 0.1.0, relayhistory: 0.1.0, relay-cloud-api: 0.1.0, relay-dashboard: 0.1.0 }
-      depends:
-        agent-relay: { relaycast: 0.3.5, relayauth: 0.1.4, sessions-pipeline: 0.6.1, relayhistory: 0.1.1, relay-cloud-api: 0.2.6, relay-dashboard: 0.1.3, relayflows: 0.2.5, durable-actors: 0.14.6-awf.1, relayfile: 0.2.2 }
-      images:
-        relayhistory: { repository: ghcr.io/agentworkforce/relayhistory, digest_required: true }
-        relay-cloud-api: { repository: ghcr.io/agentworkforce/selfhost-api, digest_required: true }
-        relay-dashboard: { repository: ghcr.io/agentworkforce/relay-dashboard, digest_required: true }
-      notes: 'Composes the API extraEnv change from PR 78. Local kind core/addons values, bootstrap and acceptance preparation. relay-cloud-api 0.2.6 adds a separate Secret-backed SELFHOST_LICENSE_FILE slot; license verification remains upstream work. Production defaults and image pins are unchanged. Local runtime proof is not yet established; see README Local kind profiles and issue 77.'
-    - id: agent-relay-0.3.14
-      status: planned
-      charts: { agent-relay: 0.3.14, relayhistory: 0.1.1, relay-cloud-api: 0.2.5, relay-dashboard: 0.1.3 }
-      app_versions: { agent-relay: 0.1.0, relayhistory: 0.1.0, relay-cloud-api: 0.1.0, relay-dashboard: 0.1.0 }
-      depends:
-        agent-relay: { relaycast: 0.3.5, relayauth: 0.1.4, sessions-pipeline: 0.6.1, relayhistory: 0.1.1, relay-cloud-api: 0.2.5, relay-dashboard: 0.1.3, relayflows: 0.2.5, durable-actors: 0.14.6-awf.1, relayfile: 0.2.2 }
-      images:
-        relayhistory: { repository: ghcr.io/agentworkforce/relayhistory, digest_required: true }
-        relay-cloud-api: { repository: ghcr.io/agentworkforce/selfhost-api, digest_required: true }
-        relay-dashboard: { repository: ghcr.io/agentworkforce/relay-dashboard, digest_required: true }
-      notes: 'Planned predecessor from PR 78: relay-cloud-api 0.2.5 adds extraEnv to API and migration containers. Ordering is coordinated with its owner; this record does not claim a published chart.'
-    - id: agent-relay-0.3.13
-      status: planned
-      charts: { agent-relay: 0.3.13, relayhistory: 0.1.1, relay-cloud-api: 0.2.4, relay-dashboard: 0.1.3 }
-      app_versions: { agent-relay: 0.1.0, relayhistory: 0.1.0, relay-cloud-api: 0.1.0, relay-dashboard: 0.1.0 }
-      depends:
-        agent-relay: { relaycast: 0.3.5, relayauth: 0.1.4, sessions-pipeline: 0.6.1, relayhistory: 0.1.1, relay-cloud-api: 0.2.4, relay-dashboard: 0.1.3, relayflows: 0.2.5, durable-actors: 0.14.6-awf.1, relayfile: 0.2.2 }
-      images:
-        relayhistory: { repository: ghcr.io/agentworkforce/relayhistory, digest_required: true }
-        relay-cloud-api: { repository: ghcr.io/agentworkforce/selfhost-api, digest_required: true }
-        relay-dashboard: { repository: ghcr.io/agentworkforce/relay-dashboard, digest_required: true }
-      notes: 'Repository rename to AgentWorkforce/infra: canonical source and Helm repository URLs, with matching local dependency patch versions. Runtime images, application source, migration generation and deployment values are unchanged. This release has no new live application proof.'
     - id: agent-relay-0.3.12
       status: shipped
       charts: { agent-relay: 0.3.12, relayhistory: 0.1.1, relay-cloud-api: 0.2.4, relay-dashboard: 0.1.3 }
@@ -1720,7 +1665,7 @@ entries:
     status: shipped
     provided_by: operator
     default: disabled
-    choices: [disabled, mounted]
+    choices: [{ value: disabled }, { value: mounted }]
     secrets:
       - name: "<license.existingSecret>"
         name_paths: [license.existingSecret]

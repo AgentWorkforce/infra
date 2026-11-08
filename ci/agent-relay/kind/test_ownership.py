@@ -199,6 +199,18 @@ class Ownership(unittest.TestCase):
         self.assertFalse(list(self.local.state.glob("ownership-*")))
         self.assertFalse(any(c[:2] in (["kind", "delete"], ["kind", "create"]) for c in self.calls))
 
+    def test_up_refusal_preserves_original_recovery_anchor(self):
+        self.legacy_receipts()
+        ready = self.local.state / "ready.json"
+        before = ready.read_bytes()
+        with patch.object(stack.shutil, "which", return_value="tool"):
+            with self.assertRaises(stack.StackError):
+                self.local.up()
+        self.assertEqual(ready.read_bytes(), before)
+        self.assertEqual(self.local.kubeconfig.read_text(), "original kubeconfig")
+        self.local.recover(self.live_uid)
+        self.assertEqual(json.loads(self.local.marker.read_text()), self.record)
+
     def test_recovery_cannot_adopt_live_replacement_even_with_same_name(self):
         self.legacy_receipts()
         self.live_uid = "c5a7f64f-34ad-4857-ac23-41729278f2f1"

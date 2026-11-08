@@ -53,7 +53,9 @@ def install(stack, version, namespace):
                 return
             last = f"HTTP {response.status}"
         except (OSError, http.client.HTTPException) as error:
-            last = type(error).__name__
+            # This fixed unauthenticated localhost route has no credentials
+            # in its URL, headers or exception context.
+            last = f"{type(error).__name__}: {error}"
         finally:
             connection.close()
         time.sleep(1)

@@ -6,6 +6,9 @@
 //
 //   bun run e2e-gcp-proof-sessions-pipeline.ts push   <marker> <machineId>  < assertion
 //   bun run e2e-gcp-proof-sessions-pipeline.ts verify <marker> <sessionId> [timeoutSec]
+//   bun run e2e-gcp-proof-sessions-pipeline.ts verify-offline <marker> <sessionId> [timeoutSec]
+// verify-offline requires exact WORKSPACE_ID and E2E_PIPELINE_USER_ID and
+// excludes only model summary stages/objects; other stage errors still fail.
 //
 // `push` writes one marked Claude transcript and a minimal Concourse catalogue
 // under /tmp, then runs one real courier pass (src/alleyoop/courier.ts) against
@@ -17,6 +20,7 @@
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
+import { pathToFileURL } from "node:url";
 import { zstdDecompressSync } from "node:zlib";
 
 const [mode, marker, arg3, arg4] = process.argv.slice(2);
@@ -66,7 +70,7 @@ async function push() {
     CONCOURSE_DB: dbPath,
     COURIER_STATE: join(dir, "courier-state.json"),
     INGEST_URL: `http://127.0.0.1:${process.env.INGEST_PORT ?? "8080"}`,
-    USER_ID: process.env.E2E_PIPELINE_USER_ID ?? `e2e-${marker}`,
+    USER_ID: process.env.E2E_PIPELINE_USER_ID || `e2e-${marker}`,
     MACHINE_ID: machineId,
     COURIER_START_MODE: "all",
     COURIER_CLOSE_AFTER_MINUTES: "0",
@@ -84,46 +88,54 @@ async function push() {
   if (!ok) process.exitCode = 1;
 }
 
-async function verify() {
+export async function verify(summariesRequired = true, dependencies?: any) {
   const sessionId = arg3!;
   const deadline = Date.now() + Number(arg4 ?? "300") * 1000;
-  const { openHoopDb } = await import("/app/src/shared/db.ts");
-  const { lockerStore } = await import("/app/src/shared/locker.ts");
-  const { objectKey, readAll } = await import("/app/src/shared/vendor.ts");
-  const db = openHoopDb();
+  const { openHoopDb } = dependencies ?? await import("/app/src/shared/db.ts");
+  const { lockerStore } = dependencies ?? await import("/app/src/shared/locker.ts");
+  const { objectKey, readAll } = dependencies ?? await import("/app/src/shared/vendor.ts");
+  let db: ReturnType<typeof openHoopDb> | undefined;
   let failed = 0;
   const check = (ok: boolean, name: string, detail: string) => {
     proof(ok ? "PASS" : "FAIL", name, detail);
     if (!ok) failed += 1;
   };
   try {
+    if (!ORG || !marker || !sessionId || (!summariesRequired && !process.env.WORKSPACE_ID))
+      throw new Error("missing exact tenant/session identity");
+    db = openHoopDb();
     // `kinds` is "long:<status>,short:<status>" (string_agg of kind:status).
     const summaryStatus = (kinds: string | null, kind: string) =>
       (kinds ?? "").split(",").find((entry) => entry.startsWith(`${kind}:`))?.slice(kind.length + 1);
-    type Row = { state: string; manifest_key: string; kinds: string | null; su: string | null; trace: string | null };
+    type Row = { state: string; manifest_key: string; kinds: string | null; su: string | null; trace: string | null; index_user: string; derived_user: string };
     let row: Row | undefined;
     while (Date.now() < deadline) {
       const { rows } = await db.query<Row>(
-        `SELECT i.state, i.manifest_key,
+        `SELECT i.state, i.manifest_key, i.user_id AS index_user,
+                (SELECT user_id FROM sessions.session_index_ext e WHERE e.org_id=i.org_id AND e.workspace_id=i.workspace_id AND e.harness=i.harness AND e.session_id=i.session_id AND e.machine_id=i.machine_id) AS derived_user,
                 (SELECT string_agg(kind || ':' || status, ',' ORDER BY kind) FROM sessions.session_summaries s
                   WHERE s.org_id=i.org_id AND s.workspace_id=i.workspace_id AND s.harness=i.harness AND s.session_id=i.session_id AND s.machine_id=i.machine_id) AS kinds,
                 (SELECT session_uuid::text FROM sessions.session_index_ext e
                   WHERE e.org_id=i.org_id AND e.workspace_id=i.workspace_id AND e.harness=i.harness AND e.session_id=i.session_id AND e.machine_id=i.machine_id) AS su,
                 (SELECT last_trace_id::text FROM sessions.session_index_ext e
                   WHERE e.org_id=i.org_id AND e.workspace_id=i.workspace_id AND e.harness=i.harness AND e.session_id=i.session_id AND e.machine_id=i.machine_id) AS trace
-           FROM sessions.session_index i WHERE i.org_id = $1 AND i.session_id = $2`,
-        [ORG, sessionId],
+           FROM sessions.session_index i WHERE i.org_id = $1 AND i.session_id = $2 AND ($3::text IS NULL OR i.workspace_id::text=$3::text)`,
+        [ORG, sessionId, process.env.WORKSPACE_ID || null],
       );
       row = rows[0];
       // Every summary status (ready, disabled, quarantined, empty, unsupported)
       // is terminal, so stop once both kinds exist and the referee has
       // classified the session; whether they succeeded is checked below.
-      if (row && row.state !== "unknown" && row.su && summaryStatus(row.kinds, "long") && summaryStatus(row.kinds, "short")) break;
+      if (row && row.state !== "unknown" && row.su && (!summariesRequired || (summaryStatus(row.kinds, "long") && summaryStatus(row.kinds, "short")))) break;
       await new Promise((r) => setTimeout(r, 5000));
     }
     check(!!row?.su, "pipeline.hoopdb_indexer", `session=${sessionId} session_uuid=${row?.su ?? "none"} trace=${row?.trace ?? "none"}`);
     if (!row?.su) return;
-    check(row.state !== "unknown", "pipeline.referee_state", `state=${row.state}`);
+    if (!summariesRequired) {
+      check(!!process.env.E2E_PIPELINE_USER_ID && row.index_user === process.env.E2E_PIPELINE_USER_ID
+        && row.derived_user === process.env.E2E_PIPELINE_USER_ID, "pipeline.owner_attribution", "ingest and derived index match the real signed-in owner");
+    }
+    check(["active", "done", "abandoned"].includes(row.state), "pipeline.referee_state", `state=${row.state}`);
     const verdicts = await db.query<{ state: string; rule: string }>(
       "SELECT state, rule FROM sessions.session_verdicts WHERE session_uuid = $1::uuid ORDER BY revision DESC, classified_at DESC, id DESC", [row.su]);
     // The latest verdict is a successful classification only when it names a
@@ -132,12 +144,15 @@ async function verify() {
     // Bob Costas succeeded only when both summaries are `ready` (a pointer to
     // an encrypted Locker object); disabled/quarantined/empty/unsupported are
     // terminal non-success outcomes.
-    check(summaryStatus(row.kinds, "long") === "ready" && summaryStatus(row.kinds, "short") === "ready",
+    if (summariesRequired) check(summaryStatus(row.kinds, "long") === "ready" && summaryStatus(row.kinds, "short") === "ready",
       "pipeline.bob_costas_summaries", `summaries=${row.kinds ?? "none"}`);
+    check(!!row.trace, "pipeline.trace", "indexed session has a non-null processing trace");
+    if (!row.trace) return;
     const events = await db.query<{ stage: string; status: string }>(
       "SELECT DISTINCT stage, status FROM sessions.pipeline_events WHERE org_id = $1 AND trace_id = $2::uuid ORDER BY stage", [ORG, row.trace]);
     const ok = events.rows.filter((e) => e.status === "ok").map((e) => e.stage);
-    check(["object-landed", "session-indexed", "status-classify", "summary-short", "summary-long"].every((s) => ok.includes(s)), "pipeline.events", `ok_stages=${ok.join(",")} other=${events.rows.filter((e) => e.status !== "ok").map((e) => `${e.stage}:${e.status}`).join(",") || "none"}`);
+    const requiredStages = ["object-landed", "session-indexed", "status-classify", ...(summariesRequired ? ["summary-short", "summary-long"] : [])];
+    check(requiredStages.every((s) => ok.includes(s)) && !events.rows.some(e => requiredStages.includes(e.stage) && e.status !== "ok"), "pipeline.events", `ok_stages=${ok.join(",")} other=${events.rows.filter((e) => e.status !== "ok").map((e) => `${e.stage}:${e.status}`).join(",") || "none"}`);
     const dlq = await db.query<{ c: string }>(
       "SELECT count(*)::text AS c FROM sessions.pipeline_dead_letters WHERE org_id = $1 AND trace_id = $2::uuid", [ORG, row.trace]).catch(() => ({ rows: [{ c: "n/a" }] }));
     check(dlq.rows[0]?.c === "0", "pipeline.no_dead_letters", `dead_letters_for_trace=${dlq.rows[0]?.c}`);
@@ -149,22 +164,25 @@ async function verify() {
     for (const obj of listing.items) text += zstdDecompressSync(Buffer.from(await readAll(await raw.store.get(obj.key)))).toString("utf8");
     const head = await raw.store.head(objectKey(row.manifest_key));
     const summaryObjects = await raw.store.list(objectKey(row.manifest_key.replace(/\/manifest\.json$/, "/summary")));
-    check(listing.items.length > 0 && text.includes(marker!) && summaryObjects.items.length >= 2 && head?.metadata?.["session-uuid"] === row.su, "pipeline.bucket_objects",
+    check(listing.items.length > 0 && text.includes(marker!) && (!summariesRequired || summaryObjects.items.length >= 2) && head?.metadata?.["session-uuid"] === row.su, "pipeline.bucket_objects",
       `provider=${raw.provider} raw_chunks=${listing.items.length} summary_objects=${summaryObjects.items.length} manifest_meta_session_uuid_matches=${head?.metadata?.["session-uuid"] === row.su}`);
-    check(!text.includes(FAKE_SECRET), "pipeline.technical_foul_scrub", `fake_secret_in_stored_chunks=${text.includes(FAKE_SECRET)}`);
+    check(listing.items.length > 0 && text.includes(marker!) && !text.includes(FAKE_SECRET), "pipeline.technical_foul_scrub", `fake_secret_in_stored_chunks=${text.includes(FAKE_SECRET)}`);
     console.log(`TRACE_ID=${row.trace}`);
     console.log(`SESSION_UUID=${row.su}`);
   } finally {
-    await db.end();
+    if (db) await db.end();
     if (failed) process.exitCode = 1;
   }
 }
 
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
 try {
   if (mode === "push") await push();
   else if (mode === "verify") await verify();
+  else if (mode === "verify-offline") await verify(false);
   else throw new Error(`unknown mode ${mode}`);
 } catch (error) {
-  proof("FAIL", `pipeline.${mode}`, `error=${(error as Error).message?.slice(0, 200)}`);
+  proof("FAIL", `pipeline.${mode}`, `error=${(error as Error).name || "Error"}`);
   process.exitCode = 1;
+}
 }

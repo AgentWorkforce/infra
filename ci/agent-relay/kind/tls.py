@@ -23,7 +23,17 @@ def create(stack, hosts, namespace):
             ca_key.chmod(0o600)
         # Reuse this fixture's CA key when upgrading an old/expiring CA cert.
         stack.cmd(["openssl", "req", "-x509", "-new", "-key", ca_key, "-days", "365", "-config", config, "-out", ca])
-    if renew_ca or not current(cert, "Authority Key Identifier", 86400):
+    def matches(path, private_key):
+        if not path.exists() or not private_key.exists():
+            return False
+        public = stack.cmd(["openssl", "x509", "-in", path, "-pubkey", "-noout"], check=False)
+        paired = stack.cmd(["openssl", "pkey", "-in", private_key, "-pubout"], check=False)
+        return public.returncode == paired.returncode == 0 and public.stdout == paired.stdout
+
+    valid_leaf = (current(cert, "Authority Key Identifier", 86400) and matches(cert, key)
+                  and all(stack.cmd(["openssl", "verify", "-CAfile", ca, "-verify_hostname", host, cert], check=False).returncode == 0
+                          for host in hosts))
+    if renew_ca or not valid_leaf:
         config = stack.state / "tls.cnf"
         san = ",".join("DNS:" + host for host in hosts)
         config.write_text("[req]\ndistinguished_name=dn\nreq_extensions=req_ext\nprompt=no\n[dn]\n"

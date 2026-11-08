@@ -17,16 +17,17 @@ recreate the cluster or replace the kubeconfig. Normal reuse refuses legacy
 receipts and does not infer ownership from live labels or a live UID alone.
 
 At source `d87aefb`, the one-command local-control build/install completed with
-exit 0 and Helm status `deployed`. The harness emits the [raw readiness
-receipt](core-ready.json), including source revision, ownership version, native
+exit 0 and Helm status `deployed`. The harness emits private
+`.kind/core/ready.json`; the manually copied, byte-identical
+[snapshot](core-ready.json) from that run records source revision, ownership version, native
 identity, recipe/render hashes and the newly completed exact-ACL Job. The full
 proof on the same source records 55 PASS, 0 FAIL, 3 PENDING, exit 2. This is live
 recovery/reuse validation, not a fresh cluster creation/deletion cycle.
 
-All 42 offline checks pass: 15 ownership, 12 harness, 10 profile/schema/TLS,
+At that recorded live source, all 42 offline checks passed: 15 ownership, 12 harness, 10 profile/schema/TLS,
 3 native-control admission/tenant preservation and 2 bootstrap checks. Those
 suites do not operate on the real cluster. The earlier curated lifecycle summary
-was removed in favor of the raw readiness artifact emitted by `stack.py`.
+was removed in favor of the manually copied snapshot of the raw readiness artifact emitted by `stack.py`.
 
 ## Current core setup and protocol proof
 
@@ -39,7 +40,12 @@ Setup completed with exit 0 and a readiness receipt, including the application
 returning HTTP 200 over verified TLS. The protocol proof exits 2 (**PENDING**),
 not 0. Its [complete credential-checked report](core-proof.json) records proof
 source `d87aefb`, 55 passing checks, no failed checks, and three pending checks.
-The [image/generation receipt](core-images.json) records the exact setup inputs.
+The [image/generation receipt](core-images.json) records the rendered suite chart images and services generation.
+The node image is in `core-ready.json`; support Postgres/probe image pins are
+in `stack.py`. This historical snapshot is not automatically refreshed by a
+subsequent setup invocation. The same manual copy applies to `core-proof.json`,
+`core-images.json` and `control-build.json`; their embedded revisions identify
+the original runs, not later source-only review fixes.
 Selected literal proof output:
 
 ```text
@@ -332,3 +338,25 @@ cached official schemas fetched over verified HTTPS because its Go HTTPS
 fetch stalled. Standard schemas were required; both new profiles reported zero
 skipped schemas. Existing static fixtures retain their declared custom-CRD
 schema skips. These local tool adapters are ignored and are not shipped.
+
+
+## Subsequent review fixes (source validation only)
+
+The review fixes preserve the original recovery anchor before ownership refusal,
+use version-checked Secret create/replace instead of plaintext last-applied
+annotations, renew TLS leaves for missing hosts or mismatched keys, and share
+one hosted/offline courier verifier. Offline verification still requires a
+trace, processing events, owner identity and a stored marked transcript; only
+model summaries are optional. Temporary cost sync sessions are revoked via
+History's supported `/v1/auth/token/revoke` route, including ingest failure.
+
+These changes have offline regression/render checks and server-side dry runs
+of Secret replacement against the five owned core Secrets. The dry runs prove
+that the old annotation is absent from the proposed object without changing
+cluster resources. The full live setup/proof receipts above remain pinned to
+`d87aefb`; they are not evidence of a rerun of these later source changes.
+
+Review validation: 60 offline checks pass (16 ownership, 19 harness, 13
+profile/schema/TLS, 3 control admission/tenant, 4 bootstrap and 5 shared pipeline
+verifier checks). The nine JavaScript checks also pass inside the pinned native
+Node 22.23.3 image with networking disabled and read-only source mounts.

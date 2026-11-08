@@ -64,6 +64,8 @@ def build(stack):
     # engine on both architectures, including where no npm runtime is shipped.
     # Large Cargo outputs/caches stay on the checkout volume, outside Docker.
     stack.check_space(6 * 1024**3)
+    if shutil.disk_usage(stack.state).free < 6 * 1024**3:
+        raise ValueError("checkout volume needs at least 6 GiB free for Cargo outputs/cache; no cleanup is performed")
     source = stack.state / "flows-source"
     checkout(stack, "flows", FLOWS_REVISION, source)
     sdk = Path(__file__).resolve().parent / "flows-sdk"

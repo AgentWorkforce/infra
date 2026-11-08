@@ -102,6 +102,7 @@ relayfile: {}
 # values-kind-*.yaml profiles opt in to namespace-wide external-egress denial.
 localKind:
   enabled: false
+  allowLocalOnly: false
   profile: core
   temporaryRelayauth: true
 # Umbrella NetworkPolicy for the durable-actors control plane (port 7100):

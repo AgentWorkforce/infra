@@ -7,6 +7,7 @@ store changes. PyYAML is a prerequisite, shared with the chart verification.
 from __future__ import annotations
 
 import argparse
+import base64
 import hashlib
 import json
 import os
@@ -101,8 +102,28 @@ class Stack:
             meta.setdefault("labels", {})["app.kubernetes.io/managed-by"] = "Helm"
             meta.setdefault("annotations", {}).update({"meta.helm.sh/release-name": RELEASE,
                                                         "meta.helm.sh/release-namespace": NS})
+        secret = doc.get("kind") == "Secret"
+        # create/replace avoids kubectl's plaintext last-applied annotation.
+        # Replace uses the observed resourceVersion so concurrent changes fail
+        # instead of silently overwriting another writer. Preserve metadata.
+        if secret:
+            doc.setdefault("data", {}).update({key: base64.b64encode(value.encode()).decode()
+                                                for key, value in doc.pop("stringData", {}).items()})
+            namespace = doc["metadata"].get("namespace")
+            existing = self.k("get", "secret", doc["metadata"]["name"], "-o", "json", "--ignore-not-found=true",
+                              namespace=namespace, sensitive=True).stdout.strip()
+            if existing:
+                metadata = json.loads(existing)["metadata"]
+                metadata.pop("managedFields", None)
+                for field in ("labels", "annotations"):
+                    metadata.setdefault(field, {}).update(doc["metadata"].get(field, {}))
+                doc["metadata"] = metadata
+            doc["metadata"].setdefault("annotations", {}).pop("kubectl.kubernetes.io/last-applied-configuration", None)
+            self.k("replace" if existing else "create", "-f", "-", namespace=namespace,
+                   data=json.dumps(doc), sensitive=True)
+            return
         self.k("apply", "-f", "-", namespace=doc.get("metadata", {}).get("namespace"),
-               data=json.dumps(doc), sensitive=doc.get("kind") == "Secret")
+               data=json.dumps(doc), sensitive=secret)
 
     def dependencies(self):
         for name, url in [("cnpg", "https://cloudnative-pg.github.io/charts"),
@@ -452,6 +473,11 @@ class Stack:
             if not shutil.which(tool):
                 raise StackError(f"missing prerequisite: {tool}")
         self.docker(require_space=False)
+        # Legacy recovery needs the original ready.json as an independent UID
+        # anchor. Refuse foreign/legacy ownership BEFORE invalidating it or
+        # preparing any images/resources; cluster() checks again before use.
+        if self.name in self.cmd(["kind", "get", "clusters"], timeout=30).stdout.splitlines():
+            self.require_owned_cluster()
         ready = self.state / "ready.json"
         if ready.exists():
             ready.unlink()
@@ -508,7 +534,9 @@ class Stack:
         # Query the real first-boot records, not a fixture organization id.
         bootstrap = (ROOT / "ci/agent-relay/kind/bootstrap.mjs").read_text()
         self.k("exec", "-i", "deploy/relaycontrol", "--", "sh", "-c", "cat > /tmp/kind-bootstrap.mjs", data=bootstrap)
-        ids = json.loads(self.k("exec", "deploy/relaycontrol", "--", "node", "/tmp/kind-bootstrap.mjs").stdout)
+        bootstrap_name = next((e["value"] for d in docs if d["kind"] == "Deployment" and d["metadata"]["name"] == "relaycontrol"
+                              for e in pod_spec(d)["containers"][0]["env"] if e["name"] == "SELFHOST_BOOTSTRAP_WORKSPACE_NAME"), "Default")
+        ids = json.loads(self.k("exec", "deploy/relaycontrol", "--", "node", "/tmp/kind-bootstrap.mjs", bootstrap_name).stdout)
         private_json(self.state / "tenant.json", ids)
         values = json.loads(self.overrides.read_text()) if self.overrides.exists() else {}
         private_json(self.overrides, tenant_values(values, ids, self.profile, self.arch, self.recipe_hash()))
