@@ -186,21 +186,21 @@ if grep -q '^relayauth' <<<"$netpol_names"; then
   echo "live profile renders a NetworkPolicy for disabled relayauth" >&2
   exit 1
 fi
-test "$(yq 'select(.kind == "Deployment" and .metadata.name == "relay-control") |
+test "$(yq 'select(.kind == "Deployment" and .metadata.name == "relay-cloud-api") |
   .spec.template.spec.containers[0].env[] | select(.name == "RELAYAUTH_URL") | .value' <<<"$live_out")" = http://relayauth.relayauth.svc:8787
 test "$(yq 'select(.kind == "ConfigMap" and .metadata.name == "relayhistory") |
   .data.RELAYAUTH_ISSUER' <<<"$live_out")" = http://relayauth.relayauth.svc:8787
 test "$(yq 'select(.kind == "ConfigMap" and .metadata.name == "relayhistory") |
   .data.RELAYAUTH_JWKS_URL' <<<"$live_out")" = http://relayauth.relayauth.svc:8787/.well-known/jwks.json
 
-live_api_env() { yq "select(.kind == \"Deployment\" and .metadata.name == \"relay-control\") |
+live_api_env() { yq "select(.kind == \"Deployment\" and .metadata.name == \"relay-cloud-api\") |
   .spec.template.spec.containers[0].env[] | select(.name == \"$1\") | .value" <<<"$live_out"; }
 test "$(live_api_env SELFHOST_ENCRYPTION_KEY_ID)" = proof-1
 test "$(live_api_env SELFHOST_DASHBOARD_URL)" = https://gcp-proof.agentrelay.com/
 test "$(live_api_env SELFHOST_INTERNAL_TOKEN_FILE)" = /var/run/agent-relay/secrets/selfhost-internal-token
 test "$(live_api_env SELFHOST_TELEMETRY_LEVEL)" = off
 test -z "$(live_api_env SELFHOST_TELEMETRY_INSTALL_KEY_FILE)"
-yq 'select(.kind == "Deployment" and .metadata.name == "relay-control") | .spec.template.spec.volumes[] |
+yq 'select(.kind == "Deployment" and .metadata.name == "relay-cloud-api") | .spec.template.spec.volumes[] |
   select(.name == "secrets") | .secret.items[].key' <<<"$live_out" | grep -qx selfhost-internal-token \
   || { echo "live profile does not mount the internal token" >&2; exit 1; }
 
