@@ -78,7 +78,8 @@ spec:
             timeoutSeconds: 2
             failureThreshold: 3
           livenessProbe:
-            exec: *healthyExec
+            exec:
+              command: ["node", "-e", "fetch('http://127.0.0.1:4319/healthz',{signal:AbortSignal.timeout(1000)}).then(()=>process.exit(0)).catch(()=>process.exit(1))"]
             periodSeconds: 15
             timeoutSeconds: 2
             failureThreshold: 3

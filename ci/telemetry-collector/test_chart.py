@@ -1,8 +1,10 @@
-"""Offline renders only; never an installed collector or durable-ack proof."""
+"""Source renders and isolated probe checks; no installed collector/durability proof."""
+import http.server
 from pathlib import Path
 import subprocess
 import json
 import unittest
+import threading
 
 import yaml
 
@@ -28,6 +30,40 @@ def render(extra=(), ok=True, umbrella=False):
 
 
 class Collector(unittest.TestCase):
+    def test_proxy_numeric_limits_and_name_schema(self):
+        docs = render(['--set', 'limits.maxBatchBytes=1000000', '--set', 'limits.maxInFlight=1024'])
+        config = next(d for d in docs if d['kind'] == 'ConfigMap')['data']['nginx.conf']
+        self.assertIn('client_max_body_size 1000000;', config)
+        self.assertIn('worker_connections 2080;', config)
+        for key in ['nameOverride', 'fullnameOverride']:
+            for value in ['Bad_Name', '-starts', 'a' * 64]:
+                with self.subTest(key=key, value=value):
+                    render(['--set', key + '=' + value], ok=False)
+
+    def test_unhealthy_store_affects_readiness_without_restarting_process(self):
+        class Health(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):
+                self.send_response(503)
+                self.end_headers()
+                self.wfile.write(b'{"ok":false}')
+            def log_message(self, *args):
+                pass
+        server = http.server.HTTPServer(('127.0.0.1', 0), Health)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        docs = render()
+        collector = next(d for d in docs if d['kind'] == 'Deployment')['spec']['template']['spec']['containers'][0]
+        def probe(name):
+            script = collector[name]['exec']['command'][-1].replace('127.0.0.1:4319',
+                      '127.0.0.1:' + str(server.server_port))
+            return subprocess.run(['node', '-e', script], capture_output=True, timeout=5).returncode
+        try:
+            self.assertEqual(probe('readinessProbe'), 1)
+            self.assertEqual(probe('livenessProbe'), 0)
+        finally:
+            server.shutdown(); server.server_close(); thread.join(timeout=5)
+        self.assertEqual(probe('livenessProbe'), 1)
+
     def test_exclusive_writer_and_retained_persistent_claim(self):
         documents = render()
         deployment = next(item for item in documents if item["kind"] == "Deployment")
