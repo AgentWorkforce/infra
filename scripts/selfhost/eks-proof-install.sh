@@ -47,10 +47,12 @@ CHART="${EKS_PROOF_CHART:-oci://ghcr.io/agentworkforce/charts/agent-relay}"
 CHART_VERSION="${EKS_PROOF_CHART_VERSION:-0.3.6}"
 # This historical proof emits pre-rename keys. The current source chart needs
 # a separately reviewed upgrade, not ignored legacy overrides.
-case "$CHART_VERSION" in
-  0.3.*|0.4.*) ;;
-  *) printf '%s\n' 'eks-proof-install supports pre-rename chart versions only (0.3.x/0.4.x)' >&2; exit 2 ;;
-esac
+require_legacy_chart() {
+  case "$CHART_VERSION" in
+    0.3.*|0.4.*) ;;
+    *) printf '%s\n' 'eks-proof-install supports pre-rename chart versions only (0.3.x/0.4.x)' >&2; return 2 ;;
+  esac
+}
 SECRET="${EKS_PROOF_SECRET:-agent-relay-eks-proof}"
 ORG_ID="${EKS_PROOF_ORG_ID:-org_eks_proof}"
 VPC_CIDR="${EKS_PROOF_VPC_CIDR:-10.42.0.0/16}"
@@ -293,8 +295,9 @@ EOF
 }
 
 helm_apply() {
+  require_legacy_chart || return $?
   local chart_dir
-  chart_dir="$(mktemp -d "$STATE_DIR/chart-${CHART_VERSION}.XXXXXX")"
+  chart_dir="$(mktemp -d "$WORK_TMP/chart-${CHART_VERSION}.XXXXXX")"
   helm pull "$CHART" --version "$CHART_VERSION" --untar --untardir "$chart_dir"
   local base_values="$chart_dir/agent-relay/values-eks.yaml"
   [[ -f "$base_values" ]] || { log 'selected chart does not ship values-eks.yaml'; return 1; }
@@ -304,6 +307,7 @@ helm_apply() {
 }
 
 cmd_install() {
+  require_legacy_chart || return $?
   local cert
   cert="$(cat "$STATE_DIR/acm-cert-arn" 2>/dev/null)" ||
     { log "no $STATE_DIR/acm-cert-arn: run eks-proof-dns.sh cert-request first"; exit 1; }

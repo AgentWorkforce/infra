@@ -99,31 +99,70 @@ class Names(unittest.TestCase):
 import json, os, sys
 from pathlib import Path
 args=sys.argv[1:]
-with open(os.environ['HELM_CALLS'], 'a') as f: f.write(json.dumps(args)+'\\n')
+call={'args':args}
 if args[0]=='pull':
     target=Path(args[args.index('--untardir')+1])/'agent-relay'
     target.mkdir()
     (target/'values-eks.yaml').write_text('relay-cloud-api: {}\\nrelay-dashboard: {}\\n')
+elif args[0]=='upgrade':
+    call['base_values']=Path(args[args.index('-f')+1]).read_text()
+with open(os.environ['HELM_CALLS'], 'a') as f: f.write(json.dumps(call)+'\\n')
 ''')
             for file in tools.iterdir(): file.chmod(0o755)
+            (root / 'tmp').mkdir()
             source = (ROOT / 'scripts/selfhost/eks-proof-install.sh').read_text()
             definitions = source.rsplit('\ncase "${1:-}" in', 1)[0]
             env = {**os.environ, 'PATH': str(tools) + os.pathsep + os.environ['PATH'],
                    'PIPPEN_SANDBOX_ACCOUNT_ID': 'render-only', 'EKS_PROOF_CHART_VERSION': '0.3.11',
+                   'TMPDIR': str(root / 'tmp'),
                    'EKS_PROOF_STATE_DIR': str(root / 'state'), 'HELM_CALLS': str(root / 'helm.jsonl')}
-            result = subprocess.run(['bash', '-c', definitions + '\nproof_overlay\nhelm_apply\n'],
+            result = subprocess.run(['bash', '-c', definitions + '\nproof_overlay\nhelm_apply\nprintf "%s" "$WORK_TMP"\n'],
                                     cwd=ROOT, env=env, capture_output=True, text=True)
             self.assertEqual(result.returncode, 0, result.stderr)
             calls = [json.loads(line) for line in (root / 'helm.jsonl').read_text().splitlines()]
-            self.assertEqual([args[0] for args in calls], ['pull', 'upgrade'])
-            for args in calls:
+            self.assertEqual([call['args'][0] for call in calls], ['pull', 'upgrade'])
+            for call in calls:
+                args = call['args']
                 self.assertEqual(args[args.index('--version') + 1], '0.3.11')
-            base = Path(calls[1][calls[1].index('-f') + 1])
-            self.assertTrue(base.is_relative_to(root / 'state'))
-            self.assertIn('relay-cloud-api', yaml.safe_load(base.read_text()))
+            args = calls[1]['args']
+            base = Path(args[args.index('-f') + 1])
+            self.assertTrue(base.is_relative_to(Path(result.stdout.strip())))
+            self.assertFalse(base.exists())
+            self.assertIn('relay-cloud-api', yaml.safe_load(calls[1]['base_values']))
             overlay = yaml.safe_load((root / 'state/values-eks-proof.yaml').read_text())
             self.assertTrue({'relay-cloud-api', 'relay-dashboard'} <= overlay.keys())
             self.assertFalse({'relay-control', 'relay-webapp'} & overlay.keys())
+            future = {**env, 'EKS_PROOF_CHART_VERSION': '0.5.0'}
+            loaded = subprocess.run(['bash', '-c', definitions + '\ntrue\n'], cwd=ROOT,
+                                    env=future, capture_output=True, text=True)
+            self.assertEqual(loaded.returncode, 0, loaded.stderr)
+            refused = subprocess.run(['bash', '-c', definitions + '\nhelm_apply\n'], cwd=ROOT,
+                                     env=future, capture_output=True, text=True)
+            self.assertEqual(refused.returncode, 2)
+
+    def test_eks_proof_discovers_the_legacy_control_domain(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / 'aws').write_text('#!/bin/sh\nexit 0\n')
+            (root / 'kubectl').write_text('''#!/usr/bin/env python3
+import json, os, sys
+with open(os.environ['KUBE_CALLS'], 'a') as f: f.write(json.dumps(sys.argv[1:])+'\\n')
+if 'relay-cloud-api' not in sys.argv: sys.exit(1)
+print('https://api.compat.agentrelay.com')
+''')
+            for file in root.iterdir(): file.chmod(0o755)
+            source = (ROOT / 'scripts/selfhost/e2e-eks-proof.sh').read_text().split('\nDASHBOARD=', 1)[0]
+            env = {**os.environ, 'PATH': str(root) + os.pathsep + os.environ['PATH'],
+                   'PIPPEN_SANDBOX_ACCOUNT_ID': 'render-only', 'EKS_PROOF_DOMAIN': '',
+                   'KUBE_CALLS': str(root / 'calls.jsonl')}
+            result = subprocess.run(['bash', '-c', source + '\nprintf "%s" "$DOMAIN"\n'],
+                                    cwd=ROOT, env=env, capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(result.stdout, 'compat.agentrelay.com')
+            calls = [json.loads(line) for line in (root / 'calls.jsonl').read_text().splitlines()]
+            self.assertEqual(len(calls), 2)
+            self.assertIn('relay-control', calls[0])
+            self.assertIn('relay-cloud-api', calls[1])
 
     def test_old_overrides_are_refused_even_when_empty_or_disabled(self):
         for key, value in [('relay-cloud-api', '{}'), ('relay-dashboard', '{}'),
@@ -143,6 +182,9 @@ if args[0]=='pull':
             deployment = next(d for d in docs if d['kind'] == 'Deployment' and d['metadata']['name'] == name)
             self.assertEqual(deployment['spec']['selector']['matchLabels']['app.kubernetes.io/name'], name)
             self.assertTrue(any(d['kind'] == 'Service' and d['metadata']['name'] == name for d in docs))
+        client = next(d for d in docs if d['kind'] == 'ConfigMap' and
+                      'AGENT_RELAY_CLOUD_API_URL' in d.get('data', {}))
+        self.assertEqual(client['data']['AGENT_RELAY_CLOUD_API_URL'], 'http://relay-cloud-api')
 
     def test_kind_compatibility_keeps_all_old_selectors_services_claims_and_jobs(self):
         fixture = json.loads((ROOT / 'ci/agent-relay/fixtures/control-webapp-legacy-identities.json').read_text())

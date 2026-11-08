@@ -57,12 +57,18 @@ K=(kubectl --context eks-proof -n "$NS")
 
 # Public origins: the HTTPS hosts the control API was installed with
 # (relay-control SELFHOST_PUBLIC_URL = https://api.<domain>).
-api_url="$("${K[@]}" get deploy relay-control \
-  -o jsonpath='{.spec.template.spec.containers[0].env[?(@.name=="SELFHOST_PUBLIC_URL")].value}' 2>/dev/null)"
+api_url=""
+if [[ -z "${EKS_PROOF_DOMAIN:-}" ]]; then
+  for control_deployment in "${EKS_PROOF_CONTROL_DEPLOYMENT:-relay-control}" relay-cloud-api; do
+    api_url="$("${K[@]}" get deploy "$control_deployment" \
+      -o jsonpath='{.spec.template.spec.containers[0].env[?(@.name=="SELFHOST_PUBLIC_URL")].value}' 2>/dev/null || true)"
+    [[ -n "$api_url" ]] && break
+  done
+fi
 DOMAIN="${EKS_PROOF_DOMAIN:-${api_url#https://api.}}"
 DOMAIN="${DOMAIN%/}"
 if [[ -z "$DOMAIN" || "$DOMAIN" == "$api_url" ]]; then
-  echo "E2E_RESULT=FAIL"; echo "reason: relay-control SELFHOST_PUBLIC_URL is not https://api.<domain> (got ${api_url:-none})"; exit 1
+  echo "E2E_RESULT=FAIL"; echo "reason: installed Control SELFHOST_PUBLIC_URL is not https://api.<domain> (got ${api_url:-none})"; exit 1
 fi
 DASHBOARD="https://$DOMAIN"
 API="https://api.$DOMAIN"

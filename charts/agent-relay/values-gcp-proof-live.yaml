@@ -18,6 +18,8 @@ components:
   sessionsPipeline: false
 
 relayhistory:
+  agentRelayCloud:
+    apiUrl: http://relay-cloud-api
   image:
     # Erasure-fix proof build of relayhistory-cloud 3cb76752 (experimental;
     # branch proof/erasure-turns-on-4b5839f). Its 0074 arms the write hold:
