@@ -232,7 +232,7 @@ Where the migrator has no default, neither does the chart:
 
 | value | env | rule |
 | --- | --- | --- |
-| `databaseMode` | `HOOPDB_DB_MODE` | Required: `local`, `selfhosted`, `cloudsql` (Google Cloud SQL) or `supabase`. |
+| `databaseMode` | `HOOPDB_DB_MODE` | Required: `local`, `selfhosted`, `cloudsql` (Google Cloud SQL), `rds` (Amazon RDS for PostgreSQL 16+, not Aurora) or `supabase`. |
 | `supabaseShim` | `HOOPDB_SUPABASE_SHIM` | Required in local, selfhosted and cloudsql. In supabase mode it must be unset or false, and it is rendered `false`. |
 | `roleBootstrap` | `HOOPDB_ROLE_BOOTSTRAP` | Optional (the migrator defaults it to the shim choice). Refused as true in supabase. Cloud SQL sets false. |
 | `runtimeRole` | `HOOPDB_RUNTIME_ROLE` | Required. Outside local mode it must be a dedicated role, never the migration owner or the search Worker. |
@@ -258,8 +258,10 @@ Where the migrator has no default, neither does the chart:
 - `migration.yaml`: an existing in-cluster CNPG HoopDb from before the search
   Worker role existed. It is `selfhost-postgres.yaml` plus
   `searchWorkerRole.bootstrapJob`.
+- `external-rds.yaml`: Amazon RDS for PostgreSQL 16+ in rds mode, in a database
+  dedicated to HoopDb. The master runs the `rds_*.sql` bootstrap first.
 - `external-selfhosted.yaml`: an external operator-controlled plain-Postgres
-  HoopDb (RDS, your own Postgres) in selfhosted mode. There are no in-cluster
+  HoopDb with a superuser, in selfhosted mode. There are no in-cluster
   SQL Jobs, and migrate waits for the roles. The operator runs the three
   bootstrap files as a superuser. Google Cloud SQL uses `cloudsql` mode instead:
   see `charts/sessions-pipeline/ci/gcp-cloudsql-values.yaml`. There the shim is off,
