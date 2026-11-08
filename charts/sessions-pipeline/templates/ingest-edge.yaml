@@ -126,8 +126,6 @@ spec:
               valueFrom:
                 secretKeyRef: { name: {{ $storeSecret | quote }}, key: {{ $c.locker.secretAccessKeyKey | quote }} }
             - { name: INGEST_KEY_ROOT, value: 96bulls }
-            - { name: INGEST_ACCEPTANCE_MODE, value: canonical }
-            - { name: INGEST_REPLICA_MODE, value: "off" }
             - { name: INGEST_MAX_PER_USER, value: {{ $c.maxPerUser | quote }} }
             - { name: INGEST_MAX_PER_ORG, value: {{ $c.maxPerOrg | quote }} }
           startupProbe:

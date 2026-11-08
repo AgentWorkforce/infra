@@ -221,7 +221,6 @@ class IngestEdge(unittest.TestCase):
         self.assertEqual(env["RELAYHISTORY_SELFHOST_INGEST"]["value"], "true")
         self.assertEqual(env["RELAYHISTORY_INGEST_ORIGIN"]["value"], "https://history.kind.agentrelay.com:8443")
         self.assertEqual(env["RELAYCONTROL_INTROSPECT_URL"]["value"], "http://relay-control.ci.svc.cluster.local")
-        self.assertEqual(env["INGEST_ACCEPTANCE_MODE"]["value"], "canonical")
         self.assertEqual(env["INGEST_KEY_ROOT"]["value"], "96bulls")
         self.assertEqual(env["SESSION_POSTGRES_TLS_PROFILE"]["value"], "custom-ca")
         self.assertFalse(pod["automountServiceAccountToken"])
@@ -237,9 +236,10 @@ class IngestEdge(unittest.TestCase):
         self.assertEqual(c["readinessProbe"]["httpGet"]["path"], "/readyz")
         self.assertEqual(c["livenessProbe"]["httpGet"]["path"], "/healthz")
         self.assertFalse(any(e.startswith(("RELAYAUTH_", "PG", "AWS_", "INGEST_PUBLISH")) for e in env))
-        self.assertNotIn("INGEST_SIGNING_KEY", env)
-        self.assertNotIn("INGEST_CUSTODY_SOURCE", env)
-        self.assertNotIn("INGEST_PRIVACY_AUTHORITY", env)
+        for name in ["INGEST_ACCEPTANCE_MODE", "INGEST_REPLICA_MODE", "INGEST_SIGNING_KEY",
+                     "INGEST_CUSTODY_SOURCE", "INGEST_PRIVACY_AUTHORITY", "INGEST_INLINE_MAX_SESSIONS",
+                     "INGEST_PUBLISH_ENABLED", "INGEST_PUBLICATION_GC_ENABLED"]:
+            self.assertNotIn(name, env)
 
     def test_missing_qualification_and_bad_numeric_inputs_refuse(self):
         for overlay in [{"image": {"digest": ""}}, {"image": {"digest": "latest"}},
@@ -280,6 +280,8 @@ class IngestEdge(unittest.TestCase):
 
     def test_no_extra_env_can_replace_auth_or_transport(self):
         for name in ["SERVICE", "RELAYHISTORY_SELFHOST_INGEST", "INGEST_SIGNING_KEY",
+                     "INGEST_ACCEPTANCE_MODE", "INGEST_REPLICA_MODE", "INGEST_CUSTODY_SOURCE",
+                     "INGEST_PRIVACY_AUTHORITY", "INGEST_PUBLISH_ENABLED",
                      "PGOPTIONS", "SESSION_POSTGRES_TLS_PROFILE"]:
             self.assertIn("extraEnv is not supported", self.render(
                 overlay={"extraEnv": [{"name": name, "value": "unsafe"}]}, fail=True))

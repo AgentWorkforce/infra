@@ -62,6 +62,10 @@ equal the reader's `READ_API_ORIGIN`. A generic `extraEnv` override is refused;
 the source's enablement, auth, TLS, inline acceptance and Secret inputs are
 managed by the chart.
 
+The native wrapper itself fixes inline canonical acceptance and disables the
+replica. The chart emits no `INGEST_ACCEPTANCE_MODE`, `INGEST_REPLICA_MODE`,
+custody/privacy authority, signing-key, publication or GC variables.
+
 ## Composition and startup
 
 The pipeline owner requires bare-role bootstrap, migration and role verification
