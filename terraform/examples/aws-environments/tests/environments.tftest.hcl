@@ -186,12 +186,12 @@ run "lambda_composition" {
     error_message = "Lambda mode must create its runtime and explicitly require overlapping worker stages to be disabled."
   }
   assert {
-    condition     = alltrue([for component in ["cloudApi", "dashboard", "sessionsPipeline", "relayhistory", "relaycast", "relayauth", "relayfile"] : output.application_contract.components[component]]) && !output.application_contract.components.durableActors
-    error_message = "The target suite includes control, dashboard, pipeline, History, Relaycast and optional Relayfile; a separate actor store is not required by the shared PostgreSQL target."
+    condition     = alltrue([for component in ["cloudApi", "dashboard", "sessionsPipeline", "relaycast", "relayfile"] : output.application_contract.components[component]]) && !output.application_contract.components.durableActors && !output.application_contract.components.relayauth && !output.application_contract.components.relayhistory
+    error_message = "The target suite includes control, dashboard, pipeline History capability, Relaycast and optional Relayfile; standalone History/Auth/actor stores are not required."
   }
   assert {
-    condition     = !output.pipeline.activation_enabled && output.application_contract.hoopdb_bootstrap_profile == "shared-rds-schema-review-required"
-    error_message = "Lambda must start inactive and require the reviewed shared-RDS schema bootstrap."
+    condition     = !output.pipeline.activation_enabled && output.application_contract.hoopdb_bootstrap_profile == "dedicated-rds-database-review-required"
+    error_message = "Lambda must start inactive and require the reviewed dedicated-database RDS bootstrap."
   }
 }
 
@@ -382,7 +382,7 @@ run "lambda_provider_and_tls_bindings" {
       output.lambda_shared_environment.SESSION_POSTGRES_CA_SHA256 == var.lambda_runtime_bindings.postgres_ca_sha256 &&
       !contains(keys(output.lambda_shared_environment), "AWS_REGION") && !output.pipeline.activation_enabled
     )
-    error_message = "Writer and reader must share explicit OpenSearch/projection/CA settings without a reserved AWS_REGION override; shared-database processing remains inactive."
+    error_message = "Writer and reader must share explicit OpenSearch/projection/CA settings without a reserved AWS_REGION override; per-service database processing remains inactive."
   }
 }
 
@@ -517,19 +517,19 @@ run "artifact_accepts_201_character_index" {
   }
 }
 
-run "shared_database_schema_bindings" {
+run "separate_service_database_bindings" {
   command = apply
   assert {
-    condition     = output.postgres_service_bindings.control.database == output.verification.postgres.database && output.postgres_service_bindings.hoopdb.database == output.verification.postgres.database && output.postgres_service_bindings.relaycast.database == output.verification.postgres.database
-    error_message = "Control, HoopDb and Relaycast must share the one RDS application database."
+    condition     = output.postgres_service_bindings.control.database == output.verification.postgres.database && output.postgres_service_bindings.hoopdb.database == "hoopdb" && output.postgres_service_bindings.relaycast.database == "relaycast"
+    error_message = "Control, HoopDb and Relaycast must use separate databases on one RDS instance."
   }
   assert {
     condition     = alltrue([for binding in values(output.postgres_service_bindings) : binding.host == output.verification.postgres.host && binding.port == output.verification.postgres.port])
     error_message = "No service binding may silently point at another server."
   }
   assert {
-    condition     = output.postgres_service_bindings.control.schema != output.postgres_service_bindings.hoopdb.schema && output.postgres_service_bindings.relaycast.schema == "relaycast" && !output.postgres_topology.application_sql_ready
-    error_message = "Schemas must remain distinct and bindings must not imply completed SQL/runtime integration."
+    condition     = output.postgres_service_bindings.control.schema != output.postgres_service_bindings.hoopdb.schema && output.postgres_service_bindings.relaycast.schema == "public" && !output.postgres_topology.application_sql_ready
+    error_message = "Service bindings must keep canonical schemas and must not imply completed SQL/runtime integration."
   }
 }
 
@@ -539,8 +539,8 @@ run "explicit_new_install_database_name" {
     application_database_name = "sharedapp"
   }
   assert {
-    condition     = output.verification.postgres.database == "sharedapp" && alltrue([for binding in values(output.postgres_service_bindings) : binding.database == "sharedapp"])
-    error_message = "The initial RDS database and all service bindings must agree on the explicitly reviewed name."
+    condition     = output.verification.postgres.database == "sharedapp" && output.postgres_service_bindings.control.database == "sharedapp" && output.postgres_service_bindings.hoopdb.database == "hoopdb" && output.postgres_service_bindings.relaycast.database == "relaycast"
+    error_message = "Changing the initial Control database name must not rename other service databases."
   }
 }
 
@@ -552,7 +552,7 @@ run "maintenance_application_database_refused" {
   expect_failures = [var.application_database_name]
 }
 
-run "shared_database_activation_refused_even_with_valid_bindings" {
+run "application_activation_refused_even_with_valid_bindings" {
   command = plan
   variables {
     pipeline_runtime            = "lambda"
@@ -573,4 +573,21 @@ run "rds_internal_database_refused" {
   command = plan
   variables { application_database_name = "rdsadmin" }
   expect_failures = [var.application_database_name]
+}
+
+run "existing_service_database_names_preserved" {
+  command = apply
+  variables {
+    service_database_names = { hoopdb = "existing_pipeline", relaycast = "existing_cast", relayfile = "existing_files" }
+  }
+  assert {
+    condition     = output.postgres_service_bindings.control.database == "relaycontrol" && output.postgres_service_bindings.hoopdb.database == "existing_pipeline" && output.postgres_service_bindings.relaycast.database == "existing_cast" && output.postgres_service_bindings.relayfile.database == "existing_files"
+    error_message = "Database binding overrides must preserve existing service names without changing Control's initial database."
+  }
+}
+
+run "service_database_collides_with_control_refused" {
+  command = plan
+  variables { service_database_names = { hoopdb = "relaycontrol", relaycast = "relaycast", relayfile = "relayfile" } }
+  expect_failures = [var.service_database_names]
 }

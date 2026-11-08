@@ -42,7 +42,7 @@ run "schema_collision_refused" {
       hoopdb  = { schema = "shared", migration_role = "hoop_owner", runtime_role = "hoop_runtime" }
     }
   }
-  expect_failures = [var.services]
+  expect_failures = [output.bindings]
 }
 
 run "shared_migration_owner_refused" {
@@ -69,7 +69,7 @@ run "public_schema_refused" {
   variables {
     services = { control = { schema = "public", migration_role = "control_owner", runtime_role = "control_runtime" } }
   }
-  expect_failures = [var.services]
+  expect_failures = [output.bindings]
 }
 
 run "platform_role_refused" {
@@ -178,4 +178,69 @@ run "invalid_host_5_refused" {
   command = plan
   variables { host = "a..b" }
   expect_failures = [var.host]
+}
+
+run "separate_databases_same_instance" {
+  command = plan
+  variables {
+    services = {
+      control = { schema = "public", migration_role = "control_owner", runtime_role = "control_runtime" }
+      hoopdb  = { schema = "sessions", migration_role = "hoop", runtime_role = "pipeline_runtime" }
+    }
+    service_databases = { control = "relaycontrol", hoopdb = "hoopdb" }
+  }
+  assert {
+    condition     = output.topology.mode == "shared-instance-isolated-databases" && output.topology.database == null && output.topology.initial_database == "relaycontrol" && output.bindings.control.host == output.bindings.hoopdb.host && output.bindings.control.database == "relaycontrol" && output.bindings.hoopdb.database == "hoopdb" && output.bindings.control.schema == "public" && output.bindings.hoopdb.sslmode == "verify-full" && !output.topology.application_sql_ready
+    error_message = "The new layout must keep one verified-TLS endpoint, separate databases and application readiness unqualified."
+  }
+}
+
+run "same_schema_allowed_only_across_different_databases" {
+  command = plan
+  variables {
+    services = {
+      control   = { schema = "public", migration_role = "control_owner", runtime_role = "control_runtime" }
+      relaycast = { schema = "public", migration_role = "cast_owner", runtime_role = "cast_runtime" }
+    }
+    service_databases = { control = "relaycontrol", relaycast = "relaycast" }
+  }
+  assert {
+    condition     = output.bindings.control.schema == output.bindings.relaycast.schema && output.bindings.control.database != output.bindings.relaycast.database
+    error_message = "Canonical public schemas are independent when service databases differ."
+  }
+}
+
+run "separate_database_collision_refused" {
+  command = plan
+  variables {
+    service_databases = { control = "same", hoopdb = "same", relaycast = "relaycast", history = "relayhistory", relayfile = "relayfile" }
+  }
+  expect_failures = [var.service_databases]
+}
+
+run "incomplete_database_map_refused" {
+  command = plan
+  variables { service_databases = { hoopdb = "hoopdb" } }
+  expect_failures = [var.service_databases]
+}
+
+run "unknown_service_database_refused" {
+  command = plan
+  variables { service_databases = { control = "relaycontrol", hoopdb = "hoopdb", relaycast = "relaycast", history = "relayhistory", relayfile = "relayfile", other = "other" } }
+  expect_failures = [var.service_databases]
+}
+
+run "maintenance_service_database_refused" {
+  command = plan
+  variables { service_databases = { control = "relaycontrol", hoopdb = "postgres", relaycast = "relaycast", history = "relayhistory", relayfile = "relayfile" } }
+  expect_failures = [var.service_databases]
+}
+
+run "public_runtime_role_still_refused_in_separate_mode" {
+  command = plan
+  variables {
+    services          = { control = { schema = "public", migration_role = "control_owner", runtime_role = "public" } }
+    service_databases = { control = "relaycontrol" }
+  }
+  expect_failures = [var.services]
 }

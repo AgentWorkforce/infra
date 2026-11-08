@@ -129,4 +129,13 @@ module "postgres_layout" {
   port            = module.postgres.port
   database        = module.postgres.initial_database
   forbidden_roles = [module.postgres.master_username]
+  # One instance, separate logical databases. These are non-secret targets;
+  # a reviewed SQL bootstrap must create/own them before application activation.
+  service_databases = merge({ control = module.postgres.initial_database }, var.service_database_names)
+  services = {
+    control   = { schema = "public", migration_role = "control_owner", runtime_role = "control_api_runtime" }
+    hoopdb    = { schema = "sessions", migration_role = "hoop", runtime_role = "sessions_pipeline_runtime" }
+    relaycast = { schema = "public", migration_role = "relaycast_owner", runtime_role = "relaycast_runtime" }
+    relayfile = { schema = "public", migration_role = "relayfile_owner", runtime_role = "relayfile_runtime" }
+  }
 }

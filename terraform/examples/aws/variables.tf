@@ -119,7 +119,7 @@ variable "search_master_user_arn" {
 }
 
 variable "enable_functions" {
-  description = "Create the optional pipeline Lambda resources; automatic queue and schedule processing remains disabled until the shared-database application is qualified."
+  description = "Create the optional pipeline Lambda resources; automatic queue and schedule processing remains disabled until the per-service-database application is qualified."
   type        = bool
   default     = false
 }
@@ -145,12 +145,31 @@ variable "alarm_actions" {
 }
 
 variable "application_database_name" {
-  description = "Single shared application database for control, HoopDb, Relaycast and other service schemas. Default preserves the existing RDS initial database identity; do not change it on an existing instance without reviewing replacement/data migration."
+  description = "Initial Control database only, on the shared RDS instance. Other services use separate logical databases. Default preserves the existing RDS initial database identity; changing it is not an implicit data migration."
   type        = string
   default     = "relaycontrol"
   nullable    = false
   validation {
     condition     = can(regex("^[a-z][a-z0-9_]{0,62}$", var.application_database_name)) && !contains(["postgres", "template0", "template1", "rdsadmin"], var.application_database_name)
     error_message = "application_database_name must be a lowercase application identifier, not a PostgreSQL maintenance database."
+  }
+}
+
+variable "service_database_names" {
+  description = "Existing or reviewed new database names for HoopDb, Relaycast and optional Relayfile on the same RDS instance. This metadata does not create or rename databases. Control uses application_database_name."
+  type        = map(string)
+  nullable    = false
+  default     = { hoopdb = "hoopdb", relaycast = "relaycast", relayfile = "relayfile" }
+  validation {
+    condition     = toset(keys(var.service_database_names)) == toset(["hoopdb", "relaycast", "relayfile"])
+    error_message = "service_database_names must name exactly hoopdb, relaycast and relayfile."
+  }
+  validation {
+    condition     = alltrue([for database in values(var.service_database_names) : can(regex("^[a-z][a-z0-9_]{0,62}$", database)) && !contains(["postgres", "template0", "template1", "rdsadmin"], database)])
+    error_message = "Service database names must be bounded application identifiers, not maintenance databases."
+  }
+  validation {
+    condition     = length(distinct(values(var.service_database_names))) == 3 && !contains(values(var.service_database_names), var.application_database_name)
+    error_message = "Each service needs a different database, distinct from the initial Control database."
   }
 }
