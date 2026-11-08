@@ -13,6 +13,7 @@ See [the complete Terraform + Helm application proof contract](../docs/terraform
 ```
 terraform/
   modules/aws/{foundation,postgres,object-storage,search,functions}
+  modules/aws/relay-chief-slots       # EC2 hosts for Relay Chief
   modules/gcp/{foundation,postgres,object-storage,search,functions}
   examples/{aws,gcp}                 # thin roots: four capabilities together
   examples/{aws,gcp}-foundation      # network and Kubernetes foundation roots
@@ -74,6 +75,10 @@ For separate development, staging, production or named installations, see
 environment state isolation, sizing profiles, a saved-plan runner and opt-in
 live data-path checks. Lambda starts inactive there. This does not establish
 live full-suite proof or replace the foundation/application installation.
+
+For dedicated Relay Chief EC2 hosts, see
+[`aws/relay-chief-slots`](modules/aws/relay-chief-slots). It stands alone and is
+not part of the Helm install. It has not been applied or qualified.
 
 ### What the stack consumes
 
