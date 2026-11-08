@@ -39,6 +39,9 @@ is "Job pod name label" "$(jy ".spec.template.metadata.labels[\"app.kubernetes.i
 is "Job own ServiceAccount" "$(jy ".spec.template.spec.serviceAccountName")" ci-relaycast-migrate
 is "Job no token" "$(jy ".spec.template.spec.automountServiceAccountToken")" false
 is "exit 64/65 not retried" "$(jy ".spec.podFailurePolicy.rules[0].onExitCodes.values | join(\",\")")" 64,65
+old=$(render --kube-version 1.22.0 | yq "$job")
+is "no podFailurePolicy before 1.26" "$(yq '.spec | has("podFailurePolicy")' <<<"$old")" false
+is "Job name independent of cluster version" "$(yq '.metadata.name' <<<"$old")" "$(jy ".metadata.name")"
 for w in "jy .spec.template.spec.containers[0]" "dy $pod.containers[0]" "dy $pod.initContainers[0]"; do
   q=${w%% *}; path=${w#* }
   is "CA env ($path)" "$($q "$path | .env[] | select(.name == \"NODE_EXTRA_CA_CERTS\") | .value")" /etc/postgres-ca/ca.crt
