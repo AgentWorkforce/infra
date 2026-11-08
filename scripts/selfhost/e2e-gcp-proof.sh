@@ -91,7 +91,7 @@ Options:
       --secret NAME           release Secret holding the Relaycast internal secret
                               (required; e.g. the release's existingSecret)
       --base-domain DOMAIN    public base domain (default: derived from the
-                              relay-cloud-api SELFHOST_PUBLIC_URL)
+                              relay-control SELFHOST_PUBLIC_URL)
       --edge gke|alb          public edge layout (default gke). alb: origins from
                               the --*-origin options, http allowed, readiness =
                               the dashboard origin answering (no ManagedCertificate)
@@ -298,8 +298,27 @@ find_pod() { # namespace selector
     -o jsonpath='{.items[0].metadata.name}' 2>/dev/null
 }
 
+# Override a custom fullname with E2E_CONTROL_DEPLOYMENT. The worker Service
+# defaults to this observed name; E2E_CONTROL_SERVICE can select a retained alias.
+find_control_deployment() {
+  local candidate name
+  for candidate in "${E2E_CONTROL_DEPLOYMENT:-relay-control}" relay-cloud-api; do
+    name="$("${KN[@]}" get deploy "$candidate" -o jsonpath='{.metadata.name}' 2>/dev/null || true)"
+    if [[ -n "$name" ]]; then printf '%s' "$name"; return 0; fi
+  done
+  return 1
+}
+
+control_worker_preflight() {
+  [[ -n "$CONTROL_SERVICE" && ${#CONTROL_SERVICE} -le 63 && "$CONTROL_SERVICE" =~ ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$ ]] || return 1
+  "${KN[@]}" get svc "$CONTROL_SERVICE" -o name >/dev/null 2>&1
+}
+
 install_driver() {
-  API_POD="$(find_pod "$NAMESPACE" 'app.kubernetes.io/name=relay-cloud-api,app.kubernetes.io/component=api')"
+  API_POD="$(find_pod "$NAMESPACE" 'app.kubernetes.io/name=relay-control,app.kubernetes.io/component=api')"
+  if [[ -z "$API_POD" ]]; then
+    API_POD="$(find_pod "$NAMESPACE" 'app.kubernetes.io/name=relay-cloud-api,app.kubernetes.io/component=api')"
+  fi
   [[ -n "$API_POD" ]] || return 1
   "${KN[@]}" exec -i "$API_POD" -- sh -c 'umask 077; cat > /tmp/e2e-gcp-proof-driver.mjs' <"$DRIVER"
 }
@@ -356,11 +375,11 @@ PY
   fi
 }
 
-# run_phase <phase>: runs the driver in the relay-cloud-api pod.
+# run_phase <phase>: runs the driver in the relay-control pod.
 run_phase() {
   local phase="$1" out="$WORK/out.json"
   if ! install_driver; then
-    emit FAIL "$phase.driver" "relay-cloud-api pod unavailable"
+    emit FAIL "$phase.driver" "relay-control pod unavailable"
     return 1
   fi
   local driver_env=()
@@ -446,8 +465,10 @@ if ! "${K[@]}" get namespace "$NAMESPACE" >/dev/null 2>&1; then
   printf 'E2E_RESULT=FAIL\nreason: cannot reach namespace %s with context %s\n' "$NAMESPACE" "$CONTEXT"
   exit 1
 fi
-if [[ -z "$BASE_DOMAIN" ]]; then
-  api_url="$("${KN[@]}" get deploy relay-cloud-api \
+CONTROL_DEPLOYMENT="$(find_control_deployment || true)"
+CONTROL_SERVICE="${E2E_CONTROL_SERVICE:-$CONTROL_DEPLOYMENT}"
+if [[ -z "$BASE_DOMAIN" && -n "$CONTROL_DEPLOYMENT" ]]; then
+  api_url="$("${KN[@]}" get deploy "$CONTROL_DEPLOYMENT" \
     -o jsonpath='{.spec.template.spec.containers[0].env[?(@.name=="SELFHOST_PUBLIC_URL")].value}' 2>/dev/null)"
   host="${api_url#https://}"
   BASE_DOMAIN="${host#api.}"
@@ -839,7 +860,7 @@ case_end 12 "admin: env var set/list masked/no plaintext/delete, audit, /interna
 # ---------------------------------------------------------------- case 13
 
 # The worker is a short-lived Pod in the agent-relay namespace (the
-# relay-cloud-api NetworkPolicy admits any pod in the namespace) running the
+# relay-control NetworkPolicy admits any pod in the namespace) running the
 # stock agent-relay CLI: `cloud worker register`, then `cloud worker start
 # --once`, which exits after one assignment. The single-use enrollment token
 # reaches it through a Secret volume, never through args in this script's
@@ -884,7 +905,7 @@ spec:
       env:
         - { name: AGENT_RELAY_VERSION, value: "$AGENT_RELAY_VERSION" }
         - { name: WORKER_NAME, value: "$3" }
-        - { name: BASE_URL, value: "http://relay-cloud-api" }
+        - { name: BASE_URL, value: "http://${CONTROL_SERVICE}" }
       resources:
         requests: { cpu: 250m, memory: 768Mi }
         limits: { memory: 2Gi }
@@ -922,6 +943,8 @@ elif ! has_capability flows; then
   # Only a control plane with the worker protocol (relaycontrol flows API)
   # can run this; one that declares it but fails still fails the case.
   case_skip "control plane has no worker protocol (/api/v1/workers/enrollment-tokens absent)"
+elif ! control_worker_preflight; then
+  emit FAIL flows.worker_service "observed Control Service is missing or invalid; worker not started"
 else
   marker="$(state_get marker)"
   WORKER_POD="e2e-flows-worker-$marker"
@@ -953,7 +976,7 @@ else
       emit FAIL flows.worker_pod "worker did not register within ${waited}s (phase=$(pod_phase))"
       worker_log_tail
     else
-      emit PASS flows.worker_pod "pod=$WORKER_POD image=$WORKER_IMAGE agent-relay=$AGENT_RELAY_VERSION base_url=http://relay-cloud-api started=$started registered_after=${waited}s"
+      emit PASS flows.worker_pod "pod=$WORKER_POD image=$WORKER_IMAGE agent-relay=$AGENT_RELAY_VERSION base_url=http://$CONTROL_SERVICE started=$started registered_after=${waited}s"
       run_phase flows-run
       # `start --once` exits after the one assignment.
       waited=0

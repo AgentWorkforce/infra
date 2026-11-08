@@ -28,7 +28,7 @@
 # Options it sets itself: --context (a temporary kubeconfig), --namespace,
 # --sessions-namespace (the same namespace: the umbrella installs the
 # Sessions Pipeline next to the rest), --secret, --edge alb and the four
-# https origins (from relay-cloud-api SELFHOST_PUBLIC_URL = https://api.<domain>),
+# https origins (from the observed Control SELFHOST_PUBLIC_URL = https://api.<domain>),
 # --require-public, and --relayauth-url (RelayAuth runs in the release
 # namespace under the umbrella). Any other option is passed through, e.g.
 # --skip-flows, --allow-known-gap NAME or --no-cleanup.
@@ -56,13 +56,27 @@ export KUBECONFIG="$KUBECONFIG_FILE"
 K=(kubectl --context eks-proof -n "$NS")
 
 # Public origins: the HTTPS hosts the control API was installed with
-# (relay-cloud-api SELFHOST_PUBLIC_URL = https://api.<domain>).
-api_url="$("${K[@]}" get deploy relay-cloud-api \
-  -o jsonpath='{.spec.template.spec.containers[0].env[?(@.name=="SELFHOST_PUBLIC_URL")].value}' 2>/dev/null)"
+# (Control SELFHOST_PUBLIC_URL = https://api.<domain>). An explicit
+# EKS_PROOF_CONTROL_DEPLOYMENT is tried first; otherwise relay-control is tried,
+# followed by the retained pre-rename relay-cloud-api Deployment.
+api_url=""
+if [[ -z "${EKS_PROOF_DOMAIN:-}" ]]; then
+  for control_deployment in "${EKS_PROOF_CONTROL_DEPLOYMENT:-relay-control}" relay-cloud-api; do
+    api_url="$("${K[@]}" get deploy "$control_deployment" \
+      -o jsonpath='{.spec.template.spec.containers[0].env[?(@.name=="SELFHOST_PUBLIC_URL")].value}' 2>/dev/null || true)"
+    [[ -n "$api_url" ]] && break
+  done
+fi
 DOMAIN="${EKS_PROOF_DOMAIN:-${api_url#https://api.}}"
 DOMAIN="${DOMAIN%/}"
 if [[ -z "$DOMAIN" || "$DOMAIN" == "$api_url" ]]; then
-  echo "E2E_RESULT=FAIL"; echo "reason: relay-cloud-api SELFHOST_PUBLIC_URL is not https://api.<domain> (got ${api_url:-none})"; exit 1
+  echo "E2E_RESULT=FAIL"; echo "reason: installed Control SELFHOST_PUBLIC_URL is not https://api.<domain> (got ${api_url:-none})"; exit 1
+fi
+if [[ -n "${EKS_PROOF_CONTROL_DEPLOYMENT:-}" && -z "${E2E_CONTROL_DEPLOYMENT:-}" ]]; then
+  export E2E_CONTROL_DEPLOYMENT="$EKS_PROOF_CONTROL_DEPLOYMENT"
+fi
+if [[ -n "${EKS_ALB_CONTROL_SERVICE:-}" && -z "${E2E_CONTROL_SERVICE:-}" ]]; then
+  export E2E_CONTROL_SERVICE="$EKS_ALB_CONTROL_SERVICE"
 fi
 DASHBOARD="https://$DOMAIN"
 API="https://api.$DOMAIN"

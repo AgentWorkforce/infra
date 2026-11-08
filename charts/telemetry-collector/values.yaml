@@ -1,0 +1,52 @@
+# Required immutable images. The collector image must contain the reviewed
+# agent-relay-analytics-collector CLI; no main/latest or invented digest default.
+image:
+  repository: ""
+  digest: ""
+  sourceRevision: ""
+tlsProxy:
+  image:
+    repository: ""
+    digest: ""
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+replicaCount: 1
+# Operator-managed Secret containing producers.json and each referenced token
+# file. Its JSON uses paths below /var/run/secrets/telemetry-producers/.
+producersSecret: ""
+# Operator-managed kubernetes.io/tls Secret; certificate SAN must match the
+# internal Service DNS name. No external Ingress or automatic trust changes.
+tlsSecret: ""
+# Change when rotating either Secret to trigger a controlled restart.
+rolloutRevision: ""
+persistence:
+  existingClaim: ""
+  size: 2Gi
+  storageClassName: ""
+  # An existing claim must also enforce one Pod writer (RWOP or equivalent).
+terminationGracePeriodSeconds: 30
+limits:
+  maxBatchBytes: 262144
+  maxBatchEvents: 500
+  maxEventBytes: 4096
+  requestTimeoutMs: 10000
+  maxInFlight: 16
+  maxSegments: 100000
+  maxDiskBytes: 1073741824
+  shutdownDeadlineMs: 5000
+retention:
+  policy: reject-new
+  maxAgeMs: null
+networkPolicy:
+  # Only same-namespace pods explicitly labeled as analytics producers.
+  allowedFrom:
+    - podSelector:
+        matchLabels:
+          agentworkforce.dev/analytics-producer: "true"
+resources:
+  requests: { cpu: 50m, memory: 64Mi }
+  limits: { cpu: 500m, memory: 256Mi }
+proxyResources:
+  requests: { cpu: 25m, memory: 32Mi }
+  limits: { cpu: 250m, memory: 128Mi }

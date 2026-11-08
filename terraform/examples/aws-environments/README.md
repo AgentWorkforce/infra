@@ -264,7 +264,7 @@ reviewed implementation can lift the shared-database activation hold:
    alternative for those stages; the remaining application workers still run.
 
 The `application_contract` output records the target full suite:
-relaycontrol API, relay-dashboard, sessions-pipeline, relayhistory, Relaycast
+relaycontrol API, relay-webapp, sessions-pipeline, relayhistory, Relaycast
 with PostgreSQL authoritative state, the current auth compatibility path, and
 optional Relayfile. A separate durable-actors store is not a dependency of the
 shared-database target. The output is not a deployable Helm overlay and labels

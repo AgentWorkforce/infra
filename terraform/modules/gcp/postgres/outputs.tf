@@ -9,7 +9,7 @@ output "connection_name" {
 }
 
 output "private_ip_address" {
-  description = "Private IP. The host part of every agent-relay database URL (relay-cloud-api database-url, relayhistory DATABASE_URL, sessions-pipeline HOOPDB_URL, durable-actors postgres-url)."
+  description = "Private IP. The host part of every agent-relay database URL (relay-control database-url, relayhistory DATABASE_URL, sessions-pipeline HOOPDB_URL, durable-actors postgres-url)."
   value       = google_sql_database_instance.this.private_ip_address
 }
 

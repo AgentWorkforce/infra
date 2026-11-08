@@ -227,7 +227,7 @@ reset_fixtures() {
 write_verify_fixtures() {
   local certificate_status="${1:-Active}"
   cat >"${fixtures}/jobs.batch.json" <<'JSON'
-{"items":[{"metadata":{"name":"relay-cloud-api-migrate-1"},
+{"items":[{"metadata":{"name":"relay-control-migrate-1"},
   "status":{"succeeded":1,"conditions":[{"type":"Complete","status":"True"}]}}]}
 JSON
   cat >"${fixtures}/deployments.apps,statefulsets.apps,daemonsets.apps.json" <<'JSON'
@@ -364,7 +364,7 @@ write_jobs() {
   local status
   for status in "$@"; do
     index=$((index + 1))
-    items="${items}${items:+,}{\"metadata\":{\"name\":\"relay-cloud-api-migrate-${index}\"},\"status\":${status}}"
+    items="${items}${items:+,}{\"metadata\":{\"name\":\"relay-control-migrate-${index}\"},\"status\":${status}}"
   done
   printf '{"items":[%s]}\n' "${items}" >"${fixtures}/jobs.batch.json"
 }

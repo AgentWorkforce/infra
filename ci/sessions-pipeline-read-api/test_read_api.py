@@ -15,9 +15,14 @@ FIXTURE = ROOT / "charts/sessions-pipeline/ci/read-api-values.yaml"
 
 
 class ReadApi(unittest.TestCase):
-    def render(self, *args, fail=False, overlay=None):
+    def render(self, *args, fail=False, overlay=None, fixture=True):
         with tempfile.TemporaryDirectory(prefix="read-api-render-") as directory:
-            command = ["helm", "template", "test", str(ROOT / "charts/sessions-pipeline"), "-n", "ci", "-f", str(FIXTURE)]
+            values = yaml.safe_load(FIXTURE.read_text())
+            if not fixture:
+                values.pop("readApi", None)
+            base = Path(directory) / "base.yaml"
+            base.write_text(yaml.safe_dump(values))
+            command = ["helm", "template", "test", str(ROOT / "charts/sessions-pipeline"), "-n", "ci", "-f", str(base)]
             if overlay:
                 extra = Path(directory) / "extra.yaml"
                 extra.write_text(yaml.safe_dump({"readApi": overlay}))
@@ -31,7 +36,18 @@ class ReadApi(unittest.TestCase):
                 d.get("metadata", {}).get("labels", {}).get("app.kubernetes.io/component") == "read-api"]
 
     def test_default_off_renders_no_read_api_objects(self):
-        self.assertEqual(self.render("--set", "readApi.enabled=false", "--set", "readApi.image.digest="), [])
+        self.assertEqual(self.render(fixture=False), [])
+
+    def test_credentials_require_secret_key_references(self):
+        for name in ["CUSTOM_TOKEN", "DATABASE_URL", "PRIVATE_KEY", "LOCKER_SECRET_ACCESS_KEY", "PGPASSWORD"]:
+            for entry in [{"value": "not-a-real-secret"},
+                          {"valueFrom": {"configMapKeyRef": {"name": "config", "key": "token"}}},
+                          {"valueFrom": {"fieldRef": {"fieldPath": "metadata.name"}}}]:
+                with self.subTest(name=name, entry=entry):
+                    self.assertIn("require valueFrom.secretKeyRef", self.render(
+                        overlay={"extraEnv": [{"name": name, **entry}]}, fail=True))
+        self.render(overlay={"extraEnv": [{"name": "CUSTOM_TOKEN", "valueFrom": {
+            "secretKeyRef": {"name": "custom", "key": "token"}}}]})
 
     def test_both_kind_profiles_keep_read_api_disabled(self):
         for profile in ("core", "addons"):
@@ -121,8 +137,8 @@ class ReadApi(unittest.TestCase):
         self.assertIn("Skipped: 0", result.stdout)
 
     def control(self, *args, fail=False):
-        command = ["helm", "template", "test", str(ROOT / "charts/relay-cloud-api"), "-n", "ci", "-f",
-                   str(ROOT / "charts/relay-cloud-api/ci/default-values.yaml"), *args]
+        command = ["helm", "template", "test", str(ROOT / "charts/relay-control"), "-n", "ci", "-f",
+                   str(ROOT / "charts/relay-control/ci/default-values.yaml"), *args]
         result = subprocess.run(command, capture_output=True, text=True)
         if fail:
             self.assertNotEqual(result.returncode, 0)

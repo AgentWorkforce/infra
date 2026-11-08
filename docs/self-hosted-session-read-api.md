@@ -84,7 +84,7 @@ separately; no successful upload can be inferred from a read-only login. Pipelin
 a default-off signing edge but its local upstream/runtime contract still needs
 owner confirmation. No URL is repointed by this PR.
 
-`relay-cloud-api.services.relayauthEnabled` stays true by default for published
+`relay-control.services.relayauthEnabled` stays true by default for published
 legacy control images. With a compatible #20/#27 image, false omits both the
 legacy URL and API-key-file environment variables and the unused legacy key from
 the API Secret projection. It does not toggle the RelayAuth component or change

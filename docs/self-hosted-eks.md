@@ -4,9 +4,20 @@ Status: proven end to end on EKS Auto Mode inside a Pippen sandbox
 (2026-11-04): all 15 cases of the e2e plus the EKS checks pass, with real DNS
 (`aws-proof.agentrelay.com`) and TLS (ACM). Chart
 `oci://ghcr.io/agentworkforce/charts/agent-relay` 0.3.11 with
-[`values-eks.yaml`](../charts/agent-relay/values-eks.yaml); every image is a
+[`values-eks.yaml` at 0.3.11](https://github.com/AgentWorkforce/infra/blob/agent-relay-0.3.11/charts/agent-relay/values-eks.yaml); every image is a
 public GHCR image pinned by digest. Results: [What was proven](#what-was-proven).
 This is a proof profile, not a production reference architecture.
+
+The proof and reproduction commands below use the historical 0.3.11 chart,
+whose keys are `relay-cloud-api` and `relay-dashboard`. The current source uses
+`relay-control` and `relay-webapp`; its examples are not overrides for 0.3.11.
+The proof installer loads the EKS base values from the selected published chart
+and emits legacy keys. See the [rename guide](control-webapp-chart-rename.md)
+for a separately reviewed upgrade. Existing ALB backends can be retained with
+`EKS_ALB_CONTROL_SERVICE` and `EKS_ALB_WEBAPP_SERVICE`. For the recorded 0.3.11
+layout use `EKS_ALB_CONTROL_SERVICE=relay-cloud-api` and
+`EKS_ALB_WEBAPP_SERVICE=relay-dashboard`; these are also the historical installer
+defaults. Explicit overrides are forwarded to the generator.
 
 Scope: the core suite with Relaycast on SQLite and Relayfile off. For the
 separate AWS actor profile, see
@@ -81,12 +92,12 @@ and dashboard
 digests, the same as `values-gcp.yaml`. The table below describes that
 image set.
 
-| Component | Image | Source |
+| Component in proven 0.3.11 (current source name) | Image | Source |
 | --- | --- | --- |
 | relaycast | `ghcr.io/agentworkforce/relaycast-self-host@sha256:81274dca…` | chart pin |
 | relayauth | `ghcr.io/agentworkforce/relayauth@sha256:c23c92d2…` | chart pin |
-| relay-cloud-api | `ghcr.io/agentworkforce/selfhost-api@sha256:95c78777…` (relaycontrol 9b80b04, 0.3.0) | chart pin |
-| relay-dashboard | `ghcr.io/agentworkforce/relay-dashboard@sha256:c50005fc…` (relay-dashboard e5003d0) | chart pin |
+| relay-cloud-api (relay-control) | `ghcr.io/agentworkforce/selfhost-api@sha256:95c78777…` (relaycontrol 9b80b04, 0.3.0) | chart pin |
+| relay-dashboard (relay-webapp) | `ghcr.io/agentworkforce/relay-dashboard@sha256:c50005fc…` (relay-dashboard e5003d0) | chart pin |
 | relayhistory | `ghcr.io/agentworkforce/relayhistory@sha256:d3166bb14e1d6043426a4dd8cc05408b94574c8d79ad5fd6e789e0de00ab371b` (relayhistory-cloud 53c3333) | `values-eks.yaml` |
 | worker, alleyoop, privileged SQL | `ghcr.io/agentworkforce/96bulls-services@sha256:070fe6fd46ecd1e1f9db32ff22379f6df9b9e6c4d48ede5312c8fb986a95f3a9` (sessions-pipeline f1c2672, with #204) | `values-eks.yaml` |
 | CNPG Postgres | `ghcr.io/cloudnative-pg/postgresql:17-standard-trixie@sha256:ed6923f9…` | chart pin |

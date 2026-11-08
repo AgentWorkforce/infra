@@ -83,7 +83,7 @@ not part of the Helm install. It has not been applied or qualified.
 ### What the stack consumes
 
 - **Postgres.** Every database is PostgreSQL 17:
-  - relay-cloud-api (relaycontrol): Secret keys `database-url` (runtime role `control_api_runtime`) and `database-migrations-url` (owner).
+  - relay-control (relaycontrol): Secret keys `database-url` (runtime role `control_api_runtime`) and `database-migrations-url` (owner).
   - relayhistory: `DATABASE_URL` (runtime role `relayhistory_runtime`) and `DATABASE_MIGRATIONS_URL`. It needs the `vector` and `pg_trgm` extensions.
   - sessions-pipeline HoopDb: `HOOPDB_URL` (worker and alleyoop) and `HOOPDB_MIGRATION_URL` (migrate). It also needs `vector` and `pg_trgm`.
   - durable-actors (when enabled): `postgres-url` in the `actors-credentials` Secret.
@@ -188,7 +188,7 @@ master secret, or from per-role Secrets Manager / Secret Manager entries.
 
 | Module output | Chart value or Secret key |
 |---|---|
-| `aws/postgres.host` / `gcp/postgres.private_ip_address`, `port` | Host of `relay-cloud-api` `database-url` and `database-migrations-url`; `relayhistory` `DATABASE_URL` and `DATABASE_MIGRATIONS_URL`; `sessions-pipeline` `HOOPDB_URL` and `HOOPDB_MIGRATION_URL`; `durable-actors` `postgres-url` |
+| `aws/postgres.host` / `gcp/postgres.private_ip_address`, `port` | Host of `relay-control` `database-url` and `database-migrations-url`; `relayhistory` `DATABASE_URL` and `DATABASE_MIGRATIONS_URL`; `sessions-pipeline` `HOOPDB_URL` and `HOOPDB_MIGRATION_URL`; `durable-actors` `postgres-url` |
 | `aws/postgres.master_user_secret_arn` / `gcp/postgres.admin_password_secret_id` | Bootstrap only (the SQL below). Never an application credential |
 | `gcp/postgres.connection_name` | `sessions-pipeline.worker.extraEnv` and `alleyoop.extraEnv` `CLOUD_SQL_CONNECTION_NAME` (`values-gcp.yaml`) |
 | `*/object-storage.bucket_name` | `sessions-pipeline.worker.locker.bucket` and `alleyoop.locker.bucket`; or `durable-actors.storage.bucket`, and relaycast/relayfile `artifactBucket`, `fileStore.bucket` and `blobStore.bucket` |

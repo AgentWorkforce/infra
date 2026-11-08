@@ -40,9 +40,14 @@ privacy-head transport is not a prerequisite for canonical-only acceptance.
 
 Use the existing sessions-pipeline chart, with a default-off read API component.
 No new chart or runtime server wrapper is needed for this reader plumbing.
-Infra #81 reserves sessions-pipeline `0.7.1`, relay-cloud-api `0.2.7` and
+Infra #81 introduced sessions-pipeline `0.7.1`, relay-cloud-api `0.2.7` and
 agent-relay `0.4.2` for
 this default-off plumbing; no kind profile enables the read service.
+
+Those are the #81 parent versions. The composed public-name branch #97 uses
+agent-relay `0.5.0`, relay-control `0.3.0`, relay-webapp `0.2.0` and
+sessions-pipeline `0.7.2` (Secret-reference review follow-up); see
+[its upgrade map](../../../docs/control-webapp-chart-rename.md).
 
 | Input | Draft contract |
 | --- | --- |
