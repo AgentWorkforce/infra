@@ -119,6 +119,10 @@ The chart enforces this before rendering: a `LOCKER_BUCKET` extraEnv entry must
 be a nonempty literal with literal `PIPELINE_ORG_FROM_PREFIX=true` and
 `PIPELINE_KEY_PREFIX=96bulls`. Missing/false flags, org-suffixed or other roots,
 and valueFrom references for these three layout inputs refuse rendering.
+Reader and ingest bucket literals reject surrounding whitespace. When both
+services are enabled and the reader has a bucket, it must equal
+`ingestEdge.locker.bucket`; uploads and canonical reads cannot name different
+buckets in that assembly.
 Transport and object-store settings remain explicit operator configuration via
 the existing reader extraEnv/CA mounts, with credentials in Secret references.
 No store, credentials, auth mode, image or reader is enabled in a profile here.

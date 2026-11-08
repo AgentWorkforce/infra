@@ -160,7 +160,7 @@ class ReadApi(unittest.TestCase):
             with self.subTest(name=correct[index]["name"]):
                 self.assertIn("readApi LOCKER_BUCKET requires", self.render(
                     overlay={"extraEnv": env}, fail=True))
-        for bucket in ("", " ", False):
+        for bucket in ("", " ", False, " sessions", "sessions ", "sessions\n", "\tsessions"):
             env = [dict(e) for e in correct]
             env[0]["value"] = bucket
             with self.subTest(bucket=bucket):
@@ -418,6 +418,23 @@ class IngestEdge(unittest.TestCase):
             with self.subTest(origin=origin):
                 self.assertIn("must exactly equal readApi.origin", self.render(
                     read_api={**reader, "origin": origin}, fail=True))
+
+    def test_reader_and_ingest_require_the_same_canonical_bucket(self):
+        reader = yaml.safe_load(FIXTURE.read_text())["readApi"]
+        bucket = "same-canonical-bucket"
+        reader["extraEnv"] = [{"name": "LOCKER_BUCKET", "value": bucket},
+                              {"name": "PIPELINE_ORG_FROM_PREFIX", "value": "true"},
+                              {"name": "PIPELINE_KEY_PREFIX", "value": "96bulls"}]
+        self.render(overlay={"locker": {"bucket": bucket}}, read_api=reader)
+        error = self.render(overlay={"locker": {"bucket": "different-bucket"}}, read_api=reader, fail=True)
+        self.assertIn("readApi LOCKER_BUCKET must equal ingestEdge.locker.bucket", error)
+        # A standalone reader may point to its own qualified canonical bucket.
+        self.render(overlay={"enabled": False, "locker": {"bucket": "different-bucket"}}, read_api=reader)
+
+    def test_ingest_bucket_refuses_surrounding_whitespace(self):
+        for bucket in (" padded", "padded ", "\tpadded", "padded\n", True):
+            with self.subTest(bucket=bucket):
+                self.assertIn("ingestEdge.locker.bucket", self.render(overlay={"locker": {"bucket": bucket}}, fail=True))
 
     def test_fixture_endpoint_names_the_rendered_storage_service(self):
         docs = self.render(all_objects=True)

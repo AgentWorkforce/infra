@@ -24,6 +24,8 @@
 {{- $introspect := include "sessions-pipeline.ingestEdge.endpoint" (dict "name" "ingestEdge.relaycontrol.url" "url" $c.relaycontrol.url "allowHttp" $c.allowInClusterHttp) -}}
 {{- $endpoint := include "sessions-pipeline.ingestEdge.endpoint" (dict "name" "ingestEdge.locker.endpoint" "url" $c.locker.endpoint "allowHttp" $c.allowInClusterHttp) -}}
 {{- $bucket := required "ingestEdge.locker.bucket is required" $c.locker.bucket -}}
+{{- if not (kindIs "string" $bucket) }}{{ fail "ingestEdge.locker.bucket must be a nonempty literal string without surrounding whitespace" }}{{ end -}}
+{{- if ne (trim $bucket) $bucket }}{{ fail "ingestEdge.locker.bucket must be a nonempty literal string without surrounding whitespace" }}{{ end -}}
 {{- $region := required "ingestEdge.locker.region is required" $c.locker.region -}}
 {{- $runtimeSecret := required "ingestEdge.config.existingSecret is required" $c.config.existingSecret -}}
 {{- $storeSecret := required "ingestEdge.locker.existingSecret is required" $c.locker.existingSecret -}}

@@ -61,6 +61,8 @@ the chart requires nonempty literal `LOCKER_BUCKET`, literal
 `PIPELINE_ORG_FROM_PREFIX=true` and `PIPELINE_KEY_PREFIX=96bulls` together when
 a bucket is supplied. Missing or false flags, org-suffixed roots and valueFrom
 references for these layout inputs are refused before a Deployment is rendered.
+Bucket literals reject surrounding whitespace. When ingest is enabled too, the
+reader bucket must equal `ingestEdge.locker.bucket`.
 Credential settings require Secret key references. This auth-mode change adds
 no object-store configuration or native image acceptance. See the
 [native composition contract](self-hosted-native-ingest.md).

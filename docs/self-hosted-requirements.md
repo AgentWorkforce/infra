@@ -2890,6 +2890,8 @@ It cannot be injected through extraEnv. A LOCKER_BUCKET extraEnv entry
 requires a nonempty literal bucket, literal PIPELINE_ORG_FROM_PREFIX=true
 and PIPELINE_KEY_PREFIX=96bulls. Missing/false flags, org-suffixed roots
 and valueFrom references for these layout inputs refuse rendering.
+Bucket literals reject surrounding whitespace; when both services are
+enabled, the configured reader bucket must equal ingestEdge.locker.bucket.
 Search is selected
 via SEARCH_INDEX_BACKEND (postgres by default) through the upstream adapter
 registry, not implemented in this chart. Introspection uses

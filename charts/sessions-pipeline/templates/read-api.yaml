@@ -55,7 +55,8 @@ standalone chart independent of the API subchart's template namespace. */ -}}
 {{- if hasKey $canonical "LOCKER_BUCKET" -}}
 {{- $bucket := index $canonical "LOCKER_BUCKET" -}}
 {{- if or (not (hasKey $bucket "value")) (not (kindIs "string" $bucket.value)) }}{{ fail "readApi LOCKER_BUCKET requires an explicit nonempty literal value for canonical layout admission" }}{{ end -}}
-{{- if not (trim $bucket.value) }}{{ fail "readApi LOCKER_BUCKET requires an explicit nonempty literal value for canonical layout admission" }}{{ end -}}
+{{- if or (not $bucket.value) (ne (trim $bucket.value) $bucket.value) }}{{ fail "readApi LOCKER_BUCKET requires an explicit nonempty literal value without surrounding whitespace for canonical layout admission" }}{{ end -}}
+{{- if and .Values.ingestEdge.enabled (ne $bucket.value .Values.ingestEdge.locker.bucket) }}{{ fail "readApi LOCKER_BUCKET must equal ingestEdge.locker.bucket when both services are enabled" }}{{ end -}}
 {{- $orgPrefix := index $canonical "PIPELINE_ORG_FROM_PREFIX" | default dict -}}
 {{- if or (not (hasKey $orgPrefix "value")) (ne (toString $orgPrefix.value) "true") }}{{ fail "readApi LOCKER_BUCKET requires literal PIPELINE_ORG_FROM_PREFIX=true" }}{{ end -}}
 {{- $keyPrefix := index $canonical "PIPELINE_KEY_PREFIX" | default dict -}}
