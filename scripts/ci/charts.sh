@@ -39,6 +39,32 @@ expect_render_failure() { # chart valuesfile label expected-error [extra helm ar
   fi
 }
 
+# postgresCa (the optional Postgres server CA bundle): off renders nothing; on,
+# every Deployment and migrate Job container gets exactly one read-only mount and
+# NODE_EXTRA_CA_CERTS; a half-configured value is refused.
+check_postgres_ca() { # chart valuesfile
+  local chart=$1 v=$2 off on missing total
+  off=$(render "$chart" "$v") || { err "$chart: postgresCa off did not render"; return; }
+  ! grep -Eq 'NODE_EXTRA_CA_CERTS|PGSSLROOTCERT|postgres-ca' <<<"$off" || err "$chart: postgresCa off must render nothing"
+  on=$(render "$chart" "$v" --set postgresCa.enabled=true --set postgresCa.configMap=ca-bundle) || { err "$chart: postgresCa on did not render"; return; }
+  local workloads='select(.kind == "Deployment" or (.kind == "Job" and (.metadata.name | contains("migrate"))))'
+  total=$(yq "$workloads | .metadata.name" <<<"$on" | grep -v '^---$' | grep -c .)
+  [ "$total" -ge 1 ] || err "$chart: postgresCa check found no workloads"
+  missing=$(yq "$workloads | select(([.spec.template.spec.containers[0].env[] | select(.name == \"NODE_EXTRA_CA_CERTS\" and .value == \"/etc/postgres-ca/ca.crt\")] | length) != 1 or ([.spec.template.spec.containers[0].volumeMounts[] | select(.name == \"postgres-ca\" and .mountPath == \"/etc/postgres-ca\" and .readOnly == true)] | length) != 1 or ([.spec.template.spec.volumes[] | select(.name == \"postgres-ca\" and .configMap.name == \"ca-bundle\" and .configMap.items[0].path == \"ca.crt\")] | length) != 1) | .metadata.name" <<<"$on" | grep -v '^---$' || true)
+  [ -z "$missing" ] || err "$chart: postgresCa did not reach: $missing"
+  kubeconform -strict -summary -ignore-missing-schemas -kubernetes-version "${KUBE_VERSION:-1.33.0}" <<<"$on" >/dev/null || err "$chart: postgresCa on failed kubeconform"
+  on=$(render "$chart" "$v" --set postgresCa.enabled=true --set postgresCa.secret=ca-secret --set postgresCa.key=rds.pem) || { err "$chart: postgresCa Secret did not render"; return; }
+  missing=$(yq "$workloads | select(([.spec.template.spec.volumes[] | select(.name == \"postgres-ca\" and .secret.secretName == \"ca-secret\" and .secret.items[0].key == \"rds.pem\" and .secret.defaultMode == 0444)] | length) != 1) | .metadata.name" <<<"$on" | grep -v '^---$' || true)
+  [ -z "$missing" ] || err "$chart: postgresCa Secret volume wrong in: $missing"
+  expect_render_failure "$chart" "$v" "postgresCa without a source" "postgresCa.enabled=true requires exactly one of postgresCa.configMap or postgresCa.secret" --set postgresCa.enabled=true
+  expect_render_failure "$chart" "$v" "postgresCa with both sources" "postgresCa.enabled=true requires exactly one of postgresCa.configMap or postgresCa.secret" --set postgresCa.enabled=true --set postgresCa.configMap=a --set postgresCa.secret=b
+  expect_render_failure "$chart" "$v" "postgresCa source while disabled" "require postgresCa.enabled=true" --set postgresCa.configMap=ca-bundle
+  expect_render_failure "$chart" "$v" "postgresCa non-boolean enabled" "postgresCa.enabled must be a boolean" --set-string postgresCa.enabled=true
+  expect_render_failure "$chart" "$v" "postgresCa bad name" "must be a Kubernetes object name" --set postgresCa.enabled=true --set postgresCa.configMap=Bad_Name
+  expect_render_failure "$chart" "$v" "postgresCa bad key" "postgresCa.key must be a Kubernetes data key" --set postgresCa.enabled=true --set postgresCa.configMap=ca-bundle --set postgresCa.key=../x
+  expect_render_failure "$chart" "$v" "postgresCa extraEnv override" "NODE_EXTRA_CA_CERTS" --set postgresCa.enabled=true --set postgresCa.configMap=ca-bundle --set-json 'extraEnv=[{"name":"NODE_EXTRA_CA_CERTS","value":"/x"}]'
+}
+
 # helm dependency build only resolves https repositories that are added.
 add_repos() { # Chart.yaml
   local repo
@@ -96,7 +122,7 @@ for chart in "${charts[@]}"; do
             ' <<<"$out"
           }
           case $chart in
-            alleyoop) expected_shared=1; component_env=INGEST_RETRY_LIMIT ;;
+            session-ingest-api) expected_shared=1; component_env=INGEST_RETRY_LIMIT ;;
             sessions-pipeline-worker) expected_shared=5; component_env=REFEREE_RETRY_LIMIT ;;
             *) err "$label: numeric env fixture is unsupported for $chart"; expected_shared=0; component_env=UNKNOWN ;;
           esac
@@ -173,6 +199,14 @@ for chart in "${charts[@]}"; do
     case $chart in
       sessions-pipeline-worker)
         v=charts/sessions-pipeline-worker/ci/pod-identity-values.yaml
+        check_postgres_ca "$chart" "$v"
+        expect_render_failure "$chart" "$v" "postgresCa component env override" "components.referee.env must not set NODE_EXTRA_CA_CERTS" --set postgresCa.enabled=true --set postgresCa.configMap=ca-bundle --set-json 'components.referee.env=[{"name":"NODE_EXTRA_CA_CERTS","value":"/x"}]'
+        # locker-init opens no Postgres connection; wait-for-role is psql (PGSSLROOTCERT).
+        ca_out=$(render "$chart" "$v" --set postgresCa.enabled=true --set postgresCa.configMap=ca-bundle --set migrations.waitForRole.enabled=true --set migrations.waitForRole.image=ghcr.io/cloudnative-pg/postgresql:17@sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff --set lockerInit.enabled=true)
+        [ "$(yq 'select(.kind == "Job" and (.metadata.name | contains("locker-init"))) | .spec.template.spec.volumes[] | select(.name == "postgres-ca") | .name' <<<"$ca_out")" = "" ] \
+          || err "$chart: locker-init must not mount the Postgres CA"
+        [ "$(yq 'select(.kind == "Job" and (.metadata.name | contains("migrate"))) | .spec.template.spec.initContainers[0].env[] | select(.name == "PGSSLROOTCERT") | .value' <<<"$ca_out" | grep -v '^---$')" = /etc/postgres-ca/ca.crt ] \
+          || err "$chart: wait-for-role must set PGSSLROOTCERT when postgresCa is on"
         expect_render_failure "$chart" "$v" "unknown credential mode" "locker.credentials.mode must be secret or podIdentity" --set locker.credentials.mode=invalid
         expect_render_failure "$chart" "$v" "missing database Secret" "hoopdb.existingSecret or existingSecret is required for HOOPDB_URL" --set hoopdb.existingSecret=
         expect_render_failure "$chart" "$v" "migration Secret without key" "migrations.hoopdb.existingSecret and key must be set together" --set migrations.hoopdb.existingSecret=hoopdb-migration
@@ -191,8 +225,10 @@ for chart in "${charts[@]}"; do
         expect_render_failure "$chart" "$v" "extraEnv in-cluster http" "extraEnv must not set ALLOW_IN_CLUSTER_HTTP" --set-json 'extraEnv=[{"name":"ALLOW_IN_CLUSTER_HTTP","value":"true"}]'
         expect_render_failure "$chart" "$v" "component in-cluster http" "components.referee.env must not set ALLOW_IN_CLUSTER_HTTP" --set-json 'components.referee.env=[{"name":"ALLOW_IN_CLUSTER_HTTP","value":"true"}]'
         ;;
-      alleyoop)
-        v=charts/alleyoop/ci/pod-identity-values.yaml
+      session-ingest-api)
+        v=charts/session-ingest-api/ci/pod-identity-values.yaml
+        check_postgres_ca "$chart" "$v"
+        expect_render_failure "$chart" "$v" "postgresCa ingest env override" "must not set NODE_EXTRA_CA_CERTS" --set postgresCa.enabled=true --set postgresCa.configMap=ca-bundle --set-json 'ingest.env=[{"name":"NODE_EXTRA_CA_CERTS","value":"/x"}]'
         expect_render_failure "$chart" "$v" "unknown credential mode" "locker.credentials.mode must be secret or podIdentity" --set locker.credentials.mode=invalid
         expect_render_failure "$chart" "$v" "missing database Secret" "hoopdb.existingSecret or existingSecret is required for HOOPDB_URL" --set hoopdb.existingSecret=
         expect_render_failure "$chart" "$v" "secret mode without endpoint" "locker.endpoint is required when locker.credentials.mode=secret" --set locker.credentials.mode=secret --set existingSecret=sessions-pipeline
@@ -359,8 +395,8 @@ for chart in "${charts[@]}"; do
         ! yq 'select(.kind == "Job" or (.kind == "Deployment" and .metadata.name == "ci-relayfile-session-broker")) | .metadata.name' <<<"$dev" | grep -q . \
           || err "$chart: devRuntime must not render the broker or the deploy Job"
         ;;
-      relay-dashboard)
-        v=charts/relay-dashboard/ci/default-values.yaml
+      relay-webapp)
+        v=charts/relay-webapp/ci/default-values.yaml
         expect_render_failure "$chart" "$v" "mutable image" "image.digest is required" --set image.digest=
         expect_render_failure "$chart" "$v" "malformed digest" "image.digest must be sha256:<64 lowercase hex characters>" --set image.digest=sha256:abc
         expect_render_failure "$chart" "$v" "public Service" "service.type must be ClusterIP" --set service.type=LoadBalancer
@@ -378,13 +414,14 @@ for chart in "${charts[@]}"; do
         expect_render_failure "$chart" "$v" "false customer profile" "customerProfile must be a map" --set customerProfile=false
         expect_render_failure "$chart" "$v" "list customer profile" "customerProfile must be a map" --set-json 'customerProfile=[]'
         expect_render_failure "$chart" "$v" "empty-string customer profile" "customerProfile must be a map" --set-string 'customerProfile='
-        brand=$(render "$chart" charts/relay-dashboard/ci/branding.profile.yaml)
+        brand=$(render "$chart" charts/relay-webapp/ci/branding.profile.yaml)
         profile=$(yq 'select(.kind == "Deployment") | .spec.template.spec.containers[0].env[] | select(.name == "DASHBOARD_CUSTOMER_PROFILE") | .value' <<<"$brand")
         [ "$(jq -r '.productName + " " + .logo.dark + " " + (.poweredByAgentRelay | tostring)' <<<"$profile")" = "Acme Relay https://acme.example/brand/logo-on-dark.svg true" ] \
           || err "$chart: customerProfile must render as one JSON object in DASHBOARD_CUSTOMER_PROFILE"
         ;;
-      relay-cloud-api)
-        v=charts/relay-cloud-api/ci/default-values.yaml
+      relay-control)
+        v=charts/relay-control/ci/default-values.yaml
+        check_postgres_ca "$chart" "$v"
         expect_render_failure "$chart" "$v" "mutable image" "image.digest is required" --set image.digest=
         expect_render_failure "$chart" "$v" "malformed digest" "image.digest must be sha256:<64 lowercase hex characters>" --set image.digest=sha256:abc
         expect_render_failure "$chart" "$v" "missing Secret" "existingSecret is required" --set existingSecret=
@@ -410,7 +447,7 @@ for chart in "${charts[@]}"; do
           || err "$chart: full-Cloud/Next environment leaked into the selfhost API chart"
         # bootstrap-signup: identity settings render to relaycontrol's env and
         # their secrets only as mounted files.
-        idv=charts/relay-cloud-api/ci/identity-values.yaml
+        idv=charts/relay-control/ci/identity-values.yaml
         id_out=$(render "$chart" "$idv")
         id_env=$(yq 'select(.kind == "Deployment") | .spec.template.spec.containers[0].env[] | .name + "=" + (.value // "")' <<<"$id_out")
         for want in "SELFHOST_BOOTSTRAP_ORG_NAME=Acme" "SELFHOST_BOOTSTRAP_ADMIN_EMAIL=ops@acme.com" \
@@ -447,6 +484,8 @@ for chart in "${charts[@]}"; do
         ;;
       relayhistory)
         v=charts/relayhistory/ci/default-values.yaml
+        check_postgres_ca "$chart" "$v"
+        expect_render_failure "$chart" "$v" "postgresCa extraConfig override" "NODE_EXTRA_CA_CERTS is managed by structured chart values" --set postgresCa.enabled=true --set postgresCa.configMap=ca-bundle --set extraConfig.NODE_EXTRA_CA_CERTS=/x
         expect_render_failure "$chart" "$v" "mutable image" "image.digest is required" --set image.digest=
         expect_render_failure "$chart" "$v" "malformed digest" "image.digest must be sha256:<64 lowercase hex characters>" --set image.digest=sha256:abc
         expect_render_failure "$chart" "$v" "missing database Secret" "database.existingSecret is required" --set database.existingSecret=
@@ -488,10 +527,10 @@ for chart in "${charts[@]}"; do
       agent-relay)
         v=charts/agent-relay/ci/gcp-proof-values.yaml
         expect_render_failure "$chart" "$v" "missing History image" "image.digest is required" --set relayhistory.image.digest=
-        expect_render_failure "$chart" "$v" "missing API image" "image.digest is required" --set relay-cloud-api.image.digest=
-        expect_render_failure "$chart" "$v" "missing dashboard image" "image.digest is required" --set relay-dashboard.image.digest=
-        expect_render_failure "$chart" "$v" "dashboardUrl off the root host" "relay-cloud-api.dashboardUrl must be on the dashboard host" --set relay-cloud-api.dashboardUrl=https://elsewhere.agentrelay.com/
-        [ -n "$(render "$chart" "$v" --set relay-cloud-api.dashboardUrl=https://gcp-proof.agentrelay.com:443/)" ] || err "$chart: dashboardUrl with an explicit :443 on the root host must render"
+        expect_render_failure "$chart" "$v" "missing API image" "image.digest is required" --set relay-control.image.digest=
+        expect_render_failure "$chart" "$v" "missing dashboard image" "image.digest is required" --set relay-webapp.image.digest=
+        expect_render_failure "$chart" "$v" "dashboardUrl off the root host" "relay-control.dashboardUrl must be on the dashboard host" --set relay-control.dashboardUrl=https://elsewhere.agentrelay.com/
+        [ -n "$(render "$chart" "$v" --set relay-control.dashboardUrl=https://gcp-proof.agentrelay.com:443/)" ] || err "$chart: dashboardUrl with an explicit :443 on the root host must render"
         expect_render_failure "$chart" "$v" "ar_ authority without relayauth" "relaycast.credentials.authority=relayauth requires components.relayauth=true" --set components.relayauth=false --set relaycast.credentials.format=ar --set relaycast.credentials.authority=relayauth --set relaycast.credentials.relayauth.url=http://relayauth:8787 --set relaycast.secretKeys.relayauthToken=relaycast-relayauth-token
         ;;
     esac

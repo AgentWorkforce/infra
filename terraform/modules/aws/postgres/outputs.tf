@@ -10,7 +10,7 @@ output "engine_mode" {
 }
 
 output "host" {
-  description = "Writer endpoint host name. The host part of every agent-relay database URL (relay-cloud-api database-url, relayhistory DATABASE_URL, sessions-pipeline HOOPDB_URL, durable-actors postgres-url)."
+  description = "Writer endpoint host name. The host part of every agent-relay database URL (relay-control database-url, relayhistory DATABASE_URL, sessions-pipeline HOOPDB_URL, durable-actors postgres-url)."
   value       = local.writer_endpoint
 }
 

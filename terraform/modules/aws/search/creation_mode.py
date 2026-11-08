@@ -3,6 +3,7 @@
 Consumes native `show -json SAVED_PLAN`, never test UI output or caller mode
 assertions. This is plan-history validation, not backend or operator attestation.
 """
+import json
 import re
 
 PREFIX = 'module.search.'
@@ -11,6 +12,8 @@ LEGACY = PREFIX + 'aws_opensearch_domain.this'
 DISPOSABLE = PREFIX + 'aws_opensearch_domain.disposable[0]'
 MARKER = PREFIX + 'terraform_data.creation_mode'
 DOMAINS = {PROTECTED, LEGACY, DISPOSABLE}
+DOMAIN_POLICY = PREFIX + 'aws_opensearch_domain_policy.this'
+WORKLOAD_ROLE = re.compile(re.escape(PREFIX) + r'aws_iam_role\.workload\["([^"]+)"\]')
 
 
 class SearchModeError(ValueError):
@@ -46,6 +49,62 @@ def _id(values):
 def _mode(values):
     require(isinstance(values, dict) and type(values.get('input')) is bool, 'unknown stored/requested marker input')
     return values['input']
+
+
+def _canonical(value):
+    """Compare IAM documents as AWS returns them: key order and one-item lists do not matter."""
+    if isinstance(value, dict):
+        return {k: _canonical(v) for k, v in sorted(value.items())}
+    if isinstance(value, list):
+        items = sorted((_canonical(v) for v in value), key=lambda v: json.dumps(v, sort_keys=True))
+        return items[0] if len(items) == 1 else items
+    return value
+
+
+def _same_document(left, right):
+    try:
+        return isinstance(left, str) and isinstance(right, str) and _canonical(json.loads(left)) == _canonical(json.loads(right))
+    except (ValueError, RecursionError):
+        return False
+
+
+def _sibling_written_drift(row, state, changes):
+    """True only for a field written by a separate managed resource that is not changing.
+
+    Terraform reports these attributes as drift after create, because the domain or
+    role reads back what the sibling attached. The control is the sibling itself: an
+    out-of-band edit makes the sibling report its own drift, which is never admitted.
+    The value comparison only ties the field to the sibling's refreshed read; it does
+    not prove the value matches the configuration.
+    """
+    change, address = row.get('change'), row['address']
+    if row.get('mode') != 'managed' or 'deposed' in row or not isinstance(change, dict) or change.get('actions') != ['update'] or change.get('after_unknown'):
+        return False
+    before, after = change.get('before'), change.get('after')
+    if not isinstance(before, dict) or not isinstance(after, dict) or not before.get('id') or before.get('id') != after.get('id'):
+        return False
+    changed = {key for key in set(before) | set(after) if before.get(key) != after.get(key)}
+    role = WORKLOAD_ROLE.fullmatch(address)
+    if address in (PROTECTED, DISPOSABLE) and changed == {'access_policies'} and row.get('type') == 'aws_opensearch_domain':
+        name = DOMAIN_POLICY
+    elif role and changed == {'inline_policy'} and row.get('type') == 'aws_iam_role':
+        name = PREFIX + 'aws_iam_role_policy.workload["' + role.group(1) + '"]'
+    else:
+        return False
+    own, sibling, planned = state.get(address), state.get(name), changes.get(name)
+    if not isinstance(own, dict) or own.get('type') != row['type'] or not isinstance(sibling, dict) or sibling.get('mode') != 'managed':
+        return False
+    if not isinstance(planned, dict) or not isinstance(planned.get('change'), dict) or planned['change'].get('actions') != ['no-op']:
+        return False
+    values = sibling.get('values')
+    if not isinstance(values, dict):
+        return False
+    if name == DOMAIN_POLICY:
+        return _same_document(after.get('access_policies'), values.get('access_policies'))
+    inline = after.get('inline_policy')
+    if not isinstance(inline, list) or len(inline) != 1 or not isinstance(inline[0], dict):
+        return False
+    return inline[0].get('name') == values.get('name') and _same_document(inline[0].get('policy'), values.get('policy'))
 
 
 def admit(plan):
@@ -103,7 +162,7 @@ def admit(plan):
             require(row['address'] in DOMAINS and row.get('mode') == 'managed', 'unsupported prior domain address')
     drift = plan.get('resource_drift', [])
     require(isinstance(drift, list), 'malformed drift inventory')
-    require(all(isinstance(r, dict) and isinstance(r.get('address'), str) and not r['address'].startswith(PREFIX) for r in drift), 'search drift requires reconciliation')
+    require(all(isinstance(r, dict) and isinstance(r.get('address'), str) and (not r['address'].startswith(PREFIX) or _sibling_written_drift(r, all_state, scoped)) for r in drift), 'search drift requires reconciliation')
     domain_changes = [a for a in scoped if a in DOMAINS]
     domain_state = [a for a in scoped_state if a in DOMAINS]
     require(len(domain_changes) == 1 and len(domain_state) <= 1 and MARKER in scoped, 'mixed/lost/missing domain or marker')

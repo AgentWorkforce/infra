@@ -76,8 +76,8 @@ handling of the explicitly disabled optional transform, without changing setup.
 # Existing fixture with the native control selection already present:
 make kind-up PROFILE=core PYTHON=python3
 make kind-proof-core PYTHON=python3
-# Fresh-host variant builds that pinned native control image first:
-# make kind-up-local-control PROFILE=core PYTHON=python3
+# Historical reproduction builds the recorded 1f08cb6 source first:
+# KIND_CONTROL_SOURCE=historical make kind-up-local-control PROFILE=core PYTHON=python3
 ```
 
 Setup completed with exit 0 and a readiness receipt, including the application
@@ -160,9 +160,29 @@ reads or application visibility. No chart component or service was enabled.
 
 ## Local MCP-capable control build and public endpoint proof
 
-The optional `kind-up-local-control` target builds the official Dockerfile at
-`relay-control@1f08cb624be66016eb0c135363553dd44e58f691`, with a pinned native
-Node base. The [raw build receipt](control-build.json) records the native manifest
+The recorded historical `kind-up-local-control` run built the official Dockerfile at
+`relay-control-internal@1f08cb624be66016eb0c135363553dd44e58f691`, with a pinned
+native Node base. This historical commit remains available from the archived
+private repository for explicit `KIND_CONTROL_SOURCE=historical` reproduction.
+Current builds instead pin public `relay-control@e74413b9ebc8a679f9e4ef64627ccd6340ec8ddb`
+in a separate cache. Existing build and runtime receipts below are unchanged and
+have not been rerun or attributed to the current source.
+The [current native candidate receipt](control-e74413b-smoke.json) records an
+actual arm64 build through this helper and a disposable PostgreSQL 17 upgrade
+test: synthetic rows survive 17-to-23 migrations, a second run applies zero,
+and health, readiness and an authenticated organization read return 200 with
+the supported runtime role while migration-ledger SELECT remains denied.
+The fixture uses private plaintext transport, not TLS, and qualifies neither
+an installed profile nor MCP, Desktop, cloud or full pipeline readback.
+The historical command
+above requires `KIND_CONTROL_SOURCE=historical`; its default now selects `e74413b`.
+
+The retired public pin `a659ac4` fails readiness with the supported runtime
+database role: readiness reads the migration ledger, which the runtime grants
+deliberately deny. The current pin includes the catalog-based readiness fix
+merged in Control PR #10. Its source checks do not reattribute the historical
+MCP, full-profile or installed-client proof to this new pin.
+The [raw build receipt](control-build.json) records the native manifest
 and config digests, source revision, tag, architecture and base image. It was
 built and tested on linux/arm64. No registry publication occurred.
 
@@ -192,8 +212,11 @@ window was honored before this final complete run. Limits were not disabled or
 reset, and diagnostic device sessions were revoked.
 
 The catalog values remain on their audited published image. A clean catalog-only
-fixture therefore still reports MCP pending; the local-control command above is
-the exact reproducible variant used for this successful MCP endpoint check.
+fixture therefore still reports MCP pending. To reproduce the source selection
+for the recorded MCP check, use the local-control command above with
+`KIND_CONTROL_SOURCE=historical`. The default current-source command does not
+reproduce this historical proof; rebuilt image bytes and a new run need their
+own receipts.
 
 ## Historical unsupported database co-location (negative evidence)
 

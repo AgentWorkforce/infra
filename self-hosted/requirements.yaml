@@ -66,13 +66,21 @@ profiles:
     install: helm upgrade <existing release> agentworkforce/sessions-pipeline -f profiles/migration.yaml --set global.tenant.orgId=<org> --set alleyoop.auth.jwksUrl=<jwks url>
     summary: selfhost-postgres plus searchWorkerRole.bootstrapJob, because initdb never runs again on an existing cluster.
   - id: external-selfhosted
-    title: External operator-controlled plain Postgres (RDS, your own Postgres 17) dedicated to HoopDb
+    title: External operator-controlled plain Postgres with a superuser (your own Postgres 17) dedicated to HoopDb
     chart: sessions-pipeline
     values_file: profiles/external-selfhosted.yaml
     services_image: ghcr
     db: { hoopdb: external, db_mode: selfhosted, boundary: global-default-revoke }
     install: helm install sessions-pipeline agentworkforce/sessions-pipeline -f profiles/external-selfhosted.yaml --set global.tenant.orgId=<org> --set alleyoop.auth.jwksUrl=<jwks url> --set worker.migrations.runtimeRole=<role> --set worker.migrations.runtimeRoleLogin=<true|false>
     summary: No in-cluster SQL Jobs (the chart cannot exec into an external database); a superuser runs three bootstrap files first; migrate waits for the roles.
+  - id: external-rds
+    title: Amazon RDS for PostgreSQL 16+ dedicated HoopDb database
+    chart: sessions-pipeline
+    values_file: profiles/external-rds.yaml
+    services_image: ghcr-rds
+    db: { hoopdb: external, db_mode: rds, boundary: global-default-revoke }
+    install: helm install sessions-pipeline agentworkforce/sessions-pipeline -f profiles/external-rds.yaml --set global.tenant.orgId=<org> --set alleyoop.auth.jwksUrl=<jwks url> --set worker.migrations.runtimeRole=<role> --set worker.migrations.runtimeRoleLogin=true
+    summary: No in-cluster SQL Jobs; the RDS master runs the rds_*.sql bootstrap before migrate.
   - id: external-supabase
     title: External Supabase project as HoopDb (fail-closed)
     chart: sessions-pipeline
@@ -119,23 +127,23 @@ profiles:
     values_file: ci/default-values.yaml
     install: helm install relayhistory agentworkforce/relayhistory -f values.yaml --set image.digest=sha256:<digest>
     summary: Single-replica GCP proof shape backed by operator-managed PostgreSQL 17; no HA claim.
-  - id: relay-cloud-api
+  - id: relay-control
     title: Self-host control-plane API
-    chart: relay-cloud-api
+    chart: relay-control
     values_file: ci/default-values.yaml
-    install: helm install relay-cloud-api agentworkforce/relay-cloud-api -f values.yaml --set image.digest=sha256:<digest>
+    install: helm install relay-control agentworkforce/relay-control -f values.yaml --set image.repository=<verified-repository> --set image.digest=sha256:<digest>
     summary: Single-replica self-host API with normal migration Job and existing Secrets only; no HA claim.
-  - id: relay-dashboard
+  - id: relay-webapp
     title: Self-host dashboard
-    chart: relay-dashboard
+    chart: relay-webapp
     values_file: ci/default-values.yaml
-    install: helm install relay-dashboard agentworkforce/relay-dashboard -f values.yaml --set image.digest=sha256:<digest>
-    summary: Static dashboard whose ingress sends same-origin /cloud/api to relay-cloud-api.
+    install: helm install relay-webapp agentworkforce/relay-webapp -f values.yaml --set image.digest=sha256:<digest>
+    summary: Static dashboard whose ingress sends same-origin /cloud/api to relay-control.
   - id: agent-relay
     title: GCP messaging and Sessions suite
     chart: agent-relay
     values_file: [values-gcp-proof.yaml, values-gcp-proof-live.yaml, ci/gcp-proof-values.yaml]
-    install: helm install agent-relay agentworkforce/agent-relay -f values-gcp-proof.yaml -f values-gcp-proof-live.yaml --set relay-cloud-api.image.digest=sha256:<digest>
+    install: helm install agent-relay agentworkforce/agent-relay -f values-gcp-proof.yaml -f values-gcp-proof-live.yaml --set relay-control.image.digest=sha256:<digest>
     summary: Relaycast, RelayAuth, Sessions Pipeline, Relay History, control-plane API and dashboard; Relayflows is opt-in via components.relayflows, Relayfile is excluded.
   - id: relayfile
     title: Relayfile server
@@ -147,6 +155,12 @@ profiles:
     chart: relayflows
     install: helm install relayflows agentworkforce/relayflows --set image.repository=<flow image> --set standalone.flow.path=<flow>
     summary: Off by default in the product. standalone runs a flow in a Kubernetes Job with no Agent Relay Cloud contact; cloudWorker enrolls a Cloud worker.
+  - id: relay-chief
+    title: Relay Chief (scheduled coordination cycles)
+    chart: relay-chief
+    values_file: ci/default-values.yaml
+    install: helm install relay-chief agentworkforce/relay-chief -f <your values>
+    summary: Not qualified and not part of the suite yet; no image is published. Suspended by default. Runs one bounded cycle per CronJob firing against SQLite on a persistent volume, and every cycle may dispatch.
 
   - id: durable-actors
     title: TerseAI durable-actors control plane (vendored upstream chart)
@@ -178,6 +192,13 @@ profiles:
     values_file: [values-eks-actors.yaml]
     install: helm upgrade --install agent-relay agentworkforce/agent-relay -f values-eks-actors.yaml -f <your overrides> (proof in a Pippen sandbox - scripts/selfhost/eks-actors-sandbox.sh, then eks-actors-install.sh)
     summary: standalone profile; standard-mode EKS with runc actor hosts on a tainted node group, one S3 bucket, EKS Pod Identity (or IRSA), a durable-actors control-plane image from the AgentWorkforce fork. Every other suite component off.
+  - id: telemetry-collector
+    title: Self-hosted analytics file collector
+    chart: telemetry-collector
+    values_file: []
+    install: helm upgrade --install telemetry agentworkforce/telemetry-collector -f <accepted images, TLS and producer Secret references>
+    summary: one writer, an exclusive persistent volume, internal TLS and no outbound analytics destination. Requires runtime image and lifecycle acceptance separately.
+
 # charts/sessions-pipeline/ci/*-values.yaml rendered by ci/sessions-pipeline-profiles/matrix.sh that are
 # test variants of a profile above, not install shapes of their own.
 ci_only_values:
@@ -185,8 +206,14 @@ ci_only_values:
     why: selfhost-postgres with CI tenant values.
   - file: ci/kind-values.yaml
     why: selfhost-postgres on kind (local JWKS, pullPolicy Never, small volumes).
+  - file: ci/read-api-values.yaml
+    why: Render-only read API fixture with a fake image identity; never install it.
   - file: ci/search-worker-bootstrap-values.yaml
     why: migration (existing cluster) with CI tenant values.
+
+  - file: ci/ingest-edge-values.yaml
+    why: Render-only native ingest fixture with synthetic image/CA identities; never
+      install it.
 
 compatibility:
   # The services image every sessions-pipeline profile, CI values file and chart default pins.
@@ -201,20 +228,99 @@ compatibility:
       repository: 500268966557.dkr.ecr.us-west-2.amazonaws.com/96bulls-services
       digest: sha256:5bb6075240afa02a1b1797a81c07bffa029954eac7803d702ecba20db35d4db9
       built_by: publish-image-ecr run 41375747474
+    ghcr-rds:
+      repository: ghcr.io/agentworkforce/96bulls-services
+      digest: sha256:b2b74a19375e86bbd5c70a30ea5edbd28cac3de103490bc428de007f4a38b821
+      built_by: publish-image run 42462161615
   releases:
-    - id: sessions-pipeline-0.6.1
+    - id: telemetry-collector-0.1.0
       status: unreleased
       current: true
-      charts: { sessions-pipeline: 0.6.1, sessions-pipeline-worker: 0.6.1, alleyoop: 0.3.9 }
+      charts: { telemetry-collector: 0.1.0 }
+      notes: 'Default-off umbrella analytics file collector. Requires accepted immutable collector and TLS-proxy images, producer and TLS Secrets and an exclusive persistent volume. Source rendering does not prove image entrypoint, TLS, durable acknowledgement, power-loss recovery or whole-application analytics coverage. The currently reviewed collector CLI registers relaycontrol events only.'
+    - id: sessions-pipeline-0.7.5
+      status: unreleased
+      current: true
+      charts: { sessions-pipeline: 0.7.5, sessions-pipeline-worker: 0.7.2, session-ingest-api: 0.4.1 }
       depends:
-        sessions-pipeline: { worker: 0.6.1, alleyoop: 0.3.9, hoopdb: 0.9.0, locker: 5.4.0, otel: 0.178.0 }
+        sessions-pipeline: { worker: 0.7.2, alleyoop: 0.4.1, hoopdb: 0.9.0, session-object-storage: 5.4.0, otel: 0.178.0 }
       images:
         sessions-pipeline-worker: { repository: agentworkforce/96bulls-services, digest: sha256:6f22ea17dff336e1431664542759fd27958649388b90a0b2f0881883caa7c6b2 }
-        alleyoop: { repository: agentworkforce/96bulls-services, digest: sha256:6f22ea17dff336e1431664542759fd27958649388b90a0b2f0881883caa7c6b2 }
+        session-ingest-api: { repository: agentworkforce/96bulls-services, digest: sha256:6f22ea17dff336e1431664542759fd27958649388b90a0b2f0881883caa7c6b2 }
+      images_note: "Native ingest edge (SERVICE=session-ingest): unqualified; an explicit qualified combined-image digest is required. Pins above belong to the existing internal worker/ingest services, not ingestEdge."
       services:
         source_commit: 7d7229bb31c121ecb98cd4e35c248fc2cf5669ad
         migration_generation: eff8b3be46565b57ad8fa5e4a066dbb6d1fe608313d9c1680bfbcd484add259b
-      notes: 'Repository rename to AgentWorkforce/infra: canonical source and Helm repository URLs, with matching local dependency patch versions. Runtime images, application source, migration generation and deployment values are unchanged. This release has no new live application proof.'
+      notes: 'Adds default-off postgresCa so Node workloads and migrate Jobs can verify the Postgres server certificate (NODE_EXTRA_CA_CERTS); with it unset every sessions-pipeline render differs only in the helm.sh/chart labels. The relayhistory checksum/config annotation also changes under agent-relay, which rolls those pods on upgrade (see the agent-relay 0.5.3 row). Adds the default-off native edge from merged pipeline #363; no compatible image or runtime acceptance is supplied. Adds Secret-only read API credentials and a true default-off regression. Normal composition with main bfcf6050 retains the descriptive session names and upgrade/IAM guards. Adds a default-off read API Deployment and ClusterIP Service with explicit compatible image/config requirements and enabled-state readiness. Worker and ingest images, migration generation and roles are unchanged. Pipeline PRs 317/318 are merged; their container/routes source does not establish the approved Postgres/canonical/auth assembly; no read API deployment or runtime proof is claimed.'
+      db_combos:
+        - { db_mode: selfhosted, boundary: global-default-revoke, hoopdb: cnpg, status: shipped, profiles: [selfhost-postgres, migration, aws-cnpg], notes: chart Jobs install the runtime role and the function default }
+        - { db_mode: selfhosted, boundary: global-default-revoke, hoopdb: external, status: shipped, profiles: [external-selfhosted], notes: operator runs the bootstrap files as a superuser }
+        - { db_mode: rds, boundary: global-default-revoke, hoopdb: external, status: shipped, profiles: [external-rds], notes: the RDS master runs the rds_*.sql bootstrap first }
+        - { db_mode: cloudsql, boundary: global-default-revoke, hoopdb: external, status: shipped, profiles: [gcp-cloudsql], notes: operator runs the Cloud SQL bootstrap files as the migration owner; roleBootstrap false }
+        - { db_mode: supabase, boundary: event-trigger, hoopdb: external, status: held, profiles: [external-supabase], notes: supabaseActivation.hold; migrate refuses until the reviewed event trigger is installed and --activation-check passes }
+        - { db_mode: supabase, boundary: null, hoopdb: external, status: fails closed, profiles: [aws-supabase], notes: renders; migrate refuses with function_boundary_unproven }
+        - { db_mode: local, boundary: null, hoopdb: any, status: dev only, profiles: [], notes: local stack only; never a self-host install }
+      sources:
+        - "charts/sessions-pipeline/Chart.yaml:4"
+        - "ci/sessions-pipeline-profiles/matrix.sh:70"
+    - id: sessions-pipeline-0.7.4
+      status: planned
+      charts: { sessions-pipeline: 0.7.4, sessions-pipeline-worker: 0.7.1, session-ingest-api: 0.4.0 }
+      depends:
+        sessions-pipeline: { worker: 0.7.1, alleyoop: 0.4.0, hoopdb: 0.9.0, session-object-storage: 5.4.0, otel: 0.178.0 }
+      images:
+        sessions-pipeline-worker: { repository: agentworkforce/96bulls-services, digest: sha256:6f22ea17dff336e1431664542759fd27958649388b90a0b2f0881883caa7c6b2 }
+        session-ingest-api: { repository: agentworkforce/96bulls-services, digest: sha256:6f22ea17dff336e1431664542759fd27958649388b90a0b2f0881883caa7c6b2 }
+      images_note: "Native ingest edge (SERVICE=session-ingest): unqualified; an explicit qualified combined-image digest is required. Pins above belong to the existing internal worker/ingest services, not ingestEdge."
+      services:
+        source_commit: 7d7229bb31c121ecb98cd4e35c248fc2cf5669ad
+        migration_generation: eff8b3be46565b57ad8fa5e4a066dbb6d1fe608313d9c1680bfbcd484add259b
+      notes: 'Never released; superseded by 0.7.5. Adds the default-off native edge from merged pipeline #363; no compatible image or runtime acceptance is supplied. Adds Secret-only read API credentials and a true default-off regression. Normal composition with main bfcf6050 retains the descriptive session names and upgrade/IAM guards. Adds a default-off read API Deployment and ClusterIP Service with explicit compatible image/config requirements and enabled-state readiness. Worker and ingest images, migration generation and roles are unchanged. Pipeline PRs 317/318 are merged; their container/routes source does not establish the approved Postgres/canonical/auth assembly; no read API deployment or runtime proof is claimed.'
+      db_combos:
+        - { db_mode: selfhosted, boundary: global-default-revoke, hoopdb: cnpg, status: shipped, profiles: [selfhost-postgres, migration, aws-cnpg], notes: chart Jobs install the runtime role and the function default }
+        - { db_mode: selfhosted, boundary: global-default-revoke, hoopdb: external, status: shipped, profiles: [external-selfhosted], notes: operator runs the bootstrap files as a superuser }
+        - { db_mode: rds, boundary: global-default-revoke, hoopdb: external, status: shipped, profiles: [external-rds], notes: the RDS master runs the rds_*.sql bootstrap first }
+        - { db_mode: cloudsql, boundary: global-default-revoke, hoopdb: external, status: shipped, profiles: [gcp-cloudsql], notes: operator runs the Cloud SQL bootstrap files as the migration owner; roleBootstrap false }
+        - { db_mode: supabase, boundary: event-trigger, hoopdb: external, status: held, profiles: [external-supabase], notes: supabaseActivation.hold; migrate refuses until the reviewed event trigger is installed and --activation-check passes }
+        - { db_mode: supabase, boundary: null, hoopdb: external, status: fails closed, profiles: [aws-supabase], notes: renders; migrate refuses with function_boundary_unproven }
+        - { db_mode: local, boundary: null, hoopdb: any, status: dev only, profiles: [], notes: local stack only; never a self-host install }
+      sources:
+        - "charts/sessions-pipeline/Chart.yaml:4"
+        - "ci/sessions-pipeline-profiles/matrix.sh:70"
+    - id: sessions-pipeline-0.7.2
+      status: planned
+      charts: { sessions-pipeline: 0.7.2, sessions-pipeline-worker: 0.7.0, session-ingest-api: 0.4.0 }
+      depends:
+        sessions-pipeline: { worker: 0.7.0, alleyoop: 0.4.0, hoopdb: 0.9.0, session-object-storage: 5.4.0, otel: 0.178.0 }
+      images:
+        sessions-pipeline-worker: { repository: agentworkforce/96bulls-services, digest: sha256:6f22ea17dff336e1431664542759fd27958649388b90a0b2f0881883caa7c6b2 }
+        session-ingest-api: { repository: agentworkforce/96bulls-services, digest: sha256:6f22ea17dff336e1431664542759fd27958649388b90a0b2f0881883caa7c6b2 }
+      services:
+        source_commit: 7d7229bb31c121ecb98cd4e35c248fc2cf5669ad
+        migration_generation: eff8b3be46565b57ad8fa5e4a066dbb6d1fe608313d9c1680bfbcd484add259b
+      notes: 'Adds Secret-only read API credentials and a true default-off regression. Normal composition with main bfcf6050 retains the descriptive session names and upgrade/IAM guards. Adds a default-off read API Deployment and ClusterIP Service with explicit compatible image/config requirements and enabled-state readiness. Worker and ingest images, migration generation and roles are unchanged. Pipeline PRs 317/318 are merged; their container/routes source does not establish the approved Postgres/canonical/auth assembly; no read API deployment or runtime proof is claimed.'
+      db_combos:
+        - { db_mode: selfhosted, boundary: global-default-revoke, hoopdb: cnpg, status: shipped, profiles: [selfhost-postgres, migration, aws-cnpg], notes: chart Jobs install the runtime role and the function default }
+        - { db_mode: selfhosted, boundary: global-default-revoke, hoopdb: external, status: shipped, profiles: [external-selfhosted], notes: operator runs the bootstrap files as a superuser }
+        - { db_mode: cloudsql, boundary: global-default-revoke, hoopdb: external, status: shipped, profiles: [gcp-cloudsql], notes: operator runs the Cloud SQL bootstrap files as the migration owner; roleBootstrap false }
+        - { db_mode: supabase, boundary: event-trigger, hoopdb: external, status: held, profiles: [external-supabase], notes: supabaseActivation.hold; migrate refuses until the reviewed event trigger is installed and --activation-check passes }
+        - { db_mode: supabase, boundary: null, hoopdb: external, status: fails closed, profiles: [aws-supabase], notes: renders; migrate refuses with function_boundary_unproven }
+        - { db_mode: local, boundary: null, hoopdb: any, status: dev only, profiles: [], notes: local stack only; never a self-host install }
+      sources:
+        - "charts/sessions-pipeline/Chart.yaml:4"
+        - "ci/sessions-pipeline-profiles/matrix.sh:70"
+    - id: sessions-pipeline-0.7.1
+      status: shipped
+      charts: { sessions-pipeline: 0.7.1, sessions-pipeline-worker: 0.7.0, session-ingest-api: 0.4.0 }
+      depends:
+        sessions-pipeline: { worker: 0.7.0, alleyoop: 0.4.0, hoopdb: 0.9.0, session-object-storage: 5.4.0, otel: 0.178.0 }
+      images:
+        sessions-pipeline-worker: { repository: agentworkforce/96bulls-services, digest: sha256:6f22ea17dff336e1431664542759fd27958649388b90a0b2f0881883caa7c6b2 }
+        session-ingest-api: { repository: agentworkforce/96bulls-services, digest: sha256:6f22ea17dff336e1431664542759fd27958649388b90a0b2f0881883caa7c6b2 }
+      services:
+        source_commit: 7d7229bb31c121ecb98cd4e35c248fc2cf5669ad
+        migration_generation: eff8b3be46565b57ad8fa5e4a066dbb6d1fe608313d9c1680bfbcd484add259b
+      notes: 'Normal composition with main bfcf6050 retains the descriptive session names and upgrade/IAM guards. Adds a default-off read API Deployment and ClusterIP Service with explicit compatible image/config requirements and enabled-state readiness. Worker and ingest images, migration generation and roles are unchanged. Pipeline PRs 317/318 are merged; their container/routes source does not establish the approved Postgres/canonical/auth assembly; no read API deployment or runtime proof is claimed.'
       db_combos:
         - { db_mode: selfhosted, boundary: global-default-revoke, hoopdb: cnpg, status: shipped, profiles: [selfhost-postgres, migration, aws-cnpg], notes: chart Jobs install the runtime role and the function default }
         - { db_mode: selfhosted, boundary: global-default-revoke, hoopdb: external, status: shipped, profiles: [external-selfhosted], notes: operator runs the bootstrap files as a superuser }
@@ -413,18 +519,51 @@ compatibility:
       images:
         relayauth: { repository: ghcr.io/agentworkforce/relayauth, digest: sha256:eb71daa28e30eb7305f666d0bccc5a4002e53e8a574e3c4c32163d907a1b71df }
       notes: superseded by 0.1.1.
-    - id: agent-relay-0.3.15
+    - id: agent-relay-0.5.3
       status: unreleased
       current: true
-      charts: { agent-relay: 0.3.15, relayhistory: 0.1.1, relay-cloud-api: 0.2.6, relay-dashboard: 0.1.3 }
+      charts: { agent-relay: 0.5.3, relayhistory: 0.1.2, relay-control: 0.3.1, relay-webapp: 0.2.0 }
+      app_versions: { agent-relay: 0.1.0, relayhistory: 0.1.0, relay-control: 0.1.0, relay-webapp: 0.1.0 }
+      depends:
+        agent-relay: { relaycast: 0.3.5, relayauth: 0.1.4, sessions-pipeline: 0.7.5, relayhistory: 0.1.2, relay-control: 0.3.1, relay-webapp: 0.2.0, relayflows: 0.2.5, durable-actors: 0.14.6-awf.1, relayfile: 0.2.2, telemetry-collector: 0.1.0 }
+      images:
+        relayhistory: { repository: ghcr.io/agentworkforce/relayhistory, digest_required: true }
+        relay-control: { repository: '', digest_required: true }
+        relay-webapp: { repository: ghcr.io/agentworkforce/relay-webapp, digest_required: true }
+      notes: 'Adds default-off postgresCa so Node workloads and migrate Jobs can verify the Postgres server certificate (NODE_EXTRA_CA_CERTS); with it unset every render differs only in the helm.sh/chart labels and the relayhistory checksum/config annotation, which hashes the ConfigMap including that label and so rolls the relayhistory pods on upgrade. Adds the default-off native ingest slot from pipeline #363 without an accepted artifact or rollout. Composes landed session naming/main bfcf6050, default-off telemetry #95/a45dbb2d and default-off reader #81/01dc7aee; preserves the standalone Chief registry outside the umbrella/kind profiles. Source-only Control/Webapp public chart rename. The Control chart requires both repository and digest explicitly; Webapp requires a verified digest; real profile image coordinates remain explicitly pinned to their existing repositories until those publishers supply new receipts. Existing releases must translate values keys and preserve names/selectors/DNS with a reviewed compatibility overlay. Kind refuses the old Control/Webapp layout before mutation. No RelayAuth or standalone History removal, publisher dispatch, rollout or new runtime proof is included; the sessions-native replacement remains dependency-gated.'
+    - id: agent-relay-0.5.2
+      status: planned
+      charts: { agent-relay: 0.5.2, relayhistory: 0.1.1, relay-control: 0.3.0, relay-webapp: 0.2.0 }
+      app_versions: { agent-relay: 0.1.0, relayhistory: 0.1.0, relay-control: 0.1.0, relay-webapp: 0.1.0 }
+      depends:
+        agent-relay: { relaycast: 0.3.5, relayauth: 0.1.4, sessions-pipeline: 0.7.4, relayhistory: 0.1.1, relay-control: 0.3.0, relay-webapp: 0.2.0, relayflows: 0.2.5, durable-actors: 0.14.6-awf.1, relayfile: 0.2.2, telemetry-collector: 0.1.0 }
+      images:
+        relayhistory: { repository: ghcr.io/agentworkforce/relayhistory, digest_required: true }
+        relay-control: { repository: '', digest_required: true }
+        relay-webapp: { repository: ghcr.io/agentworkforce/relay-webapp, digest_required: true }
+      notes: 'Never released; superseded by 0.5.3. Adds the default-off native ingest slot from pipeline #363 without an accepted artifact or rollout. Composes landed session naming/main bfcf6050, default-off telemetry #95/a45dbb2d and default-off reader #81/01dc7aee; preserves the standalone Chief registry outside the umbrella/kind profiles. Source-only Control/Webapp public chart rename. The Control chart requires both repository and digest explicitly; Webapp requires a verified digest; real profile image coordinates remain explicitly pinned to their existing repositories until those publishers supply new receipts. Existing releases must translate values keys and preserve names/selectors/DNS with a reviewed compatibility overlay. Kind refuses the old Control/Webapp layout before mutation. No RelayAuth or standalone History removal, publisher dispatch, rollout or new runtime proof is included; the sessions-native replacement remains dependency-gated.'
+    - id: agent-relay-0.5.0
+      status: planned
+      charts: { agent-relay: 0.5.0, relayhistory: 0.1.1, relay-control: 0.3.0, relay-webapp: 0.2.0 }
+      app_versions: { agent-relay: 0.1.0, relayhistory: 0.1.0, relay-control: 0.1.0, relay-webapp: 0.1.0 }
+      depends:
+        agent-relay: { relaycast: 0.3.5, relayauth: 0.1.4, sessions-pipeline: 0.7.2, relayhistory: 0.1.1, relay-control: 0.3.0, relay-webapp: 0.2.0, relayflows: 0.2.5, durable-actors: 0.14.6-awf.1, relayfile: 0.2.2, telemetry-collector: 0.1.0 }
+      images:
+        relayhistory: { repository: ghcr.io/agentworkforce/relayhistory, digest_required: true }
+        relay-control: { repository: '', digest_required: true }
+        relay-webapp: { repository: ghcr.io/agentworkforce/relay-webapp, digest_required: true }
+      notes: 'Composes landed session naming/main bfcf6050, default-off telemetry #95/a45dbb2d and default-off reader #81/01dc7aee; preserves the standalone Chief registry outside the umbrella/kind profiles. Source-only Control/Webapp public chart rename. The Control chart requires both repository and digest explicitly; Webapp requires a verified digest; real profile image coordinates remain explicitly pinned to their existing repositories until those publishers supply new receipts. Existing releases must translate values keys and preserve names/selectors/DNS with a reviewed compatibility overlay. Kind refuses the old Control/Webapp layout before mutation. No RelayAuth or standalone History removal, publisher dispatch, rollout or new runtime proof is included; the sessions-native replacement remains dependency-gated.'
+    - id: agent-relay-0.3.17
+      status: planned
+      charts: { agent-relay: 0.3.17, relayhistory: 0.1.1, relay-cloud-api: 0.2.7, relay-dashboard: 0.1.3 }
       app_versions: { agent-relay: 0.1.0, relayhistory: 0.1.0, relay-cloud-api: 0.1.0, relay-dashboard: 0.1.0 }
       depends:
-        agent-relay: { relaycast: 0.3.5, relayauth: 0.1.4, sessions-pipeline: 0.6.1, relayhistory: 0.1.1, relay-cloud-api: 0.2.6, relay-dashboard: 0.1.3, relayflows: 0.2.5, durable-actors: 0.14.6-awf.1, relayfile: 0.2.2 }
+        agent-relay: { relaycast: 0.3.5, relayauth: 0.1.4, sessions-pipeline: 0.6.2, relayhistory: 0.1.1, relay-cloud-api: 0.2.7, relay-dashboard: 0.1.3, relayflows: 0.2.5, durable-actors: 0.14.6-awf.1, relayfile: 0.2.2 }
       images:
         relayhistory: { repository: ghcr.io/agentworkforce/relayhistory, digest_required: true }
         relay-cloud-api: { repository: ghcr.io/agentworkforce/selfhost-api, digest_required: true }
         relay-dashboard: { repository: ghcr.io/agentworkforce/relay-dashboard, digest_required: true }
-      notes: 'Supersedes the untagged 0.3.14 source tree (including the 0.3.13 repository rename) and composes the API extraEnv change from PR 78. Local kind core/addons values, bootstrap and acceptance preparation. relay-cloud-api 0.2.6 adds a separate Secret-backed SELFHOST_LICENSE_FILE slot; license verification remains upstream work. Production defaults and image pins are unchanged. Local setup and bounded core protocols have pinned evidence; complete E2E remains pending. See README Local kind profiles and issue 77.'
+      notes: 'Historical untagged source proposal at d8bbff820a6541593fa2e889cbf14e3aa1f0baa7, superseded by the public-name source row; not a published or current release. Bundles sessions-pipeline 0.6.2 default-off read API plumbing and relay-cloud-api 0.2.7 legacy-client env omission. Supersedes the untagged 0.3.16 source and retains its kind core/addons relay-webapp b944a979 image pin at sha256:e4de2c628e72e906e809fd32e6192baa7c93a404eb019964cd7706805e316e6a; no new UI/runtime proof is claimed. Includes unset OAuth/raw FILE-alias reservation and strict valueFrom source validation from the reviewed extraEnv guard proposal. No profile enables the component or reroutes relaycontrol. Compatible runtime assembly and image remain upstream dependencies. Existing kind evidence belongs to its pinned base revision, not this new chart version.'
     - id: agent-relay-0.3.12
       status: shipped
       charts: { agent-relay: 0.3.12, relayhistory: 0.1.1, relay-cloud-api: 0.2.4, relay-dashboard: 0.1.3 }
@@ -526,6 +665,12 @@ compatibility:
       images:
         relayfile: { repository: ghcr.io/agentworkforce/relayfile }
       notes: image by tag (Chart.appVersion), not digest. Superseded by 0.2.0.
+    - id: relay-chief-0.1.0
+      status: unreleased
+      current: true
+      charts: { relay-chief: 0.1.0 }
+      app_versions: { relay-chief: 0.1.0 }
+      notes: First chart, rendered only. No Relay Chief image is published and the digest is operator-supplied until one exists.
     - id: relayflows-0.2.5
       status: unreleased
       current: true
@@ -559,16 +704,16 @@ compatibility:
 
 # Env the charts render that is neither a requirement nor an option.
 internal_env:
-  - { name: SERVICE, chart: [sessions-pipeline-worker, alleyoop], why: selects the entry point of the one services image }
-  - { name: OTEL_SERVICE_NAME, chart: [sessions-pipeline-worker, alleyoop], why: equals SERVICE }
-  - { name: TMPDIR, chart: [sessions-pipeline-worker, alleyoop], why: the writable emptyDir under a read-only root filesystem }
+  - { name: SERVICE, chart: [sessions-pipeline-worker, session-ingest-api], why: selects the entry point of the one services image }
+  - { name: OTEL_SERVICE_NAME, chart: [sessions-pipeline-worker, session-ingest-api], why: equals SERVICE }
+  - { name: TMPDIR, chart: [sessions-pipeline-worker, session-ingest-api], why: the writable emptyDir under a read-only root filesystem }
   - { name: HOME, chart: [sessions-pipeline, sessions-pipeline-worker, relayflows], why: a writable home under a read-only root filesystem }
   - { name: ROLES, chart: sessions-pipeline-worker, why: wait-for-role init container; derived from waitForRole.role and migrations.runtimeRole }
   - { name: FUNCTION_DEFAULT, chart: sessions-pipeline-worker, why: wait-for-role init container; derived from waitForRole.functionDefault }
   - { name: INTERVAL, chart: sessions-pipeline-worker, why: wait-for-role poll interval (waitForRole.intervalSeconds) }
   - { name: CLUSTER, chart: sessions-pipeline, why: privileged SQL Jobs; the CNPG cluster name (bootstrapJob.cluster) }
   - { name: DATABASE, chart: sessions-pipeline, why: privileged SQL Jobs; the HoopDb database (bootstrapJob.database) }
-  - { name: INGEST_PORT, chart: alleyoop, why: from ingest.port }
+  - { name: INGEST_PORT, chart: session-ingest-api, why: from ingest.port }
   - { name: PORT, chart: [relaycast, relayauth], why: from server.port }
   - { name: RELAYCAST_DB_PATH, chart: relaycast, why: fixed /data/relaycast.db on the data PVC }
   - { name: RELAYCAST_ENV, chart: relaycast, why: reserved name in the extraEnv guard; the environment is passed as --env (server.environment) }
@@ -611,9 +756,9 @@ entries:
     title: A default StorageClass for the in-cluster HoopDb and Locker volumes
     description: |
       The CNPG HoopDb claims hoopdb.cluster.storage.size (10Gi) and the MinIO Locker
-      locker.persistence.size (20Gi) through the default StorageClass.
+      session-object-storage.persistence.size (20Gi) through the default StorageClass.
     chart: sessions-pipeline
-    values: [hoopdb.cluster.storage.size, locker.persistence.size]
+    values: [hoopdb.cluster.storage.size, session-object-storage.persistence.size]
     profiles: [selfhost-postgres, migration, aws-cnpg]
     status: shipped
     provided_by: { default: operator, aws-cnpg: stack }
@@ -655,16 +800,16 @@ entries:
       externalSecrets.enabled renders an ExternalSecret (external-secrets.io/v1) whose
       target is existingSecret. The ESO CRDs and the named secretStoreRef must exist,
       and every consumed key must be mapped in externalSecrets.data.
-    chart: [sessions-pipeline-worker, alleyoop]
-    values: ["sessions-pipeline-worker:externalSecrets.*", "alleyoop:externalSecrets.*"]
-    profiles: [selfhost-postgres, migration, external-selfhosted, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql]
+    chart: [sessions-pipeline-worker, session-ingest-api]
+    values: ["sessions-pipeline-worker:externalSecrets.*", "session-ingest-api:externalSecrets.*"]
+    profiles: [selfhost-postgres, migration, external-selfhosted, external-rds, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql]
     status: shipped
     provided_by: operator
     verify: kubectl get crd externalsecrets.external-secrets.io && kubectl get clustersecretstore <name>; the ExternalSecret reports Ready
     sources:
       - "charts/sessions-pipeline-worker/values.yaml:248"
       - "charts/sessions-pipeline-worker/templates/externalsecret.yaml:20"
-      - "charts/alleyoop/templates/externalsecret.yaml:11"
+      - "charts/session-ingest-api/templates/externalsecret.yaml:11"
 
   # =========================================================================
   # sessions-pipeline: Secrets
@@ -679,7 +824,7 @@ entries:
       The ECR path (EKS node role) needs none.
     chart: sessions-pipeline
     values: [worker.imagePullSecrets, alleyoop.imagePullSecrets]
-    profiles: [selfhost-postgres, migration, external-selfhosted, external-supabase, aws-supabase, gcp-cloudsql]
+    profiles: [selfhost-postgres, migration, external-selfhosted, external-rds, external-supabase, aws-supabase, gcp-cloudsql]
     status: shipped
     provided_by: operator
     secrets:
@@ -697,18 +842,18 @@ entries:
     description: |
       In secret mode the workers and alleyoop read the Locker access key pair from
       existingSecret, and the bundled MinIO reads its root credential from the same
-      Secret (locker.existingSecret). Not used with locker.credentials.mode=podIdentity.
+      Secret (session-object-storage.existingSecret). Not used with locker.credentials.mode=podIdentity.
     chart: sessions-pipeline
     values:
       - worker.existingSecret
       - alleyoop.existingSecret
-      - locker.existingSecret
+      - session-object-storage.existingSecret
       - worker.secretKeys.lockerAccessKeyId
       - worker.secretKeys.lockerSecretAccessKey
       - alleyoop.secretKeys.lockerAccessKeyId
       - alleyoop.secretKeys.lockerSecretAccessKey
     env: [LOCKER_ACCESS_KEY_ID, LOCKER_SECRET_ACCESS_KEY]
-    profiles: [selfhost-postgres, migration, external-selfhosted, external-supabase]
+    profiles: [selfhost-postgres, migration, external-selfhosted, external-rds, external-supabase]
     status: shipped
     provided_by: operator
     secrets:
@@ -723,14 +868,14 @@ entries:
           - { key: rootUser, key_path: alleyoop.secretKeys.lockerAccessKeyId }
           - { key: rootPassword, key_path: alleyoop.secretKeys.lockerSecretAccessKey }
       - name: sessions-pipeline-locker
-        name_paths: [locker.existingSecret]
-        note: the bundled MinIO's root credential
+        name_paths: [session-object-storage.existingSecret]
+        note: the bundled upstream MinIO requires literal Secret data keys rootUser and rootPassword
     verify: kubectl get secret sessions-pipeline-locker -o jsonpath='{.data}' has rootUser and rootPassword
     sources:
       - "charts/sessions-pipeline/values.yaml:3"
       - "charts/sessions-pipeline/values.yaml:28"
       - "charts/sessions-pipeline-worker/templates/_env.tpl:78"
-      - "charts/alleyoop/templates/_env.tpl:66"
+      - "charts/session-ingest-api/templates/_env.tpl:66"
 
   - id: req.secret.summary-master-keys
     kind: requirement
@@ -744,7 +889,7 @@ entries:
     chart: sessions-pipeline
     values: [worker.summaryEncryption.existingSecret, worker.summaryEncryption.key, worker.summaryEncryption.mountPath, worker.summaryEncryption.fileName]
     env: [SUMMARY_MASTER_KEYS_FILE, SUMMARY_MASTER_KEYS]
-    profiles: [selfhost-postgres, migration, external-selfhosted, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql]
+    profiles: [selfhost-postgres, migration, external-selfhosted, external-rds, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql]
     status: shipped
     provided_by: { default: operator, aws-cnpg: stack, aws-supabase: stack, gcp-cloudsql: stack }
     secrets:
@@ -772,47 +917,50 @@ entries:
     chart: sessions-pipeline
     values: [worker.hoopdb.existingSecret, worker.hoopdb.key, worker.secretKeys.hoopdbUrl, alleyoop.hoopdb.existingSecret, alleyoop.hoopdb.key, alleyoop.secretKeys.hoopdbUrl]
     env: [HOOPDB_URL]
-    profiles: [selfhost-postgres, migration, external-selfhosted, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql]
+    profiles: [selfhost-postgres, migration, external-selfhosted, external-rds, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql]
     status: shipped
-    provided_by: { default: chart, external-selfhosted: operator, external-supabase: operator, aws-supabase: stack, gcp-cloudsql: stack }
+    provided_by: { default: chart, external-selfhosted: operator, external-rds: operator, external-supabase: operator, aws-supabase: stack, gcp-cloudsql: stack }
     secrets:
-      - name: { default: hoopdb-app, external-selfhosted: sessions-pipeline-hoopdb, external-supabase: sessions-pipeline-hoopdb, gcp-cloudsql: 96bulls-gcp }
+      - name: { default: hoopdb-app, external-selfhosted: sessions-pipeline-hoopdb, external-rds: sessions-pipeline-hoopdb, external-supabase: sessions-pipeline-hoopdb, gcp-cloudsql: 96bulls-gcp }
         name_paths: [worker.hoopdb.existingSecret, worker.existingSecret]
         keys:
-          - { key: { default: uri, external-selfhosted: HOOPDB_URL, external-supabase: HOOPDB_URL, gcp-cloudsql: HOOPDB_URL }, key_path: [worker.hoopdb.key, worker.secretKeys.hoopdbUrl] }
-      - name: { default: hoopdb-app, external-selfhosted: sessions-pipeline-hoopdb, external-supabase: sessions-pipeline-hoopdb, gcp-cloudsql: 96bulls-gcp }
+          - { key: { default: uri, external-selfhosted: HOOPDB_URL, external-rds: HOOPDB_URL, external-supabase: HOOPDB_URL, gcp-cloudsql: HOOPDB_URL }, key_path: [worker.hoopdb.key, worker.secretKeys.hoopdbUrl] }
+      - name: { default: hoopdb-app, external-selfhosted: sessions-pipeline-hoopdb, external-rds: sessions-pipeline-hoopdb, external-supabase: sessions-pipeline-hoopdb, gcp-cloudsql: 96bulls-gcp }
         name_paths: [alleyoop.hoopdb.existingSecret, alleyoop.existingSecret]
         keys:
-          - { key: { default: uri, external-selfhosted: HOOPDB_URL, external-supabase: HOOPDB_URL, gcp-cloudsql: HOOPDB_URL }, key_path: [alleyoop.hoopdb.key, alleyoop.secretKeys.hoopdbUrl] }
+          - { key: { default: uri, external-selfhosted: HOOPDB_URL, external-rds: HOOPDB_URL, external-supabase: HOOPDB_URL, gcp-cloudsql: HOOPDB_URL }, key_path: [alleyoop.hoopdb.key, alleyoop.secretKeys.hoopdbUrl] }
     verify:
       default: kubectl get secret hoopdb-app -o jsonpath='{.data.uri}' is non-empty once the CNPG Cluster is ready
       external-selfhosted: kubectl get secret sessions-pipeline-hoopdb -o jsonpath='{.data.HOOPDB_URL}' | base64 -d | psql -X -c 'select 1'
+      external-rds: psql "$(kubectl get secret sessions-pipeline-hoopdb -o jsonpath='{.data.HOOPDB_URL}' | base64 -d | sed -E 's/&?uselibpqcompat=true//; s/\?&/?/')" -X -c 'select 1'
       external-supabase: kubectl get secret sessions-pipeline-hoopdb -o jsonpath='{.data.HOOPDB_URL}' | base64 -d | psql -X -c 'select current_user'
     sources:
       - "charts/sessions-pipeline/values.yaml:39"
       - "charts/sessions-pipeline/profiles/external-selfhosted.yaml:11"
       - "charts/sessions-pipeline/profiles/external-supabase.yaml:24"
       - "charts/sessions-pipeline-worker/templates/_env.tpl:162"
-      - "charts/alleyoop/templates/_env.tpl:54"
+      - "charts/session-ingest-api/templates/_env.tpl:54"
 
   - id: req.secret.hoopdb-migration-url
     kind: requirement
     title: Separate migration-owner connection Secret (HOOPDB_MIGRATION_URL)
     description: |
-      On Cloud SQL the services connect as the least-privilege runtime role and only
+      On Cloud SQL and RDS the services connect as the least-privilege runtime role and only
       the migrate Job (and its wait-for-role) connects as the migration owner, from
       migrations.hoopdb.existingSecret/key.
     chart: sessions-pipeline
     values: [worker.migrations.hoopdb.existingSecret, worker.migrations.hoopdb.key]
-    profiles: [gcp-cloudsql]
+    profiles: [gcp-cloudsql, external-rds]
     status: shipped
-    provided_by: stack
+    provided_by: { default: stack, external-rds: operator }
     secrets:
-      - name: 96bulls-gcp
+      - name: { default: 96bulls-gcp, external-rds: sessions-pipeline-hoopdb }
         name_paths: [worker.migrations.hoopdb.existingSecret]
         keys:
           - { key: HOOPDB_MIGRATION_URL, key_path: worker.migrations.hoopdb.key }
-    verify: kubectl get secret 96bulls-gcp -o jsonpath='{.data.HOOPDB_MIGRATION_URL}' connects as the migration owner (select current_user)
+    verify:
+      default: kubectl get secret 96bulls-gcp -o jsonpath='{.data.HOOPDB_MIGRATION_URL}' connects as the migration owner (select current_user)
+      external-rds: psql "$(kubectl get secret sessions-pipeline-hoopdb -o jsonpath='{.data.HOOPDB_MIGRATION_URL}' | base64 -d | sed -E 's/&?uselibpqcompat=true//; s/\?&/?/')" -Atc 'select current_user' is the RDS master
     sources:
       - "charts/sessions-pipeline/ci/gcp-cloudsql-values.yaml:33"
       - "charts/sessions-pipeline-worker/values.yaml:93"
@@ -828,7 +976,7 @@ entries:
     chart: sessions-pipeline
     values: [global.tenant.orgId, worker.tenant.orgId, alleyoop.tenant.orgId]
     env: [TENANT_ORG_ID]
-    profiles: [selfhost-postgres, migration, external-selfhosted, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql]
+    profiles: [selfhost-postgres, migration, external-selfhosted, external-rds, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql]
     status: shipped
     provided_by: operator
     verify: helm template renders (it fails with "tenant.orgId (or global.tenant.orgId) is required" otherwise)
@@ -846,13 +994,13 @@ entries:
     chart: sessions-pipeline
     values: [alleyoop.auth.jwksUrl]
     env: [RELAYAUTH_JWKS_URL]
-    profiles: [selfhost-postgres, migration, external-selfhosted, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql]
+    profiles: [selfhost-postgres, migration, external-selfhosted, external-rds, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql]
     status: shipped
     provided_by: operator
     verify: kubectl run -it --rm curl --image=curlimages/curl -- curl -fsS <jwksUrl> returns {"keys":[...]}
     sources:
       - "charts/sessions-pipeline/values.yaml:81"
-      - "charts/alleyoop/templates/deployment.yaml:46"
+      - "charts/session-ingest-api/templates/deployment.yaml:46"
       - "sessions-pipeline@7d7229b:src/alleyoop/ingest.ts:118"
 
   - id: opt.alleyoop.auth-mode
@@ -865,7 +1013,7 @@ entries:
     chart: sessions-pipeline
     values: [alleyoop.auth.jwksUrl, alleyoop.auth.localJwks, alleyoop.auth.issuer, alleyoop.auth.audience, alleyoop.secretKeys.jwksJson]
     env: [RELAYAUTH_JWKS_URL, JWKS_JSON, AUTH_ISSUER, AUTH_AUDIENCE]
-    profiles: [selfhost-postgres, migration, external-selfhosted, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql]
+    profiles: [selfhost-postgres, migration, external-selfhosted, external-rds, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql]
     status: shipped
     provided_by: operator
     default: jwksUrl
@@ -879,9 +1027,9 @@ entries:
         note: only with auth.localJwks=true
     verify: helm template fails with "set auth.jwksUrl OR auth.localJwks, not both" or with neither
     sources:
-      - "charts/alleyoop/values.yaml:81"
-      - "charts/alleyoop/templates/_env.tpl:18"
-      - "charts/alleyoop/templates/deployment.yaml:49"
+      - "charts/session-ingest-api/values.yaml:81"
+      - "charts/session-ingest-api/templates/_env.tpl:18"
+      - "charts/session-ingest-api/templates/deployment.yaml:49"
 
   - id: opt.sessions-pipeline.in-cluster-http
     kind: option
@@ -894,11 +1042,11 @@ entries:
       <svc>.<ns>.svc.cluster.local, never public hosts, IPs or short names; for
       example alleyoop.auth.jwksUrl=http://relayauth.relayauth.svc:8787/.well-known/jwks.json.
       LOCKER_ENDPOINT and the OTLP endpoint are outside this policy, so the
-      bundled MinIO at http://locker:9000 works with the default false.
+      bundled MinIO at http://session-object-storage:9000 works with the default false.
     chart: sessions-pipeline
     values: [alleyoop.allowInClusterHttp, worker.allowInClusterHttp]
     env: [ALLOW_IN_CLUSTER_HTTP]
-    profiles: [selfhost-postgres, migration, external-selfhosted, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql]
+    profiles: [selfhost-postgres, migration, external-selfhosted, external-rds, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql]
     status: shipped
     provided_by: operator
     default: false
@@ -907,9 +1055,49 @@ entries:
       - { value: true }
     verify: helm template renders ALLOW_IN_CLUSTER_HTTP="false" by default and fails when extraEnv sets it
     sources:
-      - "charts/alleyoop/values.yaml"
-      - "charts/alleyoop/templates/deployment.yaml"
+      - "charts/session-ingest-api/values.yaml"
+      - "charts/session-ingest-api/templates/deployment.yaml"
       - "charts/sessions-pipeline-worker/templates/_env.tpl"
+
+  - id: opt.postgres-ca-bundle
+    kind: option
+    title: CA bundle for verifying the Postgres server certificate (postgresCa)
+    description: |
+      node-pg verifies the server certificate for sslmode=require or verify-full, and the
+      service images do not carry private CAs such as Amazon RDS's. postgresCa mounts a PEM
+      bundle from an existing ConfigMap or Secret (exactly one, key postgresCa.key) at
+      /etc/postgres-ca/ca.crt and sets NODE_EXTRA_CA_CERTS there in the Deployments and the
+      migrate Job of each of these charts (locker-init opens no Postgres connection). Off by
+      default. Use sslmode=verify-full in the database URLs, and do not pair sslmode=require
+      with uselibpqcompat=true, which skips verification. The bundle is read at process start,
+      so rotating it needs a pod restart. Under the agent-relay umbrella the values are
+      sessions-pipeline.worker.postgresCa, sessions-pipeline.alleyoop.postgresCa,
+      relay-control.postgresCa and relayhistory.postgresCa. NODE_EXTRA_CA_CERTS does not reach
+      the read API or ingest edge, which set an explicit CA: the read API takes
+      SESSION_POSTGRES_TLS_PROFILE=custom-ca, SESSION_POSTGRES_CA_FILE and
+      SESSION_POSTGRES_CA_SHA256 through readApi.extraEnv, with the file from
+      readApi.extraVolumes and extraVolumeMounts; the ingest edge takes
+      ingestEdge.postgres.caConfigMap, caKey and caSha256.
+      When postgresCa is on, wait-for-role (psql) gets PGSSLROOTCERT. psql run by an operator
+      needs sslrootcert=<bundle> with verify-full.
+    chart: [sessions-pipeline, relay-control, relayhistory]
+    values: [worker.postgresCa.*, alleyoop.postgresCa.*, "relay-control:postgresCa.*", "relayhistory:postgresCa.*"]
+    env: [NODE_EXTRA_CA_CERTS, PGSSLROOTCERT]
+    profiles: [selfhost-postgres, migration, external-selfhosted, external-rds, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql, relayhistory, relay-control, agent-relay]
+    status: shipped
+    provided_by: operator
+    default: false
+    choices:
+      - { value: false }
+      - { value: true }
+    verify: kubectl exec deploy/<workload> -- printenv NODE_EXTRA_CA_CERTS is /etc/postgres-ca/ca.crt; the URLs use sslmode=verify-full and the migrate Job connects
+    sources:
+      - "charts/sessions-pipeline/profiles/external-rds.yaml:19"
+      - "charts/sessions-pipeline-worker/templates/_env.tpl"
+      - "charts/session-ingest-api/templates/deployment.yaml"
+      - "charts/relay-control/templates/deployment.yaml"
+      - "charts/relayhistory/templates/deployment.yaml"
+      - "sessions-pipeline@78511e03:src/shared/db.ts:41"
 
   - id: opt.alleyoop.history-origin
     kind: option
@@ -927,7 +1115,7 @@ entries:
     chart: sessions-pipeline
     values: [alleyoop.auth.historyOrigin]
     env: [RELAYHISTORY_ORIGIN]
-    profiles: [selfhost-postgres, migration, external-selfhosted, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql]
+    profiles: [selfhost-postgres, migration, external-selfhosted, external-rds, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql]
     status: shipped
     provided_by: operator
     default: unset
@@ -936,8 +1124,8 @@ entries:
       - { value: origin }
     verify: helm template fails when auth.historyOrigin is not a bare origin or extraEnv also sets RELAYHISTORY_ORIGIN
     sources:
-      - "charts/alleyoop/values.yaml"
-      - "charts/alleyoop/templates/deployment.yaml"
+      - "charts/session-ingest-api/values.yaml"
+      - "charts/session-ingest-api/templates/deployment.yaml"
 
   - id: opt.alleyoop.interim-relayauth-bearer
     kind: option
@@ -956,7 +1144,7 @@ entries:
     chart: sessions-pipeline
     values: [alleyoop.auth.allowInterimRelayAuthBearer]
     env: [ALLOW_INTERIM_RELAYAUTH_BEARER]
-    profiles: [selfhost-postgres, migration, external-selfhosted, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql]
+    profiles: [selfhost-postgres, migration, external-selfhosted, external-rds, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql]
     status: shipped
     provided_by: operator
     default: false
@@ -965,9 +1153,9 @@ entries:
       - { value: true, note: environment=local only }
     verify: helm template renders ALLOW_INTERIM_RELAYAUTH_BEARER="false" by default and fails for true outside environment=local or when extraEnv/ingest.env sets it
     sources:
-      - "charts/alleyoop/values.yaml"
-      - "charts/alleyoop/templates/_env.tpl"
-      - "charts/alleyoop/templates/deployment.yaml"
+      - "charts/session-ingest-api/values.yaml"
+      - "charts/session-ingest-api/templates/_env.tpl"
+      - "charts/session-ingest-api/templates/deployment.yaml"
 
   # =========================================================================
   # sessions-pipeline: database
@@ -984,10 +1172,12 @@ entries:
       external databases too, though the migrations at 7d7229b do not use it.
     chart: sessions-pipeline
     values: [hoopdb.cluster.imageName, hoopdb.cluster.initdb.postInitApplicationSQL]
-    profiles: [selfhost-postgres, migration, external-selfhosted, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql]
+    profiles: [selfhost-postgres, migration, external-selfhosted, external-rds, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql]
     status: shipped
-    provided_by: { default: chart, external-selfhosted: operator, external-supabase: operator, aws-supabase: operator, gcp-cloudsql: stack }
-    verify: psql "$HOOPDB_URL" -Atc "select name from pg_available_extensions where name in ('pg_trgm','btree_gin','vector')" lists all three; server_version_num >= 170000
+    provided_by: { default: chart, external-selfhosted: operator, external-rds: operator, external-supabase: operator, aws-supabase: operator, gcp-cloudsql: stack }
+    verify:
+      default: psql "$HOOPDB_URL" -Atc "select name from pg_available_extensions where name in ('pg_trgm','btree_gin','vector')" lists all three; server_version_num >= 170000
+      external-rds: with uselibpqcompat=true removed from the URL (psql rejects it), psql "$HOOPDB_URL" -Atc "select name from pg_available_extensions where name in ('pg_trgm','btree_gin','vector')" lists all three; server_version_num >= 160000
     sources:
       - "charts/sessions-pipeline/values.yaml:99"
       - "charts/sessions-pipeline/values.yaml:119"
@@ -1004,10 +1194,12 @@ entries:
       database holds nothing else. The in-cluster HoopDb is dedicated by construction.
     chart: sessions-pipeline
     values: [hoopdb.cluster.initdb.database, hoopdb.cluster.initdb.owner]
-    profiles: [selfhost-postgres, migration, aws-cnpg, external-selfhosted, gcp-cloudsql]
+    profiles: [selfhost-postgres, migration, aws-cnpg, external-selfhosted, external-rds, gcp-cloudsql]
     status: shipped
-    provided_by: { default: chart, external-selfhosted: operator, gcp-cloudsql: stack }
-    verify: psql "$HOOPDB_URL" -Atc "select nspname from pg_namespace where nspname not like 'pg_%' and nspname <> 'information_schema'" shows only HoopDb schemas
+    provided_by: { default: chart, external-selfhosted: operator, external-rds: operator, gcp-cloudsql: stack }
+    verify:
+      default: psql "$HOOPDB_URL" -Atc "select nspname from pg_namespace where nspname not like 'pg_%' and nspname <> 'information_schema'" shows only HoopDb schemas
+      external-rds: with uselibpqcompat=true removed from the URL (psql rejects it), psql "$HOOPDB_URL" -Atc "select nspname from pg_namespace where nspname not like 'pg_%' and nspname <> 'information_schema'" shows only HoopDb schemas
     sources:
       - "charts/sessions-pipeline/profiles/external-selfhosted.yaml:2"
       - "charts/sessions-pipeline/values.yaml:275"
@@ -1019,13 +1211,16 @@ entries:
       The migrations GRANT to the Supabase roles. CNPG initdb creates them as
       superuser; on plain external Postgres the migrator's shim creates them
       (HOOPDB_SUPABASE_SHIM=true); on Cloud SQL the operator's
-      cloudsql_migration_roles.sql does (shim off); Supabase has them natively.
+      cloudsql_migration_roles.sql does (shim off); on RDS the master's
+      rds_migration_roles.sql does (shim off); Supabase has them natively.
     chart: sessions-pipeline
     values: [hoopdb.cluster.initdb.postInitApplicationSQL, worker.migrations.supabaseShim]
-    profiles: [selfhost-postgres, migration, aws-cnpg, external-selfhosted, external-supabase, aws-supabase, gcp-cloudsql]
+    profiles: [selfhost-postgres, migration, aws-cnpg, external-selfhosted, external-rds, external-supabase, aws-supabase, gcp-cloudsql]
     status: shipped
-    provided_by: { default: chart, external-selfhosted: migrator, external-supabase: operator, aws-supabase: operator, gcp-cloudsql: operator }
-    verify: psql "$HOOPDB_URL" -Atc "select count(*) from pg_roles where rolname in ('anon','authenticated','service_role')" is 3
+    provided_by: { default: chart, external-selfhosted: migrator, external-rds: operator, external-supabase: operator, aws-supabase: operator, gcp-cloudsql: operator }
+    verify:
+      default: psql "$HOOPDB_URL" -Atc "select count(*) from pg_roles where rolname in ('anon','authenticated','service_role')" is 3
+      external-rds: with uselibpqcompat=true removed from the URL (psql rejects it), psql "$HOOPDB_URL" -Atc "select count(*) from pg_roles where rolname in ('anon','authenticated','service_role')" is 3
     sources:
       - "charts/sessions-pipeline/values.yaml:122"
       - "charts/sessions-pipeline/ci/gcp-cloudsql-values.yaml:5"
@@ -1042,15 +1237,16 @@ entries:
       databases from the operator (Supabase uses the transactional _supabase wrapper).
     chart: sessions-pipeline
     values: [hoopdb.cluster.initdb.postInitApplicationSQL, searchWorkerRole.bootstrapJob.enabled, searchWorkerRole.bootstrapJob.sqlPath, worker.migrations.waitForRole.role]
-    profiles: [selfhost-postgres, migration, aws-cnpg, external-selfhosted, external-supabase, aws-supabase, gcp-cloudsql]
+    profiles: [selfhost-postgres, migration, aws-cnpg, external-selfhosted, external-rds, external-supabase, aws-supabase, gcp-cloudsql]
     status: shipped
-    provided_by: { default: chart, external-selfhosted: operator, external-supabase: operator, aws-supabase: operator, gcp-cloudsql: operator }
+    provided_by: { default: chart, external-selfhosted: operator, external-rds: operator, external-supabase: operator, aws-supabase: operator, gcp-cloudsql: operator }
     profile_values:
       migration: { searchWorkerRole.bootstrapJob.enabled: true }
       selfhost-postgres: { searchWorkerRole.bootstrapJob.enabled: false }
     verify:
       default: psql "$HOOPDB_URL" -Atc "select rolcanlogin, rolconfig from pg_roles where rolname='session_directory_search_worker'" is f|{statement_timeout=2s}
       external-selfhosted: run supabase/bootstrap/session_directory_search_worker.sql as a superuser; then the same query
+      external-rds: the master runs supabase/bootstrap/rds_migration_roles.sql; then, with uselibpqcompat=true removed from the URL (psql rejects it), the same query
       external-supabase: run supabase/bootstrap/session_directory_search_worker_supabase.sql as postgres; then the same query
       gcp-cloudsql: run supabase/bootstrap/session_directory_search_worker.sql as the migration owner; then the same query
     sources:
@@ -1069,22 +1265,25 @@ entries:
       Worker; NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS, LOGIN as
       configured, CONNECT granted, TEMPORARY revoked from PUBLIC (Supabase keeps its
       PUBLIC TEMPORARY baseline). On CNPG runtimeRole.bootstrapJob creates or verifies
-      it; external databases pre-provision it (hoopdb_runtime_role.sql, or the
-      _supabase wrapper with -v runtime_role=sessions_pipeline_runtime -v runtime_login=true).
+      it; external databases pre-provision it (hoopdb_runtime_role.sql, the _rds
+      variant on RDS, or the _supabase wrapper with -v runtime_role=sessions_pipeline_runtime -v runtime_login=true).
       Never the drifted legacy relayhistory_runtime.
     chart: sessions-pipeline
     values: [worker.migrations.runtimeRole, worker.migrations.runtimeRoleLogin, runtimeRole.bootstrapJob.enabled, runtimeRole.bootstrapJob.sqlPath]
     env: [HOOPDB_RUNTIME_ROLE, HOOPDB_RUNTIME_ROLE_LOGIN]
-    profiles: [selfhost-postgres, migration, aws-cnpg, external-selfhosted, external-supabase, aws-supabase, gcp-cloudsql]
+    profiles: [selfhost-postgres, migration, aws-cnpg, external-selfhosted, external-rds, external-supabase, aws-supabase, gcp-cloudsql]
     status: shipped
-    provided_by: { default: chart, external-selfhosted: operator, external-supabase: operator, aws-supabase: operator, gcp-cloudsql: operator }
+    provided_by: { default: chart, external-selfhosted: operator, external-rds: operator, external-supabase: operator, aws-supabase: operator, gcp-cloudsql: operator }
     profile_values:
       selfhost-postgres: { worker.migrations.runtimeRole: sessions_pipeline_runtime, worker.migrations.runtimeRoleLogin: true, runtimeRole.bootstrapJob.enabled: true }
       migration: { worker.migrations.runtimeRole: sessions_pipeline_runtime, runtimeRole.bootstrapJob.enabled: true }
       external-selfhosted: { worker.migrations.runtimeRole: "", worker.migrations.runtimeRoleLogin: null }
+      external-rds: { worker.migrations.runtimeRole: "", worker.migrations.runtimeRoleLogin: null }
       external-supabase: { worker.migrations.runtimeRole: sessions_pipeline_runtime, worker.migrations.runtimeRoleLogin: true }
       gcp-cloudsql: { worker.migrations.runtimeRole: sessions_pipeline_runtime }
-    verify: psql "$HOOPDB_URL" -Atc "select rolsuper, rolcreatedb, rolcreaterole, rolreplication, rolbypassrls, rolcanlogin from pg_roles where rolname='sessions_pipeline_runtime'" is f|f|f|f|f|t; migrate refuses otherwise
+    verify:
+      default: psql "$HOOPDB_URL" -Atc "select rolsuper, rolcreatedb, rolcreaterole, rolreplication, rolbypassrls, rolcanlogin from pg_roles where rolname='sessions_pipeline_runtime'" is f|f|f|f|f|t; migrate refuses otherwise
+      external-rds: with uselibpqcompat=true removed from the URL (psql rejects it), psql "$HOOPDB_URL" -Atc "select rolsuper, rolcreatedb, rolcreaterole, rolreplication, rolbypassrls, rolcanlogin from pg_roles where rolname='sessions_pipeline_runtime'" is f|f|f|f|f|t; migrate refuses otherwise
     sources:
       - "charts/sessions-pipeline/templates/hoopdb-runtime-role-bootstrap.yaml:17"
       - "charts/sessions-pipeline/values.yaml:250"
@@ -1102,22 +1301,25 @@ entries:
       functionDefaultRevoke.bootstrapJob runs hoopdb_function_default_revoke.sql
       (-v migration_owner=hoop) and migrate waits for the exact default; external
       Postgres runs the same file as a superuser; Cloud SQL runs
-      cloudsql_owner_function_default_revoke.sql as the migration owner.
+      cloudsql_owner_function_default_revoke.sql as the migration owner; RDS runs
+      rds_owner_function_default_revoke.sql as the master.
       event-trigger (Supabase only): hoopdb_sessions_function_boundary_supabase.sql as
       postgres (-v runtime_role=sessions_pipeline_runtime), then migrate.ts --activation-check
       must report event_trigger.verified true. Never run the default-revoke file on
       Supabase.
     chart: sessions-pipeline
     values: [functionDefaultRevoke.bootstrapJob.enabled, functionDefaultRevoke.bootstrapJob.sqlPath, worker.migrations.waitForRole.functionDefault]
-    profiles: [selfhost-postgres, migration, aws-cnpg, external-selfhosted, external-supabase, aws-supabase, gcp-cloudsql]
+    profiles: [selfhost-postgres, migration, aws-cnpg, external-selfhosted, external-rds, external-supabase, aws-supabase, gcp-cloudsql]
     status: shipped
-    provided_by: { default: chart, external-selfhosted: operator, external-supabase: operator, aws-supabase: operator, gcp-cloudsql: operator }
+    provided_by: { default: chart, external-selfhosted: operator, external-rds: operator, external-supabase: operator, aws-supabase: operator, gcp-cloudsql: operator }
     profile_values:
       selfhost-postgres: { functionDefaultRevoke.bootstrapJob.enabled: true, worker.migrations.waitForRole.functionDefault: true }
       external-selfhosted: { functionDefaultRevoke.bootstrapJob.enabled: false }
+      external-rds: { functionDefaultRevoke.bootstrapJob.enabled: false }
       external-supabase: { functionDefaultRevoke.bootstrapJob.enabled: false }
     verify:
       default: 'the function-default Job completes and migrate''s wait-for-role logs "present: ... + owner function default"'
+      external-rds: migrate completes; it refuses with function_boundary_unproven unless rds_owner_function_default_revoke.sql has run
       external-supabase: migrate.ts --activation-check with HOOPDB_DB_MODE=supabase HOOPDB_FUNCTION_BOUNDARY_MODE=event-trigger reports event_trigger.verified true
       aws-supabase: no boundary is selected in this shape; migrate refuses with function_boundary_unproven until one is
     sources:
@@ -1161,7 +1363,7 @@ entries:
       via extraEnv or component env.
     chart: sessions-pipeline
     env: [HOOPDB_ROLE_VERIFY]
-    profiles: [selfhost-postgres, migration, external-selfhosted, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql]
+    profiles: [selfhost-postgres, migration, external-selfhosted, external-rds, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql]
     status: shipped
     provided_by: chart
     verify: kubectl get job -l app.kubernetes.io/component=hoopdb-migrate -o yaml shows HOOPDB_ROLE_VERIFY "true"; workloads go ready after migrate
@@ -1179,7 +1381,7 @@ entries:
       these eks.hoopdb.backend cnpg|external (cnpg is proof/sandbox stages only there).
     chart: sessions-pipeline
     values: [hoopdb.enabled]
-    profiles: [selfhost-postgres, migration, external-selfhosted, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql]
+    profiles: [selfhost-postgres, migration, external-selfhosted, external-rds, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql]
     status: shipped
     provided_by: operator
     default: cnpg
@@ -1204,14 +1406,15 @@ entries:
     chart: sessions-pipeline
     values: [worker.migrations.databaseMode]
     env: [HOOPDB_DB_MODE]
-    profiles: [selfhost-postgres, migration, external-selfhosted, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql]
+    profiles: [selfhost-postgres, migration, external-selfhosted, external-rds, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql]
     status: shipped
     provided_by: operator
     default: null
-    profile_default: { default: selfhosted, external-supabase: supabase, aws-supabase: supabase, gcp-cloudsql: cloudsql }
+    profile_default: { default: selfhosted, external-supabase: supabase, aws-supabase: supabase, gcp-cloudsql: cloudsql, external-rds: rds }
     choices:
       - { value: selfhosted }
       - { value: cloudsql }
+      - { value: rds, note: Amazon RDS for PostgreSQL 16+, not Aurora }
       - { value: supabase }
       - { value: local, note: dev stack only }
     verify: the migrate Job env has exactly one HOOPDB_DB_MODE (ci/sessions-pipeline-profiles/matrix.sh asserts the profile env)
@@ -1233,7 +1436,7 @@ entries:
     chart: sessions-pipeline
     values: [worker.migrations.functionBoundaryMode]
     env: [HOOPDB_FUNCTION_BOUNDARY_MODE, HOOPDB_FUNCTION_BOUNDARY_APPROVED]
-    profiles: [selfhost-postgres, migration, external-selfhosted, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql]
+    profiles: [selfhost-postgres, migration, external-selfhosted, external-rds, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql]
     status: shipped
     provided_by: operator
     default: null
@@ -1257,15 +1460,15 @@ entries:
     chart: sessions-pipeline
     values: [worker.migrations.supabaseShim]
     env: [HOOPDB_SUPABASE_SHIM]
-    profiles: [selfhost-postgres, migration, external-selfhosted, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql]
+    profiles: [selfhost-postgres, migration, external-selfhosted, external-rds, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql]
     status: shipped
     provided_by: operator
     default: null
-    profile_default: { default: true, external-supabase: false, aws-supabase: false, gcp-cloudsql: false }
+    profile_default: { default: true, external-supabase: false, aws-supabase: false, gcp-cloudsql: false, external-rds: false }
     choices:
       - { value: true }
       - { value: false }
-    verify: helm template refuses supabaseShim=true in supabase mode
+    verify: helm template refuses supabaseShim=true in supabase and rds mode
     sources:
       - "charts/sessions-pipeline-worker/values.yaml:115"
       - "charts/sessions-pipeline-worker/templates/_env.tpl:198"
@@ -1276,12 +1479,12 @@ entries:
     title: Migrator role bootstrap (HOOPDB_ROLE_BOOTSTRAP)
     description: |
       Optional; the migrator defaults it to the shim choice. Refused as true in
-      supabase mode. Cloud SQL sets false (no customer superuser; the operator
-      provisions the search Worker role).
+      supabase and rds mode. Cloud SQL sets false (no customer superuser; the
+      operator provisions the search Worker role).
     chart: sessions-pipeline
     values: [worker.migrations.roleBootstrap]
     env: [HOOPDB_ROLE_BOOTSTRAP]
-    profiles: [selfhost-postgres, migration, external-selfhosted, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql]
+    profiles: [selfhost-postgres, migration, external-selfhosted, external-rds, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql]
     status: shipped
     provided_by: operator
     default: null
@@ -1303,7 +1506,7 @@ entries:
     chart: sessions-pipeline
     values: [worker.migrations.runtimeWorkloadRole]
     env: [HOOPDB_RUNTIME_WORKLOAD_ROLE]
-    profiles: [selfhost-postgres, migration, external-selfhosted, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql]
+    profiles: [selfhost-postgres, migration, external-selfhosted, external-rds, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql]
     status: shipped
     provided_by: operator
     default: ""
@@ -1322,21 +1525,23 @@ entries:
       An init container (by digest, the pinned CNPG Postgres image) holds migrate until
       the search Worker role and, outside local mode, the runtime role exist; with
       functionDefault also until the owner's function default is exact. On by default
-      in the umbrella; required with the in-cluster HoopDb; refused in supabase mode.
+      in the umbrella; required with the in-cluster HoopDb; refused in supabase and
+      rds mode.
     chart: sessions-pipeline
     values: [worker.migrations.waitForRole.enabled, worker.migrations.waitForRole.functionDefault, worker.migrations.waitForRole.image, worker.migrations.waitForRole.intervalSeconds, worker.migrations.waitForRole.role]
-    profiles: [selfhost-postgres, migration, external-selfhosted, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql]
+    profiles: [selfhost-postgres, migration, external-selfhosted, external-rds, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql]
     status: shipped
     provided_by: chart
     default: true
-    profile_default: { default: true, external-supabase: false, aws-supabase: false }
+    profile_default: { default: true, external-supabase: false, aws-supabase: false, external-rds: false }
     profile_values:
       external-supabase: { worker.migrations.waitForRole.enabled: false }
       aws-supabase: { worker.migrations.waitForRole.enabled: false }
       external-selfhosted: { worker.migrations.waitForRole.enabled: true, worker.migrations.waitForRole.functionDefault: false }
+      external-rds: { worker.migrations.waitForRole.enabled: false, worker.migrations.waitForRole.functionDefault: false }
     choices:
       - { value: true }
-      - { value: false, note: supabase mode only }
+      - { value: false, note: supabase and rds mode only }
     verify: kubectl logs job/<migrate> -c wait-for-role ends with "present"
     sources:
       - "charts/sessions-pipeline/values.yaml:73"
@@ -1372,16 +1577,17 @@ entries:
     kind: option
     title: Separate migration-owner URL for migrate
     description: |
-      Optional everywhere except Cloud SQL (see req.secret.hoopdb-migration-url): when
+      Optional everywhere except Cloud SQL and RDS (see req.secret.hoopdb-migration-url): when
       both migrations.hoopdb.existingSecret and key are set, only migrate and its
       wait-for-role read that URL, and long-running workloads keep the least-privilege
       worker.hoopdb URL. Set both or neither.
     chart: sessions-pipeline
     values: [worker.migrations.hoopdb.existingSecret, worker.migrations.hoopdb.key]
-    profiles: [selfhost-postgres, migration, external-selfhosted, external-supabase, aws-cnpg, aws-supabase]
+    profiles: [selfhost-postgres, migration, external-selfhosted, external-rds, external-supabase, aws-cnpg, aws-supabase]
     status: shipped
     provided_by: operator
     default: ""
+    profile_default: { default: "", external-rds: sessions-pipeline-hoopdb/HOOPDB_MIGRATION_URL }
     choices:
       - { value: "", note: migrate uses HOOPDB_URL }
       - { value: "<secret>/<key>", note: owner URL for migrate only }
@@ -1397,15 +1603,15 @@ entries:
     kind: option
     title: Locker object store
     description: |
-      minio runs the bundled MinIO (locker.enabled; Chainguard image, digest-pinned) and
+      minio runs the bundled MinIO (session-object-storage.enabled; Chainguard image, digest-pinned) and
       the locker-init Job creates the bucket. external uses your S3-compatible bucket:
       set worker.locker / alleyoop.locker (endpoint empty = native AWS S3 for region),
       and set worker.lockerInit.enabled=false when the bucket already exists and is
       versioned.
     chart: sessions-pipeline
-    values: [locker.enabled, worker.locker.endpoint, worker.locker.bucket, worker.locker.region, alleyoop.locker.endpoint, alleyoop.locker.bucket, alleyoop.locker.region, worker.lockerInit.enabled]
+    values: [session-object-storage.enabled, worker.locker.endpoint, worker.locker.bucket, worker.locker.region, alleyoop.locker.endpoint, alleyoop.locker.bucket, alleyoop.locker.region, worker.lockerInit.enabled]
     env: [LOCKER_ENDPOINT, LOCKER_BUCKET, LOCKER_REGION]
-    profiles: [selfhost-postgres, migration, external-selfhosted, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql]
+    profiles: [selfhost-postgres, migration, external-selfhosted, external-rds, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql]
     status: shipped
     provided_by: operator
     default: minio
@@ -1424,7 +1630,7 @@ entries:
     description: secret reads the LOCKER_* keys from existingSecret; podIdentity omits both static credential env vars so the SDK uses workload identity.
     chart: sessions-pipeline
     values: [worker.locker.credentials.mode, alleyoop.locker.credentials.mode]
-    profiles: [selfhost-postgres, migration, external-selfhosted, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql]
+    profiles: [selfhost-postgres, migration, external-selfhosted, external-rds, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql]
     status: shipped
     provided_by: operator
     default: secret
@@ -1456,7 +1662,7 @@ entries:
     chart: sessions-pipeline
     values: [worker.locker.provider, alleyoop.locker.provider, worker.extraEnv, alleyoop.extraEnv]
     env: [LOCKER_PROVIDER, PIPELINE_RAW_PROVIDER, CLOUD_SQL_CONNECTION_NAME, REDIS_HOST, REDIS_PORT, REDIS_AUTH_ENABLED, REDIS_TRANSIT_ENCRYPTION, REDIS_TLS_CA_PEM, PUBSUB_TOPIC, PUBSUB_SUBSCRIPTION]
-    profiles: [selfhost-postgres, migration, external-selfhosted, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql]
+    profiles: [selfhost-postgres, migration, external-selfhosted, external-rds, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql]
     status: shipped
     provided_by: operator
     default: s3
@@ -1469,7 +1675,7 @@ entries:
       - "charts/sessions-pipeline-worker/values.yaml:64"
       - "charts/sessions-pipeline-worker/templates/_env.tpl:63"
       - "charts/sessions-pipeline-worker/templates/_env.tpl:108"
-      - "charts/alleyoop/templates/_env.tpl:95"
+      - "charts/session-ingest-api/templates/_env.tpl:95"
 
   - id: opt.sessions-pipeline.services-image
     kind: option
@@ -1481,7 +1687,7 @@ entries:
       compatibility matrix for the pinned digests.
     chart: sessions-pipeline
     values: [worker.image.repository, worker.image.digest, worker.image.tag, alleyoop.image.repository, alleyoop.image.digest, alleyoop.image.tag, global.imageRegistry]
-    profiles: [selfhost-postgres, migration, external-selfhosted, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql]
+    profiles: [selfhost-postgres, migration, external-selfhosted, external-rds, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql]
     status: shipped
     provided_by: chart
     default: ghcr
@@ -1505,7 +1711,7 @@ entries:
     chart: sessions-pipeline
     values: [global.otel.endpoint, otel.enabled, otel.config.*]
     env: [OTEL_EXPORTER_OTLP_ENDPOINT]
-    profiles: [selfhost-postgres, migration, external-selfhosted, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql]
+    profiles: [selfhost-postgres, migration, external-selfhosted, external-rds, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql]
     status: shipped
     provided_by: operator
     default: ""
@@ -1526,7 +1732,7 @@ entries:
     chart: sessions-pipeline
     values: [worker.tenant.workspaceId, worker.deployment.name, worker.deployment.id, worker.environment, alleyoop.tenant.workspaceId, alleyoop.deployment.name, alleyoop.deployment.id, alleyoop.environment]
     env: [WORKSPACE_ID, DEPLOYMENT, DEPLOYMENT_ID, ENVIRONMENT]
-    profiles: [selfhost-postgres, migration, external-selfhosted, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql]
+    profiles: [selfhost-postgres, migration, external-selfhosted, external-rds, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql]
     status: shipped
     provided_by: operator
     default: { workspaceId: default, deployment: selfhost, environment: production }
@@ -1544,7 +1750,7 @@ entries:
     chart: sessions-pipeline
     values: [worker.workerHealth.*]
     env: [WORKER_HEALTH_PORT, WORKER_UNHEALTHY_AFTER_FAILURES, WORKER_MAX_TICK_AGE_MS]
-    profiles: [selfhost-postgres, migration, external-selfhosted, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql]
+    profiles: [selfhost-postgres, migration, external-selfhosted, external-rds, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql]
     status: shipped
     provided_by: chart
     default: true
@@ -1563,7 +1769,7 @@ entries:
     chart: sessions-pipeline
     values: [worker.components.bob-costas.env]
     env: [BOB_COSTAS_MODEL]
-    profiles: [selfhost-postgres, migration, external-selfhosted, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql]
+    profiles: [selfhost-postgres, migration, external-selfhosted, external-rds, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql]
     status: shipped
     provided_by: chart
     default: "off"
@@ -1587,7 +1793,7 @@ entries:
       architecture.
     chart: sessions-pipeline
     values: [search.backend, search.clickhouse.*]
-    profiles: [selfhost-postgres, migration, external-selfhosted, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql]
+    profiles: [selfhost-postgres, migration, external-selfhosted, external-rds, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql]
     status: planned
     provided_by: operator
     default: postgres
@@ -1611,7 +1817,7 @@ entries:
     chart: sessions-pipeline
     values: [worker.sessionBrief.enabled, worker.sessionBrief.model]
     env: [SESSION_BRIEF_ENABLED, SESSION_BRIEF_MODEL]
-    profiles: [selfhost-postgres, migration, external-selfhosted, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql]
+    profiles: [selfhost-postgres, migration, external-selfhosted, external-rds, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql]
     status: planned
     provided_by: operator
     default: false
@@ -1634,7 +1840,7 @@ entries:
     chart: sessions-pipeline
     values: [worker.sessionBrief.existingSecret, worker.sessionBrief.secretKeys.*]
     env: [OPENAI_API_KEY]
-    profiles: [selfhost-postgres, migration, external-selfhosted, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql]
+    profiles: [selfhost-postgres, migration, external-selfhosted, external-rds, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql]
     status: planned
     provided_by: operator
     secrets:
@@ -1648,7 +1854,7 @@ entries:
   # =========================================================================
   # Self-host control plane, History, dashboard and GCP composition
   # =========================================================================
-  - id: opt.relay-cloud-api.license-file
+  - id: opt.relay-control.license-file
     kind: option
     title: Offline license file mount (verification pending upstream)
     description: |
@@ -1656,10 +1862,10 @@ entries:
       SELFHOST_LICENSE_FILE. Empty existingSecret keeps the slot unmounted.
       The chart implements a file mount, not signature verification or add-on
       enforcement. Those features are owned by relaycontrol and are pending.
-    chart: relay-cloud-api
+    chart: relay-control
     values: [license.existingSecret, license.key]
     env: [SELFHOST_LICENSE_FILE]
-    profiles: [relay-cloud-api]
+    profiles: [relay-control]
     status: shipped
     provided_by: operator
     default: disabled
@@ -1671,10 +1877,10 @@ entries:
           - { key: license, key_path: license.key }
     verify: With license.existingSecret set, only the API mounts that Secret and SELFHOST_LICENSE_FILE; the migration Job receives neither. Do not infer license enforcement from a successful render.
     sources:
-      - charts/relay-cloud-api/values.yaml
-      - charts/relay-cloud-api/templates/deployment.yaml
+      - charts/relay-control/values.yaml
+      - charts/relay-control/templates/deployment.yaml
 
-  - id: req.relay-cloud-api.config
+  - id: req.relay-control.config
     kind: requirement
     title: Self-host control-plane existing Secret and service configuration
     description: |
@@ -1685,7 +1891,7 @@ entries:
       without it. The migration owner URL is projected only into the migration
       Job. Internal service origins are explicit chart values; Relaycast and
       RelayHistory public origins must use public multi-label HTTPS DNS.
-    chart: relay-cloud-api
+    chart: relay-control
     values: [publicUrl, "services.*", existingSecret, "secretKeys.*", "database.runtimeRole", encryption.keyId, ingress.tls, imagePullSecrets]
     env:
       - SELFHOST_ENCRYPTION_KEY_ID
@@ -1701,7 +1907,7 @@ entries:
       - RELAYCAST_PUBLIC_URL
       - RELAYHISTORY_URL
       - RELAYHISTORY_PUBLIC_URL
-    profiles: [relay-cloud-api]
+    profiles: [relay-control]
     status: shipped
     provided_by: operator
     secrets:
@@ -1719,10 +1925,10 @@ entries:
         note: optional registry pull Secret
     verify: helm template fails without existingSecret, encryption.keyId, immutable image digest or valid public service origins; the migration Job invokes migrate-cli.js directly and projects only database-migrations-url
     sources:
-      - "charts/relay-cloud-api/values.yaml"
-      - "charts/relay-cloud-api/templates/_helpers.tpl"
+      - "charts/relay-control/values.yaml"
+      - "charts/relay-control/templates/_helpers.tpl"
 
-  - id: opt.relay-cloud-api.encryption-rotation
+  - id: opt.relay-control.encryption-rotation
     kind: option
     title: Previous encryption key during a key rotation
     description: |
@@ -1730,10 +1936,10 @@ entries:
       with the active one. encryption.previousKeyId and
       secretKeys.previousEncryptionKey are set together or not at all (the API
       refuses one without the other); the id must differ from encryption.keyId.
-    chart: relay-cloud-api
+    chart: relay-control
     values: [encryption.previousKeyId, secretKeys.previousEncryptionKey]
     env: [SELFHOST_ENCRYPTION_PREVIOUS_KEY_ID, SELFHOST_ENCRYPTION_PREVIOUS_KEY_FILE]
-    profiles: [relay-cloud-api]
+    profiles: [relay-control]
     status: shipped
     provided_by: operator
     default: none
@@ -1747,10 +1953,10 @@ entries:
           - { key: "<operator-chosen, no default>", key_path: secretKeys.previousEncryptionKey, optional: "only during a key rotation, with encryption.previousKeyId" }
     verify: helm template fails when only one of encryption.previousKeyId and secretKeys.previousEncryptionKey is set
     sources:
-      - "charts/relay-cloud-api/values.yaml"
-      - "charts/relay-cloud-api/templates/_helpers.tpl"
+      - "charts/relay-control/values.yaml"
+      - "charts/relay-control/templates/_helpers.tpl"
 
-  - id: opt.relay-cloud-api.internal-token
+  - id: opt.relay-control.internal-token
     kind: option
     title: Internal service token for /internal/v1
     description: |
@@ -1759,10 +1965,10 @@ entries:
       integration tokens through it, and in-cluster agents file telemetry
       issue reports with it. Unset disables /internal/v1. The agent-relay GKE
       ingress denies /internal on the api host.
-    chart: relay-cloud-api
+    chart: relay-control
     values: [secretKeys.internalToken]
     env: [SELFHOST_INTERNAL_TOKEN_FILE]
-    profiles: [relay-cloud-api]
+    profiles: [relay-control]
     status: shipped
     provided_by: operator
     default: disabled
@@ -1774,13 +1980,13 @@ entries:
         name_paths: [existingSecret]
         keys:
           - { key: "<operator-chosen, no default>", key_path: secretKeys.internalToken, optional: "enables /internal/v1 (flows env delivery, telemetry issue reports)" }
-    verify: kubectl exec deploy/<release>-relay-cloud-api (or the fullnameOverride, relay-cloud-api in the agent-relay GCP profiles) -- sh -c 'test "$(tr -d "\r\n" < "$SELFHOST_INTERNAL_TOKEN_FILE" | wc -c)" -ge 32' (expanded inside the pod; at least 32 bytes); curl https://<api host>/internal/v1/... is refused at the edge
+    verify: kubectl exec deploy/<release>-relay-control (or the fullnameOverride, relay-control in the agent-relay GCP profiles) -- sh -c 'test "$(tr -d "\r\n" < "$SELFHOST_INTERNAL_TOKEN_FILE" | wc -c)" -ge 32' (expanded inside the pod; at least 32 bytes); curl https://<api host>/internal/v1/... is refused at the edge
     sources:
-      - "charts/relay-cloud-api/values.yaml"
-      - "charts/relay-cloud-api/templates/_helpers.tpl"
+      - "charts/relay-control/values.yaml"
+      - "charts/relay-control/templates/_helpers.tpl"
       - "charts/agent-relay/templates/gke-ingress.yaml"
 
-  - id: opt.relay-cloud-api.dashboard-url
+  - id: opt.relay-control.dashboard-url
     kind: option
     title: Dashboard URL for OAuth callbacks and flow run links
     description: |
@@ -1788,10 +1994,10 @@ entries:
       back and where mirrored flow runs build their runUrl. Unset, the API uses
       publicUrl + "/", which is wrong when the dashboard has its own host (the
       GKE profiles serve it on the root host).
-    chart: relay-cloud-api
+    chart: relay-control
     values: [dashboardUrl]
     env: [SELFHOST_DASHBOARD_URL]
-    profiles: [relay-cloud-api]
+    profiles: [relay-control]
     status: shipped
     provided_by: operator
     default: publicUrl + "/"
@@ -1800,10 +2006,10 @@ entries:
       - { value: dashboard origin }
     verify: helm template renders SELFHOST_DASHBOARD_URL only when dashboardUrl is set and fails on credentials, query or fragment
     sources:
-      - "charts/relay-cloud-api/values.yaml"
-      - "charts/relay-cloud-api/templates/_helpers.tpl"
+      - "charts/relay-control/values.yaml"
+      - "charts/relay-control/templates/_helpers.tpl"
 
-  - id: opt.relay-cloud-api.bootstrap
+  - id: opt.relay-control.bootstrap
     kind: option
     title: First-boot organization, owner and default workspace
     description: |
@@ -1818,10 +2024,10 @@ entries:
       is made an owner once. Requires dashboardUrl outside single-host mode and
       a selfhost-api image from relaycontrol #13 or later. Without it the
       organization is created by hand with the bootstrap token.
-    chart: relay-cloud-api
+    chart: relay-control
     values: [bootstrap.*, secretKeys.relaycastInternalSecret]
     env: [SELFHOST_BOOTSTRAP_ORG_NAME, SELFHOST_BOOTSTRAP_ADMIN_EMAIL, SELFHOST_BOOTSTRAP_ADMIN_NAME, SELFHOST_BOOTSTRAP_WORKSPACE_NAME, RELAYCAST_INTERNAL_SECRET_FILE]
-    profiles: [relay-cloud-api]
+    profiles: [relay-control]
     status: shipped
     provided_by: operator
     default: disabled (manual bootstrap with the bootstrap token)
@@ -1833,12 +2039,12 @@ entries:
         name_paths: [existingSecret]
         keys:
           - { key: "<operator-chosen, e.g. relaycast-internal-secret>", key_path: secretKeys.relaycastInternalSecret, optional: "required with bootstrap.orgName; equal to Relaycast's internal secret" }
-    verify: 'kubectl logs deploy/<release>-relay-cloud-api shows "bootstrap: organization created" and "bootstrap: default workspace created" once; GET /api/v1/organizations with the bootstrap token lists the organization and its workspace (bootstrap.workspaceName, Default when empty)'
+    verify: 'kubectl logs deploy/<release>-relay-control shows "bootstrap: organization created" and "bootstrap: default workspace created" once; GET /api/v1/organizations with the bootstrap token lists the organization and its workspace (bootstrap.workspaceName, Default when empty)'
     sources:
-      - "charts/relay-cloud-api/values.yaml"
-      - "charts/relay-cloud-api/templates/_helpers.tpl"
+      - "charts/relay-control/values.yaml"
+      - "charts/relay-control/templates/_helpers.tpl"
 
-  - id: opt.relay-cloud-api.sign-in
+  - id: opt.relay-control.sign-in
     kind: option
     title: Sign-in methods (OIDC, email links), invites and auto-join
     description: |
@@ -1853,10 +2059,10 @@ entries:
       (default 168). Owners and admins invite from Settings > Members. Without
       any method only the operator break-glass (bootstrap token approving a
       /login device code) works. auth.oidc.allowHttpIssuer is for tests only.
-    chart: relay-cloud-api
+    chart: relay-control
     values: [auth.*, secretKeys.oidcClientSecret]
     env: [SELFHOST_OIDC_ISSUER, SELFHOST_OIDC_CLIENT_ID, SELFHOST_OIDC_CLIENT_SECRET_FILE, SELFHOST_OIDC_ALLOWED_DOMAINS, SELFHOST_OIDC_DISPLAY_NAME, SELFHOST_OIDC_SCOPES, SELFHOST_OIDC_REDIRECT_URL, SELFHOST_OIDC_ALLOW_HTTP_ISSUER, SELFHOST_EMAIL_LOGIN, SELFHOST_AUTO_JOIN_DOMAINS, SELFHOST_INVITE_TTL_HOURS]
-    profiles: [relay-cloud-api]
+    profiles: [relay-control]
     status: shipped
     provided_by: operator
     default: none (operator break-glass only)
@@ -1872,10 +2078,10 @@ entries:
           - { key: "<operator-chosen, e.g. oidc-client-secret>", key_path: secretKeys.oidcClientSecret, optional: "required with auth.oidc.issuer" }
     verify: GET https://<root host>/login shows "Continue with <displayName>"; the admin email signs in and GET /cloud/api/v1/auth/whoami reports role owner
     sources:
-      - "charts/relay-cloud-api/values.yaml"
-      - "charts/relay-cloud-api/templates/_helpers.tpl"
+      - "charts/relay-control/values.yaml"
+      - "charts/relay-control/templates/_helpers.tpl"
 
-  - id: opt.relay-cloud-api.smtp
+  - id: opt.relay-control.smtp
     kind: option
     title: SMTP for invite emails and sign-in links
     description: |
@@ -1883,10 +2089,10 @@ entries:
       secretKeys.smtpPassword) lets the API email invites and, with
       auth.emailLink.enabled, sign-in links. Without it invites still work:
       owners copy the single-use link from Settings > Members.
-    chart: relay-cloud-api
+    chart: relay-control
     values: [smtp.*, secretKeys.smtpPassword]
     env: [SELFHOST_SMTP_HOST, SELFHOST_SMTP_PORT, SELFHOST_SMTP_SECURITY, SELFHOST_SMTP_USERNAME, SELFHOST_SMTP_PASSWORD_FILE, SELFHOST_EMAIL_FROM]
-    profiles: [relay-cloud-api]
+    profiles: [relay-control]
     status: shipped
     provided_by: operator
     default: none (copy invite links)
@@ -1900,10 +2106,10 @@ entries:
           - { key: "<operator-chosen, e.g. smtp-password>", key_path: secretKeys.smtpPassword, optional: "required with smtp.username" }
     verify: an invite created in Settings > Members reports "Invitation emailed to <email>" (emailDelivery sent)
     sources:
-      - "charts/relay-cloud-api/values.yaml"
-      - "charts/relay-cloud-api/templates/_helpers.tpl"
+      - "charts/relay-control/values.yaml"
+      - "charts/relay-control/templates/_helpers.tpl"
 
-  - id: opt.relay-cloud-api.integrations
+  - id: opt.relay-control.integrations
     kind: option
     title: Integration OAuth apps for just-in-time connects
     description: |
@@ -1920,14 +2126,14 @@ entries:
       SELFHOST_OAUTH_<PROVIDER>_CLIENT_ID, SELFHOST_OAUTH_<PROVIDER>_CLIENT_SECRET_FILE,
       SELFHOST_OAUTH_<PROVIDER>_SCOPES. This needs a selfhost-api image with
       operator OAuth apps (relaycontrol #12 or later).
-    chart: relay-cloud-api
+    chart: relay-control
     values: [integrations]
     secrets:
       - name: <operator-chosen, integrations.<provider>.existingSecret>
         keys:
           - { key: client-id, optional: false, note: "default name; override with integrations.<provider>.clientIdKey" }
           - { key: client-secret, optional: false, note: "default name; override with integrations.<provider>.clientSecretKey" }
-    profiles: [relay-cloud-api]
+    profiles: [relay-control]
     status: shipped
     provided_by: operator
     default: none (no integration can be connected until its app is configured)
@@ -1936,11 +2142,11 @@ entries:
       - { value: one entry per provider with existingSecret }
     verify: helm template renders the client ID from secretKeyRef and mounts only the client secret, and fails on a missing existingSecret, an inline clientId/clientSecret (unsupported field), equal key names, the migration credential key, or an invalid provider id
     sources:
-      - "charts/relay-cloud-api/values.yaml"
-      - "charts/relay-cloud-api/templates/_helpers.tpl"
-      - "charts/relay-cloud-api/templates/deployment.yaml"
+      - "charts/relay-control/values.yaml"
+      - "charts/relay-control/templates/_helpers.tpl"
+      - "charts/relay-control/templates/deployment.yaml"
 
-  - id: opt.relay-cloud-api.flows
+  - id: opt.relay-control.flows
     kind: option
     title: Relayflows control-plane storage and worker queue
     description: |
@@ -1951,10 +2157,10 @@ entries:
       flows.workerRelaycastUrl is the Relaycast origin handed to workers.
       flows.queuePingMs is the worker queue SSE keepalive (1000-120000 ms) and
       must stay below every proxy timeout in front of the API.
-    chart: relay-cloud-api
+    chart: relay-control
     values: ["flows.*"]
     env: [SELFHOST_FLOWS_STORAGE, SELFHOST_FLOWS_GCS_BUCKET, SELFHOST_FLOWS_GCS_PREFIX, SELFHOST_FLOWS_WORKER_RELAYCAST_URL, SELFHOST_FLOWS_QUEUE_PING_MS]
-    profiles: [relay-cloud-api]
+    profiles: [relay-control]
     status: shipped
     provided_by: operator
     default: postgres
@@ -1963,10 +2169,10 @@ entries:
       - { value: gcs }
     verify: helm template fails for flows.storage=gcs without flows.gcsBucket, or flows.queuePingMs outside 1000-120000
     sources:
-      - "charts/relay-cloud-api/values.yaml"
-      - "charts/relay-cloud-api/templates/_helpers.tpl"
+      - "charts/relay-control/values.yaml"
+      - "charts/relay-control/templates/_helpers.tpl"
 
-  - id: opt.relay-cloud-api.telemetry
+  - id: opt.relay-control.telemetry
     kind: option
     title: Self-host telemetry level and transport
     description: |
@@ -1983,10 +2189,10 @@ entries:
       chart-rendered keys cannot be overridden). A TCP 443 egress rule to
       telemetry.egressTo is added only when networkPolicy.enabled=true,
       allowAllEgress=false, the level is not off and the transport is https.
-    chart: relay-cloud-api
+    chart: relay-control
     values: ["telemetry.*", secretKeys.telemetryInstallKey]
     env: [SELFHOST_TELEMETRY_LEVEL, SELFHOST_TELEMETRY_TRANSPORT, SELFHOST_TELEMETRY_ENDPOINT, SELFHOST_TELEMETRY_INSTALL_ID, SELFHOST_TELEMETRY_INSTALL_KEY_FILE, SELFHOST_TELEMETRY_PROBES, SELFHOST_TELEMETRY_DEPLOYMENT]
-    profiles: [relay-cloud-api]
+    profiles: [relay-control]
     status: shipped
     provided_by: operator
     default: errors
@@ -2001,9 +2207,9 @@ entries:
           - { key: "<operator-chosen, no default>", key_path: secretKeys.telemetryInstallKey, optional: "required once the install is registered unless telemetry.level is off" }
     verify: the default render sets SELFHOST_TELEMETRY_LEVEL=off until installId, install key and (https) endpoint are set; helm template fails when only some of them are set; ci/agent-relay/render.sh checks both and that the egress rule renders only when telemetry is sent over https
     sources:
-      - "charts/relay-cloud-api/values.yaml"
-      - "charts/relay-cloud-api/templates/_helpers.tpl"
-      - "charts/relay-cloud-api/templates/networkpolicy.yaml"
+      - "charts/relay-control/values.yaml"
+      - "charts/relay-control/templates/_helpers.tpl"
+      - "charts/relay-control/templates/networkpolicy.yaml"
 
   - id: req.relayhistory.config
     kind: requirement
@@ -2076,10 +2282,10 @@ entries:
     description: |
       global.singleHost.host (off when empty) puts the dashboard and the
       self-host control API on one host: / to the dashboard and /cloud/api,
-      /login and /api to relay-cloud-api (flows workers and the integrations
-      OAuth callback use <publicUrl>/api/v1/...). relay-cloud-api.publicUrl
-      and relay-dashboard.runtime.publicUrl are derived as https://<host>, and
-      relay-dashboard.ingress.host as the bare <host>; each must be left empty
+      /login and /api to relay-control (flows workers and the integrations
+      OAuth callback use <publicUrl>/api/v1/...). relay-control.publicUrl
+      and relay-webapp.runtime.publicUrl are derived as https://<host>, and
+      relay-webapp.ingress.host as the bare <host>; each must be left empty
       or equal its derived value. The GKE
       Ingress then renders no api host and its ManagedCertificate drops it;
       the api and cast BackendConfigs are unchanged. The leaf dashboard
@@ -2089,14 +2295,14 @@ entries:
       their public URLs or leaf ingress hosts uses the single host. No service
       on the single host needs a path rewrite, so the GCE Ingress is kept
       rather than Gateway API.
-    chart: [agent-relay, relay-cloud-api, relay-dashboard]
+    chart: [agent-relay, relay-control, relay-webapp]
     values:
       - global.singleHost.host
-      - "relay-cloud-api:global.singleHost.host"
-      - "relay-cloud-api:publicUrl"
-      - "relay-dashboard:global.singleHost.host"
-      - "relay-dashboard:runtime.publicUrl"
-      - "relay-dashboard:ingress.host"
+      - "relay-control:global.singleHost.host"
+      - "relay-control:publicUrl"
+      - "relay-webapp:global.singleHost.host"
+      - "relay-webapp:runtime.publicUrl"
+      - "relay-webapp:ingress.host"
     env: [SELFHOST_PUBLIC_URL, DASHBOARD_PUBLIC_URL]
     profiles: [agent-relay]
     status: shipped
@@ -2105,26 +2311,26 @@ entries:
     choices:
       - { value: disabled, note: "per-service hosts (gkeIngress.hosts.root/api/cast/history)" }
       - { value: enabled, note: "global.singleHost.host plus gkeIngress.hosts.cast/history" }
-    verify: render has one rule for the single host (/cloud/api, /login, /api to relay-cloud-api, / to the dashboard), no api host, and SELFHOST_PUBLIC_URL = DASHBOARD_PUBLIC_URL = https://<host>
+    verify: render has one rule for the single host (/cloud/api, /login, /api to relay-control, / to the dashboard), no api host, and SELFHOST_PUBLIC_URL = DASHBOARD_PUBLIC_URL = https://<host>
     sources:
       - "charts/agent-relay/templates/gke-ingress.yaml"
       - "charts/agent-relay/templates/_helpers.tpl"
       - "charts/agent-relay/values-single-host-example.yaml"
-      - "charts/relay-dashboard/templates/ingress.yaml"
+      - "charts/relay-webapp/templates/ingress.yaml"
       - "ci/agent-relay/render.sh"
       - "ci/agent-relay/subdomain-golden.sh"
 
-  - id: opt.relay-dashboard.ingress
+  - id: opt.relay-webapp.ingress
     kind: option
     title: Dashboard ingress and same-origin API proxy
     description: |
-      The dashboard ingress routes /cloud/api to relay-cloud-api and / to the
+      The dashboard ingress routes /cloud/api to relay-control and / to the
       dashboard. The GKE proof disables this leaf ingress and supplies the same
       routes through its single umbrella Ingress.
-    chart: relay-dashboard
+    chart: relay-webapp
     values: [runtime.publicUrl, runtime.appPath, runtime.apiBasePath, runtime.loginPath, ingress.tls, imagePullSecrets]
     env: [DASHBOARD_PUBLIC_URL, DASHBOARD_APP_PATH, DASHBOARD_API_BASE_PATH, DASHBOARD_LOGIN_PATH]
-    profiles: [relay-dashboard]
+    profiles: [relay-webapp]
     status: shipped
     provided_by: operator
     default: enabled
@@ -2136,12 +2342,12 @@ entries:
         note: kubernetes.io/tls
       - name: "<imagePullSecrets[].name>"
         note: optional registry pull Secret
-    verify: render contains the configured dashboard runtime environment and routes /cloud/api to relay-cloud-api
+    verify: render contains the configured dashboard runtime environment and routes /cloud/api to relay-control
     sources:
-      - "charts/relay-dashboard/templates/ingress.yaml"
+      - "charts/relay-webapp/templates/ingress.yaml"
       - "ci/agent-relay/render.sh"
 
-  - id: opt.relay-dashboard.customer-profile
+  - id: opt.relay-webapp.customer-profile
     kind: option
     title: Dashboard customer profile (enterprise branding)
     description: |
@@ -2151,12 +2357,12 @@ entries:
       The chart renders the map as JSON into DASHBOARD_CUSTOMER_PROFILE and
       the image serves it in /runtime-config.js; the browser ignores invalid
       fields. Empty (the default) keeps the Agent Relay look. Requires a
-      dashboard image built from relay-dashboard #84 or later (its
+      dashboard image built from relay-webapp #84 or later (its
       /runtime-config.js has a customerProfile key); older images ignore it.
-    chart: relay-dashboard
+    chart: relay-webapp
     values: [customerProfile]
     env: [DASHBOARD_CUSTOMER_PROFILE]
-    profiles: [relay-dashboard]
+    profiles: [relay-webapp]
     status: shipped
     provided_by: operator
     default: none
@@ -2165,9 +2371,9 @@ entries:
       - { value: customer profile }
     verify: with customerProfile set, /runtime-config.js has customerProfile and the dashboard shows the product name and logo; without it, customerProfile is null
     sources:
-      - "charts/relay-dashboard/templates/deployment.yaml"
-      - "charts/relay-dashboard/README.md"
-      - "charts/relay-dashboard/ci/branding.profile.yaml"
+      - "charts/relay-webapp/templates/deployment.yaml"
+      - "charts/relay-webapp/README.md"
+      - "charts/relay-webapp/ci/branding.profile.yaml"
 
   - id: opt.agent-relay.gke-ingress
     kind: option
@@ -2181,8 +2387,8 @@ entries:
       (gkeIngress.backends.api.timeoutSec, at least 60, default 3600) keeps the
       flows worker queue SSE stream open past GCE's 30s default. The
       BackendConfig is named <gkeIngress.name>-api (the name truncated to 59
-      characters first); relay-cloud-api renders the annotation from
-      relay-cloud-api.service.backendConfig, which must equal that name (the
+      characters first); relay-control renders the annotation from
+      relay-control.service.backendConfig, which must equal that name (the
       render fails with the expected name otherwise). The relaycast Service is
       bound the same way to <gkeIngress.name>-cast (the name truncated to 58
       characters; gkeIngress.backends.cast.timeoutSec, default 3600) through
@@ -3264,3 +3470,193 @@ entries:
     sources:
       - "charts/relayfile/templates/actors/_helpers.tpl:71"
       - "charts/relayfile/templates/actors/session-broker.yaml:64"
+
+  - id: opt.sessions-native-ingest
+    kind: option
+    title: Default-off native session upload edge
+    description: |
+      Separate SERVICE=session-ingest Deployment and ClusterIP from merged
+      pipeline #363/974e6f74; does not replace internal alleyoop-ingest. Requires
+      a qualified immutable image, normalized public origin, introspection base
+      URL, runtime and S3 Secret references, and a pinned PostgreSQL custom CA.
+      Canonical inline test/pilot assembly only. No ingress, role bootstrap,
+      publication, GC, product deletion, provider removal or profile enablement.
+    chart: sessions-pipeline
+    values: [ingestEdge.*]
+    env: [SERVICE, RELAYHISTORY_SELFHOST_INGEST, RELAYHISTORY_INGEST_PORT, RELAYHISTORY_INGEST_ORIGIN, RELAYCONTROL_INTROSPECT_URL, RELAYCONTROL_INTROSPECT_SECRET, RELAYHISTORY_INGEST_DATABASE_URL, SESSION_POSTGRES_TLS_PROFILE, SESSION_POSTGRES_CA_FILE, SESSION_POSTGRES_CA_SHA256, RELAYHISTORY_INGEST_PG_POOL_MAX, ALLOW_IN_CLUSTER_HTTP, LOCKER_PROVIDER, LOCKER_BUCKET, LOCKER_ENDPOINT, LOCKER_REGION, LOCKER_ACCESS_KEY_ID, LOCKER_SECRET_ACCESS_KEY, INGEST_KEY_ROOT, INGEST_MAX_PER_USER, INGEST_MAX_PER_ORG]
+    profiles: [selfhost-postgres, migration, external-selfhosted, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql]
+    status: shipped
+    provided_by: operator
+    default: disabled
+    choices:
+      - { value: disabled }
+      - { value: enabled, note: Requires a qualified native image and explicit pilot plan. }
+    secrets:
+      - name: "<native ingest runtime Secret>"
+        name_paths: [ingestEdge.config.existingSecret]
+        keys:
+          - { key: database-url, key_path: ingestEdge.config.databaseUrlKey }
+          - { key: introspect-secret, key_path: ingestEdge.config.introspectSecretKey }
+      - name: "<native ingest object-store Secret>"
+        name_paths: [ingestEdge.locker.existingSecret]
+        keys:
+          - { key: access-key-id, key_path: ingestEdge.locker.accessKeyIdKey }
+          - { key: secret-access-key, key_path: ingestEdge.locker.secretAccessKeyKey }
+    verify: Keep disabled until merged composition and exact image/generation pass native PG/TLS/MinIO upload-to-readback proof. Helm readiness is not an authorization, schema, object-store or migration barrier.
+    sources:
+      - "charts/sessions-pipeline/templates/ingest-edge.yaml:1"
+      - "charts/sessions-pipeline/values.yaml:1"
+      - "docs/self-hosted-native-ingest.md:1"
+
+  - id: opt.sessions-read-api
+    kind: option
+    title: Default-off self-host session read API container
+    description: |
+      Chart plumbing for the pipeline session-read-api SERVICE. Requires an
+      explicitly pinned compatible image, read-role configuration JSON in a
+      Secret, an explicit coverage floor and workspace allowlist, a public token
+      audience, and either an explicitly configured temporary issuer (legacy
+      chart mode) or auth.mode=relaycontrol_only from merged pipeline #364.
+      Control-only mode requires enabled introspection and empty legacy issuer
+      settings, emits READ_API_AUTH_MODE, and omits both RELAYAUTH variables.
+      It cannot be injected through extraEnv. A LOCKER_BUCKET extraEnv entry
+      requires a nonempty literal bucket, literal PIPELINE_ORG_FROM_PREFIX=true
+      and PIPELINE_KEY_PREFIX=96bulls. Missing/false flags, org-suffixed roots
+      and valueFrom references for these layout inputs refuse rendering.
+      Bucket literals reject surrounding whitespace; when both services are
+      enabled, the configured reader bucket must equal ingestEdge.locker.bucket.
+      Search is selected
+      via SEARCH_INDEX_BACKEND (postgres by default) through the upstream adapter
+      registry, not implemented in this chart. Introspection uses
+      its own Secret reference. Readiness requires health JSON enabled:true;
+      dormant HTTP 200 is insufficient. No install profile enables this option.
+      Pipeline PRs 317/318 are merged; the approved PG-only/canonical/auth
+      runtime assembly remains unqualified, so this entry does not claim runtime availability or proof.
+    chart: sessions-pipeline
+    values: [readApi.*]
+    env: [SERVICE, RELAYHISTORY_SELFHOST_READ_API, RELAYHISTORY_READ_API_PORT, RELAYHISTORY_READ_API_SECRET, READ_API_ORIGIN, READ_API_AUTH_MODE, LOCKER_BUCKET, PIPELINE_ORG_FROM_PREFIX, PIPELINE_KEY_PREFIX, READ_API_COMPLETE_SINCE, READ_API_DIRECTORY_WORKSPACES, SEARCH_INDEX_BACKEND, ALLOW_IN_CLUSTER_HTTP, RELAYAUTH_JWKS_URL, RELAYAUTH_ISSUER, RELAYHISTORY_ACCEPT_RELAYCONTROL_TOKENS, RELAYCONTROL_INTROSPECT_URL, RELAYCONTROL_INTROSPECT_SECRET]
+    profiles: [selfhost-postgres, migration, external-selfhosted, external-rds, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql]
+    status: shipped
+    provided_by: operator
+    default: disabled
+    choices:
+      - { value: disabled }
+      - { value: enabled, note: Requires an owner-approved compatible runtime. }
+    secrets:
+      - name: "<read API configuration Secret>"
+        name_paths: [readApi.config.existingSecret]
+        keys:
+          - { key: RELAYHISTORY_READ_API_SECRET, key_path: readApi.config.key }
+      - name: "<read API introspection Secret>"
+        name_paths: [readApi.auth.relaycontrol.existingSecret]
+        keys:
+          - { key: RELAYCONTROL_INTROSPECT_SECRET, key_path: readApi.auth.relaycontrol.key }
+    verify: Leave disabled until the image and assembly contract land; render/schema/probe tests prove plumbing only. Authenticated workspace/session read acceptance remains required.
+    sources:
+      - "charts/sessions-pipeline/templates/read-api.yaml:1"
+      - "charts/sessions-pipeline/values.yaml:1"
+      - "docs/self-hosted-session-read-api.md:1"
+
+  - id: opt.control-legacy-relayauth
+    kind: option
+    title: Control legacy RelayAuth client environment
+    description: |
+      Keep services.relayauthEnabled true for the published legacy control
+      images. False omits RELAYAUTH_URL and RELAYAUTH_API_KEY_FILE and removes
+      the legacy key from the API Secret projection. It requires the approved
+      no-RelayAuth/caller-token control image; this changes no verifier code,
+      introspection logic or component enablement. Runtime flags are not changed
+      in the kind profiles. Introspection config uses existing extraEnv refs.
+    chart: relay-control
+    values: [services.relayauthEnabled]
+    env: [RELAYAUTH_URL, RELAYAUTH_API_KEY_FILE]
+    profiles: [relay-control, agent-relay]
+    status: shipped
+    provided_by: operator
+    default: true
+    choices:
+      - { value: true }
+      - { value: false, note: Requires a compatible caller-token image. }
+    verify: Render the disabled legacy-client mode and confirm URL/key env and key projection are absent; runtime auth acceptance still requires compatible upstream source.
+    sources:
+      - "charts/relay-control/templates/_helpers.tpl:1"
+      - "charts/relay-control/templates/deployment.yaml:1"
+      - "docs/self-hosted-session-read-api.md:1"
+
+  - id: req.telemetry-collector.runtime
+    kind: requirement
+    status: shipped
+    title: Analytics collector image and bounded storage runtime
+    chart: telemetry-collector
+    description: Internal producer-authenticated NDJSON collector. Immutable images and exact source identity are mandatory; one writer and a retained RWOP claim. TLS terminates in a sidecar; the collector binds loopback. No outbound sink or automatic producer enablement.
+    provided_by: operator
+    profiles: [telemetry-collector]
+    verify: Exercise the accepted collector entrypoint, authenticated TLS intake, durable files after restart and failure-before-acknowledgement cases on the installed volume.
+    values: [imagePullSecrets, image.*, tlsProxy.image.*, persistence.*, limits.*, retention.*, terminationGracePeriodSeconds, networkPolicy.allowedFrom, rolloutRevision]
+    env: [ANALYTICS_COLLECTOR_HOST, ANALYTICS_COLLECTOR_PORT, ANALYTICS_COLLECTOR_DATA_DIR, ANALYTICS_COLLECTOR_PRODUCERS_FILE, ANALYTICS_COLLECTOR_MAX_BATCH_BYTES, ANALYTICS_COLLECTOR_MAX_BATCH_EVENTS, ANALYTICS_COLLECTOR_MAX_EVENT_BYTES, ANALYTICS_COLLECTOR_REQUEST_TIMEOUT_MS, ANALYTICS_COLLECTOR_MAX_IN_FLIGHT, ANALYTICS_COLLECTOR_MAX_SEGMENTS, ANALYTICS_COLLECTOR_MAX_DISK_BYTES, ANALYTICS_COLLECTOR_SHUTDOWN_DEADLINE_MS, ANALYTICS_COLLECTOR_RETENTION, ANALYTICS_COLLECTOR_RETENTION_MAX_AGE_MS]
+    sources: ["charts/telemetry-collector/templates/deployment.yaml:37"]
+  - id: req.telemetry-collector.secrets
+    kind: requirement
+    status: shipped
+    title: Separate analytics producer and TLS credential Secrets
+    chart: telemetry-collector
+    description: Operator-managed producers.json plus dedicated token files, and a separate TLS key/certificate Secret. Mounted as files; no credentials in Helm values or ConfigMaps. Rotate with a controlled restart.
+    provided_by: operator
+    profiles: [telemetry-collector]
+    verify: Check distinct mounted producer credentials and TLS keys, exact certificate SAN and issuer, and a restart after rotation; never print values.
+    values: [producersSecret, tlsSecret]
+    sources: ["charts/telemetry-collector/templates/deployment.yaml:104"]
+
+  - id: req.relay-chief.origins
+    kind: requirement
+    title: Relay and control-plane origins
+    description: RELAY_BASE_URL and CHIEF_CONTROL_PLANE_URL, each a bare https origin (the runtime refuses plain http for non-loopback hosts). The chart refuses to render without RELAY_BASE_URL because the runtime otherwise falls back to the hosted Relay. Classification separately calls https://api.typesafe.ai, which is hardcoded and must be reachable.
+    chart: relay-chief
+    values: [relay.baseUrl, controlPlane.url]
+    env: [RELAY_BASE_URL, CHIEF_CONTROL_PLANE_URL]
+    profiles: [relay-chief]
+    status: shipped
+    provided_by: operator
+    verify: helm template fails with "relay.baseUrl is required" when it is unset
+    sources:
+      - "charts/relay-chief/values.yaml:27"
+      - "charts/relay-chief/templates/cronjob.yaml:57"
+
+  - id: req.relay-chief.credentials
+    kind: requirement
+    title: Relay Chief runtime credentials
+    description: A pre-provisioned chief identity (not a workspace admin key), the classification API key and a scoped control-plane service credential, from one existing Secret.
+    chart: relay-chief
+    values: [existingSecret, "secretKeys.*"]
+    env: [RELAY_AGENT_TOKEN, TYPESAFE_API_KEY, CHIEF_CONTROL_PLANE_TOKEN]
+    profiles: [relay-chief]
+    status: shipped
+    provided_by: operator
+    secrets:
+      - name: "<existingSecret>"
+        keys:
+          - { key: relay-agent-token, key_path: secretKeys.relayAgentToken }
+          - { key: typesafe-api-key, key_path: secretKeys.typesafeApiKey }
+          - { key: control-plane-token, key_path: secretKeys.controlPlaneToken }
+    verify: helm template fails with "existingSecret is required" when it is unset; after setting suspend to false, a cycle's Job starts without a CreateContainerConfigError
+    sources:
+      - "charts/relay-chief/values.yaml:36"
+      - "charts/relay-chief/templates/cronjob.yaml:59"
+
+  - id: opt.relay-chief.image-pull-secrets
+    kind: option
+    title: Relay Chief image pull Secrets
+    description: Pull Secrets for a private registry or customer mirror.
+    chart: relay-chief
+    values: [imagePullSecrets]
+    profiles: [relay-chief]
+    status: shipped
+    provided_by: operator
+    default: none
+    choices:
+      - { value: none }
+      - { value: listed }
+    verify: after setting suspend to false, the cycle's Job pulls its image without ImagePullBackOff
+    sources:
+      - "charts/relay-chief/values.yaml:9"
+      - "charts/relay-chief/templates/cronjob.yaml:34"

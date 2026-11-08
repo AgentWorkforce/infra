@@ -20,12 +20,27 @@ variable "port" {
 }
 
 variable "database" {
-  description = "The single application database used by every service binding. Preserve an existing database name; changing RDS db_name may replace infrastructure."
+  description = "Validated existing initial database metadata. With service_databases set, bindings take their database names only from that map; this value is preserved as initial_database and is not a binding selector. Changing an RDS db_name forces instance replacement and requires a reviewed data migration."
   type        = string
   nullable    = false
   validation {
     condition     = can(regex("^[a-z][a-z0-9_]{0,62}$", var.database)) && !contains(["postgres", "template0", "template1", "rdsadmin"], var.database)
     error_message = "database must be a lowercase application identifier of at most 63 characters, not a maintenance database."
+  }
+}
+
+variable "service_databases" {
+  description = "Explicit per-service database names on the same instance. An empty map preserves the legacy shared-database binding. A nonempty map must name exactly the configured services, with distinct non-maintenance databases. This metadata does not create databases or grants."
+  type        = map(string)
+  nullable    = false
+  default     = {}
+  validation {
+    condition     = alltrue([for database in values(var.service_databases) : can(regex("^[a-z][a-z0-9_]{0,62}$", database)) && !contains(["postgres", "template0", "template1", "rdsadmin"], database)])
+    error_message = "Service databases must be bounded lowercase application identifiers, never maintenance databases."
+  }
+  validation {
+    condition     = length(distinct(values(var.service_databases))) == length(var.service_databases)
+    error_message = "Each service must have its own database."
   }
 }
 
@@ -38,7 +53,7 @@ variable "forbidden_roles" {
 
 variable "services" {
   nullable    = false
-  description = "Per-service target schemas and independent owner/runtime roles. This is a non-secret binding contract; it does not create SQL objects, change app migrations or prove runtime support."
+  description = "Per-service schemas and independent owner/runtime roles, scoped by the selected database layout. This is a non-secret binding contract; it does not create SQL objects, change app migrations or prove runtime support."
   type = map(object({
     schema         = string
     migration_role = string
@@ -51,6 +66,16 @@ variable "services" {
     history   = { schema = "relayhistory", migration_role = "history_owner", runtime_role = "relayhistory_runtime" }
     relayfile = { schema = "relayfile", migration_role = "relayfile_owner", runtime_role = "relayfile_runtime" }
   }
+  # Keep cross-variable checks in one direction: services -> service_databases.
+  # Checking keys in service_databases as well would create a validation cycle.
+  validation {
+    condition     = length(var.service_databases) == 0 || toset(keys(var.service_databases)) == toset(keys(var.services))
+    error_message = "service_databases must be empty for legacy compatibility or contain exactly the configured service keys."
+  }
+  validation {
+    condition     = length(var.service_databases) > 0 || (alltrue([for service in values(var.services) : service.schema != "public"]) && length(distinct([for service in values(var.services) : service.schema])) == length(var.services))
+    error_message = "Legacy shared-database services require distinct non-public schemas; public or repeated schemas require explicit separate service databases."
+  }
   validation {
     condition     = length(var.services) > 0
     error_message = "services must contain at least one explicitly named component."
@@ -61,18 +86,20 @@ variable "services" {
   }
   validation {
     condition = alltrue(flatten([for service in values(var.services) : [
-      for identifier in [service.schema, service.migration_role, service.runtime_role] :
+      for identifier in [service.migration_role, service.runtime_role] :
       can(regex("^[a-z][a-z0-9_]{0,62}$", identifier)) && !startswith(identifier, "pg_") && !startswith(identifier, "rds_") && !contains(["public", "information_schema", "postgres", "rdsadmin", "rdstopmgr"], identifier)
     ]]))
-    error_message = "Schemas and roles must be bounded service identifiers, never public/platform/administrator identities."
+    error_message = "Roles must be bounded service identifiers, never public/platform/administrator identities."
+  }
+  validation {
+    condition = alltrue([for service in values(var.services) :
+      can(regex("^[a-z][a-z0-9_]{0,62}$", service.schema)) && !startswith(service.schema, "pg_") && !startswith(service.schema, "rds_") && !contains(["information_schema", "postgres", "rdsadmin", "rdstopmgr"], service.schema)
+    ])
+    error_message = "Schemas must be bounded application identifiers, never platform namespaces."
   }
   validation {
     condition     = alltrue(flatten([for service in values(var.services) : [for role in [service.migration_role, service.runtime_role] : !contains(var.forbidden_roles, role)]]))
     error_message = "Service roles must not reuse any configured database administrator/bootstrap identity."
-  }
-  validation {
-    condition     = length(distinct([for service in values(var.services) : service.schema])) == length(var.services)
-    error_message = "Each service must own a distinct schema."
   }
   validation {
     condition     = length(distinct(flatten([for service in values(var.services) : [service.migration_role, service.runtime_role]]))) == 2 * length(var.services)

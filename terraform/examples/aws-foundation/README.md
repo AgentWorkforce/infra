@@ -11,6 +11,55 @@ Example key layout: `<existing-account>/<region>/<environment>/foundation/terraf
 
 Foundation provides infrastructure prerequisites for the full suite, including Lambda networking and first-party Terse placement. It does not install Helm charts, a Lambda handler, secrets, DNS/certificates, auth services or application data. Existing proof resources are out of scope and remain running.
 
+## AWS Load Balancer Controller
+
+Off by default. Setting `enable_load_balancer_controller = true` creates the controller's IAM policy, IAM role, policy attachment and Pod Identity association; no Kubernetes object is created. After apply, install the chart with the values from `terraform output load_balancer_controller`:
+
+```sh
+helm repo add eks https://aws.github.io/eks-charts
+helm repo update eks
+helm upgrade --install aws-load-balancer-controller eks/aws-load-balancer-controller \
+  --version 3.6.2 \
+  --namespace kube-system \
+  --set clusterName=<cluster_name> \
+  --set region=<region> \
+  --set vpcId=<vpc_id> \
+  --set serviceAccount.create=true \
+  --set serviceAccount.name=aws-load-balancer-controller
+```
+
+The chart creates the ServiceAccount and needs no IRSA annotation: Pod Identity binds it to the role by namespace and name.
+
+### Adopting an existing installation
+
+An account where the controller was installed by hand already has the `<cluster>-lbc` policy, the `<cluster>-lbc` role and the Pod Identity association. Do not delete or recreate them, because that interrupts a running controller. An apply without imports fails because the names are already taken. Set `enable_load_balancer_controller = true`, initialize the real backend, then import them before the first apply. `<cluster>` is `name_prefix-environment`.
+
+Find the association ID:
+
+```sh
+aws eks list-pod-identity-associations \
+  --cluster-name <cluster> \
+  --namespace kube-system \
+  --service-account aws-load-balancer-controller \
+  --query 'associations[0].associationId' --output text
+```
+
+Import the three resources:
+
+```sh
+terraform import 'module.foundation.aws_iam_policy.lbc[0]' 'arn:aws:iam::<account-id>:policy/<cluster>-lbc'
+terraform import 'module.foundation.aws_iam_role.this["lbc"]' '<cluster>-lbc'
+terraform import 'module.foundation.aws_eks_pod_identity_association.lbc[0]' '<cluster>,<association-id>'
+```
+
+Import the policy attachment as well so the plan has nothing left to create. It is the role-to-policy link rather than a separately named AWS object:
+
+```sh
+terraform import 'module.foundation.aws_iam_role_policy_attachment.lbc[0]' '<cluster>-lbc/arn:aws:iam::<account-id>:policy/<cluster>-lbc'
+```
+
+Then review a saved plan. It must show no resource being replaced or destroyed; stop if one is. The policy's name, path and description, the role's name and path, and the association's cluster, namespace and ServiceAccount cannot change in place, so any difference there means replacement. The module sets no policy description, so a hand-built policy that has one would be replaced. Expect these in-place updates on a hand-built installation: the module's tags are added where missing, and the role trust gains the `aws:RequestTag/*` conditions that the module's other Pod Identity roles have. Leave the Helm release as it is; these imports do not touch it.
+
 <!-- BEGIN_TF_DOCS -->
 ### Requirements
 
@@ -43,6 +92,7 @@ Foundation provides infrastructure prerequisites for the full suite, including L
 | actor\_instance\_type | Region-supported x86\_64 first-party actor-host node instance type. | `string` | `"m6i.large"` | no |
 | capacity | General managed-node sizing; node count alone does not provide application HA. | `object({ min = number, desired = number, max = number })` | ```{ "desired": 2, "max": 4, "min": 2 }``` | no |
 | deletion\_protection | EKS API deletion protection; disable only through a reviewed retirement change. | `bool` | `true` | no |
+| enable\_load\_balancer\_controller | Create the AWS Load Balancer Controller IAM policy, role and Pod Identity association; the Helm release stays external. | `bool` | `false` | no |
 | instance\_type | Region-supported x86\_64 AL2023 general node instance type. | `string` | `"m6i.large"` | no |
 | name\_prefix | Product prefix; combined name must fit the data-layer contract. | `string` | `"agent-relay"` | no |
 | namespace | Application namespace reference only; null exports agent-relay-environment. | `string` | `null` | no |
@@ -63,5 +113,6 @@ Foundation provides infrastructure prerequisites for the full suite, including L
 | cluster\_security\_group\_id | Service-created SG identifier for scoped retirement inventory. |
 | data\_environment\_inputs | Non-secret subset of inputs for a separately initialized aws-environments state. |
 | identity\_references | References for separately owned workload roles. |
+| load\_balancer\_controller | Helm install references for the AWS Load Balancer Controller; null while disabled. |
 | storage\_class\_manifest | Retained encrypted CSI class to apply in application state. |
 <!-- END_TF_DOCS -->

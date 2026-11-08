@@ -23,8 +23,8 @@ components:
   relayauth: true
   sessionsPipeline: true
   relayhistory: true
-  cloudApi: true
-  dashboard: true
+  control: true
+  webapp: true
   relayflows: false
   durableActors: false
   relayfile: false
@@ -116,7 +116,7 @@ sessions-pipeline:
     # Session objects in S3 through EKS Pod Identity: create one IAM role
     # (s3:ListBucket on the bucket, Get/Put/DeleteObject on its objects) and
     # a Pod Identity association for the <release>-worker and
-    # <release>-alleyoop ServiceAccounts. EKS Auto Mode runs the Pod Identity
+    # <release>-session-ingest-api ServiceAccounts. EKS Auto Mode runs the Pod Identity
     # Agent; on other clusters install the eks-pod-identity-agent add-on.
     locker:
       provider: s3
@@ -130,9 +130,8 @@ sessions-pipeline:
       enabled: false
     # HoopDb in-cluster on CloudNativePG (sessions-pipeline.hoopdb below):
     # the chart wires the CNPG app Secret and runs the runtime-role and
-    # function-default Jobs. For RDS/Aurora set hoopdb.enabled=false, point
-    # worker.hoopdb / migrations.hoopdb at your Secret keys and use
-    # databaseMode selfhosted with roleBootstrap as in values-gcp.yaml.
+    # function-default Jobs. For RDS see sessions-pipeline
+    # profiles/external-rds.yaml (databaseMode rds); Aurora is not covered.
     migrations:
       databaseMode: selfhosted
       supabaseShim: true
@@ -167,7 +166,7 @@ sessions-pipeline:
       issuer: http://relayauth:8787
       # REQUIRED OVERRIDE: the bare origin couriers use as the History
       # assertion audience (byte-equal to RELAYAUTH_HISTORY_ORIGIN); it must
-      # equal relay-cloud-api.services.relayhistoryPublicUrl and
+      # equal relay-control.services.relayhistoryPublicUrl and
       # relayhistory.relayauth.historyOrigin. Without it the ingest cannot
       # accept a RelayAuth-signed courier push.
       historyOrigin: https://history.placeholder.company
@@ -186,7 +185,7 @@ sessions-pipeline:
       # Same services image repository and digest as worker.
       repository: ghcr.io/agentworkforce/96bulls-services
       digest: sha256:070fe6fd46ecd1e1f9db32ff22379f6df9b9e6c4d48ede5312c8fb986a95f3a9
-  locker:
+  session-object-storage:
     enabled: false
 
 relayhistory:
@@ -205,12 +204,12 @@ relayhistory:
     runtimeRole: relayhistory_runtime
   relayauth:
     # REQUIRED OVERRIDE: https://history.<your domain>, the same origin as
-    # relay-cloud-api.services.relayhistoryPublicUrl.
+    # relay-control.services.relayhistoryPublicUrl.
     historyOrigin: https://history.placeholder.company
     jwksUrl: http://relayauth:8787/.well-known/jwks.json
     issuer: http://relayauth:8787
   agentRelayCloud:
-    apiUrl: http://relay-cloud-api
+    apiUrl: http://relay-control
   service:
     annotations:
       alb.ingress.kubernetes.io/healthcheck-path: /readyz
@@ -223,8 +222,8 @@ relayhistory:
       - ipBlock: { cidr: 10.0.0.0/16 }
     allowAllEgress: true
 
-relay-cloud-api:
-  fullnameOverride: relay-cloud-api
+relay-control:
+  fullnameOverride: relay-control
   image:
     # Release image (public GHCR, selfhost-api 0.3.0, relaycontrol 9b80b04).
     repository: ghcr.io/agentworkforce/selfhost-api
@@ -263,10 +262,10 @@ relay-cloud-api:
       - ipBlock: { cidr: 10.0.0.0/16 }
     allowAllEgress: true
 
-relay-dashboard:
-  fullnameOverride: relay-dashboard
+relay-webapp:
+  fullnameOverride: relay-webapp
   image:
-    # Release image (public GHCR, relay-dashboard main e5003d0).
+    # Release image (public GHCR, relay-webapp main e5003d0).
     repository: ghcr.io/agentworkforce/relay-dashboard
     digest: sha256:c50005fcdd1fc5ab5ef3dac9b621db8e0c7e03480406bfe519743ae435d8f1ad
   runtime:
@@ -276,7 +275,7 @@ relay-dashboard:
     apiBasePath: /cloud/api
     loginPath: /login
   api:
-    serviceName: relay-cloud-api
+    serviceName: relay-control
   service:
     annotations:
       alb.ingress.kubernetes.io/healthcheck-path: /healthz

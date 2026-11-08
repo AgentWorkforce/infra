@@ -3,11 +3,11 @@
 relayhistory:
   image:
     digest: sha256:8fbda9bd89dd33994b6b3331fb403c38a25f04e6742050bd717e99661f3544ba
-relay-cloud-api:
+relay-control:
   image:
     digest: sha256:2222222222222222222222222222222222222222222222222222222222222222
   encryption:
     keyId: proof-1
-relay-dashboard:
+relay-webapp:
   image:
     digest: sha256:9bfc0c6b873411c7a0da60d746883bdef6aafd86a9b733c719500a603890b6fe

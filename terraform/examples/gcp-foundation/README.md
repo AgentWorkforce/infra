@@ -47,7 +47,7 @@ auto-upgrades remain managed and the requested version is not a permanent pin.
 `foundation` exports `identity`, `network`, `gke`, `workload_identity`,
 `actor_host_profile` and `pipeline`. Pass a reviewed non-secret manifest to a
 separate data root composing postgres/object-storage/search/functions, then to a
-separate application root for relaycontrol, relay-dashboard, sessions-pipeline,
+separate application root for relaycontrol, relay-webapp, sessions-pipeline,
 relayhistory, Relaycast/Terse and optional Relayfile/auth dependencies. SQL roles,
 extensions, secret delivery, migration ledgers, buckets, actors artifacts, ingress,
 certificates, DNS and exact versioned images are later contracts. Object-storage

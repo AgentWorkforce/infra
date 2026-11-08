@@ -38,12 +38,16 @@ RUNTIME=(--set worker.migrations.runtimeRole=sessions_pipeline_runtime --set wor
 #   existing  in-cluster, existing cluster: fresh plus the search Worker Job
 #   external  external plain Postgres: no SQL Jobs; wait for the roles only
 #   supabase  external Supabase: no SQL Jobs, no wait-for-role, no shim
+#   rds       external Amazon RDS: no SQL Jobs, no wait-for-role, no shim
 MATRIX=(
   "profiles/selfhost-postgres.yaml|yes|yes|selfhosted|fresh"
   "profiles/migration.yaml|yes|yes|selfhosted|existing"
   "profiles/external-supabase.yaml|no|yes|supabase|supabase"
   "profiles/external-selfhosted.yaml|no|yes|selfhosted|external"
+  "profiles/external-rds.yaml|no|yes|rds|rds"
   "ci/default-values.yaml|yes|yes|selfhosted|fresh"
+  "ci/read-api-values.yaml|yes|yes|selfhosted|fresh"
+  "ci/ingest-edge-values.yaml|yes|yes|selfhosted|fresh"
   "ci/kind-values.yaml|yes|yes|selfhosted|fresh"
   "ci/search-worker-bootstrap-values.yaml|yes|yes|selfhosted|existing"
   "ci/aws-cnpg-values.yaml|yes|no|selfhosted|fresh"
@@ -66,23 +70,27 @@ done
 # stays held) and the GCP values pin the GHCR image too. The chart
 # defaults (worker and alleyoop image.digest) are the same GHCR image, so a path
 # that pins nothing still gets it. The row loop below asserts that every
-# matrix row renders only the final images.
+# matrix row's 96bulls-services containers use those final images. The native
+# ingest-edge and read-api render fixtures carry separate synthetic image refs;
+# they do not qualify a native artifact or assert its provenance/final pin.
 GHCR="ghcr.io/agentworkforce/96bulls-services@sha256:6f22ea17dff336e1431664542759fd27958649388b90a0b2f0881883caa7c6b2"
 ECR="500268966557.dkr.ecr.us-west-2.amazonaws.com/96bulls-services@sha256:5bb6075240afa02a1b1797a81c07bffa029954eac7803d702ecba20db35d4db9"
+RDS_GHCR="ghcr.io/agentworkforce/96bulls-services@sha256:b2b74a19375e86bbd5c70a30ea5edbd28cac3de103490bc428de007f4a38b821"
 pins_of() { yq -r '[.worker.image.tag, .worker.image.digest, .alleyoop.image.tag, .alleyoop.image.digest, .privilegedSql.sqlImage.digest, .searchWorkerRole.bootstrapJob.sqlImage.digest, .runtimeRole.bootstrapJob.sqlImage.digest, .functionDefaultRevoke.bootstrapJob.sqlImage.digest] | map(select(. != null and . != "")) | join(",")' "$1"; }
 # Rendered image refs of every services container (workloads, migrate, the SQL Jobs' sql copy).
 services_refs() {
   render "$@" | yq -r 'select(.kind == "Deployment" or .kind == "Job") | .spec.template.spec | ((.initContainers // []) + .containers)[] | select(.image | test("96bulls-services")) | .image' | grep -v '^---$' | sort -u
 }
 # The chart defaults are the final GHCR image.
-for v in "$ROOT/charts/sessions-pipeline-worker/values.yaml" "$ROOT/charts/alleyoop/values.yaml"; do
+for v in "$ROOT/charts/sessions-pipeline-worker/values.yaml" "$ROOT/charts/session-ingest-api/values.yaml"; do
   [ "$(yq -r '.image.digest' "$v")" = "${GHCR#*@}" ] || err "${v#"$ROOT"/}: image.digest is not the final 7d7229b GHCR digest"
 done
-for pair in "profiles/selfhost-postgres.yaml|$GHCR" "profiles/migration.yaml|$GHCR" "profiles/external-supabase.yaml|$GHCR" "profiles/external-selfhosted.yaml|$GHCR" "ci/gcp-cloudsql-values.yaml|$GHCR" "ci/aws-cnpg-values.yaml|$ECR"; do
+for pair in "profiles/selfhost-postgres.yaml|$GHCR" "profiles/migration.yaml|$GHCR" "profiles/external-supabase.yaml|$GHCR" "profiles/external-selfhosted.yaml|$GHCR" "profiles/external-rds.yaml|$RDS_GHCR" "ci/gcp-cloudsql-values.yaml|$GHCR" "ci/aws-cnpg-values.yaml|$ECR"; do
   rel=${pair%%|*} want=${pair#*|}
   extra=(); [[ $rel == profiles/* ]] && extra=("${REQUIRED[@]}")
   [[ $rel == profiles/external-supabase.yaml ]] && extra+=(--set supabaseActivation.hold=false)
   [[ $rel == profiles/external-selfhosted.yaml ]] && extra+=("${RUNTIME[@]}")
+  [[ $rel == profiles/external-rds.yaml ]] && extra+=("${RUNTIME[@]}")
   got=$(services_refs -f "$CHART/$rel" "${extra[@]}" | tr '\n' ' ' | sed 's/ $//')
   [ "$got" = "$want" ] || err "$rel: services images are [$got], want exactly [$want]"
 done
@@ -114,7 +122,7 @@ for row in "${MATRIX[@]}"; do
     args+=("${REQUIRED[@]}")
     # Operator inputs the profile leaves empty must fail the render; then supply them.
     case $shape in
-      external)
+      external|rds)
         expect_fail "migrations.runtimeRole is required" "${args[@]}"
         expect_fail "migrations.runtimeRoleLogin must be set (true or false) in $dbmode mode" "${args[@]}" --set worker.migrations.runtimeRole=sessions_pipeline_runtime
         args+=("${RUNTIME[@]}") ;;
@@ -138,12 +146,13 @@ for row in "${MATRIX[@]}"; do
     case $img in
       "$GHCR") ;;
       "$ECR") [ "$rel" = ci/aws-cnpg-values.yaml ] || err "$label: ECR image outside the AWS path: $img" ;;
+      "$RDS_GHCR") [ "$rel" = profiles/external-rds.yaml ] || err "$label: RDS-mode image outside the RDS profile: $img" ;;
       *) err "$label: non-final services image: $img" ;;
     esac
   done <<<"$imgs"
 
   # App workloads and the migrate Job, in every profile.
-  for d in ci-worker-referee ci-worker-bob-costas ci-worker-hoopdb-indexer ci-alleyoop-ingest; do
+  for d in ci-worker-session-status-worker ci-worker-session-summary-worker ci-worker-session-metadata-indexer ci-session-ingest-api; do
     has ".kind == \"Deployment\" and .metadata.name == \"$d\"" || err "$label: Deployment $d missing"
   done
   has ".kind == \"Job\" and $(comp hoopdb-migrate)" || err "$label: migrate Job missing"
@@ -155,6 +164,7 @@ for row in "${MATRIX[@]}"; do
   case $dbmode in
     selfhosted) want=$'HOOPDB_DB_MODE=selfhosted\nHOOPDB_FUNCTION_BOUNDARY_MODE=global-default-revoke\nHOOPDB_RUNTIME_ROLE=sessions_pipeline_runtime\nHOOPDB_RUNTIME_ROLE_LOGIN=true\nHOOPDB_SUPABASE_SHIM=true' ;;
     cloudsql)   want=$'HOOPDB_DB_MODE=cloudsql\nHOOPDB_FUNCTION_BOUNDARY_MODE=global-default-revoke\nHOOPDB_ROLE_BOOTSTRAP=false\nHOOPDB_RUNTIME_ROLE=sessions_pipeline_runtime\nHOOPDB_RUNTIME_ROLE_LOGIN=true\nHOOPDB_SUPABASE_SHIM=false' ;;
+    rds)        want=$'HOOPDB_DB_MODE=rds\nHOOPDB_FUNCTION_BOUNDARY_MODE=global-default-revoke\nHOOPDB_RUNTIME_ROLE=sessions_pipeline_runtime\nHOOPDB_RUNTIME_ROLE_LOGIN=true\nHOOPDB_SUPABASE_SHIM=false' ;;
     supabase)   want=$'HOOPDB_DB_MODE=supabase\nHOOPDB_RUNTIME_ROLE=sessions_pipeline_runtime\nHOOPDB_RUNTIME_ROLE_LOGIN=true\nHOOPDB_SUPABASE_SHIM=false' ;;
   esac
   # The external-Supabase profile selects the event-trigger boundary (#125).
@@ -177,10 +187,10 @@ for row in "${MATRIX[@]}"; do
 
   # Locker.
   if [ "$locker" = yes ]; then
-    has '.kind == "Deployment" and .metadata.name == "locker"' || err "$label: Locker Deployment missing"
+    has '.kind == "Deployment" and .metadata.name == "session-object-storage"' || err "$label: Locker Deployment missing"
     has ".kind == \"Job\" and $(comp locker-init)" || err "$label: locker-init Job missing"
   else
-    none '.kind == "Deployment" and .metadata.name == "locker"' || err "$label: Locker rendered with locker disabled"
+    none '.kind == "Deployment" and .metadata.name == "session-object-storage"' || err "$label: Locker rendered with locker disabled"
   fi
 
   # The bootstrap path: which privileged Jobs, and what migrate waits for.
@@ -189,6 +199,7 @@ for row in "${MATRIX[@]}"; do
     existing) jobs="search-worker-role-bootstrap hoopdb-runtime-role-bootstrap hoopdb-function-default-revoke"; roles="session_directory_search_worker sessions_pipeline_runtime"; fd=true ;;
     external) jobs=""; roles="session_directory_search_worker sessions_pipeline_runtime"; fd=false ;;
     supabase) jobs=""; roles=""; fd="" ;;
+    rds)      jobs=""; roles=""; fd="" ;;
   esac
   for c in search-worker-role-bootstrap hoopdb-runtime-role-bootstrap hoopdb-function-default-revoke; do
     if [[ " $jobs " == *" $c "* ]]; then
@@ -248,7 +259,7 @@ if [ "$mode" = static ]; then
   IN=(-f "$CHART/ci/default-values.yaml")
   SB=(-f "$CHART/ci/pod-identity-values.yaml")
   GCP=(-f "$CHART/ci/gcp-cloudsql-values.yaml")
-  expect_fail "databaseMode must be local, selfhosted, cloudsql or supabase" "${IN[@]}" --set worker.migrations.databaseMode=
+  expect_fail "databaseMode must be local, selfhosted, cloudsql, supabase or rds" "${IN[@]}" --set worker.migrations.databaseMode=
   expect_fail "worker.migrations.databaseMode must be selfhosted, not \"supabase\"" "${IN[@]}" --set worker.migrations.databaseMode=supabase --set worker.migrations.supabaseShim=false --set worker.migrations.waitForRole.enabled=false --set worker.migrations.waitForRole.functionDefault=false
   expect_fail "worker.migrations.databaseMode must be selfhosted, not \"local\"" "${IN[@]}" --set worker.migrations.databaseMode=local
   expect_fail "supabaseShim must not be true in supabase mode" "${SB[@]}" --set worker.migrations.supabaseShim=true
@@ -257,10 +268,22 @@ if [ "$mode" = static ]; then
   expect_fail "runtimeRole.bootstrapJob is for the in-cluster HoopDb only" "${SB[@]}" --set runtimeRole.bootstrapJob.enabled=true
   expect_fail "functionDefaultRevoke.bootstrapJob is for the in-cluster CNPG HoopDb only" "${GCP[@]}" --set functionDefaultRevoke.bootstrapJob.enabled=true
   expect_fail "runtimeRoleLogin must be set (true or false) in supabase mode" "${SB[@]}" --set worker.migrations.runtimeRoleLogin=null
+  RDS=(-f "$CHART/profiles/external-rds.yaml" "${REQUIRED[@]}" "${RUNTIME[@]}")
+  expect_fail "waitForRole must be disabled in rds mode" "${RDS[@]}" --set worker.migrations.waitForRole.enabled=true
+  expect_fail "supabaseShim must not be true in rds mode" "${RDS[@]}" --set worker.migrations.supabaseShim=true
+  expect_fail "roleBootstrap must not be true in rds mode" "${RDS[@]}" --set worker.migrations.roleBootstrap=true
+  expect_fail "runtimeWorkloadRole is not supported in rds mode" "${RDS[@]}" --set worker.migrations.runtimeWorkloadRole=app
+  expect_fail "runtimeRoleLogin must be true in rds mode" "${RDS[@]}" --set worker.migrations.runtimeRoleLogin=false
+  # The RDS profile with a CA bundle: every app workload and migrate gets it.
+  out=$(render "${RDS[@]}" --set worker.postgresCa.enabled=true --set worker.postgresCa.configMap=rds-ca --set alleyoop.postgresCa.enabled=true --set alleyoop.postgresCa.configMap=rds-ca) || err "rds + postgresCa did not render"
+  ca_gaps=$(yq 'select((.kind == "Deployment" or (.kind == "Job" and (.metadata.name | contains("migrate")))) and (.spec.template.spec.containers[0].image | contains("96bulls-services"))) | select(([.spec.template.spec.containers[0].env[] | select(.name == "NODE_EXTRA_CA_CERTS")] | length) != 1) | .metadata.name' <<<"$out" | grep -v '^---$' || true)
+  [ -z "$ca_gaps" ] || err "rds + postgresCa: no CA in $ca_gaps"
+  [ "$(yq 'select(.kind == "Job" and (.metadata.name | contains("migrate"))) | .kind' <<<"$out" | grep -c Job)" = 1 ] || err "rds + postgresCa: expected one migrate Job"
+  ! render "${RDS[@]}" | grep -q NODE_EXTRA_CA_CERTS || err "rds profile must not set NODE_EXTRA_CA_CERTS by default"
   expect_fail "supabaseShim must be set (true or false) in cloudsql mode" "${GCP[@]}" --set worker.migrations.supabaseShim=null
   expect_fail "functionBoundaryMode is required in cloudsql mode" "${GCP[@]}" --set worker.migrations.functionBoundaryMode=
   expect_fail "functionBoundaryMode is required in selfhosted mode" "${IN[@]}" --set worker.migrations.functionBoundaryMode=
-  expect_fail "databaseMode must be local, selfhosted, cloudsql or supabase" "${GCP[@]}" --set worker.migrations.databaseMode=cloud
+  expect_fail "databaseMode must be local, selfhosted, cloudsql, supabase or rds" "${GCP[@]}" --set worker.migrations.databaseMode=cloud
   expect_fail "roleBootstrap must not be true in supabase mode" "${SB[@]}" --set worker.migrations.roleBootstrap=true
   expect_fail "roleBootstrap must be true or false" "${GCP[@]}" --set-string worker.migrations.roleBootstrap=no
   expect_fail "worker.migrations.databaseMode must be selfhosted, not \"cloudsql\"" "${IN[@]}" --set worker.migrations.databaseMode=cloudsql
@@ -283,8 +306,8 @@ if [ "$mode" = static ]; then
   # storage.googleapis.com, and locker.provider=gcs arms their data-path
   # readiness check. The GCP Cloud SQL file renders the native GCS shape.
   out=$(render "${GCP[@]}") || err "gcp-cloudsql did not render"
-  for w in worker-referee worker-bob-costas worker-hoopdb-indexer alleyoop-ingest; do
-    gcs_env=$(yq "select(.kind == \"Deployment\" and .metadata.name == \"ci-$w\") | .spec.template.spec.containers[0].env[] | select(.name == \"LOCKER_PROVIDER\" or .name == \"PIPELINE_RAW_PROVIDER\") | .name + \"=\" + .value" <<<"$out" | sort | tr '\n' ' ')
+  for w in ci-worker-session-status-worker ci-worker-session-summary-worker ci-worker-session-metadata-indexer ci-session-ingest-api; do
+    gcs_env=$(yq "select(.kind == \"Deployment\" and .metadata.name == \"$w\") | .spec.template.spec.containers[0].env[] | select(.name == \"LOCKER_PROVIDER\" or .name == \"PIPELINE_RAW_PROVIDER\") | .name + \"=\" + .value" <<<"$out" | sort | tr '\n' ' ')
     [ "$gcs_env" = "LOCKER_PROVIDER=gcs PIPELINE_RAW_PROVIDER=gcs " ] || err "gcp-cloudsql: $w lacks LOCKER_PROVIDER=gcs/PIPELINE_RAW_PROVIDER=gcs (got: $gcs_env)"
   done
   grep -Eq 'name: "?LOCKER_(ACCESS_KEY_ID|SECRET_ACCESS_KEY)"?$' <<<"$out" && err "gcp-cloudsql: GCS Locker renders a static HMAC credential"

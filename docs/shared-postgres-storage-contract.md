@@ -1,114 +1,101 @@
-# One RDS database, isolated service schemas
+# One RDS instance, separate service databases
 
-User direction, 2026-11-07: the self-hosted main relational store is **one RDS
-PostgreSQL instance and one application database**. Control and HoopDb share
-that database in different schemas. Relaycast must also persist its authoritative
-relational state in that database; the portable SQLite profile does not satisfy
-this target. Services must remain separable onto another RDS later.
+The self-hosted AWS relational target is **one RDS PostgreSQL instance with a
+separate logical database for each service**. This replaces the earlier shared
+application database with service schemas. Services keep complete bindings so a
+later migration to a separate RDS endpoint can preserve their database/schema
+and role contract.
 
 ## Terraform binding contract
 
-`terraform/modules/postgres-layout` emits the following independent per-service
-bindings against the same host, port and database. The AWS and AWS-environment
-roots consume the endpoint and initial database from their single `postgres`
-module. These are target namespace/identity assignments, not claims that current
-images already support them.
+The provider-free `terraform/modules/postgres-layout` publishes non-secret
+identities. AWS roots explicitly select this layout:
 
-| Service | Schema | Migration owner | Runtime role |
-|---|---|---|---|
-| Control | `relaycontrol` | `control_owner` | `control_api_runtime` |
-| HoopDb/pipeline | `sessions` | `hoop` | `sessions_pipeline_runtime` |
-| Relaycast | `relaycast` | `relaycast_owner` | `relaycast_runtime` |
-| History | `relayhistory` | `history_owner` | `relayhistory_runtime` |
-| Relayfile, when enabled | `relayfile` | `relayfile_owner` | `relayfile_runtime` |
+| Service | Database | Schema | Migration owner | Runtime role |
+|---|---|---|---|---|
+| Control | `relaycontrol` (existing initial database) | `public` | `control_owner` | `control_api_runtime` |
+| HoopDb/pipeline | `hoopdb` | `sessions` | `hoop` | `sessions_pipeline_runtime` |
+| Relaycast | `relaycast` | `public` | `relaycast_owner` | `relaycast_runtime` |
+| Relayfile, when enabled | `relayfile` | `public` | `relayfile_owner` | `relayfile_runtime` |
 
-A Relayfile binding does not enable that add-on. Runtime roles and migration
-owners are distinct for every service. Their credentials remain in the approved
-secret system; Terraform outputs contain no passwords or assembled credential
-URLs. Shared extension/platform namespaces need their own administrator-owned
-contract and cannot become a service's unbounded working schema.
+The Control `public` schema is the current service's supported default; the older
+`relaycontrol` schema assignment was target metadata, not an executed migration.
+This table does not inspect existing databases or move data. Before adopting any
+existing installation, verify its catalog and preserve its actual namespace in
+reviewed bindings; a non-public installation needs compatible application support.
 
-The existing AWS roots default the initial database name to `relaycontrol`.
-That database name is retained: it can contain all of the schemas above. The
-new `application_database_name` input supports an explicit name for a fresh
-installation. Changing it on an existing RDS resource may require replacement;
-never use a database rename or replacement as an implicit data migration.
+A binding does not create a database or enable an add-on. Database bindings
+represent components with authoritative relational stores.
+History is a sessions-pipeline capability. Keep existing legacy History/Auth
+stores until their reviewed cutover; they are not new target dependencies.
 
-Every service receives a complete `{host, port, database, schema,
-migration_role, runtime_role, sslmode}` binding even when the endpoint/database
-are shared. A later split creates another RDS/database, preserves the service's
-schema contract, migrates its data, and updates that service's secret binding.
-It still requires reviewed cutover, restore, and isolation proof. No cross-schema
-foreign keys, implicit shared tables, shared migrators or SQL joins between
-services should be introduced as a dependency on today's colocation.
+All bindings use the same writer endpoint/port and `sslmode=verify-full`, with
+independent database names and migration/runtime identities. Credentials remain
+in the secret system, never Terraform outputs or assembled credential URLs.
+`application_database_name` retains the initial Control database name to avoid
+silently replacing RDS. It does not rename other service databases. A later
+endpoint split still requires data migration, cutover and restore proof.
 
-## Application integration still required
+A complete, nonempty `service_databases` map selects separate databases. The
+module rejects missing/unknown service keys, duplicate or maintenance database
+names, and shared or privileged role identities. Public schemas may repeat in
+separate databases. An empty map preserves the older shared-database compatibility
+contract with distinct non-public schemas; it is not the current AWS target.
 
-The module validates bindings; **it does not execute SQL or establish application
-compatibility**. The existing Relaycast [PostgreSQL design PR602](https://github.com/AgentWorkforce/relaycast/pull/602)
-is documentation only; the engine owner confirmed no PostgreSQL adapter exists
-at reported main `ac38905a`. A SQLite-typed engine and migration line need a real
-dialect/schema/transaction port before any chart can select PostgreSQL. Its `application_sql_ready` output remains false. Current
-SQLite and separate-database development receipts do not qualify this target.
+## Database creation and application integration
 
-- Relaycast needs the real PostgreSQL engine adapter, schema-qualified migrations,
-  transaction/concurrency semantics, delivery and restart tests, and a pinned
-  supported image. An environment variable or a SQLite file copied into a blob
-  store is not a PostgreSQL adapter.
-- Control, History and pipeline migrators must own only their assigned namespaces,
-  including migration ledgers, readiness records, functions, policies, indexes,
-  sequences and rollback paths. Historical applied migrations must not be edited
-  in place to rename schemas. Existing installations need a reviewed forward
-  migration/cutover path.
-- The current HoopDb function-boundary bootstrap assumes a dedicated database
-  and changes defaults for multiple owners. Do not run it unchanged against this
-  shared database. Review owner-specific defaults and the exact manifest boundary;
-  never relax the verifier or union foreign functions into an allowlist merely
-  to make the shared profile pass.
-- `search_path` is name resolution, not authorization. Require explicit schema
-  identity, safe pinned function resolution, no PUBLIC/service-to-service grants,
-  no runtime schema DDL, no migration-owner membership in runtime roles, and
-  no application use of the RDS master identity.
-- Optional services must meet the same isolation contract. Inventory any other
-  authoritative local journals/stores before claiming single-store acceptance.
-  S3 may continue to hold file/transcript objects and OpenSearch derived indexes;
-  neither substitutes for the shared authoritative relational database.
-
-Both AWS roots keep automatic Lambda processing inactive: the environment root
-refuses `activate_lambda=true`, including when artifact/TLS bindings are valid,
-and the thin AWS root explicitly sets the functions module inactive. Removing
-this hold requires reviewed shared-schema runtime/bootstrap qualification, not a
-boolean acknowledgement. Direct invocation by an already authorized identity
-remains possible; provisioning inactive queues is not an application access
-control boundary or readiness proof.
-
-The schema bootstrap, credentials/LOGIN activation, image compatibility and Helm
-binding must be reviewed together before any shared application install. A
-Terraform plan/apply can provision RDS without proving those application steps.
-No existing database, schema, volume or backup is changed by publishing this
+The layout module performs no SQL. RDS `db_name` creates only the initial
+Control database; an explicitly reviewed executor must create/own the remaining
+databases and install compatible service roles/migrations. That bootstrap must
+be reproducible from the reviewed source, rather than manual Secret URL edits.
+No existing database or data is renamed, adopted or deleted by publishing this
 contract.
+
+- Revoke PUBLIC database CONNECT and grant each application role only its own
+  database. Roles are instance-wide: migration owners and runtime identities
+  must be distinct across components, with no inherited owner/admin membership.
+- Revoke runtime CREATE on databases and schemas, and limit runtime grants to the
+  service's accepted surface. A database name or search_path is not authorization.
+  The RDS master is a provisioning executor, never an application login.
+- Use the service's canonical schemas and accepted migration line inside its
+  dedicated database. HoopDb's database-wide function-boundary verifier need not
+  admit another service's functions. RDS still needs its supported bootstrap and
+  reviewed LOGIN/activation path; a true-superuser CNPG script is not equivalent.
+- Pin the RDS CA and verify both chain and hostname. `sslmode=require` or a
+  compatibility switch alone is not this proof. Test wrong CA and wrong host as
+  refusals, and verify the actual driver's TLS configuration.
+- Relaycast must use a qualified PostgreSQL serving adapter and supported image.
+  SQLite, connection/migration-only adapters and chart environment switches do
+  not prove authoritative PostgreSQL messaging state.
+- Control authentication, native ingest/read wiring, publication, privacy/deletion,
+  optional-service licensing and Desktop flows still need combined application
+  acceptance. Removing a legacy server must preserve its product capability/data.
+
+`application_sql_ready=false` remains deliberate until the application bootstrap
+and runtime are qualified. Both AWS roots keep automatic Lambda processing held;
+changing database topology does not qualify an artifact or release that gate.
+S3 remains the object store and OpenSearch can hold derived indexes; neither
+substitutes for the service's authoritative PostgreSQL data.
 
 ## Required AWS proof
 
-1. Inspect the reviewed Terraform plan/state and native AWS inventory: exactly
-   one application RDS instance and one application database; PostgreSQL's own
-   maintenance databases are not service stores. Record the common endpoint and
-   per-service schema/owner/runtime identity without credentials.
-2. Bootstrap the schemas and service-specific permissions with a reviewed named
-   executor. Use TLS verification and real non-owner LOGIN sessions. Each role
-   must read/write its own authorized surface and fail reads, writes, schema DDL
-   and privileged function execution against every other service.
-3. Apply each service's migration independently; install all services together;
-   then upgrade and restart them. Adding a foreign schema/function must not poison
-   another service's readiness check, and weakening a service's own grant or
-   schema contract must fail closed.
-4. Prove the complete application trace through control, messaging, upload,
-   pipeline indexing and application readback. Verify Relaycast durable state
-   through process/pod replacement and real concurrent writers against PostgreSQL.
-5. Restore the RDS snapshot/PITR into a separate owned recovery target and repeat
-   service behavior and cross-schema denial tests. A later split needs the same
-   tests after moving the selected service's data and binding.
+1. Inspect the reviewed plan/state and native inventory: one application RDS
+   instance, with the intended separate service databases. PostgreSQL/RDS
+   maintenance databases do not count as service stores. Record the common
+   endpoint and per-service database/schema/owner/runtime identity without secrets.
+2. Create/bootstrap databases with the named executor. Use real non-owner LOGINs
+   over verified TLS. Each runtime must read/write its allowed surface and fail
+   connection to every other service database, schema DDL and privileged access.
+   Prove unexpected role membership and weak grants fail closed.
+3. Migrate each service independently, then install the combined Helm stack.
+   Prove app-profile readiness, repeat migration, crash/resume, upgrade and restart.
+   Generic schema PASS or a listening log cannot substitute for runtime readiness.
+4. Complete the application trace: sign-in, messaging, Desktop capture/upload,
+   pipeline indexing, application readback and privacy/deletion. Prove Relaycast
+   durable state through pod replacement and real PostgreSQL concurrency.
+5. Restore into an owned recovery instance and repeat service behavior plus
+   cross-database denial tests. Record data continuity and operational cleanup.
 
-Managed AWS execution remains subject to the existing admitted environment and
-sandbox recovery requirements. This direction does not authorize bypassing a
-quarantine, adopting shared resources, or deleting legacy data to force a pass.
+Source/mocked tests and a legacy-stack smoke result are not managed acceptance
+of this target. An existing quarantine or environment admission still applies;
+this contract does not authorize provider operations or destructive cutovers.

@@ -1,30 +1,57 @@
 # Pending self-host read API contract
 
 This is source review and read-only diagnosis, not an enabled deployment or an
-end-to-end pass. Historical ar-lap proof at `1c203f59` records 57 PASS, 0 FAIL,
-3 PENDING. It predates the `core.flows_disabled` gate and was not rerun or
-reattributed. That count is not the result of the current core verifier.
+end-to-end pass. Historical proofs at `1c203f59` (ar-lap) and `fd8565c`
+(local-control) each record 57 PASS, 0 FAIL, 3 PENDING. They predate the
+`core.flows_disabled` gate and were not rerun or reattributed. Those counts
+are not the result of the current core verifier.
 
 The originally reviewed source heads were pipeline [#317 at a7d7a5db](https://github.com/AgentWorkforce/relayhistory-pipeline/pull/317),
 [#318 at 441e4862](https://github.com/AgentWorkforce/relayhistory-pipeline/pull/318)
 and the additional PG-only source in [#330 at 44b81b56](https://github.com/AgentWorkforce/relayhistory-pipeline/pull/330).
 They were open drafts at that source review. Subsequent status verification
 confirmed #317 merged as `d33bfdaa665f1ea5da7eac33e96b3522fa177b06` and #318 as
-`a1e1473be4174d1b26c1506159abcbd97b39fa4f`. #330 is open/non-draft at
-`0f2e866395c9122721262bb16d1430084955c878`. Writer #336 is open/draft at
-`518ed0fa37f1e33a8b174a18dcce1167da0defcf`, not yet re-reviewed here; the last
-reviewed `4bec3158` remains needs-fixes until superseded by passing review. Its intervening commits
+`a1e1473be4174d1b26c1506159abcbd97b39fa4f`. #330 subsequently merged as
+`992f9b17721a3208a1eaeb5933f53359b1919702` from head
+`0f2e866395c9122721262bb16d1430084955c878`. Its intervening commits
 add reader role admission, forced tenant RLS and fail-closed tenant-bound
 operations; that combined runtime is not qualified by the older source review.
 No enablement or deployment was done by infra.
 Relaycontrol remains a proxy to `RELAYHISTORY_URL`, with no pipeline URL added.
 
+## Supported self-host read scope
+
+Pipeline rollout 1 supports canonical published sessions only. Self-host
+owner-buffered reads are unsupported. The Node container assembles the Lambda
+read app, whose [source explicitly leaves owner-buffered reads unwired](https://github.com/AgentWorkforce/relayhistory-pipeline/blob/f7cfb90ecd8f03ad7d51ebd6291519ab69402597/src/session-read-api/lambda.ts#L24-L26).
+The hosted Worker privacy-head binding from pipeline #341 is outside this
+self-host assembly.
+
+Leave `RELAYHISTORY_READ_OWNER_BUFFERED` unset/off and
+`READ_API_OWNER_BUFFERED_WORKSPACES` unset. Supply no owner-buffered raw-S3
+configuration. Canonical MinIO configuration remains separately required; this
+scope does not qualify that binding or the pending courier-to-app proof.
+
+A future self-host owner-buffered design would require an authenticated
+in-cluster privacy-controls transport with an owner **TBD**. No supported
+transport or follow-up implementation exists for rollout 1. The Fetcher DI seam
+is not an approved public endpoint and must not be pointed at one. A new
+privacy-head transport is not a prerequisite for canonical-only acceptance.
+
 ## Proposed chart inputs
 
 Use the existing sessions-pipeline chart, with a default-off read API component.
-No new chart or runtime server wrapper is needed. Draft infra #81 reserves
-sessions-pipeline `0.6.2`, relay-cloud-api `0.2.7` and agent-relay `0.3.17` for
+No new chart or runtime server wrapper is needed for this reader plumbing.
+Infra #81 introduced sessions-pipeline `0.7.1`, relay-cloud-api `0.2.7` and
+agent-relay `0.4.2` for
 this default-off plumbing; no kind profile enables the read service.
+
+Those are the #81 parent versions. The composed public-name branch #97 uses
+agent-relay `0.5.0`, relay-control `0.3.0`, relay-webapp `0.2.0` and
+sessions-pipeline `0.7.2` (Secret-reference review follow-up); see
+[the upgrade map](../../../docs/control-webapp-chart-rename.md).
+Native-ingest child #102 uses umbrella `0.5.1` and pipeline `0.7.3`; see
+[its native-ingest contract](../../../docs/self-hosted-native-ingest.md).
 
 | Input | Draft contract |
 | --- | --- |
@@ -44,7 +71,50 @@ establish a replacement for every legacy History delivery/ingest route.
 
 ## Remaining integration blockers
 
-1. Draft #330 adds a Postgres-only reader composition through the existing adapter
+### RelayAuth and legacy History removal target
+
+Pipeline's source inventory at
+`7a946e06b83dff6ed9df96cb75fd1acd0f37d0a7` does not provide a complete native
+replacement for those services. The read SERVICE exists; a full upload/read/cost
+cutover has no runnable combined artifact yet. Source-program ownership and
+artifact/proof dates remain uncommitted.
+
+| Surface | Current source availability | Required replacement work |
+| --- | --- | --- |
+| Read authentication | `sh_at_` uses relaycontrol introspection. Other bearers still select RelayAuth; absent JWKS/issuer uses hosted defaults. | Explicit control-only verifier mode and service-entry proof; owner TBD. |
+| Desktop upload | Main's session-ingest endpoint is a private Cloudflare Worker with HMAC identity. Unmerged #316 adds a Node edge, not a native ingest upstream or a combined entrypoint. | Native edge/upstream with authorized token scopes and non-Cloudflare queue, Postgres and S3 bindings. |
+| Canonical writer | Main's writer is Lambda-only; native consumer #336 is draft. | Reviewed native writer, exact function-ACL authorization after bootstrap and normal migrate, tenant-gate admission and matching generation. |
+| Read views | List, activity, titles, session events and event search have source implementations, subject to schema/role/coverage/TLS prerequisites. Turns, metadata, timing, catalog and delivery records return 501 in the service assembly. | Canonical object/route bindings and actual readback proof. |
+| CLI sync | Reader login is read-only pass-through, with no refresh or `rth:sync`; Control #27 returns `501 sync_not_served` for that sync exchange. | A supported sync-capable backend login or a separately implemented Desktop upload-origin/acquire flow. |
+| Usage/cost | No replacement endpoints in this service. | Owner-defined compatible endpoints and actual attribution proof. |
+| Native image | Main's dispatcher includes the read API; the proposed edge and consumer branches are not one qualified native image. | Explicit edge/ingest/writer/read entrypoint composition, immutable image/source/generation and compatibility receipts. |
+
+Pipeline's proposed auth follow-up is `READ_API_AUTH_MODE=relaycontrol_only`.
+It is **not implemented** and is not a supported chart input. Its proposed
+contract never constructs the RelayAuth verifier, returns 401 for non-`sh_at_`
+bearers, and refuses startup if `RELAYAUTH_JWKS_URL` or `RELAYAUTH_ISSUER` is set.
+A service-entry test must prove refusal with no outbound fetch attempted.
+Blank issuer values, a dead local URL or relying on denied hosted egress do not
+implement this mode.
+
+Control currently returns one backend origin from
+`POST /api/v1/workspaces/{ws}/relayhistory/session`; it does not advertise a
+separate upload edge. Splitting ingress paths cannot grant sync authority or
+provide Desktop origin discovery. The replacement protocol belongs in its
+backend/Desktop source contract, not an infra token or scope shim.
+
+The current kind guard still requires legacy History, and the read chart still
+requires explicit temporary issuer/JWKS configuration. Chart cutover must follow
+the implemented replacement contracts, then remove both legacy components and
+their wiring with qualified native services in place. No such flag, service,
+image or workaround configuration is introduced by this source inventory.
+Owning-fixture upload, canonical indexing/readback, usage/cost, tenancy/ACL/TLS
+and egress proof must accompany the cutover while preserving existing data.
+Historical availability and 57/0/3 receipts are not that proof.
+
+### Existing reader assembly prerequisites
+
+1. PR #330 adds a Postgres-only reader composition through the existing adapter
    registry, without constructing ClickHouse. A compatible approved immutable
    image is still required, together with owner-provided schema/bootstrap/grants
    and a real canonical reconciliation writer. Missing relations/grants return
@@ -68,7 +138,7 @@ invent missing runtime composition, bypass grants, mirror session rows between
 databases, or claim the service ready from its dormant health response.
 
 The proposed writer in pipeline #336 is tracked in the
-[bootstrap source review in draft infra #81](https://github.com/AgentWorkforce/infra/blob/3d8e255b77c2f00a7239f3b10fb3771938b8facd/ci/agent-relay/kind/writer-bootstrap-review.md). Its entrypoint is not
+[bootstrap source review](writer-bootstrap-review.md). Its entrypoint is not
 ready for operator wiring: that review records the two now-fixed bootstrap
 source defects and the remaining full-bootstrap/function-ACL/combined-image
 proof requirements. Operator wiring requires the same approved image/ACL

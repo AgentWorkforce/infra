@@ -11,8 +11,8 @@
 #   https://relay.placeholder.company/api         control API (flows workers, OAuth callback)
 #
 # There is no api host: point Desktop's custom origin and `agent-relay login`
-# at https://relay.placeholder.company. relay-cloud-api.publicUrl and
-# relay-dashboard.runtime.publicUrl are derived from global.singleHost.host,
+# at https://relay.placeholder.company. relay-control.publicUrl and
+# relay-webapp.runtime.publicUrl are derived from global.singleHost.host,
 # so they are cleared below.
 #
 # Relaycast and Relay History stay on their own hosts: neither can be served
@@ -33,11 +33,11 @@ gkeIngress:
     cast: cast.placeholder.company
     history: history.placeholder.company
 
-relay-cloud-api:
+relay-control:
   # Derived: https://<global.singleHost.host>.
   publicUrl: ""
 
-relay-dashboard:
+relay-webapp:
   runtime:
     # Derived: https://<global.singleHost.host>.
     publicUrl: ""

@@ -79,7 +79,7 @@ run "all_add_ons_plan" {
 
   assert {
     condition     = !module.functions[0].activation_enabled
-    error_message = "Preparing shared-database infrastructure must not activate unqualified application processing."
+    error_message = "Preparing per-service database infrastructure must not activate unqualified application processing."
   }
 
   assert {
@@ -91,11 +91,11 @@ run "all_add_ons_plan" {
   }
 }
 
-run "shared_database_service_layout" {
+run "separate_service_database_layout" {
   command = apply
   assert {
-    condition     = output.postgres_service_bindings.control.database == "relaycontrol" && output.postgres_service_bindings.hoopdb.database == "relaycontrol" && output.postgres_service_bindings.relaycast.database == "relaycontrol"
-    error_message = "The thin AWS composition must use one database for all service schemas."
+    condition     = output.postgres_service_bindings.control.database == "relaycontrol" && output.postgres_service_bindings.hoopdb.database == "hoopdb" && output.postgres_service_bindings.relaycast.database == "relaycast"
+    error_message = "The thin AWS composition must use one instance with separate service databases."
   }
   assert {
     condition     = output.postgres_service_bindings.control.schema != output.postgres_service_bindings.hoopdb.schema && !output.postgres_topology.application_sql_ready
@@ -107,4 +107,21 @@ run "rds_internal_database_refused" {
   command = plan
   variables { application_database_name = "rdsadmin" }
   expect_failures = [var.application_database_name]
+}
+
+run "existing_service_database_names_preserved" {
+  command = apply
+  variables {
+    service_database_names = { hoopdb = "existing_pipeline", relaycast = "existing_cast", relayfile = "existing_files" }
+  }
+  assert {
+    condition     = output.postgres_service_bindings.control.database == "relaycontrol" && output.postgres_service_bindings.hoopdb.database == "existing_pipeline" && output.postgres_service_bindings.relaycast.database == "existing_cast" && output.postgres_service_bindings.relayfile.database == "existing_files"
+    error_message = "Database binding overrides must preserve existing service names without changing Control's initial database."
+  }
+}
+
+run "service_database_collides_with_control_refused" {
+  command = plan
+  variables { service_database_names = { hoopdb = "relaycontrol", relaycast = "relaycast", relayfile = "relayfile" } }
+  expect_failures = [var.service_database_names]
 }

@@ -28,7 +28,7 @@ alleyoop:
 hoopdb:
   cluster:
     storage: { size: 2Gi }
-locker:
+session-object-storage:
   persistence: { enabled: false }
   resources:
     requests: { memory: 256Mi }

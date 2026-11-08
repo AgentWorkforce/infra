@@ -21,6 +21,7 @@ ALLOW_MISSING_WORKLOADS=false
 ALLOW_MISSING_INGRESS=false
 ALLOW_NO_TLS=false
 HEALTH_URLS=()
+EXTERNAL_TLS_HOSTS=()
 
 PASS_COUNT=0
 FAIL_COUNT=0
@@ -47,6 +48,8 @@ Ingress and health:
                                    TLS host, and certificate references)
       --health-url URL             Health URL; repeat for multiple endpoints
       --health-path PATH           Derived ingress health path (default: /health)
+      --external-tls-host HOST     LB-terminated TLS host; repeat as needed;
+                                   must match a selected ingress rule host
       --timeout SECONDS            Per-network-check timeout (default: 15)
       --cert-min-valid SECONDS     Required remaining TLS validity (default: 86400)
 
@@ -160,6 +163,20 @@ while (($#)); do
     --health-path)
       (($# >= 2)) || die_usage "$1 requires a value"
       HEALTH_PATH="$2"
+      shift 2
+      ;;
+    --external-tls-host)
+      (($# >= 2)) || die_usage "$1 requires a value"
+      external_host="$(python3 - "$2" <<'PY'
+import re, sys
+value = sys.argv[1]
+label = r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?"
+if len(value) > 253 or not re.fullmatch(label + r"(?:\." + label + r")*", value):
+    raise SystemExit(1)
+print(value.lower())
+PY
+      )" || die_usage "--external-tls-host must be a DNS hostname without a port or URL"
+      EXTERNAL_TLS_HOSTS+=("$external_host")
       shift 2
       ;;
     --timeout)
@@ -563,6 +580,20 @@ for kind, values in records.items():
     fi
   fi
 fi
+
+# An explicit external-termination target must still belong to the selected
+# ingress. It adds real chain/hostname/expiry verification, never a TLS skip.
+for external_host in ${EXTERNAL_TLS_HOSTS[@]+"${EXTERNAL_TLS_HOSTS[@]}"}; do
+  external_selected=false
+  for selected_host in ${SELECTED_HOSTS[@]+"${SELECTED_HOSTS[@]}"}; do
+    [[ "$external_host" == "$selected_host" ]] && external_selected=true
+  done
+  if $INGRESS_AVAILABLE && $external_selected; then
+    TLS_HOSTS+=("$external_host")
+  else
+    proof FAIL certificate "external_tls_host_not_in_selected_ingress"
+  fi
+done
 
 # Use explicit health URLs, or derive HTTPS URLs from the selected ingress rules.
 if ((${#HEALTH_URLS[@]} == 0)) && $INGRESS_AVAILABLE; then

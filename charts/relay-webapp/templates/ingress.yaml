@@ -1,0 +1,60 @@
+{{- include "relay-webapp.validate" . }}
+{{- if .Values.ingress.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "relay-webapp.fullname" . }}
+  namespace: {{ .Release.Namespace | quote }}
+  labels:
+    {{- include "relay-webapp.labels" . | nindent 4 }}
+  {{- with .Values.ingress.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- with .Values.ingress.className }}
+  ingressClassName: {{ . }}
+  {{- end }}
+  {{- with .Values.ingress.tls }}
+  tls:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  rules:
+    - host: {{ include "relay-webapp.ingressHost" . | quote }}
+      http:
+        paths:
+          # Must precede "/" for ingress controllers that preserve declaration
+          # order. Longest-path matching is also required by networking.k8s.io/v1.
+          - path: {{ .Values.runtime.apiBasePath }}
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ .Values.api.serviceName }}
+                port:
+                  number: {{ .Values.api.servicePort }}
+          - path: {{ .Values.runtime.loginPath }}
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ .Values.api.serviceName }}
+                port:
+                  number: {{ .Values.api.servicePort }}
+          {{- if include "relay-webapp.singleHost" . }}
+          # Single-host mode: flows workers and the integrations OAuth
+          # callback use <publicUrl>/api/v1/... on this host.
+          - path: /api
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ .Values.api.serviceName }}
+                port:
+                  number: {{ .Values.api.servicePort }}
+          {{- end }}
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "relay-webapp.fullname" . }}
+                port:
+                  name: http
+{{- end }}

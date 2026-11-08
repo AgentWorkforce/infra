@@ -76,7 +76,7 @@ resource "terraform_data" "environment_contract" {
     }
     precondition {
       condition     = !var.activate_lambda
-      error_message = "Automatic Lambda activation is held: the shared-database schema/bootstrap/runtime contract is not qualified. Provision inactive infrastructure; qualification requires a reviewed implementation change, not an acknowledgement flag."
+      error_message = "Automatic Lambda activation is held: the per-service database/bootstrap/runtime contract is not qualified. Provision inactive infrastructure; qualification requires a reviewed implementation change, not an acknowledgement flag."
     }
     precondition {
       condition = var.lambda_runtime_bindings == null ? true : (
@@ -135,7 +135,7 @@ module "sessions_bucket" {
     name                     = "${local.name}-sessions"
     path                     = local.role_path
     permissions_boundary_arn = local.boundary
-    pod_identity_associations = [for sa in ["worker", "alleyoop"] : {
+    pod_identity_associations = [for sa in ["worker", "alleyoop", "session-ingest-api"] : {
       cluster_name    = var.eks_cluster_name
       namespace       = local.namespace
       service_account = "${var.release_name}-${sa}"
@@ -205,4 +205,13 @@ module "postgres_layout" {
   port            = module.postgres.port
   database        = module.postgres.initial_database
   forbidden_roles = [module.postgres.master_username]
+  # One instance, separate logical databases. These are non-secret targets;
+  # a reviewed SQL bootstrap must create/own them before application activation.
+  service_databases = merge({ control = module.postgres.initial_database }, var.service_database_names)
+  services = {
+    control   = { schema = "public", migration_role = "control_owner", runtime_role = "control_api_runtime" }
+    hoopdb    = { schema = "sessions", migration_role = "hoop", runtime_role = "sessions_pipeline_runtime" }
+    relaycast = { schema = "public", migration_role = "relaycast_owner", runtime_role = "relaycast_runtime" }
+    relayfile = { schema = "public", migration_role = "relayfile_owner", runtime_role = "relayfile_runtime" }
+  }
 }
