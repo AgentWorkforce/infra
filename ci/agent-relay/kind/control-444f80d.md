@@ -18,11 +18,30 @@ authorization/token handlers, grants, consent, admission and signing.
 The mounted-route/store/admission work belongs to **hosted-mcp-port**, not the
 owner of the pure protocol slice. Its [design PR #25](https://github.com/AgentWorkforce/relay-control/pull/25)
 was checked open/draft at `23332b73509e2e3154e90a7d6df9857fc7bcc8d1`.
-The owner-reported implementation areas are `src/mcp/oauth/**`,
-`src/mcp/events/**` and reserved migrations `0015`–`0017`; no implementation
-branch is supplied by this candidate. Design acceptance and implementation
-go-ahead remain separate gates. Code-complete, compatible-artifact and actual
-OAuth proof dates are **NOT COMMITTED** and must come from that lane.
+The owner reports the design is accepted as a target and implementation is
+already assigned in its lane; it is dependency-gated, not awaiting a new broad
+implementation go-ahead. The reported implementation areas are `src/mcp/oauth/**`,
+`src/mcp/events/**` and reserved migrations `0015`–`0017`; no mounted implementation
+is supplied by this candidate. Control #20 has since merged as
+`bae78a524fbce4fb3ab231372417bc2dfac04cad`. The next dependency, control
+[#28](https://github.com/AgentWorkforce/relay-control/pull/28), remains open/draft
+at `a0d96af87d6e1acdbf1107cf2d60808d877219b3` when checked. The owner must then
+compose main, recheck combined interfaces, and implement/review the mounted slice.
+Code-complete, compatible-artifact and actual OAuth proof dates remain
+**NOT COMMITTED**; no calendar range was supplied.
+
+The owner-reported design requires tenant-bound sessions, live organization
+membership and stored issue-time scopes, denying trusted pending handoff/artifact
+authority. OAuth, Events and pump have independent default-off controls; signing
+key/kid/subject-salt custody and canonical origin/resources need explicit operator
+configuration. Mounted endpoints, consent, tokens, refresh/revoke and admission
+need frozen-head integration tests and exact-source/image receipts. History
+delegation remains a separately unaccepted contract; no History credential or
+date is implied by the pure protocol slice. Runtime enablement and real-client
+rehearsal still require their own operator authorization and approved test inputs.
+
+Draft infra #91 records a newer merged-main local candidate at `bae78a5`; its
+build/config qualification also does not mount or qualify this OAuth slice.
 The existing basic MCP transport/CLI-auth result remains separate; this future
 OAuth work is not silently counted as a new passed or required core check.
 
