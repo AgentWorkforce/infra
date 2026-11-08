@@ -1,0 +1,40 @@
+{{- include "relaycast.validate" . }}
+{{- if include "relaycast.postgres.enabled" . }}
+{{- $podTemplate := include "relaycast.postgres.migrationPodTemplate" . }}
+{{- $migrations := .Values.runtime.postgres.migrations }}
+{{- /* Job spec.template is immutable: any pod template change must yield a new
+Job name, so the identity hashes the fully rendered template. */}}
+{{- $identity := printf "%s|%s" $podTemplate $migrations.identitySalt | sha256sum | trunc 8 }}
+{{- if .Values.serviceAccount.create }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "relaycast.postgres.migrateName" . }}
+  namespace: {{ .Release.Namespace | quote }}
+  labels:
+    {{- include "relaycast.labels" . | nindent 4 }}
+    app.kubernetes.io/component: migration
+automountServiceAccountToken: false
+---
+{{- end }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ printf "%s-%s" (include "relaycast.postgres.migrateName" .) $identity }}
+  namespace: {{ .Release.Namespace | quote }}
+  labels:
+    {{- include "relaycast.labels" . | nindent 4 }}
+    app.kubernetes.io/component: migration
+spec:
+  backoffLimit: {{ $migrations.backoffLimit | int64 }}
+  activeDeadlineSeconds: {{ $migrations.activeDeadlineSeconds | int64 }}
+  # 64 (configuration) and 65 (identity) need an operator fix; retries cannot help.
+  podFailurePolicy:
+    rules:
+      - action: FailJob
+        onExitCodes:
+          containerName: migrate
+          operator: In
+          values: [64, 65]
+  template: {{- $podTemplate | nindent 4 }}
+{{- end }}
