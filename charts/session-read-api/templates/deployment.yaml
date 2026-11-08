@@ -71,6 +71,9 @@ spec:
             - { name: READ_API_ORIGIN, value: {{ $c.origin | quote }} }
             - { name: READ_API_COMPLETE_SINCE, value: {{ $c.completeSince | quote }} }
             - { name: READ_API_DIRECTORY_WORKSPACES, value: {{ trim $c.directoryWorkspaces | quote }} }
+            {{- if $c.login.advertisesSync }}
+            - { name: RELAYHISTORY_SELFHOST_LOGIN_ADVERTISES_SYNC, value: "true" }
+            {{- end }}
             - { name: SEARCH_INDEX_BACKEND, value: {{ $backend | quote }} }
             - { name: ALLOW_IN_CLUSTER_HTTP, value: {{ $c.allowInClusterHttp | quote }} }
             - { name: SESSION_POSTGRES_TLS_PROFILE, value: {{ $c.postgres.tlsProfile | quote }} }

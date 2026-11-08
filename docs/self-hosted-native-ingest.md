@@ -97,13 +97,15 @@ router is supplied:
 - `POST /v1/delivery/batches`
 - `POST /v1/turns/batches`
 - `GET /v1/delivery/limits`
+- `POST /v1/auth/token/refresh` (answers 401 `refresh_not_supported`, so Desktop renews its session)
 
 Use exact paths and test the backend's wrong-method refusal. Keep delivery records
 on the reader. Selection/reset/recovery/onboarding are not working features;
 probe and custody endpoints stay private. The edge re-introspects the bearer and
 requires `rth:sync` on every request, ignoring client identity/signature headers.
-The reader's sync-login flag must be enabled only when both services actually
-serve the same origin. This PR adds no ingress. For a compatible image containing
+The reader's sync-login flag (`sessionReadApi.login.advertisesSync`, which Control
+requires before it issues a sync session) must be enabled only when both services
+actually serve the same origin, with the workspace on `sessionReadApi.directoryWorkspaces`. This PR adds no ingress. For a compatible image containing
 merged pipeline #364 (`8a075b26`), select `sessionReadApi.auth.mode=relaycontrol_only`,
 enable `sessionReadApi.auth.relaycontrol.enabled`, supply its URL and Secret reference,
 and clear both `sessionReadApi.auth.relayauth` fields. The chart emits

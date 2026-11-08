@@ -20,8 +20,14 @@ probeRuntime: bun
 origin: ""
 # Explicit coverage floor: ISO timestamp, or epoch only when coverage is proven.
 completeSince: ""
-# Exact upstream allowlist string; '*' is not a workspace authority.
+# Exact upstream allowlist string (READ_API_DIRECTORY_WORKSPACES); '*' is not a
+# workspace authority. Desktop upload needs its workspace listed here.
 directoryWorkspaces: ""
+login:
+  # Lets POST /v1/cli/login advertise rth:sync when introspection granted it.
+  # Control refuses sync sessions without it, so Desktop upload needs it true.
+  # Set true only where the ingest edge serves sync for this same origin.
+  advertisesSync: false
 # Allows plain http only to in-cluster Service names.
 allowInClusterHttp: false
 

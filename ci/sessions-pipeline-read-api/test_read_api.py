@@ -96,6 +96,13 @@ class ReadApi(unittest.TestCase):
         self.assertIn({"name": "postgres-ca", "mountPath": "/etc/session-read-postgres", "readOnly": True},
                       spec["containers"][0]["volumeMounts"])
 
+    def test_login_sync_advertisement_is_a_dedicated_default_off_value(self):
+        self.assertNotIn("RELAYHISTORY_SELFHOST_LOGIN_ADVERTISES_SYNC", self.env_of(self.render()))
+        env = self.env_of(self.render(overlay={"login": {"advertisesSync": True}}))
+        self.assertEqual(env["RELAYHISTORY_SELFHOST_LOGIN_ADVERTISES_SYNC"]["value"], "true")
+        self.assertIn("must be a boolean", self.render(overlay={"login": {"advertisesSync": "true"}}, fail=True))
+        self.assertIn("managed", self.render(overlay={"extraEnv": [{"name": "RELAYHISTORY_SELFHOST_LOGIN_ADVERTISES_SYNC", "value": "true"}]}, fail=True))
+
     def test_cors_allowlist_is_exact_and_off_by_default(self):
         self.assertNotIn("READ_API_CORS_ALLOWED_ORIGINS", self.env_of(self.render()))
         env = self.env_of(self.render(overlay={"cors": {"allowedOrigins": ["https://app.agentrelay.com", "http://localhost:3000"]}}))

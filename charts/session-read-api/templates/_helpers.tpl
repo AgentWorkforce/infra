@@ -46,6 +46,7 @@ app.kubernetes.io/part-of: sessions-pipeline
 {{- if or (not (regexMatch "^[0-9]+$" (toString $c.port))) (lt (int $c.port) 1024) (gt (int $c.port) 65535) }}{{ fail "session-read-api: port must be an integer from 1024 to 65535" }}{{ end -}}
 {{- if not (has $c.probeRuntime (list "bun" "node")) }}{{ fail "session-read-api: probeRuntime must be bun or node" }}{{ end -}}
 {{- if not (kindIs "bool" $c.allowInClusterHttp) }}{{ fail "session-read-api: allowInClusterHttp must be a boolean" }}{{ end -}}
+{{- if not (kindIs "bool" $c.login.advertisesSync) }}{{ fail "session-read-api: login.advertisesSync must be a boolean" }}{{ end -}}
 {{- /* Search and its Secret. */ -}}
 {{- $backend := required "session-read-api: search.backend requires an explicit registered adapter" (trim $c.search.backend) -}}
 {{- $clickhouse := $c.search.clickhouse -}}
@@ -103,7 +104,7 @@ app.kubernetes.io/part-of: sessions-pipeline
 {{- if not (or (regexMatch "^https://[a-z0-9]([-a-z0-9.]*[a-z0-9])?(:[0-9]{1,5})?$" $o) (regexMatch "^http://(localhost|127\\.0\\.0\\.1)(:[0-9]{1,5})?$" $o)) }}{{ fail "session-read-api: cors.allowedOrigins must be exact lowercase https origins (http only on loopback), with no wildcard, path or trailing slash" }}{{ end -}}
 {{- end -}}
 {{- /* extraEnv: nothing managed above can be overridden or hidden here. */ -}}
-{{- $reserved := list "SERVICE" "RELAYHISTORY_SELFHOST_READ_API" "RELAYHISTORY_READ_API_PORT" "RELAYHISTORY_READ_API_SECRET" "READ_API_ORIGIN" "READ_API_AUTH_MODE" "READ_API_COMPLETE_SINCE" "READ_API_DIRECTORY_WORKSPACES" "READ_API_CORS_ALLOWED_ORIGINS" "READ_API_INTERNAL_SECRET" "READ_API_INTERNAL_SECRET_PREVIOUS" "READ_API_ACCESS_TOKEN_TTL_SECONDS" "SEARCH_INDEX_BACKEND" "ALLOW_IN_CLUSTER_HTTP" "RELAYAUTH_JWKS_URL" "RELAYAUTH_ISSUER" "RELAYHISTORY_ACCEPT_RELAYCONTROL_TOKENS" "RELAYCONTROL_INTROSPECT_URL" "RELAYCONTROL_INTROSPECT_SECRET" "SESSION_POSTGRES_TLS_PROFILE" "SESSION_POSTGRES_CA_FILE" "SESSION_POSTGRES_CA_SHA256" -}}
+{{- $reserved := list "SERVICE" "RELAYHISTORY_SELFHOST_READ_API" "RELAYHISTORY_READ_API_PORT" "RELAYHISTORY_READ_API_SECRET" "READ_API_ORIGIN" "READ_API_AUTH_MODE" "READ_API_COMPLETE_SINCE" "READ_API_DIRECTORY_WORKSPACES" "READ_API_CORS_ALLOWED_ORIGINS" "RELAYHISTORY_SELFHOST_LOGIN_ADVERTISES_SYNC" "READ_API_INTERNAL_SECRET" "READ_API_INTERNAL_SECRET_PREVIOUS" "READ_API_ACCESS_TOKEN_TTL_SECONDS" "SEARCH_INDEX_BACKEND" "ALLOW_IN_CLUSTER_HTTP" "RELAYAUTH_JWKS_URL" "RELAYAUTH_ISSUER" "RELAYHISTORY_ACCEPT_RELAYCONTROL_TOKENS" "RELAYCONTROL_INTROSPECT_URL" "RELAYCONTROL_INTROSPECT_SECRET" "SESSION_POSTGRES_TLS_PROFILE" "SESSION_POSTGRES_CA_FILE" "SESSION_POSTGRES_CA_SHA256" -}}
 {{- $seen := dict -}}
 {{- $canonical := dict -}}
 {{- range $e := $c.extraEnv -}}
