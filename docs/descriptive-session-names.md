@@ -76,11 +76,24 @@ annotation. The check needs a real upgrade: it does not run under `helm template
 without `--is-upgrade`, so manifest-based pipelines must apply these values
 themselves.
 
-The Terraform examples bind object storage to `<release>-session-ingest-api`.
-A release that keeps `legacyResourceNames` still runs as `<release>-alleyoop`, so
-change `"session-ingest-api"` to `"alleyoop"` in that root's ServiceAccount list
-before applying. For a cutover to the new name, list both until the old workload
-is gone, or ingest loses storage access during the switch.
+The Terraform examples retain both default ingest identities,
+`<release>-alleyoop` and `<release>-session-ingest-api`, through the cutover.
+These are defaults, not a substitute for inspecting the installed Deployment's
+`spec.template.spec.serviceAccountName` and rendering the proposed chart with the
+operator's values. `fullnameOverride`, `nameOverride` and `serviceAccount.name`
+can change that identity. Keep every actual old and new ingest ServiceAccount
+in the root's IAM bindings until its workload is drained; removing the legacy
+principal is a separate deliberate change after verifying object-store access.
+The foundation output retains the legacy `alleyoop` field and adds
+`session_ingest_api` for the new default.
+
+Worker upgrades also refuse descriptive names unless
+`worker.legacyResourceNames: true` retains the old names, or
+`worker.acknowledgeWorkloadRename: true` explicitly confirms that the old indexer
+has been stopped. For a standalone worker chart these keys are at its root.
+Persist the acknowledgement for releases already installed with descriptive
+names. A storage pin alone does not stop two differently named indexers from
+overlapping; `Recreate` only coordinates replicas of the same Deployment.
 
 A live move to descriptive resource names requires a separate controlled
 cutover: stop the old indexer before creating its replacement (Deployment

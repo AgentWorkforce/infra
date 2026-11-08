@@ -5,7 +5,7 @@ An S3 bucket for agent-relay objects: the sessions pipeline Locker (`sessions-pi
 - All four public access blocks are on, ACLs are disabled (`BucketOwnerEnforced`), and SSE-KMS uses an S3 Bucket Key (customer key optional).
 - The bucket policy denies non-TLS requests and TLS below 1.2. Versioning is on, noncurrent versions expire after 30 days, incomplete multipart uploads are aborted after 7 days, and `force_destroy = false`.
 - `access_role`: List on the bucket (unconditional: S3 returns 404, not 403, for a missing key only with it), plus Get, Put and optional Delete on objects (optionally limited to `prefixes`), and KMS through S3 only.
-- `pod_identity_associations` binds the role to existing ServiceAccounts, for example `<release>-worker` and `<release>-session-ingest-api`. Keep `locker.credentials.mode: podIdentity` in the chart.
+- `pod_identity_associations` binds the role to existing ServiceAccounts. The compatibility examples keep `<release>-worker`, legacy `<release>-alleyoop` and descriptive `<release>-session-ingest-api`. Use the actual installed/rendered names when chart overrides differ, and retain old identities until their workloads are drained. Keep `locker.credentials.mode: podIdentity` in the chart.
 - EKS Pod Identity allows one role per ServiceAccount. Give other access (for example OpenSearch) to this same role.
 
 ```hcl
@@ -17,6 +17,7 @@ module "sessions_bucket" {
     pod_identity_associations = [
       { cluster_name = "my-eks", namespace = "agent-relay", service_account = "agent-relay-worker" },
       { cluster_name = "my-eks", namespace = "agent-relay", service_account = "agent-relay-session-ingest-api" },
+      { cluster_name = "my-eks", namespace = "agent-relay", service_account = "agent-relay-alleyoop" },
     ]
   }
 }
