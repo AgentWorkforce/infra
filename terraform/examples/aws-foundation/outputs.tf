@@ -32,3 +32,7 @@ output "cluster_security_group_id" {
   description = "Service-created SG identifier for scoped retirement inventory."
   value       = module.foundation.cluster_security_group_id
 }
+output "load_balancer_controller" {
+  description = "Helm install references for the AWS Load Balancer Controller; null while disabled."
+  value       = module.foundation.load_balancer_controller
+}

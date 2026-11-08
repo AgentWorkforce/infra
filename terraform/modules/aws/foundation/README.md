@@ -44,6 +44,12 @@ Workload SGs are attached to nodes, not to individual Pods. Database/search ingr
 
 Target application acceptance remains relaycontrol, relay-webapp, sessions-pipeline in Lambda mode on AWS, relayhistory, Relaycast with Terse, optional Relayfile and auth dependencies. Foundation outputs alone do not prove any application or restore path.
 
+## AWS Load Balancer Controller
+
+`enable_load_balancer_controller` defaults to `false`. When set, the module creates a `<cluster>-lbc` customer-managed policy from [`policies/load-balancer-controller.json`](policies/load-balancer-controller.json), a `<cluster>-lbc` role in the existing role map (path, permissions boundary, tags and Pod Identity trust scoped to this cluster, `kube-system` and `aws-load-balancer-controller`), their attachment, and the Pod Identity association. The Helm release stays outside Terraform, like every other chart here; the `load_balancer_controller` output carries the values it needs. Public and private subnets already have the `kubernetes.io/role/elb` and `kubernetes.io/role/internal-elb` tags that controller auto-discovery uses.
+
+The policy document matches upstream `docs/install/iam_policy.json` at controller v3.6.2, the app version of chart 3.6.2. Compare it with upstream whenever the chart version moves. See the [example root](../../../examples/aws-foundation#aws-load-balancer-controller) for the Helm command and the imports that accounts with an existing installation must run before their first apply.
+
 ## Pippen and cleanup boundaries
 
 `pippen` requires the expected nonempty agent/session lease and exact caller `arn:aws:sts::<account>:assumed-role/agent-session/agent-<session_id>`. Pippen allocation/status/credential delivery remains external; a mock cannot validate an active lease. Prefix must begin `pippen-sbx-`. All Terraform-owned taggable resources carry reserved `pippen:sandbox`, `pippen:agent`, `pippen:session` tags. Every created role uses `/pippen/workload/` and the existing `pippen-agent-session-boundary`; no platform boundary or permissions are widened here.
@@ -93,11 +99,14 @@ After `terraform init -backend=false`, run `python3 tests/check_routing_graph.py
 | [aws_eks_node_group.this](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/eks_node_group) | resource |
 | [aws_eks_pod_identity_association.cni](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/eks_pod_identity_association) | resource |
 | [aws_eks_pod_identity_association.ebs](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/eks_pod_identity_association) | resource |
+| [aws_eks_pod_identity_association.lbc](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/eks_pod_identity_association) | resource |
 | [aws_flow_log.this](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/flow_log) | resource |
+| [aws_iam_policy.lbc](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/iam_policy) | resource |
 | [aws_iam_role.flow](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/iam_role) | resource |
 | [aws_iam_role.this](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/iam_role) | resource |
 | [aws_iam_role_policy.ebs_kms](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/iam_role_policy) | resource |
 | [aws_iam_role_policy.flow](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/iam_role_policy) | resource |
+| [aws_iam_role_policy_attachment.lbc](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/iam_role_policy_attachment) | resource |
 | [aws_iam_role_policy_attachment.this](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/iam_role_policy_attachment) | resource |
 | [aws_internet_gateway.this](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/internet_gateway) | resource |
 | [aws_launch_template.node](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/launch_template) | resource |
@@ -143,6 +152,7 @@ After `terraform init -backend=false`, run `python3 tests/check_routing_graph.py
 | actor\_instance\_type | Region-supported x86\_64 first-party actor-host node instance type. | `string` | `"m6i.large"` | no |
 | capacity | General managed-node sizing; node count alone does not provide application HA. | `object({ min = number, desired = number, max = number })` | ```{ "desired": 2, "max": 4, "min": 2 }``` | no |
 | deletion\_protection | EKS API deletion protection; disable only through a reviewed retirement change. | `bool` | `true` | no |
+| enable\_load\_balancer\_controller | Create the AWS Load Balancer Controller IAM policy, role and Pod Identity association; the Helm release stays external. | `bool` | `false` | no |
 | instance\_type | Region-supported x86\_64 AL2023 general node instance type. | `string` | `"m6i.large"` | no |
 | name\_prefix | Product prefix; combined name must fit the data-layer contract. | `string` | `"agent-relay"` | no |
 | namespace | Application namespace reference only; null exports agent-relay-environment. | `string` | `null` | no |
@@ -167,6 +177,7 @@ After `terraform init -backend=false`, run `python3 tests/check_routing_graph.py
 | environment | Environment identity. |
 | function\_security\_group\_ids | Lambda source group with private PostgreSQL/DNS and HTTPS NAT egress. |
 | identity\_references | References for data/application-owned workload roles; no tokens or credentials. |
+| load\_balancer\_controller | Helm install references for the AWS Load Balancer Controller; null while disabled. No credentials. |
 | namespace | Application namespace reference; not created here. |
 | private\_subnet\_ids | Private subnets in two or three sorted AZs. |
 | region | AWS region. |

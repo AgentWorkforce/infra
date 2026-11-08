@@ -36,4 +36,6 @@ module "foundation" {
   release_name                = var.release_name
   pippen                      = var.pippen
   tags                        = var.tags
+
+  enable_load_balancer_controller = var.enable_load_balancer_controller
 }

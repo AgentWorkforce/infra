@@ -213,3 +213,9 @@ variable "deletion_protection" {
   type        = bool
   default     = true
 }
+
+variable "enable_load_balancer_controller" {
+  description = "Create the AWS Load Balancer Controller IAM policy, role and Pod Identity association; the Helm release stays external."
+  type        = bool
+  default     = false
+}
