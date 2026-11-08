@@ -1,4 +1,10 @@
 {{- define "agent-relay.validate" -}}
+{{- range $old, $new := dict "relay-cloud-api" "relay-control" "relay-dashboard" "relay-webapp" }}
+{{- if hasKey $.Values $old }}{{ fail (printf "values key %s was renamed to %s; translate overrides explicitly before upgrading (docs/control-webapp-chart-rename.md)" $old $new) }}{{ end }}
+{{- end }}
+{{- range $old, $new := dict "cloudApi" "control" "dashboard" "webapp" }}
+{{- if hasKey ($.Values.components | default dict) $old }}{{ fail (printf "components.%s was renamed to components.%s; translate overrides explicitly before upgrading" $old $new) }}{{ end }}
+{{- end }}
 {{- if and (dig "relaycast" true (.Values.components | default dict)) (eq (dig "credentials" "authority" "" (.Values.relaycast | default dict)) "relayauth") (not (dig "relayauth" true (.Values.components | default dict))) }}
 {{- fail "relaycast.credentials.authority=relayauth requires components.relayauth=true: RelayAuth is the ar_ credential authority that pushes ar_ws_ keys into Relaycast" }}
 {{- end }}
@@ -86,13 +92,13 @@ durable-actors: the control plane refuses a publicUrl with a path and issues act
 {{- if $single }}
 {{- if or (gt (len $single) 253) (regexMatch "(^|\\.)[0-9]+$" $single) (not (regexMatch "^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\\.)*[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$" $single)) }}{{ fail "global.singleHost.host must be a lowercase DNS hostname (no scheme, port or path; labels of 1-63 characters that start and end with a letter or digit, not an IP address)" }}{{ end -}}
 {{- $components := .Values.components | default dict -}}
-{{- $cloudApi := index .Values "relay-cloud-api" | default dict -}}
+{{- $cloudApi := index .Values "relay-control" | default dict -}}
 {{- $sessions := index .Values "sessions-pipeline" | default dict -}}
 {{- $urls := list
   (list "relaycast" "relaycast.baseUrl" (dig "baseUrl" "" (.Values.relaycast | default dict)) (dig "relaycast" true $components))
-  (list "relaycast" "relay-cloud-api.services.relaycastPublicUrl" (dig "services" "relaycastPublicUrl" "" $cloudApi) (dig "cloudApi" true $components))
+  (list "relaycast" "relay-control.services.relaycastPublicUrl" (dig "services" "relaycastPublicUrl" "" $cloudApi) (dig "control" true $components))
   (list "relayhistory" "relayhistory.relayauth.historyOrigin" (dig "relayauth" "historyOrigin" "" (.Values.relayhistory | default dict)) (dig "relayhistory" true $components))
-  (list "relayhistory" "relay-cloud-api.services.relayhistoryPublicUrl" (dig "services" "relayhistoryPublicUrl" "" $cloudApi) (dig "cloudApi" true $components))
+  (list "relayhistory" "relay-control.services.relayhistoryPublicUrl" (dig "services" "relayhistoryPublicUrl" "" $cloudApi) (dig "control" true $components))
   (list "relayhistory" "sessions-pipeline.alleyoop.auth.historyOrigin" (dig "alleyoop" "auth" "historyOrigin" "" $sessions) (dig "sessionsPipeline" true $components))
   (list "durable-actors" "durable-actors.publicUrl" (dig "publicUrl" "" (index .Values "durable-actors" | default dict)) (dig "durableActors" false $components))
 -}}

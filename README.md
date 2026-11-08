@@ -1,5 +1,7 @@
 # AgentWorkforce Infrastructure
 
+Public chart names and existing-release compatibility: [Control/Webapp rename](docs/control-webapp-chart-rename.md).
+
 Terraform modules and Helm charts for customer-owned Agent Relay installations on AWS and GCP. Terraform provisions cloud foundations and managed services; Helm installs the application workloads.
 
 - [Terraform modules and examples](terraform/README.md): network, Kubernetes, PostgreSQL, object storage, optional search and functions.
@@ -19,8 +21,8 @@ and the release gate’s `helm-charts` license-decision ID retain their original
 | Chart | Description |
 |-------|-------------|
 | [agent-relay](charts/agent-relay) | Self-hosted Agent Relay suite umbrella — relaycast, relayauth, sessions-pipeline, relayhistory, control-plane API, dashboard (one GKE Ingress, no HA claim) |
-| [relay-cloud-api](charts/relay-cloud-api) | Self-host control-plane API — organizations, workspaces, device auth; existing-Secret file mounts only, separate migration Job |
-| [relay-dashboard](charts/relay-dashboard) | Static self-host dashboard — nginx SPA calling same-origin `/cloud/api` |
+| [relay-control](charts/relay-control) | Self-host control-plane API — organizations, workspaces, device auth; existing-Secret file mounts only, separate migration Job |
+| [relay-webapp](charts/relay-webapp) | Static self-host dashboard — nginx SPA calling same-origin `/cloud/api` |
 | [relayhistory](charts/relayhistory) | Relay History data plane — session delivery, search, replay on its own Postgres database (digest-pinned proof image) |
 | [relaycast](charts/relaycast) | Portable self-hosted Relaycast core — realtime agent communication with single-writer SQLite persistence |
 | [relayfile](charts/relayfile) | Relayfile server — single Go binary, HTTP on :8080, Postgres-backed in production |
@@ -427,8 +429,8 @@ Run the same checks locally with `scripts/ci/charts.sh static` and `scripts/ci/c
 ## Local kind profiles
 
 The local stack uses the existing `agent-relay` umbrella. Product names are
-**relaycontrol** (`relay-cloud-api` chart, `selfhost-api` image) and
-**relay-app** (`relay-dashboard` chart/image). The deprecated Cloud repository
+**relaycontrol** (`relay-control` chart, `selfhost-api` image) and
+**relay-app** (`relay-webapp` chart/image). The deprecated Cloud repository
 is not a dependency. These profiles are development/proof fixtures, separate
 from the customer release and AWS/GCP managed-infrastructure proofs.
 
@@ -644,7 +646,7 @@ a database row. See [captured evidence](ci/agent-relay/kind/evidence.md).
 | Control image and MCP endpoint | PASS for the optional `kind-up-local-control` variant: pinned source `1f08cb6`, verified native manifest transport, both public MCP aliases, nineteen-tool discovery, real workspace binding and auth/origin rejection ([raw receipts](ci/agent-relay/kind/evidence.md)). The catalog default remains source `9b80b04` and reports MCP pending. This does not claim agent launch/release or every MCP tool backend. No image publication is performed. |
 | Custom Desktop package for ar-lap | layered-relay-desktop: target build/artifact and real browser/Desktop handoff plus courier-to-app trace are not qualified by the infra proof. Device auth and site TLS endpoint checks do not substitute for that custom application run. |
 | Agent launch/release | layered-control: API unimplemented; fleet node claim/release is not this proof. |
-| Signed offline license enforcement | layered-control: design only. `relay-cloud-api.license.existingSecret/key` reserves the `SELFHOST_LICENSE_FILE` mount; the file slot does not verify signatures or gate add-ons. |
+| Signed offline license enforcement | layered-control: design only. `relay-control.license.existingSecret/key` reserves the `SELFHOST_LICENSE_FILE` mount; the file slot does not verify signatures or gate add-ons. |
 | relayfile control-token filesystem scopes | layered-relayfile + layered-control: current introspection lacks `fs:*`; use real temporary RelayAuth for now. Dev issuer tokens do not count as acceptance evidence. |
 | Native add-on runtime proof | infra-kind-stack + Flows owner: source build supports native runtime selection; full Job/CronJob and relayfile roundtrip remain unverified until the shared core and signed-license dependencies are resolved. |
 

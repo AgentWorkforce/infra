@@ -6,8 +6,8 @@ components:
   relayauth: true
   sessionsPipeline: true
   relayhistory: true
-  cloudApi: true
-  dashboard: true
+  control: true
+  webapp: true
   relayflows: false
   # TerseAI durable-actors control plane (vendored charts/durable-actors).
   # Only useful with an actor-mode consumer: relaycast.runtime.backend or
@@ -19,8 +19,8 @@ components:
 
 # Single-host mode (off when empty): the dashboard and the control API share
 # this one host. The dashboard is served at /, the API under /cloud/api,
-# /login and /api, and relay-cloud-api.publicUrl, relay-dashboard
-# runtime.publicUrl and relay-dashboard ingress.host are derived from it
+# /login and /api, and relay-control.publicUrl, relay-webapp
+# runtime.publicUrl and relay-webapp ingress.host are derived from it
 # (https://<host>), so leave those empty. There is no api host. Relaycast,
 # Relay History, Relayfile and durable-actors cannot run under a path prefix
 # without app changes, so they keep their own hosts (gkeIngress.hosts.cast,
@@ -54,7 +54,7 @@ gkeIngress:
     dashboard: { serviceName: "", servicePort: 8080 }
     # timeoutSec (>= 60) goes into the api BackendConfig <name>-api (name
     # truncated to 59 characters first); the flows worker queue is a
-    # long-lived SSE stream. Set relay-cloud-api.service.backendConfig to
+    # long-lived SSE stream. Set relay-control.service.backendConfig to
     # <name>-api; the chart renders the backend-config annotation from it.
     api: { serviceName: "", servicePort: 80, timeoutSec: 3600 }
     # timeoutSec (60-86400) goes into the cast BackendConfig <name>-cast (name
@@ -79,13 +79,13 @@ relayauth:
     enabled: false
 sessions-pipeline: {}
 relayhistory: {}
-# relay-cloud-api: see charts/relay-cloud-api/values.yaml. encryption.keyId is
+# relay-control: see charts/relay-control/values.yaml. encryption.keyId is
 # required; optional: encryption.previousKeyId, secretKeys.previousEncryptionKey,
 # secretKeys.internalToken, secretKeys.telemetryInstallKey, dashboardUrl,
 # flows.*, telemetry.* (telemetry.level defaults to errors, effective once the
 # install is registered with installId, install key and endpoint).
-relay-cloud-api: {}
-relay-dashboard: {}
+relay-control: {}
+relay-webapp: {}
 # Opt-in only: enabling components.relayflows without configuring this block
 # renders a standalone Job that fails for lack of a flow source (or a
 # cloudWorker Deployment that cannot enroll). Set mode, a flow source

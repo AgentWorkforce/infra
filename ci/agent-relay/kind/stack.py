@@ -516,6 +516,21 @@ class Stack:
             time.sleep(2)
         raise StackError(f"Job {name} did not complete in {seconds}s")
 
+    def require_control_webapp_layout(self):
+        """A public-name change must not orphan the existing QA resources."""
+        resources = json.loads(self.k("get", "deployments,services", "-o", "json").stdout)
+        legacy = []
+        for resource in resources.get("items", []):
+            meta = resource.get("metadata", {})
+            name = meta.get("name", "")
+            app = meta.get("labels", {}).get("app.kubernetes.io/name", "")
+            if name in ("relaycontrol", "relay-app") or app in ("relay-cloud-api", "relay-dashboard"):
+                legacy.append(resource.get("kind", "resource") + "/" + name)
+        if legacy:
+            raise StackError("existing Control/Webapp layout requires a reviewed identity-preserving upgrade; "
+                             "kind-up refuses before changing ready.json, images or cluster resources: "
+                             + ", ".join(sorted(legacy)))
+
     def up(self):
         for tool in ("docker", "kind", "kubectl", "helm", "openssl", "git"):
             if not shutil.which(tool):
@@ -526,6 +541,7 @@ class Stack:
         # preparing any images/resources; cluster() checks again before use.
         if self.name in self.cmd(["kind", "get", "clusters"], timeout=30).stdout.splitlines():
             self.require_owned_cluster()
+            self.require_control_webapp_layout()
         ready = self.state / "ready.json"
         if ready.exists():
             ready.unlink()
@@ -574,17 +590,17 @@ class Stack:
         for d in docs:
             if d["kind"] in ("Deployment", "Service") and d["metadata"]["name"] in ("relaycast", "relayauth"):
                 self.apply(d, chart=True)
-        self.migration(docs, "relay-cloud-api")
+        self.migration(docs, "relay-control")
         for d in docs:
-            if d["kind"] in ("Deployment", "Service") and d["metadata"]["name"] == "relaycontrol":
+            if d["kind"] in ("Deployment", "Service") and d["metadata"]["name"] == "relay-control":
                 self.apply(d, chart=True)
-        self.k("rollout", "status", "deployment/relaycontrol", "--timeout=180s", timeout=210)
+        self.k("rollout", "status", "deployment/relay-control", "--timeout=180s", timeout=210)
         # Query the real first-boot records, not a fixture organization id.
         bootstrap = (ROOT / "ci/agent-relay/kind/bootstrap.mjs").read_text()
-        self.k("exec", "-i", "deploy/relaycontrol", "--", "sh", "-c", "cat > /tmp/kind-bootstrap.mjs", data=bootstrap)
-        bootstrap_name = next((e["value"] for d in docs if d["kind"] == "Deployment" and d["metadata"]["name"] == "relaycontrol"
+        self.k("exec", "-i", "deploy/relay-control", "--", "sh", "-c", "cat > /tmp/kind-bootstrap.mjs", data=bootstrap)
+        bootstrap_name = next((e["value"] for d in docs if d["kind"] == "Deployment" and d["metadata"]["name"] == "relay-control"
                               for e in pod_spec(d)["containers"][0]["env"] if e["name"] == "SELFHOST_BOOTSTRAP_WORKSPACE_NAME"), "Default")
-        ids = json.loads(self.k("exec", "deploy/relaycontrol", "--", "node", "/tmp/kind-bootstrap.mjs", bootstrap_name).stdout)
+        ids = json.loads(self.k("exec", "deploy/relay-control", "--", "node", "/tmp/kind-bootstrap.mjs", bootstrap_name).stdout)
         private_json(self.state / "tenant.json", ids)
         values = json.loads(self.overrides.read_text()) if self.overrides.exists() else {}
         private_json(self.overrides, tenant_values(values, ids, self.profile, self.arch, self.recipe_hash()))

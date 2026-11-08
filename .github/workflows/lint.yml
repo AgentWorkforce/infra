@@ -99,6 +99,7 @@ jobs:
       - name: Local kind profile and trust contract tests (offline)
         run: |
           python3 -m pip install -r ci/agent-relay/kind/requirements.txt
+          python3 ci/agent-relay/test_control_webapp_names.py -v
           python3 ci/agent-relay/kind/test_stack.py -v
           python3 ci/agent-relay/kind/test_ownership.py -v
           python3 ci/agent-relay/kind/test_control.py -v

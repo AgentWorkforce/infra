@@ -1,7 +1,7 @@
 replicaCount: 1
 
 image:
-  repository: ghcr.io/agentworkforce/relay-dashboard
+  repository: ghcr.io/agentworkforce/relay-webapp
   # Required. Images are never selected by a mutable tag.
   digest: ""
   pullPolicy: IfNotPresent
@@ -33,8 +33,8 @@ customerProfile: {}
 
 # A leaf Ingress can proxy /cloud/api to this Service. The GKE proof uses the
 # umbrella Ingress instead and leaves this ingress disabled. Required when
-# ingress.enabled=true: the relay-cloud-api Service name in this namespace,
-# i.e. its fullname (<release>-relay-cloud-api unless fullnameOverride is set).
+# ingress.enabled=true: the relay-control Service name in this namespace,
+# i.e. its fullname (<release>-relay-control unless fullnameOverride is set).
 api:
   serviceName: ""
   servicePort: 80

@@ -121,8 +121,8 @@ class ReadApi(unittest.TestCase):
         self.assertIn("Skipped: 0", result.stdout)
 
     def control(self, *args, fail=False):
-        command = ["helm", "template", "test", str(ROOT / "charts/relay-cloud-api"), "-n", "ci", "-f",
-                   str(ROOT / "charts/relay-cloud-api/ci/default-values.yaml"), *args]
+        command = ["helm", "template", "test", str(ROOT / "charts/relay-control"), "-n", "ci", "-f",
+                   str(ROOT / "charts/relay-control/ci/default-values.yaml"), *args]
         result = subprocess.run(command, capture_output=True, text=True)
         if fail:
             self.assertNotEqual(result.returncode, 0)

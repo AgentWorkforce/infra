@@ -1,4 +1,6 @@
-# relay-cloud-api
+# relay-control
+
+Public chart names and existing-release compatibility: [Control/Webapp rename](../../docs/control-webapp-chart-rename.md).
 
 Maintained packaging for `packages/selfhost-api` from the Cloud repository.
 It provides the minimal self-host control API and does not package the full
@@ -119,8 +121,8 @@ complete before considering a rollout successful; the API stays unready while
 its database schema is unavailable.
 
 ```sh
-helm lint --strict charts/relay-cloud-api \
-  -f charts/relay-cloud-api/ci/default-values.yaml
+helm lint --strict charts/relay-control \
+  -f charts/relay-control/ci/default-values.yaml
 ```
 
 ### Compatible caller-token images

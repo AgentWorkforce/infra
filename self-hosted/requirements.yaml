@@ -119,23 +119,23 @@ profiles:
     values_file: ci/default-values.yaml
     install: helm install relayhistory agentworkforce/relayhistory -f values.yaml --set image.digest=sha256:<digest>
     summary: Single-replica GCP proof shape backed by operator-managed PostgreSQL 17; no HA claim.
-  - id: relay-cloud-api
+  - id: relay-control
     title: Self-host control-plane API
-    chart: relay-cloud-api
+    chart: relay-control
     values_file: ci/default-values.yaml
-    install: helm install relay-cloud-api agentworkforce/relay-cloud-api -f values.yaml --set image.digest=sha256:<digest>
+    install: helm install relay-control agentworkforce/relay-control -f values.yaml --set image.digest=sha256:<digest>
     summary: Single-replica self-host API with normal migration Job and existing Secrets only; no HA claim.
-  - id: relay-dashboard
+  - id: relay-webapp
     title: Self-host dashboard
-    chart: relay-dashboard
+    chart: relay-webapp
     values_file: ci/default-values.yaml
-    install: helm install relay-dashboard agentworkforce/relay-dashboard -f values.yaml --set image.digest=sha256:<digest>
-    summary: Static dashboard whose ingress sends same-origin /cloud/api to relay-cloud-api.
+    install: helm install relay-webapp agentworkforce/relay-webapp -f values.yaml --set image.digest=sha256:<digest>
+    summary: Static dashboard whose ingress sends same-origin /cloud/api to relay-control.
   - id: agent-relay
     title: GCP messaging and Sessions suite
     chart: agent-relay
     values_file: [values-gcp-proof.yaml, values-gcp-proof-live.yaml, ci/gcp-proof-values.yaml]
-    install: helm install agent-relay agentworkforce/agent-relay -f values-gcp-proof.yaml -f values-gcp-proof-live.yaml --set relay-cloud-api.image.digest=sha256:<digest>
+    install: helm install agent-relay agentworkforce/agent-relay -f values-gcp-proof.yaml -f values-gcp-proof-live.yaml --set relay-control.image.digest=sha256:<digest>
     summary: Relaycast, RelayAuth, Sessions Pipeline, Relay History, control-plane API and dashboard; Relayflows is opt-in via components.relayflows, Relayfile is excluded.
   - id: relayfile
     title: Relayfile server
@@ -415,9 +415,20 @@ compatibility:
       images:
         relayauth: { repository: ghcr.io/agentworkforce/relayauth, digest: sha256:eb71daa28e30eb7305f666d0bccc5a4002e53e8a574e3c4c32163d907a1b71df }
       notes: superseded by 0.1.1.
-    - id: agent-relay-0.3.17
+    - id: agent-relay-0.5.0
       status: unreleased
       current: true
+      charts: { agent-relay: 0.5.0, relayhistory: 0.1.1, relay-control: 0.3.0, relay-webapp: 0.2.0 }
+      app_versions: { agent-relay: 0.1.0, relayhistory: 0.1.0, relay-control: 0.1.0, relay-webapp: 0.1.0 }
+      depends:
+        agent-relay: { relaycast: 0.3.5, relayauth: 0.1.4, sessions-pipeline: 0.6.2, relayhistory: 0.1.1, relay-control: 0.3.0, relay-webapp: 0.2.0, relayflows: 0.2.5, durable-actors: 0.14.6-awf.1, relayfile: 0.2.2 }
+      images:
+        relayhistory: { repository: ghcr.io/agentworkforce/relayhistory, digest_required: true }
+        relay-control: { repository: ghcr.io/agentworkforce/relay-control, digest_required: true }
+        relay-webapp: { repository: ghcr.io/agentworkforce/relay-webapp, digest_required: true }
+      notes: 'Source-only Control/Webapp public chart rename. New chart defaults require verified digests under relay-control and relay-webapp; real profile image coordinates remain explicitly pinned to their existing repositories until those publishers supply new receipts. Existing releases must translate values keys and preserve names/selectors/DNS with a reviewed compatibility overlay. Kind refuses the old Control/Webapp layout before mutation. No RelayAuth or standalone History removal, publisher dispatch, rollout or new runtime proof is included; the sessions-native replacement remains dependency-gated.'
+    - id: agent-relay-0.3.17
+      status: planned
       charts: { agent-relay: 0.3.17, relayhistory: 0.1.1, relay-cloud-api: 0.2.7, relay-dashboard: 0.1.3 }
       app_versions: { agent-relay: 0.1.0, relayhistory: 0.1.0, relay-cloud-api: 0.1.0, relay-dashboard: 0.1.0 }
       depends:
@@ -426,7 +437,7 @@ compatibility:
         relayhistory: { repository: ghcr.io/agentworkforce/relayhistory, digest_required: true }
         relay-cloud-api: { repository: ghcr.io/agentworkforce/selfhost-api, digest_required: true }
         relay-dashboard: { repository: ghcr.io/agentworkforce/relay-dashboard, digest_required: true }
-      notes: 'Bundles sessions-pipeline 0.6.2 default-off read API plumbing and relay-cloud-api 0.2.7 legacy-client env omission. Supersedes the untagged 0.3.16 source and retains its kind core/addons relay-webapp b944a979 image pin at sha256:e4de2c628e72e906e809fd32e6192baa7c93a404eb019964cd7706805e316e6a; no new UI/runtime proof is claimed. Includes unset OAuth/raw FILE-alias reservation and strict valueFrom source validation from the reviewed extraEnv guard proposal. No profile enables the component or reroutes relaycontrol. Compatible runtime assembly and image remain upstream dependencies. Existing kind evidence belongs to its pinned base revision, not this new chart version.'
+      notes: 'Historical untagged source proposal at d8bbff820a6541593fa2e889cbf14e3aa1f0baa7, superseded by the public-name source row; not a published or current release. Bundles sessions-pipeline 0.6.2 default-off read API plumbing and relay-cloud-api 0.2.7 legacy-client env omission. Supersedes the untagged 0.3.16 source and retains its kind core/addons relay-webapp b944a979 image pin at sha256:e4de2c628e72e906e809fd32e6192baa7c93a404eb019964cd7706805e316e6a; no new UI/runtime proof is claimed. Includes unset OAuth/raw FILE-alias reservation and strict valueFrom source validation from the reviewed extraEnv guard proposal. No profile enables the component or reroutes relaycontrol. Compatible runtime assembly and image remain upstream dependencies. Existing kind evidence belongs to its pinned base revision, not this new chart version.'
     - id: agent-relay-0.3.12
       status: shipped
       charts: { agent-relay: 0.3.12, relayhistory: 0.1.1, relay-cloud-api: 0.2.4, relay-dashboard: 0.1.3 }
@@ -1650,7 +1661,7 @@ entries:
   # =========================================================================
   # Self-host control plane, History, dashboard and GCP composition
   # =========================================================================
-  - id: opt.relay-cloud-api.license-file
+  - id: opt.relay-control.license-file
     kind: option
     title: Offline license file mount (verification pending upstream)
     description: |
@@ -1658,10 +1669,10 @@ entries:
       SELFHOST_LICENSE_FILE. Empty existingSecret keeps the slot unmounted.
       The chart implements a file mount, not signature verification or add-on
       enforcement. Those features are owned by relaycontrol and are pending.
-    chart: relay-cloud-api
+    chart: relay-control
     values: [license.existingSecret, license.key]
     env: [SELFHOST_LICENSE_FILE]
-    profiles: [relay-cloud-api]
+    profiles: [relay-control]
     status: shipped
     provided_by: operator
     default: disabled
@@ -1673,10 +1684,10 @@ entries:
           - { key: license, key_path: license.key }
     verify: With license.existingSecret set, only the API mounts that Secret and SELFHOST_LICENSE_FILE; the migration Job receives neither. Do not infer license enforcement from a successful render.
     sources:
-      - charts/relay-cloud-api/values.yaml
-      - charts/relay-cloud-api/templates/deployment.yaml
+      - charts/relay-control/values.yaml
+      - charts/relay-control/templates/deployment.yaml
 
-  - id: req.relay-cloud-api.config
+  - id: req.relay-control.config
     kind: requirement
     title: Self-host control-plane existing Secret and service configuration
     description: |
@@ -1687,7 +1698,7 @@ entries:
       without it. The migration owner URL is projected only into the migration
       Job. Internal service origins are explicit chart values; Relaycast and
       RelayHistory public origins must use public multi-label HTTPS DNS.
-    chart: relay-cloud-api
+    chart: relay-control
     values: [publicUrl, "services.*", existingSecret, "secretKeys.*", "database.runtimeRole", encryption.keyId, ingress.tls, imagePullSecrets]
     env:
       - SELFHOST_ENCRYPTION_KEY_ID
@@ -1703,7 +1714,7 @@ entries:
       - RELAYCAST_PUBLIC_URL
       - RELAYHISTORY_URL
       - RELAYHISTORY_PUBLIC_URL
-    profiles: [relay-cloud-api]
+    profiles: [relay-control]
     status: shipped
     provided_by: operator
     secrets:
@@ -1721,10 +1732,10 @@ entries:
         note: optional registry pull Secret
     verify: helm template fails without existingSecret, encryption.keyId, immutable image digest or valid public service origins; the migration Job invokes migrate-cli.js directly and projects only database-migrations-url
     sources:
-      - "charts/relay-cloud-api/values.yaml"
-      - "charts/relay-cloud-api/templates/_helpers.tpl"
+      - "charts/relay-control/values.yaml"
+      - "charts/relay-control/templates/_helpers.tpl"
 
-  - id: opt.relay-cloud-api.encryption-rotation
+  - id: opt.relay-control.encryption-rotation
     kind: option
     title: Previous encryption key during a key rotation
     description: |
@@ -1732,10 +1743,10 @@ entries:
       with the active one. encryption.previousKeyId and
       secretKeys.previousEncryptionKey are set together or not at all (the API
       refuses one without the other); the id must differ from encryption.keyId.
-    chart: relay-cloud-api
+    chart: relay-control
     values: [encryption.previousKeyId, secretKeys.previousEncryptionKey]
     env: [SELFHOST_ENCRYPTION_PREVIOUS_KEY_ID, SELFHOST_ENCRYPTION_PREVIOUS_KEY_FILE]
-    profiles: [relay-cloud-api]
+    profiles: [relay-control]
     status: shipped
     provided_by: operator
     default: none
@@ -1749,10 +1760,10 @@ entries:
           - { key: "<operator-chosen, no default>", key_path: secretKeys.previousEncryptionKey, optional: "only during a key rotation, with encryption.previousKeyId" }
     verify: helm template fails when only one of encryption.previousKeyId and secretKeys.previousEncryptionKey is set
     sources:
-      - "charts/relay-cloud-api/values.yaml"
-      - "charts/relay-cloud-api/templates/_helpers.tpl"
+      - "charts/relay-control/values.yaml"
+      - "charts/relay-control/templates/_helpers.tpl"
 
-  - id: opt.relay-cloud-api.internal-token
+  - id: opt.relay-control.internal-token
     kind: option
     title: Internal service token for /internal/v1
     description: |
@@ -1761,10 +1772,10 @@ entries:
       integration tokens through it, and in-cluster agents file telemetry
       issue reports with it. Unset disables /internal/v1. The agent-relay GKE
       ingress denies /internal on the api host.
-    chart: relay-cloud-api
+    chart: relay-control
     values: [secretKeys.internalToken]
     env: [SELFHOST_INTERNAL_TOKEN_FILE]
-    profiles: [relay-cloud-api]
+    profiles: [relay-control]
     status: shipped
     provided_by: operator
     default: disabled
@@ -1776,13 +1787,13 @@ entries:
         name_paths: [existingSecret]
         keys:
           - { key: "<operator-chosen, no default>", key_path: secretKeys.internalToken, optional: "enables /internal/v1 (flows env delivery, telemetry issue reports)" }
-    verify: kubectl exec deploy/<release>-relay-cloud-api (or the fullnameOverride, relay-cloud-api in the agent-relay GCP profiles) -- sh -c 'test "$(tr -d "\r\n" < "$SELFHOST_INTERNAL_TOKEN_FILE" | wc -c)" -ge 32' (expanded inside the pod; at least 32 bytes); curl https://<api host>/internal/v1/... is refused at the edge
+    verify: kubectl exec deploy/<release>-relay-control (or the fullnameOverride, relay-control in the agent-relay GCP profiles) -- sh -c 'test "$(tr -d "\r\n" < "$SELFHOST_INTERNAL_TOKEN_FILE" | wc -c)" -ge 32' (expanded inside the pod; at least 32 bytes); curl https://<api host>/internal/v1/... is refused at the edge
     sources:
-      - "charts/relay-cloud-api/values.yaml"
-      - "charts/relay-cloud-api/templates/_helpers.tpl"
+      - "charts/relay-control/values.yaml"
+      - "charts/relay-control/templates/_helpers.tpl"
       - "charts/agent-relay/templates/gke-ingress.yaml"
 
-  - id: opt.relay-cloud-api.dashboard-url
+  - id: opt.relay-control.dashboard-url
     kind: option
     title: Dashboard URL for OAuth callbacks and flow run links
     description: |
@@ -1790,10 +1801,10 @@ entries:
       back and where mirrored flow runs build their runUrl. Unset, the API uses
       publicUrl + "/", which is wrong when the dashboard has its own host (the
       GKE profiles serve it on the root host).
-    chart: relay-cloud-api
+    chart: relay-control
     values: [dashboardUrl]
     env: [SELFHOST_DASHBOARD_URL]
-    profiles: [relay-cloud-api]
+    profiles: [relay-control]
     status: shipped
     provided_by: operator
     default: publicUrl + "/"
@@ -1802,10 +1813,10 @@ entries:
       - { value: dashboard origin }
     verify: helm template renders SELFHOST_DASHBOARD_URL only when dashboardUrl is set and fails on credentials, query or fragment
     sources:
-      - "charts/relay-cloud-api/values.yaml"
-      - "charts/relay-cloud-api/templates/_helpers.tpl"
+      - "charts/relay-control/values.yaml"
+      - "charts/relay-control/templates/_helpers.tpl"
 
-  - id: opt.relay-cloud-api.bootstrap
+  - id: opt.relay-control.bootstrap
     kind: option
     title: First-boot organization, owner and default workspace
     description: |
@@ -1820,10 +1831,10 @@ entries:
       is made an owner once. Requires dashboardUrl outside single-host mode and
       a selfhost-api image from relaycontrol #13 or later. Without it the
       organization is created by hand with the bootstrap token.
-    chart: relay-cloud-api
+    chart: relay-control
     values: [bootstrap.*, secretKeys.relaycastInternalSecret]
     env: [SELFHOST_BOOTSTRAP_ORG_NAME, SELFHOST_BOOTSTRAP_ADMIN_EMAIL, SELFHOST_BOOTSTRAP_ADMIN_NAME, SELFHOST_BOOTSTRAP_WORKSPACE_NAME, RELAYCAST_INTERNAL_SECRET_FILE]
-    profiles: [relay-cloud-api]
+    profiles: [relay-control]
     status: shipped
     provided_by: operator
     default: disabled (manual bootstrap with the bootstrap token)
@@ -1835,12 +1846,12 @@ entries:
         name_paths: [existingSecret]
         keys:
           - { key: "<operator-chosen, e.g. relaycast-internal-secret>", key_path: secretKeys.relaycastInternalSecret, optional: "required with bootstrap.orgName; equal to Relaycast's internal secret" }
-    verify: 'kubectl logs deploy/<release>-relay-cloud-api shows "bootstrap: organization created" and "bootstrap: default workspace created" once; GET /api/v1/organizations with the bootstrap token lists the organization and its workspace (bootstrap.workspaceName, Default when empty)'
+    verify: 'kubectl logs deploy/<release>-relay-control shows "bootstrap: organization created" and "bootstrap: default workspace created" once; GET /api/v1/organizations with the bootstrap token lists the organization and its workspace (bootstrap.workspaceName, Default when empty)'
     sources:
-      - "charts/relay-cloud-api/values.yaml"
-      - "charts/relay-cloud-api/templates/_helpers.tpl"
+      - "charts/relay-control/values.yaml"
+      - "charts/relay-control/templates/_helpers.tpl"
 
-  - id: opt.relay-cloud-api.sign-in
+  - id: opt.relay-control.sign-in
     kind: option
     title: Sign-in methods (OIDC, email links), invites and auto-join
     description: |
@@ -1855,10 +1866,10 @@ entries:
       (default 168). Owners and admins invite from Settings > Members. Without
       any method only the operator break-glass (bootstrap token approving a
       /login device code) works. auth.oidc.allowHttpIssuer is for tests only.
-    chart: relay-cloud-api
+    chart: relay-control
     values: [auth.*, secretKeys.oidcClientSecret]
     env: [SELFHOST_OIDC_ISSUER, SELFHOST_OIDC_CLIENT_ID, SELFHOST_OIDC_CLIENT_SECRET_FILE, SELFHOST_OIDC_ALLOWED_DOMAINS, SELFHOST_OIDC_DISPLAY_NAME, SELFHOST_OIDC_SCOPES, SELFHOST_OIDC_REDIRECT_URL, SELFHOST_OIDC_ALLOW_HTTP_ISSUER, SELFHOST_EMAIL_LOGIN, SELFHOST_AUTO_JOIN_DOMAINS, SELFHOST_INVITE_TTL_HOURS]
-    profiles: [relay-cloud-api]
+    profiles: [relay-control]
     status: shipped
     provided_by: operator
     default: none (operator break-glass only)
@@ -1874,10 +1885,10 @@ entries:
           - { key: "<operator-chosen, e.g. oidc-client-secret>", key_path: secretKeys.oidcClientSecret, optional: "required with auth.oidc.issuer" }
     verify: GET https://<root host>/login shows "Continue with <displayName>"; the admin email signs in and GET /cloud/api/v1/auth/whoami reports role owner
     sources:
-      - "charts/relay-cloud-api/values.yaml"
-      - "charts/relay-cloud-api/templates/_helpers.tpl"
+      - "charts/relay-control/values.yaml"
+      - "charts/relay-control/templates/_helpers.tpl"
 
-  - id: opt.relay-cloud-api.smtp
+  - id: opt.relay-control.smtp
     kind: option
     title: SMTP for invite emails and sign-in links
     description: |
@@ -1885,10 +1896,10 @@ entries:
       secretKeys.smtpPassword) lets the API email invites and, with
       auth.emailLink.enabled, sign-in links. Without it invites still work:
       owners copy the single-use link from Settings > Members.
-    chart: relay-cloud-api
+    chart: relay-control
     values: [smtp.*, secretKeys.smtpPassword]
     env: [SELFHOST_SMTP_HOST, SELFHOST_SMTP_PORT, SELFHOST_SMTP_SECURITY, SELFHOST_SMTP_USERNAME, SELFHOST_SMTP_PASSWORD_FILE, SELFHOST_EMAIL_FROM]
-    profiles: [relay-cloud-api]
+    profiles: [relay-control]
     status: shipped
     provided_by: operator
     default: none (copy invite links)
@@ -1902,10 +1913,10 @@ entries:
           - { key: "<operator-chosen, e.g. smtp-password>", key_path: secretKeys.smtpPassword, optional: "required with smtp.username" }
     verify: an invite created in Settings > Members reports "Invitation emailed to <email>" (emailDelivery sent)
     sources:
-      - "charts/relay-cloud-api/values.yaml"
-      - "charts/relay-cloud-api/templates/_helpers.tpl"
+      - "charts/relay-control/values.yaml"
+      - "charts/relay-control/templates/_helpers.tpl"
 
-  - id: opt.relay-cloud-api.integrations
+  - id: opt.relay-control.integrations
     kind: option
     title: Integration OAuth apps for just-in-time connects
     description: |
@@ -1922,14 +1933,14 @@ entries:
       SELFHOST_OAUTH_<PROVIDER>_CLIENT_ID, SELFHOST_OAUTH_<PROVIDER>_CLIENT_SECRET_FILE,
       SELFHOST_OAUTH_<PROVIDER>_SCOPES. This needs a selfhost-api image with
       operator OAuth apps (relaycontrol #12 or later).
-    chart: relay-cloud-api
+    chart: relay-control
     values: [integrations]
     secrets:
       - name: <operator-chosen, integrations.<provider>.existingSecret>
         keys:
           - { key: client-id, optional: false, note: "default name; override with integrations.<provider>.clientIdKey" }
           - { key: client-secret, optional: false, note: "default name; override with integrations.<provider>.clientSecretKey" }
-    profiles: [relay-cloud-api]
+    profiles: [relay-control]
     status: shipped
     provided_by: operator
     default: none (no integration can be connected until its app is configured)
@@ -1938,11 +1949,11 @@ entries:
       - { value: one entry per provider with existingSecret }
     verify: helm template renders the client ID from secretKeyRef and mounts only the client secret, and fails on a missing existingSecret, an inline clientId/clientSecret (unsupported field), equal key names, the migration credential key, or an invalid provider id
     sources:
-      - "charts/relay-cloud-api/values.yaml"
-      - "charts/relay-cloud-api/templates/_helpers.tpl"
-      - "charts/relay-cloud-api/templates/deployment.yaml"
+      - "charts/relay-control/values.yaml"
+      - "charts/relay-control/templates/_helpers.tpl"
+      - "charts/relay-control/templates/deployment.yaml"
 
-  - id: opt.relay-cloud-api.flows
+  - id: opt.relay-control.flows
     kind: option
     title: Relayflows control-plane storage and worker queue
     description: |
@@ -1953,10 +1964,10 @@ entries:
       flows.workerRelaycastUrl is the Relaycast origin handed to workers.
       flows.queuePingMs is the worker queue SSE keepalive (1000-120000 ms) and
       must stay below every proxy timeout in front of the API.
-    chart: relay-cloud-api
+    chart: relay-control
     values: ["flows.*"]
     env: [SELFHOST_FLOWS_STORAGE, SELFHOST_FLOWS_GCS_BUCKET, SELFHOST_FLOWS_GCS_PREFIX, SELFHOST_FLOWS_WORKER_RELAYCAST_URL, SELFHOST_FLOWS_QUEUE_PING_MS]
-    profiles: [relay-cloud-api]
+    profiles: [relay-control]
     status: shipped
     provided_by: operator
     default: postgres
@@ -1965,10 +1976,10 @@ entries:
       - { value: gcs }
     verify: helm template fails for flows.storage=gcs without flows.gcsBucket, or flows.queuePingMs outside 1000-120000
     sources:
-      - "charts/relay-cloud-api/values.yaml"
-      - "charts/relay-cloud-api/templates/_helpers.tpl"
+      - "charts/relay-control/values.yaml"
+      - "charts/relay-control/templates/_helpers.tpl"
 
-  - id: opt.relay-cloud-api.telemetry
+  - id: opt.relay-control.telemetry
     kind: option
     title: Self-host telemetry level and transport
     description: |
@@ -1985,10 +1996,10 @@ entries:
       chart-rendered keys cannot be overridden). A TCP 443 egress rule to
       telemetry.egressTo is added only when networkPolicy.enabled=true,
       allowAllEgress=false, the level is not off and the transport is https.
-    chart: relay-cloud-api
+    chart: relay-control
     values: ["telemetry.*", secretKeys.telemetryInstallKey]
     env: [SELFHOST_TELEMETRY_LEVEL, SELFHOST_TELEMETRY_TRANSPORT, SELFHOST_TELEMETRY_ENDPOINT, SELFHOST_TELEMETRY_INSTALL_ID, SELFHOST_TELEMETRY_INSTALL_KEY_FILE, SELFHOST_TELEMETRY_PROBES, SELFHOST_TELEMETRY_DEPLOYMENT]
-    profiles: [relay-cloud-api]
+    profiles: [relay-control]
     status: shipped
     provided_by: operator
     default: errors
@@ -2003,9 +2014,9 @@ entries:
           - { key: "<operator-chosen, no default>", key_path: secretKeys.telemetryInstallKey, optional: "required once the install is registered unless telemetry.level is off" }
     verify: the default render sets SELFHOST_TELEMETRY_LEVEL=off until installId, install key and (https) endpoint are set; helm template fails when only some of them are set; ci/agent-relay/render.sh checks both and that the egress rule renders only when telemetry is sent over https
     sources:
-      - "charts/relay-cloud-api/values.yaml"
-      - "charts/relay-cloud-api/templates/_helpers.tpl"
-      - "charts/relay-cloud-api/templates/networkpolicy.yaml"
+      - "charts/relay-control/values.yaml"
+      - "charts/relay-control/templates/_helpers.tpl"
+      - "charts/relay-control/templates/networkpolicy.yaml"
 
   - id: req.relayhistory.config
     kind: requirement
@@ -2078,10 +2089,10 @@ entries:
     description: |
       global.singleHost.host (off when empty) puts the dashboard and the
       self-host control API on one host: / to the dashboard and /cloud/api,
-      /login and /api to relay-cloud-api (flows workers and the integrations
-      OAuth callback use <publicUrl>/api/v1/...). relay-cloud-api.publicUrl
-      and relay-dashboard.runtime.publicUrl are derived as https://<host>, and
-      relay-dashboard.ingress.host as the bare <host>; each must be left empty
+      /login and /api to relay-control (flows workers and the integrations
+      OAuth callback use <publicUrl>/api/v1/...). relay-control.publicUrl
+      and relay-webapp.runtime.publicUrl are derived as https://<host>, and
+      relay-webapp.ingress.host as the bare <host>; each must be left empty
       or equal its derived value. The GKE
       Ingress then renders no api host and its ManagedCertificate drops it;
       the api and cast BackendConfigs are unchanged. The leaf dashboard
@@ -2091,14 +2102,14 @@ entries:
       their public URLs or leaf ingress hosts uses the single host. No service
       on the single host needs a path rewrite, so the GCE Ingress is kept
       rather than Gateway API.
-    chart: [agent-relay, relay-cloud-api, relay-dashboard]
+    chart: [agent-relay, relay-control, relay-webapp]
     values:
       - global.singleHost.host
-      - "relay-cloud-api:global.singleHost.host"
-      - "relay-cloud-api:publicUrl"
-      - "relay-dashboard:global.singleHost.host"
-      - "relay-dashboard:runtime.publicUrl"
-      - "relay-dashboard:ingress.host"
+      - "relay-control:global.singleHost.host"
+      - "relay-control:publicUrl"
+      - "relay-webapp:global.singleHost.host"
+      - "relay-webapp:runtime.publicUrl"
+      - "relay-webapp:ingress.host"
     env: [SELFHOST_PUBLIC_URL, DASHBOARD_PUBLIC_URL]
     profiles: [agent-relay]
     status: shipped
@@ -2107,26 +2118,26 @@ entries:
     choices:
       - { value: disabled, note: "per-service hosts (gkeIngress.hosts.root/api/cast/history)" }
       - { value: enabled, note: "global.singleHost.host plus gkeIngress.hosts.cast/history" }
-    verify: render has one rule for the single host (/cloud/api, /login, /api to relay-cloud-api, / to the dashboard), no api host, and SELFHOST_PUBLIC_URL = DASHBOARD_PUBLIC_URL = https://<host>
+    verify: render has one rule for the single host (/cloud/api, /login, /api to relay-control, / to the dashboard), no api host, and SELFHOST_PUBLIC_URL = DASHBOARD_PUBLIC_URL = https://<host>
     sources:
       - "charts/agent-relay/templates/gke-ingress.yaml"
       - "charts/agent-relay/templates/_helpers.tpl"
       - "charts/agent-relay/values-single-host-example.yaml"
-      - "charts/relay-dashboard/templates/ingress.yaml"
+      - "charts/relay-webapp/templates/ingress.yaml"
       - "ci/agent-relay/render.sh"
       - "ci/agent-relay/subdomain-golden.sh"
 
-  - id: opt.relay-dashboard.ingress
+  - id: opt.relay-webapp.ingress
     kind: option
     title: Dashboard ingress and same-origin API proxy
     description: |
-      The dashboard ingress routes /cloud/api to relay-cloud-api and / to the
+      The dashboard ingress routes /cloud/api to relay-control and / to the
       dashboard. The GKE proof disables this leaf ingress and supplies the same
       routes through its single umbrella Ingress.
-    chart: relay-dashboard
+    chart: relay-webapp
     values: [runtime.publicUrl, runtime.appPath, runtime.apiBasePath, runtime.loginPath, ingress.tls, imagePullSecrets]
     env: [DASHBOARD_PUBLIC_URL, DASHBOARD_APP_PATH, DASHBOARD_API_BASE_PATH, DASHBOARD_LOGIN_PATH]
-    profiles: [relay-dashboard]
+    profiles: [relay-webapp]
     status: shipped
     provided_by: operator
     default: enabled
@@ -2138,12 +2149,12 @@ entries:
         note: kubernetes.io/tls
       - name: "<imagePullSecrets[].name>"
         note: optional registry pull Secret
-    verify: render contains the configured dashboard runtime environment and routes /cloud/api to relay-cloud-api
+    verify: render contains the configured dashboard runtime environment and routes /cloud/api to relay-control
     sources:
-      - "charts/relay-dashboard/templates/ingress.yaml"
+      - "charts/relay-webapp/templates/ingress.yaml"
       - "ci/agent-relay/render.sh"
 
-  - id: opt.relay-dashboard.customer-profile
+  - id: opt.relay-webapp.customer-profile
     kind: option
     title: Dashboard customer profile (enterprise branding)
     description: |
@@ -2153,12 +2164,12 @@ entries:
       The chart renders the map as JSON into DASHBOARD_CUSTOMER_PROFILE and
       the image serves it in /runtime-config.js; the browser ignores invalid
       fields. Empty (the default) keeps the Agent Relay look. Requires a
-      dashboard image built from relay-dashboard #84 or later (its
+      dashboard image built from relay-webapp #84 or later (its
       /runtime-config.js has a customerProfile key); older images ignore it.
-    chart: relay-dashboard
+    chart: relay-webapp
     values: [customerProfile]
     env: [DASHBOARD_CUSTOMER_PROFILE]
-    profiles: [relay-dashboard]
+    profiles: [relay-webapp]
     status: shipped
     provided_by: operator
     default: none
@@ -2167,9 +2178,9 @@ entries:
       - { value: customer profile }
     verify: with customerProfile set, /runtime-config.js has customerProfile and the dashboard shows the product name and logo; without it, customerProfile is null
     sources:
-      - "charts/relay-dashboard/templates/deployment.yaml"
-      - "charts/relay-dashboard/README.md"
-      - "charts/relay-dashboard/ci/branding.profile.yaml"
+      - "charts/relay-webapp/templates/deployment.yaml"
+      - "charts/relay-webapp/README.md"
+      - "charts/relay-webapp/ci/branding.profile.yaml"
 
   - id: opt.agent-relay.gke-ingress
     kind: option
@@ -2183,8 +2194,8 @@ entries:
       (gkeIngress.backends.api.timeoutSec, at least 60, default 3600) keeps the
       flows worker queue SSE stream open past GCE's 30s default. The
       BackendConfig is named <gkeIngress.name>-api (the name truncated to 59
-      characters first); relay-cloud-api renders the annotation from
-      relay-cloud-api.service.backendConfig, which must equal that name (the
+      characters first); relay-control renders the annotation from
+      relay-control.service.backendConfig, which must equal that name (the
       render fails with the expected name otherwise). The relaycast Service is
       bound the same way to <gkeIngress.name>-cast (the name truncated to 58
       characters; gkeIngress.backends.cast.timeoutSec, default 3600) through
@@ -3314,16 +3325,16 @@ entries:
       no-RelayAuth/caller-token control image; this changes no verifier code,
       introspection logic or component enablement. Runtime flags are not changed
       in the kind profiles. Introspection config uses existing extraEnv refs.
-    chart: relay-cloud-api
+    chart: relay-control
     values: [services.relayauthEnabled]
     env: [RELAYAUTH_URL, RELAYAUTH_API_KEY_FILE]
-    profiles: [relay-cloud-api, agent-relay]
+    profiles: [relay-control, agent-relay]
     status: shipped
     provided_by: operator
     default: true
     choices: [true, false with a compatible caller-token image]
     verify: Render the disabled legacy-client mode and confirm URL/key env and key projection are absent; runtime auth acceptance still requires compatible upstream source.
     sources:
-      - "charts/relay-cloud-api/templates/_helpers.tpl:1"
-      - "charts/relay-cloud-api/templates/deployment.yaml:1"
+      - "charts/relay-control/templates/_helpers.tpl:1"
+      - "charts/relay-control/templates/deployment.yaml:1"
       - "docs/self-hosted-session-read-api.md:1"

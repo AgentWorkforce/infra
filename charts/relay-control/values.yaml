@@ -2,7 +2,7 @@
 # replica is enforced; this chart does not claim HA.
 replicaCount: 1
 image:
-  repository: ghcr.io/agentworkforce/selfhost-api
+  repository: ghcr.io/agentworkforce/relay-control
   digest: ""
   pullPolicy: IfNotPresent
 imagePullSecrets: []

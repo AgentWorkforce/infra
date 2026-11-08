@@ -80,14 +80,14 @@ spec:
 EOF
 
 host "$DOMAIN"
-route /cloud/api relay-cloud-api 80
-route /login relay-cloud-api 80
-route / relay-dashboard 8080
+route /cloud/api relay-control 80
+route /login relay-control 80
+route / relay-webapp 8080
 
 host "api.$DOMAIN"
 deny /internal Prefix
 deny '"//internal*"' ImplementationSpecific
-route '"/*"' relay-cloud-api 80 ImplementationSpecific
+route '"/*"' relay-control 80 ImplementationSpecific
 
 host "cast.$DOMAIN"
 deny /internal Prefix

@@ -27,12 +27,12 @@ profiles() { # name|helm template args (word-split on spaces)
 gcp|ar $p -n agent-relay -f $p/values-gcp.yaml
 gcp-supported-100|ar $p -n agent-relay -f $p/values-gcp.yaml -f $p/values-gcp-supported-100.yaml
 gcp-proof|proof $p -n agent-relay -f $p/values-gcp-proof.yaml -f $p/ci/gcp-proof-values.yaml
-gcp-proof-live|proof $p -n agent-relay -f $p/values-gcp-proof.yaml -f $p/values-gcp-proof-live.yaml --set relay-cloud-api.image.digest=sha256:2222222222222222222222222222222222222222222222222222222222222222
+gcp-proof-live|proof $p -n agent-relay -f $p/values-gcp-proof.yaml -f $p/values-gcp-proof-live.yaml --set relay-control.image.digest=sha256:2222222222222222222222222222222222222222222222222222222222222222
 gcp-proof-flows|proof $p -n agent-relay -f $p/values-gcp-proof.yaml -f $p/ci/gcp-proof-values.yaml -f $p/values-gcp-proof-flows.yaml
 gcp-durable-actors|agent-relay $p -n agent-relay -f $p/values-gcp-proof.yaml -f $p/values-gcp-proof-live.yaml -f $p/values-gcp-proof-durable-actors.yaml -f $p/values-gcp-proof-relayfile.yaml --set relaycast.runtime.durableActors.gateway.image.digest=$(da_digest a) --set relaycast.runtime.durableActors.deployer.image.digest=$(da_digest b) --set relayfile.runtime.durableActors.image.digest=$(da_digest c) --set relayfile.runtime.durableActors.workspaceImage.digest=$(da_digest d)
 kind-durable-actors|agent-relay $p -n agent-relay -f ci/agent-relay/kind-durable-actors-values.yaml
-relay-cloud-api|ci charts/relay-cloud-api -n ci -f charts/relay-cloud-api/ci/default-values.yaml
-relay-dashboard|ci charts/relay-dashboard -n ci -f charts/relay-dashboard/ci/default-values.yaml
+relay-control|ci charts/relay-control -n ci -f charts/relay-control/ci/default-values.yaml
+relay-webapp|ci charts/relay-webapp -n ci -f charts/relay-webapp/ci/default-values.yaml
 P
 }
 render_all() { # root outdir

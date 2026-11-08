@@ -1,12 +1,12 @@
-{{- include "relay-dashboard.validate" . }}
+{{- include "relay-webapp.validate" . }}
 {{- if .Values.ingress.enabled }}
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: {{ include "relay-dashboard.fullname" . }}
+  name: {{ include "relay-webapp.fullname" . }}
   namespace: {{ .Release.Namespace | quote }}
   labels:
-    {{- include "relay-dashboard.labels" . | nindent 4 }}
+    {{- include "relay-webapp.labels" . | nindent 4 }}
   {{- with .Values.ingress.annotations }}
   annotations:
     {{- toYaml . | nindent 4 }}
@@ -20,7 +20,7 @@ spec:
     {{- toYaml . | nindent 4 }}
   {{- end }}
   rules:
-    - host: {{ include "relay-dashboard.ingressHost" . | quote }}
+    - host: {{ include "relay-webapp.ingressHost" . | quote }}
       http:
         paths:
           # Must precede "/" for ingress controllers that preserve declaration
@@ -39,7 +39,7 @@ spec:
                 name: {{ .Values.api.serviceName }}
                 port:
                   number: {{ .Values.api.servicePort }}
-          {{- if include "relay-dashboard.singleHost" . }}
+          {{- if include "relay-webapp.singleHost" . }}
           # Single-host mode: flows workers and the integrations OAuth
           # callback use <publicUrl>/api/v1/... on this host.
           - path: /api
@@ -54,7 +54,7 @@ spec:
             pathType: Prefix
             backend:
               service:
-                name: {{ include "relay-dashboard.fullname" . }}
+                name: {{ include "relay-webapp.fullname" . }}
                 port:
                   name: http
 {{- end }}

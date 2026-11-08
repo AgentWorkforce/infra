@@ -3,7 +3,7 @@ image:
 runtime:
   publicUrl: https://gcp-proof.agentrelay.com
 api:
-  serviceName: ci-relay-cloud-api
+  serviceName: ci-relay-control
 ingress:
   enabled: true
   className: nginx

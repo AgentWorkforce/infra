@@ -6,8 +6,8 @@ components:
   relayauth: true
   sessionsPipeline: true
   relayhistory: true
-  cloudApi: true
-  dashboard: true
+  control: true
+  webapp: true
 
 global:
   tenant:
@@ -114,7 +114,7 @@ relayhistory:
     jwksUrl: http://relayauth:8787/.well-known/jwks.json
     issuer: http://relayauth:8787
   agentRelayCloud:
-    apiUrl: http://relay-cloud-api
+    apiUrl: http://relay-control
   service:
     annotations:
       cloud.google.com/neg: '{"ingress": true}'
@@ -128,8 +128,8 @@ relayhistory:
       - ipBlock: { cidr: 130.211.0.0/22 }
     allowAllEgress: true
 
-relay-cloud-api:
-  fullnameOverride: relay-cloud-api
+relay-control:
+  fullnameOverride: relay-control
   image:
     repository: us-central1-docker.pkg.dev/agentrelay-96bulls-soc2-2610/awf-conformance-images/selfhost-api
     digest: ""
@@ -160,8 +160,8 @@ relay-cloud-api:
       - ipBlock: { cidr: 130.211.0.0/22 }
     allowAllEgress: true
 
-relay-dashboard:
-  fullnameOverride: relay-dashboard
+relay-webapp:
+  fullnameOverride: relay-webapp
   image:
     repository: us-central1-docker.pkg.dev/agentrelay-96bulls-soc2-2610/awf-conformance-images/relay-dashboard
     digest: ""
@@ -171,7 +171,7 @@ relay-dashboard:
     apiBasePath: /cloud/api
     loginPath: /login
   api:
-    serviceName: relay-cloud-api
+    serviceName: relay-control
   service:
     annotations:
       cloud.google.com/neg: '{"ingress": true}'

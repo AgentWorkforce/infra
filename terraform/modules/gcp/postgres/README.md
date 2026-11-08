@@ -78,6 +78,6 @@ PostgreSQL 17 for agent-relay on **Cloud SQL**, private IP only, on your VPC.
 | databases | Databases created by the module. |
 | instance\_name | Instance name. |
 | port | Database port. |
-| private\_ip\_address | Private IP. The host part of every agent-relay database URL (relay-cloud-api database-url, relayhistory DATABASE\_URL, sessions-pipeline HOOPDB\_URL, durable-actors postgres-url). |
+| private\_ip\_address | Private IP. The host part of every agent-relay database URL (relay-control database-url, relayhistory DATABASE\_URL, sessions-pipeline HOOPDB\_URL, durable-actors postgres-url). |
 | server\_ca\_cert | Current server CA certificate (public PEM) for sslmode=verify-ca/verify-full. |
 <!-- END_TF_DOCS -->

@@ -1,0 +1,19 @@
+# Naming compatibility ONLY, layered after TRANSLATED old operator values.
+# Retains kind's old immutable selectors, resources and Service DNS. This does
+# not approve image changes, migrations, legacy-provider removal or rollout.
+# kind-up deliberately refuses this legacy layout; use a separately reviewed
+# operator upgrade plan. Do not reset or reinstall the QA fixture.
+relay-control:
+  nameOverride: relay-cloud-api
+  fullnameOverride: relaycontrol
+relay-webapp:
+  nameOverride: relay-dashboard
+  fullnameOverride: relay-app
+  api:
+    serviceName: relaycontrol
+relayhistory:
+  agentRelayCloud:
+    apiUrl: http://relaycontrol.agent-relay.svc.cluster.local
+# For addons, retain the original caller URL inside the existing command.
+# Supply your translated old relayflows block after this overlay; it must use
+# relaycontrol while that Service identity is retained.

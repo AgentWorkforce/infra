@@ -1,0 +1,9 @@
+relay-webapp {{ include "relay-webapp.fullname" . }} is configured as one static replica.
+
+  Service:  {{ include "relay-webapp.fullname" . }}:{{ .Values.service.port }} ({{ .Values.service.type }})
+  Public:   {{ include "relay-webapp.publicUrl" . }}
+{{- if .Values.ingress.enabled }}
+  Ingress:  https://{{ include "relay-webapp.ingressHost" . }} routes {{ .Values.runtime.apiBasePath }}{{ if include "relay-webapp.singleHost" . }},{{ else }} and{{ end }}
+            {{ .Values.runtime.loginPath }}{{ if include "relay-webapp.singleHost" . }} and /api{{ end }} to {{ .Values.api.serviceName }}:{{ .Values.api.servicePort }},
+            and / to this Service.
+{{- end }}

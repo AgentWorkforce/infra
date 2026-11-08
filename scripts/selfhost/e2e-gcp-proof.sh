@@ -91,7 +91,7 @@ Options:
       --secret NAME           release Secret holding the Relaycast internal secret
                               (required; e.g. the release's existingSecret)
       --base-domain DOMAIN    public base domain (default: derived from the
-                              relay-cloud-api SELFHOST_PUBLIC_URL)
+                              relay-control SELFHOST_PUBLIC_URL)
       --edge gke|alb          public edge layout (default gke). alb: origins from
                               the --*-origin options, http allowed, readiness =
                               the dashboard origin answering (no ManagedCertificate)
@@ -299,7 +299,7 @@ find_pod() { # namespace selector
 }
 
 install_driver() {
-  API_POD="$(find_pod "$NAMESPACE" 'app.kubernetes.io/name=relay-cloud-api,app.kubernetes.io/component=api')"
+  API_POD="$(find_pod "$NAMESPACE" 'app.kubernetes.io/name=relay-control,app.kubernetes.io/component=api')"
   [[ -n "$API_POD" ]] || return 1
   "${KN[@]}" exec -i "$API_POD" -- sh -c 'umask 077; cat > /tmp/e2e-gcp-proof-driver.mjs' <"$DRIVER"
 }
@@ -356,11 +356,11 @@ PY
   fi
 }
 
-# run_phase <phase>: runs the driver in the relay-cloud-api pod.
+# run_phase <phase>: runs the driver in the relay-control pod.
 run_phase() {
   local phase="$1" out="$WORK/out.json"
   if ! install_driver; then
-    emit FAIL "$phase.driver" "relay-cloud-api pod unavailable"
+    emit FAIL "$phase.driver" "relay-control pod unavailable"
     return 1
   fi
   local driver_env=()
@@ -447,7 +447,7 @@ if ! "${K[@]}" get namespace "$NAMESPACE" >/dev/null 2>&1; then
   exit 1
 fi
 if [[ -z "$BASE_DOMAIN" ]]; then
-  api_url="$("${KN[@]}" get deploy relay-cloud-api \
+  api_url="$("${KN[@]}" get deploy relay-control \
     -o jsonpath='{.spec.template.spec.containers[0].env[?(@.name=="SELFHOST_PUBLIC_URL")].value}' 2>/dev/null)"
   host="${api_url#https://}"
   BASE_DOMAIN="${host#api.}"
@@ -836,7 +836,7 @@ case_end 12 "admin: env var set/list masked/no plaintext/delete, audit, /interna
 # ---------------------------------------------------------------- case 13
 
 # The worker is a short-lived Pod in the agent-relay namespace (the
-# relay-cloud-api NetworkPolicy admits any pod in the namespace) running the
+# relay-control NetworkPolicy admits any pod in the namespace) running the
 # stock agent-relay CLI: `cloud worker register`, then `cloud worker start
 # --once`, which exits after one assignment. The single-use enrollment token
 # reaches it through a Secret volume, never through args in this script's
@@ -881,7 +881,7 @@ spec:
       env:
         - { name: AGENT_RELAY_VERSION, value: "$AGENT_RELAY_VERSION" }
         - { name: WORKER_NAME, value: "$3" }
-        - { name: BASE_URL, value: "http://relay-cloud-api" }
+        - { name: BASE_URL, value: "http://relay-control" }
       resources:
         requests: { cpu: 250m, memory: 768Mi }
         limits: { memory: 2Gi }
@@ -950,7 +950,7 @@ else
       emit FAIL flows.worker_pod "worker did not register within ${waited}s (phase=$(pod_phase))"
       worker_log_tail
     else
-      emit PASS flows.worker_pod "pod=$WORKER_POD image=$WORKER_IMAGE agent-relay=$AGENT_RELAY_VERSION base_url=http://relay-cloud-api started=$started registered_after=${waited}s"
+      emit PASS flows.worker_pod "pod=$WORKER_POD image=$WORKER_IMAGE agent-relay=$AGENT_RELAY_VERSION base_url=http://relay-control started=$started registered_after=${waited}s"
       run_phase flows-run
       # `start --once` exits after the one assignment.
       waited=0

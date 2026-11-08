@@ -265,7 +265,7 @@ relayhistory:
     ingressFrom:
       - podSelector: {}
       - ipBlock: { cidr: ${VPC_CIDR} }
-relay-cloud-api:
+relay-control:
   existingSecret: ${SECRET}
   publicUrl: ${api}
   dashboardUrl: ${dash}/
@@ -276,7 +276,7 @@ relay-cloud-api:
     ingressFrom:
       - podSelector: {}
       - ipBlock: { cidr: ${VPC_CIDR} }
-relay-dashboard:
+relay-webapp:
   runtime:
     publicUrl: ${dash}
   networkPolicy:
@@ -331,7 +331,7 @@ cmd_install() {
 
 cmd_bootstrap_org() {
   local owner="${EKS_PROOF_OWNER_EMAIL:-owner@${DOMAIN}}"
-  kubectl -n "$NS" exec -i deploy/relay-cloud-api -- node --input-type=module - "$owner" <<'JS'
+  kubectl -n "$NS" exec -i deploy/relay-control -- node --input-type=module - "$owner" <<'JS'
 import { readFileSync } from "node:fs";
 const token = readFileSync("/var/run/agent-relay/secrets/selfhost-bootstrap-token", "utf8").trim();
 const api = "http://127.0.0.1:3000/api/v1/organizations";

@@ -55,7 +55,7 @@ class Proof:
         s = self.stack
         credentials = json.loads((s.state / "credentials.json").read_text())
         body = dict(self.state, secrets={"relaycastInternalSecret": credentials["cast"]})
-        response = s.k("exec", "-i", "deploy/relaycontrol", "--", "env",
+        response = s.k("exec", "-i", "deploy/relay-control", "--", "env",
                        "E2E_RELAYCAST_URL=http://relaycast.agent-relay.svc.cluster.local:8787",
                        "E2E_RELAYHISTORY_URL=http://relayhistory.agent-relay.svc.cluster.local:8080",
                        "E2E_RELAYAUTH_URL=http://relayauth.agent-relay.svc.cluster.local:8787",
@@ -94,7 +94,7 @@ class Proof:
         initialize = {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {
             "protocolVersion": "2025-06-18", "capabilities": {},
             "clientInfo": {"name": "kind-proof", "version": "1"}}}
-        containers = json.loads(self.stack.k("get", "deployment", "relaycontrol", "-o", "json").stdout)["spec"]["template"]["spec"]["containers"]
+        containers = json.loads(self.stack.k("get", "deployment", "relay-control", "-o", "json").stdout)["spec"]["template"]["spec"]["containers"]
         image = next(c["image"] for c in containers if c["name"] == "api")
         selected = json.loads((self.stack.state / "images.json").read_text())["images"]
         controls = [i for i in selected if "/selfhost-api@" in i]
@@ -197,11 +197,11 @@ class Proof:
                          "external baseline unreachable; cannot claim a policy denial")
             self.require(probe(NS, "1.1.1.1", 443, "external-denied-"+self.marker) == 23,
                          "suite namespace can reach external TCP/443")
-            self.require(probe(NS, "relaycontrol.agent-relay.svc.cluster.local", 80, "internal-allowed-"+self.marker) == 0,
+            self.require(probe(NS, "relay-control.agent-relay.svc.cluster.local", 80, "internal-allowed-"+self.marker) == 0,
                          "in-cluster DNS/service connectivity broken")
             self.require(probe("kind-edge", "1.1.1.1", 443, "edge-denied-"+self.marker) == 23,
                          "edge namespace can reach external TCP/443")
-            self.require(probe("kind-edge", "relaycontrol.agent-relay.svc.cluster.local", 80, "edge-backend-"+self.marker) == 0
+            self.require(probe("kind-edge", "relay-control.agent-relay.svc.cluster.local", 80, "edge-backend-"+self.marker) == 0
                          and probe("kind-edge", "kubernetes.default.svc.cluster.local", 443, "edge-api-"+self.marker) == 0,
                          "edge cannot reach its required backend/API endpoints")
             self.record("PASS", "core.egress", "external baseline connects; suite and edge external TCP denied; internal DNS/backend/API connects")
@@ -210,12 +210,12 @@ class Proof:
 
     def tls_and_app(self):
         status, html = self.edge("relay.kind.agentrelay.com", "/")
-        self.require(status == 200 and "<html" in html.lower(), "relay-app HTML missing through verified TLS edge")
+        self.require(status == 200 and "<html" in html.lower(), "relay-webapp HTML missing through verified TLS edge")
         a = self.state["a"]
         status, text = self.edge("relay.kind.agentrelay.com", f"/cloud/api/v1/workspaces/{a['workspaceId']}/sessions", a["accessToken"])
         self.require(status == 200 and any(x.get("sessionId") == self.state["session"]["sessionId"]
-                     for x in json.loads(text).get("items", [])), "delivered session missing through relay-app same-origin read API")
-        self.record("PASS", "app.tls_session_read", "trusted local TLS, relay-app HTML, and delivered session through /cloud/api")
+                     for x in json.loads(text).get("items", [])), "delivered session missing through relay-webapp same-origin read API")
+        self.record("PASS", "app.tls_session_read", "trusted local TLS, relay-webapp HTML, and delivered session through /cloud/api")
         alpha, beta = self.state["agents"]["alpha"], self.state["agents"]["beta"]
         for sender, receiver in ((alpha, beta), (beta, alpha)):
             message = self.marker + " public TLS DM from " + sender["name"]
@@ -267,9 +267,9 @@ class Proof:
 
     def pipeline_app_visibility(self, session, tenant):
         s = self.stack
-        s.k("exec", "-i", "deploy/relaycontrol", "--", "sh", "-c", "cat > /tmp/kind-workspace-session.mjs",
+        s.k("exec", "-i", "deploy/relay-control", "--", "sh", "-c", "cat > /tmp/kind-workspace-session.mjs",
             data=(ROOT / "ci/agent-relay/kind/workspace-session.mjs").read_text())
-        result = s.k("exec", "-i", "deploy/relaycontrol", "--", "node", "/tmp/kind-workspace-session.mjs", sensitive=True,
+        result = s.k("exec", "-i", "deploy/relay-control", "--", "node", "/tmp/kind-workspace-session.mjs", sensitive=True,
                      data=json.dumps({"userId": self.state["a"]["ownerUserId"], "workspaceId": tenant["workspaceId"]}))
         token = json.loads(result.stdout)["accessToken"]
         try:
@@ -278,7 +278,7 @@ class Proof:
                 status, body = self.edge("relay.kind.agentrelay.com", f"/cloud/api/v1/workspaces/{tenant['workspaceId']}/sessions", token)
                 self.require(status == 200, f"courier application read failed status={status}")
                 if any(item.get("sessionId") == session for item in json.loads(body).get("items", [])):
-                    self.record("PASS", "pipeline.app_visibility", "courier-uploaded session returned by authenticated relay-app TLS read API")
+                    self.record("PASS", "pipeline.app_visibility", "courier-uploaded session returned by authenticated relay-webapp TLS read API")
                     return
                 time.sleep(1)
             self.record("PENDING", "pipeline.app_visibility", "courier upload/index/Locker verified, but authenticated Default workspace application API returned 200 without that session; read-path integration contract required")
@@ -293,9 +293,9 @@ class Proof:
 
     def cost_attribution(self):
         s, a = self.stack, self.state["a"]
-        s.k("exec", "-i", "deploy/relaycontrol", "--", "sh", "-c", "cat > /tmp/kind-cost.mjs",
+        s.k("exec", "-i", "deploy/relay-control", "--", "sh", "-c", "cat > /tmp/kind-cost.mjs",
             data=(ROOT / "ci/agent-relay/kind/cost.mjs").read_text())
-        result = s.k("exec", "-i", "deploy/relaycontrol", "--", "node", "/tmp/kind-cost.mjs", sensitive=True,
+        result = s.k("exec", "-i", "deploy/relay-control", "--", "node", "/tmp/kind-cost.mjs", sensitive=True,
                      data=json.dumps({"accessToken": a["accessToken"], "workspaceId": a["workspaceId"],
                                       "sessionId": self.state["session"]["sessionId"], "marker": self.marker}))
         expected = json.loads(result.stdout)
@@ -426,7 +426,7 @@ class Proof:
         self.require(ready.get("clusterUid") == uid, "ready receipt belongs to a different cluster")
         s.render()
         self.require(ready.get("renderSha256") == hashlib.sha256((s.state / "rendered.yaml").read_bytes()).hexdigest(), "profile render changed since readiness; rerun kind-up")
-        s.k("exec", "-i", "deploy/relaycontrol", "--", "sh", "-c", "cat > /tmp/kind-proof-driver.mjs",
+        s.k("exec", "-i", "deploy/relay-control", "--", "sh", "-c", "cat > /tmp/kind-proof-driver.mjs",
             data=(ROOT / "scripts/selfhost/e2e-gcp-proof-driver.mjs").read_text())
         self.egress()
         for phase in ("bootstrap", "messaging", "delivery", "reads", "sessions", "auth"):

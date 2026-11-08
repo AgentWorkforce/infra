@@ -25,7 +25,7 @@
 # Options it sets itself: --context (a temporary kubeconfig), --namespace,
 # --sessions-namespace (the same namespace: the umbrella installs the
 # Sessions Pipeline next to the rest), --secret, --edge alb and the four
-# https origins (from relay-cloud-api SELFHOST_PUBLIC_URL = https://api.<domain>),
+# https origins (from relay-control SELFHOST_PUBLIC_URL = https://api.<domain>),
 # --require-public, and --relayauth-url (RelayAuth runs in the release
 # namespace under the umbrella). Any other option is passed through, e.g.
 # --skip-flows, --allow-known-gap NAME or --no-cleanup.
@@ -53,13 +53,13 @@ export KUBECONFIG="$KUBECONFIG_FILE"
 K=(kubectl --context eks-proof -n "$NS")
 
 # Public origins: the HTTPS hosts the control API was installed with
-# (relay-cloud-api SELFHOST_PUBLIC_URL = https://api.<domain>).
-api_url="$("${K[@]}" get deploy relay-cloud-api \
+# (relay-control SELFHOST_PUBLIC_URL = https://api.<domain>).
+api_url="$("${K[@]}" get deploy relay-control \
   -o jsonpath='{.spec.template.spec.containers[0].env[?(@.name=="SELFHOST_PUBLIC_URL")].value}' 2>/dev/null)"
 DOMAIN="${EKS_PROOF_DOMAIN:-${api_url#https://api.}}"
 DOMAIN="${DOMAIN%/}"
 if [[ -z "$DOMAIN" || "$DOMAIN" == "$api_url" ]]; then
-  echo "E2E_RESULT=FAIL"; echo "reason: relay-cloud-api SELFHOST_PUBLIC_URL is not https://api.<domain> (got ${api_url:-none})"; exit 1
+  echo "E2E_RESULT=FAIL"; echo "reason: relay-control SELFHOST_PUBLIC_URL is not https://api.<domain> (got ${api_url:-none})"; exit 1
 fi
 DASHBOARD="https://$DOMAIN"
 API="https://api.$DOMAIN"

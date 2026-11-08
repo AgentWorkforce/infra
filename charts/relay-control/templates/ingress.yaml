@@ -1,11 +1,11 @@
-{{- include "relay-cloud-api.validate" . }}
+{{- include "relay-control.validate" . }}
 {{- if .Values.ingress.enabled }}
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: {{ include "relay-cloud-api.fullname" . }}
+  name: {{ include "relay-control.fullname" . }}
   namespace: {{ .Release.Namespace | quote }}
-  labels: {{ include "relay-cloud-api.labels" . | nindent 4 }}
+  labels: {{ include "relay-control.labels" . | nindent 4 }}
   {{- with .Values.ingress.annotations }}
   annotations: {{ toYaml . | nindent 4 }}
   {{- end }}
@@ -28,14 +28,14 @@ spec:
             pathType: Prefix
             backend:
               service:
-                name: {{ include "relay-cloud-api.fullname" $ | trunc 49 | trimSuffix "-" }}-internal-deny
+                name: {{ include "relay-control.fullname" $ | trunc 49 | trimSuffix "-" }}-internal-deny
                 port: { number: 80 }
           {{- end }}
           - path: /
             pathType: Prefix
             backend:
               service:
-                name: {{ include "relay-cloud-api.fullname" $ }}
+                name: {{ include "relay-control.fullname" $ }}
                 port: { name: http }
     {{- end }}
 {{- if .Values.secretKeys.internalToken }}
@@ -45,9 +45,9 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: {{ include "relay-cloud-api.fullname" . | trunc 49 | trimSuffix "-" }}-internal-deny
+  name: {{ include "relay-control.fullname" . | trunc 49 | trimSuffix "-" }}-internal-deny
   namespace: {{ .Release.Namespace | quote }}
-  labels: {{ include "relay-cloud-api.labels" . | fromYaml | merge (dict "app.kubernetes.io/component" "internal-deny") | toYaml | nindent 4 }}
+  labels: {{ include "relay-control.labels" . | fromYaml | merge (dict "app.kubernetes.io/component" "internal-deny") | toYaml | nindent 4 }}
 spec:
   type: ClusterIP
   ports:

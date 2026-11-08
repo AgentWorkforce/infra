@@ -20,8 +20,8 @@ components:
   relayauth: false
   sessionsPipeline: false
   relayhistory: false
-  cloudApi: false
-  dashboard: false
+  control: false
+  webapp: false
   relayflows: false
   durableActors: false
   relayfile: true

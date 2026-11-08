@@ -1,6 +1,6 @@
 // In-cluster driver for e2e-gcp-proof.sh.
 //
-// Runs inside the relay-cloud-api pod (the only agent-relay workload whose
+// Runs inside the relay-control pod (the only agent-relay workload whose
 // NetworkPolicy reaches Relaycast, RelayHistory, and RelayAuth) with Node's
 // built-in fetch. The `sessions` and `admin` phases instead run on the
 // operator's machine with E2E_API_URL set to the public dashboard origin, so

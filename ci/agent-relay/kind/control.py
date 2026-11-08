@@ -80,7 +80,7 @@ def build(stack):
         archive.unlink(missing_ok=True)  # This attempt's transport only.
     private_json(stack.state / "control-build.json", receipt)
     values = json.loads(stack.overrides.read_text()) if stack.overrides.exists() else {}
-    values.setdefault("relay-cloud-api", {})["image"] = {
+    values.setdefault("relay-control", {})["image"] = {
         "repository": REPOSITORY, "digest": receipt["manifestDigest"], "pullPolicy": "Never"}
     private_json(stack.overrides, values)
     print("Built and selected " + receipt["reference"] + "; run kind-up to install. No image published.")

@@ -1,27 +1,27 @@
-{{- include "relay-dashboard.validate" . }}
+{{- include "relay-webapp.validate" . }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ include "relay-dashboard.fullname" . }}
+  name: {{ include "relay-webapp.fullname" . }}
   namespace: {{ .Release.Namespace | quote }}
   labels:
-    {{- include "relay-dashboard.labels" . | nindent 4 }}
+    {{- include "relay-webapp.labels" . | nindent 4 }}
 spec:
   replicas: {{ .Values.replicaCount }}
   selector:
     matchLabels:
-      {{- include "relay-dashboard.selectorLabels" . | nindent 6 }}
+      {{- include "relay-webapp.selectorLabels" . | nindent 6 }}
   template:
     metadata:
       labels:
-        {{- include "relay-dashboard.selectorLabels" . | nindent 8 }}
+        {{- include "relay-webapp.selectorLabels" . | nindent 8 }}
         {{- with .Values.podLabels }}{{ toYaml . | nindent 8 }}{{- end }}
       {{- with .Values.podAnnotations }}
       annotations:
         {{- toYaml . | nindent 8 }}
       {{- end }}
     spec:
-      serviceAccountName: {{ include "relay-dashboard.serviceAccountName" . }}
+      serviceAccountName: {{ include "relay-webapp.serviceAccountName" . }}
       automountServiceAccountToken: false
       terminationGracePeriodSeconds: {{ .Values.terminationGracePeriodSeconds }}
       securityContext:
@@ -32,7 +32,7 @@ spec:
       {{- end }}
       initContainers:
         - name: copy-dashboard
-          image: {{ include "relay-dashboard.image" . | quote }}
+          image: {{ include "relay-webapp.image" . | quote }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           command: [sh, -ec]
           args: [cp -a /usr/share/nginx/html/. /work/]
@@ -44,7 +44,7 @@ spec:
             - { name: html, mountPath: /work }
       containers:
         - name: dashboard
-          image: {{ include "relay-dashboard.image" . | quote }}
+          image: {{ include "relay-webapp.image" . | quote }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           securityContext:
             {{- toYaml .Values.containerSecurityContext | nindent 12 }}
@@ -55,12 +55,12 @@ spec:
               containerPort: 8080
               protocol: TCP
           env:
-            - { name: DASHBOARD_PUBLIC_URL, value: {{ include "relay-dashboard.publicUrl" . | quote }} }
+            - { name: DASHBOARD_PUBLIC_URL, value: {{ include "relay-webapp.publicUrl" . | quote }} }
             - { name: DASHBOARD_APP_PATH, value: {{ .Values.runtime.appPath | quote }} }
             - { name: DASHBOARD_API_BASE_PATH, value: {{ .Values.runtime.apiBasePath | quote }} }
             - { name: DASHBOARD_LOGIN_PATH, value: {{ .Values.runtime.loginPath | quote }} }
             {{- if not (or (kindIs "invalid" .Values.customerProfile) (kindIs "map" .Values.customerProfile)) }}
-            {{- fail "customerProfile must be a map (see the relay-dashboard README)" }}
+            {{- fail "customerProfile must be a map (see the relay-webapp README)" }}
             {{- end }}
             {{- with .Values.customerProfile }}
             - { name: DASHBOARD_CUSTOMER_PROFILE, value: {{ toJson . | quote }} }

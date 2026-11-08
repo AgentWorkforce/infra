@@ -45,10 +45,10 @@ DNS names and a certificate. The proof used four names under one domain:
 
 | Host | Origin value |
 | --- | --- |
-| `aws-proof.agentrelay.com` | `relay-dashboard.runtime.publicUrl`, `relay-cloud-api.dashboardUrl` |
-| `api.aws-proof.agentrelay.com` | `relay-cloud-api.publicUrl` |
-| `cast.aws-proof.agentrelay.com` | `relaycast.baseUrl`, `relay-cloud-api.services.relaycastPublicUrl` |
-| `history.aws-proof.agentrelay.com` | `relay-cloud-api.services.relayhistoryPublicUrl`, `relayhistory.relayauth.historyOrigin`, `sessions-pipeline.alleyoop.auth.historyOrigin` (all three byte-equal) |
+| `aws-proof.agentrelay.com` | `relay-webapp.runtime.publicUrl`, `relay-control.dashboardUrl` |
+| `api.aws-proof.agentrelay.com` | `relay-control.publicUrl` |
+| `cast.aws-proof.agentrelay.com` | `relaycast.baseUrl`, `relay-control.services.relaycastPublicUrl` |
+| `history.aws-proof.agentrelay.com` | `relay-control.services.relayhistoryPublicUrl`, `relayhistory.relayauth.historyOrigin`, `sessions-pipeline.alleyoop.auth.historyOrigin` (all three byte-equal) |
 
 Steps (any DNS provider; with Route 53 create the same records there):
 
@@ -217,7 +217,7 @@ adapt `ROLE_PATH`, `BOUNDARY` and `TAG_KEY` for your account.
    `tags`) break `CreateRule`, because `AmazonEKSLoadBalancingPolicy` allows
    only its own tag keys. Do not tag Auto Mode ALBs.
 7. **Flow artifacts** stay inline in PostgreSQL
-   (`relay-cloud-api.flows.storage: postgres`); there is no S3 option.
+   (`relay-control.flows.storage: postgres`); there is no S3 option.
 8. **Not yet proven on EKS:** RDS/Aurora instead of CNPG, private subnets
    with NAT, NetworkPolicy enforcement (the policies render with the VPC CIDR,
    but Auto Mode's network policy controller was not enabled), backup/restore

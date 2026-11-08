@@ -7,7 +7,7 @@ global:
 image:
   digest: sha256:1111111111111111111111111111111111111111111111111111111111111111
 api:
-  serviceName: ci-relay-cloud-api
+  serviceName: ci-relay-control
 ingress:
   enabled: true
   className: nginx

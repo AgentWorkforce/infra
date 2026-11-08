@@ -1,11 +1,11 @@
-{{- include "relay-dashboard.validate" . }}
+{{- include "relay-webapp.validate" . }}
 apiVersion: v1
 kind: Service
 metadata:
-  name: {{ include "relay-dashboard.fullname" . }}
+  name: {{ include "relay-webapp.fullname" . }}
   namespace: {{ .Release.Namespace | quote }}
   labels:
-    {{- include "relay-dashboard.labels" . | nindent 4 }}
+    {{- include "relay-webapp.labels" . | nindent 4 }}
   {{- with .Values.service.annotations }}
   annotations:
     {{- toYaml . | nindent 4 }}
@@ -17,4 +17,4 @@ spec:
       port: {{ .Values.service.port }}
       targetPort: http
   selector:
-    {{- include "relay-dashboard.selectorLabels" . | nindent 4 }}
+    {{- include "relay-webapp.selectorLabels" . | nindent 4 }}

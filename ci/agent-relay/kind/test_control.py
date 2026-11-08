@@ -34,11 +34,11 @@ class ControlArchive(unittest.TestCase):
 
     def test_bootstrap_preserves_selected_image_and_other_profile_settings(self):
         image = {"repository": control.REPOSITORY, "digest": "sha256:" + "a" * 64, "pullPolicy": "Never"}
-        values = {"relay-cloud-api": {"image": image}, "global": {"otel": {"endpoint": ""}},
+        values = {"relay-control": {"image": image}, "global": {"otel": {"endpoint": ""}},
                   "sessions-pipeline": {"worker": {"tenant": {"orgId": "keep"}, "podAnnotations": {"keep": "yes"}}},
                   "relayflows": {"nodeSelector": {"keep": "yes"}}}
         result = tenant_values(values, {"orgId": "real-org", "workspaceId": "real-workspace"}, "addons", "arm64", "recipe")
-        self.assertEqual(result["relay-cloud-api"]["image"], image)
+        self.assertEqual(result["relay-control"]["image"], image)
         self.assertEqual(result["global"]["otel"], {"endpoint": ""})
         self.assertEqual(result["global"]["tenant"]["orgId"], "real-org")
         self.assertEqual(result["sessions-pipeline"]["worker"]["tenant"], {"orgId": "real-org", "workspaceId": "real-workspace"})

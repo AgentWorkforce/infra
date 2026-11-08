@@ -1,4 +1,6 @@
-# relay-dashboard
+# relay-webapp
+
+Public chart names and existing-release compatibility: [Control/Webapp rename](../../docs/control-webapp-chart-rename.md).
 
 Deploys the self-hosted Agent Relay dashboard container. The image digest is
 required; this chart never follows a tag and does not create Secrets. Runtime
@@ -9,16 +11,16 @@ The browser calls `runtime.apiBasePath` (default `/cloud/api`) on its current
 origin. When ingress is enabled, the chart routes `runtime.apiBasePath` and
 `runtime.loginPath` to `api.serviceName` and `/` to the dashboard.
 `api.serviceName` has no default and is required with ingress: set it to the
-relay-cloud-api Service in the same namespace, which is that release's
-fullname (`<release>-relay-cloud-api`, or its `fullnameOverride`; for example
-`api-relay-cloud-api` after `helm install api charts/relay-cloud-api`). The separate
-`relay-cloud-api` ingress can expose that same Service on an `api.` host.
+relay-control Service in the same namespace, which is that release's
+fullname (`<release>-relay-control`, or its `fullnameOverride`; for example
+`api-relay-control` after `helm install api charts/relay-control`). The separate
+`relay-control` ingress can expose that same Service on an `api.` host.
 
 Single-host mode: with `global.singleHost.host` set (normally once on the
 agent-relay umbrella), `runtime.publicUrl` is derived as `https://<host>` and
 `ingress.host` as `<host>` (leave them empty), and the Ingress also routes
 `/api` to the API, because flows workers and the integrations OAuth callback
-call `<publicUrl>/api/v1/...` there. Keep the `relay-cloud-api` ingress
+call `<publicUrl>/api/v1/...` there. Keep the `relay-control` ingress
 disabled in that mode. See the agent-relay README, "Single-host mode".
 
 The current dashboard image is a single static replica. This chart makes no HA
@@ -31,8 +33,8 @@ deployment values file.
 new image. The chart renders it as JSON into `DASHBOARD_CUSTOMER_PROFILE`; the
 image writes it into `/runtime-config.js`, and the browser validates each field
 and ignores any it can't use. Leave it empty (the default) to keep the Agent
-Relay look. It needs a dashboard image built from relay-dashboard
-[#84](https://github.com/AgentWorkforce/relay-dashboard/pull/84) or later (the
+Relay look. It needs a dashboard image built from relay-webapp
+[#84](https://github.com/AgentWorkforce/relay-webapp/pull/84) or later (the
 image's `/runtime-config.js` then contains a `customerProfile` key); older
 images ignore the value.
 
@@ -47,13 +49,13 @@ images ignore the value.
 | `customerProfile.brandColor` | Solid primary button color. |
 | `customerProfile.supportUrl` | Support link in the account menu and on the device page (`https://…` or `mailto:`). |
 | `customerProfile.poweredByAgentRelay` | `false` hides the "Powered by Agent Relay" line shown under a custom brand. |
-| `customerProfile.desktop.urlScheme` / `.siteUrl` | Agent Relay Desktop deep links: the URL scheme and site of the Desktop build for this deployment. Settings shows a "Connect your agents" link (`<urlScheme>://connect?site=<siteUrl>&…`). Needs a dashboard image from relay-dashboard #88 or later. Not branding: on its own it changes nothing else. |
+| `customerProfile.desktop.urlScheme` / `.siteUrl` | Agent Relay Desktop deep links: the URL scheme and site of the Desktop build for this deployment. Settings shows a "Connect your agents" link (`<urlScheme>://connect?site=<siteUrl>&…`). Needs a dashboard image from relay-webapp #88 or later. Not branding: on its own it changes nothing else. |
 
 URLs may be `https`/`http`, same-origin paths or `data:image/…`. Example
 customer values:
 
 ```yaml
-relay-dashboard:            # under the agent-relay umbrella; top level for this chart
+relay-webapp:            # under the agent-relay umbrella; top level for this chart
   customerProfile:
     productName: Acme Relay
     logo:
@@ -69,6 +71,6 @@ relay-dashboard:            # under the agent-relay umbrella; top level for this
 The same JSON object is the customer profile for other Agent Relay clients.
 
 ```sh
-helm lint --strict charts/relay-dashboard \
-  -f charts/relay-dashboard/ci/default-values.yaml
+helm lint --strict charts/relay-webapp \
+  -f charts/relay-webapp/ci/default-values.yaml
 ```

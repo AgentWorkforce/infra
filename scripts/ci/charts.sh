@@ -359,8 +359,8 @@ for chart in "${charts[@]}"; do
         ! yq 'select(.kind == "Job" or (.kind == "Deployment" and .metadata.name == "ci-relayfile-session-broker")) | .metadata.name' <<<"$dev" | grep -q . \
           || err "$chart: devRuntime must not render the broker or the deploy Job"
         ;;
-      relay-dashboard)
-        v=charts/relay-dashboard/ci/default-values.yaml
+      relay-webapp)
+        v=charts/relay-webapp/ci/default-values.yaml
         expect_render_failure "$chart" "$v" "mutable image" "image.digest is required" --set image.digest=
         expect_render_failure "$chart" "$v" "malformed digest" "image.digest must be sha256:<64 lowercase hex characters>" --set image.digest=sha256:abc
         expect_render_failure "$chart" "$v" "public Service" "service.type must be ClusterIP" --set service.type=LoadBalancer
@@ -378,13 +378,13 @@ for chart in "${charts[@]}"; do
         expect_render_failure "$chart" "$v" "false customer profile" "customerProfile must be a map" --set customerProfile=false
         expect_render_failure "$chart" "$v" "list customer profile" "customerProfile must be a map" --set-json 'customerProfile=[]'
         expect_render_failure "$chart" "$v" "empty-string customer profile" "customerProfile must be a map" --set-string 'customerProfile='
-        brand=$(render "$chart" charts/relay-dashboard/ci/branding.profile.yaml)
+        brand=$(render "$chart" charts/relay-webapp/ci/branding.profile.yaml)
         profile=$(yq 'select(.kind == "Deployment") | .spec.template.spec.containers[0].env[] | select(.name == "DASHBOARD_CUSTOMER_PROFILE") | .value' <<<"$brand")
         [ "$(jq -r '.productName + " " + .logo.dark + " " + (.poweredByAgentRelay | tostring)' <<<"$profile")" = "Acme Relay https://acme.example/brand/logo-on-dark.svg true" ] \
           || err "$chart: customerProfile must render as one JSON object in DASHBOARD_CUSTOMER_PROFILE"
         ;;
-      relay-cloud-api)
-        v=charts/relay-cloud-api/ci/default-values.yaml
+      relay-control)
+        v=charts/relay-control/ci/default-values.yaml
         expect_render_failure "$chart" "$v" "mutable image" "image.digest is required" --set image.digest=
         expect_render_failure "$chart" "$v" "malformed digest" "image.digest must be sha256:<64 lowercase hex characters>" --set image.digest=sha256:abc
         expect_render_failure "$chart" "$v" "missing Secret" "existingSecret is required" --set existingSecret=
@@ -410,7 +410,7 @@ for chart in "${charts[@]}"; do
           || err "$chart: full-Cloud/Next environment leaked into the selfhost API chart"
         # bootstrap-signup: identity settings render to relaycontrol's env and
         # their secrets only as mounted files.
-        idv=charts/relay-cloud-api/ci/identity-values.yaml
+        idv=charts/relay-control/ci/identity-values.yaml
         id_out=$(render "$chart" "$idv")
         id_env=$(yq 'select(.kind == "Deployment") | .spec.template.spec.containers[0].env[] | .name + "=" + (.value // "")' <<<"$id_out")
         for want in "SELFHOST_BOOTSTRAP_ORG_NAME=Acme" "SELFHOST_BOOTSTRAP_ADMIN_EMAIL=ops@acme.com" \
@@ -488,10 +488,10 @@ for chart in "${charts[@]}"; do
       agent-relay)
         v=charts/agent-relay/ci/gcp-proof-values.yaml
         expect_render_failure "$chart" "$v" "missing History image" "image.digest is required" --set relayhistory.image.digest=
-        expect_render_failure "$chart" "$v" "missing API image" "image.digest is required" --set relay-cloud-api.image.digest=
-        expect_render_failure "$chart" "$v" "missing dashboard image" "image.digest is required" --set relay-dashboard.image.digest=
-        expect_render_failure "$chart" "$v" "dashboardUrl off the root host" "relay-cloud-api.dashboardUrl must be on the dashboard host" --set relay-cloud-api.dashboardUrl=https://elsewhere.agentrelay.com/
-        [ -n "$(render "$chart" "$v" --set relay-cloud-api.dashboardUrl=https://gcp-proof.agentrelay.com:443/)" ] || err "$chart: dashboardUrl with an explicit :443 on the root host must render"
+        expect_render_failure "$chart" "$v" "missing API image" "image.digest is required" --set relay-control.image.digest=
+        expect_render_failure "$chart" "$v" "missing dashboard image" "image.digest is required" --set relay-webapp.image.digest=
+        expect_render_failure "$chart" "$v" "dashboardUrl off the root host" "relay-control.dashboardUrl must be on the dashboard host" --set relay-control.dashboardUrl=https://elsewhere.agentrelay.com/
+        [ -n "$(render "$chart" "$v" --set relay-control.dashboardUrl=https://gcp-proof.agentrelay.com:443/)" ] || err "$chart: dashboardUrl with an explicit :443 on the root host must render"
         expect_render_failure "$chart" "$v" "ar_ authority without relayauth" "relaycast.credentials.authority=relayauth requires components.relayauth=true" --set components.relayauth=false --set relaycast.credentials.format=ar --set relaycast.credentials.authority=relayauth --set relaycast.credentials.relayauth.url=http://relayauth:8787 --set relaycast.secretKeys.relayauthToken=relaycast-relayauth-token
         ;;
     esac

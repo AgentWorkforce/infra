@@ -299,7 +299,7 @@ the overlay must disable them explicitly. The restored databases already carry
 the recorded schema, and the restored bucket already exists:
 
 - `relayhistory.migrations.enabled=false`;
-- `relay-cloud-api.migrations.enabled=false`;
+- `relay-control.migrations.enabled=false`;
 - `sessions-pipeline.worker.migrations.enabled=false`;
 - `sessions-pipeline.worker.lockerInit.enabled=false`;
 - `relaycast.backup.enabled=false`, so no backup CronJob writes during the
@@ -319,7 +319,7 @@ gkeIngress:
 relayhistory:
   migrations:
     enabled: false
-relay-cloud-api:
+relay-control:
   migrations:
     enabled: false
 sessions-pipeline:

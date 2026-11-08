@@ -1,8 +1,8 @@
-{{- define "relay-cloud-api.name" -}}{{ default .Chart.Name .Values.nameOverride | trunc 63 | trimSuffix "-" }}{{- end -}}
-{{- define "relay-cloud-api.fullname" -}}{{ if .Values.fullnameOverride }}{{ .Values.fullnameOverride | trunc 63 | trimSuffix "-" }}{{ else }}{{ printf "%s-%s" .Release.Name (include "relay-cloud-api.name" .) | trunc 63 | trimSuffix "-" }}{{ end }}{{- end -}}
-{{- define "relay-cloud-api.labels" -}}
+{{- define "relay-control.name" -}}{{ default .Chart.Name .Values.nameOverride | trunc 63 | trimSuffix "-" }}{{- end -}}
+{{- define "relay-control.fullname" -}}{{ if .Values.fullnameOverride }}{{ .Values.fullnameOverride | trunc 63 | trimSuffix "-" }}{{ else }}{{ printf "%s-%s" .Release.Name (include "relay-control.name" .) | trunc 63 | trimSuffix "-" }}{{ end }}{{- end -}}
+{{- define "relay-control.labels" -}}
 helm.sh/chart: {{ printf "%s-%s" .Chart.Name .Chart.Version | replace "+" "_" }}
-{{ include "relay-cloud-api.selectorLabels" . }}
+{{ include "relay-control.selectorLabels" . }}
 app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
 app.kubernetes.io/managed-by: {{ .Release.Service }}
 app.kubernetes.io/part-of: agent-relay
@@ -10,23 +10,23 @@ app.kubernetes.io/part-of: agent-relay
 {{- /* Job metadata labels: the runtime component label is replaced by
 migration so `kubectl wait job -l app.kubernetes.io/component=migration`
 (NOTES.txt) finds the Job. */ -}}
-{{- define "relay-cloud-api.migrationLabels" -}}
+{{- define "relay-control.migrationLabels" -}}
 helm.sh/chart: {{ printf "%s-%s" .Chart.Name .Chart.Version | replace "+" "_" }}
-app.kubernetes.io/name: {{ include "relay-cloud-api.name" . }}
+app.kubernetes.io/name: {{ include "relay-control.name" . }}
 app.kubernetes.io/instance: {{ .Release.Name }}
 app.kubernetes.io/component: migration
 app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
 app.kubernetes.io/managed-by: {{ .Release.Service }}
 app.kubernetes.io/part-of: agent-relay
 {{- end -}}
-{{- define "relay-cloud-api.selectorLabels" -}}
-app.kubernetes.io/name: {{ include "relay-cloud-api.name" . }}
+{{- define "relay-control.selectorLabels" -}}
+app.kubernetes.io/name: {{ include "relay-control.name" . }}
 app.kubernetes.io/instance: {{ .Release.Name }}
 app.kubernetes.io/component: api
 {{- end -}}
-{{- define "relay-cloud-api.serviceAccountName" -}}{{ if .Values.serviceAccount.create }}{{ default (include "relay-cloud-api.fullname" .) .Values.serviceAccount.name }}{{ else }}{{ default "default" .Values.serviceAccount.name }}{{ end }}{{- end -}}
-{{- define "relay-cloud-api.image" -}}
-{{- $digest := required "image.digest is required; relay-cloud-api images must be pinned by sha256 digest" .Values.image.digest -}}
+{{- define "relay-control.serviceAccountName" -}}{{ if .Values.serviceAccount.create }}{{ default (include "relay-control.fullname" .) .Values.serviceAccount.name }}{{ else }}{{ default "default" .Values.serviceAccount.name }}{{ end }}{{- end -}}
+{{- define "relay-control.image" -}}
+{{- $digest := required "image.digest is required; relay-control images must be pinned by sha256 digest" .Values.image.digest -}}
 {{- if not (regexMatch "^sha256:[a-f0-9]{64}$" $digest) }}{{ fail "image.digest must be sha256:<64 lowercase hex characters>" }}{{ end -}}
 {{- printf "%s@%s" .Values.image.repository $digest -}}
 {{- end -}}
@@ -34,21 +34,21 @@ app.kubernetes.io/component: api
 umbrella): the API is served on that host under /cloud/api, /login and /api
 next to the dashboard, so publicUrl is https://<host> and is derived instead
 of set a second time. Desktop and the CLI log in against that same origin. */ -}}
-{{- define "relay-cloud-api.singleHost" -}}{{ dig "singleHost" "host" "" (.Values.global | default dict) }}{{- end -}}
-{{- define "relay-cloud-api.publicUrl" -}}
-{{- $single := include "relay-cloud-api.singleHost" . -}}
+{{- define "relay-control.singleHost" -}}{{ dig "singleHost" "host" "" (.Values.global | default dict) }}{{- end -}}
+{{- define "relay-control.publicUrl" -}}
+{{- $single := include "relay-control.singleHost" . -}}
 {{- if $single }}{{ printf "https://%s" $single }}{{ else }}{{ .Values.publicUrl }}{{ end -}}
 {{- end -}}
-{{- define "relay-cloud-api.validateSingleHost" -}}
-{{- $single := include "relay-cloud-api.singleHost" . -}}
+{{- define "relay-control.validateSingleHost" -}}
+{{- $single := include "relay-control.singleHost" . -}}
 {{- if $single }}
 {{- if or (gt (len $single) 253) (regexMatch "(^|\\.)[0-9]+$" $single) (not (regexMatch "^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\\.)*[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$" $single)) }}{{ fail "global.singleHost.host must be a lowercase DNS hostname (no scheme, port or path; labels of 1-63 characters that start and end with a letter or digit, not an IP address)" }}{{ end -}}
 {{- if and .Values.publicUrl (ne (trimSuffix "/" .Values.publicUrl) (printf "https://%s" $single)) }}{{ fail (printf "publicUrl is derived from global.singleHost.host (https://%s); leave publicUrl empty" $single) }}{{ end -}}
-{{- if .Values.ingress.enabled }}{{ fail "global.singleHost.host serves the API through the dashboard host's routes (/cloud/api, /login, /api); set ingress.enabled=false (relay-dashboard.ingress or the agent-relay gkeIngress routes it)" }}{{ end -}}
+{{- if .Values.ingress.enabled }}{{ fail "global.singleHost.host serves the API through the dashboard host's routes (/cloud/api, /login, /api); set ingress.enabled=false (relay-webapp.ingress or the agent-relay gkeIngress routes it)" }}{{ end -}}
 {{- end -}}
 {{- end -}}
-{{- define "relay-cloud-api.validate" -}}
-{{- $image := include "relay-cloud-api.image" . -}}
+{{- define "relay-control.validate" -}}
+{{- $image := include "relay-control.image" . -}}
 {{- if ne (int .Values.replicaCount) 1 }}{{ fail "replicaCount must be 1: the self-host API pilot has process-local login/device rate limits and is not HA" }}{{ end -}}
 {{- if not .Values.existingSecret }}{{ fail "existingSecret is required; inline credentials are not supported" }}{{ end -}}
 {{- if .Values.license.existingSecret -}}
@@ -71,12 +71,12 @@ the API pod, and any other collision would feed one credential to two
 settings. */ -}}
 {{- $seenSecretKeys := dict -}}
 {{- range $name := keys .Values.secretKeys | sortAlpha }}{{ $key := toString (index $.Values.secretKeys $name) }}{{ if empty $key }}{{ continue }}{{ end }}{{ if hasKey $seenSecretKeys $key }}{{ fail (printf "secretKeys.%s and secretKeys.%s both name Secret key %q: every secretKeys value must be distinct (a collision with databaseMigrationsUrl would mount the migration credential into the API pod)" (get $seenSecretKeys $key) $name $key) }}{{ end }}{{ $_ := set $seenSecretKeys $key $name }}{{ end -}}
-{{- include "relay-cloud-api.validateRuntime" . -}}
+{{- include "relay-control.validateRuntime" . -}}
 {{- if and .Values.migrations.enabled (not (regexMatch "^[A-Za-z_][A-Za-z0-9_$]{0,62}$" .Values.database.runtimeRole)) }}{{ fail "database.runtimeRole must be a valid PostgreSQL role name when migrations are enabled" }}{{ end -}}
-{{- include "relay-cloud-api.validateSingleHost" . -}}
-{{- include "relay-cloud-api.validateIdentity" . -}}
-{{- include "relay-cloud-api.validateIntegrations" . -}}
-{{- if not (regexMatch "^https://[^/?#]+$" (include "relay-cloud-api.publicUrl" .)) }}{{ fail "publicUrl must be an HTTPS origin with no path" }}{{ end -}}
+{{- include "relay-control.validateSingleHost" . -}}
+{{- include "relay-control.validateIdentity" . -}}
+{{- include "relay-control.validateIntegrations" . -}}
+{{- if not (regexMatch "^https://[^/?#]+$" (include "relay-control.publicUrl" .)) }}{{ fail "publicUrl must be an HTTPS origin with no path" }}{{ end -}}
 {{- $serviceUrls := dict "relaycastUrl" .Values.services.relaycastUrl "relayhistoryUrl" .Values.services.relayhistoryUrl -}}
 {{- if .Values.services.relayauthEnabled }}{{ $_ := set $serviceUrls "relayauthUrl" .Values.services.relayauthUrl }}{{ end -}}
 {{- range $name, $url := $serviceUrls }}{{ if not (regexMatch "^https?://[^/?#]+$" $url) }}{{ fail (printf "services.%s must be an HTTP(S) origin with no path" $name) }}{{ end }}{{ end -}}
@@ -88,9 +88,9 @@ settings. */ -}}
 {{- end -}}
 {{- if and .Values.networkPolicy.enabled (not .Values.networkPolicy.allowAllEgress) (empty .Values.networkPolicy.additionalEgress) }}{{ fail "networkPolicy.enabled with allowAllEgress=false requires networkPolicy.additionalEgress: restricted egress allows only same-namespace pods and DNS, which blocks the external PostgreSQL database and any RelayAuth, Relaycast or Relay History URL outside the namespace" }}{{ end -}}
 {{- range .Values.networkPolicy.additionalEgress }}{{ if empty .to }}{{ fail "every networkPolicy.additionalEgress rule needs a non-empty to (an empty to matches every destination; use ipBlock 0.0.0.0/0 to allow any destination explicitly)" }}{{ end }}{{ end -}}
-{{- range $key, $_ := include "relay-cloud-api.selectorLabels" . | fromYaml }}{{ if hasKey ($.Values.podLabels | default dict) $key }}{{ fail (printf "podLabels must not set selector label %s: the Deployment selector would no longer match its pods" $key) }}{{ end }}{{ end -}}
+{{- range $key, $_ := include "relay-control.selectorLabels" . | fromYaml }}{{ if hasKey ($.Values.podLabels | default dict) $key }}{{ fail (printf "podLabels must not set selector label %s: the Deployment selector would no longer match its pods" $key) }}{{ end }}{{ end -}}
 {{- if ne .Values.service.type "ClusterIP" }}{{ fail "service.type must be ClusterIP" }}{{ end -}}
-{{- if .Values.ingress.enabled }}{{ if empty .Values.ingress.hosts }}{{ fail "ingress.enabled=true requires at least one host" }}{{ end }}{{ if not (has (urlParse (include "relay-cloud-api.publicUrl" .)).hostname .Values.ingress.hosts) }}{{ fail "ingress.hosts must include the publicUrl host" }}{{ end }}{{ if and (not .Values.ingress.externalTls) (empty .Values.ingress.tls) }}{{ fail "ingress.enabled=true requires ingress.tls unless externalTls=true" }}{{ end }}{{ if and .Values.networkPolicy.enabled (empty .Values.networkPolicy.ingressFrom) }}{{ fail "ingress with networkPolicy requires networkPolicy.ingressFrom" }}{{ end }}{{ end -}}
+{{- if .Values.ingress.enabled }}{{ if empty .Values.ingress.hosts }}{{ fail "ingress.enabled=true requires at least one host" }}{{ end }}{{ if not (has (urlParse (include "relay-control.publicUrl" .)).hostname .Values.ingress.hosts) }}{{ fail "ingress.hosts must include the publicUrl host" }}{{ end }}{{ if and (not .Values.ingress.externalTls) (empty .Values.ingress.tls) }}{{ fail "ingress.enabled=true requires ingress.tls unless externalTls=true" }}{{ end }}{{ if and .Values.networkPolicy.enabled (empty .Values.networkPolicy.ingressFrom) }}{{ fail "ingress with networkPolicy requires networkPolicy.ingressFrom" }}{{ end }}{{ end -}}
 {{- /* extraEnv is appended to the API and migration containers. Reject names
 the chart already sets, including duplicates inside extraEnv. */ -}}
 {{- $managed := list
@@ -109,11 +109,11 @@ the chart already sets, including duplicates inside extraEnv. */ -}}
   "SELFHOST_ENCRYPTION_PREVIOUS_KEY_FILE" "SELFHOST_INTERNAL_TOKEN_FILE" "SELFHOST_OIDC_CLIENT_SECRET_FILE" "SELFHOST_SMTP_PASSWORD_FILE"
   "SELFHOST_TELEMETRY_INSTALL_KEY_FILE" -}}
 {{- range $name := $managed }}{{ if hasSuffix "_FILE" $name }}{{ $managed = append $managed (trimSuffix "_FILE" $name) }}{{ end }}{{ end -}}
-{{- range $src := list (include "relay-cloud-api.runtimeEnv" .) (include "relay-cloud-api.secretEnv" .) -}}
+{{- range $src := list (include "relay-control.runtimeEnv" .) (include "relay-control.secretEnv" .) -}}
 {{- range $item := $src | fromYamlArray }}{{ $managed = append $managed (toString $item.name) }}{{ end -}}
 {{- end -}}
 {{- if .Values.integrations -}}
-{{- $integrationEnv := include "relay-cloud-api.integrationEnv" . -}}
+{{- $integrationEnv := include "relay-control.integrationEnv" . -}}
 {{- if $integrationEnv }}{{ range $item := $integrationEnv | fromYamlArray }}{{ $managed = append $managed (toString $item.name) }}{{ end }}{{ end -}}
 {{- end -}}
 {{- range .Values.extraEnv -}}
@@ -146,7 +146,7 @@ the chart already sets, including duplicates inside extraEnv. */ -}}
 {{- end -}}
 {{- /* Secret files mounted into the API pod: env name -> Secret data key.
 Optional keys are left out while empty. */ -}}
-{{- define "relay-cloud-api.secretFiles" -}}
+{{- define "relay-control.secretFiles" -}}
 {{- $files := dict "DATABASE_URL_FILE" .Values.secretKeys.databaseUrl "SELFHOST_BOOTSTRAP_TOKEN_FILE" .Values.secretKeys.bootstrapToken "SELFHOST_ENCRYPTION_KEY_FILE" .Values.secretKeys.encryptionKey -}}
 {{- if .Values.services.relayauthEnabled }}{{ $_ := set $files "RELAYAUTH_API_KEY_FILE" .Values.secretKeys.relayauthApiKey }}{{ end -}}
 {{- with .Values.secretKeys.previousEncryptionKey }}{{ $_ := set $files "SELFHOST_ENCRYPTION_PREVIOUS_KEY_FILE" . }}{{ end -}}
@@ -154,50 +154,50 @@ Optional keys are left out while empty. */ -}}
 {{- with .Values.secretKeys.relaycastInternalSecret }}{{ $_ := set $files "RELAYCAST_INTERNAL_SECRET_FILE" . }}{{ end -}}
 {{- if and .Values.auth.oidc.issuer .Values.secretKeys.oidcClientSecret }}{{ $_ := set $files "SELFHOST_OIDC_CLIENT_SECRET_FILE" .Values.secretKeys.oidcClientSecret }}{{ end -}}
 {{- if and .Values.smtp.host .Values.smtp.username .Values.secretKeys.smtpPassword }}{{ $_ := set $files "SELFHOST_SMTP_PASSWORD_FILE" .Values.secretKeys.smtpPassword }}{{ end -}}
-{{- if and (ne (include "relay-cloud-api.telemetryLevel" .) "off") .Values.secretKeys.telemetryInstallKey }}{{ $_ := set $files "SELFHOST_TELEMETRY_INSTALL_KEY_FILE" .Values.secretKeys.telemetryInstallKey }}{{ end -}}
+{{- if and (ne (include "relay-control.telemetryLevel" .) "off") .Values.secretKeys.telemetryInstallKey }}{{ $_ := set $files "SELFHOST_TELEMETRY_INSTALL_KEY_FILE" .Values.secretKeys.telemetryInstallKey }}{{ end -}}
 {{- toJson $files -}}
 {{- end -}}
-{{- define "relay-cloud-api.secretEnv" -}}
-{{- range $env, $key := include "relay-cloud-api.secretFiles" . | fromJson }}
+{{- define "relay-control.secretEnv" -}}
+{{- range $env, $key := include "relay-control.secretFiles" . | fromJson }}
 - name: {{ $env }}
   value: /var/run/agent-relay/secrets/{{ $key }}
 {{- end }}
 {{- end -}}
-{{- define "relay-cloud-api.secretItems" -}}
-{{- range $key := include "relay-cloud-api.secretFiles" . | fromJson | values | sortAlpha | uniq }}
+{{- define "relay-control.secretItems" -}}
+{{- range $key := include "relay-control.secretFiles" . | fromJson | values | sortAlpha | uniq }}
 {{- if eq $key (toString $.Values.secretKeys.databaseMigrationsUrl) }}{{ fail "the API pod must never mount secretKeys.databaseMigrationsUrl" }}{{ end }}
 - { key: {{ $key | quote }}, path: {{ $key | quote }} }
 {{- end }}
 {{- end -}}
 {{- /* YAML 1.1 reads a bare off as false; treat it as "off". */ -}}
 {{- /* telemetry.level as configured (validated against off|errors|full). */ -}}
-{{- define "relay-cloud-api.telemetryConfiguredLevel" -}}
+{{- define "relay-control.telemetryConfiguredLevel" -}}
 {{- $level := .Values.telemetry.level -}}
 {{- if kindIs "bool" $level }}{{ ternary "on" "off" $level }}{{ else }}{{ $level | default "off" | toString | lower }}{{ end -}}
 {{- end -}}
 {{- /* True (non-empty) once the install is registered: any of installId,
 secretKeys.telemetryInstallKey or endpoint is set. */ -}}
-{{- define "relay-cloud-api.telemetryRegistered" -}}
+{{- define "relay-control.telemetryRegistered" -}}
 {{- if or .Values.telemetry.installId .Values.secretKeys.telemetryInstallKey .Values.telemetry.endpoint }}true{{ end -}}
 {{- end -}}
 {{- /* Effective level: the configured level once the install is registered,
 otherwise off. The default (errors) therefore takes effect only after the
 operator supplies the registration; a partial registration fails the render. */ -}}
-{{- define "relay-cloud-api.telemetryLevel" -}}
-{{- if include "relay-cloud-api.telemetryRegistered" . }}{{ include "relay-cloud-api.telemetryConfiguredLevel" . }}{{ else }}off{{ end -}}
+{{- define "relay-control.telemetryLevel" -}}
+{{- if include "relay-control.telemetryRegistered" . }}{{ include "relay-control.telemetryConfiguredLevel" . }}{{ else }}off{{ end -}}
 {{- end -}}
 {{- /* True (non-empty) when the API sends telemetry over the network. */ -}}
-{{- define "relay-cloud-api.telemetryEgress" -}}
-{{- if and (ne (include "relay-cloud-api.telemetryLevel" .) "off") (eq (.Values.telemetry.transport | default "https") "https") }}true{{ end -}}
+{{- define "relay-control.telemetryEgress" -}}
+{{- if and (ne (include "relay-control.telemetryLevel" .) "off") (eq (.Values.telemetry.transport | default "https") "https") }}true{{ end -}}
 {{- end -}}
 {{- /* Non-secret deployment shape for SELFHOST_TELEMETRY_DEPLOYMENT; the API
 keeps only short keys, numbers, booleans and version-like strings.
 telemetry.deployment is checked in validateRuntime before it is merged. */ -}}
-{{- define "relay-cloud-api.telemetryDeployment" -}}
+{{- define "relay-control.telemetryDeployment" -}}
 {{- $shape := dict "chart" .Chart.Name "chartVersion" .Chart.Version "appVersion" .Chart.AppVersion "replicas" 1 "flowsStorage" (.Values.flows.storage | default "postgres") "networkPolicy" (.Values.networkPolicy.enabled | default false) "ingress" (.Values.ingress.enabled | default false) -}}
 {{- toJson (mergeOverwrite $shape (deepCopy (.Values.telemetry.deployment | default dict))) -}}
 {{- end -}}
-{{- define "relay-cloud-api.runtimeEnv" -}}
+{{- define "relay-control.runtimeEnv" -}}
 - { name: SELFHOST_ENCRYPTION_KEY_ID, value: {{ .Values.encryption.keyId | quote }} }
 {{- with .Values.encryption.previousKeyId }}
 - { name: SELFHOST_ENCRYPTION_PREVIOUS_KEY_ID, value: {{ . | quote }} }
@@ -218,8 +218,8 @@ telemetry.deployment is checked in validateRuntime before it is merged. */ -}}
 {{- if not (kindIs "invalid" .Values.flows.queuePingMs) }}{{ if ne (toString .Values.flows.queuePingMs) "" }}
 - { name: SELFHOST_FLOWS_QUEUE_PING_MS, value: {{ int64 .Values.flows.queuePingMs | toString | quote }} }
 {{- end }}{{ end }}
-{{- include "relay-cloud-api.identityEnv" . }}
-{{- $level := include "relay-cloud-api.telemetryLevel" . }}
+{{- include "relay-control.identityEnv" . }}
+{{- $level := include "relay-control.telemetryLevel" . }}
 - { name: SELFHOST_TELEMETRY_LEVEL, value: {{ $level | quote }} }
 - { name: SELFHOST_TELEMETRY_TRANSPORT, value: {{ .Values.telemetry.transport | default "https" | quote }} }
 {{- if ne $level "off" }}
@@ -232,13 +232,13 @@ telemetry.deployment is checked in validateRuntime before it is merged. */ -}}
   value: {{ $probes := list }}{{ range . }}{{ $probes = append $probes (printf "%s=%s" (toString .name) (toString .url)) }}{{ end }}{{ join "," $probes | quote }}
 {{- end }}
 - name: SELFHOST_TELEMETRY_DEPLOYMENT
-  value: {{ include "relay-cloud-api.telemetryDeployment" . | quote }}
+  value: {{ include "relay-control.telemetryDeployment" . | quote }}
 {{- end }}
 {{- end -}}
 {{- /* Fail-closed checks for the relaycontrol runtime contract (src/config.ts,
 src/flows/config.ts, src/telemetry/config.ts): everything the API would refuse
 at startup is refused at render time instead of crash-looping. */ -}}
-{{- define "relay-cloud-api.validateRuntime" -}}
+{{- define "relay-control.validateRuntime" -}}
 {{- $idPattern := "^[A-Za-z0-9_-]{1,64}$" -}}
 {{- if not .Values.encryption.keyId }}{{ fail "encryption.keyId is required (SELFHOST_ENCRYPTION_KEY_ID): the non-secret id of secretKeys.encryptionKey" }}{{ end -}}
 {{- if not (regexMatch $idPattern (toString .Values.encryption.keyId)) }}{{ fail "encryption.keyId must contain 1-64 URL-safe characters (A-Z a-z 0-9 _ -)" }}{{ end -}}
@@ -265,8 +265,8 @@ at startup is refused at render time instead of crash-looping. */ -}}
 {{- if not (regexMatch "^[0-9]+$" (toString .Values.flows.queuePingMs)) }}{{ fail "flows.queuePingMs must be an integer from 1000 to 120000" }}{{ end -}}
 {{- if or (lt (int64 .Values.flows.queuePingMs) 1000) (gt (int64 .Values.flows.queuePingMs) 120000) }}{{ fail "flows.queuePingMs must be an integer from 1000 to 120000" }}{{ end -}}
 {{- end }}{{ end -}}
-{{- if not (has (include "relay-cloud-api.telemetryConfiguredLevel" .) (list "off" "errors" "full")) }}{{ fail "telemetry.level must be off, errors, or full" }}{{ end -}}
-{{- $level := include "relay-cloud-api.telemetryLevel" . -}}
+{{- if not (has (include "relay-control.telemetryConfiguredLevel" .) (list "off" "errors" "full")) }}{{ fail "telemetry.level must be off, errors, or full" }}{{ end -}}
+{{- $level := include "relay-control.telemetryLevel" . -}}
 {{- $transport := .Values.telemetry.transport | default "https" -}}
 {{- if not (has $transport (list "https" "file")) }}{{ fail "telemetry.transport must be https or file" }}{{ end -}}
 {{- with .Values.telemetry.endpoint }}{{ if not (regexMatch "^https://[^/?#@\\s]+(/[^?#\\s]*)?$" .) }}{{ fail "telemetry.endpoint must be an https URL without credentials, query or fragment" }}{{ end }}{{ end -}}
@@ -302,15 +302,15 @@ would silently drop, and nothing that could carry data, is rendered. */ -}}
 {{- end -}}
 {{- if gt (len .Values.telemetry.probes) 20 }}{{ fail "telemetry.probes allows at most 20 entries" }}{{ end -}}
 {{- end -}}
-{{- define "relay-cloud-api.migrationPodTemplate" -}}
+{{- define "relay-control.migrationPodTemplate" -}}
 metadata:
   labels:
-    app.kubernetes.io/name: {{ include "relay-cloud-api.name" . }}
+    app.kubernetes.io/name: {{ include "relay-control.name" . }}
     app.kubernetes.io/instance: {{ .Release.Name }}
     app.kubernetes.io/component: migration
 spec:
   restartPolicy: Never
-  serviceAccountName: {{ include "relay-cloud-api.serviceAccountName" . }}
+  serviceAccountName: {{ include "relay-control.serviceAccountName" . }}
   automountServiceAccountToken: false
   securityContext: {{ toYaml .Values.podSecurityContext | nindent 4 }}
   {{- with .Values.imagePullSecrets }}
@@ -318,7 +318,7 @@ spec:
   {{- end }}
   containers:
     - name: migrate
-      image: {{ include "relay-cloud-api.image" . | quote }}
+      image: {{ include "relay-control.image" . | quote }}
       imagePullPolicy: {{ .Values.image.pullPolicy }}
       command: {{ toYaml .Values.migrations.command | nindent 8 }}
       args: {{ toYaml .Values.migrations.args | nindent 8 }}
@@ -350,7 +350,7 @@ spec:
 {{- /* bootstrap-signup: first-boot bootstrap, OIDC, email links, SMTP and
 invites (relaycontrol src/identity/config.ts). Nothing renders while the
 blocks are empty, so existing renders are unchanged. */ -}}
-{{- define "relay-cloud-api.identityEnv" -}}
+{{- define "relay-control.identityEnv" -}}
 {{- with .Values.bootstrap.orgName }}
 - { name: SELFHOST_BOOTSTRAP_ORG_NAME, value: {{ . | quote }} }
 - { name: SELFHOST_BOOTSTRAP_ADMIN_EMAIL, value: {{ $.Values.bootstrap.adminEmail | lower | quote }} }
@@ -403,7 +403,7 @@ blocks are empty, so existing renders are unchanged. */ -}}
 {{- end }}{{ end }}
 {{- end -}}
 
-{{- define "relay-cloud-api.validateIdentity" -}}
+{{- define "relay-control.validateIdentity" -}}
 {{- $email := "^[^@\\s<>()\",;:]+@[^@\\s<>()\",;:]+\\.[^@\\s<>()\",;:]+$" -}}
 {{- $domain := "^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\\.)+[a-z]([a-z0-9-]{0,61}[a-z0-9])?$" -}}
 {{- $b := .Values.bootstrap -}}
@@ -412,7 +412,7 @@ blocks are empty, so existing renders are unchanged. */ -}}
 {{- if and $b.orgName (not .Values.secretKeys.relaycastInternalSecret) }}{{ fail "bootstrap.orgName requires secretKeys.relaycastInternalSecret (the Secret key holding relaycast's internal secret, e.g. relaycast-internal-secret): the API creates the default workspace's Relaycast workspace with it" }}{{ end -}}
 {{- if and (or $b.adminName $b.workspaceName) (not $b.orgName) }}{{ fail "bootstrap.adminName and bootstrap.workspaceName need bootstrap.orgName and bootstrap.adminEmail" }}{{ end -}}
 {{- $oidc := .Values.auth.oidc -}}
-{{- if and (or $b.orgName $oidc.issuer .Values.auth.emailLink.enabled .Values.smtp.host) (not .Values.dashboardUrl) (not (include "relay-cloud-api.singleHost" .)) }}{{ fail "dashboardUrl is required with bootstrap, auth.oidc, auth.emailLink or smtp (outside single-host mode): sign-in and invite links land on the dashboard origin, where the session cookie must be set" }}{{ end -}}
+{{- if and (or $b.orgName $oidc.issuer .Values.auth.emailLink.enabled .Values.smtp.host) (not .Values.dashboardUrl) (not (include "relay-control.singleHost" .)) }}{{ fail "dashboardUrl is required with bootstrap, auth.oidc, auth.emailLink or smtp (outside single-host mode): sign-in and invite links land on the dashboard origin, where the session cookie must be set" }}{{ end -}}
 {{- if $oidc.issuer }}
 {{- if not (regexMatch (ternary "^https?://[^?#@\\s]+$" "^https://[^?#@\\s]+$" (eq $oidc.allowHttpIssuer true)) (toString $oidc.issuer)) }}{{ fail "auth.oidc.issuer must be an https URL without credentials, query or fragment (allowHttpIssuer=true, for tests only, also accepts http)" }}{{ end -}}
 {{- if not $oidc.clientId }}{{ fail "auth.oidc.clientId is required with auth.oidc.issuer" }}{{ end -}}
@@ -448,7 +448,7 @@ blocks are empty, so existing renders are unchanged. */ -}}
 {{- /* Operator OAuth apps for just-in-time integration connects:
 SELFHOST_OAUTH_<PROVIDER>_CLIENT_ID from the Secret, the client secret as a
 mounted file (_CLIENT_SECRET_FILE), optional _SCOPES. */ -}}
-{{- define "relay-cloud-api.integrationEnv" -}}
+{{- define "relay-control.integrationEnv" -}}
 {{- range $provider := keys (.Values.integrations | default dict) | sortAlpha }}
 {{- $app := index $.Values.integrations $provider }}
 {{- $prefix := printf "SELFHOST_OAUTH_%s" (upper (replace "-" "_" $provider)) }}
@@ -462,7 +462,7 @@ mounted file (_CLIENT_SECRET_FILE), optional _SCOPES. */ -}}
 {{- end }}
 {{- end -}}
 
-{{- define "relay-cloud-api.validateIntegrations" -}}
+{{- define "relay-control.validateIntegrations" -}}
 {{- $allowed := list "existingSecret" "clientIdKey" "clientSecretKey" "scopes" -}}
 {{- range $provider, $app := (.Values.integrations | default dict) }}
 {{- if not (regexMatch "^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$" $provider) }}{{ fail (printf "integrations.%s: provider ids are lowercase letters, digits and inner -" $provider) }}{{ end }}

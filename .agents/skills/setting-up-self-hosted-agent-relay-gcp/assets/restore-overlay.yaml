@@ -2,7 +2,7 @@
 relayhistory:
   migrations:
     enabled: false
-relay-cloud-api:
+relay-control:
   migrations:
     enabled: false
 sessions-pipeline:

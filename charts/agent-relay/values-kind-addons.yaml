@@ -4,7 +4,7 @@ localKind:
 components:
   relayflows: true
   relayfile: true
-relay-cloud-api:
+relay-control:
   # The owner-supplied signed license is mounted only into relaycontrol.
   # Enforcement is PENDING in relaycontrol; this slot cannot enforce it.
   license: { existingSecret: kind-addon-license, key: license }
@@ -36,7 +36,7 @@ relayflows:
           - id: control
             type: deterministic
             command: >-
-              node -e 'fetch("http://relaycontrol.agent-relay.svc.cluster.local/healthz").then(r=>{if(!r.ok)process.exit(1);console.log("kind-flow-proof")}).catch(()=>process.exit(1))'
+              node -e 'fetch("http://relay-control.agent-relay.svc.cluster.local/healthz").then(r=>{if(!r.ok)process.exit(1);console.log("kind-flow-proof")}).catch(()=>process.exit(1))'
 relayfile:
   fullnameOverride: relayfile
   runtime: { backend: go }

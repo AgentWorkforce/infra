@@ -232,7 +232,7 @@ cat >"${fixtures}/aw-conformance-test-wrong-db.pods.json" <<'JSON'
 JSON
 # Migration failure: the migration Job ended Failed=True.
 cat >"${fixtures}/aw-conformance-test-migration.jobs.batch.json" <<'JSON'
-{"items":[{"metadata":{"name":"relay-cloud-api-migrate-abc123"},
+{"items":[{"metadata":{"name":"relay-control-migrate-abc123"},
   "spec":{"template":{"metadata":{"labels":{"app.kubernetes.io/component":"migration"}}}},
   "status":{"failed":3,"conditions":[{"type":"Failed","status":"True"}]}}]}
 JSON
@@ -290,7 +290,7 @@ cat >"${fixtures}/aw-neg-wrong-db.pods.json" <<'JSON'
 JSON
 # No migration Job failed: the upgrade failed for another reason.
 cat >"${fixtures}/aw-neg-migration.jobs.batch.json" <<'JSON'
-{"items":[{"metadata":{"name":"relay-cloud-api-migrate-abc123"},
+{"items":[{"metadata":{"name":"relay-control-migrate-abc123"},
   "status":{"succeeded":1,"conditions":[{"type":"Complete","status":"True"}]}}]}
 JSON
 negative_evidence="${tmp_root}/negative-evidence"
@@ -413,9 +413,9 @@ assert_contains "${command_log}" 'condition=Ready pod .*\\?,\\?!job-name'
 : >"${command_log}"
 "${TEST_BASH}" "${HARNESS}" --apply --approval APPLY --chart ./umbrella \
   --namespace aw-select --release aw-select --db-outage-hook "${hook}" \
-  --db-dependent-selector 'app.kubernetes.io/name=relay-cloud-api' \
+  --db-dependent-selector 'app.kubernetes.io/name=relay-control' \
   --evidence-dir "${tmp_root}/outage-select-custom" >/dev/null 2>&1 || true
-assert_contains "${command_log}" 'Ready=false pod .*name=relay-cloud-api\\?,\\?!job-name'
+assert_contains "${command_log}" 'Ready=false pod .*name=relay-control\\?,\\?!job-name'
 pass "DB outage waits only on PostgreSQL-dependent, non-Job pods"
 
 # expect_wrapper RC MODE COMMAND... runs a wrapper in an isolated subshell
