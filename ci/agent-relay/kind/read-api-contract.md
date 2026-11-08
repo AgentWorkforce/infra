@@ -61,6 +61,49 @@ establish a replacement for every legacy History delivery/ingest route.
 
 ## Remaining integration blockers
 
+### RelayAuth and legacy History removal target
+
+Pipeline's source inventory at
+`7a946e06b83dff6ed9df96cb75fd1acd0f37d0a7` does not provide a complete native
+replacement for those services. The read SERVICE exists; a full upload/read/cost
+cutover has no runnable combined artifact yet. Source-program ownership and
+artifact/proof dates remain uncommitted.
+
+| Surface | Current source availability | Required replacement work |
+| --- | --- | --- |
+| Read authentication | `sh_at_` uses relaycontrol introspection. Other bearers still select RelayAuth; absent JWKS/issuer uses hosted defaults. | Explicit control-only verifier mode and service-entry proof; owner TBD. |
+| Desktop upload | Main's session-ingest endpoint is a private Cloudflare Worker with HMAC identity. Unmerged #316 adds a Node edge, not a native ingest upstream or a combined entrypoint. | Native edge/upstream with authorized token scopes and non-Cloudflare queue, Postgres and S3 bindings. |
+| Canonical writer | Main's writer is Lambda-only; native consumer #336 is draft. | Reviewed native writer, exact function-ACL authorization after bootstrap and normal migrate, tenant-gate admission and matching generation. |
+| Read views | List, activity, titles, session events and event search have source implementations, subject to schema/role/coverage/TLS prerequisites. Turns, metadata, timing, catalog and delivery records return 501 in the service assembly. | Canonical object/route bindings and actual readback proof. |
+| CLI sync | Reader login is read-only pass-through, with no refresh or `rth:sync`; Control #27 returns `501 sync_not_served` for that sync exchange. | A supported sync-capable backend login or a separately implemented Desktop upload-origin/acquire flow. |
+| Usage/cost | No replacement endpoints in this service. | Owner-defined compatible endpoints and actual attribution proof. |
+| Native image | Main's dispatcher includes the read API; the proposed edge and consumer branches are not one qualified native image. | Explicit edge/ingest/writer/read entrypoint composition, immutable image/source/generation and compatibility receipts. |
+
+Pipeline's proposed auth follow-up is `READ_API_AUTH_MODE=relaycontrol_only`.
+It is **not implemented** and is not a supported chart input. Its proposed
+contract never constructs the RelayAuth verifier, returns 401 for non-`sh_at_`
+bearers, and refuses startup if `RELAYAUTH_JWKS_URL` or `RELAYAUTH_ISSUER` is set.
+A service-entry test must prove refusal with no outbound fetch attempted.
+Blank issuer values, a dead local URL or relying on denied hosted egress do not
+implement this mode.
+
+Control currently returns one backend origin from
+`POST /api/v1/workspaces/{ws}/relayhistory/session`; it does not advertise a
+separate upload edge. Splitting ingress paths cannot grant sync authority or
+provide Desktop origin discovery. The replacement protocol belongs in its
+backend/Desktop source contract, not an infra token or scope shim.
+
+The current kind guard still requires legacy History, and the read chart still
+requires explicit temporary issuer/JWKS configuration. Chart cutover must follow
+the implemented replacement contracts, then remove both legacy components and
+their wiring with qualified native services in place. No such flag, service,
+image or workaround configuration is introduced by this source inventory.
+Owning-fixture upload, canonical indexing/readback, usage/cost, tenancy/ACL/TLS
+and egress proof must accompany the cutover while preserving existing data.
+Historical availability and 57/0/3 receipts are not that proof.
+
+### Existing reader assembly prerequisites
+
 1. PR #330 adds a Postgres-only reader composition through the existing adapter
    registry, without constructing ClickHouse. A compatible approved immutable
    image is still required, together with owner-provided schema/bootstrap/grants
