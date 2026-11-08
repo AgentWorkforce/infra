@@ -569,6 +569,12 @@ builds the official public Control Dockerfile at `e74413b` using a pinned Node b
 selects the native manifest digest in this worktree's private values, loads it
 into kind and uses `imagePullPolicy: Never`. The OCI manifest/config hashes,
 architecture and source revision are verified before installation. The build
+also selects the matching API and migration entrypoints: current public images
+use `node_modules/relay-control`, while the historical image uses
+`node_modules/@cloud/selfhost-api`. Custom command overrides require explicit
+translation before preparation; unrelated server and migration settings stay
+in place. Switching source selects both commands with the image.
+The build
 receipt is `.kind/core/control-build.json`. `make kind-build-control PROFILE=core`
 performs just the build/selection; it does not install or publish an image.
 For the previous source, use `KIND_CONTROL_SOURCE=historical make kind-build-control PROFILE=core`.

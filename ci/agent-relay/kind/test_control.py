@@ -2,11 +2,13 @@
 import hashlib
 import io
 import json
+import subprocess
 from pathlib import Path
 import sys
 import tarfile
 import tempfile
 import unittest
+import yaml
 from contextlib import redirect_stdout
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
@@ -17,6 +19,46 @@ from stack import tenant_values
 
 
 class ControlArchive(unittest.TestCase):
+    def test_custom_entrypoints_are_not_silently_replaced(self):
+        for section, override in (("server", {"command": ["sh"]}),
+                                  ("server", {"args": ["custom.js"]}),
+                                  ("migrations", {"args": ["custom-migrate.js"]})):
+            with self.subTest(section=section, override=override), tempfile.TemporaryDirectory() as directory:
+                state = Path(directory)
+                original = {"relay-control": {section: override}}
+                (state / "values.json").write_text(json.dumps(original))
+                stack = SimpleNamespace(env={}, overrides=state / "values.json", check_space=Mock())
+                with self.assertRaisesRegex(ValueError, "translate the custom"), patch.object(control, "checkout") as checkout:
+                    control.build(stack)
+                stack.check_space.assert_not_called()
+                checkout.assert_not_called()
+                self.assertEqual(json.loads(stack.overrides.read_text()), original)
+
+    def test_selected_entrypoints_reach_the_rendered_api_and_migration_job(self):
+        root = Path(__file__).resolve().parents[3]
+        image = "agent-relay-kind/selfhost-api@sha256:" + "a" * 64
+        for revision, package in ((control.REVISION, "relay-control"),
+                                  (control.HISTORICAL_REVISION, "@cloud/selfhost-api")):
+            with self.subTest(revision=revision), tempfile.TemporaryDirectory() as directory:
+                values = {"relay-control": {"image": {
+                    "repository": control.REPOSITORY, "digest": "sha256:" + "a" * 64, "pullPolicy": "Never"}}}
+                control.select_local_entrypoints(values, revision)
+                path = Path(directory) / "values.json"
+                path.write_text(json.dumps(values))
+                rendered = subprocess.run(["helm", "template", "agent-relay", "charts/agent-relay", "-n", "agent-relay",
+                                           "-f", "charts/agent-relay/values-kind-core.yaml", "-f", str(path)],
+                                          cwd=root, capture_output=True, text=True)
+                self.assertEqual(rendered.returncode, 0, rendered.stderr)
+                containers = [container for doc in yaml.safe_load_all(rendered.stdout)
+                              if doc and doc.get("kind") in ("Deployment", "Job")
+                              for container in doc["spec"]["template"]["spec"]["containers"]
+                              if container["image"] == image]
+                self.assertEqual(len(containers), 2)
+                self.assertEqual({tuple(c["args"]) for c in containers}, {
+                    (f"node_modules/{package}/dist/server.js",),
+                    (f"node_modules/{package}/dist/migrate-cli.js",)})
+                self.assertTrue(all(c["command"] == ["node"] for c in containers))
+
     def test_only_the_builders_legacy_image_override_is_removed(self):
         image = {"repository": control.REPOSITORY, "digest": "sha256:" + "a" * 64, "pullPolicy": "Never"}
         values = {"relay-cloud-api": {"image": image}, "relay-control": {"existingSecret": "runtime"},
@@ -163,6 +205,11 @@ class ControlArchive(unittest.TestCase):
                 receipt = json.loads((state / "control-build.json").read_text())
                 self.assertEqual(receipt["sourceRevision"], revision)
                 self.assertEqual(control.resolve(stack, receipt["reference"]), receipt["tag"])
+                selected = json.loads(stack.overrides.read_text())["relay-control"]
+                package = "@cloud/selfhost-api" if mode == "historical" else "relay-control"
+                for section, entry in (("server", "server.js"), ("migrations", "migrate-cli.js")):
+                    self.assertEqual(selected.get(section), {
+                        "command": ["node"], "args": [f"node_modules/{package}/dist/{entry}"]})
                 build_args = next(c.args[0] for c in stack.cmd.call_args_list if c.args[0][1:3] == ["buildx", "build"])
                 self.assertIn("IMAGE_REVISION=" + revision, build_args)
                 self.assertIn(control.REPOSITORY + ":" + revision[:7], build_args)
