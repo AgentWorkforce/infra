@@ -1287,6 +1287,34 @@ entries:
     urls:
     - https://github.com/AgentWorkforce/helm-charts/releases/download/relay-cloud-api-0.1.0/relay-cloud-api-0.1.0.tgz
     version: 0.1.0
+  relay-control:
+  - annotations:
+      agentworkforce.dev/license-scope: First-party chart code only; dependencies
+        and images retain their own licenses.
+      agentworkforce.dev/min-helm-version: 3.10.0
+      artifacthub.io/license: Apache-2.0
+    apiVersion: v2
+    appVersion: 0.1.0
+    created: "2026-11-08T16:12:50.069906994Z"
+    description: Self-hosted Agent Relay control-plane API for messaging and sessions
+    digest: 97484316e3544459d7c3bcb46e2a9155e814a789ba3b859c886c12291bb33079
+    home: https://github.com/AgentWorkforce/relay-control
+    keywords:
+    - agent-relay
+    - control-plane
+    - api
+    - self-hosted
+    kubeVersion: '>=1.28.0-0'
+    maintainers:
+    - name: AgentWorkforce
+      url: https://github.com/AgentWorkforce
+    name: relay-control
+    sources:
+    - https://github.com/AgentWorkforce/relay-control
+    type: application
+    urls:
+    - https://github.com/AgentWorkforce/infra/releases/download/relay-control-0.3.0/relay-control-0.3.0.tgz
+    version: 0.3.0
   relay-dashboard:
   - annotations:
       agentworkforce.dev/license-scope: First-party chart code only; dependencies
@@ -1388,6 +1416,32 @@ entries:
     urls:
     - https://github.com/AgentWorkforce/helm-charts/releases/download/relay-dashboard-0.1.0/relay-dashboard-0.1.0.tgz
     version: 0.1.0
+  relay-webapp:
+  - annotations:
+      agentworkforce.dev/license-scope: First-party chart code only; dependencies
+        and images retain their own licenses.
+      artifacthub.io/license: Apache-2.0
+    apiVersion: v2
+    appVersion: 0.1.0
+    created: "2026-11-08T16:12:50.379474685Z"
+    description: Static self-hosted Agent Relay sessions and messaging dashboard
+    digest: 7f0225605d98d8d1fa4a711de8c50eb2764fc177f6ba24990dcf408fd3a4eef4
+    home: https://github.com/AgentWorkforce/relay-webapp
+    keywords:
+    - agent-relay
+    - dashboard
+    - self-hosted
+    kubeVersion: '>=1.28.0-0'
+    maintainers:
+    - name: AgentWorkforce
+      url: https://github.com/AgentWorkforce
+    name: relay-webapp
+    sources:
+    - https://github.com/AgentWorkforce/relay-webapp
+    type: application
+    urls:
+    - https://github.com/AgentWorkforce/infra/releases/download/relay-webapp-0.2.0/relay-webapp-0.2.0.tgz
+    version: 0.2.0
   relayauth:
   - annotations:
       agentworkforce.dev/license-scope: First-party chart code only; dependencies
@@ -2184,6 +2238,60 @@ entries:
       artifacthub.io/license: Apache-2.0
     apiVersion: v2
     appVersion: 0.1.0
+    created: "2026-11-08T16:12:50.601801743Z"
+    dependencies:
+    - alias: worker
+      name: sessions-pipeline-worker
+      repository: file://../sessions-pipeline-worker
+      version: 0.7.0
+    - alias: alleyoop
+      name: session-ingest-api
+      repository: file://../session-ingest-api
+      version: 0.4.0
+    - alias: hoopdb
+      condition: hoopdb.enabled
+      name: cluster
+      repository: https://cloudnative-pg.github.io/charts
+      version: 0.9.0
+    - alias: session-object-storage
+      condition: session-object-storage.enabled
+      name: minio
+      repository: https://charts.min.io/
+      version: 5.4.0
+    - alias: otel
+      condition: otel.enabled
+      name: opentelemetry-collector
+      repository: https://open-telemetry.github.io/opentelemetry-helm-charts
+      version: 0.178.0
+    description: 'The sessions pipeline in one release: the sessions-pipeline-worker
+      and session-ingest-api app charts, plus optional Postgres (CloudNativePG Cluster),
+      session-object-storage (MinIO) and an OpenTelemetry collector. Hook-free, so
+      `helm install` and Alchemy''s `helm template --no-hooks` + server-side apply
+      behave the same. Requires the CloudNativePG operator when hoopdb.enabled (see
+      deps/PINS.md). '
+    digest: 4d72e6ef44cc3f264ba32c129d0d71f4690bd903b77c2306fc32843e32e778d2
+    home: https://github.com/AgentWorkforce/sessions-pipeline
+    keywords:
+    - sessions-pipeline
+    - sessions
+    - pipeline
+    - agentworkforce
+    maintainers:
+    - name: AgentWorkforce
+      url: https://github.com/AgentWorkforce/infra
+    name: sessions-pipeline
+    sources:
+    - https://github.com/AgentWorkforce/infra/tree/main/charts/sessions-pipeline
+    type: application
+    urls:
+    - https://github.com/AgentWorkforce/infra/releases/download/sessions-pipeline-0.7.2/sessions-pipeline-0.7.2.tgz
+    version: 0.7.2
+  - annotations:
+      agentworkforce.dev/license-scope: First-party chart code only; dependencies
+        and images retain their own licenses.
+      artifacthub.io/license: Apache-2.0
+    apiVersion: v2
+    appVersion: 0.1.0
     created: "2026-11-08T13:13:40.0018791Z"
     dependencies:
     - alias: worker
@@ -2421,4 +2529,27 @@ entries:
     urls:
     - https://github.com/AgentWorkforce/helm-charts/releases/download/sessions-pipeline-worker-0.6.0/sessions-pipeline-worker-0.6.0.tgz
     version: 0.6.0
-generated: "2026-11-08T13:13:40.180105568Z"
+  telemetry-collector:
+  - annotations:
+      agentworkforce.dev/license-scope: First-party chart code only; dependencies
+        and images retain their own licenses.
+      artifacthub.io/license: Apache-2.0
+    apiVersion: v2
+    appVersion: 8359483d2666c1f374190c102237c3022ca3d466
+    created: "2026-11-08T16:12:50.748708162Z"
+    description: Authenticated self-hosted analytics collector with durable NDJSON
+      storage and internal TLS
+    digest: b1dd4b462e0c2e2e4e04bca34c7f7a0712e25c132b25656c2a6f97eea6ca5adf
+    home: https://github.com/AgentWorkforce/infra
+    kubeVersion: '>=1.29.0-0'
+    maintainers:
+    - name: AgentWorkforce
+      url: https://github.com/AgentWorkforce/infra
+    name: telemetry-collector
+    sources:
+    - https://github.com/AgentWorkforce/infra/tree/main/charts/telemetry-collector
+    type: application
+    urls:
+    - https://github.com/AgentWorkforce/infra/releases/download/telemetry-collector-0.1.0/telemetry-collector-0.1.0.tgz
+    version: 0.1.0
+generated: "2026-11-08T16:12:50.7488007Z"
