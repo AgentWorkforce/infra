@@ -569,7 +569,7 @@ make kind-proof-core
 ```
 
 This requires Docker BuildKit/buildx and GitHub access during preparation. It
-builds the official public Control Dockerfile at `df4b390` using a pinned Node base,
+builds the public Control Dockerfile at `d94bd42` using a pinned Node base,
 selects the native manifest digest in this worktree's private values, loads it
 into kind and uses `imagePullPolicy: Never`. The OCI manifest/config hashes,
 architecture and source revision are verified before installation. The build
@@ -594,8 +594,12 @@ artifact digest; the official Dockerfile's runtime npm dependency ranges mean
 that identical source does not guarantee identical rebuilt image bytes.
 The historical `1f08cb6` proof covers both public MCP paths with real-token initialization, nineteen-tool discovery,
 workspace/public-origin binding and negative auth/origin checks in the recorded
-local-control proof. It has not been rerun for `df4b390`; no current-build MCP
+local-control proof. It has not been rerun for `d94bd42`; no current-build MCP
 acceptance is implied. Agent launch/release remains pending.
+The current pin adds the recorded short-summary read through the configured
+native reader. It does not generate summaries: the compatible reader migration,
+summary worker and model credential must be qualified separately. No summary
+runtime acceptance is implied by selecting this Control source.
 The current source includes the organization-scoped workspace DELETE route.
 Proof cleanup checks each tracked workspace's exact run name and organization
 before deleting either one, then verifies their absence and preserves the

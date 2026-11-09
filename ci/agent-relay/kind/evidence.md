@@ -164,10 +164,10 @@ The recorded historical `kind-up-local-control` run built the official Dockerfil
 `relay-control-internal@1f08cb624be66016eb0c135363553dd44e58f691`, with a pinned
 native Node base. This historical commit remains available from the archived
 private repository for explicit `KIND_CONTROL_SOURCE=historical` reproduction.
-Current builds instead pin public `relay-control@df4b3901768809407c7c6e1e0d28031e2c2fa25d`
+Current builds instead pin public `relay-control@d94bd4240d8b8d62a7d6edb1950285ff01b1158a`
 in a separate cache. Existing build and runtime receipts below are unchanged and
 have not been rerun or attributed to the current source.
-The [current native candidate receipt](control-df4b390-smoke.json) records the
+The [earlier native candidate receipt](control-df4b390-smoke.json) records the
 official helper build at infra `30270e7` and an owned PostgreSQL 17 fixture.
 Synthetic rows survive 17-to-23 migrations, the next migration run is a no-op,
 and the runtime role reads application data while migration-ledger reads remain
