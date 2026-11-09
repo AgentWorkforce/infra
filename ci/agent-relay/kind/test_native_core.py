@@ -8,7 +8,7 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
-from native_core import NativeCoreAdapter, image_id_matches, runtime_field
+from native_core import NativeCoreAdapter, image_id_matches, runtime_field, strategy_type
 from native_core_values import compose, PLANNING_WORKSPACE
 from native_recipe import NativeRecipeError
 from test_native_recipe import selected
@@ -20,6 +20,16 @@ TENANT = {"organizationId": "11111111-1111-4111-8111-111111111111",
 
 
 class Core(unittest.TestCase):
+    def test_omitted_deployment_strategy_matches_only_kubernetes_rollingupdate_default(self):
+        expected = {"spec": {}}
+        live = {"spec": {"strategy": {"type": "RollingUpdate", "rollingUpdate": {"maxSurge": "25%", "maxUnavailable": "25%"}}}}
+        self.assertEqual(strategy_type(expected), strategy_type(live))
+        for actual in ("Recreate", "", None, "Unknown"):
+            self.assertNotEqual(strategy_type(expected), strategy_type({"spec": {"strategy": {"type": actual}}}))
+        consumer = {"spec": {"strategy": {"type": "Recreate"}}}
+        self.assertNotEqual(strategy_type(consumer), strategy_type(expected))
+        self.assertEqual(strategy_type(consumer), "Recreate")
+
     def test_empty_env_api_omission_is_equivalent_without_hiding_valuefrom_or_other_changes(self):
         desired = {"env": [{"name": "SELFHOST_FEATURES", "value": ""},
                            {"name": "SECRET", "valueFrom": {"secretKeyRef": {"name": "owned", "key": "value"}}}]}

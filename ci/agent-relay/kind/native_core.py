@@ -48,6 +48,11 @@ def runtime_field(container, key):
     return value
 
 
+def strategy_type(deployment):
+    """Deployment's documented default; explicit Recreate stays mandatory."""
+    return deployment["spec"].get("strategy", {}).get("type", "RollingUpdate")
+
+
 class NativeCoreAdapter(NativeControlTransport, NativePipelineAdapter):
     def __init__(self, stack, inputs, operator, tls_material=None):
         require(isinstance(inputs, dict) and WEBAPP_INPUTS <= set(inputs), "qualified_webapp_packet_and_native_archive_required")
@@ -475,7 +480,7 @@ import('/app/node_modules/relay-control/dist/features.js').then(m=>{
         for name in sorted(names):
             wanted = next(d for d in docs if d["kind"] == "Deployment" and d["metadata"]["name"] == name)
             workload, pod = self._runtime_pod(name)
-            require(workload["spec"].get("strategy", {}).get("type") == wanted["spec"].get("strategy", {}).get("type") and
+            require(strategy_type(workload) == strategy_type(wanted) and
                     workload["spec"]["template"]["spec"]["containers"] == pod["spec"]["containers"],
                     "native_live_pod_does_not_match_selected_workload")
             for expected in wanted["spec"]["template"]["spec"]["containers"]:

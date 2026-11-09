@@ -7,13 +7,13 @@ dependencies:
   version: 0.1.4
 - name: sessions-pipeline
   repository: file://../sessions-pipeline
-  version: 0.8.6
+  version: 0.8.8
 - name: relayhistory
   repository: file://../relayhistory
   version: 0.1.2
 - name: relay-control
   repository: file://../relay-control
-  version: 0.4.2
+  version: 0.4.3
 - name: relay-webapp
   repository: file://../relay-webapp
   version: 0.2.1
@@ -32,5 +32,5 @@ dependencies:
 - name: relay-chief
   repository: file://../relay-chief
   version: 0.1.0
-digest: sha256:3907b3119a646eeaa85a8ac7da4a4c8cafd06e15954157e853f12ad2d8504828
-generated: "2026-11-08T21:53:36.054464527-08:00"
+digest: sha256:f54bb4c549b181094e33f5ef50dd1c39c799ef9ec8539080439afee25aef91b9
+generated: "2026-11-09T09:51:25.782951+01:00"
