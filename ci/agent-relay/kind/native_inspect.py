@@ -150,7 +150,7 @@ class NativeReadOnlyAdapter:
         return image
 
     def _probe(self, image_id, runtime, code, data):
-        return self._docker_json(["run", "--rm", "-i", "--network", "none", "--read-only", "--cpus", "1",
+        return self._docker_json(["run", "--pull", "never", "--rm", "-i", "--network", "none", "--read-only", "--cpus", "1",
                                   "--memory", "768m", "--cap-drop", "ALL", "--security-opt", "no-new-privileges",
                                   "--entrypoint", runtime, image_id, "-e", code], data=json.dumps(data))
 

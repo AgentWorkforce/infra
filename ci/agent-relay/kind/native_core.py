@@ -34,9 +34,47 @@ class NativeCoreAdapter(NativeControlTransport, NativePipelineAdapter):
         self._base_sha = None
         self._release_revision = None
         self._ready_uids = None
+        self._ready_specs = None
+        self._recipe_sha = stack.recipe_hash()
+
+    def _preflight(self, selected, fresh=False):
+        require(self.stack.recipe_hash() == self._recipe_sha, "native_recipe_source_changed_during_execution")
+        return super()._preflight(selected, fresh=fresh)
 
     def _selected_secret_names(self, selected):
         return super()._selected_secret_names(selected) | {self.control[k]["name"] for k in ("owner", "runtime", "cast")}
+
+    def verify_artifact(self, selected):
+        self._verified = None
+        result = super().verify_artifact(selected)
+        self._verified = None
+        # Presence of an environment knob does not prove an older image
+        # implements independent reader authority. Run only pure module
+        # imports in the already-bound, read-only networkless images before
+        # creating any cluster, credential or database object.
+        from native_inspect import pipeline_coordinates
+        pipeline = pipeline_coordinates(self.inputs, selected)
+        pipeline_image = self._image(pipeline["localTag"], selected["sourceRevision"], selected["architecture"],
+                                     pipeline["buildIndexDigest"], selected["configDigest"])
+        reader = self._probe(pipeline_image["Id"], "bun", """
+const m=await import('/app/src/session-read-api/self-issued.ts');
+console.log(JSON.stringify({accessPrefix:m.ACCESS_PREFIX,scope:m.READ_SCOPE,issuer:m.SESSIONS_PATH}));
+""", {})
+        require(reader == {"accessPrefix": "rth_at_read_", "scope": "rth:read",
+                           "issuer": "/internal/v1/session-read/sessions"}, "qualified_independent_reader_module_required")
+        control = document(self.inputs["controlReceipt"], selected["control"]["artifactReceiptSha256"])
+        control_image = self._image(control["tag"], selected["control"]["sourceRevision"], selected["architecture"],
+                                    control["dockerIndexDigest"], selected["control"]["configDigest"])
+        features = self._probe(control_image["Id"], "node", """
+import('/app/node_modules/relay-control/dist/features.js').then(m=>{
+ console.log(JSON.stringify({names:m.FEATURES,defaults:m.NO_FEATURES}));
+}).catch(()=>process.exitCode=1);
+""", {})
+        require(features == {"names": ["flows", "relayfile", "chief"],
+                             "defaults": {"flows": False, "relayfile": False, "chief": False}},
+                "qualified_selected_features_core_module_required")
+        self._verified = result
+        return result
 
     def inspect(self, selected):
         facts = super().inspect(selected)
@@ -81,6 +119,7 @@ class NativeCoreAdapter(NativeControlTransport, NativePipelineAdapter):
         return docs
 
     def render(self, selected):
+        self._rendered = False
         self._bind_selection(selected)
         require(selected["reference"].startswith("docker.io/agent-relay-kind/"),
                 "complete_core_requires_explicit_local_pipeline_registry")
@@ -290,12 +329,14 @@ class NativeCoreAdapter(NativeControlTransport, NativePipelineAdapter):
                 "renderSha256": hashlib.sha256(canonical(docs).encode()).hexdigest()}
 
     def verify_ready(self, selected):
+        self._ready_uids = None
+        self._ready_specs = None
         self._phase(selected, ("native_served", "runtime_credentials_verified"))
         self._helm_state()
         docs = self._render_values(self._values(selected, "serve"))
         self._validate_render_docs(selected, docs)
         names = {"relay-control", "relay-webapp", "session-native-ingest", "session-native-consumer", "session-read-api"}
-        uids = {}
+        uids, specs = {}, {}
         for name in sorted(names):
             wanted = next(d for d in docs if d["kind"] == "Deployment" and d["metadata"]["name"] == name)
             workload, pod = self._runtime_pod(name)
@@ -311,6 +352,7 @@ class NativeCoreAdapter(NativeControlTransport, NativePipelineAdapter):
                     self._transport_call("k", "exec", pod["metadata"]["name"], "-c", expected["name"], "--", *probe,
                                          sensitive=True, timeout=30)
             uids[name] = workload["metadata"]["uid"]
+            specs[name] = hashlib.sha256(canonical(workload["spec"]).encode()).hexdigest()
         require(self._observe_control(selected, self._control_pod(selected)) == self._tenant,
                 "final_control_tenant_changed")
         self.verify_owner_final(selected)
@@ -319,6 +361,7 @@ class NativeCoreAdapter(NativeControlTransport, NativePipelineAdapter):
         self._verify_control_authorities(selected)
         self._verify_public_routes(selected)
         self._ready_uids = uids
+        self._ready_specs = specs
         return {"ok": True, "deploymentUids": uids}
 
     def _verify_public_routes(self, selected):
@@ -342,6 +385,11 @@ class NativeCoreAdapter(NativeControlTransport, NativePipelineAdapter):
         self._phase(selected, ("native_served", "runtime_credentials_verified"))
         require(self._ready_uids and scope.get("fullAcceptance") is False and scope.get("sourceRevision") == selected["sourceRevision"],
                 "native_ready_requires_observed_scoped_runtime")
+        for name, expected in self._ready_uids.items():
+            live = self._get("deployment/" + name)
+            require(live["metadata"]["uid"] == expected and
+                    hashlib.sha256(canonical(live["spec"]).encode()).hexdigest() == self._ready_specs[name],
+                    "native_runtime_changed_after_final_verification")
         uid = self._get("namespace/kube-system", namespace=False)["metadata"]["uid"]
         resources = self._get("deployments,statefulsets,persistentvolumeclaims,configmaps")["items"]
         for name in sorted(self._selected_secret_names(selected)):
@@ -351,7 +399,7 @@ class NativeCoreAdapter(NativeControlTransport, NativePipelineAdapter):
             "selection": selected, "controlRoleOids": {n: r["oid"] for n, r in self._control_roles(selected).items()},
             "officialBootstrapSha256": selected["officialBootstrapSha256"], "tenant": self._tenant,
             "controlContractSha256": self._control_contract_sha, "releaseRevision": self._helm_state(),
-            "valuesSha256": self._base_sha, "recipeSha256": self.stack.recipe_hash(),
+            "valuesSha256": self._base_sha, "recipeSha256": self._recipe_sha,
             "renderSha256": hashlib.sha256(canonical(self._render_values(self._values(selected, "serve"))).encode()).hexdigest(),
             "resources": sorted([{"kind": d["kind"], "name": d["metadata"]["name"], "uid": d["metadata"]["uid"],
                 **({"specSha256": hashlib.sha256(canonical(d.get("spec", d.get("data", {}))).encode()).hexdigest()}

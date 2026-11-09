@@ -2,6 +2,7 @@
 from copy import deepcopy
 from types import SimpleNamespace
 import unittest
+from unittest.mock import patch
 
 from native_core import NativeCoreAdapter
 from native_core_values import compose, PLANNING_WORKSPACE
@@ -125,6 +126,28 @@ class Core(unittest.TestCase):
             if case == "second-pod":
                 a._transport_call = lambda *args, **kw: SimpleNamespace(stdout=json.dumps({"items": [p, deepcopy(p)]}))
             with self.subTest(case=case), self.assertRaises(NativeRecipeError): a._runtime_pod("relay-control")
+
+    def test_failed_independent_image_capability_clears_previous_artifact_admission(self):
+        a = self.adapter(); s = self.selection(); a.inputs = {"controlReceipt": "unused"}
+        a._verified = {"old": True}
+        a._image = lambda *args: {"Id": "already-bound-native-id"}
+        a._probe = lambda *args: {"accessPrefix": "wrong-older-authority"}
+        def parent(adapter, selected):
+            adapter._verified = {"sourceRevision": selected["sourceRevision"]}
+            return adapter._verified
+        with patch("native_pipeline.NativePipelineAdapter.verify_artifact", parent), patch(
+            "native_inspect.pipeline_coordinates", return_value={"localTag": "qualified", "buildIndexDigest": "bound-index"}):
+            with self.assertRaisesRegex(NativeRecipeError, "independent_reader_module"):
+                a.verify_artifact(s)
+        self.assertIsNone(a._verified)
+
+    def test_runtime_drift_after_readiness_cannot_create_binding_receipt(self):
+        a = self.adapter(); s = self.selection()
+        a._ready_uids = {"relay-control": "original-deployment"}; a._ready_specs = {"relay-control": "old-spec"}
+        a._get = lambda name: {"metadata": {"uid": "replacement-deployment"}, "spec": {}}
+        a._exclusive_json = lambda *args: self.fail("drift wrote a binding receipt")
+        with self.assertRaisesRegex(NativeRecipeError, "changed_after_final"):
+            a.record_ready(s, {"fullAcceptance": False, "sourceRevision": s["sourceRevision"]})
 
 
 if __name__ == "__main__": unittest.main()
