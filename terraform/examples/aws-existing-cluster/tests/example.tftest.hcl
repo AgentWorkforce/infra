@@ -59,6 +59,34 @@ run "defaults" {
     condition     = toset(aws_acm_certificate.app.subject_alternative_names) == toset(["api.ar.example.com", "cast.ar.example.com", "history.ar.example.com"])
     error_message = "certificate covers the three service hostnames"
   }
+  assert {
+    condition = alltrue([
+      for k in ["indexer/relay/agent-relay/agent-relay-search-indexer", "reader/relay/agent-relay/agent-relay-session-read"] :
+      contains(keys(module.search[0].pod_identity_association_ids), k)
+    ])
+    error_message = "the search roles bind to the ServiceAccounts the chart renders"
+  }
+}
+
+run "release_name_sets_service_accounts" {
+  command = plan
+
+  variables {
+    namespace    = "tools"
+    release_name = "relay"
+  }
+
+  assert {
+    condition = alltrue([
+      for k in ["indexer/relay/tools/relay-search-indexer", "reader/relay/tools/relay-session-read"] :
+      contains(keys(module.search[0].pod_identity_association_ids), k)
+    ])
+    error_message = "ServiceAccounts follow release_name, not namespace"
+  }
+  assert {
+    condition     = contains(keys(module.sessions_bucket.pod_identity_association_ids), "relay/tools/relay-worker")
+    error_message = "the bucket role binds to <release>-worker"
+  }
 }
 
 run "search_off" {

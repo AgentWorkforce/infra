@@ -34,9 +34,13 @@ locals {
     for name in ["worker", "alleyoop", "session-ingest-api"] : {
       cluster_name    = var.eks_cluster_name
       namespace       = var.namespace
-      service_account = "${var.namespace}-${name}"
+      service_account = "${var.release_name}-${name}"
     }
   ]
+
+  # EKS Pod Identity allows one role per ServiceAccount, so search has its own.
+  search_indexer_service_account = { cluster_name = var.eks_cluster_name, namespace = var.namespace, service_account = "${var.release_name}-search-indexer" }
+  search_reader_service_account  = { cluster_name = var.eks_cluster_name, namespace = var.namespace, service_account = "${var.release_name}-session-read" }
 
   hostnames = [var.domain, "api.${var.domain}", "cast.${var.domain}", "history.${var.domain}"]
 }
@@ -73,9 +77,17 @@ module "search" {
   instance_type      = var.search_instance_type
   master_user_arn    = var.search_admin_role_arn
   kms_key_arn        = var.kms_key_arn
-  # Creates the indexer (write) and reader (read-only) roles. They are bound to
-  # ServiceAccounts during the Helm install.
-  workload_roles = { name_prefix = "${var.name}-search" }
+  # The indexer (write) and reader (read-only) roles, bound to the ServiceAccounts
+  # the chart renders. Both also read session objects from the bucket.
+  workload_roles = {
+    name_prefix              = "${var.name}-search"
+    indexer_service_accounts = [local.search_indexer_service_account]
+    reader_service_accounts  = [local.search_reader_service_account]
+  }
+  sessions_bucket_read = {
+    bucket_arn  = module.sessions_bucket.bucket_arn
+    kms_key_arn = var.kms_key_arn
+  }
 }
 
 resource "aws_acm_certificate" "app" {

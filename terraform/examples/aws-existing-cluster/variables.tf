@@ -69,6 +69,12 @@ variable "name" {
   default     = "agent-relay"
 }
 
+variable "release_name" {
+  description = "Helm release name. The chart names its ServiceAccounts after it, and Pod Identity binds to those names."
+  type        = string
+  default     = "agent-relay"
+}
+
 variable "namespace" {
   description = "Kubernetes namespace the Helm chart installs into."
   type        = string
