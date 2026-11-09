@@ -857,10 +857,10 @@ chart `relayfile-control` · values [`ci/default-values.yaml`](../charts/relayfi
 | | option | choices | default here | maps to |
 | --- | --- | --- | --- | --- |
 | shipped | [CA bundle for verifying the Postgres server certificate (postgresCa)](#opt-postgres-ca-bundle) | `false`, `true` | `false` | values `worker.postgresCa.*`, `alleyoop.postgresCa.*`, `relay-control:postgresCa.*`, `relayhistory:postgresCa.*`, `relaychief-control:postgresCa.*`, `relayfile-control:postgresCa.*`; env `NODE_EXTRA_CA_CERTS`, `PGSSLROOTCERT` |
-| shipped | [Relayfile control Flows API](#opt-relayfile-control-flows) | (no default), (no default) | `false` | values `flows.enabled`, `config.publicOrigin`, `flows.*`, `secretKeys.introspectSecret`, `secretKeys.brokerSecret`, `secretKeys.encryptionKey`, `secretKeys.previousEncryptionKey`, `secretKeys.telemetrySecret`, `secretKeys.runtimeVerifySecret`; env `FLOWS_ENABLED`, `RELAYFILE_CONTROL_PUBLIC_ORIGIN`, `RELAYFILE_CONTROL_ENCRYPTION_KEY_ID`, `RELAYFILE_CONTROL_ENCRYPTION_PREVIOUS_KEY_ID`, `RELAYFILE_CONTROL_ENCRYPTION_KEY`, `RELAYFILE_CONTROL_ENCRYPTION_PREVIOUS_KEY`, `RELAYCONTROL_INTROSPECT_SECRET`, `RELAYFILE_CONTROL_BROKER_SECRET`, `RELAYFILE_CONTROL_TELEMETRY_SECRET`, `RELAYFILE_CONTROL_RUNTIME_VERIFY_SECRET`, `SELFHOST_FLOWS_WORKER_RELAYCAST_URL`, `RELAYCAST_PUBLIC_URL`, `SELFHOST_FLOWS_WORKER_RELAYFILE_URL`, `SELFHOST_DASHBOARD_URL`, `SELFHOST_FLOWS_STORAGE`, `FLOWS_PUBLIC_BASE_URL` |
-| shipped | [Relayfile control provider webhook secrets](#opt-relayfile-control-webhooks) | (no default), (no default) | `unset` | values `secretKeys.githubWebhookSecret`, `secretKeys.nangoWebhookSecret`, `secretKeys.hookdeckWebhookSecret`, `secretKeys.dropboxAppSecret`, `secretKeys.slackSigningSecret`, `secretKeys.linearWebhookSecret`; env `GITHUB_WEBHOOK_SECRET`, `NANGO_WEBHOOK_SECRET`, `HOOKDECK_WEBHOOK_SECRET`, `DROPBOX_APP_SECRET`, `SLACK_SIGNING_SECRET`, `LINEAR_WEBHOOK_SECRET` |
-| shipped | [Relayfile control Ingress and NetworkPolicy](#opt-relayfile-control-exposure) | (no default), (no default) | `disabled` | values `ingress.enabled`, `ingress.*`, `networkPolicy.*`, `service.annotations` |
-| shipped | [Relayfile control image pull Secrets](#opt-relayfile-control-image-pull-secrets) | (no default), (no default) | `none` | values `imagePullSecrets` |
+| shipped | [Relayfile control Flows API](#opt-relayfile-control-flows) | `false`, `true` | `false` | values `flows.enabled`, `config.publicOrigin`, `flows.*`, `secretKeys.introspectSecret`, `secretKeys.brokerSecret`, `secretKeys.encryptionKey`, `secretKeys.previousEncryptionKey`, `secretKeys.telemetrySecret`, `secretKeys.runtimeVerifySecret`; env `FLOWS_ENABLED`, `RELAYFILE_CONTROL_PUBLIC_ORIGIN`, `RELAYFILE_CONTROL_ENCRYPTION_KEY_ID`, `RELAYFILE_CONTROL_ENCRYPTION_PREVIOUS_KEY_ID`, `RELAYFILE_CONTROL_ENCRYPTION_KEY`, `RELAYFILE_CONTROL_ENCRYPTION_PREVIOUS_KEY`, `RELAYCONTROL_INTROSPECT_SECRET`, `RELAYFILE_CONTROL_BROKER_SECRET`, `RELAYFILE_CONTROL_TELEMETRY_SECRET`, `RELAYFILE_CONTROL_RUNTIME_VERIFY_SECRET`, `SELFHOST_FLOWS_WORKER_RELAYCAST_URL`, `RELAYCAST_PUBLIC_URL`, `SELFHOST_FLOWS_WORKER_RELAYFILE_URL`, `SELFHOST_DASHBOARD_URL`, `SELFHOST_FLOWS_STORAGE`, `FLOWS_PUBLIC_BASE_URL` |
+| shipped | [Relayfile control provider webhook secrets](#opt-relayfile-control-webhooks) | `unset`, `set` | `unset` | values `secretKeys.githubWebhookSecret`, `secretKeys.nangoWebhookSecret`, `secretKeys.hookdeckWebhookSecret`, `secretKeys.dropboxAppSecret`, `secretKeys.slackSigningSecret`, `secretKeys.linearWebhookSecret`; env `GITHUB_WEBHOOK_SECRET`, `NANGO_WEBHOOK_SECRET`, `HOOKDECK_WEBHOOK_SECRET`, `DROPBOX_APP_SECRET`, `SLACK_SIGNING_SECRET`, `LINEAR_WEBHOOK_SECRET` |
+| shipped | [Relayfile control Ingress and NetworkPolicy](#opt-relayfile-control-exposure) | `disabled`, `enabled` | `disabled` | values `ingress.enabled`, `ingress.*`, `networkPolicy.*`, `service.annotations` |
+| shipped | [Relayfile control image pull Secrets](#opt-relayfile-control-image-pull-secrets) | `none`, `listed` | `none` | values `imagePullSecrets` |
 
 ### Profile: durable-actors
 
@@ -3286,7 +3286,7 @@ Pull Secrets for a private registry or customer mirror.
 flows.enabled=true serves the Flows API. It requires config.publicOrigin (the token audience, also listed in relay-control's introspection.audiences), flows.encryptionKeyId, a Relaycast URL, and the Secret keys for the introspection secret, the broker secret and the 32-byte encryption key. The introspection and broker secrets must each be at least 32 bytes and differ; the broker secret is shared with relay-control. Telemetry and runtime-verify secrets are optional.
 
 - Default: `false`
-- Choices: (no default); (no default)
+- Choices: `false`; `true`
 - Provided by: operator
 - Values: `flows.enabled`, `config.publicOrigin`, `flows.*`, `secretKeys.introspectSecret`, `secretKeys.brokerSecret`, `secretKeys.encryptionKey`, `secretKeys.previousEncryptionKey`, `secretKeys.telemetrySecret`, `secretKeys.runtimeVerifySecret`
 - Env: `FLOWS_ENABLED`, `RELAYFILE_CONTROL_PUBLIC_ORIGIN`, `RELAYFILE_CONTROL_ENCRYPTION_KEY_ID`, `RELAYFILE_CONTROL_ENCRYPTION_PREVIOUS_KEY_ID`, `RELAYFILE_CONTROL_ENCRYPTION_KEY`, `RELAYFILE_CONTROL_ENCRYPTION_PREVIOUS_KEY`, `RELAYCONTROL_INTROSPECT_SECRET`, `RELAYFILE_CONTROL_BROKER_SECRET`, `RELAYFILE_CONTROL_TELEMETRY_SECRET`, `RELAYFILE_CONTROL_RUNTIME_VERIFY_SECRET`, `SELFHOST_FLOWS_WORKER_RELAYCAST_URL`, `RELAYCAST_PUBLIC_URL`, `SELFHOST_FLOWS_WORKER_RELAYFILE_URL`, `SELFHOST_DASHBOARD_URL`, `SELFHOST_FLOWS_STORAGE`, `FLOWS_PUBLIC_BASE_URL`
@@ -3302,7 +3302,7 @@ flows.enabled=true serves the Flows API. It requires config.publicOrigin (the to
 Optional Secret keys for each provider ingress; comma lists allow rotation. An unset secret makes that ingress answer 503 ingress_not_configured.
 
 - Default: `unset`
-- Choices: (no default); (no default)
+- Choices: `unset`; `set`
 - Provided by: operator
 - Values: `secretKeys.githubWebhookSecret`, `secretKeys.nangoWebhookSecret`, `secretKeys.hookdeckWebhookSecret`, `secretKeys.dropboxAppSecret`, `secretKeys.slackSigningSecret`, `secretKeys.linearWebhookSecret`
 - Env: `GITHUB_WEBHOOK_SECRET`, `NANGO_WEBHOOK_SECRET`, `HOOKDECK_WEBHOOK_SECRET`, `DROPBOX_APP_SECRET`, `SLACK_SIGNING_SECRET`, `LINEAR_WEBHOOK_SECRET`
@@ -3318,7 +3318,7 @@ Optional Secret keys for each provider ingress; comma lists allow rotation. An u
 ingress.enabled routes the Flows paths and their /cloud aliases to this Service and requires flows.enabled. On the shared EKS ALB use EKS_ALB_RELAYFILE_CONTROL=true with scripts/selfhost/eks-alb-ingress.sh instead. NetworkPolicy defaults on with restricted egress, so additionalEgress must admit the database.
 
 - Default: `disabled`
-- Choices: (no default); (no default)
+- Choices: `disabled`; `enabled`
 - Provided by: operator
 - Values: `ingress.enabled`, `ingress.*`, `networkPolicy.*`, `service.annotations`
 - Verify: helm template renders no Ingress by default; ingress.enabled without flows.enabled fails
@@ -3333,7 +3333,7 @@ ingress.enabled routes the Flows paths and their /cloud aliases to this Service 
 imagePullSecrets for a private registry mirror. Empty pulls the public image.
 
 - Default: `none`
-- Choices: (no default); (no default)
+- Choices: `none`; `listed`
 - Provided by: operator
 - Values: `imagePullSecrets`
 - Verify: helm template lists imagePullSecrets on the Deployment when set
