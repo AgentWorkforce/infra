@@ -57,6 +57,12 @@ class Fake:
         self.receipts = {}
         self.backups = {'db-A': 'retained'}
         self.deleted_backups = []
+        self.backend = None
+        self.init_ignored = False
+        self.state_reads = []
+        self.last_vars = {}
+        self.payload_changes = None
+        self.fail_native = False
 
     def done(self, args, stdout='', code=0):
         return subprocess.CompletedProcess(args, code, stdout, '')
@@ -73,14 +79,20 @@ class Fake:
             return self.aws(args)
         verb = args[1]
         if verb == 'init':
+            if not self.init_ignored:
+                self.backend = next(a for a in args if a.startswith('-backend-config=path='))[len('-backend-config=path='):]
             return self.done(args)
         if verb == 'plan':
             out = next(a for a in args if a.startswith('-out='))[5:]
             Path(out).write_bytes(('plan:' + str(len(self.calls))).encode())
             self.last_plan = list(args)
+            variables = next((a for a in args if a.startswith('-var-file=')), None)
+            self.last_vars = json.loads(Path(variables[len('-var-file='):]).read_text()) if variables else {}
             return self.done(args)
         if verb == 'show':
             # Real Terraform plans every resource the configuration still declares unless targeted.
+            if self.payload_changes is not None and self.last_vars.get('payload_version_id'):
+                return self.done(args, json.dumps({'resource_changes': self.payload_changes}))
             untargeted = self.untargeted_changes is not None and not any(a.startswith('-target=') for a in self.last_plan)
             return self.done(args, json.dumps({'resource_changes': self.untargeted_changes if untargeted else self.changes}))
         if verb == 'apply':
@@ -91,6 +103,7 @@ class Fake:
             self.resources = self.applied_resources if self.applied_resources is not None else [protected_database()]
             return self.done(args, code=1 if self.fail_apply else 0)
         if verb == 'state':
+            self.state_reads.append(self.backend)
             if self.state_broken:
                 return self.done(args, code=1)
             return self.done(args, json.dumps({'serial': 3, 'resources': self.resources}))
@@ -105,6 +118,8 @@ class Fake:
         if operation == 'get-caller-identity':
             return self.done(args, json.dumps({'Account': self.account, 'Arn': self.arn}))
         if operation == 'describe-db-instances':
+            if self.fail_native:
+                return self.done(args, code=1)
             return self.done(args, json.dumps({'DBInstances': [{'DbiResourceId': 'db-A', 'DBInstanceStatus': 'available', 'Endpoint': {'Address': 'db.example'}, 'EngineVersion': '17.4', 'MasterUserSecret': {'SecretArn': 'arn:secret:master'}}]}))
         if operation == 'describe-network-interfaces':
             return self.done(args, json.dumps({'NetworkInterfaces': [{'NetworkInterfaceId': 'eni-db'}]}))
@@ -179,6 +194,9 @@ class Base(unittest.TestCase):
         class Local(r.Runner):
             def bindings(self):
                 return dict(test.binding)
+
+            def backend_path(self):
+                return test.fake.backend
         self.runner = Local(self.execution, self.vars, self.terraform, env=self.env, transport=self.fake)
 
     def plan_apply(self, phase):
@@ -514,6 +532,86 @@ class Retirement(Base):
         self.assertEqual(self.fake.deleted_backups, ['db-A'])
         self.assertEqual(self.runner.status_of('backups'), 'ok')
 
+    def test_failed_native_read_is_not_captured_and_reconciles_when_clean(self):
+        self.fake.contract = self.fake.contract_value()
+        self.fake.fail_native = True
+        out = self.runner.plan('provision')
+        with self.assertRaisesRegex(r.Refused, 'run reconcile --phase provision'):
+            self.runner.apply('provision', out['plan_sha256'])
+        self.assertEqual(self.runner.status_of('provision'), 'unknown')
+        self.assertFalse(r.read(self.execution / 'provision.capture.json')['native_complete'])
+        with self.assertRaisesRegex(r.Refused, 'never finished capture'):
+            self.runner.plan('release')
+        with self.assertRaises(r.Refused):
+            self.runner.reconcile('provision')
+        self.assertEqual(self.runner.status_of('provision'), 'unknown')
+        self.fake.fail_native = False
+        self.assertEqual(self.runner.reconcile('provision')['status'], 'captured')
+        self.assertEqual(r.read(self.execution / 'native.json')['database_resource_ids'], ['db-A'])
+
+    def test_failed_apply_with_failed_native_read_reconciles_as_failed(self):
+        self.fake.contract = self.fake.contract_value()
+        self.fake.fail_native = True
+        self.fake.fail_apply = True
+        out = self.runner.plan('provision')
+        with self.assertRaisesRegex(r.Refused, 'run reconcile'):
+            self.runner.apply('provision', out['plan_sha256'])
+        self.fake.fail_native = False
+        self.assertEqual(self.runner.reconcile('provision')['status'], 'failed')
+
+    def verifier_updates(self):
+        return [{'address': a, 'type': a.split('.')[0], 'change': {'actions': ['update']}} for a in
+                ('terraform_data.execution', 'terraform_data.application_gate', 'aws_iam_role_policy.verifier', 'aws_launch_template.verifier')]
+
+    def test_release_after_upload_before_seed_keeps_the_provisioned_payload(self):
+        self.through_upload()
+        self.fake.changes = []
+        self.fake.payload_changes = self.verifier_updates()
+        out = self.runner.plan('release')
+        self.assertIsNone(self.fake.last_vars['payload_version_id'])
+        self.assertTrue(self.fake.last_vars['retire'])
+        self.assertIn('plan_sha256', out)
+
+    def test_release_of_a_seeded_lifecycle_still_sends_the_payload_and_guards_changes(self):
+        self.through_seed()
+        self.fake.changes = []
+        self.fake.payload_changes = self.verifier_updates()
+        with self.assertRaises(r.Refused):
+            self.runner.plan('release')
+        self.assertEqual(self.fake.last_vars['payload_version_id'], 'v-payload')
+
+    def second_runner(self):
+        test = self
+
+        class Local(r.Runner):
+            def bindings(self):
+                return dict(test.binding)
+
+            def backend_path(self):
+                return test.fake.backend
+        return Local(self.execution.parent / 'other', self.vars, self.terraform, env=self.env, transport=self.fake)
+
+    def test_state_reads_rebind_after_another_execution_redirects_the_root(self):
+        self.provision()
+        other = self.second_runner()
+        other.plan('provision')
+        self.assertEqual(self.fake.backend, str(other.state))
+        self.fake.state_reads.clear()
+        self.assertIsNotNone(self.runner.read_state())
+        self.assertEqual(self.fake.state_reads, [str(self.runner.state)])
+        other_state_contract = self.runner.capture_contract()
+        self.assertIsNotNone(other_state_contract)
+        self.assertEqual(self.fake.backend, str(self.runner.state))
+
+    def test_state_read_refuses_a_root_it_cannot_bind(self):
+        self.provision()
+        self.fake.backend = '/somewhere/else.tfstate'
+        self.fake.init_ignored = True
+        self.fake.state_reads.clear()
+        self.assertIsNone(self.runner.read_state())
+        self.assertEqual(self.fake.state_reads, [])
+        self.assertIsNone(self.runner.capture_contract())
+
     def test_backups_refuses_a_ledger_changed_after_drain(self):
         self.provision()
         self.retire()
@@ -745,7 +843,7 @@ class Retirement(Base):
     def test_retire_after_upload(self):
         self.through_upload()
         self.retire()
-        self.assertEqual(r.read(self.execution / 'release.tfvars.json')['payload_version_id'], 'v-payload')
+        self.assertIsNone(r.read(self.execution / 'release.tfvars.json')['payload_version_id'])
 
     def test_retire_after_seed(self):
         self.through_seed()

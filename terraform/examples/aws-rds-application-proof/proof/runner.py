@@ -293,9 +293,24 @@ class Runner:
     def attempted(self):
         return any(p in self.phases() for p in TERRAFORM_PHASES)
 
-    def read_state(self):
-        """Parsed state, or None when it cannot be known."""
+    def backend_path(self):
+        """The local state file the shared Terraform root is configured for, or None."""
         try:
+            value = json.loads((ROOT / '.terraform/terraform.tfstate').read_text())
+            return value['backend']['config']['path']
+        except (OSError, ValueError, KeyError, TypeError):
+            return None
+
+    def own_backend(self):
+        """Point the shared root at this execution's state and prove it before reading through it."""
+        if self.backend_path() != str(self.state):
+            self.run([self.terraform, 'init', '-input=false', '-no-color', '-lockfile=readonly', '-reconfigure', '-backend-config=path=' + str(self.state)], timeout=600)
+        require(self.backend_path() == str(self.state), "The shared Terraform root points at another execution's state; refusing to read it")
+
+    def read_state(self):
+        """Parsed state of this execution, or None when it cannot be known."""
+        try:
+            self.own_backend()
             result = self.run([self.terraform, 'state', 'pull'], timeout=300, check=False)
         except (OSError, subprocess.SubprocessError, Refused, CommandInterrupted):
             return None
@@ -407,7 +422,9 @@ class Runner:
 
     def phase_variables(self, phase):
         value = dict(self.v)
-        if phase in ('seed', 'restore') or (phase in ('release', 'destroy') and self.path('upload.json').exists()):
+        # State only carries the uploaded version once a compute phase was attempted. Sending it to
+        # retirement earlier would update the verifier resources, which the release guard refuses.
+        if phase in ('seed', 'restore') or (phase in ('release', 'destroy') and 'seed' in self.phases()):
             value['payload_version_id'] = read(self.path('upload.json'))['version_id']
         if phase == 'restore' or (phase in ('release', 'destroy') and 'restore' in self.phases()):
             value['restore_checkpoint'] = read(self.path('restore-checkpoint.json'))
@@ -490,6 +507,9 @@ class Runner:
             contract = self.capture_contract()
         native = self.capture_native(contract) if contract else None
         save(self.path(phase + '.capture.json'), {**record, 'serial': value['serial'], 'resources': addresses, 'native_complete': native})
+        if native is False:
+            self.mark(phase, 'unknown', reason='native metadata read failed after apply', exit_code=code)
+            raise Refused(f'Native metadata for {phase} could not be read, so the retirement ledger would be incomplete; run reconcile --phase {phase}')
         if error or code:
             self.mark(phase, 'interrupted' if error else 'failed', exit_code=code)
             raise Refused(f'Apply of {phase} did not complete; state was captured, retire this lifecycle')
@@ -509,8 +529,11 @@ class Runner:
         if phase == 'upload':
             self.mark(phase, 'failed', reason='upload outcome never confirmed; inventory lists every object version')
             return {'phase': phase, 'status': 'failed'}
+        prior = read(self.path(phase + '.capture.json')) if self.path(phase + '.capture.json').exists() else {}
+        # Only a clean apply whose native read alone failed can still finish as captured.
+        clean = prior.get('native_complete') is False and prior.get('exit_code') == 0 and prior.get('error') is None
         try:
-            self.capture(phase, 1, None)
+            self.capture(phase, 0 if clean else 1, None)
         except Refused:
             if self.status_of(phase) in UNRECONCILED:
                 raise
@@ -518,6 +541,7 @@ class Runner:
 
     def capture_contract(self):
         try:
+            self.own_backend()
             result = self.run([self.terraform, 'output', '-json', 'proof_contract'], timeout=300, check=False)
             value = json.loads(result.stdout) if result.returncode == 0 and result.stdout.strip() else None
         except (ValueError, OSError, subprocess.SubprocessError, Refused, CommandInterrupted):
@@ -834,8 +858,11 @@ def main():
     args = parser.parse_args()
     try:
         runner = Runner(args.execution, args.variables, args.terraform)
-        with runner.path('runner.lock').open('a') as lock:
+        (ROOT / '.terraform').mkdir(exist_ok=True)
+        with runner.path('runner.lock').open('a') as lock, (ROOT / '.terraform/proof-runner.lock').open('a') as root_lock:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            # The Terraform root is shared between executions, so only one runner may use it.
+            fcntl.flock(root_lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
             if args.operation == 'plan':
                 result = runner.plan(args.phase)
             elif args.operation == 'apply':
