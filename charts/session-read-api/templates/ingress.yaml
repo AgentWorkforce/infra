@@ -20,7 +20,7 @@ spec:
     {{- toYaml . | nindent 4 }}
   {{- end }}
   rules:
-    - host: {{ regexReplaceAll ":[0-9]+$" (trimPrefix "https://" .Values.origin) "" | quote }}
+    - host: {{ regexReplaceAll ":[0-9]+$" (trimPrefix "https://" .Values.origin) "" | lower | quote }}
       http:
         paths:
           # The public read paths only; /internal/* is never routed here.

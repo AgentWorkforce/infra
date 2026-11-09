@@ -135,6 +135,8 @@ class ReadApi(unittest.TestCase):
         self.assertEqual([(p["path"], p["pathType"]) for p in rule["http"]["paths"]], [("/v1", "Prefix")])
         self.assertEqual(rule["http"]["paths"][0]["backend"]["service"], {"name": "test-read-api", "port": {"name": "http"}})
         self.assertNotIn("/internal", yaml.safe_dump(ingress))
+        mixed_case = next(d for d in self.render(overlay=self.self_issued(origin="https://History.AgentRelay.com", ingress={"enabled": True}, networkPolicy__publicFrom=[{"namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": "ingress-nginx"}}}])) if d["kind"] == "Ingress")
+        self.assertEqual(mixed_case["spec"]["rules"][0]["host"], "history.agentrelay.com")
         self.assertNotIn("Ingress", [d["kind"] for d in self.render(overlay=self.self_issued())])
         self.assertIn("requires networkPolicy.publicFrom", self.render(overlay=self.self_issued(ingress={"enabled": True}), fail=True))
 
