@@ -70,6 +70,9 @@ DOMAIN="${EKS_ALB_DOMAIN:?EKS_ALB_DOMAIN=<base domain> is required}"
 CERT="${EKS_ALB_CERT_ARN:?EKS_ALB_CERT_ARN=<ACM certificate ARN> is required}"
 HISTORY="${EKS_ALB_HISTORY:-true}"
 INGEST="${EKS_ALB_INGEST:-false}"
+# Read API only on history.<domain>, for installs with no ingest edge yet. Upload
+# paths then answer the fixed 404 rather than a missing backend.
+HISTORY_READ_ONLY="${EKS_ALB_HISTORY_READ_ONLY:-false}"
 INGEST_SVC="${EKS_ALB_INGEST_SERVICE:-agent-relay-ingest-edge}"
 INGEST_PORT="${EKS_ALB_INGEST_PORT:-80}"
 READ_API_SVC="${EKS_ALB_READ_API_SERVICE:-agent-relay-read-api}"
@@ -104,7 +107,20 @@ if [[ "$RELAYFILE_CONTROL" == true ]]; then
   [[ "$RELAYFILE_CONTROL_PORT" =~ ^[1-9][0-9]{0,4}$ && "$RELAYFILE_CONTROL_PORT" -le 65535 ]] ||
     { printf '%s\n' 'EKS_ALB_RELAYFILE_CONTROL_PORT must be 1-65535' >&2; exit 2; }
 fi
+[[ "$HISTORY_READ_ONLY" == true || "$HISTORY_READ_ONLY" == false ]] ||
+  { printf '%s\n' 'EKS_ALB_HISTORY_READ_ONLY must be true or false' >&2; exit 2; }
+if [[ "$HISTORY_READ_ONLY" == true ]]; then
+  [[ "$HISTORY" == true && "$INGEST" == false ]] ||
+    { printf '%s\n' 'EKS_ALB_HISTORY_READ_ONLY=true needs EKS_ALB_HISTORY=true and EKS_ALB_INGEST=false' >&2; exit 2; }
+  [[ ${#READ_API_SVC} -le 63 && "$READ_API_SVC" =~ ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$ ]] ||
+    { printf '%s\n' 'Read API Service override must be a DNS label' >&2; exit 2; }
+  [[ "$READ_API_PORT" =~ ^[1-9][0-9]{0,4}$ && "$READ_API_PORT" -le 65535 ]] ||
+    { printf '%s\n' 'Read API port must be 1-65535' >&2; exit 2; }
+fi
 INGEST_HEALTHCHECK=""
+if [[ "$HISTORY_READ_ONLY" == true ]]; then
+  INGEST_HEALTHCHECK=$'\n    alb.ingress.kubernetes.io/healthcheck-path: /healthz'
+fi
 if [[ "$INGEST" == true ]]; then
   [[ "$HISTORY" == true ]] ||
     { printf '%s\n' 'EKS_ALB_INGEST=true needs the history host (EKS_ALB_HISTORY=true)' >&2; exit 2; }
@@ -230,7 +246,16 @@ route '"/*"' relaycast 8787 ImplementationSpecific
 
 if [[ "$HISTORY" == true ]]; then
   host "history.$DOMAIN"
-  if [[ "$INGEST" == true ]]; then
+  if [[ "$HISTORY_READ_ONLY" == true ]]; then
+    for path in /v1/delivery/records /v1/cli/login /v1/events /v1/auth/token/revoke; do
+      route "$path" "$READ_API_SVC" "$READ_API_PORT" Exact
+    done
+    route /v1/sessions "$READ_API_SVC" "$READ_API_PORT" Prefix
+    route /v1/digest "$READ_API_SVC" "$READ_API_PORT" Prefix
+    deny /internal Prefix
+    deny '"//internal*"' ImplementationSpecific
+    deny '"/*"' ImplementationSpecific
+  elif [[ "$INGEST" == true ]]; then
     for path in /v1/delivery/batches /v1/turns/batches /v1/delivery/limits /v1/auth/token/refresh; do
       route "$path" "$INGEST_SVC" "$INGEST_PORT" Exact
     done
