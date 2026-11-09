@@ -45,10 +45,15 @@ pipeline migration 043910 must be applied for `sessionSelection`.
 Run `scripts/selfhost/eks-alb-ingress.sh` with `EKS_ALB_INGEST=true` and without
 `EKS_ALB_HISTORY_LEGACY_SERVICE`. The ingest edge then receives `/v1/delivery/*`
 (except `GET /v1/delivery/records`), `/v1/turns/*`, `/v1/onboarding/*` and
-`POST /v1/auth/token/refresh`; `/internal` is denied; everything else on the
-history host, including `/healthz`, goes to the read API.
+`POST /v1/auth/token/refresh`. The read API receives `POST /v1/cli/login`,
+`GET /v1/delivery/records`, `/v1/sessions*`, `/v1/events`, `/v1/digest/*` and
+`/v1/auth/token/revoke`. `/internal` and every other path on the history host,
+including `/healthz`, are a fixed 404 at the edge.
 
 ## Removing the services
+
+Scale `relayauth` and `relayhistory` to zero only after sign-in, a Desktop upload
+and search have passed once with them still running.
 
 `helm uninstall` of the subcharts does not delete PVCs: delete `relayauth` and
 `relayhistory` data (and its Postgres database, if external) only after the
