@@ -1,0 +1,35 @@
+# The execution bridge. Installed but not enabled: an operator enables it once
+# the node is enrolled and /etc/chief-bridge/config.json names it.
+#
+# The worker token reaches this process alone: a root-only file read by systemd
+# at start, removed when the service stops. The service user cannot read it, and
+# the node unit has no path to it.
+[Unit]
+Description=Chief execution bridge
+After=network-online.target chief-node.service chief-node-metadata-block.service
+Wants=network-online.target
+Requires=chief-node.service chief-node-metadata-block.service
+ConditionPathExists=/etc/chief-bridge/config.json
+
+[Service]
+Type=simple
+User=chief-node
+Group=chief-node
+WorkingDirectory=/opt/chief-bridge/src
+Environment=HOME=/var/lib/chief-node
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
+Environment=LANG=C.UTF-8
+EnvironmentFile=-/run/chief-bridge-secrets/relay-token.env
+StateDirectory=chief-bridge
+StateDirectoryMode=0700
+ExecStartPre=+/usr/local/sbin/chief-bridge-fetch-token
+ExecStart=/usr/local/bin/node /opt/chief-bridge/src/packages/chief-execution-bridge/dist/cli.js /etc/chief-bridge/config.json
+ExecStopPost=+/usr/bin/rm -f /run/chief-bridge-secrets/relay-token.env
+Restart=on-failure
+RestartSec=10
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=full
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,71 @@
+#!/bin/bash
+# First-boot setup for the Chief execution node. Pinned downloads only; holds
+# identifiers and checksums, never a credential. The bridge stays disabled until
+# an operator enrolls the node and writes its configuration.
+set -euo pipefail
+umask 022
+export HOME=/root PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+exec >>/var/log/chief-node-bootstrap.log 2>&1
+trap 'echo "bootstrap failed at line $LINENO"' ERR
+
+dnf install -y git-core iptables-nft tar xz jq
+
+id chief-node >/dev/null 2>&1 || useradd --system --create-home --home-dir /var/lib/chief-node --shell /bin/bash chief-node
+chmod 0750 /var/lib/chief-node
+install -d -m 0755 /etc/chief-node /etc/chief-bridge /usr/local/sbin
+
+workdir="$(mktemp -d)"
+curl -fsSL --retry 5 --retry-all-errors -o "$workdir/node.tar.xz" '${node_runtime.url}'
+echo '${node_runtime.sha256}  '"$workdir/node.tar.xz" | sha256sum -c -
+install -d -m 0755 /opt/node
+tar -xJf "$workdir/node.tar.xz" -C /opt/node --strip-components=1
+for tool in node npm npx; do ln -sf "/opt/node/bin/$tool" "/usr/local/bin/$tool"; done
+
+curl -fsSL --retry 5 --retry-all-errors -o "$workdir/agent-relay-node" '${relay_node.url}'
+echo '${relay_node.sha256}  '"$workdir/agent-relay-node" | sha256sum -c -
+install -m 0755 "$workdir/agent-relay-node" /usr/local/bin/agent-relay-node
+
+npm install -g --prefix /usr/local --no-audit --no-fund '${harness.npm_package}@${harness.version}'
+
+install -d -m 0755 /opt/chief-bridge
+git init -q /opt/chief-bridge/src
+cd /opt/chief-bridge/src
+git fetch -q --depth 1 '${bridge.repository}' '${bridge.commit}'
+git checkout -q --detach FETCH_HEAD
+test "$(git rev-parse HEAD)" = '${bridge.commit}'
+npm ci --ignore-scripts --no-audit --no-fund
+npm run build:core-bridge
+npm run build:chief-execution-bridge
+test -f packages/chief-execution-bridge/dist/cli.js
+cd /
+
+%{ for file in files ~}
+install -D -m ${file.mode} /dev/null '${file.path}'
+base64 -d >'${file.path}' <<'CONTENT'
+${file.content}
+CONTENT
+%{ endfor ~}
+
+cat >/etc/chief-node/node.env <<'ENV'
+RELAY_BASE_URL=${relay_base_url}
+ENV
+cat >/etc/chief-bridge/token-source <<'SOURCE'
+REGION=${region}
+SECRET_ARN=${secret_arn}
+SOURCE
+chmod 0600 /etc/chief-bridge/token-source
+
+install -d -o chief-node -g chief-node -m 0750 /var/lib/chief-node/repos
+%{ for repository in repositories ~}
+runuser -u chief-node -- env -i HOME=/var/lib/chief-node PATH=/usr/local/bin:/usr/bin:/bin \
+  git clone -q 'https://github.com/${repository}.git' '/var/lib/chief-node/repos/${basename(repository)}'
+%{ endfor ~}
+
+systemctl daemon-reload
+systemctl enable --now chief-node-metadata-block.service
+systemctl enable --now chief-node.service
+/usr/local/sbin/chief-node-apply-settings
+
+rm -rf "$workdir"
+touch /var/lib/chief-node-bootstrap.complete
+echo "bootstrap complete"
