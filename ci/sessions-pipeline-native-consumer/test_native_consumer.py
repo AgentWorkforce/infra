@@ -173,6 +173,41 @@ class Consumer(unittest.TestCase):
             bad=copy.deepcopy(good);next(e for e in bad['readApi']['extraEnv'] if e['name']==name)['value']='wrong'
             with self.subTest(name=name):self.render(bad,fail=True)
         bad=copy.deepcopy(good);bad['readApi']['extraEnv'][0]={'name':'SEARCH_INDEX_POSTGRES_BACKEND_ID','valueFrom':{'configMapKeyRef':{'name':'opaque','key':'id'}}};self.render(bad,fail=True)
+    def test_owner_secret_cannot_reach_enabled_reader_by_any_runtime_reference(self):
+        good=self.composition();good.update(self.boot('serve'));self.render(good)
+        refs=[{'config':{'existingSecret':'consumer-owner','key':'RELAYHISTORY_PIPELINE_CONSUMER_SECRET'}},
+              {'auth':{'relaycontrol':{'existingSecret':'consumer-owner'}}},
+              {'imagePullSecrets':[{'name':'consumer-owner'}]},
+              {'extraVolumes':[{'name':'owner','secret':{'secretName':'consumer-owner'}}]},
+              {'extraVolumes':[{'name':'owner','projected':{'sources':[{'secret':{'name':'consumer-owner'}}]}}]}]
+        for env_name in ['COPIED_OWNER_JSON','HOOPDB_URL']:
+            refs.append({'extraEnv':good['readApi']['extraEnv']+[{'name':env_name,'valueFrom':{'secretKeyRef':{'name':'consumer-owner','key':'RELAYHISTORY_PIPELINE_CONSUMER_SECRET'}}}]})
+        for job_enabled in [True,False]:
+            for ref in refs:
+                with self.subTest(job_enabled=job_enabled,ref=ref):
+                    bad=copy.deepcopy(good);bad['nativeConsumer']['bootstrap']['enabled']=job_enabled
+                    def merge(a,b):
+                        for k,v in b.items():
+                            if isinstance(v,dict) and isinstance(a.get(k),dict):merge(a[k],v)
+                            else:a[k]=copy.deepcopy(v)
+                    merge(bad['readApi'],ref)
+                    self.assertIn('owner bootstrap Secret must not be referenced by runtime',self.render(bad,fail=True))
+        # Same key in a dedicated runtime Secret is supported; the owner object is Job-only.
+        good['readApi']['extraEnv'].append({'name':'READER_JSON','valueFrom':{'secretKeyRef':{'name':'reader-runtime','key':'RELAYHISTORY_PIPELINE_CONSUMER_SECRET'}}})
+        self.render(good)
+        disabled=copy.deepcopy(good);disabled['readApi']['enabled']=False;disabled['readApi']['config']['existingSecret']='consumer-owner'
+        self.render(disabled)
+
+    def test_owner_secret_is_not_a_native_ingest_or_post_prepare_consumer_credential(self):
+        base=yaml.safe_load(ROOT.joinpath('charts/sessions-pipeline/ci/ingest-edge-values.yaml').read_text())['ingestEdge']
+        c=yaml.safe_load(FIXTURE.read_text())['nativeConsumer'];base['image']=c['image'];base['locker']=c['locker']
+        good={'ingestEdge':base};good.update(self.boot('serve'));self.render(good)
+        for field in ['config','locker']:
+            bad=copy.deepcopy(good);bad['ingestEdge'][field]['existingSecret']='consumer-owner'
+            self.assertIn('owner bootstrap Secret must not be referenced by runtime',self.render(bad,fail=True))
+        bad=self.native(config={'existingSecret':'consumer-owner'},bootstrap={'enabled':False,'existingSecret':'consumer-owner','phase':'serve'})
+        self.assertIn('owner bootstrap Secret must not be referenced by runtime',self.render(bad,fail=True))
+
     def test_native_ingest_must_share_store_and_qualified_image(self):
         base=yaml.safe_load(ROOT.joinpath('charts/sessions-pipeline/ci/ingest-edge-values.yaml').read_text())['ingestEdge']
         c=yaml.safe_load(FIXTURE.read_text())['nativeConsumer'];base['image']=c['image'];base['locker']=c['locker']

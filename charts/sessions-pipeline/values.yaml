@@ -491,6 +491,8 @@ nativeConsumer:
     # set runtime-role password through the operator, then select serve.
     phase: prepare # prepare | serve
     ownerRole: ""
+    # This Secret is forbidden in enabled runtime config/env/volume/pull refs,
+    # including reader/ingest and after the prepare Job has been disabled.
     existingSecret: "" # DIFFERENT Job-only JSON {hoopdb_url:<schema owner URL>}
     key: RELAYHISTORY_PIPELINE_CONSUMER_SECRET
     activeDeadlineSeconds: 900
