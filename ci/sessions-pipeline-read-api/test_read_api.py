@@ -330,7 +330,7 @@ class ReadApi(unittest.TestCase):
         name = "RELAYHISTORY_SELFHOST_LOGIN_ADVERTISES_SYNC"
         for selected in (None, False, True):
             with self.subTest(selected=selected):
-                docs = self.render(overlay=None if selected is None else {"loginAdvertisesSync": selected})
+                docs = self.render(overlay=None if selected is None else {"login": {"advertisesSync": selected}})
                 deploy = next(d for d in docs if d["kind"] == "Deployment")
                 env = {e["name"]: e for e in deploy["spec"]["template"]["spec"]["containers"][0]["env"]}
                 if selected is True:
@@ -339,9 +339,9 @@ class ReadApi(unittest.TestCase):
                     self.assertNotIn(name, env)
                 self.assertEqual({d["kind"] for d in docs}, {"Deployment", "Service"})
         for selected in ("true", "false", 1, None):
-            self.assertIn("readApi.loginAdvertisesSync must be a boolean", self.render(overlay={"loginAdvertisesSync": selected}, fail=True))
+            self.assertIn("session-read-api: login.advertisesSync must be a boolean", self.render(overlay={"login": {"advertisesSync": selected}}, fail=True))
         for entry in ({"value": "true"}, {"value": "false"}, {"valueFrom": {"configMapKeyRef": {"name": "legacy", "key": "sync"}}}):
-            self.assertIn("move it from readApi.extraEnv to readApi.loginAdvertisesSync", self.render(overlay={"extraEnv": [{"name": name, **entry}]}, fail=True))
+            self.assertIn("extraEnv duplicates a managed or repeated variable", self.render(overlay={"extraEnv": [{"name": name, **entry}]}, fail=True))
 
     def test_credentials_require_secret_key_references(self):
         for name in ["CUSTOM_TOKEN", "DATABASE_URL", "PRIVATE_KEY", "LOCKER_SECRET_ACCESS_KEY", "PGPASSWORD"]:

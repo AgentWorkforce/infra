@@ -1,10 +1,12 @@
 """Causal native core phase tests; no cluster, provider or SQL writes."""
 from copy import deepcopy
+import hashlib
+import json
 from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
-from native_core import NativeCoreAdapter, image_id_matches
+from native_core import NativeCoreAdapter, image_id_matches, runtime_field
 from native_core_values import compose, PLANNING_WORKSPACE
 from native_recipe import NativeRecipeError
 from test_native_recipe import selected
@@ -16,6 +18,102 @@ TENANT = {"organizationId": "11111111-1111-4111-8111-111111111111",
 
 
 class Core(unittest.TestCase):
+    def test_empty_env_api_omission_is_equivalent_without_hiding_valuefrom_or_other_changes(self):
+        desired = {"env": [{"name": "SELFHOST_FEATURES", "value": ""},
+                           {"name": "SECRET", "valueFrom": {"secretKeyRef": {"name": "owned", "key": "value"}}}]}
+        actual = deepcopy(desired); actual["env"][0].pop("value")
+        self.assertEqual(runtime_field(actual, "env"), runtime_field(desired, "env"))
+        self.assertNotIn("value", actual["env"][0])
+        for change in (lambda x: x["env"][0].update(value="flows"),
+                       lambda x: x["env"][0].update(valueFrom={"secretKeyRef": {"name": "foreign", "key": "value"}}),
+                       lambda x: x["env"].reverse()):
+            changed = deepcopy(actual); change(changed)
+            self.assertNotEqual(runtime_field(changed, "env"), runtime_field(desired, "env"))
+        self.assertNotEqual(runtime_field({"command": []}, "command"), runtime_field({}, "command"))
+
+    def test_public_routes_check_selected_reader_host_path_tls_and_auth_refusal(self):
+        s = self.selection(); a = self.adapter(); seen = []
+        ca = "synthetic-public-ca"; s["postgresCa"]["sha256"] = hashlib.sha256(ca.encode()).hexdigest()
+        a._get = lambda name: {"data": {"ca.crt": ca}}
+        context = SimpleNamespace(verify_flags=0)
+        class Connection:
+            def __init__(self, host, port, **kw):
+                self.host = host; self.port = port
+                self.status = 401 if host.startswith("history.") else 200
+                self.body = b'{"error":{"code":"missing_authorization"}}'
+                self.assert_context = kw["context"] is context
+            def request(self, method, path): seen.append((self.host, self.port, method, path, self.assert_context))
+            def getresponse(self): return SimpleNamespace(status=self.status, read=lambda n: self.body)
+            def close(self): pass
+        with patch("native_core.ssl.create_default_context", return_value=context) as trust, patch(
+                "native_core.http.client.HTTPSConnection", Connection):
+            a._verify_public_routes(s)
+        trust.assert_called_once_with(cadata=ca)
+        self.assertEqual(seen, [("relay.kind.agentrelay.com", 443, "GET", "/", True),
+                                ("history.kind.agentrelay.com", 8443, "GET", "/v1/sessions", True)])
+        for failure in (200, 404, 503):
+            class Broken(Connection):
+                def __init__(self, *args, **kw):
+                    super().__init__(*args, **kw)
+                    if self.host.startswith("history."): self.status = failure
+            with self.subTest(status=failure), patch("native_core.ssl.create_default_context", return_value=context), patch(
+                    "native_core.http.client.HTTPSConnection", Broken), self.assertRaises(NativeRecipeError):
+                a._verify_public_routes(s)
+        class ForeignAuth(Connection):
+            def __init__(self, *args, **kw):
+                super().__init__(*args, **kw); self.body = b'{"error":{"code":"some_other_service"}}'
+        with patch("native_core.ssl.create_default_context", return_value=context), patch(
+                "native_core.http.client.HTTPSConnection", ForeignAuth), self.assertRaisesRegex(NativeRecipeError, "reader_auth_fence"):
+            a._verify_public_routes(s)
+
+    def test_repeat_pipeline_role_oids_are_required_before_mutating_phases(self):
+        a = self.adapter(); s = self.selection()
+        a.stack = SimpleNamespace(recipe_hash=lambda: "source-bound")
+        a.inputs = {"bindingReceipt": "private", "bindingReceiptSha256": "bound", "webappPacketSha256": "webapp"}
+        oids = {n: i for i, n in enumerate(s["roles"].values(), 100)}
+        binding = {"version": 1, "type": "local-kind-native-core", "selection": s, "recipeSha256": "source-bound",
+                   "webapp": {"packetSha256": "webapp"}, "resources": [], "pipelineRoleOids": oids}
+        a._pipeline_role_oids = lambda selected: dict(oids)
+        with patch("native_pipeline.NativePipelineAdapter.inspect", return_value={"mode": "repeat"}), patch(
+                "native_core.document", return_value=binding):
+            self.assertEqual(a.inspect(s), {"mode": "repeat"})
+            self.assertEqual(a._owner_oid, oids[s["roles"]["owner"]])
+            for name in oids:
+                changed = dict(oids); changed[name] += 1000
+                a._pipeline_role_oids = lambda selected, changed=changed: changed
+                with self.subTest(role=name), self.assertRaisesRegex(NativeRecipeError, "role_identity_changed"):
+                    a.inspect(s)
+                self.assertIsNone(a._pipeline_oids)
+            a._pipeline_role_oids = lambda selected: dict(oids)
+            binding.pop("pipelineRoleOids")
+            with self.assertRaisesRegex(NativeRecipeError, "role_identity_changed"): a.inspect(s)
+
+    def test_pipeline_role_identity_query_is_complete_and_read_only(self):
+        a = self.adapter(); s = self.selection(); calls = []
+        oids = {n: i for i, n in enumerate(s["roles"].values(), 100)}
+        def sql(selected, db, text, **kw):
+            calls.append((db, text, kw)); return json.dumps(oids)
+        a._psql = sql
+        self.assertEqual(a._pipeline_role_oids(s), oids)
+        self.assertEqual(calls[0][0], "hoopdb"); self.assertEqual(calls[0][2], {"read_only": True})
+        for role in s["roles"].values(): self.assertIn("'" + role + "'", calls[0][1])
+        for invalid in ({}, {**oids, "foreign": 999}, {**oids, s["roles"]["runtime"]: True},
+                        {**oids, s["roles"]["runtime"]: oids[s["roles"]["owner"]]}):
+            a._psql = lambda *args, invalid=invalid, **kw: json.dumps(invalid)
+            with self.assertRaisesRegex(NativeRecipeError, "role_identity_incomplete"): a._pipeline_role_oids(s)
+
+    def test_credential_identity_drift_clears_serve_admission(self):
+        a = self.adapter(); s = self.selection()
+        oids = {n: i for i, n in enumerate(s["roles"].values(), 100)}
+        a._inspected = {"mode": "repeat"}; a._pipeline_oids = oids
+        changed = dict(oids); changed[s["roles"]["consumer"]] += 10
+        a._pipeline_role_oids = lambda selected: changed
+        def credentials(adapter, selected):
+            adapter._completed.add("runtime_credentials_verified"); return {"ok": True}
+        with patch("native_pipeline.NativePipelineAdapter.verify_credentials", credentials):
+            with self.assertRaisesRegex(NativeRecipeError, "role_identity_changed"): a.verify_credentials(s)
+        self.assertNotIn("runtime_credentials_verified", a._completed)
+
     def test_running_content_identity_cannot_be_replaced_by_matching_tag_or_other_manifest(self):
         reference = "docker.io/agent-relay-kind/runtime@sha256:" + "a" * 64
         manifest, config = "sha256:" + "a" * 64, "sha256:" + "b" * 64

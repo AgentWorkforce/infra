@@ -24,9 +24,10 @@ sessions-pipeline:
     className: traefik
     tls:
       existingSecret: kind-tls
-  readApi:
+  sessionReadApi:
     enabled: true
-    loginAdvertisesSync: true
+    login:
+      advertisesSync: true
     origin: https://history.kind.agentrelay.com:8443
     auth:
       mode: relaycontrol_only
@@ -51,9 +52,9 @@ native image, schema generation, database roles and bootstrap order from the
 [native ingest](self-hosted-native-ingest.md) and native consumer contracts.
 The reader and consumer need the same **bare** key root and
 `PIPELINE_ORG_FROM_PREFIX=true`; a tenant-suffixed root reads a different layout.
-For the sync-capable pattern, set `readApi.loginAdvertisesSync: true`. This moves
+For this caller-token sync pattern, set `sessionReadApi.login.advertisesSync: true`. This moves
 the supported `RELAYHISTORY_SELFHOST_LOGIN_ADVERTISES_SYNC` setting out of
-`readApi.extraEnv`; remove that old entry when upgrading. The reader only
+`sessionReadApi.extraEnv`; remove that old entry when upgrading. The reader only
 advertises sync already granted by Control, and the ingest edge still checks it
 independently. The default is read-only, and native routing requires this
 explicit managed selection.

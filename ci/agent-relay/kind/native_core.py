@@ -16,6 +16,7 @@ import socket
 import ssl
 import tempfile
 from types import SimpleNamespace
+from urllib.parse import urlsplit
 
 import yaml
 
@@ -37,6 +38,16 @@ def image_id_matches(value, reference, manifest, config):
     return same_local_reference(value, reference) and value.endswith("@" + manifest)
 
 
+def runtime_field(container, key):
+    """Normalize only EnvVar's API-omitted zero value, not arbitrary defaults."""
+    value = deepcopy(container.get(key))
+    if key == "env" and isinstance(value, list):
+        for entry in value:
+            if "valueFrom" not in entry and entry.get("value") in (None, ""):
+                entry["value"] = ""
+    return value
+
+
 class NativeCoreAdapter(NativeControlTransport, NativePipelineAdapter):
     def __init__(self, stack, inputs, operator, tls_material=None):
         require(isinstance(inputs, dict) and WEBAPP_INPUTS <= set(inputs), "qualified_webapp_packet_and_native_archive_required")
@@ -49,6 +60,7 @@ class NativeCoreAdapter(NativeControlTransport, NativePipelineAdapter):
         self._ready_specs = None
         self._recipe_sha = stack.recipe_hash()
         self._webapp = None
+        self._pipeline_oids = None
 
     def _preflight(self, selected, fresh=False):
         require(self.stack.recipe_hash() == self._recipe_sha, "native_recipe_source_changed_during_execution")
@@ -107,6 +119,7 @@ import('/app/node_modules/relay-control/dist/features.js').then(m=>{
         self._webapp = webapp
 
     def inspect(self, selected):
+        self._pipeline_oids = None
         facts = super().inspect(selected)
         if facts["mode"] == "repeat":
             bound = document(self.inputs["bindingReceipt"], self.inputs["bindingReceiptSha256"])
@@ -121,7 +134,39 @@ import('/app/node_modules/relay-control/dist/features.js').then(m=>{
                 current = self._get(resource["kind"].lower() + "/" + resource["name"])
                 require(hashlib.sha256(canonical(current.get("spec", current.get("data", {}))).encode()).hexdigest() == resource["specSha256"],
                         "repeat_native_resource_spec_or_public_contract_changed")
+            current_oids = self._pipeline_role_oids(selected)
+            require(bound.get("pipelineRoleOids") == current_oids,
+                    "pipeline_owner_or_runtime_role_identity_changed")
+            self._pipeline_oids = current_oids
+            self._owner_oid = current_oids[selected["roles"]["owner"]]
         return facts
+
+    def _pipeline_role_oids(self, selected):
+        names = set(selected["roles"].values())
+        raw = self._psql(selected, "hoopdb", "SELECT coalesce(json_object_agg(rolname,oid),'{}'::json) FROM pg_roles WHERE rolname IN (" +
+                         ",".join("'" + n + "'" for n in sorted(names)) + ");", read_only=True)
+        value = json.loads(raw)
+        require(isinstance(value, dict) and set(value) == names and
+                all(type(oid) is int and oid > 0 for oid in value.values()) and
+                len(set(value.values())) == len(names), "native_pipeline_role_identity_incomplete")
+        return value
+
+    def verify_credentials(self, selected):
+        self._completed.discard("runtime_credentials_verified")
+        try:
+            result = super().verify_credentials(selected)
+            current = self._pipeline_role_oids(selected)
+            if self._inspected["mode"] == "fresh":
+                require(current[selected["roles"]["owner"]] == self._owner_oid and
+                        all(current[n] == oid for n, oid in self._claimed_oids.items()),
+                        "pipeline_owner_or_runtime_role_identity_changed")
+            else:
+                require(current == self._pipeline_oids, "pipeline_owner_or_runtime_role_identity_changed")
+            self._pipeline_oids = current
+            return result
+        except Exception:
+            self._completed.discard("runtime_credentials_verified")
+            raise
 
     def _base(self):
         args = self.stack.values_args()
@@ -435,7 +480,7 @@ import('/app/node_modules/relay-control/dist/features.js').then(m=>{
                     "native_live_pod_does_not_match_selected_workload")
             for expected in wanted["spec"]["template"]["spec"]["containers"]:
                 actual = next(c for c in workload["spec"]["template"]["spec"]["containers"] if c["name"] == expected["name"])
-                require(all(actual.get(k) == expected.get(k) for k in ("image", "env", "volumeMounts", "command", "args")),
+                require(all(runtime_field(actual, k) == runtime_field(expected, k) for k in ("image", "env", "volumeMounts", "command", "args")),
                         "native_selected_runtime_configuration_changed")
                 binding = selected["control"] if name == "relay-control" else self._webapp if name == "relay-webapp" else selected
                 running = next((c for c in pod["status"]["containerStatuses"] if c.get("name") == expected["name"]), {})
@@ -464,14 +509,22 @@ import('/app/node_modules/relay-control/dist/features.js').then(m=>{
         context = ssl.create_default_context(cadata=ca)
         context.verify_flags |= ssl.VERIFY_X509_STRICT
         # Fixed host/SNI and loopback socket; no global DNS or OS trust edit.
-        for port, path in ((443, "/"), (8443, "/")):
-            connection = http.client.HTTPSConnection("relay.kind.agentrelay.com", port, context=context, timeout=10)
-            connection._create_connection = lambda a, timeout, source_address=None: socket.create_connection(("127.0.0.1", port), timeout)
+        site, history = urlsplit(selected["siteOrigin"]), urlsplit(selected["historyOrigin"])
+        # An unauthenticated reader request must reach its auth fence, not
+        # succeed on the webapp's catch-all or expose an internal issuer.
+        routes = ((site.hostname, site.port or 443, "/", 200),
+                  (history.hostname, history.port or 443, "/v1/sessions", 401))
+        for host, port, path, expected_status in routes:
+            connection = http.client.HTTPSConnection(host, port, context=context, timeout=10)
+            connection._create_connection = lambda a, timeout, source_address=None, port=port: socket.create_connection(("127.0.0.1", port), timeout)
             try:
                 connection.request("GET", path)
                 response = connection.getresponse()
-                response.read(65536)
-                require(response.status == 200, "verified_public_application_route_not_ready")
+                body = response.read(65536)
+                require(response.status == expected_status, "verified_public_application_route_not_ready")
+                if expected_status == 401:
+                    require(json.loads(body).get("error", {}).get("code") == "missing_authorization",
+                            "verified_public_reader_auth_fence_not_ready")
             finally:
                 connection.close()
 
@@ -485,12 +538,15 @@ import('/app/node_modules/relay-control/dist/features.js').then(m=>{
                     hashlib.sha256(canonical(live["spec"]).encode()).hexdigest() == self._ready_specs[name],
                     "native_runtime_changed_after_final_verification")
         uid = self._get("namespace/kube-system", namespace=False)["metadata"]["uid"]
+        require(self._pipeline_oids and self._pipeline_role_oids(selected) == self._pipeline_oids,
+                "pipeline_owner_or_runtime_role_identity_changed")
         resources = self._get("deployments,statefulsets,persistentvolumeclaims,configmaps")["items"]
         for name in sorted(self._selected_secret_names(selected)):
             resources.append(self._get("secret/" + name))
         record = {"version": 1, "type": "local-kind-native-core", "clusterUid": uid, "profile": selected["profile"],
             "sourceRevision": selected["sourceRevision"], "generation": selected["generation"], "roles": selected["roles"],
             "selection": selected, "controlRoleOids": {n: r["oid"] for n, r in self._control_roles(selected).items()},
+            "pipelineRoleOids": self._pipeline_oids,
             "webapp": {k: self._webapp[k] for k in ("sourceRevision", "reference", "manifestDigest", "configDigest", "packetSha256", "archiveSha256")},
             "officialBootstrapSha256": selected["officialBootstrapSha256"], "tenant": self._tenant,
             "controlContractSha256": self._control_contract_sha, "releaseRevision": self._helm_state(),
