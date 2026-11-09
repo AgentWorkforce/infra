@@ -416,7 +416,7 @@ class NamedUpgrade(unittest.TestCase):
             named.verify_selection(self.local, self.values, self.objects)
         self.objects.pop(('Deployment', 'session-metadata-indexer'))
         self.values['sessions-pipeline']['nativeConsumer'] = {'enabled': True, 'legacyIndexerDrained': True}
-        with self.assertRaisesRegex(stack.StackError, 'drained native replacement'):
+        with patch.object(named, 'render_selected', side_effect=AssertionError('ambiguous writers reached Helm')), self.assertRaisesRegex(stack.StackError, 'drained native replacement'):
             named.verify_selection(self.local, self.values, self.objects)
 
     def test_selected_legacy_default_requires_every_rendered_workload(self):

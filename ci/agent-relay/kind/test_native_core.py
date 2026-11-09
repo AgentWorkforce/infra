@@ -2,6 +2,8 @@
 from copy import deepcopy
 import hashlib
 import json
+from pathlib import Path
+import tempfile
 from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
@@ -113,6 +115,33 @@ class Core(unittest.TestCase):
         with patch("native_pipeline.NativePipelineAdapter.verify_credentials", credentials):
             with self.assertRaisesRegex(NativeRecipeError, "role_identity_changed"): a.verify_credentials(s)
         self.assertNotIn("runtime_credentials_verified", a._completed)
+
+    def test_ready_record_persists_pipeline_role_identity_and_refuses_last_minute_recreation(self):
+        a = self.adapter(); s = self.selection(); records = []
+        oids = {n: i for i, n in enumerate(s["roles"].values(), 100)}
+        a._pipeline_oids = oids; a._pipeline_role_oids = lambda selected: dict(oids)
+        a._ready_uids = {"relay-control": "original-control"}
+        a._ready_specs = {"relay-control": hashlib.sha256(b"{}").hexdigest()}
+        a._selected_secret_names = lambda selected: set()
+        def get(name, **kw):
+            if name == "deployment/relay-control": return {"metadata": {"uid": "original-control"}, "spec": {}}
+            if name == "namespace/kube-system": return {"metadata": {"uid": "original-cluster"}}
+            return {"items": []}
+        a._get = get; a._control_roles = lambda selected: {"control_owner": {"oid": 200}, "control_api_runtime": {"oid": 201}}
+        a._webapp = {k: "bound" for k in ("sourceRevision", "reference", "manifestDigest", "configDigest", "packetSha256", "archiveSha256")}
+        a._control_contract_sha = a._base_sha = a._recipe_sha = "bound"
+        a._values = lambda selected, phase: {}; a._inspected = {"mode": "fresh"}
+        a._exclusive_json = lambda path, record: records.append(deepcopy(record))
+        with tempfile.TemporaryDirectory() as directory, patch("native_core.sha", return_value="bound-receipt"):
+            a.stack = SimpleNamespace(state=Path(directory))
+            self.assertEqual(a.record_ready(s, {"fullAcceptance": False, "sourceRevision": s["sourceRevision"]}),
+                             {"ok": True, "receiptSha256": "bound-receipt"})
+            self.assertEqual(records[0]["pipelineRoleOids"], oids)
+            changed = dict(oids); changed[s["roles"]["owner"]] += 1
+            a._pipeline_role_oids = lambda selected: changed
+            with self.assertRaisesRegex(NativeRecipeError, "role_identity_changed"):
+                a.record_ready(s, {"fullAcceptance": False, "sourceRevision": s["sourceRevision"]})
+        self.assertEqual(len(records), 1)
 
     def test_running_content_identity_cannot_be_replaced_by_matching_tag_or_other_manifest(self):
         reference = "docker.io/agent-relay-kind/runtime@sha256:" + "a" * 64

@@ -514,10 +514,6 @@ def verify_selection(stack, values, objects):
     from stack import pod_spec
     values_validate(values, stack.profile)
     reject_legacy_workloads(objects)
-    rendered = render_selected(stack, values)
-    names = {d["metadata"]["name"] for d in rendered if d["kind"] == "Deployment"}
-    if not REQUIRED_BASE <= names or names & OLD or ("Deployment", NAME) not in objects:
-        fail("render does not select the completed public workload names")
     pipeline = values["sessions-pipeline"]
     worker = pipeline.get("worker", {})
     indexer = worker.get("components", {}).get("hoopdb-indexer", {})
@@ -531,6 +527,11 @@ def verify_selection(stack, values, objects):
                    else values["localKind"].get("legacyIndexerDrained"))
         if selected_consumer == selected_search or not indexer_disabled or drained is not True:
             fail("disabled legacy indexer requires an explicitly selected, drained native replacement")
+    rendered = render_selected(stack, values)
+    names = {d["metadata"]["name"] for d in rendered if d["kind"] == "Deployment"}
+    if not REQUIRED_BASE <= names or names & OLD or ("Deployment", NAME) not in objects:
+        fail("render does not select the completed public workload names")
+    if selected_consumer or selected_search or indexer_disabled:
         contract = {"SERVICE": "session-pipeline-consumer", "RELAYHISTORY_SELFHOST_PIPELINE_CONSUMER": "true",
                     "SEARCH_INDEX_BACKEND": "postgres", "PIPELINE_FANOUT": "off",
                     "NATIVE_CONSUMER_PREFLIGHT_MODE": "runtime", "NATIVE_CONSUMER_EXPECTED_ROLE": "search_consumer_runtime"}
