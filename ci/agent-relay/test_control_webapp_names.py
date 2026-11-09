@@ -90,6 +90,37 @@ class Names(unittest.TestCase):
         self.assertNotIn('relay-control', names)
         self.assertNotIn('relay-webapp', names)
 
+    def test_eks_alb_ingest_routes_are_opt_in_and_exact(self):
+        base = {**os.environ, 'EKS_ALB_DOMAIN': 'relay.example.com', 'EKS_ALB_CERT_ARN': 'arn:aws:acm:test'}
+        render = lambda extra: subprocess.run(['bash', 'scripts/selfhost/eks-alb-ingress.sh', 'ns'], cwd=ROOT,
+                                              env={**base, **extra}, capture_output=True, text=True)
+        def history_paths(result):
+            self.assertEqual(result.returncode, 0, result.stderr)
+            doc = yaml.safe_load(result.stdout)
+            rule = next(r for r in doc['spec']['rules'] if r['host'] == 'history.relay.example.com')
+            return doc, [(p['path'], p['pathType'], p['backend']['service']['name'], p['backend']['service']['port'])
+                         for p in rule['http']['paths']]
+
+        doc, paths = history_paths(render({}))
+        self.assertEqual(paths, [('/', 'Prefix', 'relayhistory', {'number': 8080})])
+        self.assertNotIn('alb.ingress.kubernetes.io/healthcheck-path', doc['metadata']['annotations'])
+
+        doc, paths = history_paths(render({'EKS_ALB_INGEST': 'true'}))
+        ingest = {'number': 80}
+        self.assertEqual(paths, [
+            ('/v1/delivery/batches', 'Exact', 'agent-relay-ingest-edge', ingest),
+            ('/v1/turns/batches', 'Exact', 'agent-relay-ingest-edge', ingest),
+            ('/v1/delivery/limits', 'Exact', 'agent-relay-ingest-edge', ingest),
+            ('/v1/auth/token/refresh', 'Exact', 'agent-relay-ingest-edge', ingest),
+            ('/internal', 'Prefix', 'edge-deny', {'name': 'use-annotation'}),
+            ('//internal*', 'ImplementationSpecific', 'edge-deny', {'name': 'use-annotation'}),
+            ('/*', 'ImplementationSpecific', 'agent-relay-read-api', {'number': 80}),
+        ])
+        self.assertEqual(doc['metadata']['annotations']['alb.ingress.kubernetes.io/healthcheck-path'], '/healthz')
+
+        refused = render({'EKS_ALB_INGEST': 'true', 'EKS_ALB_HISTORY': 'false'})
+        self.assertEqual(refused.returncode, 2)
+
     def test_historical_eks_installer_uses_its_selected_chart_values(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
