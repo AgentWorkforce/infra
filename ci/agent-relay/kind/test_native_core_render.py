@@ -13,6 +13,7 @@ from native_recipe import NativeRecipeError
 from test_native_core import TENANT
 from test_native_control import contract
 from test_native_recipe import selected
+from native_network import public_route_values
 
 ROOT = Path(__file__).resolve().parents[3]
 
@@ -58,7 +59,7 @@ class Render(unittest.TestCase):
         self.assertEqual(env["READ_API_EVENT_MESSAGE_IDS"]["value"], "true")
         self.assertNotIn("RELAYCONTROL_INTROSPECT_SECRET", env)
         policies = [d for d in docs if d["kind"] == "NetworkPolicy"]
-        self.assertNotIn("kind-control-native-readback-egress", {d["metadata"]["name"] for d in policies})
+        self.assertIn("kind-control-native-readback-egress", {d["metadata"]["name"] for d in policies})
         routing = next(d for d in docs if d["kind"] == "Ingress" and d["metadata"]["name"] == "agent-relay-native-history")
         paths = routing["spec"]["rules"][0]["http"]["paths"]
         self.assertEqual(paths[0]["path"], "/v1")
@@ -78,6 +79,31 @@ class Render(unittest.TestCase):
             result = self.render(phase, change)
             with self.subTest(phase=phase):
                 self.assertNotEqual(result.returncode, 0)
+
+    def test_real_native_handoff_self_route_and_projection_preserve_authority(self):
+        record = {'version': 1, 'type': 'local-kind-native-control-public-route', 'clusterUid': 'owned',
+            'name': 'agent-relay-core', 'profile': 'core', 'origin': self.s['siteOrigin'],
+            'host': 'relay.kind.agentrelay.com', 'service': {'name': 'kind-edge-traefik', 'namespace': 'kind-edge',
+                'uid': 'original-gateway', 'specSha256': 'a' * 64, 'clusterIP': '10.96.42.7'}}
+        result = self.render('serve', lambda v: v['relay-control']['services'].update(
+            publicHostAliases=public_route_values(v, record)['relay-control']['services']['publicHostAliases']))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        docs = [d for d in yaml.safe_load_all(result.stdout) if d]
+        control = next(d for d in docs if d['kind'] == 'Deployment' and d['metadata']['name'] == 'relay-control')
+        pod = control['spec']['template']['spec']; env = {e['name']: e for e in pod['containers'][0]['env']}
+        self.assertEqual(pod['hostAliases'], [{'ip': '10.96.42.7', 'hostnames': ['relay.kind.agentrelay.com']}])
+        self.assertEqual(env['SELFHOST_PUBLIC_URL']['value'], self.s['siteOrigin'])
+        self.assertEqual(env['SESSION_READ_API_PUBLIC_URL']['value'], self.s['historyOrigin'])
+        self.assertEqual(env['SESSION_READ_API_MCP_READS']['value'], 'true')
+        self.assertEqual(env['RELAYHISTORY_BACKEND']['value'], 'native')
+        projected = {item['key'] for volume in pod['volumes'] if 'secret' in volume for item in volume['secret']['items']}
+        self.assertIn(contract()['runtime']['readerIssuerKey'], projected)
+        self.assertNotIn(contract()['owner']['key'], projected)
+        policy = next(d for d in docs if d['kind'] == 'NetworkPolicy' and d['metadata']['name'] == 'kind-control-native-readback-egress')
+        self.assertEqual(policy['spec']['podSelector']['matchLabels'], control['spec']['selector']['matchLabels'])
+        self.assertEqual(policy['spec']['egress'], [{'to': [{'namespaceSelector': {'matchLabels': {'kubernetes.io/metadata.name': 'kind-edge'}},
+            'podSelector': {'matchLabels': {'app.kubernetes.io/instance': 'kind-edge-kind-edge', 'app.kubernetes.io/name': 'traefik'}}}],
+            'ports': [{'protocol': 'TCP', 'port': 8443}]}])
 
 
 if __name__ == "__main__": unittest.main()

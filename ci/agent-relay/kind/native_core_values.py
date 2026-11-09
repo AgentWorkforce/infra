@@ -46,7 +46,8 @@ def compose(base, selected, operator, phase, observed_tenant=None):
     require(base.get("relaycast", {}).get("runtime", {}).get("backend", "sqlite") == "sqlite",
             "native_cast_postgres_transport_requires_separate_qualification")
     require(not base.get("relay-control", {}).get("extraEnv") and
-            not base.get("relay-control", {}).get("license", {}).get("existingSecret"),
+            not base.get("relay-control", {}).get("license", {}).get("existingSecret") and
+            not base.get("relay-control", {}).get("services", {}).get("publicHostAliases"),
             "complete_native_core_requires_managed_control_values_without_obsolete_license")
     if phase == "serve":
         actual = tenant(observed_tenant)

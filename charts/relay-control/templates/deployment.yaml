@@ -21,7 +21,7 @@ spec:
     spec:
       serviceAccountName: {{ include "relay-control.serviceAccountName" . }}
       automountServiceAccountToken: false
-      {{- with .Values.services.relayhistoryHostAliases }}
+      {{- with concat .Values.services.relayhistoryHostAliases .Values.services.publicHostAliases }}
       hostAliases: {{ toYaml . | nindent 8 }}
       {{- end }}
       terminationGracePeriodSeconds: {{ .Values.terminationGracePeriodSeconds }}

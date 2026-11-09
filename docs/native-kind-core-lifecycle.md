@@ -77,6 +77,12 @@ reinstalls Control, requeues consumer bootstrap or applies pending migrations.
 The resource binding includes the immutable Postgres administrator, database
 server TLS and ingress TLS Secrets. Recreating any of them with identical data
 still changes its UID and refuses repeat admission.
+The final binding also records the owned Traefik Service UID, complete Service
+spec hash, ClusterIP and literal Control public hostname. Service443 must target
+the gateway's verified websecure Pod port8443. This supplies Control's public
+self-route without exposing the reader's internal handoff. A changed gateway
+identity or transport refuses repeat before chart writes; failed verification
+does not admit a replacement on the next attempt.
 The original native binding and legacy readiness anchors remain unchanged.
 
 ## Ordered execution

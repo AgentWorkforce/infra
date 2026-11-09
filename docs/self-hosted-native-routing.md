@@ -66,12 +66,18 @@ The generated Ingress sends exactly these paths to the selected Services:
 | `/v1/delivery/batches` | Exact | Native ingest |
 | `/v1/turns/batches` | Exact | Native ingest |
 | `/v1/delivery/limits` | Exact | Native ingest |
-| `/` | Prefix | Reader |
+| `/v1` | Prefix | Reader |
+| `/v1/delivery/admission` | Exact, only `ingestEdge.admission.mode: async` or `drain` | Native ingest |
+| `/v1/auth/token/refresh` | Exact, only self-issued reader composition | Native ingest's explicit unsupported-refresh refusal |
 
 Backends use Service ports, not container ports. `/v1/delivery/records`,
 sessions, events, turns, search and login stay on the reader. Method and auth
 checks still belong to the services. Selection, resets, recovery and onboarding
 are not advertised as working features by these rules.
+The `/v1` prefix uses whole path elements: `/internal`, `/healthz`, `/v10` and
+the root do not reach the reader. Internal issuer routes remain private in both
+supported reader modes. The admission status exception does not enable async;
+sync remains the default and needs separate operator qualification to change.
 
 Origins must match byte-for-byte, including the port. The umbrella rejects a
 competing standalone History ingress or the older shared GKE History backend.
@@ -103,6 +109,22 @@ canonical IPv4 address and exactly the configured reader hostname. Its empty
 default emits no mapping. Certificate verification still requires the public
 name and an approved CA in the container's trust configuration. Project private
 CA bundles read-only as public certificate material, never server private keys.
+
+For `relayhistoryBackend: native`, use `sessionReadApiUrl` for the private reader
+Service, `sessionReadApiPublicUrl` for its exact public audience,
+`sessionReadApiMcpReads: true` and a dedicated `secretKeys.sessionReadApiSecret`.
+The reader's `auth.selfIssued.internalSecret` must name that same credential;
+ingest introspection uses a different secret. Do not enable the caller-token
+reader settings or reuse its legacy History DNS alias for the private issuer.
+
+MCP acquires workspace-bound reader tokens through Control's own public HTTPS
+URL. Where the kind gateway cannot be reached through normal public DNS, the
+native lifecycle supplies `services.publicHostAliases` from the owned Traefik
+Service's observed ClusterIP. This separate API-only mapping names exactly
+Control's `publicUrl` hostname, preserves any distinct History mapping and never
+changes TLS/SNI, public URL or audience. The narrow egress policy admits only
+Control API pods to the selected Traefik pods on secure Pod port8443; Service443
+is translated to that port. No namespace-wide external allow is added.
 
 ## Local kind network preparation
 

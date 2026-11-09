@@ -67,9 +67,13 @@ class NativeCoreAdapter(NativeControlTransport, NativePipelineAdapter):
         self._recipe_sha = stack.recipe_hash()
         self._webapp = None
         self._pipeline_oids = None
+        self._public_route = None
+        self._public_route_binding = None
 
     def _preflight(self, selected, fresh=False):
         require(self.stack.recipe_hash() == self._recipe_sha, "native_recipe_source_changed_during_execution")
+        if self._public_route_binding is not None:
+            self._qualify_public_route(selected, self._public_route_binding)
         return super()._preflight(selected, fresh=fresh)
 
     def _selected_secret_names(self, selected):
@@ -197,8 +201,32 @@ import('/app/node_modules/relay-control/dist/features.js').then(m=>{
 
     def _values(self, selected, phase):
         self._control_bound(selected)
-        return compose(self._base(), selected, self.control, phase,
-                       self._tenant if phase == "serve" else None)
+        value = compose(self._base(), selected, self.control, phase,
+                        self._tenant if phase == "serve" else None)
+        if phase == "serve" and self._public_route is not None:
+            from native_network import public_route_values
+            value = public_route_values(value, self._public_route)
+        return value
+
+    def _network_stack(self, selected):
+        return SimpleNamespace(state=self.stack.state, marker=self.stack.marker, name=self.stack.name,
+            profile=self.stack.profile, env=self.stack.env,
+            require_owned_cluster=lambda: self._owned_uid(selected),
+            k=lambda *a, **k: self._transport_call("k", *a, **k),
+            cmd=lambda *a, **k: self._transport_call("cmd", *a, **k))
+
+    def _qualify_public_route(self, selected, expected=None, *, allow_absent=False):
+        from native_network import control_public_route
+        # No cached admission survives a failed observation. Public route
+        # qualification is GET-only and precedes any chart/state mutation.
+        self._public_route = None
+        bound = self._public_route_binding
+        require(bound is None or expected in (None, bound), "control_public_gateway_binding_must_not_change")
+        observed = control_public_route(self._network_stack(selected), self._values(selected, "serve"), bound or expected,
+                                        allow_absent=allow_absent)
+        self._public_route_binding = observed
+        self._public_route = observed
+        return observed
 
     def _render_values(self, value):
         result = self._transport_call("cmd", ["helm", "template", "agent-relay", "charts/agent-relay",
@@ -260,6 +288,8 @@ import('/app/node_modules/relay-control/dist/features.js').then(m=>{
             require(binding.get("controlContractSha256") == self._control_contract_sha,
                     "repeat_control_operator_contract_changed")
             self._tenant = tenant(binding.get("tenant"))
+            require(binding.get("controlPublicRoute"), "repeat_control_public_gateway_binding_required")
+            self._qualify_public_route(selected, binding["controlPublicRoute"])
         docs = self._render_values(self._values(selected, "serve" if self._tenant else "plan"))
         result = self._validate_render_docs(selected, docs)
         if self._inspected["mode"] == "repeat":
@@ -452,16 +482,15 @@ import('/app/node_modules/relay-control/dist/features.js').then(m=>{
         import native_network
         from stack import TRAEFIK_CHART
         from edge import install
-        network_stack = SimpleNamespace(state=self.stack.state, marker=self.stack.marker, name=self.stack.name,
-            profile=self.stack.profile, env=self.stack.env,
-            require_owned_cluster=lambda: self._owned_uid(selected),
-            k=lambda *a, **k: self._transport_call("k", *a, **k),
-            cmd=lambda *a, **k: self._transport_call("cmd", *a, **k))
+        network_stack = self._network_stack(selected)
         native_network.preflight(network_stack, value)
+        self._qualify_public_route(selected, self._public_route, allow_absent=True)
         install(self.stack, TRAEFIK_CHART, "agent-relay", wait_for_route=False)
         observation = native_network.ensure(network_stack, value)
         require(native_network.selected_values(value, observation) == value,
                 "independent_reader_must_not_gain_legacy_alias_values")
+        self._qualify_public_route(selected, self._public_route)
+        value = self._values(selected, "serve")
         # Cache exact qualified pipeline images; already prepared schema/role
         # Jobs remain terminal and are never requeued by this runtime chart.
         self._ensure_pipeline_image(selected)
@@ -483,6 +512,11 @@ import('/app/node_modules/relay-control/dist/features.js').then(m=>{
         for name in sorted(names):
             wanted = next(d for d in docs if d["kind"] == "Deployment" and d["metadata"]["name"] == name)
             workload, pod = self._runtime_pod(name)
+            if name == "relay-control":
+                aliases = wanted["spec"]["template"]["spec"].get("hostAliases", [])
+                require(workload["spec"]["template"]["spec"].get("hostAliases", []) == aliases and
+                        pod["spec"].get("hostAliases", []) == aliases,
+                        "native_control_public_route_alias_changed")
             require(strategy_type(workload) == strategy_type(wanted) and
                     workload["spec"]["template"]["spec"]["containers"] == pod["spec"]["containers"],
                     "native_live_pod_does_not_match_selected_workload")
@@ -507,6 +541,8 @@ import('/app/node_modules/relay-control/dist/features.js').then(m=>{
         self._runtime_pod("relaycast")
         self._verify_control_authorities(selected)
         self._verify_public_routes(selected)
+        require(self._public_route is not None, "control_public_gateway_must_be_qualified")
+        self._qualify_public_route(selected, self._public_route)
         self._ready_uids = uids
         self._ready_specs = specs
         return {"ok": True, "deploymentUids": uids}
@@ -548,6 +584,8 @@ import('/app/node_modules/relay-control/dist/features.js').then(m=>{
         uid = self._get("namespace/kube-system", namespace=False)["metadata"]["uid"]
         require(self._pipeline_oids and self._pipeline_role_oids(selected) == self._pipeline_oids,
                 "pipeline_owner_or_runtime_role_identity_changed")
+        require(self._public_route is not None, "control_public_gateway_must_be_qualified")
+        self._qualify_public_route(selected, self._public_route)
         resources = self._get("deployments,statefulsets,persistentvolumeclaims,configmaps")["items"]
         for name in sorted(self._selected_secret_names(selected)):
             resources.append(self._get("secret/" + name))
@@ -558,6 +596,7 @@ import('/app/node_modules/relay-control/dist/features.js').then(m=>{
             "webapp": {k: self._webapp[k] for k in ("sourceRevision", "reference", "manifestDigest", "configDigest", "packetSha256", "archiveSha256")},
             "officialBootstrapSha256": selected["officialBootstrapSha256"], "tenant": self._tenant,
             "controlContractSha256": self._control_contract_sha, "releaseRevision": self._helm_state(),
+            "controlPublicRoute": self._public_route,
             "valuesSha256": self._base_sha, "recipeSha256": self._recipe_sha,
             "renderSha256": hashlib.sha256(canonical(self._render_values(self._values(selected, "serve"))).encode()).hexdigest(),
             "resources": sorted([{"kind": d["kind"], "name": d["metadata"]["name"], "uid": d["metadata"]["uid"],
