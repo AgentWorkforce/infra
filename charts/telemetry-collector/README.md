@@ -7,7 +7,7 @@ This chart does not redirect hosted traffic, accept browser credentials or
 enable producer adapters automatically.
 
 The runtime contract comes from relay-control source
-`8359483d2666c1f374190c102237c3022ca3d466`: the standalone
+`08cf1142303355a73a94dcf605045cdf363e02c5`: the standalone
 `agent-relay-analytics-collector` CLI, `POST /v1/events`, `GET /healthz`, and
 `ANALYTICS_COLLECTOR_*` settings. It is not OTLP; the optional OpenTelemetry
 collector in the pipeline chart serves a separate observability contract.
@@ -37,12 +37,13 @@ own liveness probe.
 
 Supply accepted immutable collector and TLS-proxy image digests and record the
 collector source SHA. The declared source is pinned to the reviewed revision
-`8359483d2666c1f374190c102237c3022ca3d466`; accepting a different runtime requires
+`08cf1142303355a73a94dcf605045cdf363e02c5`; accepting a different runtime requires
 a reviewed allowlist update. This declaration is not cryptographic verification
 of image contents: verify the actual archive/OCI source label separately. The collector image must contain Node 22 or later and
-`node_modules/@cloud/selfhost-api/dist/collector-cli.js`. Current relay-control
-images do not contain that CLI, so the chart refuses a `relay-control` or
-`selfhost-api` repository at render time. The proxy must contain
+`node_modules/relay-control/dist/collector-cli.js` and `/usr/bin/flock`. The
+reviewed public Control package includes the collector CLI. Repository naming
+alone does not establish image contents; verify the exact digest and package
+before installation. The proxy must contain
 nginx and run this chart's configuration as UID/GID 1000. No runnable images
 are selected by default. The `ci/` image identities are render-only fixtures.
 
@@ -66,9 +67,17 @@ process. Never put token values in Helm values or a ConfigMap:
    This chart creates no certificate or trust exception. It refuses using the
    producer Secret as the TLS Secret.
 
-Use a CSI storage driver supporting `ReadWriteOncePod` on Kubernetes 1.29+.
-An existing claim must independently enforce the same one-pod writer boundary.
-Do not mount the data directory into another writer. The default 2 GiB volume
+New claims use a CSI storage driver supporting `ReadWriteOncePod` on Kubernetes
+1.29+. The command also holds an exclusive kernel file lock for the entire
+collector process, including shutdown. A second process exits before the CLI
+starts; a crash releases the lock without deleting the lock file. `--no-fork`
+keeps signals directed to the collector. The lock is an additional process
+guard, not storage fencing: it does not stop another Pod mounting the claim.
+An existing claim must independently enforce exclusive Pod ownership (RWOP or
+equivalent) and support the file lock. A `ReadWriteOnce` claim and successful
+lock contention alone do not meet that storage requirement. Verify both
+storage fencing and lock contention before enabling producers. Do not mount
+the data directory into another writer that omits the lock. The default 2 GiB volume
 leaves space around the collector's 1 GiB closed-segment cap; size the volume
 for configured limits, filesystem overhead and operational retention.
 
