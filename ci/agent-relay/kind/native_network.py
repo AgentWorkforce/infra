@@ -250,7 +250,15 @@ def _record(stack, owner, cfg, service):
 
 
 def _ingresses(stack, cfg):
-    items = json.loads(stack.k("get", "ingress", "-o", "json", namespace=APP_NS).stdout).get("items", [])
+    # edge.install leaves the provider's namespace and ingress-class filters
+    # unset. It watches every namespace, unclassified/traefik annotations and
+    # every IngressClass owned by the Traefik controller. Inventory that same
+    # scope even before APP_NS exists; never mutate the shared provider to
+    # conceal a competing route. Failure to list either resource fails closed.
+    classes = json.loads(stack.k("get", "ingressclass", "-o", "json", namespace=None).stdout).get("items", [])
+    watched = {"traefik"} | {c.get("metadata", {}).get("name") for c in classes
+        if c.get("spec", {}).get("controller") == "traefik.io/ingress-controller"}
+    items = json.loads(stack.k("get", "ingress", "--all-namespaces", "-o", "json", namespace=None).stdout).get("items", [])
     expected_paths = {("/v1", "Prefix", cfg["reader"]), ("/v1/delivery/batches", "Exact", cfg["ingest"]),
                       ("/v1/turns/batches", "Exact", cfg["ingest"]), ("/v1/delivery/limits", "Exact", cfg["ingest"])}
     if cfg.get("admissionMode") in ("async", "drain"):
@@ -259,16 +267,24 @@ def _ingresses(stack, cfg):
         expected_paths.add(("/v1/auth/token/refresh", "Exact", cfg["ingest"]))
     for item in items:
         spec, meta = item.get("spec", {}), item.get("metadata", {})
+        selected = meta.get("name") == cfg["ingress"] and meta.get("namespace") == APP_NS
+        ann = meta.get("annotations", {})
+        name = spec.get("ingressClassName")
+        processed = name in watched if name is not None else ann.get("kubernetes.io/ingress.class", "") in ("", "traefik")
+        # A changed selected object's class/hostname must still refuse rather
+        # than disappear from the inventory via a class filter.
+        if not selected and not processed:
+            continue
         rules = spec.get("rules", [])
         def matches(host):
             return not host or host == cfg["host"] or (isinstance(host, str) and host.startswith("*.")
                 and cfg["host"].endswith(host[1:])
                 and "." not in cfg["host"][:-len(host[1:])])
-        if (meta.get("name") != cfg["ingress"] and not spec.get("defaultBackend")
-                and not any(matches(r.get("host")) for r in rules)):
+        if (not selected and not spec.get("defaultBackend")
+                and not any(matches(r.get("host")) for r in rules)
+                and not any(matches(host) for tls in spec.get("tls", []) for host in tls.get("hosts", []))):
             continue
-        ann = meta.get("annotations", {})
-        if (meta.get("name") != cfg["ingress"] or meta.get("namespace") != APP_NS or not meta.get("uid")
+        if (not selected or not meta.get("uid")
                 or ann.get("meta.helm.sh/release-name") != "agent-relay"
                 or ann.get("meta.helm.sh/release-namespace") != APP_NS
                 or meta.get("labels", {}).get("app.kubernetes.io/managed-by") != "Helm"):
@@ -337,8 +353,8 @@ def preflight(stack, values):
     namespaces = {d.get("metadata", {}).get("name") for d in namespace_items}
     if EDGE_NS in namespaces:
         _gateway(stack, allow_absent=True, require_ready=False)
+    _ingresses(stack, cfg)
     if APP_NS in namespaces:
-        _ingresses(stack, cfg)
         _control_egress(stack, values)
     service = _service(stack) if EDGE_NS in namespaces else None
     if cfg.get("independentIssuer"):

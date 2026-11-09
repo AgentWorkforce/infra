@@ -32,6 +32,7 @@ class Fixture:
         self.service = None
         self.public_service = None
         self.ingresses = []
+        self.ingressclasses = [{'metadata': {'name': 'traefik'}, 'spec': {'controller': 'traefik.io/ingress-controller'}}]
         self.policies = []
         self.namespaces = ["kube-system", n.EDGE_NS, n.APP_NS]
         self.gateway = {'metadata': {'name': 'kind-edge', 'namespace': n.EDGE_NS, 'annotations': {
@@ -64,8 +65,15 @@ class Fixture:
         if args[:2] == ('get', 'namespace'):
             return SimpleNamespace(stdout=json.dumps({'items': [{'metadata': {'name': name}} for name in self.namespaces]}))
         if args[:2] == ('get', 'ingress'):
-            assert namespace == n.APP_NS
-            return SimpleNamespace(stdout=json.dumps({'items': self.ingresses}))
+            if '--all-namespaces' in args:
+                assert namespace is None
+                items = self.ingresses
+            else:
+                items = [item for item in self.ingresses if item.get('metadata', {}).get('namespace') == namespace]
+            return SimpleNamespace(stdout=json.dumps({'items': items}))
+        if args[:2] == ('get', 'ingressclass'):
+            assert namespace is None
+            return SimpleNamespace(stdout=json.dumps({'items': self.ingressclasses}))
         if args[:2] == ('get', 'service'):
             assert namespace == n.EDGE_NS
             if args[2] == n.PUBLIC_SERVICE:
@@ -383,6 +391,85 @@ class NativeNetwork(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "ownership handoff"):
                 n.preflight(self.stack, values())
         self.assertFalse(any(c[0] == "k" and c[1][0] == "create" for c in self.stack.calls))
+        self.stack.assert_anchors(self)
+
+    def test_all_watched_namespaces_refuse_same_host_routes_even_before_app_namespace_exists(self):
+        host = n.selection(values())['host']
+        for app_exists in (False, True):
+            self.stack.namespaces = ['kube-system', n.EDGE_NS, 'another-app'] + ([n.APP_NS] if app_exists else [])
+            for namespace in ('another-app', n.EDGE_NS):
+                for competing_host in (host, '*.kind.agentrelay.com', None):
+                    for path in ('/', '/v1/events', '/unrelated'):
+                        self.stack.ingresses = [{'metadata': {'name': 'foreign-history', 'namespace': namespace, 'uid': 'foreign'},
+                            'spec': {'ingressClassName': 'traefik', 'rules': [{'host': competing_host,
+                                'http': {'paths': [{'path': path, 'pathType': 'Prefix',
+                                    'backend': {'service': {'name': 'foreign', 'port': {'number': 80}}}}]}}]}}]
+                        with self.subTest(app_exists=app_exists, namespace=namespace, host=competing_host, path=path):
+                            with self.assertRaisesRegex(ValueError, 'ownership handoff'): n.ensure(self.stack, values())
+        self.assertTrue(any(c[0] == 'k' and c[1][:3] == ('get', 'ingress', '--all-namespaces')
+                            and c[2] is None for c in self.stack.calls))
+        self.assertFalse(any(c[0] == 'k' and c[1][0] == 'create' for c in self.stack.calls))
+        self.stack.assert_anchors(self)
+
+    def test_cross_namespace_class_scope_and_tls_competition_match_provider(self):
+        host = n.selection(values())['host']
+        self.stack.ingressclasses += [{'metadata': {'name': 'another-traefik'},
+            'spec': {'controller': 'traefik.io/ingress-controller'}},
+            {'metadata': {'name': 'nginx'}, 'spec': {'controller': 'k8s.io/ingress-nginx'}}]
+        foreign = {'metadata': {'name': 'foreign', 'namespace': 'another-app', 'uid': 'foreign'},
+            'spec': {'rules': [{'host': host, 'http': {'paths': [{'path': '/v1/events', 'pathType': 'Exact',
+                'backend': {'service': {'name': 'foreign', 'port': {'number': 80}}}}]}}]}}
+        for ingress_class, annotation in ((None, None), (None, ''), (None, 'traefik'), ('traefik', 'nginx'), ('another-traefik', None)):
+            item = copy.deepcopy(foreign)
+            if ingress_class is not None: item['spec']['ingressClassName'] = ingress_class
+            if annotation is not None: item['metadata']['annotations'] = {'kubernetes.io/ingress.class': annotation}
+            self.stack.ingresses = [item]
+            with self.subTest(ingress_class=ingress_class, annotation=annotation), self.assertRaisesRegex(ValueError, 'ownership handoff'):
+                n.preflight(self.stack, values())
+        other_rules = copy.deepcopy(foreign['spec']['rules']); other_rules[0]['host'] = 'other.kind.agentrelay.com'
+        for spec in ({'defaultBackend': {'service': {'name': 'foreign', 'port': {'number': 80}}}},
+                     {'rules': other_rules, 'tls': [{'hosts': [host], 'secretName': 'foreign-tls'}]},
+                     {'rules': other_rules, 'tls': [{'hosts': ['*.kind.agentrelay.com'], 'secretName': 'foreign-tls'}]}):
+            self.stack.ingresses = [{'metadata': copy.deepcopy(foreign['metadata']), 'spec': spec}]
+            with self.assertRaisesRegex(ValueError, 'ownership handoff'): n.preflight(self.stack, values())
+        for ingress_class, annotation, actual_host in (('nginx', 'traefik', host), (None, 'nginx', host),
+                                                     ('traefik', None, 'other.kind.agentrelay.com'),
+                                                     ('another-traefik', None, '*.other.agentrelay.com')):
+            item = copy.deepcopy(foreign); item['spec']['rules'][0]['host'] = actual_host
+            if ingress_class is not None: item['spec']['ingressClassName'] = ingress_class
+            if annotation is not None: item['metadata']['annotations'] = {'kubernetes.io/ingress.class': annotation}
+            self.stack.ingresses = [item]
+            with self.subTest(allowed_class=ingress_class, annotation=annotation, host=actual_host):
+                self.assertTrue(n.preflight(self.stack, values())['pendingFreshService'])
+        self.stack.assert_anchors(self)
+
+    def test_expected_name_never_exempts_foreign_namespace_or_ownership_and_listing_errors_fail_closed(self):
+        cfg = n.selection(values())
+        paths = [{'path': path, 'pathType': typ, 'backend': {'service': {'name': service, 'port': {'number': 80}}}}
+                 for path, typ, service in [('/v1', 'Prefix', cfg['reader']), ('/v1/delivery/batches', 'Exact', cfg['ingest']),
+                    ('/v1/turns/batches', 'Exact', cfg['ingest']), ('/v1/delivery/limits', 'Exact', cfg['ingest'])]]
+        selected = {'metadata': {'name': cfg['ingress'], 'namespace': n.APP_NS, 'uid': 'original',
+            'labels': {'app.kubernetes.io/managed-by': 'Helm'}, 'annotations': {
+                'meta.helm.sh/release-name': 'agent-relay', 'meta.helm.sh/release-namespace': n.APP_NS}},
+            'spec': {'ingressClassName': 'traefik', 'tls': [{'hosts': [cfg['host']], 'secretName': cfg['tls']}],
+                     'rules': [{'host': cfg['host'], 'http': {'paths': paths}}]}}
+        self.stack.ingresses = [selected]
+        self.assertTrue(n.preflight(self.stack, values())['pendingFreshService'])
+        for mutate in (lambda x: x['metadata'].update(namespace='another-app'),
+                       lambda x: x['metadata']['annotations'].update({'meta.helm.sh/release-name': 'foreign'}),
+                       lambda x: x['metadata']['annotations'].update({'meta.helm.sh/release-namespace': 'another-app'}),
+                       lambda x: x['metadata']['labels'].clear(),
+                       lambda x: x['spec'].update(ingressClassName='nginx')):
+            item = copy.deepcopy(selected); mutate(item); self.stack.ingresses = [item]
+            with self.assertRaises(ValueError): n.preflight(self.stack, values())
+        original_k = self.stack.k
+        for resource in ('ingressclass', 'ingress'):
+            def forbidden(*args, **kw):
+                if args[:2] == ('get', resource): raise ValueError('inventory forbidden')
+                return original_k(*args, **kw)
+            with patch.object(self.stack, 'k', side_effect=forbidden):
+                with self.assertRaisesRegex(ValueError, 'inventory forbidden'): n.ensure(self.stack, values())
+        self.assertFalse(any(c[0] == 'k' and c[1][0] == 'create' for c in self.stack.calls))
         self.stack.assert_anchors(self)
 
     def test_source_owned_policy_must_remain_exact_and_manual_policy_refuses(self):

@@ -152,6 +152,16 @@ Existing manual resources need a separately reviewed, identity-bound ownership
 transition. Do not use broad `--take-ownership`, duplicate an Ingress or silently
 replace an existing Service. The helper refuses foreign or unqualified existing
 resources before mutation.
+The guard lists Ingresses across all namespaces watched by the gateway,
+including when the application namespace has not been created. It checks
+unclassified routes and every Traefik-owned IngressClass. A foreign exact,
+wildcard, hostless or default route, or a TLS host competing for the selected
+History name, refuses preparation before gateway writes. Distinct paths under
+the same host still require a reviewed handoff because they share hostname/TLS
+authority. Unrelated hosts and classes served by other controllers do not grant
+ownership and do not block the selected route. Only the expected name in the
+application namespace with exact release ownership and route/TLS contract can
+qualify as the existing managed native Ingress.
 
 ## Verification
 
