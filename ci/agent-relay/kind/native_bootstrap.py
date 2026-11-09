@@ -183,6 +183,8 @@ class NativeBootstrapAdapter(NativeReadOnlyAdapter):
         return host, tuple(str(x) for x in args)
 
     def _require_local_transport(self):
+        from native_target import binding
+        binding(self.stack)
         require(self._local_docker_transport() == self._docker_transport, "native_docker_endpoint_changed_since_admission")
 
     def _transport_call(self, method, *args, **kwargs):
@@ -199,7 +201,7 @@ class NativeBootstrapAdapter(NativeReadOnlyAdapter):
 
     def _bind_selection(self, selected):
         self._require_local_transport()
-        validated = selection(selected)
+        validated = selection(selected, target=getattr(self.stack, "native_target", None))
         value = hashlib.sha256(json.dumps(validated, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
         require(self._selected_sha in (None, value), "native_selection_changed_since_preflight")
         self._selected_sha = value
@@ -286,6 +288,8 @@ class NativeBootstrapAdapter(NativeReadOnlyAdapter):
 
     def _fresh_absence(self):
         self._require_local_transport()
+        from native_target import require_free_ports
+        require_free_ports(self.stack)
         require(not any(p.exists() or p.is_symlink() for p in
                         (self.stack.marker, self.stack.state / "ready.json", self.stack.kubeconfig)),
                 "fresh_cluster_local_state_appeared")
@@ -309,20 +313,24 @@ class NativeBootstrapAdapter(NativeReadOnlyAdapter):
         the returned kubeconfig/UID to this attempt before any resource apply.
         Failed/partial attempts and their claim remain for explicit recovery.
         """
-        from stack import NODE
+        from stack import NODE, Stack
         self._fresh_absence()
         nonce = secrets.token_hex(16)
         claim = self.stack.state / "native-fresh-creation.json"
-        self._exclusive_json(claim, {"name": self.stack.name, "nonce": nonce})
+        from native_target import binding
+        target = binding(self.stack)
+        claim_record = {"name": self.stack.name, "nonce": nonce}
+        if target is not None:
+            claim_record["nativeTarget"] = target
+        self._exclusive_json(claim, claim_record)
         self._fresh_absence()  # recheck immediately before create, after exclusive claim
+        require(json.loads(claim.read_text()) == claim_record, "fresh_creation_claim_changed")
         candidate = self.stack.state / ("native-created-" + nonce + ".kubeconfig")
         config = {"kind": "Cluster", "apiVersion": "kind.x-k8s.io/v1alpha4",
                   "networking": {"disableDefaultCNI": True, "podSubnet": "192.168.0.0/16"},
                   "nodes": [{"role": "control-plane", "labels": {"agentrelay-kind-owner": "infra",
-                            "agentrelay-native-creation": nonce}, "extraPortMappings": [
-                            {"containerPort": 30080, "hostPort": 8080, "listenAddress": "127.0.0.1"},
-                            {"containerPort": 30443, "hostPort": 443, "listenAddress": "127.0.0.1"},
-                            {"containerPort": 30443, "hostPort": 8443, "listenAddress": "127.0.0.1"}]}]}
+                            "agentrelay-native-creation": nonce}, "extraPortMappings":
+                            getattr(self.stack, "native_port_mappings", lambda: Stack.native_port_mappings(self.stack))()}]}
         self._transport_call("cmd", ["kind", "create", "cluster", "--name", self.stack.name, "--image", NODE,
                         "--config", "-", "--kubeconfig", candidate], data=yaml.safe_dump(config), timeout=300, sensitive=True)
         candidate.chmod(0o600)
@@ -339,6 +347,10 @@ class NativeBootstrapAdapter(NativeReadOnlyAdapter):
         require(isinstance(docker_host, str) and docker_host.startswith("unix://"), "fresh_local_docker_required")
         record = {"version": 1, "name": self.stack.name, "nodeImage": NODE, "profile": self.stack.profile,
                   "dockerHost": docker_host, "clusterUid": uid}
+        from native_target import binding
+        target = binding(self.stack)
+        if target is not None:
+            record["nativeTarget"] = target
         self._exclusive_json(self.stack.marker, record)
         with open(self.stack.kubeconfig, "xb") as stream:
             os.chmod(self.stack.kubeconfig, 0o600); stream.write(candidate.read_bytes())

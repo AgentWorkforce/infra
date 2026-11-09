@@ -124,7 +124,7 @@ def phase_receipt(name, receipt):
     return receipt
 
 
-def selection(raw):
+def selection(raw, *, target=None):
     """Validate non-secret references and exact reviewed inputs before any I/O."""
     v = deepcopy(raw)
     exact_keys(v, SELECTION_FIELDS, "unexpected_selection_fields")
@@ -195,7 +195,12 @@ def selection(raw):
             "reader_discovery_must_match_selected_authority")
     require(len({refs[n]["name"] for n in SECRET_KEYS}) == len(SECRET_KEYS),
             "distinct_native_authority_and_database_secrets_required")
-    require(v.get("historyOrigin") == "https://history.kind.agentrelay.com:8443" and
+    if target is not None:
+        from native_target import NativeInstanceTarget
+        require(type(target) is NativeInstanceTarget and v["profile"] == "core" and
+                control["independentIssuer"] is True, "native_target_core_independent_issuer_required")
+    history_origin = target.history_origin if target is not None else "https://history.kind.agentrelay.com:8443"
+    require(v.get("historyOrigin") == history_origin and
             v.get("siteOrigin") == "https://relay.kind.agentrelay.com", "origin_audience_binding_required")
     require(v.get("backend") == "postgres" and isinstance(v.get("backendId"), str) and
             re.fullmatch(r"[a-z0-9][a-z0-9-]{0,62}", v["backendId"]), "explicit_backend_required")
@@ -300,10 +305,17 @@ class NativeRecipe:
     credential-free receipts. Merely rendering this plan never claims runtime
     acceptance. No fallback into legacy Stack.up is permitted.
     """
-    def __init__(self, raw):
-        self.selected = selection(raw)
+    def __init__(self, raw, *, target=None):
+        self.selected = selection(raw, target=target)
+        self._target = target
+        self._target_binding = target.binding() if target is not None else None
 
     def run(self, operations):
+        if self._target_binding is not None:
+            from native_target import binding
+            require(self._target.binding() == self._target_binding and
+                    binding(getattr(operations, "stack", None)) == self._target_binding,
+                    "native_recipe_target_adapter_mismatch")
         s = self.selected
         names = CORE_OPERATIONS + (("addons",) if s["profile"] == "addons" else ())
         require(all(callable(getattr(operations, n, None)) for n in names), "complete_native_adapter_required")

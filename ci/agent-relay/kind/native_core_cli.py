@@ -25,7 +25,7 @@ from native_webapp import WEBAPP_INPUTS
 GENERATE_CA = "generate-local-test-ca"
 
 
-def config(path, expected_sha):
+def config(path, expected_sha, *, instance_target=None):
     path = Path(path)
     require(not path.is_symlink() and path.is_file() and re.fullmatch(r"[a-f0-9]{64}", expected_sha or "") and
             sha(path) == expected_sha, "reviewed_native_config_bytes_required")
@@ -54,25 +54,45 @@ def config(path, expected_sha):
         require("bindingReceipt" not in value["inputs"], "repeat_must_not_regenerate_ca")
         # This value is structural validation only, never deployment input.
         selected["postgresCa"]["sha256"] = "0" * 64
-    selected = selection(selected)
+    selected = selection(selected, target=instance_target)
     require(selected["control"]["independentIssuer"] is True, "native_control_backend_required")
     return value, selected, generated
 
 
-def run(path, expected_sha, *, execute=False, generate_local_test_ca=False, stack_factory=None):
-    value, selected, generated = config(path, expected_sha)
+def run(path, expected_sha, *, execute=False, generate_local_test_ca=False, stack_factory=None,
+        instance_target=None, reviewed_target_sha256=None):
+    target_binding = None
+    if instance_target is not None:
+        from native_target import NativeInstanceTarget
+        require(type(instance_target) is NativeInstanceTarget, "typed_native_target_required")
+        target_binding = instance_target.binding()
+        require(not execute or stack_factory is None, "native_target_exact_factory_required")
+        require(type(reviewed_target_sha256) is str and reviewed_target_sha256 == target_binding["targetSha256"],
+                "reviewed_native_target_hash_required")
+    else:
+        require(reviewed_target_sha256 is None, "native_target_hash_without_target")
+    value, selected, generated = config(path, expected_sha, instance_target=instance_target)
     require(not generate_local_test_ca or (execute and generated), "local_test_ca_flag_is_fresh_execute_only")
     if not execute:
         return {"result": "STATIC_NATIVE_CORE_PLAN_ONLY", "configSha256": expected_sha,
                 "profile": "core", "phases": list(CORE_OPERATIONS), "generatedPublicCaPending": generated,
-                "artifactRuntimeVerified": False, "clusterChanged": False, "fullAcceptance": False}
+                "artifactRuntimeVerified": False, "clusterChanged": False, "fullAcceptance": False,
+                **({"nativeTarget": target_binding} if target_binding is not None else {})}
     require(generate_local_test_ca is generated, "explicit_fresh_local_test_ca_intent_required")
     require(generated or ("bindingReceipt" in value["inputs"] and "bindingReceiptSha256" in value["inputs"]),
             "repeat_requires_prior_native_public_ca_binding")
     if stack_factory is None:
         from stack import Stack
-        stack_factory = Stack
+        if instance_target is None:
+            stack_factory = Stack
+        else:
+            from native_target import NativeInstanceStack
+            stack_factory = lambda profile: NativeInstanceStack(profile, instance_target)
     stack = stack_factory("core")
+    from native_target import binding, require_free_ports
+    require(binding(stack) == target_binding, "native_target_factory_mismatch")
+    if generated:
+        require_free_ports(stack)
     # Use only the base profile and the pinned explicitly selected values.
     # Historical .kind/core/values.json may not leak into native composition.
     base = Path(__file__).resolve().parents[3] / "charts/agent-relay/values-kind-core.yaml"
@@ -88,7 +108,7 @@ def run(path, expected_sha, *, execute=False, generate_local_test_ca=False, stac
         from stack import HOSTS
         material = fresh_tls_material([selected["postgres"]["host"], *HOSTS])
         selected["postgresCa"]["sha256"] = material.ca_sha256
-        selected = selection(selected)
+        selected = selection(selected, target=instance_target)
     else:
         require("bindingReceipt" in value["inputs"] and "bindingReceiptSha256" in value["inputs"],
                 "repeat_requires_prior_native_public_ca_binding")
@@ -99,12 +119,14 @@ def run(path, expected_sha, *, execute=False, generate_local_test_ca=False, stac
         # requires review, never a second silent certificate identity.
         adapter._exclusive_json(stack.state / "native-execution-plan.json", {
             "version": 1, "configSha256": expected_sha, "selection": selected,
-            "operatorContractSha256": adapter._control_contract_sha, "fullAcceptance": False})
+            "operatorContractSha256": adapter._control_contract_sha, "fullAcceptance": False,
+            **({"nativeTarget": target_binding} if target_binding is not None else {})})
     stack.dependencies()
-    receipts = NativeRecipe(selected).run(adapter)
+    receipts = NativeRecipe(selected, target=instance_target).run(adapter)
     return {"result": "NATIVE_CORE_RUNTIME_PHASES_COMPLETE", "phases": [r["phase"] for r in receipts],
             "configSha256": expected_sha, "publicCaSha256": selected["postgresCa"]["sha256"], "fullAcceptance": False,
-            "scope": "Owned native core lifecycle only; separate actual Desktop upload/dashboard and add-on proof required"}
+            "scope": "Owned native core lifecycle only; separate actual Desktop upload/dashboard and add-on proof required",
+            **({"nativeTarget": target_binding} if target_binding is not None else {})}
 
 
 def main():

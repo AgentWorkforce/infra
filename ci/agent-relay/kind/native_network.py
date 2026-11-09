@@ -86,10 +86,12 @@ def selection(values):
         parsed = urlsplit(origin)
         host = parsed.hostname
         if (parsed.scheme != "https" or parsed.username or parsed.password or parsed.path or parsed.query
-                or parsed.fragment or parsed.port != 8443 or not host or origin != "https://" + host + ":8443"
+                or parsed.fragment or type(parsed.port) is not int or not 1024 <= parsed.port <= 65535
+                or (parsed.port != 8443 and reader.get("auth", {}).get("mode") != "self_issued")
+                or not host or origin != "https://" + host + ":" + str(parsed.port)
                 or len(host) > 253 or "." not in host
                 or any(not re.fullmatch(r"[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?", x) for x in host.split("."))):
-            fail("local native routing requires its exact public HTTPS DNS origin on 8443")
+            fail("local native routing requires an exact public HTTPS DNS origin; a custom port requires self_issued authority")
         try:
             ipaddress.ip_address(host)
         except ValueError:

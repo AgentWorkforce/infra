@@ -33,6 +33,26 @@ class Render(unittest.TestCase):
             "-n", "agent-relay", "-f", "-"], input=yaml.safe_dump(value), capture_output=True, text=True)
         return result
 
+    def test_isolated_history_port_and_managed_email_signin_render_without_env_escape(self):
+        self.s["historyOrigin"] = "https://history.kind.agentrelay.com:18443"
+        self.base.setdefault("relay-control", {}).update(auth={"emailLink": {"enabled": True}}, smtp={
+            "host": "native-proof-smtp.agent-relay.svc.cluster.local", "port": 1025,
+            "security": "none", "from": "Fixture <signin@native-proof.invalid>"})
+        for phase in ("control", "serve"):
+            result = self.render(phase); self.assertEqual(result.returncode, 0, result.stderr)
+            docs = [d for d in yaml.safe_load_all(result.stdout) if d]
+            control = next(d for d in docs if d["kind"] == "Deployment" and d["metadata"]["name"] == "relay-control")
+            env = {e["name"]: e.get("value") for e in control["spec"]["template"]["spec"]["containers"][0]["env"]}
+            self.assertEqual(env["SELFHOST_PUBLIC_URL"], "https://relay.kind.agentrelay.com")
+            self.assertEqual(env["SESSION_READ_API_PUBLIC_URL"], self.s["historyOrigin"])
+            self.assertEqual(env["SELFHOST_EMAIL_LOGIN"], "true")
+            self.assertEqual(env["SELFHOST_SMTP_HOST"], "native-proof-smtp.agent-relay.svc.cluster.local")
+            self.assertEqual(env["SELFHOST_SMTP_PORT"], "1025")
+            self.assertNotIn("SELFHOST_SMTP_PASSWORD", env)
+            if phase == "serve":
+                native = next(d for d in docs if d["kind"] == "Ingress" and d["spec"].get("rules", [{}])[0].get("host") == "history.kind.agentrelay.com")
+                self.assertTrue(all(p["backend"]["service"]["port"] == {"number": 80} for p in native["spec"]["rules"][0]["http"]["paths"]))
+
     def test_real_initial_chart_cannot_start_any_pipeline_or_privileged_job(self):
         result = self.render("control"); self.assertEqual(result.returncode, 0, result.stderr)
         docs = [d for d in yaml.safe_load_all(result.stdout) if d]
