@@ -47,3 +47,8 @@ output "reader_policy_json" {
   description = "The reader's IAM policy, to attach to an existing role."
   value       = local.policies["reader"]
 }
+
+output "sessions_read_policy_json" {
+  description = "Read-only sessions bucket policy for existing roles (workload_roles.create = false), or null when sessions_bucket_read is unset."
+  value       = local.sessions_read_policy
+}
