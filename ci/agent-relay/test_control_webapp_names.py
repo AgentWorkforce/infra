@@ -90,6 +90,30 @@ class Names(unittest.TestCase):
         self.assertNotIn('relay-control', names)
         self.assertNotIn('relay-webapp', names)
 
+    def test_eks_alb_flows_routes_are_opt_in(self):
+        base = {**os.environ, 'EKS_ALB_DOMAIN': 'relay.example.com', 'EKS_ALB_CERT_ARN': 'arn:aws:acm:test'}
+        render = lambda extra: subprocess.run(['bash', 'scripts/selfhost/eks-alb-ingress.sh', 'ns'], cwd=ROOT,
+                                              env={**base, **extra}, capture_output=True, text=True)
+        def routes(result, host):
+            self.assertEqual(result.returncode, 0, result.stderr)
+            rule = next(r for r in yaml.safe_load(result.stdout)['spec']['rules'] if r['host'] == host)
+            return [(p['path'], p['pathType'], p['backend']['service']['name'], p['backend']['service'].get('port', {}).get('number'))
+                    for p in rule['http']['paths']]
+        off = render({})
+        self.assertNotIn('relayfile-control', off.stdout)
+        self.assertNotIn('/api/v1/flows', off.stdout)
+        on = render({'EKS_ALB_RELAYFILE_CONTROL': 'true'})
+        apex = routes(on, 'relay.example.com')
+        api = routes(on, 'api.relay.example.com')
+        cloud = [(f'/cloud/api/v1/{r}', 'Prefix', 'relayfile-control', 3100) for r in ('flows', 'workers', 'workflows')]
+        plain = [(f'/api/v1/{r}', 'Prefix', 'relayfile-control', 3100) for r in ('flows', 'workers', 'workflows')]
+        self.assertEqual(apex[:3], cloud)
+        self.assertEqual(apex[3][0], '/cloud/api')
+        self.assertEqual(api[2:8], cloud + plain)
+        self.assertEqual(api[-1][0], '/*')
+        bad = render({'EKS_ALB_RELAYFILE_CONTROL': 'yes'})
+        self.assertEqual(bad.returncode, 2)
+
     def test_eks_alb_ingest_routes_are_opt_in_and_exact(self):
         base = {**os.environ, 'EKS_ALB_DOMAIN': 'relay.example.com', 'EKS_ALB_CERT_ARN': 'arn:aws:acm:test'}
         render = lambda extra: subprocess.run(['bash', 'scripts/selfhost/eks-alb-ingress.sh', 'ns'], cwd=ROOT,
@@ -112,9 +136,18 @@ class Names(unittest.TestCase):
             ('/v1/turns/batches', 'Exact', 'agent-relay-ingest-edge', ingest),
             ('/v1/delivery/limits', 'Exact', 'agent-relay-ingest-edge', ingest),
             ('/v1/auth/token/refresh', 'Exact', 'agent-relay-ingest-edge', ingest),
+            ('/v1/delivery/records', 'Exact', 'agent-relay-read-api', {'number': 80}),
+            ('/v1/cli/login', 'Exact', 'agent-relay-read-api', {'number': 80}),
+            ('/v1/events', 'Exact', 'agent-relay-read-api', {'number': 80}),
+            ('/v1/auth/token/revoke', 'Exact', 'agent-relay-read-api', {'number': 80}),
+            ('/v1/sessions', 'Prefix', 'agent-relay-read-api', {'number': 80}),
+            ('/v1/digest', 'Prefix', 'agent-relay-read-api', {'number': 80}),
+            ('/v1/delivery', 'Prefix', 'agent-relay-ingest-edge', ingest),
+            ('/v1/turns', 'Prefix', 'agent-relay-ingest-edge', ingest),
+            ('/v1/onboarding', 'Prefix', 'agent-relay-ingest-edge', ingest),
             ('/internal', 'Prefix', 'edge-deny', {'name': 'use-annotation'}),
             ('//internal*', 'ImplementationSpecific', 'edge-deny', {'name': 'use-annotation'}),
-            ('/*', 'ImplementationSpecific', 'agent-relay-read-api', {'number': 80}),
+            ('/*', 'ImplementationSpecific', 'edge-deny', {'name': 'use-annotation'}),
         ])
         self.assertEqual(doc['metadata']['annotations']['alb.ingress.kubernetes.io/healthcheck-path'], '/healthz')
 
@@ -272,7 +305,33 @@ esac
             with self.subTest(profile=profile):
                 docs = self.render(profile, ['--is-upgrade', '-f', 'charts/agent-relay/upgrade/kind-control-webapp-identities.yaml'])
                 actual = sorted([identity(d) for d in docs], key=lambda d: (d['kind'], d['name']))
-                self.assertEqual(actual, fixture['profiles'][profile])
+                expected = fixture['profiles'][profile]
+                if profile == 'addons':
+                    # Main #145 replaced the license slot with explicit
+                    # SELFHOST_FEATURES=flows,relayfile. extraEnv is part of
+                    # the migration pod, so its content-addressed Job must
+                    # change. Keep the historical golden immutable and admit
+                    # exactly this transition, not other identity drift.
+                    before, after = 'relaycontrol-migrate-96ebd477', 'relaycontrol-migrate-68c7d903'
+                    self.assertEqual(sum(d['kind'] == 'Job' and d['name'] == before for d in expected), 1)
+                    expected = [dict(d, name=after) if d['kind'] == 'Job' and d['name'] == before else d
+                                for d in expected]
+                    expected = sorted(expected, key=lambda d: (d['kind'], d['name']))
+                self.assertEqual(actual, expected)
+
+    def test_addons_job_transition_is_caused_by_the_new_explicit_feature_input(self):
+        fixture = json.loads((ROOT / 'ci/agent-relay/fixtures/control-webapp-legacy-identities.json').read_text())
+        compatibility = ['--is-upgrade', '-f', 'charts/agent-relay/upgrade/kind-control-webapp-identities.yaml']
+        current = self.render('addons', compatibility)
+        migration = next(d for d in current if d['kind'] == 'Job' and
+                         d['metadata']['name'] == 'relaycontrol-migrate-68c7d903')
+        env = migration['spec']['template']['spec']['containers'][0]['env']
+        self.assertIn({'name': 'SELFHOST_FEATURES', 'value': 'flows,relayfile'}, env)
+        # Naming-only compatibility with the translated historical runtime
+        # input still preserves every golden Job as well as selectors/PVCs.
+        historical_input = self.render('addons', compatibility + ['--set-json', 'relay-control.extraEnv=[]'])
+        identities = sorted([identity(d) for d in historical_input], key=lambda d: (d['kind'], d['name']))
+        self.assertEqual(identities, fixture['profiles']['addons'])
 
     def test_default_kind_upgrade_requires_explicit_worker_cutover(self):
         error = self.render(extra=['--is-upgrade'], ok=False)

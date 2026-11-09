@@ -1,0 +1,17 @@
+# Keeps the instance role out of reach of the service user and every agent it
+# spawns. Runs as root before anything else under that user can start.
+[Unit]
+Description=Block instance metadata for the chief-node user
+DefaultDependencies=no
+After=local-fs.target
+Before=network-pre.target chief-node.service chief-bridge.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStartPre=-/usr/sbin/iptables -w -D OUTPUT -d 169.254.169.254/32 -m owner --uid-owner chief-node -j DROP
+ExecStart=/usr/sbin/iptables -w -I OUTPUT 1 -d 169.254.169.254/32 -m owner --uid-owner chief-node -j DROP
+ExecStop=/usr/sbin/iptables -w -D OUTPUT -d 169.254.169.254/32 -m owner --uid-owner chief-node -j DROP
+
+[Install]
+WantedBy=multi-user.target

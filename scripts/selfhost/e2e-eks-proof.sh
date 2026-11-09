@@ -35,6 +35,11 @@
 # namespace under the umbrella). Any other option is passed through, e.g.
 # --skip-flows, --allow-known-gap NAME or --no-cleanup.
 #
+# For an install with no RelayAuth and no standalone RelayHistory
+# (relay-control RELAYHISTORY_BACKEND=native) add --history-profile pipeline, and
+# --read-api-url / --ingest-url if the release name is not agent-relay. The
+# default profile keeps the legacy proof.
+#
 # --eks-checks-only runs only the EKS checks (no e2e-gcp-proof.sh cases).
 #
 # Exit status: e2e-gcp-proof.sh's status, or 1 if an EKS check failed.
@@ -92,7 +97,7 @@ EKS_ONLY=false
 if [[ "${1:-}" == --eks-checks-only ]]; then EKS_ONLY=true; shift; fi
 $EKS_ONLY || bash "$HERE/e2e-gcp-proof.sh" --context eks-proof --namespace "$NS" --sessions-namespace "$NS" \
   --secret "$SECRET" --edge alb --dashboard-origin "$DASHBOARD" --api-origin "$API" \
-  --cast-origin "$CAST" --history-origin "$HISTORY" --relayauth-url http://relayauth:8787 --require-public "$@" || rc=$?
+  --cast-origin "$CAST" --history-origin "$HISTORY" --read-api-url "$HISTORY" --relayauth-url http://relayauth:8787 --require-public "$@" || rc=$?
 
 printf '\n== EKS checks (%s)\n' "$(date -u +%FT%TZ)"
 EKS_FAILS=0

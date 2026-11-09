@@ -1,0 +1,68 @@
+#!/bin/bash
+set -Eeuo pipefail
+umask 077
+ulimit -c 0
+root=/opt/rds-application-proof
+mkdir -m 700 -p "$root"
+cat > "$root/inputs.json" <<'CONFIG'
+${config}
+CONFIG
+cat > /etc/systemd/system/rds-application-timeout.service <<'UNIT'
+[Service]
+Type=oneshot
+ExecStart=/usr/sbin/shutdown --poweroff now
+UNIT
+cat > /etc/systemd/system/rds-application-timeout.timer <<'UNIT'
+[Timer]
+OnActiveSec=2h
+Unit=rds-application-timeout.service
+[Install]
+WantedBy=timers.target
+UNIT
+systemctl daemon-reload
+systemctl enable --now rds-application-timeout.timer
+finish() {
+  result=$?
+  trap - EXIT
+  set +e
+  # A group that could not be settled is quarantined. Do not launch further AWS
+  # operations; parent reconciles the already published nonsecret pending intent.
+  if [ "$result" -ne 75 ] && command -v python3 >/dev/null && command -v aws >/dev/null; then
+    PROOF_EXIT="$result" python3 - <<'PY'
+import pathlib,json,subprocess,hashlib,os
+p=pathlib.Path('/opt/rds-application-proof');c=json.loads((p/'inputs.json').read_text());r=p/'receipt.json'
+try:
+ value=json.loads(r.read_text());assert isinstance(value,dict) and type(value.get('ok')) is bool
+except Exception:r.write_text(json.dumps({'ok':False,'phase':c['phase'],'source_sha':c['source_sha'],'exit_code':int(os.environ['PROOF_EXIT']),'infrastructureRetired':False})+'\n')
+try:subprocess.run(['aws','--region',c['region'],'--no-cli-pager','s3api','put-object','--bucket',c['bucket'],'--expected-bucket-owner',c['account_id'],'--key',c['receipt_key'],'--body',str(r),'--metadata','sha256='+hashlib.sha256(r.read_bytes()).hexdigest()],capture_output=True,timeout=90)
+except Exception:pass
+PY
+  fi
+  sync
+  /usr/sbin/shutdown --poweroff now
+}
+trap finish EXIT
+swapoff -a
+unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN AWS_PROFILE AWS_DEFAULT_PROFILE AWS_ROLE_ARN AWS_WEB_IDENTITY_TOKEN_FILE AWS_CONTAINER_CREDENTIALS_FULL_URI AWS_CONTAINER_CREDENTIALS_RELATIVE_URI
+export AWS_SHARED_CREDENTIALS_FILE=/dev/null AWS_CONFIG_FILE=/dev/null AWS_PAGER="" AWS_MAX_ATTEMPTS=3
+command -v python3 >/dev/null || dnf -y install python3 >/dev/null
+command -v aws >/dev/null || dnf -y install awscli2 >/dev/null
+command -v docker >/dev/null || dnf -y install docker >/dev/null
+systemctl enable --now docker
+cat > "$root/extract_payload.py" <<'EXTRACTOR'
+${extractor}
+EXTRACTOR
+python3 - <<'PY'
+import pathlib,json,subprocess,sys
+p=pathlib.Path('/opt/rds-application-proof');c=json.loads((p/'inputs.json').read_text());f=p/'payload.tar.gz'
+try:
+ r=subprocess.run(['aws','--region',c['region'],'--no-cli-pager','s3api','get-object','--bucket',c['bucket'],'--expected-bucket-owner',c['account_id'],'--key',c['payload_key'],'--version-id',c['payload_version_id'],str(f)],capture_output=True,timeout=90)
+ assert r.returncode==0 and json.loads(r.stdout)['VersionId']==c['payload_version_id']
+ sys.path.insert(0,str(p));from extract_payload import extract
+ extract(f.read_bytes(),c,p/'payload')
+ for image in [c['node_image'],c['psql_image']]:
+  assert subprocess.run(['docker','pull','--platform','linux/arm64',image],capture_output=True,timeout=300).returncode==0
+except Exception:
+ print(json.dumps({'ok':False,'code':'payload_preparation_failed'}));raise SystemExit(1)
+PY
+python3 "$root/payload/verify-host.py" > "$root/receipt.json"

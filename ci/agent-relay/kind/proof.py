@@ -448,9 +448,7 @@ class Proof:
             self.record("PENDING", "core.flows_disabled",
                         "needs reviewed server-derived Flows capability plus authenticated API refusal, hidden UI/direct-route checks and workload absence; components.relayflows=false alone is not product disablement")
         self.mcp()
-        self.record("PENDING", "agent_launch_release", "layered-control: launch/release API not implemented")
-        if s.profile == "addons":
-            self.record("PENDING", "offline_license_enforcement", "layered-control: signed license verification is design only; Secret slot is not enforcement")
+        self.record("PENDING", "agent_launch_release", "generic agent process launch/release has no runnable contract; Factory session bindings and fleet-node claims are separate")
 
     def report(self):
         code = exit_code(self.checks)
