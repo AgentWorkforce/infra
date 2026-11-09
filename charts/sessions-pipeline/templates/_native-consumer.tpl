@@ -39,6 +39,7 @@
 {{- end -}}
 {{- if $c.enabled -}}
 {{- if or (hasKey $c "extraEnv") (hasKey $c "envFrom") (hasKey $c "extraVolumes") (hasKey $c "extraVolumeMounts") (hasKey $c "command") }}{{ fail "nativeConsumer does not accept extraEnv/envFrom/command/extra volumes; use managed configuration and Secret references" }}{{ end -}}
+{{- if .Values.searchIndexer.enabled }}{{ fail "nativeConsumer requires searchIndexer.enabled=false; only one canonical/search writer may run" }}{{ end -}}
 {{- $indexer := index .Values.worker.components "hoopdb-indexer" -}}
 {{- if or (not (kindIs "bool" $indexer.enabled)) $indexer.enabled }}{{ fail "nativeConsumer requires worker.components.hoopdb-indexer.enabled=false" }}{{ end -}}
 {{- if not $c.legacyIndexerDrained }}{{ fail "nativeConsumer requires legacyIndexerDrained=true after the installed old indexer has been stopped" }}{{ end -}}
@@ -102,7 +103,8 @@
 {{- $owner := $c.bootstrap.existingSecret -}}
 {{- /* Owner credentials remain Job-only after prepare has disabled the Job. */ -}}
 {{- include "sessions-pipeline.nativeConsumer.noOwnerRuntimeRefs" (dict "owner" $owner "value" (omit $c "bootstrap")) -}}
-{{- if .Values.readApi.enabled }}{{ include "sessions-pipeline.nativeConsumer.noOwnerRuntimeRefs" (dict "owner" $owner "value" .Values.readApi) }}{{ end -}}
+{{- if .Values.sessionReadApi.enabled }}{{ include "sessions-pipeline.nativeConsumer.noOwnerRuntimeRefs" (dict "owner" $owner "value" .Values.sessionReadApi) }}{{ end -}}
+{{- if .Values.searchIndexer.enabled }}{{ include "sessions-pipeline.nativeConsumer.noOwnerRuntimeRefs" (dict "owner" $owner "value" .Values.searchIndexer) }}{{ end -}}
 {{- if .Values.ingestEdge.enabled }}{{ include "sessions-pipeline.nativeConsumer.noOwnerRuntimeRefs" (dict "owner" $owner "value" .Values.ingestEdge) }}{{ end -}}
 {{- if $activeWorker }}{{ include "sessions-pipeline.nativeConsumer.noOwnerRuntimeRefs" (dict "owner" $owner "value" (omit .Values.worker "migrations")) }}{{ end -}}
 {{- if $activeIngest }}{{ include "sessions-pipeline.nativeConsumer.noOwnerRuntimeRefs" (dict "owner" $owner "value" .Values.alleyoop) }}{{ end -}}
@@ -126,14 +128,17 @@
 {{- if or (ne $c.locker.bucket .Values.ingestEdge.locker.bucket) (ne $c.locker.endpoint .Values.ingestEdge.locker.endpoint) (ne $c.locker.region .Values.ingestEdge.locker.region) }}{{ fail "nativeConsumer Locker bucket/endpoint/region must match the enabled ingestEdge" }}{{ end -}}
 {{- if or (ne $c.image.repository .Values.ingestEdge.image.repository) (ne $c.image.digest .Values.ingestEdge.image.digest) }}{{ fail "nativeConsumer and enabled ingestEdge require the same qualified composed image" }}{{ end -}}
 {{- end -}}
-{{- if .Values.readApi.enabled -}}
-{{- if or (ne .Values.readApi.search.backend "postgres") (ne $c.completeSince .Values.readApi.completeSince) }}{{ fail "nativeConsumer and enabled readApi require postgres and the same completeSince" }}{{ end -}}
-{{- if or (ne $c.image.repository .Values.readApi.image.repository) (ne $c.image.digest .Values.readApi.image.digest) }}{{ fail "nativeConsumer and enabled readApi require the same qualified composed image" }}{{ end -}}
+{{- if .Values.sessionReadApi.enabled -}}
+{{- $ca := .Values.sessionReadApi.postgresCa -}}
+{{- if or (ne .Values.sessionReadApi.postgres.tlsProfile "custom-ca") (ne $ca.enabled true) (ne $ca.configMap $c.postgres.caConfigMap) $ca.secret (ne $ca.key $c.postgres.caKey) (ne $ca.sha256 $c.postgres.caSha256) }}{{ fail "nativeConsumer and enabled sessionReadApi require the same pinned public custom CA ConfigMap/key/hash" }}{{ end -}}
+{{- if or (ne .Values.sessionReadApi.search.backend "postgres") (ne $c.completeSince .Values.sessionReadApi.completeSince) }}{{ fail "nativeConsumer and enabled sessionReadApi require postgres and the same completeSince" }}{{ end -}}
+{{- if or (ne $c.image.repository .Values.sessionReadApi.image.repository) (ne $c.image.digest .Values.sessionReadApi.image.digest) }}{{ fail "nativeConsumer and enabled sessionReadApi require the same qualified composed image" }}{{ end -}}
+{{- if ne $c.backendId .Values.sessionReadApi.search.backendId }}{{ fail "nativeConsumer and enabled sessionReadApi require the same search.backendId" }}{{ end -}}
 {{- $reader := dict -}}
-{{- range $e := .Values.readApi.extraEnv }}{{ $_ := set $reader $e.name $e }}{{ end -}}
-{{- range $key, $value := dict "SEARCH_INDEX_POSTGRES_BACKEND_ID" $c.backendId "LOCKER_BUCKET" $c.locker.bucket "LOCKER_ENDPOINT" $c.locker.endpoint "LOCKER_REGION" $c.locker.region "PIPELINE_KEY_PREFIX" $c.keyPrefix "PIPELINE_ORG_FROM_PREFIX" "true" -}}
+{{- range $e := .Values.sessionReadApi.extraEnv }}{{ $_ := set $reader $e.name $e }}{{ end -}}
+{{- range $key, $value := dict "LOCKER_BUCKET" $c.locker.bucket "LOCKER_ENDPOINT" $c.locker.endpoint "LOCKER_REGION" $c.locker.region "PIPELINE_KEY_PREFIX" $c.keyPrefix "PIPELINE_ORG_FROM_PREFIX" "true" -}}
 {{- $entry := index $reader $key | default dict -}}
-{{- if or (not (hasKey $entry "value")) (not (kindIs "string" $entry.value)) (ne $entry.value $value) }}{{ fail (printf "nativeConsumer requires matching literal readApi.extraEnv %s" $key) }}{{ end -}}
+{{- if or (not (hasKey $entry "value")) (not (kindIs "string" $entry.value)) (ne $entry.value $value) }}{{ fail (printf "nativeConsumer requires matching literal sessionReadApi.extraEnv %s" $key) }}{{ end -}}
 {{- end -}}
 {{- end -}}
 {{- end -}}

@@ -74,3 +74,7 @@ The same JSON object is the customer profile for other Agent Relay clients.
 helm lint --strict charts/relay-webapp \
   -f charts/relay-webapp/ci/default-values.yaml
 ```
+
+## Session read API
+
+`runtime.sessionReadApiEnabled: true` renders `DASHBOARD_SESSION_READ_API_ENABLED=true`, so the page reads session lists, search, activity, turns and events directly from the session read API with the access token Control hands it. It needs relay-webapp main `53e39ca9` or later, and the read API's `cors.allowedOrigins` must name this dashboard's origin.

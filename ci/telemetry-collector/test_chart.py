@@ -40,6 +40,12 @@ class Collector(unittest.TestCase):
                 with self.subTest(key=key, value=value):
                     render(['--set', key + '=' + value], ok=False)
 
+    def test_relay_control_images_without_the_cli_are_refused(self):
+        for repository in ['ghcr.io/agentworkforce/relay-control', 'registry.example/mirror/selfhost-api']:
+            with self.subTest(repository=repository):
+                self.assertIn('does not contain dist/collector-cli.js',
+                              render(['--set', 'image.repository=' + repository], ok=False))
+
     def test_unhealthy_store_affects_readiness_without_restarting_process(self):
         class Health(http.server.BaseHTTPRequestHandler):
             def do_GET(self):

@@ -49,10 +49,12 @@ MATRIX=(
   "ci/read-api-values.yaml|yes|yes|selfhosted|fresh"
   "ci/ingest-edge-values.yaml|yes|yes|selfhosted|fresh"
   "ci/native-consumer-values.yaml|no|yes|selfhosted|native"
+  "ci/search-indexer-values.yaml|yes|yes|selfhosted|fresh"
   "ci/kind-values.yaml|yes|yes|selfhosted|fresh"
   "ci/search-worker-bootstrap-values.yaml|yes|yes|selfhosted|existing"
   "ci/aws-cnpg-values.yaml|yes|no|selfhosted|fresh"
   "ci/pod-identity-values.yaml|no|no|supabase|supabase"
+  "ci/ingest-edge-pod-identity-values.yaml|no|no|supabase|supabase"
   "ci/gcp-cloudsql-values.yaml|no|no|cloudsql|external"
 )
 

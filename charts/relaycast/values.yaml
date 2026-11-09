@@ -1,5 +1,7 @@
 # Relaycast self-host currently uses one SQLite database and local file store.
 # The chart therefore permits exactly one replica and uses Recreate upgrades.
+# runtime.backend=postgres is also single replica: realtime, presence and rate
+# limits are in-process.
 replicaCount: 1
 
 image:
@@ -27,7 +29,25 @@ runtime:
   #   with the same name, Service and selector. Env contract v1:
   #   docs/self-hosted-durable-actors.md. Requires a durable-actors control
   #   plane (agent-relay components.durableActors) and ar_ credentials.
+  # postgres: the portable image on an external PostgreSQL database, one
+  #   replica, files still on the PVC. Needs runtime.postgres, postgresCa and
+  #   the secretKeys.databaseOwnerUrl / databaseRuntimeUrl Secret keys.
   backend: sqlite
+  postgres:
+    # Used instead of image.* on this backend.
+    image:
+      repository: ghcr.io/agentworkforce/relaycast-self-host
+      # relaycast-self-host:12.8.0-pg.1.
+      digest: sha256:84f59482cb82f3c50d38f45cfca7d004cffaa95652782dbfc93c179cc343ac59
+    # The `migrate` Job: a plain Job (no Helm hook) named by a hash of its
+    # rendered pod template, so any change to it runs a new Job.
+    migrations:
+      # Change only to force a re-run of an otherwise identical template.
+      identitySalt: ""
+      backoffLimit: 3
+      # Also bounds how long the server's init container waits before it
+      # restarts and waits again.
+      activeDeadlineSeconds: 1800
   durableActors:
     projectId: relaycast
     # durable-actors organization the deployer registers under.
@@ -180,6 +200,34 @@ secretKeys:
   # credentials.authority=relayauth and refused without
   # credentials.relayauth.url.
   relayauthToken: ""
+  # runtime.backend=durable-actors only (ignored with sqlite, which reads
+  # bootstrapSecret above). RELAYCAST_WORKSPACE_BOOTSTRAP_SECRET for the
+  # gateway, passed as an env var from this existingSecret key. Empty: a keyed
+  # POST /v1/workspaces or /internal/workspaces (Idempotency-Key) answers 503
+  # workspace_create_idempotency_unavailable. Set: keyed creates land on an id
+  # derived from it and replay (201, then 200). The SAME BYTES must be in the
+  # actor env Secret (runtime.durableActors.actorEnvSecrets, e.g.
+  # relaycast-actor-env) as RELAYCAST_WORKSPACE_BOOTSTRAP_SECRET; the chart
+  # cannot check that Secret. Store it without a trailing newline in both.
+  # Keep it stable: changing it re-derives every keyed id.
+  workspaceBootstrapSecret: ""
+  # runtime.backend=postgres only. Each key holds a full URL:
+  # postgres://<role>:<pw>@<host>:5432/<db>?sslmode=verify-full.
+  # relaycast_owner URL, mounted only into the migration Job.
+  databaseOwnerUrl: database-owner-url
+  # relaycast_runtime URL, mounted only into the server.
+  databaseRuntimeUrl: database-runtime-url
+
+# REQUIRED with runtime.backend=postgres, refused otherwise: the CA bundle that
+# signs the PostgreSQL server certificate. The PEM at key in the named existing
+# ConfigMap or Secret (set exactly one) is mounted at /etc/postgres-ca/ca.crt
+# and NODE_EXTRA_CA_CERTS points at it. Read at process start, so rotating it
+# needs a pod restart.
+postgresCa:
+  enabled: false
+  configMap: ""
+  secret: ""
+  key: ca.crt
 
 # Workspace credential format and authority. The default issues and verifies
 # legacy credentials locally. format=ar requires an authority:
@@ -203,7 +251,15 @@ credentials:
 # refused together with ingress.enabled.
 publicWorkspaceCreate: false
 
-# Require bootstrap-secret proof for anonymous keyed creates.
+# Require bootstrap-secret proof (X-Workspace-Bootstrap-Secret) for anonymous
+# keyed creates (RELAYCAST_WORKSPACE_BOOTSTRAP_PROOF_REQUIRED): a missing or
+# wrong proof is refused 401 workspace_create_bootstrap_secret_invalid.
+# Unkeyed creates and keyed POST /internal/workspaces never ask for proof.
+# With runtime.backend=durable-actors it is rendered on the gateway as "true"
+# or "false", requires secretKeys.workspaceBootstrapSecret when true, and the
+# actor env Secret must carry the same RELAYCAST_WORKSPACE_BOOTSTRAP_PROOF_REQUIRED
+# value. Only anonymous POST /v1/workspaces is affected, which needs
+# publicWorkspaceCreate=true (never with an edge).
 bootstrapProofRequired: false
 
 retention:

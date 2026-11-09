@@ -10,7 +10,8 @@
 # Image digests are pinned below (relay-briefs actor-images.md): the control
 # plane is durable-actors 0.14.6 plus the invoke-only key patch
 # (selfhost/scoped-credentials 7a7e9349, not upstream); relaycast gateway and
-# deployer are relaycast main 3624cc12 (PR #618 merged; signed socket grants,
+# deployer are relaycast main 46281074 (PR #622 merged: workspace bootstrap
+# secret and proof policy on top of #618's signed socket grants,
 # so the gateway and the actor bundle must roll together).
 #
 # It switches Relaycast to runtime.backend=durable-actors (a FRESH-INSTALL
@@ -83,6 +84,14 @@ relaycast:
     # switching backends never rewrites a live secret. Must equal
     # RELAYCAST_INTERNAL_SECRET in the sandbox Secret relaycast-actor-env.
     internalSecret: relaycast-actors-internal-secret
+    # Keyed workspace creates (Idempotency-Key). The same bytes must be
+    # RELAYCAST_WORKSPACE_BOOTSTRAP_SECRET in relaycast-actor-env.
+    workspaceBootstrapSecret: relaycast-actors-workspace-bootstrap-secret
+  # Must equal RELAYCAST_WORKSPACE_BOOTSTRAP_PROOF_REQUIRED in
+  # relaycast-actor-env. Only anonymous POST /v1/workspaces asks for the proof,
+  # and publicWorkspaceCreate stays false behind the cast edge, so this guards
+  # a later opt-in rather than changing today's paths.
+  bootstrapProofRequired: true
   serviceAccount:
     annotations:
       iam.gke.io/gcp-service-account: relaycast-files@agentrelay-96bulls-soc2-2610.iam.gserviceaccount.com
@@ -92,7 +101,7 @@ relaycast:
       gateway:
         image:
           repository: us-central1-docker.pkg.dev/agentrelay-96bulls-soc2-2610/awf-conformance-images/relaycast-actors-gateway
-          digest: sha256:faf66ec45d2c755ab5cdc6ee32bca6dc48446dff444118cab18fa1f765124ffa
+          digest: sha256:026e8c1b1e78b2946c53871e8e5701e0cac9b6121c2b4124cd376ceece33cb45
         replicaCount: 2
       # Same value as actors-credentials/invoke-api-key: the control plane's
       # invoke-only key (invoke + socket grants; no deploy, no admin APIs).
@@ -106,7 +115,7 @@ relaycast:
       deployer:
         image:
           repository: us-central1-docker.pkg.dev/agentrelay-96bulls-soc2-2610/awf-conformance-images/relaycast-actors-deployer
-          digest: sha256:a81e91ed52bfb7cbb0a8c2773752df3b5d78afdc443608998b3203a30e314cee
+          digest: sha256:9b9fee183167a169370c20950caf63824417b8064ea7e1ef4bd00026ab5fd106
         artifactBucket: agentrelay-96bulls-soc2-2610-actors
         # The control plane is created in the same upgrade (migrations, Cloud
         # SQL proxy, cold image pull): pod-level retries with capped

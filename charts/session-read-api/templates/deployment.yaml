@@ -1,0 +1,187 @@
+{{- include "session-read-api.validate" . -}}
+{{- $c := .Values -}}
+{{- $clickhouse := $c.search.clickhouse -}}
+{{- $configSecret := ternary $clickhouse.existingSecret $c.config.existingSecret $clickhouse.enabled -}}
+{{- $configKey := ternary $clickhouse.key $c.config.key $clickhouse.enabled -}}
+{{- $backend := ternary "clickhouse" (trim $c.search.backend) $clickhouse.enabled -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "session-read-api.fullname" . }}
+  namespace: {{ .Release.Namespace | quote }}
+  labels:
+    {{- include "session-read-api.labels" . | nindent 4 }}
+spec:
+  replicas: {{ $c.replicas }}
+  selector:
+    matchLabels:
+      {{- include "session-read-api.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "session-read-api.selectorLabels" . | nindent 8 }}
+      {{- with $c.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      automountServiceAccountToken: false
+      {{- with $c.serviceAccountName }}
+      serviceAccountName: {{ . | quote }}
+      {{- end }}
+      {{- with $c.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile: { type: RuntimeDefault }
+      {{- with $c.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $c.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $c.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: read-api
+          image: {{ printf "%s@%s" $c.image.repository $c.image.digest | quote }}
+          imagePullPolicy: {{ $c.image.pullPolicy }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ALL] }
+          ports:
+            - { name: http, containerPort: {{ $c.port }}, protocol: TCP }
+          env:
+            - { name: SERVICE, value: session-read-api }
+            - { name: RELAYHISTORY_SELFHOST_READ_API, value: "true" }
+            - { name: RELAYHISTORY_READ_API_PORT, value: {{ $c.port | quote }} }
+            - name: RELAYHISTORY_READ_API_SECRET
+              valueFrom:
+                secretKeyRef: { name: {{ $configSecret | quote }}, key: {{ $configKey | quote }} }
+            - { name: READ_API_ORIGIN, value: {{ $c.origin | quote }} }
+            - { name: READ_API_COMPLETE_SINCE, value: {{ $c.completeSince | quote }} }
+            - { name: READ_API_DIRECTORY_WORKSPACES, value: {{ trim $c.directoryWorkspaces | quote }} }
+            {{- if $c.login.advertisesSync }}
+            - { name: RELAYHISTORY_SELFHOST_LOGIN_ADVERTISES_SYNC, value: "true" }
+            {{- end }}
+            - { name: SEARCH_INDEX_BACKEND, value: {{ $backend | quote }} }
+            {{- if has $backend (list "postgres" "opensearch") }}
+            - { name: SEARCH_INDEX_POSTGRES_BACKEND_ID, value: {{ $c.search.backendId | quote }} }
+            {{- end }}
+            {{- if eq $backend "opensearch" }}
+            - { name: SEARCH_INDEX_OPENSEARCH_URL, value: {{ $c.search.opensearch.url | quote }} }
+            - { name: SEARCH_INDEX_OPENSEARCH_AUTH, value: sigv4 }
+            - { name: SEARCH_INDEX_OPENSEARCH_AWS_REGION, value: {{ $c.search.opensearch.region | quote }} }
+            {{- with $c.search.opensearch.indexPrefix }}
+            - { name: SEARCH_INDEX_OPENSEARCH_INDEX_PREFIX, value: {{ . | quote }} }
+            {{- end }}
+            {{- end }}
+            {{- if $c.turns.assumeNoLegacy }}
+            - { name: READ_API_TURNS_ASSUME_NO_LEGACY, value: "true" }
+            {{- end }}
+            {{- if $c.events.messageIds }}
+            - { name: READ_API_EVENT_MESSAGE_IDS, value: "true" }
+            {{- end }}
+            - { name: ALLOW_IN_CLUSTER_HTTP, value: {{ $c.allowInClusterHttp | quote }} }
+            - { name: SESSION_POSTGRES_TLS_PROFILE, value: {{ $c.postgres.tlsProfile | quote }} }
+            {{- if $c.postgresCa.enabled }}
+            - { name: SESSION_POSTGRES_CA_FILE, value: /etc/session-read-postgres/ca.crt }
+            - { name: SESSION_POSTGRES_CA_SHA256, value: {{ $c.postgresCa.sha256 | quote }} }
+            {{- end }}
+            {{- if $c.cors.allowedOrigins }}
+            - { name: READ_API_CORS_ALLOWED_ORIGINS, value: {{ join "," $c.cors.allowedOrigins | quote }} }
+            {{- end }}
+            {{- if eq $c.auth.mode "legacy" }}
+            - { name: RELAYAUTH_JWKS_URL, value: {{ trim $c.auth.relayauth.jwksUrl | quote }} }
+            - { name: RELAYAUTH_ISSUER, value: {{ trim $c.auth.relayauth.issuer | quote }} }
+            {{- else }}
+            - { name: READ_API_AUTH_MODE, value: {{ $c.auth.mode | quote }} }
+            {{- end }}
+            {{- if eq $c.auth.mode "self_issued" }}
+            - { name: READ_API_ACCESS_TOKEN_TTL_SECONDS, value: {{ int (toString $c.auth.selfIssued.accessTokenTtlSeconds) | quote }} }
+            - name: READ_API_INTERNAL_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $c.auth.selfIssued.internalSecret.existingSecret | quote }}
+                  key: {{ $c.auth.selfIssued.internalSecret.key | quote }}
+            {{- if $c.auth.selfIssued.previousInternalSecret.existingSecret }}
+            - name: READ_API_INTERNAL_SECRET_PREVIOUS
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $c.auth.selfIssued.previousInternalSecret.existingSecret | quote }}
+                  key: {{ $c.auth.selfIssued.previousInternalSecret.key | quote }}
+            {{- end }}
+            {{- else }}
+            - { name: RELAYHISTORY_ACCEPT_RELAYCONTROL_TOKENS, value: {{ $c.auth.relaycontrol.enabled | quote }} }
+            {{- end }}
+            {{- if $c.auth.relaycontrol.enabled }}
+            - { name: RELAYCONTROL_INTROSPECT_URL, value: {{ $c.auth.relaycontrol.url | quote }} }
+            - name: RELAYCONTROL_INTROSPECT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $c.auth.relaycontrol.existingSecret | quote }}
+                  key: {{ $c.auth.relaycontrol.key | quote }}
+            {{- end }}
+            {{- range $e := $c.extraEnv }}
+            - name: {{ $e.name | quote }}
+              {{- if hasKey $e "value" }}
+              value: {{ $e.value | quote }}
+              {{- else }}
+              valueFrom:
+                {{- toYaml $e.valueFrom | nindent 16 }}
+              {{- end }}
+            {{- end }}
+          # Dormant services return HTTP 200 but enabled:false. A status-only
+          # readiness probe would falsely accept the disabled runtime.
+          readinessProbe:
+            exec:
+              command:
+                - {{ $c.probeRuntime | quote }}
+                - -e
+                - fetch('http://127.0.0.1:'+process.env.RELAYHISTORY_READ_API_PORT+'/healthz',{signal:AbortSignal.timeout(1500)}).then(async r=>{const v=await r.json();process.exit(r.ok&&v.ok===true&&v.enabled===true?0:1)}).catch(()=>process.exit(1))
+            timeoutSeconds: 3
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: { path: /healthz, port: http }
+            timeoutSeconds: 2
+            periodSeconds: 10
+          resources:
+            {{- toYaml $c.resources | nindent 12 }}
+          volumeMounts:
+            - { name: tmp, mountPath: /tmp }
+            {{- if $c.postgresCa.enabled }}
+            - { name: postgres-ca, mountPath: /etc/session-read-postgres, readOnly: true }
+            {{- end }}
+            {{- with $c.extraVolumeMounts }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+      volumes:
+        - name: tmp
+          emptyDir: { sizeLimit: 64Mi }
+        {{- if $c.postgresCa.enabled }}
+        - name: postgres-ca
+          {{- if $c.postgresCa.configMap }}
+          configMap:
+            name: {{ $c.postgresCa.configMap | quote }}
+            items: [{ key: {{ $c.postgresCa.key | quote }}, path: ca.crt }]
+          {{- else }}
+          secret:
+            secretName: {{ $c.postgresCa.secret | quote }}
+            # Public certificates, readable whatever the Pod's fsGroup is.
+            defaultMode: 0444
+            items: [{ key: {{ $c.postgresCa.key | quote }}, path: ca.crt }]
+          {{- end }}
+        {{- end }}
+        {{- with $c.extraVolumes }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}

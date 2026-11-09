@@ -160,3 +160,22 @@ This synthetic schema/TLS proof does not qualify a release image, existing
 database upgrade, object-store writes, IAM, privacy controls or dashboard
 visibility. Repeat it against the final image and complete the real acceptance
 trace before selecting the slot in an installation.
+
+## Reader composition after chart extraction
+
+Use the standalone `sessionReadApi` dependency, not the removed `readApi` key.
+The native consumer requires its enabled reader to use the same qualified image,
+Postgres backend ID, explicit coverage floor, pinned public custom CA ConfigMap
+and canonical Locker layout. Keep `PIPELINE_KEY_PREFIX=96bulls` and
+`PIPELINE_ORG_FROM_PREFIX=true` as literal adapter settings; configure the backend
+ID through managed `sessionReadApi.search.backendId`. The owner bootstrap Secret
+is Job-only, including after the Job is disabled. The independent `searchIndexer`
+must stay disabled to preserve one canonical/search writer.
+
+For Control-issued workspace tokens, select `sessionReadApi.auth.mode=relaycontrol_only`,
+its existing introspection Secret and base URL, and leave RelayAuth issuer/JWKS
+empty. Configure PostgreSQL through `postgres.tlsProfile=custom-ca` and
+`postgresCa`, rather than the now-reserved TLS environment variables. Sync login
+uses `sessionReadApi.login.advertisesSync=true` only when the same-origin ingest
+service is qualified. The separately supported self-issued reader mode is not
+enabled by this consumer chart or its install fixtures.

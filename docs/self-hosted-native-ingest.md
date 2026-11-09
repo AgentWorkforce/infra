@@ -58,6 +58,11 @@ not a migration owner or a connection that switches roles. The object-store
 Secret needs `access-key-id` and `secret-access-key`. Key names can be changed
 through the structured values. The chart never creates or prints credentials.
 
+On AWS, set `locker.credentials.mode: podIdentity` with a `serviceAccountName` that
+has a Pod Identity association instead: no object-store Secret is used, and
+`locker.endpoint` may stay empty. `sessionSelection: true` serves the per-session
+erase on `POST /v1/delivery/sessions/selection` and needs pipeline migration 043910.
+
 PostgreSQL must already serve TLS with the correct Service DNS certificate.
 The CA ConfigMap supplies `ca.crt` (key configurable), mounted read-only at
 `/etc/session-ingest-postgres/ca.crt`; the chart selects `custom-ca` and pins its
@@ -68,7 +73,7 @@ explicit in-cluster opt-in; public plaintext destinations are refused.
 `relaycontrol.url` is a **base origin**, without the introspection path: the
 client appends `/internal/v1/auth/introspect`. `origin` is a normalized public
 HTTPS origin (lowercase DNS, no `:443` default port or trailing slash) and must
-equal the reader's `READ_API_ORIGIN`; rendering refuses unequal `readApi.origin`
+equal the reader's `READ_API_ORIGIN`; rendering refuses unequal `sessionReadApi.origin`
 and `ingestEdge.origin` when both slots are enabled. A generic `extraEnv` override is refused;
 the source's enablement, auth, TLS, inline acceptance and Secret inputs are
 managed by the chart.
@@ -97,19 +102,25 @@ router is supplied:
 - `POST /v1/delivery/batches`
 - `POST /v1/turns/batches`
 - `GET /v1/delivery/limits`
+- `POST /v1/auth/token/refresh` (answers 401 `refresh_not_supported`, so Desktop renews its session)
+
+On EKS, `EKS_ALB_INGEST=true` makes `scripts/selfhost/eks-alb-ingress.sh` render these
+routes on the `history.<domain>` origin, with the rest of that host on the read API
+and `/internal` denied.
 
 Use exact paths and test the backend's wrong-method refusal. Keep delivery records
 on the reader. Selection/reset/recovery/onboarding are not working features;
 probe and custody endpoints stay private. The edge re-introspects the bearer and
 requires `rth:sync` on every request, ignoring client identity/signature headers.
-The reader's sync-login flag must be enabled only when both services actually
-serve the same origin. This PR adds no ingress. For a compatible image containing
-merged pipeline #364 (`8a075b26`), select `readApi.auth.mode=relaycontrol_only`,
-enable `readApi.auth.relaycontrol.enabled`, supply its URL and Secret reference,
-and clear both `readApi.auth.relayauth` fields. The chart emits
+The reader's sync-login flag (`sessionReadApi.login.advertisesSync`, which Control
+requires before it issues a sync session) must be enabled only when both services
+actually serve the same origin, with the workspace on `sessionReadApi.directoryWorkspaces`. This PR adds no ingress. For a compatible image containing
+merged pipeline #364 (`8a075b26`), select `sessionReadApi.auth.mode=relaycontrol_only`,
+enable `sessionReadApi.auth.relaycontrol.enabled`, supply its URL and Secret reference,
+and clear both `sessionReadApi.auth.relayauth` fields. The chart emits
 `READ_API_AUTH_MODE=relaycontrol_only` and omits `RELAYAUTH_JWKS_URL` and
 `RELAYAUTH_ISSUER`; contradictory settings and extraEnv overrides are refused.
-The default `legacy` chart mode preserves the existing explicit issuer behavior.
+The `legacy` chart mode preserves the existing explicit issuer behavior; it is no longer the default.
 This selects backend behavior; chart checks do not prove the image's verifier.
 
 Merged #364 also binds detail reads through `LOCKER_*`, with S3 static keys or
@@ -127,9 +138,99 @@ Transport and object-store settings remain explicit operator configuration via
 the existing reader extraEnv/CA mounts, with credentials in Secret references.
 No store, credentials, auth mode, image or reader is enabled in a profile here.
 
-Readiness calls `/readyz`, not the always-200 `/healthz`: it requires an enabled
-service and a database `SELECT 1`. It does not prove complete grants, schema,
-Control reachability or MinIO functionality. Before enabling any pilot, qualify
+## Admission modes
+
+`ingestEdge.admission.mode` defaults to `sync`. It preserves the existing
+request path and HTTP probes, emitting no admission-mode environment variables.
+The ingest edge itself remains disabled by default in every profile.
+
+The `async` and `drain` modes require the self-host admission implementation
+from pipeline [#398](https://github.com/AgentWorkforce/relayhistory-pipeline/pull/398).
+That implementation merged at
+[`f0860b2e`](https://github.com/AgentWorkforce/relayhistory-pipeline/commit/f0860b2e785b52fefbaa37482d02ab96b013049d).
+This chart supplies configuration and does not qualify an image or enable a
+deployment. Qualify an immutable combined image containing that merge (or a
+reviewed successor) before selecting either mode:
+
+```yaml
+ingestEdge:
+  admission:
+    mode: async
+    concurrency: 4
+    scanIntervalMs: 15000
+    maxAttempts: 20
+```
+
+In `async`, a successful upload acknowledges a create-only object-store inbox
+write with the queued admission receipt. The in-process consumer performs
+database admission afterward. A queued receipt does not mean the session is
+already indexed, rendered or searchable. Object-store failure refuses the
+upload; it must not silently fall back to synchronous admission. The configured
+store must pass the runtime's conditional-write startup check.
+
+The configuration, health and permission contract was checked against pipeline
+[`f0860b2e`](https://github.com/AgentWorkforce/relayhistory-pipeline/blob/f0860b2e785b52fefbaa37482d02ab96b013049d/docs/selfhost-composition.md#5-env-secret-and-ca-names).
+Its admission configuration, health and permission section is unchanged from
+the previously checked `8389e073`. Recheck successors before qualifying an image.
+The request handler and consumer currently share one credential, so it needs
+the union of their permissions; an upload-only credential is insufficient.
+For the chart's fixed `96bulls` root:
+
+| Path or operation | Required access in async/drain |
+| --- | --- |
+| Request privacy journal under `96bulls/.admission-inbox/<org>/v1/ws=<workspace>/m=srv_<machine>/privacy-journal.json` | Get; a missing journal must return 404. |
+| Inbox upload under the same machine prefix, `r=<receipt>/a=<time>-<nonce>.ndjson.zst` | Create-only Put. A 412 retry also needs Head, and Get if digest metadata is missing. |
+| Inbox consumer | List `96bulls/.admission-inbox`, Get inbox bytes, then overwrite them with a small tombstone after the terminal outcome. The consumer does not delete inbox objects. |
+| Admission outcome objects | Request/status Get and consumer overwrite Put for `outcome-admitted.json` and `outcome-refused.json`. |
+| Consumer privacy journal | Get and conditional Put using the current ETag, or create-only Put when missing. This permission remains required even when the pending-control repair path is dormant. |
+| Dead-letter markers | List `96bulls/.admission-dlq`, overwrite Put and best-effort Delete after later admission. Operator redrive also needs Delete on those markers. |
+| Tenant data | The synchronous path's existing Get, Head and conditional Put permissions; no buffered-batch staging prefix is added. |
+| Startup probe, `96bulls/.admission-probe/v1/ws=probe/m=srv_<random>/probe.json` | Create-only Put, Head/Get reconciliation, current and stale ETag conditional Put, Get, and best-effort Delete. |
+
+S3/MinIO also needs bucket listing with the runtime's required prefix scope.
+Without `s3:ListBucket`, a missing privacy journal can return 403 instead of 404,
+causing uploads to fail with 503. The startup probe refuses a backend that
+ignores conditional writes. Denied probe deletion alone does not fail startup;
+it can leave one roughly 60-byte probe object per process start. The upstream
+contract also covers GCS overwrite/delete permissions; this chart slot supplies
+S3/MinIO settings only. This chart grants no storage permissions and does not
+broaden an existing policy.
+
+In `drain`, new uploads use synchronous admission while the consumer continues
+processing the existing inbox. Roll back `async` -> `drain`, wait until both
+`consumer.backlog` and `consumer.deadLettered` are zero, then select `sync`.
+A chart rollback alone does not empty the inbox.
+Do not remove or repurpose its bucket while queued work remains.
+These two modes additionally serve `GET /v1/delivery/admission`, an authenticated
+object-store status read using the caller's verified tenant identity. Any public
+router must admit that exact path deliberately; this chart adds no route.
+
+The managed values map to `SELFHOST_INGEST_ADMISSION`,
+`SELFHOST_ADMISSION_CONCURRENCY` (1–32), `SELFHOST_ADMISSION_SCAN_MS`
+(1000–600000 milliseconds) and `SELFHOST_ADMISSION_MAX_ATTEMPTS` (1–100).
+Retries that reach the limit become dead letters; inspect and recover them
+through the runtime's supported operational procedure. The chart supplies no
+dead-letter deletion or replay command.
+
+Async admission removes admission SQL from the upload request path. Every
+request still uses Control introspection with no positive cache, and startup
+still verifies the PostgreSQL role and TLS connection. This is not a promise
+of database-independent authorization or startup.
+
+In sync mode, `/readyz` requires an enabled service and a database `SELECT 1`.
+Async and drain use an exec probe that requires HTTP 200, `ok:true`,
+`enabled:true`, the exact configured `admission` mode, and healthy `consumer`
+status with valid backlog, dead-letter and scan-age counters. An older image
+that ignores the mode fails readiness. Async readiness follows the inbox
+consumer; drain also requires the synchronous database check. Liveness remains
+`/healthz`, so a dependency outage removes readiness without creating a restart
+loop. None of these checks proves complete grants, schema, Control reachability,
+eventual admission or end-to-end object-store functionality.
+
+Before enabling any pilot, qualify
 the exact combined image/generation with native PG/TLS/MinIO upload, retries,
 writer indexing, reader/search, compressed objects and auth refusal cases.
-Helm/schema tests prove only this chart slot. No ar-lap operation is performed.
+For async, also prove database failure after startup still yields a durable
+queued receipt, restart/retry recovery without duplicate admission, dead-letter
+visibility, and successful readback after recovery. Helm/schema tests prove
+only this chart slot; this source change performs no runtime operation.

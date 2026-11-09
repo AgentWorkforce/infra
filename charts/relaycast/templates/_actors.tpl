@@ -47,7 +47,7 @@ The durable-actors control-plane Service name. Must equal the vendored chart's
 
 {{/* Env names the actor gateway sets itself; extraEnv must not repeat them. */}}
 {{- define "relaycast.actors.reservedEnv" -}}
-{{- list "PORT" "DURABLE_ACTORS_CONTROL_PLANE_URL" "DURABLE_ACTORS_PROJECT_ID" "DURABLE_ACTORS_SECRET" "DURABLE_ACTORS_HOME_REGION" "RELAYCAST_FILE_SIGNING_SECRET" "RELAYCAST_CREDENTIAL_KEYRING_FILE" "RELAYCAST_INTERNAL_SECRET_FILE" "RELAYCAST_PUBLIC_WORKSPACE_CREATE" "RELAYCAST_FILE_STORE" "RELAYCAST_FILE_DIR" "RELAYCAST_GCS_BUCKET" "RELAYCAST_GCS_PREFIX" "RELAYCAST_S3_BUCKET" "RELAYCAST_S3_REGION" "RELAYCAST_S3_ENDPOINT" "RELAYCAST_S3_PREFIX" "RELAYCAST_S3_FORCE_PATH_STYLE" "AWS_ACCESS_KEY_ID" "AWS_SECRET_ACCESS_KEY" "RELAYCAST_MAX_UPLOAD_BYTES" "RELAYCAST_SHUTDOWN_GRACE_MS" "RELAYCAST_LOG_FORMAT" "RELAYCAST_ENV" | toJson -}}
+{{- list "PORT" "DURABLE_ACTORS_CONTROL_PLANE_URL" "DURABLE_ACTORS_PROJECT_ID" "DURABLE_ACTORS_SECRET" "DURABLE_ACTORS_HOME_REGION" "RELAYCAST_FILE_SIGNING_SECRET" "RELAYCAST_CREDENTIAL_KEYRING_FILE" "RELAYCAST_INTERNAL_SECRET_FILE" "RELAYCAST_WORKSPACE_BOOTSTRAP_SECRET" "RELAYCAST_WORKSPACE_BOOTSTRAP_SECRET_FILE" "RELAYCAST_WORKSPACE_BOOTSTRAP_PROOF_REQUIRED" "RELAYCAST_PUBLIC_WORKSPACE_CREATE" "RELAYCAST_FILE_STORE" "RELAYCAST_FILE_DIR" "RELAYCAST_GCS_BUCKET" "RELAYCAST_GCS_PREFIX" "RELAYCAST_S3_BUCKET" "RELAYCAST_S3_REGION" "RELAYCAST_S3_ENDPOINT" "RELAYCAST_S3_PREFIX" "RELAYCAST_S3_FORCE_PATH_STYLE" "AWS_ACCESS_KEY_ID" "AWS_SECRET_ACCESS_KEY" "RELAYCAST_MAX_UPLOAD_BYTES" "RELAYCAST_SHUTDOWN_GRACE_MS" "RELAYCAST_LOG_FORMAT" "RELAYCAST_ENV" | toJson -}}
 {{- end }}
 
 {{- define "relaycast.actors.imageRef" -}}
@@ -85,7 +85,8 @@ The durable-actors control-plane Service name. Must equal the vendored chart's
 {{- if not $da.fileSigningSecretKey }}{{ fail "runtime.durableActors.fileSigningSecretKey is required (RELAYCAST_FILE_SIGNING_SECRET)" }}{{ end -}}
 {{- if .Values.backup.enabled }}{{ fail "backup.enabled backs up the SQLite volume; runtime.backend=durable-actors keeps state in actors (back up the durable-actors bucket and Postgres instead)" }}{{ end -}}
 {{- if or (not (kindIs "invalid" .Values.retention.messageTtlDays)) (not (kindIs "invalid" .Values.mailbox.ttlMs)) (not (kindIs "invalid" .Values.mailbox.depthCap)) }}{{ fail "retention.* and mailbox.* configure the SQLite image; with runtime.backend=durable-actors set RELAYCAST_MESSAGE_TTL_DAYS / RELAYCAST_MAILBOX_* in the actor env Secret" }}{{ end -}}
-{{- if .Values.bootstrapProofRequired }}{{ fail "bootstrapProofRequired is a SQLite-image setting; the durable-actors gateway provisions through POST /internal/workspaces" }}{{ end -}}
+{{- if not (kindIs "bool" .Values.bootstrapProofRequired) }}{{ fail "bootstrapProofRequired must be true or false" }}{{ end -}}
+{{- if and .Values.bootstrapProofRequired (not .Values.secretKeys.workspaceBootstrapSecret) }}{{ fail "bootstrapProofRequired=true with runtime.backend=durable-actors requires secretKeys.workspaceBootstrapSecret (the proof is checked against it)" }}{{ end -}}
 {{- if not (has $driver (list "local" "gcs" "s3")) }}{{ fail "runtime.durableActors.fileStore.driver must be local, gcs or s3" }}{{ end -}}
 {{- if and (ne $driver "local") (not $fs.bucket) }}{{ fail (printf "runtime.durableActors.fileStore.bucket is required for driver %s" $driver) }}{{ end -}}
 {{- if or (not (include "relaycast.isInt" $da.gateway.replicaCount)) (lt ($da.gateway.replicaCount | int64) 1) }}{{ fail "runtime.durableActors.gateway.replicaCount must be a positive integer" }}{{ end -}}
@@ -126,6 +127,23 @@ The durable-actors control-plane Service name. Must equal the vendored chart's
       key: {{ .key | quote }}
 {{- end }}
 
+{{/*
+Keyed workspace creates (Idempotency-Key). The gateway and every actor must
+read the same bytes: the gateway derives the actor id from the secret and the
+actor's engine derives the replayed credential from it. Both read it as a
+plain env var from a Secret key (no _FILE, whose loader drops one trailing
+newline), so the gateway's existingSecret key and the actor env Secret's
+RELAYCAST_WORKSPACE_BOOTSTRAP_SECRET must hold identical bytes. Unset: a
+keyed create answers 503 workspace_create_idempotency_unavailable.
+*/}}
+{{- define "relaycast.actors.bootstrapEnv" -}}
+{{- with .Values.secretKeys.workspaceBootstrapSecret }}
+{{ include "relaycast.actors.secretEnv" (dict "name" "RELAYCAST_WORKSPACE_BOOTSTRAP_SECRET" "secret" $.Values.existingSecret "key" .) }}
+{{- end }}
+- name: RELAYCAST_WORKSPACE_BOOTSTRAP_PROOF_REQUIRED
+  value: {{ ternary "true" "false" .Values.bootstrapProofRequired | quote }}
+{{- end }}
+
 {{/* Gateway env (contract v1). */}}
 {{- define "relaycast.actors.gatewayEnv" -}}
 {{- $da := .Values.runtime.durableActors -}}
@@ -152,6 +170,7 @@ The durable-actors control-plane Service name. Must equal the vendored chart's
   value: {{ include "relaycast.secretMountPath" . }}/internal-secret
 - name: RELAYCAST_PUBLIC_WORKSPACE_CREATE
   value: {{ ternary "true" "false" .Values.publicWorkspaceCreate | quote }}
+{{- include "relaycast.actors.bootstrapEnv" . }}
 - name: RELAYCAST_FILE_STORE
   value: {{ $fs.driver | quote }}
 {{- if eq (toString $fs.driver) "local" }}
@@ -217,6 +236,7 @@ on the sidecar.
   value: {{ .Values.baseUrl | quote }}
 {{ include "relaycast.actors.secretEnv" (dict "name" "RELAYCAST_FILE_SIGNING_SECRET" "secret" .Values.existingSecret "key" $da.fileSigningSecretKey) }}
 {{ include "relaycast.actors.secretEnv" (dict "name" "RELAYCAST_INTERNAL_SECRET" "secret" .Values.existingSecret "key" .Values.secretKeys.internalSecret) }}
+{{- include "relaycast.actors.bootstrapEnv" . }}
 - name: RELAYCAST_MAX_UPLOAD_BYTES
   value: {{ $da.maxUploadBytes | int64 | toString | quote }}
 - name: RELAYCAST_ENV
