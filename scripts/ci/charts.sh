@@ -459,6 +459,8 @@ for chart in "${charts[@]}"; do
           "SELFHOST_INTROSPECT_AUDIENCES=https://read.gcp-proof.agentrelay.com"; do
           grep -qxF "$want" <<<"$sr_env" || err "$chart: session read values did not render $want"
         done
+        [ "$(render "$chart" "$v" --set secretKeys.introspectSecret=relaycontrol-introspect-secret | yq 'select(.kind == "Ingress") | .spec.rules[0].http.paths[0].path')" = /internal ] \
+          || err "$chart: the Ingress must deny /internal when the introspection route is enabled"
         expect_render_failure "$chart" "$v" "partial session read handoff" "must be set together" --set services.sessionReadApiUrl=http://session-read-api:8080
         expect_render_failure "$chart" "$v" "MCP reads without handoff" "services.sessionReadApiMcpReads requires" --set services.sessionReadApiMcpReads=true
         expect_render_failure "$chart" "$v" "plaintext read API public origin" "services.sessionReadApiPublicUrl must be a public HTTPS origin" --set services.sessionReadApiUrl=http://session-read-api:8080 --set services.sessionReadApiPublicUrl=http://read.gcp-proof.agentrelay.com --set secretKeys.sessionReadApiSecret=session-read-api-secret
