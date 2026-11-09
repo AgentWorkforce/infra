@@ -34,7 +34,7 @@ def tar(path, files):
 
 def oci(path, source):
     config = json.dumps({"architecture": "arm64", "os": "linux", "rootfs": {"type": "layers", "diff_ids": []},
-                         "config": {"Labels": {"org.opencontainers.image.revision": source}}}).encode()
+                         "config": {"Labels": {"org.opencontainers.image.revision": source}, "Env": []}}).encode()
     cd = "sha256:" + h(config)
     manifest = json.dumps({"schemaVersion": 2, "config": {"digest": cd}, "layers": []}).encode()
     md = "sha256:" + h(manifest)
@@ -117,7 +117,7 @@ class NativeInspectTests(unittest.TestCase):
         self.adapter = NativeReadOnlyAdapter(self.stack, self.inputs)
 
     def image(self, identity, source):
-        return {"Id": identity, "Descriptor": {"digest": identity}, "Architecture": "arm64", "Os": "linux",
+        return {"Id": identity, "Descriptor": {"digest": identity, "mediaType": "application/vnd.oci.image.manifest.v1+json"}, "Architecture": "arm64", "Os": "linux",
                 "RootFS": {"Layers": []}, "Config": {"Labels": {"org.opencontainers.image.revision": source}, "Env": []}}
 
     def public_receipt(self):
@@ -211,7 +211,7 @@ class NativeInspectTests(unittest.TestCase):
             with self.assertRaises(NativeRecipeError): self.adapter.verify_artifact(self.s)
             self.stack.images["pipeline:fixture"] = old
         self.stack.images["control:fixture"]["Config"]["Env"] = ["SESSION_READ_API_SECRET=synthetic"]
-        with self.assertRaisesRegex(NativeRecipeError, "issuer"): self.adapter.verify_artifact(self.s)
+        with self.assertRaisesRegex(NativeRecipeError, "native_runtime_config"): self.adapter.verify_artifact(self.s)
 
     def test_fresh_is_only_an_absent_owned_target_with_no_lost_receipts(self):
         self.assertEqual(self.adapter.inspect(self.s)["mode"], "fresh")

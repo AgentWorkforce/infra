@@ -40,6 +40,16 @@ and the older nested receipt format are read without rewriting their historical
 evidence. Actual source bytes, all copied image modules, architecture, native
 manifest/config and official schema generation are independently checked.
 
+A platform-only native archive can omit the original build index. Cache
+admission keeps the unchanged build-index proof separate from the verified
+archive-native transport: an original index descriptor must match the recorded
+build index, while an imported native descriptor must match the archive's exact
+native manifest and media type. Both check source, architecture, config identity,
+every archived runtime configuration field and the complete rootfs layer list.
+A matching tag name, an unknown descriptor or mixed index/native/config digests
+cannot qualify an image. The archive's full SHA-256 is verified before deriving
+its in-memory transport record; no historical receipt is rewritten.
+
 Control also accepts the unchanged qualified RawV2 packet. Select that packet as
 `controlReceipt`, its raw `source-manifest.json`, `source-runtime-equality.json`
 and `migration-source-comparison.json` as the three manifest inputs, and supply

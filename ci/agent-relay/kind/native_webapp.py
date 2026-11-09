@@ -2,7 +2,7 @@
 from pathlib import Path
 import re
 
-from native_inspect import document, native_archive, same_local_reference
+from native_inspect import document, native_archive_transport, same_local_reference
 from native_recipe import require
 
 WEBAPP_INPUTS = {"webappPacket", "webappPacketSha256", "webappArchive", "webappBuildMetadata"}
@@ -42,8 +42,9 @@ def coordinates(inputs, architecture):
     require(isinstance(index, str) and re.fullmatch(r"sha256:[a-f0-9]{64}", index) and
             metadata.get("containerimage.descriptor", {}).get("digest") == index,
             "webapp_build_index_descriptor_required")
-    config = native_archive(inputs["webappArchive"], packet["archiveSha256"], packet["sourceRevision"],
+    transport = native_archive_transport(inputs["webappArchive"], packet["archiveSha256"], packet["sourceRevision"],
                             packet["manifestDigest"], packet["configDigest"], architecture)
+    config = transport["config"]
     require(config.get("config") == runtime["runtimeConfig"] and config["config"].get("User") == "101" and
             config.get("rootfs", {}).get("type") == "layers" and config["rootfs"].get("diff_ids"),
             "webapp_native_runtime_config_mismatch")
@@ -57,4 +58,4 @@ def coordinates(inputs, architecture):
     return {"sourceRevision": packet["sourceRevision"], "reference": packet["reference"],
             "manifestDigest": packet["manifestDigest"], "configDigest": packet["configDigest"],
             "packetSha256": inputs["webappPacketSha256"], "archiveSha256": packet["archiveSha256"],
-            "indexDigest": index, "tag": runtime["tag"], "config": config, "files": files}
+            "indexDigest": index, "tag": runtime["tag"], "config": config, "archiveNative": transport, "files": files}

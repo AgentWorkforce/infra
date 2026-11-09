@@ -23,7 +23,7 @@ import yaml
 from native_control import NativeControlTransport
 from native_control_artifact import coordinates as control_coordinates
 from native_core_values import compose, tenant, PLANNING_WORKSPACE
-from native_inspect import document, native_archive, same_local_reference, sha
+from native_inspect import document, native_archive, native_archive_transport, same_local_reference, sha
 from native_pipeline import NativePipelineAdapter, canonical
 from native_recipe import merge_values, require
 from native_webapp import WEBAPP_INPUTS, coordinates as webapp_coordinates
@@ -92,8 +92,10 @@ class NativeCoreAdapter(NativeControlTransport, NativePipelineAdapter):
         # creating any cluster, credential or database object.
         from native_inspect import pipeline_coordinates
         pipeline = pipeline_coordinates(self.inputs, selected)
+        pipeline_transport = native_archive_transport(self.inputs["pipelineArchive"], pipeline["archiveSha256"], selected["sourceRevision"],
+            selected["manifestDigest"], selected["configDigest"], selected["architecture"])
         pipeline_image = self._image(pipeline["localTag"], selected["sourceRevision"], selected["architecture"],
-                                     pipeline["buildIndexDigest"], selected["configDigest"])
+                                     pipeline["buildIndexDigest"], selected["configDigest"], archive_native=pipeline_transport)
         reader = self._probe(pipeline_image["Id"], "bun", """
 const m=await import('/app/src/session-read-api/self-issued.ts');
 console.log(JSON.stringify({accessPrefix:m.ACCESS_PREFIX,scope:m.READ_SCOPE,issuer:m.SESSIONS_PATH}));
@@ -102,7 +104,7 @@ console.log(JSON.stringify({accessPrefix:m.ACCESS_PREFIX,scope:m.READ_SCOPE,issu
                            "issuer": "/internal/v1/session-read/sessions"}, "qualified_independent_reader_module_required")
         control = control_coordinates(self.inputs, selected["control"], selected["architecture"])
         control_image = self._image(control["tag"], selected["control"]["sourceRevision"], selected["architecture"],
-                                    control["dockerIndexDigest"], selected["control"]["configDigest"])
+                                    control["dockerIndexDigest"], selected["control"]["configDigest"], archive_native=control["archiveNative"])
         features = self._probe(control_image["Id"], "node", """
 import('/app/node_modules/relay-control/dist/features.js').then(m=>{
  console.log(JSON.stringify({names:m.FEATURES,defaults:m.NO_FEATURES}));
@@ -118,7 +120,7 @@ import('/app/node_modules/relay-control/dist/features.js').then(m=>{
     def _verify_webapp(self, selected):
         webapp = webapp_coordinates(self.inputs, selected["architecture"])
         actual = self._image(webapp["tag"], webapp["sourceRevision"], selected["architecture"],
-                             webapp["indexDigest"], webapp["configDigest"])
+                             webapp["indexDigest"], webapp["configDigest"], archive_native=webapp["archiveNative"])
         require(actual.get("RootFS", {}).get("Layers") == webapp["config"]["rootfs"]["diff_ids"] and
                 all(actual.get("Config", {}).get(k) == v for k, v in webapp["config"]["config"].items()),
                 "actual_webapp_config_or_rootfs_differs")

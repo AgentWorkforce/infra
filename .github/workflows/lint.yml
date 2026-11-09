@@ -119,6 +119,7 @@ jobs:
           python3 ci/agent-relay/kind/test_named_upgrade.py -v
           python3 ci/agent-relay/kind/test_native_recipe.py -v
           python3 ci/agent-relay/kind/test_native_inspect.py -v
+          python3 ci/agent-relay/kind/test_native_archive_transport.py -v
           python3 ci/agent-relay/kind/test_native_bootstrap.py -v
           python3 ci/agent-relay/kind/test_native_control.py -v
           python3 ci/agent-relay/kind/test_native_control_artifact.py -v
