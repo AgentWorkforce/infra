@@ -99,6 +99,21 @@ allowInClusterHttp: false
 # Extra env for every component: [{ name: X, value: y }].
 extraEnv: []
 
+# OPTIONAL: a CA bundle that lets node-pg verify the Postgres server certificate
+# when the database uses a private CA, such as Amazon RDS. Off by default. When
+# on, the PEM bundle at key in the named existing ConfigMap or Secret (set
+# exactly one) is mounted at /etc/postgres-ca/ca.crt and NODE_EXTRA_CA_CERTS
+# points at it. It adds to the roots every outbound TLS client in these
+# processes trusts; it does not replace them. Use sslmode=verify-full in the
+# Postgres URLs, and do not pair sslmode=require with uselibpqcompat=true, which
+# skips verification. The bundle is read at process start, so rotating it needs
+# a pod restart.
+postgresCa:
+  enabled: false
+  configMap: ""
+  secret: ""
+  key: ca.crt
+
 # OPTIONAL: read HOOPDB_URL from a different Secret than existingSecret, e.g.
 # the "<cluster>-app" Secret CloudNativePG generates (key "uri"). Empty =
 # existingSecret / secretKeys.hoopdbUrl.
@@ -129,15 +144,16 @@ migrations:
   # into the migrate container only. Do not set these via extraEnv or component
   # env; the render refuses that. Where the migrator has no default, neither does
   # the chart: an unset required value fails the render.
-  # REQUIRED. HOOPDB_DB_MODE: local | selfhosted (CNPG, RDS, any
-  # operator-controlled plain Postgres) | cloudsql (Google Cloud SQL) | supabase.
+  # REQUIRED. HOOPDB_DB_MODE: local | selfhosted (CNPG, any
+  # operator-controlled plain Postgres with a superuser) | cloudsql (Google Cloud
+  # SQL) | rds (Amazon RDS for PostgreSQL 16+, not Aurora) | supabase.
   databaseMode: ""
   # HOOPDB_ROLE_BOOTSTRAP (optional): true/false; the migrator defaults it to the
   # shim choice. Refused as true in supabase mode. Cloud SQL sets false (no
   # customer superuser; the operator provisions the search Worker role).
   roleBootstrap: null
   # HOOPDB_SUPABASE_SHIM: true/false. Required in local, selfhosted and cloudsql
-  # (Cloud SQL: false; its operator bootstrap creates the compatibility roles). In
+  # (rds: must be unset or false; Cloud SQL: false; its operator bootstrap creates the compatibility roles). In
   # supabase mode it must be unset or false and is rendered "false". The
   # migrator also refuses the shim and the role bootstrap there.
   supabaseShim: null
@@ -152,7 +168,7 @@ migrations:
   runtimeWorkloadRole: ""
   # HOOPDB_FUNCTION_BOUNDARY_MODE: global-default-revoke or, in supabase mode
   # only, event-trigger (sessions-pipeline #125); the chart refuses event-trigger
-  # elsewhere, as the migrator does. Required in selfhosted and cloudsql mode
+  # elsewhere, as the migrator does. Required in selfhosted, cloudsql and rds mode
   # (global-default-revoke): the database is dedicated to HoopDb, and the
   # privileged supabase/bootstrap/hoopdb_function_default_revoke.sql installs
   # the control. Optional in supabase mode, where the operator installs

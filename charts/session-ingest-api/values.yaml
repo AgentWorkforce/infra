@@ -82,6 +82,21 @@ environment: production
 # Extra env for every component: [{ name: X, value: y }].
 extraEnv: []
 
+# OPTIONAL: a CA bundle that lets node-pg verify the Postgres server certificate
+# when the database uses a private CA, such as Amazon RDS. Off by default. When
+# on, the PEM bundle at key in the named existing ConfigMap or Secret (set
+# exactly one) is mounted at /etc/postgres-ca/ca.crt and NODE_EXTRA_CA_CERTS
+# points at it. It adds to the roots every outbound TLS client in these
+# processes trusts; it does not replace them. Use sslmode=verify-full in the
+# Postgres URLs, and do not pair sslmode=require with uselibpqcompat=true, which
+# skips verification. The bundle is read at process start, so rotating it needs
+# a pod restart.
+postgresCa:
+  enabled: false
+  configMap: ""
+  secret: ""
+  key: ca.crt
+
 serviceAccount:
   create: true
   name: ""

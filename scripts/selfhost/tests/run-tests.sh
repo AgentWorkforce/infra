@@ -10,6 +10,8 @@ REPO_ROOT="$(cd -- "${SELFHOST_DIR}/../.." && pwd)"
 RECOVERY_DIR="${REPO_ROOT}/charts/agent-relay/scripts"
 # Run the scripts under TEST_BASH (for example /bin/bash 3.2 on macOS).
 TEST_BASH="${TEST_BASH:-bash}"
+# The Node helper uses injected API responses; it never contacts a cluster.
+node --test "${TEST_DIR}/operator-device-login.test.mjs"
 tmp_root="$(mktemp -d)"
 trap 'rm -rf "${tmp_root}"' EXIT
 
@@ -117,6 +119,7 @@ MOCK
 cat >"${mock_bin}/openssl" <<'MOCK'
 #!/usr/bin/env bash
 if [[ "$1" == "s_client" ]]; then
+  [[ "${MOCK_TLS_FAIL:-false}" == true ]] && exit 1
   previous=""
   for arg in "$@"; do
     [[ "${previous}" == "-servername" ]] && printf 'openssl-servername %s\n' "${arg}" >>"${MOCK_COMMAND_LOG}"
@@ -671,5 +674,111 @@ out="$(eks_install EKS_ACTORS_ACTOR_CREDENTIALS=control-plane)"
 if eks_install EKS_ACTORS_ACTOR_CREDENTIALS=bogus >/dev/null; then fail "eks-actors-install accepted an unknown credential mode"; fi
 grep -q 'must be assume-role or control-plane' "${tmp_root}/eks.err" || fail "eks-actors-install did not explain the rejected mode"
 pass "eks-actors-install picks the actor credential mode and storage role ARN"
+
+# Externally terminated TLS has no spec.tls or ManagedCertificate reference.
+reset_fixtures
+write_verify_fixtures
+jq '.items[0].metadata.annotations = {} | .items[0].spec.tls = []' \
+  "${fixtures}/ingresses.networking.k8s.io.json" >"${tmp_root}/external-ingress.json"
+mv "${tmp_root}/external-ingress.json" "${fixtures}/ingresses.networking.k8s.io.json"
+if run_verify "${tmp_root}/external-no-host.out"; then
+  fail "external TLS silently passed without an explicit certificate target"
+fi
+run_verify "${tmp_root}/external-tls.out" --external-tls-host relay.example.com ||
+  { cat "${tmp_root}/external-tls.out" >&2; fail "explicit selected external TLS host was refused"; }
+grep -q 'certificate\[1\]|trusted_hostname_valid_and_not_expiring' "${tmp_root}/external-tls.out" ||
+  fail "external TLS did not run chain/hostname/expiry validation"
+if run_verify "${tmp_root}/external-foreign.out" --external-tls-host foreign.example.com; then
+  fail "external TLS accepted a host absent from the selected ingress"
+fi
+if run_verify "${tmp_root}/external-filtered.out" --ingress-host relay.example.com --external-tls-host api.example.com; then
+  fail "external TLS escaped the ingress host filter"
+fi
+for invalid in 'https://relay.example.com' 'relay.example.com:443' 'relay.example.com/path' '*.example.com'; do
+  if run_verify "${tmp_root}/external-invalid.out" --external-tls-host "$invalid"; then
+    fail "external TLS accepted a malformed hostname"
+  fi
+done
+export MOCK_TLS_FAIL=true
+if run_verify "${tmp_root}/external-failed-chain.out" --external-tls-host relay.example.com; then
+  fail "external TLS accepted a failed native TLS verification"
+fi
+unset MOCK_TLS_FAIL
+pass "external TLS targets are bound to selected ingress and never skip certificate verification"
+
+# mirror-images-to-ecr.sh: AWS and crane are mocked; yq is real.
+ecr_dir="${tmp_root}/ecr"
+mkdir -p "${ecr_dir}"
+cat >"${mock_bin}/aws" <<'MOCK'
+#!/usr/bin/env bash
+printf 'aws %s\n' "$*" >>"${MOCK_COMMAND_LOG}"
+case " $* " in
+  *" get-login-password "*) printf 'mock-token\n' ;;
+  *" describe-repositories "*) grep -qx "repo ${*: -1}" "${MOCK_ECR_STATE}" 2>/dev/null ;;
+  *" create-repository "*) printf 'repo %s\n' "$6" >>"${MOCK_ECR_STATE}" ;;
+esac
+MOCK
+cat >"${mock_bin}/crane" <<'MOCK'
+#!/usr/bin/env bash
+printf 'crane %s\n' "$*" >>"${MOCK_COMMAND_LOG}"
+case "$1" in
+  auth) cat >/dev/null ;;
+  digest)
+    case "$2" in
+      *.amazonaws.com/*) grep -q "^copied $2 " "${MOCK_ECR_STATE}" 2>/dev/null || exit 1
+                         grep "^copied $2 " "${MOCK_ECR_STATE}" | cut -d' ' -f3 ;;
+      *@*) printf '%s\n' "${2##*@}" ;;
+      *) printf 'sha256:%064d\n' 7 ;;
+    esac ;;
+  copy) case "$2" in *@*) d=${2##*@} ;; *) d=$(printf 'sha256:%064d' 7) ;; esac
+        printf 'copied %s %s\n' "$3" "$d" >>"${MOCK_ECR_STATE}" ;;
+esac
+MOCK
+chmod +x "${mock_bin}/aws" "${mock_bin}/crane"
+cat >"${ecr_dir}/rendered.yaml" <<'YAML'
+kind: Deployment
+spec: { template: { spec: { containers: [ { image: ghcr.io/org/app@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa }, { image: "node:22.1" } ] } } }
+---
+kind: Cluster
+spec: { imageName: "ghcr.io/cloudnative-pg/postgresql:17.5" }
+YAML
+ecr() {
+  PATH="${mock_bin}:${PATH}" MOCK_COMMAND_LOG="${command_log}" MOCK_ECR_STATE="${ecr_dir}/state" \
+    "${TEST_BASH}" "${SELFHOST_DIR}/mirror-images-to-ecr.sh" "$@"
+}
+registry=000000000000.dkr.ecr.us-west-2.amazonaws.com
+: >"${command_log}"
+plan="$(ecr --registry "${registry}" --rendered "${ecr_dir}/rendered.yaml" 2>/dev/null)"
+[[ "${plan}" == *"ghcr.io/org/app@sha256:aaaa"*$'\t'"${registry}/agent-relay/ghcr.io/org/app:sha256-aaaa"* ]] || fail "mirror dry run maps digest images: ${plan}"
+[[ "${plan}" == *$'\n'"node:22.1"$'\t'"${registry}/agent-relay/docker.io/library/node:22.1"* ]] || fail "mirror normalizes Docker Hub names: ${plan}"
+grep -q 'postgresql:17.5' <<<"${plan}" || fail "mirror misses imageName fields"
+! grep -qE '^(aws|crane) ' "${command_log}" || fail "mirror dry run contacted AWS or crane"
+pass "mirror-images-to-ecr dry run plans without touching a registry"
+
+for bad in 'ghcr.io/org/app:latest' 'ghcr.io/org/app'; do
+  printf 'image: %s\n' "${bad}" >"${ecr_dir}/bad.yaml"
+  if ecr --registry "${registry}" --rendered "${ecr_dir}/bad.yaml" >/dev/null 2>&1; then fail "mirror accepted unpinned ${bad}"; fi
+done
+if ecr --registry public.ecr.aws --rendered "${ecr_dir}/rendered.yaml" >/dev/null 2>&1; then fail "mirror accepted a non-ECR registry"; fi
+pass "mirror-images-to-ecr refuses unpinned images and non-ECR registries"
+
+: >"${command_log}"
+ecr --registry "${registry}" --rendered "${ecr_dir}/rendered.yaml" --apply --out "${ecr_dir}/map.tsv" >/dev/null 2>"${ecr_dir}/apply.err" ||
+  { cat "${ecr_dir}/apply.err" >&2; fail "mirror apply failed"; }
+grep -q 'repo agent-relay/ghcr.io/org/app' "${ecr_dir}/state" || fail "mirror apply did not create the repository"
+[[ "$(cut -f2 "${ecr_dir}/map.tsv" | sort | head -1)" == "${registry}/agent-relay/docker.io/library/node@sha256:"* ]] || fail "mirror mapping is not digest-pinned"
+copies="$(grep -c '^crane copy' "${command_log}")"
+[[ "${copies}" == 3 ]] || fail "mirror apply copied ${copies} images, want 3"
+: >"${command_log}"
+ecr --registry "${registry}" --rendered "${ecr_dir}/rendered.yaml" --apply >/dev/null 2>&1 || fail "mirror rerun failed"
+! grep -q '^crane copy' "${command_log}" || fail "mirror rerun copied images already present"
+pass "mirror-images-to-ecr copies by digest and is idempotent"
+
+sed -i.bak "s#^copied \(.*\) sha256:a*\$#copied \1 sha256:$(printf '%064d' 9)#" "${ecr_dir}/state"
+if ecr --registry "${registry}" --rendered "${ecr_dir}/rendered.yaml" --apply >/dev/null 2>"${ecr_dir}/conflict.err"; then
+  fail "mirror accepted a destination tag holding a different image"
+fi
+grep -q 'already holds a different image' "${ecr_dir}/conflict.err" || fail "mirror did not explain the destination conflict"
+pass "mirror-images-to-ecr refuses a conflicting destination"
 
 printf 'All self-hosted script tests passed.\n'

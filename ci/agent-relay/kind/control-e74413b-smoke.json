@@ -1,0 +1,52 @@
+{
+  "sourceRevision": "e74413b9ebc8a679f9e4ef64627ccd6340ec8ddb",
+  "sourceRepository": "AgentWorkforce/relay-control",
+  "builderInfraRevision": "4bb0c05de68eb4e6f3b2e856f1f4da8e2dee296d",
+  "buildCommand": "make kind-build-control PROFILE=core",
+  "architecture": "linux/arm64",
+  "nativeManifestDigest": "sha256:2e0984b9cce70665f14e01a1d2893bc361c0fd2c27db3e33aa2970fe67cdde8e",
+  "configDigest": "sha256:14fcbef104ea950c09e5a4a31c158d4d8bae41cbd5acdaa74f3cffb3b01fed5f",
+  "dockerIndexDigest": "sha256:124b428a46db49b679654211fc28733ec1e8ba1e396e6eecf5366a542615be9f",
+  "indexArchiveSha256": "8bd407b7f4c93abac237c5e4ccadc657788dc226eff2fd1656d7fb20d47c7064",
+  "indexArchiveBytes": 93030912,
+  "nodeImage": "node:22.23.3-bookworm-slim@sha256:3ed98443660ff48413b5af19ecefce3b9d50845a901a43420d47cc63a9fddbe9",
+  "smoke": {
+    "startedUtc": "2026-11-08T18:49:09.702367+00:00",
+    "finishedUtc": "2026-11-08T18:49:13.726291+00:00",
+    "postgresVersionNum": 170011,
+    "baselineMigrationCount": 17,
+    "finalMigrationCount": 23,
+    "secondMigrateApplied": 0,
+    "syntheticRowsPreserved": true,
+    "runtimeMigrationMetadataDenied": true,
+    "healthHttp": 200,
+    "readinessHttp": 200,
+    "authenticatedOrganizationReadHttp": 200,
+    "seedOrganizationReturned": true,
+    "cleanupErrors": [],
+    "pass": true
+  },
+  "scope": "Owned synthetic PostgreSQL 17 fixture on a private plaintext Docker network. Native build/export bytes and selected migration/runtime behavior only; unsigned, unpublished, not installed. Not TLS, MCP, Desktop, cloud or full pipeline acceptance.",
+  "entrypointSelection": {
+    "builderInfraRevision": "5a72c6cee7acf4088b3a136f681ec160b702c4ae",
+    "sameNativeManifestVerified": true,
+    "server": {
+      "command": [
+        "node"
+      ],
+      "args": [
+        "node_modules/relay-control/dist/server.js"
+      ]
+    },
+    "migrations": {
+      "command": [
+        "node"
+      ],
+      "args": [
+        "node_modules/relay-control/dist/migrate-cli.js"
+      ]
+    },
+    "currentAndHistoricalRenderedCommandChecks": "PASS",
+    "offlineKindTests": 67
+  }
+}

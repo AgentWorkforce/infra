@@ -18,6 +18,10 @@ components:
   # Relayfile (charts/relayfile). Off in the suite until its inclusion is
   # decided; runtime.backend durable-actors needs components.durableActors.
   relayfile: false
+  # Relay Chief (charts/relay-chief). Configure it under the relay-chief key:
+  # image.digest, relay.baseUrl, controlPlane.url, existingSecret and config
+  # are required. Its CronJob stays suspended until relay-chief.suspend=false.
+  relayChief: false
 
 # Single-host mode (off when empty): the dashboard and the control API share
 # this one host. The dashboard is served at /, the API under /cloud/api,

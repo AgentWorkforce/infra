@@ -77,6 +77,52 @@ class Harness(unittest.TestCase):
         self.assertEqual(key.read_bytes(), original)
         self.assertFalse(list(self.local.state.glob("auth-signing-*.pem")))
 
+    def test_mcp_pending_requires_both_catalog_aliases_to_be_absent(self):
+        paths = ("/api/v1/mcp/shared-sessions", "/cloud/api/v1/mcp/shared-sessions")
+        for statuses, native, expected in [((404, 404), False, "PENDING"),
+                                           ((404, 503), False, "FAIL"),
+                                           ((404, 200), False, "FAIL"),
+                                           ((200, 200), False, "PASS"),
+                                           ((404, 404), True, "FAIL")]:
+            with self.subTest(statuses=statuses, native=native):
+                image = ("agent-relay-kind" if native else "ghcr.io/agentworkforce") + "/selfhost-api@sha256:" + "a" * 64
+                (self.local.state / "images.json").write_text(json.dumps({"images": [image]}))
+                self.local.k = lambda *a, **kw: subprocess.CompletedProcess(a, 0, json.dumps({
+                    "spec": {"template": {"spec": {"containers": [{"name": "api", "image": image}]}}}}), "")
+                initialized = []
+                def edge(host, path, token=None, method="GET", body=None, extra_headers=None, response_headers=None):
+                    if not token:
+                        return 401, "{}"
+                    if (extra_headers or {}).get("origin"):
+                        return 403, "{}"
+                    if body["method"] == "initialize":
+                        initialized.append(path)
+                        status = statuses[paths.index(path)]
+                        if status != 200:
+                            return status, "{}"
+                        response_headers["mcp-session-id"] = "fixture-session"
+                        result = {"serverInfo": {"name": "agent-relay-selfhost"}, "protocolVersion": "2025-06-18"}
+                    elif body["method"] == "tools/list":
+                        names = ["describe_capabilities", "send_relay_message", "search_shared_sessions", "get_shared_session"]
+                        result = {"tools": [{"name": n} for n in names + [f"fixture-{i}" for i in range(15)]]}
+                    else:
+                        result = {"structuredContent": {"workspace": {"workspace_id": "fixture-workspace"},
+                            "connection": {"auth_mode": "cli_login"},
+                            "endpoint": {"url": "https://relay.kind.agentrelay.com:8443" + path}}}
+                    return 200, json.dumps({"result": result})
+                p = proof.Proof(self.local)
+                p.state["a"] = {"accessToken": "fixture-access", "workspaceId": "fixture-workspace"}
+                p.edge = edge
+                if expected == "FAIL":
+                    with self.assertRaises(stack.StackError):
+                        p.mcp()
+                    self.assertFalse(any(c["result"] == "PENDING" for c in p.checks))
+                else:
+                    p.mcp()
+                    self.assertEqual([c["result"] for c in p.checks], [expected])
+                if not native:
+                    self.assertEqual(initialized, list(paths))
+
     def test_each_acl_attempt_is_fresh_and_a_later_failure_is_not_hidden(self):
         jobs, waited = [], []
         self.local.apply = jobs.append
@@ -169,6 +215,41 @@ class Harness(unittest.TestCase):
         with self.assertRaisesRegex(stack.StackError, "original read failure"):
             p.pipeline_app_visibility("session", {"workspaceId": "workspace"})
         self.assertEqual(p.checks, [{"result": "FAIL", "check": "pipeline.read_session_cleanup", "detail": "ValueError"}])
+
+    def test_pipeline_visibility_clock_jump_before_first_poll_stays_pending_and_revokes(self):
+        p = proof.Proof(self.local)
+        p.state["a"] = {"ownerUserId": "owner"}
+        self.local.k = lambda *args, **kwargs: subprocess.CompletedProcess(args, 0, '{"accessToken":"private-token"}', "")
+        calls = []
+        def edge(host, path, *args, **kwargs):
+            calls.append((path, kwargs))
+            self.assertEqual(path, "/api/v1/auth/token/revoke", "a skipped poll must not invent an application read")
+            return 200, '{"revoked":true}'
+        p.edge = edge
+        with patch.object(proof.time, "monotonic", side_effect=[0, 30]), patch.object(proof.time, "sleep") as sleep:
+            p.pipeline_app_visibility("session", {"workspaceId": "workspace"})
+        sleep.assert_not_called()
+        self.assertEqual(len(p.checks), 1)
+        self.assertEqual(p.checks[0]["result"], "PENDING")
+        self.assertIn("last HTTP=not_attempted", p.checks[0]["detail"])
+        self.assertNotIn("private-token", p.checks[0]["detail"])
+        self.assertEqual(calls[0][1]["body"], {"token": "private-token"})
+
+    def test_pipeline_visibility_keeps_last_actual_http_outcome(self):
+        p = proof.Proof(self.local)
+        p.state["a"] = {"ownerUserId": "owner"}
+        self.local.k = lambda *args, **kwargs: subprocess.CompletedProcess(args, 0, '{"accessToken":"private-token"}', "")
+        calls = []
+        def edge(host, path, *args, **kwargs):
+            calls.append(path)
+            return (200, '{"revoked":true}') if "revoke" in path else (200, '{"items":[]}')
+        p.edge = edge
+        with patch.object(proof.time, "monotonic", side_effect=[0, 0, 16]), patch.object(proof.time, "sleep"):
+            p.pipeline_app_visibility("session", {"workspaceId": "workspace"})
+        self.assertEqual(p.checks[0]["result"], "PENDING")
+        self.assertIn("last HTTP=200", p.checks[0]["detail"])
+        self.assertNotIn("not_attempted", p.checks[0]["detail"])
+        self.assertEqual(calls, ["/cloud/api/v1/workspaces/workspace/sessions", "/api/v1/auth/token/revoke"])
 
     def test_cost_sync_session_is_revoked_even_when_ingest_fails(self):
         p = proof.Proof(self.local)

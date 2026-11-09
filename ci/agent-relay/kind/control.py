@@ -8,7 +8,7 @@ import tarfile
 from addons import NODE, checkout
 from stack import private_json
 
-REVISION = "a659ac4fbc2c73c57ccb87b6947cee2fdb78e92d"
+REVISION = "e74413b9ebc8a679f9e4ef64627ccd6340ec8ddb"
 HISTORICAL_REVISION = "1f08cb624be66016eb0c135363553dd44e58f691"
 SOURCES = {
     REVISION: ("relay-control", "0.4.0"),
@@ -97,12 +97,33 @@ def translate_local_image_override(values):
     del values["relay-cloud-api"]
 
 
+def select_local_entrypoints(values, revision):
+    """Keep the chart's API and migration commands paired with this image."""
+    package = "@cloud/selfhost-api" if revision == HISTORICAL_REVISION else "relay-control"
+    api = values.get("relay-control", {})
+    if not isinstance(api, dict):
+        raise ValueError("relay-control overrides must be an object")
+    selected = dict(api)
+    for section, entry in (("server", "server.js"), ("migrations", "migrate-cli.js")):
+        existing = api.get(section, {})
+        if not isinstance(existing, dict):
+            raise ValueError(f"relay-control.{section} must be an object")
+        if "command" in existing and existing["command"] != ["node"]:
+            raise ValueError(f"translate the custom relay-control.{section}.command before building Control")
+        supported = [[f"node_modules/{name}/dist/{entry}"] for name in ("relay-control", "@cloud/selfhost-api")]
+        if "args" in existing and existing["args"] not in supported:
+            raise ValueError(f"translate the custom relay-control.{section}.args before building Control")
+        selected[section] = {**existing, "command": ["node"], "args": [f"node_modules/{package}/dist/{entry}"]}
+    values["relay-control"] = selected
+
+
 def build(stack):
     revision = source_revision(stack)
     repository, version = SOURCES[revision]
     tag = REPOSITORY + ":" + revision[:7]
     values = json.loads(stack.overrides.read_text()) if stack.overrides.exists() else {}
     translate_local_image_override(values)
+    select_local_entrypoints(values, revision)
     stack.check_space(6 * 1024**3)
     # Current source has its own cache. Never repoint, overwrite or fetch into
     # an existing historical checkout when selecting the public source.

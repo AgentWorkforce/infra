@@ -39,6 +39,32 @@ expect_render_failure() { # chart valuesfile label expected-error [extra helm ar
   fi
 }
 
+# postgresCa (the optional Postgres server CA bundle): off renders nothing; on,
+# every Deployment and migrate Job container gets exactly one read-only mount and
+# NODE_EXTRA_CA_CERTS; a half-configured value is refused.
+check_postgres_ca() { # chart valuesfile
+  local chart=$1 v=$2 off on missing total
+  off=$(render "$chart" "$v") || { err "$chart: postgresCa off did not render"; return; }
+  ! grep -Eq 'NODE_EXTRA_CA_CERTS|PGSSLROOTCERT|postgres-ca' <<<"$off" || err "$chart: postgresCa off must render nothing"
+  on=$(render "$chart" "$v" --set postgresCa.enabled=true --set postgresCa.configMap=ca-bundle) || { err "$chart: postgresCa on did not render"; return; }
+  local workloads='select(.kind == "Deployment" or (.kind == "Job" and (.metadata.name | contains("migrate"))))'
+  total=$(yq "$workloads | .metadata.name" <<<"$on" | grep -v '^---$' | grep -c .)
+  [ "$total" -ge 1 ] || err "$chart: postgresCa check found no workloads"
+  missing=$(yq "$workloads | select(([.spec.template.spec.containers[0].env[] | select(.name == \"NODE_EXTRA_CA_CERTS\" and .value == \"/etc/postgres-ca/ca.crt\")] | length) != 1 or ([.spec.template.spec.containers[0].volumeMounts[] | select(.name == \"postgres-ca\" and .mountPath == \"/etc/postgres-ca\" and .readOnly == true)] | length) != 1 or ([.spec.template.spec.volumes[] | select(.name == \"postgres-ca\" and .configMap.name == \"ca-bundle\" and .configMap.items[0].path == \"ca.crt\")] | length) != 1) | .metadata.name" <<<"$on" | grep -v '^---$' || true)
+  [ -z "$missing" ] || err "$chart: postgresCa did not reach: $missing"
+  kubeconform -strict -summary -ignore-missing-schemas -kubernetes-version "${KUBE_VERSION:-1.33.0}" <<<"$on" >/dev/null || err "$chart: postgresCa on failed kubeconform"
+  on=$(render "$chart" "$v" --set postgresCa.enabled=true --set postgresCa.secret=ca-secret --set postgresCa.key=rds.pem) || { err "$chart: postgresCa Secret did not render"; return; }
+  missing=$(yq "$workloads | select(([.spec.template.spec.volumes[] | select(.name == \"postgres-ca\" and .secret.secretName == \"ca-secret\" and .secret.items[0].key == \"rds.pem\" and .secret.defaultMode == 0444)] | length) != 1) | .metadata.name" <<<"$on" | grep -v '^---$' || true)
+  [ -z "$missing" ] || err "$chart: postgresCa Secret volume wrong in: $missing"
+  expect_render_failure "$chart" "$v" "postgresCa without a source" "postgresCa.enabled=true requires exactly one of postgresCa.configMap or postgresCa.secret" --set postgresCa.enabled=true
+  expect_render_failure "$chart" "$v" "postgresCa with both sources" "postgresCa.enabled=true requires exactly one of postgresCa.configMap or postgresCa.secret" --set postgresCa.enabled=true --set postgresCa.configMap=a --set postgresCa.secret=b
+  expect_render_failure "$chart" "$v" "postgresCa source while disabled" "require postgresCa.enabled=true" --set postgresCa.configMap=ca-bundle
+  expect_render_failure "$chart" "$v" "postgresCa non-boolean enabled" "postgresCa.enabled must be a boolean" --set-string postgresCa.enabled=true
+  expect_render_failure "$chart" "$v" "postgresCa bad name" "must be a Kubernetes object name" --set postgresCa.enabled=true --set postgresCa.configMap=Bad_Name
+  expect_render_failure "$chart" "$v" "postgresCa bad key" "postgresCa.key must be a Kubernetes data key" --set postgresCa.enabled=true --set postgresCa.configMap=ca-bundle --set postgresCa.key=../x
+  expect_render_failure "$chart" "$v" "postgresCa extraEnv override" "NODE_EXTRA_CA_CERTS" --set postgresCa.enabled=true --set postgresCa.configMap=ca-bundle --set-json 'extraEnv=[{"name":"NODE_EXTRA_CA_CERTS","value":"/x"}]'
+}
+
 # helm dependency build only resolves https repositories that are added.
 add_repos() { # Chart.yaml
   local repo
@@ -173,6 +199,14 @@ for chart in "${charts[@]}"; do
     case $chart in
       sessions-pipeline-worker)
         v=charts/sessions-pipeline-worker/ci/pod-identity-values.yaml
+        check_postgres_ca "$chart" "$v"
+        expect_render_failure "$chart" "$v" "postgresCa component env override" "components.referee.env must not set NODE_EXTRA_CA_CERTS" --set postgresCa.enabled=true --set postgresCa.configMap=ca-bundle --set-json 'components.referee.env=[{"name":"NODE_EXTRA_CA_CERTS","value":"/x"}]'
+        # locker-init opens no Postgres connection; wait-for-role is psql (PGSSLROOTCERT).
+        ca_out=$(render "$chart" "$v" --set postgresCa.enabled=true --set postgresCa.configMap=ca-bundle --set migrations.waitForRole.enabled=true --set migrations.waitForRole.image=ghcr.io/cloudnative-pg/postgresql:17@sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff --set lockerInit.enabled=true)
+        [ "$(yq 'select(.kind == "Job" and (.metadata.name | contains("locker-init"))) | .spec.template.spec.volumes[] | select(.name == "postgres-ca") | .name' <<<"$ca_out")" = "" ] \
+          || err "$chart: locker-init must not mount the Postgres CA"
+        [ "$(yq 'select(.kind == "Job" and (.metadata.name | contains("migrate"))) | .spec.template.spec.initContainers[0].env[] | select(.name == "PGSSLROOTCERT") | .value' <<<"$ca_out" | grep -v '^---$')" = /etc/postgres-ca/ca.crt ] \
+          || err "$chart: wait-for-role must set PGSSLROOTCERT when postgresCa is on"
         expect_render_failure "$chart" "$v" "unknown credential mode" "locker.credentials.mode must be secret or podIdentity" --set locker.credentials.mode=invalid
         expect_render_failure "$chart" "$v" "missing database Secret" "hoopdb.existingSecret or existingSecret is required for HOOPDB_URL" --set hoopdb.existingSecret=
         expect_render_failure "$chart" "$v" "migration Secret without key" "migrations.hoopdb.existingSecret and key must be set together" --set migrations.hoopdb.existingSecret=hoopdb-migration
@@ -193,6 +227,8 @@ for chart in "${charts[@]}"; do
         ;;
       session-ingest-api)
         v=charts/session-ingest-api/ci/pod-identity-values.yaml
+        check_postgres_ca "$chart" "$v"
+        expect_render_failure "$chart" "$v" "postgresCa ingest env override" "must not set NODE_EXTRA_CA_CERTS" --set postgresCa.enabled=true --set postgresCa.configMap=ca-bundle --set-json 'ingest.env=[{"name":"NODE_EXTRA_CA_CERTS","value":"/x"}]'
         expect_render_failure "$chart" "$v" "unknown credential mode" "locker.credentials.mode must be secret or podIdentity" --set locker.credentials.mode=invalid
         expect_render_failure "$chart" "$v" "missing database Secret" "hoopdb.existingSecret or existingSecret is required for HOOPDB_URL" --set hoopdb.existingSecret=
         expect_render_failure "$chart" "$v" "secret mode without endpoint" "locker.endpoint is required when locker.credentials.mode=secret" --set locker.credentials.mode=secret --set existingSecret=sessions-pipeline
@@ -385,6 +421,7 @@ for chart in "${charts[@]}"; do
         ;;
       relay-control)
         v=charts/relay-control/ci/default-values.yaml
+        check_postgres_ca "$chart" "$v"
         expect_render_failure "$chart" "$v" "mutable image" "image.digest is required" --set image.digest=
         expect_render_failure "$chart" "$v" "malformed digest" "image.digest must be sha256:<64 lowercase hex characters>" --set image.digest=sha256:abc
         expect_render_failure "$chart" "$v" "missing Secret" "existingSecret is required" --set existingSecret=
@@ -447,6 +484,8 @@ for chart in "${charts[@]}"; do
         ;;
       relayhistory)
         v=charts/relayhistory/ci/default-values.yaml
+        check_postgres_ca "$chart" "$v"
+        expect_render_failure "$chart" "$v" "postgresCa extraConfig override" "NODE_EXTRA_CA_CERTS is managed by structured chart values" --set postgresCa.enabled=true --set postgresCa.configMap=ca-bundle --set extraConfig.NODE_EXTRA_CA_CERTS=/x
         expect_render_failure "$chart" "$v" "mutable image" "image.digest is required" --set image.digest=
         expect_render_failure "$chart" "$v" "malformed digest" "image.digest must be sha256:<64 lowercase hex characters>" --set image.digest=sha256:abc
         expect_render_failure "$chart" "$v" "missing database Secret" "database.existingSecret is required" --set database.existingSecret=

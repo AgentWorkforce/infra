@@ -14,7 +14,7 @@ registered, every shipped entry must exist in the charts, planned entries must
 not be referenced by any template, and the compatibility matrix must equal
 the pinned digests.
 
-Source of truth: [`self-hosted/requirements.yaml`](../self-hosted/requirements.yaml). 113 entries: 44 requirements (43 shipped, 1 planned), 69 options (67 shipped, 2 planned).
+Source of truth: [`self-hosted/requirements.yaml`](../self-hosted/requirements.yaml). 115 entries: 44 requirements (43 shipped, 1 planned), 71 options (69 shipped, 2 planned).
 
 ## Contents
 
@@ -23,6 +23,7 @@ Source of truth: [`self-hosted/requirements.yaml`](../self-hosted/requirements.y
   - [selfhost-postgres](#profile-selfhost-postgres)
   - [migration](#profile-migration)
   - [external-selfhosted](#profile-external-selfhosted)
+  - [external-rds](#profile-external-rds)
   - [external-supabase](#profile-external-supabase)
   - [aws-cnpg](#profile-aws-cnpg)
   - [aws-supabase](#profile-aws-supabase)
@@ -56,7 +57,10 @@ Services image (sessions-pipeline-worker, alleyoop and the privileged SQL Jobs):
 | row | status | charts | image | services source / generation | supported dbMode + boundary | notes |
 | --- | --- | --- | --- | --- | --- | --- |
 | telemetry-collector-0.1.0 | unreleased | telemetry-collector 0.1.0 |  |  |  | Default-off umbrella analytics file collector. Requires accepted immutable collector and TLS-proxy images, producer and TLS Secrets and an exclusive persistent volume. Source rendering does not prove image entrypoint, TLS, durable acknowledgement, power-loss recovery or whole-application analytics coverage. The currently reviewed collector CLI registers relaycontrol events only. |
-| sessions-pipeline-0.7.3 | unreleased | sessions-pipeline 0.7.3<br>sessions-pipeline-worker 0.7.0<br>session-ingest-api 0.4.0<br>(deps: worker 0.7.0, alleyoop 0.4.0, hoopdb 0.9.0, session-object-storage 5.4.0, otel 0.178.0) | sessions-pipeline-worker: `agentworkforce/96bulls-services@sha256:6f22ea17dff3…`<br>session-ingest-api: `agentworkforce/96bulls-services@sha256:6f22ea17dff3…`<br>Native ingest edge (SERVICE=session-ingest): unqualified; an explicit qualified combined-image digest is required. Pins above belong to the existing internal worker/ingest services, not ingestEdge. | `7d7229bb31c1` / `eff8b3be4656` | selfhosted + global-default-revoke (cnpg)<br>selfhosted + global-default-revoke (external)<br>cloudsql + global-default-revoke (external)<br>supabase + event-trigger (external) (held)<br>supabase + (unset) (external) (fails closed)<br>local + (unset) (any) (dev only) | Adds the default-off native edge from merged pipeline #363; no compatible image or runtime acceptance is supplied. Adds Secret-only read API credentials and a true default-off regression. Normal composition with main bfcf6050 retains the descriptive session names and upgrade/IAM guards. Adds a default-off read API Deployment and ClusterIP Service with explicit compatible image/config requirements and enabled-state readiness. Worker and ingest images, migration generation and roles are unchanged. Pipeline PRs 317/318 are merged; their container/routes source does not establish the approved Postgres/canonical/auth assembly; no read API deployment or runtime proof is claimed. |
+| sessions-pipeline-0.8.0 | unreleased | sessions-pipeline 0.8.0<br>sessions-pipeline-worker 0.7.2<br>session-ingest-api 0.4.1<br>session-read-api 0.1.0<br>(deps: worker 0.7.2, alleyoop 0.4.1, sessionReadApi 0.1.0, hoopdb 0.9.0, session-object-storage 5.4.0, otel 0.178.0) | sessions-pipeline-worker: `agentworkforce/96bulls-services@sha256:6f22ea17dff3…`<br>session-ingest-api: `agentworkforce/96bulls-services@sha256:6f22ea17dff3…`<br>Native ingest edge (SERVICE=session-ingest): unqualified; an explicit qualified combined-image digest is required. Pins above belong to the existing internal worker/ingest services, not ingestEdge. | `7d7229bb31c1` / `eff8b3be4656` | selfhosted + global-default-revoke (cnpg)<br>selfhosted + global-default-revoke (external)<br>rds + global-default-revoke (external)<br>cloudsql + global-default-revoke (external)<br>supabase + event-trigger (external) (held)<br>supabase + (unset) (external) (fails closed)<br>local + (unset) (any) (dev only) | Moves the session read API to the standalone session-read-api chart, carried as a default-off dependency under sessionReadApi. The old readApi key refuses to render with a migration message. Default auth is relaycontrol_only. |
+| sessions-pipeline-0.7.6 | **planned** | sessions-pipeline 0.7.6<br>sessions-pipeline-worker 0.7.2<br>session-ingest-api 0.4.1<br>(deps: worker 0.7.2, alleyoop 0.4.1, hoopdb 0.9.0, session-object-storage 5.4.0, otel 0.178.0) | sessions-pipeline-worker: `agentworkforce/96bulls-services@sha256:6f22ea17dff3…`<br>session-ingest-api: `agentworkforce/96bulls-services@sha256:6f22ea17dff3…`<br>Native ingest edge (SERVICE=session-ingest): unqualified; an explicit qualified combined-image digest is required. Pins above belong to the existing internal worker/ingest services, not ingestEdge. | `7d7229bb31c1` / `eff8b3be4656` | selfhosted + global-default-revoke (cnpg)<br>selfhosted + global-default-revoke (external)<br>rds + global-default-revoke (external)<br>cloudsql + global-default-revoke (external)<br>supabase + event-trigger (external) (held)<br>supabase + (unset) (external) (fails closed)<br>local + (unset) (any) (dev only) | Adds the default-off searchIndexer block (pipeline session-pipeline-consumer, OpenSearch by default). With it off, every render differs only in the helm.sh/chart labels. |
+| sessions-pipeline-0.7.5 | shipped | sessions-pipeline 0.7.5<br>sessions-pipeline-worker 0.7.2<br>session-ingest-api 0.4.1<br>(deps: worker 0.7.2, alleyoop 0.4.1, hoopdb 0.9.0, session-object-storage 5.4.0, otel 0.178.0) | sessions-pipeline-worker: `agentworkforce/96bulls-services@sha256:6f22ea17dff3…`<br>session-ingest-api: `agentworkforce/96bulls-services@sha256:6f22ea17dff3…`<br>Native ingest edge (SERVICE=session-ingest): unqualified; an explicit qualified combined-image digest is required. Pins above belong to the existing internal worker/ingest services, not ingestEdge. | `7d7229bb31c1` / `eff8b3be4656` | selfhosted + global-default-revoke (cnpg)<br>selfhosted + global-default-revoke (external)<br>rds + global-default-revoke (external)<br>cloudsql + global-default-revoke (external)<br>supabase + event-trigger (external) (held)<br>supabase + (unset) (external) (fails closed)<br>local + (unset) (any) (dev only) | Adds default-off postgresCa so Node workloads and migrate Jobs can verify the Postgres server certificate (NODE_EXTRA_CA_CERTS); with it unset every sessions-pipeline render differs only in the helm.sh/chart labels. The relayhistory checksum/config annotation also changes under agent-relay, which rolls those pods on upgrade (see the agent-relay 0.5.3 row). Adds the default-off native edge from merged pipeline #363; no compatible image or runtime acceptance is supplied. Adds Secret-only read API credentials and a true default-off regression. Normal composition with main bfcf6050 retains the descriptive session names and upgrade/IAM guards. Adds a default-off read API Deployment and ClusterIP Service with explicit compatible image/config requirements and enabled-state readiness. Worker and ingest images, migration generation and roles are unchanged. Pipeline PRs 317/318 are merged; their container/routes source does not establish the approved Postgres/canonical/auth assembly; no read API deployment or runtime proof is claimed. |
+| sessions-pipeline-0.7.4 | **planned** | sessions-pipeline 0.7.4<br>sessions-pipeline-worker 0.7.1<br>session-ingest-api 0.4.0<br>(deps: worker 0.7.1, alleyoop 0.4.0, hoopdb 0.9.0, session-object-storage 5.4.0, otel 0.178.0) | sessions-pipeline-worker: `agentworkforce/96bulls-services@sha256:6f22ea17dff3…`<br>session-ingest-api: `agentworkforce/96bulls-services@sha256:6f22ea17dff3…`<br>Native ingest edge (SERVICE=session-ingest): unqualified; an explicit qualified combined-image digest is required. Pins above belong to the existing internal worker/ingest services, not ingestEdge. | `7d7229bb31c1` / `eff8b3be4656` | selfhosted + global-default-revoke (cnpg)<br>selfhosted + global-default-revoke (external)<br>rds + global-default-revoke (external)<br>cloudsql + global-default-revoke (external)<br>supabase + event-trigger (external) (held)<br>supabase + (unset) (external) (fails closed)<br>local + (unset) (any) (dev only) | Never released; superseded by 0.7.5. Adds the default-off native edge from merged pipeline #363; no compatible image or runtime acceptance is supplied. Adds Secret-only read API credentials and a true default-off regression. Normal composition with main bfcf6050 retains the descriptive session names and upgrade/IAM guards. Adds a default-off read API Deployment and ClusterIP Service with explicit compatible image/config requirements and enabled-state readiness. Worker and ingest images, migration generation and roles are unchanged. Pipeline PRs 317/318 are merged; their container/routes source does not establish the approved Postgres/canonical/auth assembly; no read API deployment or runtime proof is claimed. |
 | sessions-pipeline-0.7.2 | **planned** | sessions-pipeline 0.7.2<br>sessions-pipeline-worker 0.7.0<br>session-ingest-api 0.4.0<br>(deps: worker 0.7.0, alleyoop 0.4.0, hoopdb 0.9.0, session-object-storage 5.4.0, otel 0.178.0) | sessions-pipeline-worker: `agentworkforce/96bulls-services@sha256:6f22ea17dff3…`<br>session-ingest-api: `agentworkforce/96bulls-services@sha256:6f22ea17dff3…` | `7d7229bb31c1` / `eff8b3be4656` | selfhosted + global-default-revoke (cnpg)<br>selfhosted + global-default-revoke (external)<br>cloudsql + global-default-revoke (external)<br>supabase + event-trigger (external) (held)<br>supabase + (unset) (external) (fails closed)<br>local + (unset) (any) (dev only) | Adds Secret-only read API credentials and a true default-off regression. Normal composition with main bfcf6050 retains the descriptive session names and upgrade/IAM guards. Adds a default-off read API Deployment and ClusterIP Service with explicit compatible image/config requirements and enabled-state readiness. Worker and ingest images, migration generation and roles are unchanged. Pipeline PRs 317/318 are merged; their container/routes source does not establish the approved Postgres/canonical/auth assembly; no read API deployment or runtime proof is claimed. |
 | sessions-pipeline-0.7.1 | shipped | sessions-pipeline 0.7.1<br>sessions-pipeline-worker 0.7.0<br>session-ingest-api 0.4.0<br>(deps: worker 0.7.0, alleyoop 0.4.0, hoopdb 0.9.0, session-object-storage 5.4.0, otel 0.178.0) | sessions-pipeline-worker: `agentworkforce/96bulls-services@sha256:6f22ea17dff3…`<br>session-ingest-api: `agentworkforce/96bulls-services@sha256:6f22ea17dff3…` | `7d7229bb31c1` / `eff8b3be4656` | selfhosted + global-default-revoke (cnpg)<br>selfhosted + global-default-revoke (external)<br>cloudsql + global-default-revoke (external)<br>supabase + event-trigger (external) (held)<br>supabase + (unset) (external) (fails closed)<br>local + (unset) (any) (dev only) | Normal composition with main bfcf6050 retains the descriptive session names and upgrade/IAM guards. Adds a default-off read API Deployment and ClusterIP Service with explicit compatible image/config requirements and enabled-state readiness. Worker and ingest images, migration generation and roles are unchanged. Pipeline PRs 317/318 are merged; their container/routes source does not establish the approved Postgres/canonical/auth assembly; no read API deployment or runtime proof is claimed. |
 | sessions-pipeline-0.6.0 | shipped | sessions-pipeline 0.6.0<br>sessions-pipeline-worker 0.6.0<br>alleyoop 0.3.8<br>(deps: worker 0.6.0, alleyoop 0.3.8, hoopdb 0.9.0, locker 5.4.0, otel 0.178.0) | sessions-pipeline-worker: `agentworkforce/96bulls-services@sha256:6f22ea17dff3…`<br>alleyoop: `agentworkforce/96bulls-services@sha256:6f22ea17dff3…` | `7d7229bb31c1` / `eff8b3be4656` | selfhosted + global-default-revoke (cnpg)<br>selfhosted + global-default-revoke (external)<br>cloudsql + global-default-revoke (external)<br>supabase + event-trigger (external) (held)<br>supabase + (unset) (external) (fails closed)<br>local + (unset) (any) (dev only) | Rename: the umbrella and worker charts were published as 96bulls (last 0.5.4) and 96bulls-worker (last 0.5.3); they continue here as sessions-pipeline 0.6.0 and sessions-pipeline-worker 0.6.0 (96bulls 0.5.5 was never released). alleyoop 0.3.8 only relabels part-of. Includes alleyoop 0.3.7 auth.allowInterimRelayAuthBearer (ALLOW_INTERIM_RELAYAUTH_BEARER, default false, environment=local only). Same services image and db combos as 0.5.4. Upgrade path: helm upgrade <existing 96bulls release> agentworkforce/sessions-pipeline keeps the release, resource names and selectors (the worker alias is unchanged; only chart and part-of labels change). A standalone 96bulls-worker release keeps its selectors only with nameOverride: 96bulls-worker. |
@@ -77,7 +81,11 @@ Services image (sessions-pipeline-worker, alleyoop and the privileged SQL Jobs):
 | relayauth-0.1.2 | shipped | relayauth 0.1.2 | relayauth: `ghcr.io/agentworkforce/relayauth@sha256:c23c92d25fdf…` |  |  | License-annotation patch bump of 0.1.1. Superseded by 0.1.3. |
 | relayauth-0.1.1 | shipped | relayauth 0.1.1 | relayauth: `ghcr.io/agentworkforce/relayauth@sha256:c23c92d25fdf…` |  |  | relayauth 784582ef (machine-bound History assertion contract, relayauth #113). Superseded by 0.1.2. |
 | relayauth-0.1.0 | shipped | relayauth 0.1.0 | relayauth: `ghcr.io/agentworkforce/relayauth@sha256:eb71daa28e30…` |  |  | superseded by 0.1.1. |
-| agent-relay-0.5.1 | unreleased | agent-relay 0.5.1<br>relayhistory 0.1.1<br>relay-control 0.3.0<br>relay-webapp 0.2.0<br>(deps: relaycast 0.3.5, relayauth 0.1.4, sessions-pipeline 0.7.3, relayhistory 0.1.1, relay-control 0.3.0, relay-webapp 0.2.0, relayflows 0.2.5, durable-actors 0.14.6-awf.1, relayfile 0.2.2, telemetry-collector 0.1.0) | relayhistory: `ghcr.io/agentworkforce/relayhistory@sha256:<required>`<br>relay-control: `<required repository>@sha256:<required>`<br>relay-webapp: `ghcr.io/agentworkforce/relay-webapp@sha256:<required>` |  |  | Adds the default-off native ingest slot from pipeline #363 without an accepted artifact or rollout. Composes landed session naming/main bfcf6050, default-off telemetry #95/a45dbb2d and default-off reader #81/01dc7aee; preserves the standalone Chief registry outside the umbrella/kind profiles. Source-only Control/Webapp public chart rename. The Control chart requires both repository and digest explicitly; Webapp requires a verified digest; real profile image coordinates remain explicitly pinned to their existing repositories until those publishers supply new receipts. Existing releases must translate values keys and preserve names/selectors/DNS with a reviewed compatibility overlay. Kind refuses the old Control/Webapp layout before mutation. No RelayAuth or standalone History removal, publisher dispatch, rollout or new runtime proof is included; the sessions-native replacement remains dependency-gated. |
+| agent-relay-0.6.0 | unreleased | agent-relay 0.6.0<br>relayhistory 0.1.2<br>relay-control 0.3.1<br>relay-webapp 0.2.0<br>(deps: relaycast 0.3.5, relayauth 0.1.4, sessions-pipeline 0.8.0, relayhistory 0.1.2, relay-control 0.3.1, relay-webapp 0.2.0, relayflows 0.2.5, durable-actors 0.14.6-awf.1, relayfile 0.2.2, telemetry-collector 0.1.0, relay-chief 0.1.0) | relayhistory: `ghcr.io/agentworkforce/relayhistory@sha256:<required>`<br>relay-control: `<required repository>@sha256:<required>`<br>relay-webapp: `ghcr.io/agentworkforce/relay-webapp@sha256:<required>` |  |  | Takes sessions-pipeline 0.8.0, which moves the session read API to its own chart under sessionReadApi. |
+| agent-relay-0.5.5 | **planned** | agent-relay 0.5.5<br>relayhistory 0.1.2<br>relay-control 0.3.1<br>relay-webapp 0.2.0<br>(deps: relaycast 0.3.5, relayauth 0.1.4, sessions-pipeline 0.7.6, relayhistory 0.1.2, relay-control 0.3.1, relay-webapp 0.2.0, relayflows 0.2.5, durable-actors 0.14.6-awf.1, relayfile 0.2.2, telemetry-collector 0.1.0, relay-chief 0.1.0) | relayhistory: `ghcr.io/agentworkforce/relayhistory@sha256:<required>`<br>relay-control: `<required repository>@sha256:<required>`<br>relay-webapp: `ghcr.io/agentworkforce/relay-webapp@sha256:<required>` |  |  | Takes sessions-pipeline 0.7.6 (default-off searchIndexer). With it off, every render differs only in the helm.sh/chart labels. |
+| agent-relay-0.5.4 | **planned** | agent-relay 0.5.4<br>relayhistory 0.1.2<br>relay-control 0.3.1<br>relay-webapp 0.2.0<br>(deps: relaycast 0.3.5, relayauth 0.1.4, sessions-pipeline 0.7.5, relayhistory 0.1.2, relay-control 0.3.1, relay-webapp 0.2.0, relayflows 0.2.5, durable-actors 0.14.6-awf.1, relayfile 0.2.2, telemetry-collector 0.1.0, relay-chief 0.1.0) | relayhistory: `ghcr.io/agentworkforce/relayhistory@sha256:<required>`<br>relay-control: `<required repository>@sha256:<required>`<br>relay-webapp: `ghcr.io/agentworkforce/relay-webapp@sha256:<required>` |  |  | Adds relay-chief 0.1.0 as a default-off component (components.relayChief). With it off, every render differs only in the helm.sh/chart labels. |
+| agent-relay-0.5.3 | **planned** | agent-relay 0.5.3<br>relayhistory 0.1.2<br>relay-control 0.3.1<br>relay-webapp 0.2.0<br>(deps: relaycast 0.3.5, relayauth 0.1.4, sessions-pipeline 0.7.5, relayhistory 0.1.2, relay-control 0.3.1, relay-webapp 0.2.0, relayflows 0.2.5, durable-actors 0.14.6-awf.1, relayfile 0.2.2, telemetry-collector 0.1.0) | relayhistory: `ghcr.io/agentworkforce/relayhistory@sha256:<required>`<br>relay-control: `<required repository>@sha256:<required>`<br>relay-webapp: `ghcr.io/agentworkforce/relay-webapp@sha256:<required>` |  |  | Never released; superseded by 0.5.4. Adds default-off postgresCa so Node workloads and migrate Jobs can verify the Postgres server certificate (NODE_EXTRA_CA_CERTS); with it unset every render differs only in the helm.sh/chart labels and the relayhistory checksum/config annotation, which hashes the ConfigMap including that label and so rolls the relayhistory pods on upgrade. Adds the default-off native ingest slot from pipeline #363 without an accepted artifact or rollout. Composes landed session naming/main bfcf6050, default-off telemetry #95/a45dbb2d and default-off reader #81/01dc7aee; preserves the standalone Chief registry outside the umbrella/kind profiles. Source-only Control/Webapp public chart rename. The Control chart requires both repository and digest explicitly; Webapp requires a verified digest; real profile image coordinates remain explicitly pinned to their existing repositories until those publishers supply new receipts. Existing releases must translate values keys and preserve names/selectors/DNS with a reviewed compatibility overlay. Kind refuses the old Control/Webapp layout before mutation. No RelayAuth or standalone History removal, publisher dispatch, rollout or new runtime proof is included; the sessions-native replacement remains dependency-gated. |
+| agent-relay-0.5.2 | **planned** | agent-relay 0.5.2<br>relayhistory 0.1.1<br>relay-control 0.3.0<br>relay-webapp 0.2.0<br>(deps: relaycast 0.3.5, relayauth 0.1.4, sessions-pipeline 0.7.4, relayhistory 0.1.1, relay-control 0.3.0, relay-webapp 0.2.0, relayflows 0.2.5, durable-actors 0.14.6-awf.1, relayfile 0.2.2, telemetry-collector 0.1.0) | relayhistory: `ghcr.io/agentworkforce/relayhistory@sha256:<required>`<br>relay-control: `<required repository>@sha256:<required>`<br>relay-webapp: `ghcr.io/agentworkforce/relay-webapp@sha256:<required>` |  |  | Never released; superseded by 0.5.3. Adds the default-off native ingest slot from pipeline #363 without an accepted artifact or rollout. Composes landed session naming/main bfcf6050, default-off telemetry #95/a45dbb2d and default-off reader #81/01dc7aee; preserves the standalone Chief registry outside the umbrella/kind profiles. Source-only Control/Webapp public chart rename. The Control chart requires both repository and digest explicitly; Webapp requires a verified digest; real profile image coordinates remain explicitly pinned to their existing repositories until those publishers supply new receipts. Existing releases must translate values keys and preserve names/selectors/DNS with a reviewed compatibility overlay. Kind refuses the old Control/Webapp layout before mutation. No RelayAuth or standalone History removal, publisher dispatch, rollout or new runtime proof is included; the sessions-native replacement remains dependency-gated. |
 | agent-relay-0.5.0 | **planned** | agent-relay 0.5.0<br>relayhistory 0.1.1<br>relay-control 0.3.0<br>relay-webapp 0.2.0<br>(deps: relaycast 0.3.5, relayauth 0.1.4, sessions-pipeline 0.7.2, relayhistory 0.1.1, relay-control 0.3.0, relay-webapp 0.2.0, relayflows 0.2.5, durable-actors 0.14.6-awf.1, relayfile 0.2.2, telemetry-collector 0.1.0) | relayhistory: `ghcr.io/agentworkforce/relayhistory@sha256:<required>`<br>relay-control: `<required repository>@sha256:<required>`<br>relay-webapp: `ghcr.io/agentworkforce/relay-webapp@sha256:<required>` |  |  | Composes landed session naming/main bfcf6050, default-off telemetry #95/a45dbb2d and default-off reader #81/01dc7aee; preserves the standalone Chief registry outside the umbrella/kind profiles. Source-only Control/Webapp public chart rename. The Control chart requires both repository and digest explicitly; Webapp requires a verified digest; real profile image coordinates remain explicitly pinned to their existing repositories until those publishers supply new receipts. Existing releases must translate values keys and preserve names/selectors/DNS with a reviewed compatibility overlay. Kind refuses the old Control/Webapp layout before mutation. No RelayAuth or standalone History removal, publisher dispatch, rollout or new runtime proof is included; the sessions-native replacement remains dependency-gated. |
 | agent-relay-0.3.17 | **planned** | agent-relay 0.3.17<br>relayhistory 0.1.1<br>relay-cloud-api 0.2.7<br>relay-dashboard 0.1.3<br>(deps: relaycast 0.3.5, relayauth 0.1.4, sessions-pipeline 0.6.2, relayhistory 0.1.1, relay-cloud-api 0.2.7, relay-dashboard 0.1.3, relayflows 0.2.5, durable-actors 0.14.6-awf.1, relayfile 0.2.2) | relayhistory: `ghcr.io/agentworkforce/relayhistory@sha256:<required>`<br>relay-cloud-api: `ghcr.io/agentworkforce/selfhost-api@sha256:<required>`<br>relay-dashboard: `ghcr.io/agentworkforce/relay-dashboard@sha256:<required>` |  |  | Historical untagged source proposal at d8bbff820a6541593fa2e889cbf14e3aa1f0baa7, superseded by the public-name source row; not a published or current release. Bundles sessions-pipeline 0.6.2 default-off read API plumbing and relay-cloud-api 0.2.7 legacy-client env omission. Supersedes the untagged 0.3.16 source and retains its kind core/addons relay-webapp b944a979 image pin at sha256:e4de2c628e72e906e809fd32e6192baa7c93a404eb019964cd7706805e316e6a; no new UI/runtime proof is claimed. Includes unset OAuth/raw FILE-alias reservation and strict valueFrom source validation from the reviewed extraEnv guard proposal. No profile enables the component or reroutes relaycontrol. Compatible runtime assembly and image remain upstream dependencies. Existing kind evidence belongs to its pinned base revision, not this new chart version. |
 | agent-relay-0.3.12 | shipped | agent-relay 0.3.12<br>relayhistory 0.1.1<br>relay-cloud-api 0.2.4<br>relay-dashboard 0.1.3<br>(deps: relaycast 0.3.4, relayauth 0.1.3, sessions-pipeline 0.6.0, relayhistory 0.1.1, relay-cloud-api 0.2.4, relay-dashboard 0.1.3, relayflows 0.2.4, durable-actors 0.14.6-awf.1, relayfile 0.2.1) | relayhistory: `ghcr.io/agentworkforce/relayhistory@sha256:<required>`<br>relay-cloud-api: `ghcr.io/agentworkforce/selfhost-api@sha256:<required>`<br>relay-dashboard: `ghcr.io/agentworkforce/relay-dashboard@sha256:<required>` |  |  | 0.3.12 is published from the tag agent-relay-0.3.12 (release run 41985579885). New in 0.3.12: Durable actors on AWS EKS. values-eks-actors.yaml is a standalone profile (Relaycast and Relayfile in actor mode on durable-actors with S3 storage, runc actor hosts on a tainted node group, EKS Pod Identity); scripts/selfhost/eks-actors-sandbox.sh and eks-actors-install.sh build the proof in a Pippen sandbox. Bundles durable-actors 0.14.6-awf.1 (UPSTREAM.md patches 10 and 11: storage.provider s3, storage.s3.*, AWS zones, sandbox.*; needs a control-plane image from the AgentWorkforce durable-actors fork), relaycast 0.3.4 and relayfile 0.2.1 (S3 deployer artifact store). NOTES warns when storage.s3.actorCredentials is control-plane. With none of these values set every render is byte-identical to 0.3.11 apart from the helm.sh/chart labels. values-eks-actors.yaml pins six public GHCR actor images by digest (durable-actors-control-plane and durable-actors-typescript from the fork tag awf-v0.14.6-aws.2, linux/amd64 only; relaycast-actors-gateway and relaycast-actors-deployer from relaycast 4e90b169; relayfile-actors and relayfile-actors-workspace from relayfile 30a5e007; anonymous pulls verified 2026-11-04), recorded as inactive entries in customer-images.yaml. The actor components stay off by default. Release images and values-gcp.yaml pins are unchanged from 0.3.11. |
@@ -102,6 +110,7 @@ Services image (sessions-pipeline-worker, alleyoop and the privileged SQL Jobs):
 | --- | --- | --- | --- | --- | --- |
 | `selfhosted` | `global-default-revoke` | cnpg | shipped | selfhost-postgres, migration, aws-cnpg | chart Jobs install the runtime role and the function default |
 | `selfhosted` | `global-default-revoke` | external | shipped | external-selfhosted | operator runs the bootstrap files as a superuser |
+| `rds` | `global-default-revoke` | external | shipped | external-rds | the RDS master runs the rds_*.sql bootstrap first |
 | `cloudsql` | `global-default-revoke` | external | shipped | gcp-cloudsql | operator runs the Cloud SQL bootstrap files as the migration owner; roleBootstrap false |
 | `supabase` | `event-trigger` | external | held | external-supabase | supabaseActivation.hold; migrate refuses until the reviewed event trigger is installed and --activation-check passes |
 | `supabase` | (unset) | external | fails closed | aws-supabase | renders; migrate refuses with function_boundary_unproven |
@@ -152,10 +161,11 @@ chart `sessions-pipeline` · values [`profiles/selfhost-postgres.yaml`](../chart
 | --- | --- | --- | --- | --- |
 | shipped | [alleyoop token verification source](#opt-alleyoop-auth-mode) | `jwksUrl`, `localJwks` | `jwksUrl` | values `alleyoop.auth.jwksUrl`, `alleyoop.auth.localJwks`, `alleyoop.auth.issuer`, `alleyoop.auth.audience`, `alleyoop.secretKeys.jwksJson`; env `RELAYAUTH_JWKS_URL`, `JWKS_JSON`, `AUTH_ISSUER`, `AUTH_AUDIENCE`; Secret `<existingSecret>` keys `JWKS_JSON` (only with auth.localJwks=true) |
 | shipped | [Plain http to in-cluster Service FQDNs](#opt-sessions-pipeline-in-cluster-http) | `false`, `true` | `false` | values `alleyoop.allowInClusterHttp`, `worker.allowInClusterHttp`; env `ALLOW_IN_CLUSTER_HTTP` |
+| shipped | [CA bundle for verifying the Postgres server certificate (postgresCa)](#opt-postgres-ca-bundle) | `false`, `true` | `false` | values `worker.postgresCa.*`, `alleyoop.postgresCa.*`, `relay-control:postgresCa.*`, `relayhistory:postgresCa.*`; env `NODE_EXTRA_CA_CERTS`, `PGSSLROOTCERT` |
 | shipped | [RelayHistory origin expected by the ingest](#opt-alleyoop-history-origin) | `unset`, `origin` | `unset` | values `alleyoop.auth.historyOrigin`; env `RELAYHISTORY_ORIGIN` |
 | shipped | [Interim RelayAuth bearer compatibility (local only)](#opt-alleyoop-interim-relayauth-bearer) | `false`, `true` | `false` | values `alleyoop.auth.allowInterimRelayAuthBearer`; env `ALLOW_INTERIM_RELAYAUTH_BEARER` |
 | shipped | [HoopDb backend](#opt-sessions-pipeline-hoopdb-backend) | `cnpg`, `external` | `cnpg` | values `hoopdb.enabled` |
-| shipped | [Migrator database mode (HOOPDB_DB_MODE)](#opt-sessions-pipeline-db-mode) | `selfhosted`, `cloudsql`, `supabase`, `local` | `selfhosted` | values `worker.migrations.databaseMode`; env `HOOPDB_DB_MODE` |
+| shipped | [Migrator database mode (HOOPDB_DB_MODE)](#opt-sessions-pipeline-db-mode) | `selfhosted`, `cloudsql`, `rds`, `supabase`, `local` | `selfhosted` | values `worker.migrations.databaseMode`; env `HOOPDB_DB_MODE` |
 | shipped | [Function boundary mode (HOOPDB_FUNCTION_BOUNDARY_MODE)](#opt-sessions-pipeline-function-boundary-mode) | `global-default-revoke`, `event-trigger` | `global-default-revoke` | values `worker.migrations.functionBoundaryMode`; env `HOOPDB_FUNCTION_BOUNDARY_MODE`, `HOOPDB_FUNCTION_BOUNDARY_APPROVED` |
 | shipped | [Plain-Postgres role shim (HOOPDB_SUPABASE_SHIM)](#opt-sessions-pipeline-supabase-shim) | `true`, `false` | `true` | values `worker.migrations.supabaseShim`; env `HOOPDB_SUPABASE_SHIM` |
 | shipped | [Migrator role bootstrap (HOOPDB_ROLE_BOOTSTRAP)](#opt-sessions-pipeline-role-bootstrap) | `true`, `false`, `unset` | (no default) | values `worker.migrations.roleBootstrap`; env `HOOPDB_ROLE_BOOTSTRAP` |
@@ -173,7 +183,8 @@ chart `sessions-pipeline` · values [`profiles/selfhost-postgres.yaml`](../chart
 | **planned** | [Transcript search backend (search.backend)](#opt-sessions-pipeline-search-backend) | `postgres`, `clickhouse` (**planned**) | `postgres` | values `search.backend`, `search.clickhouse.*` |
 | **planned** | [Model session briefs](#opt-sessions-pipeline-session-briefs) | `false`, `true` (**planned**) | `false` | values `worker.sessionBrief.enabled`, `worker.sessionBrief.model`; env `SESSION_BRIEF_ENABLED`, `SESSION_BRIEF_MODEL` |
 | shipped | [Default-off native session upload edge](#opt-sessions-native-ingest) | `disabled`, `enabled` | `disabled` | values `ingestEdge.*`; env `SERVICE`, `RELAYHISTORY_SELFHOST_INGEST`, `RELAYHISTORY_INGEST_PORT`, `RELAYHISTORY_INGEST_ORIGIN`, `RELAYCONTROL_INTROSPECT_URL`, `RELAYCONTROL_INTROSPECT_SECRET`, `RELAYHISTORY_INGEST_DATABASE_URL`, `SESSION_POSTGRES_TLS_PROFILE`, `SESSION_POSTGRES_CA_FILE`, `SESSION_POSTGRES_CA_SHA256`, `RELAYHISTORY_INGEST_PG_POOL_MAX`, `ALLOW_IN_CLUSTER_HTTP`, `LOCKER_PROVIDER`, `LOCKER_BUCKET`, `LOCKER_ENDPOINT`, `LOCKER_REGION`, `LOCKER_ACCESS_KEY_ID`, `LOCKER_SECRET_ACCESS_KEY`, `INGEST_KEY_ROOT`, `INGEST_MAX_PER_USER`, `INGEST_MAX_PER_ORG`; Secret `<native ingest runtime Secret>` keys `database-url`, `introspect-secret`; Secret `<native ingest object-store Secret>` keys `access-key-id`, `secret-access-key` |
-| shipped | [Default-off self-host session read API container](#opt-sessions-read-api) | `disabled`, `enabled` | `disabled` | values `readApi.*`; env `SERVICE`, `RELAYHISTORY_SELFHOST_READ_API`, `RELAYHISTORY_READ_API_PORT`, `RELAYHISTORY_READ_API_SECRET`, `READ_API_ORIGIN`, `READ_API_AUTH_MODE`, `LOCKER_BUCKET`, `PIPELINE_ORG_FROM_PREFIX`, `PIPELINE_KEY_PREFIX`, `READ_API_COMPLETE_SINCE`, `READ_API_DIRECTORY_WORKSPACES`, `SEARCH_INDEX_BACKEND`, `ALLOW_IN_CLUSTER_HTTP`, `RELAYAUTH_JWKS_URL`, `RELAYAUTH_ISSUER`, `RELAYHISTORY_ACCEPT_RELAYCONTROL_TOKENS`, `RELAYCONTROL_INTROSPECT_URL`, `RELAYCONTROL_INTROSPECT_SECRET`; Secret `<read API configuration Secret>` keys `RELAYHISTORY_READ_API_SECRET`; Secret `<read API introspection Secret>` keys `RELAYCONTROL_INTROSPECT_SECRET` |
+| shipped | [Default-off self-host session read API container](#opt-sessions-read-api) | `disabled`, `enabled` | `disabled` | values `fullnameOverride`, `replicas`, `image.*`, `imagePullSecrets`, `port`, `probeRuntime`, `origin`, `completeSince`, `directoryWorkspaces`, `login.advertisesSync`, `turns.assumeNoLegacy`, `serviceAccountCreate`, `allowInClusterHttp`, `config.*`, `postgres.*`, `postgresCa.*`, `search.*`, `auth.*`, `cors.*`, `extraEnv`, `extraVolumes`, `extraVolumeMounts`, `serviceAccountName`, `nodeSelector`, `tolerations`, `affinity`, `podAnnotations`, `resources`; env `SERVICE`, `RELAYHISTORY_SELFHOST_READ_API`, `RELAYHISTORY_READ_API_PORT`, `RELAYHISTORY_READ_API_SECRET`, `READ_API_ORIGIN`, `READ_API_AUTH_MODE`, `READ_API_COMPLETE_SINCE`, `READ_API_DIRECTORY_WORKSPACES`, `READ_API_CORS_ALLOWED_ORIGINS`, `RELAYHISTORY_SELFHOST_LOGIN_ADVERTISES_SYNC`, `READ_API_TURNS_ASSUME_NO_LEGACY`, `SEARCH_INDEX_POSTGRES_BACKEND_ID`, `SEARCH_INDEX_OPENSEARCH_URL`, `SEARCH_INDEX_OPENSEARCH_AUTH`, `SEARCH_INDEX_OPENSEARCH_AWS_REGION`, `SEARCH_INDEX_OPENSEARCH_INDEX_PREFIX`, `PIPELINE_ORG_FROM_PREFIX`, `PIPELINE_KEY_PREFIX`, `SEARCH_INDEX_BACKEND`, `ALLOW_IN_CLUSTER_HTTP`, `SESSION_POSTGRES_TLS_PROFILE`, `SESSION_POSTGRES_CA_FILE`, `SESSION_POSTGRES_CA_SHA256`, `RELAYAUTH_JWKS_URL`, `RELAYAUTH_ISSUER`, `RELAYHISTORY_ACCEPT_RELAYCONTROL_TOKENS`, `RELAYCONTROL_INTROSPECT_URL`, `RELAYCONTROL_INTROSPECT_SECRET`; Secret `<read API configuration Secret>` keys `RELAYHISTORY_READ_API_SECRET`; Secret `<read API introspection Secret>` keys `RELAYCONTROL_INTROSPECT_SECRET` |
+| shipped | [Default-off self-host transcript search writer](#opt-sessions-search-indexer) | `disabled`, `enabled` | `disabled` | values `searchIndexer.*`; env `SERVICE`, `RELAYHISTORY_SELFHOST_PIPELINE_CONSUMER`, `RELAYHISTORY_PIPELINE_CONSUMER_SECRET`, `SEARCH_INDEX_BACKEND`, `SEARCH_INDEX_POSTGRES_BACKEND_ID`, `READ_API_COMPLETE_SINCE`, `PIPELINE_KEY_PREFIX`, `PIPELINE_ORG_FROM_PREFIX`, `SESSION_POSTGRES_TLS_PROFILE`, `SESSION_POSTGRES_CA_FILE`, `SESSION_POSTGRES_CA_SHA256`, `LOCKER_BUCKET`, `LOCKER_REGION`, `LOCKER_ENDPOINT`, `SEARCH_INDEX_OPENSEARCH_URL`, `SEARCH_INDEX_OPENSEARCH_AUTH`, `SEARCH_INDEX_OPENSEARCH_AWS_REGION`, `SEARCH_INDEX_OPENSEARCH_INDEX_PREFIX`, `WORKER_HEALTH_PORT`; Secret `<search indexer configuration Secret>` keys `RELAYHISTORY_PIPELINE_CONSUMER_SECRET`; Secret `<search indexer bootstrap Secret>` keys `RELAYHISTORY_PIPELINE_CONSUMER_SECRET` |
 
 ### Profile: migration
 
@@ -210,10 +221,11 @@ chart `sessions-pipeline` · values [`profiles/migration.yaml`](../charts/sessio
 | --- | --- | --- | --- | --- |
 | shipped | [alleyoop token verification source](#opt-alleyoop-auth-mode) | `jwksUrl`, `localJwks` | `jwksUrl` | values `alleyoop.auth.jwksUrl`, `alleyoop.auth.localJwks`, `alleyoop.auth.issuer`, `alleyoop.auth.audience`, `alleyoop.secretKeys.jwksJson`; env `RELAYAUTH_JWKS_URL`, `JWKS_JSON`, `AUTH_ISSUER`, `AUTH_AUDIENCE`; Secret `<existingSecret>` keys `JWKS_JSON` (only with auth.localJwks=true) |
 | shipped | [Plain http to in-cluster Service FQDNs](#opt-sessions-pipeline-in-cluster-http) | `false`, `true` | `false` | values `alleyoop.allowInClusterHttp`, `worker.allowInClusterHttp`; env `ALLOW_IN_CLUSTER_HTTP` |
+| shipped | [CA bundle for verifying the Postgres server certificate (postgresCa)](#opt-postgres-ca-bundle) | `false`, `true` | `false` | values `worker.postgresCa.*`, `alleyoop.postgresCa.*`, `relay-control:postgresCa.*`, `relayhistory:postgresCa.*`; env `NODE_EXTRA_CA_CERTS`, `PGSSLROOTCERT` |
 | shipped | [RelayHistory origin expected by the ingest](#opt-alleyoop-history-origin) | `unset`, `origin` | `unset` | values `alleyoop.auth.historyOrigin`; env `RELAYHISTORY_ORIGIN` |
 | shipped | [Interim RelayAuth bearer compatibility (local only)](#opt-alleyoop-interim-relayauth-bearer) | `false`, `true` | `false` | values `alleyoop.auth.allowInterimRelayAuthBearer`; env `ALLOW_INTERIM_RELAYAUTH_BEARER` |
 | shipped | [HoopDb backend](#opt-sessions-pipeline-hoopdb-backend) | `cnpg`, `external` | `cnpg` | values `hoopdb.enabled` |
-| shipped | [Migrator database mode (HOOPDB_DB_MODE)](#opt-sessions-pipeline-db-mode) | `selfhosted`, `cloudsql`, `supabase`, `local` | `selfhosted` | values `worker.migrations.databaseMode`; env `HOOPDB_DB_MODE` |
+| shipped | [Migrator database mode (HOOPDB_DB_MODE)](#opt-sessions-pipeline-db-mode) | `selfhosted`, `cloudsql`, `rds`, `supabase`, `local` | `selfhosted` | values `worker.migrations.databaseMode`; env `HOOPDB_DB_MODE` |
 | shipped | [Function boundary mode (HOOPDB_FUNCTION_BOUNDARY_MODE)](#opt-sessions-pipeline-function-boundary-mode) | `global-default-revoke`, `event-trigger` | `global-default-revoke` | values `worker.migrations.functionBoundaryMode`; env `HOOPDB_FUNCTION_BOUNDARY_MODE`, `HOOPDB_FUNCTION_BOUNDARY_APPROVED` |
 | shipped | [Plain-Postgres role shim (HOOPDB_SUPABASE_SHIM)](#opt-sessions-pipeline-supabase-shim) | `true`, `false` | `true` | values `worker.migrations.supabaseShim`; env `HOOPDB_SUPABASE_SHIM` |
 | shipped | [Migrator role bootstrap (HOOPDB_ROLE_BOOTSTRAP)](#opt-sessions-pipeline-role-bootstrap) | `true`, `false`, `unset` | (no default) | values `worker.migrations.roleBootstrap`; env `HOOPDB_ROLE_BOOTSTRAP` |
@@ -231,11 +243,12 @@ chart `sessions-pipeline` · values [`profiles/migration.yaml`](../charts/sessio
 | **planned** | [Transcript search backend (search.backend)](#opt-sessions-pipeline-search-backend) | `postgres`, `clickhouse` (**planned**) | `postgres` | values `search.backend`, `search.clickhouse.*` |
 | **planned** | [Model session briefs](#opt-sessions-pipeline-session-briefs) | `false`, `true` (**planned**) | `false` | values `worker.sessionBrief.enabled`, `worker.sessionBrief.model`; env `SESSION_BRIEF_ENABLED`, `SESSION_BRIEF_MODEL` |
 | shipped | [Default-off native session upload edge](#opt-sessions-native-ingest) | `disabled`, `enabled` | `disabled` | values `ingestEdge.*`; env `SERVICE`, `RELAYHISTORY_SELFHOST_INGEST`, `RELAYHISTORY_INGEST_PORT`, `RELAYHISTORY_INGEST_ORIGIN`, `RELAYCONTROL_INTROSPECT_URL`, `RELAYCONTROL_INTROSPECT_SECRET`, `RELAYHISTORY_INGEST_DATABASE_URL`, `SESSION_POSTGRES_TLS_PROFILE`, `SESSION_POSTGRES_CA_FILE`, `SESSION_POSTGRES_CA_SHA256`, `RELAYHISTORY_INGEST_PG_POOL_MAX`, `ALLOW_IN_CLUSTER_HTTP`, `LOCKER_PROVIDER`, `LOCKER_BUCKET`, `LOCKER_ENDPOINT`, `LOCKER_REGION`, `LOCKER_ACCESS_KEY_ID`, `LOCKER_SECRET_ACCESS_KEY`, `INGEST_KEY_ROOT`, `INGEST_MAX_PER_USER`, `INGEST_MAX_PER_ORG`; Secret `<native ingest runtime Secret>` keys `database-url`, `introspect-secret`; Secret `<native ingest object-store Secret>` keys `access-key-id`, `secret-access-key` |
-| shipped | [Default-off self-host session read API container](#opt-sessions-read-api) | `disabled`, `enabled` | `disabled` | values `readApi.*`; env `SERVICE`, `RELAYHISTORY_SELFHOST_READ_API`, `RELAYHISTORY_READ_API_PORT`, `RELAYHISTORY_READ_API_SECRET`, `READ_API_ORIGIN`, `READ_API_AUTH_MODE`, `LOCKER_BUCKET`, `PIPELINE_ORG_FROM_PREFIX`, `PIPELINE_KEY_PREFIX`, `READ_API_COMPLETE_SINCE`, `READ_API_DIRECTORY_WORKSPACES`, `SEARCH_INDEX_BACKEND`, `ALLOW_IN_CLUSTER_HTTP`, `RELAYAUTH_JWKS_URL`, `RELAYAUTH_ISSUER`, `RELAYHISTORY_ACCEPT_RELAYCONTROL_TOKENS`, `RELAYCONTROL_INTROSPECT_URL`, `RELAYCONTROL_INTROSPECT_SECRET`; Secret `<read API configuration Secret>` keys `RELAYHISTORY_READ_API_SECRET`; Secret `<read API introspection Secret>` keys `RELAYCONTROL_INTROSPECT_SECRET` |
+| shipped | [Default-off self-host session read API container](#opt-sessions-read-api) | `disabled`, `enabled` | `disabled` | values `fullnameOverride`, `replicas`, `image.*`, `imagePullSecrets`, `port`, `probeRuntime`, `origin`, `completeSince`, `directoryWorkspaces`, `login.advertisesSync`, `turns.assumeNoLegacy`, `serviceAccountCreate`, `allowInClusterHttp`, `config.*`, `postgres.*`, `postgresCa.*`, `search.*`, `auth.*`, `cors.*`, `extraEnv`, `extraVolumes`, `extraVolumeMounts`, `serviceAccountName`, `nodeSelector`, `tolerations`, `affinity`, `podAnnotations`, `resources`; env `SERVICE`, `RELAYHISTORY_SELFHOST_READ_API`, `RELAYHISTORY_READ_API_PORT`, `RELAYHISTORY_READ_API_SECRET`, `READ_API_ORIGIN`, `READ_API_AUTH_MODE`, `READ_API_COMPLETE_SINCE`, `READ_API_DIRECTORY_WORKSPACES`, `READ_API_CORS_ALLOWED_ORIGINS`, `RELAYHISTORY_SELFHOST_LOGIN_ADVERTISES_SYNC`, `READ_API_TURNS_ASSUME_NO_LEGACY`, `SEARCH_INDEX_POSTGRES_BACKEND_ID`, `SEARCH_INDEX_OPENSEARCH_URL`, `SEARCH_INDEX_OPENSEARCH_AUTH`, `SEARCH_INDEX_OPENSEARCH_AWS_REGION`, `SEARCH_INDEX_OPENSEARCH_INDEX_PREFIX`, `PIPELINE_ORG_FROM_PREFIX`, `PIPELINE_KEY_PREFIX`, `SEARCH_INDEX_BACKEND`, `ALLOW_IN_CLUSTER_HTTP`, `SESSION_POSTGRES_TLS_PROFILE`, `SESSION_POSTGRES_CA_FILE`, `SESSION_POSTGRES_CA_SHA256`, `RELAYAUTH_JWKS_URL`, `RELAYAUTH_ISSUER`, `RELAYHISTORY_ACCEPT_RELAYCONTROL_TOKENS`, `RELAYCONTROL_INTROSPECT_URL`, `RELAYCONTROL_INTROSPECT_SECRET`; Secret `<read API configuration Secret>` keys `RELAYHISTORY_READ_API_SECRET`; Secret `<read API introspection Secret>` keys `RELAYCONTROL_INTROSPECT_SECRET` |
+| shipped | [Default-off self-host transcript search writer](#opt-sessions-search-indexer) | `disabled`, `enabled` | `disabled` | values `searchIndexer.*`; env `SERVICE`, `RELAYHISTORY_SELFHOST_PIPELINE_CONSUMER`, `RELAYHISTORY_PIPELINE_CONSUMER_SECRET`, `SEARCH_INDEX_BACKEND`, `SEARCH_INDEX_POSTGRES_BACKEND_ID`, `READ_API_COMPLETE_SINCE`, `PIPELINE_KEY_PREFIX`, `PIPELINE_ORG_FROM_PREFIX`, `SESSION_POSTGRES_TLS_PROFILE`, `SESSION_POSTGRES_CA_FILE`, `SESSION_POSTGRES_CA_SHA256`, `LOCKER_BUCKET`, `LOCKER_REGION`, `LOCKER_ENDPOINT`, `SEARCH_INDEX_OPENSEARCH_URL`, `SEARCH_INDEX_OPENSEARCH_AUTH`, `SEARCH_INDEX_OPENSEARCH_AWS_REGION`, `SEARCH_INDEX_OPENSEARCH_INDEX_PREFIX`, `WORKER_HEALTH_PORT`; Secret `<search indexer configuration Secret>` keys `RELAYHISTORY_PIPELINE_CONSUMER_SECRET`; Secret `<search indexer bootstrap Secret>` keys `RELAYHISTORY_PIPELINE_CONSUMER_SECRET` |
 
 ### Profile: external-selfhosted
 
-**External operator-controlled plain Postgres (RDS, your own Postgres 17) dedicated to HoopDb.** No in-cluster SQL Jobs (the chart cannot exec into an external database); a superuser runs three bootstrap files first; migrate waits for the roles.
+**External operator-controlled plain Postgres with a superuser (your own Postgres 17) dedicated to HoopDb.** No in-cluster SQL Jobs (the chart cannot exec into an external database); a superuser runs three bootstrap files first; migrate waits for the roles.
 
 chart `sessions-pipeline` · values [`profiles/external-selfhosted.yaml`](../charts/sessions-pipeline/profiles/external-selfhosted.yaml) · dbMode `selfhosted` · boundary `global-default-revoke` · HoopDb external · services image GHCR · install: `helm install sessions-pipeline agentworkforce/sessions-pipeline -f profiles/external-selfhosted.yaml --set global.tenant.orgId=<org> --set alleyoop.auth.jwksUrl=<jwks url> --set worker.migrations.runtimeRole=<role> --set worker.migrations.runtimeRoleLogin=<true|false>`
 
@@ -265,10 +278,11 @@ chart `sessions-pipeline` · values [`profiles/external-selfhosted.yaml`](../cha
 | --- | --- | --- | --- | --- |
 | shipped | [alleyoop token verification source](#opt-alleyoop-auth-mode) | `jwksUrl`, `localJwks` | `jwksUrl` | values `alleyoop.auth.jwksUrl`, `alleyoop.auth.localJwks`, `alleyoop.auth.issuer`, `alleyoop.auth.audience`, `alleyoop.secretKeys.jwksJson`; env `RELAYAUTH_JWKS_URL`, `JWKS_JSON`, `AUTH_ISSUER`, `AUTH_AUDIENCE`; Secret `<existingSecret>` keys `JWKS_JSON` (only with auth.localJwks=true) |
 | shipped | [Plain http to in-cluster Service FQDNs](#opt-sessions-pipeline-in-cluster-http) | `false`, `true` | `false` | values `alleyoop.allowInClusterHttp`, `worker.allowInClusterHttp`; env `ALLOW_IN_CLUSTER_HTTP` |
+| shipped | [CA bundle for verifying the Postgres server certificate (postgresCa)](#opt-postgres-ca-bundle) | `false`, `true` | `false` | values `worker.postgresCa.*`, `alleyoop.postgresCa.*`, `relay-control:postgresCa.*`, `relayhistory:postgresCa.*`; env `NODE_EXTRA_CA_CERTS`, `PGSSLROOTCERT` |
 | shipped | [RelayHistory origin expected by the ingest](#opt-alleyoop-history-origin) | `unset`, `origin` | `unset` | values `alleyoop.auth.historyOrigin`; env `RELAYHISTORY_ORIGIN` |
 | shipped | [Interim RelayAuth bearer compatibility (local only)](#opt-alleyoop-interim-relayauth-bearer) | `false`, `true` | `false` | values `alleyoop.auth.allowInterimRelayAuthBearer`; env `ALLOW_INTERIM_RELAYAUTH_BEARER` |
 | shipped | [HoopDb backend](#opt-sessions-pipeline-hoopdb-backend) | `cnpg`, `external` | `external` | values `hoopdb.enabled` |
-| shipped | [Migrator database mode (HOOPDB_DB_MODE)](#opt-sessions-pipeline-db-mode) | `selfhosted`, `cloudsql`, `supabase`, `local` | `selfhosted` | values `worker.migrations.databaseMode`; env `HOOPDB_DB_MODE` |
+| shipped | [Migrator database mode (HOOPDB_DB_MODE)](#opt-sessions-pipeline-db-mode) | `selfhosted`, `cloudsql`, `rds`, `supabase`, `local` | `selfhosted` | values `worker.migrations.databaseMode`; env `HOOPDB_DB_MODE` |
 | shipped | [Function boundary mode (HOOPDB_FUNCTION_BOUNDARY_MODE)](#opt-sessions-pipeline-function-boundary-mode) | `global-default-revoke`, `event-trigger` | `global-default-revoke` | values `worker.migrations.functionBoundaryMode`; env `HOOPDB_FUNCTION_BOUNDARY_MODE`, `HOOPDB_FUNCTION_BOUNDARY_APPROVED` |
 | shipped | [Plain-Postgres role shim (HOOPDB_SUPABASE_SHIM)](#opt-sessions-pipeline-supabase-shim) | `true`, `false` | `true` | values `worker.migrations.supabaseShim`; env `HOOPDB_SUPABASE_SHIM` |
 | shipped | [Migrator role bootstrap (HOOPDB_ROLE_BOOTSTRAP)](#opt-sessions-pipeline-role-bootstrap) | `true`, `false`, `unset` | (no default) | values `worker.migrations.roleBootstrap`; env `HOOPDB_ROLE_BOOTSTRAP` |
@@ -286,7 +300,65 @@ chart `sessions-pipeline` · values [`profiles/external-selfhosted.yaml`](../cha
 | **planned** | [Transcript search backend (search.backend)](#opt-sessions-pipeline-search-backend) | `postgres`, `clickhouse` (**planned**) | `postgres` | values `search.backend`, `search.clickhouse.*` |
 | **planned** | [Model session briefs](#opt-sessions-pipeline-session-briefs) | `false`, `true` (**planned**) | `false` | values `worker.sessionBrief.enabled`, `worker.sessionBrief.model`; env `SESSION_BRIEF_ENABLED`, `SESSION_BRIEF_MODEL` |
 | shipped | [Default-off native session upload edge](#opt-sessions-native-ingest) | `disabled`, `enabled` | `disabled` | values `ingestEdge.*`; env `SERVICE`, `RELAYHISTORY_SELFHOST_INGEST`, `RELAYHISTORY_INGEST_PORT`, `RELAYHISTORY_INGEST_ORIGIN`, `RELAYCONTROL_INTROSPECT_URL`, `RELAYCONTROL_INTROSPECT_SECRET`, `RELAYHISTORY_INGEST_DATABASE_URL`, `SESSION_POSTGRES_TLS_PROFILE`, `SESSION_POSTGRES_CA_FILE`, `SESSION_POSTGRES_CA_SHA256`, `RELAYHISTORY_INGEST_PG_POOL_MAX`, `ALLOW_IN_CLUSTER_HTTP`, `LOCKER_PROVIDER`, `LOCKER_BUCKET`, `LOCKER_ENDPOINT`, `LOCKER_REGION`, `LOCKER_ACCESS_KEY_ID`, `LOCKER_SECRET_ACCESS_KEY`, `INGEST_KEY_ROOT`, `INGEST_MAX_PER_USER`, `INGEST_MAX_PER_ORG`; Secret `<native ingest runtime Secret>` keys `database-url`, `introspect-secret`; Secret `<native ingest object-store Secret>` keys `access-key-id`, `secret-access-key` |
-| shipped | [Default-off self-host session read API container](#opt-sessions-read-api) | `disabled`, `enabled` | `disabled` | values `readApi.*`; env `SERVICE`, `RELAYHISTORY_SELFHOST_READ_API`, `RELAYHISTORY_READ_API_PORT`, `RELAYHISTORY_READ_API_SECRET`, `READ_API_ORIGIN`, `READ_API_AUTH_MODE`, `LOCKER_BUCKET`, `PIPELINE_ORG_FROM_PREFIX`, `PIPELINE_KEY_PREFIX`, `READ_API_COMPLETE_SINCE`, `READ_API_DIRECTORY_WORKSPACES`, `SEARCH_INDEX_BACKEND`, `ALLOW_IN_CLUSTER_HTTP`, `RELAYAUTH_JWKS_URL`, `RELAYAUTH_ISSUER`, `RELAYHISTORY_ACCEPT_RELAYCONTROL_TOKENS`, `RELAYCONTROL_INTROSPECT_URL`, `RELAYCONTROL_INTROSPECT_SECRET`; Secret `<read API configuration Secret>` keys `RELAYHISTORY_READ_API_SECRET`; Secret `<read API introspection Secret>` keys `RELAYCONTROL_INTROSPECT_SECRET` |
+| shipped | [Default-off self-host session read API container](#opt-sessions-read-api) | `disabled`, `enabled` | `disabled` | values `fullnameOverride`, `replicas`, `image.*`, `imagePullSecrets`, `port`, `probeRuntime`, `origin`, `completeSince`, `directoryWorkspaces`, `login.advertisesSync`, `turns.assumeNoLegacy`, `serviceAccountCreate`, `allowInClusterHttp`, `config.*`, `postgres.*`, `postgresCa.*`, `search.*`, `auth.*`, `cors.*`, `extraEnv`, `extraVolumes`, `extraVolumeMounts`, `serviceAccountName`, `nodeSelector`, `tolerations`, `affinity`, `podAnnotations`, `resources`; env `SERVICE`, `RELAYHISTORY_SELFHOST_READ_API`, `RELAYHISTORY_READ_API_PORT`, `RELAYHISTORY_READ_API_SECRET`, `READ_API_ORIGIN`, `READ_API_AUTH_MODE`, `READ_API_COMPLETE_SINCE`, `READ_API_DIRECTORY_WORKSPACES`, `READ_API_CORS_ALLOWED_ORIGINS`, `RELAYHISTORY_SELFHOST_LOGIN_ADVERTISES_SYNC`, `READ_API_TURNS_ASSUME_NO_LEGACY`, `SEARCH_INDEX_POSTGRES_BACKEND_ID`, `SEARCH_INDEX_OPENSEARCH_URL`, `SEARCH_INDEX_OPENSEARCH_AUTH`, `SEARCH_INDEX_OPENSEARCH_AWS_REGION`, `SEARCH_INDEX_OPENSEARCH_INDEX_PREFIX`, `PIPELINE_ORG_FROM_PREFIX`, `PIPELINE_KEY_PREFIX`, `SEARCH_INDEX_BACKEND`, `ALLOW_IN_CLUSTER_HTTP`, `SESSION_POSTGRES_TLS_PROFILE`, `SESSION_POSTGRES_CA_FILE`, `SESSION_POSTGRES_CA_SHA256`, `RELAYAUTH_JWKS_URL`, `RELAYAUTH_ISSUER`, `RELAYHISTORY_ACCEPT_RELAYCONTROL_TOKENS`, `RELAYCONTROL_INTROSPECT_URL`, `RELAYCONTROL_INTROSPECT_SECRET`; Secret `<read API configuration Secret>` keys `RELAYHISTORY_READ_API_SECRET`; Secret `<read API introspection Secret>` keys `RELAYCONTROL_INTROSPECT_SECRET` |
+| shipped | [Default-off self-host transcript search writer](#opt-sessions-search-indexer) | `disabled`, `enabled` | `disabled` | values `searchIndexer.*`; env `SERVICE`, `RELAYHISTORY_SELFHOST_PIPELINE_CONSUMER`, `RELAYHISTORY_PIPELINE_CONSUMER_SECRET`, `SEARCH_INDEX_BACKEND`, `SEARCH_INDEX_POSTGRES_BACKEND_ID`, `READ_API_COMPLETE_SINCE`, `PIPELINE_KEY_PREFIX`, `PIPELINE_ORG_FROM_PREFIX`, `SESSION_POSTGRES_TLS_PROFILE`, `SESSION_POSTGRES_CA_FILE`, `SESSION_POSTGRES_CA_SHA256`, `LOCKER_BUCKET`, `LOCKER_REGION`, `LOCKER_ENDPOINT`, `SEARCH_INDEX_OPENSEARCH_URL`, `SEARCH_INDEX_OPENSEARCH_AUTH`, `SEARCH_INDEX_OPENSEARCH_AWS_REGION`, `SEARCH_INDEX_OPENSEARCH_INDEX_PREFIX`, `WORKER_HEALTH_PORT`; Secret `<search indexer configuration Secret>` keys `RELAYHISTORY_PIPELINE_CONSUMER_SECRET`; Secret `<search indexer bootstrap Secret>` keys `RELAYHISTORY_PIPELINE_CONSUMER_SECRET` |
+
+### Profile: external-rds
+
+**Amazon RDS for PostgreSQL 16+ dedicated HoopDb database.** No in-cluster SQL Jobs; the RDS master runs the rds_*.sql bootstrap before migrate.
+
+chart `sessions-pipeline` · values [`profiles/external-rds.yaml`](../charts/sessions-pipeline/profiles/external-rds.yaml) · dbMode `rds` · boundary `global-default-revoke` · HoopDb external · services image GHCR-RDS · install: `helm install sessions-pipeline agentworkforce/sessions-pipeline -f profiles/external-rds.yaml --set global.tenant.orgId=<org> --set alleyoop.auth.jwksUrl=<jwks url> --set worker.migrations.runtimeRole=<role> --set worker.migrations.runtimeRoleLogin=true`
+
+**Requirements (provide these)**
+
+| | requirement | provided by | maps to | verify |
+| --- | --- | --- | --- | --- |
+| shipped | [External Secrets Operator and a ClusterSecretStore (only with externalSecrets.enabled)](#req-k8s-external-secrets-operator) | operator | values `sessions-pipeline-worker:externalSecrets.*`, `session-ingest-api:externalSecrets.*` | kubectl get crd externalsecrets.external-secrets.io && kubectl get clustersecretstore <name>; the ExternalSecret reports Ready |
+| shipped | [Pull Secret for the private GHCR services image](#req-secret-image-pull) | operator | values `worker.imagePullSecrets`, `alleyoop.imagePullSecrets`; Secret `<pull secret>` (type kubernetes.io/dockerconfigjson with read access to ghcr.io/agentworkforce/96bulls-services) | kubectl get secret <pull secret> -o jsonpath='{.type}' is kubernetes.io/dockerconfigjson; pods are not ImagePullBackOff |
+| shipped | [Locker credential Secret (MinIO root / S3 static keys)](#req-secret-locker-credentials) | operator | values `worker.existingSecret`, `alleyoop.existingSecret`, `session-object-storage.existingSecret`, `worker.secretKeys.lockerAccessKeyId`, `worker.secretKeys.lockerSecretAccessKey`, `alleyoop.secretKeys.lockerAccessKeyId`, `alleyoop.secretKeys.lockerSecretAccessKey`; env `LOCKER_ACCESS_KEY_ID`, `LOCKER_SECRET_ACCESS_KEY`; Secret `sessions-pipeline-locker` keys `rootUser`, `rootPassword`; Secret `sessions-pipeline-locker` (the bundled upstream MinIO requires literal Secret data keys rootUser and rootPassword) | kubectl get secret sessions-pipeline-locker -o jsonpath='{.data}' has rootUser and rootPassword |
+| shipped | [Summary encryption keyring (SUMMARY_MASTER_KEYS)](#req-secret-summary-master-keys) | operator | values `worker.summaryEncryption.existingSecret`, `worker.summaryEncryption.key`, `worker.summaryEncryption.mountPath`, `worker.summaryEncryption.fileName`; env `SUMMARY_MASTER_KEYS_FILE`, `SUMMARY_MASTER_KEYS`; Secret `sessions-pipeline-locker` keys `SUMMARY_MASTER_KEYS` | kubectl exec deploy/<release>-worker-bob-costas -- test -r /var/run/secrets/sessions-pipeline/summary-master-keys; the Secret key parses as <id>:<64 hex> |
+| shipped | [HoopDb connection Secret (HOOPDB_URL)](#req-secret-hoopdb-url) | operator | values `worker.hoopdb.existingSecret`, `worker.hoopdb.key`, `worker.secretKeys.hoopdbUrl`, `alleyoop.hoopdb.existingSecret`, `alleyoop.hoopdb.key`, `alleyoop.secretKeys.hoopdbUrl`; env `HOOPDB_URL`; Secret `sessions-pipeline-hoopdb` keys `HOOPDB_URL` | psql "$(kubectl get secret sessions-pipeline-hoopdb -o jsonpath='{.data.HOOPDB_URL}' \| base64 -d \| sed -E 's/&?uselibpqcompat=true//; s/\?&/?/')" -X -c 'select 1' |
+| shipped | [Separate migration-owner connection Secret (HOOPDB_MIGRATION_URL)](#req-secret-hoopdb-migration-url) | operator | values `worker.migrations.hoopdb.existingSecret`, `worker.migrations.hoopdb.key`; Secret `sessions-pipeline-hoopdb` keys `HOOPDB_MIGRATION_URL` | psql "$(kubectl get secret sessions-pipeline-hoopdb -o jsonpath='{.data.HOOPDB_MIGRATION_URL}' \| base64 -d \| sed -E 's/&?uselibpqcompat=true//; s/\?&/?/')" -Atc 'select current_user' is the RDS master |
+| shipped | [Agent Relay org id (TENANT_ORG_ID)](#req-sessions-pipeline-tenant-org-id) | operator | values `global.tenant.orgId`, `worker.tenant.orgId`, `alleyoop.tenant.orgId`; env `TENANT_ORG_ID` | helm template renders (it fails with "tenant.orgId (or global.tenant.orgId) is required" otherwise) |
+| shipped | [A RelayAuth JWKS URL reachable from alleyoop](#req-sessions-pipeline-relayauth-jwks) | operator | values `alleyoop.auth.jwksUrl`; env `RELAYAUTH_JWKS_URL` | kubectl run -it --rm curl --image=curlimages/curl -- curl -fsS <jwksUrl> returns {"keys":[...]} |
+| shipped | [PostgreSQL 17 with pg_trgm and btree_gin (and vector) available](#req-db-postgres-17-extensions) | operator | values `hoopdb.cluster.imageName`, `hoopdb.cluster.initdb.postInitApplicationSQL` | with uselibpqcompat=true removed from the URL (psql rejects it), psql "$HOOPDB_URL" -Atc "select name from pg_available_extensions where name in ('pg_trgm','btree_gin','vector')" lists all three; server_version_num >= 160000 |
+| shipped | [A database dedicated to HoopDb](#req-db-dedicated-database) | operator | values `hoopdb.cluster.initdb.database`, `hoopdb.cluster.initdb.owner` | with uselibpqcompat=true removed from the URL (psql rejects it), psql "$HOOPDB_URL" -Atc "select nspname from pg_namespace where nspname not like 'pg_%' and nspname <> 'information_schema'" shows only HoopDb schemas |
+| shipped | [Supabase compatibility roles (anon, authenticated, service_role)](#req-db-compat-roles) | operator | values `hoopdb.cluster.initdb.postInitApplicationSQL`, `worker.migrations.supabaseShim` | with uselibpqcompat=true removed from the URL (psql rejects it), psql "$HOOPDB_URL" -Atc "select count(*) from pg_roles where rolname in ('anon','authenticated','service_role')" is 3 |
+| shipped | [The session directory search Worker role (session_directory_search_worker)](#req-db-search-worker-role) | operator | values `hoopdb.cluster.initdb.postInitApplicationSQL`, `searchWorkerRole.bootstrapJob.enabled`, `searchWorkerRole.bootstrapJob.sqlPath`, `worker.migrations.waitForRole.role` | the master runs supabase/bootstrap/rds_migration_roles.sql; then, with uselibpqcompat=true removed from the URL (psql rejects it), the same query |
+| shipped | [The dedicated HoopDb runtime role (HOOPDB_RUNTIME_ROLE, e.g. sessions_pipeline_runtime)](#req-db-runtime-role) | operator | values `worker.migrations.runtimeRole`, `worker.migrations.runtimeRoleLogin`, `runtimeRole.bootstrapJob.enabled`, `runtimeRole.bootstrapJob.sqlPath`; env `HOOPDB_RUNTIME_ROLE`, `HOOPDB_RUNTIME_ROLE_LOGIN` | with uselibpqcompat=true removed from the URL (psql rejects it), psql "$HOOPDB_URL" -Atc "select rolsuper, rolcreatedb, rolcreaterole, rolreplication, rolbypassrls, rolcanlogin from pg_roles where rolname='sessions_pipeline_runtime'" is f\|f\|f\|f\|f\|t; migrate refuses otherwise |
+| shipped | [The durable function boundary installed before the first migrate](#req-db-function-boundary) | operator | values `functionDefaultRevoke.bootstrapJob.enabled`, `functionDefaultRevoke.bootstrapJob.sqlPath`, `worker.migrations.waitForRole.functionDefault` | migrate completes; it refuses with function_boundary_unproven unless rds_owner_function_default_revoke.sql has run |
+| shipped | [migrate always runs the phase 2 role verify (HOOPDB_ROLE_VERIFY=true)](#req-sessions-pipeline-role-verify) | chart | env `HOOPDB_ROLE_VERIFY` | kubectl get job -l app.kubernetes.io/component=hoopdb-migrate -o yaml shows HOOPDB_ROLE_VERIFY "true"; workloads go ready after migrate |
+| **planned** | [Model API key Secret for session briefs (OPENAI_API_KEY)](#req-secret-model-api-key) | operator | values `worker.sessionBrief.existingSecret`, `worker.sessionBrief.secretKeys.*`; env `OPENAI_API_KEY`; Secret `<model key Secret>` keys `OPENAI_API_KEY` | not applicable until charted |
+
+**Options (choose)**
+
+| | option | choices | default here | maps to |
+| --- | --- | --- | --- | --- |
+| shipped | [alleyoop token verification source](#opt-alleyoop-auth-mode) | `jwksUrl`, `localJwks` | `jwksUrl` | values `alleyoop.auth.jwksUrl`, `alleyoop.auth.localJwks`, `alleyoop.auth.issuer`, `alleyoop.auth.audience`, `alleyoop.secretKeys.jwksJson`; env `RELAYAUTH_JWKS_URL`, `JWKS_JSON`, `AUTH_ISSUER`, `AUTH_AUDIENCE`; Secret `<existingSecret>` keys `JWKS_JSON` (only with auth.localJwks=true) |
+| shipped | [Plain http to in-cluster Service FQDNs](#opt-sessions-pipeline-in-cluster-http) | `false`, `true` | `false` | values `alleyoop.allowInClusterHttp`, `worker.allowInClusterHttp`; env `ALLOW_IN_CLUSTER_HTTP` |
+| shipped | [CA bundle for verifying the Postgres server certificate (postgresCa)](#opt-postgres-ca-bundle) | `false`, `true` | `false` | values `worker.postgresCa.*`, `alleyoop.postgresCa.*`, `relay-control:postgresCa.*`, `relayhistory:postgresCa.*`; env `NODE_EXTRA_CA_CERTS`, `PGSSLROOTCERT` |
+| shipped | [RelayHistory origin expected by the ingest](#opt-alleyoop-history-origin) | `unset`, `origin` | `unset` | values `alleyoop.auth.historyOrigin`; env `RELAYHISTORY_ORIGIN` |
+| shipped | [Interim RelayAuth bearer compatibility (local only)](#opt-alleyoop-interim-relayauth-bearer) | `false`, `true` | `false` | values `alleyoop.auth.allowInterimRelayAuthBearer`; env `ALLOW_INTERIM_RELAYAUTH_BEARER` |
+| shipped | [HoopDb backend](#opt-sessions-pipeline-hoopdb-backend) | `cnpg`, `external` | `external` | values `hoopdb.enabled` |
+| shipped | [Migrator database mode (HOOPDB_DB_MODE)](#opt-sessions-pipeline-db-mode) | `selfhosted`, `cloudsql`, `rds`, `supabase`, `local` | `rds` | values `worker.migrations.databaseMode`; env `HOOPDB_DB_MODE` |
+| shipped | [Function boundary mode (HOOPDB_FUNCTION_BOUNDARY_MODE)](#opt-sessions-pipeline-function-boundary-mode) | `global-default-revoke`, `event-trigger` | `global-default-revoke` | values `worker.migrations.functionBoundaryMode`; env `HOOPDB_FUNCTION_BOUNDARY_MODE`, `HOOPDB_FUNCTION_BOUNDARY_APPROVED` |
+| shipped | [Plain-Postgres role shim (HOOPDB_SUPABASE_SHIM)](#opt-sessions-pipeline-supabase-shim) | `true`, `false` | `false` | values `worker.migrations.supabaseShim`; env `HOOPDB_SUPABASE_SHIM` |
+| shipped | [Migrator role bootstrap (HOOPDB_ROLE_BOOTSTRAP)](#opt-sessions-pipeline-role-bootstrap) | `true`, `false`, `unset` | (no default) | values `worker.migrations.roleBootstrap`; env `HOOPDB_ROLE_BOOTSTRAP` |
+| shipped | [Runtime workload role (HOOPDB_RUNTIME_WORKLOAD_ROLE)](#opt-sessions-pipeline-runtime-workload-role) | `""`, `<role>` | `""` | values `worker.migrations.runtimeWorkloadRole`; env `HOOPDB_RUNTIME_WORKLOAD_ROLE` |
+| shipped | [migrate's wait-for-role ordering](#opt-sessions-pipeline-wait-for-role) | `true`, `false` | `false` | values `worker.migrations.waitForRole.enabled`, `worker.migrations.waitForRole.functionDefault`, `worker.migrations.waitForRole.image`, `worker.migrations.waitForRole.intervalSeconds`, `worker.migrations.waitForRole.role` |
+| shipped | [Separate migration-owner URL for migrate](#opt-hoopdb-migration-owner-url) | `""`, `<secret>/<key>` | `sessions-pipeline-hoopdb/HOOPDB_MIGRATION_URL` | values `worker.migrations.hoopdb.existingSecret`, `worker.migrations.hoopdb.key` |
+| shipped | [Locker object store](#opt-sessions-pipeline-locker-backend) | `minio`, `external` | `minio` | values `session-object-storage.enabled`, `worker.locker.endpoint`, `worker.locker.bucket`, `worker.locker.region`, `alleyoop.locker.endpoint`, `alleyoop.locker.bucket`, `alleyoop.locker.region`, `worker.lockerInit.enabled`; env `LOCKER_ENDPOINT`, `LOCKER_BUCKET`, `LOCKER_REGION` |
+| shipped | [Locker credentials mode](#opt-sessions-pipeline-locker-credentials-mode) | `secret`, `podIdentity` | `secret` | values `worker.locker.credentials.mode`, `alleyoop.locker.credentials.mode` |
+| shipped | [Locker provider (S3-compatible or native GCS)](#opt-sessions-pipeline-locker-provider) | `s3`, `gcs` | `s3` | values `worker.locker.provider`, `alleyoop.locker.provider`, `worker.extraEnv`, `alleyoop.extraEnv`; env `LOCKER_PROVIDER`, `PIPELINE_RAW_PROVIDER`, `CLOUD_SQL_CONNECTION_NAME`, `REDIS_HOST`, `REDIS_PORT`, `REDIS_AUTH_ENABLED`, `REDIS_TRANSIT_ENCRYPTION`, `REDIS_TLS_CA_PEM`, `PUBSUB_TOPIC`, `PUBSUB_SUBSCRIPTION` |
+| shipped | [Services image registry](#opt-sessions-pipeline-services-image) | `ghcr`, `ecr` | `ghcr` | values `worker.image.repository`, `worker.image.digest`, `worker.image.tag`, `alleyoop.image.repository`, `alleyoop.image.digest`, `alleyoop.image.tag`, `global.imageRegistry` |
+| shipped | [OpenTelemetry export](#opt-sessions-pipeline-otel) | `""`, `<your OTLP endpoint>`, `http://otel-collector:4318` | `""` | values `global.otel.endpoint`, `otel.enabled`, `otel.config.*`; env `OTEL_EXPORTER_OTLP_ENDPOINT` |
+| shipped | [Workspace, deployment and environment labels](#opt-sessions-pipeline-deployment-identity) | `<any>` | `workspaceId=default`, `deployment=selfhost`, `environment=production` | values `worker.tenant.workspaceId`, `worker.deployment.name`, `worker.deployment.id`, `worker.environment`, `alleyoop.tenant.workspaceId`, `alleyoop.deployment.name`, `alleyoop.deployment.id`, `alleyoop.environment`; env `WORKSPACE_ID`, `DEPLOYMENT`, `DEPLOYMENT_ID`, `ENVIRONMENT` |
+| shipped | [Stage worker health server](#opt-sessions-pipeline-worker-health) | `true`, `false` | `true` | values `worker.workerHealth.*`; env `WORKER_HEALTH_PORT`, `WORKER_UNHEALTHY_AFTER_FAILURES`, `WORKER_MAX_TICK_AGE_MS` |
+| shipped | [Bob Costas summariser model (BOB_COSTAS_MODEL)](#opt-sessions-pipeline-bob-costas-model) | `off` | `off` | values `worker.components.bob-costas.env`; env `BOB_COSTAS_MODEL` |
+| **planned** | [Transcript search backend (search.backend)](#opt-sessions-pipeline-search-backend) | `postgres`, `clickhouse` (**planned**) | `postgres` | values `search.backend`, `search.clickhouse.*` |
+| **planned** | [Model session briefs](#opt-sessions-pipeline-session-briefs) | `false`, `true` (**planned**) | `false` | values `worker.sessionBrief.enabled`, `worker.sessionBrief.model`; env `SESSION_BRIEF_ENABLED`, `SESSION_BRIEF_MODEL` |
+| shipped | [Default-off self-host session read API container](#opt-sessions-read-api) | `disabled`, `enabled` | `disabled` | values `fullnameOverride`, `replicas`, `image.*`, `imagePullSecrets`, `port`, `probeRuntime`, `origin`, `completeSince`, `directoryWorkspaces`, `login.advertisesSync`, `turns.assumeNoLegacy`, `serviceAccountCreate`, `allowInClusterHttp`, `config.*`, `postgres.*`, `postgresCa.*`, `search.*`, `auth.*`, `cors.*`, `extraEnv`, `extraVolumes`, `extraVolumeMounts`, `serviceAccountName`, `nodeSelector`, `tolerations`, `affinity`, `podAnnotations`, `resources`; env `SERVICE`, `RELAYHISTORY_SELFHOST_READ_API`, `RELAYHISTORY_READ_API_PORT`, `RELAYHISTORY_READ_API_SECRET`, `READ_API_ORIGIN`, `READ_API_AUTH_MODE`, `READ_API_COMPLETE_SINCE`, `READ_API_DIRECTORY_WORKSPACES`, `READ_API_CORS_ALLOWED_ORIGINS`, `RELAYHISTORY_SELFHOST_LOGIN_ADVERTISES_SYNC`, `READ_API_TURNS_ASSUME_NO_LEGACY`, `SEARCH_INDEX_POSTGRES_BACKEND_ID`, `SEARCH_INDEX_OPENSEARCH_URL`, `SEARCH_INDEX_OPENSEARCH_AUTH`, `SEARCH_INDEX_OPENSEARCH_AWS_REGION`, `SEARCH_INDEX_OPENSEARCH_INDEX_PREFIX`, `PIPELINE_ORG_FROM_PREFIX`, `PIPELINE_KEY_PREFIX`, `SEARCH_INDEX_BACKEND`, `ALLOW_IN_CLUSTER_HTTP`, `SESSION_POSTGRES_TLS_PROFILE`, `SESSION_POSTGRES_CA_FILE`, `SESSION_POSTGRES_CA_SHA256`, `RELAYAUTH_JWKS_URL`, `RELAYAUTH_ISSUER`, `RELAYHISTORY_ACCEPT_RELAYCONTROL_TOKENS`, `RELAYCONTROL_INTROSPECT_URL`, `RELAYCONTROL_INTROSPECT_SECRET`; Secret `<read API configuration Secret>` keys `RELAYHISTORY_READ_API_SECRET`; Secret `<read API introspection Secret>` keys `RELAYCONTROL_INTROSPECT_SECRET` |
+| shipped | [Default-off self-host transcript search writer](#opt-sessions-search-indexer) | `disabled`, `enabled` | `disabled` | values `searchIndexer.*`; env `SERVICE`, `RELAYHISTORY_SELFHOST_PIPELINE_CONSUMER`, `RELAYHISTORY_PIPELINE_CONSUMER_SECRET`, `SEARCH_INDEX_BACKEND`, `SEARCH_INDEX_POSTGRES_BACKEND_ID`, `READ_API_COMPLETE_SINCE`, `PIPELINE_KEY_PREFIX`, `PIPELINE_ORG_FROM_PREFIX`, `SESSION_POSTGRES_TLS_PROFILE`, `SESSION_POSTGRES_CA_FILE`, `SESSION_POSTGRES_CA_SHA256`, `LOCKER_BUCKET`, `LOCKER_REGION`, `LOCKER_ENDPOINT`, `SEARCH_INDEX_OPENSEARCH_URL`, `SEARCH_INDEX_OPENSEARCH_AUTH`, `SEARCH_INDEX_OPENSEARCH_AWS_REGION`, `SEARCH_INDEX_OPENSEARCH_INDEX_PREFIX`, `WORKER_HEALTH_PORT`; Secret `<search indexer configuration Secret>` keys `RELAYHISTORY_PIPELINE_CONSUMER_SECRET`; Secret `<search indexer bootstrap Secret>` keys `RELAYHISTORY_PIPELINE_CONSUMER_SECRET` |
 
 ### Profile: external-supabase
 
@@ -319,10 +391,11 @@ chart `sessions-pipeline` · values [`profiles/external-supabase.yaml`](../chart
 | --- | --- | --- | --- | --- |
 | shipped | [alleyoop token verification source](#opt-alleyoop-auth-mode) | `jwksUrl`, `localJwks` | `jwksUrl` | values `alleyoop.auth.jwksUrl`, `alleyoop.auth.localJwks`, `alleyoop.auth.issuer`, `alleyoop.auth.audience`, `alleyoop.secretKeys.jwksJson`; env `RELAYAUTH_JWKS_URL`, `JWKS_JSON`, `AUTH_ISSUER`, `AUTH_AUDIENCE`; Secret `<existingSecret>` keys `JWKS_JSON` (only with auth.localJwks=true) |
 | shipped | [Plain http to in-cluster Service FQDNs](#opt-sessions-pipeline-in-cluster-http) | `false`, `true` | `false` | values `alleyoop.allowInClusterHttp`, `worker.allowInClusterHttp`; env `ALLOW_IN_CLUSTER_HTTP` |
+| shipped | [CA bundle for verifying the Postgres server certificate (postgresCa)](#opt-postgres-ca-bundle) | `false`, `true` | `false` | values `worker.postgresCa.*`, `alleyoop.postgresCa.*`, `relay-control:postgresCa.*`, `relayhistory:postgresCa.*`; env `NODE_EXTRA_CA_CERTS`, `PGSSLROOTCERT` |
 | shipped | [RelayHistory origin expected by the ingest](#opt-alleyoop-history-origin) | `unset`, `origin` | `unset` | values `alleyoop.auth.historyOrigin`; env `RELAYHISTORY_ORIGIN` |
 | shipped | [Interim RelayAuth bearer compatibility (local only)](#opt-alleyoop-interim-relayauth-bearer) | `false`, `true` | `false` | values `alleyoop.auth.allowInterimRelayAuthBearer`; env `ALLOW_INTERIM_RELAYAUTH_BEARER` |
 | shipped | [HoopDb backend](#opt-sessions-pipeline-hoopdb-backend) | `cnpg`, `external` | `external` | values `hoopdb.enabled` |
-| shipped | [Migrator database mode (HOOPDB_DB_MODE)](#opt-sessions-pipeline-db-mode) | `selfhosted`, `cloudsql`, `supabase`, `local` | `supabase` | values `worker.migrations.databaseMode`; env `HOOPDB_DB_MODE` |
+| shipped | [Migrator database mode (HOOPDB_DB_MODE)](#opt-sessions-pipeline-db-mode) | `selfhosted`, `cloudsql`, `rds`, `supabase`, `local` | `supabase` | values `worker.migrations.databaseMode`; env `HOOPDB_DB_MODE` |
 | shipped | [Function boundary mode (HOOPDB_FUNCTION_BOUNDARY_MODE)](#opt-sessions-pipeline-function-boundary-mode) | `global-default-revoke`, `event-trigger` | `event-trigger` | values `worker.migrations.functionBoundaryMode`; env `HOOPDB_FUNCTION_BOUNDARY_MODE`, `HOOPDB_FUNCTION_BOUNDARY_APPROVED` |
 | shipped | [Plain-Postgres role shim (HOOPDB_SUPABASE_SHIM)](#opt-sessions-pipeline-supabase-shim) | `true`, `false` | `false` | values `worker.migrations.supabaseShim`; env `HOOPDB_SUPABASE_SHIM` |
 | shipped | [Migrator role bootstrap (HOOPDB_ROLE_BOOTSTRAP)](#opt-sessions-pipeline-role-bootstrap) | `true`, `false`, `unset` | (no default) | values `worker.migrations.roleBootstrap`; env `HOOPDB_ROLE_BOOTSTRAP` |
@@ -341,7 +414,8 @@ chart `sessions-pipeline` · values [`profiles/external-supabase.yaml`](../chart
 | **planned** | [Transcript search backend (search.backend)](#opt-sessions-pipeline-search-backend) | `postgres`, `clickhouse` (**planned**) | `postgres` | values `search.backend`, `search.clickhouse.*` |
 | **planned** | [Model session briefs](#opt-sessions-pipeline-session-briefs) | `false`, `true` (**planned**) | `false` | values `worker.sessionBrief.enabled`, `worker.sessionBrief.model`; env `SESSION_BRIEF_ENABLED`, `SESSION_BRIEF_MODEL` |
 | shipped | [Default-off native session upload edge](#opt-sessions-native-ingest) | `disabled`, `enabled` | `disabled` | values `ingestEdge.*`; env `SERVICE`, `RELAYHISTORY_SELFHOST_INGEST`, `RELAYHISTORY_INGEST_PORT`, `RELAYHISTORY_INGEST_ORIGIN`, `RELAYCONTROL_INTROSPECT_URL`, `RELAYCONTROL_INTROSPECT_SECRET`, `RELAYHISTORY_INGEST_DATABASE_URL`, `SESSION_POSTGRES_TLS_PROFILE`, `SESSION_POSTGRES_CA_FILE`, `SESSION_POSTGRES_CA_SHA256`, `RELAYHISTORY_INGEST_PG_POOL_MAX`, `ALLOW_IN_CLUSTER_HTTP`, `LOCKER_PROVIDER`, `LOCKER_BUCKET`, `LOCKER_ENDPOINT`, `LOCKER_REGION`, `LOCKER_ACCESS_KEY_ID`, `LOCKER_SECRET_ACCESS_KEY`, `INGEST_KEY_ROOT`, `INGEST_MAX_PER_USER`, `INGEST_MAX_PER_ORG`; Secret `<native ingest runtime Secret>` keys `database-url`, `introspect-secret`; Secret `<native ingest object-store Secret>` keys `access-key-id`, `secret-access-key` |
-| shipped | [Default-off self-host session read API container](#opt-sessions-read-api) | `disabled`, `enabled` | `disabled` | values `readApi.*`; env `SERVICE`, `RELAYHISTORY_SELFHOST_READ_API`, `RELAYHISTORY_READ_API_PORT`, `RELAYHISTORY_READ_API_SECRET`, `READ_API_ORIGIN`, `READ_API_AUTH_MODE`, `LOCKER_BUCKET`, `PIPELINE_ORG_FROM_PREFIX`, `PIPELINE_KEY_PREFIX`, `READ_API_COMPLETE_SINCE`, `READ_API_DIRECTORY_WORKSPACES`, `SEARCH_INDEX_BACKEND`, `ALLOW_IN_CLUSTER_HTTP`, `RELAYAUTH_JWKS_URL`, `RELAYAUTH_ISSUER`, `RELAYHISTORY_ACCEPT_RELAYCONTROL_TOKENS`, `RELAYCONTROL_INTROSPECT_URL`, `RELAYCONTROL_INTROSPECT_SECRET`; Secret `<read API configuration Secret>` keys `RELAYHISTORY_READ_API_SECRET`; Secret `<read API introspection Secret>` keys `RELAYCONTROL_INTROSPECT_SECRET` |
+| shipped | [Default-off self-host session read API container](#opt-sessions-read-api) | `disabled`, `enabled` | `disabled` | values `fullnameOverride`, `replicas`, `image.*`, `imagePullSecrets`, `port`, `probeRuntime`, `origin`, `completeSince`, `directoryWorkspaces`, `login.advertisesSync`, `turns.assumeNoLegacy`, `serviceAccountCreate`, `allowInClusterHttp`, `config.*`, `postgres.*`, `postgresCa.*`, `search.*`, `auth.*`, `cors.*`, `extraEnv`, `extraVolumes`, `extraVolumeMounts`, `serviceAccountName`, `nodeSelector`, `tolerations`, `affinity`, `podAnnotations`, `resources`; env `SERVICE`, `RELAYHISTORY_SELFHOST_READ_API`, `RELAYHISTORY_READ_API_PORT`, `RELAYHISTORY_READ_API_SECRET`, `READ_API_ORIGIN`, `READ_API_AUTH_MODE`, `READ_API_COMPLETE_SINCE`, `READ_API_DIRECTORY_WORKSPACES`, `READ_API_CORS_ALLOWED_ORIGINS`, `RELAYHISTORY_SELFHOST_LOGIN_ADVERTISES_SYNC`, `READ_API_TURNS_ASSUME_NO_LEGACY`, `SEARCH_INDEX_POSTGRES_BACKEND_ID`, `SEARCH_INDEX_OPENSEARCH_URL`, `SEARCH_INDEX_OPENSEARCH_AUTH`, `SEARCH_INDEX_OPENSEARCH_AWS_REGION`, `SEARCH_INDEX_OPENSEARCH_INDEX_PREFIX`, `PIPELINE_ORG_FROM_PREFIX`, `PIPELINE_KEY_PREFIX`, `SEARCH_INDEX_BACKEND`, `ALLOW_IN_CLUSTER_HTTP`, `SESSION_POSTGRES_TLS_PROFILE`, `SESSION_POSTGRES_CA_FILE`, `SESSION_POSTGRES_CA_SHA256`, `RELAYAUTH_JWKS_URL`, `RELAYAUTH_ISSUER`, `RELAYHISTORY_ACCEPT_RELAYCONTROL_TOKENS`, `RELAYCONTROL_INTROSPECT_URL`, `RELAYCONTROL_INTROSPECT_SECRET`; Secret `<read API configuration Secret>` keys `RELAYHISTORY_READ_API_SECRET`; Secret `<read API introspection Secret>` keys `RELAYCONTROL_INTROSPECT_SECRET` |
+| shipped | [Default-off self-host transcript search writer](#opt-sessions-search-indexer) | `disabled`, `enabled` | `disabled` | values `searchIndexer.*`; env `SERVICE`, `RELAYHISTORY_SELFHOST_PIPELINE_CONSUMER`, `RELAYHISTORY_PIPELINE_CONSUMER_SECRET`, `SEARCH_INDEX_BACKEND`, `SEARCH_INDEX_POSTGRES_BACKEND_ID`, `READ_API_COMPLETE_SINCE`, `PIPELINE_KEY_PREFIX`, `PIPELINE_ORG_FROM_PREFIX`, `SESSION_POSTGRES_TLS_PROFILE`, `SESSION_POSTGRES_CA_FILE`, `SESSION_POSTGRES_CA_SHA256`, `LOCKER_BUCKET`, `LOCKER_REGION`, `LOCKER_ENDPOINT`, `SEARCH_INDEX_OPENSEARCH_URL`, `SEARCH_INDEX_OPENSEARCH_AUTH`, `SEARCH_INDEX_OPENSEARCH_AWS_REGION`, `SEARCH_INDEX_OPENSEARCH_INDEX_PREFIX`, `WORKER_HEALTH_PORT`; Secret `<search indexer configuration Secret>` keys `RELAYHISTORY_PIPELINE_CONSUMER_SECRET`; Secret `<search indexer bootstrap Secret>` keys `RELAYHISTORY_PIPELINE_CONSUMER_SECRET` |
 
 ### Profile: aws-cnpg
 
@@ -377,10 +451,11 @@ chart `sessions-pipeline` · values [`ci/aws-cnpg-values.yaml`](../charts/sessio
 | --- | --- | --- | --- | --- |
 | shipped | [alleyoop token verification source](#opt-alleyoop-auth-mode) | `jwksUrl`, `localJwks` | `jwksUrl` | values `alleyoop.auth.jwksUrl`, `alleyoop.auth.localJwks`, `alleyoop.auth.issuer`, `alleyoop.auth.audience`, `alleyoop.secretKeys.jwksJson`; env `RELAYAUTH_JWKS_URL`, `JWKS_JSON`, `AUTH_ISSUER`, `AUTH_AUDIENCE`; Secret `<existingSecret>` keys `JWKS_JSON` (only with auth.localJwks=true) |
 | shipped | [Plain http to in-cluster Service FQDNs](#opt-sessions-pipeline-in-cluster-http) | `false`, `true` | `false` | values `alleyoop.allowInClusterHttp`, `worker.allowInClusterHttp`; env `ALLOW_IN_CLUSTER_HTTP` |
+| shipped | [CA bundle for verifying the Postgres server certificate (postgresCa)](#opt-postgres-ca-bundle) | `false`, `true` | `false` | values `worker.postgresCa.*`, `alleyoop.postgresCa.*`, `relay-control:postgresCa.*`, `relayhistory:postgresCa.*`; env `NODE_EXTRA_CA_CERTS`, `PGSSLROOTCERT` |
 | shipped | [RelayHistory origin expected by the ingest](#opt-alleyoop-history-origin) | `unset`, `origin` | `unset` | values `alleyoop.auth.historyOrigin`; env `RELAYHISTORY_ORIGIN` |
 | shipped | [Interim RelayAuth bearer compatibility (local only)](#opt-alleyoop-interim-relayauth-bearer) | `false`, `true` | `false` | values `alleyoop.auth.allowInterimRelayAuthBearer`; env `ALLOW_INTERIM_RELAYAUTH_BEARER` |
 | shipped | [HoopDb backend](#opt-sessions-pipeline-hoopdb-backend) | `cnpg`, `external` | `cnpg` | values `hoopdb.enabled` |
-| shipped | [Migrator database mode (HOOPDB_DB_MODE)](#opt-sessions-pipeline-db-mode) | `selfhosted`, `cloudsql`, `supabase`, `local` | `selfhosted` | values `worker.migrations.databaseMode`; env `HOOPDB_DB_MODE` |
+| shipped | [Migrator database mode (HOOPDB_DB_MODE)](#opt-sessions-pipeline-db-mode) | `selfhosted`, `cloudsql`, `rds`, `supabase`, `local` | `selfhosted` | values `worker.migrations.databaseMode`; env `HOOPDB_DB_MODE` |
 | shipped | [Function boundary mode (HOOPDB_FUNCTION_BOUNDARY_MODE)](#opt-sessions-pipeline-function-boundary-mode) | `global-default-revoke`, `event-trigger` | `global-default-revoke` | values `worker.migrations.functionBoundaryMode`; env `HOOPDB_FUNCTION_BOUNDARY_MODE`, `HOOPDB_FUNCTION_BOUNDARY_APPROVED` |
 | shipped | [Plain-Postgres role shim (HOOPDB_SUPABASE_SHIM)](#opt-sessions-pipeline-supabase-shim) | `true`, `false` | `true` | values `worker.migrations.supabaseShim`; env `HOOPDB_SUPABASE_SHIM` |
 | shipped | [Migrator role bootstrap (HOOPDB_ROLE_BOOTSTRAP)](#opt-sessions-pipeline-role-bootstrap) | `true`, `false`, `unset` | (no default) | values `worker.migrations.roleBootstrap`; env `HOOPDB_ROLE_BOOTSTRAP` |
@@ -398,7 +473,8 @@ chart `sessions-pipeline` · values [`ci/aws-cnpg-values.yaml`](../charts/sessio
 | **planned** | [Transcript search backend (search.backend)](#opt-sessions-pipeline-search-backend) | `postgres`, `clickhouse` (**planned**) | `postgres` | values `search.backend`, `search.clickhouse.*` |
 | **planned** | [Model session briefs](#opt-sessions-pipeline-session-briefs) | `false`, `true` (**planned**) | `false` | values `worker.sessionBrief.enabled`, `worker.sessionBrief.model`; env `SESSION_BRIEF_ENABLED`, `SESSION_BRIEF_MODEL` |
 | shipped | [Default-off native session upload edge](#opt-sessions-native-ingest) | `disabled`, `enabled` | `disabled` | values `ingestEdge.*`; env `SERVICE`, `RELAYHISTORY_SELFHOST_INGEST`, `RELAYHISTORY_INGEST_PORT`, `RELAYHISTORY_INGEST_ORIGIN`, `RELAYCONTROL_INTROSPECT_URL`, `RELAYCONTROL_INTROSPECT_SECRET`, `RELAYHISTORY_INGEST_DATABASE_URL`, `SESSION_POSTGRES_TLS_PROFILE`, `SESSION_POSTGRES_CA_FILE`, `SESSION_POSTGRES_CA_SHA256`, `RELAYHISTORY_INGEST_PG_POOL_MAX`, `ALLOW_IN_CLUSTER_HTTP`, `LOCKER_PROVIDER`, `LOCKER_BUCKET`, `LOCKER_ENDPOINT`, `LOCKER_REGION`, `LOCKER_ACCESS_KEY_ID`, `LOCKER_SECRET_ACCESS_KEY`, `INGEST_KEY_ROOT`, `INGEST_MAX_PER_USER`, `INGEST_MAX_PER_ORG`; Secret `<native ingest runtime Secret>` keys `database-url`, `introspect-secret`; Secret `<native ingest object-store Secret>` keys `access-key-id`, `secret-access-key` |
-| shipped | [Default-off self-host session read API container](#opt-sessions-read-api) | `disabled`, `enabled` | `disabled` | values `readApi.*`; env `SERVICE`, `RELAYHISTORY_SELFHOST_READ_API`, `RELAYHISTORY_READ_API_PORT`, `RELAYHISTORY_READ_API_SECRET`, `READ_API_ORIGIN`, `READ_API_AUTH_MODE`, `LOCKER_BUCKET`, `PIPELINE_ORG_FROM_PREFIX`, `PIPELINE_KEY_PREFIX`, `READ_API_COMPLETE_SINCE`, `READ_API_DIRECTORY_WORKSPACES`, `SEARCH_INDEX_BACKEND`, `ALLOW_IN_CLUSTER_HTTP`, `RELAYAUTH_JWKS_URL`, `RELAYAUTH_ISSUER`, `RELAYHISTORY_ACCEPT_RELAYCONTROL_TOKENS`, `RELAYCONTROL_INTROSPECT_URL`, `RELAYCONTROL_INTROSPECT_SECRET`; Secret `<read API configuration Secret>` keys `RELAYHISTORY_READ_API_SECRET`; Secret `<read API introspection Secret>` keys `RELAYCONTROL_INTROSPECT_SECRET` |
+| shipped | [Default-off self-host session read API container](#opt-sessions-read-api) | `disabled`, `enabled` | `disabled` | values `fullnameOverride`, `replicas`, `image.*`, `imagePullSecrets`, `port`, `probeRuntime`, `origin`, `completeSince`, `directoryWorkspaces`, `login.advertisesSync`, `turns.assumeNoLegacy`, `serviceAccountCreate`, `allowInClusterHttp`, `config.*`, `postgres.*`, `postgresCa.*`, `search.*`, `auth.*`, `cors.*`, `extraEnv`, `extraVolumes`, `extraVolumeMounts`, `serviceAccountName`, `nodeSelector`, `tolerations`, `affinity`, `podAnnotations`, `resources`; env `SERVICE`, `RELAYHISTORY_SELFHOST_READ_API`, `RELAYHISTORY_READ_API_PORT`, `RELAYHISTORY_READ_API_SECRET`, `READ_API_ORIGIN`, `READ_API_AUTH_MODE`, `READ_API_COMPLETE_SINCE`, `READ_API_DIRECTORY_WORKSPACES`, `READ_API_CORS_ALLOWED_ORIGINS`, `RELAYHISTORY_SELFHOST_LOGIN_ADVERTISES_SYNC`, `READ_API_TURNS_ASSUME_NO_LEGACY`, `SEARCH_INDEX_POSTGRES_BACKEND_ID`, `SEARCH_INDEX_OPENSEARCH_URL`, `SEARCH_INDEX_OPENSEARCH_AUTH`, `SEARCH_INDEX_OPENSEARCH_AWS_REGION`, `SEARCH_INDEX_OPENSEARCH_INDEX_PREFIX`, `PIPELINE_ORG_FROM_PREFIX`, `PIPELINE_KEY_PREFIX`, `SEARCH_INDEX_BACKEND`, `ALLOW_IN_CLUSTER_HTTP`, `SESSION_POSTGRES_TLS_PROFILE`, `SESSION_POSTGRES_CA_FILE`, `SESSION_POSTGRES_CA_SHA256`, `RELAYAUTH_JWKS_URL`, `RELAYAUTH_ISSUER`, `RELAYHISTORY_ACCEPT_RELAYCONTROL_TOKENS`, `RELAYCONTROL_INTROSPECT_URL`, `RELAYCONTROL_INTROSPECT_SECRET`; Secret `<read API configuration Secret>` keys `RELAYHISTORY_READ_API_SECRET`; Secret `<read API introspection Secret>` keys `RELAYCONTROL_INTROSPECT_SECRET` |
+| shipped | [Default-off self-host transcript search writer](#opt-sessions-search-indexer) | `disabled`, `enabled` | `disabled` | values `searchIndexer.*`; env `SERVICE`, `RELAYHISTORY_SELFHOST_PIPELINE_CONSUMER`, `RELAYHISTORY_PIPELINE_CONSUMER_SECRET`, `SEARCH_INDEX_BACKEND`, `SEARCH_INDEX_POSTGRES_BACKEND_ID`, `READ_API_COMPLETE_SINCE`, `PIPELINE_KEY_PREFIX`, `PIPELINE_ORG_FROM_PREFIX`, `SESSION_POSTGRES_TLS_PROFILE`, `SESSION_POSTGRES_CA_FILE`, `SESSION_POSTGRES_CA_SHA256`, `LOCKER_BUCKET`, `LOCKER_REGION`, `LOCKER_ENDPOINT`, `SEARCH_INDEX_OPENSEARCH_URL`, `SEARCH_INDEX_OPENSEARCH_AUTH`, `SEARCH_INDEX_OPENSEARCH_AWS_REGION`, `SEARCH_INDEX_OPENSEARCH_INDEX_PREFIX`, `WORKER_HEALTH_PORT`; Secret `<search indexer configuration Secret>` keys `RELAYHISTORY_PIPELINE_CONSUMER_SECRET`; Secret `<search indexer bootstrap Secret>` keys `RELAYHISTORY_PIPELINE_CONSUMER_SECRET` |
 
 ### Profile: aws-supabase
 
@@ -431,10 +507,11 @@ chart `sessions-pipeline` · values [`ci/pod-identity-values.yaml`](../charts/se
 | --- | --- | --- | --- | --- |
 | shipped | [alleyoop token verification source](#opt-alleyoop-auth-mode) | `jwksUrl`, `localJwks` | `jwksUrl` | values `alleyoop.auth.jwksUrl`, `alleyoop.auth.localJwks`, `alleyoop.auth.issuer`, `alleyoop.auth.audience`, `alleyoop.secretKeys.jwksJson`; env `RELAYAUTH_JWKS_URL`, `JWKS_JSON`, `AUTH_ISSUER`, `AUTH_AUDIENCE`; Secret `<existingSecret>` keys `JWKS_JSON` (only with auth.localJwks=true) |
 | shipped | [Plain http to in-cluster Service FQDNs](#opt-sessions-pipeline-in-cluster-http) | `false`, `true` | `false` | values `alleyoop.allowInClusterHttp`, `worker.allowInClusterHttp`; env `ALLOW_IN_CLUSTER_HTTP` |
+| shipped | [CA bundle for verifying the Postgres server certificate (postgresCa)](#opt-postgres-ca-bundle) | `false`, `true` | `false` | values `worker.postgresCa.*`, `alleyoop.postgresCa.*`, `relay-control:postgresCa.*`, `relayhistory:postgresCa.*`; env `NODE_EXTRA_CA_CERTS`, `PGSSLROOTCERT` |
 | shipped | [RelayHistory origin expected by the ingest](#opt-alleyoop-history-origin) | `unset`, `origin` | `unset` | values `alleyoop.auth.historyOrigin`; env `RELAYHISTORY_ORIGIN` |
 | shipped | [Interim RelayAuth bearer compatibility (local only)](#opt-alleyoop-interim-relayauth-bearer) | `false`, `true` | `false` | values `alleyoop.auth.allowInterimRelayAuthBearer`; env `ALLOW_INTERIM_RELAYAUTH_BEARER` |
 | shipped | [HoopDb backend](#opt-sessions-pipeline-hoopdb-backend) | `cnpg`, `external` | `external` | values `hoopdb.enabled` |
-| shipped | [Migrator database mode (HOOPDB_DB_MODE)](#opt-sessions-pipeline-db-mode) | `selfhosted`, `cloudsql`, `supabase`, `local` | `supabase` | values `worker.migrations.databaseMode`; env `HOOPDB_DB_MODE` |
+| shipped | [Migrator database mode (HOOPDB_DB_MODE)](#opt-sessions-pipeline-db-mode) | `selfhosted`, `cloudsql`, `rds`, `supabase`, `local` | `supabase` | values `worker.migrations.databaseMode`; env `HOOPDB_DB_MODE` |
 | shipped | [Function boundary mode (HOOPDB_FUNCTION_BOUNDARY_MODE)](#opt-sessions-pipeline-function-boundary-mode) | `global-default-revoke`, `event-trigger` | (no default) | values `worker.migrations.functionBoundaryMode`; env `HOOPDB_FUNCTION_BOUNDARY_MODE`, `HOOPDB_FUNCTION_BOUNDARY_APPROVED` |
 | shipped | [Plain-Postgres role shim (HOOPDB_SUPABASE_SHIM)](#opt-sessions-pipeline-supabase-shim) | `true`, `false` | `false` | values `worker.migrations.supabaseShim`; env `HOOPDB_SUPABASE_SHIM` |
 | shipped | [Migrator role bootstrap (HOOPDB_ROLE_BOOTSTRAP)](#opt-sessions-pipeline-role-bootstrap) | `true`, `false`, `unset` | (no default) | values `worker.migrations.roleBootstrap`; env `HOOPDB_ROLE_BOOTSTRAP` |
@@ -452,7 +529,8 @@ chart `sessions-pipeline` · values [`ci/pod-identity-values.yaml`](../charts/se
 | **planned** | [Transcript search backend (search.backend)](#opt-sessions-pipeline-search-backend) | `postgres`, `clickhouse` (**planned**) | `postgres` | values `search.backend`, `search.clickhouse.*` |
 | **planned** | [Model session briefs](#opt-sessions-pipeline-session-briefs) | `false`, `true` (**planned**) | `false` | values `worker.sessionBrief.enabled`, `worker.sessionBrief.model`; env `SESSION_BRIEF_ENABLED`, `SESSION_BRIEF_MODEL` |
 | shipped | [Default-off native session upload edge](#opt-sessions-native-ingest) | `disabled`, `enabled` | `disabled` | values `ingestEdge.*`; env `SERVICE`, `RELAYHISTORY_SELFHOST_INGEST`, `RELAYHISTORY_INGEST_PORT`, `RELAYHISTORY_INGEST_ORIGIN`, `RELAYCONTROL_INTROSPECT_URL`, `RELAYCONTROL_INTROSPECT_SECRET`, `RELAYHISTORY_INGEST_DATABASE_URL`, `SESSION_POSTGRES_TLS_PROFILE`, `SESSION_POSTGRES_CA_FILE`, `SESSION_POSTGRES_CA_SHA256`, `RELAYHISTORY_INGEST_PG_POOL_MAX`, `ALLOW_IN_CLUSTER_HTTP`, `LOCKER_PROVIDER`, `LOCKER_BUCKET`, `LOCKER_ENDPOINT`, `LOCKER_REGION`, `LOCKER_ACCESS_KEY_ID`, `LOCKER_SECRET_ACCESS_KEY`, `INGEST_KEY_ROOT`, `INGEST_MAX_PER_USER`, `INGEST_MAX_PER_ORG`; Secret `<native ingest runtime Secret>` keys `database-url`, `introspect-secret`; Secret `<native ingest object-store Secret>` keys `access-key-id`, `secret-access-key` |
-| shipped | [Default-off self-host session read API container](#opt-sessions-read-api) | `disabled`, `enabled` | `disabled` | values `readApi.*`; env `SERVICE`, `RELAYHISTORY_SELFHOST_READ_API`, `RELAYHISTORY_READ_API_PORT`, `RELAYHISTORY_READ_API_SECRET`, `READ_API_ORIGIN`, `READ_API_AUTH_MODE`, `LOCKER_BUCKET`, `PIPELINE_ORG_FROM_PREFIX`, `PIPELINE_KEY_PREFIX`, `READ_API_COMPLETE_SINCE`, `READ_API_DIRECTORY_WORKSPACES`, `SEARCH_INDEX_BACKEND`, `ALLOW_IN_CLUSTER_HTTP`, `RELAYAUTH_JWKS_URL`, `RELAYAUTH_ISSUER`, `RELAYHISTORY_ACCEPT_RELAYCONTROL_TOKENS`, `RELAYCONTROL_INTROSPECT_URL`, `RELAYCONTROL_INTROSPECT_SECRET`; Secret `<read API configuration Secret>` keys `RELAYHISTORY_READ_API_SECRET`; Secret `<read API introspection Secret>` keys `RELAYCONTROL_INTROSPECT_SECRET` |
+| shipped | [Default-off self-host session read API container](#opt-sessions-read-api) | `disabled`, `enabled` | `disabled` | values `fullnameOverride`, `replicas`, `image.*`, `imagePullSecrets`, `port`, `probeRuntime`, `origin`, `completeSince`, `directoryWorkspaces`, `login.advertisesSync`, `turns.assumeNoLegacy`, `serviceAccountCreate`, `allowInClusterHttp`, `config.*`, `postgres.*`, `postgresCa.*`, `search.*`, `auth.*`, `cors.*`, `extraEnv`, `extraVolumes`, `extraVolumeMounts`, `serviceAccountName`, `nodeSelector`, `tolerations`, `affinity`, `podAnnotations`, `resources`; env `SERVICE`, `RELAYHISTORY_SELFHOST_READ_API`, `RELAYHISTORY_READ_API_PORT`, `RELAYHISTORY_READ_API_SECRET`, `READ_API_ORIGIN`, `READ_API_AUTH_MODE`, `READ_API_COMPLETE_SINCE`, `READ_API_DIRECTORY_WORKSPACES`, `READ_API_CORS_ALLOWED_ORIGINS`, `RELAYHISTORY_SELFHOST_LOGIN_ADVERTISES_SYNC`, `READ_API_TURNS_ASSUME_NO_LEGACY`, `SEARCH_INDEX_POSTGRES_BACKEND_ID`, `SEARCH_INDEX_OPENSEARCH_URL`, `SEARCH_INDEX_OPENSEARCH_AUTH`, `SEARCH_INDEX_OPENSEARCH_AWS_REGION`, `SEARCH_INDEX_OPENSEARCH_INDEX_PREFIX`, `PIPELINE_ORG_FROM_PREFIX`, `PIPELINE_KEY_PREFIX`, `SEARCH_INDEX_BACKEND`, `ALLOW_IN_CLUSTER_HTTP`, `SESSION_POSTGRES_TLS_PROFILE`, `SESSION_POSTGRES_CA_FILE`, `SESSION_POSTGRES_CA_SHA256`, `RELAYAUTH_JWKS_URL`, `RELAYAUTH_ISSUER`, `RELAYHISTORY_ACCEPT_RELAYCONTROL_TOKENS`, `RELAYCONTROL_INTROSPECT_URL`, `RELAYCONTROL_INTROSPECT_SECRET`; Secret `<read API configuration Secret>` keys `RELAYHISTORY_READ_API_SECRET`; Secret `<read API introspection Secret>` keys `RELAYCONTROL_INTROSPECT_SECRET` |
+| shipped | [Default-off self-host transcript search writer](#opt-sessions-search-indexer) | `disabled`, `enabled` | `disabled` | values `searchIndexer.*`; env `SERVICE`, `RELAYHISTORY_SELFHOST_PIPELINE_CONSUMER`, `RELAYHISTORY_PIPELINE_CONSUMER_SECRET`, `SEARCH_INDEX_BACKEND`, `SEARCH_INDEX_POSTGRES_BACKEND_ID`, `READ_API_COMPLETE_SINCE`, `PIPELINE_KEY_PREFIX`, `PIPELINE_ORG_FROM_PREFIX`, `SESSION_POSTGRES_TLS_PROFILE`, `SESSION_POSTGRES_CA_FILE`, `SESSION_POSTGRES_CA_SHA256`, `LOCKER_BUCKET`, `LOCKER_REGION`, `LOCKER_ENDPOINT`, `SEARCH_INDEX_OPENSEARCH_URL`, `SEARCH_INDEX_OPENSEARCH_AUTH`, `SEARCH_INDEX_OPENSEARCH_AWS_REGION`, `SEARCH_INDEX_OPENSEARCH_INDEX_PREFIX`, `WORKER_HEALTH_PORT`; Secret `<search indexer configuration Secret>` keys `RELAYHISTORY_PIPELINE_CONSUMER_SECRET`; Secret `<search indexer bootstrap Secret>` keys `RELAYHISTORY_PIPELINE_CONSUMER_SECRET` |
 
 ### Profile: gcp-cloudsql
 
@@ -487,10 +565,11 @@ chart `sessions-pipeline` · values [`ci/gcp-cloudsql-values.yaml`](../charts/se
 | --- | --- | --- | --- | --- |
 | shipped | [alleyoop token verification source](#opt-alleyoop-auth-mode) | `jwksUrl`, `localJwks` | `jwksUrl` | values `alleyoop.auth.jwksUrl`, `alleyoop.auth.localJwks`, `alleyoop.auth.issuer`, `alleyoop.auth.audience`, `alleyoop.secretKeys.jwksJson`; env `RELAYAUTH_JWKS_URL`, `JWKS_JSON`, `AUTH_ISSUER`, `AUTH_AUDIENCE`; Secret `<existingSecret>` keys `JWKS_JSON` (only with auth.localJwks=true) |
 | shipped | [Plain http to in-cluster Service FQDNs](#opt-sessions-pipeline-in-cluster-http) | `false`, `true` | `false` | values `alleyoop.allowInClusterHttp`, `worker.allowInClusterHttp`; env `ALLOW_IN_CLUSTER_HTTP` |
+| shipped | [CA bundle for verifying the Postgres server certificate (postgresCa)](#opt-postgres-ca-bundle) | `false`, `true` | `false` | values `worker.postgresCa.*`, `alleyoop.postgresCa.*`, `relay-control:postgresCa.*`, `relayhistory:postgresCa.*`; env `NODE_EXTRA_CA_CERTS`, `PGSSLROOTCERT` |
 | shipped | [RelayHistory origin expected by the ingest](#opt-alleyoop-history-origin) | `unset`, `origin` | `unset` | values `alleyoop.auth.historyOrigin`; env `RELAYHISTORY_ORIGIN` |
 | shipped | [Interim RelayAuth bearer compatibility (local only)](#opt-alleyoop-interim-relayauth-bearer) | `false`, `true` | `false` | values `alleyoop.auth.allowInterimRelayAuthBearer`; env `ALLOW_INTERIM_RELAYAUTH_BEARER` |
 | shipped | [HoopDb backend](#opt-sessions-pipeline-hoopdb-backend) | `cnpg`, `external` | `external` | values `hoopdb.enabled` |
-| shipped | [Migrator database mode (HOOPDB_DB_MODE)](#opt-sessions-pipeline-db-mode) | `selfhosted`, `cloudsql`, `supabase`, `local` | `cloudsql` | values `worker.migrations.databaseMode`; env `HOOPDB_DB_MODE` |
+| shipped | [Migrator database mode (HOOPDB_DB_MODE)](#opt-sessions-pipeline-db-mode) | `selfhosted`, `cloudsql`, `rds`, `supabase`, `local` | `cloudsql` | values `worker.migrations.databaseMode`; env `HOOPDB_DB_MODE` |
 | shipped | [Function boundary mode (HOOPDB_FUNCTION_BOUNDARY_MODE)](#opt-sessions-pipeline-function-boundary-mode) | `global-default-revoke`, `event-trigger` | `global-default-revoke` | values `worker.migrations.functionBoundaryMode`; env `HOOPDB_FUNCTION_BOUNDARY_MODE`, `HOOPDB_FUNCTION_BOUNDARY_APPROVED` |
 | shipped | [Plain-Postgres role shim (HOOPDB_SUPABASE_SHIM)](#opt-sessions-pipeline-supabase-shim) | `true`, `false` | `false` | values `worker.migrations.supabaseShim`; env `HOOPDB_SUPABASE_SHIM` |
 | shipped | [Migrator role bootstrap (HOOPDB_ROLE_BOOTSTRAP)](#opt-sessions-pipeline-role-bootstrap) | `true`, `false`, `unset` | `false` | values `worker.migrations.roleBootstrap`; env `HOOPDB_ROLE_BOOTSTRAP` |
@@ -507,7 +586,8 @@ chart `sessions-pipeline` · values [`ci/gcp-cloudsql-values.yaml`](../charts/se
 | **planned** | [Transcript search backend (search.backend)](#opt-sessions-pipeline-search-backend) | `postgres`, `clickhouse` (**planned**) | `postgres` | values `search.backend`, `search.clickhouse.*` |
 | **planned** | [Model session briefs](#opt-sessions-pipeline-session-briefs) | `false`, `true` (**planned**) | `false` | values `worker.sessionBrief.enabled`, `worker.sessionBrief.model`; env `SESSION_BRIEF_ENABLED`, `SESSION_BRIEF_MODEL` |
 | shipped | [Default-off native session upload edge](#opt-sessions-native-ingest) | `disabled`, `enabled` | `disabled` | values `ingestEdge.*`; env `SERVICE`, `RELAYHISTORY_SELFHOST_INGEST`, `RELAYHISTORY_INGEST_PORT`, `RELAYHISTORY_INGEST_ORIGIN`, `RELAYCONTROL_INTROSPECT_URL`, `RELAYCONTROL_INTROSPECT_SECRET`, `RELAYHISTORY_INGEST_DATABASE_URL`, `SESSION_POSTGRES_TLS_PROFILE`, `SESSION_POSTGRES_CA_FILE`, `SESSION_POSTGRES_CA_SHA256`, `RELAYHISTORY_INGEST_PG_POOL_MAX`, `ALLOW_IN_CLUSTER_HTTP`, `LOCKER_PROVIDER`, `LOCKER_BUCKET`, `LOCKER_ENDPOINT`, `LOCKER_REGION`, `LOCKER_ACCESS_KEY_ID`, `LOCKER_SECRET_ACCESS_KEY`, `INGEST_KEY_ROOT`, `INGEST_MAX_PER_USER`, `INGEST_MAX_PER_ORG`; Secret `<native ingest runtime Secret>` keys `database-url`, `introspect-secret`; Secret `<native ingest object-store Secret>` keys `access-key-id`, `secret-access-key` |
-| shipped | [Default-off self-host session read API container](#opt-sessions-read-api) | `disabled`, `enabled` | `disabled` | values `readApi.*`; env `SERVICE`, `RELAYHISTORY_SELFHOST_READ_API`, `RELAYHISTORY_READ_API_PORT`, `RELAYHISTORY_READ_API_SECRET`, `READ_API_ORIGIN`, `READ_API_AUTH_MODE`, `LOCKER_BUCKET`, `PIPELINE_ORG_FROM_PREFIX`, `PIPELINE_KEY_PREFIX`, `READ_API_COMPLETE_SINCE`, `READ_API_DIRECTORY_WORKSPACES`, `SEARCH_INDEX_BACKEND`, `ALLOW_IN_CLUSTER_HTTP`, `RELAYAUTH_JWKS_URL`, `RELAYAUTH_ISSUER`, `RELAYHISTORY_ACCEPT_RELAYCONTROL_TOKENS`, `RELAYCONTROL_INTROSPECT_URL`, `RELAYCONTROL_INTROSPECT_SECRET`; Secret `<read API configuration Secret>` keys `RELAYHISTORY_READ_API_SECRET`; Secret `<read API introspection Secret>` keys `RELAYCONTROL_INTROSPECT_SECRET` |
+| shipped | [Default-off self-host session read API container](#opt-sessions-read-api) | `disabled`, `enabled` | `disabled` | values `fullnameOverride`, `replicas`, `image.*`, `imagePullSecrets`, `port`, `probeRuntime`, `origin`, `completeSince`, `directoryWorkspaces`, `login.advertisesSync`, `turns.assumeNoLegacy`, `serviceAccountCreate`, `allowInClusterHttp`, `config.*`, `postgres.*`, `postgresCa.*`, `search.*`, `auth.*`, `cors.*`, `extraEnv`, `extraVolumes`, `extraVolumeMounts`, `serviceAccountName`, `nodeSelector`, `tolerations`, `affinity`, `podAnnotations`, `resources`; env `SERVICE`, `RELAYHISTORY_SELFHOST_READ_API`, `RELAYHISTORY_READ_API_PORT`, `RELAYHISTORY_READ_API_SECRET`, `READ_API_ORIGIN`, `READ_API_AUTH_MODE`, `READ_API_COMPLETE_SINCE`, `READ_API_DIRECTORY_WORKSPACES`, `READ_API_CORS_ALLOWED_ORIGINS`, `RELAYHISTORY_SELFHOST_LOGIN_ADVERTISES_SYNC`, `READ_API_TURNS_ASSUME_NO_LEGACY`, `SEARCH_INDEX_POSTGRES_BACKEND_ID`, `SEARCH_INDEX_OPENSEARCH_URL`, `SEARCH_INDEX_OPENSEARCH_AUTH`, `SEARCH_INDEX_OPENSEARCH_AWS_REGION`, `SEARCH_INDEX_OPENSEARCH_INDEX_PREFIX`, `PIPELINE_ORG_FROM_PREFIX`, `PIPELINE_KEY_PREFIX`, `SEARCH_INDEX_BACKEND`, `ALLOW_IN_CLUSTER_HTTP`, `SESSION_POSTGRES_TLS_PROFILE`, `SESSION_POSTGRES_CA_FILE`, `SESSION_POSTGRES_CA_SHA256`, `RELAYAUTH_JWKS_URL`, `RELAYAUTH_ISSUER`, `RELAYHISTORY_ACCEPT_RELAYCONTROL_TOKENS`, `RELAYCONTROL_INTROSPECT_URL`, `RELAYCONTROL_INTROSPECT_SECRET`; Secret `<read API configuration Secret>` keys `RELAYHISTORY_READ_API_SECRET`; Secret `<read API introspection Secret>` keys `RELAYCONTROL_INTROSPECT_SECRET` |
+| shipped | [Default-off self-host transcript search writer](#opt-sessions-search-indexer) | `disabled`, `enabled` | `disabled` | values `searchIndexer.*`; env `SERVICE`, `RELAYHISTORY_SELFHOST_PIPELINE_CONSUMER`, `RELAYHISTORY_PIPELINE_CONSUMER_SECRET`, `SEARCH_INDEX_BACKEND`, `SEARCH_INDEX_POSTGRES_BACKEND_ID`, `READ_API_COMPLETE_SINCE`, `PIPELINE_KEY_PREFIX`, `PIPELINE_ORG_FROM_PREFIX`, `SESSION_POSTGRES_TLS_PROFILE`, `SESSION_POSTGRES_CA_FILE`, `SESSION_POSTGRES_CA_SHA256`, `LOCKER_BUCKET`, `LOCKER_REGION`, `LOCKER_ENDPOINT`, `SEARCH_INDEX_OPENSEARCH_URL`, `SEARCH_INDEX_OPENSEARCH_AUTH`, `SEARCH_INDEX_OPENSEARCH_AWS_REGION`, `SEARCH_INDEX_OPENSEARCH_INDEX_PREFIX`, `WORKER_HEALTH_PORT`; Secret `<search indexer configuration Secret>` keys `RELAYHISTORY_PIPELINE_CONSUMER_SECRET`; Secret `<search indexer bootstrap Secret>` keys `RELAYHISTORY_PIPELINE_CONSUMER_SECRET` |
 
 ### Profile: relaycast
 
@@ -576,6 +656,12 @@ chart `relayhistory` · values [`ci/default-values.yaml`](../charts/relayhistory
 | --- | --- | --- | --- | --- |
 | shipped | [Relay History database and optional provider Secrets](#req-relayhistory-config) | operator | values `database.existingSecret`, `database.keys.*`, `relayauth.jwksUrl`, `ingress.tls`, `imagePullSecrets`, `embeddings.existingSecret`, `embeddings.key`, `sessionAnalysis.existingSecret`, `sessionAnalysis.key`, `telemetry.existingSecret`, `telemetry.key`; env `DATABASE_URL`, `DATABASE_MIGRATIONS_URL`, `DATABASE_RUNTIME_ROLE`, `EMBEDDING_API_KEY`, `OPENAI_API_KEY`, `POSTHOG_API_KEY`, `ALLOW_WRITE_HOLD`, `ROLLOUT_BUDGET_SECONDS`, `HISTORY_SELECTOR`, `DRAIN_WAIT_SECONDS`, `MAX_BODY_BYTES`, `MAX_INFLIGHT_BODY_BYTES`, `SHUTDOWN_GRACE_MS`, `SHUTDOWN_DRAIN_DELAY_MS`, `PG_POOL_MAX`, `CRON_ENABLED`, `RELAYAUTH_AUDIENCE`, `RELAYHISTORY_ORIGIN`, `AGENT_RELAY_CLOUD_API_URL`, `SESSION_EVENTS_ENABLED`, `POSTHOG_HOST`; Secret `<database.existingSecret>` keys `DATABASE_URL`, `DATABASE_MIGRATIONS_URL`; Secret `<optional provider Secret>` keys `EMBEDDING_API_KEY`, `OPENAI_API_KEY`, `POSTHOG_API_KEY`; Secret `<ingress.tls[].secretName>` (kubernetes.io/tls); Secret `<imagePullSecrets[].name>` (optional registry pull Secret) | the migration Job completes, then /readyz returns 200 through the history host |
 
+**Options (choose)**
+
+| | option | choices | default here | maps to |
+| --- | --- | --- | --- | --- |
+| shipped | [CA bundle for verifying the Postgres server certificate (postgresCa)](#opt-postgres-ca-bundle) | `false`, `true` | `false` | values `worker.postgresCa.*`, `alleyoop.postgresCa.*`, `relay-control:postgresCa.*`, `relayhistory:postgresCa.*`; env `NODE_EXTRA_CA_CERTS`, `PGSSLROOTCERT` |
+
 ### Profile: relay-control
 
 **Self-host control-plane API.** Single-replica self-host API with normal migration Job and existing Secrets only; no HA claim.
@@ -592,6 +678,7 @@ chart `relay-control` · values [`ci/default-values.yaml`](../charts/relay-contr
 
 | | option | choices | default here | maps to |
 | --- | --- | --- | --- | --- |
+| shipped | [CA bundle for verifying the Postgres server certificate (postgresCa)](#opt-postgres-ca-bundle) | `false`, `true` | `false` | values `worker.postgresCa.*`, `alleyoop.postgresCa.*`, `relay-control:postgresCa.*`, `relayhistory:postgresCa.*`; env `NODE_EXTRA_CA_CERTS`, `PGSSLROOTCERT` |
 | shipped | [Offline license file mount (verification pending upstream)](#opt-relay-control-license-file) | `disabled`, `mounted` | `disabled` | values `license.existingSecret`, `license.key`; env `SELFHOST_LICENSE_FILE`; Secret `<license.existingSecret>` keys `license` |
 | shipped | [Previous encryption key during a key rotation](#opt-relay-control-encryption-rotation) | `none`, `previous key` | `none` | values `encryption.previousKeyId`, `secretKeys.previousEncryptionKey`; env `SELFHOST_ENCRYPTION_PREVIOUS_KEY_ID`, `SELFHOST_ENCRYPTION_PREVIOUS_KEY_FILE`; Secret `<existingSecret>` keys `<operator-chosen, no default>` |
 | shipped | [Internal service token for /internal/v1](#opt-relay-control-internal-token) | `disabled`, `enabled` | `disabled` | values `secretKeys.internalToken`; env `SELFHOST_INTERNAL_TOKEN_FILE`; Secret `<existingSecret>` keys `<operator-chosen, no default>` |
@@ -627,6 +714,7 @@ chart `agent-relay` · values [`values-gcp-proof.yaml`](../charts/agent-relay/va
 
 | | option | choices | default here | maps to |
 | --- | --- | --- | --- | --- |
+| shipped | [CA bundle for verifying the Postgres server certificate (postgresCa)](#opt-postgres-ca-bundle) | `false`, `true` | `false` | values `worker.postgresCa.*`, `alleyoop.postgresCa.*`, `relay-control:postgresCa.*`, `relayhistory:postgresCa.*`; env `NODE_EXTRA_CA_CERTS`, `PGSSLROOTCERT` |
 | shipped | [Single-host mode for the dashboard and the control API](#opt-agent-relay-single-host) | `disabled`, `enabled` | `disabled` | values `global.singleHost.host`, `relay-control:global.singleHost.host`, `relay-control:publicUrl`, `relay-webapp:global.singleHost.host`, `relay-webapp:runtime.publicUrl`, `relay-webapp:ingress.host`; env `SELFHOST_PUBLIC_URL`, `DASHBOARD_PUBLIC_URL` |
 | shipped | [Single GKE ingress for the proof hosts](#opt-agent-relay-gke-ingress) | `enabled`, `disabled` | `disabled` | values `gkeIngress.enabled`, `gkeIngress.staticIpName`, `gkeIngress.managedCertificateName`, `gkeIngress.frontendConfigName`, `gkeIngress.hosts.*`, `gkeIngress.backends.*`, `relayauth.jwksIngress.enabled` |
 | shipped | [Optional Relayflows component in the suite](#opt-agent-relay-relayflows) | `enabled`, `disabled` | `disabled` | values `components.relayflows`, `relayflows.*` |
@@ -864,7 +952,7 @@ lockerInit is disabled.
 
 <a id="req-k8s-external-secrets-operator"></a>
 
-**External Secrets Operator and a ClusterSecretStore (only with externalSecrets.enabled)** · shipped · chart `sessions-pipeline-worker`, `session-ingest-api` · profiles selfhost-postgres, migration, external-selfhosted, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql
+**External Secrets Operator and a ClusterSecretStore (only with externalSecrets.enabled)** · shipped · chart `sessions-pipeline-worker`, `session-ingest-api` · profiles selfhost-postgres, migration, external-selfhosted, external-rds, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql
 
 externalSecrets.enabled renders an ExternalSecret (external-secrets.io/v1) whose
 target is existingSecret. The ESO CRDs and the named secretStoreRef must exist,
@@ -879,7 +967,7 @@ and every consumed key must be mapped in externalSecrets.data.
 
 <a id="req-secret-image-pull"></a>
 
-**Pull Secret for the private GHCR services image** · shipped · chart `sessions-pipeline` · profiles selfhost-postgres, migration, external-selfhosted, external-supabase, aws-supabase, gcp-cloudsql
+**Pull Secret for the private GHCR services image** · shipped · chart `sessions-pipeline` · profiles selfhost-postgres, migration, external-selfhosted, external-rds, external-supabase, aws-supabase, gcp-cloudsql
 
 ghcr.io/agentworkforce/96bulls-services is a private package. Create a
 docker-registry Secret and list it in the umbrella's shared imagePullSecrets
@@ -896,7 +984,7 @@ The ECR path (EKS node role) needs none.
 
 <a id="req-secret-locker-credentials"></a>
 
-**Locker credential Secret (MinIO root / S3 static keys)** · shipped · chart `sessions-pipeline` · profiles selfhost-postgres, migration, external-selfhosted, external-supabase
+**Locker credential Secret (MinIO root / S3 static keys)** · shipped · chart `sessions-pipeline` · profiles selfhost-postgres, migration, external-selfhosted, external-rds, external-supabase
 
 In secret mode the workers and alleyoop read the Locker access key pair from
 existingSecret, and the bundled MinIO reads its root credential from the same
@@ -915,7 +1003,7 @@ Secret (session-object-storage.existingSecret). Not used with locker.credentials
 
 <a id="req-secret-summary-master-keys"></a>
 
-**Summary encryption keyring (SUMMARY_MASTER_KEYS)** · shipped · chart `sessions-pipeline` · profiles selfhost-postgres, migration, external-selfhosted, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql
+**Summary encryption keyring (SUMMARY_MASTER_KEYS)** · shipped · chart `sessions-pipeline` · profiles selfhost-postgres, migration, external-selfhosted, external-rds, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql
 
 Bob Costas encrypts summary objects before they reach the Locker. The keyring
 ("<key-id>:<64 hex>[,<key-id>:<64 hex>...]", first is current) comes only from
@@ -934,7 +1022,7 @@ worker.existingSecret; pod-identity installs with no shared Secret must set it.
 
 <a id="req-secret-hoopdb-url"></a>
 
-**HoopDb connection Secret (HOOPDB_URL)** · shipped · chart `sessions-pipeline` · profiles selfhost-postgres, migration, external-selfhosted, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql
+**HoopDb connection Secret (HOOPDB_URL)** · shipped · chart `sessions-pipeline` · profiles selfhost-postgres, migration, external-selfhosted, external-rds, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql
 
 Every workload and migrate read HOOPDB_URL from hoopdb.existingSecret/key (else
 existingSecret / secretKeys.hoopdbUrl). With the in-cluster HoopDb it is the
@@ -942,35 +1030,35 @@ Secret CloudNativePG generates (hoopdb-app, key uri): nothing to create. With an
 external database the operator (or the stack) creates it; for supabase it is the
 migration role's connection string unless migrations.hoopdb separates them.
 
-- Provided by: default: chart, external-selfhosted: operator, external-supabase: operator, aws-supabase: stack, gcp-cloudsql: stack
+- Provided by: default: chart, external-selfhosted: operator, external-rds: operator, external-supabase: operator, aws-supabase: stack, gcp-cloudsql: stack
 - Values: `worker.hoopdb.existingSecret`, `worker.hoopdb.key`, `worker.secretKeys.hoopdbUrl`, `alleyoop.hoopdb.existingSecret`, `alleyoop.hoopdb.key`, `alleyoop.secretKeys.hoopdbUrl`
 - Env: `HOOPDB_URL`
-- Secret: `hoopdb-app` (default), `sessions-pipeline-hoopdb` (external-selfhosted), `sessions-pipeline-hoopdb` (external-supabase), `96bulls-gcp` (gcp-cloudsql) from `worker.hoopdb.existingSecret` then `worker.existingSecret`; keys `uri` (default), `HOOPDB_URL` (external-selfhosted), `HOOPDB_URL` (external-supabase), `HOOPDB_URL` (gcp-cloudsql) from `worker.hoopdb.key,worker.secretKeys.hoopdbUrl`
-- Secret: `hoopdb-app` (default), `sessions-pipeline-hoopdb` (external-selfhosted), `sessions-pipeline-hoopdb` (external-supabase), `96bulls-gcp` (gcp-cloudsql) from `alleyoop.hoopdb.existingSecret` then `alleyoop.existingSecret`; keys `uri` (default), `HOOPDB_URL` (external-selfhosted), `HOOPDB_URL` (external-supabase), `HOOPDB_URL` (gcp-cloudsql) from `alleyoop.hoopdb.key,alleyoop.secretKeys.hoopdbUrl`
-- Verify: default: kubectl get secret hoopdb-app -o jsonpath='{.data.uri}' is non-empty once the CNPG Cluster is ready / external-selfhosted: kubectl get secret sessions-pipeline-hoopdb -o jsonpath='{.data.HOOPDB_URL}' \| base64 -d \| psql -X -c 'select 1' / external-supabase: kubectl get secret sessions-pipeline-hoopdb -o jsonpath='{.data.HOOPDB_URL}' \| base64 -d \| psql -X -c 'select current_user'
+- Secret: `hoopdb-app` (default), `sessions-pipeline-hoopdb` (external-selfhosted), `sessions-pipeline-hoopdb` (external-rds), `sessions-pipeline-hoopdb` (external-supabase), `96bulls-gcp` (gcp-cloudsql) from `worker.hoopdb.existingSecret` then `worker.existingSecret`; keys `uri` (default), `HOOPDB_URL` (external-selfhosted), `HOOPDB_URL` (external-rds), `HOOPDB_URL` (external-supabase), `HOOPDB_URL` (gcp-cloudsql) from `worker.hoopdb.key,worker.secretKeys.hoopdbUrl`
+- Secret: `hoopdb-app` (default), `sessions-pipeline-hoopdb` (external-selfhosted), `sessions-pipeline-hoopdb` (external-rds), `sessions-pipeline-hoopdb` (external-supabase), `96bulls-gcp` (gcp-cloudsql) from `alleyoop.hoopdb.existingSecret` then `alleyoop.existingSecret`; keys `uri` (default), `HOOPDB_URL` (external-selfhosted), `HOOPDB_URL` (external-rds), `HOOPDB_URL` (external-supabase), `HOOPDB_URL` (gcp-cloudsql) from `alleyoop.hoopdb.key,alleyoop.secretKeys.hoopdbUrl`
+- Verify: default: kubectl get secret hoopdb-app -o jsonpath='{.data.uri}' is non-empty once the CNPG Cluster is ready / external-selfhosted: kubectl get secret sessions-pipeline-hoopdb -o jsonpath='{.data.HOOPDB_URL}' \| base64 -d \| psql -X -c 'select 1' / external-rds: psql "$(kubectl get secret sessions-pipeline-hoopdb -o jsonpath='{.data.HOOPDB_URL}' \| base64 -d \| sed -E 's/&?uselibpqcompat=true//; s/\?&/?/')" -X -c 'select 1' / external-supabase: kubectl get secret sessions-pipeline-hoopdb -o jsonpath='{.data.HOOPDB_URL}' \| base64 -d \| psql -X -c 'select current_user'
 - Sources: [`charts/sessions-pipeline/values.yaml:39`](../charts/sessions-pipeline/values.yaml#L39), [`charts/sessions-pipeline/profiles/external-selfhosted.yaml:11`](../charts/sessions-pipeline/profiles/external-selfhosted.yaml#L11), [`charts/sessions-pipeline/profiles/external-supabase.yaml:24`](../charts/sessions-pipeline/profiles/external-supabase.yaml#L24), [`charts/sessions-pipeline-worker/templates/_env.tpl:162`](../charts/sessions-pipeline-worker/templates/_env.tpl#L162), [`charts/session-ingest-api/templates/_env.tpl:54`](../charts/session-ingest-api/templates/_env.tpl#L54)
 
 #### req.secret.hoopdb-migration-url
 
 <a id="req-secret-hoopdb-migration-url"></a>
 
-**Separate migration-owner connection Secret (HOOPDB_MIGRATION_URL)** · shipped · chart `sessions-pipeline` · profiles gcp-cloudsql
+**Separate migration-owner connection Secret (HOOPDB_MIGRATION_URL)** · shipped · chart `sessions-pipeline` · profiles gcp-cloudsql, external-rds
 
-On Cloud SQL the services connect as the least-privilege runtime role and only
+On Cloud SQL and RDS the services connect as the least-privilege runtime role and only
 the migrate Job (and its wait-for-role) connects as the migration owner, from
 migrations.hoopdb.existingSecret/key.
 
-- Provided by: stack
+- Provided by: default: stack, external-rds: operator
 - Values: `worker.migrations.hoopdb.existingSecret`, `worker.migrations.hoopdb.key`
-- Secret: `96bulls-gcp` from `worker.migrations.hoopdb.existingSecret`; keys `HOOPDB_MIGRATION_URL` from `worker.migrations.hoopdb.key`
-- Verify: kubectl get secret 96bulls-gcp -o jsonpath='{.data.HOOPDB_MIGRATION_URL}' connects as the migration owner (select current_user)
+- Secret: `96bulls-gcp` (default), `sessions-pipeline-hoopdb` (external-rds) from `worker.migrations.hoopdb.existingSecret`; keys `HOOPDB_MIGRATION_URL` from `worker.migrations.hoopdb.key`
+- Verify: default: kubectl get secret 96bulls-gcp -o jsonpath='{.data.HOOPDB_MIGRATION_URL}' connects as the migration owner (select current_user) / external-rds: psql "$(kubectl get secret sessions-pipeline-hoopdb -o jsonpath='{.data.HOOPDB_MIGRATION_URL}' \| base64 -d \| sed -E 's/&?uselibpqcompat=true//; s/\?&/?/')" -Atc 'select current_user' is the RDS master
 - Sources: [`charts/sessions-pipeline/ci/gcp-cloudsql-values.yaml:33`](../charts/sessions-pipeline/ci/gcp-cloudsql-values.yaml#L33), [`charts/sessions-pipeline-worker/values.yaml:93`](../charts/sessions-pipeline-worker/values.yaml#L93), `sessions-pipeline@7d7229b:stacks/gcp/config.ts:1002`
 
 #### req.sessions-pipeline.tenant-org-id
 
 <a id="req-sessions-pipeline-tenant-org-id"></a>
 
-**Agent Relay org id (TENANT_ORG_ID)** · shipped · chart `sessions-pipeline` · profiles selfhost-postgres, migration, external-selfhosted, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql
+**Agent Relay org id (TENANT_ORG_ID)** · shipped · chart `sessions-pipeline` · profiles selfhost-postgres, migration, external-selfhosted, external-rds, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql
 
 The org this install ingests for; every profile leaves it to the operator and the render fails without it.
 
@@ -984,7 +1072,7 @@ The org this install ingests for; every profile leaves it to the operator and th
 
 <a id="req-sessions-pipeline-relayauth-jwks"></a>
 
-**A RelayAuth JWKS URL reachable from alleyoop** · shipped · chart `sessions-pipeline` · profiles selfhost-postgres, migration, external-selfhosted, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql
+**A RelayAuth JWKS URL reachable from alleyoop** · shipped · chart `sessions-pipeline` · profiles selfhost-postgres, migration, external-selfhosted, external-rds, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql
 
 alleyoop verifies courier tokens against RelayAuth's JWKS (RELAYAUTH_JWKS_URL).
 Point it at a RelayAuth install (the relayauth profile, with its JWKS ingress or
@@ -1000,7 +1088,7 @@ in-cluster Service) or the hosted issuer. Every profile leaves it to the operato
 
 <a id="req-db-postgres-17-extensions"></a>
 
-**PostgreSQL 17 with pg_trgm and btree_gin (and vector) available** · shipped · chart `sessions-pipeline` · profiles selfhost-postgres, migration, external-selfhosted, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql
+**PostgreSQL 17 with pg_trgm and btree_gin (and vector) available** · shipped · chart `sessions-pipeline` · profiles selfhost-postgres, migration, external-selfhosted, external-rds, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql
 
 The session directory migrations run CREATE EXTENSION IF NOT EXISTS pg_trgm and
 btree_gin WITH SCHEMA public (both trusted, so the migration owner can create
@@ -1009,47 +1097,48 @@ them. The chart's in-cluster HoopDb uses the CNPG standard Postgres 17 image and
 also creates vector and pg_trgm at initdb; the chart documents vector for
 external databases too, though the migrations at 7d7229b do not use it.
 
-- Provided by: default: chart, external-selfhosted: operator, external-supabase: operator, aws-supabase: operator, gcp-cloudsql: stack
+- Provided by: default: chart, external-selfhosted: operator, external-rds: operator, external-supabase: operator, aws-supabase: operator, gcp-cloudsql: stack
 - Values: `hoopdb.cluster.imageName`, `hoopdb.cluster.initdb.postInitApplicationSQL`
-- Verify: psql "$HOOPDB_URL" -Atc "select name from pg_available_extensions where name in ('pg_trgm','btree_gin','vector')" lists all three; server_version_num >= 170000
+- Verify: default: psql "$HOOPDB_URL" -Atc "select name from pg_available_extensions where name in ('pg_trgm','btree_gin','vector')" lists all three; server_version_num >= 170000 / external-rds: with uselibpqcompat=true removed from the URL (psql rejects it), psql "$HOOPDB_URL" -Atc "select name from pg_available_extensions where name in ('pg_trgm','btree_gin','vector')" lists all three; server_version_num >= 160000
 - Sources: [`charts/sessions-pipeline/values.yaml:99`](../charts/sessions-pipeline/values.yaml#L99), [`charts/sessions-pipeline/values.yaml:119`](../charts/sessions-pipeline/values.yaml#L119), [`docs/self-hosted-reference-architecture.md:75`](../docs/self-hosted-reference-architecture.md#L75), `sessions-pipeline@7d7229b:supabase/migrations/20261030010000_session_directory.sql:9`, `sessions-pipeline@7d7229b:supabase/migrations/20261030020000_session_directory_short_summary.sql:177`
 
 #### req.db.dedicated-database
 
 <a id="req-db-dedicated-database"></a>
 
-**A database dedicated to HoopDb** · shipped · chart `sessions-pipeline` · profiles selfhost-postgres, migration, aws-cnpg, external-selfhosted, gcp-cloudsql
+**A database dedicated to HoopDb** · shipped · chart `sessions-pipeline` · profiles selfhost-postgres, migration, aws-cnpg, external-selfhosted, external-rds, gcp-cloudsql
 
 global-default-revoke sets the global function default of the migration owner
 and every superuser in the HoopDb database; that is safe only because the
 database holds nothing else. The in-cluster HoopDb is dedicated by construction.
 
-- Provided by: default: chart, external-selfhosted: operator, gcp-cloudsql: stack
+- Provided by: default: chart, external-selfhosted: operator, external-rds: operator, gcp-cloudsql: stack
 - Values: `hoopdb.cluster.initdb.database`, `hoopdb.cluster.initdb.owner`
-- Verify: psql "$HOOPDB_URL" -Atc "select nspname from pg_namespace where nspname not like 'pg_%' and nspname <> 'information_schema'" shows only HoopDb schemas
+- Verify: default: psql "$HOOPDB_URL" -Atc "select nspname from pg_namespace where nspname not like 'pg_%' and nspname <> 'information_schema'" shows only HoopDb schemas / external-rds: with uselibpqcompat=true removed from the URL (psql rejects it), psql "$HOOPDB_URL" -Atc "select nspname from pg_namespace where nspname not like 'pg_%' and nspname <> 'information_schema'" shows only HoopDb schemas
 - Sources: [`charts/sessions-pipeline/profiles/external-selfhosted.yaml:2`](../charts/sessions-pipeline/profiles/external-selfhosted.yaml#L2), [`charts/sessions-pipeline/values.yaml:275`](../charts/sessions-pipeline/values.yaml#L275)
 
 #### req.db.compat-roles
 
 <a id="req-db-compat-roles"></a>
 
-**Supabase compatibility roles (anon, authenticated, service_role)** · shipped · chart `sessions-pipeline` · profiles selfhost-postgres, migration, aws-cnpg, external-selfhosted, external-supabase, aws-supabase, gcp-cloudsql
+**Supabase compatibility roles (anon, authenticated, service_role)** · shipped · chart `sessions-pipeline` · profiles selfhost-postgres, migration, aws-cnpg, external-selfhosted, external-rds, external-supabase, aws-supabase, gcp-cloudsql
 
 The migrations GRANT to the Supabase roles. CNPG initdb creates them as
 superuser; on plain external Postgres the migrator's shim creates them
 (HOOPDB_SUPABASE_SHIM=true); on Cloud SQL the operator's
-cloudsql_migration_roles.sql does (shim off); Supabase has them natively.
+cloudsql_migration_roles.sql does (shim off); on RDS the master's
+rds_migration_roles.sql does (shim off); Supabase has them natively.
 
-- Provided by: default: chart, external-selfhosted: migrator, external-supabase: operator, aws-supabase: operator, gcp-cloudsql: operator
+- Provided by: default: chart, external-selfhosted: migrator, external-rds: operator, external-supabase: operator, aws-supabase: operator, gcp-cloudsql: operator
 - Values: `hoopdb.cluster.initdb.postInitApplicationSQL`, `worker.migrations.supabaseShim`
-- Verify: psql "$HOOPDB_URL" -Atc "select count(*) from pg_roles where rolname in ('anon','authenticated','service_role')" is 3
+- Verify: default: psql "$HOOPDB_URL" -Atc "select count(*) from pg_roles where rolname in ('anon','authenticated','service_role')" is 3 / external-rds: with uselibpqcompat=true removed from the URL (psql rejects it), psql "$HOOPDB_URL" -Atc "select count(*) from pg_roles where rolname in ('anon','authenticated','service_role')" is 3
 - Sources: [`charts/sessions-pipeline/values.yaml:122`](../charts/sessions-pipeline/values.yaml#L122), [`charts/sessions-pipeline/ci/gcp-cloudsql-values.yaml:5`](../charts/sessions-pipeline/ci/gcp-cloudsql-values.yaml#L5), `sessions-pipeline@7d7229b:supabase/bootstrap/cloudsql_migration_roles.sql:1`
 
 #### req.db.search-worker-role
 
 <a id="req-db-search-worker-role"></a>
 
-**The session directory search Worker role (session_directory_search_worker)** · shipped · chart `sessions-pipeline` · profiles selfhost-postgres, migration, aws-cnpg, external-selfhosted, external-supabase, aws-supabase, gcp-cloudsql
+**The session directory search Worker role (session_directory_search_worker)** · shipped · chart `sessions-pipeline` · profiles selfhost-postgres, migration, aws-cnpg, external-selfhosted, external-rds, external-supabase, aws-supabase, gcp-cloudsql
 
 NOLOGIN NOINHERIT NOBYPASSRLS NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION,
 exactly statement_timeout=2s, no memberships. The migration only verifies it
@@ -1057,51 +1146,52 @@ exactly statement_timeout=2s, no memberships. The migration only verifies it
 initdb; existing CNPG clusters from searchWorkerRole.bootstrapJob; external
 databases from the operator (Supabase uses the transactional _supabase wrapper).
 
-- Provided by: default: chart, external-selfhosted: operator, external-supabase: operator, aws-supabase: operator, gcp-cloudsql: operator
+- Provided by: default: chart, external-selfhosted: operator, external-rds: operator, external-supabase: operator, aws-supabase: operator, gcp-cloudsql: operator
 - Values: `hoopdb.cluster.initdb.postInitApplicationSQL`, `searchWorkerRole.bootstrapJob.enabled`, `searchWorkerRole.bootstrapJob.sqlPath`, `worker.migrations.waitForRole.role`
-- Verify: default: psql "$HOOPDB_URL" -Atc "select rolcanlogin, rolconfig from pg_roles where rolname='session_directory_search_worker'" is f\|{statement_timeout=2s} / external-selfhosted: run supabase/bootstrap/session_directory_search_worker.sql as a superuser; then the same query / external-supabase: run supabase/bootstrap/session_directory_search_worker_supabase.sql as postgres; then the same query / gcp-cloudsql: run supabase/bootstrap/session_directory_search_worker.sql as the migration owner; then the same query
+- Verify: default: psql "$HOOPDB_URL" -Atc "select rolcanlogin, rolconfig from pg_roles where rolname='session_directory_search_worker'" is f\|{statement_timeout=2s} / external-selfhosted: run supabase/bootstrap/session_directory_search_worker.sql as a superuser; then the same query / external-rds: the master runs supabase/bootstrap/rds_migration_roles.sql; then, with uselibpqcompat=true removed from the URL (psql rejects it), the same query / external-supabase: run supabase/bootstrap/session_directory_search_worker_supabase.sql as postgres; then the same query / gcp-cloudsql: run supabase/bootstrap/session_directory_search_worker.sql as the migration owner; then the same query
 - Sources: [`charts/sessions-pipeline/values.yaml:131`](../charts/sessions-pipeline/values.yaml#L131), [`charts/sessions-pipeline/values.yaml:218`](../charts/sessions-pipeline/values.yaml#L218), [`charts/sessions-pipeline/templates/search-worker-role-bootstrap.yaml:7`](../charts/sessions-pipeline/templates/search-worker-role-bootstrap.yaml#L7), [`README.md:259`](../README.md#L259), `sessions-pipeline@7d7229b:supabase/bootstrap/session_directory_search_worker.sql:1`, `sessions-pipeline@7d7229b:runbooks/session-directory-search-worker-bootstrap.md:1`
 
 #### req.db.runtime-role
 
 <a id="req-db-runtime-role"></a>
 
-**The dedicated HoopDb runtime role (HOOPDB_RUNTIME_ROLE, e.g. sessions_pipeline_runtime)** · shipped · chart `sessions-pipeline` · profiles selfhost-postgres, migration, aws-cnpg, external-selfhosted, external-supabase, aws-supabase, gcp-cloudsql
+**The dedicated HoopDb runtime role (HOOPDB_RUNTIME_ROLE, e.g. sessions_pipeline_runtime)** · shipped · chart `sessions-pipeline` · profiles selfhost-postgres, migration, aws-cnpg, external-selfhosted, external-rds, external-supabase, aws-supabase, gcp-cloudsql
 
 The role the services connect as: never the migration owner or the search
 Worker; NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS, LOGIN as
 configured, CONNECT granted, TEMPORARY revoked from PUBLIC (Supabase keeps its
 PUBLIC TEMPORARY baseline). On CNPG runtimeRole.bootstrapJob creates or verifies
-it; external databases pre-provision it (hoopdb_runtime_role.sql, or the
-_supabase wrapper with -v runtime_role=sessions_pipeline_runtime -v runtime_login=true).
+it; external databases pre-provision it (hoopdb_runtime_role.sql, the _rds
+variant on RDS, or the _supabase wrapper with -v runtime_role=sessions_pipeline_runtime -v runtime_login=true).
 Never the drifted legacy relayhistory_runtime.
 
-- Provided by: default: chart, external-selfhosted: operator, external-supabase: operator, aws-supabase: operator, gcp-cloudsql: operator
+- Provided by: default: chart, external-selfhosted: operator, external-rds: operator, external-supabase: operator, aws-supabase: operator, gcp-cloudsql: operator
 - Values: `worker.migrations.runtimeRole`, `worker.migrations.runtimeRoleLogin`, `runtimeRole.bootstrapJob.enabled`, `runtimeRole.bootstrapJob.sqlPath`
 - Env: `HOOPDB_RUNTIME_ROLE`, `HOOPDB_RUNTIME_ROLE_LOGIN`
-- Verify: psql "$HOOPDB_URL" -Atc "select rolsuper, rolcreatedb, rolcreaterole, rolreplication, rolbypassrls, rolcanlogin from pg_roles where rolname='sessions_pipeline_runtime'" is f\|f\|f\|f\|f\|t; migrate refuses otherwise
+- Verify: default: psql "$HOOPDB_URL" -Atc "select rolsuper, rolcreatedb, rolcreaterole, rolreplication, rolbypassrls, rolcanlogin from pg_roles where rolname='sessions_pipeline_runtime'" is f\|f\|f\|f\|f\|t; migrate refuses otherwise / external-rds: with uselibpqcompat=true removed from the URL (psql rejects it), psql "$HOOPDB_URL" -Atc "select rolsuper, rolcreatedb, rolcreaterole, rolreplication, rolbypassrls, rolcanlogin from pg_roles where rolname='sessions_pipeline_runtime'" is f\|f\|f\|f\|f\|t; migrate refuses otherwise
 - Sources: [`charts/sessions-pipeline/templates/hoopdb-runtime-role-bootstrap.yaml:17`](../charts/sessions-pipeline/templates/hoopdb-runtime-role-bootstrap.yaml#L17), [`charts/sessions-pipeline/values.yaml:250`](../charts/sessions-pipeline/values.yaml#L250), [`charts/sessions-pipeline/profiles/external-supabase.yaml:29`](../charts/sessions-pipeline/profiles/external-supabase.yaml#L29), [`charts/sessions-pipeline-worker/templates/_env.tpl:202`](../charts/sessions-pipeline-worker/templates/_env.tpl#L202), `sessions-pipeline@7d7229b:supabase/bootstrap/hoopdb_runtime_role.sql:1`, `sessions-pipeline@7d7229b:src/hoopdb/migrate.ts:150`
 
 #### req.db.function-boundary
 
 <a id="req-db-function-boundary"></a>
 
-**The durable function boundary installed before the first migrate** · shipped · chart `sessions-pipeline` · profiles selfhost-postgres, migration, aws-cnpg, external-selfhosted, external-supabase, aws-supabase, gcp-cloudsql
+**The durable function boundary installed before the first migrate** · shipped · chart `sessions-pipeline` · profiles selfhost-postgres, migration, aws-cnpg, external-selfhosted, external-rds, external-supabase, aws-supabase, gcp-cloudsql
 
 The migrator's function-boundary gate refuses (function_boundary_unproven)
 without a catalog-proven control. global-default-revoke: on CNPG
 functionDefaultRevoke.bootstrapJob runs hoopdb_function_default_revoke.sql
 (-v migration_owner=hoop) and migrate waits for the exact default; external
 Postgres runs the same file as a superuser; Cloud SQL runs
-cloudsql_owner_function_default_revoke.sql as the migration owner.
+cloudsql_owner_function_default_revoke.sql as the migration owner; RDS runs
+rds_owner_function_default_revoke.sql as the master.
 event-trigger (Supabase only): hoopdb_sessions_function_boundary_supabase.sql as
 postgres (-v runtime_role=sessions_pipeline_runtime), then migrate.ts --activation-check
 must report event_trigger.verified true. Never run the default-revoke file on
 Supabase.
 
-- Provided by: default: chart, external-selfhosted: operator, external-supabase: operator, aws-supabase: operator, gcp-cloudsql: operator
+- Provided by: default: chart, external-selfhosted: operator, external-rds: operator, external-supabase: operator, aws-supabase: operator, gcp-cloudsql: operator
 - Values: `functionDefaultRevoke.bootstrapJob.enabled`, `functionDefaultRevoke.bootstrapJob.sqlPath`, `worker.migrations.waitForRole.functionDefault`
-- Verify: default: the function-default Job completes and migrate's wait-for-role logs "present: ... + owner function default" / external-supabase: migrate.ts --activation-check with HOOPDB_DB_MODE=supabase HOOPDB_FUNCTION_BOUNDARY_MODE=event-trigger reports event_trigger.verified true / aws-supabase: no boundary is selected in this shape; migrate refuses with function_boundary_unproven until one is
+- Verify: default: the function-default Job completes and migrate's wait-for-role logs "present: ... + owner function default" / external-rds: migrate completes; it refuses with function_boundary_unproven unless rds_owner_function_default_revoke.sql has run / external-supabase: migrate.ts --activation-check with HOOPDB_DB_MODE=supabase HOOPDB_FUNCTION_BOUNDARY_MODE=event-trigger reports event_trigger.verified true / aws-supabase: no boundary is selected in this shape; migrate refuses with function_boundary_unproven until one is
 - Sources: [`charts/sessions-pipeline/templates/hoopdb-function-default-revoke.yaml:17`](../charts/sessions-pipeline/templates/hoopdb-function-default-revoke.yaml#L17), [`charts/sessions-pipeline/values.yaml:283`](../charts/sessions-pipeline/values.yaml#L283), [`charts/sessions-pipeline/profiles/external-supabase.yaml:38`](../charts/sessions-pipeline/profiles/external-supabase.yaml#L38), [`charts/sessions-pipeline/profiles/external-selfhosted.yaml:17`](../charts/sessions-pipeline/profiles/external-selfhosted.yaml#L17), `sessions-pipeline@7d7229b:supabase/bootstrap/hoopdb_function_default_revoke.sql:1`, `sessions-pipeline@7d7229b:supabase/bootstrap/hoopdb_sessions_function_boundary_supabase.sql:1`, `sessions-pipeline@7d7229b:supabase/bootstrap/cloudsql_owner_function_default_revoke.sql:1`, `sessions-pipeline@7d7229b:runbooks/session-directory-search-worker-bootstrap.md:374`
 
 #### req.sessions-pipeline.privileged-sql-image
@@ -1124,7 +1214,7 @@ without it. The profiles pin the same digest as the workloads.
 
 <a id="req-sessions-pipeline-role-verify"></a>
 
-**migrate always runs the phase 2 role verify (HOOPDB_ROLE_VERIFY=true)** · shipped · chart `sessions-pipeline` · profiles selfhost-postgres, migration, external-selfhosted, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql
+**migrate always runs the phase 2 role verify (HOOPDB_ROLE_VERIFY=true)** · shipped · chart `sessions-pipeline` · profiles selfhost-postgres, migration, external-selfhosted, external-rds, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql
 
 Readiness needs the PASS marker for the image's migration generation that only
 a verifying migrate writes, so the chart always sets it and refuses an override
@@ -1139,7 +1229,7 @@ via extraEnv or component env.
 
 <a id="req-secret-model-api-key"></a>
 
-**Model API key Secret for session briefs (OPENAI_API_KEY)** · **planned** · chart `sessions-pipeline` · profiles selfhost-postgres, migration, external-selfhosted, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql
+**Model API key Secret for session briefs (OPENAI_API_KEY)** · **planned** · chart `sessions-pipeline` · profiles selfhost-postgres, migration, external-selfhosted, external-rds, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql
 
 With session briefs enabled the worker needs the model credential
 (OPENAI_API_KEY, relayhistory's binding name); unset, blank or ending in
@@ -1584,7 +1674,7 @@ A pre-provisioned chief identity (not a workspace admin key), the classification
 
 <a id="opt-alleyoop-auth-mode"></a>
 
-**alleyoop token verification source** · shipped · chart `sessions-pipeline` · profiles selfhost-postgres, migration, external-selfhosted, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql
+**alleyoop token verification source** · shipped · chart `sessions-pipeline` · profiles selfhost-postgres, migration, external-selfhosted, external-rds, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql
 
 jwksUrl (RelayAuth) for every real install; localJwks reads a JWKS document from
 existingSecret (secretKeys.jwksJson) for kind/local only. Exactly one is set.
@@ -1603,7 +1693,7 @@ issuer/audience are the expected token claims.
 
 <a id="opt-sessions-pipeline-in-cluster-http"></a>
 
-**Plain http to in-cluster Service FQDNs** · shipped · chart `sessions-pipeline` · profiles selfhost-postgres, migration, external-selfhosted, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql
+**Plain http to in-cluster Service FQDNs** · shipped · chart `sessions-pipeline` · profiles selfhost-postgres, migration, external-selfhosted, external-rds, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql
 
 allowInClusterHttp renders ALLOW_IN_CLUSTER_HTTP for alleyoop and every
 worker component. false (default) keeps the validated destination URLs
@@ -1622,11 +1712,43 @@ bundled MinIO at http://session-object-storage:9000 works with the default false
 - Verify: helm template renders ALLOW_IN_CLUSTER_HTTP="false" by default and fails when extraEnv sets it
 - Sources: [`charts/session-ingest-api/values.yaml`](../charts/session-ingest-api/values.yaml), [`charts/session-ingest-api/templates/deployment.yaml`](../charts/session-ingest-api/templates/deployment.yaml), [`charts/sessions-pipeline-worker/templates/_env.tpl`](../charts/sessions-pipeline-worker/templates/_env.tpl)
 
+#### opt.postgres-ca-bundle
+
+<a id="opt-postgres-ca-bundle"></a>
+
+**CA bundle for verifying the Postgres server certificate (postgresCa)** · shipped · chart `sessions-pipeline`, `relay-control`, `relayhistory` · profiles selfhost-postgres, migration, external-selfhosted, external-rds, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql, relayhistory, relay-control, agent-relay
+
+node-pg verifies the server certificate for sslmode=require or verify-full, and the
+service images do not carry private CAs such as Amazon RDS's. postgresCa mounts a PEM
+bundle from an existing ConfigMap or Secret (exactly one, key postgresCa.key) at
+/etc/postgres-ca/ca.crt and sets NODE_EXTRA_CA_CERTS there in the Deployments and the
+migrate Job of each of these charts (locker-init opens no Postgres connection). Off by
+default. Use sslmode=verify-full in the database URLs, and do not pair sslmode=require
+with uselibpqcompat=true, which skips verification. The bundle is read at process start,
+so rotating it needs a pod restart. Under the agent-relay umbrella the values are
+sessions-pipeline.worker.postgresCa, sessions-pipeline.alleyoop.postgresCa,
+relay-control.postgresCa and relayhistory.postgresCa. NODE_EXTRA_CA_CERTS does not reach
+the read API or ingest edge, which set an explicit CA: the read API takes
+SESSION_POSTGRES_TLS_PROFILE=custom-ca, SESSION_POSTGRES_CA_FILE and
+SESSION_POSTGRES_CA_SHA256 through sessionReadApi.postgresCa, which mounts the file
+and sets them; the ingest edge takes
+ingestEdge.postgres.caConfigMap, caKey and caSha256.
+When postgresCa is on, wait-for-role (psql) gets PGSSLROOTCERT. psql run by an operator
+needs sslrootcert=<bundle> with verify-full.
+
+- Default: `false`
+- Choices: `false`; `true`
+- Provided by: operator
+- Values: `worker.postgresCa.*`, `alleyoop.postgresCa.*`, `relay-control:postgresCa.*`, `relayhistory:postgresCa.*`
+- Env: `NODE_EXTRA_CA_CERTS`, `PGSSLROOTCERT`
+- Verify: kubectl exec deploy/<workload> -- printenv NODE_EXTRA_CA_CERTS is /etc/postgres-ca/ca.crt; the URLs use sslmode=verify-full and the migrate Job connects
+- Sources: [`charts/sessions-pipeline/profiles/external-rds.yaml:19`](../charts/sessions-pipeline/profiles/external-rds.yaml#L19), [`charts/sessions-pipeline-worker/templates/_env.tpl`](../charts/sessions-pipeline-worker/templates/_env.tpl), [`charts/session-ingest-api/templates/deployment.yaml`](../charts/session-ingest-api/templates/deployment.yaml), [`charts/relay-control/templates/deployment.yaml`](../charts/relay-control/templates/deployment.yaml), [`charts/relayhistory/templates/deployment.yaml`](../charts/relayhistory/templates/deployment.yaml), `sessions-pipeline@78511e03:src/shared/db.ts:41`
+
 #### opt.alleyoop.history-origin
 
 <a id="opt-alleyoop-history-origin"></a>
 
-**RelayHistory origin expected by the ingest** · shipped · chart `sessions-pipeline` · profiles selfhost-postgres, migration, external-selfhosted, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql
+**RelayHistory origin expected by the ingest** · shipped · chart `sessions-pipeline` · profiles selfhost-postgres, migration, external-selfhosted, external-rds, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql
 
 alleyoop.auth.historyOrigin renders RELAYHISTORY_ORIGIN on the ingest: the
 bare origin expected as the History assertion audience. It must be
@@ -1650,7 +1772,7 @@ refuses every courier upload.
 
 <a id="opt-alleyoop-interim-relayauth-bearer"></a>
 
-**Interim RelayAuth bearer compatibility (local only)** · shipped · chart `sessions-pipeline` · profiles selfhost-postgres, migration, external-selfhosted, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql
+**Interim RelayAuth bearer compatibility (local only)** · shipped · chart `sessions-pipeline` · profiles selfhost-postgres, migration, external-selfhosted, external-rds, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql
 
 alleyoop.auth.allowInterimRelayAuthBearer renders
 ALLOW_INTERIM_RELAYAUTH_BEARER on the ingest. false (default) keeps the
@@ -1675,7 +1797,7 @@ through extraEnv or ingest.env fails the render.
 
 <a id="opt-sessions-pipeline-hoopdb-backend"></a>
 
-**HoopDb backend** · shipped · chart `sessions-pipeline` · profiles selfhost-postgres, migration, external-selfhosted, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql
+**HoopDb backend** · shipped · chart `sessions-pipeline` · profiles selfhost-postgres, migration, external-selfhosted, external-rds, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql
 
 cnpg runs HoopDb as a CloudNativePG Cluster in the release (hoopdb.enabled=true,
 selfhosted mode only). external points worker.hoopdb and alleyoop.hoopdb at a
@@ -1693,7 +1815,7 @@ these eks.hoopdb.backend cnpg|external (cnpg is proof/sandbox stages only there)
 
 <a id="opt-sessions-pipeline-db-mode"></a>
 
-**Migrator database mode (HOOPDB_DB_MODE)** · shipped · chart `sessions-pipeline` · profiles selfhost-postgres, migration, external-selfhosted, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql
+**Migrator database mode (HOOPDB_DB_MODE)** · shipped · chart `sessions-pipeline` · profiles selfhost-postgres, migration, external-selfhosted, external-rds, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql
 
 The migrator's database profile (sessions-pipeline migrationProfile()). No
 default: the render fails without it. selfhosted for CNPG, RDS or any
@@ -1701,8 +1823,8 @@ operator-controlled plain Postgres; cloudsql for Google Cloud SQL; supabase for 
 Supabase project; local for the dev stack only. The in-cluster HoopDb requires
 selfhosted.
 
-- Default: (no default) (by profile: default `selfhosted`, external-supabase `supabase`, aws-supabase `supabase`, gcp-cloudsql `cloudsql`)
-- Choices: `selfhosted`; `cloudsql`; `supabase`; `local`: dev stack only
+- Default: (no default) (by profile: default `selfhosted`, external-supabase `supabase`, aws-supabase `supabase`, gcp-cloudsql `cloudsql`, external-rds `rds`)
+- Choices: `selfhosted`; `cloudsql`; `rds`: Amazon RDS for PostgreSQL 16+; `supabase`; `local`: dev stack only
 - Provided by: operator
 - Values: `worker.migrations.databaseMode`
 - Env: `HOOPDB_DB_MODE`
@@ -1713,7 +1835,7 @@ selfhosted.
 
 <a id="opt-sessions-pipeline-function-boundary-mode"></a>
 
-**Function boundary mode (HOOPDB_FUNCTION_BOUNDARY_MODE)** · shipped · chart `sessions-pipeline` · profiles selfhost-postgres, migration, external-selfhosted, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql
+**Function boundary mode (HOOPDB_FUNCTION_BOUNDARY_MODE)** · shipped · chart `sessions-pipeline` · profiles selfhost-postgres, migration, external-selfhosted, external-rds, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql
 
 Which catalog-proven function boundary the migrator requires.
 global-default-revoke (required in selfhosted and cloudsql) or event-trigger
@@ -1733,29 +1855,29 @@ HOOPDB_FUNCTION_BOUNDARY_APPROVED is refused, including via extraEnv.
 
 <a id="opt-sessions-pipeline-supabase-shim"></a>
 
-**Plain-Postgres role shim (HOOPDB_SUPABASE_SHIM)** · shipped · chart `sessions-pipeline` · profiles selfhost-postgres, migration, external-selfhosted, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql
+**Plain-Postgres role shim (HOOPDB_SUPABASE_SHIM)** · shipped · chart `sessions-pipeline` · profiles selfhost-postgres, migration, external-selfhosted, external-rds, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql
 
 true makes the migrator create the Supabase compatibility roles on plain
 Postgres. Required (true or false) in local, selfhosted and cloudsql (Cloud SQL:
 false); in supabase mode it must be unset or false and renders "false".
 
-- Default: (no default) (by profile: default `true`, external-supabase `false`, aws-supabase `false`, gcp-cloudsql `false`)
+- Default: (no default) (by profile: default `true`, external-supabase `false`, aws-supabase `false`, gcp-cloudsql `false`, external-rds `false`)
 - Choices: `true`; `false`
 - Provided by: operator
 - Values: `worker.migrations.supabaseShim`
 - Env: `HOOPDB_SUPABASE_SHIM`
-- Verify: helm template refuses supabaseShim=true in supabase mode
+- Verify: helm template refuses supabaseShim=true in supabase and rds mode
 - Sources: [`charts/sessions-pipeline-worker/values.yaml:115`](../charts/sessions-pipeline-worker/values.yaml#L115), [`charts/sessions-pipeline-worker/templates/_env.tpl:198`](../charts/sessions-pipeline-worker/templates/_env.tpl#L198), `sessions-pipeline@7d7229b:src/hoopdb/migrate.ts:131`
 
 #### opt.sessions-pipeline.role-bootstrap
 
 <a id="opt-sessions-pipeline-role-bootstrap"></a>
 
-**Migrator role bootstrap (HOOPDB_ROLE_BOOTSTRAP)** · shipped · chart `sessions-pipeline` · profiles selfhost-postgres, migration, external-selfhosted, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql
+**Migrator role bootstrap (HOOPDB_ROLE_BOOTSTRAP)** · shipped · chart `sessions-pipeline` · profiles selfhost-postgres, migration, external-selfhosted, external-rds, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql
 
 Optional; the migrator defaults it to the shim choice. Refused as true in
-supabase mode. Cloud SQL sets false (no customer superuser; the operator
-provisions the search Worker role).
+supabase and rds mode. Cloud SQL sets false (no customer superuser; the
+operator provisions the search Worker role).
 
 - Default: (no default) (by profile: default (no default), gcp-cloudsql `false`)
 - Choices: `true`; `false`; `unset`: follows supabaseShim
@@ -1769,7 +1891,7 @@ provisions the search Worker role).
 
 <a id="opt-sessions-pipeline-runtime-workload-role"></a>
 
-**Runtime workload role (HOOPDB_RUNTIME_WORKLOAD_ROLE)** · shipped · chart `sessions-pipeline` · profiles selfhost-postgres, migration, external-selfhosted, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql
+**Runtime workload role (HOOPDB_RUNTIME_WORKLOAD_ROLE)** · shipped · chart `sessions-pipeline` · profiles selfhost-postgres, migration, external-selfhosted, external-rds, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql
 
 The one role allowed to be a member of the runtime role (for example a pooler login role). Empty means none.
 
@@ -1785,15 +1907,16 @@ The one role allowed to be a member of the runtime role (for example a pooler lo
 
 <a id="opt-sessions-pipeline-wait-for-role"></a>
 
-**migrate's wait-for-role ordering** · shipped · chart `sessions-pipeline` · profiles selfhost-postgres, migration, external-selfhosted, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql
+**migrate's wait-for-role ordering** · shipped · chart `sessions-pipeline` · profiles selfhost-postgres, migration, external-selfhosted, external-rds, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql
 
 An init container (by digest, the pinned CNPG Postgres image) holds migrate until
 the search Worker role and, outside local mode, the runtime role exist; with
 functionDefault also until the owner's function default is exact. On by default
-in the umbrella; required with the in-cluster HoopDb; refused in supabase mode.
+in the umbrella; required with the in-cluster HoopDb; refused in supabase and
+rds mode.
 
-- Default: `true` (by profile: default `true`, external-supabase `false`, aws-supabase `false`)
-- Choices: `true`; `false`: supabase mode only
+- Default: `true` (by profile: default `true`, external-supabase `false`, aws-supabase `false`, external-rds `false`)
+- Choices: `true`; `false`: supabase and rds mode only
 - Provided by: chart
 - Values: `worker.migrations.waitForRole.enabled`, `worker.migrations.waitForRole.functionDefault`, `worker.migrations.waitForRole.image`, `worker.migrations.waitForRole.intervalSeconds`, `worker.migrations.waitForRole.role`
 - Verify: kubectl logs job/<migrate> -c wait-for-role ends with "present"
@@ -1821,14 +1944,14 @@ bootstrap and --activation-check) are approved.
 
 <a id="opt-hoopdb-migration-owner-url"></a>
 
-**Separate migration-owner URL for migrate** · shipped · chart `sessions-pipeline` · profiles selfhost-postgres, migration, external-selfhosted, external-supabase, aws-cnpg, aws-supabase
+**Separate migration-owner URL for migrate** · shipped · chart `sessions-pipeline` · profiles selfhost-postgres, migration, external-selfhosted, external-rds, external-supabase, aws-cnpg, aws-supabase
 
-Optional everywhere except Cloud SQL (see req.secret.hoopdb-migration-url): when
+Optional everywhere except Cloud SQL and RDS (see req.secret.hoopdb-migration-url): when
 both migrations.hoopdb.existingSecret and key are set, only migrate and its
 wait-for-role read that URL, and long-running workloads keep the least-privilege
 worker.hoopdb URL. Set both or neither.
 
-- Default: `""`
+- Default: `""` (by profile: default `""`, external-rds `sessions-pipeline-hoopdb/HOOPDB_MIGRATION_URL`)
 - Choices: `""`: migrate uses HOOPDB_URL; `<secret>/<key>`: owner URL for migrate only
 - Provided by: operator
 - Values: `worker.migrations.hoopdb.existingSecret`, `worker.migrations.hoopdb.key`
@@ -1839,7 +1962,7 @@ worker.hoopdb URL. Set both or neither.
 
 <a id="opt-sessions-pipeline-locker-backend"></a>
 
-**Locker object store** · shipped · chart `sessions-pipeline` · profiles selfhost-postgres, migration, external-selfhosted, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql
+**Locker object store** · shipped · chart `sessions-pipeline` · profiles selfhost-postgres, migration, external-selfhosted, external-rds, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql
 
 minio runs the bundled MinIO (session-object-storage.enabled; Chainguard image, digest-pinned) and
 the locker-init Job creates the bucket. external uses your S3-compatible bucket:
@@ -1859,7 +1982,7 @@ versioned.
 
 <a id="opt-sessions-pipeline-locker-credentials-mode"></a>
 
-**Locker credentials mode** · shipped · chart `sessions-pipeline` · profiles selfhost-postgres, migration, external-selfhosted, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql
+**Locker credentials mode** · shipped · chart `sessions-pipeline` · profiles selfhost-postgres, migration, external-selfhosted, external-rds, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql
 
 secret reads the LOCKER_* keys from existingSecret; podIdentity omits both static credential env vars so the SDK uses workload identity.
 
@@ -1874,7 +1997,7 @@ secret reads the LOCKER_* keys from existingSecret; podIdentity omits both stati
 
 <a id="opt-sessions-pipeline-locker-provider"></a>
 
-**Locker provider (S3-compatible or native GCS)** · shipped · chart `sessions-pipeline` · profiles selfhost-postgres, migration, external-selfhosted, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql
+**Locker provider (S3-compatible or native GCS)** · shipped · chart `sessions-pipeline` · profiles selfhost-postgres, migration, external-selfhosted, external-rds, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql
 
 s3 (default) leaves LOCKER_PROVIDER unset: MinIO, AWS S3 or another
 S3-compatible store. gcs renders LOCKER_PROVIDER=gcs and
@@ -1901,7 +2024,7 @@ render fails.
 
 <a id="opt-sessions-pipeline-services-image"></a>
 
-**Services image registry** · shipped · chart `sessions-pipeline` · profiles selfhost-postgres, migration, external-selfhosted, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql
+**Services image registry** · shipped · chart `sessions-pipeline` · profiles selfhost-postgres, migration, external-selfhosted, external-rds, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql
 
 ghcr (the chart default, private: needs req.secret.image-pull) or the immutable
 ECR digest of the same build for hosted EKS (node role pulls, no pull Secret).
@@ -1919,7 +2042,7 @@ compatibility matrix for the pinned digests.
 
 <a id="opt-sessions-pipeline-otel"></a>
 
-**OpenTelemetry export** · shipped · chart `sessions-pipeline` · profiles selfhost-postgres, migration, external-selfhosted, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql
+**OpenTelemetry export** · shipped · chart `sessions-pipeline` · profiles selfhost-postgres, migration, external-selfhosted, external-rds, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql
 
 Off by default. Set global.otel.endpoint to your OTLP/HTTP backend, or enable the
 bundled collector (otel.enabled) with endpoint http://otel-collector:4318; its
@@ -1937,7 +2060,7 @@ default exporter drops telemetry.
 
 <a id="opt-sessions-pipeline-deployment-identity"></a>
 
-**Workspace, deployment and environment labels** · shipped · chart `sessions-pipeline` · profiles selfhost-postgres, migration, external-selfhosted, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql
+**Workspace, deployment and environment labels** · shipped · chart `sessions-pipeline` · profiles selfhost-postgres, migration, external-selfhosted, external-rds, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql
 
 WORKSPACE_ID, DEPLOYMENT, DEPLOYMENT_ID (default <namespace>/<release>) and ENVIRONMENT stamped on every record.
 
@@ -1953,7 +2076,7 @@ WORKSPACE_ID, DEPLOYMENT, DEPLOYMENT_ID (default <namespace>/<release>) and ENVI
 
 <a id="opt-sessions-pipeline-worker-health"></a>
 
-**Stage worker health server** · shipped · chart `sessions-pipeline` · profiles selfhost-postgres, migration, external-selfhosted, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql
+**Stage worker health server** · shipped · chart `sessions-pipeline` · profiles selfhost-postgres, migration, external-selfhosted, external-rds, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql
 
 /readyz and /healthz on workerHealth.port for every stage worker; a slow migration never restarts a worker.
 
@@ -1969,7 +2092,7 @@ WORKSPACE_ID, DEPLOYMENT, DEPLOYMENT_ID (default <namespace>/<release>) and ENVI
 
 <a id="opt-sessions-pipeline-bob-costas-model"></a>
 
-**Bob Costas summariser model (BOB_COSTAS_MODEL)** · shipped · chart `sessions-pipeline` · profiles selfhost-postgres, migration, external-selfhosted, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql
+**Bob Costas summariser model (BOB_COSTAS_MODEL)** · shipped · chart `sessions-pipeline` · profiles selfhost-postgres, migration, external-selfhosted, external-rds, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql
 
 off (the extractive summariser) is the only value wired at 7d7229b; any other value fails at start.
 
@@ -1985,7 +2108,7 @@ off (the extractive summariser) is the only value wired at 7d7229b; any other va
 
 <a id="opt-sessions-pipeline-search-backend"></a>
 
-**Transcript search backend (search.backend)** · **planned** · chart `sessions-pipeline` · profiles selfhost-postgres, migration, external-selfhosted, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql
+**Transcript search backend (search.backend)** · **planned** · chart `sessions-pipeline` · profiles selfhost-postgres, migration, external-selfhosted, external-rds, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql
 
 Operator decision 2026-11-01: postgres (PostgreSQL 17 + pg_trgm, the default and
 what every profile does today) or self-managed ClickHouse OSS as a derived index
@@ -2006,7 +2129,7 @@ architecture.
 
 <a id="opt-sessions-pipeline-session-briefs"></a>
 
-**Model session briefs** · **planned** · chart `sessions-pipeline` · profiles selfhost-postgres, migration, external-selfhosted, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql
+**Model session briefs** · **planned** · chart `sessions-pipeline` · profiles selfhost-postgres, migration, external-selfhosted, external-rds, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql
 
 sessions-pipeline #127 (main 475d503, generation 5ed11913...) adds the
 session-brief worker (SERVICE=session-brief) and SESSION_BRIEF_ENABLED, which
@@ -2877,38 +3000,65 @@ publication, GC, product deletion, provider removal or profile enablement.
 
 <a id="opt-sessions-read-api"></a>
 
-**Default-off self-host session read API container** · shipped · chart `sessions-pipeline` · profiles selfhost-postgres, migration, external-selfhosted, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql
+**Default-off self-host session read API container** · shipped · chart `session-read-api` · profiles selfhost-postgres, migration, external-selfhosted, external-rds, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql
 
-Chart plumbing for the pipeline session-read-api SERVICE. Requires an
-explicitly pinned compatible image, read-role configuration JSON in a
-Secret, an explicit coverage floor and workspace allowlist, a public token
-audience, and either an explicitly configured temporary issuer (legacy
-chart mode) or auth.mode=relaycontrol_only from merged pipeline #364.
-Control-only mode requires enabled introspection and empty legacy issuer
-settings, emits READ_API_AUTH_MODE, and omits both RELAYAUTH variables.
-It cannot be injected through extraEnv. A LOCKER_BUCKET extraEnv entry
-requires a nonempty literal bucket, literal PIPELINE_ORG_FROM_PREFIX=true
-and PIPELINE_KEY_PREFIX=96bulls. Missing/false flags, org-suffixed roots
-and valueFrom references for these layout inputs refuse rendering.
-Bucket literals reject surrounding whitespace; when both services are
-enabled, the configured reader bucket must equal ingestEdge.locker.bucket.
-Search is selected
-via SEARCH_INDEX_BACKEND (postgres by default) through the upstream adapter
-registry, not implemented in this chart. Introspection uses
-its own Secret reference. Readiness requires health JSON enabled:true;
-dormant HTTP 200 is insufficient. No install profile enables this option.
-Pipeline PRs 317/318 are merged; the approved PG-only/canonical/auth
-runtime assembly remains unqualified, so this entry does not claim runtime availability or proof.
+The standalone session-read-api chart, carried by sessions-pipeline as the
+default-off sessionReadApi dependency. Requires an explicitly pinned
+compatible image, read-role configuration JSON in a Secret, an explicit
+coverage floor and workspace allowlist, a public token audience, an explicit
+postgres.tlsProfile, and either auth.mode=relaycontrol_only (the default,
+with enabled introspection and empty legacy issuer settings) or an
+explicitly configured temporary issuer (legacy). A LOCKER_BUCKET extraEnv
+entry requires a nonempty literal bucket, literal
+PIPELINE_ORG_FROM_PREFIX=true and PIPELINE_KEY_PREFIX=96bulls. Missing/false
+flags, org-suffixed roots and valueFrom references for these layout inputs
+refuse rendering. Bucket literals reject surrounding whitespace; when both
+services are enabled, the configured reader bucket must equal
+ingestEdge.locker.bucket. Search is selected via SEARCH_INDEX_BACKEND
+(postgres by default); search.clickhouse.enabled reads an external
+ClickHouse from the read API Secret. Introspection uses its own Secret
+reference. Readiness requires health JSON enabled:true; dormant HTTP 200 is
+insufficient. No install profile enables this option. The old
+sessions-pipeline readApi key refuses to render with a migration message.
+The approved PG-only/canonical/auth runtime assembly remains unqualified,
+so this entry does not claim runtime availability or proof.
 
 - Default: `disabled`
 - Choices: `disabled`; `enabled`: Requires an owner-approved compatible runtime.
 - Provided by: operator
-- Values: `readApi.*`
-- Env: `SERVICE`, `RELAYHISTORY_SELFHOST_READ_API`, `RELAYHISTORY_READ_API_PORT`, `RELAYHISTORY_READ_API_SECRET`, `READ_API_ORIGIN`, `READ_API_AUTH_MODE`, `LOCKER_BUCKET`, `PIPELINE_ORG_FROM_PREFIX`, `PIPELINE_KEY_PREFIX`, `READ_API_COMPLETE_SINCE`, `READ_API_DIRECTORY_WORKSPACES`, `SEARCH_INDEX_BACKEND`, `ALLOW_IN_CLUSTER_HTTP`, `RELAYAUTH_JWKS_URL`, `RELAYAUTH_ISSUER`, `RELAYHISTORY_ACCEPT_RELAYCONTROL_TOKENS`, `RELAYCONTROL_INTROSPECT_URL`, `RELAYCONTROL_INTROSPECT_SECRET`
-- Secret: `<read API configuration Secret>` from `readApi.config.existingSecret`; keys `RELAYHISTORY_READ_API_SECRET` from `readApi.config.key`
-- Secret: `<read API introspection Secret>` from `readApi.auth.relaycontrol.existingSecret`; keys `RELAYCONTROL_INTROSPECT_SECRET` from `readApi.auth.relaycontrol.key`
-- Verify: Leave disabled until the image and assembly contract land; render/schema/probe tests prove plumbing only. Authenticated workspace/session read acceptance remains required.
-- Sources: [`charts/sessions-pipeline/templates/read-api.yaml:1`](../charts/sessions-pipeline/templates/read-api.yaml#L1), [`charts/sessions-pipeline/values.yaml:1`](../charts/sessions-pipeline/values.yaml#L1), [`docs/self-hosted-session-read-api.md:1`](../docs/self-hosted-session-read-api.md#L1)
+- Values: `fullnameOverride`, `replicas`, `image.*`, `imagePullSecrets`, `port`, `probeRuntime`, `origin`, `completeSince`, `directoryWorkspaces`, `login.advertisesSync`, `turns.assumeNoLegacy`, `serviceAccountCreate`, `allowInClusterHttp`, `config.*`, `postgres.*`, `postgresCa.*`, `search.*`, `auth.*`, `cors.*`, `extraEnv`, `extraVolumes`, `extraVolumeMounts`, `serviceAccountName`, `nodeSelector`, `tolerations`, `affinity`, `podAnnotations`, `resources`
+- Env: `SERVICE`, `RELAYHISTORY_SELFHOST_READ_API`, `RELAYHISTORY_READ_API_PORT`, `RELAYHISTORY_READ_API_SECRET`, `READ_API_ORIGIN`, `READ_API_AUTH_MODE`, `READ_API_COMPLETE_SINCE`, `READ_API_DIRECTORY_WORKSPACES`, `READ_API_CORS_ALLOWED_ORIGINS`, `RELAYHISTORY_SELFHOST_LOGIN_ADVERTISES_SYNC`, `READ_API_TURNS_ASSUME_NO_LEGACY`, `SEARCH_INDEX_POSTGRES_BACKEND_ID`, `SEARCH_INDEX_OPENSEARCH_URL`, `SEARCH_INDEX_OPENSEARCH_AUTH`, `SEARCH_INDEX_OPENSEARCH_AWS_REGION`, `SEARCH_INDEX_OPENSEARCH_INDEX_PREFIX`, `PIPELINE_ORG_FROM_PREFIX`, `PIPELINE_KEY_PREFIX`, `SEARCH_INDEX_BACKEND`, `ALLOW_IN_CLUSTER_HTTP`, `SESSION_POSTGRES_TLS_PROFILE`, `SESSION_POSTGRES_CA_FILE`, `SESSION_POSTGRES_CA_SHA256`, `RELAYAUTH_JWKS_URL`, `RELAYAUTH_ISSUER`, `RELAYHISTORY_ACCEPT_RELAYCONTROL_TOKENS`, `RELAYCONTROL_INTROSPECT_URL`, `RELAYCONTROL_INTROSPECT_SECRET`
+- Secret: `<read API configuration Secret>` from `session-read-api:config.existingSecret`; keys `RELAYHISTORY_READ_API_SECRET` from `session-read-api:config.key`
+- Secret: `<read API introspection Secret>` from `session-read-api:auth.relaycontrol.existingSecret`; keys `RELAYCONTROL_INTROSPECT_SECRET` from `session-read-api:auth.relaycontrol.key`
+- Verify: Leave disabled until the image and assembly contract land; render/schema/probe tests prove plumbing only. Authenticated workspace reads need the approved runtime.
+- Sources: [`charts/session-read-api/templates/deployment.yaml:1`](../charts/session-read-api/templates/deployment.yaml#L1), [`charts/session-read-api/values.yaml:1`](../charts/session-read-api/values.yaml#L1), [`docs/self-hosted-session-read-api.md:1`](../docs/self-hosted-session-read-api.md#L1)
+
+#### opt.sessions-search-indexer
+
+<a id="opt-sessions-search-indexer"></a>
+
+**Default-off self-host transcript search writer** · shipped · chart `sessions-pipeline` · profiles selfhost-postgres, migration, external-selfhosted, external-rds, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql
+
+Chart plumbing for the pipeline session-pipeline-consumer SERVICE, which
+reads the Locker and writes the transcript search index (managed
+OpenSearch by default, signed with the ServiceAccount's Pod Identity
+credentials; projection state stays in Postgres). Requires an explicitly
+pinned image built from a pipeline commit with the OpenSearch writer, the
+same coverage floor and backend id as the read API, the runtime-role
+connection JSON in a Secret, and an owner-role bootstrap (the chart's
+bootstrap Job, or a run acknowledged by the operator). The ServiceAccount
+must carry the search indexer Pod Identity association and the Locker
+read grant. No install profile enables this option.
+
+- Default: `disabled`
+- Choices: `disabled`; `enabled`: Requires a services image with the OpenSearch writer and the indexer role's Locker grant.
+- Provided by: operator
+- Values: `searchIndexer.*`
+- Env: `SERVICE`, `RELAYHISTORY_SELFHOST_PIPELINE_CONSUMER`, `RELAYHISTORY_PIPELINE_CONSUMER_SECRET`, `SEARCH_INDEX_BACKEND`, `SEARCH_INDEX_POSTGRES_BACKEND_ID`, `READ_API_COMPLETE_SINCE`, `PIPELINE_KEY_PREFIX`, `PIPELINE_ORG_FROM_PREFIX`, `SESSION_POSTGRES_TLS_PROFILE`, `SESSION_POSTGRES_CA_FILE`, `SESSION_POSTGRES_CA_SHA256`, `LOCKER_BUCKET`, `LOCKER_REGION`, `LOCKER_ENDPOINT`, `SEARCH_INDEX_OPENSEARCH_URL`, `SEARCH_INDEX_OPENSEARCH_AUTH`, `SEARCH_INDEX_OPENSEARCH_AWS_REGION`, `SEARCH_INDEX_OPENSEARCH_INDEX_PREFIX`, `WORKER_HEALTH_PORT`
+- Secret: `<search indexer configuration Secret>` from `searchIndexer.config.existingSecret`; keys `RELAYHISTORY_PIPELINE_CONSUMER_SECRET` from `searchIndexer.config.key`
+- Secret: `<search indexer bootstrap Secret>` from `searchIndexer.bootstrap.existingSecret`; keys `RELAYHISTORY_PIPELINE_CONSUMER_SECRET` from `searchIndexer.bootstrap.key`
+- Verify: Leave disabled until the image and the role grants land; render tests prove plumbing only. kubectl logs of the indexer report pipeline consumer ticks, and search hits come back through the read API once it is enabled.
+- Sources: [`charts/sessions-pipeline/templates/search-indexer.yaml:1`](../charts/sessions-pipeline/templates/search-indexer.yaml#L1), [`charts/sessions-pipeline/values.yaml:1`](../charts/sessions-pipeline/values.yaml#L1)
 
 #### opt.control-legacy-relayauth
 
@@ -2952,6 +3102,9 @@ Rendered by the charts but not a requirement or an option: fixed by the chart or
 
 | env | chart | why |
 | --- | --- | --- |
+| `READ_API_INTERNAL_SECRET` | session-read-api | reserved from extraEnv; no chart value offers it yet |
+| `READ_API_INTERNAL_SECRET_PREVIOUS` | session-read-api | reserved from extraEnv; no chart value offers it yet |
+| `READ_API_ACCESS_TOKEN_TTL_SECONDS` | session-read-api | reserved from extraEnv; no chart value offers it yet |
 | `SERVICE` | sessions-pipeline-worker, session-ingest-api | selects the entry point of the one services image |
 | `OTEL_SERVICE_NAME` | sessions-pipeline-worker, session-ingest-api | equals SERVICE |
 | `TMPDIR` | sessions-pipeline-worker, session-ingest-api | the writable emptyDir under a read-only root filesystem |

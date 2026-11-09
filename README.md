@@ -7,6 +7,8 @@ Terraform modules and Helm charts for customer-owned Agent Relay installations o
 - [Terraform modules and examples](terraform/README.md): network, Kubernetes, PostgreSQL, object storage, optional search and functions.
 - [Helm charts](#charts): application configuration, deployment and versioned dependencies under `charts/<service-name>/`.
 - [Full application proof](docs/terraform-helm-application-proof.md): required lifecycle evidence and current gaps.
+- [Enterprise AWS installation and first-user guide](docs/enterprise-aws-install.md): customer roles, SSO, Desktop downloads, device approval and acceptance; release preparation with explicit remaining gates.
+- [Enterprise operator controls](docs/enterprise-customer-controls.md): generic operator controls, profile-specific downloads and disabled-Flows acceptance.
 
 This repository was renamed from `AgentWorkforce/helm-charts` to `AgentWorkforce/infra`.
 Update existing clones with `git remote set-url origin git@github.com:AgentWorkforce/infra.git`;
@@ -232,7 +234,7 @@ Where the migrator has no default, neither does the chart:
 
 | value | env | rule |
 | --- | --- | --- |
-| `databaseMode` | `HOOPDB_DB_MODE` | Required: `local`, `selfhosted`, `cloudsql` (Google Cloud SQL) or `supabase`. |
+| `databaseMode` | `HOOPDB_DB_MODE` | Required: `local`, `selfhosted`, `cloudsql` (Google Cloud SQL), `rds` (Amazon RDS for PostgreSQL 16+, not Aurora) or `supabase`. |
 | `supabaseShim` | `HOOPDB_SUPABASE_SHIM` | Required in local, selfhosted and cloudsql. In supabase mode it must be unset or false, and it is rendered `false`. |
 | `roleBootstrap` | `HOOPDB_ROLE_BOOTSTRAP` | Optional (the migrator defaults it to the shim choice). Refused as true in supabase. Cloud SQL sets false. |
 | `runtimeRole` | `HOOPDB_RUNTIME_ROLE` | Required. Outside local mode it must be a dedicated role, never the migration owner or the search Worker. |
@@ -258,8 +260,10 @@ Where the migrator has no default, neither does the chart:
 - `migration.yaml`: an existing in-cluster CNPG HoopDb from before the search
   Worker role existed. It is `selfhost-postgres.yaml` plus
   `searchWorkerRole.bootstrapJob`.
+- `external-rds.yaml`: Amazon RDS for PostgreSQL 16+ in rds mode, in a database
+  dedicated to HoopDb. The master runs the `rds_*.sql` bootstrap first.
 - `external-selfhosted.yaml`: an external operator-controlled plain-Postgres
-  HoopDb (RDS, your own Postgres) in selfhosted mode. There are no in-cluster
+  HoopDb with a superuser, in selfhosted mode. There are no in-cluster
   SQL Jobs, and migrate waits for the roles. The operator runs the three
   bootstrap files as a superuser. Google Cloud SQL uses `cloudsql` mode instead:
   see `charts/sessions-pipeline/ci/gcp-cloudsql-values.yaml`. There the shim is off,
@@ -462,7 +466,7 @@ Prerequisites: Docker Engine 28+ (including native-platform image export),
 kind 0.31+, kubectl, Helm 3.10+, OpenSSL, Git, Python 3.9+, and PyYAML. Allocate
 enough Docker memory for the suite and CNI; budget 20 GiB free disk for a cold
 setup. Current optional native Control builds fetch public
-`AgentWorkforce/relay-control` at the exact `a659ac4` source pin. Explicit historical
+`AgentWorkforce/relay-control` at the exact `e74413b` source pin. Explicit historical
 reproduction (`KIND_CONTROL_SOURCE=historical`) uses `1f08cb6` from the archived
 private `AgentWorkforce/relay-control-internal` repository and needs authenticated
 Git read access. Current and historical source caches are separate. Existing
@@ -565,10 +569,16 @@ make kind-proof-core
 ```
 
 This requires Docker BuildKit/buildx and GitHub access during preparation. It
-builds the official public Control Dockerfile at `a659ac4` using a pinned Node base,
+builds the official public Control Dockerfile at `e74413b` using a pinned Node base,
 selects the native manifest digest in this worktree's private values, loads it
 into kind and uses `imagePullPolicy: Never`. The OCI manifest/config hashes,
 architecture and source revision are verified before installation. The build
+also selects the matching API and migration entrypoints: current public images
+use `node_modules/relay-control`, while the historical image uses
+`node_modules/@cloud/selfhost-api`. Custom command overrides require explicit
+translation before preparation; unrelated server and migration settings stay
+in place. Switching source selects both commands with the image.
+The build
 receipt is `.kind/core/control-build.json`. `make kind-build-control PROFILE=core`
 performs just the build/selection; it does not install or publish an image.
 For the previous source, use `KIND_CONTROL_SOURCE=historical make kind-build-control PROFILE=core`.
@@ -584,7 +594,7 @@ artifact digest; the official Dockerfile's runtime npm dependency ranges mean
 that identical source does not guarantee identical rebuilt image bytes.
 The historical `1f08cb6` proof covers both public MCP paths with real-token initialization, nineteen-tool discovery,
 workspace/public-origin binding and negative auth/origin checks in the recorded
-local-control proof. It has not been rerun for `a659ac4`; no current-build runtime
+local-control proof. It has not been rerun for `e74413b`; no current-build runtime
 acceptance is implied. Agent launch/release remains pending.
 The local bootstrap applies release objects client-side before final Helm
 reconciliation. On Helm 4 the wrapper explicitly selects its supported
@@ -608,7 +618,17 @@ The CA private
 key stays on the host; Kubernetes receives only the separate server leaf key.
 The leaf certificate covers these hostnames for 30 days. Desktop builds can
 target `AGENT_RELAY_SITE_URL=https://relay.kind.agentrelay.com:8443` and
-`AGENT_RELAY_URL_SCHEME=agentrelay-kind`. The dashboard carries the matching
+`AGENT_RELAY_URL_SCHEME=agentrelay-kind` as **compile-time site-build inputs**;
+runtime environment variables cannot retarget a default-profile Desktop.
+Only on an operator-designated disposable fixture host, Desktop/LaunchAgent
+calls may use this fixture CA in the macOS **System** keychain; remove its trust
+and exact certificate after testing, identified by its recorded fingerprint.
+Do not install it on a general workstation; use a properly trusted site
+certificate there. Login-keychain trust is insufficient. Desktop has
+no custom-CA or trust-bypass setting. No trust-store change is made by this
+installer. The [Desktop delivery contract](ci/agent-relay/kind/ar-lap-delivery-plan.md#desktop-owner-build-and-trust-contract)
+tracks the separate release/artifact gate and analytics requirements.
+The dashboard carries the matching
 Desktop link settings. The proof routes to loopback with verified TLS/SNI,
 so it requires neither editing `/etc/hosts` nor disabling certificate checks.
 Add-on SDK dependencies are committed in `ci/agent-relay/kind/flows-sdk/package-lock.json`
@@ -669,7 +689,7 @@ a database row. See [captured evidence](ci/agent-relay/kind/evidence.md).
 | Current image/source compatibility | Component owners: record exact source SHA and migrator generation; a tag named `main` is insufficient. This run used services source `f1c2672581b6f88d26d0549b4d1cb78fce0d5f16`, generation `0dcd0e89bebbdad789a40fa61311c601b4c0e49e389e3b2b0167b6fd5fdf542e`. |
 | RelayAuth removal | layered-control + layered-sessions-pipeline: default-off introspection branch, `sh_at_`, `rth:read/rth:sync`; keep the temporary internal component until compatible images ship. |
 | Cost attribution data | History's client-reported fixture usage/cost passes authenticated ingest and TLS readback, including owner and workspace isolation. This does not claim live model billing or courier-session application visibility. |
-| Control image and MCP endpoint | PASS for the recorded historical local-Control variant at pinned source `1f08cb6`: verified native manifest transport, both public MCP aliases, nineteen-tool discovery, real workspace binding and auth/origin rejection ([raw receipts](ci/agent-relay/kind/evidence.md)). Current public source `a659ac4` has not received that runtime proof. The catalog default remains source `9b80b04` and reports MCP pending. This does not claim agent launch/release or every MCP tool backend. No image publication is performed. |
+| Control image and MCP endpoint | PASS for the recorded historical local-Control variant at pinned source `1f08cb6`: verified native manifest transport, both public MCP aliases, nineteen-tool discovery, real workspace binding and auth/origin rejection ([raw receipts](ci/agent-relay/kind/evidence.md)). Current public source `e74413b` has not received that runtime proof. The catalog default remains source `9b80b04` and reports MCP pending. This does not claim agent launch/release or every MCP tool backend. No image publication is performed. |
 | Custom Desktop package for ar-lap | layered-relay-desktop: target build/artifact and real browser/Desktop handoff plus courier-to-app trace are not qualified by the infra proof. Device auth and site TLS endpoint checks do not substitute for that custom application run. |
 | Agent launch/release | layered-control: API unimplemented; fleet node claim/release is not this proof. |
 | Signed offline license enforcement | layered-control: design only. `relay-control.license.existingSecret/key` reserves the `SELFHOST_LICENSE_FILE` mount; the file slot does not verify signatures or gate add-ons. |
@@ -681,7 +701,7 @@ For render/trust/schema checks without Docker (Helm and kubeconform required), r
 `python3 ci/agent-relay/kind/test_stack.py -v` after building chart dependencies.
 
 The default-off [session read API chart preparation](docs/self-hosted-session-read-api.md)
-is available under `sessions-pipeline.readApi`. It remains disabled in both kind
+is available as the `charts/session-read-api` chart, carried under `sessions-pipeline.sessionReadApi`. It remains disabled in both kind
 profiles pending the approved runtime assembly and image; the running core
 evidence does not prove this new component.
 

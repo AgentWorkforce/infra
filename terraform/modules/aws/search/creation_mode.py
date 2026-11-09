@@ -14,6 +14,9 @@ MARKER = PREFIX + 'terraform_data.creation_mode'
 DOMAINS = {PROTECTED, LEGACY, DISPOSABLE}
 DOMAIN_POLICY = PREFIX + 'aws_opensearch_domain_policy.this'
 WORKLOAD_ROLE = re.compile(re.escape(PREFIX) + r'aws_iam_role\.workload\["([^"]+)"\]')
+# Inline policies a workload role may read back, each its own managed resource.
+# The first is mandatory; the second exists only when sessions_bucket_read is set.
+ROLE_POLICIES = ('workload', 'sessions_read')
 
 
 class SearchModeError(ValueError):
@@ -86,25 +89,32 @@ def _sibling_written_drift(row, state, changes):
     changed = {key for key in set(before) | set(after) if before.get(key) != after.get(key)}
     role = WORKLOAD_ROLE.fullmatch(address)
     if address in (PROTECTED, DISPOSABLE) and changed == {'access_policies'} and row.get('type') == 'aws_opensearch_domain':
-        name = DOMAIN_POLICY
+        names = [DOMAIN_POLICY]
     elif role and changed == {'inline_policy'} and row.get('type') == 'aws_iam_role':
-        name = PREFIX + 'aws_iam_role_policy.workload["' + role.group(1) + '"]'
+        required, *optional = [PREFIX + 'aws_iam_role_policy.' + kind + '["' + role.group(1) + '"]' for kind in ROLE_POLICIES]
+        names = [required] + [name for name in optional if name in state]
     else:
         return False
-    own, sibling, planned = state.get(address), state.get(name), changes.get(name)
-    if not isinstance(own, dict) or own.get('type') != row['type'] or not isinstance(sibling, dict) or sibling.get('mode') != 'managed':
+    own = state.get(address)
+    if not isinstance(own, dict) or own.get('type') != row['type']:
         return False
-    if not isinstance(planned, dict) or not isinstance(planned.get('change'), dict) or planned['change'].get('actions') != ['no-op']:
-        return False
-    values = sibling.get('values')
-    if not isinstance(values, dict):
-        return False
-    if name == DOMAIN_POLICY:
-        return _same_document(after.get('access_policies'), values.get('access_policies'))
+    siblings = []
+    for name in names:
+        sibling, planned = state.get(name), changes.get(name)
+        if not isinstance(sibling, dict) or sibling.get('mode') != 'managed':
+            return False
+        if not isinstance(planned, dict) or not isinstance(planned.get('change'), dict) or planned['change'].get('actions') != ['no-op']:
+            return False
+        if not isinstance(sibling.get('values'), dict):
+            return False
+        siblings.append(sibling['values'])
+    if names == [DOMAIN_POLICY]:
+        return _same_document(after.get('access_policies'), siblings[0].get('access_policies'))
     inline = after.get('inline_policy')
-    if not isinstance(inline, list) or len(inline) != 1 or not isinstance(inline[0], dict):
+    if not isinstance(inline, list) or len(inline) != len(siblings) or not all(isinstance(entry, dict) for entry in inline):
         return False
-    return inline[0].get('name') == values.get('name') and _same_document(inline[0].get('policy'), values.get('policy'))
+    documents = {entry.get('name'): entry.get('policy') for entry in inline}
+    return len(documents) == len(siblings) and all(values.get('name') in documents and _same_document(documents[values.get('name')], values.get('policy')) for values in siblings)
 
 
 def admit(plan):

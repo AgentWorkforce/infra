@@ -1,8 +1,10 @@
 # Pending self-host read API contract
 
 This is source review and read-only diagnosis, not an enabled deployment or an
-end-to-end pass. Historical local-control proof at `fd8565c` records 57 PASS,
-0 FAIL, 3 PENDING. This source-contract update does not rerun or reattribute it.
+end-to-end pass. Historical proofs at `1c203f59` (ar-lap) and `fd8565c`
+(local-control) each record 57 PASS, 0 FAIL, 3 PENDING. They predate the
+`core.flows_disabled` gate and were not rerun or reattributed. Those counts
+are not the result of the current core verifier.
 
 The originally reviewed source heads were pipeline [#317 at a7d7a5db](https://github.com/AgentWorkforce/relayhistory-pipeline/pull/317),
 [#318 at 441e4862](https://github.com/AgentWorkforce/relayhistory-pipeline/pull/318)
@@ -139,7 +141,9 @@ The proposed writer in pipeline #336 is tracked in the
 [bootstrap source review](writer-bootstrap-review.md). Its entrypoint is not
 ready for operator wiring: that review records the two now-fixed bootstrap
 source defects and the remaining full-bootstrap/function-ACL/combined-image
-proof requirements. The accompanying source checksums
+proof requirements. Operator wiring requires the same approved image/ACL
+migration generation and a final exact-function-manifest receipt; source
+hashes alone cannot qualify installation. The accompanying source checksums
 do not establish a compatible container image or migration generation.
 
 The #330 service also requires `SESSION_POSTGRES_TLS_PROFILE` explicitly and,
@@ -147,7 +151,7 @@ when using Postgres search, a nonempty `SEARCH_INDEX_POSTGRES_BACKEND_ID` matchi
 the writer. For kind's custom CA, the upstream inputs are
 `SESSION_POSTGRES_TLS_PROFILE=custom-ca`, `SESSION_POSTGRES_CA_FILE` and
 `SESSION_POSTGRES_CA_SHA256` over the exact mounted public PEM bytes. The chart's
-`readApi.extraEnv`, `extraVolumes` and `extraVolumeMounts` can carry these reviewed
+`sessionReadApi.extraEnv`, `extraVolumes` and `extraVolumeMounts` can carry these reviewed
 inputs; they do not create a server certificate, schema or writer. The coverage
 floor must agree with the writer. No TLS bypass or owner credential belongs in
 the reader. Complete upload/sync/cost compatibility must also be established

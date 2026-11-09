@@ -130,9 +130,8 @@ sessions-pipeline:
       enabled: false
     # HoopDb in-cluster on CloudNativePG (sessions-pipeline.hoopdb below):
     # the chart wires the CNPG app Secret and runs the runtime-role and
-    # function-default Jobs. For RDS/Aurora set hoopdb.enabled=false, point
-    # worker.hoopdb / migrations.hoopdb at your Secret keys and use
-    # databaseMode selfhosted with roleBootstrap as in values-gcp.yaml.
+    # function-default Jobs. For RDS see sessions-pipeline
+    # profiles/external-rds.yaml (databaseMode rds); Aurora is not covered.
     migrations:
       databaseMode: selfhosted
       supabaseShim: true

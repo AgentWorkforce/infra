@@ -72,6 +72,7 @@ settings. */ -}}
 {{- $seenSecretKeys := dict -}}
 {{- range $name := keys .Values.secretKeys | sortAlpha }}{{ $key := toString (index $.Values.secretKeys $name) }}{{ if empty $key }}{{ continue }}{{ end }}{{ if hasKey $seenSecretKeys $key }}{{ fail (printf "secretKeys.%s and secretKeys.%s both name Secret key %q: every secretKeys value must be distinct (a collision with databaseMigrationsUrl would mount the migration credential into the API pod)" (get $seenSecretKeys $key) $name $key) }}{{ end }}{{ $_ := set $seenSecretKeys $key $name }}{{ end -}}
 {{- include "relay-control.validateRuntime" . -}}
+{{- include "relay-control.validatePostgresCa" . -}}
 {{- if and .Values.migrations.enabled (not (regexMatch "^[A-Za-z_][A-Za-z0-9_$]{0,62}$" .Values.database.runtimeRole)) }}{{ fail "database.runtimeRole must be a valid PostgreSQL role name when migrations are enabled" }}{{ end -}}
 {{- include "relay-control.validateSingleHost" . -}}
 {{- include "relay-control.validateIdentity" . -}}
@@ -108,6 +109,7 @@ the chart already sets, including duplicates inside extraEnv. */ -}}
   "RELAYAUTH_API_KEY_FILE" "RELAYCAST_INTERNAL_SECRET_FILE" "SELFHOST_BOOTSTRAP_TOKEN_FILE" "SELFHOST_ENCRYPTION_KEY_FILE"
   "SELFHOST_ENCRYPTION_PREVIOUS_KEY_FILE" "SELFHOST_INTERNAL_TOKEN_FILE" "SELFHOST_OIDC_CLIENT_SECRET_FILE" "SELFHOST_SMTP_PASSWORD_FILE"
   "SELFHOST_TELEMETRY_INSTALL_KEY_FILE" -}}
+{{- if (.Values.postgresCa | default dict).enabled }}{{ $managed = append $managed "NODE_EXTRA_CA_CERTS" }}{{ end -}}
 {{- range $name := $managed }}{{ if hasSuffix "_FILE" $name }}{{ $managed = append $managed (trimSuffix "_FILE" $name) }}{{ end }}{{ end -}}
 {{- range $src := list (include "relay-control.runtimeEnv" .) (include "relay-control.secretEnv" .) -}}
 {{- range $item := $src | fromYamlArray }}{{ $managed = append $managed (toString $item.name) }}{{ end -}}
@@ -330,12 +332,18 @@ spec:
           value: /var/run/agent-relay/secrets/{{ .Values.secretKeys.databaseMigrationsUrl }}
         - name: SELFHOST_RUNTIME_DATABASE_ROLE
           value: {{ .Values.database.runtimeRole | quote }}
+        {{- if (.Values.postgresCa | default dict).enabled }}
+        - { name: NODE_EXTRA_CA_CERTS, value: /etc/postgres-ca/ca.crt }
+        {{- end }}
         {{- with .Values.extraEnv }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
       volumeMounts:
         - { name: database, mountPath: /var/run/agent-relay/secrets, readOnly: true }
         - { name: tmp, mountPath: /tmp }
+        {{- if (.Values.postgresCa | default dict).enabled }}
+        - { name: postgres-ca, mountPath: /etc/postgres-ca, readOnly: true }
+        {{- end }}
       resources: {{ toYaml .Values.resources | nindent 8 }}
   volumes:
     - name: database
@@ -347,6 +355,9 @@ spec:
             path: {{ .Values.secretKeys.databaseMigrationsUrl | quote }}
     - name: tmp
       emptyDir: { sizeLimit: 64Mi }
+    {{- if (.Values.postgresCa | default dict).enabled }}
+    {{- include "relay-control.postgresCaVolume" . | nindent 4 }}
+    {{- end }}
 {{- end -}}
 
 {{- /* bootstrap-signup: first-boot bootstrap, OIDC, email links, SMTP and
@@ -478,4 +489,40 @@ mounted file (_CLIENT_SECRET_FILE), optional _SCOPES. */ -}}
 {{- /* Never hand an API credential (the migration owner credential included) to an integration reference. */ -}}
 {{- if eq (toString $app.existingSecret) (toString $.Values.existingSecret) }}{{- range $name, $key := $.Values.secretKeys }}{{- if and (not (empty $key)) (or (eq $idKey (toString $key)) (eq $secretKey (toString $key))) }}{{ fail (printf "integrations.%s must not reuse secretKeys.%s from existingSecret" $provider $name) }}{{ end }}{{ end }}{{ end }}
 {{- end }}
+{{- end -}}
+
+{{- /* Optional Postgres server CA bundle (postgresCa.*). NODE_EXTRA_CA_CERTS adds the
+mounted PEM to the roots node-pg verifies against for sslmode=verify-full. */ -}}
+{{- define "relay-control.postgresCaVolume" -}}
+{{- $ca := .Values.postgresCa -}}
+- name: postgres-ca
+{{- if $ca.configMap }}
+  configMap:
+    name: {{ $ca.configMap | quote }}
+    items: [{ key: {{ $ca.key | quote }}, path: ca.crt }]
+{{- else }}
+  secret:
+    secretName: {{ $ca.secret | quote }}
+    # Public certificates, readable whatever the Pod's fsGroup is.
+    defaultMode: 0444
+    items: [{ key: {{ $ca.key | quote }}, path: ca.crt }]
+{{- end }}
+{{- end -}}
+
+{{- /* Fail closed on a half-configured bundle: a name without enabled=true would
+leave the certificate unverified while looking configured. */ -}}
+{{- define "relay-control.validatePostgresCa" -}}
+{{- $ca := .Values.postgresCa | default dict -}}
+{{- $enabled := dig "enabled" false $ca -}}
+{{- if not (kindIs "bool" $enabled) }}{{ fail "postgresCa.enabled must be a boolean" }}{{ end -}}
+{{- $configMap := get $ca "configMap" | default "" | toString -}}
+{{- $secret := get $ca "secret" | default "" | toString -}}
+{{- if not $enabled -}}
+{{- if or $configMap $secret }}{{ fail "postgresCa.configMap and postgresCa.secret require postgresCa.enabled=true; a CA name while disabled would leave the certificate unverified" }}{{ end -}}
+{{- else -}}
+{{- if eq (empty $configMap) (empty $secret) }}{{ fail "postgresCa.enabled=true requires exactly one of postgresCa.configMap or postgresCa.secret" }}{{ end -}}
+{{- $ref := default $secret $configMap -}}
+{{- if or (gt (len $ref) 253) (not (regexMatch "^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?)*$" $ref)) }}{{ fail "postgresCa.configMap and postgresCa.secret must be a Kubernetes object name" }}{{ end -}}
+{{- if not (regexMatch "^[A-Za-z0-9._-]+$" (get $ca "key" | default "" | toString)) }}{{ fail "postgresCa.key must be a Kubernetes data key" }}{{ end -}}
+{{- end -}}
 {{- end -}}

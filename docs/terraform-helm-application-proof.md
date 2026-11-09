@@ -7,11 +7,9 @@ installation does not establish that result.
 
 ## Required relational storage
 
-The current target is [one RDS instance and one application database with isolated
-service schemas](shared-postgres-storage-contract.md), including Control, HoopDb
-and Relaycast. SQLite and separate-database receipts remain historical evidence;
-they do not satisfy this target. Verify schema-aware migrations, owner/runtime
-separation and cross-schema access refusals on actual managed RDS.
+The current target is [one RDS instance with separate logical service databases](shared-postgres-storage-contract.md), including Control, HoopDb and Relaycast. SQLite and local PostgreSQL receipts
+remain development evidence; they do not satisfy the managed-RDS target. Verify service migrations, owner/runtime
+separation and cross-database access refusals on actual managed RDS.
 
 ## Evidence status — 2026-11-07
 
@@ -79,9 +77,9 @@ separate evidence and recovery requirements.
    repeat the reads. Exercise erasure and require all read paths to stop
    returning the session.
 5. **All requested components and profiles.** Include RelayControl, Dashboard
-   (target product relay-app; current chart `relay-dashboard`), Sessions Pipeline,
+   (chart `relay-webapp`), Sessions Pipeline,
    RelayHistory and Relaycast with authoritative PostgreSQL state in its own
-   schema on the shared RDS/database. Prove runtime placement, transaction
+   logical database on the shared RDS instance. Prove runtime placement, transaction
    semantics and durable recovery; do not count a SQLite-backed profile. Run the
    reviewed base values plus each selected add-on overlay as separate proof runs;
    the add-on overlays are not standalone installations.
