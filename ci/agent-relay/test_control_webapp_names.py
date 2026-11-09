@@ -236,9 +236,9 @@ esac
     def test_real_profile_images_are_not_relabelled_as_unpublished_repositories(self):
         docs = self.render()
         images = {c['image'] for d in docs for c in stack.pod_spec(d).get('containers', [])}
-        self.assertTrue(any(i.startswith('ghcr.io/agentworkforce/selfhost-api@sha256:') for i in images))
+        self.assertTrue(any(i.startswith('ghcr.io/agentworkforce/relay-control@sha256:') for i in images))
         self.assertTrue(any(i.startswith('ghcr.io/agentworkforce/relay-dashboard@sha256:') for i in images))
-        self.assertFalse(any(i.startswith(('ghcr.io/agentworkforce/relay-control@', 'ghcr.io/agentworkforce/relay-webapp@')) for i in images))
+        self.assertFalse(any(i.startswith(('ghcr.io/agentworkforce/selfhost-api@', 'ghcr.io/agentworkforce/relay-webapp@')) for i in images))
 
     def test_old_cluster_is_refused_before_ready_or_images_are_changed(self):
         with tempfile.TemporaryDirectory() as tmp, patch.object(stack, 'ROOT', Path(tmp)), patch.object(stack.shutil, 'which', return_value='/fixture/tool'):

@@ -241,9 +241,13 @@ compatibility:
       digest: sha256:b2b74a19375e86bbd5c70a30ea5edbd28cac3de103490bc428de007f4a38b821
       built_by: publish-image run 42462161615
   releases:
-    - id: telemetry-collector-0.1.0
+    - id: telemetry-collector-0.1.1
       status: unreleased
       current: true
+      charts: { telemetry-collector: 0.1.1 }
+      notes: 'Refuses relay-control images at render time: they do not contain the collector CLI this chart runs.'
+    - id: telemetry-collector-0.1.0
+      status: shipped
       charts: { telemetry-collector: 0.1.0 }
       notes: 'Default-off umbrella analytics file collector. Requires accepted immutable collector and TLS-proxy images, producer and TLS Secrets and an exclusive persistent volume. Source rendering does not prove image entrypoint, TLS, durable acknowledgement, power-loss recovery or whole-application analytics coverage. The currently reviewed collector CLI registers relaycontrol events only.'
     - id: sessions-pipeline-0.8.0
@@ -582,18 +586,29 @@ compatibility:
       images:
         relayauth: { repository: ghcr.io/agentworkforce/relayauth, digest: sha256:eb71daa28e30eb7305f666d0bccc5a4002e53e8a574e3c4c32163d907a1b71df }
       notes: superseded by 0.1.1.
-    - id: agent-relay-0.6.1
+    - id: agent-relay-0.6.2
       status: unreleased
       current: true
-      charts: { agent-relay: 0.6.1, relayhistory: 0.1.2, relay-control: 0.3.1, relay-webapp: 0.2.0 }
+      charts: { agent-relay: 0.6.2, relayhistory: 0.1.2, relay-control: 0.4.0, relay-webapp: 0.2.0 }
       app_versions: { agent-relay: 0.1.0, relayhistory: 0.1.0, relay-control: 0.1.0, relay-webapp: 0.1.0 }
       depends:
-        agent-relay: { relaycast: 0.3.6, relayauth: 0.1.4, sessions-pipeline: 0.8.0, relayhistory: 0.1.2, relay-control: 0.3.1, relay-webapp: 0.2.0, relayflows: 0.2.5, durable-actors: 0.14.6-awf.1, relayfile: 0.2.2, telemetry-collector: 0.1.0, relay-chief: 0.1.0 }
+        agent-relay: { relaycast: 0.3.6, relayauth: 0.1.4, sessions-pipeline: 0.8.0, relayhistory: 0.1.2, relay-control: 0.4.0, relay-webapp: 0.2.0, relayflows: 0.2.5, durable-actors: 0.14.6-awf.1, relayfile: 0.2.2, telemetry-collector: 0.1.1, relay-chief: 0.1.0 }
       images:
         relayhistory: { repository: ghcr.io/agentworkforce/relayhistory, digest_required: true }
-        relay-control: { repository: '', digest_required: true }
+        relay-control: { repository: ghcr.io/agentworkforce/relay-control, digest: sha256:d8c26d44dccb6dd21b7033288241a379e46ce5fbca69f276c4d4745001c3c3e2 }
         relay-webapp: { repository: ghcr.io/agentworkforce/relay-webapp, digest_required: true }
       notes: 'Takes relaycast 0.3.6 (default-off runtime.backend=postgres). With it off, every render differs only in the helm.sh/chart labels.'
+    - id: agent-relay-0.6.1
+      status: planned
+      charts: { agent-relay: 0.6.1, relayhistory: 0.1.2, relay-control: 0.4.0, relay-webapp: 0.2.0 }
+      app_versions: { agent-relay: 0.1.0, relayhistory: 0.1.0, relay-control: 0.1.0, relay-webapp: 0.1.0 }
+      depends:
+        agent-relay: { relaycast: 0.3.5, relayauth: 0.1.4, sessions-pipeline: 0.8.0, relayhistory: 0.1.2, relay-control: 0.4.0, relay-webapp: 0.2.0, relayflows: 0.2.5, durable-actors: 0.14.6-awf.1, relayfile: 0.2.2, telemetry-collector: 0.1.1, relay-chief: 0.1.0 }
+      images:
+        relayhistory: { repository: ghcr.io/agentworkforce/relayhistory, digest_required: true }
+        relay-control: { repository: ghcr.io/agentworkforce/relay-control, digest: sha256:d8c26d44dccb6dd21b7033288241a379e46ce5fbca69f276c4d4745001c3c3e2 }
+        relay-webapp: { repository: ghcr.io/agentworkforce/relay-webapp, digest_required: true }
+      notes: 'Moves Control to ghcr.io/agentworkforce/relay-control 0.5.0 and the relay-control package paths; older pins need server.args and migrations.args. Adds default-off session read handoff and introspection values. The handoff needs Control 0.5.1, not yet published.'
     - id: agent-relay-0.6.0
       status: planned
       charts: { agent-relay: 0.6.0, relayhistory: 0.1.2, relay-control: 0.3.1, relay-webapp: 0.2.0 }
@@ -1997,6 +2012,29 @@ entries:
     sources:
       - charts/relay-control/values.yaml
       - charts/relay-control/templates/deployment.yaml
+
+  - id: req.relay-control.session-read
+    kind: requirement
+    title: Session read API handoff and token introspection for Control
+    description: |
+      Default off. services.sessionReadApiUrl, services.sessionReadApiPublicUrl
+      and secretKeys.sessionReadApiSecret enable the Control credential handoff
+      to the session read API and must be set together;
+      services.sessionReadApiMcpReads also sends MCP session reads there. The
+      handoff needs Control 0.5.1. secretKeys.introspectSecret enables token
+      introspection, and introspection.audiences lists the accepted origins.
+    chart: relay-control
+    values: [services.sessionReadApiUrl, services.sessionReadApiPublicUrl, services.sessionReadApiMcpReads, secretKeys.sessionReadApiSecret, secretKeys.introspectSecret, introspection.audiences]
+    env: [SESSION_READ_API_URL, SESSION_READ_API_PUBLIC_URL, SESSION_READ_API_SECRET_FILE, SESSION_READ_API_MCP_READS, RELAYCONTROL_INTROSPECT_SECRET_FILE, SELFHOST_INTROSPECT_AUDIENCES]
+    profiles: [relay-control]
+    status: shipped
+    provided_by: operator
+    default: disabled
+    choices: [{ value: disabled }, { value: enabled }]
+    verify: helm template renders no SESSION_READ_API_* or introspection env by default, and renders each one with the secrets as mounted files when configured.
+    sources:
+      - charts/relay-control/values.yaml
+      - charts/relay-control/templates/_helpers.tpl
 
   - id: req.relay-control.config
     kind: requirement

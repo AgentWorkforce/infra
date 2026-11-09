@@ -20,18 +20,26 @@ assert mirror.is_dir() and (module / '.terraform.lock.hcl').is_file(), 'Initiali
 base = module / '.terraform/mode-history'; base.mkdir(exist_ok=True)
 prefix = (module / 'tests/disposable.tftest.hcl').read_text().split('run "', 1)[0]
 results = {}
+
+def prepare(root, source):
+    (root / 'home').mkdir()
+    for path in module.iterdir():
+        if path.is_file() and path.name.endswith(('.tf', '.tf.json', '.tofu', '.tofu.json')):
+            shutil.copy2(path, root / path.name)
+    shutil.copy2(module / '.terraform.lock.hcl', root / '.terraform.lock.hcl')
+    rc = root / 'terraform.rc'
+    rc.write_text('disable_checkpoint = true\nprovider_installation {\n filesystem_mirror {\n path = '+json.dumps(str(mirror))+'\n }\n}\n')
+    env = {'PATH':os.environ.get('PATH','/usr/bin:/bin'), 'HOME':str(root/'home'), 'CHECKPOINT_DISABLE':'1', 'TF_CLI_CONFIG_FILE':str(rc)}
+    tests = root / 'tests'; tests.mkdir()
+    (tests/'history.tftest.hcl').write_text(source)
+    init = subprocess.run([engine,'init','-backend=false','-lockfile=readonly','-input=false','-no-color'], cwd=root, env=env, capture_output=True, text=True, timeout=120)
+    assert init.returncode == 0, init.stdout+init.stderr
+    return subprocess.run([engine,'test','-json','-verbose','-no-color'], cwd=root, env=env, capture_output=True, text=True, timeout=120)
+
 for protected in [False, True]:
     label = 'protected-to-disposable' if protected else 'disposable-to-protected'
     with tempfile.TemporaryDirectory(prefix=label+'-', dir=base) as temporary:
-        root = Path(temporary); (root / 'home').mkdir()
-        for path in module.iterdir():
-            if path.is_file() and path.name.endswith(('.tf', '.tf.json', '.tofu', '.tofu.json')):
-                shutil.copy2(path, root / path.name)
-        shutil.copy2(module / '.terraform.lock.hcl', root / '.terraform.lock.hcl')
-        rc = root / 'terraform.rc'
-        rc.write_text('disable_checkpoint = true\nprovider_installation {\n filesystem_mirror {\n path = '+json.dumps(str(mirror))+'\n }\n}\n')
-        env = {'PATH':os.environ.get('PATH','/usr/bin:/bin'), 'HOME':str(root/'home'), 'CHECKPOINT_DISABLE':'1', 'TF_CLI_CONFIG_FILE':str(rc)}
-        tests = root / 'tests'; tests.mkdir()
+        root = Path(temporary)
         source = prefix.replace('disposable                 = true', 'disposable                 = false') if protected else prefix
         source += '''run "created" {
  command = apply
@@ -55,10 +63,7 @@ run "flip" {
  }
 }
 '''
-        (tests/'history.tftest.hcl').write_text(source)
-        init = subprocess.run([engine,'init','-backend=false','-lockfile=readonly','-input=false','-no-color'], cwd=root, env=env, capture_output=True, text=True, timeout=120)
-        assert init.returncode == 0, init.stdout+init.stderr
-        test = subprocess.run([engine,'test','-json','-verbose','-no-color'], cwd=root, env=env, capture_output=True, text=True, timeout=120)
+        test = prepare(root, source)
         output = test.stdout+test.stderr; (base/(label+'.jsonl')).write_text(output)
         events = [json.loads(line) for line in output.splitlines() if line.startswith('{')]
         if protected:
@@ -76,4 +81,27 @@ run "flip" {
             assert same['actions'] == ['no-op'] and same['before']['id'] == old['values']['id'] == same['after']['id'], output
 
             results[label] = 'hard mode postcondition expected/refused; same-mode plan and full disposable mock teardown passed'
+# Setting sessions_bucket_read on applied state may only add its two policies.
+label = 'sessions-read-added'
+identities = 'workload_roles             = { create = false }'
+assert identities in prefix
+source = prefix.replace(identities, 'workload_roles             = {}').replace('mock_provider "aws" {', 'mock_provider "aws" {\n  mock_resource "aws_iam_role" { defaults = { arn = "arn:aws:iam::111111111111:role/synthetic" } }', 1) + '''run "created" {
+ command = apply
+}
+run "add_sessions_read" {
+ command = plan
+ variables {
+  sessions_bucket_read = { bucket_arn = "arn:aws:s3:::synthetic-sessions", kms_key_arn = "arn:aws:kms:us-west-2:111111111111:key/synthetic" }
+ }
+}
+'''
+with tempfile.TemporaryDirectory(prefix=label+'-', dir=base) as temporary:
+    test = prepare(Path(temporary), source)
+    output = test.stdout+test.stderr; (base/(label+'.jsonl')).write_text(output)
+    assert test.returncode == 0, output
+    events = [json.loads(line) for line in output.splitlines() if line.startswith('{')]
+    plan = next(e['test_plan'] for e in events if e.get('type') == 'test_plan' and e.get('@testrun') == 'add_sessions_read')
+    changed = {r['address']: r['change']['actions'] for r in plan['resource_changes'] if r['change']['actions'] != ['no-op']}
+    assert changed == {'aws_iam_role_policy.sessions_read["indexer"]': ['create'], 'aws_iam_role_policy.sessions_read["reader"]': ['create']}, changed
+    results[label] = 'only the two sibling policies are created; roles, domain and marker no-op'
 print(json.dumps({'ok':True,'native_shared_root_history':results,'aws_calls':0,'legacy_cross_module_tofu_history':'not covered: pinned Tofu lacks state_key'}))

@@ -61,7 +61,7 @@ of set a second time. Desktop and the CLI log in against that same origin. */ -}
 {{- end -}}
 {{- end -}}
 {{- if not (kindIs "bool" .Values.services.relayauthEnabled) }}{{ fail "services.relayauthEnabled must be a boolean" }}{{ end -}}
-{{- $optionalSecretKeys := list "previousEncryptionKey" "internalToken" "telemetryInstallKey" "relaycastInternalSecret" "oidcClientSecret" "smtpPassword" -}}
+{{- $optionalSecretKeys := list "previousEncryptionKey" "internalToken" "telemetryInstallKey" "relaycastInternalSecret" "oidcClientSecret" "smtpPassword" "introspectSecret" "sessionReadApiSecret" -}}
 {{- if not .Values.services.relayauthEnabled }}{{ $optionalSecretKeys = append $optionalSecretKeys "relayauthApiKey" }}{{ end -}}
 {{- range $name, $key := .Values.secretKeys }}{{ if and (has $name $optionalSecretKeys) (empty $key) }}{{ continue }}{{ end }}{{ if not (regexMatch "^[A-Za-z0-9._-]+$" (toString $key)) }}{{ fail (printf "secretKeys.%s must be a Kubernetes Secret data key" $name) }}{{ end }}{{ end -}}
 {{- /* Every non-empty secretKeys.* value must name a distinct Secret key. The
@@ -72,6 +72,7 @@ settings. */ -}}
 {{- $seenSecretKeys := dict -}}
 {{- range $name := keys .Values.secretKeys | sortAlpha }}{{ $key := toString (index $.Values.secretKeys $name) }}{{ if empty $key }}{{ continue }}{{ end }}{{ if hasKey $seenSecretKeys $key }}{{ fail (printf "secretKeys.%s and secretKeys.%s both name Secret key %q: every secretKeys value must be distinct (a collision with databaseMigrationsUrl would mount the migration credential into the API pod)" (get $seenSecretKeys $key) $name $key) }}{{ end }}{{ $_ := set $seenSecretKeys $key $name }}{{ end -}}
 {{- include "relay-control.validateRuntime" . -}}
+{{- include "relay-control.validateSessionRead" . -}}
 {{- include "relay-control.validatePostgresCa" . -}}
 {{- if and .Values.migrations.enabled (not (regexMatch "^[A-Za-z_][A-Za-z0-9_$]{0,62}$" .Values.database.runtimeRole)) }}{{ fail "database.runtimeRole must be a valid PostgreSQL role name when migrations are enabled" }}{{ end -}}
 {{- include "relay-control.validateSingleHost" . -}}
@@ -80,9 +81,12 @@ settings. */ -}}
 {{- if not (regexMatch "^https://[^/?#]+$" (include "relay-control.publicUrl" .)) }}{{ fail "publicUrl must be an HTTPS origin with no path" }}{{ end -}}
 {{- $serviceUrls := dict "relaycastUrl" .Values.services.relaycastUrl "relayhistoryUrl" .Values.services.relayhistoryUrl -}}
 {{- if .Values.services.relayauthEnabled }}{{ $_ := set $serviceUrls "relayauthUrl" .Values.services.relayauthUrl }}{{ end -}}
+{{- with .Values.services.sessionReadApiUrl }}{{ $_ := set $serviceUrls "sessionReadApiUrl" . }}{{ end -}}
 {{- range $name, $url := $serviceUrls }}{{ if not (regexMatch "^https?://[^/?#]+$" $url) }}{{ fail (printf "services.%s must be an HTTP(S) origin with no path" $name) }}{{ end }}{{ end -}}
 {{- $publicOriginPattern := "^https://([A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?\\.)+[A-Za-z]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?(:[0-9]{1,5})?$" -}}
-{{- range $name, $url := dict "relaycastPublicUrl" .Values.services.relaycastPublicUrl "relayhistoryPublicUrl" .Values.services.relayhistoryPublicUrl -}}
+{{- $publicUrls := dict "relaycastPublicUrl" .Values.services.relaycastPublicUrl "relayhistoryPublicUrl" .Values.services.relayhistoryPublicUrl -}}
+{{- with .Values.services.sessionReadApiPublicUrl }}{{ $_ := set $publicUrls "sessionReadApiPublicUrl" . }}{{ end -}}
+{{- range $name, $url := $publicUrls -}}
 {{- if or (not (regexMatch $publicOriginPattern $url)) (regexMatch "(?i)\\.(localhost|local|internal|lan|invalid|test|example|home\\.arpa|onion)(:[0-9]{1,5})?$" $url) (regexMatch "(?i)\\.example\\.(com|net|org)(:[0-9]{1,5})?$" $url) }}{{ fail (printf "services.%s must be a public HTTPS origin with multi-label DNS and no credentials, path, query, or fragment" $name) }}{{ end -}}
 {{- $portToken := regexFind ":[0-9]+$" $url -}}
 {{- if and $portToken (or (lt (int (trimPrefix ":" $portToken)) 1) (gt (int (trimPrefix ":" $portToken)) 65535)) }}{{ fail (printf "services.%s port must be between 1 and 65535" $name) }}{{ end -}}
@@ -108,7 +112,8 @@ the chart already sets, including duplicates inside extraEnv. */ -}}
   "SELFHOST_TELEMETRY_LEVEL" "SELFHOST_TELEMETRY_PROBES" "SELFHOST_TELEMETRY_TRANSPORT" "DATABASE_URL_FILE"
   "RELAYAUTH_API_KEY_FILE" "RELAYCAST_INTERNAL_SECRET_FILE" "SELFHOST_BOOTSTRAP_TOKEN_FILE" "SELFHOST_ENCRYPTION_KEY_FILE"
   "SELFHOST_ENCRYPTION_PREVIOUS_KEY_FILE" "SELFHOST_INTERNAL_TOKEN_FILE" "SELFHOST_OIDC_CLIENT_SECRET_FILE" "SELFHOST_SMTP_PASSWORD_FILE"
-  "SELFHOST_TELEMETRY_INSTALL_KEY_FILE" -}}
+  "SELFHOST_TELEMETRY_INSTALL_KEY_FILE" "RELAYCONTROL_INTROSPECT_SECRET_FILE" "SESSION_READ_API_SECRET_FILE"
+  "SESSION_READ_API_URL" "SESSION_READ_API_PUBLIC_URL" "SESSION_READ_API_MCP_READS" "SELFHOST_INTROSPECT_AUDIENCES" -}}
 {{- if (.Values.postgresCa | default dict).enabled }}{{ $managed = append $managed "NODE_EXTRA_CA_CERTS" }}{{ end -}}
 {{- range $name := $managed }}{{ if hasSuffix "_FILE" $name }}{{ $managed = append $managed (trimSuffix "_FILE" $name) }}{{ end }}{{ end -}}
 {{- range $src := list (include "relay-control.runtimeEnv" .) (include "relay-control.secretEnv" .) -}}
@@ -156,6 +161,8 @@ Optional keys are left out while empty. */ -}}
 {{- with .Values.secretKeys.previousEncryptionKey }}{{ $_ := set $files "SELFHOST_ENCRYPTION_PREVIOUS_KEY_FILE" . }}{{ end -}}
 {{- with .Values.secretKeys.internalToken }}{{ $_ := set $files "SELFHOST_INTERNAL_TOKEN_FILE" . }}{{ end -}}
 {{- with .Values.secretKeys.relaycastInternalSecret }}{{ $_ := set $files "RELAYCAST_INTERNAL_SECRET_FILE" . }}{{ end -}}
+{{- with .Values.secretKeys.introspectSecret }}{{ $_ := set $files "RELAYCONTROL_INTROSPECT_SECRET_FILE" . }}{{ end -}}
+{{- with .Values.secretKeys.sessionReadApiSecret }}{{ $_ := set $files "SESSION_READ_API_SECRET_FILE" . }}{{ end -}}
 {{- if and .Values.auth.oidc.issuer .Values.secretKeys.oidcClientSecret }}{{ $_ := set $files "SELFHOST_OIDC_CLIENT_SECRET_FILE" .Values.secretKeys.oidcClientSecret }}{{ end -}}
 {{- if and .Values.smtp.host .Values.smtp.username .Values.secretKeys.smtpPassword }}{{ $_ := set $files "SELFHOST_SMTP_PASSWORD_FILE" .Values.secretKeys.smtpPassword }}{{ end -}}
 {{- if and (ne (include "relay-control.telemetryLevel" .) "off") .Values.secretKeys.telemetryInstallKey }}{{ $_ := set $files "SELFHOST_TELEMETRY_INSTALL_KEY_FILE" .Values.secretKeys.telemetryInstallKey }}{{ end -}}
@@ -222,6 +229,18 @@ telemetry.deployment is checked in validateRuntime before it is merged. */ -}}
 {{- if not (kindIs "invalid" .Values.flows.queuePingMs) }}{{ if ne (toString .Values.flows.queuePingMs) "" }}
 - { name: SELFHOST_FLOWS_QUEUE_PING_MS, value: {{ int64 .Values.flows.queuePingMs | toString | quote }} }
 {{- end }}{{ end }}
+{{- with .Values.services.sessionReadApiUrl }}
+- { name: SESSION_READ_API_URL, value: {{ . | quote }} }
+{{- end }}
+{{- with .Values.services.sessionReadApiPublicUrl }}
+- { name: SESSION_READ_API_PUBLIC_URL, value: {{ . | quote }} }
+{{- end }}
+{{- if .Values.services.sessionReadApiMcpReads }}
+- { name: SESSION_READ_API_MCP_READS, value: "true" }
+{{- end }}
+{{- with .Values.introspection.audiences }}
+- { name: SELFHOST_INTROSPECT_AUDIENCES, value: {{ join "," . | quote }} }
+{{- end }}
 {{- include "relay-control.identityEnv" . }}
 {{- $level := include "relay-control.telemetryLevel" . }}
 - { name: SELFHOST_TELEMETRY_LEVEL, value: {{ $level | quote }} }
@@ -305,6 +324,19 @@ would silently drop, and nothing that could carry data, is rendered. */ -}}
 {{- else if not (or (kindIs "bool" $value) (kindIs "int" $value) (kindIs "int64" $value) (kindIs "float64" $value)) }}{{ fail (printf "telemetry.deployment.%s must be a string, number or boolean (nested maps, lists and nulls are not allowed)" $key) }}{{ end -}}
 {{- end -}}
 {{- if gt (len .Values.telemetry.probes) 20 }}{{ fail "telemetry.probes allows at most 20 entries" }}{{ end -}}
+{{- end -}}
+{{- /* Session read handoff and introspection (relaycontrol src/config.ts):
+what the API would refuse at startup is refused at render time. */ -}}
+{{- define "relay-control.validateSessionRead" -}}
+{{- $s := .Values.services -}}
+{{- $secret := .Values.secretKeys.sessionReadApiSecret -}}
+{{- if not (kindIs "bool" $s.sessionReadApiMcpReads) }}{{ fail "services.sessionReadApiMcpReads must be a boolean" }}{{ end -}}
+{{- if and (or $s.sessionReadApiUrl $s.sessionReadApiPublicUrl $secret) (not (and $s.sessionReadApiUrl $s.sessionReadApiPublicUrl $secret)) }}{{ fail "services.sessionReadApiUrl, services.sessionReadApiPublicUrl and secretKeys.sessionReadApiSecret must be set together" }}{{ end -}}
+{{- if and $s.sessionReadApiMcpReads (not $secret) }}{{ fail "services.sessionReadApiMcpReads requires the session read API handoff (services.sessionReadApiUrl, services.sessionReadApiPublicUrl and secretKeys.sessionReadApiSecret)" }}{{ end -}}
+{{- $audiences := .Values.introspection.audiences -}}
+{{- if not (kindIs "slice" ($audiences | default list)) }}{{ fail "introspection.audiences must be a list of http(s) origins" }}{{ end -}}
+{{- if and $audiences (not .Values.secretKeys.introspectSecret) }}{{ fail "introspection.audiences requires secretKeys.introspectSecret: without it the introspection route answers 404" }}{{ end -}}
+{{- range $audiences }}{{ if not (regexMatch "^https?://[^/?#@,\\s]+$" (toString .)) }}{{ fail "introspection.audiences entries must be http(s) origins without credentials, path, query or fragment" }}{{ end }}{{ end -}}
 {{- end -}}
 {{- define "relay-control.migrationPodTemplate" -}}
 metadata:

@@ -51,6 +51,13 @@ resource "terraform_data" "environment_contract" {
       error_message = "OpenSearch administration requires a separate role in this environment's account."
     }
     precondition {
+      condition = var.search_sessions_bucket_read == null ? true : (
+        var.search_sessions_bucket_read.bucket_arn == "arn:aws:s3:::${local.name}-${var.account_id}-${var.region}-sessions" &&
+        var.search_sessions_bucket_read.kms_key_arn == var.kms_key_arn
+      )
+      error_message = "search_sessions_bucket_read must name this environment's sessions bucket and the kms_key_arn that encrypts it."
+    }
+    precondition {
       condition = var.existing_runtime_roles == null ? true : (
         (var.pipeline_runtime == "lambda") == (var.existing_runtime_roles.pipeline_role_arn != null) &&
         length(distinct(local.external_runtime_arns)) == length(local.external_runtime_arns) &&
@@ -169,6 +176,7 @@ module "search" {
     indexer_service_accounts = [{ cluster_name = var.eks_cluster_name, namespace = local.namespace, service_account = local.search_indexer_sa }]
     reader_service_accounts  = [{ cluster_name = var.eks_cluster_name, namespace = local.namespace, service_account = local.search_reader_sa }]
   }
+  sessions_bucket_read      = var.search_sessions_bucket_read
   additional_principal_arns = distinct(concat(local.external_runtime_arns, var.pipeline_runtime == "lambda" ? [module.pipeline[0].execution_role_arn] : []))
   tags                      = local.tags
 
