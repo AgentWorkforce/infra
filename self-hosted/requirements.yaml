@@ -225,6 +225,8 @@ ci_only_values:
 
   - file: ci/ingest-edge-values.yaml
     why: Render-only native ingest fixture with synthetic image/CA identities; never
+  - file: ci/ingest-edge-pod-identity-values.yaml
+    why: Ingest edge with Pod Identity S3 credentials and per-session erase.
       install it.
   - file: ci/search-indexer-values.yaml
     why: Render-only search indexer fixture with a fake image identity; never install it.
