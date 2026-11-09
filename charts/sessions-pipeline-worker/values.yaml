@@ -264,9 +264,26 @@ nativeBrief:
   openaiSecret:
     name: ""
     key: OPENAI_API_KEY
+  # OpenAI-compatible Responses API base for the session-brief worker, rendered
+  # as OPENAI_BASE_URL; calls go to <baseUrl>/responses. Empty keeps the hosted
+  # OpenAI default. Must be https, or http only to a Kubernetes Service name
+  # (<svc>.<ns>.svc or <svc>.<ns>.svc.cluster.local) with in-cluster http
+  # allowed below. No credentials, query or fragment. openaiSecret supplies the
+  # key this endpoint expects and model the id it serves.
+  baseUrl: ""
+  # true renders ALLOW_IN_CLUSTER_HTTP="true" on the session-brief container
+  # only. The top-level allowInClusterHttp applies to every worker and also
+  # admits an http baseUrl; either one turns it on for this container.
+  allowInClusterHttp: false
   # Adds ONLY a session-brief policy on TCP443. Kubernetes NetworkPolicy has no
   # FQDN matcher: supply actual provider CIDRs or an approved egress gateway.
   # Existing egress policies are additive and must also be reviewed.
+  # With a custom baseUrl, `to` must match that endpoint instead of the provider.
+  # For an in-cluster gateway use a podSelector plus namespaceSelector for its
+  # pods: an ipBlock does not match a Service ClusterIP. NetworkPolicy checks the
+  # pod's port, not the Service port, so a gateway pod listening on anything
+  # other than 443 also needs an operator-managed egress policy selecting the
+  # session-brief pods for that port.
   openaiEgress:
     enabled: false
     to: []

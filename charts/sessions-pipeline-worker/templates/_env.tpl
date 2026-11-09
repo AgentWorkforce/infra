@@ -138,7 +138,7 @@ Usage: include "sessions-pipeline-worker.env" (dict "context" . "service" "refer
 - name: ENVIRONMENT
   value: {{ $v.environment | quote }}
 - name: ALLOW_IN_CLUSTER_HTTP
-  value: {{ ternary "true" "false" (eq (toString $v.allowInClusterHttp) "true") | quote }}
+  value: {{ ternary "true" "false" (or (eq (toString $v.allowInClusterHttp) "true") (and (eq .service "session-brief") $v.nativeBrief.enabled $v.nativeBrief.allowInClusterHttp)) | quote }}
 {{- if eq .service "bob-costas" }}
 # The Secret is projected as a file into Bob Costas only; the key material is
 # never copied into the Pod spec's environment values.
