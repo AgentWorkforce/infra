@@ -604,6 +604,11 @@ class Stack:
             self.require_owned_cluster()
             self.require_no_legacy_storage()
             self.require_control_webapp_layout()
+            # Edge policy ownership may predate the current installer. Refuse
+            # unqualified reuse before invalidating readiness or touching DBs,
+            # images or Helm; install() repeats this same read-only gate.
+            from edge import preflight_policy
+            preflight_policy(self, NS)
         ready = self.state / "ready.json"
         if ready.exists():
             ready.unlink()

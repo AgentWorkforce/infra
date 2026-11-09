@@ -183,7 +183,9 @@ terminating policy refuses before gateway or local readiness/selection changes;
 matching contents alone do not authorize adoption. Establish any existing
 manual policy's ownership through a separately reviewed handoff.
 
-Installation repeats that gate. An exact owned policy is a no-op. An absent
-policy is created with source ownership and its returned contents verified;
+Existing-cluster legacy `kind-up` runs the same read-only gate before removing
+readiness, database work or chart changes. Installation repeats that gate. An
+exact owned policy is a no-op. An absent policy is created with source ownership
+and its returned contents verified;
 `CREATE` refuses a policy that races preflight. Installation does not apply over
 an existing policy.
