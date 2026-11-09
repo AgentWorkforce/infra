@@ -11,8 +11,8 @@ metadata:
     {{- include "sessions-pipeline-worker.componentLabels" (dict "context" $ "component" $component) | nindent 4 }}
 spec:
   replicas: {{ $c.replicas }}
-  {{- if eq $component "hoopdb-indexer" }}
-  # Never two indexers at once: the reconcile loop is not leader-elected.
+  {{- if or (eq $component "hoopdb-indexer") (and (eq $component "session-brief") $.Values.nativeBrief.enabled) }}
+  # Bound the indexer reconcile and native model worker to one active Pod.
   strategy:
     type: Recreate
   {{- end }}
@@ -33,9 +33,34 @@ spec:
     spec:
       terminationGracePeriodSeconds: {{ $.Values.terminationGracePeriodSeconds }}
       {{- include "sessions-pipeline-worker.podSpecCommon" (dict "context" $ "component" $component) | nindent 6 }}
+      {{- if and (eq $component "session-brief") $.Values.nativeBrief.enabled }}
+      initContainers:
+        - name: verify-native-brief-postgres
+          image: {{ include "sessions-pipeline-worker.nativeBriefImage" $ | quote }}
+          imagePullPolicy: {{ $.Values.image.pullPolicy }}
+          command: ["bun", "-e"]
+          args:
+            - {{ include "sessions-pipeline-worker.nativeBriefPreflight" $ | quote }}
+          env:
+            {{- include "sessions-pipeline-worker.hoopdbUrlEnv" (dict "root" $ "migrate" false) | nindent 12 }}
+            - { name: NATIVE_BRIEF_CA_FILE, value: /etc/postgres-ca/ca.crt }
+            - { name: NATIVE_BRIEF_CA_SOURCE, value: /var/run/native-brief-ca-source/ca.crt }
+            - { name: NATIVE_BRIEF_CA_SHA256, value: {{ $.Values.postgresCa.sha256 | quote }} }
+          securityContext: {{ toYaml $.Values.containerSecurityContext | nindent 12 }}
+          resources:
+            requests: { cpu: 10m, memory: 32Mi }
+            limits: { memory: 128Mi }
+          volumeMounts:
+            - { name: postgres-ca, mountPath: /var/run/native-brief-ca-source, readOnly: true }
+            - { name: native-brief-verified-ca, mountPath: /etc/postgres-ca }
+      {{- end }}
       containers:
         - name: {{ include "sessions-pipeline-worker.publicComponent" (dict "context" $ "component" $component) }}
+          {{- if and (eq $component "session-brief") $.Values.nativeBrief.enabled }}
+          image: {{ include "sessions-pipeline-worker.nativeBriefImage" $ | quote }}
+          {{- else }}
           image: {{ include "sessions-pipeline-worker.image" $ | quote }}
+          {{- end }}
           imagePullPolicy: {{ $.Values.image.pullPolicy }}
           env:
             {{- include "sessions-pipeline-worker.env" (dict "context" $ "service" $component) | nindent 12 }}
@@ -51,6 +76,9 @@ spec:
             - name: WORKER_MAX_TICK_AGE_MS
               value: {{ .maxTickAgeMs | quote }}
             {{- end }}
+            {{- end }}
+            {{- if and (eq $component "session-brief") $.Values.nativeBrief.enabled }}
+            {{- include "sessions-pipeline-worker.nativeBriefEnv" $ | nindent 12 }}
             {{- end }}
             {{- with $c.env }}
             {{- include "sessions-pipeline-worker.renderEnv" . | nindent 12 }}
@@ -92,7 +120,11 @@ spec:
               readOnly: true
             {{- end }}
             {{- if ($.Values.postgresCa | default dict).enabled }}
+            {{- if and (eq $component "session-brief") $.Values.nativeBrief.enabled }}
+            - { name: native-brief-verified-ca, mountPath: /etc/postgres-ca, readOnly: true }
+            {{- else }}
             - { name: postgres-ca, mountPath: /etc/postgres-ca, readOnly: true }
+            {{- end }}
             {{- end }}
 {{- end }}
 {{- end }}

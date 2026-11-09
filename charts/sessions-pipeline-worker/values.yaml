@@ -113,6 +113,8 @@ postgresCa:
   configMap: ""
   secret: ""
   key: ca.crt
+  # Required by nativeBrief; verified before its process starts.
+  sha256: ""
 
 # OPTIONAL: read HOOPDB_URL from a different Secret than existingSecret, e.g.
 # the "<cluster>-app" Secret CloudNativePG generates (key "uri"). Empty =
@@ -244,7 +246,40 @@ workerHealth:
 
 # Stage workers. Each blocks at start until HoopDb answers and the migration
 # ledger is complete, so apply order does not matter.
+# Explicit native canonical model briefs. Off until a reviewed image containing
+# the native input source and matching schema generation is selected. A key is
+# referenced only by session-brief, never migration Jobs or other stage workers.
+nativeBrief:
+  enabled: false
+  image:
+    repository: ""
+    digest: ""
+  workspaceIds: []
+  keyPrefix: 96bulls
+  model: gpt-5.6-luna
+  sweepSeconds: 60
+  batch: 1
+  globalDailyCap: 20
+  sessionDailyCap: 3
+  openaiSecret:
+    name: ""
+    key: OPENAI_API_KEY
+  # Adds ONLY a session-brief policy on TCP443. Kubernetes NetworkPolicy has no
+  # FQDN matcher: supply actual provider CIDRs or an approved egress gateway.
+  # Existing egress policies are additive and must also be reviewed.
+  openaiEgress:
+    enabled: false
+    to: []
+
 components:
+  session-brief:
+    enabled: false
+    fullnameOverride: ""
+    replicas: 1
+    env: []
+    resources:
+      requests: { cpu: 25m, memory: 128Mi }
+      limits: { memory: 512Mi }
   hoopdb-indexer:
     # Optional explicit Deployment identity; otherwise fullname-scoped.
     fullnameOverride: ""

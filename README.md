@@ -427,6 +427,55 @@ Each released chart is also pushed to GHCR as an OCI artifact:
 helm install <release> oci://ghcr.io/agentworkforce/charts/<chart> --version <version>
 ```
 
+### Native model descriptions
+
+The standalone `sessions-pipeline-worker` chart has a default-off native brief
+worker. It selects `SERVICE=session-brief`, rather than Bob Costas' encrypted
+summary-object pipeline. Enable `components.session-brief.enabled` and
+`nativeBrief.enabled` (never an unmanaged `SESSION_BRIEF_CANONICAL_INPUT` env
+override) only with an explicitly qualified
+`nativeBrief.image.repository` and `nativeBrief.image.digest`; these have no
+fallback to the chart's historical services image. Active sibling workers must
+select that same image, or be disabled. The migrate Job must also use that image
+or remain disabled for a separately reviewed migration step. The image's schema verifier determines
+runtime migration compatibility; a digest alone does not attest source or tests.
+The parent chart/profile must separately compose this chart version and the
+matching migrated services generation before enablement.
+
+Set `nativeBrief.workspaceIds` to the explicit workspace IDs that may incur model
+calls, `nativeBrief.keyPrefix` to the writer/reader's **bare** root (for example,
+`96bulls`), and `nativeBrief.openaiSecret.name/key` to an existing API-key Secret.
+Only the brief process receives that key. The managed defaults are one claimed
+wakeup per tick, twenty model calls globally per UTC day and three per session
+per UTC day (`batch`, `globalDailyCap`, `sessionDailyCap`); these positive bounded
+values are configurable. The worker keeps the existing leases,
+provider transport, prompt/input bounds, scrubbing and model-call budgets. It
+serves one physical source or one consistent physical-to-canonical alias;
+multi-source canonical groups remain unsupported. Generating descriptions is a
+separate acceptance step from upload, pointers, session display and API readback.
+
+For a private PostgreSQL CA, set `postgresCa.enabled`, `postgresCa.configMap`,
+`postgresCa.key`, and the exact PEM bytes' `postgresCa.sha256`. The runtime
+`HOOPDB_URL` Secret must use `sslmode=verify-full` and
+`sslrootcert=/etc/postgres-ca/ca.crt`, without alternative SSL parameters. An init
+process validates the public certificate-only bundle, digest and URL contract
+without connecting to PostgreSQL or receiving the model key. It copies the
+verified bytes to an in-memory volume mounted read-only by the worker, so a
+subsequent ConfigMap edit cannot silently replace the admitted CA. A retry of
+the init container accepts an existing regular file only when its bytes match
+the newly verified source; symlinks and divergent output are refused. This does not
+replace native PostgreSQL TLS/role/schema qualification.
+
+With `networkPolicy.enabled=true`, explicitly enable
+`nativeBrief.openaiEgress.enabled` and list its `to` peers. The additional policy
+selects only `session-brief` and TCP443; existing explicit DNS, database and Locker
+rules still apply. Standard Kubernetes NetworkPolicy cannot identify
+`api.openai.com` by hostname: operators must provide suitable provider CIDRs or an
+approved egress gateway and review additive policies. No unrestricted empty
+peer, model endpoint override or custom plaintext API key is accepted by this
+managed mode. Its transport keeps the official OpenAI endpoint and verified TLS.
+All native brief options remain disabled in existing default/core/addons renders.
+
 ## Contributing
 
 Add new service charts under `charts/<service-name>/`. Open a PR against `main`. Merges are gated by Khaliq.
