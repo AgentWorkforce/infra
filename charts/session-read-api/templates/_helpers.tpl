@@ -25,6 +25,7 @@ app.kubernetes.io/part-of: sessions-pipeline
 
 {{- /* Everything that must refuse to render, in one place. Emits nothing. */ -}}
 {{- define "session-read-api.validate" -}}
+{{- include "session-read-api.analytics.validate" .Values.analytics -}}
 {{- $c := .Values -}}
 {{- $repository := required "session-read-api: image.repository is required" $c.image.repository -}}
 {{- $repositoryPattern := "^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\\.)+[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(:[0-9]{1,5})?/[a-z0-9]+(([._]|__|-+)[a-z0-9]+)*(/[a-z0-9]+(([._]|__|-+)[a-z0-9]+)*)*$" -}}
@@ -172,13 +173,21 @@ workspace is not on a static list, and its reads would answer 501. */ -}}
 {{- if not (kindIs "string" $o) }}{{ fail "session-read-api: cors.allowedOrigins entries must be strings" }}{{ end -}}
 {{- if not (or (regexMatch "^https://[a-z0-9]([-a-z0-9.]*[a-z0-9])?(:[0-9]{1,5})?$" $o) (regexMatch "^http://(localhost|127\\.0\\.0\\.1)(:[0-9]{1,5})?$" $o)) }}{{ fail "session-read-api: cors.allowedOrigins must be exact lowercase https origins (http only on loopback), with no wildcard, path or trailing slash" }}{{ end -}}
 {{- end -}}
+{{- if $c.analytics.enabled -}}
+{{- range $v := $c.extraVolumes -}}
+{{- if eq $v.name "analytics-ca" }}{{ fail "analytics-ca is a managed volume name" }}{{ end -}}
+{{- end -}}
+{{- range $m := $c.extraVolumeMounts -}}
+{{- if or (eq $m.name "analytics-ca") (hasPrefix "/etc/analytics-ca" $m.mountPath) }}{{ fail "analytics-ca is a managed mount" }}{{ end -}}
+{{- end -}}
+{{- end -}}
 {{- /* extraEnv: nothing managed above can be overridden or hidden here. */ -}}
 {{- $reserved := list "SERVICE" "RELAYHISTORY_SELFHOST_READ_API" "RELAYHISTORY_READ_API_PORT" "RELAYHISTORY_READ_API_SECRET" "READ_API_ORIGIN" "READ_API_AUTH_MODE" "READ_API_COMPLETE_SINCE" "READ_API_DIRECTORY_WORKSPACES" "READ_API_CORS_ALLOWED_ORIGINS" "RELAYHISTORY_SELFHOST_LOGIN_ADVERTISES_SYNC" "READ_API_TURNS_ASSUME_NO_LEGACY" "SEARCH_INDEX_POSTGRES_BACKEND_ID" "SEARCH_INDEX_OPENSEARCH_URL" "SEARCH_INDEX_OPENSEARCH_AUTH" "SEARCH_INDEX_OPENSEARCH_AWS_REGION" "SEARCH_INDEX_OPENSEARCH_INDEX_PREFIX" "READ_API_INTERNAL_SECRET" "READ_API_INTERNAL_SECRET_PREVIOUS" "READ_API_ACCESS_TOKEN_TTL_SECONDS" "READ_API_EVENT_MESSAGE_IDS" "SEARCH_INDEX_BACKEND" "ALLOW_IN_CLUSTER_HTTP" "RELAYAUTH_JWKS_URL" "RELAYAUTH_ISSUER" "RELAYHISTORY_ACCEPT_RELAYCONTROL_TOKENS" "RELAYCONTROL_INTROSPECT_URL" "RELAYCONTROL_INTROSPECT_SECRET" "SESSION_POSTGRES_TLS_PROFILE" "SESSION_POSTGRES_CA_FILE" "SESSION_POSTGRES_CA_SHA256" -}}
 {{- $seen := dict -}}
 {{- $canonical := dict -}}
 {{- range $e := $c.extraEnv -}}
 {{- $envName := required "session-read-api: extraEnv entries require name" $e.name -}}
-{{- if or (has $envName $reserved) (hasKey $seen $envName) }}{{ fail (printf "session-read-api: extraEnv duplicates a managed or repeated variable: %s" $envName) }}{{ end -}}
+{{- if or (has $envName $reserved) (hasKey $seen $envName) (hasPrefix "ANALYTICS_" $envName) (and $c.analytics.enabled (eq $envName "NODE_EXTRA_CA_CERTS")) }}{{ fail (printf "session-read-api: extraEnv duplicates a managed or repeated variable: %s" $envName) }}{{ end -}}
 {{- if not (regexMatch "^[A-Za-z_][A-Za-z0-9_]*$" $envName) }}{{ fail "session-read-api: extraEnv has an invalid variable name" }}{{ end -}}
 {{- if hasPrefix "CLICKHOUSE_" $envName }}{{ fail "session-read-api: the service reads no CLICKHOUSE_* environment; put ClickHouse in the read API Secret's clickhouse block" }}{{ end -}}
 {{- if eq (hasKey $e "value") (hasKey $e "valueFrom") }}{{ fail "session-read-api: extraEnv requires exactly one of value or valueFrom" }}{{ end -}}

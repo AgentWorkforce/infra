@@ -1,3 +1,4 @@
+{{- include "sessions-pipeline.analytics.validate" .Values.nativeConsumer.analytics -}}
 {{- include "sessions-pipeline.nativeConsumer.validate" . -}}
 {{- $c := .Values.nativeConsumer -}}
 {{- if $c.enabled -}}
@@ -38,7 +39,13 @@ spec:
       app.kubernetes.io/component: native-consumer
   template:
     metadata:
-      labels: *selector
+      labels:
+        app.kubernetes.io/name: session-pipeline-consumer
+        app.kubernetes.io/instance: {{ .Release.Name }}
+        app.kubernetes.io/component: native-consumer
+        {{- if $c.analytics.enabled }}
+        agentworkforce.dev/analytics-producer: "true"
+        {{- end }}
       {{- with $c.podAnnotations }}
       annotations: {{ toYaml . | nindent 8 }}
       {{- end }}

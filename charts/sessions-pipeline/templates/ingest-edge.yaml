@@ -1,3 +1,4 @@
+{{- include "sessions-pipeline.analytics.validate" .Values.ingestEdge.analytics -}}
 {{- $c := .Values.ingestEdge -}}
 {{- if not (kindIs "bool" $c.enabled) }}{{ fail "ingestEdge.enabled must be a boolean" }}{{ end -}}
 {{- if $c.enabled -}}
@@ -92,7 +93,13 @@ spec:
       app.kubernetes.io/component: ingest-edge
   template:
     metadata:
-      labels: *selector
+      labels:
+        app.kubernetes.io/name: session-ingest-edge
+        app.kubernetes.io/instance: {{ .Release.Name }}
+        app.kubernetes.io/component: ingest-edge
+        {{- if $c.analytics.enabled }}
+        agentworkforce.dev/analytics-producer: "true"
+        {{- end }}
       {{- with $c.podAnnotations }}
       annotations:
         {{- toYaml . | nindent 8 }}
@@ -136,6 +143,7 @@ spec:
           ports:
             - { name: http, containerPort: {{ $c.port }}, protocol: TCP }
           env:
+            {{- include "sessions-pipeline.analytics.env" $c.analytics | nindent 12 }}
             - { name: SERVICE, value: session-ingest }
             - { name: RELAYHISTORY_SELFHOST_INGEST, value: "true" }
             - { name: RELAYHISTORY_INGEST_PORT, value: {{ $c.port | quote }} }
@@ -216,9 +224,11 @@ spec:
           resources:
             {{- toYaml $c.resources | nindent 12 }}
           volumeMounts:
+            {{- include "sessions-pipeline.analytics.mount" $c.analytics | nindent 12 }}
             - { name: tmp, mountPath: /tmp }
             - { name: postgres-ca, mountPath: /etc/session-ingest-postgres, readOnly: true }
       volumes:
+        {{- include "sessions-pipeline.analytics.volume" $c.analytics | nindent 8 }}
         - name: tmp
           emptyDir: { sizeLimit: 64Mi }
         - name: postgres-ca

@@ -241,7 +241,11 @@ containers:
     image: {{ printf "%s@%s" $c.image.repository $c.image.digest | quote }}
     imagePullPolicy: {{ $c.image.pullPolicy }}
     securityContext: *security
-    env: *env
+    env:
+      {{- include "sessions-pipeline.nativeConsumer.env" . | nindent 6 }}
+      {{- if not .bootstrap }}
+      {{- include "sessions-pipeline.analytics.env" $c.analytics | nindent 6 }}
+      {{- end }}
     {{- if not .bootstrap }}
     ports: [{ name: health, containerPort: {{ $c.port }}, protocol: TCP }]
     startupProbe:
@@ -263,7 +267,13 @@ containers:
       - { name: tmp, mountPath: /tmp }
       - { name: postgres-ca, mountPath: /etc/native-consumer-postgres, readOnly: true }
       - { name: contract, mountPath: /etc/native-consumer-contract, readOnly: true }
+      {{- if not .bootstrap }}
+      {{- include "sessions-pipeline.analytics.mount" $c.analytics | nindent 6 }}
+      {{- end }}
 volumes:
+  {{- if not .bootstrap }}
+  {{- include "sessions-pipeline.analytics.volume" $c.analytics | nindent 2 }}
+  {{- end }}
   - name: tmp
     emptyDir: { sizeLimit: 128Mi }
   - name: postgres-ca

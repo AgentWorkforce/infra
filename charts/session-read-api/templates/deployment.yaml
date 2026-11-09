@@ -20,6 +20,9 @@ spec:
     metadata:
       labels:
         {{- include "session-read-api.selectorLabels" . | nindent 8 }}
+        {{- if $c.analytics.enabled }}
+        agentworkforce.dev/analytics-producer: "true"
+        {{- end }}
       {{- with $c.podAnnotations }}
       annotations:
         {{- toYaml . | nindent 8 }}
@@ -132,6 +135,7 @@ spec:
                   name: {{ $c.auth.relaycontrol.existingSecret | quote }}
                   key: {{ $c.auth.relaycontrol.key | quote }}
             {{- end }}
+            {{- include "session-read-api.analytics.env" $c.analytics | nindent 12 }}
             {{- range $e := $c.extraEnv }}
             - name: {{ $e.name | quote }}
               {{- if hasKey $e "value" }}
@@ -162,6 +166,7 @@ spec:
             {{- if $c.postgresCa.enabled }}
             - { name: postgres-ca, mountPath: /etc/session-read-postgres, readOnly: true }
             {{- end }}
+            {{- include "session-read-api.analytics.mount" $c.analytics | nindent 12 }}
             {{- with $c.extraVolumeMounts }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
@@ -182,6 +187,7 @@ spec:
             items: [{ key: {{ $c.postgresCa.key | quote }}, path: ca.crt }]
           {{- end }}
         {{- end }}
+        {{- include "session-read-api.analytics.volume" $c.analytics | nindent 8 }}
         {{- with $c.extraVolumes }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
