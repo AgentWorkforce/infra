@@ -11,6 +11,27 @@
 {{- if or (not (kindIs "string" $value)) (gt (len $value) 253) (not (regexMatch "^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?)*$" $value)) }}{{ fail (printf "%s must be a Kubernetes DNS subdomain" .name) }}{{ end -}}
 {{- $value -}}
 {{- end -}}
+{{- /* Walk configured runtime references, never Secret contents or the owner Job. */ -}}
+{{- define "sessions-pipeline.nativeConsumer.noOwnerRuntimeRefs" -}}
+{{- $owner := .owner -}}
+{{- $value := .value -}}
+{{- if kindIs "map" $value -}}
+{{- range $key, $entry := $value -}}
+{{- if and (has $key (list "existingSecret" "secretName" "secret")) (kindIs "string" $entry) (eq $entry $owner) }}{{ fail "nativeConsumer owner bootstrap Secret must not be referenced by runtime workloads" }}{{ end -}}
+{{- if and (has $key (list "secretKeyRef" "secretRef" "nodePublishSecretRef" "secret")) (kindIs "map" $entry) -}}
+{{- if and (kindIs "string" $entry.name) (eq $entry.name $owner) }}{{ fail "nativeConsumer owner bootstrap Secret must not be referenced by runtime workloads" }}{{ end -}}
+{{- end -}}
+{{- if and (eq $key "imagePullSecrets") (kindIs "slice" $entry) -}}
+{{- range $ref := $entry -}}
+{{- if and (kindIs "map" $ref) (kindIs "string" $ref.name) (eq $ref.name $owner) }}{{ fail "nativeConsumer owner bootstrap Secret must not be referenced by runtime workloads" }}{{ end -}}
+{{- end -}}
+{{- end -}}
+{{- include "sessions-pipeline.nativeConsumer.noOwnerRuntimeRefs" (dict "owner" $owner "value" $entry) -}}
+{{- end -}}
+{{- else if kindIs "slice" $value -}}
+{{- range $entry := $value }}{{ include "sessions-pipeline.nativeConsumer.noOwnerRuntimeRefs" (dict "owner" $owner "value" $entry) }}{{ end -}}
+{{- end -}}
+{{- end -}}
 {{- define "sessions-pipeline.nativeConsumer.validate" -}}
 {{- $c := .Values.nativeConsumer -}}
 {{- range $name, $flag := dict "enabled" $c.enabled "migrationDriverVerified" $c.migrationDriverVerified "legacyRuntimesQualified" $c.legacyRuntimesQualified "legacyIndexerDrained" $c.legacyIndexerDrained "allowInClusterHttp" $c.allowInClusterHttp "bootstrap.enabled" $c.bootstrap.enabled -}}
@@ -74,9 +95,17 @@
 {{- if not (has $c.bootstrap.phase (list "prepare" "serve")) }}{{ fail "nativeConsumer.bootstrap.phase must be prepare or serve" }}{{ end -}}
 {{- if $c.bootstrap.enabled -}}
 {{- $_ := include "sessions-pipeline.nativeConsumer.ref" (dict "name" "nativeConsumer.bootstrap.existingSecret" "value" $c.bootstrap.existingSecret) -}}
-{{- if has $c.bootstrap.existingSecret (list $c.config.existingSecret $c.locker.existingSecret) }}{{ fail "nativeConsumer owner bootstrap Secret must be different from every runtime Secret" }}{{ end -}}
-{{- range $ref := $c.imagePullSecrets }}{{ if eq $ref.name $c.bootstrap.existingSecret }}{{ fail "nativeConsumer owner bootstrap Secret must not be an imagePullSecret" }}{{ end }}{{ end -}}
 {{- if or (not (regexMatch "^[A-Za-z_][A-Za-z0-9_-]{0,62}$" $c.bootstrap.ownerRole)) (has $c.bootstrap.ownerRole (list "search_consumer_runtime" "bulls96_read_api" "bulls96_session_ingest")) }}{{ fail "nativeConsumer.bootstrap.ownerRole must name a separate schema owner" }}{{ end -}}
+{{- end -}}
+{{- if not (kindIs "string" $c.bootstrap.existingSecret) }}{{ fail "nativeConsumer.bootstrap.existingSecret must be a string" }}{{ end -}}
+{{- if $c.bootstrap.existingSecret -}}
+{{- $owner := $c.bootstrap.existingSecret -}}
+{{- /* Owner credentials remain Job-only after prepare has disabled the Job. */ -}}
+{{- include "sessions-pipeline.nativeConsumer.noOwnerRuntimeRefs" (dict "owner" $owner "value" (omit $c "bootstrap")) -}}
+{{- if .Values.readApi.enabled }}{{ include "sessions-pipeline.nativeConsumer.noOwnerRuntimeRefs" (dict "owner" $owner "value" .Values.readApi) }}{{ end -}}
+{{- if .Values.ingestEdge.enabled }}{{ include "sessions-pipeline.nativeConsumer.noOwnerRuntimeRefs" (dict "owner" $owner "value" .Values.ingestEdge) }}{{ end -}}
+{{- if $activeWorker }}{{ include "sessions-pipeline.nativeConsumer.noOwnerRuntimeRefs" (dict "owner" $owner "value" (omit .Values.worker "migrations")) }}{{ end -}}
+{{- if $activeIngest }}{{ include "sessions-pipeline.nativeConsumer.noOwnerRuntimeRefs" (dict "owner" $owner "value" .Values.alleyoop) }}{{ end -}}
 {{- end -}}
 {{- range $key := list $c.config.key $c.postgres.caKey $c.bootstrap.key $c.locker.accessKeyIdKey $c.locker.secretAccessKeyKey -}}
 {{- if or (not $key) (gt (len $key) 253) (not (regexMatch "^[A-Za-z0-9._-]+$" $key)) }}{{ fail "nativeConsumer Secret/CA keys must be nonempty Kubernetes key names" }}{{ end -}}
