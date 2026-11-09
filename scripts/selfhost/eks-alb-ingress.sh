@@ -184,6 +184,12 @@ fi
 host "api.$DOMAIN"
 deny /internal Prefix
 deny '"//internal*"' ImplementationSpecific
+if [[ -n "$CHIEF_SVC" ]]; then
+  for prefix in /cloud/api/v1 /api/v1; do
+    route "\"$prefix/workspaces/*/chiefs\"" "$CHIEF_SVC" "$CHIEF_PORT" ImplementationSpecific
+    route "\"$prefix/workspaces/*/chiefs/*\"" "$CHIEF_SVC" "$CHIEF_PORT" ImplementationSpecific
+  done
+fi
 route '"/*"' "$CONTROL_SVC" 80 ImplementationSpecific
 
 host "cast.$DOMAIN"
