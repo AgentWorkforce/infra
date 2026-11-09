@@ -99,6 +99,10 @@ jobs:
         with:
           node-version: "22.23.3"
 
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.4.2"
+
       - name: Local kind profile and trust contract tests (offline)
         run: |
           python3 -m pip install -r ci/agent-relay/kind/requirements.txt
