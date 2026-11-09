@@ -8,7 +8,10 @@ replicas: 1
 image:
   # Registry DNS host plus image path; no scheme, tag or digest.
   repository: ghcr.io/agentworkforce/96bulls-services
-  # Required: an immutable digest of an owner-approved compatible image.
+  # Required: an immutable digest of an owner-approved compatible image. For
+  # auth.mode=self_issued and events.messageIds use at least
+  # sha256:d55840ab4bf4e2fea3769db690f3c8d32979ab455ef251172f914ac011cb8c33
+  # (relayhistory-pipeline eebaced9).
   digest: ""
   pullPolicy: IfNotPresent
 imagePullSecrets: []
@@ -23,6 +26,10 @@ completeSince: ""
 # Exact upstream allowlist string (READ_API_DIRECTORY_WORKSPACES); '*' is not a
 # workspace authority. Desktop upload needs its workspace listed here.
 directoryWorkspaces: ""
+events:
+  # READ_API_EVENT_MESSAGE_IDS. Serves includeMessageId on session events from
+  # the canonical store, so it requires LOCKER_BUCKET in extraEnv.
+  messageIds: false
 turns:
   # True only where no Neon source exists, so no legacy coverage marker is expected.
   assumeNoLegacy: false
@@ -86,10 +93,29 @@ search:
 auth:
   # relaycontrol_only: Control introspection with rth:read and no RelayAuth
   # dependency. legacy: an explicitly configured temporary issuer, plus the
-  # optional Control path. No other mode is available from this chart yet.
+  # optional Control path. self_issued: this service issues and checks its own
+  # opaque tokens, and Control hands sessions over through
+  # /internal/v1/session-read/*. self_issued requires relaycontrol.enabled=false,
+  # login.advertisesSync=false, selfIssued.internalSecret and
+  # networkPolicy.controlFrom.
   mode: relaycontrol_only
+  selfIssued:
+    # READ_API_ACCESS_TOKEN_TTL_SECONDS: 60 to 300.
+    accessTokenTtlSeconds: 300
+    # READ_API_INTERNAL_SECRET: at least 32 characters with no surrounding
+    # whitespace. The service refuses anything else at startup; helm cannot read
+    # the Secret at render. Control presents the same value as its
+    # SESSION_READ_API_SECRET.
+    internalSecret:
+      existingSecret: ""
+      key: READ_API_INTERNAL_SECRET
+    # READ_API_INTERNAL_SECRET_PREVIOUS: optional, accepted alongside the current
+    # secret during a rotation overlap. Must hold a different value.
+    previousInternalSecret:
+      existingSecret: ""
+      key: READ_API_INTERNAL_SECRET_PREVIOUS
   relayauth:
-    # Required for legacy; must stay empty for relaycontrol_only.
+    # Required for legacy; must stay empty for relaycontrol_only and self_issued.
     jwksUrl: ""
     issuer: ""
   relaycontrol:
@@ -106,6 +132,27 @@ cors:
   # http only on loopback. Empty means no CORS. Honored only by images that
   # include READ_API_CORS_ALLOWED_ORIGINS support; older images ignore it.
   allowedOrigins: []
+
+# Default off. Routes only /v1 to the Service, so /internal/* is never published;
+# the host comes from origin. Any other proxy must likewise route only /v1 here.
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  tls: []
+
+# Ingress-only policy for the read API pods. The service has one port and
+# NetworkPolicy cannot tell paths apart: publicFrom peers are admitted to that
+# port too, and it is the /v1-only route that keeps /internal/* away from them.
+networkPolicy:
+  # Required for auth.mode=self_issued.
+  enabled: false
+  # The Control pods, the only caller of /internal/*: podSelector labels,
+  # optionally with a namespaceSelector. Required when enabled.
+  controlFrom: []
+  # Peers that carry public /v1 traffic: the ingress controller's selectors, or
+  # an ipBlock of the ALB subnets in IP target mode. Required with ingress.enabled.
+  publicFrom: []
 
 # TLS CA mounts, adapter configuration and other upstream options. Credential
 # values belong in Secret key refs, not literal extraEnv values. LOCKER_BUCKET

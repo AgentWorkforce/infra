@@ -52,6 +52,42 @@ extraEnv overrides. The default legacy mode emits no `READ_API_AUTH_MODE`,
 preserving compatibility with earlier reader images. Neither mode is enabled
 by a profile, and the earlier reader-only image predates this backend feature.
 
+## Self-issued tokens
+
+`auth.mode=self_issued` makes the read API issue and check its own opaque tokens
+([contract](https://github.com/AgentWorkforce/relayhistory-pipeline/blob/main/docs/contracts/session-read-api-v1.openapi.yaml)).
+It needs an image from pipeline `eebaced9` or later:
+`ghcr.io/agentworkforce/96bulls-services@sha256:d55840ab4bf4e2fea3769db690f3c8d32979ab455ef251172f914ac011cb8c33`.
+The database must also carry the token functions from pipeline migration
+`20261105044000`. `relaycontrol_only` stays the default.
+
+| Value | Renders | Notes |
+| --- | --- | --- |
+| `auth.mode: self_issued` | `READ_API_AUTH_MODE=self_issued` | Fails closed: anything below that is missing refuses to render |
+| `auth.relaycontrol.enabled: false` | omits every `RELAYCONTROL_*` setting and `RELAYHISTORY_ACCEPT_RELAYCONTROL_TOKENS` | Required; the service refuses Control introspection in this mode. `url` and `existingSecret` must be empty |
+| `auth.selfIssued.internalSecret.existingSecret` and `.key` (default `READ_API_INTERNAL_SECRET`) | `READ_API_INTERNAL_SECRET` from that Secret | Required. At least 32 characters with no surrounding whitespace; the service checks this at startup, because Helm cannot read the Secret. Control presents the same value |
+| `auth.selfIssued.previousInternalSecret.existingSecret` and `.key` (default `READ_API_INTERNAL_SECRET_PREVIOUS`) | `READ_API_INTERNAL_SECRET_PREVIOUS` from that Secret | Optional, for a rotation overlap. Must hold a different value |
+| `auth.selfIssued.accessTokenTtlSeconds` (default 300) | `READ_API_ACCESS_TOKEN_TTL_SECONDS` | Integer from 60 to 300 |
+| `origin` | `READ_API_ORIGIN` | The token audience; Control must send this origin |
+| `login.advertisesSync: false` | | Required; `POST /v1/cli/login` does not exist in this mode |
+| `networkPolicy.enabled: true`, `networkPolicy.controlFrom` | a NetworkPolicy admitting those peers on the service port | Required. `controlFrom` entries need `podSelector` labels |
+
+`/internal/*` is kept off public paths in two ways. The chart's optional Ingress
+(`ingress.enabled`) routes only the `/v1` prefix; the host comes from `origin`.
+The NetworkPolicy admits Control through `controlFrom`, and the carriers of public
+traffic through `networkPolicy.publicFrom` (required with `ingress.enabled`).
+The service serves both on one port, and a NetworkPolicy cannot tell paths apart,
+so `publicFrom` peers can reach `/internal/*` at the network layer. That is why
+they must be proxies that route only `/v1`: never a whole namespace of workloads,
+and never a catch-all (`0.0.0.0/0`, or a peer with no selector labels, refuses
+to render). `/internal/*` also still requires the internal secret. A proxy you
+run yourself instead of this Ingress must route only `/v1` and must not forward
+un-normalized paths such as `/v1/../internal/...`, which the service normalizes.
+
+`events.messageIds` (default false) renders `READ_API_EVENT_MESSAGE_IDS=true` and
+requires `LOCKER_BUCKET`, because the service serves message ids only from the
+canonical store.
+
 The same backend merge adds canonical detail reads from `LOCKER_*` (S3 static
 keys or Pod Identity supported). When `LOCKER_BUCKET` is configured, upstream
 requires `PIPELINE_ORG_FROM_PREFIX=true`. For the inline test/pilot assembly,
