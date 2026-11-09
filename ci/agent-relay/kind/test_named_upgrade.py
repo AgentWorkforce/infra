@@ -324,6 +324,95 @@ class NamedUpgrade(unittest.TestCase):
              'status':{'readyReplicas':1}}
         self.rendered.append(copy.deepcopy(doc));self.objects[('Deployment',doc['metadata']['name'])]=copy.deepcopy(doc)
 
+    def current_search_replacement(self):
+        """Use the real umbrella: no invented nativeConsumer values or Pod spec."""
+        self.values['localKind']['legacyIndexerDrained'] = True
+        self.values['sessions-pipeline']['worker']['components'] = {
+            'hoopdb-indexer': {'enabled': False, 'fullnameOverride': 'session-metadata-indexer'}}
+        self.values['sessions-pipeline']['searchIndexer'] = {
+            'enabled': True, 'fullnameOverride': 'qualified-current-search',
+            'image': {'repository': 'example.invalid/qualified-consumer', 'digest': 'sha256:'+'8'*64},
+            'config': {'existingSecret': 'dedicated-search-runtime', 'key': 'consumer-json'},
+            'search': {'backend': 'postgres', 'backendId': 'kind-reviewed'},
+            'completeSince': 'epoch', 'keyPrefix': '96bulls',
+            'locker': {'bucket': 'locker', 'endpoint': 'http://locker:9000'},
+            'postgres': {'tlsProfile': 'custom-ca', 'caConfigMap': 'kind-postgres-ca', 'caSha256': 'a'*64},
+            'bootstrap': {'enabled': False, 'acknowledgeRunByOperator': True,
+                          'existingSecret': 'separate-owner', 'key': 'consumer-json'}}
+        self.local.root = HERE.parents[2]
+        def actual_helm(argv, **kwargs):
+            self.assertEqual(list(argv[:2]), ['helm', 'template'])
+            result = subprocess.run([str(a) for a in argv], cwd=self.local.root,
+                                    text=True, capture_output=True, timeout=30)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            return result
+        self.local.cmd = actual_helm
+        self.rendered = named.render_selected(self.local, self.values)
+        storage = self.objects[('Deployment', named.NAME)]
+        self.objects = {(d['kind'], d['metadata']['name']): copy.deepcopy(d)
+                        for d in self.rendered if d['kind'] == 'Deployment'}
+        self.objects[('Deployment', named.NAME)] = storage
+        for doc in self.objects.values():
+            doc['status'] = {'readyReplicas': 1}
+        return next(d for d in self.rendered if d['kind'] == 'Deployment'
+                    and d['metadata']['name'] == 'qualified-current-search')
+
+    def test_current_chart_search_writer_is_admitted_without_a_future_native_slot(self):
+        writer = self.current_search_replacement()
+        self.assertNotIn('nativeConsumer', self.values['sessions-pipeline'])
+        self.assertEqual(writer['metadata']['labels']['app.kubernetes.io/name'], 'session-search-indexer')
+        env = {e['name']: e.get('value') for e in stack.pod_spec(writer)['containers'][0]['env']}
+        self.assertEqual(env['SERVICE'], 'session-pipeline-consumer')
+        self.assertNotIn('NATIVE_CONSUMER_PREFLIGHT_MODE', env)
+        self.assertTrue(named.current_search_writer(writer, self.values['sessions-pipeline']['searchIndexer']))
+        selected = named.verify_selection(self.local, self.values, self.objects)
+        self.assertIn('qualified-current-search', {d['metadata']['name'] for d in selected})
+        self.assertNotIn('session-metadata-indexer', {d['metadata']['name'] for d in selected})
+
+    def test_actual_search_chart_cannot_reconcile_an_owner_secret_or_missing_drain_ack(self):
+        self.current_search_replacement()
+        self.values['localKind']['legacyIndexerDrained'] = False
+        with self.assertRaisesRegex(stack.StackError, 'drained native replacement'):
+            named.verify_selection(self.local, self.values, self.objects)
+        self.values['localKind']['legacyIndexerDrained'] = True
+        self.values['sessions-pipeline']['searchIndexer']['config']['existingSecret'] = 'separate-owner'
+        with self.assertRaisesRegex(stack.StackError, 'no single rendered runtime'):
+            named.verify_selection(self.local, self.values, self.objects)
+
+    def test_actual_search_writer_keeps_tls_startup_identity_and_single_writer_guards(self):
+        writer = self.current_search_replacement()
+        selected = self.values['sessions-pipeline']['searchIndexer']
+        def env(doc, name, value):
+            entries = stack.pod_spec(doc)['containers'][0]['env']
+            entries[:] = [e for e in entries if e['name'] != name] + [{'name': name, 'value': value}]
+        changes = [lambda d: env(d, 'SERVICE', 'hoopdb-indexer'),
+                   lambda d: env(d, 'SEARCH_INDEX_BACKEND', 'opensearch'),
+                   lambda d: env(d, 'PIPELINE_FANOUT', 'postgres'),
+                   lambda d: env(d, 'SESSION_POSTGRES_TLS_PROFILE', 'supabase'),
+                   lambda d: env(d, 'NODE_EXTRA_CA_CERTS', '/unverified/ca.crt'),
+                   lambda d: env(d, 'RELAYHISTORY_PIPELINE_CONSUMER_SECRET', 'inline-owner-url'),
+                   lambda d: d['spec'].update(replicas=2),
+                   lambda d: d['spec']['strategy'].update(type='RollingUpdate'),
+                   lambda d: stack.pod_spec(d)['containers'][0].update(command=['skip-role-admission']),
+                   lambda d: stack.pod_spec(d)['containers'][0]['startupProbe']['httpGet'].update(path='/healthz')]
+        for change in changes:
+            changed = copy.deepcopy(writer); change(changed)
+            self.assertFalse(named.current_search_writer(changed, selected))
+        self.objects[('Deployment', writer['metadata']['name'])]['status']['readyReplicas'] = 0
+        with self.assertRaisesRegex(stack.StackError, 'missing or unready'):
+            named.verify_selection(self.local, self.values, self.objects)
+
+    def test_actual_search_writer_does_not_admit_a_second_legacy_or_future_writer(self):
+        self.current_search_replacement()
+        self.objects[('Deployment', 'session-metadata-indexer')] = {
+            'kind': 'Deployment', 'metadata': {'name': 'session-metadata-indexer'}, 'spec': {'replicas': 0}}
+        with self.assertRaisesRegex(stack.StackError, 'still present'):
+            named.verify_selection(self.local, self.values, self.objects)
+        self.objects.pop(('Deployment', 'session-metadata-indexer'))
+        self.values['sessions-pipeline']['nativeConsumer'] = {'enabled': True, 'legacyIndexerDrained': True}
+        with self.assertRaisesRegex(stack.StackError, 'drained native replacement'):
+            named.verify_selection(self.local, self.values, self.objects)
+
     def test_selected_legacy_default_requires_every_rendered_workload(self):
         selected=named.verify_selection(self.local,self.values,self.objects)
         self.assertTrue(DEFAULT_LEGACY<={d['metadata']['name'] for d in selected})

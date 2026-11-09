@@ -448,6 +448,68 @@ def render_selected(stack, values):
         temporary.unlink(missing_ok=True)
 
 
+def current_search_writer(doc, selected):
+    """Admit the current searchIndexer chart, not #123's separate init contract.
+
+    The qualified SERVICE itself pins the authenticated search_consumer_runtime
+    login and schema/RLS admission before becoming ready. NATIVE_CONSUMER_*
+    belongs to the future nativeConsumer init and is not a runtime requirement
+    of this chart. Credentials stay behind its selected runtime Secret ref.
+    """
+    from stack import pod_spec
+    labels = doc.get("metadata", {}).get("labels", {})
+    spec = doc.get("spec", {})
+    if (doc.get("kind") != "Deployment" or labels.get("app.kubernetes.io/name") != "session-search-indexer"
+            or labels.get("app.kubernetes.io/component") != "search-indexer"
+            or spec.get("replicas") != 1 or spec.get("strategy", {}).get("type") != "Recreate"):
+        return False
+    config = selected.get("config", {})
+    runtime = {"name": config.get("existingSecret"), "key": config.get("key", "RELAYHISTORY_PIPELINE_CONSUMER_SECRET")}
+    bootstrap = selected.get("bootstrap", {})
+    owner = {"name": bootstrap.get("existingSecret"), "key": bootstrap.get("key", "RELAYHISTORY_PIPELINE_CONSUMER_SECRET")}
+    tls = selected.get("postgres", {})
+    search = selected.get("search", {})
+    locker = selected.get("locker", {})
+    if (not all(isinstance(v, str) and v for v in runtime.values()) or runtime == owner
+            or tls.get("tlsProfile", "custom-ca") != "custom-ca"
+            or not isinstance(tls.get("caConfigMap"), str) or not tls["caConfigMap"]
+            or not isinstance(tls.get("caSha256"), str) or not SHA.fullmatch(tls["caSha256"])
+            or not search.get("backendId") or not selected.get("completeSince") or not locker.get("bucket")
+            or locker.get("endpoint") != "http://locker:9000"):
+        return False
+    contract = {"SERVICE": "session-pipeline-consumer", "RELAYHISTORY_SELFHOST_PIPELINE_CONSUMER": "true",
+                "SEARCH_INDEX_BACKEND": "postgres", "SEARCH_INDEX_POSTGRES_BACKEND_ID": search["backendId"],
+                "READ_API_COMPLETE_SINCE": selected["completeSince"],
+                "PIPELINE_KEY_PREFIX": selected.get("keyPrefix", "96bulls"), "PIPELINE_ORG_FROM_PREFIX": "true",
+                "SESSION_POSTGRES_TLS_PROFILE": "custom-ca", "SESSION_POSTGRES_CA_SHA256": tls["caSha256"],
+                "SESSION_POSTGRES_CA_FILE": "/etc/search-indexer-postgres/ca.crt",
+                "NODE_EXTRA_CA_CERTS": "/etc/search-indexer-postgres/ca.crt",
+                "LOCKER_ENDPOINT": "http://locker:9000", "LOCKER_BUCKET": locker["bucket"]}
+    pod = pod_spec(doc)
+    ca = {"name": "postgres-ca", "configMap": {"name": tls["caConfigMap"],
+          "items": [{"key": tls.get("caKey", "ca.crt"), "path": "ca.crt"}]}}
+    if not any(subset(ca, volume) for volume in pod.get("volumes", [])):
+        return False
+    for container in pod.get("containers", []):
+        entries = container.get("env", [])
+        env = {e["name"]: e.get("value") for e in entries}
+        if (len(env) != len(entries) or not all(env.get(k) == v for k, v in contract.items())
+                # The actual consumer defaults to off and refuses other fanout.
+                or env.get("PIPELINE_FANOUT") not in (None, "off")
+                or container.get("command") or container.get("args")
+                or not re.fullmatch(r"[^@\s]+@sha256:[a-f0-9]{64}", container.get("image", ""))):
+            continue
+        if (not any(e.get("name") == "RELAYHISTORY_PIPELINE_CONSUMER_SECRET"
+                    and e.get("valueFrom") == {"secretKeyRef": runtime} for e in entries)
+                or not all(container.get(probe, {}).get("httpGet") == {"path": "/readyz", "port": "health"}
+                           for probe in ("startupProbe", "readinessProbe"))
+                or not any(subset({"name": "postgres-ca", "mountPath": "/etc/search-indexer-postgres", "readOnly": True}, mount)
+                           for mount in container.get("volumeMounts", []))):
+            continue
+        return True
+    return False
+
+
 def verify_selection(stack, values, objects):
     from stack import pod_spec
     values_validate(values, stack.profile)
@@ -461,15 +523,23 @@ def verify_selection(stack, values, objects):
     indexer = worker.get("components", {}).get("hoopdb-indexer", {})
     native = pipeline.get("nativeConsumer", {})
     selected_consumer = isinstance(native, dict) and native.get("enabled") is True
+    search = pipeline.get("searchIndexer", {})
+    selected_search = isinstance(search, dict) and search.get("enabled") is True
     indexer_disabled = isinstance(indexer, dict) and indexer.get("enabled") is False
-    if selected_consumer or indexer_disabled:
-        if not selected_consumer or not indexer_disabled or native.get("legacyIndexerDrained") is not True:
+    if selected_consumer or selected_search or indexer_disabled:
+        drained = (native.get("legacyIndexerDrained") if selected_consumer
+                   else values["localKind"].get("legacyIndexerDrained"))
+        if selected_consumer == selected_search or not indexer_disabled or drained is not True:
             fail("disabled legacy indexer requires an explicitly selected, drained native replacement")
         contract = {"SERVICE": "session-pipeline-consumer", "RELAYHISTORY_SELFHOST_PIPELINE_CONSUMER": "true",
                     "SEARCH_INDEX_BACKEND": "postgres", "PIPELINE_FANOUT": "off",
                     "NATIVE_CONSUMER_PREFLIGHT_MODE": "runtime", "NATIVE_CONSUMER_EXPECTED_ROLE": "search_consumer_runtime"}
         replacements = []
         for doc in rendered:
+            if selected_search:
+                if current_search_writer(doc, search):
+                    replacements.append(doc["metadata"]["name"])
+                continue
             if doc["kind"] != "Deployment":
                 continue
             if doc["metadata"].get("labels", {}).get("app.kubernetes.io/name") != "session-pipeline-consumer":
