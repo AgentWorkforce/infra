@@ -28,7 +28,7 @@ Usage: include "sessions-pipeline-worker.fit" "<name>"
 Component object name. Usage: include "sessions-pipeline-worker.componentName" (dict "context" . "component" "referee")
 */}}
 {{- define "sessions-pipeline-worker.componentName" -}}
-{{- if and (not .context.Values.legacyResourceNames) (hasKey (dict "bob-costas" "" "hoopdb-indexer" "" "referee" "") .component) -}}
+{{- if and (not .context.Values.legacyResourceNames) (hasKey (dict "bob-costas" "" "hoopdb-indexer" "" "referee" "" "session-brief" "") .component) -}}
 {{- $override := dig .component "fullnameOverride" "" .context.Values.components -}}
 {{- if $override -}}
 {{- include "sessions-pipeline-worker.fit" $override -}}
