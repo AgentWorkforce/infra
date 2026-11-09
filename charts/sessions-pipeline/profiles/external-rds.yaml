@@ -29,8 +29,8 @@
 #      at process start, so rotating it needs a pod restart. postgresCa does not
 #      reach the read API or ingest edge, which set an explicit CA: the read API
 #      takes SESSION_POSTGRES_TLS_PROFILE=custom-ca, SESSION_POSTGRES_CA_FILE and
-#      SESSION_POSTGRES_CA_SHA256 through readApi.extraEnv, with the file from
-#      readApi.extraVolumes and extraVolumeMounts; the ingest edge takes
+#      SESSION_POSTGRES_CA_SHA256 through sessionReadApi.postgresCa, which mounts the file
+#      and sets them; the ingest edge takes
 #      ingestEdge.postgres.caConfigMap, caKey and caSha256.
 # Pinned: GHCR, built from sessions-pipeline main 78511e03, the first published
 # image containing rds mode (publish-image run 42462161615).

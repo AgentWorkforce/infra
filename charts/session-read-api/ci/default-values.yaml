@@ -1,0 +1,21 @@
+# RENDER ONLY: fake image identity; never deploy this fixture.
+image:
+  repository: example.invalid/session-read-api
+  digest: sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff
+config: { existingSecret: read-api-config }
+origin: https://history.kind.agentrelay.com:8443
+completeSince: epoch
+directoryWorkspaces: render-workspace
+search: { backendId: render-backend }
+allowInClusterHttp: true
+postgres: { tlsProfile: custom-ca }
+postgresCa:
+  enabled: true
+  configMap: read-api-postgres-ca
+  sha256: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+auth:
+  relaycontrol:
+    url: http://relaycontrol.ci.svc.cluster.local
+    existingSecret: read-api-introspection
+cors:
+  allowedOrigins: [https://app.agentrelay.com]

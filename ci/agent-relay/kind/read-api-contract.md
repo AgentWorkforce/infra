@@ -151,7 +151,7 @@ when using Postgres search, a nonempty `SEARCH_INDEX_POSTGRES_BACKEND_ID` matchi
 the writer. For kind's custom CA, the upstream inputs are
 `SESSION_POSTGRES_TLS_PROFILE=custom-ca`, `SESSION_POSTGRES_CA_FILE` and
 `SESSION_POSTGRES_CA_SHA256` over the exact mounted public PEM bytes. The chart's
-`readApi.extraEnv`, `extraVolumes` and `extraVolumeMounts` can carry these reviewed
+`sessionReadApi.extraEnv`, `extraVolumes` and `extraVolumeMounts` can carry these reviewed
 inputs; they do not create a server certificate, schema or writer. The coverage
 floor must agree with the writer. No TLS bypass or owner credential belongs in
 the reader. Complete upload/sync/cost compatibility must also be established
