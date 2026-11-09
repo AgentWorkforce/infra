@@ -127,6 +127,12 @@ class Names(unittest.TestCase):
         import stack
         for metadata in [{"name": "locker"}, {"name": "custom-data", "annotations": {"meta.helm.sh/release-name": "kind-locker"}}]:
             with tempfile.TemporaryDirectory() as directory, patch.object(stack, "ROOT", Path(directory)), patch.object(stack.shutil, "which", return_value="/fake/tool"):
+                # Let the new read-only native selection gate pass so the
+                # original data-preserving legacy storage gate is exercised.
+                charts = Path(directory) / "charts/agent-relay"
+                charts.mkdir(parents=True)
+                (charts / "values.yaml").write_text("{}\n")
+                (charts / "values-kind-core.yaml").write_text("{}\n")
                 local = stack.Stack("core")
                 ready = local.state / "ready.json"
                 ready.write_text("original readiness evidence")

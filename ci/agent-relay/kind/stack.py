@@ -198,6 +198,7 @@ class Stack:
     def recipe_hash(self):
         files = [ROOT / "Makefile", ROOT / "ci/agent-relay/kind/stack.py", ROOT / "ci/agent-relay/kind/addons.py",
                  ROOT / "ci/agent-relay/kind/edge.py", ROOT / "ci/agent-relay/kind/tls.py",
+                 ROOT / "ci/agent-relay/kind/native_network.py",
                  ROOT / "ci/agent-relay/kind/bootstrap.mjs", ROOT / "ci/agent-relay/kind/control.py",
                  ROOT / "ci/agent-relay/kind/named_upgrade.py",
                  ROOT / "ci/agent-relay/kind/storage-name-renderer/plugin.yaml",
@@ -582,6 +583,17 @@ class Stack:
         for tool in ("docker", "kind", "kubectl", "helm", "openssl", "git"):
             if not shutil.which(tool):
                 raise StackError(f"missing prerequisite: {tool}")
+        from native_network import refuse_legacy_bootstrap
+        try:
+            layers = [yaml.safe_load((ROOT / "charts/agent-relay/values.yaml").read_text())]
+            args = self.values_args()
+            for index in range(0, len(args), 2):
+                if args[index] != "-f":
+                    raise StackError("unrecognized bootstrap values argument")
+                layers.append(yaml.safe_load(Path(args[index + 1]).read_text()))
+        except yaml.YAMLError:
+            raise StackError("malformed bootstrap values; no runtime mutation attempted") from None
+        refuse_legacy_bootstrap(layers)
         self.docker(require_space=False)
         # Legacy recovery needs the original ready.json as an independent UID
         # anchor. Refuse foreign/legacy ownership BEFORE invalidating it or
