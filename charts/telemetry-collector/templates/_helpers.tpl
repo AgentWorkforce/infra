@@ -25,7 +25,7 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- end -}}
 {{- if ne (int .Values.replicaCount) 1 }}{{ fail "telemetry-collector: exactly one writer replica is required" }}{{ end -}}
 {{- if not (regexMatch "^[a-f0-9]{40}$" .Values.image.sourceRevision) }}{{ fail "telemetry-collector: image.sourceRevision must record the exact 40-character source revision" }}{{ end -}}
-{{- if ne .Values.image.sourceRevision "08cf1142303355a73a94dcf605045cdf363e02c5" }}{{ fail "telemetry-collector: declared source revision is not in the reviewed allowlist" }}{{ end -}}
+{{- if ne .Values.image.sourceRevision "d2cb39635bbf163976c354582365b3d97dcd0b56" }}{{ fail "telemetry-collector: declared source revision is not in the reviewed allowlist" }}{{ end -}}
 {{- if empty .Values.producersSecret }}{{ fail "telemetry-collector: producersSecret is required" }}{{ end -}}
 {{- if empty .Values.tlsSecret }}{{ fail "telemetry-collector: tlsSecret is required" }}{{ end -}}
 {{- if eq .Values.tlsSecret .Values.producersSecret }}{{ fail "telemetry-collector: producer credentials and TLS keys require distinct Secrets" }}{{ end -}}

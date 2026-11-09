@@ -57,9 +57,22 @@ class Collector(unittest.TestCase):
                     '/usr/bin/flock', '--nonblock', '--no-fork', '/var/lib/telemetry/.writer.lock',
                     'node', 'node_modules/relay-control/dist/collector-cli.js',
                 ])
-        for revision in ['8359483d2666c1f374190c102237c3022ca3d466', 'f' * 40]:
+        for revision in ['08cf1142303355a73a94dcf605045cdf363e02c5',
+                         '7baefb5561a2f81b48335edea9632488601fb7a4',
+                         '8359483d2666c1f374190c102237c3022ca3d466', 'f' * 40]:
             with self.subTest(revision=revision):
                 render(['--set', 'image.sourceRevision=' + revision], ok=False)
+
+    def test_private_recovery_source_is_explicit_and_unknown_sources_stay_refused(self):
+        source = "d2cb39635bbf163976c354582365b3d97dcd0b56"
+        self.assertEqual(yaml.safe_load((ROOT / CHART / "Chart.yaml").read_text())["appVersion"], source)
+        docs = render(["--set-string", "image.sourceRevision=" + source])
+        deployment = next(item for item in docs if item["kind"] == "Deployment")
+        self.assertEqual(deployment["spec"]["template"]["metadata"]["annotations"]["agentworkforce.dev/collector-source"], source)
+        self.assertEqual(deployment["spec"]["replicas"], 1)
+        self.assertEqual(deployment["spec"]["strategy"], {"type": "Recreate"})
+        # A source declaration is required independently of the digest fixture.
+        render(["--set-string", "image.sourceRevision="], ok=False)
 
     def test_unhealthy_store_affects_readiness_without_restarting_process(self):
         class Health(http.server.BaseHTTPRequestHandler):
