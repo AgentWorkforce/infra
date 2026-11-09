@@ -276,6 +276,9 @@ def validate(stack, *, check_values=True):
     check_anchor(stack, record)
     objects = live_objects(stack)
     reject_legacy_workloads(objects)
+    active_values = read(stack.overrides)
+    values_validate(active_values, stack.profile)
+    reject_replaced_indexer(active_values, objects)
     if storage_snapshot(stack, objects) != record.get("storage") or postgres_snapshot(objects) != record.get("postgres"):
         fail("recorded storage/Postgres identity or specification changed")
     if private_state(stack) != record.get("privateState") or postgres_secret_snapshot(stack, objects) != record.get("postgresSecrets"):
@@ -287,8 +290,7 @@ def validate(stack, *, check_values=True):
             or digest(manifest) != record.get("storageManifestSha256")):
         fail("storage release configuration changed")
     if check_values:
-        values = read(stack.overrides)
-        values_validate(values, stack.profile)
+        values = active_values
         if digest(values) not in {record.get("activeValuesSha256"), record.get("previousActiveValuesSha256")}:
             fail("active profile selection changed; explicitly reconcile before reuse")
         if record.get("controlBuildSha256") is not None:
@@ -510,10 +512,13 @@ def current_search_writer(doc, selected):
     return False
 
 
-def verify_selection(stack, values, objects):
+def reject_replaced_indexer(values, objects):
+    """Repeat the single-writer fence before reuse can invalidate local state.
+
+    Presence is a refusal even at zero replicas: a recreated legacy Deployment
+    can become a writer independently of this command's Helm selection.
+    """
     from stack import pod_spec
-    values_validate(values, stack.profile)
-    reject_legacy_workloads(objects)
     pipeline = values["sessions-pipeline"]
     worker = pipeline.get("worker", {})
     indexer = worker.get("components", {}).get("hoopdb-indexer", {})
@@ -527,6 +532,24 @@ def verify_selection(stack, values, objects):
                    else values["localKind"].get("legacyIndexerDrained"))
         if selected_consumer == selected_search or not indexer_disabled or drained is not True:
             fail("disabled legacy indexer requires an explicitly selected, drained native replacement")
+        previous_name = indexer.get("fullnameOverride") or "session-metadata-indexer"
+        for (kind, name), doc in objects.items():
+            if kind != "Deployment":
+                continue
+            services = {e.get("value") for c in pod_spec(doc).get("containers", [])
+                        for e in c.get("env", []) if e.get("name") == "SERVICE"}
+            if name in {previous_name, "session-metadata-indexer"} or "hoopdb-indexer" in services:
+                fail("old metadata indexer is still present beside the native replacement")
+    return selected_consumer, selected_search, indexer_disabled
+
+
+def verify_selection(stack, values, objects):
+    from stack import pod_spec
+    values_validate(values, stack.profile)
+    reject_legacy_workloads(objects)
+    selected_consumer, selected_search, indexer_disabled = reject_replaced_indexer(values, objects)
+    pipeline = values["sessions-pipeline"]
+    search = pipeline.get("searchIndexer", {})
     rendered = render_selected(stack, values)
     names = {d["metadata"]["name"] for d in rendered if d["kind"] == "Deployment"}
     if not REQUIRED_BASE <= names or names & OLD or ("Deployment", NAME) not in objects:
@@ -551,14 +574,6 @@ def verify_selection(stack, values, objects):
                     replacements.append(doc["metadata"]["name"])
         if len(replacements) != 1:
             fail("selected native indexer replacement has no single rendered runtime Deployment")
-        previous_name = indexer.get("fullnameOverride") or "session-metadata-indexer"
-        for (kind, name), doc in objects.items():
-            if kind != "Deployment":
-                continue
-            services = {e.get("value") for c in pod_spec(doc).get("containers", [])
-                        for e in c.get("env", []) if e.get("name") == "SERVICE"}
-            if name == previous_name or "hoopdb-indexer" in services:
-                fail("old metadata indexer is still present beside the native replacement")
     for doc in rendered:
         if doc["kind"] != "Deployment":
             continue

@@ -97,7 +97,10 @@ The original native binding and legacy readiness anchors remain unchanged.
    migration driver, zero-step rerun, consumer bootstrap and post-schema grants.
    Revoke temporary owner authority before generating the three new runtime
    credentials. No marker SQL, alias rewrite, ownership transfer or existing
-   password reset is substituted for those APIs.
+   password reset is substituted for those APIs. Each owned diagnostic operator
+   Job has a 20-minute deadline and retains terminal diagnostics for one hour
+   before Kubernetes TTL cleanup removes its Job and Pod. Phase results are read
+   before cleanup; repeat creates a new operator and never requeues an old one.
 6. Enable the native ingest, consumer, independent reader and dashboard with
    the observed workspace allowlist. Control's independent-reader secret and
    ingest introspection secret are distinct. The public route exposes `/v1`,

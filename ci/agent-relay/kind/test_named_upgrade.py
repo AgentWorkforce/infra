@@ -419,6 +419,54 @@ class NamedUpgrade(unittest.TestCase):
         with patch.object(named, 'render_selected', side_effect=AssertionError('ambiguous writers reached Helm')), self.assertRaisesRegex(stack.StackError, 'drained native replacement'):
             named.verify_selection(self.local, self.values, self.objects)
 
+    def bind_replacement_for_reuse(self, *, current_search=False):
+        self.native_replacement()
+        if current_search:
+            self.values['sessions-pipeline'].pop('nativeConsumer')
+            self.values['sessions-pipeline']['searchIndexer'] = {'enabled': True}
+            self.values['localKind']['legacyIndexerDrained'] = True
+        named.write(self.local.overrides, self.values)
+        self.record['activeValuesSha256'] = named.digest(self.values)
+        named.write(self.local.state/named.RECORD, self.record)
+
+    def test_reuse_rechecks_recreated_old_writer_before_ready_or_other_state_changes(self):
+        for current_search in (False, True):
+            for old_name, service in (('session-metadata-indexer', None),
+                                      ('custom-old-writer', None),
+                                      ('unexpected-old-writer', 'hoopdb-indexer')):
+                with self.subTest(current_search=current_search, name=old_name):
+                    self.prepare('core')
+                    self.bind_replacement_for_reuse(current_search=current_search)
+                    if old_name == 'custom-old-writer':
+                        self.values['sessions-pipeline']['worker']['components']['hoopdb-indexer']['fullnameOverride'] = old_name
+                        named.write(self.local.overrides, self.values)
+                        self.record['activeValuesSha256'] = named.digest(self.values)
+                        named.write(self.local.state/named.RECORD, self.record)
+                    self.objects[('Deployment', old_name)] = {
+                        'kind': 'Deployment', 'metadata': {'name': old_name},
+                        'spec': {'replicas': 0, 'template': {'spec': {'containers': [
+                            {'name': 'old', 'env': [{'name': 'SERVICE', 'value': service}]}]}}}}
+                    self.assert_refused_without_state_change()
+                    before = {p: p.read_bytes() for p in self.local.state.glob('*.json')}
+                    error = stack.StackError if current_search else ValueError
+                    message = 'still present' if current_search else 'complete native bootstrap'
+                    with patch('shutil.which', return_value='/fixture/tool'), self.assertRaisesRegex(error, message):
+                        self.local.up()
+                    self.assertEqual(before, {p: p.read_bytes() for p in self.local.state.glob('*.json')})
+                    self.assertFalse(any(c[:2] == ['helm', 'template'] for c in self.calls))
+
+    def test_reuse_unchanged_replacement_and_legacy_default_remain_admitted(self):
+        named.validate(self.local)  # The legitimate legacy default is not a replacement.
+        for current_search in (False, True):
+            self.prepare('core')
+            self.bind_replacement_for_reuse(current_search=current_search)
+            named.validate(self.local)
+            # Post-up refresh skips only the old values hash, not writer safety.
+            self.objects[('Deployment', 'session-metadata-indexer')] = {
+                'kind': 'Deployment', 'metadata': {'name': 'session-metadata-indexer'}, 'spec': {'replicas': 0}}
+            with self.assertRaisesRegex(stack.StackError, 'still present'):
+                named.validate(self.local, check_values=False)
+
     def test_selected_legacy_default_requires_every_rendered_workload(self):
         selected=named.verify_selection(self.local,self.values,self.objects)
         self.assertTrue(DEFAULT_LEGACY<={d['metadata']['name'] for d in selected})

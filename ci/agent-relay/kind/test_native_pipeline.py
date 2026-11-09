@@ -238,6 +238,7 @@ class NativePipelineTests(unittest.TestCase):
         self.assertEqual(job["apiVersion"], "batch/v1")
         self.assertEqual(job["spec"]["activeDeadlineSeconds"], 1200)
         self.assertEqual(job["spec"]["backoffLimit"], 0)
+        self.assertEqual(job["spec"]["ttlSecondsAfterFinished"], 3600)
         pod = job["spec"]["template"]["spec"]
         self.assertIs(pod["automountServiceAccountToken"], False)
         self.assertTrue(pod["containers"][0]["securityContext"]["readOnlyRootFilesystem"])
@@ -254,6 +255,21 @@ class NativePipelineTests(unittest.TestCase):
         self.stack.objects_by_name["pod/operator-fixture"]["metadata"]["uid"] = "foreign"
         with self.assertRaisesRegex(NativeRecipeError, "operator_pod_changed"):
             self.adapter._driver(self.s, "credentials", credentials=[])
+        self.assertFalse(any(n == "bun-exec" for n, _ in self.events))
+
+    def test_operator_cleanup_is_deferred_until_terminal_and_cannot_be_removed_on_reuse(self):
+        self.operator_fixture()
+        result = self.adapter._driver(self.s, "noop")
+        self.assertEqual(result, {"ok": True, "verified": 3})
+        job = self.stack.objects_by_name["job/" + self.adapter._operator["name"]]
+        self.assertEqual(job["spec"]["ttlSecondsAfterFinished"], 3600)
+        self.assertNotIn("ttlSecondsAfterFinished", job["spec"]["template"]["spec"])
+        # A changed cleanup policy is a changed owned Job, not a reason to
+        # recreate it or retry owner operations without inspection.
+        job["spec"].pop("ttlSecondsAfterFinished")
+        self.events.clear()
+        with self.assertRaisesRegex(NativeRecipeError, "operator_job_changed"):
+            self.adapter._driver(self.s, "noop")
         self.assertFalse(any(n == "bun-exec" for n, _ in self.events))
 
     def test_driver_result_framing_ignores_official_logs_and_credentials_stay_in_sensitive_stdin(self):

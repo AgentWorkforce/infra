@@ -177,7 +177,10 @@ class NativePipelineAdapter(NativeBootstrapAdapter):
         name = "native-owner-" + self._selected_sha[:16] + "-" + secrets.token_hex(4)
         ref = selected["secretRefs"]["owner"]
         ca = selected["postgresCa"]
-        spec = {"backoffLimit": 0, "activeDeadlineSeconds": 1200, "template": {
+        # Keep terminal diagnostics available for one hour, then let the TTL
+        # controller delete this owned Job and its Pod. Phase results are read
+        # synchronously; repeat never depends on or adopts an old operator.
+        spec = {"backoffLimit": 0, "activeDeadlineSeconds": 1200, "ttlSecondsAfterFinished": 3600, "template": {
             "metadata": {"labels": {"app.kubernetes.io/name": "native-owner-operator"}},
             "spec": {"restartPolicy": "Never", "automountServiceAccountToken": False,
                 "securityContext": {"runAsNonRoot": True, "runAsUser": 1000, "runAsGroup": 1000, "fsGroup": 1000},
