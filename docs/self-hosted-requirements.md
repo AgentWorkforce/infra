@@ -14,7 +14,7 @@ registered, every shipped entry must exist in the charts, planned entries must
 not be referenced by any template, and the compatibility matrix must equal
 the pinned digests.
 
-Source of truth: [`self-hosted/requirements.yaml`](../self-hosted/requirements.yaml). 123 entries: 48 requirements (47 shipped, 1 planned), 75 options (73 shipped, 2 planned).
+Source of truth: [`self-hosted/requirements.yaml`](../self-hosted/requirements.yaml). 122 entries: 48 requirements (47 shipped, 1 planned), 74 options (72 shipped, 2 planned).
 
 ## Contents
 
@@ -91,7 +91,8 @@ Services image (sessions-pipeline-worker, alleyoop and the privileged SQL Jobs):
 | relayauth-0.1.2 | shipped | relayauth 0.1.2 | relayauth: `ghcr.io/agentworkforce/relayauth@sha256:c23c92d25fdf…` |  |  | License-annotation patch bump of 0.1.1. Superseded by 0.1.3. |
 | relayauth-0.1.1 | shipped | relayauth 0.1.1 | relayauth: `ghcr.io/agentworkforce/relayauth@sha256:c23c92d25fdf…` |  |  | relayauth 784582ef (machine-bound History assertion contract, relayauth #113). Superseded by 0.1.2. |
 | relayauth-0.1.0 | shipped | relayauth 0.1.0 | relayauth: `ghcr.io/agentworkforce/relayauth@sha256:eb71daa28e30…` |  |  | superseded by 0.1.1. |
-| agent-relay-0.6.8 | unreleased | agent-relay 0.6.8<br>relayhistory 0.1.2<br>relay-control 0.4.0<br>relay-webapp 0.2.1<br>(deps: relaycast 0.3.7, relayauth 0.1.4, sessions-pipeline 0.8.4, relayhistory 0.1.2, relay-control 0.4.0, relay-webapp 0.2.1, relayflows 0.2.5, durable-actors 0.14.6-awf.1, relayfile 0.2.2, telemetry-collector 0.1.1, relay-chief 0.1.0) | relayhistory: `ghcr.io/agentworkforce/relayhistory@sha256:<required>`<br>relay-control: `ghcr.io/agentworkforce/relay-control@sha256:d8c26d44dccb…`<br>relay-webapp: `ghcr.io/agentworkforce/relay-webapp@sha256:<required>` |  |  | Uses relaycast 0.3.7 for actor-mode bootstrap wiring. Retains sessions-pipeline 0.8.4 and reader 0.2.1 async-admission/inception options from 0.6.7; defaults remain disabled and no rollout is claimed. |
+| agent-relay-0.6.9 | unreleased | agent-relay 0.6.9<br>relayhistory 0.1.2<br>relay-control 0.4.1<br>relay-webapp 0.2.1<br>(deps: relaycast 0.3.7, relayauth 0.1.4, sessions-pipeline 0.8.4, relayhistory 0.1.2, relay-control 0.4.1, relay-webapp 0.2.1, relayflows 0.2.5, durable-actors 0.14.6-awf.1, relayfile 0.2.2, telemetry-collector 0.1.1, relay-chief 0.1.0) | relayhistory: `ghcr.io/agentworkforce/relayhistory@sha256:<required>`<br>relay-control: `ghcr.io/agentworkforce/relay-control@sha256:d8c26d44dccb…`<br>relay-webapp: `ghcr.io/agentworkforce/relay-webapp@sha256:<required>` |  |  | Removes the self-host license Secret mount and values. Optional components are selected with SELFHOST_FEATURES through relay-control extraEnv. The pinned Control digest predates license removal and still needs the replacement image; no rollout is claimed. |
+| agent-relay-0.6.8 | **planned** | agent-relay 0.6.8<br>relayhistory 0.1.2<br>relay-control 0.4.0<br>relay-webapp 0.2.1<br>(deps: relaycast 0.3.7, relayauth 0.1.4, sessions-pipeline 0.8.4, relayhistory 0.1.2, relay-control 0.4.0, relay-webapp 0.2.1, relayflows 0.2.5, durable-actors 0.14.6-awf.1, relayfile 0.2.2, telemetry-collector 0.1.1, relay-chief 0.1.0) | relayhistory: `ghcr.io/agentworkforce/relayhistory@sha256:<required>`<br>relay-control: `ghcr.io/agentworkforce/relay-control@sha256:d8c26d44dccb…`<br>relay-webapp: `ghcr.io/agentworkforce/relay-webapp@sha256:<required>` |  |  | Uses relaycast 0.3.7 for actor-mode bootstrap wiring. Retains sessions-pipeline 0.8.4 and reader 0.2.1 async-admission/inception options from 0.6.7; defaults remain disabled and no rollout is claimed. |
 | agent-relay-0.6.7 | **planned** | agent-relay 0.6.7<br>relayhistory 0.1.2<br>relay-control 0.4.0<br>relay-webapp 0.2.1<br>(deps: relaycast 0.3.6, relayauth 0.1.4, sessions-pipeline 0.8.4, relayhistory 0.1.2, relay-control 0.4.0, relay-webapp 0.2.1, relayflows 0.2.5, durable-actors 0.14.6-awf.1, relayfile 0.2.2, telemetry-collector 0.1.1, relay-chief 0.1.0) | relayhistory: `ghcr.io/agentworkforce/relayhistory@sha256:<required>`<br>relay-control: `ghcr.io/agentworkforce/relay-control@sha256:d8c26d44dccb…`<br>relay-webapp: `ghcr.io/agentworkforce/relay-webapp@sha256:<required>` |  |  | Superseded before tagging by agent-relay-0.6.8. Takes sessions-pipeline 0.8.4 with opt-in async admission and reader 0.2.1 inception coverage for new own-ingest stores, retaining explicit partial-import floors. Preserves current Relaycast, RelayChief Control and Webapp dependencies. Defaults remain disabled; no image qualification or rollout is supplied. |
 | agent-relay-0.6.6 | **planned** | agent-relay 0.6.6<br>relayhistory 0.1.2<br>relay-control 0.4.0<br>relay-webapp 0.2.1<br>(deps: relaycast 0.3.6, relayauth 0.1.4, sessions-pipeline 0.8.3, relayhistory 0.1.2, relay-control 0.4.0, relay-webapp 0.2.1, relayflows 0.2.5, durable-actors 0.14.6-awf.1, relayfile 0.2.2, telemetry-collector 0.1.1, relay-chief 0.1.0) | relayhistory: `ghcr.io/agentworkforce/relayhistory@sha256:<required>`<br>relay-control: `ghcr.io/agentworkforce/relay-control@sha256:d8c26d44dccb…`<br>relay-webapp: `ghcr.io/agentworkforce/relay-webapp@sha256:<required>` |  |  | Superseded before tagging by agent-relay-0.6.8. Takes sessions-pipeline 0.8.3 (search indexer Node CA). |
 | agent-relay-0.6.5 | **planned** | agent-relay 0.6.5<br>relayhistory 0.1.2<br>relay-control 0.4.0<br>relay-webapp 0.2.1<br>(deps: relaycast 0.3.6, relayauth 0.1.4, sessions-pipeline 0.8.2, relayhistory 0.1.2, relay-control 0.4.0, relay-webapp 0.2.1, relayflows 0.2.5, durable-actors 0.14.6-awf.1, relayfile 0.2.2, telemetry-collector 0.1.1, relay-chief 0.1.0) | relayhistory: `ghcr.io/agentworkforce/relayhistory@sha256:<required>`<br>relay-control: `ghcr.io/agentworkforce/relay-control@sha256:d8c26d44dccb…`<br>relay-webapp: `ghcr.io/agentworkforce/relay-webapp@sha256:<required>` |  |  | Takes relay-webapp 0.2.1 (default-off runtime.sessionReadApiEnabled). |
@@ -706,7 +707,6 @@ chart `relay-control` · values [`ci/default-values.yaml`](../charts/relay-contr
 | | option | choices | default here | maps to |
 | --- | --- | --- | --- | --- |
 | shipped | [CA bundle for verifying the Postgres server certificate (postgresCa)](#opt-postgres-ca-bundle) | `false`, `true` | `false` | values `worker.postgresCa.*`, `alleyoop.postgresCa.*`, `relay-control:postgresCa.*`, `relayhistory:postgresCa.*`, `relaychief-control:postgresCa.*`; env `NODE_EXTRA_CA_CERTS`, `PGSSLROOTCERT` |
-| shipped | [Offline license file mount (verification pending upstream)](#opt-relay-control-license-file) | `disabled`, `mounted` | `disabled` | values `license.existingSecret`, `license.key`; env `SELFHOST_LICENSE_FILE`; Secret `<license.existingSecret>` keys `license` |
 | shipped | [Previous encryption key during a key rotation](#opt-relay-control-encryption-rotation) | `none`, `previous key` | `none` | values `encryption.previousKeyId`, `secretKeys.previousEncryptionKey`; env `SELFHOST_ENCRYPTION_PREVIOUS_KEY_ID`, `SELFHOST_ENCRYPTION_PREVIOUS_KEY_FILE`; Secret `<existingSecret>` keys `<operator-chosen, no default>` |
 | shipped | [Internal service token for /internal/v1](#opt-relay-control-internal-token) | `disabled`, `enabled` | `disabled` | values `secretKeys.internalToken`; env `SELFHOST_INTERNAL_TOKEN_FILE`; Secret `<existingSecret>` keys `<operator-chosen, no default>` |
 | shipped | [Dashboard URL for OAuth callbacks and flow run links](#opt-relay-control-dashboard-url) | `publicUrl + "/"`, `dashboard origin` | `publicUrl + "/"` | values `dashboardUrl`; env `SELFHOST_DASHBOARD_URL` |
@@ -2279,26 +2279,6 @@ key Secret (req.secret.model-api-key). Values names are proposed.
 - Env: `SESSION_BRIEF_ENABLED`, `SESSION_BRIEF_MODEL`
 - Verify: not applicable until charted
 - Sources: `sessions-pipeline@475d503:src/session-brief/config.ts:4`, `sessions-pipeline@475d503:src/session-brief/main.ts:2`
-
-#### opt.relay-control.license-file
-
-<a id="opt-relay-control-license-file"></a>
-
-**Offline license file mount (verification pending upstream)** · shipped · chart `relay-control` · profiles relay-control
-
-Optional separate Secret projected only into the relaycontrol API, as
-SELFHOST_LICENSE_FILE. Empty existingSecret keeps the slot unmounted.
-The chart implements a file mount, not signature verification or add-on
-enforcement. Those features are owned by relaycontrol and are pending.
-
-- Default: `disabled`
-- Choices: `disabled`; `mounted`
-- Provided by: operator
-- Values: `license.existingSecret`, `license.key`
-- Env: `SELFHOST_LICENSE_FILE`
-- Secret: `<license.existingSecret>` from `license.existingSecret`; keys `license` from `license.key`
-- Verify: With license.existingSecret set, only the API mounts that Secret and SELFHOST_LICENSE_FILE; the migration Job receives neither. Do not infer license enforcement from a successful render.
-- Sources: [`charts/relay-control/values.yaml`](../charts/relay-control/values.yaml), [`charts/relay-control/templates/deployment.yaml`](../charts/relay-control/templates/deployment.yaml)
 
 #### opt.relay-control.encryption-rotation
 

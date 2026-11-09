@@ -117,27 +117,18 @@ class Profiles(unittest.TestCase):
         self.assertEqual(env["RELAYFILE_PRODUCTION_DSN"]["valueFrom"]["secretKeyRef"]["name"], "kind-relayfile")
         self.assertIn("relayauth.agent-relay.svc.cluster.local", env["RELAYAUTH_JWKS_URL"]["value"])
 
-    def test_license_only_mounted_in_api_not_migrator(self):
+    def test_addons_select_features_and_no_license_slot(self):
         docs = self.render("addons")
         api = next(d for d in docs if d["kind"] == "Deployment" and d["metadata"]["name"] == "relay-control")
         spec = stack.pod_spec(api)
-        self.assertIn({"name": "SELFHOST_LICENSE_FILE", "value": "/var/run/agent-relay/license/license"}, spec["containers"][0]["env"])
-        secret = next(v for v in spec["volumes"] if v["name"] == "license")["secret"]
-        self.assertEqual(secret["secretName"], "kind-addon-license")
-        self.assertEqual(secret["items"], [{"key": "license", "path": "license"}])
-        for workload in (d for d in docs if stack.pod_spec(d) and d is not api):
-            self.assertNotIn("SELFHOST_LICENSE", json.dumps(workload))
-            self.assertNotIn("kind-addon-license", json.dumps(workload))
-        core = self.render()
-        self.assertNotIn("SELFHOST_LICENSE", json.dumps(core))
+        self.assertIn({"name": "SELFHOST_FEATURES", "value": "flows,relayfile"}, spec["containers"][0]["env"])
+        for rendered in (docs, self.render()):
+            self.assertNotIn("SELFHOST_LICENSE", json.dumps(rendered))
 
     def test_invalid_profile_and_temporary_auth_disagreement_refused(self):
         self.assertIn("must explicitly match", self.render(extra=["--set", "localKind.temporaryRelayauth=false"], ok=False))
         self.assertIn("must agree", self.render("addons", extra=["--set", "components.relayfile=false"], ok=False))
         self.assertIn("must be core or addons", self.render(extra=["--set", "localKind.profile=unknown"], ok=False))
-        self.assertIn("license.key", self.render("addons", extra=["--set", "relay-control.license.key=../bad"], ok=False))
-        self.assertIn("must not mount the migration credential", self.render("addons", extra=["--set", "relay-control.license.existingSecret=kind-control", "--set", "relay-control.license.key=database-migrations-url"], ok=False))
-        self.assertIn("SELFHOST_LICENSE_FILE is managed", self.render("addons", extra=["--set", "relay-control.extraEnv[0].name=SELFHOST_LICENSE_FILE", "--set", "relay-control.extraEnv[0].value=/other-license"], ok=False))
 
     def test_local_scope_guard_and_configurable_api_ingress(self):
         self.assertIn("allowLocalOnly", self.render(extra=["--set", "localKind.allowLocalOnly=false"], ok=False))
@@ -154,14 +145,6 @@ class Profiles(unittest.TestCase):
         self.assertEqual(ingress["spec"]["tls"][0]["secretName"], "custom-tls")
         self.assertEqual(ingress["spec"]["rules"][0]["host"], "custom.kind.agentrelay.com")
         self.assertEqual(ingress["spec"]["rules"][0]["http"]["paths"][0]["backend"]["service"]["name"], "other-control")
-
-    def test_license_secret_shape_and_all_credential_collisions(self):
-        for name in ("a.-b", "a" * 254):
-            self.assertIn("Kubernetes Secret name", self.render("addons", extra=["--set-string", "relay-control.license.existingSecret="+name], ok=False))
-        for key in ("database-url", "database-migrations-url", "relayauth-api-key"):
-            self.assertIn("must not mount", self.render("addons", extra=["--set", "relay-control.license.existingSecret=kind-control",
-                                                                      "--set", "relay-control.license.key="+key], ok=False))
-        self.render("addons", extra=["--set", "relay-control.license.key=2024"])
 
     def test_extra_env_cannot_bypass_validation_or_expose_migration_credentials(self):
         invalid = [

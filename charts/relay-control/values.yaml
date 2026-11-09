@@ -23,12 +23,6 @@ global:
   singleHost:
     host: ""
 existingSecret: ""
-# Reserved for relaycontrol's signed offline license. Verification is owned by
-# relaycontrol; mounting this file does not imply that the deployed image
-# implements enforcement. Empty keeps the slot unmounted (core only).
-license:
-  existingSecret: ""
-  key: license
 secretKeys:
   databaseUrl: database-url
   databaseMigrationsUrl: database-migrations-url

@@ -440,7 +440,6 @@ class Stack:
             self.secret("kind-relayfile", {"RELAYFILE_INTERNAL_HMAC_SECRET": s["internal"],
                                           # lib/pq defaults to TLS; local Postgres has TLS off.
                                           "RELAYFILE_PRODUCTION_DSN": db("relayfile", "relayfile") + "?sslmode=disable"})
-            self.secret("kind-addon-license", {"license": Path(os.environ["KIND_LICENSE_FILE"]).read_text()})
         return s
 
     def postgres(self, s, services_image):
@@ -557,9 +556,6 @@ class Stack:
         ready = self.state / "ready.json"
         if ready.exists():
             ready.unlink()
-        if self.profile == "addons":
-            if not os.environ.get("KIND_LICENSE_FILE"):
-                raise StackError("PENDING: set KIND_LICENSE_FILE to the owner-supplied signed offline license; enforcement is not shipped yet")
         self.dependencies()
         docs = self.render()
         images = sorted({c["image"] for d in docs for c in pod_spec(d).get("containers", []) + pod_spec(d).get("initContainers", [])})

@@ -51,15 +51,6 @@ of set a second time. Desktop and the CLI log in against that same origin. */ -}
 {{- $image := include "relay-control.image" . -}}
 {{- if ne (int .Values.replicaCount) 1 }}{{ fail "replicaCount must be 1: the self-host API pilot has process-local login/device rate limits and is not HA" }}{{ end -}}
 {{- if not .Values.existingSecret }}{{ fail "existingSecret is required; inline credentials are not supported" }}{{ end -}}
-{{- if .Values.license.existingSecret -}}
-{{- if or (gt (len (toString .Values.license.existingSecret)) 253) (not (regexMatch "^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\\.)*[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$" (toString .Values.license.existingSecret))) }}{{ fail "license.existingSecret must be a Kubernetes Secret name" }}{{ end -}}
-{{- if not (regexMatch "^[A-Za-z0-9._-]+$" (toString .Values.license.key)) }}{{ fail "license.key must be a Kubernetes Secret data key" }}{{ end -}}
-{{- if eq (toString .Values.license.existingSecret) (toString .Values.existingSecret) -}}
-{{- range $name, $key := .Values.secretKeys -}}
-{{- if eq (toString $.Values.license.key) (toString $key) }}{{ fail "license must not mount the migration credential or reuse any secretKeys credential" }}{{ end -}}
-{{- end -}}
-{{- end -}}
-{{- end -}}
 {{- if not (kindIs "bool" .Values.services.relayauthEnabled) }}{{ fail "services.relayauthEnabled must be a boolean" }}{{ end -}}
 {{- $optionalSecretKeys := list "previousEncryptionKey" "internalToken" "telemetryInstallKey" "relaycastInternalSecret" "oidcClientSecret" "smtpPassword" "introspectSecret" "sessionReadApiSecret" -}}
 {{- if not .Values.services.relayauthEnabled }}{{ $optionalSecretKeys = append $optionalSecretKeys "relayauthApiKey" }}{{ end -}}
@@ -104,7 +95,7 @@ the chart already sets, including duplicates inside extraEnv. */ -}}
   "SELFHOST_BOOTSTRAP_ADMIN_EMAIL" "SELFHOST_BOOTSTRAP_ADMIN_NAME" "SELFHOST_BOOTSTRAP_ORG_NAME" "SELFHOST_BOOTSTRAP_WORKSPACE_NAME"
   "SELFHOST_DASHBOARD_URL" "SELFHOST_EMAIL_FROM" "SELFHOST_EMAIL_LOGIN" "SELFHOST_ENCRYPTION_KEY_ID"
   "SELFHOST_ENCRYPTION_PREVIOUS_KEY_ID" "SELFHOST_FLOWS_GCS_BUCKET" "SELFHOST_FLOWS_GCS_PREFIX" "SELFHOST_FLOWS_QUEUE_PING_MS"
-  "SELFHOST_FLOWS_STORAGE" "SELFHOST_FLOWS_WORKER_RELAYCAST_URL" "SELFHOST_INVITE_TTL_HOURS" "SELFHOST_LICENSE_FILE"
+  "SELFHOST_FLOWS_STORAGE" "SELFHOST_FLOWS_WORKER_RELAYCAST_URL" "SELFHOST_INVITE_TTL_HOURS"
   "SELFHOST_OIDC_ALLOWED_DOMAINS" "SELFHOST_OIDC_ALLOW_HTTP_ISSUER" "SELFHOST_OIDC_CLIENT_ID" "SELFHOST_OIDC_DISPLAY_NAME"
   "SELFHOST_OIDC_ISSUER" "SELFHOST_OIDC_REDIRECT_URL" "SELFHOST_OIDC_SCOPES" "SELFHOST_PUBLIC_URL"
   "SELFHOST_RUNTIME_DATABASE_ROLE" "SELFHOST_SMTP_HOST" "SELFHOST_SMTP_PORT" "SELFHOST_SMTP_SECURITY"
