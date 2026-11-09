@@ -33,6 +33,12 @@ injected into self-hosted workloads. No live hosted configuration is changed her
 
 ## Internal batch endpoint
 
+The proposed source inventory and event records are maintained in
+[`analytics-producer-registry.md`](analytics-producer-registry.md), which names
+document/component ownership and distinguishes proposed records from future
+runtime admission. It creates no active producer registration or credentials;
+the collector implementation owner and reviewed runtime bindings remain required.
+
 The collector exposes an authenticated, internal `POST /v1/events`. Browser
 and Desktop clients do not receive collector producer credentials or connect
 directly to this Service. A separate authenticated local gateway validates

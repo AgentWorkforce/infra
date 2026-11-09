@@ -44,11 +44,17 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end }}
 
 {{- define "relaycast.image" -}}
-{{- $digest := required "image.digest is required; Relaycast images must be pinned by sha256 digest" .Values.image.digest }}
-{{- if not (regexMatch "^sha256:[a-f0-9]{64}$" $digest) }}
-{{- fail "image.digest must be sha256:<64 lowercase hex characters>" }}
+{{- $image := .Values.image }}
+{{- $path := "image" }}
+{{- if include "relaycast.postgres.enabled" . }}
+{{- $image = .Values.runtime.postgres.image }}
+{{- $path = "runtime.postgres.image" }}
 {{- end }}
-{{- printf "%s@%s" .Values.image.repository $digest }}
+{{- $digest := required (printf "%s.digest is required; Relaycast images must be pinned by sha256 digest" $path) $image.digest }}
+{{- if not (regexMatch "^sha256:[a-f0-9]{64}$" $digest) }}
+{{- fail (printf "%s.digest must be sha256:<64 lowercase hex characters>" $path) }}
+{{- end }}
+{{- printf "%s@%s" $image.repository $digest }}
 {{- end }}
 
 {{- /* CronJob names are limited to 52 characters; "-backup" is 7. */ -}}
@@ -71,11 +77,12 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 
 {{- define "relaycast.validate" -}}
 {{- if ne (int .Values.replicaCount) 1 }}
-{{- fail "replicaCount must be 1: Relaycast self-host stores SQLite and uploaded files on one persistent volume (runtime.backend=durable-actors scales runtime.durableActors.gateway.replicaCount instead)" }}
+{{- fail "replicaCount must be 1: Relaycast self-host stores SQLite and uploaded files on one persistent volume, and the postgres backend keeps realtime, presence and rate limits in-process (runtime.backend=durable-actors scales runtime.durableActors.gateway.replicaCount instead)" }}
 {{- end }}
-{{- if not (has (toString .Values.runtime.backend) (list "sqlite" "durable-actors")) }}
-{{- fail "runtime.backend must be sqlite or durable-actors" }}
+{{- if not (has (toString .Values.runtime.backend) (list "sqlite" "durable-actors" "postgres")) }}
+{{- fail "runtime.backend must be sqlite, durable-actors or postgres" }}
 {{- end }}
+{{- include "relaycast.postgres.validate" . }}
 {{- if include "relaycast.actors.enabled" . }}
 {{- include "relaycast.actors.validate" . }}
 {{- end }}

@@ -1,0 +1,35 @@
+# An AWS Load Balancer Controller shape, with the example CIDRs an operator
+# replaces. Rendered by scripts/ci/charts.sh; not a chart default.
+image:
+  digest: sha256:ddd4129f062cc19ba144bbb4ac0f7af66fb730be5a7c9521a9307d4c8f287688
+existingSecret: relaychief-control-secrets
+secretKeys:
+  nangoSecretKey: NANGO_SECRET_KEY
+config:
+  relaycontrolUrl: https://control.example.com
+  publicOrigin: https://chief.example.com
+  browserOrigins: https://app.example.com, https://admin.example.com
+  nangoHost: https://nango.example.com
+ingress:
+  enabled: true
+  className: alb
+  annotations:
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/healthcheck-path: /healthz
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTPS":443}]'
+  hosts: [chief.example.com]
+  externalTls: true
+networkPolicy:
+  ingressFrom:
+    - ipBlock: { cidr: 10.0.1.0/24 }
+    - ipBlock: { cidr: 10.0.2.0/24 }
+  additionalEgress:
+    - to:
+        - ipBlock: { cidr: 10.0.0.0/16 }
+      ports:
+        - { protocol: TCP, port: 5432 }
+    - to:
+        - ipBlock: { cidr: 0.0.0.0/0 }
+      ports:
+        - { protocol: TCP, port: 443 }

@@ -28,6 +28,7 @@ and the release gate’s `helm-charts` license-decision ID retain their original
 | [relay-control](charts/relay-control) | Self-host control-plane API — organizations, workspaces, device auth; existing-Secret file mounts only, separate migration Job |
 | [relay-webapp](charts/relay-webapp) | Static self-host dashboard — nginx SPA calling same-origin `/cloud/api` |
 | [relayhistory](charts/relayhistory) | Relay History data plane — session delivery, search, replay on its own Postgres database (digest-pinned proof image) |
+| [relaychief-control](charts/relaychief-control) | Optional Relay Chief registry and slot-binding add-on on PostgreSQL — one replica, loopback-only admin listener, Ingress limited to `/chief/v1` by default (not part of the umbrella) |
 | [relaycast](charts/relaycast) | Portable self-hosted Relaycast core — realtime agent communication with single-writer SQLite persistence |
 | [relayfile](charts/relayfile) | Relayfile server — single Go binary, HTTP on :8080, Postgres-backed in production |
 | [relayflows](charts/relayflows) | Durable workflows running locally in Kubernetes, with optional Cloud assignment mode |
@@ -466,7 +467,9 @@ Prerequisites: Docker Engine 28+ (including native-platform image export),
 kind 0.31+, kubectl, Helm 3.10+, OpenSSL, Git, Python 3.9+, and PyYAML. Allocate
 enough Docker memory for the suite and CNI; budget 20 GiB free disk for a cold
 setup. Current optional native Control builds fetch public
-`AgentWorkforce/relay-control` at the exact `df4b390` source pin. Explicit historical
+`AgentWorkforce/relay-control` at the exact `53252e3` candidate source pin from
+open Control PR #23; this selection does not establish upstream main provenance
+or runtime qualification. Explicit historical
 reproduction (`KIND_CONTROL_SOURCE=historical`) uses `1f08cb6` from the archived
 private `AgentWorkforce/relay-control-internal` repository and needs authenticated
 Git read access. Current and historical source caches are separate. Existing
@@ -602,10 +605,11 @@ before deleting either one, then verifies their absence and preserves the
 installation's other workspaces. Older images that still return 404 retain the
 cleanup pending result. This removes only Control's workspace rows; separately
 owned Relaycast resources and external session/object cleanup remain separate.
-The [native candidate receipt](ci/agent-relay/kind/control-df4b390-smoke.json)
-qualifies the selected image's runtime-role migration/readiness and guarded
-workspace deletion against disposable PostgreSQL 17 data. It does not qualify
-an installed profile, TLS, MCP, Desktop, external erasure or the full pipeline.
+The [historical native candidate receipt](ci/agent-relay/kind/control-df4b390-smoke.json)
+records `df4b390` runtime-role migration/readiness and guarded workspace deletion
+against disposable PostgreSQL 17 data. It does not qualify the newly selected
+`53252e3` image, an installed profile, TLS, MCP, Desktop, external erasure or the
+full pipeline.
 The local bootstrap applies release objects client-side before final Helm
 reconciliation. On Helm 4 the wrapper explicitly selects its supported
 [`--server-side=false`](https://docs.helm.sh/docs/helm/helm_upgrade/) mode to keep
@@ -711,7 +715,7 @@ For render/trust/schema checks without Docker (Helm and kubeconform required), r
 `python3 ci/agent-relay/kind/test_stack.py -v` after building chart dependencies.
 
 The default-off [session read API chart preparation](docs/self-hosted-session-read-api.md)
-is available under `sessions-pipeline.readApi`. It remains disabled in both kind
+is available as the `charts/session-read-api` chart, carried under `sessions-pipeline.sessionReadApi`. It remains disabled in both kind
 profiles pending the approved runtime assembly and image; the running core
 evidence does not prove this new component.
 

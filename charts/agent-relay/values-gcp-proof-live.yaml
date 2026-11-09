@@ -36,10 +36,9 @@ relay-control:
   nameOverride: relay-cloud-api
   fullnameOverride: relay-cloud-api
   image:
-    # Proof build of AgentWorkforce/relaycontrol 17bdc78 (selfhost/desktop-auth).
-    # Proof-only: not in self-hosted/customer-images.yaml, which audits the
-    # customer profile (values-gcp.yaml) for the release gate.
-    digest: sha256:99670d253b88c27499f6c4cca6ac1265ed97978ed7a9d5eaaeecd65de9e052dc
+    # relay-control 0.5.0, df4b390; 0.5.1 is not published yet, so the session read handoff is inert on this pin.
+    # The earlier 17bdc78 proof build was only in the private proof registry.
+    digest: sha256:d8c26d44dccb6dd21b7033288241a379e46ce5fbca69f276c4d4745001c3c3e2
   resources:
     requests: { cpu: 25m, memory: 128Mi }
     limits: { memory: 512Mi }

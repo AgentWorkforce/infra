@@ -11,8 +11,18 @@ Ingress: {{ join ", " .Values.ingress.hosts }} (/internal and /v1/workspaces are
 Backups: CronJob {{ include "relaycast.backupName" . }} ({{ .Values.backup.schedule }}) -> PVC {{ include "relaycast.backupClaimName" . }}
 {{- end }}
 
+{{- if include "relaycast.postgres.enabled" . }}
+PostgreSQL backend: the migration Job must finish before the server starts;
+the server pod's init container waits for it. Watch it with:
+
+  kubectl -n {{ .Release.Namespace }} wait --for=condition=complete job -l app.kubernetes.io/name={{ include "relaycast.name" . }}-migrate,app.kubernetes.io/instance={{ .Release.Name }} --timeout=30m
+
+Single process: uploaded files on one volume and in-process realtime state.
+Do not scale this Deployment.
+{{- else }}
 Single process: one SQLite database and the uploaded files on one volume.
 Do not scale this Deployment.
+{{- end }}
 
 First run: create a workspace through the in-cluster admin API. The internal
 secret never leaves the pod; the response holds the only copy of the workspace

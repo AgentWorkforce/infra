@@ -27,7 +27,7 @@ privilegedSql:
   sqlImage:
     digest: "sha256:6f22ea17dff336e1431664542759fd27958649388b90a0b2f0881883caa7c6b2"
 
-readApi:
+sessionReadApi:
   enabled: true
   image:
     repository: example.invalid/session-read-api
@@ -36,12 +36,14 @@ readApi:
   origin: https://history.kind.agentrelay.com:8443
   completeSince: epoch
   directoryWorkspaces: render-workspace
+  search: { backendId: render-backend }
   allowInClusterHttp: true
+  postgres: { tlsProfile: custom-ca }
+  postgresCa:
+    enabled: true
+    configMap: read-api-postgres-ca
+    sha256: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
   auth:
-    relayauth:
-      jwksUrl: http://relayauth.ci.svc.cluster.local:8787/.well-known/jwks.json
-      issuer: http://relayauth.ci.svc.cluster.local:8787
     relaycontrol:
-      enabled: true
       url: http://relaycontrol.ci.svc.cluster.local
       existingSecret: read-api-introspection

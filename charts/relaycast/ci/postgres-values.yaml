@@ -1,0 +1,7 @@
+baseUrl: https://relay.example.com
+existingSecret: relaycast-secrets
+runtime:
+  backend: postgres
+postgresCa:
+  enabled: true
+  configMap: postgres-ca-bundle

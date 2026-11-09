@@ -2,7 +2,7 @@ apiVersion: v2
 name: agent-relay
 description: Self-hosted Agent Relay messaging and sessions suite
 type: application
-version: 0.5.4
+version: 0.6.7
 appVersion: "0.1.0"
 kubeVersion: ">=1.28.0-0"
 annotations:
@@ -17,7 +17,7 @@ maintainers:
     url: https://github.com/AgentWorkforce
 dependencies:
   - name: relaycast
-    version: 0.3.5
+    version: 0.3.6
     repository: file://../relaycast
     condition: components.relaycast
   - name: relayauth
@@ -25,7 +25,7 @@ dependencies:
     repository: file://../relayauth
     condition: components.relayauth
   - name: sessions-pipeline
-    version: 0.7.5
+    version: 0.8.4
     repository: file://../sessions-pipeline
     condition: components.sessionsPipeline
   - name: relayhistory
@@ -33,11 +33,11 @@ dependencies:
     repository: file://../relayhistory
     condition: components.relayhistory
   - name: relay-control
-    version: 0.3.1
+    version: 0.4.0
     repository: file://../relay-control
     condition: components.control
   - name: relay-webapp
-    version: 0.2.0
+    version: 0.2.1
     repository: file://../relay-webapp
     condition: components.webapp
   - name: relayflows
@@ -55,7 +55,7 @@ dependencies:
     repository: file://../relayfile
     condition: components.relayfile
   - name: telemetry-collector
-    version: 0.1.0
+    version: 0.1.1
     repository: file://../telemetry-collector
     condition: components.telemetryCollector
   - name: relay-chief
