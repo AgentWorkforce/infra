@@ -10,7 +10,7 @@ A completed live run proves only those selected SQL/readiness/module storage che
 Source mocks/imports and synthetic client tests do not prove actual RDS behavior,
 projection state, OpenSearch/FGAC/provider conformance, Lambda or the full suite.
 There is no untrusted-code, tenant-isolation, production durability or HA claim.
-Actual execution remains held for complete TF/host/payload/private parent-driver
+Actual execution remains held for complete TF/host/payload/`proof/runner.py`
 review and separate exact saved-plan admission. No platform grant, account/project,
 existing app/role, parent DNS, publication or deployment change is made here.
 
@@ -23,7 +23,7 @@ runtime `sessions_pipeline_runtime`. It stays held, and a successful run of thes
 checks would cover only HoopDB. It would not qualify the other services, cross-database
 denials or a Terraform-to-Helm application installation. Those need their own service
 bindings, a digest-pinned Helm installation and the real application acceptance cases.
-The private parent saved-plan driver also still requires independent review. Managed
+The saved-plan runner, `proof/runner.py`, also still requires independent review. Managed
 execution remains held.
 
 Both source and restore instances disable automatic minor upgrades. The host
@@ -138,10 +138,10 @@ Seed version/label stays immutable; AWSCURRENT or password derivation is no subs
 
 ## Parent lifecycle and complete retirement
 
-Parent owns the separately reviewed private saved-plan/state/history driver; this
-source does not implement a duplicate framework. Required admission binds source,
-vars, saved plan, provider lock/binaries, backend/current state/runner and fresh
-exact Pippen caller for each phase. Provision without compute, verify native empty
+`proof/runner.py` is the saved-plan/state/history runner and needs its own
+independent review before any live use. Required admission binds source, vars,
+saved plan, provider lock/binaries, current state, runner and fresh exact Pippen
+caller for each phase. Provision without compute, verify native empty
 secret/policy/network prerequisites, upload immutable payload version, then review
 host launch. Exact successful seed receipt admits the Terraform marker snapshot/
 restore. Application catalog digest is `guest.receipt.evidenceSha256`, with master
@@ -183,6 +183,37 @@ DeletionDate is not absence. Typed DescribeSecret AND ListSecretVersionIds NotFo
 prove exact container/all versions gone. Denied, untyped empty responses, refresh
 failure and recovery schedules never count. State0 plus independent specific native
 absence closes the fixture; existing VPC/routes/apps/resources remain outside scope.
+
+### Running the phases
+
+Run each command under the lease, with `R="python3 proof/runner.py --execution
+<private T7 dir> --variables <inputs.tfvars.json> --terraform <terraform>"`.
+Every `plan` stops so a person can read `<phase>.summary.txt`; `apply` then takes
+only that plan's digest.
+
+```sh
+pippen sandbox up aws-proof
+pippen sandbox exec aws-proof -- $R plan --phase provision
+pippen sandbox exec aws-proof -- $R apply --phase provision --plan-sha256 <digest>
+pippen sandbox exec aws-proof -- $R prerequisites
+pippen sandbox exec aws-proof -- $R upload --archive <payload.tar.gz>
+pippen sandbox exec aws-proof -- $R plan --phase seed                 # then apply as above
+pippen sandbox exec aws-proof -- $R receipt --phase seed
+pippen sandbox exec aws-proof -- $R plan --phase restore              # then apply as above
+pippen sandbox exec aws-proof -- $R receipt --phase restore
+pippen sandbox exec aws-proof -- $R plan --phase release              # then apply as above
+pippen sandbox exec aws-proof -- $R inventory                         # prints ledger_sha256
+pippen sandbox exec aws-proof -- $R drain --ledger-sha256 <digest>
+pippen sandbox exec aws-proof -- $R plan --phase destroy              # then apply as above
+pippen sandbox exec aws-proof -- $R absence
+pippen sandbox down aws-proof
+```
+
+`release` may start from any phase. Forward phases refuse an expired deadline;
+retirement does not, because refusing would strand resources. A failed or empty
+state read after an attempted apply is unknown, never empty, and blocks retirement
+until the state can be read. If no contract was captured, `inventory`, `drain` and
+`absence` are unavailable, so native absence needs a manual exact-owned check.
 
 ## F1 status: separate-database application path (refused)
 
@@ -238,7 +269,7 @@ Remaining dependencies (nothing here is a live proof):
 1. **Merged and reviewed driver.** Pin `guest_sources` and register the artifact in
    `local.approved_activations` using the merged commit and its `artifact_sha256`.
    Any byte change to the driver or its SQL changes the artifact. Owner: pipeline, then infra.
-2. **Independent review of the private parent saved-plan driver**, then exact saved-plan
+2. **Independent review of the saved-plan runner `proof/runner.py`**, then exact saved-plan
    admission. Owner: reviewer to be named.
 3. **A Pippen lease** for the sandbox account, which needs the `pippen-sandbox-client`
    credential.
