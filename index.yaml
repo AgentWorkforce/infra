@@ -1897,6 +1897,33 @@ entries:
     urls:
     - https://github.com/AgentWorkforce/helm-charts/releases/download/relaycast-0.1.0/relaycast-0.1.0.tgz
     version: 0.1.0
+  relaychief-control:
+  - annotations:
+      agentworkforce.dev/license-scope: First-party chart code only; dependencies
+        and images retain their own licenses.
+      artifacthub.io/license: Apache-2.0
+    apiVersion: v2
+    appVersion: 0.1.0
+    created: "2026-11-09T03:25:18.650928287Z"
+    description: Optional Relay Chief registry and slot-binding add-on backed by PostgreSQL
+    digest: bff73f8fbbd72709bba25fbf306bb4f83253ffeadf93806c0b3f5b6e28e0d501
+    home: https://github.com/AgentWorkforce/relaychief-control
+    keywords:
+    - relay-chief
+    - control-plane
+    - agents
+    - self-hosted
+    kubeVersion: '>=1.28.0-0'
+    maintainers:
+    - name: AgentWorkforce
+      url: https://github.com/AgentWorkforce/infra
+    name: relaychief-control
+    sources:
+    - https://github.com/AgentWorkforce/relaychief-control
+    type: application
+    urls:
+    - https://github.com/AgentWorkforce/infra/releases/download/relaychief-control-0.1.0/relaychief-control-0.1.0.tgz
+    version: 0.1.0
   relayfile:
   - annotations:
       agentworkforce.dev/license-scope: First-party chart code only; dependencies
@@ -3155,4 +3182,4 @@ entries:
     urls:
     - https://github.com/AgentWorkforce/infra/releases/download/telemetry-collector-0.1.0/telemetry-collector-0.1.0.tgz
     version: 0.1.0
-generated: "2026-11-09T03:23:54.161712289Z"
+generated: "2026-11-09T03:25:18.651056577Z"
