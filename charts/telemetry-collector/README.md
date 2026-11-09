@@ -7,10 +7,33 @@ This chart does not redirect hosted traffic, accept browser credentials or
 enable producer adapters automatically.
 
 The runtime contract comes from relay-control source
-`08cf1142303355a73a94dcf605045cdf363e02c5`: the standalone
+`d2cb39635bbf163976c354582365b3d97dcd0b56`: the standalone
 `agent-relay-analytics-collector` CLI, `POST /v1/events`, `GET /healthz`, and
 `ANALYTICS_COLLECTOR_*` settings. It is not OTLP; the optional OpenTelemetry
 collector in the pipeline chart serves a separate observability contract.
+
+## Qualified runtime and upgrade
+
+Chart 0.1.3 requires the source above, which restores owned committed segment
+files to mode 0600 before listening, including after a volume remount broadens
+their permissions. Recovery refuses startup if hardening fails. Event bytes,
+retention and the exclusive-writer contract are unchanged.
+
+The signed candidate `ghcr.io/agentworkforce/relay-control@sha256:37aa934ac5a39a950c53b93a5e03509cafaac2268471a3e398f276df6d95331a`
+was built from that exact source. Its [source CI](https://github.com/AgentWorkforce/relay-control/actions/runs/42686628619)
+and [image publication](https://github.com/AgentWorkforce/relay-control/actions/runs/42687608594)
+passed. Qualification verified signed source provenance and both image
+platforms, then exercised the native ARM CLI as UID 1000: accepted/rejected
+producer controls, restart with 0660 fixtures restored to 0600, unchanged
+bytes, and a retained RWOP volume remount with strict TLS health. The predecessor
+failed the same private-mode restart check. Operators must still verify their
+own storage backend and configured images.
+
+The former qualified source `08cf1142303355a73a94dcf605045cdf363e02c5` is no
+longer admitted. Before upgrading, supply the new verified collector image
+and matching `image.sourceRevision`; do not retain the old declaration for a
+new image. Repository, digest and source remain required operator inputs,
+and producer adapters remain disabled until explicitly configured.
 
 ## What the chart installs
 
@@ -37,7 +60,7 @@ own liveness probe.
 
 Supply accepted immutable collector and TLS-proxy image digests and record the
 collector source SHA. The declared source is pinned to the reviewed revision
-`08cf1142303355a73a94dcf605045cdf363e02c5`; accepting a different runtime requires
+`d2cb39635bbf163976c354582365b3d97dcd0b56`; accepting a different runtime requires
 a reviewed allowlist update. This declaration is not cryptographic verification
 of image contents: verify the actual archive/OCI source label separately. The collector image must contain Node 22 or later and
 `node_modules/relay-control/dist/collector-cli.js` and `/usr/bin/flock`. The
@@ -58,9 +81,9 @@ process. Never put token values in Helm values or a ConfigMap:
    ```
 
    Use a separate random credential per producer and deployment. The collector
-   validates identity bindings and refuses shared credentials. The currently
-   reviewed CLI registers **only `relaycontrol` events**; other component
-   registries remain a runtime dependency. Dashboard/Desktop events use the
+   validates identity bindings and refuses shared credentials. This qualified CLI registers `relaycontrol`, `session-ingest`,
+   `session-read-api` and `session-pipeline-consumer`, each with a closed typed
+   vocabulary. Other components still need a reviewed runtime registry. Dashboard/Desktop events use the
    authenticated Control gateway and never receive producer tokens.
 2. A TLS Secret with `tls.crt` and `tls.key`. The certificate must cover the
    exact internal Service DNS name, and producers must trust its issuing CA.

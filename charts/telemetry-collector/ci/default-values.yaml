@@ -2,7 +2,7 @@
 image:
   repository: example.invalid/analytics-collector
   digest: sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
-  sourceRevision: 08cf1142303355a73a94dcf605045cdf363e02c5
+  sourceRevision: d2cb39635bbf163976c354582365b3d97dcd0b56
 tlsProxy:
   image:
     repository: example.invalid/tls-proxy
