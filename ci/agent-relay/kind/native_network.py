@@ -117,7 +117,8 @@ def selection(values):
         url = services.get("sessionReadApiUrl")
         expected_url = "http://" + (reader.get("fullnameOverride") or "agent-relay-read-api") + ".agent-relay.svc.cluster.local"
         if (services.get("relayhistoryBackend") != "native" or url != expected_url
-                or services.get("relayhistoryUrl") != url or services.get("sessionReadApiPublicUrl") != origin
+                or services.get("relayhistoryUrl") not in (None, "") or services.get("relayhistoryPublicUrl") not in (None, "")
+                or services.get("sessionReadApiPublicUrl") != origin
                 or services.get("relayhistoryReadApiUrl") not in (None, "")
                 or services.get("relayhistoryReadApiEvents", False) is not False
                 or services.get("relayhistoryHostAliases") not in (None, [])
@@ -137,7 +138,7 @@ def selection(values):
             fail("Pattern A requires Control-only auth, explicit native events and grant-aware sync login")
         if services.get("relayhistoryReadApiUrl") not in (None, "", origin):
             fail("existing Control read API origin differs")
-    if services.get("relayhistoryPublicUrl") != origin:
+    if not independent and services.get("relayhistoryPublicUrl") != origin:
         fail("Control's existing public History audience must equal the selected origin")
     names = {"ingress": routing.get("fullnameOverride") or "agent-relay-native-history",
              "reader": reader.get("fullnameOverride") or "agent-relay-read-api",

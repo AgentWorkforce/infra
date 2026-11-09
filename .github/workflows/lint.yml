@@ -109,6 +109,7 @@ jobs:
           python3 ci/agent-relay/kind/test_native_network.py -v
           python3 ci/agent-relay/kind/test_native_network_command.py -v
           python3 ci/agent-relay/kind/test_native_bootstrap_guard.py -v
+          python3 ci/agent-relay/test_native_no_relayauth.py -v
           python3 ci/agent-relay/kind/test_stack.py -v
           python3 ci/agent-relay/kind/test_ownership.py -v
           python3 ci/agent-relay/kind/test_named_upgrade.py -v
@@ -119,6 +120,7 @@ jobs:
           python3 ci/agent-relay/kind/test_native_core.py -v
           python3 ci/agent-relay/kind/test_native_core_cli.py -v
           python3 ci/agent-relay/kind/test_native_core_render.py -v
+          python3 ci/agent-relay/kind/test_native_webapp.py -v
           python3 ci/agent-relay/kind/test_native_pipeline.py -v
           python3 ci/agent-relay/kind/test_native_pipeline_driver.py -v
           python3 ci/agent-relay/kind/test_control.py -v

@@ -111,6 +111,11 @@ class ReadApi(unittest.TestCase):
             node[leaf] = value
         return overlay
 
+    def test_directory_wildcard_is_only_for_self_issued(self):
+        env = self.env_of(self.render(overlay=self.self_issued(directoryWorkspaces="*")))
+        self.assertEqual(env["READ_API_DIRECTORY_WORKSPACES"]["value"], "*")
+        self.assertIn("allowed only with auth.mode=self_issued", self.render(overlay={"directoryWorkspaces": "*"}, fail=True))
+
     def test_self_issued_renders_only_its_own_token_family(self):
         env = self.env_of(self.render(overlay=self.self_issued()))
         self.assertEqual(env["READ_API_AUTH_MODE"]["value"], "self_issued")

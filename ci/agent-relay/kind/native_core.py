@@ -24,10 +24,22 @@ from native_core_values import compose, tenant, PLANNING_WORKSPACE
 from native_inspect import document, native_archive, same_local_reference, sha
 from native_pipeline import NativePipelineAdapter, canonical
 from native_recipe import merge_values, require
+from native_webapp import WEBAPP_INPUTS, coordinates as webapp_coordinates
+
+
+def image_id_matches(value, reference, manifest, config):
+    """Kubernetes/CRI's two documented content identities, never a tag match."""
+    if value in (config, "containerd://" + config):
+        return True
+    if not isinstance(value, str):
+        return False
+    value = value.removeprefix("docker-pullable://")
+    return same_local_reference(value, reference) and value.endswith("@" + manifest)
 
 
 class NativeCoreAdapter(NativeControlTransport, NativePipelineAdapter):
     def __init__(self, stack, inputs, operator, tls_material=None):
+        require(isinstance(inputs, dict) and WEBAPP_INPUTS <= set(inputs), "qualified_webapp_packet_and_native_archive_required")
         super().__init__(stack, inputs, tls_material)
         self._configure_control(operator)
         self._base_values = None
@@ -36,6 +48,7 @@ class NativeCoreAdapter(NativeControlTransport, NativePipelineAdapter):
         self._ready_uids = None
         self._ready_specs = None
         self._recipe_sha = stack.recipe_hash()
+        self._webapp = None
 
     def _preflight(self, selected, fresh=False):
         require(self.stack.recipe_hash() == self._recipe_sha, "native_recipe_source_changed_during_execution")
@@ -46,6 +59,7 @@ class NativeCoreAdapter(NativeControlTransport, NativePipelineAdapter):
 
     def verify_artifact(self, selected):
         self._verified = None
+        self._webapp = None
         result = super().verify_artifact(selected)
         self._verified = None
         # Presence of an environment knob does not prove an older image
@@ -73,8 +87,24 @@ import('/app/node_modules/relay-control/dist/features.js').then(m=>{
         require(features == {"names": ["flows", "relayfile", "chief"],
                              "defaults": {"flows": False, "relayfile": False, "chief": False}},
                 "qualified_selected_features_core_module_required")
+        self._verify_webapp(selected)
         self._verified = result
         return result
+
+    def _verify_webapp(self, selected):
+        webapp = webapp_coordinates(self.inputs, selected["architecture"])
+        actual = self._image(webapp["tag"], webapp["sourceRevision"], selected["architecture"],
+                             webapp["indexDigest"], webapp["configDigest"])
+        require(actual.get("RootFS", {}).get("Layers") == webapp["config"]["rootfs"]["diff_ids"] and
+                all(actual.get("Config", {}).get(k) == v for k, v in webapp["config"]["config"].items()),
+                "actual_webapp_config_or_rootfs_differs")
+        lines = "".join(h + "  " + n + "\n" for n, h in sorted(webapp["files"].items()))
+        result = self._docker_json(["run", "--pull", "never", "--rm", "-i", "--network", "none", "--read-only",
+            "--cpus", "1", "--memory", "256m", "--cap-drop", "ALL", "--security-opt", "no-new-privileges",
+            "--entrypoint", "/bin/sh", actual["Id"], "-ec",
+            "cd /usr/share/nginx/html; sha256sum -c - >/dev/null; printf '%s\\n' '{\"checked\":" + str(len(webapp["files"])) + "}'"], data=lines)
+        require(result == {"checked": len(webapp["files"])}, "actual_webapp_static_bundle_differs")
+        self._webapp = webapp
 
     def inspect(self, selected):
         facts = super().inspect(selected)
@@ -83,6 +113,8 @@ import('/app/node_modules/relay-control/dist/features.js').then(m=>{
             require(bound.get("version") == 1 and bound.get("type") == "local-kind-native-core" and
                     bound.get("selection") == selected and bound.get("recipeSha256") == self.stack.recipe_hash(),
                     "repeat_requires_exact_native_selection_binding")
+            require(bound.get("webapp", {}).get("packetSha256") == self.inputs["webappPacketSha256"],
+                    "repeat_qualified_webapp_packet_changed")
             for resource in bound["resources"]:
                 if "specSha256" not in resource:
                     continue
@@ -100,6 +132,10 @@ import('/app/node_modules/relay-control/dist/features.js').then(m=>{
                     v["relay-webapp"]["image"].get("repository") and v["relay-webapp"]["image"].get("digest")
                     for v in layers[1:]), "explicit_qualified_webapp_image_override_required")
         value = merge_values(*layers)
+        if self._webapp is not None:
+            image = value["relay-webapp"]["image"]
+            require(same_local_reference(image["repository"] + "@" + image["digest"], self._webapp["reference"]),
+                    "selected_webapp_differs_from_qualified_packet")
         actual = hashlib.sha256(canonical(value).encode()).hexdigest()
         require(self._base_sha in (None, actual), "native_input_values_changed")
         if self._base_sha is None:
@@ -117,6 +153,47 @@ import('/app/node_modules/relay-control/dist/features.js').then(m=>{
         docs = [d for d in yaml.safe_load_all(result.stdout) if d]
         require(not any(d.get("kind") == "Secret" for d in docs), "native_chart_must_reference_managed_secrets")
         return docs
+
+    def _validate_render_docs(self, selected, docs):
+        result = super()._validate_render_docs(selected, docs)
+        owners = {self.control["owner"]["name"], selected["secretRefs"]["owner"]["name"], self.ADMIN_SECRET}
+        allowed = {
+            "relay-control": {self.control["runtime"]["name"]}, "relaycast": {self.control["cast"]["name"]},
+            "relay-webapp": set(),
+            "session-native-consumer": {selected["secretRefs"][k]["name"] for k in ("consumer", "locker")},
+            "session-native-ingest": {selected["secretRefs"][k]["name"] for k in ("ingest", "locker")},
+            "session-read-api": {selected["secretRefs"][k]["name"] for k in ("reader", "readerIssuer", "locker")}}
+        def references(value):
+            found = set()
+            if isinstance(value, dict):
+                for k, v in value.items():
+                    if k in {"secretKeyRef", "secretRef", "nodePublishSecretRef", "secret"} and isinstance(v, dict) and v.get("name", v.get("secretName")):
+                        found.add(v.get("name", v.get("secretName")))
+                    if k == "imagePullSecrets" and isinstance(v, list):
+                        found |= {r["name"] for r in v if isinstance(r, dict) and r.get("name")}
+                    if k == "secretName" and isinstance(v, str):
+                        found.add(v)
+                    found |= references(v)
+            elif isinstance(value, list):
+                for v in value:
+                    found |= references(v)
+            return found
+        for d in docs:
+            if d["kind"] != "Deployment" or not d["spec"].get("replicas", 1):
+                continue
+            name, pod = d["metadata"]["name"], d["spec"]["template"]["spec"]
+            refs = references(pod)
+            require(name in allowed and not (refs & owners) and refs <= allowed[name],
+                    "native_runtime_owner_or_foreign_secret_reference_refused")
+        api = next(d for d in docs if d["kind"] == "Deployment" and d["metadata"]["name"] == "relay-control")
+        runtime = self.control["runtime"]
+        volumes = api["spec"]["template"]["spec"].get("volumes", [])
+        credentials = [v["secret"] for v in volumes if "secret" in v]
+        expected_keys = {runtime[k] for k in ("databaseKey", "bootstrapKey", "encryptionKey", "castInternalKey", "internalKey", "introspectionKey", "readerIssuerKey")}
+        require(len(credentials) == 1 and credentials[0].get("secretName") == runtime["name"] and
+                {v.get("key") for v in credentials[0].get("items", [])} == expected_keys,
+                "control_runtime_projects_only_generated_runtime_credentials")
+        return result
 
     def render(self, selected):
         self._rendered = False
@@ -207,6 +284,24 @@ import('/app/node_modules/relay-control/dist/features.js').then(m=>{
                                 docker_args=self.stack.docker_args, name=self.stack.name, arch=self.stack.arch)
         alias(bound, control["reference"].removeprefix("docker.io/"), {
             "tag": tag, "manifestDigest": control["manifestDigest"], "configDigest": control["configDigest"]})
+
+    def _import_webapp(self, selected):
+        require(self._webapp is not None, "qualified_webapp_preflight_required")
+        # Recheck unchanged raw receipts/archive before exporting the real
+        # local tag. Never assume native manifest == Docker index/config ID.
+        current = webapp_coordinates(self.inputs, selected["architecture"])
+        require(current == self._webapp, "qualified_webapp_changed_before_import")
+        with tempfile.TemporaryDirectory(prefix="native-webapp-image-", dir=self.stack.state) as directory:
+            archive = Path(directory) / "native.tar"
+            self._transport_call("cmd", [*self.stack.docker_args, "image", "save", "--platform", "linux/" + selected["architecture"],
+                "-o", archive, current["tag"]], timeout=300, sensitive=True)
+            native_archive(archive, sha(archive), current["sourceRevision"], current["manifestDigest"], current["configDigest"], selected["architecture"])
+            self._transport_call("cmd", ["kind", "load", "image-archive", "--name", self.stack.name, archive], timeout=300, sensitive=True)
+        from control import alias
+        bound = SimpleNamespace(cmd=lambda *a, **k: self._transport_call("cmd", *a, **k),
+                                docker_args=self.stack.docker_args, name=self.stack.name, arch=self.stack.arch)
+        alias(bound, current["reference"].removeprefix("docker.io/"), {
+            "tag": current["tag"], "manifestDigest": current["manifestDigest"], "configDigest": current["configDigest"]})
 
     def _runtime_pod(self, deployment):
         workload = self._get("deployment/" + deployment)
@@ -317,12 +412,7 @@ import('/app/node_modules/relay-control/dist/features.js').then(m=>{
         # Cache exact qualified pipeline images; already prepared schema/role
         # Jobs remain terminal and are never requeued by this runtime chart.
         self._ensure_pipeline_image(selected)
-        for d in self._render_values(value):
-            if d["kind"] != "Deployment" or d["metadata"]["name"] != "relay-webapp":
-                continue
-            for c in d["spec"]["template"]["spec"].get("initContainers", []) + d["spec"]["template"]["spec"].get("containers", []):
-                require("@sha256:" in c["image"], "immutable_webapp_image_required")
-                self._transport_call("load", c["image"])
+        self._import_webapp(selected)
         docs = self._upgrade(selected, value)
         self._completed.add("native_served")
         return {"ok": True, "releaseRevision": self._release_revision,
@@ -347,6 +437,10 @@ import('/app/node_modules/relay-control/dist/features.js').then(m=>{
                 actual = next(c for c in workload["spec"]["template"]["spec"]["containers"] if c["name"] == expected["name"])
                 require(all(actual.get(k) == expected.get(k) for k in ("image", "env", "volumeMounts", "command", "args")),
                         "native_selected_runtime_configuration_changed")
+                binding = selected["control"] if name == "relay-control" else self._webapp if name == "relay-webapp" else selected
+                running = next((c for c in pod["status"]["containerStatuses"] if c.get("name") == expected["name"]), {})
+                require(image_id_matches(running.get("imageID"), binding["reference"], binding["manifestDigest"], binding["configDigest"]),
+                        "running_native_container_content_identity_mismatch")
                 probe = expected.get("readinessProbe", {}).get("exec", {}).get("command")
                 if probe:
                     self._transport_call("k", "exec", pod["metadata"]["name"], "-c", expected["name"], "--", *probe,
@@ -397,6 +491,7 @@ import('/app/node_modules/relay-control/dist/features.js').then(m=>{
         record = {"version": 1, "type": "local-kind-native-core", "clusterUid": uid, "profile": selected["profile"],
             "sourceRevision": selected["sourceRevision"], "generation": selected["generation"], "roles": selected["roles"],
             "selection": selected, "controlRoleOids": {n: r["oid"] for n, r in self._control_roles(selected).items()},
+            "webapp": {k: self._webapp[k] for k in ("sourceRevision", "reference", "manifestDigest", "configDigest", "packetSha256", "archiveSha256")},
             "officialBootstrapSha256": selected["officialBootstrapSha256"], "tenant": self._tenant,
             "controlContractSha256": self._control_contract_sha, "releaseRevision": self._helm_state(),
             "valuesSha256": self._base_sha, "recipeSha256": self._recipe_sha,

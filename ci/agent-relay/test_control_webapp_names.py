@@ -90,6 +90,30 @@ class Names(unittest.TestCase):
         self.assertNotIn('relay-control', names)
         self.assertNotIn('relay-webapp', names)
 
+    def test_eks_alb_flows_routes_are_opt_in(self):
+        base = {**os.environ, 'EKS_ALB_DOMAIN': 'relay.example.com', 'EKS_ALB_CERT_ARN': 'arn:aws:acm:test'}
+        render = lambda extra: subprocess.run(['bash', 'scripts/selfhost/eks-alb-ingress.sh', 'ns'], cwd=ROOT,
+                                              env={**base, **extra}, capture_output=True, text=True)
+        def routes(result, host):
+            self.assertEqual(result.returncode, 0, result.stderr)
+            rule = next(r for r in yaml.safe_load(result.stdout)['spec']['rules'] if r['host'] == host)
+            return [(p['path'], p['pathType'], p['backend']['service']['name'], p['backend']['service'].get('port', {}).get('number'))
+                    for p in rule['http']['paths']]
+        off = render({})
+        self.assertNotIn('relayfile-control', off.stdout)
+        self.assertNotIn('/api/v1/flows', off.stdout)
+        on = render({'EKS_ALB_RELAYFILE_CONTROL': 'true'})
+        apex = routes(on, 'relay.example.com')
+        api = routes(on, 'api.relay.example.com')
+        cloud = [(f'/cloud/api/v1/{r}', 'Prefix', 'relayfile-control', 3100) for r in ('flows', 'workers', 'workflows')]
+        plain = [(f'/api/v1/{r}', 'Prefix', 'relayfile-control', 3100) for r in ('flows', 'workers', 'workflows')]
+        self.assertEqual(apex[:3], cloud)
+        self.assertEqual(apex[3][0], '/cloud/api')
+        self.assertEqual(api[2:8], cloud + plain)
+        self.assertEqual(api[-1][0], '/*')
+        bad = render({'EKS_ALB_RELAYFILE_CONTROL': 'yes'})
+        self.assertEqual(bad.returncode, 2)
+
     def test_eks_alb_ingest_routes_are_opt_in_and_exact(self):
         base = {**os.environ, 'EKS_ALB_DOMAIN': 'relay.example.com', 'EKS_ALB_CERT_ARN': 'arn:aws:acm:test'}
         render = lambda extra: subprocess.run(['bash', 'scripts/selfhost/eks-alb-ingress.sh', 'ns'], cwd=ROOT,
@@ -112,9 +136,18 @@ class Names(unittest.TestCase):
             ('/v1/turns/batches', 'Exact', 'agent-relay-ingest-edge', ingest),
             ('/v1/delivery/limits', 'Exact', 'agent-relay-ingest-edge', ingest),
             ('/v1/auth/token/refresh', 'Exact', 'agent-relay-ingest-edge', ingest),
+            ('/v1/delivery/records', 'Exact', 'agent-relay-read-api', {'number': 80}),
+            ('/v1/cli/login', 'Exact', 'agent-relay-read-api', {'number': 80}),
+            ('/v1/events', 'Exact', 'agent-relay-read-api', {'number': 80}),
+            ('/v1/auth/token/revoke', 'Exact', 'agent-relay-read-api', {'number': 80}),
+            ('/v1/sessions', 'Prefix', 'agent-relay-read-api', {'number': 80}),
+            ('/v1/digest', 'Prefix', 'agent-relay-read-api', {'number': 80}),
+            ('/v1/delivery', 'Prefix', 'agent-relay-ingest-edge', ingest),
+            ('/v1/turns', 'Prefix', 'agent-relay-ingest-edge', ingest),
+            ('/v1/onboarding', 'Prefix', 'agent-relay-ingest-edge', ingest),
             ('/internal', 'Prefix', 'edge-deny', {'name': 'use-annotation'}),
             ('//internal*', 'ImplementationSpecific', 'edge-deny', {'name': 'use-annotation'}),
-            ('/*', 'ImplementationSpecific', 'agent-relay-read-api', {'number': 80}),
+            ('/*', 'ImplementationSpecific', 'edge-deny', {'name': 'use-annotation'}),
         ])
         self.assertEqual(doc['metadata']['annotations']['alb.ingress.kubernetes.io/healthcheck-path'], '/healthz')
 

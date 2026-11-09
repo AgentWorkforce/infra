@@ -109,7 +109,7 @@ class NativeNetwork(unittest.TestCase):
                   "selfIssued": {"internalSecret": {"existingSecret": "reader-issuer", "key": "internal-secret"}}})
         v["relay-control"]["services"].update(relayhistoryBackend="native", relayhistoryReadApiEvents=False,
             sessionReadApiUrl="http://agent-relay-read-api.agent-relay.svc.cluster.local",
-            relayhistoryUrl="http://agent-relay-read-api.agent-relay.svc.cluster.local",
+            relayhistoryUrl="", relayhistoryPublicUrl="",
             sessionReadApiPublicUrl=reader["origin"])
         v["relay-control"]["secretKeys"] = {"sessionReadApiSecret": "reader-internal", "introspectSecret": "ingest-introspection"}
         return v

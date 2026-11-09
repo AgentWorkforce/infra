@@ -31,7 +31,11 @@ historical frontend in the old core profile is never inherited implicitly.
 
 `inputs` names the qualified pipeline source archive/manifest, native OCI archive,
 artifact receipt and immutable build metadata, plus the Control OCI archive,
-artifact receipt and source/dist/migration manifests. Public pipeline receipts
+artifact receipt and source/dist/migration manifests. The frontend inputs are
+`webappPacket`, `webappPacketSha256`, `webappArchive` and `webappBuildMetadata`.
+They preserve the original qualification/build/base-chain/bundle/smoke receipts,
+verify the native archive and actual compiled files, and distinguish Docker
+index, native manifest and config digests before import. Public pipeline receipts
 and the older nested receipt format are read without rewriting their historical
 evidence. Actual source bytes, all copied image modules, architecture, native
 manifest/config and official schema generation are independently checked.

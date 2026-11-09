@@ -26,7 +26,7 @@
 {{- if $api.services.relayauthEnabled }}{{ fail "native History routing requires Control services.relayauthEnabled=false so login forwards the caller token" }}{{ end -}}
 {{- if eq ($api.services.relayhistoryBackend | default "legacy") "native" -}}
 {{- if ne (dig "sessionReadApi" "auth" "mode" "" $pipeline) "self_issued" }}{{ fail "native Control backend requires an independent self_issued reader" }}{{ end -}}
-{{- if or (ne $origin $api.services.relayhistoryPublicUrl) (ne $origin $api.services.sessionReadApiPublicUrl) }}{{ fail "native History origin must exactly equal Control's independent reader public origin" }}{{ end -}}
+{{- if or $api.services.relayhistoryPublicUrl (ne $origin $api.services.sessionReadApiPublicUrl) }}{{ fail "native History origin must exactly equal Control's independent reader public origin" }}{{ end -}}
 {{- if not $api.services.sessionReadApiMcpReads }}{{ fail "native Control backend requires sessionReadApiMcpReads=true" }}{{ end -}}
 {{- else -}}
 {{- if eq (dig "sessionReadApi" "auth" "mode" "" $pipeline) "self_issued" }}{{ fail "self_issued reader requires Control services.relayhistoryBackend=native" }}{{ end -}}

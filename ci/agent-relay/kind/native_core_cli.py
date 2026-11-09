@@ -20,6 +20,7 @@ from native_control import control_contract
 from native_core import NativeCoreAdapter
 from native_inspect import sha, INPUT_FIELDS, OPTIONAL_INPUT_FIELDS
 from native_recipe import CORE_OPERATIONS, NativeRecipe, nonsecret, require, selection
+from native_webapp import WEBAPP_INPUTS
 
 GENERATE_CA = "generate-local-test-ca"
 
@@ -36,6 +37,7 @@ def config(path, expected_sha):
     control_contract(value["operator"])
     require(isinstance(value["inputs"], dict) and INPUT_FIELDS <= set(value["inputs"]) and
             set(value["inputs"]) <= INPUT_FIELDS | OPTIONAL_INPUT_FIELDS, "unexpected_native_input_fields")
+    require(WEBAPP_INPUTS <= set(value["inputs"]), "qualified_webapp_packet_and_native_archive_required")
     require(isinstance(value["values"], dict) and set(value["values"]) == {"path", "sha256"}, "pinned_selected_values_required")
     selected_values = Path(value["values"]["path"])
     require(not selected_values.is_symlink() and selected_values.is_file() and sha(selected_values) == value["values"]["sha256"],

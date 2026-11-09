@@ -449,8 +449,6 @@ class Proof:
                         "needs reviewed server-derived Flows capability plus authenticated API refusal, hidden UI/direct-route checks and workload absence; components.relayflows=false alone is not product disablement")
         self.mcp()
         self.record("PENDING", "agent_launch_release", "generic agent process launch/release has no runnable contract; Factory session bindings and fleet-node claims are separate")
-        if s.profile == "addons":
-            self.record("PENDING", "offline_license_enforcement", "layered-control: signed license verification is design only; Secret slot is not enforcement")
 
     def report(self):
         code = exit_code(self.checks)

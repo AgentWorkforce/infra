@@ -8,6 +8,8 @@ import yaml
 
 from native_core_values import compose
 from native_inspect import NativeReadOnlyAdapter
+from native_core import NativeCoreAdapter
+from native_recipe import NativeRecipeError
 from test_native_core import TENANT
 from test_native_control import contract
 from test_native_recipe import selected
@@ -45,7 +47,7 @@ class Render(unittest.TestCase):
     def test_real_final_chart_passes_same_production_native_render_guard(self):
         result = self.render("serve"); self.assertEqual(result.returncode, 0, result.stderr)
         docs = [d for d in yaml.safe_load_all(result.stdout) if d]
-        a = NativeReadOnlyAdapter.__new__(NativeReadOnlyAdapter)
+        a = NativeCoreAdapter.__new__(NativeCoreAdapter); a.control = contract()
         self.assertFalse(a._validate_render_docs(self.s, docs)["readerLoginAdvertisesSync"])
         self.assertFalse(any(d["kind"] in {"Secret", "Job"} for d in docs))
         reader = next(d for d in docs if d["kind"] == "Deployment" and d["metadata"]["name"] == "session-read-api")
@@ -61,6 +63,12 @@ class Render(unittest.TestCase):
         paths = routing["spec"]["rules"][0]["http"]["paths"]
         self.assertEqual(paths[0]["path"], "/v1")
         self.assertFalse(any(p["path"] == "/" for p in paths))
+        for target in ("relay-control", "session-read-api"):
+            changed = deepcopy(docs)
+            pod = next(d for d in changed if d["kind"] == "Deployment" and d["metadata"]["name"] == target)["spec"]["template"]["spec"]
+            pod.setdefault("volumes", []).append({"name": "hidden-owner", "secret": {"secretName": contract()["owner"]["name"]}})
+            with self.subTest(target=target), self.assertRaisesRegex(NativeRecipeError, "owner_or_foreign_secret"):
+                a._validate_render_docs(self.s, changed)
 
     def test_native_phase_cannot_bypass_core_component_or_authority_boundary(self):
         for phase, change in (("control", lambda v: v["components"].update(sessionsPipeline=True)),

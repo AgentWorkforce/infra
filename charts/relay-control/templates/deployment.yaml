@@ -39,7 +39,9 @@ spec:
           ports:
             - { name: http, containerPort: {{ .Values.server.port }}, protocol: TCP }
           env:
+            {{- if not (kindIs "invalid" .Values.selectedFeatures) }}
             - { name: SELFHOST_FEATURES, value: {{ join "," .Values.selectedFeatures | quote }} }
+            {{- end }}
             - { name: PORT, value: {{ .Values.server.port | quote }} }
             - { name: SELFHOST_PUBLIC_URL, value: {{ include "relay-control.publicUrl" . | quote }} }
             {{- if .Values.services.relayauthEnabled }}
@@ -47,8 +49,10 @@ spec:
             {{- end }}
             - { name: RELAYCAST_URL, value: {{ .Values.services.relaycastUrl | quote }} }
             - { name: RELAYCAST_PUBLIC_URL, value: {{ .Values.services.relaycastPublicUrl | quote }} }
+            {{- if ne .Values.services.relayhistoryBackend "native" }}
             - { name: RELAYHISTORY_URL, value: {{ .Values.services.relayhistoryUrl | quote }} }
             - { name: RELAYHISTORY_PUBLIC_URL, value: {{ .Values.services.relayhistoryPublicUrl | quote }} }
+            {{- end }}
             {{- if .Values.services.relayhistoryReadApiUrl }}
             {{- include "relay-control.historyConnectionEnv" . | nindent 12 }}
             {{- end }}
@@ -56,9 +60,6 @@ spec:
             {{- include "relay-control.secretEnv" . | nindent 12 }}
             {{- if (.Values.postgresCa | default dict).enabled }}
             - { name: NODE_EXTRA_CA_CERTS, value: /etc/postgres-ca/ca.crt }
-            {{- end }}
-            {{- if .Values.license.existingSecret }}
-            - { name: SELFHOST_LICENSE_FILE, value: /var/run/agent-relay/license/license }
             {{- end }}
             {{- if .Values.integrations }}
             {{- include "relay-control.integrationEnv" . | nindent 12 }}
@@ -68,9 +69,6 @@ spec:
             {{- end }}
           volumeMounts:
             - { name: secrets, mountPath: /var/run/agent-relay/secrets, readOnly: true }
-            {{- if .Values.license.existingSecret }}
-            - { name: license, mountPath: /var/run/agent-relay/license, readOnly: true }
-            {{- end }}
             {{- range $provider := keys (.Values.integrations | default dict) | sortAlpha }}
             - { name: {{ printf "oauth-%s" $provider | quote }}, mountPath: {{ printf "/var/run/agent-relay/integrations/%s" $provider | quote }}, readOnly: true }
             {{- end }}
@@ -86,14 +84,6 @@ spec:
             {{- toYaml .Values.livenessProbe | nindent 12 }}
           resources: {{ toYaml .Values.resources | nindent 12 }}
       volumes:
-        {{- if .Values.license.existingSecret }}
-        - name: license
-          secret:
-            secretName: {{ .Values.license.existingSecret | quote }}
-            defaultMode: 0440
-            items:
-              - { key: {{ .Values.license.key | quote }}, path: license }
-        {{- end }}
         - name: secrets
           secret:
             secretName: {{ .Values.existingSecret }}

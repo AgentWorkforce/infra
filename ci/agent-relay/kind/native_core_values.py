@@ -43,6 +43,8 @@ def compose(base, selected, operator, phase, observed_tenant=None):
     require(selected["profile"] == "core", "complete_native_addons_transport_required")
     require(not base.get("relay-control", {}).get("selectedFeatures"),
             "core_must_not_select_optional_workloads")
+    require(base.get("relaycast", {}).get("runtime", {}).get("backend", "sqlite") == "sqlite",
+            "native_cast_postgres_transport_requires_separate_qualification")
     require(not base.get("relay-control", {}).get("extraEnv") and
             not base.get("relay-control", {}).get("license", {}).get("existingSecret"),
             "complete_native_core_requires_managed_control_values_without_obsolete_license")
@@ -62,9 +64,10 @@ def compose(base, selected, operator, phase, observed_tenant=None):
         "relay-control": {
             "fullnameOverride": "relay-control", "image": image(selected["control"]["reference"]),
             "existingSecret": runtime["name"], "selectedFeatures": [],
-            "license": {"existingSecret": ""}, "extraEnv": [],
+            "extraEnv": [],
             "publicUrl": selected["siteOrigin"], "dashboardUrl": selected["siteOrigin"],
             "database": {"runtimeRole": runtime["role"]}, "migrations": {"enabled": False},
+            "server": {"command": ["node"], "args": ["node_modules/relay-control/dist/server.js"]},
             "encryption": {"keyId": runtime["encryptionKeyId"]},
             "secretKeys": {"databaseUrl": runtime["databaseKey"], "databaseMigrationsUrl": owner["key"],
                 "bootstrapToken": runtime["bootstrapKey"], "encryptionKey": runtime["encryptionKey"],
@@ -79,8 +82,8 @@ def compose(base, selected, operator, phase, observed_tenant=None):
                 "workspaceName": "Default" if phase == "control" else ""},
             "services": {"relayhistoryBackend": "native", "relayauthEnabled": False, "relayauthUrl": "",
                 "relayhistoryReadApiUrl": "", "relayhistoryReadApiEvents": False, "relayhistoryHostAliases": [],
-                "relayhistoryUrl": private_reader, "sessionReadApiUrl": private_reader,
-                "relayhistoryPublicUrl": selected["historyOrigin"], "sessionReadApiPublicUrl": selected["historyOrigin"],
+                "relayhistoryUrl": "", "sessionReadApiUrl": private_reader,
+                "relayhistoryPublicUrl": "", "sessionReadApiPublicUrl": selected["historyOrigin"],
                 "sessionReadApiMcpReads": True, "relaycastUrl": "http://relaycast.agent-relay.svc.cluster.local:8787",
                 "relaycastPublicUrl": "https://cast.kind.agentrelay.com"}},
         "relaycast": {"existingSecret": cast["name"], "baseUrl": "https://cast.kind.agentrelay.com",

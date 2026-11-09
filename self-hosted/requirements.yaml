@@ -168,6 +168,13 @@ profiles:
     install: helm install relaychief-control agentworkforce/relaychief-control -f <your values>
     summary: Optional add-on outside the agent-relay umbrella; not qualified. One replica, operator-managed PostgreSQL, a loopback-only admin listener and an Ingress limited to /chief/v1 by default; no HA claim.
 
+  - id: relayfile-control
+    title: Relayfile control add-on (webhook ingest and Flows API)
+    chart: relayfile-control
+    values_file: ci/default-values.yaml
+    install: helm install relayfile-control agentworkforce/relayfile-control -f <your values>
+    summary: Optional add-on outside the agent-relay umbrella; not qualified. One replica, operator-managed PostgreSQL in its own database, migrations at startup, a loopback-only admin listener. Flows and the Ingress are off by default.
+
   - id: durable-actors
     title: TerseAI durable-actors control plane (vendored upstream chart)
     chart: durable-actors
@@ -261,19 +268,25 @@ compatibility:
       status: shipped
       charts: { telemetry-collector: 0.1.0 }
       notes: 'Default-off umbrella analytics file collector. Requires accepted immutable collector and TLS-proxy images, producer and TLS Secrets and an exclusive persistent volume. Source rendering does not prove image entrypoint, TLS, durable acknowledgement, power-loss recovery or whole-application analytics coverage. The currently reviewed collector CLI registers relaycontrol events only.'
-    - id: session-read-api-0.2.1
+    - id: session-read-api-0.2.2
       status: unreleased
       current: true
+      charts: { session-read-api: 0.2.2 }
+      images:
+        session-read-api: { repository: ghcr.io/agentworkforce/96bulls-services, digest_required: true }
+      notes: 'Admits exactly "*" for directoryWorkspaces with auth.mode=self_issued.'
+    - id: session-read-api-0.2.1
+      status: planned
       charts: { session-read-api: 0.2.1 }
       images:
         session-read-api: { repository: ghcr.io/agentworkforce/96bulls-services, digest_required: true }
       notes: 'Defaults READ_API_COMPLETE_SINCE to epoch for a new self-host store populated only by its own ingest. Partial legacy imports must retain an explicit real coverage floor matching the indexer. Image, auth, routing and enabled defaults are unchanged; this does not assert coverage for an imported store or qualify a runtime.'
-    - id: sessions-pipeline-0.8.5
+    - id: sessions-pipeline-0.8.6
       status: unreleased
       current: true
-      charts: { sessions-pipeline: 0.8.5, sessions-pipeline-worker: 0.7.2, session-ingest-api: 0.4.1, session-read-api: 0.2.1 }
+      charts: { sessions-pipeline: 0.8.6, sessions-pipeline-worker: 0.7.2, session-ingest-api: 0.4.1, session-read-api: 0.2.2 }
       depends:
-        sessions-pipeline: { worker: 0.7.2, alleyoop: 0.4.1, sessionReadApi: 0.2.1, hoopdb: 0.9.0, session-object-storage: 5.4.0, otel: 0.178.0 }
+        sessions-pipeline: { worker: 0.7.2, alleyoop: 0.4.1, sessionReadApi: 0.2.2, hoopdb: 0.9.0, session-object-storage: 5.4.0, otel: 0.178.0 }
       images:
         sessions-pipeline-worker: { repository: agentworkforce/96bulls-services, digest: sha256:6f22ea17dff336e1431664542759fd27958649388b90a0b2f0881883caa7c6b2 }
         session-ingest-api: { repository: agentworkforce/96bulls-services, digest: sha256:6f22ea17dff336e1431664542759fd27958649388b90a0b2f0881883caa7c6b2 }
@@ -282,7 +295,6 @@ compatibility:
       services:
         source_commit: 7d7229bb31c121ecb98cd4e35c248fc2cf5669ad
         migration_generation: eff8b3be46565b57ad8fa5e4a066dbb6d1fe608313d9c1680bfbcd484add259b
-      notes: 'Adds the default-off native canonical consumer and Job-only owner bootstrap, with pinned TLS, explicit migration/coverage admission and stopped legacy writers. Preserves the standalone reader, asynchronous admission, search CA and actor bootstrap contracts from current main; no new runtime qualification is asserted.'
       db_combos:
         - { db_mode: selfhosted, boundary: global-default-revoke, hoopdb: cnpg, status: shipped, profiles: [selfhost-postgres, migration, aws-cnpg], notes: chart Jobs install the runtime role and the function default }
         - { db_mode: selfhosted, boundary: global-default-revoke, hoopdb: external, status: shipped, profiles: [external-selfhosted], notes: operator runs the bootstrap files as a superuser }
@@ -294,6 +306,7 @@ compatibility:
       sources:
         - "charts/sessions-pipeline/Chart.yaml:4"
         - "ci/sessions-pipeline-profiles/matrix.sh:70"
+      notes: 'Takes reader 0.2.2. Version 0.8.5 is reserved by a concurrent change.'
     - id: sessions-pipeline-0.8.4
       status: planned
       charts: { sessions-pipeline: 0.8.4, sessions-pipeline-worker: 0.7.2, session-ingest-api: 0.4.1, session-read-api: 0.2.1 }
@@ -736,18 +749,29 @@ compatibility:
       images:
         relayauth: { repository: ghcr.io/agentworkforce/relayauth, digest: sha256:eb71daa28e30eb7305f666d0bccc5a4002e53e8a574e3c4c32163d907a1b71df }
       notes: superseded by 0.1.1.
-    - id: agent-relay-0.6.9
+    - id: agent-relay-0.6.11
       status: unreleased
       current: true
-      charts: { agent-relay: 0.6.9, relayhistory: 0.1.2, relay-control: 0.4.0, relay-webapp: 0.2.1 }
+      charts: { agent-relay: 0.6.11, relayhistory: 0.1.2, relay-control: 0.4.2, relay-webapp: 0.2.1 }
       app_versions: { agent-relay: 0.1.0, relayhistory: 0.1.0, relay-control: 0.1.0, relay-webapp: 0.1.0 }
       depends:
-        agent-relay: { relaycast: 0.3.7, relayauth: 0.1.4, sessions-pipeline: 0.8.5, relayhistory: 0.1.2, relay-control: 0.4.0, relay-webapp: 0.2.1, relayflows: 0.2.5, durable-actors: 0.14.6-awf.1, relayfile: 0.2.2, telemetry-collector: 0.1.1, relay-chief: 0.1.0 }
+        agent-relay: { relaycast: 0.3.7, relayauth: 0.1.4, sessions-pipeline: 0.8.6, relayhistory: 0.1.2, relay-control: 0.4.2, relay-webapp: 0.2.1, relayflows: 0.2.5, durable-actors: 0.14.6-awf.1, relayfile: 0.2.2, telemetry-collector: 0.1.1, relay-chief: 0.1.0 }
       images:
         relayhistory: { repository: ghcr.io/agentworkforce/relayhistory, digest_required: true }
         relay-control: { repository: ghcr.io/agentworkforce/relay-control, digest: sha256:d8c26d44dccb6dd21b7033288241a379e46ce5fbca69f276c4d4745001c3c3e2 }
         relay-webapp: { repository: ghcr.io/agentworkforce/relay-webapp, digest_required: true }
-      notes: 'Adds the default-off native canonical consumer and Job-only owner bootstrap, with pinned TLS, explicit migration/coverage admission and stopped legacy writers. Preserves the standalone reader, asynchronous admission, search CA and actor bootstrap contracts from current main; no new runtime qualification is asserted.'
+      notes: 'Removes the self-host license Secret mount and values. Optional components are selected with SELFHOST_FEATURES through relay-control extraEnv. The pinned Control digest predates license removal and still needs the replacement image; no rollout is claimed.'
+    - id: agent-relay-0.6.10
+      status: planned
+      charts: { agent-relay: 0.6.10, relayhistory: 0.1.2, relay-control: 0.4.1, relay-webapp: 0.2.1 }
+      app_versions: { agent-relay: 0.1.0, relayhistory: 0.1.0, relay-control: 0.1.0, relay-webapp: 0.1.0 }
+      depends:
+        agent-relay: { relaycast: 0.3.7, relayauth: 0.1.4, sessions-pipeline: 0.8.6, relayhistory: 0.1.2, relay-control: 0.4.1, relay-webapp: 0.2.1, relayflows: 0.2.5, durable-actors: 0.14.6-awf.1, relayfile: 0.2.2, telemetry-collector: 0.1.1, relay-chief: 0.1.0 }
+      images:
+        relayhistory: { repository: ghcr.io/agentworkforce/relayhistory, digest_required: true }
+        relay-control: { repository: ghcr.io/agentworkforce/relay-control, digest: sha256:d8c26d44dccb6dd21b7033288241a379e46ce5fbca69f276c4d4745001c3c3e2 }
+        relay-webapp: { repository: ghcr.io/agentworkforce/relay-webapp, digest_required: true }
+      notes: 'Adds relay-control 0.4.1 with services.relayhistoryBackend=native and the no-RelayAuth overlay. Version 0.6.9 is reserved by a concurrent change.'
     - id: agent-relay-0.6.8
       status: planned
       charts: { agent-relay: 0.6.8, relayhistory: 0.1.2, relay-control: 0.4.0, relay-webapp: 0.2.1 }
@@ -1020,6 +1044,14 @@ compatibility:
       charts: { relay-chief: 0.1.0 }
       app_versions: { relay-chief: 0.1.0 }
       notes: First chart, rendered only. No Relay Chief image is published and the digest is operator-supplied until one exists.
+    - id: relayfile-control-0.1.0
+      status: unreleased
+      current: true
+      charts: { relayfile-control: 0.1.0 }
+      app_versions: { relayfile-control: 0.1.0 }
+      images:
+        relayfile-control: { repository: ghcr.io/agentworkforce/relayfile-control, digest_required: true }
+      notes: First chart, rendered only. The chart ships no default digest; the operator sets image.digest.
     - id: relaychief-control-0.1.0
       status: unreleased
       current: true
@@ -1061,6 +1093,9 @@ compatibility:
 
 # Env the charts render that is neither a requirement nor an option.
 internal_env:
+  - { name: LISTEN, chart: relayfile-control, why: derived from server.port; refused in extraEnv }
+  - { name: ADMIN_LISTEN, chart: relayfile-control, why: fixed at 127.0.0.1:3101 so the admin listener stays on loopback; refused in extraEnv }
+  - { name: MIGRATE_ON_START, chart: relayfile-control, why: fixed at 1 so the server applies migrations under its advisory lock; refused in extraEnv }
   - { name: ADMIN_HOST, chart: relaychief-control, why: fixed at 127.0.0.1 so the admin listener stays on loopback; refused in extraEnv }
   - { name: ADMIN_PORT, chart: relaychief-control, why: reserved from extraEnv so the admin listener stays on its documented port; no chart value offers it }
   - { name: SERVICE, chart: [sessions-pipeline-worker, session-ingest-api], why: selects the entry point of the one services image }
@@ -1447,10 +1482,10 @@ entries:
       ingestEdge.postgres.caConfigMap, caKey and caSha256.
       When postgresCa is on, wait-for-role (psql) gets PGSSLROOTCERT. psql run by an operator
       needs sslrootcert=<bundle> with verify-full.
-    chart: [sessions-pipeline, relay-control, relayhistory, relaychief-control]
-    values: [worker.postgresCa.*, alleyoop.postgresCa.*, "relay-control:postgresCa.*", "relayhistory:postgresCa.*", "relaychief-control:postgresCa.*"]
+    chart: [sessions-pipeline, relay-control, relayhistory, relaychief-control, relayfile-control]
+    values: [worker.postgresCa.*, alleyoop.postgresCa.*, "relay-control:postgresCa.*", "relayhistory:postgresCa.*", "relaychief-control:postgresCa.*", "relayfile-control:postgresCa.*"]
     env: [NODE_EXTRA_CA_CERTS, PGSSLROOTCERT]
-    profiles: [selfhost-postgres, migration, external-selfhosted, external-rds, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql, relayhistory, relay-control, agent-relay, relaychief-control]
+    profiles: [selfhost-postgres, migration, external-selfhosted, external-rds, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql, relayhistory, relay-control, agent-relay, relaychief-control, relayfile-control]
     status: shipped
     provided_by: operator
     default: false
@@ -1465,6 +1500,7 @@ entries:
       - "charts/relay-control/templates/deployment.yaml"
       - "charts/relayhistory/templates/deployment.yaml"
       - "charts/relaychief-control/templates/deployment.yaml"
+      - "charts/relayfile-control/templates/deployment.yaml"
       - "sessions-pipeline@78511e03:src/shared/db.ts:41"
 
   - id: opt.alleyoop.history-origin
@@ -2222,32 +2258,6 @@ entries:
   # =========================================================================
   # Self-host control plane, History, dashboard and GCP composition
   # =========================================================================
-  - id: opt.relay-control.license-file
-    kind: option
-    title: Offline license file mount (verification pending upstream)
-    description: |
-      Optional separate Secret projected only into the relaycontrol API, as
-      SELFHOST_LICENSE_FILE. Empty existingSecret keeps the slot unmounted.
-      The chart implements a file mount, not signature verification or add-on
-      enforcement. Those features are owned by relaycontrol and are pending.
-    chart: relay-control
-    values: [license.existingSecret, license.key]
-    env: [SELFHOST_LICENSE_FILE]
-    profiles: [relay-control]
-    status: shipped
-    provided_by: operator
-    default: disabled
-    choices: [{ value: disabled }, { value: mounted }]
-    secrets:
-      - name: "<license.existingSecret>"
-        name_paths: [license.existingSecret]
-        keys:
-          - { key: license, key_path: license.key }
-    verify: With license.existingSecret set, only the API mounts that Secret and SELFHOST_LICENSE_FILE; the migration Job receives neither. Do not infer license enforcement from a successful render.
-    sources:
-      - charts/relay-control/values.yaml
-      - charts/relay-control/templates/deployment.yaml
-
   - id: req.relay-control.session-read
     kind: requirement
     title: Session read API handoff and token introspection for Control
@@ -2259,8 +2269,8 @@ entries:
       handoff needs Control 0.5.1. secretKeys.introspectSecret enables token
       introspection, and introspection.audiences lists the accepted origins.
     chart: relay-control
-    values: [services.sessionReadApiUrl, services.sessionReadApiPublicUrl, services.sessionReadApiMcpReads, secretKeys.sessionReadApiSecret, secretKeys.introspectSecret, introspection.audiences]
-    env: [SESSION_READ_API_URL, SESSION_READ_API_PUBLIC_URL, SESSION_READ_API_SECRET_FILE, SESSION_READ_API_MCP_READS, RELAYCONTROL_INTROSPECT_SECRET_FILE, SELFHOST_INTROSPECT_AUDIENCES]
+    values: [services.relayhistoryBackend, services.sessionReadApiUrl, services.sessionReadApiPublicUrl, services.sessionReadApiMcpReads, secretKeys.sessionReadApiSecret, secretKeys.introspectSecret, introspection.audiences]
+    env: [RELAYHISTORY_BACKEND, SESSION_READ_API_URL, SESSION_READ_API_PUBLIC_URL, SESSION_READ_API_SECRET_FILE, SESSION_READ_API_MCP_READS, RELAYCONTROL_INTROSPECT_SECRET_FILE, SELFHOST_INTROSPECT_AUDIENCES]
     profiles: [relay-control]
     status: shipped
     provided_by: operator
@@ -4146,6 +4156,119 @@ entries:
       - "charts/relay-chief/values.yaml:9"
       - "charts/relay-chief/templates/cronjob.yaml:34"
 
+  - id: req.relayfile-control.config
+    kind: requirement
+    title: Relayfile control target URLs
+    description: RELAYFILE_BASE_URL (an http(s) URL) and RELAYCONTROL_BASE_URL (a bare http(s) origin). The chart always renders MIGRATE_ON_START=1.
+    chart: relayfile-control
+    values: [config.relayfileBaseUrl, config.relaycontrolBaseUrl]
+    env: [RELAYFILE_BASE_URL, RELAYCONTROL_BASE_URL]
+    profiles: [relayfile-control]
+    status: shipped
+    provided_by: operator
+    verify: helm template fails with "config.relayfileBaseUrl (RELAYFILE_BASE_URL) is required" or "config.relaycontrolBaseUrl (RELAYCONTROL_BASE_URL) is required" when one is unset
+    sources:
+      - "charts/relayfile-control/values.yaml"
+      - "charts/relayfile-control/templates/configmap.yaml"
+
+  - id: req.relayfile-control.credentials
+    kind: requirement
+    title: Relayfile control database URL and service secrets
+    description: One existing Secret with DATABASE_URL (its own relayfile_control database), RELAYFILE_INTERNAL_HMAC_SECRET (the same value as the Relayfile server), RELAYFILE_CONTROL_ADMIN_TOKEN and RELAYCONTROL_SERVICE_TOKEN. The chart creates no Secret and takes no Secret values.
+    chart: relayfile-control
+    values: [existingSecret, "secretKeys.*"]
+    env: [DATABASE_URL, RELAYFILE_INTERNAL_HMAC_SECRET, RELAYFILE_CONTROL_ADMIN_TOKEN, RELAYCONTROL_SERVICE_TOKEN]
+    profiles: [relayfile-control]
+    status: shipped
+    provided_by: operator
+    secrets:
+      - name: "<existingSecret>"
+        keys:
+          - { key: DATABASE_URL, key_path: secretKeys.databaseUrl }
+          - { key: RELAYFILE_INTERNAL_HMAC_SECRET, key_path: secretKeys.relayfileInternalHmacSecret }
+          - { key: RELAYFILE_CONTROL_ADMIN_TOKEN, key_path: secretKeys.adminToken }
+          - { key: RELAYCONTROL_SERVICE_TOKEN, key_path: secretKeys.relaycontrolServiceToken }
+    verify: helm template fails with "existingSecret is required" when it is unset; the pod starts without a CreateContainerConfigError and /readyz answers 200
+    sources:
+      - "charts/relayfile-control/values.yaml"
+      - "charts/relayfile-control/templates/_helpers.tpl"
+
+  - id: opt.relayfile-control.flows
+    kind: option
+    title: Relayfile control Flows API
+    description: flows.enabled=true serves the Flows API. It requires config.publicOrigin (the token audience, also listed in relay-control's introspection.audiences), flows.encryptionKeyId, a Relaycast URL, and the Secret keys for the introspection secret, the broker secret and the 32-byte encryption key. The introspection and broker secrets must each be at least 32 bytes and differ; the broker secret is shared with relay-control. Telemetry and runtime-verify secrets are optional.
+    chart: relayfile-control
+    values: [flows.enabled, config.publicOrigin, "flows.*", "secretKeys.introspectSecret", "secretKeys.brokerSecret", "secretKeys.encryptionKey", "secretKeys.previousEncryptionKey", "secretKeys.telemetrySecret", "secretKeys.runtimeVerifySecret"]
+    env: [FLOWS_ENABLED, RELAYFILE_CONTROL_PUBLIC_ORIGIN, RELAYFILE_CONTROL_ENCRYPTION_KEY_ID, RELAYFILE_CONTROL_ENCRYPTION_PREVIOUS_KEY_ID, RELAYFILE_CONTROL_ENCRYPTION_KEY, RELAYFILE_CONTROL_ENCRYPTION_PREVIOUS_KEY, RELAYCONTROL_INTROSPECT_SECRET, RELAYFILE_CONTROL_BROKER_SECRET, RELAYFILE_CONTROL_TELEMETRY_SECRET, RELAYFILE_CONTROL_RUNTIME_VERIFY_SECRET, SELFHOST_FLOWS_WORKER_RELAYCAST_URL, RELAYCAST_PUBLIC_URL, SELFHOST_FLOWS_WORKER_RELAYFILE_URL, SELFHOST_DASHBOARD_URL, SELFHOST_FLOWS_STORAGE, FLOWS_PUBLIC_BASE_URL]
+    profiles: [relayfile-control]
+    status: shipped
+    provided_by: operator
+    choices:
+      - { value: "false" }
+      - { value: "true" }
+    default: "false"
+    verify: helm template fails with "flows.enabled=true requires" when a Flows input is missing
+    sources:
+      - "charts/relayfile-control/values.yaml"
+      - "charts/relayfile-control/templates/configmap.yaml"
+      - "charts/relayfile-control/templates/_helpers.tpl"
+
+  - id: opt.relayfile-control.webhooks
+    kind: option
+    title: Relayfile control provider webhook secrets
+    description: Optional Secret keys for each provider ingress; comma lists allow rotation. An unset secret makes that ingress answer 503 ingress_not_configured.
+    chart: relayfile-control
+    values: ["secretKeys.githubWebhookSecret", "secretKeys.nangoWebhookSecret", "secretKeys.hookdeckWebhookSecret", "secretKeys.dropboxAppSecret", "secretKeys.slackSigningSecret", "secretKeys.linearWebhookSecret"]
+    env: [GITHUB_WEBHOOK_SECRET, NANGO_WEBHOOK_SECRET, HOOKDECK_WEBHOOK_SECRET, DROPBOX_APP_SECRET, SLACK_SIGNING_SECRET, LINEAR_WEBHOOK_SECRET]
+    profiles: [relayfile-control]
+    status: shipped
+    provided_by: operator
+    choices:
+      - { value: unset }
+      - { value: set }
+    default: unset
+    verify: an unset provider answers 503 ingress_not_configured; a set one verifies signatures
+    sources:
+      - "charts/relayfile-control/values.yaml"
+      - "charts/relayfile-control/templates/_helpers.tpl"
+
+  - id: opt.relayfile-control.exposure
+    kind: option
+    title: Relayfile control Ingress and NetworkPolicy
+    description: ingress.enabled routes the Flows paths and their /cloud aliases to this Service and requires flows.enabled. On the shared EKS ALB use EKS_ALB_RELAYFILE_CONTROL=true with scripts/selfhost/eks-alb-ingress.sh instead. NetworkPolicy defaults on with restricted egress, so additionalEgress must admit the database.
+    chart: relayfile-control
+    values: [ingress.enabled, "ingress.*", "networkPolicy.*", "service.annotations"]
+    profiles: [relayfile-control]
+    status: shipped
+    provided_by: operator
+    choices:
+      - { value: disabled }
+      - { value: enabled }
+    default: disabled
+    verify: helm template renders no Ingress by default; ingress.enabled without flows.enabled fails
+    sources:
+      - "charts/relayfile-control/templates/ingress.yaml"
+      - "charts/relayfile-control/templates/networkpolicy.yaml"
+      - "scripts/selfhost/eks-alb-ingress.sh"
+
+  - id: opt.relayfile-control.image-pull-secrets
+    kind: option
+    title: Relayfile control image pull Secrets
+    description: imagePullSecrets for a private registry mirror. Empty pulls the public image.
+    chart: relayfile-control
+    values: [imagePullSecrets]
+    profiles: [relayfile-control]
+    status: shipped
+    provided_by: operator
+    choices:
+      - { value: none }
+      - { value: listed }
+    default: none
+    verify: helm template lists imagePullSecrets on the Deployment when set
+    sources:
+      - "charts/relayfile-control/values.yaml"
+      - "charts/relayfile-control/templates/deployment.yaml"
+
   - id: req.relaychief-control.config
     kind: requirement
     title: Relay Chief control origins
@@ -4320,3 +4443,65 @@ entries:
       - "charts/sessions-pipeline/templates/native-consumer-bootstrap.yaml:1"
       - "charts/sessions-pipeline/templates/_native-consumer.tpl:1"
       - "docs/self-hosted-native-consumer.md:1"
+
+  - id: opt.relay-control.selected-features
+    kind: option
+    title: Explicit optional Control features
+    description: |
+      selectedFeatures=null preserves the existing extraEnv/default selection.
+      A managed list selects only flows, relayfile and chief; [] explicitly
+      serves core only. No license, customer metadata or entitlement is used.
+      Managed selection reserves SELFHOST_FEATURES against duplicate extraEnv.
+    chart: relay-control
+    values: [selectedFeatures]
+    env: [SELFHOST_FEATURES]
+    profiles: [relay-control]
+    status: shipped
+    provided_by: operator
+    default: null
+    choices: [{ value: null }, { value: [], note: Core only }, { value: [flows, relayfile, chief] }]
+    verify: Render explicit core with an empty SELFHOST_FEATURES and refuse unknown names, duplicates and duplicate extraEnv.
+    sources: [charts/relay-control/templates/deployment.yaml, charts/relay-control/templates/_helpers.tpl]
+
+  - id: opt.relay-control.direct-native-reader
+    kind: option
+    title: Existing caller-token native reader connection
+    description: |
+      Separate compatibility mode for a Control-only reader. Off by default.
+      Uses the caller's existing Control bearer, exact public HTTPS origin,
+      managed introspection secret/audience and optional scoped IP mapping.
+      The independent native backend refuses this direct-reader selection.
+    chart: relay-control
+    values: [services.relayhistoryReadApiUrl, services.relayhistoryReadApiEvents, services.relayhistoryHostAliases]
+    env: [RELAYHISTORY_READ_API_URL, RELAYHISTORY_READ_API_EVENTS]
+    profiles: [relay-control]
+    status: shipped
+    provided_by: operator
+    default: disabled
+    choices: [{ value: disabled }, { value: enabled }]
+    verify: Render no direct-reader env by default; preserve exact origin/port and reject authority mixing.
+    sources: [charts/relay-control/templates/_history-connection.tpl]
+
+  - id: opt.sessions-pipeline.native-routing
+    kind: option
+    title: Native History public route
+    description: |
+      Default-off managed Ingress selecting the native reader and ingest edge
+      on one exact public origin. Independent issuer mode exposes only /v1,
+      never /internal. Existing caller-token mode retains its separate route
+      contract. Source ownership and compatible image qualification are needed
+      before local fixture preparation; no manual resource is auto-adopted.
+    chart: sessions-pipeline
+    values: [nativeRouting.*]
+    env: []
+    profiles: [selfhost-postgres, external-selfhosted]
+    status: shipped
+    provided_by: operator
+    default: disabled
+    choices: [{ value: disabled }, { value: enabled }]
+    secrets:
+      - name: "<existing public History TLS Secret>"
+        name_paths: [nativeRouting.tls, nativeRouting.tls.existingSecret]
+        keys: []
+    verify: Render only qualified exact paths and Service ports; reject missing TLS/origin, mixed authorities and public internal issuer exposure.
+    sources: [charts/sessions-pipeline/templates/native-routing.yaml, charts/sessions-pipeline/templates/_native-routing.tpl]

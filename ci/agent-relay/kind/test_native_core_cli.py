@@ -8,6 +8,7 @@ import unittest
 from native_core_cli import config, run, GENERATE_CA
 from native_inspect import INPUT_FIELDS
 from native_recipe import NativeRecipeError
+from native_webapp import WEBAPP_INPUTS
 from test_native_control import contract
 from test_native_recipe import selected
 
@@ -23,7 +24,7 @@ class Cli(unittest.TestCase):
         self.s["readerLoginAdvertisesSync"] = False
         self.s["postgresCa"]["sha256"] = GENERATE_CA
         self.value = {"version": 1, "selection": self.s, "operator": contract(),
-            "inputs": {n: "source-only-path" for n in INPUT_FIELDS},
+            "inputs": {n: "source-only-path" for n in INPUT_FIELDS | WEBAPP_INPUTS},
             "values": {"path": str(self.values), "sha256": hashlib.sha256(self.values.read_bytes()).hexdigest()}}
 
     def save(self):

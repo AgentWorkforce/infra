@@ -49,20 +49,13 @@ of set a second time. Desktop and the CLI log in against that same origin. */ -}
 {{- end -}}
 {{- define "relay-control.validate" -}}
 {{- $image := include "relay-control.image" . -}}
-{{- if not (kindIs "slice" .Values.selectedFeatures) }}{{ fail "selectedFeatures must be a list" }}{{ end -}}
+{{- if not (kindIs "invalid" .Values.selectedFeatures) -}}
+{{- if not (kindIs "slice" .Values.selectedFeatures) }}{{ fail "selectedFeatures must be a list or null" }}{{ end -}}
 {{- if ne (len .Values.selectedFeatures) (len (uniq .Values.selectedFeatures)) }}{{ fail "selectedFeatures must not contain duplicates" }}{{ end -}}
 {{- range .Values.selectedFeatures }}{{ if not (has . (list "flows" "relayfile" "chief")) }}{{ fail "selectedFeatures contains an unknown optional component" }}{{ end }}{{ end -}}
+{{- end -}}
 {{- if ne (int .Values.replicaCount) 1 }}{{ fail "replicaCount must be 1: the self-host API pilot has process-local login/device rate limits and is not HA" }}{{ end -}}
 {{- if not .Values.existingSecret }}{{ fail "existingSecret is required; inline credentials are not supported" }}{{ end -}}
-{{- if .Values.license.existingSecret -}}
-{{- if or (gt (len (toString .Values.license.existingSecret)) 253) (not (regexMatch "^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\\.)*[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$" (toString .Values.license.existingSecret))) }}{{ fail "license.existingSecret must be a Kubernetes Secret name" }}{{ end -}}
-{{- if not (regexMatch "^[A-Za-z0-9._-]+$" (toString .Values.license.key)) }}{{ fail "license.key must be a Kubernetes Secret data key" }}{{ end -}}
-{{- if eq (toString .Values.license.existingSecret) (toString .Values.existingSecret) -}}
-{{- range $name, $key := .Values.secretKeys -}}
-{{- if eq (toString $.Values.license.key) (toString $key) }}{{ fail "license must not mount the migration credential or reuse any secretKeys credential" }}{{ end -}}
-{{- end -}}
-{{- end -}}
-{{- end -}}
 {{- if not (kindIs "bool" .Values.services.relayauthEnabled) }}{{ fail "services.relayauthEnabled must be a boolean" }}{{ end -}}
 {{- $optionalSecretKeys := list "previousEncryptionKey" "internalToken" "telemetryInstallKey" "relaycastInternalSecret" "oidcClientSecret" "smtpPassword" "introspectSecret" "sessionReadApiSecret" -}}
 {{- if not .Values.services.relayauthEnabled }}{{ $optionalSecretKeys = append $optionalSecretKeys "relayauthApiKey" }}{{ end -}}
@@ -76,19 +69,21 @@ settings. */ -}}
 {{- range $name := keys .Values.secretKeys | sortAlpha }}{{ $key := toString (index $.Values.secretKeys $name) }}{{ if empty $key }}{{ continue }}{{ end }}{{ if hasKey $seenSecretKeys $key }}{{ fail (printf "secretKeys.%s and secretKeys.%s both name Secret key %q: every secretKeys value must be distinct (a collision with databaseMigrationsUrl would mount the migration credential into the API pod)" (get $seenSecretKeys $key) $name $key) }}{{ end }}{{ $_ := set $seenSecretKeys $key $name }}{{ end -}}
 {{- include "relay-control.validateRuntime" . -}}
 {{- include "relay-control.validateSessionRead" . -}}
+{{- include "relay-control.validateHistoryConnection" . -}}
 {{- include "relay-control.validatePostgresCa" . -}}
 {{- if and .Values.migrations.enabled (not (regexMatch "^[A-Za-z_][A-Za-z0-9_$]{0,62}$" .Values.database.runtimeRole)) }}{{ fail "database.runtimeRole must be a valid PostgreSQL role name when migrations are enabled" }}{{ end -}}
 {{- include "relay-control.validateSingleHost" . -}}
 {{- include "relay-control.validateIdentity" . -}}
 {{- include "relay-control.validateIntegrations" . -}}
-{{- include "relay-control.validateHistoryConnection" . -}}
 {{- if not (regexMatch "^https://[^/?#]+$" (include "relay-control.publicUrl" .)) }}{{ fail "publicUrl must be an HTTPS origin with no path" }}{{ end -}}
-{{- $serviceUrls := dict "relaycastUrl" .Values.services.relaycastUrl "relayhistoryUrl" .Values.services.relayhistoryUrl -}}
+{{- $serviceUrls := dict "relaycastUrl" .Values.services.relaycastUrl -}}
+{{- if ne .Values.services.relayhistoryBackend "native" }}{{ $_ := set $serviceUrls "relayhistoryUrl" .Values.services.relayhistoryUrl }}{{ end -}}
 {{- if .Values.services.relayauthEnabled }}{{ $_ := set $serviceUrls "relayauthUrl" .Values.services.relayauthUrl }}{{ end -}}
 {{- with .Values.services.sessionReadApiUrl }}{{ $_ := set $serviceUrls "sessionReadApiUrl" . }}{{ end -}}
 {{- range $name, $url := $serviceUrls }}{{ if not (regexMatch "^https?://[^/?#]+$" $url) }}{{ fail (printf "services.%s must be an HTTP(S) origin with no path" $name) }}{{ end }}{{ end -}}
 {{- $publicOriginPattern := "^https://([A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?\\.)+[A-Za-z]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?(:[0-9]{1,5})?$" -}}
-{{- $publicUrls := dict "relaycastPublicUrl" .Values.services.relaycastPublicUrl "relayhistoryPublicUrl" .Values.services.relayhistoryPublicUrl -}}
+{{- $publicUrls := dict "relaycastPublicUrl" .Values.services.relaycastPublicUrl -}}
+{{- if ne .Values.services.relayhistoryBackend "native" }}{{ $_ := set $publicUrls "relayhistoryPublicUrl" .Values.services.relayhistoryPublicUrl }}{{ end -}}
 {{- with .Values.services.sessionReadApiPublicUrl }}{{ $_ := set $publicUrls "sessionReadApiPublicUrl" . }}{{ end -}}
 {{- range $name, $url := $publicUrls -}}
 {{- if or (not (regexMatch $publicOriginPattern $url)) (regexMatch "(?i)\\.(localhost|local|internal|lan|invalid|test|example|home\\.arpa|onion)(:[0-9]{1,5})?$" $url) (regexMatch "(?i)\\.example\\.(com|net|org)(:[0-9]{1,5})?$" $url) }}{{ fail (printf "services.%s must be a public HTTPS origin with multi-label DNS and no credentials, path, query, or fragment" $name) }}{{ end -}}
@@ -108,7 +103,7 @@ the chart already sets, including duplicates inside extraEnv. */ -}}
   "SELFHOST_BOOTSTRAP_ADMIN_EMAIL" "SELFHOST_BOOTSTRAP_ADMIN_NAME" "SELFHOST_BOOTSTRAP_ORG_NAME" "SELFHOST_BOOTSTRAP_WORKSPACE_NAME"
   "SELFHOST_DASHBOARD_URL" "SELFHOST_EMAIL_FROM" "SELFHOST_EMAIL_LOGIN" "SELFHOST_ENCRYPTION_KEY_ID"
   "SELFHOST_ENCRYPTION_PREVIOUS_KEY_ID" "SELFHOST_FLOWS_GCS_BUCKET" "SELFHOST_FLOWS_GCS_PREFIX" "SELFHOST_FLOWS_QUEUE_PING_MS"
-  "SELFHOST_FLOWS_STORAGE" "SELFHOST_FLOWS_WORKER_RELAYCAST_URL" "SELFHOST_INVITE_TTL_HOURS" "SELFHOST_LICENSE_FILE"
+  "SELFHOST_FLOWS_STORAGE" "SELFHOST_FLOWS_WORKER_RELAYCAST_URL" "SELFHOST_INVITE_TTL_HOURS"
   "SELFHOST_OIDC_ALLOWED_DOMAINS" "SELFHOST_OIDC_ALLOW_HTTP_ISSUER" "SELFHOST_OIDC_CLIENT_ID" "SELFHOST_OIDC_DISPLAY_NAME"
   "SELFHOST_OIDC_ISSUER" "SELFHOST_OIDC_REDIRECT_URL" "SELFHOST_OIDC_SCOPES" "SELFHOST_PUBLIC_URL"
   "SELFHOST_RUNTIME_DATABASE_ROLE" "SELFHOST_SMTP_HOST" "SELFHOST_SMTP_PORT" "SELFHOST_SMTP_SECURITY"
@@ -117,9 +112,11 @@ the chart already sets, including duplicates inside extraEnv. */ -}}
   "RELAYAUTH_API_KEY_FILE" "RELAYCAST_INTERNAL_SECRET_FILE" "SELFHOST_BOOTSTRAP_TOKEN_FILE" "SELFHOST_ENCRYPTION_KEY_FILE"
   "SELFHOST_ENCRYPTION_PREVIOUS_KEY_FILE" "SELFHOST_INTERNAL_TOKEN_FILE" "SELFHOST_OIDC_CLIENT_SECRET_FILE" "SELFHOST_SMTP_PASSWORD_FILE"
   "SELFHOST_TELEMETRY_INSTALL_KEY_FILE" "RELAYCONTROL_INTROSPECT_SECRET_FILE" "SESSION_READ_API_SECRET_FILE"
-  "SELFHOST_FEATURES" "SESSION_READ_API_URL" "SESSION_READ_API_PUBLIC_URL" "SESSION_READ_API_MCP_READS" "SELFHOST_INTROSPECT_AUDIENCES" "RELAYHISTORY_BACKEND" -}}
-{{- if (.Values.postgresCa | default dict).enabled }}{{ $managed = append $managed "NODE_EXTRA_CA_CERTS" }}{{ end -}}
+  "SESSION_READ_API_URL" "SESSION_READ_API_PUBLIC_URL" "SESSION_READ_API_MCP_READS" "SELFHOST_INTROSPECT_AUDIENCES"
+  "RELAYHISTORY_BACKEND" -}}
+{{- if not (kindIs "invalid" .Values.selectedFeatures) }}{{ $managed = append $managed "SELFHOST_FEATURES" }}{{ end -}}
 {{- if .Values.services.relayhistoryReadApiUrl }}{{ $managed = concat $managed (list "RELAYHISTORY_READ_API_URL" "RELAYHISTORY_READ_API_EVENTS") }}{{ end -}}
+{{- if (.Values.postgresCa | default dict).enabled }}{{ $managed = append $managed "NODE_EXTRA_CA_CERTS" }}{{ end -}}
 {{- range $name := $managed }}{{ if hasSuffix "_FILE" $name }}{{ $managed = append $managed (trimSuffix "_FILE" $name) }}{{ end }}{{ end -}}
 {{- range $src := list (include "relay-control.runtimeEnv" .) (include "relay-control.secretEnv" .) -}}
 {{- range $item := $src | fromYamlArray }}{{ $managed = append $managed (toString $item.name) }}{{ end -}}
@@ -234,11 +231,11 @@ telemetry.deployment is checked in validateRuntime before it is merged. */ -}}
 {{- if not (kindIs "invalid" .Values.flows.queuePingMs) }}{{ if ne (toString .Values.flows.queuePingMs) "" }}
 - { name: SELFHOST_FLOWS_QUEUE_PING_MS, value: {{ int64 .Values.flows.queuePingMs | toString | quote }} }
 {{- end }}{{ end }}
+{{- if eq .Values.services.relayhistoryBackend "native" }}
+- { name: RELAYHISTORY_BACKEND, value: native }
+{{- end }}
 {{- with .Values.services.sessionReadApiUrl }}
 - { name: SESSION_READ_API_URL, value: {{ . | quote }} }
-{{- end }}
-{{- if eq (.Values.services.relayhistoryBackend | default "legacy") "native" }}
-- { name: RELAYHISTORY_BACKEND, value: "native" }
 {{- end }}
 {{- with .Values.services.sessionReadApiPublicUrl }}
 - { name: SESSION_READ_API_PUBLIC_URL, value: {{ . | quote }} }
@@ -338,16 +335,18 @@ what the API would refuse at startup is refused at render time. */ -}}
 {{- define "relay-control.validateSessionRead" -}}
 {{- $s := .Values.services -}}
 {{- $secret := .Values.secretKeys.sessionReadApiSecret -}}
-{{- $backend := $s.relayhistoryBackend | default "legacy" -}}
-{{- if not (has $backend (list "legacy" "native")) }}{{ fail "services.relayhistoryBackend must be legacy or native" }}{{ end -}}
-{{- if eq $backend "native" -}}
-{{- if or $s.relayauthEnabled $s.relayhistoryReadApiUrl $s.relayhistoryReadApiEvents }}{{ fail "native History backend refuses RelayAuth and the legacy direct-reader connection" }}{{ end -}}
-{{- if not (and $s.sessionReadApiUrl $s.sessionReadApiPublicUrl $secret .Values.secretKeys.introspectSecret) }}{{ fail "native History backend requires the independent session read handoff and Control introspection Secret keys" }}{{ end -}}
-{{- if or (ne $s.relayhistoryUrl $s.sessionReadApiUrl) (ne $s.relayhistoryPublicUrl $s.sessionReadApiPublicUrl) }}{{ fail "native History internal/public origins must equal the selected session read API origins" }}{{ end -}}
-{{- end -}}
 {{- if not (kindIs "bool" $s.sessionReadApiMcpReads) }}{{ fail "services.sessionReadApiMcpReads must be a boolean" }}{{ end -}}
 {{- if and (or $s.sessionReadApiUrl $s.sessionReadApiPublicUrl $secret) (not (and $s.sessionReadApiUrl $s.sessionReadApiPublicUrl $secret)) }}{{ fail "services.sessionReadApiUrl, services.sessionReadApiPublicUrl and secretKeys.sessionReadApiSecret must be set together" }}{{ end -}}
 {{- if and $s.sessionReadApiMcpReads (not $secret) }}{{ fail "services.sessionReadApiMcpReads requires the session read API handoff (services.sessionReadApiUrl, services.sessionReadApiPublicUrl and secretKeys.sessionReadApiSecret)" }}{{ end -}}
+{{- if not (has $s.relayhistoryBackend (list "legacy" "native")) }}{{ fail "services.relayhistoryBackend must be legacy or native" }}{{ end -}}
+{{- if eq $s.relayhistoryBackend "native" -}}
+{{- if or $s.relayhistoryReadApiUrl $s.relayhistoryReadApiEvents }}{{ fail "native History backend refuses the legacy direct-reader connection" }}{{ end -}}
+{{- if $s.relayauthEnabled }}{{ fail "services.relayhistoryBackend=native requires services.relayauthEnabled=false: this mode has no RelayAuth" }}{{ end -}}
+{{- if or $s.relayhistoryUrl $s.relayhistoryPublicUrl }}{{ fail "services.relayhistoryBackend=native takes the History origin from the session read API: leave services.relayhistoryUrl and services.relayhistoryPublicUrl empty" }}{{ end -}}
+{{- if not $secret }}{{ fail "services.relayhistoryBackend=native requires the session read API handoff (services.sessionReadApiUrl, services.sessionReadApiPublicUrl and secretKeys.sessionReadApiSecret)" }}{{ end -}}
+{{- if not .Values.secretKeys.introspectSecret }}{{ fail "services.relayhistoryBackend=native requires secretKeys.introspectSecret: the ingest edge authorizes uploads through introspection" }}{{ end -}}
+{{- with .Values.introspection.audiences }}{{ if not (has $s.sessionReadApiPublicUrl .) }}{{ fail "introspection.audiences must include services.sessionReadApiPublicUrl with services.relayhistoryBackend=native" }}{{ end }}{{ end -}}
+{{- end -}}
 {{- $audiences := .Values.introspection.audiences -}}
 {{- if not (kindIs "slice" ($audiences | default list)) }}{{ fail "introspection.audiences must be a list of http(s) origins" }}{{ end -}}
 {{- if and $audiences (not .Values.secretKeys.introspectSecret) }}{{ fail "introspection.audiences requires secretKeys.introspectSecret: without it the introspection route answers 404" }}{{ end -}}

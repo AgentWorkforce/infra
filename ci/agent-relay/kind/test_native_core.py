@@ -4,7 +4,7 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
-from native_core import NativeCoreAdapter
+from native_core import NativeCoreAdapter, image_id_matches
 from native_core_values import compose, PLANNING_WORKSPACE
 from native_recipe import NativeRecipeError
 from test_native_recipe import selected
@@ -16,6 +16,16 @@ TENANT = {"organizationId": "11111111-1111-4111-8111-111111111111",
 
 
 class Core(unittest.TestCase):
+    def test_running_content_identity_cannot_be_replaced_by_matching_tag_or_other_manifest(self):
+        reference = "docker.io/agent-relay-kind/runtime@sha256:" + "a" * 64
+        manifest, config = "sha256:" + "a" * 64, "sha256:" + "b" * 64
+        for value in (reference, reference.removeprefix("docker.io/"), "docker-pullable://" + reference,
+                      config, "containerd://" + config):
+            self.assertTrue(image_id_matches(value, reference, manifest, config))
+        for value in (None, "runtime:latest", "sha256:" + "c" * 64,
+                      "elsewhere.invalid/runtime@" + manifest, reference.replace("a" * 64, "c" * 64)):
+            self.assertFalse(image_id_matches(value, reference, manifest, config))
+
     def selection(self):
         s = selected(); s["control"]["independentIssuer"] = True; s["readerLoginAdvertisesSync"] = False
         return s
@@ -45,7 +55,8 @@ class Core(unittest.TestCase):
         self.assertEqual(pipeline["sessionReadApi"]["auth"]["selfIssued"]["internalSecret"]["existingSecret"],
                          s["secretRefs"]["readerIssuer"]["name"])
         self.assertEqual(api["services"]["relayhistoryBackend"], "native")
-        self.assertEqual(api["services"]["relayhistoryUrl"], api["services"]["sessionReadApiUrl"])
+        self.assertEqual(api["services"]["relayhistoryUrl"], "")
+        self.assertEqual(api["services"]["relayhistoryPublicUrl"], "")
         self.assertFalse(api["services"]["relayauthEnabled"])
         self.assertEqual(api["selectedFeatures"], [])
         self.assertEqual(api["bootstrap"]["orgName"], "")

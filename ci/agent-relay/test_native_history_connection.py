@@ -38,8 +38,8 @@ class HistoryConnection(unittest.TestCase):
 
     def test_native_backend_uses_independent_handoff_without_relay_auth_or_legacy_connection(self):
         value = {"services": {"relayhistoryBackend": "native", "relayauthEnabled": False,
-            "relayhistoryUrl": "http://session-read-api.agent-relay.svc.cluster.local",
-            "relayhistoryPublicUrl": ORIGIN, "sessionReadApiUrl": "http://session-read-api.agent-relay.svc.cluster.local",
+            "relayhistoryUrl": "",
+            "relayhistoryPublicUrl": "", "sessionReadApiUrl": "http://session-read-api.agent-relay.svc.cluster.local",
             "sessionReadApiPublicUrl": ORIGIN, "sessionReadApiMcpReads": True},
             "secretKeys": {"introspectSecret": "ingest-introspection", "sessionReadApiSecret": "reader-issuer"}}
         docs = self.render(value)
@@ -52,7 +52,7 @@ class HistoryConnection(unittest.TestCase):
         for key, field in (('relayauthEnabled', True), ('relayhistoryReadApiUrl', ORIGIN),
                            ('relayhistoryReadApiEvents', True), ('relayhistoryUrl', 'http://different.agent-relay.svc.cluster.local')):
             bad = deepcopy(value); bad['services'][key] = field
-            self.render(bad, 'native History')
+            self.render(bad, 'native')
 
     def test_dormant_connection_does_not_change_pod_dns_or_env(self):
         for d in self.render({}):

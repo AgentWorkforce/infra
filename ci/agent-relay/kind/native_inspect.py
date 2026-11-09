@@ -20,7 +20,8 @@ from native_recipe import BOOTSTRAP, NativeRecipeError, merge_values, require
 INPUT_FIELDS = {"pipelineReceipt", "sourceManifest", "sourceManifestSha256", "sourceArchive", "pipelineArchive",
                 "controlReceipt", "controlArchive", "controlDistManifest", "controlMigrationManifest",
                 "controlMigrationManifestSha256", "controlSourceManifest"}
-OPTIONAL_INPUT_FIELDS = {"bindingReceipt", "bindingReceiptSha256", "pipelineBuildMetadata", "pipelineBuildMetadataSha256"}
+OPTIONAL_INPUT_FIELDS = {"bindingReceipt", "bindingReceiptSha256", "pipelineBuildMetadata", "pipelineBuildMetadataSha256",
+                         "webappPacket", "webappPacketSha256", "webappArchive", "webappBuildMetadata"}
 
 
 def sha(path):
@@ -422,10 +423,9 @@ const {generation}=await import('/app/src/hoopdb/migrate.ts');console.log(JSON.s
         if selected["control"]["independentIssuer"]:
             require(ce.get("RELAYHISTORY_BACKEND") == "native" and
                     ce.get("SESSION_READ_API_URL") == "http://session-read-api.agent-relay.svc.cluster.local" and
-                    ce.get("RELAYHISTORY_URL") == ce["SESSION_READ_API_URL"] and
-                    ce.get("SESSION_READ_API_PUBLIC_URL") == ce.get("RELAYHISTORY_PUBLIC_URL") == selected["historyOrigin"] and
+                    ce.get("SESSION_READ_API_PUBLIC_URL") == selected["historyOrigin"] and
                     bool(ce.get("SESSION_READ_API_SECRET_FILE")) and
-                    not ({"RELAYHISTORY_READ_API_URL", "RELAYHISTORY_READ_API_EVENTS", "RELAYAUTH_URL"} & set(ce)),
+                    not ({"RELAYHISTORY_URL", "RELAYHISTORY_PUBLIC_URL", "RELAYHISTORY_READ_API_URL", "RELAYHISTORY_READ_API_EVENTS", "RELAYAUTH_URL"} & set(ce)),
                     "control_independent_reader_handoff_mismatch")
         else:
             require(ce.get("RELAYHISTORY_READ_API_URL") == selected["historyOrigin"] and ce.get("RELAYHISTORY_READ_API_EVENTS") == "true" and

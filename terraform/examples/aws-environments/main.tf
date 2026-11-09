@@ -205,6 +205,28 @@ module "pipeline" {
   depends_on = [terraform_data.environment_contract]
 }
 
+module "chief_execution_node" {
+  source = "../../modules/aws/chief-execution-node"
+  count  = var.chief_execution_node == null ? 0 : 1
+
+  name                     = "${local.name}-chief-exec"
+  subnet_id                = var.chief_execution_node.subnet_id
+  kms_key_arn              = var.kms_key_arn
+  instance_type            = var.chief_execution_node.instance_type
+  root_volume_size_gb      = var.chief_execution_node.root_volume_size_gb
+  relay_base_url           = var.chief_execution_node.relay_base_url
+  node_runtime             = var.chief_execution_node.node_runtime
+  relay_node               = var.chief_execution_node.relay_node
+  harness                  = var.chief_execution_node.harness
+  bridge                   = var.chief_execution_node.bridge
+  repositories             = var.chief_execution_node.repositories
+  iam_path                 = local.role_path
+  permissions_boundary_arn = local.boundary
+  tags                     = local.tags
+
+  depends_on = [terraform_data.environment_contract]
+}
+
 # No SQL provider, passwords or privileged bootstrap credentials enter this
 # contract. Each service keeps its own complete binding for a later split.
 module "postgres_layout" {

@@ -30,10 +30,12 @@ def control_contract(raw):
     require(isinstance(admin, dict) and set(admin) == {"email", "displayName"} and
             isinstance(admin["email"], str) and len(admin["email"]) <= 254 and
             re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", admin["email"]) and
+            all(ord(c) >= 32 and ord(c) != 127 for c in admin["email"]) and
             isinstance(admin["displayName"], str) and 0 < len(admin["displayName"].strip()) <= 128 and
-            "\n" not in admin["displayName"], "explicit_first_administrator_required")
+            all(ord(c) >= 32 and ord(c) != 127 for c in admin["displayName"]), "explicit_first_administrator_required")
     require(isinstance(value["organizationName"], str) and
-            0 < len(value["organizationName"].strip()) <= 128 and "\n" not in value["organizationName"] and
+            0 < len(value["organizationName"].strip()) <= 128 and
+            all(ord(c) >= 32 and ord(c) != 127 for c in value["organizationName"]) and
             value["workspaceName"] == "Default", "explicit_installation_and_default_workspace_required")
     # Control's first-boot provisioner canonicalizes email addresses this way.
     admin["email"] = admin["email"].lower()

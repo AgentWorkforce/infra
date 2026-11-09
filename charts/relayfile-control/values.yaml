@@ -1,0 +1,167 @@
+# One replica; the chart makes no HA claim.
+replicaCount: 1
+image:
+  repository: ghcr.io/agentworkforce/relayfile-control
+  # Required. Must be sha256:<64 hex>; tags are not accepted.
+  digest: ""
+  pullPolicy: IfNotPresent
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+server:
+  # Rendered as LISTEN. Must differ from the admin listener's port, 3101.
+  port: 3100
+
+config:
+  # RELAYFILE_BASE_URL: required absolute http(s) URL of the Relayfile server.
+  relayfileBaseUrl: ""
+  # RELAYCONTROL_BASE_URL: required bare http(s) origin of relay-control, used
+  # for entitlement, token introspection and the Flows credential broker.
+  relaycontrolBaseUrl: ""
+  # RELAYFILE_CONTROL_PUBLIC_ORIGIN: bare http(s) origin of this service.
+  # Required with flows.enabled. It is the token audience, so list the same
+  # origin in relay-control's introspection.audiences.
+  publicOrigin: ""
+
+# Flows API. Off by default. Enabling it requires config.publicOrigin,
+# flows.encryptionKeyId, a Relaycast URL, and the Flows data keys in
+# existingSecret.
+flows:
+  enabled: false
+  # RELAYFILE_CONTROL_ENCRYPTION_KEY_ID: non-secret key identifier.
+  encryptionKeyId: ""
+  # RELAYFILE_CONTROL_ENCRYPTION_PREVIOUS_KEY_ID: set with
+  # secretKeys.previousEncryptionKey during a key rotation.
+  previousEncryptionKeyId: ""
+  # Set at least one: the Relaycast URL workers are told to use.
+  # SELFHOST_FLOWS_WORKER_RELAYCAST_URL takes precedence.
+  workerRelaycastUrl: ""
+  relaycastPublicUrl: ""
+  # SELFHOST_FLOWS_WORKER_RELAYFILE_URL: optional.
+  workerRelayfileUrl: ""
+  # SELFHOST_DASHBOARD_URL: optional. Needed for cookie-authenticated browser
+  # writes under /cloud, where it is an allowed Origin.
+  dashboardUrl: ""
+  # FLOWS_PUBLIC_BASE_URL: optional base URL for links the API returns.
+  publicBaseUrl: ""
+  # SELFHOST_FLOWS_STORAGE: only postgres is offered by this chart.
+  storage: postgres
+
+# Required: the name of an existing Secret. The chart never creates Secrets and
+# takes no Secret values.
+existingSecret: ""
+secretKeys:
+  # Always required.
+  databaseUrl: DATABASE_URL
+  relayfileInternalHmacSecret: RELAYFILE_INTERNAL_HMAC_SECRET
+  adminToken: RELAYFILE_CONTROL_ADMIN_TOKEN
+  relaycontrolServiceToken: RELAYCONTROL_SERVICE_TOKEN
+  # Required with flows.enabled. The introspect and broker secrets must each
+  # be at least 32 bytes and must differ; the server refuses to start
+  # otherwise. A render cannot see them.
+  introspectSecret: RELAYCONTROL_INTROSPECT_SECRET
+  brokerSecret: RELAYFILE_CONTROL_BROKER_SECRET
+  encryptionKey: RELAYFILE_CONTROL_ENCRYPTION_KEY
+  # Optional: the Secret data key for each. Empty leaves it unset.
+  previousEncryptionKey: ""
+  telemetrySecret: ""
+  runtimeVerifySecret: ""
+  # Optional per-provider webhook secrets. An unset secret makes that ingress
+  # answer 503 ingress_not_configured.
+  githubWebhookSecret: ""
+  nangoWebhookSecret: ""
+  hookdeckWebhookSecret: ""
+  dropboxAppSecret: ""
+  slackSigningSecret: ""
+  linearWebhookSecret: ""
+
+# Added to the Deployment only. Names the chart manages are refused, including
+# ADMIN_LISTEN and every <NAME>_FILE alias of a Secret the chart injects.
+extraEnv: []
+
+# OPTIONAL: a CA bundle that lets node-pg verify the Postgres server certificate
+# when the database uses a private CA, such as Amazon RDS. Off by default. When
+# on, the PEM bundle at key in the named existing ConfigMap or Secret (set
+# exactly one) is mounted at /etc/postgres-ca/ca.crt and NODE_EXTRA_CA_CERTS
+# points at it. It adds to the roots every outbound TLS client in these
+# processes trusts; it does not replace them. Use sslmode=verify-full in
+# DATABASE_URL. The bundle is read at process start, so rotating it needs a pod
+# restart.
+postgresCa:
+  enabled: false
+  configMap: ""
+  secret: ""
+  key: ca.crt
+
+service:
+  type: ClusterIP
+  port: 3100
+  annotations: {}
+
+ingress:
+  # Routes the Flows paths and their /cloud aliases to this service. Requires
+  # flows.enabled. On the shared EKS ALB use EKS_ALB_RELAYFILE_CONTROL=true with
+  # scripts/selfhost/eks-alb-ingress.sh instead.
+  enabled: false
+  className: ""
+  annotations: {}
+  hosts: []
+  tls: []
+  # Set when TLS terminates ahead of the Ingress, as with an ALB and ACM.
+  externalTls: false
+
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+
+podAnnotations: {}
+podLabels: {}
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  runAsGroup: 1000
+  fsGroup: 1000
+  seccompProfile: { type: RuntimeDefault }
+containerSecurityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  runAsNonRoot: true
+  capabilities: { drop: [ALL] }
+resources:
+  requests: { cpu: 100m, memory: 256Mi }
+  limits: { memory: 1Gi }
+# Migrations run before the server listens (MIGRATE_ON_START=1), so the startup
+# budget covers them.
+startupProbe:
+  httpGet: { path: /healthz, port: http }
+  periodSeconds: 5
+  failureThreshold: 60
+livenessProbe:
+  httpGet: { path: /healthz, port: http }
+  periodSeconds: 10
+  timeoutSeconds: 3
+readinessProbe:
+  httpGet: { path: /readyz, port: http }
+  periodSeconds: 10
+  timeoutSeconds: 3
+
+networkPolicy:
+  enabled: true
+  # Peers allowed to reach the server port. Empty admits same-namespace pods
+  # only and is refused with ingress.enabled. relay-control calls this service,
+  # so keep a peer for it. An ALB in IP target mode connects from its subnets;
+  # list them as ipBlock peers.
+  ingressFrom: []
+  # With allowAllEgress=false the pods may reach only same-namespace pods and
+  # DNS plus additionalEgress. The database needs a rule here, so rendering
+  # fails when it is empty. Give each rule a non-empty `to` (enforced).
+  allowAllEgress: false
+  additionalEgress: []
+
+terminationGracePeriodSeconds: 30
+nodeSelector: {}
+tolerations: []
+affinity: {}
+topologySpreadConstraints: []

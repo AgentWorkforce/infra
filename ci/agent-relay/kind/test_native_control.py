@@ -44,6 +44,8 @@ class NativeControlTests(unittest.TestCase):
         good = contract(); self.assertEqual(control_contract(good), good)
         for mutate in [lambda x: x.update(password="not-allowed"), lambda x: x.pop("administrator"),
                        lambda x: x["administrator"].update(email="missing-domain"),
+                       lambda x: x["administrator"].update(email="bad\x00@kind.example"),
+                       lambda x: x["administrator"].update(displayName="name\rcontrol"),
                        lambda x: x.update(workspaceName="arbitrary-existing-workspace"),
                        lambda x: x["runtime"].update(role="control_owner"),
                        lambda x: x["runtime"].update(name=x["owner"]["name"]),
