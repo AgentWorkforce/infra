@@ -201,6 +201,7 @@ export MOCK_FIXTURES="${fixtures}"
 export MOCK_GCS="${gcs}"
 
 scripts=(
+  "${SELFHOST_DIR}/cloud-sql-setup.sh"
   "${SELFHOST_DIR}/verify-agent-relay.sh"
   "${SELFHOST_DIR}/pre-upgrade-check.sh"
   "${SELFHOST_DIR}/record-restore-drill.sh"

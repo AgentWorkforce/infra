@@ -27,6 +27,10 @@ provider "google" {
 # existing GKE cluster that runs agent-relay.
 data "google_client_config" "this" {}
 
+data "google_project" "this" {
+  project_id = var.project_id
+}
+
 data "google_container_cluster" "this" {
   count = var.enable_search ? 1 : 0
 
@@ -56,21 +60,49 @@ provider "helm" {
   }
 }
 
-# Postgres for relaycontrol (relay-control), relayhistory and HoopDb
-# (sessions). Add a database here if you enable durable-actors.
+# Postgres for relaycontrol, Relaycast and HoopDb (native Sessions history).
+# Add a database here if you enable durable-actors or Relayfile.
 module "postgres" {
   source = "../../modules/gcp/postgres"
 
-  project_id        = var.project_id
-  region            = var.region
-  name              = "${var.name}-pg"
-  network_self_link = var.network_self_link
-  kms_key_name      = var.kms_key_name
-  databases         = ["relaycontrol", "relayhistory", "hoopdb"]
-  labels            = var.labels
+  project_id          = var.project_id
+  region              = var.region
+  name                = "${var.name}-pg"
+  network_self_link   = var.network_self_link
+  kms_key_name        = var.kms_key_name
+  databases           = ["relaycontrol", "relaycast", "hoopdb"]
+  deletion_protection = var.deletion_protection
+  server_ca_mode      = "GOOGLE_MANAGED_CAS_CA"
+  labels              = var.labels
 }
 
-# Session objects (Locker), read and written by the worker and alleyoop pods
+# Shared-CA Cloud SQL certificates carry the instance DNS identity. Resolve
+# that identity to the private address inside this VPC so every service can use
+# sslmode=verify-full without a proxy or public IP.
+resource "google_dns_managed_zone" "cloud_sql" {
+  project     = var.project_id
+  name        = "${var.name}-cloud-sql"
+  dns_name    = "${module.postgres.dns_name}."
+  description = "Private verified-DNS route to ${var.name} Cloud SQL"
+  visibility  = "private"
+
+  private_visibility_config {
+    networks {
+      network_url = var.network_self_link
+    }
+  }
+}
+
+resource "google_dns_record_set" "cloud_sql" {
+  project      = var.project_id
+  managed_zone = google_dns_managed_zone.cloud_sql.name
+  name         = "${module.postgres.dns_name}."
+  type         = "A"
+  ttl          = 300
+  rrdatas      = [module.postgres.private_ip_address]
+}
+
+# Session objects (Locker), read and written by the native pipeline pods
 # through GKE Workload Identity (direct principals; no Google service account).
 module "sessions_bucket" {
   source = "../../modules/gcp/object-storage"
@@ -81,7 +113,7 @@ module "sessions_bucket" {
   kms_key_name = var.kms_key_name
   workload_identity = {
     direct_kubernetes_service_accounts = [
-      for sa in ["worker", "alleyoop", "session-ingest-api"] : { namespace = var.namespace, name = "${var.release_name}-${sa}" }
+      for sa in ["worker", "session-ingest-api", "read-api", "search-indexer"] : { namespace = var.namespace, name = "${var.release_name}-${sa}" }
     ]
   }
   labels = var.labels

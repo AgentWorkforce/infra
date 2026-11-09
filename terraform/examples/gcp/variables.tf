@@ -20,6 +20,12 @@ variable "labels" {
   default     = {}
 }
 
+variable "deletion_protection" {
+  description = "Prevent deletion of Cloud SQL, Memorystore and Pub/Sub data resources. Disable only for a disposable proof environment."
+  type        = bool
+  default     = true
+}
+
 variable "kms_key_name" {
   description = "CMEK key for Cloud SQL and the bucket (null: Google-managed). Grant the service agents on it first."
   type        = string
@@ -79,6 +85,36 @@ variable "release_name" {
 variable "sessions_bucket_name" {
   description = "Globally unique GCS bucket name for session objects."
   type        = string
+}
+
+variable "pipeline_redis_memory_size_gb" {
+  description = "Memorystore capacity for the native Sessions pipeline."
+  type        = number
+  default     = 5
+}
+
+variable "pipeline_redis_version" {
+  description = "Memorystore Redis version."
+  type        = string
+  default     = "REDIS_7_2"
+}
+
+variable "pipeline_redis_reserved_ip_range" {
+  description = "Optional PSA allocated range name for Memorystore. null lets Google choose from the connection."
+  type        = string
+  default     = null
+}
+
+variable "pipeline_pubsub_kms_key_name" {
+  description = "Optional CMEK key for the native Sessions pipeline Pub/Sub topics."
+  type        = string
+  default     = null
+}
+
+variable "pipeline_message_retention" {
+  description = "Pub/Sub topic and subscription retention for the native Sessions pipeline."
+  type        = string
+  default     = "604800s"
 }
 
 variable "enable_search" {

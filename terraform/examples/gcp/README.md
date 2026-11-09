@@ -1,9 +1,17 @@
 # examples/gcp
 
-A thin root that composes the four GCP modules for one agent-relay install on an existing GKE cluster and VPC:
+A root for the native-history Agent Relay profile on an existing GKE cluster
+and VPC:
 
-- `gcp/postgres` (Cloud SQL with the `relaycontrol`, `relayhistory` and `hoopdb` databases).
-- `gcp/object-storage` for the sessions Locker, with direct Workload Identity for `<release>-worker` and `<release>-session-ingest-api`.
+- `gcp/postgres` (Cloud SQL with `relaycontrol`, `relaycast` and `hoopdb`),
+  using a shared CA plus private DNS so application URLs can use
+  `sslmode=verify-full`.
+- `gcp/object-storage` for the GCS Locker, with direct Workload Identity for
+  the worker, read API, ingest edge and search indexer.
+- TLS-only Standard HA Memorystore and a Pub/Sub pull queue with a dead-letter
+  queue for the native Sessions data path. Redis AUTH is disabled because the
+  service contract uses VPC isolation plus TLS and requires
+  `REDIS_AUTH_ENABLED=false`.
 - `gcp/search` on the GKE cluster (`enable_search`).
 - `gcp/functions` (`enable_functions`).
 
@@ -12,7 +20,10 @@ cp terraform.tfvars.example terraform.tfvars   # fill in existing IDs
 terraform init && terraform plan
 ```
 
-`chart_values` prints the non-secret values for `values-gcp.yaml`. Requires Terraform or OpenTofu >= 1.11 (the Cloud SQL admin password is write-only).
+`chart_values` and `pipeline` print the non-secret inputs for
+`values-gcp.yaml` plus `values-gcp-native.yaml`. Run
+`scripts/selfhost/cloud-sql-setup.sh pre` after apply and before Helm. Requires
+Terraform or OpenTofu >= 1.11 (the Cloud SQL admin password is write-only).
 
 <!-- BEGIN_TF_DOCS -->
 ### Requirements
@@ -43,8 +54,20 @@ terraform init && terraform plan
 
 | Name | Type |
 | ---- | ---- |
+| [google_dns_managed_zone.cloud_sql](https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/dns_managed_zone) | resource |
+| [google_dns_record_set.cloud_sql](https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/dns_record_set) | resource |
+| [google_pubsub_subscription.pipeline](https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/pubsub_subscription) | resource |
+| [google_pubsub_subscription.pipeline_dead_letter](https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/pubsub_subscription) | resource |
+| [google_pubsub_subscription_iam_member.pipeline_subscriber](https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/pubsub_subscription_iam_member) | resource |
+| [google_pubsub_subscription_iam_member.pubsub_dead_letter](https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/pubsub_subscription_iam_member) | resource |
+| [google_pubsub_topic.pipeline](https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/pubsub_topic) | resource |
+| [google_pubsub_topic.pipeline_dead_letter](https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/pubsub_topic) | resource |
+| [google_pubsub_topic_iam_member.pipeline_publisher](https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/pubsub_topic_iam_member) | resource |
+| [google_pubsub_topic_iam_member.pubsub_dead_letter](https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/pubsub_topic_iam_member) | resource |
+| [google_redis_instance.pipeline](https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/redis_instance) | resource |
 | [google_client_config.this](https://registry.terraform.io/providers/hashicorp/google/latest/docs/data-sources/client_config) | data source |
 | [google_container_cluster.this](https://registry.terraform.io/providers/hashicorp/google/latest/docs/data-sources/container_cluster) | data source |
+| [google_project.this](https://registry.terraform.io/providers/hashicorp/google/latest/docs/data-sources/project) | data source |
 
 ### Inputs
 
@@ -54,6 +77,7 @@ terraform init && terraform plan
 | project\_id | GCP project. | `string` | n/a | yes |
 | region | GCP region. | `string` | n/a | yes |
 | sessions\_bucket\_name | Globally unique GCS bucket name for session objects. | `string` | n/a | yes |
+| deletion\_protection | Prevent deletion of Cloud SQL, Memorystore and Pub/Sub data resources. Disable only for a disposable proof environment. | `bool` | `true` | no |
 | enable\_functions | Create the optional event-driven pipeline (Cloud Run functions). | `bool` | `false` | no |
 | enable\_search | Install the optional OpenSearch cluster on GKE. | `bool` | `false` | no |
 | gke\_cluster\_location | Its region or zone. | `string` | `null` | no |
@@ -64,6 +88,11 @@ terraform init && terraform plan
 | name | Name prefix for every resource. | `string` | `"agent-relay"` | no |
 | namespace | agent-relay release namespace. | `string` | `"agent-relay"` | no |
 | notification\_channels | Cloud Monitoring notification channels for the pipeline alerts. | `list(string)` | `[]` | no |
+| pipeline\_message\_retention | Pub/Sub topic and subscription retention for the native Sessions pipeline. | `string` | `"604800s"` | no |
+| pipeline\_pubsub\_kms\_key\_name | Optional CMEK key for the native Sessions pipeline Pub/Sub topics. | `string` | `null` | no |
+| pipeline\_redis\_memory\_size\_gb | Memorystore capacity for the native Sessions pipeline. | `number` | `5` | no |
+| pipeline\_redis\_reserved\_ip\_range | Optional PSA allocated range name for Memorystore. null lets Google choose from the connection. | `string` | `null` | no |
+| pipeline\_redis\_version | Memorystore Redis version. | `string` | `"REDIS_7_2"` | no |
 | pipeline\_source\_archive | Function source zip in GCS. Required with enable\_functions. | ```object({ bucket = string object = string generation = optional(number) })``` | `null` | no |
 | release\_name | agent-relay Helm release name. | `string` | `"agent-relay"` | no |
 | search\_admin\_credentials\_secret\_name | Existing Secret (in the search namespace) with the OpenSearch admin username and password. | `string` | `"opensearch-admin"` | no |
@@ -77,6 +106,7 @@ terraform init && terraform plan
 | ---- | ----------- |
 | chart\_values | Non-secret agent-relay chart values (values-gcp.yaml) these resources feed. Database URLs go in the release Secret, not here; see terraform/README.md. |
 | functions | Pipeline function, topics and secret (null unless enable\_functions). |
+| pipeline | Native Sessions pipeline values. The Redis CA is public certificate material, not a credential. |
 | postgres | Cloud SQL private IP, admin secret and URL template. connection\_name feeds CLOUD\_SQL\_CONNECTION\_NAME in the sessions worker and alleyoop extraEnv. |
 | search\_url | In-cluster OpenSearch URL (null unless enable\_search). |
 <!-- END_TF_DOCS -->

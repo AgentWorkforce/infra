@@ -7,6 +7,8 @@ region               = "us-central1"
 name                 = "agent-relay"
 network_self_link    = "projects/my-project/global/networks/my-vpc"
 sessions_bucket_name = "example-agent-relay-sessions"
+# Keep true for customer installs. A disposable proof cluster may set false.
+deletion_protection   = true
 # kms_key_name       = "projects/my-project/locations/us-central1/keyRings/r/cryptoKeys/k"
 
 # Optional add-ons (off by default):
