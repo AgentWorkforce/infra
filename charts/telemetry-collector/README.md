@@ -71,11 +71,13 @@ New claims use a CSI storage driver supporting `ReadWriteOncePod` on Kubernetes
 1.29+. The command also holds an exclusive kernel file lock for the entire
 collector process, including shutdown. A second process exits before the CLI
 starts; a crash releases the lock without deleting the lock file. `--no-fork`
-keeps signals directed to the collector. An existing claim must support these
-file-lock semantics; prove contention from a second Pod on the same claim
-before enabling producers. This supports an existing local `ReadWriteOnce`
-claim when that proof passes. Do not mount the data directory into another
-writer that omits the lock. The default 2 GiB volume
+keeps signals directed to the collector. The lock is an additional process
+guard, not storage fencing: it does not stop another Pod mounting the claim.
+An existing claim must independently enforce exclusive Pod ownership (RWOP or
+equivalent) and support the file lock. A `ReadWriteOnce` claim and successful
+lock contention alone do not meet that storage requirement. Verify both
+storage fencing and lock contention before enabling producers. Do not mount
+the data directory into another writer that omits the lock. The default 2 GiB volume
 leaves space around the collector's 1 GiB closed-segment cap; size the volume
 for configured limits, filesystem overhead and operational retention.
 

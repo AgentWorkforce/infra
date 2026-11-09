@@ -264,7 +264,7 @@ compatibility:
       current: true
       charts: { telemetry-collector: 0.1.2 }
       app_versions: { telemetry-collector: 08cf1142303355a73a94dcf605045cdf363e02c5 }
-      notes: 'Runs the current public Control collector package under an exclusive kernel file lock and renders numeric limits as decimal strings. Requires independently verified immutable images, TLS, producer credentials and storage lock semantics. No profile enablement or all-component telemetry coverage is implied.'
+      notes: 'Runs the current public Control collector package under an exclusive kernel file lock and renders numeric limits as decimal strings. Requires independently verified immutable images, TLS, producer credentials and exclusive Pod storage fencing; advisory lock contention does not replace storage fencing. No profile enablement or all-component telemetry coverage is implied.'
     - id: telemetry-collector-0.1.1
       status: shipped
       charts: { telemetry-collector: 0.1.1 }

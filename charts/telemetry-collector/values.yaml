@@ -26,8 +26,8 @@ persistence:
   existingClaim: ""
   size: 2Gi
   storageClassName: ""
-  # An existing claim must support the collector's kernel advisory file lock.
-  # Verify that a second Pod cannot acquire it before enabling producers.
+  # An existing claim must enforce exclusive Pod ownership (RWOP or equivalent)
+  # and support the kernel advisory lock. The lock does not replace storage fencing.
 terminationGracePeriodSeconds: 30
 limits:
   maxBatchBytes: 262144
