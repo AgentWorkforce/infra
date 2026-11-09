@@ -135,9 +135,11 @@ The ingest edge itself remains disabled by default in every profile.
 
 The `async` and `drain` modes require the self-host admission implementation
 from pipeline [#398](https://github.com/AgentWorkforce/relayhistory-pipeline/pull/398).
-That runtime is still under review; this chart supplies configuration and does
-not qualify an image or enable a deployment. After that implementation lands,
-qualify an immutable combined image before selecting either mode:
+That implementation merged at
+[`f0860b2e`](https://github.com/AgentWorkforce/relayhistory-pipeline/commit/f0860b2e785b52fefbaa37482d02ab96b013049d).
+This chart supplies configuration and does not qualify an image or enable a
+deployment. Qualify an immutable combined image containing that merge (or a
+reviewed successor) before selecting either mode:
 
 ```yaml
 ingestEdge:
@@ -156,8 +158,9 @@ upload; it must not silently fall back to synchronous admission. The configured
 store must pass the runtime's conditional-write startup check.
 
 The configuration, health and permission contract was checked against pipeline
-[`8389e073`](https://github.com/AgentWorkforce/relayhistory-pipeline/blob/8389e073d05dcea66a257c265576e09c78cae563/docs/selfhost-composition.md#5-env-secret-and-ca-names),
-which is still a draft runtime. Recheck any successor before qualifying an image.
+[`f0860b2e`](https://github.com/AgentWorkforce/relayhistory-pipeline/blob/f0860b2e785b52fefbaa37482d02ab96b013049d/docs/selfhost-composition.md#5-env-secret-and-ca-names).
+Its admission configuration, health and permission section is unchanged from
+the previously checked `8389e073`. Recheck successors before qualifying an image.
 The request handler and consumer currently share one credential, so it needs
 the union of their permissions; an upload-only credential is insufficient.
 For the chart's fixed `96bulls` root:

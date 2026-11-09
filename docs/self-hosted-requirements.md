@@ -3007,8 +3007,9 @@ publication, GC, product deletion, provider removal or profile enablement.
 
 **Native ingest admission mode** · shipped · chart `sessions-pipeline` · profiles selfhost-postgres, migration, external-selfhosted, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql
 
-Chart configuration for the self-host runtime in pipeline #398, which
-remains under review and requires a separately qualified image. Sync is
+Chart configuration for pipeline #398, merged at
+f0860b2e785b52fefbaa37482d02ab96b013049d. A separately qualified image
+containing that merge or a reviewed successor is required. Sync is
 the unchanged default. Async acknowledges a durable create-only inbox
 write, then admits to PostgreSQL in the background. Drain accepts new
 uploads synchronously while consuming the existing inbox. Control
