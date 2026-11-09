@@ -214,7 +214,6 @@ telemetry.deployment is checked in validateRuntime before it is merged. */ -}}
 {{- toJson (mergeOverwrite $shape (deepCopy (.Values.telemetry.deployment | default dict))) -}}
 {{- end -}}
 {{- define "relay-control.runtimeEnv" -}}
-- { name: SELFHOST_FEATURES, value: {{ join "," .Values.selectedFeatures | quote }} }
 - { name: SELFHOST_ENCRYPTION_KEY_ID, value: {{ .Values.encryption.keyId | quote }} }
 {{- with .Values.encryption.previousKeyId }}
 - { name: SELFHOST_ENCRYPTION_PREVIOUS_KEY_ID, value: {{ . | quote }} }
