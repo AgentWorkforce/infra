@@ -25,12 +25,12 @@ dependencies:
   version: 0.14.6-awf.1
 - name: relayfile
   repository: file://../relayfile
-  version: 0.2.2
+  version: 0.2.3
 - name: telemetry-collector
   repository: file://../telemetry-collector
   version: 0.1.2
 - name: relay-chief
   repository: file://../relay-chief
   version: 0.1.0
-digest: sha256:4557de24a74cfe8b747ec32723f3abfb148cdf1b70252165fd4a9063912b1994
-generated: "2026-11-09T16:01:16.112801+01:00"
+digest: sha256:fd8038c645e31d4602098f95fa24ebcced3428b6999bc04b9b0206fd32990f44
+generated: "2026-11-09T17:14:00.194497+01:00"

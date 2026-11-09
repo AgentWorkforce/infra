@@ -132,6 +132,9 @@ runtime:
 image:
   # Registry + repository for the relayfile server image.
   repository: ghcr.io/agentworkforce/relayfile
+  # Required for managed introspection or verified PostgreSQL serving. Select
+  # a separately qualified image containing the corresponding official CLI.
+  digest: ""
   # Overrides the image tag (defaults to Chart.appVersion when empty).
   tag: ""
   pullPolicy: IfNotPresent
@@ -211,6 +214,39 @@ auth:
   # JWKS URL served by the relayauth service (RELAYAUTH_JWKS_URL).
   # relayauth is a separate external service; only its public JWKS endpoint is needed here.
   jwksUrl: ""
+  # Empty preserves the existing Go/JWKS and durable-actors behavior.
+  # introspection is Go-only and never configures a JWKS fallback.
+  mode: ""
+  introspection:
+    internalUrl: "" # Bare http(s) Control origin; the server appends its route.
+    publicOrigin: "" # Exact HTTPS Relayfile audience accepted by Control.
+    secretRef:
+      name: ""
+      key: introspect-secret
+    timeoutSeconds: 3
+    cacheTtlSeconds: 60 # 0 disables the positive cache; maximum 60.
+
+# Official external owner bootstrap must have completed before enabling this
+# Go-only mode. No owner credential, role SQL or bootstrap Job is rendered.
+# The official command verifies identity, schema, effective privileges and CA
+# before starting workers/listening. /health remains liveness, not continuous
+# database readiness. Opaque Secret contents are validated by that command.
+postgres:
+  enabled: false
+  database: ""
+  ownerRole: "" # Public NOLOGIN owner name, never its credential.
+  runtimeRole: ""
+  runtimeSecret:
+    name: ""
+    key: database-url
+  startupProbe:
+    periodSeconds: 10
+    timeoutSeconds: 2
+    failureThreshold: 30 # Separate five-minute budget before liveness starts.
+  ca:
+    configMap: "" # Public CA only; projected read-only as ca.crt.
+    key: ca.crt
+    sha256: "" # SHA256 of the exact CA file bytes, no sha256: prefix.
 
 # ---------------------------------------------------------------------------
 # Provider credentials (optional — configure only the providers you use)

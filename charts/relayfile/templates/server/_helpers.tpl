@@ -32,6 +32,10 @@ Env vars come from three sources (in priority order Kubernetes applies):
 {{- if and (not .Values.secrets.existingSecret) (not .Values.secrets.internalHmacSecret) -}}
 {{- fail "secrets.internalHmacSecret is required (or set secrets.existingSecret to an existing Secret)" -}}
 {{- end -}}
+{{- if include "relayfile.go.managed" . }}
+- name: RELAYFILE_DEV_MODE
+  value: "false"
+{{- end }}
 - name: RELAYFILE_ADDR
   value: {{ if .Values.server.addr }}{{ .Values.server.addr | quote }}{{ else }}{{ printf ":%d" (.Values.server.port | int) | quote }}{{ end }}
 - name: RELAYFILE_BACKEND_PROFILE
@@ -58,6 +62,20 @@ Env vars come from three sources (in priority order Kubernetes applies):
 - name: RELAYAUTH_JWKS_URL
   value: {{ .Values.auth.jwksUrl | quote }}
 {{- end }}
+{{- if eq .Values.auth.mode "introspection" }}
+- name: RELAYFILE_AUTH_MODE
+  value: introspection
+- name: RELAYCONTROL_INTERNAL_URL
+  value: {{ .Values.auth.introspection.internalUrl | quote }}
+- name: RELAYFILE_PUBLIC_ORIGIN
+  value: {{ .Values.auth.introspection.publicOrigin | quote }}
+- name: RELAYCONTROL_INTROSPECT_SECRET_FILE
+  value: /var/run/relayfile-introspection/secret
+- name: RELAYFILE_INTROSPECTION_TIMEOUT
+  value: {{ printf "%ds" (int .Values.auth.introspection.timeoutSeconds) | quote }}
+- name: RELAYFILE_INTROSPECTION_CACHE_TTL
+  value: {{ printf "%ds" (int .Values.auth.introspection.cacheTtlSeconds) | quote }}
+{{- end }}
 {{- if .Values.providers.notion.baseUrl }}
 - name: RELAYFILE_NOTION_BASE_URL
   value: {{ .Values.providers.notion.baseUrl | quote }}
@@ -66,23 +84,27 @@ Env vars come from three sources (in priority order Kubernetes applies):
 - name: RELAYFILE_NOTION_API_VERSION
   value: {{ .Values.providers.notion.apiVersion | quote }}
 {{- end }}
+{{- if not .Values.postgres.enabled }}
 - name: RELAYFILE_PRODUCTION_DSN
   valueFrom:
     secretKeyRef:
       name: {{ include "relayfile.secretName" . }}
       key: RELAYFILE_PRODUCTION_DSN
       optional: true
+{{- end }}
 - name: RELAYFILE_INTERNAL_HMAC_SECRET
   valueFrom:
     secretKeyRef:
       name: {{ include "relayfile.secretName" . }}
       key: RELAYFILE_INTERNAL_HMAC_SECRET
+{{- if ne .Values.auth.mode "introspection" }}
 - name: RELAYFILE_JWT_SECRET
   valueFrom:
     secretKeyRef:
       name: {{ include "relayfile.secretName" . }}
       key: RELAYFILE_JWT_SECRET
       optional: true
+{{- end }}
 - name: RELAYFILE_NOTION_TOKEN
   valueFrom:
     secretKeyRef:

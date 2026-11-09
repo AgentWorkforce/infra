@@ -1,0 +1,71 @@
+{
+  "$schema": "https://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "required": ["auth", "postgres", "image"],
+  "properties": {
+    "image": {
+      "type": "object",
+      "properties": {
+        "repository": {"type": "string", "minLength": 1},
+        "tag": {"type": "string"},
+        "digest": {"type": "string", "pattern": "^(|sha256:[a-f0-9]{64})$"}
+      }
+    },
+    "auth": {
+      "type": "object",
+      "required": ["mode", "introspection"],
+      "properties": {
+        "mode": {"type": "string", "enum": ["", "introspection"]},
+        "introspection": {
+          "type": "object", "additionalProperties": false,
+          "required": ["internalUrl", "publicOrigin", "secretRef", "timeoutSeconds", "cacheTtlSeconds"],
+          "properties": {
+            "internalUrl": {"type": "string"},
+            "publicOrigin": {"type": "string"},
+            "secretRef": {"$ref": "#/definitions/secretRef"},
+            "timeoutSeconds": {"type": "integer", "minimum": 1, "maximum": 30},
+            "cacheTtlSeconds": {"type": "integer", "minimum": 0, "maximum": 60}
+          }
+        }
+      }
+    },
+    "postgres": {
+      "type": "object", "additionalProperties": false,
+      "required": ["enabled", "database", "ownerRole", "runtimeRole", "runtimeSecret", "ca", "startupProbe"],
+      "properties": {
+        "enabled": {"type": "boolean"},
+        "database": {"type": "string"},
+        "ownerRole": {"type": "string"},
+        "runtimeRole": {"type": "string"},
+        "runtimeSecret": {"$ref": "#/definitions/secretRef"},
+        "startupProbe": {
+          "type": "object", "additionalProperties": false,
+          "required": ["periodSeconds", "timeoutSeconds", "failureThreshold"],
+          "properties": {
+            "periodSeconds": {"type": "integer", "minimum": 1, "maximum": 30},
+            "timeoutSeconds": {"type": "integer", "minimum": 1, "maximum": 30},
+            "failureThreshold": {"type": "integer", "minimum": 1, "maximum": 60}
+          }
+        },
+        "ca": {
+          "type": "object", "additionalProperties": false,
+          "required": ["configMap", "key", "sha256"],
+          "properties": {
+            "configMap": {"type": "string"},
+            "key": {"type": "string", "minLength": 1, "maxLength": 253, "pattern": "^[A-Za-z0-9._-]+$"},
+            "sha256": {"type": "string", "pattern": "^(|[a-f0-9]{64})$"}
+          }
+        }
+      }
+    }
+  },
+  "definitions": {
+    "secretRef": {
+      "type": "object", "additionalProperties": false, "required": ["name", "key"],
+      "properties": {
+        "name": {"type": "string"},
+        "key": {"type": "string", "minLength": 1, "maxLength": 253, "pattern": "^[A-Za-z0-9._-]+$"}
+      }
+    }
+  }
+}
