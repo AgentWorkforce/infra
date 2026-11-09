@@ -431,9 +431,16 @@ ingestEdge:
     bucket: ""
     endpoint: ""
     region: us-east-1
+    # secret: static keys from existingSecret (MinIO). podIdentity: no keys; the
+    # AWS credential chain of serviceAccountName, and endpoint may stay empty.
+    credentials:
+      mode: secret
     existingSecret: ""
     accessKeyIdKey: access-key-id
     secretAccessKeyKey: secret-access-key
+  # Serves the per-session erase on POST /v1/delivery/sessions/selection
+  # (RELAYHISTORY_SELFHOST_SESSION_SELECTION). Needs pipeline migration 043910.
+  sessionSelection: false
   maxPerUser: 4
   maxPerOrg: 32
   serviceAccountName: ""

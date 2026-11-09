@@ -1,0 +1,65 @@
+# RENDER ONLY: synthetic ingest image/CA identities; never deploy this fixture.
+# The ingest edge with AWS Pod Identity S3 credentials and per-session erase.
+global:
+  tenant:
+    orgId: org_ci
+worker:
+  migrations:
+    databaseMode: supabase
+    supabaseShim: false
+    runtimeRole: sessions_pipeline_runtime
+    runtimeRoleLogin: true
+    waitForRole:
+      enabled: false
+  existingSecret: ""
+  summaryEncryption:
+    existingSecret: sessions-pipeline-summary
+  hoopdb:
+    existingSecret: hoopdb-app
+    key: uri
+  locker:
+    endpoint: ""
+    bucket: sessions-pipeline-ci
+    region: us-west-2
+    credentials:
+      mode: podIdentity
+alleyoop:
+  existingSecret: ""
+  hoopdb:
+    existingSecret: hoopdb-app
+    key: uri
+  locker:
+    endpoint: ""
+    bucket: sessions-pipeline-ci
+    region: us-west-2
+    credentials:
+      mode: podIdentity
+  auth:
+    jwksUrl: https://relayauth.example.com/.well-known/jwks.json
+hoopdb:
+  enabled: false
+session-object-storage:
+  enabled: false
+
+sessionReadApi: { enabled: false }
+ingestEdge:
+  enabled: true
+  image:
+    repository: example.invalid/session-ingest
+    digest: sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff
+  origin: https://history.kind.agentrelay.com:8443
+  allowInClusterHttp: true
+  sessionSelection: true
+  relaycontrol:
+    url: http://relay-control.ci.svc.cluster.local
+  config:
+    existingSecret: ingest-runtime
+  postgres:
+    caConfigMap: postgres-ca
+    caSha256: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+  serviceAccountName: agent-relay-ingest
+  locker:
+    bucket: pilot-sessions
+    region: us-west-2
+    credentials:
+      mode: podIdentity
