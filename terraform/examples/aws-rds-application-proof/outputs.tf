@@ -18,6 +18,7 @@ output "proof_contract" {
     runtime_secret     = { arn = aws_secretsmanager_secret.runtime.arn, name = aws_secretsmanager_secret.runtime.name, recovery_window_in_days = 0 }
     guest_sources      = var.guest_sources
     snapshot           = try(aws_db_snapshot.marker[0].db_snapshot_identifier, null),
+    orphan_candidates  = { snapshot = "${local.name}-marker", restored_identifier = "${local.name}-restored" },
     restored           = try({ identifier = aws_db_instance.restored[0].identifier, host = aws_db_instance.restored[0].address, resource_id = aws_db_instance.restored[0].resource_id }, null),
     bucket             = module.objects.bucket_name, payload_key = local.payload, payload_sha256 = var.payload_sha256, payload_version_id = var.payload_version_id, receipt_key = local.receipt, prefix = local.prefix, ca_sha256 = var.rds_ca_sha256,
     sentinel           = { key = aws_s3_object.sentinel.key, version_id = aws_s3_object.sentinel.version_id, etag = aws_s3_object.sentinel.etag },

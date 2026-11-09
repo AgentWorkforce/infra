@@ -130,10 +130,10 @@ fresh TLS/readiness precedes success. Parent receives only nonsecret references,
 checks and content-free catalog hashes.
 
 Restore pins seed receipt version/hash, historical master/runtime VersionIds and
-catalog digest. It authenticates using the exact SEED runtime version and proves
+activation evidence digest. It authenticates using the exact SEED runtime version and proves
 TLS/readiness BEFORE any bootstrap/password mutation; host protocol requires the
 acknowledgement. Unchanged restored guest then proves both old-password28P01 cases,
-new readiness and unchanged catalog digest, and stores a distinct final version.
+new readiness and an unchanged activation evidence digest, and stores a distinct final version.
 Seed version/label stays immutable; AWSCURRENT or password derivation is no substitute.
 
 ## Parent lifecycle and complete retirement
@@ -144,7 +144,10 @@ saved plan, provider lock/binaries, current state, runner and fresh exact Pippen
 caller for each phase. Provision without compute, verify native empty
 secret/policy/network prerequisites, upload immutable payload version, then review
 host launch. Exact successful seed receipt admits the Terraform marker snapshot/
-restore. Application catalog digest is `guest.receipt.evidenceSha256`, with master
+restore. `guest.receipt.evidenceSha256` is an activation evidence digest over the driver
+contract, artifact, generation, database name and owner, and the verified role graph.
+It is not a digest of the application catalog: any correct activation matches. The
+restore is proven by the seed password login and the schema verdict. It pins master
 `secret_version_id` and `runtime_secret_version_id`; SELECT1/module marker is insufficient.
 
 Before each SQL/secret write, host saves a nonsecret intent with a real VersionId
@@ -164,16 +167,20 @@ After stopping all owned hosts, metadata-only all-page capture produces
 `runtime_secret_inventory={arn,version_ids,complete:true}`, including0 before
 publication. No value GET for cleanup. `compute_inventory={complete:true,instance_ids}`
 exactly matches unique lifetime compute_history (max2); zero is valid after captured
-PROVISION iff contract.compute is null, otherwise last history equals current
-contract.compute. Missing/truncated/foreign/duplicate inventory refuses before IO.
+PROVISION iff contract.compute is null. After a captured release, contract.compute is
+null and history stays populated only with `compute_released=true` in the ledger; in
+every other case the last history entry equals the current contract.compute. Missing/truncated/foreign/duplicate inventory refuses before IO.
 
-Separately review protection-release changes affecting only deletion_protection,
-then exact-owned delete-only Terraform plan/state. No state-rm, old-resource import,
+Separately review protection-release changes: the runner refuses a release plan that
+does anything but turn deletion_protection off on database instances and remove
+verifier compute, and the plan summary shows each changed attribute. Then exact-owned delete-only Terraform plan/state. No state-rm, old-resource import,
 protection bypass or native deletion of unknown DBs. Retire primary/clone, explicit
-snapshot, retained primary automated backups by exact DbiResourceId, runtime container/
+snapshot, retained primary automated backups by exact DbiResourceId (runner `backups`,
+after destroy and before `absence`), runtime container/
 ALLversions, managed master secret, cumulative compute/rootvolume/ENI/LT/SG/role/profile
 and owned subnet/route/association IDs. Final snapshots are skipped deliberately;
-explicit marker snapshot is tracked. Fixed SQL roles retire with whole instances.
+explicit marker snapshot is tracked. `absence` also checks the fixed marker snapshot and
+restored instance names, so a resource AWS created but state lost cannot read as absent. Fixed SQL roles retire with whole instances.
 
 S3 drainer admits the exact complete key/version/MPU ledger, including pending
 receipt versions, refuses unknown/unrelated inventory BEFORE deletion and retains
@@ -205,6 +212,7 @@ pippen sandbox exec aws-proof -- $R plan --phase release              # then app
 pippen sandbox exec aws-proof -- $R inventory                         # prints ledger_sha256
 pippen sandbox exec aws-proof -- $R drain --ledger-sha256 <digest>
 pippen sandbox exec aws-proof -- $R plan --phase destroy              # then apply as above
+pippen sandbox exec aws-proof -- $R backups
 pippen sandbox exec aws-proof -- $R absence
 pippen sandbox down aws-proof
 ```
@@ -212,8 +220,15 @@ pippen sandbox down aws-proof
 `release` may start from any phase. Forward phases refuse an expired deadline;
 retirement does not, because refusing would strand resources. A failed or empty
 state read after an attempted apply is unknown, never empty, and blocks retirement
-until the state can be read. If no contract was captured, `inventory`, `drain` and
+until the state can be read and the phase is reconciled. If no contract was captured, `inventory`, `drain` and
 `absence` are unavailable, so native absence needs a manual exact-owned check.
+
+Run `reconcile --phase <phase>` on any phase left `pending` or `unknown` (a killed runner,
+a lost host) before retiring; it captures what state holds, or stays `unknown`, and an
+unknown empty state still needs exact-owned recovery. A process group that would not
+stop is recorded on disk and blocks every later tool or AWS call, across processes,
+until `settle` proves the group gone. `backups` reruns safely while a retained backup is
+still being created.
 
 ## F1 status: separate-database application path (refused)
 

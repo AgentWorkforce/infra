@@ -46,6 +46,32 @@ class RuntimeSecretInventory(unittest.TestCase):
             with self.subTest(inventory=changed),patch.object(r,'request') as native,self.assertRaises(RuntimeError):r.check(ledger)
             native.assert_not_called()
 class ComputeInventory(unittest.TestCase):
+    def test_released_compute_needs_the_ledger_marker(self):
+        row={'instance_id':'i-0123456789abcdef0','root_volume_ids':['vol-0123456789abcdef0'],'eni_id':'eni-0123456789abcdef0'}
+        good={'compute_inventory':{'complete':True,'instance_ids':[row['instance_id']]},'compute_history':[row],'compute_released':True}
+        self.assertEqual(r.compute_inventory(good,{'compute':None}),[row])
+        with self.assertRaises(RuntimeError):r.compute_inventory({**good,'compute_released':False},{'compute':None})
+    def full_ledger(self,**contract):
+        c={'account_id':'1','region':'r','lease':{'session_id':'s'},'database':{'identifier':'db','secret_arn':'arn:m','subnet_group':'g','parameter_group':'p'},'runtime_secret':{'arn':'arn:rt'},'bucket':'b','security_group_ids':['sg-1'],'verifier_identity':{'launch_template_id':'lt','role_arn':'a/role','profile_arn':'a/profile'},'owned_network':None,'compute':None,'restored':None,'snapshot':None,'orphan_candidates':{'snapshot':'x-marker','restored_identifier':'x-restored'}}
+        c.update(contract)
+        return {'contract':c,'runtime_secret_inventory':{'arn':'arn:rt','version_ids':[],'complete':True},'compute_history':[],'compute_inventory':{'complete':True,'instance_ids':[]},'database_resource_ids':['db-A'],'database_network_interface_ids':['eni-db'],'managed_secret_arns':['arn:m']}
+    NOT_FOUND={'describe-db-instances':'DBInstanceNotFound','describe-db-snapshots':'DBSnapshotNotFound','describe-db-instance-automated-backups':'DBInstanceAutomatedBackupNotFound','describe-secret':'ResourceNotFoundException','list-secret-version-ids':'ResourceNotFoundException','describe-network-interfaces':'InvalidNetworkInterfaceID.NotFound','describe-security-groups':'InvalidGroup.NotFound','describe-launch-templates':'InvalidLaunchTemplateId.NotFound','get-role':'NoSuchEntity','get-instance-profile':'NoSuchEntity','list-object-versions':'NoSuchBucket','list-multipart-uploads':'NoSuchBucket','describe-db-subnet-groups':'DBSubnetGroupNotFoundFault','describe-db-parameter-groups':'DBParameterGroupNotFound'}
+    def fake_request(self,found=()):
+        def request(contract,service,operation,*args):
+            if operation=='get-caller-identity':return {'Account':'1','Arn':'arn:aws:sts::1:assumed-role/agent-session/agent-s'},None
+            if (operation,args[1] if len(args)>1 else None) in found:return {},None
+            return None,self.NOT_FOUND[operation]
+        return request
+    def test_absence_passes_when_everything_is_gone(self):
+        with patch.object(r,'request',self.fake_request()):self.assertTrue(r.check(self.full_ledger())['ok'])
+    def test_unaccounted_marker_snapshot_or_clone_fails_absence(self):
+        for found,key in [(('describe-db-snapshots','x-marker'),'snapshot:x-marker'),(('describe-db-instances','x-restored'),'database:x-restored')]:
+            with self.subTest(key=key),patch.object(r,'request',self.fake_request({found})):
+                result=r.check(self.full_ledger())
+                self.assertFalse(result['ok']);self.assertFalse(result['checks'][key])
+    def test_missing_orphan_candidates_refuses(self):
+        ledger=self.full_ledger();del ledger['contract']['orphan_candidates']
+        with patch.object(r,'request',self.fake_request()),self.assertRaises(RuntimeError):r.check(ledger)
     def test_captured_provision_before_seed_has_valid_empty_history(self):
         self.assertEqual(r.compute_inventory({'compute_inventory':{'complete':True,'instance_ids':[]},'compute_history':[]},{'compute':None}),[])
     def test_exact_complete_history_and_missing_foreign_truncated_refusal(self):

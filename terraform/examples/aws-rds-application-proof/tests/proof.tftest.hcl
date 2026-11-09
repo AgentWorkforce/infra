@@ -102,6 +102,17 @@ run "application_execution_refused_without_reviewed_activation" {
   variables { payload_version_id = "synthetic-transport-version" }
   expect_failures = [terraform_data.application_gate]
 }
+run "retirement_with_an_uploaded_payload_is_not_refused_and_runs_no_compute" {
+  command = plan
+  variables {
+    payload_version_id = "synthetic-transport-version"
+    retire             = true
+  }
+  assert {
+    condition     = length(aws_instance.verifier) == 0
+    error_message = "Retirement must plan no verifier compute, so the gate exemption cannot run the guest."
+  }
+}
 run "unregistered_activation_artifact_still_refused" {
   command = plan
   variables {

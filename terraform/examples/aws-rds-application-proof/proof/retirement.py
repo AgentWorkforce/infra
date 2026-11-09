@@ -62,20 +62,24 @@ def compute_inventory(ledger,contract):
     volumes=[v for x in history for v in x['root_volume_ids']];interfaces=[x['eni_id'] for x in history]
     if len(set(volumes))!=len(volumes) or len(set(interfaces))!=len(interfaces):raise RuntimeError('Duplicate compute physical IDs')
     historical=[x['instance_id'] for x in history]
-    if len(set(historical))!=len(historical) or set(historical)!=set(identifiers) or (history[-1]!=contract.get('compute') if history else contract.get('compute') is not None):raise RuntimeError('Compute inventory differs from captured lifetime/current output')
+    if len(set(historical))!=len(historical) or set(historical)!=set(identifiers) or (contract.get('compute') is None and history and ledger.get('compute_released') is not True) or (contract.get('compute') is not None and (not history or history[-1]!=contract.get('compute'))):raise RuntimeError('Compute inventory differs from captured lifetime/current output')
     return history
 
 def check(ledger):
     c=ledger['contract'];runtime_inventory(ledger,c);compute_inventory(ledger,c);checks={};ids=ledger['database_resource_ids']
     if len(set(ids))!=(2 if c.get('restored') else 1) or not all(re.fullmatch(r'db-[A-Z0-9]+',x) for x in ids):raise RuntimeError('Incomplete DB resource-ID capture')
+    orphans=c.get('orphan_candidates')
+    if not isinstance(orphans,dict) or set(orphans)!={'snapshot','restored_identifier'} or not all(isinstance(x,str) and x for x in orphans.values()):raise RuntimeError('Missing unaccounted resource candidates')
     if ledger['managed_secret_arns']!=[c['database']['secret_arn']] or not ledger['database_network_interface_ids']:raise RuntimeError('Incomplete secret/storage/network capture')
     caller,error=request(c,'sts','get-caller-identity')
     expected=f"arn:aws:sts::{c['account_id']}:assumed-role/agent-session/agent-{c['lease']['session_id']}"
     if error or caller.get('Account')!=c['account_id'] or caller.get('Arn')!=expected:raise RuntimeError('Wrong expected lease/caller')
-    for identifier in [c['database']['identifier']]+([c['restored']['identifier']] if c.get('restored') else []):
+    # The candidate names are checked even when state never recorded them: an apply lost
+    # between AWS and state must not read as absent.
+    for identifier in sorted({c['database']['identifier'],orphans['restored_identifier']}|({c['restored']['identifier']} if c.get('restored') else set())):
         checks['database:'+identifier]=absent(c,'rds','describe-db-instances',['--db-instance-identifier',identifier],'DBInstanceNotFound')
-    if c.get('snapshot'):
-        checks['snapshot']=absent(c,'rds','describe-db-snapshots',['--db-snapshot-identifier',c['snapshot']],'DBSnapshotNotFound')
+    for snapshot in sorted({orphans['snapshot']}|({c['snapshot']} if c.get('snapshot') else set())):
+        checks['snapshot:'+snapshot]=absent(c,'rds','describe-db-snapshots',['--db-snapshot-identifier',snapshot],'DBSnapshotNotFound')
     for resource_id in ids:
         value,error=request(c,'rds','describe-db-instance-automated-backups','--dbi-resource-id',resource_id)
         checks['automated_backups:'+resource_id]=error=='DBInstanceAutomatedBackupNotFound' or (error is None and isinstance(value.get('DBInstanceAutomatedBackups'),list) and value['DBInstanceAutomatedBackups']==[])

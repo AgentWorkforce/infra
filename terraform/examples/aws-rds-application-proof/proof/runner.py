@@ -31,10 +31,12 @@ ACCOUNT = '361835732085'
 AGENT = 'aws-proof'
 EXECUTION_PREFIX = '/Volumes/T7/'
 FORWARD = ('provision', 'prerequisites', 'upload', 'seed', 'seed-receipt', 'restore', 'restore-receipt')
-RETIRE = ('release', 'inventory', 'drain', 'destroy', 'absence')
+RETIRE = ('release', 'inventory', 'drain', 'destroy', 'backups', 'absence')
 TERRAFORM_PHASES = ('provision', 'seed', 'restore', 'release', 'destroy')
 DONE = ('captured', 'ok')
 UNSETTLED = ('pending', 'unknown', 'failed', 'interrupted', 'captured-invalid')
+UNRECONCILED = ('pending', 'unknown')
+RECONCILABLE = TERRAFORM_PHASES + ('upload',)
 
 
 class Refused(RuntimeError):
@@ -102,7 +104,6 @@ class Runner:
         self.terraform = str(Path(terraform).resolve())
         self.env = dict(os.environ if env is None else env)
         self.transport = transport
-        self.settled = True
         self.v = read(self.variables)
         validate_variables(self.v)
         self.execution.mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -137,6 +138,50 @@ class Runner:
 
     def path(self, name):
         return self.execution / name
+
+    # ----- unsettled process groups ----------------------------------------
+
+    def record_unsettled(self, group):
+        """Survives this process: every later run refuses until `settle` proves the group gone."""
+        save(self.path('unsettled.json'), {'process_group': group, 'at': now().isoformat()})
+
+    def settled_guard(self):
+        require(not self.path('unsettled.json').exists(), 'Unsettled owned process group from an earlier command; no further tool or AWS calls until `settle` proves it gone')
+
+    def settle(self):
+        marker = self.path('unsettled.json')
+        require(marker.exists(), 'Nothing is unsettled')
+        group = read(marker)['process_group']
+        try:
+            os.killpg(group, 0)
+        except ProcessLookupError:
+            marker.unlink()
+            return {'status': 'settled', 'process_group': group}
+        except PermissionError:
+            pass
+        raise Refused(f'Process group {group} still exists; stop it before any further tool or AWS call')
+
+    def settle_group(self, process):
+        if process is None:
+            return True
+        for sig in [signal.SIGTERM, signal.SIGKILL]:
+            try:
+                os.killpg(process.pid, sig)
+            except ProcessLookupError:
+                return True
+            except PermissionError:
+                pass
+            end = time.monotonic() + 5
+            while time.monotonic() < end:
+                process.poll()
+                try:
+                    os.killpg(process.pid, 0)
+                except ProcessLookupError:
+                    return True
+                except PermissionError:
+                    pass
+                time.sleep(.1)
+        return False
 
     # ----- identity, deadline, bindings ------------------------------------
 
@@ -225,6 +270,9 @@ class Runner:
                 require(phases.get(FORWARD[index - 1], {}).get('status') in DONE, f'Phase {FORWARD[index - 1]} must complete before {phase}')
             require(phases.get(phase, {}).get('status') not in DONE, f'Phase {phase} already ran; no blind re-run')
             return
+        if phase in RETIRE:
+            open_phases = sorted(p for p in RECONCILABLE if phases.get(p, {}).get('status') in UNRECONCILED)
+            require(not open_phases, f'Phases {open_phases} never finished capture; run reconcile on each before retiring')
         if phase == 'release':
             require('destroy' not in phases, 'Destroy has started')
         elif phase == 'inventory':
@@ -235,8 +283,10 @@ class Runner:
             require(self.status_of('release') in DONE, 'Release must complete before destroy')
             if self.path('contract.json').exists():
                 require(self.status_of('drain') in DONE, 'Drain must complete before destroy')
+        elif phase == 'backups':
+            require(self.status_of('destroy') in DONE, 'Destroy must complete before backups')
         elif phase == 'absence':
-            require(self.status_of('destroy') in DONE, 'Destroy must complete before absence')
+            require(self.status_of('backups') in DONE, 'Backups must complete before absence')
 
     def attempted(self):
         return any(p in self.phases() for p in TERRAFORM_PHASES)
@@ -275,6 +325,7 @@ class Runner:
         return self.run(['aws', '--region', self.v['region'], '--no-cli-pager', service, operation, *args, '--output', 'json'], timeout=120, check=check)
 
     def run(self, args, timeout=2700, check=True):
+        self.settled_guard()
         if self.transport:
             return self.transport(args, timeout=timeout, check=check)
         prefix = self.path('commands') / str(time.time_ns())
@@ -289,28 +340,6 @@ class Runner:
             nonlocal requested
             if requested is None:
                 requested = signum
-
-        def settle():
-            if process is None:
-                return True
-            for sig in [signal.SIGTERM, signal.SIGKILL]:
-                try:
-                    os.killpg(process.pid, sig)
-                except ProcessLookupError:
-                    return True
-                except PermissionError:
-                    pass
-                end = time.monotonic() + 5
-                while time.monotonic() < end:
-                    process.poll()
-                    try:
-                        os.killpg(process.pid, 0)
-                    except ProcessLookupError:
-                        return True
-                    except PermissionError:
-                        pass
-                    time.sleep(.1)
-            return False
 
         try:
             for sig in [signal.SIGTERM, signal.SIGHUP, signal.SIGINT]:
@@ -328,11 +357,15 @@ class Runner:
                     if time.monotonic() >= end:
                         raise subprocess.TimeoutExpired(args, timeout)
                     time.sleep(.1)
-            self.settled = settle()
-            require(self.settled, 'Unsettled owned process group; quarantine before recovery')
+            settled = self.settle_group(process)
+            if not settled:
+                self.record_unsettled(process.pid)
+            require(settled, 'Unsettled owned process group; quarantine before recovery')
         except BaseException as error:
-            self.settled = settle()
-            metadata.update(outcome='interrupted', error_type=type(error).__name__, process_group_absent=self.settled)
+            settled = self.settle_group(process)
+            if not settled and process is not None:
+                self.record_unsettled(process.pid)
+            metadata.update(outcome='interrupted', error_type=type(error).__name__, process_group_absent=settled)
             save(prefix.with_suffix('.json'), metadata)
             raise
         finally:
@@ -383,12 +416,12 @@ class Runner:
                   'state_sha256': sha(self.state) if self.state.exists() else None, 'bindings': before, 'changes': changes}
         save(self.path(phase + '.packet.json'), packet)
         summary = self.path(phase + '.summary.txt')
-        summary.write_text(''.join(f'{c["action"]:<8} {c["address"]}\n' for c in changes) + f'{len(changes)} changes\nplan_sha256 {packet["plan_sha256"]}\n')
+        summary.write_text(render_summary(changes, packet['plan_sha256']))
         summary.chmod(0o600)
         return {'phase': phase, 'plan_sha256': packet['plan_sha256'], 'changes': len(changes), 'summary': str(summary), 'next': f'review, then apply --phase {phase} --plan-sha256 {packet["plan_sha256"]}'}
 
     def apply(self, phase, plan_sha256):
-        require(self.settled, 'Unsettled prior command group')
+        self.settled_guard()
         require(phase in TERRAFORM_PHASES, f'{phase} is not a Terraform phase')
         forward = phase in FORWARD
         arn = self.guards(forward)
@@ -436,6 +469,21 @@ class Runner:
                 raise Refused(f'Captured contract failed validation: {problems}')
         self.mark(phase, 'captured')
         return {'phase': phase, 'status': 'captured', 'resources': len(addresses)}
+
+    def reconcile(self, phase):
+        """Record what an interrupted apply or upload actually left, so retirement can count it."""
+        require(phase in RECONCILABLE, f'{phase} cannot be reconciled')
+        require(self.status_of(phase) in UNRECONCILED, f'{phase} is not pending or unknown; nothing to reconcile')
+        self.guards(False)
+        if phase == 'upload':
+            self.mark(phase, 'failed', reason='upload outcome never confirmed; inventory lists every object version')
+            return {'phase': phase, 'status': 'failed'}
+        try:
+            self.capture(phase, 1, None)
+        except Refused:
+            if self.status_of(phase) in UNRECONCILED:
+                raise
+        return {'phase': phase, 'status': self.status_of(phase)}
 
     def capture_contract(self):
         try:
@@ -546,6 +594,9 @@ class Runner:
         value = read(path)
         require(value.get('ok') is True and value.get('phase') == phase and value.get('source_sha') == self.v['source_sha'] and value.get('marker') == c['marker'], 'Receipt does not match this lifecycle')
         require(value.get('application_sql_ready') is False, 'A receipt may not claim application readiness')
+        native = read(self.path('native.json'))['database_resource_ids']
+        expected = (c.get('restored') or {}).get('resource_id') if phase == 'restore' else (native[0] if native else None)
+        require(expected and value.get('database_resource_id') == expected, 'Receipt does not name the captured database')
         if phase == 'seed':
             save(self.path('restore-checkpoint.json'), {'seed_receipt_sha256': sha(path), 'seed_receipt_version_id': version, 'secret_version_id': value['secret_version_id'],
                                                          'runtime_secret_version_id': value['runtime_secret_version_id'], 'seed_evidence_sha256': value['guest']['receipt']['evidenceSha256']})
@@ -581,6 +632,7 @@ class Runner:
             'contract': c,
             'runtime_secret_inventory': {'arn': c['runtime_secret']['arn'], 'version_ids': [x['VersionId'] for x in secrets.get('Versions', [])], 'complete': True},
             'compute_history': history,
+            'compute_released': self.status_of('release') in DONE and c.get('compute') is None,
             'compute_inventory': {'complete': True, 'instance_ids': [x['instance_id'] for x in history]},
             'database_resource_ids': native['database_resource_ids'],
             'database_network_interface_ids': native['database_network_interface_ids'],
@@ -605,6 +657,39 @@ class Runner:
         self.mark('drain', 'ok', versions_deleted=result['versions_deleted'])
         return {'phase': 'drain', **result}
 
+    def backups(self):
+        """Delete retained automated backups of this lifecycle's own databases only."""
+        arn = self.guards(False)
+        self.order_guard('backups')
+        ledger = self.ledger()
+        self.mark('backups', 'pending', caller=arn)
+        deleted, waiting = [], []
+        for resource_id in ledger['database_resource_ids']:
+            result = self.aws('rds', 'describe-db-instance-automated-backups', '--dbi-resource-id', resource_id, check=False)
+            if result.returncode:
+                if 'DBInstanceAutomatedBackupNotFound' in result.stderr:
+                    continue
+                self.mark('backups', 'failed', reason='could not list retained backups')
+                raise Refused('Could not list retained automated backups; private command evidence is preserved')
+            rows = json.loads(result.stdout or '{}').get('DBInstanceAutomatedBackups', [])
+            if not all(row.get('DbiResourceId') == resource_id for row in rows):
+                self.mark('backups', 'failed', reason='foreign backup returned')
+                raise Refused('A backup for a different resource was returned; refusing to delete')
+            if not rows:
+                continue
+            if any(row.get('Status') != 'retained' for row in rows):
+                waiting.append(resource_id)
+                continue
+            if self.aws('rds', 'delete-db-instance-automated-backup', '--dbi-resource-id', resource_id, check=False).returncode:
+                self.mark('backups', 'failed', reason='delete refused', deleted=deleted)
+                raise Refused('Deleting a retained automated backup failed; absence will report it')
+            deleted.append(resource_id)
+        if waiting:
+            self.mark('backups', 'failed', reason='not retained yet', waiting=waiting, deleted=deleted)
+            raise Refused(f'Backups not retained yet for {waiting}; run backups again')
+        self.mark('backups', 'ok', deleted=deleted)
+        return {'phase': 'backups', 'status': 'ok', 'deleted': deleted}
+
     def absence(self):
         self.guards(False)
         self.order_guard('absence')
@@ -619,14 +704,60 @@ class Runner:
                 'still_present': sorted(k for k, v in result['checks'].items() if not v)}
 
 
+def is_flagged(marks, key):
+    return marks is True or (isinstance(marks, dict) and bool(marks.get(key)))
+
+
+def show(value, sensitive):
+    if sensitive:
+        return '(sensitive)'
+    if isinstance(value, (bool, int, float)) or value is None or (isinstance(value, str) and len(value) <= 80):
+        return value
+    return '(changed)'
+
+
+def changed_attributes(change):
+    before = change.get('before') if isinstance(change.get('before'), dict) else {}
+    after = change.get('after') if isinstance(change.get('after'), dict) else {}
+    unknown = change.get('after_unknown') if isinstance(change.get('after_unknown'), dict) else {}
+    attributes = []
+    for key in sorted(set(before) | set(after) | set(unknown)):
+        pending = is_flagged(unknown, key)
+        if not pending and before.get(key) == after.get(key):
+            continue
+        attributes.append({'name': key, 'before': show(before.get(key), is_flagged(change.get('before_sensitive'), key)),
+                           'after': '(known after apply)' if pending else show(after.get(key), is_flagged(change.get('after_sensitive'), key))})
+    return attributes
+
+
 def summarize(rendered):
     changes = []
     for change in rendered.get('resource_changes', []):
         actions = change.get('change', {}).get('actions', [])
         if actions in ([], ['no-op'], ['read']):
             continue
-        changes.append({'address': change['address'], 'type': change['type'], 'action': 'replace' if len(actions) > 1 else actions[0]})
+        entry = {'address': change['address'], 'type': change['type'], 'action': 'replace' if len(actions) > 1 else actions[0]}
+        if entry['action'] in ('update', 'replace'):
+            entry['attributes'] = changed_attributes(change['change'])
+        changes.append(entry)
     return changes
+
+
+def render_summary(changes, plan_sha256):
+    lines = []
+    for change in changes:
+        lines.append(f'{change["action"]:<8} {change["address"]}')
+        for attribute in change.get('attributes', []):
+            lines.append(f'         {attribute["name"]}: {json.dumps(attribute["before"])} -> {json.dumps(attribute["after"])}')
+    return '\n'.join(lines + [f'{len(changes)} changes', f'plan_sha256 {plan_sha256}']) + '\n'
+
+
+def release_change_allowed(change):
+    if change['action'] == 'delete':
+        return change['type'] == 'aws_instance'
+    if change['action'] == 'update' and change['type'] == 'aws_db_instance':
+        return change.get('attributes') == [{'name': 'deletion_protection', 'before': True, 'after': False}]
+    return False
 
 
 def guard_changes(phase, changes):
@@ -636,7 +767,8 @@ def guard_changes(phase, changes):
     if phase == 'provision':
         require('aws_instance' not in kinds, 'Provision must not create compute')
     if phase == 'release':
-        require(not [c for c in changes if c['action'] in ('create', 'replace') and c['type'] != 'terraform_data'], 'Release must only update or remove')
+        refused = [c['address'] for c in changes if not release_change_allowed(c)]
+        require(not refused, f'Release may only clear database deletion_protection and remove compute; refused {refused}')
     if phase == 'destroy':
         require(all(c['action'] == 'delete' for c in changes), 'A destroy plan may only delete')
 
@@ -654,7 +786,7 @@ def validate_contract(contract, variables, phase):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument('operation', choices=['plan', 'apply', 'prerequisites', 'upload', 'receipt', 'inventory', 'drain', 'absence', 'status'])
+    parser.add_argument('operation', choices=['plan', 'apply', 'prerequisites', 'upload', 'receipt', 'inventory', 'drain', 'backups', 'absence', 'reconcile', 'settle', 'status'])
     parser.add_argument('--execution', required=True)
     parser.add_argument('--variables', required=True)
     parser.add_argument('--terraform', required=True)
@@ -682,8 +814,14 @@ def main():
                 result['ledger_sha256'] = sha(runner.path('ledger.json'))
             elif args.operation == 'drain':
                 result = runner.drain(args.ledger_sha256)
+            elif args.operation == 'backups':
+                result = runner.backups()
             elif args.operation == 'absence':
                 result = runner.absence()
+            elif args.operation == 'reconcile':
+                result = runner.reconcile(args.phase)
+            elif args.operation == 'settle':
+                result = runner.settle()
             else:
                 result = runner.phases()
     except Refused as error:

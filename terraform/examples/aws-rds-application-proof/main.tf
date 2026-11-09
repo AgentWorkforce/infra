@@ -172,11 +172,13 @@ locals {
 }
 # F1: compute that would run the guest is refused unless the supplied activation is
 # registered in approved_activations and matches the payload's Sessions source.
+# retire=true is exempt so cleanup cannot be stranded; aws_instance.verifier has count 0
+# under retire, so the exemption can never run the guest.
 resource "terraform_data" "application_gate" {
   input = { activation = var.application_activation, payload = var.payload_version_id }
   lifecycle {
     precondition {
-      condition     = var.payload_version_id == null || local.activation_registered
+      condition     = var.retire || var.payload_version_id == null || local.activation_registered
       error_message = "Application SQL execution is refused: no reviewed rds-activation/v1 artifact is registered for this exact Sessions source (application_sql_ready=false). See README 'F1 status'."
     }
   }

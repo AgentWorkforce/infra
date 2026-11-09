@@ -34,9 +34,11 @@ class Fake:
         self.on_apply = None
         self.contract = None
         self.changes = []
-        self.compute = {'instance_id': 'i-0123456789abcdef0', 'root_volume_ids': ['vol-1'], 'eni_id': 'eni-1'}
+        self.compute = {'instance_id': 'i-0123456789abcdef0', 'root_volume_ids': ['vol-0123456789abcdef0'], 'eni_id': 'eni-0123456789abcdef0'}
         self.restored = None
         self.receipts = {}
+        self.backups = {'db-A': 'retained'}
+        self.deleted_backups = []
 
     def done(self, args, stdout='', code=0):
         return subprocess.CompletedProcess(args, code, stdout, '')
@@ -113,6 +115,15 @@ class Fake:
             return self.done(args, json.dumps({'IsTruncated': False}))
         if operation == 'describe-instances':
             return self.done(args, json.dumps({'Reservations': []}))
+        if operation == 'describe-db-instance-automated-backups':
+            rid = args[args.index('--dbi-resource-id') + 1]
+            rows = [{'DbiResourceId': rid, 'Status': self.backups[rid]}] if rid in self.backups else []
+            return self.done(args, json.dumps({'DBInstanceAutomatedBackups': rows}))
+        if operation == 'delete-db-instance-automated-backup':
+            rid = args[args.index('--dbi-resource-id') + 1]
+            self.deleted_backups.append(rid)
+            self.backups.pop(rid)
+            return self.done(args, '{}')
         raise AssertionError(args)
 
 
@@ -254,9 +265,10 @@ class UnknownState(Base):
         self.fake.state_broken = True
         with self.assertRaises(r.Refused):
             self.runner.apply('provision', out['plan_sha256'])
-        with self.assertRaisesRegex(r.Refused, 'do not assume no resources'):
+        with self.assertRaisesRegex(r.Refused, 'reconcile'):
             self.runner.plan('release')
         self.fake.state_broken = False
+        self.assertEqual(self.runner.reconcile('provision')['status'], 'failed')
         self.assertIn('plan_sha256', self.runner.plan('release'))
 
     def test_failed_apply_captures_state_before_refusing(self):
@@ -365,7 +377,7 @@ class Order(Base):
         self.fake.receipts['seed'] = {'ok': True, 'phase': 'seed', 'source_sha': 'a' * 40, 'marker': 'm', 'application_sql_ready': False, 'secret_version_id': 'sv', 'runtime_secret_version_id': 'rv', 'database_resource_id': 'db-A', 'guest': {'receipt': {'evidenceSha256': 'e' * 64}}}
         self.runner.receipt('seed')
         self.fake.restored = {'identifier': 'db2', 'host': 'h', 'resource_id': 'db-B'}
-        self.fake.contract = self.fake.contract_value({**self.fake.compute, 'instance_id': 'i-0123456789abcdef1', 'eni_id': 'eni-2', 'root_volume_ids': ['vol-2']})
+        self.fake.contract = self.fake.contract_value({**self.fake.compute, 'instance_id': 'i-0123456789abcdef1', 'eni_id': 'eni-0123456789abcdef1', 'root_volume_ids': ['vol-0123456789abcdef1']})
         self.plan_apply('restore')
         checkpoint = r.read(self.execution / 'restore.tfvars.json')['restore_checkpoint']
         self.assertEqual(checkpoint['seed_receipt_version_id'], 'r-seed')
@@ -441,6 +453,9 @@ class Order(Base):
 
 class Retirement(Base):
     def retire(self):
+        if self.fake.contract is not None:
+            # Real post-release output: retire=true sets the instance count to 0.
+            self.fake.contract = self.fake.contract_value(None)
         out = self.runner.plan('release')
         self.runner.apply('release', out['plan_sha256'])
         self.assertTrue(r.read(self.execution / 'release.tfvars.json')['retire'])
@@ -461,6 +476,132 @@ class Retirement(Base):
             return result
         self.runner.transport = emptied
         self.assertEqual(self.runner.apply('destroy', out['plan_sha256'])['status'], 'captured')
+
+    def test_released_compute_passes_the_real_inventory_check(self):
+        self.through_seed()
+        self.retire()
+        import retirement
+        ledger = r.read(self.execution / 'ledger.json')
+        self.assertIsNone(ledger['contract']['compute'])
+        self.assertTrue(ledger['compute_released'])
+        self.assertEqual(retirement.compute_inventory(ledger, ledger['contract']), ledger['compute_history'])
+
+    def test_backups_deletes_retained_by_exact_resource_id(self):
+        self.provision()
+        self.retire()
+        self.assertEqual(self.runner.backups()['deleted'], ['db-A'])
+        self.assertEqual(self.fake.deleted_backups, ['db-A'])
+        self.assertEqual(self.runner.status_of('backups'), 'ok')
+
+    def test_backups_waits_while_not_yet_retained_and_can_rerun(self):
+        self.provision()
+        self.retire()
+        self.fake.backups['db-A'] = 'creating'
+        with self.assertRaisesRegex(r.Refused, 'not retained yet'):
+            self.runner.backups()
+        self.assertEqual(self.fake.deleted_backups, [])
+        self.assertEqual(self.runner.status_of('backups'), 'failed')
+        self.fake.backups['db-A'] = 'retained'
+        self.assertEqual(self.runner.backups()['deleted'], ['db-A'])
+
+    def test_backups_requires_destroy_and_absence_requires_backups(self):
+        self.provision()
+        with self.assertRaisesRegex(r.Refused, 'Destroy must complete before backups'):
+            self.runner.backups()
+        self.retire()
+        with self.assertRaisesRegex(r.Refused, 'Backups must complete before absence'):
+            self.runner.absence()
+
+    def test_pending_apply_blocks_retirement_until_reconciled(self):
+        self.provision()
+        self.runner.mark('provision', 'pending', plan_sha256='x')
+        with self.assertRaisesRegex(r.Refused, 'reconcile'):
+            self.runner.plan('release')
+        self.assertEqual(self.runner.reconcile('provision')['status'], 'failed')
+        self.assertTrue((self.execution / 'provision.capture.json').exists())
+        self.assertIn('plan_sha256', self.runner.plan('release'))
+
+    def test_reconcile_stays_unknown_while_state_is_unreadable(self):
+        self.provision()
+        self.runner.mark('provision', 'pending')
+        self.fake.state_broken = True
+        with self.assertRaisesRegex(r.Refused, 'do not assume no resources'):
+            self.runner.reconcile('provision')
+        self.assertEqual(self.runner.status_of('provision'), 'unknown')
+
+    def test_reconcile_refuses_a_settled_phase(self):
+        self.provision()
+        with self.assertRaisesRegex(r.Refused, 'nothing to reconcile'):
+            self.runner.reconcile('provision')
+
+    def test_unsettled_marker_blocks_later_processes(self):
+        self.provision()
+        self.runner.record_unsettled(999999)
+        calls = len(self.fake.calls)
+        fresh = type(self.runner)(self.execution, self.vars, self.terraform, env=self.env, transport=self.fake)
+        with self.assertRaisesRegex(r.Refused, 'Unsettled'):
+            fresh.plan('release')
+        self.assertEqual(len(self.fake.calls), calls)
+
+    def test_unsettled_real_group_is_persisted(self):
+        real = r.Runner(self.execution, self.vars, self.terraform, env=self.env)
+        with patch.object(real, 'settle_group', return_value=False):
+            with self.assertRaisesRegex(r.Refused, 'Unsettled'):
+                real.run(['true'])
+        self.assertTrue((self.execution / 'unsettled.json').exists())
+
+    def test_settle_clears_only_when_the_group_is_gone(self):
+        self.provision()
+        self.runner.record_unsettled(os.getpgrp())
+        with self.assertRaisesRegex(r.Refused, 'still exists'):
+            self.runner.settle()
+        self.runner.record_unsettled(999999)
+        with patch('os.killpg', side_effect=ProcessLookupError):
+            self.assertEqual(self.runner.settle()['status'], 'settled')
+        self.assertFalse((self.execution / 'unsettled.json').exists())
+
+    def test_receipt_must_name_the_captured_database(self):
+        self.through_seed()
+        good = {'ok': True, 'phase': 'seed', 'source_sha': 'a' * 40, 'marker': 'm', 'application_sql_ready': False, 'secret_version_id': 'sv', 'runtime_secret_version_id': 'rv',
+                'database_resource_id': 'db-OTHER', 'source_database_resource_id': 'db-OTHER', 'guest': {'receipt': {'evidenceSha256': 'e' * 64}}}
+        self.fake.receipts['seed'] = good
+        with self.assertRaisesRegex(r.Refused, 'captured database'):
+            self.runner.receipt('seed')
+
+    def test_restore_receipt_must_name_the_captured_clone(self):
+        self.through_seed()
+        seed = {'ok': True, 'phase': 'seed', 'source_sha': 'a' * 40, 'marker': 'm', 'application_sql_ready': False, 'secret_version_id': 'sv', 'runtime_secret_version_id': 'rv',
+                'database_resource_id': 'db-A', 'source_database_resource_id': 'db-A', 'guest': {'receipt': {'evidenceSha256': 'e' * 64}}}
+        self.fake.receipts['seed'] = seed
+        self.runner.receipt('seed')
+        self.fake.restored = {'identifier': 'db2', 'host': 'h', 'resource_id': 'db-B'}
+        self.fake.contract = self.fake.contract_value({**self.fake.compute, 'instance_id': 'i-0123456789abcdef1', 'eni_id': 'eni-0123456789abcdef1', 'root_volume_ids': ['vol-0123456789abcdef1']})
+        self.plan_apply('restore')
+        self.fake.receipts['restore'] = {**seed, 'phase': 'restore', 'database_resource_id': 'db-C'}
+        with self.assertRaisesRegex(r.Refused, 'captured database'):
+            self.runner.receipt('restore')
+
+    def test_release_guard_allows_only_deletion_protection_and_compute_removal(self):
+        ok = [{'address': 'aws_db_instance.r', 'type': 'aws_db_instance', 'action': 'update', 'attributes': [{'name': 'deletion_protection', 'before': True, 'after': False}]},
+              {'address': 'aws_instance.v', 'type': 'aws_instance', 'action': 'delete'}]
+        r.guard_changes('release', ok)
+        for bad in [[{'address': 'a', 'type': 'aws_db_instance', 'action': 'update', 'attributes': [{'name': 'instance_class', 'before': 'x', 'after': 'y'}]}],
+                    [{'address': 'a', 'type': 'aws_db_instance', 'action': 'update', 'attributes': [{'name': 'deletion_protection', 'before': True, 'after': False}, {'name': 'tags', 'before': '(changed)', 'after': '(changed)'}]}],
+                    [{'address': 'a', 'type': 'aws_db_instance', 'action': 'update', 'attributes': [{'name': 'deletion_protection', 'before': False, 'after': True}]}],
+                    [{'address': 'a', 'type': 'aws_iam_role', 'action': 'update', 'attributes': []}],
+                    [{'address': 'a', 'type': 'aws_security_group', 'action': 'delete'}]]:
+            with self.subTest(bad=bad), self.assertRaisesRegex(r.Refused, 'Release'):
+                r.guard_changes('release', bad)
+
+    def test_summary_shows_attribute_diffs_and_masks_sensitive(self):
+        rendered = {'resource_changes': [{'address': 'aws_db_instance.p', 'type': 'aws_db_instance', 'change': {'actions': ['update'],
+                    'before': {'deletion_protection': True, 'password': 'hidden', 'same': 1}, 'after': {'deletion_protection': False, 'password': 'hunter2', 'same': 1},
+                    'before_sensitive': {'password': True}, 'after_sensitive': {'password': True}, 'after_unknown': {}}}]}
+        attributes = r.summarize(rendered)[0]['attributes']
+        self.assertEqual(attributes, [{'name': 'deletion_protection', 'before': True, 'after': False}, {'name': 'password', 'before': '(sensitive)', 'after': '(sensitive)'}])
+        text = r.render_summary(r.summarize(rendered), 'd' * 64)
+        self.assertIn('deletion_protection: true -> false', text)
+        self.assertNotIn('hunter2', text)
 
     def test_retire_after_provision(self):
         self.provision()
@@ -559,6 +700,7 @@ class Retirement(Base):
     def test_absence_reports_what_remains(self):
         self.provision()
         self.retire()
+        self.runner.backups()
         fake = type('M', (), {'check': staticmethod(lambda _l: {'ok': False, 'checks': {'database:db': True, 'role': False}})})
         with patch.dict('sys.modules', {'retirement': fake}):
             result = self.runner.absence()
