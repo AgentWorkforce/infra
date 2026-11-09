@@ -99,6 +99,10 @@ router is supplied:
 - `GET /v1/delivery/limits`
 - `POST /v1/auth/token/refresh` (answers 401 `refresh_not_supported`, so Desktop renews its session)
 
+On EKS, `EKS_ALB_INGEST=true` makes `scripts/selfhost/eks-alb-ingress.sh` render these
+routes on the `history.<domain>` origin, with the rest of that host on the read API
+and `/internal` denied.
+
 Use exact paths and test the backend's wrong-method refusal. Keep delivery records
 on the reader. Selection/reset/recovery/onboarding are not working features;
 probe and custody endpoints stay private. The edge re-introspects the bearer and
