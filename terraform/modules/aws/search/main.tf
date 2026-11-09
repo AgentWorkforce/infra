@@ -43,6 +43,34 @@ locals {
     })
   }
 
+  # Separate from `policies`: indexer_policy_json also feeds the Lambda pipeline,
+  # which holds its own bucket grants. Each statement group is its own
+  # conditional list so no conditional unifies differently shaped statements.
+  sessions_read_policy = var.sessions_bucket_read == null ? null : jsonencode({
+    Version = "2012-10-17"
+    Statement = concat(
+      [{
+        Sid      = "ListSessionsBucket"
+        Effect   = "Allow"
+        Action   = ["s3:ListBucket"]
+        Resource = [var.sessions_bucket_read.bucket_arn]
+      }],
+      [{
+        Sid      = "ReadSessionObjects"
+        Effect   = "Allow"
+        Action   = ["s3:GetObject"]
+        Resource = ["${var.sessions_bucket_read.bucket_arn}/*"]
+      }],
+      var.sessions_bucket_read.kms_key_arn == null ? [] : [{
+        Sid       = "DecryptSessionsBucketKey"
+        Effect    = "Allow"
+        Action    = ["kms:Decrypt"]
+        Resource  = [var.sessions_bucket_read.kms_key_arn]
+        Condition = { StringEquals = { "kms:ViaService" = "s3.${local.region}.${data.aws_partition.current.dns_suffix}" } }
+      }],
+    )
+  })
+
   roles = local.create_roles ? {
     indexer = { service_accounts = var.workload_roles.indexer_service_accounts }
     reader  = { service_accounts = var.workload_roles.reader_service_accounts }
@@ -98,6 +126,17 @@ resource "aws_iam_role_policy" "workload" {
   name   = "opensearch-${var.domain_name}"
   role   = aws_iam_role.workload[each.key].id
   policy = local.policies[each.key]
+}
+
+# Its own resource, not a statement on the policy above: existing roles and
+# their OpenSearch policy stay untouched, and each inline policy is individually
+# managed so creation_mode.py can admit the role's inline_policy read-back.
+resource "aws_iam_role_policy" "sessions_read" {
+  for_each = var.sessions_bucket_read == null ? toset([]) : toset(keys(local.roles))
+
+  name   = "sessions-read-${var.domain_name}"
+  role   = aws_iam_role.workload[each.key].id
+  policy = local.sessions_read_policy
 }
 
 resource "aws_eks_pod_identity_association" "workload" {

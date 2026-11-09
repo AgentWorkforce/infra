@@ -194,4 +194,72 @@ class SiblingDrift(unittest.TestCase):
             with self.subTest(case=name), self.assertRaises(g.SearchModeError): g.admit(p)
 
 
+SESSIONS = g.PREFIX + 'aws_iam_role_policy.sessions_read["indexer"]'
+SESSIONS_DOC = json.dumps({'Version': '2012-10-17', 'Statement': [{'Effect': 'Allow', 'Action': ['s3:GetObject'], 'Resource': 'arn:aws:s3:::b/*'}]})
+
+
+def creation(address):
+    return {'address': address, 'mode': 'managed', 'type': 'aws_iam_role_policy', 'change': {'actions': ['create'], 'before': None, 'after': {'id': None}, 'after_unknown': {'id': True}}}
+
+
+def adding_sessions_read():
+    """The first plan once sessions_bucket_read is set on existing enrolled state."""
+    p = sibling_plan()
+    p['resource_changes'] += [creation(SESSIONS), creation(SESSIONS.replace('indexer', 'reader'))]
+    return p
+
+
+def after_sessions_read():
+    """The next plan: the role reads back both inline policies, its state holding one."""
+    p = sibling_plan()
+    values = {'id': 'role:s', 'name': 's', 'policy': SESSIONS_DOC}
+    state(p).append({'address': SESSIONS, 'mode': 'managed', 'type': 'aws_iam_role_policy', 'values': values})
+    p['resource_changes'].append({'address': SESSIONS, 'mode': 'managed', 'type': 'aws_iam_role_policy', 'change': {'actions': ['no-op'], 'before': values, 'after': values, 'after_unknown': {}}})
+    drift = p['resource_drift'][1]['change']
+    drift['before']['inline_policy'] = [{'name': 'p', 'policy': DOC}]
+    drift['after']['inline_policy'] = [{'name': 's', 'policy': SESSIONS_DOC}, {'name': 'p', 'policy': SAME_DOC}]
+    return p
+
+
+class SessionsRead(unittest.TestCase):
+    def inline(self, p): return p['resource_drift'][1]['change']['after']['inline_policy']
+
+    def test_adding_the_sibling_policy_to_existing_state_is_admitted(self):
+        self.assertEqual(g.admit(adding_sessions_read()), 'enrolled')
+
+    def test_the_following_plan_admits_both_inline_policies(self):
+        self.assertEqual(g.admit(after_sessions_read()), 'enrolled')
+
+    def test_adding_the_sibling_holds_with_any_domain_or_marker_change(self):
+        for address, actions in [(g.PROTECTED, ['delete', 'create']), (g.MARKER, ['update']), (POLICY, ['delete'])]:
+            p = adding_sessions_read(); change(p, address)['actions'] = actions
+            with self.subTest(address=address), self.assertRaises(g.SearchModeError): g.admit(p)
+
+    def test_unenrolled_state_must_enroll_before_adding_the_sibling(self):
+        p = fixture(mode=False, enrolled=False); p['resource_changes'].append(creation(SESSIONS))
+        with self.assertRaises(g.SearchModeError): g.admit(p)
+
+    def test_read_back_must_match_every_managed_policy_exactly(self):
+        cases = {
+            'second policy missing': lambda p: self.inline(p).pop(0),
+            'unmanaged third policy': lambda p: self.inline(p).append({'name': 'extra', 'policy': DOC}),
+            'duplicate name': lambda p: self.inline(p).__setitem__(0, {'name': 'p', 'policy': DOC}),
+            'name differs': lambda p: self.inline(p)[0].update(name='other'),
+            'document differs': lambda p: self.inline(p)[0].update(policy=DOC),
+            'malformed entry': lambda p: self.inline(p).__setitem__(0, 'extra'),
+            'sibling changing': lambda p: change(p, SESSIONS).update(actions=['update']),
+            'sibling deleted': lambda p: change(p, SESSIONS).update(actions=['delete']),
+            'sibling not managed here': lambda p: state(p).pop(),
+            'null sibling values': lambda p: next(r for r in state(p) if r['address'] == SESSIONS).update(values=None),
+            'sibling own drift': lambda p: p['resource_drift'].append({'address': SESSIONS, 'change': {'actions': ['update'], 'before': {'id': 'role:s'}, 'after': {'id': 'role:s'}}}),
+        }
+        for name, mutate in cases.items():
+            p = after_sessions_read(); mutate(p)
+            with self.subTest(case=name), self.assertRaises(g.SearchModeError): g.admit(p)
+
+    def test_unmanaged_read_back_holds_while_no_sibling_exists(self):
+        p = sibling_plan(); self.inline(p).append({'name': 's', 'policy': SESSIONS_DOC})
+        with self.assertRaises(g.SearchModeError): g.admit(p)
+
+
 if __name__ == '__main__': unittest.main()

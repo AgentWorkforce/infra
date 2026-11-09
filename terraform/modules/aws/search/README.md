@@ -15,7 +15,50 @@
 - Application, search-slow and index-slow logs go to CloudWatch. Add `AUDIT_LOGS` once audit logging is configured in the security plugin.
 - Prerequisite: the `AWSServiceRoleForAmazonOpenSearchService` service-linked role.
 
-Search drift holds a plan, with one exception: the domain's `access_policies` and a workload role's `inline_policy`, which separate managed resources write, so Terraform reports them as drift after create. Each is admitted only as the sole changed field, while the managed resource is a no-op. The control is that an out-of-band edit makes the managed resource report its own drift, which still holds. Comparing values only ties the field to that resource's refreshed read; it does not prove the value matches the configuration.
+Search drift holds a plan, with one exception: the domain's `access_policies` and a workload role's `inline_policy`, which separate managed resources write, so Terraform reports them as drift after create. Each is admitted only as the sole changed field, while the managed resource is a no-op. A role's `inline_policy` must read back exactly the policies managed in state: the OpenSearch policy and, once created, the sessions read policy. The control is that an out-of-band edit makes the managed resource report its own drift, which still holds. Comparing values only ties the field to that resource's refreshed read; it does not prove the value matches the configuration.
+
+## Sessions bucket read
+
+Set `sessions_bucket_read` to give the indexer and reader roles read-only access to the sessions bucket: `s3:ListBucket` on the bucket, `s3:GetObject` on its objects and `kms:Decrypt` on its key through S3. There are no write permissions. Set `kms_key_arn` to the bucket's customer-managed key; leave it null when the bucket uses the AWS-managed `aws/s3` key, whose key policy already allows S3 use in the account.
+
+Leaving it unset adds nothing. Setting it creates one `sessions-read-<domain_name>` inline policy on each role, as a new `aws_iam_role_policy.sessions_read` resource: no role or domain is replaced, and the existing OpenSearch policy does not change. On a state that has not recorded `creation_mode` yet, apply once with the input unset so the marker enrolls, then set it; the classifier holds a plan that does both. With `workload_roles.create = false`, the module creates no policy: attach `sessions_read_policy_json` to your roles.
+
+### After apply
+
+IAM only opens the door: OpenSearch fine-grained access control still has to map each role. Both steps run once per domain, from inside the VPC, signed as `master_user_arn`. No other AWS change is needed, and pods pick up the IAM policy without a restart.
+
+Assume the master role, then read the endpoint and role ARNs:
+
+```sh
+aws sts assume-role --role-arn "$MASTER_ROLE_ARN" --role-session-name opensearch-role-mapping
+aws opensearch describe-domain --domain-name "$DOMAIN" --query 'DomainStatus.Endpoints.vpc' --output text
+```
+
+`indexer_role_arn` and `reader_role_arn` are module outputs. Export the assumed credentials and send each pair of requests signed for the `es` service, for example with `awscurl --service es --region "$REGION"`.
+
+1. Map the indexer to write on `relayhistory-*`, with cluster monitor:
+
+   ```sh
+   awscurl --service es --region "$REGION" -X PUT "https://$ENDPOINT/_plugins/_security/api/roles/relayhistory_indexer" \
+     -H 'Content-Type: application/json' \
+     -d '{"cluster_permissions":["cluster_monitor"],"index_permissions":[{"index_patterns":["relayhistory-*"],"allowed_actions":["write"]}]}'
+   awscurl --service es --region "$REGION" -X PUT "https://$ENDPOINT/_plugins/_security/api/rolesmapping/relayhistory_indexer" \
+     -H 'Content-Type: application/json' \
+     -d "{\"backend_roles\":[\"$INDEXER_ROLE_ARN\"]}"
+   ```
+
+2. Map the reader to read on `relayhistory-*`:
+
+   ```sh
+   awscurl --service es --region "$REGION" -X PUT "https://$ENDPOINT/_plugins/_security/api/roles/relayhistory_reader" \
+     -H 'Content-Type: application/json' \
+     -d '{"index_permissions":[{"index_patterns":["relayhistory-*"],"allowed_actions":["read"]}]}'
+   awscurl --service es --region "$REGION" -X PUT "https://$ENDPOINT/_plugins/_security/api/rolesmapping/relayhistory_reader" \
+     -H 'Content-Type: application/json' \
+     -d "{\"backend_roles\":[\"$READER_ROLE_ARN\"]}"
+   ```
+
+These are the minimum mappings. OpenSearch checks `_bulk` and `_msearch` at cluster level, so an indexer that sends `_bulk` also needs the `indices:data/write/bulk` cluster permission, one that creates its own indices needs `create_index` on the pattern, and a reader that sends `_msearch` or `_mget` needs `cluster_composite_ops_ro`.
 
 The mandatory pure classifier is `creation_mode.py`; it accepts only native saved-plan `show -json` objects for exact `module.search` addresses used by `examples/aws-environments` and `examples/aws-search-proof`. It accepts no caller mode, path override, skip flag or digest as authority. Both runner paths check before publishing the plan receipt and again before apply; existing exact-plan review, source/input seals and state locks remain required. Search-proof's closed AWS address/action contract remains unchanged apart from the new built-in marker.
 
@@ -44,6 +87,7 @@ Offline validation separates native HCL history from classifier fixtures. Both p
 | [aws_cloudwatch_log_resource_policy.this](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/cloudwatch_log_resource_policy) | resource |
 | [aws_eks_pod_identity_association.workload](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/eks_pod_identity_association) | resource |
 | [aws_iam_role.workload](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/iam_role) | resource |
+| [aws_iam_role_policy.sessions_read](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/iam_role_policy) | resource |
 | [aws_iam_role_policy.workload](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/iam_role_policy) | resource |
 | [aws_opensearch_domain.disposable](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/opensearch_domain) | resource |
 | [aws_opensearch_domain.this](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/opensearch_domain) | resource |
@@ -83,6 +127,7 @@ Offline validation separates native HCL history from classifier fixtures. Both p
 | log\_retention\_days | Retention of the published log groups. | `number` | `30` | no |
 | multi\_az\_with\_standby\_enabled | Multi-AZ with Standby (needs 3 AZs, dedicated masters and a multiple of 3 data nodes). | `bool` | `false` | no |
 | off\_peak\_window\_start | Off-peak window start (UTC) for service software updates and Auto-Tune. | ```object({ hours = number minutes = number })``` | ```{ "hours": 7, "minutes": 0 }``` | no |
+| sessions\_bucket\_read | Grant the indexer and reader roles read-only access to the sessions bucket: s3:ListBucket on the bucket, s3:GetObject on its objects, and kms:Decrypt on its key through S3 in this Region. Set kms\_key\_arn to the bucket's customer-managed key; leave it null for a bucket on the AWS-managed aws/s3 key. null grants nothing. With workload\_roles.create = false, attach sessions\_read\_policy\_json to your roles instead. | ```object({ bucket_arn = string kms_key_arn = optional(string) })``` | `null` | no |
 | tags | Tags applied to every resource. | `map(string)` | `{}` | no |
 | tls\_security\_policy | Minimum TLS policy for the HTTPS endpoint. | `string` | `"Policy-Min-TLS-1-2-PFS-2023-10"` | no |
 | workload\_roles | The two workload roles the module creates, trusted by EKS Pod Identity (and IRSA when oidc\_provider\_arn is set): indexer (the sessions-pipeline search stage: writes transcript events) and reader (the session read API: searches). Set create = false to skip them: attach indexer\_policy\_json / reader\_policy\_json to existing roles and list them in additional\_principal\_arns. EKS Pod Identity allows one association per ServiceAccount, so a ServiceAccount that already has a role (the sessions worker has the bucket role) needs a separate ServiceAccount for search. | ```object({ create = optional(bool, true) name_prefix = optional(string) path = optional(string, "/") permissions_boundary_arn = optional(string) oidc_provider_arn = optional(string) indexer_service_accounts = optional(list(object({ cluster_name = optional(string) namespace = string service_account = string })), []) reader_service_accounts = optional(list(object({ cluster_name = optional(string) namespace = string service_account = string })), []) })``` | `{}` | no |
@@ -100,5 +145,6 @@ Offline validation separates native HCL history from classifier fixtures. Both p
 | pod\_identity\_association\_ids | Pod Identity associations created, keyed by role/cluster/namespace/service-account. |
 | reader\_policy\_json | The reader's IAM policy, to attach to an existing role. |
 | reader\_role\_arn | Read API workload role (Pod Identity). Map it to an OpenSearch role with read permissions on the transcript indices. |
+| sessions\_read\_policy\_json | Read-only sessions bucket policy for existing roles (workload\_roles.create = false), or null when sessions\_bucket\_read is unset. |
 | url | https://<endpoint>. |
 <!-- END_TF_DOCS -->

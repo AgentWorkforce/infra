@@ -161,6 +161,23 @@ variable "workload_roles" {
   default = {}
 }
 
+variable "sessions_bucket_read" {
+  description = "Grant the indexer and reader roles read-only access to the sessions bucket: s3:ListBucket on the bucket, s3:GetObject on its objects, and kms:Decrypt on its key through S3 in this Region. Set kms_key_arn to the bucket's customer-managed key; leave it null for a bucket on the AWS-managed aws/s3 key. null grants nothing. With workload_roles.create = false, attach sessions_read_policy_json to your roles instead."
+  type = object({
+    bucket_arn  = string
+    kms_key_arn = optional(string)
+  })
+  default = null
+
+  validation {
+    condition = var.sessions_bucket_read == null ? true : (
+      can(regex("^arn:aws[a-z-]*:s3:::[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$", var.sessions_bucket_read.bucket_arn)) &&
+      (var.sessions_bucket_read.kms_key_arn == null ? true : can(regex("^arn:aws[a-z-]*:kms:[a-z0-9-]+:[0-9]{12}:key/[A-Za-z0-9-]+$", var.sessions_bucket_read.kms_key_arn)))
+    )
+    error_message = "sessions_bucket_read needs an exact S3 bucket ARN and, when set, an exact KMS key ARN (no wildcards, object paths or aliases)."
+  }
+}
+
 variable "additional_principal_arns" {
   description = "Extra IAM principals allowed to send HTTP requests to the domain (still subject to fine-grained access control)."
   type        = list(string)
