@@ -1,0 +1,22 @@
+# Copy to terraform.tfvars and replace each value.
+
+account_id       = "111111111111"
+region           = "us-east-1"
+eks_cluster_name = "my-cluster"
+domain           = "ar.example.com"
+
+database_subnet_ids        = ["subnet-aaaa", "subnet-bbbb"]
+database_security_group_id = "sg-database"
+
+sessions_bucket_name = "example-agent-relay-sessions"
+
+search_subnet_ids        = ["subnet-aaaa", "subnet-bbbb", "subnet-cccc"]
+search_security_group_id = "sg-search"
+search_admin_role_arn    = "arn:aws:iam::111111111111:role/opensearch-admin"
+
+# Optional. Defaults shown.
+# database_instance_class        = "db.r7g.large"
+# database_backup_retention_days = 35
+# search_instance_type           = "r7g.large.search"
+# kms_key_arn                    = null   # AWS-managed keys
+# enable_search                  = true
