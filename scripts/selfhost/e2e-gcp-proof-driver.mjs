@@ -682,7 +682,7 @@ async function phaseDeliveryPipeline() {
     if (events.status !== 200) return null;
     const rows = markerEvents(events.json?.events);
     if (!(rows.length > 0 && projectionMatches(rows))) return null;
-    const turnsRead = await call("GET", `${READ_API}/v1/sessions/${encodeURIComponent(state.session.sessionId)}/turns?source=${SOURCE}`, { token: read.accessToken });
+    const turnsRead = await call("GET", `${READ_API}/v1/sessions/${encodeURIComponent(state.session.sessionId)}/turns?${new URLSearchParams({ workspace: state.a.workspaceId, source: SOURCE })}`, { token: read.accessToken });
     return turnsRead.status === 200 && turnsRead.json?.turns?.length === 2 ? rows : null;
   });
   const ids = projected.map((event) => event.eventId);
