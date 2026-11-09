@@ -61,6 +61,12 @@
 {{- fail "auth.introspection settings require auth.mode=introspection" -}}
 {{- end -}}
 {{- if $pg -}}
+{{- if not (kindIs "map" .Values.postgres.startupProbe) }}{{ fail "postgres.startupProbe must contain bounded integer timings" }}{{ end -}}
+{{- range $field := list "periodSeconds" "timeoutSeconds" "failureThreshold" -}}
+{{- $value := index $.Values.postgres.startupProbe $field -}}
+{{- $maximum := 30 -}}{{- if eq $field "failureThreshold" }}{{ $maximum = 60 }}{{ end -}}
+{{- if or (not (include "relayfile.isInt" $value)) (lt (int64 $value) 1) (gt (int64 $value) (int64 $maximum)) }}{{ fail (printf "postgres.startupProbe.%s must be an integer from 1 to %d" $field $maximum) }}{{ end -}}
+{{- end -}}
 {{- if or (not (include "relayfile.isInt" .Values.replicaCount)) (ne (int64 .Values.replicaCount) 1) .Values.autoscaling.enabled }}{{ fail "postgres.enabled requires replicaCount=1 and autoscaling.enabled=false; concurrent snapshot writers are not qualified" }}{{ end -}}
 {{- if not (has .Values.server.backendProfile (list "production" "prod")) }}{{ fail "postgres.enabled requires server.backendProfile=production" }}{{ end -}}
 {{- if .Values.secrets.productionDsn }}{{ fail "postgres.enabled uses only postgres.runtimeSecret; remove secrets.productionDsn" }}{{ end -}}

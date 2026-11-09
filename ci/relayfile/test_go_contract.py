@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """Go bootstrap/auth render contracts; no credentials, SQL or installed proof."""
 import json
+import os
 from pathlib import Path
 import subprocess
+import tempfile
 import unittest
 
 import yaml
@@ -31,6 +33,25 @@ def pod(documents):
 
 
 class GoContract(unittest.TestCase):
+    def test_api_upgrade_script_requires_ci_and_owned_context_before_effects(self):
+        script = ROOT / "ci/relayfile/test_verified_upgrade.sh"
+        with tempfile.TemporaryDirectory() as directory:
+            directory = Path(directory)
+            calls = directory / "calls"
+            stub = directory / "kubectl"
+            stub.write_text('#!/bin/sh\nprintf "%s\\n" "$*" >> "$CALLS"\n[ "$*" = "config current-context" ] || exit 98\necho kind-foreign\n')
+            stub.chmod(0o755)
+            env = {**os.environ, "PATH": str(directory) + ":/usr/bin:/bin", "CALLS": str(calls), "CI": "false"}
+            result = subprocess.run(["/bin/bash", str(script)], env=env, text=True, capture_output=True, timeout=5)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("CI=true", result.stderr)
+            self.assertFalse(calls.exists())
+            env["CI"] = "true"
+            result = subprocess.run(["/bin/bash", str(script)], env=env, text=True, capture_output=True, timeout=5)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("kind-ci", result.stderr)
+            self.assertEqual(calls.read_text().splitlines(), ["config current-context"])
+
     def test_default_go_output_equals_explicit_disabled_contract(self):
         fixture = CHART / "ci/default-values.yaml"
         baseline = render(fixture=fixture)
@@ -40,13 +61,14 @@ class GoContract(unittest.TestCase):
         self.assertNotIn("command", current["containers"][0])
         self.assertNotIn("args", current["containers"][0])
         self.assertNotIn("automountServiceAccountToken", current)
+        self.assertNotIn("startupProbe", current["containers"][0])
         self.assertIn("RELAYFILE_PRODUCTION_DSN", {x["name"] for x in current["containers"][0]["env"]})
 
     def test_verified_command_projects_only_runtime_and_public_ca(self):
         documents = render()
         deployment = next(x for x in documents if x["kind"] == "Deployment")
         self.assertEqual(deployment["spec"]["replicas"], 1)
-        self.assertEqual(deployment["spec"]["strategy"], {"type": "Recreate"})
+        self.assertEqual(deployment["spec"]["strategy"], {"type": "Recreate", "rollingUpdate": None})
         self.assertFalse(any(x["kind"] in {"Job", "Secret"} for x in documents))
         current = pod(documents)
         self.assertFalse(current["automountServiceAccountToken"])
@@ -71,6 +93,25 @@ class GoContract(unittest.TestCase):
             "items": [{"key": "ca.crt", "path": "ca.crt"}]})
         self.assertNotIn("--operator-role", server["args"])
         self.assertNotIn("postgresql://", json.dumps(documents))
+
+    def test_verified_startup_budget_is_separate_from_liveness(self):
+        baseline = pod(render())["containers"][0]
+        self.assertEqual(baseline["startupProbe"], {"httpGet": {"path": "/health", "port": "http"},
+                         "periodSeconds": 10, "timeoutSeconds": 2, "failureThreshold": 30})
+        changed = pod(render(["--set", "postgres.startupProbe.periodSeconds=5",
+                              "--set", "postgres.startupProbe.timeoutSeconds=3",
+                              "--set", "postgres.startupProbe.failureThreshold=60"]))["containers"][0]
+        self.assertEqual(changed["startupProbe"]["periodSeconds"], 5)
+        self.assertEqual(changed["startupProbe"]["timeoutSeconds"], 3)
+        self.assertEqual(changed["startupProbe"]["failureThreshold"], 60)
+        for key in ("livenessProbe", "readinessProbe"):
+            self.assertEqual(changed[key], baseline[key])
+        for skip in ([], ["--skip-schema-validation"]):
+            for field, value in [("periodSeconds", "0"), ("periodSeconds", "31"),
+                                 ("timeoutSeconds", '"2"'), ("timeoutSeconds", "true"),
+                                 ("failureThreshold", "61"), ("failureThreshold", "0.5")]:
+                with self.subTest(skip=skip, field=field, value=value):
+                    self.assertIn("startupProbe", render([*skip, "--set-json", "postgres.startupProbe." + field + "=" + value], success=False))
 
     def test_introspection_is_file_only_exact_origin_no_jwks_or_legacy_dsn(self):
         current = pod(render())

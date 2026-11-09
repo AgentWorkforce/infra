@@ -239,6 +239,10 @@ postgres:
   runtimeSecret:
     name: ""
     key: database-url
+  startupProbe:
+    periodSeconds: 10
+    timeoutSeconds: 2
+    failureThreshold: 30 # Separate five-minute budget before liveness starts.
   ca:
     configMap: "" # Public CA only; projected read-only as ca.crt.
     key: ca.crt

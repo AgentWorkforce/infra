@@ -31,13 +31,22 @@
     },
     "postgres": {
       "type": "object", "additionalProperties": false,
-      "required": ["enabled", "database", "ownerRole", "runtimeRole", "runtimeSecret", "ca"],
+      "required": ["enabled", "database", "ownerRole", "runtimeRole", "runtimeSecret", "ca", "startupProbe"],
       "properties": {
         "enabled": {"type": "boolean"},
         "database": {"type": "string"},
         "ownerRole": {"type": "string"},
         "runtimeRole": {"type": "string"},
         "runtimeSecret": {"$ref": "#/definitions/secretRef"},
+        "startupProbe": {
+          "type": "object", "additionalProperties": false,
+          "required": ["periodSeconds", "timeoutSeconds", "failureThreshold"],
+          "properties": {
+            "periodSeconds": {"type": "integer", "minimum": 1, "maximum": 30},
+            "timeoutSeconds": {"type": "integer", "minimum": 1, "maximum": 30},
+            "failureThreshold": {"type": "integer", "minimum": 1, "maximum": 60}
+          }
+        },
         "ca": {
           "type": "object", "additionalProperties": false,
           "required": ["configMap", "key", "sha256"],

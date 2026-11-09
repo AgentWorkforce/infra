@@ -236,6 +236,9 @@ jobs:
       - name: Server-side dry-run apply
         run: scripts/ci/charts.sh dryrun
 
+      - name: Relayfile verified PostgreSQL strategy upgrade (zero replicas)
+        run: bash ci/relayfile/test_verified_upgrade.sh
+
       # The same sessions-pipeline profile matrix, applied server-side (dry run).
       - name: sessions-pipeline profile matrix (server-side dry run)
         run: ci/sessions-pipeline-profiles/matrix.sh dryrun

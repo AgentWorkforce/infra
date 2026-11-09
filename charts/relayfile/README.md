@@ -214,6 +214,12 @@ identity, schema, privileges and persisted data before starting workers or the
 listener. Wrong credentials, CA, hostname or database authority refuse startup.
 This mode requires one replica, disables autoscaling and uses Recreate rollouts;
 concurrent processes writing the stored workspace snapshot are not qualified.
+The upgrade explicitly clears Kubernetes' previous rolling-update strategy.
+`postgres.startupProbe` gives verification and persisted-state loading a separate
+five-minute default budget before liveness starts. Its `periodSeconds` and
+`timeoutSeconds` accept integers from 1 to 30, and `failureThreshold` from 1 to 60.
+The startup probe uses `/health` on the HTTP port and leaves subsequent liveness
+and readiness settings unchanged.
 
 The generated command is `relayfile postgres serve` with public contract flags
 and `--dsn-file /var/run/relayfile-postgres/database-url`. DSN and introspection

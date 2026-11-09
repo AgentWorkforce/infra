@@ -14,7 +14,9 @@ metadata:
   {{- end }}
 spec:
   {{- if .Values.postgres.enabled }}
-  strategy: { type: Recreate }
+  strategy:
+    type: Recreate
+    rollingUpdate: null
   {{- end }}
   {{- if not .Values.autoscaling.enabled }}
   replicas: {{ .Values.replicaCount }}
@@ -85,6 +87,15 @@ spec:
           {{- with .Values.extraEnvFrom }}
           envFrom:
             {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- if .Values.postgres.enabled }}
+          startupProbe:
+            httpGet:
+              path: /health
+              port: http
+            periodSeconds: {{ .Values.postgres.startupProbe.periodSeconds }}
+            timeoutSeconds: {{ .Values.postgres.startupProbe.timeoutSeconds }}
+            failureThreshold: {{ .Values.postgres.startupProbe.failureThreshold }}
           {{- end }}
           {{- with .Values.livenessProbe }}
           livenessProbe:
