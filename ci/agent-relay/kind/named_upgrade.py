@@ -603,6 +603,8 @@ def reconcile(stack, proof_path, control_archive=None, readiness_anchor=None):
     verify_seeded_readback(stack, record)
     verify_credentials(stack)
     verify_tls(stack)
+    if control_receipt is not None:
+        verify_control_cache(stack, control_receipt)
     # Check again before committing local metadata. A concurrent rollout must
     # produce a refusal, not a receipt assembled from incompatible snapshots.
     current = live_objects(stack)
@@ -617,8 +619,6 @@ def reconcile(stack, proof_path, control_archive=None, readiness_anchor=None):
             fail("active local state changed during reconciliation")
     if live_release(stack, "agent-relay")[1] != values:
         fail("installed application selection changed during reconciliation")
-    if control_receipt is not None:
-        verify_control_cache(stack, control_receipt)
     history = stack.state / ("named-history-" + secrets.token_hex(8))
     history.mkdir(mode=0o700)
     for name, data in original.items():

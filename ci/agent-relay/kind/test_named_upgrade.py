@@ -457,6 +457,24 @@ class NamedUpgrade(unittest.TestCase):
                 self.assertFalse(list(self.local.state.glob('naming-control-*.tar')))
 
 
+    def test_cache_export_cannot_overwrite_a_concurrent_local_selection(self):
+        packet=self.reconcile_packet();original=self.local.cmd;concurrent=copy.deepcopy(self.values)
+        concurrent["concurrentSelectionMustSurvive"]=True
+        before={p:p.read_bytes() for p in self.local.state.glob("*.json") if p!=self.local.overrides}
+        histories=set(self.local.state.glob("named-history-*"))
+        def cmd(args,**kwargs):
+            result=original(args,**kwargs)
+            if "image" in args and "save" in args:named.write(self.local.overrides,concurrent)
+            return result
+        self.local.cmd=cmd
+        with self.assertRaisesRegex(stack.StackError,"active local state changed"):
+            named.reconcile(self.local,packet/"activation-receipt.json",self.archive)
+        self.assertEqual(named.read(self.local.overrides),concurrent)
+        self.assertEqual(before,{p:p.read_bytes() for p in self.local.state.glob("*.json") if p!=self.local.overrides})
+        self.assertEqual(histories,set(self.local.state.glob("named-history-*")))
+        self.assertFalse(list(self.local.state.glob("naming-control-*.tar")))
+
+
 class StorageRenderer(unittest.TestCase):
     def test_pinned_minio_chart_retains_the_claim_and_only_renames_the_deployment(self):
         root=HERE.parents[2]
