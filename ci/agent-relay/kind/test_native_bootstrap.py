@@ -23,10 +23,13 @@ class OperatorStack(Stack):
         super().__init__(root)
         self.objects_by_name = {}; self.applied = []; self.effects = []
         self.owner_crea = False; self.owner_login = False; self.owner_oid = 101
+        self.profile = "core"; self.kubeconfig = root / "kubeconfig"; self.creation_nonce = None
+        self.cluster_uid_value = "44444444-4444-4444-8444-444444444444"
 
     def pull(self, image): self.effects.append(("pull", image))
     def load(self, image): self.effects.append(("load", image))
-    def cluster(self): self.effects.append(("cluster", self.name))
+    def cluster(self): raise AssertionError("legacy reusable cluster primitive forbidden")
+    def cluster_uid(self, kubeconfig): return self.cluster_uid_value
     def cni(self): self.effects.append(("cni", None))
 
     def apply(self, doc, chart=False):
@@ -38,12 +41,25 @@ class OperatorStack(Stack):
             self.objects_by_name["persistentvolumeclaim/data-postgres-0"] = {"metadata": {"uid": "22222222-2222-4222-8222-222222222222"}}
 
     def cmd(self, args, **kw):
+        if args[:3] == ["kind", "create", "cluster"]:
+            import yaml
+            config = yaml.safe_load(kw["data"])
+            self.creation_nonce = config["nodes"][0]["labels"]["agentrelay-native-creation"]
+            self.clusters = self.name
+            Path(args[args.index("--kubeconfig") + 1]).write_bytes(b"synthetic-kubeconfig")
+            self.effects.append(("create-cluster", self.name))
+            return SimpleNamespace(stdout="")
+        if args[0] == "kubectl" and args[-4:] == ["get", "nodes", "-o", "json"]:
+            return SimpleNamespace(stdout=json.dumps({"items": [self.node()]}))
         if args[:2] == ["helm", "version"]: return SimpleNamespace(stdout="v4.3.1")
         if args[:2] == ["helm", "install"]:
             self.calls.append((args, kw)); self.effects.append(("install-storage", "kind-locker"))
             self.objects_by_name["persistentvolumeclaim/locker"] = {"metadata": {"uid": "33333333-3333-4333-8333-333333333333"}}
             return SimpleNamespace(stdout="")
         return super().cmd(args, **kw)
+
+    def node(self):
+        return {"metadata": {"labels": {"agentrelay-kind-owner": "infra", "agentrelay-native-creation": self.creation_nonce}}}
 
     def k(self, *args, **kw):
         self.calls.append((args, kw))
@@ -54,6 +70,7 @@ class OperatorStack(Stack):
             obj = self.objects_by_name.get(key)
             if "--ignore-not-found=true" in args: return SimpleNamespace(stdout="" if obj is None else key)
             if key == "namespace/kube-system": obj = {"metadata": {"uid": "44444444-4444-4444-8444-444444444444"}}
+            if key == "nodes": obj = {"items": [self.node()]}
             if obj is None: raise NativeRecipeError("synthetic_missing_resource")
             return SimpleNamespace(stdout=json.dumps(obj))
         if args[0] == "create":
@@ -171,6 +188,83 @@ class NativeBootstrapTests(unittest.TestCase):
         with self.assertRaisesRegex(NativeRecipeError, "not_retry"): self.adapter.prepare_infrastructure(self.s, self.adapter._inspected)
         self.assertEqual(self.stack.effects, before)
 
+    def test_raced_cluster_or_marker_after_inspect_refuses_before_pull_or_resource_writes(self):
+        self.observed_preflight()
+        for race in ("cluster", "marker", "ready", "kubeconfig"):
+            with self.subTest(race=race):
+                path = {"marker": self.stack.marker, "ready": self.root / "ready.json",
+                        "kubeconfig": self.stack.kubeconfig}.get(race)
+                if path: path.write_text("raced-state")
+                else: self.stack.clusters = self.stack.name
+                with patch.object(TlsMaterial, "verify", return_value=None):
+                    with self.assertRaisesRegex(NativeRecipeError, "fresh_cluster_.*appeared"):
+                        self.adapter.prepare_infrastructure(self.s, self.adapter._inspected)
+                self.assertEqual(self.stack.effects, [])
+                if path: path.unlink()
+                self.stack.clusters = ""
+
+    def test_race_during_pull_refuses_create_and_all_kubernetes_writes(self):
+        self.observed_preflight()
+        def pull(image):
+            self.stack.effects.append(("pull", image)); self.stack.clusters = self.stack.name
+        self.stack.pull = pull
+        with patch.object(TlsMaterial, "verify", return_value=None):
+            with self.assertRaisesRegex(NativeRecipeError, "fresh_cluster_name_appeared"):
+                self.adapter.prepare_infrastructure(self.s, self.adapter._inspected)
+        self.assertTrue(self.stack.effects and all(e[0] == "pull" for e in self.stack.effects))
+
+    def test_creation_nonce_or_new_marker_race_refuses_before_cni_or_resource_writes(self):
+        self.observed_preflight(); original = self.stack.cmd
+        def raced(args, **kw):
+            result = original(args, **kw)
+            if args[:3] == ["kind", "create", "cluster"]: self.stack.creation_nonce = "wrong-attempt"
+            return result
+        self.stack.cmd = raced
+        with patch.object(TlsMaterial, "verify", return_value=None):
+            with self.assertRaisesRegex(NativeRecipeError, "creation_binding_mismatch"):
+                self.adapter.prepare_infrastructure(self.s, self.adapter._inspected)
+        self.assertTrue(all(e[0] in {"pull", "create-cluster"} for e in self.stack.effects))
+        self.assertFalse(self.stack.marker.exists())
+
+    def test_marker_appearing_during_creation_is_never_overwritten(self):
+        self.observed_preflight(); original = self.stack.cmd
+        def raced(args, **kw):
+            result = original(args, **kw)
+            if args[:3] == ["kind", "create", "cluster"]: self.stack.marker.write_text("other-owner-receipt")
+            return result
+        self.stack.cmd = raced
+        with patch.object(TlsMaterial, "verify", return_value=None):
+            with self.assertRaisesRegex(NativeRecipeError, "state_raced_creation"):
+                self.adapter.prepare_infrastructure(self.s, self.adapter._inspected)
+        self.assertEqual(self.stack.marker.read_text(), "other-owner-receipt")
+        self.assertTrue(all(e[0] in {"pull", "create-cluster"} for e in self.stack.effects))
+        self.assertFalse(self.stack.kubeconfig.exists())
+
+    def test_uid_replacement_before_cni_is_not_adopted(self):
+        self.observed_preflight(); calls = []
+        def changed_uid(path):
+            calls.append(path)
+            return self.stack.cluster_uid_value if len(calls) == 1 else "different-uid"
+        self.stack.cluster_uid = changed_uid
+        with patch.object(TlsMaterial, "verify", return_value=None):
+            with self.assertRaisesRegex(NativeRecipeError, "uid_changed"):
+                self.adapter.prepare_infrastructure(self.s, self.adapter._inspected)
+        self.assertTrue(all(e[0] in {"pull", "create-cluster"} for e in self.stack.effects))
+
+    def test_kind_name_race_at_create_failure_never_falls_back_to_reuse(self):
+        self.observed_preflight(); original = self.stack.cmd
+        def create_collision(args, **kw):
+            if args[:3] == ["kind", "create", "cluster"]:
+                self.stack.clusters = self.stack.name
+                raise NativeRecipeError("kind_name_already_exists")
+            return original(args, **kw)
+        self.stack.cmd = create_collision
+        with patch.object(TlsMaterial, "verify", return_value=None):
+            with self.assertRaisesRegex(NativeRecipeError, "kind_name_already_exists"):
+                self.adapter.prepare_infrastructure(self.s, self.adapter._inspected)
+        self.assertTrue(all(e[0] == "pull" for e in self.stack.effects))
+        self.assertFalse(self.stack.marker.exists())
+
     def test_operator_instance_change_or_existing_owner_credential_never_resets_it(self):
         self.fresh()
         self.stack.objects_by_name["statefulset/postgres"]["metadata"]["uid"] = "foreign"
@@ -225,6 +319,43 @@ class RealPkiTests(unittest.TestCase):
         with self.assertRaises(NativeRecipeError): material.verify(["wrong.kind.agentrelay.com"])
         other = fresh_tls_material(hosts)
         with self.assertRaises(NativeRecipeError): TlsMaterial(other.ca, material.certificate, material.private_key).verify(hosts)
+
+    def test_extra_pem_private_material_refused_before_transport(self):
+        hosts = ["postgres.agent-relay.svc.cluster.local", "relay.kind.agentrelay.com", "cast.kind.agentrelay.com",
+                 "history.kind.agentrelay.com", "files.kind.agentrelay.com"]
+        material = fresh_tls_material(hosts)
+        ca_der = base64.b64decode(b"".join(material.ca.splitlines()[1:-1]))
+        hidden_der = b"-----BEGIN CERTIFICATE-----\n" + base64.encodebytes(ca_der + b"extra-object") + b"-----END CERTIFICATE-----\n"
+        key_der = base64.b64decode(b"".join(material.private_key.splitlines()[1:-1]))
+        hidden_key = b"-----BEGIN PRIVATE KEY-----\n" + base64.encodebytes(key_der + b"extra-object") + b"-----END PRIVATE KEY-----\n"
+        for ca, leaf, key, error in [
+            (material.ca + material.private_key, material.certificate, material.private_key, "public_ca"),
+            (material.ca + material.ca, material.certificate, material.private_key, "public_ca"),
+            (b"unexpected\n" + material.ca, material.certificate, material.private_key, "public_ca"),
+            (hidden_der, material.certificate, material.private_key, "public_ca"),
+            (material.ca, material.certificate + material.private_key, material.private_key, "tls_leaf"),
+            (material.ca, material.certificate, material.private_key + material.ca, "tls_key"),
+            (material.ca, material.certificate, hidden_key, "tls_key"),
+        ]:
+            with self.subTest(error=error):
+                fixture = NativeBootstrapTests("test_applying_adapter_is_still_incomplete_and_cannot_dispatch")
+                fixture.setUp()
+                try:
+                    bad = TlsMaterial(ca, leaf, key); fixture.adapter.tls_material = bad
+                    fixture.s["postgresCa"]["sha256"] = bad.ca_sha256
+                    fixture.observed_preflight()
+                    with self.assertRaisesRegex(NativeRecipeError, error):
+                        fixture.adapter.prepare_infrastructure(fixture.s, fixture.adapter._inspected)
+                    self.assertEqual(fixture.stack.effects, [])
+                finally: fixture.doCleanups()
+
+    def test_ca_and_server_leaf_constraints_are_required(self):
+        hosts = ["postgres.agent-relay.svc.cluster.local"]
+        material = fresh_tls_material(hosts)
+        with self.assertRaisesRegex(NativeRecipeError, "public_ca_constraints"):
+            TlsMaterial(material.certificate, material.certificate, material.private_key).verify(hosts)
+        with self.assertRaisesRegex(NativeRecipeError, "tls_leaf_server_constraints"):
+            TlsMaterial(material.ca, material.ca, material.private_key).verify(hosts)
 
 
 if __name__ == "__main__": unittest.main()

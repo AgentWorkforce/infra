@@ -51,6 +51,29 @@ def require_hostname_verifier():
     require(b"-verify_hostname" in p.stdout + p.stderr, "openssl_hostname_verification_required")
 
 
+def exact_pem(raw, labels, code):
+    """Do not let OpenSSL's permissive first-object parser hide extra material."""
+    require(isinstance(raw, bytes) and 0 < len(raw) <= 8192, code)
+    matches = [label for label in labels if re.fullmatch(
+        rb"-----BEGIN " + label.encode() + rb"-----\r?\n(?:[A-Za-z0-9+/=]+\r?\n)+-----END " +
+        label.encode() + rb"-----(?:\r?\n)?", raw)]
+    require(len(matches) == 1, code)
+    encoded = b"".join(raw.splitlines()[1:-1])
+    try:
+        der = base64.b64decode(encoded, validate=True)
+    except ValueError:
+        raise NativeRecipeError(code) from None
+    require(len(der) >= 2 and der[0] == 0x30, code)
+    count = der[1] & 0x7f if der[1] & 0x80 else 0
+    require(not (der[1] & 0x80) or (0 < count <= 4 and len(der) > 2 + count and der[2] != 0), code)
+    length = int.from_bytes(der[2:2 + count], "big") if count else der[1]
+    require(2 + count + length == len(der) and (not count or length >= 128), code)
+    if matches == ["CERTIFICATE"]:
+        # x509 accepts a first ASN.1 object too. Bind the entire decoded PEM,
+        # not just that first object, before publishing the original bytes.
+        require(openssl(["x509", "-outform", "DER"], data=raw) == der, code)
+
+
 @dataclass(frozen=True)
 class TlsMaterial:
     ca: bytes = field(repr=False)
@@ -62,7 +85,19 @@ class TlsMaterial:
         return hashlib.sha256(self.ca).hexdigest()
 
     def verify(self, hosts):
+        exact_pem(self.ca, ("CERTIFICATE",), "public_ca_must_be_exactly_one_certificate")
+        exact_pem(self.certificate, ("CERTIFICATE",), "tls_leaf_must_be_exactly_one_certificate")
+        exact_pem(self.private_key, ("PRIVATE KEY", "RSA PRIVATE KEY", "EC PRIVATE KEY"),
+                  "tls_key_must_be_exactly_one_private_key")
         require_hostname_verifier()
+        ca_extensions = openssl(["x509", "-noout", "-ext", "basicConstraints,keyUsage"], data=self.ca)
+        require(b"CA:TRUE" in ca_extensions and b"Certificate Sign" in ca_extensions,
+                "public_ca_constraints_required")
+        openssl(["x509", "-checkend", "86400", "-noout"], data=self.ca)
+        openssl(["verify", "-x509_strict", "-check_ss_sig", "-CAfile", "@FD0", "@FD1"], (self.ca, self.ca))
+        leaf_extensions = openssl(["x509", "-noout", "-ext", "basicConstraints,extendedKeyUsage"], data=self.certificate)
+        require(b"CA:FALSE" in leaf_extensions and b"TLS Web Server Authentication" in leaf_extensions,
+                "tls_leaf_server_constraints_required")
         public = openssl(["x509", "-pubkey", "-noout"], data=self.certificate)
         paired = openssl(["pkey", "-pubout"], data=self.private_key)
         require(public == paired, "tls_leaf_key_mismatch")
@@ -124,6 +159,7 @@ class NativeBootstrapAdapter(NativeReadOnlyAdapter):
         self._verified = None; self._inspected = None; self._rendered = False
         self._pg_uid = None; self._owner_oid = None; self._completed = set()
         self._selected_sha = None; self._infrastructure_started = False
+        self._created_cluster = None
 
     def _bind_selection(self, selected):
         validated = selection(selected)
@@ -209,6 +245,73 @@ class NativeBootstrapAdapter(NativeReadOnlyAdapter):
             text = "BEGIN READ ONLY;\nSET LOCAL statement_timeout='30s';\n" + text + "\nROLLBACK;\n"
         return self.stack.k(*args, data=text, sensitive=True).stdout
 
+    def _fresh_absence(self):
+        require(not any(p.exists() or p.is_symlink() for p in
+                        (self.stack.marker, self.stack.state / "ready.json", self.stack.kubeconfig)),
+                "fresh_cluster_local_state_appeared")
+        clusters = self.stack.cmd(["kind", "get", "clusters"], timeout=30).stdout.splitlines()
+        require(self.stack.name not in clusters, "fresh_cluster_name_appeared")
+
+    @staticmethod
+    def _exclusive_json(path, value):
+        try:
+            stream = open(path, "x", encoding="utf8")
+        except FileExistsError:
+            raise NativeRecipeError("fresh_creation_local_claim_or_receipt_exists") from None
+        with stream:
+            os.chmod(path, 0o600)
+            json.dump(value, stream); stream.write("\n"); stream.flush(); os.fsync(stream.fileno())
+
+    def _fresh_cluster(self):
+        """Create only; never reuse/adopt a cluster from a stale fresh inspection.
+
+        Kind arbitrates the cluster name. A creation nonce additionally binds
+        the returned kubeconfig/UID to this attempt before any resource apply.
+        Failed/partial attempts and their claim remain for explicit recovery.
+        """
+        from stack import NODE
+        self._fresh_absence()
+        nonce = secrets.token_hex(16)
+        claim = self.stack.state / "native-fresh-creation.json"
+        self._exclusive_json(claim, {"name": self.stack.name, "nonce": nonce})
+        self._fresh_absence()  # recheck immediately before create, after exclusive claim
+        candidate = self.stack.state / ("native-created-" + nonce + ".kubeconfig")
+        config = {"kind": "Cluster", "apiVersion": "kind.x-k8s.io/v1alpha4",
+                  "networking": {"disableDefaultCNI": True, "podSubnet": "192.168.0.0/16"},
+                  "nodes": [{"role": "control-plane", "labels": {"agentrelay-kind-owner": "infra",
+                            "agentrelay-native-creation": nonce}, "extraPortMappings": [
+                            {"containerPort": 30080, "hostPort": 8080, "listenAddress": "127.0.0.1"},
+                            {"containerPort": 30443, "hostPort": 8443, "listenAddress": "127.0.0.1"}]}]}
+        self.stack.cmd(["kind", "create", "cluster", "--name", self.stack.name, "--image", NODE,
+                        "--config", "-", "--kubeconfig", candidate], data=yaml.safe_dump(config), timeout=300, sensitive=True)
+        candidate.chmod(0o600)
+        uid = self.stack.cluster_uid(candidate)
+        nodes = json.loads(self.stack.cmd(["kubectl", "--kubeconfig", candidate,
+                           "--context", "kind-" + self.stack.name, "get", "nodes", "-o", "json"], sensitive=True).stdout)["items"]
+        require(len(nodes) == 1 and nodes[0]["metadata"].get("labels", {}).get("agentrelay-native-creation") == nonce and
+                nodes[0]["metadata"].get("labels", {}).get("agentrelay-kind-owner") == "infra",
+                "fresh_cluster_creation_binding_mismatch")
+        require(not any(p.exists() or p.is_symlink() for p in
+                        (self.stack.marker, self.stack.state / "ready.json", self.stack.kubeconfig)),
+                "fresh_cluster_state_raced_creation")
+        docker_host = self.stack.env.get("DOCKER_HOST")
+        require(isinstance(docker_host, str) and docker_host.startswith("unix://"), "fresh_local_docker_required")
+        record = {"version": 1, "name": self.stack.name, "nodeImage": NODE, "profile": self.stack.profile,
+                  "dockerHost": docker_host, "clusterUid": uid}
+        self._exclusive_json(self.stack.marker, record)
+        with open(self.stack.kubeconfig, "xb") as stream:
+            os.chmod(self.stack.kubeconfig, 0o600); stream.write(candidate.read_bytes())
+        self._created_cluster = {"uid": uid, "nonce": nonce, "record": record}
+        self._require_created_cluster()
+
+    def _require_created_cluster(self):
+        binding = self._created_cluster
+        require(binding and json.loads(self.stack.marker.read_text()) == binding["record"] and
+                self.stack.cluster_uid(self.stack.kubeconfig) == binding["uid"], "fresh_cluster_uid_changed")
+        nodes = self._get("nodes", namespace=False)["items"]
+        require(len(nodes) == 1 and nodes[0]["metadata"].get("labels", {}).get("agentrelay-native-creation") == binding["nonce"],
+                "fresh_cluster_creation_binding_changed")
+
     def prepare_infrastructure(self, selected, facts):
         self._preflight(selected, fresh=True)
         require(not self._infrastructure_started, "fresh_infrastructure_attempt_requires_review_not_retry")
@@ -222,9 +325,12 @@ class NativeBootstrapAdapter(NativeReadOnlyAdapter):
         self.tls_material.verify(hosts)
         require(self.tls_material.ca_sha256 == selected["postgresCa"]["sha256"], "fresh_tls_ca_not_bound_to_selection")
         self._minio_source()
+        self._fresh_absence()
         self._infrastructure_started = True
         self.stack.pull(POSTGRES); self.stack.pull(PROBE)
-        self.stack.cluster(); self.stack.cni()
+        self._fresh_cluster()
+        self._require_created_cluster(); self.stack.cni()
+        self._require_created_cluster()
         self.stack.apply({"apiVersion": "v1", "kind": "Namespace", "metadata": {"name": "agent-relay"}})
         for d in self._verified_render_docs:
             if d["kind"] in {"NetworkPolicy", "ServiceAccount"}:
