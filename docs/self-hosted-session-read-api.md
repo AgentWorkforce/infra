@@ -10,7 +10,15 @@ The session read API now has its own chart, `charts/session-read-api`, which ins
 (the default), it renders no read API objects. Enabling it requires an explicit
 compatible image digest, a configuration Secret, public HTTPS origin with multi-label DNS (no credentials, IP/single-label/local
 host, path, query or fragment; optional port 1–65535),
-coverage floor (`completeSince`), workspace allowlist and an explicit auth mode.
+workspace allowlist and an explicit auth mode. `completeSince` defaults to
+`epoch` for a new self-host store populated only by its own ingest: the store is
+complete from inception. It renders `READ_API_COMPLETE_SINCE`, not
+`SESSION_READ_COMPLETE_SINCE`. The installation timestamp is not a coverage floor;
+using it refuses detail for older sessions and can return `501 history_floor`
+for unbounded searches. When importing partial legacy history, explicitly set
+the earliest ISO timestamp from which coverage is complete and align the
+indexer's floor. Preserve that explicit value on upgrades; do not claim epoch
+coverage for a partial import.
 A separate Secret supplies the optional relaycontrol introspection credential.
 `sessionReadApi.search.backend` defaults to `postgres` and renders `SEARCH_INDEX_BACKEND`.
 It selects the registered adapter in the compatible upstream image; it does not
