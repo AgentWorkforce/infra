@@ -11,8 +11,12 @@ metadata:
     {{- include "sessions-pipeline-worker.componentLabels" (dict "context" $ "component" $component) | nindent 4 }}
 spec:
   replicas: {{ $c.replicas }}
-  {{- if or (eq $component "hoopdb-indexer") (and (eq $component "session-brief") $.Values.nativeBrief.enabled) }}
-  # Bound the indexer reconcile and native model worker to one active Pod.
+  {{- if eq $component "hoopdb-indexer" }}
+  # Never two indexers at once: the reconcile loop is not leader-elected.
+  strategy:
+    type: Recreate
+  {{- else if and (eq $component "session-brief") $.Values.nativeBrief.enabled }}
+  # Never overlap native model workers during an upgrade.
   strategy:
     type: Recreate
   {{- end }}
