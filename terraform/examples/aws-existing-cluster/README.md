@@ -37,7 +37,12 @@ Use your usual remote state backend: add a `backend "s3"` block, or pass
 
 The outputs feed the Helm install: `database_host`, `sessions_bucket`,
 `search_url` and `certificate_arn`. Install the chart with the `release_name` and
-`namespace` set here, because Pod Identity binds to the ServiceAccount names.
+`namespace` set here, because Pod Identity binds to the ServiceAccount names. If
+you change `release_name` from `agent-relay`, also set these chart values to
+`<release>-search-indexer`, `<release>-session-read` and
+`<release>-session-ingest-api`: `sessions-pipeline.searchIndexer.serviceAccount.name`,
+`sessions-pipeline.sessionReadApi.serviceAccountName` (with
+`serviceAccountCreate: true`) and `sessions-pipeline.ingestEdge.serviceAccountName`.
 
 With search on, map `search_roles` to OpenSearch roles as the admin role before
 the first install: see "After apply" in
