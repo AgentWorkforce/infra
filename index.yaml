@@ -1631,6 +1631,34 @@ entries:
       artifacthub.io/license: Apache-2.0
     apiVersion: v2
     appVersion: 12.7.0
+    created: "2026-11-09T03:23:54.161519057Z"
+    description: Portable Relaycast core for self-hosted Agent Relay deployments
+    digest: d5ee7c305d92ea87a2c4fac68b10d0733cb9a40c4d72b0afeacc0080ee5d66de
+    home: https://github.com/AgentWorkforce/relaycast
+    keywords:
+    - relaycast
+    - agents
+    - realtime
+    - self-hosted
+    - agentworkforce
+    kubeVersion: '>=1.22.0-0'
+    maintainers:
+    - name: AgentWorkforce
+      url: https://github.com/AgentWorkforce/infra
+    name: relaycast
+    sources:
+    - https://github.com/AgentWorkforce/relaycast
+    - https://github.com/AgentWorkforce/infra/tree/main/charts/relaycast
+    type: application
+    urls:
+    - https://github.com/AgentWorkforce/infra/releases/download/relaycast-0.3.6/relaycast-0.3.6.tgz
+    version: 0.3.6
+  - annotations:
+      agentworkforce.dev/license-scope: First-party chart code only; dependencies
+        and images retain their own licenses.
+      artifacthub.io/license: Apache-2.0
+    apiVersion: v2
+    appVersion: 12.7.0
     created: "2026-11-07T21:23:45.376535253Z"
     description: Portable Relaycast core for self-hosted Agent Relay deployments
     digest: 79187e3a59b52b477c85f0bf491fcc50588cbe64eb4c431c25f0ecbaa0a95ca1
@@ -3127,4 +3155,4 @@ entries:
     urls:
     - https://github.com/AgentWorkforce/infra/releases/download/telemetry-collector-0.1.0/telemetry-collector-0.1.0.tgz
     version: 0.1.0
-generated: "2026-11-09T03:02:34.482427425Z"
+generated: "2026-11-09T03:23:54.161712289Z"
