@@ -73,6 +73,17 @@ class RetainedWorkloads(unittest.TestCase):
                 self.assertNotEqual(result.returncode, 0)
                 self.assertIn(missing, result.stderr)
 
+    def test_relayauth_image_contract_applies_when_deployment_is_disabled(self):
+        for enabled in (True, False):
+            for digest, message in (("not-a-digest", "image.digest must be sha256:"),
+                                    ("", "image.digest is required")):
+                with self.subTest(enabled=enabled, digest=digest):
+                    result = render("relayauth", ["--set-json",
+                        "deployment.enabled=" + json.dumps(enabled),
+                        "--set-string", "image.digest=" + digest])
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIn(message, result.stderr)
+
     def test_umbrella_retirement_removes_exact_five_and_keeps_all_others(self):
         command = ["helm", "template", "retained", "charts/agent-relay", "-n", "retained",
                    "--no-hooks", "-f", "charts/agent-relay/values-gcp-proof.yaml",
