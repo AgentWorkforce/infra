@@ -97,7 +97,7 @@ EKS_ONLY=false
 if [[ "${1:-}" == --eks-checks-only ]]; then EKS_ONLY=true; shift; fi
 $EKS_ONLY || bash "$HERE/e2e-gcp-proof.sh" --context eks-proof --namespace "$NS" --sessions-namespace "$NS" \
   --secret "$SECRET" --edge alb --dashboard-origin "$DASHBOARD" --api-origin "$API" \
-  --cast-origin "$CAST" --history-origin "$HISTORY" --relayauth-url http://relayauth:8787 --require-public "$@" || rc=$?
+  --cast-origin "$CAST" --history-origin "$HISTORY" --read-api-url "$HISTORY" --relayauth-url http://relayauth:8787 --require-public "$@" || rc=$?
 
 printf '\n== EKS checks (%s)\n' "$(date -u +%FT%TZ)"
 EKS_FAILS=0

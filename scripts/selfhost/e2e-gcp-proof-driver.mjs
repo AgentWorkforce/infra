@@ -599,7 +599,10 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 // The pipeline indexes asynchronously (ingest edge, consumer, read API), so a
 // read proves durability only after polling.
-async function waitFor(label, check, timeoutMs = 240_000) {
+// The pipeline indexer reconciles on a 5-minute tick, so a new session can take
+// longer than one tick to appear in the read API's directory and search.
+const VISIBLE_TIMEOUT_MS = PIPELINE ? 420_000 : 240_000;
+async function waitFor(label, check, timeoutMs = VISIBLE_TIMEOUT_MS) {
   const deadline = Date.now() + timeoutMs;
   for (;;) {
     const result = await check();
@@ -679,7 +682,7 @@ async function phaseDeliveryPipeline() {
     if (events.status !== 200) return null;
     const rows = markerEvents(events.json?.events);
     if (!(rows.length > 0 && projectionMatches(rows))) return null;
-    const turnsRead = await call("GET", `${READ_API}/v1/sessions/${encodeURIComponent(state.session.sessionId)}/turns?source=${SOURCE}`, { token: read.accessToken });
+    const turnsRead = await call("GET", `${READ_API}/v1/sessions/${encodeURIComponent(state.session.sessionId)}/turns?${new URLSearchParams({ workspace: state.a.workspaceId, source: SOURCE })}`, { token: read.accessToken });
     return turnsRead.status === 200 && turnsRead.json?.turns?.length === 2 ? rows : null;
   });
   const ids = projected.map((event) => event.eventId);
@@ -809,7 +812,7 @@ async function dashboardSearch(tenant, workspaceId, query) {
 
 async function directSearch(token, tenant, query) {
   const url = PIPELINE
-    ? `${READ_API}/v1/events?${new URLSearchParams({ q: query, limit: "50" })}`
+    ? `${READ_API}/v1/events?${new URLSearchParams({ workspace: tenant.workspaceId, q: query, limit: "50" })}`
     : `${READ_API}/v1/sessions?${new URLSearchParams({ workspace: tenant.workspaceId, q: query, limit: "50" })}`;
   const response = await call("GET", url, { token });
   const rows = response.status === 200 ? (response.json?.events ?? response.json?.sessions ?? []) : [];
