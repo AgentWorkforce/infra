@@ -346,5 +346,6 @@ const {generation}=await import('/app/src/hoopdb/migrate.ts');console.log(JSON.s
                 not any(n.startswith("SESSION_READ_API_") for n in ce), "control_native_readback_or_independent_issuer_mismatch")
         for name in ("session-ingest-api", "session-summary-worker", "session-status-worker", "session-metadata-indexer"):
             require(not deployed.get(name, {}).get("spec", {}).get("replicas", 0), "legacy_writer_rendered_active")
+        self._verified_render_docs = docs
         return {"legacyWriterCount": 0, "managedNative": True, "ownerBuffered": False, "publication": False,
                 "readerLoginAdvertisesSync": True}
