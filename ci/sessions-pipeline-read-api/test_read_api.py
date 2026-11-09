@@ -59,14 +59,125 @@ class ReadApi(unittest.TestCase):
         for doc in self.render():
             self.assertEqual(doc["metadata"]["name"], "test-read-api")
 
-    def test_control_only_is_the_default_and_self_issued_is_not_offered(self):
-        env = self.env_of(self.render())
+    def test_control_only_stays_the_default_and_unknown_modes_refuse(self):
+        docs = self.render()
+        env = self.env_of(docs)
         self.assertEqual(env["READ_API_AUTH_MODE"]["value"], "relaycontrol_only")
         self.assertNotIn("READ_API_INTERNAL_SECRET", env)
-        self.assertIn("auth.mode must be", self.render(overlay={"auth": {"mode": "self_issued"}}, fail=True))
-        for name in ("READ_API_AUTH_MODE", "READ_API_INTERNAL_SECRET", "READ_API_ACCESS_TOKEN_TTL_SECONDS"):
+        self.assertNotIn("READ_API_ACCESS_TOKEN_TTL_SECONDS", env)
+        self.assertEqual(sorted(d["kind"] for d in docs), ["Deployment", "Service"])
+        self.assertIn("auth.mode must be", self.render(overlay={"auth": {"mode": "other"}}, fail=True))
+        for name in ("READ_API_AUTH_MODE", "READ_API_INTERNAL_SECRET", "READ_API_INTERNAL_SECRET_PREVIOUS", "READ_API_ACCESS_TOKEN_TTL_SECONDS", "READ_API_EVENT_MESSAGE_IDS"):
             with self.subTest(name=name):
                 self.assertIn("managed", self.render(overlay={"extraEnv": [{"name": name, "valueFrom": {"secretKeyRef": {"name": "x", "key": "x"}}}]}, fail=True))
+
+    def self_issued(self, **changes):
+        """The fixture in self_issued mode; each change is a dotted path set on a complete overlay."""
+        overlay = {
+            "auth": {"mode": "self_issued", "relaycontrol": {"enabled": False, "url": "", "existingSecret": ""},
+                     "selfIssued": {"internalSecret": {"existingSecret": "read-api-internal"}}},
+            "networkPolicy": {"enabled": True, "controlFrom": [{"podSelector": {"matchLabels": {"app.kubernetes.io/name": "relay-control"}}}]},
+        }
+        for path, value in changes.items():
+            node = overlay
+            *parents, leaf = path.split("__")
+            for key in parents:
+                node = node.setdefault(key, {})
+            node[leaf] = value
+        return overlay
+
+    def test_self_issued_renders_only_its_own_token_family(self):
+        env = self.env_of(self.render(overlay=self.self_issued()))
+        self.assertEqual(env["READ_API_AUTH_MODE"]["value"], "self_issued")
+        self.assertEqual(env["READ_API_ORIGIN"]["value"], "https://history.kind.agentrelay.com:8443")
+        self.assertEqual(env["READ_API_ACCESS_TOKEN_TTL_SECONDS"]["value"], "300")
+        self.assertEqual(env["READ_API_INTERNAL_SECRET"]["valueFrom"]["secretKeyRef"], {"name": "read-api-internal", "key": "READ_API_INTERNAL_SECRET"})
+        self.assertNotIn("READ_API_INTERNAL_SECRET_PREVIOUS", env)
+        for name in ("RELAYAUTH_JWKS_URL", "RELAYAUTH_ISSUER", "RELAYCONTROL_INTROSPECT_URL", "RELAYCONTROL_INTROSPECT_SECRET",
+                     "RELAYHISTORY_ACCEPT_RELAYCONTROL_TOKENS", "RELAYHISTORY_SELFHOST_LOGIN_ADVERTISES_SYNC"):
+            with self.subTest(name=name):
+                self.assertNotIn(name, env)
+
+    def test_self_issued_rotation_and_ttl_bounds(self):
+        env = self.env_of(self.render(overlay=self.self_issued(auth__selfIssued__previousInternalSecret={"existingSecret": "read-api-internal-old"}, auth__selfIssued__accessTokenTtlSeconds=60)))
+        self.assertEqual(env["READ_API_INTERNAL_SECRET_PREVIOUS"]["valueFrom"]["secretKeyRef"], {"name": "read-api-internal-old", "key": "READ_API_INTERNAL_SECRET_PREVIOUS"})
+        self.assertEqual(env["READ_API_ACCESS_TOKEN_TTL_SECONDS"]["value"], "60")
+        for ttl in (59, 301, 60.5, "soon", 0):
+            with self.subTest(ttl=ttl):
+                self.assertIn("accessTokenTtlSeconds must be", self.render(overlay=self.self_issued(auth__selfIssued__accessTokenTtlSeconds=ttl), fail=True))
+
+    def test_half_configured_self_issued_refuses(self):
+        for changes, message in [
+                ({"auth__selfIssued__internalSecret": {"existingSecret": ""}}, "requires auth.selfIssued.internalSecret.existingSecret"),
+                ({"auth__selfIssued__internalSecret": {"existingSecret": "Not A Secret"}}, "requires auth.selfIssued.internalSecret.existingSecret"),
+                ({"auth__selfIssued__previousInternalSecret": {"existingSecret": "read-api-internal", "key": "READ_API_INTERNAL_SECRET"}}, "different Secret key"),
+                ({"auth__relaycontrol": {"enabled": True, "url": "", "existingSecret": ""}}, "requires auth.relaycontrol.enabled=false"),
+                ({"auth__relaycontrol": {"enabled": False, "url": "https://control.agentrelay.com", "existingSecret": ""}}, "requires empty auth.relaycontrol.url"),
+                ({"auth__relayauth": {"jwksUrl": "https://x.agentrelay.com/jwks", "issuer": ""}}, "requires empty relayauth.jwksUrl"),
+                ({"login": {"advertisesSync": True}}, "requires login.advertisesSync=false"),
+                ({"networkPolicy": {"enabled": False, "controlFrom": []}}, "requires networkPolicy.enabled=true"),
+                ({"networkPolicy": {"enabled": True, "controlFrom": []}}, "requires networkPolicy.controlFrom")]:
+            with self.subTest(changes=changes):
+                self.assertIn(message, self.render(overlay=self.self_issued(**changes), fail=True))
+        for overlay, message in [
+                ({"auth": {"selfIssued": {"internalSecret": {"existingSecret": "x"}}}}, "require auth.mode=self_issued"),
+                ({"auth": {"selfIssued": {"previousInternalSecret": {"existingSecret": "x"}}}}, "require auth.mode=self_issued"),
+                ({"auth": {"selfIssued": {"accessTokenTtlSeconds": 60}}}, "requires auth.mode=self_issued")]:
+            with self.subTest(overlay=overlay):
+                self.assertIn(message, self.render(overlay=overlay, fail=True))
+
+    def test_ingress_publishes_only_the_public_read_paths(self):
+        docs = self.render(overlay=self.self_issued(ingress={"enabled": True, "className": "nginx"}, networkPolicy__publicFrom=[{"namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": "ingress-nginx"}}}]))
+        ingress = next(d for d in docs if d["kind"] == "Ingress")
+        self.assertEqual(ingress["spec"]["ingressClassName"], "nginx")
+        rule = ingress["spec"]["rules"][0]
+        self.assertEqual(rule["host"], "history.kind.agentrelay.com")
+        self.assertEqual([(p["path"], p["pathType"]) for p in rule["http"]["paths"]], [("/v1", "Prefix")])
+        self.assertEqual(rule["http"]["paths"][0]["backend"]["service"], {"name": "test-read-api", "port": {"name": "http"}})
+        self.assertNotIn("/internal", yaml.safe_dump(ingress))
+        mixed_case = next(d for d in self.render(overlay=self.self_issued(origin="https://History.AgentRelay.com", ingress={"enabled": True}, networkPolicy__publicFrom=[{"namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": "ingress-nginx"}}}])) if d["kind"] == "Ingress")
+        self.assertEqual(mixed_case["spec"]["rules"][0]["host"], "history.agentrelay.com")
+        self.assertNotIn("Ingress", [d["kind"] for d in self.render(overlay=self.self_issued())])
+        self.assertIn("requires networkPolicy.publicFrom", self.render(overlay=self.self_issued(ingress={"enabled": True}), fail=True))
+
+    def test_network_policy_admits_control_and_named_public_peers_only(self):
+        control = [{"podSelector": {"matchLabels": {"app.kubernetes.io/name": "relay-control"}}}]
+        public = [{"ipBlock": {"cidr": "10.0.1.0/24"}}]
+        policy = next(d for d in self.render(overlay=self.self_issued(networkPolicy__publicFrom=public)) if d["kind"] == "NetworkPolicy")
+        self.assertEqual(policy["spec"]["policyTypes"], ["Ingress"])
+        self.assertEqual([r["from"] for r in policy["spec"]["ingress"]], [control, public])
+        self.assertEqual([r["ports"] for r in policy["spec"]["ingress"]], [[{"port": "http"}], [{"port": "http"}]])
+        only_control = next(d for d in self.render(overlay=self.self_issued()) if d["kind"] == "NetworkPolicy")
+        self.assertEqual([r["from"] for r in only_control["spec"]["ingress"]], [control])
+        for changes, message in [
+                ({"networkPolicy__controlFrom": [{}]}, "controlFrom entries must select Control"),
+                ({"networkPolicy__controlFrom": [{"podSelector": {}}]}, "controlFrom entries must select Control"),
+                ({"networkPolicy__controlFrom": [{"namespaceSelector": {"matchLabels": {"a": "b"}}}]}, "controlFrom entries must select Control"),
+                ({"networkPolicy__controlFrom": [{"ipBlock": {"cidr": "10.0.0.0/8"}}]}, "controlFrom entries must select Control"),
+                ({"networkPolicy__publicFrom": [{}]}, "an empty peer admits everyone"),
+                ({"networkPolicy__publicFrom": [{"podSelector": {}, "namespaceSelector": {}}]}, "an empty peer admits everyone"),
+                ({"networkPolicy__publicFrom": [{"ipBlock": {"cidr": "0.0.0.0/0"}}]}, "needs a specific cidr"),
+                ({"networkPolicy__publicFrom": [{"ipBlock": {"cidr": "::/0"}}]}, "needs a specific cidr")]:
+            with self.subTest(changes=changes):
+                self.assertIn(message, self.render(overlay=self.self_issued(**changes), fail=True))
+
+    def test_standalone_self_issued_fixture_passes_schema(self):
+        fixture = ROOT / "charts/session-read-api/ci/self-issued-values.yaml"
+        result = subprocess.run(["helm", "template", "solo", str(ROOT / "charts/session-read-api"), "-n", "ci", "-f", str(fixture)],
+                                capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        docs = [d for d in yaml.safe_load_all(result.stdout) if d]
+        self.assertEqual(sorted(d["kind"] for d in docs), ["Deployment", "Ingress", "NetworkPolicy", "Service"])
+        check = subprocess.run(["kubeconform", "-strict", "-summary"], input=yaml.safe_dump_all(docs), text=True, capture_output=True)
+        self.assertEqual(check.returncode, 0, check.stdout + check.stderr)
+
+    def test_event_message_ids_are_a_dedicated_default_off_value(self):
+        self.assertNotIn("READ_API_EVENT_MESSAGE_IDS", self.env_of(self.render()))
+        canonical = [{"name": "LOCKER_BUCKET", "value": "sessions"}, {"name": "PIPELINE_ORG_FROM_PREFIX", "value": "true"}, {"name": "PIPELINE_KEY_PREFIX", "value": "96bulls"}]
+        env = self.env_of(self.render(overlay={"events": {"messageIds": True}, "extraEnv": canonical}))
+        self.assertEqual(env["READ_API_EVENT_MESSAGE_IDS"]["value"], "true")
+        self.assertIn("requires LOCKER_BUCKET", self.render(overlay={"events": {"messageIds": True}}, fail=True))
+        self.assertIn("must be a boolean", self.render(overlay={"events": {"messageIds": "true"}}, fail=True))
 
     def test_postgres_tls_requires_an_explicit_verified_profile(self):
         self.assertEqual(self.env_of(self.render())["SESSION_POSTGRES_TLS_PROFILE"]["value"], "custom-ca")
