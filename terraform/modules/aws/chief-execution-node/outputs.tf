@@ -9,7 +9,7 @@ output "private_ip" {
 }
 
 output "role_arn" {
-  description = "Instance role: SSM core plus read of the worker token secret."
+  description = "Instance role: SSM core plus read of the worker token and harness key secrets."
   value       = aws_iam_role.this.arn
 }
 
@@ -21,4 +21,9 @@ output "security_group_id" {
 output "worker_token_secret_arn" {
   description = "Secret holding the bridge's Relay token. Terraform creates it empty; the value is written out of band and never enters state."
   value       = aws_secretsmanager_secret.worker_token.arn
+}
+
+output "harness_key_secret_arn" {
+  description = "Secret holding the harness API key. Terraform creates it empty; the value is written out of band and never enters state."
+  value       = aws_secretsmanager_secret.harness_key.arn
 }
