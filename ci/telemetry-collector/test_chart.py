@@ -40,11 +40,19 @@ class Collector(unittest.TestCase):
                 with self.subTest(key=key, value=value):
                     render(['--set', key + '=' + value], ok=False)
 
-    def test_relay_control_images_without_the_cli_are_refused(self):
+    def test_current_control_package_and_exclusive_writer_contract(self):
         for repository in ['ghcr.io/agentworkforce/relay-control', 'registry.example/mirror/selfhost-api']:
             with self.subTest(repository=repository):
-                self.assertIn('does not contain dist/collector-cli.js',
-                              render(['--set', 'image.repository=' + repository], ok=False))
+                docs = render(['--set', 'image.repository=' + repository])
+                collector = next(d for d in docs if d['kind'] == 'Deployment')['spec']['template']['spec']['containers'][0]
+                self.assertTrue(collector['image'].startswith(repository + '@sha256:'))
+                self.assertEqual(collector['command'], [
+                    '/usr/bin/flock', '--nonblock', '--no-fork', '/var/lib/telemetry/.writer.lock',
+                    'node', 'node_modules/relay-control/dist/collector-cli.js',
+                ])
+        for revision in ['8359483d2666c1f374190c102237c3022ca3d466', 'f' * 40]:
+            with self.subTest(revision=revision):
+                render(['--set', 'image.sourceRevision=' + revision], ok=False)
 
     def test_unhealthy_store_affects_readiness_without_restarting_process(self):
         class Health(http.server.BaseHTTPRequestHandler):

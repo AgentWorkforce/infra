@@ -32,7 +32,7 @@ spec:
         - name: collector
           image: {{ include "telemetry-collector.image" .Values.image | quote }}
           imagePullPolicy: IfNotPresent
-          command: ["node", "node_modules/@cloud/selfhost-api/dist/collector-cli.js"]
+          command: ["/usr/bin/flock", "--nonblock", "--no-fork", "/var/lib/telemetry/.writer.lock", "node", "node_modules/relay-control/dist/collector-cli.js"]
           env:
             - { name: ANALYTICS_COLLECTOR_HOST, value: "127.0.0.1" }
             - { name: ANALYTICS_COLLECTOR_PORT, value: "4319" }
