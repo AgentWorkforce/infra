@@ -12,14 +12,12 @@ import json
 from pathlib import Path
 import re
 import secrets
-import tempfile
-from types import SimpleNamespace
 from urllib.parse import quote, unquote, urlsplit
 
 import yaml
 
 from native_bootstrap import NativeBootstrapAdapter, scram
-from native_inspect import document, native_archive, pipeline_coordinates, sha
+from native_inspect import document, sha
 from native_recipe import NativeRecipeError, require
 
 
@@ -138,31 +136,6 @@ class NativePipelineAdapter(NativeBootstrapAdapter):
         """Virtual values seam: complete adapters retain their real tenant binding."""
         return self._transport_call("cmd", ["helm", "template", "agent-relay", "charts/agent-relay", "-n", "agent-relay",
             *self.stack.values_args(), "-f", "-"], data=yaml.safe_dump(overrides), sensitive=True, timeout=60)
-
-    def _ensure_pipeline_image(self, selected):
-        """Import the already-qualified native export, then prove CRI identity.
-
-        Docker's own native re-export supplies a real tag for Kind's importer;
-        its bytes are checked again, and the digest alias is never retargeted.
-        This does not pull a mutable tag or change an application workload.
-        """
-        receipt = pipeline_coordinates(self.inputs, selected)
-        tag = receipt["localTag"]
-        require(re.fullmatch(r"agent-relay-kind/[a-z0-9._/-]+:[A-Za-z0-9_.-]+", tag), "local_pipeline_tag_required")
-        reference = selected["reference"]
-        bare_reference = reference.removeprefix("docker.io/")
-        require(bare_reference.startswith("agent-relay-kind/"), "local_pipeline_repository_required")
-        with tempfile.TemporaryDirectory(prefix="native-image-", dir=self.stack.state) as directory:
-            archive = Path(directory) / "native.tar"
-            self._transport_call("cmd", [*self.stack.docker_args, "image", "save", "--platform", "linux/" + selected["architecture"], "-o", archive, tag], timeout=300, sensitive=True)
-            native_archive(archive, sha(archive), selected["sourceRevision"], selected["manifestDigest"], selected["configDigest"], selected["architecture"])
-            self._transport_call("cmd", ["kind", "load", "image-archive", "--name", self.stack.name, archive], timeout=300, sensitive=True)
-        from control import alias
-        # alias rechecks the imported tag's exact native manifest before any tag
-        # operation and proves the config/platform through the node's CRI.
-        bound = SimpleNamespace(cmd=lambda *args, **kwargs: self._transport_call("cmd", *args, **kwargs),
-                                docker_args=self.stack.docker_args, name=self.stack.name, arch=self.stack.arch)
-        alias(bound, bare_reference, {"tag": tag, "manifestDigest": selected["manifestDigest"], "configDigest": selected["configDigest"]})
 
     def _operator_pod(self, selected):
         if self._operator is not None:
