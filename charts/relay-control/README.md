@@ -16,9 +16,17 @@ never creates a Secret or renders credentials. Set `database.runtimeRole` to
 the non-secret PostgreSQL role used by `database-url`; after migrations, the
 owner grants that role runtime access only to `selfhost_*` application tables.
 
-The image must contain the compiled `@cloud/selfhost-api` package. The server
-runs `node node_modules/@cloud/selfhost-api/dist/server.js`; migrations run
-`node node_modules/@cloud/selfhost-api/dist/migrate-cli.js`.
+The image must contain the compiled `relay-control` package. The server runs
+`node node_modules/relay-control/dist/server.js`; migrations run
+`node node_modules/relay-control/dist/migrate-cli.js`. To pin an older image
+built before the rename, set `server.args` and `migrations.args` to its
+`node_modules/@cloud/selfhost-api/dist/` paths.
+
+The default image is `ghcr.io/agentworkforce/relay-control` 0.5.0. The session
+read handoff and MCP reads (`services.sessionReadApi*`,
+`secretKeys.sessionReadApiSecret`) need 0.5.1, which is not published yet; they
+stay off by default. `secretKeys.introspectSecret` and
+`introspection.audiences` wire token introspection.
 `services.relaycastUrl` and `services.relayhistoryUrl` are internal origins;
 their `*PublicUrl` counterparts must be public HTTPS origins and are returned
 to clients or used as the externally stable RelayHistory assertion audience.

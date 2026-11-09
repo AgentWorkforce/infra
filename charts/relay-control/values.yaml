@@ -2,9 +2,12 @@
 # replica is enforced; this chart does not claim HA.
 replicaCount: 1
 image:
-  # Explicit coordinates prevent a repository rename from reinterpreting an old digest.
-  repository: ""
-  digest: ""
+  # relay-control 0.5.0, df4b390; 0.5.1 is not published yet, so the session read handoff is inert on this pin.
+  # Published at ghcr.io/agentworkforce/relay-control:0.5.0. Pin 0.5.1 here once
+  # that tag exists; never pin a digest that is not published under this name.
+  # Mirror by digest to your registry and override repository if needed.
+  repository: ghcr.io/agentworkforce/relay-control
+  digest: sha256:d8c26d44dccb6dd21b7033288241a379e46ce5fbca69f276c4d4745001c3c3e2
   pullPolicy: IfNotPresent
 imagePullSecrets: []
 nameOverride: ""
@@ -48,6 +51,14 @@ secretKeys:
   # with bootstrap.orgName: the API creates the default workspace's Relaycast
   # workspace through POST /internal/workspaces.
   relaycastInternalSecret: ""
+  # Bearer for POST /internal/v1/auth/introspect (RELAYCONTROL_INTROSPECT_SECRET,
+  # at least 32 bytes), shared only with the read API and relayfile. Empty
+  # keeps that route answering 404.
+  introspectSecret: ""
+  # Dedicated Control-to-read-API secret (SESSION_READ_API_SECRET, at least 32
+  # bytes, never sent to clients). Set with services.sessionReadApiUrl and
+  # services.sessionReadApiPublicUrl.
+  sessionReadApiSecret: ""
   # OIDC client secret (required with auth.oidc.issuer).
   oidcClientSecret: ""
   # SMTP password (required with smtp.username).
@@ -212,11 +223,30 @@ services:
   relaycastPublicUrl: ""
   relayhistoryUrl: ""
   relayhistoryPublicUrl: ""
+  # Session read API credential handoff, default off (relay-control #13; first
+  # image with it is 0.5.1). Set together with secretKeys.sessionReadApiSecret,
+  # or leave all three empty. Internal HTTP(S) origin of the read API Service.
+  sessionReadApiUrl: ""
+  # Bare public HTTPS origin of the read API, returned to clients.
+  sessionReadApiPublicUrl: ""
+  # SESSION_READ_API_MCP_READS: send MCP session reads to the read API
+  # (relay-control #14/#18, first image 0.5.1). Requires the handoff above.
+  sessionReadApiMcpReads: false
+
+# Token introspection audiences (SELFHOST_INTROSPECT_AUDIENCES): http(s)
+# origins a token may be introspected for. Empty uses
+# services.relayhistoryPublicUrl. Add the read API's exact READ_API_ORIGIN when
+# it differs. Requires secretKeys.introspectSecret.
+introspection:
+  audiences: []
 
 server:
   port: 3000
   command: [node]
-  args: [node_modules/@cloud/selfhost-api/dist/server.js]
+  # Images older than the relay-control rename install the package at
+  # node_modules/@cloud/selfhost-api: pin those with server.args and
+  # migrations.args set to that path.
+  args: [node_modules/relay-control/dist/server.js]
 
 migrations:
   enabled: true
@@ -228,7 +258,7 @@ migrations:
   backoffLimit: 3
   activeDeadlineSeconds: 1800
   command: [node]
-  args: [node_modules/@cloud/selfhost-api/dist/migrate-cli.js]
+  args: [node_modules/relay-control/dist/migrate-cli.js]
 
 service:
   type: ClusterIP

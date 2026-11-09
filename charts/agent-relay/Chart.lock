@@ -13,7 +13,7 @@ dependencies:
   version: 0.1.2
 - name: relay-control
   repository: file://../relay-control
-  version: 0.3.1
+  version: 0.4.0
 - name: relay-webapp
   repository: file://../relay-webapp
   version: 0.2.0
@@ -28,9 +28,9 @@ dependencies:
   version: 0.2.2
 - name: telemetry-collector
   repository: file://../telemetry-collector
-  version: 0.1.0
+  version: 0.1.1
 - name: relay-chief
   repository: file://../relay-chief
   version: 0.1.0
-digest: sha256:c3d16def7877049d90858200db11a1c4cf71976eba15adebaff40faea4c51e2a
-generated: "2026-11-08T12:38:01.311566893-08:00"
+digest: sha256:fe98faca997040324ecc182bde73600395eebdb131ddca5c4263f16c5aa0a6e2
+generated: "2026-11-08T16:19:57.376646907-08:00"

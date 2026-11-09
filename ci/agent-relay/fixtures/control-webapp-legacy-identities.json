@@ -285,7 +285,7 @@
       },
       {
         "kind": "Job",
-        "name": "relaycontrol-migrate-f11dfd51",
+        "name": "relaycontrol-migrate-96ebd477",
         "namespace": "agent-relay",
         "selector": null,
         "podSelectors": {
@@ -913,7 +913,7 @@
       },
       {
         "kind": "Job",
-        "name": "relaycontrol-migrate-f11dfd51",
+        "name": "relaycontrol-migrate-96ebd477",
         "namespace": "agent-relay",
         "selector": null,
         "podSelectors": {
