@@ -91,11 +91,14 @@ output "service_accounts" {
 
 output "runtime_role_policy_json" {
   description = "Proposed search and Lambda runtime permissions for operator review. External mode does not attach them or validate existing IAM configuration. Values may be unknown until service resources exist."
-  value = {
-    indexer  = module.search.indexer_policy_json
-    reader   = module.search.reader_policy_json
-    pipeline = var.pipeline_runtime == "lambda" ? module.pipeline[0].execution_role_policy_json : null
-  }
+  value = merge(
+    {
+      indexer  = module.search.indexer_policy_json
+      reader   = module.search.reader_policy_json
+      pipeline = var.pipeline_runtime == "lambda" ? module.pipeline[0].execution_role_policy_json : null
+    },
+    var.search_sessions_bucket_read == null ? {} : { sessions_read = module.search.sessions_read_policy_json },
+  )
 }
 
 output "lambda_shared_environment" {
@@ -111,4 +114,14 @@ output "postgres_service_bindings" {
 output "postgres_topology" {
   description = "Single-instance, separate-service-database target; application_sql_ready=false until actual service integration and managed-RDS validation are completed."
   value       = module.postgres_layout.topology
+}
+
+output "chief_execution_node" {
+  description = "Chief execution host references, or null. Holds no secret value."
+  value = var.chief_execution_node == null ? null : {
+    instance_id             = module.chief_execution_node[0].instance_id
+    role_arn                = module.chief_execution_node[0].role_arn
+    security_group_id       = module.chief_execution_node[0].security_group_id
+    worker_token_secret_arn = module.chief_execution_node[0].worker_token_secret_arn
+  }
 }

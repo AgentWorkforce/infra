@@ -81,6 +81,10 @@ For dedicated Relay Chief EC2 hosts, see
 [`aws/relay-chief-slots`](modules/aws/relay-chief-slots). It stands alone and is
 not part of the Helm install. It has not been applied or qualified.
 
+For the dedicated host that runs Chief execution, see
+[`aws/chief-execution-node`](modules/aws/chief-execution-node). `examples/aws-environments`
+creates it when `chief_execution_node` is set.
+
 ### What current compatibility profiles consume
 
 This inventory includes the published legacy History and durable-actors

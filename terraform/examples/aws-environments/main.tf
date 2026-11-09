@@ -51,6 +51,13 @@ resource "terraform_data" "environment_contract" {
       error_message = "OpenSearch administration requires a separate role in this environment's account."
     }
     precondition {
+      condition = var.search_sessions_bucket_read == null ? true : (
+        var.search_sessions_bucket_read.bucket_arn == "arn:aws:s3:::${local.name}-${var.account_id}-${var.region}-sessions" &&
+        var.search_sessions_bucket_read.kms_key_arn == var.kms_key_arn
+      )
+      error_message = "search_sessions_bucket_read must name this environment's sessions bucket and the kms_key_arn that encrypts it."
+    }
+    precondition {
       condition = var.existing_runtime_roles == null ? true : (
         (var.pipeline_runtime == "lambda") == (var.existing_runtime_roles.pipeline_role_arn != null) &&
         length(distinct(local.external_runtime_arns)) == length(local.external_runtime_arns) &&
@@ -169,6 +176,7 @@ module "search" {
     indexer_service_accounts = [{ cluster_name = var.eks_cluster_name, namespace = local.namespace, service_account = local.search_indexer_sa }]
     reader_service_accounts  = [{ cluster_name = var.eks_cluster_name, namespace = local.namespace, service_account = local.search_reader_sa }]
   }
+  sessions_bucket_read      = var.search_sessions_bucket_read
   additional_principal_arns = distinct(concat(local.external_runtime_arns, var.pipeline_runtime == "lambda" ? [module.pipeline[0].execution_role_arn] : []))
   tags                      = local.tags
 
@@ -193,6 +201,28 @@ module "pipeline" {
   environment                  = local.lambda_shared_environment
   additional_policy_statements = jsondecode(module.search.indexer_policy_json).Statement
   tags                         = local.tags
+
+  depends_on = [terraform_data.environment_contract]
+}
+
+module "chief_execution_node" {
+  source = "../../modules/aws/chief-execution-node"
+  count  = var.chief_execution_node == null ? 0 : 1
+
+  name                     = "${local.name}-chief-exec"
+  subnet_id                = var.chief_execution_node.subnet_id
+  kms_key_arn              = var.kms_key_arn
+  instance_type            = var.chief_execution_node.instance_type
+  root_volume_size_gb      = var.chief_execution_node.root_volume_size_gb
+  relay_base_url           = var.chief_execution_node.relay_base_url
+  node_runtime             = var.chief_execution_node.node_runtime
+  relay_node               = var.chief_execution_node.relay_node
+  harness                  = var.chief_execution_node.harness
+  bridge                   = var.chief_execution_node.bridge
+  repositories             = var.chief_execution_node.repositories
+  iam_path                 = local.role_path
+  permissions_boundary_arn = local.boundary
+  tags                     = local.tags
 
   depends_on = [terraform_data.environment_contract]
 }

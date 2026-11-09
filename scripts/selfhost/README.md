@@ -15,6 +15,14 @@ explicit migration-compatibility review that matches the deployed Helm
 revision. It also refuses to pass while a selected migration or backup Job is
 active or failed.
 
+## Mirroring images to ECR
+
+`mirror-images-to-ecr.sh` copies the images an environment's chart render pins
+into that environment's ECR, so it can pull with no GHCR access. It is default
+off: without `--apply` it prints the plan and contacts nothing. See its header
+for flags, and [the supply chain doc](../../docs/self-hosted-image-supply-chain.md)
+for what must be true before an image is used in a customer install.
+
 ## Safety properties
 
 Both scripts:

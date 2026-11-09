@@ -57,6 +57,9 @@ jobs:
       - name: durable-actors S3 render assertions
         run: ci/actors-s3/render.sh
 
+      - name: relaycast PostgreSQL backend render assertions
+        run: ci/relaycast/render.sh
+
       # Offline tests for scripts/selfhost (every external command mocked),
       # including eks-actors-install.sh's actor credential mode and role ARN.
       - name: Self-hosted operator script tests
@@ -100,6 +103,7 @@ jobs:
         run: |
           python3 -m pip install -r ci/agent-relay/kind/requirements.txt
           python3 ci/agent-relay/test_control_webapp_names.py -v
+          python3 ci/agent-relay/test_native_no_relayauth.py -v
           python3 ci/agent-relay/kind/test_stack.py -v
           python3 ci/agent-relay/kind/test_ownership.py -v
           python3 ci/agent-relay/kind/test_named_upgrade.py -v

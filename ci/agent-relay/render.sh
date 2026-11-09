@@ -47,7 +47,7 @@ for host in gcp-proof.agentrelay.com api.gcp-proof.agentrelay.com \
 done
 
 for image in \
-  us-central1-docker.pkg.dev/agentrelay-96bulls-soc2-2610/awf-conformance-images/selfhost-api \
+  ghcr.io/agentworkforce/relay-control \
   us-central1-docker.pkg.dev/agentrelay-96bulls-soc2-2610/awf-conformance-images/relay-dashboard \
   us-central1-docker.pkg.dev/agentrelay-96bulls-soc2-2610/awf-conformance-images/relayhistory; do
   grep -Eq "image: [\"']?${image}@sha256:[a-f0-9]{64}" <<<"$out"
@@ -267,6 +267,12 @@ default_env_names=$(helm template ci charts/relay-control -n ci --no-hooks -f ch
   grep -vx -- '---' | sort -u)
 unset_structured_names=(
   SELFHOST_ENCRYPTION_PREVIOUS_KEY_FILE
+  RELAYCONTROL_INTROSPECT_SECRET_FILE
+  SESSION_READ_API_SECRET_FILE
+  SESSION_READ_API_URL
+  SESSION_READ_API_PUBLIC_URL
+  SESSION_READ_API_MCP_READS
+  SELFHOST_INTROSPECT_AUDIENCES
   SELFHOST_INTERNAL_TOKEN_FILE
   RELAYCAST_INTERNAL_SECRET_FILE
   SELFHOST_OIDC_CLIENT_SECRET_FILE
@@ -631,6 +637,9 @@ for reader in $admin_readers; do
 done
 test "$(yq 'select(.kind == "Deployment" and .metadata.name == "relaycast") | .spec.template.spec.containers[0].env[] | select(.name == "DURABLE_ACTORS_SECRET") | .valueFrom.secretKeyRef.name' <<<"$da_out")" = relaycast-durable-actors-invoke \
   || da_fail "the relaycast gateway must use its own invocation Secret"
+# Keyed workspace creates: the proof's bootstrap secret and proof policy.
+test "$(yq 'select(.kind == "Deployment" and .metadata.name == "relaycast") | .spec.template.spec.containers[0].env[] | select(.name == "RELAYCAST_WORKSPACE_BOOTSTRAP_PROOF_REQUIRED") | .value' <<<"$da_out")" = true \
+  || da_fail "the proof's relaycast actor gateway must require the bootstrap proof"
 for consumer in relaycast relayfile-server; do
   test "$(yq "select(.kind == \"Deployment\" and .metadata.name == \"$consumer\") | .spec.template.spec.containers[0].env[] | select(.name == \"DURABLE_ACTORS_CONTROL_PLANE_URL\") | .value" <<<"$da_out")" = http://agent-relay-durable-actors.agent-relay.svc.cluster.local:7100 \
     || da_fail "$consumer does not target the umbrella control plane"
@@ -708,7 +717,7 @@ test "$(yq 'select(.kind == "Deployment" and .metadata.name == "relayfile-server
 # The relaycast actor gateway reads exactly these keys of the proof Secret
 # (documented in charts/agent-relay/README.md).
 proof_keys=$(yq 'select(.kind == "Deployment" and .metadata.name == "relaycast") | ((.. | select(has("secretKeyRef")) | .secretKeyRef | select(.name == "agent-relay-gcp-proof") | .key), (.. | select(has("secret")) | .secret | select(.secretName == "agent-relay-gcp-proof") | .items[].key))' <<<"$da_out" | grep -v '^---$' | grep . | sort -u | paste -sd, -)
-test "$proof_keys" = relaycast-actors-internal-secret,relaycast-credential-keyring,relaycast-file-signing-secret \
+test "$proof_keys" = relaycast-actors-internal-secret,relaycast-actors-workspace-bootstrap-secret,relaycast-credential-keyring,relaycast-file-signing-secret \
   || da_fail "relaycast actor gateway reads unexpected agent-relay-gcp-proof keys: $proof_keys"
 for consumer in relaycast relayfile-server; do
   grep -qx "$consumer" <<<"$(yq 'select(.kind == "Deployment") | .metadata.name' <<<"$da_out")" || da_fail "missing $consumer"
@@ -832,9 +841,19 @@ ca_out=$(helm template proof charts/agent-relay -n agent-relay --no-hooks \
   --set relayhistory.postgresCa.enabled=true --set relayhistory.postgresCa.configMap=rds-ca \
   --set sessions-pipeline.worker.postgresCa.enabled=true --set sessions-pipeline.worker.postgresCa.configMap=rds-ca \
   --set sessions-pipeline.alleyoop.postgresCa.enabled=true --set sessions-pipeline.alleyoop.postgresCa.configMap=rds-ca)
-ca_gaps=$(yq 'select((.kind == "Deployment" or (.kind == "Job" and (.metadata.name | contains("migrate")))) and (.spec.template.spec.containers[0].image | test("selfhost-api|/relayhistory@|96bulls-services"))) | select(([.spec.template.spec.containers[0].env[] | select(.name == "NODE_EXTRA_CA_CERTS")] | length) != 1) | .metadata.name' <<<"$ca_out" | grep -v '^---$' || true)
+ca_gaps=$(yq 'select((.kind == "Deployment" or (.kind == "Job" and (.metadata.name | contains("migrate")))) and (.spec.template.spec.containers[0].image | test("/relay-control@|/relayhistory@|96bulls-services"))) | select(([.spec.template.spec.containers[0].env[] | select(.name == "NODE_EXTRA_CA_CERTS")] | length) != 1) | .metadata.name' <<<"$ca_out" | grep -v '^---$' || true)
 test -z "$ca_gaps" || { echo "postgresCa missing from: $ca_gaps" >&2; exit 1; }
 test "$(yq 'select(.kind == "Deployment" or (.kind == "Job" and (.metadata.name | contains("migrate")))) | select(.spec.template.spec.containers[0].env[].name == "NODE_EXTRA_CA_CERTS") | .metadata.name' <<<"$ca_out" | grep -v '^---$' | grep -c .)" -ge 4
+
+# Relay Chief is default off in the umbrella and starts suspended when enabled.
+chief_values=$(mktemp)
+yq '{"relay-chief": .}' charts/relay-chief/ci/default-values.yaml >"$chief_values"
+chief_args=(-n agent-relay --no-hooks -f charts/agent-relay/values-gcp-proof.yaml -f charts/agent-relay/ci/gcp-proof-values.yaml -f "$chief_values")
+test -z "$(helm template proof charts/agent-relay "${chief_args[@]}" | yq 'select(.kind == "CronJob" and (.metadata.name | contains("chief"))) | .metadata.name')" \
+  || { echo "relay-chief rendered with components.relayChief off" >&2; exit 1; }
+test "$(helm template proof charts/agent-relay "${chief_args[@]}" --set components.relayChief=true | yq 'select(.kind == "CronJob" and (.metadata.name | contains("chief"))) | .spec.suspend')" = "true" \
+  || { echo "relay-chief is not a suspended CronJob when enabled" >&2; exit 1; }
+rm -f "$chief_values"
 
 # With single-host mode off, every default (subdomain) render is unchanged.
 ci/agent-relay/subdomain-golden.sh check

@@ -127,6 +127,15 @@ variable "database_instance_class" {
   default     = null
 }
 
+variable "search_sessions_bucket_read" {
+  description = "Exact ARNs of this environment's sessions bucket and, for a customer-managed key, its kms_key_arn (null for AWS-managed encryption). Any other bucket or key is refused. Grants the search indexer and session-read roles read-only access. null changes nothing."
+  type = object({
+    bucket_arn  = string
+    kms_key_arn = optional(string)
+  })
+  default = null
+}
+
 variable "search_instance_type" {
   description = "Override the environment tier's OpenSearch data node type."
   type        = string
@@ -273,4 +282,32 @@ variable "service_database_names" {
     condition     = length(distinct(values(var.service_database_names))) == 3 && !contains(values(var.service_database_names), var.application_database_name)
     error_message = "Each service needs a different database, distinct from the initial Control database."
   }
+}
+
+variable "chief_execution_node" {
+  description = "Optional dedicated Chief execution host (modules/aws/chief-execution-node). null creates nothing. Private installation values only; no credentials belong here."
+  type = object({
+    subnet_id           = string
+    relay_base_url      = string
+    instance_type       = optional(string, "t3.medium")
+    root_volume_size_gb = optional(number, 40)
+    node_runtime = object({
+      url    = string
+      sha256 = string
+    })
+    relay_node = object({
+      url    = string
+      sha256 = string
+    })
+    harness = object({
+      npm_package = string
+      version     = string
+    })
+    bridge = object({
+      repository = string
+      commit     = string
+    })
+    repositories = list(string)
+  })
+  default = null
 }

@@ -1,5 +1,7 @@
 # Required immutable images. The collector image must contain the reviewed
 # agent-relay-analytics-collector CLI; no main/latest or invented digest default.
+# relay-control images do not contain that CLI (the public relay-control repo
+# has only the analytics sink), so the chart refuses them at render time.
 image:
   repository: ""
   digest: ""

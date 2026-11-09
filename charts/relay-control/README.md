@@ -16,9 +16,23 @@ never creates a Secret or renders credentials. Set `database.runtimeRole` to
 the non-secret PostgreSQL role used by `database-url`; after migrations, the
 owner grants that role runtime access only to `selfhost_*` application tables.
 
-The image must contain the compiled `@cloud/selfhost-api` package. The server
-runs `node node_modules/@cloud/selfhost-api/dist/server.js`; migrations run
-`node node_modules/@cloud/selfhost-api/dist/migrate-cli.js`.
+The image must contain the compiled `relay-control` package. The server runs
+`node node_modules/relay-control/dist/server.js`; migrations run
+`node node_modules/relay-control/dist/migrate-cli.js`. To pin an older image
+built before the rename, set `server.args` and `migrations.args` to its
+`node_modules/@cloud/selfhost-api/dist/` paths.
+
+The default image is `ghcr.io/agentworkforce/relay-control` 0.5.0. The session
+read handoff and MCP reads (`services.sessionReadApi*`,
+`secretKeys.sessionReadApiSecret`) need 0.5.1, which is not published yet; they
+stay off by default. `secretKeys.introspectSecret` and
+`introspection.audiences` wire token introspection.
+`services.relayhistoryBackend=native` (default `legacy`) is the install without
+RelayAuth and standalone RelayHistory: uploads go to the pipeline ingest edge and
+reads through the read API, both at `services.sessionReadApiPublicUrl`. It requires
+`services.relayauthEnabled=false`, the session read handoff and
+`secretKeys.introspectSecret`, and an image with the Control native backend. See
+[docs/self-hosted-no-relayauth.md](../../docs/self-hosted-no-relayauth.md).
 `services.relaycastUrl` and `services.relayhistoryUrl` are internal origins;
 their `*PublicUrl` counterparts must be public HTTPS origins and are returned
 to clients or used as the externally stable RelayHistory assertion audience.
@@ -37,7 +51,7 @@ whatever the API would refuse at startup:
 | --- | --- | --- |
 | `encryption.keyId` (required) | `SELFHOST_ENCRYPTION_KEY_ID` | Non-secret id of `secretKeys.encryptionKey`, 1-64 URL-safe characters. |
 | `encryption.previousKeyId` + `secretKeys.previousEncryptionKey` | `SELFHOST_ENCRYPTION_PREVIOUS_KEY_ID`, `SELFHOST_ENCRYPTION_PREVIOUS_KEY_FILE` | Key rotation; both or neither, and the id must differ from `keyId`. |
-| `secretKeys.internalToken` | `SELFHOST_INTERNAL_TOKEN_FILE` | Optional service bearer for `/internal/v1` (flows env delivery, telemetry issue reports). Never expose `/internal` publicly: when this is set and `ingress.enabled=true`, this chart routes `/internal` to a selector-less deny Service; the agent-relay GKE ingress denies it at the edge. |
+| `secretKeys.internalToken` | `SELFHOST_INTERNAL_TOKEN_FILE` | Optional service bearer for `/internal/v1` (flows env delivery, telemetry issue reports). Never expose `/internal` publicly: when this or `secretKeys.introspectSecret` is set and `ingress.enabled=true`, this chart routes `/internal` to a selector-less deny Service; the agent-relay GKE ingress denies it at the edge. |
 | `global.singleHost.host` | `SELFHOST_PUBLIC_URL` | Single-host mode (normally set on the agent-relay umbrella): `publicUrl` is derived as `https://<host>` and must be empty or equal it, and `ingress.enabled` must be `false` because the dashboard host routes `/cloud/api`, `/login` and `/api` here. |
 | `dashboardUrl` | `SELFHOST_DASHBOARD_URL` | Where OAuth callback pages and flow `runUrl`s point. Defaults to `publicUrl` + `/` in the API. |
 | `bootstrap.orgName`, `bootstrap.adminEmail` (+ optional `adminName`, `workspaceName`) | `SELFHOST_BOOTSTRAP_ORG_NAME`, `SELFHOST_BOOTSTRAP_ADMIN_EMAIL`, `SELFHOST_BOOTSTRAP_ADMIN_NAME`, `SELFHOST_BOOTSTRAP_WORKSPACE_NAME` | First-boot bootstrap (see "Sign-in, bootstrap and invites" below). `orgName` and `adminEmail` are set together; `adminName` and `workspaceName` are optional overrides. Requires `secretKeys.relaycastInternalSecret` and `dashboardUrl` (outside single-host mode). |
@@ -59,7 +73,7 @@ whatever the API would refuse at startup:
 | `telemetry.probes` | `SELFHOST_TELEMETRY_PROBES` | Up to 20 extra health probes; `name` is a string of lowercase letters, digits and dashes (quote numeric names). |
 | `telemetry.deployment` | `SELFHOST_TELEMETRY_DEPLOYMENT` | Extra flat deployment-shape keys (at most 32): string, number or boolean values only, version-like strings without `//`; the chart-rendered keys (`chart`, `chartVersion`, `appVersion`, `replicas`, `flowsStorage`, `networkPolicy`, `ingress`) cannot be overridden. |
 | `extraEnv` | caller-chosen | Non-secret string values or one supported Kubernetes `valueFrom` source appended to API and migration containers. Default `[]`. Chart-managed names, raw FILE aliases and unset OAuth provider names (including consecutive underscores) are reserved. `valueFrom` requires exactly one of `secretKeyRef`, `configMapKeyRef`, `fieldRef`, or `resourceFieldRef`, with its required fields. Literal values are rejected for names ending at an underscore boundary in `SECRET`, `TOKEN`, `PASSWORD`, `CREDENTIAL`, `DSN`, `API_KEY`, `PRIVATE_KEY`, access-key or database-URL names, or `PGPASSWORD`; this heuristic is not a complete credential classifier. Matching credential names require `secretKeyRef` for every source. `resourceFieldRef.containerName` is refused because the API and migration containers share this list. Operators must use Secret references for credentials, never literals or ConfigMaps. References to the main migration credential are refused. |
-| `license.existingSecret`, `license.key` | `SELFHOST_LICENSE_FILE` | Optional license Secret (key defaults to `license`), mounted only into the API pod. Must not reuse a `secretKeys.*` key from the main Secret. This mounts a file; signature verification and add-on enforcement remain upstream work. |
+| `extraEnv` with `SELFHOST_FEATURES` | `SELFHOST_FEATURES` | Comma list of optional components Control serves: `flows`, `relayfile`, `chief`. Unset selects none; their routes answer 403 `feature_not_enabled`. |
 
 Every non-empty `secretKeys.*` value must name a distinct Secret key; the
 chart refuses collisions, so the migration credential

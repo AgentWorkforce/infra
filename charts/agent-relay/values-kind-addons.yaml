@@ -5,9 +5,8 @@ components:
   relayflows: true
   relayfile: true
 relay-control:
-  # The owner-supplied signed license is mounted only into relaycontrol.
-  # Enforcement is PENDING in relaycontrol; this slot cannot enforce it.
-  license: { existingSecret: kind-addon-license, key: license }
+  extraEnv:
+    - { name: SELFHOST_FEATURES, value: "flows,relayfile" }
 relayflows:
   fullnameOverride: relayflows
   mode: standalone

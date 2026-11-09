@@ -200,9 +200,7 @@ class NamedUpgrade(unittest.TestCase):
         for profile in ("core","addons"):
             with self.subTest(profile=profile):
                 if profile == "addons":
-                    license_path=self.root/'synthetic-license';license_path.write_text('synthetic-license')
-                    with patch.dict('os.environ',KIND_LICENSE_FILE=str(license_path)):
-                        self.prepare(profile);self.local.require_no_legacy_storage()
+                    self.prepare(profile);self.local.require_no_legacy_storage()
                 else:self.local.require_no_legacy_storage()
                 self.assertEqual(self.local.named_layout,self.record)
                 self.assertFalse(any(c[0] in ("apply","replace","delete","create","scale") for c in self.calls))

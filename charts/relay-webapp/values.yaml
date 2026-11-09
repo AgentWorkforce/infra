@@ -22,6 +22,10 @@ runtime:
   appPath: /
   apiBasePath: /cloud/api
   loginPath: /login
+  # DASHBOARD_SESSION_READ_API_ENABLED: read sessions directly from the session
+  # read API with the access token Control hands the page. Needs relay-webapp
+  # main 53e39ca9 or later and the read API's CORS allowlist to name this origin.
+  sessionReadApiEnabled: false
 
 # Optional enterprise branding: one customer profile, rendered as JSON into
 # DASHBOARD_CUSTOMER_PROFILE and served in /runtime-config.js (no rebuild).

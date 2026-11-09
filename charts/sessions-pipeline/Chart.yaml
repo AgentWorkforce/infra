@@ -1,7 +1,7 @@
 apiVersion: v2
 name: sessions-pipeline
 type: application
-version: 0.7.5
+version: 0.8.6
 # The Sessions Pipeline services image version the app subcharts default to.
 appVersion: "0.1.0"
 description: >
@@ -30,6 +30,11 @@ dependencies:
     alias: alleyoop # retained values key; the published chart name is descriptive
     version: 0.4.1
     repository: file://../session-ingest-api
+  - name: session-read-api
+    alias: sessionReadApi
+    version: 0.2.2
+    repository: file://../session-read-api
+    condition: sessionReadApi.enabled
   - name: cluster
     version: 0.9.0
     repository: https://cloudnative-pg.github.io/charts

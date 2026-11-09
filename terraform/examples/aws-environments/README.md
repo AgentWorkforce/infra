@@ -153,6 +153,25 @@ delete the baseline workspace bucket. End with the owner-run Pippen sweep and a
 `clean: true` receipt; investigate quarantine rather than bypassing it. Pippen
 currently supplies AWS sandboxes, not GCP project vending.
 
+## Search access to the sessions bucket
+
+The search indexer and session-read roles have no bucket access by default. To
+grant them read-only access to this environment's sessions bucket, set:
+
+```hcl
+search_sessions_bucket_read = {
+  bucket_arn  = "arn:aws:s3:::<name_prefix>-<environment>-<account_id>-<region>-sessions"
+  # The environment's kms_key_arn; omit for AWS-managed encryption.
+  kms_key_arn = "arn:aws:kms:<region>:<account_id>:key/<key-id>"
+}
+```
+
+Any other bucket or key is refused at plan. This adds one inline policy to each
+role and changes nothing else. External
+roles (`existing_runtime_roles`) get it as `runtime_role_policy_json.sessions_read`
+to attach themselves. After apply, map both roles in OpenSearch; see
+[the search module](../../modules/aws/search/README.md#after-apply).
+
 ## Existing runtime identities
 
 By default this root manages the search and Lambda execution roles as before.
@@ -412,6 +431,7 @@ exact destroy inventory and recovery proof; do not remove state to bypass them.
 
 | Name | Source | Version |
 | ---- | ------ | ------- |
+| chief\_execution\_node | ../../modules/aws/chief-execution-node | n/a |
 | pipeline | ../../modules/aws/functions | n/a |
 | postgres | ../../modules/aws/postgres | n/a |
 | postgres\_layout | ../../modules/postgres-layout | n/a |
@@ -441,6 +461,7 @@ exact destroy inventory and recovery proof; do not remove state to bypass them.
 | activate\_lambda | Reserved activation input. This per-service-database profile currently refuses true until schema/bootstrap/runtime support is qualified by a reviewed implementation change; provision inactive infrastructure meanwhile. | `bool` | `false` | no |
 | application\_database\_name | Initial Control database only, on the shared RDS instance. Other services use separate logical databases. Default preserves the existing identity. Changing this value on an existing RDS instance forces instance replacement; review the plan and an explicit data migration/restore before changing it. | `string` | `"relaycontrol"` | no |
 | aurora\_engine\_version | Explicit region-supported Aurora PostgreSQL 17 minor version when Aurora is selected. | `string` | `null` | no |
+| chief\_execution\_node | Optional dedicated Chief execution host (modules/aws/chief-execution-node). null creates nothing. Private installation values only; no credentials belong here. | ```object({ subnet_id = string relay_base_url = string instance_type = optional(string, "t3.medium") root_volume_size_gb = optional(number, 40) node_runtime = object({ url = string sha256 = string }) relay_node = object({ url = string sha256 = string }) harness = object({ npm_package = string version = string }) bridge = object({ repository = string commit = string }) repositories = list(string) })``` | `null` | no |
 | database\_instance\_class | Override the environment tier's instance class. Aurora needs an Aurora-supported class. | `string` | `null` | no |
 | deletion\_protection | Database API deletion protection. Production refuses false. Final snapshots and S3 versioning remain enabled. | `bool` | `true` | no |
 | enable\_relayfile | Include Relayfile in the full-suite application contract; its actor identities/Secrets must be configured by the application layer. | `bool` | `false` | no |
@@ -458,6 +479,7 @@ exact destroy inventory and recovery proof; do not remove state to bypass them.
 | release\_name | Helm release name used in generated ServiceAccount names. | `string` | `"agent-relay"` | no |
 | search\_engine\_version | Region-supported OpenSearch engine version. | `string` | `"OpenSearch_2.19"` | no |
 | search\_instance\_type | Override the environment tier's OpenSearch data node type. | `string` | `null` | no |
+| search\_sessions\_bucket\_read | Exact ARNs of this environment's sessions bucket and, for a customer-managed key, its kms\_key\_arn (null for AWS-managed encryption). Any other bucket or key is refused. Grants the search indexer and session-read roles read-only access. null changes nothing. | ```object({ bucket_arn = string kms_key_arn = optional(string) })``` | `null` | no |
 | service\_database\_names | Existing or reviewed new database names for HoopDb, Relaycast and optional Relayfile on the same RDS instance. This metadata does not create or rename databases. Control uses application\_database\_name. | `map(string)` | ```{ "hoopdb": "hoopdb", "relaycast": "relaycast", "relayfile": "relayfile" }``` | no |
 | tags | Additional resource tags. Environment identity and Pippen conventions cannot be overridden. | `map(string)` | `{}` | no |
 
@@ -466,6 +488,7 @@ exact destroy inventory and recovery proof; do not remove state to bypass them.
 | Name | Description |
 | ---- | ----------- |
 | application\_contract | Required full-suite components and selected pipeline mode. This contract does not replace complete Helm values, actor roles, bootstrap or runtime compatibility proof. |
+| chief\_execution\_node | Chief execution host references, or null. Holds no secret value. |
 | environment | Environment identity to compare with the separately configured backend before apply. |
 | lambda\_shared\_environment | Non-secret writer/reader bindings, or null until explicitly configured. Independently qualify the matching reader artifact, read-only DB identity, JWT settings, schema/FGAC bootstrap and worker retirement before activation. |
 | pipeline | Lambda runtime bindings, or null in worker mode. Populate the secret out of band and verify actual handler compatibility before activation. |
