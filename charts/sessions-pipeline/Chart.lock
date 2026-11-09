@@ -4,7 +4,7 @@ dependencies:
   version: 0.7.3
 - name: session-ingest-api
   repository: file://../session-ingest-api
-  version: 0.4.1
+  version: 0.4.2
 - name: session-read-api
   repository: file://../session-read-api
   version: 0.2.2
@@ -17,5 +17,5 @@ dependencies:
 - name: opentelemetry-collector
   repository: https://open-telemetry.github.io/opentelemetry-helm-charts
   version: 0.178.0
-digest: sha256:6a14405990fd45e0530b42c42ae20aa9e445010fcce005de0d29864dd44e1519
-generated: "2026-11-09T09:41:18.083273+01:00"
+digest: sha256:798a5a767108bff1cb7dd1ca19deba6b455d1f09a590f4f3e227b10c31ce451a
+generated: "2026-11-09T15:12:55.833137+01:00"

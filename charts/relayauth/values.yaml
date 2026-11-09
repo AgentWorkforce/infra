@@ -2,6 +2,11 @@
 # count other than one and always uses the Recreate deployment strategy.
 replicaCount: 1
 
+# Omit only the Deployment after a verified replacement is serving. Services,
+# retained data resources and all other chart resources remain managed.
+deployment:
+  enabled: true
+
 image:
   repository: ghcr.io/agentworkforce/relayauth
   # Immutable multi-platform release manifest (linux/amd64 and linux/arm64).

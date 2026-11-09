@@ -86,3 +86,17 @@ not a released or supported RelayHistory artifact.
 helm lint --strict charts/relayhistory \
   -f charts/relayhistory/ci/default-values.yaml
 ```
+
+## Retaining resources after replacing the workload
+
+`deployment.enabled` defaults to `true`. Set it to `false` only after a
+replacement has been verified and the old Deployment has been drained. This
+omits **only the Deployment** from the managed render; the chart continues to
+render its Service, PVC (where applicable), configuration, service account,
+network policy and any explicitly enabled migration resources. Existing input
+validation still applies. This setting does not change routing or migrate data.
+
+For an existing release, review the full proposed render against the actual
+running configuration before upgrading. Deleting a Deployment by hand while
+Helm still renders it can recreate it on a later upgrade. Disabling the entire
+chart dependency is different: that may also remove its retained data resources.

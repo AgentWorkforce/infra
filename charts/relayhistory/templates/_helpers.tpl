@@ -31,6 +31,8 @@ app.kubernetes.io/component: history
 {{- printf "%s@%s" .Values.image.repository $digest -}}
 {{- end -}}
 {{- define "relayhistory.validate" -}}
+{{- if not (kindIs "map" .Values.deployment) }}{{ fail "deployment must be an object with boolean deployment.enabled" }}{{ end -}}
+{{- if not (kindIs "bool" .Values.deployment.enabled) }}{{ fail "deployment.enabled must be a boolean" }}{{ end -}}
 {{- $image := include "relayhistory.image" . -}}
 {{- if ne (int .Values.replicaCount) 1 }}{{ fail "replicaCount must be 1: the GCP proof runs one History replica and the chart makes no HA claim (to drain it for a write-hold migration, set migrations.drainForWriteHold=true instead)" }}{{ end -}}
 {{- if and .Values.migrations.drainForWriteHold (not .Values.migrations.allowWriteHold) }}{{ fail "migrations.drainForWriteHold requires migrations.allowWriteHold=true: draining History only serves a write-hold migration" }}{{ end -}}

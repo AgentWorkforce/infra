@@ -1,7 +1,7 @@
 apiVersion: v2
 name: sessions-pipeline
 type: application
-version: 0.8.9
+version: 0.8.10
 # The Sessions Pipeline services image version the app subcharts default to.
 appVersion: "0.1.0"
 description: >
@@ -28,7 +28,7 @@ dependencies:
     alias: worker
   - name: session-ingest-api
     alias: alleyoop # retained values key; the published chart name is descriptive
-    version: 0.4.1
+    version: 0.4.2
     repository: file://../session-ingest-api
   - name: session-read-api
     alias: sessionReadApi
