@@ -43,7 +43,7 @@ spec:
             {{- end }}
             - { name: RELAYCAST_URL, value: {{ .Values.services.relaycastUrl | quote }} }
             - { name: RELAYCAST_PUBLIC_URL, value: {{ .Values.services.relaycastPublicUrl | quote }} }
-            {{- if ne .Values.services.historyBackend "native" }}
+            {{- if ne .Values.services.relayhistoryBackend "native" }}
             - { name: RELAYHISTORY_URL, value: {{ .Values.services.relayhistoryUrl | quote }} }
             - { name: RELAYHISTORY_PUBLIC_URL, value: {{ .Values.services.relayhistoryPublicUrl | quote }} }
             {{- end }}

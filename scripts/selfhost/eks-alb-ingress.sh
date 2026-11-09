@@ -36,8 +36,9 @@
 # docs/self-hosted-native-ingest.md go to the ingest edge Service as Exact
 # paths, everything else on that host goes to the read API instead of
 # RelayHistory, and /internal is denied as on api and cast. Without
-# EKS_ALB_HISTORY_LEGACY_SERVICE the ingest edge also receives selection,
-# reset, recovery, admission and onboarding (docs/self-hosted-no-relayauth.md). Exact paths match
+# EKS_ALB_HISTORY_LEGACY_SERVICE the ingest edge receives all of /v1/delivery
+# (delivery records stay on the read API), /v1/turns and /v1/onboarding
+# (docs/self-hosted-no-relayauth.md). Exact paths match
 # any method: the ingest edge refuses the wrong one. Services without their own
 # health-check annotation use /healthz from an Ingress-level default, which a
 # Service annotation overrides; it is the one path both new backends serve.
@@ -171,13 +172,16 @@ if [[ "$HISTORY" == true ]]; then
     for path in /v1/delivery/batches /v1/turns/batches /v1/delivery/limits /v1/auth/token/refresh; do
       route "$path" "$INGEST_SVC" "$INGEST_PORT" Exact
     done
-    # The ingest edge also owns these when nothing else is on the origin. They
-    # stay on the legacy Service while one is named: it serves them today.
+    # With nothing else on the origin the ingest edge owns /v1/delivery/*,
+    # /v1/turns/* and /v1/onboarding/*, except delivery records, which the read
+    # API serves (relayhistory-pipeline docs/selfhost-composition.md section 2).
+    # The controller orders Exact before Prefix. A named legacy Service keeps
+    # these paths: it serves them today.
     if [[ -z "$LEGACY_SVC" ]]; then
-      for path in /v1/delivery/sessions/selection /v1/delivery/sessions/reset /v1/delivery/recovery /v1/delivery/admission; do
-        route "$path" "$INGEST_SVC" "$INGEST_PORT" Exact
+      route /v1/delivery/records "$READ_API_SVC" "$READ_API_PORT" Exact
+      for path in /v1/delivery /v1/turns /v1/onboarding; do
+        route "$path" "$INGEST_SVC" "$INGEST_PORT" Prefix
       done
-      route /v1/onboarding "$INGEST_SVC" "$INGEST_PORT" Prefix
     fi
     deny /internal Prefix
     deny '"//internal*"' ImplementationSpecific

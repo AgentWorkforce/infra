@@ -27,7 +27,7 @@ read handoff and MCP reads (`services.sessionReadApi*`,
 `secretKeys.sessionReadApiSecret`) need 0.5.1, which is not published yet; they
 stay off by default. `secretKeys.introspectSecret` and
 `introspection.audiences` wire token introspection.
-`services.historyBackend=native` (default `legacy`) is the install without
+`services.relayhistoryBackend=native` (default `legacy`) is the install without
 RelayAuth and standalone RelayHistory: uploads go to the pipeline ingest edge and
 reads through the read API, both at `services.sessionReadApiPublicUrl`. It requires
 `services.relayauthEnabled=false`, the session read handoff and

@@ -10,7 +10,7 @@ import yaml
 ROOT = Path(__file__).resolve().parents[2]
 NATIVE = {'services': {
     'relayauthEnabled': False, 'relayauthUrl': '', 'relayhistoryUrl': '', 'relayhistoryPublicUrl': '',
-    'historyBackend': 'native', 'sessionReadApiUrl': 'http://agent-relay-read-api',
+    'relayhistoryBackend': 'native', 'sessionReadApiUrl': 'http://agent-relay-read-api',
     'sessionReadApiPublicUrl': 'https://history.placeholder.company',
 }, 'secretKeys': {'relayauthApiKey': '', 'introspectSecret': 'introspect', 'sessionReadApiSecret': 'read'}}
 
@@ -70,9 +70,9 @@ class NativeNoRelayauth(unittest.TestCase):
         self.assertEqual(control({}).returncode, 0, control({}).stderr)
 
     def test_control_refuses_an_unknown_history_backend(self):
-        result = control({'services': {'historyBackend': 'maybe'}})
+        result = control({'services': {'relayhistoryBackend': 'maybe'}})
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn('services.historyBackend must be legacy or native', result.stderr)
+        self.assertIn('services.relayhistoryBackend must be legacy or native', result.stderr)
 
 
 if __name__ == '__main__':

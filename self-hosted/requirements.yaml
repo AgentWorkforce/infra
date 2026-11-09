@@ -2202,8 +2202,8 @@ entries:
       handoff needs Control 0.5.1. secretKeys.introspectSecret enables token
       introspection, and introspection.audiences lists the accepted origins.
     chart: relay-control
-    values: [services.sessionReadApiUrl, services.sessionReadApiPublicUrl, services.sessionReadApiMcpReads, secretKeys.sessionReadApiSecret, secretKeys.introspectSecret, introspection.audiences]
-    env: [SESSION_READ_API_URL, SESSION_READ_API_PUBLIC_URL, SESSION_READ_API_SECRET_FILE, SESSION_READ_API_MCP_READS, RELAYCONTROL_INTROSPECT_SECRET_FILE, SELFHOST_INTROSPECT_AUDIENCES]
+    values: [services.relayhistoryBackend, services.sessionReadApiUrl, services.sessionReadApiPublicUrl, services.sessionReadApiMcpReads, secretKeys.sessionReadApiSecret, secretKeys.introspectSecret, introspection.audiences]
+    env: [RELAYHISTORY_BACKEND, SESSION_READ_API_URL, SESSION_READ_API_PUBLIC_URL, SESSION_READ_API_SECRET_FILE, SESSION_READ_API_MCP_READS, RELAYCONTROL_INTROSPECT_SECRET_FILE, SELFHOST_INTROSPECT_AUDIENCES]
     profiles: [relay-control]
     status: shipped
     provided_by: operator

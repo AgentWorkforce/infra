@@ -80,13 +80,13 @@ settings. */ -}}
 {{- include "relay-control.validateIntegrations" . -}}
 {{- if not (regexMatch "^https://[^/?#]+$" (include "relay-control.publicUrl" .)) }}{{ fail "publicUrl must be an HTTPS origin with no path" }}{{ end -}}
 {{- $serviceUrls := dict "relaycastUrl" .Values.services.relaycastUrl -}}
-{{- if ne .Values.services.historyBackend "native" }}{{ $_ := set $serviceUrls "relayhistoryUrl" .Values.services.relayhistoryUrl }}{{ end -}}
+{{- if ne .Values.services.relayhistoryBackend "native" }}{{ $_ := set $serviceUrls "relayhistoryUrl" .Values.services.relayhistoryUrl }}{{ end -}}
 {{- if .Values.services.relayauthEnabled }}{{ $_ := set $serviceUrls "relayauthUrl" .Values.services.relayauthUrl }}{{ end -}}
 {{- with .Values.services.sessionReadApiUrl }}{{ $_ := set $serviceUrls "sessionReadApiUrl" . }}{{ end -}}
 {{- range $name, $url := $serviceUrls }}{{ if not (regexMatch "^https?://[^/?#]+$" $url) }}{{ fail (printf "services.%s must be an HTTP(S) origin with no path" $name) }}{{ end }}{{ end -}}
 {{- $publicOriginPattern := "^https://([A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?\\.)+[A-Za-z]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?(:[0-9]{1,5})?$" -}}
 {{- $publicUrls := dict "relaycastPublicUrl" .Values.services.relaycastPublicUrl -}}
-{{- if ne .Values.services.historyBackend "native" }}{{ $_ := set $publicUrls "relayhistoryPublicUrl" .Values.services.relayhistoryPublicUrl }}{{ end -}}
+{{- if ne .Values.services.relayhistoryBackend "native" }}{{ $_ := set $publicUrls "relayhistoryPublicUrl" .Values.services.relayhistoryPublicUrl }}{{ end -}}
 {{- with .Values.services.sessionReadApiPublicUrl }}{{ $_ := set $publicUrls "sessionReadApiPublicUrl" . }}{{ end -}}
 {{- range $name, $url := $publicUrls -}}
 {{- if or (not (regexMatch $publicOriginPattern $url)) (regexMatch "(?i)\\.(localhost|local|internal|lan|invalid|test|example|home\\.arpa|onion)(:[0-9]{1,5})?$" $url) (regexMatch "(?i)\\.example\\.(com|net|org)(:[0-9]{1,5})?$" $url) }}{{ fail (printf "services.%s must be a public HTTPS origin with multi-label DNS and no credentials, path, query, or fragment" $name) }}{{ end -}}
@@ -232,7 +232,7 @@ telemetry.deployment is checked in validateRuntime before it is merged. */ -}}
 {{- if not (kindIs "invalid" .Values.flows.queuePingMs) }}{{ if ne (toString .Values.flows.queuePingMs) "" }}
 - { name: SELFHOST_FLOWS_QUEUE_PING_MS, value: {{ int64 .Values.flows.queuePingMs | toString | quote }} }
 {{- end }}{{ end }}
-{{- if eq .Values.services.historyBackend "native" }}
+{{- if eq .Values.services.relayhistoryBackend "native" }}
 - { name: RELAYHISTORY_BACKEND, value: native }
 {{- end }}
 {{- with .Values.services.sessionReadApiUrl }}
@@ -339,13 +339,13 @@ what the API would refuse at startup is refused at render time. */ -}}
 {{- if not (kindIs "bool" $s.sessionReadApiMcpReads) }}{{ fail "services.sessionReadApiMcpReads must be a boolean" }}{{ end -}}
 {{- if and (or $s.sessionReadApiUrl $s.sessionReadApiPublicUrl $secret) (not (and $s.sessionReadApiUrl $s.sessionReadApiPublicUrl $secret)) }}{{ fail "services.sessionReadApiUrl, services.sessionReadApiPublicUrl and secretKeys.sessionReadApiSecret must be set together" }}{{ end -}}
 {{- if and $s.sessionReadApiMcpReads (not $secret) }}{{ fail "services.sessionReadApiMcpReads requires the session read API handoff (services.sessionReadApiUrl, services.sessionReadApiPublicUrl and secretKeys.sessionReadApiSecret)" }}{{ end -}}
-{{- if not (has $s.historyBackend (list "legacy" "native")) }}{{ fail "services.historyBackend must be legacy or native" }}{{ end -}}
-{{- if eq $s.historyBackend "native" -}}
-{{- if $s.relayauthEnabled }}{{ fail "services.historyBackend=native requires services.relayauthEnabled=false: this mode has no RelayAuth" }}{{ end -}}
-{{- if or $s.relayhistoryUrl $s.relayhistoryPublicUrl }}{{ fail "services.historyBackend=native takes the History origin from the session read API: leave services.relayhistoryUrl and services.relayhistoryPublicUrl empty" }}{{ end -}}
-{{- if not $secret }}{{ fail "services.historyBackend=native requires the session read API handoff (services.sessionReadApiUrl, services.sessionReadApiPublicUrl and secretKeys.sessionReadApiSecret)" }}{{ end -}}
-{{- if not .Values.secretKeys.introspectSecret }}{{ fail "services.historyBackend=native requires secretKeys.introspectSecret: the ingest edge authorizes uploads through introspection" }}{{ end -}}
-{{- with .Values.introspection.audiences }}{{ if not (has $s.sessionReadApiPublicUrl .) }}{{ fail "introspection.audiences must include services.sessionReadApiPublicUrl with services.historyBackend=native" }}{{ end }}{{ end -}}
+{{- if not (has $s.relayhistoryBackend (list "legacy" "native")) }}{{ fail "services.relayhistoryBackend must be legacy or native" }}{{ end -}}
+{{- if eq $s.relayhistoryBackend "native" -}}
+{{- if $s.relayauthEnabled }}{{ fail "services.relayhistoryBackend=native requires services.relayauthEnabled=false: this mode has no RelayAuth" }}{{ end -}}
+{{- if or $s.relayhistoryUrl $s.relayhistoryPublicUrl }}{{ fail "services.relayhistoryBackend=native takes the History origin from the session read API: leave services.relayhistoryUrl and services.relayhistoryPublicUrl empty" }}{{ end -}}
+{{- if not $secret }}{{ fail "services.relayhistoryBackend=native requires the session read API handoff (services.sessionReadApiUrl, services.sessionReadApiPublicUrl and secretKeys.sessionReadApiSecret)" }}{{ end -}}
+{{- if not .Values.secretKeys.introspectSecret }}{{ fail "services.relayhistoryBackend=native requires secretKeys.introspectSecret: the ingest edge authorizes uploads through introspection" }}{{ end -}}
+{{- with .Values.introspection.audiences }}{{ if not (has $s.sessionReadApiPublicUrl .) }}{{ fail "introspection.audiences must include services.sessionReadApiPublicUrl with services.relayhistoryBackend=native" }}{{ end }}{{ end -}}
 {{- end -}}
 {{- $audiences := .Values.introspection.audiences -}}
 {{- if not (kindIs "slice" ($audiences | default list)) }}{{ fail "introspection.audiences must be a list of http(s) origins" }}{{ end -}}

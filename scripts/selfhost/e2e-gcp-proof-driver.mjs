@@ -666,9 +666,15 @@ async function phaseDeliveryPipeline() {
   const turns = await call("POST", `${INGEST}/v1/turns/batches`, { token: sync.accessToken, body: pipelineTurnBatch() });
   must(turns.status === 200 && typeof turns.json?.receiptId === "string", `turn ingest status=${turns.status} error=${errorCode(turns)}`);
   pass("delivery.turns", `receipt=${turns.json.receiptId}`);
-  const read = await historySession(state.a, "read");
+  // Read tokens can live as little as 60 seconds, so renew one while polling.
+  let read = await historySession(state.a, "read");
+  let readIssuedAt = Date.now();
   // Wait for both streams (records and turns) to index before later cases read them.
   const projected = await waitFor("delivered session", async () => {
+    if (Date.now() - readIssuedAt > 45_000) {
+      read = await historySession(state.a, "read");
+      readIssuedAt = Date.now();
+    }
     const events = await eventsDirect(read.accessToken, state.a, state.session.sessionId);
     if (events.status !== 200) return null;
     const rows = markerEvents(events.json?.events);

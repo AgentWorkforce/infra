@@ -17,7 +17,7 @@ relay-control:
     # The native backend takes the History origin from the read API.
     relayhistoryUrl: ""
     relayhistoryPublicUrl: ""
-    historyBackend: native
+    relayhistoryBackend: native
     sessionReadApiUrl: http://agent-relay-read-api
     # REQUIRED OVERRIDE: https://history.<your domain>.
     sessionReadApiPublicUrl: https://history.placeholder.company

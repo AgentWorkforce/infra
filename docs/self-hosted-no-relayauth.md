@@ -11,7 +11,7 @@ Apply `-f charts/agent-relay/values-eks.yaml -f charts/agent-relay/values-eks-na
 with the values marked REQUIRED OVERRIDE. Needed together:
 
 - `components.relayauth: false`, `components.relayhistory: false`
-- `relay-control.services`: `relayauthEnabled: false`, `historyBackend: native`,
+- `relay-control.services`: `relayauthEnabled: false`, `relayhistoryBackend: native`,
   `sessionReadApiUrl`, `sessionReadApiPublicUrl`; `relayhistoryUrl` and
   `relayhistoryPublicUrl` stay empty.
 - `relay-control.secretKeys`: `sessionReadApiSecret`, `introspectSecret`; the
@@ -43,9 +43,10 @@ pipeline migration 043910 must be applied for `sessionSelection`.
 ## Edge
 
 Run `scripts/selfhost/eks-alb-ingress.sh` with `EKS_ALB_INGEST=true` and without
-`EKS_ALB_HISTORY_LEGACY_SERVICE`. The ingest edge then also receives selection,
-reset, recovery, admission and onboarding, and everything else on the history
-host goes to the read API.
+`EKS_ALB_HISTORY_LEGACY_SERVICE`. The ingest edge then receives `/v1/delivery/*`
+(except `GET /v1/delivery/records`), `/v1/turns/*`, `/v1/onboarding/*` and
+`POST /v1/auth/token/refresh`; `/internal` is denied; everything else on the
+history host, including `/healthz`, goes to the read API.
 
 ## Removing the services
 
