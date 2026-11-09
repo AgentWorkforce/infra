@@ -701,9 +701,20 @@ compatibility:
       images:
         relayauth: { repository: ghcr.io/agentworkforce/relayauth, digest: sha256:eb71daa28e30eb7305f666d0bccc5a4002e53e8a574e3c4c32163d907a1b71df }
       notes: superseded by 0.1.1.
-    - id: agent-relay-0.6.7
+    - id: agent-relay-0.6.8
       status: unreleased
       current: true
+      charts: { agent-relay: 0.6.8, relayhistory: 0.1.2, relay-control: 0.4.1, relay-webapp: 0.2.1 }
+      app_versions: { agent-relay: 0.1.0, relayhistory: 0.1.0, relay-control: 0.1.0, relay-webapp: 0.1.0 }
+      depends:
+        agent-relay: { relaycast: 0.3.6, relayauth: 0.1.4, sessions-pipeline: 0.8.4, relayhistory: 0.1.2, relay-control: 0.4.1, relay-webapp: 0.2.1, relayflows: 0.2.5, durable-actors: 0.14.6-awf.1, relayfile: 0.2.2, telemetry-collector: 0.1.1, relay-chief: 0.1.0 }
+      images:
+        relayhistory: { repository: ghcr.io/agentworkforce/relayhistory, digest_required: true }
+        relay-control: { repository: ghcr.io/agentworkforce/relay-control, digest: sha256:d8c26d44dccb6dd21b7033288241a379e46ce5fbca69f276c4d4745001c3c3e2 }
+        relay-webapp: { repository: ghcr.io/agentworkforce/relay-webapp, digest_required: true }
+      notes: 'Takes relay-control 0.4.1 with default-off services.relaychiefControlUrl (RELAYCHIEF_CONTROL_URL) for the optional relaychief-control add-on. Needs a Control image built with that wiring; the default image ignores it. With it unset every render differs only in the helm.sh/chart labels.'
+    - id: agent-relay-0.6.7
+      status: planned
       charts: { agent-relay: 0.6.7, relayhistory: 0.1.2, relay-control: 0.4.0, relay-webapp: 0.2.1 }
       app_versions: { agent-relay: 0.1.0, relayhistory: 0.1.0, relay-control: 0.1.0, relay-webapp: 0.1.0 }
       depends:
@@ -2191,6 +2202,28 @@ entries:
       - charts/relay-control/values.yaml
       - charts/relay-control/templates/deployment.yaml
 
+  - id: opt.relaychief-control-url
+    kind: option
+    title: Forward Control's Chief routes to relaychief-control
+    description: |
+      Default off. services.relaychiefControlUrl (RELAYCHIEF_CONTROL_URL) is the
+      internal origin of the optional relaychief-control add-on; unset, every Chief
+      route keeps answering 503 chief_unavailable. Requires
+      secretKeys.introspectSecret and the add-on's config.publicOrigin in
+      introspection.audiences. Needs a Control image built with the wiring.
+    chart: relay-control
+    values: [services.relaychiefControlUrl]
+    env: [RELAYCHIEF_CONTROL_URL]
+    profiles: [relay-control]
+    status: shipped
+    provided_by: operator
+    default: disabled
+    choices: [{ value: disabled }, { value: enabled }]
+    verify: helm template renders no RELAYCHIEF_CONTROL_URL by default, renders it on the API Deployment only when configured, and refuses it without secretKeys.introspectSecret.
+    sources:
+      - charts/relay-control/values.yaml
+      - charts/relay-control/templates/deployment.yaml
+      - scripts/ci/charts.sh
   - id: req.relay-control.session-read
     kind: requirement
     title: Session read API handoff and token introspection for Control

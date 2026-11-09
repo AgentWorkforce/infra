@@ -45,6 +45,9 @@ spec:
             - { name: RELAYCAST_PUBLIC_URL, value: {{ .Values.services.relaycastPublicUrl | quote }} }
             - { name: RELAYHISTORY_URL, value: {{ .Values.services.relayhistoryUrl | quote }} }
             - { name: RELAYHISTORY_PUBLIC_URL, value: {{ .Values.services.relayhistoryPublicUrl | quote }} }
+            {{- with .Values.services.relaychiefControlUrl }}
+            - { name: RELAYCHIEF_CONTROL_URL, value: {{ . | quote }} }
+            {{- end }}
             {{- include "relay-control.runtimeEnv" . | nindent 12 }}
             {{- include "relay-control.secretEnv" . | nindent 12 }}
             {{- if (.Values.postgresCa | default dict).enabled }}

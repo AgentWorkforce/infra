@@ -82,6 +82,8 @@ settings. */ -}}
 {{- $serviceUrls := dict "relaycastUrl" .Values.services.relaycastUrl "relayhistoryUrl" .Values.services.relayhistoryUrl -}}
 {{- if .Values.services.relayauthEnabled }}{{ $_ := set $serviceUrls "relayauthUrl" .Values.services.relayauthUrl }}{{ end -}}
 {{- with .Values.services.sessionReadApiUrl }}{{ $_ := set $serviceUrls "sessionReadApiUrl" . }}{{ end -}}
+{{- with .Values.services.relaychiefControlUrl }}{{ $_ := set $serviceUrls "relaychiefControlUrl" . }}{{ end -}}
+{{- if and .Values.services.relaychiefControlUrl (not .Values.secretKeys.introspectSecret) }}{{ fail "services.relaychiefControlUrl requires secretKeys.introspectSecret" }}{{ end -}}
 {{- range $name, $url := $serviceUrls }}{{ if not (regexMatch "^https?://[^/?#]+$" $url) }}{{ fail (printf "services.%s must be an HTTP(S) origin with no path" $name) }}{{ end }}{{ end -}}
 {{- $publicOriginPattern := "^https://([A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?\\.)+[A-Za-z]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?(:[0-9]{1,5})?$" -}}
 {{- $publicUrls := dict "relaycastPublicUrl" .Values.services.relaycastPublicUrl "relayhistoryPublicUrl" .Values.services.relayhistoryPublicUrl -}}
@@ -113,7 +115,7 @@ the chart already sets, including duplicates inside extraEnv. */ -}}
   "RELAYAUTH_API_KEY_FILE" "RELAYCAST_INTERNAL_SECRET_FILE" "SELFHOST_BOOTSTRAP_TOKEN_FILE" "SELFHOST_ENCRYPTION_KEY_FILE"
   "SELFHOST_ENCRYPTION_PREVIOUS_KEY_FILE" "SELFHOST_INTERNAL_TOKEN_FILE" "SELFHOST_OIDC_CLIENT_SECRET_FILE" "SELFHOST_SMTP_PASSWORD_FILE"
   "SELFHOST_TELEMETRY_INSTALL_KEY_FILE" "RELAYCONTROL_INTROSPECT_SECRET_FILE" "SESSION_READ_API_SECRET_FILE"
-  "SESSION_READ_API_URL" "SESSION_READ_API_PUBLIC_URL" "SESSION_READ_API_MCP_READS" "SELFHOST_INTROSPECT_AUDIENCES" -}}
+  "SESSION_READ_API_URL" "SESSION_READ_API_PUBLIC_URL" "SESSION_READ_API_MCP_READS" "SELFHOST_INTROSPECT_AUDIENCES" "RELAYCHIEF_CONTROL_URL" -}}
 {{- if (.Values.postgresCa | default dict).enabled }}{{ $managed = append $managed "NODE_EXTRA_CA_CERTS" }}{{ end -}}
 {{- range $name := $managed }}{{ if hasSuffix "_FILE" $name }}{{ $managed = append $managed (trimSuffix "_FILE" $name) }}{{ end }}{{ end -}}
 {{- range $src := list (include "relay-control.runtimeEnv" .) (include "relay-control.secretEnv" .) -}}

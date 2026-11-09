@@ -27,6 +27,14 @@ read handoff and MCP reads (`services.sessionReadApi*`,
 `secretKeys.sessionReadApiSecret`) need 0.5.1, which is not published yet; they
 stay off by default. `secretKeys.introspectSecret` and
 `introspection.audiences` wire token introspection.
+`services.relaychiefControlUrl` (`RELAYCHIEF_CONTROL_URL`) forwards the Chief
+routes to the optional [relaychief-control](../relaychief-control) add-on and is
+off by default. Point it at the internal Service, because that add-on's Ingress
+serves only `/chief/v1`. It needs `secretKeys.introspectSecret`, the add-on's
+`config.publicOrigin` in `introspection.audiences`, `chief` in `SELFHOST_FEATURES`
+and a Control image built with that wiring; the default image ignores it. A
+different namespace needs a `networkPolicy.additionalEgress` rule, and a
+relaychief-control `networkPolicy.ingressFrom` must admit Control.
 `services.relaycastUrl` and `services.relayhistoryUrl` are internal origins;
 their `*PublicUrl` counterparts must be public HTTPS origins and are returned
 to clients or used as the externally stable RelayHistory assertion audience.

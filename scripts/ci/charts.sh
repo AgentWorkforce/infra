@@ -445,6 +445,16 @@ for chart in "${charts[@]}"; do
         ! grep -q 'export DATABASE_URL_FILE' <<<"$out" || err "$chart: obsolete migration DATABASE_URL_FILE adapter is still rendered"
         ! grep -Eq 'CLOUD_EDITION|NEXT_PUBLIC_APP_URL|OIDC_|AUTH_SESSION_SECRET|NEXT_CACHE' <<<"$out" \
           || err "$chart: full-Cloud/Next environment leaked into the selfhost API chart"
+        # The Chief add-on origin renders only when configured.
+        ! grep -q 'RELAYCHIEF_CONTROL_URL' <<<"$out" || err "$chart: RELAYCHIEF_CONTROL_URL must not render by default"
+        chief_args=(--set services.relaychiefControlUrl=http://relaychief-control:3200 --set secretKeys.introspectSecret=relaycontrol-introspect-secret)
+        render "$chart" "$v" "${chief_args[@]}" | yq 'select(.kind == "Deployment") | .spec.template.spec.containers[0].env[] | .name + "=" + (.value // "")' \
+          | grep -qxF "RELAYCHIEF_CONTROL_URL=http://relaychief-control:3200" || err "$chart: services.relaychiefControlUrl did not render"
+        ! render "$chart" "$v" "${chief_args[@]}" | yq 'select(.kind == "Job") | .spec.template.spec.containers[0].env[].name' | grep -q RELAYCHIEF_CONTROL_URL \
+          || err "$chart: RELAYCHIEF_CONTROL_URL must not reach the migration Job"
+        expect_render_failure "$chart" "$v" "Chief add-on without introspection" "services.relaychiefControlUrl requires secretKeys.introspectSecret" --set services.relaychiefControlUrl=http://relaychief-control:3200
+        expect_render_failure "$chart" "$v" "Chief add-on origin with a path" "services.relaychiefControlUrl must be an HTTP(S) origin" "${chief_args[@]}" --set services.relaychiefControlUrl=http://relaychief-control:3200/chief/v1
+        expect_render_failure "$chart" "$v" "Chief add-on env managed by the chart" "RELAYCHIEF_CONTROL_URL is managed by structured chart values" --set 'extraEnv[0].name=RELAYCHIEF_CONTROL_URL' --set 'extraEnv[0].value=http://x'
         # Session read handoff and introspection render only when configured,
         # with their secrets as mounted files.
         ! grep -Eq 'SESSION_READ_API|RELAYCONTROL_INTROSPECT|SELFHOST_INTROSPECT' <<<"$out" \

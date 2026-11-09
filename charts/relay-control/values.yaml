@@ -232,6 +232,12 @@ services:
   # SESSION_READ_API_MCP_READS: send MCP session reads to the read API
   # (relay-control #14/#18, first image 0.5.1). Requires the handoff above.
   sessionReadApiMcpReads: false
+  # RELAYCHIEF_CONTROL_URL, default off: internal origin of the relaychief-control
+  # Service (for example http://relaychief-control:3200), where the /api/v1 tenant
+  # routes are served. Requires secretKeys.introspectSecret; list relaychief-control's
+  # config.publicOrigin in introspection.audiences. Needs a Control image built
+  # after the Chief wiring landed; the default 0.5.0 image ignores it.
+  relaychiefControlUrl: ""
 
 # Token introspection audiences (SELFHOST_INTROSPECT_AUDIENCES): http(s)
 # origins a token may be introspected for. Empty uses
