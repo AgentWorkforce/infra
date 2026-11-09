@@ -165,8 +165,8 @@ profiles:
     title: Relay Chief control add-on
     chart: relaychief-control
     values_file: ci/default-values.yaml
-    install: helm install relaychief-control agentworkforce/relaychief-control -f <your values> --set image.digest=sha256:<digest>
-    summary: Optional add-on outside the agent-relay umbrella; not qualified and no image is published. One replica, operator-managed PostgreSQL, a loopback-only admin listener and an Ingress limited to /chief/v1 by default; no HA claim.
+    install: helm install relaychief-control agentworkforce/relaychief-control -f <your values>
+    summary: Optional add-on outside the agent-relay umbrella; not qualified. One replica, operator-managed PostgreSQL, a loopback-only admin listener and an Ingress limited to /chief/v1 by default; no HA claim.
 
   - id: durable-actors
     title: TerseAI durable-actors control plane (vendored upstream chart)
@@ -817,8 +817,8 @@ compatibility:
       charts: { relaychief-control: 0.1.0 }
       app_versions: { relaychief-control: 0.1.0 }
       images:
-        relaychief-control: { repository: ghcr.io/agentworkforce/relaychief-control, digest_required: true }
-      notes: First chart, rendered only. No relaychief-control image is published and the digest is operator-supplied until one exists.
+        relaychief-control: { repository: ghcr.io/agentworkforce/relaychief-control, digest: "sha256:ddd4129f062cc19ba144bbb4ac0f7af66fb730be5a7c9521a9307d4c8f287688", digest_required: true }
+      notes: First chart, rendered only. Defaults to the published relaychief-control 0.1.0 image.
     - id: relayflows-0.2.5
       status: unreleased
       current: true

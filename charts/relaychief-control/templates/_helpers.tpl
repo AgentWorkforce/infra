@@ -30,7 +30,8 @@ app.kubernetes.io/component: server
 {{- end -}}
 {{- define "relaychief-control.validate" -}}
 {{- $image := include "relaychief-control.image" . -}}
-{{- if ne (int .Values.replicaCount) 1 }}{{ fail "replicaCount must be 1: the chart runs one replica and makes no HA claim" }}{{ end -}}
+{{- $replicas := .Values.replicaCount -}}
+{{- if not (and (or (kindIs "int" $replicas) (kindIs "int64" $replicas) (kindIs "float64" $replicas)) (eq (float64 $replicas) 1.0)) }}{{ fail "replicaCount must be 1: the chart runs one replica and makes no HA claim" }}{{ end -}}
 {{- if not .Values.existingSecret }}{{ fail "existingSecret is required; the chart never creates Secrets" }}{{ end -}}
 {{- range $name, $key := .Values.secretKeys }}{{ if and $key (not (regexMatch "^[A-Za-z0-9._-]+$" (toString $key))) }}{{ fail (printf "secretKeys.%s must be a Kubernetes Secret data key" $name) }}{{ end }}{{ end -}}
 {{- range $name := list "databaseUrl" "introspectSecret" "adminToken" }}{{ if not (get $.Values.secretKeys $name) }}{{ fail (printf "secretKeys.%s is required" $name) }}{{ end }}{{ end -}}

@@ -3,14 +3,14 @@
 Packaging for [relaychief-control](https://github.com/AgentWorkforce/relaychief-control),
 the optional Relay Chief registry and slot-binding add-on. It is not part of the
 `agent-relay` umbrella, and an installation without it is complete. It runs one
-replica and makes no HA claim. No image is published yet, so `image.digest` has
-to be supplied; `ci/default-values.yaml` carries a placeholder for rendering only.
+replica and makes no HA claim. `image.digest` defaults to the published 0.1.0
+image.
 
 ## Install inputs
 
 | Value | Renders | Notes |
 | --- | --- | --- |
-| `image.digest` | image reference | Required, `sha256:<64 hex>`; tags are not accepted |
+| `image.digest` | image reference | Pinned to 0.1.0 by default; must be `sha256:<64 hex>`, tags are not accepted |
 | `config.relaycontrolUrl` | `RELAYCONTROL_URL` | Required bare http(s) origin |
 | `config.publicOrigin` | `RELAYCHIEF_CONTROL_PUBLIC_ORIGIN` | Required bare http(s) origin; register it in relay-control's accepted audiences |
 | `config.browserOrigins` | `RELAYCHIEF_CONTROL_BROWSER_ORIGINS` | Optional, comma separated |

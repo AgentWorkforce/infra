@@ -105,7 +105,7 @@ Services image (sessions-pipeline-worker, alleyoop and the privileged SQL Jobs):
 | durable-actors-0.14.6-awf.1 | unreleased | durable-actors 0.14.6-awf.1 |  |  |  | The vendored v0.14.6 chart plus UPSTREAM.md patch 10 (AWS: storage.provider s3, storage.s3.{region,actorCredentials,actorRoleArn,endpoint,forcePathStyle}, serviceAccount.annotations, sandbox.{runtimeClassName,nodeSelector,tolerations}, AWS availability zones in placement.zone) and patch 11 (the -awf.1 version suffix). The S3 values need a control-plane image from the AgentWorkforce durable-actors fork (selfhost/aws-s3, GHCR durable-actors-control-plane); upstream 0.14.6 images ignore them. GCS defaults render as the upstream chart apart from the helm.sh/chart label. Supersedes the never-released 0.14.6 row: Vendored TerseAI/durable-actors release chart v0.14.6 (tag commit 5f0a2d62, asset sha256 a489cd15...bee) with the local patches listed in charts/durable-actors/UPSTREAM.md (root global, invoke-only key, host idle timeout, pool-manager name length, zero-valued bounds, lowercase ingress host, schema patterns, README links). Never published by this repo; images pinned by upstream digest (charts/durable-actors/UPSTREAM.md). |
 | relayfile-0.1.1 | shipped | relayfile 0.1.1 | relayfile: `ghcr.io/agentworkforce/relayfile:0.1.0` |  |  | image by tag (Chart.appVersion), not digest. Superseded by 0.2.0. |
 | relay-chief-0.1.0 | unreleased | relay-chief 0.1.0 |  |  |  | First chart, rendered only. No Relay Chief image is published and the digest is operator-supplied until one exists. |
-| relaychief-control-0.1.0 | unreleased | relaychief-control 0.1.0 | relaychief-control: `ghcr.io/agentworkforce/relaychief-control@sha256:<required>` |  |  | First chart, rendered only. No relaychief-control image is published and the digest is operator-supplied until one exists. |
+| relaychief-control-0.1.0 | unreleased | relaychief-control 0.1.0 | relaychief-control: `ghcr.io/agentworkforce/relaychief-control@sha256:ddd4129f062c…` |  |  | First chart, rendered only. Defaults to the published relaychief-control 0.1.0 image. |
 | relayflows-0.2.5 | unreleased | relayflows 0.2.5 | relayflows: `node:22.23.3-bookworm-slim` |  |  | Repository rename to AgentWorkforce/infra: canonical source and Helm repository URLs, with matching local dependency patch versions. Runtime images, application source, migration generation and deployment values are unchanged. This release has no new live application proof. |
 | relayflows-0.2.4 | shipped | relayflows 0.2.4 | relayflows: `node:22.23.3-bookworm-slim` |  |  | License-annotation patch bump of 0.2.3; the stock image installs the pinned relayflows runtime at start. |
 | relayflows-0.2.3 | shipped | relayflows 0.2.3 | relayflows: `node:22.23.3-bookworm-slim` |  |  | the stock image installs the pinned relayflows runtime at start; production uses an immutable flow image. Superseded by 0.2.4. |
@@ -794,9 +794,9 @@ chart `relay-chief` · values [`ci/default-values.yaml`](../charts/relay-chief/c
 
 ### Profile: relaychief-control
 
-**Relay Chief control add-on.** Optional add-on outside the agent-relay umbrella; not qualified and no image is published. One replica, operator-managed PostgreSQL, a loopback-only admin listener and an Ingress limited to /chief/v1 by default; no HA claim.
+**Relay Chief control add-on.** Optional add-on outside the agent-relay umbrella; not qualified. One replica, operator-managed PostgreSQL, a loopback-only admin listener and an Ingress limited to /chief/v1 by default; no HA claim.
 
-chart `relaychief-control` · values [`ci/default-values.yaml`](../charts/relaychief-control/ci/default-values.yaml) · install: `helm install relaychief-control agentworkforce/relaychief-control -f <your values> --set image.digest=sha256:<digest>`
+chart `relaychief-control` · values [`ci/default-values.yaml`](../charts/relaychief-control/ci/default-values.yaml) · install: `helm install relaychief-control agentworkforce/relaychief-control -f <your values>`
 
 **Requirements (provide these)**
 

@@ -563,6 +563,8 @@ for chart in "${charts[@]}"; do
         expect_render_failure "$chart" "$v" "unsafe Secret key path" "secretKeys.adminToken must be a Kubernetes Secret data key" --set-string secretKeys.adminToken=../key
         expect_render_failure "$chart" "$v" "empty required Secret key" "secretKeys.databaseUrl is required" --set secretKeys.databaseUrl=
         expect_render_failure "$chart" "$v" "multiple replicas" "replicaCount must be 1" --set replicaCount=2
+        expect_render_failure "$chart" "$v" "fractional replicas" "replicaCount must be 1" --set replicaCount=1.5
+        expect_render_failure "$chart" "$v" "string replicas" "replicaCount must be 1" --set-string replicaCount=1
         expect_render_failure "$chart" "$v" "server port on the admin port" "server.port must not be 3201" --set server.port=3201
         expect_render_failure "$chart" "$v" "public Service" "service.type must be ClusterIP" --set service.type=LoadBalancer
         expect_render_failure "$chart" "$v" "restricted egress with no rules" "requires networkPolicy.additionalEgress" --set-json 'networkPolicy.additionalEgress=[]'
