@@ -1,5 +1,7 @@
 {{- define "relayfile-control.name" -}}{{ default .Chart.Name .Values.nameOverride | trunc 63 | trimSuffix "-" }}{{- end -}}
-{{- define "relayfile-control.fullname" -}}{{ if .Values.fullnameOverride }}{{ .Values.fullnameOverride | trunc 63 | trimSuffix "-" }}{{ else }}{{ printf "%s-%s" .Release.Name (include "relayfile-control.name" .) | trunc 63 | trimSuffix "-" }}{{ end }}{{- end -}}
+{{- /* A release named after the chart keeps the bare name, so the default
+`helm install relayfile-control` Service matches EKS_ALB_RELAYFILE_CONTROL_SERVICE. */ -}}
+{{- define "relayfile-control.fullname" -}}{{ if .Values.fullnameOverride }}{{ .Values.fullnameOverride | trunc 63 | trimSuffix "-" }}{{ else if contains (include "relayfile-control.name" .) .Release.Name }}{{ .Release.Name | trunc 63 | trimSuffix "-" }}{{ else }}{{ printf "%s-%s" .Release.Name (include "relayfile-control.name" .) | trunc 63 | trimSuffix "-" }}{{ end }}{{- end -}}
 {{- define "relayfile-control.labels" -}}
 helm.sh/chart: {{ printf "%s-%s" .Chart.Name .Chart.Version | replace "+" "_" }}
 {{ include "relayfile-control.selectorLabels" . }}

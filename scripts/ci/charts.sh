@@ -699,6 +699,8 @@ for chart in "${charts[@]}"; do
         [ "$(rq "$deployment | [.containers[0].env[].name] | join(\",\")" "$out")" = DATABASE_URL,RELAYFILE_INTERNAL_HMAC_SECRET,RELAYFILE_CONTROL_ADMIN_TOKEN,RELAYCONTROL_SERVICE_TOKEN ] \
           || err "$chart: the default render must inject only the four core Secret env vars"
         ! grep -Eq 'FLOWS_ENABLED|RELAYCONTROL_LICENSE' <<<"$out" || err "$chart: Flows and license env must not render by default"
+        [ "$(helm template relayfile-control "charts/$chart" --namespace ci --no-hooks -f "$v" | yq 'select(.kind == "Service") | .metadata.name')" = relayfile-control ] \
+          || err "$chart: a release named relayfile-control must create the Service the ALB script targets by default"
         v=charts/relayfile-control/ci/flows-values.yaml
         for field in config.publicOrigin flows.encryptionKeyId; do
           expect_render_failure "$chart" "$v" "Flows without $field" "flows.enabled=true requires $field" --set "$field="
