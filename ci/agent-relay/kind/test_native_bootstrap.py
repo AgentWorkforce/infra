@@ -265,6 +265,37 @@ class NativeBootstrapTests(unittest.TestCase):
         self.assertTrue(all(e[0] == "pull" for e in self.stack.effects))
         self.assertFalse(self.stack.marker.exists())
 
+    def test_local_docker_endpoint_is_bound_before_every_effect(self):
+        self.observed_preflight()
+        for host in ("tcp://unqualified.example:2375", "unix://remote/var/run/docker.sock", "unix:///other/docker.sock"):
+            with self.subTest(host=host):
+                self.stack.env["DOCKER_HOST"] = host
+                with self.assertRaises(NativeRecipeError):
+                    self.adapter.prepare_infrastructure(self.s, self.adapter._inspected)
+                self.assertEqual(self.stack.effects, [])
+        self.stack.env["DOCKER_HOST"] = self.adapter._docker_transport[0]
+        for key, value in (("DOCKER_CONTEXT", "remote-context"), ("DOCKER_TLS_VERIFY", "1"), ("DOCKER_CERT_PATH", "/other")):
+            with self.subTest(override=key):
+                self.stack.env[key] = value
+                with self.assertRaisesRegex(NativeRecipeError, "endpoint_override"):
+                    self.adapter.prepare_infrastructure(self.s, self.adapter._inspected)
+                self.assertEqual(self.stack.effects, [])
+                del self.stack.env[key]
+        self.stack.docker_args = ["docker", "--context", "remote-context"]
+        with self.assertRaisesRegex(NativeRecipeError, "endpoint_override"):
+            self.adapter.prepare_infrastructure(self.s, self.adapter._inspected)
+        self.assertEqual(self.stack.effects, [])
+
+    def test_endpoint_drift_after_first_pull_prevents_second_pull_and_kind(self):
+        self.observed_preflight()
+        def drift(image):
+            self.stack.effects.append(("pull", image)); self.stack.env["DOCKER_HOST"] = "tcp://unqualified.example:2375"
+        self.stack.pull = drift
+        with patch.object(TlsMaterial, "verify", return_value=None):
+            with self.assertRaisesRegex(NativeRecipeError, "local_docker_required"):
+                self.adapter.prepare_infrastructure(self.s, self.adapter._inspected)
+        self.assertEqual([e[0] for e in self.stack.effects], ["pull"])
+
     def test_operator_instance_change_or_existing_owner_credential_never_resets_it(self):
         self.fresh()
         self.stack.objects_by_name["statefulset/postgres"]["metadata"]["uid"] = "foreign"

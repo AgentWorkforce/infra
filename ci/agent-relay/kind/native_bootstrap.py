@@ -16,7 +16,7 @@ import re
 import secrets
 import subprocess
 import tarfile
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 
 import yaml
 
@@ -154,6 +154,7 @@ class NativeBootstrapAdapter(NativeReadOnlyAdapter):
 
     def __init__(self, stack, inputs, tls_material=None):
         super().__init__(stack, inputs)
+        self._docker_transport = self._local_docker_transport()
         require(tls_material is None or isinstance(tls_material, TlsMaterial), "typed_tls_material_required")
         self.tls_material = tls_material
         self._verified = None; self._inspected = None; self._rendered = False
@@ -161,7 +162,41 @@ class NativeBootstrapAdapter(NativeReadOnlyAdapter):
         self._selected_sha = None; self._infrastructure_started = False
         self._created_cluster = None
 
+    def _local_docker_transport(self):
+        host = self.stack.env.get("DOCKER_HOST")
+        require(isinstance(host, str), "fresh_local_docker_required")
+        parsed = urlsplit(host)
+        require(parsed.scheme == "unix" and not parsed.netloc and parsed.path.startswith("/") and
+                len(parsed.path) > 1 and not parsed.query and not parsed.fragment and
+                not any(ord(c) < 32 for c in host), "fresh_local_docker_required")
+        # Both Docker CLI and Kind inherit this explicit endpoint. Context or
+        # command-line host flags would defeat DOCKER_HOST binding.
+        require(not any(self.stack.env.get(k) for k in ("DOCKER_CONTEXT", "DOCKER_TLS_VERIFY", "DOCKER_CERT_PATH")),
+                "native_docker_endpoint_override_refused")
+        args = self.stack.docker_args
+        require(isinstance(args, list) and len(args) in (1, 3) and isinstance(args[0], str) and
+                Path(args[0]).name == "docker" and
+                (len(args) == 1 or (args[1] == "--config" and isinstance(args[2], (str, Path)) and str(args[2]))),
+                "native_docker_command_endpoint_override_refused")
+        return host, tuple(str(x) for x in args)
+
+    def _require_local_transport(self):
+        require(self._local_docker_transport() == self._docker_transport, "native_docker_endpoint_changed_since_admission")
+
+    def _transport_call(self, method, *args, **kwargs):
+        self._require_local_transport()
+        return getattr(self.stack, method)(*args, **kwargs)
+
+    def _get(self, resource, namespace=True):
+        self._require_local_transport()
+        return super()._get(resource, namespace=namespace)
+
+    def _docker_json(self, arguments, data=None):
+        self._require_local_transport()
+        return super()._docker_json(arguments, data)
+
     def _bind_selection(self, selected):
+        self._require_local_transport()
         validated = selection(selected)
         value = hashlib.sha256(json.dumps(validated, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
         require(self._selected_sha in (None, value), "native_selection_changed_since_preflight")
@@ -197,10 +232,11 @@ class NativeBootstrapAdapter(NativeReadOnlyAdapter):
             require(self._inspected["mode"] == "fresh", "fresh_operator_phase_refuses_retained_target")
 
     def _create(self, kind, name, body):
-        old = self.stack.k("get", kind.lower(), name, "--ignore-not-found=true", "-o", "name", sensitive=True).stdout.strip()
+        self._require_local_transport()
+        old = self._transport_call("k", "get", kind.lower(), name, "--ignore-not-found=true", "-o", "name", sensitive=True).stdout.strip()
         require(not old, "prior_native_resource_requires_review:" + kind.lower())
         obj = {"apiVersion": "v1", "kind": kind, "metadata": {"name": name, "namespace": "agent-relay"}, **body}
-        result = json.loads(self.stack.k("create", "-f", "-", "-o", "json", data=json.dumps(obj), sensitive=True).stdout)
+        result = json.loads(self._transport_call("k", "create", "-f", "-", "-o", "json", data=json.dumps(obj), sensitive=True).stdout)
         require(result.get("metadata", {}).get("uid"), "native_resource_creation_unconfirmed")
         return result
 
@@ -227,6 +263,7 @@ class NativeBootstrapAdapter(NativeReadOnlyAdapter):
         return official_sql(files, selected, name)
 
     def _psql(self, selected, database, text, variables=(), read_only=False):
+        self._require_local_transport()
         require(database in {"postgres", "hoopdb", "relaycontrol", "relayfile", "relaycast"}, "unbound_operator_database")
         require(self._pg_uid, "owned_postgres_instance_required")
         actual = self._get("statefulset/postgres")
@@ -243,13 +280,14 @@ class NativeBootstrapAdapter(NativeReadOnlyAdapter):
         # assignment statement. Secret-bearing SQL is captured and never echoed.
         if read_only:
             text = "BEGIN READ ONLY;\nSET LOCAL statement_timeout='30s';\n" + text + "\nROLLBACK;\n"
-        return self.stack.k(*args, data=text, sensitive=True).stdout
+        return self._transport_call("k", *args, data=text, sensitive=True).stdout
 
     def _fresh_absence(self):
+        self._require_local_transport()
         require(not any(p.exists() or p.is_symlink() for p in
                         (self.stack.marker, self.stack.state / "ready.json", self.stack.kubeconfig)),
                 "fresh_cluster_local_state_appeared")
-        clusters = self.stack.cmd(["kind", "get", "clusters"], timeout=30).stdout.splitlines()
+        clusters = self._transport_call("cmd", ["kind", "get", "clusters"], timeout=30).stdout.splitlines()
         require(self.stack.name not in clusters, "fresh_cluster_name_appeared")
 
     @staticmethod
@@ -282,11 +320,11 @@ class NativeBootstrapAdapter(NativeReadOnlyAdapter):
                             "agentrelay-native-creation": nonce}, "extraPortMappings": [
                             {"containerPort": 30080, "hostPort": 8080, "listenAddress": "127.0.0.1"},
                             {"containerPort": 30443, "hostPort": 8443, "listenAddress": "127.0.0.1"}]}]}
-        self.stack.cmd(["kind", "create", "cluster", "--name", self.stack.name, "--image", NODE,
+        self._transport_call("cmd", ["kind", "create", "cluster", "--name", self.stack.name, "--image", NODE,
                         "--config", "-", "--kubeconfig", candidate], data=yaml.safe_dump(config), timeout=300, sensitive=True)
         candidate.chmod(0o600)
-        uid = self.stack.cluster_uid(candidate)
-        nodes = json.loads(self.stack.cmd(["kubectl", "--kubeconfig", candidate,
+        uid = self._transport_call("cluster_uid", candidate)
+        nodes = json.loads(self._transport_call("cmd", ["kubectl", "--kubeconfig", candidate,
                            "--context", "kind-" + self.stack.name, "get", "nodes", "-o", "json"], sensitive=True).stdout)["items"]
         require(len(nodes) == 1 and nodes[0]["metadata"].get("labels", {}).get("agentrelay-native-creation") == nonce and
                 nodes[0]["metadata"].get("labels", {}).get("agentrelay-kind-owner") == "infra",
@@ -305,9 +343,10 @@ class NativeBootstrapAdapter(NativeReadOnlyAdapter):
         self._require_created_cluster()
 
     def _require_created_cluster(self):
+        self._require_local_transport()
         binding = self._created_cluster
         require(binding and json.loads(self.stack.marker.read_text()) == binding["record"] and
-                self.stack.cluster_uid(self.stack.kubeconfig) == binding["uid"], "fresh_cluster_uid_changed")
+                self._transport_call("cluster_uid", self.stack.kubeconfig) == binding["uid"], "fresh_cluster_uid_changed")
         nodes = self._get("nodes", namespace=False)["items"]
         require(len(nodes) == 1 and nodes[0]["metadata"].get("labels", {}).get("agentrelay-native-creation") == binding["nonce"],
                 "fresh_cluster_creation_binding_changed")
@@ -327,15 +366,16 @@ class NativeBootstrapAdapter(NativeReadOnlyAdapter):
         self._minio_source()
         self._fresh_absence()
         self._infrastructure_started = True
-        self.stack.pull(POSTGRES); self.stack.pull(PROBE)
+        self._require_local_transport(); self._transport_call("pull", POSTGRES)
+        self._require_local_transport(); self._transport_call("pull", PROBE)
         self._fresh_cluster()
-        self._require_created_cluster(); self.stack.cni()
+        self._require_created_cluster(); self._transport_call("cni", )
         self._require_created_cluster()
-        self.stack.apply({"apiVersion": "v1", "kind": "Namespace", "metadata": {"name": "agent-relay"}})
+        self._transport_call("apply", {"apiVersion": "v1", "kind": "Namespace", "metadata": {"name": "agent-relay"}})
         for d in self._verified_render_docs:
             if d["kind"] in {"NetworkPolicy", "ServiceAccount"}:
-                self.stack.apply(d, chart=True)
-        self.stack.load(POSTGRES); self.stack.load(PROBE)
+                self._transport_call("apply", d, chart=True)
+        self._transport_call("load", POSTGRES); self._transport_call("load", PROBE)
         # No legacy credentials.json, password argv, last-applied Secret
         # annotation or source-controlled credential file is used.
         admin = secrets.token_urlsafe(48)
@@ -346,7 +386,7 @@ class NativeBootstrapAdapter(NativeReadOnlyAdapter):
         # The ingress uses the leaf, never the CA signing key.
         self._secret("kind-tls", {"tls.crt": self.tls_material.certificate.decode(), "tls.key": self.tls_material.private_key.decode()}, "kubernetes.io/tls")
         labels = {"app": "kind-postgres"}
-        self.stack.apply({"apiVersion": "v1", "kind": "Service", "metadata": {"name": "postgres", "namespace": "agent-relay"},
+        self._transport_call("apply", {"apiVersion": "v1", "kind": "Service", "metadata": {"name": "postgres", "namespace": "agent-relay"},
                           "spec": {"selector": labels, "ports": [{"port": 5432}]}})
         pod = {"securityContext": {"fsGroup": 999}, "containers": [{"name": "postgres", "image": POSTGRES,
                "args": ["-c", "ssl=on", "-c", "ssl_min_protocol_version=TLSv1.2", "-c", "ssl_cert_file=/var/run/native-postgres-tls/tls.crt", "-c", "ssl_key_file=/var/run/native-postgres-tls/tls.key", "-c", "hba_file=/var/run/native-postgres-config/pg_hba.conf"],
@@ -358,11 +398,11 @@ class NativeBootstrapAdapter(NativeReadOnlyAdapter):
                "readinessProbe": {"exec": {"command": ["pg_isready", "-U", "postgres"]}, "periodSeconds": 3}}],
                "volumes": [{"name": "server-tls", "secret": {"secretName": self.SERVER_TLS_SECRET, "defaultMode": 0o440}},
                            {"name": "hba", "configMap": {"name": self.HBA_CONFIG}}]}
-        self.stack.apply({"apiVersion": "apps/v1", "kind": "StatefulSet", "metadata": {"name": "postgres", "namespace": "agent-relay"},
+        self._transport_call("apply", {"apiVersion": "apps/v1", "kind": "StatefulSet", "metadata": {"name": "postgres", "namespace": "agent-relay"},
                           "spec": {"serviceName": "postgres", "replicas": 1, "selector": {"matchLabels": labels},
                                    "template": {"metadata": {"labels": labels}, "spec": pod},
                                    "volumeClaimTemplates": [{"metadata": {"name": "data"}, "spec": {"accessModes": ["ReadWriteOnce"], "resources": {"requests": {"storage": "4Gi"}}}}]}})
-        self.stack.k("rollout", "status", "statefulset/postgres", "--timeout=180s", sensitive=True, timeout=210)
+        self._transport_call("k", "rollout", "status", "statefulset/postgres", "--timeout=180s", sensitive=True, timeout=210)
         self._pg_uid = self._get("statefulset/postgres")["metadata"]["uid"]
         # Fixed names only, no owner takeover and no IF NOT EXISTS adoption.
         guard = """DO $$ BEGIN
@@ -405,17 +445,17 @@ IF current_user<>'postgres' OR session_user<>current_user OR current_setting('ro
         values = {"mode": "standalone", "fullnameOverride": "locker", "existingSecret": ref["name"],
                   "persistence": {"enabled": True, "size": "2Gi"}, "resources": {"requests": {"memory": "256Mi"}},
                   "buckets": [{"name": selected["lockerBucket"], "policy": "none", "purge": False}]}
-        old = self.stack.k("get", "persistentvolumeclaim", "locker", "--ignore-not-found=true", "-o", "name", sensitive=True).stdout.strip()
+        old = self._transport_call("k", "get", "persistentvolumeclaim", "locker", "--ignore-not-found=true", "-o", "name", sensitive=True).stdout.strip()
         require(not old, "prior_storage_claim_refuses_fresh_creation")
         with self._storage_renderer(renderer) as command:
-            self.stack.cmd(["helm", "install", "kind-locker", str(chart), "-n", "agent-relay", "-f", "-",
+            self._transport_call("cmd", ["helm", "install", "kind-locker", str(chart), "-n", "agent-relay", "-f", "-",
                             "--post-renderer", command, "--wait", "--wait-for-jobs", "--timeout", "5m"],
                            data=json.dumps(values), sensitive=True, timeout=330)
 
     @contextmanager
     def _storage_renderer(self, script):
         """Use the existing reviewed Helm3 executable / Helm4 plugin protocol."""
-        version = self.stack.cmd(["helm", "version", "--template", "{{.Version}}"], sensitive=True).stdout.strip()
+        version = self._transport_call("cmd", ["helm", "version", "--template", "{{.Version}}"], sensitive=True).stdout.strip()
         previous = self.stack.env.get("HELM_PLUGINS")
         try:
             if version.startswith("v4."):
