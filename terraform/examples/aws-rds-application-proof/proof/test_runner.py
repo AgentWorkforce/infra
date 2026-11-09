@@ -66,6 +66,8 @@ class Fake:
         self.fail_output = False
         self.null_output = False
         self.bad_output = False
+        self.misleading_output = False
+        self.empty_output = False
 
     def done(self, args, stdout='', code=0, stderr=''):
         return subprocess.CompletedProcess(args, code, stdout, stderr)
@@ -113,6 +115,10 @@ class Fake:
         if verb == 'output':
             if self.null_output:
                 return self.done(args, 'null')
+            if self.misleading_output:
+                return self.done(args, code=1, stderr='Error: backend object not found, retry')
+            if self.empty_output:
+                return self.done(args, '')
             if self.bad_output:
                 return self.done(args, 'not json')
             if self.fail_output:
@@ -601,6 +607,31 @@ class Retirement(Base):
     def test_missing_output_after_a_captured_contract_is_not_clean(self):
         self.provision()
         self.fake.contract = None
+        out = self.runner.plan('release')
+        with self.assertRaisesRegex(r.Refused, 'run reconcile --phase release'):
+            self.runner.apply('release', out['plan_sha256'])
+        self.assertEqual(self.runner.status_of('release'), 'unknown')
+
+    def test_transient_error_mentioning_not_found_stays_recoverable(self):
+        self.fake.contract = self.fake.contract_value()
+        self.fake.misleading_output = True
+        out = self.runner.plan('provision')
+        with self.assertRaisesRegex(r.Refused, 'run reconcile --phase provision'):
+            self.runner.apply('provision', out['plan_sha256'])
+        self.assertEqual(self.runner.status_of('provision'), 'unknown')
+        self.fake.misleading_output = False
+        self.assertEqual(self.runner.reconcile('provision')['status'], 'captured')
+
+    def test_missing_output_after_a_clean_first_provision_stays_recoverable(self):
+        self.fake.contract = None
+        out = self.runner.plan('provision')
+        with self.assertRaisesRegex(r.Refused, 'run reconcile --phase provision'):
+            self.runner.apply('provision', out['plan_sha256'])
+        self.assertEqual(self.runner.status_of('provision'), 'unknown')
+
+    def test_empty_output_after_a_captured_contract_is_not_clean(self):
+        self.provision()
+        self.fake.empty_output = True
         out = self.runner.plan('release')
         with self.assertRaisesRegex(r.Refused, 'run reconcile --phase release'):
             self.runner.apply('release', out['plan_sha256'])

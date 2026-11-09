@@ -509,7 +509,8 @@ class Runner:
         # apply, or the ledger would keep stale IDs. Only a genuine absence with nothing
         # captured yet (a first provision that failed) may proceed without one.
         had_contract = self.path('contract.json').exists()
-        unreadable = not destroying and contract is None and (self.contract_read_failed or (self.contract_absent and had_contract))
+        clean_forward = phase in FORWARD and code == 0 and error is None
+        unreadable = not destroying and contract is None and (self.contract_read_failed or (self.contract_absent and (had_contract or clean_forward)))
         native = False if unreadable else (self.capture_native(contract) if contract else None)
         save(self.path(phase + '.capture.json'), {**record, 'serial': value['serial'], 'resources': addresses, 'native_complete': native})
         if native is False:
@@ -555,7 +556,7 @@ class Runner:
             result = self.run([self.terraform, 'output', '-json', 'proof_contract'], timeout=300, check=False)
             if result.returncode != 0:
                 text = f'{result.stdout or ""}{result.stderr or ""}'
-                if 'not found' in text or 'could not be found' in text:
+                if 'Output "proof_contract" not found' in text:
                     self.contract_absent = True
                 else:
                     self.contract_read_failed = True
@@ -565,6 +566,8 @@ class Runner:
             self.contract_read_failed = True
             return None
         if not isinstance(value, dict):
+            # Not a contract; once one was captured, keeping it would leave the ledger stale.
+            self.contract_read_failed = self.path('contract.json').exists()
             return None
         save(self.path('contract.json'), value)
         history = read(self.path('compute-history.json')) if self.path('compute-history.json').exists() else []
