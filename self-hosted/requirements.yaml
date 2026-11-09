@@ -278,9 +278,34 @@ compatibility:
       images:
         session-read-api: { repository: ghcr.io/agentworkforce/96bulls-services, digest_required: true }
       notes: 'Defaults READ_API_COMPLETE_SINCE to epoch for a new self-host store populated only by its own ingest. Partial legacy imports must retain an explicit real coverage floor matching the indexer. Image, auth, routing and enabled defaults are unchanged; this does not assert coverage for an imported store or qualify a runtime.'
-    - id: sessions-pipeline-0.8.6
+    - id: sessions-pipeline-0.8.7
       status: unreleased
       current: true
+      charts: { sessions-pipeline: 0.8.7, sessions-pipeline-worker: 0.7.3, session-ingest-api: 0.4.1, session-read-api: 0.2.2 }
+      depends:
+        sessions-pipeline: { worker: 0.7.3, alleyoop: 0.4.1, sessionReadApi: 0.2.2, hoopdb: 0.9.0, session-object-storage: 5.4.0, otel: 0.178.0 }
+      images:
+        sessions-pipeline-worker: { repository: agentworkforce/96bulls-services, digest: sha256:6f22ea17dff336e1431664542759fd27958649388b90a0b2f0881883caa7c6b2 }
+        session-ingest-api: { repository: agentworkforce/96bulls-services, digest: sha256:6f22ea17dff336e1431664542759fd27958649388b90a0b2f0881883caa7c6b2 }
+        session-read-api: { repository: ghcr.io/agentworkforce/96bulls-services, digest_required: true }
+      images_note: "session-read-api self_issued and events.messageIds need at least ghcr.io/agentworkforce/96bulls-services@sha256:d55840ab4bf4e2fea3769db690f3c8d32979ab455ef251172f914ac011cb8c33 (pipeline eebaced9). Native ingest edge (SERVICE=session-ingest): unqualified; an explicit qualified combined-image digest is required. Pins above belong to the existing internal worker/ingest services, not ingestEdge."
+      services:
+        source_commit: 7d7229bb31c121ecb98cd4e35c248fc2cf5669ad
+        migration_generation: eff8b3be46565b57ad8fa5e4a066dbb6d1fe608313d9c1680bfbcd484add259b
+      db_combos:
+        - { db_mode: selfhosted, boundary: global-default-revoke, hoopdb: cnpg, status: shipped, profiles: [selfhost-postgres, migration, aws-cnpg], notes: chart Jobs install the runtime role and the function default }
+        - { db_mode: selfhosted, boundary: global-default-revoke, hoopdb: external, status: shipped, profiles: [external-selfhosted], notes: operator runs the bootstrap files as a superuser }
+        - { db_mode: rds, boundary: global-default-revoke, hoopdb: external, status: shipped, profiles: [external-rds], notes: the RDS master runs the rds_*.sql bootstrap first }
+        - { db_mode: cloudsql, boundary: global-default-revoke, hoopdb: external, status: shipped, profiles: [gcp-cloudsql], notes: operator runs the Cloud SQL bootstrap files as the migration owner; roleBootstrap false }
+        - { db_mode: supabase, boundary: event-trigger, hoopdb: external, status: held, profiles: [external-supabase], notes: supabaseActivation.hold; migrate refuses until the reviewed event trigger is installed and --activation-check passes }
+        - { db_mode: supabase, boundary: null, hoopdb: external, status: fails closed, profiles: [aws-supabase], notes: renders; migrate refuses with function_boundary_unproven }
+        - { db_mode: local, boundary: null, hoopdb: any, status: dev only, profiles: [], notes: local stack only; never a self-host install }
+      sources:
+        - "charts/sessions-pipeline/Chart.yaml:4"
+        - "ci/sessions-pipeline-profiles/matrix.sh:70"
+      notes: 'Adds default-off managed native briefs in worker 0.7.3, retaining reader 0.2.2 and all existing ingest admission. Requires an explicit compatible image, scoped model credential and reader migration; no runtime or image acceptance is implied.'
+    - id: sessions-pipeline-0.8.6
+      status: planned
       charts: { sessions-pipeline: 0.8.6, sessions-pipeline-worker: 0.7.2, session-ingest-api: 0.4.1, session-read-api: 0.2.2 }
       depends:
         sessions-pipeline: { worker: 0.7.2, alleyoop: 0.4.1, sessionReadApi: 0.2.2, hoopdb: 0.9.0, session-object-storage: 5.4.0, otel: 0.178.0 }
@@ -746,9 +771,20 @@ compatibility:
       images:
         relayauth: { repository: ghcr.io/agentworkforce/relayauth, digest: sha256:eb71daa28e30eb7305f666d0bccc5a4002e53e8a574e3c4c32163d907a1b71df }
       notes: superseded by 0.1.1.
-    - id: agent-relay-0.6.11
+    - id: agent-relay-0.6.12
       status: unreleased
       current: true
+      charts: { agent-relay: 0.6.12, relayhistory: 0.1.2, relay-control: 0.4.2, relay-webapp: 0.2.1 }
+      app_versions: { agent-relay: 0.1.0, relayhistory: 0.1.0, relay-control: 0.1.0, relay-webapp: 0.1.0 }
+      depends:
+        agent-relay: { relaycast: 0.3.7, relayauth: 0.1.4, sessions-pipeline: 0.8.7, relayhistory: 0.1.2, relay-control: 0.4.2, relay-webapp: 0.2.1, relayflows: 0.2.5, durable-actors: 0.14.6-awf.1, relayfile: 0.2.2, telemetry-collector: 0.1.1, relay-chief: 0.1.0 }
+      images:
+        relayhistory: { repository: ghcr.io/agentworkforce/relayhistory, digest_required: true }
+        relay-control: { repository: ghcr.io/agentworkforce/relay-control, digest: sha256:d8c26d44dccb6dd21b7033288241a379e46ce5fbca69f276c4d4745001c3c3e2 }
+        relay-webapp: { repository: ghcr.io/agentworkforce/relay-webapp, digest_required: true }
+      notes: 'Takes sessions-pipeline 0.8.7 and its default-off managed brief worker while preserving Control 0.4.2 license retirement and native backend. No image publication or runtime acceptance is implied.'
+    - id: agent-relay-0.6.11
+      status: planned
       charts: { agent-relay: 0.6.11, relayhistory: 0.1.2, relay-control: 0.4.2, relay-webapp: 0.2.1 }
       app_versions: { agent-relay: 0.1.0, relayhistory: 0.1.0, relay-control: 0.1.0, relay-webapp: 0.1.0 }
       depends:
@@ -1090,6 +1126,14 @@ compatibility:
 
 # Env the charts render that is neither a requirement nor an option.
 internal_env:
+  - { name: SSL_CERT_FILE, chart: sessions-pipeline-worker, why: "Reserved and refused by native brief admission; not an operator setting or rendered credential override." }
+  - { name: SSL_CERT_DIR, chart: sessions-pipeline-worker, why: "Reserved and refused by native brief admission; not an operator setting or rendered credential override." }
+  - { name: NODE_OPTIONS, chart: sessions-pipeline-worker, why: "Reserved and refused by native brief admission; not an operator setting or rendered credential override." }
+  - { name: OPENAI_BASE_URL, chart: sessions-pipeline-worker, why: "Reserved and refused by native brief admission; not an operator setting or rendered credential override." }
+  - { name: NODE_TLS_REJECT_UNAUTHORIZED, chart: sessions-pipeline-worker, why: "Reserved and refused by native brief admission; not an operator setting or rendered credential override." }
+  - { name: NATIVE_BRIEF_CA_FILE, chart: sessions-pipeline-worker, why: Fixed verified CA output path for native brief init admission. }
+  - { name: NATIVE_BRIEF_CA_SOURCE, chart: sessions-pipeline-worker, why: Fixed read-only public CA source path for native brief init admission. }
+  - { name: NATIVE_BRIEF_CA_SHA256, chart: sessions-pipeline-worker, why: Derived from the explicit public CA digest; never a private key. }
   - { name: LISTEN, chart: relayfile-control, why: derived from server.port; refused in extraEnv }
   - { name: ADMIN_LISTEN, chart: relayfile-control, why: fixed at 127.0.0.1:3101 so the admin listener stays on loopback; refused in extraEnv }
   - { name: MIGRATE_ON_START, chart: relayfile-control, why: fixed at 1 so the server applies migrations under its advisory lock; refused in extraEnv }
@@ -2208,49 +2252,58 @@ entries:
 
   - id: opt.sessions-pipeline.session-briefs
     kind: option
-    title: Model session briefs
+    title: Native model session briefs
     description: |
-      sessions-pipeline #127 (main 475d503, generation 5ed11913...) adds the
-      session-brief worker (SERVICE=session-brief) and SESSION_BRIEF_ENABLED, which
-      arms wakeups in the HoopDb indexer. Off by default upstream. Not in any chart
-      yet: needs the sessions-pipeline-next re-pin, a session-brief component, and the model
-      key Secret (req.secret.model-api-key). Values names are proposed.
+      Default-off managed SERVICE=session-brief canonical-input worker. Selecting
+      components.session-brief requires nativeBrief.enabled and an explicit
+      immutable compatible image. Sibling workers and migrations use the same
+      image or remain disabled. An explicit workspace allowlist, bare writer root,
+      model key Secret and SHA-pinned public PostgreSQL CA are required. Init
+      admits only verify-full with the mounted CA and seals verified bytes for
+      the worker; repeat init accepts only the same regular file. Batch and daily
+      caps are configurable (defaults 1/20/3), sweep defaults 60 seconds. Optional
+      egress selects only this component on TCP443; peers are operator-selected
+      because standard NetworkPolicy has no FQDN enforcement. No profile enables
+      it automatically; runtime images and native summary reads need separate
+      qualification. This is not Bob Costas encrypted-summary output.
     chart: sessions-pipeline
-    values: [worker.sessionBrief.enabled, worker.sessionBrief.model]
-    env: [SESSION_BRIEF_ENABLED, SESSION_BRIEF_MODEL]
+    values: [worker.components.session-brief.enabled, worker.components.session-brief.replicas, worker.nativeBrief.enabled, worker.nativeBrief.image.*, worker.nativeBrief.workspaceIds, worker.nativeBrief.model, worker.nativeBrief.keyPrefix, worker.nativeBrief.sweepSeconds, worker.nativeBrief.batch, worker.nativeBrief.globalDailyCap, worker.nativeBrief.sessionDailyCap, worker.nativeBrief.openaiEgress.*, worker.postgresCa.sha256]
+    env: [SESSION_BRIEF_ENABLED, SESSION_BRIEF_CANONICAL_INPUT, SESSION_BRIEF_WORKSPACE_IDS, SESSION_BRIEF_MODEL, SESSION_BRIEF_SWEEP_SECONDS, SESSION_BRIEF_BATCH, SESSION_BRIEF_GLOBAL_DAILY_CAP, SESSION_BRIEF_SESSION_DAILY_CAP, PIPELINE_ORG_FROM_PREFIX, PIPELINE_KEY_PREFIX]
     profiles: [selfhost-postgres, migration, external-selfhosted, external-rds, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql]
-    status: planned
+    status: shipped
     provided_by: operator
     default: false
     choices:
       - { value: false }
-      - { value: true, status: planned }
-    verify: not applicable until charted
+      - { value: true, note: Requires a separately qualified backend image and model credential. }
+    verify: Render with explicit native values; verify pinned CA init and worker health, then a recorded summary with actual model provenance. Source render is not model-call proof.
     sources:
-      - "sessions-pipeline@475d503:src/session-brief/config.ts:4"
-      - "sessions-pipeline@475d503:src/session-brief/main.ts:2"
+      - "charts/sessions-pipeline-worker/templates/_native-brief.tpl:1"
+      - "charts/sessions-pipeline-worker/templates/deployments.yaml:35"
 
   - id: req.secret.model-api-key
     kind: requirement
     title: Model API key Secret for session briefs (OPENAI_API_KEY)
     description: |
-      With session briefs enabled the worker needs the model credential
-      (OPENAI_API_KEY, relayhistory's binding name); unset, blank or ending in
-      "-disabled" means no model calls and the worker claims nothing. It must come
-      from a Secret, never values. Secret and value names are proposed.
+      Native briefs read the model key from an existing Secret named by
+      nativeBrief.openaiSecret. The key is supplied only to the main worker,
+      never the CA-admission init container. Missing credentials never produce
+      generated text. Configure the Secret through the operator credential store,
+      never a literal value or unmanaged env override.
     chart: sessions-pipeline
-    values: [worker.sessionBrief.existingSecret, worker.sessionBrief.secretKeys.*]
+    values: [worker.nativeBrief.openaiSecret, worker.nativeBrief.openaiSecret.name, worker.nativeBrief.openaiSecret.key]
     env: [OPENAI_API_KEY]
     profiles: [selfhost-postgres, migration, external-selfhosted, external-rds, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql]
-    status: planned
+    status: shipped
     provided_by: operator
     secrets:
       - name: "<model key Secret>"
+        name_paths: [worker.nativeBrief.openaiSecret.name]
         keys:
-          - { key: OPENAI_API_KEY }
-    verify: not applicable until charted
+          - { key: OPENAI_API_KEY, key_path: worker.nativeBrief.openaiSecret.key }
+    verify: A worker Pod references the chosen Secret/key; the init container does not. Verify an actual model result separately.
     sources:
-      - "sessions-pipeline@475d503:src/session-brief/config.ts:6"
+      - "charts/sessions-pipeline-worker/templates/_native-brief.tpl:75"
 
   # =========================================================================
   # Self-host control plane, History, dashboard and GCP composition

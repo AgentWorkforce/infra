@@ -37,6 +37,7 @@ unless a separate mark_pass step runs, which this chart does not have. */ -}}
 {{- range $entry := $bob.env }}
 {{- if or (eq ($entry.name | default "") "SUMMARY_MASTER_KEYS") (eq ($entry.name | default "") "SUMMARY_MASTER_KEYS_FILE") }}{{ fail "sessions-pipeline-worker: configure summaryEncryption instead of components.bob-costas.env SUMMARY_MASTER_KEYS/SUMMARY_MASTER_KEYS_FILE" }}{{ end -}}
 {{- end }}
+{{- include "sessions-pipeline-worker.validateNativeBrief" . }}
 {{- include "sessions-pipeline-worker.validateLocker" . }}
 {{- include "sessions-pipeline-worker.validatePostgresCa" . }}
 {{- end }}
@@ -187,6 +188,10 @@ affinity:
 volumes:
   - name: tmp
     emptyDir: {}
+{{- if and (eq .component "session-brief") $ctx.Values.nativeBrief.enabled }}
+  - name: native-brief-verified-ca
+    emptyDir: { medium: Memory, sizeLimit: 1Mi }
+{{- end }}
 {{- if eq .component "bob-costas" }}
   - name: summary-master-keys
     secret:

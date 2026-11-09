@@ -27,6 +27,12 @@ expect_pass() { # label check
   if o=$(check "$2"); then echo "ok   $1"; else err "$1: $2 failed: $(grep -m1 '::error' <<<"$o")"; fi
 }
 
+# The registry now marks the real brief option as shipped. Model a future setting in
+# each negative fixture rather than depending on the product's release status.
+planned_brief_fixture() {
+  yq -i '(.entries[] | select(.id == "opt.sessions-pipeline.session-briefs")) |= (.status = "planned" | .chart = "sessions-pipeline" | .values = ["worker.sessionBrief.enabled"] | .env = ["REGISTRY_TEST_PENDING_BRIEF_ENABLED"])' "$WORK/r/self-hosted/requirements.yaml"
+}
+
 fresh
 expect_pass "clean copy (coverage)" coverage
 expect_pass "clean copy (shipped)" shipped
@@ -34,12 +40,14 @@ expect_pass "clean copy (planned)" planned
 
 # (c) A planned subchart value read from the UMBRELLA templates (.Values.worker.<x>).
 fresh
+planned_brief_fixture
 echo '{{- if .Values.worker.sessionBrief.enabled }}{{ end }}' >> "$WORK/r/charts/sessions-pipeline/templates/NOTES.txt"
 expect_fail "planned: umbrella reads .Values.worker.sessionBrief.enabled" planned \
   "opt.sessions-pipeline.session-briefs is planned, but charts/sessions-pipeline/templates reads sessions-pipeline-worker:sessionBrief.enabled"
 
 # (c) The same through index (a key a dotted path cannot spell).
 fresh
+planned_brief_fixture
 echo '{{- if index .Values.worker "sessionBrief" "enabled" }}{{ end }}' >> "$WORK/r/charts/sessions-pipeline/templates/NOTES.txt"
 expect_fail "planned: umbrella index .Values.worker \"sessionBrief\"" planned \
   "charts/sessions-pipeline/templates reads sessions-pipeline-worker:sessionBrief.enabled"
@@ -53,6 +61,7 @@ expect_fail "planned: umbrella reads .Values.search.backend" planned \
 # (c) A planned entry owned by a SUBCHART (chart: sessions-pipeline-worker) whose path is
 # read only by the umbrella templates: every chart's reads are scanned.
 fresh
+planned_brief_fixture
 yq -i '(.entries[] | select(.id == "opt.sessions-pipeline.session-briefs")) |= (.chart = "sessions-pipeline-worker" | .values = ["sessionBrief.enabled"])' "$WORK/r/self-hosted/requirements.yaml"
 echo '{{- if .Values.worker.sessionBrief.enabled }}{{ end }}' >> "$WORK/r/charts/sessions-pipeline/templates/NOTES.txt"
 expect_fail "planned: subchart entry read only by the umbrella" planned \
@@ -60,7 +69,8 @@ expect_fail "planned: subchart entry read only by the umbrella" planned \
 
 # A template comment that names a planned env or value is not a reference.
 fresh
-printf '%s\n' '{{/* SESSION_BRIEF_ENABLED and .Values.worker.sessionBrief.enabled come with the re-pin */}}' \
+planned_brief_fixture
+printf '%s\n' '{{/* REGISTRY_TEST_PENDING_BRIEF_ENABLED and .Values.worker.sessionBrief.enabled come with the re-pin */}}' \
   '{{- /* .Values.search.backend: planned */ -}}' >> "$WORK/r/charts/sessions-pipeline/templates/NOTES.txt"
 expect_pass "planned: template comments are not references" planned
 
