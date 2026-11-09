@@ -249,7 +249,7 @@ const {generation}=await import('/app/src/hoopdb/migrate.ts');console.log(JSON.s
                               ("Deployment", "relay-control"), ("Deployment", "relay-webapp"),
                               ("Deployment", "session-native-consumer"), ("Deployment", "session-native-ingest"),
                               ("Deployment", "session-read-api")}
-        required_resources.update(("Secret", ref["name"]) for ref in selected["secretRefs"].values())
+        required_resources.update(("Secret", name) for name in self._selected_secret_names(selected))
         require(required_resources <= {(r["kind"], r["name"]) for r in binding["resources"]}, "native_resource_binding_incomplete")
         for item in binding["resources"]:
             actual = by_id.get((item["kind"], item["name"]))

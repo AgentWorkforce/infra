@@ -100,6 +100,49 @@ class Core(unittest.TestCase):
             binding.pop("pipelineRoleOids")
             with self.assertRaisesRegex(NativeRecipeError, "role_identity_changed"): a.inspect(s)
 
+    def test_repeat_binds_original_admin_server_and_ingress_tls_secret_uids_even_with_identical_bytes(self):
+        from native_inspect import NativeReadOnlyAdapter
+        from test_native_inspect import NativeInspectTests, write_json
+        fixture = NativeInspectTests(); fixture.setUp(); self.addCleanup(fixture.doCleanups)
+        fixture.repeat_fixture()
+        fixture.stack.recipe_hash = lambda: "source-bound"
+        inputs = {**fixture.inputs, "webappPacket": "unused-readonly-test", "webappPacketSha256": "packet-bound",
+                  "webappArchive": "unused-readonly-test", "webappBuildMetadata": "unused-readonly-test"}
+        a = NativeCoreAdapter(fixture.stack, inputs, contract())
+        infrastructure = {a.ADMIN_SECRET, a.SERVER_TLS_SECRET, "kind-tls"}
+        original_refs = {r["name"] for r in fixture.s["secretRefs"].values()}
+        self.assertEqual(NativeReadOnlyAdapter._selected_secret_names(a, fixture.s), original_refs)
+        self.assertTrue(infrastructure <= a._selected_secret_names(fixture.s))
+        existing = {o["metadata"]["name"] for o in fixture.stack.objects if o["kind"] == "Secret"}
+        for name in a._selected_secret_names(fixture.s) - existing:
+            fixture.stack.objects.append({"kind": "Secret", "metadata": {"name": name, "uid": name + "-uid"},
+                                          "immutable": True, "data": {"synthetic": "c3ludGhldGlj"}})
+        oids = {n: i for i, n in enumerate(fixture.s["roles"].values(), 100)}
+        a._pipeline_role_oids = lambda selected: dict(oids)
+        binding = json.loads(Path(inputs["bindingReceipt"]).read_text())
+        binding.update(version=1, type="local-kind-native-core", selection=fixture.s, recipeSha256="source-bound",
+                       webapp={"packetSha256": inputs["webappPacketSha256"]}, pipelineRoleOids=oids,
+                       resources=[{"kind": o["kind"], "name": o["metadata"]["name"], "uid": o["metadata"]["uid"]}
+                                  for o in fixture.stack.objects])
+        inputs["bindingReceiptSha256"] = write_json(inputs["bindingReceipt"], binding)
+        self.assertEqual(a.inspect(fixture.s)["mode"], "repeat")
+        for name in infrastructure:
+            obj = next(o for o in fixture.stack.objects if o["metadata"]["name"] == name)
+            old_uid, old_bytes = obj["metadata"]["uid"], deepcopy(obj["data"])
+            obj["metadata"]["uid"] = "new-secret-with-same-data"
+            with self.subTest(name=name), self.assertRaisesRegex(NativeRecipeError, "resource_uid_changed"):
+                a.inspect(fixture.s)
+            self.assertEqual(obj["data"], old_bytes)
+            obj["metadata"]["uid"] = old_uid
+            incomplete = deepcopy(binding)
+            incomplete["resources"] = [r for r in incomplete["resources"] if (r["kind"], r["name"]) != ("Secret", name)]
+            inputs["bindingReceiptSha256"] = write_json(inputs["bindingReceipt"], incomplete)
+            with self.subTest(missing=name), self.assertRaisesRegex(NativeRecipeError, "resource_binding_incomplete"):
+                a.inspect(fixture.s)
+            inputs["bindingReceiptSha256"] = write_json(inputs["bindingReceipt"], binding)
+        self.assertEqual(a.inspect(fixture.s)["mode"], "repeat")
+        self.assertTrue(all(args[0] == "get" or args[:2] == ["kind", "get"] for args, kw in fixture.stack.calls))
+
     def test_pipeline_role_identity_query_is_complete_and_read_only(self):
         a = self.adapter(); s = self.selection(); calls = []
         oids = {n: i for i, n in enumerate(s["roles"].values(), 100)}

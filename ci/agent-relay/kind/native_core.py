@@ -73,7 +73,9 @@ class NativeCoreAdapter(NativeControlTransport, NativePipelineAdapter):
         return super()._preflight(selected, fresh=fresh)
 
     def _selected_secret_names(self, selected):
-        return super()._selected_secret_names(selected) | {self.control[k]["name"] for k in ("owner", "runtime", "cast")}
+        return (super()._selected_secret_names(selected) |
+                {self.control[k]["name"] for k in ("owner", "runtime", "cast")} |
+                {self.ADMIN_SECRET, self.SERVER_TLS_SECRET, "kind-tls"})
 
     def verify_artifact(self, selected):
         self._verified = None

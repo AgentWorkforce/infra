@@ -74,6 +74,9 @@ hash and pin `bindingReceipt` plus `bindingReceiptSha256`. Repeat-up requires th
 original cluster UID, resource UIDs, exact selection, operator contract, real
 tenant and database role identities. It never regenerates credentials or TLS,
 reinstalls Control, requeues consumer bootstrap or applies pending migrations.
+The resource binding includes the immutable Postgres administrator, database
+server TLS and ingress TLS Secrets. Recreating any of them with identical data
+still changes its UID and refuses repeat admission.
 The original native binding and legacy readiness anchors remain unchanged.
 
 ## Ordered execution
