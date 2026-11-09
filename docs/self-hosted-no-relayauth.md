@@ -18,7 +18,8 @@ with the values marked REQUIRED OVERRIDE. Needed together:
   key `relayauthApiKey` empty. `introspection.audiences` includes the history
   origin (or stays empty to default to it).
 - `sessions-pipeline.sessionReadApi.enabled: true` with `auth.mode: self_issued`
-  and the same `origin`, and `.ingestEdge.enabled: true` with the same `origin`
+  and the same `origin`, `directoryWorkspaces: "*"` (a static list would refuse
+  new workspaces with 501), and `.ingestEdge.enabled: true` with the same `origin`
   and `sessionSelection: true`. See
   [native ingest](self-hosted-native-ingest.md) and
   [read API](self-hosted-session-read-api.md).

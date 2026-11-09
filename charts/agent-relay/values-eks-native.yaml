@@ -31,10 +31,6 @@ relay-control:
     introspectSecret: relaycontrol-introspect-secret
     sessionReadApiSecret: session-read-api-secret
 
-sessions-pipeline:
-  alleyoop:
-    auth:
-      # alleyoop's courier path needs RelayAuth and is idle here; a dead JWKS
-      # URL only makes its upload route refuse callers. The ingest edge and
-      # read API do not use it.
-      jwksUrl: http://relayauth.invalid/.well-known/jwks.json
+# sessions-pipeline.alleyoop keeps its values-eks.yaml JWKS URL: alleyoop's
+# courier path needs RelayAuth and is idle here, and that URL is only fetched
+# when a courier authenticates. The ingest edge and read API do not use it.
