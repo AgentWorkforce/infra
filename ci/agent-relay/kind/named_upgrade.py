@@ -109,6 +109,11 @@ def live_objects(stack):
     return {(d["kind"], d["metadata"]["name"]): d for d in result.get("items", [])}
 
 
+def reject_legacy_workloads(objects):
+    if any(kind == "Deployment" and name in OLD for kind, name in objects):
+        fail("a legacy Deployment is still present")
+
+
 def live_release(stack, release):
     rows = json.loads(stack.cmd(["helm", "list", "-n", "agent-relay", "-o", "json"]).stdout)
     matches = [r for r in rows if r.get("name") == release]
@@ -270,8 +275,7 @@ def validate(stack, *, check_values=True):
     record = read(stack.state / RECORD)
     check_anchor(stack, record)
     objects = live_objects(stack)
-    if any(kind == "Deployment" and name in OLD for kind, name in objects):
-        fail("a legacy Deployment is still present")
+    reject_legacy_workloads(objects)
     if storage_snapshot(stack, objects) != record.get("storage") or postgres_snapshot(objects) != record.get("postgres"):
         fail("recorded storage/Postgres identity or specification changed")
     if private_state(stack) != record.get("privateState") or postgres_secret_snapshot(stack, objects) != record.get("postgresSecrets"):
@@ -447,6 +451,7 @@ def render_selected(stack, values):
 def verify_selection(stack, values, objects):
     from stack import pod_spec
     values_validate(values, stack.profile)
+    reject_legacy_workloads(objects)
     rendered = render_selected(stack, values)
     names = {d["metadata"]["name"] for d in rendered if d["kind"] == "Deployment"}
     if not REQUIRED_BASE <= names or names & OLD or ("Deployment", NAME) not in objects:
@@ -495,6 +500,21 @@ def verify_selection(stack, values, objects):
     return rendered
 
 
+def verify_control_cache(stack, receipt):
+    """The next up exports this tag, so prove that export before changing state."""
+    from control import inspect_archive
+    temporary = stack.state / ("naming-control-" + secrets.token_hex(8) + ".tar")
+    try:
+        exported = stack.cmd([*stack.docker_args, "image", "save", "--platform", f"linux/{stack.arch}",
+                              "-o", temporary, receipt["tag"]], check=False, timeout=300)
+        if exported.returncode:
+            fail("local Control tag is unavailable; restore the verified archive before reconciliation")
+        if inspect_archive(temporary, stack.arch) != receipt:
+            fail("local Control tag differs from the verified archive; restore it before reconciliation")
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
 def reconcile(stack, proof_path, control_archive=None, readiness_anchor=None):
     """Import a completed cutover as explicit local state, never as acceptance."""
     from control import REPOSITORY, inspect_archive, select_local_entrypoints
@@ -534,6 +554,7 @@ def reconcile(stack, proof_path, control_archive=None, readiness_anchor=None):
             or review.get("rendererSha256") != sha_file(stack.root / "ci/agent-relay/kind/storage-name-renderer/postrender.py")):
         fail("cutover did not qualify the same chart, values and PVC-preserving transform")
     objects = live_objects(stack)
+    reject_legacy_workloads(objects)
     storage = storage_snapshot(stack, objects)
     if (storage["PersistentVolumeClaim/locker"]["uid"] != proof["pvcUid"]
             or storage["Deployment/" + NAME]["uid"] != proof["newDeploymentUid"]):
@@ -596,6 +617,8 @@ def reconcile(stack, proof_path, control_archive=None, readiness_anchor=None):
             fail("active local state changed during reconciliation")
     if live_release(stack, "agent-relay")[1] != values:
         fail("installed application selection changed during reconciliation")
+    if control_receipt is not None:
+        verify_control_cache(stack, control_receipt)
     history = stack.state / ("named-history-" + secrets.token_hex(8))
     history.mkdir(mode=0o700)
     for name, data in original.items():

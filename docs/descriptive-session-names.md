@@ -144,7 +144,11 @@ seeded object and the sentinel against the live store; additional later objects
 are allowed. A missing/changed seed, replaced claim, duplicate writer, foreign
 release, configuration drift, or missing original readiness anchor refuses.
 
-For a locally built Control image, also retain its native OCI archive. Admission
+For a locally built Control image, also retain its native OCI archive. The local
+Docker tag must still export the same native manifest/config; reconciliation checks
+that export before changing readiness or selection metadata. If the tag is missing
+or was rebuilt, restore the verified archive first; reconciliation does not
+silently replace the host cache. Admission
 checks the archive's manifest/config bytes, platform and approved source, pairs
 the API/migration entrypoints, and compares the selected image and rendered
 application configuration with the live named Deployments. An old build receipt

@@ -52,6 +52,7 @@ class NamedUpgrade(unittest.TestCase):
         named.write(self.local.state/"control-build.json", {"historical": True})
         self.archive = self.local.state/"native-control.tar"
         native = control_tests.ControlArchive().archive(self.archive)
+        self.cached_control_archive = self.archive
         self.values = {"localKind": {"profile": profile},
                        "components": {"relayflows": profile == "addons", "relayfile": profile == "addons"},
                        "sessions-pipeline": {"session-object-storage": {"enabled": False},
@@ -164,6 +165,11 @@ class NamedUpgrade(unittest.TestCase):
 
     def cmd(self, args, **kwargs):
         args=[str(x) for x in args];self.calls.append(args)
+        if args[:len(self.local.docker_args)+2] == [*self.local.docker_args, "image", "save"]:
+            if self.cached_control_archive is None:
+                return subprocess.CompletedProcess(args, 1, "", "missing local tag")
+            Path(args[args.index("-o")+1]).write_bytes(self.cached_control_archive.read_bytes())
+            return self.result(args)
         if args[:3] == ["kind", "get", "clusters"]:
             return self.result(args, self.local.name+'\n')
         if args[:2] == ["helm", "list"]:
@@ -373,8 +379,7 @@ class NamedUpgrade(unittest.TestCase):
             with self.subTest(change=change),self.assertRaises(stack.StackError):
                 named.completed_proof({**self.proof,**change},[self.seed],[self.seed])
 
-    def test_explicit_reconcile_archives_prior_state_and_issues_no_new_proof(self):
-        (self.local.state/named.RECORD).unlink()
+    def reconcile_packet(self):
         packet=self.local.state/'cutover-packet';packet.mkdir()
         named.write(packet/'activation-receipt.json',self.proof)
         for label in ('before','after'):named.write(packet/(label+'-inventory-normalized-private.json'),[self.seed])
@@ -387,6 +392,11 @@ class NamedUpgrade(unittest.TestCase):
                     'onlyChangedFields':['Deployment.metadata.name','Deployment.spec.template.metadata.name'],
                     'valuesSha256':named.sha_file(packet/'values-before.json'),'chartSha256':named.sha_file(chart),
                     'rendererSha256':named.sha_file(packet_renderer)})
+        return packet
+
+    def test_explicit_reconcile_archives_prior_state_and_issues_no_new_proof(self):
+        (self.local.state/named.RECORD).unlink()
+        packet = self.reconcile_packet()
         # A later, independently qualified site-origin change remains selected;
         # the storage cutover must not restore an obsolete application URL.
         self.values['relay-control']['publicUrl']='https://relay.kind.example'
@@ -409,6 +419,42 @@ class NamedUpgrade(unittest.TestCase):
         with redirect_stdout(io.StringIO()):
             named.reconcile(self.local,packet/'activation-receipt.json',self.archive,history/'ready.json')
         named.validate(self.local)
+
+
+    def test_reconcile_refuses_every_live_legacy_name_before_state_changes(self):
+        packet = self.reconcile_packet()
+        for name in named.OLD:
+            with self.subTest(name=name):
+                key = ("Deployment", name)
+                self.objects[key] = {"kind": "Deployment", "metadata": {"name": name}, "spec": {"replicas": 0}}
+                before = {p:p.read_bytes() for p in self.local.state.glob("*.json")}
+                with self.assertRaisesRegex(stack.StackError, "legacy Deployment"):
+                    named.reconcile(self.local, packet/'activation-receipt.json', self.archive)
+                self.assertEqual(before, {p:p.read_bytes() for p in self.local.state.glob("*.json")})
+                del self.objects[key]
+
+    def test_reconcile_refuses_missing_or_rebuilt_local_control_tag_without_invalidation(self):
+        packet = self.reconcile_packet()
+        replaced = self.local.state/'rebuilt-control.tar'
+        control_tests.ControlArchive().archive(replaced, revision=control.HISTORICAL_REVISION)
+        same_source = self.local.state/'same-source-rebuilt.tar'
+        dumps = json.dumps
+        with patch.object(control_tests.json, 'dumps', side_effect=lambda value: dumps(value, separators=(',', ':'))):
+            control_tests.ControlArchive().archive(same_source)
+        original = control.inspect_archive(self.archive, self.local.arch)
+        changed = control.inspect_archive(same_source, self.local.arch)
+        self.assertEqual(original['sourceRevision'], changed['sourceRevision'])
+        self.assertNotEqual(original['manifestDigest'], changed['manifestDigest'])
+        for archive in (None, replaced, same_source):
+            with self.subTest(archive=archive):
+                self.cached_control_archive = archive
+                before = {p:p.read_bytes() for p in self.local.state.glob("*.json")}
+                histories = set(self.local.state.glob('named-history-*'))
+                with self.assertRaisesRegex(stack.StackError, "local Control tag"):
+                    named.reconcile(self.local, packet/'activation-receipt.json', self.archive)
+                self.assertEqual(before, {p:p.read_bytes() for p in self.local.state.glob("*.json")})
+                self.assertEqual(histories, set(self.local.state.glob('named-history-*')))
+                self.assertFalse(list(self.local.state.glob('naming-control-*.tar')))
 
 
 class StorageRenderer(unittest.TestCase):
