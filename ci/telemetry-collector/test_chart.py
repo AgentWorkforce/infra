@@ -31,10 +31,17 @@ def render(extra=(), ok=True, umbrella=False):
 
 class Collector(unittest.TestCase):
     def test_proxy_numeric_limits_and_name_schema(self):
-        docs = render(['--set', 'limits.maxBatchBytes=1000000', '--set', 'limits.maxInFlight=1024'])
+        docs = render(['--set', 'limits.maxBatchBytes=1000000', '--set', 'limits.maxInFlight=1024',
+                       '--set', 'limits.maxDiskBytes=1048576'])
         config = next(d for d in docs if d['kind'] == 'ConfigMap')['data']['nginx.conf']
         self.assertIn('client_max_body_size 1000000;', config)
         self.assertIn('worker_connections 2080;', config)
+        collector = next(d for d in docs if d['kind'] == 'Deployment')['spec']['template']['spec']['containers'][0]
+        limits = {e['name']: e['value'] for e in collector['env'] if e['name'].startswith('ANALYTICS_COLLECTOR_MAX_')}
+        self.assertEqual(limits['ANALYTICS_COLLECTOR_MAX_DISK_BYTES'], '1048576')
+        self.assertEqual(limits['ANALYTICS_COLLECTOR_MAX_BATCH_BYTES'], '1000000')
+        for value in limits.values():
+            self.assertRegex(value, r'^[0-9]+$')
         for key in ['nameOverride', 'fullnameOverride']:
             for value in ['Bad_Name', '-starts', 'a' * 64]:
                 with self.subTest(key=key, value=value):
