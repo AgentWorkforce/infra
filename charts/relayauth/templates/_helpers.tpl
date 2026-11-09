@@ -64,6 +64,8 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end }}
 
 {{- define "relayauth.validate" -}}
+{{- if not (kindIs "map" .Values.deployment) }}{{ fail "deployment must be an object with boolean deployment.enabled" }}{{ end -}}
+{{- if not (kindIs "bool" .Values.deployment.enabled) }}{{ fail "deployment.enabled must be a boolean" }}{{ end -}}
 {{- if ne (int .Values.replicaCount) 1 }}
 {{- fail "replicaCount must be 1: RelayAuth stores state in a single SQLite file" }}
 {{- end }}

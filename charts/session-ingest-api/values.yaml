@@ -76,6 +76,8 @@ tenant:
   orgId: ""           # REQUIRED
   workspaceId: default
 deployment:
+  # Omit only the Deployment; retain its Service and other chart resources.
+  enabled: true
   name: selfhost      # DEPLOYMENT
   id: ""              # DEPLOYMENT_ID; defaults to the release namespace/name
 environment: production

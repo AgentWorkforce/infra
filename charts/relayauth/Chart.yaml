@@ -2,7 +2,7 @@ apiVersion: v2
 name: relayauth
 description: RelayAuth identity and token issuer for self-hosted Agent Relay stacks
 type: application
-version: 0.1.4
+version: 0.1.5
 appVersion: "0.2.34"
 annotations:
   artifacthub.io/license: Apache-2.0

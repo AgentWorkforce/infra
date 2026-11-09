@@ -1,5 +1,10 @@
 # The GCP proof runs one replica and makes no HA claim.
 replicaCount: 1
+
+# Omit only the Deployment after a verified replacement is serving. Services,
+# retained data resources and all other chart resources remain managed.
+deployment:
+  enabled: true
 image:
   # The proof image is experimental and is not a released/supported artifact.
   repository: ghcr.io/agentworkforce/relayhistory

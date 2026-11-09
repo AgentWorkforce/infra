@@ -1,4 +1,5 @@
 {{- include "alleyoop.validate" . -}}
+{{- if .Values.deployment.enabled }}
 {{- $component := "alleyoop-ingest" -}}
 apiVersion: apps/v1
 kind: Deployment
@@ -92,3 +93,4 @@ spec:
             {{- if (.Values.postgresCa | default dict).enabled }}
             - { name: postgres-ca, mountPath: /etc/postgres-ca, readOnly: true }
             {{- end }}
+{{- end }}

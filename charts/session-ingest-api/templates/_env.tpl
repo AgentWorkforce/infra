@@ -9,6 +9,8 @@ Tenant org id: tenant.orgId, else global.tenant.orgId (set once by an umbrella).
 Fail early on missing required values (render time, not crash-loop time).
 */}}
 {{- define "alleyoop.validate" -}}
+{{- if not (kindIs "map" .Values.deployment) }}{{ fail "deployment must be an object with boolean deployment.enabled" }}{{ end -}}
+{{- if not (kindIs "bool" .Values.deployment.enabled) }}{{ fail "deployment.enabled must be a boolean" }}{{ end -}}
 {{- $credentialsMode := .Values.locker.credentials.mode | default "secret" -}}
 {{- if not (or (eq $credentialsMode "secret") (eq $credentialsMode "podIdentity")) }}{{ fail "alleyoop: locker.credentials.mode must be secret or podIdentity" }}{{ end -}}
 {{- if and (eq $credentialsMode "secret") (not .Values.existingSecret) }}{{ fail "alleyoop: existingSecret is required when locker.credentials.mode=secret" }}{{ end -}}
