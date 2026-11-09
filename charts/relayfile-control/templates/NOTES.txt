@@ -1,0 +1,13 @@
+relayfile-control {{ include "relayfile-control.fullname" . }} is configured as one replica.
+
+  Service: {{ include "relayfile-control.fullname" . }}:{{ .Values.service.port }} ({{ .Values.service.type }})
+  Secret:  {{ .Values.existingSecret }}
+  Flows:   {{ if .Values.flows.enabled }}enabled, audience {{ .Values.config.publicOrigin }}{{ else }}disabled{{ end }}
+{{- if .Values.flows.enabled }}
+
+List {{ .Values.config.publicOrigin }} in relay-control's introspection.audiences,
+and give relay-control the same RELAYFILE_CONTROL_BROKER_SECRET.
+{{- end }}
+
+Schema migrations run at startup (MIGRATE_ON_START=1) under an advisory lock.
+Operator routes stay on the pod's loopback (port 3101).

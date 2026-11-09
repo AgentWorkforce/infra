@@ -50,6 +50,13 @@
 # prefixes, plus OPTIONS preflights on its CORS routes, and every other request
 # goes to the named Service. EKS_ALB_HISTORY_LEGACY_PORT defaults to 8080.
 #
+# Flows on relayfile-control (off by default; EKS_ALB_RELAYFILE_CONTROL=true)
+# route /api/v1/{flows,workers,workflows} on api.<domain> and the
+# /cloud/api/v1/{flows,workers,workflows} aliases on <domain> and api.<domain>
+# to that Service instead of the control API. EKS_ALB_RELAYFILE_CONTROL_SERVICE
+# defaults to relayfile-control and EKS_ALB_RELAYFILE_CONTROL_PORT to 3100. The
+# Service needs its own alb.ingress.kubernetes.io/healthcheck-path annotation.
+#
 # EKS_ALB_CHIEF_SERVICE (default empty) sends the dashboard's Chief calls on
 # <domain> to a separately installed relaychief-control Service, port
 # EKS_ALB_CHIEF_PORT (default 3200), ahead of the control API. Those routes need
@@ -69,6 +76,9 @@ READ_API_SVC="${EKS_ALB_READ_API_SERVICE:-agent-relay-read-api}"
 READ_API_PORT="${EKS_ALB_READ_API_PORT:-80}"
 LEGACY_SVC="${EKS_ALB_HISTORY_LEGACY_SERVICE:-}"
 LEGACY_PORT="${EKS_ALB_HISTORY_LEGACY_PORT:-8080}"
+RELAYFILE_CONTROL="${EKS_ALB_RELAYFILE_CONTROL:-false}"
+RELAYFILE_CONTROL_SVC="${EKS_ALB_RELAYFILE_CONTROL_SERVICE:-relayfile-control}"
+RELAYFILE_CONTROL_PORT="${EKS_ALB_RELAYFILE_CONTROL_PORT:-3100}"
 NAME="${EKS_ALB_INGRESS_NAME:-agent-relay}"
 CONTROL_SVC="${EKS_ALB_CONTROL_SERVICE:-relay-control}"
 WEBAPP_SVC="${EKS_ALB_WEBAPP_SERVICE:-relay-webapp}"
@@ -86,6 +96,14 @@ for service in "$CONTROL_SVC" "$WEBAPP_SVC"; do
 done
 [[ "$INGEST" == true || "$INGEST" == false ]] ||
   { printf '%s\n' 'EKS_ALB_INGEST must be true or false' >&2; exit 2; }
+[[ "$RELAYFILE_CONTROL" == true || "$RELAYFILE_CONTROL" == false ]] ||
+  { printf '%s\n' 'EKS_ALB_RELAYFILE_CONTROL must be true or false' >&2; exit 2; }
+if [[ "$RELAYFILE_CONTROL" == true ]]; then
+  [[ ${#RELAYFILE_CONTROL_SVC} -le 63 && "$RELAYFILE_CONTROL_SVC" =~ ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$ ]] ||
+    { printf '%s\n' 'EKS_ALB_RELAYFILE_CONTROL_SERVICE must be a DNS label' >&2; exit 2; }
+  [[ "$RELAYFILE_CONTROL_PORT" =~ ^[1-9][0-9]{0,4}$ && "$RELAYFILE_CONTROL_PORT" -le 65535 ]] ||
+    { printf '%s\n' 'EKS_ALB_RELAYFILE_CONTROL_PORT must be 1-65535' >&2; exit 2; }
+fi
 INGEST_HEALTHCHECK=""
 if [[ "$INGEST" == true ]]; then
   [[ "$HISTORY" == true ]] ||
@@ -137,6 +155,14 @@ route() { # path service port [pathType]
     "            backend: { service: { name: $2, port: { number: $3 } } }"
 }
 
+flows_routes() { # base path; a no-op unless EKS_ALB_RELAYFILE_CONTROL=true
+  [[ "$RELAYFILE_CONTROL" == true ]] || return 0
+  local resource
+  for resource in flows workers workflows; do
+    route "$1/$resource" "$RELAYFILE_CONTROL_SVC" "$RELAYFILE_CONTROL_PORT"
+  done
+}
+
 host() {
   printf '%s\n' "    - host: $1" "      http:" "        paths:"
 }
@@ -165,6 +191,7 @@ spec:
 EOF
 
 host "$DOMAIN"
+flows_routes /cloud/api/v1
 if [[ -n "$CHIEF_SVC" ]]; then
   route /cloud/api "$CONTROL_SVC" 80 Exact
   route /login "$CONTROL_SVC" 80 Exact
@@ -184,6 +211,8 @@ fi
 host "api.$DOMAIN"
 deny /internal Prefix
 deny '"//internal*"' ImplementationSpecific
+flows_routes /cloud/api/v1
+flows_routes /api/v1
 if [[ -n "$CHIEF_SVC" ]]; then
   for prefix in /cloud/api/v1 /api/v1; do
     route "\"$prefix/workspaces/*/chiefs\"" "$CHIEF_SVC" "$CHIEF_PORT" ImplementationSpecific

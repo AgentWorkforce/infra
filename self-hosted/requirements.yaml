@@ -168,6 +168,13 @@ profiles:
     install: helm install relaychief-control agentworkforce/relaychief-control -f <your values>
     summary: Optional add-on outside the agent-relay umbrella; not qualified. One replica, operator-managed PostgreSQL, a loopback-only admin listener and an Ingress limited to /chief/v1 by default; no HA claim.
 
+  - id: relayfile-control
+    title: Relayfile control add-on (webhook ingest and Flows API)
+    chart: relayfile-control
+    values_file: ci/default-values.yaml
+    install: helm install relayfile-control agentworkforce/relayfile-control -f <your values>
+    summary: Optional add-on outside the agent-relay umbrella; not qualified. One replica, operator-managed PostgreSQL in its own database, migrations at startup, a loopback-only admin listener. Flows and the Ingress are off by default.
+
   - id: durable-actors
     title: TerseAI durable-actors control plane (vendored upstream chart)
     chart: durable-actors
@@ -1034,6 +1041,14 @@ compatibility:
       charts: { relay-chief: 0.1.0 }
       app_versions: { relay-chief: 0.1.0 }
       notes: First chart, rendered only. No Relay Chief image is published and the digest is operator-supplied until one exists.
+    - id: relayfile-control-0.1.0
+      status: unreleased
+      current: true
+      charts: { relayfile-control: 0.1.0 }
+      app_versions: { relayfile-control: 0.1.0 }
+      images:
+        relayfile-control: { repository: ghcr.io/agentworkforce/relayfile-control, digest_required: true }
+      notes: First chart, rendered only. The chart ships no default digest; the operator sets image.digest.
     - id: relaychief-control-0.1.0
       status: unreleased
       current: true
@@ -1075,6 +1090,9 @@ compatibility:
 
 # Env the charts render that is neither a requirement nor an option.
 internal_env:
+  - { name: LISTEN, chart: relayfile-control, why: derived from server.port; refused in extraEnv }
+  - { name: ADMIN_LISTEN, chart: relayfile-control, why: fixed at 127.0.0.1:3101 so the admin listener stays on loopback; refused in extraEnv }
+  - { name: MIGRATE_ON_START, chart: relayfile-control, why: fixed at 1 so the server applies migrations under its advisory lock; refused in extraEnv }
   - { name: ADMIN_HOST, chart: relaychief-control, why: fixed at 127.0.0.1 so the admin listener stays on loopback; refused in extraEnv }
   - { name: ADMIN_PORT, chart: relaychief-control, why: reserved from extraEnv so the admin listener stays on its documented port; no chart value offers it }
   - { name: SERVICE, chart: [sessions-pipeline-worker, session-ingest-api], why: selects the entry point of the one services image }
@@ -1461,10 +1479,10 @@ entries:
       ingestEdge.postgres.caConfigMap, caKey and caSha256.
       When postgresCa is on, wait-for-role (psql) gets PGSSLROOTCERT. psql run by an operator
       needs sslrootcert=<bundle> with verify-full.
-    chart: [sessions-pipeline, relay-control, relayhistory, relaychief-control]
-    values: [worker.postgresCa.*, alleyoop.postgresCa.*, "relay-control:postgresCa.*", "relayhistory:postgresCa.*", "relaychief-control:postgresCa.*"]
+    chart: [sessions-pipeline, relay-control, relayhistory, relaychief-control, relayfile-control]
+    values: [worker.postgresCa.*, alleyoop.postgresCa.*, "relay-control:postgresCa.*", "relayhistory:postgresCa.*", "relaychief-control:postgresCa.*", "relayfile-control:postgresCa.*"]
     env: [NODE_EXTRA_CA_CERTS, PGSSLROOTCERT]
-    profiles: [selfhost-postgres, migration, external-selfhosted, external-rds, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql, relayhistory, relay-control, agent-relay, relaychief-control]
+    profiles: [selfhost-postgres, migration, external-selfhosted, external-rds, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql, relayhistory, relay-control, agent-relay, relaychief-control, relayfile-control]
     status: shipped
     provided_by: operator
     default: false
@@ -1479,6 +1497,7 @@ entries:
       - "charts/relay-control/templates/deployment.yaml"
       - "charts/relayhistory/templates/deployment.yaml"
       - "charts/relaychief-control/templates/deployment.yaml"
+      - "charts/relayfile-control/templates/deployment.yaml"
       - "sessions-pipeline@78511e03:src/shared/db.ts:41"
 
   - id: opt.alleyoop.history-origin
@@ -4133,6 +4152,111 @@ entries:
     sources:
       - "charts/relay-chief/values.yaml:9"
       - "charts/relay-chief/templates/cronjob.yaml:34"
+
+  - id: req.relayfile-control.config
+    kind: requirement
+    title: Relayfile control target URLs
+    description: RELAYFILE_BASE_URL (an http(s) URL) and RELAYCONTROL_BASE_URL (a bare http(s) origin). The chart always renders MIGRATE_ON_START=1.
+    chart: relayfile-control
+    values: [config.relayfileBaseUrl, config.relaycontrolBaseUrl]
+    env: [RELAYFILE_BASE_URL, RELAYCONTROL_BASE_URL]
+    profiles: [relayfile-control]
+    status: shipped
+    provided_by: operator
+    verify: helm template fails with "config.relayfileBaseUrl (RELAYFILE_BASE_URL) is required" or "config.relaycontrolBaseUrl (RELAYCONTROL_BASE_URL) is required" when one is unset
+    sources:
+      - "charts/relayfile-control/values.yaml"
+      - "charts/relayfile-control/templates/configmap.yaml"
+
+  - id: req.relayfile-control.credentials
+    kind: requirement
+    title: Relayfile control database URL and service secrets
+    description: One existing Secret with DATABASE_URL (its own relayfile_control database), RELAYFILE_INTERNAL_HMAC_SECRET (the same value as the Relayfile server), RELAYFILE_CONTROL_ADMIN_TOKEN and RELAYCONTROL_SERVICE_TOKEN. The chart creates no Secret and takes no Secret values.
+    chart: relayfile-control
+    values: [existingSecret, "secretKeys.*"]
+    env: [DATABASE_URL, RELAYFILE_INTERNAL_HMAC_SECRET, RELAYFILE_CONTROL_ADMIN_TOKEN, RELAYCONTROL_SERVICE_TOKEN]
+    profiles: [relayfile-control]
+    status: shipped
+    provided_by: operator
+    secrets:
+      - name: "<existingSecret>"
+        keys:
+          - { key: DATABASE_URL, key_path: secretKeys.databaseUrl }
+          - { key: RELAYFILE_INTERNAL_HMAC_SECRET, key_path: secretKeys.relayfileInternalHmacSecret }
+          - { key: RELAYFILE_CONTROL_ADMIN_TOKEN, key_path: secretKeys.adminToken }
+          - { key: RELAYCONTROL_SERVICE_TOKEN, key_path: secretKeys.relaycontrolServiceToken }
+    verify: helm template fails with "existingSecret is required" when it is unset; the pod starts without a CreateContainerConfigError and /readyz answers 200
+    sources:
+      - "charts/relayfile-control/values.yaml"
+      - "charts/relayfile-control/templates/_helpers.tpl"
+
+  - id: opt.relayfile-control.flows
+    kind: option
+    title: Relayfile control Flows API
+    description: flows.enabled=true serves the Flows API. It requires config.publicOrigin (the token audience, also listed in relay-control's introspection.audiences), flows.encryptionKeyId, a Relaycast URL, and the Secret keys for the introspection secret, the broker secret and the 32-byte encryption key. The introspection and broker secrets must each be at least 32 bytes and differ; the broker secret is shared with relay-control. Telemetry and runtime-verify secrets are optional.
+    chart: relayfile-control
+    values: [flows.enabled, config.publicOrigin, "flows.*", "secretKeys.introspectSecret", "secretKeys.brokerSecret", "secretKeys.encryptionKey", "secretKeys.previousEncryptionKey", "secretKeys.telemetrySecret", "secretKeys.runtimeVerifySecret"]
+    env: [FLOWS_ENABLED, RELAYFILE_CONTROL_PUBLIC_ORIGIN, RELAYFILE_CONTROL_ENCRYPTION_KEY_ID, RELAYFILE_CONTROL_ENCRYPTION_PREVIOUS_KEY_ID, RELAYFILE_CONTROL_ENCRYPTION_KEY, RELAYFILE_CONTROL_ENCRYPTION_PREVIOUS_KEY, RELAYCONTROL_INTROSPECT_SECRET, RELAYFILE_CONTROL_BROKER_SECRET, RELAYFILE_CONTROL_TELEMETRY_SECRET, RELAYFILE_CONTROL_RUNTIME_VERIFY_SECRET, SELFHOST_FLOWS_WORKER_RELAYCAST_URL, RELAYCAST_PUBLIC_URL, SELFHOST_FLOWS_WORKER_RELAYFILE_URL, SELFHOST_DASHBOARD_URL, SELFHOST_FLOWS_STORAGE, FLOWS_PUBLIC_BASE_URL]
+    profiles: [relayfile-control]
+    status: shipped
+    provided_by: operator
+    choices: ["false", "true"]
+    default: "false"
+    verify: helm template fails with "flows.enabled=true requires" when a Flows input is missing
+    sources:
+      - "charts/relayfile-control/values.yaml"
+      - "charts/relayfile-control/templates/configmap.yaml"
+      - "charts/relayfile-control/templates/_helpers.tpl"
+
+  - id: opt.relayfile-control.webhooks
+    kind: option
+    title: Relayfile control provider webhook secrets
+    description: Optional Secret keys for each provider ingress; comma lists allow rotation. An unset secret makes that ingress answer 503 ingress_not_configured.
+    chart: relayfile-control
+    values: ["secretKeys.githubWebhookSecret", "secretKeys.nangoWebhookSecret", "secretKeys.hookdeckWebhookSecret", "secretKeys.dropboxAppSecret", "secretKeys.slackSigningSecret", "secretKeys.linearWebhookSecret"]
+    env: [GITHUB_WEBHOOK_SECRET, NANGO_WEBHOOK_SECRET, HOOKDECK_WEBHOOK_SECRET, DROPBOX_APP_SECRET, SLACK_SIGNING_SECRET, LINEAR_WEBHOOK_SECRET]
+    profiles: [relayfile-control]
+    status: shipped
+    provided_by: operator
+    choices: [unset, set]
+    default: unset
+    verify: an unset provider answers 503 ingress_not_configured; a set one verifies signatures
+    sources:
+      - "charts/relayfile-control/values.yaml"
+      - "charts/relayfile-control/templates/_helpers.tpl"
+
+  - id: opt.relayfile-control.exposure
+    kind: option
+    title: Relayfile control Ingress and NetworkPolicy
+    description: ingress.enabled routes the Flows paths and their /cloud aliases to this Service and requires flows.enabled. On the shared EKS ALB use EKS_ALB_RELAYFILE_CONTROL=true with scripts/selfhost/eks-alb-ingress.sh instead. NetworkPolicy defaults on with restricted egress, so additionalEgress must admit the database.
+    chart: relayfile-control
+    values: [ingress.enabled, "ingress.*", "networkPolicy.*", "service.annotations"]
+    profiles: [relayfile-control]
+    status: shipped
+    provided_by: operator
+    choices: [disabled, enabled]
+    default: disabled
+    verify: helm template renders no Ingress by default; ingress.enabled without flows.enabled fails
+    sources:
+      - "charts/relayfile-control/templates/ingress.yaml"
+      - "charts/relayfile-control/templates/networkpolicy.yaml"
+      - "scripts/selfhost/eks-alb-ingress.sh"
+
+  - id: opt.relayfile-control.image-pull-secrets
+    kind: option
+    title: Relayfile control image pull Secrets
+    description: imagePullSecrets for a private registry mirror. Empty pulls the public image.
+    chart: relayfile-control
+    values: [imagePullSecrets]
+    profiles: [relayfile-control]
+    status: shipped
+    provided_by: operator
+    choices: [none, listed]
+    default: none
+    verify: helm template lists imagePullSecrets on the Deployment when set
+    sources:
+      - "charts/relayfile-control/values.yaml"
+      - "charts/relayfile-control/templates/deployment.yaml"
 
   - id: req.relaychief-control.config
     kind: requirement
