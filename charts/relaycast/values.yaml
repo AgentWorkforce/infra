@@ -200,6 +200,17 @@ secretKeys:
   # credentials.authority=relayauth and refused without
   # credentials.relayauth.url.
   relayauthToken: ""
+  # runtime.backend=durable-actors only (ignored with sqlite, which reads
+  # bootstrapSecret above). RELAYCAST_WORKSPACE_BOOTSTRAP_SECRET for the
+  # gateway, passed as an env var from this existingSecret key. Empty: a keyed
+  # POST /v1/workspaces or /internal/workspaces (Idempotency-Key) answers 503
+  # workspace_create_idempotency_unavailable. Set: keyed creates land on an id
+  # derived from it and replay (201, then 200). The SAME BYTES must be in the
+  # actor env Secret (runtime.durableActors.actorEnvSecrets, e.g.
+  # relaycast-actor-env) as RELAYCAST_WORKSPACE_BOOTSTRAP_SECRET; the chart
+  # cannot check that Secret. Store it without a trailing newline in both.
+  # Keep it stable: changing it re-derives every keyed id.
+  workspaceBootstrapSecret: ""
   # runtime.backend=postgres only. Each key holds a full URL:
   # postgres://<role>:<pw>@<host>:5432/<db>?sslmode=verify-full.
   # relaycast_owner URL, mounted only into the migration Job.
@@ -240,7 +251,15 @@ credentials:
 # refused together with ingress.enabled.
 publicWorkspaceCreate: false
 
-# Require bootstrap-secret proof for anonymous keyed creates.
+# Require bootstrap-secret proof (X-Workspace-Bootstrap-Secret) for anonymous
+# keyed creates (RELAYCAST_WORKSPACE_BOOTSTRAP_PROOF_REQUIRED): a missing or
+# wrong proof is refused 401 workspace_create_bootstrap_secret_invalid.
+# Unkeyed creates and keyed POST /internal/workspaces never ask for proof.
+# With runtime.backend=durable-actors it is rendered on the gateway as "true"
+# or "false", requires secretKeys.workspaceBootstrapSecret when true, and the
+# actor env Secret must carry the same RELAYCAST_WORKSPACE_BOOTSTRAP_PROOF_REQUIRED
+# value. Only anonymous POST /v1/workspaces is affected, which needs
+# publicWorkspaceCreate=true (never with an edge).
 bootstrapProofRequired: false
 
 retention:

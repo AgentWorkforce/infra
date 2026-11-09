@@ -112,6 +112,91 @@ secretKeys:
   relayauthToken: relaycast-relayauth-token   # key in existingSecret
 ```
 
+## Keyed workspace creates on durable-actors
+
+With `runtime.backend: durable-actors`, a keyed workspace create
+(`Idempotency-Key`) needs the workspace bootstrap secret on the gateway **and**
+on every actor, with the same bytes. Without it, keyed creates answer 503
+`workspace_create_idempotency_unavailable`; unkeyed creates are unaffected.
+Requires gateway and deployer images from relaycast PR #622 or later.
+
+```yaml
+secretKeys:
+  # existingSecret key; becomes RELAYCAST_WORKSPACE_BOOTSTRAP_SECRET on the gateway
+  workspaceBootstrapSecret: relaycast-actors-workspace-bootstrap-secret
+# RELAYCAST_WORKSPACE_BOOTSTRAP_PROOF_REQUIRED ("true"/"false"; default false)
+bootstrapProofRequired: false
+```
+
+The chart cannot write or read the actor env Secret
+(`runtime.durableActors.actorEnvSecrets`), so operators must provision the same
+values there. In the following example, replace **every** sample assignment with
+the configured namespace, gateway `existingSecret`,
+`secretKeys.workspaceBootstrapSecret`, and the actor Secret's actual namespace
+and name. These names are independent; do not assume the sandbox namespace is
+`$NS-$RELEASE` on a customized deployment.
+
+```bash
+NS=relay-system
+GATEWAY_SECRET=relaycast-secrets
+BOOTSTRAP_KEY=relaycast-actors-workspace-bootstrap-secret
+ACTOR_NS=relay-system-relay
+ACTOR_SECRET=relaycast-actor-env
+PROOF_REQUIRED=false # must equal bootstrapProofRequired in the Helm values
+# First-time provisioning only. Reuse the existing bytes on an established install.
+v=$(openssl rand -base64 48 | tr -d '\n') # no trailing newline
+kubectl -n "$NS" patch secret "$GATEWAY_SECRET" --type merge \
+  -p "{\"stringData\":{\"$BOOTSTRAP_KEY\":\"$v\"}}"
+kubectl -n "$ACTOR_NS" patch secret "$ACTOR_SECRET" --type merge \
+  -p "{\"stringData\":{\"RELAYCAST_WORKSPACE_BOOTSTRAP_SECRET\":\"$v\",\"RELAYCAST_WORKSPACE_BOOTSTRAP_PROOF_REQUIRED\":\"$PROOF_REQUIRED\"}}"
+unset v
+```
+
+For an existing actor installation, use a maintenance window and stop workspace
+creation/replay traffic before changing the proof policy or provisioning these
+values. Updating a Secret does not refresh an existing actor process. Follow this
+order before resuming traffic:
+
+1. Update the actor Secret first. Keep an established bootstrap secret stable:
+   changing it derives different workspace IDs and is not a supported key
+   rotation procedure.
+2. Render the proposed release with its complete reviewed values and identify
+   the **exact** `Job` carrying `app.kubernetes.io/component: actors-deploy` in
+   that release's namespace. After verifying its release ownership and that no
+   deployer is running, delete that completed Job by name:
+   `kubectl -n "$NS" delete job "$DEPLOY_JOB"`, where `DEPLOY_JOB` is that
+   inspected name. Reapply the reviewed release so the Job is recreated, then
+   wait for that exact Job to complete. Secret contents and bootstrap policy
+   are not in its pod-template hash: an unchanged `helm upgrade` alone does
+   **not** rerun it. A changed deployer input can create a new Job instead; still
+   inspect and wait for the newly rendered Job.
+3. Complete the actor bundle rollout using the durable-actors lifecycle
+   procedure for this project. Restart/replace every already-running Workspace
+   actor for the project so it reads the updated Secret; a completed deployer
+   Job alone does not prove those processes have refreshed. Verify replacement
+   actor readiness before rolling the gateway. Preserve actor storage and PVCs.
+4. Apply the matching gateway values and restart the gateway after the actor
+   rollout. Secret contents alone do not change its pod template either. For
+   the development sidecar, restart the gateway pod so both containers reload.
+   Verify keyed create and replay return the same workspace/credential, and
+   verify a missing/wrong proof is refused when required, before resuming traffic.
+
+Do not proceed with a Secret/policy update if the project has no qualified actor
+restart/rollout procedure. This chart change does not perform or qualify that
+live cutover.
+
+`bootstrapProofRequired: true` requires an anonymous keyed `POST /v1/workspaces`
+to send `X-Workspace-Bootstrap-Secret`; the gateway refuses a missing or wrong
+proof with 401 `workspace_create_bootstrap_secret_invalid` before any actor
+call. It only matters with `publicWorkspaceCreate: true` (never behind an
+edge, which denies `/v1/workspaces`). Unkeyed creates and keyed
+`POST /internal/workspaces` never ask for proof. Known edge: a weak key (fewer
+than 32 characters) sent with a missing or wrong proof gets 401, not 400
+`key_too_weak`, because the proof is checked first.
+
+The full request/answer table is in
+[docs/self-hosted-durable-actors.md](../../docs/self-hosted-durable-actors.md#workspace-bootstrap-secret-actor-mode).
+
 ## Public ingress
 
 ```yaml
