@@ -115,7 +115,10 @@ module "sessions_bucket" {
   kms_key_name = var.kms_key_name
   workload_identity = {
     direct_kubernetes_service_accounts = [
-      for sa in ["worker", "session-ingest-api", "read-api", "search-indexer"] : { namespace = var.namespace, name = "${var.release_name}-${sa}" }
+      { namespace = var.namespace, name = "${var.release_name}-worker" },
+      { namespace = var.namespace, name = "agent-relay-session-ingest-api" },
+      { namespace = var.namespace, name = "agent-relay-read-api" },
+      { namespace = var.namespace, name = "agent-relay-search-indexer" },
     ]
   }
   labels = var.labels

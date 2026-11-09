@@ -5,11 +5,11 @@ locals {
   workload_identity_prefix = "principal://iam.googleapis.com/projects/${data.google_project.this.number}/locations/global/workloadIdentityPools/${var.project_id}.svc.id.goog/subject/ns/${var.namespace}/sa"
   pipeline_publishers = toset([
     "${var.release_name}-worker",
-    "${var.release_name}-session-ingest-api",
+    "agent-relay-session-ingest-api",
   ])
   pipeline_subscribers = toset([
     "${var.release_name}-worker",
-    "${var.release_name}-search-indexer",
+    "agent-relay-search-indexer",
   ])
 }
 
