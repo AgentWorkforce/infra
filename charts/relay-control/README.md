@@ -5,8 +5,11 @@ verified publication; a chart rename does not republish an old digest.
 
 Public chart names and existing-release compatibility: [Control/Webapp rename](../../docs/control-webapp-chart-rename.md).
 
-Maintained packaging for `packages/selfhost-api` from the Cloud repository.
-It provides the minimal self-host control API and does not package the full
+Optional native session reads and scoped DNS mapping:
+[single-origin native History routing](../../docs/self-hosted-native-routing.md).
+
+Runs the separately built self-host Control image. Select the verified image's
+matching server and migration entrypoints; the chart does not package the full
 Cloud/Next application.
 
 `image.digest` and `existingSecret` are mandatory. The Secret keys are listed

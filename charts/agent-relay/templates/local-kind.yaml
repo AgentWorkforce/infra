@@ -60,4 +60,31 @@ spec:
               service:
                 name: {{ $apiService }}
                 port: { number: {{ $api.service.port }} }
+{{- if dig "nativeRouting" "enabled" false $pipeline }}
+---
+# Only Control may reach the native public History origin through the owned
+# in-cluster Traefik gateway. Keep all other namespace egress restrictions.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: kind-control-native-readback-egress
+  namespace: {{ .Release.Namespace | quote }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: {{ $api.nameOverride | default "relay-control" | trunc 63 | trimSuffix "-" | quote }}
+      app.kubernetes.io/instance: {{ .Release.Name | quote }}
+      app.kubernetes.io/component: api
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels: { kubernetes.io/metadata.name: kind-edge }
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/instance: kind-edge-kind-edge
+              app.kubernetes.io/name: traefik
+      ports:
+        - { protocol: TCP, port: 8443 }
+{{- end }}
 {{- end }}

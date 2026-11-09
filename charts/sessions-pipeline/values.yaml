@@ -344,6 +344,10 @@ readApi:
   probeRuntime: bun
   # Bare public HTTPS origin, used as the token audience.
   origin: ""
+  # Advertise rth:sync only from the caller's actual introspected grants and
+  # only after a compatible ingest edge is qualified at this same origin.
+  # This does not mint a scope or grant upload authority.
+  loginAdvertisesSync: false
   # Explicit coverage floor: ISO timestamp or epoch only when coverage is proven.
   completeSince: ""
   # Exact upstream allowlist string; '*' is not a workspace authority.
@@ -433,6 +437,21 @@ ingestEdge:
   resources:
     requests: { cpu: 50m, memory: 128Mi }
     limits: { memory: 512Mi }
+
+# Optional public route for an already-qualified native reader/ingest assembly.
+# This creates only an Ingress; it does not enable services or establish their
+# schema/auth/privacy compatibility. Keep the legacy public History route off
+# when selecting this origin, while preserving its server and data separately.
+# The reader must use auth.mode=relaycontrol_only for the shared login/upload path.
+nativeRouting:
+  enabled: false
+  fullnameOverride: ""
+  # Exact same normalized HTTPS origin as readApi.origin and ingestEdge.origin.
+  origin: ""
+  className: ""
+  tls:
+    # Must already exist in the release namespace; no key material is created.
+    existingSecret: ""
 
 # Canonical pointer/search consumer from merged pipeline #336, default OFF.
 # No runtime image is selected until the complete source/image/generation and

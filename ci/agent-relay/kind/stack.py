@@ -733,6 +733,39 @@ finally {await db.end();}'''
         from addons import build
         build(self)
 
+    def prepare_native_network(self, values_path):
+        """Prepare source-owned local networking, never install the app/profile."""
+        from native_network import preflight, ensure, selected_values, selection
+        from edge import install
+        path = Path(values_path)
+        if path.is_symlink() or not path.is_file():
+            raise StackError("--native-values must be a regular selected-values JSON file")
+        values = json.loads(path.read_text())
+        if selection(values) is None:
+            raise StackError("prepare-native-network requires an enabled nativeRouting selection")
+        self.docker(require_space=False)
+        # This explicit preparation command operates on an existing owned
+        # fixture. Full native first-boot/bootstrap is a separate recipe.
+        self.require_owned_cluster()
+        preflight(self, values)  # no gateway/ready/images mutation on refusal
+        self.dependencies()
+        base_args = ["-f", ROOT / "charts/agent-relay/values-kind-core.yaml"]
+        if self.profile == "addons":
+            base_args += ["-f", ROOT / "charts/agent-relay/values-kind-addons.yaml"]
+        selected_args = [*base_args, "-f", path.resolve()]
+        self.cmd(["helm", "template", RELEASE, "charts/agent-relay", "-n", NS, *selected_args])
+        install(self, TRAEFIK_CHART, NS, wait_for_route=False)
+        observation = ensure(self, values)
+        selected = selected_values(values, observation)
+        proposal = self.state / "native-network-values.json"
+        private_json(proposal, selected)
+        # Validate the allocated mapping too, before presenting the proposal.
+        self.cmd(["helm", "template", RELEASE, "charts/agent-relay", "-n", NS,
+                  *base_args, "-f", proposal])
+        print("Prepared owned edge networking and proposed values at " + str(proposal))
+        print("Active values, Helm app release, database, readiness and proof were not changed. "
+              "Review/install the complete selected app values separately.")
+
     def down(self):
         self.docker(require_space=False)
         self.require_owned_cluster()
@@ -753,12 +786,13 @@ def pod_spec(doc):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("action", choices=("up", "down", "render", "build-addons", "build-control", "recover", "reconcile-names"))
+    parser.add_argument("action", choices=("up", "down", "render", "build-addons", "build-control", "recover", "reconcile-names", "prepare-native-network"))
     parser.add_argument("--profile", choices=("core", "addons"), default="core")
     parser.add_argument("--expected-cluster-uid", help="original readiness UID; required only for explicit recover")
     parser.add_argument("--cutover-receipt", help="completed private seeded storage naming proof; reconcile-names only")
     parser.add_argument("--control-image-archive", help="matching native OCI Control archive; reconcile-names only")
     parser.add_argument("--readiness-anchor", help="preserved naming-history ready.json after interruption; reconcile-names only")
+    parser.add_argument("--native-values", help="selected values JSON; required only for prepare-native-network")
     args = parser.parse_args()
     if args.expected_cluster_uid and args.action != "recover":
         parser.error("--expected-cluster-uid is only valid for recover")
@@ -766,6 +800,8 @@ def main():
         parser.error("reconcile-names requires --cutover-receipt")
     if args.action != "reconcile-names" and (args.cutover_receipt or args.control_image_archive or args.readiness_anchor):
         parser.error("cutover arguments are only valid for reconcile-names")
+    if (args.action == "prepare-native-network") != bool(args.native_values):
+        parser.error("prepare-native-network requires --native-values; other actions must omit it")
     os.umask(0o077)
     try:
         stack = Stack(args.profile)
@@ -785,6 +821,8 @@ def main():
         elif args.action == "build-addons":
             stack.docker(require_space=False)
             stack.build_addons()
+        elif args.action == "prepare-native-network":
+            stack.prepare_native_network(args.native_values)
         else:
             getattr(stack, args.action)()
     except (StackError, OSError, ValueError) as e:

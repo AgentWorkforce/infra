@@ -1,0 +1,44 @@
+{{- include "sessions-pipeline.nativeRouting.validate" . -}}
+{{- if .Values.nativeRouting.enabled -}}
+{{- $c := .Values.nativeRouting -}}
+{{- $host := (urlParse $c.origin).hostname -}}
+{{- $reader := include "sessions-pipeline.nativeRouting.readerServiceName" . -}}
+{{- $ingest := include "sessions-pipeline.nativeRouting.ingestServiceName" . -}}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "sessions-pipeline.nativeRouting.fullname" . }}
+  namespace: {{ .Release.Namespace | quote }}
+  labels:
+    app.kubernetes.io/name: session-native-routing
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: native-routing
+    helm.sh/chart: {{ printf "%s-%s" .Chart.Name .Chart.Version | quote }}
+spec:
+  ingressClassName: {{ $c.className | quote }}
+  tls:
+    - hosts: [{{ $host | quote }}]
+      secretName: {{ $c.tls.existingSecret | quote }}
+  rules:
+    - host: {{ $host | quote }}
+      http:
+        paths:
+          # Specific Exact paths take precedence over the reader's root Prefix.
+          # Ingress selects paths only; native services enforce methods/auth.
+          - path: /
+            pathType: Prefix
+            backend:
+              service: { name: {{ $reader }}, port: { number: 80 } }
+          - path: /v1/delivery/batches
+            pathType: Exact
+            backend:
+              service: { name: {{ $ingest }}, port: { number: 80 } }
+          - path: /v1/turns/batches
+            pathType: Exact
+            backend:
+              service: { name: {{ $ingest }}, port: { number: 80 } }
+          - path: /v1/delivery/limits
+            pathType: Exact
+            backend:
+              service: { name: {{ $ingest }}, port: { number: 80 } }
+{{- end }}

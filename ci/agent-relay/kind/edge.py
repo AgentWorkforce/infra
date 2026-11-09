@@ -7,7 +7,7 @@ import ssl
 import time
 
 
-def install(stack, version, namespace):
+def install(stack, version, namespace, *, wait_for_route=True):
     endpoints = json.loads(stack.k("get", "endpoints", "kubernetes", "-o", "json", namespace="default").stdout)
     service = json.loads(stack.k("get", "service", "kubernetes", "-o", "json", namespace="default").stdout)
     addresses = {service["spec"]["clusterIP"]}
@@ -36,6 +36,11 @@ def install(stack, version, namespace):
     path.chmod(0o600)
     stack.cmd(["helm", "upgrade", "--install", "kind-edge", "traefik/traefik", "--version", version,
                "-n", "kind-edge", "-f", path, "--wait", "--timeout", "5m"], timeout=330)
+    if wait_for_route:
+        verify_application_route(stack)
+
+
+def verify_application_route(stack):
     # A ready ingress pod can still be serving its default certificate while
     # loading providers. Require the actual trusted application route too.
     deadline = time.monotonic() + 45

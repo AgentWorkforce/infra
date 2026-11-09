@@ -204,6 +204,15 @@ database:
   runtimeRole: ""
 
 services:
+  # Optional direct native reader connection. Requires the Control image's
+  # introspection configuration, supplied through Secret references in extraEnv.
+  # Events additionally require the native-events support in that image.
+  relayhistoryReadApiUrl: ""
+  relayhistoryReadApiEvents: false
+  # Optional explicit in-cluster DNS mapping for the public reader hostname.
+  # At most one IPv4 address/hostname pair; the hostname must match the URL
+  # above. This preserves HTTPS/SNI/audience and does not change CA trust.
+  relayhistoryHostAliases: []
   # Legacy client stays on for published images. False omits URL/key env and
   # projection, requiring the owner-approved no-RelayAuth/caller-token image.
   relayauthEnabled: true
