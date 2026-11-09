@@ -1,0 +1,141 @@
+# One replica; the chart makes no HA claim.
+replicaCount: 1
+image:
+  repository: ghcr.io/agentworkforce/relaychief-control
+  # Required: sha256:<64 hex>. No image is published yet, and tags are not accepted.
+  digest: ""
+  pullPolicy: IfNotPresent
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+server:
+  # Rendered as PORT. Must differ from the admin listener's port, 3201.
+  port: 3200
+
+config:
+  # RELAYCONTROL_URL: required bare http(s) origin of relay-control.
+  relaycontrolUrl: ""
+  # RELAYCHIEF_CONTROL_PUBLIC_ORIGIN: required bare http(s) origin of this
+  # service. It is the token audience, so register the same origin in
+  # relay-control's accepted audiences.
+  publicOrigin: ""
+  # RELAYCHIEF_CONTROL_BROWSER_ORIGINS: optional comma-separated http(s) origins.
+  browserOrigins: ""
+  # NANGO_HOST: optional bare http(s) origin. It requires
+  # secretKeys.nangoSecretKey, because the server refuses to start without the
+  # key. With the key alone the server uses Nango's hosted API.
+  nangoHost: ""
+
+# Required: the name of an existing Secret. The chart never creates Secrets and
+# takes no Secret values.
+existingSecret: ""
+secretKeys:
+  databaseUrl: DATABASE_URL
+  # The next two values must be at least 32 characters; the server refuses to
+  # start otherwise. A render cannot see them.
+  introspectSecret: RELAYCONTROL_INTROSPECT_SECRET
+  adminToken: RELAYCHIEF_CONTROL_ADMIN_TOKEN
+  # Optional: the Secret data key holding NANGO_SECRET_KEY. Empty leaves Nango
+  # unconfigured, and creating a chief answers 503.
+  nangoSecretKey: ""
+
+migrations:
+  enabled: true
+  # The Job name carries a hash of the fully rendered pod template, so any
+  # change to it creates a new Job instead of patching the immutable
+  # spec.template. Change identitySalt only to force a re-run with an otherwise
+  # identical template; the migration is idempotent and takes an advisory lock.
+  identitySalt: ""
+  backoffLimit: 1
+  activeDeadlineSeconds: 600
+
+# Added to the Deployment only. Names the chart manages are refused, including
+# ADMIN_HOST and ADMIN_PORT.
+extraEnv: []
+
+# OPTIONAL: a CA bundle that lets node-pg verify the Postgres server certificate
+# when the database uses a private CA, such as Amazon RDS. Off by default. When
+# on, the PEM bundle at key in the named existing ConfigMap or Secret (set
+# exactly one) is mounted at /etc/postgres-ca/ca.crt and NODE_EXTRA_CA_CERTS
+# points at it. It adds to the roots every outbound TLS client in these
+# processes trusts; it does not replace them. Use sslmode=verify-full in
+# DATABASE_URL. The bundle is read at process start, so rotating it needs a pod
+# restart.
+postgresCa:
+  enabled: false
+  configMap: ""
+  secret: ""
+  key: ca.crt
+
+service:
+  type: ClusterIP
+  port: 3200
+  annotations: {}
+
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  hosts: []
+  tls: []
+  # Set when TLS terminates ahead of the Ingress, as with an ALB and ACM.
+  externalTls: false
+  # /chief/v1 (Prefix) is always routed. Tenant routes under /api/v1 stay
+  # cluster-internal unless listed here, for example
+  # [{ path: /api/v1, pathType: Prefix }]. "/" is refused.
+  extraPaths: []
+
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+
+podAnnotations: {}
+podLabels: {}
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  runAsGroup: 1000
+  fsGroup: 1000
+  seccompProfile: { type: RuntimeDefault }
+containerSecurityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  runAsNonRoot: true
+  capabilities: { drop: [ALL] }
+resources:
+  requests: { cpu: 100m, memory: 128Mi }
+  limits: { memory: 512Mi }
+startupProbe:
+  httpGet: { path: /healthz, port: http }
+  periodSeconds: 2
+  failureThreshold: 30
+livenessProbe:
+  httpGet: { path: /healthz, port: http }
+  periodSeconds: 10
+  timeoutSeconds: 3
+readinessProbe:
+  httpGet: { path: /readyz, port: http }
+  periodSeconds: 10
+  timeoutSeconds: 3
+
+networkPolicy:
+  enabled: true
+  # Peers allowed to reach the server port. Empty admits same-namespace pods
+  # only and is refused with ingress.enabled. An ALB in IP target mode connects
+  # from its subnets, so list them as ipBlock peers, and add a podSelector or
+  # namespaceSelector peer for cluster-internal callers.
+  ingressFrom: []
+  # With allowAllEgress=false the pods may reach only same-namespace pods and
+  # DNS plus additionalEgress. The database, and relay-control or Nango when
+  # they are outside the namespace, need additionalEgress rules, so rendering
+  # fails when it is empty. Give each rule a non-empty `to` (enforced).
+  allowAllEgress: false
+  additionalEgress: []
+
+terminationGracePeriodSeconds: 30
+nodeSelector: {}
+tolerations: []
+affinity: {}
+topologySpreadConstraints: []

@@ -1,0 +1,13 @@
+image:
+  # Placeholder: no relaychief-control image is published yet.
+  digest: sha256:4444444444444444444444444444444444444444444444444444444444444444
+existingSecret: relaychief-control-secrets
+config:
+  relaycontrolUrl: http://relay-control.relay.svc:3000
+  publicOrigin: https://chief.example.com
+networkPolicy:
+  additionalEgress:
+    - to:
+        - ipBlock: { cidr: 10.0.0.0/16 }
+      ports:
+        - { protocol: TCP, port: 5432 }
