@@ -1582,6 +1582,33 @@ entries:
       artifacthub.io/license: Apache-2.0
     apiVersion: v2
     appVersion: 0.2.34
+    created: "2026-11-09T15:35:00.038520374Z"
+    description: RelayAuth identity and token issuer for self-hosted Agent Relay stacks
+    digest: e826b13389f5eeba2c817a58d9d83be339bccc7a1f9a16e31ad24b83d30397c1
+    home: https://github.com/AgentWorkforce/relayauth
+    keywords:
+    - relayauth
+    - oidc
+    - jwt
+    - jwks
+    - agentworkforce
+    maintainers:
+    - name: AgentWorkforce
+      url: https://github.com/AgentWorkforce/infra
+    name: relayauth
+    sources:
+    - https://github.com/AgentWorkforce/relayauth
+    - https://github.com/AgentWorkforce/infra/tree/main/charts/relayauth
+    type: application
+    urls:
+    - https://github.com/AgentWorkforce/infra/releases/download/relayauth-0.1.5/relayauth-0.1.5.tgz
+    version: 0.1.5
+  - annotations:
+      agentworkforce.dev/license-scope: First-party chart code only; dependencies
+        and images retain their own licenses.
+      artifacthub.io/license: Apache-2.0
+    apiVersion: v2
+    appVersion: 0.2.34
     created: "2026-11-07T21:23:45.22878221Z"
     description: RelayAuth identity and token issuer for self-hosted Agent Relay stacks
     digest: a5c407db450bd47ca78f8cfe4d669489edf191ed836b29fb4a99e6cbc0630fb3
@@ -2399,6 +2426,33 @@ entries:
       artifacthub.io/license: Apache-2.0
     apiVersion: v2
     appVersion: 0.1.0
+    created: "2026-11-09T15:35:00.274918296Z"
+    description: Customer-hosted Relay History API backed by PostgreSQL
+    digest: c5da10297dc762e5c783679b08b7558ba1fda93d28f7aaa9325dc26789f524b4
+    home: https://github.com/AgentWorkforce/relayhistory-cloud
+    keywords:
+    - agent-relay
+    - sessions
+    - history
+    - pgvector
+    - self-hosted
+    kubeVersion: '>=1.28.0-0'
+    maintainers:
+    - name: AgentWorkforce
+      url: https://github.com/AgentWorkforce
+    name: relayhistory
+    sources:
+    - https://github.com/AgentWorkforce/relayhistory-cloud
+    type: application
+    urls:
+    - https://github.com/AgentWorkforce/infra/releases/download/relayhistory-0.1.3/relayhistory-0.1.3.tgz
+    version: 0.1.3
+  - annotations:
+      agentworkforce.dev/license-scope: First-party chart code only; dependencies
+        and images retain their own licenses.
+      artifacthub.io/license: Apache-2.0
+    apiVersion: v2
+    appVersion: 0.1.0
     created: "2026-11-08T20:00:38.248633149Z"
     description: Customer-hosted Relay History API backed by PostgreSQL
     digest: ea2979abe0acc09741e7ca6fe3a120d6ae57605b99d7a83c0e0e922bcb395ee2
@@ -2475,6 +2529,33 @@ entries:
     - https://github.com/AgentWorkforce/helm-charts/releases/download/relayhistory-0.1.0/relayhistory-0.1.0.tgz
     version: 0.1.0
   session-ingest-api:
+  - annotations:
+      agentworkforce.dev/license-scope: First-party chart code only; dependencies
+        and images retain their own licenses.
+      artifacthub.io/license: Apache-2.0
+    apiVersion: v2
+    appVersion: 0.1.0
+    created: "2026-11-09T15:35:00.511255957Z"
+    description: 'Session ingest API for the sessions pipeline: receives session manifests
+      and chunks from couriers and lands them in the Locker (S3). Hook-free; ready
+      only once the HoopDb migration ledger matches the image. '
+    digest: 46298e254a6ba2fdc028d57ff4fc31aac8e7ee083c1b224a5a5e00b5599559f0
+    home: https://github.com/AgentWorkforce/sessions-pipeline
+    keywords:
+    - sessions-pipeline
+    - alleyoop
+    - ingest
+    - agentworkforce
+    maintainers:
+    - name: AgentWorkforce
+      url: https://github.com/AgentWorkforce/infra
+    name: session-ingest-api
+    sources:
+    - https://github.com/AgentWorkforce/infra/tree/main/charts/session-ingest-api
+    type: application
+    urls:
+    - https://github.com/AgentWorkforce/infra/releases/download/session-ingest-api-0.4.2/session-ingest-api-0.4.2.tgz
+    version: 0.4.2
   - annotations:
       agentworkforce.dev/license-scope: First-party chart code only; dependencies
         and images retain their own licenses.
@@ -2612,6 +2693,65 @@ entries:
     - https://github.com/AgentWorkforce/infra/releases/download/session-read-api-0.1.0/session-read-api-0.1.0.tgz
     version: 0.1.0
   sessions-pipeline:
+  - annotations:
+      agentworkforce.dev/license-scope: First-party chart code only; dependencies
+        and images retain their own licenses.
+      artifacthub.io/license: Apache-2.0
+    apiVersion: v2
+    appVersion: 0.1.0
+    created: "2026-11-09T15:35:00.739861735Z"
+    dependencies:
+    - alias: worker
+      name: sessions-pipeline-worker
+      repository: file://../sessions-pipeline-worker
+      version: 0.7.3
+    - alias: alleyoop
+      name: session-ingest-api
+      repository: file://../session-ingest-api
+      version: 0.4.2
+    - alias: sessionReadApi
+      condition: sessionReadApi.enabled
+      name: session-read-api
+      repository: file://../session-read-api
+      version: 0.2.2
+    - alias: hoopdb
+      condition: hoopdb.enabled
+      name: cluster
+      repository: https://cloudnative-pg.github.io/charts
+      version: 0.9.0
+    - alias: session-object-storage
+      condition: session-object-storage.enabled
+      name: minio
+      repository: https://charts.min.io/
+      version: 5.4.0
+    - alias: otel
+      condition: otel.enabled
+      name: opentelemetry-collector
+      repository: https://open-telemetry.github.io/opentelemetry-helm-charts
+      version: 0.178.0
+    description: 'The sessions pipeline in one release: the sessions-pipeline-worker
+      and session-ingest-api app charts, plus optional Postgres (CloudNativePG Cluster),
+      session-object-storage (MinIO) and an OpenTelemetry collector. Hook-free, so
+      `helm install` and Alchemy''s `helm template --no-hooks` + server-side apply
+      behave the same. Requires the CloudNativePG operator when hoopdb.enabled (see
+      deps/PINS.md). '
+    digest: 6a0e4cf3951beedc579e6fdc56ed03ba98593ad73213a0231f08a684e35663ff
+    home: https://github.com/AgentWorkforce/sessions-pipeline
+    keywords:
+    - sessions-pipeline
+    - sessions
+    - pipeline
+    - agentworkforce
+    maintainers:
+    - name: AgentWorkforce
+      url: https://github.com/AgentWorkforce/infra
+    name: sessions-pipeline
+    sources:
+    - https://github.com/AgentWorkforce/infra/tree/main/charts/sessions-pipeline
+    type: application
+    urls:
+    - https://github.com/AgentWorkforce/infra/releases/download/sessions-pipeline-0.8.10/sessions-pipeline-0.8.10.tgz
+    version: 0.8.10
   - annotations:
       agentworkforce.dev/license-scope: First-party chart code only; dependencies
         and images retain their own licenses.
@@ -3689,4 +3829,4 @@ entries:
     urls:
     - https://github.com/AgentWorkforce/infra/releases/download/telemetry-collector-0.1.0/telemetry-collector-0.1.0.tgz
     version: 0.1.0
-generated: "2026-11-09T15:15:25.205511485Z"
+generated: "2026-11-09T15:35:00.740002455Z"
