@@ -36,12 +36,12 @@ aws opensearch describe-domain --domain-name "$DOMAIN" --query 'DomainStatus.End
 
 `indexer_role_arn` and `reader_role_arn` are module outputs. Export the assumed credentials and send each pair of requests signed for the `es` service, for example with `awscurl --service es --region "$REGION"`.
 
-1. Map the indexer to write on `relayhistory-*`, with cluster monitor:
+1. Map the indexer to write and index bootstrap on `relayhistory-*`, with cluster monitor and bulk:
 
    ```sh
    awscurl --service es --region "$REGION" -X PUT "https://$ENDPOINT/_plugins/_security/api/roles/relayhistory_indexer" \
      -H 'Content-Type: application/json' \
-     -d '{"cluster_permissions":["cluster_monitor"],"index_permissions":[{"index_patterns":["relayhistory-*"],"allowed_actions":["write"]}]}'
+     -d '{"cluster_permissions":["cluster_monitor","indices:data/write/bulk"],"index_permissions":[{"index_patterns":["relayhistory-*"],"allowed_actions":["write","create_index","indices:data/write/bulk*","indices:monitor/settings/get","indices:admin/mapping/put"]}]}'
    awscurl --service es --region "$REGION" -X PUT "https://$ENDPOINT/_plugins/_security/api/rolesmapping/relayhistory_indexer" \
      -H 'Content-Type: application/json' \
      -d "{\"backend_roles\":[\"$INDEXER_ROLE_ARN\"]}"
@@ -58,7 +58,7 @@ aws opensearch describe-domain --domain-name "$DOMAIN" --query 'DomainStatus.End
      -d "{\"backend_roles\":[\"$READER_ROLE_ARN\"]}"
    ```
 
-These are the minimum mappings. OpenSearch checks `_bulk` and `_msearch` at cluster level, so an indexer that sends `_bulk` also needs the `indices:data/write/bulk` cluster permission, one that creates its own indices needs `create_index` on the pattern, and a reader that sends `_msearch` or `_mget` needs `cluster_composite_ops_ro`.
+The indexer needs this whole list. OpenSearch checks `_bulk` at cluster level, so it needs the `indices:data/write/bulk` cluster permission, and index bootstrap returns 403 without `create_index`, `indices:monitor/settings/get` and `indices:admin/mapping/put` on the pattern. The reader mapping is the minimum: a reader that sends `_msearch` or `_mget` also needs `cluster_composite_ops_ro`, because those are checked at cluster level too.
 
 The mandatory pure classifier is `creation_mode.py`; it accepts only native saved-plan `show -json` objects for exact `module.search` addresses used by `examples/aws-environments` and `examples/aws-search-proof`. It accepts no caller mode, path override, skip flag or digest as authority. Both runner paths check before publishing the plan receipt and again before apply; existing exact-plan review, source/input seals and state locks remain required. Search-proof's closed AWS address/action contract remains unchanged apart from the new built-in marker.
 

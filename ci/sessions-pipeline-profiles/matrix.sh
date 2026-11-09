@@ -53,6 +53,7 @@ MATRIX=(
   "ci/search-worker-bootstrap-values.yaml|yes|yes|selfhosted|existing"
   "ci/aws-cnpg-values.yaml|yes|no|selfhosted|fresh"
   "ci/pod-identity-values.yaml|no|no|supabase|supabase"
+  "ci/ingest-edge-pod-identity-values.yaml|no|no|supabase|supabase"
   "ci/gcp-cloudsql-values.yaml|no|no|cloudsql|external"
 )
 
