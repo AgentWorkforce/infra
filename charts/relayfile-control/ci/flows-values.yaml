@@ -1,0 +1,34 @@
+# Render fixture with Flows and an ALB-fronted Ingress; never install it.
+image:
+  digest: sha256:0000000000000000000000000000000000000000000000000000000000000000
+existingSecret: relayfile-control-secrets
+config:
+  relayfileBaseUrl: http://relayfile.relay.svc:8080
+  relaycontrolBaseUrl: http://relay-control.relay.svc:3000
+  publicOrigin: https://api.example.com
+flows:
+  enabled: true
+  encryptionKeyId: k1
+  workerRelaycastUrl: https://cast.example.com
+  dashboardUrl: https://example.com
+service:
+  annotations:
+    alb.ingress.kubernetes.io/healthcheck-path: /healthz
+ingress:
+  enabled: true
+  className: alb
+  annotations:
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTPS":443}]'
+  hosts: [api.example.com]
+  externalTls: true
+networkPolicy:
+  ingressFrom:
+    - podSelector: {}
+    - ipBlock: { cidr: 10.0.1.0/24 }
+  additionalEgress:
+    - to:
+        - ipBlock: { cidr: 10.0.0.0/16 }
+      ports:
+        - { protocol: TCP, port: 5432 }

@@ -1,0 +1,39 @@
+{{- include "relayfile-control.validate" . }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "relayfile-control.fullname" . }}
+  namespace: {{ .Release.Namespace | quote }}
+  labels: {{ include "relayfile-control.labels" . | nindent 4 }}
+data:
+  LISTEN: {{ printf "0.0.0.0:%d" (.Values.server.port | int64) | quote }}
+  ADMIN_LISTEN: "127.0.0.1:3101"
+  MIGRATE_ON_START: "1"
+  RELAYFILE_BASE_URL: {{ .Values.config.relayfileBaseUrl | quote }}
+  RELAYCONTROL_BASE_URL: {{ .Values.config.relaycontrolBaseUrl | quote }}
+  {{- with .Values.config.publicOrigin }}
+  RELAYFILE_CONTROL_PUBLIC_ORIGIN: {{ . | quote }}
+  {{- end }}
+  {{- if .Values.flows.enabled }}
+  FLOWS_ENABLED: "true"
+  SELFHOST_FLOWS_STORAGE: {{ .Values.flows.storage | quote }}
+  RELAYFILE_CONTROL_ENCRYPTION_KEY_ID: {{ .Values.flows.encryptionKeyId | quote }}
+  {{- with .Values.flows.previousEncryptionKeyId }}
+  RELAYFILE_CONTROL_ENCRYPTION_PREVIOUS_KEY_ID: {{ . | quote }}
+  {{- end }}
+  {{- with .Values.flows.workerRelaycastUrl }}
+  SELFHOST_FLOWS_WORKER_RELAYCAST_URL: {{ . | quote }}
+  {{- end }}
+  {{- with .Values.flows.relaycastPublicUrl }}
+  RELAYCAST_PUBLIC_URL: {{ . | quote }}
+  {{- end }}
+  {{- with .Values.flows.workerRelayfileUrl }}
+  SELFHOST_FLOWS_WORKER_RELAYFILE_URL: {{ . | quote }}
+  {{- end }}
+  {{- with .Values.flows.dashboardUrl }}
+  SELFHOST_DASHBOARD_URL: {{ . | quote }}
+  {{- end }}
+  {{- with .Values.flows.publicBaseUrl }}
+  FLOWS_PUBLIC_BASE_URL: {{ . | quote }}
+  {{- end }}
+  {{- end }}

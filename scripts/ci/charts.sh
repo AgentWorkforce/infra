@@ -667,6 +667,54 @@ for chart in "${charts[@]}"; do
         [ "$(rq 'select(.kind == "Ingress") | [.spec.rules[0].http.paths[] | .path + "=" + .pathType] | join(",")' "$extra")" = "/chief/v1=Prefix,/api/v1=Prefix" ] \
           || err "$chart: ingress.extraPaths must add routes after /chief/v1"
         ;;
+      relayfile-control)
+        v=charts/relayfile-control/ci/default-values.yaml
+        check_postgres_ca "$chart" "$v"
+        expect_render_failure "$chart" "$v" "mutable image" "image.digest is required" --set image.digest=
+        expect_render_failure "$chart" "$v" "malformed digest" "image.digest must be sha256:<64 lowercase hex characters>" --set image.digest=sha256:abc
+        expect_render_failure "$chart" "$v" "missing Secret" "existingSecret is required" --set existingSecret=
+        expect_render_failure "$chart" "$v" "missing Relayfile URL" "config.relayfileBaseUrl (RELAYFILE_BASE_URL) is required" --set config.relayfileBaseUrl=
+        expect_render_failure "$chart" "$v" "missing relay-control origin" "config.relaycontrolBaseUrl (RELAYCONTROL_BASE_URL) is required" --set config.relaycontrolBaseUrl=
+        expect_render_failure "$chart" "$v" "relay-control URL with a path" "config.relaycontrolBaseUrl (RELAYCONTROL_BASE_URL) is required" --set config.relaycontrolBaseUrl=https://control.example.com/v1
+        expect_render_failure "$chart" "$v" "empty required Secret key" "secretKeys.databaseUrl is required" --set secretKeys.databaseUrl=
+        expect_render_failure "$chart" "$v" "unsafe Secret key path" "secretKeys.adminToken must be a Kubernetes Secret data key" --set-string secretKeys.adminToken=../key
+        expect_render_failure "$chart" "$v" "multiple replicas" "replicaCount must be 1" --set replicaCount=2
+        expect_render_failure "$chart" "$v" "server port on the admin port" "server.port must not be 3101" --set server.port=3101
+        expect_render_failure "$chart" "$v" "public Service" "service.type must be ClusterIP" --set service.type=LoadBalancer
+        expect_render_failure "$chart" "$v" "restricted egress with no rules" "requires networkPolicy.additionalEgress" --set-json 'networkPolicy.additionalEgress=[]'
+        expect_render_failure "$chart" "$v" "ingress without Flows" "ingress.enabled=true requires flows.enabled=true" --set ingress.enabled=true
+        for name in LISTEN ADMIN_LISTEN MIGRATE_ON_START DATABASE_URL RELAYFILE_CONTROL_BROKER_SECRET RELAYFILE_CONTROL_BROKER_SECRET_FILE; do
+          expect_render_failure "$chart" "$v" "$name through extraEnv" "$name is managed by structured chart values and must not appear in extraEnv" --set-json "extraEnv=[{\"name\":\"$name\",\"value\":\"x\"}]"
+        done
+        rq() { yq "$1" <<<"$2" | { grep -Ev '^(---)?$' || true; }; }
+        out=$(render "$chart" "$v")
+        deployment='select(.kind == "Deployment") | .spec.template.spec'
+        [ "$(yq 'select(.kind == "Secret") | .metadata.name' <<<"$out")" = "" ] || err "$chart: the chart must not render a Secret"
+        [ "$(yq 'select(.kind == "Ingress") | .metadata.name' <<<"$out")" = "" ] || err "$chart: Ingress must be off by default"
+        [ "$(rq "$deployment | [.containers[0].ports[].containerPort] | join(\",\")" "$out")" = 3100 ] || err "$chart: the container must expose only port 3100"
+        [ "$(rq 'select(.kind == "Service") | [.spec.ports[].port] | join(",")' "$out")" = 3100 ] || err "$chart: the Service must expose only port 3100"
+        [ "$(yq "$deployment | .containers[0].readinessProbe.httpGet.path" <<<"$out")" = /readyz ] || err "$chart: readiness must be /readyz"
+        [ "$(yq 'select(.kind == "ConfigMap") | .data.MIGRATE_ON_START' <<<"$out")" = 1 ] || err "$chart: MIGRATE_ON_START must render as 1"
+        [ "$(yq 'select(.kind == "ConfigMap") | .data.ADMIN_LISTEN' <<<"$out")" = 127.0.0.1:3101 ] || err "$chart: the admin listener must stay on loopback"
+        [ "$(rq "$deployment | [.containers[0].env[].name] | join(\",\")" "$out")" = DATABASE_URL,RELAYFILE_INTERNAL_HMAC_SECRET,RELAYFILE_CONTROL_ADMIN_TOKEN,RELAYCONTROL_SERVICE_TOKEN ] \
+          || err "$chart: the default render must inject only the four core Secret env vars"
+        ! grep -Eq 'FLOWS_ENABLED|RELAYCONTROL_LICENSE' <<<"$out" || err "$chart: Flows and license env must not render by default"
+        v=charts/relayfile-control/ci/flows-values.yaml
+        for field in config.publicOrigin flows.encryptionKeyId; do
+          expect_render_failure "$chart" "$v" "Flows without $field" "flows.enabled=true requires $field" --set "$field="
+        done
+        expect_render_failure "$chart" "$v" "Flows without Relaycast" "flows.enabled=true requires flows.workerRelaycastUrl or flows.relaycastPublicUrl" --set flows.workerRelaycastUrl=
+        expect_render_failure "$chart" "$v" "Flows without the broker key" "flows.enabled=true requires secretKeys.brokerSecret" --set secretKeys.brokerSecret=
+        expect_render_failure "$chart" "$v" "equal introspect and broker keys" "name the same Secret key" --set secretKeys.brokerSecret=RELAYCONTROL_INTROSPECT_SECRET
+        expect_render_failure "$chart" "$v" "half-set key rotation" "must be set together" --set flows.previousEncryptionKeyId=k0
+        out=$(render "$chart" "$v")
+        [ "$(rq 'select(.kind == "Ingress") | [.spec.rules[0].http.paths[] | .path + "=" + .pathType] | join(",")' "$out")" = "/cloud/api/v1/flows=Prefix,/cloud/api/v1/workers=Prefix,/cloud/api/v1/workflows=Prefix,/api/v1/flows=Prefix,/api/v1/workers=Prefix,/api/v1/workflows=Prefix" ] \
+          || err "$chart: the Ingress must route exactly the Flows paths and their /cloud aliases"
+        for name in RELAYCONTROL_INTROSPECT_SECRET RELAYFILE_CONTROL_BROKER_SECRET RELAYFILE_CONTROL_ENCRYPTION_KEY; do
+          [ "$(yq "select(.kind == \"Deployment\") | .spec.template.spec.containers[0].env[] | select(.name == \"$name\") | .valueFrom.secretKeyRef.key" <<<"$out")" = "$name" ] \
+            || err "$chart: $name must come from the existing Secret"
+        done
+        ;;
       agent-relay)
         v=charts/agent-relay/ci/gcp-proof-values.yaml
         expect_render_failure "$chart" "$v" "missing History image" "image.digest is required" --set relayhistory.image.digest=
