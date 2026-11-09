@@ -1,0 +1,17 @@
+{{- include "relaychief-control.validate" . }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "relaychief-control.fullname" . }}
+  namespace: {{ .Release.Namespace | quote }}
+  labels: {{ include "relaychief-control.labels" . | nindent 4 }}
+data:
+  PORT: {{ .Values.server.port | int64 | quote }}
+  RELAYCONTROL_URL: {{ .Values.config.relaycontrolUrl | quote }}
+  RELAYCHIEF_CONTROL_PUBLIC_ORIGIN: {{ .Values.config.publicOrigin | quote }}
+  {{- with .Values.config.browserOrigins }}
+  RELAYCHIEF_CONTROL_BROWSER_ORIGINS: {{ . | quote }}
+  {{- end }}
+  {{- with .Values.config.nangoHost }}
+  NANGO_HOST: {{ . | quote }}
+  {{- end }}

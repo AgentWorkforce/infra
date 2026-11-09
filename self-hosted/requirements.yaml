@@ -161,6 +161,12 @@ profiles:
     values_file: ci/default-values.yaml
     install: helm install relay-chief agentworkforce/relay-chief -f <your values>
     summary: Not qualified and not part of the suite yet; no image is published. Suspended by default. Runs one bounded cycle per CronJob firing against SQLite on a persistent volume, and every cycle may dispatch.
+  - id: relaychief-control
+    title: Relay Chief control add-on
+    chart: relaychief-control
+    values_file: ci/default-values.yaml
+    install: helm install relaychief-control agentworkforce/relaychief-control -f <your values>
+    summary: Optional add-on outside the agent-relay umbrella; not qualified. One replica, operator-managed PostgreSQL, a loopback-only admin listener and an Ingress limited to /chief/v1 by default; no HA claim.
 
   - id: durable-actors
     title: TerseAI durable-actors control plane (vendored upstream chart)
@@ -829,6 +835,14 @@ compatibility:
       charts: { relay-chief: 0.1.0 }
       app_versions: { relay-chief: 0.1.0 }
       notes: First chart, rendered only. No Relay Chief image is published and the digest is operator-supplied until one exists.
+    - id: relaychief-control-0.1.0
+      status: unreleased
+      current: true
+      charts: { relaychief-control: 0.1.0 }
+      app_versions: { relaychief-control: 0.1.0 }
+      images:
+        relaychief-control: { repository: ghcr.io/agentworkforce/relaychief-control, digest: "sha256:ddd4129f062cc19ba144bbb4ac0f7af66fb730be5a7c9521a9307d4c8f287688", digest_required: true }
+      notes: First chart, rendered only. Defaults to the published relaychief-control 0.1.0 image.
     - id: relayflows-0.2.5
       status: unreleased
       current: true
@@ -862,6 +876,8 @@ compatibility:
 
 # Env the charts render that is neither a requirement nor an option.
 internal_env:
+  - { name: ADMIN_HOST, chart: relaychief-control, why: fixed at 127.0.0.1 so the admin listener stays on loopback; refused in extraEnv }
+  - { name: ADMIN_PORT, chart: relaychief-control, why: reserved from extraEnv so the admin listener stays on its documented port; no chart value offers it }
   - { name: SERVICE, chart: [sessions-pipeline-worker, session-ingest-api], why: selects the entry point of the one services image }
   - { name: OTEL_SERVICE_NAME, chart: [sessions-pipeline-worker, session-ingest-api], why: equals SERVICE }
   - { name: TMPDIR, chart: [sessions-pipeline-worker, session-ingest-api], why: the writable emptyDir under a read-only root filesystem }
@@ -1246,10 +1262,10 @@ entries:
       ingestEdge.postgres.caConfigMap, caKey and caSha256.
       When postgresCa is on, wait-for-role (psql) gets PGSSLROOTCERT. psql run by an operator
       needs sslrootcert=<bundle> with verify-full.
-    chart: [sessions-pipeline, relay-control, relayhistory]
-    values: [worker.postgresCa.*, alleyoop.postgresCa.*, "relay-control:postgresCa.*", "relayhistory:postgresCa.*"]
+    chart: [sessions-pipeline, relay-control, relayhistory, relaychief-control]
+    values: [worker.postgresCa.*, alleyoop.postgresCa.*, "relay-control:postgresCa.*", "relayhistory:postgresCa.*", "relaychief-control:postgresCa.*"]
     env: [NODE_EXTRA_CA_CERTS, PGSSLROOTCERT]
-    profiles: [selfhost-postgres, migration, external-selfhosted, external-rds, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql, relayhistory, relay-control, agent-relay]
+    profiles: [selfhost-postgres, migration, external-selfhosted, external-rds, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql, relayhistory, relay-control, agent-relay, relaychief-control]
     status: shipped
     provided_by: operator
     default: false
@@ -1263,6 +1279,7 @@ entries:
       - "charts/session-ingest-api/templates/deployment.yaml"
       - "charts/relay-control/templates/deployment.yaml"
       - "charts/relayhistory/templates/deployment.yaml"
+      - "charts/relaychief-control/templates/deployment.yaml"
       - "sessions-pipeline@78511e03:src/shared/db.ts:41"
 
   - id: opt.alleyoop.history-origin
@@ -3940,3 +3957,96 @@ entries:
     sources:
       - "charts/relay-chief/values.yaml:9"
       - "charts/relay-chief/templates/cronjob.yaml:34"
+
+  - id: req.relaychief-control.config
+    kind: requirement
+    title: Relay Chief control origins
+    description: RELAYCONTROL_URL and RELAYCHIEF_CONTROL_PUBLIC_ORIGIN, each a bare http(s) origin. The public origin is the token audience, so it must also be among relay-control's accepted audiences.
+    chart: relaychief-control
+    values: [config.relaycontrolUrl, config.publicOrigin]
+    env: [RELAYCONTROL_URL, RELAYCHIEF_CONTROL_PUBLIC_ORIGIN]
+    profiles: [relaychief-control]
+    status: shipped
+    provided_by: operator
+    verify: helm template fails with "config.relaycontrolUrl (RELAYCONTROL_URL) is required" or "config.publicOrigin (RELAYCHIEF_CONTROL_PUBLIC_ORIGIN) is required" when one is unset
+    sources:
+      - "charts/relaychief-control/values.yaml"
+      - "charts/relaychief-control/templates/configmap.yaml"
+
+  - id: req.relaychief-control.credentials
+    kind: requirement
+    title: Relay Chief control database URL and service secrets
+    description: One existing Secret with DATABASE_URL (also used by the migrate Job), RELAYCONTROL_INTROSPECT_SECRET and RELAYCHIEF_CONTROL_ADMIN_TOKEN (both 32 or more characters; the server refuses to start otherwise). The chart creates no Secret and takes no Secret values, so a render cannot check their presence or length.
+    chart: relaychief-control
+    values: [existingSecret, "secretKeys.*"]
+    env: [DATABASE_URL, RELAYCONTROL_INTROSPECT_SECRET, RELAYCHIEF_CONTROL_ADMIN_TOKEN]
+    profiles: [relaychief-control]
+    status: shipped
+    provided_by: operator
+    secrets:
+      - name: "<existingSecret>"
+        keys:
+          - { key: DATABASE_URL, key_path: secretKeys.databaseUrl }
+          - { key: RELAYCONTROL_INTROSPECT_SECRET, key_path: secretKeys.introspectSecret }
+          - { key: RELAYCHIEF_CONTROL_ADMIN_TOKEN, key_path: secretKeys.adminToken }
+          - { key: "<operator-chosen, e.g. NANGO_SECRET_KEY>", key_path: secretKeys.nangoSecretKey, optional: "unset leaves Nango off and creating a chief answers 503; required with config.nangoHost" }
+    verify: helm template fails with "existingSecret is required" when it is unset; the pod starts without a CreateContainerConfigError and /readyz answers 200
+    sources:
+      - "charts/relaychief-control/values.yaml"
+      - "charts/relaychief-control/templates/_helpers.tpl"
+
+  - id: opt.relaychief-control.nango
+    kind: option
+    title: Relay Chief control Nango host and browser origins
+    description: NANGO_HOST with secretKeys.nangoSecretKey selects a self-hosted Nango; the key alone uses Nango's hosted API. NANGO_HOST without the key makes the server throw at startup, so the chart refuses to render it. RELAYCHIEF_CONTROL_BROWSER_ORIGINS is a comma-separated list of http(s) origins allowed through the CSRF check.
+    chart: relaychief-control
+    values: [config.nangoHost, config.browserOrigins]
+    env: [NANGO_HOST, NANGO_SECRET_KEY, RELAYCHIEF_CONTROL_BROWSER_ORIGINS]
+    profiles: [relaychief-control]
+    status: shipped
+    provided_by: operator
+    default: unset
+    choices:
+      - { value: unset }
+      - { value: hosted }
+      - { value: self-hosted }
+    verify: helm template fails with "requires secretKeys.nangoSecretKey" when config.nangoHost is set without the key
+    sources:
+      - "charts/relaychief-control/values.yaml"
+      - "charts/relaychief-control/templates/_helpers.tpl"
+
+  - id: opt.relaychief-control.exposure
+    kind: option
+    title: Relay Chief control Ingress and NetworkPolicy
+    description: The Ingress is off by default and routes only /chief/v1 (Prefix) when on. ingress.extraPaths can add the tenant routes under /api/v1; a / rule is refused. networkPolicy.ingressFrom must admit the load balancer (an ALB in IP target mode connects from its subnets, as ipBlock peers), and networkPolicy.additionalEgress must admit the database unless allowAllEgress is true.
+    chart: relaychief-control
+    values: ["ingress.*", "networkPolicy.*"]
+    profiles: [relaychief-control]
+    status: shipped
+    provided_by: operator
+    default: disabled
+    choices:
+      - { value: disabled }
+      - { value: enabled }
+    verify: kubectl get ingress shows only the /chief/v1 path unless ingress.extraPaths adds more, and the load balancer's targets report healthy
+    sources:
+      - "charts/relaychief-control/templates/ingress.yaml"
+      - "charts/relaychief-control/templates/networkpolicy.yaml"
+
+  - id: opt.relaychief-control.image-pull-secrets
+    kind: option
+    title: Relay Chief control image pull Secrets
+    description: Pull Secrets for a private registry or customer mirror.
+    chart: relaychief-control
+    values: [imagePullSecrets]
+    profiles: [relaychief-control]
+    status: shipped
+    provided_by: operator
+    default: none
+    choices:
+      - { value: none }
+      - { value: listed }
+    verify: the Deployment and migrate Job pull their image without ImagePullBackOff
+    sources:
+      - "charts/relaychief-control/values.yaml"
+      - "charts/relaychief-control/templates/deployment.yaml"
