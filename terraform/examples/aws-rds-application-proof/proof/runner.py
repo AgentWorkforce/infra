@@ -34,6 +34,8 @@ FORWARD = ('provision', 'prerequisites', 'upload', 'seed', 'seed-receipt', 'rest
 RETIRE = ('release', 'inventory', 'drain', 'destroy', 'backups', 'absence')
 TERRAFORM_PHASES = ('provision', 'seed', 'restore', 'release', 'destroy')
 DONE = ('captured', 'ok')
+RELEASED = DONE + ('not-required',)
+FORWARD_TERRAFORM = ('provision', 'seed', 'restore')
 UNSETTLED = ('pending', 'unknown', 'failed', 'interrupted', 'captured-invalid')
 UNRECONCILED = ('pending', 'unknown')
 RECONCILABLE = TERRAFORM_PHASES + ('upload',)
@@ -276,11 +278,11 @@ class Runner:
         if phase == 'release':
             require('destroy' not in phases, 'Destroy has started')
         elif phase == 'inventory':
-            require(self.status_of('release') in DONE, 'Release must complete before inventory')
+            require(self.status_of('release') in RELEASED, 'Release must complete before inventory')
         elif phase == 'drain':
             require(self.status_of('inventory') in DONE, 'Inventory must complete before drain')
         elif phase == 'destroy':
-            require(self.status_of('release') in DONE, 'Release must complete before destroy')
+            require(self.status_of('release') in RELEASED, 'Release must complete before destroy')
             if self.path('contract.json').exists():
                 require(self.status_of('drain') in DONE, 'Drain must complete before destroy')
         elif phase == 'backups':
@@ -304,6 +306,26 @@ class Runner:
         except ValueError:
             return None
         return value if isinstance(value, dict) and isinstance(value.get('resources'), list) and 'serial' in value else None
+
+    def partial_lifecycle(self):
+        phases = self.phases()
+        return any(p in phases and phases[p]['status'] not in DONE for p in FORWARD_TERRAFORM)
+
+    def release_scope(self, value):
+        """Exact addresses a partial lifecycle must release: protected databases and compute only."""
+        targets = []
+        for resource in value['resources']:
+            if resource.get('mode') != 'managed' or resource.get('type') not in ('aws_db_instance', 'aws_instance'):
+                continue
+            base = '.'.join(x for x in [resource.get('module'), resource['type'], resource['name']] if x)
+            for instance in resource.get('instances', []):
+                key = instance.get('index_key')
+                address = base if key is None else f'{base}[{json.dumps(key)}]'
+                if resource['type'] == 'aws_db_instance' and (instance.get('status') == 'tainted' or instance.get('deposed')):
+                    raise Refused(f'{address} is tainted or deposed, so release would replace it. Review it, run `terraform untaint` under the lease if it is intact, then plan release again')
+                if resource['type'] == 'aws_instance' or instance.get('attributes', {}).get('deletion_protection') is not False:
+                    targets.append(address)
+        return sorted(targets)
 
     def state_guard(self, phase):
         """A failed or empty read after an attempted apply never means no resources."""
@@ -397,8 +419,16 @@ class Runner:
         forward = phase in FORWARD
         self.guards(forward)
         self.order_guard(phase)
+        targets = []
         if not forward:
-            self.state_guard(phase)
+            state = self.state_guard(phase)
+            if phase == 'release' and self.partial_lifecycle():
+                # An unfinished forward phase leaves resources missing, so an untargeted release
+                # plan would create them. The guard below still refuses any create.
+                targets = self.release_scope(state)
+                if not targets:
+                    self.mark('release', 'not-required', reason='partial lifecycle has no protected database or compute in state', state_serial=state['serial'])
+                    return {'phase': 'release', 'status': 'not-required', 'next': 'plan --phase destroy'}
         self.run([self.terraform, 'init', '-input=false', '-no-color', '-lockfile=readonly', '-reconfigure', '-backend-config=path=' + str(self.state)])
         before = self.bindings()
         variables = self.path(phase + '.tfvars.json')
@@ -407,16 +437,17 @@ class Runner:
         args = [self.terraform, 'plan', '-input=false', '-no-color', '-lock-timeout=60s', '-var-file=' + str(variables), '-out=' + str(saved)]
         if phase == 'destroy':
             args.append('-destroy')
+        args += ['-target=' + address for address in targets]
         self.run(args)
         rendered = json.loads(self.run([self.terraform, 'show', '-json', str(saved)]).stdout)
         changes = summarize(rendered)
         guard_changes(phase, changes)
         require(self.bindings() == before, 'Source, inputs or providers changed while planning')
         packet = {'phase': phase, 'plan_sha256': sha(saved), 'plan_json_sha256': digest(canonical(rendered)), 'variables_sha256': sha(variables),
-                  'state_sha256': sha(self.state) if self.state.exists() else None, 'bindings': before, 'changes': changes}
+                  'state_sha256': sha(self.state) if self.state.exists() else None, 'bindings': before, 'changes': changes, 'targets': targets}
         save(self.path(phase + '.packet.json'), packet)
         summary = self.path(phase + '.summary.txt')
-        summary.write_text(render_summary(changes, packet['plan_sha256']))
+        summary.write_text(render_summary(changes, packet['plan_sha256'], targets))
         summary.chmod(0o600)
         return {'phase': phase, 'plan_sha256': packet['plan_sha256'], 'changes': len(changes), 'summary': str(summary), 'next': f'review, then apply --phase {phase} --plan-sha256 {packet["plan_sha256"]}'}
 
@@ -632,7 +663,7 @@ class Runner:
             'contract': c,
             'runtime_secret_inventory': {'arn': c['runtime_secret']['arn'], 'version_ids': [x['VersionId'] for x in secrets.get('Versions', [])], 'complete': True},
             'compute_history': history,
-            'compute_released': self.status_of('release') in DONE and c.get('compute') is None,
+            'compute_released': self.status_of('release') in RELEASED and c.get('compute') is None,
             'compute_inventory': {'complete': True, 'instance_ids': [x['instance_id'] for x in history]},
             'database_resource_ids': native['database_resource_ids'],
             'database_network_interface_ids': native['database_network_interface_ids'],
@@ -743,8 +774,8 @@ def summarize(rendered):
     return changes
 
 
-def render_summary(changes, plan_sha256):
-    lines = []
+def render_summary(changes, plan_sha256, targets=()):
+    lines = [f'targeted to a partial lifecycle: {address}' for address in targets]
     for change in changes:
         lines.append(f'{change["action"]:<8} {change["address"]}')
         for attribute in change.get('attributes', []):

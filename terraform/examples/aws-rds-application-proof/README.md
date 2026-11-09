@@ -123,10 +123,13 @@ pg overwrites ssl.servername with its DNS host; local negative therefore uses an
 alternate DNS alias to the same server, and operational negative invokes Node's
 default certificate checker with a deliberately wrong expected hostname.
 
-Only after full original guest success does host PutSecretValue use the exact new
-ARN and pending-recorded UUID, with secret JSON through stdin. Returned ARN/VersionId
-must match; exact-version Get readback matches RAM bytes, then persisted-password
-fresh TLS/readiness precedes success. Parent receives only nonsecret references,
+Credentials are published first: on a fresh database, host PutSecretValue runs before
+the activation SQL that makes the passwords live, because after activation no
+customer-held login can reset them. On restore it runs after the seeded passwords are
+proven and before `rotate-self`. It uses the exact new ARN and pending-recorded UUID,
+with secret JSON through stdin. Returned ARN/VersionId must match, and an exact-version
+Get readback must match RAM bytes. A published version therefore does not mean success:
+success still requires persisted-password fresh TLS/readiness at the end of the guest. Parent receives only nonsecret references,
 checks and content-free catalog hashes.
 
 Restore pins seed receipt version/hash, historical master/runtime VersionIds and
@@ -222,6 +225,14 @@ retirement does not, because refusing would strand resources. A failed or empty
 state read after an attempted apply is unknown, never empty, and blocks retirement
 until the state can be read and the phase is reconciled. If no contract was captured, `inventory`, `drain` and
 `absence` are unavailable, so native absence needs a manual exact-owned check.
+
+A forward phase that did not finish leaves resources the configuration still declares,
+so a normal release plan would create them, and the guard refuses any create. For a
+partial lifecycle only, `plan --phase release` targets the exact protected database and
+compute addresses in state. If state holds neither, it records release as `not-required`
+with no plan, and `destroy` may proceed. A complete lifecycle is never targeted. A
+tainted or deposed database refuses, because release would replace it; review it and
+run `terraform untaint` under the lease if it is intact, then plan release again.
 
 Run `reconcile --phase <phase>` on any phase left `pending` or `unknown` (a killed runner,
 a lost host) before retiring; it captures what state holds, or stays `unknown`, and an

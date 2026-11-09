@@ -3,7 +3,11 @@ postgres-layout contract, the RDS master is never the application migrator or
 runtime, and execution stays refused unless a registered activation matches the payload."""
 import importlib.util
 import json
+import os
 from pathlib import Path
+import re
+import shutil
+import subprocess
 import unittest
 from unittest.mock import patch
 from secret_io import SecretIoError
@@ -97,5 +101,44 @@ class GuestRuntimeLogin(unittest.TestCase):
         text=Path(__file__).with_name('guest-adapter.mjs').read_text()
         self.assertIn('session_user AS login',text)
         self.assertIn('row.login===cfg.scope.runtimeRole&&row.role===cfg.scope.runtimeRole',text)
+
+class GuestUrlChannel(unittest.TestCase):
+    """The migrator URL carries the owner password, so it travels by private pipe only."""
+    PASSWORD='synthetic-owner-password-0123456789abcdef'
+    HOOK=Path(__file__).with_name('runtime-hook.mjs')
+    @classmethod
+    def setUpClass(cls):
+        cls.node=shutil.which('node')
+        if not cls.node:raise unittest.SkipTest('node is not installed')
+    def hook(self,marker='3',content=b'postgres://hoop:synthetic@h/hoopdb',attach=True,extra=None):
+        script="process.stdout.write(JSON.stringify({url:process.env.HOOPDB_URL,marker:process.env.HOOPDB_URL_FD??null}))"
+        read,write=os.pipe();os.write(write,content);os.close(write);os.set_inheritable(read,True)
+        env={'PATH':os.environ['PATH'],'HOOPDB_URL_FD':marker,**(extra or {})}
+        def child():
+            if attach:os.dup2(read,3)
+        try:return subprocess.run([self.node,'--import',str(self.HOOK),'-e',script],env=env,capture_output=True,text=True,preexec_fn=child,close_fds=False,timeout=30)
+        finally:os.close(read)
+    def test_hook_moves_the_url_from_the_pipe_into_the_process(self):
+        done=self.hook();self.assertEqual(done.returncode,0,done.stderr)
+        self.assertEqual(json.loads(done.stdout),{'url':'postgres://hoop:synthetic@h/hoopdb','marker':None})
+    def test_hook_fails_closed(self):
+        for name,args in {'empty':{'content':b''},'not_a_url':{'content':b'hoop'},'bad_marker':{'marker':'x'},'high_fd':{'marker':'12'},'url_already_in_env':{'extra':{'HOOPDB_URL':'postgres://x'}}}.items():
+            with self.subTest(name):self.assertNotEqual(self.hook(**args).returncode,0)
+    def test_hook_does_nothing_without_the_marker(self):
+        done=subprocess.run([self.node,'--import',str(self.HOOK),'-e','process.stdout.write(String(process.env.HOOPDB_URL))'],env={'PATH':os.environ['PATH']},capture_output=True,text=True,timeout=30)
+        self.assertEqual((done.returncode,done.stdout),(0,'undefined'),done.stderr)
+    def test_spawned_migrator_env_and_argv_hold_no_password(self):
+        text=Path(__file__).with_name('guest-adapter.mjs').read_text()
+        body=re.search(r'^function migrate\(password\)\{\n.*?^\}\n',text,re.M|re.S).group(0)
+        script="""const out={};const spawn=(file,args,options)=>{out.file=file;out.args=args;out.options=options;
+const pipe={on(){},end(value){out.piped=value;}};return {stdio:[null,null,null,pipe],on(event,fn){if(event==='close')setImmediate(()=>fn(0));}};};
+const cfg={scope:{owner:'hoop',endpoint:'db.example',database:'hoopdb',runtimeRole:'sessions_pipeline_runtime',provisioner:'proof_admin'}};
+const deadline=()=>{},HOOK='/g/hook',MIGRATOR='/g/m.ts',CA_FILE='/g/ca.pem',SOURCE='/g/s';
+"""+body+"migrate("+json.dumps(self.PASSWORD)+").then(()=>process.stdout.write(JSON.stringify(out)));"
+        done=subprocess.run([self.node,'-e',script],capture_output=True,text=True,timeout=30);self.assertEqual(done.returncode,0,done.stderr)
+        out=json.loads(done.stdout);visible=json.dumps([out['file'],out['args'],out['options']])
+        self.assertNotIn(self.PASSWORD,visible);self.assertNotIn('HOOPDB_URL"',visible)
+        self.assertEqual(out['options']['env']['HOOPDB_URL_FD'],'3');self.assertEqual(out['options']['stdio'][3],'pipe')
+        self.assertIn(self.PASSWORD,out['piped']);self.assertTrue(out['piped'].startswith('postgres://hoop:'))
 
 if __name__=='__main__':unittest.main()

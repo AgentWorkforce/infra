@@ -19,6 +19,21 @@ def future():
     return (dt.datetime.now(dt.timezone.utc) + dt.timedelta(hours=2)).strftime('%Y-%m-%dT%H:%M:%S.000Z')
 
 
+def protected_database(name='x', status=None):
+    instance = {'attributes': {'deletion_protection': True}}
+    if status:
+        instance['status'] = status
+    return {'mode': 'managed', 'module': 'module.postgres', 'type': 'aws_db_instance', 'name': name, 'instances': [instance]}
+
+
+def security_group():
+    return {'mode': 'managed', 'type': 'aws_security_group', 'name': 'database', 'instances': [{'attributes': {}}]}
+
+
+CREATE_MISSING = [{'address': 'aws_secretsmanager_secret.runtime', 'type': 'aws_secretsmanager_secret', 'change': {'actions': ['create']}}]
+DESTROY = [{'address': 'aws_security_group.database', 'type': 'aws_security_group', 'change': {'actions': ['delete']}}]
+
+
 class Fake:
     """Synthetic Terraform and AWS. Nothing here reaches a tool or provider."""
 
@@ -32,6 +47,9 @@ class Fake:
         self.raise_apply = False
         self.state_broken = False
         self.on_apply = None
+        self.applied_resources = None
+        self.untargeted_changes = None
+        self.last_plan = []
         self.contract = None
         self.changes = []
         self.compute = {'instance_id': 'i-0123456789abcdef0', 'root_volume_ids': ['vol-0123456789abcdef0'], 'eni_id': 'eni-0123456789abcdef0'}
@@ -59,15 +77,18 @@ class Fake:
         if verb == 'plan':
             out = next(a for a in args if a.startswith('-out='))[5:]
             Path(out).write_bytes(('plan:' + str(len(self.calls))).encode())
+            self.last_plan = list(args)
             return self.done(args)
         if verb == 'show':
-            return self.done(args, json.dumps({'resource_changes': self.changes}))
+            # Real Terraform plans every resource the configuration still declares unless targeted.
+            untargeted = self.untargeted_changes is not None and not any(a.startswith('-target=') for a in self.last_plan)
+            return self.done(args, json.dumps({'resource_changes': self.untargeted_changes if untargeted else self.changes}))
         if verb == 'apply':
             if self.on_apply:
                 self.on_apply(args)
             if self.raise_apply:
                 raise r.CommandInterrupted(15)
-            self.resources = [{'module': '', 'type': 'aws_db_instance', 'name': 'x'}]
+            self.resources = self.applied_resources if self.applied_resources is not None else [protected_database()]
             return self.done(args, code=1 if self.fail_apply else 0)
         if verb == 'state':
             if self.state_broken:
@@ -278,7 +299,7 @@ class UnknownState(Base):
         with self.assertRaisesRegex(r.Refused, 'did not complete'):
             self.runner.apply('provision', out['plan_sha256'])
         self.assertEqual(self.runner.status_of('provision'), 'failed')
-        self.assertEqual(r.read(self.execution / 'provision.capture.json')['resources'], ['.aws_db_instance.x'])
+        self.assertEqual(r.read(self.execution / 'provision.capture.json')['resources'], ['module.postgres.aws_db_instance.x'])
 
     def test_interrupted_apply_is_captured(self):
         self.fake.contract = None
@@ -549,6 +570,97 @@ class Retirement(Base):
             with self.assertRaisesRegex(r.Refused, 'Unsettled'):
                 real.run(['true'])
         self.assertTrue((self.execution / 'unsettled.json').exists())
+
+    def test_unsettled_apply_captures_nothing_and_blocks_a_new_runner(self):
+        self.provision()
+        out = self.runner.plan('release')
+
+        def hung(_args):
+            self.runner.record_unsettled(999999)
+            raise r.Refused('Unsettled owned process group; quarantine before recovery')
+        self.fake.on_apply = hung
+        calls = []
+        self.fake.calls = calls
+        with self.assertRaisesRegex(r.Refused, 'unknown'):
+            self.runner.apply('release', out['plan_sha256'])
+        applied = next(i for i, c in enumerate(calls) if len(c) > 1 and c[1] == 'apply')
+        self.assertEqual(calls[applied + 1:], [])
+        self.assertEqual(self.runner.status_of('release'), 'unknown')
+        fresh = type(self.runner)(self.execution, self.vars, self.terraform, env=self.env, transport=self.fake)
+        before = len(calls)
+        with self.assertRaisesRegex(r.Refused, 'Unsettled'):
+            fresh.plan('release')
+        with self.assertRaisesRegex(r.Refused, 'Unsettled'):
+            fresh.reconcile('release')
+        self.assertEqual(len(calls), before)
+
+    def fail_provision(self, resources):
+        self.fake.contract = None
+        self.fake.applied_resources = resources
+        self.fake.fail_apply = True
+        out = self.runner.plan('provision')
+        with self.assertRaises(r.Refused):
+            self.runner.apply('provision', out['plan_sha256'])
+        self.fake.fail_apply = False
+        self.assertEqual(self.runner.status_of('provision'), 'failed')
+        self.fake.untargeted_changes = CREATE_MISSING
+
+    def finish_destroy(self):
+        self.fake.untargeted_changes = None
+        self.fake.changes = DESTROY
+        out = self.runner.plan('destroy')
+        self.fake.applied_resources = []
+        return self.runner.apply('destroy', out['plan_sha256'])
+
+    def test_partial_provision_with_a_database_releases_only_that_database(self):
+        self.fail_provision([protected_database(), security_group()])
+        self.fake.changes = [{'address': 'module.postgres.aws_db_instance.x', 'type': 'aws_db_instance',
+                              'change': {'actions': ['update'], 'before': {'deletion_protection': True}, 'after': {'deletion_protection': False}}}]
+        out = self.runner.plan('release')
+        self.assertIn('-target=module.postgres.aws_db_instance.x', self.fake.last_plan)
+        self.assertEqual(self.runner.apply('release', out['plan_sha256'])['status'], 'captured')
+        self.assertIn('targeted to a partial lifecycle', (self.execution / 'release.summary.txt').read_text())
+        self.assertEqual(self.finish_destroy()['status'], 'captured')
+
+    def test_partial_provision_with_nothing_to_release_records_it_and_can_destroy(self):
+        self.fail_provision([security_group()])
+        result = self.runner.plan('release')
+        self.assertEqual(result['status'], 'not-required')
+        self.assertEqual(self.runner.status_of('release'), 'not-required')
+        self.assertFalse(any(len(c) > 1 and c[1] == 'plan' and 'release.tfplan' in ' '.join(c) for c in self.fake.calls))
+        self.assertEqual(self.finish_destroy()['status'], 'captured')
+
+    def test_partial_release_is_not_required_only_without_protection_or_compute(self):
+        self.fail_provision([{'mode': 'managed', 'type': 'aws_instance', 'name': 'verifier', 'instances': [{'index_key': 0, 'attributes': {}}]}])
+        self.fake.changes = [{'address': 'aws_instance.verifier[0]', 'type': 'aws_instance', 'change': {'actions': ['delete']}}]
+        out = self.runner.plan('release')
+        self.assertIn('-target=aws_instance.verifier[0]', self.fake.last_plan)
+        self.assertIn('plan_sha256', out)
+
+    def test_targeted_partial_release_still_refuses_a_create(self):
+        self.fail_provision([protected_database()])
+        self.fake.changes = CREATE_MISSING
+        with self.assertRaisesRegex(r.Refused, 'Release may only'):
+            self.runner.plan('release')
+
+    def test_tainted_database_refuses_with_recovery_instructions(self):
+        self.fail_provision([protected_database(status='tainted')])
+        with self.assertRaisesRegex(r.Refused, 'tainted'):
+            self.runner.plan('release')
+        self.assertNotIn('release', self.runner.phases())
+
+    def test_complete_provision_is_not_targeted_and_still_refuses_creates(self):
+        self.provision()
+        self.fake.changes = CREATE_MISSING
+        with self.assertRaisesRegex(r.Refused, 'Release may only'):
+            self.runner.plan('release')
+        self.assertFalse(any(a.startswith('-target=') for a in self.fake.last_plan))
+        self.assertNotEqual(self.runner.status_of('release'), 'not-required')
+
+    def test_destroy_still_requires_release_when_it_is_not_recorded(self):
+        self.fail_provision([protected_database()])
+        with self.assertRaisesRegex(r.Refused, 'Release must complete'):
+            self.runner.plan('destroy')
 
     def test_settle_clears_only_when_the_group_is_gone(self):
         self.provision()

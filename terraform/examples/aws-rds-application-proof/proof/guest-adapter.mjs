@@ -73,7 +73,9 @@ function migrate(password){
  deadline();
  const url=`postgres://${encodeURIComponent(cfg.scope.owner)}:${encodeURIComponent(password)}@${cfg.scope.endpoint}:5432/${encodeURIComponent(cfg.scope.database)}?sslmode=verify-full&sslrootcert=${encodeURIComponent(CA_FILE)}`;
  return new Promise((resolve,reject)=>{
-  const child=spawn(process.execPath,['--import',HOOK,MIGRATOR],{cwd:SOURCE,stdio:'ignore',env:{PATH:process.env.PATH,HOOPDB_URL:url,HOOPDB_DB_MODE:'rds',HOOPDB_RDS_LAYOUT:'separate-database',HOOPDB_SUPABASE_SHIM:'false',HOOPDB_RUNTIME_ROLE:cfg.scope.runtimeRole,HOOPDB_RUNTIME_ROLE_LOGIN:'true',HOOPDB_FUNCTION_BOUNDARY_MODE:'global-default-revoke'}});
+  const child=spawn(process.execPath,['--import',HOOK,MIGRATOR],{cwd:SOURCE,stdio:['ignore','ignore','ignore','pipe'],env:{PATH:process.env.PATH,HOOPDB_URL_FD:'3',HOOPDB_DB_MODE:'rds',HOOPDB_RDS_LAYOUT:'separate-database',HOOPDB_SUPABASE_SHIM:'false',HOOPDB_RUNTIME_ROLE:cfg.scope.runtimeRole,HOOPDB_RUNTIME_ROLE_LOGIN:'true',HOOPDB_FUNCTION_BOUNDARY_MODE:'global-default-revoke'}});
+  // The URL holds the owner password: a private pipe, never the child's environment or argv.
+  child.stdio[3].on('error',()=>{});child.stdio[3].end(url);
   child.on('error',reject);child.on('close',code=>code===0?resolve():reject(new Error('migrate_failed')));
  });
 }
