@@ -3,8 +3,8 @@
 This independent source fixture composes the actual AWS PostgreSQL/object-storage
 modules for a new disposable PostgreSQL17 instance, explicit snapshot/restore
 clone, versioned S3 bucket, empty runtime Secrets Manager container and temporary
-ARM host. It runs the unchanged reviewed HoopDB bootstrap/migrator/readiness library
-from Sessions composition `292359f0c68b1e4615704fd51d303b7f6b4db445`.
+ARM host. Its guest runs the unchanged `rds-activation/v1` driver and HoopDB
+migrator from the Sessions commit named by `guest_sources`.
 
 A completed live run proves only those selected SQL/readiness/module storage checks.
 Source mocks/imports and synthetic client tests do not prove actual RDS behavior,
@@ -16,20 +16,15 @@ existing app/role, parent DNS, publication or deployment change is made here.
 
 ## Shared-database qualification remains blocked
 
-`application_sql_ready` is always `false`. This fixture currently migrates the
-synthetic `applicationproof` database as its RDS master, `proof_admin`, with
-`proof_runtime` for runtime checks. It does not implement the
-[shared PostgreSQL application contract](../../../docs/shared-postgres-storage-contract.md):
-one RDS instance, a separate logical database per service, non-master owners
-and restricted runtime logins. A successful run of these selected checks must
-not qualify that contract or a Terraform-to-Helm application installation.
-
-Closing this gap requires a supported application composition and reviewed
-bootstrap/activation path for the non-master owner and runtime, native tests of
-the service bindings and cross-database denials, then a digest-pinned Helm
-installation and the real application acceptance cases. Metadata-only schema
-bindings are not SQL/bootstrap proof. The private parent saved-plan driver also
-still requires independent review. Managed execution remains held.
+`application_sql_ready` is always `false`. The guest flow now runs as the
+[shared PostgreSQL application contract](../../../docs/shared-postgres-storage-contract.md)
+requires for one service: database `hoopdb`, non-master owner `hoop`, restricted
+runtime `sessions_pipeline_runtime`. It stays held, and a successful run of these
+checks would cover only HoopDB. It would not qualify the other services, cross-database
+denials or a Terraform-to-Helm application installation. Those need their own service
+bindings, a digest-pinned Helm installation and the real application acceptance cases.
+The private parent saved-plan driver also still requires independent review. Managed
+execution remains held.
 
 Both source and restore instances disable automatic minor upgrades. The host
 requires the exact selected PostgreSQL version and native upgrade flag, and
@@ -68,27 +63,28 @@ no production secret is derived, overwritten or re-used.
 
 ## Immutable source preparation
 
-Use an own T7 Sessions worktree at exact292359, real Bun1.4.2 frozen installation
-and its original bun.lock. The requested npm-ci attempt refuses this Bun-only
-project's absent npm lock; never invent a lock or link another checkout's modules.
-All11RDS+23portable owner inputs are byte-checked. Original TypeScript paths,
-import.meta.url, actual SQL/verifier/JSON assets and pg8.23.1's exact lock closure
-are copied and hashed. A closed hook resolves only the vendor scrub alias from
-shared/log.ts. The separate `rds-profile-proof.ts` emulation harness is never
-packaged, imported or executed.
+Use an own Sessions worktree at the exact commit named by `guest_sources`, with a
+frozen Bun installation and its original bun.lock. Never invent a lock or link another
+checkout's modules. The build refuses a dirty tree, a different commit, or an artifact
+hash that differs from the driver's own. Only the driver's and migrator's exact
+relative-import closure, the driver's artifact files, the migration and bootstrap SQL,
+and pg's exact lock closure are copied and hashed. A closed hook resolves only the
+vendor scrub alias from shared/log.ts. The separate `rds-profile-proof.ts` emulation
+harness is never packaged, imported or executed.
 
 Commit Helm source/provider lock first, then build twice with fresh T7 outputs:
 
 ```sh
 node proof/build-payload.mjs --source /T7/clean-guest-source \
   --output /T7/new-payload-a --ca /T7/reviewed-public-rds-ca.pem \
-  --ca-sha256 REVIEWED_CA_SHA256 --wrong-ca proof/assets/wrong-ca.pem
+  --ca-sha256 REVIEWED_CA_SHA256 --wrong-ca proof/assets/wrong-ca.pem \
+  --commit MERGED_SESSIONS_COMMIT --artifact REVIEWED_ARTIFACT_SHA256
 ```
 
 Use Node24. Public CA bytes/digest are reviewed explicitly and archived; runtime
 never fetches them. The wrong-CA public asset is synthetic and its disposable
 creation key was removed; it is never production trust. Builder binds clean Helm
-commit/tree/source/provider lock, original guest manifest/generation/Bun lock/all
+commit/tree/source/provider lock, guest manifest/artifact/generation/Bun lock/all
 transitive bytes, pinned Node/psql images and CA. Dirty test builds require a flag
 and are marked/rejected for operations. Repeat archive SHA must match. Parent
 separately binds selected provider binaries/backend/state/plan/runner and real S3
@@ -212,44 +208,55 @@ The layout has no legacy History binding: self-host history remains a
 sessions-pipeline capability, and the standalone History server is being removed
 separately.
 
-**Application execution is refused** and `application_sql_ready` is `false`.
+**Application execution is refused by default** and `application_sql_ready` is `false`.
 `terraform_data.application_gate` refuses any verifier compute unless
-`application_activation` names an entry of `local.approved_activations`, which
-is intentionally empty. The host additionally refuses a missing activation
-(`application_activation_artifact_missing`) and any supplied one
-(`application_activation_not_implemented`), because the guest flow hasn't been
-ported to a non-master owner.
+`application_activation` names an entry of `local.approved_activations` that matches
+the payload's Sessions commit and generation. That map is intentionally empty until
+the driver is merged and reviewed. The host refuses a missing or unregistered
+activation before any AWS call or credential read.
 
-Remaining dependencies (source/design inventory; nothing here is a proof):
-1. **A reviewed, schema-aware Sessions source and artifact.** The pinned
-   composition `292359f0c68b1e4615704fd51d303b7f6b4db445` is not retrievable from
-   any AgentWorkforce GitHub repository (`relayhistory-pipeline`,
-   `sessions-pipeline`, `96BullSessions`, `sessions-pipeline-cloud` all return 422)
-   or from this host. It can't be reviewed for non-master owner support.
-   Owner: pipeline (`relayhistory-pipeline`).
-2. **The RDS application activation contract.** A narrowly privileged, named and
-   authenticated provisioning executor creates the `hoopdb` database, `hoop` and
-   `sessions_pipeline_runtime` with an exact grantor-specific graph. Then, in one
-   explicit transaction:
-   - LOGIN and default changes;
-   - `RESET ROLE`;
-   - creator cleanup;
-   - final graph validation.
+The guest was rewritten to run the `rds-activation/v1` driver
+(`relayhistory-pipeline` #409). It replaces the earlier guest library, whose pinned
+commit was never pushed and could not be recovered. In order:
 
-   No helper creator or capability may survive into the ready state. Candidate
-   upstream sources to review are `supabase/bootstrap/rds_migration_roles.sql`
-   and `hoopdb_runtime_role_rds.sql` in `relayhistory-pipeline`. They must not be
-   run as standalone `BEGIN`/`COMMIT` files inside an outer transaction. The
-   `rds-profile-proof.ts` emulation is not an activation. Owner: pipeline.
-3. **A durable application-readiness result.** The application grants and the
+1. TLS negatives (wrong hostname, wrong CA) against the RDS endpoint.
+2. The host generates one distinct password per LOGIN role in the driver's generated
+   spec and persists them to the runtime secret **before** any SQL that makes them
+   live. After activation no customer-held login can reset a HoopDb role, so a lost
+   password is not recoverable.
+3. `run` as the provisioning login (the RDS master), with `verify-full` TLS, secrets on
+   stdin only and the result on a dedicated descriptor. This is the master's only use.
+4. The bootstrap chain, then the migrator twice, as `hoop` with
+   `HOOPDB_RDS_LAYOUT=separate-database`.
+5. `verify`, then readiness as `sessions_pipeline_runtime` with the persisted password.
+
+The restore phase proves the seeded passwords before changing anything, reruns the
+chain and migrator, rotates the runtime password with `rotate-self`, and requires the
+same catalog evidence as the seed.
+
+Remaining dependencies (nothing here is a live proof):
+1. **Merged and reviewed driver.** Pin `guest_sources` and register the artifact in
+   `local.approved_activations` using the merged commit and its `artifact_sha256`.
+   Any byte change to the driver or its SQL changes the artifact. Owner: pipeline, then infra.
+2. **Independent review of the private parent saved-plan driver**, then exact saved-plan
+   admission. Owner: reviewer to be named.
+3. **A Pippen lease** for the sandbox account, which needs the `pippen-sandbox-client`
+   credential.
+4. **A durable application-readiness result.** The application grants and the
    retention, privacy and read-api verifiers must pass, then publish a result
-   bound to source, profile, generation and verifier. Ordinary `migrate` and a
-   generic schema PASS can't stand in for it. Missing, pending or stale readiness
-   must block service startup. Owner: pipeline and control.
-4. **Execution proof (later, separate).** Actual non-owner LOGINs, access
-   denials between databases with unchanged foreign objects, and bootstrap failure, crash and
-   resume. Ordinary migrate must not substitute for activation. Then real
-   auth/TLS/password rotation and restore, then Helm and application behaviour.
+   bound to source, profile, generation and verifier. Missing, pending or stale
+   readiness must block service startup. Owner: to be named (pipeline and control).
+5. **PUBLIC CONNECT on sibling databases.** Activation closes `hoopdb` only. The
+   HoopDb roles can still connect to `postgres` and to the Terraform-created initial
+   database `relaycontrol` until a reviewed bootstrap for those databases revokes it.
+   This fixture deliberately does not invent one. Owner: infra and control.
+6. **Execution proofs (later, separate).** Access denials between databases with
+   unchanged foreign objects, real auth/password rotation and restore on RDS, then Helm
+   and application behaviour.
+
+Known limits of `rds-activation/v1`: `bulls96_babysitter_retention` stays NOLOGIN, and
+the operator `*_role.sql` files are unsupported on this layout. The driver needs
+`--experimental-transform-types` on Node because it uses TypeScript parameter properties.
 
 Immutable schema steps (including `042000`), historical migration, verifier and
 function ACLs are unchanged here, and no migration slot or privilege edge is
@@ -324,7 +331,7 @@ added.
 | account\_id | Exact existing sandbox account; never an account creation request. | `string` | n/a | yes |
 | ami\_id | Exact reviewed Amazon AL2023 ARM64 HVM/EBS AMI, not latest. | `string` | n/a | yes |
 | deadline | Explicit immutable UTC workload deadline; fresh parent review must budget creation/guest/restore/cleanup. Never extend it to retry a failed fixture. | `string` | n/a | yes |
-| guest\_sources | Frozen unchanged source composition, actual manifest and generation. Public provenance only, no credentials. | `object({ composition_commit = string, manifest_sha256 = string, generation = string })` | n/a | yes |
+| guest\_sources | Sessions source commit, guest manifest digest and migration generation of the payload. Must match the registered application\_activation before any compute. Public provenance only, no credentials. | `object({ composition_commit = string, manifest_sha256 = string, generation = string })` | n/a | yes |
 | host\_subnet\_id | Reviewed existing public subnet with HTTPS egress through an IGW. No routing changes. | `string` | n/a | yes |
 | payload\_sha256 | Content digest of the secret-free transport archive, checked before extraction. | `string` | n/a | yes |
 | pippen | Expected allocated non-secret lease identity. | `object({ agent = string, session_id = string })` | n/a | yes |
@@ -346,6 +353,6 @@ added.
 | Name | Description |
 | ---- | ----------- |
 | application\_binding | Expected application identities from the postgres-layout contract (non-secret). Metadata only: not SQL, bootstrap or application proof. |
-| application\_sql\_ready | False: this synthetic master-role fixture does not qualify the separate-database application layout or its activation. |
+| application\_sql\_ready | False: this fixture proves one service at most and does not qualify the separate-database application layout or a full installation. |
 | proof\_contract | Non-secret source/lease/module/transport identities. Capture before guest termination. |
 <!-- END_TF_DOCS -->

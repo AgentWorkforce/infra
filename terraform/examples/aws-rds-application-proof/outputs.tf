@@ -4,7 +4,7 @@ output "application_binding" {
 }
 
 output "application_sql_ready" {
-  description = "False: this synthetic master-role fixture does not qualify the separate-database application layout or its activation."
+  description = "False: this fixture proves one service at most and does not qualify the separate-database application layout or a full installation."
   value       = false
 }
 

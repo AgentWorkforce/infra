@@ -115,11 +115,11 @@ variable "retire" {
 }
 
 variable "guest_sources" {
-  description = "Frozen unchanged source composition, actual manifest and generation. Public provenance only, no credentials."
+  description = "Sessions source commit, guest manifest digest and migration generation of the payload. Must match the registered application_activation before any compute. Public provenance only, no credentials."
   type        = object({ composition_commit = string, manifest_sha256 = string, generation = string })
   validation {
-    condition     = var.guest_sources.composition_commit == "292359f0c68b1e4615704fd51d303b7f6b4db445" && can(regex("^[a-f0-9]{64}$", var.guest_sources.manifest_sha256)) && var.guest_sources.generation == "7d64ae1f74670530fd6443fad7d6cc9ac11776055941821ef79f8501fb2d7879"
-    error_message = "Require the exact reviewed original guest composition/manifest/generation; never repin implicitly."
+    condition     = can(regex("^[a-f0-9]{40}$", var.guest_sources.composition_commit)) && can(regex("^[a-f0-9]{64}$", var.guest_sources.manifest_sha256)) && can(regex("^[a-f0-9]{64}$", var.guest_sources.generation))
+    error_message = "Require a 40-hex Sessions commit and 64-hex manifest and generation digests. Which commit may run is decided only by local.approved_activations."
   }
 }
 
@@ -142,7 +142,7 @@ variable "application_activation" {
   })
   default = null
   validation {
-    condition     = var.application_activation == null ? true : can(regex("^[a-f0-9]{40}$", var.application_activation.sessions_commit)) && can(regex("^[a-f0-9]{64}$", var.application_activation.artifact_sha256)) && can(regex("^[a-f0-9]{64}$", var.application_activation.generation)) && can(regex("^[a-z0-9][a-z0-9._-]{0,63}$", var.application_activation.contract))
+    condition     = var.application_activation == null ? true : can(regex("^[a-f0-9]{40}$", var.application_activation.sessions_commit)) && can(regex("^[a-f0-9]{64}$", var.application_activation.artifact_sha256)) && can(regex("^[a-f0-9]{64}$", var.application_activation.generation)) && can(regex("^[a-z0-9][a-z0-9._/-]{0,63}$", var.application_activation.contract))
     error_message = "application_activation needs a 40-hex Sessions commit, 64-hex artifact and generation digests and a bounded contract id."
   }
 }

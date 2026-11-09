@@ -1,5 +1,7 @@
 # Preparatory source and IO checkpoint
 
+> **Superseded for the guest flow.** This records validation of the earlier guest composition, which could not be recovered. The guest now runs `rds-activation/v1`; see README "F1 status".
+
 This new example is in progress; it has no operational admission yet. The first
 stage resolves source-import/password IO before building the Terraform/parent
 transport. No AWS API, credentials, actual-RDS library SQL, protected SQL edits,

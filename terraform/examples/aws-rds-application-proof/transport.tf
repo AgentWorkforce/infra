@@ -36,7 +36,7 @@ locals {
     account_id                = var.account_id, region = var.region, source_sha = var.source_sha, vpc_id = var.vpc_id,
     bucket                    = module.objects.bucket_name, prefix = local.prefix, payload_key = local.payload, payload_version_id = var.payload_version_id,
     payload_sha256            = var.payload_sha256, receipt_key = local.receipt, phase = local.phase,
-    marker                    = local.marker, ca_sha256 = var.rds_ca_sha256, database = module.postgres.initial_database,
+    marker                    = local.marker, ca_sha256 = var.rds_ca_sha256, database = local.application.database,
     host                      = var.restore_checkpoint == null ? module.postgres.host : aws_db_instance.restored[0].address,
     instance_id               = var.restore_checkpoint == null ? module.postgres.instance_identifier : aws_db_instance.restored[0].identifier,
     source_instance_id        = module.postgres.instance_identifier,
@@ -56,11 +56,12 @@ locals {
     runtime_secret_version_id = try(var.restore_checkpoint.runtime_secret_version_id, null)
     seed_evidence_sha256      = try(var.restore_checkpoint.seed_evidence_sha256, null)
     # Provisioning executor (RDS master) is distinct from the application owner/runtime.
-    provisioning_executor  = module.postgres.master_username
-    forbidden_roles        = [module.postgres.master_username]
-    application            = local.application
-    application_activation = var.application_activation
-    pending_receipt_key    = "receipts/${local.phase}.pending.json"
+    provisioning_executor             = module.postgres.master_username
+    forbidden_roles                   = [module.postgres.master_username]
+    application                       = local.application
+    application_activation            = var.application_activation
+    application_activation_registered = local.activation_registered
+    pending_receipt_key               = "receipts/${local.phase}.pending.json"
   }
   bootstrap = templatefile("${path.module}/bootstrap.sh.tftpl", { config = jsonencode(local.guest), extractor = file("${path.module}/proof/extract_payload.py") })
 }

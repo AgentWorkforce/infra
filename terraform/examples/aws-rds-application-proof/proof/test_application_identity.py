@@ -1,6 +1,6 @@
 """F1 causal refusals: the separate-database application identities come from the
 postgres-layout contract, the RDS master is never the application migrator or
-runtime, and execution stays refused until a reviewed activation artifact exists."""
+runtime, and execution stays refused unless a registered activation matches the payload."""
 import importlib.util
 import json
 from pathlib import Path
@@ -12,8 +12,11 @@ spec=importlib.util.spec_from_file_location('rds_host_f1',Path(__file__).with_na
 def cfg(**over):
     c={'provisioning_executor':'proof_admin','forbidden_roles':['proof_admin'],
        'application':{'database':'hoopdb','schema':'sessions','migration_role':'hoop','runtime_role':'sessions_pipeline_runtime','host':'db.example.invalid','port':5432},
-       'application_activation':None}
+       'application_activation':None,'application_activation_registered':False,
+       'guest_sources':{'composition_commit':'a'*40,'manifest_sha256':'d'*64,'generation':'c'*64}}
     c.update(over);return c
+
+ACTIVATION={'sessions_commit':'a'*40,'artifact_sha256':'b'*64,'generation':'c'*64,'contract':'rds-activation/v1'}
 
 def app(**over):
     a=dict(cfg()['application']);a.update(over);return a
@@ -26,9 +29,17 @@ class ApplicationIdentity(unittest.TestCase):
     def test_layout_identities_refuse_without_reviewed_activation(self):
         self.refused(cfg(),'application_activation_artifact_missing')
 
-    def test_even_a_supplied_activation_is_refused_until_the_guest_is_ported(self):
-        activation={'sessions_commit':'a'*40,'artifact_sha256':'b'*64,'generation':'c'*64,'contract':'reviewed'}
-        self.refused(cfg(application_activation=activation),'application_activation_not_implemented')
+    def test_supplied_activation_is_refused_unless_registered(self):
+        self.refused(cfg(application_activation=ACTIVATION),'application_activation_not_registered')
+        self.refused(cfg(application_activation=ACTIVATION,application_activation_registered='true'),'application_activation_not_registered')
+
+    def test_registered_activation_is_the_only_route_and_returns_it(self):
+        self.assertEqual(h.application_identity(cfg(application_activation=ACTIVATION,application_activation_registered=True)),ACTIVATION)
+
+    def test_registered_activation_must_bind_the_payload_source_and_contract(self):
+        for change in [{'sessions_commit':'f'*40},{'generation':'f'*64},{'contract':'reviewed'},{'artifact_sha256':'short'}]:
+            with self.subTest(change=change):
+                self.refused(cfg(application_activation={**ACTIVATION,**change},application_activation_registered=True),'application_activation_binding_mismatch')
 
     def test_master_as_application_migrator_or_runtime_is_refused(self):
         self.refused(cfg(application=app(migration_role='proof_admin')),'application_binding_mismatch')
@@ -58,9 +69,8 @@ class ApplicationIdentity(unittest.TestCase):
     def test_main_refuses_before_aws_or_followup_file_reads(self):
         # Invoke the actual entry point; calling the helper alone cannot prove
         # its position before credential/CLI work in main().
-        activation={'sessions_commit':'a'*40,'artifact_sha256':'b'*64,'generation':'c'*64,'contract':'reviewed'}
         for supplied,code in [(None,'application_activation_artifact_missing'),
-                              (activation,'application_activation_not_implemented')]:
+                              (ACTIVATION,'application_activation_not_registered')]:
             with self.subTest(supplied=supplied is not None):
                 c=cfg(application_activation=supplied)
                 c.update(account_id='111111111111',source_sha='a'*40,deadline='2099-01-01T00:00:00.000Z')

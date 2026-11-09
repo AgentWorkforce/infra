@@ -23,8 +23,8 @@ restore_checkpoint = null
 retire = false
 
 guest_sources = {
-  composition_commit = "292359f0c68b1e4615704fd51d303b7f6b4db445"
+  composition_commit = "REPLACE_WITH_MERGED_SESSIONS_COMMIT"
   manifest_sha256 = "REPLACE_WITH_REVIEWED_GUEST_MANIFEST_SHA256"
-  generation = "7d64ae1f74670530fd6443fad7d6cc9ac11776055941821ef79f8501fb2d7879"
+  generation = "REPLACE_WITH_MIGRATION_GENERATION"
 }
 deadline = "REPLACE_WITH_REVIEWED_BOUNDED_UTC_DEADLINE" # Must fit original lease/lifecycle; no extension.

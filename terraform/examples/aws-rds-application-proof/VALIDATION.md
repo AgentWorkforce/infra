@@ -1,5 +1,7 @@
 # Source validation and live gates
 
+> **Superseded for the guest flow.** This records validation of the earlier guest composition, which could not be recovered. The guest now runs `rds-activation/v1`; see README "F1 status".
+
 This new example is based on main201f06 (including independently reviewed65/66),
 with unchanged shared modules and unchanged Sessions composition292359. Exact
 candidate/final head and payload hashes live in the held PR/external receipts to

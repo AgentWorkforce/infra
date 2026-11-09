@@ -155,19 +155,29 @@ module "layout" {
   }
 }
 locals {
-  # Reviewed activation artifacts by sha256. Intentionally empty: none exists yet.
+  # Reviewed rds-activation/v1 artifacts by artifact_sha256, each as
+  # { sessions_commit, generation, contract }. Intentionally empty until the driver
+  # is merged and independently reviewed. Do not add an unmerged commit here.
   approved_activations = {}
-  application          = module.layout.bindings["hoopdb"]
+  activation_registered = var.application_activation == null ? false : (
+    contains(keys(local.approved_activations), var.application_activation.artifact_sha256) &&
+    try(local.approved_activations[var.application_activation.artifact_sha256].sessions_commit, "") == var.application_activation.sessions_commit &&
+    try(local.approved_activations[var.application_activation.artifact_sha256].generation, "") == var.application_activation.generation &&
+    try(local.approved_activations[var.application_activation.artifact_sha256].contract, "") == var.application_activation.contract &&
+    var.application_activation.contract == "rds-activation/v1" &&
+    var.application_activation.sessions_commit == var.guest_sources.composition_commit &&
+    var.application_activation.generation == var.guest_sources.generation
+  )
+  application = module.layout.bindings["hoopdb"]
 }
-# F1: the application path (non-master owner/runtime in its own database) has
-# no reviewed, schema-aware Sessions activation artifact yet. Compute that would
-# run the guest is refused until one is registered in approved_activations.
+# F1: compute that would run the guest is refused unless the supplied activation is
+# registered in approved_activations and matches the payload's Sessions source.
 resource "terraform_data" "application_gate" {
   input = { activation = var.application_activation, payload = var.payload_version_id }
   lifecycle {
     precondition {
-      condition     = var.payload_version_id == null || (var.application_activation != null && contains(keys(local.approved_activations), try(var.application_activation.artifact_sha256, "")))
-      error_message = "Application SQL execution is refused: no reviewed schema-aware Sessions activation artifact is registered (application_sql_ready=false). See README 'F1 status'."
+      condition     = var.payload_version_id == null || local.activation_registered
+      error_message = "Application SQL execution is refused: no reviewed rds-activation/v1 artifact is registered for this exact Sessions source (application_sql_ready=false). See README 'F1 status'."
     }
   }
 }

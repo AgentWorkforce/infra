@@ -8,10 +8,10 @@ import extract_payload as x
 
 def sha(value):return hashlib.sha256(value).hexdigest()
 def fixture():
-    guest={'compositionCommit':'292359f0c68b1e4615704fd51d303b7f6b4db445','generation':'3'*64}
-    files={name:b'public-source' for name in ['guest-adapter.mjs','guest_protocol.py','secret_io.py','verify-host.py','s3_probe.py','runtime-hook.mjs','register.mjs','source/scripts/pg-proof/actual-rds-guest.ts']}
+    guest={'compositionCommit':'a'*40,'generation':'3'*64,'artifactSha256':'4'*64,'contract':'rds-activation/v1'}
+    files={name:b'public-source' for name in ['guest-adapter.mjs','guest_protocol.py','secret_io.py','verify-host.py','s3_probe.py','runtime-hook.mjs','register.mjs','source/src/hoopdb/rds-activation.ts']}
     files.update({'guest-sources.json':json.dumps(guest).encode(),'assets/rds-ca.pem':b'public-ca','assets/wrong-ca.pem':b'public-wrong-ca','source/bun.lock':b'public-lock'})
-    c={'source_sha':'0'*40,'provider_lock_sha256':'1'*64,'guest_sources':{**guest,'composition_commit':guest['compositionCommit'],'manifest_sha256':'2'*64},'ca_sha256':sha(files['assets/rds-ca.pem'])}
+    c={'source_sha':'0'*40,'provider_lock_sha256':'1'*64,'guest_sources':{**guest,'composition_commit':guest['compositionCommit'],'manifest_sha256':'2'*64},'application_activation':{'artifact_sha256':'4'*64},'ca_sha256':sha(files['assets/rds-ca.pem'])}
     manifest={'format':'actual-rds-application-archive-v1','test_only':False,'helm_commit':c['source_sha'],'provider_lock_sha256':c['provider_lock_sha256'],'guest_manifest_sha256':'2'*64,'ca_sha256':c['ca_sha256'],'bun_lock_sha256':sha(files['source/bun.lock']),'files':{n:sha(v) for n,v in files.items()}}
     files['archive-manifest.json']=json.dumps(manifest).encode();return files,c
 
@@ -27,8 +27,9 @@ class Extraction(unittest.TestCase):
     def test_exact_hashed_regular_inventory(self):
         files,c=fixture();blob=pack(files);c['payload_sha256']=sha(blob);self.assertEqual(x.verify(blob,c),files)
     def test_digest_source_test_only_and_unlisted_changes_refused(self):
-        for mutation in ['digest','source','test_only','unlisted','private_key']:
+        for mutation in ['digest','source','test_only','unlisted','private_key','artifact']:
             files,c=fixture()
+            if mutation=='artifact':c['application_activation']['artifact_sha256']='f'*64
             if mutation=='source':c['source_sha']='f'*40
             if mutation=='test_only':m=json.loads(files['archive-manifest.json']);m['test_only']=True;files['archive-manifest.json']=json.dumps(m).encode()
             if mutation=='unlisted':files['unexpected']=b'public-extra'

@@ -10,7 +10,7 @@ class Archive(unittest.TestCase):
         base=Path('/Volumes/T7/Projects/AgentWorkforce/.cache')
         self.temp=tempfile.TemporaryDirectory(dir=base if base.exists() else None);self.base=Path(self.temp.name);self.root=self.base/'source';self.root.mkdir()
         (self.root/'public.txt').write_bytes(b'public-fixture')
-        self.manifest={'format':'actual-rds-source-archive-v1','composition_commit':'0'*40,'composition_tree':'1'*40,'bun_lock_sha256':'2'*64,'owner_input_sha256':{},'packages':{},'files':{'public.txt':hashlib.sha256(b'public-fixture').hexdigest()}}
+        self.manifest={'format':'actual-rds-source-archive-v1','composition_commit':'0'*40,'composition_tree':'1'*40,'bun_lock_sha256':'2'*64,'packages':{},'files':{'public.txt':hashlib.sha256(b'public-fixture').hexdigest()}}
         (self.root/'archive-manifest.json').write_text(json.dumps(self.manifest))
     def tearDown(self):self.temp.cleanup()
     def test_identical_bytes_and_fresh_output_required(self):

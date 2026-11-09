@@ -76,7 +76,7 @@ def fixture(source,receipt,context):
         call('exec','-i',node,'tar','-xzf','-','-C','/guest',input_bytes=archive.read_bytes(),max_input=4*1024*1024)
         call('exec','-i',node,'sh','-c','cat > /guest/local-pg-probe.mjs',input_bytes=Path(__file__).with_name('local-pg-probe.mjs').read_bytes())
         phase='installed-import'
-        imported=json.loads(call('exec',node,'node','--import','/guest/runtime-hook.mjs','/guest/import-check.mjs').stdout)
+        imported=json.loads(call('exec',node,'node','--experimental-transform-types','--import','/guest/runtime-hook.mjs','/guest/import-check.mjs').stdout)
         check(imported['ok'] and imported['arch']=='arm64' and imported['platform']=='linux' and imported['node'].startswith('v24.'),'installed_import_refused')
         result['installed_import']=imported;checks.append('original_ts_installed_linux_arm64_import')
         result['psql_version']=call('exec',pg,'psql','--version').stdout.decode().strip()

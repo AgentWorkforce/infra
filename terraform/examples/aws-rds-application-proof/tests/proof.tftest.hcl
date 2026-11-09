@@ -44,7 +44,7 @@ override_data {
 }
 variables {
   deadline           = "2099-01-01T00:00:00.000Z"
-  guest_sources      = { composition_commit = "292359f0c68b1e4615704fd51d303b7f6b4db445", manifest_sha256 = "3333333333333333333333333333333333333333333333333333333333333333", generation = "7d64ae1f74670530fd6443fad7d6cc9ac11776055941821ef79f8501fb2d7879" }
+  guest_sources      = { composition_commit = "1111111111111111111111111111111111111111", manifest_sha256 = "3333333333333333333333333333333333333333333333333333333333333333", generation = "3333333333333333333333333333333333333333333333333333333333333333" }
   account_id         = "111111111111"
   region             = "us-west-2"
   run_id             = "example"
@@ -206,10 +206,22 @@ run "runtime_container_is_empty_scoped_and_deadline_bound" {
     error_message = "Pending intent receipt scope and original guest source identity cannot be dropped."
   }
 }
-run "wrong_original_guest_commit_refused" {
+run "malformed_guest_commit_refused" {
   command = plan
-  variables { guest_sources = { composition_commit = "ffffffffffffffffffffffffffffffffffffffff", manifest_sha256 = "3333333333333333333333333333333333333333333333333333333333333333", generation = "7d64ae1f74670530fd6443fad7d6cc9ac11776055941821ef79f8501fb2d7879" } }
+  variables { guest_sources = { composition_commit = "not-a-commit", manifest_sha256 = "3333333333333333333333333333333333333333333333333333333333333333", generation = "3333333333333333333333333333333333333333333333333333333333333333" } }
   expect_failures = [var.guest_sources]
+}
+run "approved_activations_stay_empty_until_the_driver_merges" {
+  command = plan
+  variables { application_activation = { sessions_commit = "1111111111111111111111111111111111111111", artifact_sha256 = "2222222222222222222222222222222222222222222222222222222222222222", generation = "3333333333333333333333333333333333333333333333333333333333333333", contract = "rds-activation/v1" } }
+  assert {
+    condition     = length(local.approved_activations) == 0 && !local.activation_registered
+    error_message = "No activation may be registered before the rds-activation/v1 driver is merged and independently reviewed."
+  }
+  assert {
+    condition     = output.application_sql_ready == false
+    error_message = "application_sql_ready must stay false."
+  }
 }
 run "malformed_workload_deadline_refused" {
   command = plan

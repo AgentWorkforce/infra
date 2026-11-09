@@ -15,7 +15,7 @@ import tempfile
 import time
 import uuid
 from secret_io import run,SecretIoError
-from guest_protocol import Broker,BOOTSTRAPS,require
+from guest_protocol import Broker,CONTRACT,ROLE,require
 import s3_probe
 
 NODE='node@sha256:48abc13a19400ca3985071e287bd405a1d99306770eb81d61202fb6b65cf0b57'
@@ -85,26 +85,25 @@ class HostIo:
         self.pending_versions.append(r['VersionId']);self.events.append({'step':step,'operation_id':identifier,'pending_version_id':r['VersionId']})
     def restored_auth(self):
         self.events.append({'step':'restored_seed_auth_before_mutation','runtime_secret_version_id':self.c['runtime_secret_version_id']})
-    def psql(self,args,passwords):
+    def psql(self,args,passwords,role,database):
         self.deadline();require(all(isinstance(p,str) and p and not re.search(r'[\r\n\0]',p) for p in passwords),'password_stdin_shape')
-        self.docker('exec','-i','-e','PGSSLMODE=verify-full','-e','PGSSLROOTCERT=/guest/assets/rds-ca.pem','-e','PGPASSFILE=/dev/null','-e','PGCONNECT_TIMEOUT=5','-e','PGOPTIONS=-c statement_timeout=10000',self.names['psql'],'psql','-X','-W','-v','ON_ERROR_STOP=1','-h',self.c['host'],'-p','5432','-U',self.c['owner'],'-d',self.c['database'],*args,private_input=('\n'.join(passwords)+'\n').encode())
-    def bootstrap(self,file):
+        self.docker('exec','-i','-e','PGSSLMODE=verify-full','-e','PGSSLROOTCERT=/guest/assets/rds-ca.pem','-e','PGPASSFILE=/dev/null','-e','PGCONNECT_TIMEOUT=5','-e','PGOPTIONS=-c statement_timeout=10000',self.names['psql'],'psql','-X','-W','-v','ON_ERROR_STOP=1','-h',self.c['host'],'-p','5432','-U',role,'-d',database,*args,private_input=('\n'.join(passwords)+'\n').encode())
+    def bootstrap(self,file,owner_password):
+        # The migration owner runs the chain; the RDS master never touches application SQL.
         path=self.root/file['path'] if self.root.name=='source' else self.root/'source'/file['path']
         require(path.is_file() and not path.is_symlink() and hashlib.sha256(path.read_bytes()).hexdigest()==file['sha256'],'bootstrap_bytes_changed')
-        args=[]
-        for key,value in sorted(file['variables'].items()):args+=['-v',key+'='+value]
-        self.psql(args+['-f','/guest/source/'+file['path']],[self.owner_password])
-    def rotate(self,password):self.psql(['-c','\\password "'+self.c['runtime_role']+'"'],[self.owner_password,password,password])
-    def runtime_value(self,password):
-        return {'format':'actual-rds-runtime-v1','source_sha':self.c['source_sha'],'lease':self.c['expected_tags']['pippen:session'],'guest_source_sha':self.c['guest_sources']['composition_commit'],'manifest_sha256':self.c['guest_sources']['manifest_sha256'],'generation':self.c['guest_sources']['generation'],'seed_instance_arn':self.source_db['DBInstanceArn'],'seed_resource_id':self.source_db['DbiResourceId'],'database':self.c['database'],'runtime_role':self.c['runtime_role'],'password':password}
-    def publish(self,password,identifier,receipt):
-        data=json.dumps(self.runtime_value(password),separators=(',',':')).encode()
+        a=self.c['application'];self.psql(['-f','/guest/source/'+file['path']],[owner_password],a['migration_role'],a['database'])
+    def runtime_value(self,passwords):
+        a=self.c['application']
+        return {'format':'actual-rds-runtime-v1','source_sha':self.c['source_sha'],'lease':self.c['expected_tags']['pippen:session'],'guest_source_sha':self.c['guest_sources']['composition_commit'],'manifest_sha256':self.c['guest_sources']['manifest_sha256'],'generation':self.c['guest_sources']['generation'],'seed_instance_arn':self.source_db['DBInstanceArn'],'seed_resource_id':self.source_db['DbiResourceId'],'database':a['database'],'runtime_role':a['runtime_role'],'passwords':passwords}
+    def publish(self,passwords,identifier):
+        data=json.dumps(self.runtime_value(passwords),separators=(',',':')).encode()
         stages=['AWSCURRENT','proof-seed' if self.c['phase']=='seed' else 'proof-restored']
         r=cli(self.c,'secretsmanager','put-secret-value','--secret-id',self.runtime_secret_arn,'--client-request-token',identifier,'--version-stages',*stages,'--secret-string','file:///dev/stdin',private_input=data)
         require(r.get('ARN')==self.runtime_secret_arn and r.get('VersionId')==identifier,'published_secret_reference_mismatch')
         stored,version=secret(self.c,self.runtime_secret_arn,identifier)
-        require(stored==self.runtime_value(password),'published_secret_bytes_mismatch')
-        return {'password':stored['password'],'arn':self.runtime_secret_arn,'versionId':version}
+        require(stored==self.runtime_value(passwords),'published_secret_bytes_mismatch')
+        return {'passwords':stored['passwords'],'arn':self.runtime_secret_arn,'versionId':version}
     def start(self):
         for kind,image in [('node',NODE),('psql',PG)]:
             name=self.names[kind]
@@ -145,11 +144,13 @@ def application_identity(c):
     for role in (a['migration_role'],a['runtime_role']):
         require(role!=master and role not in forbidden,'application_identity_is_master_or_forbidden')
     require(a['migration_role']!=a['runtime_role'],'application_owner_runtime_shared')
-    # No reviewed schema-aware Sessions activation artifact exists, and the guest
-    # flow has not been ported to a non-master owner. Refuse before any AWS call
-    # or credential read; never fall back to the master as application migrator.
-    require(c.get('application_activation') is not None,'application_activation_artifact_missing')
-    require(False,'application_activation_not_implemented')
+    # Refuse before any AWS call or credential read. A registered, reviewed
+    # activation is the only route; the master is never the application migrator.
+    activation=c.get('application_activation');require(activation is not None,'application_activation_artifact_missing')
+    require(c.get('application_activation_registered') is True,'application_activation_not_registered')
+    sources=c.get('guest_sources') or {}
+    require(activation.get('contract')==CONTRACT and activation.get('sessions_commit')==sources.get('composition_commit') and activation.get('generation')==sources.get('generation') and re.fullmatch(r'[a-f0-9]{64}',activation.get('artifact_sha256','')),'application_activation_binding_mismatch')
+    return activation
 
 def read_seed(c,root):
     path=root.parent/'seed.json'
@@ -163,10 +164,12 @@ def main():
     require(platform.system()=='Linux' and platform.machine()=='aarch64','owned_linux_arm_host_required')
     require(len(Path('/proc/swaps').read_text().splitlines())<=1,'swap_must_be_disabled_before_credentials')
     root=Path(__file__).resolve().parent;c=json.loads((root.parent/'inputs.json').read_text());check_deadline(c)
-    require(re.fullmatch(r'[0-9]{12}',c['account_id']) and re.fullmatch(r'[a-f0-9]{40}',c['source_sha']),'closed_host_identity');application_identity(c)
-    require(c['phase'] in ['seed','restore'] and c['guest_sources']['composition_commit']=='292359f0c68b1e4615704fd51d303b7f6b4db445','closed_guest_source')
+    require(re.fullmatch(r'[0-9]{12}',c['account_id']) and re.fullmatch(r'[a-f0-9]{40}',c['source_sha']),'closed_host_identity');activation=application_identity(c)
+    require(c['phase'] in ['seed','restore'],'closed_guest_source')
     sources=json.loads((root/'guest-sources.json').read_text());outer=json.loads((root/'archive-manifest.json').read_text())
-    require(outer['format']=='actual-rds-application-archive-v1' and outer.get('test_only') is False and outer['helm_commit']==c['source_sha'] and outer['guest_manifest_sha256']==c['guest_sources']['manifest_sha256'] and sources['compositionCommit']==c['guest_sources']['composition_commit'] and sources['generation']==c['guest_sources']['generation'],'frozen_source_manifest')
+    require(outer['format']=='actual-rds-application-archive-v1' and outer.get('test_only') is False and outer['helm_commit']==c['source_sha'] and outer['guest_manifest_sha256']==c['guest_sources']['manifest_sha256'] and sources['compositionCommit']==c['guest_sources']['composition_commit'] and sources['generation']==c['guest_sources']['generation'] and sources['artifactSha256']==activation['artifact_sha256'] and sources['contract']==CONTRACT,'frozen_source_manifest')
+    login_roles=sources['loginRoles'];a=c['application'];master=c['provisioning_executor']
+    require(isinstance(login_roles,list) and all(isinstance(r,str) and re.fullmatch(ROLE,r) for r in login_roles) and a['migration_role'] in login_roles and a['runtime_role'] in login_roles and master not in login_roles,'login_role_set')
     ca=(root/'assets/rds-ca.pem').read_text();wrong_ca=(root/'assets/wrong-ca.pem').read_text()
     require(hashlib.sha256(ca.encode()).hexdigest()==c['ca_sha256'] and 'PRIVATE KEY' not in ca and ca!=wrong_ca,'public_ca_binding')
     for name,expected in outer['files'].items():
@@ -181,22 +184,22 @@ def main():
     if c['phase']=='restore':require_distinct_restore(source_db,target)
     require(target['Endpoint']['Address']==c['host'] and target['EngineVersion']==c['postgres_version'] and source_db.get('MasterUserSecret',{}).get('SecretArn')==c['secret_arn'],'native_target_or_master_mapping')
     owner,master_version=secret(c,c['secret_arn'],c['secret_version_id'])
-    require(owner.get('username')==c['owner'] and isinstance(owner.get('password'),str) and owner['password'] and not re.search(r'[\r\n\0]',owner['password']),'owner_credential_shape')
+    require(owner.get('username')==master and isinstance(owner.get('password'),str) and owner['password'] and not re.search(r'[\r\n\0]',owner['password']),'owner_credential_shape')
     prior=None
     if c['phase']=='restore':
         seed=read_seed(c,root)
         require(seed['source_database_resource_id']==source_db['DbiResourceId'],'restored_seed_native_identity')
         value,version=secret(c,c['runtime_secret_arn'],c['runtime_secret_version_id'])
         # The seeded endpoint is never a restore target or a connection override.
-        expected={'format':'actual-rds-runtime-v1','source_sha':c['source_sha'],'lease':c['expected_tags']['pippen:session'],'guest_source_sha':c['guest_sources']['composition_commit'],'manifest_sha256':c['guest_sources']['manifest_sha256'],'generation':c['guest_sources']['generation'],'seed_instance_arn':source_db['DBInstanceArn'],'seed_resource_id':source_db['DbiResourceId'],'database':c['database'],'runtime_role':c['runtime_role']}
-        require(set(value)==set(expected)|{'password'} and all(value[k]==v for k,v in expected.items()) and isinstance(value['password'],str) and len(value['password'])>=32,'restored_runtime_credential_provenance');prior=value['password']
+        expected={'format':'actual-rds-runtime-v1','source_sha':c['source_sha'],'lease':c['expected_tags']['pippen:session'],'guest_source_sha':c['guest_sources']['composition_commit'],'manifest_sha256':c['guest_sources']['manifest_sha256'],'generation':c['guest_sources']['generation'],'seed_instance_arn':source_db['DBInstanceArn'],'seed_resource_id':source_db['DbiResourceId'],'database':a['database'],'runtime_role':a['runtime_role']}
+        require(set(value)==set(expected)|{'passwords'} and all(value[k]==v for k,v in expected.items()),'restored_runtime_credential_provenance');prior=value['passwords']
     deadline=min(dt.datetime.now(dt.timezone.utc)+dt.timedelta(minutes=20),dt.datetime.fromisoformat(c['deadline'].replace('Z','+00:00')))
-    scope={'accountId':c['account_id'],'region':c['region'],'instanceArn':target['DBInstanceArn'],'endpoint':c['host'],'database':c['database'],'owner':c['owner'],'runtimeRole':c['runtime_role'],'compositionCommit':c['guest_sources']['composition_commit'],'sourceManifestSha256':c['guest_sources']['manifest_sha256'],'generation':c['guest_sources']['generation'],'deadline':deadline.isoformat(timespec='milliseconds').replace('+00:00','Z'),'phase':'fresh' if c['phase']=='seed' else 'restored'}
+    scope={'accountId':c['account_id'],'region':c['region'],'instanceArn':target['DBInstanceArn'],'endpoint':c['host'],'maintenanceDatabase':'postgres','database':a['database'],'provisioner':master,'owner':a['migration_role'],'runtimeRole':a['runtime_role'],'loginRoles':login_roles,'contract':CONTRACT,'artifactSha256':activation['artifact_sha256'],'compositionCommit':c['guest_sources']['composition_commit'],'sourceManifestSha256':c['guest_sources']['manifest_sha256'],'generation':c['guest_sources']['generation'],'deadline':deadline.isoformat(timespec='milliseconds').replace('+00:00','Z'),'phase':'fresh' if c['phase']=='seed' else 'restored'}
     if c['phase']=='restore':scope['restoredEvidenceSha256']=c['seed_evidence_sha256']
-    io=HostIo(c,root,owner['password'],source_db,target,scope);broker=Broker(scope,sources,io);cleanup={};unsettled=False
+    io=HostIo(c,root,owner['password'],source_db,target,scope);broker=Broker(scope,sources,io,prior);cleanup={};unsettled=False
     try:
         io.start()
-        initial={'format':'actual-rds-io-v1','sequence':0,'scope':scope,'sources':sources,'ownerPassword':owner['password'],'priorRuntimePassword':prior,'ca':ca,'wrongCa':wrong_ca}
+        initial={'format':'actual-rds-io-v2','sequence':0,'scope':scope,'sources':sources,'provisionerPassword':owner['password'],'priorPasswords':prior,'ca':ca,'wrongCa':wrong_ca}
         # Pending intent already exists before the first committed bootstrap; the
         # Broker adds per-write intents immediately before each SQL/SM mutation.
         io.pending('guest_started',str(uuid.uuid4()))
@@ -211,7 +214,7 @@ def main():
     # AWS transport. They never invoke the legacy module DB/ACL helper.
     s3_probe.cli=cli
     with tempfile.TemporaryDirectory(prefix='owned-s3-synthetic-') as folder:s3=s3_probe.prove_s3(c,Path(folder))
-    return {'ok':True,'application_sql_ready':False,'migration_identity':'synthetic_rds_master','scope':'actual original HoopDB RDS bootstrap/migration/runtime readiness + module S3; no shared-database/search/provider/Lambda/full-app/retirement proof','phase':c['phase'],'source_sha':c['source_sha'],'marker':c['marker'],'guest_sources':c['guest_sources'],'payload_sha256':c['payload_sha256'],'payload_version_id':c['payload_version_id'],'ca_sha256':c['ca_sha256'],'secret_version_id':master_version,'runtime_secret_arn':c['runtime_secret_arn'],'runtime_secret_version_id':broker.result['secretRef']['versionId'],'source_database_resource_id':source_db['DbiResourceId'],'database_resource_id':target['DbiResourceId'],'guest':broker.result,'s3':s3,'ordered_events':io.events,'pending_object_versions':io.pending_versions,'containers':io.containers,'runtime_versions':io.versions,'host_arch':platform.machine(),'python_version':platform.python_version(),'aws_cli_version':run(['aws','--version'],env=ENV,timeout=15).stdout.decode().strip(),'container_absence':cleanup,'infrastructureRetired':False,'requiresInstanceRetirement':True}
+    return {'ok':True,'application_sql_ready':False,'migration_identity':'hoop_separate_database','activation':activation,'scope':'rds-activation/v1 activation, migration and runtime readiness as non-master roles on one RDS database + module S3; no sibling-database isolation/search/provider/Lambda/full-app/retirement proof','phase':c['phase'],'source_sha':c['source_sha'],'marker':c['marker'],'guest_sources':c['guest_sources'],'payload_sha256':c['payload_sha256'],'payload_version_id':c['payload_version_id'],'ca_sha256':c['ca_sha256'],'secret_version_id':master_version,'runtime_secret_arn':c['runtime_secret_arn'],'runtime_secret_version_id':broker.result['secretRef']['versionId'],'source_database_resource_id':source_db['DbiResourceId'],'database_resource_id':target['DbiResourceId'],'guest':broker.result,'s3':s3,'ordered_events':io.events,'pending_object_versions':io.pending_versions,'containers':io.containers,'runtime_versions':io.versions,'host_arch':platform.machine(),'python_version':platform.python_version(),'aws_cli_version':run(['aws','--version'],env=ENV,timeout=15).stdout.decode().strip(),'container_absence':cleanup,'infrastructureRetired':False,'requiresInstanceRetirement':True}
 
 if __name__=='__main__':
     try:print(json.dumps(main()))
