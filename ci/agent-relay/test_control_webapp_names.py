@@ -121,6 +121,20 @@ class Names(unittest.TestCase):
         refused = render({'EKS_ALB_INGEST': 'true', 'EKS_ALB_HISTORY': 'false'})
         self.assertEqual(refused.returncode, 2)
 
+        doc, paths = history_paths(render({'EKS_ALB_INGEST': 'true', 'EKS_ALB_HISTORY_LEGACY_SERVICE': 'relayhistory'}))
+        action = {'name': 'use-annotation'}
+        self.assertEqual(paths[6:], [
+            ('/v1/sessions', 'Prefix', 'read-api-token', action),
+            ('/v1/sessions', 'Prefix', 'read-api-cors', action),
+            ('/v1/events', 'Exact', 'read-api-token', action),
+            ('/v1/events', 'Exact', 'read-api-cors', action),
+            ('/v1/auth/token/revoke', 'Exact', 'read-api-token', action),
+            ('/*', 'ImplementationSpecific', 'relayhistory', {'number': 8080}),
+        ])
+        conditions = doc['metadata']['annotations']['alb.ingress.kubernetes.io/conditions.read-api-token']
+        self.assertIn('Bearer rth_at_read_*', conditions)
+        self.assertEqual(render({'EKS_ALB_HISTORY_LEGACY_SERVICE': 'relayhistory'}).returncode, 2)
+
     def test_historical_eks_installer_uses_its_selected_chart_values(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
