@@ -25,12 +25,14 @@ def merge(base, overlay):
 
 
 def control(overrides):
-    values = merge(json.loads(json.dumps(NATIVE)), overrides)
+    defaults = yaml.safe_load((ROOT / 'charts/relay-control/values.yaml').read_text())
+    ci = yaml.safe_load((ROOT / 'charts/relay-control/ci/default-values.yaml').read_text())
+    values = merge(merge(json.loads(json.dumps(merge(defaults, ci))), NATIVE), overrides)
+    args = ['--set-json', 'services=' + json.dumps(values['services']),
+            '--set-json', 'secretKeys=' + json.dumps(values['secretKeys']),
+            '--set-json', 'introspection=' + json.dumps(values.get('introspection', {'audiences': []}))]
     return subprocess.run(['helm', 'template', 'test', 'charts/relay-control',
-                           '-f', 'charts/relay-control/ci/default-values.yaml',
-                           '--set-json', 'services=' + json.dumps(values['services']),
-                           '--set-json', 'secretKeys=' + json.dumps({**values['secretKeys']}),
-                           '--set-json', 'introspection=' + json.dumps(values.get('introspection', {'audiences': []}))],
+                           '-f', 'charts/relay-control/ci/default-values.yaml', *args],
                           cwd=ROOT, capture_output=True, text=True)
 
 
