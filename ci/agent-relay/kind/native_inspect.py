@@ -164,20 +164,7 @@ const {generation}=await import('/app/src/hoopdb/migrate.ts');console.log(JSON.s
         if self.stack.name not in clusters:
             require(not self.stack.marker.exists() and not (self.stack.state / "ready.json").exists(), "missing_owned_cluster_is_not_fresh")
             return {"owned": True, "mode": "fresh", "clusterUid": None, "foreignWriters": []}
-        # Stack.require_owned_cluster exports/replaces kubeconfig. This path
-        # must remain GET-only and preserve every existing local receipt.
-        from stack import NODE
-        record = json.loads(self.stack.marker.read_text())
-        require(record.get("version") == 1 and record.get("name") == self.stack.name and
-                record.get("profile") == selected["profile"] and record.get("nodeImage") == NODE and
-                record.get("dockerHost") == self.stack.env.get("DOCKER_HOST"), "owned_cluster_receipt_mismatch")
-        uid = self._get("namespace/kube-system", namespace=False)["metadata"]["uid"]
-        require(record.get("clusterUid") == uid, "owned_cluster_uid_changed")
-        nodes = self._get("nodes", namespace=False)["items"]
-        local_nodes = self.stack.cmd(["kind", "get", "nodes", "--name", self.stack.name], timeout=30).stdout.splitlines()
-        require(nodes and {n["metadata"]["name"] for n in nodes} == set(local_nodes) and
-                all(n["metadata"].get("labels", {}).get("agentrelay-kind-owner") == "infra" for n in nodes),
-                "owned_cluster_node_identity_changed")
+        uid = self._owned_uid(selected)
         # An already-populated target is repeat only with a bound native receipt.
         binding = document(self.inputs["bindingReceipt"], self.inputs["bindingReceiptSha256"])
         require(binding["clusterUid"] == uid and binding["profile"] == selected["profile"], "native_fixture_binding_mismatch")
@@ -200,6 +187,38 @@ const {generation}=await import('/app/src/hoopdb/migrate.ts');console.log(JSON.s
         for item in binding["resources"]:
             actual = by_id.get((item["kind"], item["name"]))
             require(actual and actual["metadata"]["uid"] == item["uid"], "native_resource_uid_changed")
+        self._check_references(selected, by_id)
+        writers = []
+        native_names = {"session-native-consumer", "session-native-ingest", "session-read-api"}
+        for o in objects:
+            if o["kind"] != "Deployment" or not o["spec"].get("replicas", 1):
+                continue
+            for c in o["spec"]["template"]["spec"].get("containers", []):
+                env = {e["name"]: e.get("value") for e in c.get("env", [])}
+                if env.get("SERVICE") in {"ingest", "session-ingest", "session-pipeline-consumer", "alleyoop", "bob-costas", "referee"} and o["metadata"]["name"] not in native_names:
+                    writers.append(o["metadata"]["name"])
+        require(not writers, "legacy_or_foreign_pipeline_writer_active")
+        return {"owned": True, "mode": "repeat", "clusterUid": uid, "foreignWriters": [],
+                "boundResourceCount": len(binding["resources"])}
+
+    def _owned_uid(self, selected):
+        # Stack.require_owned_cluster exports/replaces kubeconfig. This path
+        # must remain GET-only and preserve every existing local receipt.
+        from stack import NODE
+        record = json.loads(self.stack.marker.read_text())
+        require(record.get("version") == 1 and record.get("name") == self.stack.name and
+                record.get("profile") == selected["profile"] and record.get("nodeImage") == NODE and
+                record.get("dockerHost") == self.stack.env.get("DOCKER_HOST"), "owned_cluster_receipt_mismatch")
+        uid = self._get("namespace/kube-system", namespace=False)["metadata"]["uid"]
+        require(record.get("clusterUid") == uid, "owned_cluster_uid_changed")
+        nodes = self._get("nodes", namespace=False)["items"]
+        local_nodes = self.stack.cmd(["kind", "get", "nodes", "--name", self.stack.name], timeout=30).stdout.splitlines()
+        require(nodes and {n["metadata"]["name"] for n in nodes} == set(local_nodes) and
+                all(n["metadata"].get("labels", {}).get("agentrelay-kind-owner") == "infra" for n in nodes),
+                "owned_cluster_node_identity_changed")
+        return uid
+
+    def _check_references(self, selected, by_id):
         ca = by_id.get(("ConfigMap", selected["postgresCa"]["configMap"]), {})
         require(ca.get("immutable") is True and set(ca.get("data", {})) == {"ca.crt"} and
                 hashlib.sha256(ca["data"]["ca.crt"].encode()).hexdigest() == selected["postgresCa"]["sha256"], "native_public_ca_changed")
@@ -237,18 +256,18 @@ const {generation}=await import('/app/src/hoopdb/migrate.ts');console.log(JSON.s
         containers = pg.get("spec", {}).get("template", {}).get("spec", {}).get("containers", [])
         require(len(containers) == 1 and containers[0].get("args", []).count("ssl=on") == 1 and
                 not any(x.startswith("ssl=") and x != "ssl=on" for x in containers[0].get("args", [])), "postgres_tls_not_enabled")
-        writers = []
-        native_names = {"session-native-consumer", "session-native-ingest", "session-read-api"}
-        for o in objects:
-            if o["kind"] != "Deployment" or not o["spec"].get("replicas", 1):
-                continue
-            for c in o["spec"]["template"]["spec"].get("containers", []):
-                env = {e["name"]: e.get("value") for e in c.get("env", [])}
-                if env.get("SERVICE") in {"ingest", "session-ingest", "session-pipeline-consumer", "alleyoop", "bob-costas", "referee"} and o["metadata"]["name"] not in native_names:
-                    writers.append(o["metadata"]["name"])
-        require(not writers, "legacy_or_foreign_pipeline_writer_active")
-        return {"owned": True, "mode": "repeat", "clusterUid": uid, "foreignWriters": [],
-                "boundResourceCount": len(binding["resources"])}
+        return {"caSha256": selected["postgresCa"]["sha256"], "postgresTlsConfigured": True,
+                "secretReferences": {n: {"name": r["name"], "key": r["key"], "jsonField": r["jsonField"],
+                    "uid": by_id[("Secret", r["name"])]["metadata"]["uid"]} for n, r in selected["secretRefs"].items()},
+                "scope": "Reference/URL/CA/TLS-configuration equality only; no role-bootstrap, repeat-up, handshake or whole-core acceptance"}
+
+    def qualify_references(self, selected):
+        """Scoped diagnostic; never upgrades historical evidence into admission."""
+        self._owned_uid(selected)
+        objects = [self._get("statefulset/postgres"), self._get("configmap/" + selected["postgresCa"]["configMap"])]
+        for name in sorted({r["name"] for r in selected["secretRefs"].values()}):
+            objects.append(self._get("secret/" + name))
+        return self._check_references(selected, {(o["kind"], o["metadata"]["name"]): o for o in objects})
 
     def render(self, selected):
         values = []

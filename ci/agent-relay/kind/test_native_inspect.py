@@ -73,7 +73,7 @@ class Stack:
         assert args[0] == "get" and kw.get("sensitive") is True
         if args[1] == "namespace/kube-system": value = {"metadata": {"uid": "original-cluster"}}
         elif args[1] == "nodes": value = {"items": [{"metadata": {"name": "agent-relay-core-control-plane", "labels": {"agentrelay-kind-owner": "infra"}}}]}
-        elif args[1].startswith("secret/"): value = next(o for o in self.objects if o["kind"] == "Secret" and o["metadata"]["name"] == args[1].split("/", 1)[1])
+        elif "/" in args[1]: value = next(o for o in self.objects if o["metadata"]["name"] == args[1].split("/", 1)[1])
         else: value = {"items": [o for o in self.objects if o["kind"] != "Secret"]}
         return SimpleNamespace(stdout=json.dumps(value))
 
@@ -209,6 +209,12 @@ class NativeInspectTests(unittest.TestCase):
         self.inputs["bindingReceiptSha256"] = write_json(self.inputs["bindingReceipt"], old)
         with self.assertRaisesRegex(NativeRecipeError, "native_role_generation_binding"): self.adapter.inspect(self.s)
         self.assertFalse(any(a[0] == "get" and a[1].startswith("secret/") for a, _ in self.stack.calls))
+        # Individual input references may still be measured honestly without
+        # changing the refusal or inventing the missing native acceptance.
+        result = self.adapter.qualify_references(self.s)
+        self.assertTrue(result["postgresTlsConfigured"])
+        self.assertNotIn("mode", result)
+        self.assertNotIn("synthetic-owner", json.dumps(result))
 
     def test_repeat_uid_ca_secret_or_tls_drift_refuses(self):
         for which in ("uid", "ca", "secret", "tls"):
