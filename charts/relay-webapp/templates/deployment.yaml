@@ -59,6 +59,12 @@ spec:
             - { name: DASHBOARD_APP_PATH, value: {{ .Values.runtime.appPath | quote }} }
             - { name: DASHBOARD_API_BASE_PATH, value: {{ .Values.runtime.apiBasePath | quote }} }
             - { name: DASHBOARD_LOGIN_PATH, value: {{ .Values.runtime.loginPath | quote }} }
+            {{- if not (kindIs "bool" .Values.runtime.sessionReadApiEnabled) }}
+            {{- fail "runtime.sessionReadApiEnabled must be a boolean" }}
+            {{- end }}
+            {{- if .Values.runtime.sessionReadApiEnabled }}
+            - { name: DASHBOARD_SESSION_READ_API_ENABLED, value: "true" }
+            {{- end }}
             {{- if not (or (kindIs "invalid" .Values.customerProfile) (kindIs "map" .Values.customerProfile)) }}
             {{- fail "customerProfile must be a map (see the relay-webapp README)" }}
             {{- end }}

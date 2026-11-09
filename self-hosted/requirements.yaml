@@ -644,9 +644,20 @@ compatibility:
       images:
         relayauth: { repository: ghcr.io/agentworkforce/relayauth, digest: sha256:eb71daa28e30eb7305f666d0bccc5a4002e53e8a574e3c4c32163d907a1b71df }
       notes: superseded by 0.1.1.
-    - id: agent-relay-0.6.4
+    - id: agent-relay-0.6.5
       status: unreleased
       current: true
+      charts: { agent-relay: 0.6.5, relayhistory: 0.1.2, relay-control: 0.4.0, relay-webapp: 0.2.1 }
+      app_versions: { agent-relay: 0.1.0, relayhistory: 0.1.0, relay-control: 0.1.0, relay-webapp: 0.1.0 }
+      depends:
+        agent-relay: { relaycast: 0.3.6, relayauth: 0.1.4, sessions-pipeline: 0.8.2, relayhistory: 0.1.2, relay-control: 0.4.0, relay-webapp: 0.2.1, relayflows: 0.2.5, durable-actors: 0.14.6-awf.1, relayfile: 0.2.2, telemetry-collector: 0.1.1, relay-chief: 0.1.0 }
+      images:
+        relayhistory: { repository: ghcr.io/agentworkforce/relayhistory, digest_required: true }
+        relay-control: { repository: ghcr.io/agentworkforce/relay-control, digest: sha256:d8c26d44dccb6dd21b7033288241a379e46ce5fbca69f276c4d4745001c3c3e2 }
+        relay-webapp: { repository: ghcr.io/agentworkforce/relay-webapp, digest_required: true }
+      notes: 'Takes relay-webapp 0.2.1 (default-off runtime.sessionReadApiEnabled).'
+    - id: agent-relay-0.6.4
+      status: planned
       charts: { agent-relay: 0.6.4, relayhistory: 0.1.2, relay-control: 0.4.0, relay-webapp: 0.2.0 }
       app_versions: { agent-relay: 0.1.0, relayhistory: 0.1.0, relay-control: 0.1.0, relay-webapp: 0.1.0 }
       depends:
@@ -2573,7 +2584,7 @@ entries:
       routes through its single umbrella Ingress.
     chart: relay-webapp
     values: [runtime.publicUrl, runtime.appPath, runtime.apiBasePath, runtime.loginPath, ingress.tls, imagePullSecrets]
-    env: [DASHBOARD_PUBLIC_URL, DASHBOARD_APP_PATH, DASHBOARD_API_BASE_PATH, DASHBOARD_LOGIN_PATH]
+    env: [DASHBOARD_PUBLIC_URL, DASHBOARD_APP_PATH, DASHBOARD_API_BASE_PATH, DASHBOARD_LOGIN_PATH, DASHBOARD_SESSION_READ_API_ENABLED]
     profiles: [relay-webapp]
     status: shipped
     provided_by: operator
