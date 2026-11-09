@@ -35,6 +35,7 @@ def selected(profile="core"):
                        for n, (k, j) in SECRET_KEYS.items()},
         "keyRoot": "96bulls", "orgFromPrefix": True, "backend": "postgres", "backendId": "kind-native-test",
         "readerLoginAdvertisesSync": True,
+        "lockerBucket": "locker", "lockerClaim": "locker",
         "completeSince": "2026-11-08T22:02:26Z", "siteOrigin": "https://relay.kind.agentrelay.com",
         "historyOrigin": "https://history.kind.agentrelay.com:8443",
         "publication": False, "gc": False, "ownerBuffered": False,
@@ -61,7 +62,9 @@ class Operations:
             if name == "schema_plan":
                 return {"ok": True, "pending": 0, "physicalLedgerSha256": "1" * 64, "planSha256": "2" * 64}
             if name == "install_control":
-                return {"ok": True, "workspaceId": "real-workspace", "organizationId": "real-org"}
+                return {"ok": True, "workspaceId": "11111111-1111-4111-8111-111111111111", "organizationId": "22222222-2222-4222-8222-222222222222"}
+            if name == "addons":
+                return {"ok": True, "signedLicenseVerified": True, "featureModes": {"flows": "enabled", "relayfile": "enabled", "chief": "disabled"}}
             return {"ok": True}
         return run
 
@@ -159,6 +162,15 @@ class NativeRecipeTests(unittest.TestCase):
         o = Operations(); o.verify_credentials = lambda s: {"ok": True, "token": "synthetic"}
         with self.assertRaises(NativeRecipeError): NativeRecipe(selected()).run(o)
         self.assertNotIn("serve", [n for n, _ in o.calls])
+        for mutate in (lambda x: x.update(extraApiKey="synthetic"),
+                       lambda x: x["control"].update(extraApiKey="synthetic"),
+                       lambda x: x["acceptedSource"].update(extraApiKey="synthetic"),
+                       lambda x: x["secretRefs"].update(extra={"name": "synthetic"}),
+                       lambda x: x["officialBootstrapSha256"].update(extra="a" * 64)):
+            x = selected(); mutate(x)
+            with self.assertRaises(NativeRecipeError): selection(x)
+        o = Operations(); o.verify_credentials = lambda s: {"ok": True, "extraApiKey": "synthetic"}
+        with self.assertRaisesRegex(NativeRecipeError, "unexpected_phase_receipt_fields"): NativeRecipe(selected()).run(o)
 
     def test_legacy_guard_detects_each_managed_native_surface_before_ready_unlink(self):
         for surface in ("nativeConsumer", "readApi", "ingestEdge"):
@@ -171,7 +183,10 @@ class NativeRecipeTests(unittest.TestCase):
                 events.append("postgres_apply")
             self.assertEqual(events, [])
         self.assertFalse(native_selected({"sessions-pipeline": {"ingestEdge": {"enabled": False}}}))
-        self.assertTrue(native_selected({"relay-control": {"nativeRouting": {"enabled": True}}}))
+        self.assertTrue(native_selected({"sessions-pipeline": {"nativeRouting": {"enabled": True}, "readApi": {"enabled": False}, "ingestEdge": {"enabled": False}}}))
+        for invalid in (True, "enabled", {"enabled": "true"}):
+            with self.assertRaises(NativeRecipeError): native_selected({"sessions-pipeline": {"nativeRouting": invalid}})
+            with self.assertRaises(NativeRecipeError): native_selected({"sessions-pipeline": {"readApi": {"enabled": True}, "nativeRouting": invalid}})
         refuse_legacy_up({})
 
     def test_early_guard_uses_merged_base_profile_and_private_values(self):
@@ -187,7 +202,7 @@ class NativeRecipeTests(unittest.TestCase):
     def test_actual_stack_up_refuses_before_docker_ready_unlink_and_pg_writes(self):
         from stack import Stack, StackError
         for profile in ("core", "addons"):
-            for surface in ("nativeConsumer", "readApi", "ingestEdge"):
+            for surface in ("nativeConsumer", "readApi", "ingestEdge", "nativeRouting"):
                 with self.subTest(profile=profile, surface=surface), tempfile.TemporaryDirectory() as td:
                     s = Stack.__new__(Stack)
                     s.profile = profile; s.state = Path(td); s.overrides = s.state / "values.json"
