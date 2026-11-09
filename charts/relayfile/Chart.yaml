@@ -1,9 +1,9 @@
 apiVersion: v2
 name: relayfile
 type: application
-version: 0.2.2
-# appVersion tracks the default image tag. Pin image.tag in your values to a
-# specific digest for reproducible deployments; do not rely on "latest".
+version: 0.2.3
+# appVersion tracks the legacy default image tag. Managed Go contracts require
+# image.digest selecting a separately qualified compatible runtime.
 appVersion: "0.1.0"
 description: >
   Relayfile — virtual filesystem sync for agents. A single Go binary that

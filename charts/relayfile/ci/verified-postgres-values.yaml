@@ -1,0 +1,27 @@
+# Render fixture only. These are public placeholders, not qualified artifacts
+# or a claim that schema bootstrap, application auth or deployment succeeded.
+image:
+  digest: sha256:1111111111111111111111111111111111111111111111111111111111111111
+secrets:
+  existingSecret: relayfile-service
+auth:
+  mode: introspection
+  introspection:
+    internalUrl: http://relay-control.example.svc.cluster.local
+    publicOrigin: https://files.example.company
+    secretRef:
+      name: control-introspection
+      key: introspect-secret
+    cacheTtlSeconds: 0
+postgres:
+  enabled: true
+  database: relayfile
+  ownerRole: relayfile
+  runtimeRole: relayfile_runtime
+  runtimeSecret:
+    name: relayfile-runtime
+    key: database-url
+  ca:
+    configMap: relayfile-postgres-ca
+    key: ca.crt
+    sha256: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa

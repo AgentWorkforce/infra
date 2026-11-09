@@ -1,3 +1,4 @@
+{{- include "relayfile.go.validate" . -}}
 {{- include "relayfile.actors.validate" . -}}
 {{- if not (include "relayfile.actors.enabled" .) }}
 apiVersion: apps/v1
@@ -12,6 +13,9 @@ metadata:
     {{- toYaml . | nindent 4 }}
   {{- end }}
 spec:
+  {{- if .Values.postgres.enabled }}
+  strategy: { type: Recreate }
+  {{- end }}
   {{- if not .Values.autoscaling.enabled }}
   replicas: {{ .Values.replicaCount }}
   {{- end }}
@@ -38,14 +42,36 @@ spec:
         {{- toYaml . | nindent 8 }}
       {{- end }}
       serviceAccountName: {{ include "relayfile.serviceAccountName" . }}
+      {{- if include "relayfile.go.managed" . }}
+      automountServiceAccountToken: false
+      securityContext:
+        {{- include "relayfile.go.podSecurityContext" . | nindent 8 }}
+      {{- else }}
       {{- with .Values.podSecurityContext }}
       securityContext:
         {{- toYaml . | nindent 8 }}
+      {{- end }}
       {{- end }}
       containers:
         - name: server
           image: {{ include "relayfile.images.server" . }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
+          {{- if .Values.postgres.enabled }}
+          command: [relayfile]
+          args:
+            - postgres
+            - serve
+            - --database
+            - {{ .Values.postgres.database | quote }}
+            - --owner-role
+            - {{ .Values.postgres.ownerRole | quote }}
+            - --runtime-role
+            - {{ .Values.postgres.runtimeRole | quote }}
+            - --ca-sha256
+            - {{ .Values.postgres.ca.sha256 | quote }}
+            - --dsn-file
+            - /var/run/relayfile-postgres/database-url
+          {{- end }}
           {{- with .Values.containerSecurityContext }}
           securityContext:
             {{- toYaml . | nindent 12 }}
@@ -72,6 +98,50 @@ spec:
           resources:
             {{- toYaml . | nindent 12 }}
           {{- end }}
+          {{- if include "relayfile.go.managed" . }}
+          volumeMounts:
+            {{- if .Values.postgres.enabled }}
+            - name: postgres-credential
+              mountPath: /var/run/relayfile-postgres
+              readOnly: true
+            - name: postgres-ca
+              mountPath: /etc/relayfile-postgres
+              readOnly: true
+            {{- end }}
+            {{- if eq .Values.auth.mode "introspection" }}
+            - name: introspection-credential
+              mountPath: /var/run/relayfile-introspection
+              readOnly: true
+            {{- end }}
+          {{- end }}
+      {{- if include "relayfile.go.managed" . }}
+      volumes:
+        {{- if .Values.postgres.enabled }}
+        - name: postgres-credential
+          secret:
+            secretName: {{ .Values.postgres.runtimeSecret.name }}
+            defaultMode: 0440
+            items:
+              - key: {{ .Values.postgres.runtimeSecret.key }}
+                path: database-url
+        - name: postgres-ca
+          configMap:
+            name: {{ .Values.postgres.ca.configMap }}
+            defaultMode: 0444
+            items:
+              - key: {{ .Values.postgres.ca.key }}
+                path: ca.crt
+        {{- end }}
+        {{- if eq .Values.auth.mode "introspection" }}
+        - name: introspection-credential
+          secret:
+            secretName: {{ .Values.auth.introspection.secretRef.name }}
+            defaultMode: 0440
+            items:
+              - key: {{ .Values.auth.introspection.secretRef.key }}
+                path: secret
+        {{- end }}
+      {{- end }}
       {{- with .Values.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}

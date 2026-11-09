@@ -861,9 +861,20 @@ compatibility:
       images:
         relayauth: { repository: ghcr.io/agentworkforce/relayauth, digest: sha256:eb71daa28e30eb7305f666d0bccc5a4002e53e8a574e3c4c32163d907a1b71df }
       notes: superseded by 0.1.1.
-    - id: agent-relay-0.6.16
+    - id: agent-relay-0.6.17
       status: unreleased
       current: true
+      charts: { agent-relay: 0.6.17, relayhistory: 0.1.3, relay-control: 0.4.3, relay-webapp: 0.2.1 }
+      app_versions: { agent-relay: 0.1.0, relayhistory: 0.1.0, relay-control: 0.1.0, relay-webapp: 0.1.0 }
+      depends:
+        agent-relay: { relaycast: 0.3.7, relayauth: 0.1.5, sessions-pipeline: 0.8.10, relayhistory: 0.1.3, relay-control: 0.4.3, relay-webapp: 0.2.1, relayflows: 0.2.5, durable-actors: 0.14.6-awf.1, relayfile: 0.2.3, telemetry-collector: 0.1.2, relay-chief: 0.1.0 }
+      images:
+        relayhistory: { repository: ghcr.io/agentworkforce/relayhistory, digest_required: true }
+        relay-control: { repository: ghcr.io/agentworkforce/relay-control, digest: sha256:d8c26d44dccb6dd21b7033288241a379e46ce5fbca69f276c4d4745001c3c3e2 }
+        relay-webapp: { repository: ghcr.io/agentworkforce/relay-webapp, digest_required: true }
+      notes: 'Adds default-off Go introspection and official verified PostgreSQL serving with immutable image selection, read-only runtime credentials and pinned public CA. External owner bootstrap is required; no owner credential or SQL Job is rendered. Legacy defaults and durable-actors behavior are preserved; this is not native add-on or runtime deployment acceptance.'
+    - id: agent-relay-0.6.16
+      status: planned
       charts: { agent-relay: 0.6.16, relayhistory: 0.1.3, relay-control: 0.4.3, relay-webapp: 0.2.1 }
       app_versions: { agent-relay: 0.1.0, relayhistory: 0.1.0, relay-control: 0.1.0, relay-webapp: 0.1.0 }
       depends:
@@ -1170,9 +1181,16 @@ compatibility:
         relay-cloud-api: { repository: ghcr.io/agentworkforce/selfhost-api, digest_required: true }
         relay-dashboard: { repository: ghcr.io/agentworkforce/relay-dashboard, digest_required: true }
       notes: '0.3.1 is published from the tag agent-relay-0.3.1 as the first reviewable, preview-labelled customer release; it includes the never-released 0.2.0, 0.2.1 and 0.3.0 changes described below. values-gcp.yaml pins these GHCR digests (supply chain per image): selfhost-api sha256:535e6718fa239ce87dead3d22e7c53324bed44bfcef94018918e8804d24af478 (relaycontrol main 8e989a1; SBOM + max-mode provenance; package still private), relay-dashboard sha256:bbeca872c7e204a02a17050db6ac6309c6d36a07bcd00e1da3a739923f990282 (main b213406; SBOM + max-mode provenance + GitHub attestation, public; self-host build that only uses the same-origin /cloud/api prefix), relayauth sha256:c23c92d2... (784582e; SBOM + provenance), relaycast-self-host sha256:a05732ad... (bdf1b69; NO SBOM and only buildx min-mode provenance; attested rebuild pending relaycast #619). RelayHistory and the Sessions services release images are not published and stay REQUIRED OVERRIDE (zero digest). values-gcp.yaml also sets alleyoop.auth.issuer and historyOrigin (the chart default rejected RelayAuth assertions; the umbrella now refuses an alleyoop historyOrigin that differs from relayhistory.relayauth.historyOrigin). Status: docs/handoff/STATUS.md. 0.3.0 renamed the Sessions subchart values key from 96bulls: to sessions-pipeline: (move your overrides; resource names under the umbrella are unchanged). relay-cloud-api 0.2.0 renders the relaycontrol contract (encryption.keyId required; internal token, dashboardUrl, flows, telemetry off by default). The GKE ingress denies /internal on the api host and gives the api backend a BackendConfig timeout (default 3600s) for the flows queue SSE stream. Supersedes the never-released 0.1.0. GKE proof packaging. Live proof pins (values-gcp-proof-live.yaml): dashboard sha256:23361e08b899f272ed5debcbd4e7d6c6555591029357d6fba6c54236063bca62 (relay-dashboard 53d484b); experimental unsupported RelayHistory sha256:72a057c27edbec53412a2b3a665913810b5d9a95d8b6b818946f1892590147bf (relayhistory-cloud 74a6e526, erasure fix). The CI render fixture and customer-images.yaml keep dashboard sha256:9bfc0c6b873411c7a0da60d746883bdef6aafd86a9b733c719500a603890b6fe and RelayHistory sha256:8fbda9bd89dd33994b6b3331fb403c38a25f04e6742050bd717e99661f3544ba. selfhost-api remains fail-closed until published and supplied by digest. The dashboard''s same-origin /cloud/api is served by selfhost-api natively (it owns /cloud/api and /login; no ingress rewrite). No HA claim. 0.2.0 adds optional components.durableActors (vendored durable-actors 0.14.6) and components.relayfile, both off by default. relayhistory 0.1.1 adds migrations.drainForWriteHold (two-step write-hold upgrade; the migrate Job waits until no History pod exists, README). relay-cloud-api 0.2.1: telemetry.level defaults to errors (scrubbed error metadata and health only; it takes effect once the install is registered with installId, install key and endpoint, so a default render stays off and a partial registration fails), telemetry.egressTo defaults to empty (restricted egress with https telemetry must list the ingest addresses), the standalone Ingress denies /internal when secretKeys.internalToken is set, and Helm 3.10+ is required. 0.2.1 moved to 96bulls 0.5.5 (interim RelayAuth bearer stays off by default) and supersedes the never-released 0.2.0.'
-    - id: relayfile-0.2.2
+    - id: relayfile-0.2.3
       status: unreleased
       current: true
+      charts: { relayfile: 0.2.3 }
+      app_versions: { relayfile: 0.1.0 }
+      images:
+        relayfile: { repository: ghcr.io/agentworkforce/relayfile }
+      notes: 'Adds default-off Go introspection and official verified PostgreSQL serving with immutable image selection, read-only runtime credentials and pinned public CA. External owner bootstrap is required; no owner credential or SQL Job is rendered. Legacy defaults and durable-actors behavior are preserved; this is not native add-on or runtime deployment acceptance.'
+    - id: relayfile-0.2.2
+      status: shipped
       charts: { relayfile: 0.2.2 }
       app_versions: { relayfile: 0.1.0 }
       images:
@@ -1271,6 +1289,14 @@ internal_env:
   - { name: LISTEN, chart: relayfile-control, why: derived from server.port; refused in extraEnv }
   - { name: ADMIN_LISTEN, chart: relayfile-control, why: fixed at 127.0.0.1:3101 so the admin listener stays on loopback; refused in extraEnv }
   - { name: MIGRATE_ON_START, chart: relayfile-control, why: fixed at 1 so the server applies migrations under its advisory lock; refused in extraEnv }
+  - { name: RELAYFILE_STATE_BACKEND_DSN, chart: relayfile, why: legacy independent storage override; refused in extraEnv with postgres.enabled }
+  - { name: RELAYFILE_STATE_FILE, chart: relayfile, why: legacy independent storage override; refused in extraEnv with postgres.enabled }
+  - { name: RELAYFILE_ENVELOPE_QUEUE_DSN, chart: relayfile, why: legacy independent storage override; refused in extraEnv with postgres.enabled }
+  - { name: RELAYFILE_WRITEBACK_QUEUE_DSN, chart: relayfile, why: legacy independent storage override; refused in extraEnv with postgres.enabled }
+  - { name: RELAYFILE_ENVELOPE_QUEUE_FILE, chart: relayfile, why: legacy independent storage override; refused in extraEnv with postgres.enabled }
+  - { name: RELAYFILE_WRITEBACK_QUEUE_FILE, chart: relayfile, why: legacy independent storage override; refused in extraEnv with postgres.enabled }
+  - { name: RELAYFILE_POSTGRES_DSN, chart: relayfile, why: legacy independent storage override; refused in extraEnv with postgres.enabled }
+  - { name: RELAYFILE_DEV_MODE, chart: relayfile, why: fixed false in managed Go modes so an empty HMAC cannot activate the predictable development secret; refused in extraEnv }
   - { name: ADMIN_HOST, chart: relaychief-control, why: fixed at 127.0.0.1 so the admin listener stays on loopback; refused in extraEnv }
   - { name: ADMIN_PORT, chart: relaychief-control, why: reserved from extraEnv so the admin listener stays on its documented port; no chart value offers it }
   - { name: SERVICE, chart: [sessions-pipeline-worker, session-ingest-api], why: selects the entry point of the one services image }
@@ -3571,7 +3597,7 @@ entries:
   - id: opt.relayfile.auth
     kind: option
     title: Relayfile RelayAuth JWKS
-    description: RELAYAUTH_JWKS_URL of the RelayAuth issuer; only its public JWKS endpoint is needed.
+    description: Legacy/default Go and durable-actors authentication uses the RelayAuth public JWKS endpoint. The Go-only managed auth.mode=introspection alternative forbids this field and does not use RelayAuth.
     chart: relayfile
     values: [auth.jwksUrl]
     env: [RELAYAUTH_JWKS_URL]
@@ -3585,6 +3611,49 @@ entries:
     sources:
       - "charts/relayfile/values.yaml:85"
       - "charts/relayfile/templates/server/_helpers.tpl:58"
+
+  - id: opt.relayfile.introspection
+    kind: option
+    title: Relayfile Go authentication through Control introspection
+    description: Explicit Go-only introspection with an exact public HTTPS audience, bounded timeout and positive cache. The existing service credential is projected read-only; no JWKS fallback or client token issuance is configured. Requires a separately qualified immutable image and existing HMAC Secret reference.
+    chart: relayfile
+    values: [auth.mode, auth.introspection.*, image.digest]
+    env: [RELAYFILE_AUTH_MODE, RELAYCONTROL_INTERNAL_URL, RELAYFILE_PUBLIC_ORIGIN, RELAYCONTROL_INTROSPECT_SECRET_FILE, RELAYFILE_INTROSPECTION_TIMEOUT, RELAYFILE_INTROSPECTION_CACHE_TTL]
+    profiles: [relayfile]
+    status: shipped
+    provided_by: operator
+    default: disabled
+    choices:
+      - { value: disabled }
+      - { value: introspection }
+    secrets:
+      - name: "<auth.introspection.secretRef.name>"
+        name_paths: [auth.introspection.secretRef.name]
+        keys:
+          - { key: introspect-secret, key_path: auth.introspection.secretRef.key }
+    verify: Render the exact audience and credential file; refuse JWKS conflicts, missing image/refs, duplicate managed env and opaque envFrom. Verify actual scoped filesystem authorization and revocation separately.
+    sources: [charts/relayfile/values.yaml, charts/relayfile/templates/server/_go-contract.tpl, charts/relayfile/templates/server/_helpers.tpl, ci/relayfile/test_go_contract.py]
+
+  - id: opt.relayfile.verified-postgres
+    kind: option
+    title: Relayfile verified PostgreSQL runtime after external owner bootstrap
+    description: Run the official postgres serve command with public role/database names, a read-only runtime URL Secret file and a pinned public CA ConfigMap. An external operator completes official owner bootstrap first; owner credentials, roles, grants and bootstrap Jobs are outside this chart. Actual startup validates the opaque URL, strict TLS, identity, schema, privileges and persisted data before workers/listener; health remains liveness only.
+    chart: relayfile
+    values: [postgres.*, image.digest]
+    profiles: [relayfile]
+    status: shipped
+    provided_by: operator
+    default: false
+    choices:
+      - { value: false }
+      - { value: true }
+    secrets:
+      - name: "<postgres.runtimeSecret.name>"
+        name_paths: [postgres.runtimeSecret.name]
+        keys:
+          - { key: database-url, key_path: postgres.runtimeSecret.key }
+    verify: Render only runtime credentials/public CA and the supported serve argv. Refuse shared owner/runtime role names, malformed SHA/refs, incompatible backend and storage/env overrides. Qualify the selected binary with actual PostgreSQL/TLS and application persistence separately.
+    sources: [charts/relayfile/templates/server/_go-contract.tpl, charts/relayfile/templates/server/deployment.yaml, charts/relayfile/README.md, ci/relayfile/test_go_contract.py]
 
   - id: opt.relayfile.notion
     kind: option

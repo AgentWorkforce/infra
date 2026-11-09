@@ -173,6 +173,73 @@ Configure only the providers you use.
 | `tolerations` | Tolerations | `[]` |
 | `affinity` | Affinity rules | `{}` |
 
+## Managed Go introspection and verified PostgreSQL
+
+Both modes are optional. Empty `auth.mode` and `postgres.enabled=false` retain
+the existing server and durable-actors behavior. They do not select optional
+Control features or implement the native kind add-on lifecycle.
+
+Set `auth.mode=introspection` for the Go server to verify bearers using Control
+without RelayAuth. Provide a bare HTTP(S) `auth.introspection.internalUrl`, the
+exact HTTPS `publicOrigin` accepted in Control's introspection audience list,
+and `secretRef.name/key` for the existing introspection service credential.
+The server appends `/internal/v1/auth/introspect`; it reads the service credential
+from a read-only projected file. No JWKS or JWT credential is configured in this
+mode. `auth.jwksUrl` conflicts with it. `timeoutSeconds` is 1–30 and the positive
+cache's `cacheTtlSeconds` is 0–60; use 0 to disable caching. Revocation acceptance
+can otherwise last until the documented cache TTL expires.
+
+Filesystem authority remains separate: a normal History user token does not
+gain `fs:*` scopes from this setting. An authorized workspace owner/admin issues
+a finite-lived Control token with purpose `relayfile-agent`, `agent_name` and
+the exact files audience through the supported token API. The chart neither
+issues nor stores such client tokens.
+
+For verified PostgreSQL serving, complete the official external owner bootstrap
+first. Use one dedicated database on the existing PostgreSQL instance, a
+restricted NOLOGIN database/schema owner and a distinct restricted LOGIN runtime
+role. The official `relayfile postgres bootstrap` command creates the supported
+objects and grants under that owner; run `relayfile postgres verify` as runtime.
+The chart creates no database, roles, grants or bootstrap Job and has no owner
+credential field or mount.
+
+Then set `postgres.enabled=true`, the public `database`, `ownerRole` and
+`runtimeRole` names, `runtimeSecret.name/key`, and `ca.configMap/key/sha256`.
+The Pod projects only the selected URL key from the runtime Secret. Its value must name the
+runtime identity, explicit host/port/database, `sslmode=verify-full` and
+`sslrootcert=/etc/relayfile-postgres/ca.crt`. The supplied CA SHA256 is 64 lowercase
+hex characters over the exact public CA bytes. Secret contents cannot be checked
+at render time: the official serving command checks the URL, CA bytes, actual
+identity, schema, privileges and persisted data before starting workers or the
+listener. Wrong credentials, CA, hostname or database authority refuse startup.
+This mode requires one replica, disables autoscaling and uses Recreate rollouts;
+concurrent processes writing the stored workspace snapshot are not qualified.
+
+The generated command is `relayfile postgres serve` with public contract flags
+and `--dsn-file /var/run/relayfile-postgres/database-url`. DSN and introspection
+credentials are projected read-only with group-readable mode and a default
+`fsGroup=1000`; an explicit existing `podSecurityContext.fsGroup` is preserved.
+No new credential is placed in argv or environment values. The unchanged server
+still requires `RELAYFILE_INTERNAL_HMAC_SECRET` through the existing Secret env
+reference; optional provider Secret refs retain their existing behavior.
+Managed Go modes explicitly set `RELAYFILE_DEV_MODE=false`; an empty HMAC
+credential must refuse startup rather than enable the development secret.
+
+These modes require an explicit `image.digest` and empty `image.tag`, selecting
+a separately qualified image with the matching official runtime contract. The
+legacy default tag is not a qualification for these commands. Both are Go-only;
+durable-actors refuses them. Managed connection/auth names cannot appear again in
+`extraEnv`, and opaque `extraEnvFrom` is refused. `secrets.existingSecret` is
+required; no new inline credential Secret is rendered. With verified PostgreSQL,
+the old `RELAYFILE_PRODUCTION_DSN` env and independent storage overrides are not
+configured. Auth-only and verified-database-only configurations are also supported;
+a native add-on adapter must explicitly require both when it is implemented.
+
+`/health` remains HTTP liveness. Startup verification is not continuous database
+readiness, a migration system, a backup system or end-to-end deployment proof.
+See [the render fixture](ci/verified-postgres-values.yaml) for public placeholders;
+its image and CA hashes are not deployable artifact or PKI selections.
+
 ## Release workflow
 
 Charts are released via [helm/chart-releaser-action](https://github.com/helm/chart-releaser-action) published to GitHub Pages. When a PR is merged to `main`, the action packages the chart, creates a GitHub Release, and updates the `gh-pages` branch so the chart index stays current.

@@ -115,6 +115,7 @@ jobs:
           python3 ci/agent-relay/kind/test_native_bootstrap_guard.py -v
           python3 ci/agent-relay/test_native_no_relayauth.py -v
           python3 ci/agent-relay/test_retained_workloads.py -v
+          python3 ci/relayfile/test_go_contract.py -v
           python3 ci/agent-relay/kind/test_stack.py -v
           python3 ci/agent-relay/kind/test_ownership.py -v
           python3 ci/agent-relay/kind/test_named_upgrade.py -v
