@@ -164,14 +164,30 @@ const {generation}=await import('/app/src/hoopdb/migrate.ts');console.log(JSON.s
         if self.stack.name not in clusters:
             require(not self.stack.marker.exists() and not (self.stack.state / "ready.json").exists(), "missing_owned_cluster_is_not_fresh")
             return {"owned": True, "mode": "fresh", "clusterUid": None, "foreignWriters": []}
-        self.stack.require_owned_cluster()
+        # Stack.require_owned_cluster exports/replaces kubeconfig. This path
+        # must remain GET-only and preserve every existing local receipt.
+        from stack import NODE
+        record = json.loads(self.stack.marker.read_text())
+        require(record.get("version") == 1 and record.get("name") == self.stack.name and
+                record.get("profile") == selected["profile"] and record.get("nodeImage") == NODE and
+                record.get("dockerHost") == self.stack.env.get("DOCKER_HOST"), "owned_cluster_receipt_mismatch")
         uid = self._get("namespace/kube-system", namespace=False)["metadata"]["uid"]
-        objects = self._get("deployments,statefulsets,persistentvolumeclaims,secrets,configmaps")["items"]
+        require(record.get("clusterUid") == uid, "owned_cluster_uid_changed")
+        nodes = self._get("nodes", namespace=False)["items"]
+        local_nodes = self.stack.cmd(["kind", "get", "nodes", "--name", self.stack.name], timeout=30).stdout.splitlines()
+        require(nodes and {n["metadata"]["name"] for n in nodes} == set(local_nodes) and
+                all(n["metadata"].get("labels", {}).get("agentrelay-kind-owner") == "infra" for n in nodes),
+                "owned_cluster_node_identity_changed")
         # An already-populated target is repeat only with a bound native receipt.
         binding = document(self.inputs["bindingReceipt"], self.inputs["bindingReceiptSha256"])
         require(binding["clusterUid"] == uid and binding["profile"] == selected["profile"], "native_fixture_binding_mismatch")
         require(binding.get("roles") == selected["roles"] and binding.get("generation") == selected["generation"] and
                 binding.get("officialBootstrapSha256") == selected["officialBootstrapSha256"], "native_role_generation_binding_mismatch")
+        objects = self._get("deployments,statefulsets,persistentvolumeclaims,configmaps")["items"]
+        # Read only the selected credential resources, never every Secret in
+        # the namespace. Values remain process-local and are never returned.
+        for name in sorted({r["name"] for r in selected["secretRefs"].values()}):
+            objects.append(self._get("secret/" + name))
         by_id = {(o["kind"], o["metadata"]["name"]): o for o in objects}
         required_resources = {("StatefulSet", "postgres"), ("PersistentVolumeClaim", "data-postgres-0"),
                               ("PersistentVolumeClaim", selected["lockerClaim"]),

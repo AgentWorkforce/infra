@@ -46,11 +46,13 @@ class Stack:
     def __init__(self, root):
         self.state = root; self.marker = root / "cluster.json"; self.name = "agent-relay-core"
         self.docker_args = ["docker", "--config", "owned-anonymous-config"]
+        self.env = {"DOCKER_HOST": "unix:///owned-fixture/docker.sock"}
         self.images = {}; self.calls = []; self.clusters = ""; self.docs = []; self.objects = []; self.owned = True
 
     def cmd(self, args, **kw):
         self.calls.append((args, kw))
         if args == ["kind", "get", "clusters"]: return SimpleNamespace(stdout=self.clusters)
+        if args == ["kind", "get", "nodes", "--name", self.name]: return SimpleNamespace(stdout="agent-relay-core-control-plane\n")
         if args[:2] == ["helm", "template"]:
             assert kw.get("sensitive") is True
             return SimpleNamespace(stdout=yaml.safe_dump_all(self.docs))
@@ -69,7 +71,10 @@ class Stack:
     def k(self, *args, **kw):
         self.calls.append((args, kw))
         assert args[0] == "get" and kw.get("sensitive") is True
-        value = {"metadata": {"uid": "original-cluster"}} if args[1] == "namespace/kube-system" else {"items": self.objects}
+        if args[1] == "namespace/kube-system": value = {"metadata": {"uid": "original-cluster"}}
+        elif args[1] == "nodes": value = {"items": [{"metadata": {"name": "agent-relay-core-control-plane", "labels": {"agentrelay-kind-owner": "infra"}}}]}
+        elif args[1].startswith("secret/"): value = next(o for o in self.objects if o["kind"] == "Secret" and o["metadata"]["name"] == args[1].split("/", 1)[1])
+        else: value = {"items": [o for o in self.objects if o["kind"] != "Secret"]}
         return SimpleNamespace(stdout=json.dumps(value))
 
     def values_args(self): return ["-f", self.state / "values.yaml"]
@@ -159,7 +164,10 @@ class NativeInspectTests(unittest.TestCase):
         with self.assertRaisesRegex(NativeRecipeError, "missing_owned_cluster"): self.adapter.inspect(self.s)
 
     def repeat_fixture(self):
+        from stack import NODE
         self.stack.clusters = "agent-relay-core\n"
+        self.stack.marker.write_text(json.dumps({"version": 1, "name": self.stack.name, "profile": "core", "nodeImage": NODE,
+                                                "dockerHost": self.stack.env["DOCKER_HOST"], "clusterUid": "original-cluster"}))
         ca = b"public-test-ca"; self.s["postgresCa"]["sha256"] = h(ca)
         objects = [{"kind": "ConfigMap", "metadata": {"name": self.s["postgresCa"]["configMap"], "uid": "ca-uid"}, "immutable": True, "data": {"ca.crt": ca.decode()}},
                    {"kind": "StatefulSet", "metadata": {"name": "postgres", "uid": "pg-uid"}, "spec": {"template": {"spec": {"containers": [{"args": ["-c", "ssl=on"]}]}}}},
@@ -184,10 +192,23 @@ class NativeInspectTests(unittest.TestCase):
         path = self.root / "binding.json"; self.inputs.update(bindingReceipt=path, bindingReceiptSha256=write_json(path, binding))
 
     def test_repeat_reads_bound_uids_public_ca_and_secret_keys_without_writes(self):
-        self.repeat_fixture(); result = self.adapter.inspect(self.s)
+        self.repeat_fixture()
+        config = self.root / "kubeconfig"; config.write_text("original-private-kubeconfig")
+        marker = self.stack.marker.read_bytes()
+        self.stack.require_owned_cluster = lambda: self.fail("legacy ownership method rewrites kubeconfig")
+        result = self.adapter.inspect(self.s)
         self.assertEqual(result["mode"], "repeat"); self.assertEqual(result["clusterUid"], "original-cluster")
-        self.assertTrue(all(a[0] == "get" or a == ["kind", "get", "clusters"] for a, _ in self.stack.calls))
+        self.assertTrue(all(a[0] == "get" or a[:2] == ["kind", "get"] for a, _ in self.stack.calls))
         self.assertNotIn("c3ludGhldGlj", json.dumps(result))
+        self.assertEqual(config.read_text(), "original-private-kubeconfig")
+        self.assertEqual(marker, self.stack.marker.read_bytes())
+
+    def test_old_named_layout_is_not_native_role_bootstrap_acceptance(self):
+        self.repeat_fixture()
+        old = {"clusterUid": "original-cluster", "profile": "core", "storage": {}, "postgres": {}}
+        self.inputs["bindingReceiptSha256"] = write_json(self.inputs["bindingReceipt"], old)
+        with self.assertRaisesRegex(NativeRecipeError, "native_role_generation_binding"): self.adapter.inspect(self.s)
+        self.assertFalse(any(a[0] == "get" and a[1].startswith("secret/") for a, _ in self.stack.calls))
 
     def test_repeat_uid_ca_secret_or_tls_drift_refuses(self):
         for which in ("uid", "ca", "secret", "tls"):
