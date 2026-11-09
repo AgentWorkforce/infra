@@ -12,7 +12,7 @@ mock_provider "aws" {
     defaults = { insecure_value = "ami-12345678" }
   }
   mock_resource "aws_secretsmanager_secret" {
-    defaults = { arn = "arn:aws:secretsmanager:us-west-2:111111111111:secret:node/worker-token-AbCdEf" }
+    defaults = { arn = "arn:aws:secretsmanager:us-west-2:111111111111:secret:node/secret-AbCdEf" }
   }
   mock_resource "aws_iam_role" {
     defaults = { arn = "arn:aws:iam::111111111111:role/node", name = "node", id = "node" }
@@ -67,16 +67,16 @@ run "host_is_private_and_reached_only_through_ssm" {
   }
 }
 
-run "role_reads_one_secret_only" {
+run "role_reads_the_two_node_secrets_only" {
   command = apply
 
   assert {
-    condition     = jsondecode(aws_iam_role_policy.worker_token.policy).Statement[0].Resource == [aws_secretsmanager_secret.worker_token.arn]
-    error_message = "The role may read the worker token secret and nothing else."
+    condition     = jsondecode(aws_iam_role_policy.worker_token.policy).Statement[0].Resource == [aws_secretsmanager_secret.worker_token.arn, aws_secretsmanager_secret.harness_key.arn]
+    error_message = "The role may read the node's two secrets and nothing else."
   }
   assert {
-    condition     = jsondecode(aws_iam_role_policy.worker_token.policy).Statement[1].Condition.StringEquals["kms:EncryptionContext:SecretARN"] == aws_secretsmanager_secret.worker_token.arn
-    error_message = "Decrypt must be limited to this secret's encryption context."
+    condition     = jsondecode(aws_iam_role_policy.worker_token.policy).Statement[1].Condition.StringEquals["kms:EncryptionContext:SecretARN"] == [aws_secretsmanager_secret.worker_token.arn, aws_secretsmanager_secret.harness_key.arn]
+    error_message = "Decrypt must be limited to these secrets' encryption context."
   }
 }
 
@@ -86,6 +86,14 @@ run "worker_token_stays_out_of_the_node_unit" {
   assert {
     condition     = !strcontains(file("${path.module}/files/chief-node.service"), "CHIEF_BRIDGE_RELAY_TOKEN") && !strcontains(file("${path.module}/files/chief-node.service"), "relay-token.env")
     error_message = "Spawned harnesses copy the node's environment: the token must never reach its unit."
+  }
+  assert {
+    condition     = strcontains(file("${path.module}/files/chief-node.service"), "EnvironmentFile=-/run/chief-node-secrets/harness.env") && strcontains(file("${path.module}/files/chief-node.service"), "ExecStartPre=+/usr/local/sbin/chief-node-fetch-harness-key")
+    error_message = "The harness key must reach the node by a root-run step, and the node must start without one."
+  }
+  assert {
+    condition     = !strcontains(file("${path.module}/files/chief-bridge.service"), "harness.env")
+    error_message = "The harness key has no business in the bridge."
   }
   assert {
     condition     = strcontains(file("${path.module}/files/chief-bridge.service"), "ExecStartPre=+/usr/local/sbin/chief-bridge-fetch-token")

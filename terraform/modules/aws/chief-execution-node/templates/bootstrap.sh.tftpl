@@ -54,6 +54,12 @@ REGION=${region}
 SECRET_ARN=${secret_arn}
 SOURCE
 chmod 0600 /etc/chief-bridge/token-source
+cat >/etc/chief-node/harness-key-source <<'SOURCE'
+REGION=${region}
+SECRET_ARN=${harness_key_secret_arn}
+KEY_NAME=${harness.api_key_env}
+SOURCE
+chmod 0600 /etc/chief-node/harness-key-source
 
 install -d -o chief-node -g chief-node -m 0750 /var/lib/chief-node/repos
 %{ for repository in repositories ~}

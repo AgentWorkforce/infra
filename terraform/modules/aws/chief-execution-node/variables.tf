@@ -84,15 +84,21 @@ variable "relay_node" {
 }
 
 variable "harness" {
-  description = "npm package and exact version of the one harness this node runs."
+  description = "npm package, exact version and API key environment variable of the one harness this node runs."
   type = object({
     npm_package = string
     version     = string
+    api_key_env = optional(string, "ANTHROPIC_API_KEY")
   })
 
   validation {
     condition     = can(regex("^[0-9]+\\.[0-9]+\\.[0-9]+$", var.harness.version))
     error_message = "harness.version must be an exact release version."
+  }
+
+  validation {
+    condition     = can(regex("^[A-Z][A-Z0-9_]*$", var.harness.api_key_env))
+    error_message = "harness.api_key_env must be an environment variable name."
   }
 }
 

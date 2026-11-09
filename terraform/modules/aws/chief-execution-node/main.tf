@@ -25,6 +25,7 @@ locals {
     { path = "/etc/systemd/system/chief-bridge.service", mode = "0644", content = filebase64("${path.module}/files/chief-bridge.service") },
     { path = "/usr/local/sbin/chief-bridge-fetch-token", mode = "0700", content = filebase64("${path.module}/files/fetch-bridge-token.sh") },
     { path = "/usr/local/sbin/chief-node-apply-settings", mode = "0700", content = filebase64("${path.module}/files/apply-node-settings.sh") },
+    { path = "/usr/local/sbin/chief-node-fetch-harness-key", mode = "0700", content = filebase64("${path.module}/files/fetch-harness-key.sh") },
   ]
 
   bootstrap = templatefile("${path.module}/templates/bootstrap.sh.tftpl", {
@@ -35,8 +36,10 @@ locals {
     relay_base_url = var.relay_base_url
     region         = local.region
     secret_arn     = aws_secretsmanager_secret.worker_token.arn
-    repositories   = var.repositories
-    files          = local.host_files
+
+    harness_key_secret_arn = aws_secretsmanager_secret.harness_key.arn
+    repositories           = var.repositories
+    files                  = local.host_files
   })
 }
 
@@ -44,6 +47,15 @@ resource "aws_secretsmanager_secret" "worker_token" {
   #checkov:skip=CKV2_AWS_57:The value is issued by Relay and copied in out of band; there is no rotation function to attach.
   name                    = "${var.name}/worker-token"
   description             = "Relay token for the Chief execution bridge. Read at service start by a root-run step only."
+  kms_key_id              = var.kms_key_arn
+  recovery_window_in_days = 7
+  tags                    = var.tags
+}
+
+resource "aws_secretsmanager_secret" "harness_key" {
+  #checkov:skip=CKV2_AWS_57:The value is issued by the harness provider and copied in out of band; there is no rotation function to attach.
+  name                    = "${var.name}/harness-api-key"
+  description             = "API key for spawned harnesses. Read at node start by a root-run step only."
   kms_key_id              = var.kms_key_arn
   recovery_window_in_days = 7
   tags                    = var.tags
@@ -90,29 +102,29 @@ resource "aws_iam_role_policy_attachment" "ssm" {
 }
 
 resource "aws_iam_role_policy" "worker_token" {
-  name = "read-worker-token"
+  name = "read-node-secrets"
   role = aws_iam_role.this.id
 
   policy = jsonencode({
     Version = "2012-10-17"
     Statement = [
       {
-        Sid      = "ReadWorkerToken"
+        Sid      = "ReadNodeSecrets"
         Effect   = "Allow"
         Action   = ["secretsmanager:GetSecretValue"]
-        Resource = [aws_secretsmanager_secret.worker_token.arn]
+        Resource = [aws_secretsmanager_secret.worker_token.arn, aws_secretsmanager_secret.harness_key.arn]
       },
       {
         # The key is shared. The encryption context Secrets Manager supplies is
-        # what limits this role to this one secret.
-        Sid      = "DecryptWorkerToken"
+        # what limits this role to these two secrets.
+        Sid      = "DecryptNodeSecrets"
         Effect   = "Allow"
         Action   = ["kms:Decrypt"]
         Resource = [var.kms_key_arn]
         Condition = {
           StringEquals = {
             "kms:ViaService"                  = "secretsmanager.${local.region}.${local.dns_suffix}"
-            "kms:EncryptionContext:SecretARN" = aws_secretsmanager_secret.worker_token.arn
+            "kms:EncryptionContext:SecretARN" = [aws_secretsmanager_secret.worker_token.arn, aws_secretsmanager_secret.harness_key.arn]
           }
         }
       },
