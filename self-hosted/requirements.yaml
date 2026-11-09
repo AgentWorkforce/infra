@@ -161,6 +161,12 @@ profiles:
     values_file: ci/default-values.yaml
     install: helm install relay-chief agentworkforce/relay-chief -f <your values>
     summary: Not qualified and not part of the suite yet; no image is published. Suspended by default. Runs one bounded cycle per CronJob firing against SQLite on a persistent volume, and every cycle may dispatch.
+  - id: relaychief-control
+    title: Relay Chief control add-on
+    chart: relaychief-control
+    values_file: ci/default-values.yaml
+    install: helm install relaychief-control agentworkforce/relaychief-control -f <your values>
+    summary: Optional add-on outside the agent-relay umbrella; not qualified. One replica, operator-managed PostgreSQL, a loopback-only admin listener and an Ingress limited to /chief/v1 by default; no HA claim.
 
   - id: durable-actors
     title: TerseAI durable-actors control plane (vendored upstream chart)
@@ -174,6 +180,12 @@ profiles:
     values_file: ci/durable-actors-values.yaml
     install: helm install relaycast agentworkforce/relaycast -f values.yaml (runtime.backend=durable-actors, a durable-actors control plane, ar_ credentials)
     summary: Stateless gateway (relaycast-actors-gateway) in front of one Workspace actor per workspace; deployer Job registers the actor bundle; files in GCS or S3. Fresh-install backend; SQLite workspaces are not migrated.
+  - id: relaycast-postgres
+    title: Relaycast on PostgreSQL (runtime.backend=postgres)
+    chart: relaycast
+    values_file: ci/postgres-values.yaml
+    install: helm install relaycast agentworkforce/relaycast -f values.yaml (runtime.backend=postgres, postgresCa, owner and runtime database URLs in existingSecret)
+    summary: One replica on an external PostgreSQL database; a hash-named migration Job runs as relaycast_owner and the server waits for it as relaycast_runtime; uploaded files stay on the PVC. Default off.
   - id: relayfile-durable-actors
     title: Relayfile on durable-actors (runtime.backend=durable-actors)
     chart: relayfile
@@ -290,7 +302,7 @@ compatibility:
       services:
         source_commit: 7d7229bb31c121ecb98cd4e35c248fc2cf5669ad
         migration_generation: eff8b3be46565b57ad8fa5e4a066dbb6d1fe608313d9c1680bfbcd484add259b
-      notes: 'Never released; superseded by sessions-pipeline-0.8.2. Allows sessionReadApi.auth.mode=self_issued with a /v1-only ingress and a NetworkPolicy that names Control, and adds the default-off events.messageIds value. Default auth stays relaycontrol_only.'
+      notes: 'Allows sessionReadApi.auth.mode=self_issued with a /v1-only ingress and a NetworkPolicy that names Control, and adds the default-off events.messageIds value. Default auth stays relaycontrol_only.'
       db_combos:
         - { db_mode: selfhosted, boundary: global-default-revoke, hoopdb: cnpg, status: shipped, profiles: [selfhost-postgres, migration, aws-cnpg], notes: chart Jobs install the runtime role and the function default }
         - { db_mode: selfhosted, boundary: global-default-revoke, hoopdb: external, status: shipped, profiles: [external-selfhosted], notes: operator runs the bootstrap files as a superuser }
@@ -536,9 +548,16 @@ compatibility:
       images_note: not built for the charts yet
       notes: 'Follow-up re-pin to sessions-pipeline main after #127 (session briefs, generation 5ed11913...). Needs new GHCR/ECR digests, ci/sessions-pipeline-search-worker-role/services-commit and services-generation, and the session-brief entries below shipped.'
       db_combos: []
-    - id: relaycast-0.3.5
+    - id: relaycast-0.3.6
       status: unreleased
       current: true
+      charts: { relaycast: 0.3.6 }
+      app_versions: { relaycast: 12.7.0 }
+      images:
+        relaycast: { repository: ghcr.io/agentworkforce/relaycast-self-host, digest: sha256:81274dca7ab58673383dc7a9c777f422f29606c7422e81b5ea15724770f1455e }
+      notes: 'Adds default-off runtime.backend=postgres (image relaycast-self-host 12.8.0-pg.1, sha256:84f59482cb82f3c50d38f45cfca7d004cffaa95652782dbfc93c179cc343ac59, pinned in runtime.postgres.image), a hash-named migration Job and postgresCa. sqlite and durable-actors renders differ only in the helm.sh/chart label.'
+    - id: relaycast-0.3.5
+      status: shipped
       charts: { relaycast: 0.3.5 }
       app_versions: { relaycast: 12.7.0 }
       images:
@@ -630,18 +649,29 @@ compatibility:
       images:
         relayauth: { repository: ghcr.io/agentworkforce/relayauth, digest: sha256:eb71daa28e30eb7305f666d0bccc5a4002e53e8a574e3c4c32163d907a1b71df }
       notes: superseded by 0.1.1.
-    - id: agent-relay-0.6.3
+    - id: agent-relay-0.6.4
       status: unreleased
       current: true
-      charts: { agent-relay: 0.6.3, relayhistory: 0.1.2, relay-control: 0.4.0, relay-webapp: 0.2.0 }
+      charts: { agent-relay: 0.6.4, relayhistory: 0.1.2, relay-control: 0.4.0, relay-webapp: 0.2.0 }
       app_versions: { agent-relay: 0.1.0, relayhistory: 0.1.0, relay-control: 0.1.0, relay-webapp: 0.1.0 }
       depends:
-        agent-relay: { relaycast: 0.3.5, relayauth: 0.1.4, sessions-pipeline: 0.8.2, relayhistory: 0.1.2, relay-control: 0.4.0, relay-webapp: 0.2.0, relayflows: 0.2.5, durable-actors: 0.14.6-awf.1, relayfile: 0.2.2, telemetry-collector: 0.1.1, relay-chief: 0.1.0 }
+        agent-relay: { relaycast: 0.3.6, relayauth: 0.1.4, sessions-pipeline: 0.8.2, relayhistory: 0.1.2, relay-control: 0.4.0, relay-webapp: 0.2.0, relayflows: 0.2.5, durable-actors: 0.14.6-awf.1, relayfile: 0.2.2, telemetry-collector: 0.1.1, relay-chief: 0.1.0 }
       images:
         relayhistory: { repository: ghcr.io/agentworkforce/relayhistory, digest_required: true }
         relay-control: { repository: ghcr.io/agentworkforce/relay-control, digest: sha256:d8c26d44dccb6dd21b7033288241a379e46ce5fbca69f276c4d4745001c3c3e2 }
         relay-webapp: { repository: ghcr.io/agentworkforce/relay-webapp, digest_required: true }
-      notes: 'Takes sessions-pipeline 0.8.2 with opt-in async admission from merged pipeline #398/f0860b2e. Existing standalone reader, image settings and profile defaults are retained; no enablement or runtime qualification is supplied.'
+      notes: 'Takes sessions-pipeline 0.8.2 with opt-in async admission and reader 0.2.1 inception coverage for new own-ingest stores, retaining explicit partial-import floors. Preserves current Relaycast and RelayChief Control dependencies. Defaults remain disabled; no image qualification or rollout is supplied.'
+    - id: agent-relay-0.6.3
+      status: planned
+      charts: { agent-relay: 0.6.3, relayhistory: 0.1.2, relay-control: 0.4.0, relay-webapp: 0.2.0 }
+      app_versions: { agent-relay: 0.1.0, relayhistory: 0.1.0, relay-control: 0.1.0, relay-webapp: 0.1.0 }
+      depends:
+        agent-relay: { relaycast: 0.3.6, relayauth: 0.1.4, sessions-pipeline: 0.8.1, relayhistory: 0.1.2, relay-control: 0.4.0, relay-webapp: 0.2.0, relayflows: 0.2.5, durable-actors: 0.14.6-awf.1, relayfile: 0.2.2, telemetry-collector: 0.1.1, relay-chief: 0.1.0 }
+      images:
+        relayhistory: { repository: ghcr.io/agentworkforce/relayhistory, digest_required: true }
+        relay-control: { repository: ghcr.io/agentworkforce/relay-control, digest: sha256:d8c26d44dccb6dd21b7033288241a379e46ce5fbca69f276c4d4745001c3c3e2 }
+        relay-webapp: { repository: ghcr.io/agentworkforce/relay-webapp, digest_required: true }
+      notes: 'Takes relaycast 0.3.6 (default-off runtime.backend=postgres). With it off, every render differs only in the helm.sh/chart labels.'
     - id: agent-relay-0.6.2
       status: planned
       charts: { agent-relay: 0.6.2, relayhistory: 0.1.2, relay-control: 0.4.0, relay-webapp: 0.2.0 }
@@ -652,7 +682,7 @@ compatibility:
         relayhistory: { repository: ghcr.io/agentworkforce/relayhistory, digest_required: true }
         relay-control: { repository: ghcr.io/agentworkforce/relay-control, digest: sha256:d8c26d44dccb6dd21b7033288241a379e46ce5fbca69f276c4d4745001c3c3e2 }
         relay-webapp: { repository: ghcr.io/agentworkforce/relay-webapp, digest_required: true }
-      notes: 'Never released; superseded by agent-relay-0.6.3. Takes sessions-pipeline 0.8.1, which allows the default-off self_issued read API mode.'
+      notes: 'Takes sessions-pipeline 0.8.1, which allows the default-off self_issued read API mode.'
     - id: agent-relay-0.6.1
       status: planned
       charts: { agent-relay: 0.6.1, relayhistory: 0.1.2, relay-control: 0.4.0, relay-webapp: 0.2.0 }
@@ -848,6 +878,14 @@ compatibility:
       charts: { relay-chief: 0.1.0 }
       app_versions: { relay-chief: 0.1.0 }
       notes: First chart, rendered only. No Relay Chief image is published and the digest is operator-supplied until one exists.
+    - id: relaychief-control-0.1.0
+      status: unreleased
+      current: true
+      charts: { relaychief-control: 0.1.0 }
+      app_versions: { relaychief-control: 0.1.0 }
+      images:
+        relaychief-control: { repository: ghcr.io/agentworkforce/relaychief-control, digest: "sha256:ddd4129f062cc19ba144bbb4ac0f7af66fb730be5a7c9521a9307d4c8f287688", digest_required: true }
+      notes: First chart, rendered only. Defaults to the published relaychief-control 0.1.0 image.
     - id: relayflows-0.2.5
       status: unreleased
       current: true
@@ -881,6 +919,8 @@ compatibility:
 
 # Env the charts render that is neither a requirement nor an option.
 internal_env:
+  - { name: ADMIN_HOST, chart: relaychief-control, why: fixed at 127.0.0.1 so the admin listener stays on loopback; refused in extraEnv }
+  - { name: ADMIN_PORT, chart: relaychief-control, why: reserved from extraEnv so the admin listener stays on its documented port; no chart value offers it }
   - { name: SERVICE, chart: [sessions-pipeline-worker, session-ingest-api], why: selects the entry point of the one services image }
   - { name: OTEL_SERVICE_NAME, chart: [sessions-pipeline-worker, session-ingest-api], why: equals SERVICE }
   - { name: TMPDIR, chart: [sessions-pipeline-worker, session-ingest-api], why: the writable emptyDir under a read-only root filesystem }
@@ -898,6 +938,14 @@ internal_env:
   - { name: RELAYCAST_WORKSPACE_BOOTSTRAP_SECRET, chart: relaycast, why: reserved prefix in the extraEnv guard; the Secret is mounted as a file }
   - { name: RELAYCAST_RELAYAUTH, chart: relaycast, why: reserved prefix in the extraEnv guard; the RelayAuth remote tagger is wired through credentials.relayauth.url and secretKeys.relayauthToken }
   - { name: RELAYCAST_CREDENTIAL, chart: relaycast, why: reserved prefix in the extraEnv guard; the credential format and local keyring are wired through credentials.* and secretKeys.credentialKeyring }
+  - { name: MIGRATION_WAIT_SECONDS, chart: relaycast, why: postgres backend wait-for-migrations init container; from runtime.postgres.migrations.activeDeadlineSeconds }
+  - { name: RELAYCAST_DATABASE_, chart: relaycast, why: reserved prefix in the extraEnv guard on the sqlite and durable-actors backends }
+  - { name: RELAYCAST_DATABASE_URL, chart: relaycast, why: reserved name in the postgres extraEnv guard; the URL is mounted as a file }
+  - { name: RELAYCAST_DATABASE_CA_FILE, chart: relaycast, why: reserved name in the postgres extraEnv guard; the chart uses NODE_EXTRA_CA_CERTS }
+  - { name: RELAYCAST_DATABASE_SCHEMA, chart: relaycast, why: reserved name in the postgres extraEnv guard; left at the image default }
+  - { name: RELAYCAST_DATABASE_OWNER_ROLE, chart: relaycast, why: reserved name in the postgres extraEnv guard; left at the image default }
+  - { name: RELAYCAST_DATABASE_RUNTIME_ROLE, chart: relaycast, why: reserved name in the postgres extraEnv guard; left at the image default }
+  - { name: PGCLIENT_ENCODING, chart: relaycast, why: refused in the postgres extraEnv guard; the image exits 64 while it is set }
   - { name: BACKUP_KEEP, chart: relaycast, why: backup CronJob; from backup.keep }
   - { name: LOCK_STALE_MS, chart: relaycast, why: backup CronJob lock timeout (fixed) }
   - { name: RELAYAUTH_DB_PATH, chart: relayauth, why: fixed path on the data PVC }
@@ -1257,10 +1305,10 @@ entries:
       ingestEdge.postgres.caConfigMap, caKey and caSha256.
       When postgresCa is on, wait-for-role (psql) gets PGSSLROOTCERT. psql run by an operator
       needs sslrootcert=<bundle> with verify-full.
-    chart: [sessions-pipeline, relay-control, relayhistory]
-    values: [worker.postgresCa.*, alleyoop.postgresCa.*, "relay-control:postgresCa.*", "relayhistory:postgresCa.*"]
+    chart: [sessions-pipeline, relay-control, relayhistory, relaychief-control]
+    values: [worker.postgresCa.*, alleyoop.postgresCa.*, "relay-control:postgresCa.*", "relayhistory:postgresCa.*", "relaychief-control:postgresCa.*"]
     env: [NODE_EXTRA_CA_CERTS, PGSSLROOTCERT]
-    profiles: [selfhost-postgres, migration, external-selfhosted, external-rds, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql, relayhistory, relay-control, agent-relay]
+    profiles: [selfhost-postgres, migration, external-selfhosted, external-rds, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql, relayhistory, relay-control, agent-relay, relaychief-control]
     status: shipped
     provided_by: operator
     default: false
@@ -1274,6 +1322,7 @@ entries:
       - "charts/session-ingest-api/templates/deployment.yaml"
       - "charts/relay-control/templates/deployment.yaml"
       - "charts/relayhistory/templates/deployment.yaml"
+      - "charts/relaychief-control/templates/deployment.yaml"
       - "sessions-pipeline@78511e03:src/shared/db.ts:41"
 
   - id: opt.alleyoop.history-origin
@@ -3530,7 +3579,7 @@ entries:
 
   - id: opt.relaycast.durable-actors
     kind: option
-    title: Relaycast runtime backend (sqlite or durable-actors)
+    title: Relaycast runtime backend (sqlite, durable-actors or postgres)
     description: |
       durable-actors (env contract v1) replaces the SQLite Deployment with the
       relaycast-actors-gateway (same Service, ingress and edge-deny rules; PORT 8787,
@@ -3548,6 +3597,7 @@ entries:
     choices:
       - { value: sqlite }
       - { value: durable-actors, note: "env contract v1; images relaycast-actors-gateway and relaycast-actors-deployer by digest" }
+      - { value: postgres, note: "see req.relaycast.postgres; image runtime.postgres.image by digest" }
     secrets:
       - name: "<runtime.durableActors.fileStore.s3.existingSecret>"
         keys:
@@ -3558,6 +3608,43 @@ entries:
     sources:
       - "charts/relaycast/values.yaml:29"
       - "charts/relaycast/templates/_actors.tpl:98"
+
+  - id: req.relaycast.postgres
+    kind: requirement
+    title: Relaycast PostgreSQL backend (owner and runtime URLs, CA, migration Job)
+    description: |
+      runtime.backend=postgres runs the portable image (runtime.postgres.image) on an
+      external PostgreSQL database that the platform prepares (relaycast_owner and
+      relaycast_runtime roles, schema public; see docs/self-host-postgres.md in
+      AgentWorkforce/relaycast). existingSecret gains two keys, each a full URL
+      postgres://<role>:<pw>@<host>:5432/<db>?sslmode=verify-full: the relaycast_owner URL
+      is projected only into the migration Job, the relaycast_runtime URL only into the
+      server. postgresCa names the CA bundle and is required. The Job is a plain Job named
+      by a hash of its pod template (args migrate, no Helm hook, exits 64 and 65 not
+      retried); the server's wait-for-migrations init container runs verify-db until the
+      database is migrated for this image. One replica; files stay on the PVC; backup.enabled
+      and retention.messageTtlDays are refused. Default off.
+    chart: relaycast
+    values: [runtime.postgres.image.repository, runtime.postgres.image.digest, runtime.postgres.migrations.identitySalt, runtime.postgres.migrations.backoffLimit, runtime.postgres.migrations.activeDeadlineSeconds, secretKeys.databaseOwnerUrl, secretKeys.databaseRuntimeUrl, postgresCa.enabled, postgresCa.configMap, postgresCa.secret, postgresCa.key]
+    env: [RELAYCAST_DATABASE_URL_FILE]
+    profiles: [relaycast-postgres]
+    status: shipped
+    provided_by: operator
+    secrets:
+      - name: "<existingSecret>"
+        name_paths: [existingSecret]
+        keys:
+          - { key: database-owner-url, key_path: secretKeys.databaseOwnerUrl }
+          - { key: database-runtime-url, key_path: secretKeys.databaseRuntimeUrl }
+      - name: "<postgresCa.secret>"
+        keys:
+          - { key: ca.crt, key_path: postgresCa.key }
+        note: or the same key in the ConfigMap named by postgresCa.configMap
+    verify: kubectl wait --for=condition=complete job -l app.kubernetes.io/name=relaycast-migrate; curl <baseUrl>/health
+    sources:
+      - "charts/relaycast/values.yaml:29"
+      - "charts/relaycast/templates/_postgres.tpl:1"
+      - "charts/relaycast/templates/postgres-migrate-job.yaml:1"
 
   - id: req.relaycast.durable-actors-secrets
     kind: requirement
@@ -3913,6 +4000,99 @@ entries:
     sources:
       - "charts/relay-chief/values.yaml:9"
       - "charts/relay-chief/templates/cronjob.yaml:34"
+
+  - id: req.relaychief-control.config
+    kind: requirement
+    title: Relay Chief control origins
+    description: RELAYCONTROL_URL and RELAYCHIEF_CONTROL_PUBLIC_ORIGIN, each a bare http(s) origin. The public origin is the token audience, so it must also be among relay-control's accepted audiences.
+    chart: relaychief-control
+    values: [config.relaycontrolUrl, config.publicOrigin]
+    env: [RELAYCONTROL_URL, RELAYCHIEF_CONTROL_PUBLIC_ORIGIN]
+    profiles: [relaychief-control]
+    status: shipped
+    provided_by: operator
+    verify: helm template fails with "config.relaycontrolUrl (RELAYCONTROL_URL) is required" or "config.publicOrigin (RELAYCHIEF_CONTROL_PUBLIC_ORIGIN) is required" when one is unset
+    sources:
+      - "charts/relaychief-control/values.yaml"
+      - "charts/relaychief-control/templates/configmap.yaml"
+
+  - id: req.relaychief-control.credentials
+    kind: requirement
+    title: Relay Chief control database URL and service secrets
+    description: One existing Secret with DATABASE_URL (also used by the migrate Job), RELAYCONTROL_INTROSPECT_SECRET and RELAYCHIEF_CONTROL_ADMIN_TOKEN (both 32 or more characters; the server refuses to start otherwise). The chart creates no Secret and takes no Secret values, so a render cannot check their presence or length.
+    chart: relaychief-control
+    values: [existingSecret, "secretKeys.*"]
+    env: [DATABASE_URL, RELAYCONTROL_INTROSPECT_SECRET, RELAYCHIEF_CONTROL_ADMIN_TOKEN]
+    profiles: [relaychief-control]
+    status: shipped
+    provided_by: operator
+    secrets:
+      - name: "<existingSecret>"
+        keys:
+          - { key: DATABASE_URL, key_path: secretKeys.databaseUrl }
+          - { key: RELAYCONTROL_INTROSPECT_SECRET, key_path: secretKeys.introspectSecret }
+          - { key: RELAYCHIEF_CONTROL_ADMIN_TOKEN, key_path: secretKeys.adminToken }
+          - { key: "<operator-chosen, e.g. NANGO_SECRET_KEY>", key_path: secretKeys.nangoSecretKey, optional: "unset leaves Nango off and creating a chief answers 503; required with config.nangoHost" }
+    verify: helm template fails with "existingSecret is required" when it is unset; the pod starts without a CreateContainerConfigError and /readyz answers 200
+    sources:
+      - "charts/relaychief-control/values.yaml"
+      - "charts/relaychief-control/templates/_helpers.tpl"
+
+  - id: opt.relaychief-control.nango
+    kind: option
+    title: Relay Chief control Nango host and browser origins
+    description: NANGO_HOST with secretKeys.nangoSecretKey selects a self-hosted Nango; the key alone uses Nango's hosted API. NANGO_HOST without the key makes the server throw at startup, so the chart refuses to render it. RELAYCHIEF_CONTROL_BROWSER_ORIGINS is a comma-separated list of http(s) origins allowed through the CSRF check.
+    chart: relaychief-control
+    values: [config.nangoHost, config.browserOrigins]
+    env: [NANGO_HOST, NANGO_SECRET_KEY, RELAYCHIEF_CONTROL_BROWSER_ORIGINS]
+    profiles: [relaychief-control]
+    status: shipped
+    provided_by: operator
+    default: unset
+    choices:
+      - { value: unset }
+      - { value: hosted }
+      - { value: self-hosted }
+    verify: helm template fails with "requires secretKeys.nangoSecretKey" when config.nangoHost is set without the key
+    sources:
+      - "charts/relaychief-control/values.yaml"
+      - "charts/relaychief-control/templates/_helpers.tpl"
+
+  - id: opt.relaychief-control.exposure
+    kind: option
+    title: Relay Chief control Ingress and NetworkPolicy
+    description: The Ingress is off by default and routes only /chief/v1 (Prefix) when on. ingress.extraPaths can add the tenant routes under /api/v1; a / rule is refused. networkPolicy.ingressFrom must admit the load balancer (an ALB in IP target mode connects from its subnets, as ipBlock peers), and networkPolicy.additionalEgress must admit the database unless allowAllEgress is true.
+    chart: relaychief-control
+    values: ["ingress.*", "networkPolicy.*"]
+    profiles: [relaychief-control]
+    status: shipped
+    provided_by: operator
+    default: disabled
+    choices:
+      - { value: disabled }
+      - { value: enabled }
+    verify: kubectl get ingress shows only the /chief/v1 path unless ingress.extraPaths adds more, and the load balancer's targets report healthy
+    sources:
+      - "charts/relaychief-control/templates/ingress.yaml"
+      - "charts/relaychief-control/templates/networkpolicy.yaml"
+
+  - id: opt.relaychief-control.image-pull-secrets
+    kind: option
+    title: Relay Chief control image pull Secrets
+    description: Pull Secrets for a private registry or customer mirror.
+    chart: relaychief-control
+    values: [imagePullSecrets]
+    profiles: [relaychief-control]
+    status: shipped
+    provided_by: operator
+    default: none
+    choices:
+      - { value: none }
+      - { value: listed }
+    verify: the Deployment and migrate Job pull their image without ImagePullBackOff
+    sources:
+      - "charts/relaychief-control/values.yaml"
+      - "charts/relaychief-control/templates/deployment.yaml"
 
   - id: opt.sessions-native-ingest-admission
     kind: option

@@ -14,7 +14,7 @@ registered, every shipped entry must exist in the charts, planned entries must
 not be referenced by any template, and the compatibility matrix must equal
 the pinned digests.
 
-Source of truth: [`self-hosted/requirements.yaml`](../self-hosted/requirements.yaml). 117 entries: 45 requirements (44 shipped, 1 planned), 72 options (70 shipped, 2 planned).
+Source of truth: [`self-hosted/requirements.yaml`](../self-hosted/requirements.yaml). 123 entries: 48 requirements (47 shipped, 1 planned), 75 options (73 shipped, 2 planned).
 
 ## Contents
 
@@ -37,8 +37,10 @@ Source of truth: [`self-hosted/requirements.yaml`](../self-hosted/requirements.y
   - [relayfile](#profile-relayfile)
   - [relayflows](#profile-relayflows)
   - [relay-chief](#profile-relay-chief)
+  - [relaychief-control](#profile-relaychief-control)
   - [durable-actors](#profile-durable-actors)
   - [relaycast-durable-actors](#profile-relaycast-durable-actors)
+  - [relaycast-postgres](#profile-relaycast-postgres)
   - [relayfile-durable-actors](#profile-relayfile-durable-actors)
   - [agent-relay-durable-actors](#profile-agent-relay-durable-actors)
   - [agent-relay-eks-durable-actors](#profile-agent-relay-eks-durable-actors)
@@ -60,7 +62,7 @@ Services image (sessions-pipeline-worker, alleyoop and the privileged SQL Jobs):
 | telemetry-collector-0.1.0 | shipped | telemetry-collector 0.1.0 |  |  |  | Default-off umbrella analytics file collector. Requires accepted immutable collector and TLS-proxy images, producer and TLS Secrets and an exclusive persistent volume. Source rendering does not prove image entrypoint, TLS, durable acknowledgement, power-loss recovery or whole-application analytics coverage. The currently reviewed collector CLI registers relaycontrol events only. |
 | session-read-api-0.2.1 | unreleased | session-read-api 0.2.1 | session-read-api: `ghcr.io/agentworkforce/96bulls-services@sha256:<required>` |  |  | Defaults READ_API_COMPLETE_SINCE to epoch for a new self-host store populated only by its own ingest. Partial legacy imports must retain an explicit real coverage floor matching the indexer. Image, auth, routing and enabled defaults are unchanged; this does not assert coverage for an imported store or qualify a runtime. |
 | sessions-pipeline-0.8.2 | unreleased | sessions-pipeline 0.8.2<br>sessions-pipeline-worker 0.7.2<br>session-ingest-api 0.4.1<br>session-read-api 0.2.1<br>(deps: worker 0.7.2, alleyoop 0.4.1, sessionReadApi 0.2.1, hoopdb 0.9.0, session-object-storage 5.4.0, otel 0.178.0) | sessions-pipeline-worker: `agentworkforce/96bulls-services@sha256:6f22ea17dff3…`<br>session-ingest-api: `agentworkforce/96bulls-services@sha256:6f22ea17dff3…`<br>session-read-api: `ghcr.io/agentworkforce/96bulls-services@sha256:<required>`<br>session-read-api self_issued and events.messageIds need at least ghcr.io/agentworkforce/96bulls-services@sha256:d55840ab4bf4e2fea3769db690f3c8d32979ab455ef251172f914ac011cb8c33 (pipeline eebaced9). Native ingest edge (SERVICE=session-ingest): unqualified; an explicit qualified combined-image digest is required. Pins above belong to the existing internal worker/ingest services, not ingestEdge. | `7d7229bb31c1` / `eff8b3be4656` | selfhosted + global-default-revoke (cnpg)<br>selfhosted + global-default-revoke (external)<br>rds + global-default-revoke (external)<br>cloudsql + global-default-revoke (external)<br>supabase + event-trigger (external) (held)<br>supabase + (unset) (external) (fails closed)<br>local + (unset) (any) (dev only) | Adds explicit sync/async/drain ingest admission from merged pipeline #398/f0860b2e. Sync remains the default and no profile enables the native edge. Reader 0.2.1 defaults new-store coverage to epoch with a partial-import override. A qualified combined-image digest and separate runtime acceptance are required. |
-| sessions-pipeline-0.8.1 | **planned** | sessions-pipeline 0.8.1<br>sessions-pipeline-worker 0.7.2<br>session-ingest-api 0.4.1<br>session-read-api 0.2.0<br>(deps: worker 0.7.2, alleyoop 0.4.1, sessionReadApi 0.2.0, hoopdb 0.9.0, session-object-storage 5.4.0, otel 0.178.0) | sessions-pipeline-worker: `agentworkforce/96bulls-services@sha256:6f22ea17dff3…`<br>session-ingest-api: `agentworkforce/96bulls-services@sha256:6f22ea17dff3…`<br>session-read-api: `ghcr.io/agentworkforce/96bulls-services@sha256:<required>`<br>session-read-api self_issued and events.messageIds need at least ghcr.io/agentworkforce/96bulls-services@sha256:d55840ab4bf4e2fea3769db690f3c8d32979ab455ef251172f914ac011cb8c33 (pipeline eebaced9). Native ingest edge (SERVICE=session-ingest): unqualified; an explicit qualified combined-image digest is required. Pins above belong to the existing internal worker/ingest services, not ingestEdge. | `7d7229bb31c1` / `eff8b3be4656` | selfhosted + global-default-revoke (cnpg)<br>selfhosted + global-default-revoke (external)<br>rds + global-default-revoke (external)<br>cloudsql + global-default-revoke (external)<br>supabase + event-trigger (external) (held)<br>supabase + (unset) (external) (fails closed)<br>local + (unset) (any) (dev only) | Never released; superseded by sessions-pipeline-0.8.2. Allows sessionReadApi.auth.mode=self_issued with a /v1-only ingress and a NetworkPolicy that names Control, and adds the default-off events.messageIds value. Default auth stays relaycontrol_only. |
+| sessions-pipeline-0.8.1 | **planned** | sessions-pipeline 0.8.1<br>sessions-pipeline-worker 0.7.2<br>session-ingest-api 0.4.1<br>session-read-api 0.2.0<br>(deps: worker 0.7.2, alleyoop 0.4.1, sessionReadApi 0.2.0, hoopdb 0.9.0, session-object-storage 5.4.0, otel 0.178.0) | sessions-pipeline-worker: `agentworkforce/96bulls-services@sha256:6f22ea17dff3…`<br>session-ingest-api: `agentworkforce/96bulls-services@sha256:6f22ea17dff3…`<br>session-read-api: `ghcr.io/agentworkforce/96bulls-services@sha256:<required>`<br>session-read-api self_issued and events.messageIds need at least ghcr.io/agentworkforce/96bulls-services@sha256:d55840ab4bf4e2fea3769db690f3c8d32979ab455ef251172f914ac011cb8c33 (pipeline eebaced9). Native ingest edge (SERVICE=session-ingest): unqualified; an explicit qualified combined-image digest is required. Pins above belong to the existing internal worker/ingest services, not ingestEdge. | `7d7229bb31c1` / `eff8b3be4656` | selfhosted + global-default-revoke (cnpg)<br>selfhosted + global-default-revoke (external)<br>rds + global-default-revoke (external)<br>cloudsql + global-default-revoke (external)<br>supabase + event-trigger (external) (held)<br>supabase + (unset) (external) (fails closed)<br>local + (unset) (any) (dev only) | Allows sessionReadApi.auth.mode=self_issued with a /v1-only ingress and a NetworkPolicy that names Control, and adds the default-off events.messageIds value. Default auth stays relaycontrol_only. |
 | sessions-pipeline-0.8.0 | shipped | sessions-pipeline 0.8.0<br>sessions-pipeline-worker 0.7.2<br>session-ingest-api 0.4.1<br>session-read-api 0.1.0<br>(deps: worker 0.7.2, alleyoop 0.4.1, sessionReadApi 0.1.0, hoopdb 0.9.0, session-object-storage 5.4.0, otel 0.178.0) | sessions-pipeline-worker: `agentworkforce/96bulls-services@sha256:6f22ea17dff3…`<br>session-ingest-api: `agentworkforce/96bulls-services@sha256:6f22ea17dff3…`<br>Native ingest edge (SERVICE=session-ingest): unqualified; an explicit qualified combined-image digest is required. Pins above belong to the existing internal worker/ingest services, not ingestEdge. | `7d7229bb31c1` / `eff8b3be4656` | selfhosted + global-default-revoke (cnpg)<br>selfhosted + global-default-revoke (external)<br>rds + global-default-revoke (external)<br>cloudsql + global-default-revoke (external)<br>supabase + event-trigger (external) (held)<br>supabase + (unset) (external) (fails closed)<br>local + (unset) (any) (dev only) | Moves the session read API to the standalone session-read-api chart, carried as a default-off dependency under sessionReadApi. The old readApi key refuses to render with a migration message. Default auth is relaycontrol_only. |
 | sessions-pipeline-0.7.6 | **planned** | sessions-pipeline 0.7.6<br>sessions-pipeline-worker 0.7.2<br>session-ingest-api 0.4.1<br>(deps: worker 0.7.2, alleyoop 0.4.1, hoopdb 0.9.0, session-object-storage 5.4.0, otel 0.178.0) | sessions-pipeline-worker: `agentworkforce/96bulls-services@sha256:6f22ea17dff3…`<br>session-ingest-api: `agentworkforce/96bulls-services@sha256:6f22ea17dff3…`<br>Native ingest edge (SERVICE=session-ingest): unqualified; an explicit qualified combined-image digest is required. Pins above belong to the existing internal worker/ingest services, not ingestEdge. | `7d7229bb31c1` / `eff8b3be4656` | selfhosted + global-default-revoke (cnpg)<br>selfhosted + global-default-revoke (external)<br>rds + global-default-revoke (external)<br>cloudsql + global-default-revoke (external)<br>supabase + event-trigger (external) (held)<br>supabase + (unset) (external) (fails closed)<br>local + (unset) (any) (dev only) | Adds the default-off searchIndexer block (pipeline session-pipeline-consumer, OpenSearch by default). With it off, every render differs only in the helm.sh/chart labels. |
 | sessions-pipeline-0.7.5 | shipped | sessions-pipeline 0.7.5<br>sessions-pipeline-worker 0.7.2<br>session-ingest-api 0.4.1<br>(deps: worker 0.7.2, alleyoop 0.4.1, hoopdb 0.9.0, session-object-storage 5.4.0, otel 0.178.0) | sessions-pipeline-worker: `agentworkforce/96bulls-services@sha256:6f22ea17dff3…`<br>session-ingest-api: `agentworkforce/96bulls-services@sha256:6f22ea17dff3…`<br>Native ingest edge (SERVICE=session-ingest): unqualified; an explicit qualified combined-image digest is required. Pins above belong to the existing internal worker/ingest services, not ingestEdge. | `7d7229bb31c1` / `eff8b3be4656` | selfhosted + global-default-revoke (cnpg)<br>selfhosted + global-default-revoke (external)<br>rds + global-default-revoke (external)<br>cloudsql + global-default-revoke (external)<br>supabase + event-trigger (external) (held)<br>supabase + (unset) (external) (fails closed)<br>local + (unset) (any) (dev only) | Adds default-off postgresCa so Node workloads and migrate Jobs can verify the Postgres server certificate (NODE_EXTRA_CA_CERTS); with it unset every sessions-pipeline render differs only in the helm.sh/chart labels. The relayhistory checksum/config annotation also changes under agent-relay, which rolls those pods on upgrade (see the agent-relay 0.5.3 row). Adds the default-off native edge from merged pipeline #363; no compatible image or runtime acceptance is supplied. Adds Secret-only read API credentials and a true default-off regression. Normal composition with main bfcf6050 retains the descriptive session names and upgrade/IAM guards. Adds a default-off read API Deployment and ClusterIP Service with explicit compatible image/config requirements and enabled-state readiness. Worker and ingest images, migration generation and roles are unchanged. Pipeline PRs 317/318 are merged; their container/routes source does not establish the approved Postgres/canonical/auth assembly; no read API deployment or runtime proof is claimed. |
@@ -72,7 +74,8 @@ Services image (sessions-pipeline-worker, alleyoop and the privileged SQL Jobs):
 | 96bulls-0.5.2 | shipped | 96bulls 0.5.2<br>96bulls-worker 0.5.2<br>alleyoop 0.3.4<br>(deps: worker 0.5.2, alleyoop 0.3.4, hoopdb 0.9.0, locker 5.4.0, otel 0.178.0) | 96bulls-worker: `agentworkforce/96bulls-services@sha256:6f22ea17dff3…`<br>alleyoop: `agentworkforce/96bulls-services@sha256:6f22ea17dff3…` | `7d7229bb31c1` / `eff8b3be4656` | selfhosted + global-default-revoke (cnpg)<br>selfhosted + global-default-revoke (external)<br>cloudsql + global-default-revoke (external)<br>supabase + event-trigger (external) (held)<br>supabase + (unset) (external) (fails closed)<br>local + (unset) (any) (dev only) | License-annotation patch bump of 0.5.1; same services image and db combos. Superseded by 0.5.4. |
 | 96bulls-0.5.1 | shipped | 96bulls 0.5.1<br>96bulls-worker 0.5.1<br>alleyoop 0.3.3<br>(deps: worker 0.5.1, alleyoop 0.3.3, hoopdb 0.9.0, locker 5.4.0, otel 0.178.0) | 96bulls-worker: `agentworkforce/96bulls-services@sha256:6f22ea17dff3…`<br>alleyoop: `agentworkforce/96bulls-services@sha256:6f22ea17dff3…` | `7d7229bb31c1` / `eff8b3be4656` | selfhosted + global-default-revoke (cnpg)<br>selfhosted + global-default-revoke (external)<br>cloudsql + global-default-revoke (external)<br>supabase + event-trigger (external) (held)<br>supabase + (unset) (external) (fails closed)<br>local + (unset) (any) (dev only) | sessions-pipeline main 7d7229b (#124 session list RPC, #125 Supabase event-trigger boundary, #139 its manifest sync, #137 exact sessions function ACL). The AWS path pins the ECR digest of the same build. Superseded by 0.5.2. |
 | sessions-pipeline-next | **planned** | sessions-pipeline next | not built for the charts yet | `475d503216a2` / `5ed119133e36` |  | Follow-up re-pin to sessions-pipeline main after #127 (session briefs, generation 5ed11913...). Needs new GHCR/ECR digests, ci/sessions-pipeline-search-worker-role/services-commit and services-generation, and the session-brief entries below shipped. |
-| relaycast-0.3.5 | unreleased | relaycast 0.3.5 | relaycast: `ghcr.io/agentworkforce/relaycast-self-host@sha256:81274dca7ab5…` |  |  | Repository rename to AgentWorkforce/infra: canonical source and Helm repository URLs, with matching local dependency patch versions. Runtime images, application source, migration generation and deployment values are unchanged. This release has no new live application proof. |
+| relaycast-0.3.6 | unreleased | relaycast 0.3.6 | relaycast: `ghcr.io/agentworkforce/relaycast-self-host@sha256:81274dca7ab5…` |  |  | Adds default-off runtime.backend=postgres (image relaycast-self-host 12.8.0-pg.1, sha256:84f59482cb82f3c50d38f45cfca7d004cffaa95652782dbfc93c179cc343ac59, pinned in runtime.postgres.image), a hash-named migration Job and postgresCa. sqlite and durable-actors renders differ only in the helm.sh/chart label. |
+| relaycast-0.3.5 | shipped | relaycast 0.3.5 | relaycast: `ghcr.io/agentworkforce/relaycast-self-host@sha256:81274dca7ab5…` |  |  | Repository rename to AgentWorkforce/infra: canonical source and Helm repository URLs, with matching local dependency patch versions. Runtime images, application source, migration generation and deployment values are unchanged. This release has no new live application proof. |
 | relaycast-0.3.4 | shipped | relaycast 0.3.4 | relaycast: `ghcr.io/agentworkforce/relaycast-self-host@sha256:81274dca7ab5…` |  |  | runtime.durableActors.deployer.artifactStore (driver gcs \| s3, s3.region/endpoint/forcePathStyle): the deploy Job uploads bundles to S3 for a durable-actors control plane on S3 (needs a relaycast-actors-deployer image from relaycast #626 or later). Default render unchanged apart from the helm.sh/chart label. Same default image as 0.3.3. |
 | relaycast-0.3.3 | shipped | relaycast 0.3.3 | relaycast: `ghcr.io/agentworkforce/relaycast-self-host@sha256:81274dca7ab5…` |  |  | Comment and README fix of 0.3.2: the pinned default (engine 12.7.0) already satisfies the >=12.3.x requirement for ar_ custody, so the credentials guidance no longer asks for an image.digest override. Same default image as 0.3.2. |
 | relaycast-0.3.2 | shipped | relaycast 0.3.2 | relaycast: `ghcr.io/agentworkforce/relaycast-self-host@sha256:81274dca7ab5…` |  |  | Default image moves to relaycast-self-host 12.7.0 (relaycast main bf713d86, engine 12.7.0), built by the reviewed publish-container workflow with an SPDX SBOM, max-mode provenance and a GitHub build-provenance attestation (run 41717074565); public, amd64+arm64. Superseded by 0.3.3. |
@@ -85,8 +88,9 @@ Services image (sessions-pipeline-worker, alleyoop and the privileged SQL Jobs):
 | relayauth-0.1.2 | shipped | relayauth 0.1.2 | relayauth: `ghcr.io/agentworkforce/relayauth@sha256:c23c92d25fdf…` |  |  | License-annotation patch bump of 0.1.1. Superseded by 0.1.3. |
 | relayauth-0.1.1 | shipped | relayauth 0.1.1 | relayauth: `ghcr.io/agentworkforce/relayauth@sha256:c23c92d25fdf…` |  |  | relayauth 784582ef (machine-bound History assertion contract, relayauth #113). Superseded by 0.1.2. |
 | relayauth-0.1.0 | shipped | relayauth 0.1.0 | relayauth: `ghcr.io/agentworkforce/relayauth@sha256:eb71daa28e30…` |  |  | superseded by 0.1.1. |
-| agent-relay-0.6.3 | unreleased | agent-relay 0.6.3<br>relayhistory 0.1.2<br>relay-control 0.4.0<br>relay-webapp 0.2.0<br>(deps: relaycast 0.3.5, relayauth 0.1.4, sessions-pipeline 0.8.2, relayhistory 0.1.2, relay-control 0.4.0, relay-webapp 0.2.0, relayflows 0.2.5, durable-actors 0.14.6-awf.1, relayfile 0.2.2, telemetry-collector 0.1.1, relay-chief 0.1.0) | relayhistory: `ghcr.io/agentworkforce/relayhistory@sha256:<required>`<br>relay-control: `ghcr.io/agentworkforce/relay-control@sha256:d8c26d44dccb…`<br>relay-webapp: `ghcr.io/agentworkforce/relay-webapp@sha256:<required>` |  |  | Takes sessions-pipeline 0.8.2 with opt-in async admission from merged pipeline #398/f0860b2e. Existing standalone reader, image settings and profile defaults are retained; no enablement or runtime qualification is supplied. |
-| agent-relay-0.6.2 | **planned** | agent-relay 0.6.2<br>relayhistory 0.1.2<br>relay-control 0.4.0<br>relay-webapp 0.2.0<br>(deps: relaycast 0.3.5, relayauth 0.1.4, sessions-pipeline 0.8.1, relayhistory 0.1.2, relay-control 0.4.0, relay-webapp 0.2.0, relayflows 0.2.5, durable-actors 0.14.6-awf.1, relayfile 0.2.2, telemetry-collector 0.1.1, relay-chief 0.1.0) | relayhistory: `ghcr.io/agentworkforce/relayhistory@sha256:<required>`<br>relay-control: `ghcr.io/agentworkforce/relay-control@sha256:d8c26d44dccb…`<br>relay-webapp: `ghcr.io/agentworkforce/relay-webapp@sha256:<required>` |  |  | Never released; superseded by agent-relay-0.6.3. Takes sessions-pipeline 0.8.1, which allows the default-off self_issued read API mode. |
+| agent-relay-0.6.4 | unreleased | agent-relay 0.6.4<br>relayhistory 0.1.2<br>relay-control 0.4.0<br>relay-webapp 0.2.0<br>(deps: relaycast 0.3.6, relayauth 0.1.4, sessions-pipeline 0.8.2, relayhistory 0.1.2, relay-control 0.4.0, relay-webapp 0.2.0, relayflows 0.2.5, durable-actors 0.14.6-awf.1, relayfile 0.2.2, telemetry-collector 0.1.1, relay-chief 0.1.0) | relayhistory: `ghcr.io/agentworkforce/relayhistory@sha256:<required>`<br>relay-control: `ghcr.io/agentworkforce/relay-control@sha256:d8c26d44dccb…`<br>relay-webapp: `ghcr.io/agentworkforce/relay-webapp@sha256:<required>` |  |  | Takes sessions-pipeline 0.8.2 with opt-in async admission and reader 0.2.1 inception coverage for new own-ingest stores, retaining explicit partial-import floors. Preserves current Relaycast and RelayChief Control dependencies. Defaults remain disabled; no image qualification or rollout is supplied. |
+| agent-relay-0.6.3 | **planned** | agent-relay 0.6.3<br>relayhistory 0.1.2<br>relay-control 0.4.0<br>relay-webapp 0.2.0<br>(deps: relaycast 0.3.6, relayauth 0.1.4, sessions-pipeline 0.8.1, relayhistory 0.1.2, relay-control 0.4.0, relay-webapp 0.2.0, relayflows 0.2.5, durable-actors 0.14.6-awf.1, relayfile 0.2.2, telemetry-collector 0.1.1, relay-chief 0.1.0) | relayhistory: `ghcr.io/agentworkforce/relayhistory@sha256:<required>`<br>relay-control: `ghcr.io/agentworkforce/relay-control@sha256:d8c26d44dccb…`<br>relay-webapp: `ghcr.io/agentworkforce/relay-webapp@sha256:<required>` |  |  | Takes relaycast 0.3.6 (default-off runtime.backend=postgres). With it off, every render differs only in the helm.sh/chart labels. |
+| agent-relay-0.6.2 | **planned** | agent-relay 0.6.2<br>relayhistory 0.1.2<br>relay-control 0.4.0<br>relay-webapp 0.2.0<br>(deps: relaycast 0.3.5, relayauth 0.1.4, sessions-pipeline 0.8.1, relayhistory 0.1.2, relay-control 0.4.0, relay-webapp 0.2.0, relayflows 0.2.5, durable-actors 0.14.6-awf.1, relayfile 0.2.2, telemetry-collector 0.1.1, relay-chief 0.1.0) | relayhistory: `ghcr.io/agentworkforce/relayhistory@sha256:<required>`<br>relay-control: `ghcr.io/agentworkforce/relay-control@sha256:d8c26d44dccb…`<br>relay-webapp: `ghcr.io/agentworkforce/relay-webapp@sha256:<required>` |  |  | Takes sessions-pipeline 0.8.1, which allows the default-off self_issued read API mode. |
 | agent-relay-0.6.1 | **planned** | agent-relay 0.6.1<br>relayhistory 0.1.2<br>relay-control 0.4.0<br>relay-webapp 0.2.0<br>(deps: relaycast 0.3.5, relayauth 0.1.4, sessions-pipeline 0.8.0, relayhistory 0.1.2, relay-control 0.4.0, relay-webapp 0.2.0, relayflows 0.2.5, durable-actors 0.14.6-awf.1, relayfile 0.2.2, telemetry-collector 0.1.1, relay-chief 0.1.0) | relayhistory: `ghcr.io/agentworkforce/relayhistory@sha256:<required>`<br>relay-control: `ghcr.io/agentworkforce/relay-control@sha256:d8c26d44dccb…`<br>relay-webapp: `ghcr.io/agentworkforce/relay-webapp@sha256:<required>` |  |  | Moves Control to ghcr.io/agentworkforce/relay-control 0.5.0 and the relay-control package paths; older pins need server.args and migrations.args. Adds default-off session read handoff and introspection values. The handoff needs Control 0.5.1, not yet published. |
 | agent-relay-0.6.0 | **planned** | agent-relay 0.6.0<br>relayhistory 0.1.2<br>relay-control 0.3.1<br>relay-webapp 0.2.0<br>(deps: relaycast 0.3.5, relayauth 0.1.4, sessions-pipeline 0.8.0, relayhistory 0.1.2, relay-control 0.3.1, relay-webapp 0.2.0, relayflows 0.2.5, durable-actors 0.14.6-awf.1, relayfile 0.2.2, telemetry-collector 0.1.0, relay-chief 0.1.0) | relayhistory: `ghcr.io/agentworkforce/relayhistory@sha256:<required>`<br>relay-control: `<required repository>@sha256:<required>`<br>relay-webapp: `ghcr.io/agentworkforce/relay-webapp@sha256:<required>` |  |  | Takes sessions-pipeline 0.8.0, which moves the session read API to its own chart under sessionReadApi. |
 | agent-relay-0.5.5 | **planned** | agent-relay 0.5.5<br>relayhistory 0.1.2<br>relay-control 0.3.1<br>relay-webapp 0.2.0<br>(deps: relaycast 0.3.5, relayauth 0.1.4, sessions-pipeline 0.7.6, relayhistory 0.1.2, relay-control 0.3.1, relay-webapp 0.2.0, relayflows 0.2.5, durable-actors 0.14.6-awf.1, relayfile 0.2.2, telemetry-collector 0.1.0, relay-chief 0.1.0) | relayhistory: `ghcr.io/agentworkforce/relayhistory@sha256:<required>`<br>relay-control: `<required repository>@sha256:<required>`<br>relay-webapp: `ghcr.io/agentworkforce/relay-webapp@sha256:<required>` |  |  | Takes sessions-pipeline 0.7.6 (default-off searchIndexer). With it off, every render differs only in the helm.sh/chart labels. |
@@ -107,6 +111,7 @@ Services image (sessions-pipeline-worker, alleyoop and the privileged SQL Jobs):
 | durable-actors-0.14.6-awf.1 | unreleased | durable-actors 0.14.6-awf.1 |  |  |  | The vendored v0.14.6 chart plus UPSTREAM.md patch 10 (AWS: storage.provider s3, storage.s3.{region,actorCredentials,actorRoleArn,endpoint,forcePathStyle}, serviceAccount.annotations, sandbox.{runtimeClassName,nodeSelector,tolerations}, AWS availability zones in placement.zone) and patch 11 (the -awf.1 version suffix). The S3 values need a control-plane image from the AgentWorkforce durable-actors fork (selfhost/aws-s3, GHCR durable-actors-control-plane); upstream 0.14.6 images ignore them. GCS defaults render as the upstream chart apart from the helm.sh/chart label. Supersedes the never-released 0.14.6 row: Vendored TerseAI/durable-actors release chart v0.14.6 (tag commit 5f0a2d62, asset sha256 a489cd15...bee) with the local patches listed in charts/durable-actors/UPSTREAM.md (root global, invoke-only key, host idle timeout, pool-manager name length, zero-valued bounds, lowercase ingress host, schema patterns, README links). Never published by this repo; images pinned by upstream digest (charts/durable-actors/UPSTREAM.md). |
 | relayfile-0.1.1 | shipped | relayfile 0.1.1 | relayfile: `ghcr.io/agentworkforce/relayfile:0.1.0` |  |  | image by tag (Chart.appVersion), not digest. Superseded by 0.2.0. |
 | relay-chief-0.1.0 | unreleased | relay-chief 0.1.0 |  |  |  | First chart, rendered only. No Relay Chief image is published and the digest is operator-supplied until one exists. |
+| relaychief-control-0.1.0 | unreleased | relaychief-control 0.1.0 | relaychief-control: `ghcr.io/agentworkforce/relaychief-control@sha256:ddd4129f062c…` |  |  | First chart, rendered only. Defaults to the published relaychief-control 0.1.0 image. |
 | relayflows-0.2.5 | unreleased | relayflows 0.2.5 | relayflows: `node:22.23.3-bookworm-slim` |  |  | Repository rename to AgentWorkforce/infra: canonical source and Helm repository URLs, with matching local dependency patch versions. Runtime images, application source, migration generation and deployment values are unchanged. This release has no new live application proof. |
 | relayflows-0.2.4 | shipped | relayflows 0.2.4 | relayflows: `node:22.23.3-bookworm-slim` |  |  | License-annotation patch bump of 0.2.3; the stock image installs the pinned relayflows runtime at start. |
 | relayflows-0.2.3 | shipped | relayflows 0.2.3 | relayflows: `node:22.23.3-bookworm-slim` |  |  | the stock image installs the pinned relayflows runtime at start; production uses an immutable flow image. Superseded by 0.2.4. |
@@ -168,7 +173,7 @@ chart `sessions-pipeline` · values [`profiles/selfhost-postgres.yaml`](../chart
 | --- | --- | --- | --- | --- |
 | shipped | [alleyoop token verification source](#opt-alleyoop-auth-mode) | `jwksUrl`, `localJwks` | `jwksUrl` | values `alleyoop.auth.jwksUrl`, `alleyoop.auth.localJwks`, `alleyoop.auth.issuer`, `alleyoop.auth.audience`, `alleyoop.secretKeys.jwksJson`; env `RELAYAUTH_JWKS_URL`, `JWKS_JSON`, `AUTH_ISSUER`, `AUTH_AUDIENCE`; Secret `<existingSecret>` keys `JWKS_JSON` (only with auth.localJwks=true) |
 | shipped | [Plain http to in-cluster Service FQDNs](#opt-sessions-pipeline-in-cluster-http) | `false`, `true` | `false` | values `alleyoop.allowInClusterHttp`, `worker.allowInClusterHttp`; env `ALLOW_IN_CLUSTER_HTTP` |
-| shipped | [CA bundle for verifying the Postgres server certificate (postgresCa)](#opt-postgres-ca-bundle) | `false`, `true` | `false` | values `worker.postgresCa.*`, `alleyoop.postgresCa.*`, `relay-control:postgresCa.*`, `relayhistory:postgresCa.*`; env `NODE_EXTRA_CA_CERTS`, `PGSSLROOTCERT` |
+| shipped | [CA bundle for verifying the Postgres server certificate (postgresCa)](#opt-postgres-ca-bundle) | `false`, `true` | `false` | values `worker.postgresCa.*`, `alleyoop.postgresCa.*`, `relay-control:postgresCa.*`, `relayhistory:postgresCa.*`, `relaychief-control:postgresCa.*`; env `NODE_EXTRA_CA_CERTS`, `PGSSLROOTCERT` |
 | shipped | [RelayHistory origin expected by the ingest](#opt-alleyoop-history-origin) | `unset`, `origin` | `unset` | values `alleyoop.auth.historyOrigin`; env `RELAYHISTORY_ORIGIN` |
 | shipped | [Interim RelayAuth bearer compatibility (local only)](#opt-alleyoop-interim-relayauth-bearer) | `false`, `true` | `false` | values `alleyoop.auth.allowInterimRelayAuthBearer`; env `ALLOW_INTERIM_RELAYAUTH_BEARER` |
 | shipped | [HoopDb backend](#opt-sessions-pipeline-hoopdb-backend) | `cnpg`, `external` | `cnpg` | values `hoopdb.enabled` |
@@ -229,7 +234,7 @@ chart `sessions-pipeline` · values [`profiles/migration.yaml`](../charts/sessio
 | --- | --- | --- | --- | --- |
 | shipped | [alleyoop token verification source](#opt-alleyoop-auth-mode) | `jwksUrl`, `localJwks` | `jwksUrl` | values `alleyoop.auth.jwksUrl`, `alleyoop.auth.localJwks`, `alleyoop.auth.issuer`, `alleyoop.auth.audience`, `alleyoop.secretKeys.jwksJson`; env `RELAYAUTH_JWKS_URL`, `JWKS_JSON`, `AUTH_ISSUER`, `AUTH_AUDIENCE`; Secret `<existingSecret>` keys `JWKS_JSON` (only with auth.localJwks=true) |
 | shipped | [Plain http to in-cluster Service FQDNs](#opt-sessions-pipeline-in-cluster-http) | `false`, `true` | `false` | values `alleyoop.allowInClusterHttp`, `worker.allowInClusterHttp`; env `ALLOW_IN_CLUSTER_HTTP` |
-| shipped | [CA bundle for verifying the Postgres server certificate (postgresCa)](#opt-postgres-ca-bundle) | `false`, `true` | `false` | values `worker.postgresCa.*`, `alleyoop.postgresCa.*`, `relay-control:postgresCa.*`, `relayhistory:postgresCa.*`; env `NODE_EXTRA_CA_CERTS`, `PGSSLROOTCERT` |
+| shipped | [CA bundle for verifying the Postgres server certificate (postgresCa)](#opt-postgres-ca-bundle) | `false`, `true` | `false` | values `worker.postgresCa.*`, `alleyoop.postgresCa.*`, `relay-control:postgresCa.*`, `relayhistory:postgresCa.*`, `relaychief-control:postgresCa.*`; env `NODE_EXTRA_CA_CERTS`, `PGSSLROOTCERT` |
 | shipped | [RelayHistory origin expected by the ingest](#opt-alleyoop-history-origin) | `unset`, `origin` | `unset` | values `alleyoop.auth.historyOrigin`; env `RELAYHISTORY_ORIGIN` |
 | shipped | [Interim RelayAuth bearer compatibility (local only)](#opt-alleyoop-interim-relayauth-bearer) | `false`, `true` | `false` | values `alleyoop.auth.allowInterimRelayAuthBearer`; env `ALLOW_INTERIM_RELAYAUTH_BEARER` |
 | shipped | [HoopDb backend](#opt-sessions-pipeline-hoopdb-backend) | `cnpg`, `external` | `cnpg` | values `hoopdb.enabled` |
@@ -287,7 +292,7 @@ chart `sessions-pipeline` · values [`profiles/external-selfhosted.yaml`](../cha
 | --- | --- | --- | --- | --- |
 | shipped | [alleyoop token verification source](#opt-alleyoop-auth-mode) | `jwksUrl`, `localJwks` | `jwksUrl` | values `alleyoop.auth.jwksUrl`, `alleyoop.auth.localJwks`, `alleyoop.auth.issuer`, `alleyoop.auth.audience`, `alleyoop.secretKeys.jwksJson`; env `RELAYAUTH_JWKS_URL`, `JWKS_JSON`, `AUTH_ISSUER`, `AUTH_AUDIENCE`; Secret `<existingSecret>` keys `JWKS_JSON` (only with auth.localJwks=true) |
 | shipped | [Plain http to in-cluster Service FQDNs](#opt-sessions-pipeline-in-cluster-http) | `false`, `true` | `false` | values `alleyoop.allowInClusterHttp`, `worker.allowInClusterHttp`; env `ALLOW_IN_CLUSTER_HTTP` |
-| shipped | [CA bundle for verifying the Postgres server certificate (postgresCa)](#opt-postgres-ca-bundle) | `false`, `true` | `false` | values `worker.postgresCa.*`, `alleyoop.postgresCa.*`, `relay-control:postgresCa.*`, `relayhistory:postgresCa.*`; env `NODE_EXTRA_CA_CERTS`, `PGSSLROOTCERT` |
+| shipped | [CA bundle for verifying the Postgres server certificate (postgresCa)](#opt-postgres-ca-bundle) | `false`, `true` | `false` | values `worker.postgresCa.*`, `alleyoop.postgresCa.*`, `relay-control:postgresCa.*`, `relayhistory:postgresCa.*`, `relaychief-control:postgresCa.*`; env `NODE_EXTRA_CA_CERTS`, `PGSSLROOTCERT` |
 | shipped | [RelayHistory origin expected by the ingest](#opt-alleyoop-history-origin) | `unset`, `origin` | `unset` | values `alleyoop.auth.historyOrigin`; env `RELAYHISTORY_ORIGIN` |
 | shipped | [Interim RelayAuth bearer compatibility (local only)](#opt-alleyoop-interim-relayauth-bearer) | `false`, `true` | `false` | values `alleyoop.auth.allowInterimRelayAuthBearer`; env `ALLOW_INTERIM_RELAYAUTH_BEARER` |
 | shipped | [HoopDb backend](#opt-sessions-pipeline-hoopdb-backend) | `cnpg`, `external` | `external` | values `hoopdb.enabled` |
@@ -346,7 +351,7 @@ chart `sessions-pipeline` · values [`profiles/external-rds.yaml`](../charts/ses
 | --- | --- | --- | --- | --- |
 | shipped | [alleyoop token verification source](#opt-alleyoop-auth-mode) | `jwksUrl`, `localJwks` | `jwksUrl` | values `alleyoop.auth.jwksUrl`, `alleyoop.auth.localJwks`, `alleyoop.auth.issuer`, `alleyoop.auth.audience`, `alleyoop.secretKeys.jwksJson`; env `RELAYAUTH_JWKS_URL`, `JWKS_JSON`, `AUTH_ISSUER`, `AUTH_AUDIENCE`; Secret `<existingSecret>` keys `JWKS_JSON` (only with auth.localJwks=true) |
 | shipped | [Plain http to in-cluster Service FQDNs](#opt-sessions-pipeline-in-cluster-http) | `false`, `true` | `false` | values `alleyoop.allowInClusterHttp`, `worker.allowInClusterHttp`; env `ALLOW_IN_CLUSTER_HTTP` |
-| shipped | [CA bundle for verifying the Postgres server certificate (postgresCa)](#opt-postgres-ca-bundle) | `false`, `true` | `false` | values `worker.postgresCa.*`, `alleyoop.postgresCa.*`, `relay-control:postgresCa.*`, `relayhistory:postgresCa.*`; env `NODE_EXTRA_CA_CERTS`, `PGSSLROOTCERT` |
+| shipped | [CA bundle for verifying the Postgres server certificate (postgresCa)](#opt-postgres-ca-bundle) | `false`, `true` | `false` | values `worker.postgresCa.*`, `alleyoop.postgresCa.*`, `relay-control:postgresCa.*`, `relayhistory:postgresCa.*`, `relaychief-control:postgresCa.*`; env `NODE_EXTRA_CA_CERTS`, `PGSSLROOTCERT` |
 | shipped | [RelayHistory origin expected by the ingest](#opt-alleyoop-history-origin) | `unset`, `origin` | `unset` | values `alleyoop.auth.historyOrigin`; env `RELAYHISTORY_ORIGIN` |
 | shipped | [Interim RelayAuth bearer compatibility (local only)](#opt-alleyoop-interim-relayauth-bearer) | `false`, `true` | `false` | values `alleyoop.auth.allowInterimRelayAuthBearer`; env `ALLOW_INTERIM_RELAYAUTH_BEARER` |
 | shipped | [HoopDb backend](#opt-sessions-pipeline-hoopdb-backend) | `cnpg`, `external` | `external` | values `hoopdb.enabled` |
@@ -401,7 +406,7 @@ chart `sessions-pipeline` · values [`profiles/external-supabase.yaml`](../chart
 | --- | --- | --- | --- | --- |
 | shipped | [alleyoop token verification source](#opt-alleyoop-auth-mode) | `jwksUrl`, `localJwks` | `jwksUrl` | values `alleyoop.auth.jwksUrl`, `alleyoop.auth.localJwks`, `alleyoop.auth.issuer`, `alleyoop.auth.audience`, `alleyoop.secretKeys.jwksJson`; env `RELAYAUTH_JWKS_URL`, `JWKS_JSON`, `AUTH_ISSUER`, `AUTH_AUDIENCE`; Secret `<existingSecret>` keys `JWKS_JSON` (only with auth.localJwks=true) |
 | shipped | [Plain http to in-cluster Service FQDNs](#opt-sessions-pipeline-in-cluster-http) | `false`, `true` | `false` | values `alleyoop.allowInClusterHttp`, `worker.allowInClusterHttp`; env `ALLOW_IN_CLUSTER_HTTP` |
-| shipped | [CA bundle for verifying the Postgres server certificate (postgresCa)](#opt-postgres-ca-bundle) | `false`, `true` | `false` | values `worker.postgresCa.*`, `alleyoop.postgresCa.*`, `relay-control:postgresCa.*`, `relayhistory:postgresCa.*`; env `NODE_EXTRA_CA_CERTS`, `PGSSLROOTCERT` |
+| shipped | [CA bundle for verifying the Postgres server certificate (postgresCa)](#opt-postgres-ca-bundle) | `false`, `true` | `false` | values `worker.postgresCa.*`, `alleyoop.postgresCa.*`, `relay-control:postgresCa.*`, `relayhistory:postgresCa.*`, `relaychief-control:postgresCa.*`; env `NODE_EXTRA_CA_CERTS`, `PGSSLROOTCERT` |
 | shipped | [RelayHistory origin expected by the ingest](#opt-alleyoop-history-origin) | `unset`, `origin` | `unset` | values `alleyoop.auth.historyOrigin`; env `RELAYHISTORY_ORIGIN` |
 | shipped | [Interim RelayAuth bearer compatibility (local only)](#opt-alleyoop-interim-relayauth-bearer) | `false`, `true` | `false` | values `alleyoop.auth.allowInterimRelayAuthBearer`; env `ALLOW_INTERIM_RELAYAUTH_BEARER` |
 | shipped | [HoopDb backend](#opt-sessions-pipeline-hoopdb-backend) | `cnpg`, `external` | `external` | values `hoopdb.enabled` |
@@ -462,7 +467,7 @@ chart `sessions-pipeline` · values [`ci/aws-cnpg-values.yaml`](../charts/sessio
 | --- | --- | --- | --- | --- |
 | shipped | [alleyoop token verification source](#opt-alleyoop-auth-mode) | `jwksUrl`, `localJwks` | `jwksUrl` | values `alleyoop.auth.jwksUrl`, `alleyoop.auth.localJwks`, `alleyoop.auth.issuer`, `alleyoop.auth.audience`, `alleyoop.secretKeys.jwksJson`; env `RELAYAUTH_JWKS_URL`, `JWKS_JSON`, `AUTH_ISSUER`, `AUTH_AUDIENCE`; Secret `<existingSecret>` keys `JWKS_JSON` (only with auth.localJwks=true) |
 | shipped | [Plain http to in-cluster Service FQDNs](#opt-sessions-pipeline-in-cluster-http) | `false`, `true` | `false` | values `alleyoop.allowInClusterHttp`, `worker.allowInClusterHttp`; env `ALLOW_IN_CLUSTER_HTTP` |
-| shipped | [CA bundle for verifying the Postgres server certificate (postgresCa)](#opt-postgres-ca-bundle) | `false`, `true` | `false` | values `worker.postgresCa.*`, `alleyoop.postgresCa.*`, `relay-control:postgresCa.*`, `relayhistory:postgresCa.*`; env `NODE_EXTRA_CA_CERTS`, `PGSSLROOTCERT` |
+| shipped | [CA bundle for verifying the Postgres server certificate (postgresCa)](#opt-postgres-ca-bundle) | `false`, `true` | `false` | values `worker.postgresCa.*`, `alleyoop.postgresCa.*`, `relay-control:postgresCa.*`, `relayhistory:postgresCa.*`, `relaychief-control:postgresCa.*`; env `NODE_EXTRA_CA_CERTS`, `PGSSLROOTCERT` |
 | shipped | [RelayHistory origin expected by the ingest](#opt-alleyoop-history-origin) | `unset`, `origin` | `unset` | values `alleyoop.auth.historyOrigin`; env `RELAYHISTORY_ORIGIN` |
 | shipped | [Interim RelayAuth bearer compatibility (local only)](#opt-alleyoop-interim-relayauth-bearer) | `false`, `true` | `false` | values `alleyoop.auth.allowInterimRelayAuthBearer`; env `ALLOW_INTERIM_RELAYAUTH_BEARER` |
 | shipped | [HoopDb backend](#opt-sessions-pipeline-hoopdb-backend) | `cnpg`, `external` | `cnpg` | values `hoopdb.enabled` |
@@ -519,7 +524,7 @@ chart `sessions-pipeline` · values [`ci/pod-identity-values.yaml`](../charts/se
 | --- | --- | --- | --- | --- |
 | shipped | [alleyoop token verification source](#opt-alleyoop-auth-mode) | `jwksUrl`, `localJwks` | `jwksUrl` | values `alleyoop.auth.jwksUrl`, `alleyoop.auth.localJwks`, `alleyoop.auth.issuer`, `alleyoop.auth.audience`, `alleyoop.secretKeys.jwksJson`; env `RELAYAUTH_JWKS_URL`, `JWKS_JSON`, `AUTH_ISSUER`, `AUTH_AUDIENCE`; Secret `<existingSecret>` keys `JWKS_JSON` (only with auth.localJwks=true) |
 | shipped | [Plain http to in-cluster Service FQDNs](#opt-sessions-pipeline-in-cluster-http) | `false`, `true` | `false` | values `alleyoop.allowInClusterHttp`, `worker.allowInClusterHttp`; env `ALLOW_IN_CLUSTER_HTTP` |
-| shipped | [CA bundle for verifying the Postgres server certificate (postgresCa)](#opt-postgres-ca-bundle) | `false`, `true` | `false` | values `worker.postgresCa.*`, `alleyoop.postgresCa.*`, `relay-control:postgresCa.*`, `relayhistory:postgresCa.*`; env `NODE_EXTRA_CA_CERTS`, `PGSSLROOTCERT` |
+| shipped | [CA bundle for verifying the Postgres server certificate (postgresCa)](#opt-postgres-ca-bundle) | `false`, `true` | `false` | values `worker.postgresCa.*`, `alleyoop.postgresCa.*`, `relay-control:postgresCa.*`, `relayhistory:postgresCa.*`, `relaychief-control:postgresCa.*`; env `NODE_EXTRA_CA_CERTS`, `PGSSLROOTCERT` |
 | shipped | [RelayHistory origin expected by the ingest](#opt-alleyoop-history-origin) | `unset`, `origin` | `unset` | values `alleyoop.auth.historyOrigin`; env `RELAYHISTORY_ORIGIN` |
 | shipped | [Interim RelayAuth bearer compatibility (local only)](#opt-alleyoop-interim-relayauth-bearer) | `false`, `true` | `false` | values `alleyoop.auth.allowInterimRelayAuthBearer`; env `ALLOW_INTERIM_RELAYAUTH_BEARER` |
 | shipped | [HoopDb backend](#opt-sessions-pipeline-hoopdb-backend) | `cnpg`, `external` | `external` | values `hoopdb.enabled` |
@@ -578,7 +583,7 @@ chart `sessions-pipeline` · values [`ci/gcp-cloudsql-values.yaml`](../charts/se
 | --- | --- | --- | --- | --- |
 | shipped | [alleyoop token verification source](#opt-alleyoop-auth-mode) | `jwksUrl`, `localJwks` | `jwksUrl` | values `alleyoop.auth.jwksUrl`, `alleyoop.auth.localJwks`, `alleyoop.auth.issuer`, `alleyoop.auth.audience`, `alleyoop.secretKeys.jwksJson`; env `RELAYAUTH_JWKS_URL`, `JWKS_JSON`, `AUTH_ISSUER`, `AUTH_AUDIENCE`; Secret `<existingSecret>` keys `JWKS_JSON` (only with auth.localJwks=true) |
 | shipped | [Plain http to in-cluster Service FQDNs](#opt-sessions-pipeline-in-cluster-http) | `false`, `true` | `false` | values `alleyoop.allowInClusterHttp`, `worker.allowInClusterHttp`; env `ALLOW_IN_CLUSTER_HTTP` |
-| shipped | [CA bundle for verifying the Postgres server certificate (postgresCa)](#opt-postgres-ca-bundle) | `false`, `true` | `false` | values `worker.postgresCa.*`, `alleyoop.postgresCa.*`, `relay-control:postgresCa.*`, `relayhistory:postgresCa.*`; env `NODE_EXTRA_CA_CERTS`, `PGSSLROOTCERT` |
+| shipped | [CA bundle for verifying the Postgres server certificate (postgresCa)](#opt-postgres-ca-bundle) | `false`, `true` | `false` | values `worker.postgresCa.*`, `alleyoop.postgresCa.*`, `relay-control:postgresCa.*`, `relayhistory:postgresCa.*`, `relaychief-control:postgresCa.*`; env `NODE_EXTRA_CA_CERTS`, `PGSSLROOTCERT` |
 | shipped | [RelayHistory origin expected by the ingest](#opt-alleyoop-history-origin) | `unset`, `origin` | `unset` | values `alleyoop.auth.historyOrigin`; env `RELAYHISTORY_ORIGIN` |
 | shipped | [Interim RelayAuth bearer compatibility (local only)](#opt-alleyoop-interim-relayauth-bearer) | `false`, `true` | `false` | values `alleyoop.auth.allowInterimRelayAuthBearer`; env `ALLOW_INTERIM_RELAYAUTH_BEARER` |
 | shipped | [HoopDb backend](#opt-sessions-pipeline-hoopdb-backend) | `cnpg`, `external` | `external` | values `hoopdb.enabled` |
@@ -674,7 +679,7 @@ chart `relayhistory` · values [`ci/default-values.yaml`](../charts/relayhistory
 
 | | option | choices | default here | maps to |
 | --- | --- | --- | --- | --- |
-| shipped | [CA bundle for verifying the Postgres server certificate (postgresCa)](#opt-postgres-ca-bundle) | `false`, `true` | `false` | values `worker.postgresCa.*`, `alleyoop.postgresCa.*`, `relay-control:postgresCa.*`, `relayhistory:postgresCa.*`; env `NODE_EXTRA_CA_CERTS`, `PGSSLROOTCERT` |
+| shipped | [CA bundle for verifying the Postgres server certificate (postgresCa)](#opt-postgres-ca-bundle) | `false`, `true` | `false` | values `worker.postgresCa.*`, `alleyoop.postgresCa.*`, `relay-control:postgresCa.*`, `relayhistory:postgresCa.*`, `relaychief-control:postgresCa.*`; env `NODE_EXTRA_CA_CERTS`, `PGSSLROOTCERT` |
 
 ### Profile: relay-control
 
@@ -693,7 +698,7 @@ chart `relay-control` · values [`ci/default-values.yaml`](../charts/relay-contr
 
 | | option | choices | default here | maps to |
 | --- | --- | --- | --- | --- |
-| shipped | [CA bundle for verifying the Postgres server certificate (postgresCa)](#opt-postgres-ca-bundle) | `false`, `true` | `false` | values `worker.postgresCa.*`, `alleyoop.postgresCa.*`, `relay-control:postgresCa.*`, `relayhistory:postgresCa.*`; env `NODE_EXTRA_CA_CERTS`, `PGSSLROOTCERT` |
+| shipped | [CA bundle for verifying the Postgres server certificate (postgresCa)](#opt-postgres-ca-bundle) | `false`, `true` | `false` | values `worker.postgresCa.*`, `alleyoop.postgresCa.*`, `relay-control:postgresCa.*`, `relayhistory:postgresCa.*`, `relaychief-control:postgresCa.*`; env `NODE_EXTRA_CA_CERTS`, `PGSSLROOTCERT` |
 | shipped | [Offline license file mount (verification pending upstream)](#opt-relay-control-license-file) | `disabled`, `mounted` | `disabled` | values `license.existingSecret`, `license.key`; env `SELFHOST_LICENSE_FILE`; Secret `<license.existingSecret>` keys `license` |
 | shipped | [Previous encryption key during a key rotation](#opt-relay-control-encryption-rotation) | `none`, `previous key` | `none` | values `encryption.previousKeyId`, `secretKeys.previousEncryptionKey`; env `SELFHOST_ENCRYPTION_PREVIOUS_KEY_ID`, `SELFHOST_ENCRYPTION_PREVIOUS_KEY_FILE`; Secret `<existingSecret>` keys `<operator-chosen, no default>` |
 | shipped | [Internal service token for /internal/v1](#opt-relay-control-internal-token) | `disabled`, `enabled` | `disabled` | values `secretKeys.internalToken`; env `SELFHOST_INTERNAL_TOKEN_FILE`; Secret `<existingSecret>` keys `<operator-chosen, no default>` |
@@ -729,7 +734,7 @@ chart `agent-relay` · values [`values-gcp-proof.yaml`](../charts/agent-relay/va
 
 | | option | choices | default here | maps to |
 | --- | --- | --- | --- | --- |
-| shipped | [CA bundle for verifying the Postgres server certificate (postgresCa)](#opt-postgres-ca-bundle) | `false`, `true` | `false` | values `worker.postgresCa.*`, `alleyoop.postgresCa.*`, `relay-control:postgresCa.*`, `relayhistory:postgresCa.*`; env `NODE_EXTRA_CA_CERTS`, `PGSSLROOTCERT` |
+| shipped | [CA bundle for verifying the Postgres server certificate (postgresCa)](#opt-postgres-ca-bundle) | `false`, `true` | `false` | values `worker.postgresCa.*`, `alleyoop.postgresCa.*`, `relay-control:postgresCa.*`, `relayhistory:postgresCa.*`, `relaychief-control:postgresCa.*`; env `NODE_EXTRA_CA_CERTS`, `PGSSLROOTCERT` |
 | shipped | [Single-host mode for the dashboard and the control API](#opt-agent-relay-single-host) | `disabled`, `enabled` | `disabled` | values `global.singleHost.host`, `relay-control:global.singleHost.host`, `relay-control:publicUrl`, `relay-webapp:global.singleHost.host`, `relay-webapp:runtime.publicUrl`, `relay-webapp:ingress.host`; env `SELFHOST_PUBLIC_URL`, `DASHBOARD_PUBLIC_URL` |
 | shipped | [Single GKE ingress for the proof hosts](#opt-agent-relay-gke-ingress) | `enabled`, `disabled` | `disabled` | values `gkeIngress.enabled`, `gkeIngress.staticIpName`, `gkeIngress.managedCertificateName`, `gkeIngress.frontendConfigName`, `gkeIngress.hosts.*`, `gkeIngress.backends.*`, `relayauth.jwksIngress.enabled` |
 | shipped | [Optional Relayflows component in the suite](#opt-agent-relay-relayflows) | `enabled`, `disabled` | `disabled` | values `components.relayflows`, `relayflows.*` |
@@ -800,6 +805,28 @@ chart `relay-chief` · values [`ci/default-values.yaml`](../charts/relay-chief/c
 | --- | --- | --- | --- | --- |
 | shipped | [Relay Chief image pull Secrets](#opt-relay-chief-image-pull-secrets) | `none`, `listed` | `none` | values `imagePullSecrets` |
 
+### Profile: relaychief-control
+
+**Relay Chief control add-on.** Optional add-on outside the agent-relay umbrella; not qualified. One replica, operator-managed PostgreSQL, a loopback-only admin listener and an Ingress limited to /chief/v1 by default; no HA claim.
+
+chart `relaychief-control` · values [`ci/default-values.yaml`](../charts/relaychief-control/ci/default-values.yaml) · install: `helm install relaychief-control agentworkforce/relaychief-control -f <your values>`
+
+**Requirements (provide these)**
+
+| | requirement | provided by | maps to | verify |
+| --- | --- | --- | --- | --- |
+| shipped | [Relay Chief control origins](#req-relaychief-control-config) | operator | values `config.relaycontrolUrl`, `config.publicOrigin`; env `RELAYCONTROL_URL`, `RELAYCHIEF_CONTROL_PUBLIC_ORIGIN` | helm template fails with "config.relaycontrolUrl (RELAYCONTROL_URL) is required" or "config.publicOrigin (RELAYCHIEF_CONTROL_PUBLIC_ORIGIN) is required" when one is unset |
+| shipped | [Relay Chief control database URL and service secrets](#req-relaychief-control-credentials) | operator | values `existingSecret`, `secretKeys.*`; env `DATABASE_URL`, `RELAYCONTROL_INTROSPECT_SECRET`, `RELAYCHIEF_CONTROL_ADMIN_TOKEN`; Secret `<existingSecret>` keys `DATABASE_URL`, `RELAYCONTROL_INTROSPECT_SECRET`, `RELAYCHIEF_CONTROL_ADMIN_TOKEN`, `<operator-chosen, e.g. NANGO_SECRET_KEY>` | helm template fails with "existingSecret is required" when it is unset; the pod starts without a CreateContainerConfigError and /readyz answers 200 |
+
+**Options (choose)**
+
+| | option | choices | default here | maps to |
+| --- | --- | --- | --- | --- |
+| shipped | [CA bundle for verifying the Postgres server certificate (postgresCa)](#opt-postgres-ca-bundle) | `false`, `true` | `false` | values `worker.postgresCa.*`, `alleyoop.postgresCa.*`, `relay-control:postgresCa.*`, `relayhistory:postgresCa.*`, `relaychief-control:postgresCa.*`; env `NODE_EXTRA_CA_CERTS`, `PGSSLROOTCERT` |
+| shipped | [Relay Chief control Nango host and browser origins](#opt-relaychief-control-nango) | `unset`, `hosted`, `self-hosted` | `unset` | values `config.nangoHost`, `config.browserOrigins`; env `NANGO_HOST`, `NANGO_SECRET_KEY`, `RELAYCHIEF_CONTROL_BROWSER_ORIGINS` |
+| shipped | [Relay Chief control Ingress and NetworkPolicy](#opt-relaychief-control-exposure) | `disabled`, `enabled` | `disabled` | values `ingress.*`, `networkPolicy.*` |
+| shipped | [Relay Chief control image pull Secrets](#opt-relaychief-control-image-pull-secrets) | `none`, `listed` | `none` | values `imagePullSecrets` |
+
 ### Profile: durable-actors
 
 **TerseAI durable-actors control plane (vendored upstream chart).** GKE Sandbox (gVisor) actor hosts, one Standard GCS bucket (Rapid optional), PostgreSQL; more than one controller needs Redis. Only GKE Sandbox and Modal providers exist upstream.
@@ -832,7 +859,19 @@ chart `relaycast` · values [`ci/durable-actors-values.yaml`](../charts/relaycas
 
 | | option | choices | default here | maps to |
 | --- | --- | --- | --- | --- |
-| shipped | [Relaycast runtime backend (sqlite or durable-actors)](#opt-relaycast-durable-actors) | `sqlite`, `durable-actors` | `sqlite` | values `runtime.backend`, `runtime.durableActors.projectId`, `runtime.durableActors.organizationId`, `runtime.durableActors.controlPlaneUrl`, `runtime.durableActors.homeRegion`, `runtime.durableActors.gateway.*`, `runtime.durableActors.maxUploadBytes`, `runtime.durableActors.shutdownGraceMs`, `runtime.durableActors.logFormat`, `runtime.durableActors.fileStore.*`, `runtime.durableActors.devRuntime.*`; env `DURABLE_ACTORS_CONTROL_PLANE_URL`, `DURABLE_ACTORS_PROJECT_ID`, `DURABLE_ACTORS_HOME_REGION`, `RELAYCAST_FILE_STORE`, `RELAYCAST_FILE_DIR`, `RELAYCAST_GCS_BUCKET`, `RELAYCAST_GCS_PREFIX`, `RELAYCAST_S3_BUCKET`, `RELAYCAST_S3_REGION`, `RELAYCAST_S3_ENDPOINT`, `RELAYCAST_S3_PREFIX`, `RELAYCAST_S3_FORCE_PATH_STYLE`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `RELAYCAST_MAX_UPLOAD_BYTES`, `RELAYCAST_SHUTDOWN_GRACE_MS`, `RELAYCAST_LOG_FORMAT`, `DURABLE_ACTORS_PORT`, `DURABLE_ACTORS_DATA_DIR`, `RELAYCAST_PUBLIC_URL`, `RELAYCAST_INTERNAL_SECRET`; Secret `<runtime.durableActors.fileStore.s3.existingSecret>` keys `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` (s3 file store only; empty uses the pod's ambient identity) |
+| shipped | [Relaycast runtime backend (sqlite, durable-actors or postgres)](#opt-relaycast-durable-actors) | `sqlite`, `durable-actors`, `postgres` | `sqlite` | values `runtime.backend`, `runtime.durableActors.projectId`, `runtime.durableActors.organizationId`, `runtime.durableActors.controlPlaneUrl`, `runtime.durableActors.homeRegion`, `runtime.durableActors.gateway.*`, `runtime.durableActors.maxUploadBytes`, `runtime.durableActors.shutdownGraceMs`, `runtime.durableActors.logFormat`, `runtime.durableActors.fileStore.*`, `runtime.durableActors.devRuntime.*`; env `DURABLE_ACTORS_CONTROL_PLANE_URL`, `DURABLE_ACTORS_PROJECT_ID`, `DURABLE_ACTORS_HOME_REGION`, `RELAYCAST_FILE_STORE`, `RELAYCAST_FILE_DIR`, `RELAYCAST_GCS_BUCKET`, `RELAYCAST_GCS_PREFIX`, `RELAYCAST_S3_BUCKET`, `RELAYCAST_S3_REGION`, `RELAYCAST_S3_ENDPOINT`, `RELAYCAST_S3_PREFIX`, `RELAYCAST_S3_FORCE_PATH_STYLE`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `RELAYCAST_MAX_UPLOAD_BYTES`, `RELAYCAST_SHUTDOWN_GRACE_MS`, `RELAYCAST_LOG_FORMAT`, `DURABLE_ACTORS_PORT`, `DURABLE_ACTORS_DATA_DIR`, `RELAYCAST_PUBLIC_URL`, `RELAYCAST_INTERNAL_SECRET`; Secret `<runtime.durableActors.fileStore.s3.existingSecret>` keys `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` (s3 file store only; empty uses the pod's ambient identity) |
+
+### Profile: relaycast-postgres
+
+**Relaycast on PostgreSQL (runtime.backend=postgres).** One replica on an external PostgreSQL database; a hash-named migration Job runs as relaycast_owner and the server waits for it as relaycast_runtime; uploaded files stay on the PVC. Default off.
+
+chart `relaycast` · values [`ci/postgres-values.yaml`](../charts/relaycast/ci/postgres-values.yaml) · install: `helm install relaycast agentworkforce/relaycast -f values.yaml (runtime.backend=postgres, postgresCa, owner and runtime database URLs in existingSecret)`
+
+**Requirements (provide these)**
+
+| | requirement | provided by | maps to | verify |
+| --- | --- | --- | --- | --- |
+| shipped | [Relaycast PostgreSQL backend (owner and runtime URLs, CA, migration Job)](#req-relaycast-postgres) | operator | values `runtime.postgres.image.repository`, `runtime.postgres.image.digest`, `runtime.postgres.migrations.identitySalt`, `runtime.postgres.migrations.backoffLimit`, `runtime.postgres.migrations.activeDeadlineSeconds`, `secretKeys.databaseOwnerUrl`, `secretKeys.databaseRuntimeUrl`, `postgresCa.enabled`, `postgresCa.configMap`, `postgresCa.secret`, `postgresCa.key`; env `RELAYCAST_DATABASE_URL_FILE`; Secret `<existingSecret>` keys `database-owner-url`, `database-runtime-url`; Secret `<postgresCa.secret>` keys `ca.crt` (or the same key in the ConfigMap named by postgresCa.configMap) | kubectl wait --for=condition=complete job -l app.kubernetes.io/name=relaycast-migrate; curl <baseUrl>/health |
 
 ### Profile: relayfile-durable-actors
 
@@ -873,7 +912,7 @@ chart `agent-relay` · values [`values-gcp-proof.yaml`](../charts/agent-relay/va
 | | option | choices | default here | maps to |
 | --- | --- | --- | --- | --- |
 | shipped | [Run the durable-actors control plane and Relayfile in the suite](#opt-agent-relay-durable-actors) | `false`, `true` | `false` | values `components.durableActors`, `components.relayfile`, `durableActorsNetworkPolicy.*`, `gkeIngress.hosts.files`, `gkeIngress.backends.files.*` |
-| shipped | [Relaycast runtime backend (sqlite or durable-actors)](#opt-relaycast-durable-actors) | `sqlite`, `durable-actors` | `sqlite` | values `runtime.backend`, `runtime.durableActors.projectId`, `runtime.durableActors.organizationId`, `runtime.durableActors.controlPlaneUrl`, `runtime.durableActors.homeRegion`, `runtime.durableActors.gateway.*`, `runtime.durableActors.maxUploadBytes`, `runtime.durableActors.shutdownGraceMs`, `runtime.durableActors.logFormat`, `runtime.durableActors.fileStore.*`, `runtime.durableActors.devRuntime.*`; env `DURABLE_ACTORS_CONTROL_PLANE_URL`, `DURABLE_ACTORS_PROJECT_ID`, `DURABLE_ACTORS_HOME_REGION`, `RELAYCAST_FILE_STORE`, `RELAYCAST_FILE_DIR`, `RELAYCAST_GCS_BUCKET`, `RELAYCAST_GCS_PREFIX`, `RELAYCAST_S3_BUCKET`, `RELAYCAST_S3_REGION`, `RELAYCAST_S3_ENDPOINT`, `RELAYCAST_S3_PREFIX`, `RELAYCAST_S3_FORCE_PATH_STYLE`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `RELAYCAST_MAX_UPLOAD_BYTES`, `RELAYCAST_SHUTDOWN_GRACE_MS`, `RELAYCAST_LOG_FORMAT`, `DURABLE_ACTORS_PORT`, `DURABLE_ACTORS_DATA_DIR`, `RELAYCAST_PUBLIC_URL`, `RELAYCAST_INTERNAL_SECRET`; Secret `<runtime.durableActors.fileStore.s3.existingSecret>` keys `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` (s3 file store only; empty uses the pod's ambient identity) |
+| shipped | [Relaycast runtime backend (sqlite, durable-actors or postgres)](#opt-relaycast-durable-actors) | `sqlite`, `durable-actors`, `postgres` | `sqlite` | values `runtime.backend`, `runtime.durableActors.projectId`, `runtime.durableActors.organizationId`, `runtime.durableActors.controlPlaneUrl`, `runtime.durableActors.homeRegion`, `runtime.durableActors.gateway.*`, `runtime.durableActors.maxUploadBytes`, `runtime.durableActors.shutdownGraceMs`, `runtime.durableActors.logFormat`, `runtime.durableActors.fileStore.*`, `runtime.durableActors.devRuntime.*`; env `DURABLE_ACTORS_CONTROL_PLANE_URL`, `DURABLE_ACTORS_PROJECT_ID`, `DURABLE_ACTORS_HOME_REGION`, `RELAYCAST_FILE_STORE`, `RELAYCAST_FILE_DIR`, `RELAYCAST_GCS_BUCKET`, `RELAYCAST_GCS_PREFIX`, `RELAYCAST_S3_BUCKET`, `RELAYCAST_S3_REGION`, `RELAYCAST_S3_ENDPOINT`, `RELAYCAST_S3_PREFIX`, `RELAYCAST_S3_FORCE_PATH_STYLE`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `RELAYCAST_MAX_UPLOAD_BYTES`, `RELAYCAST_SHUTDOWN_GRACE_MS`, `RELAYCAST_LOG_FORMAT`, `DURABLE_ACTORS_PORT`, `DURABLE_ACTORS_DATA_DIR`, `RELAYCAST_PUBLIC_URL`, `RELAYCAST_INTERNAL_SECRET`; Secret `<runtime.durableActors.fileStore.s3.existingSecret>` keys `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` (s3 file store only; empty uses the pod's ambient identity) |
 | shipped | [Relayfile runtime backend (go or durable-actors)](#opt-relayfile-durable-actors) | `go`, `durable-actors` | `go` | values `runtime.backend`, `runtime.durableActors.image.*`, `runtime.durableActors.projectId`, `runtime.durableActors.organizationId`, `runtime.durableActors.controlPlaneUrl`, `runtime.durableActors.gateway.*`, `runtime.durableActors.broker.*`, `runtime.durableActors.deployer.*`, `runtime.durableActors.blobStore.*`, `runtime.durableActors.devRuntime.*`; env `DURABLE_ACTORS_CONTROL_PLANE_URL`, `DURABLE_ACTORS_PROJECT_ID`, `DURABLE_ACTORS_ORGANIZATION_ID`, `DURABLE_ACTORS_ARTIFACT_BUCKET`, `RELAYFILE_ACTORS_BROKER_URL`, `RELAYFILE_ACTORS_ALLOW_ADMIN_KEY`, `RELAYFILE_BLOB_STORE`, `RELAYFILE_BLOB_BUCKET`, `RELAYFILE_BLOB_PREFIX`, `RELAYFILE_BLOB_INLINE_MAX_BYTES`, `RELAYFILE_S3_ENDPOINT`, `RELAYFILE_S3_REGION`, `RELAYFILE_S3_FORCE_PATH_STYLE`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `DURABLE_ACTORS_PORT`, `DURABLE_ACTORS_DATA_DIR`, `DURABLE_ACTORS_ARTIFACT_STORE`, `DURABLE_ACTORS_S3_REGION`, `DURABLE_ACTORS_S3_ENDPOINT`, `DURABLE_ACTORS_S3_FORCE_PATH_STYLE`; Secret `<runtime.durableActors.blobStore.s3.existingSecret>` keys `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` (s3 blob store only; empty uses the pod's ambient identity) |
 
 ### Profile: agent-relay-eks-durable-actors
@@ -895,7 +934,7 @@ chart `agent-relay` · values [`values-eks-actors.yaml`](../charts/agent-relay/v
 | | option | choices | default here | maps to |
 | --- | --- | --- | --- | --- |
 | shipped | [Run the durable-actors control plane and Relayfile in the suite](#opt-agent-relay-durable-actors) | `false`, `true` | `false` | values `components.durableActors`, `components.relayfile`, `durableActorsNetworkPolicy.*`, `gkeIngress.hosts.files`, `gkeIngress.backends.files.*` |
-| shipped | [Relaycast runtime backend (sqlite or durable-actors)](#opt-relaycast-durable-actors) | `sqlite`, `durable-actors` | `sqlite` | values `runtime.backend`, `runtime.durableActors.projectId`, `runtime.durableActors.organizationId`, `runtime.durableActors.controlPlaneUrl`, `runtime.durableActors.homeRegion`, `runtime.durableActors.gateway.*`, `runtime.durableActors.maxUploadBytes`, `runtime.durableActors.shutdownGraceMs`, `runtime.durableActors.logFormat`, `runtime.durableActors.fileStore.*`, `runtime.durableActors.devRuntime.*`; env `DURABLE_ACTORS_CONTROL_PLANE_URL`, `DURABLE_ACTORS_PROJECT_ID`, `DURABLE_ACTORS_HOME_REGION`, `RELAYCAST_FILE_STORE`, `RELAYCAST_FILE_DIR`, `RELAYCAST_GCS_BUCKET`, `RELAYCAST_GCS_PREFIX`, `RELAYCAST_S3_BUCKET`, `RELAYCAST_S3_REGION`, `RELAYCAST_S3_ENDPOINT`, `RELAYCAST_S3_PREFIX`, `RELAYCAST_S3_FORCE_PATH_STYLE`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `RELAYCAST_MAX_UPLOAD_BYTES`, `RELAYCAST_SHUTDOWN_GRACE_MS`, `RELAYCAST_LOG_FORMAT`, `DURABLE_ACTORS_PORT`, `DURABLE_ACTORS_DATA_DIR`, `RELAYCAST_PUBLIC_URL`, `RELAYCAST_INTERNAL_SECRET`; Secret `<runtime.durableActors.fileStore.s3.existingSecret>` keys `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` (s3 file store only; empty uses the pod's ambient identity) |
+| shipped | [Relaycast runtime backend (sqlite, durable-actors or postgres)](#opt-relaycast-durable-actors) | `sqlite`, `durable-actors`, `postgres` | `sqlite` | values `runtime.backend`, `runtime.durableActors.projectId`, `runtime.durableActors.organizationId`, `runtime.durableActors.controlPlaneUrl`, `runtime.durableActors.homeRegion`, `runtime.durableActors.gateway.*`, `runtime.durableActors.maxUploadBytes`, `runtime.durableActors.shutdownGraceMs`, `runtime.durableActors.logFormat`, `runtime.durableActors.fileStore.*`, `runtime.durableActors.devRuntime.*`; env `DURABLE_ACTORS_CONTROL_PLANE_URL`, `DURABLE_ACTORS_PROJECT_ID`, `DURABLE_ACTORS_HOME_REGION`, `RELAYCAST_FILE_STORE`, `RELAYCAST_FILE_DIR`, `RELAYCAST_GCS_BUCKET`, `RELAYCAST_GCS_PREFIX`, `RELAYCAST_S3_BUCKET`, `RELAYCAST_S3_REGION`, `RELAYCAST_S3_ENDPOINT`, `RELAYCAST_S3_PREFIX`, `RELAYCAST_S3_FORCE_PATH_STYLE`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `RELAYCAST_MAX_UPLOAD_BYTES`, `RELAYCAST_SHUTDOWN_GRACE_MS`, `RELAYCAST_LOG_FORMAT`, `DURABLE_ACTORS_PORT`, `DURABLE_ACTORS_DATA_DIR`, `RELAYCAST_PUBLIC_URL`, `RELAYCAST_INTERNAL_SECRET`; Secret `<runtime.durableActors.fileStore.s3.existingSecret>` keys `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` (s3 file store only; empty uses the pod's ambient identity) |
 | shipped | [Relayfile runtime backend (go or durable-actors)](#opt-relayfile-durable-actors) | `go`, `durable-actors` | `go` | values `runtime.backend`, `runtime.durableActors.image.*`, `runtime.durableActors.projectId`, `runtime.durableActors.organizationId`, `runtime.durableActors.controlPlaneUrl`, `runtime.durableActors.gateway.*`, `runtime.durableActors.broker.*`, `runtime.durableActors.deployer.*`, `runtime.durableActors.blobStore.*`, `runtime.durableActors.devRuntime.*`; env `DURABLE_ACTORS_CONTROL_PLANE_URL`, `DURABLE_ACTORS_PROJECT_ID`, `DURABLE_ACTORS_ORGANIZATION_ID`, `DURABLE_ACTORS_ARTIFACT_BUCKET`, `RELAYFILE_ACTORS_BROKER_URL`, `RELAYFILE_ACTORS_ALLOW_ADMIN_KEY`, `RELAYFILE_BLOB_STORE`, `RELAYFILE_BLOB_BUCKET`, `RELAYFILE_BLOB_PREFIX`, `RELAYFILE_BLOB_INLINE_MAX_BYTES`, `RELAYFILE_S3_ENDPOINT`, `RELAYFILE_S3_REGION`, `RELAYFILE_S3_FORCE_PATH_STYLE`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `DURABLE_ACTORS_PORT`, `DURABLE_ACTORS_DATA_DIR`, `DURABLE_ACTORS_ARTIFACT_STORE`, `DURABLE_ACTORS_S3_REGION`, `DURABLE_ACTORS_S3_ENDPOINT`, `DURABLE_ACTORS_S3_FORCE_PATH_STYLE`; Secret `<runtime.durableActors.blobStore.s3.existingSecret>` keys `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` (s3 blob store only; empty uses the pod's ambient identity) |
 
 ### Profile: telemetry-collector
@@ -1596,6 +1635,32 @@ BackendConfig timeout for sockets) or the chart's own ingress
 - Verify: curl -fsS <publicUrl>/healthz
 - Sources: [`charts/durable-actors/templates/control-plane.yaml:97`](../charts/durable-actors/templates/control-plane.yaml#L97), [`charts/agent-relay/templates/gke-ingress.yaml:50`](../charts/agent-relay/templates/gke-ingress.yaml#L50)
 
+#### req.relaycast.postgres
+
+<a id="req-relaycast-postgres"></a>
+
+**Relaycast PostgreSQL backend (owner and runtime URLs, CA, migration Job)** · shipped · chart `relaycast` · profiles relaycast-postgres
+
+runtime.backend=postgres runs the portable image (runtime.postgres.image) on an
+external PostgreSQL database that the platform prepares (relaycast_owner and
+relaycast_runtime roles, schema public; see docs/self-host-postgres.md in
+AgentWorkforce/relaycast). existingSecret gains two keys, each a full URL
+postgres://<role>:<pw>@<host>:5432/<db>?sslmode=verify-full: the relaycast_owner URL
+is projected only into the migration Job, the relaycast_runtime URL only into the
+server. postgresCa names the CA bundle and is required. The Job is a plain Job named
+by a hash of its pod template (args migrate, no Helm hook, exits 64 and 65 not
+retried); the server's wait-for-migrations init container runs verify-db until the
+database is migrated for this image. One replica; files stay on the PVC; backup.enabled
+and retention.messageTtlDays are refused. Default off.
+
+- Provided by: operator
+- Values: `runtime.postgres.image.repository`, `runtime.postgres.image.digest`, `runtime.postgres.migrations.identitySalt`, `runtime.postgres.migrations.backoffLimit`, `runtime.postgres.migrations.activeDeadlineSeconds`, `secretKeys.databaseOwnerUrl`, `secretKeys.databaseRuntimeUrl`, `postgresCa.enabled`, `postgresCa.configMap`, `postgresCa.secret`, `postgresCa.key`
+- Env: `RELAYCAST_DATABASE_URL_FILE`
+- Secret: `<existingSecret>` from `existingSecret`; keys `database-owner-url` from `secretKeys.databaseOwnerUrl`; `database-runtime-url` from `secretKeys.databaseRuntimeUrl`
+- Secret: `<postgresCa.secret>`; keys `ca.crt` from `postgresCa.key`. or the same key in the ConfigMap named by postgresCa.configMap
+- Verify: kubectl wait --for=condition=complete job -l app.kubernetes.io/name=relaycast-migrate; curl <baseUrl>/health
+- Sources: [`charts/relaycast/values.yaml:29`](../charts/relaycast/values.yaml#L29), [`charts/relaycast/templates/_postgres.tpl:1`](../charts/relaycast/templates/_postgres.tpl#L1), [`charts/relaycast/templates/postgres-migrate-job.yaml:1`](../charts/relaycast/templates/postgres-migrate-job.yaml#L1)
+
 #### req.relaycast.durable-actors-secrets
 
 <a id="req-relaycast-durable-actors-secrets"></a>
@@ -1702,6 +1767,35 @@ A pre-provisioned chief identity (not a workspace admin key), the classification
 - Verify: helm template fails with "existingSecret is required" when it is unset; after setting suspend to false, a cycle's Job starts without a CreateContainerConfigError
 - Sources: [`charts/relay-chief/values.yaml:36`](../charts/relay-chief/values.yaml#L36), [`charts/relay-chief/templates/cronjob.yaml:59`](../charts/relay-chief/templates/cronjob.yaml#L59)
 
+#### req.relaychief-control.config
+
+<a id="req-relaychief-control-config"></a>
+
+**Relay Chief control origins** · shipped · chart `relaychief-control` · profiles relaychief-control
+
+RELAYCONTROL_URL and RELAYCHIEF_CONTROL_PUBLIC_ORIGIN, each a bare http(s) origin. The public origin is the token audience, so it must also be among relay-control's accepted audiences.
+
+- Provided by: operator
+- Values: `config.relaycontrolUrl`, `config.publicOrigin`
+- Env: `RELAYCONTROL_URL`, `RELAYCHIEF_CONTROL_PUBLIC_ORIGIN`
+- Verify: helm template fails with "config.relaycontrolUrl (RELAYCONTROL_URL) is required" or "config.publicOrigin (RELAYCHIEF_CONTROL_PUBLIC_ORIGIN) is required" when one is unset
+- Sources: [`charts/relaychief-control/values.yaml`](../charts/relaychief-control/values.yaml), [`charts/relaychief-control/templates/configmap.yaml`](../charts/relaychief-control/templates/configmap.yaml)
+
+#### req.relaychief-control.credentials
+
+<a id="req-relaychief-control-credentials"></a>
+
+**Relay Chief control database URL and service secrets** · shipped · chart `relaychief-control` · profiles relaychief-control
+
+One existing Secret with DATABASE_URL (also used by the migrate Job), RELAYCONTROL_INTROSPECT_SECRET and RELAYCHIEF_CONTROL_ADMIN_TOKEN (both 32 or more characters; the server refuses to start otherwise). The chart creates no Secret and takes no Secret values, so a render cannot check their presence or length.
+
+- Provided by: operator
+- Values: `existingSecret`, `secretKeys.*`
+- Env: `DATABASE_URL`, `RELAYCONTROL_INTROSPECT_SECRET`, `RELAYCHIEF_CONTROL_ADMIN_TOKEN`
+- Secret: `<existingSecret>`; keys `DATABASE_URL` from `secretKeys.databaseUrl`; `RELAYCONTROL_INTROSPECT_SECRET` from `secretKeys.introspectSecret`; `RELAYCHIEF_CONTROL_ADMIN_TOKEN` from `secretKeys.adminToken`; `<operator-chosen, e.g. NANGO_SECRET_KEY>` from `secretKeys.nangoSecretKey` (optional: unset leaves Nango off and creating a chief answers 503; required with config.nangoHost)
+- Verify: helm template fails with "existingSecret is required" when it is unset; the pod starts without a CreateContainerConfigError and /readyz answers 200
+- Sources: [`charts/relaychief-control/values.yaml`](../charts/relaychief-control/values.yaml), [`charts/relaychief-control/templates/_helpers.tpl`](../charts/relaychief-control/templates/_helpers.tpl)
+
 ### Options
 
 #### opt.alleyoop.auth-mode
@@ -1750,7 +1844,7 @@ bundled MinIO at http://session-object-storage:9000 works with the default false
 
 <a id="opt-postgres-ca-bundle"></a>
 
-**CA bundle for verifying the Postgres server certificate (postgresCa)** · shipped · chart `sessions-pipeline`, `relay-control`, `relayhistory` · profiles selfhost-postgres, migration, external-selfhosted, external-rds, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql, relayhistory, relay-control, agent-relay
+**CA bundle for verifying the Postgres server certificate (postgresCa)** · shipped · chart `sessions-pipeline`, `relay-control`, `relayhistory`, `relaychief-control` · profiles selfhost-postgres, migration, external-selfhosted, external-rds, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql, relayhistory, relay-control, agent-relay, relaychief-control
 
 node-pg verifies the server certificate for sslmode=require or verify-full, and the
 service images do not carry private CAs such as Amazon RDS's. postgresCa mounts a PEM
@@ -1773,10 +1867,10 @@ needs sslrootcert=<bundle> with verify-full.
 - Default: `false`
 - Choices: `false`; `true`
 - Provided by: operator
-- Values: `worker.postgresCa.*`, `alleyoop.postgresCa.*`, `relay-control:postgresCa.*`, `relayhistory:postgresCa.*`
+- Values: `worker.postgresCa.*`, `alleyoop.postgresCa.*`, `relay-control:postgresCa.*`, `relayhistory:postgresCa.*`, `relaychief-control:postgresCa.*`
 - Env: `NODE_EXTRA_CA_CERTS`, `PGSSLROOTCERT`
 - Verify: kubectl exec deploy/<workload> -- printenv NODE_EXTRA_CA_CERTS is /etc/postgres-ca/ca.crt; the URLs use sslmode=verify-full and the migrate Job connects
-- Sources: [`charts/sessions-pipeline/profiles/external-rds.yaml:19`](../charts/sessions-pipeline/profiles/external-rds.yaml#L19), [`charts/sessions-pipeline-worker/templates/_env.tpl`](../charts/sessions-pipeline-worker/templates/_env.tpl), [`charts/session-ingest-api/templates/deployment.yaml`](../charts/session-ingest-api/templates/deployment.yaml), [`charts/relay-control/templates/deployment.yaml`](../charts/relay-control/templates/deployment.yaml), [`charts/relayhistory/templates/deployment.yaml`](../charts/relayhistory/templates/deployment.yaml), `sessions-pipeline@78511e03:src/shared/db.ts:41`
+- Sources: [`charts/sessions-pipeline/profiles/external-rds.yaml:19`](../charts/sessions-pipeline/profiles/external-rds.yaml#L19), [`charts/sessions-pipeline-worker/templates/_env.tpl`](../charts/sessions-pipeline-worker/templates/_env.tpl), [`charts/session-ingest-api/templates/deployment.yaml`](../charts/session-ingest-api/templates/deployment.yaml), [`charts/relay-control/templates/deployment.yaml`](../charts/relay-control/templates/deployment.yaml), [`charts/relayhistory/templates/deployment.yaml`](../charts/relayhistory/templates/deployment.yaml), [`charts/relaychief-control/templates/deployment.yaml`](../charts/relaychief-control/templates/deployment.yaml), `sessions-pipeline@78511e03:src/shared/db.ts:41`
 
 #### opt.alleyoop.history-origin
 
@@ -2968,7 +3062,7 @@ release namespace, the sandbox namespace and the GKE LB ranges.
 
 <a id="opt-relaycast-durable-actors"></a>
 
-**Relaycast runtime backend (sqlite or durable-actors)** · shipped · chart `relaycast` · profiles relaycast-durable-actors, agent-relay-durable-actors, agent-relay-eks-durable-actors
+**Relaycast runtime backend (sqlite, durable-actors or postgres)** · shipped · chart `relaycast` · profiles relaycast-durable-actors, agent-relay-durable-actors, agent-relay-eks-durable-actors
 
 durable-actors (env contract v1) replaces the SQLite Deployment with the
 relaycast-actors-gateway (same Service, ingress and edge-deny rules; PORT 8787,
@@ -2978,7 +3072,7 @@ plane. More than one gateway replica needs fileStore gcs or s3. A fresh-install
 backend: SQLite workspaces are not migrated.
 
 - Default: `sqlite`
-- Choices: `sqlite`; `durable-actors`: env contract v1; images relaycast-actors-gateway and relaycast-actors-deployer by digest
+- Choices: `sqlite`; `durable-actors`: env contract v1; images relaycast-actors-gateway and relaycast-actors-deployer by digest; `postgres`: see req.relaycast.postgres; image runtime.postgres.image by digest
 - Provided by: operator
 - Values: `runtime.backend`, `runtime.durableActors.projectId`, `runtime.durableActors.organizationId`, `runtime.durableActors.controlPlaneUrl`, `runtime.durableActors.homeRegion`, `runtime.durableActors.gateway.*`, `runtime.durableActors.maxUploadBytes`, `runtime.durableActors.shutdownGraceMs`, `runtime.durableActors.logFormat`, `runtime.durableActors.fileStore.*`, `runtime.durableActors.devRuntime.*`
 - Env: `DURABLE_ACTORS_CONTROL_PLANE_URL`, `DURABLE_ACTORS_PROJECT_ID`, `DURABLE_ACTORS_HOME_REGION`, `RELAYCAST_FILE_STORE`, `RELAYCAST_FILE_DIR`, `RELAYCAST_GCS_BUCKET`, `RELAYCAST_GCS_PREFIX`, `RELAYCAST_S3_BUCKET`, `RELAYCAST_S3_REGION`, `RELAYCAST_S3_ENDPOINT`, `RELAYCAST_S3_PREFIX`, `RELAYCAST_S3_FORCE_PATH_STYLE`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `RELAYCAST_MAX_UPLOAD_BYTES`, `RELAYCAST_SHUTDOWN_GRACE_MS`, `RELAYCAST_LOG_FORMAT`, `DURABLE_ACTORS_PORT`, `DURABLE_ACTORS_DATA_DIR`, `RELAYCAST_PUBLIC_URL`, `RELAYCAST_INTERNAL_SECRET`
@@ -3139,6 +3233,52 @@ Pull Secrets for a private registry or customer mirror.
 - Verify: after setting suspend to false, the cycle's Job pulls its image without ImagePullBackOff
 - Sources: [`charts/relay-chief/values.yaml:9`](../charts/relay-chief/values.yaml#L9), [`charts/relay-chief/templates/cronjob.yaml:34`](../charts/relay-chief/templates/cronjob.yaml#L34)
 
+#### opt.relaychief-control.nango
+
+<a id="opt-relaychief-control-nango"></a>
+
+**Relay Chief control Nango host and browser origins** · shipped · chart `relaychief-control` · profiles relaychief-control
+
+NANGO_HOST with secretKeys.nangoSecretKey selects a self-hosted Nango; the key alone uses Nango's hosted API. NANGO_HOST without the key makes the server throw at startup, so the chart refuses to render it. RELAYCHIEF_CONTROL_BROWSER_ORIGINS is a comma-separated list of http(s) origins allowed through the CSRF check.
+
+- Default: `unset`
+- Choices: `unset`; `hosted`; `self-hosted`
+- Provided by: operator
+- Values: `config.nangoHost`, `config.browserOrigins`
+- Env: `NANGO_HOST`, `NANGO_SECRET_KEY`, `RELAYCHIEF_CONTROL_BROWSER_ORIGINS`
+- Verify: helm template fails with "requires secretKeys.nangoSecretKey" when config.nangoHost is set without the key
+- Sources: [`charts/relaychief-control/values.yaml`](../charts/relaychief-control/values.yaml), [`charts/relaychief-control/templates/_helpers.tpl`](../charts/relaychief-control/templates/_helpers.tpl)
+
+#### opt.relaychief-control.exposure
+
+<a id="opt-relaychief-control-exposure"></a>
+
+**Relay Chief control Ingress and NetworkPolicy** · shipped · chart `relaychief-control` · profiles relaychief-control
+
+The Ingress is off by default and routes only /chief/v1 (Prefix) when on. ingress.extraPaths can add the tenant routes under /api/v1; a / rule is refused. networkPolicy.ingressFrom must admit the load balancer (an ALB in IP target mode connects from its subnets, as ipBlock peers), and networkPolicy.additionalEgress must admit the database unless allowAllEgress is true.
+
+- Default: `disabled`
+- Choices: `disabled`; `enabled`
+- Provided by: operator
+- Values: `ingress.*`, `networkPolicy.*`
+- Verify: kubectl get ingress shows only the /chief/v1 path unless ingress.extraPaths adds more, and the load balancer's targets report healthy
+- Sources: [`charts/relaychief-control/templates/ingress.yaml`](../charts/relaychief-control/templates/ingress.yaml), [`charts/relaychief-control/templates/networkpolicy.yaml`](../charts/relaychief-control/templates/networkpolicy.yaml)
+
+#### opt.relaychief-control.image-pull-secrets
+
+<a id="opt-relaychief-control-image-pull-secrets"></a>
+
+**Relay Chief control image pull Secrets** · shipped · chart `relaychief-control` · profiles relaychief-control
+
+Pull Secrets for a private registry or customer mirror.
+
+- Default: `none`
+- Choices: `none`; `listed`
+- Provided by: operator
+- Values: `imagePullSecrets`
+- Verify: the Deployment and migrate Job pull their image without ImagePullBackOff
+- Sources: [`charts/relaychief-control/values.yaml`](../charts/relaychief-control/values.yaml), [`charts/relaychief-control/templates/deployment.yaml`](../charts/relaychief-control/templates/deployment.yaml)
+
 #### opt.sessions-native-ingest-admission
 
 <a id="opt-sessions-native-ingest-admission"></a>
@@ -3169,6 +3309,8 @@ Rendered by the charts but not a requirement or an option: fixed by the chart or
 
 | env | chart | why |
 | --- | --- | --- |
+| `ADMIN_HOST` | relaychief-control | fixed at 127.0.0.1 so the admin listener stays on loopback; refused in extraEnv |
+| `ADMIN_PORT` | relaychief-control | reserved from extraEnv so the admin listener stays on its documented port; no chart value offers it |
 | `SERVICE` | sessions-pipeline-worker, session-ingest-api | selects the entry point of the one services image |
 | `OTEL_SERVICE_NAME` | sessions-pipeline-worker, session-ingest-api | equals SERVICE |
 | `TMPDIR` | sessions-pipeline-worker, session-ingest-api | the writable emptyDir under a read-only root filesystem |
@@ -3186,6 +3328,14 @@ Rendered by the charts but not a requirement or an option: fixed by the chart or
 | `RELAYCAST_WORKSPACE_BOOTSTRAP_SECRET` | relaycast | reserved prefix in the extraEnv guard; the Secret is mounted as a file |
 | `RELAYCAST_RELAYAUTH` | relaycast | reserved prefix in the extraEnv guard; the RelayAuth remote tagger is wired through credentials.relayauth.url and secretKeys.relayauthToken |
 | `RELAYCAST_CREDENTIAL` | relaycast | reserved prefix in the extraEnv guard; the credential format and local keyring are wired through credentials.* and secretKeys.credentialKeyring |
+| `MIGRATION_WAIT_SECONDS` | relaycast | postgres backend wait-for-migrations init container; from runtime.postgres.migrations.activeDeadlineSeconds |
+| `RELAYCAST_DATABASE_` | relaycast | reserved prefix in the extraEnv guard on the sqlite and durable-actors backends |
+| `RELAYCAST_DATABASE_URL` | relaycast | reserved name in the postgres extraEnv guard; the URL is mounted as a file |
+| `RELAYCAST_DATABASE_CA_FILE` | relaycast | reserved name in the postgres extraEnv guard; the chart uses NODE_EXTRA_CA_CERTS |
+| `RELAYCAST_DATABASE_SCHEMA` | relaycast | reserved name in the postgres extraEnv guard; left at the image default |
+| `RELAYCAST_DATABASE_OWNER_ROLE` | relaycast | reserved name in the postgres extraEnv guard; left at the image default |
+| `RELAYCAST_DATABASE_RUNTIME_ROLE` | relaycast | reserved name in the postgres extraEnv guard; left at the image default |
+| `PGCLIENT_ENCODING` | relaycast | refused in the postgres extraEnv guard; the image exits 64 while it is set |
 | `BACKUP_KEEP` | relaycast | backup CronJob; from backup.keep |
 | `LOCK_STALE_MS` | relaycast | backup CronJob lock timeout (fixed) |
 | `RELAYAUTH_DB_PATH` | relayauth | fixed path on the data PVC |
