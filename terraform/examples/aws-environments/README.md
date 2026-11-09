@@ -431,6 +431,7 @@ exact destroy inventory and recovery proof; do not remove state to bypass them.
 
 | Name | Source | Version |
 | ---- | ------ | ------- |
+| chief\_execution\_node | ../../modules/aws/chief-execution-node | n/a |
 | pipeline | ../../modules/aws/functions | n/a |
 | postgres | ../../modules/aws/postgres | n/a |
 | postgres\_layout | ../../modules/postgres-layout | n/a |
@@ -460,6 +461,7 @@ exact destroy inventory and recovery proof; do not remove state to bypass them.
 | activate\_lambda | Reserved activation input. This per-service-database profile currently refuses true until schema/bootstrap/runtime support is qualified by a reviewed implementation change; provision inactive infrastructure meanwhile. | `bool` | `false` | no |
 | application\_database\_name | Initial Control database only, on the shared RDS instance. Other services use separate logical databases. Default preserves the existing identity. Changing this value on an existing RDS instance forces instance replacement; review the plan and an explicit data migration/restore before changing it. | `string` | `"relaycontrol"` | no |
 | aurora\_engine\_version | Explicit region-supported Aurora PostgreSQL 17 minor version when Aurora is selected. | `string` | `null` | no |
+| chief\_execution\_node | Optional dedicated Chief execution host (modules/aws/chief-execution-node). null creates nothing. Private installation values only; no credentials belong here. | ```object({ subnet_id = string relay_base_url = string instance_type = optional(string, "t3.medium") root_volume_size_gb = optional(number, 40) node_runtime = object({ url = string sha256 = string }) relay_node = object({ url = string sha256 = string }) harness = object({ npm_package = string version = string }) bridge = object({ repository = string commit = string }) repositories = list(string) })``` | `null` | no |
 | database\_instance\_class | Override the environment tier's instance class. Aurora needs an Aurora-supported class. | `string` | `null` | no |
 | deletion\_protection | Database API deletion protection. Production refuses false. Final snapshots and S3 versioning remain enabled. | `bool` | `true` | no |
 | enable\_relayfile | Include Relayfile in the full-suite application contract; its actor identities/Secrets must be configured by the application layer. | `bool` | `false` | no |
@@ -486,6 +488,7 @@ exact destroy inventory and recovery proof; do not remove state to bypass them.
 | Name | Description |
 | ---- | ----------- |
 | application\_contract | Required full-suite components and selected pipeline mode. This contract does not replace complete Helm values, actor roles, bootstrap or runtime compatibility proof. |
+| chief\_execution\_node | Chief execution host references, or null. Holds no secret value. |
 | environment | Environment identity to compare with the separately configured backend before apply. |
 | lambda\_shared\_environment | Non-secret writer/reader bindings, or null until explicitly configured. Independently qualify the matching reader artifact, read-only DB identity, JWT settings, schema/FGAC bootstrap and worker retirement before activation. |
 | pipeline | Lambda runtime bindings, or null in worker mode. Populate the secret out of band and verify actual handler compatibility before activation. |

@@ -283,3 +283,31 @@ variable "service_database_names" {
     error_message = "Each service needs a different database, distinct from the initial Control database."
   }
 }
+
+variable "chief_execution_node" {
+  description = "Optional dedicated Chief execution host (modules/aws/chief-execution-node). null creates nothing. Private installation values only; no credentials belong here."
+  type = object({
+    subnet_id           = string
+    relay_base_url      = string
+    instance_type       = optional(string, "t3.medium")
+    root_volume_size_gb = optional(number, 40)
+    node_runtime = object({
+      url    = string
+      sha256 = string
+    })
+    relay_node = object({
+      url    = string
+      sha256 = string
+    })
+    harness = object({
+      npm_package = string
+      version     = string
+    })
+    bridge = object({
+      repository = string
+      commit     = string
+    })
+    repositories = list(string)
+  })
+  default = null
+}

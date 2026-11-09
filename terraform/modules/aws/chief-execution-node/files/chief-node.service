@@ -1,0 +1,31 @@
+# The dedicated Agent Relay node. Spawned harnesses copy this unit's whole
+# environment, so it must never carry a token or an EnvironmentFile with one.
+[Unit]
+Description=Agent Relay node for Chief execution
+After=network-online.target chief-node-metadata-block.service
+Wants=network-online.target
+Requires=chief-node-metadata-block.service
+
+[Service]
+Type=simple
+User=chief-node
+Group=chief-node
+WorkingDirectory=/var/lib/chief-node
+Environment=HOME=/var/lib/chief-node
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
+Environment=LANG=C.UTF-8
+Environment=XDG_RUNTIME_DIR=/run/chief-node
+Environment=DISABLE_AUTOUPDATER=1
+# Holds the Relay origin only: the node's workspace key lives in the relay home.
+EnvironmentFile=/etc/chief-node/node.env
+RuntimeDirectory=chief-node
+RuntimeDirectoryPreserve=yes
+ExecStart=/usr/local/bin/agent-relay-node serve --headless --cli-managed
+Restart=always
+RestartSec=5
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=full
+
+[Install]
+WantedBy=multi-user.target
