@@ -49,6 +49,11 @@ of set a second time. Desktop and the CLI log in against that same origin. */ -}
 {{- end -}}
 {{- define "relay-control.validate" -}}
 {{- $image := include "relay-control.image" . -}}
+{{- if not (kindIs "invalid" .Values.selectedFeatures) -}}
+{{- if not (kindIs "slice" .Values.selectedFeatures) }}{{ fail "selectedFeatures must be a list or null" }}{{ end -}}
+{{- if ne (len .Values.selectedFeatures) (len (uniq .Values.selectedFeatures)) }}{{ fail "selectedFeatures must not contain duplicates" }}{{ end -}}
+{{- range .Values.selectedFeatures }}{{ if not (has . (list "flows" "relayfile" "chief")) }}{{ fail "selectedFeatures contains an unknown optional component" }}{{ end }}{{ end -}}
+{{- end -}}
 {{- if ne (int .Values.replicaCount) 1 }}{{ fail "replicaCount must be 1: the self-host API pilot has process-local login/device rate limits and is not HA" }}{{ end -}}
 {{- if not .Values.existingSecret }}{{ fail "existingSecret is required; inline credentials are not supported" }}{{ end -}}
 {{- if not (kindIs "bool" .Values.services.relayauthEnabled) }}{{ fail "services.relayauthEnabled must be a boolean" }}{{ end -}}
@@ -64,6 +69,7 @@ settings. */ -}}
 {{- range $name := keys .Values.secretKeys | sortAlpha }}{{ $key := toString (index $.Values.secretKeys $name) }}{{ if empty $key }}{{ continue }}{{ end }}{{ if hasKey $seenSecretKeys $key }}{{ fail (printf "secretKeys.%s and secretKeys.%s both name Secret key %q: every secretKeys value must be distinct (a collision with databaseMigrationsUrl would mount the migration credential into the API pod)" (get $seenSecretKeys $key) $name $key) }}{{ end }}{{ $_ := set $seenSecretKeys $key $name }}{{ end -}}
 {{- include "relay-control.validateRuntime" . -}}
 {{- include "relay-control.validateSessionRead" . -}}
+{{- include "relay-control.validateHistoryConnection" . -}}
 {{- include "relay-control.validatePostgresCa" . -}}
 {{- if and .Values.migrations.enabled (not (regexMatch "^[A-Za-z_][A-Za-z0-9_$]{0,62}$" .Values.database.runtimeRole)) }}{{ fail "database.runtimeRole must be a valid PostgreSQL role name when migrations are enabled" }}{{ end -}}
 {{- include "relay-control.validateSingleHost" . -}}
@@ -108,6 +114,8 @@ the chart already sets, including duplicates inside extraEnv. */ -}}
   "SELFHOST_TELEMETRY_INSTALL_KEY_FILE" "RELAYCONTROL_INTROSPECT_SECRET_FILE" "SESSION_READ_API_SECRET_FILE"
   "SESSION_READ_API_URL" "SESSION_READ_API_PUBLIC_URL" "SESSION_READ_API_MCP_READS" "SELFHOST_INTROSPECT_AUDIENCES"
   "RELAYHISTORY_BACKEND" -}}
+{{- if not (kindIs "invalid" .Values.selectedFeatures) }}{{ $managed = append $managed "SELFHOST_FEATURES" }}{{ end -}}
+{{- if .Values.services.relayhistoryReadApiUrl }}{{ $managed = concat $managed (list "RELAYHISTORY_READ_API_URL" "RELAYHISTORY_READ_API_EVENTS") }}{{ end -}}
 {{- if (.Values.postgresCa | default dict).enabled }}{{ $managed = append $managed "NODE_EXTRA_CA_CERTS" }}{{ end -}}
 {{- range $name := $managed }}{{ if hasSuffix "_FILE" $name }}{{ $managed = append $managed (trimSuffix "_FILE" $name) }}{{ end }}{{ end -}}
 {{- range $src := list (include "relay-control.runtimeEnv" .) (include "relay-control.secretEnv" .) -}}
@@ -332,6 +340,7 @@ what the API would refuse at startup is refused at render time. */ -}}
 {{- if and $s.sessionReadApiMcpReads (not $secret) }}{{ fail "services.sessionReadApiMcpReads requires the session read API handoff (services.sessionReadApiUrl, services.sessionReadApiPublicUrl and secretKeys.sessionReadApiSecret)" }}{{ end -}}
 {{- if not (has $s.relayhistoryBackend (list "legacy" "native")) }}{{ fail "services.relayhistoryBackend must be legacy or native" }}{{ end -}}
 {{- if eq $s.relayhistoryBackend "native" -}}
+{{- if or $s.relayhistoryReadApiUrl $s.relayhistoryReadApiEvents }}{{ fail "native History backend refuses the legacy direct-reader connection" }}{{ end -}}
 {{- if $s.relayauthEnabled }}{{ fail "services.relayhistoryBackend=native requires services.relayauthEnabled=false: this mode has no RelayAuth" }}{{ end -}}
 {{- if or $s.relayhistoryUrl $s.relayhistoryPublicUrl }}{{ fail "services.relayhistoryBackend=native takes the History origin from the session read API: leave services.relayhistoryUrl and services.relayhistoryPublicUrl empty" }}{{ end -}}
 {{- if not $secret }}{{ fail "services.relayhistoryBackend=native requires the session read API handoff (services.sessionReadApiUrl, services.sessionReadApiPublicUrl and secretKeys.sessionReadApiSecret)" }}{{ end -}}

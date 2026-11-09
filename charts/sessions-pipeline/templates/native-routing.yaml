@@ -1,0 +1,57 @@
+{{- include "sessions-pipeline.nativeRouting.validate" . -}}
+{{- if .Values.nativeRouting.enabled -}}
+{{- $c := .Values.nativeRouting -}}
+{{- $host := (urlParse $c.origin).hostname -}}
+{{- $reader := include "sessions-pipeline.nativeRouting.readerServiceName" . -}}
+{{- $ingest := include "sessions-pipeline.nativeRouting.ingestServiceName" . -}}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "sessions-pipeline.nativeRouting.fullname" . }}
+  namespace: {{ .Release.Namespace | quote }}
+  labels:
+    app.kubernetes.io/name: session-native-routing
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: native-routing
+    helm.sh/chart: {{ printf "%s-%s" .Chart.Name .Chart.Version | quote }}
+spec:
+  ingressClassName: {{ $c.className | quote }}
+  tls:
+    - hosts: [{{ $host | quote }}]
+      secretName: {{ $c.tls.existingSecret | quote }}
+  rules:
+    - host: {{ $host | quote }}
+      http:
+        paths:
+          # Specific Exact paths take precedence over the reader's /v1 Prefix.
+          # Ingress selects paths only; native services enforce methods/auth.
+          # An independent issuer's /internal handoff is never public.
+          - path: /v1
+            pathType: Prefix
+            backend:
+              service: { name: {{ $reader }}, port: { number: 80 } }
+          - path: /v1/delivery/batches
+            pathType: Exact
+            backend:
+              service: { name: {{ $ingest }}, port: { number: 80 } }
+          - path: /v1/turns/batches
+            pathType: Exact
+            backend:
+              service: { name: {{ $ingest }}, port: { number: 80 } }
+          - path: /v1/delivery/limits
+            pathType: Exact
+            backend:
+              service: { name: {{ $ingest }}, port: { number: 80 } }
+          {{- if has .Values.ingestEdge.admission.mode (list "async" "drain") }}
+          - path: /v1/delivery/admission
+            pathType: Exact
+            backend:
+              service: { name: {{ $ingest }}, port: { number: 80 } }
+          {{- end }}
+          {{- if eq .Values.sessionReadApi.auth.mode "self_issued" }}
+          - path: /v1/auth/token/refresh
+            pathType: Exact
+            backend:
+              service: { name: {{ $ingest }}, port: { number: 80 } }
+          {{- end }}
+{{- end }}

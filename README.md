@@ -497,6 +497,14 @@ Run the same checks locally with `scripts/ci/charts.sh static` and `scripts/ci/c
 
 ## Local kind profiles
 
+For the independent-reader native core, use the explicit
+[native core lifecycle](docs/native-kind-core-lifecycle.md). Its command defaults
+to a static plan; execution requires qualified source/image packets and an
+explicit fresh or prior-owned-native binding. Legacy `kind-up` refuses native
+selection before modifying a fixture. Fresh/repeat runtime and real Desktop/UI
+acceptance remain separate qualifications; the native add-on adapter is not
+implemented yet.
+
 The local stack uses the existing `agent-relay` umbrella. Product names are
 **relaycontrol** (`relay-control` chart, `selfhost-api` image) and
 **relay-app** (`relay-webapp` chart/image). The deprecated Cloud repository
@@ -521,7 +529,7 @@ Prerequisites: Docker Engine 28+ (including native-platform image export),
 kind 0.31+, kubectl, Helm 3.10+, OpenSSL, Git, Python 3.9+, and PyYAML. Allocate
 enough Docker memory for the suite and CNI; budget 20 GiB free disk for a cold
 setup. Current optional native Control builds fetch public
-`AgentWorkforce/relay-control` at the exact `df4b390` source pin. Explicit historical
+`AgentWorkforce/relay-control` at the exact `53252e3` source pin. Explicit historical
 reproduction (`KIND_CONTROL_SOURCE=historical`) uses `1f08cb6` from the archived
 private `AgentWorkforce/relay-control-internal` repository and needs authenticated
 Git read access. Current and historical source caches are separate. Existing
@@ -615,6 +623,18 @@ the legacy receipt, and updates only the local ownership record. It preserves
 the cluster and kubeconfig. Missing original identity or any mismatch fails;
 normal `kind-up` and `kind-down` never recover a receipt implicitly.
 
+After an operator has separately completed and qualified the public workload
+rename, use the explicit [named-layout reconciliation](docs/descriptive-session-names.md#reconcile-a-completed-local-kind-cutover)
+before reusing that existing fixture. It verifies the original cluster/readiness
+identity, live Helm ownership, the original storage claim, seeded objects and
+the selected native Control archive. It retains the original `kind-locker`
+release and PVC through a persistent postrenderer selection, preserves the
+existing Postgres server configuration, and refuses credential mismatches.
+It archives old local selection/readiness metadata and imports the actual
+installed values, including any later qualified site-origin settings. It does
+not perform the rename or issue a new acceptance result. Ordinary `kind-up`
+continues to refuse an unqualified old or mismatched layout.
+
 To build and install the pinned MCP-capable control source without registry
 publication, use the same profile and local fixture with:
 
@@ -624,7 +644,7 @@ make kind-proof-core
 ```
 
 This requires Docker BuildKit/buildx and GitHub access during preparation. It
-builds the official public Control Dockerfile at `df4b390` using a pinned Node base,
+builds the official public Control Dockerfile at `53252e3` using a pinned Node base,
 selects the native manifest digest in this worktree's private values, loads it
 into kind and uses `imagePullPolicy: Never`. The OCI manifest/config hashes,
 architecture and source revision are verified before installation. The build
@@ -649,7 +669,7 @@ artifact digest; the official Dockerfile's runtime npm dependency ranges mean
 that identical source does not guarantee identical rebuilt image bytes.
 The historical `1f08cb6` proof covers both public MCP paths with real-token initialization, nineteen-tool discovery,
 workspace/public-origin binding and negative auth/origin checks in the recorded
-local-control proof. It has not been rerun for `df4b390`; no current-build MCP
+local-control proof. It has not been rerun for `53252e3`; no current-build MCP
 acceptance is implied. Agent launch/release remains pending.
 The current source includes the organization-scoped workspace DELETE route.
 Proof cleanup checks each tracked workspace's exact run name and organization
@@ -657,8 +677,8 @@ before deleting either one, then verifies their absence and preserves the
 installation's other workspaces. Older images that still return 404 retain the
 cleanup pending result. This removes only Control's workspace rows; separately
 owned Relaycast resources and external session/object cleanup remain separate.
-The [native candidate receipt](ci/agent-relay/kind/control-df4b390-smoke.json)
-qualifies the selected image's runtime-role migration/readiness and guarded
+The [earlier native candidate receipt](ci/agent-relay/kind/control-df4b390-smoke.json)
+qualifies that prior `df4b390` image's runtime-role migration/readiness and guarded
 workspace deletion against disposable PostgreSQL 17 data. It does not qualify
 an installed profile, TLS, MCP, Desktop, external erasure or the full pipeline.
 The local bootstrap applies release objects client-side before final Helm
@@ -754,7 +774,7 @@ a database row. See [captured evidence](ci/agent-relay/kind/evidence.md).
 | Current image/source compatibility | Component owners: record exact source SHA and migrator generation; a tag named `main` is insufficient. This run used services source `f1c2672581b6f88d26d0549b4d1cb78fce0d5f16`, generation `0dcd0e89bebbdad789a40fa61311c601b4c0e49e389e3b2b0167b6fd5fdf542e`. |
 | RelayAuth removal | layered-control + layered-sessions-pipeline: default-off introspection branch, `sh_at_`, `rth:read/rth:sync`; keep the temporary internal component until compatible images ship. |
 | Cost attribution data | History's client-reported fixture usage/cost passes authenticated ingest and TLS readback, including owner and workspace isolation. This does not claim live model billing or courier-session application visibility. |
-| Control image and MCP endpoint | PASS for the recorded historical local-Control variant at pinned source `1f08cb6`: verified native manifest transport, both public MCP aliases, nineteen-tool discovery, real workspace binding and auth/origin rejection ([raw receipts](ci/agent-relay/kind/evidence.md)). Current public source `df4b390` has not received that runtime proof. The catalog default remains source `9b80b04` and reports MCP pending. This does not claim agent launch/release or every MCP tool backend. No image publication is performed. |
+| Control image and MCP endpoint | PASS for the recorded historical local-Control variant at pinned source `1f08cb6`: verified native manifest transport, both public MCP aliases, nineteen-tool discovery, real workspace binding and auth/origin rejection ([raw receipts](ci/agent-relay/kind/evidence.md)). Current optional source `53252e3` has not received that recorded runtime proof; the `df4b390` candidate receipt is earlier source evidence. The catalog default remains source `9b80b04` and reports MCP pending. This does not claim agent launch/release or every MCP tool backend. No image publication is performed. |
 | Custom Desktop package for ar-lap | layered-relay-desktop: target build/artifact and real browser/Desktop handoff plus courier-to-app trace are not qualified by the infra proof. Device auth and site TLS endpoint checks do not substitute for that custom application run. |
 | Agent launch/release | Generic agent process launch/release has no runnable contract. Factory binds existing Droid sessions, and fleet node claim/release is not this proof. |
 | relayfile control-token filesystem scopes | layered-relayfile + layered-control: current introspection lacks `fs:*`; use real temporary RelayAuth for now. Dev issuer tokens do not count as acceptance evidence. |

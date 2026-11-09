@@ -110,3 +110,130 @@ invalidating readiness or changing resources. It never adopts a differently
 named Helm release or silently switches an existing installation to an empty
 claim. Preserve the old release and complete a reviewed data-preserving cutover
 before rerunning the new recipe.
+
+## Reconcile a completed local kind cutover
+
+`reconcile-names` is an explicit import of an already-completed operator
+cutover. It does not rename resources, stop workloads, apply migrations, change
+Secrets, move data, adopt a release, or turn a live UID into ownership authority.
+The existing versioned cluster ownership and original readiness receipts must
+already bind this checkout's selected `core` or `addons` profile and native
+cluster UID. A completed core cutover cannot authorize an addons fixture.
+
+The private cutover packet must retain these files together:
+
+- `activation-receipt.json`: `PASS`, phase `CLIENT_WRITERS_RESUMED`, distinct old
+  and new Deployment UIDs, original PVC UID, one-writer confirmation, unchanged
+  image/PVC confirmations, equal nonempty seeded inventories, and the synthetic
+  sentinel key/content hash. A failed, partial, or rolled-back attempt refuses.
+- `before-inventory-normalized-private.json` and
+  `after-inventory-normalized-private.json`: equal sorted object rows containing
+  `key`, `size`, `etag`, and `versionId`, whose content hashes and totals match
+  the activation receipt. The sentinel must be one of these objects.
+- `render-review-receipt.json`, `values-before.json`, and `minio-5.4.0.tgz`: the
+  review binds the same chart/values bytes and exactly two changed fields,
+  `Deployment.metadata.name` and `Deployment.spec.template.metadata.name`.
+  The original `locker` PVC, Services, selectors, Secret references, image and
+  mount path remain in the same `kind-locker` Helm release.
+
+Keep this packet under the checkout's private `.kind` directory. Never invent
+a receipt to silence an upgrade guard, or use `persistence.existingClaim` to
+remove the release-owned PVC from the manifest. The currently installed release
+must still render that PVC and the named Deployment. Readback verifies every
+seeded object and the sentinel against the live store; additional later objects
+are allowed. A missing/changed seed, replaced claim, duplicate writer, foreign
+release, configuration drift, or missing original readiness anchor refuses.
+
+For a locally built Control image, also retain its native OCI archive. The local
+Docker tag must still export the same native manifest/config; reconciliation checks
+that export before changing readiness or selection metadata. If the tag is missing
+or was rebuilt, restore the verified archive first; reconciliation does not
+silently replace the host cache. Admission
+checks the archive's manifest/config bytes, platform and approved source, pairs
+the API/migration entrypoints, and compares the selected image and rendered
+application configuration with the live named Deployments. An old build receipt
+alone cannot qualify a different image.
+
+```sh
+make kind-reconcile-names PROFILE=core \
+  CUTOVER_RECEIPT=.kind/operator-cutover/activation-receipt.json \
+  CONTROL_IMAGE_ARCHIVE=.kind/operator-cutover/native-control.tar
+make kind-up PROFILE=core
+make kind-proof-core
+```
+
+For an independently qualified addons cutover, select `PROFILE=addons`. Its
+installed component selection and credentials must match that profile; this
+path does not relax add-on acceptance gates.
+
+Reconciliation writes a typed private `named-layout.json` binding. It archives
+the original `ready.json`, images/build metadata, values, render and proof under
+a new `named-history-*` directory, imports the **current installed** application
+values, and selects the verified Control archive metadata. It clears stale
+active readiness/images; the old proof remains untouched and historical. A
+later qualified public-origin change is retained rather than replaced with the
+values from the earlier storage cutover. Only a complete subsequent `kind-up`
+can issue current readiness, and only a fresh proof can establish acceptance.
+Required application Deployment names come from the selected render rather than
+the previous implementation's fixed worker list. The default legacy profile
+still requires every selected role. Disabling the legacy metadata indexer is
+accepted only with an explicitly selected, drained canonical runtime
+replacement; a preparation-only Job, owner bootstrap role, missing selected
+Deployment, or remaining legacy indexer refuses.
+
+The current `sessions-pipeline.searchIndexer` chart is one supported replacement
+when explicitly selected with its Postgres backend, dedicated runtime Secret,
+pinned custom CA and the existing Locker endpoint. Its Deployment is labelled
+`session-search-indexer`, but runs `SERVICE=session-pipeline-consumer`: the
+qualified service authenticates as `search_consumer_runtime` and verifies its
+schema/RLS boundary before becoming ready. Reconciliation also requires its
+single-replica Recreate strategy, `/readyz` startup/readiness probes and exact
+live/rendered configuration. The owner bootstrap Secret cannot be selected as
+the runtime Secret. Image and database admission still require their independent
+qualification; a Deployment label alone is insufficient.
+
+For this current-chart path, set `localKind.legacyIndexerDrained: true` in the
+installed values only after the operator has completed the drain. This is
+reconciliation acknowledgement metadata, not workload enablement or drain
+evidence: it does not create or stop a writer, and any remaining legacy
+Deployment still refuses, even at zero replicas. Select the writer through
+`sessions-pipeline.searchIndexer.enabled`, and disable the old
+`worker.components.hoopdb-indexer` explicitly. There is no need to invent an
+unused `nativeConsumer.enabled` flag.
+
+The separate `sessions-pipeline.nativeConsumer` slot retains its own runtime
+preflight and `legacyIndexerDrained` contract when a qualified chart actually
+renders it. It is not an alias for `searchIndexer`; selecting both replacements
+refuses. Adding values for a slot absent from the selected chart cannot admit
+a missing Deployment or qualify a completed cutover.
+
+On reuse, `kind-up` rechecks the typed binding, original readiness archive,
+storage/Postgres identities and specifications, seeded readback, selected
+values and credentials **before** invalidating readiness or preparing images.
+It keeps the original storage release/claim and applies the saved naming
+transform automatically with Helm 3 or the isolated Helm 4 postrenderer plugin.
+It preserves the existing Postgres server configuration (including reviewed
+TLS), and compares credential projections without replacing Secrets or dropping
+extra keys. It still executes the ordinary ordered role/schema checks. Tenant
+annotation updates remain retryable across interruption; they cannot select a
+different application image through this reconciliation path.
+
+If an interrupted operation left no active readiness file, reconciliation
+requires the independently retained anchor explicitly:
+
+```sh
+python3 ci/agent-relay/kind/stack.py reconcile-names --profile core \
+  --cutover-receipt .kind/operator-cutover/activation-receipt.json \
+  --control-image-archive .kind/operator-cutover/native-control.tar \
+  --readiness-anchor '.kind/core/named-history-<recorded-id>/ready.json'
+```
+
+The anchor must come from that profile's preserved naming history; a guessed
+live UID or another profile's file refuses. Credential/PKI rotation or a
+Postgres server/Secret change also needs explicit requalification. This path
+reuses the selected valid TLS identity rather than silently reissuing it.
+
+Fresh installations keep their ordinary layout and need no cutover receipt.
+An unqualified legacy fixture still refuses. No cloud operation, fixture reset,
+or live rollout of this reconciliation implementation is implied by its source
+tests or by the earlier operator cutover evidence.

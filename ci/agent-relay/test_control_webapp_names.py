@@ -346,6 +346,13 @@ esac
 
     def test_old_cluster_is_refused_before_ready_or_images_are_changed(self):
         with tempfile.TemporaryDirectory() as tmp, patch.object(stack, 'ROOT', Path(tmp)), patch.object(stack.shutil, 'which', return_value='/fixture/tool'):
+            # Read-only native selection admission precedes runtime calls.
+            # Keep this fixture non-native so the real legacy-name guard is
+            # still reached, with all original no-mutation assertions intact.
+            charts = Path(tmp) / 'charts/agent-relay'
+            charts.mkdir(parents=True)
+            (charts / 'values.yaml').write_text('{}\n')
+            (charts / 'values-kind-core.yaml').write_text('{}\n')
             local = stack.Stack('core')
             ready = local.state / 'ready.json'
             ready.write_text('saved-independent-receipt')

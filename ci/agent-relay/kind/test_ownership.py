@@ -201,6 +201,13 @@ class Ownership(unittest.TestCase):
 
     def test_up_refusal_preserves_original_recovery_anchor(self):
         self.legacy_receipts()
+        # The up entry point now reads profile selections before its first
+        # runtime call. Supply a disabled native selection so this test still
+        # reaches the original independent ownership-refusal boundary.
+        charts = self.root / "charts/agent-relay"
+        charts.mkdir(parents=True)
+        (charts / "values.yaml").write_text("{}\n")
+        (charts / "values-kind-core.yaml").write_text("{}\n")
         ready = self.local.state / "ready.json"
         before = ready.read_bytes()
         with patch.object(stack.shutil, "which", return_value="tool"):

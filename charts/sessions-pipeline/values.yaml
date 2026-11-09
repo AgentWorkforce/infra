@@ -463,3 +463,88 @@ ingestEdge:
   resources:
     requests: { cpu: 50m, memory: 128Mi }
     limits: { memory: 512Mi }
+
+# Canonical pointer/search consumer from merged pipeline #336, default OFF.
+# No runtime image is selected until the complete source/image/generation and
+# native PostgreSQL/TLS/Locker handoff is accepted. This does not enable reads,
+# upload, publication, GC, deletion/privacy, or replace an installed indexer.
+nativeConsumer:
+  enabled: false
+  fullnameOverride: ""
+  replicas: 1
+  # Both the chart's legacy indexer and the installed old indexer must be off.
+  # Recreate cannot coordinate two differently named writers.
+  legacyIndexerDrained: false
+  # Driver/migrations stay outside this slot; verify the selected image's
+  # migration run AND zero-step rerun before prepare/serve. Disable old Job.
+  migrationDriverVerified: false
+  # Only needed with active legacy Bob/referee/ingest. Match their image and
+  # CA, validate immutable CA object and opaque verify-full URLs/roles/DB/gates.
+  legacyRuntimesQualified: false
+  image:
+    repository: ghcr.io/agentworkforce/96bulls-services
+    digest: ""
+    pullPolicy: IfNotPresent
+  imagePullSecrets: []
+  port: 8081
+  # Postgres is the only supported native consumer backend. Match the reader.
+  backendId: ""
+  completeSince: ""
+  keyPrefix: 96bulls
+  reconcileEveryMinutes: 1
+  reconcileLookbackMinutes: 30
+  allowInClusterHttp: false
+  config:
+    # JSON {hoopdb_url:<search_consumer_runtime URL>}; no owner/reader URL.
+    existingSecret: ""
+    key: RELAYHISTORY_PIPELINE_CONSUMER_SECRET
+  postgres:
+    # Explicit expected target; the init contract checks both actual pools.
+    host: ""
+    database: ""
+    port: 5432
+    caConfigMap: ""
+    caKey: ca.crt
+    caSha256: ""
+  locker:
+    bucket: ""
+    endpoint: ""
+    region: us-east-1
+    credentials:
+      mode: secret # secret | podIdentity (S3/MinIO only; no GCS slot)
+    existingSecret: ""
+    accessKeyIdKey: access-key-id
+    secretAccessKeyKey: secret-access-key
+  bootstrap:
+    enabled: false
+    # With the Job enabled, prepare renders Job+contract only. Verify completion,
+    # set runtime-role password through the operator, then select serve.
+    phase: prepare # prepare | serve
+    ownerRole: ""
+    # This Secret is forbidden in enabled runtime config/env/volume/pull refs,
+    # including reader/ingest and after the prepare Job has been disabled.
+    existingSecret: "" # DIFFERENT Job-only JSON {hoopdb_url:<schema owner URL>}
+    key: RELAYHISTORY_PIPELINE_CONSUMER_SECRET
+    activeDeadlineSeconds: 900
+  preflight:
+    # Bounded init wait for genuine login, both verified-TLS pools, matching
+    # database, official consumer schema/role/policies and generation/PASS.
+    timeoutSeconds: 600
+  serviceAccountName: ""
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  podAnnotations: {}
+  resources:
+    requests: { cpu: 50m, memory: 128Mi }
+    limits: { memory: 768Mi }
+
+nativeRouting:
+  enabled: false
+  fullnameOverride: ""
+  # Exact same normalized HTTPS origin as sessionReadApi.origin and ingestEdge.origin.
+  origin: ""
+  className: ""
+  tls:
+    # Must already exist in the release namespace; no key material is created.
+    existingSecret: ""

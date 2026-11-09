@@ -10,7 +10,19 @@
 {{- end -}}
 {{- if not (has $local.profile (list "core" "addons")) }}{{ fail "localKind.profile must be core or addons" }}{{ end -}}
 {{- if ne (toString $local.temporaryRelayauth) (toString .Values.components.relayauth) }}{{ fail "localKind.temporaryRelayauth must explicitly match components.relayauth; remove both only after upstream auth removal ships" }}{{ end -}}
+{{- $native := $local.nativePhase | default "" -}}
+{{- if not (has $native (list "" "control" "serve")) }}{{ fail "localKind.nativePhase must be empty, control or serve" }}{{ end -}}
+{{- if $native -}}
+{{- $api := index .Values "relay-control" -}}
+{{- if or (ne $local.profile "core") .Values.components.durableActors .Values.components.relayhistory .Values.components.relayauth .Values.components.relayflows .Values.components.relayfile .Values.components.relayChief (not .Values.components.control) (not .Values.components.relaycast) (ne ($api.services.relayhistoryBackend | default "legacy") "native") }}{{ fail "complete native core requires native Control and Cast, with legacy History/RelayAuth and optional workloads off" }}{{ end -}}
+{{- if eq $native "control" -}}
+{{- if or .Values.components.webapp .Values.components.sessionsPipeline }}{{ fail "native control bootstrap must not start the app or pipeline before the real Default workspace exists" }}{{ end -}}
+{{- else -}}
+{{- if or (not .Values.components.webapp) (not .Values.components.sessionsPipeline) (not (dig "nativeRouting" "enabled" false $pipeline)) (ne (dig "sessionReadApi" "auth" "mode" "" $pipeline) "self_issued") }}{{ fail "native serve requires app, pipeline, routing and the independent reader" }}{{ end -}}
+{{- end -}}
+{{- else -}}
 {{- if or .Values.components.durableActors (not .Values.components.control) (not .Values.components.webapp) (not .Values.components.sessionsPipeline) (not .Values.components.relayhistory) (not .Values.components.relaycast) }}{{ fail "local kind profiles require control, app, cast, history and sessions, without durable actors" }}{{ end -}}
+{{- end -}}
 {{- $addons := eq $local.profile "addons" -}}
 {{- if or (ne $addons .Values.components.relayflows) (ne $addons .Values.components.relayfile) }}{{ fail "localKind.profile and components.relayflows/relayfile must agree" }}{{ end -}}
 {{- $api := index .Values "relay-control" -}}
@@ -60,4 +72,32 @@ spec:
               service:
                 name: {{ $apiService }}
                 port: { number: {{ $api.service.port }} }
+{{- if dig "nativeRouting" "enabled" false $pipeline }}
+---
+# Only Control may reach public HTTPS through the owned in-cluster Traefik
+# gateway: History compatibility reads or its own workspace token handoff.
+# Service 443 and 8443 both target the gateway's secure Pod port 8443.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: kind-control-native-readback-egress
+  namespace: {{ .Release.Namespace | quote }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: {{ $api.nameOverride | default "relay-control" | trunc 63 | trimSuffix "-" | quote }}
+      app.kubernetes.io/instance: {{ .Release.Name | quote }}
+      app.kubernetes.io/component: api
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels: { kubernetes.io/metadata.name: kind-edge }
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/instance: kind-edge-kind-edge
+              app.kubernetes.io/name: traefik
+      ports:
+        - { protocol: TCP, port: 8443 }
+{{- end }}
 {{- end }}

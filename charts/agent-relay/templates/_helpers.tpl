@@ -11,7 +11,31 @@
 {{- include "agent-relay.validateHistoryOrigin" . }}
 {{- include "agent-relay.validateDurableActors" . }}
 {{- include "agent-relay.validateSingleHost" . }}
+{{- include "agent-relay.validateNativeHistory" . }}
 {{- end }}
+
+{{- define "agent-relay.validateNativeHistory" -}}
+{{- $pipeline := index .Values "sessions-pipeline" | default dict -}}
+{{- if dig "nativeRouting" "enabled" false $pipeline -}}
+{{- if not .Values.components.sessionsPipeline }}{{ fail "native History routing requires components.sessionsPipeline=true" }}{{ end -}}
+{{- if and .Values.components.relayhistory (dig "ingress" "enabled" false (.Values.relayhistory | default dict)) }}{{ fail "native History routing requires relayhistory.ingress.enabled=false; retain the server separately if needed" }}{{ end -}}
+{{- if (.Values.gkeIngress | default dict).enabled }}{{ fail "native History routing cannot share the legacy gkeIngress History backend" }}{{ end -}}
+{{- if .Values.components.control -}}
+{{- $api := index .Values "relay-control" -}}
+{{- $origin := dig "nativeRouting" "origin" "" $pipeline -}}
+{{- if $api.services.relayauthEnabled }}{{ fail "native History routing requires Control services.relayauthEnabled=false so login forwards the caller token" }}{{ end -}}
+{{- if eq ($api.services.relayhistoryBackend | default "legacy") "native" -}}
+{{- if ne (dig "sessionReadApi" "auth" "mode" "" $pipeline) "self_issued" }}{{ fail "native Control backend requires an independent self_issued reader" }}{{ end -}}
+{{- if or $api.services.relayhistoryPublicUrl (ne $origin $api.services.sessionReadApiPublicUrl) }}{{ fail "native History origin must exactly equal Control's independent reader public origin" }}{{ end -}}
+{{- if not $api.services.sessionReadApiMcpReads }}{{ fail "native Control backend requires sessionReadApiMcpReads=true" }}{{ end -}}
+{{- else -}}
+{{- if eq (dig "sessionReadApi" "auth" "mode" "" $pipeline) "self_issued" }}{{ fail "self_issued reader requires Control services.relayhistoryBackend=native" }}{{ end -}}
+{{- if or (ne $origin $api.services.relayhistoryPublicUrl) (ne $origin $api.services.relayhistoryReadApiUrl) }}{{ fail "native History origin must exactly equal Control's managed public and direct-reader origins" }}{{ end -}}
+{{- if not $api.services.relayhistoryReadApiEvents }}{{ fail "native History with Control requires services.relayhistoryReadApiEvents=true and a compatible Control image" }}{{ end -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
 
 {{/*
 Session ingest (alleyoop) verifies courier History assertions against the same

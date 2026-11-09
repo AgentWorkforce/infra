@@ -7,7 +7,11 @@ import ssl
 import time
 
 
-def install(stack, version, namespace):
+POLICY = "kind-edge-no-external-egress"
+EDGE_NAMESPACE = "kind-edge"
+
+
+def egress_policy_spec(stack, namespace):
     endpoints = json.loads(stack.k("get", "endpoints", "kubernetes", "-o", "json", namespace="default").stdout)
     service = json.loads(stack.k("get", "service", "kubernetes", "-o", "json", namespace="default").stdout)
     addresses = {service["spec"]["clusterIP"]}
@@ -16,15 +20,65 @@ def install(stack, version, namespace):
         addresses.update(a["ip"] for a in subset["addresses"])
         ports.update(p["port"] for p in subset["ports"])
     targets = [{"ipBlock": {"cidr": f"{ip}/{ipaddress.ip_address(ip).max_prefixlen}"}} for ip in sorted(addresses)]
-    stack.apply({"apiVersion": "v1", "kind": "Namespace", "metadata": {"name": "kind-edge"}})
-    stack.apply({"apiVersion": "networking.k8s.io/v1", "kind": "NetworkPolicy",
-                 "metadata": {"name": "kind-edge-no-external-egress", "namespace": "kind-edge"}, "spec": {
-                     "podSelector": {}, "policyTypes": ["Egress"], "egress": [
-                         {"to": [{"namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": namespace}}, "podSelector": {}}]},
-                         {"to": [{"namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": "kube-system"}},
-                                  "podSelector": {"matchLabels": {"k8s-app": "kube-dns"}}}],
-                          "ports": [{"protocol": "UDP", "port": 53}, {"protocol": "TCP", "port": 53}]},
-                         {"to": targets, "ports": [{"protocol": "TCP", "port": p} for p in sorted(ports)]}]}})
+    return {"podSelector": {}, "policyTypes": ["Egress"], "egress": [
+        {"to": [{"namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": namespace}}, "podSelector": {}}]},
+        {"to": [{"namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": "kube-system"}},
+                 "podSelector": {"matchLabels": {"k8s-app": "kube-dns"}}}],
+         "ports": [{"protocol": "UDP", "port": 53}, {"protocol": "TCP", "port": 53}]},
+        {"to": targets, "ports": [{"protocol": "TCP", "port": p} for p in sorted(ports)]}]}
+
+
+def egress_policy_document(owner, spec):
+    from native_network import OWNER
+    return {"apiVersion": "networking.k8s.io/v1", "kind": "NetworkPolicy", "metadata": {
+        "name": POLICY, "namespace": EDGE_NAMESPACE,
+        "labels": {OWNER: "owned", "kind.agentrelay.dev/profile": owner["profile"]},
+        "annotations": {"kind.agentrelay.dev/cluster-uid": owner["clusterUid"],
+                        "kind.agentrelay.dev/fixture-name": owner["name"]}}, "spec": spec}
+
+
+def preflight_policy(stack, namespace):
+    """Read-only admission of the exact policy install would otherwise change."""
+    from native_network import _owner, fail
+    owner = _owner(stack)
+    desired = egress_policy_document(owner, egress_policy_spec(stack, namespace))
+    namespaces = json.loads(stack.k("get", "namespace", "-o", "json", namespace=None).stdout).get("items", [])
+    if EDGE_NAMESPACE not in {d.get("metadata", {}).get("name") for d in namespaces}:
+        return desired, False
+    items = json.loads(stack.k("get", "networkpolicy", "-o", "json", namespace=EDGE_NAMESPACE).stdout).get("items", [])
+    selected = [p for p in items if p.get("metadata", {}).get("name") == POLICY]
+    if not selected:
+        return desired, False
+    if len(selected) != 1:
+        fail("edge egress policy identity is ambiguous")
+    validate_policy(selected[0], desired)
+    return desired, True
+
+
+def validate_policy(actual, desired):
+    from native_network import fail
+    meta = actual.get("metadata", {})
+    ann = meta.get("annotations", {})
+    if (actual.get("kind") != "NetworkPolicy" or meta.get("name") != POLICY or meta.get("namespace") != EDGE_NAMESPACE
+            or meta.get("deletionTimestamp")
+            or not isinstance(meta.get("uid"), str) or not meta["uid"]
+            or any(meta.get("labels", {}).get(k) != v for k, v in desired["metadata"]["labels"].items())
+            or any(ann.get(k) != v for k, v in desired["metadata"]["annotations"].items())
+            or any(k in ann for k in ("meta.helm.sh/release-name", "meta.helm.sh/release-namespace"))
+            or meta.get("ownerReferences")):
+        fail("manual or foreign edge egress policy requires a reviewed ownership handoff")
+    if actual.get("spec") != desired["spec"]:
+        fail("edge egress policy differs from the exact backend/API/DNS-only contract")
+
+
+def install(stack, version, namespace, *, wait_for_route=True):
+    policy, exists = preflight_policy(stack, namespace)  # before any apply or Helm action
+    stack.apply({"apiVersion": "v1", "kind": "Namespace", "metadata": {"name": EDGE_NAMESPACE}})
+    if not exists:
+        # CREATE refuses a manual object that raced preflight. Existing exact
+        # source-owned policy is a no-op, never an unconditional overwrite.
+        created = json.loads(stack.k("create", "-f", "-", "-o", "json", namespace=EDGE_NAMESPACE, data=json.dumps(policy)).stdout)
+        validate_policy(created, policy)
     values = {
         "global": {"checkNewVersion": False, "sendAnonymousUsage": False},
         "service": {"spec": {"type": "NodePort"}},
@@ -36,6 +90,11 @@ def install(stack, version, namespace):
     path.chmod(0o600)
     stack.cmd(["helm", "upgrade", "--install", "kind-edge", "traefik/traefik", "--version", version,
                "-n", "kind-edge", "-f", path, "--wait", "--timeout", "5m"], timeout=330)
+    if wait_for_route:
+        verify_application_route(stack)
+
+
+def verify_application_route(stack):
     # A ready ingress pod can still be serving its default certificate while
     # loading providers. Require the actual trusted application route too.
     deadline = time.monotonic() + 45

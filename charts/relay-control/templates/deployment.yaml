@@ -21,6 +21,9 @@ spec:
     spec:
       serviceAccountName: {{ include "relay-control.serviceAccountName" . }}
       automountServiceAccountToken: false
+      {{- with concat .Values.services.relayhistoryHostAliases .Values.services.publicHostAliases }}
+      hostAliases: {{ toYaml . | nindent 8 }}
+      {{- end }}
       terminationGracePeriodSeconds: {{ .Values.terminationGracePeriodSeconds }}
       securityContext: {{ toYaml .Values.podSecurityContext | nindent 8 }}
       {{- with .Values.imagePullSecrets }}
@@ -36,6 +39,9 @@ spec:
           ports:
             - { name: http, containerPort: {{ .Values.server.port }}, protocol: TCP }
           env:
+            {{- if not (kindIs "invalid" .Values.selectedFeatures) }}
+            - { name: SELFHOST_FEATURES, value: {{ join "," .Values.selectedFeatures | quote }} }
+            {{- end }}
             - { name: PORT, value: {{ .Values.server.port | quote }} }
             - { name: SELFHOST_PUBLIC_URL, value: {{ include "relay-control.publicUrl" . | quote }} }
             {{- if .Values.services.relayauthEnabled }}
@@ -46,6 +52,9 @@ spec:
             {{- if ne .Values.services.relayhistoryBackend "native" }}
             - { name: RELAYHISTORY_URL, value: {{ .Values.services.relayhistoryUrl | quote }} }
             - { name: RELAYHISTORY_PUBLIC_URL, value: {{ .Values.services.relayhistoryPublicUrl | quote }} }
+            {{- end }}
+            {{- if .Values.services.relayhistoryReadApiUrl }}
+            {{- include "relay-control.historyConnectionEnv" . | nindent 12 }}
             {{- end }}
             {{- include "relay-control.runtimeEnv" . | nindent 12 }}
             {{- include "relay-control.secretEnv" . | nindent 12 }}

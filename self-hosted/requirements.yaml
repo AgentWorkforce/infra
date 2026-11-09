@@ -238,6 +238,9 @@ ci_only_values:
   - file: ci/search-indexer-values.yaml
     why: Render-only search indexer fixture with a fake image identity; never install it.
 
+  - file: ci/native-consumer-values.yaml
+    why: Render-only native canonical consumer with synthetic image/CA identities and disabled legacy writers; never install it.
+
 compatibility:
   # The services image every sessions-pipeline profile, CI values file and chart default pins.
   services_images:
@@ -278,9 +281,34 @@ compatibility:
       images:
         session-read-api: { repository: ghcr.io/agentworkforce/96bulls-services, digest_required: true }
       notes: 'Defaults READ_API_COMPLETE_SINCE to epoch for a new self-host store populated only by its own ingest. Partial legacy imports must retain an explicit real coverage floor matching the indexer. Image, auth, routing and enabled defaults are unchanged; this does not assert coverage for an imported store or qualify a runtime.'
-    - id: sessions-pipeline-0.8.8
+    - id: sessions-pipeline-0.8.9
       status: unreleased
       current: true
+      charts: { sessions-pipeline: 0.8.9, sessions-pipeline-worker: 0.7.3, session-ingest-api: 0.4.1, session-read-api: 0.2.2 }
+      depends:
+        sessions-pipeline: { worker: 0.7.3, alleyoop: 0.4.1, sessionReadApi: 0.2.2, hoopdb: 0.9.0, session-object-storage: 5.4.0, otel: 0.178.0 }
+      images:
+        sessions-pipeline-worker: { repository: agentworkforce/96bulls-services, digest: sha256:6f22ea17dff336e1431664542759fd27958649388b90a0b2f0881883caa7c6b2 }
+        session-ingest-api: { repository: agentworkforce/96bulls-services, digest: sha256:6f22ea17dff336e1431664542759fd27958649388b90a0b2f0881883caa7c6b2 }
+        session-read-api: { repository: ghcr.io/agentworkforce/96bulls-services, digest_required: true }
+      images_note: "session-read-api self_issued and events.messageIds need at least ghcr.io/agentworkforce/96bulls-services@sha256:d55840ab4bf4e2fea3769db690f3c8d32979ab455ef251172f914ac011cb8c33 (pipeline eebaced9). Native ingest edge (SERVICE=session-ingest): unqualified; an explicit qualified combined-image digest is required. Pins above belong to the existing internal worker/ingest services, not ingestEdge."
+      services:
+        source_commit: 7d7229bb31c121ecb98cd4e35c248fc2cf5669ad
+        migration_generation: eff8b3be46565b57ad8fa5e4a066dbb6d1fe608313d9c1680bfbcd484add259b
+      db_combos:
+        - { db_mode: selfhosted, boundary: global-default-revoke, hoopdb: cnpg, status: shipped, profiles: [selfhost-postgres, migration, aws-cnpg], notes: chart Jobs install the runtime role and the function default }
+        - { db_mode: selfhosted, boundary: global-default-revoke, hoopdb: external, status: shipped, profiles: [external-selfhosted], notes: operator runs the bootstrap files as a superuser }
+        - { db_mode: rds, boundary: global-default-revoke, hoopdb: external, status: shipped, profiles: [external-rds], notes: the RDS master runs the rds_*.sql bootstrap first }
+        - { db_mode: cloudsql, boundary: global-default-revoke, hoopdb: external, status: shipped, profiles: [gcp-cloudsql], notes: operator runs the Cloud SQL bootstrap files as the migration owner; roleBootstrap false }
+        - { db_mode: supabase, boundary: event-trigger, hoopdb: external, status: held, profiles: [external-supabase], notes: supabaseActivation.hold; migrate refuses until the reviewed event trigger is installed and --activation-check passes }
+        - { db_mode: supabase, boundary: null, hoopdb: external, status: fails closed, profiles: [aws-supabase], notes: renders; migrate refuses with function_boundary_unproven }
+        - { db_mode: local, boundary: null, hoopdb: any, status: dev only, profiles: [], notes: local stack only; never a self-host install }
+      sources:
+        - "charts/sessions-pipeline/Chart.yaml:4"
+        - "ci/sessions-pipeline-profiles/matrix.sh:70"
+      notes: 'Native canonical consumer and single-origin routing remain default-off and require independently qualified source, image, schema and separate runtime credentials. The explicit native kind core lifecycle is source-tested only; no fresh or repeat runtime acceptance is inferred.'
+    - id: sessions-pipeline-0.8.8
+      status: planned
       charts: { sessions-pipeline: 0.8.8, sessions-pipeline-worker: 0.7.3, session-ingest-api: 0.4.1, session-read-api: 0.2.2 }
       depends:
         sessions-pipeline: { worker: 0.7.3, alleyoop: 0.4.1, sessionReadApi: 0.2.2, hoopdb: 0.9.0, session-object-storage: 5.4.0, otel: 0.178.0 }
@@ -796,9 +824,20 @@ compatibility:
       images:
         relayauth: { repository: ghcr.io/agentworkforce/relayauth, digest: sha256:eb71daa28e30eb7305f666d0bccc5a4002e53e8a574e3c4c32163d907a1b71df }
       notes: superseded by 0.1.1.
-    - id: agent-relay-0.6.13
+    - id: agent-relay-0.6.14
       status: unreleased
       current: true
+      charts: { agent-relay: 0.6.14, relayhistory: 0.1.2, relay-control: 0.4.3, relay-webapp: 0.2.1 }
+      app_versions: { agent-relay: 0.1.0, relayhistory: 0.1.0, relay-control: 0.1.0, relay-webapp: 0.1.0 }
+      depends:
+        agent-relay: { relaycast: 0.3.7, relayauth: 0.1.4, sessions-pipeline: 0.8.9, relayhistory: 0.1.2, relay-control: 0.4.3, relay-webapp: 0.2.1, relayflows: 0.2.5, durable-actors: 0.14.6-awf.1, relayfile: 0.2.2, telemetry-collector: 0.1.1, relay-chief: 0.1.0 }
+      images:
+        relayhistory: { repository: ghcr.io/agentworkforce/relayhistory, digest_required: true }
+        relay-control: { repository: ghcr.io/agentworkforce/relay-control, digest: sha256:d8c26d44dccb6dd21b7033288241a379e46ce5fbca69f276c4d4745001c3c3e2 }
+        relay-webapp: { repository: ghcr.io/agentworkforce/relay-webapp, digest_required: true }
+      notes: 'Adds explicit managed optional-feature selection and native independent-reader local core phase admission. Defaults preserve extraEnv compatibility; no license is used. Native runtime and public artifacts require separate qualification; the old pinned Control image is not a compatible native-core image claim.'
+    - id: agent-relay-0.6.13
+      status: planned
       charts: { agent-relay: 0.6.13, relayhistory: 0.1.2, relay-control: 0.4.2, relay-webapp: 0.2.1 }
       app_versions: { agent-relay: 0.1.0, relayhistory: 0.1.0, relay-control: 0.1.0, relay-webapp: 0.1.0 }
       depends:
@@ -4478,3 +4517,116 @@ entries:
       - "charts/sessions-pipeline/templates/_ingest-edge.tpl:1"
       - "charts/sessions-pipeline/values.yaml:1"
       - "docs/self-hosted-native-ingest.md:1"
+
+  - id: opt.sessions-native-consumer
+    kind: option
+    title: Default-off native canonical pointer and search consumer
+    description: |
+      SERVICE=session-pipeline-consumer from merged pipeline 336. Requires a
+      qualified immutable composed image, a dedicated runtime JSON Secret, explicit
+      PostgreSQL target and pinned public custom CA, S3/MinIO static Secret or
+      Pod Identity, typed backend/floor/bare root, and a drained disabled old
+      hoopdb-indexer. Old migrator Job must be disabled after an external official
+      driver plus zero-step rerun. Active legacy workers/ingest must match the
+      immutable image and CA references and carry operator strict-URL/TLS/generation
+      qualification; otherwise stop them. One replica with Recreate. The bounded init contract checks
+      both actual pool TLS transports, database/login, source role/schema/policy
+      admission and exact generation/PASS. Opaque URLs must use verify-full plus
+      the managed CA path; helper-pool trust alone is insufficient.
+      Optional owner bootstrap uses a different Job-only JSON Secret and the
+      official SERVICE; no SQL grants are fabricated. Phase prepare renders
+      Job/contract only; serve is selected after completion and password setup.
+      No default image digest, install-profile enablement, public Service, hosted
+      fanout, buffered/publication/GC activation or deletion/privacy acceptance.
+    chart: sessions-pipeline
+    values: [nativeConsumer.*]
+    env: [SERVICE, RELAYHISTORY_SELFHOST_PIPELINE_CONSUMER, RELAYHISTORY_PIPELINE_CONSUMER_SECRET, HOOPDB_DB_MODE, SEARCH_INDEX_BACKEND, SEARCH_INDEX_POSTGRES_BACKEND_ID, READ_API_COMPLETE_SINCE, PIPELINE_RUNTIME, PIPELINE_FANOUT, PIPELINE_KEY_PREFIX, PIPELINE_ORG_FROM_PREFIX, CONSUMER_RECONCILE_EVERY_MINUTES, PIPELINE_RECONCILE_LOOKBACK_MINUTES, SESSION_POSTGRES_TLS_PROFILE, SESSION_POSTGRES_CA_FILE, SESSION_POSTGRES_CA_SHA256, ALLOW_IN_CLUSTER_HTTP, WORKER_HEALTH_PORT, CONSUMER_UNHEALTHY_FILE, LOCKER_PROVIDER, LOCKER_BUCKET, LOCKER_ENDPOINT, LOCKER_REGION, LOCKER_ACCESS_KEY_ID, LOCKER_SECRET_ACCESS_KEY, NATIVE_CONSUMER_CA_SOURCE_FILE, NATIVE_CONSUMER_PREFLIGHT_MODE, NATIVE_CONSUMER_EXPECTED_ROLE, NATIVE_CONSUMER_EXPECTED_DATABASE, NATIVE_CONSUMER_EXPECTED_HOST, NATIVE_CONSUMER_EXPECTED_PORT, NATIVE_CONSUMER_PREFLIGHT_TIMEOUT_SECONDS]
+    profiles: [selfhost-postgres, migration, external-selfhosted, aws-cnpg]
+    status: shipped
+    provided_by: operator
+    default: disabled
+    choices:
+      - { value: disabled }
+      - { value: enabled, note: Requires qualified image/generation and a drained canonical pilot plan. }
+    secrets:
+      - name: "<native consumer runtime JSON Secret>"
+        name_paths: [nativeConsumer.config.existingSecret]
+        keys:
+          - { key: RELAYHISTORY_PIPELINE_CONSUMER_SECRET, key_path: nativeConsumer.config.key }
+      - name: "<native consumer Job-only owner JSON Secret>"
+        name_paths: [nativeConsumer.bootstrap.existingSecret]
+        keys:
+          - { key: RELAYHISTORY_PIPELINE_CONSUMER_SECRET, key_path: nativeConsumer.bootstrap.key }
+      - name: "<native consumer S3 static Secret, secret mode only>"
+        name_paths: [nativeConsumer.locker.existingSecret]
+        keys:
+          - { key: access-key-id, key_path: nativeConsumer.locker.accessKeyIdKey }
+          - { key: secret-access-key, key_path: nativeConsumer.locker.secretAccessKeyKey }
+    verify: Leave off until exact source/image/generation, official bootstrap and native PG/TLS/MinIO upload-to-pointer-to-dashboard proof pass. Render and probe tests alone are not runtime acceptance.
+    sources:
+      - "charts/sessions-pipeline/templates/native-consumer.yaml:1"
+      - "charts/sessions-pipeline/templates/native-consumer-bootstrap.yaml:1"
+      - "charts/sessions-pipeline/templates/_native-consumer.tpl:1"
+      - "docs/self-hosted-native-consumer.md:1"
+
+  - id: opt.relay-control.selected-features
+    kind: option
+    title: Explicit optional Control features
+    description: |
+      selectedFeatures=null preserves the existing extraEnv/default selection.
+      A managed list selects only flows, relayfile and chief; [] explicitly
+      serves core only. No license, customer metadata or entitlement is used.
+      Managed selection reserves SELFHOST_FEATURES against duplicate extraEnv.
+    chart: relay-control
+    values: [selectedFeatures]
+    env: [SELFHOST_FEATURES]
+    profiles: [relay-control]
+    status: shipped
+    provided_by: operator
+    default: null
+    choices: [{ value: null }, { value: [], note: Core only }, { value: [flows, relayfile, chief] }]
+    verify: Render explicit core with an empty SELFHOST_FEATURES and refuse unknown names, duplicates and duplicate extraEnv.
+    sources: [charts/relay-control/templates/deployment.yaml, charts/relay-control/templates/_helpers.tpl]
+
+  - id: opt.relay-control.direct-native-reader
+    kind: option
+    title: Existing caller-token native reader connection
+    description: |
+      Separate compatibility mode for a Control-only reader. Off by default.
+      Uses the caller's existing Control bearer, exact public HTTPS origin,
+      managed introspection secret/audience and optional scoped IP mapping.
+      The independent native backend refuses this direct-reader selection.
+    chart: relay-control
+    values: [services.relayhistoryReadApiUrl, services.relayhistoryReadApiEvents, services.relayhistoryHostAliases]
+    env: [RELAYHISTORY_READ_API_URL, RELAYHISTORY_READ_API_EVENTS]
+    profiles: [relay-control]
+    status: shipped
+    provided_by: operator
+    default: disabled
+    choices: [{ value: disabled }, { value: enabled }]
+    verify: Render no direct-reader env by default; preserve exact origin/port and reject authority mixing.
+    sources: [charts/relay-control/templates/_history-connection.tpl]
+
+  - id: opt.sessions-pipeline.native-routing
+    kind: option
+    title: Native History public route
+    description: |
+      Default-off managed Ingress selecting the native reader and ingest edge
+      on one exact public origin. Independent issuer mode exposes only /v1,
+      never /internal. Existing caller-token mode retains its separate route
+      contract. Source ownership and compatible image qualification are needed
+      before local fixture preparation; no manual resource is auto-adopted.
+    chart: sessions-pipeline
+    values: [nativeRouting.*]
+    env: []
+    profiles: [selfhost-postgres, external-selfhosted]
+    status: shipped
+    provided_by: operator
+    default: disabled
+    choices: [{ value: disabled }, { value: enabled }]
+    secrets:
+      - name: "<existing public History TLS Secret>"
+        name_paths: [nativeRouting.tls, nativeRouting.tls.existingSecret]
+        keys: []
+    verify: Render only qualified exact paths and Service ports; reject missing TLS/origin, mixed authorities and public internal issuer exposure.
+    sources: [charts/sessions-pipeline/templates/native-routing.yaml, charts/sessions-pipeline/templates/_native-routing.tpl]

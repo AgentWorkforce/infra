@@ -99,15 +99,38 @@ jobs:
         with:
           node-version: "22.23.3"
 
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.4.2"
+
       - name: Local kind profile and trust contract tests (offline)
         run: |
           python3 -m pip install -r ci/agent-relay/kind/requirements.txt
           python3 ci/agent-relay/test_control_webapp_names.py -v
+          python3 ci/agent-relay/test_native_history_connection.py -v
+          python3 ci/agent-relay/test_native_kind_policy.py -v
+          python3 ci/sessions-pipeline-native-routing/test_native_routing.py -v
+          python3 ci/agent-relay/kind/test_native_network.py -v
+          python3 ci/agent-relay/kind/test_native_network_command.py -v
+          python3 ci/agent-relay/kind/test_native_bootstrap_guard.py -v
           python3 ci/agent-relay/test_native_no_relayauth.py -v
           python3 ci/agent-relay/kind/test_stack.py -v
           python3 ci/agent-relay/kind/test_ownership.py -v
+          python3 ci/agent-relay/kind/test_named_upgrade.py -v
+          python3 ci/agent-relay/kind/test_native_recipe.py -v
+          python3 ci/agent-relay/kind/test_native_inspect.py -v
+          python3 ci/agent-relay/kind/test_native_bootstrap.py -v
+          python3 ci/agent-relay/kind/test_native_control.py -v
+          python3 ci/agent-relay/kind/test_native_control_artifact.py -v
+          python3 ci/agent-relay/kind/test_native_core.py -v
+          python3 ci/agent-relay/kind/test_native_core_cli.py -v
+          python3 ci/agent-relay/kind/test_native_core_render.py -v
+          python3 ci/agent-relay/kind/test_native_webapp.py -v
+          python3 ci/agent-relay/kind/test_native_pipeline.py -v
+          python3 ci/agent-relay/kind/test_native_pipeline_driver.py -v
           python3 ci/agent-relay/kind/test_control.py -v
           python3 ci/sessions-pipeline-read-api/test_read_api.py -v
+          python3 ci/sessions-pipeline-native-consumer/test_native_consumer.py -v
           python3 ci/sessions-pipeline-native-brief/test_native_brief.py -v
           python3 ci/agent-relay/kind/test_harness.py -v
           python3 ci/session-component-names/test_names.py -v

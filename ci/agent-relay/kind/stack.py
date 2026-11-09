@@ -119,6 +119,8 @@ class Stack:
         if profile not in ("core", "addons"):
             raise StackError("profile must be core or addons")
         self.profile = profile
+        self.root = ROOT
+        self.named_layout = None
         self.name = f"agent-relay-{profile}"
         # State contains local credentials. Keep it on the checkout's volume.
         self.state = ROOT / ".kind" / profile
@@ -196,7 +198,14 @@ class Stack:
     def recipe_hash(self):
         files = [ROOT / "Makefile", ROOT / "ci/agent-relay/kind/stack.py", ROOT / "ci/agent-relay/kind/addons.py",
                  ROOT / "ci/agent-relay/kind/edge.py", ROOT / "ci/agent-relay/kind/tls.py",
+                 ROOT / "ci/agent-relay/kind/native_network.py",
+                 *[ROOT / "ci/agent-relay/kind" / (name + ".py") for name in
+                   ("native_recipe", "native_inspect", "native_bootstrap", "native_pipeline", "native_control", "native_control_artifact",
+                    "native_core_values", "native_core", "native_core_cli", "native_webapp")],
                  ROOT / "ci/agent-relay/kind/bootstrap.mjs", ROOT / "ci/agent-relay/kind/control.py",
+                 ROOT / "ci/agent-relay/kind/named_upgrade.py",
+                 ROOT / "ci/agent-relay/kind/storage-name-renderer/plugin.yaml",
+                 ROOT / "ci/agent-relay/kind/storage-name-renderer/postrender.py",
                  ROOT / "ci/agent-relay/kind/flows-sdk/package.json",
                  ROOT / "ci/agent-relay/kind/flows-sdk/package-lock.json"]
         return hashlib.sha256(b"".join(p.read_bytes() for p in files)).hexdigest()
@@ -412,6 +421,10 @@ class Stack:
         print("Calico and kind node ready", flush=True)
 
     def secret(self, name, values):
+        if self.named_layout is not None:
+            from named_upgrade import preserve_secret
+            preserve_secret(self, name, values)
+            return
         self.apply({"apiVersion": "v1", "kind": "Secret", "metadata": {"name": name, "namespace": NS},
                     "type": "Opaque", "stringData": values})
 
@@ -423,26 +436,40 @@ class Stack:
             s.setdefault(k, secrets.token_hex(32))
         private_json(path, s)
         key = auth_signing_key(self)
-        db = lambda user, database: f"postgresql://{user}:{s[user]}@postgres.{NS}.svc.cluster.local:5432/{database}"
-        self.secret("kind-postgres", {"password": s["postgres"]})
-        self.secret("kind-cast", {"internal-secret": s["cast"], "workspace-bootstrap-secret": s["cast_bootstrap"]})
-        self.secret("kind-auth", {"internal-secret": s["auth_internal"], "signing-key.pem": key.read_text(), "bootstrap-api-key": s["auth_key"]})
-        self.secret("kind-control", {"database-url": db("control_api_runtime", "relaycontrol"),
-            "database-migrations-url": db("control_owner", "relaycontrol"), "relayauth-api-key": s["auth_key"],
-            "selfhost-bootstrap-token": s["bootstrap"], "selfhost-encryption-key": s["encryption"],
-            "selfhost-internal-token": s["internal"], "relaycast-internal-secret": s["cast"]})
-        runtime = f"postgresql://sessions_pipeline_runtime:{s['runtime']}@postgres.{NS}.svc.cluster.local:5432/hoopdb"
-        self.secret("kind-pipeline", {"HOOPDB_URL": runtime, "HOOPDB_MIGRATION_URL": db("hoop", "hoopdb"),
-                    "rootUser": "locker", "rootPassword": s["locker"], "SUMMARY_MASTER_KEYS": "kind1:" + s["encryption"]})
-        self.secret("kind-history-db", {"DATABASE_URL": db("history_runtime", "relayhistory"),
-                                       "DATABASE_MIGRATIONS_URL": db("history_owner", "relayhistory")})
-        if self.profile == "addons":
-            self.secret("kind-relayfile", {"RELAYFILE_INTERNAL_HMAC_SECRET": s["internal"],
-                                          # lib/pq defaults to TLS; local Postgres has TLS off.
-                                          "RELAYFILE_PRODUCTION_DSN": db("relayfile", "relayfile") + "?sslmode=disable"})
+        for name, values in self.credential_values(s, key.read_text()).items():
+            self.secret(name, values)
         return s
 
+    def credential_values(self, s, signing_key):
+        """Pure projection shared by fresh creation and named-reuse checks."""
+        db = lambda user, database: f"postgresql://{user}:{s[user]}@postgres.{NS}.svc.cluster.local:5432/{database}"
+        values = {
+            "kind-postgres": {"password": s["postgres"]},
+            "kind-cast": {"internal-secret": s["cast"], "workspace-bootstrap-secret": s["cast_bootstrap"]},
+            "kind-auth": {"internal-secret": s["auth_internal"], "signing-key.pem": signing_key, "bootstrap-api-key": s["auth_key"]},
+            "kind-control": {"database-url": db("control_api_runtime", "relaycontrol"),
+            "database-migrations-url": db("control_owner", "relaycontrol"), "relayauth-api-key": s["auth_key"],
+            "selfhost-bootstrap-token": s["bootstrap"], "selfhost-encryption-key": s["encryption"],
+            "selfhost-internal-token": s["internal"], "relaycast-internal-secret": s["cast"]}}
+        runtime = f"postgresql://sessions_pipeline_runtime:{s['runtime']}@postgres.{NS}.svc.cluster.local:5432/hoopdb"
+        values["kind-pipeline"] = {"HOOPDB_URL": runtime, "HOOPDB_MIGRATION_URL": db("hoop", "hoopdb"),
+                    "rootUser": "locker", "rootPassword": s["locker"], "SUMMARY_MASTER_KEYS": "kind1:" + s["encryption"]}
+        values["kind-history-db"] = {"DATABASE_URL": db("history_runtime", "relayhistory"),
+                                    "DATABASE_MIGRATIONS_URL": db("history_owner", "relayhistory")}
+        if self.profile == "addons":
+            values["kind-relayfile"] = {"RELAYFILE_INTERNAL_HMAC_SECRET": s["internal"],
+                                          # lib/pq defaults to TLS; local Postgres has TLS off.
+                                      "RELAYFILE_PRODUCTION_DSN": db("relayfile", "relayfile") + "?sslmode=disable"}
+        return values
+
     def postgres(self, s, services_image):
+        if self.named_layout is not None:
+            # A qualified existing fixture may have a reviewed TLS server
+            # configuration. Reuse it; naming is not authority to replace it
+            # with the fresh-install plaintext server below.
+            self.k("rollout", "status", "statefulset/postgres", "--timeout=180s", timeout=210)
+            self.postgres_roles(s, services_image)
+            return
         labels = {"app": "kind-postgres"}
         self.apply({"apiVersion": "v1", "kind": "Service", "metadata": {"name": "postgres", "namespace": NS},
                     "spec": {"selector": labels, "ports": [{"port": 5432}]}})
@@ -455,6 +482,9 @@ class Stack:
               "readinessProbe": {"exec": {"command": ["pg_isready", "-U", "postgres"]}, "periodSeconds": 3}}]}},
             "volumeClaimTemplates": [{"metadata": {"name": "data"}, "spec": {"accessModes": ["ReadWriteOnce"], "resources": {"requests": {"storage": "4Gi"}}}}]}})
         self.k("rollout", "status", "statefulset/postgres", "--timeout=180s", timeout=210)
+        self.postgres_roles(s, services_image)
+
+    def postgres_roles(self, s, services_image):
         sql = []
         for role in ("hoop", "history_owner", "history_runtime", "control_owner", "control_api_runtime", "relayfile"):
             sql.append(f"SELECT 'CREATE ROLE {role} LOGIN PASSWORD ''{s[role]}''' WHERE NOT EXISTS (SELECT FROM pg_roles WHERE rolname='{role}') \\gexec")
@@ -488,6 +518,10 @@ class Stack:
         return self.k(*args, data=text, sensitive=sensitive).stdout
 
     def tls(self):
+        if self.named_layout is not None:
+            from named_upgrade import verify_tls
+            verify_tls(self)
+            return
         from tls import create
         create(self, HOSTS, NS)
 
@@ -516,6 +550,12 @@ class Stack:
         raise StackError(f"Job {name} did not complete in {seconds}s")
 
     def require_no_legacy_storage(self):
+        from named_upgrade import RECORD, validate
+        if (self.state / RECORD).exists():
+            # A missing namespace/claim after a qualified cutover is drift, not
+            # permission to silently replace the volume with a fresh install.
+            self.named_layout = validate(self)
+            return
         if not self.k("get", "namespace", NS, "--ignore-not-found", "-o", "json", namespace=None).stdout.strip():
             return  # A previously created, owned cluster may still be empty.
         objects = json.loads(self.k("get", "deploy,pvc", "-o", "json").stdout).get("items", [])
@@ -545,6 +585,17 @@ class Stack:
         for tool in ("docker", "kind", "kubectl", "helm", "openssl", "git"):
             if not shutil.which(tool):
                 raise StackError(f"missing prerequisite: {tool}")
+        from native_network import refuse_legacy_bootstrap
+        try:
+            layers = [yaml.safe_load((ROOT / "charts/agent-relay/values.yaml").read_text())]
+            args = self.values_args()
+            for index in range(0, len(args), 2):
+                if args[index] != "-f":
+                    raise StackError("unrecognized bootstrap values argument")
+                layers.append(yaml.safe_load(Path(args[index + 1]).read_text()))
+        except yaml.YAMLError:
+            raise StackError("malformed bootstrap values; no runtime mutation attempted") from None
+        refuse_legacy_bootstrap(layers)
         self.docker(require_space=False)
         # Legacy recovery needs the original ready.json as an independent UID
         # anchor. Refuse foreign/legacy ownership BEFORE invalidating it or
@@ -553,6 +604,11 @@ class Stack:
             self.require_owned_cluster()
             self.require_no_legacy_storage()
             self.require_control_webapp_layout()
+            # Edge policy ownership may predate the current installer. Refuse
+            # unqualified reuse before invalidating readiness or touching DBs,
+            # images or Helm; install() repeats this same read-only gate.
+            from edge import preflight_policy
+            preflight_policy(self, NS)
         ready = self.state / "ready.json"
         if ready.exists():
             ready.unlink()
@@ -589,12 +645,16 @@ class Stack:
                      "servicesSourceRevision": source,
                      "infraRevision": self.cmd(["git", "rev-parse", "HEAD"]).stdout.strip()})
         self.postgres(s, services_image)
-        locker_values = self.state / "locker-values.json"
-        defaults = yaml.safe_load((ROOT / "charts/sessions-pipeline/values.yaml").read_text())["session-object-storage"]
-        defaults.update(existingSecret="kind-pipeline", persistence={"enabled": True, "size": "2Gi"})
-        private_json(locker_values, defaults)
-        self.cmd(["helm", "upgrade", "--install", "kind-session-object-storage", "charts/sessions-pipeline/charts/minio-5.4.0.tgz", "-n", NS,
-                  "-f", locker_values, "--wait", "--timeout", "5m"], timeout=330)
+        if self.named_layout is not None:
+            from named_upgrade import install_storage
+            install_storage(self)
+        else:
+            locker_values = self.state / "locker-values.json"
+            defaults = yaml.safe_load((ROOT / "charts/sessions-pipeline/values.yaml").read_text())["session-object-storage"]
+            defaults.update(existingSecret="kind-pipeline", persistence={"enabled": True, "size": "2Gi"})
+            private_json(locker_values, defaults)
+            self.cmd(["helm", "upgrade", "--install", "kind-session-object-storage", "charts/sessions-pipeline/charts/minio-5.4.0.tgz", "-n", NS,
+                      "-f", locker_values, "--wait", "--timeout", "5m"], timeout=330)
         for d in docs:
             if d["kind"] in ("Deployment", "Service") and d["metadata"]["name"] in ("relaycast", "relayauth"):
                 self.apply(d, chart=True)
@@ -611,7 +671,11 @@ class Stack:
         ids = json.loads(self.k("exec", "deploy/relay-control", "--", "node", "/tmp/kind-bootstrap.mjs", bootstrap_name).stdout)
         private_json(self.state / "tenant.json", ids)
         values = json.loads(self.overrides.read_text()) if self.overrides.exists() else {}
-        private_json(self.overrides, tenant_values(values, ids, self.profile, self.arch, self.recipe_hash()))
+        selected = tenant_values(values, ids, self.profile, self.arch, self.recipe_hash())
+        if self.named_layout is not None:
+            from named_upgrade import stage_selection
+            stage_selection(self, selected)
+        private_json(self.overrides, selected)
         docs = self.render()
         final_images = sorted({c["image"] for d in docs for c in pod_spec(d).get("containers", []) + pod_spec(d).get("initContainers", [])})
         if final_images != images:
@@ -632,6 +696,9 @@ class Stack:
                   *self.values_args(), *apply_mode, "--wait", "--wait-for-jobs", "--timeout", "10m"], timeout=660)
         from edge import install
         install(self, TRAEFIK_CHART, NS)
+        if self.named_layout is not None:
+            from named_upgrade import refresh_after_up
+            refresh_after_up(self)
         private_json(ready, {"profile": self.profile, "recipeSha256": self.recipe_hash(),
                      "renderSha256": hashlib.sha256((self.state / "rendered.yaml").read_bytes()).hexdigest(),
                      "clusterUid": self.k("get", "namespace", "kube-system", "-o", "jsonpath={.metadata.uid}", namespace=None).stdout,
@@ -670,6 +737,39 @@ finally {await db.end();}'''
         from addons import build
         build(self)
 
+    def prepare_native_network(self, values_path):
+        """Prepare source-owned local networking, never install the app/profile."""
+        from native_network import preflight, ensure, selected_values, selection
+        from edge import install
+        path = Path(values_path)
+        if path.is_symlink() or not path.is_file():
+            raise StackError("--native-values must be a regular selected-values JSON file")
+        values = json.loads(path.read_text())
+        if selection(values) is None:
+            raise StackError("prepare-native-network requires an enabled nativeRouting selection")
+        self.docker(require_space=False)
+        # This explicit preparation command operates on an existing owned
+        # fixture. Full native first-boot/bootstrap is a separate recipe.
+        self.require_owned_cluster()
+        preflight(self, values)  # no gateway/ready/images mutation on refusal
+        self.dependencies()
+        base_args = ["-f", ROOT / "charts/agent-relay/values-kind-core.yaml"]
+        if self.profile == "addons":
+            base_args += ["-f", ROOT / "charts/agent-relay/values-kind-addons.yaml"]
+        selected_args = [*base_args, "-f", path.resolve()]
+        self.cmd(["helm", "template", RELEASE, "charts/agent-relay", "-n", NS, *selected_args])
+        install(self, TRAEFIK_CHART, NS, wait_for_route=False)
+        observation = ensure(self, values)
+        selected = selected_values(values, observation)
+        proposal = self.state / "native-network-values.json"
+        private_json(proposal, selected)
+        # Validate the allocated mapping too, before presenting the proposal.
+        self.cmd(["helm", "template", RELEASE, "charts/agent-relay", "-n", NS,
+                  *base_args, "-f", proposal])
+        print("Prepared owned edge networking and proposed values at " + str(proposal))
+        print("Active values, Helm app release, database, readiness and proof were not changed. "
+              "Review/install the complete selected app values separately.")
+
     def down(self):
         self.docker(require_space=False)
         self.require_owned_cluster()
@@ -690,12 +790,22 @@ def pod_spec(doc):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("action", choices=("up", "down", "render", "build-addons", "build-control", "recover"))
+    parser.add_argument("action", choices=("up", "down", "render", "build-addons", "build-control", "recover", "reconcile-names", "prepare-native-network"))
     parser.add_argument("--profile", choices=("core", "addons"), default="core")
     parser.add_argument("--expected-cluster-uid", help="original readiness UID; required only for explicit recover")
+    parser.add_argument("--cutover-receipt", help="completed private seeded storage naming proof; reconcile-names only")
+    parser.add_argument("--control-image-archive", help="matching native OCI Control archive; reconcile-names only")
+    parser.add_argument("--readiness-anchor", help="preserved naming-history ready.json after interruption; reconcile-names only")
+    parser.add_argument("--native-values", help="selected values JSON; required only for prepare-native-network")
     args = parser.parse_args()
     if args.expected_cluster_uid and args.action != "recover":
         parser.error("--expected-cluster-uid is only valid for recover")
+    if args.action == "reconcile-names" and not args.cutover_receipt:
+        parser.error("reconcile-names requires --cutover-receipt")
+    if args.action != "reconcile-names" and (args.cutover_receipt or args.control_image_archive or args.readiness_anchor):
+        parser.error("cutover arguments are only valid for reconcile-names")
+    if (args.action == "prepare-native-network") != bool(args.native_values):
+        parser.error("prepare-native-network requires --native-values; other actions must omit it")
     os.umask(0o077)
     try:
         stack = Stack(args.profile)
@@ -709,9 +819,14 @@ def main():
             build(stack)
         elif args.action == "recover":
             stack.recover(args.expected_cluster_uid)
+        elif args.action == "reconcile-names":
+            from named_upgrade import reconcile
+            reconcile(stack, args.cutover_receipt, args.control_image_archive, args.readiness_anchor)
         elif args.action == "build-addons":
             stack.docker(require_space=False)
             stack.build_addons()
+        elif args.action == "prepare-native-network":
+            stack.prepare_native_network(args.native_values)
         else:
             getattr(stack, args.action)()
     except (StackError, OSError, ValueError) as e:
