@@ -83,11 +83,11 @@ class OperatorStack(Stack):
             assert kw.get("sensitive") is True and "-i" in args and "psql" in args
             sql = kw["data"]; self.effects.append(("psql", None))
             if "json_build_object('oid'" in sql:
-                return SimpleNamespace(stdout=json.dumps({"oid": self.owner_oid, "clean": not self.owner_login}))
+                return SimpleNamespace(stdout=json.dumps({"oid": self.owner_oid if "r.oid::bigint" in sql else str(self.owner_oid), "clean": not self.owner_login}))
             if "ALTER ROLE hoop LOGIN CREATEROLE PASSWORD" in sql: self.owner_login = True; self.owner_crea = True
             if "ALTER ROLE hoop NOCREATEROLE" in sql: self.owner_crea = False
             if "json_build_object('ownerOid'" in sql:
-                return SimpleNamespace(stdout=json.dumps({"ownerOid": self.owner_oid, "ownerNoCreateRole": self.owner_login and not self.owner_crea}))
+                return SimpleNamespace(stdout=json.dumps({"ownerOid": self.owner_oid if "r.oid::bigint" in sql else str(self.owner_oid), "ownerNoCreateRole": self.owner_login and not self.owner_crea}))
             return SimpleNamespace(stdout="")
         raise AssertionError("unexpected test transport")
 
@@ -131,6 +131,42 @@ class NativeBootstrapTests(unittest.TestCase):
         facts = self.observed_preflight()
         with patch.object(TlsMaterial, "verify", return_value=None):
             return self.adapter.prepare_infrastructure(self.s, facts)
+
+    def test_owner_json_projects_oid_as_bigint_before_strict_decode(self):
+        self.fresh()
+        # PostgreSQL's oid JSON category is a string. Match the real PG17
+        # behavior unless the producer explicitly projects a numeric type.
+        raw = self.stack.k("exec", "-i", "postgres-0", "--", "psql", data="SELECT json_build_object('oid',r.oid,'clean',true)", sensitive=True).stdout
+        self.assertEqual(json.loads(raw)["oid"], str(self.stack.owner_oid))
+        owner = self.adapter._owner_snapshot(self.s)
+        self.assertIs(type(owner["oid"]), int)
+        self.assertEqual(owner, {"oid": self.stack.owner_oid, "clean": True})
+        self.stack.owner_login = True
+        with patch.object(self.adapter, "_preflight"):
+            self.adapter._owner_oid = self.stack.owner_oid
+            self.adapter.verify_owner_final(self.s)
+        for args, kw in self.stack.calls:
+            if args[0] == "exec" and ("json_build_object('oid'" in kw["data"] or "json_build_object('ownerOid'" in kw["data"]):
+                if "SELECT json_build_object('oid',r.oid,'clean',true)" == kw["data"]:
+                    continue
+                self.assertIn("r.oid::bigint", kw["data"])
+                self.assertTrue(kw["data"].startswith("BEGIN READ ONLY;"))
+
+    def test_owner_json_does_not_coerce_malformed_oid_or_boolean_values(self):
+        for oid in ["101", True, False, 0, -1, 101.0, None]:
+            with self.subTest(oid=oid), patch.object(self.adapter, "_psql", return_value=json.dumps({"oid": oid, "clean": True})):
+                with self.assertRaisesRegex(NativeRecipeError, "fresh_owner_snapshot_unreadable"):
+                    self.adapter._owner_snapshot(self.s)
+        with patch.object(self.adapter, "_psql", return_value=json.dumps({"oid": 101, "clean": "true"})):
+            with self.assertRaisesRegex(NativeRecipeError, "fresh_owner_snapshot_unreadable"):
+                self.adapter._owner_snapshot(self.s)
+        for oid, final in [("101", True), (True, True), (0, True), (101, "true"), (101, None)]:
+            with self.subTest(oid=oid, final=final), patch.object(self.adapter, "_preflight"), patch.object(self.adapter, "_psql", return_value=json.dumps({"ownerOid": oid, "ownerNoCreateRole": final})):
+                with self.assertRaisesRegex(NativeRecipeError, "final_owner_snapshot_unreadable"):
+                    self.adapter.verify_owner_final(self.s)
+        with patch.object(self.adapter, "_preflight"), patch.object(self.adapter, "_psql", return_value=json.dumps({"ownerOid": 101, "ownerNoCreateRole": False})):
+            with self.assertRaisesRegex(NativeRecipeError, "owner_privilege_not_finalized"):
+                self.adapter.verify_owner_final(self.s)
 
     def test_applying_adapter_is_still_incomplete_and_cannot_dispatch(self):
         with self.assertRaisesRegex(NativeRecipeError, "complete_native_adapter"): NativeRecipe(self.s).run(self.adapter)
