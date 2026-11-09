@@ -32,31 +32,31 @@ spec:
         - name: collector
           image: {{ include "telemetry-collector.image" .Values.image | quote }}
           imagePullPolicy: IfNotPresent
-          command: ["node", "node_modules/@cloud/selfhost-api/dist/collector-cli.js"]
+          command: ["/usr/bin/flock", "--nonblock", "--no-fork", "/var/lib/telemetry/.writer.lock", "node", "node_modules/relay-control/dist/collector-cli.js"]
           env:
             - { name: ANALYTICS_COLLECTOR_HOST, value: "127.0.0.1" }
             - { name: ANALYTICS_COLLECTOR_PORT, value: "4319" }
             - { name: ANALYTICS_COLLECTOR_DATA_DIR, value: /var/lib/telemetry }
             - { name: ANALYTICS_COLLECTOR_PRODUCERS_FILE, value: /var/run/secrets/telemetry-producers/producers.json }
             - name: ANALYTICS_COLLECTOR_MAX_BATCH_BYTES
-              value: {{ .Values.limits.maxBatchBytes | quote }}
+              value: {{ .Values.limits.maxBatchBytes | int64 | quote }}
             - name: ANALYTICS_COLLECTOR_MAX_BATCH_EVENTS
-              value: {{ .Values.limits.maxBatchEvents | quote }}
+              value: {{ .Values.limits.maxBatchEvents | int64 | quote }}
             - name: ANALYTICS_COLLECTOR_MAX_EVENT_BYTES
-              value: {{ .Values.limits.maxEventBytes | quote }}
+              value: {{ .Values.limits.maxEventBytes | int64 | quote }}
             - name: ANALYTICS_COLLECTOR_REQUEST_TIMEOUT_MS
-              value: {{ .Values.limits.requestTimeoutMs | quote }}
+              value: {{ .Values.limits.requestTimeoutMs | int64 | quote }}
             - name: ANALYTICS_COLLECTOR_MAX_IN_FLIGHT
-              value: {{ .Values.limits.maxInFlight | quote }}
+              value: {{ .Values.limits.maxInFlight | int64 | quote }}
             - name: ANALYTICS_COLLECTOR_MAX_SEGMENTS
-              value: {{ .Values.limits.maxSegments | quote }}
+              value: {{ .Values.limits.maxSegments | int64 | quote }}
             - name: ANALYTICS_COLLECTOR_MAX_DISK_BYTES
-              value: {{ .Values.limits.maxDiskBytes | quote }}
+              value: {{ .Values.limits.maxDiskBytes | int64 | quote }}
             - name: ANALYTICS_COLLECTOR_SHUTDOWN_DEADLINE_MS
-              value: {{ .Values.limits.shutdownDeadlineMs | quote }}
+              value: {{ .Values.limits.shutdownDeadlineMs | int64 | quote }}
             - { name: ANALYTICS_COLLECTOR_RETENTION, value: {{ .Values.retention.policy | quote }} }
             {{- if .Values.retention.maxAgeMs }}
-            - { name: ANALYTICS_COLLECTOR_RETENTION_MAX_AGE_MS, value: {{ .Values.retention.maxAgeMs | quote }} }
+            - { name: ANALYTICS_COLLECTOR_RETENTION_MAX_AGE_MS, value: {{ .Values.retention.maxAgeMs | int64 | quote }} }
             {{- end }}
           securityContext: &restricted
             allowPrivilegeEscalation: false

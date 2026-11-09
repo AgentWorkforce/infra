@@ -51,7 +51,7 @@ class Webapp(unittest.TestCase):
 
     def test_reads_original_receipts_and_uses_actual_build_index_separate_from_native_and_config(self):
         inputs = self.save(); original = {p.name: p.read_bytes() for p in self.root.iterdir()}
-        with patch("native_webapp.native_archive", return_value=self.config) as archive:
+        with patch("native_inspect.native_archive", return_value=self.config) as archive:
             value = coordinates(inputs, "arm64")
         self.assertEqual(value["indexDigest"], self.metadata["containerimage.digest"])
         self.assertNotEqual(value["indexDigest"], value["manifestDigest"])
@@ -61,7 +61,7 @@ class Webapp(unittest.TestCase):
 
     def test_changed_unbound_metadata_or_packet_refuses_before_archive_read(self):
         inputs = self.save(); (self.root / "build-metadata.json").write_text("{}")
-        with patch("native_webapp.native_archive") as archive:
+        with patch("native_inspect.native_archive") as archive:
             with self.assertRaisesRegex(NativeRecipeError, "evidence_bytes_changed"): coordinates(inputs, "arm64")
             archive.assert_not_called()
         inputs = self.save(); inputs["webappPacketSha256"] = "0" * 64
@@ -76,14 +76,14 @@ class Webapp(unittest.TestCase):
             if case == "different-base": self.docs["base-chain-receipt.json"]["runtime"]["exactBasePrefix"] = False
             config = deepcopy(self.config)
             if case == "root-user": config["config"]["User"] = "0"
-            with patch("native_webapp.native_archive", return_value=config):
+            with patch("native_inspect.native_archive", return_value=config):
                 with self.subTest(case=case), self.assertRaises(NativeRecipeError): coordinates(self.save(), "arm64")
             self.packet, self.docs = original_packet, original_docs
 
     def test_static_file_hash_input_cannot_inject_shell_or_escape_served_directory(self):
         for name in ("../secret", "/root/file", "index.html\nnext", "$(unsafe).js"):
             self.docs["compiled-bundle-manifest.json"]["files"] = {name: "a" * 64}
-            with patch("native_webapp.native_archive", return_value=self.config):
+            with patch("native_inspect.native_archive", return_value=self.config):
                 with self.subTest(name=name), self.assertRaisesRegex(NativeRecipeError, "static_manifest"):
                     coordinates(self.save(), "arm64")
 

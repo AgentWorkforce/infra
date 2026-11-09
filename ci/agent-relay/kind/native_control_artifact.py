@@ -58,7 +58,7 @@ def source_archive(path, expected_sha, files, modes):
 
 
 def coordinates(paths, selected, architecture):
-    from native_inspect import document, native_archive, same_local_reference, sha
+    from native_inspect import document, native_archive_transport, same_local_reference, sha
     packet = document(paths["controlReceipt"], selected["artifactReceiptSha256"])
     require(isinstance(packet, dict) and all(packet.get(k) == selected[k] for k in ("sourceRevision", "manifestDigest", "configDigest")) and
             same_local_reference(packet.get("reference"), selected["reference"]), "control_receipt_chain_mismatch")
@@ -67,8 +67,9 @@ def coordinates(paths, selected, architecture):
         # hashes and file names. No RawV2 field or proof is silently inferred.
         require({"nativeArchiveSha256", "imageDistManifestSha256", "sourceFileManifestSha256", "tag", "dockerIndexDigest"} <= set(packet),
                 "qualified_flat_control_receipt_required")
-        config = native_archive(paths["controlArchive"], packet["nativeArchiveSha256"], selected["sourceRevision"],
+        transport = native_archive_transport(paths["controlArchive"], packet["nativeArchiveSha256"], selected["sourceRevision"],
                                 selected["manifestDigest"], selected["configDigest"], architecture)
+        config = transport["config"]
         dist = document(paths["controlDistManifest"], packet["imageDistManifestSha256"])
         migration = document(paths["controlMigrationManifest"], paths["controlMigrationManifestSha256"])
         require(migration["source"] == selected["sourceRevision"] and
@@ -77,7 +78,7 @@ def coordinates(paths, selected, architecture):
         require(all(source.get("migrations/" + n) == h for n, h in migration["sql"].items()),
                 "control_source_schema_binding_mismatch")
         return {**packet, "dist": dist, "migration": {**migration, "ledger": "selfhost_schema_migrations"},
-                "source": source, "nativeConfig": config, "rawV2": False}
+                "source": source, "nativeConfig": config, "archiveNative": transport, "rawV2": False}
 
     require(set(packet) == RAW_FIELDS and architecture == "arm64" and packet["architecture"] == "linux/arm64" and
             isinstance(packet["sourceTree"], str) and re.fullmatch(r"[a-f0-9]{40}", packet["sourceTree"]) and
@@ -160,7 +161,8 @@ def coordinates(paths, selected, architecture):
             all(probe.get(k) is True for k in ("capabilitiesEndpoint", "licenseModuleAbsent", "directOptIn", "nativeSingleOrigin", "nativeRefusesLegacyDirectOverride")),
             "raw_control_compiled_contract_proof_required")
     ledger, mode_binding = source_archive(paths["controlSourceArchive"], source["sourceArchiveSha256"], files, source["modes"])
-    config = native_archive(paths["controlArchive"], packet["archiveSha256"], packet["sourceRevision"], packet["manifestDigest"], packet["configDigest"], architecture)
+    transport = native_archive_transport(paths["controlArchive"], packet["archiveSha256"], packet["sourceRevision"], packet["manifestDigest"], packet["configDigest"], architecture)
+    config = transport["config"]
     require(isinstance(config.get("config"), dict) and config["config"] == runtime.get("runtimeConfig") and config.get("rootfs", {}).get("type") == "layers" and
             isinstance(config["rootfs"].get("diff_ids"), list) and config["rootfs"]["diff_ids"] and
             all(isinstance(v, str) and re.fullmatch(r"sha256:[a-f0-9]{64}", v) for v in config["rootfs"]["diff_ids"]),
@@ -168,4 +170,4 @@ def coordinates(paths, selected, architecture):
     return {**packet, "tag": packet["localTag"], "nativeArchiveSha256": packet["archiveSha256"],
             "dist": {"dist/" + n: h for n, h in dist.items()}, "source": files,
             "migration": {"source": packet["sourceRevision"], "migrationCount": len(sql), "sql": sql, "ledger": ledger},
-            "nativeConfig": config, "sourceModeBinding": mode_binding, "rawV2": True}
+            "nativeConfig": config, "archiveNative": transport, "sourceModeBinding": mode_binding, "rawV2": True}
