@@ -22,10 +22,10 @@ def write_json(path, value):
     return digest(path.read_bytes())
 
 
-def write_tar(path, files):
+def write_tar(path, files, modes=None):
     with tarfile.open(path, "w") as archive:
         for name, raw in files.items():
-            item = tarfile.TarInfo(name); item.size = len(raw); item.mode = 0o644
+            item = tarfile.TarInfo(name); item.size = len(raw); item.mode = (modes or {}).get(name, 0o644)
             archive.addfile(item, io.BytesIO(raw))
 
 
@@ -106,6 +106,22 @@ class RawControl(unittest.TestCase):
     def save(self, paths, selected, packet):
         selected["artifactReceiptSha256"] = write_json(paths["controlReceipt"], packet)
 
+    def rewrite_source_modes(self, root, paths, selected, packet, modes):
+        with tarfile.open(paths["controlSourceArchive"]) as archive:
+            files = {m.name: archive.extractfile(m).read() for m in archive}
+        write_tar(paths["controlSourceArchive"], files, modes)
+        source = json.loads(paths["controlSourceManifest"].read_text())
+        source["sourceArchiveSha256"] = digest(paths["controlSourceArchive"].read_bytes())
+        build_path = root / "build-receipt.json"; build = json.loads(build_path.read_text())
+        build["sourceArchiveSha256"] = source["sourceArchiveSha256"]
+        packet["receipts"]["build-receipt.json"] = write_json(build_path, build)
+        packet["receipts"]["source-manifest.json"] = write_json(paths["controlSourceManifest"], source)
+        artifact_path = root / "artifact-receipt.json"; artifact = json.loads(artifact_path.read_text())
+        artifact["receipts"]["source-manifest.json"] = packet["receipts"]["source-manifest.json"]
+        packet["receipts"]["artifact-receipt.json"] = write_json(artifact_path, artifact)
+        self.save(paths, selected, packet)
+        return files
+
     def test_raw_packet_archive_and_all_maps_are_read_without_rewriting_proof(self):
         root, paths, selected, packet = self.fixture()
         before = {p: p.read_bytes() for p in root.rglob("*") if p.is_file()}
@@ -117,6 +133,19 @@ class RawControl(unittest.TestCase):
         self.assertEqual(result["migration"]["migrationCount"], 24)
         self.assertEqual(set(result["dist"]), {"dist/features.js"})
         self.assertEqual(before, {p: p.read_bytes() for p in before})
+
+    def test_only_frozen_0664_to_0644_chmod_normalization_can_change_an_archive_mode(self):
+        root, paths, selected, packet = self.fixture()
+        source = json.loads(paths["controlSourceManifest"].read_text())
+        files = self.rewrite_source_modes(root, paths, selected, packet, {n: 0o664 for n in source["files"]})
+        result = coordinates(paths, selected, "arm64")
+        self.assertEqual(result["sourceModeBinding"], {"contract": "verified-bytes-then-explicit-manifest-chmod-v1",
+            "normalized0664To0644Files": len(files), "exactModeFiles": 0})
+        for mode in (0o600, 0o666, 0o755, 0o777, 0o4644):
+            root, paths, selected, packet = self.fixture()
+            self.rewrite_source_modes(root, paths, selected, packet, {"src/migrations.ts": mode})
+            with self.subTest(mode=mode), self.assertRaisesRegex(NativeRecipeError, "archive_mode_changed"):
+                coordinates(paths, selected, "arm64")
 
     def test_every_child_hash_and_missing_packet_field_refuses(self):
         for case in ("child", "missing-child", "missing-field", "wrong-type", "missing-source"):

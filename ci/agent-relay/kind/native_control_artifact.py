@@ -23,7 +23,7 @@ def file_map(value, *, sql=False):
     return value
 
 
-def source_archive(path, expected_sha, files):
+def source_archive(path, expected_sha, files, modes):
     from native_inspect import sha
     require(sha(path) == expected_sha, "control_source_archive_changed")
     with tarfile.open(path) as archive:
@@ -32,7 +32,18 @@ def source_archive(path, expected_sha, files):
                 all(m.isfile() and 0 <= m.size <= 8 * 1024 * 1024 for m in members),
                 "control_source_archive_members_changed")
         migrations_source = None
+        normalized = 0
         for member in members:
+            expected_mode = modes[member.name]
+            # This frozen RawV2 builder writes verified bytes into a new
+            # build context and explicitly chmods to the manifest mode.
+            # Its git archive has 0664 while the tracked checkout has 0644.
+            # Accept exactly that pair or equality, never a general mask,
+            # executable inference, special bit or arbitrary mismatch.
+            require(member.mode in (0o644, 0o664, 0o755) and expected_mode in (0o644, 0o755) and
+                    (member.mode == expected_mode or (member.mode, expected_mode) == (0o664, 0o644)),
+                    "control_source_archive_mode_changed")
+            normalized += member.mode != expected_mode
             raw = archive.extractfile(member).read()
             require(hashlib.sha256(raw).hexdigest() == files[member.name], "control_source_file_changed")
             if member.name == "src/migrations.ts":
@@ -42,7 +53,8 @@ def source_archive(path, expected_sha, files):
     match = re.search(r'^const MIGRATION_LEDGER = "(control_schema_migrations|selfhost_schema_migrations)";$',
                       migrations_source or "", re.MULTILINE)
     require(match is not None, "qualified_control_migration_ledger_contract_required")
-    return match.group(1)
+    return match.group(1), {"contract": "verified-bytes-then-explicit-manifest-chmod-v1",
+                            "normalized0664To0644Files": normalized, "exactModeFiles": len(files) - normalized}
 
 
 def coordinates(paths, selected, architecture):
@@ -127,7 +139,7 @@ def coordinates(paths, selected, architecture):
             "raw_control_index_descriptor_changed")
     files, dist, sql = file_map(source["files"]), file_map(equality["dist"]), file_map(migrations["sql"], sql=True)
     require(isinstance(source.get("modes"), dict) and set(source["modes"]) == set(files) and
-            all(type(v) is int and 0 <= v <= 0o777 for v in source["modes"].values()) and
+            all(type(v) is int and v in (0o644, 0o755) for v in source["modes"].values()) and
             equality.get("result") == "PASS_FRESH_OFFICIAL_COMPILATION_PACKAGE_SQL_AND_LOCK_BOUND_DEPENDENCIES" and
             equality.get("unexpectedRuntimeDependencyVersionsOrIntegrity") == [] and
             all(equality.get(k) is True for k in ("runtimePackageFilesMatchFreshBuild", "runtimeSourceLockByteIdentical", "actualInstalledLockUsed")) and
@@ -147,7 +159,7 @@ def coordinates(paths, selected, architecture):
             type(probe.get("networkCalls")) is int and probe["networkCalls"] == 0 and
             all(probe.get(k) is True for k in ("capabilitiesEndpoint", "licenseModuleAbsent", "directOptIn", "nativeSingleOrigin", "nativeRefusesLegacyDirectOverride")),
             "raw_control_compiled_contract_proof_required")
-    ledger = source_archive(paths["controlSourceArchive"], source["sourceArchiveSha256"], files)
+    ledger, mode_binding = source_archive(paths["controlSourceArchive"], source["sourceArchiveSha256"], files, source["modes"])
     config = native_archive(paths["controlArchive"], packet["archiveSha256"], packet["sourceRevision"], packet["manifestDigest"], packet["configDigest"], architecture)
     require(isinstance(config.get("config"), dict) and config["config"] == runtime.get("runtimeConfig") and config.get("rootfs", {}).get("type") == "layers" and
             isinstance(config["rootfs"].get("diff_ids"), list) and config["rootfs"]["diff_ids"] and
@@ -156,4 +168,4 @@ def coordinates(paths, selected, architecture):
     return {**packet, "tag": packet["localTag"], "nativeArchiveSha256": packet["archiveSha256"],
             "dist": {"dist/" + n: h for n, h in dist.items()}, "source": files,
             "migration": {"source": packet["sourceRevision"], "migrationCount": len(sql), "sql": sql, "ledger": ledger},
-            "nativeConfig": config, "rawV2": True}
+            "nativeConfig": config, "sourceModeBinding": mode_binding, "rawV2": True}

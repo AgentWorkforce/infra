@@ -50,6 +50,11 @@ then derives coordinates only in memory. It does not manufacture a flat receipt
 or attribute the packet's disposable database proof to a new fixture. The
 read-only ledger verifier follows the exact bounded ledger identifier in that
 qualified migration source, preserving the old flat receipt's ledger contract.
+The frozen RawV2 build driver writes hash-verified source bytes into a new build
+context and explicitly applies each manifest mode. Its Git source tar uses
+`0664` for tracked `0644` files. The parser accepts only that fixed normalization
+or exact mode equality and records the normalized count; it never extracts the
+tar, infers executability or applies a general permission mask.
 
 ```sh
 python3 ci/agent-relay/kind/native_core_cli.py \
