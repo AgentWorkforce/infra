@@ -20,6 +20,7 @@ ALLOW_MISSING_MIGRATIONS=false
 ALLOW_MISSING_WORKLOADS=false
 ALLOW_MISSING_INGRESS=false
 ALLOW_NO_TLS=false
+REQUIRE_NATIVE_HISTORY=false
 HEALTH_URLS=()
 EXTERNAL_TLS_HOSTS=()
 
@@ -58,6 +59,11 @@ Explicit exceptions:
       --allow-missing-workloads    Permit no controller workloads
       --allow-missing-ingress      Permit no ingress and skip derived health/TLS
       --allow-no-tls               Permit ingress without TLS
+
+Architecture:
+      --require-native-history     Require read API, ingest edge and search
+                                   indexer; reject RelayAuth, standalone
+                                   RelayHistory and legacy Control URLs
 
 Other:
   -h, --help                       Show this help
@@ -203,6 +209,10 @@ PY
       ;;
     --allow-no-tls)
       ALLOW_NO_TLS=true
+      shift
+      ;;
+    --require-native-history)
+      REQUIRE_NATIVE_HISTORY=true
       shift
       ;;
     -h|--help)
@@ -416,6 +426,49 @@ print(len(items), unready)
       proof FAIL workloads "controllers=$workload_count unready=$workload_unready"
     else
       proof PASS workloads "controllers=$workload_count ready=$workload_count"
+    fi
+  fi
+fi
+
+# Native History architecture: require all three pipeline controllers, reject
+# both legacy controllers, and prove Control is configured for the native
+# backend without the retired RelayAuth/RelayHistory URL handoff. This reads
+# Deployment metadata and literal env names/values only; it never fetches a
+# Secret resource.
+if $REQUIRE_NATIVE_HISTORY; then
+  if ((workload_get_rc != 0)); then
+    proof FAIL native_history "controller_query_failed"
+  else
+    native_summary="$(
+      printf '%s' "$workload_json" |
+        NATIVE_RELEASE="$RELEASE" python3 -c '
+import json, os, sys
+release = os.environ["NATIVE_RELEASE"]
+items = [x for x in json.load(sys.stdin).get("items", []) if x.get("kind") == "Deployment"]
+by_name = {x.get("metadata", {}).get("name", ""): x for x in items}
+required = [f"{release}-read-api", f"{release}-ingest-edge", f"{release}-search-indexer"]
+missing = [name for name in required if name not in by_name]
+legacy = [name for name in by_name if name in {"relayauth", "relayhistory"} or name in {f"{release}-relayauth", f"{release}-relayhistory"}]
+control = next((x for x in items if x.get("metadata", {}).get("name") in {"relay-control", f"{release}-relay-control"} or x.get("metadata", {}).get("labels", {}).get("app.kubernetes.io/name") == "relay-control"), None)
+env = {}
+if control:
+    containers = control.get("spec", {}).get("template", {}).get("spec", {}).get("containers", [])
+    if containers:
+        env = {x.get("name"): x.get("value") for x in containers[0].get("env", []) if x.get("name")}
+control_ok = control is not None and env.get("RELAYHISTORY_BACKEND") == "native" and "RELAYAUTH_URL" not in env and "RELAYHISTORY_URL" not in env
+print(",".join(missing) or "-", ",".join(legacy) or "-", "ok" if control_ok else "bad")
+' 2>/dev/null
+    )"
+    native_parse_rc=$?
+    if ((native_parse_rc != 0)); then
+      proof FAIL native_history "controller_status_parse_failed"
+    else
+      read -r native_missing native_legacy native_control <<<"$native_summary"
+      if [[ "$native_missing" == - && "$native_legacy" == - && "$native_control" == ok ]]; then
+        proof PASS native_history "reader_ingest_search_present legacy_absent control_backend=native"
+      else
+        proof FAIL native_history "missing=$native_missing legacy=$native_legacy control=$native_control"
+      fi
     fi
   fi
 fi
