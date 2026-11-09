@@ -138,3 +138,19 @@ strict TLS, a marked upload in the bucket, its canonical pointer and that same
 session's real dashboard conversation. Render tests or an empty HTTP200 list
 do not prove that path. Historical backfill, Desktop automatic sync, summaries
 and privacy/deletion need separate tests.
+
+### Edge egress policy ownership
+
+Native network preflight also checks `kind-edge-no-external-egress` in
+`kind-edge` before gateway installation. An existing policy must carry the
+source ownership label, profile, fixture name and original cluster UID, have no
+foreign release/controller ownership, and match the exact backend/API/DNS-only
+policy computed from the current Kubernetes API endpoints. A manual, changed or
+terminating policy refuses before gateway or local readiness/selection changes;
+matching contents alone do not authorize adoption. Establish any existing
+manual policy's ownership through a separately reviewed handoff.
+
+Installation repeats that gate. An exact owned policy is a no-op. An absent
+policy is created with source ownership and its returned contents verified;
+`CREATE` refuses a policy that races preflight. Installation does not apply over
+an existing policy.

@@ -8,6 +8,7 @@ import unittest
 from unittest.mock import patch
 
 import native_network as n
+import edge
 
 UID = 'original-core-native-uid'
 
@@ -32,6 +33,7 @@ class Fixture:
         self.service = None
         self.ingresses = []
         self.policies = []
+        self.edge_policies = []
         self.namespaces = ["kube-system", n.EDGE_NS, n.APP_NS]
         self.gateway = {'metadata': {'name': 'kind-edge', 'namespace': n.EDGE_NS, 'annotations': {
             'meta.helm.sh/release-name': 'kind-edge', 'meta.helm.sh/release-namespace': n.EDGE_NS}},
@@ -64,17 +66,26 @@ class Fixture:
         if args[:2] == ('get', 'ingress'):
             assert namespace == n.APP_NS
             return SimpleNamespace(stdout=json.dumps({'items': self.ingresses}))
+        if args[:3] == ('get', 'endpoints', 'kubernetes'):
+            return SimpleNamespace(stdout=json.dumps({'subsets':[{'addresses':[{'ip':'10.0.0.1'}],'ports':[{'port':6443}]}]}))
+        if args[:3] == ('get', 'service', 'kubernetes'):
+            return SimpleNamespace(stdout=json.dumps({'spec':{'clusterIP':'10.96.0.1'}}))
         if args[:2] == ('get', 'service'):
             assert namespace == n.EDGE_NS
             return SimpleNamespace(stdout=json.dumps(self.service) if self.service else '')
         if args[:2] == ('get', 'networkpolicy'):
-            assert namespace == n.APP_NS
-            return SimpleNamespace(stdout=json.dumps({'items': self.policies}))
+            assert namespace in (n.APP_NS,n.EDGE_NS)
+            return SimpleNamespace(stdout=json.dumps({'items':self.policies if namespace==n.APP_NS else self.edge_policies}))
         if args[:2] == ('get', 'deployment'):
             assert namespace == n.EDGE_NS
             return SimpleNamespace(stdout=json.dumps({'items': [self.gateway] if self.gateway else []}))
         if args[:2] == ('create', '-f'):
             assert namespace == n.EDGE_NS
+            created=json.loads(kw['data'])
+            if created.get('kind')=='NetworkPolicy':
+                if self.edge_policies:raise ValueError('AlreadyExists')
+                created['metadata']['uid']='created-policy-uid';self.edge_policies=[created]
+                return SimpleNamespace(stdout=json.dumps(created))
             if self.service is not None:
                 raise ValueError('AlreadyExists')
             self.service = json.loads(kw['data'])
@@ -128,6 +139,60 @@ class NativeNetwork(unittest.TestCase):
         self.assertEqual(self.stack.service['spec']['ports'], [{'name': 'history-https', 'port': 8443, 'protocol': 'TCP', 'targetPort': 'websecure'}])
         self.assertEqual(n.ensure(self.stack, values()), observation)
         self.assertEqual(len([c for c in self.stack.calls if c[0] == 'k' and c[1][0] == 'create']), 1)
+        self.stack.assert_anchors(self)
+
+    def edge_policy(self):
+        owner={'name':self.stack.name,'profile':self.stack.profile,'clusterUid':UID}
+        policy=edge.egress_policy_document(owner,edge.egress_policy_spec(self.stack,n.APP_NS))
+        policy['metadata']['uid']='owned-policy-uid'
+        return policy
+
+    def test_manual_or_changed_edge_policy_refuses_before_any_install_side_effect(self):
+        good=self.edge_policy()
+        changes=[lambda p:p['metadata'].update(labels={},annotations={}),
+                 lambda p:p['metadata']['annotations'].update({'kind.agentrelay.dev/cluster-uid':'foreign'}),
+                 lambda p:p['metadata']['labels'].update({'kind.agentrelay.dev/profile':'addons'}),
+                 lambda p:p['metadata']['annotations'].update({'meta.helm.sh/release-name':'foreign'}),
+                 lambda p:p['metadata'].update(ownerReferences=[{'uid':'foreign-owner'}]),
+                 lambda p:p['metadata'].update(deletionTimestamp='2026-11-09T00:00:00Z'),
+                 lambda p:p['spec']['egress'].append({'to':[{'ipBlock':{'cidr':'0.0.0.0/0'}}]}),
+                 lambda p:p['spec']['egress'][2]['ports'].append({'protocol':'TCP','port':80})]
+        for change in changes:
+            with self.subTest(change=change):
+                policy=copy.deepcopy(good);change(policy);self.stack.edge_policies=[policy]
+                before={p.name:p.read_bytes()for p in self.stack.state.iterdir()}
+                with self.assertRaisesRegex(ValueError,'edge egress policy'):n.preflight(self.stack,values())
+                effects=[];self.stack.apply=lambda doc:effects.append(doc)
+                with self.assertRaisesRegex(ValueError,'edge egress policy'):edge.install(self.stack,'pinned',n.APP_NS,wait_for_route=False)
+                self.assertEqual(effects,[])
+                self.assertEqual(before,{p.name:p.read_bytes()for p in self.stack.state.iterdir()})
+                self.stack.assert_anchors(self)
+
+    def test_exact_owned_edge_policy_is_reused_without_policy_overwrite(self):
+        self.stack.edge_policies=[self.edge_policy()]
+        self.assertTrue(edge.preflight_policy(self.stack,n.APP_NS)[1])
+        original=self.stack.cmd;effects=[];self.stack.apply=lambda doc:effects.append(doc)
+        def cmd(args,**kwargs):
+            if args[:2]==['helm','upgrade']:return SimpleNamespace(stdout='')
+            return original(args,**kwargs)
+        self.stack.cmd=cmd
+        edge.install(self.stack,'pinned',n.APP_NS,wait_for_route=False)
+        self.assertEqual([d['kind']for d in effects],['Namespace'])
+        self.assertFalse(any(c[0]=='k' and c[1][0]=='create'for c in self.stack.calls))
+        self.stack.assert_anchors(self)
+
+    def test_absent_edge_policy_creation_cannot_overwrite_a_racing_manual_policy(self):
+        original=self.stack.cmd
+        self.stack.cmd=lambda args,**kwargs:SimpleNamespace(stdout='')if args[:2]==['helm','upgrade']else original(args,**kwargs)
+        self.stack.apply=lambda doc:None
+        edge.install(self.stack,'pinned',n.APP_NS,wait_for_route=False)
+        self.assertEqual(len(self.stack.edge_policies),1)
+        self.assertTrue(edge.preflight_policy(self.stack,n.APP_NS)[1])
+        self.stack.edge_policies=[]
+        raced=copy.deepcopy(self.edge_policy());raced['metadata']['labels']={}
+        self.stack.apply=lambda doc:self.stack.edge_policies.append(raced)
+        with self.assertRaisesRegex(ValueError,'AlreadyExists'):edge.install(self.stack,'pinned',n.APP_NS,wait_for_route=False)
+        self.assertEqual(self.stack.edge_policies,[raced])
         self.stack.assert_anchors(self)
 
     def test_existing_manual_service_refuses_even_when_spec_would_match(self):

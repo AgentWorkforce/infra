@@ -303,6 +303,8 @@ def preflight(stack, values):
     namespaces = {d.get("metadata", {}).get("name") for d in namespace_items}
     if EDGE_NS in namespaces:
         _gateway(stack, allow_absent=True, require_ready=False)
+        from edge import preflight_policy
+        preflight_policy(stack, APP_NS)
     if APP_NS in namespaces:
         _ingresses(stack, cfg)
         _control_egress(stack, values)
