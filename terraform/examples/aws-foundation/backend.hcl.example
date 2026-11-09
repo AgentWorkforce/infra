@@ -1,0 +1,8 @@
+# Existing durable bucket/key. Never create state storage in the stack it stores.
+bucket              = "<existing-durable-state-bucket>"
+key                 = "<existing-account>/<region>/<environment>/foundation/terraform.tfstate"
+region              = "<state-bucket-region>"
+allowed_account_ids = ["<state-account-id>"]
+encrypt             = true
+kms_key_id          = "<existing-state-kms-key-arn>"
+use_lockfile        = true

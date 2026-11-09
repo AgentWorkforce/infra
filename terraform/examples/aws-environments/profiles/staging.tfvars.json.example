@@ -1,0 +1,23 @@
+{
+  "account_id": "REPLACE_WITH_ACCOUNT",
+  "region": "us-west-2",
+  "environment": "staging",
+  "environment_class": "staging",
+  "private_subnet_ids": [
+    "REPLACE_PRIVATE_SUBNET_A",
+    "REPLACE_PRIVATE_SUBNET_B"
+  ],
+  "database_security_group_ids": [
+    "REPLACE_DATABASE_SG"
+  ],
+  "search_subnet_ids": [
+    "REPLACE_SEARCH_SUBNET_A"
+  ],
+  "search_security_group_ids": [
+    "REPLACE_SEARCH_SG"
+  ],
+  "search_master_user_arn": "REPLACE_WITH_ENVIRONMENT_ADMIN_ROLE_ARN",
+  "eks_cluster_name": "REPLACE_EXISTING_CLUSTER",
+  "pipeline_runtime": "workers",
+  "enable_relayfile": false
+}

@@ -1,0 +1,36 @@
+# CI: runtime.backend=durable-actors, AWS shape: S3 file store on native AWS
+# (no endpoint), and an S3 deployer artifact store through an explicit
+# endpoint (MinIO-style, path-style on; deployer only). Placeholder identities
+# only. The deployer env is asserted by ci/actors-s3/render.sh.
+baseUrl: https://cast.example.com
+existingSecret: relaycast-secrets
+secretKeys:
+  credentialKeyring: credential-keyring
+credentials:
+  format: ar
+  authority: self
+runtime:
+  backend: durable-actors
+  durableActors:
+    gateway:
+      image:
+        digest: sha256:2222222222222222222222222222222222222222222222222222222222222222
+      replicaCount: 2
+    invocationSecret:
+      name: relaycast-durable-actors-invoke
+    deployer:
+      image:
+        digest: sha256:3333333333333333333333333333333333333333333333333333333333333333
+      artifactBucket: example-actor-state
+      artifactStore:
+        driver: s3
+        s3:
+          region: us-west-2
+          endpoint: https://s3.example.com
+          forcePathStyle: true
+    fileStore:
+      driver: s3
+      bucket: example-relaycast-files
+      prefix: relaycast/
+      s3:
+        region: us-west-2

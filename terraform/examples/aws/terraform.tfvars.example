@@ -1,0 +1,23 @@
+# Copy to terraform.tfvars and replace every value. The subnets, security
+# groups and EKS cluster must already exist; the example creates no network.
+# The bucket name must be globally unique and free: the example creates it.
+region                      = "us-west-2"
+name                        = "agent-relay"
+eks_cluster_name            = "my-eks-cluster"
+private_subnet_ids          = ["subnet-0123456789abcdef0", "subnet-0123456789abcdef1"]
+database_security_group_ids = ["sg-0123456789abcdef0"]
+sessions_bucket_name        = "example-agent-relay-sessions"
+# kms_key_arn               = "arn:aws:kms:us-west-2:111111111111:key/..."
+
+# Optional add-ons (off by default):
+# enable_search             = true
+# search_subnet_ids         = ["subnet-...a", "subnet-...b", "subnet-...c"]
+# search_security_group_ids = ["sg-..."]
+# search_master_user_arn    = "arn:aws:iam::111111111111:role/opensearch-admin"
+# enable_functions          = true
+# function_security_group_ids = ["sg-..."]
+# pipeline_package          = { s3_bucket = "my-artifacts", s3_key = "session-pipeline.zip" }
+
+tags = {
+  app = "agent-relay"
+}

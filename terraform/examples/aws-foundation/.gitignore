@@ -1,0 +1,3 @@
+backend.hcl
+*.tfvars
+*.auto.tfvars

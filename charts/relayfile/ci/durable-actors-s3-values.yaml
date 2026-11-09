@@ -1,0 +1,30 @@
+# CI: runtime.backend=durable-actors, AWS shape: S3 blob store and S3 deployer
+# artifact store on native AWS (no endpoint) with path-style addressing forced.
+# Placeholder identities only (EKS Pod Identity needs no annotations).
+# ci/actors-s3/render.sh asserts the deploy Job's artifact-store env and the
+# gateway's blob-store env (RELAYFILE_BLOB_STORE, RELAYFILE_S3_REGION).
+runtime:
+  backend: durable-actors
+  durableActors:
+    image:
+      digest: sha256:1111111111111111111111111111111111111111111111111111111111111111
+    workspaceImage:
+      digest: sha256:2222222222222222222222222222222222222222222222222222222222222222
+    existingSecret: relayfile-actors
+    deployer:
+      artifactBucket: example-actor-state
+      artifactStore:
+        driver: s3
+        s3:
+          region: us-west-2
+          forcePathStyle: true
+    blobStore:
+      driver: s3
+      bucket: example-relayfile-blobs
+      prefix: relayfile/
+      s3:
+        region: us-west-2
+auth:
+  jwksUrl: http://relayauth:8787/.well-known/jwks.json
+networkPolicy:
+  enabled: true

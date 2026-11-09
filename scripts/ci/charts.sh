@@ -39,6 +39,32 @@ expect_render_failure() { # chart valuesfile label expected-error [extra helm ar
   fi
 }
 
+# postgresCa (the optional Postgres server CA bundle): off renders nothing; on,
+# every Deployment and migrate Job container gets exactly one read-only mount and
+# NODE_EXTRA_CA_CERTS; a half-configured value is refused.
+check_postgres_ca() { # chart valuesfile
+  local chart=$1 v=$2 off on missing total
+  off=$(render "$chart" "$v") || { err "$chart: postgresCa off did not render"; return; }
+  ! grep -Eq 'NODE_EXTRA_CA_CERTS|PGSSLROOTCERT|postgres-ca' <<<"$off" || err "$chart: postgresCa off must render nothing"
+  on=$(render "$chart" "$v" --set postgresCa.enabled=true --set postgresCa.configMap=ca-bundle) || { err "$chart: postgresCa on did not render"; return; }
+  local workloads='select(.kind == "Deployment" or (.kind == "Job" and (.metadata.name | contains("migrate"))))'
+  total=$(yq "$workloads | .metadata.name" <<<"$on" | grep -v '^---$' | grep -c .)
+  [ "$total" -ge 1 ] || err "$chart: postgresCa check found no workloads"
+  missing=$(yq "$workloads | select(([.spec.template.spec.containers[0].env[] | select(.name == \"NODE_EXTRA_CA_CERTS\" and .value == \"/etc/postgres-ca/ca.crt\")] | length) != 1 or ([.spec.template.spec.containers[0].volumeMounts[] | select(.name == \"postgres-ca\" and .mountPath == \"/etc/postgres-ca\" and .readOnly == true)] | length) != 1 or ([.spec.template.spec.volumes[] | select(.name == \"postgres-ca\" and .configMap.name == \"ca-bundle\" and .configMap.items[0].path == \"ca.crt\")] | length) != 1) | .metadata.name" <<<"$on" | grep -v '^---$' || true)
+  [ -z "$missing" ] || err "$chart: postgresCa did not reach: $missing"
+  kubeconform -strict -summary -ignore-missing-schemas -kubernetes-version "${KUBE_VERSION:-1.33.0}" <<<"$on" >/dev/null || err "$chart: postgresCa on failed kubeconform"
+  on=$(render "$chart" "$v" --set postgresCa.enabled=true --set postgresCa.secret=ca-secret --set postgresCa.key=rds.pem) || { err "$chart: postgresCa Secret did not render"; return; }
+  missing=$(yq "$workloads | select(([.spec.template.spec.volumes[] | select(.name == \"postgres-ca\" and .secret.secretName == \"ca-secret\" and .secret.items[0].key == \"rds.pem\" and .secret.defaultMode == 0444)] | length) != 1) | .metadata.name" <<<"$on" | grep -v '^---$' || true)
+  [ -z "$missing" ] || err "$chart: postgresCa Secret volume wrong in: $missing"
+  expect_render_failure "$chart" "$v" "postgresCa without a source" "postgresCa.enabled=true requires exactly one of postgresCa.configMap or postgresCa.secret" --set postgresCa.enabled=true
+  expect_render_failure "$chart" "$v" "postgresCa with both sources" "postgresCa.enabled=true requires exactly one of postgresCa.configMap or postgresCa.secret" --set postgresCa.enabled=true --set postgresCa.configMap=a --set postgresCa.secret=b
+  expect_render_failure "$chart" "$v" "postgresCa source while disabled" "require postgresCa.enabled=true" --set postgresCa.configMap=ca-bundle
+  expect_render_failure "$chart" "$v" "postgresCa non-boolean enabled" "postgresCa.enabled must be a boolean" --set-string postgresCa.enabled=true
+  expect_render_failure "$chart" "$v" "postgresCa bad name" "must be a Kubernetes object name" --set postgresCa.enabled=true --set postgresCa.configMap=Bad_Name
+  expect_render_failure "$chart" "$v" "postgresCa bad key" "postgresCa.key must be a Kubernetes data key" --set postgresCa.enabled=true --set postgresCa.configMap=ca-bundle --set postgresCa.key=../x
+  expect_render_failure "$chart" "$v" "postgresCa extraEnv override" "NODE_EXTRA_CA_CERTS" --set postgresCa.enabled=true --set postgresCa.configMap=ca-bundle --set-json 'extraEnv=[{"name":"NODE_EXTRA_CA_CERTS","value":"/x"}]'
+}
+
 # helm dependency build only resolves https repositories that are added.
 add_repos() { # Chart.yaml
   local repo
@@ -96,7 +122,7 @@ for chart in "${charts[@]}"; do
             ' <<<"$out"
           }
           case $chart in
-            alleyoop) expected_shared=1; component_env=INGEST_RETRY_LIMIT ;;
+            session-ingest-api) expected_shared=1; component_env=INGEST_RETRY_LIMIT ;;
             sessions-pipeline-worker) expected_shared=5; component_env=REFEREE_RETRY_LIMIT ;;
             *) err "$label: numeric env fixture is unsupported for $chart"; expected_shared=0; component_env=UNKNOWN ;;
           esac
@@ -173,6 +199,14 @@ for chart in "${charts[@]}"; do
     case $chart in
       sessions-pipeline-worker)
         v=charts/sessions-pipeline-worker/ci/pod-identity-values.yaml
+        check_postgres_ca "$chart" "$v"
+        expect_render_failure "$chart" "$v" "postgresCa component env override" "components.referee.env must not set NODE_EXTRA_CA_CERTS" --set postgresCa.enabled=true --set postgresCa.configMap=ca-bundle --set-json 'components.referee.env=[{"name":"NODE_EXTRA_CA_CERTS","value":"/x"}]'
+        # locker-init opens no Postgres connection; wait-for-role is psql (PGSSLROOTCERT).
+        ca_out=$(render "$chart" "$v" --set postgresCa.enabled=true --set postgresCa.configMap=ca-bundle --set migrations.waitForRole.enabled=true --set migrations.waitForRole.image=ghcr.io/cloudnative-pg/postgresql:17@sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff --set lockerInit.enabled=true)
+        [ "$(yq 'select(.kind == "Job" and (.metadata.name | contains("locker-init"))) | .spec.template.spec.volumes[] | select(.name == "postgres-ca") | .name' <<<"$ca_out")" = "" ] \
+          || err "$chart: locker-init must not mount the Postgres CA"
+        [ "$(yq 'select(.kind == "Job" and (.metadata.name | contains("migrate"))) | .spec.template.spec.initContainers[0].env[] | select(.name == "PGSSLROOTCERT") | .value' <<<"$ca_out" | grep -v '^---$')" = /etc/postgres-ca/ca.crt ] \
+          || err "$chart: wait-for-role must set PGSSLROOTCERT when postgresCa is on"
         expect_render_failure "$chart" "$v" "unknown credential mode" "locker.credentials.mode must be secret or podIdentity" --set locker.credentials.mode=invalid
         expect_render_failure "$chart" "$v" "missing database Secret" "hoopdb.existingSecret or existingSecret is required for HOOPDB_URL" --set hoopdb.existingSecret=
         expect_render_failure "$chart" "$v" "migration Secret without key" "migrations.hoopdb.existingSecret and key must be set together" --set migrations.hoopdb.existingSecret=hoopdb-migration
@@ -191,8 +225,10 @@ for chart in "${charts[@]}"; do
         expect_render_failure "$chart" "$v" "extraEnv in-cluster http" "extraEnv must not set ALLOW_IN_CLUSTER_HTTP" --set-json 'extraEnv=[{"name":"ALLOW_IN_CLUSTER_HTTP","value":"true"}]'
         expect_render_failure "$chart" "$v" "component in-cluster http" "components.referee.env must not set ALLOW_IN_CLUSTER_HTTP" --set-json 'components.referee.env=[{"name":"ALLOW_IN_CLUSTER_HTTP","value":"true"}]'
         ;;
-      alleyoop)
-        v=charts/alleyoop/ci/pod-identity-values.yaml
+      session-ingest-api)
+        v=charts/session-ingest-api/ci/pod-identity-values.yaml
+        check_postgres_ca "$chart" "$v"
+        expect_render_failure "$chart" "$v" "postgresCa ingest env override" "must not set NODE_EXTRA_CA_CERTS" --set postgresCa.enabled=true --set postgresCa.configMap=ca-bundle --set-json 'ingest.env=[{"name":"NODE_EXTRA_CA_CERTS","value":"/x"}]'
         expect_render_failure "$chart" "$v" "unknown credential mode" "locker.credentials.mode must be secret or podIdentity" --set locker.credentials.mode=invalid
         expect_render_failure "$chart" "$v" "missing database Secret" "hoopdb.existingSecret or existingSecret is required for HOOPDB_URL" --set hoopdb.existingSecret=
         expect_render_failure "$chart" "$v" "secret mode without endpoint" "locker.endpoint is required when locker.credentials.mode=secret" --set locker.credentials.mode=secret --set existingSecret=sessions-pipeline
@@ -331,6 +367,7 @@ for chart in "${charts[@]}"; do
         expect_render_failure "$chart" "$v" "actors proof not a bool" "bootstrapProofRequired must be true or false" --set-string bootstrapProofRequired=yes --set secretKeys.workspaceBootstrapSecret=wbs
         expect_render_failure "$chart" "$v" "actors bootstrap secret in extraEnv" "must not appear in extraEnv" --set-json 'extraEnv=[{"name":"RELAYCAST_WORKSPACE_BOOTSTRAP_SECRET","value":"x"}]'
         expect_render_failure "$chart" "$v" "actors proof flag in extraEnv" "must not appear in extraEnv" --set-json 'extraEnv=[{"name":"RELAYCAST_WORKSPACE_BOOTSTRAP_PROOF_REQUIRED","value":"true"}]'
+        expect_render_failure "$chart" "$v" "actors bootstrap file in extraEnv" "must not appear in extraEnv" --set-json 'extraEnv=[{"name":"RELAYCAST_WORKSPACE_BOOTSTRAP_SECRET_FILE","value":"/tmp/key"}]'
         out=$(render "$chart" charts/relaycast/ci/default-values.yaml --set secretKeys.workspaceBootstrapSecret=wbs)
         ! grep -q wbs <<<"$out" || err "$chart: the SQLite render must ignore secretKeys.workspaceBootstrapSecret"
         out=$(render "$chart" "$v")
@@ -346,6 +383,15 @@ for chart in "${charts[@]}"; do
           || err "$chart: bootstrapProofRequired=true must render RELAYCAST_WORKSPACE_BOOTSTRAP_PROOF_REQUIRED=true on the actors gateway"
         [ -z "$(gw_env gateway RELAYCAST_WORKSPACE_BOOTSTRAP_SECRET_FILE .name)" ] \
           || err "$chart: the actors gateway must read the bootstrap secret as exact bytes (env), not _FILE"
+        # Configurable names must be honored, not silently replaced by example names.
+        original_job=$(yq 'select(.kind == "Job") | .metadata.name' <<<"$out")
+        out=$(render "$chart" "$v" --set existingSecret=custom-gateway --set secretKeys.workspaceBootstrapSecret=custom-bootstrap --set bootstrapProofRequired=true)
+        [ "$(gw_env gateway RELAYCAST_WORKSPACE_BOOTSTRAP_SECRET '.valueFrom.secretKeyRef.name + "/" + .valueFrom.secretKeyRef.key')" = custom-gateway/custom-bootstrap ] \
+          || err "$chart: actor bootstrap wiring ignores configurable Secret names"
+        # Neither the bootstrap reference nor its proof policy changes the deployer
+        # inputs. Operators must explicitly rerun a completed Job and refresh actors.
+        [ "$(yq 'select(.kind == "Job") | .metadata.name' <<<"$out")" = "$original_job" ] \
+          || err "$chart: bootstrap wiring unexpectedly changes deployer identity"
         # The dev sidecar is the actors' env: it gets the same two values.
         out=$(render "$chart" charts/relaycast/ci/durable-actors-dev-values.yaml --set secretKeys.workspaceBootstrapSecret=wbs --set bootstrapProofRequired=true)
         for c in gateway durable-actors-dev; do
@@ -387,8 +433,8 @@ for chart in "${charts[@]}"; do
         ! yq 'select(.kind == "Job" or (.kind == "Deployment" and .metadata.name == "ci-relayfile-session-broker")) | .metadata.name' <<<"$dev" | grep -q . \
           || err "$chart: devRuntime must not render the broker or the deploy Job"
         ;;
-      relay-dashboard)
-        v=charts/relay-dashboard/ci/default-values.yaml
+      relay-webapp)
+        v=charts/relay-webapp/ci/default-values.yaml
         expect_render_failure "$chart" "$v" "mutable image" "image.digest is required" --set image.digest=
         expect_render_failure "$chart" "$v" "malformed digest" "image.digest must be sha256:<64 lowercase hex characters>" --set image.digest=sha256:abc
         expect_render_failure "$chart" "$v" "public Service" "service.type must be ClusterIP" --set service.type=LoadBalancer
@@ -406,13 +452,14 @@ for chart in "${charts[@]}"; do
         expect_render_failure "$chart" "$v" "false customer profile" "customerProfile must be a map" --set customerProfile=false
         expect_render_failure "$chart" "$v" "list customer profile" "customerProfile must be a map" --set-json 'customerProfile=[]'
         expect_render_failure "$chart" "$v" "empty-string customer profile" "customerProfile must be a map" --set-string 'customerProfile='
-        brand=$(render "$chart" charts/relay-dashboard/ci/branding.profile.yaml)
+        brand=$(render "$chart" charts/relay-webapp/ci/branding.profile.yaml)
         profile=$(yq 'select(.kind == "Deployment") | .spec.template.spec.containers[0].env[] | select(.name == "DASHBOARD_CUSTOMER_PROFILE") | .value' <<<"$brand")
         [ "$(jq -r '.productName + " " + .logo.dark + " " + (.poweredByAgentRelay | tostring)' <<<"$profile")" = "Acme Relay https://acme.example/brand/logo-on-dark.svg true" ] \
           || err "$chart: customerProfile must render as one JSON object in DASHBOARD_CUSTOMER_PROFILE"
         ;;
-      relay-cloud-api)
-        v=charts/relay-cloud-api/ci/default-values.yaml
+      relay-control)
+        v=charts/relay-control/ci/default-values.yaml
+        check_postgres_ca "$chart" "$v"
         expect_render_failure "$chart" "$v" "mutable image" "image.digest is required" --set image.digest=
         expect_render_failure "$chart" "$v" "malformed digest" "image.digest must be sha256:<64 lowercase hex characters>" --set image.digest=sha256:abc
         expect_render_failure "$chart" "$v" "missing Secret" "existingSecret is required" --set existingSecret=
@@ -431,14 +478,35 @@ for chart in "${charts[@]}"; do
           || err "$chart: API Deployment can read the migration owner URL"
         [ "$(yq 'select(.kind == "Job") | .spec.template.spec.containers[0].command | join(" ")' <<<"$out")" = node ] \
           || err "$chart: migration Job must invoke node directly"
-        [ "$(yq 'select(.kind == "Job") | .spec.template.spec.containers[0].args | join(" ")' <<<"$out")" = node_modules/@cloud/selfhost-api/dist/migrate-cli.js ] \
+        [ "$(yq 'select(.kind == "Job") | .spec.template.spec.containers[0].args | join(" ")' <<<"$out")" = node_modules/relay-control/dist/migrate-cli.js ] \
           || err "$chart: migration Job must invoke the packaged migrate CLI directly"
         ! grep -q 'export DATABASE_URL_FILE' <<<"$out" || err "$chart: obsolete migration DATABASE_URL_FILE adapter is still rendered"
         ! grep -Eq 'CLOUD_EDITION|NEXT_PUBLIC_APP_URL|OIDC_|AUTH_SESSION_SECRET|NEXT_CACHE' <<<"$out" \
           || err "$chart: full-Cloud/Next environment leaked into the selfhost API chart"
+        # Session read handoff and introspection render only when configured,
+        # with their secrets as mounted files.
+        ! grep -Eq 'SESSION_READ_API|RELAYCONTROL_INTROSPECT|SELFHOST_INTROSPECT' <<<"$out" \
+          || err "$chart: read API handoff env must not render by default"
+        sr_args=(--set services.sessionReadApiUrl=http://session-read-api:8080 --set services.sessionReadApiPublicUrl=https://read.gcp-proof.agentrelay.com
+          --set secretKeys.sessionReadApiSecret=session-read-api-secret --set services.sessionReadApiMcpReads=true
+          --set secretKeys.introspectSecret=relaycontrol-introspect-secret --set 'introspection.audiences={https://read.gcp-proof.agentrelay.com}')
+        sr_env=$(render "$chart" "$v" "${sr_args[@]}" | yq 'select(.kind == "Deployment") | .spec.template.spec.containers[0].env[] | .name + "=" + (.value // "")')
+        for want in "SESSION_READ_API_URL=http://session-read-api:8080" "SESSION_READ_API_PUBLIC_URL=https://read.gcp-proof.agentrelay.com" \
+          "SESSION_READ_API_SECRET_FILE=/var/run/agent-relay/secrets/session-read-api-secret" "SESSION_READ_API_MCP_READS=true" \
+          "RELAYCONTROL_INTROSPECT_SECRET_FILE=/var/run/agent-relay/secrets/relaycontrol-introspect-secret" \
+          "SELFHOST_INTROSPECT_AUDIENCES=https://read.gcp-proof.agentrelay.com"; do
+          grep -qxF "$want" <<<"$sr_env" || err "$chart: session read values did not render $want"
+        done
+        [ "$(render "$chart" "$v" --set secretKeys.introspectSecret=relaycontrol-introspect-secret | yq 'select(.kind == "Ingress") | .spec.rules[0].http.paths[0].path')" = /internal ] \
+          || err "$chart: the Ingress must deny /internal when the introspection route is enabled"
+        expect_render_failure "$chart" "$v" "partial session read handoff" "must be set together" --set services.sessionReadApiUrl=http://session-read-api:8080
+        expect_render_failure "$chart" "$v" "MCP reads without handoff" "services.sessionReadApiMcpReads requires" --set services.sessionReadApiMcpReads=true
+        expect_render_failure "$chart" "$v" "plaintext read API public origin" "services.sessionReadApiPublicUrl must be a public HTTPS origin" --set services.sessionReadApiUrl=http://session-read-api:8080 --set services.sessionReadApiPublicUrl=http://read.gcp-proof.agentrelay.com --set secretKeys.sessionReadApiSecret=session-read-api-secret
+        expect_render_failure "$chart" "$v" "audiences without secret" "introspection.audiences requires secretKeys.introspectSecret" --set 'introspection.audiences={https://read.gcp-proof.agentrelay.com}'
+        expect_render_failure "$chart" "$v" "audience with a path" "introspection.audiences entries must be http(s) origins" --set secretKeys.introspectSecret=relaycontrol-introspect-secret --set 'introspection.audiences={https://read.gcp-proof.agentrelay.com/v1}'
         # bootstrap-signup: identity settings render to relaycontrol's env and
         # their secrets only as mounted files.
-        idv=charts/relay-cloud-api/ci/identity-values.yaml
+        idv=charts/relay-control/ci/identity-values.yaml
         id_out=$(render "$chart" "$idv")
         id_env=$(yq 'select(.kind == "Deployment") | .spec.template.spec.containers[0].env[] | .name + "=" + (.value // "")' <<<"$id_out")
         for want in "SELFHOST_BOOTSTRAP_ORG_NAME=Acme" "SELFHOST_BOOTSTRAP_ADMIN_EMAIL=ops@acme.com" \
@@ -475,6 +543,8 @@ for chart in "${charts[@]}"; do
         ;;
       relayhistory)
         v=charts/relayhistory/ci/default-values.yaml
+        check_postgres_ca "$chart" "$v"
+        expect_render_failure "$chart" "$v" "postgresCa extraConfig override" "NODE_EXTRA_CA_CERTS is managed by structured chart values" --set postgresCa.enabled=true --set postgresCa.configMap=ca-bundle --set extraConfig.NODE_EXTRA_CA_CERTS=/x
         expect_render_failure "$chart" "$v" "mutable image" "image.digest is required" --set image.digest=
         expect_render_failure "$chart" "$v" "malformed digest" "image.digest must be sha256:<64 lowercase hex characters>" --set image.digest=sha256:abc
         expect_render_failure "$chart" "$v" "missing database Secret" "database.existingSecret is required" --set database.existingSecret=
@@ -513,13 +583,97 @@ for chart in "${charts[@]}"; do
         [ "$(yq 'select(.kind == "Job") | .spec.template.spec.containers[0].env[] | select(.name == "ALLOW_WRITE_HOLD") | .value' <<<"$dflt")" = no ] \
           || err "$chart: default Job takes a write hold"
         ;;
+      relaychief-control)
+        v=charts/relaychief-control/ci/default-values.yaml
+        check_postgres_ca "$chart" "$v"
+        expect_render_failure "$chart" "$v" "mutable image" "image.digest is required" --set image.digest=
+        expect_render_failure "$chart" "$v" "malformed digest" "image.digest must be sha256:<64 lowercase hex characters>" --set image.digest=sha256:abc
+        expect_render_failure "$chart" "$v" "missing Secret" "existingSecret is required" --set existingSecret=
+        expect_render_failure "$chart" "$v" "missing relay-control origin" "config.relaycontrolUrl (RELAYCONTROL_URL) is required" --set config.relaycontrolUrl=
+        expect_render_failure "$chart" "$v" "relay-control URL with a path" "config.relaycontrolUrl (RELAYCONTROL_URL) is required" --set config.relaycontrolUrl=https://control.example.com/v1
+        expect_render_failure "$chart" "$v" "missing public origin" "config.publicOrigin (RELAYCHIEF_CONTROL_PUBLIC_ORIGIN) is required" --set config.publicOrigin=
+        for origin in ftp://chief.example.com https://chief.example.com/ https://user@chief.example.com chief.example.com; do
+          expect_render_failure "$chart" "$v" "public origin $origin" "config.publicOrigin (RELAYCHIEF_CONTROL_PUBLIC_ORIGIN) is required" --set "config.publicOrigin=$origin"
+        done
+        expect_render_failure "$chart" "$v" "bad browser origin" "config.browserOrigins must be comma-separated http(s) origins" --set 'config.browserOrigins=https://a.example.com\,app.example.com'
+        expect_render_failure "$chart" "$v" "bad Nango host" "config.nangoHost (NANGO_HOST) must be an http(s) origin" --set config.nangoHost=nango.example.com --set secretKeys.nangoSecretKey=NANGO_SECRET_KEY
+        expect_render_failure "$chart" "$v" "NANGO_HOST without the key" "config.nangoHost (NANGO_HOST) requires secretKeys.nangoSecretKey" --set config.nangoHost=https://nango.example.com
+        expect_render_failure "$chart" "$v" "unsafe Secret key path" "secretKeys.adminToken must be a Kubernetes Secret data key" --set-string secretKeys.adminToken=../key
+        expect_render_failure "$chart" "$v" "empty required Secret key" "secretKeys.databaseUrl is required" --set secretKeys.databaseUrl=
+        expect_render_failure "$chart" "$v" "multiple replicas" "replicaCount must be 1" --set replicaCount=2
+        expect_render_failure "$chart" "$v" "fractional replicas" "replicaCount must be 1" --set replicaCount=1.5
+        expect_render_failure "$chart" "$v" "string replicas" "replicaCount must be 1" --set-string replicaCount=1
+        expect_render_failure "$chart" "$v" "server port on the admin port" "server.port must not be 3201" --set server.port=3201
+        expect_render_failure "$chart" "$v" "public Service" "service.type must be ClusterIP" --set service.type=LoadBalancer
+        expect_render_failure "$chart" "$v" "restricted egress with no rules" "requires networkPolicy.additionalEgress" --set-json 'networkPolicy.additionalEgress=[]'
+        for name in ADMIN_HOST ADMIN_PORT HOST PORT NANGO_HOST NANGO_SECRET_KEY DATABASE_URL; do
+          expect_render_failure "$chart" "$v" "$name through extraEnv" "$name is managed by structured chart values and must not appear in extraEnv" --set-json "extraEnv=[{\"name\":\"$name\",\"value\":\"x\"}]"
+        done
+        expect_render_failure "$chart" "$v" "ingress without hosts" "ingress.enabled=true requires at least one host" --set ingress.enabled=true
+        expect_render_failure "$chart" "$v" "ingress without TLS" "ingress.enabled=true requires ingress.tls unless externalTls=true" --set ingress.enabled=true --set-json 'ingress.hosts=["chief.example.com"]'
+        expect_render_failure "$chart" "$v" "ingress blocked by NetworkPolicy" "ingress with networkPolicy requires networkPolicy.ingressFrom" --set ingress.enabled=true --set-json 'ingress.hosts=["chief.example.com"]' --set ingress.externalTls=true
+        expect_render_failure "$chart" "$v" "root ingress path" "must be an absolute path other than /" --set-json 'ingress.extraPaths=[{"path":"/"}]'
+        expect_render_failure "$chart" "$v" "bad ingress pathType" "pathType must be Prefix or Exact" --set-json 'ingress.extraPaths=[{"path":"/api/v1","pathType":"ImplementationSpecific"}]'
+        # A yq expression that runs over every document prints blank lines and
+        # separators for the documents it does not match; keep only the values.
+        rq() { yq "$1" <<<"$2" | { grep -Ev '^(---)?$' || true; }; }
+        out=$(render "$chart" "$v")
+        deployment='select(.kind == "Deployment") | .spec.template.spec'
+        [ "$(yq 'select(.kind == "Secret") | .metadata.name' <<<"$out")" = "" ] || err "$chart: the chart must not render a Secret"
+        [ "$(yq 'select(.kind == "Ingress") | .metadata.name' <<<"$out")" = "" ] || err "$chart: Ingress must be off by default"
+        [ "$(rq "$deployment | [.containers[0].env[] | select(.name == \"ADMIN_HOST\") | .value] | join(\",\")" "$out")" = 127.0.0.1 ] \
+          || err "$chart: ADMIN_HOST must render exactly once as 127.0.0.1"
+        [ "$(rq "$deployment | [.containers[0].ports[].containerPort] | join(\",\")" "$out")" = 3200 ] \
+          || err "$chart: the container must expose only the server port"
+        [ "$(rq 'select(.kind == "Service") | [.spec.ports[].port] | join(",")' "$out")" = 3200 ] \
+          || err "$chart: the Service must expose only the server port"
+        [ "$(yq 'select(.kind == "ConfigMap") | .data.PORT' <<<"$out")" = 3200 ] || err "$chart: PORT must render as 3200"
+        [ "$(yq "$deployment | .containers[0].startupProbe.httpGet.path + \" \" + .containers[0].livenessProbe.httpGet.path + \" \" + .containers[0].readinessProbe.httpGet.path" <<<"$out")" = "/healthz /healthz /readyz" ] \
+          || err "$chart: probes must be /healthz (startup, liveness) and /readyz (readiness)"
+        [ "$(yq "$deployment | (.containers[0].command // [] | length) + (.containers[0].args // [] | length)" <<<"$out")" = 0 ] \
+          || err "$chart: the server must run the image default command"
+        [ "$(yq "$deployment | .securityContext.runAsUser" <<<"$out")" = 1000 ] || err "$chart: the pod must run as uid 1000"
+        [ "$(yq "$deployment | .containers[0].securityContext.readOnlyRootFilesystem" <<<"$out")" = true ] || err "$chart: the root filesystem must be read-only"
+        [ "$(yq "$deployment | .volumes[] | select(.name == \"tmp\") | .emptyDir.medium" <<<"$out")" = Memory ] || err "$chart: /tmp must be a tmpfs"
+        ! grep -Eq 'NANGO_(HOST|SECRET_KEY)|RELAYCHIEF_CONTROL_BROWSER_ORIGINS' <<<"$out" || err "$chart: optional env must not render when unset"
+        ! grep -q 'part-of: agent-relay' <<<"$out" || err "$chart: the chart is not part of the agent-relay umbrella"
+        job='select(.kind == "Job") | .spec.template.spec'
+        [ "$(yq "$job | .containers[0].command[0] + \" \" + .containers[0].args[0]" <<<"$out")" = "node node_modules/relaychief-control/dist/migrate-cli.js" ] \
+          || err "$chart: the migrate Job must run the packaged migrate CLI"
+        [ "$(rq "$job | [.containers[0].env[].name] | join(\",\")" "$out")" = DATABASE_URL ] \
+          || err "$chart: the migrate Job must receive only DATABASE_URL"
+        yq 'select(.kind == "Job") | .metadata.name' <<<"$out" | grep -Eq '^ci-relaychief-control-migrate-[0-9a-f]{8}$' \
+          || err "$chart: the migrate Job must be named by its template hash"
+        salted=$(render "$chart" "$v" --set migrations.identitySalt=retry)
+        [ "$(yq 'select(.kind == "Job") | .metadata.name' <<<"$salted")" != "$(yq 'select(.kind == "Job") | .metadata.name' <<<"$out")" ] \
+          || err "$chart: migrations.identitySalt must change the Job name"
+        placed=$(render "$chart" "$v" --set nodeSelector.pool=chief --set-json 'tolerations=[{"key":"dedicated","operator":"Exists","effect":"NoSchedule"}]' --set-json 'affinity={"nodeAffinity":{"requiredDuringSchedulingIgnoredDuringExecution":{"nodeSelectorTerms":[{"matchExpressions":[{"key":"zone","operator":"Exists"}]}]}}}')
+        for workload in "$job" "$deployment"; do
+          [ "$(rq "$workload | .nodeSelector.pool + \" \" + .tolerations[0].key + \" \" + .affinity.nodeAffinity.requiredDuringSchedulingIgnoredDuringExecution.nodeSelectorTerms[0].matchExpressions[0].key" "$placed")" = "chief dedicated zone" ] \
+            || err "$chart: nodeSelector, tolerations and affinity must reach the server and the migrate Job"
+        done
+        nango_key=$(render "$chart" "$v" --set secretKeys.nangoSecretKey=NANGO_SECRET_KEY)
+        [ "$(yq "$deployment | .containers[0].env[] | select(.name == \"NANGO_SECRET_KEY\") | .valueFrom.secretKeyRef.key" <<<"$nango_key")" = NANGO_SECRET_KEY ] \
+          || err "$chart: NANGO_SECRET_KEY must come from the existing Secret"
+        v=charts/relaychief-control/ci/alb-values.yaml
+        out=$(render "$chart" "$v")
+        [ "$(rq 'select(.kind == "Ingress") | [.spec.rules[0].http.paths[] | .path + "=" + .pathType] | join(",")' "$out")" = "/chief/v1=Prefix" ] \
+          || err "$chart: the default Ingress must expose only /chief/v1 (Prefix)"
+        [ "$(rq 'select(.kind == "NetworkPolicy" and (.metadata.name | test("migration$") | not)) | [.spec.ingress[0].from[].ipBlock.cidr] | join(",")' "$out")" = "10.0.1.0/24,10.0.2.0/24" ] \
+          || err "$chart: networkPolicy.ingressFrom must admit ALB subnets"
+        [ "$(yq 'select(.kind == "ConfigMap") | .data.RELAYCHIEF_CONTROL_BROWSER_ORIGINS' <<<"$out")" = "https://app.example.com, https://admin.example.com" ] \
+          || err "$chart: browser origins did not render"
+        extra=$(render "$chart" "$v" --set-json 'ingress.extraPaths=[{"path":"/api/v1"}]')
+        [ "$(rq 'select(.kind == "Ingress") | [.spec.rules[0].http.paths[] | .path + "=" + .pathType] | join(",")' "$extra")" = "/chief/v1=Prefix,/api/v1=Prefix" ] \
+          || err "$chart: ingress.extraPaths must add routes after /chief/v1"
+        ;;
       agent-relay)
         v=charts/agent-relay/ci/gcp-proof-values.yaml
         expect_render_failure "$chart" "$v" "missing History image" "image.digest is required" --set relayhistory.image.digest=
-        expect_render_failure "$chart" "$v" "missing API image" "image.digest is required" --set relay-cloud-api.image.digest=
-        expect_render_failure "$chart" "$v" "missing dashboard image" "image.digest is required" --set relay-dashboard.image.digest=
-        expect_render_failure "$chart" "$v" "dashboardUrl off the root host" "relay-cloud-api.dashboardUrl must be on the dashboard host" --set relay-cloud-api.dashboardUrl=https://elsewhere.agentrelay.com/
-        [ -n "$(render "$chart" "$v" --set relay-cloud-api.dashboardUrl=https://gcp-proof.agentrelay.com:443/)" ] || err "$chart: dashboardUrl with an explicit :443 on the root host must render"
+        expect_render_failure "$chart" "$v" "missing API image" "image.digest is required" --set relay-control.image.digest=
+        expect_render_failure "$chart" "$v" "missing dashboard image" "image.digest is required" --set relay-webapp.image.digest=
+        expect_render_failure "$chart" "$v" "dashboardUrl off the root host" "relay-control.dashboardUrl must be on the dashboard host" --set relay-control.dashboardUrl=https://elsewhere.agentrelay.com/
+        [ -n "$(render "$chart" "$v" --set relay-control.dashboardUrl=https://gcp-proof.agentrelay.com:443/)" ] || err "$chart: dashboardUrl with an explicit :443 on the root host must render"
         expect_render_failure "$chart" "$v" "ar_ authority without relayauth" "relaycast.credentials.authority=relayauth requires components.relayauth=true" --set components.relayauth=false --set relaycast.credentials.format=ar --set relaycast.credentials.authority=relayauth --set relaycast.credentials.relayauth.url=http://relayauth:8787 --set relaycast.secretKeys.relayauthToken=relaycast-relayauth-token
         ;;
     esac

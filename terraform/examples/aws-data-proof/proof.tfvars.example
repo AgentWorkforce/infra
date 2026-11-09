@@ -1,0 +1,23 @@
+# INERT placeholders, never operational IDs/credentials. Root account/caller
+# fencing rejects this. Use a private ignored *.tfvars.json execution file later.
+account_id = "000000000000"
+region = "REPLACE_WITH_APPROVED_REGION"
+run_id = "example"
+pippen = { agent = "example-agent", session_id = "00000000-0000-4000-8000-000000000000" }
+vpc_id = "vpc-REPLACE"
+private_subnet_ids = ["subnet-REPLACE-A", "subnet-REPLACE-B"]
+# Alternatively set private_subnet_ids=null and create_private_subnets to two
+# reviewed non-overlapping /24-/28 CIDR/AZ objects in the existing default VPC:
+# create_private_subnets = {
+#   first  = { cidr = "REPLACE_WITH_REVIEWED_CIDR_A", az = "REPLACE_WITH_AZ_A" }
+#   second = { cidr = "REPLACE_WITH_REVIEWED_CIDR_B", az = "REPLACE_WITH_AZ_B" }
+# }
+host_subnet_id = "subnet-REPLACE-HOST"
+ami_id = "ami-REPLACE"
+postgres_version = "17.REPLACE"
+source_sha = "0000000000000000000000000000000000000000"
+payload_sha256 = "0000000000000000000000000000000000000000000000000000000000000000"
+rds_ca_sha256 = "0000000000000000000000000000000000000000000000000000000000000000"
+payload_version_id = null # Data first. Capture upload VersionId before launching.
+restore_checkpoint = null
+retire = false

@@ -1,0 +1,21 @@
+# CI fixture (not part of the upstream release): S3 storage, an AWS zone and
+# runc actor hosts on a dedicated tainted node group (local patch 10).
+# Placeholder identities; nothing here is a real resource.
+publicUrl: https://actors.example.com
+placement:
+  zone: us-west-2a
+storage:
+  provider: s3
+  bucket: example-actor-state
+  s3:
+    region: us-west-2
+    actorRoleArn: arn:aws:iam::123456789012:role/durable-actors-actor-storage
+serviceAccount:
+  annotations:
+    eks.amazonaws.com/role-arn: arn:aws:iam::123456789012:role/durable-actors-control-plane
+sandbox:
+  runtimeClassName: ""
+  nodeSelector:
+    durable-actors/role: actor-host
+  tolerations:
+    - {key: durable-actors/actor-host, operator: Exists, effect: NoSchedule}

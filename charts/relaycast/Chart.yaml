@@ -2,7 +2,7 @@ apiVersion: v2
 name: relaycast
 description: Portable Relaycast core for self-hosted Agent Relay deployments
 type: application
-version: 0.3.4
+version: 0.3.7
 appVersion: "12.7.0"
 kubeVersion: ">=1.22.0-0"
 annotations:
@@ -17,7 +17,7 @@ keywords:
   - agentworkforce
 maintainers:
   - name: AgentWorkforce
-    url: https://github.com/AgentWorkforce/helm-charts
+    url: https://github.com/AgentWorkforce/infra
 sources:
   - https://github.com/AgentWorkforce/relaycast
-  - https://github.com/AgentWorkforce/helm-charts/tree/main/charts/relaycast
+  - https://github.com/AgentWorkforce/infra/tree/main/charts/relaycast

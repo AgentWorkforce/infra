@@ -1,0 +1,77 @@
+# Profile: Amazon RDS for PostgreSQL 16+ (not Aurora) as HoopDb, rds mode
+# (sessions-pipeline migrate.ts, #277). The database must be dedicated to HoopDb;
+# it may share the RDS instance with other services' databases.
+#   helm template sessions-pipeline charts/sessions-pipeline -f charts/sessions-pipeline/profiles/external-rds.yaml \
+#     --set global.tenant.orgId=<org> --set alleyoop.auth.jwksUrl=<jwks url> \
+#     --set worker.migrations.runtimeRole=<role> --set worker.migrations.runtimeRoleLogin=true
+# RDS has no customer superuser, so the chart runs no privileged SQL. Operator
+# prerequisites, as the master (the migration owner) connected to the HoopDb
+# database, before the first migrate, in this order (files come from the
+# services image you deploy; see the sessions-pipeline bootstrap runbook):
+#   1. supabase/bootstrap/rds_owner_function_default_revoke.sql
+#   2. supabase/bootstrap/rds_migration_roles.sql
+#   3. supabase/bootstrap/hoopdb_runtime_role_rds.sql with -v migration_owner,
+#      -v runtime_role and -v runtime_login=true, then set the role's password.
+#   4. The phase 1 verifiers: session_directory_search_worker.sql,
+#      session_token_verifier.sql, session_ingest_roles.sql and
+#      session_read_api_roles.sql.
+#   5. Secret sessions-pipeline-hoopdb: HOOPDB_URL for the runtime role and
+#      HOOPDB_MIGRATION_URL for the master. RDS requires TLS. node-pg treats
+#      sslmode=require or verify-full as full verification and the image does
+#      not carry the RDS CA. To verify the server certificate, including for the
+#      master password, put the RDS CA bundle in a ConfigMap or Secret, enable
+#      worker.postgresCa and alleyoop.postgresCa (the bundle is mounted at
+#      /etc/postgres-ca/ca.crt and NODE_EXTRA_CA_CERTS points at it), and use
+#      sslmode=verify-full in both URLs, with no uselibpqcompat. Without a CA
+#      bundle these URLs need sslmode=require&uselibpqcompat=true, which encrypts
+#      but does NOT verify the server certificate. psql (the prerequisites
+#      above) needs sslrootcert=<bundle> with verify-full. The bundle is read
+#      at process start, so rotating it needs a pod restart. postgresCa does not
+#      reach the read API or ingest edge, which set an explicit CA: the read API
+#      takes SESSION_POSTGRES_TLS_PROFILE=custom-ca, SESSION_POSTGRES_CA_FILE and
+#      SESSION_POSTGRES_CA_SHA256 through sessionReadApi.postgresCa, which mounts the file
+#      and sets them; the ingest edge takes
+#      ingestEdge.postgres.caConfigMap, caKey and caSha256.
+# Pinned: GHCR, built from sessions-pipeline main 78511e03, the first published
+# image containing rds mode (publish-image run 42462161615).
+hoopdb:
+  enabled: false
+worker:
+  image:
+    digest: "sha256:b2b74a19375e86bbd5c70a30ea5edbd28cac3de103490bc428de007f4a38b821"
+  hoopdb:
+    existingSecret: sessions-pipeline-hoopdb
+    key: HOOPDB_URL
+  migrations:
+    hoopdb:
+      existingSecret: sessions-pipeline-hoopdb
+      key: HOOPDB_MIGRATION_URL
+    databaseMode: rds
+    supabaseShim: false
+    runtimeRole: ""
+    runtimeRoleLogin: null
+    functionBoundaryMode: global-default-revoke
+    # Off, and refused in rds mode. A URL with uselibpqcompat=true, the shape used
+    # without a CA bundle, is rejected by psql (wait-for-role). sslmode=verify-full
+    # works for both clients with a bundle (PGSSLROOTCERT for psql,
+    # NODE_EXTRA_CA_CERTS for node-pg), but the chart cannot see the URL in the
+    # Secret; allowing it would mean lifting the refusal when worker.postgresCa is
+    # on and requiring verify-full from the operator. The migrator proves the roles.
+    waitForRole:
+      enabled: false
+      functionDefault: false
+alleyoop:
+  image:
+    digest: "sha256:b2b74a19375e86bbd5c70a30ea5edbd28cac3de103490bc428de007f4a38b821"
+  hoopdb:
+    existingSecret: sessions-pipeline-hoopdb
+    key: HOOPDB_URL
+searchWorkerRole:
+  bootstrapJob:
+    enabled: false
+runtimeRole:
+  bootstrapJob:
+    enabled: false
+functionDefaultRevoke:
+  bootstrapJob:
+    enabled: false

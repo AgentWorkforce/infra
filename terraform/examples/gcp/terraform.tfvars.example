@@ -1,0 +1,22 @@
+# Copy to terraform.tfvars and replace every value. The network (and, for
+# the optional add-ons, the GKE cluster and VPC connector) must already exist;
+# the example creates no network. The bucket name must be globally unique and
+# free: the example creates that bucket.
+project_id           = "my-project"
+region               = "us-central1"
+name                 = "agent-relay"
+network_self_link    = "projects/my-project/global/networks/my-vpc"
+sessions_bucket_name = "example-agent-relay-sessions"
+# kms_key_name       = "projects/my-project/locations/us-central1/keyRings/r/cryptoKeys/k"
+
+# Optional add-ons (off by default):
+# enable_search        = true
+# gke_cluster_name     = "my-gke"
+# gke_cluster_location = "us-central1"
+# enable_functions        = true
+# vpc_connector           = "projects/my-project/locations/us-central1/connectors/my-connector"
+# pipeline_source_archive = { bucket = "my-artifacts", object = "session-pipeline.zip" }
+
+labels = {
+  app = "agent-relay"
+}

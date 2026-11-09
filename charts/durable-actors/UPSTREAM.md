@@ -76,6 +76,29 @@ Patches to upstream files (report upstream; drop when fixed there):
    upstream tag, and the per-actor CPU default reads 250 millicores (the
    rendered `actors.cpuMillis` default; upstream says 500).
 
+10. AWS: S3 storage, AWS zones and sandbox scheduling (`values.yaml`,
+    `values.schema.json`, `templates/control-plane.yaml`, `templates/_helpers.tpl`,
+    `ci/eks-values.yaml`). New values `storage.provider` (`gcs` | `s3`),
+    `storage.s3.{region,actorCredentials,actorRoleArn,endpoint,forcePathStyle}`
+    (`actorCredentials: control-plane` hands actor hosts the control plane's own
+    credentials, for accounts that forbid STS; weaker isolation, first-party code only),
+    `serviceAccount.annotations` (IRSA `eks.amazonaws.com/role-arn`, or none
+    with EKS Pod Identity) and `sandbox.{runtimeClassName,nodeSelector,tolerations}`.
+    `placement.zone` accepts AWS availability zones (`us-west-2a`). The GKE
+    Workload Identity annotation is rendered only for GCS or when set. They need a
+    control-plane image built from durable-actors `selfhost/aws-s3`
+    (`DURABLE_ACTORS_STORAGE_PROVIDER`, `DURABLE_ACTORS_S3_*`,
+    `DURABLE_ACTORS_SANDBOX_*`); upstream 0.14.6 ignores them. `storage.provider=s3`
+    requires `storage.s3.region` and, with the default `actorCredentials: assume-role`,
+    `storage.s3.actorRoleArn`; GCS keeps upstream's rules (no new required value).
+    Defaults render byte-identical to upstream apart from the `helm.sh/chart`
+    label (patch 11). Upstream proposal: TerseAI/durable-actors PRs (see
+    relay-briefs actors-aws.md).
+11. `Chart.yaml`: `version` is `0.14.6-awf.1` (upstream `0.14.6`), so a packaged
+    chart carrying patch 10 can never be mistaken for the upstream release.
+    `appVersion` stays `0.14.6`. Reset the suffix when re-vendoring a release
+    that contains these patches.
+
 ## Re-vendoring
 
 ```sh
@@ -102,8 +125,9 @@ sha256 and digests above.
 - The sandbox NetworkPolicy denies RFC1918 egress from actor pods. Actors
   therefore cannot call cluster-internal services; they may only reach the
   control plane (7100), DNS and public addresses.
-- Only GKE Sandbox and Modal providers exist upstream. There is no
-  kind/MinIO/S3 provider: local proofs use `durable-actors dev` instead (see
+- Only GKE Sandbox and Modal providers exist upstream (patch 10 adds S3
+  storage and non-gVisor scheduling for our fork image). There is no
+  kind/MinIO provider: local proofs use `durable-actors dev` instead (see
   docs/self-hosted-durable-actors.md).
 - The sandbox Namespace has no `helm.sh/resource-policy: keep` (upstream).
   `helm uninstall` deletes it together with operator-created Secrets in it,

@@ -15,7 +15,7 @@
       "properties": {
         "zone": {
           "type": "string",
-          "pattern": "^[a-z]+-[a-z]+[0-9]+-[a-z]$"
+          "pattern": "^([a-z]+-[a-z]+[0-9]+-[a-z]|[a-z]{2}(-gov)?-[a-z]+-[0-9][a-z])$"
         }
       },
       "required": [
@@ -78,6 +78,41 @@
           "required": [
             "buckets"
           ]
+        },
+        "provider": {
+          "type": "string",
+          "enum": [
+            "gcs",
+            "s3"
+          ]
+        },
+        "s3": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "region": {
+              "type": "string",
+              "pattern": "^([a-z]{2}(-gov)?-[a-z]+-[0-9])?$"
+            },
+            "actorRoleArn": {
+              "type": "string",
+              "pattern": "^(arn:aws[a-z-]*:iam::[0-9]{12}:role/[A-Za-z0-9+=,.@_/-]+)?$"
+            },
+            "endpoint": {
+              "type": "string",
+              "pattern": "^(https?://[^\\s]+)?$"
+            },
+            "forcePathStyle": {
+              "type": "boolean"
+            },
+            "actorCredentials": {
+              "type": "string",
+              "enum": [
+                "assume-role",
+                "control-plane"
+              ]
+            }
+          }
         }
       },
       "required": [
@@ -101,7 +136,13 @@
       "properties": {
         "googleServiceAccount": {
           "type": "string",
-          "pattern": "^[^@]+@[^@]+[.]iam[.]gserviceaccount[.]com$"
+          "pattern": "^$|^[^@]+@[^@]+[.]iam[.]gserviceaccount[.]com$"
+        },
+        "annotations": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
         }
       },
       "required": [
@@ -145,7 +186,10 @@
       "additionalProperties": false,
       "properties": {
         "hostIdleTimeoutMs": {
-          "type": ["integer", "null"],
+          "type": [
+            "integer",
+            "null"
+          ],
           "minimum": 1,
           "maximum": 86400000
         },
@@ -188,7 +232,10 @@
           "minimum": 1
         },
         "cpuLimitMillis": {
-          "type": ["integer", "null"],
+          "type": [
+            "integer",
+            "null"
+          ],
           "minimum": 1
         },
         "memoryMiB": {
@@ -196,17 +243,44 @@
           "minimum": 1
         },
         "memoryLimitMiB": {
-          "type": ["integer", "null"],
+          "type": [
+            "integer",
+            "null"
+          ],
           "minimum": 1
         },
         "bounds": {
           "type": "object",
           "additionalProperties": false,
           "properties": {
-            "minCpuMillis": {"type": ["integer", "null"], "minimum": 0},
-            "maxCpuMillis": {"type": ["integer", "null"], "minimum": 0},
-            "minMemoryMiB": {"type": ["integer", "null"], "minimum": 0},
-            "maxMemoryMiB": {"type": ["integer", "null"], "minimum": 0}
+            "minCpuMillis": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 0
+            },
+            "maxCpuMillis": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 0
+            },
+            "minMemoryMiB": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 0
+            },
+            "maxMemoryMiB": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 0
+            }
           }
         }
       },
@@ -220,12 +294,31 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "enabled": { "type": "boolean" },
-        "maxActiveActors": { "type": "integer", "minimum": 1, "maximum": 4294967295 },
-        "actorStartsPerSecond": { "type": "integer", "minimum": 1, "maximum": 4294967295 },
-        "actorStartBurst": { "type": "integer", "minimum": 1, "maximum": 4294967295 }
+        "enabled": {
+          "type": "boolean"
+        },
+        "maxActiveActors": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 4294967295
+        },
+        "actorStartsPerSecond": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 4294967295
+        },
+        "actorStartBurst": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 4294967295
+        }
       },
-      "required": ["enabled", "maxActiveActors", "actorStartsPerSecond", "actorStartBurst"]
+      "required": [
+        "enabled",
+        "maxActiveActors",
+        "actorStartsPerSecond",
+        "actorStartBurst"
+      ]
     },
     "alarms": {
       "type": "object",
@@ -311,15 +404,28 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "backend": {"enum": ["postgres", "clickhouse"]},
+        "backend": {
+          "enum": [
+            "postgres",
+            "clickhouse"
+          ]
+        },
         "clickhouse": {
           "type": "object",
           "additionalProperties": false,
           "properties": {
-            "url": {"type": "string"},
-            "database": {"type": "string"},
-            "user": {"type": "string"},
-            "passwordSecretKey": {"type": "string"}
+            "url": {
+              "type": "string"
+            },
+            "database": {
+              "type": "string"
+            },
+            "user": {
+              "type": "string"
+            },
+            "passwordSecretKey": {
+              "type": "string"
+            }
           }
         }
       }
@@ -343,6 +449,38 @@
         "typescript",
         "python"
       ]
+    },
+    "sandbox": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "runtimeClassName": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^$|^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$",
+          "maxLength": 253
+        },
+        "nodeSelector": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "tolerations": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "object"
+          }
+        }
+      }
     }
   },
   "required": [

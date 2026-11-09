@@ -19,6 +19,14 @@
 {{- if empty $value }}{{ fail (printf "analytics.clickhouse.%s is required" $key) }}{{ end -}}
 {{- end -}}
 {{- end -}}
+{{- /* Local patch 10: S3 storage. */ -}}
+{{- if eq .Values.storage.provider "s3" -}}
+{{- if empty .Values.storage.s3.region }}{{ fail "storage.provider=s3 requires storage.s3.region" }}{{ end -}}
+{{- if eq .Values.storage.s3.actorCredentials "control-plane" -}}
+{{- if .Values.storage.s3.actorRoleArn }}{{ fail "storage.s3.actorRoleArn applies only to storage.s3.actorCredentials=assume-role" }}{{ end -}}
+{{- else if empty .Values.storage.s3.actorRoleArn }}{{ fail "storage.s3.actorCredentials=assume-role requires storage.s3.actorRoleArn" }}{{ end -}}
+{{- if eq .Values.storage.mode "rapid" }}{{ fail "Rapid persistence requires storage.provider=gcs" }}{{ end -}}
+{{- end -}}
 {{- if .Values.ingress.enabled -}}
 {{- if or (empty .Values.ingress.className) (empty .Values.ingress.tlsSecret) }}{{ fail "ingress requires className and tlsSecret" }}{{ end -}}
 {{- end -}}

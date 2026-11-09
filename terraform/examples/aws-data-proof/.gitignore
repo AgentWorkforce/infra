@@ -1,0 +1,7 @@
+.terraform/
+terraform.tfstate*
+*.tfplan
+*.tfvars.json
+node_modules/
+dist/
+*.log

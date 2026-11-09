@@ -1,5 +1,10 @@
 # Agent Relay self-host safety checks
 
+For first-admin recovery and device-code inventory, lookup and approve/deny,
+use the [operator login runbook](../../docs/operator-device-login.md). Its
+standalone in-pod helper is separate from the read-only safety checks below;
+only its explicit approve/deny actions change a device request.
+
 `verify-agent-relay.sh` performs a read-only, non-secret smoke check of an
 installed agent-relay Helm suite. It exits nonzero if it cannot prove the
 required release, migration, workload, ingress, health, or certificate state.
@@ -9,6 +14,14 @@ evidence of a current backup, a successful isolated restore drill, and an
 explicit migration-compatibility review that matches the deployed Helm
 revision. It also refuses to pass while a selected migration or backup Job is
 active or failed.
+
+## Mirroring images to ECR
+
+`mirror-images-to-ecr.sh` copies the images an environment's chart render pins
+into that environment's ECR, so it can pull with no GHCR access. It is default
+off: without `--apply` it prints the plan and contacts nothing. See its header
+for flags, and [the supply chain doc](../../docs/self-hosted-image-supply-chain.md)
+for what must be true before an image is used in a customer install.
 
 ## Safety properties
 
@@ -29,6 +42,13 @@ not fetched and its name is not printed.
 Neither script proves that a database migration is reversible. Helm rollback
 changes Kubernetes release resources; it does not reverse database schema or
 data changes.
+
+For load-balancer-terminated TLS without Ingress `spec.tls`, repeat
+`--external-tls-host <hostname>` for each expected endpoint. Each hostname must
+belong to the selected ingress rules (including any `--ingress-host` filter),
+and undergoes the normal chain, hostname and expiry checks. This adds a TLS
+verification target; it does not skip TLS checks. Supply explicit per-service
+`--health-url` paths when their health endpoints differ from `/health`.
 
 ## Requirements
 
@@ -187,7 +207,7 @@ For charts with another health route, set `--health-path`:
 ```
 
 The services behind the agent-relay GKE Ingress do not share a health path
-(relay-dashboard, relay-cloud-api, and relayhistory serve `/healthz`;
+(relay-webapp, relay-control, and relayhistory serve `/healthz`;
 relaycast serves `/health`), so no single `--health-path` passes for every
 host. For the GKE umbrella, supply one URL per host instead:
 
@@ -202,7 +222,7 @@ host. For the GKE umbrella, supply one URL per host instead:
 ```
 
 Here `relay.example.com` is `gkeIngress.hosts.root` (served by
-relay-dashboard), and `api`, `cast`, and `history` are the other
+relay-webapp), and `api`, `cast`, and `history` are the other
 `gkeIngress.hosts` values.
 
 Or supply one or more exact endpoints:

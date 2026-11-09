@@ -255,8 +255,29 @@ on the sidecar.
 {{ include "relaycast.actors.secretEnv" (dict "name" "DURABLE_ACTORS_SECRET" "secret" $da.adminKeySecret.name "key" $da.adminKeySecret.key) }}
 - name: DURABLE_ACTORS_ARTIFACT_BUCKET
   value: {{ $da.deployer.artifactBucket | quote }}
+{{- include "relaycast.actors.artifactStoreEnv" $da.deployer.artifactStore }}
 - name: DURABLE_ACTORS_SECRET_REFS
   value: {{ join "," $da.actorEnvSecrets | quote }}
 - name: HOME
   value: /tmp
+{{- end }}
+
+{{/* Deployer artifact store: S3 variables only in s3 mode (the deployer rejects them otherwise). */}}
+{{- define "relaycast.actors.artifactStoreEnv" -}}
+{{- $store := . | default dict -}}
+{{- $driver := $store.driver | default "gcs" -}}
+{{- if not (has $driver (list "gcs" "s3")) }}{{ fail "runtime.durableActors.deployer.artifactStore.driver must be gcs or s3" }}{{ end -}}
+{{- if eq $driver "s3" }}
+{{- if not $store.s3.region }}{{ fail "runtime.durableActors.deployer.artifactStore.s3.region is required for driver s3" }}{{ end }}
+- name: DURABLE_ACTORS_ARTIFACT_STORE
+  value: s3
+- name: DURABLE_ACTORS_S3_REGION
+  value: {{ $store.s3.region | quote }}
+{{- with $store.s3.endpoint }}
+- name: DURABLE_ACTORS_S3_ENDPOINT
+  value: {{ . | quote }}
+{{- end }}
+- name: DURABLE_ACTORS_S3_FORCE_PATH_STYLE
+  value: {{ $store.s3.forcePathStyle | default false | toString | quote }}
+{{- end }}
 {{- end }}

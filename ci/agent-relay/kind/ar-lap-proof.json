@@ -1,0 +1,308 @@
+{
+  "profile": "core",
+  "infraRevision": "1c203f59fd22c4355fe309244593eef24e40d1ea",
+  "recipeSha256": "1046e36d816273be0d2066dbbd3304c0f81855a7ca65851e89dd426c61648a3d",
+  "result": "PENDING",
+  "checks": [
+    {
+      "result": "PASS",
+      "check": "core.egress",
+      "detail": "external baseline connects; suite and edge external TCP denied; internal DNS/backend/API connects"
+    },
+    {
+      "result": "PASS",
+      "check": "bootstrap.organization",
+      "detail": "org=88b579ce-efc1-4393-9210-c1bf3190f94c name=\"Kind proof\" owner=08c5047d-6c91-4ad2-9541-1ef6abff4a27 members=1"
+    },
+    {
+      "result": "PASS",
+      "check": "bootstrap.single_organization",
+      "detail": "second_org_create=409 error=organization_already_configured organizations=1"
+    },
+    {
+      "result": "PASS",
+      "check": "bootstrap.capabilities",
+      "detail": "openapi=200 sessions=true admin=true flows=true"
+    },
+    {
+      "result": "PASS",
+      "check": "bootstrap.relaycast_workspaces",
+      "detail": "mode=sqlite create=true delete=true create_ms=9,8"
+    },
+    {
+      "result": "PASS",
+      "check": "bootstrap.tenant_a",
+      "detail": "relaycast_ws=245007217078882305 org=88b579ce-efc1-4393-9210-c1bf3190f94c workspace=3fa00669-9275-4f70-ab48-58dde33aa77b name=e2e-e2emw774ftb78d276-a owner=08c5047d-6c91-4ad2-9541-1ef6abff4a27 scope=cli:auth,rth:read,rth:sync"
+    },
+    {
+      "result": "PASS",
+      "check": "bootstrap.resolve_a",
+      "detail": "whoami_workspace_matches=true whoami_org_matches=true relaycast_url=https://cast.kind.agentrelay.com:8443"
+    },
+    {
+      "result": "PASS",
+      "check": "bootstrap.tenant_b",
+      "detail": "relaycast_ws=245007217078882304 org=88b579ce-efc1-4393-9210-c1bf3190f94c workspace=78f238a7-faea-4f9f-af46-c9a9bd0eed8b name=e2e-e2emw774ftb78d276-b owner=08c5047d-6c91-4ad2-9541-1ef6abff4a27 scope=cli:auth,rth:read,rth:sync"
+    },
+    {
+      "result": "PASS",
+      "check": "bootstrap.resolve_b",
+      "detail": "whoami_workspace_matches=true whoami_org_matches=true relaycast_url=https://cast.kind.agentrelay.com:8443"
+    },
+    {
+      "result": "PASS",
+      "check": "bootstrap.workspaces_listed",
+      "detail": "org_workspaces=3 contains_a_and_b=true"
+    },
+    {
+      "result": "PASS",
+      "check": "bootstrap.membership_gate",
+      "detail": "unknown_user=403/not_member removed_member=403/not_member removed_member_poll=authorization_pending a_token_for_b=404/workspace_not_found denied_poll=access_denied outsider=79f71eb3-1d55-449a-b8cc-be3c8148d6cb"
+    },
+    {
+      "result": "PASS",
+      "check": "messaging.register",
+      "detail": "agents=245007217703833600,245007217737388032"
+    },
+    {
+      "result": "PASS",
+      "check": "messaging.roster",
+      "detail": "roster_size=2 contains_both=true"
+    },
+    {
+      "result": "PASS",
+      "check": "messaging.a_to_b",
+      "detail": "conversation=dm_95ff9a8400128ef6ae34f92e message=245007217779331072"
+    },
+    {
+      "result": "PASS",
+      "check": "messaging.b_to_a_same_conversation",
+      "detail": "conversation=dm_95ff9a8400128ef6ae34f92e message=245007217842245632"
+    },
+    {
+      "result": "PASS",
+      "check": "messaging.history",
+      "detail": "conversation=dm_95ff9a8400128ef6ae34f92e both_agents_see_ping_and_reply=true"
+    },
+    {
+      "result": "PASS",
+      "check": "delivery.session_token",
+      "detail": "base_url=https://history.kind.agentrelay.com:8443 scopes=rth:read,rth:sync"
+    },
+    {
+      "result": "PASS",
+      "check": "delivery.first",
+      "detail": "batch=0d225b98c686c7c2769c1d70eab318c9 receipt=rhr_ae346243afdad788ebc92b3de642698cc51f51418794dc024c2ecd68574e0420 accepted=5 level=durable"
+    },
+    {
+      "result": "PASS",
+      "check": "delivery.retry_same_receipt",
+      "detail": "receipt=rhr_ae346243afdad788ebc92b3de642698cc51f51418794dc024c2ecd68574e0420"
+    },
+    {
+      "result": "PASS",
+      "check": "delivery.single_projection",
+      "detail": "projected_events=4 expected=4 content_matches=true unique=4 retained_records=5"
+    },
+    {
+      "result": "PASS",
+      "check": "delivery.turns",
+      "detail": "accepted=2"
+    },
+    {
+      "result": "PASS",
+      "check": "reads.dashboard_list",
+      "detail": "items=1 contains_session=true"
+    },
+    {
+      "result": "PASS",
+      "check": "reads.dashboard_replay",
+      "detail": "events=4"
+    },
+    {
+      "result": "PASS",
+      "check": "reads.dashboard_search",
+      "detail": "matches=1"
+    },
+    {
+      "result": "PASS",
+      "check": "reads.relayhistory_direct",
+      "detail": "search_matches=1 replay_events=4"
+    },
+    {
+      "result": "PASS",
+      "check": "sessions.list",
+      "detail": "items=1 contains_session=true source=claude members=1 anonymous=401"
+    },
+    {
+      "result": "PASS",
+      "check": "sessions.filters",
+      "detail": "source_match=kept source_other=dropped window_match=kept window_future=dropped window_past=dropped q_match=kept q_other=dropped project_match=kept project_other=dropped invalid_param=400"
+    },
+    {
+      "result": "PASS",
+      "check": "sessions.transcript",
+      "detail": "events=4 ordered=true desc_limit_is_last_two=true asc_limit_is_first_two=true turns=2 turns_match=true timing=present catalog=200"
+    },
+    {
+      "result": "PASS",
+      "check": "sessions.search",
+      "detail": "matches=3 citation=true miss_dropped=true missing_q=400"
+    },
+    {
+      "result": "PASS",
+      "check": "sessions.activity",
+      "detail": "day=2026-11-08 conversations=1 claude=1 non_matching_q_total=0 reversed_range=400"
+    },
+    {
+      "result": "PASS",
+      "check": "sessions.cross_workspace",
+      "detail": "b_on_a_404=8/8"
+    },
+    {
+      "result": "PASS",
+      "check": "auth.jwks",
+      "detail": "keys=1 algs=RS256"
+    },
+    {
+      "result": "PASS",
+      "check": "auth.relayhistory_token",
+      "detail": "issued=200 tampered=401 anonymous=401 opaque_token"
+    },
+    {
+      "result": "PASS",
+      "check": "auth.relayauth_assertion",
+      "detail": "alg=RS256 kid_in_jwks=true signature_valid=true aud=https://history.kind.agentrelay.com:8443 exchange=200 tampered_exchange=401"
+    },
+    {
+      "result": "PASS",
+      "check": "auth.relayhistory_rejects_forged_assertion",
+      "detail": "status=401"
+    },
+    {
+      "result": "PASS",
+      "check": "auth.control_plane_token",
+      "detail": "valid=200 invalid=401"
+    },
+    {
+      "result": "PASS",
+      "check": "auth.relaycast_key",
+      "detail": "resolved_key=200 wrong_key=401"
+    },
+    {
+      "result": "PASS",
+      "check": "app.tls_session_read",
+      "detail": "trusted local TLS, relay-app HTML, and delivered session through /cloud/api"
+    },
+    {
+      "result": "PASS",
+      "check": "app.cast_tls_dm",
+      "detail": "both agents send/receive through verified public Cast TLS origin; internal route denied at edge"
+    },
+    {
+      "result": "PASS",
+      "check": "cost_attribution",
+      "detail": "reported fixture usage/cost preserved through public History TLS ingest and application TLS read API; owner user/workspace match; other workspace denied"
+    },
+    {
+      "result": "PASS",
+      "check": "pipeline.mint_assertion",
+      "detail": "org=88b579ce-efc1-4393-9210-c1bf3190f94c workspace=1dc48386-8464-43d5-9a58-f9e667dee0ff machine=kind-4be6484c3eca aud=https://history.kind.agentrelay.com:8443 ttl=60s"
+    },
+    {
+      "result": "PASS",
+      "check": "pipeline.courier_push",
+      "detail": "session=7b847789-498a-4e30-8188-cd5cb504407e machine=kind-4be6484c3eca sessions=1 uploaded=1 chunks=1"
+    },
+    {
+      "result": "PASS",
+      "check": "pipeline.hoopdb_indexer",
+      "detail": "session=7b847789-498a-4e30-8188-cd5cb504407e session_uuid=01a1b8ec-9285-7d0d-9bb7-623887fb5810 trace=01a1b8ec-9285-76a3-9e5f-f187a6ae3835"
+    },
+    {
+      "result": "PASS",
+      "check": "pipeline.owner_attribution",
+      "detail": "ingest and derived index match the real signed-in owner"
+    },
+    {
+      "result": "PASS",
+      "check": "pipeline.referee_state",
+      "detail": "state=done"
+    },
+    {
+      "result": "PASS",
+      "check": "pipeline.referee_verdict",
+      "detail": "verdicts=1 done/raw_closed"
+    },
+    {
+      "result": "PASS",
+      "check": "pipeline.trace",
+      "detail": "indexed session has a non-null processing trace"
+    },
+    {
+      "result": "PASS",
+      "check": "pipeline.events",
+      "detail": "ok_stages=object-landed,session-indexed,status-classify,summary-long,summary-short other=file-normalize:skipped optional_disabled=file-normalize:not_enabled"
+    },
+    {
+      "result": "PASS",
+      "check": "pipeline.no_dead_letters",
+      "detail": "dead_letters_for_trace=0"
+    },
+    {
+      "result": "PASS",
+      "check": "pipeline.bucket_objects",
+      "detail": "provider=s3 raw_chunks=1 summary_objects=2 manifest_meta_session_uuid_matches=true"
+    },
+    {
+      "result": "PASS",
+      "check": "pipeline.technical_foul_scrub",
+      "detail": "raw_chunks=1 marker_present=true fake_secret_in_stored_chunks=false"
+    },
+    {
+      "result": "PENDING",
+      "check": "pipeline.app_visibility",
+      "detail": "courier upload/index/Locker verified, but authenticated Default workspace application API returned 200 without that session; read-path integration contract required"
+    },
+    {
+      "result": "PASS",
+      "check": "mcp",
+      "detail": "both trusted public TLS paths initialize, list19 tools and report the real workspace; missing auth401 and foreign origin403"
+    },
+    {
+      "result": "PENDING",
+      "check": "agent_launch_release",
+      "detail": "layered-control: launch/release API not implemented"
+    },
+    {
+      "result": "PASS",
+      "check": "cleanup.control_plane_resources",
+      "detail": "leftover=0"
+    },
+    {
+      "result": "PASS",
+      "check": "cleanup.relaycast_a",
+      "detail": "deleted=245007217078882305"
+    },
+    {
+      "result": "PASS",
+      "check": "cleanup.relaycast_b",
+      "detail": "deleted=245007217078882304"
+    },
+    {
+      "result": "PASS",
+      "check": "cleanup.tokens_a",
+      "detail": "revoked=true whoami_after=401 refresh_after=403"
+    },
+    {
+      "result": "PASS",
+      "check": "cleanup.tokens_b",
+      "detail": "revoked=true whoami_after=401 refresh_after=403"
+    },
+    {
+      "result": "PENDING",
+      "check": "cleanup.control_plane_workspaces",
+      "detail": "no workspace delete API (DELETE answered 404); kept e2e-e2emw774ftb78d276-a,e2e-e2emw774ftb78d276-b in org 88b579ce-efc1-4393-9210-c1bf3190f94c; outsider user 79f71eb3-1d55-449a-b8cc-be3c8148d6cb has no membership"
+    }
+  ]
+}

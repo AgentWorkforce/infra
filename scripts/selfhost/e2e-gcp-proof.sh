@@ -26,8 +26,15 @@
 # `kubectl rollout restart` on relayhistory and relaycast. It never changes
 # Helm releases, NetworkPolicies, release Secrets or the ingress. Cleanup (case
 # 15, on by default) deletes the Relaycast workspaces, revokes the device
-# tokens, and removes the flow, worker, Pod and Secret; the control plane has
-# no workspace delete API, so the two e2e-<marker>-a/b workspaces remain.
+# tokens, removes the flow, worker, Pod and Secret, and deletes the two
+# e2e-<marker>-a/b workspaces. A control plane older than relay-control 0.5.0
+# has no workspace delete API, so they remain there (reported as SKIP).
+#
+# The public edge defaults to the GKE layout (--edge gke: hosts <base>,
+# api.<base>, cast.<base>, history.<base> behind a ManagedCertificate). On
+# EKS (--edge alb, used by e2e-eks-proof.sh) the origins are given
+# explicitly, may be plain http (an ALB hostname with no custom domain), and
+# readiness is the dashboard origin answering instead of the certificate.
 
 set -uo pipefail
 
@@ -61,6 +68,12 @@ AGENT_RELAY_VERSION="12.4.1"
 WORKER_POD=""
 WORKER_SECRET=""
 VERIFY_PUBLIC="$HERE/../../.agents/skills/setting-up-self-hosted-agent-relay-gcp/scripts/verify-public.sh"
+EDGE=gke
+DASHBOARD_ORIGIN=""
+API_ORIGIN=""
+CAST_ORIGIN=""
+HISTORY_ORIGIN=""
+RELAYAUTH_URL=""
 
 usage() {
   cat <<'EOF'
@@ -79,7 +92,17 @@ Options:
       --secret NAME           release Secret holding the Relaycast internal secret
                               (required; e.g. the release's existingSecret)
       --base-domain DOMAIN    public base domain (default: derived from the
-                              relay-cloud-api SELFHOST_PUBLIC_URL)
+                              relay-control SELFHOST_PUBLIC_URL)
+      --edge gke|alb          public edge layout (default gke). alb: origins from
+                              the --*-origin options, http allowed, readiness =
+                              the dashboard origin answering (no ManagedCertificate)
+      --dashboard-origin URL  public dashboard origin (default https://<base-domain>)
+      --api-origin URL        public api origin (default https://api.<base-domain>)
+      --cast-origin URL       public Relaycast origin (default https://cast.<base-domain>)
+      --history-origin URL    public RelayHistory origin (default https://history.<base-domain>)
+      --relayauth-url URL     in-cluster RelayAuth URL for the driver (default: the
+                              driver's http://relayauth.relayauth.svc:8787, the GKE
+                              proof's separate namespace)
       --skip-restart          do not restart relayhistory/relaycast (case 6 SKIP)
       --skip-sessions-pipeline
                               skip the Sessions Pipeline (case 8 SKIP;
@@ -128,7 +151,7 @@ need_value() {
 
 while (($#)); do
   case "$1" in
-    --context|-n|--namespace|--sessions-namespace|--bulls-namespace|--secret|--base-domain|--cert-wait|--pipeline-timeout|--edge-wait|--worker-wait|--worker-image|--agent-relay-version|--allow-known-gap|--relaycast-secret-key|--relaycast-create-timeout)
+    --context|-n|--namespace|--sessions-namespace|--bulls-namespace|--secret|--base-domain|--edge|--dashboard-origin|--api-origin|--cast-origin|--history-origin|--relayauth-url|--cert-wait|--pipeline-timeout|--edge-wait|--worker-wait|--worker-image|--agent-relay-version|--allow-known-gap|--relaycast-secret-key|--relaycast-create-timeout)
       need_value "$1" "$#" ;;
   esac
   case "$1" in
@@ -137,6 +160,12 @@ while (($#)); do
     --sessions-namespace|--bulls-namespace) BULLS_NAMESPACE="$2"; shift 2 ;;
     --secret) SECRET_NAME="$2"; shift 2 ;;
     --base-domain) BASE_DOMAIN="$2"; shift 2 ;;
+    --edge) EDGE="$2"; shift 2 ;;
+    --dashboard-origin) DASHBOARD_ORIGIN="${2%/}"; shift 2 ;;
+    --api-origin) API_ORIGIN="${2%/}"; shift 2 ;;
+    --cast-origin) CAST_ORIGIN="${2%/}"; shift 2 ;;
+    --history-origin) HISTORY_ORIGIN="${2%/}"; shift 2 ;;
+    --relayauth-url) RELAYAUTH_URL="${2%/}"; shift 2 ;;
     --skip-restart) SKIP_RESTART=true; shift ;;
     --skip-sessions-pipeline|--skip-96bulls) SKIP_SESSIONS_PIPELINE=true; shift ;;
     --skip-public) SKIP_PUBLIC=true; shift ;;
@@ -161,6 +190,16 @@ while (($#)); do
 done
 
 [[ -n "$CONTEXT" ]] || die_usage "--context is required"
+[[ "$EDGE" == gke || "$EDGE" == alb ]] || die_usage "--edge must be gke or alb"
+for origin in "$DASHBOARD_ORIGIN" "$API_ORIGIN" "$CAST_ORIGIN" "$HISTORY_ORIGIN"; do
+  # https only: authenticated checks send bearer tokens to these origins.
+  [[ -z "$origin" || "$origin" =~ ^https://[A-Za-z0-9.-]+(:[0-9]+)?$ ]] || die_usage "origins must be https://host[:port] with no path"
+done
+[[ -z "$RELAYAUTH_URL" || "$RELAYAUTH_URL" =~ ^https?://[A-Za-z0-9.-]+(:[0-9]+)?$ ]] || die_usage "--relayauth-url must be http(s)://host[:port]"
+if [[ "$EDGE" == alb ]]; then
+  [[ -n "$DASHBOARD_ORIGIN" && -n "$API_ORIGIN" && -n "$CAST_ORIGIN" && -n "$HISTORY_ORIGIN" ]] ||
+    die_usage "--edge alb needs --dashboard-origin, --api-origin, --cast-origin and --history-origin"
+fi
 [[ -n "$NAMESPACE" && -n "$BULLS_NAMESPACE" && -n "$SECRET_NAME" ]] || die_usage "namespace and secret options must not be empty"
 [[ "$CERT_WAIT" =~ ^[0-9]+$ ]] || die_usage "--cert-wait must be a non-negative integer"
 [[ "$PIPELINE_TIMEOUT" =~ ^[1-9][0-9]*$ ]] || die_usage "--pipeline-timeout must be a positive integer"
@@ -260,8 +299,27 @@ find_pod() { # namespace selector
     -o jsonpath='{.items[0].metadata.name}' 2>/dev/null
 }
 
+# Override a custom fullname with E2E_CONTROL_DEPLOYMENT. The worker Service
+# defaults to this observed name; E2E_CONTROL_SERVICE can select a retained alias.
+find_control_deployment() {
+  local candidate name
+  for candidate in "${E2E_CONTROL_DEPLOYMENT:-relay-control}" relay-cloud-api; do
+    name="$("${KN[@]}" get deploy "$candidate" -o jsonpath='{.metadata.name}' 2>/dev/null || true)"
+    if [[ -n "$name" ]]; then printf '%s' "$name"; return 0; fi
+  done
+  return 1
+}
+
+control_worker_preflight() {
+  [[ -n "$CONTROL_SERVICE" && ${#CONTROL_SERVICE} -le 63 && "$CONTROL_SERVICE" =~ ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$ ]] || return 1
+  "${KN[@]}" get svc "$CONTROL_SERVICE" -o name >/dev/null 2>&1
+}
+
 install_driver() {
-  API_POD="$(find_pod "$NAMESPACE" 'app.kubernetes.io/name=relay-cloud-api,app.kubernetes.io/component=api')"
+  API_POD="$(find_pod "$NAMESPACE" 'app.kubernetes.io/name=relay-control,app.kubernetes.io/component=api')"
+  if [[ -z "$API_POD" ]]; then
+    API_POD="$(find_pod "$NAMESPACE" 'app.kubernetes.io/name=relay-cloud-api,app.kubernetes.io/component=api')"
+  fi
   [[ -n "$API_POD" ]] || return 1
   "${KN[@]}" exec -i "$API_POD" -- sh -c 'umask 077; cat > /tmp/e2e-gcp-proof-driver.mjs' <"$DRIVER"
 }
@@ -318,14 +376,16 @@ PY
   fi
 }
 
-# run_phase <phase>: runs the driver in the relay-cloud-api pod.
+# run_phase <phase>: runs the driver in the relay-control pod.
 run_phase() {
   local phase="$1" out="$WORK/out.json"
   if ! install_driver; then
-    emit FAIL "$phase.driver" "relay-cloud-api pod unavailable"
+    emit FAIL "$phase.driver" "relay-control pod unavailable"
     return 1
   fi
-  phase_input | "${KN[@]}" exec -i "$API_POD" -- node /tmp/e2e-gcp-proof-driver.mjs "$phase" >"$out" 2>/dev/null
+  local driver_env=()
+  [[ -n "$RELAYAUTH_URL" ]] && driver_env=(env "E2E_RELAYAUTH_URL=$RELAYAUTH_URL")
+  phase_input | "${KN[@]}" exec -i "$API_POD" -- ${driver_env[@]+"${driver_env[@]}"} node /tmp/e2e-gcp-proof-driver.mjs "$phase" >"$out" 2>/dev/null
   consume_phase_output "$phase" "$out" $?
 }
 
@@ -333,7 +393,7 @@ run_phase() {
 # origin, so the calls cross the GCE edge exactly as the SPA's do.
 run_public_phase() {
   local phase="$1" out="$WORK/out.json"
-  phase_input | E2E_API_URL="https://$BASE_DOMAIN" node "$DRIVER" "$phase" >"$out" 2>/dev/null
+  phase_input | E2E_API_URL="$DASHBOARD_ORIGIN" node "$DRIVER" "$phase" >"$out" 2>/dev/null
   consume_phase_output "$phase" "$out" $?
 }
 
@@ -406,13 +466,26 @@ if ! "${K[@]}" get namespace "$NAMESPACE" >/dev/null 2>&1; then
   printf 'E2E_RESULT=FAIL\nreason: cannot reach namespace %s with context %s\n' "$NAMESPACE" "$CONTEXT"
   exit 1
 fi
-if [[ -z "$BASE_DOMAIN" ]]; then
-  api_url="$("${KN[@]}" get deploy relay-cloud-api \
+CONTROL_DEPLOYMENT="$(find_control_deployment || true)"
+CONTROL_SERVICE="${E2E_CONTROL_SERVICE:-$CONTROL_DEPLOYMENT}"
+if [[ -z "$BASE_DOMAIN" && -n "$CONTROL_DEPLOYMENT" ]]; then
+  api_url="$("${KN[@]}" get deploy "$CONTROL_DEPLOYMENT" \
     -o jsonpath='{.spec.template.spec.containers[0].env[?(@.name=="SELFHOST_PUBLIC_URL")].value}' 2>/dev/null)"
   host="${api_url#https://}"
   BASE_DOMAIN="${host#api.}"
 fi
+if [[ -z "$BASE_DOMAIN" && "$EDGE" == alb ]]; then
+  BASE_DOMAIN="${DASHBOARD_ORIGIN#*://}"
+fi
 printf 'E2E_BASE_DOMAIN=%s\n' "$BASE_DOMAIN"
+: "${DASHBOARD_ORIGIN:=https://$BASE_DOMAIN}"
+: "${API_ORIGIN:=https://api.$BASE_DOMAIN}"
+: "${CAST_ORIGIN:=https://cast.$BASE_DOMAIN}"
+: "${HISTORY_ORIGIN:=https://history.$BASE_DOMAIN}"
+# curl --proto for public requests: https only.
+PUBLIC_PROTO='=https'
+printf 'E2E_EDGE=%s\nE2E_ORIGINS=dashboard=%s api=%s cast=%s history=%s\n' "$EDGE" \
+  "$DASHBOARD_ORIGIN" "$API_ORIGIN" "$CAST_ORIGIN" "$HISTORY_ORIGIN"
 # Relaycast runs either as the SQLite server or as the durable-actors gateway
 # (same Service, same /internal/workspaces contract, different secret, and an
 # actor-mode create that can take ~100s). The mode is read from the relaycast
@@ -460,6 +533,12 @@ printf 'E2E_RELAYCAST_MODE=%s\nE2E_RELAYCAST_SECRET_KEY=%s\n' "$RELAYCAST_MODE" 
 # Decided once, before any public request (case 11 runs before case 10), and
 # shared by every case that crosses the public edge (10, 11, 12, 14).
 cert_status() {
+  if [[ "$EDGE" == alb ]]; then
+    # No certificate on a plain ALB origin: ready once the dashboard answers.
+    [[ "$(curl --disable -s -o /dev/null --max-time 10 -w '%{http_code}' "$DASHBOARD_ORIGIN/" 2>/dev/null)" == 200 ]] &&
+      printf 'Active '
+    return 0
+  fi
   "${KN[@]}" get managedcertificate -o jsonpath='{range .items[*]}{.status.certificateStatus}{"\n"}{end}' 2>/dev/null |
     sort -u | tr '\n' ' '
 }
@@ -570,7 +649,7 @@ case_begin 8 "Sessions Pipeline"
 if $SKIP_SESSIONS_PIPELINE; then
   case_skip "--skip-sessions-pipeline"
 else
-  BULLS_POD="$(find_pod "$BULLS_NAMESPACE" 'app.kubernetes.io/name=alleyoop')"
+  BULLS_POD="$("${KB[@]}" get pods --field-selector=status.phase=Running -o json 2>/dev/null | python3 "$HERE/session-identities.py" ingest-pod)"
   if [[ -z "$BULLS_POD" ]]; then
     emit FAIL pipeline.ingest_pod "no running alleyoop ingest pod"
   else
@@ -581,8 +660,9 @@ else
     marker="$(state_get marker)"
     [[ -n "$marker" ]] || marker="e2e$(date +%s)"
     machine="e2e-$marker"
-    state_set_json bulls "$(python3 -c 'import json,sys; print(json.dumps(dict(orgId=sys.argv[1], workspaceId=sys.argv[2] or "default", origin=sys.argv[3], machineId=sys.argv[4])))' \
-      "$(env_of TENANT_ORG_ID)" "$(env_of WORKSPACE_ID)" "$(env_of RELAYHISTORY_ORIGIN)" "$machine")"
+    pipeline_user="${E2E_PIPELINE_USER_ID:-$(state_get a.ownerUserId)}"
+    state_set_json bulls "$(python3 -c 'import json,sys; print(json.dumps(dict(orgId=sys.argv[1], workspaceId=sys.argv[2] or "default", origin=sys.argv[3], machineId=sys.argv[4], userId=sys.argv[5])))' \
+      "$(env_of TENANT_ORG_ID)" "$(env_of WORKSPACE_ID)" "$(env_of RELAYHISTORY_ORIGIN)" "$machine" "$pipeline_user")"
     [[ -n "$(state_get marker)" ]] || state_set_json marker "\"$marker\""
     # Remove any helper left by an earlier run first, so a failed copy can
     # never execute a stale probe.
@@ -592,17 +672,17 @@ else
     pushed_at="$(date -u +%FT%TZ)"
     run_phase mint-sessions-pipeline
     state_pop_to_file bullsAssertion "$WORK/assertion"
-    push_out="$("${KB[@]}" exec -i "$BULLS_POD" -- sh -c "cd /app && bun run /tmp/e2e-gcp-proof-sessions-pipeline.ts push '$marker' '$machine'" \
+    push_out="$("${KB[@]}" exec -i "$BULLS_POD" -- env "E2E_PIPELINE_USER_ID=$pipeline_user" sh -c "cd /app && bun run /tmp/e2e-gcp-proof-sessions-pipeline.ts push '$marker' '$machine'" \
       <"$WORK/assertion" 2>/dev/null)"
     push_rc=$?
     rm -f "$WORK/assertion"
     emit_probe_output push "$push_rc" "$push_out" pipeline.courier_push
     bulls_session="$(sed -n 's/^SESSION_ID=//p' <<<"$push_out")"
     if [[ -n "$bulls_session" ]]; then
-      verify_out="$("${KB[@]}" exec "$BULLS_POD" -- sh -c "cd /app && bun run /tmp/e2e-gcp-proof-sessions-pipeline.ts verify '$marker' '$bulls_session' '$PIPELINE_TIMEOUT'" 2>/dev/null)"
+      verify_out="$("${KB[@]}" exec "$BULLS_POD" -- env "E2E_PIPELINE_USER_ID=$pipeline_user" sh -c "cd /app && bun run /tmp/e2e-gcp-proof-sessions-pipeline.ts verify '$marker' '$bulls_session' '$PIPELINE_TIMEOUT'" 2>/dev/null)"
       verify_rc=$?
       emit_probe_output verify "$verify_rc" "$verify_out" \
-        pipeline.hoopdb_indexer pipeline.referee_state pipeline.referee_verdict \
+        pipeline.hoopdb_indexer pipeline.owner_attribution pipeline.referee_state pipeline.referee_verdict \
         pipeline.bob_costas_summaries pipeline.events pipeline.no_dead_letters \
         pipeline.bucket_objects pipeline.technical_foul_scrub
       trace="$(sed -n 's/^TRACE_ID=//p' <<<"$verify_out")"
@@ -610,8 +690,15 @@ else
         emit FAIL pipeline.trace "verify returned no trace id; worker logs not checked"
       else
         for worker in hoopdb-indexer referee bob-costas; do
-          lines="$("${KB[@]}" logs "deploy/bulls96-worker-$worker" --since-time="$pushed_at" 2>/dev/null | grep -c -- "$trace")"
-          leaks="$("${KB[@]}" logs "deploy/bulls96-worker-$worker" --since-time="$pushed_at" 2>/dev/null | grep -c -- "$marker")"
+          # Resolve the unchanged engine SERVICE, independent of legacy/new
+          # public resource names. Ambiguous matches fail instead of guessing.
+          dep="$("${KB[@]}" get deploy -o json 2>/dev/null | python3 "$HERE/session-identities.py" worker "$worker")"
+          if [[ -z "$dep" ]]; then
+            emit FAIL "pipeline.logs_$worker" "expected one deployment for engine stage $worker"
+            continue
+          fi
+          lines="$("${KB[@]}" logs "$dep" --since-time="$pushed_at" 2>/dev/null | grep -c -- "$trace")"
+          leaks="$("${KB[@]}" logs "$dep" --since-time="$pushed_at" 2>/dev/null | grep -c -- "$marker")"
           if ((lines > 0 && leaks == 0)); then
             emit PASS "pipeline.logs_$worker" "trace_lines=$lines marker_in_logs=0"
           else
@@ -650,8 +737,10 @@ elif ! $PUBLIC_READY; then
     case_skip "ManagedCertificate not Active"
   fi
 else
-  emit PASS public.certificate "status=Active waited=${PUBLIC_WAITED}s"
-  if [[ -x "$VERIFY_PUBLIC" || -f "$VERIFY_PUBLIC" ]]; then
+  emit PASS public.certificate "status=Active waited=${PUBLIC_WAITED}s edge=$EDGE"
+  if [[ "$EDGE" == alb ]]; then
+    emit SKIP public.verify_public "GKE-only (ManagedCertificate, FrontendConfig, static IP)"
+  elif [[ -x "$VERIFY_PUBLIC" || -f "$VERIFY_PUBLIC" ]]; then
     vp_out="$(BASE_DOMAIN="$BASE_DOMAIN" bash "$VERIFY_PUBLIC" 2>&1)"
     vp_rc=$?
     emit "$([[ $vp_rc -eq 0 ]] && echo PASS || echo FAIL)" public.verify_public \
@@ -680,31 +769,31 @@ PY
   ws_a="$(state_get a.workspaceId)"
   pub() { # check expected header-file url
     local code
-    code="$(curl --disable --silent --output /dev/null --max-time 20 --proto '=https' \
+    code="$(curl --disable --silent --output /dev/null --max-time 20 --proto "$PUBLIC_PROTO" \
       --write-out '%{http_code}' ${3:+--header "@$WORK/$3"} "$4" 2>/dev/null)"
     if [[ "$code" == "$2" ]]; then emit PASS "$1" "status=$code"; else emit FAIL "$1" "status=$code expected=$2"; fi
   }
-  pub public.api_whoami 200 h-api "https://api.$BASE_DOMAIN/api/v1/auth/whoami"
-  pub public.api_resolve 200 h-api "https://api.$BASE_DOMAIN/api/v1/workspaces/$ws_a/resolve"
-  pub public.dashboard_sessions 200 h-api "https://$BASE_DOMAIN/cloud/api/v1/workspaces/$ws_a/sessions"
-  pub public.dashboard_cross_tenant 404 h-api-b "https://$BASE_DOMAIN/cloud/api/v1/workspaces/$ws_a/sessions"
-  pub public.api_anonymous 401 "" "https://api.$BASE_DOMAIN/api/v1/auth/whoami"
-  pub public.cast_roster 200 h-cast "https://cast.$BASE_DOMAIN/v1/agents"
-  pub public.cast_agent 200 h-agent "https://cast.$BASE_DOMAIN/v1/agent"
-  pub public.cast_anonymous 401 "" "https://cast.$BASE_DOMAIN/v1/agents"
+  pub public.api_whoami 200 h-api "$API_ORIGIN/api/v1/auth/whoami"
+  pub public.api_resolve 200 h-api "$API_ORIGIN/api/v1/workspaces/$ws_a/resolve"
+  pub public.dashboard_sessions 200 h-api "$DASHBOARD_ORIGIN/cloud/api/v1/workspaces/$ws_a/sessions"
+  pub public.dashboard_cross_tenant 404 h-api-b "$DASHBOARD_ORIGIN/cloud/api/v1/workspaces/$ws_a/sessions"
+  pub public.api_anonymous 401 "" "$API_ORIGIN/api/v1/auth/whoami"
+  pub public.cast_roster 200 h-cast "$CAST_ORIGIN/v1/agents"
+  pub public.cast_agent 200 h-agent "$CAST_ORIGIN/v1/agent"
+  pub public.cast_anonymous 401 "" "$CAST_ORIGIN/v1/agents"
   code="$(curl --disable -s -o /dev/null --max-time 20 -w '%{http_code}' -X POST \
-    -H 'content-type: application/json' --data '{"name":"e2e-edge-probe"}' "https://cast.$BASE_DOMAIN/v1/workspaces")"
+    -H 'content-type: application/json' --data '{"name":"e2e-edge-probe"}' "$CAST_ORIGIN/v1/workspaces")"
   # The chart routes this path to a selector-less Service, so the Google edge
   # answers 502 (no backend) and the request never reaches Relaycast.
   [[ "$code" == 502 || "$code" == 404 || "$code" == 403 ]] && emit PASS public.cast_workspace_create_denied "status=$code edge_denied=true" ||
     emit FAIL public.cast_workspace_create_denied "status=$code"
-  code="$(curl --disable -s -o /dev/null --max-time 20 -w '%{http_code}' "https://cast.$BASE_DOMAIN/internal/capabilities")"
+  code="$(curl --disable -s -o /dev/null --max-time 20 -w '%{http_code}' "$CAST_ORIGIN/internal/capabilities")"
   # The chart routes this path to a selector-less Service, so the Google edge
   # answers 502 (no backend) and the request never reaches Relaycast.
   [[ "$code" == 502 || "$code" == 404 || "$code" == 403 ]] && emit PASS public.cast_internal_denied "status=$code edge_denied=true" ||
     emit FAIL public.cast_internal_denied "status=$code"
-  pub public.history_sessions 200 h-history "https://history.$BASE_DOMAIN/v1/sessions?workspace=$ws_a&limit=1"
-  pub public.history_anonymous 401 "" "https://history.$BASE_DOMAIN/v1/delivery/limits"
+  pub public.history_sessions 200 h-history "$HISTORY_ORIGIN/v1/sessions?workspace=$ws_a&limit=1"
+  pub public.history_anonymous 401 "" "$HISTORY_ORIGIN/v1/delivery/limits"
   rm -f "$WORK"/h-*
 fi
 case_end 10 "public: verify-public.sh and authenticated calls through the HTTPS edge"
@@ -740,8 +829,8 @@ if $BOOTSTRAPPED && has_capability admin && public_gate admin; then
   )
   edge_denied() { # path -> prints status; returns 0 when the edge denied it
     local body code
-    body="$(curl --disable --silent --path-as-is --location --max-redirs 3 --max-time 20 --proto '=https' \
-      --write-out '\n%{http_code}' "https://api.$BASE_DOMAIN$1" 2>/dev/null)"
+    body="$(curl --disable --silent --path-as-is --location --max-redirs 3 --max-time 20 --proto "$PUBLIC_PROTO" \
+      --write-out '\n%{http_code}' "$API_ORIGIN$1" 2>/dev/null)"
     code="${body##*$'\n'}"
     body="${body%$'\n'*}"
     printf '%s' "$code"
@@ -772,7 +861,7 @@ case_end 12 "admin: env var set/list masked/no plaintext/delete, audit, /interna
 # ---------------------------------------------------------------- case 13
 
 # The worker is a short-lived Pod in the agent-relay namespace (the
-# relay-cloud-api NetworkPolicy admits any pod in the namespace) running the
+# relay-control NetworkPolicy admits any pod in the namespace) running the
 # stock agent-relay CLI: `cloud worker register`, then `cloud worker start
 # --once`, which exits after one assignment. The single-use enrollment token
 # reaches it through a Secret volume, never through args in this script's
@@ -817,7 +906,7 @@ spec:
       env:
         - { name: AGENT_RELAY_VERSION, value: "$AGENT_RELAY_VERSION" }
         - { name: WORKER_NAME, value: "$3" }
-        - { name: BASE_URL, value: "http://relay-cloud-api" }
+        - { name: BASE_URL, value: "http://${CONTROL_SERVICE}" }
       resources:
         requests: { cpu: 250m, memory: 768Mi }
         limits: { memory: 2Gi }
@@ -855,6 +944,8 @@ elif ! has_capability flows; then
   # Only a control plane with the worker protocol (relaycontrol flows API)
   # can run this; one that declares it but fails still fails the case.
   case_skip "control plane has no worker protocol (/api/v1/workers/enrollment-tokens absent)"
+elif ! control_worker_preflight; then
+  emit FAIL flows.worker_service "observed Control Service is missing or invalid; worker not started"
 else
   marker="$(state_get marker)"
   WORKER_POD="e2e-flows-worker-$marker"
@@ -886,7 +977,7 @@ else
       emit FAIL flows.worker_pod "worker did not register within ${waited}s (phase=$(pod_phase))"
       worker_log_tail
     else
-      emit PASS flows.worker_pod "pod=$WORKER_POD image=$WORKER_IMAGE agent-relay=$AGENT_RELAY_VERSION base_url=http://relay-cloud-api started=$started registered_after=${waited}s"
+      emit PASS flows.worker_pod "pod=$WORKER_POD image=$WORKER_IMAGE agent-relay=$AGENT_RELAY_VERSION base_url=http://$CONTROL_SERVICE started=$started registered_after=${waited}s"
       run_phase flows-run
       # `start --once` exits after the one assignment.
       waited=0
@@ -919,14 +1010,14 @@ case_end 13 "flows: enrollment token, in-namespace worker Pod, deterministic run
 case_begin 14 "dashboard"
 if public_gate dashboard; then
   fetch() { # url file -> prints status
-    curl --disable --silent --max-time 20 --proto '=https' --output "$2" --write-out '%{http_code} %{content_type}' "$1" 2>/dev/null
+    curl --disable --silent --max-time 20 --proto "$PUBLIC_PROTO" --output "$2" --write-out '%{http_code} %{content_type}' "$1" 2>/dev/null
   }
-  index_meta="$(fetch "https://$BASE_DOMAIN/" "$WORK/index.html")"
-  config_meta="$(fetch "https://$BASE_DOMAIN/runtime-config.js" "$WORK/runtime-config.js")"
-  deep_meta="$(fetch "https://$BASE_DOMAIN/flows/runs/e2e-deep-link" "$WORK/deep.html")"
+  index_meta="$(fetch "$DASHBOARD_ORIGIN/" "$WORK/index.html")"
+  config_meta="$(fetch "$DASHBOARD_ORIGIN/runtime-config.js" "$WORK/runtime-config.js")"
+  deep_meta="$(fetch "$DASHBOARD_ORIGIN/flows/runs/e2e-deep-link" "$WORK/deep.html")"
   bundle="$(sed -n 's/.*<script type="module"[^>]* src="\(\/assets\/index-[A-Za-z0-9_-]*\.js\)".*/\1/p' "$WORK/index.html" | head -n 1)"
   bundle_meta=""
-  [[ -n "$bundle" ]] && bundle_meta="$(fetch "https://$BASE_DOMAIN$bundle" "$WORK/bundle.js")"
+  [[ -n "$bundle" ]] && bundle_meta="$(fetch "$DASHBOARD_ORIGIN$bundle" "$WORK/bundle.js")"
   dash_out="$(python3 - "$WORK" "$index_meta" "$config_meta" "$deep_meta" "$bundle" "$bundle_meta" <<'PY'
 import json, os, re, sys
 work, index_meta, config_meta, deep_meta, bundle, bundle_meta = sys.argv[1:7]
@@ -986,7 +1077,7 @@ if $CLEANUP; then
 else
   case_skip "--no-cleanup"
 fi
-case_end 15 "cleanup: Relaycast workspaces deleted, device tokens revoked (control-plane workspaces have no delete API)"
+case_end 15 "cleanup: Relaycast workspaces deleted, device tokens revoked, control-plane test workspaces deleted"
 
 printf '\n== summary (%s)\n' "$(ts)"
 ((${#ALLOWED_GAPS[@]})) && printf 'E2E_ALLOWED_GAPS=%s\n' "${ALLOWED_GAPS[*]}"

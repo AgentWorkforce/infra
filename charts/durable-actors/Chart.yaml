@@ -4,4 +4,4 @@ description: Durable Actors on GKE with Standard GCS persistence and optional Ra
   acceleration
 name: durable-actors
 type: application
-version: 0.14.6
+version: 0.14.6-awf.1

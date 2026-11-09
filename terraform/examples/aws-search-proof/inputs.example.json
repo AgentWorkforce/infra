@@ -1,0 +1,17 @@
+{
+  "account_id": "000000000000",
+  "region": "REPLACE_WITH_APPROVED_REGION",
+  "pippen": { "agent": "example-agent", "session_id": "00000000-0000-4000-8000-000000000000" },
+  "source_sha": "0000000000000000000000000000000000000000",
+  "approved_tag_keys": ["pippen:sandbox", "pippen:agent", "pippen:session", "proof:source", "Environment", "EnvironmentClass", "ManagedBy"],
+  "vpc_id": "vpc-REPLACE",
+  "subnet_ids": ["subnet-REPLACE-PRIVATE"],
+  "domain_security_group_id": "sg-REPLACE-EXCLUSIVE",
+  "client_security_group_ids": ["sg-REPLACE-CLIENT"],
+  "roles": {
+    "admin": "arn:aws:iam::000000000000:role/REPLACE-ADMIN",
+    "indexer": "arn:aws:iam::000000000000:role/REPLACE-INDEXER",
+    "reader": "arn:aws:iam::000000000000:role/REPLACE-READER"
+  },
+  "engine_version": "OpenSearch_REPLACE"
+}

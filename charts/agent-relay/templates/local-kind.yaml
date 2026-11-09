@@ -1,0 +1,63 @@
+{{- $local := .Values.localKind | default dict -}}
+{{- if $local.enabled -}}
+{{- if ne (toString $local.allowLocalOnly) "true" }}{{ fail "localKind.enabled requires localKind.allowLocalOnly=true; this profile denies namespace-wide external egress and is for local kind only" }}{{ end -}}
+{{- range $name := list "relay-control" "relay-webapp" "relayhistory" "relaycast" "relayauth" "relayflows" "relayfile" -}}
+{{- if dig "networkPolicy" "enabled" false (index $.Values $name | default dict) }}{{ fail (printf "localKind requires %s.networkPolicy.enabled=false: child egress policies can add external allows" $name) }}{{ end -}}
+{{- end -}}
+{{- $pipeline := index .Values "sessions-pipeline" | default dict -}}
+{{- range $name := list "worker" "alleyoop" "session-object-storage" -}}
+{{- if dig $name "networkPolicy" "enabled" false $pipeline }}{{ fail (printf "localKind requires sessions-pipeline.%s.networkPolicy.enabled=false: child egress policies can add external allows" $name) }}{{ end -}}
+{{- end -}}
+{{- if not (has $local.profile (list "core" "addons")) }}{{ fail "localKind.profile must be core or addons" }}{{ end -}}
+{{- if ne (toString $local.temporaryRelayauth) (toString .Values.components.relayauth) }}{{ fail "localKind.temporaryRelayauth must explicitly match components.relayauth; remove both only after upstream auth removal ships" }}{{ end -}}
+{{- if or .Values.components.durableActors (not .Values.components.control) (not .Values.components.webapp) (not .Values.components.sessionsPipeline) (not .Values.components.relayhistory) (not .Values.components.relaycast) }}{{ fail "local kind profiles require control, app, cast, history and sessions, without durable actors" }}{{ end -}}
+{{- $addons := eq $local.profile "addons" -}}
+{{- if or (ne $addons .Values.components.relayflows) (ne $addons .Values.components.relayfile) }}{{ fail "localKind.profile and components.relayflows/relayfile must agree" }}{{ end -}}
+{{- $api := index .Values "relay-control" -}}
+{{- $dashboard := index .Values "relay-webapp" -}}
+{{- if or (not $dashboard.ingress.enabled) (empty $dashboard.ingress.host) (empty $dashboard.ingress.className) (empty $dashboard.ingress.tls) }}{{ fail "localKind requires relay-webapp.ingress.enabled=true with explicit host, className and TLS" }}{{ end -}}
+{{- $apiService := $api.fullnameOverride | default (printf "%s-%s" .Release.Name ($api.nameOverride | default "relay-control")) | trunc 63 | trimSuffix "-" -}}
+# This policy deliberately covers support pods and all migration Jobs too.
+# Calico must be running; the proof tests a real denial, not policy presence.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: kind-no-external-egress
+  namespace: {{ .Release.Namespace | quote }}
+spec:
+  podSelector: {}
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - podSelector: {}
+    - to:
+        - namespaceSelector:
+            matchLabels: { kubernetes.io/metadata.name: kube-system }
+          podSelector:
+            matchLabels: { k8s-app: kube-dns }
+      ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }
+---
+# Dashboard leaf ingress already handles /cloud/api and /login. Route the
+# Desktop and integration /api entry point to the same control plane as well.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: kind-control-api
+  namespace: {{ .Release.Namespace | quote }}
+spec:
+  ingressClassName: {{ $dashboard.ingress.className | quote }}
+  tls:
+    {{- toYaml $dashboard.ingress.tls | nindent 4 }}
+  rules:
+    - host: {{ $dashboard.ingress.host | quote }}
+      http:
+        paths:
+          - path: /api
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ $apiService }}
+                port: { number: {{ $api.service.port }} }
+{{- end }}

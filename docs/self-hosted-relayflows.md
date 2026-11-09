@@ -36,9 +36,12 @@ The operator supplies:
   ESO-created Secret holding `ANTHROPIC_API_KEY`).
 
 The flow can reach the suite's in-cluster services (`relaycast`,
-`relay-cloud-api`, `relayhistory`) over plain ClusterIP service DNS; nothing
+`relay-control`, `relayhistory`) over plain ClusterIP service DNS; nothing
 in the chart hard-codes those URLs, so credentials and endpoints are passed
-explicitly as env.
+explicitly as env. These are fresh-layout examples: existing releases retain
+their observed Service names (for example `relaycontrol` or `relay-cloud-api`).
+Use those names in endpoint values; see the
+[Control/Webapp rename guide](control-webapp-chart-rename.md).
 
 ## What is blocked: cloudWorker mode
 
@@ -66,7 +69,7 @@ Every post-registration call authenticates with `Authorization: Bearer
 mint the one-time enrollment token
 (`cloud` repo, `packages/web/app/api/v1/workers/`).
 
-The self-host control plane (`relay-cloud-api`, source
+The self-host control plane (`relay-control`, source
 `cloud-selfhost-current/packages/selfhost-api/src/app.ts`) implements none of
 this family. Its route table covers auth/device flow, organizations,
 memberships, workspace resolve/runtime, session search and relayhistory
@@ -78,7 +81,9 @@ Until selfhost-api grows `POST /api/v1/workers/register`, the per-worker
 `heartbeat`, `queue`, `assignments/{runId}/ack|status|storage` endpoints and
 an enrollment-token minting path, `cloudWorker` can only point at a control
 plane that already implements the protocol (today: hosted Agent Relay Cloud —
-the chart's default `worker.cloudUrl`). Pointing it at `http://relay-cloud-api`
+the chart's default `worker.cloudUrl`). On a fresh layout, pointing it at `http://relay-control` (or the observed
+retained Service name on an existing release; see the
+[rename guide](control-webapp-chart-rename.md))
 renders and deploys but the worker exits: `register` gets a 404 and no
 registration state is persisted.
 

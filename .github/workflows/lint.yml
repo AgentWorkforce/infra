@@ -18,7 +18,7 @@ env:
 
 jobs:
   static:
-    runs-on: ubuntu-latest
+    runs-on: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork) && 'ubuntu-latest' || vars.CI_LINUX_RUNNER || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -52,6 +52,19 @@ jobs:
           helm dependency build charts/sessions-pipeline >/dev/null
           ci/sessions-pipeline-search-worker-role/render.sh
 
+      # S3 artifact store of the relaycast and relayfile deploy Jobs and the
+      # durable-actors control plane's S3 env (charts/*/ci/durable-actors-s3-values.yaml).
+      - name: durable-actors S3 render assertions
+        run: ci/actors-s3/render.sh
+
+      - name: relaycast PostgreSQL backend render assertions
+        run: ci/relaycast/render.sh
+
+      # Offline tests for scripts/selfhost (every external command mocked),
+      # including eks-actors-install.sh's actor credential mode and role ARN.
+      - name: Self-hosted operator script tests
+        run: scripts/selfhost/tests/run-tests.sh
+
       # The development-preview customer handoff builds, verifies, extracts,
       # and its umbrella resolves every file:// dependency and renders.
       - name: Customer handoff package smoke
@@ -82,6 +95,26 @@ jobs:
       - name: Install customer release gate dependencies
         run: python3 -m pip install -r ci/customer-release-gate/requirements.txt
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22.23.3"
+
+      - name: Local kind profile and trust contract tests (offline)
+        run: |
+          python3 -m pip install -r ci/agent-relay/kind/requirements.txt
+          python3 ci/agent-relay/test_control_webapp_names.py -v
+          python3 ci/agent-relay/kind/test_stack.py -v
+          python3 ci/agent-relay/kind/test_ownership.py -v
+          python3 ci/agent-relay/kind/test_control.py -v
+          python3 ci/sessions-pipeline-read-api/test_read_api.py -v
+          python3 ci/agent-relay/kind/test_harness.py -v
+          python3 ci/session-component-names/test_names.py -v
+          python3 ci/telemetry-collector/test_chart.py -v
+          node --test ci/agent-relay/kind/test_bootstrap.mjs
+          node --test ci/agent-relay/kind/test_pipeline.mjs
+        env:
+          TMPDIR: ${{ runner.temp }}
+
       - name: Customer release gate regression tests
         run: python3 ci/customer-release-gate/test.py
 
@@ -104,7 +137,7 @@ jobs:
   # Produces the `customer-release-gate` check name that branch protection and
   # self-hosted/customer-release-evidence.json's requiredStatusChecks refer to.
   customer-release-gate:
-    runs-on: ubuntu-latest
+    runs-on: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork) && 'ubuntu-latest' || vars.CI_LINUX_RUNNER || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@v4
       # The gate renders the fixture chart (helm), parses it (yq, preinstalled
@@ -124,7 +157,7 @@ jobs:
   # (https://agentskills.io/specification). skills-ref is the reference
   # validator, pinned to an agentskills/agentskills commit (no tags yet).
   agent-skill:
-    runs-on: ubuntu-latest
+    runs-on: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork) && 'ubuntu-latest' || vars.CI_LINUX_RUNNER || 'ubuntu-latest' }}
     env:
       SKILLS_REF_COMMIT: 69ef37e9424c0a7ea9dd2293b559e43ec8176379
     steps:
@@ -142,7 +175,7 @@ jobs:
         run: bash .agents/skills/setting-up-self-hosted-agent-relay-gcp/scripts/test-layout.sh
 
   kind:
-    runs-on: ubuntu-latest
+    runs-on: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork) && 'ubuntu-latest' || vars.CI_LINUX_RUNNER || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -181,7 +214,7 @@ jobs:
   # upgrade from the published 0.1.0, first-run bootstrap, register -> node
   # transport -> send -> receive, restart, backup + restore.
   relaycast-smoke:
-    runs-on: ubuntu-latest
+    runs-on: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork) && 'ubuntu-latest' || vars.CI_LINUX_RUNNER || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -255,7 +288,7 @@ jobs:
           BULLS96_READ_TOKEN: ${{ secrets.BULLS96_READ_TOKEN }}
         run: |
           if [ -z "$BULLS96_READ_TOKEN" ]; then
-            echo "::error::BULLS96_READ_TOKEN is not available to this run (fork pull request, or the Actions secret is missing). This job builds the private sessions-pipeline services image and is required: it fails rather than skips. A maintainer must run it from a branch in AgentWorkforce/helm-charts."
+            echo "::error::BULLS96_READ_TOKEN is not available to this run (fork pull request, or the Actions secret is missing). This job builds the private sessions-pipeline services image and is required: it fails rather than skips. A maintainer must run it from a branch in AgentWorkforce/infra."
             exit 1
           fi
 

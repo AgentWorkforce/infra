@@ -1,0 +1,33 @@
+# PLACEHOLDERS: deliberately invalid version/project number. Never apply unchanged.
+project_id              = "replace-approved-project"
+expected_project_number = "REPLACE_IMMUTABLE_PROJECT_NUMBER"
+name                    = "example"
+environment             = "development"
+expected_environment    = "development"
+region                  = "us-central1"
+node_locations          = ["us-central1-a", "us-central1-b", "us-central1-c"]
+gke_version             = "REPLACE_REVIEWED_REGION_CHANNEL_VERSION"
+release_channel         = "STABLE"
+operator_cidrs          = { approved-vpn = "10.100.0.0/24" }
+network_ranges = {
+  nodes            = "10.10.0.0/20"
+  pods             = "10.20.0.0/16"
+  services         = "10.30.0.0/20"
+  control_plane    = "10.40.0.0/28"
+  private_services = "10.50.0.0/16"
+  connector        = "10.60.0.0/28"
+}
+maintenance_window = {
+  # Replace these dates/window after checking GKE maintenance requirements.
+  start_time = "2030-01-05T00:00:00Z"
+  end_time   = "2030-01-06T00:00:00Z"
+  recurrence = "FREQ=WEEKLY;BYDAY=SA,SU"
+}
+# Outbound actor HTTPS and non-Google registries need reviewed NAT or another
+# separately designed egress path. This root creates no internet ingress.
+enable_nat = false
+public_api_enabled = false
+actor_hosts = { enabled = false }
+pipeline = { enabled = false }
+# No AUTH material in the default state. See README before enabling managed Redis.
+redis = { enabled = false }

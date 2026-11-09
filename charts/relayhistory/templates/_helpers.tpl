@@ -58,10 +58,12 @@ app.kubernetes.io/component: history
 {{- if and .Values.migrations.enabled (lt (int .Values.migrations.activeDeadlineSeconds) (add (int .Values.migrations.rolloutBudgetSeconds) 2700 | int)) }}{{ fail "migrations.activeDeadlineSeconds must be >= rolloutBudgetSeconds + 2700" }}{{ end -}}
 {{- if .Values.ingress.enabled }}{{ if empty .Values.ingress.hosts }}{{ fail "ingress.enabled=true requires at least one host" }}{{ end }}{{ if and (not .Values.ingress.externalTls) (empty .Values.ingress.tls) }}{{ fail "ingress.enabled=true requires ingress.tls unless externalTls=true" }}{{ end }}{{ if and .Values.networkPolicy.enabled (empty .Values.networkPolicy.ingressFrom) }}{{ fail "ingress with networkPolicy requires networkPolicy.ingressFrom" }}{{ end }}{{ end -}}
 {{- $reservedEnv := list "PORT" "ENVIRONMENT" "MAX_BODY_BYTES" "MAX_INFLIGHT_BODY_BYTES" "SHUTDOWN_GRACE_MS" "SHUTDOWN_DRAIN_DELAY_MS" "PG_POOL_MAX" "CRON_ENABLED" "RELAYAUTH_JWKS_URL" "RELAYAUTH_ISSUER" "RELAYAUTH_AUDIENCE" "RELAYHISTORY_ORIGIN" "AGENT_RELAY_CLOUD_API_URL" "SESSION_EVENTS_ENABLED" "POSTHOG_HOST" "DATABASE_URL" "DATABASE_MIGRATIONS_URL" "DATABASE_RUNTIME_ROLE" "EMBEDDING_API_KEY" "OPENAI_API_KEY" "POSTHOG_API_KEY" "ALLOW_WRITE_HOLD" "ROLLOUT_BUDGET_SECONDS" -}}
+{{- if (.Values.postgresCa | default dict).enabled }}{{ $reservedEnv = append $reservedEnv "NODE_EXTRA_CA_CERTS" }}{{ end -}}
 {{- range .Values.extraEnv }}{{ if has .name $reservedEnv }}{{ fail (printf "%s is managed by structured chart values and must not appear in extraEnv" .name) }}{{ end }}{{ end -}}
 {{- /* extraEnvFrom entries (EnvFromSource) carry no variable names to check;
 the Deployment lists them before the chart ConfigMap so managed keys win. */ -}}
 {{- range $key, $_ := .Values.extraConfig }}{{ if has $key $reservedEnv }}{{ fail (printf "%s is managed by structured chart values and must not appear in extraConfig" $key) }}{{ end }}{{ end -}}
+{{- include "relayhistory.validatePostgresCa" . -}}
 {{- end -}}
 {{- define "relayhistory.secretEnv" -}}
 - name: DATABASE_URL
@@ -178,12 +180,21 @@ spec:
         {{- end }}
         - { name: ALLOW_WRITE_HOLD, value: {{ ternary "yes" "no" .Values.migrations.allowWriteHold | quote }} }
         - { name: ROLLOUT_BUDGET_SECONDS, value: {{ .Values.migrations.rolloutBudgetSeconds | quote }} }
+        {{- if (.Values.postgresCa | default dict).enabled }}
+        - { name: NODE_EXTRA_CA_CERTS, value: /etc/postgres-ca/ca.crt }
+        {{- end }}
       resources: {{ toYaml .Values.resources | nindent 8 }}
       volumeMounts:
         - { name: tmp, mountPath: /tmp }
+        {{- if (.Values.postgresCa | default dict).enabled }}
+        - { name: postgres-ca, mountPath: /etc/postgres-ca, readOnly: true }
+        {{- end }}
   volumes:
     - name: tmp
       emptyDir: { sizeLimit: 64Mi }
+    {{- if (.Values.postgresCa | default dict).enabled }}
+    {{- include "relayhistory.postgresCaVolume" . | nindent 4 }}
+    {{- end }}
     {{- if .Values.migrations.drainForWriteHold }}
     - name: drain-wait-token
       projected:
@@ -192,4 +203,40 @@ spec:
           - configMap: { name: kube-root-ca.crt, items: [{ key: ca.crt, path: ca.crt }] }
           - downwardAPI: { items: [{ path: namespace, fieldRef: { fieldPath: metadata.namespace } }] }
     {{- end }}
+{{- end -}}
+
+{{- /* Optional Postgres server CA bundle (postgresCa.*). NODE_EXTRA_CA_CERTS adds the
+mounted PEM to the roots node-pg verifies against for sslmode=verify-full. */ -}}
+{{- define "relayhistory.postgresCaVolume" -}}
+{{- $ca := .Values.postgresCa -}}
+- name: postgres-ca
+{{- if $ca.configMap }}
+  configMap:
+    name: {{ $ca.configMap | quote }}
+    items: [{ key: {{ $ca.key | quote }}, path: ca.crt }]
+{{- else }}
+  secret:
+    secretName: {{ $ca.secret | quote }}
+    # Public certificates, readable whatever the Pod's fsGroup is.
+    defaultMode: 0444
+    items: [{ key: {{ $ca.key | quote }}, path: ca.crt }]
+{{- end }}
+{{- end -}}
+
+{{- /* Fail closed on a half-configured bundle: a name without enabled=true would
+leave the certificate unverified while looking configured. */ -}}
+{{- define "relayhistory.validatePostgresCa" -}}
+{{- $ca := .Values.postgresCa | default dict -}}
+{{- $enabled := dig "enabled" false $ca -}}
+{{- if not (kindIs "bool" $enabled) }}{{ fail "postgresCa.enabled must be a boolean" }}{{ end -}}
+{{- $configMap := get $ca "configMap" | default "" | toString -}}
+{{- $secret := get $ca "secret" | default "" | toString -}}
+{{- if not $enabled -}}
+{{- if or $configMap $secret }}{{ fail "postgresCa.configMap and postgresCa.secret require postgresCa.enabled=true; a CA name while disabled would leave the certificate unverified" }}{{ end -}}
+{{- else -}}
+{{- if eq (empty $configMap) (empty $secret) }}{{ fail "postgresCa.enabled=true requires exactly one of postgresCa.configMap or postgresCa.secret" }}{{ end -}}
+{{- $ref := default $secret $configMap -}}
+{{- if or (gt (len $ref) 253) (not (regexMatch "^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?)*$" $ref)) }}{{ fail "postgresCa.configMap and postgresCa.secret must be a Kubernetes object name" }}{{ end -}}
+{{- if not (regexMatch "^[A-Za-z0-9._-]+$" (get $ca "key" | default "" | toString)) }}{{ fail "postgresCa.key must be a Kubernetes data key" }}{{ end -}}
+{{- end -}}
 {{- end -}}

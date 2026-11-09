@@ -6,8 +6,8 @@ components:
   relayauth: true
   sessionsPipeline: true
   relayhistory: true
-  cloudApi: true
-  dashboard: true
+  control: true
+  webapp: true
   # Optional: run flows in-cluster. Off by default; see the relayflows block
   # below and docs/self-hosted-relayflows.md before enabling.
   relayflows: false
@@ -114,11 +114,18 @@ relayauth:
 sessions-pipeline:
   worker:
     image:
-      # PENDING: the SBOM-attested Sessions release image waits on Khaliq's
-      # publish-image dispatch. REQUIRED OVERRIDE until it is pinned here: a
-      # fully qualified repository (or a path under global.imageRegistry) and digest.
+      # Release image (public GHCR, sessions-pipeline f1c2672: origin-bound
+      # courier assertions, #204). Mirror it by digest to your registry and
+      # override repository. Before its first migrate, run the Cloud SQL
+      # bootstraps shipped in the image (/app/supabase/bootstrap/) as the
+      # migration owner, in order: cloudsql_migration_roles.sql,
+      # session_directory_search_worker.sql, session_token_verifier.sql,
+      # session_ingest_roles.sql, cloudsql_owner_function_default_revoke.sql.
+      # This chart does not create those roles (roleBootstrap: false). An
+      # upgrade from 0.3.6 adds session_token_verifier.sql and
+      # session_ingest_roles.sql; the others already ran at install.
       repository: ghcr.io/agentworkforce/96bulls-services
-      digest: sha256:0000000000000000000000000000000000000000000000000000000000000000
+      digest: sha256:070fe6fd46ecd1e1f9db32ff22379f6df9b9e6c4d48ede5312c8fb986a95f3a9
     # REQUIRED OVERRIDE: existing Secret name; see README for required keys.
     existingSecret: example-agent-relay-secrets
     summaryEncryption:
@@ -168,7 +175,7 @@ sessions-pipeline:
     image:
       # Same services image repository and digest as worker.
       repository: ghcr.io/agentworkforce/96bulls-services
-      digest: sha256:0000000000000000000000000000000000000000000000000000000000000000
+      digest: sha256:070fe6fd46ecd1e1f9db32ff22379f6df9b9e6c4d48ede5312c8fb986a95f3a9
     # REQUIRED OVERRIDE: existing Secret name; see README for required keys.
     existingSecret: example-agent-relay-secrets
     hoopdb:
@@ -184,27 +191,32 @@ sessions-pipeline:
         mode: podIdentity
     # Same GCS data-path settings as worker.extraEnv.
     extraEnv: *sessionsGcsDataPath
+    # The ingest (services f1c2672 and later) validates its RelayAuth/JWKS
+    # URLs: https, or (with this) plain http to an in-cluster Service FQDN
+    # only (<svc>.<ns>.svc), as in values-eks.yaml.
+    allowInClusterHttp: true
     auth:
-      jwksUrl: http://relayauth:8787/.well-known/jwks.json
+      # REQUIRED OVERRIDE: <release namespace> in the FQDN.
+      jwksUrl: http://relayauth.agent-relay.svc:8787/.well-known/jwks.json
       # Must equal relayauth.issuer; the chart default (https://96bulls.local)
       # rejects every RelayAuth-signed courier assertion.
       issuer: http://relayauth:8787
       # REQUIRED OVERRIDE: the bare origin couriers use as the History
       # assertion audience (byte-equal to RELAYAUTH_HISTORY_ORIGIN). It must
       # equal relayhistory.relayauth.historyOrigin (the chart refuses a
-      # mismatch) and relay-cloud-api.services.relayhistoryPublicUrl.
+      # mismatch) and relay-control.services.relayhistoryPublicUrl.
       historyOrigin: https://history.placeholder.company
   hoopdb:
     enabled: false
-  locker:
+  session-object-storage:
     enabled: false
 
 relayhistory:
   fullnameOverride: relayhistory
   image:
-    # PENDING: the RelayHistory release image is not published yet (relayhistory-cloud #280 is held). REQUIRED OVERRIDE until it is: an approved image digest.
+    # Release image (public GHCR, relayhistory-cloud 53c3333). Mirror it by digest to your registry and override repository.
     repository: ghcr.io/agentworkforce/relayhistory
-    digest: sha256:0000000000000000000000000000000000000000000000000000000000000000
+    digest: sha256:d3166bb14e1d6043426a4dd8cc05408b94574c8d79ad5fd6e789e0de00ab371b
   database:
     # REQUIRED OVERRIDE: existing Secret name; see README for required keys.
     existingSecret: example-agent-relay-secrets
@@ -214,7 +226,7 @@ relayhistory:
     jwksUrl: http://relayauth:8787/.well-known/jwks.json
     issuer: http://relayauth:8787
   agentRelayCloud:
-    apiUrl: http://relay-cloud-api
+    apiUrl: http://relay-control
   service:
     annotations:
       cloud.google.com/neg: '{"ingress": true}'
@@ -228,12 +240,12 @@ relayhistory:
       - ipBlock: { cidr: 130.211.0.0/22 }
     allowAllEgress: true
 
-relay-cloud-api:
-  fullnameOverride: relay-cloud-api
+relay-control:
+  fullnameOverride: relay-control
   image:
-    # Release image (GHCR, relaycontrol 8e989a1). Mirror it by digest to your registry and override repository.
-    repository: ghcr.io/agentworkforce/selfhost-api
-    digest: sha256:535e6718fa239ce87dead3d22e7c53324bed44bfcef94018918e8804d24af478
+    # Release image (public GHCR, relay-control 0.5.0, df4b390; 0.5.1 is not published yet, so the session read handoff is inert on this pin). Mirror it by digest to your registry and override repository.
+    repository: ghcr.io/agentworkforce/relay-control
+    digest: sha256:d8c26d44dccb6dd21b7033288241a379e46ce5fbca69f276c4d4745001c3c3e2
   database:
     runtimeRole: control_api_runtime
   # Non-secret id of the encryption key (SELFHOST_ENCRYPTION_KEY_ID), stored
@@ -268,15 +280,14 @@ relay-cloud-api:
       - ipBlock: { cidr: 35.191.0.0/16 }
       - ipBlock: { cidr: 130.211.0.0/22 }
     allowAllEgress: true
-  # First boot and sign-in (relay-cloud-api README "Sign-in, bootstrap and
+  # First boot and sign-in (relay-control README "Sign-in, bootstrap and
   # invites"). With these set, the first start creates the organization (the
   # admin email is its owner) and a Default workspace bound to a new Relaycast
   # workspace; the admin signs in at https://<root host>/login and invites
   # teammates from Settings > Members. No manual bootstrap step is needed.
   # REQUIRED with bootstrap/auth/smtp: https://<gkeIngress.hosts.root>/ (the
-  # chart refuses any other host). Also override image.digest (above) and
-  # relay-dashboard.image.digest with images from relaycontrol #13 and
-  # relay-dashboard #92 or later: the pinned digests predate these features.
+  # chart refuses any other host). The pinned relay-control and dashboard
+  # digests include these features.
   # dashboardUrl: https://dashboard.placeholder.company/
   # bootstrap:
   #   orgName: Acme
@@ -307,21 +318,21 @@ relay-cloud-api:
   #   oidcClientSecret: oidc-client-secret
   #   smtpPassword: smtp-password
 
-relay-dashboard:
-  fullnameOverride: relay-dashboard
+relay-webapp:
+  fullnameOverride: relay-webapp
   image:
-    # Release image (public GHCR). Mirror it by digest to your registry and override repository.
+    # Release image (public GHCR, relay-webapp main e5003d0). Mirror it by digest to your registry and override repository.
     repository: ghcr.io/agentworkforce/relay-dashboard
-    digest: sha256:bbeca872c7e204a02a17050db6ac6309c6d36a07bcd00e1da3a739923f990282
+    digest: sha256:c50005fcdd1fc5ab5ef3dac9b621db8e0c7e03480406bfe519743ae435d8f1ad
   runtime:
     # REQUIRED OVERRIDE: publicUrl must use gkeIngress.hosts.root.
     publicUrl: https://dashboard.placeholder.company
     appPath: /
     apiBasePath: /cloud/api
     loginPath: /login
-  # Optional enterprise branding (relay-dashboard customerProfile; README
+  # Optional enterprise branding (relay-webapp customerProfile; README
   # "Customer profile"). Empty keeps the Agent Relay look. It needs a
-  # dashboard image built from relay-dashboard 8eac2bd or later; older images
+  # dashboard image built from relay-webapp 8eac2bd or later; older images
   # ignore it.
   # customerProfile:
   #   productName: Acme Relay
@@ -334,7 +345,7 @@ relay-dashboard:
   #   supportUrl: mailto:support@acme.example
   #   poweredByAgentRelay: true
   api:
-    serviceName: relay-cloud-api
+    serviceName: relay-control
   service:
     annotations:
       cloud.google.com/neg: '{"ingress": true}'
@@ -378,12 +389,12 @@ relay-dashboard:
 #  # cloudWorker mode only. REQUIRED OVERRIDE: enrollment token Secret;
 #  # the worker reads AGENT_RELAY_WORKER_ENROLLMENT_TOKEN from
 #  # credentials.existingSecretKey. cloudUrl is the control-plane base URL the
-#  # CLI appends /api/v1/workers/* to: http://relay-cloud-api (or
-#  # http://relay-cloud-api/cloud) in-cluster, https://<gkeIngress.hosts.api>
+#  # CLI appends /api/v1/workers/* to: http://relay-control (or
+#  # http://relay-control/cloud) in-cluster, https://<gkeIngress.hosts.api>
 #  # from outside — once selfhost-api implements the worker endpoints.
 #  # mode: cloudWorker
 #  # worker:
-#  #   cloudUrl: http://relay-cloud-api
+#  #   cloudUrl: http://relay-control
 #  # credentials:
 #  #   existingSecret: example-agent-relay-secrets
 #  #   existingSecretKey: AGENT_RELAY_WORKER_ENROLLMENT_TOKEN

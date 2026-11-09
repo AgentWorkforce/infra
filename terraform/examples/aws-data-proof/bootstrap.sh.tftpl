@@ -1,0 +1,63 @@
+#!/bin/bash
+set -Eeuo pipefail
+umask 077
+deadline=$(date -u -d '+2 hours' '+%Y-%m-%d %H:%M:%S UTC')
+cat > /etc/systemd/system/data-proof-timeout.service <<'UNIT'
+[Service]
+Type=oneshot
+ExecStart=/usr/sbin/shutdown --poweroff now
+UNIT
+cat > /etc/systemd/system/data-proof-timeout.timer <<UNIT
+[Timer]
+OnCalendar=$deadline
+Persistent=true
+Unit=data-proof-timeout.service
+[Install]
+WantedBy=timers.target
+UNIT
+systemctl daemon-reload
+systemctl enable --now data-proof-timeout.timer
+root=/opt/data-proof
+mkdir -m 700 -p "$root"
+cat > "$root/inputs.json" <<'CONFIG'
+${config}
+CONFIG
+finish() {
+  result=$?
+  trap - EXIT
+  set +e
+  if command -v python3 >/dev/null && command -v aws >/dev/null; then
+    PROOF_EXIT="$result" python3 - <<'PY'
+import pathlib,json,subprocess,hashlib,os
+p=pathlib.Path('/opt/data-proof');c=json.loads((p/'inputs.json').read_text());r=p/'receipt.json'
+if not r.exists():r.write_text(json.dumps({'ok':False,'phase':c['phase'],'source_sha':c['source_sha'],'exit_code':int(os.environ['PROOF_EXIT'])})+'\n')
+subprocess.run(['aws','--region',c['region'],'--no-cli-pager','s3api','put-object','--bucket',c['bucket'],'--expected-bucket-owner',c['account_id'],'--key',c['receipt_key'],'--body',str(r),'--metadata','sha256='+hashlib.sha256(r.read_bytes()).hexdigest()],capture_output=True,timeout=90)
+PY
+  fi
+  sync
+  /usr/sbin/shutdown --poweroff now
+}
+trap finish EXIT
+unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN AWS_PROFILE AWS_DEFAULT_PROFILE AWS_ROLE_ARN AWS_WEB_IDENTITY_TOKEN_FILE AWS_CONTAINER_CREDENTIALS_FULL_URI AWS_CONTAINER_CREDENTIALS_RELATIVE_URI
+export AWS_SHARED_CREDENTIALS_FILE=/dev/null AWS_CONFIG_FILE=/dev/null AWS_PAGER="" AWS_MAX_ATTEMPTS=5
+command -v python3 >/dev/null || dnf -y install python3
+command -v aws >/dev/null || dnf -y install awscli2
+command -v docker >/dev/null || dnf -y install docker
+command -v openssl >/dev/null || dnf -y install openssl
+systemctl enable --now docker
+python3 - <<'PY'
+import pathlib,json,subprocess,hashlib,tarfile,io
+p=pathlib.Path('/opt/data-proof');c=json.loads((p/'inputs.json').read_text());f=p/'payload.tar.gz'
+subprocess.run(['aws','--region',c['region'],'--no-cli-pager','s3api','get-object','--bucket',c['bucket'],'--expected-bucket-owner',c['account_id'],'--key',c['payload_key'],'--version-id',c['payload_version_id'],str(f)],check=True,capture_output=True,timeout=90)
+blob=f.read_bytes();assert len(blob)<=4*1024*1024 and hashlib.sha256(blob).hexdigest()==c['payload_sha256']
+allowed={'manifest.json','db-proof.mjs','verify-host.py'}
+with tarfile.open(fileobj=io.BytesIO(blob),mode='r:gz') as t:
+ members=t.getmembers();assert len(members)==3 and {m.name for m in members}==allowed and all(m.isfile() and m.size<=2*1024*1024 for m in members)
+ files={m.name:t.extractfile(m).read() for m in members}
+manifest=json.loads(files['manifest.json']);assert manifest['source_sha']==c['source_sha'] and set(manifest['files'])==allowed-{'manifest.json'}
+assert all(hashlib.sha256(files[n]).hexdigest()==h for n,h in manifest['files'].items())
+base=p/'payload';base.mkdir(mode=0o700)
+for name,body in files.items():(base/name).write_bytes(body)
+PY
+docker pull --platform linux/arm64 node@sha256:48abc13a19400ca3985071e287bd405a1d99306770eb81d61202fb6b65cf0b57 >/dev/null
+python3 "$root/payload/verify-host.py" > "$root/receipt.json"

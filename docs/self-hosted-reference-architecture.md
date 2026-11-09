@@ -14,6 +14,14 @@ matching an archive, open the same path at the revision recorded in its
 `RELEASE-MANIFEST.json`. The diagrams below ship in the archive under
 `docs/diagrams/`.
 
+## Current shared-store requirement
+
+The 2026-11-07 user direction is one RDS instance and one application database,
+with distinct service schemas and credentials, including Relaycast. See the
+[shared PostgreSQL contract](https://github.com/AgentWorkforce/infra/blob/main/docs/shared-postgres-storage-contract.md).
+The SQLite-backed `portable-single` profile is implemented; `aws-ha` and `gcp-ha`
+are planned. None proves or satisfies the new shared-store target.
+
 ## Diagrams
 
 - [Architecture overview](diagrams/agent-relay-architecture.png)
@@ -158,7 +166,7 @@ the shipped requirement
 [`req.db.postgres-17-extensions`](self-hosted-requirements.md#req-db-postgres-17-extensions)
 (`pg_trgm`, `btree_gin`) that the standard profile relies on.
 
-The Sessions Pipeline chart notes in the [README](https://github.com/AgentWorkforce/helm-charts/blob/main/README.md#transcript-search-profiles)
+The Sessions Pipeline chart notes in the [README](https://github.com/AgentWorkforce/infra/blob/main/README.md#transcript-search-profiles)
 point back to this section.
 
 ## Proof and commit gates

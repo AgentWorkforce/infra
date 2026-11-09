@@ -1,0 +1,8 @@
+{
+  "bucket": "replace-with-approved-state-bucket",
+  "key": "agent-relay/REPLACE_WITH_ACCOUNT/us-west-2/prod/data.tfstate",
+  "region": "us-west-2",
+  "expected_bucket_owner": "REPLACE_WITH_STATE_ACCOUNT",
+  "encrypt": true,
+  "use_lockfile": true
+}

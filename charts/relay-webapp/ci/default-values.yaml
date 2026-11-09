@@ -1,0 +1,18 @@
+image:
+  digest: sha256:1111111111111111111111111111111111111111111111111111111111111111
+runtime:
+  publicUrl: https://gcp-proof.agentrelay.com
+api:
+  serviceName: ci-relay-control
+ingress:
+  enabled: true
+  className: nginx
+  host: gcp-proof.agentrelay.com
+  tls:
+    - secretName: gcp-proof-agentrelay-com-tls
+      hosts: [gcp-proof.agentrelay.com]
+networkPolicy:
+  ingressFrom:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: ingress-nginx

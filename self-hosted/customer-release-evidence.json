@@ -16,7 +16,7 @@
     "firstParty": [
       {
         "decision": "approved",
-        "evidence": "https://github.com/AgentWorkforce/helm-charts/blob/main/LICENSE (Apache-2.0; GitHub license detection: Apache-2.0)",
+        "evidence": "https://github.com/AgentWorkforce/infra/blob/main/LICENSE (Apache-2.0; GitHub license detection: Apache-2.0)",
         "id": "helm-charts",
         "spdx": "Apache-2.0"
       },
@@ -61,7 +61,7 @@
   "operationalReadiness": {
     "loadTest": {
       "artifactSha256": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
-      "chartVersion": "0.3.7",
+      "chartVersion": "0.3.12",
       "evidence": "Not yet done; planned. The supported-100 ramp, 24-hour steady run, burst, drain and fault phases in docs/operations/capacity-and-load-test.md have not run. No capacity or SLO claim is made.",
       "imageManifestSha256": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
       "result": "not-run",
@@ -116,14 +116,14 @@
       "requiredStatusChecks": [],
       "requiresPullRequest": false
     },
-    "chartVersion": "0.3.7",
+    "chartVersion": "0.3.12",
     "environmentControls": {
       "name": "customer-release",
       "preventsSelfReview": false,
       "protected": false,
       "requiredApprovals": 0
     },
-    "imageManifestSha256": "sha256:04d83449034c21523b7cbb76e12440e1f6c2ef670e88444268754b5648368a72",
+    "imageManifestSha256": "sha256:c56a0751d3f94d3872778cc7685cf8684bcf0aa44f0cf6160aa7f9133b6ff97b",
     "valuesFile": "charts/agent-relay/values-gcp.yaml"
   },
   "releaseDecision": "blocked",
@@ -153,7 +153,7 @@
         "desktopVersion": "unreleased-custom-origin",
         "evidence": "Not yet done; planned. The server N/N-1 x Desktop current/previous matrix has not run; testedPlatforms lists the planned customer platform only.",
         "result": "not-run",
-        "serverVersion": "0.3.7",
+        "serverVersion": "0.3.12",
         "testedPlatforms": [
           "linux/amd64"
         ]
@@ -163,7 +163,7 @@
         "desktopVersion": "none",
         "evidence": "Not yet done; planned. The server N/N-1 x Desktop current/previous matrix has not run; testedPlatforms lists the planned customer platform only.",
         "result": "not-run",
-        "serverVersion": "0.3.7",
+        "serverVersion": "0.3.12",
         "testedPlatforms": [
           "linux/amd64"
         ]
@@ -173,7 +173,7 @@
         "desktopVersion": "unreleased-custom-origin",
         "evidence": "Not yet done; planned. The server N/N-1 x Desktop current/previous matrix has not run; testedPlatforms lists the planned customer platform only.",
         "result": "not-run",
-        "serverVersion": "0.3.6",
+        "serverVersion": "0.3.11",
         "testedPlatforms": [
           "linux/amd64"
         ]
@@ -183,13 +183,13 @@
         "desktopVersion": "none",
         "evidence": "Not yet done; planned. The server N/N-1 x Desktop current/previous matrix has not run; testedPlatforms lists the planned customer platform only.",
         "result": "not-run",
-        "serverVersion": "0.3.6",
+        "serverVersion": "0.3.11",
         "testedPlatforms": [
           "linux/amd64"
         ]
       }
     },
-    "serverCurrentVersion": "0.3.7",
-    "serverPreviousVersion": "0.3.6"
+    "serverCurrentVersion": "0.3.12",
+    "serverPreviousVersion": "0.3.11"
   }
 }

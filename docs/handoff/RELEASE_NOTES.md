@@ -38,9 +38,195 @@ components, off by default. Billing, hosted (Nango) provider integrations and
 hosted fleet are out of scope; operator-configured integration OAuth apps
 (relay-cloud-api `integrations`, 0.2.3, in agent-relay 0.3.8) are a preview.
 
-## agent-relay 0.3.9 (unreleased): first boot, sign-in and invites
+## agent-relay 0.3.12 (2026-11-04): durable actors on AWS EKS
 
-To be published from the `agent-relay-0.3.9` tag (not tagged yet). It
+Released by `release-agent-relay.yml` when the `agent-relay-0.3.12` tag is
+pushed (`oci://ghcr.io/agentworkforce/charts/agent-relay`, version 0.3.12).
+It adds durable actors on AWS (helm-charts #53, #55). **The actor components
+stay off by default.** With none of the new values set, every render is
+byte-identical to 0.3.11 apart from the `helm.sh/chart` labels. The customer
+images and the `values-gcp.yaml` and `values-eks.yaml` pins are unchanged
+from 0.3.11.
+
+- **S3 actor storage.** `durable-actors` 0.14.6-awf.1 adds
+  `storage.provider: s3` and `storage.s3.{region, actorCredentials,
+  actorRoleArn, endpoint, forcePathStyle}`, AWS availability zones in
+  `placement.zone`, `sandbox.{runtimeClassName, nodeSelector, tolerations}`
+  for a tainted actor node group, and `serviceAccount.annotations` for IRSA.
+  It needs a control-plane image from the AgentWorkforce durable-actors fork
+  (`charts/durable-actors/UPSTREAM.md` patches 10 and 11). relaycast 0.3.4 and
+  relayfile 0.2.1 add an S3 artifact store for their actor deploy Jobs
+  (`runtime.durableActors.deployer.artifactStore`).
+- **Per-actor STS is the default.** With `storage.s3.actorCredentials:
+  assume-role`, the control plane assumes `storage.s3.actorRoleArn` (on
+  Pippen, a `/pippen/workload/` storage role) with an inline session policy
+  narrowed to one actor, so an actor host cannot read another actor's state.
+  The control-plane role needs `sts:AssumeRole` and `sts:TagSession` on that
+  role. **`actorCredentials: control-plane` is an opt-in fallback** for an
+  account that forbids `sts:AssumeRole`: actor hosts then share the control
+  plane's S3 credentials, isolated by prefix only (first-party actors only).
+  The chart's NOTES warn when it is set.
+- **`values-eks-actors.yaml`**, a standalone profile: Relaycast and Relayfile
+  in actor mode on durable actors with S3 storage, runc actor hosts on a
+  tainted node group, and EKS Pod Identity (IRSA works through the service
+  account annotations). Every other component is off. To run actors next to
+  the suite, layer it over `values-eks.yaml` and turn the other components
+  back on. It pins six images by digest, all **public on GHCR** (anonymous
+  pulls verified 2026-11-04):
+
+| Image | Pinned digest (`values-eks-actors.yaml`) | Source | Platforms |
+|---|---|---|---|
+| `ghcr.io/agentworkforce/durable-actors-control-plane` | `sha256:0dc76905554055c8f063d764799410e2a2f385c2274661dd07d8fd9b12117971` | AgentWorkforce/durable-actors (fork of TerseAI) tag `awf-v0.14.6-aws.2` (`a5a7e245`), [run 41800410035](https://github.com/AgentWorkforce/durable-actors/actions/runs/41800410035), MIT | linux/amd64 only |
+| `ghcr.io/agentworkforce/durable-actors-typescript` | `sha256:b7118ed1377ccc20f0389d194dd589bcd4845394f72f91410cbaf0f62d4a2ed9` | same fork tag and run, MIT | linux/amd64 only |
+| `ghcr.io/agentworkforce/relaycast-actors-gateway` | `sha256:6d4f77c4285becac66f56601a36ac3580b19ad37331db4ad2b87f68b2a68abe4` | relaycast main `4e90b169` (#626), [run 41805228035](https://github.com/AgentWorkforce/relaycast/actions/runs/41805228035), Apache-2.0 | linux/amd64, linux/arm64 |
+| `ghcr.io/agentworkforce/relaycast-actors-deployer` | `sha256:f539982442305c61f2c7a7d979cb110e18f3be83fed69befd8755b6ad5476b51` | same relaycast revision and run, Apache-2.0 | linux/amd64, linux/arm64 |
+| `ghcr.io/agentworkforce/relayfile-actors` | `sha256:27dfc8d5bbceb7161af9aa4c4923c0efd5045b2d332f60c30492fd599b434522` | relayfile main `30a5e007` (#559), [run 41805271012](https://github.com/AgentWorkforce/relayfile/actions/runs/41805271012), Apache-2.0 | linux/amd64, linux/arm64 |
+| `ghcr.io/agentworkforce/relayfile-actors-workspace` | `sha256:6845272aa103724e4da8d6f29653e4ea06ab57b71900b807e4a38b8f41c11d32` | same relayfile revision and run, Apache-2.0 | linux/amd64, linux/arm64 |
+
+  The file's header comment still says these packages may be private, and
+  that the install script uses the control-plane fallback. Both are out of
+  date: the packages are public, and the script defaults to per-actor STS
+  (#55). Changing the comment would need a chart version bump, so it is
+  fixed in the next chart change.
+- **`scripts/selfhost/eks-actors-install.sh`** (`prereqs`, `prepull`,
+  `install`, `actor-env`, `status`, `uninstall`) and `eks-actors-sandbox.sh`
+  build the proof in a Pippen sandbox. The install defaults to per-actor STS
+  with the derived storage role ARN (`EKS_ACTORS_ACTOR_ROLE_ARN` overrides
+  it), and `EKS_ACTORS_ACTOR_CREDENTIALS=control-plane` opts in to the
+  fallback. `prepull` is only needed for a private mirror.
+- **Proof.** In the `actors-proof` Pippen sandbox (EKS, standard mode, runc
+  actor hosts) in per-actor STS mode: actor activation, the Relaycast
+  harness 18/18, the Relayfile mount e2e, and a cross-actor negative check
+  15/15 (one actor's session policy denies another actor's snapshots and
+  ownership records and a bucket-wide list, and create-only writes are
+  enforced). Proof Postgres and secrets are proof-only (see the script
+  header); use a managed Postgres with TLS for a real install.
+- Images and licenses are recorded in `self-hosted/customer-images.yaml` as
+  inactive entries and in the image supply-chain guide. They are not part of
+  the gated customer matrix and need owner approval before they join one.
+  The two durable-actors images are linux/amd64 only.
+
+## agent-relay 0.3.11 (2026-11-04): current images, every pin public
+
+Published from the `agent-relay-0.3.11` tag by `release-agent-relay.yml`
+([run 41812609280](https://github.com/AgentWorkforce/infra/actions/runs/41812609280);
+`oci://ghcr.io/agentworkforce/charts/agent-relay`, version 0.3.11). It
+supersedes the never-tagged 0.3.7, 0.3.8, 0.3.9 and 0.3.10 and includes their
+changes (below), so it covers everything since 0.3.6. The leaf charts are
+unchanged from 0.3.9 (relay-cloud-api 0.2.4, relay-dashboard 0.1.3,
+relayhistory 0.1.1, sessions-pipeline 0.6.0). Only `values-gcp.yaml` and the
+selfhost-api and dashboard pins in the new `values-eks.yaml` (0.3.10, below)
+move.
+
+**Images.** Every image `values-gcp.yaml` renders is now a public GHCR
+release digest, with linux/amd64 and linux/arm64 pullable anonymously. The two
+REQUIRED OVERRIDE zero digests (RelayHistory, Sessions services) are gone.
+
+| Component | Image | Source |
+|---|---|---|
+| Control-plane API | `ghcr.io/agentworkforce/selfhost-api@sha256:95c7877741054dc2f1cafa26be3faa9bfe4660ed85d637aef4524daa10481963` (0.3.0) | relaycontrol `9b80b04` (#7-#13) |
+| Dashboard | `ghcr.io/agentworkforce/relay-dashboard@sha256:c50005fcdd1fc5ab5ef3dac9b621db8e0c7e03480406bfe519743ae435d8f1ad` | relay-dashboard `e5003d0` (#83-#92) |
+| RelayHistory | `ghcr.io/agentworkforce/relayhistory@sha256:d3166bb14e1d6043426a4dd8cc05408b94574c8d79ad5fd6e789e0de00ab371b` | relayhistory-cloud `53c3333` |
+| Sessions services (worker, alleyoop) | `ghcr.io/agentworkforce/96bulls-services@sha256:070fe6fd46ecd1e1f9db32ff22379f6df9b9e6c4d48ede5312c8fb986a95f3a9` | sessions-pipeline `f1c2672` |
+| Relaycast | `ghcr.io/agentworkforce/relaycast-self-host@sha256:81274dca7ab58673383dc7a9c777f422f29606c7422e81b5ea15724770f1455e` (unchanged) | relaycast `bf713d86` (engine 12.7.0) |
+| RelayAuth | `ghcr.io/agentworkforce/relayauth@sha256:c23c92d25fdffef3b5838a1eef4c226925f859706365d9ccece229795b877288` (unchanged) | relayauth `784582e` |
+| Sessions wait-for-role | `ghcr.io/cloudnative-pg/postgresql:17-standard-trixie@sha256:ed6923f9ba2399cf9070379a353c710c29ced8a294be73986a2c3dae7e599ce3` (unchanged) | upstream `4c2710a` |
+
+Mirror each one by digest into your registry, as before (image supply-chain
+guide).
+
+What the new images bring, in one place:
+
+- **Dashboard redesign.** The self-host dashboard now has the hosted Cloud
+  look and feel (relay-dashboard #83), the faceted sessions sidebar and
+  customer-profile branding (#84, #86), and Settings pages that match hosted:
+  Connections with Coding agents (#85, #89, #90), the Agent Relay Desktop
+  link from the customer profile (#88) and Members with email invites (#92).
+  Connections now matches hosted visually, and the Integrations tab is
+  gone (#91).
+- **First-boot bootstrap, OIDC / email sign-in and invites** (relaycontrol
+  #13, chart values from 0.3.9, below). The pinned images include it, so no
+  digest override is needed any more.
+- **Coding-agent credentials and device logins** (relaycontrol #7, #10, #11).
+  Workspace model-provider credentials with sandbox and model selection;
+  Codex (ChatGPT) and Grok subscription logins, envelope-encrypted and mounted
+  per run. Daytona is no longer offered. The envelopes are stored in Postgres
+  unless flows storage is `gcs` (then the same bucket).
+- **Desktop sign-in origin** (relaycontrol #9): sign-in answers name the
+  site the request arrived on, so a custom-origin Desktop signs in to your
+  host.
+- **Integration OAuth apps** (relaycontrol #12, chart values from 0.3.8,
+  below).
+- **Origin-bound pipeline auth.** The Sessions services image verifies the
+  courier's origin-bound RelayAuth History assertion (sessions-pipeline
+  #204), so session ingest works with the interim RelayAuth bearer off, as
+  the customer profile ships it. Keep `alleyoop.auth.historyOrigin` equal to
+  `relayhistory.relayauth.historyOrigin` (the chart refuses a mismatch).
+- **RelayHistory public image** from its reviewed container workflow.
+
+**Flows worker CLI.** The relayflows chart still installs agent-relay
+12.4.1 into the flows worker (`runtimeInstaller.agentRelayVersion`). The
+agent-relay CLI release with the new coding-agent device logins (15.1.2 or
+later) was not on npm when 0.3.11 was cut; raise that value once it ships.
+
+**Upgrade step: ingest JWKS URL.** The new services image only accepts an
+https RelayAuth JWKS URL, or plain http to an in-cluster Service FQDN when
+`allowInClusterHttp` is on. `values-gcp.yaml` now sets
+`sessions-pipeline.alleyoop.allowInClusterHttp: true` and
+`auth.jwksUrl: http://relayauth.<release namespace>.svc:8787/.well-known/jwks.json`.
+If your overrides set the old short `http://relayauth:8787/...` URL, change
+it, or session ingest cannot verify courier tokens.
+
+**Upgrade step: HoopDb roles (required).** The new Sessions services image
+checks roles that the sessions-pipeline 0.6.0 chart does not create in the
+customer profile (`roleBootstrap: false`). Without them its migrate Job fails
+with `42501 role check failed bootstrap:session_token_verifier`. Before you
+upgrade, run the three bootstrap scripts shipped in the image, in order, as a
+privileged HoopDb user (the Cloud SQL admin user, or the CNPG superuser):
+
+```bash
+IMG=ghcr.io/agentworkforce/96bulls-services@sha256:070fe6fd46ecd1e1f9db32ff22379f6df9b9e6c4d48ede5312c8fb986a95f3a9
+for f in session_directory_search_worker session_token_verifier session_ingest_roles; do
+  docker run --rm --entrypoint cat "$IMG" "/app/supabase/bootstrap/$f.sql" \
+    | psql "$HOOPDB_ADMIN_URL" -X -v ON_ERROR_STOP=1
+done
+```
+
+The scripts are idempotent. On Cloud SQL (`values-gcp.yaml`) a fresh install
+runs the full set as the migration owner, in order:
+`cloudsql_migration_roles.sql`, `session_directory_search_worker.sql`,
+`session_token_verifier.sql`, `session_ingest_roles.sql`,
+`cloudsql_owner_function_default_revoke.sql` (all in the same image
+directory). An upgrade from 0.3.6 already ran the first, second and last at
+install.
+
+EKS validation passed after the upgrade to the published 0.3.11 chart with
+its selfhost-api and dashboard digests, services `070fe6fd`, RelayHistory
+`d3166bb1` and the interim bearer off. The GKE proof has not been re-run
+with the complete 0.3.11 image set. Renders with your own
+`image.repository`/`image.digest` overrides are unchanged apart from the
+`helm.sh/chart` labels.
+
+## agent-relay 0.3.10 (never tagged; ships in 0.3.11): AWS EKS profile
+
+Never tagged; it ships in 0.3.11 (above). It adds
+`charts/agent-relay/values-eks.yaml`, the AWS EKS profile, and
+[`docs/self-hosted-eks.md`](../self-hosted-eks.md) (helm-charts #47). The
+profile was proven end to end on EKS Auto Mode with real DNS and TLS and the
+interim bearer off (15/15 cases). It uses one ALB Ingress with host rules and
+an ACM certificate (`scripts/selfhost/eks-alb-ingress.sh`), EKS Pod Identity
+to S3 for the Sessions Pipeline, and in-cluster CloudNativePG for HoopDb, the
+control API and RelayHistory. Relaycast runs on SQLite.
+`scripts/selfhost/eks-proof-install.sh hoopdb-roles` runs the HoopDb role
+bootstraps in-cluster on EKS. Durable actors stay GKE-only. Templates are
+unchanged. It is a proof profile, not a production reference architecture.
+0.3.11 moves its selfhost-api and dashboard pins to the same digests as
+`values-gcp.yaml`. The EKS proof ran the earlier `535e6718` and `bbeca872`
+digests.
+
+## agent-relay 0.3.9 (never tagged; ships in 0.3.11): first boot, sign-in and invites
+
+Never tagged; it ships in 0.3.11 (above). It
 supersedes the never-tagged 0.3.8 (and 0.3.7) and includes their changes. It ships with
 relay-cloud-api 0.2.4.
 
@@ -68,20 +254,14 @@ Requirements:
 - a selfhost-api image from relaycontrol #13 or later;
 - a dashboard image from relay-dashboard #92 or later, for the invite UI.
 
-The `relay-cloud-api` and `relay-dashboard` digests pinned in `values-gcp.yaml`
-predate both. Until the pins move, copy images built from those revisions (or
-later) into a registry your cluster can pull from, as for every other image
-(see the image supply-chain guide), and override both `image.repository` and
-`image.digest` for `relay-cloud-api` and `relay-dashboard`. Otherwise the new values render but the API ignores
-them and Members has no invite UI.
+0.3.11 pins images that include both.
 
 With none of these values set, renders are byte-identical apart from the
 `helm.sh/chart` labels.
 
-## agent-relay 0.3.8 (2026-11-04): integration OAuth apps
+## agent-relay 0.3.8 (never tagged; ships in 0.3.11): integration OAuth apps
 
-To be published from the `agent-relay-0.3.8` tag (not tagged yet). 0.3.7 was
-never tagged; its changes ship here (below). relay-cloud-api 0.2.3 adds
+Never tagged; it ships in 0.3.11. 0.3.7 was also never tagged; its changes ship here (below). relay-cloud-api 0.2.3 adds
 `integrations.<provider>.existingSecret`: the customer's own OAuth app per
 integration (GitHub, Slack, Linear, Notion, ...), read from an existing
 Secret (client ID as `SELFHOST_OAUTH_<PROVIDER>_CLIENT_ID`, client secret

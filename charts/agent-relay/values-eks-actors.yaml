@@ -1,0 +1,165 @@
+# Durable-actors overlay for AWS EKS: Relaycast and Relayfile in actor mode on
+# TerseAI durable-actors with S3 storage. It is a standalone profile: it turns
+# every other component off, as the actors proof does (scripts/selfhost/
+# eks-actors-install.sh):
+#
+#   helm upgrade --install agent-relay charts/agent-relay -n agent-relay \
+#     -f charts/agent-relay/values-eks-actors.yaml -f <your overrides>
+#
+# To run the actors next to the rest of the suite, layer it over the core EKS
+# profile (values-eks.yaml, docs/self-hosted-eks.md) and set the other
+# components back to true in your overrides, after this file.
+#
+# The image digests below are the GHCR builds of the durable-actors fork (S3
+# storage, AWS placement and sandbox scheduling; charts/durable-actors
+# UPSTREAM.md patch 10) and of relaycast #626 / relayfile #559 (S3 artifact
+# upload). These GHCR packages may still be private: until they are public,
+# mirror them into a registry the nodes can pull from and override the
+# repositories. Replace every <...> value. No credential values appear
+# here: the Secrets are listed in docs/self-hosted-durable-actors.md.
+#
+# Identity (EKS Pod Identity; IRSA works through serviceAccount annotations):
+# - <release>-durable-actors (control plane and pool manager): S3 Get/Put/List
+#   on the bucket, and sts:AssumeRole + sts:TagSession on storage.s3.actorRoleArn.
+# - In an account that forbids sts:AssumeRole (a Pippen sandbox), override
+#   storage.s3.actorCredentials: control-plane and leave actorRoleArn empty
+#   (eks-actors-install.sh does this): actor hosts then share the control
+#   plane's S3 credentials, isolated by prefix only. First-party actors only.
+# - storage.s3.actorRoleArn: trusted by the control-plane role, S3 Get/Put on
+#   <bucket>/durable-actors/v3/* and ListBucket. The control plane narrows it per
+#   actor with an inline session policy; actor hosts get nothing else.
+# - The relaycast and relayfile deployer ServiceAccounts: s3:PutObject and
+#   s3:GetObject on <bucket>/durable-actors/v3/artifacts/*.
+# - The relaycast and relayfile ServiceAccounts: their file and blob buckets.
+#
+# Actor hosts run on the cluster's default runtime (runc), hardened (non-root,
+# read-only rootfs, seccomp RuntimeDefault, no capabilities, no ServiceAccount
+# token, no AWS identity, IMDS blocked by the NetworkPolicy), on a dedicated
+# node group labelled durable-actors/role=actor-host and tainted
+# durable-actors/actor-host=true:NoSchedule. For untrusted or multi-tenant actor
+# code, add a gVisor RuntimeClass and set sandbox.runtimeClassName: gvisor
+# (docs: relay-briefs actors-aws-design.md, section c).
+components:
+  relaycast: true
+  relayauth: false
+  sessionsPipeline: false
+  relayhistory: false
+  control: false
+  webapp: false
+  relayflows: false
+  durableActors: true
+  relayfile: true
+
+durable-actors:
+  publicUrl: https://<actors host>
+  placement:
+    zone: <the actor node group's availability zone, e.g. us-west-2a>
+  storage:
+    provider: s3
+    bucket: <bucket>
+    s3:
+      region: <region>
+      actorRoleArn: arn:aws:iam::<account>:role/<actor storage role>
+  credentialsSecret: actors-credentials
+  invokeApiKeySecretKey: invoke-api-key
+  images:
+    controlPlane:
+      repository: ghcr.io/agentworkforce/durable-actors-control-plane
+      # AgentWorkforce/durable-actors tag awf-v0.14.6-aws.2 (a5a7e245), run 41800410035
+      digest: 0dc76905554055c8f063d764799410e2a2f385c2274661dd07d8fd9b12117971
+    typescript:
+      repository: ghcr.io/agentworkforce/durable-actors-typescript
+      digest: b7118ed1377ccc20f0389d194dd589bcd4845394f72f91410cbaf0f62d4a2ed9
+    # images.python stays at upstream 0.14.6 (public): the fork does not build a
+    # Python host, and this stack runs TypeScript actors only (relaycast and
+    # relayfile). Python actors are not supported with storage.provider s3 until
+    # the fork publishes a matching Python host.
+  serviceAccount:
+    googleServiceAccount: ""
+  sandbox:
+    runtimeClassName: ""
+    nodeSelector:
+      durable-actors/role: actor-host
+    tolerations:
+      - {key: durable-actors/actor-host, operator: Exists, effect: NoSchedule}
+  ingress:
+    enabled: false
+  actors:
+    hostIdleTimeoutMs: 120000
+    warm: 1
+    maxStarting: 4
+
+relaycast:
+  # Public HTTPS origin of Relaycast. The Workspace actor reads uploaded files
+  # back through it (RELAYCAST_PUBLIC_URL in relaycast-actor-env), so actor pods
+  # must reach it over public egress.
+  baseUrl: https://<cast host>
+  # Holds internal-secret, workspace-bootstrap-secret, credential-keyring and
+  # file-signing-secret (docs/self-hosted-durable-actors.md); credentials.authority
+  # self needs the keyring.
+  existingSecret: <relaycast Secret, e.g. relaycast-secrets>
+  secretKeys:
+    credentialKeyring: credential-keyring
+  credentials:
+    format: ar
+    authority: self
+  runtime:
+    backend: durable-actors
+    durableActors:
+      # relaycast main 4e90b169 (#626), publish-actors-images run 41805228035, tag 12.7.0-actors.1
+      gateway:
+        image:
+          repository: ghcr.io/agentworkforce/relaycast-actors-gateway
+          digest: sha256:6d4f77c4285becac66f56601a36ac3580b19ad37331db4ad2b87f68b2a68abe4
+      invocationSecret:
+        name: relaycast-durable-actors-invoke
+        key: durable-actors-invoke-key
+        scope: invoke-only
+      adminKeySecret:
+        name: actors-credentials
+        key: api-key
+      deployer:
+        image:
+          repository: ghcr.io/agentworkforce/relaycast-actors-deployer
+          digest: sha256:f539982442305c61f2c7a7d979cb110e18f3be83fed69befd8755b6ad5476b51
+        artifactBucket: <bucket>
+        artifactStore:
+          driver: s3
+          s3:
+            region: <region>
+      actorEnvSecrets: [relaycast-actor-env]
+      fileStore:
+        driver: s3
+        bucket: <relaycast files bucket>
+        # eks-actors-sandbox.sh's files role may write only relaycast/* and relayfile/*.
+        prefix: relaycast/
+        s3:
+          region: <region>
+
+relayfile:
+  runtime:
+    backend: durable-actors
+    durableActors:
+      # relayfile main 30a5e007 (#559), publish-actors-images run 41805271012, tag sha-30a5e00
+      image:
+        repository: ghcr.io/agentworkforce/relayfile-actors
+        digest: sha256:27dfc8d5bbceb7161af9aa4c4923c0efd5045b2d332f60c30492fd599b434522
+      workspaceImage:
+        repository: ghcr.io/agentworkforce/relayfile-actors-workspace
+        digest: sha256:6845272aa103724e4da8d6f29653e4ea06ab57b71900b807e4a38b8f41c11d32
+      existingSecret: relayfile-actors
+      adminKeySecret:
+        name: actors-credentials
+        key: api-key
+      deployer:
+        artifactBucket: <bucket>
+        artifactStore:
+          driver: s3
+          s3:
+            region: <region>
+      blobStore:
+        driver: s3
+        bucket: <relayfile blob bucket>
+        prefix: relayfile/
+        s3:
+          region: <region>

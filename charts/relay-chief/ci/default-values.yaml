@@ -1,0 +1,34 @@
+image:
+  digest: sha256:0000000000000000000000000000000000000000000000000000000000000000
+relay:
+  baseUrl: https://cast.relay.example.com
+controlPlane:
+  url: https://api.relay.example.com
+existingSecret: relay-chief-credentials
+config:
+  revision: 1
+  chiefId: chief-demo
+  organizationId: org-demo
+  workspaceId: workspace-demo
+  projectId: project-demo
+  relayCallerId: agent-chief
+  repositories:
+    - acme/project
+  workers:
+    - agentId: agent-worker
+      address: worker@execution-host
+      actions:
+        - investigate
+        - coordinate
+        - unblock
+  policy:
+    version: "1"
+    allowedActions:
+      - investigate
+      - coordinate
+      - unblock
+    maxEvidenceAgeMs: 3600000
+    minConfidence: 0.8
+    maxConcurrentTasks: 2
+    budgetMicros: 10000000
+    taskReservationMicros: 1000000

@@ -34,11 +34,14 @@ spec:
       terminationGracePeriodSeconds: {{ $.Values.terminationGracePeriodSeconds }}
       {{- include "sessions-pipeline-worker.podSpecCommon" (dict "context" $ "component" $component) | nindent 6 }}
       containers:
-        - name: {{ $component }}
+        - name: {{ include "sessions-pipeline-worker.publicComponent" (dict "context" $ "component" $component) }}
           image: {{ include "sessions-pipeline-worker.image" $ | quote }}
           imagePullPolicy: {{ $.Values.image.pullPolicy }}
           env:
             {{- include "sessions-pipeline-worker.env" (dict "context" $ "service" $component) | nindent 12 }}
+            {{- if ($.Values.postgresCa | default dict).enabled }}
+            - { name: NODE_EXTRA_CA_CERTS, value: /etc/postgres-ca/ca.crt }
+            {{- end }}
             {{- with $.Values.workerHealth }}
             {{- if .enabled }}
             - name: WORKER_HEALTH_PORT
@@ -87,6 +90,9 @@ spec:
             - name: summary-master-keys
               mountPath: {{ $.Values.summaryEncryption.mountPath }}
               readOnly: true
+            {{- end }}
+            {{- if ($.Values.postgresCa | default dict).enabled }}
+            - { name: postgres-ca, mountPath: /etc/postgres-ca, readOnly: true }
             {{- end }}
 {{- end }}
 {{- end }}

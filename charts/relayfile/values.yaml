@@ -74,6 +74,15 @@ runtime:
       # The durable-actors storage.bucket: compiled code is uploaded under
       # durable-actors/v3/artifacts/<uuid>/. Required when enabled.
       artifactBucket: ""
+      # Where compiled bundles are uploaded: gcs (Workload Identity) or s3 (the
+      # default AWS chain, e.g. EKS Pod Identity on the deployer ServiceAccount;
+      # pairs with durable-actors storage.provider=s3).
+      artifactStore:
+        driver: gcs
+        s3:
+          region: ""
+          endpoint: ""
+          forcePathStyle: false
       backoffLimit: 3
       # Upper bound on the whole Job (all retries), so a hung deploy fails.
       activeDeadlineSeconds: 3600

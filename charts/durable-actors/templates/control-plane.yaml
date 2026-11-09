@@ -4,7 +4,13 @@ kind: ServiceAccount
 metadata:
   name: {{ include "actors.name" . }}
   annotations:
+    {{- /* Local patch 10: S3 deployments may omit the GKE Workload Identity annotation. */}}
+    {{- if or (eq .Values.storage.provider "gcs") .Values.serviceAccount.googleServiceAccount }}
     iam.gke.io/gcp-service-account: {{ .Values.serviceAccount.googleServiceAccount | quote }}
+    {{- end }}
+    {{- with .Values.serviceAccount.annotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
 {{- $workloads := list (dict "name" (include "actors.name" .) "role" "control_plane" "replicas" .Values.replicaCount) (dict "name" (include "actors.poolManagerName" .) "role" "pool_manager" "replicas" 1) }}
 {{- range $workload := $workloads }}
 ---
@@ -100,6 +106,31 @@ spec:
             - {name: DURABLE_ACTORS_PYTHON_IMAGE, value: {{ include "actors.image" $.Values.images.python | quote }}}
             - {name: DURABLE_ACTORS_GKE_NAMESPACE, value: {{ include "actors.sandboxNamespace" $ | quote }}}
             - {name: DURABLE_ACTORS_GKE_ZONE, value: {{ $.Values.placement.zone | quote }}}
+            {{- if eq $.Values.storage.provider "s3" }}
+            - {name: DURABLE_ACTORS_STORAGE_PROVIDER, value: s3}
+            - {name: DURABLE_ACTORS_S3_REGION, value: {{ $.Values.storage.s3.region | quote }}}
+            {{- if eq $.Values.storage.s3.actorCredentials "control-plane" }}
+            # Weaker isolation: actor hosts share the control plane's S3 credentials (per bucket prefix, not per actor).
+            - {name: DURABLE_ACTORS_S3_ACTOR_CREDENTIALS, value: control-plane}
+            {{- else }}
+            - {name: DURABLE_ACTORS_S3_ACTOR_ROLE_ARN, value: {{ $.Values.storage.s3.actorRoleArn | quote }}}
+            {{- end }}
+            {{- with $.Values.storage.s3.endpoint }}
+            - {name: DURABLE_ACTORS_S3_ENDPOINT, value: {{ . | quote }}}
+            {{- end }}
+            - {name: DURABLE_ACTORS_S3_FORCE_PATH_STYLE, value: {{ $.Values.storage.s3.forcePathStyle | toString | quote }}}
+            {{- end }}
+            {{- with $.Values.sandbox }}
+            {{- if not (kindIs "invalid" .runtimeClassName) }}
+            - {name: DURABLE_ACTORS_SANDBOX_RUNTIME_CLASS, value: {{ .runtimeClassName | quote }}}
+            {{- end }}
+            {{- if not (kindIs "invalid" .nodeSelector) }}
+            - {name: DURABLE_ACTORS_SANDBOX_NODE_SELECTOR, value: {{ .nodeSelector | toJson | quote }}}
+            {{- end }}
+            {{- if not (kindIs "invalid" .tolerations) }}
+            - {name: DURABLE_ACTORS_SANDBOX_TOLERATIONS, value: {{ .tolerations | toJson | quote }}}
+            {{- end }}
+            {{- end }}
             - {name: DURABLE_ACTORS_PERSISTENCE, value: {{ $.Values.storage.mode | quote }}}
             - {name: DURABLE_ACTORS_BUCKET, value: {{ $.Values.storage.bucket | quote }}}
             - {name: DURABLE_ACTORS_ARTIFACT_BUCKET, value: {{ $.Values.storage.bucket | quote }}}

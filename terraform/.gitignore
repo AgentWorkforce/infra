@@ -1,0 +1,12 @@
+.terraform/
+.terraform.lock.hcl
+!examples/aws-environments/.terraform.lock.hcl
+*.tfstate
+*.tfstate.*
+*.tfplan
+crash.log
+terraform.tfvars
+.runs/
+__pycache__/
+*.tfvars.json
+*.backend.json

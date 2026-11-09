@@ -1,0 +1,96 @@
+name: Terraform modules
+
+# Static checks for terraform/**: no cloud credentials, no state, no apply.
+on:
+  pull_request:
+    paths:
+      - "terraform/**"
+      - ".github/workflows/terraform.yml"
+  push:
+    branches: [main]
+    paths:
+      - "terraform/**"
+      - ".github/workflows/terraform.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  TERRAFORM_VERSION: 1.16.7
+  OPENTOFU_VERSION: 1.11.14
+  TFLINT_VERSION: v0.64.0
+  TERRAFORM_DOCS_VERSION: v0.24.0
+  CHECKOV_VERSION: 3.3.30
+
+jobs:
+  terraform:
+    runs-on: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork) && 'ubuntu-latest' || vars.CI_LINUX_RUNNER || 'ubuntu-latest' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/cache@v4
+        with:
+          path: ~/.terraform.d/plugin-cache
+          key: terraform-plugins-${{ hashFiles('terraform/**/versions.tf', 'terraform/examples/*/main.tf') }}
+          restore-keys: terraform-plugins-
+
+      - uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+          terraform_wrapper: false
+
+      - uses: terraform-linters/setup-tflint@v6
+        with:
+          tflint_version: ${{ env.TFLINT_VERSION }}
+
+      - name: Install tflint plugins
+        run: tflint --init --config "$GITHUB_WORKSPACE/terraform/.tflint.hcl"
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+
+      - name: Install terraform-docs
+        run: |
+          base="https://github.com/terraform-docs/terraform-docs/releases/download/${TERRAFORM_DOCS_VERSION}"
+          tarball="terraform-docs-${TERRAFORM_DOCS_VERSION}-linux-amd64.tar.gz"
+          dir="$(mktemp -d)"
+          curl -sSfL -o "$dir/$tarball" "$base/$tarball"
+          curl -sSfL -o "$dir/sums" "$base/terraform-docs-${TERRAFORM_DOCS_VERSION}.sha256sum"
+          (cd "$dir" && grep " $tarball\$" sums | sha256sum --check --strict)
+          sudo tar xzf "$dir/$tarball" -C /usr/local/bin terraform-docs
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install checkov
+        run: python3 -m pip install "checkov==${CHECKOV_VERSION}"
+
+      # fmt, init -backend=false, validate, tflint, terraform test (mock
+      # providers), terraform-docs drift, checkov.
+      - name: Check modules and examples
+        run: terraform/scripts/check.sh
+        env:
+          CI: "true"
+
+  opentofu:
+    runs-on: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork) && 'ubuntu-latest' || vars.CI_LINUX_RUNNER || 'ubuntu-latest' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/cache@v4
+        with:
+          path: ~/.terraform.d/plugin-cache
+          key: opentofu-plugins-${{ hashFiles('terraform/**/versions.tf', 'terraform/examples/*/main.tf') }}
+          restore-keys: opentofu-plugins-
+
+      - uses: opentofu/setup-opentofu@v2
+        with:
+          tofu_version: ${{ env.OPENTOFU_VERSION }}
+          tofu_wrapper: false
+
+      - name: Validate and test with OpenTofu
+        run: terraform/scripts/check.sh fmt validate test
+        env:
+          CI: "true"
+          TF_BIN: tofu

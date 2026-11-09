@@ -1,0 +1,19 @@
+apiVersion: v2
+name: session-ingest-api
+type: application
+version: 0.4.1
+appVersion: "0.1.0"
+description: >
+  Session ingest API for the sessions pipeline: receives session
+  manifests and chunks from couriers and lands them in the Locker (S3).
+  Hook-free; ready only once the HoopDb migration ledger matches the image.
+annotations:
+  artifacthub.io/license: Apache-2.0
+  agentworkforce.dev/license-scope: "First-party chart code only; dependencies and images retain their own licenses."
+home: https://github.com/AgentWorkforce/sessions-pipeline
+keywords: [sessions-pipeline, alleyoop, ingest, agentworkforce]
+maintainers:
+  - name: AgentWorkforce
+    url: https://github.com/AgentWorkforce/infra
+sources:
+  - https://github.com/AgentWorkforce/infra/tree/main/charts/session-ingest-api

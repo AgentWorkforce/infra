@@ -1,0 +1,28 @@
+# Replace all placeholders. Versions below intentionally have no guessed default.
+account_id                  = "<existing-12-digit-account>"
+region                      = "<region>"
+environment                 = "dev"
+name_prefix                 = "agent-relay" # Pippen: pippen-sbx-ar
+kubernetes_version          = "<region-supported-minor>"
+node_ami_release_version    = "<compatible-al2023-release>"
+kms_key_arn                 = "<existing-durable-key-arn>"
+operator_role_arns          = ["<existing-same-account-operator-role-arn>"]
+operator_cidrs              = ["192.0.2.0/24"] # Documentation range: replace with approved routed operator network.
+public_api_enabled          = false
+actor_availability_zone     = "<region-az-a>"
+search_az_count              = 2 # 1/2/3; production data composition requires 3.
+subnets = {
+  "<region-az-a>" = { public_cidr = "10.80.0.0/24", private_cidr = "10.80.16.0/20" }
+  "<region-az-b>" = { public_cidr = "10.80.1.0/24", private_cidr = "10.80.32.0/20" }
+}
+addon_versions = {
+  vpc-cni                = "<compatible-version>"
+  kube-proxy             = "<compatible-version>"
+  coredns                = "<compatible-version>"
+  eks-pod-identity-agent = "<compatible-version>"
+  aws-ebs-csi-driver     = "<compatible-version>"
+}
+# Pippen only: expected lease from external sandbox status; credentials stay external.
+# pippen = { agent = "<allocated-agent>", session_id = "<allocated-session>" }
+# Opt in to AWS Load Balancer Controller IAM and Pod Identity. Accounts where these already exist must import them first; see README.
+# enable_load_balancer_controller = true

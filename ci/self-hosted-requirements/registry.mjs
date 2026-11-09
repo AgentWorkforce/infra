@@ -64,7 +64,7 @@ const STATUSES = ['shipped', 'planned'];
 const PROVIDERS = ['operator', 'chart', 'migrator', 'stack'];
 
 // Umbrella value paths under worker./alleyoop. belong to the subcharts.
-const UMBRELLA_ALIASES = { worker: 'sessions-pipeline-worker', alleyoop: 'alleyoop' };
+const UMBRELLA_ALIASES = { worker: 'sessions-pipeline-worker', alleyoop: 'session-ingest-api', sessionReadApi: 'session-read-api' };
 function normPath(chart, p) {
   let c = chart, q = p;
   const m = /^([a-z0-9-]+):(.+)$/.exec(p);
@@ -81,7 +81,7 @@ const entryValues = (e) => asList(e.values).map((p) => normPath(entryCharts(e)[0
 const entryEnv = (e) => asList(e.env);
 const perProfile = (v, p) => (v && typeof v === 'object' && !Array.isArray(v) ? (p in v ? v[p] : v.default) : v);
 // The charts whose templates an entry's chart covers (the umbrella renders its subcharts).
-const chartFamily = (c) => (c === 'sessions-pipeline' ? ['sessions-pipeline', 'sessions-pipeline-worker', 'alleyoop'] : [c]);
+const chartFamily = (c) => (c === 'sessions-pipeline' ? ['sessions-pipeline', 'sessions-pipeline-worker', 'session-ingest-api', 'session-read-api'] : [c]);
 
 // ---------------------------------------------------------------------------
 // Template scan
@@ -347,7 +347,7 @@ checks.matrix = () => {
   const file = (p) => fs.readFileSync(abs(p), 'utf8').trim();
   if (file('ci/sessions-pipeline-search-worker-role/services-commit') !== img.source_commit) err(c, `services source_commit ${img.source_commit} != ci/sessions-pipeline-search-worker-role/services-commit`);
   if (file('ci/sessions-pipeline-search-worker-role/services-generation') !== img.migration_generation) err(c, `migration_generation ${img.migration_generation} != ci/sessions-pipeline-search-worker-role/services-generation`);
-  for (const ch of ['sessions-pipeline-worker', 'alleyoop']) if (chartValues[ch].image.digest !== img.ghcr?.digest) err(c, `charts/${ch}/values.yaml image.digest is ${chartValues[ch].image.digest}, not the registry GHCR digest`);
+  for (const ch of ['sessions-pipeline-worker', 'session-ingest-api']) if (chartValues[ch].image.digest !== img.ghcr?.digest) err(c, `charts/${ch}/values.yaml image.digest is ${chartValues[ch].image.digest}, not the registry GHCR digest`);
   // Every sessions-pipeline profile pins the image the registry names for it.
   for (const p of profiles.filter((x) => x.chart === 'sessions-pipeline')) {
     const want = img[p.services_image];
@@ -409,7 +409,7 @@ checks.matrix = () => {
       }
     }
     if (r.current && r.services && (r.services.source_commit !== img.source_commit || r.services.migration_generation !== img.migration_generation)) err(c, `release ${r.id}: services pins differ from compatibility.services_images`);
-    if (r.current && r.services) for (const ch of ['sessions-pipeline-worker', 'alleyoop']) {
+    if (r.current && r.services) for (const ch of ['sessions-pipeline-worker', 'session-ingest-api']) {
       if (r.images?.[ch]?.digest !== img.ghcr?.digest) err(c, `release ${r.id}: ${ch} image digest is not compatibility.services_images.ghcr`);
     }
   }
@@ -483,8 +483,8 @@ function renderDoc() {
     const deps = r.depends ? `<br>(deps: ${Object.values(r.depends).flatMap((d) => Object.entries(d).map(([c, v]) => `${c} ${v}`)).join(', ')})` : '';
     // digest_required: the chart ships no default digest and refuses to render
     // without one, so there is no installable tag to show.
-    const imgs = Object.entries(r.images || {}).map(([c, i]) => `${c}: ${code(`${i.repository}${i.digest ? `@${short(i.digest)}` : i.digest_required ? '@sha256:<required>' : `:${i.tag ?? r.app_versions?.[c] ?? ''}`}`)}`);
-    const image = imgs.length ? imgs.join('<br>') : cell(r.images_note);
+    const imgs = Object.entries(r.images || {}).map(([c, i]) => `${c}: ${code(`${i.repository || '<required repository>'}${i.digest ? `@${short(i.digest)}` : i.digest_required ? '@sha256:<required>' : `:${i.tag ?? r.app_versions?.[c] ?? ''}`}`)}`);
+    const image = [...imgs, cell(r.images_note)].filter(Boolean).join('<br>');
     const svc = r.services ? `${code(r.services.source_commit.slice(0, 12))} / ${code(r.services.migration_generation.slice(0, 12))}` : '';
     const combos = asList(r.db_combos).map((k) => `${k.db_mode} + ${k.boundary ?? '(unset)'} (${k.hoopdb})${k.status && k.status !== 'shipped' ? ` (${k.status})` : ''}`).join('<br>');
     L(`| ${r.id} | ${r.status === 'planned' ? '**planned**' : r.status} | ${charts}${deps} | ${image} | ${svc} | ${combos} | ${cell(r.notes)} |`);
@@ -502,7 +502,7 @@ function renderDoc() {
   for (const p of profiles) {
     L(`### Profile: ${p.id}`, '', `**${p.title}.** ${cell(p.summary)}`, '');
     const meta = [`chart ${code(p.chart)}`];
-    if (p.values_file) meta.push(`values ${asList(p.values_file).map((f) => `[${code(f)}](../charts/${p.chart}/${f})`).join(', ')}`);
+    if (asList(p.values_file).length) meta.push(`values ${asList(p.values_file).map((f) => `[${code(f)}](../charts/${p.chart}/${f})`).join(', ')}`);
     if (p.db) meta.push(`dbMode ${code(p.db.db_mode)}`, `boundary ${p.db.boundary ? code(p.db.boundary) : '(unset)'}`, `HoopDb ${p.db.hoopdb}`);
     if (p.services_image) meta.push(`services image ${p.services_image.toUpperCase()}`);
     if (p.install) meta.push(`install: ${code(p.install)}`);
@@ -542,7 +542,7 @@ function renderDoc() {
       for (const s of asList(e.secrets)) {
         const name = typeof s.name === 'object' ? Object.entries(s.name).map(([k, v]) => `${code(v)} (${k})`).join(', ') : code(s.name);
         const keys = asList(s.keys).map((k) => (typeof k.key === 'object' ? Object.entries(k.key).map(([pk, v]) => `${code(v)} (${pk})`).join(', ') : code(k.key)) + (k.key_path ? ` from ${code(k.key_path)}` : '') + (k.optional ? ` (optional: ${k.optional})` : '')).join('; ');
-        L(`- Secret: ${name}${s.name_paths ? ` from ${asList(s.name_paths).map(code).join(' then ')}` : ''}; keys ${keys}${s.note ? `. ${s.note}` : ''}`);
+        L(`- Secret: ${name}${s.name_paths ? ` from ${asList(s.name_paths).map(code).join(' then ')}` : ''}${keys ? `; keys ${keys}` : ''}${s.note ? `. ${s.note}` : ''}`);
       }
       const verify = typeof e.verify === 'object' ? Object.entries(e.verify).map(([k, v]) => `${k}: ${v}`).join(' / ') : e.verify;
       L(`- Verify: ${cell(verify)}`);

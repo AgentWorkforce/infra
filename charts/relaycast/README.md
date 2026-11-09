@@ -8,12 +8,10 @@ a reachable RelayAuth deployment.
 
 The self-host runtime is a single Node process backed by SQLite and a local
 uploaded-file store, both on one persistent volume. The chart therefore allows
-exactly one replica and upgrades with `Recreate`. That is `runtime.backend:
-sqlite`, the default. `runtime.backend: durable-actors` (experimental, a
-fresh-install backend) runs a stateless gateway in front of one TerseAI
-durable-actors `Workspace` actor per workspace; its contract is in
-[docs/self-hosted-durable-actors.md](../../docs/self-hosted-durable-actors.md).
-The chart refuses names of backends that are not implemented.
+exactly one replica and upgrades with `Recreate`. `runtime.backend` selects
+`sqlite` (the default), `durable-actors` (see `docs/self-hosted-durable-actors.md`)
+or [`postgres`](#postgresql-backend), and the chart refuses names of backends
+that are not implemented.
 
 ## Defaults
 
@@ -37,7 +35,7 @@ kubectl -n relaycast create secret generic relaycast-secrets \
   --from-literal=internal-secret="$(openssl rand -hex 32)" \
   --from-literal=workspace-bootstrap-secret="$(openssl rand -hex 32)"
 
-helm repo add agentworkforce https://agentworkforce.github.io/helm-charts
+helm repo add agentworkforce https://agentworkforce.github.io/infra --force-update
 helm install relaycast agentworkforce/relaycast -n relaycast \
   --set baseUrl=https://relay.example.com \
   --set existingSecret=relaycast-secrets
@@ -130,25 +128,65 @@ secretKeys:
 bootstrapProofRequired: false
 ```
 
-The chart cannot write or read the actor env Secret (`runtime.durableActors.actorEnvSecrets`,
-for example `relaycast-actor-env` in the durable-actors sandbox namespace), so you
-must put the same values there yourself:
+The chart cannot write or read the actor env Secret
+(`runtime.durableActors.actorEnvSecrets`), so operators must provision the same
+values there. In the following example, replace **every** sample assignment with
+the configured namespace, gateway `existingSecret`,
+`secretKeys.workspaceBootstrapSecret`, and the actor Secret's actual namespace
+and name. These names are independent; do not assume the sandbox namespace is
+`$NS-$RELEASE` on a customized deployment.
 
 ```bash
-v=$(openssl rand -base64 48 | tr -d '\n')   # 64 characters, no trailing newline
-kubectl -n "$NS" patch secret relaycast-secrets --type merge \
-  -p "{\"stringData\":{\"relaycast-actors-workspace-bootstrap-secret\":\"$v\"}}"
-kubectl -n "$NS-$RELEASE" patch secret relaycast-actor-env --type merge \
-  -p "{\"stringData\":{\"RELAYCAST_WORKSPACE_BOOTSTRAP_SECRET\":\"$v\",\"RELAYCAST_WORKSPACE_BOOTSTRAP_PROOF_REQUIRED\":\"false\"}}"
+NS=relay-system
+GATEWAY_SECRET=relaycast-secrets
+BOOTSTRAP_KEY=relaycast-actors-workspace-bootstrap-secret
+ACTOR_NS=relay-system-relay
+ACTOR_SECRET=relaycast-actor-env
+PROOF_REQUIRED=false # must equal bootstrapProofRequired in the Helm values
+# First-time provisioning only. Reuse the existing bytes on an established install.
+v=$(openssl rand -base64 48 | tr -d '\n') # no trailing newline
+kubectl -n "$NS" patch secret "$GATEWAY_SECRET" --type merge \
+  -p "{\"stringData\":{\"$BOOTSTRAP_KEY\":\"$v\"}}"
+kubectl -n "$ACTOR_NS" patch secret "$ACTOR_SECRET" --type merge \
+  -p "{\"stringData\":{\"RELAYCAST_WORKSPACE_BOOTSTRAP_SECRET\":\"$v\",\"RELAYCAST_WORKSPACE_BOOTSTRAP_PROOF_REQUIRED\":\"$PROOF_REQUIRED\"}}"
 unset v
 ```
 
-Actors read their env when they start, so update the actor Secret first, then
-upgrade (a new deployer Job re-registers the bundle). Keep the secret stable:
-changing it re-derives every keyed workspace id.
+For an existing actor installation, use a maintenance window and stop workspace
+creation/replay traffic before changing the proof policy or provisioning these
+values. Updating a Secret does not refresh an existing actor process. Follow this
+order before resuming traffic:
 
-`bootstrapProofRequired: true` makes an anonymous keyed `POST /v1/workspaces`
-send `X-Workspace-Bootstrap-Secret`; the gateway refuses a missing or wrong
+1. Update the actor Secret first. Keep an established bootstrap secret stable:
+   changing it derives different workspace IDs and is not a supported key
+   rotation procedure.
+2. Render the proposed release with its complete reviewed values and identify
+   the **exact** `Job` carrying `app.kubernetes.io/component: actors-deploy` in
+   that release's namespace. After verifying its release ownership and that no
+   deployer is running, delete that completed Job by name:
+   `kubectl -n "$NS" delete job "$DEPLOY_JOB"`, where `DEPLOY_JOB` is that
+   inspected name. Reapply the reviewed release so the Job is recreated, then
+   wait for that exact Job to complete. Secret contents and bootstrap policy
+   are not in its pod-template hash: an unchanged `helm upgrade` alone does
+   **not** rerun it. A changed deployer input can create a new Job instead; still
+   inspect and wait for the newly rendered Job.
+3. Complete the actor bundle rollout using the durable-actors lifecycle
+   procedure for this project. Restart/replace every already-running Workspace
+   actor for the project so it reads the updated Secret; a completed deployer
+   Job alone does not prove those processes have refreshed. Verify replacement
+   actor readiness before rolling the gateway. Preserve actor storage and PVCs.
+4. Apply the matching gateway values and restart the gateway after the actor
+   rollout. Secret contents alone do not change its pod template either. For
+   the development sidecar, restart the gateway pod so both containers reload.
+   Verify keyed create and replay return the same workspace/credential, and
+   verify a missing/wrong proof is refused when required, before resuming traffic.
+
+Do not proceed with a Secret/policy update if the project has no qualified actor
+restart/rollout procedure. This chart change does not perform or qualify that
+live cutover.
+
+`bootstrapProofRequired: true` requires an anonymous keyed `POST /v1/workspaces`
+to send `X-Workspace-Bootstrap-Secret`; the gateway refuses a missing or wrong
 proof with 401 `workspace_create_bootstrap_secret_invalid` before any actor
 call. It only matters with `publicWorkspaceCreate: true` (never behind an
 edge, which denies `/v1/workspaces`). Unkeyed creates and keyed
@@ -258,6 +296,54 @@ back up. If the copy fails after it has started, the Deployment stays at 0.
 
 Do not run `helm upgrade` while a restore is in progress, because it scales the
 Deployment back to 1.
+
+## PostgreSQL backend
+
+`runtime.backend: postgres` (default off) runs the server on an external
+PostgreSQL database. Uploaded files stay on the data PVC, and realtime, presence
+and rate limits are in-process, so `replicaCount` must stay 1. The image is
+`runtime.postgres.image` (12.8.0-pg.1), not `image.*`.
+
+Prepare the database first: the `relaycast_owner` and `relaycast_runtime` roles
+and schema `public`, as in `docs/self-host-postgres.md` in AgentWorkforce/relaycast.
+Then add two keys to `existingSecret`, next to the existing ones:
+
+| Key (value) | Content | Mounted into |
+| --- | --- | --- |
+| `database-owner-url` (`secretKeys.databaseOwnerUrl`) | `postgres://relaycast_owner:<pw>@<host>:5432/<db>?sslmode=verify-full` | migration Job only |
+| `database-runtime-url` (`secretKeys.databaseRuntimeUrl`) | `postgres://relaycast_runtime:<pw>@<host>:5432/<db>?sslmode=verify-full` | server only |
+
+The password must be URL-encoded, and `sslmode=verify-full` is the only accepted
+query parameter.
+
+```yaml
+runtime:
+  backend: postgres
+postgresCa:
+  enabled: true
+  configMap: postgres-ca-bundle   # or secret: <name>; key defaults to ca.crt
+```
+
+`postgresCa` mounts the CA that signs the database certificate at
+`/etc/postgres-ca/ca.crt` and sets `NODE_EXTRA_CA_CERTS`. It is required on this
+backend and refused on the others.
+
+A plain Job (`<release>-relaycast-migrate-<hash>`, no Helm hook) runs `migrate`
+as the owner; its name hashes the rendered pod template, so a new image or
+setting runs a new Job. The server's `wait-for-migrations` init container runs
+`verify-db` as the runtime role and holds the server until the database is
+migrated for this image; the server then checks identity and the ledger again
+before it listens. Install with `--wait --wait-for-jobs`, or wait for the Job
+yourself. Exit codes are `64` (configuration), `65` (identity) and `1` (failure):
+the Job does not retry 64 or 65, and a server or init container that exits with
+one needs an operator fix.
+
+The chart refuses a half-configured backend at render: no CA, a missing or
+shared URL key, `replicaCount` other than 1, `backup.enabled` (the backup CronJob
+is SQLite-only, so back up the database with its own tooling),
+`retention.messageTtlDays`, or chart-managed database variables in `extraEnv`.
+
+Moving an existing SQLite release to this backend does not migrate its data.
 
 ## Upgrades and rollback
 

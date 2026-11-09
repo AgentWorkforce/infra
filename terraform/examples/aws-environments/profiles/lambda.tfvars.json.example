@@ -1,0 +1,18 @@
+{
+  "pipeline_runtime": "lambda",
+  "activate_lambda": false,
+  "function_security_group_ids": [
+    "REPLACE_PRIVATE_FUNCTION_SG"
+  ],
+  "lambda_package": {
+    "s3_bucket": "replace-with-reviewed-artifact-bucket",
+    "s3_key": "pipeline/REPLACE_SOURCE_COMMIT/pipeline.zip",
+    "s3_object_version": "REPLACE_IMMUTABLE_VERSION_ID"
+  },
+  "lambda_runtime_bindings": {
+    "search_index": "agent-relay-dev-sessions-v2",
+    "state_backend_id": "agent-relay-dev-sessions",
+    "complete_since": "epoch",
+    "postgres_ca_sha256": "REPLACE_REVIEWED_PUBLIC_CA_SHA256"
+  }
+}

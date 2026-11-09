@@ -195,3 +195,23 @@ Gateway env: the single place the relayfile actor-mode env contract is wired.
 {{ include "relayfile.selectorLabels" . }}
 app.kubernetes.io/component: session-broker
 {{- end }}
+
+{{/* Deployer artifact store: S3 variables only in s3 mode. */}}
+{{- define "relayfile.actors.artifactStoreEnv" -}}
+{{- $store := . | default dict -}}
+{{- $driver := $store.driver | default "gcs" -}}
+{{- if not (has $driver (list "gcs" "s3")) }}{{ fail "runtime.durableActors.deployer.artifactStore.driver must be gcs or s3" }}{{ end -}}
+{{- if eq $driver "s3" }}
+{{- if not $store.s3.region }}{{ fail "runtime.durableActors.deployer.artifactStore.s3.region is required for driver s3" }}{{ end }}
+- name: DURABLE_ACTORS_ARTIFACT_STORE
+  value: s3
+- name: DURABLE_ACTORS_S3_REGION
+  value: {{ $store.s3.region | quote }}
+{{- with $store.s3.endpoint }}
+- name: DURABLE_ACTORS_S3_ENDPOINT
+  value: {{ . | quote }}
+{{- end }}
+- name: DURABLE_ACTORS_S3_FORCE_PATH_STYLE
+  value: {{ $store.s3.forcePathStyle | default false | toString | quote }}
+{{- end }}
+{{- end }}

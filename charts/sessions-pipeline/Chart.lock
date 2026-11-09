@@ -1,10 +1,13 @@
 dependencies:
 - name: sessions-pipeline-worker
   repository: file://../sessions-pipeline-worker
-  version: 0.6.0
-- name: alleyoop
-  repository: file://../alleyoop
-  version: 0.3.8
+  version: 0.7.2
+- name: session-ingest-api
+  repository: file://../session-ingest-api
+  version: 0.4.1
+- name: session-read-api
+  repository: file://../session-read-api
+  version: 0.2.0
 - name: cluster
   repository: https://cloudnative-pg.github.io/charts
   version: 0.9.0
@@ -14,5 +17,5 @@ dependencies:
 - name: opentelemetry-collector
   repository: https://open-telemetry.github.io/opentelemetry-helm-charts
   version: 0.178.0
-digest: sha256:9206b7d2ee78aa5068934641d643fa4397fb14362fb2ac8fe31e46854593787f
-generated: "2026-11-03T10:18:38.972638-08:00"
+digest: sha256:da42a5b8d5499b6ed75ef958dc11a717e24a643a08014bc1a19b949ac5dd130d
+generated: "2026-11-08T17:30:21.625980227-08:00"

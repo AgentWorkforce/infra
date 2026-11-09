@@ -1,0 +1,8 @@
+# terraform/scripts/check.sh runs checkov with this file. Findings that do not
+# apply are skipped inline (#checkov:skip=<id>:<reason>) next to the resource,
+# so every exception carries its reason.
+framework:
+  - terraform
+compact: true
+quiet: true
+download-external-modules: false

@@ -2,3 +2,11 @@ Agent Relay messaging and sessions suite rendered.
 
 This proof is not HA. Wait for the migration Jobs to complete, then verify the
 API, Relaycast and Relay History health endpoints before onboarding clients.
+{{- $da := index .Values "durable-actors" | default dict }}
+{{- if and (dig "durableActors" false (.Values.components | default dict)) (eq (dig "storage" "provider" "gcs" $da) "s3") (eq (dig "storage" "s3" "actorCredentials" "" $da) "control-plane") }}
+
+WARNING: durable-actors.storage.s3.actorCredentials=control-plane. Actor hosts
+receive the control plane's own S3 credentials, so actors are isolated by bucket
+prefix, not per actor. Use it only for first-party actor code (relaycast and
+relayfile) in accounts where the control plane may not call sts:AssumeRole.
+{{- end }}
