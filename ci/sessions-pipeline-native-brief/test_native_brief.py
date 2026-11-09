@@ -3,6 +3,7 @@ from copy import deepcopy
 import hashlib
 import json
 import os
+import shutil
 from pathlib import Path
 import subprocess
 import tempfile
@@ -40,6 +41,38 @@ class NativeBrief(unittest.TestCase):
         self.render({'extraEnv':None,'components':{'session-brief':{'env':None}}})
         selected=self.selected();selected['extraEnv']=None;selected['components']['session-brief']['env']=None
         self.assertEqual(self.brief(self.render(selected))['containers'][0]['env'][0]['name'],'SERVICE')
+
+    def test_siblings_cannot_select_the_native_worker_but_indexer_wakeups_remain_supported(self):
+        for entry in [{'name':'SERVICE','value':'session-brief'}, {'name':'SERVICE','valueFrom':{'secretKeyRef':{'name':'selection','key':'service'}}}, {'name':'SESSION_BRIEF_CANONICAL_INPUT','value':'true'}]:
+            self.render({'components':{'referee':{'enabled':True,'env':[entry]}}},'managed' if entry['name']=='SERVICE' else 'nativeBrief.enabled')
+        self.render({'components':{'hoopdb-indexer':{'enabled':True,'env':[{'name':'SESSION_BRIEF_ENABLED','value':'true'}]}}})
+
+    def test_native_component_name_override_reaches_the_deployment(self):
+        selected=self.selected();selected['components']['session-brief']['fullnameOverride']='explicit-native-brief'
+        docs=self.render(selected)
+        deployment=next(d for d in docs if d['kind']=='Deployment' and d['spec']['template']['metadata']['labels']['app.kubernetes.io/component']=='session-brief')
+        self.assertEqual(deployment['metadata']['name'],'explicit-native-brief')
+
+    def test_each_worker_start_rechecks_rotated_url_before_the_entrypoint(self):
+        pod=self.brief(self.render(self.selected()));main=pod['containers'][0]
+        self.assertEqual(main['command'],['/bin/sh','-ec']);self.assertEqual(main['args'][2],'/entrypoint.sh')
+        cert=subprocess.check_output(['node','-e',"const t=require('node:tls'),c=require('node:crypto');console.log(t.rootCertificates.find(p=>{const x=new c.X509Certificate(p);return x.ca&&Date.parse(x.validFrom)<Date.now()&&Date.parse(x.validTo)>Date.now()}))"],text=True)
+        with tempfile.TemporaryDirectory() as t:
+            root=Path(t);source=root/'source.crt';verified=root/'verified.crt';source.write_text(cert)
+            marker=root/'entrypoint-ran';entry=root/'entry point.sh';entry.write_text('#!/bin/sh\nprintf started > "$TEST_ENTRYPOINT_MARKER"\n');entry.chmod(0o700)
+            # The rendered JS uses Node-compatible APIs; production Bun is qualified separately.
+            binaries=root/'bin';binaries.mkdir();(binaries/'bun').symlink_to(shutil.which('node'))
+            env={**os.environ,'PATH':str(binaries)+os.pathsep+os.environ['PATH'],'NATIVE_BRIEF_CA_SOURCE':str(source),'NATIVE_BRIEF_CA_FILE':str(verified),'NATIVE_BRIEF_CA_SHA256':hashlib.sha256(source.read_bytes()).hexdigest(),'HOOPDB_URL':f'postgresql://test-only@postgres/hoopdb?sslmode=verify-full&sslrootcert={verified}','TEST_ENTRYPOINT_MARKER':str(marker)}
+            admitted=subprocess.run(['node','-e',pod['initContainers'][0]['args'][0]],env=env,capture_output=True,text=True)
+            self.assertEqual(admitted.returncode,0,admitted.stderr)
+            env['NATIVE_BRIEF_CA_SOURCE']=str(verified)
+            def start(url):
+                marker.unlink(missing_ok=True)
+                return subprocess.run(main['command']+[main['args'][0],main['args'][1],str(entry)],env={**env,'HOOPDB_URL':url},capture_output=True,text=True)
+            self.assertEqual(start(env['HOOPDB_URL']).returncode,0);self.assertTrue(marker.exists())
+            for changed in [env['HOOPDB_URL'].replace('verify-full','require'),env['HOOPDB_URL'].replace(str(verified),'/other/ca.crt')]:
+                result=start(changed);self.assertNotEqual(result.returncode,0);self.assertFalse(marker.exists());self.assertNotIn(changed,result.stderr)
+            self.assertEqual(start(env['HOOPDB_URL'].replace('test-only@','rotated-test-only@')).returncode,0);self.assertTrue(marker.exists())
 
     def test_native_env_secret_ca_health_and_egress_are_component_scoped(self):
         docs=self.render(self.selected());pod=self.brief(docs);main=pod['containers'][0]

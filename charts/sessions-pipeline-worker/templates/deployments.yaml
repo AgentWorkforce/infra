@@ -62,6 +62,11 @@ spec:
         - name: {{ include "sessions-pipeline-worker.publicComponent" (dict "context" $ "component" $component) }}
           {{- if and (eq $component "session-brief") $.Values.nativeBrief.enabled }}
           image: {{ include "sessions-pipeline-worker.nativeBriefImage" $ | quote }}
+          command: ["/bin/sh", "-ec"]
+          args:
+            - {{ include "sessions-pipeline-worker.nativeBriefStart" $ | quote }}
+            - native-brief-start
+            - /entrypoint.sh
           {{- else }}
           image: {{ include "sessions-pipeline-worker.image" $ | quote }}
           {{- end }}

@@ -465,6 +465,10 @@ subsequent ConfigMap edit cannot silently replace the admitted CA. A retry of
 the init container accepts an existing regular file only when its bytes match
 the newly verified source; symlinks and divergent output are refused. This does not
 replace native PostgreSQL TLS/role/schema qualification.
+Each worker start rechecks its current database URL against the sealed CA before
+executing the image's `/entrypoint.sh`. A worker-only restart after Secret rotation
+cannot bypass `verify-full` or change the admitted CA path. Credentials stay in
+the Secret/environment; the chart never writes the URL to a file.
 
 With `networkPolicy.enabled=true`, explicitly enable
 `nativeBrief.openaiEgress.enabled` and list its `to` peers. The additional policy

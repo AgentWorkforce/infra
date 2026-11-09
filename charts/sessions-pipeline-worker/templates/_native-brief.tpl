@@ -1,8 +1,9 @@
 {{- define "sessions-pipeline-worker.validateNativeBrief" -}}
 {{- $n := .Values.nativeBrief -}}
 {{- $c := index .Values.components "session-brief" -}}
-{{- range $entry := concat (.Values.extraEnv | default list) ($c.env | default list) -}}
-{{- if eq ($entry.name | default "") "SESSION_BRIEF_CANONICAL_INPUT" }}{{ fail "use nativeBrief.enabled instead of unmanaged SESSION_BRIEF_CANONICAL_INPUT" }}{{ end -}}
+{{- include "sessions-pipeline-worker.refuseUnmanagedBrief" (.Values.extraEnv | default list) -}}
+{{- range $component, $settings := .Values.components -}}
+{{- include "sessions-pipeline-worker.refuseUnmanagedBrief" ($settings.env | default list) -}}
 {{- end -}}
 {{- if not (kindIs "bool" $n.enabled) }}{{ fail "nativeBrief.enabled must be a boolean" }}{{ end -}}
 {{- if not (kindIs "bool" $c.enabled) }}{{ fail "components.session-brief.enabled must be a boolean" }}{{ end -}}
@@ -72,6 +73,13 @@
 {{- end -}}
 {{- end -}}
 
+{{- define "sessions-pipeline-worker.refuseUnmanagedBrief" -}}
+{{- range $entry := . -}}
+{{- if eq ($entry.name | default "") "SESSION_BRIEF_CANONICAL_INPUT" }}{{ fail "use nativeBrief.enabled instead of unmanaged SESSION_BRIEF_CANONICAL_INPUT" }}{{ end -}}
+{{- if and (eq ($entry.name | default "") "SERVICE") (or (hasKey $entry "valueFrom") (eq (trim (toString ($entry.value | default ""))) "session-brief")) }}{{ fail "SERVICE must not select session-brief or a dynamic service outside managed nativeBrief admission" }}{{ end -}}
+{{- end -}}
+{{- end -}}
+
 {{- define "sessions-pipeline-worker.nativeBriefEnv" -}}
 - { name: SESSION_BRIEF_ENABLED, value: "true" }
 - { name: SESSION_BRIEF_CANONICAL_INPUT, value: "true" }
@@ -83,6 +91,9 @@
 - { name: SESSION_BRIEF_SESSION_DAILY_CAP, value: {{ .Values.nativeBrief.sessionDailyCap | quote }} }
 - { name: PIPELINE_ORG_FROM_PREFIX, value: "true" }
 - { name: PIPELINE_KEY_PREFIX, value: {{ .Values.nativeBrief.keyPrefix | quote }} }
+- { name: NATIVE_BRIEF_CA_FILE, value: /etc/postgres-ca/ca.crt }
+- { name: NATIVE_BRIEF_CA_SOURCE, value: /etc/postgres-ca/ca.crt }
+- { name: NATIVE_BRIEF_CA_SHA256, value: {{ .Values.postgresCa.sha256 | quote }} }
 - name: OPENAI_API_KEY
   valueFrom:
     secretKeyRef:
@@ -116,6 +127,11 @@ try {
  }finally{if(fd!==undefined)fs.closeSync(fd);}
  console.log('native brief PostgreSQL CA and URL contract verified');
 }catch{console.error('native brief PostgreSQL CA or URL contract refused');process.exit(1);}
+{{- end -}}
+
+{{- define "sessions-pipeline-worker.nativeBriefStart" -}}
+bun -e '{{ include "sessions-pipeline-worker.nativeBriefPreflight" . | replace "'" "'\"'\"'" }}'
+exec "$@"
 {{- end -}}
 
 {{- define "sessions-pipeline-worker.nativeBriefImage" -}}
