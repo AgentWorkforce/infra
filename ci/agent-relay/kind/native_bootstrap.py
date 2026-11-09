@@ -524,7 +524,7 @@ CREATE SCHEMA sessions; CREATE SCHEMA search_index;
         return {"ok": True, "ownerOid": oid}
 
     def _owner_snapshot(self, selected):
-        raw = self._psql(selected, "hoopdb", "SELECT json_build_object('oid',r.oid,'clean',NOT(r.rolcanlogin OR r.rolsuper OR r.rolcreaterole OR r.rolinherit OR r.rolbypassrls OR r.rolcreatedb OR r.rolreplication) AND r.rolpassword IS NULL AND r.rolvaliduntil IS NULL AND NOT EXISTS(SELECT 1 FROM pg_db_role_setting WHERE setrole=r.oid) AND NOT EXISTS(SELECT 1 FROM pg_auth_members WHERE roleid=r.oid OR member=r.oid)) FROM pg_authid r WHERE rolname='hoop' AND r.oid=(SELECT datdba FROM pg_database WHERE datname='hoopdb');", read_only=True)
+        raw = self._psql(selected, "hoopdb", "SELECT json_build_object('oid',r.oid::bigint,'clean',NOT(r.rolcanlogin OR r.rolsuper OR r.rolcreaterole OR r.rolinherit OR r.rolbypassrls OR r.rolcreatedb OR r.rolreplication) AND r.rolpassword IS NULL AND r.rolvaliduntil IS NULL AND NOT EXISTS(SELECT 1 FROM pg_db_role_setting WHERE setrole=r.oid) AND NOT EXISTS(SELECT 1 FROM pg_auth_members WHERE roleid=r.oid OR member=r.oid)) FROM pg_authid r WHERE rolname='hoop' AND r.oid=(SELECT datdba FROM pg_database WHERE datname='hoopdb');", read_only=True)
         result = json.loads(raw)
         require(type(result.get("oid")) is int and result["oid"] > 0 and type(result.get("clean")) is bool, "fresh_owner_snapshot_unreadable")
         return result
@@ -540,8 +540,10 @@ CREATE SCHEMA sessions; CREATE SCHEMA search_index;
 
     def verify_owner_final(self, selected):
         self._preflight(selected)
-        raw = self._psql(selected, "hoopdb", "SELECT json_build_object('ownerOid',r.oid,'ownerNoCreateRole',r.rolcanlogin AND NOT(r.rolsuper OR r.rolcreaterole OR r.rolbypassrls OR r.rolcreatedb OR r.rolreplication OR r.rolinherit)) FROM pg_roles r WHERE rolname='hoop' AND r.oid=(SELECT datdba FROM pg_database WHERE datname='hoopdb');", read_only=True)
-        result = json.loads(raw); require(result.get("ownerNoCreateRole") is True, "owner_privilege_not_finalized")
+        raw = self._psql(selected, "hoopdb", "SELECT json_build_object('ownerOid',r.oid::bigint,'ownerNoCreateRole',r.rolcanlogin AND NOT(r.rolsuper OR r.rolcreaterole OR r.rolbypassrls OR r.rolcreatedb OR r.rolreplication OR r.rolinherit)) FROM pg_roles r WHERE rolname='hoop' AND r.oid=(SELECT datdba FROM pg_database WHERE datname='hoopdb');", read_only=True)
+        result = json.loads(raw)
+        require(type(result.get("ownerOid")) is int and result["ownerOid"] > 0 and type(result.get("ownerNoCreateRole")) is bool, "final_owner_snapshot_unreadable")
+        require(result["ownerNoCreateRole"] is True, "owner_privilege_not_finalized")
         if self._owner_oid is not None: require(result["ownerOid"] == self._owner_oid, "native_owner_oid_changed")
         return {"ok": True, **result}
 
