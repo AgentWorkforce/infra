@@ -4200,7 +4200,9 @@ entries:
     profiles: [relayfile-control]
     status: shipped
     provided_by: operator
-    choices: ["false", "true"]
+    choices:
+      - { value: "false" }
+      - { value: "true" }
     default: "false"
     verify: helm template fails with "flows.enabled=true requires" when a Flows input is missing
     sources:
@@ -4218,7 +4220,9 @@ entries:
     profiles: [relayfile-control]
     status: shipped
     provided_by: operator
-    choices: [unset, set]
+    choices:
+      - { value: unset }
+      - { value: set }
     default: unset
     verify: an unset provider answers 503 ingress_not_configured; a set one verifies signatures
     sources:
@@ -4234,7 +4238,9 @@ entries:
     profiles: [relayfile-control]
     status: shipped
     provided_by: operator
-    choices: [disabled, enabled]
+    choices:
+      - { value: disabled }
+      - { value: enabled }
     default: disabled
     verify: helm template renders no Ingress by default; ingress.enabled without flows.enabled fails
     sources:
@@ -4251,7 +4257,9 @@ entries:
     profiles: [relayfile-control]
     status: shipped
     provided_by: operator
-    choices: [none, listed]
+    choices:
+      - { value: none }
+      - { value: listed }
     default: none
     verify: helm template lists imagePullSecrets on the Deployment when set
     sources:
