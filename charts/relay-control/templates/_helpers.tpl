@@ -57,7 +57,8 @@ of set a second time. Desktop and the CLI log in against that same origin. */ -}
 {{- if ne (int .Values.replicaCount) 1 }}{{ fail "replicaCount must be 1: the self-host API pilot has process-local login/device rate limits and is not HA" }}{{ end -}}
 {{- if not .Values.existingSecret }}{{ fail "existingSecret is required; inline credentials are not supported" }}{{ end -}}
 {{- if not (kindIs "bool" .Values.services.relayauthEnabled) }}{{ fail "services.relayauthEnabled must be a boolean" }}{{ end -}}
-{{- $optionalSecretKeys := list "previousEncryptionKey" "internalToken" "telemetryInstallKey" "relaycastInternalSecret" "oidcClientSecret" "smtpPassword" "introspectSecret" "sessionReadApiSecret" -}}
+{{- $optionalSecretKeys := list "previousEncryptionKey" "internalToken" "telemetryInstallKey" "relaycastInternalSecret" "oidcClientSecret" "smtpPassword" "passwordPepper" "introspectSecret" "sessionReadApiSecret" -}}
+{{- if and .Values.secretKeys.passwordPepper (eq (toString .Values.secretKeys.passwordPepper) (toString .Values.secretKeys.databaseMigrationsUrl)) }}{{ fail "secretKeys.passwordPepper must not name secretKeys.databaseMigrationsUrl" }}{{ end -}}
 {{- if not .Values.services.relayauthEnabled }}{{ $optionalSecretKeys = append $optionalSecretKeys "relayauthApiKey" }}{{ end -}}
 {{- range $name, $key := .Values.secretKeys }}{{ if and (has $name $optionalSecretKeys) (empty $key) }}{{ continue }}{{ end }}{{ if not (regexMatch "^[A-Za-z0-9._-]+$" (toString $key)) }}{{ fail (printf "secretKeys.%s must be a Kubernetes Secret data key" $name) }}{{ end }}{{ end -}}
 {{- /* Every non-empty secretKeys.* value must name a distinct Secret key. The
@@ -112,6 +113,7 @@ the chart already sets, including duplicates inside extraEnv. */ -}}
   "RELAYAUTH_API_KEY_FILE" "RELAYCAST_INTERNAL_SECRET_FILE" "SELFHOST_BOOTSTRAP_TOKEN_FILE" "SELFHOST_ENCRYPTION_KEY_FILE"
   "SELFHOST_ENCRYPTION_PREVIOUS_KEY_FILE" "SELFHOST_INTERNAL_TOKEN_FILE" "SELFHOST_OIDC_CLIENT_SECRET_FILE" "SELFHOST_SMTP_PASSWORD_FILE"
   "SELFHOST_TELEMETRY_INSTALL_KEY_FILE" "RELAYCONTROL_INTROSPECT_SECRET_FILE" "SESSION_READ_API_SECRET_FILE"
+  "SELFHOST_PASSWORD_PEPPER_FILE"
   "SESSION_READ_API_URL" "SESSION_READ_API_PUBLIC_URL" "SESSION_READ_API_MCP_READS" "SELFHOST_INTROSPECT_AUDIENCES"
   "RELAYHISTORY_BACKEND" -}}
 {{- if not (kindIs "invalid" .Values.selectedFeatures) }}{{ $managed = append $managed "SELFHOST_FEATURES" }}{{ end -}}

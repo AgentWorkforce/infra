@@ -521,6 +521,19 @@ for chart in "${charts[@]}"; do
           || err "$chart: identity secrets must be projected into the secrets volume"
         ! grep -Eq 'SELFHOST_BOOTSTRAP_(ORG|ADMIN|WORKSPACE)|SELFHOST_(OIDC|SMTP|EMAIL|AUTO_JOIN|INVITE)_|RELAYCAST_INTERNAL_SECRET' <<<"$out" \
           || err "$chart: identity env must not render without identity values"
+        # Password pepper: off by default. When set, only the API gets it, as a
+        # private copy made by the init container.
+        pepper_out=$(render "$chart" "$v" --set secretKeys.passwordPepper=password-pepper)
+        ! grep -Fq 'password-pepper' <<<"$out" || err "$chart: password pepper must not render without its key"
+        [ "$(yq 'select(.kind == "Deployment") | .spec.template.spec.initContainers[0].name' <<<"$pepper_out")" = password-pepper ] \
+          || err "$chart: password pepper needs its init container"
+        yq 'select(.kind == "Deployment") | .spec.template.spec.containers[0].env[] | .name + "=" + (.value // "")' <<<"$pepper_out" \
+          | grep -qxF "SELFHOST_PASSWORD_PEPPER_FILE=/var/run/agent-relay/password-pepper/pepper" \
+          || err "$chart: password pepper env must point at the private copy"
+        [ "$(yq 'select(.kind == "Deployment") | .spec.template.spec.volumes[] | select(.name == "password-pepper") | .emptyDir.medium' <<<"$pepper_out")" = Memory ] \
+          || err "$chart: password pepper copy must be memory-backed"
+        ! yq 'select(.kind == "Job")' <<<"$pepper_out" | grep -Fq 'password-pepper' || err "$chart: the migrate Job must not receive the password pepper"
+        expect_render_failure "$chart" "$v" "pepper naming the migrations URL" "secretKeys.passwordPepper must not name secretKeys.databaseMigrationsUrl" --set secretKeys.passwordPepper=database-migrations-url
         expect_render_failure "$chart" "$v" "bootstrap without admin" "bootstrap.orgName and bootstrap.adminEmail must be set together" --set bootstrap.orgName=Acme
         expect_render_failure "$chart" "$v" "bootstrap with a bad admin email" "bootstrap.adminEmail must be an email address" --set bootstrap.orgName=Acme --set bootstrap.adminEmail=ops
         expect_render_failure "$chart" "$v" "bootstrap without dashboardUrl" "dashboardUrl is required with bootstrap" --set bootstrap.orgName=Acme --set bootstrap.adminEmail=ops@acme.com --set secretKeys.relaycastInternalSecret=relaycast-internal-secret

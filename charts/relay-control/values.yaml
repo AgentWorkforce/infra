@@ -60,6 +60,12 @@ secretKeys:
   oidcClientSecret: ""
   # SMTP password (required with smtp.username).
   smtpPassword: ""
+  # Password pepper: one `v<version>:<secret>` line per pepper, each secret at
+  # least 32 bytes. Rendered as SELFHOST_PASSWORD_PEPPER_FILE. The API refuses a
+  # file it does not own or that other users can read, so an init container
+  # copies this key into a memory-backed emptyDir at mode 0600. Empty means no
+  # pepper. Keep the value safe: peppered passwords stop verifying without it.
+  passwordPepper: ""
 
 # Encryption key identifiers. Non-secret labels stored with every encrypted
 # value; the key material itself is secretKeys.encryptionKey.
