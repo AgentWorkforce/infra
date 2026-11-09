@@ -244,12 +244,19 @@ compatibility:
       status: shipped
       charts: { telemetry-collector: 0.1.0 }
       notes: 'Default-off umbrella analytics file collector. Requires accepted immutable collector and TLS-proxy images, producer and TLS Secrets and an exclusive persistent volume. Source rendering does not prove image entrypoint, TLS, durable acknowledgement, power-loss recovery or whole-application analytics coverage. The currently reviewed collector CLI registers relaycontrol events only.'
+    - id: session-read-api-0.2.1
+      status: unreleased
+      current: true
+      charts: { session-read-api: 0.2.1 }
+      images:
+        session-read-api: { repository: ghcr.io/agentworkforce/96bulls-services, digest_required: true }
+      notes: 'Defaults READ_API_COMPLETE_SINCE to epoch for a new self-host store populated only by its own ingest. Partial legacy imports must retain an explicit real coverage floor matching the indexer. Image, auth, routing and enabled defaults are unchanged; this does not assert coverage for an imported store or qualify a runtime.'
     - id: sessions-pipeline-0.8.2
       status: unreleased
       current: true
-      charts: { sessions-pipeline: 0.8.2, sessions-pipeline-worker: 0.7.2, session-ingest-api: 0.4.1, session-read-api: 0.2.0 }
+      charts: { sessions-pipeline: 0.8.2, sessions-pipeline-worker: 0.7.2, session-ingest-api: 0.4.1, session-read-api: 0.2.1 }
       depends:
-        sessions-pipeline: { worker: 0.7.2, alleyoop: 0.4.1, sessionReadApi: 0.2.0, hoopdb: 0.9.0, session-object-storage: 5.4.0, otel: 0.178.0 }
+        sessions-pipeline: { worker: 0.7.2, alleyoop: 0.4.1, sessionReadApi: 0.2.1, hoopdb: 0.9.0, session-object-storage: 5.4.0, otel: 0.178.0 }
       images:
         sessions-pipeline-worker: { repository: agentworkforce/96bulls-services, digest: sha256:6f22ea17dff336e1431664542759fd27958649388b90a0b2f0881883caa7c6b2 }
         session-ingest-api: { repository: agentworkforce/96bulls-services, digest: sha256:6f22ea17dff336e1431664542759fd27958649388b90a0b2f0881883caa7c6b2 }
@@ -258,7 +265,7 @@ compatibility:
       services:
         source_commit: 7d7229bb31c121ecb98cd4e35c248fc2cf5669ad
         migration_generation: eff8b3be46565b57ad8fa5e4a066dbb6d1fe608313d9c1680bfbcd484add259b
-      notes: 'Adds explicit sync/async/drain ingest admission from merged pipeline #398/f0860b2e. Sync remains the default and no profile enables the native edge. A qualified combined-image digest and separate runtime acceptance are required.'
+      notes: 'Adds explicit sync/async/drain ingest admission from merged pipeline #398/f0860b2e. Sync remains the default and no profile enables the native edge. Reader 0.2.1 defaults new-store coverage to epoch with a partial-import override. A qualified combined-image digest and separate runtime acceptance are required.'
       db_combos:
         - { db_mode: selfhosted, boundary: global-default-revoke, hoopdb: cnpg, status: shipped, profiles: [selfhost-postgres, migration, aws-cnpg], notes: chart Jobs install the runtime role and the function default }
         - { db_mode: selfhosted, boundary: global-default-revoke, hoopdb: external, status: shipped, profiles: [external-selfhosted], notes: operator runs the bootstrap files as a superuser }

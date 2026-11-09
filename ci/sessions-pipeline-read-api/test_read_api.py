@@ -46,6 +46,31 @@ class ReadApi(unittest.TestCase):
         check = subprocess.run(["kubeconform", "-strict", "-summary"], input=yaml.safe_dump_all(docs), text=True, capture_output=True)
         self.assertEqual(check.returncode, 0, check.stdout + check.stderr)
 
+    def test_new_store_defaults_to_epoch_and_partial_import_floor_survives(self):
+        # The fixtures explicitly set epoch: remove it so they cannot mask a
+        # regression to an installation-time or empty default. Cover both entry points.
+        for nested in (False, True):
+            fixture = FIXTURE if nested else ROOT / "charts/session-read-api/ci/default-values.yaml"
+            chart = ROOT / ("charts/sessions-pipeline" if nested else "charts/session-read-api")
+            for floor in (None, "2001-02-03T04:05:06Z"):
+                with self.subTest(nested=nested, floor=floor), tempfile.TemporaryDirectory() as directory:
+                    values = yaml.safe_load(fixture.read_text())
+                    config = values["sessionReadApi"] if nested else values
+                    config.pop("completeSince", None)
+                    if floor is not None:
+                        config["completeSince"] = floor
+                    base = Path(directory) / "values.yaml"
+                    base.write_text(yaml.safe_dump(values))
+                    result = subprocess.run(["helm", "template", "test", str(chart), "-n", "ci", "-f", str(base)],
+                                            capture_output=True, text=True)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    docs = [d for d in yaml.safe_load_all(result.stdout) if d]
+                    deploy = next(d for d in docs if d.get("kind") == "Deployment" and
+                                  d.get("metadata", {}).get("labels", {}).get("app.kubernetes.io/component") == "read-api")
+                    env = {e["name"]: e.get("value") for e in deploy["spec"]["template"]["spec"]["containers"][0]["env"]}
+                    self.assertEqual(env["READ_API_COMPLETE_SINCE"], floor or "epoch")
+                    self.assertNotIn("SESSION_READ_COMPLETE_SINCE", env)
+
     def test_old_read_api_key_fails_with_a_migration_message(self):
         with tempfile.TemporaryDirectory(prefix="read-api-render-") as directory:
             legacy = Path(directory) / "old.yaml"
