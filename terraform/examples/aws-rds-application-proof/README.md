@@ -110,8 +110,11 @@ The original guest uses explicit pg hostname/CA verification and bounded IO.
 Bootstrap admits only six committed path/hash/nonsecret-variable tuples. Detached
 psql17 uses -X/-W/ON_ERROR_STOP/-f with owner password through anonymous stdin.
 Runtime callbacks generate random initial/rotated values and use client-encrypted
-`\password` stdin prompts. No password/SCRAM material enters argv/environment/files,
-raw output logs, Runner command files, cloud-init/journal or foreign error text.
+`\password` stdin prompts. No password/SCRAM material enters argv, a process's initial
+environment, files, raw output logs, Runner command files, cloud-init/journal or foreign
+error text. One qualification: the migrator reads `HOOPDB_URL` from `process.env`, so
+its `--import` hook receives the URL over a private pipe and sets it in-process; the
+owner password is therefore in that migrator's live `process.env` for its lifetime.
 The process helper bounds RAM/time, settles owned groups and returns typed errors.
 It is not a general remote executor, client approval file or secure-erasure claim.
 

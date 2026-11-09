@@ -514,6 +514,29 @@ class Retirement(Base):
         self.assertEqual(self.fake.deleted_backups, ['db-A'])
         self.assertEqual(self.runner.status_of('backups'), 'ok')
 
+    def test_backups_refuses_a_ledger_changed_after_drain(self):
+        self.provision()
+        self.retire()
+        path = self.execution / 'ledger.json'
+        ledger = r.read(path)
+        ledger['database_resource_ids'] = ['db-FOREIGN']
+        r.save(path, ledger)
+        self.fake.backups['db-FOREIGN'] = 'retained'
+        with self.assertRaisesRegex(r.Refused, 'changed after the reviewed drain'):
+            self.runner.backups()
+        self.assertEqual(self.fake.deleted_backups, [])
+
+    def test_backups_refuses_an_id_that_was_never_captured(self):
+        self.provision()
+        self.retire()
+        path = self.execution / 'native.json'
+        native = r.read(path)
+        native['database_resource_ids'] = ['db-OTHER']
+        r.save(path, native)
+        with self.assertRaisesRegex(r.Refused, 'did not capture'):
+            self.runner.backups()
+        self.assertEqual(self.fake.deleted_backups, [])
+
     def test_backups_waits_while_not_yet_retained_and_can_rerun(self):
         self.provision()
         self.retire()

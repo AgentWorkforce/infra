@@ -685,14 +685,20 @@ class Runner:
         except Exception as error:
             self.mark('drain', 'failed', error=type(error).__name__)
             raise Refused('Drain failed; re-run inventory before another attempt') from error
-        self.mark('drain', 'ok', versions_deleted=result['versions_deleted'])
+        self.mark('drain', 'ok', versions_deleted=result['versions_deleted'], ledger_sha256=ledger_sha256)
         return {'phase': 'drain', **result}
 
     def backups(self):
         """Delete retained automated backups of this lifecycle's own databases only."""
         arn = self.guards(False)
         self.order_guard('backups')
+        # Deletion authority comes from the ledger the operator reviewed for drain,
+        # and every ID must be one this lifecycle captured from AWS itself.
+        reviewed = self.phases().get('drain', {}).get('ledger_sha256')
+        require(reviewed and reviewed == sha(self.path('ledger.json')), 'The ledger changed after the reviewed drain; refusing to delete backups')
         ledger = self.ledger()
+        captured = read(self.path('native.json'))['database_resource_ids']
+        require(all(resource_id in captured for resource_id in ledger['database_resource_ids']), 'The ledger names a database this lifecycle did not capture; refusing to delete backups')
         self.mark('backups', 'pending', caller=arn)
         deleted, waiting = [], []
         for resource_id in ledger['database_resource_ids']:
