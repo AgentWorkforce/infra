@@ -124,6 +124,7 @@ jobs:
           python3 ci/agent-relay/kind/test_native_control_artifact.py -v
           python3 ci/agent-relay/kind/test_native_core.py -v
           python3 ci/agent-relay/kind/test_native_core_cli.py -v
+          python3 ci/agent-relay/kind/test_native_target.py -v
           python3 ci/agent-relay/kind/test_native_core_render.py -v
           python3 ci/agent-relay/kind/test_native_webapp.py -v
           python3 ci/agent-relay/kind/test_native_pipeline.py -v

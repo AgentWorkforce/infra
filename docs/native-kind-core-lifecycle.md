@@ -120,3 +120,35 @@ The original native binding and legacy readiness anchors remain unchanged.
 An existing legacy fixture is not a fresh target. A changed generation or pending
 schema on repeat requires an explicit reviewed operator upgrade; this command
 does not infer upgrade or data-adoption authority from matching resource names.
+
+### Isolated core instances through the Python transport
+
+A retained `agent-relay-core` must not be adopted, reset, or renamed to obtain a
+fresh proof. The optional `NativeInstanceTarget` Python input selects a separate
+`agent-relay-core-native-…` cluster and matching `.kind/native-instances/…` state
+before directory access. Its HTTP and History ports must be distinct from the
+legacy 8080/8443 ports; the site stays on 443 and refuses an occupied port. A
+reviewed example is HTTP 18080, site HTTPS 443, and History HTTPS 18443.
+
+The existing `native_core_cli.run` Python entry point accepts `instance_target`
+and `reviewed_target_sha256`. An execute call uses the exact real native Stack
+factory; arbitrary factory overrides are refused before construction. The target,
+factory source, recipe and actual cluster UID are bound in fresh and repeat
+receipts. The ordinary command-line entry point and legacy profile defaults are
+unchanged; an isolated Python invocation is not evidence for the default command.
+Legacy `Stack.up` and the reusable cluster primitive cannot run this target.
+
+This source support does not install host DNS or certificate trust. Strict API
+checks retain loopback routing, the selected DNS SNI and explicit pinned public
+CA verification. A freshly generated local CA is not implicitly trusted by an
+existing browser or Desktop. A separate owned Linux browser fixture may import
+that public CA into its own normal OS/NSS trust stores, with no certificate-error
+bypass ([Chromium Linux trust-store documentation](https://chromium.googlesource.com/chromium/src.git/+/refs/heads/main/docs/linux/cert_management.md)); this does not qualify a host-installed macOS Desktop.
+
+An ordinary first-admin browser login is a separate proof from operator bootstrap
+or device approval. Existing managed `relay-control.auth.emailLink.enabled` and
+`smtp` values can select a synthetic, in-memory SMTP fixture and the real
+email-link/confirmation/cookie flow without `extraEnv`. Authenticated customer
+SMTP/OIDC secret provisioning still needs its separately supported authority
+contract. No ordinary login, external mail delivery, upload, or add-on acceptance
+is inferred from a native lifecycle receipt.

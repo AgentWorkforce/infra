@@ -135,6 +135,8 @@ import('/app/node_modules/relay-control/dist/features.js').then(m=>{
         facts = super().inspect(selected)
         if facts["mode"] == "repeat":
             bound = document(self.inputs["bindingReceipt"], self.inputs["bindingReceiptSha256"])
+            from native_target import require_record
+            require_record(self.stack, bound)
             require(bound.get("version") == 1 and bound.get("type") == "local-kind-native-core" and
                     bound.get("selection") == selected and bound.get("recipeSha256") == self.stack.recipe_hash(),
                     "repeat_requires_exact_native_selection_binding")
@@ -604,6 +606,10 @@ import('/app/node_modules/relay-control/dist/features.js').then(m=>{
                    if d["kind"] != "Secret" else {})} for d in resources],
                                 key=lambda r: (r["kind"], r["name"])),
             "fullAcceptance": False, "castPostgresBackendAccepted": False}
+        from native_target import binding
+        target = binding(self.stack)
+        if target is not None:
+            record["nativeTarget"] = target
         path = self.stack.state / "native-binding.json"
         if self._inspected["mode"] == "repeat":
             bound = document(self.inputs["bindingReceipt"], self.inputs["bindingReceiptSha256"])

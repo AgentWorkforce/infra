@@ -145,6 +145,10 @@ class NativeBootstrapTests(unittest.TestCase):
 
     def test_fresh_tls_pod_and_hba_never_boot_plaintext_and_separate_databases(self):
         result = self.fresh(); self.assertTrue(result["ok"])
+        claim = (self.stack.state / "native-fresh-creation.json").read_bytes()
+        record = json.loads(claim)
+        self.assertEqual(set(record), {"name", "nonce"})
+        self.assertEqual(claim, (json.dumps({"name": self.stack.name, "nonce": record["nonce"]}) + "\n").encode())
         pg = next(d for d in self.stack.applied if d["kind"] == "StatefulSet")
         c = pg["spec"]["template"]["spec"]["containers"][0]
         self.assertIn("ssl=on", c["args"]); self.assertTrue(any(a.startswith("hba_file=") for a in c["args"]))

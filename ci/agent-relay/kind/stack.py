@@ -121,19 +121,30 @@ class Stack:
         self.profile = profile
         self.root = ROOT
         self.named_layout = None
-        self.name = f"agent-relay-{profile}"
+        # Select the identity before any state-directory filesystem access.
+        self.name, self.state = self.identity_layout(profile)
         # State contains local credentials. Keep it on the checkout's volume.
-        self.state = ROOT / ".kind" / profile
-        self.state.mkdir(mode=0o700, parents=True, exist_ok=True)
-        self.state.chmod(0o700)
+        self.prepare_private_directory(self.state, chmod=True)
         self.kubeconfig = self.state / "kubeconfig"
         self.env = dict(os.environ, KUBECONFIG=str(self.kubeconfig), TMPDIR=str(self.state / "tmp"))
-        Path(self.env["TMPDIR"]).mkdir(mode=0o700, exist_ok=True)
+        self.prepare_private_directory(Path(self.env["TMPDIR"]))
         for suffix in ("CACHE", "CONFIG", "DATA"):
             self.env[f"HELM_{suffix}_HOME"] = str(ROOT / ".kind" / "helm" / suffix.lower())
         self.overrides = self.state / "values.json"
         self.marker = self.state / "cluster.json"
         self.docker_args = ["docker"]
+
+    def identity_layout(self, profile):
+        return f"agent-relay-{profile}", self.root / ".kind" / profile
+
+    def prepare_private_directory(self, path, chmod=False):
+        path.mkdir(mode=0o700, parents=True, exist_ok=True)
+        if chmod:
+            path.chmod(0o700)
+
+    def native_port_mappings(self):
+        return [{"containerPort": container, "hostPort": host, "listenAddress": "127.0.0.1"}
+                for container, host in ((30080, 8080), (30443, 443), (30443, 8443))]
 
     def cmd(self, argv, **kw):
         return run(argv, env=self.env, **kw)
@@ -201,7 +212,7 @@ class Stack:
                  ROOT / "ci/agent-relay/kind/native_network.py",
                  *[ROOT / "ci/agent-relay/kind" / (name + ".py") for name in
                    ("native_recipe", "native_inspect", "native_bootstrap", "native_pipeline", "native_control", "native_control_artifact",
-                    "native_core_values", "native_core", "native_core_cli", "native_webapp")],
+                    "native_core_values", "native_core", "native_core_cli", "native_webapp", "native_target")],
                  ROOT / "ci/agent-relay/kind/bootstrap.mjs", ROOT / "ci/agent-relay/kind/control.py",
                  ROOT / "ci/agent-relay/kind/named_upgrade.py",
                  ROOT / "ci/agent-relay/kind/storage-name-renderer/plugin.yaml",
@@ -327,6 +338,12 @@ class Stack:
                 or not isinstance(record.get("clusterUid"), str)
                 or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}", record["clusterUid"])):
             raise StackError("cluster ownership receipt does not match this profile and Docker endpoint")
+        from native_target import require_record
+        from native_recipe import NativeRecipeError
+        try:
+            require_record(self, record)
+        except NativeRecipeError:
+            raise StackError("native instance ownership binding differs") from None
         candidate = self.state / ("ownership-" + secrets.token_hex(8) + ".kubeconfig")
         try:
             self.cmd(["kind", "export", "kubeconfig", "--name", self.name,
@@ -391,6 +408,8 @@ class Stack:
             pending.unlink(missing_ok=True)
 
     def cluster(self):
+        if getattr(self, "native_target", None) is not None:
+            raise StackError("native instance requires the explicit native core transport")
         clusters = self.cmd(["kind", "get", "clusters"], timeout=30).stdout.splitlines()
         if self.name in clusters:
             self.require_owned_cluster()
@@ -582,6 +601,8 @@ class Stack:
                              + ", ".join(sorted(legacy)))
 
     def up(self):
+        if getattr(self, "native_target", None) is not None:
+            raise StackError("native instance requires the explicit native core transport")
         for tool in ("docker", "kind", "kubectl", "helm", "openssl", "git"):
             if not shutil.which(tool):
                 raise StackError(f"missing prerequisite: {tool}")
