@@ -29,6 +29,22 @@
 # Exact, then Prefix, then ImplementationSpecific (in spec order), so the api
 # and cast catch-alls are ImplementationSpecific "/*" listed after it; a
 # Prefix "/" catch-all would win first.
+#
+# Native session ingest (off by default; EKS_ALB_INGEST=true, which needs
+# EKS_ALB_HISTORY=true) shares the history.<domain> origin, so it needs no new
+# name on the certificate. The four public ingest paths in
+# docs/self-hosted-native-ingest.md go to the ingest edge Service as Exact
+# paths, everything else on that host goes to the read API instead of
+# RelayHistory, and /internal is denied as on api and cast. Exact paths match
+# any method: the ingest edge refuses the wrong one. Services without their own
+# health-check annotation use /healthz from an Ingress-level default, which a
+# Service annotation overrides; it is the one path both new backends serve.
+#
+# EKS_ALB_HISTORY_LEGACY_SERVICE (default empty, with EKS_ALB_INGEST=true) keeps
+# a standalone RelayHistory answering on that origin during a migration: the
+# read API receives only bearers carrying its own rth_at_read_/rth_rt_read_
+# prefixes, plus OPTIONS preflights on its CORS routes, and every other request
+# goes to the named Service. EKS_ALB_HISTORY_LEGACY_PORT defaults to 8080.
 
 set -euo pipefail
 NS="${1:-agent-relay}"
@@ -36,6 +52,13 @@ CLASS="${EKS_INGRESS_CLASS:-alb}"
 DOMAIN="${EKS_ALB_DOMAIN:?EKS_ALB_DOMAIN=<base domain> is required}"
 CERT="${EKS_ALB_CERT_ARN:?EKS_ALB_CERT_ARN=<ACM certificate ARN> is required}"
 HISTORY="${EKS_ALB_HISTORY:-true}"
+INGEST="${EKS_ALB_INGEST:-false}"
+INGEST_SVC="${EKS_ALB_INGEST_SERVICE:-agent-relay-ingest-edge}"
+INGEST_PORT="${EKS_ALB_INGEST_PORT:-80}"
+READ_API_SVC="${EKS_ALB_READ_API_SERVICE:-agent-relay-read-api}"
+READ_API_PORT="${EKS_ALB_READ_API_PORT:-80}"
+LEGACY_SVC="${EKS_ALB_HISTORY_LEGACY_SERVICE:-}"
+LEGACY_PORT="${EKS_ALB_HISTORY_LEGACY_PORT:-8080}"
 NAME="${EKS_ALB_INGRESS_NAME:-agent-relay}"
 CONTROL_SVC="${EKS_ALB_CONTROL_SERVICE:-relay-control}"
 WEBAPP_SVC="${EKS_ALB_WEBAPP_SERVICE:-relay-webapp}"
@@ -43,12 +66,50 @@ for service in "$CONTROL_SVC" "$WEBAPP_SVC"; do
   [[ ${#service} -le 63 && "$service" =~ ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$ ]] ||
     { printf '%s\n' 'Control/Webapp Service overrides must be DNS labels' >&2; exit 2; }
 done
+[[ "$INGEST" == true || "$INGEST" == false ]] ||
+  { printf '%s\n' 'EKS_ALB_INGEST must be true or false' >&2; exit 2; }
+INGEST_HEALTHCHECK=""
+if [[ "$INGEST" == true ]]; then
+  [[ "$HISTORY" == true ]] ||
+    { printf '%s\n' 'EKS_ALB_INGEST=true needs the history host (EKS_ALB_HISTORY=true)' >&2; exit 2; }
+  for service in "$INGEST_SVC" "$READ_API_SVC"; do
+    [[ ${#service} -le 63 && "$service" =~ ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$ ]] ||
+      { printf '%s\n' 'Ingest/read API Service overrides must be DNS labels' >&2; exit 2; }
+  done
+  for port in "$INGEST_PORT" "$READ_API_PORT"; do
+    [[ "$port" =~ ^[1-9][0-9]{0,4}$ && "$port" -le 65535 ]] ||
+      { printf '%s\n' 'Ingest/read API ports must be 1-65535' >&2; exit 2; }
+  done
+  INGEST_HEALTHCHECK=$'\n    alb.ingress.kubernetes.io/healthcheck-path: /healthz'
+fi
+LEGACY_ANNOTATIONS=""
+if [[ -n "$LEGACY_SVC" ]]; then
+  [[ "$INGEST" == true ]] ||
+    { printf '%s\n' 'EKS_ALB_HISTORY_LEGACY_SERVICE needs EKS_ALB_INGEST=true' >&2; exit 2; }
+  [[ ${#LEGACY_SVC} -le 63 && "$LEGACY_SVC" =~ ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$ ]] ||
+    { printf '%s\n' 'EKS_ALB_HISTORY_LEGACY_SERVICE must be a DNS label' >&2; exit 2; }
+  [[ "$LEGACY_PORT" =~ ^[1-9][0-9]{0,4}$ && "$LEGACY_PORT" -le 65535 ]] ||
+    { printf '%s\n' 'EKS_ALB_HISTORY_LEGACY_PORT must be 1-65535' >&2; exit 2; }
+  forward="{\"type\":\"forward\",\"forwardConfig\":{\"targetGroups\":[{\"serviceName\":\"${READ_API_SVC}\",\"servicePort\":${READ_API_PORT}}]}}"
+  LEGACY_ANNOTATIONS="
+    alb.ingress.kubernetes.io/actions.read-api-token: '${forward}'
+    alb.ingress.kubernetes.io/conditions.read-api-token: '[{\"field\":\"http-header\",\"httpHeaderConfig\":{\"httpHeaderName\":\"Authorization\",\"values\":[\"Bearer rth_at_read_*\",\"Bearer rth_rt_read_*\"]}}]'
+    alb.ingress.kubernetes.io/actions.read-api-cors: '${forward}'
+    alb.ingress.kubernetes.io/conditions.read-api-cors: '[{\"field\":\"http-request-method\",\"httpRequestMethodConfig\":{\"Values\":[\"OPTIONS\"]}}]'"
+fi
 
 deny() {
   printf '%s\n' \
     "          - path: $1" \
     "            pathType: $2" \
     "            backend: { service: { name: edge-deny, port: { name: use-annotation } } }"
+}
+
+action() { # path pathType action-name
+  printf '%s\n' \
+    "          - path: $1" \
+    "            pathType: $2" \
+    "            backend: { service: { name: $3, port: { name: use-annotation } } }"
 }
 
 route() { # path service port [pathType]
@@ -68,7 +129,7 @@ kind: Ingress
 metadata:
   name: ${NAME}
   namespace: ${NS}
-  annotations:
+  annotations:${INGEST_HEALTHCHECK}${LEGACY_ANNOTATIONS}
     alb.ingress.kubernetes.io/scheme: internet-facing
     alb.ingress.kubernetes.io/target-type: ip
     alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}, {"HTTPS": 443}]'
@@ -104,5 +165,23 @@ route '"/*"' relaycast 8787 ImplementationSpecific
 
 if [[ "$HISTORY" == true ]]; then
   host "history.$DOMAIN"
-  route / relayhistory 8080
+  if [[ "$INGEST" == true ]]; then
+    for path in /v1/delivery/batches /v1/turns/batches /v1/delivery/limits /v1/auth/token/refresh; do
+      route "$path" "$INGEST_SVC" "$INGEST_PORT" Exact
+    done
+    deny /internal Prefix
+    deny '"//internal*"' ImplementationSpecific
+    if [[ -n "$LEGACY_SVC" ]]; then
+      action /v1/sessions Prefix read-api-token
+      action /v1/sessions Prefix read-api-cors
+      action /v1/events Exact read-api-token
+      action /v1/events Exact read-api-cors
+      action /v1/auth/token/revoke Exact read-api-token
+      route '"/*"' "$LEGACY_SVC" "$LEGACY_PORT" ImplementationSpecific
+    else
+      route '"/*"' "$READ_API_SVC" "$READ_API_PORT" ImplementationSpecific
+    fi
+  else
+    route / relayhistory 8080
+  fi
 fi

@@ -58,6 +58,11 @@ not a migration owner or a connection that switches roles. The object-store
 Secret needs `access-key-id` and `secret-access-key`. Key names can be changed
 through the structured values. The chart never creates or prints credentials.
 
+On AWS, set `locker.credentials.mode: podIdentity` with a `serviceAccountName` that
+has a Pod Identity association instead: no object-store Secret is used, and
+`locker.endpoint` may stay empty. `sessionSelection: true` serves the per-session
+erase on `POST /v1/delivery/sessions/selection` and needs pipeline migration 043910.
+
 PostgreSQL must already serve TLS with the correct Service DNS certificate.
 The CA ConfigMap supplies `ca.crt` (key configurable), mounted read-only at
 `/etc/session-ingest-postgres/ca.crt`; the chart selects `custom-ca` and pins its
@@ -98,6 +103,10 @@ router is supplied:
 - `POST /v1/turns/batches`
 - `GET /v1/delivery/limits`
 - `POST /v1/auth/token/refresh` (answers 401 `refresh_not_supported`, so Desktop renews its session)
+
+On EKS, `EKS_ALB_INGEST=true` makes `scripts/selfhost/eks-alb-ingress.sh` render these
+routes on the `history.<domain>` origin, with the rest of that host on the read API
+and `/internal` denied.
 
 Use exact paths and test the backend's wrong-method refusal. Keep delivery records
 on the reader. Selection/reset/recovery/onboarding are not working features;
