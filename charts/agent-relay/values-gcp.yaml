@@ -243,9 +243,9 @@ relayhistory:
 relay-control:
   fullnameOverride: relay-control
   image:
-    # Release image (public GHCR, selfhost-api 0.3.0, relaycontrol 9b80b04). Mirror it by digest to your registry and override repository.
-    repository: ghcr.io/agentworkforce/selfhost-api
-    digest: sha256:95c7877741054dc2f1cafa26be3faa9bfe4660ed85d637aef4524daa10481963
+    # Release image (public GHCR, relay-control 0.5.0, df4b390; 0.5.1 is not published yet, so the session read handoff is inert on this pin). Mirror it by digest to your registry and override repository.
+    repository: ghcr.io/agentworkforce/relay-control
+    digest: sha256:d8c26d44dccb6dd21b7033288241a379e46ce5fbca69f276c4d4745001c3c3e2
   database:
     runtimeRole: control_api_runtime
   # Non-secret id of the encryption key (SELFHOST_ENCRYPTION_KEY_ID), stored
@@ -286,7 +286,7 @@ relay-control:
   # workspace; the admin signs in at https://<root host>/login and invites
   # teammates from Settings > Members. No manual bootstrap step is needed.
   # REQUIRED with bootstrap/auth/smtp: https://<gkeIngress.hosts.root>/ (the
-  # chart refuses any other host). The pinned selfhost-api and dashboard
+  # chart refuses any other host). The pinned relay-control and dashboard
   # digests include these features.
   # dashboardUrl: https://dashboard.placeholder.company/
   # bootstrap:
