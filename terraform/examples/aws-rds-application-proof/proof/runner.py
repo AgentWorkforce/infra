@@ -505,11 +505,16 @@ class Runner:
         contract = None
         if not destroying:
             contract = self.capture_contract()
-        native = self.capture_native(contract) if contract else None
+        # After a clean forward apply, or once a contract has been captured, the output must
+        # exist, so a failed read is retryable. A failed apply or a partial lifecycle's cleanup
+        # may legitimately have no output, and must not get stuck waiting for one.
+        expected = phase in FORWARD or self.path('contract.json').exists()
+        unreadable = not destroying and contract is None and self.contract_read_failed and code == 0 and error is None and expected
+        native = False if unreadable else (self.capture_native(contract) if contract else None)
         save(self.path(phase + '.capture.json'), {**record, 'serial': value['serial'], 'resources': addresses, 'native_complete': native})
         if native is False:
-            self.mark(phase, 'unknown', reason='native metadata read failed after apply', exit_code=code)
-            raise Refused(f'Native metadata for {phase} could not be read, so the retirement ledger would be incomplete; run reconcile --phase {phase}')
+            self.mark(phase, 'unknown', reason='contract or native metadata read failed after apply', exit_code=code)
+            raise Refused(f'The contract or native metadata for {phase} could not be read, so the retirement ledger would be incomplete; run reconcile --phase {phase}')
         if error or code:
             self.mark(phase, 'interrupted' if error else 'failed', exit_code=code)
             raise Refused(f'Apply of {phase} did not complete; state was captured, retire this lifecycle')
@@ -540,12 +545,19 @@ class Runner:
         return {'phase': phase, 'status': self.status_of(phase)}
 
     def capture_contract(self):
+        # A failed read says nothing about the contract: it stays recoverable, unlike a
+        # successful read of a null or wrong-shaped output, which fails validation.
+        self.contract_read_failed = False
         try:
             self.own_backend()
             result = self.run([self.terraform, 'output', '-json', 'proof_contract'], timeout=300, check=False)
-            value = json.loads(result.stdout) if result.returncode == 0 and result.stdout.strip() else None
+            if result.returncode != 0:
+                self.contract_read_failed = True
+                return None
+            value = json.loads(result.stdout) if result.stdout.strip() else None
         except (ValueError, OSError, subprocess.SubprocessError, Refused, CommandInterrupted):
-            value = None
+            self.contract_read_failed = True
+            return None
         if not isinstance(value, dict):
             return None
         save(self.path('contract.json'), value)

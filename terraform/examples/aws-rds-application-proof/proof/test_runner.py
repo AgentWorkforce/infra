@@ -63,6 +63,8 @@ class Fake:
         self.last_vars = {}
         self.payload_changes = None
         self.fail_native = False
+        self.fail_output = False
+        self.null_output = False
 
     def done(self, args, stdout='', code=0):
         return subprocess.CompletedProcess(args, code, stdout, '')
@@ -108,7 +110,9 @@ class Fake:
                 return self.done(args, code=1)
             return self.done(args, json.dumps({'serial': 3, 'resources': self.resources}))
         if verb == 'output':
-            if self.contract is None:
+            if self.null_output:
+                return self.done(args, 'null')
+            if self.contract is None or self.fail_output:
                 return self.done(args, code=1)
             return self.done(args, json.dumps(self.contract))
         raise AssertionError(args)
@@ -329,7 +333,7 @@ class UnknownState(Base):
         self.assertEqual(self.runner.status_of('provision'), 'interrupted')
 
     def test_successful_apply_without_contract_is_invalid(self):
-        self.fake.contract = None
+        self.fake.null_output = True
         out = self.runner.plan('provision')
         with self.assertRaisesRegex(r.Refused, 'validation'):
             self.runner.apply('provision', out['plan_sha256'])
@@ -548,6 +552,28 @@ class Retirement(Base):
         self.fake.fail_native = False
         self.assertEqual(self.runner.reconcile('provision')['status'], 'captured')
         self.assertEqual(r.read(self.execution / 'native.json')['database_resource_ids'], ['db-A'])
+
+    def test_failed_contract_read_after_clean_apply_is_recoverable(self):
+        self.fake.contract = self.fake.contract_value()
+        self.fake.fail_output = True
+        out = self.runner.plan('provision')
+        with self.assertRaisesRegex(r.Refused, 'run reconcile --phase provision'):
+            self.runner.apply('provision', out['plan_sha256'])
+        self.assertEqual(self.runner.status_of('provision'), 'unknown')
+        with self.assertRaises(r.Refused):
+            self.runner.reconcile('provision')
+        self.assertEqual(self.runner.status_of('provision'), 'unknown')
+        self.fake.fail_output = False
+        self.assertEqual(self.runner.reconcile('provision')['status'], 'captured')
+        self.assertEqual(r.read(self.execution / 'native.json')['database_resource_ids'], ['db-A'])
+
+    def test_failed_apply_without_output_does_not_wait_for_one(self):
+        self.fake.contract = None
+        self.fake.fail_apply = True
+        out = self.runner.plan('provision')
+        with self.assertRaisesRegex(r.Refused, 'did not complete'):
+            self.runner.apply('provision', out['plan_sha256'])
+        self.assertEqual(self.runner.status_of('provision'), 'failed')
 
     def test_failed_apply_with_failed_native_read_reconciles_as_failed(self):
         self.fake.contract = self.fake.contract_value()
