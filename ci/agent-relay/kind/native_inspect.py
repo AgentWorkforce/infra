@@ -116,6 +116,59 @@ def native_archive(path, expected_sha, source, manifest_sha, config_sha, archite
         return config
 
 
+def native_archive_transport(path, expected_sha, source, manifest_sha, config_sha, architecture):
+    """Derive a typed import identity from verified archive bytes, not a tag.
+
+    Docker's platform-only save omits the original build index and exports the
+    selected native manifest. Keep that transport identity distinct from the
+    original index attested by the unchanged build/qualification receipts.
+    """
+    return {"kind": "verified-native-archive-v1", "sourceRevision": source,
+            "architecture": architecture, "manifestDigest": manifest_sha,
+            "configDigest": config_sha, "archiveSha256": expected_sha,
+            "config": native_archive(path, expected_sha, source, manifest_sha, config_sha, architecture)}
+
+
+def attest_cached_image(image, source, architecture, index_digest, config_digest, *, archive_native=None):
+    """Admit exact build-index or verified archive-native cache representations."""
+    require(image.get("Architecture") == architecture and image.get("Os") == "linux", "docker_native_architecture_mismatch")
+    require(image.get("Config", {}).get("Labels", {}).get("org.opencontainers.image.revision") == source,
+            "docker_source_mismatch")
+    descriptor = image.get("Descriptor", {})
+    if archive_native is None:
+        # Preserve the original receipt/interface for callers without an
+        # independently verified native archive. No native identity inferred.
+        require(descriptor.get("digest") == index_digest and image.get("Id") in (index_digest, config_digest),
+                "docker_immutable_transport_mismatch")
+        return "build-index"
+    require(isinstance(archive_native, dict) and set(archive_native) == {
+        "kind", "sourceRevision", "architecture", "manifestDigest", "configDigest", "archiveSha256", "config"} and
+        archive_native["kind"] == "verified-native-archive-v1" and
+        archive_native["sourceRevision"] == source and archive_native["architecture"] == architecture and
+        archive_native["configDigest"] == config_digest and
+        re.fullmatch(r"[a-f0-9]{64}", archive_native.get("archiveSha256", "")) and
+        re.fullmatch(r"sha256:[a-f0-9]{64}", archive_native.get("manifestDigest", "")),
+        "verified_archive_native_transport_required")
+    manifest = archive_native["manifestDigest"]
+    if (descriptor.get("digest") == manifest and
+            descriptor.get("mediaType") == "application/vnd.oci.image.manifest.v1+json"):
+        require(image.get("Id") in (manifest, config_digest), "docker_immutable_transport_mismatch")
+        transport = "archive-native"
+    else:
+        require(descriptor.get("digest") == index_digest and
+                descriptor.get("mediaType") == "application/vnd.oci.image.index.v1+json" and
+                image.get("Id") in (index_digest, config_digest), "docker_immutable_transport_mismatch")
+        transport = "build-index"
+    native = archive_native["config"]
+    require(isinstance(native, dict) and native.get("architecture") == architecture and native.get("os") == "linux" and
+            isinstance(native.get("config"), dict) and native.get("rootfs", {}).get("type") == "layers" and
+            isinstance(native["rootfs"].get("diff_ids"), list) and
+            image.get("RootFS", {}).get("Layers") == native["rootfs"]["diff_ids"] and
+            all(image.get("Config", {}).get(k) == v for k, v in native["config"].items()),
+            "docker_native_runtime_config_mismatch")
+    return transport
+
+
 def runtime_files(manifest):
     files = {}
     for name, info in manifest["files"].items():
@@ -140,16 +193,11 @@ class NativeReadOnlyAdapter:
         result = self.stack.cmd([*self.stack.docker_args, *arguments], data=data, timeout=180, sensitive=True)
         return json.loads(result.stdout)
 
-    def _image(self, local_tag, source, architecture, index_digest, config_digest):
+    def _image(self, local_tag, source, architecture, index_digest, config_digest, *, archive_native=None):
         images = self._docker_json(["image", "inspect", local_tag])
         require(len(images) == 1, "one_local_image_required")
         image = images[0]
-        require(image.get("Architecture") == architecture and image.get("Os") == "linux", "docker_native_architecture_mismatch")
-        require(image.get("Config", {}).get("Labels", {}).get("org.opencontainers.image.revision") == source,
-                "docker_source_mismatch")
-        # Docker29 may expose the index as Id. Never assume Id == config SHA.
-        require(image.get("Descriptor", {}).get("digest") == index_digest and image.get("Id") in (index_digest, config_digest),
-                "docker_immutable_transport_mismatch")
+        attest_cached_image(image, source, architecture, index_digest, config_digest, archive_native=archive_native)
         return image
 
     def _probe(self, image_id, runtime, code, data):
@@ -184,9 +232,10 @@ class NativeReadOnlyAdapter:
         for name in BOOTSTRAP:
             require(expected.get("/app/supabase/bootstrap/" + name) == selected["officialBootstrapSha256"][name],
                     "image_bootstrap_acceptance_mismatch")
-        native = native_archive(paths["pipelineArchive"], artifact["archiveSha256"], selected["sourceRevision"],
+        archive_native = native_archive_transport(paths["pipelineArchive"], artifact["archiveSha256"], selected["sourceRevision"],
                                 selected["manifestDigest"], selected["configDigest"], selected["architecture"])
-        image = self._image(artifact["localTag"], selected["sourceRevision"], selected["architecture"], artifact["buildIndexDigest"], selected["configDigest"])
+        native = archive_native["config"]
+        image = self._image(artifact["localTag"], selected["sourceRevision"], selected["architecture"], artifact["buildIndexDigest"], selected["configDigest"], archive_native=archive_native)
         if artifact["flat"]:
             diff_ids = native.get("rootfs", {}).get("diff_ids")
             require(native.get("rootfs", {}).get("type") == "layers" and isinstance(diff_ids, list) and
@@ -203,7 +252,7 @@ const {generation}=await import('/app/src/hoopdb/migrate.ts');console.log(JSON.s
         control = selected["control"]
         cr = control_coordinates(paths, control, selected["architecture"])
         dist, migration = cr["dist"], cr["migration"]
-        ci = self._image(cr["tag"], control["sourceRevision"], selected["architecture"], cr["dockerIndexDigest"], control["configDigest"])
+        ci = self._image(cr["tag"], control["sourceRevision"], selected["architecture"], cr["dockerIndexDigest"], control["configDigest"], archive_native=cr["archiveNative"])
         if cr["rawV2"]:
             native = cr["nativeConfig"]
             require(ci.get("RootFS", {}).get("Layers") == native["rootfs"]["diff_ids"] and

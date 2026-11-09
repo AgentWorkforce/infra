@@ -385,15 +385,15 @@ class Core(unittest.TestCase):
             with self.subTest(case=case), self.assertRaises(NativeRecipeError): a._runtime_pod("relay-control")
 
     def test_failed_independent_image_capability_clears_previous_artifact_admission(self):
-        a = self.adapter(); s = self.selection(); a.inputs = {"controlReceipt": "unused"}
+        a = self.adapter(); s = self.selection(); a.inputs = {"controlReceipt": "unused", "pipelineArchive": "unused-bound-archive"}
         a._verified = {"old": True}
-        a._image = lambda *args: {"Id": "already-bound-native-id"}
+        a._image = lambda *args, **kwargs: {"Id": "already-bound-native-id"}
         a._probe = lambda *args: {"accessPrefix": "wrong-older-authority"}
         def parent(adapter, selected):
             adapter._verified = {"sourceRevision": selected["sourceRevision"]}
             return adapter._verified
         with patch("native_pipeline.NativePipelineAdapter.verify_artifact", parent), patch(
-            "native_inspect.pipeline_coordinates", return_value={"localTag": "qualified", "buildIndexDigest": "bound-index"}):
+            "native_inspect.pipeline_coordinates", return_value={"localTag": "qualified", "buildIndexDigest": "bound-index", "archiveSha256": "bound-archive"}), patch("native_core.native_archive_transport", return_value={"config": {}}):
             with self.assertRaisesRegex(NativeRecipeError, "independent_reader_module"):
                 a.verify_artifact(s)
         self.assertIsNone(a._verified)
