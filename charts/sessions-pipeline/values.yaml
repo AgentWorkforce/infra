@@ -401,6 +401,16 @@ searchIndexer:
 # internal alleyoop-ingest worker. No profile enables it or supplies an image.
 # Initial supported assembly is test/pilot only; deletion/privacy is incomplete.
 ingestEdge:
+  # Business analytics adapter (pipeline source 71801741 or later). Off by default.
+  # Self-host sends only to the private file collector, never hosted PostHog.
+  analytics:
+    enabled: false
+    deploymentId: "" # opaque installation id; no person, workspace or hostname
+    collectorUrl: "" # complete HTTPS URL ending /v1/events
+    existingSecret: "" # unique component-bound collector producer token
+    tokenKey: token
+    caConfigMap: "" # optional public CA bundle, added to OS trust
+    caKey: ca.crt
   enabled: false
   # Requires an image implementing SELFHOST_INGEST_ADMISSION. Sync preserves
   # the existing request path. Async acknowledges durable object storage and
@@ -469,6 +479,16 @@ ingestEdge:
 # native PostgreSQL/TLS/Locker handoff is accepted. This does not enable reads,
 # upload, publication, GC, deletion/privacy, or replace an installed indexer.
 nativeConsumer:
+  # Business analytics adapter (pipeline source 71801741 or later). Off by default.
+  # Self-host sends only to the private file collector, never hosted PostHog.
+  analytics:
+    enabled: false
+    deploymentId: "" # opaque installation id; no person, workspace or hostname
+    collectorUrl: "" # complete HTTPS URL ending /v1/events
+    existingSecret: "" # unique component-bound collector producer token
+    tokenKey: token
+    caConfigMap: "" # optional public CA bundle, added to OS trust
+    caKey: ca.crt
   enabled: false
   fullnameOverride: ""
   replicas: 1
