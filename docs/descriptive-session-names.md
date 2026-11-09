@@ -144,7 +144,11 @@ seeded object and the sentinel against the live store; additional later objects
 are allowed. A missing/changed seed, replaced claim, duplicate writer, foreign
 release, configuration drift, or missing original readiness anchor refuses.
 
-For a locally built Control image, also retain its native OCI archive. Admission
+For a locally built Control image, also retain its native OCI archive. The local
+Docker tag must still export the same native manifest/config; reconciliation checks
+that export before changing readiness or selection metadata. If the tag is missing
+or was rebuilt, restore the verified archive first; reconciliation does not
+silently replace the host cache. Admission
 checks the archive's manifest/config bytes, platform and approved source, pairs
 the API/migration entrypoints, and compares the selected image and rendered
 application configuration with the live named Deployments. An old build receipt
@@ -158,10 +162,9 @@ make kind-up PROFILE=core
 make kind-proof-core
 ```
 
-For an independently qualified addons cutover, select `PROFILE=addons` and the
-existing owner-supplied `KIND_LICENSE_FILE` as usual. Its installed component
-selection and credentials must match that profile; this path does not relax
-licensing or add-on acceptance gates.
+For an independently qualified addons cutover, select `PROFILE=addons`. Its
+installed component selection and credentials must match that profile; this
+path does not relax add-on acceptance gates.
 
 Reconciliation writes a typed private `named-layout.json` binding. It archives
 the original `ready.json`, images/build metadata, values, render and proof under
@@ -174,9 +177,35 @@ can issue current readiness, and only a fresh proof can establish acceptance.
 Required application Deployment names come from the selected render rather than
 the previous implementation's fixed worker list. The default legacy profile
 still requires every selected role. Disabling the legacy metadata indexer is
-accepted only with an explicitly selected, drained native-consumer runtime
+accepted only with an explicitly selected, drained canonical runtime
 replacement; a preparation-only Job, owner bootstrap role, missing selected
 Deployment, or remaining legacy indexer refuses.
+
+The current `sessions-pipeline.searchIndexer` chart is one supported replacement
+when explicitly selected with its Postgres backend, dedicated runtime Secret,
+pinned custom CA and the existing Locker endpoint. Its Deployment is labelled
+`session-search-indexer`, but runs `SERVICE=session-pipeline-consumer`: the
+qualified service authenticates as `search_consumer_runtime` and verifies its
+schema/RLS boundary before becoming ready. Reconciliation also requires its
+single-replica Recreate strategy, `/readyz` startup/readiness probes and exact
+live/rendered configuration. The owner bootstrap Secret cannot be selected as
+the runtime Secret. Image and database admission still require their independent
+qualification; a Deployment label alone is insufficient.
+
+For this current-chart path, set `localKind.legacyIndexerDrained: true` in the
+installed values only after the operator has completed the drain. This is
+reconciliation acknowledgement metadata, not workload enablement or drain
+evidence: it does not create or stop a writer, and any remaining legacy
+Deployment still refuses, even at zero replicas. Select the writer through
+`sessions-pipeline.searchIndexer.enabled`, and disable the old
+`worker.components.hoopdb-indexer` explicitly. There is no need to invent an
+unused `nativeConsumer.enabled` flag.
+
+The separate `sessions-pipeline.nativeConsumer` slot retains its own runtime
+preflight and `legacyIndexerDrained` contract when a qualified chart actually
+renders it. It is not an alias for `searchIndexer`; selecting both replacements
+refuses. Adding values for a slot absent from the selected chart cannot admit
+a missing Deployment or qualify a completed cutover.
 
 On reuse, `kind-up` rechecks the typed binding, original readiness archive,
 storage/Postgres identities and specifications, seeded readback, selected

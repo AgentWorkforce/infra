@@ -58,6 +58,7 @@ class NamedUpgrade(unittest.TestCase):
         named.write(self.local.state/"control-build.json", {"historical": True})
         self.archive = self.local.state/"native-control.tar"
         native = control_tests.ControlArchive().archive(self.archive)
+        self.cached_control_archive = self.archive
         self.values = {"localKind": {"profile": profile},
                        "components": {"relayflows": profile == "addons", "relayfile": profile == "addons"},
                        "sessions-pipeline": {"session-object-storage": {"enabled": False},
@@ -170,6 +171,11 @@ class NamedUpgrade(unittest.TestCase):
 
     def cmd(self, args, **kwargs):
         args=[str(x) for x in args];self.calls.append(args)
+        if args[:len(self.local.docker_args)+2] == [*self.local.docker_args, "image", "save"]:
+            if self.cached_control_archive is None:
+                return subprocess.CompletedProcess(args, 1, "", "missing local tag")
+            Path(args[args.index("-o")+1]).write_bytes(self.cached_control_archive.read_bytes())
+            return self.result(args)
         if args[:3] == ["kind", "get", "clusters"]:
             return self.result(args, self.local.name+'\n')
         if args[:2] == ["helm", "list"]:
@@ -200,9 +206,7 @@ class NamedUpgrade(unittest.TestCase):
         for profile in ("core","addons"):
             with self.subTest(profile=profile):
                 if profile == "addons":
-                    license_path=self.root/'synthetic-license';license_path.write_text('synthetic-license')
-                    with patch.dict('os.environ',KIND_LICENSE_FILE=str(license_path)):
-                        self.prepare(profile);self.local.require_no_legacy_storage()
+                    self.prepare(profile);self.local.require_no_legacy_storage()
                 else:self.local.require_no_legacy_storage()
                 self.assertEqual(self.local.named_layout,self.record)
                 self.assertFalse(any(c[0] in ("apply","replace","delete","create","scale") for c in self.calls))
@@ -326,6 +330,95 @@ class NamedUpgrade(unittest.TestCase):
              'status':{'readyReplicas':1}}
         self.rendered.append(copy.deepcopy(doc));self.objects[('Deployment',doc['metadata']['name'])]=copy.deepcopy(doc)
 
+    def current_search_replacement(self):
+        """Use the real umbrella: no invented nativeConsumer values or Pod spec."""
+        self.values['localKind']['legacyIndexerDrained'] = True
+        self.values['sessions-pipeline']['worker']['components'] = {
+            'hoopdb-indexer': {'enabled': False, 'fullnameOverride': 'session-metadata-indexer'}}
+        self.values['sessions-pipeline']['searchIndexer'] = {
+            'enabled': True, 'fullnameOverride': 'qualified-current-search',
+            'image': {'repository': 'example.invalid/qualified-consumer', 'digest': 'sha256:'+'8'*64},
+            'config': {'existingSecret': 'dedicated-search-runtime', 'key': 'consumer-json'},
+            'search': {'backend': 'postgres', 'backendId': 'kind-reviewed'},
+            'completeSince': 'epoch', 'keyPrefix': '96bulls',
+            'locker': {'bucket': 'locker', 'endpoint': 'http://locker:9000'},
+            'postgres': {'tlsProfile': 'custom-ca', 'caConfigMap': 'kind-postgres-ca', 'caSha256': 'a'*64},
+            'bootstrap': {'enabled': False, 'acknowledgeRunByOperator': True,
+                          'existingSecret': 'separate-owner', 'key': 'consumer-json'}}
+        self.local.root = HERE.parents[2]
+        def actual_helm(argv, **kwargs):
+            self.assertEqual(list(argv[:2]), ['helm', 'template'])
+            result = subprocess.run([str(a) for a in argv], cwd=self.local.root,
+                                    text=True, capture_output=True, timeout=30)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            return result
+        self.local.cmd = actual_helm
+        self.rendered = named.render_selected(self.local, self.values)
+        storage = self.objects[('Deployment', named.NAME)]
+        self.objects = {(d['kind'], d['metadata']['name']): copy.deepcopy(d)
+                        for d in self.rendered if d['kind'] == 'Deployment'}
+        self.objects[('Deployment', named.NAME)] = storage
+        for doc in self.objects.values():
+            doc['status'] = {'readyReplicas': 1}
+        return next(d for d in self.rendered if d['kind'] == 'Deployment'
+                    and d['metadata']['name'] == 'qualified-current-search')
+
+    def test_current_chart_search_writer_is_admitted_without_a_future_native_slot(self):
+        writer = self.current_search_replacement()
+        self.assertNotIn('nativeConsumer', self.values['sessions-pipeline'])
+        self.assertEqual(writer['metadata']['labels']['app.kubernetes.io/name'], 'session-search-indexer')
+        env = {e['name']: e.get('value') for e in stack.pod_spec(writer)['containers'][0]['env']}
+        self.assertEqual(env['SERVICE'], 'session-pipeline-consumer')
+        self.assertNotIn('NATIVE_CONSUMER_PREFLIGHT_MODE', env)
+        self.assertTrue(named.current_search_writer(writer, self.values['sessions-pipeline']['searchIndexer']))
+        selected = named.verify_selection(self.local, self.values, self.objects)
+        self.assertIn('qualified-current-search', {d['metadata']['name'] for d in selected})
+        self.assertNotIn('session-metadata-indexer', {d['metadata']['name'] for d in selected})
+
+    def test_actual_search_chart_cannot_reconcile_an_owner_secret_or_missing_drain_ack(self):
+        self.current_search_replacement()
+        self.values['localKind']['legacyIndexerDrained'] = False
+        with self.assertRaisesRegex(stack.StackError, 'drained native replacement'):
+            named.verify_selection(self.local, self.values, self.objects)
+        self.values['localKind']['legacyIndexerDrained'] = True
+        self.values['sessions-pipeline']['searchIndexer']['config']['existingSecret'] = 'separate-owner'
+        with self.assertRaisesRegex(stack.StackError, 'no single rendered runtime'):
+            named.verify_selection(self.local, self.values, self.objects)
+
+    def test_actual_search_writer_keeps_tls_startup_identity_and_single_writer_guards(self):
+        writer = self.current_search_replacement()
+        selected = self.values['sessions-pipeline']['searchIndexer']
+        def env(doc, name, value):
+            entries = stack.pod_spec(doc)['containers'][0]['env']
+            entries[:] = [e for e in entries if e['name'] != name] + [{'name': name, 'value': value}]
+        changes = [lambda d: env(d, 'SERVICE', 'hoopdb-indexer'),
+                   lambda d: env(d, 'SEARCH_INDEX_BACKEND', 'opensearch'),
+                   lambda d: env(d, 'PIPELINE_FANOUT', 'postgres'),
+                   lambda d: env(d, 'SESSION_POSTGRES_TLS_PROFILE', 'supabase'),
+                   lambda d: env(d, 'NODE_EXTRA_CA_CERTS', '/unverified/ca.crt'),
+                   lambda d: env(d, 'RELAYHISTORY_PIPELINE_CONSUMER_SECRET', 'inline-owner-url'),
+                   lambda d: d['spec'].update(replicas=2),
+                   lambda d: d['spec']['strategy'].update(type='RollingUpdate'),
+                   lambda d: stack.pod_spec(d)['containers'][0].update(command=['skip-role-admission']),
+                   lambda d: stack.pod_spec(d)['containers'][0]['startupProbe']['httpGet'].update(path='/healthz')]
+        for change in changes:
+            changed = copy.deepcopy(writer); change(changed)
+            self.assertFalse(named.current_search_writer(changed, selected))
+        self.objects[('Deployment', writer['metadata']['name'])]['status']['readyReplicas'] = 0
+        with self.assertRaisesRegex(stack.StackError, 'missing or unready'):
+            named.verify_selection(self.local, self.values, self.objects)
+
+    def test_actual_search_writer_does_not_admit_a_second_legacy_or_future_writer(self):
+        self.current_search_replacement()
+        self.objects[('Deployment', 'session-metadata-indexer')] = {
+            'kind': 'Deployment', 'metadata': {'name': 'session-metadata-indexer'}, 'spec': {'replicas': 0}}
+        with self.assertRaisesRegex(stack.StackError, 'still present'):
+            named.verify_selection(self.local, self.values, self.objects)
+        self.objects.pop(('Deployment', 'session-metadata-indexer'))
+        self.values['sessions-pipeline']['nativeConsumer'] = {'enabled': True, 'legacyIndexerDrained': True}
+        with self.assertRaisesRegex(stack.StackError, 'drained native replacement'):
+            named.verify_selection(self.local, self.values, self.objects)
+
     def test_selected_legacy_default_requires_every_rendered_workload(self):
         selected=named.verify_selection(self.local,self.values,self.objects)
         self.assertTrue(DEFAULT_LEGACY<={d['metadata']['name'] for d in selected})
@@ -379,8 +472,7 @@ class NamedUpgrade(unittest.TestCase):
             with self.subTest(change=change),self.assertRaises(stack.StackError):
                 named.completed_proof({**self.proof,**change},[self.seed],[self.seed])
 
-    def test_explicit_reconcile_archives_prior_state_and_issues_no_new_proof(self):
-        (self.local.state/named.RECORD).unlink()
+    def reconcile_packet(self):
         packet=self.local.state/'cutover-packet';packet.mkdir()
         named.write(packet/'activation-receipt.json',self.proof)
         for label in ('before','after'):named.write(packet/(label+'-inventory-normalized-private.json'),[self.seed])
@@ -393,6 +485,11 @@ class NamedUpgrade(unittest.TestCase):
                     'onlyChangedFields':['Deployment.metadata.name','Deployment.spec.template.metadata.name'],
                     'valuesSha256':named.sha_file(packet/'values-before.json'),'chartSha256':named.sha_file(chart),
                     'rendererSha256':named.sha_file(packet_renderer)})
+        return packet
+
+    def test_explicit_reconcile_archives_prior_state_and_issues_no_new_proof(self):
+        (self.local.state/named.RECORD).unlink()
+        packet = self.reconcile_packet()
         # A later, independently qualified site-origin change remains selected;
         # the storage cutover must not restore an obsolete application URL.
         self.values['relay-control']['publicUrl']='https://relay.kind.example'
@@ -415,6 +512,60 @@ class NamedUpgrade(unittest.TestCase):
         with redirect_stdout(io.StringIO()):
             named.reconcile(self.local,packet/'activation-receipt.json',self.archive,history/'ready.json')
         named.validate(self.local)
+
+
+    def test_reconcile_refuses_every_live_legacy_name_before_state_changes(self):
+        packet = self.reconcile_packet()
+        for name in named.OLD:
+            with self.subTest(name=name):
+                key = ("Deployment", name)
+                self.objects[key] = {"kind": "Deployment", "metadata": {"name": name}, "spec": {"replicas": 0}}
+                before = {p:p.read_bytes() for p in self.local.state.glob("*.json")}
+                with self.assertRaisesRegex(stack.StackError, "legacy Deployment"):
+                    named.reconcile(self.local, packet/'activation-receipt.json', self.archive)
+                self.assertEqual(before, {p:p.read_bytes() for p in self.local.state.glob("*.json")})
+                del self.objects[key]
+
+    def test_reconcile_refuses_missing_or_rebuilt_local_control_tag_without_invalidation(self):
+        packet = self.reconcile_packet()
+        replaced = self.local.state/'rebuilt-control.tar'
+        control_tests.ControlArchive().archive(replaced, revision=control.HISTORICAL_REVISION)
+        same_source = self.local.state/'same-source-rebuilt.tar'
+        dumps = json.dumps
+        with patch.object(control_tests.json, 'dumps', side_effect=lambda value: dumps(value, separators=(',', ':'))):
+            control_tests.ControlArchive().archive(same_source)
+        original = control.inspect_archive(self.archive, self.local.arch)
+        changed = control.inspect_archive(same_source, self.local.arch)
+        self.assertEqual(original['sourceRevision'], changed['sourceRevision'])
+        self.assertNotEqual(original['manifestDigest'], changed['manifestDigest'])
+        for archive in (None, replaced, same_source):
+            with self.subTest(archive=archive):
+                self.cached_control_archive = archive
+                before = {p:p.read_bytes() for p in self.local.state.glob("*.json")}
+                histories = set(self.local.state.glob('named-history-*'))
+                with self.assertRaisesRegex(stack.StackError, "local Control tag"):
+                    named.reconcile(self.local, packet/'activation-receipt.json', self.archive)
+                self.assertEqual(before, {p:p.read_bytes() for p in self.local.state.glob("*.json")})
+                self.assertEqual(histories, set(self.local.state.glob('named-history-*')))
+                self.assertFalse(list(self.local.state.glob('naming-control-*.tar')))
+
+
+    def test_cache_export_cannot_overwrite_a_concurrent_local_selection(self):
+        packet=self.reconcile_packet();original=self.local.cmd;concurrent=copy.deepcopy(self.values)
+        concurrent["concurrentSelectionMustSurvive"]=True
+        before={p:p.read_bytes() for p in self.local.state.glob("*.json") if p!=self.local.overrides}
+        histories=set(self.local.state.glob("named-history-*"))
+        def cmd(args,**kwargs):
+            result=original(args,**kwargs)
+            if "image" in args and "save" in args:named.write(self.local.overrides,concurrent)
+            return result
+        self.local.cmd=cmd
+        with self.assertRaisesRegex(stack.StackError,"active local state changed"):
+            named.reconcile(self.local,packet/"activation-receipt.json",self.archive)
+        self.assertEqual(named.read(self.local.overrides),concurrent)
+        self.assertEqual(before,{p:p.read_bytes() for p in self.local.state.glob("*.json") if p!=self.local.overrides})
+        self.assertEqual(histories,set(self.local.state.glob("named-history-*")))
+        self.assertFalse(list(self.local.state.glob("naming-control-*.tar")))
 
 
 class StorageRenderer(unittest.TestCase):
