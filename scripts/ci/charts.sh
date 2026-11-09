@@ -362,6 +362,44 @@ for chart in "${charts[@]}"; do
           || err "$chart: the actors gateway allows public workspace create"
         ! yq 'select(.kind == "PersistentVolumeClaim") | .metadata.name' <<<"$out" | grep -q . \
           || err "$chart: the actors gateway with an object file store renders a PVC"
+        # Keyed creates: the workspace bootstrap secret and proof policy (relaycast #622).
+        expect_render_failure "$chart" "$v" "actors proof without bootstrap secret" "bootstrapProofRequired=true with runtime.backend=durable-actors requires secretKeys.workspaceBootstrapSecret" --set bootstrapProofRequired=true
+        expect_render_failure "$chart" "$v" "actors proof not a bool" "bootstrapProofRequired must be true or false" --set-string bootstrapProofRequired=yes --set secretKeys.workspaceBootstrapSecret=wbs
+        expect_render_failure "$chart" "$v" "actors bootstrap secret in extraEnv" "must not appear in extraEnv" --set-json 'extraEnv=[{"name":"RELAYCAST_WORKSPACE_BOOTSTRAP_SECRET","value":"x"}]'
+        expect_render_failure "$chart" "$v" "actors proof flag in extraEnv" "must not appear in extraEnv" --set-json 'extraEnv=[{"name":"RELAYCAST_WORKSPACE_BOOTSTRAP_PROOF_REQUIRED","value":"true"}]'
+        expect_render_failure "$chart" "$v" "actors bootstrap file in extraEnv" "must not appear in extraEnv" --set-json 'extraEnv=[{"name":"RELAYCAST_WORKSPACE_BOOTSTRAP_SECRET_FILE","value":"/tmp/key"}]'
+        out=$(render "$chart" charts/relaycast/ci/default-values.yaml --set secretKeys.workspaceBootstrapSecret=wbs)
+        ! grep -q wbs <<<"$out" || err "$chart: the SQLite render must ignore secretKeys.workspaceBootstrapSecret"
+        out=$(render "$chart" "$v")
+        gw_env() { yq "select(.kind == \"Deployment\") | .spec.template.spec.containers[] | select(.name == \"$1\") | .env[] | select(.name == \"$2\") | $3" <<<"$out"; }
+        [ "$(gw_env gateway RELAYCAST_WORKSPACE_BOOTSTRAP_PROOF_REQUIRED .value)" = false ] \
+          || err "$chart: the actors gateway must render RELAYCAST_WORKSPACE_BOOTSTRAP_PROOF_REQUIRED=false by default"
+        [ -z "$(gw_env gateway RELAYCAST_WORKSPACE_BOOTSTRAP_SECRET .name)" ] \
+          || err "$chart: the actors gateway renders RELAYCAST_WORKSPACE_BOOTSTRAP_SECRET without secretKeys.workspaceBootstrapSecret"
+        out=$(render "$chart" "$v" --set secretKeys.workspaceBootstrapSecret=relaycast-actors-workspace-bootstrap-secret --set bootstrapProofRequired=true)
+        [ "$(gw_env gateway RELAYCAST_WORKSPACE_BOOTSTRAP_SECRET '.valueFrom.secretKeyRef.name + "/" + .valueFrom.secretKeyRef.key')" = relaycast-secrets/relaycast-actors-workspace-bootstrap-secret ] \
+          || err "$chart: the actors gateway must read RELAYCAST_WORKSPACE_BOOTSTRAP_SECRET from existingSecret/secretKeys.workspaceBootstrapSecret"
+        [ "$(gw_env gateway RELAYCAST_WORKSPACE_BOOTSTRAP_PROOF_REQUIRED .value)" = true ] \
+          || err "$chart: bootstrapProofRequired=true must render RELAYCAST_WORKSPACE_BOOTSTRAP_PROOF_REQUIRED=true on the actors gateway"
+        [ -z "$(gw_env gateway RELAYCAST_WORKSPACE_BOOTSTRAP_SECRET_FILE .name)" ] \
+          || err "$chart: the actors gateway must read the bootstrap secret as exact bytes (env), not _FILE"
+        # Configurable names must be honored, not silently replaced by example names.
+        original_job=$(yq 'select(.kind == "Job") | .metadata.name' <<<"$out")
+        out=$(render "$chart" "$v" --set existingSecret=custom-gateway --set secretKeys.workspaceBootstrapSecret=custom-bootstrap --set bootstrapProofRequired=true)
+        [ "$(gw_env gateway RELAYCAST_WORKSPACE_BOOTSTRAP_SECRET '.valueFrom.secretKeyRef.name + "/" + .valueFrom.secretKeyRef.key')" = custom-gateway/custom-bootstrap ] \
+          || err "$chart: actor bootstrap wiring ignores configurable Secret names"
+        # Neither the bootstrap reference nor its proof policy changes the deployer
+        # inputs. Operators must explicitly rerun a completed Job and refresh actors.
+        [ "$(yq 'select(.kind == "Job") | .metadata.name' <<<"$out")" = "$original_job" ] \
+          || err "$chart: bootstrap wiring unexpectedly changes deployer identity"
+        # The dev sidecar is the actors' env: it gets the same two values.
+        out=$(render "$chart" charts/relaycast/ci/durable-actors-dev-values.yaml --set secretKeys.workspaceBootstrapSecret=wbs --set bootstrapProofRequired=true)
+        for c in gateway durable-actors-dev; do
+          [ "$(gw_env "$c" RELAYCAST_WORKSPACE_BOOTSTRAP_SECRET '.valueFrom.secretKeyRef.name + "/" + .valueFrom.secretKeyRef.key')" = relaycast-secrets/wbs ] \
+            || err "$chart: devRuntime $c must read RELAYCAST_WORKSPACE_BOOTSTRAP_SECRET from secretKeys.workspaceBootstrapSecret"
+          [ "$(gw_env "$c" RELAYCAST_WORKSPACE_BOOTSTRAP_PROOF_REQUIRED .value)" = true ] \
+            || err "$chart: devRuntime $c must render RELAYCAST_WORKSPACE_BOOTSTRAP_PROOF_REQUIRED=true"
+        done
         ;;
       relayfile)
         v=charts/relayfile/ci/durable-actors-values.yaml

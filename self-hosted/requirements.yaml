@@ -600,14 +600,21 @@ compatibility:
       images_note: not built for the charts yet
       notes: 'Follow-up re-pin to sessions-pipeline main after #127 (session briefs, generation 5ed11913...). Needs new GHCR/ECR digests, ci/sessions-pipeline-search-worker-role/services-commit and services-generation, and the session-brief entries below shipped.'
       db_combos: []
-    - id: relaycast-0.3.6
+    - id: relaycast-0.3.7
       status: unreleased
       current: true
+      charts: { relaycast: 0.3.7 }
+      app_versions: { relaycast: 12.7.0 }
+      images:
+        relaycast: { repository: ghcr.io/agentworkforce/relaycast-self-host, digest: sha256:81274dca7ab58673383dc7a9c777f422f29606c7422e81b5ea15724770f1455e }
+      notes: 'Actor-mode keyed workspace bootstrap Secret and proof policy; matching gateway and actor environments and a qualified actor rollout are required. No live rollout is claimed.'
+    - id: relaycast-0.3.6
+      status: planned
       charts: { relaycast: 0.3.6 }
       app_versions: { relaycast: 12.7.0 }
       images:
         relaycast: { repository: ghcr.io/agentworkforce/relaycast-self-host, digest: sha256:81274dca7ab58673383dc7a9c777f422f29606c7422e81b5ea15724770f1455e }
-      notes: 'Adds default-off runtime.backend=postgres (image relaycast-self-host 12.8.0-pg.1, sha256:84f59482cb82f3c50d38f45cfca7d004cffaa95652782dbfc93c179cc343ac59, pinned in runtime.postgres.image), a hash-named migration Job and postgresCa. sqlite and durable-actors renders differ only in the helm.sh/chart label.'
+      notes: 'Superseded before tagging by relaycast-0.3.7. Adds default-off runtime.backend=postgres (image relaycast-self-host 12.8.0-pg.1, sha256:84f59482cb82f3c50d38f45cfca7d004cffaa95652782dbfc93c179cc343ac59, pinned in runtime.postgres.image), a hash-named migration Job and postgresCa. sqlite and durable-actors renders differ only in the helm.sh/chart label.'
     - id: relaycast-0.3.5
       status: shipped
       charts: { relaycast: 0.3.5 }
@@ -701,9 +708,20 @@ compatibility:
       images:
         relayauth: { repository: ghcr.io/agentworkforce/relayauth, digest: sha256:eb71daa28e30eb7305f666d0bccc5a4002e53e8a574e3c4c32163d907a1b71df }
       notes: superseded by 0.1.1.
-    - id: agent-relay-0.6.7
+    - id: agent-relay-0.6.8
       status: unreleased
       current: true
+      charts: { agent-relay: 0.6.8, relayhistory: 0.1.2, relay-control: 0.4.0, relay-webapp: 0.2.1 }
+      app_versions: { agent-relay: 0.1.0, relayhistory: 0.1.0, relay-control: 0.1.0, relay-webapp: 0.1.0 }
+      depends:
+        agent-relay: { relaycast: 0.3.7, relayauth: 0.1.4, sessions-pipeline: 0.8.4, relayhistory: 0.1.2, relay-control: 0.4.0, relay-webapp: 0.2.1, relayflows: 0.2.5, durable-actors: 0.14.6-awf.1, relayfile: 0.2.2, telemetry-collector: 0.1.1, relay-chief: 0.1.0 }
+      images:
+        relayhistory: { repository: ghcr.io/agentworkforce/relayhistory, digest_required: true }
+        relay-control: { repository: ghcr.io/agentworkforce/relay-control, digest: sha256:d8c26d44dccb6dd21b7033288241a379e46ce5fbca69f276c4d4745001c3c3e2 }
+        relay-webapp: { repository: ghcr.io/agentworkforce/relay-webapp, digest_required: true }
+      notes: 'Uses relaycast 0.3.7 for actor-mode bootstrap wiring. Retains sessions-pipeline 0.8.4 and reader 0.2.1 async-admission/inception options from 0.6.7; defaults remain disabled and no rollout is claimed.'
+    - id: agent-relay-0.6.7
+      status: planned
       charts: { agent-relay: 0.6.7, relayhistory: 0.1.2, relay-control: 0.4.0, relay-webapp: 0.2.1 }
       app_versions: { agent-relay: 0.1.0, relayhistory: 0.1.0, relay-control: 0.1.0, relay-webapp: 0.1.0 }
       depends:
@@ -712,7 +730,7 @@ compatibility:
         relayhistory: { repository: ghcr.io/agentworkforce/relayhistory, digest_required: true }
         relay-control: { repository: ghcr.io/agentworkforce/relay-control, digest: sha256:d8c26d44dccb6dd21b7033288241a379e46ce5fbca69f276c4d4745001c3c3e2 }
         relay-webapp: { repository: ghcr.io/agentworkforce/relay-webapp, digest_required: true }
-      notes: 'Takes sessions-pipeline 0.8.4 with opt-in async admission and reader 0.2.1 inception coverage for new own-ingest stores, retaining explicit partial-import floors. Preserves current Relaycast, RelayChief Control and Webapp dependencies. Defaults remain disabled; no image qualification or rollout is supplied.'
+      notes: 'Superseded before tagging by agent-relay-0.6.8. Takes sessions-pipeline 0.8.4 with opt-in async admission and reader 0.2.1 inception coverage for new own-ingest stores, retaining explicit partial-import floors. Preserves current Relaycast, RelayChief Control and Webapp dependencies. Defaults remain disabled; no image qualification or rollout is supplied.'
     - id: agent-relay-0.6.6
       status: planned
       charts: { agent-relay: 0.6.6, relayhistory: 0.1.2, relay-control: 0.4.0, relay-webapp: 0.2.1 }
@@ -723,7 +741,7 @@ compatibility:
         relayhistory: { repository: ghcr.io/agentworkforce/relayhistory, digest_required: true }
         relay-control: { repository: ghcr.io/agentworkforce/relay-control, digest: sha256:d8c26d44dccb6dd21b7033288241a379e46ce5fbca69f276c4d4745001c3c3e2 }
         relay-webapp: { repository: ghcr.io/agentworkforce/relay-webapp, digest_required: true }
-      notes: 'Takes sessions-pipeline 0.8.3 (search indexer Node CA).'
+      notes: 'Superseded before tagging by agent-relay-0.6.8. Takes sessions-pipeline 0.8.3 (search indexer Node CA).'
     - id: agent-relay-0.6.5
       status: planned
       charts: { agent-relay: 0.6.5, relayhistory: 0.1.2, relay-control: 0.4.0, relay-webapp: 0.2.1 }
@@ -2957,7 +2975,7 @@ entries:
   - id: opt.relaycast.workspace-create
     kind: option
     title: Anonymous workspace creation
-    description: Off by default; workspaces are created through the internal admin API. Refused with ingress. bootstrapProofRequired demands bootstrap-secret proof for anonymous keyed creates.
+    description: Off by default; workspaces are created through the internal admin API. Refused with ingress. bootstrapProofRequired demands bootstrap-secret proof for anonymous keyed creates; actor mode requires secretKeys.workspaceBootstrapSecret and matching actor environment values.
     chart: relaycast
     values: [publicWorkspaceCreate, bootstrapProofRequired]
     env: [RELAYCAST_PUBLIC_WORKSPACE_CREATE, RELAYCAST_WORKSPACE_BOOTSTRAP_PROOF_REQUIRED]
@@ -3747,8 +3765,8 @@ entries:
       deployer.artifactStore.driver s3 uploads bundles to S3 (DURABLE_ACTORS_ARTIFACT_STORE,
       DURABLE_ACTORS_S3_*; credentials from the AWS SDK default chain, e.g. EKS Pod Identity).
     chart: relaycast
-    values: [runtime.durableActors.fileSigningSecretKey, runtime.durableActors.invocationSecret.*, runtime.durableActors.adminKeySecret.*, runtime.durableActors.actorEnvSecrets, runtime.durableActors.devRuntime.secretKey, runtime.durableActors.deployer.*]
-    env: [DURABLE_ACTORS_SECRET, RELAYCAST_FILE_SIGNING_SECRET, DURABLE_ACTORS_ARTIFACT_BUCKET, DURABLE_ACTORS_SECRET_REFS, DURABLE_ACTORS_ORGANIZATION_ID, DURABLE_ACTORS_ARTIFACT_STORE, DURABLE_ACTORS_S3_REGION, DURABLE_ACTORS_S3_ENDPOINT, DURABLE_ACTORS_S3_FORCE_PATH_STYLE]
+    values: [secretKeys.workspaceBootstrapSecret, runtime.durableActors.fileSigningSecretKey, runtime.durableActors.invocationSecret.*, runtime.durableActors.adminKeySecret.*, runtime.durableActors.actorEnvSecrets, runtime.durableActors.devRuntime.secretKey, runtime.durableActors.deployer.*]
+    env: [RELAYCAST_WORKSPACE_BOOTSTRAP_SECRET, DURABLE_ACTORS_SECRET, RELAYCAST_FILE_SIGNING_SECRET, DURABLE_ACTORS_ARTIFACT_BUCKET, DURABLE_ACTORS_SECRET_REFS, DURABLE_ACTORS_ORGANIZATION_ID, DURABLE_ACTORS_ARTIFACT_STORE, DURABLE_ACTORS_S3_REGION, DURABLE_ACTORS_S3_ENDPOINT, DURABLE_ACTORS_S3_FORCE_PATH_STYLE]
     profiles: [relaycast-durable-actors]
     status: shipped
     provided_by: operator
@@ -3757,6 +3775,7 @@ entries:
         name_paths: [existingSecret, relaycast.existingSecret]
         keys:
           - { key: file-signing-secret, key_path: runtime.durableActors.fileSigningSecretKey }
+          - { key: "<operator-chosen>", key_path: secretKeys.workspaceBootstrapSecret, optional: "keyed actor workspace creates; same bytes as the actor environment" }
           - { key: credential-keyring, key_path: secretKeys.credentialKeyring }
       - name: "<runtime.durableActors.invocationSecret.name>"
         keys:
@@ -3770,6 +3789,8 @@ entries:
           - { key: RELAYCAST_PUBLIC_URL }
           - { key: RELAYCAST_FILE_SIGNING_SECRET }
           - { key: RELAYCAST_INTERNAL_SECRET }
+          - { key: RELAYCAST_WORKSPACE_BOOTSTRAP_SECRET, optional: "same bytes as secretKeys.workspaceBootstrapSecret" }
+          - { key: RELAYCAST_WORKSPACE_BOOTSTRAP_PROOF_REQUIRED, optional: "true or false; equal to bootstrapProofRequired" }
         note: label terse.ai/customer-secret=true; keys become actor env
       - name: "<existingSecret, devRuntime only>"
         keys:

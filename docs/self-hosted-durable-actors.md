@@ -92,8 +92,8 @@ in `charts/relaycast/templates/_actors.tpl`.
 
 | Process | Variables (chart source) |
 | --- | --- |
-| gateway (`relaycast-actors-gateway`, PORT 8787, `/healthz` liveness, `/readyz` readiness) | `DURABLE_ACTORS_CONTROL_PLANE_URL` (default `http://<release>-durable-actors.<ns>.svc.cluster.local:7100`), `DURABLE_ACTORS_PROJECT_ID`, `DURABLE_ACTORS_SECRET` (from `runtime.durableActors.invocationSecret`, its own Secret), `DURABLE_ACTORS_HOME_REGION` (optional), `RELAYCAST_FILE_SIGNING_SECRET` (existingSecret key `fileSigningSecretKey`), `RELAYCAST_CREDENTIAL_KEYRING_FILE`, `RELAYCAST_INTERNAL_SECRET_FILE`, `RELAYCAST_PUBLIC_WORKSPACE_CREATE` (`publicWorkspaceCreate`, default false), `RELAYCAST_FILE_STORE` local\|gcs\|s3 with `RELAYCAST_FILE_DIR` / `RELAYCAST_GCS_BUCKET`,`_PREFIX` / `RELAYCAST_S3_BUCKET`,`_REGION`,`_ENDPOINT`,`_PREFIX`,`_FORCE_PATH_STYLE` (+ `AWS_*` from `fileStore.s3.existingSecret`), `RELAYCAST_MAX_UPLOAD_BYTES`, `RELAYCAST_SHUTDOWN_GRACE_MS`, `RELAYCAST_LOG_FORMAT`, `RELAYCAST_ENV` |
-| Workspace actor (customer Secret in the sandbox namespace, `runtime.durableActors.actorEnvSecrets`) | `RELAYCAST_PUBLIC_URL` (= `baseUrl`, public HTTPS), `RELAYCAST_FILE_SIGNING_SECRET`, `RELAYCAST_INTERNAL_SECRET`, optional `RELAYCAST_MAX_UPLOAD_BYTES`, `RELAYCAST_MESSAGE_TTL_DAYS`, `RELAYCAST_MAILBOX_TTL_MS`, `RELAYCAST_MAILBOX_DEPTH_CAP`, `RELAYCAST_RATE_LIMIT_PER_MINUTE`, `RELAYCAST_ENV` |
+| gateway (`relaycast-actors-gateway`, PORT 8787, `/healthz` liveness, `/readyz` readiness) | `DURABLE_ACTORS_CONTROL_PLANE_URL` (default `http://<release>-durable-actors.<ns>.svc.cluster.local:7100`), `DURABLE_ACTORS_PROJECT_ID`, `DURABLE_ACTORS_SECRET` (from `runtime.durableActors.invocationSecret`, its own Secret), `DURABLE_ACTORS_HOME_REGION` (optional), `RELAYCAST_FILE_SIGNING_SECRET` (existingSecret key `fileSigningSecretKey`), `RELAYCAST_CREDENTIAL_KEYRING_FILE`, `RELAYCAST_INTERNAL_SECRET_FILE`, `RELAYCAST_PUBLIC_WORKSPACE_CREATE` (`publicWorkspaceCreate`, default false), `RELAYCAST_WORKSPACE_BOOTSTRAP_SECRET` (optional, existingSecret key `secretKeys.workspaceBootstrapSecret`), `RELAYCAST_WORKSPACE_BOOTSTRAP_PROOF_REQUIRED` (`bootstrapProofRequired`, always rendered, default `"false"`), `RELAYCAST_FILE_STORE` local\|gcs\|s3 with `RELAYCAST_FILE_DIR` / `RELAYCAST_GCS_BUCKET`,`_PREFIX` / `RELAYCAST_S3_BUCKET`,`_REGION`,`_ENDPOINT`,`_PREFIX`,`_FORCE_PATH_STYLE` (+ `AWS_*` from `fileStore.s3.existingSecret`), `RELAYCAST_MAX_UPLOAD_BYTES`, `RELAYCAST_SHUTDOWN_GRACE_MS`, `RELAYCAST_LOG_FORMAT`, `RELAYCAST_ENV` |
+| Workspace actor (customer Secret in the sandbox namespace, `runtime.durableActors.actorEnvSecrets`) | `RELAYCAST_PUBLIC_URL` (= `baseUrl`, public HTTPS), `RELAYCAST_FILE_SIGNING_SECRET`, `RELAYCAST_INTERNAL_SECRET`, optional `RELAYCAST_WORKSPACE_BOOTSTRAP_SECRET` and `RELAYCAST_WORKSPACE_BOOTSTRAP_PROOF_REQUIRED` (both equal to the gateway's), `RELAYCAST_MAX_UPLOAD_BYTES`, `RELAYCAST_MESSAGE_TTL_DAYS`, `RELAYCAST_MAILBOX_TTL_MS`, `RELAYCAST_MAILBOX_DEPTH_CAP`, `RELAYCAST_RATE_LIMIT_PER_MINUTE`, `RELAYCAST_ENV` |
 | deployer Job (`relaycast-actors-deployer`) | `DURABLE_ACTORS_CONTROL_PLANE_URL`, `DURABLE_ACTORS_PROJECT_ID`, `DURABLE_ACTORS_ORGANIZATION_ID`, `DURABLE_ACTORS_SECRET` (admin, `adminKeySecret`), `DURABLE_ACTORS_ARTIFACT_BUCKET`, `DURABLE_ACTORS_SECRET_REFS` |
 
 Chart behaviour and validation:
@@ -114,7 +114,10 @@ Chart behaviour and validation:
   the gateway sets (control-plane URL, credentials, file store).
 - Requires `credentials.format=ar` and a keyring, an HTTPS public `baseUrl` (no
   `allowInsecureBaseUrl`), and no SQLite-only settings (`backup`, `retention`,
-  `mailbox`, `bootstrapProofRequired`; set those as actor env instead).
+  `mailbox`; set those as actor env instead).
+- Keyed workspace creates (`Idempotency-Key`, relaycast PR #622). The gateway and
+  the actors read the same two variables and must hold the same bytes; see
+  [Workspace bootstrap secret](#workspace-bootstrap-secret-actor-mode) below.
 - `gateway.replicaCount > 1` requires `fileStore` gcs or s3. `local` renders the
   data PVC and one replica.
 - The deployer is a plain Job whose name carries a hash of its pod template:
@@ -128,6 +131,58 @@ Chart behaviour and validation:
 
 Fresh-install backend: SQLite workspaces are not migrated and legacy
 credentials are refused; keep the SQLite release for existing workspaces.
+
+### Workspace bootstrap secret (actor mode)
+
+Needs relaycast-actors-gateway and an actor bundle (deployer) built from
+relaycast PR #622 or later. Roll them together (signed socket grants).
+
+- `secretKeys.workspaceBootstrapSecret`: an `existingSecret` key, passed to the
+  gateway as `RELAYCAST_WORKSPACE_BOOTSTRAP_SECRET` (an env var, not `_FILE`,
+  so the bytes are exactly the Secret's, as they are for the actor). Empty (the
+  default): keyed creates answer 503 `workspace_create_idempotency_unavailable`.
+  It is ignored with `runtime.backend: sqlite`, which uses
+  `secretKeys.bootstrapSecret`.
+- `bootstrapProofRequired` (default false): rendered on the gateway as
+  `RELAYCAST_WORKSPACE_BOOTSTRAP_PROOF_REQUIRED` `"true"` or `"false"`; `true`
+  requires `secretKeys.workspaceBootstrapSecret`.
+- The actor env Secret (`actorEnvSecrets`, e.g. `relaycast-actor-env` in the
+  sandbox namespace) must carry `RELAYCAST_WORKSPACE_BOOTSTRAP_SECRET` with the
+  **same bytes** (generate it without a trailing newline and put the one value in
+  both Secrets) and `RELAYCAST_WORKSPACE_BOOTSTRAP_PROOF_REQUIRED` with the same
+  value. The chart cannot read that Secret, so it cannot check either. A
+  mismatched secret breaks replay: the gateway derives the actor id from it and
+  the actor's engine derives the replayed credential from it. Actors read their
+  env when they start. Quiesce create/replay traffic, update the actor Secret,
+  explicitly rerun the inspected deployer Job, and restart/replace existing
+  project actors before rolling the matching gateway. Secret changes do not
+  change the deployer Job hash or refresh a running actor. Wait for the Job and
+  replacement actors separately; keep actor storage and the established key.
+  The [ordered rollout procedure](../charts/relaycast/README.md#keyed-workspace-creates-on-durable-actors)
+  explains the required ownership checks, configurable Secret names and restart
+  gate. A qualified project lifecycle procedure is a prerequisite; a plain Helm
+  upgrade is not proof that actor environments were refreshed.
+
+`POST /v1/workspaces` (served only with `publicWorkspaceCreate: true`, which
+is refused with an edge; behind `ingress` or the umbrella `gkeIngress` the
+path is denied at the edge):
+
+| Request | Answer |
+| --- | --- |
+| Unkeyed | 201; never asks for proof |
+| Keyed, no secret | 503 `workspace_create_idempotency_unavailable` |
+| Keyed, secret set, proof not required | id derived from the key: 201, replay 200 with the same credential, another body 409 `workspace_create_idempotency_conflict` |
+| Keyed, proof required, `X-Workspace-Bootstrap-Secret` missing or wrong | 401 `workspace_create_bootstrap_secret_invalid` at the gateway, with no actor call |
+| Keyed, proof required, matching header | 201, replay 200 |
+
+`POST /internal/workspaces` (the internal secret is its authentication) follows
+the same keyed rules but never asks for proof.
+
+Known edge: with proof required, a weak `Idempotency-Key` (fewer than 32
+characters) sent with a missing or wrong proof gets 401
+`workspace_create_bootstrap_secret_invalid`, not 400 `key_too_weak`: the proof
+is checked first, in the engine's order. Clients see `key_too_weak` once the
+proof matches.
 
 ## Relayfile env contract v1 (`runtime.backend: durable-actors`)
 
@@ -215,7 +270,9 @@ pool), release `REL` in namespace `NS` (sandbox namespace `NS-REL`).
      (`durable-actors.invokeApiKeySecretKey: invoke-api-key`).
    - Relaycast `existingSecret`: `internal-secret`, `workspace-bootstrap-secret`,
      the credential keyring (`{"current":"a","keys":{"a":"<random>"}}`), the file
-     signing secret.
+     signing secret, and optionally the actor-mode workspace bootstrap secret
+     (`secretKeys.workspaceBootstrapSecret`, e.g.
+     `openssl rand -base64 48 | tr -d '\n'`).
    - Relaycast invocation Secret (for example `relaycast-durable-actors-invoke`):
      `durable-actors-invoke-key` = the `invoke-api-key` value (patched control
      plane; `invocationSecret.scope: invoke-only`), otherwise the `api-key`
@@ -223,7 +280,9 @@ pool), release `REL` in namespace `NS` (sandbox namespace `NS-REL`).
    - Sandbox namespace `NS-REL`: `relaycast-actor-env`, labelled
      `terse.ai/customer-secret=true`, with `RELAYCAST_PUBLIC_URL`,
      `RELAYCAST_FILE_SIGNING_SECRET` (same value), `RELAYCAST_INTERNAL_SECRET`
-     (same value). The chart renders the sandbox Namespace, so create this Secret
+     (same value), and with keyed creates `RELAYCAST_WORKSPACE_BOOTSTRAP_SECRET`
+     (same bytes as the gateway's key) plus
+     `RELAYCAST_WORKSPACE_BOOTSTRAP_PROOF_REQUIRED` (= `bootstrapProofRequired`). The chart renders the sandbox Namespace, so create this Secret
      after the first install, or pre-create the Namespace with Helm ownership
      metadata (`app.kubernetes.io/managed-by: Helm`, annotations
      `meta.helm.sh/release-name: REL`, `meta.helm.sh/release-namespace: NS`) so
