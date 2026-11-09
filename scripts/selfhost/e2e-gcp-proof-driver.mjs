@@ -812,7 +812,7 @@ async function dashboardSearch(tenant, workspaceId, query) {
 
 async function directSearch(token, tenant, query) {
   const url = PIPELINE
-    ? `${READ_API}/v1/events?${new URLSearchParams({ q: query, limit: "50" })}`
+    ? `${READ_API}/v1/events?${new URLSearchParams({ workspace: tenant.workspaceId, q: query, limit: "50" })}`
     : `${READ_API}/v1/sessions?${new URLSearchParams({ workspace: tenant.workspaceId, q: query, limit: "50" })}`;
   const response = await call("GET", url, { token });
   const rows = response.status === 200 ? (response.json?.events ?? response.json?.sessions ?? []) : [];
