@@ -52,6 +52,12 @@
 # to that Service instead of the control API. EKS_ALB_RELAYFILE_CONTROL_SERVICE
 # defaults to relayfile-control and EKS_ALB_RELAYFILE_CONTROL_PORT to 3100. The
 # Service needs its own alb.ingress.kubernetes.io/healthcheck-path annotation.
+#
+# EKS_ALB_CHIEF_SERVICE (default empty) sends the dashboard's Chief calls on
+# <domain> to a separately installed relaychief-control Service, port
+# EKS_ALB_CHIEF_PORT (default 3200), ahead of the control API. Those routes need
+# a wildcard for the workspace id, and wildcards are ImplementationSpecific, so
+# with Chief on, this host's Prefix paths become Exact plus ordered wildcards.
 
 set -euo pipefail
 NS="${1:-agent-relay}"
@@ -72,6 +78,14 @@ RELAYFILE_CONTROL_PORT="${EKS_ALB_RELAYFILE_CONTROL_PORT:-3100}"
 NAME="${EKS_ALB_INGRESS_NAME:-agent-relay}"
 CONTROL_SVC="${EKS_ALB_CONTROL_SERVICE:-relay-control}"
 WEBAPP_SVC="${EKS_ALB_WEBAPP_SERVICE:-relay-webapp}"
+CHIEF_SVC="${EKS_ALB_CHIEF_SERVICE:-}"
+CHIEF_PORT="${EKS_ALB_CHIEF_PORT:-3200}"
+if [[ -n "$CHIEF_SVC" ]]; then
+  [[ ${#CHIEF_SVC} -le 63 && "$CHIEF_SVC" =~ ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$ ]] ||
+    { printf '%s\n' 'EKS_ALB_CHIEF_SERVICE must be a DNS label' >&2; exit 2; }
+  [[ "$CHIEF_PORT" =~ ^[1-9][0-9]{0,4}$ && "$CHIEF_PORT" -le 65535 ]] ||
+    { printf '%s\n' 'EKS_ALB_CHIEF_PORT must be 1-65535' >&2; exit 2; }
+fi
 for service in "$CONTROL_SVC" "$WEBAPP_SVC"; do
   [[ ${#service} -le 63 && "$service" =~ ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$ ]] ||
     { printf '%s\n' 'Control/Webapp Service overrides must be DNS labels' >&2; exit 2; }
@@ -174,9 +188,21 @@ EOF
 
 host "$DOMAIN"
 flows_routes /cloud/api/v1
-route /cloud/api "$CONTROL_SVC" 80
-route /login "$CONTROL_SVC" 80
-route / "$WEBAPP_SVC" 8080
+if [[ -n "$CHIEF_SVC" ]]; then
+  route /cloud/api "$CONTROL_SVC" 80 Exact
+  route /login "$CONTROL_SVC" 80 Exact
+  for prefix in /cloud/api/v1 /api/v1; do
+    route "\"$prefix/workspaces/*/chiefs\"" "$CHIEF_SVC" "$CHIEF_PORT" ImplementationSpecific
+    route "\"$prefix/workspaces/*/chiefs/*\"" "$CHIEF_SVC" "$CHIEF_PORT" ImplementationSpecific
+  done
+  route '"/cloud/api/*"' "$CONTROL_SVC" 80 ImplementationSpecific
+  route '"/login/*"' "$CONTROL_SVC" 80 ImplementationSpecific
+  route '"/*"' "$WEBAPP_SVC" 8080 ImplementationSpecific
+else
+  route /cloud/api "$CONTROL_SVC" 80
+  route /login "$CONTROL_SVC" 80
+  route / "$WEBAPP_SVC" 8080
+fi
 
 host "api.$DOMAIN"
 deny /internal Prefix
