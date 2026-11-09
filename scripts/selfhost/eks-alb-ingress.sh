@@ -34,8 +34,12 @@
 # EKS_ALB_HISTORY=true) shares the history.<domain> origin, so it needs no new
 # name on the certificate. The four public ingest paths in
 # docs/self-hosted-native-ingest.md go to the ingest edge Service as Exact
-# paths, everything else on that host goes to the read API instead of
-# RelayHistory, and /internal is denied as on api and cast. Exact paths match
+# paths, RelayHistory is no longer the host's default backend, and /internal is
+# denied as on api and cast. Without
+# EKS_ALB_HISTORY_LEGACY_SERVICE the ingest edge receives all of /v1/delivery
+# (delivery records stay on the read API), /v1/turns and /v1/onboarding;
+# the read API receives its read paths, and anything else on that host is a
+# fixed 404 at the edge (docs/self-hosted-no-relayauth.md). Exact paths match
 # any method: the ingest edge refuses the wrong one. Services without their own
 # health-check annotation use /healthz from an Ingress-level default, which a
 # Service annotation overrides; it is the one path both new backends serve.
@@ -45,6 +49,19 @@
 # read API receives only bearers carrying its own rth_at_read_/rth_rt_read_
 # prefixes, plus OPTIONS preflights on its CORS routes, and every other request
 # goes to the named Service. EKS_ALB_HISTORY_LEGACY_PORT defaults to 8080.
+#
+# Flows on relayfile-control (off by default; EKS_ALB_RELAYFILE_CONTROL=true)
+# route /api/v1/{flows,workers,workflows} on api.<domain> and the
+# /cloud/api/v1/{flows,workers,workflows} aliases on <domain> and api.<domain>
+# to that Service instead of the control API. EKS_ALB_RELAYFILE_CONTROL_SERVICE
+# defaults to relayfile-control and EKS_ALB_RELAYFILE_CONTROL_PORT to 3100. The
+# Service needs its own alb.ingress.kubernetes.io/healthcheck-path annotation.
+#
+# EKS_ALB_CHIEF_SERVICE (default empty) sends the dashboard's Chief calls on
+# <domain> to a separately installed relaychief-control Service, port
+# EKS_ALB_CHIEF_PORT (default 3200), ahead of the control API. Those routes need
+# a wildcard for the workspace id, and wildcards are ImplementationSpecific, so
+# with Chief on, this host's Prefix paths become Exact plus ordered wildcards.
 
 set -euo pipefail
 NS="${1:-agent-relay}"
@@ -53,22 +70,57 @@ DOMAIN="${EKS_ALB_DOMAIN:?EKS_ALB_DOMAIN=<base domain> is required}"
 CERT="${EKS_ALB_CERT_ARN:?EKS_ALB_CERT_ARN=<ACM certificate ARN> is required}"
 HISTORY="${EKS_ALB_HISTORY:-true}"
 INGEST="${EKS_ALB_INGEST:-false}"
+# Read API only on history.<domain>, for installs with no ingest edge yet. Upload
+# paths then answer the fixed 404 rather than a missing backend.
+HISTORY_READ_ONLY="${EKS_ALB_HISTORY_READ_ONLY:-false}"
 INGEST_SVC="${EKS_ALB_INGEST_SERVICE:-agent-relay-ingest-edge}"
 INGEST_PORT="${EKS_ALB_INGEST_PORT:-80}"
 READ_API_SVC="${EKS_ALB_READ_API_SERVICE:-agent-relay-read-api}"
 READ_API_PORT="${EKS_ALB_READ_API_PORT:-80}"
 LEGACY_SVC="${EKS_ALB_HISTORY_LEGACY_SERVICE:-}"
 LEGACY_PORT="${EKS_ALB_HISTORY_LEGACY_PORT:-8080}"
+RELAYFILE_CONTROL="${EKS_ALB_RELAYFILE_CONTROL:-false}"
+RELAYFILE_CONTROL_SVC="${EKS_ALB_RELAYFILE_CONTROL_SERVICE:-relayfile-control}"
+RELAYFILE_CONTROL_PORT="${EKS_ALB_RELAYFILE_CONTROL_PORT:-3100}"
 NAME="${EKS_ALB_INGRESS_NAME:-agent-relay}"
 CONTROL_SVC="${EKS_ALB_CONTROL_SERVICE:-relay-control}"
 WEBAPP_SVC="${EKS_ALB_WEBAPP_SERVICE:-relay-webapp}"
+CHIEF_SVC="${EKS_ALB_CHIEF_SERVICE:-}"
+CHIEF_PORT="${EKS_ALB_CHIEF_PORT:-3200}"
+if [[ -n "$CHIEF_SVC" ]]; then
+  [[ ${#CHIEF_SVC} -le 63 && "$CHIEF_SVC" =~ ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$ ]] ||
+    { printf '%s\n' 'EKS_ALB_CHIEF_SERVICE must be a DNS label' >&2; exit 2; }
+  [[ "$CHIEF_PORT" =~ ^[1-9][0-9]{0,4}$ && "$CHIEF_PORT" -le 65535 ]] ||
+    { printf '%s\n' 'EKS_ALB_CHIEF_PORT must be 1-65535' >&2; exit 2; }
+fi
 for service in "$CONTROL_SVC" "$WEBAPP_SVC"; do
   [[ ${#service} -le 63 && "$service" =~ ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$ ]] ||
     { printf '%s\n' 'Control/Webapp Service overrides must be DNS labels' >&2; exit 2; }
 done
 [[ "$INGEST" == true || "$INGEST" == false ]] ||
   { printf '%s\n' 'EKS_ALB_INGEST must be true or false' >&2; exit 2; }
+[[ "$RELAYFILE_CONTROL" == true || "$RELAYFILE_CONTROL" == false ]] ||
+  { printf '%s\n' 'EKS_ALB_RELAYFILE_CONTROL must be true or false' >&2; exit 2; }
+if [[ "$RELAYFILE_CONTROL" == true ]]; then
+  [[ ${#RELAYFILE_CONTROL_SVC} -le 63 && "$RELAYFILE_CONTROL_SVC" =~ ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$ ]] ||
+    { printf '%s\n' 'EKS_ALB_RELAYFILE_CONTROL_SERVICE must be a DNS label' >&2; exit 2; }
+  [[ "$RELAYFILE_CONTROL_PORT" =~ ^[1-9][0-9]{0,4}$ && "$RELAYFILE_CONTROL_PORT" -le 65535 ]] ||
+    { printf '%s\n' 'EKS_ALB_RELAYFILE_CONTROL_PORT must be 1-65535' >&2; exit 2; }
+fi
+[[ "$HISTORY_READ_ONLY" == true || "$HISTORY_READ_ONLY" == false ]] ||
+  { printf '%s\n' 'EKS_ALB_HISTORY_READ_ONLY must be true or false' >&2; exit 2; }
+if [[ "$HISTORY_READ_ONLY" == true ]]; then
+  [[ "$HISTORY" == true && "$INGEST" == false ]] ||
+    { printf '%s\n' 'EKS_ALB_HISTORY_READ_ONLY=true needs EKS_ALB_HISTORY=true and EKS_ALB_INGEST=false' >&2; exit 2; }
+  [[ ${#READ_API_SVC} -le 63 && "$READ_API_SVC" =~ ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$ ]] ||
+    { printf '%s\n' 'Read API Service override must be a DNS label' >&2; exit 2; }
+  [[ "$READ_API_PORT" =~ ^[1-9][0-9]{0,4}$ && "$READ_API_PORT" -le 65535 ]] ||
+    { printf '%s\n' 'Read API port must be 1-65535' >&2; exit 2; }
+fi
 INGEST_HEALTHCHECK=""
+if [[ "$HISTORY_READ_ONLY" == true ]]; then
+  INGEST_HEALTHCHECK=$'\n    alb.ingress.kubernetes.io/healthcheck-path: /healthz'
+fi
 if [[ "$INGEST" == true ]]; then
   [[ "$HISTORY" == true ]] ||
     { printf '%s\n' 'EKS_ALB_INGEST=true needs the history host (EKS_ALB_HISTORY=true)' >&2; exit 2; }
@@ -119,6 +171,14 @@ route() { # path service port [pathType]
     "            backend: { service: { name: $2, port: { number: $3 } } }"
 }
 
+flows_routes() { # base path; a no-op unless EKS_ALB_RELAYFILE_CONTROL=true
+  [[ "$RELAYFILE_CONTROL" == true ]] || return 0
+  local resource
+  for resource in flows workers workflows; do
+    route "$1/$resource" "$RELAYFILE_CONTROL_SVC" "$RELAYFILE_CONTROL_PORT"
+  done
+}
+
 host() {
   printf '%s\n' "    - host: $1" "      http:" "        paths:"
 }
@@ -147,13 +207,34 @@ spec:
 EOF
 
 host "$DOMAIN"
-route /cloud/api "$CONTROL_SVC" 80
-route /login "$CONTROL_SVC" 80
-route / "$WEBAPP_SVC" 8080
+flows_routes /cloud/api/v1
+if [[ -n "$CHIEF_SVC" ]]; then
+  route /cloud/api "$CONTROL_SVC" 80 Exact
+  route /login "$CONTROL_SVC" 80 Exact
+  for prefix in /cloud/api/v1 /api/v1; do
+    route "\"$prefix/workspaces/*/chiefs\"" "$CHIEF_SVC" "$CHIEF_PORT" ImplementationSpecific
+    route "\"$prefix/workspaces/*/chiefs/*\"" "$CHIEF_SVC" "$CHIEF_PORT" ImplementationSpecific
+  done
+  route '"/cloud/api/*"' "$CONTROL_SVC" 80 ImplementationSpecific
+  route '"/login/*"' "$CONTROL_SVC" 80 ImplementationSpecific
+  route '"/*"' "$WEBAPP_SVC" 8080 ImplementationSpecific
+else
+  route /cloud/api "$CONTROL_SVC" 80
+  route /login "$CONTROL_SVC" 80
+  route / "$WEBAPP_SVC" 8080
+fi
 
 host "api.$DOMAIN"
 deny /internal Prefix
 deny '"//internal*"' ImplementationSpecific
+flows_routes /cloud/api/v1
+flows_routes /api/v1
+if [[ -n "$CHIEF_SVC" ]]; then
+  for prefix in /cloud/api/v1 /api/v1; do
+    route "\"$prefix/workspaces/*/chiefs\"" "$CHIEF_SVC" "$CHIEF_PORT" ImplementationSpecific
+    route "\"$prefix/workspaces/*/chiefs/*\"" "$CHIEF_SVC" "$CHIEF_PORT" ImplementationSpecific
+  done
+fi
 route '"/*"' "$CONTROL_SVC" 80 ImplementationSpecific
 
 host "cast.$DOMAIN"
@@ -165,10 +246,34 @@ route '"/*"' relaycast 8787 ImplementationSpecific
 
 if [[ "$HISTORY" == true ]]; then
   host "history.$DOMAIN"
-  if [[ "$INGEST" == true ]]; then
+  if [[ "$HISTORY_READ_ONLY" == true ]]; then
+    for path in /v1/delivery/records /v1/cli/login /v1/events /v1/auth/token/revoke; do
+      route "$path" "$READ_API_SVC" "$READ_API_PORT" Exact
+    done
+    route /v1/sessions "$READ_API_SVC" "$READ_API_PORT" Prefix
+    route /v1/digest "$READ_API_SVC" "$READ_API_PORT" Prefix
+    deny /internal Prefix
+    deny '"//internal*"' ImplementationSpecific
+    deny '"/*"' ImplementationSpecific
+  elif [[ "$INGEST" == true ]]; then
     for path in /v1/delivery/batches /v1/turns/batches /v1/delivery/limits /v1/auth/token/refresh; do
       route "$path" "$INGEST_SVC" "$INGEST_PORT" Exact
     done
+    # With nothing else on the origin the ingest edge owns /v1/delivery/*,
+    # /v1/turns/* and /v1/onboarding/*, except delivery records, which the read
+    # API serves (relayhistory-pipeline docs/selfhost-composition.md section 2).
+    # The controller orders Exact before Prefix. A named legacy Service keeps
+    # these paths: it serves them today.
+    if [[ -z "$LEGACY_SVC" ]]; then
+      for path in /v1/delivery/records /v1/cli/login /v1/events /v1/auth/token/revoke; do
+        route "$path" "$READ_API_SVC" "$READ_API_PORT" Exact
+      done
+      route /v1/sessions "$READ_API_SVC" "$READ_API_PORT" Prefix
+      route /v1/digest "$READ_API_SVC" "$READ_API_PORT" Prefix
+      for path in /v1/delivery /v1/turns /v1/onboarding; do
+        route "$path" "$INGEST_SVC" "$INGEST_PORT" Prefix
+      done
+    fi
     deny /internal Prefix
     deny '"//internal*"' ImplementationSpecific
     if [[ -n "$LEGACY_SVC" ]]; then
@@ -179,7 +284,8 @@ if [[ "$HISTORY" == true ]]; then
       action /v1/auth/token/revoke Exact read-api-token
       route '"/*"' "$LEGACY_SVC" "$LEGACY_PORT" ImplementationSpecific
     else
-      route '"/*"' "$READ_API_SVC" "$READ_API_PORT" ImplementationSpecific
+      # Everything not named above is a fixed 404 at the edge, probes included.
+      deny '"/*"' ImplementationSpecific
     fi
   else
     route / relayhistory 8080

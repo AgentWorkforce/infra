@@ -26,7 +26,9 @@ origin: ""
 # it aligned with the indexer's floor. This is not the chart installation time.
 completeSince: epoch
 # Exact upstream allowlist string (READ_API_DIRECTORY_WORKSPACES); '*' is not a
-# workspace authority. Desktop upload needs its workspace listed here.
+# workspace authority. Desktop upload needs its workspace listed here. Exactly
+# "*" (every workspace) is allowed only with auth.mode=self_issued, for the
+# single-tenant self-host install where new workspaces appear at runtime.
 directoryWorkspaces: ""
 events:
   # READ_API_EVENT_MESSAGE_IDS. Serves includeMessageId on session events from

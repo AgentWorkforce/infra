@@ -1,0 +1,35 @@
+{{- include "relayfile-control.validate" . }}
+{{- if .Values.ingress.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "relayfile-control.fullname" . }}
+  namespace: {{ .Release.Namespace | quote }}
+  labels: {{ include "relayfile-control.labels" . | nindent 4 }}
+  {{- with .Values.ingress.annotations }}
+  annotations: {{ toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- with .Values.ingress.className }}
+  ingressClassName: {{ . }}
+  {{- end }}
+  {{- with .Values.ingress.tls }}
+  tls: {{ toYaml . | nindent 4 }}
+  {{- end }}
+  rules:
+    {{- range .Values.ingress.hosts }}
+    - host: {{ . | quote }}
+      http:
+        paths:
+          {{- range $base := list "/cloud/api/v1" "/api/v1" }}
+          {{- range $resource := list "flows" "workers" "workflows" }}
+          - path: {{ printf "%s/%s" $base $resource }}
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "relayfile-control.fullname" $ }}
+                port: { name: http }
+          {{- end }}
+          {{- end }}
+    {{- end }}
+{{- end }}

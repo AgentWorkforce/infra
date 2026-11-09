@@ -1,0 +1,13 @@
+# Render fixture; the digest is a placeholder, never install it.
+image:
+  digest: sha256:0000000000000000000000000000000000000000000000000000000000000000
+existingSecret: relayfile-control-secrets
+config:
+  relayfileBaseUrl: http://relayfile.relay.svc:8080
+  relaycontrolBaseUrl: http://relay-control.relay.svc:3000
+networkPolicy:
+  additionalEgress:
+    - to:
+        - ipBlock: { cidr: 10.0.0.0/16 }
+      ports:
+        - { protocol: TCP, port: 5432 }

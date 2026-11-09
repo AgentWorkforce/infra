@@ -637,6 +637,9 @@ for reader in $admin_readers; do
 done
 test "$(yq 'select(.kind == "Deployment" and .metadata.name == "relaycast") | .spec.template.spec.containers[0].env[] | select(.name == "DURABLE_ACTORS_SECRET") | .valueFrom.secretKeyRef.name' <<<"$da_out")" = relaycast-durable-actors-invoke \
   || da_fail "the relaycast gateway must use its own invocation Secret"
+# Keyed workspace creates: the proof's bootstrap secret and proof policy.
+test "$(yq 'select(.kind == "Deployment" and .metadata.name == "relaycast") | .spec.template.spec.containers[0].env[] | select(.name == "RELAYCAST_WORKSPACE_BOOTSTRAP_PROOF_REQUIRED") | .value' <<<"$da_out")" = true \
+  || da_fail "the proof's relaycast actor gateway must require the bootstrap proof"
 for consumer in relaycast relayfile-server; do
   test "$(yq "select(.kind == \"Deployment\" and .metadata.name == \"$consumer\") | .spec.template.spec.containers[0].env[] | select(.name == \"DURABLE_ACTORS_CONTROL_PLANE_URL\") | .value" <<<"$da_out")" = http://agent-relay-durable-actors.agent-relay.svc.cluster.local:7100 \
     || da_fail "$consumer does not target the umbrella control plane"
@@ -714,7 +717,7 @@ test "$(yq 'select(.kind == "Deployment" and .metadata.name == "relayfile-server
 # The relaycast actor gateway reads exactly these keys of the proof Secret
 # (documented in charts/agent-relay/README.md).
 proof_keys=$(yq 'select(.kind == "Deployment" and .metadata.name == "relaycast") | ((.. | select(has("secretKeyRef")) | .secretKeyRef | select(.name == "agent-relay-gcp-proof") | .key), (.. | select(has("secret")) | .secret | select(.secretName == "agent-relay-gcp-proof") | .items[].key))' <<<"$da_out" | grep -v '^---$' | grep . | sort -u | paste -sd, -)
-test "$proof_keys" = relaycast-actors-internal-secret,relaycast-credential-keyring,relaycast-file-signing-secret \
+test "$proof_keys" = relaycast-actors-internal-secret,relaycast-actors-workspace-bootstrap-secret,relaycast-credential-keyring,relaycast-file-signing-secret \
   || da_fail "relaycast actor gateway reads unexpected agent-relay-gcp-proof keys: $proof_keys"
 for consumer in relaycast relayfile-server; do
   grep -qx "$consumer" <<<"$(yq 'select(.kind == "Deployment") | .metadata.name' <<<"$da_out")" || da_fail "missing $consumer"
