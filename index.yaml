@@ -3628,6 +3628,28 @@ entries:
         and images retain their own licenses.
       artifacthub.io/license: Apache-2.0
     apiVersion: v2
+    appVersion: 08cf1142303355a73a94dcf605045cdf363e02c5
+    created: "2026-11-09T15:15:25.205371602Z"
+    description: Authenticated self-hosted analytics collector with durable NDJSON
+      storage and internal TLS
+    digest: b7bccb6d0932a7d59cc74756b77e0559e0da672fa562c6009a78823fec76375d
+    home: https://github.com/AgentWorkforce/infra
+    kubeVersion: '>=1.29.0-0'
+    maintainers:
+    - name: AgentWorkforce
+      url: https://github.com/AgentWorkforce/infra
+    name: telemetry-collector
+    sources:
+    - https://github.com/AgentWorkforce/infra/tree/main/charts/telemetry-collector
+    type: application
+    urls:
+    - https://github.com/AgentWorkforce/infra/releases/download/telemetry-collector-0.1.2/telemetry-collector-0.1.2.tgz
+    version: 0.1.2
+  - annotations:
+      agentworkforce.dev/license-scope: First-party chart code only; dependencies
+        and images retain their own licenses.
+      artifacthub.io/license: Apache-2.0
+    apiVersion: v2
     appVersion: 8359483d2666c1f374190c102237c3022ca3d466
     created: "2026-11-09T02:39:16.652238627Z"
     description: Authenticated self-hosted analytics collector with durable NDJSON
@@ -3667,4 +3689,4 @@ entries:
     urls:
     - https://github.com/AgentWorkforce/infra/releases/download/telemetry-collector-0.1.0/telemetry-collector-0.1.0.tgz
     version: 0.1.0
-generated: "2026-11-09T11:17:44.02705235Z"
+generated: "2026-11-09T15:15:25.205511485Z"
