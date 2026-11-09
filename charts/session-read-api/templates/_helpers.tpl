@@ -91,17 +91,41 @@ app.kubernetes.io/part-of: sessions-pipeline
 {{- else if or $ca.configMap $ca.secret -}}
 {{- fail "session-read-api: postgresCa.configMap and postgresCa.secret require postgresCa.enabled=true; a CA name while disabled would leave the certificate unverified" -}}
 {{- end -}}
-{{- /* Auth. self_issued stays out until its engine, Control handoff and image land. */ -}}
+{{- /* Auth. One token family per mode; a half-configured mode refuses to render. */ -}}
 {{- if not (kindIs "bool" $c.auth.relaycontrol.enabled) }}{{ fail "session-read-api: auth.relaycontrol.enabled must be a boolean" }}{{ end -}}
-{{- if not (has $c.auth.mode (list "legacy" "relaycontrol_only")) }}{{ fail "session-read-api: auth.mode must be legacy or relaycontrol_only" }}{{ end -}}
+{{- if not (kindIs "string" $c.auth.mode) }}{{ fail "session-read-api: auth.mode must be legacy, relaycontrol_only or self_issued" }}{{ end -}}
+{{- if not (has $c.auth.mode (list "legacy" "relaycontrol_only" "self_issued")) }}{{ fail "session-read-api: auth.mode must be legacy, relaycontrol_only or self_issued" }}{{ end -}}
 {{- $jwks := trim $c.auth.relayauth.jwksUrl -}}
 {{- $issuer := trim $c.auth.relayauth.issuer -}}
+{{- $selfIssued := $c.auth.selfIssued -}}
+{{- $internal := $selfIssued.internalSecret -}}
+{{- $previous := $selfIssued.previousInternalSecret -}}
+{{- $objectName := "^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?)*$" -}}
+{{- if eq $c.auth.mode "self_issued" -}}
+{{- if or $jwks $issuer }}{{ fail "session-read-api: auth.mode=self_issued requires empty relayauth.jwksUrl and relayauth.issuer" }}{{ end -}}
+{{- if $c.auth.relaycontrol.enabled }}{{ fail "session-read-api: auth.mode=self_issued requires auth.relaycontrol.enabled=false; the service refuses Control introspection in this mode" }}{{ end -}}
+{{- if or $c.auth.relaycontrol.url $c.auth.relaycontrol.existingSecret }}{{ fail "session-read-api: auth.mode=self_issued requires empty auth.relaycontrol.url and existingSecret" }}{{ end -}}
+{{- if $c.login.advertisesSync }}{{ fail "session-read-api: auth.mode=self_issued requires login.advertisesSync=false; POST /v1/cli/login does not exist in this mode" }}{{ end -}}
+{{- if or (gt (len (toString $internal.existingSecret)) 253) (not (regexMatch $objectName (toString $internal.existingSecret))) }}{{ fail "session-read-api: auth.mode=self_issued requires auth.selfIssued.internalSecret.existingSecret, a Secret holding at least 32 characters" }}{{ end -}}
+{{- if not (regexMatch "^[A-Za-z0-9._-]+$" (toString $internal.key)) }}{{ fail "session-read-api: auth.selfIssued.internalSecret.key must be a Kubernetes data key" }}{{ end -}}
+{{- if $previous.existingSecret -}}
+{{- if or (gt (len (toString $previous.existingSecret)) 253) (not (regexMatch $objectName (toString $previous.existingSecret))) }}{{ fail "session-read-api: auth.selfIssued.previousInternalSecret.existingSecret must be a Kubernetes object name" }}{{ end -}}
+{{- if not (regexMatch "^[A-Za-z0-9._-]+$" (toString $previous.key)) }}{{ fail "session-read-api: auth.selfIssued.previousInternalSecret.key must be a Kubernetes data key" }}{{ end -}}
+{{- if and (eq $previous.existingSecret $internal.existingSecret) (eq $previous.key $internal.key) }}{{ fail "session-read-api: auth.selfIssued.previousInternalSecret must name a different Secret key from internalSecret" }}{{ end -}}
+{{- end -}}
+{{- $ttl := toString $selfIssued.accessTokenTtlSeconds -}}
+{{- if or (not (regexMatch "^[1-9][0-9]{0,4}$" $ttl)) (lt (int $ttl) 60) (gt (int $ttl) 300) }}{{ fail "session-read-api: auth.selfIssued.accessTokenTtlSeconds must be an integer from 60 to 300" }}{{ end -}}
+{{- if not $c.networkPolicy.enabled }}{{ fail "session-read-api: auth.mode=self_issued requires networkPolicy.enabled=true with networkPolicy.controlFrom, so only Control is admitted for /internal" }}{{ end -}}
+{{- else -}}
+{{- if or $internal.existingSecret $previous.existingSecret }}{{ fail "session-read-api: auth.selfIssued secrets require auth.mode=self_issued" }}{{ end -}}
+{{- if ne (toString $selfIssued.accessTokenTtlSeconds) "300" }}{{ fail "session-read-api: auth.selfIssued.accessTokenTtlSeconds requires auth.mode=self_issued" }}{{ end -}}
 {{- if eq $c.auth.mode "relaycontrol_only" -}}
 {{- if or $jwks $issuer }}{{ fail "session-read-api: auth.mode=relaycontrol_only requires empty relayauth.jwksUrl and relayauth.issuer" }}{{ end -}}
 {{- if not $c.auth.relaycontrol.enabled }}{{ fail "session-read-api: auth.mode=relaycontrol_only requires auth.relaycontrol.enabled=true" }}{{ end -}}
 {{- else -}}
 {{- $_ := required "session-read-api: auth.relayauth.jwksUrl must explicitly configure the temporary issuer" $jwks -}}
 {{- $_ := required "session-read-api: auth.relayauth.issuer must explicitly configure the temporary issuer" $issuer -}}
+{{- end -}}
 {{- end -}}
 {{- if $c.auth.relaycontrol.enabled -}}
 {{- $url := required "session-read-api: auth.relaycontrol.url is required" $c.auth.relaycontrol.url -}}
@@ -110,6 +134,35 @@ app.kubernetes.io/part-of: sessions-pipeline
 {{- $_ := required "session-read-api: auth.relaycontrol.existingSecret is required" $c.auth.relaycontrol.existingSecret -}}
 {{- $_ := required "session-read-api: auth.relaycontrol.key is required" $c.auth.relaycontrol.key -}}
 {{- end -}}
+{{- /* NetworkPolicy peers: no catch-all can stand in for a named caller. */ -}}
+{{- $np := $c.networkPolicy -}}
+{{- if not (kindIs "bool" $np.enabled) }}{{ fail "session-read-api: networkPolicy.enabled must be a boolean" }}{{ end -}}
+{{- if not (kindIs "bool" $c.ingress.enabled) }}{{ fail "session-read-api: ingress.enabled must be a boolean" }}{{ end -}}
+{{- range $field := list "controlFrom" "publicFrom" -}}
+{{- $peers := index $np $field -}}
+{{- if not (kindIs "slice" $peers) }}{{ fail (printf "session-read-api: networkPolicy.%s must be a list" $field) }}{{ end -}}
+{{- range $peer := $peers -}}
+{{- if not (kindIs "map" $peer) }}{{ fail (printf "session-read-api: networkPolicy.%s entries must be NetworkPolicy peers" $field) }}{{ end -}}
+{{- $pods := index $peer "podSelector" | default dict -}}
+{{- $namespaces := index $peer "namespaceSelector" | default dict -}}
+{{- $block := index $peer "ipBlock" | default dict -}}
+{{- $namesPods := or $pods.matchLabels $pods.matchExpressions -}}
+{{- $namesNamespaces := or $namespaces.matchLabels $namespaces.matchExpressions -}}
+{{- if eq $field "controlFrom" -}}
+{{- if or (not $namesPods) $block }}{{ fail "session-read-api: networkPolicy.controlFrom entries must select Control with podSelector labels (optionally a namespaceSelector), never an ipBlock or a whole namespace" }}{{ end -}}
+{{- else if $block -}}
+{{- if or $pods $namespaces }}{{ fail "session-read-api: networkPolicy.publicFrom ipBlock entries cannot also set selectors" }}{{ end -}}
+{{- if or (not $block.cidr) (has (toString $block.cidr) (list "0.0.0.0/0" "::/0")) }}{{ fail "session-read-api: networkPolicy.publicFrom ipBlock needs a specific cidr, not 0.0.0.0/0 or ::/0" }}{{ end -}}
+{{- else if not (or $namesPods $namesNamespaces) -}}
+{{- fail "session-read-api: networkPolicy.publicFrom entries need selector labels or an ipBlock; an empty peer admits everyone" -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- if $np.enabled -}}
+{{- if not $np.controlFrom }}{{ fail "session-read-api: networkPolicy.enabled=true requires networkPolicy.controlFrom naming the Control pods" }}{{ end -}}
+{{- if and $c.ingress.enabled (not $np.publicFrom) }}{{ fail "session-read-api: ingress.enabled with networkPolicy.enabled requires networkPolicy.publicFrom, or the policy would block the ingress" }}{{ end -}}
+{{- end -}}
+{{- if not (kindIs "bool" $c.events.messageIds) }}{{ fail "session-read-api: events.messageIds must be a boolean" }}{{ end -}}
 {{- /* CORS: exact origins only, matching what the service itself accepts. */ -}}
 {{- if not (kindIs "slice" $c.cors.allowedOrigins) }}{{ fail "session-read-api: cors.allowedOrigins must be a list" }}{{ end -}}
 {{- range $o := $c.cors.allowedOrigins -}}
@@ -117,7 +170,7 @@ app.kubernetes.io/part-of: sessions-pipeline
 {{- if not (or (regexMatch "^https://[a-z0-9]([-a-z0-9.]*[a-z0-9])?(:[0-9]{1,5})?$" $o) (regexMatch "^http://(localhost|127\\.0\\.0\\.1)(:[0-9]{1,5})?$" $o)) }}{{ fail "session-read-api: cors.allowedOrigins must be exact lowercase https origins (http only on loopback), with no wildcard, path or trailing slash" }}{{ end -}}
 {{- end -}}
 {{- /* extraEnv: nothing managed above can be overridden or hidden here. */ -}}
-{{- $reserved := list "SERVICE" "RELAYHISTORY_SELFHOST_READ_API" "RELAYHISTORY_READ_API_PORT" "RELAYHISTORY_READ_API_SECRET" "READ_API_ORIGIN" "READ_API_AUTH_MODE" "READ_API_COMPLETE_SINCE" "READ_API_DIRECTORY_WORKSPACES" "READ_API_CORS_ALLOWED_ORIGINS" "RELAYHISTORY_SELFHOST_LOGIN_ADVERTISES_SYNC" "READ_API_TURNS_ASSUME_NO_LEGACY" "SEARCH_INDEX_POSTGRES_BACKEND_ID" "SEARCH_INDEX_OPENSEARCH_URL" "SEARCH_INDEX_OPENSEARCH_AUTH" "SEARCH_INDEX_OPENSEARCH_AWS_REGION" "SEARCH_INDEX_OPENSEARCH_INDEX_PREFIX" "READ_API_INTERNAL_SECRET" "READ_API_INTERNAL_SECRET_PREVIOUS" "READ_API_ACCESS_TOKEN_TTL_SECONDS" "SEARCH_INDEX_BACKEND" "ALLOW_IN_CLUSTER_HTTP" "RELAYAUTH_JWKS_URL" "RELAYAUTH_ISSUER" "RELAYHISTORY_ACCEPT_RELAYCONTROL_TOKENS" "RELAYCONTROL_INTROSPECT_URL" "RELAYCONTROL_INTROSPECT_SECRET" "SESSION_POSTGRES_TLS_PROFILE" "SESSION_POSTGRES_CA_FILE" "SESSION_POSTGRES_CA_SHA256" -}}
+{{- $reserved := list "SERVICE" "RELAYHISTORY_SELFHOST_READ_API" "RELAYHISTORY_READ_API_PORT" "RELAYHISTORY_READ_API_SECRET" "READ_API_ORIGIN" "READ_API_AUTH_MODE" "READ_API_COMPLETE_SINCE" "READ_API_DIRECTORY_WORKSPACES" "READ_API_CORS_ALLOWED_ORIGINS" "RELAYHISTORY_SELFHOST_LOGIN_ADVERTISES_SYNC" "READ_API_TURNS_ASSUME_NO_LEGACY" "SEARCH_INDEX_POSTGRES_BACKEND_ID" "SEARCH_INDEX_OPENSEARCH_URL" "SEARCH_INDEX_OPENSEARCH_AUTH" "SEARCH_INDEX_OPENSEARCH_AWS_REGION" "SEARCH_INDEX_OPENSEARCH_INDEX_PREFIX" "READ_API_INTERNAL_SECRET" "READ_API_INTERNAL_SECRET_PREVIOUS" "READ_API_ACCESS_TOKEN_TTL_SECONDS" "READ_API_EVENT_MESSAGE_IDS" "SEARCH_INDEX_BACKEND" "ALLOW_IN_CLUSTER_HTTP" "RELAYAUTH_JWKS_URL" "RELAYAUTH_ISSUER" "RELAYHISTORY_ACCEPT_RELAYCONTROL_TOKENS" "RELAYCONTROL_INTROSPECT_URL" "RELAYCONTROL_INTROSPECT_SECRET" "SESSION_POSTGRES_TLS_PROFILE" "SESSION_POSTGRES_CA_FILE" "SESSION_POSTGRES_CA_SHA256" -}}
 {{- $seen := dict -}}
 {{- $canonical := dict -}}
 {{- range $e := $c.extraEnv -}}
@@ -137,6 +190,7 @@ app.kubernetes.io/part-of: sessions-pipeline
 {{- $_ := set $seen $envName true -}}
 {{- if has $envName (list "LOCKER_BUCKET" "PIPELINE_ORG_FROM_PREFIX" "PIPELINE_KEY_PREFIX") }}{{ $_ := set $canonical $envName $e }}{{ end -}}
 {{- end -}}
+{{- if and $c.events.messageIds (not (hasKey $canonical "LOCKER_BUCKET")) }}{{ fail "session-read-api: events.messageIds=true requires LOCKER_BUCKET in extraEnv; the service serves message ids only from the canonical store" }}{{ end -}}
 {{- if hasKey $canonical "LOCKER_BUCKET" -}}
 {{- $bucket := index $canonical "LOCKER_BUCKET" -}}
 {{- if or (not (hasKey $bucket "value")) (not (kindIs "string" $bucket.value)) }}{{ fail "session-read-api: LOCKER_BUCKET requires an explicit nonempty literal value for canonical layout admission" }}{{ end -}}

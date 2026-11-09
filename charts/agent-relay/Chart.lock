@@ -7,7 +7,7 @@ dependencies:
   version: 0.1.4
 - name: sessions-pipeline
   repository: file://../sessions-pipeline
-  version: 0.8.0
+  version: 0.8.1
 - name: relayhistory
   repository: file://../relayhistory
   version: 0.1.2
@@ -32,5 +32,5 @@ dependencies:
 - name: relay-chief
   repository: file://../relay-chief
   version: 0.1.0
-digest: sha256:c438ac3e61b90cbb81a856185b92f6cabf727793eb76a31d61d6d4a2a1361e9c
-generated: "2026-11-08T17:36:04.216501971-08:00"
+digest: sha256:ef8a1606d9e56c57e447d15e67fa859ae19a5035b2581c4465afed72428a444a
+generated: "2026-11-08T18:11:24.80679734-08:00"

@@ -1,0 +1,25 @@
+# RENDER ONLY: fake image identity; never deploy this fixture.
+image:
+  repository: example.invalid/session-read-api
+  digest: sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff
+config: { existingSecret: read-api-config }
+origin: https://history.kind.agentrelay.com:8443
+completeSince: epoch
+directoryWorkspaces: render-workspace
+search: { backendId: render-backend }
+postgres: { tlsProfile: supabase }
+auth:
+  mode: self_issued
+  relaycontrol: { enabled: false }
+  selfIssued:
+    internalSecret: { existingSecret: read-api-internal }
+    previousInternalSecret: { existingSecret: read-api-internal-previous }
+ingress:
+  enabled: true
+  className: nginx
+networkPolicy:
+  enabled: true
+  controlFrom:
+    - podSelector: { matchLabels: { app.kubernetes.io/name: relay-control } }
+  publicFrom:
+    - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: ingress-nginx } }
