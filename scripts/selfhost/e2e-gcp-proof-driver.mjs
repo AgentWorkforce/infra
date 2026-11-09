@@ -1648,20 +1648,42 @@ async function phaseCleanup() {
     pass(`cleanup.tokens_${label}`, `revoked=true whoami_after=${who.status} refresh_after=${refresh.status}`);
     });
   }
-  if (!state.a?.workspaceId || !state.b?.workspaceId || state.cleaned.workspaces) return;
-  // relaycontrol has no workspace (or user) delete route, so the two test
-  // workspaces and the removed outsider user stay in the organization.
-  const bootstrap = bootstrapToken();
-  const probe = await call("DELETE", `${API}/api/v1/organizations/${state.org.organizationId}/workspaces/${state.b.workspaceId}`, { token: bootstrap });
-  const listed = await call("GET", `${API}/api/v1/organizations/${state.org.organizationId}/workspaces`, { token: bootstrap });
-  must(listed.status === 200, `workspace list status=${listed.status}`);
-  const left = listed.json.workspaces.filter((workspace) => [state.a.workspaceId, state.b.workspaceId].includes(workspace.id));
-  state.cleaned.workspaces = true;
-  if (probe.status === 404 && left.length === 2) {
-    proof("SKIP", "cleanup.control_plane_workspaces",
-      `no workspace delete API (DELETE answered ${probe.status}); kept ${left.map((w) => w.name).join(",")} in org ${state.org.organizationId}; outsider user ${state.outsider?.userId ?? "n/a"} has no membership`);
-  } else {
-    fail("cleanup.control_plane_workspaces", `unexpected workspace delete status=${probe.status} remaining=${left.length}; update the e2e to use the delete API`);
+  // relay-control 0.5.0 and later delete a workspace with the bootstrap bearer
+  // (204). 409 is a real refusal, reported rather than failed: workspace_in_use
+  // while a Factory connection exists, or last_workspace, which only a person
+  // can get. A 404 is an already-deleted workspace, unless it is still listed:
+  // then the control plane predates the delete API. There is no user delete
+  // route, so the removed outsider user stays.
+  for (const label of ["a", "b"]) {
+    const tenant = state[label];
+    if (!tenant?.workspaceId || state.cleaned[`workspace_${label}`]) continue;
+    const check = `cleanup.control_plane_workspace_${label}`;
+    await step(check, async () => {
+      const token = bootstrapToken();
+      const base = `${API}/api/v1/organizations/${state.org.organizationId}/workspaces`;
+      const deleted = await call("DELETE", `${base}/${tenant.workspaceId}`, { token });
+      const code = errorCode(deleted);
+      const name = tenant.workspaceName ?? tenant.workspaceId;
+      if (deleted.status === 204) {
+        state.cleaned[`workspace_${label}`] = true;
+        pass(check, `deleted=${name}`);
+      } else if (deleted.status === 409 && ["workspace_in_use", "last_workspace"].includes(code)) {
+        state.cleaned[`workspace_${label}`] = true;
+        proof("SKIP", check, `kept ${name} in org ${state.org.organizationId}: ${code}`);
+      } else if (deleted.status === 404) {
+        const listed = await call("GET", base, { token });
+        must(listed.status === 200, `workspace list status=${listed.status}`);
+        const remains = listed.json.workspaces.some((workspace) => workspace.id === tenant.workspaceId);
+        state.cleaned[`workspace_${label}`] = true;
+        if (remains) {
+          proof("SKIP", check, `no workspace delete API (DELETE answered 404 ${code}); kept ${name} in org ${state.org.organizationId}`);
+        } else {
+          pass(check, `already_deleted=${name}`);
+        }
+      } else {
+        fail(check, `unexpected workspace delete status=${deleted.status} error=${code}`);
+      }
+    });
   }
 }
 

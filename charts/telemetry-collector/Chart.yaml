@@ -1,7 +1,7 @@
 apiVersion: v2
 name: telemetry-collector
 type: application
-version: 0.1.0
+version: 0.1.1
 appVersion: "8359483d2666c1f374190c102237c3022ca3d466"
 kubeVersion: ">=1.29.0-0"
 description: Authenticated self-hosted analytics collector with durable NDJSON storage and internal TLS

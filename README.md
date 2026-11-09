@@ -701,7 +701,7 @@ For render/trust/schema checks without Docker (Helm and kubeconform required), r
 `python3 ci/agent-relay/kind/test_stack.py -v` after building chart dependencies.
 
 The default-off [session read API chart preparation](docs/self-hosted-session-read-api.md)
-is available under `sessions-pipeline.readApi`. It remains disabled in both kind
+is available as the `charts/session-read-api` chart, carried under `sessions-pipeline.sessionReadApi`. It remains disabled in both kind
 profiles pending the approved runtime assembly and image; the running core
 evidence does not prove this new component.
 

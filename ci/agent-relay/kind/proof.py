@@ -97,7 +97,7 @@ class Proof:
         containers = json.loads(self.stack.k("get", "deployment", "relay-control", "-o", "json").stdout)["spec"]["template"]["spec"]["containers"]
         image = next(c["image"] for c in containers if c["name"] == "api")
         selected = json.loads((self.stack.state / "images.json").read_text())["images"]
-        controls = [i for i in selected if "/selfhost-api@" in i]
+        controls = [i for i in selected if "/selfhost-api@" in i or "/relay-control@" in i]
         self.require(len(controls) == 1 and image == controls[0], "live control image differs from the selected control image receipt")
         expected_local = image.startswith("agent-relay-kind/selfhost-api@")
         unavailable = []
@@ -171,7 +171,7 @@ class Proof:
         self.require(all(set(peer) == {"ipBlock"} and ipaddress.ip_network(peer["ipBlock"]["cidr"]).num_addresses == 1
                          and str(ipaddress.ip_network(peer["ipBlock"]["cidr"]).network_address) in allowed for peer in api["to"])
                      and all(p["protocol"] == "TCP" and p["port"] in allowed_ports for p in api["ports"]), "edge API rule must target only this cluster's API endpoints")
-        image = next(i for i in json.loads((s.state / "images.json").read_text())["images"] if "/selfhost-api@" in i)
+        image = next(i for i in json.loads((s.state / "images.json").read_text())["images"] if "/selfhost-api@" in i or "/relay-control@" in i)
         baseline = "kind-proof-" + self.marker
         s.apply({"apiVersion": "v1", "kind": "Namespace", "metadata": {"name": baseline}})
 

@@ -26,12 +26,18 @@
 {{- $originPort := regexFind ":[0-9]+$" $origin -}}
 {{- if and $originPort (or (lt (int (trimPrefix ":" $originPort)) 1) (gt (int (trimPrefix ":" $originPort)) 65535)) }}{{ fail "ingestEdge.origin has an invalid port" }}{{ end -}}
 {{- if and $originPort (or (eq (int (trimPrefix ":" $originPort)) 443) (ne $originPort (printf ":%d" (int (trimPrefix ":" $originPort))))) }}{{ fail "ingestEdge.origin port must be normalized without leading zeros or the default HTTPS port" }}{{ end -}}
-{{- if and .Values.readApi.enabled (ne $origin .Values.readApi.origin) }}{{ fail "ingestEdge.origin must exactly equal readApi.origin when both services are enabled" }}{{ end -}}
+{{- if and .Values.sessionReadApi.enabled (ne $origin .Values.sessionReadApi.origin) }}{{ fail "ingestEdge.origin must exactly equal sessionReadApi.origin when both services are enabled" }}{{ end -}}
 {{- $introspect := include "sessions-pipeline.ingestEdge.endpoint" (dict "name" "ingestEdge.relaycontrol.url" "url" $c.relaycontrol.url "allowHttp" $c.allowInClusterHttp) -}}
 {{- $endpoint := include "sessions-pipeline.ingestEdge.endpoint" (dict "name" "ingestEdge.locker.endpoint" "url" $c.locker.endpoint "allowHttp" $c.allowInClusterHttp) -}}
 {{- $bucket := required "ingestEdge.locker.bucket is required" $c.locker.bucket -}}
 {{- if not (kindIs "string" $bucket) }}{{ fail "ingestEdge.locker.bucket must be a nonempty literal string without surrounding whitespace" }}{{ end -}}
 {{- if ne (trim $bucket) $bucket }}{{ fail "ingestEdge.locker.bucket must be a nonempty literal string without surrounding whitespace" }}{{ end -}}
+{{- /* A subchart cannot see ingestEdge, so the shared bucket is checked here. */ -}}
+{{- if .Values.sessionReadApi.enabled -}}
+{{- range $e := .Values.sessionReadApi.extraEnv -}}
+{{- if and (eq $e.name "LOCKER_BUCKET") (ne (toString $e.value) $bucket) }}{{ fail "sessionReadApi LOCKER_BUCKET must equal ingestEdge.locker.bucket when both services are enabled" }}{{ end -}}
+{{- end -}}
+{{- end -}}
 {{- $region := required "ingestEdge.locker.region is required" $c.locker.region -}}
 {{- $runtimeSecret := required "ingestEdge.config.existingSecret is required" $c.config.existingSecret -}}
 {{- $storeSecret := required "ingestEdge.locker.existingSecret is required" $c.locker.existingSecret -}}
