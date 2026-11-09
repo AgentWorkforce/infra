@@ -65,9 +65,10 @@ class Fake:
         self.fail_native = False
         self.fail_output = False
         self.null_output = False
+        self.bad_output = False
 
-    def done(self, args, stdout='', code=0):
-        return subprocess.CompletedProcess(args, code, stdout, '')
+    def done(self, args, stdout='', code=0, stderr=''):
+        return subprocess.CompletedProcess(args, code, stdout, stderr)
 
     def contract_value(self, compute=None):
         return {'account_id': r.ACCOUNT, 'region': 'us-west-2', 'source_sha': 'a' * 40, 'run_id': 'rds67', 'lease': {'agent': r.AGENT, 'session_id': SESSION}, 'deadline': self.deadline,
@@ -112,8 +113,12 @@ class Fake:
         if verb == 'output':
             if self.null_output:
                 return self.done(args, 'null')
-            if self.contract is None or self.fail_output:
-                return self.done(args, code=1)
+            if self.bad_output:
+                return self.done(args, 'not json')
+            if self.fail_output:
+                return self.done(args, code=1, stderr='Error: reading state: request timed out')
+            if self.contract is None:
+                return self.done(args, code=1, stderr='Error: Output "proof_contract" not found')
             return self.done(args, json.dumps(self.contract))
         raise AssertionError(args)
 
@@ -574,6 +579,40 @@ class Retirement(Base):
         with self.assertRaisesRegex(r.Refused, 'did not complete'):
             self.runner.apply('provision', out['plan_sha256'])
         self.assertEqual(self.runner.status_of('provision'), 'failed')
+
+    def test_failed_apply_with_failed_output_read_stays_recoverable(self):
+        self.through_upload()
+        out = self.runner.plan('seed')
+        self.fake.contract = self.fake.contract_value('i-seed-host')
+        self.fake.fail_apply = True
+        self.fake.fail_output = True
+        with self.assertRaisesRegex(r.Refused, 'run reconcile --phase seed'):
+            self.runner.apply('seed', out['plan_sha256'])
+        self.assertEqual(self.runner.status_of('seed'), 'unknown')
+        self.assertIsNone(r.read(self.execution / 'contract.json')['compute'])
+        with self.assertRaises(r.Refused):
+            self.runner.reconcile('seed')
+        self.assertEqual(self.runner.status_of('seed'), 'unknown')
+        self.fake.fail_apply = False
+        self.fake.fail_output = False
+        self.assertEqual(self.runner.reconcile('seed')['status'], 'failed')
+        self.assertEqual(r.read(self.execution / 'contract.json')['compute'], 'i-seed-host')
+
+    def test_missing_output_after_a_captured_contract_is_not_clean(self):
+        self.provision()
+        self.fake.contract = None
+        out = self.runner.plan('release')
+        with self.assertRaisesRegex(r.Refused, 'run reconcile --phase release'):
+            self.runner.apply('release', out['plan_sha256'])
+        self.assertEqual(self.runner.status_of('release'), 'unknown')
+
+    def test_malformed_output_is_a_failed_read(self):
+        self.fake.contract = self.fake.contract_value()
+        self.fake.bad_output = True
+        out = self.runner.plan('provision')
+        with self.assertRaisesRegex(r.Refused, 'run reconcile --phase provision'):
+            self.runner.apply('provision', out['plan_sha256'])
+        self.assertEqual(self.runner.status_of('provision'), 'unknown')
 
     def test_failed_apply_with_failed_native_read_reconciles_as_failed(self):
         self.fake.contract = self.fake.contract_value()
