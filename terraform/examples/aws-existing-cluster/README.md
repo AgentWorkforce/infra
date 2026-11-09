@@ -36,7 +36,12 @@ Use your usual remote state backend: add a `backend "s3"` block, or pass
 `-backend-config` to `terraform init`.
 
 The outputs feed the Helm install: `database_host`, `sessions_bucket`,
-`search_url` and `certificate_arn`.
+`search_url` and `certificate_arn`. Install the chart with the `release_name` and
+`namespace` set here, because Pod Identity binds to the ServiceAccount names.
+
+With search on, map `search_roles` to OpenSearch roles as the admin role before
+the first install: see "After apply" in
+[`modules/aws/search/README.md`](../../modules/aws/search/README.md).
 
 <!-- BEGIN_TF_DOCS -->
 ### Requirements
@@ -83,6 +88,7 @@ The outputs feed the Helm install: `database_host`, `sessions_bucket`,
 | kms\_key\_arn | Your KMS key for the database, bucket and search. null uses AWS-managed keys. | `string` | `null` | no |
 | name | Prefix for every resource name. | `string` | `"agent-relay"` | no |
 | namespace | Kubernetes namespace the Helm chart installs into. | `string` | `"agent-relay"` | no |
+| release\_name | Helm release name. The chart names its ServiceAccounts after it, and Pod Identity binds to those names. | `string` | `"agent-relay"` | no |
 | search\_admin\_role\_arn | Existing IAM role that administers OpenSearch access. Not used by the app at runtime. | `string` | `null` | no |
 | search\_instance\_type | OpenSearch data node type. | `string` | `"r7g.large.search"` | no |
 | search\_security\_group\_id | Security group for OpenSearch. Allow TCP 443 from your EKS nodes or pods. | `string` | `null` | no |
