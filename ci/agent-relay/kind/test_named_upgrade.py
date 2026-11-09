@@ -31,6 +31,12 @@ class NamedUpgrade(unittest.TestCase):
         self.root = Path(self.directory.name)
         root = patch.object(stack, "ROOT", self.root)
         root.start(); self.addCleanup(root.stop)
+        # The early native bootstrap guard reads the selected profile layers.
+        # This fixture exercises the separate retained naming boundary.
+        charts = self.root / "charts/agent-relay"
+        charts.mkdir(parents=True)
+        for name in ("values.yaml", "values-kind-core.yaml", "values-kind-addons.yaml"):
+            (charts / name).write_text("{}\n")
         self.prepare("core")
 
     def prepare(self, profile):
