@@ -1,0 +1,36 @@
+# Overlay on values-eks.yaml for an install without RelayAuth and without the
+# standalone RelayHistory (docs/self-hosted-no-relayauth.md). Apply with
+# `-f values-eks.yaml -f values-eks-native.yaml` and replace every value marked
+# REQUIRED OVERRIDE. The relay-control image must include the native backend.
+# It assumes sessions-pipeline.sessionReadApi and .ingestEdge are enabled on the
+# one history origin below (docs/self-hosted-native-ingest.md); the ALB comes
+# from scripts/selfhost/eks-alb-ingress.sh with EKS_ALB_INGEST=true and
+# EKS_ALB_HISTORY_LEGACY_SERVICE unset.
+components:
+  relayauth: false
+  relayhistory: false
+
+relay-control:
+  services:
+    relayauthEnabled: false
+    relayauthUrl: ""
+    # The native backend takes the History origin from the read API.
+    relayhistoryUrl: ""
+    relayhistoryPublicUrl: ""
+    relayhistoryBackend: native
+    sessionReadApiUrl: http://agent-relay-read-api
+    # REQUIRED OVERRIDE: https://history.<your domain>.
+    sessionReadApiPublicUrl: https://history.placeholder.company
+    sessionReadApiMcpReads: true
+  introspection:
+    # REQUIRED OVERRIDE: the same origin.
+    audiences:
+      - https://history.placeholder.company
+  secretKeys:
+    relayauthApiKey: ""
+    introspectSecret: relaycontrol-introspect-secret
+    sessionReadApiSecret: session-read-api-secret
+
+# sessions-pipeline.alleyoop keeps its values-eks.yaml JWKS URL: alleyoop's
+# courier path needs RelayAuth and is idle here, and that URL is only fetched
+# when a courier authenticates. The ingest edge and read API do not use it.

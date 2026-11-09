@@ -217,6 +217,13 @@ services:
   relaycastPublicUrl: ""
   relayhistoryUrl: ""
   relayhistoryPublicUrl: ""
+  # History backend: legacy (default) or native. native (RELAYHISTORY_BACKEND,
+  # relay-control with the native backend mode) needs no RelayAuth and no standalone
+  # RelayHistory: uploads go to the pipeline ingest edge and reads through the
+  # read API, both on sessionReadApiPublicUrl. It requires relayauthEnabled=false,
+  # the session read handoff below, secretKeys.introspectSecret, and leaves
+  # relayhistoryUrl and relayhistoryPublicUrl empty.
+  relayhistoryBackend: legacy
   # Session read API credential handoff, default off (relay-control #13; first
   # image with it is 0.5.1). Set together with secretKeys.sessionReadApiSecret,
   # or leave all three empty. Internal HTTP(S) origin of the read API Service.

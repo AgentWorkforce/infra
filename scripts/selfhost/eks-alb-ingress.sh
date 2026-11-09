@@ -34,8 +34,12 @@
 # EKS_ALB_HISTORY=true) shares the history.<domain> origin, so it needs no new
 # name on the certificate. The four public ingest paths in
 # docs/self-hosted-native-ingest.md go to the ingest edge Service as Exact
-# paths, everything else on that host goes to the read API instead of
-# RelayHistory, and /internal is denied as on api and cast. Exact paths match
+# paths, RelayHistory is no longer the host's default backend, and /internal is
+# denied as on api and cast. Without
+# EKS_ALB_HISTORY_LEGACY_SERVICE the ingest edge receives all of /v1/delivery
+# (delivery records stay on the read API), /v1/turns and /v1/onboarding;
+# the read API receives its read paths, and anything else on that host is a
+# fixed 404 at the edge (docs/self-hosted-no-relayauth.md). Exact paths match
 # any method: the ingest edge refuses the wrong one. Services without their own
 # health-check annotation use /healthz from an Ingress-level default, which a
 # Service annotation overrides; it is the one path both new backends serve.
@@ -195,6 +199,21 @@ if [[ "$HISTORY" == true ]]; then
     for path in /v1/delivery/batches /v1/turns/batches /v1/delivery/limits /v1/auth/token/refresh; do
       route "$path" "$INGEST_SVC" "$INGEST_PORT" Exact
     done
+    # With nothing else on the origin the ingest edge owns /v1/delivery/*,
+    # /v1/turns/* and /v1/onboarding/*, except delivery records, which the read
+    # API serves (relayhistory-pipeline docs/selfhost-composition.md section 2).
+    # The controller orders Exact before Prefix. A named legacy Service keeps
+    # these paths: it serves them today.
+    if [[ -z "$LEGACY_SVC" ]]; then
+      for path in /v1/delivery/records /v1/cli/login /v1/events /v1/auth/token/revoke; do
+        route "$path" "$READ_API_SVC" "$READ_API_PORT" Exact
+      done
+      route /v1/sessions "$READ_API_SVC" "$READ_API_PORT" Prefix
+      route /v1/digest "$READ_API_SVC" "$READ_API_PORT" Prefix
+      for path in /v1/delivery /v1/turns /v1/onboarding; do
+        route "$path" "$INGEST_SVC" "$INGEST_PORT" Prefix
+      done
+    fi
     deny /internal Prefix
     deny '"//internal*"' ImplementationSpecific
     if [[ -n "$LEGACY_SVC" ]]; then
@@ -205,7 +224,8 @@ if [[ "$HISTORY" == true ]]; then
       action /v1/auth/token/revoke Exact read-api-token
       route '"/*"' "$LEGACY_SVC" "$LEGACY_PORT" ImplementationSpecific
     else
-      route '"/*"' "$READ_API_SVC" "$READ_API_PORT" ImplementationSpecific
+      # Everything not named above is a fixed 404 at the edge, probes included.
+      deny '"/*"' ImplementationSpecific
     fi
   else
     route / relayhistory 8080
