@@ -296,6 +296,40 @@ class NativeBootstrapTests(unittest.TestCase):
                 self.adapter.prepare_infrastructure(self.s, self.adapter._inspected)
         self.assertEqual([e[0] for e in self.stack.effects], ["pull"])
 
+    def test_actual_stack_docker_argument_contract_and_exact_host_binding(self):
+        import stack as stack_module
+        # Execute the real helper with only its subprocess boundary faked.
+        # It writes its own anonymous config under this disposable test root.
+        with patch.object(stack_module, "ROOT", self.root / "actual-stack"):
+            actual = stack_module.Stack("core")
+        actual.env = {"DOCKER_HOST": self.stack.env["DOCKER_HOST"]}
+        observed = []
+        def command(args, **kwargs):
+            observed.append(args)
+            return SimpleNamespace(stdout="arm64" if "{{.Architecture}}" in args else "29.8.0")
+        actual.cmd = command
+        actual.docker(require_space=False)
+        expected = ["docker", "--config", actual.state / "docker-public", "--host", actual.env["DOCKER_HOST"]]
+        self.assertEqual(actual.docker_args, expected)
+        self.assertTrue(any(args[:5] == expected for args in observed))
+        adapter = NativeBootstrapAdapter(actual, self.inputs, self.material)
+        adapter._require_local_transport()
+        for args in (
+            [*expected[:4], "tcp://unqualified.example:2375"],
+            [*expected[:4], "unix:///other/docker.sock"],
+            [*expected[:3], "--context", "remote-context"],
+            ["docker", "--host", actual.env["DOCKER_HOST"], "--config", expected[2]],
+            [*expected, "--tlsverify"],
+        ):
+            with self.subTest(args=args):
+                actual.docker_args = args
+                with self.assertRaisesRegex(NativeRecipeError, "command_endpoint_override"):
+                    NativeBootstrapAdapter(actual, self.inputs, self.material)
+        actual.docker_args = ["docker", "--config", self.root / "changed-config", "--host", actual.env["DOCKER_HOST"]]
+        with self.assertRaisesRegex(NativeRecipeError, "endpoint_changed_since_admission"):
+            adapter._require_local_transport()
+        self.assertEqual(self.stack.effects, [])
+
     def test_operator_instance_change_or_existing_owner_credential_never_resets_it(self):
         self.fresh()
         self.stack.objects_by_name["statefulset/postgres"]["metadata"]["uid"] = "foreign"

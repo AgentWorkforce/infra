@@ -169,14 +169,16 @@ class NativeBootstrapAdapter(NativeReadOnlyAdapter):
         require(parsed.scheme == "unix" and not parsed.netloc and parsed.path.startswith("/") and
                 len(parsed.path) > 1 and not parsed.query and not parsed.fragment and
                 not any(ord(c) < 32 for c in host), "fresh_local_docker_required")
-        # Both Docker CLI and Kind inherit this explicit endpoint. Context or
-        # command-line host flags would defeat DOCKER_HOST binding.
+        # Both Docker CLI and Kind inherit this explicit endpoint. Accept the
+        # official Stack.docker explicit --host only when it is identical;
+        # contexts or other endpoint flags must not override this binding.
         require(not any(self.stack.env.get(k) for k in ("DOCKER_CONTEXT", "DOCKER_TLS_VERIFY", "DOCKER_CERT_PATH")),
                 "native_docker_endpoint_override_refused")
         args = self.stack.docker_args
-        require(isinstance(args, list) and len(args) in (1, 3) and isinstance(args[0], str) and
+        require(isinstance(args, list) and len(args) in (1, 3, 5) and isinstance(args[0], str) and
                 Path(args[0]).name == "docker" and
-                (len(args) == 1 or (args[1] == "--config" and isinstance(args[2], (str, Path)) and str(args[2]))),
+                (len(args) == 1 or (args[1] == "--config" and isinstance(args[2], (str, Path)) and str(args[2]))) and
+                (len(args) != 5 or (args[3] == "--host" and args[4] == host)),
                 "native_docker_command_endpoint_override_refused")
         return host, tuple(str(x) for x in args)
 
