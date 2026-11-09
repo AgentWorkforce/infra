@@ -14,7 +14,7 @@ in `values.yaml`; all values are mounted as files. The migration Job projects
 only `database-migrations-url`; the API pod cannot read that key. The chart
 never creates a Secret or renders credentials. Set `database.runtimeRole` to
 the non-secret PostgreSQL role used by `database-url`; after migrations, the
-owner grants that role runtime access only to `selfhost_*` application tables.
+owner grants that role runtime access only to the Control application tables.
 
 The image must contain the compiled `relay-control` package. The server runs
 `node node_modules/relay-control/dist/server.js`; migrations run
