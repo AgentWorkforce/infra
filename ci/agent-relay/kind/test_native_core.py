@@ -184,12 +184,15 @@ class Core(unittest.TestCase):
         a._webapp = {k: "bound" for k in ("sourceRevision", "reference", "manifestDigest", "configDigest", "packetSha256", "archiveSha256")}
         a._control_contract_sha = a._base_sha = a._recipe_sha = "bound"
         a._values = lambda selected, phase: {}; a._inspected = {"mode": "fresh"}
+        a._public_route = {"service": {"uid": "original-edge"}}
+        a._qualify_public_route = lambda selected, expected: expected
         a._exclusive_json = lambda path, record: records.append(deepcopy(record))
         with tempfile.TemporaryDirectory() as directory, patch("native_core.sha", return_value="bound-receipt"):
             a.stack = SimpleNamespace(state=Path(directory))
             self.assertEqual(a.record_ready(s, {"fullAcceptance": False, "sourceRevision": s["sourceRevision"]}),
                              {"ok": True, "receiptSha256": "bound-receipt"})
             self.assertEqual(records[0]["pipelineRoleOids"], oids)
+            self.assertEqual(records[0]["controlPublicRoute"], a._public_route)
             changed = dict(oids); changed[s["roles"]["owner"]] += 1
             a._pipeline_role_oids = lambda selected: changed
             with self.assertRaisesRegex(NativeRecipeError, "role_identity_changed"):
@@ -264,9 +267,72 @@ class Core(unittest.TestCase):
         a._phase = lambda *args, **kw: None
         a._helm_state = lambda **kw: None
         a._release_revision = None
+        a._public_route = None
+        a._public_route_binding = None
         a._render_values = lambda v: []
         a._transport_call = lambda *a, **kw: self.fail("unexpected mutation/transport")
         return a
+
+    def test_public_gateway_drift_clears_admission_and_precedes_runtime_transport(self):
+        from test_native_network import NativeNetwork
+        f = NativeNetwork(); f.setUp(); self.addCleanup(f.doCleanups)
+        value = f.public_route()
+        a = self.adapter(); s = self.selection()
+        a._network_stack = lambda selected: f.stack
+        a._values = lambda selected, phase: deepcopy(value)
+        original = a._qualify_public_route(s)
+        self.assertEqual(a._public_route, original)
+        f.stack.public_service['metadata']['uid'] = 'recreated-service'
+        with self.assertRaisesRegex(ValueError, 'gateway UID'):
+            a._qualify_public_route(s, original)
+        self.assertIsNone(a._public_route)
+        self.assertEqual(a._public_route_binding, original)
+        with self.assertRaisesRegex(ValueError, 'gateway UID'): a._qualify_public_route(s)
+        self.assertFalse(any(call[0] == 'k' and call[1][0] != 'get' for call in f.stack.calls))
+
+    def test_serve_observes_gateway_before_rendering_alias_and_reuses_bound_identity(self):
+        import native_network
+        from test_native_network import NativeNetwork
+        f = NativeNetwork(); f.setUp(); self.addCleanup(f.doCleanups)
+        value = f.public_route(); a = self.adapter(); s = self.selection(); applied = []
+        a.stack = f.stack
+        a._network_stack = lambda selected: f.stack
+        a._values = lambda selected, phase: native_network.public_route_values(value, a._public_route) if a._public_route else deepcopy(value)
+        a._ensure_pipeline_image = lambda selected: None
+        a._import_webapp = lambda selected: None
+        a._upgrade = lambda selected, values: applied.append(deepcopy(values)) or []
+        a._release_revision = 1
+        with patch('edge.install', return_value=None) as install:
+            a.serve(s, {'bootstrapEnabled': False, 'phase': 'serve'})
+            self.assertEqual(len(applied), 1)
+            self.assertEqual(applied[0]['relay-control']['services']['publicHostAliases'], [
+                {'ip': '10.96.42.7', 'hostnames': ['relay.kind.agentrelay.com']}])
+            self.assertNotIn('relayhistoryHostAliases', applied[0]['relay-control']['services'])
+            f.stack.public_service['metadata']['uid'] = 'replacement-edge'
+            with self.assertRaisesRegex(ValueError, 'gateway UID'):
+                a.serve(s, {'bootstrapEnabled': False, 'phase': 'serve'})
+            self.assertEqual(len(applied), 1)
+            self.assertEqual(install.call_count, 1)
+        self.assertIsNone(a._public_route)
+        self.assertEqual(a._public_route_binding['service']['uid'], 'original-public-service')
+
+    def test_repeat_render_requires_and_rechecks_the_saved_public_gateway_before_chart_hash(self):
+        a = self.adapter(); s = self.selection()
+        s['reference'] = 'docker.io/' + s['reference']
+        a._bind_selection = lambda selected: None
+        a._inspected = {'mode': 'repeat'}
+        a._control_contract_sha = 'contract'
+        a.inputs = {'bindingReceipt': 'private', 'bindingReceiptSha256': 'bound'}
+        binding = {'controlContractSha256': 'contract', 'tenant': TENANT}
+        with patch('native_core.document', return_value=binding):
+            with self.assertRaisesRegex(NativeRecipeError, 'public_gateway_binding_required'): a.render(s)
+            binding['controlPublicRoute'] = {'service': {'uid': 'original'}}
+            def drift(selected, expected):
+                self.assertEqual(expected, binding['controlPublicRoute'])
+                raise ValueError('gateway drift')
+            a._qualify_public_route = drift
+            with self.assertRaisesRegex(ValueError, 'gateway drift'): a.render(s)
+        self.assertFalse(a._rendered)
 
     def test_planning_uuid_and_privileged_runtime_job_refuse_before_helm_mutation(self):
         a = self.adapter(); s = self.selection()

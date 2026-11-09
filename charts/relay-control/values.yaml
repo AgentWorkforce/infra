@@ -216,6 +216,11 @@ services:
   relayhistoryReadApiUrl: ""
   relayhistoryReadApiEvents: false
   relayhistoryHostAliases: []
+  # Optional local gateway mapping for the API's own publicUrl. MCP obtains
+  # workspace-bound reader tokens through that public HTTPS origin. Only that
+  # exact hostname may be mapped; migrations never receive this mapping.
+  # The native kind lifecycle fills it from the qualified owned edge Service.
+  publicHostAliases: []
   # Legacy client stays on for published images. False omits URL/key env and
   # projection, requiring the owner-approved no-RelayAuth/caller-token image.
   relayauthEnabled: true

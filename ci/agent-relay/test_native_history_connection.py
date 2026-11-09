@@ -64,6 +64,25 @@ class HistoryConnection(unittest.TestCase):
             self.assertNotIn('RELAYHISTORY_READ_API_URL', names)
             self.assertNotIn('RELAYHISTORY_READ_API_EVENTS', names)
 
+    def test_public_self_route_preserves_history_alias_tls_and_secret_separation(self):
+        value = self.selected()
+        public = [{'ip': '10.96.42.7', 'hostnames': ['api.gcp-proof.agentrelay.com']}]
+        value['services']['publicHostAliases'] = public
+        docs = self.render(value)
+        api = next(d for d in docs if d['kind'] == 'Deployment')['spec']['template']['spec']
+        self.assertEqual(api['hostAliases'], value['services']['relayhistoryHostAliases'] + public)
+        env = {e['name']: e.get('value') for e in api['containers'][0]['env']}
+        self.assertEqual(env['SELFHOST_PUBLIC_URL'], 'https://api.gcp-proof.agentrelay.com')
+        self.assertEqual(env['RELAYHISTORY_READ_API_URL'], ORIGIN)
+        self.assertNotIn('hostAliases', next(d for d in docs if d['kind'] == 'Job')['spec']['template']['spec'])
+        keys = [i['key'] for v in api['volumes'] if 'secret' in v for i in v['secret'].get('items', [])]
+        self.assertNotIn('database-migrations-url', keys)
+        for bad in ([{'ip': '10.96.42.7', 'hostnames': ['other.gcp-proof.agentrelay.com']}],
+                    [{'ip': '10.96.42.7', 'hostnames': ['api.gcp-proof.agentrelay.com', 'other.host']}],
+                    [{'ip': '010.96.42.7', 'hostnames': ['api.gcp-proof.agentrelay.com']}], public * 2):
+            changed = deepcopy(value); changed['services']['publicHostAliases'] = bad
+            self.render(changed, 'publicHostAlias')
+
     def test_enabled_connection_is_owned_by_api_only(self):
         docs = self.render(self.selected())
         api = next(d for d in docs if d['kind'] == 'Deployment')['spec']['template']['spec']

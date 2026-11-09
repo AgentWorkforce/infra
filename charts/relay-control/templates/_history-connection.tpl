@@ -23,6 +23,18 @@
 {{- if or (not (kindIs "slice" .hostnames)) (ne (len .hostnames) 1) }}{{ fail "reader hostAlias must name exactly the configured reader hostname" }}{{ end -}}
 {{- if or (not (kindIs "string" (index .hostnames 0))) (ne (index .hostnames 0) ((urlParse $url).hostname)) }}{{ fail "reader hostAlias hostname must equal services.relayhistoryReadApiUrl hostname" }}{{ end -}}
 {{- end -}}
+{{- $publicAliases := $services.publicHostAliases -}}
+{{- if not (kindIs "slice" $publicAliases) }}{{ fail "services.publicHostAliases must be a list" }}{{ end -}}
+{{- if gt (len $publicAliases) 1 }}{{ fail "services.publicHostAliases accepts one explicit public gateway address" }}{{ end -}}
+{{- range $publicAliases -}}
+{{- if or (not (kindIs "map" .)) (ne (len (keys .)) 2) (not (hasKey . "ip")) (not (hasKey . "hostnames")) }}{{ fail "publicHostAlias must contain only ip and hostnames" }}{{ end -}}
+{{- if or (not (kindIs "string" .ip)) (not (regexMatch "^([0-9]{1,3}\\.){3}[0-9]{1,3}$" (toString .ip))) }}{{ fail "publicHostAlias.ip must be an IPv4 literal" }}{{ end -}}
+{{- range splitList "." .ip }}{{ if or (gt (int .) 255) (ne . (toString (int .))) }}{{ fail "publicHostAlias.ip must use canonical IPv4 octets" }}{{ end }}{{ end -}}
+{{- if or (not (kindIs "slice" .hostnames)) (ne (len .hostnames) 1) }}{{ fail "publicHostAlias must name exactly the configured public hostname" }}{{ end -}}
+{{- $host := (urlParse (include "relay-control.publicUrl" $)).hostname -}}
+{{- if or (not (kindIs "string" (index .hostnames 0))) (ne (index .hostnames 0) $host) }}{{ fail "publicHostAlias hostname must equal publicUrl hostname" }}{{ end -}}
+{{- range $aliases }}{{ if has $host .hostnames }}{{ fail "publicHostAlias must not duplicate a History hostname mapping" }}{{ end }}{{ end -}}
+{{- end -}}
 {{- end -}}
 
 {{- define "relay-control.historyConnectionEnv" -}}

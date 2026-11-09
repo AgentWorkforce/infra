@@ -11,10 +11,29 @@ from unittest.mock import Mock, patch
 import edge
 import native_network
 from stack import Stack, StackError
-from test_native_network import values
+from test_native_network import values, Fixture
 
 
 class PrepareCommand(unittest.TestCase):
+    def test_real_cross_namespace_inventory_refuses_before_dependency_gateway_or_proposed_values_writes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            stack = Fixture(directory)
+            stack.namespaces.remove(native_network.APP_NS)
+            stack.namespaces.append('another-app')
+            stack.ingresses = [{'metadata': {'name': 'foreign', 'namespace': 'another-app', 'uid': 'foreign'},
+                'spec': {'ingressClassName': 'traefik', 'rules': [{'host': 'history.kind.agentrelay.com',
+                    'http': {'paths': [{'path': '/v1/events', 'pathType': 'Exact',
+                        'backend': {'service': {'name': 'foreign', 'port': {'number': 80}}}}]}}]}}]
+            stack.docker = Mock()
+            stack.dependencies = Mock(side_effect=AssertionError('dependencies must not run'))
+            selected = stack.state / 'selected.json'; selected.write_text(json.dumps(values()))
+            before = {p.name: p.read_bytes() for p in stack.state.iterdir()}
+            with patch.object(edge, 'install') as gateway, self.assertRaisesRegex(ValueError, 'ownership handoff'):
+                Stack.prepare_native_network(stack, selected)
+            stack.dependencies.assert_not_called(); gateway.assert_not_called()
+            self.assertEqual(before, {p.name: p.read_bytes() for p in stack.state.iterdir()})
+            self.assertFalse(any(call[0] == 'k' and call[1][0] != 'get' for call in stack.calls))
+
     def fixture(self, directory):
         state = Path(directory)
         selected = state / 'selected.json'

@@ -88,6 +88,30 @@ class NativeRouting(unittest.TestCase):
         for enabled in ["true", 1, None]:
             self.render({"nativeRouting": {"enabled": enabled}}, error="nativeRouting.enabled must be a boolean")
 
+    def test_public_boundary_and_async_status_use_actual_leaf_and_umbrella_routes(self):
+        def selected(paths, path):
+            matches = [p for p in paths if (p["pathType"] == "Exact" and path == p["path"]) or
+                       (p["pathType"] == "Prefix" and (path == p["path"] or path.startswith(p["path"].rstrip("/") + "/")))]
+            return max(matches, key=lambda p: (len(p["path"]), p["pathType"] == "Exact"))["backend"]["service"]["name"] if matches else None
+        for umbrella in (False, True):
+            for mode in ("sync", "async", "drain"):
+                overlay = {"ingestEdge": {"admission": {"mode": mode}}}
+                if umbrella: overlay = {"sessions-pipeline": overlay}
+                paths = self.ingress(self.render(overlay, umbrella=umbrella))["spec"]["rules"][0]["http"]["paths"]
+                for private in ("/", "/healthz", "/internal/v1/session-read/sessions", "/v10/events", "/v1evil"):
+                    self.assertIsNone(selected(paths, private), (umbrella, mode, private))
+                for read in ("/v1", "/v1/events", "/v1/sessions", "/v1/delivery/admission/extra"):
+                    self.assertEqual(selected(paths, read), "routing-test-read-api")
+                exact = [p for p in paths if p["path"] == "/v1/delivery/admission"]
+                self.assertEqual(len(exact), int(mode != "sync"))
+                self.assertEqual(selected(paths, "/v1/delivery/admission"),
+                                 "routing-test-read-api" if mode == "sync" else "routing-test-ingest-edge")
+                for path in ("/v1/delivery/batches", "/v1/turns/batches", "/v1/delivery/limits"):
+                    self.assertEqual(selected(paths, path), "routing-test-ingest-edge")
+                if exact:
+                    self.assertEqual(exact[0]["pathType"], "Exact")
+                    self.assertEqual(exact[0]["backend"]["service"]["port"], {"number": 80})
+
     def test_exact_paths_bind_to_actual_service_ports_not_container_ports(self):
         docs = self.render({"sessionReadApi": {"port": 8092}, "ingestEdge": {"port": 8093}})
         route = self.ingress(docs)
@@ -95,11 +119,11 @@ class NativeRouting(unittest.TestCase):
         self.assertEqual(route["spec"]["ingressClassName"], "test-edge")
         self.assertEqual(route["spec"]["tls"], [{"hosts": ["history.selfhosted.company"], "secretName": "history-tls"}])
         paths = route["spec"]["rules"][0]["http"]["paths"]
-        self.assertEqual([(p["path"], p["pathType"]) for p in paths], [("/", "Prefix"), ("/v1/delivery/batches", "Exact"), ("/v1/turns/batches", "Exact"), ("/v1/delivery/limits", "Exact")])
+        self.assertEqual([(p["path"], p["pathType"]) for p in paths], [("/v1", "Prefix"), ("/v1/delivery/batches", "Exact"), ("/v1/turns/batches", "Exact"), ("/v1/delivery/limits", "Exact")])
         self.assertEqual(len({p["path"] for p in paths}), 4)
         for path in paths:
             backend = path["backend"]["service"]
-            name = "routing-test-read-api" if path["path"] == "/" else "routing-test-ingest-edge"
+            name = "routing-test-read-api" if path["path"] == "/v1" else "routing-test-ingest-edge"
             self.assertEqual(backend["name"], name)
             service = next(d for d in docs if d["kind"] == "Service" and d["metadata"]["name"] == name)
             deployment = next(d for d in docs if d["kind"] == "Deployment" and d["metadata"]["name"] == name)
@@ -114,7 +138,7 @@ class NativeRouting(unittest.TestCase):
     def test_records_and_other_reads_never_match_the_upload_edge(self):
         paths = self.ingress(self.render())["spec"]["rules"][0]["http"]["paths"]
         def selected(path):
-            matches = [p for p in paths if (p["pathType"] == "Exact" and path == p["path"]) or (p["pathType"] == "Prefix" and p["path"] == "/")]
+            matches = [p for p in paths if (p["pathType"] == "Exact" and path == p["path"]) or (p["pathType"] == "Prefix" and (path == p["path"] or path.startswith(p["path"].rstrip("/") + "/")))]
             return max(matches, key=lambda p: (len(p["path"]), p["pathType"] == "Exact"))["backend"]["service"]["name"]
         for path in ["/v1/delivery/records", "/v1/delivery/batches/extra", "/v1/sessions", "/v1/sessions/test-id/turns", "/v1/events", "/v1/cli/login", "/v1/privacy/control-head", "/v1/sessions/test-id/reset"]:
             self.assertEqual(selected(path), "routing-test-read-api", path)

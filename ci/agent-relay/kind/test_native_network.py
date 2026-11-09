@@ -30,12 +30,15 @@ class Fixture:
         self.cluster = cluster
         self.actual_uid = UID
         self.service = None
+        self.public_service = None
         self.ingresses = []
+        self.ingressclasses = [{'metadata': {'name': 'traefik'}, 'spec': {'controller': 'traefik.io/ingress-controller'}}]
         self.policies = []
         self.namespaces = ["kube-system", n.EDGE_NS, n.APP_NS]
         self.gateway = {'metadata': {'name': 'kind-edge', 'namespace': n.EDGE_NS, 'annotations': {
             'meta.helm.sh/release-name': 'kind-edge', 'meta.helm.sh/release-namespace': n.EDGE_NS}},
-            'spec': {'template': {'metadata': {'labels': dict(n.SELECTOR)}}}, 'status': {'readyReplicas': 1}}
+            'spec': {'template': {'metadata': {'labels': dict(n.SELECTOR)},
+                'spec': {'containers': [{'ports': [{'name': 'websecure', 'containerPort': 8443}]}]}}}, 'status': {'readyReplicas': 1}}
         if cluster:
             self.marker.write_text(json.dumps({'version': 1, 'name': self.name, 'profile': profile,
                                                'clusterUid': UID, 'dockerHost': self.env['DOCKER_HOST']}))
@@ -62,10 +65,19 @@ class Fixture:
         if args[:2] == ('get', 'namespace'):
             return SimpleNamespace(stdout=json.dumps({'items': [{'metadata': {'name': name}} for name in self.namespaces]}))
         if args[:2] == ('get', 'ingress'):
-            assert namespace == n.APP_NS
-            return SimpleNamespace(stdout=json.dumps({'items': self.ingresses}))
+            if '--all-namespaces' in args:
+                assert namespace is None
+                items = self.ingresses
+            else:
+                items = [item for item in self.ingresses if item.get('metadata', {}).get('namespace') == namespace]
+            return SimpleNamespace(stdout=json.dumps({'items': items}))
+        if args[:2] == ('get', 'ingressclass'):
+            assert namespace is None
+            return SimpleNamespace(stdout=json.dumps({'items': self.ingressclasses}))
         if args[:2] == ('get', 'service'):
             assert namespace == n.EDGE_NS
+            if args[2] == n.PUBLIC_SERVICE:
+                return SimpleNamespace(stdout=json.dumps(self.public_service))
             return SimpleNamespace(stdout=json.dumps(self.service) if self.service else '')
         if args[:2] == ('get', 'networkpolicy'):
             assert namespace == n.APP_NS
@@ -113,6 +125,81 @@ class NativeNetwork(unittest.TestCase):
             sessionReadApiPublicUrl=reader["origin"])
         v["relay-control"]["secretKeys"] = {"sessionReadApiSecret": "reader-internal", "introspectSecret": "ingest-introspection"}
         return v
+
+    def public_route(self):
+        v = self.independent(); v['relay-control']['publicUrl'] = 'https://relay.kind.agentrelay.com'
+        self.stack.public_service = {'kind': 'Service', 'metadata': {'name': n.PUBLIC_SERVICE, 'namespace': n.EDGE_NS,
+            'uid': 'original-public-service', 'labels': {'app.kubernetes.io/managed-by': 'Helm'},
+            'annotations': {'meta.helm.sh/release-name': 'kind-edge', 'meta.helm.sh/release-namespace': n.EDGE_NS}},
+            'spec': {'type': 'NodePort', 'selector': dict(n.SELECTOR), 'clusterIP': '10.96.42.7', 'clusterIPs': ['10.96.42.7'],
+                'ports': [{'name': 'websecure', 'port': 443, 'targetPort': 'websecure', 'nodePort': 30443}]}}
+        return v
+
+    def test_public_route_binds_owned_service_and_literal_control_host_without_mutation(self):
+        v = self.public_route(); v['relay-control']['services']['relayhistoryHostAliases'] = [
+            {'ip': '10.96.137.234', 'hostnames': ['history.kind.agentrelay.com']}]
+        before = copy.deepcopy(v)
+        record = n.control_public_route(self.stack, v)
+        self.assertEqual(n.control_public_route(self.stack, v, record), record)
+        result = n.public_route_values(v, record)
+        self.assertEqual(result['relay-control']['services']['publicHostAliases'], [
+            {'ip': '10.96.42.7', 'hostnames': ['relay.kind.agentrelay.com']}])
+        self.assertEqual(result['relay-control']['services']['relayhistoryHostAliases'],
+                         v['relay-control']['services']['relayhistoryHostAliases'])
+        self.assertEqual(record['service']['specSha256'], n.digest(self.stack.public_service['spec']))
+        self.assertEqual(v, before)
+        self.assertTrue(all(c[0] == 'owned-check' or c[0] == 'k' and c[1][0] == 'get' for c in self.stack.calls))
+
+    def test_public_route_refuses_recreated_service_selector_transport_and_record_drift(self):
+        v = self.public_route(); record = n.control_public_route(self.stack, v)
+        original = copy.deepcopy(self.stack.public_service)
+        for change in (lambda s: s['metadata'].update(uid='replacement'),
+                       lambda s: s['metadata']['annotations'].update({'meta.helm.sh/release-name': 'foreign'}),
+                       lambda s: s['spec']['selector'].update({'app.kubernetes.io/name': 'foreign'}),
+                       lambda s: s['spec']['ports'][0].update(port=8443),
+                       lambda s: s['spec']['ports'][0].update(targetPort=443),
+                       lambda s: s['spec']['ports'][0].update(nodePort=31443),
+                       lambda s: s['spec'].update(clusterIP='10.96.42.8', clusterIPs=['10.96.42.8'])):
+            self.stack.public_service = copy.deepcopy(original); change(self.stack.public_service)
+            with self.subTest(change=change), self.assertRaises(ValueError): n.control_public_route(self.stack, v, record)
+        self.stack.public_service = original
+        self.stack.gateway['spec']['template']['spec']['containers'][0]['ports'][0]['containerPort'] = 443
+        with self.assertRaisesRegex(ValueError, 'Pod port 8443'): n.control_public_route(self.stack, v, record)
+        for key, val in (('host', 'other.kind.agentrelay.com'), ('origin', 'https://other.kind.agentrelay.com')):
+            changed = copy.deepcopy(record); changed[key] = val
+            with self.assertRaisesRegex(ValueError, 'observation'): n.public_route_values(v, changed)
+
+    def test_missing_public_service_is_pending_only_before_first_qualification(self):
+        v = self.public_route(); original = n.control_public_route(self.stack, v)
+        self.stack.public_service = None
+        self.assertIsNone(n.control_public_route(self.stack, v, allow_absent=True))
+        with self.assertRaisesRegex(ValueError, 'disappeared'):
+            n.control_public_route(self.stack, v, original, allow_absent=True)
+        with self.assertRaisesRegex(ValueError, 'disappeared'): n.control_public_route(self.stack, v)
+        self.assertFalse(any(c[0] == 'k' and c[1][0] != 'get' for c in self.stack.calls))
+
+    def test_async_exact_admission_route_is_required_without_widening_reader(self):
+        # Install the unmodified owned sync fixture, then require the one new
+        # exact status path for either async admission mode.
+        self.stack.ingresses = []
+        cfg = n.selection(values())
+        paths = [{'path': path, 'pathType': typ, 'backend': {'service': {'name': service, 'port': {'number': 80}}}}
+                 for path, typ, service in [('/v1', 'Prefix', cfg['reader']), ('/v1/delivery/batches', 'Exact', cfg['ingest']),
+                    ('/v1/turns/batches', 'Exact', cfg['ingest']), ('/v1/delivery/limits', 'Exact', cfg['ingest'])]]
+        self.stack.ingresses = [{'metadata': {'name': cfg['ingress'], 'namespace': n.APP_NS, 'uid': 'owned',
+            'labels': {'app.kubernetes.io/managed-by': 'Helm'}, 'annotations': {
+                'meta.helm.sh/release-name': 'agent-relay', 'meta.helm.sh/release-namespace': n.APP_NS}},
+            'spec': {'ingressClassName': 'traefik', 'tls': [{'hosts': [cfg['host']], 'secretName': cfg['tls']}],
+                     'rules': [{'host': cfg['host'], 'http': {'paths': paths}}]}}]
+        for mode in ('async', 'drain'):
+            v = values(); v['sessions-pipeline']['ingestEdge']['admission'] = {'mode': mode}
+            with self.assertRaisesRegex(ValueError, 'path contract'): n._ingresses(self.stack, n.selection(v))
+            status = {'path': '/v1/delivery/admission', 'pathType': 'Exact',
+                      'backend': {'service': {'name': cfg['ingest'], 'port': {'number': 80}}}}
+            paths.append(status); n._ingresses(self.stack, n.selection(v))
+            status['pathType'] = 'Prefix'
+            with self.assertRaisesRegex(ValueError, 'path contract'): n._ingresses(self.stack, n.selection(v))
+            paths.pop()
 
     def test_independent_private_reader_never_creates_or_injects_public_dns_alias(self):
         v = self.independent(); before = copy.deepcopy(v)
@@ -252,7 +339,7 @@ class NativeNetwork(unittest.TestCase):
     def test_existing_owned_ingress_must_match_exact_route_tls_and_backend_contract(self):
         cfg = n.selection(values())
         paths = [{"path": path, "pathType": typ, "backend": {"service": {"name": name, "port": {"number": 80}}}}
-                 for path, typ, name in [("/", "Prefix", cfg["reader"]), ("/v1/delivery/batches", "Exact", cfg["ingest"]),
+                 for path, typ, name in [("/v1", "Prefix", cfg["reader"]), ("/v1/delivery/batches", "Exact", cfg["ingest"]),
                                          ("/v1/turns/batches", "Exact", cfg["ingest"]), ("/v1/delivery/limits", "Exact", cfg["ingest"])]]
         owned = {"metadata": {"name": cfg["ingress"], "namespace": n.APP_NS, "uid": "owned-ingress",
                  "labels": {"app.kubernetes.io/managed-by": "Helm"}, "annotations": {
@@ -304,6 +391,85 @@ class NativeNetwork(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "ownership handoff"):
                 n.preflight(self.stack, values())
         self.assertFalse(any(c[0] == "k" and c[1][0] == "create" for c in self.stack.calls))
+        self.stack.assert_anchors(self)
+
+    def test_all_watched_namespaces_refuse_same_host_routes_even_before_app_namespace_exists(self):
+        host = n.selection(values())['host']
+        for app_exists in (False, True):
+            self.stack.namespaces = ['kube-system', n.EDGE_NS, 'another-app'] + ([n.APP_NS] if app_exists else [])
+            for namespace in ('another-app', n.EDGE_NS):
+                for competing_host in (host, '*.kind.agentrelay.com', None):
+                    for path in ('/', '/v1/events', '/unrelated'):
+                        self.stack.ingresses = [{'metadata': {'name': 'foreign-history', 'namespace': namespace, 'uid': 'foreign'},
+                            'spec': {'ingressClassName': 'traefik', 'rules': [{'host': competing_host,
+                                'http': {'paths': [{'path': path, 'pathType': 'Prefix',
+                                    'backend': {'service': {'name': 'foreign', 'port': {'number': 80}}}}]}}]}}]
+                        with self.subTest(app_exists=app_exists, namespace=namespace, host=competing_host, path=path):
+                            with self.assertRaisesRegex(ValueError, 'ownership handoff'): n.ensure(self.stack, values())
+        self.assertTrue(any(c[0] == 'k' and c[1][:3] == ('get', 'ingress', '--all-namespaces')
+                            and c[2] is None for c in self.stack.calls))
+        self.assertFalse(any(c[0] == 'k' and c[1][0] == 'create' for c in self.stack.calls))
+        self.stack.assert_anchors(self)
+
+    def test_cross_namespace_class_scope_and_tls_competition_match_provider(self):
+        host = n.selection(values())['host']
+        self.stack.ingressclasses += [{'metadata': {'name': 'another-traefik'},
+            'spec': {'controller': 'traefik.io/ingress-controller'}},
+            {'metadata': {'name': 'nginx'}, 'spec': {'controller': 'k8s.io/ingress-nginx'}}]
+        foreign = {'metadata': {'name': 'foreign', 'namespace': 'another-app', 'uid': 'foreign'},
+            'spec': {'rules': [{'host': host, 'http': {'paths': [{'path': '/v1/events', 'pathType': 'Exact',
+                'backend': {'service': {'name': 'foreign', 'port': {'number': 80}}}}]}}]}}
+        for ingress_class, annotation in ((None, None), (None, ''), (None, 'traefik'), ('traefik', 'nginx'), ('another-traefik', None)):
+            item = copy.deepcopy(foreign)
+            if ingress_class is not None: item['spec']['ingressClassName'] = ingress_class
+            if annotation is not None: item['metadata']['annotations'] = {'kubernetes.io/ingress.class': annotation}
+            self.stack.ingresses = [item]
+            with self.subTest(ingress_class=ingress_class, annotation=annotation), self.assertRaisesRegex(ValueError, 'ownership handoff'):
+                n.preflight(self.stack, values())
+        other_rules = copy.deepcopy(foreign['spec']['rules']); other_rules[0]['host'] = 'other.kind.agentrelay.com'
+        for spec in ({'defaultBackend': {'service': {'name': 'foreign', 'port': {'number': 80}}}},
+                     {'rules': other_rules, 'tls': [{'hosts': [host], 'secretName': 'foreign-tls'}]},
+                     {'rules': other_rules, 'tls': [{'hosts': ['*.kind.agentrelay.com'], 'secretName': 'foreign-tls'}]}):
+            self.stack.ingresses = [{'metadata': copy.deepcopy(foreign['metadata']), 'spec': spec}]
+            with self.assertRaisesRegex(ValueError, 'ownership handoff'): n.preflight(self.stack, values())
+        for ingress_class, annotation, actual_host in (('nginx', 'traefik', host), (None, 'nginx', host),
+                                                     ('traefik', None, 'other.kind.agentrelay.com'),
+                                                     ('another-traefik', None, '*.other.agentrelay.com')):
+            item = copy.deepcopy(foreign); item['spec']['rules'][0]['host'] = actual_host
+            if ingress_class is not None: item['spec']['ingressClassName'] = ingress_class
+            if annotation is not None: item['metadata']['annotations'] = {'kubernetes.io/ingress.class': annotation}
+            self.stack.ingresses = [item]
+            with self.subTest(allowed_class=ingress_class, annotation=annotation, host=actual_host):
+                self.assertTrue(n.preflight(self.stack, values())['pendingFreshService'])
+        self.stack.assert_anchors(self)
+
+    def test_expected_name_never_exempts_foreign_namespace_or_ownership_and_listing_errors_fail_closed(self):
+        cfg = n.selection(values())
+        paths = [{'path': path, 'pathType': typ, 'backend': {'service': {'name': service, 'port': {'number': 80}}}}
+                 for path, typ, service in [('/v1', 'Prefix', cfg['reader']), ('/v1/delivery/batches', 'Exact', cfg['ingest']),
+                    ('/v1/turns/batches', 'Exact', cfg['ingest']), ('/v1/delivery/limits', 'Exact', cfg['ingest'])]]
+        selected = {'metadata': {'name': cfg['ingress'], 'namespace': n.APP_NS, 'uid': 'original',
+            'labels': {'app.kubernetes.io/managed-by': 'Helm'}, 'annotations': {
+                'meta.helm.sh/release-name': 'agent-relay', 'meta.helm.sh/release-namespace': n.APP_NS}},
+            'spec': {'ingressClassName': 'traefik', 'tls': [{'hosts': [cfg['host']], 'secretName': cfg['tls']}],
+                     'rules': [{'host': cfg['host'], 'http': {'paths': paths}}]}}
+        self.stack.ingresses = [selected]
+        self.assertTrue(n.preflight(self.stack, values())['pendingFreshService'])
+        for mutate in (lambda x: x['metadata'].update(namespace='another-app'),
+                       lambda x: x['metadata']['annotations'].update({'meta.helm.sh/release-name': 'foreign'}),
+                       lambda x: x['metadata']['annotations'].update({'meta.helm.sh/release-namespace': 'another-app'}),
+                       lambda x: x['metadata']['labels'].clear(),
+                       lambda x: x['spec'].update(ingressClassName='nginx')):
+            item = copy.deepcopy(selected); mutate(item); self.stack.ingresses = [item]
+            with self.assertRaises(ValueError): n.preflight(self.stack, values())
+        original_k = self.stack.k
+        for resource in ('ingressclass', 'ingress'):
+            def forbidden(*args, **kw):
+                if args[:2] == ('get', resource): raise ValueError('inventory forbidden')
+                return original_k(*args, **kw)
+            with patch.object(self.stack, 'k', side_effect=forbidden):
+                with self.assertRaisesRegex(ValueError, 'inventory forbidden'): n.ensure(self.stack, values())
+        self.assertFalse(any(c[0] == 'k' and c[1][0] == 'create' for c in self.stack.calls))
         self.stack.assert_anchors(self)
 
     def test_source_owned_policy_must_remain_exact_and_manual_policy_refuses(self):

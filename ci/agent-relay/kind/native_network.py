@@ -19,6 +19,7 @@ APP_NS = "agent-relay"
 SERVICE = "kind-native-history-edge8443"
 RECORD = "native-network.json"
 CONTROL_EGRESS = "kind-control-native-readback-egress"
+PUBLIC_SERVICE = "kind-edge-traefik"
 SELECTOR = {"app.kubernetes.io/instance": "kind-edge-kind-edge", "app.kubernetes.io/name": "traefik"}
 OWNER = "kind.agentrelay.dev/native-network"
 SHA = re.compile(r"[a-f0-9]{64}\Z")
@@ -153,7 +154,11 @@ def selection(values):
             fail("native Ingress and TLS names must be DNS subdomains")
     if re.search(r"\.(localhost|local|internal|lan|invalid|test|example|home\.arpa|onion)$", host) or re.search(r"\.example\.(com|net|org)$", host):
         fail("History origin must be public DNS")
-    return {"origin": origin, "host": host, **names, **({"independentIssuer": True} if independent else {})}
+    admission = ingest.get("admission", {}).get("mode", "sync")
+    if admission not in ("sync", "async", "drain"):
+        fail("unsupported ingest admission mode")
+    return {"origin": origin, "host": host, **names, "admissionMode": admission,
+            **({"independentIssuer": True} if independent else {})}
 
 
 def _owner(stack):
@@ -245,23 +250,41 @@ def _record(stack, owner, cfg, service):
 
 
 def _ingresses(stack, cfg):
-    items = json.loads(stack.k("get", "ingress", "-o", "json", namespace=APP_NS).stdout).get("items", [])
-    expected_paths = {("/v1" if cfg.get("independentIssuer") else "/", "Prefix", cfg["reader"]), ("/v1/delivery/batches", "Exact", cfg["ingest"]),
+    # edge.install leaves the provider's namespace and ingress-class filters
+    # unset. It watches every namespace, unclassified/traefik annotations and
+    # every IngressClass owned by the Traefik controller. Inventory that same
+    # scope even before APP_NS exists; never mutate the shared provider to
+    # conceal a competing route. Failure to list either resource fails closed.
+    classes = json.loads(stack.k("get", "ingressclass", "-o", "json", namespace=None).stdout).get("items", [])
+    watched = {"traefik"} | {c.get("metadata", {}).get("name") for c in classes
+        if c.get("spec", {}).get("controller") == "traefik.io/ingress-controller"}
+    items = json.loads(stack.k("get", "ingress", "--all-namespaces", "-o", "json", namespace=None).stdout).get("items", [])
+    expected_paths = {("/v1", "Prefix", cfg["reader"]), ("/v1/delivery/batches", "Exact", cfg["ingest"]),
                       ("/v1/turns/batches", "Exact", cfg["ingest"]), ("/v1/delivery/limits", "Exact", cfg["ingest"])}
+    if cfg.get("admissionMode") in ("async", "drain"):
+        expected_paths.add(("/v1/delivery/admission", "Exact", cfg["ingest"]))
     if cfg.get("independentIssuer"):
         expected_paths.add(("/v1/auth/token/refresh", "Exact", cfg["ingest"]))
     for item in items:
         spec, meta = item.get("spec", {}), item.get("metadata", {})
+        selected = meta.get("name") == cfg["ingress"] and meta.get("namespace") == APP_NS
+        ann = meta.get("annotations", {})
+        name = spec.get("ingressClassName")
+        processed = name in watched if name is not None else ann.get("kubernetes.io/ingress.class", "") in ("", "traefik")
+        # A changed selected object's class/hostname must still refuse rather
+        # than disappear from the inventory via a class filter.
+        if not selected and not processed:
+            continue
         rules = spec.get("rules", [])
         def matches(host):
             return not host or host == cfg["host"] or (isinstance(host, str) and host.startswith("*.")
                 and cfg["host"].endswith(host[1:])
                 and "." not in cfg["host"][:-len(host[1:])])
-        if (meta.get("name") != cfg["ingress"] and not spec.get("defaultBackend")
-                and not any(matches(r.get("host")) for r in rules)):
+        if (not selected and not spec.get("defaultBackend")
+                and not any(matches(r.get("host")) for r in rules)
+                and not any(matches(host) for tls in spec.get("tls", []) for host in tls.get("hosts", []))):
             continue
-        ann = meta.get("annotations", {})
-        if (meta.get("name") != cfg["ingress"] or meta.get("namespace") != APP_NS or not meta.get("uid")
+        if (not selected or not meta.get("uid")
                 or ann.get("meta.helm.sh/release-name") != "agent-relay"
                 or ann.get("meta.helm.sh/release-namespace") != APP_NS
                 or meta.get("labels", {}).get("app.kubernetes.io/managed-by") != "Helm"):
@@ -297,8 +320,6 @@ def _control_egress(stack, values):
         meta = policy.get("metadata", {})
         if meta.get("name") != CONTROL_EGRESS:
             continue
-        if selection(values).get("independentIssuer"):
-            fail("independent reader uses private service transport; existing legacy gateway egress requires explicit review")
         annotations = meta.get("annotations", {})
         if (meta.get("namespace") != APP_NS or not meta.get("uid")
                 or annotations.get("meta.helm.sh/release-name") != "agent-relay"
@@ -332,8 +353,8 @@ def preflight(stack, values):
     namespaces = {d.get("metadata", {}).get("name") for d in namespace_items}
     if EDGE_NS in namespaces:
         _gateway(stack, allow_absent=True, require_ready=False)
+    _ingresses(stack, cfg)
     if APP_NS in namespaces:
-        _ingresses(stack, cfg)
         _control_egress(stack, values)
     service = _service(stack) if EDGE_NS in namespaces else None
     if cfg.get("independentIssuer"):
@@ -368,6 +389,87 @@ def _gateway(stack, *, allow_absent=False, require_ready=True):
             or any(labels.get(k) != v for k, v in SELECTOR.items())
             or (require_ready and gateway.get("status", {}).get("readyReplicas", 0) < 1)):
         fail("the Traefik gateway is foreign, unready or has a different selector")
+    return gateway
+
+
+def control_public_route(stack, values, expected=None, *, allow_absent=False):
+    """Read-only exact public Control hostname -> owned HTTPS edge binding.
+
+    This is separate from the legacy History alias helper. It creates no
+    Service and never changes a public URL, TLS authority or Secret.
+    """
+    owner = _owner(stack)
+    origin = values.get("relay-control", {}).get("publicUrl", "")
+    parsed = urlsplit(origin)
+    if (parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password
+            or parsed.path or parsed.query or parsed.fragment or parsed.port not in (None, 443)
+            or origin != "https://" + parsed.hostname):
+        fail("Control public self-route requires its literal HTTPS origin on 443")
+    raw = stack.k("get", "service", PUBLIC_SERVICE, "-o", "json", "--ignore-not-found=true", namespace=EDGE_NS).stdout.strip()
+    service = json.loads(raw) if raw else None
+    if service is None:
+        if allow_absent and expected is None and not values["relay-control"]["services"].get("publicHostAliases"):
+            return None
+        fail("the bound Control public gateway Service disappeared")
+    gateway = _gateway(stack)
+    ports = [p for c in gateway["spec"]["template"]["spec"]["containers"] for p in c.get("ports", [])
+             if p.get("name") == "websecure"]
+    if len(ports) != 1 or ports[0].get("containerPort") != 8443 or ports[0].get("protocol", "TCP") != "TCP":
+        fail("public gateway must terminate on the verified websecure Pod port 8443")
+    meta, spec = service.get("metadata", {}), service.get("spec", {})
+    ann = meta.get("annotations", {})
+    if (meta.get("name") != PUBLIC_SERVICE or meta.get("namespace") != EDGE_NS or not meta.get("uid")
+            or ann.get("meta.helm.sh/release-name") != "kind-edge"
+            or ann.get("meta.helm.sh/release-namespace") != EDGE_NS
+            or meta.get("labels", {}).get("app.kubernetes.io/managed-by") != "Helm"
+            or meta.get("ownerReferences") or spec.get("type") != "NodePort" or spec.get("selector") != SELECTOR
+            or spec.get("externalName") or spec.get("externalIPs")):
+        fail("Control public route requires the exact Helm-owned Traefik Service")
+    secure = [p for p in spec.get("ports", []) if p.get("port") == 443]
+    if (len(secure) != 1 or secure[0].get("name") != "websecure" or secure[0].get("targetPort") != "websecure"
+            or secure[0].get("protocol", "TCP") != "TCP"):
+        fail("public gateway Service443 must target websecure8443")
+    try:
+        address = ipaddress.ip_address(spec.get("clusterIP", ""))
+    except ValueError:
+        fail("public gateway must have a canonical IPv4 ClusterIP")
+    if (address.version != 4 or not address.is_private or address.is_unspecified or address.is_loopback
+            or address.is_link_local or address.is_multicast or spec.get("clusterIPs", [str(address)]) != [str(address)]):
+        fail("public gateway must have a private IPv4 ClusterIP")
+    record = {"type": "local-kind-native-control-public-route", "version": 1, **owner,
+              "origin": origin, "host": parsed.hostname, "service": {"name": PUBLIC_SERVICE, "namespace": EDGE_NS,
+              "uid": meta["uid"], "clusterIP": str(address), "specSha256": digest(spec)}}
+    if expected is not None and expected != record:
+        fail("Control public gateway UID, spec, address or hostname changed")
+    public_route_values(values, record)  # Refuse conflicting operator aliases before any mutation.
+    return record
+
+
+def public_route_values(values, record):
+    """Pure application of an observed, caller-bound public gateway record."""
+    result = copy.deepcopy(values)
+    services = result.setdefault("relay-control", {}).setdefault("services", {})
+    origin = result["relay-control"].get("publicUrl")
+    if (not isinstance(record, dict) or record.get("version") != 1
+            or record.get("type") != "local-kind-native-control-public-route"
+            or record.get("origin") != origin or record.get("host") != urlsplit(origin or "").hostname
+            or not record.get("clusterUid") or not record.get("name")
+            or record.get("service", {}).get("name") != PUBLIC_SERVICE
+            or record["service"].get("namespace") != EDGE_NS or not record["service"].get("uid")
+            or not SHA.fullmatch(record["service"].get("specSha256", ""))):
+        fail("qualified Control public gateway observation required")
+    address = record["service"].get("clusterIP", "")
+    try:
+        ip = ipaddress.ip_address(address)
+    except ValueError:
+        fail("qualified Control public gateway address required")
+    if ip.version != 4 or not ip.is_private or ip.is_loopback or ip.is_unspecified or ip.is_link_local or ip.is_multicast:
+        fail("qualified private Control public gateway address required")
+    aliases = [{"ip": address, "hostnames": [record["host"]]}]
+    if services.get("publicHostAliases") not in (None, [], aliases):
+        fail("existing Control public aliases differ from the qualified gateway")
+    services["publicHostAliases"] = aliases
+    return result
 
 
 def ensure(stack, values):
