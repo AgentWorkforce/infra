@@ -234,7 +234,7 @@ class NativePipelineTests(unittest.TestCase):
     def test_owner_job_is_bounded_tokenless_and_mounts_only_existing_owner_secret_and_public_ca(self):
         self.operator_fixture()
         self.adapter._operator_pod(self.s)
-        job = next(v for k, v in self.stack.objects_by_name.items() if k.startswith("job/"))
+        job = self.stack.objects_by_name["job/" + self.adapter._operator["name"]]
         self.assertEqual(job["apiVersion"], "batch/v1")
         self.assertEqual(job["spec"]["activeDeadlineSeconds"], 1200)
         self.assertEqual(job["spec"]["backoffLimit"], 0)

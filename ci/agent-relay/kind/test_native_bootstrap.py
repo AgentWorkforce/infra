@@ -77,8 +77,16 @@ class OperatorStack(Stack):
             assert kw.get("sensitive") is True
             d = json.loads(kw["data"]); d["metadata"]["uid"] = "55555555-5555-4555-8555-555555555555"
             self.objects_by_name[d["kind"].lower() + "/" + d["metadata"]["name"]] = d
+            if d["kind"] == "Job" and d["spec"]["template"]["spec"]["containers"][0]["name"] == "locker-init":
+                d["status"] = {"succeeded": 1, "conditions": [{"type": "Complete", "status": "True"}]}
+                pod = {"metadata": {"name": d["metadata"]["name"] + "-pod", "uid": "66666666-6666-4666-8666-666666666666",
+                                    "ownerReferences": [{"kind": "Job", "name": d["metadata"]["name"], "uid": d["metadata"]["uid"], "controller": True}]},
+                       "spec": deepcopy(d["spec"]["template"]["spec"]), "status": {"phase": "Succeeded", "containerStatuses": [{"name": "locker-init", "imageID": "containerd://" + self.locker_config_digest, "state": {"terminated": {"exitCode": 0}}}]}}
+                self.objects_by_name["pods"] = {"items": [pod]}
+                self.objects_by_name["job/" + d["metadata"]["name"]] = d
             self.effects.append(("create", d["kind"])); return SimpleNamespace(stdout=json.dumps(d))
         if args[0] == "rollout": return SimpleNamespace(stdout="ready")
+        if args[0] == "wait": return SimpleNamespace(stdout="condition met")
         if args[0] == "exec":
             assert kw.get("sensitive") is True and "-i" in args and "psql" in args
             sql = kw["data"]; self.effects.append(("psql", None))
@@ -107,9 +115,11 @@ class NativeBootstrapTests(unittest.TestCase):
         import tarfile
         with tarfile.open(self.inputs["sourceArchive"]) as a: files = {m.name: a.extractfile(m).read() for m in a if m.isfile()}
         name = "supabase/tests/supabase_shim.sql"; files[name] = b"-- official shim fixture\n"
+        locker_name = "src/locker/init.ts"; files[locker_name] = b"export const sourceFixture = true;\n"
         tar(self.inputs["sourceArchive"], files)
         source["archiveSha256"] = hashlib.sha256(self.inputs["sourceArchive"].read_bytes()).hexdigest()
         source["files"][name] = {"gitMode": "100644", "sha256": hashlib.sha256(files[name]).hexdigest()}
+        source["files"][locker_name] = {"gitMode": "100644", "sha256": hashlib.sha256(files[locker_name]).hexdigest()}
         self.inputs["sourceManifestSha256"] = write_json(self.inputs["sourceManifest"], source)
         receipt = json.loads(self.inputs["pipelineReceipt"].read_text())
         receipt["source"]["archiveSha256"] = source["archiveSha256"]
@@ -129,7 +139,10 @@ class NativeBootstrapTests(unittest.TestCase):
 
     def fresh(self):
         facts = self.observed_preflight()
-        with patch.object(TlsMaterial, "verify", return_value=None):
+        def qualified_import(selected):
+            self.stack.locker_config_digest = selected["configDigest"]
+            self.stack.effects.append(("qualified-node-import", None))
+        with patch.object(TlsMaterial, "verify", return_value=None), patch.object(self.adapter, "_ensure_pipeline_image", side_effect=qualified_import):
             return self.adapter.prepare_infrastructure(self.s, facts)
 
     def test_owner_json_projects_oid_as_bigint_before_strict_decode(self):
@@ -197,7 +210,8 @@ class NativeBootstrapTests(unittest.TestCase):
             self.assertIn("CREATE DATABASE " + d + " OWNER " + owner, sql)
         self.assertNotIn("IF NOT EXISTS", sql)
         installed = next(kw for a, kw in self.stack.calls if a[:2] == ["helm", "install"])
-        self.assertEqual(json.loads(installed["data"])["buckets"], [{"name": "locker", "policy": "none", "purge": False}])
+        self.assertEqual(json.loads(installed["data"])["buckets"], [])
+        self.assertEqual(json.loads(installed["data"])["image"], self.adapter._locker_image())
 
     def test_credentials_only_go_to_create_stdin_and_never_to_files_or_argv(self):
         self.fresh(); self.adapter.prepare_owner(self.s)

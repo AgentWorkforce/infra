@@ -16,11 +16,13 @@ import re
 import secrets
 import subprocess
 import tarfile
+import tempfile
+from types import SimpleNamespace
 from urllib.parse import quote, urlsplit
 
 import yaml
 
-from native_inspect import NativeReadOnlyAdapter, file_sha, sha
+from native_inspect import NativeReadOnlyAdapter, file_sha, native_archive, pipeline_coordinates, same_local_reference, sha
 from native_recipe import NativeRecipeError, official_sql, require, selection
 
 
@@ -148,6 +150,8 @@ class NativeBootstrapAdapter(NativeReadOnlyAdapter):
     SERVER_TLS_SECRET = "kind-native-server-tls"
     HBA_CONFIG = "kind-native-postgres-hba"
     MINIO_CHART_SHA256 = "25fa2740480d1ebc9e64340854a6c42d3a7bc39c2a77378da91b21f144faa9af"
+    MINIO_IMAGE_REPOSITORY = "cgr.dev/chainguard/minio"
+    MINIO_IMAGE_TAG = "latest@sha256:e70b2b1e74d79457f808710483bd726ff364529ca30736eaa15a6ab547d3a5a7"
     STORAGE_RENDERER_SHA256 = "c35d2c5b6b13c3e5effc3fdb8f850f0aad688ad090830fe95bd418ac60b43330"
     STORAGE_PLUGIN_SHA256 = "fd4e09ed1757e734d523b0066ec4bd751774f52eb40fbc3b416b3dcc05f151a9"
     HBA = "local all all trust\nhostnossl all all 0.0.0.0/0 reject\nhostnossl all all ::/0 reject\nhostssl all all 0.0.0.0/0 scram-sha-256\nhostssl all all ::/0 scram-sha-256\n"
@@ -161,6 +165,7 @@ class NativeBootstrapAdapter(NativeReadOnlyAdapter):
         self._pg_uid = None; self._owner_oid = None; self._completed = set()
         self._selected_sha = None; self._infrastructure_started = False
         self._created_cluster = None
+        self._locker_init_attempted = False
 
     def _local_docker_transport(self):
         host = self.stack.env.get("DOCKER_HOST")
@@ -379,6 +384,8 @@ class NativeBootstrapAdapter(NativeReadOnlyAdapter):
         self.tls_material.verify(hosts)
         require(self.tls_material.ca_sha256 == selected["postgresCa"]["sha256"], "fresh_tls_ca_not_bound_to_selection")
         self._minio_source()
+        self._locker_image()
+        self._source(selected, "src/locker/init.ts")
         self._fresh_absence()
         self._infrastructure_started = True
         self._require_local_transport(); self._transport_call("pull", POSTGRES)
@@ -439,6 +446,31 @@ IF current_user<>'postgres' OR session_user<>current_user OR current_setting('ro
                 "objectStoragePvcUid": self._get("persistentvolumeclaim/" + selected["lockerClaim"])["metadata"]["uid"],
                 "caSha256": selected["postgresCa"]["sha256"]}
 
+    def _ensure_pipeline_image(self, selected):
+        """Import the already-qualified native export, then prove CRI identity.
+
+        Docker's own native re-export supplies a real tag for Kind's importer;
+        its bytes are checked again, and the digest alias is never retargeted.
+        This does not pull a mutable tag or change an application workload.
+        """
+        receipt = pipeline_coordinates(self.inputs, selected)
+        tag = receipt["localTag"]
+        require(re.fullmatch(r"agent-relay-kind/[a-z0-9._/-]+:[A-Za-z0-9_.-]+", tag), "local_pipeline_tag_required")
+        reference = selected["reference"]
+        bare_reference = reference.removeprefix("docker.io/")
+        require(bare_reference.startswith("agent-relay-kind/"), "local_pipeline_repository_required")
+        with tempfile.TemporaryDirectory(prefix="native-image-", dir=self.stack.state) as directory:
+            archive = Path(directory) / "native.tar"
+            self._transport_call("cmd", [*self.stack.docker_args, "image", "save", "--platform", "linux/" + selected["architecture"], "-o", archive, tag], timeout=300, sensitive=True)
+            native_archive(archive, sha(archive), selected["sourceRevision"], selected["manifestDigest"], selected["configDigest"], selected["architecture"])
+            self._transport_call("cmd", ["kind", "load", "image-archive", "--name", self.stack.name, archive], timeout=300, sensitive=True)
+        from control import alias
+        # alias rechecks the imported tag's exact native manifest before any tag
+        # operation and proves the config/platform through the node's CRI.
+        bound = SimpleNamespace(cmd=lambda *args, **kwargs: self._transport_call("cmd", *args, **kwargs),
+                                docker_args=self.stack.docker_args, name=self.stack.name, arch=self.stack.arch)
+        alias(bound, bare_reference, {"tag": tag, "manifestDigest": selected["manifestDigest"], "configDigest": selected["configDigest"]})
+
     def _minio_source(self):
         root = Path(__file__).resolve().parents[3]
         chart = root / "charts/sessions-pipeline/charts/minio-5.4.0.tgz"
@@ -449,23 +481,91 @@ IF current_user<>'postgres' OR session_user<>current_user OR current_setting('ro
                 sha(renderer.parent / "plugin.yaml") == self.STORAGE_PLUGIN_SHA256, "pinned_minio_dependency_required")
         return chart, renderer
 
+    def _locker_image(self):
+        root = Path(__file__).resolve().parents[3]
+        image = yaml.safe_load((root / "charts/sessions-pipeline/values.yaml").read_text())["session-object-storage"]["image"]
+        require(image.get("repository") == self.MINIO_IMAGE_REPOSITORY and image.get("tag") == self.MINIO_IMAGE_TAG,
+                "pinned_native_minio_image_changed")
+        return {"repository": image["repository"], "tag": image["tag"], "pullPolicy": "IfNotPresent"}
+
     def _prepare_locker(self, selected):
+        self._preflight(selected, fresh=True)
+        self._require_created_cluster()
         require(selected["lockerClaim"] == "locker", "fresh_pinned_storage_transform_requires_locker_claim")
         # Reuse the reviewed same-release transform: only the Deployment name
         # becomes session-object-storage; claim, service DNS and selectors stay.
         chart, renderer = self._minio_source()
+        image = self._locker_image()
+        # Validate the qualified client's actual tracked source before creating
+        # credentials or installing storage. There is no unrelated mc image.
+        self._source(selected, "src/locker/init.ts")
         ref = selected["secretRefs"]["locker"]
         password = secrets.token_urlsafe(48)
         self._secret(ref["name"], {"rootUser": "locker", ref["key"]: password}); del password
         values = {"mode": "standalone", "fullnameOverride": "locker", "existingSecret": ref["name"],
                   "persistence": {"enabled": True, "size": "2Gi"}, "resources": {"requests": {"memory": "256Mi"}},
-                  "buckets": [{"name": selected["lockerBucket"], "policy": "none", "purge": False}]}
+                  "image": image,
+                  # Every post-install mc hook must remain disabled. The
+                  # qualified pipeline's official initializer owns creation
+                  # and versioning, matching the normal worker contract.
+                  "buckets": [], "users": [], "policies": [], "svcaccts": [], "customCommands": []}
         old = self._transport_call("k", "get", "persistentvolumeclaim", "locker", "--ignore-not-found=true", "-o", "name", sensitive=True).stdout.strip()
         require(not old, "prior_storage_claim_refuses_fresh_creation")
         with self._storage_renderer(renderer) as command:
             self._transport_call("cmd", ["helm", "install", "kind-locker", str(chart), "-n", "agent-relay", "-f", "-",
                             "--post-renderer", command, "--wait", "--wait-for-jobs", "--timeout", "5m"],
                            data=json.dumps(values), sensitive=True, timeout=330)
+        self._initialize_locker_bucket(selected)
+
+    def _initialize_locker_bucket(self, selected):
+        self._preflight(selected, fresh=True)
+        self._require_created_cluster()
+        self._source(selected, "src/locker/init.ts")
+        require(not self._locker_init_attempted, "native_locker_initializer_attempt_requires_review")
+        self._locker_init_attempted = True
+        self._ensure_pipeline_image(selected)
+        name = "native-locker-init-" + self._selected_sha[:16] + "-" + secrets.token_hex(4)
+        ref = selected["secretRefs"]["locker"]
+        spec = {"backoffLimit": 0, "activeDeadlineSeconds": 180, "ttlSecondsAfterFinished": 3600, "template": {
+            "metadata": {"labels": {"app.kubernetes.io/name": "native-locker-init",
+                                    "app.kubernetes.io/component": "native-locker-init"}},
+            "spec": {"restartPolicy": "Never", "automountServiceAccountToken": False,
+                "securityContext": {"runAsNonRoot": True, "runAsUser": 1000, "runAsGroup": 1000},
+                "containers": [{"name": "locker-init", "image": selected["reference"], "imagePullPolicy": "Never",
+                    "command": ["bun", "src/locker/init.ts"],
+                    "env": [{"name": "LOCKER_BUCKET", "value": selected["lockerBucket"]},
+                            {"name": "LOCKER_ENDPOINT", "value": "http://locker.agent-relay.svc.cluster.local:9000"},
+                            {"name": "LOCKER_REGION", "value": "us-east-1"},
+                            {"name": "LOCKER_ACCESS_KEY_ID", "valueFrom": {"secretKeyRef": {"name": ref["name"], "key": "rootUser"}}},
+                            {"name": "LOCKER_SECRET_ACCESS_KEY", "valueFrom": {"secretKeyRef": {"name": ref["name"], "key": ref["key"]}}}],
+                    "securityContext": {"readOnlyRootFilesystem": True, "allowPrivilegeEscalation": False,
+                                        "capabilities": {"drop": ["ALL"]}},
+                    "resources": {"requests": {"cpu": "50m", "memory": "128Mi"}, "limits": {"cpu": "1", "memory": "512Mi"}},
+                    "volumeMounts": [{"name": "tmp", "mountPath": "/tmp"}]}],
+                "volumes": [{"name": "tmp", "emptyDir": {"medium": "Memory", "sizeLimit": "32Mi"}}]}}}
+        job = self._create("Job", name, {"apiVersion": "batch/v1", "spec": spec})
+        self._transport_call("k", "wait", "--for=condition=complete", "job/" + name,
+                             "--timeout=180s", sensitive=True, timeout=210)
+        live = self._get("job/" + name)
+        require(live["metadata"]["uid"] == job["metadata"]["uid"] and live["spec"] == job["spec"] and
+                live.get("status", {}).get("succeeded") == 1 and not live.get("status", {}).get("failed", 0) and
+                any(c.get("type") == "Complete" and c.get("status") == "True" for c in live.get("status", {}).get("conditions", [])),
+                "native_locker_job_not_complete")
+        matches = [p for p in self._get("pods")["items"] if any(
+            o.get("controller") is True and o.get("kind") == "Job" and o.get("name") == name and
+            o.get("uid") == job["metadata"]["uid"] for o in p["metadata"].get("ownerReferences", []))]
+        require(len(matches) == 1 and matches[0].get("status", {}).get("phase") == "Succeeded", "one_completed_native_locker_pod_required")
+        pod = matches[0]
+        require(pod["spec"]["containers"] == live["spec"]["template"]["spec"]["containers"], "native_locker_pod_spec_changed")
+        statuses = pod["status"].get("containerStatuses", [])
+        require(len(statuses) == 1 and statuses[0].get("name") == "locker-init", "native_locker_initializer_status_refused")
+        exit_code = statuses[0].get("state", {}).get("terminated", {}).get("exitCode")
+        require(type(exit_code) is int and exit_code == 0, "native_locker_initializer_exit_refused")
+        identity = statuses[0].get("imageID")
+        reference = identity.removeprefix("docker-pullable://") if isinstance(identity, str) else ""
+        require(identity in (selected["configDigest"], "containerd://" + selected["configDigest"]) or
+                (same_local_reference(reference, selected["reference"]) and reference.endswith("@" + selected["manifestDigest"])),
+                "native_locker_initializer_image_changed")
 
     @contextmanager
     def _storage_renderer(self, script):
