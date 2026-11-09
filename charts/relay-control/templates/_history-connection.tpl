@@ -8,7 +8,7 @@
 {{- if or (not (regexMatch $pattern $url)) (regexMatch "(?i)\\.(localhost|local|internal|lan|invalid|test|example|home\\.arpa|onion)(:[0-9]{1,5})?$" $url) (regexMatch "(?i)\\.example\\.(com|net|org)(:[0-9]{1,5})?$" $url) }}{{ fail "services.relayhistoryReadApiUrl must be a bare public HTTPS DNS origin" }}{{ end -}}
 {{- $port := regexFind ":[0-9]+$" $url -}}
 {{- if and $port (or (lt (int (trimPrefix ":" $port)) 1) (gt (int (trimPrefix ":" $port)) 65535)) }}{{ fail "services.relayhistoryReadApiUrl port must be between 1 and 65535" }}{{ end -}}
-{{- if not .Values.secretKeys.introspectSecret }}{{ fail "managed native History requires secretKeys.introspectSecret" }}{{ end -}}
+{{- if not (or .Values.secretKeys.introspectSecret .Values.introspection.existingSecret) }}{{ fail "managed native History requires secretKeys.introspectSecret or introspection.existingSecret" }}{{ end -}}
 {{- $audiences := .Values.introspection.audiences | default (list .Values.services.relayhistoryPublicUrl) -}}
 {{- if not (has $url $audiences) }}{{ fail "SELFHOST_INTROSPECT_AUDIENCES must include the exact managed native History reader origin" }}{{ end -}}
 {{- else if $services.relayhistoryReadApiEvents }}{{ fail "services.relayhistoryReadApiEvents requires services.relayhistoryReadApiUrl" }}{{ end -}}

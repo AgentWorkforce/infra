@@ -922,9 +922,20 @@ compatibility:
       images:
         relayauth: { repository: ghcr.io/agentworkforce/relayauth, digest: sha256:eb71daa28e30eb7305f666d0bccc5a4002e53e8a574e3c4c32163d907a1b71df }
       notes: superseded by 0.1.1.
-    - id: agent-relay-0.6.20
+    - id: agent-relay-0.6.21
       status: unreleased
       current: true
+      charts: { agent-relay: 0.6.21, relayhistory: 0.1.3, relay-control: 0.4.5, relay-webapp: 0.2.1 }
+      app_versions: { agent-relay: 0.1.0, relayhistory: 0.1.0, relay-control: 0.1.0, relay-webapp: 0.1.0 }
+      depends:
+        agent-relay: { relaycast: 0.3.7, relayauth: 0.1.5, sessions-pipeline: 0.8.12, relayhistory: 0.1.3, relay-control: 0.4.5, relay-webapp: 0.2.1, relayflows: 0.2.5, durable-actors: 0.14.6-awf.1, relayfile: 0.2.2, telemetry-collector: 0.1.3, relay-chief: 0.1.0 }
+      images:
+        relayhistory: { repository: ghcr.io/agentworkforce/relayhistory, digest_required: true }
+        relay-control: { repository: ghcr.io/agentworkforce/relay-control, digest: sha256:d8c26d44dccb6dd21b7033288241a379e46ce5fbca69f276c4d4745001c3c3e2 }
+        relay-webapp: { repository: ghcr.io/agentworkforce/relay-webapp, digest_required: true }
+      notes: 'Adds default-off Control collector analytics and an API-only external introspection Secret reference. No source/image default or runtime changes. Collector credentials and CA never reach migration Jobs or pepper init containers; existing introspection keys remain compatible.'
+    - id: agent-relay-0.6.20
+      status: planned
       charts: { agent-relay: 0.6.20, relayhistory: 0.1.3, relay-control: 0.4.4, relay-webapp: 0.2.1 }
       app_versions: { agent-relay: 0.1.0, relayhistory: 0.1.0, relay-control: 0.1.0, relay-webapp: 0.1.0 }
       depends:
@@ -2561,8 +2572,9 @@ entries:
       and secretKeys.sessionReadApiSecret enable the Control credential handoff
       to the session read API and must be set together;
       services.sessionReadApiMcpReads also sends MCP session reads there. The
-      handoff needs Control 0.5.1. secretKeys.introspectSecret enables token
-      introspection, and introspection.audiences lists the accepted origins.
+      handoff needs Control 0.5.1. secretKeys.introspectSecret or the separate
+      introspection.existingSecret reference enables token introspection, and
+      introspection.audiences lists the accepted origins.
     chart: relay-control
     values: [services.relayhistoryBackend, services.sessionReadApiUrl, services.sessionReadApiPublicUrl, services.sessionReadApiMcpReads, secretKeys.sessionReadApiSecret, secretKeys.introspectSecret, introspection.audiences]
     env: [RELAYHISTORY_BACKEND, SESSION_READ_API_URL, SESSION_READ_API_PUBLIC_URL, SESSION_READ_API_SECRET_FILE, SESSION_READ_API_MCP_READS, RELAYCONTROL_INTROSPECT_SECRET_FILE, SELFHOST_INTROSPECT_AUDIENCES]
@@ -2575,6 +2587,62 @@ entries:
     sources:
       - charts/relay-control/values.yaml
       - charts/relay-control/templates/_helpers.tpl
+
+  - id: opt.relay-control.collector-analytics
+    kind: option
+    status: shipped
+    title: Control collector analytics adapter
+    chart: relay-control
+    description: |
+      Default-off Control business analytics to a private collector. Requires
+      a compatible qualified application image, existing component-bound
+      registration and dedicated producer Secret. Optional public CA trust is
+      scoped to this transport; Postgres and system roots are unchanged.
+      Only the API container receives the token file and Pod producer label.
+      No hosted PostHog configuration is accepted through this adapter.
+    values: [analytics.*]
+    env: [SELFHOST_ANALYTICS_DESTINATION, SELFHOST_ANALYTICS_PROFILE, SELFHOST_ANALYTICS_DEPLOYMENT_ID, SELFHOST_ANALYTICS_COLLECTOR_URL, SELFHOST_ANALYTICS_COLLECTOR_TOKEN_FILE, SELFHOST_ANALYTICS_COLLECTOR_CA_FILE]
+    profiles: [relay-control, agent-relay]
+    provided_by: operator
+    default: false
+    choices:
+      - { value: false }
+      - { value: true, note: Requires a component-bound collector registration and verified TLS. }
+    secrets:
+      - name: "<Control component-bound analytics producer Secret>"
+        name_paths: ["relay-control:analytics.existingSecret"]
+        keys:
+          - { key: token, key_path: "relay-control:analytics.tokenKey" }
+    verify: Check the rendered API-only Secret/CA mounts and unchanged migration Job identity, then verify real Control events in private committed collector files and negative authentication separately.
+    sources:
+      - charts/relay-control/templates/_runtime-adapters.tpl
+      - charts/relay-control/ANALYTICS.md
+
+  - id: opt.relay-control.external-introspection-secret
+    kind: option
+    status: shipped
+    title: Separate Control introspection credential Secret
+    chart: relay-control
+    description: |
+      Mount an existing introspection credential into the API without copying
+      it into the main application Secret. Mutually exclusive with
+      secretKeys.introspectSecret; neither migration nor init containers get
+      the credential. The existing internal-route ingress shield is preserved.
+    values: [introspection.existingSecret, introspection.key]
+    env: [RELAYCONTROL_INTROSPECT_SECRET_FILE]
+    profiles: [relay-control, agent-relay]
+    provided_by: operator
+    default: disabled
+    choices: [{ value: disabled }, { value: enabled }]
+    secrets:
+      - name: "<Control introspection Secret>"
+        name_paths: ["relay-control:introspection.existingSecret"]
+        keys:
+          - { key: introspect-secret, key_path: "relay-control:introspection.key" }
+    verify: Render the external reference and ensure the API alone mounts it, the migration Job identity is unchanged, and public /internal traffic reaches only the selectorless deny Service.
+    sources:
+      - charts/relay-control/templates/_runtime-adapters.tpl
+      - charts/relay-control/templates/ingress.yaml
 
   - id: req.relay-control.config
     kind: requirement
