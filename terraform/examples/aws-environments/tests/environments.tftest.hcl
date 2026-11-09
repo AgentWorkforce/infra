@@ -247,6 +247,7 @@ run "external_contract_setup" {
 run "sessions_bucket_read_is_scoped" {
   command = plan
   variables {
+    kms_key_arn = "arn:aws:kms:us-west-2:111111111111:key/11111111-2222-3333-4444-555555555555"
     search_sessions_bucket_read = {
       bucket_arn  = "arn:aws:s3:::agent-relay-dev-111111111111-us-west-2-sessions"
       kms_key_arn = "arn:aws:kms:us-west-2:111111111111:key/11111111-2222-3333-4444-555555555555"
@@ -264,6 +265,25 @@ run "sessions_bucket_read_is_scoped" {
     condition     = toset(flatten([for s in jsondecode(output.runtime_role_policy_json.sessions_read).Statement : s.Action])) == toset(["s3:ListBucket", "s3:GetObject", "kms:Decrypt"])
     error_message = "The root must publish exactly the read-only actions."
   }
+}
+
+run "sessions_bucket_read_refuses_another_bucket" {
+  command = plan
+  variables {
+    search_sessions_bucket_read = { bucket_arn = "arn:aws:s3:::some-other-bucket" }
+  }
+  expect_failures = [terraform_data.environment_contract]
+}
+
+run "sessions_bucket_read_refuses_another_key" {
+  command = plan
+  variables {
+    search_sessions_bucket_read = {
+      bucket_arn  = "arn:aws:s3:::agent-relay-dev-111111111111-us-west-2-sessions"
+      kms_key_arn = "arn:aws:kms:us-west-2:111111111111:key/99999999-2222-3333-4444-555555555555"
+    }
+  }
+  expect_failures = [terraform_data.environment_contract]
 }
 
 run "external_search_roles" {

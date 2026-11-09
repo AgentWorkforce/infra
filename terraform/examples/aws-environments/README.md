@@ -166,7 +166,8 @@ search_sessions_bucket_read = {
 }
 ```
 
-This adds one inline policy to each role and changes nothing else. External
+Any other bucket or key is refused at plan. This adds one inline policy to each
+role and changes nothing else. External
 roles (`existing_runtime_roles`) get it as `runtime_role_policy_json.sessions_read`
 to attach themselves. After apply, map both roles in OpenSearch; see
 [the search module](../../modules/aws/search/README.md#after-apply).
@@ -476,7 +477,7 @@ exact destroy inventory and recovery proof; do not remove state to bypass them.
 | release\_name | Helm release name used in generated ServiceAccount names. | `string` | `"agent-relay"` | no |
 | search\_engine\_version | Region-supported OpenSearch engine version. | `string` | `"OpenSearch_2.19"` | no |
 | search\_instance\_type | Override the environment tier's OpenSearch data node type. | `string` | `null` | no |
-| search\_sessions\_bucket\_read | Exact ARNs of this environment's sessions bucket and, for a customer-managed key, its KMS key (null for AWS-managed encryption). Grants the search indexer and session-read roles read-only access. null changes nothing. | ```object({ bucket_arn = string kms_key_arn = optional(string) })``` | `null` | no |
+| search\_sessions\_bucket\_read | Exact ARNs of this environment's sessions bucket and, for a customer-managed key, its kms\_key\_arn (null for AWS-managed encryption). Any other bucket or key is refused. Grants the search indexer and session-read roles read-only access. null changes nothing. | ```object({ bucket_arn = string kms_key_arn = optional(string) })``` | `null` | no |
 | service\_database\_names | Existing or reviewed new database names for HoopDb, Relaycast and optional Relayfile on the same RDS instance. This metadata does not create or rename databases. Control uses application\_database\_name. | `map(string)` | ```{ "hoopdb": "hoopdb", "relaycast": "relaycast", "relayfile": "relayfile" }``` | no |
 | tags | Additional resource tags. Environment identity and Pippen conventions cannot be overridden. | `map(string)` | `{}` | no |
 
