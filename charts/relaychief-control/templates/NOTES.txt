@@ -1,0 +1,24 @@
+relaychief-control {{ include "relaychief-control.fullname" . }} is configured as one replica.
+
+  Service: {{ include "relaychief-control.fullname" . }}:{{ .Values.service.port }} ({{ .Values.service.type }})
+  Origin:  {{ .Values.config.publicOrigin }}
+  Secret:  {{ .Values.existingSecret }}
+{{- if .Values.ingress.enabled }}
+  Ingress: {{ range .Values.ingress.hosts }}https://{{ . }}/chief/v1 {{ end }}
+{{- end }}
+{{- if not .Values.secretKeys.nangoSecretKey }}
+
+Nango is not configured, so creating a chief answers 503.
+{{- end }}
+{{- if .Values.migrations.enabled }}
+
+The schema migration is a plain Job, not a Helm hook. Wait for it to finish
+before treating the rollout as healthy:
+
+  kubectl -n {{ .Release.Namespace }} wait --for=condition=complete job -l app.kubernetes.io/name={{ include "relaychief-control.name" . }},app.kubernetes.io/instance={{ .Release.Name }},app.kubernetes.io/component=migration --timeout={{ .Values.migrations.activeDeadlineSeconds }}s
+{{- end }}
+
+Operator routes stay on the pod's loopback (port 3201). Reach them with a
+port-forward to the pod, not the Service:
+
+  kubectl -n {{ .Release.Namespace }} port-forward "$(kubectl -n {{ .Release.Namespace }} get pod -l app.kubernetes.io/name={{ include "relaychief-control.name" . }},app.kubernetes.io/instance={{ .Release.Name }},app.kubernetes.io/component=server -o name | head -1)" 3201:3201

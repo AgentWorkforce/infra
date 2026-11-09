@@ -28,6 +28,7 @@ and the release gate’s `helm-charts` license-decision ID retain their original
 | [relay-control](charts/relay-control) | Self-host control-plane API — organizations, workspaces, device auth; existing-Secret file mounts only, separate migration Job |
 | [relay-webapp](charts/relay-webapp) | Static self-host dashboard — nginx SPA calling same-origin `/cloud/api` |
 | [relayhistory](charts/relayhistory) | Relay History data plane — session delivery, search, replay on its own Postgres database (digest-pinned proof image) |
+| [relaychief-control](charts/relaychief-control) | Optional Relay Chief registry and slot-binding add-on on PostgreSQL — one replica, loopback-only admin listener, Ingress limited to `/chief/v1` by default (not part of the umbrella) |
 | [relaycast](charts/relaycast) | Portable self-hosted Relaycast core — realtime agent communication with single-writer SQLite persistence |
 | [relayfile](charts/relayfile) | Relayfile server — single Go binary, HTTP on :8080, Postgres-backed in production |
 | [relayflows](charts/relayflows) | Durable workflows running locally in Kubernetes, with optional Cloud assignment mode |
@@ -711,7 +712,7 @@ For render/trust/schema checks without Docker (Helm and kubeconform required), r
 `python3 ci/agent-relay/kind/test_stack.py -v` after building chart dependencies.
 
 The default-off [session read API chart preparation](docs/self-hosted-session-read-api.md)
-is available under `sessions-pipeline.readApi`. It remains disabled in both kind
+is available as the `charts/session-read-api` chart, carried under `sessions-pipeline.sessionReadApi`. It remains disabled in both kind
 profiles pending the approved runtime assembly and image; the running core
 evidence does not prove this new component.
 

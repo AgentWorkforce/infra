@@ -1694,7 +1694,7 @@ async function phaseCleanup() {
     const results = [];
     for (const tenant of present) {
       const removed = await call("DELETE", `${collection}/${encodeURIComponent(tenant.workspaceId)}`, { token: bootstrap });
-      must(removed.status === 204 || removed.status === 404, `workspace delete ${tenant.label} status=${removed.status}; no forced teardown attempted`);
+      must(removed.status === 204 || removed.status === 404, `workspace delete ${tenant.label} status=${removed.status} error=${errorCode(removed)}; no forced teardown attempted`);
       results.push(removed.status);
     }
     const after = await list();

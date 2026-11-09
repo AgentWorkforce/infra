@@ -161,6 +161,12 @@ profiles:
     values_file: ci/default-values.yaml
     install: helm install relay-chief agentworkforce/relay-chief -f <your values>
     summary: Not qualified and not part of the suite yet; no image is published. Suspended by default. Runs one bounded cycle per CronJob firing against SQLite on a persistent volume, and every cycle may dispatch.
+  - id: relaychief-control
+    title: Relay Chief control add-on
+    chart: relaychief-control
+    values_file: ci/default-values.yaml
+    install: helm install relaychief-control agentworkforce/relaychief-control -f <your values>
+    summary: Optional add-on outside the agent-relay umbrella; not qualified. One replica, operator-managed PostgreSQL, a loopback-only admin listener and an Ingress limited to /chief/v1 by default; no HA claim.
 
   - id: durable-actors
     title: TerseAI durable-actors control plane (vendored upstream chart)
@@ -174,6 +180,12 @@ profiles:
     values_file: ci/durable-actors-values.yaml
     install: helm install relaycast agentworkforce/relaycast -f values.yaml (runtime.backend=durable-actors, a durable-actors control plane, ar_ credentials)
     summary: Stateless gateway (relaycast-actors-gateway) in front of one Workspace actor per workspace; deployer Job registers the actor bundle; files in GCS or S3. Fresh-install backend; SQLite workspaces are not migrated.
+  - id: relaycast-postgres
+    title: Relaycast on PostgreSQL (runtime.backend=postgres)
+    chart: relaycast
+    values_file: ci/postgres-values.yaml
+    install: helm install relaycast agentworkforce/relaycast -f values.yaml (runtime.backend=postgres, postgresCa, owner and runtime database URLs in existingSecret)
+    summary: One replica on an external PostgreSQL database; a hash-named migration Job runs as relaycast_owner and the server waits for it as relaycast_runtime; uploaded files stay on the PVC. Default off.
   - id: relayfile-durable-actors
     title: Relayfile on durable-actors (runtime.backend=durable-actors)
     chart: relayfile
@@ -213,7 +225,11 @@ ci_only_values:
 
   - file: ci/ingest-edge-values.yaml
     why: Render-only native ingest fixture with synthetic image/CA identities; never
+  - file: ci/ingest-edge-pod-identity-values.yaml
+    why: Ingest edge with Pod Identity S3 credentials and per-session erase.
       install it.
+  - file: ci/search-indexer-values.yaml
+    why: Render-only search indexer fixture with a fake image identity; never install it.
 
 compatibility:
   # The services image every sessions-pipeline profile, CI values file and chart default pins.
@@ -233,14 +249,173 @@ compatibility:
       digest: sha256:b2b74a19375e86bbd5c70a30ea5edbd28cac3de103490bc428de007f4a38b821
       built_by: publish-image run 42462161615
   releases:
-    - id: telemetry-collector-0.1.0
+    - id: telemetry-collector-0.1.1
       status: unreleased
       current: true
+      charts: { telemetry-collector: 0.1.1 }
+      notes: 'Refuses relay-control images at render time: they do not contain the collector CLI this chart runs.'
+    - id: telemetry-collector-0.1.0
+      status: shipped
       charts: { telemetry-collector: 0.1.0 }
       notes: 'Default-off umbrella analytics file collector. Requires accepted immutable collector and TLS-proxy images, producer and TLS Secrets and an exclusive persistent volume. Source rendering does not prove image entrypoint, TLS, durable acknowledgement, power-loss recovery or whole-application analytics coverage. The currently reviewed collector CLI registers relaycontrol events only.'
-    - id: sessions-pipeline-0.7.5
+    - id: session-read-api-0.2.1
       status: unreleased
       current: true
+      charts: { session-read-api: 0.2.1 }
+      images:
+        session-read-api: { repository: ghcr.io/agentworkforce/96bulls-services, digest_required: true }
+      notes: 'Defaults READ_API_COMPLETE_SINCE to epoch for a new self-host store populated only by its own ingest. Partial legacy imports must retain an explicit real coverage floor matching the indexer. Image, auth, routing and enabled defaults are unchanged; this does not assert coverage for an imported store or qualify a runtime.'
+    - id: sessions-pipeline-0.8.4
+      status: unreleased
+      current: true
+      charts: { sessions-pipeline: 0.8.4, sessions-pipeline-worker: 0.7.2, session-ingest-api: 0.4.1, session-read-api: 0.2.1 }
+      depends:
+        sessions-pipeline: { worker: 0.7.2, alleyoop: 0.4.1, sessionReadApi: 0.2.1, hoopdb: 0.9.0, session-object-storage: 5.4.0, otel: 0.178.0 }
+      images:
+        sessions-pipeline-worker: { repository: agentworkforce/96bulls-services, digest: sha256:6f22ea17dff336e1431664542759fd27958649388b90a0b2f0881883caa7c6b2 }
+        session-ingest-api: { repository: agentworkforce/96bulls-services, digest: sha256:6f22ea17dff336e1431664542759fd27958649388b90a0b2f0881883caa7c6b2 }
+        session-read-api: { repository: ghcr.io/agentworkforce/96bulls-services, digest_required: true }
+      images_note: "session-read-api self_issued and events.messageIds need at least ghcr.io/agentworkforce/96bulls-services@sha256:d55840ab4bf4e2fea3769db690f3c8d32979ab455ef251172f914ac011cb8c33 (pipeline eebaced9). Native ingest edge (SERVICE=session-ingest): unqualified; an explicit qualified combined-image digest is required. Pins above belong to the existing internal worker/ingest services, not ingestEdge."
+      services:
+        source_commit: 7d7229bb31c121ecb98cd4e35c248fc2cf5669ad
+        migration_generation: eff8b3be46565b57ad8fa5e4a066dbb6d1fe608313d9c1680bfbcd484add259b
+      notes: 'Adds explicit sync/async/drain ingest admission from merged pipeline #398/f0860b2e. Sync remains the default and no profile enables the native edge. Reader 0.2.1 defaults new-store coverage to epoch with a partial-import override. Retains the default-off Pod Identity and session-selection settings from 0.8.2. Preserves 0.8.3 search-indexer custom-CA trust. A qualified combined-image digest and separate runtime acceptance are required.'
+      db_combos:
+        - { db_mode: selfhosted, boundary: global-default-revoke, hoopdb: cnpg, status: shipped, profiles: [selfhost-postgres, migration, aws-cnpg], notes: chart Jobs install the runtime role and the function default }
+        - { db_mode: selfhosted, boundary: global-default-revoke, hoopdb: external, status: shipped, profiles: [external-selfhosted], notes: operator runs the bootstrap files as a superuser }
+        - { db_mode: rds, boundary: global-default-revoke, hoopdb: external, status: shipped, profiles: [external-rds], notes: the RDS master runs the rds_*.sql bootstrap first }
+        - { db_mode: cloudsql, boundary: global-default-revoke, hoopdb: external, status: shipped, profiles: [gcp-cloudsql], notes: operator runs the Cloud SQL bootstrap files as the migration owner; roleBootstrap false }
+        - { db_mode: supabase, boundary: event-trigger, hoopdb: external, status: held, profiles: [external-supabase], notes: supabaseActivation.hold; migrate refuses until the reviewed event trigger is installed and --activation-check passes }
+        - { db_mode: supabase, boundary: null, hoopdb: external, status: fails closed, profiles: [aws-supabase], notes: renders; migrate refuses with function_boundary_unproven }
+        - { db_mode: local, boundary: null, hoopdb: any, status: dev only, profiles: [], notes: local stack only; never a self-host install }
+      sources:
+        - "charts/sessions-pipeline/Chart.yaml:4"
+        - "ci/sessions-pipeline-profiles/matrix.sh:70"
+    - id: sessions-pipeline-0.8.3
+      status: planned
+      charts: { sessions-pipeline: 0.8.3, sessions-pipeline-worker: 0.7.2, session-ingest-api: 0.4.1, session-read-api: 0.2.0 }
+      depends:
+        sessions-pipeline: { worker: 0.7.2, alleyoop: 0.4.1, sessionReadApi: 0.2.0, hoopdb: 0.9.0, session-object-storage: 5.4.0, otel: 0.178.0 }
+      images:
+        sessions-pipeline-worker: { repository: agentworkforce/96bulls-services, digest: sha256:6f22ea17dff336e1431664542759fd27958649388b90a0b2f0881883caa7c6b2 }
+        session-ingest-api: { repository: agentworkforce/96bulls-services, digest: sha256:6f22ea17dff336e1431664542759fd27958649388b90a0b2f0881883caa7c6b2 }
+        session-read-api: { repository: ghcr.io/agentworkforce/96bulls-services, digest_required: true }
+      images_note: "session-read-api self_issued and events.messageIds need at least ghcr.io/agentworkforce/96bulls-services@sha256:d55840ab4bf4e2fea3769db690f3c8d32979ab455ef251172f914ac011cb8c33 (pipeline eebaced9). Native ingest edge (SERVICE=session-ingest): unqualified; an explicit qualified combined-image digest is required. Pins above belong to the existing internal worker/ingest services, not ingestEdge."
+      services:
+        source_commit: 7d7229bb31c121ecb98cd4e35c248fc2cf5669ad
+        migration_generation: eff8b3be46565b57ad8fa5e4a066dbb6d1fe608313d9c1680bfbcd484add259b
+      notes: 'Search indexer sets NODE_EXTRA_CA_CERTS for its custom-ca profile so the worker pool verifies Postgres.'
+      db_combos:
+        - { db_mode: selfhosted, boundary: global-default-revoke, hoopdb: cnpg, status: shipped, profiles: [selfhost-postgres, migration, aws-cnpg], notes: chart Jobs install the runtime role and the function default }
+        - { db_mode: selfhosted, boundary: global-default-revoke, hoopdb: external, status: shipped, profiles: [external-selfhosted], notes: operator runs the bootstrap files as a superuser }
+        - { db_mode: rds, boundary: global-default-revoke, hoopdb: external, status: shipped, profiles: [external-rds], notes: the RDS master runs the rds_*.sql bootstrap first }
+        - { db_mode: cloudsql, boundary: global-default-revoke, hoopdb: external, status: shipped, profiles: [gcp-cloudsql], notes: operator runs the Cloud SQL bootstrap files as the migration owner; roleBootstrap false }
+        - { db_mode: supabase, boundary: event-trigger, hoopdb: external, status: held, profiles: [external-supabase], notes: supabaseActivation.hold; migrate refuses until the reviewed event trigger is installed and --activation-check passes }
+        - { db_mode: supabase, boundary: null, hoopdb: external, status: fails closed, profiles: [aws-supabase], notes: renders; migrate refuses with function_boundary_unproven }
+        - { db_mode: local, boundary: null, hoopdb: any, status: dev only, profiles: [], notes: local stack only; never a self-host install }
+      sources:
+        - "charts/sessions-pipeline/Chart.yaml:4"
+        - "ci/sessions-pipeline-profiles/matrix.sh:70"
+    - id: sessions-pipeline-0.8.2
+      status: planned
+      charts: { sessions-pipeline: 0.8.2, sessions-pipeline-worker: 0.7.2, session-ingest-api: 0.4.1, session-read-api: 0.2.0 }
+      depends:
+        sessions-pipeline: { worker: 0.7.2, alleyoop: 0.4.1, sessionReadApi: 0.2.0, hoopdb: 0.9.0, session-object-storage: 5.4.0, otel: 0.178.0 }
+      images:
+        sessions-pipeline-worker: { repository: agentworkforce/96bulls-services, digest: sha256:6f22ea17dff336e1431664542759fd27958649388b90a0b2f0881883caa7c6b2 }
+        session-ingest-api: { repository: agentworkforce/96bulls-services, digest: sha256:6f22ea17dff336e1431664542759fd27958649388b90a0b2f0881883caa7c6b2 }
+        session-read-api: { repository: ghcr.io/agentworkforce/96bulls-services, digest_required: true }
+      images_note: "session-read-api self_issued and events.messageIds need at least ghcr.io/agentworkforce/96bulls-services@sha256:d55840ab4bf4e2fea3769db690f3c8d32979ab455ef251172f914ac011cb8c33 (pipeline eebaced9). Native ingest edge (SERVICE=session-ingest): unqualified; an explicit qualified combined-image digest is required. Pins above belong to the existing internal worker/ingest services, not ingestEdge."
+      services:
+        source_commit: 7d7229bb31c121ecb98cd4e35c248fc2cf5669ad
+        migration_generation: eff8b3be46565b57ad8fa5e4a066dbb6d1fe608313d9c1680bfbcd484add259b
+      notes: 'Adds default-off ingestEdge Pod Identity credentials and the session-selection erase flag.'
+      db_combos:
+        - { db_mode: selfhosted, boundary: global-default-revoke, hoopdb: cnpg, status: shipped, profiles: [selfhost-postgres, migration, aws-cnpg], notes: chart Jobs install the runtime role and the function default }
+        - { db_mode: selfhosted, boundary: global-default-revoke, hoopdb: external, status: shipped, profiles: [external-selfhosted], notes: operator runs the bootstrap files as a superuser }
+        - { db_mode: rds, boundary: global-default-revoke, hoopdb: external, status: shipped, profiles: [external-rds], notes: the RDS master runs the rds_*.sql bootstrap first }
+        - { db_mode: cloudsql, boundary: global-default-revoke, hoopdb: external, status: shipped, profiles: [gcp-cloudsql], notes: operator runs the Cloud SQL bootstrap files as the migration owner; roleBootstrap false }
+        - { db_mode: supabase, boundary: event-trigger, hoopdb: external, status: held, profiles: [external-supabase], notes: supabaseActivation.hold; migrate refuses until the reviewed event trigger is installed and --activation-check passes }
+        - { db_mode: supabase, boundary: null, hoopdb: external, status: fails closed, profiles: [aws-supabase], notes: renders; migrate refuses with function_boundary_unproven }
+        - { db_mode: local, boundary: null, hoopdb: any, status: dev only, profiles: [], notes: local stack only; never a self-host install }
+      sources:
+        - "charts/sessions-pipeline/Chart.yaml:4"
+        - "ci/sessions-pipeline-profiles/matrix.sh:70"
+    - id: sessions-pipeline-0.8.1
+      status: planned
+      charts: { sessions-pipeline: 0.8.1, sessions-pipeline-worker: 0.7.2, session-ingest-api: 0.4.1, session-read-api: 0.2.0 }
+      depends:
+        sessions-pipeline: { worker: 0.7.2, alleyoop: 0.4.1, sessionReadApi: 0.2.0, hoopdb: 0.9.0, session-object-storage: 5.4.0, otel: 0.178.0 }
+      images:
+        sessions-pipeline-worker: { repository: agentworkforce/96bulls-services, digest: sha256:6f22ea17dff336e1431664542759fd27958649388b90a0b2f0881883caa7c6b2 }
+        session-ingest-api: { repository: agentworkforce/96bulls-services, digest: sha256:6f22ea17dff336e1431664542759fd27958649388b90a0b2f0881883caa7c6b2 }
+        session-read-api: { repository: ghcr.io/agentworkforce/96bulls-services, digest_required: true }
+      images_note: "session-read-api self_issued and events.messageIds need at least ghcr.io/agentworkforce/96bulls-services@sha256:d55840ab4bf4e2fea3769db690f3c8d32979ab455ef251172f914ac011cb8c33 (pipeline eebaced9). Native ingest edge (SERVICE=session-ingest): unqualified; an explicit qualified combined-image digest is required. Pins above belong to the existing internal worker/ingest services, not ingestEdge."
+      services:
+        source_commit: 7d7229bb31c121ecb98cd4e35c248fc2cf5669ad
+        migration_generation: eff8b3be46565b57ad8fa5e4a066dbb6d1fe608313d9c1680bfbcd484add259b
+      notes: 'Allows sessionReadApi.auth.mode=self_issued with a /v1-only ingress and a NetworkPolicy that names Control, and adds the default-off events.messageIds value. Default auth stays relaycontrol_only.'
+      db_combos:
+        - { db_mode: selfhosted, boundary: global-default-revoke, hoopdb: cnpg, status: shipped, profiles: [selfhost-postgres, migration, aws-cnpg], notes: chart Jobs install the runtime role and the function default }
+        - { db_mode: selfhosted, boundary: global-default-revoke, hoopdb: external, status: shipped, profiles: [external-selfhosted], notes: operator runs the bootstrap files as a superuser }
+        - { db_mode: rds, boundary: global-default-revoke, hoopdb: external, status: shipped, profiles: [external-rds], notes: the RDS master runs the rds_*.sql bootstrap first }
+        - { db_mode: cloudsql, boundary: global-default-revoke, hoopdb: external, status: shipped, profiles: [gcp-cloudsql], notes: operator runs the Cloud SQL bootstrap files as the migration owner; roleBootstrap false }
+        - { db_mode: supabase, boundary: event-trigger, hoopdb: external, status: held, profiles: [external-supabase], notes: supabaseActivation.hold; migrate refuses until the reviewed event trigger is installed and --activation-check passes }
+        - { db_mode: supabase, boundary: null, hoopdb: external, status: fails closed, profiles: [aws-supabase], notes: renders; migrate refuses with function_boundary_unproven }
+        - { db_mode: local, boundary: null, hoopdb: any, status: dev only, profiles: [], notes: local stack only; never a self-host install }
+      sources:
+        - "charts/sessions-pipeline/Chart.yaml:4"
+        - "ci/sessions-pipeline-profiles/matrix.sh:70"
+    - id: sessions-pipeline-0.8.0
+      status: shipped
+      charts: { sessions-pipeline: 0.8.0, sessions-pipeline-worker: 0.7.2, session-ingest-api: 0.4.1, session-read-api: 0.1.0 }
+      depends:
+        sessions-pipeline: { worker: 0.7.2, alleyoop: 0.4.1, sessionReadApi: 0.1.0, hoopdb: 0.9.0, session-object-storage: 5.4.0, otel: 0.178.0 }
+      images:
+        sessions-pipeline-worker: { repository: agentworkforce/96bulls-services, digest: sha256:6f22ea17dff336e1431664542759fd27958649388b90a0b2f0881883caa7c6b2 }
+        session-ingest-api: { repository: agentworkforce/96bulls-services, digest: sha256:6f22ea17dff336e1431664542759fd27958649388b90a0b2f0881883caa7c6b2 }
+      images_note: "Native ingest edge (SERVICE=session-ingest): unqualified; an explicit qualified combined-image digest is required. Pins above belong to the existing internal worker/ingest services, not ingestEdge."
+      services:
+        source_commit: 7d7229bb31c121ecb98cd4e35c248fc2cf5669ad
+        migration_generation: eff8b3be46565b57ad8fa5e4a066dbb6d1fe608313d9c1680bfbcd484add259b
+      notes: 'Moves the session read API to the standalone session-read-api chart, carried as a default-off dependency under sessionReadApi. The old readApi key refuses to render with a migration message. Default auth is relaycontrol_only.'
+      db_combos:
+        - { db_mode: selfhosted, boundary: global-default-revoke, hoopdb: cnpg, status: shipped, profiles: [selfhost-postgres, migration, aws-cnpg], notes: chart Jobs install the runtime role and the function default }
+        - { db_mode: selfhosted, boundary: global-default-revoke, hoopdb: external, status: shipped, profiles: [external-selfhosted], notes: operator runs the bootstrap files as a superuser }
+        - { db_mode: rds, boundary: global-default-revoke, hoopdb: external, status: shipped, profiles: [external-rds], notes: the RDS master runs the rds_*.sql bootstrap first }
+        - { db_mode: cloudsql, boundary: global-default-revoke, hoopdb: external, status: shipped, profiles: [gcp-cloudsql], notes: operator runs the Cloud SQL bootstrap files as the migration owner; roleBootstrap false }
+        - { db_mode: supabase, boundary: event-trigger, hoopdb: external, status: held, profiles: [external-supabase], notes: supabaseActivation.hold; migrate refuses until the reviewed event trigger is installed and --activation-check passes }
+        - { db_mode: supabase, boundary: null, hoopdb: external, status: fails closed, profiles: [aws-supabase], notes: renders; migrate refuses with function_boundary_unproven }
+        - { db_mode: local, boundary: null, hoopdb: any, status: dev only, profiles: [], notes: local stack only; never a self-host install }
+      sources:
+        - "charts/sessions-pipeline/Chart.yaml:4"
+        - "ci/sessions-pipeline-profiles/matrix.sh:70"
+    - id: sessions-pipeline-0.7.6
+      status: planned
+      charts: { sessions-pipeline: 0.7.6, sessions-pipeline-worker: 0.7.2, session-ingest-api: 0.4.1 }
+      depends:
+        sessions-pipeline: { worker: 0.7.2, alleyoop: 0.4.1, hoopdb: 0.9.0, session-object-storage: 5.4.0, otel: 0.178.0 }
+      images:
+        sessions-pipeline-worker: { repository: agentworkforce/96bulls-services, digest: sha256:6f22ea17dff336e1431664542759fd27958649388b90a0b2f0881883caa7c6b2 }
+        session-ingest-api: { repository: agentworkforce/96bulls-services, digest: sha256:6f22ea17dff336e1431664542759fd27958649388b90a0b2f0881883caa7c6b2 }
+      images_note: "Native ingest edge (SERVICE=session-ingest): unqualified; an explicit qualified combined-image digest is required. Pins above belong to the existing internal worker/ingest services, not ingestEdge."
+      services:
+        source_commit: 7d7229bb31c121ecb98cd4e35c248fc2cf5669ad
+        migration_generation: eff8b3be46565b57ad8fa5e4a066dbb6d1fe608313d9c1680bfbcd484add259b
+      notes: 'Adds the default-off searchIndexer block (pipeline session-pipeline-consumer, OpenSearch by default). With it off, every render differs only in the helm.sh/chart labels.'
+      db_combos:
+        - { db_mode: selfhosted, boundary: global-default-revoke, hoopdb: cnpg, status: shipped, profiles: [selfhost-postgres, migration, aws-cnpg], notes: chart Jobs install the runtime role and the function default }
+        - { db_mode: selfhosted, boundary: global-default-revoke, hoopdb: external, status: shipped, profiles: [external-selfhosted], notes: operator runs the bootstrap files as a superuser }
+        - { db_mode: rds, boundary: global-default-revoke, hoopdb: external, status: shipped, profiles: [external-rds], notes: the RDS master runs the rds_*.sql bootstrap first }
+        - { db_mode: cloudsql, boundary: global-default-revoke, hoopdb: external, status: shipped, profiles: [gcp-cloudsql], notes: operator runs the Cloud SQL bootstrap files as the migration owner; roleBootstrap false }
+        - { db_mode: supabase, boundary: event-trigger, hoopdb: external, status: held, profiles: [external-supabase], notes: supabaseActivation.hold; migrate refuses until the reviewed event trigger is installed and --activation-check passes }
+        - { db_mode: supabase, boundary: null, hoopdb: external, status: fails closed, profiles: [aws-supabase], notes: renders; migrate refuses with function_boundary_unproven }
+        - { db_mode: local, boundary: null, hoopdb: any, status: dev only, profiles: [], notes: local stack only; never a self-host install }
+      sources:
+        - "charts/sessions-pipeline/Chart.yaml:4"
+        - "ci/sessions-pipeline-profiles/matrix.sh:70"
+    - id: sessions-pipeline-0.7.5
+      status: shipped
       charts: { sessions-pipeline: 0.7.5, sessions-pipeline-worker: 0.7.2, session-ingest-api: 0.4.1 }
       depends:
         sessions-pipeline: { worker: 0.7.2, alleyoop: 0.4.1, hoopdb: 0.9.0, session-object-storage: 5.4.0, otel: 0.178.0 }
@@ -425,9 +600,16 @@ compatibility:
       images_note: not built for the charts yet
       notes: 'Follow-up re-pin to sessions-pipeline main after #127 (session briefs, generation 5ed11913...). Needs new GHCR/ECR digests, ci/sessions-pipeline-search-worker-role/services-commit and services-generation, and the session-brief entries below shipped.'
       db_combos: []
-    - id: relaycast-0.3.5
+    - id: relaycast-0.3.6
       status: unreleased
       current: true
+      charts: { relaycast: 0.3.6 }
+      app_versions: { relaycast: 12.7.0 }
+      images:
+        relaycast: { repository: ghcr.io/agentworkforce/relaycast-self-host, digest: sha256:81274dca7ab58673383dc7a9c777f422f29606c7422e81b5ea15724770f1455e }
+      notes: 'Adds default-off runtime.backend=postgres (image relaycast-self-host 12.8.0-pg.1, sha256:84f59482cb82f3c50d38f45cfca7d004cffaa95652782dbfc93c179cc343ac59, pinned in runtime.postgres.image), a hash-named migration Job and postgresCa. sqlite and durable-actors renders differ only in the helm.sh/chart label.'
+    - id: relaycast-0.3.5
+      status: shipped
       charts: { relaycast: 0.3.5 }
       app_versions: { relaycast: 12.7.0 }
       images:
@@ -519,9 +701,108 @@ compatibility:
       images:
         relayauth: { repository: ghcr.io/agentworkforce/relayauth, digest: sha256:eb71daa28e30eb7305f666d0bccc5a4002e53e8a574e3c4c32163d907a1b71df }
       notes: superseded by 0.1.1.
-    - id: agent-relay-0.5.4
+    - id: agent-relay-0.6.7
       status: unreleased
       current: true
+      charts: { agent-relay: 0.6.7, relayhistory: 0.1.2, relay-control: 0.4.0, relay-webapp: 0.2.1 }
+      app_versions: { agent-relay: 0.1.0, relayhistory: 0.1.0, relay-control: 0.1.0, relay-webapp: 0.1.0 }
+      depends:
+        agent-relay: { relaycast: 0.3.6, relayauth: 0.1.4, sessions-pipeline: 0.8.4, relayhistory: 0.1.2, relay-control: 0.4.0, relay-webapp: 0.2.1, relayflows: 0.2.5, durable-actors: 0.14.6-awf.1, relayfile: 0.2.2, telemetry-collector: 0.1.1, relay-chief: 0.1.0 }
+      images:
+        relayhistory: { repository: ghcr.io/agentworkforce/relayhistory, digest_required: true }
+        relay-control: { repository: ghcr.io/agentworkforce/relay-control, digest: sha256:d8c26d44dccb6dd21b7033288241a379e46ce5fbca69f276c4d4745001c3c3e2 }
+        relay-webapp: { repository: ghcr.io/agentworkforce/relay-webapp, digest_required: true }
+      notes: 'Takes sessions-pipeline 0.8.4 with opt-in async admission and reader 0.2.1 inception coverage for new own-ingest stores, retaining explicit partial-import floors. Preserves current Relaycast, RelayChief Control and Webapp dependencies. Defaults remain disabled; no image qualification or rollout is supplied.'
+    - id: agent-relay-0.6.6
+      status: planned
+      charts: { agent-relay: 0.6.6, relayhistory: 0.1.2, relay-control: 0.4.0, relay-webapp: 0.2.1 }
+      app_versions: { agent-relay: 0.1.0, relayhistory: 0.1.0, relay-control: 0.1.0, relay-webapp: 0.1.0 }
+      depends:
+        agent-relay: { relaycast: 0.3.6, relayauth: 0.1.4, sessions-pipeline: 0.8.3, relayhistory: 0.1.2, relay-control: 0.4.0, relay-webapp: 0.2.1, relayflows: 0.2.5, durable-actors: 0.14.6-awf.1, relayfile: 0.2.2, telemetry-collector: 0.1.1, relay-chief: 0.1.0 }
+      images:
+        relayhistory: { repository: ghcr.io/agentworkforce/relayhistory, digest_required: true }
+        relay-control: { repository: ghcr.io/agentworkforce/relay-control, digest: sha256:d8c26d44dccb6dd21b7033288241a379e46ce5fbca69f276c4d4745001c3c3e2 }
+        relay-webapp: { repository: ghcr.io/agentworkforce/relay-webapp, digest_required: true }
+      notes: 'Takes sessions-pipeline 0.8.3 (search indexer Node CA).'
+    - id: agent-relay-0.6.5
+      status: planned
+      charts: { agent-relay: 0.6.5, relayhistory: 0.1.2, relay-control: 0.4.0, relay-webapp: 0.2.1 }
+      app_versions: { agent-relay: 0.1.0, relayhistory: 0.1.0, relay-control: 0.1.0, relay-webapp: 0.1.0 }
+      depends:
+        agent-relay: { relaycast: 0.3.6, relayauth: 0.1.4, sessions-pipeline: 0.8.2, relayhistory: 0.1.2, relay-control: 0.4.0, relay-webapp: 0.2.1, relayflows: 0.2.5, durable-actors: 0.14.6-awf.1, relayfile: 0.2.2, telemetry-collector: 0.1.1, relay-chief: 0.1.0 }
+      images:
+        relayhistory: { repository: ghcr.io/agentworkforce/relayhistory, digest_required: true }
+        relay-control: { repository: ghcr.io/agentworkforce/relay-control, digest: sha256:d8c26d44dccb6dd21b7033288241a379e46ce5fbca69f276c4d4745001c3c3e2 }
+        relay-webapp: { repository: ghcr.io/agentworkforce/relay-webapp, digest_required: true }
+      notes: 'Takes relay-webapp 0.2.1 (default-off runtime.sessionReadApiEnabled).'
+    - id: agent-relay-0.6.4
+      status: planned
+      charts: { agent-relay: 0.6.4, relayhistory: 0.1.2, relay-control: 0.4.0, relay-webapp: 0.2.0 }
+      app_versions: { agent-relay: 0.1.0, relayhistory: 0.1.0, relay-control: 0.1.0, relay-webapp: 0.1.0 }
+      depends:
+        agent-relay: { relaycast: 0.3.6, relayauth: 0.1.4, sessions-pipeline: 0.8.2, relayhistory: 0.1.2, relay-control: 0.4.0, relay-webapp: 0.2.0, relayflows: 0.2.5, durable-actors: 0.14.6-awf.1, relayfile: 0.2.2, telemetry-collector: 0.1.1, relay-chief: 0.1.0 }
+      images:
+        relayhistory: { repository: ghcr.io/agentworkforce/relayhistory, digest_required: true }
+        relay-control: { repository: ghcr.io/agentworkforce/relay-control, digest: sha256:d8c26d44dccb6dd21b7033288241a379e46ce5fbca69f276c4d4745001c3c3e2 }
+        relay-webapp: { repository: ghcr.io/agentworkforce/relay-webapp, digest_required: true }
+      notes: 'Takes sessions-pipeline 0.8.2 (ingestEdge Pod Identity and session selection).'
+    - id: agent-relay-0.6.3
+      status: planned
+      charts: { agent-relay: 0.6.3, relayhistory: 0.1.2, relay-control: 0.4.0, relay-webapp: 0.2.0 }
+      app_versions: { agent-relay: 0.1.0, relayhistory: 0.1.0, relay-control: 0.1.0, relay-webapp: 0.1.0 }
+      depends:
+        agent-relay: { relaycast: 0.3.6, relayauth: 0.1.4, sessions-pipeline: 0.8.1, relayhistory: 0.1.2, relay-control: 0.4.0, relay-webapp: 0.2.0, relayflows: 0.2.5, durable-actors: 0.14.6-awf.1, relayfile: 0.2.2, telemetry-collector: 0.1.1, relay-chief: 0.1.0 }
+      images:
+        relayhistory: { repository: ghcr.io/agentworkforce/relayhistory, digest_required: true }
+        relay-control: { repository: ghcr.io/agentworkforce/relay-control, digest: sha256:d8c26d44dccb6dd21b7033288241a379e46ce5fbca69f276c4d4745001c3c3e2 }
+        relay-webapp: { repository: ghcr.io/agentworkforce/relay-webapp, digest_required: true }
+      notes: 'Takes relaycast 0.3.6 (default-off runtime.backend=postgres). With it off, every render differs only in the helm.sh/chart labels.'
+    - id: agent-relay-0.6.2
+      status: planned
+      charts: { agent-relay: 0.6.2, relayhistory: 0.1.2, relay-control: 0.4.0, relay-webapp: 0.2.0 }
+      app_versions: { agent-relay: 0.1.0, relayhistory: 0.1.0, relay-control: 0.1.0, relay-webapp: 0.1.0 }
+      depends:
+        agent-relay: { relaycast: 0.3.5, relayauth: 0.1.4, sessions-pipeline: 0.8.1, relayhistory: 0.1.2, relay-control: 0.4.0, relay-webapp: 0.2.0, relayflows: 0.2.5, durable-actors: 0.14.6-awf.1, relayfile: 0.2.2, telemetry-collector: 0.1.1, relay-chief: 0.1.0 }
+      images:
+        relayhistory: { repository: ghcr.io/agentworkforce/relayhistory, digest_required: true }
+        relay-control: { repository: ghcr.io/agentworkforce/relay-control, digest: sha256:d8c26d44dccb6dd21b7033288241a379e46ce5fbca69f276c4d4745001c3c3e2 }
+        relay-webapp: { repository: ghcr.io/agentworkforce/relay-webapp, digest_required: true }
+      notes: 'Takes sessions-pipeline 0.8.1, which allows the default-off self_issued read API mode.'
+    - id: agent-relay-0.6.1
+      status: planned
+      charts: { agent-relay: 0.6.1, relayhistory: 0.1.2, relay-control: 0.4.0, relay-webapp: 0.2.0 }
+      app_versions: { agent-relay: 0.1.0, relayhistory: 0.1.0, relay-control: 0.1.0, relay-webapp: 0.1.0 }
+      depends:
+        agent-relay: { relaycast: 0.3.5, relayauth: 0.1.4, sessions-pipeline: 0.8.0, relayhistory: 0.1.2, relay-control: 0.4.0, relay-webapp: 0.2.0, relayflows: 0.2.5, durable-actors: 0.14.6-awf.1, relayfile: 0.2.2, telemetry-collector: 0.1.1, relay-chief: 0.1.0 }
+      images:
+        relayhistory: { repository: ghcr.io/agentworkforce/relayhistory, digest_required: true }
+        relay-control: { repository: ghcr.io/agentworkforce/relay-control, digest: sha256:d8c26d44dccb6dd21b7033288241a379e46ce5fbca69f276c4d4745001c3c3e2 }
+        relay-webapp: { repository: ghcr.io/agentworkforce/relay-webapp, digest_required: true }
+      notes: 'Moves Control to ghcr.io/agentworkforce/relay-control 0.5.0 and the relay-control package paths; older pins need server.args and migrations.args. Adds default-off session read handoff and introspection values. The handoff needs Control 0.5.1, not yet published.'
+    - id: agent-relay-0.6.0
+      status: planned
+      charts: { agent-relay: 0.6.0, relayhistory: 0.1.2, relay-control: 0.3.1, relay-webapp: 0.2.0 }
+      app_versions: { agent-relay: 0.1.0, relayhistory: 0.1.0, relay-control: 0.1.0, relay-webapp: 0.1.0 }
+      depends:
+        agent-relay: { relaycast: 0.3.5, relayauth: 0.1.4, sessions-pipeline: 0.8.0, relayhistory: 0.1.2, relay-control: 0.3.1, relay-webapp: 0.2.0, relayflows: 0.2.5, durable-actors: 0.14.6-awf.1, relayfile: 0.2.2, telemetry-collector: 0.1.0, relay-chief: 0.1.0 }
+      images:
+        relayhistory: { repository: ghcr.io/agentworkforce/relayhistory, digest_required: true }
+        relay-control: { repository: '', digest_required: true }
+        relay-webapp: { repository: ghcr.io/agentworkforce/relay-webapp, digest_required: true }
+      notes: 'Takes sessions-pipeline 0.8.0, which moves the session read API to its own chart under sessionReadApi.'
+    - id: agent-relay-0.5.5
+      status: planned
+      charts: { agent-relay: 0.5.5, relayhistory: 0.1.2, relay-control: 0.3.1, relay-webapp: 0.2.0 }
+      app_versions: { agent-relay: 0.1.0, relayhistory: 0.1.0, relay-control: 0.1.0, relay-webapp: 0.1.0 }
+      depends:
+        agent-relay: { relaycast: 0.3.5, relayauth: 0.1.4, sessions-pipeline: 0.7.6, relayhistory: 0.1.2, relay-control: 0.3.1, relay-webapp: 0.2.0, relayflows: 0.2.5, durable-actors: 0.14.6-awf.1, relayfile: 0.2.2, telemetry-collector: 0.1.0, relay-chief: 0.1.0 }
+      images:
+        relayhistory: { repository: ghcr.io/agentworkforce/relayhistory, digest_required: true }
+        relay-control: { repository: '', digest_required: true }
+        relay-webapp: { repository: ghcr.io/agentworkforce/relay-webapp, digest_required: true }
+      notes: 'Takes sessions-pipeline 0.7.6 (default-off searchIndexer). With it off, every render differs only in the helm.sh/chart labels.'
+    - id: agent-relay-0.5.4
+      status: planned
       charts: { agent-relay: 0.5.4, relayhistory: 0.1.2, relay-control: 0.3.1, relay-webapp: 0.2.0 }
       app_versions: { agent-relay: 0.1.0, relayhistory: 0.1.0, relay-control: 0.1.0, relay-webapp: 0.1.0 }
       depends:
@@ -682,6 +963,14 @@ compatibility:
       charts: { relay-chief: 0.1.0 }
       app_versions: { relay-chief: 0.1.0 }
       notes: First chart, rendered only. No Relay Chief image is published and the digest is operator-supplied until one exists.
+    - id: relaychief-control-0.1.0
+      status: unreleased
+      current: true
+      charts: { relaychief-control: 0.1.0 }
+      app_versions: { relaychief-control: 0.1.0 }
+      images:
+        relaychief-control: { repository: ghcr.io/agentworkforce/relaychief-control, digest: "sha256:ddd4129f062cc19ba144bbb4ac0f7af66fb730be5a7c9521a9307d4c8f287688", digest_required: true }
+      notes: First chart, rendered only. Defaults to the published relaychief-control 0.1.0 image.
     - id: relayflows-0.2.5
       status: unreleased
       current: true
@@ -715,6 +1004,8 @@ compatibility:
 
 # Env the charts render that is neither a requirement nor an option.
 internal_env:
+  - { name: ADMIN_HOST, chart: relaychief-control, why: fixed at 127.0.0.1 so the admin listener stays on loopback; refused in extraEnv }
+  - { name: ADMIN_PORT, chart: relaychief-control, why: reserved from extraEnv so the admin listener stays on its documented port; no chart value offers it }
   - { name: SERVICE, chart: [sessions-pipeline-worker, session-ingest-api], why: selects the entry point of the one services image }
   - { name: OTEL_SERVICE_NAME, chart: [sessions-pipeline-worker, session-ingest-api], why: equals SERVICE }
   - { name: TMPDIR, chart: [sessions-pipeline-worker, session-ingest-api], why: the writable emptyDir under a read-only root filesystem }
@@ -732,6 +1023,14 @@ internal_env:
   - { name: RELAYCAST_WORKSPACE_BOOTSTRAP_SECRET, chart: relaycast, why: reserved prefix in the extraEnv guard; the Secret is mounted as a file }
   - { name: RELAYCAST_RELAYAUTH, chart: relaycast, why: reserved prefix in the extraEnv guard; the RelayAuth remote tagger is wired through credentials.relayauth.url and secretKeys.relayauthToken }
   - { name: RELAYCAST_CREDENTIAL, chart: relaycast, why: reserved prefix in the extraEnv guard; the credential format and local keyring are wired through credentials.* and secretKeys.credentialKeyring }
+  - { name: MIGRATION_WAIT_SECONDS, chart: relaycast, why: postgres backend wait-for-migrations init container; from runtime.postgres.migrations.activeDeadlineSeconds }
+  - { name: RELAYCAST_DATABASE_, chart: relaycast, why: reserved prefix in the extraEnv guard on the sqlite and durable-actors backends }
+  - { name: RELAYCAST_DATABASE_URL, chart: relaycast, why: reserved name in the postgres extraEnv guard; the URL is mounted as a file }
+  - { name: RELAYCAST_DATABASE_CA_FILE, chart: relaycast, why: reserved name in the postgres extraEnv guard; the chart uses NODE_EXTRA_CA_CERTS }
+  - { name: RELAYCAST_DATABASE_SCHEMA, chart: relaycast, why: reserved name in the postgres extraEnv guard; left at the image default }
+  - { name: RELAYCAST_DATABASE_OWNER_ROLE, chart: relaycast, why: reserved name in the postgres extraEnv guard; left at the image default }
+  - { name: RELAYCAST_DATABASE_RUNTIME_ROLE, chart: relaycast, why: reserved name in the postgres extraEnv guard; left at the image default }
+  - { name: PGCLIENT_ENCODING, chart: relaycast, why: refused in the postgres extraEnv guard; the image exits 64 while it is set }
   - { name: BACKUP_KEEP, chart: relaycast, why: backup CronJob; from backup.keep }
   - { name: LOCK_STALE_MS, chart: relaycast, why: backup CronJob lock timeout (fixed) }
   - { name: RELAYAUTH_DB_PATH, chart: relayauth, why: fixed path on the data PVC }
@@ -1086,15 +1385,15 @@ entries:
       relay-control.postgresCa and relayhistory.postgresCa. NODE_EXTRA_CA_CERTS does not reach
       the read API or ingest edge, which set an explicit CA: the read API takes
       SESSION_POSTGRES_TLS_PROFILE=custom-ca, SESSION_POSTGRES_CA_FILE and
-      SESSION_POSTGRES_CA_SHA256 through readApi.extraEnv, with the file from
-      readApi.extraVolumes and extraVolumeMounts; the ingest edge takes
+      SESSION_POSTGRES_CA_SHA256 through sessionReadApi.postgresCa, which mounts the file
+      and sets them; the ingest edge takes
       ingestEdge.postgres.caConfigMap, caKey and caSha256.
       When postgresCa is on, wait-for-role (psql) gets PGSSLROOTCERT. psql run by an operator
       needs sslrootcert=<bundle> with verify-full.
-    chart: [sessions-pipeline, relay-control, relayhistory]
-    values: [worker.postgresCa.*, alleyoop.postgresCa.*, "relay-control:postgresCa.*", "relayhistory:postgresCa.*"]
+    chart: [sessions-pipeline, relay-control, relayhistory, relaychief-control]
+    values: [worker.postgresCa.*, alleyoop.postgresCa.*, "relay-control:postgresCa.*", "relayhistory:postgresCa.*", "relaychief-control:postgresCa.*"]
     env: [NODE_EXTRA_CA_CERTS, PGSSLROOTCERT]
-    profiles: [selfhost-postgres, migration, external-selfhosted, external-rds, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql, relayhistory, relay-control, agent-relay]
+    profiles: [selfhost-postgres, migration, external-selfhosted, external-rds, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql, relayhistory, relay-control, agent-relay, relaychief-control]
     status: shipped
     provided_by: operator
     default: false
@@ -1108,6 +1407,7 @@ entries:
       - "charts/session-ingest-api/templates/deployment.yaml"
       - "charts/relay-control/templates/deployment.yaml"
       - "charts/relayhistory/templates/deployment.yaml"
+      - "charts/relaychief-control/templates/deployment.yaml"
       - "sessions-pipeline@78511e03:src/shared/db.ts:41"
 
   - id: opt.alleyoop.history-origin
@@ -1891,6 +2191,29 @@ entries:
       - charts/relay-control/values.yaml
       - charts/relay-control/templates/deployment.yaml
 
+  - id: req.relay-control.session-read
+    kind: requirement
+    title: Session read API handoff and token introspection for Control
+    description: |
+      Default off. services.sessionReadApiUrl, services.sessionReadApiPublicUrl
+      and secretKeys.sessionReadApiSecret enable the Control credential handoff
+      to the session read API and must be set together;
+      services.sessionReadApiMcpReads also sends MCP session reads there. The
+      handoff needs Control 0.5.1. secretKeys.introspectSecret enables token
+      introspection, and introspection.audiences lists the accepted origins.
+    chart: relay-control
+    values: [services.sessionReadApiUrl, services.sessionReadApiPublicUrl, services.sessionReadApiMcpReads, secretKeys.sessionReadApiSecret, secretKeys.introspectSecret, introspection.audiences]
+    env: [SESSION_READ_API_URL, SESSION_READ_API_PUBLIC_URL, SESSION_READ_API_SECRET_FILE, SESSION_READ_API_MCP_READS, RELAYCONTROL_INTROSPECT_SECRET_FILE, SELFHOST_INTROSPECT_AUDIENCES]
+    profiles: [relay-control]
+    status: shipped
+    provided_by: operator
+    default: disabled
+    choices: [{ value: disabled }, { value: enabled }]
+    verify: helm template renders no SESSION_READ_API_* or introspection env by default, and renders each one with the secrets as mounted files when configured.
+    sources:
+      - charts/relay-control/values.yaml
+      - charts/relay-control/templates/_helpers.tpl
+
   - id: req.relay-control.config
     kind: requirement
     title: Self-host control-plane existing Secret and service configuration
@@ -2340,7 +2663,7 @@ entries:
       routes through its single umbrella Ingress.
     chart: relay-webapp
     values: [runtime.publicUrl, runtime.appPath, runtime.apiBasePath, runtime.loginPath, ingress.tls, imagePullSecrets]
-    env: [DASHBOARD_PUBLIC_URL, DASHBOARD_APP_PATH, DASHBOARD_API_BASE_PATH, DASHBOARD_LOGIN_PATH]
+    env: [DASHBOARD_PUBLIC_URL, DASHBOARD_APP_PATH, DASHBOARD_API_BASE_PATH, DASHBOARD_LOGIN_PATH, DASHBOARD_SESSION_READ_API_ENABLED]
     profiles: [relay-webapp]
     status: shipped
     provided_by: operator
@@ -3341,7 +3664,7 @@ entries:
 
   - id: opt.relaycast.durable-actors
     kind: option
-    title: Relaycast runtime backend (sqlite or durable-actors)
+    title: Relaycast runtime backend (sqlite, durable-actors or postgres)
     description: |
       durable-actors (env contract v1) replaces the SQLite Deployment with the
       relaycast-actors-gateway (same Service, ingress and edge-deny rules; PORT 8787,
@@ -3359,6 +3682,7 @@ entries:
     choices:
       - { value: sqlite }
       - { value: durable-actors, note: "env contract v1; images relaycast-actors-gateway and relaycast-actors-deployer by digest" }
+      - { value: postgres, note: "see req.relaycast.postgres; image runtime.postgres.image by digest" }
     secrets:
       - name: "<runtime.durableActors.fileStore.s3.existingSecret>"
         keys:
@@ -3369,6 +3693,43 @@ entries:
     sources:
       - "charts/relaycast/values.yaml:29"
       - "charts/relaycast/templates/_actors.tpl:98"
+
+  - id: req.relaycast.postgres
+    kind: requirement
+    title: Relaycast PostgreSQL backend (owner and runtime URLs, CA, migration Job)
+    description: |
+      runtime.backend=postgres runs the portable image (runtime.postgres.image) on an
+      external PostgreSQL database that the platform prepares (relaycast_owner and
+      relaycast_runtime roles, schema public; see docs/self-host-postgres.md in
+      AgentWorkforce/relaycast). existingSecret gains two keys, each a full URL
+      postgres://<role>:<pw>@<host>:5432/<db>?sslmode=verify-full: the relaycast_owner URL
+      is projected only into the migration Job, the relaycast_runtime URL only into the
+      server. postgresCa names the CA bundle and is required. The Job is a plain Job named
+      by a hash of its pod template (args migrate, no Helm hook, exits 64 and 65 not
+      retried); the server's wait-for-migrations init container runs verify-db until the
+      database is migrated for this image. One replica; files stay on the PVC; backup.enabled
+      and retention.messageTtlDays are refused. Default off.
+    chart: relaycast
+    values: [runtime.postgres.image.repository, runtime.postgres.image.digest, runtime.postgres.migrations.identitySalt, runtime.postgres.migrations.backoffLimit, runtime.postgres.migrations.activeDeadlineSeconds, secretKeys.databaseOwnerUrl, secretKeys.databaseRuntimeUrl, postgresCa.enabled, postgresCa.configMap, postgresCa.secret, postgresCa.key]
+    env: [RELAYCAST_DATABASE_URL_FILE]
+    profiles: [relaycast-postgres]
+    status: shipped
+    provided_by: operator
+    secrets:
+      - name: "<existingSecret>"
+        name_paths: [existingSecret]
+        keys:
+          - { key: database-owner-url, key_path: secretKeys.databaseOwnerUrl }
+          - { key: database-runtime-url, key_path: secretKeys.databaseRuntimeUrl }
+      - name: "<postgresCa.secret>"
+        keys:
+          - { key: ca.crt, key_path: postgresCa.key }
+        note: or the same key in the ConfigMap named by postgresCa.configMap
+    verify: kubectl wait --for=condition=complete job -l app.kubernetes.io/name=relaycast-migrate; curl <baseUrl>/health
+    sources:
+      - "charts/relaycast/values.yaml:29"
+      - "charts/relaycast/templates/_postgres.tpl:1"
+      - "charts/relaycast/templates/postgres-migrate-job.yaml:1"
 
   - id: req.relaycast.durable-actors-secrets
     kind: requirement
@@ -3494,7 +3855,7 @@ entries:
       publication, GC, product deletion, provider removal or profile enablement.
     chart: sessions-pipeline
     values: [ingestEdge.*]
-    env: [SERVICE, RELAYHISTORY_SELFHOST_INGEST, RELAYHISTORY_INGEST_PORT, RELAYHISTORY_INGEST_ORIGIN, RELAYCONTROL_INTROSPECT_URL, RELAYCONTROL_INTROSPECT_SECRET, RELAYHISTORY_INGEST_DATABASE_URL, SESSION_POSTGRES_TLS_PROFILE, SESSION_POSTGRES_CA_FILE, SESSION_POSTGRES_CA_SHA256, RELAYHISTORY_INGEST_PG_POOL_MAX, ALLOW_IN_CLUSTER_HTTP, LOCKER_PROVIDER, LOCKER_BUCKET, LOCKER_ENDPOINT, LOCKER_REGION, LOCKER_ACCESS_KEY_ID, LOCKER_SECRET_ACCESS_KEY, INGEST_KEY_ROOT, INGEST_MAX_PER_USER, INGEST_MAX_PER_ORG]
+    env: [SERVICE, RELAYHISTORY_SELFHOST_INGEST, RELAYHISTORY_SELFHOST_SESSION_SELECTION, RELAYHISTORY_INGEST_PORT, RELAYHISTORY_INGEST_ORIGIN, RELAYCONTROL_INTROSPECT_URL, RELAYCONTROL_INTROSPECT_SECRET, RELAYHISTORY_INGEST_DATABASE_URL, SESSION_POSTGRES_TLS_PROFILE, SESSION_POSTGRES_CA_FILE, SESSION_POSTGRES_CA_SHA256, RELAYHISTORY_INGEST_PG_POOL_MAX, ALLOW_IN_CLUSTER_HTTP, LOCKER_PROVIDER, LOCKER_BUCKET, LOCKER_ENDPOINT, LOCKER_REGION, LOCKER_ACCESS_KEY_ID, LOCKER_SECRET_ACCESS_KEY, INGEST_KEY_ROOT, INGEST_MAX_PER_USER, INGEST_MAX_PER_ORG]
     profiles: [selfhost-postgres, migration, external-selfhosted, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql]
     status: shipped
     provided_by: operator
@@ -3523,29 +3884,36 @@ entries:
     kind: option
     title: Default-off self-host session read API container
     description: |
-      Chart plumbing for the pipeline session-read-api SERVICE. Requires an
-      explicitly pinned compatible image, read-role configuration JSON in a
-      Secret, an explicit coverage floor and workspace allowlist, a public token
-      audience, and either an explicitly configured temporary issuer (legacy
-      chart mode) or auth.mode=relaycontrol_only from merged pipeline #364.
-      Control-only mode requires enabled introspection and empty legacy issuer
-      settings, emits READ_API_AUTH_MODE, and omits both RELAYAUTH variables.
-      It cannot be injected through extraEnv. A LOCKER_BUCKET extraEnv entry
-      requires a nonempty literal bucket, literal PIPELINE_ORG_FROM_PREFIX=true
-      and PIPELINE_KEY_PREFIX=96bulls. Missing/false flags, org-suffixed roots
-      and valueFrom references for these layout inputs refuse rendering.
-      Bucket literals reject surrounding whitespace; when both services are
-      enabled, the configured reader bucket must equal ingestEdge.locker.bucket.
-      Search is selected
-      via SEARCH_INDEX_BACKEND (postgres by default) through the upstream adapter
-      registry, not implemented in this chart. Introspection uses
-      its own Secret reference. Readiness requires health JSON enabled:true;
-      dormant HTTP 200 is insufficient. No install profile enables this option.
-      Pipeline PRs 317/318 are merged; the approved PG-only/canonical/auth
-      runtime assembly remains unqualified, so this entry does not claim runtime availability or proof.
-    chart: sessions-pipeline
-    values: [readApi.*]
-    env: [SERVICE, RELAYHISTORY_SELFHOST_READ_API, RELAYHISTORY_READ_API_PORT, RELAYHISTORY_READ_API_SECRET, READ_API_ORIGIN, READ_API_AUTH_MODE, LOCKER_BUCKET, PIPELINE_ORG_FROM_PREFIX, PIPELINE_KEY_PREFIX, READ_API_COMPLETE_SINCE, READ_API_DIRECTORY_WORKSPACES, SEARCH_INDEX_BACKEND, ALLOW_IN_CLUSTER_HTTP, RELAYAUTH_JWKS_URL, RELAYAUTH_ISSUER, RELAYHISTORY_ACCEPT_RELAYCONTROL_TOKENS, RELAYCONTROL_INTROSPECT_URL, RELAYCONTROL_INTROSPECT_SECRET]
+      The standalone session-read-api chart, carried by sessions-pipeline as the
+      default-off sessionReadApi dependency. Requires an explicitly pinned
+      compatible image, read-role configuration JSON in a Secret, an explicit
+      coverage floor and workspace allowlist, a public token audience, an explicit
+      postgres.tlsProfile, and one of auth.mode=relaycontrol_only (the default,
+      with enabled introspection and empty legacy issuer settings), an
+      explicitly configured temporary issuer (legacy), or self_issued. self_issued
+      requires auth.selfIssued.internalSecret (at least 32 characters, checked by
+      the service at startup), relaycontrol.enabled=false, login.advertisesSync=false
+      and networkPolicy.enabled with controlFrom selecting the Control pods.
+      accessTokenTtlSeconds is 60 to 300. The optional ingress routes only /v1,
+      so /internal/* is not published; publicFrom peers share the service port
+      and must route only /v1. events.messageIds (default off) requires
+      LOCKER_BUCKET. A LOCKER_BUCKET extraEnv
+      entry requires a nonempty literal bucket, literal
+      PIPELINE_ORG_FROM_PREFIX=true and PIPELINE_KEY_PREFIX=96bulls. Missing/false
+      flags, org-suffixed roots and valueFrom references for these layout inputs
+      refuse rendering. Bucket literals reject surrounding whitespace; when both
+      services are enabled, the configured reader bucket must equal
+      ingestEdge.locker.bucket. Search is selected via SEARCH_INDEX_BACKEND
+      (postgres by default); search.clickhouse.enabled reads an external
+      ClickHouse from the read API Secret. Introspection uses its own Secret
+      reference. Readiness requires health JSON enabled:true; dormant HTTP 200 is
+      insufficient. No install profile enables this option. The old
+      sessions-pipeline readApi key refuses to render with a migration message.
+      The approved PG-only/canonical/auth runtime assembly remains unqualified,
+      so this entry does not claim runtime availability or proof.
+    chart: session-read-api
+    values: [fullnameOverride, replicas, image.*, imagePullSecrets, port, probeRuntime, origin, completeSince, directoryWorkspaces, login.advertisesSync, turns.assumeNoLegacy, events.messageIds, serviceAccountCreate, allowInClusterHttp, config.*, postgres.*, postgresCa.*, search.*, auth.*, cors.*, ingress.*, networkPolicy.*, extraEnv, extraVolumes, extraVolumeMounts, serviceAccountName, nodeSelector, tolerations, affinity, podAnnotations, resources]
+    env: [SERVICE, RELAYHISTORY_SELFHOST_READ_API, RELAYHISTORY_READ_API_PORT, RELAYHISTORY_READ_API_SECRET, READ_API_ORIGIN, READ_API_AUTH_MODE, READ_API_COMPLETE_SINCE, READ_API_DIRECTORY_WORKSPACES, READ_API_CORS_ALLOWED_ORIGINS, RELAYHISTORY_SELFHOST_LOGIN_ADVERTISES_SYNC, READ_API_TURNS_ASSUME_NO_LEGACY, READ_API_EVENT_MESSAGE_IDS, READ_API_INTERNAL_SECRET, READ_API_INTERNAL_SECRET_PREVIOUS, READ_API_ACCESS_TOKEN_TTL_SECONDS, SEARCH_INDEX_POSTGRES_BACKEND_ID, SEARCH_INDEX_OPENSEARCH_URL, SEARCH_INDEX_OPENSEARCH_AUTH, SEARCH_INDEX_OPENSEARCH_AWS_REGION, SEARCH_INDEX_OPENSEARCH_INDEX_PREFIX, PIPELINE_ORG_FROM_PREFIX, PIPELINE_KEY_PREFIX, SEARCH_INDEX_BACKEND, ALLOW_IN_CLUSTER_HTTP, SESSION_POSTGRES_TLS_PROFILE, SESSION_POSTGRES_CA_FILE, SESSION_POSTGRES_CA_SHA256, RELAYAUTH_JWKS_URL, RELAYAUTH_ISSUER, RELAYHISTORY_ACCEPT_RELAYCONTROL_TOKENS, RELAYCONTROL_INTROSPECT_URL, RELAYCONTROL_INTROSPECT_SECRET]
     profiles: [selfhost-postgres, migration, external-selfhosted, external-rds, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql]
     status: shipped
     provided_by: operator
@@ -3555,18 +3923,64 @@ entries:
       - { value: enabled, note: Requires an owner-approved compatible runtime. }
     secrets:
       - name: "<read API configuration Secret>"
-        name_paths: [readApi.config.existingSecret]
+        name_paths: ["session-read-api:config.existingSecret"]
         keys:
-          - { key: RELAYHISTORY_READ_API_SECRET, key_path: readApi.config.key }
+          - { key: RELAYHISTORY_READ_API_SECRET, key_path: "session-read-api:config.key" }
       - name: "<read API introspection Secret>"
-        name_paths: [readApi.auth.relaycontrol.existingSecret]
+        name_paths: ["session-read-api:auth.relaycontrol.existingSecret"]
         keys:
-          - { key: RELAYCONTROL_INTROSPECT_SECRET, key_path: readApi.auth.relaycontrol.key }
-    verify: Leave disabled until the image and assembly contract land; render/schema/probe tests prove plumbing only. Authenticated workspace/session read acceptance remains required.
+          - { key: RELAYCONTROL_INTROSPECT_SECRET, key_path: "session-read-api:auth.relaycontrol.key" }
+      - name: "<read API internal Secret>"
+        name_paths: ["session-read-api:auth.selfIssued.internalSecret.existingSecret"]
+        keys:
+          - { key: READ_API_INTERNAL_SECRET, key_path: "session-read-api:auth.selfIssued.internalSecret.key" }
+      - name: "<read API previous internal Secret>"
+        name_paths: ["session-read-api:auth.selfIssued.previousInternalSecret.existingSecret"]
+        keys:
+          - { key: READ_API_INTERNAL_SECRET_PREVIOUS, key_path: "session-read-api:auth.selfIssued.previousInternalSecret.key" }
+    verify: Leave disabled until the image and assembly contract land; render/schema/probe tests prove plumbing only. Authenticated workspace reads need the approved runtime.
     sources:
-      - "charts/sessions-pipeline/templates/read-api.yaml:1"
-      - "charts/sessions-pipeline/values.yaml:1"
+      - "charts/session-read-api/templates/deployment.yaml:1"
+      - "charts/session-read-api/values.yaml:1"
       - "docs/self-hosted-session-read-api.md:1"
+
+  - id: opt.sessions-search-indexer
+    kind: option
+    title: Default-off self-host transcript search writer
+    description: |
+      Chart plumbing for the pipeline session-pipeline-consumer SERVICE, which
+      reads the Locker and writes the transcript search index (managed
+      OpenSearch by default, signed with the ServiceAccount's Pod Identity
+      credentials; projection state stays in Postgres). Requires an explicitly
+      pinned image built from a pipeline commit with the OpenSearch writer, the
+      same coverage floor and backend id as the read API, the runtime-role
+      connection JSON in a Secret, and an owner-role bootstrap (the chart's
+      bootstrap Job, or a run acknowledged by the operator). The ServiceAccount
+      must carry the search indexer Pod Identity association and the Locker
+      read grant. No install profile enables this option.
+    chart: sessions-pipeline
+    values: [searchIndexer.*]
+    env: [SERVICE, RELAYHISTORY_SELFHOST_PIPELINE_CONSUMER, RELAYHISTORY_PIPELINE_CONSUMER_SECRET, SEARCH_INDEX_BACKEND, SEARCH_INDEX_POSTGRES_BACKEND_ID, READ_API_COMPLETE_SINCE, PIPELINE_KEY_PREFIX, PIPELINE_ORG_FROM_PREFIX, SESSION_POSTGRES_TLS_PROFILE, SESSION_POSTGRES_CA_FILE, SESSION_POSTGRES_CA_SHA256, LOCKER_BUCKET, LOCKER_REGION, LOCKER_ENDPOINT, SEARCH_INDEX_OPENSEARCH_URL, SEARCH_INDEX_OPENSEARCH_AUTH, SEARCH_INDEX_OPENSEARCH_AWS_REGION, SEARCH_INDEX_OPENSEARCH_INDEX_PREFIX, WORKER_HEALTH_PORT]
+    profiles: [selfhost-postgres, migration, external-selfhosted, external-rds, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql]
+    status: shipped
+    provided_by: operator
+    default: disabled
+    choices:
+      - { value: disabled }
+      - { value: enabled, note: Requires a services image with the OpenSearch writer and the indexer role's Locker grant. }
+    secrets:
+      - name: "<search indexer configuration Secret>"
+        name_paths: [searchIndexer.config.existingSecret]
+        keys:
+          - { key: RELAYHISTORY_PIPELINE_CONSUMER_SECRET, key_path: searchIndexer.config.key }
+      - name: "<search indexer bootstrap Secret>"
+        name_paths: [searchIndexer.bootstrap.existingSecret]
+        keys:
+          - { key: RELAYHISTORY_PIPELINE_CONSUMER_SECRET, key_path: searchIndexer.bootstrap.key }
+    verify: Leave disabled until the image and the role grants land; render tests prove plumbing only. kubectl logs of the indexer report pipeline consumer ticks, and search hits come back through the read API once it is enabled.
+    sources:
+      - "charts/sessions-pipeline/templates/search-indexer.yaml:1"
+      - "charts/sessions-pipeline/values.yaml:1"
 
   - id: opt.control-legacy-relayauth
     kind: option
@@ -3671,3 +4085,127 @@ entries:
     sources:
       - "charts/relay-chief/values.yaml:9"
       - "charts/relay-chief/templates/cronjob.yaml:34"
+
+  - id: req.relaychief-control.config
+    kind: requirement
+    title: Relay Chief control origins
+    description: RELAYCONTROL_URL and RELAYCHIEF_CONTROL_PUBLIC_ORIGIN, each a bare http(s) origin. The public origin is the token audience, so it must also be among relay-control's accepted audiences.
+    chart: relaychief-control
+    values: [config.relaycontrolUrl, config.publicOrigin]
+    env: [RELAYCONTROL_URL, RELAYCHIEF_CONTROL_PUBLIC_ORIGIN]
+    profiles: [relaychief-control]
+    status: shipped
+    provided_by: operator
+    verify: helm template fails with "config.relaycontrolUrl (RELAYCONTROL_URL) is required" or "config.publicOrigin (RELAYCHIEF_CONTROL_PUBLIC_ORIGIN) is required" when one is unset
+    sources:
+      - "charts/relaychief-control/values.yaml"
+      - "charts/relaychief-control/templates/configmap.yaml"
+
+  - id: req.relaychief-control.credentials
+    kind: requirement
+    title: Relay Chief control database URL and service secrets
+    description: One existing Secret with DATABASE_URL (also used by the migrate Job), RELAYCONTROL_INTROSPECT_SECRET and RELAYCHIEF_CONTROL_ADMIN_TOKEN (both 32 or more characters; the server refuses to start otherwise). The chart creates no Secret and takes no Secret values, so a render cannot check their presence or length.
+    chart: relaychief-control
+    values: [existingSecret, "secretKeys.*"]
+    env: [DATABASE_URL, RELAYCONTROL_INTROSPECT_SECRET, RELAYCHIEF_CONTROL_ADMIN_TOKEN]
+    profiles: [relaychief-control]
+    status: shipped
+    provided_by: operator
+    secrets:
+      - name: "<existingSecret>"
+        keys:
+          - { key: DATABASE_URL, key_path: secretKeys.databaseUrl }
+          - { key: RELAYCONTROL_INTROSPECT_SECRET, key_path: secretKeys.introspectSecret }
+          - { key: RELAYCHIEF_CONTROL_ADMIN_TOKEN, key_path: secretKeys.adminToken }
+          - { key: "<operator-chosen, e.g. NANGO_SECRET_KEY>", key_path: secretKeys.nangoSecretKey, optional: "unset leaves Nango off and creating a chief answers 503; required with config.nangoHost" }
+    verify: helm template fails with "existingSecret is required" when it is unset; the pod starts without a CreateContainerConfigError and /readyz answers 200
+    sources:
+      - "charts/relaychief-control/values.yaml"
+      - "charts/relaychief-control/templates/_helpers.tpl"
+
+  - id: opt.relaychief-control.nango
+    kind: option
+    title: Relay Chief control Nango host and browser origins
+    description: NANGO_HOST with secretKeys.nangoSecretKey selects a self-hosted Nango; the key alone uses Nango's hosted API. NANGO_HOST without the key makes the server throw at startup, so the chart refuses to render it. RELAYCHIEF_CONTROL_BROWSER_ORIGINS is a comma-separated list of http(s) origins allowed through the CSRF check.
+    chart: relaychief-control
+    values: [config.nangoHost, config.browserOrigins]
+    env: [NANGO_HOST, NANGO_SECRET_KEY, RELAYCHIEF_CONTROL_BROWSER_ORIGINS]
+    profiles: [relaychief-control]
+    status: shipped
+    provided_by: operator
+    default: unset
+    choices:
+      - { value: unset }
+      - { value: hosted }
+      - { value: self-hosted }
+    verify: helm template fails with "requires secretKeys.nangoSecretKey" when config.nangoHost is set without the key
+    sources:
+      - "charts/relaychief-control/values.yaml"
+      - "charts/relaychief-control/templates/_helpers.tpl"
+
+  - id: opt.relaychief-control.exposure
+    kind: option
+    title: Relay Chief control Ingress and NetworkPolicy
+    description: The Ingress is off by default and routes only /chief/v1 (Prefix) when on. ingress.extraPaths can add the tenant routes under /api/v1; a / rule is refused. networkPolicy.ingressFrom must admit the load balancer (an ALB in IP target mode connects from its subnets, as ipBlock peers), and networkPolicy.additionalEgress must admit the database unless allowAllEgress is true.
+    chart: relaychief-control
+    values: ["ingress.*", "networkPolicy.*"]
+    profiles: [relaychief-control]
+    status: shipped
+    provided_by: operator
+    default: disabled
+    choices:
+      - { value: disabled }
+      - { value: enabled }
+    verify: kubectl get ingress shows only the /chief/v1 path unless ingress.extraPaths adds more, and the load balancer's targets report healthy
+    sources:
+      - "charts/relaychief-control/templates/ingress.yaml"
+      - "charts/relaychief-control/templates/networkpolicy.yaml"
+
+  - id: opt.relaychief-control.image-pull-secrets
+    kind: option
+    title: Relay Chief control image pull Secrets
+    description: Pull Secrets for a private registry or customer mirror.
+    chart: relaychief-control
+    values: [imagePullSecrets]
+    profiles: [relaychief-control]
+    status: shipped
+    provided_by: operator
+    default: none
+    choices:
+      - { value: none }
+      - { value: listed }
+    verify: the Deployment and migrate Job pull their image without ImagePullBackOff
+    sources:
+      - "charts/relaychief-control/values.yaml"
+      - "charts/relaychief-control/templates/deployment.yaml"
+
+  - id: opt.sessions-native-ingest-admission
+    kind: option
+    title: Native ingest admission mode
+    description: |
+      Chart configuration for pipeline #398, merged at
+      f0860b2e785b52fefbaa37482d02ab96b013049d. A separately qualified image
+      containing that merge or a reviewed successor is required. Sync is
+      the unchanged default. Async acknowledges a durable create-only inbox
+      write, then admits to PostgreSQL in the background. Drain accepts new
+      uploads synchronously while consuming the existing inbox. Control
+      introspection remains per request; startup still verifies PostgreSQL.
+      Async/drain probes require the exact mode and healthy consumer counters;
+      an older image ignoring the setting fails readiness. No profile opts in.
+    chart: sessions-pipeline
+    values: [ingestEdge.admission.mode, ingestEdge.admission.concurrency, ingestEdge.admission.scanIntervalMs, ingestEdge.admission.maxAttempts]
+    env: [SELFHOST_INGEST_ADMISSION, SELFHOST_ADMISSION_CONCURRENCY, SELFHOST_ADMISSION_SCAN_MS, SELFHOST_ADMISSION_MAX_ATTEMPTS]
+    profiles: [selfhost-postgres, migration, external-selfhosted, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql]
+    status: shipped
+    provided_by: operator
+    default: sync
+    choices:
+      - { value: sync, note: Existing synchronous upload admission; emits no new mode variables. }
+      - { value: async, note: Requires a qualified conditional-write store and native async image. Queued is not indexed. }
+      - { value: drain, note: Keep the consumer running while new uploads use synchronous admission. }
+    verify: Prove durable queued receipt during admission database failure after startup, restart/retry recovery, dead-letter visibility and eventual indexed readback with the exact image. Rendering and readiness do not establish end-to-end acceptance.
+    sources:
+      - "charts/sessions-pipeline/templates/ingest-edge.yaml:1"
+      - "charts/sessions-pipeline/templates/_ingest-edge.tpl:1"
+      - "charts/sessions-pipeline/values.yaml:1"
+      - "docs/self-hosted-native-ingest.md:1"

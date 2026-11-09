@@ -1,0 +1,176 @@
+# Standalone chart for the session read API. sessions-pipeline carries it as a
+# default-off dependency under the sessionReadApi key.
+
+# Override the Deployment and Service name. Default: <release>-read-api, the
+# name the old sessions-pipeline readApi block used.
+fullnameOverride: ""
+replicas: 1
+image:
+  # Registry DNS host plus image path; no scheme, tag or digest.
+  repository: ghcr.io/agentworkforce/96bulls-services
+  # Required: an immutable digest of an owner-approved compatible image. For
+  # auth.mode=self_issued and events.messageIds use at least
+  # sha256:d55840ab4bf4e2fea3769db690f3c8d32979ab455ef251172f914ac011cb8c33
+  # (relayhistory-pipeline eebaced9).
+  digest: ""
+  pullPolicy: IfNotPresent
+imagePullSecrets: []
+# Unprivileged container port: 1024-65535, independent of the public origin port.
+port: 8080
+# The services image uses Bun; Node-only compatible images may select node.
+probeRuntime: bun
+# Bare public HTTPS origin, used as the token audience.
+origin: ""
+# A new self-host store populated only by its own ingest is complete from inception.
+# Set a real ISO coverage floor only when importing partial legacy history; keep
+# it aligned with the indexer's floor. This is not the chart installation time.
+completeSince: epoch
+# Exact upstream allowlist string (READ_API_DIRECTORY_WORKSPACES); '*' is not a
+# workspace authority. Desktop upload needs its workspace listed here.
+directoryWorkspaces: ""
+events:
+  # READ_API_EVENT_MESSAGE_IDS. Serves includeMessageId on session events from
+  # the canonical store, so it requires LOCKER_BUCKET in extraEnv.
+  messageIds: false
+turns:
+  # True only where no Neon source exists, so no legacy coverage marker is expected.
+  assumeNoLegacy: false
+login:
+  # Lets POST /v1/cli/login advertise rth:sync when introspection granted it.
+  # Control refuses sync sessions without it, so Desktop upload needs it true.
+  # Set true only where the ingest edge serves sync for this same origin.
+  advertisesSync: false
+# Allows plain http only to in-cluster Service names.
+allowInClusterHttp: false
+
+# The Secret holding RELAYHISTORY_READ_API_SECRET, one JSON document:
+#   {"supabase_url": "postgresql://bulls96_read_api:...@host:5432/db"}
+# plus a "clickhouse" block when search.clickhouse.enabled=true. The login must
+# be the reader role; the service refuses any other at startup.
+config:
+  existingSecret: ""
+  key: RELAYHISTORY_READ_API_SECRET
+
+postgres:
+  # Required, with no default: supabase (the image's pinned CA) or custom-ca
+  # (postgresCa below). The service verifies the server hostname in both.
+  tlsProfile: ""
+
+# The Postgres server CA for tlsProfile=custom-ca: exactly one of configMap or
+# secret, and the certificate's SHA-256.
+postgresCa:
+  enabled: false
+  configMap: ""
+  secret: ""
+  key: ca.crt
+  sha256: ""
+
+search:
+  # postgres, clickhouse or opensearch; requires a compatible image.
+  backend: postgres
+  # SEARCH_INDEX_POSTGRES_BACKEND_ID. Required for postgres and opensearch. It and
+  # completeSince must match the indexer's values.
+  backendId: ""
+  # Used only when backend=opensearch. Auth is sigv4, so serviceAccountName needs
+  # an AWS identity (agent-relay-session-read in the agent-relay composition).
+  opensearch:
+    url: ""
+    region: ""
+    # Optional.
+    indexPrefix: ""
+  # Default off. Reads search from an external ClickHouse; this chart installs
+  # none, and something else must keep it populated up to completeSince. True
+  # renders SEARCH_INDEX_BACKEND=clickhouse and takes RELAYHISTORY_READ_API_SECRET
+  # from this Secret key instead of config above. The key holds one JSON document:
+  #   {"supabase_url": "postgresql://bulls96_read_api:...",
+  #    "clickhouse": {"url": "https://<host>:8443", "user": "<SELECT-only user>",
+  #                   "password": "...", "database": "..."}}
+  # The url must be https or loopback, and the service requires all four fields.
+  # The service reads no CLICKHOUSE_* environment variables.
+  clickhouse:
+    enabled: false
+    existingSecret: ""
+    key: RELAYHISTORY_READ_API_SECRET
+
+auth:
+  # relaycontrol_only: Control introspection with rth:read and no RelayAuth
+  # dependency. legacy: an explicitly configured temporary issuer, plus the
+  # optional Control path. self_issued: this service issues and checks its own
+  # opaque tokens, and Control hands sessions over through
+  # /internal/v1/session-read/*. self_issued requires relaycontrol.enabled=false,
+  # login.advertisesSync=false, selfIssued.internalSecret and
+  # networkPolicy.controlFrom.
+  mode: relaycontrol_only
+  selfIssued:
+    # READ_API_ACCESS_TOKEN_TTL_SECONDS: 60 to 300.
+    accessTokenTtlSeconds: 300
+    # READ_API_INTERNAL_SECRET: at least 32 characters with no surrounding
+    # whitespace. The service refuses anything else at startup; helm cannot read
+    # the Secret at render. Control presents the same value as its
+    # SESSION_READ_API_SECRET.
+    internalSecret:
+      existingSecret: ""
+      key: READ_API_INTERNAL_SECRET
+    # READ_API_INTERNAL_SECRET_PREVIOUS: optional, accepted alongside the current
+    # secret during a rotation overlap. Must hold a different value.
+    previousInternalSecret:
+      existingSecret: ""
+      key: READ_API_INTERNAL_SECRET_PREVIOUS
+  relayauth:
+    # Required for legacy; must stay empty for relaycontrol_only and self_issued.
+    jwksUrl: ""
+    issuer: ""
+  relaycontrol:
+    enabled: true
+    # Base origin only: https, or http to an in-cluster Service with
+    # allowInClusterHttp=true.
+    url: ""
+    existingSecret: ""
+    key: RELAYCONTROL_INTROSPECT_SECRET
+
+cors:
+  # Exact browser origins allowed to call the GET read routes directly, for
+  # example https://app.example.com. No wildcard, path or trailing slash; plain
+  # http only on loopback. Empty means no CORS. Honored only by images that
+  # include READ_API_CORS_ALLOWED_ORIGINS support; older images ignore it.
+  allowedOrigins: []
+
+# Default off. Routes only /v1 to the Service, so /internal/* is never published;
+# the host comes from origin. Any other proxy must likewise route only /v1 here.
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  tls: []
+
+# Ingress-only policy for the read API pods. The service has one port and
+# NetworkPolicy cannot tell paths apart: publicFrom peers are admitted to that
+# port too, and it is the /v1-only route that keeps /internal/* away from them.
+networkPolicy:
+  # Required for auth.mode=self_issued.
+  enabled: false
+  # The Control pods, the only caller of /internal/*: podSelector labels,
+  # optionally with a namespaceSelector. Required when enabled.
+  controlFrom: []
+  # Peers that carry public /v1 traffic: the ingress controller's selectors, or
+  # an ipBlock of the ALB subnets in IP target mode. Required with ingress.enabled.
+  publicFrom: []
+
+# TLS CA mounts, adapter configuration and other upstream options. Credential
+# values belong in Secret key refs, not literal extraEnv values. LOCKER_BUCKET
+# requires a nonempty literal plus literal PIPELINE_ORG_FROM_PREFIX=true and
+# PIPELINE_KEY_PREFIX=96bulls (bare root); these three layout inputs cannot use
+# valueFrom, because admission must see them.
+extraEnv: []
+extraVolumes: []
+extraVolumeMounts: []
+serviceAccountName: ""
+# Creates serviceAccountName. Otherwise it must already exist.
+serviceAccountCreate: false
+nodeSelector: {}
+tolerations: []
+affinity: {}
+podAnnotations: {}
+resources:
+  requests: { cpu: 50m, memory: 128Mi }
+  limits: { memory: 512Mi }

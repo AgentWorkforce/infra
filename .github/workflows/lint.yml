@@ -57,6 +57,9 @@ jobs:
       - name: durable-actors S3 render assertions
         run: ci/actors-s3/render.sh
 
+      - name: relaycast PostgreSQL backend render assertions
+        run: ci/relaycast/render.sh
+
       # Offline tests for scripts/selfhost (every external command mocked),
       # including eks-actors-install.sh's actor credential mode and role ARN.
       - name: Self-hosted operator script tests

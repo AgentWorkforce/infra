@@ -281,7 +281,7 @@ relayfile-actors-workspace
 These are proof-only identities. The release gate audits the customer profile
 (`values-gcp.yaml`) against `self-hosted/customer-images.yaml`, which records
 the CI render fixture's dashboard digest (`ci/gcp-proof-values.yaml`) and the
-published `ghcr.io/agentworkforce/selfhost-api` digest, not the live pins; a
+published `ghcr.io/agentworkforce/relay-control` digest, not the live pins; a
 proof pin never makes an image customer-ready.
 
 The RelayHistory image is an experimental proof build, not a released or

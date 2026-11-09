@@ -1,0 +1,47 @@
+# RENDER ONLY: fake image identity; never deploy this fixture.
+global:
+  tenant:
+    orgId: org_ci
+alleyoop:
+  auth:
+    jwksUrl: https://relayauth.example.com/.well-known/jwks.json
+worker:
+  migrations:
+    databaseMode: selfhosted
+    supabaseShim: true
+    runtimeRole: sessions_pipeline_runtime
+    runtimeRoleLogin: true
+    functionBoundaryMode: global-default-revoke
+    waitForRole:
+      enabled: true
+      functionDefault: true
+runtimeRole:
+  bootstrapJob:
+    enabled: true
+functionDefaultRevoke:
+  bootstrapJob:
+    enabled: true
+privilegedSql:
+  sqlImage:
+    digest: "sha256:6f22ea17dff336e1431664542759fd27958649388b90a0b2f0881883caa7c6b2"
+searchIndexer:
+  enabled: true
+  image:
+    repository: example.invalid/session-search-indexer
+    digest: sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff
+  completeSince: epoch
+  config: { existingSecret: search-indexer-config }
+  search:
+    backendId: ci-opensearch
+    opensearch:
+      url: https://search.ci.example.com
+      region: us-west-2
+  locker:
+    bucket: ci-sessions
+    region: us-west-2
+  postgres:
+    caConfigMap: rds-ca
+    caSha256: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+  bootstrap:
+    enabled: true
+    existingSecret: search-indexer-owner

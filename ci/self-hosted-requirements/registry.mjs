@@ -64,7 +64,7 @@ const STATUSES = ['shipped', 'planned'];
 const PROVIDERS = ['operator', 'chart', 'migrator', 'stack'];
 
 // Umbrella value paths under worker./alleyoop. belong to the subcharts.
-const UMBRELLA_ALIASES = { worker: 'sessions-pipeline-worker', alleyoop: 'session-ingest-api' };
+const UMBRELLA_ALIASES = { worker: 'sessions-pipeline-worker', alleyoop: 'session-ingest-api', sessionReadApi: 'session-read-api' };
 function normPath(chart, p) {
   let c = chart, q = p;
   const m = /^([a-z0-9-]+):(.+)$/.exec(p);
@@ -81,7 +81,7 @@ const entryValues = (e) => asList(e.values).map((p) => normPath(entryCharts(e)[0
 const entryEnv = (e) => asList(e.env);
 const perProfile = (v, p) => (v && typeof v === 'object' && !Array.isArray(v) ? (p in v ? v[p] : v.default) : v);
 // The charts whose templates an entry's chart covers (the umbrella renders its subcharts).
-const chartFamily = (c) => (c === 'sessions-pipeline' ? ['sessions-pipeline', 'sessions-pipeline-worker', 'session-ingest-api'] : [c]);
+const chartFamily = (c) => (c === 'sessions-pipeline' ? ['sessions-pipeline', 'sessions-pipeline-worker', 'session-ingest-api', 'session-read-api'] : [c]);
 
 // ---------------------------------------------------------------------------
 // Template scan

@@ -1,0 +1,20 @@
+apiVersion: v2
+name: session-read-api
+type: application
+version: 0.2.1
+appVersion: "0.1.0"
+description: >
+  Read-only session API for the sessions pipeline (SERVICE=session-read-api):
+  list, turns, search and activity over the reader database role. Installs and
+  tests on its own; sessions-pipeline also carries it as a default-off dependency.
+  Hook-free.
+annotations:
+  artifacthub.io/license: Apache-2.0
+  agentworkforce.dev/license-scope: "First-party chart code only; dependencies and images retain their own licenses."
+home: https://github.com/AgentWorkforce/relayhistory-pipeline
+keywords: [sessions-pipeline, session-read-api, agentworkforce]
+maintainers:
+  - name: AgentWorkforce
+    url: https://github.com/AgentWorkforce/infra
+sources:
+  - https://github.com/AgentWorkforce/infra/tree/main/charts/session-read-api

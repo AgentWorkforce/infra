@@ -21,7 +21,7 @@ spec:
     - host: {{ . | quote }}
       http:
         paths:
-          {{- if $.Values.secretKeys.internalToken }}
+          {{- if or $.Values.secretKeys.internalToken $.Values.secretKeys.introspectSecret }}
           # /internal/v1 is for in-cluster callers only: route it to a Service
           # with no endpoints so the controller answers with an error.
           - path: /internal
@@ -38,7 +38,7 @@ spec:
                 name: {{ include "relay-control.fullname" $ }}
                 port: { name: http }
     {{- end }}
-{{- if .Values.secretKeys.internalToken }}
+{{- if or .Values.secretKeys.internalToken .Values.secretKeys.introspectSecret }}
 ---
 # Deliberately has no selector (and so no endpoints): the Ingress sends
 # /internal here so it is never forwarded to the API.

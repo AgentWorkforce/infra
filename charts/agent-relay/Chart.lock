@@ -1,22 +1,22 @@
 dependencies:
 - name: relaycast
   repository: file://../relaycast
-  version: 0.3.5
+  version: 0.3.6
 - name: relayauth
   repository: file://../relayauth
   version: 0.1.4
 - name: sessions-pipeline
   repository: file://../sessions-pipeline
-  version: 0.7.5
+  version: 0.8.4
 - name: relayhistory
   repository: file://../relayhistory
   version: 0.1.2
 - name: relay-control
   repository: file://../relay-control
-  version: 0.3.1
+  version: 0.4.0
 - name: relay-webapp
   repository: file://../relay-webapp
-  version: 0.2.0
+  version: 0.2.1
 - name: relayflows
   repository: file://../relayflows
   version: 0.2.5
@@ -28,9 +28,9 @@ dependencies:
   version: 0.2.2
 - name: telemetry-collector
   repository: file://../telemetry-collector
-  version: 0.1.0
+  version: 0.1.1
 - name: relay-chief
   repository: file://../relay-chief
   version: 0.1.0
-digest: sha256:63a316e3366b395054942d80b26000ac469b47894f3d16ff27c8e98758bd1a08
-generated: "2026-11-08T12:15:08.109277348-08:00"
+digest: sha256:fe7cf661e72de260daeea31d06842db7ae428e6387845d0a7547a4afd04cd87e
+generated: "2026-11-08T20:43:36.074866-08:00"
