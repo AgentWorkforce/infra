@@ -258,12 +258,19 @@ compatibility:
       status: shipped
       charts: { telemetry-collector: 0.1.0 }
       notes: 'Default-off umbrella analytics file collector. Requires accepted immutable collector and TLS-proxy images, producer and TLS Secrets and an exclusive persistent volume. Source rendering does not prove image entrypoint, TLS, durable acknowledgement, power-loss recovery or whole-application analytics coverage. The currently reviewed collector CLI registers relaycontrol events only.'
-    - id: sessions-pipeline-0.8.4
+    - id: session-read-api-0.2.1
       status: unreleased
       current: true
-      charts: { sessions-pipeline: 0.8.4, sessions-pipeline-worker: 0.7.3, session-ingest-api: 0.4.1, session-read-api: 0.2.0 }
+      charts: { session-read-api: 0.2.1 }
+      images:
+        session-read-api: { repository: ghcr.io/agentworkforce/96bulls-services, digest_required: true }
+      notes: 'Defaults READ_API_COMPLETE_SINCE to epoch for a new self-host store populated only by its own ingest. Partial legacy imports must retain an explicit real coverage floor matching the indexer. Image, auth, routing and enabled defaults are unchanged; this does not assert coverage for an imported store or qualify a runtime.'
+    - id: sessions-pipeline-0.8.5
+      status: unreleased
+      current: true
+      charts: { sessions-pipeline: 0.8.5, sessions-pipeline-worker: 0.7.3, session-ingest-api: 0.4.1, session-read-api: 0.2.1 }
       depends:
-        sessions-pipeline: { worker: 0.7.3, alleyoop: 0.4.1, sessionReadApi: 0.2.0, hoopdb: 0.9.0, session-object-storage: 5.4.0, otel: 0.178.0 }
+        sessions-pipeline: { worker: 0.7.3, alleyoop: 0.4.1, sessionReadApi: 0.2.1, hoopdb: 0.9.0, session-object-storage: 5.4.0, otel: 0.178.0 }
       images:
         sessions-pipeline-worker: { repository: agentworkforce/96bulls-services, digest: sha256:6f22ea17dff336e1431664542759fd27958649388b90a0b2f0881883caa7c6b2 }
         session-ingest-api: { repository: agentworkforce/96bulls-services, digest: sha256:6f22ea17dff336e1431664542759fd27958649388b90a0b2f0881883caa7c6b2 }
@@ -272,7 +279,32 @@ compatibility:
       services:
         source_commit: 7d7229bb31c121ecb98cd4e35c248fc2cf5669ad
         migration_generation: eff8b3be46565b57ad8fa5e4a066dbb6d1fe608313d9c1680bfbcd484add259b
-      notes: 'Adds default-off managed session-brief worker admission. Native summaries require an explicit compatible image, scoped model credential and reader migration; existing worker image defaults are unchanged.'
+      notes: 'Adds default-off managed native session-brief worker admission in worker 0.7.3. Retains async ingest admission, reader 0.2.1 inception coverage and explicit partial-import floors. Native summaries need an explicit compatible image, scoped model credential and reader migration; no image or runtime acceptance is implied.'
+      db_combos:
+        - { db_mode: selfhosted, boundary: global-default-revoke, hoopdb: cnpg, status: shipped, profiles: [selfhost-postgres, migration, aws-cnpg], notes: chart Jobs install the runtime role and the function default }
+        - { db_mode: selfhosted, boundary: global-default-revoke, hoopdb: external, status: shipped, profiles: [external-selfhosted], notes: operator runs the bootstrap files as a superuser }
+        - { db_mode: rds, boundary: global-default-revoke, hoopdb: external, status: shipped, profiles: [external-rds], notes: the RDS master runs the rds_*.sql bootstrap first }
+        - { db_mode: cloudsql, boundary: global-default-revoke, hoopdb: external, status: shipped, profiles: [gcp-cloudsql], notes: operator runs the Cloud SQL bootstrap files as the migration owner; roleBootstrap false }
+        - { db_mode: supabase, boundary: event-trigger, hoopdb: external, status: held, profiles: [external-supabase], notes: supabaseActivation.hold; migrate refuses until the reviewed event trigger is installed and --activation-check passes }
+        - { db_mode: supabase, boundary: null, hoopdb: external, status: fails closed, profiles: [aws-supabase], notes: renders; migrate refuses with function_boundary_unproven }
+        - { db_mode: local, boundary: null, hoopdb: any, status: dev only, profiles: [], notes: local stack only; never a self-host install }
+      sources:
+        - "charts/sessions-pipeline/Chart.yaml:4"
+        - "ci/sessions-pipeline-profiles/matrix.sh:70"
+    - id: sessions-pipeline-0.8.4
+      status: planned
+      charts: { sessions-pipeline: 0.8.4, sessions-pipeline-worker: 0.7.2, session-ingest-api: 0.4.1, session-read-api: 0.2.1 }
+      depends:
+        sessions-pipeline: { worker: 0.7.2, alleyoop: 0.4.1, sessionReadApi: 0.2.1, hoopdb: 0.9.0, session-object-storage: 5.4.0, otel: 0.178.0 }
+      images:
+        sessions-pipeline-worker: { repository: agentworkforce/96bulls-services, digest: sha256:6f22ea17dff336e1431664542759fd27958649388b90a0b2f0881883caa7c6b2 }
+        session-ingest-api: { repository: agentworkforce/96bulls-services, digest: sha256:6f22ea17dff336e1431664542759fd27958649388b90a0b2f0881883caa7c6b2 }
+        session-read-api: { repository: ghcr.io/agentworkforce/96bulls-services, digest_required: true }
+      images_note: "session-read-api self_issued and events.messageIds need at least ghcr.io/agentworkforce/96bulls-services@sha256:d55840ab4bf4e2fea3769db690f3c8d32979ab455ef251172f914ac011cb8c33 (pipeline eebaced9). Native ingest edge (SERVICE=session-ingest): unqualified; an explicit qualified combined-image digest is required. Pins above belong to the existing internal worker/ingest services, not ingestEdge."
+      services:
+        source_commit: 7d7229bb31c121ecb98cd4e35c248fc2cf5669ad
+        migration_generation: eff8b3be46565b57ad8fa5e4a066dbb6d1fe608313d9c1680bfbcd484add259b
+      notes: 'Adds explicit sync/async/drain ingest admission from merged pipeline #398/f0860b2e. Sync remains the default and no profile enables the native edge. Reader 0.2.1 defaults new-store coverage to epoch with a partial-import override. Retains the default-off Pod Identity and session-selection settings from 0.8.2. Preserves 0.8.3 search-indexer custom-CA trust. A qualified combined-image digest and separate runtime acceptance are required.'
       db_combos:
         - { db_mode: selfhosted, boundary: global-default-revoke, hoopdb: cnpg, status: shipped, profiles: [selfhost-postgres, migration, aws-cnpg], notes: chart Jobs install the runtime role and the function default }
         - { db_mode: selfhosted, boundary: global-default-revoke, hoopdb: external, status: shipped, profiles: [external-selfhosted], notes: operator runs the bootstrap files as a superuser }
@@ -694,9 +726,20 @@ compatibility:
       images:
         relayauth: { repository: ghcr.io/agentworkforce/relayauth, digest: sha256:eb71daa28e30eb7305f666d0bccc5a4002e53e8a574e3c4c32163d907a1b71df }
       notes: superseded by 0.1.1.
-    - id: agent-relay-0.6.7
+    - id: agent-relay-0.6.8
       status: unreleased
       current: true
+      charts: { agent-relay: 0.6.8, relayhistory: 0.1.2, relay-control: 0.4.0, relay-webapp: 0.2.1 }
+      app_versions: { agent-relay: 0.1.0, relayhistory: 0.1.0, relay-control: 0.1.0, relay-webapp: 0.1.0 }
+      depends:
+        agent-relay: { relaycast: 0.3.6, relayauth: 0.1.4, sessions-pipeline: 0.8.5, relayhistory: 0.1.2, relay-control: 0.4.0, relay-webapp: 0.2.1, relayflows: 0.2.5, durable-actors: 0.14.6-awf.1, relayfile: 0.2.2, telemetry-collector: 0.1.1, relay-chief: 0.1.0 }
+      images:
+        relayhistory: { repository: ghcr.io/agentworkforce/relayhistory, digest_required: true }
+        relay-control: { repository: ghcr.io/agentworkforce/relay-control, digest: sha256:d8c26d44dccb6dd21b7033288241a379e46ce5fbca69f276c4d4745001c3c3e2 }
+        relay-webapp: { repository: ghcr.io/agentworkforce/relay-webapp, digest_required: true }
+      notes: 'Takes sessions-pipeline 0.8.5 and worker 0.7.3, preserving async admission and reader 0.2.1 coverage settings. Native brief generation remains default off; no image qualification or runtime acceptance is implied.'
+    - id: agent-relay-0.6.7
+      status: planned
       charts: { agent-relay: 0.6.7, relayhistory: 0.1.2, relay-control: 0.4.0, relay-webapp: 0.2.1 }
       app_versions: { agent-relay: 0.1.0, relayhistory: 0.1.0, relay-control: 0.1.0, relay-webapp: 0.1.0 }
       depends:
@@ -705,7 +748,7 @@ compatibility:
         relayhistory: { repository: ghcr.io/agentworkforce/relayhistory, digest_required: true }
         relay-control: { repository: ghcr.io/agentworkforce/relay-control, digest: sha256:d8c26d44dccb6dd21b7033288241a379e46ce5fbca69f276c4d4745001c3c3e2 }
         relay-webapp: { repository: ghcr.io/agentworkforce/relay-webapp, digest_required: true }
-      notes: 'Takes sessions-pipeline 0.8.4 and worker 0.7.3. Native brief generation remains default off; no image or runtime acceptance is implied.'
+      notes: 'Takes sessions-pipeline 0.8.4 with opt-in async admission and reader 0.2.1 inception coverage for new own-ingest stores, retaining explicit partial-import floors. Preserves current Relaycast, RelayChief Control and Webapp dependencies. Defaults remain disabled; no image qualification or rollout is supplied.'
     - id: agent-relay-0.6.6
       status: planned
       charts: { agent-relay: 0.6.6, relayhistory: 0.1.2, relay-control: 0.4.0, relay-webapp: 0.2.1 }
@@ -4188,3 +4231,34 @@ entries:
     sources:
       - "charts/relaychief-control/values.yaml"
       - "charts/relaychief-control/templates/deployment.yaml"
+
+  - id: opt.sessions-native-ingest-admission
+    kind: option
+    title: Native ingest admission mode
+    description: |
+      Chart configuration for pipeline #398, merged at
+      f0860b2e785b52fefbaa37482d02ab96b013049d. A separately qualified image
+      containing that merge or a reviewed successor is required. Sync is
+      the unchanged default. Async acknowledges a durable create-only inbox
+      write, then admits to PostgreSQL in the background. Drain accepts new
+      uploads synchronously while consuming the existing inbox. Control
+      introspection remains per request; startup still verifies PostgreSQL.
+      Async/drain probes require the exact mode and healthy consumer counters;
+      an older image ignoring the setting fails readiness. No profile opts in.
+    chart: sessions-pipeline
+    values: [ingestEdge.admission.mode, ingestEdge.admission.concurrency, ingestEdge.admission.scanIntervalMs, ingestEdge.admission.maxAttempts]
+    env: [SELFHOST_INGEST_ADMISSION, SELFHOST_ADMISSION_CONCURRENCY, SELFHOST_ADMISSION_SCAN_MS, SELFHOST_ADMISSION_MAX_ATTEMPTS]
+    profiles: [selfhost-postgres, migration, external-selfhosted, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql]
+    status: shipped
+    provided_by: operator
+    default: sync
+    choices:
+      - { value: sync, note: Existing synchronous upload admission; emits no new mode variables. }
+      - { value: async, note: Requires a qualified conditional-write store and native async image. Queued is not indexed. }
+      - { value: drain, note: Keep the consumer running while new uploads use synchronous admission. }
+    verify: Prove durable queued receipt during admission database failure after startup, restart/retry recovery, dead-letter visibility and eventual indexed readback with the exact image. Rendering and readiness do not establish end-to-end acceptance.
+    sources:
+      - "charts/sessions-pipeline/templates/ingest-edge.yaml:1"
+      - "charts/sessions-pipeline/templates/_ingest-edge.tpl:1"
+      - "charts/sessions-pipeline/values.yaml:1"
+      - "docs/self-hosted-native-ingest.md:1"

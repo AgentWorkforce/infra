@@ -21,8 +21,10 @@ port: 8080
 probeRuntime: bun
 # Bare public HTTPS origin, used as the token audience.
 origin: ""
-# Explicit coverage floor: ISO timestamp, or epoch only when coverage is proven.
-completeSince: ""
+# A new self-host store populated only by its own ingest is complete from inception.
+# Set a real ISO coverage floor only when importing partial legacy history; keep
+# it aligned with the indexer's floor. This is not the chart installation time.
+completeSince: epoch
 # Exact upstream allowlist string (READ_API_DIRECTORY_WORKSPACES); '*' is not a
 # workspace authority. Desktop upload needs its workspace listed here.
 directoryWorkspaces: ""
