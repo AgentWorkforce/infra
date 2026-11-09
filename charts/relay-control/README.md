@@ -27,6 +27,12 @@ read handoff and MCP reads (`services.sessionReadApi*`,
 `secretKeys.sessionReadApiSecret`) need 0.5.1, which is not published yet; they
 stay off by default. `secretKeys.introspectSecret` and
 `introspection.audiences` wire token introspection.
+`services.historyBackend=native` (default `legacy`) is the install without
+RelayAuth and standalone RelayHistory: uploads go to the pipeline ingest edge and
+reads through the read API, both at `services.sessionReadApiPublicUrl`. It requires
+`services.relayauthEnabled=false`, the session read handoff and
+`secretKeys.introspectSecret`, and an image with the Control native backend. See
+[docs/self-hosted-no-relayauth.md](../../docs/self-hosted-no-relayauth.md).
 `services.relaycastUrl` and `services.relayhistoryUrl` are internal origins;
 their `*PublicUrl` counterparts must be public HTTPS origins and are returned
 to clients or used as the externally stable RelayHistory assertion audience.
