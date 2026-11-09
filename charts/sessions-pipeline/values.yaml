@@ -367,10 +367,14 @@ searchIndexer:
       region: ""
       indexPrefix: relayhistory
   locker:
+    # s3 (AWS/MinIO) or gcs (GKE Workload Identity; no HMAC keys).
+    provider: s3
     bucket: ""
     region: us-east-1
     # Empty uses the AWS S3 endpoint for the region (Pod Identity credentials).
     endpoint: ""
+  # GCS readiness settings (Cloud SQL, Memorystore and Pub/Sub). Empty for S3.
+  extraEnv: []
   postgres:
     # supabase, or custom-ca with the bundle below (Amazon RDS).
     tlsProfile: custom-ca
@@ -445,7 +449,8 @@ ingestEdge:
     caSha256: ""
     poolMax: 4
   locker:
-    # S3/MinIO only in this slot. Use a qualified Service DNS for HTTP.
+    # s3 (AWS/MinIO) or gcs (GKE Workload Identity; no HMAC keys).
+    provider: s3
     bucket: ""
     endpoint: ""
     region: us-east-1
@@ -470,6 +475,9 @@ ingestEdge:
   tolerations: []
   affinity: {}
   podAnnotations: {}
+  networkPolicy:
+    enabled: false
+    ingressFrom: []
   resources:
     requests: { cpu: 50m, memory: 128Mi }
     limits: { memory: 512Mi }

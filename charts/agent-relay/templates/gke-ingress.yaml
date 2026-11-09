@@ -6,20 +6,40 @@
 {{- $relayhistory := .Values.relayhistory | default dict -}}
 {{- $cloudApi := index .Values "relay-control" | default dict -}}
 {{- $dashboard := index .Values "relay-webapp" | default dict -}}
-{{- if not (and $components.relaycast $components.relayhistory $components.control $components.webapp) }}{{ fail "gkeIngress requires relaycast, relayhistory, control, and webapp components" }}{{ end -}}
-{{- if or (dig "ingress" "enabled" false $relaycast) (dig "ingress" "enabled" false $relayhistory) (dig "ingress" "enabled" false $cloudApi) (dig "ingress" "enabled" false $dashboard) }}{{ fail "gkeIngress requires all leaf ingresses to be disabled" }}{{ end -}}
+{{- $pipeline := index .Values "sessions-pipeline" | default dict -}}
+{{- $nativeHistory := and $components.sessionsPipeline (not $components.relayhistory) (eq (dig "services" "relayhistoryBackend" "legacy" $cloudApi) "native") -}}
+{{- if not (and $components.relaycast $components.control $components.webapp (or $components.relayhistory $nativeHistory)) }}{{ fail "gkeIngress requires relaycast, control, webapp, and either relayhistory or the native sessions reader/ingest edge" }}{{ end -}}
+{{- if and $nativeHistory (or (not (dig "sessionReadApi" "enabled" false $pipeline)) (not (dig "ingestEdge" "enabled" false $pipeline))) }}{{ fail "native gkeIngress requires sessions-pipeline.sessionReadApi.enabled=true and ingestEdge.enabled=true" }}{{ end -}}
+{{- if or (dig "ingress" "enabled" false $relaycast) (and $components.relayhistory (dig "ingress" "enabled" false $relayhistory)) (dig "ingress" "enabled" false $cloudApi) (dig "ingress" "enabled" false $dashboard) (and $nativeHistory (dig "sessionReadApi" "ingress" "enabled" false $pipeline)) }}{{ fail "gkeIngress requires all leaf ingresses to be disabled" }}{{ end -}}
 {{- if and $components.relayauth (index ((.Values.relayauth | default dict).jwksIngress | default dict) "enabled" | default false) }}{{ fail "gkeIngress requires relayauth.jwksIngress.enabled=false" }}{{ end -}}
 {{- $apiBasePath := dig "runtime" "apiBasePath" "" $dashboard -}}
 {{- if and $apiBasePath (ne $apiBasePath "/cloud/api") }}{{ fail "gkeIngress routes /cloud/api to relay-control; relay-webapp.runtime.apiBasePath must be /cloud/api" }}{{ end -}}
 {{- with dig "dashboardUrl" "" $cloudApi }}{{ $rootHost := dig "hosts" "root" "" $gke }}{{ $single := dig "singleHost" "host" "" ($.Values.global | default dict) }}{{ $want := $single | default $rootHost }}{{ if and $want (ne (trimSuffix ":443" (urlParse (toString .)).host) $want) }}{{ fail (printf "relay-control.dashboardUrl must be on the dashboard host https://%s/ (sign-in, OAuth and invite links land there)" $want) }}{{ end }}{{ end -}}
 {{- $loginPath := dig "runtime" "loginPath" "" $dashboard -}}
 {{- if and $loginPath (ne $loginPath "/login") }}{{ fail "gkeIngress routes /login to relay-control; relay-webapp.runtime.loginPath must be /login" }}{{ end -}}
-{{- $policyBackends := dict "relaycast" $relaycast "relayhistory" $relayhistory "relay-control" $cloudApi "relay-webapp" $dashboard -}}
+{{- $policyBackends := dict "relaycast" $relaycast "relay-control" $cloudApi "relay-webapp" $dashboard -}}
+{{- if $components.relayhistory }}{{ $_ := set $policyBackends "relayhistory" $relayhistory }}{{ end -}}
 {{- if and (dig "hosts" "files" "" $gke) $components.relayfile }}
 {{- /* Relayfile behind the public files host gets the same GKE-only policy
 shape (hosts.files without components.relayfile fails further down). */ -}}
 {{- $_ := set $policyBackends "relayfile" (.Values.relayfile | default dict) -}}
 {{- if dig "networkPolicy" "allowExternalTraffic" true (.Values.relayfile | default dict) }}{{ fail "gkeIngress.hosts.files requires relayfile.networkPolicy.allowExternalTraffic=false and relayfile.networkPolicy.ingressFrom with same-namespace pods and the GKE ranges" }}{{ end -}}
+{{- end }}
+{{- if $nativeHistory }}
+{{- $readerPolicy := dig "sessionReadApi" "networkPolicy" (dict) $pipeline -}}
+{{- $ingestPolicy := dig "ingestEdge" "networkPolicy" (dict) $pipeline -}}
+{{- if not (dig "enabled" false $readerPolicy) }}{{ fail "native gkeIngress requires sessions-pipeline.sessionReadApi.networkPolicy.enabled=true" }}{{ end -}}
+{{- if not (dig "enabled" false $ingestPolicy) }}{{ fail "native gkeIngress requires sessions-pipeline.ingestEdge.networkPolicy.enabled=true" }}{{ end -}}
+{{- range $name, $peers := dict "sessionReadApi.networkPolicy.publicFrom" (dig "publicFrom" (list) $readerPolicy) "ingestEdge.networkPolicy.ingressFrom" (dig "ingressFrom" (list) $ingestPolicy) }}
+{{- $hasGfePrimary := false -}}
+{{- $hasGfeSecondary := false -}}
+{{- range $peer := $peers }}
+{{- if and (eq (len $peer) 1) (eq (dig "ipBlock" "cidr" "" $peer) "35.191.0.0/16") (empty (dig "ipBlock" "except" (list) $peer)) }}{{ $hasGfePrimary = true }}{{ end -}}
+{{- if and (eq (len $peer) 1) (eq (dig "ipBlock" "cidr" "" $peer) "130.211.0.0/22") (empty (dig "ipBlock" "except" (list) $peer)) }}{{ $hasGfeSecondary = true }}{{ end -}}
+{{- end }}
+{{- if not $hasGfePrimary }}{{ fail (printf "native gkeIngress requires sessions-pipeline.%s to allow GKE range 35.191.0.0/16 without exclusions" $name) }}{{ end -}}
+{{- if not $hasGfeSecondary }}{{ fail (printf "native gkeIngress requires sessions-pipeline.%s to allow GKE range 130.211.0.0/22 without exclusions" $name) }}{{ end -}}
+{{- end }}
 {{- end }}
 {{- range $name, $backendValues := $policyBackends }}
 {{- if not (dig "networkPolicy" "enabled" false $backendValues) }}{{ fail (printf "gkeIngress requires %s.networkPolicy.enabled=true" $name) }}{{ end -}}
@@ -36,6 +56,8 @@ shape (hosts.files without components.relayfile fails further down). */ -}}
 {{- if not $hasGfeSecondary }}{{ fail (printf "gkeIngress requires %s.networkPolicy.ingressFrom to allow GKE health checker/proxy range 130.211.0.0/22 without exclusions" $name) }}{{ end -}}
 {{- end }}
 {{- $gkeName := required "gkeIngress.name is required when gkeIngress.enabled=true" (dig "name" "" $gke) -}}
+{{- $nativeReadEdge := printf "%s-history-read" ($gkeName | trunc 50 | trimSuffix "-") -}}
+{{- $nativeIngestEdge := printf "%s-history-ingest" ($gkeName | trunc 48 | trimSuffix "-") -}}
 {{- $staticIpName := required "gkeIngress.staticIpName is required when gkeIngress.enabled=true" (dig "staticIpName" "" $gke) -}}
 {{- $managedCertificateName := required "gkeIngress.managedCertificateName is required when gkeIngress.enabled=true" (dig "managedCertificateName" "" $gke) -}}
 {{- $frontendConfigName := required "gkeIngress.frontendConfigName is required when gkeIngress.enabled=true" (dig "frontendConfigName" "" $gke) -}}
@@ -114,8 +136,8 @@ explicit backends.<name>.serviceName must equal that derived name. */ -}}
   "dashboard" (list "relay-webapp" $dashboard (dig "fullnameOverride" "" $dashboard | default (printf "%s-%s" .Release.Name (dig "nameOverride" "" $dashboard | default "relay-webapp"))))
   "api" (list "relay-control" $cloudApi (dig "fullnameOverride" "" $cloudApi | default (printf "%s-%s" .Release.Name (dig "nameOverride" "" $cloudApi | default "relay-control"))))
   "cast" (list "relaycast" $relaycast $castService)
-  "history" (list "relayhistory" $relayhistory (dig "fullnameOverride" "" $relayhistory | default (printf "%s-%s" .Release.Name (dig "nameOverride" "" $relayhistory | default "relayhistory"))))
 -}}
+{{- if $components.relayhistory }}{{ $_ := set $children "history" (list "relayhistory" $relayhistory (dig "fullnameOverride" "" $relayhistory | default (printf "%s-%s" .Release.Name (dig "nameOverride" "" $relayhistory | default "relayhistory")))) }}{{ end -}}
 {{- $backendNames := dict -}}
 {{- range $name, $child := $children }}
 {{- $backend := dig "backends" $name (dict) $gke -}}
@@ -286,6 +308,80 @@ spec:
       targetPort: 7100
       protocol: TCP
 {{- end }}
+{{- if $nativeHistory }}
+---
+apiVersion: cloud.google.com/v1
+kind: BackendConfig
+metadata:
+  name: {{ $nativeReadEdge }}
+  namespace: {{ .Release.Namespace | quote }}
+  labels:
+    app.kubernetes.io/name: agent-relay
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: native-history-read-edge
+spec:
+  healthCheck:
+    type: HTTP
+    requestPath: /healthz
+    port: {{ dig "sessionReadApi" "port" 8080 $pipeline }}
+---
+apiVersion: cloud.google.com/v1
+kind: BackendConfig
+metadata:
+  name: {{ $nativeIngestEdge }}
+  namespace: {{ .Release.Namespace | quote }}
+  labels:
+    app.kubernetes.io/name: agent-relay
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: native-history-ingest-edge
+spec:
+  healthCheck:
+    type: HTTP
+    requestPath: /healthz
+    port: {{ dig "ingestEdge" "port" 8081 $pipeline }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $nativeReadEdge }}
+  namespace: {{ .Release.Namespace | quote }}
+  labels:
+    app.kubernetes.io/name: agent-relay
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: native-history-read-edge
+  annotations:
+    cloud.google.com/neg: '{"ingress": true}'
+    cloud.google.com/backend-config: {{ printf "{\"default\": \"%s\"}" $nativeReadEdge | squote }}
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: session-read-api
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: read-api
+  ports:
+    - { name: http, port: 80, targetPort: http, protocol: TCP }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $nativeIngestEdge }}
+  namespace: {{ .Release.Namespace | quote }}
+  labels:
+    app.kubernetes.io/name: agent-relay
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: native-history-ingest-edge
+  annotations:
+    cloud.google.com/neg: '{"ingress": true}'
+    cloud.google.com/backend-config: {{ printf "{\"default\": \"%s\"}" $nativeIngestEdge | squote }}
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: session-ingest-edge
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: ingest-edge
+  ports:
+    - { name: http, port: 80, targetPort: http, protocol: TCP }
+{{- end }}
 ---
 apiVersion: networking.k8s.io/v1
 kind: Ingress
@@ -384,12 +480,47 @@ spec:
     - host: {{ $hostHistory | quote }}
       http:
         paths:
+          {{- if $nativeHistory }}
+          # Native upload endpoints. Exact routes win over the read paths and
+          # the broader delivery/turns/onboarding prefixes below.
+          {{- range $path := list "/v1/delivery/batches" "/v1/turns/batches" "/v1/delivery/limits" "/v1/auth/token/refresh" }}
+          - path: {{ $path }}
+            pathType: Exact
+            backend:
+              service: { name: {{ $nativeIngestEdge }}, port: { number: 80 } }
+          {{- end }}
+          {{- range $path := list "/v1/delivery/records" "/v1/cli/login" "/v1/events" "/v1/auth/token/revoke" }}
+          - path: {{ $path }}
+            pathType: Exact
+            backend:
+              service: { name: {{ $nativeReadEdge }}, port: { number: 80 } }
+          {{- end }}
+          {{- range $path := list "/v1/sessions" "/v1/digest" }}
+          - path: {{ $path }}
+            pathType: Prefix
+            backend:
+              service: { name: {{ $nativeReadEdge }}, port: { number: 80 } }
+          {{- end }}
+          {{- range $path := list "/v1/delivery" "/v1/turns" "/v1/onboarding" }}
+          - path: {{ $path }}
+            pathType: Prefix
+            backend:
+              service: { name: {{ $nativeIngestEdge }}, port: { number: 80 } }
+          {{- end }}
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ printf "%s-cast-edge-deny" $gkeName | trunc 63 | trimSuffix "-" }}
+                port: { number: {{ $gke.backends.cast.servicePort }} }
+          {{- else }}
           - path: /
             pathType: Prefix
             backend:
               service:
                 name: {{ index $backendNames "history" }}
                 port: { number: {{ $gke.backends.history.servicePort }} }
+          {{- end }}
     {{- if $hostActors }}
     - host: {{ $hostActors | quote }}
       http:

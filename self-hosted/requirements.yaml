@@ -297,10 +297,10 @@ compatibility:
       images:
         session-read-api: { repository: ghcr.io/agentworkforce/96bulls-services, digest_required: true }
       notes: 'Defaults READ_API_COMPLETE_SINCE to epoch for a new self-host store populated only by its own ingest. Partial legacy imports must retain an explicit real coverage floor matching the indexer. Image, auth, routing and enabled defaults are unchanged; this does not assert coverage for an imported store or qualify a runtime.'
-    - id: sessions-pipeline-0.8.12
+    - id: sessions-pipeline-0.8.13
       status: unreleased
       current: true
-      charts: { sessions-pipeline: 0.8.12, sessions-pipeline-worker: 0.7.4, session-ingest-api: 0.4.2, session-read-api: 0.2.3 }
+      charts: { sessions-pipeline: 0.8.13, sessions-pipeline-worker: 0.7.4, session-ingest-api: 0.4.2, session-read-api: 0.2.3 }
       depends:
         sessions-pipeline: { worker: 0.7.4, alleyoop: 0.4.2, sessionReadApi: 0.2.3, hoopdb: 0.9.0, session-object-storage: 5.4.0, otel: 0.178.0 }
       images:
@@ -322,7 +322,7 @@ compatibility:
       sources:
         - "charts/sessions-pipeline/Chart.yaml:4"
         - "ci/sessions-pipeline-profiles/matrix.sh:70"
-      notes: 'Adds managed default-off native collector adapters. Each service uses a component-bound Secret reference, an opaque installation ID, HTTPS and optional public additional CA trust. Preflight/bootstrap has no analytics credentials. No application image default, SQL, admission mode, profile or runtime is changed; a qualified source71801741-or-later image and operator registrations remain required.'
+      notes: 'Adds GCS Workload Identity support to the native ingest edge and PostgreSQL search indexer, plus a restricted GCS data-path environment for the indexer. Existing defaults remain S3 and every native service stays default-off.'
     - id: sessions-pipeline-0.8.11
       status: shipped
       charts: { sessions-pipeline: 0.8.11, sessions-pipeline-worker: 0.7.4, session-ingest-api: 0.4.2, session-read-api: 0.2.2 }
@@ -922,18 +922,18 @@ compatibility:
       images:
         relayauth: { repository: ghcr.io/agentworkforce/relayauth, digest: sha256:eb71daa28e30eb7305f666d0bccc5a4002e53e8a574e3c4c32163d907a1b71df }
       notes: superseded by 0.1.1.
-    - id: agent-relay-0.6.20
+    - id: agent-relay-0.6.21
       status: unreleased
       current: true
-      charts: { agent-relay: 0.6.20, relayhistory: 0.1.3, relay-control: 0.4.4, relay-webapp: 0.2.1 }
+      charts: { agent-relay: 0.6.21, relayhistory: 0.1.3, relay-control: 0.4.4, relay-webapp: 0.2.1 }
       app_versions: { agent-relay: 0.1.0, relayhistory: 0.1.0, relay-control: 0.1.0, relay-webapp: 0.1.0 }
       depends:
-        agent-relay: { relaycast: 0.3.7, relayauth: 0.1.5, sessions-pipeline: 0.8.12, relayhistory: 0.1.3, relay-control: 0.4.4, relay-webapp: 0.2.1, relayflows: 0.2.5, durable-actors: 0.14.6-awf.1, relayfile: 0.2.2, telemetry-collector: 0.1.3, relay-chief: 0.1.0 }
+        agent-relay: { relaycast: 0.3.7, relayauth: 0.1.5, sessions-pipeline: 0.8.13, relayhistory: 0.1.3, relay-control: 0.4.4, relay-webapp: 0.2.1, relayflows: 0.2.5, durable-actors: 0.14.6-awf.1, relayfile: 0.2.2, telemetry-collector: 0.1.3, relay-chief: 0.1.0 }
       images:
         relayhistory: { repository: ghcr.io/agentworkforce/relayhistory, digest_required: true }
         relay-control: { repository: ghcr.io/agentworkforce/relay-control, digest: sha256:d8c26d44dccb6dd21b7033288241a379e46ce5fbca69f276c4d4745001c3c3e2 }
         relay-webapp: { repository: ghcr.io/agentworkforce/relay-webapp, digest_required: true }
-      notes: 'Adds managed default-off native collector adapters. Each service uses a component-bound Secret reference, an opaque installation ID, HTTPS and optional public additional CA trust. Preflight/bootstrap has no analytics credentials. No application image default, SQL, admission mode, profile or runtime is changed; a qualified source71801741-or-later image and operator registrations remain required.'
+      notes: 'Adds the GCP native History overlay and GKE routing for the Sessions read API and ingest edge, refreshes the GCP profile to the customer-qualified services, webapp and relay-control 0.5.8 digests, and takes sessions-pipeline 0.8.13 for native GCS support.'
     - id: agent-relay-0.6.19
       status: planned
       charts: { agent-relay: 0.6.19, relayhistory: 0.1.3, relay-control: 0.4.4, relay-webapp: 0.2.1 }

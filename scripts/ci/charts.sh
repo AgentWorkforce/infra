@@ -23,7 +23,13 @@ render() { # chart valuesfile [extra helm args]
     args=(-f "$v")
     # The umbrella CI fixture supplies immutable proof/render image identities
     # on the operator-facing GCP proof values.
-    [ "$chart" = agent-relay ] && args=(-f "charts/agent-relay/values-gcp-proof.yaml" -f "$v")
+    if [ "$chart" = agent-relay ]; then
+      if [ "$(basename "$v")" = gcp-native-values.yaml ]; then
+        args=(-f "charts/agent-relay/values-gcp.yaml" -f "charts/agent-relay/values-gcp-native.yaml" -f "$v")
+      else
+        args=(-f "charts/agent-relay/values-gcp-proof.yaml" -f "$v")
+      fi
+    fi
   fi
   helm template ci "charts/$chart" --namespace ci --no-hooks --include-crds "${args[@]}" "$@"
 }
@@ -98,7 +104,13 @@ for chart in "${charts[@]}"; do
         args=()
         if [ -n "$v" ]; then
           args=(-f "$v")
-          [ "$chart" = agent-relay ] && args=(-f "charts/agent-relay/values-gcp-proof.yaml" -f "$v")
+          if [ "$chart" = agent-relay ]; then
+            if [ "$(basename "$v")" = gcp-native-values.yaml ]; then
+              args=(-f "charts/agent-relay/values-gcp.yaml" -f "charts/agent-relay/values-gcp-native.yaml" -f "$v")
+            else
+              args=(-f "charts/agent-relay/values-gcp-proof.yaml" -f "$v")
+            fi
+          fi
         fi
         helm lint --strict "charts/$chart" "${args[@]}" >/dev/null || { helm lint --strict "charts/$chart" "${args[@]}"; err "$label: helm lint --strict failed"; continue; }
         out=$(render "$chart" "$v") || { err "$label: render failed"; continue; }

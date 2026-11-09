@@ -1,0 +1,112 @@
+# RENDER ONLY: completes values-gcp.yaml + values-gcp-native.yaml with the
+# native reader, ingest edge and PostgreSQL search indexer. Names are fake and
+# Secret values are never rendered.
+sessions-pipeline:
+  sessionReadApi:
+    enabled: true
+    image:
+      repository: ghcr.io/agentworkforce/sessions-pipeline
+      digest: sha256:dc95d94202c49573749f99cc548638ed185f782dc3b88691f551d7f1f700f769
+    origin: https://history.placeholder.company
+    completeSince: epoch
+    directoryWorkspaces: "*"
+    events: { messageIds: true }
+    turns: { assumeNoLegacy: true }
+    login: { advertisesSync: false }
+    config:
+      existingSecret: agent-relay-read-api
+      key: RELAYHISTORY_READ_API_SECRET
+    postgres: { tlsProfile: custom-ca }
+    postgresCa:
+      enabled: true
+      configMap: cloud-sql-ca
+      key: ca.crt
+      sha256: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    search:
+      backend: postgres
+      backendId: gcp-native
+    auth:
+      mode: self_issued
+      relaycontrol: { enabled: false, url: "", existingSecret: "" }
+      selfIssued:
+        internalSecret:
+          existingSecret: example-agent-relay-secrets
+          key: session-read-api-secret
+    cors:
+      allowedOrigins: [https://dashboard.placeholder.company]
+    serviceAccountCreate: true
+    serviceAccountName: agent-relay-read-api
+    networkPolicy:
+      enabled: true
+      controlFrom:
+        - podSelector:
+            matchLabels: { app.kubernetes.io/name: relay-control }
+      publicFrom:
+        - ipBlock: { cidr: 35.191.0.0/16 }
+        - ipBlock: { cidr: 130.211.0.0/22 }
+    extraEnv:
+      - { name: LOCKER_PROVIDER, value: gcs }
+      - { name: LOCKER_BUCKET, value: example-agent-relay-sessions }
+      - { name: LOCKER_REGION, value: us-central1 }
+      - { name: PIPELINE_KEY_PREFIX, value: 96bulls }
+      - { name: PIPELINE_ORG_FROM_PREFIX, value: "true" }
+
+  ingestEdge:
+    enabled: true
+    image:
+      repository: ghcr.io/agentworkforce/sessions-pipeline
+      digest: sha256:dc95d94202c49573749f99cc548638ed185f782dc3b88691f551d7f1f700f769
+    origin: https://history.placeholder.company
+    allowInClusterHttp: true
+    relaycontrol: { url: http://relay-control.agent-relay.svc }
+    config:
+      existingSecret: agent-relay-ingest-edge-runtime
+      databaseUrlKey: database-url
+      introspectSecretKey: introspect-secret
+    postgres:
+      caConfigMap: cloud-sql-ca
+      caKey: ca.crt
+      caSha256: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    locker:
+      provider: gcs
+      bucket: example-agent-relay-sessions
+      region: us-central1
+      credentials: { mode: podIdentity }
+    sessionSelection: true
+    heartbeatAccept: true
+    serviceAccountName: agent-relay-session-ingest-api
+    networkPolicy:
+      enabled: true
+      ingressFrom:
+        - ipBlock: { cidr: 35.191.0.0/16 }
+        - ipBlock: { cidr: 130.211.0.0/22 }
+
+  searchIndexer:
+    enabled: true
+    image:
+      repository: ghcr.io/agentworkforce/sessions-pipeline
+      digest: sha256:dc95d94202c49573749f99cc548638ed185f782dc3b88691f551d7f1f700f769
+    completeSince: epoch
+    config: { existingSecret: search-indexer-runtime }
+    search: { backend: postgres, backendId: gcp-native }
+    locker:
+      provider: gcs
+      bucket: example-agent-relay-sessions
+      region: us-central1
+    postgres:
+      tlsProfile: custom-ca
+      caConfigMap: cloud-sql-ca
+      caKey: ca.crt
+      caSha256: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    bootstrap:
+      enabled: true
+      existingSecret: search-indexer-owner
+    extraEnv:
+      - { name: CLOUD_SQL_CONNECTION_NAME, value: "example-project:us-central1:example-sessions" }
+      - { name: REDIS_HOST, value: "10.0.0.3" }
+      - { name: REDIS_PORT, value: "6378" }
+      - { name: REDIS_AUTH_ENABLED, value: "false" }
+      - { name: REDIS_TRANSIT_ENCRYPTION, value: SERVER_AUTHENTICATION }
+      - { name: REDIS_TLS_CA_PEM, value: "render-only CA bundle" }
+      - { name: PUBSUB_TOPIC, value: "projects/example-project/topics/example-sessions" }
+      - { name: PUBSUB_SUBSCRIPTION, value: "projects/example-project/subscriptions/example-sessions" }

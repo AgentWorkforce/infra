@@ -10,6 +10,10 @@
 - { name: READ_API_COMPLETE_SINCE, value: {{ $c.completeSince | quote }} }
 - { name: PIPELINE_KEY_PREFIX, value: {{ $c.keyPrefix | quote }} }
 - { name: PIPELINE_ORG_FROM_PREFIX, value: "true" }
+- { name: LOCKER_PROVIDER, value: {{ $c.locker.provider | quote }} }
+{{- if eq $c.locker.provider "gcs" }}
+- { name: PIPELINE_RAW_PROVIDER, value: gcs }
+{{- end }}
 - { name: SESSION_POSTGRES_TLS_PROFILE, value: {{ $c.postgres.tlsProfile | quote }} }
 {{- if eq $c.postgres.tlsProfile "custom-ca" }}
 - { name: SESSION_POSTGRES_CA_FILE, value: /etc/search-indexer-postgres/ca.crt }
@@ -21,6 +25,9 @@
 - { name: LOCKER_REGION, value: {{ $c.locker.region | quote }} }
 {{- with $c.locker.endpoint }}
 - { name: LOCKER_ENDPOINT, value: {{ . | quote }} }
+{{- end }}
+{{- with $c.extraEnv }}
+{{- toYaml . | nindent 0 }}
 {{- end }}
 {{- if eq $c.search.backend "opensearch" }}
 - { name: SEARCH_INDEX_OPENSEARCH_URL, value: {{ $c.search.opensearch.url | quote }} }

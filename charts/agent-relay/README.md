@@ -28,6 +28,13 @@ deployment. It is derived from the proof configuration but uses only
 Artifact Registry placeholders. It contains Secret names and keys, never
 Secret values.
 
+New installs also apply `values-gcp-native.yaml`. That overlay removes
+RelayAuth and standalone RelayHistory, selects relay-control's native History
+backend, and lets the umbrella GKE Ingress split the history host between the
+Sessions read API and ingest edge. A final site values file enables and
+configures `sessionReadApi`, `ingestEdge`, and the PostgreSQL `searchIndexer`;
+`ci/gcp-native-values.yaml` is a render-only example of that shape.
+
 The template is intentionally renderable: all-zero image digests are sentinel
 values, not deployable images. Replace every value marked `REQUIRED OVERRIDE`
 before installing. The required value overrides are:
@@ -166,6 +173,10 @@ Render the template before supplying any credentials:
 ```sh
 helm lint . -f values-gcp.yaml
 helm template agent-relay . -n agent-relay -f values-gcp.yaml >/dev/null
+
+helm lint . -f values-gcp.yaml -f values-gcp-native.yaml -f <site-values.yaml>
+helm template agent-relay . -n agent-relay -f values-gcp.yaml \
+  -f values-gcp-native.yaml -f <site-values.yaml> >/dev/null
 ```
 
 `values-gcp-proof.yaml` is the portable, all-components customer shape.
