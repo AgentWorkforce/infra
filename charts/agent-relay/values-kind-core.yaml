@@ -21,8 +21,9 @@ global:
 relay-control:
   fullnameOverride: relay-control
   image:
-    repository: ghcr.io/agentworkforce/selfhost-api
-    digest: sha256:95c7877741054dc2f1cafa26be3faa9bfe4660ed85d637aef4524daa10481963
+    # relay-control 0.5.0, df4b390; 0.5.1 is not published yet, so the session read handoff is inert on this pin.
+    repository: ghcr.io/agentworkforce/relay-control
+    digest: sha256:d8c26d44dccb6dd21b7033288241a379e46ce5fbca69f276c4d4745001c3c3e2
   existingSecret: kind-control
   publicUrl: https://relay.kind.agentrelay.com:8443
   dashboardUrl: https://relay.kind.agentrelay.com:8443

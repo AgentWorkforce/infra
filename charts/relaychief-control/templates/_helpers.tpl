@@ -88,6 +88,18 @@ spec:
   {{- with .Values.imagePullSecrets }}
   imagePullSecrets: {{ toYaml . | nindent 4 }}
   {{- end }}
+  {{- /* Same node placement as the server, so the Job can schedule wherever the
+  Deployment can. topologySpreadConstraints select the server's labels, so they
+  do not apply here. */}}
+  {{- with .Values.nodeSelector }}
+  nodeSelector: {{ toYaml . | nindent 4 }}
+  {{- end }}
+  {{- with .Values.affinity }}
+  affinity: {{ toYaml . | nindent 4 }}
+  {{- end }}
+  {{- with .Values.tolerations }}
+  tolerations: {{ toYaml . | nindent 4 }}
+  {{- end }}
   containers:
     - name: migrate
       image: {{ include "relaychief-control.image" . | quote }}

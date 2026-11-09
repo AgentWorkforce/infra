@@ -89,6 +89,9 @@ spec:
             {{- if $c.turns.assumeNoLegacy }}
             - { name: READ_API_TURNS_ASSUME_NO_LEGACY, value: "true" }
             {{- end }}
+            {{- if $c.events.messageIds }}
+            - { name: READ_API_EVENT_MESSAGE_IDS, value: "true" }
+            {{- end }}
             - { name: ALLOW_IN_CLUSTER_HTTP, value: {{ $c.allowInClusterHttp | quote }} }
             - { name: SESSION_POSTGRES_TLS_PROFILE, value: {{ $c.postgres.tlsProfile | quote }} }
             {{- if $c.postgresCa.enabled }}
@@ -98,13 +101,29 @@ spec:
             {{- if $c.cors.allowedOrigins }}
             - { name: READ_API_CORS_ALLOWED_ORIGINS, value: {{ join "," $c.cors.allowedOrigins | quote }} }
             {{- end }}
-            {{- if eq $c.auth.mode "relaycontrol_only" }}
-            - { name: READ_API_AUTH_MODE, value: relaycontrol_only }
-            {{- else }}
+            {{- if eq $c.auth.mode "legacy" }}
             - { name: RELAYAUTH_JWKS_URL, value: {{ trim $c.auth.relayauth.jwksUrl | quote }} }
             - { name: RELAYAUTH_ISSUER, value: {{ trim $c.auth.relayauth.issuer | quote }} }
+            {{- else }}
+            - { name: READ_API_AUTH_MODE, value: {{ $c.auth.mode | quote }} }
             {{- end }}
+            {{- if eq $c.auth.mode "self_issued" }}
+            - { name: READ_API_ACCESS_TOKEN_TTL_SECONDS, value: {{ int (toString $c.auth.selfIssued.accessTokenTtlSeconds) | quote }} }
+            - name: READ_API_INTERNAL_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $c.auth.selfIssued.internalSecret.existingSecret | quote }}
+                  key: {{ $c.auth.selfIssued.internalSecret.key | quote }}
+            {{- if $c.auth.selfIssued.previousInternalSecret.existingSecret }}
+            - name: READ_API_INTERNAL_SECRET_PREVIOUS
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $c.auth.selfIssued.previousInternalSecret.existingSecret | quote }}
+                  key: {{ $c.auth.selfIssued.previousInternalSecret.key | quote }}
+            {{- end }}
+            {{- else }}
             - { name: RELAYHISTORY_ACCEPT_RELAYCONTROL_TOKENS, value: {{ $c.auth.relaycontrol.enabled | quote }} }
+            {{- end }}
             {{- if $c.auth.relaycontrol.enabled }}
             - { name: RELAYCONTROL_INTROSPECT_URL, value: {{ $c.auth.relaycontrol.url | quote }} }
             - name: RELAYCONTROL_INTROSPECT_SECRET

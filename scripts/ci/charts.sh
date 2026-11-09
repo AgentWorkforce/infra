@@ -440,11 +440,32 @@ for chart in "${charts[@]}"; do
           || err "$chart: API Deployment can read the migration owner URL"
         [ "$(yq 'select(.kind == "Job") | .spec.template.spec.containers[0].command | join(" ")' <<<"$out")" = node ] \
           || err "$chart: migration Job must invoke node directly"
-        [ "$(yq 'select(.kind == "Job") | .spec.template.spec.containers[0].args | join(" ")' <<<"$out")" = node_modules/@cloud/selfhost-api/dist/migrate-cli.js ] \
+        [ "$(yq 'select(.kind == "Job") | .spec.template.spec.containers[0].args | join(" ")' <<<"$out")" = node_modules/relay-control/dist/migrate-cli.js ] \
           || err "$chart: migration Job must invoke the packaged migrate CLI directly"
         ! grep -q 'export DATABASE_URL_FILE' <<<"$out" || err "$chart: obsolete migration DATABASE_URL_FILE adapter is still rendered"
         ! grep -Eq 'CLOUD_EDITION|NEXT_PUBLIC_APP_URL|OIDC_|AUTH_SESSION_SECRET|NEXT_CACHE' <<<"$out" \
           || err "$chart: full-Cloud/Next environment leaked into the selfhost API chart"
+        # Session read handoff and introspection render only when configured,
+        # with their secrets as mounted files.
+        ! grep -Eq 'SESSION_READ_API|RELAYCONTROL_INTROSPECT|SELFHOST_INTROSPECT' <<<"$out" \
+          || err "$chart: read API handoff env must not render by default"
+        sr_args=(--set services.sessionReadApiUrl=http://session-read-api:8080 --set services.sessionReadApiPublicUrl=https://read.gcp-proof.agentrelay.com
+          --set secretKeys.sessionReadApiSecret=session-read-api-secret --set services.sessionReadApiMcpReads=true
+          --set secretKeys.introspectSecret=relaycontrol-introspect-secret --set 'introspection.audiences={https://read.gcp-proof.agentrelay.com}')
+        sr_env=$(render "$chart" "$v" "${sr_args[@]}" | yq 'select(.kind == "Deployment") | .spec.template.spec.containers[0].env[] | .name + "=" + (.value // "")')
+        for want in "SESSION_READ_API_URL=http://session-read-api:8080" "SESSION_READ_API_PUBLIC_URL=https://read.gcp-proof.agentrelay.com" \
+          "SESSION_READ_API_SECRET_FILE=/var/run/agent-relay/secrets/session-read-api-secret" "SESSION_READ_API_MCP_READS=true" \
+          "RELAYCONTROL_INTROSPECT_SECRET_FILE=/var/run/agent-relay/secrets/relaycontrol-introspect-secret" \
+          "SELFHOST_INTROSPECT_AUDIENCES=https://read.gcp-proof.agentrelay.com"; do
+          grep -qxF "$want" <<<"$sr_env" || err "$chart: session read values did not render $want"
+        done
+        [ "$(render "$chart" "$v" --set secretKeys.introspectSecret=relaycontrol-introspect-secret | yq 'select(.kind == "Ingress") | .spec.rules[0].http.paths[0].path')" = /internal ] \
+          || err "$chart: the Ingress must deny /internal when the introspection route is enabled"
+        expect_render_failure "$chart" "$v" "partial session read handoff" "must be set together" --set services.sessionReadApiUrl=http://session-read-api:8080
+        expect_render_failure "$chart" "$v" "MCP reads without handoff" "services.sessionReadApiMcpReads requires" --set services.sessionReadApiMcpReads=true
+        expect_render_failure "$chart" "$v" "plaintext read API public origin" "services.sessionReadApiPublicUrl must be a public HTTPS origin" --set services.sessionReadApiUrl=http://session-read-api:8080 --set services.sessionReadApiPublicUrl=http://read.gcp-proof.agentrelay.com --set secretKeys.sessionReadApiSecret=session-read-api-secret
+        expect_render_failure "$chart" "$v" "audiences without secret" "introspection.audiences requires secretKeys.introspectSecret" --set 'introspection.audiences={https://read.gcp-proof.agentrelay.com}'
+        expect_render_failure "$chart" "$v" "audience with a path" "introspection.audiences entries must be http(s) origins" --set secretKeys.introspectSecret=relaycontrol-introspect-secret --set 'introspection.audiences={https://read.gcp-proof.agentrelay.com/v1}'
         # bootstrap-signup: identity settings render to relaycontrol's env and
         # their secrets only as mounted files.
         idv=charts/relay-control/ci/identity-values.yaml
@@ -586,6 +607,11 @@ for chart in "${charts[@]}"; do
         salted=$(render "$chart" "$v" --set migrations.identitySalt=retry)
         [ "$(yq 'select(.kind == "Job") | .metadata.name' <<<"$salted")" != "$(yq 'select(.kind == "Job") | .metadata.name' <<<"$out")" ] \
           || err "$chart: migrations.identitySalt must change the Job name"
+        placed=$(render "$chart" "$v" --set nodeSelector.pool=chief --set-json 'tolerations=[{"key":"dedicated","operator":"Exists","effect":"NoSchedule"}]' --set-json 'affinity={"nodeAffinity":{"requiredDuringSchedulingIgnoredDuringExecution":{"nodeSelectorTerms":[{"matchExpressions":[{"key":"zone","operator":"Exists"}]}]}}}')
+        for workload in "$job" "$deployment"; do
+          [ "$(rq "$workload | .nodeSelector.pool + \" \" + .tolerations[0].key + \" \" + .affinity.nodeAffinity.requiredDuringSchedulingIgnoredDuringExecution.nodeSelectorTerms[0].matchExpressions[0].key" "$placed")" = "chief dedicated zone" ] \
+            || err "$chart: nodeSelector, tolerations and affinity must reach the server and the migrate Job"
+        done
         nango_key=$(render "$chart" "$v" --set secretKeys.nangoSecretKey=NANGO_SECRET_KEY)
         [ "$(yq "$deployment | .containers[0].env[] | select(.name == \"NANGO_SECRET_KEY\") | .valueFrom.secretKeyRef.key" <<<"$nango_key")" = NANGO_SECRET_KEY ] \
           || err "$chart: NANGO_SECRET_KEY must come from the existing Secret"
