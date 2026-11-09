@@ -1,5 +1,5 @@
 # Published proof identities plus a render-only API identity. The API digest
-# is deliberately synthetic until selfhost-api is published.
+# is deliberately synthetic until a proof digest is selected.
 relayhistory:
   image:
     digest: sha256:8fbda9bd89dd33994b6b3331fb403c38a25f04e6742050bd717e99661f3544ba

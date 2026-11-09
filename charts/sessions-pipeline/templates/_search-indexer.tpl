@@ -14,6 +14,8 @@
 {{- if eq $c.postgres.tlsProfile "custom-ca" }}
 - { name: SESSION_POSTGRES_CA_FILE, value: /etc/search-indexer-postgres/ca.crt }
 - { name: SESSION_POSTGRES_CA_SHA256, value: {{ $c.postgres.caSha256 | quote }} }
+{{- /* runWorker's readiness pool uses the pg driver with sslmode=verify-full, which reads Node's extra CA list. */}}
+- { name: NODE_EXTRA_CA_CERTS, value: /etc/search-indexer-postgres/ca.crt }
 {{- end }}
 - { name: LOCKER_BUCKET, value: {{ $c.locker.bucket | quote }} }
 - { name: LOCKER_REGION, value: {{ $c.locker.region | quote }} }

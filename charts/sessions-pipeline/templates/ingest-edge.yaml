@@ -1,6 +1,12 @@
 {{- $c := .Values.ingestEdge -}}
 {{- if not (kindIs "bool" $c.enabled) }}{{ fail "ingestEdge.enabled must be a boolean" }}{{ end -}}
 {{- if $c.enabled -}}
+{{- if not (kindIs "map" $c.admission) }}{{ fail "ingestEdge.admission must be an object" }}{{ end -}}
+{{- $admission := $c.admission -}}
+{{- if or (not (kindIs "string" $admission.mode)) (not (has $admission.mode (list "sync" "async" "drain"))) }}{{ fail "ingestEdge.admission.mode must be sync, async or drain" }}{{ end -}}
+{{- range $field, $limit := dict "concurrency" (dict "value" $admission.concurrency "min" 1 "max" 32) "scanIntervalMs" (dict "value" $admission.scanIntervalMs "min" 1000 "max" 600000) "maxAttempts" (dict "value" $admission.maxAttempts "min" 1 "max" 100) -}}
+{{- if or (not (regexMatch "^[0-9]+$" (toString $limit.value))) (lt (int $limit.value) (int $limit.min)) (gt (int $limit.value) (int $limit.max)) }}{{ fail (printf "ingestEdge.admission.%s must be an integer from %d to %d" $field (int $limit.min) (int $limit.max)) }}{{ end -}}
+{{- end -}}
 {{- if not (kindIs "bool" $c.allowInClusterHttp) }}{{ fail "ingestEdge.allowInClusterHttp must be a boolean" }}{{ end -}}
 {{- if hasKey $c "extraEnv" }}{{ fail "ingestEdge.extraEnv is not supported; use the managed configuration and Secret references" }}{{ end -}}
 {{- $name := default (printf "%s-ingest-edge" .Release.Name) $c.fullnameOverride -}}
@@ -22,7 +28,16 @@
 {{- if and $originPort (or (eq (int (trimPrefix ":" $originPort)) 443) (ne $originPort (printf ":%d" (int (trimPrefix ":" $originPort))))) }}{{ fail "ingestEdge.origin port must be normalized without leading zeros or the default HTTPS port" }}{{ end -}}
 {{- if and .Values.sessionReadApi.enabled (ne $origin .Values.sessionReadApi.origin) }}{{ fail "ingestEdge.origin must exactly equal sessionReadApi.origin when both services are enabled" }}{{ end -}}
 {{- $introspect := include "sessions-pipeline.ingestEdge.endpoint" (dict "name" "ingestEdge.relaycontrol.url" "url" $c.relaycontrol.url "allowHttp" $c.allowInClusterHttp) -}}
-{{- $endpoint := include "sessions-pipeline.ingestEdge.endpoint" (dict "name" "ingestEdge.locker.endpoint" "url" $c.locker.endpoint "allowHttp" $c.allowInClusterHttp) -}}
+{{- if not (kindIs "bool" $c.sessionSelection) }}{{ fail "ingestEdge.sessionSelection must be a boolean" }}{{ end -}}
+{{- $credentialMode := $c.locker.credentials.mode -}}
+{{- if not (has $credentialMode (list "secret" "podIdentity")) }}{{ fail "ingestEdge.locker.credentials.mode must be secret or podIdentity" }}{{ end -}}
+{{- $podIdentity := eq $credentialMode "podIdentity" -}}
+{{- if and $podIdentity (not $c.serviceAccountName) }}{{ fail "ingestEdge.locker.credentials.mode=podIdentity requires serviceAccountName with a Pod Identity association" }}{{ end -}}
+{{- if and $podIdentity $c.locker.existingSecret }}{{ fail "ingestEdge.locker.existingSecret must be empty with credentials.mode=podIdentity" }}{{ end -}}
+{{- $endpoint := "" -}}
+{{- if or (not $podIdentity) $c.locker.endpoint -}}
+{{- $endpoint = include "sessions-pipeline.ingestEdge.endpoint" (dict "name" "ingestEdge.locker.endpoint" "url" $c.locker.endpoint "allowHttp" $c.allowInClusterHttp) -}}
+{{- end -}}
 {{- $bucket := required "ingestEdge.locker.bucket is required" $c.locker.bucket -}}
 {{- if not (kindIs "string" $bucket) }}{{ fail "ingestEdge.locker.bucket must be a nonempty literal string without surrounding whitespace" }}{{ end -}}
 {{- if ne (trim $bucket) $bucket }}{{ fail "ingestEdge.locker.bucket must be a nonempty literal string without surrounding whitespace" }}{{ end -}}
@@ -34,14 +49,19 @@
 {{- end -}}
 {{- $region := required "ingestEdge.locker.region is required" $c.locker.region -}}
 {{- $runtimeSecret := required "ingestEdge.config.existingSecret is required" $c.config.existingSecret -}}
-{{- $storeSecret := required "ingestEdge.locker.existingSecret is required" $c.locker.existingSecret -}}
+{{- $storeSecret := "" -}}
+{{- if not $podIdentity -}}
+{{- $storeSecret = required "ingestEdge.locker.existingSecret is required" $c.locker.existingSecret -}}
+{{- end -}}
 {{- $caMap := required "ingestEdge.postgres.caConfigMap is required" $c.postgres.caConfigMap -}}
 {{- $caHash := required "ingestEdge.postgres.caSha256 is required" $c.postgres.caSha256 -}}
 {{- if not (regexMatch "^[a-f0-9]{64}$" $caHash) }}{{ fail "ingestEdge.postgres.caSha256 must be 64 lowercase hex characters" }}{{ end -}}
-{{- range $ref := list $runtimeSecret $storeSecret $caMap -}}
+{{- range $ref := compact (list $runtimeSecret $storeSecret $caMap) -}}
 {{- if or (gt (len $ref) 253) (not (regexMatch "^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?)*$" $ref)) }}{{ fail "ingestEdge Secret and ConfigMap names must be Kubernetes DNS subdomains" }}{{ end -}}
 {{- end -}}
-{{- range $key := list $c.config.databaseUrlKey $c.config.introspectSecretKey $c.locker.accessKeyIdKey $c.locker.secretAccessKeyKey $c.postgres.caKey -}}
+{{- $secretKeys := list $c.config.databaseUrlKey $c.config.introspectSecretKey $c.postgres.caKey -}}
+{{- if not $podIdentity }}{{ $secretKeys = concat $secretKeys (list $c.locker.accessKeyIdKey $c.locker.secretAccessKeyKey) }}{{ end -}}
+{{- range $key := $secretKeys -}}
 {{- if or (not $key) (not (regexMatch "^[A-Za-z0-9._-]+$" $key)) }}{{ fail "ingestEdge Secret/CA keys must be nonempty Kubernetes key names" }}{{ end -}}
 {{- end -}}
 {{- range $field, $n := dict "port" $c.port "poolMax" $c.postgres.poolMax "maxPerUser" $c.maxPerUser "maxPerOrg" $c.maxPerOrg -}}
@@ -133,24 +153,57 @@ spec:
             - { name: ALLOW_IN_CLUSTER_HTTP, value: {{ $c.allowInClusterHttp | quote }} }
             - { name: LOCKER_PROVIDER, value: s3 }
             - { name: LOCKER_BUCKET, value: {{ $bucket | quote }} }
-            - { name: LOCKER_ENDPOINT, value: {{ $endpoint | quote }} }
+            {{- with $endpoint }}
+            - { name: LOCKER_ENDPOINT, value: {{ . | quote }} }
+            {{- end }}
             - { name: LOCKER_REGION, value: {{ $region | quote }} }
+            {{- if not $podIdentity }}
             - name: LOCKER_ACCESS_KEY_ID
               valueFrom:
                 secretKeyRef: { name: {{ $storeSecret | quote }}, key: {{ $c.locker.accessKeyIdKey | quote }} }
             - name: LOCKER_SECRET_ACCESS_KEY
               valueFrom:
                 secretKeyRef: { name: {{ $storeSecret | quote }}, key: {{ $c.locker.secretAccessKeyKey | quote }} }
+            {{- end }}
+            {{- if $c.sessionSelection }}
+            - { name: RELAYHISTORY_SELFHOST_SESSION_SELECTION, value: "true" }
+            {{- end }}
             - { name: INGEST_KEY_ROOT, value: 96bulls }
             - { name: INGEST_MAX_PER_USER, value: {{ $c.maxPerUser | quote }} }
             - { name: INGEST_MAX_PER_ORG, value: {{ $c.maxPerOrg | quote }} }
+            {{- if ne $admission.mode "sync" }}
+            - { name: SELFHOST_INGEST_ADMISSION, value: {{ $admission.mode | quote }} }
+            - { name: SELFHOST_ADMISSION_CONCURRENCY, value: {{ $admission.concurrency | quote }} }
+            - { name: SELFHOST_ADMISSION_SCAN_MS, value: {{ $admission.scanIntervalMs | quote }} }
+            - { name: SELFHOST_ADMISSION_MAX_ATTEMPTS, value: {{ $admission.maxAttempts | quote }} }
+            {{- end }}
           startupProbe:
+            {{- if eq $admission.mode "sync" }}
             httpGet: { path: /readyz, port: http }
+            {{- else }}
+            exec:
+              command:
+                - bun
+                - -e
+                - |
+                  {{- include "sessions-pipeline.ingestEdge.admissionProbe" . | nindent 18 }}
+            timeoutSeconds: 3
+            {{- end }}
             failureThreshold: 30
             periodSeconds: 2
           readinessProbe:
+            {{- if eq $admission.mode "sync" }}
             httpGet: { path: /readyz, port: http }
             timeoutSeconds: 2
+            {{- else }}
+            exec:
+              command:
+                - bun
+                - -e
+                - |
+                  {{- include "sessions-pipeline.ingestEdge.admissionProbe" . | nindent 18 }}
+            timeoutSeconds: 3
+            {{- end }}
             periodSeconds: 5
           livenessProbe:
             httpGet: { path: /healthz, port: http }

@@ -440,11 +440,32 @@ for chart in "${charts[@]}"; do
           || err "$chart: API Deployment can read the migration owner URL"
         [ "$(yq 'select(.kind == "Job") | .spec.template.spec.containers[0].command | join(" ")' <<<"$out")" = node ] \
           || err "$chart: migration Job must invoke node directly"
-        [ "$(yq 'select(.kind == "Job") | .spec.template.spec.containers[0].args | join(" ")' <<<"$out")" = node_modules/@cloud/selfhost-api/dist/migrate-cli.js ] \
+        [ "$(yq 'select(.kind == "Job") | .spec.template.spec.containers[0].args | join(" ")' <<<"$out")" = node_modules/relay-control/dist/migrate-cli.js ] \
           || err "$chart: migration Job must invoke the packaged migrate CLI directly"
         ! grep -q 'export DATABASE_URL_FILE' <<<"$out" || err "$chart: obsolete migration DATABASE_URL_FILE adapter is still rendered"
         ! grep -Eq 'CLOUD_EDITION|NEXT_PUBLIC_APP_URL|OIDC_|AUTH_SESSION_SECRET|NEXT_CACHE' <<<"$out" \
           || err "$chart: full-Cloud/Next environment leaked into the selfhost API chart"
+        # Session read handoff and introspection render only when configured,
+        # with their secrets as mounted files.
+        ! grep -Eq 'SESSION_READ_API|RELAYCONTROL_INTROSPECT|SELFHOST_INTROSPECT' <<<"$out" \
+          || err "$chart: read API handoff env must not render by default"
+        sr_args=(--set services.sessionReadApiUrl=http://session-read-api:8080 --set services.sessionReadApiPublicUrl=https://read.gcp-proof.agentrelay.com
+          --set secretKeys.sessionReadApiSecret=session-read-api-secret --set services.sessionReadApiMcpReads=true
+          --set secretKeys.introspectSecret=relaycontrol-introspect-secret --set 'introspection.audiences={https://read.gcp-proof.agentrelay.com}')
+        sr_env=$(render "$chart" "$v" "${sr_args[@]}" | yq 'select(.kind == "Deployment") | .spec.template.spec.containers[0].env[] | .name + "=" + (.value // "")')
+        for want in "SESSION_READ_API_URL=http://session-read-api:8080" "SESSION_READ_API_PUBLIC_URL=https://read.gcp-proof.agentrelay.com" \
+          "SESSION_READ_API_SECRET_FILE=/var/run/agent-relay/secrets/session-read-api-secret" "SESSION_READ_API_MCP_READS=true" \
+          "RELAYCONTROL_INTROSPECT_SECRET_FILE=/var/run/agent-relay/secrets/relaycontrol-introspect-secret" \
+          "SELFHOST_INTROSPECT_AUDIENCES=https://read.gcp-proof.agentrelay.com"; do
+          grep -qxF "$want" <<<"$sr_env" || err "$chart: session read values did not render $want"
+        done
+        [ "$(render "$chart" "$v" --set secretKeys.introspectSecret=relaycontrol-introspect-secret | yq 'select(.kind == "Ingress") | .spec.rules[0].http.paths[0].path')" = /internal ] \
+          || err "$chart: the Ingress must deny /internal when the introspection route is enabled"
+        expect_render_failure "$chart" "$v" "partial session read handoff" "must be set together" --set services.sessionReadApiUrl=http://session-read-api:8080
+        expect_render_failure "$chart" "$v" "MCP reads without handoff" "services.sessionReadApiMcpReads requires" --set services.sessionReadApiMcpReads=true
+        expect_render_failure "$chart" "$v" "plaintext read API public origin" "services.sessionReadApiPublicUrl must be a public HTTPS origin" --set services.sessionReadApiUrl=http://session-read-api:8080 --set services.sessionReadApiPublicUrl=http://read.gcp-proof.agentrelay.com --set secretKeys.sessionReadApiSecret=session-read-api-secret
+        expect_render_failure "$chart" "$v" "audiences without secret" "introspection.audiences requires secretKeys.introspectSecret" --set 'introspection.audiences={https://read.gcp-proof.agentrelay.com}'
+        expect_render_failure "$chart" "$v" "audience with a path" "introspection.audiences entries must be http(s) origins" --set secretKeys.introspectSecret=relaycontrol-introspect-secret --set 'introspection.audiences={https://read.gcp-proof.agentrelay.com/v1}'
         # bootstrap-signup: identity settings render to relaycontrol's env and
         # their secrets only as mounted files.
         idv=charts/relay-control/ci/identity-values.yaml
@@ -523,6 +544,90 @@ for chart in "${charts[@]}"; do
         [ "$(yq 'select(.kind == "Deployment") | .spec.replicas' <<<"$dflt")" = 1 ] || err "$chart: default render is not one replica"
         [ "$(yq 'select(.kind == "Job") | .spec.template.spec.containers[0].env[] | select(.name == "ALLOW_WRITE_HOLD") | .value' <<<"$dflt")" = no ] \
           || err "$chart: default Job takes a write hold"
+        ;;
+      relaychief-control)
+        v=charts/relaychief-control/ci/default-values.yaml
+        check_postgres_ca "$chart" "$v"
+        expect_render_failure "$chart" "$v" "mutable image" "image.digest is required" --set image.digest=
+        expect_render_failure "$chart" "$v" "malformed digest" "image.digest must be sha256:<64 lowercase hex characters>" --set image.digest=sha256:abc
+        expect_render_failure "$chart" "$v" "missing Secret" "existingSecret is required" --set existingSecret=
+        expect_render_failure "$chart" "$v" "missing relay-control origin" "config.relaycontrolUrl (RELAYCONTROL_URL) is required" --set config.relaycontrolUrl=
+        expect_render_failure "$chart" "$v" "relay-control URL with a path" "config.relaycontrolUrl (RELAYCONTROL_URL) is required" --set config.relaycontrolUrl=https://control.example.com/v1
+        expect_render_failure "$chart" "$v" "missing public origin" "config.publicOrigin (RELAYCHIEF_CONTROL_PUBLIC_ORIGIN) is required" --set config.publicOrigin=
+        for origin in ftp://chief.example.com https://chief.example.com/ https://user@chief.example.com chief.example.com; do
+          expect_render_failure "$chart" "$v" "public origin $origin" "config.publicOrigin (RELAYCHIEF_CONTROL_PUBLIC_ORIGIN) is required" --set "config.publicOrigin=$origin"
+        done
+        expect_render_failure "$chart" "$v" "bad browser origin" "config.browserOrigins must be comma-separated http(s) origins" --set 'config.browserOrigins=https://a.example.com\,app.example.com'
+        expect_render_failure "$chart" "$v" "bad Nango host" "config.nangoHost (NANGO_HOST) must be an http(s) origin" --set config.nangoHost=nango.example.com --set secretKeys.nangoSecretKey=NANGO_SECRET_KEY
+        expect_render_failure "$chart" "$v" "NANGO_HOST without the key" "config.nangoHost (NANGO_HOST) requires secretKeys.nangoSecretKey" --set config.nangoHost=https://nango.example.com
+        expect_render_failure "$chart" "$v" "unsafe Secret key path" "secretKeys.adminToken must be a Kubernetes Secret data key" --set-string secretKeys.adminToken=../key
+        expect_render_failure "$chart" "$v" "empty required Secret key" "secretKeys.databaseUrl is required" --set secretKeys.databaseUrl=
+        expect_render_failure "$chart" "$v" "multiple replicas" "replicaCount must be 1" --set replicaCount=2
+        expect_render_failure "$chart" "$v" "fractional replicas" "replicaCount must be 1" --set replicaCount=1.5
+        expect_render_failure "$chart" "$v" "string replicas" "replicaCount must be 1" --set-string replicaCount=1
+        expect_render_failure "$chart" "$v" "server port on the admin port" "server.port must not be 3201" --set server.port=3201
+        expect_render_failure "$chart" "$v" "public Service" "service.type must be ClusterIP" --set service.type=LoadBalancer
+        expect_render_failure "$chart" "$v" "restricted egress with no rules" "requires networkPolicy.additionalEgress" --set-json 'networkPolicy.additionalEgress=[]'
+        for name in ADMIN_HOST ADMIN_PORT HOST PORT NANGO_HOST NANGO_SECRET_KEY DATABASE_URL; do
+          expect_render_failure "$chart" "$v" "$name through extraEnv" "$name is managed by structured chart values and must not appear in extraEnv" --set-json "extraEnv=[{\"name\":\"$name\",\"value\":\"x\"}]"
+        done
+        expect_render_failure "$chart" "$v" "ingress without hosts" "ingress.enabled=true requires at least one host" --set ingress.enabled=true
+        expect_render_failure "$chart" "$v" "ingress without TLS" "ingress.enabled=true requires ingress.tls unless externalTls=true" --set ingress.enabled=true --set-json 'ingress.hosts=["chief.example.com"]'
+        expect_render_failure "$chart" "$v" "ingress blocked by NetworkPolicy" "ingress with networkPolicy requires networkPolicy.ingressFrom" --set ingress.enabled=true --set-json 'ingress.hosts=["chief.example.com"]' --set ingress.externalTls=true
+        expect_render_failure "$chart" "$v" "root ingress path" "must be an absolute path other than /" --set-json 'ingress.extraPaths=[{"path":"/"}]'
+        expect_render_failure "$chart" "$v" "bad ingress pathType" "pathType must be Prefix or Exact" --set-json 'ingress.extraPaths=[{"path":"/api/v1","pathType":"ImplementationSpecific"}]'
+        # A yq expression that runs over every document prints blank lines and
+        # separators for the documents it does not match; keep only the values.
+        rq() { yq "$1" <<<"$2" | { grep -Ev '^(---)?$' || true; }; }
+        out=$(render "$chart" "$v")
+        deployment='select(.kind == "Deployment") | .spec.template.spec'
+        [ "$(yq 'select(.kind == "Secret") | .metadata.name' <<<"$out")" = "" ] || err "$chart: the chart must not render a Secret"
+        [ "$(yq 'select(.kind == "Ingress") | .metadata.name' <<<"$out")" = "" ] || err "$chart: Ingress must be off by default"
+        [ "$(rq "$deployment | [.containers[0].env[] | select(.name == \"ADMIN_HOST\") | .value] | join(\",\")" "$out")" = 127.0.0.1 ] \
+          || err "$chart: ADMIN_HOST must render exactly once as 127.0.0.1"
+        [ "$(rq "$deployment | [.containers[0].ports[].containerPort] | join(\",\")" "$out")" = 3200 ] \
+          || err "$chart: the container must expose only the server port"
+        [ "$(rq 'select(.kind == "Service") | [.spec.ports[].port] | join(",")' "$out")" = 3200 ] \
+          || err "$chart: the Service must expose only the server port"
+        [ "$(yq 'select(.kind == "ConfigMap") | .data.PORT' <<<"$out")" = 3200 ] || err "$chart: PORT must render as 3200"
+        [ "$(yq "$deployment | .containers[0].startupProbe.httpGet.path + \" \" + .containers[0].livenessProbe.httpGet.path + \" \" + .containers[0].readinessProbe.httpGet.path" <<<"$out")" = "/healthz /healthz /readyz" ] \
+          || err "$chart: probes must be /healthz (startup, liveness) and /readyz (readiness)"
+        [ "$(yq "$deployment | (.containers[0].command // [] | length) + (.containers[0].args // [] | length)" <<<"$out")" = 0 ] \
+          || err "$chart: the server must run the image default command"
+        [ "$(yq "$deployment | .securityContext.runAsUser" <<<"$out")" = 1000 ] || err "$chart: the pod must run as uid 1000"
+        [ "$(yq "$deployment | .containers[0].securityContext.readOnlyRootFilesystem" <<<"$out")" = true ] || err "$chart: the root filesystem must be read-only"
+        [ "$(yq "$deployment | .volumes[] | select(.name == \"tmp\") | .emptyDir.medium" <<<"$out")" = Memory ] || err "$chart: /tmp must be a tmpfs"
+        ! grep -Eq 'NANGO_(HOST|SECRET_KEY)|RELAYCHIEF_CONTROL_BROWSER_ORIGINS' <<<"$out" || err "$chart: optional env must not render when unset"
+        ! grep -q 'part-of: agent-relay' <<<"$out" || err "$chart: the chart is not part of the agent-relay umbrella"
+        job='select(.kind == "Job") | .spec.template.spec'
+        [ "$(yq "$job | .containers[0].command[0] + \" \" + .containers[0].args[0]" <<<"$out")" = "node node_modules/relaychief-control/dist/migrate-cli.js" ] \
+          || err "$chart: the migrate Job must run the packaged migrate CLI"
+        [ "$(rq "$job | [.containers[0].env[].name] | join(\",\")" "$out")" = DATABASE_URL ] \
+          || err "$chart: the migrate Job must receive only DATABASE_URL"
+        yq 'select(.kind == "Job") | .metadata.name' <<<"$out" | grep -Eq '^ci-relaychief-control-migrate-[0-9a-f]{8}$' \
+          || err "$chart: the migrate Job must be named by its template hash"
+        salted=$(render "$chart" "$v" --set migrations.identitySalt=retry)
+        [ "$(yq 'select(.kind == "Job") | .metadata.name' <<<"$salted")" != "$(yq 'select(.kind == "Job") | .metadata.name' <<<"$out")" ] \
+          || err "$chart: migrations.identitySalt must change the Job name"
+        placed=$(render "$chart" "$v" --set nodeSelector.pool=chief --set-json 'tolerations=[{"key":"dedicated","operator":"Exists","effect":"NoSchedule"}]' --set-json 'affinity={"nodeAffinity":{"requiredDuringSchedulingIgnoredDuringExecution":{"nodeSelectorTerms":[{"matchExpressions":[{"key":"zone","operator":"Exists"}]}]}}}')
+        for workload in "$job" "$deployment"; do
+          [ "$(rq "$workload | .nodeSelector.pool + \" \" + .tolerations[0].key + \" \" + .affinity.nodeAffinity.requiredDuringSchedulingIgnoredDuringExecution.nodeSelectorTerms[0].matchExpressions[0].key" "$placed")" = "chief dedicated zone" ] \
+            || err "$chart: nodeSelector, tolerations and affinity must reach the server and the migrate Job"
+        done
+        nango_key=$(render "$chart" "$v" --set secretKeys.nangoSecretKey=NANGO_SECRET_KEY)
+        [ "$(yq "$deployment | .containers[0].env[] | select(.name == \"NANGO_SECRET_KEY\") | .valueFrom.secretKeyRef.key" <<<"$nango_key")" = NANGO_SECRET_KEY ] \
+          || err "$chart: NANGO_SECRET_KEY must come from the existing Secret"
+        v=charts/relaychief-control/ci/alb-values.yaml
+        out=$(render "$chart" "$v")
+        [ "$(rq 'select(.kind == "Ingress") | [.spec.rules[0].http.paths[] | .path + "=" + .pathType] | join(",")' "$out")" = "/chief/v1=Prefix" ] \
+          || err "$chart: the default Ingress must expose only /chief/v1 (Prefix)"
+        [ "$(rq 'select(.kind == "NetworkPolicy" and (.metadata.name | test("migration$") | not)) | [.spec.ingress[0].from[].ipBlock.cidr] | join(",")' "$out")" = "10.0.1.0/24,10.0.2.0/24" ] \
+          || err "$chart: networkPolicy.ingressFrom must admit ALB subnets"
+        [ "$(yq 'select(.kind == "ConfigMap") | .data.RELAYCHIEF_CONTROL_BROWSER_ORIGINS' <<<"$out")" = "https://app.example.com, https://admin.example.com" ] \
+          || err "$chart: browser origins did not render"
+        extra=$(render "$chart" "$v" --set-json 'ingress.extraPaths=[{"path":"/api/v1"}]')
+        [ "$(rq 'select(.kind == "Ingress") | [.spec.rules[0].http.paths[] | .path + "=" + .pathType] | join(",")' "$extra")" = "/chief/v1=Prefix,/api/v1=Prefix" ] \
+          || err "$chart: ingress.extraPaths must add routes after /chief/v1"
         ;;
       agent-relay)
         v=charts/agent-relay/ci/gcp-proof-values.yaml

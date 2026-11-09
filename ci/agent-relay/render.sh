@@ -47,7 +47,7 @@ for host in gcp-proof.agentrelay.com api.gcp-proof.agentrelay.com \
 done
 
 for image in \
-  us-central1-docker.pkg.dev/agentrelay-96bulls-soc2-2610/awf-conformance-images/selfhost-api \
+  ghcr.io/agentworkforce/relay-control \
   us-central1-docker.pkg.dev/agentrelay-96bulls-soc2-2610/awf-conformance-images/relay-dashboard \
   us-central1-docker.pkg.dev/agentrelay-96bulls-soc2-2610/awf-conformance-images/relayhistory; do
   grep -Eq "image: [\"']?${image}@sha256:[a-f0-9]{64}" <<<"$out"
@@ -267,6 +267,12 @@ default_env_names=$(helm template ci charts/relay-control -n ci --no-hooks -f ch
   grep -vx -- '---' | sort -u)
 unset_structured_names=(
   SELFHOST_ENCRYPTION_PREVIOUS_KEY_FILE
+  RELAYCONTROL_INTROSPECT_SECRET_FILE
+  SESSION_READ_API_SECRET_FILE
+  SESSION_READ_API_URL
+  SESSION_READ_API_PUBLIC_URL
+  SESSION_READ_API_MCP_READS
+  SELFHOST_INTROSPECT_AUDIENCES
   SELFHOST_INTERNAL_TOKEN_FILE
   RELAYCAST_INTERNAL_SECRET_FILE
   SELFHOST_OIDC_CLIENT_SECRET_FILE
@@ -832,7 +838,7 @@ ca_out=$(helm template proof charts/agent-relay -n agent-relay --no-hooks \
   --set relayhistory.postgresCa.enabled=true --set relayhistory.postgresCa.configMap=rds-ca \
   --set sessions-pipeline.worker.postgresCa.enabled=true --set sessions-pipeline.worker.postgresCa.configMap=rds-ca \
   --set sessions-pipeline.alleyoop.postgresCa.enabled=true --set sessions-pipeline.alleyoop.postgresCa.configMap=rds-ca)
-ca_gaps=$(yq 'select((.kind == "Deployment" or (.kind == "Job" and (.metadata.name | contains("migrate")))) and (.spec.template.spec.containers[0].image | test("selfhost-api|/relayhistory@|96bulls-services"))) | select(([.spec.template.spec.containers[0].env[] | select(.name == "NODE_EXTRA_CA_CERTS")] | length) != 1) | .metadata.name' <<<"$ca_out" | grep -v '^---$' || true)
+ca_gaps=$(yq 'select((.kind == "Deployment" or (.kind == "Job" and (.metadata.name | contains("migrate")))) and (.spec.template.spec.containers[0].image | test("/relay-control@|/relayhistory@|96bulls-services"))) | select(([.spec.template.spec.containers[0].env[] | select(.name == "NODE_EXTRA_CA_CERTS")] | length) != 1) | .metadata.name' <<<"$ca_out" | grep -v '^---$' || true)
 test -z "$ca_gaps" || { echo "postgresCa missing from: $ca_gaps" >&2; exit 1; }
 test "$(yq 'select(.kind == "Deployment" or (.kind == "Job" and (.metadata.name | contains("migrate")))) | select(.spec.template.spec.containers[0].env[].name == "NODE_EXTRA_CA_CERTS") | .metadata.name' <<<"$ca_out" | grep -v '^---$' | grep -c .)" -ge 4
 

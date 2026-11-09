@@ -8,8 +8,10 @@ a reachable RelayAuth deployment.
 
 The self-host runtime is a single Node process backed by SQLite and a local
 uploaded-file store, both on one persistent volume. The chart therefore allows
-exactly one replica and upgrades with `Recreate`. `runtime.backend` is fixed to
-`sqlite`, and the chart refuses names of backends that are not implemented.
+exactly one replica and upgrades with `Recreate`. `runtime.backend` selects
+`sqlite` (the default), `durable-actors` (see `docs/self-hosted-durable-actors.md`)
+or [`postgres`](#postgresql-backend), and the chart refuses names of backends
+that are not implemented.
 
 ## Defaults
 
@@ -209,6 +211,54 @@ back up. If the copy fails after it has started, the Deployment stays at 0.
 
 Do not run `helm upgrade` while a restore is in progress, because it scales the
 Deployment back to 1.
+
+## PostgreSQL backend
+
+`runtime.backend: postgres` (default off) runs the server on an external
+PostgreSQL database. Uploaded files stay on the data PVC, and realtime, presence
+and rate limits are in-process, so `replicaCount` must stay 1. The image is
+`runtime.postgres.image` (12.8.0-pg.1), not `image.*`.
+
+Prepare the database first: the `relaycast_owner` and `relaycast_runtime` roles
+and schema `public`, as in `docs/self-host-postgres.md` in AgentWorkforce/relaycast.
+Then add two keys to `existingSecret`, next to the existing ones:
+
+| Key (value) | Content | Mounted into |
+| --- | --- | --- |
+| `database-owner-url` (`secretKeys.databaseOwnerUrl`) | `postgres://relaycast_owner:<pw>@<host>:5432/<db>?sslmode=verify-full` | migration Job only |
+| `database-runtime-url` (`secretKeys.databaseRuntimeUrl`) | `postgres://relaycast_runtime:<pw>@<host>:5432/<db>?sslmode=verify-full` | server only |
+
+The password must be URL-encoded, and `sslmode=verify-full` is the only accepted
+query parameter.
+
+```yaml
+runtime:
+  backend: postgres
+postgresCa:
+  enabled: true
+  configMap: postgres-ca-bundle   # or secret: <name>; key defaults to ca.crt
+```
+
+`postgresCa` mounts the CA that signs the database certificate at
+`/etc/postgres-ca/ca.crt` and sets `NODE_EXTRA_CA_CERTS`. It is required on this
+backend and refused on the others.
+
+A plain Job (`<release>-relaycast-migrate-<hash>`, no Helm hook) runs `migrate`
+as the owner; its name hashes the rendered pod template, so a new image or
+setting runs a new Job. The server's `wait-for-migrations` init container runs
+`verify-db` as the runtime role and holds the server until the database is
+migrated for this image; the server then checks identity and the ledger again
+before it listens. Install with `--wait --wait-for-jobs`, or wait for the Job
+yourself. Exit codes are `64` (configuration), `65` (identity) and `1` (failure):
+the Job does not retry 64 or 65, and a server or init container that exits with
+one needs an operator fix.
+
+The chart refuses a half-configured backend at render: no CA, a missing or
+shared URL key, `replicaCount` other than 1, `backup.enabled` (the backup CronJob
+is SQLite-only, so back up the database with its own tooling),
+`retention.messageTtlDays`, or chart-managed database variables in `extraEnv`.
+
+Moving an existing SQLite release to this backend does not migrate its data.
 
 ## Upgrades and rollback
 

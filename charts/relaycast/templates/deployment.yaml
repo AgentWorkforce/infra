@@ -1,5 +1,6 @@
 {{- include "relaycast.validate" . }}
 {{- if not (include "relaycast.actors.enabled" .) }}
+{{- $postgres := include "relaycast.postgres.enabled" . }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -35,6 +36,10 @@ spec:
       {{- end }}
       securityContext:
         {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      {{- if $postgres }}
+      initContainers:
+        {{- include "relaycast.postgres.waitContainer" . | nindent 8 }}
+      {{- end }}
       containers:
         - name: relaycast
           image: {{ include "relaycast.image" . | quote }}
@@ -42,8 +47,10 @@ spec:
           args:
             - --base-url
             - {{ .Values.baseUrl | quote }}
+            {{- if not $postgres }}
             - --db
             - /data/relaycast.db
+            {{- end }}
             - --port
             - {{ .Values.server.port | quote }}
             - --env
@@ -57,8 +64,12 @@ spec:
           env:
             - name: PORT
               value: {{ .Values.server.port | quote }}
+            {{- if $postgres }}
+            {{- include "relaycast.postgres.databaseEnv" (dict "root" . "file" "database-runtime-url") | nindent 12 }}
+            {{- else }}
             - name: RELAYCAST_DB_PATH
               value: /data/relaycast.db
+            {{- end }}
             - name: RELAYCAST_INTERNAL_SECRET_FILE
               value: {{ include "relaycast.secretMountPath" . }}/internal-secret
             - name: RELAYCAST_WORKSPACE_BOOTSTRAP_SECRET_FILE
@@ -126,6 +137,11 @@ spec:
             - name: secrets
               mountPath: {{ include "relaycast.secretMountPath" . }}
               readOnly: true
+            {{- if $postgres }}
+            - name: postgres-ca
+              mountPath: /etc/postgres-ca
+              readOnly: true
+            {{- end }}
             {{- if .Values.backup.enabled }}
             # Mounted (read-only) so the backup claim is provisioned and bound
             # with the release, on this pod's node, rather than at the first
@@ -150,6 +166,10 @@ spec:
                 path: internal-secret
               - key: {{ .Values.secretKeys.bootstrapSecret | quote }}
                 path: workspace-bootstrap-secret
+              {{- if $postgres }}
+              - key: {{ .Values.secretKeys.databaseRuntimeUrl | quote }}
+                path: database-runtime-url
+              {{- end }}
               {{- with .Values.secretKeys.credentialKeyring }}
               - key: {{ . | quote }}
                 path: credential-keyring
@@ -158,6 +178,9 @@ spec:
               - key: {{ . | quote }}
                 path: relayauth-token
               {{- end }}
+        {{- if $postgres }}
+        {{- include "relaycast.postgres.caVolume" . | nindent 8 }}
+        {{- end }}
         {{- if .Values.backup.enabled }}
         - name: backup
           persistentVolumeClaim:

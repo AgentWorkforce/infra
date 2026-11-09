@@ -402,6 +402,14 @@ searchIndexer:
 # Initial supported assembly is test/pilot only; deletion/privacy is incomplete.
 ingestEdge:
   enabled: false
+  # Requires an image implementing SELFHOST_INGEST_ADMISSION. Sync preserves
+  # the existing request path. Async acknowledges durable object storage and
+  # defers admission SQL; drain consumes the inbox but accepts new work sync.
+  admission:
+    mode: sync
+    concurrency: 4
+    scanIntervalMs: 15000
+    maxAttempts: 20
   fullnameOverride: ""
   image:
     repository: ghcr.io/agentworkforce/96bulls-services
@@ -431,9 +439,16 @@ ingestEdge:
     bucket: ""
     endpoint: ""
     region: us-east-1
+    # secret: static keys from existingSecret (MinIO). podIdentity: no keys; the
+    # AWS credential chain of serviceAccountName, and endpoint may stay empty.
+    credentials:
+      mode: secret
     existingSecret: ""
     accessKeyIdKey: access-key-id
     secretAccessKeyKey: secret-access-key
+  # Serves the per-session erase on POST /v1/delivery/sessions/selection
+  # (RELAYHISTORY_SELFHOST_SESSION_SELECTION). Needs pipeline migration 043910.
+  sessionSelection: false
   maxPerUser: 4
   maxPerOrg: 32
   serviceAccountName: ""

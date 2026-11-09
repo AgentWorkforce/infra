@@ -1,0 +1,46 @@
+{{- include "relaycast.validate" . }}
+{{- if include "relaycast.postgres.enabled" . }}
+{{- $podTemplate := include "relaycast.postgres.migrationPodTemplate" . }}
+{{- $migrations := .Values.runtime.postgres.migrations }}
+{{- /* podFailurePolicy is on by default from Kubernetes 1.26; older clusters use
+backoffLimit alone. */}}
+{{- $failurePolicy := semverCompare ">=1.26.0-0" .Capabilities.KubeVersion.Version }}
+{{- /* Job spec.template and podFailurePolicy are immutable: a change to either must
+yield a new Job name, so the identity hashes the rendered template and whether the
+policy is present (a cluster upgrade across 1.26 runs the Job again). */}}
+{{- $identity := printf "%s|%s|%t" $podTemplate $migrations.identitySalt $failurePolicy | sha256sum | trunc 8 }}
+{{- if .Values.serviceAccount.create }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "relaycast.postgres.migrateName" . }}
+  namespace: {{ .Release.Namespace | quote }}
+  labels:
+    {{- include "relaycast.labels" . | nindent 4 }}
+    app.kubernetes.io/component: migration
+automountServiceAccountToken: false
+---
+{{- end }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ printf "%s-%s" (include "relaycast.postgres.migrateName" .) $identity }}
+  namespace: {{ .Release.Namespace | quote }}
+  labels:
+    {{- include "relaycast.labels" . | nindent 4 }}
+    app.kubernetes.io/component: migration
+spec:
+  backoffLimit: {{ $migrations.backoffLimit | int64 }}
+  activeDeadlineSeconds: {{ $migrations.activeDeadlineSeconds | int64 }}
+  {{- if $failurePolicy }}
+  # 64 (configuration) and 65 (identity) need an operator fix; retries cannot help.
+  podFailurePolicy:
+    rules:
+      - action: FailJob
+        onExitCodes:
+          containerName: migrate
+          operator: In
+          values: [64, 65]
+  {{- end }}
+  template: {{- $podTemplate | nindent 4 }}
+{{- end }}
