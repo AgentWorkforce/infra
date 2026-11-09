@@ -36,6 +36,11 @@ class NativeBrief(unittest.TestCase):
         self.render({'components':{'session-brief':{'enabled':True}}},'requires nativeBrief.enabled')
         self.assertFalse(any(d.get('spec',{}).get('template',{}).get('metadata',{}).get('labels',{}).get('app.kubernetes.io/component')=='session-brief' for d in docs))
 
+    def test_null_optional_environment_preserves_disabled_and_native_rendering(self):
+        self.render({'extraEnv':None,'components':{'session-brief':{'env':None}}})
+        selected=self.selected();selected['extraEnv']=None;selected['components']['session-brief']['env']=None
+        self.assertEqual(self.brief(self.render(selected))['containers'][0]['env'][0]['name'],'SERVICE')
+
     def test_native_env_secret_ca_health_and_egress_are_component_scoped(self):
         docs=self.render(self.selected());pod=self.brief(docs);main=pod['containers'][0]
         env={e['name']:e for e in main['env']};self.assertEqual(len(env),len(main['env']))

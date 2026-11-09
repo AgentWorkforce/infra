@@ -1,7 +1,7 @@
 {{- define "sessions-pipeline-worker.validateNativeBrief" -}}
 {{- $n := .Values.nativeBrief -}}
 {{- $c := index .Values.components "session-brief" -}}
-{{- range $entry := concat .Values.extraEnv ($c.env | default list) -}}
+{{- range $entry := concat (.Values.extraEnv | default list) ($c.env | default list) -}}
 {{- if eq ($entry.name | default "") "SESSION_BRIEF_CANONICAL_INPUT" }}{{ fail "use nativeBrief.enabled instead of unmanaged SESSION_BRIEF_CANONICAL_INPUT" }}{{ end -}}
 {{- end -}}
 {{- if not (kindIs "bool" $n.enabled) }}{{ fail "nativeBrief.enabled must be a boolean" }}{{ end -}}
@@ -47,7 +47,7 @@
 {{- if not (regexMatch "^[a-f0-9]{64}$" ($ca.sha256 | default "")) }}{{ fail "nativeBrief requires postgresCa.sha256 (64 lowercase hex)" }}{{ end -}}
 {{- if not .Values.workerHealth.enabled }}{{ fail "nativeBrief requires workerHealth.enabled" }}{{ end -}}
 {{- $reserved := list "SERVICE" "OTEL_SERVICE_NAME" "HOOPDB_URL" "LOCKER_ENDPOINT" "LOCKER_BUCKET" "LOCKER_REGION" "LOCKER_ACCESS_KEY_ID" "LOCKER_SECRET_ACCESS_KEY" "NODE_EXTRA_CA_CERTS" "SSL_CERT_FILE" "SSL_CERT_DIR" "NODE_OPTIONS" "PGOPTIONS" "PGSSLCERT" "PGSSLKEY" "WORKER_HEALTH_PORT" "WORKER_UNHEALTHY_AFTER_FAILURES" "WORKER_MAX_TICK_AGE_MS" "SESSION_BRIEF_ENABLED" "SESSION_BRIEF_CANONICAL_INPUT" "SESSION_BRIEF_WORKSPACE_IDS" "SESSION_BRIEF_MODEL" "SESSION_BRIEF_SWEEP_SECONDS" "SESSION_BRIEF_BATCH" "SESSION_BRIEF_GLOBAL_DAILY_CAP" "SESSION_BRIEF_SESSION_DAILY_CAP" "PIPELINE_ORG_FROM_PREFIX" "PIPELINE_KEY_PREFIX" "OPENAI_API_KEY" "OPENAI_BASE_URL" "NATIVE_BRIEF_CA_FILE" "NATIVE_BRIEF_CA_SOURCE" "NATIVE_BRIEF_CA_SHA256" "PGSSLMODE" "PGSSLROOTCERT" "NODE_TLS_REJECT_UNAUTHORIZED" -}}
-{{- range $entry := concat .Values.extraEnv ($c.env | default list) -}}
+{{- range $entry := concat (.Values.extraEnv | default list) ($c.env | default list) -}}
 {{- if has ($entry.name | default "") $reserved }}{{ fail (printf "nativeBrief manages %s; remove it from extraEnv/components.session-brief.env" $entry.name) }}{{ end -}}
 {{- end -}}
 {{- if and .Values.networkPolicy.enabled (not $n.openaiEgress.enabled) }}{{ fail "nativeBrief requires explicit openaiEgress when networkPolicy.enabled=true" }}{{ end -}}
