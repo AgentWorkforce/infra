@@ -189,7 +189,9 @@ the supported runtime role while migration-ledger SELECT remains denied.
 The fixture uses private plaintext transport, not TLS, and qualifies neither
 an installed profile nor MCP, Desktop, cloud or full pipeline readback.
 The historical command
-above requires `KIND_CONTROL_SOURCE=historical`; its default now selects `df4b390`.
+above requires `KIND_CONTROL_SOURCE=historical`; its default now selects `d94bd42`.
+The earlier `df4b390` smoke receipt is historical evidence for that source only;
+it is not runtime proof for `d94bd42`.
 
 The retired public pin `a659ac4` fails readiness with the supported runtime
 database role: readiness reads the migration ledger, which the runtime grants

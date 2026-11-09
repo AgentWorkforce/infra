@@ -466,7 +466,7 @@ Prerequisites: Docker Engine 28+ (including native-platform image export),
 kind 0.31+, kubectl, Helm 3.10+, OpenSSL, Git, Python 3.9+, and PyYAML. Allocate
 enough Docker memory for the suite and CNI; budget 20 GiB free disk for a cold
 setup. Current optional native Control builds fetch public
-`AgentWorkforce/relay-control` at the exact `df4b390` source pin. Explicit historical
+`AgentWorkforce/relay-control` at the exact `d94bd42` source pin. Explicit historical
 reproduction (`KIND_CONTROL_SOURCE=historical`) uses `1f08cb6` from the archived
 private `AgentWorkforce/relay-control-internal` repository and needs authenticated
 Git read access. Current and historical source caches are separate. Existing
@@ -606,10 +606,11 @@ before deleting either one, then verifies their absence and preserves the
 installation's other workspaces. Older images that still return 404 retain the
 cleanup pending result. This removes only Control's workspace rows; separately
 owned Relaycast resources and external session/object cleanup remain separate.
-The [native candidate receipt](ci/agent-relay/kind/control-df4b390-smoke.json)
-qualifies the selected image's runtime-role migration/readiness and guarded
-workspace deletion against disposable PostgreSQL 17 data. It does not qualify
-an installed profile, TLS, MCP, Desktop, external erasure or the full pipeline.
+The [historical native candidate receipt](ci/agent-relay/kind/control-df4b390-smoke.json)
+records `df4b390` runtime-role migration/readiness and guarded workspace deletion
+against disposable PostgreSQL 17 data. It does not qualify the newly selected
+`d94bd42` image, an installed profile, TLS, MCP, Desktop, external erasure or the
+full pipeline.
 The local bootstrap applies release objects client-side before final Helm
 reconciliation. On Helm 4 the wrapper explicitly selects its supported
 [`--server-side=false`](https://docs.helm.sh/docs/helm/helm_upgrade/) mode to keep
