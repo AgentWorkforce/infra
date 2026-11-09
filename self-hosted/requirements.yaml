@@ -739,9 +739,20 @@ compatibility:
       images:
         relayauth: { repository: ghcr.io/agentworkforce/relayauth, digest: sha256:eb71daa28e30eb7305f666d0bccc5a4002e53e8a574e3c4c32163d907a1b71df }
       notes: superseded by 0.1.1.
-    - id: agent-relay-0.6.10
+    - id: agent-relay-0.6.11
       status: unreleased
       current: true
+      charts: { agent-relay: 0.6.11, relayhistory: 0.1.2, relay-control: 0.4.2, relay-webapp: 0.2.1 }
+      app_versions: { agent-relay: 0.1.0, relayhistory: 0.1.0, relay-control: 0.1.0, relay-webapp: 0.1.0 }
+      depends:
+        agent-relay: { relaycast: 0.3.7, relayauth: 0.1.4, sessions-pipeline: 0.8.6, relayhistory: 0.1.2, relay-control: 0.4.2, relay-webapp: 0.2.1, relayflows: 0.2.5, durable-actors: 0.14.6-awf.1, relayfile: 0.2.2, telemetry-collector: 0.1.1, relay-chief: 0.1.0 }
+      images:
+        relayhistory: { repository: ghcr.io/agentworkforce/relayhistory, digest_required: true }
+        relay-control: { repository: ghcr.io/agentworkforce/relay-control, digest: sha256:d8c26d44dccb6dd21b7033288241a379e46ce5fbca69f276c4d4745001c3c3e2 }
+        relay-webapp: { repository: ghcr.io/agentworkforce/relay-webapp, digest_required: true }
+      notes: 'Removes the self-host license Secret mount and values. Optional components are selected with SELFHOST_FEATURES through relay-control extraEnv. The pinned Control digest predates license removal and still needs the replacement image; no rollout is claimed.'
+    - id: agent-relay-0.6.10
+      status: planned
       charts: { agent-relay: 0.6.10, relayhistory: 0.1.2, relay-control: 0.4.1, relay-webapp: 0.2.1 }
       app_versions: { agent-relay: 0.1.0, relayhistory: 0.1.0, relay-control: 0.1.0, relay-webapp: 0.1.0 }
       depends:
@@ -2225,32 +2236,6 @@ entries:
   # =========================================================================
   # Self-host control plane, History, dashboard and GCP composition
   # =========================================================================
-  - id: opt.relay-control.license-file
-    kind: option
-    title: Offline license file mount (verification pending upstream)
-    description: |
-      Optional separate Secret projected only into the relaycontrol API, as
-      SELFHOST_LICENSE_FILE. Empty existingSecret keeps the slot unmounted.
-      The chart implements a file mount, not signature verification or add-on
-      enforcement. Those features are owned by relaycontrol and are pending.
-    chart: relay-control
-    values: [license.existingSecret, license.key]
-    env: [SELFHOST_LICENSE_FILE]
-    profiles: [relay-control]
-    status: shipped
-    provided_by: operator
-    default: disabled
-    choices: [{ value: disabled }, { value: mounted }]
-    secrets:
-      - name: "<license.existingSecret>"
-        name_paths: [license.existingSecret]
-        keys:
-          - { key: license, key_path: license.key }
-    verify: With license.existingSecret set, only the API mounts that Secret and SELFHOST_LICENSE_FILE; the migration Job receives neither. Do not infer license enforcement from a successful render.
-    sources:
-      - charts/relay-control/values.yaml
-      - charts/relay-control/templates/deployment.yaml
-
   - id: req.relay-control.session-read
     kind: requirement
     title: Session read API handoff and token introspection for Control
