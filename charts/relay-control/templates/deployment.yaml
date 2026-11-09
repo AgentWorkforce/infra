@@ -29,6 +29,26 @@ spec:
       {{- with .Values.imagePullSecrets }}
       imagePullSecrets: {{ toYaml . | nindent 8 }}
       {{- end }}
+      {{- if .Values.secretKeys.passwordPepper }}
+      initContainers:
+        # Secret volumes are root-owned with group bits, which the API refuses
+        # for a pepper file. This copy is owned by the pod's user at 0600.
+        - name: password-pepper
+          image: {{ include "relay-control.image" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: [node, -e]
+          args:
+            - |
+              const fs = require("node:fs");
+              const target = "/var/run/agent-relay/password-pepper/pepper";
+              fs.copyFileSync("/var/run/agent-relay/password-pepper-source/pepper", target);
+              fs.chmodSync(target, 0o600);
+          securityContext: {{ toYaml .Values.containerSecurityContext | nindent 12 }}
+          volumeMounts:
+            - { name: password-pepper-source, mountPath: /var/run/agent-relay/password-pepper-source, readOnly: true }
+            - { name: password-pepper, mountPath: /var/run/agent-relay/password-pepper }
+          resources: {{ toYaml .Values.resources | nindent 12 }}
+      {{- end }}
       containers:
         - name: api
           image: {{ include "relay-control.image" . | quote }}
@@ -58,6 +78,9 @@ spec:
             {{- end }}
             {{- include "relay-control.runtimeEnv" . | nindent 12 }}
             {{- include "relay-control.secretEnv" . | nindent 12 }}
+            {{- if .Values.secretKeys.passwordPepper }}
+            - { name: SELFHOST_PASSWORD_PEPPER_FILE, value: /var/run/agent-relay/password-pepper/pepper }
+            {{- end }}
             {{- if (.Values.postgresCa | default dict).enabled }}
             - { name: NODE_EXTRA_CA_CERTS, value: /etc/postgres-ca/ca.crt }
             {{- end }}
@@ -73,6 +96,9 @@ spec:
             - { name: {{ printf "oauth-%s" $provider | quote }}, mountPath: {{ printf "/var/run/agent-relay/integrations/%s" $provider | quote }}, readOnly: true }
             {{- end }}
             - { name: tmp, mountPath: /tmp }
+            {{- if .Values.secretKeys.passwordPepper }}
+            - { name: password-pepper, mountPath: /var/run/agent-relay/password-pepper, readOnly: true }
+            {{- end }}
             {{- if (.Values.postgresCa | default dict).enabled }}
             - { name: postgres-ca, mountPath: /etc/postgres-ca, readOnly: true }
             {{- end }}
@@ -92,6 +118,16 @@ spec:
               {{- include "relay-control.secretItems" . | nindent 14 }}
         - name: tmp
           emptyDir: { sizeLimit: 64Mi }
+        {{- if .Values.secretKeys.passwordPepper }}
+        - name: password-pepper-source
+          secret:
+            secretName: {{ .Values.existingSecret }}
+            defaultMode: 0440
+            items:
+              - { key: {{ .Values.secretKeys.passwordPepper | quote }}, path: pepper }
+        - name: password-pepper
+          emptyDir: { medium: Memory, sizeLimit: 1Mi }
+        {{- end }}
         {{- if (.Values.postgresCa | default dict).enabled }}
         {{- include "relay-control.postgresCaVolume" . | nindent 8 }}
         {{- end }}
