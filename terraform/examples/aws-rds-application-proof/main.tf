@@ -156,9 +156,15 @@ module "layout" {
 }
 locals {
   # Reviewed rds-activation/v1 artifacts by artifact_sha256, each as
-  # { sessions_commit, generation, contract }. Intentionally empty until the driver
-  # is merged and independently reviewed. Do not add an unmerged commit here.
-  approved_activations = {}
+  # { sessions_commit, generation, contract }. Only a merged commit belongs here;
+  # any byte change to the driver or its SQL changes the artifact and needs a new entry.
+  approved_activations = {
+    "589eb5fc04a25ecdaf04ea3d836c7dd2bc2f542474452ed4aaaed04b8db06a3f" = {
+      sessions_commit = "312fc8ff3207bef7269858bb276f0d196c3b0406" # relayhistory-pipeline #409, merged
+      generation      = "a08590dc1cda36a92b0b5bce3341cc079d0d8fb07857c41db50667cbde452ec5"
+      contract        = "rds-activation/v1"
+    }
+  }
   activation_registered = var.application_activation == null ? false : (
     contains(keys(local.approved_activations), var.application_activation.artifact_sha256) &&
     try(local.approved_activations[var.application_activation.artifact_sha256].sessions_commit, "") == var.application_activation.sessions_commit &&

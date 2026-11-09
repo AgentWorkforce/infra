@@ -295,9 +295,9 @@ chain and migrator, rotates the runtime password with `rotate-self`, and require
 same catalog evidence as the seed.
 
 Remaining dependencies (nothing here is a live proof):
-1. **Merged and reviewed driver.** Pin `guest_sources` and register the artifact in
-   `local.approved_activations` using the merged commit and its `artifact_sha256`.
-   Any byte change to the driver or its SQL changes the artifact. Owner: pipeline, then infra.
+1. **Merged driver: done.** `local.approved_activations` registers relayhistory-pipeline
+   `312fc8ff3207bef7269858bb276f0d196c3b0406` (#409), artifact `589eb5fc04a25ecdaf04ea3d836c7dd2bc2f542474452ed4aaaed04b8db06a3f`.
+   Any byte change to the driver or its SQL changes the artifact and needs a new entry.
 2. **Independent review of the saved-plan runner `proof/runner.py`**, then exact saved-plan
    admission. Owner: reviewer to be named.
 3. **A Pippen lease** for the sandbox account, which needs the `pippen-sandbox-client`

@@ -222,16 +222,28 @@ run "malformed_guest_commit_refused" {
   variables { guest_sources = { composition_commit = "not-a-commit", manifest_sha256 = "3333333333333333333333333333333333333333333333333333333333333333", generation = "3333333333333333333333333333333333333333333333333333333333333333" } }
   expect_failures = [var.guest_sources]
 }
-run "approved_activations_stay_empty_until_the_driver_merges" {
+run "unknown_activation_is_not_registered_and_sql_stays_unready" {
   command = plan
   variables { application_activation = { sessions_commit = "1111111111111111111111111111111111111111", artifact_sha256 = "2222222222222222222222222222222222222222222222222222222222222222", generation = "3333333333333333333333333333333333333333333333333333333333333333", contract = "rds-activation/v1" } }
   assert {
-    condition     = length(local.approved_activations) == 0 && !local.activation_registered
-    error_message = "No activation may be registered before the rds-activation/v1 driver is merged and independently reviewed."
+    condition     = !local.activation_registered
+    error_message = "An activation outside approved_activations must not be registered."
   }
   assert {
     condition     = output.application_sql_ready == false
     error_message = "application_sql_ready must stay false."
+  }
+}
+
+run "merged_driver_activation_is_registered" {
+  command = plan
+  variables {
+    guest_sources          = { composition_commit = "312fc8ff3207bef7269858bb276f0d196c3b0406", manifest_sha256 = "3333333333333333333333333333333333333333333333333333333333333333", generation = "a08590dc1cda36a92b0b5bce3341cc079d0d8fb07857c41db50667cbde452ec5" }
+    application_activation = { sessions_commit = "312fc8ff3207bef7269858bb276f0d196c3b0406", artifact_sha256 = "589eb5fc04a25ecdaf04ea3d836c7dd2bc2f542474452ed4aaaed04b8db06a3f", generation = "a08590dc1cda36a92b0b5bce3341cc079d0d8fb07857c41db50667cbde452ec5", contract = "rds-activation/v1" }
+  }
+  assert {
+    condition     = local.activation_registered && output.application_sql_ready == false
+    error_message = "The merged rds-activation/v1 driver must be registered, and application_sql_ready must stay false."
   }
 }
 run "malformed_workload_deadline_refused" {
