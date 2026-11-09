@@ -43,15 +43,14 @@ spec:
             {{- end }}
             - { name: RELAYCAST_URL, value: {{ .Values.services.relaycastUrl | quote }} }
             - { name: RELAYCAST_PUBLIC_URL, value: {{ .Values.services.relaycastPublicUrl | quote }} }
+            {{- if ne .Values.services.relayhistoryBackend "native" }}
             - { name: RELAYHISTORY_URL, value: {{ .Values.services.relayhistoryUrl | quote }} }
             - { name: RELAYHISTORY_PUBLIC_URL, value: {{ .Values.services.relayhistoryPublicUrl | quote }} }
+            {{- end }}
             {{- include "relay-control.runtimeEnv" . | nindent 12 }}
             {{- include "relay-control.secretEnv" . | nindent 12 }}
             {{- if (.Values.postgresCa | default dict).enabled }}
             - { name: NODE_EXTRA_CA_CERTS, value: /etc/postgres-ca/ca.crt }
-            {{- end }}
-            {{- if .Values.license.existingSecret }}
-            - { name: SELFHOST_LICENSE_FILE, value: /var/run/agent-relay/license/license }
             {{- end }}
             {{- if .Values.integrations }}
             {{- include "relay-control.integrationEnv" . | nindent 12 }}
@@ -61,9 +60,6 @@ spec:
             {{- end }}
           volumeMounts:
             - { name: secrets, mountPath: /var/run/agent-relay/secrets, readOnly: true }
-            {{- if .Values.license.existingSecret }}
-            - { name: license, mountPath: /var/run/agent-relay/license, readOnly: true }
-            {{- end }}
             {{- range $provider := keys (.Values.integrations | default dict) | sortAlpha }}
             - { name: {{ printf "oauth-%s" $provider | quote }}, mountPath: {{ printf "/var/run/agent-relay/integrations/%s" $provider | quote }}, readOnly: true }
             {{- end }}
@@ -79,14 +75,6 @@ spec:
             {{- toYaml .Values.livenessProbe | nindent 12 }}
           resources: {{ toYaml .Values.resources | nindent 12 }}
       volumes:
-        {{- if .Values.license.existingSecret }}
-        - name: license
-          secret:
-            secretName: {{ .Values.license.existingSecret | quote }}
-            defaultMode: 0440
-            items:
-              - { key: {{ .Values.license.key | quote }}, path: license }
-        {{- end }}
         - name: secrets
           secret:
             secretName: {{ .Values.existingSecret }}

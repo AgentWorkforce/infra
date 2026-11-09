@@ -1,5 +1,7 @@
 # ar-lap delivery checklist
 
+> Owner decision 2026-11-08: the self-host license is dropped. Optional components depend only on `SELFHOST_FEATURES`; the entitlement and signed-license text below is historical.
+
 Updated 2026-11-08. Dates in the milestone table are executed evidence or explicit
 owner commitments, never inferred from an open PR. Uncommitted planning estimates
 are kept in their own section below the table.

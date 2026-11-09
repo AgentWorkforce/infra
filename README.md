@@ -503,9 +503,9 @@ make kind-up PROFILE=core
 make kind-proof-core
 make kind-down PROFILE=core
 
-# Add-ons need an owner-supplied license. Run one profile at a time (same ports).
+# Run one profile at a time (same ports).
 make kind-build-addons  # optional: prepare native images without starting a cluster
-KIND_LICENSE_FILE=/absolute/path/to/signed-license make kind-up PROFILE=addons
+make kind-up PROFILE=addons
 KIND_RELAYFILE_TOKEN_FILE=/absolute/path/to/real-scoped-token make kind-proof-addons
 make kind-down PROFILE=addons
 ```
@@ -687,16 +687,15 @@ a database row. See [captured evidence](ci/agent-relay/kind/evidence.md).
 | --- | --- |
 | Courier → RelayHistory → application read path | Pipeline and RelayHistory owners, coordinated by pipeline-lead: the real-owner courier session is indexed and stored, but RelayHistory does not return it through the authenticated Default workspace application API. Relaycontrol already proxies to `RELAYHISTORY_URL`; it needs no new pipeline URL in control, while the compatible History read service remains unqualified. The pipeline-to-History workspace session visibility contract is a required pending check. Merged pipeline #317/#318 add a default-off container entry and login/catalog routes; [source review and read-only diagnosis](ci/agent-relay/kind/read-api-contract.md) track remaining Postgres-only composition, TLS, canonical source and auth-pair blockers. The courier fixture already has a matching directory row. Nothing is enabled. |
 | Shared-schema ownership | The local recipe now isolates History and HoopDB, matching the existing EKS installer; both migrators and the exact final ACL check pass. The earlier 160 violations remain as negative evidence for unsupported co-location. A future shared-schema design requires the schema and History application owners; the pipeline owner does not own the separate `relayhistory-cloud` application repo. |
-| Add-on E2E | infra-kind-stack + license/file owners: native images and offline engine/storage preflights pass; the installed add-on profile, actual CronJob firing and authenticated file roundtrip remain unproved pending a signed license fixture and genuine filesystem-scoped authority. |
+| Add-on E2E | infra-kind-stack + file owners: native images and offline engine/storage preflights pass; the installed add-on profile, actual CronJob firing and authenticated file roundtrip remain unproved pending genuine filesystem-scoped authority. |
 | Current image/source compatibility | Component owners: record exact source SHA and migrator generation; a tag named `main` is insufficient. This run used services source `f1c2672581b6f88d26d0549b4d1cb78fce0d5f16`, generation `0dcd0e89bebbdad789a40fa61311c601b4c0e49e389e3b2b0167b6fd5fdf542e`. |
 | RelayAuth removal | layered-control + layered-sessions-pipeline: default-off introspection branch, `sh_at_`, `rth:read/rth:sync`; keep the temporary internal component until compatible images ship. |
 | Cost attribution data | History's client-reported fixture usage/cost passes authenticated ingest and TLS readback, including owner and workspace isolation. This does not claim live model billing or courier-session application visibility. |
 | Control image and MCP endpoint | PASS for the recorded historical local-Control variant at pinned source `1f08cb6`: verified native manifest transport, both public MCP aliases, nineteen-tool discovery, real workspace binding and auth/origin rejection ([raw receipts](ci/agent-relay/kind/evidence.md)). Current public source `e74413b` has not received that runtime proof. The catalog default remains source `9b80b04` and reports MCP pending. This does not claim agent launch/release or every MCP tool backend. No image publication is performed. |
 | Custom Desktop package for ar-lap | layered-relay-desktop: target build/artifact and real browser/Desktop handoff plus courier-to-app trace are not qualified by the infra proof. Device auth and site TLS endpoint checks do not substitute for that custom application run. |
 | Agent launch/release | layered-control: API unimplemented; fleet node claim/release is not this proof. |
-| Signed offline license enforcement | layered-control: design only. `relay-control.license.existingSecret/key` reserves the `SELFHOST_LICENSE_FILE` mount; the file slot does not verify signatures or gate add-ons. |
 | relayfile control-token filesystem scopes | layered-relayfile + layered-control: current introspection lacks `fs:*`; use real temporary RelayAuth for now. Dev issuer tokens do not count as acceptance evidence. |
-| Native add-on runtime proof | infra-kind-stack + Flows owner: source build supports native runtime selection; full Job/CronJob and relayfile roundtrip remain unverified until the shared core and signed-license dependencies are resolved. |
+| Native add-on runtime proof | infra-kind-stack + Flows owner: source build supports native runtime selection; full Job/CronJob and relayfile roundtrip remain unverified until the shared core dependencies are resolved. |
 
 Track the local work in [issue #77](https://github.com/AgentWorkforce/infra/issues/77).
 For render/trust/schema checks without Docker (Helm and kubeconform required), run

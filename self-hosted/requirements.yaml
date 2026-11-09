@@ -265,16 +265,47 @@ compatibility:
       status: shipped
       charts: { telemetry-collector: 0.1.0 }
       notes: 'Default-off umbrella analytics file collector. Requires accepted immutable collector and TLS-proxy images, producer and TLS Secrets and an exclusive persistent volume. Source rendering does not prove image entrypoint, TLS, durable acknowledgement, power-loss recovery or whole-application analytics coverage. The currently reviewed collector CLI registers relaycontrol events only.'
-    - id: session-read-api-0.2.1
+    - id: session-read-api-0.2.2
       status: unreleased
       current: true
+      charts: { session-read-api: 0.2.2 }
+      images:
+        session-read-api: { repository: ghcr.io/agentworkforce/96bulls-services, digest_required: true }
+      notes: 'Admits exactly "*" for directoryWorkspaces with auth.mode=self_issued.'
+    - id: session-read-api-0.2.1
+      status: planned
       charts: { session-read-api: 0.2.1 }
       images:
         session-read-api: { repository: ghcr.io/agentworkforce/96bulls-services, digest_required: true }
       notes: 'Defaults READ_API_COMPLETE_SINCE to epoch for a new self-host store populated only by its own ingest. Partial legacy imports must retain an explicit real coverage floor matching the indexer. Image, auth, routing and enabled defaults are unchanged; this does not assert coverage for an imported store or qualify a runtime.'
-    - id: sessions-pipeline-0.8.4
+    - id: sessions-pipeline-0.8.6
       status: unreleased
       current: true
+      charts: { sessions-pipeline: 0.8.6, sessions-pipeline-worker: 0.7.2, session-ingest-api: 0.4.1, session-read-api: 0.2.2 }
+      depends:
+        sessions-pipeline: { worker: 0.7.2, alleyoop: 0.4.1, sessionReadApi: 0.2.2, hoopdb: 0.9.0, session-object-storage: 5.4.0, otel: 0.178.0 }
+      images:
+        sessions-pipeline-worker: { repository: agentworkforce/96bulls-services, digest: sha256:6f22ea17dff336e1431664542759fd27958649388b90a0b2f0881883caa7c6b2 }
+        session-ingest-api: { repository: agentworkforce/96bulls-services, digest: sha256:6f22ea17dff336e1431664542759fd27958649388b90a0b2f0881883caa7c6b2 }
+        session-read-api: { repository: ghcr.io/agentworkforce/96bulls-services, digest_required: true }
+      images_note: "session-read-api self_issued and events.messageIds need at least ghcr.io/agentworkforce/96bulls-services@sha256:d55840ab4bf4e2fea3769db690f3c8d32979ab455ef251172f914ac011cb8c33 (pipeline eebaced9). Native ingest edge (SERVICE=session-ingest): unqualified; an explicit qualified combined-image digest is required. Pins above belong to the existing internal worker/ingest services, not ingestEdge."
+      services:
+        source_commit: 7d7229bb31c121ecb98cd4e35c248fc2cf5669ad
+        migration_generation: eff8b3be46565b57ad8fa5e4a066dbb6d1fe608313d9c1680bfbcd484add259b
+      db_combos:
+        - { db_mode: selfhosted, boundary: global-default-revoke, hoopdb: cnpg, status: shipped, profiles: [selfhost-postgres, migration, aws-cnpg], notes: chart Jobs install the runtime role and the function default }
+        - { db_mode: selfhosted, boundary: global-default-revoke, hoopdb: external, status: shipped, profiles: [external-selfhosted], notes: operator runs the bootstrap files as a superuser }
+        - { db_mode: rds, boundary: global-default-revoke, hoopdb: external, status: shipped, profiles: [external-rds], notes: the RDS master runs the rds_*.sql bootstrap first }
+        - { db_mode: cloudsql, boundary: global-default-revoke, hoopdb: external, status: shipped, profiles: [gcp-cloudsql], notes: operator runs the Cloud SQL bootstrap files as the migration owner; roleBootstrap false }
+        - { db_mode: supabase, boundary: event-trigger, hoopdb: external, status: held, profiles: [external-supabase], notes: supabaseActivation.hold; migrate refuses until the reviewed event trigger is installed and --activation-check passes }
+        - { db_mode: supabase, boundary: null, hoopdb: external, status: fails closed, profiles: [aws-supabase], notes: renders; migrate refuses with function_boundary_unproven }
+        - { db_mode: local, boundary: null, hoopdb: any, status: dev only, profiles: [], notes: local stack only; never a self-host install }
+      sources:
+        - "charts/sessions-pipeline/Chart.yaml:4"
+        - "ci/sessions-pipeline-profiles/matrix.sh:70"
+      notes: 'Takes reader 0.2.2. Version 0.8.5 is reserved by a concurrent change.'
+    - id: sessions-pipeline-0.8.4
+      status: planned
       charts: { sessions-pipeline: 0.8.4, sessions-pipeline-worker: 0.7.2, session-ingest-api: 0.4.1, session-read-api: 0.2.1 }
       depends:
         sessions-pipeline: { worker: 0.7.2, alleyoop: 0.4.1, sessionReadApi: 0.2.1, hoopdb: 0.9.0, session-object-storage: 5.4.0, otel: 0.178.0 }
@@ -715,9 +746,31 @@ compatibility:
       images:
         relayauth: { repository: ghcr.io/agentworkforce/relayauth, digest: sha256:eb71daa28e30eb7305f666d0bccc5a4002e53e8a574e3c4c32163d907a1b71df }
       notes: superseded by 0.1.1.
-    - id: agent-relay-0.6.8
+    - id: agent-relay-0.6.11
       status: unreleased
       current: true
+      charts: { agent-relay: 0.6.11, relayhistory: 0.1.2, relay-control: 0.4.2, relay-webapp: 0.2.1 }
+      app_versions: { agent-relay: 0.1.0, relayhistory: 0.1.0, relay-control: 0.1.0, relay-webapp: 0.1.0 }
+      depends:
+        agent-relay: { relaycast: 0.3.7, relayauth: 0.1.4, sessions-pipeline: 0.8.6, relayhistory: 0.1.2, relay-control: 0.4.2, relay-webapp: 0.2.1, relayflows: 0.2.5, durable-actors: 0.14.6-awf.1, relayfile: 0.2.2, telemetry-collector: 0.1.1, relay-chief: 0.1.0 }
+      images:
+        relayhistory: { repository: ghcr.io/agentworkforce/relayhistory, digest_required: true }
+        relay-control: { repository: ghcr.io/agentworkforce/relay-control, digest: sha256:d8c26d44dccb6dd21b7033288241a379e46ce5fbca69f276c4d4745001c3c3e2 }
+        relay-webapp: { repository: ghcr.io/agentworkforce/relay-webapp, digest_required: true }
+      notes: 'Removes the self-host license Secret mount and values. Optional components are selected with SELFHOST_FEATURES through relay-control extraEnv. The pinned Control digest predates license removal and still needs the replacement image; no rollout is claimed.'
+    - id: agent-relay-0.6.10
+      status: planned
+      charts: { agent-relay: 0.6.10, relayhistory: 0.1.2, relay-control: 0.4.1, relay-webapp: 0.2.1 }
+      app_versions: { agent-relay: 0.1.0, relayhistory: 0.1.0, relay-control: 0.1.0, relay-webapp: 0.1.0 }
+      depends:
+        agent-relay: { relaycast: 0.3.7, relayauth: 0.1.4, sessions-pipeline: 0.8.6, relayhistory: 0.1.2, relay-control: 0.4.1, relay-webapp: 0.2.1, relayflows: 0.2.5, durable-actors: 0.14.6-awf.1, relayfile: 0.2.2, telemetry-collector: 0.1.1, relay-chief: 0.1.0 }
+      images:
+        relayhistory: { repository: ghcr.io/agentworkforce/relayhistory, digest_required: true }
+        relay-control: { repository: ghcr.io/agentworkforce/relay-control, digest: sha256:d8c26d44dccb6dd21b7033288241a379e46ce5fbca69f276c4d4745001c3c3e2 }
+        relay-webapp: { repository: ghcr.io/agentworkforce/relay-webapp, digest_required: true }
+      notes: 'Adds relay-control 0.4.1 with services.relayhistoryBackend=native and the no-RelayAuth overlay. Version 0.6.9 is reserved by a concurrent change.'
+    - id: agent-relay-0.6.8
+      status: planned
       charts: { agent-relay: 0.6.8, relayhistory: 0.1.2, relay-control: 0.4.0, relay-webapp: 0.2.1 }
       app_versions: { agent-relay: 0.1.0, relayhistory: 0.1.0, relay-control: 0.1.0, relay-webapp: 0.1.0 }
       depends:
@@ -2202,32 +2255,6 @@ entries:
   # =========================================================================
   # Self-host control plane, History, dashboard and GCP composition
   # =========================================================================
-  - id: opt.relay-control.license-file
-    kind: option
-    title: Offline license file mount (verification pending upstream)
-    description: |
-      Optional separate Secret projected only into the relaycontrol API, as
-      SELFHOST_LICENSE_FILE. Empty existingSecret keeps the slot unmounted.
-      The chart implements a file mount, not signature verification or add-on
-      enforcement. Those features are owned by relaycontrol and are pending.
-    chart: relay-control
-    values: [license.existingSecret, license.key]
-    env: [SELFHOST_LICENSE_FILE]
-    profiles: [relay-control]
-    status: shipped
-    provided_by: operator
-    default: disabled
-    choices: [{ value: disabled }, { value: mounted }]
-    secrets:
-      - name: "<license.existingSecret>"
-        name_paths: [license.existingSecret]
-        keys:
-          - { key: license, key_path: license.key }
-    verify: With license.existingSecret set, only the API mounts that Secret and SELFHOST_LICENSE_FILE; the migration Job receives neither. Do not infer license enforcement from a successful render.
-    sources:
-      - charts/relay-control/values.yaml
-      - charts/relay-control/templates/deployment.yaml
-
   - id: req.relay-control.session-read
     kind: requirement
     title: Session read API handoff and token introspection for Control
@@ -2239,8 +2266,8 @@ entries:
       handoff needs Control 0.5.1. secretKeys.introspectSecret enables token
       introspection, and introspection.audiences lists the accepted origins.
     chart: relay-control
-    values: [services.sessionReadApiUrl, services.sessionReadApiPublicUrl, services.sessionReadApiMcpReads, secretKeys.sessionReadApiSecret, secretKeys.introspectSecret, introspection.audiences]
-    env: [SESSION_READ_API_URL, SESSION_READ_API_PUBLIC_URL, SESSION_READ_API_SECRET_FILE, SESSION_READ_API_MCP_READS, RELAYCONTROL_INTROSPECT_SECRET_FILE, SELFHOST_INTROSPECT_AUDIENCES]
+    values: [services.relayhistoryBackend, services.sessionReadApiUrl, services.sessionReadApiPublicUrl, services.sessionReadApiMcpReads, secretKeys.sessionReadApiSecret, secretKeys.introspectSecret, introspection.audiences]
+    env: [RELAYHISTORY_BACKEND, SESSION_READ_API_URL, SESSION_READ_API_PUBLIC_URL, SESSION_READ_API_SECRET_FILE, SESSION_READ_API_MCP_READS, RELAYCONTROL_INTROSPECT_SECRET_FILE, SELFHOST_INTROSPECT_AUDIENCES]
     profiles: [relay-control]
     status: shipped
     provided_by: operator

@@ -136,9 +136,18 @@ class Names(unittest.TestCase):
             ('/v1/turns/batches', 'Exact', 'agent-relay-ingest-edge', ingest),
             ('/v1/delivery/limits', 'Exact', 'agent-relay-ingest-edge', ingest),
             ('/v1/auth/token/refresh', 'Exact', 'agent-relay-ingest-edge', ingest),
+            ('/v1/delivery/records', 'Exact', 'agent-relay-read-api', {'number': 80}),
+            ('/v1/cli/login', 'Exact', 'agent-relay-read-api', {'number': 80}),
+            ('/v1/events', 'Exact', 'agent-relay-read-api', {'number': 80}),
+            ('/v1/auth/token/revoke', 'Exact', 'agent-relay-read-api', {'number': 80}),
+            ('/v1/sessions', 'Prefix', 'agent-relay-read-api', {'number': 80}),
+            ('/v1/digest', 'Prefix', 'agent-relay-read-api', {'number': 80}),
+            ('/v1/delivery', 'Prefix', 'agent-relay-ingest-edge', ingest),
+            ('/v1/turns', 'Prefix', 'agent-relay-ingest-edge', ingest),
+            ('/v1/onboarding', 'Prefix', 'agent-relay-ingest-edge', ingest),
             ('/internal', 'Prefix', 'edge-deny', {'name': 'use-annotation'}),
             ('//internal*', 'ImplementationSpecific', 'edge-deny', {'name': 'use-annotation'}),
-            ('/*', 'ImplementationSpecific', 'agent-relay-read-api', {'number': 80}),
+            ('/*', 'ImplementationSpecific', 'edge-deny', {'name': 'use-annotation'}),
         ])
         self.assertEqual(doc['metadata']['annotations']['alb.ingress.kubernetes.io/healthcheck-path'], '/healthz')
 
