@@ -234,3 +234,5 @@ For async, also prove database failure after startup still yields a durable
 queued receipt, restart/retry recovery without duplicate admission, dead-letter
 visibility, and successful readback after recovery. Helm/schema tests prove
 only this chart slot; this source change performs no runtime operation.
+
+`ingestEdge.heartbeatAccept: true` answers the Desktop's `POST /v1/onboarding/heartbeat` with 204 after token verification and discards it. It needs a services image from pipeline #431 or later.
