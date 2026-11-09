@@ -305,7 +305,33 @@ esac
             with self.subTest(profile=profile):
                 docs = self.render(profile, ['--is-upgrade', '-f', 'charts/agent-relay/upgrade/kind-control-webapp-identities.yaml'])
                 actual = sorted([identity(d) for d in docs], key=lambda d: (d['kind'], d['name']))
-                self.assertEqual(actual, fixture['profiles'][profile])
+                expected = fixture['profiles'][profile]
+                if profile == 'addons':
+                    # Main #145 replaced the license slot with explicit
+                    # SELFHOST_FEATURES=flows,relayfile. extraEnv is part of
+                    # the migration pod, so its content-addressed Job must
+                    # change. Keep the historical golden immutable and admit
+                    # exactly this transition, not other identity drift.
+                    before, after = 'relaycontrol-migrate-96ebd477', 'relaycontrol-migrate-68c7d903'
+                    self.assertEqual(sum(d['kind'] == 'Job' and d['name'] == before for d in expected), 1)
+                    expected = [dict(d, name=after) if d['kind'] == 'Job' and d['name'] == before else d
+                                for d in expected]
+                    expected = sorted(expected, key=lambda d: (d['kind'], d['name']))
+                self.assertEqual(actual, expected)
+
+    def test_addons_job_transition_is_caused_by_the_new_explicit_feature_input(self):
+        fixture = json.loads((ROOT / 'ci/agent-relay/fixtures/control-webapp-legacy-identities.json').read_text())
+        compatibility = ['--is-upgrade', '-f', 'charts/agent-relay/upgrade/kind-control-webapp-identities.yaml']
+        current = self.render('addons', compatibility)
+        migration = next(d for d in current if d['kind'] == 'Job' and
+                         d['metadata']['name'] == 'relaycontrol-migrate-68c7d903')
+        env = migration['spec']['template']['spec']['containers'][0]['env']
+        self.assertIn({'name': 'SELFHOST_FEATURES', 'value': 'flows,relayfile'}, env)
+        # Naming-only compatibility with the translated historical runtime
+        # input still preserves every golden Job as well as selectors/PVCs.
+        historical_input = self.render('addons', compatibility + ['--set-json', 'relay-control.extraEnv=[]'])
+        identities = sorted([identity(d) for d in historical_input], key=lambda d: (d['kind'], d['name']))
+        self.assertEqual(identities, fixture['profiles']['addons'])
 
     def test_default_kind_upgrade_requires_explicit_worker_cutover(self):
         error = self.render(extra=['--is-upgrade'], ok=False)
