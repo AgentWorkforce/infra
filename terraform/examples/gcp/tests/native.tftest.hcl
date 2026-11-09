@@ -36,8 +36,8 @@ run "native_data_services_are_complete" {
   command = apply
 
   assert {
-    condition     = toset(module.postgres.databases) == toset(["relaycontrol", "relaycast", "hoopdb"])
-    error_message = "The native profile creates control, Relaycast and HoopDb databases, not legacy RelayHistory."
+    condition     = toset(module.postgres.databases) == toset(["relaycontrol", "relaycast", "hoopdb", "relayhistory"])
+    error_message = "The native profile must preserve the legacy RelayHistory database during cutover."
   }
   assert {
     condition     = module.postgres.database_url_template == "postgresql://<role>:<password>@agent-relay-pg.abc123.us-central1.sql.goog:5432/<database>?sslmode=verify-full"
@@ -58,5 +58,13 @@ run "native_data_services_are_complete" {
   assert {
     condition     = google_pubsub_topic_iam_member.pipeline_publisher["agent-relay-session-ingest-api"].member == "principal://iam.googleapis.com/projects/123456789012/locations/global/workloadIdentityPools/example.svc.id.goog/subject/ns/agent-relay/sa/agent-relay-session-ingest-api"
     error_message = "Pub/Sub access must use an exact GKE Workload Identity principal."
+  }
+  assert {
+    condition     = length(output.chart_values["sessions-pipeline"].worker.extraEnv) == 8 && output.chart_values["sessions-pipeline"].worker.extraEnv[3].value == "false"
+    error_message = "The generated worker overlay must contain the complete no-AUTH TLS pipeline contract."
+  }
+  assert {
+    condition     = output.chart_values["sessions-pipeline"].worker.migrations.runtimeRole == "sessions_pipeline_runtime" && output.chart_values["sessions-pipeline"].sessionReadApi.postgresCa.sha256 == sha256("-----BEGIN CERTIFICATE-----")
+    error_message = "The generated overlay must select the native runtime role and pin the Cloud SQL CA."
   }
 }

@@ -1,17 +1,93 @@
+locals {
+  cloud_sql_ca_sha256 = sha256(module.postgres.server_ca_cert)
+  pipeline_extra_env = [
+    { name = "CLOUD_SQL_CONNECTION_NAME", value = module.postgres.connection_name },
+    { name = "REDIS_HOST", value = google_redis_instance.pipeline.host },
+    { name = "REDIS_PORT", value = tostring(google_redis_instance.pipeline.port) },
+    { name = "REDIS_AUTH_ENABLED", value = "false" },
+    { name = "REDIS_TRANSIT_ENCRYPTION", value = "SERVER_AUTHENTICATION" },
+    { name = "REDIS_TLS_CA_PEM", value = nonsensitive(google_redis_instance.pipeline.server_ca_certs[0].cert) },
+    { name = "PUBSUB_TOPIC", value = google_pubsub_topic.pipeline.id },
+    { name = "PUBSUB_SUBSCRIPTION", value = google_pubsub_subscription.pipeline.id },
+  ]
+  postgres_ca = {
+    enabled   = true
+    configMap = "cloud-sql-ca"
+    key       = "ca.crt"
+    sha256    = local.cloud_sql_ca_sha256
+  }
+}
+
 output "chart_values" {
-  description = "Non-secret agent-relay chart values (values-gcp.yaml) these resources feed. Database URLs go in the release Secret, not here; see terraform/README.md."
+  description = "Complete non-secret managed-service overlay for values-gcp.yaml plus values-gcp-native.yaml. Save with: terraform output -json chart_values > managed-values.json."
   value = {
-    "sessions-pipeline.worker.locker.bucket"             = module.sessions_bucket.bucket_name
-    "sessions-pipeline.worker.locker.region"             = module.sessions_bucket.region
-    "sessions-pipeline.ingestEdge.locker.bucket"         = module.sessions_bucket.bucket_name
-    "sessions-pipeline.ingestEdge.locker.region"         = module.sessions_bucket.region
-    "sessions-pipeline.searchIndexer.locker.bucket"      = module.sessions_bucket.bucket_name
-    "sessions-pipeline.searchIndexer.locker.region"      = module.sessions_bucket.region
-    "sessions-pipeline.worker.CLOUD_SQL_CONNECTION_NAME" = module.postgres.connection_name
-    "sessions-pipeline.worker.REDIS_HOST"                = google_redis_instance.pipeline.host
-    "sessions-pipeline.worker.REDIS_PORT"                = tostring(google_redis_instance.pipeline.port)
-    "sessions-pipeline.worker.PUBSUB_TOPIC"              = google_pubsub_topic.pipeline.id
-    "sessions-pipeline.worker.PUBSUB_SUBSCRIPTION"       = google_pubsub_subscription.pipeline.id
+    "sessions-pipeline" = {
+      worker = {
+        locker = {
+          bucket = module.sessions_bucket.bucket_name
+          region = module.sessions_bucket.region
+        }
+        migrations = {
+          runtimeRole      = "sessions_pipeline_runtime"
+          runtimeRoleLogin = true
+        }
+        postgresCa = local.postgres_ca
+        extraEnv   = local.pipeline_extra_env
+      }
+      alleyoop = {
+        postgresCa = local.postgres_ca
+        extraEnv   = local.pipeline_extra_env
+      }
+      sessionReadApi = {
+        postgres   = { tlsProfile = "custom-ca" }
+        postgresCa = local.postgres_ca
+        extraEnv = [
+          { name = "LOCKER_PROVIDER", value = "gcs" },
+          { name = "LOCKER_BUCKET", value = module.sessions_bucket.bucket_name },
+          { name = "LOCKER_REGION", value = module.sessions_bucket.region },
+        ]
+      }
+      ingestEdge = {
+        locker = {
+          provider = "gcs"
+          bucket   = module.sessions_bucket.bucket_name
+          region   = module.sessions_bucket.region
+        }
+        postgres = {
+          caConfigMap = "cloud-sql-ca"
+          caKey       = "ca.crt"
+          caSha256    = local.cloud_sql_ca_sha256
+        }
+      }
+      searchIndexer = {
+        locker = {
+          provider = "gcs"
+          bucket   = module.sessions_bucket.bucket_name
+          region   = module.sessions_bucket.region
+        }
+        postgres = {
+          tlsProfile  = "custom-ca"
+          caConfigMap = "cloud-sql-ca"
+          caKey       = "ca.crt"
+          caSha256    = local.cloud_sql_ca_sha256
+        }
+        extraEnv = local.pipeline_extra_env
+      }
+    }
+    "relay-control" = {
+      postgresCa = {
+        enabled   = true
+        configMap = "cloud-sql-ca"
+        key       = "ca.crt"
+      }
+    }
+    relaycast = {
+      postgresCa = {
+        enabled   = true
+        configMap = "cloud-sql-ca"
+        key       = "ca.crt"
+      }
+    }
   }
 }
 

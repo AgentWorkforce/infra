@@ -61,7 +61,9 @@ provider "helm" {
 }
 
 # Postgres for relaycontrol, Relaycast and HoopDb (native Sessions history).
-# Add a database here if you enable durable-actors or Relayfile.
+# relayhistory is retained so applying this root to a legacy installation can
+# never schedule deletion of its history database. The native profile does not
+# connect to it. Add a database here if you enable durable-actors or Relayfile.
 module "postgres" {
   source = "../../modules/gcp/postgres"
 
@@ -70,7 +72,7 @@ module "postgres" {
   name                = "${var.name}-pg"
   network_self_link   = var.network_self_link
   kms_key_name        = var.kms_key_name
-  databases           = ["relaycontrol", "relaycast", "hoopdb"]
+  databases           = ["relaycontrol", "relaycast", "hoopdb", "relayhistory"]
   deletion_protection = var.deletion_protection
   server_ca_mode      = "GOOGLE_MANAGED_CAS_CA"
   labels              = var.labels

@@ -202,6 +202,7 @@ export MOCK_GCS="${gcs}"
 
 scripts=(
   "${SELFHOST_DIR}/cloud-sql-setup.sh"
+  "${TEST_DIR}/cloud-sql-setup-test.sh"
   "${SELFHOST_DIR}/verify-agent-relay.sh"
   "${SELFHOST_DIR}/pre-upgrade-check.sh"
   "${SELFHOST_DIR}/record-restore-drill.sh"
@@ -218,6 +219,7 @@ if command -v shellcheck >/dev/null 2>&1; then
   shellcheck -x -S warning "${scripts[@]}" "${BASH_SOURCE[0]}"
   pass "shellcheck"
 fi
+"${TEST_BASH}" "${TEST_DIR}/cloud-sql-setup-test.sh"
 
 reset_fixtures() {
   rm -rf "${fixtures}" "${gcs}"

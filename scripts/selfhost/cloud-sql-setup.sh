@@ -20,6 +20,7 @@
 #   CLOUD_SQL_CA_FILE           shared-CA PEM bundle (otherwise fetched by gcloud)
 #   PSQL_IMAGE                  PostgreSQL client image pinned by digest
 #   NAMESPACE                   default agent-relay
+#   HELM_RELEASE                default agent-relay
 #   STATE_DIR                   default $HOME/.agent-relay-install (mode 0700)
 #
 # The Terraform example uses GOOGLE_MANAGED_CAS_CA and private Cloud DNS. This
@@ -39,6 +40,7 @@ case "$MODE" in pre|post) ;; *) echo "usage: $0 pre|post" >&2; exit 2 ;; esac
 : "${SERVICES_IMAGE:?set SERVICES_IMAGE to the sessions-pipeline image from images.md}"
 PSQL_IMAGE="${PSQL_IMAGE:-ghcr.io/cloudnative-pg/postgresql:17-standard-trixie@sha256:ed6923f9ba2399cf9070379a353c710c29ced8a294be73986a2c3dae7e599ce3}"
 NS="${NAMESPACE:-agent-relay}"
+HELM_RELEASE="${HELM_RELEASE:-agent-relay}"
 STATE_DIR="${STATE_DIR:-$HOME/.agent-relay-install}"
 PW_DIR="$STATE_DIR/passwords"
 FILES="$STATE_DIR/secret-files"
@@ -48,7 +50,7 @@ SQL_DIR=/app/supabase/bootstrap
 log() { printf '%s %s\n' "$(date -u +%H:%M:%SZ)" "$*"; }
 die() { log "ERROR: $*" >&2; exit 1; }
 
-for tool in gcloud kubectl jq openssl; do
+for tool in gcloud helm kubectl jq openssl; do
   command -v "$tool" >/dev/null || die "$tool is not installed"
 done
 [[ "$SERVICES_IMAGE" == *@sha256:* ]] || die "SERVICES_IMAGE must be pinned by digest"
@@ -120,8 +122,10 @@ run_job() {
   for p in "$@"; do cp "$PW_DIR/$p" "$secret_dir/$p"; done
 
   kubectl -n "$NS" delete job "$name" --ignore-not-found >/dev/null
-  kubectl -n "$NS" create secret generic "$JOB_SECRET" --from-file="$secret_dir" \
-    --dry-run=client -o yaml | kubectl apply -f - >/dev/null
+  # This Secret is deliberately create-only. `kubectl apply` would persist the
+  # database credentials a second time in last-applied-configuration.
+  kubectl -n "$NS" delete secret "$JOB_SECRET" --ignore-not-found >/dev/null
+  kubectl -n "$NS" create secret generic "$JOB_SECRET" --from-file="$secret_dir" >/dev/null
   rm -rf "$secret_dir"
   kubectl -n "$NS" create configmap "$name-run" --from-file=run.sh="$script" \
     --dry-run=client -o yaml | kubectl apply -f - >/dev/null
@@ -227,7 +231,8 @@ $P -f /sql/cloudsql_migration_roles.sql
 echo "Cloud SQL owner boundary and migration roles ready"
 
 $P -v p1="$sessions_pipeline_runtime" <<'SQL'
-SELECT set_config('agent_relay.runtime_password', :'p1', false);
+-- \gset consumes the row locally; the password must never reach Job logs.
+SELECT set_config('agent_relay.runtime_password', :'p1', false) AS ignored \gset
 DO $runtime$
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='sessions_pipeline_runtime') THEN
@@ -265,9 +270,22 @@ do_post() {
   for p in bulls96_read_api bulls96_session_ingest search_consumer_runtime; do
     [[ -s "$PW_DIR/$p" ]] || die "missing $p password: run '$0 pre' first"
   done
-  local migrated
-  migrated="$(kubectl -n "$NS" get jobs -o json | jq -r '[.items[]|select(.metadata.name|contains("worker-migrate"))|.status.succeeded//0]|add//0')"
-  [[ "$migrated" -ge 1 ]] || die "the HoopDb migrate Job has not succeeded"
+  local migration_job migration_json
+  migration_job="$(helm -n "$NS" get manifest "$HELM_RELEASE" | awk '
+    function emit() { if (kind == "Job" && name != "" && migrate) print name }
+    /^---[[:space:]]*$/ { emit(); kind=""; name=""; migrate=0; next }
+    /^kind:[[:space:]]+Job[[:space:]]*$/ { kind="Job"; next }
+    /^  name:[[:space:]]+/ && name == "" { name=$2; next }
+    /^[[:space:]]+- name:[[:space:]]+migrate[[:space:]]*$/ { migrate=1 }
+    END { emit() }
+  ')"
+  [[ -n "$migration_job" && "$migration_job" != *$'\n'* ]] || \
+    die "could not resolve exactly one current HoopDb migrate Job from Helm release $HELM_RELEASE"
+  migration_json="$(kubectl -n "$NS" get job "$migration_job" -o json)"
+  [[ "$(jq -r '[.status.conditions[]? | select(.type == "Failed" and .status == "True")] | length' <<<"$migration_json")" == 0 ]] || \
+    die "current HoopDb migrate Job $migration_job failed"
+  [[ "$(jq -r '[.status.conditions[]? | select(.type == "Complete" and .status == "True")] | length' <<<"$migration_json")" == 1 ]] || \
+    die "current HoopDb migrate Job $migration_job has not completed"
 
   cat >"$WORK/run.sh" <<'EOS'
 set -eu
