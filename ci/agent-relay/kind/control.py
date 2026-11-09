@@ -8,7 +8,7 @@ import tarfile
 from addons import NODE, checkout
 from stack import private_json
 
-REVISION = "4f1dcb0166f2febb070a86dfdbe1c9416e662271"
+REVISION = "53252e3a6a33a74fe9e5bdb2ddfb30d627e5813e"
 HISTORICAL_REVISION = "1f08cb624be66016eb0c135363553dd44e58f691"
 SOURCES = {
     REVISION: ("relay-control", "0.5.1"),
