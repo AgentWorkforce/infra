@@ -117,6 +117,71 @@ class NativeBrief(unittest.TestCase):
         s=self.selected();s['extraEnv']=[{'name':'SESSION_BRIEF_ENABLED','value':'true'}];self.render(s,'manages')
         s=self.selected();s['podLabels']={'app.kubernetes.io/component':'unselected'};self.render(s,'selector labels')
 
+    def env_of(self,pod):
+        env=pod['containers'][0]['env'];names=[e['name'] for e in env]
+        self.assertEqual(len(names),len(set(names)),'a duplicate env name breaks server-side apply')
+        return {e['name']:e.get('value') for e in env}
+
+    def test_base_url_defaults_leave_the_worker_on_the_hosted_endpoint(self):
+        env=self.env_of(self.brief(self.render(self.selected())))
+        self.assertNotIn('OPENAI_BASE_URL',env);self.assertEqual(env['ALLOW_IN_CLUSTER_HTTP'],'false')
+
+    def test_base_url_and_in_cluster_http_render_on_session_brief_only(self):
+        s=self.selected();s['nativeBrief'].update(baseUrl='http://llm-gateway.ai.svc:4000/v1',allowInClusterHttp=True)
+        s['image']=deepcopy(s['nativeBrief']['image']);s['components']['referee']={'enabled':True}
+        docs=self.render(s);pod=self.brief(docs);env=self.env_of(pod)
+        self.assertEqual(env['OPENAI_BASE_URL'],'http://llm-gateway.ai.svc:4000/v1');self.assertEqual(env['ALLOW_IN_CLUSTER_HTTP'],'true')
+        self.assertNotIn('OPENAI_BASE_URL',json.dumps(pod['initContainers']))
+        checked=0
+        for d in docs:
+            if d['kind'] not in ('Deployment','Job') or d['spec']['template']['metadata']['labels'].get('app.kubernetes.io/component')=='session-brief':continue
+            sibling=self.env_of(d['spec']['template']['spec']);checked+=1
+            self.assertNotIn('OPENAI_BASE_URL',sibling);self.assertEqual(sibling['ALLOW_IN_CLUSTER_HTTP'],'false')
+        self.assertGreater(checked,0)
+
+    def test_top_level_in_cluster_http_keeps_applying_to_session_brief(self):
+        s=self.selected();s['allowInClusterHttp']=True;s['nativeBrief']['baseUrl']='http://llm-gateway.ai.svc.cluster.local/v1'
+        env=self.env_of(self.brief(self.render(s)))
+        self.assertEqual(env['ALLOW_IN_CLUSTER_HTTP'],'true');self.assertEqual(env['OPENAI_BASE_URL'],'http://llm-gateway.ai.svc.cluster.local/v1')
+
+    def test_https_base_url_needs_no_in_cluster_flag(self):
+        for url in ['https://llm.example.com/v1','https://llm.example.com:8443/openai/v1/','https://gateway.ai.svc:8443/v1']:
+            s=self.selected();s['nativeBrief']['baseUrl']=url
+            env=self.env_of(self.brief(self.render(s)));self.assertEqual(env['OPENAI_BASE_URL'],url);self.assertEqual(env['ALLOW_IN_CLUSTER_HTTP'],'false')
+
+    def test_refuses_base_urls_the_worker_would_refuse(self):
+        for url,allow,message in [
+            ('http://llm-gateway.ai.svc:4000/v1',False,'allowInClusterHttp'),
+            ('http://llm.example.com/v1',True,'svc'),
+            ('http://llm-gateway/v1',True,'svc'),
+            ('http://llm-gateway.ai/v1',True,'svc'),
+            ('http://a.b.c.svc/v1',True,'svc'),
+            ('http://llm-gateway.ai.svc.evil.example/v1',True,'svc'),
+            ('http://10.0.0.1:4000/v1',True,'svc'),
+            ('http://localhost:4000/v1',True,'svc'),
+            ('http://llm-gateway.ai.svc:99999/v1',True,'svc'),
+            ('http://u:p@llm-gateway.ai.svc:4000/v1',True,'svc'),
+            ('http://llm-gateway.ai.svc:4000/v1?x=1',True,'svc'),
+            ('https://u:p@llm.example.com/v1',False,'credentials'),
+            ('https://llm.example.com/v1?x=1',False,'credentials'),
+            ('https://llm.example.com/v1#frag',False,'credentials'),
+            ('https://llm.example.com:0/v1',False,'credentials'),
+            ('https://llm.example.com/v1 ',False,'credentials'),
+            ('ftp://llm.example.com/v1',False,'absolute'),
+            ('llm.example.com/v1',False,'absolute'),
+            ('HTTPS://llm.example.com/v1',False,'absolute'),
+            (42,False,'must be a string')]:
+            s=self.selected();s['nativeBrief'].update(baseUrl=url,allowInClusterHttp=allow);self.render(s,message)
+        s=self.selected();s['nativeBrief']['allowInClusterHttp']='true';self.render(s,'must be a boolean')
+
+    def test_base_url_settings_require_the_native_worker(self):
+        self.render({'nativeBrief':{'baseUrl':'https://llm.example.com/v1'}},'requires nativeBrief.enabled')
+        self.render({'nativeBrief':{'allowInClusterHttp':True}},'requires nativeBrief.enabled')
+
+    def test_in_cluster_http_flag_cannot_be_set_through_env(self):
+        s=self.selected();s['components']['session-brief']['env']=[{'name':'ALLOW_IN_CLUSTER_HTTP','value':'true'}];self.render(s,'must not set ALLOW_IN_CLUSTER_HTTP')
+        s=self.selected();s['extraEnv']=[{'name':'ALLOW_IN_CLUSTER_HTTP','value':'true'}];self.render(s,'must not set ALLOW_IN_CLUSTER_HTTP')
+
     def test_openai_policy_refuses_disabled_or_empty_wildcard_rules(self):
         for peers in [[],[{}],[{'namespaceSelector':{}}],[{'namespaceSelector':{'matchLabels':{}}}],[{'ports':[443]}]]:
             s=self.selected();s['nativeBrief']['openaiEgress']['to']=peers;self.render(s,'openaiEgress')

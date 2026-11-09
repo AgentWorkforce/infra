@@ -11,6 +11,26 @@
 {{- if not (kindIs "bool" $n.openaiEgress.enabled) }}{{ fail "nativeBrief.openaiEgress.enabled must be a boolean" }}{{ end -}}
 {{- if and $n.openaiEgress.enabled (not $n.enabled) }}{{ fail "nativeBrief.openaiEgress requires nativeBrief.enabled" }}{{ end -}}
 {{- if and (not $n.openaiEgress.enabled) (not (empty $n.openaiEgress.to)) }}{{ fail "nativeBrief.openaiEgress.to requires enabled=true" }}{{ end -}}
+{{- if not (or (kindIs "invalid" $n.baseUrl) (kindIs "string" $n.baseUrl)) }}{{ fail "nativeBrief.baseUrl must be a string" }}{{ end -}}
+{{- if not (kindIs "bool" $n.allowInClusterHttp) }}{{ fail "nativeBrief.allowInClusterHttp must be a boolean" }}{{ end -}}
+{{- if and $n.baseUrl (not $n.enabled) }}{{ fail "nativeBrief.baseUrl requires nativeBrief.enabled" }}{{ end -}}
+{{- if and $n.allowInClusterHttp (not $n.enabled) }}{{ fail "nativeBrief.allowInClusterHttp requires nativeBrief.enabled" }}{{ end -}}
+{{- if $n.baseUrl -}}
+{{- /* The worker's destination rule (src/shared/destination-url.ts), checked here so a bad value fails the render and not the pod. Messages name the rule, never the value. */ -}}
+{{- $port := "(:(6553[0-5]|655[0-2][0-9]|65[0-4][0-9]{2}|6[0-4][0-9]{3}|[1-5][0-9]{4}|[1-9][0-9]{0,3}))?" -}}
+{{- $path := "(/[A-Za-z0-9._~%!$&'()*+,;=:@/-]*)?" -}}
+{{- $publicHost := "([A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?(\\.[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?)*|\\[[0-9A-Fa-f:.]+\\])" -}}
+{{- $label := "[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?" -}}
+{{- $serviceHost := printf "%s\\.%s\\.svc(\\.cluster\\.local)?" $label $label -}}
+{{- $inClusterHttp := or (eq (toString .Values.allowInClusterHttp) "true") $n.allowInClusterHttp -}}
+{{- if not (regexMatch "^https?://" $n.baseUrl) }}{{ fail "nativeBrief.baseUrl must be an absolute https URL, or http to a Kubernetes Service name" }}{{ end -}}
+{{- if hasPrefix "https://" $n.baseUrl -}}
+{{- if not (regexMatch (printf "^https://%s%s%s$" $publicHost $port $path) $n.baseUrl) }}{{ fail "nativeBrief.baseUrl must be a valid URL without credentials, query or fragment" }}{{ end -}}
+{{- else -}}
+{{- if not $inClusterHttp }}{{ fail "nativeBrief.baseUrl must use https; http needs nativeBrief.allowInClusterHttp=true and a <svc>.<ns>.svc[.cluster.local] host" }}{{ end -}}
+{{- if not (regexMatch (printf "^http://%s%s%s$" $serviceHost $port $path) $n.baseUrl) }}{{ fail "nativeBrief.baseUrl http is limited to a <svc>.<ns>.svc[.cluster.local] host without credentials, query or fragment" }}{{ end -}}
+{{- end -}}
+{{- end -}}
 {{- if $n.enabled -}}
 {{- range $label := list "app.kubernetes.io/name" "app.kubernetes.io/instance" "app.kubernetes.io/component" -}}
 {{- if hasKey $.Values.podLabels $label }}{{ fail "nativeBrief podLabels must not override managed NetworkPolicy selector labels" }}{{ end -}}
@@ -94,6 +114,9 @@
 - { name: NATIVE_BRIEF_CA_FILE, value: /etc/postgres-ca/ca.crt }
 - { name: NATIVE_BRIEF_CA_SOURCE, value: /etc/postgres-ca/ca.crt }
 - { name: NATIVE_BRIEF_CA_SHA256, value: {{ .Values.postgresCa.sha256 | quote }} }
+{{- with .Values.nativeBrief.baseUrl }}
+- { name: OPENAI_BASE_URL, value: {{ . | quote }} }
+{{- end }}
 - name: OPENAI_API_KEY
   valueFrom:
     secretKeyRef:
