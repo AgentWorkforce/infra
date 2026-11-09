@@ -33,6 +33,7 @@ class NativeBrief(unittest.TestCase):
         self.assertNotIn('SESSION_BRIEF_CANONICAL_INPUT',s);self.assertNotIn('OPENAI_API_KEY',s)
         self.assertFalse(any(d['metadata']['name'].endswith('-brief-openai') for d in docs))
         self.render({'extraEnv':[{'name':'SESSION_BRIEF_CANONICAL_INPUT','value':'true'}]},'use nativeBrief.enabled')
+        self.render({'components':{'session-brief':{'enabled':True}}},'requires nativeBrief.enabled')
         self.assertFalse(any(d.get('spec',{}).get('template',{}).get('metadata',{}).get('labels',{}).get('app.kubernetes.io/component')=='session-brief' for d in docs))
 
     def test_native_env_secret_ca_health_and_egress_are_component_scoped(self):

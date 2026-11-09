@@ -5,6 +5,8 @@
 {{- if eq ($entry.name | default "") "SESSION_BRIEF_CANONICAL_INPUT" }}{{ fail "use nativeBrief.enabled instead of unmanaged SESSION_BRIEF_CANONICAL_INPUT" }}{{ end -}}
 {{- end -}}
 {{- if not (kindIs "bool" $n.enabled) }}{{ fail "nativeBrief.enabled must be a boolean" }}{{ end -}}
+{{- if not (kindIs "bool" $c.enabled) }}{{ fail "components.session-brief.enabled must be a boolean" }}{{ end -}}
+{{- if and $c.enabled (not $n.enabled) }}{{ fail "components.session-brief.enabled requires nativeBrief.enabled; unmanaged native worker selection is refused" }}{{ end -}}
 {{- if not (kindIs "bool" $n.openaiEgress.enabled) }}{{ fail "nativeBrief.openaiEgress.enabled must be a boolean" }}{{ end -}}
 {{- if and $n.openaiEgress.enabled (not $n.enabled) }}{{ fail "nativeBrief.openaiEgress requires nativeBrief.enabled" }}{{ end -}}
 {{- if and (not $n.openaiEgress.enabled) (not (empty $n.openaiEgress.to)) }}{{ fail "nativeBrief.openaiEgress.to requires enabled=true" }}{{ end -}}
