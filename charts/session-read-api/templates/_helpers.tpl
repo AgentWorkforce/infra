@@ -42,7 +42,10 @@ app.kubernetes.io/part-of: sessions-pipeline
 {{- $_ := required "session-read-api: completeSince requires an explicit coverage floor" $c.completeSince -}}
 {{- if not (kindIs "string" $c.directoryWorkspaces) }}{{ fail "session-read-api: directoryWorkspaces must be a string" }}{{ end -}}
 {{- $workspaces := required "session-read-api: directoryWorkspaces requires an explicit workspace allowlist" (trim $c.directoryWorkspaces) -}}
-{{- if contains "*" $workspaces }}{{ fail "session-read-api: directoryWorkspaces must be an explicit allowlist string without '*'" }}{{ end -}}
+{{- /* Exactly "*" is the single-tenant self-host value (every workspace; the
+token still binds each read to one workspace), only in self_issued mode: a new
+workspace is not on a static list, and its reads would answer 501. */ -}}
+{{- if and (contains "*" $workspaces) (not (and (eq $workspaces "*") (eq (toString $c.auth.mode) "self_issued"))) }}{{ fail "session-read-api: directoryWorkspaces must be an explicit allowlist string without '*' (exactly '*' is allowed only with auth.mode=self_issued)" }}{{ end -}}
 {{- if or (not (regexMatch "^[0-9]+$" (toString $c.port))) (lt (int $c.port) 1024) (gt (int $c.port) 65535) }}{{ fail "session-read-api: port must be an integer from 1024 to 65535" }}{{ end -}}
 {{- if not (has $c.probeRuntime (list "bun" "node")) }}{{ fail "session-read-api: probeRuntime must be bun or node" }}{{ end -}}
 {{- if not (kindIs "bool" $c.allowInClusterHttp) }}{{ fail "session-read-api: allowInClusterHttp must be a boolean" }}{{ end -}}
