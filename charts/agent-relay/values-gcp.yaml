@@ -168,7 +168,7 @@ sessions-pipeline:
       databaseMode: cloudsql
       supabaseShim: false
       roleBootstrap: false
-      runtimeRole: sessions_runtime
+      runtimeRole: sessions_pipeline_runtime
       runtimeRoleLogin: true
       functionBoundaryMode: global-default-revoke
   alleyoop:
