@@ -41,7 +41,7 @@ aws opensearch describe-domain --domain-name "$DOMAIN" --query 'DomainStatus.End
    ```sh
    awscurl --service es --region "$REGION" -X PUT "https://$ENDPOINT/_plugins/_security/api/roles/relayhistory_indexer" \
      -H 'Content-Type: application/json' \
-     -d '{"cluster_permissions":["cluster_monitor","indices:data/write/bulk"],"index_permissions":[{"index_patterns":["relayhistory-*"],"allowed_actions":["write","create_index","indices:data/write/bulk*","indices:monitor/settings/get","indices:admin/mapping/put"]}]}'
+     -d '{"cluster_permissions":["cluster_monitor","indices:data/write/bulk"],"index_permissions":[{"index_patterns":["relayhistory-*"],"allowed_actions":["write","create_index","indices:data/write/bulk*","indices:monitor/settings/get","indices:admin/mapping/put","indices:data/read/search*","indices:data/read/scroll*","indices:data/read/mget*","indices:data/write/delete/byquery","indices:admin/refresh*","indices:admin/get"]}]}'
    awscurl --service es --region "$REGION" -X PUT "https://$ENDPOINT/_plugins/_security/api/rolesmapping/relayhistory_indexer" \
      -H 'Content-Type: application/json' \
      -d "{\"backend_roles\":[\"$INDEXER_ROLE_ARN\"]}"
