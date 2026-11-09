@@ -31,6 +31,10 @@ relay-control:
 # ingestEdge; retain the ServiceAccount because it is the GCS identity selected
 # by the native edge in the customer values.
 sessions-pipeline:
+  # relay-control uses this stable in-cluster handoff URL. Keep the Service
+  # name independent of the Helm release name so the two values cannot drift.
+  sessionReadApi:
+    fullnameOverride: agent-relay-read-api
   alleyoop:
     deployment:
       enabled: false

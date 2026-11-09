@@ -49,16 +49,23 @@ class NativeNoRelayauth(unittest.TestCase):
         deployments = {doc['metadata']['name']: doc for doc in docs if doc.get('kind') == 'Deployment'}
         self.assertNotIn('relayauth', deployments)
         self.assertNotIn('relayhistory', deployments)
-        for name in ('proof-read-api', 'proof-ingest-edge', 'proof-search-indexer'):
+        for name in ('agent-relay-read-api', 'proof-ingest-edge', 'proof-search-indexer'):
             self.assertIn(name, deployments)
             self.assertTrue(deployments[name]['spec']['template']['spec']['containers'][0]['image'].startswith(
                 'ghcr.io/agentworkforce/sessions-pipeline@sha256:dc95d942'))
+        services = {doc['metadata']['name']: doc for doc in docs if doc.get('kind') == 'Service'}
+        self.assertIn('agent-relay-read-api', services)
         self.assertEqual(
             deployments['relay-control']['spec']['template']['spec']['containers'][0]['image'],
             'ghcr.io/agentworkforce/relay-control@sha256:c6648cc3d504b79f0e138993cb2e48dfcd2d8ba300a0969ff8c9c87c89c80d65')
         self.assertEqual(
             deployments['relay-webapp']['spec']['template']['spec']['containers'][0]['image'],
             'ghcr.io/agentworkforce/relay-webapp@sha256:d28bb01d3545db204de8ba3d8927d6d14c2a1a256b0ec077abfc9a7a6242fdc4')
+        control_env = {
+            item['name']: item.get('value')
+            for item in deployments['relay-control']['spec']['template']['spec']['containers'][0]['env']
+        }
+        self.assertEqual(control_env['SESSION_READ_API_URL'], 'http://agent-relay-read-api')
 
         ingress = next(doc for doc in docs if doc.get('kind') == 'Ingress' and doc['metadata']['name'] == 'example-agent-relay')
         history = next(rule for rule in ingress['spec']['rules'] if rule['host'] == 'history.placeholder.company')

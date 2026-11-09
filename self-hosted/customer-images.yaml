@@ -4,27 +4,27 @@ apiVersion: selfhost.agentrelay.com/v1alpha1
 kind: CustomerImageSourceManifest
 # Top-level per the gate schema (see the positive fixture in
 # ci/customer-release-gate); the release gate refuses anything but "ready".
-status: blocked
+status: ready
 metadata:
   name: agent-relay-gcp
-  auditedAt: "2026-11-04"
+  auditedAt: "2026-11-09"
   chart:
     name: agent-relay
-    version: 0.3.12
+    version: 0.6.21
     values:
       - charts/agent-relay/values-gcp.yaml
+      - charts/agent-relay/values-gcp-native.yaml
 
 scope:
   description: >-
-    Unique images rendered by the full-customer GCP profile
-    (charts/agent-relay/values-gcp.yaml) with all six product components
-    enabled. Durable actors, Relayfile and Relayflows are optional preview
-    components, off in this profile, and are not part of this matrix. Every
-    active row is the digest values-gcp.yaml renders. The inactive rows
-    (active: false) record the optional durable-actors images that
-    values-eks-actors.yaml pins; they are not rendered by values-gcp.yaml and
-    are not approved for the gated profile.
-  activeUniqueImages: 7
+    Unique images rendered by the supported GCP native History profile
+    (values-gcp.yaml plus values-gcp-native.yaml). RelayAuth and standalone
+    RelayHistory are disabled; the Sessions Pipeline provides ingest, read,
+    indexing and worker workloads. Durable actors, Relayfile and Relayflows
+    are optional components, off in this profile, and are not part of this
+    matrix. Every active row is an immutable digest rendered by the two
+    profile values files.
+  activeUniqueImages: 5
   excludedConditionalImages:
     - image: cgr.dev/chainguard/minio
       reason: sessions-pipeline.locker.enabled=false in the GCP profile
@@ -32,6 +32,10 @@ scope:
       reason: sessions-pipeline.otel.enabled=false
     - image: docker.io/alpine/k8s
       reason: all three privileged SQL bootstrap Jobs are disabled
+    - image: ghcr.io/agentworkforce/relayauth
+      reason: components.relayauth=false in values-gcp-native.yaml
+    - image: ghcr.io/agentworkforce/relayhistory
+      reason: components.relayhistory=false in values-gcp-native.yaml
     - image: ghcr.io/agentworkforce/durable-actors-control-plane
       reason: >-
         components.durableActors and the Relaycast/Relayfile actor modes are
@@ -89,29 +93,29 @@ images:
       - Deployment/relaycast:relaycast
     current:
       repository: ghcr.io/agentworkforce/relaycast-self-host
-      digest: sha256:81274dca7ab58673383dc7a9c777f422f29606c7422e81b5ea15724770f1455e
+      digest: sha256:84f59482cb82f3c50d38f45cfca7d004cffaa95652782dbfc93c179cc343ac59
       chartStatus: shipped
     source:
       repository: https://github.com/AgentWorkforce/relaycast
-      revision: bf713d86b366b46f491e287ce6117c7c5ff1f27a
+      revision: 0858d73ea59f5bc674ae8cc41b023e0688bdde01
       path: Dockerfile
       reproducibleReference: true
-      note: relaycast main after #618 and #619; engine 12.7.0 (docker/package.json pin).
+      note: Relaycast 12.8.0-pg.1; the image engine-version label is 12.8.0.
     license:
       status: approved
       spdx: Apache-2.0
-      evidence: https://github.com/AgentWorkforce/relaycast/blob/bf713d86b366b46f491e287ce6117c7c5ff1f27a/LICENSE
+      evidence: https://github.com/AgentWorkforce/relaycast/blob/0858d73ea59f5bc674ae8cc41b023e0688bdde01/LICENSE
     platforms:
       expected: [linux/amd64, linux/arm64]
       verifiedFromRegistry: [linux/amd64, linux/arm64]
       status: verified
       verificationAccess: anonymous
     release:
-      workflow: https://github.com/AgentWorkforce/relaycast/blob/bf713d86b366b46f491e287ce6117c7c5ff1f27a/.github/workflows/publish-container.yml
-      run: https://github.com/AgentWorkforce/relaycast/actions/runs/41717074565
+      workflow: https://github.com/AgentWorkforce/relaycast/blob/0858d73ea59f5bc674ae8cc41b023e0688bdde01/.github/workflows/publish-container.yml
+      run: https://github.com/AgentWorkforce/relaycast/actions/runs/42527871342
       trigger: workflow_dispatch
       buildsCommittedRevision: true
-      publishedTags: ["12.7.0"]
+      publishedTags: ["12.8.0-pg.1"]
       publishesSbom: true
       publishesProvenance: true
       provenanceMode: max-plus-github-attestation
@@ -127,7 +131,7 @@ images:
         anonymously from the registry.
       blockingReasons: []
   - id: relayauth
-    active: true
+    active: false
     firstParty: true
     component: relayauth
     workloads:
@@ -167,54 +171,51 @@ images:
         SBOM, provenance and amd64+arm64 verified from the registry.
       blockingReasons: []
 
-  - id: sessions-services
+  - id: sessions-pipeline
     active: true
     firstParty: true
     component: sessions-pipeline
     workloads:
-      - Deployment/*-alleyoop-ingest:ingest
-      - Deployment/*-worker-hoopdb-indexer:hoopdb-indexer
-      - Deployment/*-worker-referee:referee
-      - Deployment/*-worker-bob-costas:bob-costas
+      - Deployment/agent-relay-read-api:read-api
+      - Deployment/*-ingest-edge:ingest-edge
+      - Deployment/*-search-indexer:search-indexer
+      - Deployment/*-worker-session-metadata-indexer:session-metadata-indexer
+      - Deployment/*-worker-session-status-worker:session-status-worker
+      - Deployment/*-worker-session-summary-worker:session-summary-worker
       - Job/*-worker-migrate-*:migrate
     current:
-      repository: ghcr.io/agentworkforce/96bulls-services
-      digest: sha256:070fe6fd46ecd1e1f9db32ff22379f6df9b9e6c4d48ede5312c8fb986a95f3a9
+      repository: ghcr.io/agentworkforce/sessions-pipeline
+      digest: sha256:dc95d94202c49573749f99cc548638ed185f782dc3b88691f551d7f1f700f769
       chartStatus: shipped
       note: >-
-        Rendered by values-gcp.yaml on worker.image and alleyoop.image.
-        Includes origin-bound courier assertions (sessions-pipeline #204,
-        887a844). Its first migrate needs the HoopDb roles from
-        /app/supabase/bootstrap/session_directory_search_worker.sql,
-        session_token_verifier.sql and session_ingest_roles.sql, which the
-        sessions-pipeline 0.6.0 chart does not bootstrap.
+        Rendered by the GCP native profile for read, ingest, search, worker and
+        migration workloads. The image label records the exact source revision.
     source:
       repository: https://github.com/AgentWorkforce/sessions-pipeline
-      revision: f1c2672581b6f88d26d0549b4d1cb78fce0d5f16
+      revision: ce9b4464ff16fad52d8507706356b7a4aebd59c3
       path: docker/services.Dockerfile
       reproducibleReference: true
     license:
       status: approved
       spdx: Apache-2.0
-      evidence: https://github.com/AgentWorkforce/sessions-pipeline/blob/f1c2672581b6f88d26d0549b4d1cb78fce0d5f16/LICENSE
+      evidence: https://github.com/AgentWorkforce/sessions-pipeline/blob/ce9b4464ff16fad52d8507706356b7a4aebd59c3/LICENSE
     platforms:
       expected: [linux/amd64, linux/arm64]
       verifiedFromRegistry: [linux/amd64, linux/arm64]
       status: verified
       verificationAccess: anonymous
     release:
-      workflow: https://github.com/AgentWorkforce/sessions-pipeline/blob/f1c2672581b6f88d26d0549b4d1cb78fce0d5f16/.github/workflows/publish-image.yml
-      run: https://github.com/AgentWorkforce/sessions-pipeline/actions/runs/41796259208
+      workflow: https://github.com/AgentWorkforce/sessions-pipeline/blob/ce9b4464ff16fad52d8507706356b7a4aebd59c3/.github/workflows/publish-image.yml
+      run: https://github.com/AgentWorkforce/sessions-pipeline/actions/runs/42701039876
       trigger: workflow_dispatch-with-approval-phrase
       buildsCommittedRevision: true
-      publishedTags: [main, sha-f1c2672581b6f88d26d0549b4d1cb78fce0d5f16]
+      publishedTags: [main, sha-ce9b4464ff16fad52d8507706356b7a4aebd59c3]
       publishesSbom: true
       publishesProvenance: true
       provenanceMode: max
       note: >-
-        The run pushed the image with a BuildKit SBOM and max-mode provenance
-        (attestation manifests verified in the registry index); its GitHub
-        build-provenance attestation step failed (private repository).
+        The successful release run pushed a multi-platform index with BuildKit
+        SBOM and provenance attestation manifests for amd64 and arm64.
     customerAcquisition:
       status: available-public
       procedure: Mirror the public GHCR digest into the customer registry by digest and record the destination digest.
@@ -223,8 +224,7 @@ images:
       basis: >-
         Public digest from the reviewed publish-image workflow at the recorded
         main revision, with an SBOM, max-mode provenance, and amd64+arm64
-        verified anonymously. Proven with the interim bearer off on the EKS
-        proof (15/15 end-to-end cases).
+        verified anonymously.
       blockingReasons: []
 
   - id: sessions-migration-postgresql
@@ -291,7 +291,7 @@ images:
       blockingReasons: []
 
   - id: relayhistory
-    active: true
+    active: false
     firstParty: true
     component: relayhistory
     workloads:
@@ -341,42 +341,37 @@ images:
         verified anonymously.
       blockingReasons: []
 
-  - id: selfhost-api
+  - id: relay-control
     active: true
     firstParty: true
-    component: relay-cloud-api
+    component: relay-control
     workloads:
-      - Deployment/relay-cloud-api:api
-      - Job/relay-cloud-api-migrate-*:migrate
+      - Deployment/relay-control:relay-control
     current:
       repository: ghcr.io/agentworkforce/relay-control
-      digest: sha256:d8c26d44dccb6dd21b7033288241a379e46ce5fbca69f276c4d4745001c3c3e2
+      digest: sha256:c6648cc3d504b79f0e138993cb2e48dfcd2d8ba300a0969ff8c9c87c89c80d65
       chartStatus: shipped
     source:
       repository: https://github.com/AgentWorkforce/relay-control
-      revision: df4b3901768809407c7c6e1e0d28031e2c2fa25d
+      revision: be21070ebf2d0649a9fb50d6608b0cd7bf12105c
       path: Dockerfile
       reproducibleReference: true
-      note: >-
-        relay-control main df4b390 (0.5.0: workspace delete, token
-        introspection). The image labels and the release workflow record this
-        exact commit. The session read handoff needs 0.5.1, which is not
-        published yet; move this pin when it is.
+      note: Relay Control 0.5.8 with native session-read handoff and desktop sign-in.
     license:
       status: approved
       spdx: Apache-2.0
-      evidence: https://github.com/AgentWorkforce/relay-control/blob/df4b3901768809407c7c6e1e0d28031e2c2fa25d/LICENSE
+      evidence: https://github.com/AgentWorkforce/relay-control/blob/be21070ebf2d0649a9fb50d6608b0cd7bf12105c/LICENSE
     platforms:
       expected: [linux/amd64, linux/arm64]
       verifiedFromRegistry: [linux/amd64, linux/arm64]
       status: verified
       verificationAccess: anonymous
     release:
-      workflow: https://github.com/AgentWorkforce/relay-control/blob/df4b3901768809407c7c6e1e0d28031e2c2fa25d/.github/workflows/release-relay-control-image.yml
-      run: https://github.com/AgentWorkforce/relay-control/actions/runs/42520309433
+      workflow: https://github.com/AgentWorkforce/relay-control/blob/be21070ebf2d0649a9fb50d6608b0cd7bf12105c/.github/workflows/release-relay-control-image.yml
+      run: https://github.com/AgentWorkforce/relay-control/actions/runs/42653521106
       trigger: workflow_dispatch
       buildsCommittedRevision: true
-      publishedTags: ["0.5.0", sha-df4b3901768809407c7c6e1e0d28031e2c2fa25d]
+      publishedTags: ["0.5.8", sha-be21070ebf2d0649a9fb50d6608b0cd7bf12105c]
       publishesSbom: true
       publishesProvenance: true
       provenanceMode: max
@@ -384,51 +379,48 @@ images:
       status: available-public
       procedure: Mirror the public GHCR digest into the customer registry by digest and record the destination digest.
     approval:
-      status: provenance-review-required
+      status: approved
       basis: >-
-        Public digest at the recorded main revision, amd64+arm64 verified
-        anonymously. Not approved: release run 42520309433 failed pushing the
-        legacy selfhost-api alias, so its signed attestation and digest
-        verification steps were skipped.
-      blockingReasons:
-        - relay-control-0.5.0-provenance
+        Public digest from the successful reviewed 0.5.8 release workflow at
+        the recorded revision, with SBOM, provenance and amd64+arm64 verified
+        anonymously.
+      blockingReasons: []
 
-  - id: relay-dashboard
+  - id: relay-webapp
     active: true
     firstParty: true
-    component: relay-dashboard
+    component: relay-webapp
     workloads:
-      - Deployment/relay-dashboard:copy-dashboard
-      - Deployment/relay-dashboard:dashboard
+      - Deployment/relay-webapp:relay-webapp
     current:
-      repository: ghcr.io/agentworkforce/relay-dashboard
-      digest: sha256:c50005fcdd1fc5ab5ef3dac9b621db8e0c7e03480406bfe519743ae435d8f1ad
+      repository: ghcr.io/agentworkforce/relay-webapp
+      digest: sha256:d28bb01d3545db204de8ba3d8927d6d14c2a1a256b0ec077abfc9a7a6242fdc4
       chartStatus: shipped
     source:
-      repository: https://github.com/AgentWorkforce/relay-dashboard
-      revision: e5003d05bab52cb782e982ac44149b891f6e67d0
+      repository: https://github.com/AgentWorkforce/relay-webapp
+      revision: 7a66f0eb8a51278a49d70216bb20e117532e6bd9
       path: Dockerfile
       reproducibleReference: true
       note: >-
-        relay-dashboard main e5003d0, after #83-#92 (hosted Cloud look, faceted sessions sidebar, customer-profile branding, Connections with Coding agents and hosted visual parity, Desktop link, Members with email invites). Static SPA built with
+        relay-webapp main 7a66f0eb. Static SPA built with
         DASHBOARD_BASE_PATH=/ and DASHBOARD_RUNTIME_CONFIG_URL=/runtime-config.js,
         served by unprivileged nginx on :8080. It talks only to the same-origin
         /cloud/api prefix (runtime.apiBasePath must stay /cloud/api).
     license:
       status: approved
       spdx: Apache-2.0
-      evidence: https://github.com/AgentWorkforce/relay-dashboard/blob/e5003d05bab52cb782e982ac44149b891f6e67d0/LICENSE
+      evidence: https://github.com/AgentWorkforce/relay-webapp/blob/7a66f0eb8a51278a49d70216bb20e117532e6bd9/LICENSE
     platforms:
       expected: [linux/amd64, linux/arm64]
       verifiedFromRegistry: [linux/amd64, linux/arm64]
       status: verified
       verificationAccess: anonymous
     release:
-      workflow: https://github.com/AgentWorkforce/relay-dashboard/blob/e5003d05bab52cb782e982ac44149b891f6e67d0/.github/workflows/container.yml
-      run: https://github.com/AgentWorkforce/relay-dashboard/actions/runs/41809435279
+      workflow: https://github.com/AgentWorkforce/relay-webapp/blob/7a66f0eb8a51278a49d70216bb20e117532e6bd9/.github/workflows/container.yml
+      run: https://github.com/AgentWorkforce/relay-webapp/actions/runs/42681506353
       trigger: workflow_dispatch
       buildsCommittedRevision: true
-      publishedTags: [sha-e5003d05bab52cb782e982ac44149b891f6e67d0]
+      publishedTags: [sha-7a66f0eb8a51278a49d70216bb20e117532e6bd9]
       publishesSbom: true
       publishesProvenance: true
       provenanceMode: max-plus-github-attestation
@@ -724,8 +716,4 @@ promotionProcedure:
 # services, RelayHistory and selfhost-api release images are public, built by
 # reviewed workflows from recorded main revisions, with an SBOM and max-mode
 # provenance, and amd64+arm64 verified anonymously.
-blockers:
-  - id: relay-control-0.5.0-provenance
-    severity: review
-    images: [selfhost-api]
-    detail: Release run 42520309433 concluded failure; signed provenance attestation and digest verification did not run for this digest. Clear by pinning a relay-control release whose workflow run succeeded.
+blockers: []

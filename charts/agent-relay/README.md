@@ -137,13 +137,14 @@ no enrollment Secret; model and provider credentials reach the flow through
 `relayflows.extraEnv`/`extraEnvFrom`.
 
 The template assumes external Cloud SQL and GCS rather than in-cluster
-Postgres and MinIO. Before installation, provision separate Sessions, Relay
-History, and control API databases; install the Sessions database extensions
-and migrations required by the Sessions Pipeline; and make each runtime URL use the
-least-privilege role named in the values (`sessions_runtime` or
-`control_api_runtime`). Migration URLs must use the corresponding
-migration-owner roles. Relay History must have its own database and migration
-ledger.
+Postgres and MinIO. For the supported native History profile, provision
+separate Sessions and control API databases; install the Sessions database
+extensions and migrations required by the Sessions Pipeline; and make each
+runtime URL use the least-privilege role named in the values
+(`sessions_pipeline_runtime` or `control_api_runtime`). Migration URLs must use
+the corresponding migration-owner roles. The legacy profile additionally
+needs a standalone Relay History database and migration ledger; its Sessions
+runtime role remains `sessions_runtime`.
 
 Sessions objects use the services' native GCS adapter
 (`locker.provider=gcs`, `LOCKER_PROVIDER=gcs`) with an empty endpoint, which
