@@ -29,6 +29,7 @@
 {{- if and .Values.sessionReadApi.enabled (ne $origin .Values.sessionReadApi.origin) }}{{ fail "ingestEdge.origin must exactly equal sessionReadApi.origin when both services are enabled" }}{{ end -}}
 {{- $introspect := include "sessions-pipeline.ingestEdge.endpoint" (dict "name" "ingestEdge.relaycontrol.url" "url" $c.relaycontrol.url "allowHttp" $c.allowInClusterHttp) -}}
 {{- if not (kindIs "bool" $c.sessionSelection) }}{{ fail "ingestEdge.sessionSelection must be a boolean" }}{{ end -}}
+{{- if not (kindIs "bool" $c.heartbeatAccept) }}{{ fail "ingestEdge.heartbeatAccept must be a boolean" }}{{ end -}}
 {{- $credentialMode := $c.locker.credentials.mode -}}
 {{- if not (has $credentialMode (list "secret" "podIdentity")) }}{{ fail "ingestEdge.locker.credentials.mode must be secret or podIdentity" }}{{ end -}}
 {{- $podIdentity := eq $credentialMode "podIdentity" -}}
@@ -167,6 +168,9 @@ spec:
             {{- end }}
             {{- if $c.sessionSelection }}
             - { name: RELAYHISTORY_SELFHOST_SESSION_SELECTION, value: "true" }
+            {{- end }}
+            {{- if $c.heartbeatAccept }}
+            - { name: RELAYHISTORY_SELFHOST_HEARTBEAT_ACCEPT, value: "true" }
             {{- end }}
             - { name: INGEST_KEY_ROOT, value: 96bulls }
             - { name: INGEST_MAX_PER_USER, value: {{ $c.maxPerUser | quote }} }

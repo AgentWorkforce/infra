@@ -449,6 +449,10 @@ ingestEdge:
   # Serves the per-session erase on POST /v1/delivery/sessions/selection
   # (RELAYHISTORY_SELFHOST_SESSION_SELECTION). Needs pipeline migration 043910.
   sessionSelection: false
+  # Answers the Desktop's POST /v1/onboarding/heartbeat 204 and discards it
+  # (RELAYHISTORY_SELFHOST_HEARTBEAT_ACCEPT). Needs a services image from pipeline
+  # #431 or later.
+  heartbeatAccept: false
   maxPerUser: 4
   maxPerOrg: 32
   serviceAccountName: ""
