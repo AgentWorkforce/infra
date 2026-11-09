@@ -599,7 +599,10 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 // The pipeline indexes asynchronously (ingest edge, consumer, read API), so a
 // read proves durability only after polling.
-async function waitFor(label, check, timeoutMs = 240_000) {
+// The pipeline indexer reconciles on a 5-minute tick, so a new session can take
+// longer than one tick to appear in the read API's directory and search.
+const VISIBLE_TIMEOUT_MS = PIPELINE ? 420_000 : 240_000;
+async function waitFor(label, check, timeoutMs = VISIBLE_TIMEOUT_MS) {
   const deadline = Date.now() + timeoutMs;
   for (;;) {
     const result = await check();
