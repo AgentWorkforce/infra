@@ -31,7 +31,7 @@ def selected(profile="core"):
                      "pipelineDatabase": "hoopdb", "controlDatabase": "relaycontrol",
                      "fileDatabase": "relayfile", "castDatabase": "relaycast", "tls": "verify-full"},
         "postgresCa": {"sha256": "f" * 64, "configMap": "kind-native-public-ca", "key": "ca.crt", "immutable": True},
-        "secretRefs": {n: {"name": "kind-native-" + n, "key": k, "jsonField": j}
+        "secretRefs": {n: {"name": "kind-native-" + n.lower(), "key": k, "jsonField": j}
                        for n, (k, j) in SECRET_KEYS.items()},
         "keyRoot": "96bulls", "orgFromPrefix": True, "backend": "postgres", "backendId": "kind-native-test",
         "readerLoginAdvertisesSync": True,
@@ -58,18 +58,47 @@ class Operations:
             if name == "verify_artifact":
                 return {k: s[k] for k in ("sourceRevision", "manifestDigest", "configDigest", "generation", "officialBootstrapSha256", "control")}
             if name == "render":
-                return {"legacyWriterCount": 0, "managedNative": True, "ownerBuffered": False, "publication": False, "readerLoginAdvertisesSync": True}
+                return {"legacyWriterCount": 0, "managedNative": True, "ownerBuffered": False, "publication": False, "readerLoginAdvertisesSync": s["readerLoginAdvertisesSync"]}
             if name == "schema_plan":
                 return {"ok": True, "pending": 0, "physicalLedgerSha256": "1" * 64, "planSha256": "2" * 64}
             if name == "install_control":
                 return {"ok": True, "workspaceId": "11111111-1111-4111-8111-111111111111", "organizationId": "22222222-2222-4222-8222-222222222222"}
             if name == "addons":
-                return {"ok": True, "signedLicenseVerified": True, "featureModes": {"flows": "enabled", "relayfile": "enabled", "chief": "disabled"}}
+                return {"ok": True, "capabilitiesVerified": True, "workloadsVerified": True, "apiVerified": True, "uiVerified": True, "featureModes": {"flows": "enabled", "relayfile": "enabled", "chief": "disabled"}}
             return {"ok": True}
         return run
 
 
 class NativeRecipeTests(unittest.TestCase):
+    def test_explicit_new_store_epoch_is_supported_but_ambiguous_floor_is_not(self):
+        s = selected(); s["completeSince"] = "epoch"
+        self.assertEqual(selection(s)["completeSince"], "epoch")
+        for floor in ("", "now", "2000-01-01", "2999-01-01T00:00:00Z"):
+            s["completeSince"] = floor
+            with self.assertRaises(NativeRecipeError): selection(s)
+
+    def test_independent_reader_discovery_and_authority_are_bound_before_io(self):
+        s = selected(); s["control"]["independentIssuer"] = True; s["readerLoginAdvertisesSync"] = False
+        self.assertEqual(selection(s), s)
+        o = Operations(); NativeRecipe(s).run(o)
+        for mutate in (lambda x: x.update(readerLoginAdvertisesSync=True),
+                       lambda x: x["secretRefs"]["readerIssuer"].update(name=x["secretRefs"]["introspection"]["name"])):
+            bad = deepcopy(s); mutate(bad); o = Operations()
+            with self.assertRaises(NativeRecipeError): NativeRecipe(bad).run(o)
+            self.assertEqual(o.calls, [])
+
+    def test_addons_require_actual_selected_workload_api_ui_evidence_not_license(self):
+        from native_recipe import phase_receipt
+        good = {"ok": True, "capabilitiesVerified": True, "workloadsVerified": True,
+                "apiVerified": True, "uiVerified": True,
+                "featureModes": {"flows": "enabled", "relayfile": "enabled"}}
+        self.assertEqual(phase_receipt("addons", good), good)
+        for k in ("capabilitiesVerified", "workloadsVerified", "apiVerified", "uiVerified"):
+            bad = deepcopy(good); bad[k] = False
+            with self.assertRaises(NativeRecipeError): phase_receipt("addons", bad)
+        with self.assertRaises(NativeRecipeError):
+            phase_receipt("addons", {"ok": True, "signedLicenseVerified": True, "featureModes": good["featureModes"]})
+
     def test_fresh_has_exact_native_order_and_finalizes_before_runtime(self):
         o = Operations(); receipts = NativeRecipe(selected()).run(o)
         self.assertEqual([n for n, _ in o.calls], [
@@ -88,7 +117,7 @@ class NativeRecipeTests(unittest.TestCase):
                                  "schema_noop", "verify_claimed_roles", "verify_owner_final", "verify_credentials", "serve", "verify_ready", "record_ready"])
         self.assertFalse(set(names) & {"prepare_owner", "consumer_prepare", "initial_credentials", "schema_apply", "prepare_infrastructure"})
 
-    def test_addons_reuses_identical_native_core_and_runs_license_lane_last(self):
+    def test_addons_reuses_identical_native_core_and_runs_selected_workload_proof_last(self):
         a, b = Operations(), Operations()
         NativeRecipe(selected()).run(a); NativeRecipe(selected("addons")).run(b)
         self.assertEqual([n for n, _ in a.calls[:-1]], [n for n, _ in b.calls[:-2]])
@@ -173,7 +202,7 @@ class NativeRecipeTests(unittest.TestCase):
         with self.assertRaisesRegex(NativeRecipeError, "unexpected_phase_receipt_fields"): NativeRecipe(selected()).run(o)
 
     def test_legacy_guard_detects_each_managed_native_surface_before_ready_unlink(self):
-        for surface in ("nativeConsumer", "readApi", "ingestEdge"):
+        for surface in ("nativeConsumer", "sessionReadApi", "ingestEdge"):
             values = {"sessions-pipeline": {surface: {"enabled": True}}}
             self.assertTrue(native_selected(values))
             events = []
@@ -183,15 +212,15 @@ class NativeRecipeTests(unittest.TestCase):
                 events.append("postgres_apply")
             self.assertEqual(events, [])
         self.assertFalse(native_selected({"sessions-pipeline": {"ingestEdge": {"enabled": False}}}))
-        self.assertTrue(native_selected({"sessions-pipeline": {"nativeRouting": {"enabled": True}, "readApi": {"enabled": False}, "ingestEdge": {"enabled": False}}}))
+        self.assertTrue(native_selected({"sessions-pipeline": {"nativeRouting": {"enabled": True}, "sessionReadApi": {"enabled": False}, "ingestEdge": {"enabled": False}}}))
         for invalid in (True, "enabled", {"enabled": "true"}):
             with self.assertRaises(NativeRecipeError): native_selected({"sessions-pipeline": {"nativeRouting": invalid}})
-            with self.assertRaises(NativeRecipeError): native_selected({"sessions-pipeline": {"readApi": {"enabled": True}, "nativeRouting": invalid}})
+            with self.assertRaises(NativeRecipeError): native_selected({"sessions-pipeline": {"sessionReadApi": {"enabled": True}, "nativeRouting": invalid}})
         refuse_legacy_up({})
 
     def test_early_guard_uses_merged_base_profile_and_private_values(self):
         base = {"sessions-pipeline": {"nativeConsumer": {"enabled": False, "phase": "prepare"}}}
-        profile = {"sessions-pipeline": {"readApi": {"enabled": False}}}
+        profile = {"sessions-pipeline": {"sessionReadApi": {"enabled": False}}}
         private = {"sessions-pipeline": {"nativeConsumer": {"enabled": True}}}
         merged = merge_values(base, profile, private)
         self.assertTrue(native_selected(merged))
@@ -202,7 +231,7 @@ class NativeRecipeTests(unittest.TestCase):
     def test_actual_stack_up_refuses_before_docker_ready_unlink_and_pg_writes(self):
         from stack import Stack, StackError
         for profile in ("core", "addons"):
-            for surface in ("nativeConsumer", "readApi", "ingestEdge", "nativeRouting"):
+            for surface in ("nativeConsumer", "sessionReadApi", "ingestEdge", "nativeRouting"):
                 with self.subTest(profile=profile, surface=surface), tempfile.TemporaryDirectory() as td:
                     s = Stack.__new__(Stack)
                     s.profile = profile; s.state = Path(td); s.overrides = s.state / "values.json"
@@ -212,7 +241,7 @@ class NativeRecipeTests(unittest.TestCase):
                     s.docker = lambda **kw: events.append("docker_config_write")
                     s.postgres = lambda *args: events.append("postgres_write")
                     with patch("stack.shutil.which", return_value="/bin/mock"):
-                        with self.assertRaisesRegex(StackError, "native_selected_requires_native"):
+                        with self.assertRaisesRegex(ValueError, "native.*(?:requires|require).*native"):
                             s.up()
                     self.assertEqual(events, [])
                     self.assertEqual(ready.read_text(), "owned-original-receipt")

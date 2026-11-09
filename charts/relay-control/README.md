@@ -19,9 +19,17 @@ never creates a Secret or renders credentials. Set `database.runtimeRole` to
 the non-secret PostgreSQL role used by `database-url`; after migrations, the
 owner grants that role runtime access only to `selfhost_*` application tables.
 
-The image must contain the compiled `@cloud/selfhost-api` package. The server
-runs `node node_modules/@cloud/selfhost-api/dist/server.js`; migrations run
-`node node_modules/@cloud/selfhost-api/dist/migrate-cli.js`.
+The image must contain the compiled `relay-control` package. The server runs
+`node node_modules/relay-control/dist/server.js`; migrations run
+`node node_modules/relay-control/dist/migrate-cli.js`. To pin an older image
+built before the rename, set `server.args` and `migrations.args` to its
+`node_modules/@cloud/selfhost-api/dist/` paths.
+
+The default image is `ghcr.io/agentworkforce/relay-control` 0.5.0. The session
+read handoff and MCP reads (`services.sessionReadApi*`,
+`secretKeys.sessionReadApiSecret`) need 0.5.1, which is not published yet; they
+stay off by default. `secretKeys.introspectSecret` and
+`introspection.audiences` wire token introspection.
 `services.relaycastUrl` and `services.relayhistoryUrl` are internal origins;
 their `*PublicUrl` counterparts must be public HTTPS origins and are returned
 to clients or used as the externally stable RelayHistory assertion audience.
@@ -40,7 +48,7 @@ whatever the API would refuse at startup:
 | --- | --- | --- |
 | `encryption.keyId` (required) | `SELFHOST_ENCRYPTION_KEY_ID` | Non-secret id of `secretKeys.encryptionKey`, 1-64 URL-safe characters. |
 | `encryption.previousKeyId` + `secretKeys.previousEncryptionKey` | `SELFHOST_ENCRYPTION_PREVIOUS_KEY_ID`, `SELFHOST_ENCRYPTION_PREVIOUS_KEY_FILE` | Key rotation; both or neither, and the id must differ from `keyId`. |
-| `secretKeys.internalToken` | `SELFHOST_INTERNAL_TOKEN_FILE` | Optional service bearer for `/internal/v1` (flows env delivery, telemetry issue reports). Never expose `/internal` publicly: when this is set and `ingress.enabled=true`, this chart routes `/internal` to a selector-less deny Service; the agent-relay GKE ingress denies it at the edge. |
+| `secretKeys.internalToken` | `SELFHOST_INTERNAL_TOKEN_FILE` | Optional service bearer for `/internal/v1` (flows env delivery, telemetry issue reports). Never expose `/internal` publicly: when this or `secretKeys.introspectSecret` is set and `ingress.enabled=true`, this chart routes `/internal` to a selector-less deny Service; the agent-relay GKE ingress denies it at the edge. |
 | `global.singleHost.host` | `SELFHOST_PUBLIC_URL` | Single-host mode (normally set on the agent-relay umbrella): `publicUrl` is derived as `https://<host>` and must be empty or equal it, and `ingress.enabled` must be `false` because the dashboard host routes `/cloud/api`, `/login` and `/api` here. |
 | `dashboardUrl` | `SELFHOST_DASHBOARD_URL` | Where OAuth callback pages and flow `runUrl`s point. Defaults to `publicUrl` + `/` in the API. |
 | `bootstrap.orgName`, `bootstrap.adminEmail` (+ optional `adminName`, `workspaceName`) | `SELFHOST_BOOTSTRAP_ORG_NAME`, `SELFHOST_BOOTSTRAP_ADMIN_EMAIL`, `SELFHOST_BOOTSTRAP_ADMIN_NAME`, `SELFHOST_BOOTSTRAP_WORKSPACE_NAME` | First-boot bootstrap (see "Sign-in, bootstrap and invites" below). `orgName` and `adminEmail` are set together; `adminName` and `workspaceName` are optional overrides. Requires `secretKeys.relaycastInternalSecret` and `dashboardUrl` (outside single-host mode). |

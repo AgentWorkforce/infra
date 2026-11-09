@@ -20,7 +20,7 @@ from urllib.parse import quote, urlsplit
 
 import yaml
 
-from native_inspect import NativeReadOnlyAdapter, sha
+from native_inspect import NativeReadOnlyAdapter, file_sha, sha
 from native_recipe import NativeRecipeError, official_sql, require, selection
 
 
@@ -256,7 +256,7 @@ class NativeBootstrapAdapter(NativeReadOnlyAdapter):
         with tarfile.open(self.inputs["sourceArchive"]) as archive:
             member = archive.getmember(name); require(member.isfile(), "official_sql_must_be_file")
             raw = archive.extractfile(member).read()
-        require(hashlib.sha256(raw).hexdigest() == source["files"][name]["sha256"], "official_source_bytes_changed")
+        require(hashlib.sha256(raw).hexdigest() == file_sha(source["files"][name]), "official_source_bytes_changed")
         return raw
 
     def _official(self, selected, name):
@@ -321,6 +321,7 @@ class NativeBootstrapAdapter(NativeReadOnlyAdapter):
                   "nodes": [{"role": "control-plane", "labels": {"agentrelay-kind-owner": "infra",
                             "agentrelay-native-creation": nonce}, "extraPortMappings": [
                             {"containerPort": 30080, "hostPort": 8080, "listenAddress": "127.0.0.1"},
+                            {"containerPort": 30443, "hostPort": 443, "listenAddress": "127.0.0.1"},
                             {"containerPort": 30443, "hostPort": 8443, "listenAddress": "127.0.0.1"}]}]}
         self._transport_call("cmd", ["kind", "create", "cluster", "--name", self.stack.name, "--image", NODE,
                         "--config", "-", "--kubeconfig", candidate], data=yaml.safe_dump(config), timeout=300, sensitive=True)

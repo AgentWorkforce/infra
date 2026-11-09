@@ -32,10 +32,27 @@ class HistoryConnection(unittest.TestCase):
             "relayhistoryReadApiUrl": ORIGIN,
             "relayhistoryReadApiEvents": True,
             "relayhistoryHostAliases": [{"ip": "10.96.137.234", "hostnames": ["history.kind.agentrelay.com"]}],
-        }, "extraEnv": [
-            {"name": "RELAYCONTROL_INTROSPECT_SECRET", "valueFrom": {"secretKeyRef": {"name": "introspection", "key": "secret"}}},
-            {"name": "SELFHOST_INTROSPECT_AUDIENCES", "value": ORIGIN},
-        ]}
+        }, "secretKeys": {"introspectSecret": "introspection-secret"},
+            "introspection": {"audiences": [ORIGIN]}, "extraEnv": []}
+
+
+    def test_native_backend_uses_independent_handoff_without_relay_auth_or_legacy_connection(self):
+        value = {"services": {"relayhistoryBackend": "native", "relayauthEnabled": False,
+            "relayhistoryUrl": "http://session-read-api.agent-relay.svc.cluster.local",
+            "relayhistoryPublicUrl": ORIGIN, "sessionReadApiUrl": "http://session-read-api.agent-relay.svc.cluster.local",
+            "sessionReadApiPublicUrl": ORIGIN, "sessionReadApiMcpReads": True},
+            "secretKeys": {"introspectSecret": "ingest-introspection", "sessionReadApiSecret": "reader-issuer"}}
+        docs = self.render(value)
+        env = {e['name']: e.get('value') for d in docs if d['kind'] == 'Deployment'
+               for e in d['spec']['template']['spec']['containers'][0]['env']}
+        self.assertEqual(env['RELAYHISTORY_BACKEND'], 'native')
+        self.assertEqual(env['SESSION_READ_API_URL'], value['services']['sessionReadApiUrl'])
+        self.assertNotIn('RELAYAUTH_URL', env)
+        self.assertNotIn('RELAYHISTORY_READ_API_URL', env)
+        for key, field in (('relayauthEnabled', True), ('relayhistoryReadApiUrl', ORIGIN),
+                           ('relayhistoryReadApiEvents', True), ('relayhistoryUrl', 'http://different.agent-relay.svc.cluster.local')):
+            bad = deepcopy(value); bad['services'][key] = field
+            self.render(bad, 'native History')
 
     def test_dormant_connection_does_not_change_pod_dns_or_env(self):
         for d in self.render({}):
@@ -105,17 +122,17 @@ class HistoryConnection(unittest.TestCase):
 
     def test_managed_connection_requires_secret_reference_and_matching_audience(self):
         selected = self.selected()
-        selected['extraEnv'] = []
-        self.render(selected, 'requires RELAYCONTROL_INTROSPECT_SECRET')
+        selected['secretKeys']['introspectSecret'] = ''
+        self.render(selected, 'requires secretKeys.introspectSecret')
         selected = self.selected()
-        selected['extraEnv'][1]['value'] = 'https://another.kind.agentrelay.com:8443'
+        selected['introspection']['audiences'] = ['https://another.kind.agentrelay.com:8443']
         self.render(selected, 'must include the exact managed')
         selected = self.selected()
-        selected['extraEnv'][1] = {'name': 'SELFHOST_INTROSPECT_AUDIENCES', 'valueFrom': {'configMapKeyRef': {'name': 'unknown-audiences', 'key': 'origins'}}}
-        self.render(selected, 'literal matching origin list')
+        selected['extraEnv'].append({'name': 'SELFHOST_INTROSPECT_AUDIENCES', 'valueFrom': {'configMapKeyRef': {'name': 'unknown-audiences', 'key': 'origins'}}})
+        self.render(selected, 'managed by structured chart values')
         selected = self.selected()
         selected['services']['relayhistoryPublicUrl'] = ORIGIN
-        selected['extraEnv'].pop()  # Control's default audience is this public URL.
+        selected['introspection']['audiences'] = []  # Default audience is this public URL.
         self.render(selected)
 
     def test_existing_extra_env_transport_remains_explicitly_compatible(self):

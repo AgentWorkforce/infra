@@ -15,7 +15,7 @@ FIXTURE = ROOT / 'charts/sessions-pipeline/ci/native-consumer-values.yaml'
 FILES = ROOT / 'charts/sessions-pipeline/files/native-consumer'
 
 class Consumer(unittest.TestCase):
-    def render(self, overlay=None, fail=False, defaults=False):
+    def render(self, overlay=None, fail=False, defaults=False, all_docs=False):
         values = yaml.safe_load(FIXTURE.read_text())
         if defaults:
             values.pop('nativeConsumer')
@@ -32,13 +32,16 @@ class Consumer(unittest.TestCase):
             self.assertNotEqual(result.returncode,0)
             return result.stderr
         self.assertEqual(result.returncode,0,result.stderr)
-        return [d for d in yaml.safe_load_all(result.stdout) if d and d.get('metadata',{}).get('labels',{}).get('app.kubernetes.io/name')=='session-pipeline-consumer']
+        docs=[d for d in yaml.safe_load_all(result.stdout) if d]
+        return docs if all_docs else [d for d in docs if d.get('metadata',{}).get('labels',{}).get('app.kubernetes.io/name')=='session-pipeline-consumer']
     def pod(self, docs, kind='Deployment'):
         return next(d['spec']['template']['spec'] for d in docs if d['kind']==kind)
     def env(self,c): return {e['name']:e for e in c['env']}
     def native(self, **kwargs): return {'nativeConsumer':kwargs}
     def boot(self, phase='prepare'):
         return self.native(bootstrap={'enabled':True,'existingSecret':'consumer-owner','ownerRole':'hoop','phase':phase})
+    def test_parallel_search_indexer_refuses(self):
+        self.assertIn("searchIndexer.enabled=false",self.render({'searchIndexer':yaml.safe_load(ROOT.joinpath('charts/sessions-pipeline/ci/search-indexer-values.yaml').read_text())['searchIndexer']},fail=True))
     def test_default_off_and_boolean_selection(self):
         self.assertEqual(self.render(defaults=True),[])
         for value in ['true',1,None]:
@@ -159,20 +162,79 @@ class Consumer(unittest.TestCase):
         overlay['nativeConsumer']['locker']['existingSecret']='';overlay['nativeConsumer']['serviceAccountName']='';self.render(overlay,fail=True)
     def composition(self):
         c=yaml.safe_load(FIXTURE.read_text())['nativeConsumer']
-        extra={'SEARCH_INDEX_POSTGRES_BACKEND_ID':c['backendId'],'LOCKER_BUCKET':c['locker']['bucket'],
+        extra={'LOCKER_BUCKET':c['locker']['bucket'],
                'LOCKER_ENDPOINT':c['locker']['endpoint'],'LOCKER_REGION':'us-east-1','PIPELINE_KEY_PREFIX':'96bulls','PIPELINE_ORG_FROM_PREFIX':'true'}
-        return {'readApi':{'enabled':True,'image':c['image'],'origin':'https://history.kind.agentrelay.com:8443','completeSince':c['completeSince'],
-            'directoryWorkspaces':'workspace-ci','allowInClusterHttp':True,'config':{'existingSecret':'reader-config'},'auth':{'mode':'relaycontrol_only','relaycontrol':{
+        return {'sessionReadApi':{'enabled':True,'image':c['image'],'origin':'https://history.kind.agentrelay.com:8443','completeSince':c['completeSince'],
+            'search':{'backend':'postgres','backendId':c['backendId']},'postgres':{'tlsProfile':'custom-ca'},'postgresCa':{'enabled':True,'configMap':c['postgres']['caConfigMap'],'key':c['postgres'].get('caKey','ca.crt'),'sha256':c['postgres']['caSha256']},'directoryWorkspaces':'workspace-ci','allowInClusterHttp':True,'config':{'existingSecret':'reader-config'},'auth':{'mode':'relaycontrol_only','relaycontrol':{
             'enabled':True,'url':'http://relay-control.ci.svc.cluster.local','existingSecret':'introspect'}},'extraEnv':[{'name':k,'value':v} for k,v in extra.items()]}}
+    def test_standalone_reader_renders_control_only_canonical_contract(self):
+        good=self.composition();good['sessionReadApi']['login']={'advertisesSync':True}
+        docs=self.render(good,all_docs=True)
+        reader=next(d for d in docs if d['kind']=='Deployment' and d['metadata']['name']=='test-read-api')
+        pod=reader['spec']['template']['spec'];container=pod['containers'][0];env=self.env(container)
+        c=yaml.safe_load(FIXTURE.read_text())['nativeConsumer']
+        for name,value in {'SERVICE':'session-read-api','RELAYHISTORY_SELFHOST_READ_API':'true','READ_API_AUTH_MODE':'relaycontrol_only',
+            'RELAYHISTORY_ACCEPT_RELAYCONTROL_TOKENS':'true','RELAYHISTORY_SELFHOST_LOGIN_ADVERTISES_SYNC':'true',
+            'READ_API_ORIGIN':'https://history.kind.agentrelay.com:8443','SEARCH_INDEX_BACKEND':'postgres','SEARCH_INDEX_POSTGRES_BACKEND_ID':c['backendId'],
+            'READ_API_COMPLETE_SINCE':c['completeSince'],'SESSION_POSTGRES_TLS_PROFILE':'custom-ca','SESSION_POSTGRES_CA_SHA256':c['postgres']['caSha256'],
+            'LOCKER_BUCKET':c['locker']['bucket'],'PIPELINE_KEY_PREFIX':'96bulls','PIPELINE_ORG_FROM_PREFIX':'true'}.items():
+            self.assertEqual(env[name]['value'],value,name)
+        self.assertEqual(container['image'],c['image']['repository']+'@'+c['image']['digest'])
+        self.assertEqual(env['RELAYHISTORY_READ_API_SECRET']['valueFrom']['secretKeyRef']['name'],'reader-config')
+        self.assertEqual(env['RELAYCONTROL_INTROSPECT_SECRET']['valueFrom']['secretKeyRef']['name'],'introspect')
+        self.assertNotIn('READ_API_INTERNAL_SECRET',env);self.assertNotIn('RELAYAUTH_ISSUER',env);self.assertNotIn('RELAYAUTH_JWKS_URL',env)
+        self.assertEqual(next(v for v in pod['volumes']if v['name']=='postgres-ca')['configMap']['name'],c['postgres']['caConfigMap'])
+        for change in [{'auth':{'relayauth':{'issuer':'https://legacy.example.com'}}},{'postgresCa':{'sha256':'f'*64}},{'postgresCa':{'configMap':'other-ca'}}]:
+            bad=copy.deepcopy(good)
+            def merge(a,b):
+                for k,v in b.items():
+                    if isinstance(v,dict) and isinstance(a.get(k),dict):merge(a[k],v)
+                    else:a[k]=v
+            merge(bad['sessionReadApi'],change);self.render(bad,fail=True)
     def test_reader_composition_requires_same_image_backend_floor_and_literal_layout(self):
         good=self.composition();self.render(good)
-        for change in [{'completeSince':'epoch'},{'search':{'backend':'clickhouse'}},{'image':{'digest':'sha256:'+'e'*64}}]:
-            bad=copy.deepcopy(good);bad['readApi'].update(change)
+        for change in [{'search':{'backend':'postgres','backendId':'wrong'}},{'completeSince':'epoch'},{'search':{'backend':'clickhouse'}},{'image':{'digest':'sha256:'+'e'*64}}]:
+            bad=copy.deepcopy(good);bad['sessionReadApi'].update(change)
             with self.subTest(change=change):self.render(bad,fail=True)
-        for name in ['LOCKER_BUCKET','PIPELINE_KEY_PREFIX','PIPELINE_ORG_FROM_PREFIX','SEARCH_INDEX_POSTGRES_BACKEND_ID','LOCKER_ENDPOINT']:
-            bad=copy.deepcopy(good);next(e for e in bad['readApi']['extraEnv'] if e['name']==name)['value']='wrong'
+        for name in ['LOCKER_BUCKET','PIPELINE_KEY_PREFIX','PIPELINE_ORG_FROM_PREFIX','LOCKER_ENDPOINT']:
+            bad=copy.deepcopy(good);next(e for e in bad['sessionReadApi']['extraEnv'] if e['name']==name)['value']='wrong'
             with self.subTest(name=name):self.render(bad,fail=True)
-        bad=copy.deepcopy(good);bad['readApi']['extraEnv'][0]={'name':'SEARCH_INDEX_POSTGRES_BACKEND_ID','valueFrom':{'configMapKeyRef':{'name':'opaque','key':'id'}}};self.render(bad,fail=True)
+        bad=copy.deepcopy(good);bad['sessionReadApi']['extraEnv'][0]={'name':'LOCKER_BUCKET','valueFrom':{'configMapKeyRef':{'name':'opaque','key':'id'}}};self.render(bad,fail=True)
+    def test_owner_secret_cannot_reach_enabled_reader_by_any_runtime_reference(self):
+        good=self.composition();good.update(self.boot('serve'));self.render(good)
+        refs=[{'config':{'existingSecret':'consumer-owner','key':'RELAYHISTORY_PIPELINE_CONSUMER_SECRET'}},
+              {'auth':{'relaycontrol':{'existingSecret':'consumer-owner'}}},
+              {'imagePullSecrets':[{'name':'consumer-owner'}]},
+              {'extraVolumes':[{'name':'owner','secret':{'secretName':'consumer-owner'}}]},
+              {'extraVolumes':[{'name':'owner','projected':{'sources':[{'secret':{'name':'consumer-owner'}}]}}]}]
+        for env_name in ['COPIED_OWNER_JSON','HOOPDB_URL']:
+            refs.append({'extraEnv':good['sessionReadApi']['extraEnv']+[{'name':env_name,'valueFrom':{'secretKeyRef':{'name':'consumer-owner','key':'RELAYHISTORY_PIPELINE_CONSUMER_SECRET'}}}]})
+        for job_enabled in [True,False]:
+            for ref in refs:
+                with self.subTest(job_enabled=job_enabled,ref=ref):
+                    bad=copy.deepcopy(good);bad['nativeConsumer']['bootstrap']['enabled']=job_enabled
+                    def merge(a,b):
+                        for k,v in b.items():
+                            if isinstance(v,dict) and isinstance(a.get(k),dict):merge(a[k],v)
+                            else:a[k]=copy.deepcopy(v)
+                    merge(bad['sessionReadApi'],ref)
+                    self.assertIn('owner bootstrap Secret must not be referenced by runtime',self.render(bad,fail=True))
+        # Same key in a dedicated runtime Secret is supported; the owner object is Job-only.
+        good['sessionReadApi']['extraEnv'].append({'name':'READER_JSON','valueFrom':{'secretKeyRef':{'name':'reader-runtime','key':'RELAYHISTORY_PIPELINE_CONSUMER_SECRET'}}})
+        self.render(good)
+        disabled=copy.deepcopy(good);disabled['sessionReadApi']['enabled']=False;disabled['sessionReadApi']['config']['existingSecret']='consumer-owner'
+        self.render(disabled)
+
+    def test_owner_secret_is_not_a_native_ingest_or_post_prepare_consumer_credential(self):
+        base=yaml.safe_load(ROOT.joinpath('charts/sessions-pipeline/ci/ingest-edge-values.yaml').read_text())['ingestEdge']
+        c=yaml.safe_load(FIXTURE.read_text())['nativeConsumer'];base['image']=c['image'];base['locker']=c['locker']
+        good={'ingestEdge':base};good.update(self.boot('serve'));self.render(good)
+        for field in ['config','locker']:
+            bad=copy.deepcopy(good);bad['ingestEdge'][field]['existingSecret']='consumer-owner'
+            self.assertIn('owner bootstrap Secret must not be referenced by runtime',self.render(bad,fail=True))
+        bad=self.native(config={'existingSecret':'consumer-owner'},bootstrap={'enabled':False,'existingSecret':'consumer-owner','phase':'serve'})
+        self.assertIn('owner bootstrap Secret must not be referenced by runtime',self.render(bad,fail=True))
+
     def test_native_ingest_must_share_store_and_qualified_image(self):
         base=yaml.safe_load(ROOT.joinpath('charts/sessions-pipeline/ci/ingest-edge-values.yaml').read_text())['ingestEdge']
         c=yaml.safe_load(FIXTURE.read_text())['nativeConsumer'];base['image']=c['image'];base['locker']=c['locker']

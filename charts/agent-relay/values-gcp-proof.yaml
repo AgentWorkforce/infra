@@ -131,7 +131,7 @@ relayhistory:
 relay-control:
   fullnameOverride: relay-control
   image:
-    repository: us-central1-docker.pkg.dev/agentrelay-96bulls-soc2-2610/awf-conformance-images/selfhost-api
+    repository: ghcr.io/agentworkforce/relay-control
     digest: ""
   database:
     runtimeRole: control_api_runtime

@@ -19,7 +19,7 @@ from urllib.parse import quote, unquote, urlsplit
 import yaml
 
 from native_bootstrap import NativeBootstrapAdapter, scram
-from native_inspect import document, native_archive, sha
+from native_inspect import document, native_archive, pipeline_coordinates, sha
 from native_recipe import NativeRecipeError, require
 
 
@@ -75,7 +75,7 @@ async function inventory(c){
 try{
  if(x.operation==='credentials'){
   if(!Array.isArray(x.credentials)||x.credentials.length!==3)fail();
-  const paths={search_consumer_runtime:'/etc/native-consumer-postgres/ca.crt',bulls96_read_api:'/etc/session-read-api-postgres/ca.crt',bulls96_session_ingest:'/etc/session-ingest-postgres/ca.crt'};
+  const paths={search_consumer_runtime:'/etc/native-consumer-postgres/ca.crt',bulls96_read_api:'/etc/session-read-postgres/ca.crt',bulls96_session_ingest:'/etc/session-ingest-postgres/ca.crt'};
   if(new Set(x.credentials.map(v=>v.role)).size!==3||x.credentials.some(v=>!paths[v.role]))fail();
   for(const item of x.credentials){const c=await connect(item.url,item.role,paths[item.role]);
    try{await c.query('BEGIN READ ONLY');await c.query('SELECT 1');await c.query('ROLLBACK')}finally{await c.end()}}
@@ -134,6 +134,11 @@ class NativePipelineAdapter(NativeBootstrapAdapter):
         else:
             self._owned_uid(selected)
 
+    def _template(self, selected, overrides):
+        """Virtual values seam: complete adapters retain their real tenant binding."""
+        return self._transport_call("cmd", ["helm", "template", "agent-relay", "charts/agent-relay", "-n", "agent-relay",
+            *self.stack.values_args(), "-f", "-"], data=yaml.safe_dump(overrides), sensitive=True, timeout=60)
+
     def _ensure_pipeline_image(self, selected):
         """Import the already-qualified native export, then prove CRI identity.
 
@@ -141,8 +146,8 @@ class NativePipelineAdapter(NativeBootstrapAdapter):
         its bytes are checked again, and the digest alias is never retargeted.
         This does not pull a mutable tag or change an application workload.
         """
-        receipt = document(self.inputs["pipelineReceipt"], selected["artifactReceiptSha256"])
-        tag = receipt["build"]["localTag"]
+        receipt = pipeline_coordinates(self.inputs, selected)
+        tag = receipt["localTag"]
         require(re.fullmatch(r"agent-relay-kind/[a-z0-9._/-]+:[A-Za-z0-9_.-]+", tag), "local_pipeline_tag_required")
         reference = selected["reference"]
         bare_reference = reference.removeprefix("docker.io/")
@@ -166,7 +171,10 @@ class NativePipelineAdapter(NativeBootstrapAdapter):
             require(job["metadata"]["uid"] == self._operator["uid"] and job["spec"] == self._operator["spec"], "native_operator_job_changed")
             return self._operator["pod"]
         self._ensure_pipeline_image(selected)
-        name = "native-owner-" + self._selected_sha[:16]
+        # A repeat invocation creates a new bounded diagnostic operator. It
+        # never adopts/requeues the previous owner's terminal Job, nor runs
+        # consumer bootstrap or schema apply in repeat mode.
+        name = "native-owner-" + self._selected_sha[:16] + "-" + secrets.token_hex(4)
         ref = selected["secretRefs"]["owner"]
         ca = selected["postgresCa"]
         spec = {"backoffLimit": 0, "activeDeadlineSeconds": 1200, "template": {
@@ -255,8 +263,7 @@ class NativePipelineAdapter(NativeBootstrapAdapter):
         # Resolve/check the chart job before making the one-time SQL helper.
         overrides = {"sessions-pipeline": {"nativeConsumer": {"bootstrap": {"enabled": True, "phase": "prepare",
             "existingSecret": selected["secretRefs"]["owner"]["name"], "key": selected["secretRefs"]["owner"]["key"], "ownerRole": "hoop"}}}}
-        rendered = self._transport_call("cmd", ["helm", "template", "agent-relay", "charts/agent-relay", "-n", "agent-relay",
-            *self.stack.values_args(), "-f", "-"], data=yaml.safe_dump(overrides), sensitive=True, timeout=60)
+        rendered = self._template(selected, overrides)
         docs = [d for d in yaml.safe_load_all(rendered.stdout) if d]
         jobs = [d for d in docs if d["kind"] == "Job" and d["metadata"].get("labels", {}).get("app.kubernetes.io/component") == "native-consumer-bootstrap"]
         require(len(jobs) == 1, "one_managed_consumer_bootstrap_job_required")
@@ -350,7 +357,7 @@ class NativePipelineAdapter(NativeBootstrapAdapter):
         owner_password = unquote(urlsplit(json.loads(base64.b64decode(owner_data, validate=True).decode())[owner_ref["jsonField"]]).password or "")
         require(owner_password and len({owner_password, *generated.values()}) == 4, "distinct_native_runtime_passwords_required")
         del owner_password, owner_data
-        for key, path in (("consumer", "/etc/native-consumer-postgres/ca.crt"), ("reader", "/etc/session-read-api-postgres/ca.crt"), ("ingest", "/etc/session-ingest-postgres/ca.crt")):
+        for key, path in (("consumer", "/etc/native-consumer-postgres/ca.crt"), ("reader", "/etc/session-read-postgres/ca.crt"), ("ingest", "/etc/session-ingest-postgres/ca.crt")):
             role = selected["roles"][key]
             password = generated.pop(key)
             verifiers[role] = scram(password)

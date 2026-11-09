@@ -26,8 +26,9 @@
 # `kubectl rollout restart` on relayhistory and relaycast. It never changes
 # Helm releases, NetworkPolicies, release Secrets or the ingress. Cleanup (case
 # 15, on by default) deletes the Relaycast workspaces, revokes the device
-# tokens, and removes the flow, worker, Pod and Secret; the control plane has
-# no workspace delete API, so the two e2e-<marker>-a/b workspaces remain.
+# tokens, removes the flow, worker, Pod and Secret, and deletes the two
+# e2e-<marker>-a/b workspaces. A control plane older than relay-control 0.5.0
+# has no workspace delete API, so they remain there (reported as SKIP).
 #
 # The public edge defaults to the GKE layout (--edge gke: hosts <base>,
 # api.<base>, cast.<base>, history.<base> behind a ManagedCertificate). On
@@ -1076,7 +1077,7 @@ if $CLEANUP; then
 else
   case_skip "--no-cleanup"
 fi
-case_end 15 "cleanup: Relaycast workspaces deleted, device tokens revoked (control-plane workspaces have no delete API)"
+case_end 15 "cleanup: Relaycast workspaces deleted, device tokens revoked, control-plane test workspaces deleted"
 
 printf '\n== summary (%s)\n' "$(ts)"
 ((${#ALLOWED_GAPS[@]})) && printf 'E2E_ALLOWED_GAPS=%s\n' "${ALLOWED_GAPS[*]}"

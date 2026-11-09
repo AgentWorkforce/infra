@@ -2,7 +2,7 @@
 
 The adapter is deliberately injected: the legacy Stack.up adapter must not be
 used until it implements every operation below. The same plan serves core and
-addons; licensed workloads are an additional phase after the native core.
+addons; selected optional workloads are a separate proof phase after native core.
 """
 from copy import deepcopy
 from datetime import datetime, timezone
@@ -36,6 +36,7 @@ SECRET_KEYS = {
     "reader": ("reader-json", "supabase_url"),
     "ingest": ("database-url", None),
     "introspection": ("introspect-secret", None),
+    "readerIssuer": ("internal-secret", None),
     "locker": ("rootPassword", None),
 }
 CORE_OPERATIONS = (
@@ -65,7 +66,7 @@ RECEIPT_FIELDS = {
     "verify_owner_final": {"ownerOid", "ownerNoCreateRole"}, "verify_claimed_roles": {"roleOids"},
     "initial_credentials": {"secretUids", "roleOids"}, "verify_credentials": {"secretUids", "roleOids"},
     "serve": {"releaseRevision", "renderSha256"}, "verify_ready": {"deploymentUids"},
-    "addons": {"signedLicenseVerified", "featureModes"}, "record_ready": {"receiptSha256"},
+    "addons": {"capabilitiesVerified", "workloadsVerified", "apiVerified", "uiVerified", "featureModes"}, "record_ready": {"receiptSha256"},
 }
 
 
@@ -101,7 +102,7 @@ def phase_receipt(name, receipt):
         elif key == "featureModes":
             require(isinstance(value, dict) and set(value) <= {"flows", "relayfile", "chief"} and
                     all(v in {"disabled", "enabled"} for v in value.values()), "invalid_feature_mode_receipt")
-        elif key in {"ownerNoCreateRole", "signedLicenseVerified"}:
+        elif key in {"ownerNoCreateRole", "capabilitiesVerified", "workloadsVerified", "apiVerified", "uiVerified"}:
             require(type(value) is bool, "invalid_boolean_receipt")
         elif key in {"pending", "applied", "skipped", "releaseRevision", "ownerOid", "consumerOid"}:
             require(type(value) is int and value >= 0, "invalid_integer_receipt")
@@ -117,8 +118,9 @@ def phase_receipt(name, receipt):
         else:
             require(key == "jobName" and isinstance(value, str) and re.fullmatch(r"[a-z0-9][a-z0-9-]{0,62}", value), "invalid_named_identity_receipt")
     if name == "addons":
-        require(receipt.get("signedLicenseVerified") is True and receipt.get("featureModes", {}).get("flows") == "enabled" and
-                receipt.get("featureModes", {}).get("relayfile") == "enabled", "addons_effective_signed_license_proof_required")
+        require(all(receipt.get(k) is True for k in ("capabilitiesVerified", "workloadsVerified", "apiVerified", "uiVerified")) and
+                receipt.get("featureModes", {}).get("flows") == "enabled" and
+                receipt.get("featureModes", {}).get("relayfile") == "enabled", "addons_selected_workload_api_ui_proof_required")
     return receipt
 
 
@@ -142,7 +144,7 @@ def selection(raw):
             re.fullmatch(r"sha256:[a-f0-9]{64}", control.get("manifestDigest", "")) and
             re.fullmatch(r"sha256:[a-f0-9]{64}", control.get("configDigest", "")) and
             control.get("reference", "").endswith("@" + control.get("manifestDigest", "invalid")) and
-            control.get("nativeEvents") is True and control.get("independentIssuer") is False,
+            control.get("nativeEvents") is True and type(control.get("independentIssuer")) is bool,
             "qualified_control_native_readback_required")
     digest(control.get("artifactReceiptSha256"), "qualified_control_receipt_required")
     accepted = v.get("acceptedSource", {})
@@ -188,18 +190,26 @@ def selection(raw):
     require(isinstance(v.get("lockerBucket"), str) and re.fullmatch(r"[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]", v["lockerBucket"]) and
             isinstance(v.get("lockerClaim"), str) and re.fullmatch(r"[a-z0-9][a-z0-9-]{0,62}", v["lockerClaim"]),
             "explicit_locker_bucket_claim_required")
-    require(v.get("readerLoginAdvertisesSync") is True, "managed_sync_discovery_required")
+    require(type(v.get("readerLoginAdvertisesSync")) is bool and
+            v["readerLoginAdvertisesSync"] is (not control["independentIssuer"]),
+            "reader_discovery_must_match_selected_authority")
+    require(len({refs[n]["name"] for n in SECRET_KEYS}) == len(SECRET_KEYS),
+            "distinct_native_authority_and_database_secrets_required")
     require(v.get("historyOrigin") == "https://history.kind.agentrelay.com:8443" and
             v.get("siteOrigin") == "https://relay.kind.agentrelay.com", "origin_audience_binding_required")
     require(v.get("backend") == "postgres" and isinstance(v.get("backendId"), str) and
             re.fullmatch(r"[a-z0-9][a-z0-9-]{0,62}", v["backendId"]), "explicit_backend_required")
-    require(re.fullmatch(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d+)?Z", v.get("completeSince", "")),
-            "explicit_prospective_coverage_floor_required")
-    try:
-        floor = datetime.fromisoformat(v["completeSince"].replace("Z", "+00:00"))
-    except ValueError:
-        raise NativeRecipeError("invalid_coverage_floor_date") from None
-    require(floor <= datetime.now(timezone.utc), "future_coverage_floor_refused")
+    # Epoch is the upstream explicit new-store contract. Existing stores may
+    # use a prospective ISO floor, but repeat admission binds the exact prior
+    # selection and cannot lower it merely by choosing epoch.
+    if v.get("completeSince") != "epoch":
+        require(re.fullmatch(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d+)?Z", v.get("completeSince", "")),
+                "explicit_coverage_floor_required")
+        try:
+            floor = datetime.fromisoformat(v["completeSince"].replace("Z", "+00:00"))
+        except ValueError:
+            raise NativeRecipeError("invalid_coverage_floor_date") from None
+        require(floor <= datetime.now(timezone.utc), "future_coverage_floor_refused")
     require(v.get("publication") is False and v.get("gc") is False and
             v.get("ownerBuffered") is False, "unsupported_owner_ceremonies_must_stay_off")
     return v
@@ -211,7 +221,7 @@ def native_selected(values):
     if not isinstance(pipeline, dict):
         raise NativeRecipeError("pipeline_values_must_be_object")
     enabled = False
-    for key in ("nativeConsumer", "readApi", "ingestEdge", "nativeRouting"):
+    for key in ("nativeConsumer", "readApi", "sessionReadApi", "ingestEdge", "nativeRouting"):
         part = pipeline.get(key, {})
         require(isinstance(part, dict), "native_values_must_be_object")
         require("enabled" not in part or type(part["enabled"]) is bool, "native_enabled_must_be_boolean")
@@ -317,7 +327,7 @@ class NativeRecipe:
                    "unexpected_render_receipt_fields")
         require(rendered.get("legacyWriterCount") == 0 and rendered.get("managedNative") is True and
                 rendered.get("ownerBuffered") is False and rendered.get("publication") is False and
-                rendered.get("readerLoginAdvertisesSync") is True,
+                rendered.get("readerLoginAdvertisesSync") is s["readerLoginAdvertisesSync"],
                 "rendered_native_contract_refused")
         results = []
 
@@ -369,7 +379,7 @@ class NativeRecipe:
         call("verify_ready")
         if s["profile"] == "addons":
             call("addons")
-        # Readiness is not an upload/UI/license acceptance claim. The separate
+        # Readiness is not an upload/UI acceptance claim. The separate
         # proof driver must use real supported login and actual session readback.
         call("record_ready", {"clusterUid": facts.get("clusterUid"), "sourceRevision": s["sourceRevision"],
                               "generation": s["generation"], "pipelineScope": "native-canonical",

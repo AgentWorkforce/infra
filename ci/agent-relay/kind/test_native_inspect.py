@@ -33,7 +33,8 @@ def tar(path, files):
 
 
 def oci(path, source):
-    config = json.dumps({"architecture": "arm64", "os": "linux", "config": {"Labels": {"org.opencontainers.image.revision": source}}}).encode()
+    config = json.dumps({"architecture": "arm64", "os": "linux", "rootfs": {"type": "layers", "diff_ids": []},
+                         "config": {"Labels": {"org.opencontainers.image.revision": source}}}).encode()
     cd = "sha256:" + h(config)
     manifest = json.dumps({"schemaVersion": 2, "config": {"digest": cd}, "layers": []}).encode()
     md = "sha256:" + h(manifest)
@@ -117,7 +118,62 @@ class NativeInspectTests(unittest.TestCase):
 
     def image(self, identity, source):
         return {"Id": identity, "Descriptor": {"digest": identity}, "Architecture": "arm64", "Os": "linux",
-                "Config": {"Labels": {"org.opencontainers.image.revision": source}, "Env": []}}
+                "RootFS": {"Layers": []}, "Config": {"Labels": {"org.opencontainers.image.revision": source}, "Env": []}}
+
+    def public_receipt(self):
+        source = json.loads(Path(self.inputs["sourceManifest"]).read_text())
+        old = json.loads(Path(self.inputs["pipelineReceipt"]).read_text())
+        source.pop("sourceClean")
+        source.update(sourceTree="7" * 40, sourceState="reviewed-archive-description-not-a-clean-flag")
+        source["files"] = {name: info["sha256"] for name, info in source["files"].items()}
+        self.inputs["sourceManifestSha256"] = write_json(self.inputs["sourceManifest"], source)
+        build = self.root / "build-metadata.json"
+        self.inputs.update(pipelineBuildMetadata=build, pipelineBuildMetadataSha256=write_json(build, {
+            "containerimage.digest": old["artifact"]["buildIndexDigest"],
+            "containerimage.descriptor": {"digest": old["artifact"]["buildIndexDigest"]}}))
+        public = {"result": "PASS_OFFICIAL_SOURCE_ARCHIVE_NATIVE_CHAIN", "sourceRevision": self.s["sourceRevision"],
+            "sourceTree": source["sourceTree"], "sourceState": source["sourceState"], "architecture": self.s["architecture"],
+            "officialDockerfileUnmodified": True, "manifestDigest": self.s["manifestDigest"], "configDigest": self.s["configDigest"],
+            "generation": self.s["generation"], "sourceArchiveSha256": source["archiveSha256"],
+            "sourceManifestSha256": self.inputs["sourceManifestSha256"], "localTag": old["build"]["localTag"],
+            "archiveSha256": old["artifact"]["archiveSha256"], "allCopiedSourceFiles": old["allCopiedTrackedSourceCheck"]}
+        self.s["artifactReceiptSha256"] = write_json(self.inputs["pipelineReceipt"], public)
+        self.adapter = NativeReadOnlyAdapter(self.stack, self.inputs)
+
+    def test_actual_flat_public_schema_verifies_original_archive_and_every_image_file(self):
+        self.public_receipt()
+        before = {p: Path(p).read_bytes() for p in (self.inputs["pipelineReceipt"], self.inputs["sourceManifest"], self.inputs["pipelineBuildMetadata"])}
+        self.assertEqual(self.adapter.verify_artifact(self.s)["generation"], self.s["generation"])
+        self.assertEqual(before, {p: Path(p).read_bytes() for p in before}, "qualification receipts are read, never reshaped on disk")
+        runs = [args for args, _ in self.stack.calls if "run" in args]
+        self.assertEqual(len(runs), 2)
+
+    def test_flat_receipt_missing_or_changed_build_metadata_refuses_before_docker(self):
+        self.public_receipt()
+        bad = dict(self.inputs); bad.pop("pipelineBuildMetadata"); bad.pop("pipelineBuildMetadataSha256")
+        with self.assertRaisesRegex(NativeRecipeError, "pinned_public"): NativeReadOnlyAdapter(self.stack, bad).verify_artifact(self.s)
+        self.assertEqual(self.stack.calls, [])
+        Path(self.inputs["pipelineBuildMetadata"]).write_text("changed")
+        with self.assertRaisesRegex(NativeRecipeError, "evidence_bytes_changed"): self.adapter.verify_artifact(self.s)
+        self.assertEqual(self.stack.calls, [])
+
+    def test_flat_receipt_source_tree_and_source_manifest_are_exact_bound_inputs(self):
+        self.public_receipt()
+        path = self.inputs["sourceManifest"]
+        source = json.loads(Path(path).read_text()); source["sourceTree"] = "8" * 40
+        self.inputs["sourceManifestSha256"] = write_json(path, source)
+        with self.assertRaisesRegex(NativeRecipeError, "public_source_tree"): self.adapter.verify_artifact(self.s)
+        self.assertEqual(self.stack.calls, [])
+
+    def test_flat_runtime_config_or_rootfs_drift_refuses_before_any_container_probe(self):
+        self.public_receipt()
+        original = deepcopy(self.stack.images["pipeline:fixture"])
+        for mutate in (lambda x: x["RootFS"].update(Layers=["sha256:" + "f" * 64]),
+                       lambda x: x["Config"]["Labels"].update({"extra": "unqualified-runtime-config"})):
+            image = deepcopy(original); mutate(image); self.stack.images["pipeline:fixture"] = image
+            self.stack.calls.clear()
+            with self.assertRaisesRegex(NativeRecipeError, "native_runtime_config"): self.adapter.verify_artifact(self.s)
+            self.assertFalse(any("run" in a for a, _ in self.stack.calls))
 
     def test_real_oci_source_archive_and_module_probe_positive(self):
         result = self.adapter.verify_artifact(self.s)
@@ -177,7 +233,7 @@ class NativeInspectTests(unittest.TestCase):
             objects.append({"kind": "Secret", "metadata": {"name": ref["name"], "uid": ref["name"] + "-uid"}, "immutable": True, "data": {ref["key"]: "c3ludGhldGlj"}})
         for kind in ("owner", "consumer", "reader", "ingest"):
             ref = self.s["secretRefs"][kind]
-            folder = "native-consumer" if kind in ("owner", "consumer") else ("session-read-api" if kind == "reader" else "session-ingest")
+            folder = "native-consumer" if kind in ("owner", "consumer") else ("session-read" if kind == "reader" else "session-ingest")
             url = "postgresql://" + self.s["roles"][kind] + ":synthetic-" + kind + "@postgres.agent-relay.svc.cluster.local:5432/hoopdb?sslmode=verify-full&sslrootcert=/etc/" + folder + "-postgres/ca.crt"
             payload = json.dumps({ref["jsonField"]: url}) if ref["jsonField"] else url
             obj = next(o for o in objects if o["metadata"]["name"] == ref["name"])
@@ -236,7 +292,7 @@ class NativeInspectTests(unittest.TestCase):
         self.assertEqual([a for a, _ in self.stack.calls], [["kind", "get", "clusters"]])
 
     def render_fixture(self):
-        values = {"sessions-pipeline": {"nativeRouting": {"enabled": True}, "readApi": {"loginAdvertisesSync": True, "extraEnv": []}}}
+        values = {"sessions-pipeline": {"nativeRouting": {"enabled": True}, "sessionReadApi": {"login": {"advertisesSync": True}, "extraEnv": []}}}
         (self.root / "values.yaml").write_text(yaml.safe_dump(values))
         docs = []
         for name, kind, service, variable in [
@@ -290,7 +346,7 @@ class NativeInspectTests(unittest.TestCase):
     def test_sync_flag_is_typed_and_not_an_extra_env_workaround(self):
         self.render_fixture()
         path = self.root / "values.yaml"; values = yaml.safe_load(path.read_text())
-        values["sessions-pipeline"]["readApi"]["extraEnv"] = [{"name": "RELAYHISTORY_SELFHOST_LOGIN_ADVERTISES_SYNC", "value": "true"}]
+        values["sessions-pipeline"]["sessionReadApi"]["extraEnv"] = [{"name": "RELAYHISTORY_SELFHOST_LOGIN_ADVERTISES_SYNC", "value": "true"}]
         path.write_text(yaml.safe_dump(values))
         with self.assertRaisesRegex(NativeRecipeError, "extra_env"): self.adapter.render(self.s)
 

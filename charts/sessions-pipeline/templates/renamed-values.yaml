@@ -2,6 +2,10 @@
 {{- if hasKey .Values "locker" -}}
 {{- fail "sessions-pipeline: locker dependency values were renamed to session-object-storage; move that block (worker.locker and alleyoop.locker remain internal adapter configuration). Do not use --reuse-values for this rename." -}}
 {{- end -}}
+{{- /* The read API moved to its own chart. Refusing the old key also means two readers can never both render. */ -}}
+{{- if hasKey .Values "readApi" -}}
+{{- fail "sessions-pipeline: readApi moved to the session-read-api chart under sessionReadApi. Move the block: postgres TLS from extraEnv SESSION_POSTGRES_* to postgres.tlsProfile and postgresCa, and set auth.mode explicitly if you relied on legacy. The Deployment and Service keep the name <release>-read-api. Do not use --reuse-values for this rename; see docs/self-hosted-session-read-api.md." -}}
+{{- end -}}
 {{- /* An upgrade from a release that used the old default name would prune PVC/locker and create an empty claim. */ -}}
 {{- $storage := index .Values "session-object-storage" | default dict -}}
 {{- $persistence := $storage.persistence | default dict -}}

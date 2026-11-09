@@ -199,6 +199,9 @@ class Stack:
         files = [ROOT / "Makefile", ROOT / "ci/agent-relay/kind/stack.py", ROOT / "ci/agent-relay/kind/addons.py",
                  ROOT / "ci/agent-relay/kind/edge.py", ROOT / "ci/agent-relay/kind/tls.py",
                  ROOT / "ci/agent-relay/kind/native_network.py",
+                 *[ROOT / "ci/agent-relay/kind" / (name + ".py") for name in
+                   ("native_recipe", "native_inspect", "native_bootstrap", "native_pipeline", "native_control",
+                    "native_core_values", "native_core", "native_core_cli")],
                  ROOT / "ci/agent-relay/kind/bootstrap.mjs", ROOT / "ci/agent-relay/kind/control.py",
                  ROOT / "ci/agent-relay/kind/named_upgrade.py",
                  ROOT / "ci/agent-relay/kind/storage-name-renderer/plugin.yaml",

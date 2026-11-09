@@ -40,7 +40,9 @@ collector source SHA. The declared source is pinned to the reviewed revision
 `8359483d2666c1f374190c102237c3022ca3d466`; accepting a different runtime requires
 a reviewed allowlist update. This declaration is not cryptographic verification
 of image contents: verify the actual archive/OCI source label separately. The collector image must contain Node 22 or later and
-`node_modules/@cloud/selfhost-api/dist/collector-cli.js`; the proxy must contain
+`node_modules/@cloud/selfhost-api/dist/collector-cli.js`. Current relay-control
+images do not contain that CLI, so the chart refuses a `relay-control` or
+`selfhost-api` repository at render time. The proxy must contain
 nginx and run this chart's configuration as UID/GID 1000. No runnable images
 are selected by default. The `ci/` image identities are render-only fixtures.
 

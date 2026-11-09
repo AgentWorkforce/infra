@@ -15,7 +15,7 @@ def values(profile='core'):
     origin = 'https://history.kind.agentrelay.com:8443'
     return {'localKind': {'profile': profile, 'enabled': True, 'allowLocalOnly': True}, 'sessions-pipeline': {
         'nativeRouting': {'enabled': True, 'origin': origin, 'className': 'traefik', 'tls': {'existingSecret': 'kind-tls'}},
-        'readApi': {'enabled': True, 'origin': origin, 'loginAdvertisesSync': True, 'auth': {'mode': 'relaycontrol_only', 'relaycontrol': {'enabled': True}}}, 'ingestEdge': {'enabled': True, 'origin': origin}},
+        'sessionReadApi': {'enabled': True, 'origin': origin, 'login': {'advertisesSync': True}, 'auth': {'mode': 'relaycontrol_only', 'relaycontrol': {'enabled': True}}}, 'ingestEdge': {'enabled': True, 'origin': origin}},
         'relay-control': {'services': {'relayhistoryPublicUrl': origin, 'relayauthEnabled': False, 'relayhistoryReadApiEvents': True}}}
 
 
@@ -101,6 +101,42 @@ class NativeNetwork(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.stack = Fixture(self.temp.name)
+
+    def independent(self):
+        v = values(); reader = v["sessions-pipeline"]["sessionReadApi"]
+        reader.update(login={"advertisesSync": False}, events={"messageIds": True},
+            auth={"mode": "self_issued", "relaycontrol": {"enabled": False},
+                  "selfIssued": {"internalSecret": {"existingSecret": "reader-issuer", "key": "internal-secret"}}})
+        v["relay-control"]["services"].update(relayhistoryBackend="native", relayhistoryReadApiEvents=False,
+            sessionReadApiUrl="http://agent-relay-read-api.agent-relay.svc.cluster.local",
+            relayhistoryUrl="http://agent-relay-read-api.agent-relay.svc.cluster.local",
+            sessionReadApiPublicUrl=reader["origin"])
+        v["relay-control"]["secretKeys"] = {"sessionReadApiSecret": "reader-internal", "introspectSecret": "ingest-introspection"}
+        return v
+
+    def test_independent_private_reader_never_creates_or_injects_public_dns_alias(self):
+        v = self.independent(); before = copy.deepcopy(v)
+        record = n.ensure(self.stack, v)
+        self.assertEqual(record["type"], "local-kind-native-private-reader")
+        self.assertIsNone(self.stack.service)
+        self.assertFalse((self.stack.state / n.RECORD).exists())
+        self.assertEqual(n.selected_values(v, record), before)
+        self.assertEqual(n.ensure(self.stack, v), record)
+        self.stack.assert_anchors(self)
+
+    def test_independent_authority_mixing_and_legacy_service_refuse_without_mutation(self):
+        for change in (lambda v: v["relay-control"]["services"].update(relayhistoryReadApiUrl=v["sessions-pipeline"]["sessionReadApi"]["origin"]),
+                       lambda v: v["sessions-pipeline"]["sessionReadApi"]["login"].update(advertisesSync=True),
+                       lambda v: v["sessions-pipeline"]["sessionReadApi"]["events"].update(messageIds=False),
+                       lambda v: v["sessions-pipeline"]["sessionReadApi"]["auth"]["relaycontrol"].update(enabled=True),
+                       lambda v: v["relay-control"]["services"].update(sessionReadApiUrl="http://foreign.agent-relay.svc.cluster.local")):
+            v = self.independent(); change(v)
+            with self.assertRaises(ValueError): n.ensure(self.stack, v)
+        self.assertFalse(any(c[0] == "k" and c[1][0] == "create" for c in self.stack.calls))
+        self.stack.seed_owned()
+        with self.assertRaisesRegex(ValueError, "silently reuse"):
+            n.preflight(self.stack, self.independent())
+        self.stack.assert_anchors(self)
 
     def test_default_off_does_not_inspect_write_or_prepare_any_network(self):
         before = {p.name: p.read_bytes() for p in Path(self.temp.name).iterdir()}
@@ -256,7 +292,7 @@ class NativeNetwork(unittest.TestCase):
     def test_profile_mismatch_malformed_bool_and_private_origin_refuse_without_mutation(self):
         for mutate in (lambda v: v["localKind"].update(profile="addons"),
                        lambda v: v["sessions-pipeline"]["nativeRouting"].update(enabled=1),
-                       lambda v: [v["sessions-pipeline"][key].update(origin="https://history.internal:8443") for key in ("nativeRouting", "readApi", "ingestEdge")]):
+                       lambda v: [v["sessions-pipeline"][key].update(origin="https://history.internal:8443") for key in ("nativeRouting", "sessionReadApi", "ingestEdge")]):
             selected = values();mutate(selected)
             with self.assertRaises(ValueError):
                 n.preflight(self.stack, selected)
@@ -311,9 +347,9 @@ class NativeNetwork(unittest.TestCase):
             lambda v: v["relay-control"]["services"].update(relayauthEnabled=True),
             lambda v: v["relay-control"]["services"].update(relayhistoryReadApiEvents=False),
             lambda v: v["relay-control"]["services"].update(relayhistoryReadApiEvents="true"),
-            lambda v: v["sessions-pipeline"]["readApi"].update(loginAdvertisesSync=False),
-            lambda v: v["sessions-pipeline"]["readApi"]["auth"].update(mode="legacy"),
-            lambda v: v["sessions-pipeline"]["readApi"]["auth"]["relaycontrol"].update(enabled=False)]
+            lambda v: v["sessions-pipeline"]["sessionReadApi"]["login"].update(advertisesSync=False),
+            lambda v: v["sessions-pipeline"]["sessionReadApi"]["auth"].update(mode="legacy"),
+            lambda v: v["sessions-pipeline"]["sessionReadApi"]["auth"]["relaycontrol"].update(enabled=False)]
         for mutate in mutations:
             selected = values();mutate(selected)
             with self.assertRaises(ValueError):
@@ -339,7 +375,7 @@ class NativeNetwork(unittest.TestCase):
         cfg = n.selection(selected)
         self.assertEqual(cfg["ingress"], "kind.native.history")
         self.assertEqual(cfg["tls"], "kind.history.tls")
-        selected["sessions-pipeline"]["readApi"]["fullnameOverride"] = "invalid.service"
+        selected["sessions-pipeline"]["sessionReadApi"]["fullnameOverride"] = "invalid.service"
         with self.assertRaisesRegex(ValueError, "Service names"):
             n.selection(selected)
 
@@ -358,7 +394,7 @@ class NativeNetwork(unittest.TestCase):
 
     def test_mismatched_origin_alias_or_explicit_control_url_refuses_without_rewriting(self):
         observation = self.stack.seed_owned()
-        for mutate in (lambda v: v['sessions-pipeline']['readApi'].update(origin='https://other.kind.agentrelay.com:8443'),
+        for mutate in (lambda v: v['sessions-pipeline']['sessionReadApi'].update(origin='https://other.kind.agentrelay.com:8443'),
                        lambda v: v['relay-control']['services'].update(relayhistoryReadApiUrl='http://internal'),
                        lambda v: v['relay-control']['services'].update(relayhistoryHostAliases=[{'ip': '10.1.1.1', 'hostnames': ['other']}])):
             selected = values();mutate(selected);before = copy.deepcopy(selected)

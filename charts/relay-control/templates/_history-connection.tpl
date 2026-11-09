@@ -8,20 +8,8 @@
 {{- if or (not (regexMatch $pattern $url)) (regexMatch "(?i)\\.(localhost|local|internal|lan|invalid|test|example|home\\.arpa|onion)(:[0-9]{1,5})?$" $url) (regexMatch "(?i)\\.example\\.(com|net|org)(:[0-9]{1,5})?$" $url) }}{{ fail "services.relayhistoryReadApiUrl must be a bare public HTTPS DNS origin" }}{{ end -}}
 {{- $port := regexFind ":[0-9]+$" $url -}}
 {{- if and $port (or (lt (int (trimPrefix ":" $port)) 1) (gt (int (trimPrefix ":" $port)) 65535)) }}{{ fail "services.relayhistoryReadApiUrl port must be between 1 and 65535" }}{{ end -}}
-{{- $secretRef := false -}}
-{{- $audiences := list .Values.services.relayhistoryPublicUrl -}}
-{{- range .Values.extraEnv -}}
-{{- if kindIs "map" . -}}
-{{- if eq (.name | default "") "RELAYCONTROL_INTROSPECT_SECRET" -}}
-{{- if and (kindIs "map" .valueFrom) (kindIs "map" .valueFrom.secretKeyRef) .valueFrom.secretKeyRef.name .valueFrom.secretKeyRef.key }}{{ $secretRef = true }}{{ end -}}
-{{- end -}}
-{{- if eq (.name | default "") "SELFHOST_INTROSPECT_AUDIENCES" -}}
-{{- if not (kindIs "string" .value) }}{{ fail "managed native History requires SELFHOST_INTROSPECT_AUDIENCES as a literal matching origin list" }}{{ end -}}
-{{- if trim .value }}{{ $audiences = list }}{{ range splitList "," .value }}{{ if trim . }}{{ $audiences = append $audiences (trim .) }}{{ end }}{{ end }}{{ end -}}
-{{- end -}}
-{{- end -}}
-{{- end -}}
-{{- if not $secretRef }}{{ fail "managed native History requires RELAYCONTROL_INTROSPECT_SECRET from extraEnv.valueFrom.secretKeyRef" }}{{ end -}}
+{{- if not .Values.secretKeys.introspectSecret }}{{ fail "managed native History requires secretKeys.introspectSecret" }}{{ end -}}
+{{- $audiences := .Values.introspection.audiences | default (list .Values.services.relayhistoryPublicUrl) -}}
 {{- if not (has $url $audiences) }}{{ fail "SELFHOST_INTROSPECT_AUDIENCES must include the exact managed native History reader origin" }}{{ end -}}
 {{- else if $services.relayhistoryReadApiEvents }}{{ fail "services.relayhistoryReadApiEvents requires services.relayhistoryReadApiUrl" }}{{ end -}}
 {{- $aliases := $services.relayhistoryHostAliases -}}

@@ -42,7 +42,7 @@ def refuse_legacy_bootstrap(layers):
         pipeline = layer.get("sessions-pipeline", {})
         if not isinstance(pipeline, dict):
             fail("pipeline values must be an object")
-        for name in ("readApi", "ingestEdge", "nativeConsumer", "nativeRouting"):
+        for name in ("readApi", "sessionReadApi", "ingestEdge", "nativeConsumer", "nativeRouting"):
             if name not in pipeline:
                 continue
             slot = pipeline[name]
@@ -71,7 +71,9 @@ def selection(values):
         fail("nativeRouting.enabled must be a boolean")
     if not routing.get("enabled", False):
         return None
-    reader, ingest = pipeline.get("readApi", {}), pipeline.get("ingestEdge", {})
+    if pipeline.get("readApi", {}).get("enabled") is True:
+        fail("the deprecated readApi alias cannot select a native reader")
+    reader, ingest = pipeline.get("sessionReadApi", {}), pipeline.get("ingestEdge", {})
     if not isinstance(reader, dict) or not isinstance(ingest, dict):
         fail("reader and ingest values must be objects")
     origin = routing.get("origin")
@@ -105,14 +107,36 @@ def selection(values):
     if not isinstance(control, dict) or not isinstance(control.get("services", {}), dict):
         fail("Control service values must be an object")
     services = control.get("services", {})
-    if (services.get("relayauthEnabled") is not False
-            or not isinstance(reader.get("auth"), dict) or reader["auth"].get("mode") != "relaycontrol_only"
-            or not isinstance(reader["auth"].get("relaycontrol", {}), dict)
-            or reader["auth"].get("relaycontrol", {}).get("enabled") is not True
-            or services.get("relayhistoryReadApiEvents") is not True or reader.get("loginAdvertisesSync") is not True):
-        fail("Pattern A requires Control-only auth, explicit native events and grant-aware sync login")
-    if services.get("relayhistoryReadApiUrl") not in (None, "", origin):
-        fail("existing Control read API origin differs")
+    mode = reader.get("auth", {}).get("mode")
+    independent = mode == "self_issued"
+    if services.get("relayauthEnabled") is not False:
+        fail("native History requires RelayAuth disabled")
+    if independent:
+        rc = reader["auth"].get("relaycontrol", {})
+        issuer = reader["auth"].get("selfIssued", {}).get("internalSecret", {})
+        url = services.get("sessionReadApiUrl")
+        expected_url = "http://" + (reader.get("fullnameOverride") or "agent-relay-read-api") + ".agent-relay.svc.cluster.local"
+        if (services.get("relayhistoryBackend") != "native" or url != expected_url
+                or services.get("relayhistoryUrl") != url or services.get("sessionReadApiPublicUrl") != origin
+                or services.get("relayhistoryReadApiUrl") not in (None, "")
+                or services.get("relayhistoryReadApiEvents", False) is not False
+                or services.get("relayhistoryHostAliases") not in (None, [])
+                or not isinstance(rc, dict) or rc.get("enabled", False) is not False
+                or rc.get("url") or rc.get("existingSecret") or rc.get("secret", {}).get("existingSecret")
+                or reader.get("login", {}).get("advertisesSync", False) is not False
+                or reader.get("events", {}).get("messageIds") is not True
+                or not issuer.get("existingSecret") or not issuer.get("key")
+                or not control.get("secretKeys", {}).get("sessionReadApiSecret")
+                or not control.get("secretKeys", {}).get("introspectSecret")):
+            fail("native backend requires independent reader authority, private handoff and message IDs; no caller-token login or DNS alias")
+    else:
+        if (mode != "relaycontrol_only" or services.get("relayhistoryBackend", "legacy") != "legacy"
+                or reader.get("auth", {}).get("relaycontrol", {}).get("enabled") is not True
+                or services.get("relayhistoryReadApiEvents") is not True
+                or reader.get("login", {}).get("advertisesSync") is not True):
+            fail("Pattern A requires Control-only auth, explicit native events and grant-aware sync login")
+        if services.get("relayhistoryReadApiUrl") not in (None, "", origin):
+            fail("existing Control read API origin differs")
     if services.get("relayhistoryPublicUrl") != origin:
         fail("Control's existing public History audience must equal the selected origin")
     names = {"ingress": routing.get("fullnameOverride") or "agent-relay-native-history",
@@ -128,7 +152,7 @@ def selection(values):
             fail("native Ingress and TLS names must be DNS subdomains")
     if re.search(r"\.(localhost|local|internal|lan|invalid|test|example|home\.arpa|onion)$", host) or re.search(r"\.example\.(com|net|org)$", host):
         fail("History origin must be public DNS")
-    return {"origin": origin, "host": host, **names}
+    return {"origin": origin, "host": host, **names, **({"independentIssuer": True} if independent else {})}
 
 
 def _owner(stack):
@@ -221,8 +245,10 @@ def _record(stack, owner, cfg, service):
 
 def _ingresses(stack, cfg):
     items = json.loads(stack.k("get", "ingress", "-o", "json", namespace=APP_NS).stdout).get("items", [])
-    expected_paths = {("/", "Prefix", cfg["reader"]), ("/v1/delivery/batches", "Exact", cfg["ingest"]),
+    expected_paths = {("/v1" if cfg.get("independentIssuer") else "/", "Prefix", cfg["reader"]), ("/v1/delivery/batches", "Exact", cfg["ingest"]),
                       ("/v1/turns/batches", "Exact", cfg["ingest"]), ("/v1/delivery/limits", "Exact", cfg["ingest"])}
+    if cfg.get("independentIssuer"):
+        expected_paths.add(("/v1/auth/token/refresh", "Exact", cfg["ingest"]))
     for item in items:
         spec, meta = item.get("spec", {}), item.get("metadata", {})
         rules = spec.get("rules", [])
@@ -246,7 +272,7 @@ def _ingresses(stack, cfg):
             if backend.get("port") != {"number": 80}:
                 fail("native Ingress backend port differs")
             actual.add((path.get("path"), path.get("pathType"), backend.get("name")))
-        if (spec.get("defaultBackend") or len(rules) != 1 or rules[0].get("host") != cfg["host"] or len(paths) != 4
+        if (spec.get("defaultBackend") or len(rules) != 1 or rules[0].get("host") != cfg["host"] or len(paths) != len(expected_paths)
                 or actual != expected_paths or spec.get("ingressClassName") != "traefik"
                 or spec.get("tls") != [{"hosts": [cfg["host"]], "secretName": cfg["tls"]}]):
             fail("native Ingress class, TLS or path contract differs")
@@ -270,6 +296,8 @@ def _control_egress(stack, values):
         meta = policy.get("metadata", {})
         if meta.get("name") != CONTROL_EGRESS:
             continue
+        if selection(values).get("independentIssuer"):
+            fail("independent reader uses private service transport; existing legacy gateway egress requires explicit review")
         annotations = meta.get("annotations", {})
         if (meta.get("namespace") != APP_NS or not meta.get("uid")
                 or annotations.get("meta.helm.sh/release-name") != "agent-relay"
@@ -307,6 +335,10 @@ def preflight(stack, values):
         _ingresses(stack, cfg)
         _control_egress(stack, values)
     service = _service(stack) if EDGE_NS in namespaces else None
+    if cfg.get("independentIssuer"):
+        if service is not None or (Path(stack.state) / RECORD).exists():
+            fail("independent reader cannot silently reuse or retire a legacy edge Service/record")
+        return {"type": "local-kind-native-private-reader", "version": 1, **owner, "origin": cfg["origin"]}
     if service is None:
         if values["relay-control"]["services"].get("relayhistoryHostAliases") not in (None, []):
             fail("unallocated edge cannot qualify a preselected Control IP mapping")
@@ -350,6 +382,8 @@ def ensure(stack, values):
     if before.get("pendingFreshCluster"):
         fail("owned cluster and gateway must precede Service allocation")
     _gateway(stack)
+    if cfg.get("independentIssuer"):
+        return before
     if not before.get("pendingFreshService"):
         return before
     owner = {k: before[k] for k in ("name", "profile", "clusterUid")}
@@ -381,6 +415,14 @@ def selected_values(values, observation):
     result = copy.deepcopy(values)
     cfg = selection(result)
     if cfg is None:
+        return result
+    if cfg.get("independentIssuer"):
+        local = result.get("localKind", {})
+        if (not isinstance(observation, dict) or observation.get("type") != "local-kind-native-private-reader"
+                or type(observation.get("version")) is not int or observation["version"] != 1
+                or observation.get("origin") != cfg["origin"] or observation.get("profile") != local.get("profile")
+                or not observation.get("clusterUid") or not observation.get("name")):
+            fail("qualified private reader observation required")
         return result
     if (not isinstance(observation, dict) or observation.get("type") != "local-kind-native-network"
             or type(observation.get("version")) is not int or observation.get("version") != 1

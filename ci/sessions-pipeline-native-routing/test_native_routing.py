@@ -20,9 +20,9 @@ def merge(target, overlay):
 def fixture():
     values = yaml.safe_load((ROOT / "charts/sessions-pipeline/ci/read-api-values.yaml").read_text())
     values["ingestEdge"] = yaml.safe_load((ROOT / "charts/sessions-pipeline/ci/ingest-edge-values.yaml").read_text())["ingestEdge"]
-    values["readApi"]["origin"] = values["ingestEdge"]["origin"] = ORIGIN
-    values["readApi"]["loginAdvertisesSync"] = True
-    values["readApi"]["auth"].update({"mode": "relaycontrol_only", "relayauth": {"jwksUrl": "", "issuer": ""}})
+    values["sessionReadApi"]["origin"] = values["ingestEdge"]["origin"] = ORIGIN
+    values["sessionReadApi"].setdefault("login", {})["advertisesSync"] = True
+    values["sessionReadApi"]["auth"].update({"mode": "relaycontrol_only", "relayauth": {"jwksUrl": "", "issuer": ""}})
     values["nativeRouting"] = {"enabled": True, "origin": ORIGIN, "className": "test-edge", "tls": {"existingSecret": "history-tls"}}
     return values
 
@@ -34,17 +34,15 @@ def umbrella_fixture():
     values["relayhistory"]["ingress"]["enabled"] = False
     api = values["relay-control"]
     api["services"].update({"relayauthEnabled": False, "relayhistoryUrl": "http://routing-test-read-api.ci.svc.cluster.local", "relayhistoryPublicUrl": ORIGIN, "relayhistoryReadApiUrl": ORIGIN, "relayhistoryReadApiEvents": True})
-    api["extraEnv"] = [
-        {"name": "RELAYCONTROL_INTROSPECT_SECRET", "valueFrom": {"secretKeyRef": {"name": "control-introspection", "key": "introspect-secret"}}},
-        {"name": "SELFHOST_INTROSPECT_AUDIENCES", "value": ORIGIN},
-    ]
+    api.setdefault("secretKeys", {}).update(introspectSecret="control-introspection")
+    api["introspection"] = {"audiences": [ORIGIN]}
     return values
 
 class NativeRouting(unittest.TestCase):
     def render(self, overlay=None, defaults=False, umbrella=False, error=None):
         values = umbrella_fixture() if umbrella else fixture()
         if defaults:
-            for key in ("readApi", "ingestEdge", "nativeRouting"):
+            for key in ("sessionReadApi", "ingestEdge", "nativeRouting"):
                 values.pop(key, None)
         if overlay:
             merge(values, overlay)
@@ -66,6 +64,24 @@ class NativeRouting(unittest.TestCase):
         assert len(routes) == 1
         return routes[0]
 
+    def test_independent_reader_never_exposes_internal_issuer_route(self):
+        override = {"sessionReadApi": {"auth": {"mode": "self_issued", "relaycontrol": {"enabled": False, "url": "", "existingSecret": ""},
+            "selfIssued": {"internalSecret": {"existingSecret": "reader-issuer"}}},
+            "login": {"advertisesSync": False}, "events": {"messageIds": True},
+            "extraEnv": [{"name": "LOCKER_BUCKET", "value": "pilot-sessions"}, {"name": "PIPELINE_ORG_FROM_PREFIX", "value": "true"}, {"name": "PIPELINE_KEY_PREFIX", "value": "96bulls"}],
+            "networkPolicy": {"enabled": True, "controlFrom": [{"podSelector": {"matchLabels": {"app.kubernetes.io/name": "relay-control"}}}]}}}
+        route = self.ingress(self.render(override))
+        paths = route["spec"]["rules"][0]["http"]["paths"]
+        self.assertEqual([(p["path"], p["pathType"]) for p in paths], [
+            ("/v1", "Prefix"), ("/v1/delivery/batches", "Exact"), ("/v1/turns/batches", "Exact"),
+            ("/v1/delivery/limits", "Exact"), ("/v1/auth/token/refresh", "Exact")])
+        self.assertFalse(any(p["path"] == "/" or p["path"].startswith("/internal") for p in paths))
+        for change, message in (({"login": {"advertisesSync": True}}, "requires login.advertisesSync=false"),
+                                ({"events": {"messageIds": False}}, "requires native message IDs"),
+                                ({"auth": {"relaycontrol": {"enabled": True}}}, "requires auth.relaycontrol.enabled=false")):
+            bad = copy.deepcopy(override); merge(bad["sessionReadApi"], change)
+            self.render(bad, error=message)
+
     def test_default_off_and_staged_services_create_no_public_route(self):
         self.assertFalse(any(d["kind"] == "Ingress" for d in self.render(defaults=True)))
         self.assertFalse(any(d["kind"] == "Ingress" for d in self.render({"nativeRouting": {"enabled": False}})))
@@ -73,7 +89,7 @@ class NativeRouting(unittest.TestCase):
             self.render({"nativeRouting": {"enabled": enabled}}, error="nativeRouting.enabled must be a boolean")
 
     def test_exact_paths_bind_to_actual_service_ports_not_container_ports(self):
-        docs = self.render({"readApi": {"port": 8092}, "ingestEdge": {"port": 8093}})
+        docs = self.render({"sessionReadApi": {"port": 8092}, "ingestEdge": {"port": 8093}})
         route = self.ingress(docs)
         self.assertEqual(route["metadata"]["namespace"], "ci")
         self.assertEqual(route["spec"]["ingressClassName"], "test-edge")
@@ -106,17 +122,17 @@ class NativeRouting(unittest.TestCase):
             self.assertEqual(selected(path), "routing-test-ingest-edge", path)
 
     def test_service_and_route_names_follow_selected_fullname_overrides(self):
-        docs = self.render({"readApi": {"fullnameOverride": "selected-reader"}, "ingestEdge": {"fullnameOverride": "selected-ingest"}, "nativeRouting": {"fullnameOverride": "selected-history"}})
+        docs = self.render({"sessionReadApi": {"fullnameOverride": "selected-reader"}, "ingestEdge": {"fullnameOverride": "selected-ingest"}, "nativeRouting": {"fullnameOverride": "selected-history"}})
         route = self.ingress(docs)
         self.assertEqual(route["metadata"]["name"], "selected-history")
         self.assertEqual({p["backend"]["service"]["name"] for p in route["spec"]["rules"][0]["http"]["paths"]}, {"selected-reader", "selected-ingest"})
-        self.render({"readApi": {"fullnameOverride": "same-service"}, "ingestEdge": {"fullnameOverride": "same-service"}}, error="distinct reader and ingest Service names")
+        self.render({"sessionReadApi": {"fullnameOverride": "same-service"}, "ingestEdge": {"fullnameOverride": "same-service"}}, error="distinct reader and ingest Service names")
 
     def test_both_selected_services_and_matching_origin_are_required(self):
-        for key in ["readApi", "ingestEdge"]:
-            self.render({key: {"enabled": False}}, error="nativeRouting requires readApi.enabled=true and ingestEdge.enabled=true")
-        self.render({"readApi": {"auth": {"mode": "legacy", "relayauth": {"jwksUrl": "http://auth.ci.svc.cluster.local/jwks", "issuer": "http://auth.ci.svc.cluster.local"}}}}, error="nativeRouting requires readApi.auth.mode=relaycontrol_only")
-        self.render({"readApi": {"loginAdvertisesSync": False}}, error="nativeRouting requires readApi.loginAdvertisesSync=true")
+        for key in ["sessionReadApi", "ingestEdge"]:
+            self.render({key: {"enabled": False}}, error="nativeRouting requires sessionReadApi.enabled=true and ingestEdge.enabled=true")
+        self.render({"sessionReadApi": {"auth": {"mode": "legacy", "relayauth": {"jwksUrl": "http://auth.ci.svc.cluster.local/jwks", "issuer": "http://auth.ci.svc.cluster.local"}}}}, error="requires a supported Control-owned or independent-issuer reader mode")
+        self.render({"sessionReadApi": {"login": {"advertisesSync": False}}}, error="requires sessionReadApi.login.advertisesSync=true")
         for origin in ["https://other.selfhosted.company:8443", "https://history.selfhosted.company", "https://history.selfhosted.company:9443"]:
             self.render({"nativeRouting": {"origin": origin}}, error="nativeRouting.origin must exactly equal")
         for origin in ["http://history.selfhosted.company", ORIGIN + "/", ORIGIN + "?q=1", ORIGIN + "#fragment", "https://user:pass@history.selfhosted.company:8443", "https://127.0.0.1:8443", "https://history.internal:8443", "https://History.selfhosted.company:8443"]:
@@ -135,7 +151,7 @@ class NativeRouting(unittest.TestCase):
         env = {e["name"]: e for e in control["spec"]["template"]["spec"]["containers"][0]["env"]}
         self.assertEqual(env["RELAYHISTORY_READ_API_URL"]["value"], ORIGIN)
         self.assertEqual(env["RELAYHISTORY_READ_API_EVENTS"]["value"], "true")
-        self.assertEqual(env["RELAYCONTROL_INTROSPECT_SECRET"]["valueFrom"]["secretKeyRef"]["name"], "control-introspection")
+        self.assertEqual(env["RELAYCONTROL_INTROSPECT_SECRET_FILE"]["value"], "/var/run/agent-relay/secrets/control-introspection")
         reader = next(d for d in docs if d["kind"] == "Deployment" and d["metadata"]["name"] == "routing-test-read-api")
         reader_env = {e["name"]: e for e in reader["spec"]["template"]["spec"]["containers"][0]["env"]}
         self.assertEqual(reader_env["RELAYHISTORY_SELFHOST_LOGIN_ADVERTISES_SYNC"]["value"], "true")
@@ -145,8 +161,7 @@ class NativeRouting(unittest.TestCase):
             api = {"services": {key: "https://other.selfhosted.company:8443"}}
             # Keep leaf authentication admission valid so this causal case
             # reaches the parent single-origin boundary, not its audience guard.
-            api["extraEnv"] = copy.deepcopy(umbrella_fixture()["relay-control"]["extraEnv"])
-            api["extraEnv"][1]["value"] += ",https://other.selfhosted.company:8443"
+            api["introspection"] = {"audiences": [ORIGIN, "https://other.selfhosted.company:8443"]}
             self.render({"relay-control": api}, umbrella=True, error="exactly equal Control's managed public and direct-reader origins")
         self.render({"relay-control": {"services": {"relayhistoryReadApiEvents": False}}}, umbrella=True, error="relayhistoryReadApiEvents=true")
 

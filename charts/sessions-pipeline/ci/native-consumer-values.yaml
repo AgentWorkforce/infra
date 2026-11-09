@@ -36,7 +36,7 @@ functionDefaultRevoke:
 privilegedSql:
   sqlImage:
     digest: sha256:6f22ea17dff336e1431664542759fd27958649388b90a0b2f0881883caa7c6b2
-readApi:
+sessionReadApi:
   enabled: false
 ingestEdge:
   enabled: false

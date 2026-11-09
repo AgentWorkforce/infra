@@ -270,9 +270,9 @@ all required immutable digests are present. The live proof
   fixture keeps `sha256:8fbda9bd89dd33994b6b3331fb403c38a25f04e6742050bd717e99661f3544ba`)
 
 `values-gcp-proof-durable-actors.yaml` pins the relaycast actors gateway
-`sha256:faf66ec45d2c755ab5cdc6ee32bca6dc48446dff444118cab18fa1f765124ffa` and
-deployer `sha256:a81e91ed52bfb7cbb0a8c2773752df3b5d78afdc443608998b3203a30e314cee`
-(relaycast main `3624cc12`, PR #618); `values-gcp-proof-relayfile.yaml` pins relayfile-actors
+`sha256:026e8c1b1e78b2946c53871e8e5701e0cac9b6121c2b4124cd376ceece33cb45` and
+deployer `sha256:9b9fee183167a169370c20950caf63824417b8064ea7e1ef4bd00026ab5fd106`
+(relaycast main `46281074`, PR #622: the workspace bootstrap secret and proof policy); `values-gcp-proof-relayfile.yaml` pins relayfile-actors
 `sha256:7fb2110701a004f9f7ed2b025d25156fbe993208598bfbd0498a48b30df48299` and
 relayfile-actors-workspace
 `sha256:c5851a1b1f7624390a1a00ebdee69e8e521dc3f23f345c582d62e09dba9a6e83`
@@ -281,7 +281,7 @@ relayfile-actors-workspace
 These are proof-only identities. The release gate audits the customer profile
 (`values-gcp.yaml`) against `self-hosted/customer-images.yaml`, which records
 the CI render fixture's dashboard digest (`ci/gcp-proof-values.yaml`) and the
-published `ghcr.io/agentworkforce/selfhost-api` digest, not the live pins; a
+published `ghcr.io/agentworkforce/relay-control` digest, not the live pins; a
 proof pin never makes an image customer-ready.
 
 The RelayHistory image is an experimental proof build, not a released or
@@ -321,6 +321,12 @@ the same Secret instead of the two SQLite Relaycast keys above
   `RELAYCAST_INTERNAL_SECRET` in the sandbox Secret `relaycast-actor-env`)
 - `relaycast-file-signing-secret` (equal to `RELAYCAST_FILE_SIGNING_SECRET` in
   `relaycast-actor-env`)
+- `relaycast-actors-workspace-bootstrap-secret` (48 or more random characters,
+  no trailing newline; the same bytes as `RELAYCAST_WORKSPACE_BOOTSTRAP_SECRET`
+  in `relaycast-actor-env`, which also carries
+  `RELAYCAST_WORKSPACE_BOOTSTRAP_PROOF_REQUIRED` equal to
+  `relaycast.bootstrapProofRequired`; see charts/relaycast/README.md, "Keyed
+  workspace creates on durable-actors")
 
 It also needs the Secrets `actors-credentials` (`postgres-url`,
 `jwt-signing-key`, `api-key`, `invoke-api-key`) and

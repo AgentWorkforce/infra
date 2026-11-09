@@ -20,6 +20,7 @@ from native_recipe import BOOTSTRAP, NativeRecipeError, merge_values, require
 INPUT_FIELDS = {"pipelineReceipt", "sourceManifest", "sourceManifestSha256", "sourceArchive", "pipelineArchive",
                 "controlReceipt", "controlArchive", "controlDistManifest", "controlMigrationManifest",
                 "controlMigrationManifestSha256", "controlSourceManifest"}
+OPTIONAL_INPUT_FIELDS = {"bindingReceipt", "bindingReceiptSha256", "pipelineBuildMetadata", "pipelineBuildMetadataSha256"}
 
 
 def sha(path):
@@ -33,6 +34,56 @@ def sha(path):
 def document(path, expected_sha):
     require(sha(path) == expected_sha, "local_evidence_bytes_changed")
     return json.loads(Path(path).read_text())
+
+
+def file_sha(info):
+    value = info if isinstance(info, str) else info.get("sha256") if isinstance(info, dict) else None
+    require(isinstance(value, str) and re.fullmatch(r"[a-f0-9]{64}", value), "source_file_digest_required")
+    return value
+
+
+def same_local_reference(a, b):
+    """Only Docker's documented local repository spelling is interchangeable."""
+    def known(value):
+        if isinstance(value, str) and value.startswith("docker.io/agent-relay-kind/"):
+            return value[len("docker.io/"):]
+        return value
+    return known(a) == known(b)
+
+
+def pipeline_coordinates(paths, selected):
+    """Read the two qualified receipt schemas without rewriting either proof.
+
+    Newer public receipts describe sourceState as text, not a clean-worktree
+    attestation. Source admission remains the explicit acceptedSource binding;
+    this adapter verifies the actual source/archive/image bytes independently.
+    """
+    receipt = document(paths["pipelineReceipt"], selected["artifactReceiptSha256"])
+    if "source" in receipt:
+        require(receipt["source"].get("revision") == selected["sourceRevision"] and
+                receipt["source"].get("clean") is True, "pipeline_receipt_source_mismatch")
+        artifact = receipt["artifact"]
+        return {"sourceArchiveSha256": receipt["source"]["archiveSha256"], "sourceManifestSha256": None,
+                "sourceTree": None, "nativeManifestDigest": artifact["nativeManifestDigest"],
+                "configDigest": artifact["configDigest"], "archiveSha256": artifact["archiveSha256"],
+                "buildIndexDigest": artifact["buildIndexDigest"], "generation": receipt["schemaGeneration"],
+                "localTag": receipt["build"]["localTag"], "copied": receipt["allCopiedTrackedSourceCheck"], "flat": False}
+    require(receipt.get("result") == "PASS_OFFICIAL_SOURCE_ARCHIVE_NATIVE_CHAIN" and
+            receipt.get("sourceRevision") == selected["sourceRevision"] and
+            receipt.get("architecture") == selected["architecture"] and receipt.get("officialDockerfileUnmodified") is True and
+            re.fullmatch(r"[a-f0-9]{40}", receipt.get("sourceTree", "")), "qualified_public_pipeline_receipt_required")
+    require("pipelineBuildMetadata" in paths and "pipelineBuildMetadataSha256" in paths,
+            "pinned_public_pipeline_build_metadata_required")
+    build = document(paths["pipelineBuildMetadata"], paths["pipelineBuildMetadataSha256"])
+    index = build.get("containerimage.digest")
+    require(isinstance(index, str) and re.fullmatch(r"sha256:[a-f0-9]{64}", index) and
+            build.get("containerimage.descriptor", {}).get("digest") == index,
+            "public_pipeline_index_descriptor_binding_required")
+    return {"sourceArchiveSha256": receipt["sourceArchiveSha256"], "sourceManifestSha256": receipt["sourceManifestSha256"],
+            "sourceTree": receipt["sourceTree"], "nativeManifestDigest": receipt["manifestDigest"],
+            "configDigest": receipt["configDigest"], "archiveSha256": receipt["archiveSha256"],
+            "buildIndexDigest": index, "generation": receipt["generation"], "localTag": receipt["localTag"],
+            "copied": receipt["allCopiedSourceFiles"], "flat": True}
 
 
 def native_archive(path, expected_sha, source, manifest_sha, config_sha, architecture):
@@ -67,17 +118,19 @@ def runtime_files(manifest):
     for name, info in manifest["files"].items():
         require(not name.startswith("/") and ".." not in Path(name).parts, "source_manifest_path_escape")
         if name.startswith(("packages/", "supabase/", "certs/", "src/", "stacks/")) and "/node_modules/" not in name and not name.startswith("packages/object-store/dist/"):
-            files["/app/" + name] = info["sha256"]
+            files["/app/" + name] = file_sha(info)
         elif name in ("LICENSE", "NOTICE", "package.json", "bun.lock", "tsconfig.json", "scripts/sync-amp-provider.mjs", "scripts/install-amp-cli.ts"):
-            files["/app/" + name] = info["sha256"]
-    files["/entrypoint.sh"] = manifest["files"]["docker/entrypoint.sh"]["sha256"]
+            files["/app/" + name] = file_sha(info)
+    files["/entrypoint.sh"] = file_sha(manifest["files"]["docker/entrypoint.sh"])
     return files
 
 
 class NativeReadOnlyAdapter:
     def __init__(self, stack, inputs):
         require(isinstance(inputs, dict) and INPUT_FIELDS <= set(inputs) and
-                set(inputs) <= INPUT_FIELDS | {"bindingReceipt", "bindingReceiptSha256"}, "unexpected_native_input_fields")
+                set(inputs) <= INPUT_FIELDS | OPTIONAL_INPUT_FIELDS, "unexpected_native_input_fields")
+        require(("pipelineBuildMetadata" in inputs) == ("pipelineBuildMetadataSha256" in inputs),
+                "public_build_metadata_path_and_digest_required_together")
         self.stack, self.inputs = stack, inputs
 
     def _docker_json(self, arguments, data=None):
@@ -103,15 +156,17 @@ class NativeReadOnlyAdapter:
 
     def verify_artifact(self, selected):
         paths = self.inputs
-        receipt = document(paths["pipelineReceipt"], selected["artifactReceiptSha256"])
-        require(receipt["source"]["revision"] == selected["sourceRevision"] and receipt["source"]["clean"] is True,
-                "pipeline_receipt_source_mismatch")
-        artifact = receipt["artifact"]
+        artifact = pipeline_coordinates(paths, selected)
         require(artifact["nativeManifestDigest"] == selected["manifestDigest"] and artifact["configDigest"] == selected["configDigest"] and
-                receipt["schemaGeneration"] == selected["generation"], "pipeline_receipt_chain_mismatch")
+                artifact["generation"] == selected["generation"], "pipeline_receipt_chain_mismatch")
         source = document(paths["sourceManifest"], paths["sourceManifestSha256"])
-        require(source["sourceRevision"] == selected["sourceRevision"] and source["sourceClean"] is True and
-                source["archiveSha256"] == receipt["source"]["archiveSha256"], "source_manifest_binding_mismatch")
+        require(source["sourceRevision"] == selected["sourceRevision"] and
+                source["archiveSha256"] == artifact["sourceArchiveSha256"], "source_manifest_binding_mismatch")
+        if artifact["flat"]:
+            require(source.get("sourceTree") == artifact["sourceTree"] and
+                    paths["sourceManifestSha256"] == artifact["sourceManifestSha256"], "public_source_tree_manifest_binding_mismatch")
+        else:
+            require(source.get("sourceClean") is True, "source_manifest_binding_mismatch")
         require(sha(paths["sourceArchive"]) == source["archiveSha256"], "tracked_source_archive_changed")
         with tarfile.open(paths["sourceArchive"]) as original:
             members = {m.name: m for m in original if not m.isdir()}
@@ -120,15 +175,22 @@ class NativeReadOnlyAdapter:
                 member = members[name]
                 require(member.isfile() or member.issym(), "unsupported_source_member")
                 raw = member.linkname.encode() if member.issym() else original.extractfile(member).read()
-                require(hashlib.sha256(raw).hexdigest() == info["sha256"], "tracked_source_file_changed")
+                require(hashlib.sha256(raw).hexdigest() == file_sha(info), "tracked_source_file_changed")
         expected = runtime_files(source)
-        require(receipt["allCopiedTrackedSourceCheck"] == {"checked": len(expected), "mismatched": []}, "accepted_source_copy_manifest_mismatch")
+        require(artifact["copied"] == {"checked": len(expected), "mismatched": []}, "accepted_source_copy_manifest_mismatch")
         for name in BOOTSTRAP:
             require(expected.get("/app/supabase/bootstrap/" + name) == selected["officialBootstrapSha256"][name],
                     "image_bootstrap_acceptance_mismatch")
-        native_archive(paths["pipelineArchive"], artifact["archiveSha256"], selected["sourceRevision"],
-                       selected["manifestDigest"], selected["configDigest"], selected["architecture"])
-        image = self._image(receipt["build"]["localTag"], selected["sourceRevision"], selected["architecture"], artifact["buildIndexDigest"], selected["configDigest"])
+        native = native_archive(paths["pipelineArchive"], artifact["archiveSha256"], selected["sourceRevision"],
+                                selected["manifestDigest"], selected["configDigest"], selected["architecture"])
+        image = self._image(artifact["localTag"], selected["sourceRevision"], selected["architecture"], artifact["buildIndexDigest"], selected["configDigest"])
+        if artifact["flat"]:
+            diff_ids = native.get("rootfs", {}).get("diff_ids")
+            require(native.get("rootfs", {}).get("type") == "layers" and isinstance(diff_ids, list) and
+                    all(isinstance(d, str) and re.fullmatch(r"sha256:[a-f0-9]{64}", d) for d in diff_ids) and
+                    image.get("RootFS", {}).get("Layers") == diff_ids and
+                    all(image.get("Config", {}).get(k) == v for k, v in native["config"].items()),
+                    "public_pipeline_native_runtime_config_changed")
         code = """const fs=require('fs'),crypto=require('crypto');const x=await Bun.stdin.json();let count=0;
 for(const [p,h] of Object.entries(x)){if(crypto.createHash('sha256').update(fs.readFileSync(p)).digest('hex')!==h)process.exit(2);count++}
 const {generation}=await import('/app/src/hoopdb/migrate.ts');console.log(JSON.stringify({checked:count,generation:await generation()}));"""
@@ -137,7 +199,8 @@ const {generation}=await import('/app/src/hoopdb/migrate.ts');console.log(JSON.s
 
         control = selected["control"]
         cr = document(paths["controlReceipt"], control["artifactReceiptSha256"])
-        require(all(cr.get(k) == control[k] for k in ("sourceRevision", "manifestDigest", "configDigest", "reference")), "control_receipt_chain_mismatch")
+        require(all(cr.get(k) == control[k] for k in ("sourceRevision", "manifestDigest", "configDigest")) and
+                same_local_reference(cr.get("reference"), control["reference"]), "control_receipt_chain_mismatch")
         native_archive(paths["controlArchive"], cr["nativeArchiveSha256"], control["sourceRevision"], control["manifestDigest"], control["configDigest"], selected["architecture"])
         dist = document(paths["controlDistManifest"], cr["imageDistManifestSha256"])
         migration = document(paths["controlMigrationManifest"], paths["controlMigrationManifestSha256"])
@@ -159,6 +222,9 @@ const {generation}=await import('/app/src/hoopdb/migrate.ts');console.log(JSON.s
             return json.loads(self.stack.k(*args, namespace=None, sensitive=True).stdout)
         return json.loads(self.stack.k(*args, sensitive=True).stdout)
 
+    def _selected_secret_names(self, selected):
+        return {r["name"] for r in selected["secretRefs"].values()}
+
     def inspect(self, selected):
         clusters = self.stack.cmd(["kind", "get", "clusters"], timeout=30).stdout.splitlines()
         if self.stack.name not in clusters:
@@ -173,7 +239,7 @@ const {generation}=await import('/app/src/hoopdb/migrate.ts');console.log(JSON.s
         objects = self._get("deployments,statefulsets,persistentvolumeclaims,configmaps")["items"]
         # Read only the selected credential resources, never every Secret in
         # the namespace. Values remain process-local and are never returned.
-        for name in sorted({r["name"] for r in selected["secretRefs"].values()}):
+        for name in sorted(self._selected_secret_names(selected)):
             objects.append(self._get("secret/" + name))
         by_id = {(o["kind"], o["metadata"]["name"]): o for o in objects}
         required_resources = {("StatefulSet", "postgres"), ("PersistentVolumeClaim", "data-postgres-0"),
@@ -237,7 +303,7 @@ const {generation}=await import('/app/src/hoopdb/migrate.ts');console.log(JSON.s
                         raw = payload[ref["jsonField"]]
                     url = urlsplit(raw)
                     ca_path = {"owner": "/etc/native-consumer-postgres/ca.crt", "consumer": "/etc/native-consumer-postgres/ca.crt",
-                               "reader": "/etc/session-read-api-postgres/ca.crt", "ingest": "/etc/session-ingest-postgres/ca.crt"}[name]
+                               "reader": "/etc/session-read-postgres/ca.crt", "ingest": "/etc/session-ingest-postgres/ca.crt"}[name]
                     require(url.scheme in {"postgres", "postgresql"} and unquote(url.username or "") == selected["roles"][name] and
                             bool(url.password) and url.hostname == selected["postgres"]["host"] and url.port in (None, 5432) and
                             url.path == "/hoopdb" and not url.fragment and
@@ -265,7 +331,7 @@ const {generation}=await import('/app/src/hoopdb/migrate.ts');console.log(JSON.s
         """Scoped diagnostic; never upgrades historical evidence into admission."""
         self._owned_uid(selected)
         objects = [self._get("statefulset/postgres"), self._get("configmap/" + selected["postgresCa"]["configMap"])]
-        for name in sorted({r["name"] for r in selected["secretRefs"].values()}):
+        for name in sorted(self._selected_secret_names(selected)):
             objects.append(self._get("secret/" + name))
         return self._check_references(selected, {(o["kind"], o["metadata"]["name"]): o for o in objects})
 
@@ -278,9 +344,9 @@ const {generation}=await import('/app/src/hoopdb/migrate.ts');console.log(JSON.s
         merged = merge_values(*values)
         pipeline = merged.get("sessions-pipeline", {})
         require(pipeline.get("nativeRouting", {}).get("enabled") is True and
-                pipeline.get("readApi", {}).get("loginAdvertisesSync") is True,
+                pipeline.get("sessionReadApi", {}).get("login", {}).get("advertisesSync") is selected["readerLoginAdvertisesSync"],
                 "managed_native_routing_sync_required")
-        require(not any(e.get("name") == "RELAYHISTORY_SELFHOST_LOGIN_ADVERTISES_SYNC" for e in pipeline["readApi"].get("extraEnv", [])),
+        require(not any(e.get("name") == "RELAYHISTORY_SELFHOST_LOGIN_ADVERTISES_SYNC" for e in pipeline["sessionReadApi"].get("extraEnv", [])),
                 "sync_discovery_must_not_use_extra_env")
         # Unlike legacy Stack.render, retain output only in memory. Invalid
         # values must not write a raw Secret-bearing manifest to evidence.
@@ -288,6 +354,9 @@ const {generation}=await import('/app/src/hoopdb/migrate.ts');console.log(JSON.s
                                 timeout=60, sensitive=True)
         docs = [d for d in yaml.safe_load_all(result.stdout) if d]
         require(not any(d.get("kind") == "Secret" for d in docs), "native_serve_must_reference_managed_secrets")
+        return self._validate_render_docs(selected, docs)
+
+    def _validate_render_docs(self, selected, docs):
         deployed = {d["metadata"]["name"]: d for d in docs if d["kind"] == "Deployment"}
         expected = {
             "session-native-consumer": ("session-pipeline-consumer", "RELAYHISTORY_PIPELINE_CONSUMER_SECRET", "consumer"),
@@ -323,12 +392,20 @@ const {generation}=await import('/app/src/hoopdb/migrate.ts');console.log(JSON.s
                         env.get("READ_API_COMPLETE_SINCE", {}).get("value") == selected["completeSince"], "native_reader_consumer_layout_mismatch")
             if kind == "reader":
                 ir = selected["secretRefs"]["introspection"]
-                require(env.get("READ_API_AUTH_MODE", {}).get("value") == "relaycontrol_only" and
+                independent = selected["control"]["independentIssuer"]
+                require(env.get("READ_API_AUTH_MODE", {}).get("value") == ("self_issued" if independent else "relaycontrol_only") and
                         env.get("READ_API_ORIGIN", {}).get("value") == selected["historyOrigin"] and
-                        env.get("RELAYHISTORY_SELFHOST_LOGIN_ADVERTISES_SYNC", {}).get("value") == "true" and
                         not ({"RELAYAUTH_JWKS_URL", "RELAYAUTH_ISSUER"} & set(env)), "reader_auth_discovery_mismatch")
-                require(env.get("RELAYCONTROL_INTROSPECT_SECRET", {}).get("valueFrom", {}).get("secretKeyRef") ==
-                        {"name": ir["name"], "key": ir["key"]}, "reader_introspection_ref_mismatch")
+                if independent:
+                    issuer = selected["secretRefs"]["readerIssuer"]
+                    require(not ({"RELAYHISTORY_SELFHOST_LOGIN_ADVERTISES_SYNC", "RELAYCONTROL_INTROSPECT_URL", "RELAYCONTROL_INTROSPECT_SECRET"} & set(env)) and
+                            env.get("READ_API_INTERNAL_SECRET", {}).get("valueFrom", {}).get("secretKeyRef") ==
+                            {"name": issuer["name"], "key": issuer["key"]} and
+                            env.get("READ_API_EVENT_MESSAGE_IDS", {}).get("value") == "true", "reader_independent_issuer_binding_mismatch")
+                else:
+                    require(env.get("RELAYHISTORY_SELFHOST_LOGIN_ADVERTISES_SYNC", {}).get("value") == "true" and
+                            env.get("RELAYCONTROL_INTROSPECT_SECRET", {}).get("valueFrom", {}).get("secretKeyRef") ==
+                            {"name": ir["name"], "key": ir["key"]}, "reader_introspection_ref_mismatch")
             locker = selected["secretRefs"]["locker"]
             require(env.get("LOCKER_SECRET_ACCESS_KEY", {}).get("valueFrom", {}).get("secretKeyRef") ==
                     {"name": locker["name"], "key": locker["key"]}, "locker_secret_ref_mismatch")
@@ -340,12 +417,21 @@ const {generation}=await import('/app/src/hoopdb/migrate.ts');console.log(JSON.s
                 component = d["metadata"].get("labels", {}).get("app.kubernetes.io/component", "")
                 require(component not in {"native-consumer-bootstrap", "hoopdb-migrate", "locker-init"}, "privileged_or_legacy_job_in_final_serve")
         control = deployed.get("relay-control", {}).get("spec", {}).get("template", {}).get("spec", {}).get("containers", [])
-        require(len(control) == 1 and control[0]["image"] == selected["control"]["reference"], "control_rendered_image_mismatch")
+        require(len(control) == 1 and same_local_reference(control[0]["image"], selected["control"]["reference"]), "control_rendered_image_mismatch")
         ce = {e["name"]: e.get("value") for e in control[0].get("env", [])}
-        require(ce.get("RELAYHISTORY_READ_API_URL") == selected["historyOrigin"] and ce.get("RELAYHISTORY_READ_API_EVENTS") == "true" and
-                not any(n.startswith("SESSION_READ_API_") for n in ce), "control_native_readback_or_independent_issuer_mismatch")
+        if selected["control"]["independentIssuer"]:
+            require(ce.get("RELAYHISTORY_BACKEND") == "native" and
+                    ce.get("SESSION_READ_API_URL") == "http://session-read-api.agent-relay.svc.cluster.local" and
+                    ce.get("RELAYHISTORY_URL") == ce["SESSION_READ_API_URL"] and
+                    ce.get("SESSION_READ_API_PUBLIC_URL") == ce.get("RELAYHISTORY_PUBLIC_URL") == selected["historyOrigin"] and
+                    bool(ce.get("SESSION_READ_API_SECRET_FILE")) and
+                    not ({"RELAYHISTORY_READ_API_URL", "RELAYHISTORY_READ_API_EVENTS", "RELAYAUTH_URL"} & set(ce)),
+                    "control_independent_reader_handoff_mismatch")
+        else:
+            require(ce.get("RELAYHISTORY_READ_API_URL") == selected["historyOrigin"] and ce.get("RELAYHISTORY_READ_API_EVENTS") == "true" and
+                    not any(n.startswith("SESSION_READ_API_") for n in ce), "control_native_readback_or_independent_issuer_mismatch")
         for name in ("session-ingest-api", "session-summary-worker", "session-status-worker", "session-metadata-indexer"):
             require(not deployed.get(name, {}).get("spec", {}).get("replicas", 0), "legacy_writer_rendered_active")
         self._verified_render_docs = docs
         return {"legacyWriterCount": 0, "managedNative": True, "ownerBuffered": False, "publication": False,
-                "readerLoginAdvertisesSync": True}
+                "readerLoginAdvertisesSync": selected["readerLoginAdvertisesSync"]}

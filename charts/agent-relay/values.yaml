@@ -111,6 +111,8 @@ localKind:
   allowLocalOnly: false
   profile: core
   temporaryRelayauth: true
+  # Explicit complete-native core installer phase; empty preserves legacy profiles.
+  nativePhase: ""
 # Umbrella NetworkPolicy for the durable-actors control plane (port 7100):
 # release-namespace pods, the actor sandbox namespace and, with
 # gkeIngress.hosts.actors, the GKE load balancer ranges.

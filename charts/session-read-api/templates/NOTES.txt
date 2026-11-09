@@ -1,0 +1,2 @@
+Session read API (auth mode {{ .Values.auth.mode }}) is at Service {{ include "session-read-api.fullname" . }}, port 80.
+It is ready only when /healthz reports enabled:true. Expose /v1/ only through your ingress; never route /internal/* publicly.
