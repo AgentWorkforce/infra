@@ -40,6 +40,17 @@ and the older nested receipt format are read without rewriting their historical
 evidence. Actual source bytes, all copied image modules, architecture, native
 manifest/config and official schema generation are independently checked.
 
+Control also accepts the unchanged qualified RawV2 packet. Select that packet as
+`controlReceipt`, its raw `source-manifest.json`, `source-runtime-equality.json`
+and `migration-source-comparison.json` as the three manifest inputs, and supply
+the original tracked source tar as `controlSourceArchive`. Keep all hash-bound
+child receipts beside the qualification packet. The parser verifies every child,
+the source tar, SQL/dist maps, native archive/config and separate build index,
+then derives coordinates only in memory. It does not manufacture a flat receipt
+or attribute the packet's disposable database proof to a new fixture. The
+read-only ledger verifier follows the exact bounded ledger identifier in that
+qualified migration source, preserving the old flat receipt's ledger contract.
+
 ```sh
 python3 ci/agent-relay/kind/native_core_cli.py \
   --config native-core.json --reviewed-config-sha256 <config-sha256>

@@ -21,6 +21,7 @@ from urllib.parse import urlsplit
 import yaml
 
 from native_control import NativeControlTransport
+from native_control_artifact import coordinates as control_coordinates
 from native_core_values import compose, tenant, PLANNING_WORKSPACE
 from native_inspect import document, native_archive, same_local_reference, sha
 from native_pipeline import NativePipelineAdapter, canonical
@@ -93,7 +94,7 @@ console.log(JSON.stringify({accessPrefix:m.ACCESS_PREFIX,scope:m.READ_SCOPE,issu
 """, {})
         require(reader == {"accessPrefix": "rth_at_read_", "scope": "rth:read",
                            "issuer": "/internal/v1/session-read/sessions"}, "qualified_independent_reader_module_required")
-        control = document(self.inputs["controlReceipt"], selected["control"]["artifactReceiptSha256"])
+        control = control_coordinates(self.inputs, selected["control"], selected["architecture"])
         control_image = self._image(control["tag"], selected["control"]["sourceRevision"], selected["architecture"],
                                     control["dockerIndexDigest"], selected["control"]["configDigest"])
         features = self._probe(control_image["Id"], "node", """
@@ -318,7 +319,7 @@ import('/app/node_modules/relay-control/dist/features.js').then(m=>{
         return docs
 
     def _import_control(self, selected):
-        cr = document(self.inputs["controlReceipt"], selected["control"]["artifactReceiptSha256"])
+        cr = control_coordinates(self.inputs, selected["control"], selected["architecture"])
         control = selected["control"]
         tag = cr["tag"]
         require(isinstance(tag, str) and re.fullmatch(r"agent-relay-kind/[a-z0-9._/-]+:[A-Za-z0-9_.-]+", tag),

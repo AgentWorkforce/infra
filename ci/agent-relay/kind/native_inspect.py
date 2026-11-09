@@ -16,11 +16,13 @@ from urllib.parse import parse_qs, unquote, urlsplit
 import yaml
 
 from native_recipe import BOOTSTRAP, NativeRecipeError, merge_values, require
+from native_control_artifact import coordinates as control_coordinates
 
 INPUT_FIELDS = {"pipelineReceipt", "sourceManifest", "sourceManifestSha256", "sourceArchive", "pipelineArchive",
                 "controlReceipt", "controlArchive", "controlDistManifest", "controlMigrationManifest",
                 "controlMigrationManifestSha256", "controlSourceManifest"}
 OPTIONAL_INPUT_FIELDS = {"bindingReceipt", "bindingReceiptSha256", "pipelineBuildMetadata", "pipelineBuildMetadataSha256",
+                         "controlSourceArchive",
                          "webappPacket", "webappPacketSha256", "webappArchive", "webappBuildMetadata"}
 
 
@@ -199,16 +201,14 @@ const {generation}=await import('/app/src/hoopdb/migrate.ts');console.log(JSON.s
         require(checked == {"checked": len(expected), "generation": selected["generation"]}, "actual_image_module_generation_mismatch")
 
         control = selected["control"]
-        cr = document(paths["controlReceipt"], control["artifactReceiptSha256"])
-        require(all(cr.get(k) == control[k] for k in ("sourceRevision", "manifestDigest", "configDigest")) and
-                same_local_reference(cr.get("reference"), control["reference"]), "control_receipt_chain_mismatch")
-        native_archive(paths["controlArchive"], cr["nativeArchiveSha256"], control["sourceRevision"], control["manifestDigest"], control["configDigest"], selected["architecture"])
-        dist = document(paths["controlDistManifest"], cr["imageDistManifestSha256"])
-        migration = document(paths["controlMigrationManifest"], paths["controlMigrationManifestSha256"])
-        require(migration["source"] == control["sourceRevision"] and migration["migrationCount"] == len(migration["sql"]), "control_schema_manifest_mismatch")
-        control_source = document(paths["controlSourceManifest"], cr["sourceFileManifestSha256"])
-        require(all(control_source.get("migrations/" + n) == h for n, h in migration["sql"].items()), "control_source_schema_binding_mismatch")
+        cr = control_coordinates(paths, control, selected["architecture"])
+        dist, migration = cr["dist"], cr["migration"]
         ci = self._image(cr["tag"], control["sourceRevision"], selected["architecture"], cr["dockerIndexDigest"], control["configDigest"])
+        if cr["rawV2"]:
+            native = cr["nativeConfig"]
+            require(ci.get("RootFS", {}).get("Layers") == native["rootfs"]["diff_ids"] and
+                    all(ci.get("Config", {}).get(k) == v for k, v in native["config"].items()),
+                    "actual_control_native_config_changed")
         require(not any(e.startswith("SESSION_READ_API_") for e in ci["Config"].get("Env", [])), "independent_control_issuer_must_be_dormant")
         files = {"/app/node_modules/relay-control/" + n: h for n, h in dist.items()}
         files.update({"/app/node_modules/relay-control/migrations/" + n: h for n, h in migration["sql"].items()})

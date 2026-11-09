@@ -14,7 +14,7 @@ import secrets
 from urllib.parse import quote
 
 from native_bootstrap import scram
-from native_inspect import document
+from native_control_artifact import coordinates as control_coordinates
 from native_pipeline import canonical
 from native_recipe import NativeRecipeError, nonsecret, require
 
@@ -203,9 +203,10 @@ FROM pg_authid WHERE rolname IN ('control_owner','control_api_runtime');""", rea
                         {"name": "tmp", "emptyDir": {"sizeLimit": "64Mi"}}]}}}}
 
     def _verify_control_ledger(self, selected):
-        expected = document(self.inputs["controlMigrationManifest"], self.inputs["controlMigrationManifestSha256"])
+        expected = control_coordinates(self.inputs, selected["control"], selected["architecture"])["migration"]
         require(expected["source"] == selected["control"]["sourceRevision"], "control_schema_source_changed")
-        actual = self._psql(selected, "relaycontrol", "SELECT coalesce(json_object_agg(name,checksum)::text,'{}') FROM public.selfhost_schema_migrations;", read_only=True)
+        require(expected["ledger"] in {"selfhost_schema_migrations", "control_schema_migrations"}, "qualified_control_ledger_required")
+        actual = self._psql(selected, "relaycontrol", "SELECT coalesce(json_object_agg(name,checksum)::text,'{}') FROM public." + expected["ledger"] + ";", read_only=True)
         require(json.loads(actual.strip()) == expected["sql"], "control_schema_ledger_must_match_qualified_source_exactly")
 
     def _observe_control(self, selected, pod):
