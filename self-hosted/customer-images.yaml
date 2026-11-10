@@ -4,7 +4,7 @@ apiVersion: selfhost.agentrelay.com/v1alpha1
 kind: CustomerImageSourceManifest
 # Top-level per the gate schema (see the positive fixture in
 # ci/customer-release-gate); the release gate refuses anything but "ready".
-status: ready
+status: blocked
 metadata:
   name: agent-relay-gcp
   auditedAt: "2026-11-09"
@@ -220,12 +220,12 @@ images:
       status: available-public
       procedure: Mirror the public GHCR digest into the customer registry by digest and record the destination digest.
     approval:
-      status: approved
+      status: blocked
       basis: >-
-        Public digest from the reviewed publish-image workflow at the recorded
-        main revision, with an SBOM, max-mode provenance, and amd64+arm64
-        verified anonymously.
-      blockingReasons: []
+        The digest remains recorded for traceability but is no longer eligible
+        for the November 11 customer install. It must be replaced by the
+        reviewed R9 successor from main.
+      blockingReasons: [sessions-pipeline-r9-customer-image]
 
   - id: sessions-migration-postgresql
     active: true
@@ -716,4 +716,16 @@ promotionProcedure:
 # services, RelayHistory and selfhost-api release images are public, built by
 # reviewed workflows from recorded main revisions, with an SBOM and max-mode
 # provenance, and amd64+arm64 verified anonymously.
-blockers: []
+blockers:
+  - id: sessions-pipeline-r9-customer-image
+    severity: hard
+    images: [sessions-pipeline]
+    owner: sessions-pipeline
+    reason: >-
+      The recorded ce9b4464 services image was withdrawn from the November 11
+      customer install. The R9 scrub-fix successor has not yet merged to main
+      or been published as an approved immutable image.
+    resolution: >-
+      Replace the recorded source revision and digest with the exact merged R9
+      successor, record its reviewed release evidence, and rerun the customer
+      release gate before producing an install bundle.
