@@ -151,7 +151,12 @@ def failure_diagnostic(error):
     from native_recipe import NativePhaseError, NativeRecipeError, CORE_OPERATIONS, PHASE_FAILURE_CODES
     if isinstance(error, NativePhaseError):
         if type(error.phase) is str and type(error.code) is str and error.phase in (*CORE_OPERATIONS, "addons") and error.code in PHASE_FAILURE_CODES:
-            return {"result": "REFUSED", "phase": error.phase, "errorCode": error.code}
+            from native_diagnostics import validate_details
+            try:
+                details = validate_details(error.details)
+            except (ValueError, AttributeError):
+                return {"result": "REFUSED", "errorCode": "native_core_failed_review_required"}
+            return {"result": "REFUSED", "phase": error.phase, "errorCode": error.code, **details}
         return {"result": "REFUSED", "errorCode": "native_core_failed_review_required"}
     code = str(error) if isinstance(error, NativeRecipeError) and re.fullmatch(r"[a-zA-Z0-9_:.-]+", str(error)) else "native_core_failed_review_required"
     return {"result": "REFUSED", "errorCode": code}

@@ -108,7 +108,7 @@ class NativeRecipeTests(unittest.TestCase):
         error = NativePhaseError("install_control", "command_failed"); error.phase = sensitive
         self.assertEqual(failure_diagnostic(error), {"result": "REFUSED", "errorCode": "native_core_failed_review_required"})
 
-    def test_command_boundary_classifies_failures_without_reading_sensitive_details(self):
+    def test_command_boundary_classifies_failures_without_retaining_sensitive_details(self):
         from types import SimpleNamespace
         import stack
         from native_recipe import NativePhaseError, phase_operation
@@ -120,6 +120,46 @@ class NativeRecipeTests(unittest.TestCase):
                 phase_operation("install_control", lambda: stack.run(["synthetic-command"], sensitive=True))
             self.assertEqual(caught.exception.code, expected)
             self.assertNotIn(sensitive, str(caught.exception))
+
+    def test_closed_command_stage_exit_and_reason_survive_sensitive_failure(self):
+        from types import SimpleNamespace
+        import stack
+        from native_recipe import NativePhaseError, phase_operation
+        from native_core_cli import failure_diagnostic
+        sensitive = "synthetic-password /private/credential SELECT secret;"
+        stderr = sensitive + " sessions-pipeline-worker: workload rename requires a drained cutover. " + sensitive
+        result = SimpleNamespace(returncode=1, stdout=sensitive, stderr=stderr)
+        with patch.object(stack.subprocess, "run", return_value=result), self.assertRaises(NativePhaseError) as caught:
+            phase_operation("serve", lambda: stack.run(["/private/credential/helm", "upgrade", sensitive],
+                                                       data=sensitive, sensitive=True))
+        self.assertEqual(failure_diagnostic(caught.exception), {"result": "REFUSED", "phase": "serve",
+            "errorCode": "command_failed", "commandStage": "helm_upgrade", "exitCode": 1,
+            "reasonCode": "workload_rename_guard"})
+        self.assertNotIn(sensitive, json.dumps(failure_diagnostic(caught.exception)))
+        self.assertNotIn("/private/credential", "".join(traceback.format_exception(caught.exception)))
+
+    def test_diagnostic_timeout_and_database_codes_are_closed_without_child_argv(self):
+        from native_diagnostics import command_details
+        private = "synthetic-password /private/credential SELECT secret;"
+        args = ["kubectl", "--kubeconfig", private, "exec", "owned-pod", "--", "psql", "-c", private]
+        self.assertEqual(command_details(args, exit_code=1, stderr='{"errorCode":"42501"} '+private),
+                         {"commandStage": "kubectl_exec", "exitCode": 1, "reasonCode": "database_permission_denied"})
+        self.assertEqual(command_details(args, timeout=True, stderr=private),
+                         {"commandStage": "kubectl_exec", "reasonCode": "command_timeout"})
+        self.assertEqual(command_details([private], exit_code=1, stderr='{"errorCode":"'+private+'"}'),
+                         {"commandStage": "transport_command", "exitCode": 1, "reasonCode": "command_failed"})
+
+    def test_public_formatter_revalidates_detail_types_and_closed_vocabulary(self):
+        from native_recipe import NativePhaseError
+        from native_core_cli import failure_diagnostic
+        for details in [{"commandStage": "private-token", "reasonCode": "command_failed"},
+                        {"commandStage": "helm_upgrade", "reasonCode": "private-token"},
+                        {"commandStage": "helm_upgrade", "reasonCode": "command_failed", "exitCode": True},
+                        {"commandStage": "helm_upgrade", "reasonCode": "command_failed", "exitCode": 0},
+                        {"commandStage": "helm_upgrade", "reasonCode": "command_failed", "stderr": "private-token"}]:
+            with self.subTest(details=details):
+                error = NativePhaseError("serve", "command_failed"); error.details = details
+                self.assertEqual(failure_diagnostic(error), {"result": "REFUSED", "errorCode": "native_core_failed_review_required"})
 
     def test_explicit_new_store_epoch_is_supported_but_ambiguous_floor_is_not(self):
         s = selected(); s["completeSince"] = "epoch"

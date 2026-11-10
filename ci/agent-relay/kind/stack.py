@@ -36,9 +36,11 @@ HOSTS = [f"{s}.kind.agentrelay.com" for s in ("relay", "cast", "history", "files
 
 
 class StackError(Exception):
-    def __init__(self, message, *, safe_code="transport_failure"):
+    def __init__(self, message, *, safe_code="transport_failure", details=None):
         super().__init__(message)
         self.safe_code = safe_code if safe_code in {"transport_failure", "command_failed", "command_timeout"} else "transport_failure"
+        from native_diagnostics import validate_details
+        self.safe_details = validate_details(details)
 
 
 def helm_list_all_args(version):
@@ -55,10 +57,14 @@ def run(argv, *, data=None, timeout=600, sensitive=False, check=True, env=None):
         p = subprocess.run([str(a) for a in argv], input=data, capture_output=True,
                            text=True, timeout=timeout, cwd=ROOT, env=env)
     except subprocess.TimeoutExpired:
-        raise StackError(f"{argv[0]} timed out after {timeout}s", safe_code="command_timeout") from None
+        from native_diagnostics import command_details
+        raise StackError(f"{argv[0]} timed out after {timeout}s", safe_code="command_timeout",
+                         details=command_details(argv, timeout=True)) from None
     if check and p.returncode:
         detail = "credential-bearing operation failed; output withheld" if sensitive else (p.stderr or p.stdout)[-2500:]
-        raise StackError(f"{argv[0]} exited {p.returncode}: {detail}", safe_code="command_failed")
+        from native_diagnostics import command_details
+        raise StackError(f"{argv[0]} exited {p.returncode}: {detail}", safe_code="command_failed",
+                         details=command_details(argv, exit_code=p.returncode, stdout=p.stdout, stderr=p.stderr))
     return p
 
 
@@ -222,7 +228,7 @@ class Stack:
                  ROOT / "ci/agent-relay/kind/native_network.py",
                  *[ROOT / "ci/agent-relay/kind" / (name + ".py") for name in
                    ("native_recipe", "native_inspect", "native_bootstrap", "native_pipeline", "native_control", "native_control_artifact",
-                    "native_core_values", "native_core", "native_core_cli", "native_webapp", "native_target")],
+                    "native_core_values", "native_core", "native_core_cli", "native_webapp", "native_target", "native_diagnostics")],
                  ROOT / "ci/agent-relay/kind/bootstrap.mjs", ROOT / "ci/agent-relay/kind/control.py",
                  ROOT / "ci/agent-relay/kind/named_upgrade.py",
                  ROOT / "ci/agent-relay/kind/storage-name-renderer/plugin.yaml",
