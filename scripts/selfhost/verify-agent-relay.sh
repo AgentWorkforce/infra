@@ -439,25 +439,39 @@ if $REQUIRE_NATIVE_HISTORY; then
   if ((workload_get_rc != 0)); then
     proof FAIL native_history "controller_query_failed"
   else
+    all_deployments_json="$("${KUBECTL[@]}" get deployments -o json 2>/dev/null)"
+    all_deployments_rc=$?
+    if ((all_deployments_rc != 0)); then
+      proof FAIL native_history "namespace_deployment_query_failed"
+    else
     native_summary="$(
-      printf '%s' "$workload_json" |
-        NATIVE_RELEASE="$RELEASE" python3 -c '
+      NATIVE_RELEASE="$RELEASE" python3 -c '
 import json, os, sys
-release = os.environ["NATIVE_RELEASE"]
 items = [x for x in json.load(sys.stdin).get("items", []) if x.get("kind") == "Deployment"]
-by_name = {x.get("metadata", {}).get("name", ""): x for x in items}
-required = [f"{release}-read-api", f"{release}-ingest-edge", f"{release}-search-indexer"]
-missing = [name for name in required if name not in by_name]
-legacy = [name for name in by_name if name in {"relayauth", "relayhistory"} or name in {f"{release}-relayauth", f"{release}-relayhistory"}]
-control = next((x for x in items if x.get("metadata", {}).get("name") in {"relay-control", f"{release}-relay-control"} or x.get("metadata", {}).get("labels", {}).get("app.kubernetes.io/name") == "relay-control"), None)
+all_items = [x for x in json.load(os.fdopen(3)).get("items", []) if x.get("kind", "Deployment") == "Deployment"]
+def labels(item):
+    return item.get("metadata", {}).get("labels", {})
+def chart(item):
+    return labels(item).get("helm.sh/chart", "")
+def component(item):
+    return labels(item).get("app.kubernetes.io/component", "")
+required = {"read-api": "read-api", "ingest-edge": "ingest-edge", "search-indexer": "search-indexer"}
+counts = {role: sum(component(x) == value for x in items) for role, value in required.items()}
+missing = [role if count == 0 else f"{role}({count})" for role, count in counts.items() if count != 1]
+def is_legacy(item):
+    names = {c.get("name", "") for c in item.get("spec", {}).get("template", {}).get("spec", {}).get("containers", [])}
+    return chart(item).startswith(("relayauth-", "relayhistory-")) or bool(names & {"relayauth", "history"})
+legacy = sorted(x.get("metadata", {}).get("name", "") for x in all_items if is_legacy(x))
+controls = [x for x in items if chart(x).startswith("relay-control-") or labels(x).get("app.kubernetes.io/name") == "relay-control"]
+control = controls[0] if len(controls) == 1 else None
 env = {}
 if control:
     containers = control.get("spec", {}).get("template", {}).get("spec", {}).get("containers", [])
     if containers:
         env = {x.get("name"): x.get("value") for x in containers[0].get("env", []) if x.get("name")}
-control_ok = control is not None and env.get("RELAYHISTORY_BACKEND") == "native" and "RELAYAUTH_URL" not in env and "RELAYHISTORY_URL" not in env
+control_ok = control is not None and env.get("RELAYHISTORY_BACKEND") == "native" and not ({"RELAYAUTH_URL", "RELAYHISTORY_URL", "RELAYHISTORY_PUBLIC_URL"} & set(env))
 print(",".join(missing) or "-", ",".join(legacy) or "-", "ok" if control_ok else "bad")
-' 2>/dev/null
+' 3<<<"$all_deployments_json" <<<"$workload_json" 2>/dev/null
     )"
     native_parse_rc=$?
     if ((native_parse_rc != 0)); then
@@ -469,6 +483,7 @@ print(",".join(missing) or "-", ",".join(legacy) or "-", "ok" if control_ok else
       else
         proof FAIL native_history "missing=$native_missing legacy=$native_legacy control=$native_control"
       fi
+    fi
     fi
   fi
 fi

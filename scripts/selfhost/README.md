@@ -176,9 +176,9 @@ visible in Dashboard list, replay and search:
   --release agent-relay \
   --require-native-history \
   --health-url https://relay.example.com/healthz \
-  --health-url https://api.example.com/healthz \
-  --health-url https://cast.example.com/health \
-  --health-url https://history.example.com/healthz
+  --health-url https://api.relay.example.com/healthz \
+  --health-url https://cast.relay.example.com/health \
+  --health-url https://history.relay.example.com/healthz
 
 ./e2e-gcp-proof.sh \
   --context my-gcp-context \
