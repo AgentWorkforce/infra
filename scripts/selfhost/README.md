@@ -23,7 +23,55 @@ off: without `--apply` it prints the plan and contacts nothing. See its header
 for flags, and [the supply chain doc](../../docs/self-hosted-image-supply-chain.md)
 for what must be true before an image is used in a customer install.
 
-## Safety properties
+## Managed RDS bootstrap
+
+`rds-setup.sh` prepares the supported shared-instance AWS RDS layout: separate
+`relaycontrol`, `hoopdb`, and `relaycast` databases with distinct owner and
+runtime roles. Unlike the verification scripts below, it is intentionally
+mutating. Run it only from the approved administrator context for the target
+cluster and RDS instance.
+
+The `pre` phase runs before Helm. It retrieves the RDS administrator credential
+from AWS Secrets Manager, runs the reviewed bootstrap SQL in short-lived
+Kubernetes Jobs, creates the `rds-ca` ConfigMap, and writes Secret input files
+under a mode-0700 state directory. It never prints passwords or connection
+strings.
+
+```bash
+export AWS_REGION=us-west-2
+export RDS_HOST="$(terraform output -raw database_host)"
+export RDS_ADMIN_SECRET_ARN="$(terraform output -raw database_admin_secret_arn)"
+export SERVICES_IMAGE='registry.example/sessions-pipeline@sha256:<approved-digest>'
+export NAMESPACE=agent-relay
+export STATE_DIR="$PWD/.private/agent-relay-install"
+scripts/selfhost/rds-setup.sh pre
+```
+
+Merge the generated `secret-files/` entries with the other release-packet
+secrets, then create the named Kubernetes Secrets before installing the chart.
+Do not commit or archive the state directory in the source bundle. One RDS
+instance supports one HoopDb install because a required search role is
+server-wide.
+
+After the Helm migration Jobs have completed, run the `post` phase. It refuses
+to proceed without a succeeded HoopDb migration Job, activates the read,
+ingest, and search logins over verified TLS, and leaves the application
+Deployments ready to restart.
+
+```bash
+scripts/selfhost/rds-setup.sh post
+kubectl -n "$NAMESPACE" rollout restart \
+  deploy/agent-relay-read-api \
+  deploy/agent-relay-ingest-edge \
+  deploy/agent-relay-search-indexer
+```
+
+Re-run `pre` immediately before an upgrade so the local HoopDb migration-owner
+Secret input reflects the current rotating RDS administrator password. Both
+the services image and optional PostgreSQL client image must be immutable
+digest references.
+
+## Verification safety properties
 
 Both scripts:
 
