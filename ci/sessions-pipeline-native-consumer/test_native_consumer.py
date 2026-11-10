@@ -55,7 +55,7 @@ class Consumer(unittest.TestCase):
             env=self.env(c);self.assertEqual(env['RELAYHISTORY_PIPELINE_CONSUMER_SECRET']['valueFrom']['secretKeyRef'],{'name':'consumer-runtime','key':'RELAYHISTORY_PIPELINE_CONSUMER_SECRET'})
             self.assertNotIn('HOOPDB_URL',env)
             self.assertEqual(env['PIPELINE_FANOUT']['value'],'off')
-            self.assertEqual(env['READER_MAX_RULESET']['value'],'8')
+            self.assertNotIn('READER_MAX_RULESET',env)
             self.assertEqual(env['PIPELINE_KEY_PREFIX']['value'],'96bulls')
             self.assertEqual(env['SEARCH_INDEX_BACKEND']['value'],'postgres')
             self.assertEqual(env['SESSION_POSTGRES_TLS_PROFILE']['value'],'custom-ca')
@@ -76,10 +76,11 @@ class Consumer(unittest.TestCase):
                 docs=self.render(self.native(readerMaxRuleset=ceiling))
                 for container in self.pod(docs)['containers']+self.pod(docs)['initContainers']:
                     self.assertEqual(self.env(container)['READER_MAX_RULESET']['value'],str(ceiling))
-        for ceiling in [7,11,'padded',' 8',8.5,None,True]:
+        for ceiling in [7,11,'padded',' 8',8.5,True]:
             with self.subTest(ceiling=ceiling):
                 self.assertIn('readerMaxRuleset',self.render(self.native(enabled=False,readerMaxRuleset=ceiling),fail=True))
         self.assertEqual(self.render(self.native(enabled=False,readerMaxRuleset=10)),[])
+        self.assertEqual(self.render(self.native(readerMaxRuleset=None)),self.render(self.native()))
     def test_native_slot_renders_under_umbrella_scope(self):
         values=yaml.safe_load(FIXTURE.read_text())
         image=values['nativeConsumer']['image'];ca={'enabled':True,'configMap':'postgres-ca','key':'ca.crt','secret':''}

@@ -251,9 +251,9 @@ workerHealth:
 # referenced only by session-brief, never migration Jobs or other stage workers.
 nativeBrief:
   enabled: false
-  # Highest ruleset the canonical brief input reader may decode. Reader-only;
+  # Null preserves legacy reads; explicit 8/9/10 opts into strict checks;
   # it neither selects a writer ruleset nor enables the native worker.
-  readerMaxRuleset: 8
+  readerMaxRuleset: null
   image:
     repository: ""
     digest: ""

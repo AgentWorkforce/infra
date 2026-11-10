@@ -77,7 +77,7 @@ class NativeBrief(unittest.TestCase):
     def test_native_env_secret_ca_health_and_egress_are_component_scoped(self):
         docs=self.render(self.selected());pod=self.brief(docs);main=pod['containers'][0]
         env={e['name']:e for e in main['env']};self.assertEqual(len(env),len(main['env']))
-        self.assertEqual(env['READER_MAX_RULESET']['value'],'8')
+        self.assertNotIn('READER_MAX_RULESET',env)
         self.assertEqual(env['SESSION_BRIEF_WORKSPACE_IDS']['value'],'default-workspace')
         self.assertEqual(env['SESSION_BRIEF_BATCH']['value'],'1');self.assertEqual(env['SESSION_BRIEF_GLOBAL_DAILY_CAP']['value'],'20');self.assertEqual(env['SESSION_BRIEF_SESSION_DAILY_CAP']['value'],'3');self.assertEqual(env['PIPELINE_KEY_PREFIX']['value'],'96bulls');self.assertEqual(env['PIPELINE_ORG_FROM_PREFIX']['value'],'true')
         self.assertEqual(env['OPENAI_API_KEY']['valueFrom']['secretKeyRef'],{'name':'brief-model-key','key':'OPENAI_API_KEY'})
@@ -100,10 +100,12 @@ class NativeBrief(unittest.TestCase):
                 selected=self.selected();selected['nativeBrief']['readerMaxRuleset']=ceiling
                 env={e['name']:e for e in self.brief(self.render(selected))['containers'][0]['env']}
                 self.assertEqual(env['READER_MAX_RULESET']['value'],str(ceiling))
-        for ceiling in [7,11,'09',' 8',8.5,None,True]:
+        for ceiling in [7,11,'09',' 8',8.5,True]:
             with self.subTest(ceiling=ceiling):
                 selected=self.selected();selected['nativeBrief']['readerMaxRuleset']=ceiling
                 self.render(selected,'readerMaxRuleset')
+        selected=self.selected();selected['nativeBrief']['readerMaxRuleset']=None
+        self.assertEqual(self.render(selected),self.render(self.selected()))
         for target in ['extraEnv','component']:
             selected=self.selected();entry={'name':'READER_MAX_RULESET','value':'10'}
             if target=='extraEnv':selected['extraEnv']=[entry]

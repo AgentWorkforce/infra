@@ -81,9 +81,10 @@ deployment:
   name: selfhost      # DEPLOYMENT
   id: ""              # DEPLOYMENT_ID; defaults to the release namespace/name
 environment: production
-# Highest ruleset this ingest reader may admit. This is a reader ceiling only:
+# Null omits the binding and preserves legacy admission. Explicit 8/9/10 opts
+# into strict marker/chunk checks. This is a reader ceiling only:
 # it does not select a writer ruleset or enable a runtime feature.
-readerMaxRuleset: 8
+readerMaxRuleset: null
 # Extra env for every component: [{ name: X, value: y }].
 extraEnv: []
 

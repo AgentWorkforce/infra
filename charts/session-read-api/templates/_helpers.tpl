@@ -36,7 +36,7 @@ app.kubernetes.io/part-of: sessions-pipeline
 {{- $digest := required "session-read-api: image.digest requires an owner-approved compatible image" $c.image.digest -}}
 {{- if not (regexMatch "^sha256:[a-f0-9]{64}$" $digest) }}{{ fail "session-read-api: image.digest must be sha256:<64 lowercase hex characters>" }}{{ end -}}
 {{- $origin := required "session-read-api: origin is required" $c.origin -}}
-{{- if not (has (toString $c.readerMaxRuleset) (list "8" "9" "10")) }}{{ fail "session-read-api: readerMaxRuleset must be one of 8, 9, or 10" }}{{ end -}}
+{{- if and (not (kindIs "invalid" $c.readerMaxRuleset)) (not (has (toString $c.readerMaxRuleset) (list "8" "9" "10"))) }}{{ fail "session-read-api: readerMaxRuleset must be one of 8, 9, or 10" }}{{ end -}}
 {{- $publicOriginPattern := "^https://([A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?\\.)+[A-Za-z]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?(:[0-9]{1,5})?$" -}}
 {{- if or (not (regexMatch $publicOriginPattern $origin)) (regexMatch "(?i)\\.(localhost|local|internal|lan|invalid|test|example|home\\.arpa|onion)(:[0-9]{1,5})?$" $origin) (regexMatch "(?i)\\.example\\.(com|net|org)(:[0-9]{1,5})?$" $origin) }}{{ fail "session-read-api: origin must be a public HTTPS origin with multi-label DNS and no credentials, path, query, or fragment" }}{{ end -}}
 {{- $portToken := regexFind ":[0-9]+$" $origin -}}

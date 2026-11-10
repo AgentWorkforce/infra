@@ -6,7 +6,7 @@
 {{- include "sessions-pipeline-worker.refuseUnmanagedBrief" ($settings.env | default list) -}}
 {{- end -}}
 {{- if not (kindIs "bool" $n.enabled) }}{{ fail "nativeBrief.enabled must be a boolean" }}{{ end -}}
-{{- if not (has (toString $n.readerMaxRuleset) (list "8" "9" "10")) }}{{ fail "nativeBrief.readerMaxRuleset must be one of 8, 9, or 10" }}{{ end -}}
+{{- if and (not (kindIs "invalid" $n.readerMaxRuleset)) (not (has (toString $n.readerMaxRuleset) (list "8" "9" "10"))) }}{{ fail "nativeBrief.readerMaxRuleset must be one of 8, 9, or 10" }}{{ end -}}
 {{- if not (kindIs "bool" $c.enabled) }}{{ fail "components.session-brief.enabled must be a boolean" }}{{ end -}}
 {{- if and $c.enabled (not $n.enabled) }}{{ fail "components.session-brief.enabled requires nativeBrief.enabled; unmanaged native worker selection is refused" }}{{ end -}}
 {{- if not (kindIs "bool" $n.openaiEgress.enabled) }}{{ fail "nativeBrief.openaiEgress.enabled must be a boolean" }}{{ end -}}
@@ -103,7 +103,9 @@
 
 {{- define "sessions-pipeline-worker.nativeBriefEnv" -}}
 - { name: SESSION_BRIEF_ENABLED, value: "true" }
+{{- if not (kindIs "invalid" .Values.nativeBrief.readerMaxRuleset) }}
 - { name: READER_MAX_RULESET, value: {{ .Values.nativeBrief.readerMaxRuleset | quote }} }
+{{- end }}
 - { name: SESSION_BRIEF_CANONICAL_INPUT, value: "true" }
 - { name: SESSION_BRIEF_WORKSPACE_IDS, value: {{ join "," .Values.nativeBrief.workspaceIds | quote }} }
 - { name: SESSION_BRIEF_MODEL, value: {{ .Values.nativeBrief.model | quote }} }
