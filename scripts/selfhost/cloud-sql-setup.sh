@@ -232,6 +232,7 @@ printf '%s\n' "SELECT format('ALTER DATABASE hoopdb OWNER TO %I', current_user) 
 $P -c 'CREATE EXTENSION IF NOT EXISTS vector WITH SCHEMA public; CREATE EXTENSION IF NOT EXISTS pg_trgm WITH SCHEMA public; CREATE EXTENSION IF NOT EXISTS btree_gin WITH SCHEMA public;'
 $P -f /sql/cloudsql_owner_function_default_revoke.sql
 $P -f /sql/cloudsql_migration_roles.sql
+$P -f /sql/session_consumer_roles.sql
 echo "Cloud SQL owner boundary and migration roles ready"
 
 $P -v p1="$sessions_pipeline_runtime" <<'SQL'

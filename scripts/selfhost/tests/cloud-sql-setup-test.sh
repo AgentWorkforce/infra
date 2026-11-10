@@ -107,6 +107,7 @@ grep -F 'ALTER DATABASE relaycast OWNER TO CURRENT_USER' "$SCRIPT" >/dev/null ||
 if grep -Fq 'ALTER DATABASE relaycast OWNER TO relaycast_owner' "$SCRIPT"; then
   fail "Relaycast role incorrectly owns the database"
 fi
+grep -F 'session_consumer_roles.sql' "$SCRIPT" >/dev/null || fail "pre-migration consumer role bootstrap is missing"
 [[ -s "$CAPTURE/job-agent-relay-cloud-sql-pre.json" ]] || fail "pre Job manifest was not submitted"
 jq -e '.spec.template.spec.automountServiceAccountToken == false and
   any(.spec.template.spec.volumes[]; .name == "ca") and
