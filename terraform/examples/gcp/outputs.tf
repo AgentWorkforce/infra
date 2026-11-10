@@ -45,6 +45,8 @@ output "chart_values" {
           { name = "LOCKER_PROVIDER", value = "gcs" },
           { name = "LOCKER_BUCKET", value = module.sessions_bucket.bucket_name },
           { name = "LOCKER_REGION", value = module.sessions_bucket.region },
+          { name = "PIPELINE_KEY_PREFIX", value = "96bulls" },
+          { name = "PIPELINE_ORG_FROM_PREFIX", value = "true" },
         ]
       }
       ingestEdge = {

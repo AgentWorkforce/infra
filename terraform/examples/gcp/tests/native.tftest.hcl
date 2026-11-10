@@ -67,4 +67,8 @@ run "native_data_services_are_complete" {
     condition     = output.chart_values["sessions-pipeline"].worker.migrations.runtimeRole == "sessions_pipeline_runtime" && output.chart_values["sessions-pipeline"].sessionReadApi.postgresCa.sha256 == sha256("-----BEGIN CERTIFICATE-----")
     error_message = "The generated overlay must select the native runtime role and pin the Cloud SQL CA."
   }
+  assert {
+    condition     = output.chart_values["sessions-pipeline"].sessionReadApi.extraEnv[3].value == "96bulls" && output.chart_values["sessions-pipeline"].sessionReadApi.extraEnv[4].value == "true"
+    error_message = "The generated read API overlay must retain the GCS object-key contract when it replaces site extraEnv."
+  }
 }
