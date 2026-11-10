@@ -191,6 +191,14 @@ volumes:
 {{- if and (eq .component "session-brief") $ctx.Values.nativeBrief.enabled }}
   - name: native-brief-verified-ca
     emptyDir: { medium: Memory, sizeLimit: 1Mi }
+{{- $analytics := $ctx.Values.nativeBrief.analytics }}
+{{- if and $analytics.enabled $analytics.caConfigMap }}
+  - name: brief-analytics-ca
+    configMap:
+      name: {{ $analytics.caConfigMap | quote }}
+      defaultMode: 0444
+      items: [{ key: {{ $analytics.caKey | quote }}, path: ca.crt }]
+{{- end }}
 {{- end }}
 {{- if eq .component "bob-costas" }}
   - name: summary-master-keys
