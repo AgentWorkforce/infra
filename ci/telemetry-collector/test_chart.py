@@ -64,13 +64,16 @@ class Collector(unittest.TestCase):
                 render(['--set', 'image.sourceRevision=' + revision], ok=False)
 
     def test_private_recovery_source_is_explicit_and_unknown_sources_stay_refused(self):
-        source = "d2cb39635bbf163976c354582365b3d97dcd0b56"
-        self.assertEqual(yaml.safe_load((ROOT / CHART / "Chart.yaml").read_text())["appVersion"], source)
-        docs = render(["--set-string", "image.sourceRevision=" + source])
-        deployment = next(item for item in docs if item["kind"] == "Deployment")
-        self.assertEqual(deployment["spec"]["template"]["metadata"]["annotations"]["agentworkforce.dev/collector-source"], source)
-        self.assertEqual(deployment["spec"]["replicas"], 1)
-        self.assertEqual(deployment["spec"]["strategy"], {"type": "Recreate"})
+        current = "ccc84b1a64435f18000dda299c64f0e84b3f751d"
+        previous = "d2cb39635bbf163976c354582365b3d97dcd0b56"
+        self.assertEqual(yaml.safe_load((ROOT / CHART / "Chart.yaml").read_text())["appVersion"], current)
+        for source in [previous, current]:
+            with self.subTest(source=source):
+                docs = render(["--set-string", "image.sourceRevision=" + source])
+                deployment = next(item for item in docs if item["kind"] == "Deployment")
+                self.assertEqual(deployment["spec"]["template"]["metadata"]["annotations"]["agentworkforce.dev/collector-source"], source)
+                self.assertEqual(deployment["spec"]["replicas"], 1)
+                self.assertEqual(deployment["spec"]["strategy"], {"type": "Recreate"})
         # A source declaration is required independently of the digest fixture.
         render(["--set-string", "image.sourceRevision="], ok=False)
 
