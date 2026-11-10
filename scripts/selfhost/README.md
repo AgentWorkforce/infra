@@ -159,6 +159,42 @@ Override it when the chart uses another release label:
 
 Run `./verify-agent-relay.sh --help` for all options.
 
+For the current native History architecture, add
+`--require-native-history`. That gate requires the read API, ingest edge and
+search indexer Deployments; rejects RelayAuth and standalone RelayHistory; and
+requires Relay Control to use `RELAYHISTORY_BACKEND=native` without either
+legacy URL environment variable.
+
+After the read-only gate passes, the end-to-end proof uses the ingest edge for
+an idempotent session upload and polls the read API until the session is
+visible in Dashboard list, replay and search:
+
+```bash
+./verify-agent-relay.sh \
+  --context my-gcp-context \
+  --namespace agent-relay \
+  --release agent-relay \
+  --require-native-history \
+  --health-url https://relay.example.com/healthz \
+  --health-url https://api.relay.example.com/healthz \
+  --health-url https://cast.relay.example.com/health \
+  --health-url https://history.relay.example.com/healthz
+
+./e2e-gcp-proof.sh \
+  --context my-gcp-context \
+  --namespace agent-relay \
+  --sessions-namespace agent-relay \
+  --secret agent-relay-secrets \
+  --history-profile pipeline \
+  --base-domain relay.example.com \
+  --require-public
+```
+
+The e2e proof creates disposable workspaces, agents and session data, then
+removes them in its cleanup case. It emits `CASE|...` records and ends with
+`E2E_RESULT=PASS` only when the session upload, Dashboard reads/search,
+tenant isolation, restart durability, public edge and cleanup pass.
+
 ### What is proved
 
 1. **Release:** `helm status --output json` reports `deployed`.
@@ -207,7 +243,7 @@ For charts with another health route, set `--health-path`:
 ```
 
 The services behind the agent-relay GKE Ingress do not share a health path
-(relay-webapp, relay-control, and relayhistory serve `/healthz`;
+(relay-webapp, relay-control, and the native read API serve `/healthz`;
 relaycast serves `/health`), so no single `--health-path` passes for every
 host. For the GKE umbrella, supply one URL per host instead:
 

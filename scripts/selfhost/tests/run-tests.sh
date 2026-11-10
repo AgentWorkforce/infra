@@ -327,6 +327,43 @@ if run_verify "${tmp_root}/verify-refs-all.out"; then
 fi
 pass "verify narrows health, TLS, and certificate references to --ingress-host"
 
+reset_fixtures
+write_verify_fixtures
+cat >"${fixtures}/deployments.apps,statefulsets.apps,daemonsets.apps.json" <<'JSON'
+{"items":[
+  {"kind":"Deployment","metadata":{"name":"custom-control","generation":1,"labels":{"helm.sh/chart":"relay-control-0.4.4","app.kubernetes.io/name":"relay-control"}},"spec":{"replicas":1,"template":{"spec":{"containers":[{"name":"api","env":[{"name":"RELAYHISTORY_BACKEND","value":"native"}]}]}}},"status":{"observedGeneration":1,"availableReplicas":1,"updatedReplicas":1}},
+  {"kind":"Deployment","metadata":{"name":"custom-reader","generation":1,"labels":{"app.kubernetes.io/component":"read-api"}},"spec":{"replicas":1},"status":{"observedGeneration":1,"availableReplicas":1,"updatedReplicas":1}},
+  {"kind":"Deployment","metadata":{"name":"custom-ingest","generation":1,"labels":{"app.kubernetes.io/component":"ingest-edge"}},"spec":{"replicas":1},"status":{"observedGeneration":1,"availableReplicas":1,"updatedReplicas":1}},
+  {"kind":"Deployment","metadata":{"name":"custom-indexer","generation":1,"labels":{"app.kubernetes.io/component":"search-indexer"}},"spec":{"replicas":1},"status":{"observedGeneration":1,"availableReplicas":1,"updatedReplicas":1}}
+]}
+JSON
+cp "${fixtures}/deployments.apps,statefulsets.apps,daemonsets.apps.json" "${fixtures}/deployments.json"
+run_verify "${tmp_root}/verify-native.out" --require-native-history ||
+  { cat "${tmp_root}/verify-native.out" >&2; fail "verify rejected the native History architecture"; }
+grep -q '^PROOF|PASS|native_history|reader_ingest_search_present legacy_absent control_backend=native' "${tmp_root}/verify-native.out" ||
+  fail "native History success was not reported"
+jq '.items += [{"kind":"Deployment","metadata":{"name":"old-history-custom-name","generation":1,"labels":{"helm.sh/chart":"relayhistory-0.4.0"}},"spec":{"replicas":1,"template":{"spec":{"containers":[{"name":"history"}]}}},"status":{"observedGeneration":1,"availableReplicas":1,"updatedReplicas":1}}]' \
+  "${fixtures}/deployments.apps,statefulsets.apps,daemonsets.apps.json" >"${fixtures}/native-legacy.tmp"
+mv "${fixtures}/native-legacy.tmp" "${fixtures}/deployments.apps,statefulsets.apps,daemonsets.apps.json"
+cp "${fixtures}/deployments.apps,statefulsets.apps,daemonsets.apps.json" "${fixtures}/deployments.json"
+if run_verify "${tmp_root}/verify-native-legacy.out" --require-native-history; then
+  fail "verify accepted standalone RelayHistory in the native architecture"
+fi
+grep -q '^PROOF|FAIL|native_history|.*legacy=old-history-custom-name' "${tmp_root}/verify-native-legacy.out" ||
+  fail "legacy History controller was not reported"
+jq '.items |= map(select(.metadata.name != "old-history-custom-name")) |
+  (.items[] | select(.metadata.name == "custom-control") | .spec.template.spec.containers[0].env) +=
+  [{"name":"RELAYHISTORY_PUBLIC_URL","value":"https://legacy.example.com"}]' \
+  "${fixtures}/deployments.apps,statefulsets.apps,daemonsets.apps.json" >"${fixtures}/native-control.tmp"
+mv "${fixtures}/native-control.tmp" "${fixtures}/deployments.apps,statefulsets.apps,daemonsets.apps.json"
+cp "${fixtures}/deployments.apps,statefulsets.apps,daemonsets.apps.json" "${fixtures}/deployments.json"
+if run_verify "${tmp_root}/verify-native-control.out" --require-native-history; then
+  fail "verify accepted a native Control Deployment with a legacy public URL"
+fi
+grep -q '^PROOF|FAIL|native_history|.*control=bad' "${tmp_root}/verify-native-control.out" ||
+  fail "legacy Control public URL was not reported"
+pass "verify enforces the native History controller and Control handoff contract"
+
 # ---------------------------------------------------------------------------
 # pre-upgrade-check.sh
 # ---------------------------------------------------------------------------

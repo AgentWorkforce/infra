@@ -20,6 +20,7 @@ ALLOW_MISSING_MIGRATIONS=false
 ALLOW_MISSING_WORKLOADS=false
 ALLOW_MISSING_INGRESS=false
 ALLOW_NO_TLS=false
+REQUIRE_NATIVE_HISTORY=false
 HEALTH_URLS=()
 EXTERNAL_TLS_HOSTS=()
 
@@ -58,6 +59,11 @@ Explicit exceptions:
       --allow-missing-workloads    Permit no controller workloads
       --allow-missing-ingress      Permit no ingress and skip derived health/TLS
       --allow-no-tls               Permit ingress without TLS
+
+Architecture:
+      --require-native-history     Require read API, ingest edge and search
+                                   indexer; reject RelayAuth, standalone
+                                   RelayHistory and legacy Control URLs
 
 Other:
   -h, --help                       Show this help
@@ -203,6 +209,10 @@ PY
       ;;
     --allow-no-tls)
       ALLOW_NO_TLS=true
+      shift
+      ;;
+    --require-native-history)
+      REQUIRE_NATIVE_HISTORY=true
       shift
       ;;
     -h|--help)
@@ -416,6 +426,64 @@ print(len(items), unready)
       proof FAIL workloads "controllers=$workload_count unready=$workload_unready"
     else
       proof PASS workloads "controllers=$workload_count ready=$workload_count"
+    fi
+  fi
+fi
+
+# Native History architecture: require all three pipeline controllers, reject
+# both legacy controllers, and prove Control is configured for the native
+# backend without the retired RelayAuth/RelayHistory URL handoff. This reads
+# Deployment metadata and literal env names/values only; it never fetches a
+# Secret resource.
+if $REQUIRE_NATIVE_HISTORY; then
+  if ((workload_get_rc != 0)); then
+    proof FAIL native_history "controller_query_failed"
+  else
+    all_deployments_json="$("${KUBECTL[@]}" get deployments -o json 2>/dev/null)"
+    all_deployments_rc=$?
+    if ((all_deployments_rc != 0)); then
+      proof FAIL native_history "namespace_deployment_query_failed"
+    else
+    native_summary="$(
+      NATIVE_RELEASE="$RELEASE" python3 -c '
+import json, os, sys
+items = [x for x in json.load(sys.stdin).get("items", []) if x.get("kind") == "Deployment"]
+all_items = [x for x in json.load(os.fdopen(3)).get("items", []) if x.get("kind", "Deployment") == "Deployment"]
+def labels(item):
+    return item.get("metadata", {}).get("labels", {})
+def chart(item):
+    return labels(item).get("helm.sh/chart", "")
+def component(item):
+    return labels(item).get("app.kubernetes.io/component", "")
+required = {"read-api": "read-api", "ingest-edge": "ingest-edge", "search-indexer": "search-indexer"}
+counts = {role: sum(component(x) == value for x in items) for role, value in required.items()}
+missing = [role if count == 0 else f"{role}({count})" for role, count in counts.items() if count != 1]
+def is_legacy(item):
+    names = {c.get("name", "") for c in item.get("spec", {}).get("template", {}).get("spec", {}).get("containers", [])}
+    return chart(item).startswith(("relayauth-", "relayhistory-")) or bool(names & {"relayauth", "history"})
+legacy = sorted(x.get("metadata", {}).get("name", "") for x in all_items if is_legacy(x))
+controls = [x for x in items if chart(x).startswith("relay-control-") or labels(x).get("app.kubernetes.io/name") == "relay-control"]
+control = controls[0] if len(controls) == 1 else None
+env = {}
+if control:
+    containers = control.get("spec", {}).get("template", {}).get("spec", {}).get("containers", [])
+    if containers:
+        env = {x.get("name"): x.get("value") for x in containers[0].get("env", []) if x.get("name")}
+control_ok = control is not None and env.get("RELAYHISTORY_BACKEND") == "native" and not ({"RELAYAUTH_URL", "RELAYHISTORY_URL", "RELAYHISTORY_PUBLIC_URL"} & set(env))
+print(",".join(missing) or "-", ",".join(legacy) or "-", "ok" if control_ok else "bad")
+' 3<<<"$all_deployments_json" <<<"$workload_json" 2>/dev/null
+    )"
+    native_parse_rc=$?
+    if ((native_parse_rc != 0)); then
+      proof FAIL native_history "controller_status_parse_failed"
+    else
+      read -r native_missing native_legacy native_control <<<"$native_summary"
+      if [[ "$native_missing" == - && "$native_legacy" == - && "$native_control" == ok ]]; then
+        proof PASS native_history "reader_ingest_search_present legacy_absent control_backend=native"
+      else
+        proof FAIL native_history "missing=$native_missing legacy=$native_legacy control=$native_control"
+      fi
+    fi
     fi
   fi
 fi
