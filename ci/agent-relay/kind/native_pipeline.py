@@ -30,13 +30,16 @@ def canonical(value):
 # its supported external gate, reached before even the pending marker is written.
 DRIVER = r"""
 import fs from 'node:fs';
+import {isDeepStrictEqual} from 'node:util';
 import pg from 'pg';
 import {postgresConnectionString,postgresTlsOptions} from '/app/src/shared/postgres-tls.ts';
 import {generation,expectedSchema,runMigrations,migrationProfile,migrationLedgerSha256} from '/app/src/hoopdb/migrate.ts';
 import {resolveRenamedLedger,migrationChecksumMatches} from '/app/src/hoopdb/migrate-guards.ts';
 const x=await Bun.stdin.json();
 const fail=()=>{throw Error('native_operator_refused')};
-const equal=(a,b)=>JSON.stringify(a)===JSON.stringify(b);
+// Python canonical stdin sorts object keys; their insertion order is not data.
+// Keep array order, property sets and value types exact at the write gate.
+const equal=isDeepStrictEqual;
 const profile=migrationProfile({HOOPDB_DB_MODE:'selfhosted',HOOPDB_SUPABASE_SHIM:'false',
  HOOPDB_ROLE_BOOTSTRAP:'false',HOOPDB_ROLE_VERIFY:'true',HOOPDB_RUNTIME_ROLE:'sessions_pipeline_runtime',
  HOOPDB_RUNTIME_ROLE_LOGIN:'true',HOOPDB_FUNCTION_BOUNDARY_MODE:'global-default-revoke'});
