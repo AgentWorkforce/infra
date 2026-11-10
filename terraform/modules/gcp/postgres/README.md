@@ -80,7 +80,7 @@ PostgreSQL 17 for agent-relay on **Cloud SQL**, private IP only, on your VPC.
 | connection\_name | project:region:instance. Feeds the sessions-pipeline CLOUD\_SQL\_CONNECTION\_NAME extraEnv in values-gcp.yaml (worker and alleyoop) and the Cloud SQL Auth Proxy, if used. |
 | database\_url\_template | Connection URL shape for chart Secrets. Shared-CA instances use their verified DNS identity; per-instance CA keeps the private-IP sslmode=require compatibility shape. |
 | databases | Databases created by the module. |
-| dns\_name | Cloud SQL server DNS name. With GOOGLE\_MANAGED\_CAS\_CA, use this host with sslmode=verify-full and private DNS pointing it to private\_ip\_address. |
+| dns\_name | Exact Cloud SQL server DNS identity, including its terminal dot. With GOOGLE\_MANAGED\_CAS\_CA, use it byte-for-byte with sslmode=verify-full and private DNS pointing it to private\_ip\_address. |
 | instance\_name | Instance name. |
 | port | Database port. |
 | private\_ip\_address | Private IP. The host part of every agent-relay database URL (relay-control database-url, relayhistory DATABASE\_URL, sessions-pipeline HOOPDB\_URL, durable-actors postgres-url). |

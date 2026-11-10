@@ -121,12 +121,13 @@ module "sessions_bucket" {
   location     = var.region
   kms_key_name = var.kms_key_name
   workload_identity = {
-    direct_kubernetes_service_accounts = [
-      { namespace = var.namespace, name = "${var.release_name}-worker" },
-      { namespace = var.namespace, name = "agent-relay-session-ingest-api" },
+    direct_kubernetes_service_accounts = concat([
+      for sa in ["worker", "alleyoop", "session-ingest-api"] :
+      { namespace = var.namespace, name = "${var.release_name}-${sa}" }
+      ], [
       { namespace = var.namespace, name = "agent-relay-read-api" },
       { namespace = var.namespace, name = "agent-relay-search-indexer" },
-    ]
+    ])
   }
   labels = var.labels
 }

@@ -104,6 +104,7 @@ resource "google_pubsub_subscription_iam_member" "pubsub_dead_letter" {
 }
 
 resource "google_redis_instance" "pipeline" {
+  #checkov:skip=CKV_GCP_95:The pinned native pipeline rejects Redis AUTH credentials; access is private-VPC-only and TLS server-authenticated.
   project                 = var.project_id
   name                    = "${var.name}-pipeline"
   region                  = var.region
