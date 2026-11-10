@@ -87,6 +87,7 @@ class ReadApi(unittest.TestCase):
     def test_control_only_stays_the_default_and_unknown_modes_refuse(self):
         docs = self.render()
         env = self.env_of(docs)
+        self.assertEqual(env["READER_MAX_RULESET"]["value"], "8")
         self.assertEqual(env["READ_API_AUTH_MODE"]["value"], "relaycontrol_only")
         self.assertNotIn("READ_API_INTERNAL_SECRET", env)
         self.assertNotIn("READ_API_ACCESS_TOKEN_TTL_SECONDS", env)
@@ -95,6 +96,15 @@ class ReadApi(unittest.TestCase):
         for name in ("READ_API_AUTH_MODE", "READ_API_INTERNAL_SECRET", "READ_API_INTERNAL_SECRET_PREVIOUS", "READ_API_ACCESS_TOKEN_TTL_SECONDS", "READ_API_EVENT_MESSAGE_IDS"):
             with self.subTest(name=name):
                 self.assertIn("managed", self.render(overlay={"extraEnv": [{"name": name, "valueFrom": {"secretKeyRef": {"name": "x", "key": "x"}}}]}, fail=True))
+
+    def test_reader_ruleset_ceiling_is_exact_and_managed(self):
+        for ceiling in (8, 9, 10):
+            with self.subTest(ceiling=ceiling):
+                self.assertEqual(self.env_of(self.render(overlay={"readerMaxRuleset": ceiling}))["READER_MAX_RULESET"]["value"], str(ceiling))
+        for ceiling in (7, 11, "padded", " 8", 8.5, None, True):
+            with self.subTest(ceiling=ceiling):
+                self.assertIn("readerMaxRuleset", self.render(overlay={"readerMaxRuleset": ceiling}, fail=True))
+        self.assertIn("managed", self.render(overlay={"extraEnv": [{"name": "READER_MAX_RULESET", "value": "10"}]}, fail=True))
 
     def self_issued(self, **changes):
         """The fixture in self_issued mode; each change is a dotted path set on a complete overlay."""

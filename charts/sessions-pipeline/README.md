@@ -60,6 +60,22 @@ migration generation. See [the operator contract](../../docs/self-hosted-native-
 for its two-pool TLS requirements, separate owner/runtime Secrets, indexer drain
 and prepare/serve bootstrap order. No install profile enables it.
 
+## Reader ruleset ceiling
+
+Four reader surfaces expose an independent `readerMaxRuleset` value and render
+`READER_MAX_RULESET`: `nativeConsumer`, `worker.nativeBrief`, `sessionReadApi`,
+and `alleyoop`. Every value defaults to `8` and accepts only `8`, `9`, or `10`.
+The ceiling is reader-only: it does not select the writer ruleset, enable a
+component, or activate Rust/WASM behavior.
+
+Raise readers before any writer can emit a newer ruleset, using an immutable
+services image containing relayhistory-pipeline #489 at `94352d36` or a
+reviewed successor. The four values deliberately do not have to match during a
+staged rollout. Before writer activation, prove each required read path against
+representative objects. If newer objects have been written, keep the readers at
+the needed ceiling during rollback; rolling this chart back to the default `8`
+does not convert those objects.
+
 ## Upload credential renewal route
 
 When `nativeRouting.enabled=true`, `/v1/auth/token/refresh` always routes

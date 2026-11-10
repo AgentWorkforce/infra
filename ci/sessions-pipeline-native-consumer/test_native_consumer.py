@@ -55,6 +55,7 @@ class Consumer(unittest.TestCase):
             env=self.env(c);self.assertEqual(env['RELAYHISTORY_PIPELINE_CONSUMER_SECRET']['valueFrom']['secretKeyRef'],{'name':'consumer-runtime','key':'RELAYHISTORY_PIPELINE_CONSUMER_SECRET'})
             self.assertNotIn('HOOPDB_URL',env)
             self.assertEqual(env['PIPELINE_FANOUT']['value'],'off')
+            self.assertEqual(env['READER_MAX_RULESET']['value'],'8')
             self.assertEqual(env['PIPELINE_KEY_PREFIX']['value'],'96bulls')
             self.assertEqual(env['SEARCH_INDEX_BACKEND']['value'],'postgres')
             self.assertEqual(env['SESSION_POSTGRES_TLS_PROFILE']['value'],'custom-ca')
@@ -69,6 +70,16 @@ class Consumer(unittest.TestCase):
         ca=next(v for v in p['volumes'] if v['name']=='postgres-ca-source')['configMap']
         self.assertEqual(ca['items'],[{'key':'ca.crt','path':'ca.crt'}]);self.assertEqual(ca['defaultMode'],292)
         self.assertEqual(self.env(p['containers'][0])['SERVICE']['value'],'session-pipeline-consumer')
+    def test_reader_ruleset_ceiling_is_exact_and_does_not_enable_the_consumer(self):
+        for ceiling in [8,9,10]:
+            with self.subTest(ceiling=ceiling):
+                docs=self.render(self.native(readerMaxRuleset=ceiling))
+                for container in self.pod(docs)['containers']+self.pod(docs)['initContainers']:
+                    self.assertEqual(self.env(container)['READER_MAX_RULESET']['value'],str(ceiling))
+        for ceiling in [7,11,'padded',' 8',8.5,None,True]:
+            with self.subTest(ceiling=ceiling):
+                self.assertIn('readerMaxRuleset',self.render(self.native(enabled=False,readerMaxRuleset=ceiling),fail=True))
+        self.assertEqual(self.render(self.native(enabled=False,readerMaxRuleset=10)),[])
     def test_native_slot_renders_under_umbrella_scope(self):
         values=yaml.safe_load(FIXTURE.read_text())
         image=values['nativeConsumer']['image'];ca={'enabled':True,'configMap':'postgres-ca','key':'ca.crt','secret':''}

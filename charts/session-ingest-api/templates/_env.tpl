@@ -22,11 +22,14 @@ Fail early on missing required values (render time, not crash-loop time).
 {{- if and .Values.auth.localJwks (not .Values.existingSecret) }}{{ fail "alleyoop: existingSecret is required when auth.localJwks=true" }}{{ end -}}
 {{- if not (kindIs "bool" .Values.auth.allowInterimRelayAuthBearer) }}{{ fail "alleyoop: auth.allowInterimRelayAuthBearer must be a boolean" }}{{ end -}}
 {{- if and .Values.auth.allowInterimRelayAuthBearer (ne .Values.environment "local") }}{{ fail "alleyoop: auth.allowInterimRelayAuthBearer=true is allowed only when environment=local" }}{{ end -}}
+{{- if not (has (toString .Values.readerMaxRuleset) (list "8" "9" "10")) }}{{ fail "alleyoop: readerMaxRuleset must be one of 8, 9, or 10" }}{{ end -}}
 {{- range $entry := .Values.extraEnv }}
 {{- if eq ($entry.name | default "") "ALLOW_INTERIM_RELAYAUTH_BEARER" }}{{ fail "alleyoop: configure auth.allowInterimRelayAuthBearer instead of extraEnv" }}{{ end -}}
+{{- if eq ($entry.name | default "") "READER_MAX_RULESET" }}{{ fail "alleyoop: configure readerMaxRuleset instead of extraEnv" }}{{ end -}}
 {{- end -}}
 {{- range $entry := .Values.ingest.env }}
 {{- if eq ($entry.name | default "") "ALLOW_INTERIM_RELAYAUTH_BEARER" }}{{ fail "alleyoop: configure auth.allowInterimRelayAuthBearer instead of ingest.env" }}{{ end -}}
+{{- if eq ($entry.name | default "") "READER_MAX_RULESET" }}{{ fail "alleyoop: configure readerMaxRuleset instead of ingest.env" }}{{ end -}}
 {{- end -}}
 {{- if not (has (toString .Values.allowInClusterHttp) (list "true" "false")) }}{{ fail "alleyoop: allowInClusterHttp must be true or false" }}{{ end -}}
 {{- with .Values.auth.historyOrigin }}

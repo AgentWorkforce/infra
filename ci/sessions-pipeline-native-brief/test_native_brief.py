@@ -77,6 +77,7 @@ class NativeBrief(unittest.TestCase):
     def test_native_env_secret_ca_health_and_egress_are_component_scoped(self):
         docs=self.render(self.selected());pod=self.brief(docs);main=pod['containers'][0]
         env={e['name']:e for e in main['env']};self.assertEqual(len(env),len(main['env']))
+        self.assertEqual(env['READER_MAX_RULESET']['value'],'8')
         self.assertEqual(env['SESSION_BRIEF_WORKSPACE_IDS']['value'],'default-workspace')
         self.assertEqual(env['SESSION_BRIEF_BATCH']['value'],'1');self.assertEqual(env['SESSION_BRIEF_GLOBAL_DAILY_CAP']['value'],'20');self.assertEqual(env['SESSION_BRIEF_SESSION_DAILY_CAP']['value'],'3');self.assertEqual(env['PIPELINE_KEY_PREFIX']['value'],'96bulls');self.assertEqual(env['PIPELINE_ORG_FROM_PREFIX']['value'],'true')
         self.assertEqual(env['OPENAI_API_KEY']['valueFrom']['secretKeyRef'],{'name':'brief-model-key','key':'OPENAI_API_KEY'})
@@ -92,6 +93,22 @@ class NativeBrief(unittest.TestCase):
             p=d['spec']['template']['spec']
             if p is pod:continue
             self.assertNotIn('brief-model-key',json.dumps(p));self.assertNotIn('SESSION_BRIEF_CANONICAL_INPUT',json.dumps(p))
+
+    def test_reader_ruleset_ceiling_is_exact_managed_and_reader_scoped(self):
+        for ceiling in [8,9,10]:
+            with self.subTest(ceiling=ceiling):
+                selected=self.selected();selected['nativeBrief']['readerMaxRuleset']=ceiling
+                env={e['name']:e for e in self.brief(self.render(selected))['containers'][0]['env']}
+                self.assertEqual(env['READER_MAX_RULESET']['value'],str(ceiling))
+        for ceiling in [7,11,'09',' 8',8.5,None,True]:
+            with self.subTest(ceiling=ceiling):
+                selected=self.selected();selected['nativeBrief']['readerMaxRuleset']=ceiling
+                self.render(selected,'readerMaxRuleset')
+        for target in ['extraEnv','component']:
+            selected=self.selected();entry={'name':'READER_MAX_RULESET','value':'10'}
+            if target=='extraEnv':selected['extraEnv']=[entry]
+            else:selected['components']['session-brief']['env']=[entry]
+            self.render(selected,'manages')
 
     def test_refuses_unbounded_selection_layout_key_and_image(self):
         for field,value,message in [('workspaceIds',[],'workspaceIds'),('workspaceIds',['*'],'workspaceIds'),('workspaceIds',['same','same'],'workspaceIds'),('keyPrefix','96bulls/org','bare writer root'),('model','bad model','model'),('sweepSeconds',0,'sweepSeconds'),('batch',0,'batch'),('batch',101,'batch'),('globalDailyCap',0,'globalDailyCap'),('globalDailyCap',1.5,'globalDailyCap'),('sessionDailyCap',10001,'sessionDailyCap'),('enabled','false','boolean')]:

@@ -6,6 +6,7 @@
 {{- include "sessions-pipeline-worker.refuseUnmanagedBrief" ($settings.env | default list) -}}
 {{- end -}}
 {{- if not (kindIs "bool" $n.enabled) }}{{ fail "nativeBrief.enabled must be a boolean" }}{{ end -}}
+{{- if not (has (toString $n.readerMaxRuleset) (list "8" "9" "10")) }}{{ fail "nativeBrief.readerMaxRuleset must be one of 8, 9, or 10" }}{{ end -}}
 {{- if not (kindIs "bool" $c.enabled) }}{{ fail "components.session-brief.enabled must be a boolean" }}{{ end -}}
 {{- if and $c.enabled (not $n.enabled) }}{{ fail "components.session-brief.enabled requires nativeBrief.enabled; unmanaged native worker selection is refused" }}{{ end -}}
 {{- if not (kindIs "bool" $n.openaiEgress.enabled) }}{{ fail "nativeBrief.openaiEgress.enabled must be a boolean" }}{{ end -}}
@@ -67,7 +68,7 @@
 {{- if or (not $ca.enabled) (not $ca.configMap) $ca.secret }}{{ fail "nativeBrief requires postgresCa.enabled and an existing public CA ConfigMap (not a Secret)" }}{{ end -}}
 {{- if not (regexMatch "^[a-f0-9]{64}$" ($ca.sha256 | default "")) }}{{ fail "nativeBrief requires postgresCa.sha256 (64 lowercase hex)" }}{{ end -}}
 {{- if not .Values.workerHealth.enabled }}{{ fail "nativeBrief requires workerHealth.enabled" }}{{ end -}}
-{{- $reserved := list "SERVICE" "OTEL_SERVICE_NAME" "HOOPDB_URL" "LOCKER_ENDPOINT" "LOCKER_BUCKET" "LOCKER_REGION" "LOCKER_ACCESS_KEY_ID" "LOCKER_SECRET_ACCESS_KEY" "NODE_EXTRA_CA_CERTS" "SSL_CERT_FILE" "SSL_CERT_DIR" "NODE_OPTIONS" "PGOPTIONS" "PGSSLCERT" "PGSSLKEY" "WORKER_HEALTH_PORT" "WORKER_UNHEALTHY_AFTER_FAILURES" "WORKER_MAX_TICK_AGE_MS" "SESSION_BRIEF_ENABLED" "SESSION_BRIEF_CANONICAL_INPUT" "SESSION_BRIEF_WORKSPACE_IDS" "SESSION_BRIEF_MODEL" "SESSION_BRIEF_SWEEP_SECONDS" "SESSION_BRIEF_BATCH" "SESSION_BRIEF_GLOBAL_DAILY_CAP" "SESSION_BRIEF_SESSION_DAILY_CAP" "PIPELINE_ORG_FROM_PREFIX" "PIPELINE_KEY_PREFIX" "OPENAI_API_KEY" "OPENAI_BASE_URL" "NATIVE_BRIEF_CA_FILE" "NATIVE_BRIEF_CA_SOURCE" "NATIVE_BRIEF_CA_SHA256" "PGSSLMODE" "PGSSLROOTCERT" "NODE_TLS_REJECT_UNAUTHORIZED" -}}
+{{- $reserved := list "SERVICE" "READER_MAX_RULESET" "OTEL_SERVICE_NAME" "HOOPDB_URL" "LOCKER_ENDPOINT" "LOCKER_BUCKET" "LOCKER_REGION" "LOCKER_ACCESS_KEY_ID" "LOCKER_SECRET_ACCESS_KEY" "NODE_EXTRA_CA_CERTS" "SSL_CERT_FILE" "SSL_CERT_DIR" "NODE_OPTIONS" "PGOPTIONS" "PGSSLCERT" "PGSSLKEY" "WORKER_HEALTH_PORT" "WORKER_UNHEALTHY_AFTER_FAILURES" "WORKER_MAX_TICK_AGE_MS" "SESSION_BRIEF_ENABLED" "SESSION_BRIEF_CANONICAL_INPUT" "SESSION_BRIEF_WORKSPACE_IDS" "SESSION_BRIEF_MODEL" "SESSION_BRIEF_SWEEP_SECONDS" "SESSION_BRIEF_BATCH" "SESSION_BRIEF_GLOBAL_DAILY_CAP" "SESSION_BRIEF_SESSION_DAILY_CAP" "PIPELINE_ORG_FROM_PREFIX" "PIPELINE_KEY_PREFIX" "OPENAI_API_KEY" "OPENAI_BASE_URL" "NATIVE_BRIEF_CA_FILE" "NATIVE_BRIEF_CA_SOURCE" "NATIVE_BRIEF_CA_SHA256" "PGSSLMODE" "PGSSLROOTCERT" "NODE_TLS_REJECT_UNAUTHORIZED" -}}
 {{- range $entry := concat (.Values.extraEnv | default list) ($c.env | default list) -}}
 {{- if has ($entry.name | default "") $reserved }}{{ fail (printf "nativeBrief manages %s; remove it from extraEnv/components.session-brief.env" $entry.name) }}{{ end -}}
 {{- end -}}
@@ -102,6 +103,7 @@
 
 {{- define "sessions-pipeline-worker.nativeBriefEnv" -}}
 - { name: SESSION_BRIEF_ENABLED, value: "true" }
+- { name: READER_MAX_RULESET, value: {{ .Values.nativeBrief.readerMaxRuleset | quote }} }
 - { name: SESSION_BRIEF_CANONICAL_INPUT, value: "true" }
 - { name: SESSION_BRIEF_WORKSPACE_IDS, value: {{ join "," .Values.nativeBrief.workspaceIds | quote }} }
 - { name: SESSION_BRIEF_MODEL, value: {{ .Values.nativeBrief.model | quote }} }

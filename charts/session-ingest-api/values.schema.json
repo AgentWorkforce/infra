@@ -5,6 +5,11 @@
     "deployment"
   ],
   "properties": {
+    "readerMaxRuleset": {
+      "type": "integer",
+      "enum": [8, 9, 10],
+      "description": "Highest ruleset accepted by ingest readers; does not select writer output."
+    },
     "deployment": {
       "type": "object",
       "required": [

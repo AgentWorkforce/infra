@@ -37,6 +37,8 @@ spec:
               protocol: TCP
           env:
             {{- include "alleyoop.env" (dict "context" . "service" $component) | nindent 12 }}
+            - name: READER_MAX_RULESET
+              value: {{ .Values.readerMaxRuleset | quote }}
             {{- if (.Values.postgresCa | default dict).enabled }}
             - { name: NODE_EXTRA_CA_CERTS, value: /etc/postgres-ca/ca.crt }
             {{- end }}
