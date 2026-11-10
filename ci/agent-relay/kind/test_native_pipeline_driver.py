@@ -13,7 +13,7 @@ import subprocess
 import tempfile
 import unittest
 
-from native_pipeline import DRIVER
+from native_pipeline import DRIVER, canonical
 
 
 FIXTURE = r"""
@@ -22,6 +22,7 @@ const mode=process.env.NATIVE_PHASE_TEST_CASE;
 const trace=[];let transaction=false,aborted=false,locked=false;
 const entries=mode==='wrong_checksum'?[['96bulls:001_fixture.sql','c'.repeat(64)]]:[];
 const expected={generation:'d'.repeat(64),names:['96bulls:001_fixture.sql'],shas:{'96bulls:001_fixture.sql':'a'.repeat(64)}};
+if(mode==='two_entries'){expected.names.push('96bulls:002_fixture.sql');expected.shas['96bulls:002_fixture.sql']='b'.repeat(64)}
 export const generation=async()=>expected.generation;
 export const expectedSchema=async()=>expected;
 export const migrationProfile=x=>{if(x.HOOPDB_DB_MODE!=='selfhosted'||x.HOOPDB_SUPABASE_SHIM!=='false'||x.HOOPDB_ROLE_BOOTSTRAP!=='false'||x.HOOPDB_ROLE_VERIFY!=='true')throw Error('profile');return x};
@@ -80,7 +81,9 @@ class NativeDriverTests(unittest.TestCase):
                     "host": "postgres.agent-relay.svc.cluster.local", "caSha256": "f" * 64,
                     "temporaryOwner": True, "ownerOid": 101}
             if plan is not None: data["plan"] = plan
-            p = subprocess.run([shutil.which("bun"), str(script)], input=json.dumps(data), text=True,
+            # Match the actual Python -> kubectl stdin transport, including its
+            # recursive key sorting. Ordinary json.dumps hides ordering bugs.
+            p = subprocess.run([shutil.which("bun"), str(script)], input=canonical(data), text=True,
                                capture_output=True, env={**os.environ, "NATIVE_PHASE_TEST_CASE": case}, timeout=10)
             self.assertNotIn("synthetic-test-only", p.stdout + p.stderr)
             trace = [json.loads(line.removeprefix("FIXTURE_TRACE ")) for line in p.stdout.splitlines() if line.startswith("FIXTURE_TRACE ")]
@@ -126,6 +129,50 @@ class NativeDriverTests(unittest.TestCase):
             self.assertEqual(results, [])
             self.assertNotIn("WRITE_ATTEMPT", trace[0]["trace"])
             self.assertFalse(trace[0]["locked"])
+
+    def test_canonical_transport_accepts_unchanged_plan_before_apply(self):
+        _, _, planned = self.run_driver()
+        plan = planned[0]["plan"]
+        # The inventory builder has source insertion order; canonical transport
+        # sorts both its outer keys and each inventory object's keys.
+        self.assertNotEqual(list(plan), list(json.loads(canonical(plan))))
+        p, trace, results = self.run_driver(mode="apply", plan=plan)
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertEqual(results[0]["applied"], 1)
+        self.assertIn("WRITE_ATTEMPT", trace[0]["trace"])
+        self.assertFalse(trace[0]["locked"])
+
+    def test_inventory_values_and_types_remain_exact(self):
+        _, _, planned = self.run_driver()
+        plan = planned[0]["plan"]
+        for field in ("name", "sha256", "pending", "pending_type", "extra", "duplicate"):
+            altered = json.loads(json.dumps(plan))
+            item = altered["inventory"][0]
+            if field == "pending_type": item["pending"] = 1
+            elif field == "extra": item["unapproved"] = True
+            elif field == "duplicate": altered["inventory"].append(dict(item))
+            elif field == "pending": item[field] = False
+            else: item[field] = "changed"
+            with self.subTest(field=field):
+                p, trace, results = self.run_driver(mode="apply", plan=altered)
+                self.assertNotEqual(p.returncode, 0)
+                self.assertEqual(results, [])
+                self.assertNotIn("WRITE_ATTEMPT", trace[0]["trace"])
+                self.assertFalse(trace[0]["locked"])
+
+    def test_inventory_array_order_remains_exact(self):
+        _, _, planned = self.run_driver(case="two_entries")
+        plan = planned[0]["plan"]
+        self.assertEqual(len(plan["inventory"]), 2)
+        p, _, results = self.run_driver(mode="apply", case="two_entries", plan=plan)
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertEqual(results[0]["applied"], 1)
+        plan["inventory"].reverse()
+        p, trace, results = self.run_driver(mode="apply", case="two_entries", plan=plan)
+        self.assertNotEqual(p.returncode, 0)
+        self.assertEqual(results, [])
+        self.assertNotIn("WRITE_ATTEMPT", trace[0]["trace"])
+        self.assertFalse(trace[0]["locked"])
 
     def test_plaintext_or_wrong_identity_connection_never_reaches_schema_preflight(self):
         for case in ("plaintext", "wrong_identity"):
