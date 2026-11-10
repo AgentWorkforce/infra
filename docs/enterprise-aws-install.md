@@ -5,10 +5,11 @@ and pilot users. `AgentWorkforce/infra` is the installation source of truth;
 customer names, account details and credentials belong in a private handoff.
 
 **Status: the complete AWS installation is not ready for customer handoff.**
-Terraform and the application charts exist, but the current target still needs
-managed-RDS bootstrap and a complete application acceptance run. Finish the
-release checks below before scheduling an installation. The historical EKS and
-local kind demonstrations are useful development evidence, not this release.
+Terraform, the application charts, and the managed-RDS bootstrap exist, but the
+current target still needs a release-approved Sessions Pipeline image and a
+complete application acceptance run. Finish the release checks below before
+scheduling an installation. The historical EKS and local kind demonstrations
+are useful development evidence, not this release.
 
 ## Before you start
 
@@ -124,9 +125,29 @@ The AWS target is **one RDS instance with separate logical databases**:
 
 Use the accepted [database bootstrap contract](shared-postgres-storage-contract.md).
 Terraform creates only the initial RDS database; its binding outputs do not
-create the other databases, users or grants. This step is blocked until the
-release packet includes the supported, tested RDS SQL/activation procedure.
-Do not use the CNPG superuser bootstrap as an RDS substitute.
+create the other databases, users or grants. Use the tracked
+[`rds-setup.sh`](../scripts/selfhost/rds-setup.sh) procedure with the approved,
+digest-pinned Sessions Pipeline services image. Do not use the CNPG superuser
+bootstrap as an RDS substitute.
+
+Before Helm, export the non-secret Terraform outputs and the Secrets Manager
+ARN from the reviewed environment, then run `pre`:
+
+```sh
+export AWS_REGION=<approved-region>
+export RDS_HOST="$(terraform output -raw database_host)"
+export RDS_ADMIN_SECRET_ARN="$(terraform output -raw database_admin_secret_arn)"
+export SERVICES_IMAGE='<customer-registry>/sessions-pipeline@sha256:<approved-digest>'
+export NAMESPACE=agent-relay
+export STATE_DIR=/approved/private/agent-relay-install
+scripts/selfhost/rds-setup.sh pre
+```
+
+The command creates the `rds-ca` ConfigMap and mode-restricted Secret input
+files under `$STATE_DIR/secret-files`. It prints neither database passwords nor
+connection strings. Merge those files with the non-database secrets in the
+private release packet and create the referenced Kubernetes Secrets; never put
+their contents in values or the source checkout.
 
 For each service, create the dedicated database, install its owner/runtime
 identities and required extensions, then run its pinned migrations as the
@@ -136,6 +157,9 @@ existing installation's actual database names until a reviewed migration changes
 
 History is a pipeline capability in the target. Keep legacy History/Auth stores
 where the selected profile still requires them until their reviewed cutover.
+After the HoopDb migration Job succeeds, run `rds-setup.sh post` and restart the
+read API, ingest edge, and search indexer. The post phase refuses to activate
+those logins before migration evidence exists and verifies each login over TLS.
 
 **Checkpoint:** all required migrations and runtime-role checks pass on managed
 RDS. `application_sql_ready=false` or a pending generation means stop here.
