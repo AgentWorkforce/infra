@@ -4,6 +4,10 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
+import io
+import sys
+from contextlib import redirect_stdout
+from unittest.mock import patch
 
 from native_core_cli import config, run, GENERATE_CA
 from native_inspect import INPUT_FIELDS
@@ -14,6 +18,17 @@ from test_native_recipe import selected
 
 
 class Cli(unittest.TestCase):
+    def test_public_cli_emits_only_typed_closed_phase_and_code(self):
+        import native_core_cli
+        from native_recipe import NativePhaseError
+        error = NativePhaseError("install_control", "command_failed")
+        output = io.StringIO()
+        with patch.object(sys, "argv", ["native-core", "--config", "not-read", "--reviewed-config-sha256", "not-read"]), \
+                patch.object(native_core_cli, "run", side_effect=error), redirect_stdout(output), self.assertRaises(SystemExit) as stopped:
+            native_core_cli.main()
+        self.assertEqual(stopped.exception.code, 1)
+        self.assertEqual(json.loads(output.getvalue()), {"result":"REFUSED","phase":"install_control","errorCode":"command_failed"})
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(); self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
