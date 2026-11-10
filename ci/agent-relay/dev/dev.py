@@ -231,6 +231,21 @@ def context_archive(files, frontend=False, repo=None):
     return out.getvalue()
 
 
+def sync_batches(wanted, removed):
+    import base64
+    files, size = {}, 0
+    for path, data in wanted.items():
+        # Keep canonical base64 plus JSON overhead inside the 32MiB stdin cap.
+        need(len(data) <= 24 * 1024 * 1024 - 65536, "frontend_single_file_sync_bound")
+        if files and (len(files) >= 4000 or size + len(data) > 8 * 1024 * 1024):
+            yield json.dumps({"files": files, "removed": []}).encode()
+            files, size = {}, 0
+        files[path] = base64.b64encode(data).decode(); size += len(data)
+    if files: yield json.dumps({"files": files, "removed": []}).encode()
+    for start in range(0, len(removed), 4000):
+        yield json.dumps({"files": {}, "removed": removed[start:start + 4000]}).encode()
+
+
 def identity(doc):
     return {"uid": doc["metadata"]["uid"], "specSha256": digest(doc["spec"])}
 
@@ -444,23 +459,27 @@ class Session:
         return None
 
     def sync(self, group, old, files, replay=False, running=None):
-        wanted = {p: b for p, b in files.items() if frontend_path(p) and (replay or old.get(p) != b)}
+        basis = self.frontend_seeds.get(group["name"], {}) if replay else old
+        wanted = {p: b for p, b in files.items() if frontend_path(p) and basis.get(p) != b}
         removed = [p for p in old if frontend_path(p) and p not in files]
         if not wanted and not removed: return
         self.guard()
         if self.stopping: return
-        import base64
-        payload = json.dumps({"files": {p: base64.b64encode(b).decode() for p, b in wanted.items()}, "removed": removed}).encode()
-        need(len(payload) <= 32 * 1024 * 1024, "frontend_sync_bound")
         running = running or self.frontend_pod(group)
         if running is None or self.stopping: return
         self.guard()  # A readiness wait may span an unrelated operator change.
         if self.stopping: return
         target = group["targets"][0]
-        self.k.k("exec", "-i", running[0], "-c", target["container"], "--",
-                 "node", "/seed/__kind_dev/sync.mjs", data=payload)
+        batches = 0
+        for payload in sync_batches(wanted, removed):
+            need(len(payload) <= 32 * 1024 * 1024, "frontend_sync_bound")
+            self.guard()
+            if self.stopping: return
+            self.k.k("exec", "-i", running[0], "-c", target["container"], "--",
+                     "node", "/seed/__kind_dev/sync.mjs", data=payload)
+            batches += 1
         self.frontend_instances[group["name"]] = running[1]
-        emit("hmr_replay" if replay else "hmr_sync", files=len(wanted), removed=len(removed))
+        emit("hmr_replay" if replay else "hmr_sync", files=len(wanted), removed=len(removed), batches=batches)
 
     def frontend_replay(self, group, previous, files):
         running = self.frontend_pod(group)

@@ -15,7 +15,7 @@ export function validate(input) {
       !Array.isArray(input.removed) || Object.keys(input.files).length > 5000) throw new Error('sync_shape');
   let bytes = 0;
   for (const [path, data] of Object.entries(input.files)) {
-    if (!allowed(path) || typeof data !== 'string' || !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(data))
+    if (!allowed(path) || typeof data !== 'string' || Buffer.from(data, 'base64').toString('base64') !== data)
       throw new Error('sync_path_or_encoding');
     bytes += Buffer.byteLength(data, 'base64');
   }

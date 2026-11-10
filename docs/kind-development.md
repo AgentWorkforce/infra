@@ -137,6 +137,10 @@ failure or readiness failure ends the session and runs guarded restoration.
 If the frontend container restarts or its pod is replaced, the loop detects the
 new running identity and replays the current source snapshot and deletions;
 it does not require an additional source edit to replace the image's old code.
+Recovery sends only differences from the known image seed, in bounded batches;
+unchanged large assets are not resent. A single changed frontend file larger
+than 24 MiB minus JSON/base64 headroom refuses; use an explicit image rebuild
+for assets beyond that live-sync bound.
 
 SQL, scrubber authority, dependency manifests/locks, Dockerfiles and runtime
 entrypoints are protected. Changing them stops the session instead of

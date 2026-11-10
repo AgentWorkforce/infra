@@ -333,16 +333,49 @@ class DevTests(unittest.TestCase):
             sent = []; s.k.k = lambda *args, data: sent.append(json.loads(data))
             self.assertTrue(s.frontend_replay(group, previous, current))
             self.assertEqual(set(sent[0]["files"]), {"src/App.tsx", "src/new.ts"})
-            self.assertEqual(set(sent[0]["removed"]), {"src/deleted-from-seed.ts", "src/removed-after-add.ts"})
+            self.assertEqual({p for batch in sent for p in batch["removed"]}, {"src/deleted-from-seed.ts", "src/removed-after-add.ts"})
             self.assertEqual(s.frontend_instances["webapp"], new_identity)
             self.assertFalse(s.frontend_replay(group, current, current))
-            self.assertEqual(len(sent), 1)
+            self.assertEqual(len(sent), 2)
 
     def test_frontend_replay_does_not_sync_after_stop(self):
         s = self.session({"app": deployment()}); s.stopping = True
         s.frontend_pod = lambda _: ("pod", {"podUid": "new"})
         s.k.k = lambda *args, **kwargs: self.fail("exec after stop")
         self.assertFalse(s.frontend_replay({"name": "webapp"}, {}, {"src/a.ts": b"new"}))
+
+    def test_large_seed_tree_recovery_sends_only_host_differences(self):
+        s = self.session({"app": deployment()}); s.guard = lambda: {}
+        group = {"name": "webapp", "targets": [{"deployment": "app", "container": "server"}]}
+        seed = {"public/large.bin": bytes(25 * 1024 * 1024), "src/App.tsx": b"image-old"}
+        seed.update({"public/file-" + str(n) + ".txt": b"same" for n in range(6000)})
+        current = {**seed, "src/App.tsx": b"current-host"}
+        s.frontend_seeds["webapp"] = seed
+        s.frontend_pod = lambda _: ("pod", {"podUid": "new", "containerId": "containerd://new", "restartCount": 1})
+        sent = []; s.k.k = lambda *args, data: sent.append(json.loads(data))
+        self.assertTrue(s.frontend_replay(group, current, current))
+        self.assertEqual(len(sent), 1)
+        self.assertEqual(set(sent[0]["files"]), {"src/App.tsx"})
+
+    def test_frontend_sync_splits_file_count_and_removals_into_transport_bounds(self):
+        wanted = {"src/file-" + str(n) + ".ts": b"x" for n in range(5001)}
+        removed = ["src/deleted-" + str(n) + ".ts" for n in range(5001)]
+        batches = [json.loads(p) for p in dev.sync_batches(wanted, removed)]
+        self.assertEqual({p for b in batches for p in b["files"]}, set(wanted))
+        self.assertEqual([p for b in batches for p in b["removed"]], removed)
+        self.assertTrue(all(len(b["files"]) <= 4000 and len(b["removed"]) <= 4000 for b in batches))
+
+    def test_frontend_sync_splits_byte_count_and_refuses_oversize_single_file(self):
+        import base64
+        wanted = {"public/part-" + str(n) + ".bin": bytes(9 * 1024 * 1024) for n in range(3)}
+        payloads = list(dev.sync_batches(wanted, []))
+        self.assertEqual(len(payloads), 3)
+        self.assertTrue(all(len(p) <= 32 * 1024 * 1024 for p in payloads))
+        for p in payloads:
+            decoded = json.loads(p)
+            self.assertLessEqual(sum(len(base64.b64decode(v)) for v in decoded["files"].values()), 24 * 1024 * 1024)
+        with self.assertRaisesRegex(dev.Refused, "frontend_single_file_sync_bound"):
+            list(dev.sync_batches({"public/too-large.bin": bytes(24 * 1024 * 1024)}, []))
 
     def frontend_pod_get(self, ready_after=1, foreign_owner=False):
         queries = []

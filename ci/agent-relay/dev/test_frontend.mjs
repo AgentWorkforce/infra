@@ -76,3 +76,9 @@ test('Python and pod path contracts agree on public hidden assets and sensitive 
   assert.equal(allowed('public/.well-known/security.txt'), true);
   assert.equal(validate({ files: { 'public/.well-known/security.txt': Buffer.from('contact').toString('base64') }, removed: [] }).removed.length, 0);
 });
+
+test('a valid bounded multi-megabyte batch accepts canonical base64 without regex stack overflow', () => {
+  const input = { files: { 'public/chunk.bin': Buffer.alloc(9 * 1024 * 1024).toString('base64') }, removed: [] };
+  assert.equal(validate(input), input);
+  assert.throws(() => validate({ files: { 'src/a.ts': 'YQ' }, removed: [] }), /sync_path_or_encoding/);
+});
