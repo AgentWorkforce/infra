@@ -290,9 +290,15 @@ compatibility:
       status: shipped
       charts: { telemetry-collector: 0.1.0 }
       notes: 'Default-off umbrella analytics file collector. Requires accepted immutable collector and TLS-proxy images, producer and TLS Secrets and an exclusive persistent volume. Source rendering does not prove image entrypoint, TLS, durable acknowledgement, power-loss recovery or whole-application analytics coverage. The currently reviewed collector CLI registers relaycontrol events only.'
-    - id: session-read-api-0.2.5
+    - id: session-read-api-0.2.6
       status: unreleased
       current: true
+      charts: { session-read-api: 0.2.6 }
+      images:
+        session-read-api: { repository: ghcr.io/agentworkforce/96bulls-services, digest_required: true }
+      notes: 'Makes readerMaxRuleset default null, omitting READER_MAX_RULESET so legacy reads remain unchanged. Explicit 8, 9 or 10 opts into strict marker checks. Raising it requires an independently qualified image containing relayhistory-pipeline #489 including its default-path compatibility and binding fixes, after exact-head review. This reader ceiling neither selects a writer ruleset nor enables a workload.'
+    - id: session-read-api-0.2.5
+      status: shipped
       charts: { session-read-api: 0.2.5 }
       images:
         session-read-api: { repository: ghcr.io/agentworkforce/96bulls-services, digest_required: true }
@@ -324,14 +330,14 @@ compatibility:
     - id: sessions-pipeline-0.8.19
       status: unreleased
       current: true
-      charts: { sessions-pipeline: 0.8.19, sessions-pipeline-worker: 0.7.5, session-ingest-api: 0.4.3, session-read-api: 0.2.5 }
+      charts: { sessions-pipeline: 0.8.19, sessions-pipeline-worker: 0.7.6, session-ingest-api: 0.4.4, session-read-api: 0.2.6 }
       depends:
-        sessions-pipeline: { worker: 0.7.5, alleyoop: 0.4.3, sessionReadApi: 0.2.5, hoopdb: 0.9.0, session-object-storage: 5.4.0, otel: 0.178.0 }
+        sessions-pipeline: { worker: 0.7.6, alleyoop: 0.4.4, sessionReadApi: 0.2.6, hoopdb: 0.9.0, session-object-storage: 5.4.0, otel: 0.178.0 }
       images:
         sessions-pipeline-worker: { repository: agentworkforce/96bulls-services, digest: sha256:6f22ea17dff336e1431664542759fd27958649388b90a0b2f0881883caa7c6b2 }
         session-ingest-api: { repository: agentworkforce/96bulls-services, digest: sha256:6f22ea17dff336e1431664542759fd27958649388b90a0b2f0881883caa7c6b2 }
         session-read-api: { repository: ghcr.io/agentworkforce/96bulls-services, digest_required: true }
-      images_note: "The aws-rds-native profile requires one approved release-overlay services digest for worker, alleyoop, sessionReadApi, ingestEdge and searchIndexer; every profile digest stays empty in source. Raising any readerMaxRuleset above 8 requires an artifact containing relayhistory-pipeline #489 at 0ad0813c or a reviewed successor. The artifact must also include pipeline #484 for default-on claim-lock 429/Retry-After behavior, fresh-install search_index grants, schema through 046010, session query and coordination overlaps. Existing profile image pins are unchanged."
+      images_note: "The aws-rds-native profile requires one approved release-overlay services digest for worker, alleyoop, sessionReadApi, ingestEdge and searchIndexer; every profile digest stays empty in source. Setting an explicit readerMaxRuleset requires an artifact containing relayhistory-pipeline #489 including its default-path compatibility and binding fixes, after exact-head review. The artifact must also include pipeline #484 for default-on claim-lock 429/Retry-After behavior, fresh-install search_index grants, schema through 046010, session query and coordination overlaps. Existing profile image pins are unchanged."
       services:
         source_commit: 7d7229bb31c121ecb98cd4e35c248fc2cf5669ad
         migration_generation: eff8b3be46565b57ad8fa5e4a066dbb6d1fe608313d9c1680bfbcd484add259b
@@ -347,7 +353,7 @@ compatibility:
         - "charts/sessions-pipeline/Chart.yaml:4"
         - "charts/sessions-pipeline/profiles/aws-rds-native.yaml"
         - "ci/sessions-pipeline-profiles/matrix.sh"
-      notes: 'Extends the independent readerMaxRuleset ceiling to the native ingestEdge engine initializer, alongside nativeConsumer, nativeBrief, sessionReadApi and alleyoop. Every ceiling defaults to 8 and admits only 8, 9 or 10. Raising a ceiling requires a qualified #489-compatible image; the values do not select writer output, enable Rust/WASM, enable a workload, or change image pins. Keep upgraded readers at the required ceiling while newer objects remain.'
+      notes: 'Extends the independent readerMaxRuleset ceiling to the native ingestEdge engine initializer, alongside nativeConsumer, nativeBrief, sessionReadApi and alleyoop. Every ceiling defaults to null and omits the binding to preserve legacy reads; explicit 8, 9 or 10 enables strict marker checks. Raising a ceiling requires a qualified #489-compatible image; the values do not select writer output, enable Rust/WASM, enable a workload, or change image pins. Keep upgraded readers at the required ceiling while newer objects remain.'
     - id: sessions-pipeline-0.8.18
       status: shipped
       charts: { sessions-pipeline: 0.8.18, sessions-pipeline-worker: 0.7.5, session-ingest-api: 0.4.3, session-read-api: 0.2.5 }
@@ -1090,7 +1096,7 @@ compatibility:
         relayhistory: { repository: ghcr.io/agentworkforce/relayhistory, digest_required: true }
         relay-control: { repository: ghcr.io/agentworkforce/relay-control, digest: sha256:d8c26d44dccb6dd21b7033288241a379e46ce5fbca69f276c4d4745001c3c3e2 }
         relay-webapp: { repository: ghcr.io/agentworkforce/relay-webapp, digest_required: true }
-      notes: 'Carries sessions-pipeline 0.8.19 and its independently staged readerMaxRuleset ceilings, all default 8. Raising a ceiling requires an approved #489-compatible services image. No image pin, writer ruleset, component enablement, customer target or rollout is selected.'
+      notes: 'Carries sessions-pipeline 0.8.19 and its independently staged readerMaxRuleset ceilings, all default null/omitted so strict marker policy remains opt-in. Raising a ceiling requires an approved #489-compatible services image. No image pin, writer ruleset, component enablement, customer target or rollout is selected.'
     - id: agent-relay-0.6.27
       status: planned
       charts: { agent-relay: 0.6.27, relayhistory: 0.1.3, relay-control: 0.4.5, relay-webapp: 0.2.1 }
@@ -2786,30 +2792,31 @@ entries:
     kind: option
     title: Sessions reader ruleset ceiling
     description: |
-      Managed READER_MAX_RULESET for every sessions reader surface: the native
-      canonical consumer, native brief input, standalone read API, alleyoop
-      ingest manifest admission and the native ingest-edge engine initializer.
-      Each ceiling is independent so an operator can
-      stage reader-first compatibility before changing writer output. The default
-      8 preserves existing behavior; only 8, 9 and 10 are accepted. Raising any
-      ceiling requires an exact qualified image containing relayhistory-pipeline
-      #489 at 0ad0813c or a reviewed successor. It does not enable a workload,
-      Rust/WASM, or writer output. Keep all readers at the required newer ceiling
-      while objects written with that ruleset remain; a chart rollback alone does
-      not make those objects readable at ceiling 8.
+      Managed READER_MAX_RULESET for the native canonical consumer, native brief
+      input, standalone read API, alleyoop manifest admission and native ingest-edge
+      engine initializer. Each value defaults to null: no env binding is emitted,
+      preserving legacy reads and courier admission exactly. Explicit 8, 9 or 10
+      opts into strict marker family/version and per-chunk metadata checks.
+      The unconfigured bindgen writer pin gate separately retains a ceiling of 8.
+      Setting an explicit policy requires an exact qualified image containing
+      relayhistory-pipeline #489 after compatibility fixes and exact-head review.
+      It does not enable a workload, Rust/WASM or writer output. Stage reader-first
+      compatibility and verify retained objects before writer activation; keep the
+      required explicit ceiling while newer objects remain during rollback.
     chart: sessions-pipeline
     values: [nativeConsumer.readerMaxRuleset, worker.nativeBrief.readerMaxRuleset, sessionReadApi.readerMaxRuleset, alleyoop.readerMaxRuleset, ingestEdge.readerMaxRuleset]
     env: [READER_MAX_RULESET]
     profiles: [selfhost-postgres, migration, external-selfhosted, external-rds, aws-rds-native, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql]
     status: shipped
     provided_by: operator
-    default: 8
-    profile_default: { default: 8, aws-rds-native: 8 }
+    default: null
+    profile_default: { default: null, aws-rds-native: null }
     choices:
-      - { value: 8, note: Existing reader ceiling and chart default. }
+      - { value: null, note: Omit the binding and preserve legacy reads; writer pin gate defaults to 8. }
+      - { value: 8, note: Opt into strict checks through version 8 with a qualified image. }
       - { value: 9, note: "Requires a qualified #489-compatible image on that reader." }
       - { value: 10, note: "Requires a qualified #489-compatible image on that reader." }
-    verify: Render each selected reader and confirm exactly one READER_MAX_RULESET with the requested decimal token; prove reads of representative objects before raising writer output. Rendering alone is not runtime compatibility proof.
+    verify: Default renders must omit READER_MAX_RULESET; explicit policies render exactly one binding with the requested decimal token; prove reads of representative objects before raising writer output. Rendering alone is not runtime compatibility proof.
     sources:
       - "charts/sessions-pipeline/templates/_native-consumer.tpl:1"
       - "charts/sessions-pipeline-worker/templates/_native-brief.tpl:1"

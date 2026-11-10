@@ -410,10 +410,11 @@ searchIndexer:
 # internal alleyoop-ingest worker. No profile enables it or supplies an image.
 # Initial supported assembly is test/pilot only; deletion/privacy is incomplete.
 ingestEdge:
-  # Independent compatibility ceiling used by the scrub-engine initializer.
+  # Omitted by default: legacy reads stay unchanged; the engine pin gate remains 8.
+  # Explicit 8/9/10 opts into the independent compatibility policy.
   # Raising it requires a qualified #489-compatible image; it does not select
   # writer output or enable Rust/WASM. Keep compatible readers staged first.
-  readerMaxRuleset: 8
+  readerMaxRuleset: null
   # Business analytics adapter (pipeline source 71801741 or later). Off by default.
   # Self-host sends only to the private file collector, never hosted PostHog.
   analytics:
@@ -511,9 +512,9 @@ nativeConsumer:
     caConfigMap: "" # optional public CA bundle, added to OS trust
     caKey: ca.crt
   enabled: false
-  # Highest ruleset the consumer reader may decode. Reader-only; it neither
+  # Null preserves legacy reads; explicit 8/9/10 opts into strict checks. It neither
   # selects a writer ruleset nor enables this default-off component.
-  readerMaxRuleset: 8
+  readerMaxRuleset: null
   fullnameOverride: ""
   replicas: 1
   # Both the chart's legacy indexer and the installed old indexer must be off.

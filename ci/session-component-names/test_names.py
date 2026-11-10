@@ -60,7 +60,7 @@ class Names(unittest.TestCase):
             self.assertNotIn("SUMMARY_MASTER_KEYS", env)
         ingest = deployments["ci-session-ingest-api"]["spec"]["template"]["spec"]["containers"][0]
         self.assertEqual(next(item["value"] for item in ingest["env"] if item["name"] == "SERVICE"), "alleyoop-ingest")
-        self.assertEqual(next(item["value"] for item in ingest["env"] if item["name"] == "READER_MAX_RULESET"), "8")
+        self.assertFalse(any(item["name"] == "READER_MAX_RULESET" for item in ingest["env"]))
         for item in deployments["ci-worker-session-summary-worker"]["spec"]["template"]["spec"]["containers"][0]["env"]:
             if item["name"] == "LOCKER_ENDPOINT":
                 self.assertEqual(item["value"], "http://session-object-storage:9000")
@@ -77,6 +77,9 @@ class Names(unittest.TestCase):
             with self.subTest(ceiling=ceiling):
                 error = render("session-ingest-api", ["-f", fixture, "--set-string", f"readerMaxRuleset={ceiling}"], success=False)
                 self.assertIn("readerMaxRuleset", error)
+        documents=render("session-ingest-api",["-f",fixture,"--set-json","readerMaxRuleset=null"])
+        deployment=next(item for item in documents if item["kind"]=="Deployment")
+        self.assertFalse(any(item["name"]=="READER_MAX_RULESET" for item in deployment["spec"]["template"]["spec"]["containers"][0]["env"]))
         for path in ("extraEnv[0]", "ingest.env[0]"):
             error = render("session-ingest-api", ["-f", fixture, "--set", f"{path}.name=READER_MAX_RULESET", "--set", f"{path}.value=10"], success=False)
             self.assertIn("readerMaxRuleset", error)

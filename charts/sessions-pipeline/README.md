@@ -64,18 +64,19 @@ and prepare/serve bootstrap order. No install profile enables it.
 
 The compatibility surfaces expose independent `readerMaxRuleset` values and render
 `READER_MAX_RULESET`: `nativeConsumer`, `worker.nativeBrief`, `sessionReadApi`,
-`alleyoop`, and `ingestEdge`. Every value defaults to `8` and accepts only `8`, `9`, or `10`.
+`alleyoop`, and `ingestEdge`. Every value defaults to `null`, omitting the
+environment binding and preserving legacy reads. Explicit `8`, `9`, or `10` opts into strict marker and chunk checks.
 The ingest-edge engine initializer also uses this ceiling to reject an incompatible
-Rust/WASM pin before loading it. A ceiling does not select the writer ruleset,
+Rust/WASM pin before loading it. The pin gate retains its own ceiling of 8 when
+unset. A ceiling does not select the writer ruleset,
 enable a component, or activate Rust/WASM behavior.
 
 Raise readers before any writer can emit a newer ruleset, using an immutable
-services image containing relayhistory-pipeline #489 at `0ad0813c` or a
-reviewed successor. The five values deliberately do not have to match during a
+services image containing the reviewed #489 compatibility and binding fixes. The five values deliberately do not have to match during a
 staged rollout. Before writer activation, prove each required read path against
 representative objects. If newer objects have been written, keep the readers at
-the needed ceiling during rollback; rolling this chart back to the default `8`
-does not convert those objects.
+the needed explicit ceiling during rollback. Removing the policy or rolling back
+the chart does not convert those objects.
 
 ## Upload credential renewal route
 

@@ -23,16 +23,16 @@ sources:
 # Third-party versions MUST match deps/pins.txt (scripts/ci/deps.sh checks).
 dependencies:
   - name: sessions-pipeline-worker
-    version: 0.7.5
+    version: 0.7.6
     repository: file://../sessions-pipeline-worker
     alias: worker
   - name: session-ingest-api
     alias: alleyoop # retained values key; the published chart name is descriptive
-    version: 0.4.3
+    version: 0.4.4
     repository: file://../session-ingest-api
   - name: session-read-api
     alias: sessionReadApi
-    version: 0.2.5
+    version: 0.2.6
     repository: file://../session-read-api
     condition: sessionReadApi.enabled
   - name: cluster

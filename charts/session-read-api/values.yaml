@@ -21,9 +21,10 @@ port: 8080
 probeRuntime: bun
 # Bare public HTTPS origin, used as the token audience.
 origin: ""
-# Highest ruleset this reader may decode. This does not select the writer's
+# Null omits the binding and preserves legacy reads. Explicit 8/9/10 opts into
+# strict marker/chunk checks. This does not select the writer's
 # ruleset and must be raised only after the selected image supports it.
-readerMaxRuleset: 8
+readerMaxRuleset: null
 # A new self-host store populated only by its own ingest is complete from inception.
 # Set a real ISO coverage floor only when importing partial legacy history; keep
 # it aligned with the indexer's floor. This is not the chart installation time.

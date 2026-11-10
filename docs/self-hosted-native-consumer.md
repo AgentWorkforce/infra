@@ -1,11 +1,11 @@
 # Native canonical consumer chart slot
 
 `nativeConsumer.readerMaxRuleset` manages `READER_MAX_RULESET` for this
-consumer. It defaults to `8` and accepts only `8`, `9`, or `10`. Raising it
-requires a qualified image containing relayhistory-pipeline #489 at `0ad0813c`
-or a reviewed successor; it does not enable the consumer or select writer
-output. Stage reader compatibility first and retain the required ceiling on
-rollback while newer objects remain.
+consumer. It defaults to `null`, omitting the binding to preserve legacy reads.
+Explicit `8`, `9`, or `10` opts into strict marker and chunk checks. Use a
+qualified image containing the reviewed #489 compatibility and binding fixes.
+The value neither enables the consumer nor selects writer output. Stage readers
+first and retain the required explicit ceiling while newer objects remain.
 
 `nativeConsumer` adds the merged pipeline #336
 `SERVICE=session-pipeline-consumer` reconciler and an optional

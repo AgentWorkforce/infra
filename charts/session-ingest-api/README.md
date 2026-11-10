@@ -4,9 +4,10 @@ This chart runs the legacy courier ingest Deployment. Secret inputs use
 existing Kubernetes Secrets; the chart does not accept credential values.
 
 `readerMaxRuleset` manages `READER_MAX_RULESET` for ingest manifest admission.
-It defaults to `8` and accepts only `8`, `9`, or `10`; `extraEnv` and
+It defaults to `null` and omits the binding. Explicit `8`, `9`, or `10` opts
+into strict marker and chunk checks; `extraEnv` and
 `ingest.env` cannot override it. Raising the ceiling requires a qualified image
-containing relayhistory-pipeline #489 at `0ad0813c` or a reviewed successor.
+containing the reviewed #489 compatibility and binding fixes.
 This is a reader ceiling only and does not change writer output.
 
 ## Retaining resources after replacing the workload

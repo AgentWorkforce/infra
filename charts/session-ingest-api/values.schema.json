@@ -6,9 +6,17 @@
   ],
   "properties": {
     "readerMaxRuleset": {
-      "type": "integer",
-      "enum": [8, 9, 10],
-      "description": "Highest ruleset accepted by ingest readers; does not select writer output."
+      "type": [
+        "integer",
+        "null"
+      ],
+      "enum": [
+        null,
+        8,
+        9,
+        10
+      ],
+      "description": "Null omits READER_MAX_RULESET and preserves legacy admission; explicit 8, 9 or 10 opts into strict marker checks with a qualified compatible image."
     },
     "deployment": {
       "type": "object",
