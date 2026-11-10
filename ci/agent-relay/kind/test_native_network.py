@@ -318,8 +318,8 @@ class NativeNetwork(unittest.TestCase):
         values=json.loads((self.stack.state/'edge-values.json').read_text())
         self.assertEqual(values['volumes'],[{'name':edge.DEFAULT_TLS,'mountPath':edge.DEFAULT_TLS_MOUNT,'type':'secret'}])
         self.assertTrue(values['providers']['file']['enabled']);self.assertFalse(values['providers']['file']['watch'])
-        self.assertIn(f'certFile: {edge.DEFAULT_TLS_MOUNT}/tls.crt',values['providers']['file']['content'])
-        self.assertIn('stores:\n    default:\n      defaultCertificate:',values['providers']['file']['content'])
+        self.assertEqual(values['providers']['file']['content'],{'tls':{'stores':{'default':{'defaultCertificate':{
+            'certFile':f'{edge.DEFAULT_TLS_MOUNT}/tls.crt','keyFile':f'{edge.DEFAULT_TLS_MOUNT}/tls.key'}}}}})
         self.assertFalse(values['providers']['kubernetesCRD']['enabled'])
 
     def test_absent_edge_policy_creation_cannot_overwrite_a_racing_manual_policy(self):

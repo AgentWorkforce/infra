@@ -26,8 +26,9 @@ def default_certificate_values(stack):
         return {}
     stack.apply({"apiVersion": "v1", "kind": "Secret", "metadata": {"name": DEFAULT_TLS, "namespace": EDGE_NAMESPACE},
                  "type": "kubernetes.io/tls", "stringData": {"tls.crt": cert.read_text(), "tls.key": key.read_text()}})
-    store = ("tls:\n  stores:\n    default:\n      defaultCertificate:\n"
-             f"        certFile: {DEFAULT_TLS_MOUNT}/tls.crt\n        keyFile: {DEFAULT_TLS_MOUNT}/tls.key\n")
+    # Chart 42.x's schema takes the file-provider content as an object, not YAML text.
+    store = {"tls": {"stores": {"default": {"defaultCertificate": {
+        "certFile": f"{DEFAULT_TLS_MOUNT}/tls.crt", "keyFile": f"{DEFAULT_TLS_MOUNT}/tls.key"}}}}}
     return {"volumes": [{"name": DEFAULT_TLS, "mountPath": DEFAULT_TLS_MOUNT, "type": "secret"}],
             "file": {"enabled": True, "watch": False, "content": store}}
 
