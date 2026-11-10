@@ -225,7 +225,7 @@ kubectl --context "$KUBE_CONTEXT" -n "$NAMESPACE" rollout restart \
   deployment/$RELEASE-read-api deployment/$RELEASE-ingest-edge \
   deployment/$RELEASE-search-indexer
 kubectl --context "$KUBE_CONTEXT" -n "$NAMESPACE" rollout status deployment \
-  --all --timeout=20m
+  --selector "app.kubernetes.io/instance=$RELEASE" --timeout=20m
 ```
 
 Inspect every Job before running `post`; a failed or missing current migration
