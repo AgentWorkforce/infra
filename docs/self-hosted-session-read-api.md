@@ -3,7 +3,7 @@
 `readerMaxRuleset` manages the read API's `READER_MAX_RULESET` ceiling. It
 defaults to `8` and accepts only `8`, `9`, or `10`; `extraEnv` cannot override
 it. Raise it only with a qualified image containing relayhistory-pipeline #489
-at `94352d36` or a reviewed successor, and before any writer emits that newer
+at `0ad0813c` or a reviewed successor, and before any writer emits that newer
 ruleset. The value neither selects writer output nor enables this default-off
 reader. Keep the ceiling high enough during rollback while newer objects exist.
 

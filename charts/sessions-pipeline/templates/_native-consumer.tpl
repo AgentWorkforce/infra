@@ -148,7 +148,9 @@
 {{- define "sessions-pipeline.nativeConsumer.env" -}}
 {{- $c := .root.Values.nativeConsumer -}}
 - { name: SERVICE, value: {{ ternary "session-pipeline-consumer-bootstrap" "session-pipeline-consumer" .bootstrap }} }
+{{- if not .bootstrap }}
 - { name: READER_MAX_RULESET, value: {{ $c.readerMaxRuleset | quote }} }
+{{- end }}
 - { name: RELAYHISTORY_SELFHOST_PIPELINE_CONSUMER, value: "true" }
 - name: RELAYHISTORY_PIPELINE_CONSUMER_SECRET
   valueFrom:

@@ -296,7 +296,7 @@ compatibility:
       charts: { session-read-api: 0.2.5 }
       images:
         session-read-api: { repository: ghcr.io/agentworkforce/96bulls-services, digest_required: true }
-      notes: 'Adds managed readerMaxRuleset (READER_MAX_RULESET), default 8 and restricted to 8, 9 or 10. Raising it requires an independently qualified image containing relayhistory-pipeline #489 at 94352d36 or a reviewed successor. This reader ceiling neither selects a writer ruleset nor enables a workload.'
+      notes: 'Adds managed readerMaxRuleset (READER_MAX_RULESET), default 8 and restricted to 8, 9 or 10. Raising it requires an independently qualified image containing relayhistory-pipeline #489 at 0ad0813c or a reviewed successor. This reader ceiling neither selects a writer ruleset nor enables a workload.'
     - id: session-read-api-0.2.4
       status: shipped
       charts: { session-read-api: 0.2.4 }
@@ -331,7 +331,7 @@ compatibility:
         sessions-pipeline-worker: { repository: agentworkforce/96bulls-services, digest: sha256:6f22ea17dff336e1431664542759fd27958649388b90a0b2f0881883caa7c6b2 }
         session-ingest-api: { repository: agentworkforce/96bulls-services, digest: sha256:6f22ea17dff336e1431664542759fd27958649388b90a0b2f0881883caa7c6b2 }
         session-read-api: { repository: ghcr.io/agentworkforce/96bulls-services, digest_required: true }
-      images_note: "The aws-rds-native profile requires one approved release-overlay services digest for worker, alleyoop, sessionReadApi, ingestEdge and searchIndexer; every profile digest stays empty in source. Raising any readerMaxRuleset above 8 requires an artifact containing relayhistory-pipeline #489 at 94352d36 or a reviewed successor. The artifact must also include pipeline #484 for default-on claim-lock 429/Retry-After behavior, fresh-install search_index grants, schema through 046010, session query and coordination overlaps. Existing profile image pins are unchanged."
+      images_note: "The aws-rds-native profile requires one approved release-overlay services digest for worker, alleyoop, sessionReadApi, ingestEdge and searchIndexer; every profile digest stays empty in source. Raising any readerMaxRuleset above 8 requires an artifact containing relayhistory-pipeline #489 at 0ad0813c or a reviewed successor. The artifact must also include pipeline #484 for default-on claim-lock 429/Retry-After behavior, fresh-install search_index grants, schema through 046010, session query and coordination overlaps. Existing profile image pins are unchanged."
       services:
         source_commit: 7d7229bb31c121ecb98cd4e35c248fc2cf5669ad
         migration_generation: eff8b3be46565b57ad8fa5e4a066dbb6d1fe608313d9c1680bfbcd484add259b
@@ -2762,7 +2762,7 @@ entries:
       stage reader-first compatibility before changing writer output. The default
       8 preserves existing behavior; only 8, 9 and 10 are accepted. Raising any
       ceiling requires an exact qualified image containing relayhistory-pipeline
-      #489 at 94352d36 or a reviewed successor. It does not enable a workload,
+      #489 at 0ad0813c or a reviewed successor. It does not enable a workload,
       Rust/WASM, or writer output. Keep all readers at the required newer ceiling
       while objects written with that ruleset remain; a chart rollback alone does
       not make those objects readable at ceiling 8.

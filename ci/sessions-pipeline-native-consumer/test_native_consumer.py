@@ -112,6 +112,7 @@ class Consumer(unittest.TestCase):
         for c in p['containers']+p['initContainers']:
             env=self.env(c);self.assertEqual(env['RELAYHISTORY_PIPELINE_CONSUMER_SECRET']['valueFrom']['secretKeyRef']['name'],'consumer-owner')
             self.assertEqual(env['SERVICE']['value'],'session-pipeline-consumer-bootstrap')
+            self.assertNotIn('READER_MAX_RULESET',env)
             self.assertNotIn('LOCKER_SECRET_ACCESS_KEY',env)
         served=self.render(self.boot('serve'));self.assertIn('Deployment',{d['kind'] for d in served})
         self.assertEqual(job['metadata']['name'],next(d['metadata']['name'] for d in served if d['kind']=='Job'))
@@ -131,6 +132,10 @@ class Consumer(unittest.TestCase):
                 if isinstance(v,dict):overlay['nativeConsumer'].setdefault(k,{}).update(v)
                 else:overlay['nativeConsumer'][k]=v
             with self.subTest(change=change):self.assertNotEqual(name,next(d['metadata']['name'] for d in self.render(overlay) if d['kind']=='Job'))
+        # Reader compatibility is a runtime setting; it must never recreate the
+        # privileged owner bootstrap Job whose name hashes its Pod spec.
+        raised=self.boot();raised['nativeConsumer']['readerMaxRuleset']=10
+        self.assertEqual(name,next(d['metadata']['name'] for d in self.render(raised) if d['kind']=='Job'))
     def test_bad_image_ca_target_and_layout_inputs_refuse(self):
         for change in [{'image':{'digest':''}},{'image':{'digest':'latest'}},{'image':{'repository':'image:latest'}},{'image':{'tag':'latest'}},
                        {'postgres':{'caSha256':'A'*64}},{'postgres':{'caConfigMap':''}},{'postgres':{'caKey':'a'*254}},{'postgres':{'host':'127.0.0.1'}},

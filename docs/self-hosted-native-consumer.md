@@ -2,7 +2,7 @@
 
 `nativeConsumer.readerMaxRuleset` manages `READER_MAX_RULESET` for this
 consumer. It defaults to `8` and accepts only `8`, `9`, or `10`. Raising it
-requires a qualified image containing relayhistory-pipeline #489 at `94352d36`
+requires a qualified image containing relayhistory-pipeline #489 at `0ad0813c`
 or a reviewed successor; it does not enable the consumer or select writer
 output. Stage reader compatibility first and retain the required ceiling on
 rollback while newer objects remain.
