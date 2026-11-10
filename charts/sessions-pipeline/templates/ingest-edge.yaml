@@ -1,6 +1,7 @@
 {{- include "sessions-pipeline.analytics.validate" .Values.ingestEdge.analytics -}}
 {{- $c := .Values.ingestEdge -}}
 {{- if not (kindIs "bool" $c.enabled) }}{{ fail "ingestEdge.enabled must be a boolean" }}{{ end -}}
+{{- if not (has (toString $c.readerMaxRuleset) (list "8" "9" "10")) }}{{ fail "ingestEdge.readerMaxRuleset must be one of 8, 9, or 10" }}{{ end -}}
 {{- if $c.enabled -}}
 {{- if not (kindIs "bool" $c.claimLockBusy) }}{{ fail "ingestEdge.claimLockBusy must be a boolean" }}{{ end -}}
 {{- if not (kindIs "map" $c.admission) }}{{ fail "ingestEdge.admission must be an object" }}{{ end -}}
@@ -152,6 +153,7 @@ spec:
           env:
             {{- include "sessions-pipeline.analytics.env" $c.analytics | nindent 12 }}
             - { name: SERVICE, value: session-ingest }
+            - { name: READER_MAX_RULESET, value: {{ $c.readerMaxRuleset | quote }} }
             - { name: RELAYHISTORY_SELFHOST_INGEST, value: "true" }
             - { name: RELAYHISTORY_INGEST_PORT, value: {{ $c.port | quote }} }
             - { name: RELAYHISTORY_INGEST_ORIGIN, value: {{ $origin | quote }} }

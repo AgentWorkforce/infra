@@ -62,15 +62,16 @@ and prepare/serve bootstrap order. No install profile enables it.
 
 ## Reader ruleset ceiling
 
-Four reader surfaces expose an independent `readerMaxRuleset` value and render
+The compatibility surfaces expose independent `readerMaxRuleset` values and render
 `READER_MAX_RULESET`: `nativeConsumer`, `worker.nativeBrief`, `sessionReadApi`,
-and `alleyoop`. Every value defaults to `8` and accepts only `8`, `9`, or `10`.
-The ceiling is reader-only: it does not select the writer ruleset, enable a
-component, or activate Rust/WASM behavior.
+`alleyoop`, and `ingestEdge`. Every value defaults to `8` and accepts only `8`, `9`, or `10`.
+The ingest-edge engine initializer also uses this ceiling to reject an incompatible
+Rust/WASM pin before loading it. A ceiling does not select the writer ruleset,
+enable a component, or activate Rust/WASM behavior.
 
 Raise readers before any writer can emit a newer ruleset, using an immutable
 services image containing relayhistory-pipeline #489 at `0ad0813c` or a
-reviewed successor. The four values deliberately do not have to match during a
+reviewed successor. The five values deliberately do not have to match during a
 staged rollout. Before writer activation, prove each required read path against
 representative objects. If newer objects have been written, keep the readers at
 the needed ceiling during rollback; rolling this chart back to the default `8`
