@@ -262,11 +262,10 @@ def _ingresses(stack, cfg):
         if c.get("spec", {}).get("controller") == "traefik.io/ingress-controller"}
     items = json.loads(stack.k("get", "ingress", "--all-namespaces", "-o", "json", namespace=None).stdout).get("items", [])
     expected_paths = {("/v1", "Prefix", cfg["reader"]), ("/v1/delivery/batches", "Exact", cfg["ingest"]),
-                      ("/v1/turns/batches", "Exact", cfg["ingest"]), ("/v1/delivery/limits", "Exact", cfg["ingest"])}
+                      ("/v1/turns/batches", "Exact", cfg["ingest"]), ("/v1/delivery/limits", "Exact", cfg["ingest"]),
+                      ("/v1/auth/token/refresh", "Exact", cfg["ingest"])}
     if cfg.get("admissionMode") in ("async", "drain"):
         expected_paths.add(("/v1/delivery/admission", "Exact", cfg["ingest"]))
-    if cfg.get("independentIssuer"):
-        expected_paths.add(("/v1/auth/token/refresh", "Exact", cfg["ingest"]))
     for item in items:
         spec, meta = item.get("spec", {}), item.get("metadata", {})
         selected = meta.get("name") == cfg["ingress"] and meta.get("namespace") == APP_NS
