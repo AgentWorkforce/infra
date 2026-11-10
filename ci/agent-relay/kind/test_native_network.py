@@ -304,6 +304,24 @@ class NativeNetwork(unittest.TestCase):
         self.assertFalse(any(c[0]=='k' and c[1][0]=='create'for c in self.stack.calls))
         self.stack.assert_anchors(self)
 
+    def test_edge_serves_the_local_ca_leaf_as_its_default_certificate(self):
+        self.stack.edge_policies=[self.edge_policy()]
+        (self.stack.state/'tls.crt').write_text('CERT');(self.stack.state/'tls.key').write_text('KEY')
+        original=self.stack.cmd;effects=[]
+        self.stack.apply=lambda doc:effects.append(doc)
+        self.stack.cmd=lambda args,**kwargs:SimpleNamespace(stdout='')if args[:2]==['helm','upgrade']else original(args,**kwargs)
+        edge.install(self.stack,'pinned',n.APP_NS,wait_for_route=False)
+        secret=[d for d in effects if d['kind']=='Secret']
+        self.assertEqual([(s['metadata']['name'],s['metadata']['namespace'],s['type'])for s in secret],
+                         [(edge.DEFAULT_TLS,edge.EDGE_NAMESPACE,'kubernetes.io/tls')])
+        self.assertEqual(secret[0]['stringData'],{'tls.crt':'CERT','tls.key':'KEY'})
+        values=json.loads((self.stack.state/'edge-values.json').read_text())
+        self.assertEqual(values['volumes'],[{'name':edge.DEFAULT_TLS,'mountPath':edge.DEFAULT_TLS_MOUNT,'type':'secret'}])
+        self.assertTrue(values['providers']['file']['enabled']);self.assertFalse(values['providers']['file']['watch'])
+        self.assertIn(f'certFile: {edge.DEFAULT_TLS_MOUNT}/tls.crt',values['providers']['file']['content'])
+        self.assertIn('stores:\n    default:\n      defaultCertificate:',values['providers']['file']['content'])
+        self.assertFalse(values['providers']['kubernetesCRD']['enabled'])
+
     def test_absent_edge_policy_creation_cannot_overwrite_a_racing_manual_policy(self):
         original=self.stack.cmd
         self.stack.cmd=lambda args,**kwargs:SimpleNamespace(stdout='')if args[:2]==['helm','upgrade']else original(args,**kwargs)

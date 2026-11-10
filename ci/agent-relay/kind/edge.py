@@ -9,6 +9,27 @@ import time
 
 POLICY = "kind-edge-no-external-egress"
 EDGE_NAMESPACE = "kind-edge"
+DEFAULT_TLS = "kind-edge-default-tls"
+DEFAULT_TLS_MOUNT = "/kind-edge-default-tls"
+
+
+def default_certificate_values(stack):
+    """Serve the local CA's leaf for unmatched SNI instead of Traefik's self-signed default.
+
+    Without this, a request for an unrouted host fails as an unknown authority
+    before hostname checks run, so a client cannot distinguish "wrong host"
+    from "untrusted edge". The leaf is the same one the application ingresses
+    use (tls.create), copied into the edge namespace for the pod to mount.
+    """
+    cert, key = stack.state / "tls.crt", stack.state / "tls.key"
+    if not (cert.exists() and key.exists()):
+        return {}
+    stack.apply({"apiVersion": "v1", "kind": "Secret", "metadata": {"name": DEFAULT_TLS, "namespace": EDGE_NAMESPACE},
+                 "type": "kubernetes.io/tls", "stringData": {"tls.crt": cert.read_text(), "tls.key": key.read_text()}})
+    store = ("tls:\n  stores:\n    default:\n      defaultCertificate:\n"
+             f"        certFile: {DEFAULT_TLS_MOUNT}/tls.crt\n        keyFile: {DEFAULT_TLS_MOUNT}/tls.key\n")
+    return {"volumes": [{"name": DEFAULT_TLS, "mountPath": DEFAULT_TLS_MOUNT, "type": "secret"}],
+            "file": {"enabled": True, "watch": False, "content": store}}
 
 
 def egress_policy_spec(stack, namespace):
@@ -85,6 +106,10 @@ def install(stack, version, namespace, *, wait_for_route=True):
         "ports": {"web": {"nodePort": 30080}, "websecure": {"nodePort": 30443}},
         "providers": {"kubernetesIngress": {"enabled": True}, "kubernetesCRD": {"enabled": False}},
         "ingressClass": {"enabled": True, "isDefaultClass": False, "name": "traefik"}}
+    default_tls = default_certificate_values(stack)
+    if default_tls:
+        values["volumes"] = default_tls["volumes"]
+        values["providers"]["file"] = default_tls["file"]
     path = stack.state / "edge-values.json"
     path.write_text(json.dumps(values, indent=2) + "\n")
     path.chmod(0o600)
