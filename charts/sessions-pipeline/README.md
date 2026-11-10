@@ -59,3 +59,12 @@ and optional owner bootstrap Job after qualifying the merged source/image and
 migration generation. See [the operator contract](../../docs/self-hosted-native-consumer.md)
 for its two-pool TLS requirements, separate owner/runtime Secrets, indexer drain
 and prepare/serve bootstrap order. No install profile enables it.
+
+## Upload credential renewal route
+
+When `nativeRouting.enabled=true`, `/v1/auth/token/refresh` always routes
+exactly to the ingest edge, in both Control-only and independent reader modes.
+The edge returns `401 refresh_not_supported`; Desktop then renews its upload
+credential from its current Control sign-in. Sending this POST to the reader
+returns `405` and leaves expired uploads retrying as an outage. Descendant paths
+continue to use the reader; this adds no public internal issuer route.

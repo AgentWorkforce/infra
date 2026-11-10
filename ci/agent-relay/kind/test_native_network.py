@@ -196,7 +196,7 @@ class NativeNetwork(unittest.TestCase):
         cfg = n.selection(values())
         paths = [{'path': path, 'pathType': typ, 'backend': {'service': {'name': service, 'port': {'number': 80}}}}
                  for path, typ, service in [('/v1', 'Prefix', cfg['reader']), ('/v1/delivery/batches', 'Exact', cfg['ingest']),
-                    ('/v1/turns/batches', 'Exact', cfg['ingest']), ('/v1/delivery/limits', 'Exact', cfg['ingest'])]]
+                    ('/v1/turns/batches', 'Exact', cfg['ingest']), ('/v1/delivery/limits', 'Exact', cfg['ingest']), ('/v1/auth/token/refresh', 'Exact', cfg['ingest'])]]
         self.stack.ingresses = [{'metadata': {'name': cfg['ingress'], 'namespace': n.APP_NS, 'uid': 'owned',
             'labels': {'app.kubernetes.io/managed-by': 'Helm'}, 'annotations': {
                 'meta.helm.sh/release-name': 'agent-relay', 'meta.helm.sh/release-namespace': n.APP_NS}},
@@ -495,7 +495,7 @@ class NativeNetwork(unittest.TestCase):
         cfg = n.selection(values())
         paths = [{"path": path, "pathType": typ, "backend": {"service": {"name": name, "port": {"number": 80}}}}
                  for path, typ, name in [("/v1", "Prefix", cfg["reader"]), ("/v1/delivery/batches", "Exact", cfg["ingest"]),
-                                         ("/v1/turns/batches", "Exact", cfg["ingest"]), ("/v1/delivery/limits", "Exact", cfg["ingest"])]]
+                                         ("/v1/turns/batches", "Exact", cfg["ingest"]), ("/v1/delivery/limits", "Exact", cfg["ingest"]), ("/v1/auth/token/refresh", "Exact", cfg["ingest"])]]
         owned = {"metadata": {"name": cfg["ingress"], "namespace": n.APP_NS, "uid": "owned-ingress",
                  "labels": {"app.kubernetes.io/managed-by": "Helm"}, "annotations": {
                  "meta.helm.sh/release-name": "agent-relay", "meta.helm.sh/release-namespace": n.APP_NS}},
@@ -506,7 +506,10 @@ class NativeNetwork(unittest.TestCase):
         for mutate in (lambda d: d["spec"].update(ingressClassName="other"),
                        lambda d: d["spec"]["tls"][0].update(secretName="different"),
                        lambda d: d["spec"]["rules"][0].update(host="other.kind.agentrelay.com"),
-                       lambda d: d["spec"]["rules"][0]["http"]["paths"][0]["backend"]["service"].update(name=cfg["ingest"])):
+                       lambda d: d["spec"]["rules"][0]["http"]["paths"][0]["backend"]["service"].update(name=cfg["ingest"]),
+                       lambda d: d["spec"]["rules"][0]["http"]["paths"].pop(),
+                       lambda d: d["spec"]["rules"][0]["http"]["paths"][-1].update(pathType="Prefix"),
+                       lambda d: d["spec"]["rules"][0]["http"]["paths"][-1]["backend"]["service"].update(name=cfg["reader"])):
             altered = copy.deepcopy(owned);mutate(altered);self.stack.ingresses = [altered]
             with self.assertRaises(ValueError):
                 n.preflight(self.stack, values())
@@ -602,7 +605,7 @@ class NativeNetwork(unittest.TestCase):
         cfg = n.selection(values())
         paths = [{'path': path, 'pathType': typ, 'backend': {'service': {'name': service, 'port': {'number': 80}}}}
                  for path, typ, service in [('/v1', 'Prefix', cfg['reader']), ('/v1/delivery/batches', 'Exact', cfg['ingest']),
-                    ('/v1/turns/batches', 'Exact', cfg['ingest']), ('/v1/delivery/limits', 'Exact', cfg['ingest'])]]
+                    ('/v1/turns/batches', 'Exact', cfg['ingest']), ('/v1/delivery/limits', 'Exact', cfg['ingest']), ('/v1/auth/token/refresh', 'Exact', cfg['ingest'])]]
         selected = {'metadata': {'name': cfg['ingress'], 'namespace': n.APP_NS, 'uid': 'original',
             'labels': {'app.kubernetes.io/managed-by': 'Helm'}, 'annotations': {
                 'meta.helm.sh/release-name': 'agent-relay', 'meta.helm.sh/release-namespace': n.APP_NS}},

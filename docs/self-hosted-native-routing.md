@@ -68,7 +68,12 @@ The generated Ingress sends exactly these paths to the selected Services:
 | `/v1/delivery/limits` | Exact | Native ingest |
 | `/v1` | Prefix | Reader |
 | `/v1/delivery/admission` | Exact, only `ingestEdge.admission.mode: async` or `drain` | Native ingest |
-| `/v1/auth/token/refresh` | Exact, only self-issued reader composition | Native ingest's explicit unsupported-refresh refusal |
+| `/v1/auth/token/refresh` | Exact, both supported reader modes | Native ingest's explicit unsupported-refresh refusal |
+
+The ingest service answers refresh requests with `401 refresh_not_supported`.
+Desktop then renews from its current Control sign-in. A reader's `405` response
+would instead be treated as a temporary outage, leaving an expired upload
+credential retrying without renewal.
 
 Backends use Service ports, not container ports. `/v1/delivery/records`,
 sessions, events, turns, search and login stay on the reader. Method and auth
