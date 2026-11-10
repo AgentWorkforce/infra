@@ -34,6 +34,10 @@ events:
   # READ_API_EVENT_MESSAGE_IDS. Serves includeMessageId on session events from
   # the canonical store, so it requires LOCKER_BUCKET in extraEnv.
   messageIds: false
+coordinationOverlaps:
+  # GET /v1/coordination/overlaps. Off unless the customer explicitly enables
+  # the reviewed overlap view in a compatible read-api image.
+  enabled: false
 turns:
   # True only where no Neon source exists, so no legacy coverage marker is expected.
   assumeNoLegacy: false
