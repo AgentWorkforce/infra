@@ -209,6 +209,26 @@ class ReadApi(unittest.TestCase):
         self.assertIn("requires LOCKER_BUCKET", self.render(overlay={"events": {"messageIds": True}}, fail=True))
         self.assertIn("must be a boolean", self.render(overlay={"events": {"messageIds": "true"}}, fail=True))
 
+    def test_coordination_overlaps_is_a_dedicated_default_off_value(self):
+        self.assertNotIn("READ_API_COORDINATION_OVERLAPS_ENABLED", self.env_of(self.render()))
+        env = self.env_of(self.render(overlay={"coordinationOverlaps": {"enabled": True}}))
+        self.assertEqual(env["READ_API_COORDINATION_OVERLAPS_ENABLED"]["value"], "true")
+        self.assertIn(
+            "coordinationOverlaps.enabled must be a boolean",
+            self.render(overlay={"coordinationOverlaps": {"enabled": "true"}}, fail=True),
+        )
+        self.assertIn(
+            "managed",
+            self.render(
+                overlay={
+                    "extraEnv": [
+                        {"name": "READ_API_COORDINATION_OVERLAPS_ENABLED", "value": "true"}
+                    ]
+                },
+                fail=True,
+            ),
+        )
+
     def test_postgres_tls_requires_an_explicit_verified_profile(self):
         self.assertEqual(self.env_of(self.render())["SESSION_POSTGRES_TLS_PROFILE"]["value"], "custom-ca")
         docs = self.render(overlay={"postgres": {"tlsProfile": "supabase"}, "postgresCa": {"enabled": False, "configMap": "", "sha256": ""}})
