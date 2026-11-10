@@ -158,6 +158,9 @@ sessionReadApi:
           matchLabels:
             app.kubernetes.io/name: relay-control
     publicFrom: []
+  # Fresh self-host session-list reads require the query path introduced with
+  # migration 046010. Keep this explicit so an older services artifact fails
+  # acceptance instead of silently returning 501 to the Dashboard.
   extraEnv:
     - name: LOCKER_BUCKET
       value: ""
@@ -165,6 +168,8 @@ sessionReadApi:
       value: "true"
     - name: PIPELINE_KEY_PREFIX
       value: 96bulls
+    - name: READ_API_SESSION_QUERY
+      value: "true"
 
 ingestEdge:
   enabled: true

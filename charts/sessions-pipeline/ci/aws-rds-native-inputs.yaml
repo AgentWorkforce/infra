@@ -40,6 +40,7 @@ sessionReadApi:
     - { name: LOCKER_BUCKET, value: ci-sessions }
     - { name: PIPELINE_ORG_FROM_PREFIX, value: "true" }
     - { name: PIPELINE_KEY_PREFIX, value: 96bulls }
+    - { name: READ_API_SESSION_QUERY, value: "true" }
 ingestEdge:
   image:
     digest: sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff

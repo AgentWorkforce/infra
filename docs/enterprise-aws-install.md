@@ -19,9 +19,9 @@ The release owner supplies one tested release packet:
 | --- | --- |
 | Infrastructure and application versions | An immutable infra commit, chart package and image inventory, including CPU architectures and customer ECR locations. |
 | RDS setup | A supported RDS bootstrap/LOGIN procedure, separate service databases, owner/runtime roles, verified TLS and completed migrations. |
-| Application wiring | Control sign-in, native ingest/read routes, authoritative PostgreSQL messaging, S3 and the selected OpenSearch/Lambda path tested together. |
+| Application wiring | Control sign-in, native ingest/read routes, authoritative PostgreSQL messaging, S3 and the selected OpenSearch/Lambda path tested together. The Sessions artifact includes schema generation `046010`, fresh-install `search_index` read grants and the session-query path. |
 | Desktop | Signed customer-profile installers, a working download location and the correct server, URL scheme and update feed. |
-| Operator controls | Capture policy, pre-upload scrubbing, authorized deletion and disabled add-ons verified in the actual client and app. |
+| Operator controls | Capture policy, pre-upload scrubbing, authorized deletion and disabled add-ons verified in the actual client and app. Do not claim client-side scrubbing until the selected Desktop build contains the release-qualified R9 scrubber. |
 | Recovery | A successful isolated restore and a reviewed upgrade/recovery procedure for this exact release. |
 
 Open work is tracked in the [application proof](terraform-helm-application-proof.md),
@@ -184,6 +184,9 @@ Use the release packet's complete RDS values overlay. The historical
    qualified [native ingest](self-hosted-native-ingest.md) and
    [session reader](self-hosted-session-read-api.md) profile from the packet.
    Do not enable a slot without its supported image, role and authentication contract.
+   For the AWS RDS native profile, keep `READ_API_SESSION_QUERY=true` and verify
+   a fresh database can list sessions and read events before accepting the
+   services digest. A 501 from session list or 503 from events blocks release.
 4. For a core pilot, set `components.relayflows: false`; leave Relayfile and
    Chief uninstalled unless selected. Verify the matching server and UI
    capability behavior in the [controls checklist](enterprise-customer-controls.md).
@@ -241,6 +244,11 @@ client-facing origins through VPN/ZTNA, including selected upload endpoints.
 1. Open the approved app's `/login` page and sign in through customer SSO.
    Confirm the organization/workspace, then invite pilot users in Members.
    Verify an uninvited account is refused.
+   Microsoft Entra issuers that omit `email_verified` need the narrowly scoped
+   `SELFHOST_OIDC_TRUST_MISSING_EMAIL_VERIFIED_ISSUER` setting for that exact
+   issuer in `relay-control.extraEnv`; never use it as a generic trust bypass.
+   Until the release packet records a successful real-IdP SSO acceptance run,
+   use the qualified password/email-link flow for day-one onboarding.
 2. If no sign-in method is configured, have the identity administrator finish
    OIDC/SMTP. For first-owner recovery, the customer's authorized Kubernetes
    operator uses the [device approval runbook](operator-device-login.md).
@@ -253,7 +261,9 @@ client-facing origins through VPN/ZTNA, including selected upload endpoints.
    workspace and code in the normal signed-in browser, approve only that
    request, and verify Desktop connects to the same customer workspace.
 5. Confirm the effective administrator capture policy and pre-upload scrubber.
-   Browser sign-in alone does not prove Desktop is connected.
+   Browser sign-in alone does not prove Desktop is connected. A server-side
+   scrub result also does not prove client-side pre-upload scrubbing; verify the
+   selected Desktop build carries the release-qualified R9 scrubber first.
 
 **Checkpoint:** a real pilot user can complete SSO, install the correct Desktop
 profile and approve their own device without Kubernetes or bootstrap access.
@@ -265,6 +275,9 @@ profile and approve their own device without Kubernetes or bootstrap access.
 - Capture a short real agent session with a harmless unique marker and the
   release's synthetic secret-test value. Verify removal **before upload**,
   then find the same session in app list, transcript and search.
+- After first sign-in, copy the real workspace ID into the release overlay's
+  `worker.nativeBrief.workspaceIds` before enabling descriptions. This is an
+  explicit bounded list; never use `"*"`, and add later workspaces deliberately.
 - Retry the supported delivery once and verify one logical result. Restart the
   relevant workloads and confirm durable readback and PostgreSQL messaging.
 - Use a second workspace/user to verify cross-tenant denial. Check that each

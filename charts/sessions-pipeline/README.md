@@ -22,10 +22,23 @@ NetworkPolicy. Database credentials remain in existing Secrets created from
 the managed-RDS bootstrap output. No customer credential belongs in either
 values file.
 
+That artifact must be qualified as one unit. It must include the schema through
+migration `046010`, the fresh-install read grants on `search_index`, and the
+session-query read path selected by `READ_API_SESSION_QUERY=true`. A digest that
+starts but lacks any of those contracts is not acceptable: session list/search
+will answer 501 or events reads will answer 503 on a new database. Record the
+merged source revision, successful publish run, immutable destination digest,
+and a fresh-RDS read acceptance result in the private release packet.
+
 The profile disables the in-cluster HoopDb and MinIO, disables the legacy
 alleyoop Deployment, and uses dedicated Pod Identity ServiceAccounts. Run
 `scripts/selfhost/rds-setup.sh pre` before Helm and `post` only after the
 HoopDb migration Job succeeds.
+
+Session descriptions are deliberately a second activation. After the first
+owner signs in, read the real workspace ID and add it to
+`worker.nativeBrief.workspaceIds`; the value is a bounded explicit list and
+never `"*"`. Repeat the render and acceptance checks when adding a workspace.
 
 ## Native canonical consumer (default off)
 
