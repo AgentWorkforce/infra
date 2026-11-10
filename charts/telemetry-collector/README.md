@@ -29,6 +29,14 @@ bytes, and a retained RWOP volume remount with strict TLS health. The predecesso
 failed the same private-mode restart check. Operators must still verify their
 own storage backend and configured images.
 
+Chart 0.1.4 also accepts relay-control source
+`ccc84b1a64435f18000dda299c64f0e84b3f751d`. It registers the
+`session-brief` installation-scoped event and the reader's coordination-overlaps
+route. The collector CLI and file recovery code are the same as the previous
+source. The earlier source remains accepted for existing installs and rollback.
+Verify the newer image's immutable digest and exact source before enabling the
+brief producer. The locally built ARM image is qualified for Kind.
+
 The former qualified source `08cf1142303355a73a94dcf605045cdf363e02c5` is no
 longer admitted. Before upgrading, supply the new verified collector image
 and matching `image.sourceRevision`; do not retain the old declaration for a
@@ -59,9 +67,8 @@ own liveness probe.
 ## Before installation
 
 Supply accepted immutable collector and TLS-proxy image digests and record the
-collector source SHA. The declared source is pinned to the reviewed revision
-`d2cb39635bbf163976c354582365b3d97dcd0b56`; accepting a different runtime requires
-a reviewed allowlist update. This declaration is not cryptographic verification
+collector source SHA. Use one of the reviewed revisions listed above. This
+declaration is not cryptographic verification
 of image contents: verify the actual archive/OCI source label separately. The collector image must contain Node 22 or later and
 `node_modules/relay-control/dist/collector-cli.js` and `/usr/bin/flock`. The
 reviewed public Control package includes the collector CLI. Repository naming
