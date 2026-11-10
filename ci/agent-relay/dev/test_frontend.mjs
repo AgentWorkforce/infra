@@ -1,5 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
+import { dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { options, runtimePlugin, validateFinalServer } from './frontend.mjs';
 import { allowed, validate } from './sync.mjs';
 
@@ -58,4 +61,18 @@ test('sync rejects invalid encodings, conflicting removals and oversized inputs'
   assert.throws(() => validate({ files: { 'src/a.ts': '' }, removed: ['src/a.ts'] }));
   assert.throws(() => validate({ files: { 'src/a.ts': Buffer.alloc(25 * 1024 * 1024).toString('base64') }, removed: [] }));
   assert.throws(() => validate({ files: null, removed: [] }));
+});
+
+test('Python and pod path contracts agree on public hidden assets and sensitive paths', () => {
+  const paths = ['public/.well-known/security.txt', 'public/.assets/logo.svg', 'src/.generated/types.ts',
+    'src/App.tsx', 'index.html', 'tsconfig.app.json', 'public/.env', 'public/.env.local',
+    'src/.git/config', 'public/.ssh/key', 'public/.aws/credentials', 'src/.config/auth.json',
+    'src/node_modules/a.ts', 'public/private.key', '../src/a.ts', '/src/a.ts', 'public//a'];
+  const result = spawnSync('python3', ['-c',
+    'import json,sys; sys.path.insert(0,sys.argv[1]); import dev; print(json.dumps([dev.frontend_path(p) for p in json.loads(sys.argv[2])]))',
+    dirname(fileURLToPath(import.meta.url)), JSON.stringify(paths)], { encoding: 'utf8' });
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(paths.map(allowed), JSON.parse(result.stdout));
+  assert.equal(allowed('public/.well-known/security.txt'), true);
+  assert.equal(validate({ files: { 'public/.well-known/security.txt': Buffer.from('contact').toString('base64') }, removed: [] }).removed.length, 0);
 });

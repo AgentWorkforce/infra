@@ -81,6 +81,52 @@ class DevTests(unittest.TestCase):
         self.assertTrue(s.restore())
         self.assertEqual(s.k.docs["app"]["spec"], original["spec"])
 
+    def backend_group(self):
+        return {"name": "control", "mode": "rebuild", "targets": [{"deployment": "app", "container": "server", "role": "control"}]}
+
+    def test_failed_second_patch_preserves_last_confirmed_ownership_and_restores(self):
+        s = self.session({"app": deployment()})
+        s.apply(self.backend_group(), "dev:first")
+        confirmed = copy.deepcopy(s.applied["app"])
+        original_patch = s.k.patch
+        s.k.patch = lambda *_: (_ for _ in ()).throw(dev.Refused("transport_failed_before_patch"))
+        with self.assertRaisesRegex(dev.Refused, "transport_failed"):
+            s.apply(self.backend_group(), "dev:second")
+        self.assertEqual(s.applied["app"], confirmed)
+        s.k.patch = original_patch
+        self.assertTrue(s.restore())
+        self.assertEqual(s.k.docs["app"]["spec"], deployment()["spec"])
+
+    def test_stop_after_second_journal_preserves_last_confirmed_spec(self):
+        s = self.session({"app": deployment()})
+        s.apply(self.backend_group(), "dev:first")
+        confirmed = copy.deepcopy(s.applied["app"])
+        def stop_before_patch(*_): s.stopping = True
+        with patch.object(dev, "save", side_effect=stop_before_patch):
+            s.apply(self.backend_group(), "dev:second")
+        self.assertEqual(s.applied["app"], confirmed)
+        self.assertNotIn("app", s.pending)
+        self.assertTrue(s.restore())
+        self.assertEqual(s.k.docs["app"]["spec"], deployment()["spec"])
+
+    def test_unknown_patch_response_accepts_only_exact_inflight_or_confirmed_spec(self):
+        for foreign_drift in (False, True):
+            s = self.session({"app": deployment()})
+            s.apply(self.backend_group(), "dev:first")
+            original_patch = s.k.patch
+            def applied_but_response_lost(doc, spec):
+                original_patch(doc, spec)
+                if foreign_drift: s.k.docs["app"]["spec"]["replicas"] = 0
+                raise dev.Refused("patch_response_lost")
+            s.k.patch = applied_but_response_lost
+            with self.assertRaisesRegex(dev.Refused, "patch_response_lost"):
+                s.apply(self.backend_group(), "dev:second")
+            self.assertEqual(s.applied["app"]["template"]["spec"]["containers"][0]["image"], "dev:first")
+            s.k.patch = original_patch
+            self.assertEqual(s.restore(), not foreign_drift)
+            if not foreign_drift: self.assertEqual(s.k.docs["app"]["spec"], deployment()["spec"])
+            else: self.assertEqual(s.k.docs["app"]["spec"]["replicas"], 0)
+
     def test_foreign_uid_refuses_before_patch(self):
         s = self.session({"app": deployment()})
         s.k.docs["app"]["metadata"]["uid"] = "replacement"
@@ -259,19 +305,74 @@ class DevTests(unittest.TestCase):
         def get(kind, name=None):
             if kind == "deployment": return deployment()
             if kind == "replicasets": return {"items": [{"metadata": {"uid": "rs", "ownerReferences": [{"uid": "owned-app"}]}}]}
-            if kind == "pods": return {"items": [{"metadata": {"name": "pod", "ownerReferences": [{"uid": "rs"}]},
+            if kind == "pods": return {"items": [{"metadata": {"name": "pod", "uid": "pod-uid", "ownerReferences": [{"uid": "rs"}]},
                                                    "spec": {"containers": deployment()["spec"]["template"]["spec"]["containers"]},
-                                                   "status": {"containerStatuses": [{"name": "server", "ready": True}]}}]}
+                                                   "status": {"containerStatuses": [{"name": "server", "ready": True, "containerID": "containerd://owned", "restartCount": 0}]}}]}
             self.fail(kind)
         s.k.get = get
         s.k.k = lambda *args, data: calls.append(json.loads(data))
-        group = {"targets": [{"deployment": "app", "container": "server"}]}
+        group = {"name": "webapp", "targets": [{"deployment": "app", "container": "server"}]}
         before = {"src/App.tsx": b"old", "src/other.ts": b"same", "README.md": b"old"}
         after = dict(before, **{"src/App.tsx": b"new"})
         s.sync(group, before, after)
         self.assertEqual(set(calls[0]["files"]), {"src/App.tsx"})
         s.sync(group, after, dict(after, **{"README.md": b"new"}))
         self.assertEqual(len(calls), 1)
+
+    def test_frontend_restart_replays_latest_files_and_deletions_without_new_edit(self):
+        for replacement in (False, True):
+            s = self.session({"app": deployment()}); s.guard = lambda: {}
+            group = {"name": "webapp", "targets": [{"deployment": "app", "container": "server"}]}
+            seed = {"src/App.tsx": b"image-old", "src/deleted-from-seed.ts": b"seed"}
+            previous = {"src/App.tsx": b"host-new", "src/removed-after-add.ts": b"previous"}
+            current = {"src/App.tsx": b"host-new", "src/new.ts": b"new"}
+            old_identity = {"podUid": "old-pod", "containerId": "containerd://old", "restartCount": 0}
+            new_identity = {"podUid": "new-pod" if replacement else "old-pod", "containerId": "containerd://new", "restartCount": 0 if replacement else 1}
+            s.frontend_seeds["webapp"] = seed; s.frontend_instances["webapp"] = old_identity
+            s.frontend_pod = lambda _: ("running-pod", new_identity)
+            sent = []; s.k.k = lambda *args, data: sent.append(json.loads(data))
+            self.assertTrue(s.frontend_replay(group, previous, current))
+            self.assertEqual(set(sent[0]["files"]), {"src/App.tsx", "src/new.ts"})
+            self.assertEqual(set(sent[0]["removed"]), {"src/deleted-from-seed.ts", "src/removed-after-add.ts"})
+            self.assertEqual(s.frontend_instances["webapp"], new_identity)
+            self.assertFalse(s.frontend_replay(group, current, current))
+            self.assertEqual(len(sent), 1)
+
+    def test_frontend_replay_does_not_sync_after_stop(self):
+        s = self.session({"app": deployment()}); s.stopping = True
+        s.frontend_pod = lambda _: ("pod", {"podUid": "new"})
+        s.k.k = lambda *args, **kwargs: self.fail("exec after stop")
+        self.assertFalse(s.frontend_replay({"name": "webapp"}, {}, {"src/a.ts": b"new"}))
+
+    def frontend_pod_get(self, ready_after=1, foreign_owner=False):
+        queries = []
+        def get(kind, name=None):
+            if kind == "deployment": return deployment()
+            if kind == "replicasets": return {"items": [{"metadata": {"uid": "rs", "ownerReferences": [{"uid": "owned-app"}]}}]}
+            if kind == "pods":
+                queries.append(1)
+                return {"items": [{"metadata": {"name": "pod", "uid": "pod-uid", "ownerReferences": [{"uid": "other" if foreign_owner else "rs"}]},
+                                   "spec": {"containers": deployment()["spec"]["template"]["spec"]["containers"]},
+                                   "status": {"containerStatuses": [{"name": "server", "ready": len(queries) >= ready_after,
+                                                                      "containerID": "containerd://new", "restartCount": 1}]}}]}
+            self.fail(kind)
+        return get, queries
+
+    def test_frontend_pod_waits_for_actual_container_ready_before_replay(self):
+        s = self.session({"app": deployment()})
+        s.k.get, queries = self.frontend_pod_get(ready_after=2)
+        with patch.object(dev.time, "sleep") as sleep:
+            running = s.frontend_pod({"targets": [{"deployment": "app", "container": "server"}]})
+        self.assertEqual(len(queries), 2)
+        sleep.assert_called_once_with(1)
+        self.assertEqual(running, ("pod", {"podUid": "pod-uid", "containerId": "containerd://new", "restartCount": 1}))
+
+    def test_frontend_ready_wait_is_bounded_and_never_accepts_foreign_owner(self):
+        s = self.session({"app": deployment()})
+        s.k.get, queries = self.frontend_pod_get(foreign_owner=True)
+        with patch.object(dev.time, "monotonic", side_effect=[0, 181]), self.assertRaisesRegex(dev.Refused, "frontend_owned_pod_required"):
+            s.frontend_pod({"targets": [{"deployment": "app", "container": "server"}]})
+        self.assertEqual(len(queries), 1)
 
     def test_stop_requested_during_build_prevents_new_apply_effects(self):
         s = self.session({"app": deployment()})

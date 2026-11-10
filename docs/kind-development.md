@@ -134,6 +134,9 @@ working image and emits bounded compiler file/line/error-code metadata; source
 snippets, environment values and arbitrary tool messages are not echoed.
 Fix/save again to build again. A command timeout, cluster drift, image import
 failure or readiness failure ends the session and runs guarded restoration.
+If the frontend container restarts or its pod is replaced, the loop detects the
+new running identity and replays the current source snapshot and deletions;
+it does not require an additional source edit to replace the image's old code.
 
 SQL, scrubber authority, dependency manifests/locks, Dockerfiles and runtime
 entrypoints are protected. Changing them stops the session instead of
@@ -171,7 +174,9 @@ documentation](https://vite.dev/config/) for the reverse-proxy/runner behavior.
 
 Ctrl-C or SIGTERM stops scheduling new imports/rollouts and independently
 attempts restoration of **every changed** Deployment. Each restoration requires
-the same UID and exact dev spec before a compare-and-swap patch; drift is not
+the same UID and an exact confirmed or in-flight owned dev spec before a
+compare-and-swap patch; a failed update preserves the previous confirmed spec.
+Unrelated drift is not
 overwritten. Original specs stay in process memory, so environment/Secret data
 is not written into a recovery file. The private journal contains only target
 UID/spec hashes and dev image references.

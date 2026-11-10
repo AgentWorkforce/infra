@@ -3,8 +3,9 @@ import { dirname, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 export function allowed(path) {
+  const blocked = new Set(['.', '..', '.git', '.kind', '.local', '.aws', '.ssh', '.config', '.npmrc', '.netrc', 'node_modules']);
   return typeof path === 'string' && !path.startsWith('/') &&
-    !path.split('/').some(x => !x || x === '.' || x === '..' || x.startsWith('.') || x === 'node_modules') &&
+    !path.split('/').some(x => !x || blocked.has(x) || x === '.env' || x.startsWith('.env.') || /\.(?:key|p12|pfx)$/.test(x)) &&
     (path.startsWith('src/') || path.startsWith('public/') ||
      ['index.html', 'vite.config.ts', 'vite.config.js'].includes(path) || /^tsconfig[^/]*\.json$/.test(path));
 }

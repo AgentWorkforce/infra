@@ -339,6 +339,8 @@ class Session:
         self.k = Cluster(config, cmd)
         self.expected = {**plan["targets"], **plan["protected"]}
         self.original, self.applied, self.seen = {}, {}, {}
+        self.pending = {}
+        self.frontend_seeds, self.frontend_instances = {}, {}
         self.stopping = False
         self.nonce = uuid.uuid4().hex[:10]
 
@@ -395,46 +397,81 @@ class Session:
                 container["image"] = image; container["imagePullPolicy"] = "Never"
             # Keep the original only in RAM: no env values, Secret data or argv on disk.
             self.original.setdefault(name, before)
-            self.applied[name] = after
             # Journal contains hashes only. A crash requires explicit operator recovery.
             save(self.journal / (str(time.time_ns()) + ".json"),
                  {"deployment": name, "uid": doc["metadata"]["uid"], "beforeSha256": digest(before),
                   "intendedSha256": digest(after), "devImage": image, "planned": True})
             if self.stopping:
                 return
+            # Keep the last confirmed spec. An in-flight CAS may have reached
+            # the API even when its transport returns an error.
+            self.pending[name] = after
             self.k.patch(doc, after)
-            self.expected[name] = {"uid": doc["metadata"]["uid"], "specSha256": digest(after)}
             # Kubernetes defaults may canonicalize only our new emptyDir/volumeMount.
             actual = self.k.get("deployment", name)
-            need(actual["spec"] == after, "unexpected_apiserver_spec_change")
+            need(actual["metadata"]["uid"] == doc["metadata"]["uid"] and actual["spec"] == after,
+                 "unexpected_apiserver_spec_change")
+            self.applied[name] = after
+            self.expected[name] = {"uid": doc["metadata"]["uid"], "specSha256": digest(after)}
+            self.pending.pop(name, None)
             if self.stopping:
                 return
             self.k.ready(name)
             emit("ready", role=target["role"], deployment=name)
 
-    def sync(self, group, old, files):
-        wanted = {p: b for p, b in files.items() if frontend_path(p) and old.get(p) != b}
+    def frontend_pod(self, group):
+        target = group["targets"][0]
+        deadline = time.monotonic() + 180
+        while not self.stopping:
+            doc = self.k.get("deployment", target["deployment"])
+            pods = self.k.get("pods")["items"]
+            rs = {x["metadata"]["uid"] for x in self.k.get("replicasets")["items"]
+                  if any(o["uid"] == doc["metadata"]["uid"] for o in x["metadata"].get("ownerReferences", []))}
+            desired = next(c["image"] for c in doc["spec"]["template"]["spec"]["containers"] if c["name"] == target["container"])
+            matches = [p for p in pods if not p["metadata"].get("deletionTimestamp") and
+                       any(o["uid"] in rs for o in p["metadata"].get("ownerReferences", [])) and
+                       any(c["name"] == target["container"] and c["image"] == desired for c in p.get("spec", {}).get("containers", [])) and
+                       any(x.get("name") == target["container"] and x.get("ready") is True for x in p.get("status", {}).get("containerStatuses", []))]
+            if len(matches) == 1:
+                pod = matches[0]
+                status = next(x for x in pod["status"]["containerStatuses"] if x["name"] == target["container"])
+                need(isinstance(status.get("containerID"), str) and status["containerID"] and
+                     type(status.get("restartCount")) is int, "frontend_running_identity_required")
+                return pod["metadata"]["name"], {"podUid": pod["metadata"]["uid"],
+                                                  "containerId": status["containerID"], "restartCount": status["restartCount"]}
+            need(time.monotonic() < deadline, "frontend_owned_pod_required")
+            time.sleep(1)  # Bounded read-only wait for container/pod recovery.
+        return None
+
+    def sync(self, group, old, files, replay=False, running=None):
+        wanted = {p: b for p, b in files.items() if frontend_path(p) and (replay or old.get(p) != b)}
         removed = [p for p in old if frontend_path(p) and p not in files]
-        if not wanted and not removed:
-            return
+        if not wanted and not removed: return
         self.guard()
+        if self.stopping: return
         import base64
         payload = json.dumps({"files": {p: base64.b64encode(b).decode() for p, b in wanted.items()}, "removed": removed}).encode()
         need(len(payload) <= 32 * 1024 * 1024, "frontend_sync_bound")
+        running = running or self.frontend_pod(group)
+        if running is None or self.stopping: return
+        self.guard()  # A readiness wait may span an unrelated operator change.
+        if self.stopping: return
         target = group["targets"][0]
-        doc = self.k.get("deployment", target["deployment"])
-        pods = self.k.get("pods")["items"]
-        rs = {x["metadata"]["uid"] for x in self.k.get("replicasets")["items"]
-              if any(o["uid"] == doc["metadata"]["uid"] for o in x["metadata"].get("ownerReferences", []))}
-        desired = next(c["image"] for c in doc["spec"]["template"]["spec"]["containers"] if c["name"] == target["container"])
-        matches = [p for p in pods if not p["metadata"].get("deletionTimestamp") and
-                   any(o["uid"] in rs for o in p["metadata"].get("ownerReferences", [])) and
-                   any(c["name"] == target["container"] and c["image"] == desired for c in p.get("spec", {}).get("containers", [])) and
-                   any(x.get("name") == target["container"] and x.get("ready") is True for x in p.get("status", {}).get("containerStatuses", []))]
-        need(len(matches) == 1, "frontend_owned_pod_required")
-        self.k.k("exec", "-i", matches[0]["metadata"]["name"], "-c", target["container"], "--",
+        self.k.k("exec", "-i", running[0], "-c", target["container"], "--",
                  "node", "/seed/__kind_dev/sync.mjs", data=payload)
-        emit("hmr_sync", files=len(wanted), removed=len(removed))
+        self.frontend_instances[group["name"]] = running[1]
+        emit("hmr_replay" if replay else "hmr_sync", files=len(wanted), removed=len(removed))
+
+    def frontend_replay(self, group, previous, files):
+        running = self.frontend_pod(group)
+        if running is None or self.stopping: return False
+        if self.frontend_instances.get(group["name"]) == running[1]: return False
+        # Startup recopies the seed image. Restore current host contents and
+        # remove both seeded and previously synced files deleted on the host.
+        old = {**self.frontend_seeds.get(group["name"], {}), **previous}
+        self.sync(group, old, files, replay=True, running=running)
+        self.frontend_instances[group["name"]] = running[1]
+        return True
 
     def restore(self):
         errors = []
@@ -446,7 +483,7 @@ class Session:
                 need(doc["metadata"]["uid"] == self.expected[name]["uid"], "restore_uid_changed")
                 if doc["spec"] == original:
                     continue
-                need(doc["spec"] == self.applied[name], "restore_spec_drift")
+                need(doc["spec"] in [self.applied.get(name), self.pending.get(name)], "restore_spec_drift")
                 self.k.patch(doc, original)
                 self.k.ready(name)
             except (Refused, KeyError) as e:
@@ -468,6 +505,10 @@ class Session:
                 if self.stopping: break
                 files = source_files(Path(group["repo"]).resolve(), self.cmd)
                 self.apply(group, self.build(group, files))
+                if group["mode"] == "frontend-hmr" and not self.stopping:
+                    self.frontend_seeds[group["name"]] = files
+                    running = self.frontend_pod(group)
+                    if running: self.frontend_instances[group["name"]] = running[1]
                 self.seen[group["name"]] = files
             emit("watching", intervalSeconds=1, developmentOnly=True)
             while not self.stopping:
@@ -477,6 +518,9 @@ class Session:
                     files = source_files(Path(group["repo"]).resolve(), self.cmd)
                     need(digest(protected_source(files)) == group["protectedSourceSha256"], "protected_source_changed")
                     previous = self.seen.get(group["name"], {})
+                    if group["mode"] == "frontend-hmr" and self.frontend_replay(group, previous, files):
+                        self.seen[group["name"]] = files
+                        continue
                     if files == previous: continue
                     time.sleep(0.4)  # Coalesce a save before one serial build/sync.
                     try:
@@ -494,6 +538,10 @@ class Session:
 
 
 def frontend_path(p):
+    if not isinstance(p, str) or p.startswith("/"): return False
+    blocked = {".", "..", ".git", ".kind", ".local", ".aws", ".ssh", ".config", ".npmrc", ".netrc", "node_modules"}
+    if any(not x or x in blocked or x == ".env" or x.startswith(".env.") or
+           x.endswith((".key", ".p12", ".pfx")) for x in p.split("/")): return False
     return p.startswith(("src/", "public/")) or p in {"index.html", "vite.config.ts", "vite.config.js"} or bool(re.fullmatch(r"tsconfig[^/]*\.json", p))
 
 
