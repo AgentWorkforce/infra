@@ -2833,6 +2833,65 @@ entries:
       artifacthub.io/license: Apache-2.0
     apiVersion: v2
     appVersion: 0.1.0
+    created: "2026-11-10T11:06:48.577572138Z"
+    dependencies:
+    - alias: worker
+      name: sessions-pipeline-worker
+      repository: file://../sessions-pipeline-worker
+      version: 0.7.4
+    - alias: alleyoop
+      name: session-ingest-api
+      repository: file://../session-ingest-api
+      version: 0.4.2
+    - alias: sessionReadApi
+      condition: sessionReadApi.enabled
+      name: session-read-api
+      repository: file://../session-read-api
+      version: 0.2.4
+    - alias: hoopdb
+      condition: hoopdb.enabled
+      name: cluster
+      repository: https://cloudnative-pg.github.io/charts
+      version: 0.9.0
+    - alias: session-object-storage
+      condition: session-object-storage.enabled
+      name: minio
+      repository: https://charts.min.io/
+      version: 5.4.0
+    - alias: otel
+      condition: otel.enabled
+      name: opentelemetry-collector
+      repository: https://open-telemetry.github.io/opentelemetry-helm-charts
+      version: 0.178.0
+    description: 'The sessions pipeline in one release: the sessions-pipeline-worker
+      and session-ingest-api app charts, plus optional Postgres (CloudNativePG Cluster),
+      session-object-storage (MinIO) and an OpenTelemetry collector. Hook-free, so
+      `helm install` and Alchemy''s `helm template --no-hooks` + server-side apply
+      behave the same. Requires the CloudNativePG operator when hoopdb.enabled (see
+      deps/PINS.md). '
+    digest: 822bc3dbecc20f0e23fcd4b8b818fadd854691735615f386504af6e27c3d5b23
+    home: https://github.com/AgentWorkforce/sessions-pipeline
+    keywords:
+    - sessions-pipeline
+    - sessions
+    - pipeline
+    - agentworkforce
+    maintainers:
+    - name: AgentWorkforce
+      url: https://github.com/AgentWorkforce/infra
+    name: sessions-pipeline
+    sources:
+    - https://github.com/AgentWorkforce/infra/tree/main/charts/sessions-pipeline
+    type: application
+    urls:
+    - https://github.com/AgentWorkforce/infra/releases/download/sessions-pipeline-0.8.17/sessions-pipeline-0.8.17.tgz
+    version: 0.8.17
+  - annotations:
+      agentworkforce.dev/license-scope: First-party chart code only; dependencies
+        and images retain their own licenses.
+      artifacthub.io/license: Apache-2.0
+    apiVersion: v2
+    appVersion: 0.1.0
     created: "2026-11-10T10:19:32.573144233Z"
     dependencies:
     - alias: worker
@@ -4367,4 +4426,4 @@ entries:
     urls:
     - https://github.com/AgentWorkforce/infra/releases/download/telemetry-collector-0.1.0/telemetry-collector-0.1.0.tgz
     version: 0.1.0
-generated: "2026-11-10T10:33:57.773710345Z"
+generated: "2026-11-10T11:06:48.577811064Z"
