@@ -429,6 +429,10 @@ ingestEdge:
     concurrency: 4
     scanIntervalMs: 15000
     maxAttempts: 20
+  # Requires a qualified services image containing pipeline #484. Claim-stage
+  # lock waits become 429 + Retry-After; statement timeouts still return 503.
+  # This does not remove SQL from sync uploads or change async consumer backoff.
+  claimLockBusy: true
   fullnameOverride: ""
   image:
     repository: ghcr.io/agentworkforce/96bulls-services

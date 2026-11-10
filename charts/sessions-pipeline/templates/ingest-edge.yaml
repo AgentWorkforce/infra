@@ -2,6 +2,7 @@
 {{- $c := .Values.ingestEdge -}}
 {{- if not (kindIs "bool" $c.enabled) }}{{ fail "ingestEdge.enabled must be a boolean" }}{{ end -}}
 {{- if $c.enabled -}}
+{{- if not (kindIs "bool" $c.claimLockBusy) }}{{ fail "ingestEdge.claimLockBusy must be a boolean" }}{{ end -}}
 {{- if not (kindIs "map" $c.admission) }}{{ fail "ingestEdge.admission must be an object" }}{{ end -}}
 {{- $admission := $c.admission -}}
 {{- if or (not (kindIs "string" $admission.mode)) (not (has $admission.mode (list "sync" "async" "drain"))) }}{{ fail "ingestEdge.admission.mode must be sync, async or drain" }}{{ end -}}
@@ -189,6 +190,9 @@ spec:
             - { name: INGEST_KEY_ROOT, value: 96bulls }
             - { name: INGEST_MAX_PER_USER, value: {{ $c.maxPerUser | quote }} }
             - { name: INGEST_MAX_PER_ORG, value: {{ $c.maxPerOrg | quote }} }
+            {{- if $c.claimLockBusy }}
+            - { name: INGEST_CLAIM_LOCK_BUSY, value: "on" }
+            {{- end }}
             {{- if ne $admission.mode "sync" }}
             - { name: SELFHOST_INGEST_ADMISSION, value: {{ $admission.mode | quote }} }
             - { name: SELFHOST_ADMISSION_CONCURRENCY, value: {{ $admission.concurrency | quote }} }
