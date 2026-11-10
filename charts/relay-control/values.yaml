@@ -221,6 +221,9 @@ services:
   # Optional compatibility connection for existing caller-token readers.
   relayhistoryReadApiUrl: ""
   relayhistoryReadApiEvents: false
+  # Optional API-only mapping of the public reader hostname. In native mode it
+  # must match sessionReadApiPublicUrl; otherwise relayhistoryReadApiUrl.
+  # It never changes the private sessionReadApiUrl handoff or TLS/SNI/audience.
   relayhistoryHostAliases: []
   # Optional local gateway mapping for the API's own publicUrl. MCP obtains
   # workspace-bound reader tokens through that public HTTPS origin. Only that

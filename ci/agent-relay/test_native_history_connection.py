@@ -54,6 +54,39 @@ class HistoryConnection(unittest.TestCase):
             bad = deepcopy(value); bad['services'][key] = field
             self.render(bad, 'native')
 
+    def native(self):
+        return {"services": {"relayhistoryBackend": "native", "relayauthEnabled": False,
+            "relayhistoryUrl": "", "relayhistoryPublicUrl": "",
+            "sessionReadApiUrl": "http://session-read-api.agent-relay.svc.cluster.local",
+            "sessionReadApiPublicUrl": ORIGIN, "sessionReadApiMcpReads": True,
+            "relayhistoryHostAliases": [{"ip": "10.96.137.234", "hostnames": ["history.kind.agentrelay.com"]}]},
+            "secretKeys": {"introspectSecret": "ingest-introspection", "sessionReadApiSecret": "reader-issuer"}}
+
+    def test_native_public_reader_alias_preserves_private_handoff_and_public_self_route(self):
+        value = self.native()
+        public = [{'ip': '10.96.42.7', 'hostnames': ['api.gcp-proof.agentrelay.com']}]
+        value['services']['publicHostAliases'] = public
+        docs = self.render(value)
+        pod = next(d for d in docs if d['kind'] == 'Deployment')['spec']['template']['spec']
+        self.assertEqual(pod['hostAliases'], value['services']['relayhistoryHostAliases'] + public)
+        env = {e['name']: e.get('value') for e in pod['containers'][0]['env']}
+        self.assertEqual(env['SESSION_READ_API_URL'], value['services']['sessionReadApiUrl'])
+        self.assertEqual(env['SESSION_READ_API_PUBLIC_URL'], ORIGIN)
+        self.assertEqual(env['SELFHOST_PUBLIC_URL'], 'https://api.gcp-proof.agentrelay.com')
+        self.assertNotIn('RELAYHISTORY_READ_API_URL', env)
+        self.assertNotIn('RELAYHISTORY_READ_API_EVENTS', env)
+        self.assertNotIn('hostAliases', next(d for d in docs if d['kind'] == 'Job')['spec']['template']['spec'])
+
+    def test_native_alias_requires_exact_public_reader_hostname_and_canonical_ip(self):
+        for hostname in ('other.kind.agentrelay.com', 'session-read-api.agent-relay.svc.cluster.local'):
+            selected = self.native()
+            selected['services']['relayhistoryHostAliases'][0]['hostnames'] = [hostname]
+            self.render(selected, 'reader hostAlias hostname')
+        for ip in ('010.96.1.1', '10.96.1.256', 'gateway.kind.agentrelay.com'):
+            selected = self.native()
+            selected['services']['relayhistoryHostAliases'][0]['ip'] = ip
+            self.render(selected, 'reader hostAlias.ip')
+
     def test_dormant_connection_does_not_change_pod_dns_or_env(self):
         for d in self.render({}):
             if d['kind'] not in ('Deployment', 'Job'):

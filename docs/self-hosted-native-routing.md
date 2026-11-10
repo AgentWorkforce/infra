@@ -110,7 +110,8 @@ relay-control:
 ```
 
 Do not copy this example IP into another cluster. This value accepts one
-canonical IPv4 address and exactly the configured reader hostname. Its empty
+canonical IPv4 address and exactly the configured public reader hostname:
+`sessionReadApiPublicUrl` in native mode, `relayhistoryReadApiUrl` otherwise. Its empty
 default emits no mapping. Certificate verification still requires the public
 name and an approved CA in the container's trust configuration. Project private
 CA bundles read-only as public certificate material, never server private keys.
@@ -120,7 +121,9 @@ Service, `sessionReadApiPublicUrl` for its exact public audience,
 `sessionReadApiMcpReads: true` and a dedicated `secretKeys.sessionReadApiSecret`.
 The reader's `auth.selfIssued.internalSecret` must name that same credential;
 ingest introspection uses a different secret. Do not enable the caller-token
-reader settings or reuse its legacy History DNS alias for the private issuer.
+reader settings. When the public reader needs an in-cluster gateway mapping,
+`relayhistoryHostAliases` names only `sessionReadApiPublicUrl`'s hostname; it
+does not map or replace the private `sessionReadApiUrl` issuer Service.
 
 MCP acquires workspace-bound reader tokens through Control's own public HTTPS
 URL. Where the kind gateway cannot be reached through normal public DNS, the
