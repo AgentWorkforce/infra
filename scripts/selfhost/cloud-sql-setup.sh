@@ -277,11 +277,11 @@ do_post() {
   done
   local migration_job migration_json
   migration_job="$(helm -n "$NS" get manifest "$HELM_RELEASE" | awk '
-    function emit() { if (kind == "Job" && name != "" && migrate) print name }
-    /^---[[:space:]]*$/ { emit(); kind=""; name=""; migrate=0; next }
+    function emit() { if (kind == "Job" && name != "" && hoopdb) print name }
+    /^---[[:space:]]*$/ { emit(); kind=""; name=""; hoopdb=0; next }
     /^kind:[[:space:]]+Job[[:space:]]*$/ { kind="Job"; next }
     /^  name:[[:space:]]+/ && name == "" { name=$2; next }
-    /^[[:space:]]+- name:[[:space:]]+migrate[[:space:]]*$/ { migrate=1 }
+    /^[[:space:]]+app\.kubernetes\.io\/component:[[:space:]]+hoopdb-migrate[[:space:]]*$/ { hoopdb=1 }
     END { emit() }
   ')"
   [[ -n "$migration_job" && "$migration_job" != *$'\n'* ]] || \

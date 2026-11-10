@@ -44,6 +44,8 @@ apiVersion: batch/v1
 kind: Job
 metadata:
   name: agent-relay-worker-migrate-current
+  labels:
+    app.kubernetes.io/component: hoopdb-migrate
 spec:
   template:
     spec:
