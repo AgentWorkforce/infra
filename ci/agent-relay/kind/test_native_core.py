@@ -184,13 +184,18 @@ print(json.dumps(rows))
         a = self.adapter(); s = self.selection(); calls = []
         oids = {n: i for i, n in enumerate(s["roles"].values(), 100)}
         def sql(selected, db, text, **kw):
-            calls.append((db, text, kw)); return json.dumps(oids)
+            calls.append((db, text, kw))
+            numeric = "json_object_agg(rolname,oid::bigint)" in text
+            return json.dumps({n: oid if numeric else str(oid) for n, oid in oids.items()})
         a._psql = sql
         self.assertEqual(a._pipeline_role_oids(s), oids)
         self.assertEqual(calls[0][0], "hoopdb"); self.assertEqual(calls[0][2], {"read_only": True})
         for role in s["roles"].values(): self.assertIn("'" + role + "'", calls[0][1])
-        for invalid in ({}, {**oids, "foreign": 999}, {**oids, s["roles"]["runtime"]: True},
-                        {**oids, s["roles"]["runtime"]: oids[s["roles"]["owner"]]}):
+        self.assertIn("json_object_agg(rolname,oid::bigint)", calls[0][1])
+        invalid_values = [str(oids[s["roles"]["runtime"]]), True, False, 0, -1, 101.0, None]
+        invalid_maps = [{}, {**oids, "foreign": 999}, {**oids, s["roles"]["runtime"]: oids[s["roles"]["owner"]]}]
+        invalid_maps += [{**oids, s["roles"]["runtime"]: value} for value in invalid_values]
+        for invalid in invalid_maps:
             a._psql = lambda *args, invalid=invalid, **kw: json.dumps(invalid)
             with self.assertRaisesRegex(NativeRecipeError, "role_identity_incomplete"): a._pipeline_role_oids(s)
 

@@ -159,7 +159,7 @@ import('/app/node_modules/relay-control/dist/features.js').then(m=>{
 
     def _pipeline_role_oids(self, selected):
         names = set(selected["roles"].values())
-        raw = self._psql(selected, "hoopdb", "SELECT coalesce(json_object_agg(rolname,oid),'{}'::json) FROM pg_roles WHERE rolname IN (" +
+        raw = self._psql(selected, "hoopdb", "SELECT coalesce(json_object_agg(rolname,oid::bigint),'{}'::json) FROM pg_roles WHERE rolname IN (" +
                          ",".join("'" + n + "'" for n in sorted(names)) + ");", read_only=True)
         value = json.loads(raw)
         require(isinstance(value, dict) and set(value) == names and
