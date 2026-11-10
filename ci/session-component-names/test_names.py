@@ -60,9 +60,26 @@ class Names(unittest.TestCase):
             self.assertNotIn("SUMMARY_MASTER_KEYS", env)
         ingest = deployments["ci-session-ingest-api"]["spec"]["template"]["spec"]["containers"][0]
         self.assertEqual(next(item["value"] for item in ingest["env"] if item["name"] == "SERVICE"), "alleyoop-ingest")
+        self.assertEqual(next(item["value"] for item in ingest["env"] if item["name"] == "READER_MAX_RULESET"), "8")
         for item in deployments["ci-worker-session-summary-worker"]["spec"]["template"]["spec"]["containers"][0]["env"]:
             if item["name"] == "LOCKER_ENDPOINT":
                 self.assertEqual(item["value"], "http://session-object-storage:9000")
+
+    def test_ingest_reader_ruleset_ceiling_is_exact_and_managed(self):
+        fixture = "ci/sessions-pipeline/values.yaml"
+        for ceiling in (8, 9, 10):
+            with self.subTest(ceiling=ceiling):
+                documents = render("session-ingest-api", ["-f", fixture, "--set", f"readerMaxRuleset={ceiling}"])
+                deployment = next(item for item in documents if item["kind"] == "Deployment")
+                env = {item["name"]: item for item in deployment["spec"]["template"]["spec"]["containers"][0]["env"]}
+                self.assertEqual(env["READER_MAX_RULESET"]["value"], str(ceiling))
+        for ceiling in (7, 11, "09", "padded"):
+            with self.subTest(ceiling=ceiling):
+                error = render("session-ingest-api", ["-f", fixture, "--set-string", f"readerMaxRuleset={ceiling}"], success=False)
+                self.assertIn("readerMaxRuleset", error)
+        for path in ("extraEnv[0]", "ingest.env[0]"):
+            error = render("session-ingest-api", ["-f", fixture, "--set", f"{path}.name=READER_MAX_RULESET", "--set", f"{path}.value=10"], success=False)
+            self.assertIn("readerMaxRuleset", error)
 
     def test_explicit_legacy_identity_pins_preserve_old_names_and_storage_claim(self):
         documents = render(args=[

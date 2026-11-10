@@ -507,6 +507,9 @@ nativeConsumer:
     caConfigMap: "" # optional public CA bundle, added to OS trust
     caKey: ca.crt
   enabled: false
+  # Highest ruleset the consumer reader may decode. Reader-only; it neither
+  # selects a writer ruleset nor enables this default-off component.
+  readerMaxRuleset: 8
   fullnameOverride: ""
   replicas: 1
   # Both the chart's legacy indexer and the installed old indexer must be off.

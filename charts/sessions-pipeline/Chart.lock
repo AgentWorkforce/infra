@@ -1,13 +1,13 @@
 dependencies:
 - name: sessions-pipeline-worker
   repository: file://../sessions-pipeline-worker
-  version: 0.7.4
+  version: 0.7.5
 - name: session-ingest-api
   repository: file://../session-ingest-api
-  version: 0.4.2
+  version: 0.4.3
 - name: session-read-api
   repository: file://../session-read-api
-  version: 0.2.4
+  version: 0.2.5
 - name: cluster
   repository: https://cloudnative-pg.github.io/charts
   version: 0.9.0
@@ -17,5 +17,5 @@ dependencies:
 - name: opentelemetry-collector
   repository: https://open-telemetry.github.io/opentelemetry-helm-charts
   version: 0.178.0
-digest: sha256:00f435a8d2f1f9ff6a468f2ba04e2325ae3ed5a4b8c3e5dc3b835df717826788
-generated: "2026-11-09T23:40:24.288184972-08:00"
+digest: sha256:e7b279452f35e6d93770f70ef19084d5b07535b858fc07bc37290babf444049d
+generated: "2026-11-10T05:27:28.755392222-08:00"

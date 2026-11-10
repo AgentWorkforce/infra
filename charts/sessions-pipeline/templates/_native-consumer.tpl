@@ -37,6 +37,7 @@
 {{- range $name, $flag := dict "enabled" $c.enabled "migrationDriverVerified" $c.migrationDriverVerified "legacyRuntimesQualified" $c.legacyRuntimesQualified "legacyIndexerDrained" $c.legacyIndexerDrained "allowInClusterHttp" $c.allowInClusterHttp "bootstrap.enabled" $c.bootstrap.enabled -}}
 {{- if not (kindIs "bool" $flag) }}{{ fail (printf "nativeConsumer.%s must be a boolean" $name) }}{{ end -}}
 {{- end -}}
+{{- if not (has (toString $c.readerMaxRuleset) (list "8" "9" "10")) }}{{ fail "nativeConsumer.readerMaxRuleset must be one of 8, 9, or 10" }}{{ end -}}
 {{- if $c.enabled -}}
 {{- if or (hasKey $c "extraEnv") (hasKey $c "envFrom") (hasKey $c "extraVolumes") (hasKey $c "extraVolumeMounts") (hasKey $c "command") }}{{ fail "nativeConsumer does not accept extraEnv/envFrom/command/extra volumes; use managed configuration and Secret references" }}{{ end -}}
 {{- if .Values.searchIndexer.enabled }}{{ fail "nativeConsumer requires searchIndexer.enabled=false; only one canonical/search writer may run" }}{{ end -}}
@@ -147,6 +148,9 @@
 {{- define "sessions-pipeline.nativeConsumer.env" -}}
 {{- $c := .root.Values.nativeConsumer -}}
 - { name: SERVICE, value: {{ ternary "session-pipeline-consumer-bootstrap" "session-pipeline-consumer" .bootstrap }} }
+{{- if not .bootstrap }}
+- { name: READER_MAX_RULESET, value: {{ $c.readerMaxRuleset | quote }} }
+{{- end }}
 - { name: RELAYHISTORY_SELFHOST_PIPELINE_CONSUMER, value: "true" }
 - name: RELAYHISTORY_PIPELINE_CONSUMER_SECRET
   valueFrom:
