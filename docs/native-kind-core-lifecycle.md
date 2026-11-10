@@ -127,6 +127,29 @@ The original native binding and legacy readiness anchors remain unchanged.
    create-only scoped native binding. A separate supported real upload/browser
    proof is still required for product acceptance.
 
+### Fresh object-storage initialization
+
+Fresh installation uses the same digest-pinned CGR MinIO server as the parent
+sessions-pipeline chart. The upstream dependency's floating/release image defaults
+are not inherited: a changed parent pin refuses until the explicit bootstrap pin
+is reviewed with it. All chart inputs that create `mc` post-install hooks stay
+empty, so native bootstrap requires no separate MinIO client image.
+
+The already-qualified pipeline image is imported and attested through the normal
+native archive transport before a fresh-only Job runs its official
+`src/locker/init.ts`. That initializer creates the bucket and enables versioning.
+The Job has backoff zero, a three-minute deadline, no service-account token, a
+read-only root filesystem and locker Secret references only; it receives no
+PostgreSQL or database-owner credentials. Completion requires its exact Job and
+Pod ownership, immutable image identity and exit zero. A failed attempt is left
+for review rather than silently requeued. Repeat-up does not run this initializer
+or change the existing bucket/versioning.
+
+The existing namespace-only egress policy remains unchanged. It permits this
+Job to reach the object store within the application namespace; it is not an
+S3-only network isolation claim. A successful render or source test still does
+not establish registry availability, bucket creation or fresh-cluster acceptance.
+
 An existing legacy fixture is not a fresh target. A changed generation or pending
 schema on repeat requires an explicit reviewed operator upgrade; this command
 does not infer upgrade or data-adoption authority from matching resource names.

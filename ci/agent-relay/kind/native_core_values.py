@@ -129,7 +129,10 @@ def compose(base, selected, operator, phase, observed_tenant=None):
                               "tls": {"existingSecret": "kind-tls"}},
             "hoopdb": {"enabled": False}, "session-object-storage": {"enabled": False}, "otel": {"enabled": False},
             "alleyoop": {"ingest": {"replicas": 0}},
-            "worker": {"migrations": {"enabled": False}, "lockerInit": {"enabled": False}, "components": {
+            # The control-only install is followed by a same-release upgrade.
+            # Retain generic worker names; disabling them is not a drained
+            # rename acknowledgement, and native workload names are separate.
+            "worker": {"legacyResourceNames": True, "migrations": {"enabled": False}, "lockerInit": {"enabled": False}, "components": {
                 "hoopdb-indexer": {"enabled": False}, "bob-costas": {"enabled": False}, "referee": {"enabled": False}}},
             "runtimeRole": {"bootstrapJob": {"enabled": False}}, "functionDefaultRevoke": {"bootstrapJob": {"enabled": False}}}})
     # Canonical object store credentials remain Secret references, including

@@ -78,6 +78,47 @@ class NativeControlTests(unittest.TestCase):
         with self.assertRaisesRegex(NativeRecipeError, "partial_control_claim"): t._claim_control_credentials(selected())
         self.assertEqual(t.effects, prior)
 
+    def test_real_catalog_query_and_locked_claim_guard_use_role_setting_catalog(self):
+        t = Transport(); inventory = list(t._control_roles(selected()).values()); queries = []
+        def query(s, database, sql, **kwargs):
+            queries.append((database, sql, kwargs)); return json.dumps(inventory)
+        t._psql = query
+        observed = NativeControlTransport._control_roles(t, selected())
+        self.assertEqual(set(observed), {"control_owner", "control_api_runtime"})
+        self.assertEqual(queries[0][0], "relaycontrol")
+        self.assertTrue(queries[0][2]["read_only"])
+        self.assertIn("FROM pg_authid r", queries[0][1])
+        predicate = "NOT EXISTS(SELECT 1 FROM pg_db_role_setting WHERE setrole=r.oid)"
+        self.assertIn(predicate, queries[0][1])
+        self.assertNotIn("rolconfig", queries[0][1])
+        # Keep every per-role/per-database override in scope, not just global.
+        self.assertNotIn("setdatabase=0", queries[0][1])
+        statements = []
+        t = Transport(); original_psql = t._psql
+        def claim(s, database, sql, **kwargs):
+            statements.append(sql); return original_psql(s, database, sql, **kwargs)
+        t._psql = claim; t._claim_control_credentials(selected()); sql = statements[0]
+        lock = "LOCK TABLE pg_catalog.pg_db_role_setting IN SHARE MODE;"
+        self.assertLess(sql.index(lock), sql.index("DO $$"))
+        self.assertEqual(sql.count(predicate), 2)
+        self.assertNotIn("rolconfig", sql)
+        self.assertEqual(sql.count("ALTER ROLE "), 2)
+
+    def test_catalog_settings_or_malformed_identity_refuse_before_credentials(self):
+        for bad in ("settings", "oid-string", "oid-bool", "settings-not-bool"):
+            with self.subTest(bad=bad):
+                t = Transport(); rows = list(t._control_roles(selected()).values())
+                if bad == "settings": rows[0]["settingsAbsent"] = False
+                if bad == "oid-string": rows[0]["oid"] = str(rows[0]["oid"])
+                if bad == "oid-bool": rows[0]["oid"] = True
+                if bad == "settings-not-bool": rows[0]["settingsAbsent"] = "true"
+                t._psql = lambda *a, **k: json.dumps(rows)
+                t._control_roles = lambda s: NativeControlTransport._control_roles(t, s)
+                with self.assertRaisesRegex(NativeRecipeError, "exact_control_role_identity"):
+                    t._claim_control_credentials(selected())
+                self.assertEqual(t.effects, [])
+                self.assertFalse(t._control_claim_attempted)
+
     def test_api_failure_leaves_new_secret_for_review_and_does_not_assign_passwords(self):
         t = Transport(); seen = []
         def fail(name, value):

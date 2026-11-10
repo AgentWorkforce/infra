@@ -14,7 +14,7 @@ registered, every shipped entry must exist in the charts, planned entries must
 not be referenced by any template, and the compatibility matrix must equal
 the pinned digests.
 
-Source of truth: [`self-hosted/requirements.yaml`](../self-hosted/requirements.yaml). 135 entries: 50 requirements (50 shipped, 0 planned), 85 options (84 shipped, 1 planned).
+Source of truth: [`self-hosted/requirements.yaml`](../self-hosted/requirements.yaml). 137 entries: 50 requirements (50 shipped, 0 planned), 87 options (86 shipped, 1 planned).
 
 ## Contents
 
@@ -104,7 +104,9 @@ Services image (sessions-pipeline-worker, alleyoop and the privileged SQL Jobs):
 | relayauth-0.1.2 | shipped | relayauth 0.1.2 | relayauth: `ghcr.io/agentworkforce/relayauth@sha256:c23c92d25fdf…` |  |  | License-annotation patch bump of 0.1.1. Superseded by 0.1.3. |
 | relayauth-0.1.1 | shipped | relayauth 0.1.1 | relayauth: `ghcr.io/agentworkforce/relayauth@sha256:c23c92d25fdf…` |  |  | relayauth 784582ef (machine-bound History assertion contract, relayauth #113). Superseded by 0.1.2. |
 | relayauth-0.1.0 | shipped | relayauth 0.1.0 | relayauth: `ghcr.io/agentworkforce/relayauth@sha256:eb71daa28e30…` |  |  | superseded by 0.1.1. |
-| agent-relay-0.6.21 | unreleased | agent-relay 0.6.21<br>relayhistory 0.1.3<br>relay-control 0.4.4<br>relay-webapp 0.2.1<br>(deps: relaycast 0.3.7, relayauth 0.1.5, sessions-pipeline 0.8.13, relayhistory 0.1.3, relay-control 0.4.4, relay-webapp 0.2.1, relayflows 0.2.5, durable-actors 0.14.6-awf.1, relayfile 0.2.2, telemetry-collector 0.1.3, relay-chief 0.1.0) | relayhistory: `ghcr.io/agentworkforce/relayhistory@sha256:<required>`<br>relay-control: `ghcr.io/agentworkforce/relay-control@sha256:d8c26d44dccb…`<br>relay-webapp: `ghcr.io/agentworkforce/relay-webapp@sha256:<required>` |  |  | Adds the GCP native History overlay and GKE routing for the Sessions read API and ingest edge, refreshes the GCP profile to the customer-qualified services, webapp and relay-control 0.5.8 digests, and takes sessions-pipeline 0.8.13 for native GCS support. |
+| agent-relay-0.6.22 | unreleased | agent-relay 0.6.22<br>relayhistory 0.1.3<br>relay-control 0.4.5<br>relay-webapp 0.2.1<br>(deps: relaycast 0.3.7, relayauth 0.1.5, sessions-pipeline 0.8.13, relayhistory 0.1.3, relay-control 0.4.5, relay-webapp 0.2.1, relayflows 0.2.5, durable-actors 0.14.6-awf.1, relayfile 0.2.2, telemetry-collector 0.1.3, relay-chief 0.1.0) | relayhistory: `ghcr.io/agentworkforce/relayhistory@sha256:<required>`<br>relay-control: `ghcr.io/agentworkforce/relay-control@sha256:d8c26d44dccb…`<br>relay-webapp: `ghcr.io/agentworkforce/relay-webapp@sha256:<required>` |  |  | Adds the GCP native History overlay and GKE routing for the Sessions read API and ingest edge, refreshes the GCP profile to the customer-qualified services, webapp and relay-control 0.5.8 digests, and takes sessions-pipeline 0.8.13 for native GCS support. Retains the default-off Control collector and external introspection configuration from 0.6.21. |
+| agent-relay-0.6.21 | **planned** | agent-relay 0.6.21<br>relayhistory 0.1.3<br>relay-control 0.4.5<br>relay-webapp 0.2.1<br>(deps: relaycast 0.3.7, relayauth 0.1.5, sessions-pipeline 0.8.12, relayhistory 0.1.3, relay-control 0.4.5, relay-webapp 0.2.1, relayflows 0.2.5, durable-actors 0.14.6-awf.1, relayfile 0.2.2, telemetry-collector 0.1.3, relay-chief 0.1.0) | relayhistory: `ghcr.io/agentworkforce/relayhistory@sha256:<required>`<br>relay-control: `ghcr.io/agentworkforce/relay-control@sha256:d8c26d44dccb…`<br>relay-webapp: `ghcr.io/agentworkforce/relay-webapp@sha256:<required>` |  |  | Never released; superseded by 0.6.22. Adds default-off Control collector analytics and an API-only external introspection Secret reference. No source/image default or runtime changes. Collector credentials and CA never reach migration Jobs or pepper init containers; existing introspection keys remain compatible. |
+| agent-relay-0.6.20 | **planned** | agent-relay 0.6.20<br>relayhistory 0.1.3<br>relay-control 0.4.4<br>relay-webapp 0.2.1<br>(deps: relaycast 0.3.7, relayauth 0.1.5, sessions-pipeline 0.8.12, relayhistory 0.1.3, relay-control 0.4.4, relay-webapp 0.2.1, relayflows 0.2.5, durable-actors 0.14.6-awf.1, relayfile 0.2.2, telemetry-collector 0.1.3, relay-chief 0.1.0) | relayhistory: `ghcr.io/agentworkforce/relayhistory@sha256:<required>`<br>relay-control: `ghcr.io/agentworkforce/relay-control@sha256:d8c26d44dccb…`<br>relay-webapp: `ghcr.io/agentworkforce/relay-webapp@sha256:<required>` |  |  | Adds managed default-off native collector adapters. Each service uses a component-bound Secret reference, an opaque installation ID, HTTPS and optional public additional CA trust. Preflight/bootstrap has no analytics credentials. No application image default, SQL, admission mode, profile or runtime is changed; a qualified source71801741-or-later image and operator registrations remain required. |
 | agent-relay-0.6.19 | **planned** | agent-relay 0.6.19<br>relayhistory 0.1.3<br>relay-control 0.4.4<br>relay-webapp 0.2.1<br>(deps: relaycast 0.3.7, relayauth 0.1.5, sessions-pipeline 0.8.11, relayhistory 0.1.3, relay-control 0.4.4, relay-webapp 0.2.1, relayflows 0.2.5, durable-actors 0.14.6-awf.1, relayfile 0.2.2, telemetry-collector 0.1.3, relay-chief 0.1.0) | relayhistory: `ghcr.io/agentworkforce/relayhistory@sha256:<required>`<br>relay-control: `ghcr.io/agentworkforce/relay-control@sha256:d8c26d44dccb…`<br>relay-webapp: `ghcr.io/agentworkforce/relay-webapp@sha256:<required>` |  |  | Picks up telemetry-collector 0.1.3 and its qualified private-file recovery source. The collector remains default-off; application pins, producer configuration and database behavior are unchanged. |
 | agent-relay-0.6.18 | **planned** | agent-relay 0.6.18<br>relayhistory 0.1.3<br>relay-control 0.4.4<br>relay-webapp 0.2.1<br>(deps: relaycast 0.3.7, relayauth 0.1.5, sessions-pipeline 0.8.11, relayhistory 0.1.3, relay-control 0.4.4, relay-webapp 0.2.1, relayflows 0.2.5, durable-actors 0.14.6-awf.1, relayfile 0.2.2, telemetry-collector 0.1.2, relay-chief 0.1.0) | relayhistory: `ghcr.io/agentworkforce/relayhistory@sha256:<required>`<br>relay-control: `ghcr.io/agentworkforce/relay-control@sha256:d8c26d44dccb…`<br>relay-webapp: `ghcr.io/agentworkforce/relay-webapp@sha256:<required>` |  |  | Picks up sessions-pipeline 0.8.11 (optional nativeBrief.baseUrl and nativeBrief.allowInClusterHttp). Default renders are unchanged apart from chart versions. |
 | agent-relay-0.6.17 | **planned** | agent-relay 0.6.17<br>relayhistory 0.1.3<br>relay-control 0.4.4<br>relay-webapp 0.2.1<br>(deps: relaycast 0.3.7, relayauth 0.1.5, sessions-pipeline 0.8.10, relayhistory 0.1.3, relay-control 0.4.4, relay-webapp 0.2.1, relayflows 0.2.5, durable-actors 0.14.6-awf.1, relayfile 0.2.2, telemetry-collector 0.1.2, relay-chief 0.1.0) | relayhistory: `ghcr.io/agentworkforce/relayhistory@sha256:<required>`<br>relay-control: `ghcr.io/agentworkforce/relay-control@sha256:d8c26d44dccb…`<br>relay-webapp: `ghcr.io/agentworkforce/relay-webapp@sha256:<required>` |  |  | Adds optional secretKeys.passwordPepper to relay-control; the default render is unchanged. |
@@ -742,6 +744,8 @@ chart `relay-control` · values [`ci/default-values.yaml`](../charts/relay-contr
 | | option | choices | default here | maps to |
 | --- | --- | --- | --- | --- |
 | shipped | [CA bundle for verifying the Postgres server certificate (postgresCa)](#opt-postgres-ca-bundle) | `false`, `true` | `false` | values `worker.postgresCa.*`, `alleyoop.postgresCa.*`, `relay-control:postgresCa.*`, `relayhistory:postgresCa.*`, `relaychief-control:postgresCa.*`, `relayfile-control:postgresCa.*`; env `NODE_EXTRA_CA_CERTS`, `PGSSLROOTCERT` |
+| shipped | [Control collector analytics adapter](#opt-relay-control-collector-analytics) | `false`, `true` | `false` | values `analytics.*`; env `SELFHOST_ANALYTICS_DESTINATION`, `SELFHOST_ANALYTICS_PROFILE`, `SELFHOST_ANALYTICS_DEPLOYMENT_ID`, `SELFHOST_ANALYTICS_COLLECTOR_URL`, `SELFHOST_ANALYTICS_COLLECTOR_TOKEN_FILE`, `SELFHOST_ANALYTICS_COLLECTOR_CA_FILE`; Secret `<Control component-bound analytics producer Secret>` keys `token` |
+| shipped | [Separate Control introspection credential Secret](#opt-relay-control-external-introspection-secret) | `disabled`, `enabled` | `disabled` | values `introspection.existingSecret`, `introspection.key`; env `RELAYCONTROL_INTROSPECT_SECRET_FILE`; Secret `<Control introspection Secret>` keys `introspect-secret` |
 | shipped | [Previous encryption key during a key rotation](#opt-relay-control-encryption-rotation) | `none`, `previous key` | `none` | values `encryption.previousKeyId`, `secretKeys.previousEncryptionKey`; env `SELFHOST_ENCRYPTION_PREVIOUS_KEY_ID`, `SELFHOST_ENCRYPTION_PREVIOUS_KEY_FILE`; Secret `<existingSecret>` keys `<operator-chosen, no default>` |
 | shipped | [Internal service token for /internal/v1](#opt-relay-control-internal-token) | `disabled`, `enabled` | `disabled` | values `secretKeys.internalToken`; env `SELFHOST_INTERNAL_TOKEN_FILE`; Secret `<existingSecret>` keys `<operator-chosen, no default>` |
 | shipped | [Dashboard URL for OAuth callbacks and flow run links](#opt-relay-control-dashboard-url) | `publicUrl + "/"`, `dashboard origin` | `publicUrl + "/"` | values `dashboardUrl`; env `SELFHOST_DASHBOARD_URL` |
@@ -780,6 +784,8 @@ chart `agent-relay` · values [`values-gcp-proof.yaml`](../charts/agent-relay/va
 | | option | choices | default here | maps to |
 | --- | --- | --- | --- | --- |
 | shipped | [CA bundle for verifying the Postgres server certificate (postgresCa)](#opt-postgres-ca-bundle) | `false`, `true` | `false` | values `worker.postgresCa.*`, `alleyoop.postgresCa.*`, `relay-control:postgresCa.*`, `relayhistory:postgresCa.*`, `relaychief-control:postgresCa.*`, `relayfile-control:postgresCa.*`; env `NODE_EXTRA_CA_CERTS`, `PGSSLROOTCERT` |
+| shipped | [Control collector analytics adapter](#opt-relay-control-collector-analytics) | `false`, `true` | `false` | values `analytics.*`; env `SELFHOST_ANALYTICS_DESTINATION`, `SELFHOST_ANALYTICS_PROFILE`, `SELFHOST_ANALYTICS_DEPLOYMENT_ID`, `SELFHOST_ANALYTICS_COLLECTOR_URL`, `SELFHOST_ANALYTICS_COLLECTOR_TOKEN_FILE`, `SELFHOST_ANALYTICS_COLLECTOR_CA_FILE`; Secret `<Control component-bound analytics producer Secret>` keys `token` |
+| shipped | [Separate Control introspection credential Secret](#opt-relay-control-external-introspection-secret) | `disabled`, `enabled` | `disabled` | values `introspection.existingSecret`, `introspection.key`; env `RELAYCONTROL_INTROSPECT_SECRET_FILE`; Secret `<Control introspection Secret>` keys `introspect-secret` |
 | shipped | [Single-host mode for the dashboard and the control API](#opt-agent-relay-single-host) | `disabled`, `enabled` | `disabled` | values `global.singleHost.host`, `relay-control:global.singleHost.host`, `relay-control:publicUrl`, `relay-webapp:global.singleHost.host`, `relay-webapp:runtime.publicUrl`, `relay-webapp:ingress.host`; env `SELFHOST_PUBLIC_URL`, `DASHBOARD_PUBLIC_URL` |
 | shipped | [Single GKE ingress for the proof hosts](#opt-agent-relay-gke-ingress) | `enabled`, `disabled` | `disabled` | values `gkeIngress.enabled`, `gkeIngress.staticIpName`, `gkeIngress.managedCertificateName`, `gkeIngress.frontendConfigName`, `gkeIngress.hosts.*`, `gkeIngress.backends.*`, `relayauth.jwksIngress.enabled` |
 | shipped | [Optional Relayflows component in the suite](#opt-agent-relay-relayflows) | `enabled`, `disabled` | `disabled` | values `components.relayflows`, `relayflows.*` |
@@ -1378,8 +1384,9 @@ Default off. services.sessionReadApiUrl, services.sessionReadApiPublicUrl
 and secretKeys.sessionReadApiSecret enable the Control credential handoff
 to the session read API and must be set together;
 services.sessionReadApiMcpReads also sends MCP session reads there. The
-handoff needs Control 0.5.1. secretKeys.introspectSecret enables token
-introspection, and introspection.audiences lists the accepted origins.
+handoff needs Control 0.5.1. secretKeys.introspectSecret or the separate
+introspection.existingSecret reference enables token introspection, and
+introspection.audiences lists the accepted origins.
 
 - Provided by: operator
 - Values: `services.relayhistoryBackend`, `services.sessionReadApiUrl`, `services.sessionReadApiPublicUrl`, `services.sessionReadApiMcpReads`, `secretKeys.sessionReadApiSecret`, `secretKeys.introspectSecret`, `introspection.audiences`
@@ -2386,6 +2393,48 @@ operator-managed egress policy.
 - Env: `SESSION_BRIEF_ENABLED`, `SESSION_BRIEF_CANONICAL_INPUT`, `SESSION_BRIEF_WORKSPACE_IDS`, `SESSION_BRIEF_MODEL`, `SESSION_BRIEF_SWEEP_SECONDS`, `SESSION_BRIEF_BATCH`, `SESSION_BRIEF_GLOBAL_DAILY_CAP`, `SESSION_BRIEF_SESSION_DAILY_CAP`, `PIPELINE_ORG_FROM_PREFIX`, `PIPELINE_KEY_PREFIX`, `OPENAI_BASE_URL`
 - Verify: Render with explicit native values; verify pinned CA init and worker health, then a recorded summary with actual model provenance. Source render is not model-call proof.
 - Sources: [`charts/sessions-pipeline-worker/templates/_native-brief.tpl:1`](../charts/sessions-pipeline-worker/templates/_native-brief.tpl#L1), [`charts/sessions-pipeline-worker/templates/deployments.yaml:35`](../charts/sessions-pipeline-worker/templates/deployments.yaml#L35)
+
+#### opt.relay-control.collector-analytics
+
+<a id="opt-relay-control-collector-analytics"></a>
+
+**Control collector analytics adapter** · shipped · chart `relay-control` · profiles relay-control, agent-relay
+
+Default-off Control business analytics to a private collector. Requires
+a compatible qualified application image, existing component-bound
+registration and dedicated producer Secret. Optional public CA trust is
+scoped to this transport; Postgres and system roots are unchanged.
+Only the API container receives the token file and Pod producer label.
+No hosted PostHog configuration is accepted through this adapter.
+
+- Default: `false`
+- Choices: `false`; `true`: Requires a component-bound collector registration and verified TLS.
+- Provided by: operator
+- Values: `analytics.*`
+- Env: `SELFHOST_ANALYTICS_DESTINATION`, `SELFHOST_ANALYTICS_PROFILE`, `SELFHOST_ANALYTICS_DEPLOYMENT_ID`, `SELFHOST_ANALYTICS_COLLECTOR_URL`, `SELFHOST_ANALYTICS_COLLECTOR_TOKEN_FILE`, `SELFHOST_ANALYTICS_COLLECTOR_CA_FILE`
+- Secret: `<Control component-bound analytics producer Secret>` from `relay-control:analytics.existingSecret`; keys `token` from `relay-control:analytics.tokenKey`
+- Verify: Check the rendered API-only Secret/CA mounts and unchanged migration Job identity, then verify real Control events in private committed collector files and negative authentication separately.
+- Sources: [`charts/relay-control/templates/_runtime-adapters.tpl`](../charts/relay-control/templates/_runtime-adapters.tpl), [`charts/relay-control/ANALYTICS.md`](../charts/relay-control/ANALYTICS.md)
+
+#### opt.relay-control.external-introspection-secret
+
+<a id="opt-relay-control-external-introspection-secret"></a>
+
+**Separate Control introspection credential Secret** · shipped · chart `relay-control` · profiles relay-control, agent-relay
+
+Mount an existing introspection credential into the API without copying
+it into the main application Secret. Mutually exclusive with
+secretKeys.introspectSecret; neither migration nor init containers get
+the credential. The existing internal-route ingress shield is preserved.
+
+- Default: `disabled`
+- Choices: `disabled`; `enabled`
+- Provided by: operator
+- Values: `introspection.existingSecret`, `introspection.key`
+- Env: `RELAYCONTROL_INTROSPECT_SECRET_FILE`
+- Secret: `<Control introspection Secret>` from `relay-control:introspection.existingSecret`; keys `introspect-secret` from `relay-control:introspection.key`
+- Verify: Render the external reference and ensure the API alone mounts it, the migration Job identity is unchanged, and public /internal traffic reaches only the selectorless deny Service.
+- Sources: [`charts/relay-control/templates/_runtime-adapters.tpl`](../charts/relay-control/templates/_runtime-adapters.tpl), [`charts/relay-control/templates/ingress.yaml`](../charts/relay-control/templates/ingress.yaml)
 
 #### opt.relay-control.encryption-rotation
 

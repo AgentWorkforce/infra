@@ -135,11 +135,13 @@ class Target(unittest.TestCase):
         operations.inspect = lambda *a: self.fail("must refuse before dispatch to another instance")
         with self.assertRaisesRegex(NativeRecipeError, "target_adapter_mismatch"): recipe.run(operations)
 
-    def test_target_module_participates_in_actual_recipe_hash(self):
+    def test_target_and_diagnostics_modules_participate_in_actual_recipe_hash(self):
         stack = self.real_stack(); before = stack.recipe_hash(); original = Path.read_bytes
-        def changed(path):
-            raw = original(path); return raw + b"\n# changed\n" if path.name == "native_target.py" else raw
-        with patch.object(Path, "read_bytes", changed): self.assertNotEqual(stack.recipe_hash(), before)
+        for module in ("native_target.py", "native_diagnostics.py"):
+            def changed(path):
+                raw = original(path); return raw + b"\n# changed\n" if path.name == module else raw
+            with self.subTest(module=module), patch.object(Path, "read_bytes", changed):
+                self.assertNotEqual(stack.recipe_hash(), before)
 
     def test_actual_create_uses_target_ports_and_keeps_nonce_uid_guards(self):
         stack = self.real_stack(); stack.env["DOCKER_HOST"] = "unix:///owned-test/docker.sock"
