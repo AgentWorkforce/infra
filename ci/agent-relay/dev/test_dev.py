@@ -327,5 +327,71 @@ class DevTests(unittest.TestCase):
         self.assertEqual(json.loads(path.read_text()), {"a": 1})
         self.assertEqual(path.stat().st_mode & 0o777, 0o600)
 
+    def git_prepare_fixture(self):
+        subprocess.run(["git", "init", "-q", str(self.root)], check=True)
+        for name, data in {"src/main.ts": "initial code", "Dockerfile": "FROM pinned",
+                           "supabase/migrations/001.sql": "initial sql", "package-lock.json": "initial lock",
+                           "src/shared/scrub.ts": "initial scrub"}.items():
+            path = self.root / name; path.parent.mkdir(parents=True, exist_ok=True); path.write_text(data)
+        self.commit_fixture()
+        command = dev.Commands()
+        baseline = command.run(["git", "-C", self.root, "rev-parse", "HEAD"]).decode().strip()
+        config = {"groups": [{"name": "control", "repo": str(self.root.resolve()), "baselineRevision": baseline,
+                              "mode": "rebuild", "protectedSourceSha256": dev.digest(dev.protected_source(dev.source_files(self.root.resolve(), command))),
+                              "targets": [{"deployment": "app", "container": "server", "uid": "owned-app",
+                                           "image": deployment()["spec"]["template"]["spec"]["containers"][0]["image"],
+                                           "reviewedInitSha256": dev.digest([])}]}],
+                  "protectedDeployments": ["database"], "docker": "docker", "architecture": "arm64", "cluster": "owned"}
+        effects = []
+        class Commands(dev.Commands):
+            def run(self, argv, *args, **kwargs):
+                if argv[0] != "git": raise AssertionError("non-Git command attempted")
+                return super().run(argv, *args, **kwargs)
+            def json(self, argv):
+                if argv[1] == "info": return {"ID": "engine", "OSType": "linux", "Architecture": "aarch64"}
+                return [{"Id": "node-full-id", "State": {"Running": True},
+                         "Config": {"Labels": {"io.x-k8s.kind.cluster": "owned"}}}]
+        class Cluster(MemoryCluster):
+            def __init__(self, *args):
+                super().__init__({"app": deployment(), "database": deployment("database", "db-owned")})
+            def get(self, kind, name=None):
+                if kind == "nodes": return {"items": [{"metadata": {"name": "owned-control-plane", "uid": "node-uid"}}]}
+                return super().get(kind, name)
+            def patch(self, *args): effects.append("patch"); return super().patch(*args)
+        return config, Commands(), Cluster, effects
+
+    def test_real_source_only_commit_allows_fresh_prepare_and_records_actual_head(self):
+        config, cmd, cluster, _ = self.git_prepare_fixture()
+        with patch.object(dev, "Cluster", cluster):
+            initial = dev.prepare(config, cmd)
+            (self.root / "src/main.ts").write_text("new source-only code")
+            self.commit_fixture()
+            fresh = dev.prepare(config, cmd)
+        current = cmd.run(["git", "-C", self.root, "rev-parse", "HEAD"]).decode().strip()
+        self.assertNotEqual(initial["sourceHeads"]["control"], current)
+        self.assertEqual(fresh["sourceHeads"]["control"], current)
+        self.assertEqual(config["groups"][0]["baselineRevision"], initial["sourceHeads"]["control"])
+        self.assertEqual(initial["configSha256"], fresh["configSha256"])
+
+    def test_real_protected_sql_dependency_and_scrub_commits_still_refuse(self):
+        config, cmd, cluster, _ = self.git_prepare_fixture()
+        for name in ("supabase/migrations/001.sql", "package-lock.json", "src/shared/scrub.ts"):
+            path = self.root / name; original = path.read_text(); path.write_text("changed protected content")
+            self.commit_fixture()
+            with patch.object(dev, "Cluster", cluster), self.assertRaisesRegex(dev.Refused, "source_admission_required"):
+                dev.prepare(config, cmd)
+            path.write_text(original); self.commit_fixture()
+
+    def test_explicit_frozen_plan_refuses_a_later_source_commit_before_effects(self):
+        config, cmd, cluster, effects = self.git_prepare_fixture()
+        with patch.object(dev, "Cluster", cluster):
+            plan = dev.prepare(config, cmd)
+            (self.root / "src/main.ts").write_text("new source-only code")
+            self.commit_fixture()
+            session = dev.Session(config, plan, cmd, self.root / "journal")
+            with self.assertRaisesRegex(dev.Refused, "plan_changed"):
+                session.run()
+        self.assertEqual(effects, [])
+
 
 if __name__ == "__main__": unittest.main()

@@ -271,12 +271,13 @@ def prepare(config, cmd):
     for group in config["groups"]:
         need(not group.get("sourceUnavailable"), "source_checkout_required_" + group["name"])
     k = Cluster(config, cmd); docs = k.inventory()
-    images = {}
+    images, source_heads = {}, {}
     for g in config["groups"]:
         files = source_files(Path(g["repo"]).resolve(), cmd)
         rev = cmd.run(["git", "-C", g["repo"], "rev-parse", "HEAD"]).decode().strip()
-        need(rev == g["baselineRevision"], "source_base_changed")
+        need(HEX.fullmatch(rev), "source_head_invalid")
         need(g.get("protectedSourceSha256") == digest(protected_source(files)), "source_admission_required")
+        source_heads[g["name"]] = rev
         for t in g["targets"]:
             d = docs[t["deployment"]]
             need(d["metadata"]["uid"] == t["uid"], "deployment_uid_changed")
@@ -311,6 +312,7 @@ def prepare(config, cmd):
     need(nodes, "kind_nodes_required")
     return {"version": 1, "preparedAt": int(time.time()), "configSha256": digest(config),
             "engineId": engine["ID"], "nodes": nodes, "targets": images, "protected": protected,
+            "sourceHeads": source_heads,
             "sourceSha256": digest({p.name: hashlib.sha256(p.read_bytes()).hexdigest()
                                     for p in HERE.iterdir() if p.suffix in (".py", ".mjs", ".Dockerfile")})}
 

@@ -59,6 +59,10 @@ For a non-root official Dockerfile use `{"path":"/work/repo",
 "dockerfile":"docker/official.Dockerfile"}`. Actual source roots, exact Git
 heads, protected-file hashes, deployment/container names, UIDs, images and init
 container hashes are discovered. Ambiguous or missing core roles refuse.
+The configured `baselineRevision` records setup provenance. Ordinary source-only
+commits do not require reconfiguration: each fresh plan records the current Git
+HEAD, while protected-file hashes remain unchanged. An explicitly frozen plan
+still refuses a later HEAD change before any effects.
 Missing source groups are explicitly reported. The default all-component plan
 refuses them before effects; an explicit subset leaves them protected and
 unwatched. They are never silently claimed to have hot reload. Gitlinks are
