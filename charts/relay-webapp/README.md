@@ -27,6 +27,13 @@ The current dashboard image is a single static replica. This chart makes no HA
 claim. Publish and verify the dashboard image before replacing the digest in a
 deployment values file.
 
+`runtime.analyticsEnabled` controls the compatible image's
+`DASHBOARD_ANALYTICS_ENABLED` runtime flag. Its default `null` emits nothing and
+preserves the image default; explicit `true` and `false` both render as strings.
+Browser analytics use Control's collector proxy. Configure the Control adapter
+and private collector separately; the dashboard receives no collector credential
+or hosted exporter configuration from this value.
+
 ## Customer profile (branding)
 
 `customerProfile` rebrands the dashboard for an enterprise customer without a
