@@ -213,7 +213,12 @@ $P -d relaycast -v p1="$relaycast_owner" -v p2="$relaycast_runtime" <<'SQL'
 SELECT format('CREATE ROLE %I LOGIN', r) FROM unnest(ARRAY['relaycast_owner','relaycast_runtime']) r WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname=r) \gexec
 ALTER ROLE relaycast_owner PASSWORD :'p1'; ALTER ROLE relaycast_runtime PASSWORD :'p2';
 GRANT relaycast_owner TO CURRENT_USER WITH SET TRUE;
-ALTER DATABASE relaycast OWNER TO relaycast_owner; ALTER SCHEMA public OWNER TO relaycast_owner;
+-- Keep the database owned by the Cloud SQL administrator. PostgreSQL grants
+-- every database owner implicit pg_database_owner membership and CREATE;
+-- Relaycast's production owner-boundary check deliberately rejects both.
+-- This assignment also repairs installs made with the earlier script.
+ALTER DATABASE relaycast OWNER TO CURRENT_USER;
+ALTER SCHEMA public OWNER TO relaycast_owner;
 REVOKE CREATE ON SCHEMA public FROM PUBLIC; GRANT USAGE ON SCHEMA public TO relaycast_runtime;
 ALTER DEFAULT PRIVILEGES FOR ROLE relaycast_owner IN SCHEMA public GRANT SELECT,INSERT,UPDATE,DELETE ON TABLES TO relaycast_runtime;
 ALTER DEFAULT PRIVILEGES FOR ROLE relaycast_owner IN SCHEMA public GRANT SELECT,USAGE,UPDATE ON SEQUENCES TO relaycast_runtime;
@@ -225,7 +230,6 @@ echo "relaycast ready"
 export PGDATABASE=hoopdb
 printf '%s\n' "SELECT format('ALTER DATABASE hoopdb OWNER TO %I', current_user) \\gexec" | $P
 $P -c 'CREATE EXTENSION IF NOT EXISTS vector WITH SCHEMA public; CREATE EXTENSION IF NOT EXISTS pg_trgm WITH SCHEMA public; CREATE EXTENSION IF NOT EXISTS btree_gin WITH SCHEMA public;'
-$P -f /sql/cloudsql_owner_function_default_revoke.sql
 $P -f /sql/cloudsql_owner_function_default_revoke.sql
 $P -f /sql/cloudsql_migration_roles.sql
 echo "Cloud SQL owner boundary and migration roles ready"

@@ -103,6 +103,10 @@ export STATE_DIR="$STATE"
 export JOB_TIMEOUT_SECONDS=5
 
 "$TEST_BASH" "$SCRIPT" pre >/dev/null
+grep -F 'ALTER DATABASE relaycast OWNER TO CURRENT_USER' "$SCRIPT" >/dev/null || fail "Relaycast database owner boundary is missing"
+if grep -Fq 'ALTER DATABASE relaycast OWNER TO relaycast_owner' "$SCRIPT"; then
+  fail "Relaycast role incorrectly owns the database"
+fi
 [[ -s "$CAPTURE/job-agent-relay-cloud-sql-pre.json" ]] || fail "pre Job manifest was not submitted"
 jq -e '.spec.template.spec.automountServiceAccountToken == false and
   any(.spec.template.spec.volumes[]; .name == "ca") and
