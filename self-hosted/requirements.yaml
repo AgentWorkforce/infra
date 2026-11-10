@@ -4433,8 +4433,9 @@ entries:
       pipeline #363/974e6f74; does not replace internal alleyoop-ingest. Requires
       a qualified immutable image, normalized public origin, introspection base
       URL, runtime Secret, S3 Secret or workload identity, and a pinned PostgreSQL custom CA.
-      Canonical inline test/pilot assembly only. No ingress, role bootstrap,
-      publication, GC, product deletion, provider removal or profile enablement.
+      The aws-rds-native profile is the only install profile that enables it,
+      through a mandatory qualified release overlay. No ingress, role bootstrap,
+      publication, GC, product deletion or provider removal is implied.
     chart: sessions-pipeline
     values: [ingestEdge.*]
     env: [SERVICE, RELAYHISTORY_SELFHOST_INGEST, RELAYHISTORY_SELFHOST_SESSION_SELECTION, RELAYHISTORY_SELFHOST_HEARTBEAT_ACCEPT, RELAYHISTORY_INGEST_PORT, RELAYHISTORY_INGEST_ORIGIN, RELAYCONTROL_INTROSPECT_URL, RELAYCONTROL_INTROSPECT_SECRET, RELAYHISTORY_INGEST_DATABASE_URL, SESSION_POSTGRES_TLS_PROFILE, SESSION_POSTGRES_CA_FILE, SESSION_POSTGRES_CA_SHA256, RELAYHISTORY_INGEST_PG_POOL_MAX, ALLOW_IN_CLUSTER_HTTP, LOCKER_PROVIDER, LOCKER_BUCKET, LOCKER_ENDPOINT, LOCKER_REGION, LOCKER_ACCESS_KEY_ID, LOCKER_SECRET_ACCESS_KEY, INGEST_KEY_ROOT, INGEST_MAX_PER_USER, INGEST_MAX_PER_ORG]
@@ -4457,7 +4458,9 @@ entries:
         keys:
           - { key: access-key-id, key_path: ingestEdge.locker.accessKeyIdKey }
           - { key: secret-access-key, key_path: ingestEdge.locker.secretAccessKeyKey }
-    verify: Keep disabled until merged composition and exact image/generation pass native PG/TLS/MinIO upload-to-readback proof. Helm readiness is not an authorization, schema, object-store or migration barrier.
+    verify:
+      default: Keep disabled until merged composition and exact image/generation pass native PG/TLS/MinIO upload-to-readback proof.
+      aws-rds-native: The qualified release overlay must pass native RDS/TLS/S3 upload-to-readback proof; Helm readiness is not an authorization, schema, object-store or migration barrier.
     sources:
       - "charts/sessions-pipeline/templates/ingest-edge.yaml:1"
       - "charts/sessions-pipeline/values.yaml:1"
@@ -4490,10 +4493,10 @@ entries:
       (postgres by default); search.clickhouse.enabled reads an external
       ClickHouse from the read API Secret. Introspection uses its own Secret
       reference. Readiness requires health JSON enabled:true; dormant HTTP 200 is
-      insufficient. No install profile enables this option. The old
+      insufficient. The aws-rds-native profile is the only install profile that
+      enables this option, through a mandatory qualified release overlay. The old
       sessions-pipeline readApi key refuses to render with a migration message.
-      The approved PG-only/canonical/auth runtime assembly remains unqualified,
-      so this entry does not claim runtime availability or proof.
+      Source configuration alone does not claim runtime availability or proof.
       coordinationOverlaps.enabled is separately default off and emits
       READ_API_COORDINATION_OVERLAPS_ENABLED=true only when selected.
     chart: session-read-api
@@ -4524,7 +4527,9 @@ entries:
         name_paths: [sessionReadApi.auth.selfIssued.previousInternalSecret.existingSecret, "session-read-api:auth.selfIssued.previousInternalSecret.existingSecret"]
         keys:
           - { key: READ_API_INTERNAL_SECRET_PREVIOUS, key_path: "session-read-api:auth.selfIssued.previousInternalSecret.key" }
-    verify: Leave disabled until the image and assembly contract land; render/schema/probe tests prove plumbing only. Authenticated workspace reads need the approved runtime.
+    verify:
+      default: Leave disabled until the image and assembly contract land; render/schema/probe tests prove plumbing only.
+      aws-rds-native: Prove authenticated workspace list/event reads and coordination overlaps with the exact qualified release image; render/schema/probe tests prove plumbing only.
     sources:
       - "charts/session-read-api/templates/deployment.yaml:1"
       - "charts/session-read-api/values.yaml:1"
@@ -4543,7 +4548,8 @@ entries:
       connection JSON in a Secret, and an owner-role bootstrap (the chart's
       bootstrap Job, or a run acknowledged by the operator). The ServiceAccount
       must carry the search indexer Pod Identity association and the Locker
-      read grant. No install profile enables this option.
+      read grant. The aws-rds-native profile is the only install profile that
+      enables this option, through a mandatory qualified release overlay.
     chart: sessions-pipeline
     values: [searchIndexer.*]
     env: [SERVICE, RELAYHISTORY_SELFHOST_PIPELINE_CONSUMER, RELAYHISTORY_PIPELINE_CONSUMER_SECRET, SEARCH_INDEX_BACKEND, SEARCH_INDEX_POSTGRES_BACKEND_ID, READ_API_COMPLETE_SINCE, PIPELINE_KEY_PREFIX, PIPELINE_ORG_FROM_PREFIX, SESSION_POSTGRES_TLS_PROFILE, SESSION_POSTGRES_CA_FILE, SESSION_POSTGRES_CA_SHA256, LOCKER_BUCKET, LOCKER_REGION, LOCKER_ENDPOINT, SEARCH_INDEX_OPENSEARCH_URL, SEARCH_INDEX_OPENSEARCH_AUTH, SEARCH_INDEX_OPENSEARCH_AWS_REGION, SEARCH_INDEX_OPENSEARCH_INDEX_PREFIX, WORKER_HEALTH_PORT]
@@ -4564,7 +4570,9 @@ entries:
         name_paths: [searchIndexer.bootstrap.existingSecret]
         keys:
           - { key: RELAYHISTORY_PIPELINE_CONSUMER_SECRET, key_path: searchIndexer.bootstrap.key }
-    verify: Leave disabled until the image and the role grants land; render tests prove plumbing only. kubectl logs of the indexer report pipeline consumer ticks, and search hits come back through the read API once it is enabled.
+    verify:
+      default: Leave disabled until the image and the role grants land; render tests prove plumbing only.
+      aws-rds-native: With the exact qualified release image, verify indexer consumer ticks and search hits through the read API; render tests prove plumbing only.
     sources:
       - "charts/sessions-pipeline/templates/search-indexer.yaml:1"
       - "charts/sessions-pipeline/values.yaml:1"

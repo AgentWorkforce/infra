@@ -139,6 +139,7 @@ export RDS_HOST="$(terraform output -raw database_host)"
 export RDS_ADMIN_SECRET_ARN="$(terraform output -raw database_admin_secret_arn)"
 export SERVICES_IMAGE='<customer-registry>/sessions-pipeline@sha256:<approved-digest>'
 export NAMESPACE=agent-relay
+export KUBE_CONTEXT=<approved-kube-context>
 export STATE_DIR=/approved/private/agent-relay-install
 scripts/selfhost/rds-setup.sh pre
 ```
@@ -216,11 +217,19 @@ activation must wait for the HoopDb migration Job. Complete that barrier in
 order:
 
 ```sh
-kubectl --context "$KUBE_CONTEXT" -n "$NAMESPACE" get jobs
+MIGRATION_JOB="$(
+  helm get manifest "$RELEASE" --kube-context "$KUBE_CONTEXT" \
+    --namespace "$NAMESPACE" |
+    yq -r 'select(.kind == "Job" and .metadata.labels."app.kubernetes.io/component" == "hoopdb-migrate") | .metadata.name'
+)"
+[[ -n "$MIGRATION_JOB" && "$MIGRATION_JOB" != *$'\n'* ]] || {
+  echo "expected exactly one current HoopDb migrate Job" >&2
+  exit 1
+}
 kubectl --context "$KUBE_CONTEXT" -n "$NAMESPACE" wait \
-  --for=condition=complete job -l "app.kubernetes.io/instance=$RELEASE" \
-  --timeout=20m
-scripts/selfhost/rds-setup.sh post
+  --for=condition=complete "job/$MIGRATION_JOB" --timeout=20m &&
+KUBE_CONTEXT="$KUBE_CONTEXT" RELEASE="$RELEASE" MIGRATION_JOB="$MIGRATION_JOB" \
+  scripts/selfhost/rds-setup.sh post
 kubectl --context "$KUBE_CONTEXT" -n "$NAMESPACE" rollout restart \
   deployment/$RELEASE-read-api deployment/$RELEASE-ingest-edge \
   deployment/$RELEASE-search-indexer
@@ -299,9 +308,11 @@ profile and approve their own device without Kubernetes or bootstrap access.
 - Capture a short real agent session with a harmless unique marker and the
   release's synthetic secret-test value. Verify removal **before upload**,
   then find the same session in app list, transcript and search.
-- After first sign-in, copy the real workspace ID into the release overlay's
-  `worker.nativeBrief.workspaceIds` before enabling descriptions. This is an
-  explicit bounded list; never use `"*"`, and add later workspaces deliberately.
+- After first sign-in, copy the real workspace ID into the umbrella release
+  overlay's `sessions-pipeline.worker.nativeBrief.workspaceIds`, apply that
+  corrected overlay through the reviewed upgrade procedure, and only then
+  enable descriptions. This is an explicit bounded list; never use `"*"`, and
+  add later workspaces deliberately.
 - Retry the supported delivery once and verify one logical result. Restart the
   relevant workloads and confirm durable readback and PostgreSQL messaging.
 - Use a second workspace/user to verify cross-tenant denial. Check that each

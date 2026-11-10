@@ -3338,8 +3338,9 @@ Separate SERVICE=session-ingest Deployment and ClusterIP from merged
 pipeline #363/974e6f74; does not replace internal alleyoop-ingest. Requires
 a qualified immutable image, normalized public origin, introspection base
 URL, runtime Secret, S3 Secret or workload identity, and a pinned PostgreSQL custom CA.
-Canonical inline test/pilot assembly only. No ingress, role bootstrap,
-publication, GC, product deletion, provider removal or profile enablement.
+The aws-rds-native profile is the only install profile that enables it,
+through a mandatory qualified release overlay. No ingress, role bootstrap,
+publication, GC, product deletion or provider removal is implied.
 
 - Default: `disabled` (by profile: default `disabled`, aws-rds-native `enabled`)
 - Choices: `disabled`; `enabled`: Requires a qualified native image and explicit pilot plan.
@@ -3348,7 +3349,7 @@ publication, GC, product deletion, provider removal or profile enablement.
 - Env: `SERVICE`, `RELAYHISTORY_SELFHOST_INGEST`, `RELAYHISTORY_SELFHOST_SESSION_SELECTION`, `RELAYHISTORY_SELFHOST_HEARTBEAT_ACCEPT`, `RELAYHISTORY_INGEST_PORT`, `RELAYHISTORY_INGEST_ORIGIN`, `RELAYCONTROL_INTROSPECT_URL`, `RELAYCONTROL_INTROSPECT_SECRET`, `RELAYHISTORY_INGEST_DATABASE_URL`, `SESSION_POSTGRES_TLS_PROFILE`, `SESSION_POSTGRES_CA_FILE`, `SESSION_POSTGRES_CA_SHA256`, `RELAYHISTORY_INGEST_PG_POOL_MAX`, `ALLOW_IN_CLUSTER_HTTP`, `LOCKER_PROVIDER`, `LOCKER_BUCKET`, `LOCKER_ENDPOINT`, `LOCKER_REGION`, `LOCKER_ACCESS_KEY_ID`, `LOCKER_SECRET_ACCESS_KEY`, `INGEST_KEY_ROOT`, `INGEST_MAX_PER_USER`, `INGEST_MAX_PER_ORG`
 - Secret: `<native ingest runtime Secret>` (default), `agent-relay-ingest-edge-runtime` (aws-rds-native) from `ingestEdge.config.existingSecret`; keys `database-url` from `ingestEdge.config.databaseUrlKey`; `introspect-secret` from `ingestEdge.config.introspectSecretKey`
 - Secret: `<native ingest object-store Secret>` (default), `<not used: EKS Pod Identity>` (aws-rds-native) from `ingestEdge.locker.existingSecret`; keys `access-key-id` from `ingestEdge.locker.accessKeyIdKey`; `secret-access-key` from `ingestEdge.locker.secretAccessKeyKey`
-- Verify: Keep disabled until merged composition and exact image/generation pass native PG/TLS/MinIO upload-to-readback proof. Helm readiness is not an authorization, schema, object-store or migration barrier.
+- Verify: default: Keep disabled until merged composition and exact image/generation pass native PG/TLS/MinIO upload-to-readback proof. / aws-rds-native: The qualified release overlay must pass native RDS/TLS/S3 upload-to-readback proof; Helm readiness is not an authorization, schema, object-store or migration barrier.
 - Sources: [`charts/sessions-pipeline/templates/ingest-edge.yaml:1`](../charts/sessions-pipeline/templates/ingest-edge.yaml#L1), [`charts/sessions-pipeline/values.yaml:1`](../charts/sessions-pipeline/values.yaml#L1), [`docs/self-hosted-native-ingest.md:1`](../docs/self-hosted-native-ingest.md#L1)
 
 #### opt.sessions-read-api
@@ -3380,10 +3381,10 @@ ingestEdge.locker.bucket. Search is selected via SEARCH_INDEX_BACKEND
 (postgres by default); search.clickhouse.enabled reads an external
 ClickHouse from the read API Secret. Introspection uses its own Secret
 reference. Readiness requires health JSON enabled:true; dormant HTTP 200 is
-insufficient. No install profile enables this option. The old
+insufficient. The aws-rds-native profile is the only install profile that
+enables this option, through a mandatory qualified release overlay. The old
 sessions-pipeline readApi key refuses to render with a migration message.
-The approved PG-only/canonical/auth runtime assembly remains unqualified,
-so this entry does not claim runtime availability or proof.
+Source configuration alone does not claim runtime availability or proof.
 coordinationOverlaps.enabled is separately default off and emits
 READ_API_COORDINATION_OVERLAPS_ENABLED=true only when selected.
 
@@ -3396,7 +3397,7 @@ READ_API_COORDINATION_OVERLAPS_ENABLED=true only when selected.
 - Secret: `<read API introspection Secret>` (default), `<not used: self-issued auth>` (aws-rds-native) from `sessionReadApi.auth.relaycontrol.existingSecret` then `session-read-api:auth.relaycontrol.existingSecret`; keys `RELAYCONTROL_INTROSPECT_SECRET` from `session-read-api:auth.relaycontrol.key`
 - Secret: `<read API internal Secret>` (default), `agent-relay-secrets` (aws-rds-native) from `sessionReadApi.auth.selfIssued.internalSecret.existingSecret` then `session-read-api:auth.selfIssued.internalSecret.existingSecret`; keys `READ_API_INTERNAL_SECRET` (default), `session-read-api-secret` (aws-rds-native) from `sessionReadApi.auth.selfIssued.internalSecret.key,session-read-api:auth.selfIssued.internalSecret.key`
 - Secret: `<read API previous internal Secret>` (default), `<not configured>` (aws-rds-native) from `sessionReadApi.auth.selfIssued.previousInternalSecret.existingSecret` then `session-read-api:auth.selfIssued.previousInternalSecret.existingSecret`; keys `READ_API_INTERNAL_SECRET_PREVIOUS` from `session-read-api:auth.selfIssued.previousInternalSecret.key`
-- Verify: Leave disabled until the image and assembly contract land; render/schema/probe tests prove plumbing only. Authenticated workspace reads need the approved runtime.
+- Verify: default: Leave disabled until the image and assembly contract land; render/schema/probe tests prove plumbing only. / aws-rds-native: Prove authenticated workspace list/event reads and coordination overlaps with the exact qualified release image; render/schema/probe tests prove plumbing only.
 - Sources: [`charts/session-read-api/templates/deployment.yaml:1`](../charts/session-read-api/templates/deployment.yaml#L1), [`charts/session-read-api/values.yaml:1`](../charts/session-read-api/values.yaml#L1), [`docs/self-hosted-session-read-api.md:1`](../docs/self-hosted-session-read-api.md#L1)
 
 #### opt.sessions-search-indexer
@@ -3414,7 +3415,8 @@ same coverage floor and backend id as the read API, the runtime-role
 connection JSON in a Secret, and an owner-role bootstrap (the chart's
 bootstrap Job, or a run acknowledged by the operator). The ServiceAccount
 must carry the search indexer Pod Identity association and the Locker
-read grant. No install profile enables this option.
+read grant. The aws-rds-native profile is the only install profile that
+enables this option, through a mandatory qualified release overlay.
 
 - Default: `disabled` (by profile: default `disabled`, aws-rds-native `enabled`)
 - Choices: `disabled`; `enabled`: Requires a services image with the OpenSearch writer and the indexer role's Locker grant.
@@ -3423,7 +3425,7 @@ read grant. No install profile enables this option.
 - Env: `SERVICE`, `RELAYHISTORY_SELFHOST_PIPELINE_CONSUMER`, `RELAYHISTORY_PIPELINE_CONSUMER_SECRET`, `SEARCH_INDEX_BACKEND`, `SEARCH_INDEX_POSTGRES_BACKEND_ID`, `READ_API_COMPLETE_SINCE`, `PIPELINE_KEY_PREFIX`, `PIPELINE_ORG_FROM_PREFIX`, `SESSION_POSTGRES_TLS_PROFILE`, `SESSION_POSTGRES_CA_FILE`, `SESSION_POSTGRES_CA_SHA256`, `LOCKER_BUCKET`, `LOCKER_REGION`, `LOCKER_ENDPOINT`, `SEARCH_INDEX_OPENSEARCH_URL`, `SEARCH_INDEX_OPENSEARCH_AUTH`, `SEARCH_INDEX_OPENSEARCH_AWS_REGION`, `SEARCH_INDEX_OPENSEARCH_INDEX_PREFIX`, `WORKER_HEALTH_PORT`
 - Secret: `<search indexer configuration Secret>` (default), `search-indexer-runtime` (aws-rds-native) from `searchIndexer.config.existingSecret`; keys `RELAYHISTORY_PIPELINE_CONSUMER_SECRET` from `searchIndexer.config.key`
 - Secret: `<search indexer bootstrap Secret>` (default), `search-indexer-owner` (aws-rds-native) from `searchIndexer.bootstrap.existingSecret`; keys `RELAYHISTORY_PIPELINE_CONSUMER_SECRET` from `searchIndexer.bootstrap.key`
-- Verify: Leave disabled until the image and the role grants land; render tests prove plumbing only. kubectl logs of the indexer report pipeline consumer ticks, and search hits come back through the read API once it is enabled.
+- Verify: default: Leave disabled until the image and the role grants land; render tests prove plumbing only. / aws-rds-native: With the exact qualified release image, verify indexer consumer ticks and search hits through the read API; render tests prove plumbing only.
 - Sources: [`charts/sessions-pipeline/templates/search-indexer.yaml:1`](../charts/sessions-pipeline/templates/search-indexer.yaml#L1), [`charts/sessions-pipeline/values.yaml:1`](../charts/sessions-pipeline/values.yaml#L1)
 
 #### opt.control-legacy-relayauth
