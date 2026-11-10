@@ -19,7 +19,7 @@ The release owner supplies one tested release packet:
 | --- | --- |
 | Infrastructure and application versions | An immutable infra commit, chart package and image inventory, including CPU architectures and customer ECR locations. |
 | RDS setup | A supported RDS bootstrap/LOGIN procedure, separate service databases, owner/runtime roles, verified TLS and completed migrations. |
-| Application wiring | Control sign-in, native ingest/read routes, authoritative PostgreSQL messaging, S3 and the selected OpenSearch/Lambda path tested together. The Sessions artifact includes schema generation `046010`, fresh-install `search_index` read grants and the session-query path. |
+| Application wiring | Control sign-in, native ingest/read routes, authoritative PostgreSQL messaging, S3 and the selected OpenSearch/Lambda path tested together. The Sessions artifact includes schema generation `046010`, fresh-install `search_index` read grants, the session-query path and the coordination-overlaps endpoint. |
 | Desktop | Signed customer-profile installers, a working download location and the correct server, URL scheme and update feed. |
 | Operator controls | Capture policy, pre-upload scrubbing, authorized deletion and disabled add-ons verified in the actual client and app. Do not claim client-side scrubbing until the selected Desktop build contains the release-qualified R9 scrubber. |
 | Recovery | A successful isolated restore and a reviewed upgrade/recovery procedure for this exact release. |
@@ -186,7 +186,9 @@ Use the release packet's complete RDS values overlay. The historical
    Do not enable a slot without its supported image, role and authentication contract.
    For the AWS RDS native profile, keep `READ_API_SESSION_QUERY=true` and verify
    a fresh database can list sessions and read events before accepting the
-   services digest. A 501 from session list or 503 from events blocks release.
+   services digest. Verify `GET /v1/coordination/overlaps` with an authorized
+   workspace token too. A 501 from session list, 503 from events, or 404 from
+   overlaps blocks release.
 4. For a core pilot, set `components.relayflows: false`; leave Relayfile and
    Chief uninstalled unless selected. Verify the matching server and UI
    capability behavior in the [controls checklist](enterprise-customer-controls.md).

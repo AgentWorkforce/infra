@@ -298,6 +298,7 @@ if [ "$mode" = static ]; then
   }
   [ "$(read_value READ_API_AUTH_MODE)" = self_issued ] || err "aws-rds-native: read API is not self-issued"
   [ "$(read_value READ_API_EVENT_MESSAGE_IDS)" = true ] || err "aws-rds-native: read API message IDs are not enabled"
+  [ "$(read_value READ_API_COORDINATION_OVERLAPS_ENABLED)" = true ] || err "aws-rds-native: coordination overlaps are not enabled"
   [ "$(read_value READ_API_SESSION_QUERY)" = true ] || err "aws-rds-native: session query path is not enabled"
   [ "$(read_value SEARCH_INDEX_BACKEND)" = opensearch ] || err "aws-rds-native: read API does not select OpenSearch"
   [ "$(read_value LOCKER_BUCKET)" = ci-sessions ] || err "aws-rds-native: read API canonical bucket differs from ingest"

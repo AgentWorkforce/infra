@@ -106,6 +106,8 @@ functionDefaultRevoke:
 
 sessionReadApi:
   enabled: true
+  coordinationOverlaps:
+    enabled: true
   image:
     repository: ghcr.io/agentworkforce/96bulls-services
     digest: ""

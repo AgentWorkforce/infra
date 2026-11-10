@@ -24,11 +24,14 @@ values file.
 
 That artifact must be qualified as one unit. It must include the schema through
 migration `046010`, the fresh-install read grants on `search_index`, and the
-session-query read path selected by `READ_API_SESSION_QUERY=true`. A digest that
-starts but lacks any of those contracts is not acceptable: session list/search
-will answer 501 or events reads will answer 503 on a new database. Record the
-merged source revision, successful publish run, immutable destination digest,
-and a fresh-RDS read acceptance result in the private release packet.
+session-query read path selected by `READ_API_SESSION_QUERY=true`. It must also
+implement `GET /v1/coordination/overlaps`; this profile enables that endpoint
+through `sessionReadApi.coordinationOverlaps.enabled`. A digest that starts but
+lacks any of those contracts is not acceptable: session list/search will answer
+501, events reads will answer 503, or the Dashboard Overlaps tab will stay
+hidden on 404. Record the merged source revision, successful publish run,
+immutable destination digest, and a fresh-RDS read acceptance result in the
+private release packet.
 
 The profile disables the in-cluster HoopDb and MinIO, disables the legacy
 alleyoop Deployment, and uses dedicated Pod Identity ServiceAccounts. Run
