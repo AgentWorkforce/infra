@@ -7,7 +7,9 @@ addons; selected optional workloads are a separate proof phase after native core
 from copy import deepcopy
 from datetime import datetime, timezone
 import hashlib
+import json
 import re
+import subprocess
 
 
 class NativeRecipeError(ValueError):
@@ -47,6 +49,39 @@ CORE_OPERATIONS = (
     "verify_claimed_roles", "initial_credentials", "verify_credentials",
     "serve", "verify_ready", "record_ready",
 )
+PHASE_FAILURE_CODES = frozenset({"command_failed", "command_timeout", "transport_failure", "invalid_response", "unexpected_failure"})
+
+
+class NativePhaseError(NativeRecipeError):
+    """Only closed phase/code values may cross the public error boundary."""
+    def __init__(self, phase, code):
+        if type(phase) is not str or type(code) is not str or phase not in (*CORE_OPERATIONS, "addons") or code not in PHASE_FAILURE_CODES:
+            raise NativeRecipeError("invalid_native_phase_diagnostic")
+        self.phase = phase
+        self.code = code
+        # Existing callers that emit only a safe ValueError string also retain
+        # the phase, without reading or printing the underlying exception.
+        super().__init__("native_phase_" + phase + "_" + code)
+
+
+def phase_operation(name, operation, *args):
+    try:
+        return operation(*args)
+    except NativeRecipeError:
+        raise
+    except Exception as error:
+        from stack import StackError
+        if isinstance(error, StackError):
+            code = error.safe_code
+        elif isinstance(error, (subprocess.TimeoutExpired, TimeoutError)):
+            code = "command_timeout"
+        elif isinstance(error, subprocess.CalledProcessError):
+            code = "command_failed"
+        elif isinstance(error, json.JSONDecodeError):
+            code = "invalid_response"
+        else:
+            code = "unexpected_failure"
+        raise NativePhaseError(name, code) from None
 SELECTION_FIELDS = {"profile", "sourceRevision", "manifestDigest", "configDigest", "reference", "architecture", "generation",
                     "artifactReceiptSha256", "sourceClean", "control", "acceptedSource", "officialBootstrapSha256", "roles",
                     "postgres", "postgresCa", "secretRefs", "keyRoot", "orgFromPrefix", "backend", "backendId", "completeSince",
@@ -321,20 +356,20 @@ class NativeRecipe:
         require(all(callable(getattr(operations, n, None)) for n in names), "complete_native_adapter_required")
         # All three are read-only. Fail before infrastructure/credentials/ready
         # changes if ownership, image modules, TLS inputs or rendered writers drift.
-        facts = operations.inspect(s)
+        facts = phase_operation("inspect", operations.inspect, s)
         require(isinstance(facts, dict) and set(facts) <= {"owned", "mode", "clusterUid", "foreignWriters", "boundResourceCount"},
                 "unexpected_inspection_receipt_fields")
         nonsecret(facts)
         require(facts.get("owned") is True and facts.get("mode") in ("fresh", "repeat"), "owned_fresh_or_repeat_target_required")
         require(facts.get("foreignWriters") == [], "foreign_or_legacy_writer_requires_review")
-        chain = operations.verify_artifact(s)
+        chain = phase_operation("verify_artifact", operations.verify_artifact, s)
         exact_keys(chain, {"sourceRevision", "manifestDigest", "configDigest", "generation", "officialBootstrapSha256", "control"},
                    "unexpected_artifact_receipt_fields")
         require(all(chain.get(k) == s[k] for k in ("sourceRevision", "manifestDigest", "configDigest", "generation")),
                 "verified_artifact_chain_mismatch")
         require(chain.get("officialBootstrapSha256") == s["officialBootstrapSha256"], "verified_bootstrap_chain_mismatch")
         require(chain.get("control") == s["control"], "verified_control_chain_mismatch")
-        rendered = operations.render(s)
+        rendered = phase_operation("render", operations.render, s)
         exact_keys(rendered, {"legacyWriterCount", "managedNative", "ownerBuffered", "publication", "readerLoginAdvertisesSync"},
                    "unexpected_render_receipt_fields")
         require(rendered.get("legacyWriterCount") == 0 and rendered.get("managedNative") is True and
@@ -344,7 +379,7 @@ class NativeRecipe:
         results = []
 
         def call(name, *args):
-            receipt = getattr(operations, name)(s, *args)
+            receipt = phase_operation(name, getattr(operations, name), s, *args)
             require(isinstance(receipt, dict) and receipt.get("ok") is True, "phase_refused:" + name)
             phase_receipt(name, receipt)
             results.append({"phase": name, "receipt": receipt})

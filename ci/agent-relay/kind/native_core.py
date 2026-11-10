@@ -312,7 +312,10 @@ import('/app/node_modules/relay-control/dist/features.js').then(m=>{
             "-f", "-"], data=yaml.safe_dump(value), sensitive=True, timeout=60)
 
     def _helm_state(self, *, absent=False):
-        result = self._transport_call("cmd", ["helm", "list", "-n", "agent-relay", "--all", "-o", "json"],
+        from stack import helm_list_all_args
+        version = self._transport_call("cmd", ["helm", "version", "--template", "{{.Version}}"],
+                                       sensitive=True, timeout=10).stdout.strip()
+        result = self._transport_call("cmd", helm_list_all_args(version),
                                       sensitive=True, timeout=30)
         entries = [r for r in json.loads(result.stdout) if r.get("name") == "agent-relay"]
         if absent:

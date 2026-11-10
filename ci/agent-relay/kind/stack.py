@@ -36,7 +36,17 @@ HOSTS = [f"{s}.kind.agentrelay.com" for s in ("relay", "cast", "history", "files
 
 
 class StackError(Exception):
-    pass
+    def __init__(self, message, *, safe_code="transport_failure"):
+        super().__init__(message)
+        self.safe_code = safe_code if safe_code in {"transport_failure", "command_failed", "command_timeout"} else "transport_failure"
+
+
+def helm_list_all_args(version):
+    """List every release state on Helm 3 and 4, including failed/pending."""
+    match = re.fullmatch(r"v([34])\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?", version.strip())
+    if match is None:
+        raise StackError("unsupported Helm release-list version")
+    return ["helm", "list", "-n", NS, *(["--all"] if match[1] == "3" else []), "-o", "json"]
 
 
 def run(argv, *, data=None, timeout=600, sensitive=False, check=True, env=None):
@@ -45,10 +55,10 @@ def run(argv, *, data=None, timeout=600, sensitive=False, check=True, env=None):
         p = subprocess.run([str(a) for a in argv], input=data, capture_output=True,
                            text=True, timeout=timeout, cwd=ROOT, env=env)
     except subprocess.TimeoutExpired:
-        raise StackError(f"{argv[0]} timed out after {timeout}s") from None
+        raise StackError(f"{argv[0]} timed out after {timeout}s", safe_code="command_timeout") from None
     if check and p.returncode:
         detail = "credential-bearing operation failed; output withheld" if sensitive else (p.stderr or p.stdout)[-2500:]
-        raise StackError(f"{argv[0]} exited {p.returncode}: {detail}")
+        raise StackError(f"{argv[0]} exited {p.returncode}: {detail}", safe_code="command_failed")
     return p
 
 
