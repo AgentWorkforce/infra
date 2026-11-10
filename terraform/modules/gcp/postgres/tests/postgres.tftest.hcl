@@ -87,11 +87,11 @@ run "shared_ca_has_verified_dns_url" {
   }
 
   assert {
-    condition     = output.dns_name == "relay.abc123.us-central1.sql-psa.goog"
+    condition     = output.dns_name == "relay.abc123.us-central1.sql-psa.goog."
     error_message = "Cloud SQL DNS output has no trailing dot for use in URLs."
   }
   assert {
-    condition     = output.database_url_template == "postgresql://<role>:<password>@relay.abc123.us-central1.sql-psa.goog:5432/<database>?sslmode=verify-full"
+    condition     = output.database_url_template == "postgresql://<role>:<password>@relay.abc123.us-central1.sql-psa.goog.:5432/<database>?sslmode=verify-full"
     error_message = "Shared-CA URLs use the certificate DNS identity with verify-full."
   }
 }

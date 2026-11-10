@@ -24,7 +24,7 @@ printf 'gcloud %s\n' "$*" >>"$MOCK_LOG"
 case " $* " in
   *" secrets versions access "*) printf '%s' 'admin-password' ;;
   *" sql ssl server-ca-certs list "*) printf '[{"cert":"-----BEGIN CERTIFICATE-----\\nMOCK\\n-----END CERTIFICATE-----\\n"}]\n' ;;
-  *" sql instances describe "*) printf '{"dnsName":"db.example.sql.goog."}\n' ;;
+  *" sql instances describe "*) printf '{"dnsNames":[{"connectionType":"PRIVATE_SERVICES_ACCESS","name":"db.example.sql-psa.goog."}]}\n' ;;
   *) exit 1 ;;
 esac
 MOCK
@@ -95,7 +95,7 @@ export MOCK_LOG="$LOG"
 export MOCK_CAPTURE="$CAPTURE"
 export GCP_PROJECT_ID=example
 export CLOUD_SQL_INSTANCE=agent-relay-pg
-export CLOUD_SQL_HOST=db.example.sql.goog
+export CLOUD_SQL_HOST=db.example.sql-psa.goog.
 export CLOUD_SQL_ADMIN_USER=cloud-admin
 export CLOUD_SQL_ADMIN_SECRET_ID=agent-relay-pg-admin
 export SERVICES_IMAGE=ghcr.io/agentworkforce/sessions-pipeline@sha256:dc95d94202c49573749f99cc548638ed185f782dc3b88691f551d7f1f700f769

@@ -40,7 +40,7 @@ run "native_data_services_are_complete" {
     error_message = "The native profile must preserve the legacy RelayHistory database during cutover."
   }
   assert {
-    condition     = module.postgres.database_url_template == "postgresql://<role>:<password>@agent-relay-pg.abc123.us-central1.sql-psa.goog:5432/<database>?sslmode=verify-full"
+    condition     = module.postgres.database_url_template == "postgresql://<role>:<password>@agent-relay-pg.abc123.us-central1.sql-psa.goog.:5432/<database>?sslmode=verify-full"
     error_message = "Cloud SQL URLs must use its shared-CA DNS identity and verify-full."
   }
   assert {

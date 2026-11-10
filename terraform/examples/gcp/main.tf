@@ -84,13 +84,13 @@ module "postgres" {
 resource "google_dns_managed_zone" "cloud_sql" {
   project     = var.project_id
   name        = "${var.name}-cloud-sql"
-  dns_name    = "${module.postgres.dns_name}."
+  dns_name    = module.postgres.dns_name
   description = "Private verified-DNS route to ${var.name} Cloud SQL"
   visibility  = "private"
 
   lifecycle {
     precondition {
-      condition     = can(regex("^[^.].*\\.sql-psa\\.goog$", module.postgres.dns_name))
+      condition     = can(regex("^[^.].*\\.sql-psa\\.goog\\.$", module.postgres.dns_name))
       error_message = "Cloud SQL did not return a private-services-access DNS identity; refusing to create an empty or root private DNS zone."
     }
   }
@@ -105,7 +105,7 @@ resource "google_dns_managed_zone" "cloud_sql" {
 resource "google_dns_record_set" "cloud_sql" {
   project      = var.project_id
   managed_zone = google_dns_managed_zone.cloud_sql.name
-  name         = "${module.postgres.dns_name}."
+  name         = module.postgres.dns_name
   type         = "A"
   ttl          = 300
   rrdatas      = [module.postgres.private_ip_address]
