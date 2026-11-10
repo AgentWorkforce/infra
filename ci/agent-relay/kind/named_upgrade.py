@@ -115,7 +115,9 @@ def reject_legacy_workloads(objects):
 
 
 def live_release(stack, release):
-    rows = json.loads(stack.cmd(["helm", "list", "-n", "agent-relay", "-o", "json"]).stdout)
+    from stack import helm_list_all_args
+    version = stack.cmd(["helm", "version", "--template", "{{.Version}}"], timeout=10).stdout.strip()
+    rows = json.loads(stack.cmd(helm_list_all_args(version)).stdout)
     matches = [r for r in rows if r.get("name") == release]
     if len(matches) != 1 or matches[0].get("namespace") != "agent-relay" or matches[0].get("status") != "deployed":
         fail("expected an already-deployed owned Helm release")

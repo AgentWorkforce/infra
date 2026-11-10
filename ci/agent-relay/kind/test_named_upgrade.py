@@ -25,6 +25,27 @@ DEFAULT_LEGACY = {"relay-control", "relay-webapp", "session-ingest-api", "sessio
 
 
 class NamedUpgrade(unittest.TestCase):
+    def test_helm3_and4_reconciliation_still_requires_deployed_release(self):
+        from types import SimpleNamespace
+        for version in ("v3.17.3", "v4.1.3"):
+            for status in ("deployed", "failed", "pending-upgrade"):
+                with self.subTest(version=version, status=status):
+                    calls = []
+                    def command(argv, **kwargs):
+                        calls.append(argv)
+                        if argv[:2] == ["helm", "version"]: return SimpleNamespace(stdout=version)
+                        if argv[:2] == ["helm", "list"]:
+                            self.assertEqual("--all" in argv, version.startswith("v3."))
+                            return SimpleNamespace(stdout=json.dumps([{"name":"kind-locker","namespace":"agent-relay","status":status}]))
+                        if argv[:3] == ["helm", "get", "values"]: return SimpleNamespace(stdout="{}")
+                        if argv[:3] == ["helm", "get", "manifest"]: return SimpleNamespace(stdout="")
+                        self.fail("unexpected command")
+                    if status == "deployed": named.live_release(SimpleNamespace(cmd=command), "kind-locker")
+                    else:
+                        with self.assertRaisesRegex(stack.StackError, "already-deployed"):
+                            named.live_release(SimpleNamespace(cmd=command), "kind-locker")
+                        self.assertFalse(any(argv[:2] == ["helm", "get"] for argv in calls))
+
     def setUp(self):
         self.directory = tempfile.TemporaryDirectory(prefix="kind-named-")
         self.addCleanup(self.directory.cleanup)

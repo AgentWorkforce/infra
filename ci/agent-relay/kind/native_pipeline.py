@@ -12,14 +12,12 @@ import json
 from pathlib import Path
 import re
 import secrets
-import tempfile
-from types import SimpleNamespace
 from urllib.parse import quote, unquote, urlsplit
 
 import yaml
 
 from native_bootstrap import NativeBootstrapAdapter, scram
-from native_inspect import document, native_archive, pipeline_coordinates, sha
+from native_inspect import document, sha
 from native_recipe import NativeRecipeError, require
 
 
@@ -32,13 +30,16 @@ def canonical(value):
 # its supported external gate, reached before even the pending marker is written.
 DRIVER = r"""
 import fs from 'node:fs';
+import {isDeepStrictEqual} from 'node:util';
 import pg from 'pg';
 import {postgresConnectionString,postgresTlsOptions} from '/app/src/shared/postgres-tls.ts';
 import {generation,expectedSchema,runMigrations,migrationProfile,migrationLedgerSha256} from '/app/src/hoopdb/migrate.ts';
 import {resolveRenamedLedger,migrationChecksumMatches} from '/app/src/hoopdb/migrate-guards.ts';
 const x=await Bun.stdin.json();
 const fail=()=>{throw Error('native_operator_refused')};
-const equal=(a,b)=>JSON.stringify(a)===JSON.stringify(b);
+// Python canonical stdin sorts object keys; their insertion order is not data.
+// Keep array order, property sets and value types exact at the write gate.
+const equal=isDeepStrictEqual;
 const profile=migrationProfile({HOOPDB_DB_MODE:'selfhosted',HOOPDB_SUPABASE_SHIM:'false',
  HOOPDB_ROLE_BOOTSTRAP:'false',HOOPDB_ROLE_VERIFY:'true',HOOPDB_RUNTIME_ROLE:'sessions_pipeline_runtime',
  HOOPDB_RUNTIME_ROLE_LOGIN:'true',HOOPDB_FUNCTION_BOUNDARY_MODE:'global-default-revoke'});
@@ -138,31 +139,6 @@ class NativePipelineAdapter(NativeBootstrapAdapter):
         """Virtual values seam: complete adapters retain their real tenant binding."""
         return self._transport_call("cmd", ["helm", "template", "agent-relay", "charts/agent-relay", "-n", "agent-relay",
             *self.stack.values_args(), "-f", "-"], data=yaml.safe_dump(overrides), sensitive=True, timeout=60)
-
-    def _ensure_pipeline_image(self, selected):
-        """Import the already-qualified native export, then prove CRI identity.
-
-        Docker's own native re-export supplies a real tag for Kind's importer;
-        its bytes are checked again, and the digest alias is never retargeted.
-        This does not pull a mutable tag or change an application workload.
-        """
-        receipt = pipeline_coordinates(self.inputs, selected)
-        tag = receipt["localTag"]
-        require(re.fullmatch(r"agent-relay-kind/[a-z0-9._/-]+:[A-Za-z0-9_.-]+", tag), "local_pipeline_tag_required")
-        reference = selected["reference"]
-        bare_reference = reference.removeprefix("docker.io/")
-        require(bare_reference.startswith("agent-relay-kind/"), "local_pipeline_repository_required")
-        with tempfile.TemporaryDirectory(prefix="native-image-", dir=self.stack.state) as directory:
-            archive = Path(directory) / "native.tar"
-            self._transport_call("cmd", [*self.stack.docker_args, "image", "save", "--platform", "linux/" + selected["architecture"], "-o", archive, tag], timeout=300, sensitive=True)
-            native_archive(archive, sha(archive), selected["sourceRevision"], selected["manifestDigest"], selected["configDigest"], selected["architecture"])
-            self._transport_call("cmd", ["kind", "load", "image-archive", "--name", self.stack.name, archive], timeout=300, sensitive=True)
-        from control import alias
-        # alias rechecks the imported tag's exact native manifest before any tag
-        # operation and proves the config/platform through the node's CRI.
-        bound = SimpleNamespace(cmd=lambda *args, **kwargs: self._transport_call("cmd", *args, **kwargs),
-                                docker_args=self.stack.docker_args, name=self.stack.name, arch=self.stack.arch)
-        alias(bound, bare_reference, {"tag": tag, "manifestDigest": selected["manifestDigest"], "configDigest": selected["configDigest"]})
 
     def _operator_pod(self, selected):
         if self._operator is not None:
@@ -319,7 +295,7 @@ class NativePipelineAdapter(NativeBootstrapAdapter):
 
     def _role_claims(self, selected):
         roles = [selected["roles"][k] for k in ("consumer", "reader", "ingest")]
-        raw = self._psql(selected, "hoopdb", "SELECT coalesce(json_agg(json_build_object('name',rolname,'oid',oid,'safe',rolcanlogin AND NOT(rolsuper OR rolbypassrls OR rolcreaterole OR rolcreatedb OR rolreplication OR rolinherit) AND rolvaliduntil IS NULL,'passwordAbsent',rolpassword IS NULL) ORDER BY rolname),'[]'::json) FROM pg_authid WHERE rolname IN (" + ",".join("'" + r + "'" for r in roles) + ");", read_only=True)
+        raw = self._psql(selected, "hoopdb", "SELECT coalesce(json_agg(json_build_object('name',rolname,'oid',oid::bigint,'safe',rolcanlogin AND NOT(rolsuper OR rolbypassrls OR rolcreaterole OR rolcreatedb OR rolreplication OR rolinherit) AND rolvaliduntil IS NULL,'passwordAbsent',rolpassword IS NULL) ORDER BY rolname),'[]'::json) FROM pg_authid WHERE rolname IN (" + ",".join("'" + r + "'" for r in roles) + ");", read_only=True)
         rows = json.loads(raw)
         require(len(rows) == 3 and {r["name"] for r in rows} == set(roles) and all(r["safe"] is True and type(r["oid"]) is int and r["oid"] > 0 for r in rows), "native_runtime_role_claim_unsafe")
         return {r["name"]: r for r in rows}

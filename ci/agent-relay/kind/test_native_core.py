@@ -4,6 +4,8 @@ import hashlib
 import json
 from pathlib import Path
 import tempfile
+import subprocess
+import sys
 from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
@@ -20,6 +22,41 @@ TENANT = {"organizationId": "11111111-1111-4111-8111-111111111111",
 
 
 class Core(unittest.TestCase):
+    def test_versioned_helm_parser_lists_pending_and_failed_before_any_fresh_claim(self):
+        from stack import helm_list_all_args, StackError
+        with tempfile.TemporaryDirectory() as directory:
+            parser = Path(directory) / "helm.py"
+            parser.write_text("""import argparse,json,sys
+version,status=sys.argv[1:3];args=sys.argv[3:]
+if args==['version','--template','{{.Version}}']:
+ print(version);raise SystemExit(0)
+p=argparse.ArgumentParser();p.add_argument('list');p.add_argument('-n');p.add_argument('-o')
+if version.startswith('v3.'):p.add_argument('--all',action='store_true')
+parsed=p.parse_args(args)
+rows=[{'name':'agent-relay','namespace':'agent-relay','status':status,'revision':'1'}]
+if version.startswith('v3.') and not parsed.all and status.startswith('pending'):rows=[]
+print(json.dumps(rows))
+""")
+            for version in ("v3.17.3+g123", "v4.1.3"):
+                for status in ("deployed", "failed", "pending-install", "pending-upgrade"):
+                    with self.subTest(version=version, status=status):
+                        a = object.__new__(NativeCoreAdapter); a._release_revision = None
+                        calls = []
+                        def transport(method, argv, **kwargs):
+                            self.assertEqual(method, "cmd"); calls.append(argv)
+                            result = subprocess.run([sys.executable, str(parser), version, status, *argv[1:]], capture_output=True, text=True, check=True)
+                            return result
+                        a._transport_call = transport
+                        with self.assertRaisesRegex(NativeRecipeError, "existing_app_release"):
+                            a._helm_state(absent=True)
+                        if status == "deployed": self.assertEqual(a._helm_state(), 1)
+                        else:
+                            with self.assertRaisesRegex(NativeRecipeError, "must_be_deployed"): a._helm_state()
+                        listing = next(c for c in calls if c[1] == "list")
+                        self.assertEqual("--all" in listing, version.startswith("v3."))
+            for version in ("v2.17.0", "v5.0.0", "v4", "v4.1.3 --all", ""):
+                with self.subTest(version=version), self.assertRaises(StackError): helm_list_all_args(version)
+
     def test_omitted_deployment_strategy_matches_only_kubernetes_rollingupdate_default(self):
         expected = {"spec": {}}
         live = {"spec": {"strategy": {"type": "RollingUpdate", "rollingUpdate": {"maxSurge": "25%", "maxUnavailable": "25%"}}}}
@@ -147,13 +184,18 @@ class Core(unittest.TestCase):
         a = self.adapter(); s = self.selection(); calls = []
         oids = {n: i for i, n in enumerate(s["roles"].values(), 100)}
         def sql(selected, db, text, **kw):
-            calls.append((db, text, kw)); return json.dumps(oids)
+            calls.append((db, text, kw))
+            numeric = "json_object_agg(rolname,oid::bigint)" in text
+            return json.dumps({n: oid if numeric else str(oid) for n, oid in oids.items()})
         a._psql = sql
         self.assertEqual(a._pipeline_role_oids(s), oids)
         self.assertEqual(calls[0][0], "hoopdb"); self.assertEqual(calls[0][2], {"read_only": True})
         for role in s["roles"].values(): self.assertIn("'" + role + "'", calls[0][1])
-        for invalid in ({}, {**oids, "foreign": 999}, {**oids, s["roles"]["runtime"]: True},
-                        {**oids, s["roles"]["runtime"]: oids[s["roles"]["owner"]]}):
+        self.assertIn("json_object_agg(rolname,oid::bigint)", calls[0][1])
+        invalid_values = [str(oids[s["roles"]["runtime"]]), True, False, 0, -1, 101.0, None]
+        invalid_maps = [{}, {**oids, "foreign": 999}, {**oids, s["roles"]["runtime"]: oids[s["roles"]["owner"]]}]
+        invalid_maps += [{**oids, s["roles"]["runtime"]: value} for value in invalid_values]
+        for invalid in invalid_maps:
             a._psql = lambda *args, invalid=invalid, **kw: json.dumps(invalid)
             with self.assertRaisesRegex(NativeRecipeError, "role_identity_incomplete"): a._pipeline_role_oids(s)
 
@@ -245,6 +287,9 @@ class Core(unittest.TestCase):
         self.assertEqual(api["bootstrap"]["orgName"], "")
         self.assertFalse(api["migrations"]["enabled"])
         self.assertFalse(pipeline["nativeConsumer"]["bootstrap"]["enabled"])
+        self.assertIs(pipeline["worker"]["legacyResourceNames"], True)
+        self.assertFalse(pipeline["worker"].get("acknowledgeWorkloadRename", False))
+        self.assertTrue(all(v["enabled"] is False for v in pipeline["worker"]["components"].values()))
         self.assertEqual(api["existingSecret"], c["runtime"]["name"])
         self.assertNotIn(c["owner"]["name"], str(api))
         self.assertNotIn(PLANNING_WORKSPACE, str(value))
@@ -269,7 +314,7 @@ class Core(unittest.TestCase):
         a._release_revision = None
         a._public_route = None
         a._public_route_binding = None
-        a._render_values = lambda v: []
+        a._render_values = lambda v, **kwargs: []
         a._transport_call = lambda *a, **kw: self.fail("unexpected mutation/transport")
         return a
 
@@ -289,6 +334,26 @@ class Core(unittest.TestCase):
         self.assertEqual(a._public_route_binding, original)
         with self.assertRaisesRegex(ValueError, 'gateway UID'): a._qualify_public_route(s)
         self.assertFalse(any(call[0] == 'k' and call[1][0] != 'get' for call in f.stack.calls))
+
+    def test_fresh_admission_renders_future_serve_as_upgrade_before_effects(self):
+        a = self.adapter(); s = self.selection(); s["reference"] = "docker.io/" + s["reference"]
+        a._tenant = None; a._inspected = {"mode": "fresh"}
+        a._bind_selection = lambda selected: None
+        a._values = lambda selected, phase: {"phase": phase}
+        rendered = []
+        a._render_values = lambda value, **kwargs: rendered.append((value, kwargs)) or []
+        a._validate_render_docs = lambda selected, docs: {"ok": True}
+        self.assertEqual(a.render(s), {"ok": True})
+        self.assertEqual(rendered, [({"phase": "plan"}, {"upgrade": True})])
+        self.assertEqual(a.effects, [])
+
+    def test_upgrade_template_flag_uses_actual_transport_and_install_stays_install(self):
+        a = self.adapter(); calls = []
+        a._transport_call = lambda *args, **kwargs: calls.append((args, kwargs)) or SimpleNamespace(stdout="")
+        for upgrade in (False, True):
+            NativeCoreAdapter._render_values(a, {}, upgrade=upgrade)
+            self.assertEqual("--is-upgrade" in calls[-1][0][1], upgrade)
+            self.assertTrue(calls[-1][1]["sensitive"])
 
     def test_serve_observes_gateway_before_rendering_alias_and_reuses_bound_identity(self):
         import native_network
@@ -341,7 +406,7 @@ class Core(unittest.TestCase):
         with self.assertRaisesRegex(NativeRecipeError, "must_never_be_deployed"):
             a._upgrade(s, value)
         value = compose({}, s, contract(), "serve", TENANT)
-        a._render_values = lambda v: [{"kind": "Job", "metadata": {"name": "unwanted-owner-job"}}]
+        a._render_values = lambda v, **kwargs: [{"kind": "Job", "metadata": {"name": "unwanted-owner-job"}}]
         with self.assertRaisesRegex(NativeRecipeError, "privileged_jobs"):
             a._upgrade(s, value)
 

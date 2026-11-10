@@ -159,7 +159,7 @@ import('/app/node_modules/relay-control/dist/features.js').then(m=>{
 
     def _pipeline_role_oids(self, selected):
         names = set(selected["roles"].values())
-        raw = self._psql(selected, "hoopdb", "SELECT coalesce(json_object_agg(rolname,oid),'{}'::json) FROM pg_roles WHERE rolname IN (" +
+        raw = self._psql(selected, "hoopdb", "SELECT coalesce(json_object_agg(rolname,oid::bigint),'{}'::json) FROM pg_roles WHERE rolname IN (" +
                          ",".join("'" + n + "'" for n in sorted(names)) + ");", read_only=True)
         value = json.loads(raw)
         require(isinstance(value, dict) and set(value) == names and
@@ -232,9 +232,10 @@ import('/app/node_modules/relay-control/dist/features.js').then(m=>{
         self._public_route = observed
         return observed
 
-    def _render_values(self, value):
+    def _render_values(self, value, *, upgrade=False):
         result = self._transport_call("cmd", ["helm", "template", "agent-relay", "charts/agent-relay",
-            "-n", "agent-relay", "-f", "-"], data=yaml.safe_dump(value), sensitive=True, timeout=60)
+            "-n", "agent-relay", "-f", "-", *(["--is-upgrade"] if upgrade else [])],
+            data=yaml.safe_dump(value), sensitive=True, timeout=60)
         docs = [d for d in yaml.safe_load_all(result.stdout) if d]
         require(not any(d.get("kind") == "Secret" for d in docs), "native_chart_must_reference_managed_secrets")
         return docs
@@ -294,7 +295,9 @@ import('/app/node_modules/relay-control/dist/features.js').then(m=>{
             self._tenant = tenant(binding.get("tenant"))
             require(binding.get("controlPublicRoute"), "repeat_control_public_gateway_binding_required")
             self._qualify_public_route(selected, binding["controlPublicRoute"])
-        docs = self._render_values(self._values(selected, "serve" if self._tenant else "plan"))
+        # Even fresh bootstrap serves via an upgrade after Control's install.
+        # Exercise upgrade-only chart guards before creating infrastructure.
+        docs = self._render_values(self._values(selected, "serve" if self._tenant else "plan"), upgrade=True)
         result = self._validate_render_docs(selected, docs)
         if self._inspected["mode"] == "repeat":
             require(binding.get("valuesSha256") == self._base_sha and
@@ -309,10 +312,13 @@ import('/app/node_modules/relay-control/dist/features.js').then(m=>{
         require(self._tenant is not None, "real_tenant_required_before_pipeline_bootstrap")
         value = merge_values(self._values(selected, "serve"), overrides)
         return self._transport_call("cmd", ["helm", "template", "agent-relay", "charts/agent-relay", "-n", "agent-relay",
-            "-f", "-"], data=yaml.safe_dump(value), sensitive=True, timeout=60)
+            "-f", "-", "--is-upgrade"], data=yaml.safe_dump(value), sensitive=True, timeout=60)
 
     def _helm_state(self, *, absent=False):
-        result = self._transport_call("cmd", ["helm", "list", "-n", "agent-relay", "--all", "-o", "json"],
+        from stack import helm_list_all_args
+        version = self._transport_call("cmd", ["helm", "version", "--template", "{{.Version}}"],
+                                       sensitive=True, timeout=10).stdout.strip()
+        result = self._transport_call("cmd", helm_list_all_args(version),
                                       sensitive=True, timeout=30)
         entries = [r for r in json.loads(result.stdout) if r.get("name") == "agent-relay"]
         if absent:
@@ -332,7 +338,7 @@ import('/app/node_modules/relay-control/dist/features.js').then(m=>{
         require(not value["components"]["sessionsPipeline"] or
                 (self._tenant and value["sessions-pipeline"]["sessionReadApi"]["directoryWorkspaces"] == self._tenant["workspaceId"]),
                 "planning_tenant_must_never_be_deployed")
-        docs = self._render_values(value)
+        docs = self._render_values(value, upgrade=not install)
         require(not any(d["kind"] == "Job" for d in docs), "runtime_upgrade_must_not_apply_privileged_jobs")
         if value["components"]["sessionsPipeline"]:
             self._validate_render_docs(selected, docs)
@@ -509,7 +515,7 @@ import('/app/node_modules/relay-control/dist/features.js').then(m=>{
         self._ready_specs = None
         self._phase(selected, ("native_served", "runtime_credentials_verified"))
         self._helm_state()
-        docs = self._render_values(self._values(selected, "serve"))
+        docs = self._render_values(self._values(selected, "serve"), upgrade=True)
         self._validate_render_docs(selected, docs)
         names = {"relay-control", "relay-webapp", "session-native-ingest", "session-native-consumer", "session-read-api"}
         uids, specs = {}, {}
@@ -602,7 +608,7 @@ import('/app/node_modules/relay-control/dist/features.js').then(m=>{
             "controlContractSha256": self._control_contract_sha, "releaseRevision": self._helm_state(),
             "controlPublicRoute": self._public_route,
             "valuesSha256": self._base_sha, "recipeSha256": self._recipe_sha,
-            "renderSha256": hashlib.sha256(canonical(self._render_values(self._values(selected, "serve"))).encode()).hexdigest(),
+            "renderSha256": hashlib.sha256(canonical(self._render_values(self._values(selected, "serve"), upgrade=True)).encode()).hexdigest(),
             "resources": sorted([{"kind": d["kind"], "name": d["metadata"]["name"], "uid": d["metadata"]["uid"],
                 **({"specSha256": hashlib.sha256(canonical(d.get("spec", d.get("data", {}))).encode()).hexdigest()}
                    if d["kind"] != "Secret" else {})} for d in resources],

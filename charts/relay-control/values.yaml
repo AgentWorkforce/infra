@@ -258,6 +258,25 @@ services:
 # it differs. Requires secretKeys.introspectSecret.
 introspection:
   audiences: []
+  # Optional separate Secret for the existing introspection credential. Keep
+  # secretKeys.introspectSecret empty when using this reference. Only the API
+  # mounts it; the migration Job never receives it.
+  existingSecret: ""
+  key: introspect-secret
+
+# Business analytics adapter. Requires a qualified image with the Control
+# collector adapter (the live 0.5.8 contract); this does not change the image.
+# Self-host sends to its own collector files. Hosted PostHog is a separate
+# deployment adapter, with no PostHog key or endpoint in this configuration.
+analytics:
+  enabled: false
+  deploymentId: "" # opaque collector registration id, 8-64 URL-safe characters
+  profile: production # production | development
+  collectorUrl: "" # complete HTTPS endpoint ending in /v1/events
+  existingSecret: "" # dedicated component credential, distinct from existingSecret
+  tokenKey: token
+  caConfigMap: "" # optional public CA bundle, scoped to the collector transport
+  caKey: ca.crt
 
 server:
   port: 3000
