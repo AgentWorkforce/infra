@@ -61,6 +61,7 @@ resource "google_sql_database_instance" "this" {
       private_network                               = var.network_self_link
       allocated_ip_range                            = var.allocated_ip_range
       ssl_mode                                      = var.ssl_mode
+      server_ca_mode                                = var.server_ca_mode
       enable_private_path_for_google_cloud_services = true
     }
 

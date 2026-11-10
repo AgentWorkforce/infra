@@ -3,6 +3,7 @@ mock_provider "google" {
     defaults = {
       connection_name    = "proj:us-central1:relay"
       private_ip_address = "10.10.0.5"
+      dns_names          = [{ connection_type = "PRIVATE_SERVICES_ACCESS", dns_scope = "INSTANCE", name = "relay.abc123.us-central1.sql-psa.goog." }]
       server_ca_cert     = [{ cert = "-----BEGIN CERTIFICATE-----", common_name = "", create_time = "", expiration_time = "", sha1_fingerprint = "" }]
     }
   }
@@ -32,6 +33,10 @@ run "defaults_are_private_and_protected" {
   assert {
     condition     = google_sql_database_instance.this.settings[0].ip_configuration[0].ssl_mode == "ENCRYPTED_ONLY"
     error_message = "TLS is required."
+  }
+  assert {
+    condition     = google_sql_database_instance.this.settings[0].ip_configuration[0].server_ca_mode == "GOOGLE_MANAGED_INTERNAL_CA"
+    error_message = "The backwards-compatible module default remains the per-instance CA."
   }
   assert {
     condition     = google_sql_database_instance.this.deletion_protection && google_sql_database_instance.this.settings[0].deletion_protection_enabled
@@ -71,6 +76,23 @@ run "defaults_are_private_and_protected" {
   assert {
     condition     = google_sql_database_instance.this.settings[0].backup_configuration[0].backup_retention_settings[0].retained_backups == 14
     error_message = "14 backups retained by default."
+  }
+}
+
+run "shared_ca_has_verified_dns_url" {
+  command = plan
+
+  variables {
+    server_ca_mode = "GOOGLE_MANAGED_CAS_CA"
+  }
+
+  assert {
+    condition     = output.dns_name == "relay.abc123.us-central1.sql-psa.goog."
+    error_message = "Cloud SQL DNS output has no trailing dot for use in URLs."
+  }
+  assert {
+    condition     = output.database_url_template == "postgresql://<role>:<password>@relay.abc123.us-central1.sql-psa.goog.:5432/<database>?sslmode=verify-full"
+    error_message = "Shared-CA URLs use the certificate DNS identity with verify-full."
   }
 }
 

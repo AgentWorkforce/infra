@@ -79,6 +79,17 @@ variable "ssl_mode" {
   }
 }
 
+variable "server_ca_mode" {
+  description = "Server certificate authority mode. GOOGLE_MANAGED_CAS_CA provides a DNS identity suitable for sslmode=verify-full."
+  type        = string
+  default     = "GOOGLE_MANAGED_INTERNAL_CA"
+
+  validation {
+    condition     = contains(["GOOGLE_MANAGED_INTERNAL_CA", "GOOGLE_MANAGED_CAS_CA"], var.server_ca_mode)
+    error_message = "server_ca_mode must be GOOGLE_MANAGED_INTERNAL_CA or GOOGLE_MANAGED_CAS_CA."
+  }
+}
+
 variable "kms_key_name" {
   description = "CMEK key (projects/.../cryptoKeys/...). The Cloud SQL service agent needs roles/cloudkms.cryptoKeyEncrypterDecrypter on it first. null uses Google-managed encryption."
   type        = string

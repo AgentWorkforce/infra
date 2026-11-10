@@ -4,6 +4,9 @@ PostgreSQL 17 for agent-relay on **Cloud SQL**, private IP only, on your VPC.
 
 - `ipv4_enabled = false`, `private_network` = your VPC. The VPC must already have Private Services Access; the module creates no PSA range or connection.
 - `ssl_mode = ENCRYPTED_ONLY`; unencrypted modes are refused. CMEK through `kms_key_name` (grant the Cloud SQL service agent on the key first).
+- Optional `server_ca_mode = GOOGLE_MANAGED_CAS_CA` exposes the Cloud SQL DNS
+  identity needed for `sslmode=verify-full`. The GCP example creates a private
+  DNS record from that name to the instance private IP.
 - Regional HA, backups (14 retained) with point-in-time recovery (7 days), and deletion protection on both the Terraform and API side.
 - Logging flags on (checkpoints, connections, disconnections, lock waits), IAM database authentication, and Query Insights without client addresses.
 - `pg_trgm` and `vector` are supported on Cloud SQL without flags.
@@ -63,6 +66,7 @@ PostgreSQL 17 for agent-relay on **Cloud SQL**, private IP only, on your VPC.
 | maintenance\_window | Weekly maintenance window (day 1-7 Monday-Sunday, hour 0-23 UTC) and update\_track (stable, canary, week5). | ```object({ day = number hour = number update_track = optional(string, "stable") })``` | ```{ "day": 7, "hour": 4 }``` | no |
 | query\_insights\_enabled | Enable Query Insights. | `bool` | `true` | no |
 | retained\_backups | Automated backups kept. | `number` | `14` | no |
+| server\_ca\_mode | Server certificate authority mode. GOOGLE\_MANAGED\_CAS\_CA provides a DNS identity suitable for sslmode=verify-full. | `string` | `"GOOGLE_MANAGED_INTERNAL_CA"` | no |
 | ssl\_mode | ENCRYPTED\_ONLY (TLS required) or TRUSTED\_CLIENT\_CERTIFICATE\_REQUIRED (TLS plus client certificates). Unencrypted modes are refused. | `string` | `"ENCRYPTED_ONLY"` | no |
 | tier | Machine tier (db-custom-<vCPU>-<MiB> for ENTERPRISE, db-perf-optimized-N-<vCPU> for ENTERPRISE\_PLUS). | `string` | `"db-custom-2-7680"` | no |
 | transaction\_log\_retention\_days | Point-in-time recovery window in days (1-7 ENTERPRISE, up to 35 ENTERPRISE\_PLUS). | `number` | `7` | no |
@@ -74,8 +78,9 @@ PostgreSQL 17 for agent-relay on **Cloud SQL**, private IP only, on your VPC.
 | admin\_password\_secret\_id | Secret Manager secret holding the administrator password (projects/<p>/secrets/<id>). Read it from the bootstrap job; it is not in Terraform state. |
 | admin\_username | Administrator (cloudsqlsuperuser) for the bootstrap SQL only (null when admin\_user.create is false). |
 | connection\_name | project:region:instance. Feeds the sessions-pipeline CLOUD\_SQL\_CONNECTION\_NAME extraEnv in values-gcp.yaml (worker and alleyoop) and the Cloud SQL Auth Proxy, if used. |
-| database\_url\_template | Connection URL shape for the chart Secrets, with placeholders for role, password and database. ssl\_mode ENCRYPTED\_ONLY needs at least sslmode=require. |
+| database\_url\_template | Connection URL shape for chart Secrets. Shared-CA instances use their verified DNS identity; per-instance CA keeps the private-IP sslmode=require compatibility shape. |
 | databases | Databases created by the module. |
+| dns\_name | Exact Cloud SQL server DNS identity, including its terminal dot. With GOOGLE\_MANAGED\_CAS\_CA, use it byte-for-byte with sslmode=verify-full and private DNS pointing it to private\_ip\_address. |
 | instance\_name | Instance name. |
 | port | Database port. |
 | private\_ip\_address | Private IP. The host part of every agent-relay database URL (relay-control database-url, relayhistory DATABASE\_URL, sessions-pipeline HOOPDB\_URL, durable-actors postgres-url). |
