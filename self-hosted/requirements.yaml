@@ -1474,9 +1474,16 @@ compatibility:
       images:
         relayfile-control: { repository: ghcr.io/agentworkforce/relayfile-control, digest_required: true }
       notes: First chart, rendered only. The chart ships no default digest; the operator sets image.digest.
-    - id: relaychief-control-0.1.0
+    - id: relaychief-control-0.1.1
       status: unreleased
       current: true
+      charts: { relaychief-control: 0.1.1 }
+      app_versions: { relaychief-control: 0.1.0 }
+      images:
+        relaychief-control: { repository: ghcr.io/agentworkforce/relaychief-control, digest: "sha256:ddd4129f062cc19ba144bbb4ac0f7af66fb730be5a7c9521a9307d4c8f287688", digest_required: true }
+      notes: Optional secretKeys.relaySecret, encryptionKeyId and encryptionKey (all three or none) for platform-issued chief Relay identities. They need an image built from relaychief-control PR 5 or later; the default digest is unchanged and predates it. Rendered only.
+    - id: relaychief-control-0.1.0
+      status: shipped
       charts: { relaychief-control: 0.1.0 }
       app_versions: { relaychief-control: 0.1.0 }
       images:
@@ -4903,6 +4910,9 @@ entries:
           - { key: RELAYCONTROL_INTROSPECT_SECRET, key_path: secretKeys.introspectSecret }
           - { key: RELAYCHIEF_CONTROL_ADMIN_TOKEN, key_path: secretKeys.adminToken }
           - { key: "<operator-chosen, e.g. NANGO_SECRET_KEY>", key_path: secretKeys.nangoSecretKey, optional: "unset leaves Nango off and creating a chief answers 503; required with config.nangoHost" }
+          - { key: "<operator-chosen, e.g. RELAYCHIEF_CONTROL_RELAY_SECRET>", key_path: secretKeys.relaySecret, optional: "relay identity; set with encryptionKeyId and encryptionKey or not at all" }
+          - { key: "<operator-chosen, e.g. RELAYCHIEF_CONTROL_ENCRYPTION_KEY_ID>", key_path: secretKeys.encryptionKeyId, optional: "relay identity; set with relaySecret and encryptionKey or not at all" }
+          - { key: "<operator-chosen, e.g. RELAYCHIEF_CONTROL_ENCRYPTION_KEY>", key_path: secretKeys.encryptionKey, optional: "relay identity; set with relaySecret and encryptionKeyId or not at all" }
     verify: helm template fails with "existingSecret is required" when it is unset; the pod starts without a CreateContainerConfigError and /readyz answers 200
     sources:
       - "charts/relaychief-control/values.yaml"
@@ -4924,6 +4934,25 @@ entries:
       - { value: hosted }
       - { value: self-hosted }
     verify: helm template fails with "requires secretKeys.nangoSecretKey" when config.nangoHost is set without the key
+    sources:
+      - "charts/relaychief-control/values.yaml"
+      - "charts/relaychief-control/templates/_helpers.tpl"
+
+  - id: opt.relaychief-control.relay-identity
+    kind: option
+    title: Relay Chief control platform-issued Relay identities
+    description: With all three Secret keys set, binding a chief without relayCallerId registers it as a Relay agent through relay-control and stores its token encrypted with AES-256-GCM; unset, that bind answers 503. RELAYCHIEF_CONTROL_RELAY_SECRET (32 or more characters) must equal the value relay-control reads for chief registration, RELAYCHIEF_CONTROL_ENCRYPTION_KEY_ID is 1-64 characters of [A-Za-z0-9_-], and RELAYCHIEF_CONTROL_ENCRYPTION_KEY is 64 hex characters. The server refuses to start with only some of them, so the chart refuses to render a partial set; a render cannot check their contents. Needs an image built from relaychief-control PR 5 or later, whose migration 0003 the existing migrate Job applies.
+    chart: relaychief-control
+    values: [secretKeys.relaySecret, secretKeys.encryptionKeyId, secretKeys.encryptionKey]
+    env: [RELAYCHIEF_CONTROL_RELAY_SECRET, RELAYCHIEF_CONTROL_ENCRYPTION_KEY_ID, RELAYCHIEF_CONTROL_ENCRYPTION_KEY]
+    profiles: [relaychief-control]
+    status: shipped
+    provided_by: operator
+    default: unset
+    choices:
+      - { value: unset }
+      - { value: set }
+    verify: helm template fails with "must be set together or not at all" when only some of the three are set; with all three, the Deployment (not the migrate Job) reads each from existingSecret
     sources:
       - "charts/relaychief-control/values.yaml"
       - "charts/relaychief-control/templates/_helpers.tpl"

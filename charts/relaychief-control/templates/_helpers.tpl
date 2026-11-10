@@ -35,6 +35,10 @@ app.kubernetes.io/component: server
 {{- if not .Values.existingSecret }}{{ fail "existingSecret is required; the chart never creates Secrets" }}{{ end -}}
 {{- range $name, $key := .Values.secretKeys }}{{ if and $key (not (regexMatch "^[A-Za-z0-9._-]+$" (toString $key))) }}{{ fail (printf "secretKeys.%s must be a Kubernetes Secret data key" $name) }}{{ end }}{{ end -}}
 {{- range $name := list "databaseUrl" "introspectSecret" "adminToken" }}{{ if not (get $.Values.secretKeys $name) }}{{ fail (printf "secretKeys.%s is required" $name) }}{{ end }}{{ end -}}
+{{- $relayIdentity := list "relaySecret" "encryptionKeyId" "encryptionKey" -}}
+{{- $relayIdentitySet := 0 -}}
+{{- range $relayIdentity }}{{ if get $.Values.secretKeys . }}{{ $relayIdentitySet = add1 $relayIdentitySet }}{{ end }}{{ end -}}
+{{- if and (gt $relayIdentitySet 0) (lt $relayIdentitySet (len $relayIdentity)) }}{{ fail "secretKeys.relaySecret, secretKeys.encryptionKeyId and secretKeys.encryptionKey must be set together or not at all: the server refuses to start with only some of RELAYCHIEF_CONTROL_RELAY_SECRET, RELAYCHIEF_CONTROL_ENCRYPTION_KEY_ID and RELAYCHIEF_CONTROL_ENCRYPTION_KEY" }}{{ end -}}
 {{- $origin := "^https?://[^/?#@[:space:]]+$" -}}
 {{- if not (regexMatch $origin (toString .Values.config.relaycontrolUrl)) }}{{ fail "config.relaycontrolUrl (RELAYCONTROL_URL) is required and must be an http(s) origin with no path" }}{{ end -}}
 {{- if not (regexMatch $origin (toString .Values.config.publicOrigin)) }}{{ fail "config.publicOrigin (RELAYCHIEF_CONTROL_PUBLIC_ORIGIN) is required and must be an http(s) origin with no path" }}{{ end -}}
@@ -55,7 +59,7 @@ app.kubernetes.io/component: server
 {{- if not (regexMatch "^/[^*?#[:space:]]+$" (toString .path)) }}{{ fail (printf "ingress.extraPaths: path %q must be an absolute path other than /: a root rule would expose every route" (toString .path)) }}{{ end -}}
 {{- if not (has (default "Prefix" .pathType) (list "Prefix" "Exact")) }}{{ fail "ingress.extraPaths: pathType must be Prefix or Exact" }}{{ end -}}
 {{- end -}}
-{{- $reservedEnv := list "PORT" "HOST" "ADMIN_HOST" "ADMIN_PORT" "RELAYCONTROL_URL" "RELAYCHIEF_CONTROL_PUBLIC_ORIGIN" "RELAYCHIEF_CONTROL_BROWSER_ORIGINS" "NANGO_HOST" "DATABASE_URL" "RELAYCONTROL_INTROSPECT_SECRET" "RELAYCHIEF_CONTROL_ADMIN_TOKEN" "NANGO_SECRET_KEY" -}}
+{{- $reservedEnv := list "PORT" "HOST" "ADMIN_HOST" "ADMIN_PORT" "RELAYCONTROL_URL" "RELAYCHIEF_CONTROL_PUBLIC_ORIGIN" "RELAYCHIEF_CONTROL_BROWSER_ORIGINS" "NANGO_HOST" "DATABASE_URL" "RELAYCONTROL_INTROSPECT_SECRET" "RELAYCHIEF_CONTROL_ADMIN_TOKEN" "NANGO_SECRET_KEY" "RELAYCHIEF_CONTROL_RELAY_SECRET" "RELAYCHIEF_CONTROL_ENCRYPTION_KEY_ID" "RELAYCHIEF_CONTROL_ENCRYPTION_KEY" -}}
 {{- if (.Values.postgresCa | default dict).enabled }}{{ $reservedEnv = append $reservedEnv "NODE_EXTRA_CA_CERTS" }}{{ end -}}
 {{- range .Values.extraEnv }}{{ if has .name $reservedEnv }}{{ fail (printf "%s is managed by structured chart values and must not appear in extraEnv" .name) }}{{ end }}{{ end -}}
 {{- include "relaychief-control.validatePostgresCa" . -}}
@@ -73,6 +77,11 @@ app.kubernetes.io/component: server
 {{ include "relaychief-control.secretEnvVar" (dict "name" "RELAYCHIEF_CONTROL_ADMIN_TOKEN" "secret" .Values.existingSecret "key" .Values.secretKeys.adminToken) }}
 {{- with .Values.secretKeys.nangoSecretKey }}
 {{ include "relaychief-control.secretEnvVar" (dict "name" "NANGO_SECRET_KEY" "secret" $.Values.existingSecret "key" .) }}
+{{- end }}
+{{- if .Values.secretKeys.relaySecret }}
+{{ include "relaychief-control.secretEnvVar" (dict "name" "RELAYCHIEF_CONTROL_RELAY_SECRET" "secret" .Values.existingSecret "key" .Values.secretKeys.relaySecret) }}
+{{ include "relaychief-control.secretEnvVar" (dict "name" "RELAYCHIEF_CONTROL_ENCRYPTION_KEY_ID" "secret" .Values.existingSecret "key" .Values.secretKeys.encryptionKeyId) }}
+{{ include "relaychief-control.secretEnvVar" (dict "name" "RELAYCHIEF_CONTROL_ENCRYPTION_KEY" "secret" .Values.existingSecret "key" .Values.secretKeys.encryptionKey) }}
 {{- end }}
 {{- end -}}
 {{- define "relaychief-control.migrationPodTemplate" -}}

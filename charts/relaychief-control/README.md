@@ -25,6 +25,15 @@ image.
 | `RELAYCONTROL_INTROSPECT_SECRET` | same | Required, 32+ characters |
 | `RELAYCHIEF_CONTROL_ADMIN_TOKEN` | same | Required, 32+ characters |
 | set `secretKeys.nangoSecretKey` | `NANGO_SECRET_KEY` | Optional; unset leaves Nango off and creating a chief answers 503 |
+| set `secretKeys.relaySecret` | `RELAYCHIEF_CONTROL_RELAY_SECRET` | Optional relay identity, 32+ characters; the same value relay-control reads |
+| set `secretKeys.encryptionKeyId` | `RELAYCHIEF_CONTROL_ENCRYPTION_KEY_ID` | Optional relay identity, 1-64 characters of `[A-Za-z0-9_-]` |
+| set `secretKeys.encryptionKey` | `RELAYCHIEF_CONTROL_ENCRYPTION_KEY` | Optional relay identity, 64 hex characters |
+
+The three relay identity keys go together: the render fails when only some are
+set. With them, binding a chief without `relayCallerId` registers it as a Relay
+agent; without them, that bind answers 503. They need an image built from
+relaychief-control PR #5 or later (the default digest predates it), and only the
+server receives them, not the migrate Job.
 
 A render cannot see Secret contents. A missing key stops the pod with
 `CreateContainerConfigError`, and a short token stops the server at startup.
