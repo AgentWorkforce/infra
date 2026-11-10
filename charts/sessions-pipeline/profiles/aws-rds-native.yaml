@@ -9,6 +9,7 @@
 #   sessionReadApi, ingestEdge, and searchIndexer (and customer registry paths)
 # - worker/alleyoop/ingestEdge/searchIndexer locker bucket and AWS region
 # - sessionReadApi + ingestEdge public origin (the same value)
+# - ingestEdge.relaycontrol.url for the parent release's Control Service
 # - alleyoop.auth.jwksUrl (retained chart validation while its legacy
 #   Deployment is disabled)
 # - sessionReadApi and searchIndexer OpenSearch URL, region, and backendId
@@ -20,6 +21,9 @@
 global:
   tenant:
     orgId: ""
+
+releaseContract:
+  unifiedServicesDigest: true
 
 hoopdb:
   enabled: false
@@ -187,7 +191,9 @@ ingestEdge:
   origin: ""
   allowInClusterHttp: true
   relaycontrol:
-    url: http://relay-control.agent-relay.svc.cluster.local
+    # Required from the private overlay because the Control Service name is
+    # determined by the parent release/fullnameOverride.
+    url: ""
   config:
     existingSecret: agent-relay-ingest-edge-runtime
     databaseUrlKey: database-url

@@ -17,10 +17,11 @@ helm template agent-relay . -n agent-relay \
 The release overlay must set one reviewed services artifact under `worker`,
 `alleyoop`, `sessionReadApi`, `ingestEdge`, and `searchIndexer`; the same public
 History origin for read and ingest; the S3 bucket/region; OpenSearch settings;
-the RDS CA SHA-256; and the ALB subnet peers admitted by the read API
-NetworkPolicy. Database credentials remain in existing Secrets created from
-the managed-RDS bootstrap output. No customer credential belongs in either
-values file.
+the RDS CA SHA-256; the actual in-cluster Control Service URL used for token
+introspection; and the ALB subnet peers admitted by the read API NetworkPolicy.
+The chart rejects a missing or mismatched services digest before rendering.
+Database credentials remain in existing Secrets created from the managed-RDS
+bootstrap output. No customer credential belongs in either values file.
 
 That artifact must be qualified as one unit. It must include the schema through
 migration `046010`, the fresh-install read grants on `search_index`, and the

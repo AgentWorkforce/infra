@@ -1,0 +1,15 @@
+{{- $c := .Values.releaseContract -}}
+{{- if not (kindIs "bool" $c.unifiedServicesDigest) }}{{ fail "releaseContract.unifiedServicesDigest must be a boolean" }}{{ end -}}
+{{- if $c.unifiedServicesDigest -}}
+{{- $worker := required "releaseContract.unifiedServicesDigest requires worker.image.digest" .Values.worker.image.digest -}}
+{{- if not (regexMatch "^sha256:[a-f0-9]{64}$" $worker) }}{{ fail "releaseContract unified services digest must be sha256:<64 lowercase hex characters>" }}{{ end -}}
+{{- range $name, $digest := dict
+  "alleyoop.image.digest" .Values.alleyoop.image.digest
+  "sessionReadApi.image.digest" .Values.sessionReadApi.image.digest
+  "ingestEdge.image.digest" .Values.ingestEdge.image.digest
+  "searchIndexer.image.digest" .Values.searchIndexer.image.digest -}}
+{{- if not $digest }}{{ fail (printf "releaseContract.unifiedServicesDigest requires %s" $name) }}{{ end -}}
+{{- if ne $digest $worker }}{{ fail (printf "releaseContract.unifiedServicesDigest requires %s to equal worker.image.digest" $name) }}{{ end -}}
+{{- end -}}
+{{- if or .Values.worker.image.tag .Values.alleyoop.image.tag }}{{ fail "releaseContract.unifiedServicesDigest requires worker.image.tag and alleyoop.image.tag to be empty" }}{{ end -}}
+{{- end -}}

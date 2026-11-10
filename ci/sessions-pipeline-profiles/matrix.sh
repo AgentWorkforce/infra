@@ -135,6 +135,9 @@ for row in "${MATRIX[@]}"; do
         expect_fail "migrations.runtimeRoleLogin must be set (true or false) in $dbmode mode" "${args[@]}" --set worker.migrations.runtimeRole=sessions_pipeline_runtime
         args+=("${RUNTIME[@]}") ;;
       rds-native)
+        # A required services digest may be rejected by a component subchart
+        # before the umbrella release contract runs; either way the native
+        # profile remains fail-closed until the release overlay is supplied.
         expect_fail "image.digest requires an owner-approved compatible image" "${args[@]}"
         args+=(-f "$CHART/ci/aws-rds-native-inputs.yaml") ;;
       supabase)
@@ -274,6 +277,14 @@ if [ "$mode" = static ]; then
   out=$(render -f "$CHART/profiles/aws-rds-native.yaml" -f "$CHART/ci/aws-rds-native-inputs.yaml") \
     || err "aws-rds-native: synthetic release overlay did not render"
 
+  expect_fail "releaseContract.unifiedServicesDigest must be a boolean" \
+    -f "$CHART/profiles/aws-rds-native.yaml" -f "$CHART/ci/aws-rds-native-inputs.yaml" \
+    --set-string releaseContract.unifiedServicesDigest=true
+
+  expect_fail "releaseContract.unifiedServicesDigest requires searchIndexer.image.digest to equal worker.image.digest" \
+    -f "$CHART/profiles/aws-rds-native.yaml" -f "$CHART/ci/aws-rds-native-inputs.yaml" \
+    --set searchIndexer.image.digest=sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
+
   # The release overlay supplies one immutable services artifact to every
   # workload and Job; no chart default may leak into this profile.
   refs=$(yq -r 'select(.kind == "Deployment" or .kind == "Job") | .spec.template.spec | ((.initContainers // []) + .containers)[] | select(.image | test("96bulls-services")) | .image' <<<"$out" | grep -v '^---$' | sort -u)
@@ -307,6 +318,8 @@ if [ "$mode" = static ]; then
   [ "$(read_value READ_API_EVENT_MESSAGE_IDS)" = true ] || err "aws-rds-native: read API message IDs are not enabled"
   [ "$(read_value READ_API_COORDINATION_OVERLAPS_ENABLED)" = true ] || err "aws-rds-native: coordination overlaps are not enabled"
   [ "$(read_value READ_API_SESSION_QUERY)" = true ] || err "aws-rds-native: session query path is not enabled"
+  [ "$(yq -r 'select(.kind == "Deployment" and .metadata.name == "ci-ingest-edge") | .spec.template.spec.containers[0].env[] | select(.name == "RELAYCONTROL_INTROSPECT_URL") | .value' <<<"$out" | grep -v '^---$')" = http://ci-relay-control.ci.svc.cluster.local ] \
+    || err "aws-rds-native: ingest edge does not use the release-overlay Control Service URL"
   [ "$(read_value SEARCH_INDEX_BACKEND)" = opensearch ] || err "aws-rds-native: read API does not select OpenSearch"
   [ "$(read_value LOCKER_BUCKET)" = ci-sessions ] || err "aws-rds-native: read API canonical bucket differs from ingest"
 

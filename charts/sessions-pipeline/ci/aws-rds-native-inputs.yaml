@@ -45,6 +45,8 @@ ingestEdge:
   image:
     digest: sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff
   origin: https://history.ci.agentrelay.com
+  relaycontrol:
+    url: http://ci-relay-control.ci.svc.cluster.local
   postgres:
     caSha256: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
   locker:
