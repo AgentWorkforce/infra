@@ -144,6 +144,7 @@ jobs:
           node --test ci/agent-relay/kind/test_bootstrap.mjs
           node --test ci/agent-relay/kind/test_pipeline.mjs
           node --test ci/agent-relay/kind/test_workspace_cleanup.mjs
+          make dev-test
         env:
           TMPDIR: ${{ runner.temp }}
 

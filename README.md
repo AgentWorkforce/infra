@@ -6,6 +6,7 @@ Terraform modules and Helm charts for customer-owned Agent Relay installations o
 
 - [Terraform modules and examples](terraform/README.md): network, Kubernetes, PostgreSQL, object storage, optional search and functions.
 - [Helm charts](#charts): application configuration, deployment and versioned dependencies under `charts/<service-name>/`.
+- [Local code loop](docs/kind-development.md): `make dev` on an existing Kind stack, frontend HMR and backend code-watch rebuilds.
 - [Full application proof](docs/terraform-helm-application-proof.md): required lifecycle evidence and current gaps.
 - [Enterprise AWS installation and first-user guide](docs/enterprise-aws-install.md): customer roles, SSO, Desktop downloads, device approval and acceptance; release preparation with explicit remaining gates.
 - [Enterprise operator controls](docs/enterprise-customer-controls.md): generic operator controls, profile-specific downloads and disabled-Flows acceptance.
