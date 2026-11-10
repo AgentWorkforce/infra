@@ -631,7 +631,7 @@ for chart in "${charts[@]}"; do
         expect_render_failure "$chart" "$v" "server port on the admin port" "server.port must not be 3201" --set server.port=3201
         expect_render_failure "$chart" "$v" "public Service" "service.type must be ClusterIP" --set service.type=LoadBalancer
         expect_render_failure "$chart" "$v" "restricted egress with no rules" "requires networkPolicy.additionalEgress" --set-json 'networkPolicy.additionalEgress=[]'
-        for name in ADMIN_HOST ADMIN_PORT HOST PORT NANGO_HOST NANGO_SECRET_KEY DATABASE_URL; do
+        for name in ADMIN_HOST ADMIN_PORT HOST PORT NANGO_HOST NANGO_SECRET_KEY DATABASE_URL RELAYCHIEF_CONTROL_RELAY_SECRET RELAYCHIEF_CONTROL_ENCRYPTION_KEY_ID RELAYCHIEF_CONTROL_ENCRYPTION_KEY; do
           expect_render_failure "$chart" "$v" "$name through extraEnv" "$name is managed by structured chart values and must not appear in extraEnv" --set-json "extraEnv=[{\"name\":\"$name\",\"value\":\"x\"}]"
         done
         expect_render_failure "$chart" "$v" "ingress without hosts" "ingress.enabled=true requires at least one host" --set ingress.enabled=true
@@ -680,6 +680,21 @@ for chart in "${charts[@]}"; do
         nango_key=$(render "$chart" "$v" --set secretKeys.nangoSecretKey=NANGO_SECRET_KEY)
         [ "$(yq "$deployment | .containers[0].env[] | select(.name == \"NANGO_SECRET_KEY\") | .valueFrom.secretKeyRef.key" <<<"$nango_key")" = NANGO_SECRET_KEY ] \
           || err "$chart: NANGO_SECRET_KEY must come from the existing Secret"
+        # Relay identity: all three Secret keys or none.
+        ! grep -q 'RELAYCHIEF_CONTROL_\(RELAY_SECRET\|ENCRYPTION_KEY\)' <<<"$out" || err "$chart: relay identity env must not render when unset"
+        relay_identity=(--set secretKeys.relaySecret=RELAYCHIEF_CONTROL_RELAY_SECRET --set secretKeys.encryptionKeyId=RELAYCHIEF_CONTROL_ENCRYPTION_KEY_ID --set secretKeys.encryptionKey=RELAYCHIEF_CONTROL_ENCRYPTION_KEY)
+        relay=$(render "$chart" "$v" "${relay_identity[@]}")
+        for name in RELAYCHIEF_CONTROL_RELAY_SECRET RELAYCHIEF_CONTROL_ENCRYPTION_KEY_ID RELAYCHIEF_CONTROL_ENCRYPTION_KEY; do
+          [ "$(rq "$deployment | [.containers[0].env[] | select(.name == \"$name\") | .valueFrom.secretKeyRef.name + \"/\" + .valueFrom.secretKeyRef.key] | join(\",\")" "$relay")" = "relaychief-control-secrets/$name" ] \
+            || err "$chart: $name must render once from the existing Secret"
+        done
+        [ "$(rq "$job | [.containers[0].env[].name] | join(\",\")" "$relay")" = DATABASE_URL ] \
+          || err "$chart: relay identity env must not reach the migrate Job"
+        for missing in relaySecret encryptionKeyId encryptionKey; do
+          expect_render_failure "$chart" "$v" "relay identity without secretKeys.$missing" "must be set together or not at all" "${relay_identity[@]}" --set "secretKeys.$missing="
+        done
+        expect_render_failure "$chart" "$v" "relay secret alone" "must be set together or not at all" --set secretKeys.relaySecret=RELAYCHIEF_CONTROL_RELAY_SECRET
+        expect_render_failure "$chart" "$v" "unsafe relay identity key path" "secretKeys.encryptionKey must be a Kubernetes Secret data key" "${relay_identity[@]}" --set-string secretKeys.encryptionKey=../key
         v=charts/relaychief-control/ci/alb-values.yaml
         out=$(render "$chart" "$v")
         [ "$(rq 'select(.kind == "Ingress") | [.spec.rules[0].http.paths[] | .path + "=" + .pathType] | join(",")' "$out")" = "/chief/v1=Prefix" ] \

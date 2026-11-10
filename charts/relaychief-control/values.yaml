@@ -39,6 +39,17 @@ secretKeys:
   # Optional: the Secret data key holding NANGO_SECRET_KEY. Empty leaves Nango
   # unconfigured, and creating a chief answers 503.
   nangoSecretKey: ""
+  # Optional, all three or none (the render fails on a partial set): the Secret
+  # data keys for platform-issued chief Relay identities. Unset, binding a chief
+  # without relayCallerId answers 503. They need an image built from
+  # relaychief-control PR #5 or later; the default digest predates it.
+  # RELAYCHIEF_CONTROL_RELAY_SECRET: 32+ characters, the same value relay-control
+  # reads for chief registration.
+  relaySecret: ""
+  # RELAYCHIEF_CONTROL_ENCRYPTION_KEY_ID: 1-64 characters of [A-Za-z0-9_-].
+  encryptionKeyId: ""
+  # RELAYCHIEF_CONTROL_ENCRYPTION_KEY: 64 hex characters (AES-256-GCM key).
+  encryptionKey: ""
 
 migrations:
   enabled: true
