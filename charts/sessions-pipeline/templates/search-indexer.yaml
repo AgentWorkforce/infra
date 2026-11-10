@@ -13,12 +13,27 @@
 {{- $backend := $c.search.backend -}}
 {{- if not (has $backend (list "postgres" "opensearch")) }}{{ fail "searchIndexer.search.backend must be postgres or opensearch" }}{{ end -}}
 {{- $backendId := required "searchIndexer.search.backendId requires the projection-state id shared with the read API" $c.search.backendId -}}
+{{- $provider := $c.locker.provider -}}
+{{- if not (has $provider (list "s3" "gcs")) }}{{ fail "searchIndexer.locker.provider must be s3 or gcs" }}{{ end -}}
+{{- $_ := required "searchIndexer.locker.bucket is required" $c.locker.bucket -}}
+{{- if and (eq $provider "gcs") $c.locker.endpoint }}{{ fail "searchIndexer.locker.endpoint must be empty for gcs" }}{{ end -}}
+{{- if not (kindIs "slice" $c.extraEnv) }}{{ fail "searchIndexer.extraEnv must be a list" }}{{ end -}}
+{{- $gcsNames := list "CLOUD_SQL_CONNECTION_NAME" "REDIS_HOST" "REDIS_PORT" "REDIS_AUTH_ENABLED" "REDIS_TRANSIT_ENCRYPTION" "REDIS_TLS_CA_PEM" "PUBSUB_TOPIC" "PUBSUB_SUBSCRIPTION" -}}
+{{- $seen := dict -}}
+{{- range $entry := $c.extraEnv -}}
+{{- if or (not (kindIs "map" $entry)) (not (hasKey $entry "name")) }}{{ fail "searchIndexer.extraEnv entries must be Kubernetes env objects with name" }}{{ end -}}
+{{- if hasKey $seen $entry.name }}{{ fail (printf "searchIndexer.extraEnv repeats %s" $entry.name) }}{{ end -}}
+{{- $_ := set $seen $entry.name true -}}
+{{- if not (has $entry.name $gcsNames) }}{{ fail (printf "searchIndexer.extraEnv %s is unsupported; only the managed GCS data-path settings are accepted" $entry.name) }}{{ end -}}
+{{- end -}}
+{{- if eq $provider "gcs" -}}
+{{- range $name := $gcsNames }}{{ if not (hasKey $seen $name) }}{{ fail (printf "searchIndexer.locker.provider=gcs requires extraEnv %s" $name) }}{{ end }}{{ end -}}
+{{- else if $c.extraEnv }}{{ fail "searchIndexer.extraEnv is only supported with locker.provider=gcs" }}{{ end -}}
 {{- if and (not $c.bootstrap.enabled) (ne (toString $c.bootstrap.acknowledgeRunByOperator) "true") }}{{ fail "searchIndexer.bootstrap.enabled=false requires bootstrap.acknowledgeRunByOperator=true" }}{{ end -}}
 {{- if eq $backend "opensearch" -}}
 {{- $url := required "searchIndexer.search.opensearch.url is required" $c.search.opensearch.url -}}
 {{- if not (regexMatch "^https://[a-z0-9.-]+(:[0-9]{1,5})?$" $url) }}{{ fail "searchIndexer.search.opensearch.url must be an https endpoint with no path, credentials or query" }}{{ end -}}
 {{- $_ := required "searchIndexer.search.opensearch.region is required" $c.search.opensearch.region -}}
-{{- $_ := required "searchIndexer.locker.bucket is required" $c.locker.bucket -}}
 {{- end -}}
 {{- $tls := $c.postgres.tlsProfile -}}
 {{- if not (has $tls (list "supabase" "custom-ca")) }}{{ fail "searchIndexer.postgres.tlsProfile must be supabase or custom-ca" }}{{ end -}}

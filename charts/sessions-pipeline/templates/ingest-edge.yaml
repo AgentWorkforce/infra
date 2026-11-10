@@ -10,6 +10,8 @@
 {{- end -}}
 {{- if not (kindIs "bool" $c.allowInClusterHttp) }}{{ fail "ingestEdge.allowInClusterHttp must be a boolean" }}{{ end -}}
 {{- if hasKey $c "extraEnv" }}{{ fail "ingestEdge.extraEnv is not supported; use the managed configuration and Secret references" }}{{ end -}}
+{{- if not (kindIs "bool" $c.networkPolicy.enabled) }}{{ fail "ingestEdge.networkPolicy.enabled must be a boolean" }}{{ end -}}
+{{- if and $c.networkPolicy.enabled (or (not (kindIs "slice" $c.networkPolicy.ingressFrom)) (empty $c.networkPolicy.ingressFrom)) }}{{ fail "ingestEdge.networkPolicy.enabled=true requires networkPolicy.ingressFrom" }}{{ end -}}
 {{- $name := default (printf "%s-ingest-edge" .Release.Name) $c.fullnameOverride -}}
 {{- if or (gt (len $name) 63) (not (regexMatch "^[a-z]([-a-z0-9]*[a-z0-9])?$" $name)) }}{{ fail "ingestEdge.fullnameOverride must be a DNS-1035 label of at most 63 characters" }}{{ end -}}
 {{- $repository := required "ingestEdge.image.repository is required" $c.image.repository -}}
@@ -31,11 +33,15 @@
 {{- $introspect := include "sessions-pipeline.ingestEdge.endpoint" (dict "name" "ingestEdge.relaycontrol.url" "url" $c.relaycontrol.url "allowHttp" $c.allowInClusterHttp) -}}
 {{- if not (kindIs "bool" $c.sessionSelection) }}{{ fail "ingestEdge.sessionSelection must be a boolean" }}{{ end -}}
 {{- if not (kindIs "bool" $c.heartbeatAccept) }}{{ fail "ingestEdge.heartbeatAccept must be a boolean" }}{{ end -}}
+{{- $provider := $c.locker.provider -}}
+{{- if not (has $provider (list "s3" "gcs")) }}{{ fail "ingestEdge.locker.provider must be s3 or gcs" }}{{ end -}}
 {{- $credentialMode := $c.locker.credentials.mode -}}
 {{- if not (has $credentialMode (list "secret" "podIdentity")) }}{{ fail "ingestEdge.locker.credentials.mode must be secret or podIdentity" }}{{ end -}}
 {{- $podIdentity := eq $credentialMode "podIdentity" -}}
 {{- if and $podIdentity (not $c.serviceAccountName) }}{{ fail "ingestEdge.locker.credentials.mode=podIdentity requires serviceAccountName with a Pod Identity association" }}{{ end -}}
 {{- if and $podIdentity $c.locker.existingSecret }}{{ fail "ingestEdge.locker.existingSecret must be empty with credentials.mode=podIdentity" }}{{ end -}}
+{{- if and (eq $provider "gcs") (not $podIdentity) }}{{ fail "ingestEdge.locker.provider=gcs requires credentials.mode=podIdentity" }}{{ end -}}
+{{- if and (eq $provider "gcs") $c.locker.endpoint }}{{ fail "ingestEdge.locker.endpoint must be empty for gcs" }}{{ end -}}
 {{- $endpoint := "" -}}
 {{- if or (not $podIdentity) $c.locker.endpoint -}}
 {{- $endpoint = include "sessions-pipeline.ingestEdge.endpoint" (dict "name" "ingestEdge.locker.endpoint" "url" $c.locker.endpoint "allowHttp" $c.allowInClusterHttp) -}}
@@ -160,7 +166,7 @@ spec:
             - { name: SESSION_POSTGRES_CA_SHA256, value: {{ $caHash | quote }} }
             - { name: RELAYHISTORY_INGEST_PG_POOL_MAX, value: {{ $c.postgres.poolMax | quote }} }
             - { name: ALLOW_IN_CLUSTER_HTTP, value: {{ $c.allowInClusterHttp | quote }} }
-            - { name: LOCKER_PROVIDER, value: s3 }
+            - { name: LOCKER_PROVIDER, value: {{ $provider | quote }} }
             - { name: LOCKER_BUCKET, value: {{ $bucket | quote }} }
             {{- with $endpoint }}
             - { name: LOCKER_ENDPOINT, value: {{ . | quote }} }
@@ -253,4 +259,27 @@ spec:
     app.kubernetes.io/component: ingest-edge
   ports:
     - { name: http, port: 80, targetPort: http, protocol: TCP }
+{{- if $c.networkPolicy.enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace | quote }}
+  labels:
+    app.kubernetes.io/name: session-ingest-edge
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: ingest-edge
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: session-ingest-edge
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/component: ingest-edge
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        {{- toYaml $c.networkPolicy.ingressFrom | nindent 8 }}
+      ports: [{ port: http }]
+{{- end }}
 {{- end }}

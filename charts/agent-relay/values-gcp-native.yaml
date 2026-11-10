@@ -1,0 +1,40 @@
+# Overlay on values-gcp.yaml for the supported native History architecture:
+# no RelayAuth and no standalone RelayHistory. Apply with
+# `-f values-gcp.yaml -f values-gcp-native.yaml`, then a site values file that
+# configures sessionReadApi, ingestEdge and searchIndexer. The GKE edge routes
+# the one history host to the reader and ingest services.
+components:
+  relayauth: false
+  relayhistory: false
+
+relay-control:
+  services:
+    relayauthEnabled: false
+    relayauthUrl: ""
+    relayhistoryUrl: ""
+    relayhistoryPublicUrl: ""
+    relayhistoryBackend: native
+    sessionReadApiUrl: http://agent-relay-read-api
+    # REQUIRED OVERRIDE: the gkeIngress history origin.
+    sessionReadApiPublicUrl: https://history.placeholder.company
+    sessionReadApiMcpReads: true
+  introspection:
+    # REQUIRED OVERRIDE: the same history origin.
+    audiences:
+      - https://history.placeholder.company
+  secretKeys:
+    relayauthApiKey: ""
+    introspectSecret: relaycontrol-introspect-secret
+    sessionReadApiSecret: session-read-api-secret
+
+# The legacy courier ingest Deployment depends on RelayAuth. Native uploads use
+# ingestEdge; retain the ServiceAccount because it is the GCS identity selected
+# by the native edge in the customer values.
+sessions-pipeline:
+  # relay-control uses this stable in-cluster handoff URL. Keep the Service
+  # name independent of the Helm release name so the two values cannot drift.
+  sessionReadApi:
+    fullnameOverride: agent-relay-read-api
+  alleyoop:
+    deployment:
+      enabled: false
