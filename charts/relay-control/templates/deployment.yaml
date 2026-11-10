@@ -14,6 +14,9 @@ spec:
     metadata:
       labels:
         {{- include "relay-control.selectorLabels" . | nindent 8 }}
+        {{- if .Values.analytics.enabled }}
+        agentworkforce.dev/analytics-producer: "true"
+        {{- end }}
         {{- with .Values.podLabels }}{{ toYaml . | nindent 8 }}{{- end }}
       {{- with .Values.podAnnotations }}
       annotations: {{ toYaml . | nindent 8 }}
@@ -78,6 +81,12 @@ spec:
             {{- end }}
             {{- include "relay-control.runtimeEnv" . | nindent 12 }}
             {{- include "relay-control.secretEnv" . | nindent 12 }}
+            {{- if .Values.introspection.existingSecret }}
+            - { name: RELAYCONTROL_INTROSPECT_SECRET_FILE, value: /var/run/agent-relay/introspection/secret }
+            {{- end }}
+            {{- if .Values.analytics.enabled }}
+            {{- include "relay-control.analyticsEnv" . | nindent 12 }}
+            {{- end }}
             {{- if .Values.secretKeys.passwordPepper }}
             - { name: SELFHOST_PASSWORD_PEPPER_FILE, value: /var/run/agent-relay/password-pepper/pepper }
             {{- end }}
@@ -92,6 +101,15 @@ spec:
             {{- end }}
           volumeMounts:
             - { name: secrets, mountPath: /var/run/agent-relay/secrets, readOnly: true }
+            {{- if .Values.introspection.existingSecret }}
+            - { name: introspection-secret, mountPath: /var/run/agent-relay/introspection, readOnly: true }
+            {{- end }}
+            {{- if .Values.analytics.enabled }}
+            - { name: analytics-producer, mountPath: /var/run/secrets/analytics-control, readOnly: true }
+            {{- if .Values.analytics.caConfigMap }}
+            - { name: analytics-ca, mountPath: /var/run/analytics-collector-ca, readOnly: true }
+            {{- end }}
+            {{- end }}
             {{- range $provider := keys (.Values.integrations | default dict) | sortAlpha }}
             - { name: {{ printf "oauth-%s" $provider | quote }}, mountPath: {{ printf "/var/run/agent-relay/integrations/%s" $provider | quote }}, readOnly: true }
             {{- end }}
@@ -110,6 +128,27 @@ spec:
             {{- toYaml .Values.livenessProbe | nindent 12 }}
           resources: {{ toYaml .Values.resources | nindent 12 }}
       volumes:
+        {{- if .Values.introspection.existingSecret }}
+        - name: introspection-secret
+          secret:
+            secretName: {{ .Values.introspection.existingSecret | quote }}
+            defaultMode: 0440
+            items: [{ key: {{ .Values.introspection.key | quote }}, path: secret }]
+        {{- end }}
+        {{- if .Values.analytics.enabled }}
+        - name: analytics-producer
+          secret:
+            secretName: {{ .Values.analytics.existingSecret | quote }}
+            defaultMode: 0440
+            items: [{ key: {{ .Values.analytics.tokenKey | quote }}, path: token }]
+        {{- if .Values.analytics.caConfigMap }}
+        - name: analytics-ca
+          configMap:
+            name: {{ .Values.analytics.caConfigMap | quote }}
+            defaultMode: 0444
+            items: [{ key: {{ .Values.analytics.caKey | quote }}, path: ca.crt }]
+        {{- end }}
+        {{- end }}
         - name: secrets
           secret:
             secretName: {{ .Values.existingSecret }}

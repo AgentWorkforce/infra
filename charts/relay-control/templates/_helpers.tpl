@@ -48,6 +48,7 @@ of set a second time. Desktop and the CLI log in against that same origin. */ -}
 {{- end -}}
 {{- end -}}
 {{- define "relay-control.validate" -}}
+{{- include "relay-control.validateAdapters" . -}}
 {{- $image := include "relay-control.image" . -}}
 {{- if not (kindIs "invalid" .Values.selectedFeatures) -}}
 {{- if not (kindIs "slice" .Values.selectedFeatures) }}{{ fail "selectedFeatures must be a list or null" }}{{ end -}}
@@ -130,6 +131,7 @@ the chart already sets, including duplicates inside extraEnv. */ -}}
 {{- range .Values.extraEnv -}}
 {{- if not (kindIs "map" .) }}{{ fail "every extraEnv entry must be an object" }}{{ end -}}
 {{- if or (not (kindIs "string" .name)) (not .name) }}{{ fail "every extraEnv name must be a non-empty string" }}{{ end -}}
+{{- if regexMatch "^SELFHOST_ANALYTICS_" .name }}{{ fail "SELFHOST_ANALYTICS_* is managed by analytics and must not appear in extraEnv" }}{{ end -}}
 {{- if or (not (kindIs "string" .name)) (not (regexMatch "^[A-Za-z_][A-Za-z0-9_]*$" (toString .name))) }}{{ fail "extraEnv.name must be a valid environment variable string" }}{{ end -}}
 {{- /* Provider hyphens become underscores; reserve unset OAuth names and raw secret FILE aliases. */ -}}
 {{- if regexMatch "^SELFHOST_OAUTH_[A-Z0-9]([A-Z0-9_]*[A-Z0-9])?_(CLIENT_ID|CLIENT_SECRET|CLIENT_SECRET_FILE|SCOPES)$" .name }}{{ fail (printf "%s is managed by structured chart values and must not appear in extraEnv" .name) }}{{ end -}}
@@ -346,12 +348,12 @@ what the API would refuse at startup is refused at render time. */ -}}
 {{- if $s.relayauthEnabled }}{{ fail "services.relayhistoryBackend=native requires services.relayauthEnabled=false: this mode has no RelayAuth" }}{{ end -}}
 {{- if or $s.relayhistoryUrl $s.relayhistoryPublicUrl }}{{ fail "services.relayhistoryBackend=native takes the History origin from the session read API: leave services.relayhistoryUrl and services.relayhistoryPublicUrl empty" }}{{ end -}}
 {{- if not $secret }}{{ fail "services.relayhistoryBackend=native requires the session read API handoff (services.sessionReadApiUrl, services.sessionReadApiPublicUrl and secretKeys.sessionReadApiSecret)" }}{{ end -}}
-{{- if not .Values.secretKeys.introspectSecret }}{{ fail "services.relayhistoryBackend=native requires secretKeys.introspectSecret: the ingest edge authorizes uploads through introspection" }}{{ end -}}
+{{- if not (or .Values.secretKeys.introspectSecret .Values.introspection.existingSecret) }}{{ fail "services.relayhistoryBackend=native requires secretKeys.introspectSecret or introspection.existingSecret: the ingest edge authorizes uploads through introspection" }}{{ end -}}
 {{- with .Values.introspection.audiences }}{{ if not (has $s.sessionReadApiPublicUrl .) }}{{ fail "introspection.audiences must include services.sessionReadApiPublicUrl with services.relayhistoryBackend=native" }}{{ end }}{{ end -}}
 {{- end -}}
 {{- $audiences := .Values.introspection.audiences -}}
 {{- if not (kindIs "slice" ($audiences | default list)) }}{{ fail "introspection.audiences must be a list of http(s) origins" }}{{ end -}}
-{{- if and $audiences (not .Values.secretKeys.introspectSecret) }}{{ fail "introspection.audiences requires secretKeys.introspectSecret: without it the introspection route answers 404" }}{{ end -}}
+{{- if and $audiences (not (or .Values.secretKeys.introspectSecret .Values.introspection.existingSecret)) }}{{ fail "introspection.audiences requires secretKeys.introspectSecret or introspection.existingSecret: without it the introspection route answers 404" }}{{ end -}}
 {{- range $audiences }}{{ if not (regexMatch "^https?://[^/?#@,\\s]+$" (toString .)) }}{{ fail "introspection.audiences entries must be http(s) origins without credentials, path, query or fragment" }}{{ end }}{{ end -}}
 {{- end -}}
 {{- define "relay-control.migrationPodTemplate" -}}
