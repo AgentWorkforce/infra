@@ -45,6 +45,29 @@ class NativePipelineTests(unittest.TestCase):
         return {self.s["roles"][name]: {"name": self.s["roles"][name], "oid": n, "safe": True, "passwordAbsent": password_absent}
                 for n, name in enumerate(("consumer", "reader", "ingest"), 301)}
 
+    def test_role_claim_json_projects_numeric_oids_without_decoder_coercion(self):
+        expected = self.claims(); calls = []
+        def sql(selected, database, text, **kwargs):
+            calls.append((database, text, kwargs)); rows = deepcopy(list(expected.values()))
+            if "'oid',oid::bigint" not in text:
+                for row in rows: row["oid"] = str(row["oid"])
+            return json.dumps(rows)
+        self.adapter._psql = sql
+        self.assertEqual(self.adapter._role_claims(self.s), expected)
+        self.assertEqual(calls[0][0], "hoopdb")
+        self.assertEqual(calls[0][2], {"read_only": True})
+        self.assertIn("'oid',oid::bigint", calls[0][1])
+        for role in expected: self.assertIn("'" + role + "'", calls[0][1])
+        for value in ["301", True, False, 0, -1, 301.0, None]:
+            with self.subTest(oid=value):
+                rows = deepcopy(list(expected.values())); rows[0]["oid"] = value
+                self.adapter._psql = lambda *a, rows=rows, **k: json.dumps(rows)
+                with self.assertRaisesRegex(NativeRecipeError, "role_claim_unsafe"): self.adapter._role_claims(self.s)
+        rows = deepcopy(list(expected.values())); rows[0]["safe"] = "true"
+        self.adapter._psql = lambda *a, **k: json.dumps(rows)
+        with self.assertRaisesRegex(NativeRecipeError, "role_claim_unsafe"): self.adapter._role_claims(self.s)
+        self.assertEqual(self.stack.effects, [])
+
     def secret_writes(self):
         return [e for e in self.stack.effects if e == ("create", "Secret")]
 

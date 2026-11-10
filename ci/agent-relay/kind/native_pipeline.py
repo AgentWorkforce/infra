@@ -292,7 +292,7 @@ class NativePipelineAdapter(NativeBootstrapAdapter):
 
     def _role_claims(self, selected):
         roles = [selected["roles"][k] for k in ("consumer", "reader", "ingest")]
-        raw = self._psql(selected, "hoopdb", "SELECT coalesce(json_agg(json_build_object('name',rolname,'oid',oid,'safe',rolcanlogin AND NOT(rolsuper OR rolbypassrls OR rolcreaterole OR rolcreatedb OR rolreplication OR rolinherit) AND rolvaliduntil IS NULL,'passwordAbsent',rolpassword IS NULL) ORDER BY rolname),'[]'::json) FROM pg_authid WHERE rolname IN (" + ",".join("'" + r + "'" for r in roles) + ");", read_only=True)
+        raw = self._psql(selected, "hoopdb", "SELECT coalesce(json_agg(json_build_object('name',rolname,'oid',oid::bigint,'safe',rolcanlogin AND NOT(rolsuper OR rolbypassrls OR rolcreaterole OR rolcreatedb OR rolreplication OR rolinherit) AND rolvaliduntil IS NULL,'passwordAbsent',rolpassword IS NULL) ORDER BY rolname),'[]'::json) FROM pg_authid WHERE rolname IN (" + ",".join("'" + r + "'" for r in roles) + ");", read_only=True)
         rows = json.loads(raw)
         require(len(rows) == 3 and {r["name"] for r in rows} == set(roles) and all(r["safe"] is True and type(r["oid"]) is int and r["oid"] > 0 for r in rows), "native_runtime_role_claim_unsafe")
         return {r["name"]: r for r in rows}
