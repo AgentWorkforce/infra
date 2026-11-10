@@ -167,6 +167,7 @@ workspace is not on a static list, and its reads would answer 501. */ -}}
 {{- if and $c.ingress.enabled (not $np.publicFrom) }}{{ fail "session-read-api: ingress.enabled with networkPolicy.enabled requires networkPolicy.publicFrom, or the policy would block the ingress" }}{{ end -}}
 {{- end -}}
 {{- if not (kindIs "bool" $c.events.messageIds) }}{{ fail "session-read-api: events.messageIds must be a boolean" }}{{ end -}}
+{{- if not (kindIs "bool" $c.coordinationOverlaps.enabled) }}{{ fail "session-read-api: coordinationOverlaps.enabled must be a boolean" }}{{ end -}}
 {{- /* CORS: exact origins only, matching what the service itself accepts. */ -}}
 {{- if not (kindIs "slice" $c.cors.allowedOrigins) }}{{ fail "session-read-api: cors.allowedOrigins must be a list" }}{{ end -}}
 {{- range $o := $c.cors.allowedOrigins -}}
@@ -182,7 +183,7 @@ workspace is not on a static list, and its reads would answer 501. */ -}}
 {{- end -}}
 {{- end -}}
 {{- /* extraEnv: nothing managed above can be overridden or hidden here. */ -}}
-{{- $reserved := list "SERVICE" "RELAYHISTORY_SELFHOST_READ_API" "RELAYHISTORY_READ_API_PORT" "RELAYHISTORY_READ_API_SECRET" "READ_API_ORIGIN" "READ_API_AUTH_MODE" "READ_API_COMPLETE_SINCE" "READ_API_DIRECTORY_WORKSPACES" "READ_API_CORS_ALLOWED_ORIGINS" "RELAYHISTORY_SELFHOST_LOGIN_ADVERTISES_SYNC" "READ_API_TURNS_ASSUME_NO_LEGACY" "SEARCH_INDEX_POSTGRES_BACKEND_ID" "SEARCH_INDEX_OPENSEARCH_URL" "SEARCH_INDEX_OPENSEARCH_AUTH" "SEARCH_INDEX_OPENSEARCH_AWS_REGION" "SEARCH_INDEX_OPENSEARCH_INDEX_PREFIX" "READ_API_INTERNAL_SECRET" "READ_API_INTERNAL_SECRET_PREVIOUS" "READ_API_ACCESS_TOKEN_TTL_SECONDS" "READ_API_EVENT_MESSAGE_IDS" "SEARCH_INDEX_BACKEND" "ALLOW_IN_CLUSTER_HTTP" "RELAYAUTH_JWKS_URL" "RELAYAUTH_ISSUER" "RELAYHISTORY_ACCEPT_RELAYCONTROL_TOKENS" "RELAYCONTROL_INTROSPECT_URL" "RELAYCONTROL_INTROSPECT_SECRET" "SESSION_POSTGRES_TLS_PROFILE" "SESSION_POSTGRES_CA_FILE" "SESSION_POSTGRES_CA_SHA256" -}}
+{{- $reserved := list "SERVICE" "RELAYHISTORY_SELFHOST_READ_API" "RELAYHISTORY_READ_API_PORT" "RELAYHISTORY_READ_API_SECRET" "READ_API_ORIGIN" "READ_API_AUTH_MODE" "READ_API_COMPLETE_SINCE" "READ_API_DIRECTORY_WORKSPACES" "READ_API_CORS_ALLOWED_ORIGINS" "RELAYHISTORY_SELFHOST_LOGIN_ADVERTISES_SYNC" "READ_API_TURNS_ASSUME_NO_LEGACY" "READ_API_COORDINATION_OVERLAPS_ENABLED" "SEARCH_INDEX_POSTGRES_BACKEND_ID" "SEARCH_INDEX_OPENSEARCH_URL" "SEARCH_INDEX_OPENSEARCH_AUTH" "SEARCH_INDEX_OPENSEARCH_AWS_REGION" "SEARCH_INDEX_OPENSEARCH_INDEX_PREFIX" "READ_API_INTERNAL_SECRET" "READ_API_INTERNAL_SECRET_PREVIOUS" "READ_API_ACCESS_TOKEN_TTL_SECONDS" "READ_API_EVENT_MESSAGE_IDS" "SEARCH_INDEX_BACKEND" "ALLOW_IN_CLUSTER_HTTP" "RELAYAUTH_JWKS_URL" "RELAYAUTH_ISSUER" "RELAYHISTORY_ACCEPT_RELAYCONTROL_TOKENS" "RELAYCONTROL_INTROSPECT_URL" "RELAYCONTROL_INTROSPECT_SECRET" "SESSION_POSTGRES_TLS_PROFILE" "SESSION_POSTGRES_CA_FILE" "SESSION_POSTGRES_CA_SHA256" -}}
 {{- $seen := dict -}}
 {{- $canonical := dict -}}
 {{- range $e := $c.extraEnv -}}
