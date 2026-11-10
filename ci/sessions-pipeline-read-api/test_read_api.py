@@ -652,6 +652,25 @@ class IngestEdge(unittest.TestCase):
         self.assertIn("httpGet", default["startupProbe"])
         self.assertIn("httpGet", default["readinessProbe"])
 
+    def test_claim_lock_busy_defaults_on_in_every_admission_mode_and_can_be_disabled(self):
+        for mode in ("sync", "async", "drain"):
+            for enabled in (True, False):
+                with self.subTest(mode=mode, enabled=enabled):
+                    config = {"admission": {"mode": mode}}
+                    if not enabled:
+                        config["claimLockBusy"] = False
+                    docs = self.render(overlay=config)
+                    c = next(d for d in docs if d["kind"] == "Deployment")["spec"]["template"]["spec"]["containers"][0]
+                    entries = [e for e in c["env"] if e["name"] == "INGEST_CLAIM_LOCK_BUSY"]
+                    self.assertEqual(entries, [{"name": "INGEST_CLAIM_LOCK_BUSY", "value": "on"}] if enabled else [])
+                    self.assertEqual(c["image"].split("@")[1], "sha256:" + "f" * 64)
+
+    def test_claim_lock_busy_refuses_ambiguous_values(self):
+        for value in ("on", "true", "false", 0, 1, [], {}):
+            with self.subTest(value=value):
+                self.assertIn("ingestEdge.claimLockBusy must be a boolean",
+                              self.render(overlay={"claimLockBusy": value}, fail=True))
+
     def test_async_and_drain_emit_only_managed_admission_settings(self):
         for mode in ("async", "drain"):
             with self.subTest(mode=mode):

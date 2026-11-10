@@ -315,9 +315,35 @@ compatibility:
       images:
         session-read-api: { repository: ghcr.io/agentworkforce/96bulls-services, digest_required: true }
       notes: 'Defaults READ_API_COMPLETE_SINCE to epoch for a new self-host store populated only by its own ingest. Partial legacy imports must retain an explicit real coverage floor matching the indexer. Image, auth, routing and enabled defaults are unchanged; this does not assert coverage for an imported store or qualify a runtime.'
-    - id: sessions-pipeline-0.8.15
+    - id: sessions-pipeline-0.8.16
       status: unreleased
       current: true
+      charts: { sessions-pipeline: 0.8.16, sessions-pipeline-worker: 0.7.4, session-ingest-api: 0.4.2, session-read-api: 0.2.4 }
+      depends:
+        sessions-pipeline: { worker: 0.7.4, alleyoop: 0.4.2, sessionReadApi: 0.2.4, hoopdb: 0.9.0, session-object-storage: 5.4.0, otel: 0.178.0 }
+      images:
+        sessions-pipeline-worker: { repository: agentworkforce/96bulls-services, digest: sha256:6f22ea17dff336e1431664542759fd27958649388b90a0b2f0881883caa7c6b2 }
+        session-ingest-api: { repository: agentworkforce/96bulls-services, digest: sha256:6f22ea17dff336e1431664542759fd27958649388b90a0b2f0881883caa7c6b2 }
+        session-read-api: { repository: ghcr.io/agentworkforce/96bulls-services, digest_required: true }
+      images_note: "The aws-rds-native profile requires one approved release-overlay services digest for worker, alleyoop, sessionReadApi, ingestEdge and searchIndexer; every profile digest stays empty in source. The artifact must also include pipeline #484 for default-on claim-lock 429/Retry-After behavior; older images may ignore the new variable. The artifact must include the fresh-install search_index grants, schema through 046010, session query and coordination overlaps. Existing profile image pins are unchanged."
+      services:
+        source_commit: 7d7229bb31c121ecb98cd4e35c248fc2cf5669ad
+        migration_generation: eff8b3be46565b57ad8fa5e4a066dbb6d1fe608313d9c1680bfbcd484add259b
+      db_combos:
+        - { db_mode: selfhosted, boundary: global-default-revoke, hoopdb: cnpg, status: shipped, profiles: [selfhost-postgres, migration, aws-cnpg], notes: chart Jobs install the runtime role and the function default }
+        - { db_mode: selfhosted, boundary: global-default-revoke, hoopdb: external, status: shipped, profiles: [external-selfhosted], notes: operator runs the bootstrap files as a superuser }
+        - { db_mode: rds, boundary: global-default-revoke, hoopdb: external, status: shipped, profiles: [external-rds, aws-rds-native], notes: the RDS master runs the rds_*.sql bootstrap first }
+        - { db_mode: cloudsql, boundary: global-default-revoke, hoopdb: external, status: shipped, profiles: [gcp-cloudsql], notes: operator runs the Cloud SQL bootstrap files as the migration owner; roleBootstrap false }
+        - { db_mode: supabase, boundary: event-trigger, hoopdb: external, status: held, profiles: [external-supabase], notes: supabaseActivation.hold; migrate refuses until the reviewed event trigger is installed and --activation-check passes }
+        - { db_mode: supabase, boundary: null, hoopdb: external, status: fails closed, profiles: [aws-supabase], notes: renders; migrate refuses with function_boundary_unproven }
+        - { db_mode: local, boundary: null, hoopdb: any, status: dev only, profiles: [], notes: local stack only; never a self-host install }
+      sources:
+        - "charts/sessions-pipeline/Chart.yaml:4"
+        - "charts/sessions-pipeline/profiles/aws-rds-native.yaml"
+        - "ci/sessions-pipeline-profiles/matrix.sh"
+      notes: 'Adds managed ingestEdge.claimLockBusy, default true, emitting INGEST_CLAIM_LOCK_BUSY=on. Requires an independently qualified image containing pipeline #484; no image pin or admission mode changes. Claim lock waits become 429 with Retry-After; statement timeouts remain 503. Includes the existing AWS RDS native profile.'
+    - id: sessions-pipeline-0.8.15
+      status: shipped
       charts: { sessions-pipeline: 0.8.15, sessions-pipeline-worker: 0.7.4, session-ingest-api: 0.4.2, session-read-api: 0.2.4 }
       depends:
         sessions-pipeline: { worker: 0.7.4, alleyoop: 0.4.2, sessionReadApi: 0.2.4, hoopdb: 0.9.0, session-object-storage: 5.4.0, otel: 0.178.0 }
@@ -991,9 +1017,20 @@ compatibility:
       images:
         relayauth: { repository: ghcr.io/agentworkforce/relayauth, digest: sha256:eb71daa28e30eb7305f666d0bccc5a4002e53e8a574e3c4c32163d907a1b71df }
       notes: superseded by 0.1.1.
-    - id: agent-relay-0.6.24
+    - id: agent-relay-0.6.25
       status: unreleased
       current: true
+      charts: { agent-relay: 0.6.25, relayhistory: 0.1.3, relay-control: 0.4.5, relay-webapp: 0.2.1 }
+      app_versions: { agent-relay: 0.1.0, relayhistory: 0.1.0, relay-control: 0.1.0, relay-webapp: 0.1.0 }
+      depends:
+        agent-relay: { relaycast: 0.3.7, relayauth: 0.1.5, sessions-pipeline: 0.8.16, relayhistory: 0.1.3, relay-control: 0.4.5, relay-webapp: 0.2.1, relayflows: 0.2.5, durable-actors: 0.14.6-awf.1, relayfile: 0.2.2, telemetry-collector: 0.1.3, relay-chief: 0.1.0 }
+      images:
+        relayhistory: { repository: ghcr.io/agentworkforce/relayhistory, digest_required: true }
+        relay-control: { repository: ghcr.io/agentworkforce/relay-control, digest: sha256:d8c26d44dccb6dd21b7033288241a379e46ce5fbca69f276c4d4745001c3c3e2 }
+        relay-webapp: { repository: ghcr.io/agentworkforce/relay-webapp, digest_required: true }
+      notes: 'Carries sessions-pipeline 0.8.16 and the managed default-on claim-lock busy mapping. The qualified services image must contain pipeline #484; no image, customer target, or admission mode is selected here.'
+    - id: agent-relay-0.6.24
+      status: planned
       charts: { agent-relay: 0.6.24, relayhistory: 0.1.3, relay-control: 0.4.5, relay-webapp: 0.2.1 }
       app_versions: { agent-relay: 0.1.0, relayhistory: 0.1.0, relay-control: 0.1.0, relay-webapp: 0.1.0 }
       depends:
@@ -4926,6 +4963,32 @@ entries:
     sources:
       - "charts/relaychief-control/values.yaml"
       - "charts/relaychief-control/templates/deployment.yaml"
+
+  - id: opt.sessions-native-ingest-claim-lock-busy
+    kind: option
+    title: Native ingest claim lock retry response
+    description: |
+      Maps claim-stage lock waits to 429 delivery_busy with Retry-After 5-10s,
+      instead of 503. Requires a qualified services image containing pipeline
+      #484; older images can ignore the variable. Does not remove SQL from
+      synchronous uploads, enable async admission or change consumer backoff.
+      Statement timeouts and other database failures remain 503.
+    chart: sessions-pipeline
+    values: [ingestEdge.claimLockBusy]
+    env: [INGEST_CLAIM_LOCK_BUSY]
+    profiles: [selfhost-postgres, migration, external-selfhosted, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql, aws-rds-native]
+    status: shipped
+    provided_by: operator
+    default: true
+    profile_default: { default: true, aws-rds-native: true }
+    choices:
+      - { value: true, note: Emit on for a qualified native ingest image. }
+      - { value: false, note: Omit the variable and keep the runtime default. }
+    verify: Prove claim lock contention returns 429 with an integer Retry-After in 5-10s on the qualified image; statement timeout stays 503 and async admission backoff is unchanged. Rendering alone does not prove support.
+    sources:
+      - "charts/sessions-pipeline/values.yaml:1"
+      - "charts/sessions-pipeline/templates/ingest-edge.yaml:1"
+      - "docs/self-hosted-native-ingest.md:1"
 
   - id: opt.sessions-native-ingest-admission
     kind: option

@@ -25,7 +25,12 @@ bootstrap output. No customer credential belongs in either values file.
 
 That artifact must be qualified as one unit. It must include the schema through
 migration `046010`, the fresh-install read grants on `search_index`, and the
-session-query read path selected by `READ_API_SESSION_QUERY=true`. It must also
+session-query read path selected by `READ_API_SESSION_QUERY=true`. The ingest
+edge defaults `claimLockBusy: true`; the artifact must include pipeline #484
+before claiming 429/Retry-After behavior for claim lock contention. An older
+image can ignore that setting; no services image is selected by this change.
+This does not remove the synchronous SQL claim or enable async admission.
+The artifact must also
 implement `GET /v1/coordination/overlaps`; this profile enables that endpoint
 through `sessionReadApi.coordinationOverlaps.enabled`. A digest that starts but
 lacks any of those contracts is not acceptable: session list/search will answer

@@ -185,6 +185,8 @@ sessionReadApi:
 
 ingestEdge:
   enabled: true
+  # The approved release artifact must contain pipeline #484.
+  claimLockBusy: true
   image:
     repository: ghcr.io/agentworkforce/96bulls-services
     digest: ""
