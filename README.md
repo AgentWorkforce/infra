@@ -244,7 +244,7 @@ Where the migrator has no default, neither does the chart:
 | `runtimeWorkloadRole` | `HOOPDB_RUNTIME_WORKLOAD_ROLE` | Optional. |
 | `functionBoundaryMode` | `HOOPDB_FUNCTION_BOUNDARY_MODE` | `global-default-revoke`, or `event-trigger` in supabase mode only (refused in local, selfhosted and cloudsql, as the migrator refuses it). Required in selfhosted and cloudsql. Optional in supabase; unset, migrate fails closed. |
 
-`charts/sessions-pipeline/profiles/` ships four render shapes:
+`charts/sessions-pipeline/profiles/` ships six render shapes:
 
 - `selfhost-postgres.yaml`: a new install on the in-cluster CNPG HoopDb, in
   selfhosted mode. initdb creates the search Worker role. Before migrate, two
@@ -264,6 +264,10 @@ Where the migrator has no default, neither does the chart:
   `searchWorkerRole.bootstrapJob`.
 - `external-rds.yaml`: Amazon RDS for PostgreSQL 16+ in rds mode, in a database
   dedicated to HoopDb. The master runs the `rds_*.sql` bootstrap first.
+- `aws-rds-native.yaml`: the customer-neutral EKS shape with external RDS, S3
+  through Pod Identity, OpenSearch, and the native read, ingest, and search
+  slots. It deliberately carries no services digest or customer identifiers;
+  rendering fails until an approved private release overlay supplies them.
 - `external-selfhosted.yaml`: an external operator-controlled plain-Postgres
   HoopDb with a superuser, in selfhosted mode. There are no in-cluster
   SQL Jobs, and migrate waits for the roles. The operator runs the three
@@ -292,7 +296,7 @@ Where the migrator has no default, neither does the chart:
   Supabase steps are approved. The operator prerequisites are listed in the
   profile, including the Supabase-only bootstrap wrappers.
 
-Every profile, every CI values file, and the worker and alleyoop chart
+Every legacy profile, every CI values file, and the worker and alleyoop chart
 defaults pin the services image built from sessions-pipeline main `7d7229b`, GHCR
 `ghcr.io/agentworkforce/96bulls-services@sha256:6f22ea17dff336e1431664542759fd27958649388b90a0b2f0881883caa7c6b2`
 (publish-image run 41375745173). Its migration generation is
@@ -300,8 +304,10 @@ defaults pin the services image built from sessions-pipeline main `7d7229b`, GHC
 proof values (`charts/sessions-pipeline/ci/aws-cnpg-values.yaml`) pin the immutable ECR
 digest from the same source,
 `500268966557.dkr.ecr.us-west-2.amazonaws.com/96bulls-services@sha256:5bb6075240afa02a1b1797a81c07bffa029954eac7803d702ecba20db35d4db9`
-(publish-image-ecr run 41375747474). Every profile
-also needs `global.tenant.orgId` and `alleyoop.auth.jwksUrl`.
+(publish-image-ecr run 41375747474). The AWS RDS native profile is the exception:
+its digest is a required release-overlay input, so a withdrawn repository
+default can never become a customer pin. Every profile also needs
+`global.tenant.orgId` and `alleyoop.auth.jwksUrl`.
 
 `ci/sessions-pipeline-profiles/matrix.sh` renders every profile and every
 `charts/sessions-pipeline/ci/*-values.yaml`. Those include the AWS CNPG proof, AWS

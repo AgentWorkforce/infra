@@ -1,0 +1,227 @@
+# Customer-neutral AWS native History profile: external Amazon RDS, S3 through
+# EKS Pod Identity, OpenSearch, the session read API, ingest edge, and search
+# indexer. It intentionally does not carry an image digest or customer resource
+# identifiers. A release overlay must provide every REQUIRED input below.
+#
+# REQUIRED before render/install:
+# - global.tenant.orgId
+# - the same approved services image digest under worker, alleyoop,
+#   sessionReadApi, ingestEdge, and searchIndexer (and customer registry paths)
+# - worker/alleyoop/ingestEdge/searchIndexer locker bucket and AWS region
+# - sessionReadApi + ingestEdge public origin (the same value)
+# - alleyoop.auth.jwksUrl (retained chart validation while its legacy
+#   Deployment is disabled)
+# - sessionReadApi and searchIndexer OpenSearch URL, region, and backendId
+# - the RDS CA SHA-256 under every enabled Postgres client
+# - sessionReadApi.networkPolicy.publicFrom for the customer's ALB subnet CIDRs
+#
+# Run scripts/selfhost/rds-setup.sh pre before Helm and post only after the
+# HoopDb migration Job succeeds. This profile contains no database credential.
+global:
+  tenant:
+    orgId: ""
+
+hoopdb:
+  enabled: false
+session-object-storage:
+  enabled: false
+
+worker:
+  image:
+    repository: agentworkforce/96bulls-services
+    tag: ""
+    digest: ""
+  existingSecret: agent-relay-secrets
+  summaryEncryption:
+    existingSecret: agent-relay-secrets
+  serviceAccount:
+    create: true
+    name: agent-relay-worker
+  hoopdb:
+    existingSecret: agent-relay-secrets
+    key: HOOPDB_URL
+  migrations:
+    hoopdb:
+      existingSecret: agent-relay-secrets
+      key: HOOPDB_MIGRATION_URL
+    databaseMode: rds
+    supabaseShim: false
+    runtimeRole: sessions_pipeline_runtime
+    runtimeRoleLogin: true
+    functionBoundaryMode: global-default-revoke
+    waitForRole:
+      enabled: false
+      functionDefault: false
+  postgresCa:
+    enabled: true
+    configMap: rds-ca
+    key: ca.crt
+    sha256: ""
+  locker:
+    provider: s3
+    endpoint: ""
+    bucket: ""
+    region: ""
+    credentials:
+      mode: podIdentity
+
+alleyoop:
+  deployment:
+    enabled: false
+  image:
+    repository: agentworkforce/96bulls-services
+    tag: ""
+    digest: ""
+  existingSecret: agent-relay-secrets
+  serviceAccount:
+    create: true
+    name: agent-relay-alleyoop
+  hoopdb:
+    existingSecret: agent-relay-secrets
+    key: HOOPDB_URL
+  auth:
+    jwksUrl: ""
+  postgresCa:
+    enabled: true
+    configMap: rds-ca
+    key: ca.crt
+    sha256: ""
+  locker:
+    provider: s3
+    endpoint: ""
+    bucket: ""
+    region: ""
+    credentials:
+      mode: podIdentity
+
+searchWorkerRole:
+  bootstrapJob:
+    enabled: false
+runtimeRole:
+  bootstrapJob:
+    enabled: false
+functionDefaultRevoke:
+  bootstrapJob:
+    enabled: false
+
+sessionReadApi:
+  enabled: true
+  image:
+    repository: ghcr.io/agentworkforce/96bulls-services
+    digest: ""
+  origin: ""
+  completeSince: epoch
+  directoryWorkspaces: "*"
+  events:
+    messageIds: true
+  turns:
+    assumeNoLegacy: true
+  login:
+    advertisesSync: false
+  allowInClusterHttp: true
+  config:
+    existingSecret: agent-relay-read-api
+    key: RELAYHISTORY_READ_API_SECRET
+  postgres:
+    tlsProfile: custom-ca
+  postgresCa:
+    enabled: true
+    configMap: rds-ca
+    key: ca.crt
+    sha256: ""
+  search:
+    backend: opensearch
+    backendId: ""
+    opensearch:
+      url: ""
+      region: ""
+      indexPrefix: relayhistory
+  auth:
+    mode: self_issued
+    selfIssued:
+      internalSecret:
+        existingSecret: agent-relay-secrets
+        key: session-read-api-secret
+    relayauth:
+      jwksUrl: ""
+      issuer: ""
+    relaycontrol:
+      enabled: false
+      url: ""
+      existingSecret: ""
+  serviceAccountCreate: true
+  serviceAccountName: agent-relay-session-read
+  networkPolicy:
+    enabled: true
+    controlFrom:
+      - podSelector:
+          matchLabels:
+            app.kubernetes.io/name: relay-control
+    publicFrom: []
+  extraEnv:
+    - name: LOCKER_BUCKET
+      value: ""
+    - name: PIPELINE_ORG_FROM_PREFIX
+      value: "true"
+    - name: PIPELINE_KEY_PREFIX
+      value: 96bulls
+
+ingestEdge:
+  enabled: true
+  image:
+    repository: ghcr.io/agentworkforce/96bulls-services
+    digest: ""
+  origin: ""
+  allowInClusterHttp: true
+  relaycontrol:
+    url: http://relay-control.agent-relay.svc.cluster.local
+  config:
+    existingSecret: agent-relay-ingest-edge-runtime
+    databaseUrlKey: database-url
+    introspectSecretKey: introspect-secret
+  postgres:
+    caConfigMap: rds-ca
+    caKey: ca.crt
+    caSha256: ""
+  locker:
+    provider: s3
+    endpoint: ""
+    bucket: ""
+    region: ""
+    credentials:
+      mode: podIdentity
+    existingSecret: ""
+  sessionSelection: true
+  heartbeatAccept: true
+  serviceAccountName: agent-relay-session-ingest-api
+
+searchIndexer:
+  enabled: true
+  image:
+    repository: ghcr.io/agentworkforce/96bulls-services
+    digest: ""
+  completeSince: epoch
+  config:
+    existingSecret: search-indexer-runtime
+    key: RELAYHISTORY_PIPELINE_CONSUMER_SECRET
+  search:
+    backend: opensearch
+    backendId: ""
+    opensearch:
+      url: ""
+      region: ""
+      indexPrefix: relayhistory
+  locker:
+    provider: s3
+    endpoint: ""
+    bucket: ""
+    region: ""
+  postgres:
+    tlsProfile: custom-ca
+    caConfigMap: rds-ca
+    caKey: ca.crt
+    caSha256: ""
+  bootstrap:
+    enabled: true
+    existingSecret: search-indexer-owner
+    key: RELAYHISTORY_PIPELINE_CONSUMER_SECRET

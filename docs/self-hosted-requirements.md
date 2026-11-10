@@ -24,6 +24,7 @@ Source of truth: [`self-hosted/requirements.yaml`](../self-hosted/requirements.y
   - [migration](#profile-migration)
   - [external-selfhosted](#profile-external-selfhosted)
   - [external-rds](#profile-external-rds)
+  - [aws-rds-native](#profile-aws-rds-native)
   - [external-supabase](#profile-external-supabase)
   - [aws-cnpg](#profile-aws-cnpg)
   - [aws-supabase](#profile-aws-supabase)
@@ -156,7 +157,7 @@ Services image (sessions-pipeline-worker, alleyoop and the privileged SQL Jobs):
 | --- | --- | --- | --- | --- | --- |
 | `selfhosted` | `global-default-revoke` | cnpg | shipped | selfhost-postgres, migration, aws-cnpg | chart Jobs install the runtime role and the function default |
 | `selfhosted` | `global-default-revoke` | external | shipped | external-selfhosted | operator runs the bootstrap files as a superuser |
-| `rds` | `global-default-revoke` | external | shipped | external-rds | the RDS master runs the rds_*.sql bootstrap first |
+| `rds` | `global-default-revoke` | external | shipped | external-rds, aws-rds-native | the RDS master runs the rds_*.sql bootstrap first |
 | `cloudsql` | `global-default-revoke` | external | shipped | gcp-cloudsql | operator runs the Cloud SQL bootstrap files as the migration owner; roleBootstrap false |
 | `supabase` | `event-trigger` | external | held | external-supabase | supabaseActivation.hold; migrate refuses until the reviewed event trigger is installed and --activation-check passes |
 | `supabase` | (unset) | external | fails closed | aws-supabase | renders; migrate refuses with function_boundary_unproven |
@@ -416,6 +417,12 @@ chart `sessions-pipeline` · values [`profiles/external-rds.yaml`](../charts/ses
 | shipped | [Default-off self-host session read API container](#opt-sessions-read-api) | `disabled`, `enabled` | `disabled` | values `fullnameOverride`, `replicas`, `image.*`, `imagePullSecrets`, `port`, `probeRuntime`, `origin`, `completeSince`, `directoryWorkspaces`, `login.advertisesSync`, `turns.assumeNoLegacy`, `events.messageIds`, `serviceAccountCreate`, `allowInClusterHttp`, `config.*`, `postgres.*`, `postgresCa.*`, `search.*`, `auth.*`, `cors.*`, `ingress.*`, `networkPolicy.*`, `extraEnv`, `extraVolumes`, `extraVolumeMounts`, `serviceAccountName`, `nodeSelector`, `tolerations`, `affinity`, `podAnnotations`, `resources`; env `SERVICE`, `RELAYHISTORY_SELFHOST_READ_API`, `RELAYHISTORY_READ_API_PORT`, `RELAYHISTORY_READ_API_SECRET`, `READ_API_ORIGIN`, `READ_API_AUTH_MODE`, `READ_API_COMPLETE_SINCE`, `READ_API_DIRECTORY_WORKSPACES`, `READ_API_CORS_ALLOWED_ORIGINS`, `RELAYHISTORY_SELFHOST_LOGIN_ADVERTISES_SYNC`, `READ_API_TURNS_ASSUME_NO_LEGACY`, `READ_API_EVENT_MESSAGE_IDS`, `READ_API_INTERNAL_SECRET`, `READ_API_INTERNAL_SECRET_PREVIOUS`, `READ_API_ACCESS_TOKEN_TTL_SECONDS`, `SEARCH_INDEX_POSTGRES_BACKEND_ID`, `SEARCH_INDEX_OPENSEARCH_URL`, `SEARCH_INDEX_OPENSEARCH_AUTH`, `SEARCH_INDEX_OPENSEARCH_AWS_REGION`, `SEARCH_INDEX_OPENSEARCH_INDEX_PREFIX`, `PIPELINE_ORG_FROM_PREFIX`, `PIPELINE_KEY_PREFIX`, `SEARCH_INDEX_BACKEND`, `ALLOW_IN_CLUSTER_HTTP`, `SESSION_POSTGRES_TLS_PROFILE`, `SESSION_POSTGRES_CA_FILE`, `SESSION_POSTGRES_CA_SHA256`, `RELAYAUTH_JWKS_URL`, `RELAYAUTH_ISSUER`, `RELAYHISTORY_ACCEPT_RELAYCONTROL_TOKENS`, `RELAYCONTROL_INTROSPECT_URL`, `RELAYCONTROL_INTROSPECT_SECRET`; Secret `<read API configuration Secret>` keys `RELAYHISTORY_READ_API_SECRET`; Secret `<read API introspection Secret>` keys `RELAYCONTROL_INTROSPECT_SECRET`; Secret `<read API internal Secret>` keys `READ_API_INTERNAL_SECRET`; Secret `<read API previous internal Secret>` keys `READ_API_INTERNAL_SECRET_PREVIOUS` |
 | shipped | [Default-off self-host transcript search writer](#opt-sessions-search-indexer) | `disabled`, `enabled` | `disabled` | values `searchIndexer.*`; env `SERVICE`, `RELAYHISTORY_SELFHOST_PIPELINE_CONSUMER`, `RELAYHISTORY_PIPELINE_CONSUMER_SECRET`, `SEARCH_INDEX_BACKEND`, `SEARCH_INDEX_POSTGRES_BACKEND_ID`, `READ_API_COMPLETE_SINCE`, `PIPELINE_KEY_PREFIX`, `PIPELINE_ORG_FROM_PREFIX`, `SESSION_POSTGRES_TLS_PROFILE`, `SESSION_POSTGRES_CA_FILE`, `SESSION_POSTGRES_CA_SHA256`, `LOCKER_BUCKET`, `LOCKER_REGION`, `LOCKER_ENDPOINT`, `SEARCH_INDEX_OPENSEARCH_URL`, `SEARCH_INDEX_OPENSEARCH_AUTH`, `SEARCH_INDEX_OPENSEARCH_AWS_REGION`, `SEARCH_INDEX_OPENSEARCH_INDEX_PREFIX`, `WORKER_HEALTH_PORT`; Secret `<search indexer configuration Secret>` keys `RELAYHISTORY_PIPELINE_CONSUMER_SECRET`; Secret `<search indexer bootstrap Secret>` keys `RELAYHISTORY_PIPELINE_CONSUMER_SECRET` |
 | shipped | [Retire a legacy Deployment while retaining resources](#opt-legacy-deployment-retirement) | `true`, `false` | `true` | values `deployment.enabled` |
+
+### Profile: aws-rds-native
+
+**AWS EKS native History with external RDS, S3 and OpenSearch.** Customer-neutral production shape. It fails closed until the release overlay supplies the approved services digest, customer resource IDs, origins, RDS CA hash and ALB subnet peers. No in-cluster database or privileged SQL bootstrap Job is installed.
+
+chart `sessions-pipeline` · values [`profiles/aws-rds-native.yaml`](../charts/sessions-pipeline/profiles/aws-rds-native.yaml) · dbMode `rds` · boundary `global-default-revoke` · HoopDb external · services image RELEASE-OVERLAY · install: `helm install sessions-pipeline agentworkforce/sessions-pipeline -n agent-relay -f profiles/aws-rds-native.yaml -f /approved/private/release-values.yaml`
 
 ### Profile: external-supabase
 

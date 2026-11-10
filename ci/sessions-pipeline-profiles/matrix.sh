@@ -39,7 +39,10 @@ RUNTIME=(--set worker.migrations.runtimeRole=sessions_pipeline_runtime --set wor
 #   external  external plain Postgres: no SQL Jobs; wait for the roles only
 #   supabase  external Supabase: no SQL Jobs, no wait-for-role, no shim
 #   rds       external Amazon RDS: no SQL Jobs, no wait-for-role, no shim
+#   rds-native RDS plus the customer-native read, ingest, and OpenSearch slots;
+#              release inputs come from the synthetic render-only overlay
 MATRIX=(
+  "profiles/aws-rds-native.yaml|no|no|rds|rds-native"
   "profiles/selfhost-postgres.yaml|yes|yes|selfhosted|fresh"
   "profiles/migration.yaml|yes|yes|selfhosted|existing"
   "profiles/external-supabase.yaml|no|yes|supabase|supabase"
@@ -79,6 +82,7 @@ done
 GHCR="ghcr.io/agentworkforce/96bulls-services@sha256:6f22ea17dff336e1431664542759fd27958649388b90a0b2f0881883caa7c6b2"
 ECR="500268966557.dkr.ecr.us-west-2.amazonaws.com/96bulls-services@sha256:5bb6075240afa02a1b1797a81c07bffa029954eac7803d702ecba20db35d4db9"
 RDS_GHCR="ghcr.io/agentworkforce/96bulls-services@sha256:b2b74a19375e86bbd5c70a30ea5edbd28cac3de103490bc428de007f4a38b821"
+RDS_NATIVE_CI="ghcr.io/agentworkforce/96bulls-services@sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
 pins_of() { yq -r '[.worker.image.tag, .worker.image.digest, .alleyoop.image.tag, .alleyoop.image.digest, .privilegedSql.sqlImage.digest, .searchWorkerRole.bootstrapJob.sqlImage.digest, .runtimeRole.bootstrapJob.sqlImage.digest, .functionDefaultRevoke.bootstrapJob.sqlImage.digest] | map(select(. != null and . != "")) | join(",")' "$1"; }
 # Rendered image refs of every services container (workloads, migrate, the SQL Jobs' sql copy).
 services_refs() {
@@ -88,12 +92,13 @@ services_refs() {
 for v in "$ROOT/charts/sessions-pipeline-worker/values.yaml" "$ROOT/charts/session-ingest-api/values.yaml"; do
   [ "$(yq -r '.image.digest' "$v")" = "${GHCR#*@}" ] || err "${v#"$ROOT"/}: image.digest is not the final 7d7229b GHCR digest"
 done
-for pair in "profiles/selfhost-postgres.yaml|$GHCR" "profiles/migration.yaml|$GHCR" "profiles/external-supabase.yaml|$GHCR" "profiles/external-selfhosted.yaml|$GHCR" "profiles/external-rds.yaml|$RDS_GHCR" "ci/gcp-cloudsql-values.yaml|$GHCR" "ci/aws-cnpg-values.yaml|$ECR"; do
+for pair in "profiles/selfhost-postgres.yaml|$GHCR" "profiles/migration.yaml|$GHCR" "profiles/external-supabase.yaml|$GHCR" "profiles/external-selfhosted.yaml|$GHCR" "profiles/external-rds.yaml|$RDS_GHCR" "profiles/aws-rds-native.yaml|$RDS_NATIVE_CI" "ci/gcp-cloudsql-values.yaml|$GHCR" "ci/aws-cnpg-values.yaml|$ECR"; do
   rel=${pair%%|*} want=${pair#*|}
   extra=(); [[ $rel == profiles/* ]] && extra=("${REQUIRED[@]}")
   [[ $rel == profiles/external-supabase.yaml ]] && extra+=(--set supabaseActivation.hold=false)
   [[ $rel == profiles/external-selfhosted.yaml ]] && extra+=("${RUNTIME[@]}")
   [[ $rel == profiles/external-rds.yaml ]] && extra+=("${RUNTIME[@]}")
+  [[ $rel == profiles/aws-rds-native.yaml ]] && extra+=(-f "$CHART/ci/aws-rds-native-inputs.yaml")
   got=$(services_refs -f "$CHART/$rel" "${extra[@]}" | tr '\n' ' ' | sed 's/ $//')
   [ "$got" = "$want" ] || err "$rel: services images are [$got], want exactly [$want]"
 done
@@ -129,6 +134,9 @@ for row in "${MATRIX[@]}"; do
         expect_fail "migrations.runtimeRole is required" "${args[@]}"
         expect_fail "migrations.runtimeRoleLogin must be set (true or false) in $dbmode mode" "${args[@]}" --set worker.migrations.runtimeRole=sessions_pipeline_runtime
         args+=("${RUNTIME[@]}") ;;
+      rds-native)
+        expect_fail "image.digest requires an owner-approved compatible image" "${args[@]}"
+        args+=(-f "$CHART/ci/aws-rds-native-inputs.yaml") ;;
       supabase)
         # Fail-closed: the profile itself does not render.
         expect_fail "supabaseActivation.hold: the external-Supabase profile is fail-closed" "${args[@]}"
@@ -150,13 +158,16 @@ for row in "${MATRIX[@]}"; do
       "$GHCR") ;;
       "$ECR") [ "$rel" = ci/aws-cnpg-values.yaml ] || err "$label: ECR image outside the AWS path: $img" ;;
       "$RDS_GHCR") [ "$rel" = profiles/external-rds.yaml ] || err "$label: RDS-mode image outside the RDS profile: $img" ;;
+      "$RDS_NATIVE_CI") [ "$rel" = profiles/aws-rds-native.yaml ] || err "$label: synthetic native RDS image outside its profile: $img" ;;
       *) err "$label: non-final services image: $img" ;;
     esac
   done <<<"$imgs"
 
   # App workloads and the migrate Job, in every profile.
   deployments="ci-worker-session-status-worker ci-worker-session-summary-worker ci-session-ingest-api"
-  if [ "$rel" = ci/native-consumer-values.yaml ]; then
+  if [ "$shape" = rds-native ]; then
+    deployments="ci-worker-session-status-worker ci-worker-session-summary-worker ci-worker-session-metadata-indexer ci-read-api ci-ingest-edge ci-search-indexer"
+  elif [ "$rel" = ci/native-consumer-values.yaml ]; then
     deployments="$deployments ci-native-consumer"
     none '.kind == "Deployment" and .metadata.name == "ci-worker-session-metadata-indexer"' || err "$label: old indexer overlaps native consumer"
   else
@@ -216,7 +227,7 @@ for row in "${MATRIX[@]}"; do
     existing) jobs="search-worker-role-bootstrap hoopdb-runtime-role-bootstrap hoopdb-function-default-revoke"; roles="session_directory_search_worker sessions_pipeline_runtime"; fd=true ;;
     external) jobs=""; roles="session_directory_search_worker sessions_pipeline_runtime"; fd=false ;;
     supabase) jobs=""; roles=""; fd="" ;;
-    rds)      jobs=""; roles=""; fd="" ;;
+    rds|rds-native) jobs=""; roles=""; fd="" ;;
     native)   jobs=""; roles=""; fd="" ;;
   esac
   for c in search-worker-role-bootstrap hoopdb-runtime-role-bootstrap hoopdb-function-default-revoke; do
@@ -257,6 +268,51 @@ for row in "${MATRIX[@]}"; do
       || err "$label: server-side dry-run apply failed"
   fi
 done
+
+if [ "$mode" = static ]; then
+  echo "--- static: AWS RDS native customer contract"
+  out=$(render -f "$CHART/profiles/aws-rds-native.yaml" -f "$CHART/ci/aws-rds-native-inputs.yaml") \
+    || err "aws-rds-native: synthetic release overlay did not render"
+
+  # The release overlay supplies one immutable services artifact to every
+  # workload and Job; no chart default may leak into this profile.
+  refs=$(yq -r 'select(.kind == "Deployment" or .kind == "Job") | .spec.template.spec | ((.initContainers // []) + .containers)[] | select(.image | test("96bulls-services")) | .image' <<<"$out" | grep -v '^---$' | sort -u)
+  [ "$refs" = "$RDS_NATIVE_CI" ] || err "aws-rds-native: services images are [$refs], want only $RDS_NATIVE_CI"
+
+  for pair in \
+    "ci-read-api|agent-relay-session-read" \
+    "ci-ingest-edge|agent-relay-session-ingest-api" \
+    "ci-search-indexer|agent-relay-search-indexer" \
+    "ci-worker-session-status-worker|agent-relay-worker"; do
+    name=${pair%%|*}; sa=${pair#*|}
+    got=$(yq -r "select(.kind == \"Deployment\" and .metadata.name == \"$name\") | .spec.template.spec.serviceAccountName" <<<"$out")
+    [ "$got" = "$sa" ] || err "aws-rds-native: $name uses ServiceAccount $got, want $sa"
+  done
+
+  # Pod Identity means no static AWS/Locker key variables anywhere.
+  static_keys=$(yq -r 'select(.kind == "Deployment" or .kind == "Job") | .spec.template.spec.containers[].env[]?.name | select(. == "AWS_ACCESS_KEY_ID" or . == "AWS_SECRET_ACCESS_KEY" or . == "LOCKER_ACCESS_KEY_ID" or . == "LOCKER_SECRET_ACCESS_KEY")' <<<"$out" | grep -v '^---$' || true)
+  [ -z "$static_keys" ] || err "aws-rds-native: static object-store credentials rendered: $static_keys"
+
+  read_value() {
+    yq -r "select(.kind == \"Deployment\" and .metadata.name == \"ci-read-api\") | .spec.template.spec.containers[0].env[] | select(.name == \"$1\") | .value" <<<"$out" | grep -v '^---$'
+  }
+  [ "$(read_value READ_API_AUTH_MODE)" = self_issued ] || err "aws-rds-native: read API is not self-issued"
+  [ "$(read_value READ_API_EVENT_MESSAGE_IDS)" = true ] || err "aws-rds-native: read API message IDs are not enabled"
+  [ "$(read_value SEARCH_INDEX_BACKEND)" = opensearch ] || err "aws-rds-native: read API does not select OpenSearch"
+  [ "$(read_value LOCKER_BUCKET)" = ci-sessions ] || err "aws-rds-native: read API canonical bucket differs from ingest"
+
+  for deployment in ci-read-api ci-ingest-edge ci-search-indexer; do
+    ca=$(yq -r "select(.kind == \"Deployment\" and .metadata.name == \"$deployment\") | .spec.template.spec.containers[0].env[] | select(.name == \"SESSION_POSTGRES_CA_SHA256\") | .value" <<<"$out" | grep -v '^---$')
+    [ "$ca" = aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa ] \
+      || err "aws-rds-native: $deployment does not pin the RDS CA"
+  done
+
+  secret_refs=$(yq -r '.. | select(has("secretKeyRef")) | .secretKeyRef.name' <<<"$out" | grep -v '^---$' | sort -u)
+  for secret in agent-relay-secrets agent-relay-read-api agent-relay-ingest-edge-runtime search-indexer-runtime search-indexer-owner; do
+    grep -qxF "$secret" <<<"$secret_refs" \
+      || err "aws-rds-native: Secret $secret is not referenced"
+  done
+fi
 
 # The external-Supabase profile: sessions_pipeline_runtime with LOGIN and no workload
 # role (never the drifted legacy relayhistory_runtime), the Worker pinned to
