@@ -4,6 +4,8 @@ import hashlib
 import json
 from pathlib import Path
 import tempfile
+import subprocess
+import sys
 from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
@@ -20,6 +22,41 @@ TENANT = {"organizationId": "11111111-1111-4111-8111-111111111111",
 
 
 class Core(unittest.TestCase):
+    def test_versioned_helm_parser_lists_pending_and_failed_before_any_fresh_claim(self):
+        from stack import helm_list_all_args, StackError
+        with tempfile.TemporaryDirectory() as directory:
+            parser = Path(directory) / "helm.py"
+            parser.write_text("""import argparse,json,sys
+version,status=sys.argv[1:3];args=sys.argv[3:]
+if args==['version','--template','{{.Version}}']:
+ print(version);raise SystemExit(0)
+p=argparse.ArgumentParser();p.add_argument('list');p.add_argument('-n');p.add_argument('-o')
+if version.startswith('v3.'):p.add_argument('--all',action='store_true')
+parsed=p.parse_args(args)
+rows=[{'name':'agent-relay','namespace':'agent-relay','status':status,'revision':'1'}]
+if version.startswith('v3.') and not parsed.all and status.startswith('pending'):rows=[]
+print(json.dumps(rows))
+""")
+            for version in ("v3.17.3+g123", "v4.1.3"):
+                for status in ("deployed", "failed", "pending-install", "pending-upgrade"):
+                    with self.subTest(version=version, status=status):
+                        a = object.__new__(NativeCoreAdapter); a._release_revision = None
+                        calls = []
+                        def transport(method, argv, **kwargs):
+                            self.assertEqual(method, "cmd"); calls.append(argv)
+                            result = subprocess.run([sys.executable, str(parser), version, status, *argv[1:]], capture_output=True, text=True, check=True)
+                            return result
+                        a._transport_call = transport
+                        with self.assertRaisesRegex(NativeRecipeError, "existing_app_release"):
+                            a._helm_state(absent=True)
+                        if status == "deployed": self.assertEqual(a._helm_state(), 1)
+                        else:
+                            with self.assertRaisesRegex(NativeRecipeError, "must_be_deployed"): a._helm_state()
+                        listing = next(c for c in calls if c[1] == "list")
+                        self.assertEqual("--all" in listing, version.startswith("v3."))
+            for version in ("v2.17.0", "v5.0.0", "v4", "v4.1.3 --all", ""):
+                with self.subTest(version=version), self.assertRaises(StackError): helm_list_all_args(version)
+
     def test_omitted_deployment_strategy_matches_only_kubernetes_rollingupdate_default(self):
         expected = {"spec": {}}
         live = {"spec": {"strategy": {"type": "RollingUpdate", "rollingUpdate": {"maxSurge": "25%", "maxUnavailable": "25%"}}}}

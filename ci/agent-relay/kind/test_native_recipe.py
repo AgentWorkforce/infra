@@ -2,8 +2,11 @@
 from copy import deepcopy
 import hashlib
 import json
+import re
 from pathlib import Path
 import tempfile
+import subprocess
+import traceback
 import unittest
 from unittest.mock import patch
 
@@ -70,6 +73,54 @@ class Operations:
 
 
 class NativeRecipeTests(unittest.TestCase):
+    def test_untyped_failures_emit_only_closed_phase_diagnostics_without_source_data(self):
+        from native_recipe import NativePhaseError
+        from native_core_cli import failure_diagnostic
+        from stack import StackError
+        sensitive = "synthetic-token POSTGRES_PASSWORD /private/path SELECT secret; stderr --credential"
+        failures = [
+            (StackError(sensitive, safe_code="command_failed"), "command_failed"),
+            (StackError(sensitive, safe_code="command_timeout"), "command_timeout"),
+            (subprocess.CalledProcessError(1, [sensitive], output=sensitive, stderr=sensitive), "command_failed"),
+            (subprocess.TimeoutExpired([sensitive], 5, output=sensitive, stderr=sensitive), "command_timeout"),
+            (json.JSONDecodeError(sensitive, sensitive, 0), "invalid_response"),
+            (RuntimeError(sensitive), "unexpected_failure"),
+        ]
+        for stage in ("inspect", "verify_artifact", "render", "prepare_infrastructure", "install_control", "schema_apply"):
+            for failure, code in failures:
+                with self.subTest(stage=stage, code=code):
+                    o = Operations()
+                    def fail(*args):
+                        o.calls.append((stage, ())); raise failure
+                    setattr(o, stage, fail)
+                    try: NativeRecipe(selected()).run(o); self.fail("expected phase refusal")
+                    except NativePhaseError as error:
+                        diagnostic = failure_diagnostic(error)
+                        self.assertEqual(diagnostic, {"result": "REFUSED", "phase": stage, "errorCode": code})
+                        self.assertNotIn(sensitive, str(error))
+                        self.assertRegex(str(error), r"\Anative_phase_[A-Za-z0-9_]{1,107}\Z")
+                        self.assertNotIn(sensitive, "".join(traceback.format_exception(error)))
+                    self.assertNotIn("serve", [name for name, _ in o.calls])
+                    self.assertNotIn("record_ready", [name for name, _ in o.calls])
+                    if stage == "schema_apply": self.assertEqual(o.calls[-1][0], "finalize_owner")
+        for phase, code in ((sensitive, "command_failed"), ("install_control", sensitive), ([], "command_failed"), ("install_control", [])):
+            with self.assertRaisesRegex(NativeRecipeError, "invalid_native_phase"): NativePhaseError(phase, code)
+        error = NativePhaseError("install_control", "command_failed"); error.phase = sensitive
+        self.assertEqual(failure_diagnostic(error), {"result": "REFUSED", "errorCode": "native_core_failed_review_required"})
+
+    def test_command_boundary_classifies_failures_without_reading_sensitive_details(self):
+        from types import SimpleNamespace
+        import stack
+        from native_recipe import NativePhaseError, phase_operation
+        sensitive = "synthetic-password /private/path SQL stderr"
+        for result, expected in ((SimpleNamespace(returncode=1, stdout=sensitive, stderr=sensitive), "command_failed"),
+                                 (subprocess.TimeoutExpired([sensitive], 1, output=sensitive), "command_timeout")):
+            options = {"side_effect": result} if isinstance(result, Exception) else {"return_value": result}
+            with patch.object(stack.subprocess, "run", **options), self.assertRaises(NativePhaseError) as caught:
+                phase_operation("install_control", lambda: stack.run(["synthetic-command"], sensitive=True))
+            self.assertEqual(caught.exception.code, expected)
+            self.assertNotIn(sensitive, str(caught.exception))
+
     def test_explicit_new_store_epoch_is_supported_but_ambiguous_floor_is_not(self):
         s = selected(); s["completeSince"] = "epoch"
         self.assertEqual(selection(s)["completeSince"], "epoch")
