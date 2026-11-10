@@ -19,6 +19,11 @@ global:
     # no export. With otel.enabled below: http://otel-collector:4318
     endpoint: ""
 
+# A private release profile can require every services workload and migration
+# Job to use one reviewed immutable artifact. Default off for existing profiles.
+releaseContract:
+  unifiedServicesDigest: false
+
 # Shared by both app charts (YAML anchors keep one copy).
 shared: &shared
   # Pull credentials for the private services image: every workload and Job,

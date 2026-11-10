@@ -1,0 +1,67 @@
+# RENDER ONLY: synthetic operator inputs for profiles/aws-rds-native.yaml.
+# No address, identity, image, or credential in this file is deployable.
+global:
+  tenant:
+    orgId: org_ci
+worker:
+  image:
+    digest: sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff
+  postgresCa:
+    sha256: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+  locker:
+    bucket: ci-sessions
+    region: us-west-2
+alleyoop:
+  image:
+    digest: sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff
+  auth:
+    jwksUrl: https://api.ci.agentrelay.com/.well-known/jwks.json
+  postgresCa:
+    sha256: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+  locker:
+    bucket: ci-sessions
+    region: us-west-2
+sessionReadApi:
+  image:
+    digest: sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff
+  origin: https://history.ci.agentrelay.com
+  postgresCa:
+    sha256: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+  search:
+    backendId: ci-opensearch
+    opensearch:
+      url: https://search.ci.agentrelay.com
+      region: us-west-2
+  networkPolicy:
+    publicFrom:
+      - ipBlock: { cidr: 10.10.1.0/24 }
+      - ipBlock: { cidr: 10.10.2.0/24 }
+  extraEnv:
+    - { name: LOCKER_BUCKET, value: ci-sessions }
+    - { name: PIPELINE_ORG_FROM_PREFIX, value: "true" }
+    - { name: PIPELINE_KEY_PREFIX, value: 96bulls }
+    - { name: READ_API_SESSION_QUERY, value: "true" }
+ingestEdge:
+  image:
+    digest: sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff
+  origin: https://history.ci.agentrelay.com
+  relaycontrol:
+    url: http://ci-relay-control.ci.svc.cluster.local
+  postgres:
+    caSha256: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+  locker:
+    bucket: ci-sessions
+    region: us-west-2
+searchIndexer:
+  image:
+    digest: sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff
+  search:
+    backendId: ci-opensearch
+    opensearch:
+      url: https://search.ci.agentrelay.com
+      region: us-west-2
+  locker:
+    bucket: ci-sessions
+    region: us-west-2
+  postgres:
+    caSha256: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa

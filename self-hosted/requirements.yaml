@@ -81,6 +81,18 @@ profiles:
     db: { hoopdb: external, db_mode: rds, boundary: global-default-revoke }
     install: helm install sessions-pipeline agentworkforce/sessions-pipeline -f profiles/external-rds.yaml --set global.tenant.orgId=<org> --set alleyoop.auth.jwksUrl=<jwks url> --set worker.migrations.runtimeRole=<role> --set worker.migrations.runtimeRoleLogin=true
     summary: No in-cluster SQL Jobs; the RDS master runs the rds_*.sql bootstrap before migrate.
+  - id: aws-rds-native
+    title: AWS EKS native History with external RDS, S3 and OpenSearch
+    chart: sessions-pipeline
+    values_file: profiles/aws-rds-native.yaml
+    services_image: release-overlay
+    db: { hoopdb: external, db_mode: rds, boundary: global-default-revoke }
+    install: helm install sessions-pipeline agentworkforce/sessions-pipeline -n agent-relay -f profiles/aws-rds-native.yaml -f /approved/private/release-values.yaml
+    summary: >-
+      Customer-neutral production shape. It fails closed until the release
+      overlay supplies the approved services digest, customer resource IDs,
+      origins, RDS CA hash and ALB subnet peers. No in-cluster database or
+      privileged SQL bootstrap Job is installed.
   - id: external-supabase
     title: External Supabase project as HoopDb (fail-closed)
     chart: sessions-pipeline
@@ -279,7 +291,7 @@ compatibility:
       charts: { telemetry-collector: 0.1.0 }
       notes: 'Default-off umbrella analytics file collector. Requires accepted immutable collector and TLS-proxy images, producer and TLS Secrets and an exclusive persistent volume. Source rendering does not prove image entrypoint, TLS, durable acknowledgement, power-loss recovery or whole-application analytics coverage. The currently reviewed collector CLI registers relaycontrol events only.'
     - id: session-read-api-0.2.4
-      status: unreleased
+      status: shipped
       current: true
       charts: { session-read-api: 0.2.4 }
       images:
@@ -303,9 +315,35 @@ compatibility:
       images:
         session-read-api: { repository: ghcr.io/agentworkforce/96bulls-services, digest_required: true }
       notes: 'Defaults READ_API_COMPLETE_SINCE to epoch for a new self-host store populated only by its own ingest. Partial legacy imports must retain an explicit real coverage floor matching the indexer. Image, auth, routing and enabled defaults are unchanged; this does not assert coverage for an imported store or qualify a runtime.'
-    - id: sessions-pipeline-0.8.14
+    - id: sessions-pipeline-0.8.15
       status: unreleased
       current: true
+      charts: { sessions-pipeline: 0.8.15, sessions-pipeline-worker: 0.7.4, session-ingest-api: 0.4.2, session-read-api: 0.2.4 }
+      depends:
+        sessions-pipeline: { worker: 0.7.4, alleyoop: 0.4.2, sessionReadApi: 0.2.4, hoopdb: 0.9.0, session-object-storage: 5.4.0, otel: 0.178.0 }
+      images:
+        sessions-pipeline-worker: { repository: agentworkforce/96bulls-services, digest: sha256:6f22ea17dff336e1431664542759fd27958649388b90a0b2f0881883caa7c6b2 }
+        session-ingest-api: { repository: agentworkforce/96bulls-services, digest: sha256:6f22ea17dff336e1431664542759fd27958649388b90a0b2f0881883caa7c6b2 }
+        session-read-api: { repository: ghcr.io/agentworkforce/96bulls-services, digest_required: true }
+      images_note: "The aws-rds-native profile requires one approved release-overlay services digest for worker, alleyoop, sessionReadApi, ingestEdge and searchIndexer; every profile digest stays empty in source. The artifact must include the fresh-install search_index grants, schema through 046010, session query and coordination overlaps. Existing profile image pins are unchanged."
+      services:
+        source_commit: 7d7229bb31c121ecb98cd4e35c248fc2cf5669ad
+        migration_generation: eff8b3be46565b57ad8fa5e4a066dbb6d1fe608313d9c1680bfbcd484add259b
+      db_combos:
+        - { db_mode: selfhosted, boundary: global-default-revoke, hoopdb: cnpg, status: shipped, profiles: [selfhost-postgres, migration, aws-cnpg], notes: chart Jobs install the runtime role and the function default }
+        - { db_mode: selfhosted, boundary: global-default-revoke, hoopdb: external, status: shipped, profiles: [external-selfhosted], notes: operator runs the bootstrap files as a superuser }
+        - { db_mode: rds, boundary: global-default-revoke, hoopdb: external, status: shipped, profiles: [external-rds, aws-rds-native], notes: the RDS master runs the rds_*.sql bootstrap first }
+        - { db_mode: cloudsql, boundary: global-default-revoke, hoopdb: external, status: shipped, profiles: [gcp-cloudsql], notes: operator runs the Cloud SQL bootstrap files as the migration owner; roleBootstrap false }
+        - { db_mode: supabase, boundary: event-trigger, hoopdb: external, status: held, profiles: [external-supabase], notes: supabaseActivation.hold; migrate refuses until the reviewed event trigger is installed and --activation-check passes }
+        - { db_mode: supabase, boundary: null, hoopdb: external, status: fails closed, profiles: [aws-supabase], notes: renders; migrate refuses with function_boundary_unproven }
+        - { db_mode: local, boundary: null, hoopdb: any, status: dev only, profiles: [], notes: local stack only; never a self-host install }
+      sources:
+        - "charts/sessions-pipeline/Chart.yaml:4"
+        - "charts/sessions-pipeline/profiles/aws-rds-native.yaml"
+        - "ci/sessions-pipeline-profiles/matrix.sh"
+      notes: 'Adds the customer-neutral, fail-closed AWS RDS native profile: external RDS, S3 Pod Identity, OpenSearch, read API, ingest edge and search indexer. It carries no customer resource identifier or services digest; an approved private release overlay is mandatory. The profile enables the structured coordination-overlaps switch and the session-query path, and CI proves the shared immutable image, dedicated ServiceAccounts, verified RDS CA, Secret references and absence of static AWS keys.'
+    - id: sessions-pipeline-0.8.14
+      status: shipped
       charts: { sessions-pipeline: 0.8.14, sessions-pipeline-worker: 0.7.4, session-ingest-api: 0.4.2, session-read-api: 0.2.4 }
       depends:
         sessions-pipeline: { worker: 0.7.4, alleyoop: 0.4.2, sessionReadApi: 0.2.4, hoopdb: 0.9.0, session-object-storage: 5.4.0, otel: 0.178.0 }
@@ -953,9 +991,20 @@ compatibility:
       images:
         relayauth: { repository: ghcr.io/agentworkforce/relayauth, digest: sha256:eb71daa28e30eb7305f666d0bccc5a4002e53e8a574e3c4c32163d907a1b71df }
       notes: superseded by 0.1.1.
-    - id: agent-relay-0.6.23
+    - id: agent-relay-0.6.24
       status: unreleased
       current: true
+      charts: { agent-relay: 0.6.24, relayhistory: 0.1.3, relay-control: 0.4.5, relay-webapp: 0.2.1 }
+      app_versions: { agent-relay: 0.1.0, relayhistory: 0.1.0, relay-control: 0.1.0, relay-webapp: 0.1.0 }
+      depends:
+        agent-relay: { relaycast: 0.3.7, relayauth: 0.1.5, sessions-pipeline: 0.8.15, relayhistory: 0.1.3, relay-control: 0.4.5, relay-webapp: 0.2.1, relayflows: 0.2.5, durable-actors: 0.14.6-awf.1, relayfile: 0.2.2, telemetry-collector: 0.1.3, relay-chief: 0.1.0 }
+      images:
+        relayhistory: { repository: ghcr.io/agentworkforce/relayhistory, digest_required: true }
+        relay-control: { repository: ghcr.io/agentworkforce/relay-control, digest: sha256:d8c26d44dccb6dd21b7033288241a379e46ce5fbca69f276c4d4745001c3c3e2 }
+        relay-webapp: { repository: ghcr.io/agentworkforce/relay-webapp, digest_required: true }
+      notes: 'Carries sessions-pipeline 0.8.15 and its customer-neutral, fail-closed AWS RDS native profile. The umbrella still supplies no customer resource identifiers or release-overlay services/webapp digests.'
+    - id: agent-relay-0.6.23
+      status: planned
       charts: { agent-relay: 0.6.23, relayhistory: 0.1.3, relay-control: 0.4.5, relay-webapp: 0.2.1 }
       app_versions: { agent-relay: 0.1.0, relayhistory: 0.1.0, relay-control: 0.1.0, relay-webapp: 0.1.0 }
       depends:
@@ -1519,20 +1568,22 @@ entries:
       With locker.credentials.mode=podIdentity the charts omit LOCKER_ACCESS_KEY_ID and
       LOCKER_SECRET_ACCESS_KEY and the SDK uses the workload identity chain. Install
       the EKS Pod Identity Agent (unless EKS Auto Mode) and create the IAM
-      associations for the rendered worker and alleyoop ServiceAccounts before the
-      workloads start (GKE: Workload Identity bindings via serviceAccount.annotations).
-      The role needs the bucket, and bucket creation plus versioning unless
-      lockerInit is disabled.
+      associations for every rendered ServiceAccount before the workloads start
+      (GKE: Workload Identity bindings via serviceAccount.annotations). The AWS
+      native profile uses separate worker, native-ingest, read and search-indexer
+      identities. The workload roles need their scoped bucket/OpenSearch access;
+      Terraform owns bucket creation and versioning when lockerInit is disabled.
     chart: sessions-pipeline
-    values: [worker.locker.credentials.mode, alleyoop.locker.credentials.mode, worker.serviceAccount.annotations, alleyoop.serviceAccount.annotations]
-    profiles: [aws-cnpg, aws-supabase, gcp-cloudsql]
+    values: [worker.locker.credentials.mode, alleyoop.locker.credentials.mode, worker.serviceAccount.annotations, alleyoop.serviceAccount.annotations, worker.serviceAccount.name, alleyoop.serviceAccount.name, sessionReadApi.serviceAccountName, ingestEdge.serviceAccountName, searchIndexer.serviceAccount.name]
+    profiles: [aws-cnpg, aws-supabase, gcp-cloudsql, aws-rds-native]
     status: shipped
     provided_by: stack
     profile_values:
       aws-cnpg: { worker.locker.credentials.mode: podIdentity, alleyoop.locker.credentials.mode: podIdentity }
       aws-supabase: { worker.locker.credentials.mode: podIdentity, alleyoop.locker.credentials.mode: podIdentity }
       gcp-cloudsql: { worker.locker.credentials.mode: podIdentity, alleyoop.locker.credentials.mode: podIdentity }
-    verify: aws eks list-pod-identity-associations --cluster-name <c> (one per worker/alleyoop ServiceAccount); then the locker-init Job (or a worker) reaches the bucket
+      aws-rds-native: { worker.locker.credentials.mode: podIdentity, alleyoop.locker.credentials.mode: podIdentity, worker.serviceAccount.name: agent-relay-worker, alleyoop.serviceAccount.name: agent-relay-session-ingest-api, sessionReadApi.serviceAccountName: agent-relay-session-read, ingestEdge.serviceAccountName: agent-relay-session-ingest-api, searchIndexer.serviceAccount.name: agent-relay-search-indexer }
+    verify: aws eks list-pod-identity-associations --cluster-name <c> includes every enabled workload ServiceAccount; the worker, ingest edge and search indexer reach only their required bucket/index resources
     sources:
       - "README.md:152"
       - "charts/sessions-pipeline-worker/values.yaml:60"
@@ -1634,11 +1685,11 @@ entries:
     chart: sessions-pipeline
     values: [worker.summaryEncryption.existingSecret, worker.summaryEncryption.key, worker.summaryEncryption.mountPath, worker.summaryEncryption.fileName]
     env: [SUMMARY_MASTER_KEYS_FILE, SUMMARY_MASTER_KEYS]
-    profiles: [selfhost-postgres, migration, external-selfhosted, external-rds, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql]
+    profiles: [selfhost-postgres, migration, external-selfhosted, external-rds, aws-rds-native, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql]
     status: shipped
     provided_by: { default: operator, aws-cnpg: stack, aws-supabase: stack, gcp-cloudsql: stack }
     secrets:
-      - name: { default: sessions-pipeline-locker, aws-cnpg: 96bulls-runtime, aws-supabase: sessions-pipeline-summary, gcp-cloudsql: 96bulls-gcp }
+      - name: { default: sessions-pipeline-locker, aws-cnpg: 96bulls-runtime, aws-supabase: sessions-pipeline-summary, gcp-cloudsql: 96bulls-gcp, aws-rds-native: agent-relay-secrets }
         name_paths: [worker.summaryEncryption.existingSecret, worker.existingSecret]
         keys:
           - { key: SUMMARY_MASTER_KEYS, key_path: worker.summaryEncryption.key }
@@ -1662,22 +1713,23 @@ entries:
     chart: sessions-pipeline
     values: [worker.hoopdb.existingSecret, worker.hoopdb.key, worker.secretKeys.hoopdbUrl, alleyoop.hoopdb.existingSecret, alleyoop.hoopdb.key, alleyoop.secretKeys.hoopdbUrl]
     env: [HOOPDB_URL]
-    profiles: [selfhost-postgres, migration, external-selfhosted, external-rds, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql]
+    profiles: [selfhost-postgres, migration, external-selfhosted, external-rds, aws-rds-native, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql]
     status: shipped
-    provided_by: { default: chart, external-selfhosted: operator, external-rds: operator, external-supabase: operator, aws-supabase: stack, gcp-cloudsql: stack }
+    provided_by: { default: chart, external-selfhosted: operator, external-rds: operator, aws-rds-native: operator, external-supabase: operator, aws-supabase: stack, gcp-cloudsql: stack }
     secrets:
-      - name: { default: hoopdb-app, external-selfhosted: sessions-pipeline-hoopdb, external-rds: sessions-pipeline-hoopdb, external-supabase: sessions-pipeline-hoopdb, gcp-cloudsql: 96bulls-gcp }
+      - name: { default: hoopdb-app, external-selfhosted: sessions-pipeline-hoopdb, external-rds: sessions-pipeline-hoopdb, aws-rds-native: agent-relay-secrets, external-supabase: sessions-pipeline-hoopdb, gcp-cloudsql: 96bulls-gcp }
         name_paths: [worker.hoopdb.existingSecret, worker.existingSecret]
         keys:
-          - { key: { default: uri, external-selfhosted: HOOPDB_URL, external-rds: HOOPDB_URL, external-supabase: HOOPDB_URL, gcp-cloudsql: HOOPDB_URL }, key_path: [worker.hoopdb.key, worker.secretKeys.hoopdbUrl] }
-      - name: { default: hoopdb-app, external-selfhosted: sessions-pipeline-hoopdb, external-rds: sessions-pipeline-hoopdb, external-supabase: sessions-pipeline-hoopdb, gcp-cloudsql: 96bulls-gcp }
+          - { key: { default: uri, external-selfhosted: HOOPDB_URL, external-rds: HOOPDB_URL, aws-rds-native: HOOPDB_URL, external-supabase: HOOPDB_URL, gcp-cloudsql: HOOPDB_URL }, key_path: [worker.hoopdb.key, worker.secretKeys.hoopdbUrl] }
+      - name: { default: hoopdb-app, external-selfhosted: sessions-pipeline-hoopdb, external-rds: sessions-pipeline-hoopdb, aws-rds-native: agent-relay-secrets, external-supabase: sessions-pipeline-hoopdb, gcp-cloudsql: 96bulls-gcp }
         name_paths: [alleyoop.hoopdb.existingSecret, alleyoop.existingSecret]
         keys:
-          - { key: { default: uri, external-selfhosted: HOOPDB_URL, external-rds: HOOPDB_URL, external-supabase: HOOPDB_URL, gcp-cloudsql: HOOPDB_URL }, key_path: [alleyoop.hoopdb.key, alleyoop.secretKeys.hoopdbUrl] }
+          - { key: { default: uri, external-selfhosted: HOOPDB_URL, external-rds: HOOPDB_URL, aws-rds-native: HOOPDB_URL, external-supabase: HOOPDB_URL, gcp-cloudsql: HOOPDB_URL }, key_path: [alleyoop.hoopdb.key, alleyoop.secretKeys.hoopdbUrl] }
     verify:
       default: kubectl get secret hoopdb-app -o jsonpath='{.data.uri}' is non-empty once the CNPG Cluster is ready
       external-selfhosted: kubectl get secret sessions-pipeline-hoopdb -o jsonpath='{.data.HOOPDB_URL}' | base64 -d | psql -X -c 'select 1'
       external-rds: psql "$(kubectl get secret sessions-pipeline-hoopdb -o jsonpath='{.data.HOOPDB_URL}' | base64 -d | sed -E 's/&?uselibpqcompat=true//; s/\?&/?/')" -X -c 'select 1'
+      aws-rds-native: psql "$(kubectl get secret agent-relay-secrets -o jsonpath='{.data.HOOPDB_URL}' | base64 -d | sed -E 's/&?uselibpqcompat=true//; s/\?&/?/')" -X -c 'select 1'
       external-supabase: kubectl get secret sessions-pipeline-hoopdb -o jsonpath='{.data.HOOPDB_URL}' | base64 -d | psql -X -c 'select current_user'
     sources:
       - "charts/sessions-pipeline/values.yaml:39"
@@ -1695,17 +1747,18 @@ entries:
       migrations.hoopdb.existingSecret/key.
     chart: sessions-pipeline
     values: [worker.migrations.hoopdb.existingSecret, worker.migrations.hoopdb.key]
-    profiles: [gcp-cloudsql, external-rds]
+    profiles: [gcp-cloudsql, external-rds, aws-rds-native]
     status: shipped
-    provided_by: { default: stack, external-rds: operator }
+    provided_by: { default: stack, external-rds: operator, aws-rds-native: operator }
     secrets:
-      - name: { default: 96bulls-gcp, external-rds: sessions-pipeline-hoopdb }
+      - name: { default: 96bulls-gcp, external-rds: sessions-pipeline-hoopdb, aws-rds-native: agent-relay-secrets }
         name_paths: [worker.migrations.hoopdb.existingSecret]
         keys:
           - { key: HOOPDB_MIGRATION_URL, key_path: worker.migrations.hoopdb.key }
     verify:
       default: kubectl get secret 96bulls-gcp -o jsonpath='{.data.HOOPDB_MIGRATION_URL}' connects as the migration owner (select current_user)
       external-rds: psql "$(kubectl get secret sessions-pipeline-hoopdb -o jsonpath='{.data.HOOPDB_MIGRATION_URL}' | base64 -d | sed -E 's/&?uselibpqcompat=true//; s/\?&/?/')" -Atc 'select current_user' is the RDS master
+      aws-rds-native: psql "$(kubectl get secret agent-relay-secrets -o jsonpath='{.data.HOOPDB_MIGRATION_URL}' | base64 -d | sed -E 's/&?uselibpqcompat=true//; s/\?&/?/')" -Atc 'select current_user' is the RDS master
     sources:
       - "charts/sessions-pipeline/ci/gcp-cloudsql-values.yaml:33"
       - "charts/sessions-pipeline-worker/values.yaml:93"
@@ -1721,7 +1774,7 @@ entries:
     chart: sessions-pipeline
     values: [global.tenant.orgId, worker.tenant.orgId, alleyoop.tenant.orgId]
     env: [TENANT_ORG_ID]
-    profiles: [selfhost-postgres, migration, external-selfhosted, external-rds, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql]
+    profiles: [selfhost-postgres, migration, external-selfhosted, external-rds, aws-rds-native, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql]
     status: shipped
     provided_by: operator
     verify: helm template renders (it fails with "tenant.orgId (or global.tenant.orgId) is required" otherwise)
@@ -1739,7 +1792,7 @@ entries:
     chart: sessions-pipeline
     values: [alleyoop.auth.jwksUrl]
     env: [RELAYAUTH_JWKS_URL]
-    profiles: [selfhost-postgres, migration, external-selfhosted, external-rds, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql]
+    profiles: [selfhost-postgres, migration, external-selfhosted, external-rds, aws-rds-native, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql]
     status: shipped
     provided_by: operator
     verify: kubectl run -it --rm curl --image=curlimages/curl -- curl -fsS <jwksUrl> returns {"keys":[...]}
@@ -1758,7 +1811,7 @@ entries:
     chart: sessions-pipeline
     values: [alleyoop.auth.jwksUrl, alleyoop.auth.localJwks, alleyoop.auth.issuer, alleyoop.auth.audience, alleyoop.secretKeys.jwksJson]
     env: [RELAYAUTH_JWKS_URL, JWKS_JSON, AUTH_ISSUER, AUTH_AUDIENCE]
-    profiles: [selfhost-postgres, migration, external-selfhosted, external-rds, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql]
+    profiles: [selfhost-postgres, migration, external-selfhosted, external-rds, aws-rds-native, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql]
     status: shipped
     provided_by: operator
     default: jwksUrl
@@ -1791,7 +1844,7 @@ entries:
     chart: sessions-pipeline
     values: [alleyoop.allowInClusterHttp, worker.allowInClusterHttp]
     env: [ALLOW_IN_CLUSTER_HTTP]
-    profiles: [selfhost-postgres, migration, external-selfhosted, external-rds, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql]
+    profiles: [selfhost-postgres, migration, external-selfhosted, external-rds, aws-rds-native, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql]
     status: shipped
     provided_by: operator
     default: false
@@ -1828,10 +1881,11 @@ entries:
     chart: [sessions-pipeline, relay-control, relayhistory, relaychief-control, relayfile-control]
     values: [worker.postgresCa.*, alleyoop.postgresCa.*, "relay-control:postgresCa.*", "relayhistory:postgresCa.*", "relaychief-control:postgresCa.*", "relayfile-control:postgresCa.*"]
     env: [NODE_EXTRA_CA_CERTS, PGSSLROOTCERT]
-    profiles: [selfhost-postgres, migration, external-selfhosted, external-rds, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql, relayhistory, relay-control, agent-relay, relaychief-control, relayfile-control]
+    profiles: [selfhost-postgres, migration, external-selfhosted, external-rds, aws-rds-native, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql, relayhistory, relay-control, agent-relay, relaychief-control, relayfile-control]
     status: shipped
     provided_by: operator
     default: false
+    profile_default: { default: false, aws-rds-native: true }
     choices:
       - { value: false }
       - { value: true }
@@ -1919,12 +1973,13 @@ entries:
       external databases too, though the migrations at 7d7229b do not use it.
     chart: sessions-pipeline
     values: [hoopdb.cluster.imageName, hoopdb.cluster.initdb.postInitApplicationSQL]
-    profiles: [selfhost-postgres, migration, external-selfhosted, external-rds, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql]
+    profiles: [selfhost-postgres, migration, external-selfhosted, external-rds, aws-rds-native, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql]
     status: shipped
-    provided_by: { default: chart, external-selfhosted: operator, external-rds: operator, external-supabase: operator, aws-supabase: operator, gcp-cloudsql: stack }
+    provided_by: { default: chart, external-selfhosted: operator, external-rds: operator, aws-rds-native: operator, external-supabase: operator, aws-supabase: operator, gcp-cloudsql: stack }
     verify:
       default: psql "$HOOPDB_URL" -Atc "select name from pg_available_extensions where name in ('pg_trgm','btree_gin','vector')" lists all three; server_version_num >= 170000
       external-rds: with uselibpqcompat=true removed from the URL (psql rejects it), psql "$HOOPDB_URL" -Atc "select name from pg_available_extensions where name in ('pg_trgm','btree_gin','vector')" lists all three; server_version_num >= 160000
+      aws-rds-native: with uselibpqcompat=true removed from the URL (psql rejects it), psql "$HOOPDB_URL" -Atc "select name from pg_available_extensions where name in ('pg_trgm','btree_gin','vector')" lists all three; server_version_num >= 160000
     sources:
       - "charts/sessions-pipeline/values.yaml:99"
       - "charts/sessions-pipeline/values.yaml:119"
@@ -1941,12 +1996,13 @@ entries:
       database holds nothing else. The in-cluster HoopDb is dedicated by construction.
     chart: sessions-pipeline
     values: [hoopdb.cluster.initdb.database, hoopdb.cluster.initdb.owner]
-    profiles: [selfhost-postgres, migration, aws-cnpg, external-selfhosted, external-rds, gcp-cloudsql]
+    profiles: [selfhost-postgres, migration, aws-cnpg, external-selfhosted, external-rds, aws-rds-native, gcp-cloudsql]
     status: shipped
-    provided_by: { default: chart, external-selfhosted: operator, external-rds: operator, gcp-cloudsql: stack }
+    provided_by: { default: chart, external-selfhosted: operator, external-rds: operator, aws-rds-native: operator, gcp-cloudsql: stack }
     verify:
       default: psql "$HOOPDB_URL" -Atc "select nspname from pg_namespace where nspname not like 'pg_%' and nspname <> 'information_schema'" shows only HoopDb schemas
       external-rds: with uselibpqcompat=true removed from the URL (psql rejects it), psql "$HOOPDB_URL" -Atc "select nspname from pg_namespace where nspname not like 'pg_%' and nspname <> 'information_schema'" shows only HoopDb schemas
+      aws-rds-native: with uselibpqcompat=true removed from the URL (psql rejects it), psql "$HOOPDB_URL" -Atc "select nspname from pg_namespace where nspname not like 'pg_%' and nspname <> 'information_schema'" shows only HoopDb schemas
     sources:
       - "charts/sessions-pipeline/profiles/external-selfhosted.yaml:2"
       - "charts/sessions-pipeline/values.yaml:275"
@@ -1962,12 +2018,13 @@ entries:
       rds_migration_roles.sql does (shim off); Supabase has them natively.
     chart: sessions-pipeline
     values: [hoopdb.cluster.initdb.postInitApplicationSQL, worker.migrations.supabaseShim]
-    profiles: [selfhost-postgres, migration, aws-cnpg, external-selfhosted, external-rds, external-supabase, aws-supabase, gcp-cloudsql]
+    profiles: [selfhost-postgres, migration, aws-cnpg, external-selfhosted, external-rds, aws-rds-native, external-supabase, aws-supabase, gcp-cloudsql]
     status: shipped
-    provided_by: { default: chart, external-selfhosted: migrator, external-rds: operator, external-supabase: operator, aws-supabase: operator, gcp-cloudsql: operator }
+    provided_by: { default: chart, external-selfhosted: migrator, external-rds: operator, aws-rds-native: operator, external-supabase: operator, aws-supabase: operator, gcp-cloudsql: operator }
     verify:
       default: psql "$HOOPDB_URL" -Atc "select count(*) from pg_roles where rolname in ('anon','authenticated','service_role')" is 3
       external-rds: with uselibpqcompat=true removed from the URL (psql rejects it), psql "$HOOPDB_URL" -Atc "select count(*) from pg_roles where rolname in ('anon','authenticated','service_role')" is 3
+      aws-rds-native: with uselibpqcompat=true removed from the URL (psql rejects it), psql "$HOOPDB_URL" -Atc "select count(*) from pg_roles where rolname in ('anon','authenticated','service_role')" is 3
     sources:
       - "charts/sessions-pipeline/values.yaml:122"
       - "charts/sessions-pipeline/ci/gcp-cloudsql-values.yaml:5"
@@ -1984,16 +2041,18 @@ entries:
       databases from the operator (Supabase uses the transactional _supabase wrapper).
     chart: sessions-pipeline
     values: [hoopdb.cluster.initdb.postInitApplicationSQL, searchWorkerRole.bootstrapJob.enabled, searchWorkerRole.bootstrapJob.sqlPath, worker.migrations.waitForRole.role]
-    profiles: [selfhost-postgres, migration, aws-cnpg, external-selfhosted, external-rds, external-supabase, aws-supabase, gcp-cloudsql]
+    profiles: [selfhost-postgres, migration, aws-cnpg, external-selfhosted, external-rds, aws-rds-native, external-supabase, aws-supabase, gcp-cloudsql]
     status: shipped
-    provided_by: { default: chart, external-selfhosted: operator, external-rds: operator, external-supabase: operator, aws-supabase: operator, gcp-cloudsql: operator }
+    provided_by: { default: chart, external-selfhosted: operator, external-rds: operator, aws-rds-native: operator, external-supabase: operator, aws-supabase: operator, gcp-cloudsql: operator }
     profile_values:
       migration: { searchWorkerRole.bootstrapJob.enabled: true }
       selfhost-postgres: { searchWorkerRole.bootstrapJob.enabled: false }
+      aws-rds-native: { searchWorkerRole.bootstrapJob.enabled: false }
     verify:
       default: psql "$HOOPDB_URL" -Atc "select rolcanlogin, rolconfig from pg_roles where rolname='session_directory_search_worker'" is f|{statement_timeout=2s}
       external-selfhosted: run supabase/bootstrap/session_directory_search_worker.sql as a superuser; then the same query
       external-rds: the master runs supabase/bootstrap/rds_migration_roles.sql; then, with uselibpqcompat=true removed from the URL (psql rejects it), the same query
+      aws-rds-native: the master runs supabase/bootstrap/rds_migration_roles.sql; then, with uselibpqcompat=true removed from the URL (psql rejects it), the same query
       external-supabase: run supabase/bootstrap/session_directory_search_worker_supabase.sql as postgres; then the same query
       gcp-cloudsql: run supabase/bootstrap/session_directory_search_worker.sql as the migration owner; then the same query
     sources:
@@ -2018,19 +2077,21 @@ entries:
     chart: sessions-pipeline
     values: [worker.migrations.runtimeRole, worker.migrations.runtimeRoleLogin, runtimeRole.bootstrapJob.enabled, runtimeRole.bootstrapJob.sqlPath]
     env: [HOOPDB_RUNTIME_ROLE, HOOPDB_RUNTIME_ROLE_LOGIN]
-    profiles: [selfhost-postgres, migration, aws-cnpg, external-selfhosted, external-rds, external-supabase, aws-supabase, gcp-cloudsql]
+    profiles: [selfhost-postgres, migration, aws-cnpg, external-selfhosted, external-rds, aws-rds-native, external-supabase, aws-supabase, gcp-cloudsql]
     status: shipped
-    provided_by: { default: chart, external-selfhosted: operator, external-rds: operator, external-supabase: operator, aws-supabase: operator, gcp-cloudsql: operator }
+    provided_by: { default: chart, external-selfhosted: operator, external-rds: operator, aws-rds-native: operator, external-supabase: operator, aws-supabase: operator, gcp-cloudsql: operator }
     profile_values:
       selfhost-postgres: { worker.migrations.runtimeRole: sessions_pipeline_runtime, worker.migrations.runtimeRoleLogin: true, runtimeRole.bootstrapJob.enabled: true }
       migration: { worker.migrations.runtimeRole: sessions_pipeline_runtime, runtimeRole.bootstrapJob.enabled: true }
       external-selfhosted: { worker.migrations.runtimeRole: "", worker.migrations.runtimeRoleLogin: null }
       external-rds: { worker.migrations.runtimeRole: "", worker.migrations.runtimeRoleLogin: null }
+      aws-rds-native: { worker.migrations.runtimeRole: sessions_pipeline_runtime, worker.migrations.runtimeRoleLogin: true, runtimeRole.bootstrapJob.enabled: false }
       external-supabase: { worker.migrations.runtimeRole: sessions_pipeline_runtime, worker.migrations.runtimeRoleLogin: true }
       gcp-cloudsql: { worker.migrations.runtimeRole: sessions_pipeline_runtime }
     verify:
       default: psql "$HOOPDB_URL" -Atc "select rolsuper, rolcreatedb, rolcreaterole, rolreplication, rolbypassrls, rolcanlogin from pg_roles where rolname='sessions_pipeline_runtime'" is f|f|f|f|f|t; migrate refuses otherwise
       external-rds: with uselibpqcompat=true removed from the URL (psql rejects it), psql "$HOOPDB_URL" -Atc "select rolsuper, rolcreatedb, rolcreaterole, rolreplication, rolbypassrls, rolcanlogin from pg_roles where rolname='sessions_pipeline_runtime'" is f|f|f|f|f|t; migrate refuses otherwise
+      aws-rds-native: with uselibpqcompat=true removed from the URL (psql rejects it), psql "$HOOPDB_URL" -Atc "select rolsuper, rolcreatedb, rolcreaterole, rolreplication, rolbypassrls, rolcanlogin from pg_roles where rolname='sessions_pipeline_runtime'" is f|f|f|f|f|t; migrate refuses otherwise
     sources:
       - "charts/sessions-pipeline/templates/hoopdb-runtime-role-bootstrap.yaml:17"
       - "charts/sessions-pipeline/values.yaml:250"
@@ -2056,17 +2117,19 @@ entries:
       Supabase.
     chart: sessions-pipeline
     values: [functionDefaultRevoke.bootstrapJob.enabled, functionDefaultRevoke.bootstrapJob.sqlPath, worker.migrations.waitForRole.functionDefault]
-    profiles: [selfhost-postgres, migration, aws-cnpg, external-selfhosted, external-rds, external-supabase, aws-supabase, gcp-cloudsql]
+    profiles: [selfhost-postgres, migration, aws-cnpg, external-selfhosted, external-rds, aws-rds-native, external-supabase, aws-supabase, gcp-cloudsql]
     status: shipped
-    provided_by: { default: chart, external-selfhosted: operator, external-rds: operator, external-supabase: operator, aws-supabase: operator, gcp-cloudsql: operator }
+    provided_by: { default: chart, external-selfhosted: operator, external-rds: operator, aws-rds-native: operator, external-supabase: operator, aws-supabase: operator, gcp-cloudsql: operator }
     profile_values:
       selfhost-postgres: { functionDefaultRevoke.bootstrapJob.enabled: true, worker.migrations.waitForRole.functionDefault: true }
       external-selfhosted: { functionDefaultRevoke.bootstrapJob.enabled: false }
       external-rds: { functionDefaultRevoke.bootstrapJob.enabled: false }
+      aws-rds-native: { functionDefaultRevoke.bootstrapJob.enabled: false }
       external-supabase: { functionDefaultRevoke.bootstrapJob.enabled: false }
     verify:
       default: 'the function-default Job completes and migrate''s wait-for-role logs "present: ... + owner function default"'
       external-rds: migrate completes; it refuses with function_boundary_unproven unless rds_owner_function_default_revoke.sql has run
+      aws-rds-native: migrate completes; it refuses with function_boundary_unproven unless rds_owner_function_default_revoke.sql has run
       external-supabase: migrate.ts --activation-check with HOOPDB_DB_MODE=supabase HOOPDB_FUNCTION_BOUNDARY_MODE=event-trigger reports event_trigger.verified true
       aws-supabase: no boundary is selected in this shape; migrate refuses with function_boundary_unproven until one is
     sources:
@@ -2110,7 +2173,7 @@ entries:
       via extraEnv or component env.
     chart: sessions-pipeline
     env: [HOOPDB_ROLE_VERIFY]
-    profiles: [selfhost-postgres, migration, external-selfhosted, external-rds, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql]
+    profiles: [selfhost-postgres, migration, external-selfhosted, external-rds, aws-rds-native, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql]
     status: shipped
     provided_by: chart
     verify: kubectl get job -l app.kubernetes.io/component=hoopdb-migrate -o yaml shows HOOPDB_ROLE_VERIFY "true"; workloads go ready after migrate
@@ -2128,7 +2191,7 @@ entries:
       these eks.hoopdb.backend cnpg|external (cnpg is proof/sandbox stages only there).
     chart: sessions-pipeline
     values: [hoopdb.enabled]
-    profiles: [selfhost-postgres, migration, external-selfhosted, external-rds, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql]
+    profiles: [selfhost-postgres, migration, external-selfhosted, external-rds, aws-rds-native, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql]
     status: shipped
     provided_by: operator
     default: cnpg
@@ -2153,11 +2216,11 @@ entries:
     chart: sessions-pipeline
     values: [worker.migrations.databaseMode]
     env: [HOOPDB_DB_MODE]
-    profiles: [selfhost-postgres, migration, external-selfhosted, external-rds, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql]
+    profiles: [selfhost-postgres, migration, external-selfhosted, external-rds, aws-rds-native, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql]
     status: shipped
     provided_by: operator
     default: null
-    profile_default: { default: selfhosted, external-supabase: supabase, aws-supabase: supabase, gcp-cloudsql: cloudsql, external-rds: rds }
+    profile_default: { default: selfhosted, external-supabase: supabase, aws-supabase: supabase, gcp-cloudsql: cloudsql, external-rds: rds, aws-rds-native: rds }
     choices:
       - { value: selfhosted }
       - { value: cloudsql }
@@ -2183,7 +2246,7 @@ entries:
     chart: sessions-pipeline
     values: [worker.migrations.functionBoundaryMode]
     env: [HOOPDB_FUNCTION_BOUNDARY_MODE, HOOPDB_FUNCTION_BOUNDARY_APPROVED]
-    profiles: [selfhost-postgres, migration, external-selfhosted, external-rds, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql]
+    profiles: [selfhost-postgres, migration, external-selfhosted, external-rds, aws-rds-native, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql]
     status: shipped
     provided_by: operator
     default: null
@@ -2207,11 +2270,11 @@ entries:
     chart: sessions-pipeline
     values: [worker.migrations.supabaseShim]
     env: [HOOPDB_SUPABASE_SHIM]
-    profiles: [selfhost-postgres, migration, external-selfhosted, external-rds, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql]
+    profiles: [selfhost-postgres, migration, external-selfhosted, external-rds, aws-rds-native, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql]
     status: shipped
     provided_by: operator
     default: null
-    profile_default: { default: true, external-supabase: false, aws-supabase: false, gcp-cloudsql: false, external-rds: false }
+    profile_default: { default: true, external-supabase: false, aws-supabase: false, gcp-cloudsql: false, external-rds: false, aws-rds-native: false }
     choices:
       - { value: true }
       - { value: false }
@@ -2231,7 +2294,7 @@ entries:
     chart: sessions-pipeline
     values: [worker.migrations.roleBootstrap]
     env: [HOOPDB_ROLE_BOOTSTRAP]
-    profiles: [selfhost-postgres, migration, external-selfhosted, external-rds, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql]
+    profiles: [selfhost-postgres, migration, external-selfhosted, external-rds, aws-rds-native, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql]
     status: shipped
     provided_by: operator
     default: null
@@ -2253,7 +2316,7 @@ entries:
     chart: sessions-pipeline
     values: [worker.migrations.runtimeWorkloadRole]
     env: [HOOPDB_RUNTIME_WORKLOAD_ROLE]
-    profiles: [selfhost-postgres, migration, external-selfhosted, external-rds, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql]
+    profiles: [selfhost-postgres, migration, external-selfhosted, external-rds, aws-rds-native, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql]
     status: shipped
     provided_by: operator
     default: ""
@@ -2276,16 +2339,17 @@ entries:
       rds mode.
     chart: sessions-pipeline
     values: [worker.migrations.waitForRole.enabled, worker.migrations.waitForRole.functionDefault, worker.migrations.waitForRole.image, worker.migrations.waitForRole.intervalSeconds, worker.migrations.waitForRole.role]
-    profiles: [selfhost-postgres, migration, external-selfhosted, external-rds, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql]
+    profiles: [selfhost-postgres, migration, external-selfhosted, external-rds, aws-rds-native, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql]
     status: shipped
     provided_by: chart
     default: true
-    profile_default: { default: true, external-supabase: false, aws-supabase: false, external-rds: false }
+    profile_default: { default: true, external-supabase: false, aws-supabase: false, external-rds: false, aws-rds-native: false }
     profile_values:
       external-supabase: { worker.migrations.waitForRole.enabled: false }
       aws-supabase: { worker.migrations.waitForRole.enabled: false }
       external-selfhosted: { worker.migrations.waitForRole.enabled: true, worker.migrations.waitForRole.functionDefault: false }
       external-rds: { worker.migrations.waitForRole.enabled: false, worker.migrations.waitForRole.functionDefault: false }
+      aws-rds-native: { worker.migrations.waitForRole.enabled: false, worker.migrations.waitForRole.functionDefault: false }
     choices:
       - { value: true }
       - { value: false, note: supabase and rds mode only }
@@ -2330,11 +2394,11 @@ entries:
       worker.hoopdb URL. Set both or neither.
     chart: sessions-pipeline
     values: [worker.migrations.hoopdb.existingSecret, worker.migrations.hoopdb.key]
-    profiles: [selfhost-postgres, migration, external-selfhosted, external-rds, external-supabase, aws-cnpg, aws-supabase]
+    profiles: [selfhost-postgres, migration, external-selfhosted, external-rds, aws-rds-native, external-supabase, aws-cnpg, aws-supabase]
     status: shipped
     provided_by: operator
     default: ""
-    profile_default: { default: "", external-rds: sessions-pipeline-hoopdb/HOOPDB_MIGRATION_URL }
+    profile_default: { default: "", external-rds: sessions-pipeline-hoopdb/HOOPDB_MIGRATION_URL, aws-rds-native: agent-relay-secrets/HOOPDB_MIGRATION_URL }
     choices:
       - { value: "", note: migrate uses HOOPDB_URL }
       - { value: "<secret>/<key>", note: owner URL for migrate only }
@@ -2358,11 +2422,11 @@ entries:
     chart: sessions-pipeline
     values: [session-object-storage.enabled, worker.locker.endpoint, worker.locker.bucket, worker.locker.region, alleyoop.locker.endpoint, alleyoop.locker.bucket, alleyoop.locker.region, worker.lockerInit.enabled]
     env: [LOCKER_ENDPOINT, LOCKER_BUCKET, LOCKER_REGION]
-    profiles: [selfhost-postgres, migration, external-selfhosted, external-rds, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql]
+    profiles: [selfhost-postgres, migration, external-selfhosted, external-rds, aws-rds-native, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql]
     status: shipped
     provided_by: operator
     default: minio
-    profile_default: { default: minio, aws-cnpg: external, aws-supabase: external, gcp-cloudsql: external }
+    profile_default: { default: minio, aws-cnpg: external, aws-supabase: external, gcp-cloudsql: external, aws-rds-native: external }
     choices:
       - { value: minio }
       - { value: external, note: S3 / GCS bucket }
@@ -2377,11 +2441,11 @@ entries:
     description: secret reads the LOCKER_* keys from existingSecret; podIdentity omits both static credential env vars so the SDK uses workload identity.
     chart: sessions-pipeline
     values: [worker.locker.credentials.mode, alleyoop.locker.credentials.mode]
-    profiles: [selfhost-postgres, migration, external-selfhosted, external-rds, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql]
+    profiles: [selfhost-postgres, migration, external-selfhosted, external-rds, aws-rds-native, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql]
     status: shipped
     provided_by: operator
     default: secret
-    profile_default: { default: secret, aws-cnpg: podIdentity, aws-supabase: podIdentity, gcp-cloudsql: podIdentity }
+    profile_default: { default: secret, aws-cnpg: podIdentity, aws-supabase: podIdentity, gcp-cloudsql: podIdentity, aws-rds-native: podIdentity }
     choices:
       - { value: secret }
       - { value: podIdentity }
@@ -2409,7 +2473,7 @@ entries:
     chart: sessions-pipeline
     values: [worker.locker.provider, alleyoop.locker.provider, worker.extraEnv, alleyoop.extraEnv]
     env: [LOCKER_PROVIDER, PIPELINE_RAW_PROVIDER, CLOUD_SQL_CONNECTION_NAME, REDIS_HOST, REDIS_PORT, REDIS_AUTH_ENABLED, REDIS_TRANSIT_ENCRYPTION, REDIS_TLS_CA_PEM, PUBSUB_TOPIC, PUBSUB_SUBSCRIPTION]
-    profiles: [selfhost-postgres, migration, external-selfhosted, external-rds, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql]
+    profiles: [selfhost-postgres, migration, external-selfhosted, external-rds, aws-rds-native, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql]
     status: shipped
     provided_by: operator
     default: s3
@@ -2428,20 +2492,23 @@ entries:
     kind: option
     title: Services image registry
     description: |
-      ghcr (the chart default, private: needs req.secret.image-pull) or the immutable
-      ECR digest of the same build for hosted EKS (node role pulls, no pull Secret).
-      Overriding repository or tag requires clearing or matching the digest. See the
-      compatibility matrix for the pinned digests.
+      ghcr (the chart default, private: needs req.secret.image-pull), the immutable
+      ECR digest of the same build for hosted EKS (node role pulls, no pull Secret),
+      or the AWS native profile's mandatory private release overlay. That overlay
+      must set one approved digest on all five services workloads. Overriding a
+      repository or tag requires clearing or matching the digest. See the compatibility
+      matrix for the pinned digests.
     chart: sessions-pipeline
     values: [worker.image.repository, worker.image.digest, worker.image.tag, alleyoop.image.repository, alleyoop.image.digest, alleyoop.image.tag, global.imageRegistry]
-    profiles: [selfhost-postgres, migration, external-selfhosted, external-rds, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql]
+    profiles: [selfhost-postgres, migration, external-selfhosted, external-rds, aws-rds-native, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql]
     status: shipped
     provided_by: chart
     default: ghcr
-    profile_default: { default: ghcr, aws-cnpg: ecr }
+    profile_default: { default: ghcr, aws-cnpg: ecr, aws-rds-native: release-overlay }
     choices:
       - { value: ghcr }
       - { value: ecr, note: AWS path only }
+      - { value: release-overlay, note: AWS RDS native profile; one qualified digest across worker, alleyoop, read, ingest and indexer }
     verify: ci/sessions-pipeline-profiles/matrix.sh asserts every row renders only the pinned images
     sources:
       - "charts/sessions-pipeline-worker/values.yaml:22"
@@ -2458,7 +2525,7 @@ entries:
     chart: sessions-pipeline
     values: [global.otel.endpoint, otel.enabled, otel.config.*]
     env: [OTEL_EXPORTER_OTLP_ENDPOINT]
-    profiles: [selfhost-postgres, migration, external-selfhosted, external-rds, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql]
+    profiles: [selfhost-postgres, migration, external-selfhosted, external-rds, aws-rds-native, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql]
     status: shipped
     provided_by: operator
     default: ""
@@ -2479,7 +2546,7 @@ entries:
     chart: sessions-pipeline
     values: [worker.tenant.workspaceId, worker.deployment.name, worker.deployment.id, worker.environment, alleyoop.tenant.workspaceId, alleyoop.deployment.name, alleyoop.deployment.id, alleyoop.environment]
     env: [WORKSPACE_ID, DEPLOYMENT, DEPLOYMENT_ID, ENVIRONMENT]
-    profiles: [selfhost-postgres, migration, external-selfhosted, external-rds, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql]
+    profiles: [selfhost-postgres, migration, external-selfhosted, external-rds, aws-rds-native, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql]
     status: shipped
     provided_by: operator
     default: { workspaceId: default, deployment: selfhost, environment: production }
@@ -2497,7 +2564,7 @@ entries:
     chart: sessions-pipeline
     values: [worker.workerHealth.*]
     env: [WORKER_HEALTH_PORT, WORKER_UNHEALTHY_AFTER_FAILURES, WORKER_MAX_TICK_AGE_MS]
-    profiles: [selfhost-postgres, migration, external-selfhosted, external-rds, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql]
+    profiles: [selfhost-postgres, migration, external-selfhosted, external-rds, aws-rds-native, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql]
     status: shipped
     provided_by: chart
     default: true
@@ -2516,7 +2583,7 @@ entries:
     chart: sessions-pipeline
     values: [worker.components.bob-costas.env]
     env: [BOB_COSTAS_MODEL]
-    profiles: [selfhost-postgres, migration, external-selfhosted, external-rds, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql]
+    profiles: [selfhost-postgres, migration, external-selfhosted, external-rds, aws-rds-native, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql]
     status: shipped
     provided_by: chart
     default: "off"
@@ -2578,7 +2645,7 @@ entries:
     chart: sessions-pipeline
     values: [worker.components.session-brief.enabled, worker.components.session-brief.replicas, worker.nativeBrief.enabled, worker.nativeBrief.image.*, worker.nativeBrief.workspaceIds, worker.nativeBrief.model, worker.nativeBrief.baseUrl, worker.nativeBrief.allowInClusterHttp, worker.nativeBrief.keyPrefix, worker.nativeBrief.sweepSeconds, worker.nativeBrief.batch, worker.nativeBrief.globalDailyCap, worker.nativeBrief.sessionDailyCap, worker.nativeBrief.openaiEgress.*, worker.postgresCa.sha256]
     env: [SESSION_BRIEF_ENABLED, SESSION_BRIEF_CANONICAL_INPUT, SESSION_BRIEF_WORKSPACE_IDS, SESSION_BRIEF_MODEL, SESSION_BRIEF_SWEEP_SECONDS, SESSION_BRIEF_BATCH, SESSION_BRIEF_GLOBAL_DAILY_CAP, SESSION_BRIEF_SESSION_DAILY_CAP, PIPELINE_ORG_FROM_PREFIX, PIPELINE_KEY_PREFIX, OPENAI_BASE_URL]
-    profiles: [selfhost-postgres, migration, external-selfhosted, external-rds, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql]
+    profiles: [selfhost-postgres, migration, external-selfhosted, external-rds, aws-rds-native, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql]
     status: shipped
     provided_by: operator
     default: false
@@ -4365,31 +4432,35 @@ entries:
       Separate SERVICE=session-ingest Deployment and ClusterIP from merged
       pipeline #363/974e6f74; does not replace internal alleyoop-ingest. Requires
       a qualified immutable image, normalized public origin, introspection base
-      URL, runtime and S3 Secret references, and a pinned PostgreSQL custom CA.
-      Canonical inline test/pilot assembly only. No ingress, role bootstrap,
-      publication, GC, product deletion, provider removal or profile enablement.
+      URL, runtime Secret, S3 Secret or workload identity, and a pinned PostgreSQL custom CA.
+      The aws-rds-native profile is the only install profile that enables it,
+      through a mandatory qualified release overlay. No ingress, role bootstrap,
+      publication, GC, product deletion or provider removal is implied.
     chart: sessions-pipeline
     values: [ingestEdge.*]
     env: [SERVICE, RELAYHISTORY_SELFHOST_INGEST, RELAYHISTORY_SELFHOST_SESSION_SELECTION, RELAYHISTORY_SELFHOST_HEARTBEAT_ACCEPT, RELAYHISTORY_INGEST_PORT, RELAYHISTORY_INGEST_ORIGIN, RELAYCONTROL_INTROSPECT_URL, RELAYCONTROL_INTROSPECT_SECRET, RELAYHISTORY_INGEST_DATABASE_URL, SESSION_POSTGRES_TLS_PROFILE, SESSION_POSTGRES_CA_FILE, SESSION_POSTGRES_CA_SHA256, RELAYHISTORY_INGEST_PG_POOL_MAX, ALLOW_IN_CLUSTER_HTTP, LOCKER_PROVIDER, LOCKER_BUCKET, LOCKER_ENDPOINT, LOCKER_REGION, LOCKER_ACCESS_KEY_ID, LOCKER_SECRET_ACCESS_KEY, INGEST_KEY_ROOT, INGEST_MAX_PER_USER, INGEST_MAX_PER_ORG]
-    profiles: [selfhost-postgres, migration, external-selfhosted, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql]
+    profiles: [selfhost-postgres, migration, external-selfhosted, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql, aws-rds-native]
     status: shipped
     provided_by: operator
     default: disabled
+    profile_default: { default: disabled, aws-rds-native: enabled }
     choices:
       - { value: disabled }
       - { value: enabled, note: Requires a qualified native image and explicit pilot plan. }
     secrets:
-      - name: "<native ingest runtime Secret>"
+      - name: { default: "<native ingest runtime Secret>", aws-rds-native: agent-relay-ingest-edge-runtime }
         name_paths: [ingestEdge.config.existingSecret]
         keys:
           - { key: database-url, key_path: ingestEdge.config.databaseUrlKey }
           - { key: introspect-secret, key_path: ingestEdge.config.introspectSecretKey }
-      - name: "<native ingest object-store Secret>"
+      - name: { default: "<native ingest object-store Secret>", aws-rds-native: "<not used: EKS Pod Identity>" }
         name_paths: [ingestEdge.locker.existingSecret]
         keys:
           - { key: access-key-id, key_path: ingestEdge.locker.accessKeyIdKey }
           - { key: secret-access-key, key_path: ingestEdge.locker.secretAccessKeyKey }
-    verify: Keep disabled until merged composition and exact image/generation pass native PG/TLS/MinIO upload-to-readback proof. Helm readiness is not an authorization, schema, object-store or migration barrier.
+    verify:
+      default: Keep disabled until merged composition and exact image/generation pass native PG/TLS/MinIO upload-to-readback proof.
+      aws-rds-native: The qualified release overlay must pass native RDS/TLS/S3 upload-to-readback proof; Helm readiness is not an authorization, schema, object-store or migration barrier.
     sources:
       - "charts/sessions-pipeline/templates/ingest-edge.yaml:1"
       - "charts/sessions-pipeline/values.yaml:1"
@@ -4422,40 +4493,43 @@ entries:
       (postgres by default); search.clickhouse.enabled reads an external
       ClickHouse from the read API Secret. Introspection uses its own Secret
       reference. Readiness requires health JSON enabled:true; dormant HTTP 200 is
-      insufficient. No install profile enables this option. The old
+      insufficient. The aws-rds-native profile is the only install profile that
+      enables this option, through a mandatory qualified release overlay. The old
       sessions-pipeline readApi key refuses to render with a migration message.
-      The approved PG-only/canonical/auth runtime assembly remains unqualified,
-      so this entry does not claim runtime availability or proof.
+      Source configuration alone does not claim runtime availability or proof.
       coordinationOverlaps.enabled is separately default off and emits
       READ_API_COORDINATION_OVERLAPS_ENABLED=true only when selected.
     chart: session-read-api
     values: [fullnameOverride, replicas, image.*, imagePullSecrets, port, probeRuntime, origin, completeSince, directoryWorkspaces, login.advertisesSync, turns.assumeNoLegacy, events.messageIds, coordinationOverlaps.enabled, serviceAccountCreate, allowInClusterHttp, config.*, postgres.*, postgresCa.*, search.*, auth.*, cors.*, ingress.*, networkPolicy.*, extraEnv, extraVolumes, extraVolumeMounts, serviceAccountName, nodeSelector, tolerations, affinity, podAnnotations, resources]
     env: [SERVICE, RELAYHISTORY_SELFHOST_READ_API, RELAYHISTORY_READ_API_PORT, RELAYHISTORY_READ_API_SECRET, READ_API_ORIGIN, READ_API_AUTH_MODE, READ_API_COMPLETE_SINCE, READ_API_DIRECTORY_WORKSPACES, READ_API_CORS_ALLOWED_ORIGINS, RELAYHISTORY_SELFHOST_LOGIN_ADVERTISES_SYNC, READ_API_TURNS_ASSUME_NO_LEGACY, READ_API_EVENT_MESSAGE_IDS, READ_API_COORDINATION_OVERLAPS_ENABLED, READ_API_INTERNAL_SECRET, READ_API_INTERNAL_SECRET_PREVIOUS, READ_API_ACCESS_TOKEN_TTL_SECONDS, SEARCH_INDEX_POSTGRES_BACKEND_ID, SEARCH_INDEX_OPENSEARCH_URL, SEARCH_INDEX_OPENSEARCH_AUTH, SEARCH_INDEX_OPENSEARCH_AWS_REGION, SEARCH_INDEX_OPENSEARCH_INDEX_PREFIX, PIPELINE_ORG_FROM_PREFIX, PIPELINE_KEY_PREFIX, SEARCH_INDEX_BACKEND, ALLOW_IN_CLUSTER_HTTP, SESSION_POSTGRES_TLS_PROFILE, SESSION_POSTGRES_CA_FILE, SESSION_POSTGRES_CA_SHA256, RELAYAUTH_JWKS_URL, RELAYAUTH_ISSUER, RELAYHISTORY_ACCEPT_RELAYCONTROL_TOKENS, RELAYCONTROL_INTROSPECT_URL, RELAYCONTROL_INTROSPECT_SECRET]
-    profiles: [selfhost-postgres, migration, external-selfhosted, external-rds, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql]
+    profiles: [selfhost-postgres, migration, external-selfhosted, external-rds, aws-rds-native, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql]
     status: shipped
     provided_by: operator
     default: disabled
+    profile_default: { default: disabled, aws-rds-native: enabled }
     choices:
       - { value: disabled }
       - { value: enabled, note: Requires an owner-approved compatible runtime. }
     secrets:
-      - name: "<read API configuration Secret>"
-        name_paths: ["session-read-api:config.existingSecret"]
+      - name: { default: "<read API configuration Secret>", aws-rds-native: agent-relay-read-api }
+        name_paths: [sessionReadApi.config.existingSecret, "session-read-api:config.existingSecret"]
         keys:
           - { key: RELAYHISTORY_READ_API_SECRET, key_path: "session-read-api:config.key" }
-      - name: "<read API introspection Secret>"
-        name_paths: ["session-read-api:auth.relaycontrol.existingSecret"]
+      - name: { default: "<read API introspection Secret>", aws-rds-native: "<not used: self-issued auth>" }
+        name_paths: [sessionReadApi.auth.relaycontrol.existingSecret, "session-read-api:auth.relaycontrol.existingSecret"]
         keys:
           - { key: RELAYCONTROL_INTROSPECT_SECRET, key_path: "session-read-api:auth.relaycontrol.key" }
-      - name: "<read API internal Secret>"
-        name_paths: ["session-read-api:auth.selfIssued.internalSecret.existingSecret"]
+      - name: { default: "<read API internal Secret>", aws-rds-native: agent-relay-secrets }
+        name_paths: [sessionReadApi.auth.selfIssued.internalSecret.existingSecret, "session-read-api:auth.selfIssued.internalSecret.existingSecret"]
         keys:
-          - { key: READ_API_INTERNAL_SECRET, key_path: "session-read-api:auth.selfIssued.internalSecret.key" }
-      - name: "<read API previous internal Secret>"
-        name_paths: ["session-read-api:auth.selfIssued.previousInternalSecret.existingSecret"]
+          - { key: { default: READ_API_INTERNAL_SECRET, aws-rds-native: session-read-api-secret }, key_path: [sessionReadApi.auth.selfIssued.internalSecret.key, "session-read-api:auth.selfIssued.internalSecret.key"] }
+      - name: { default: "<read API previous internal Secret>", aws-rds-native: "<not configured>" }
+        name_paths: [sessionReadApi.auth.selfIssued.previousInternalSecret.existingSecret, "session-read-api:auth.selfIssued.previousInternalSecret.existingSecret"]
         keys:
           - { key: READ_API_INTERNAL_SECRET_PREVIOUS, key_path: "session-read-api:auth.selfIssued.previousInternalSecret.key" }
-    verify: Leave disabled until the image and assembly contract land; render/schema/probe tests prove plumbing only. Authenticated workspace reads need the approved runtime.
+    verify:
+      default: Leave disabled until the image and assembly contract land; render/schema/probe tests prove plumbing only.
+      aws-rds-native: Prove authenticated workspace list/event reads and coordination overlaps with the exact qualified release image; render/schema/probe tests prove plumbing only.
     sources:
       - "charts/session-read-api/templates/deployment.yaml:1"
       - "charts/session-read-api/values.yaml:1"
@@ -4474,27 +4548,31 @@ entries:
       connection JSON in a Secret, and an owner-role bootstrap (the chart's
       bootstrap Job, or a run acknowledged by the operator). The ServiceAccount
       must carry the search indexer Pod Identity association and the Locker
-      read grant. No install profile enables this option.
+      read grant. The aws-rds-native profile is the only install profile that
+      enables this option, through a mandatory qualified release overlay.
     chart: sessions-pipeline
     values: [searchIndexer.*]
     env: [SERVICE, RELAYHISTORY_SELFHOST_PIPELINE_CONSUMER, RELAYHISTORY_PIPELINE_CONSUMER_SECRET, SEARCH_INDEX_BACKEND, SEARCH_INDEX_POSTGRES_BACKEND_ID, READ_API_COMPLETE_SINCE, PIPELINE_KEY_PREFIX, PIPELINE_ORG_FROM_PREFIX, SESSION_POSTGRES_TLS_PROFILE, SESSION_POSTGRES_CA_FILE, SESSION_POSTGRES_CA_SHA256, LOCKER_BUCKET, LOCKER_REGION, LOCKER_ENDPOINT, SEARCH_INDEX_OPENSEARCH_URL, SEARCH_INDEX_OPENSEARCH_AUTH, SEARCH_INDEX_OPENSEARCH_AWS_REGION, SEARCH_INDEX_OPENSEARCH_INDEX_PREFIX, WORKER_HEALTH_PORT]
-    profiles: [selfhost-postgres, migration, external-selfhosted, external-rds, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql]
+    profiles: [selfhost-postgres, migration, external-selfhosted, external-rds, aws-rds-native, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql]
     status: shipped
     provided_by: operator
     default: disabled
+    profile_default: { default: disabled, aws-rds-native: enabled }
     choices:
       - { value: disabled }
       - { value: enabled, note: Requires a services image with the OpenSearch writer and the indexer role's Locker grant. }
     secrets:
-      - name: "<search indexer configuration Secret>"
+      - name: { default: "<search indexer configuration Secret>", aws-rds-native: search-indexer-runtime }
         name_paths: [searchIndexer.config.existingSecret]
         keys:
           - { key: RELAYHISTORY_PIPELINE_CONSUMER_SECRET, key_path: searchIndexer.config.key }
-      - name: "<search indexer bootstrap Secret>"
+      - name: { default: "<search indexer bootstrap Secret>", aws-rds-native: search-indexer-owner }
         name_paths: [searchIndexer.bootstrap.existingSecret]
         keys:
           - { key: RELAYHISTORY_PIPELINE_CONSUMER_SECRET, key_path: searchIndexer.bootstrap.key }
-    verify: Leave disabled until the image and the role grants land; render tests prove plumbing only. kubectl logs of the indexer report pipeline consumer ticks, and search hits come back through the read API once it is enabled.
+    verify:
+      default: Leave disabled until the image and the role grants land; render tests prove plumbing only.
+      aws-rds-native: With the exact qualified release image, verify indexer consumer ticks and search hits through the read API; render tests prove plumbing only.
     sources:
       - "charts/sessions-pipeline/templates/search-indexer.yaml:1"
       - "charts/sessions-pipeline/values.yaml:1"
@@ -4865,10 +4943,11 @@ entries:
     chart: sessions-pipeline
     values: [ingestEdge.admission.mode, ingestEdge.admission.concurrency, ingestEdge.admission.scanIntervalMs, ingestEdge.admission.maxAttempts]
     env: [SELFHOST_INGEST_ADMISSION, SELFHOST_ADMISSION_CONCURRENCY, SELFHOST_ADMISSION_SCAN_MS, SELFHOST_ADMISSION_MAX_ATTEMPTS]
-    profiles: [selfhost-postgres, migration, external-selfhosted, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql]
+    profiles: [selfhost-postgres, migration, external-selfhosted, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql, aws-rds-native]
     status: shipped
     provided_by: operator
     default: sync
+    profile_default: { default: sync, aws-rds-native: sync }
     choices:
       - { value: sync, note: Existing synchronous upload admission; emits no new mode variables. }
       - { value: async, note: Requires a qualified conditional-write store and native async image. Queued is not indexed. }
@@ -4999,10 +5078,11 @@ entries:
     description: Omit only the legacy auth, History or ingest Deployment after a verified replacement and drain. Services, PVCs and all other resources remain managed. This does not switch routing, migrate data or qualify a replacement.
     chart: [relayauth, relayhistory, session-ingest-api]
     values: [deployment.enabled]
-    profiles: [relayauth, relayhistory, agent-relay, selfhost-postgres, external-selfhosted, external-rds]
+    profiles: [relayauth, relayhistory, agent-relay, selfhost-postgres, external-selfhosted, external-rds, aws-rds-native]
     status: shipped
     provided_by: operator
     default: true
+    profile_default: { default: true, aws-rds-native: false }
     choices:
       - { value: true }
       - { value: false, note: Requires a verified replacement, drained old Deployment and actual-current render review. }

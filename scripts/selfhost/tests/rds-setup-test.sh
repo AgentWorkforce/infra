@@ -65,7 +65,9 @@ case " $* " in
   *" create secret generic "*) printf 'apiVersion: v1\nkind: Secret\nmetadata: {name: fixture}\n'; exit 0 ;;
   *" create configmap "*) printf 'apiVersion: v1\nkind: ConfigMap\nmetadata: {name: fixture}\n'; exit 0 ;;
   *" get job agent-relay-rds-pre -o jsonpath="*|*" get job agent-relay-rds-post -o jsonpath="*) printf '1'; exit 0 ;;
-  *" get jobs -o json "*) printf '%s\n' '{"items":[{"metadata":{"name":"sessions-pipeline-worker-migrate-1"},"status":{"succeeded":1}}]}'; exit 0 ;;
+  *" get job sessions-pipeline-worker-migrate-current -o json "*)
+    printf '%s\n' '{"metadata":{"name":"sessions-pipeline-worker-migrate-current","labels":{"app.kubernetes.io/instance":"agent-relay","app.kubernetes.io/component":"hoopdb-migrate"}},"status":{"succeeded":1}}'
+    exit 0 ;;
   *" logs job/"*) printf 'fixture job completed\n'; exit 0 ;;
 esac
 exit 0
@@ -79,6 +81,9 @@ export RDS_HOST="customer-db.example.invalid"
 export RDS_ADMIN_SECRET_ARN="arn:aws:secretsmanager:us-west-2:111122223333:secret:fixture"
 export SERVICES_IMAGE="ghcr.io/agentworkforce/sessions-pipeline@sha256:1111111111111111111111111111111111111111111111111111111111111111"
 export NAMESPACE="agent-relay"
+export KUBE_CONTEXT="customer-context"
+export RELEASE="agent-relay"
+export MIGRATION_JOB="sessions-pipeline-worker-migrate-current"
 export STATE_DIR
 
 set +e
@@ -107,9 +112,17 @@ pre_output="$(bash "${RDS_SETUP}" pre 2>&1)"
 [[ "$(stat -c '%a' "${STATE_DIR}/secret-files/agent-relay-secrets")" == 700 ]] || fail "secret directory mode is not 0700"
 pass "pre mode creates private credential files without leaking secrets"
 
+set +e
+wrong_release_output="$(RELEASE=another-release bash "${RDS_SETUP}" post 2>&1)"
+wrong_release_rc=$?
+set -e
+[[ "${wrong_release_rc}" != 0 ]] || fail "post mode accepted migration evidence from another release"
+[[ "${wrong_release_output}" == *"has not succeeded for release another-release"* ]] || fail "wrong-release refusal was unclear"
+pass "post mode refuses migration evidence from another release"
+
 post_output="$(bash "${RDS_SETUP}" post 2>&1)"
 [[ "${post_output}" == *"post done"* ]] || fail "post mode did not finish"
 [[ "${post_output}" != *"admin-secret-material"* ]] || fail "admin password leaked in post mode"
-grep -q 'get jobs -o json' "${COMMAND_LOG}" || fail "post mode did not verify the migration Job"
+grep -q -- '--context customer-context -n agent-relay get job sessions-pipeline-worker-migrate-current -o json' "${COMMAND_LOG}" || fail "post mode did not verify the exact current migration Job in the selected context"
 grep -q 'agent-relay-rds-post' "${COMMAND_LOG}" || fail "post bootstrap Job was not applied"
 pass "post mode requires migration evidence and activates runtime roles"

@@ -19,9 +19,9 @@ The release owner supplies one tested release packet:
 | --- | --- |
 | Infrastructure and application versions | An immutable infra commit, chart package and image inventory, including CPU architectures and customer ECR locations. |
 | RDS setup | A supported RDS bootstrap/LOGIN procedure, separate service databases, owner/runtime roles, verified TLS and completed migrations. |
-| Application wiring | Control sign-in, native ingest/read routes, authoritative PostgreSQL messaging, S3 and the selected OpenSearch/Lambda path tested together. |
+| Application wiring | Control sign-in, native ingest/read routes, authoritative PostgreSQL messaging, S3 and the selected OpenSearch/Lambda path tested together. The Sessions artifact includes schema generation `046010`, fresh-install `search_index` read grants, the session-query path and the coordination-overlaps endpoint. |
 | Desktop | Signed customer-profile installers, a working download location and the correct server, URL scheme and update feed. |
-| Operator controls | Capture policy, pre-upload scrubbing, authorized deletion and disabled add-ons verified in the actual client and app. |
+| Operator controls | Capture policy, pre-upload scrubbing, authorized deletion and disabled add-ons verified in the actual client and app. Do not claim client-side scrubbing until the selected Desktop build contains the release-qualified R9 scrubber. |
 | Recovery | A successful isolated restore and a reviewed upgrade/recovery procedure for this exact release. |
 
 Open work is tracked in the [application proof](terraform-helm-application-proof.md),
@@ -139,6 +139,7 @@ export RDS_HOST="$(terraform output -raw database_host)"
 export RDS_ADMIN_SECRET_ARN="$(terraform output -raw database_admin_secret_arn)"
 export SERVICES_IMAGE='<customer-registry>/sessions-pipeline@sha256:<approved-digest>'
 export NAMESPACE=agent-relay
+export KUBE_CONTEXT=<approved-kube-context>
 export STATE_DIR=/approved/private/agent-relay-install
 scripts/selfhost/rds-setup.sh pre
 ```
@@ -184,6 +185,11 @@ Use the release packet's complete RDS values overlay. The historical
    qualified [native ingest](self-hosted-native-ingest.md) and
    [session reader](self-hosted-session-read-api.md) profile from the packet.
    Do not enable a slot without its supported image, role and authentication contract.
+   For the AWS RDS native profile, keep `READ_API_SESSION_QUERY=true` and verify
+   a fresh database can list sessions and read events before accepting the
+   services digest. Verify `GET /v1/coordination/overlaps` with an authorized
+   workspace token too. A 501 from session list, 503 from events, or 404 from
+   overlaps blocks release.
 4. For a core pilot, set `components.relayflows: false`; leave Relayfile and
    Chief uninstalled unless selected. Verify the matching server and UI
    capability behavior in the [controls checklist](enterprise-customer-controls.md).
@@ -202,13 +208,43 @@ permits this **first-install** command:
 helm install "$RELEASE" "$CHART_PACKAGE" \
   --kube-context "$KUBE_CONTEXT" --namespace "$NAMESPACE" \
   --create-namespace --values /approved/private/customer.values.yaml \
-  --no-hooks --wait --wait-for-jobs --timeout 20m
+  --no-hooks --timeout 20m
 ```
 
-Run the packet's ordered pre-install SQL/Jobs before this command where required.
+Do not add `--wait` to this first command. The read API, ingest edge and search
+indexer cannot become ready until their RDS logins are activated, while login
+activation must wait for the HoopDb migration Job. Complete that barrier in
+order:
+
+```sh
+MIGRATION_JOB="$(
+  helm get manifest "$RELEASE" --kube-context "$KUBE_CONTEXT" \
+    --namespace "$NAMESPACE" |
+    yq -r 'select(.kind == "Job" and .metadata.labels."app.kubernetes.io/component" == "hoopdb-migrate") | .metadata.name'
+)"
+[[ -n "$MIGRATION_JOB" && "$MIGRATION_JOB" != *$'\n'* ]] || {
+  echo "expected exactly one current HoopDb migrate Job" >&2
+  exit 1
+}
+kubectl --context "$KUBE_CONTEXT" -n "$NAMESPACE" wait \
+  --for=condition=complete "job/$MIGRATION_JOB" --timeout=20m &&
+KUBE_CONTEXT="$KUBE_CONTEXT" RELEASE="$RELEASE" MIGRATION_JOB="$MIGRATION_JOB" \
+  scripts/selfhost/rds-setup.sh post
+kubectl --context "$KUBE_CONTEXT" -n "$NAMESPACE" rollout restart \
+  deployment/$RELEASE-read-api deployment/$RELEASE-ingest-edge \
+  deployment/$RELEASE-search-indexer
+kubectl --context "$KUBE_CONTEXT" -n "$NAMESPACE" rollout status deployment \
+  --selector "app.kubernetes.io/instance=$RELEASE" --timeout=20m
+```
+
+Inspect every Job before running `post`; a failed or missing current migration
+blocks activation. Run the packet's ordered pre-install SQL/Jobs before the
+Helm command where required.
 For an existing release, follow the [pre-upgrade gate](../scripts/selfhost/README.md#pre-upgrade-gate)
 and use `helm upgrade` with its reviewed package and values. Do not add `--install`
-to an upgrade, or `--atomic` to a database-changing installation.
+to an upgrade, or `--atomic` to a database-changing installation. If the
+upgrade rotates or creates RDS logins, use the same migrate-then-post ordering
+rather than waiting on Deployments first.
 
 **Checkpoint:** required Jobs complete and workloads become ready. Inspect a
 failed Job or missing image/profile instead of bypassing a verifier.
@@ -241,6 +277,11 @@ client-facing origins through VPN/ZTNA, including selected upload endpoints.
 1. Open the approved app's `/login` page and sign in through customer SSO.
    Confirm the organization/workspace, then invite pilot users in Members.
    Verify an uninvited account is refused.
+   Microsoft Entra issuers that omit `email_verified` need the narrowly scoped
+   `SELFHOST_OIDC_TRUST_MISSING_EMAIL_VERIFIED_ISSUER` setting for that exact
+   issuer in `relay-control.extraEnv`; never use it as a generic trust bypass.
+   Until the release packet records a successful real-IdP SSO acceptance run,
+   use the qualified password/email-link flow for day-one onboarding.
 2. If no sign-in method is configured, have the identity administrator finish
    OIDC/SMTP. For first-owner recovery, the customer's authorized Kubernetes
    operator uses the [device approval runbook](operator-device-login.md).
@@ -253,7 +294,9 @@ client-facing origins through VPN/ZTNA, including selected upload endpoints.
    workspace and code in the normal signed-in browser, approve only that
    request, and verify Desktop connects to the same customer workspace.
 5. Confirm the effective administrator capture policy and pre-upload scrubber.
-   Browser sign-in alone does not prove Desktop is connected.
+   Browser sign-in alone does not prove Desktop is connected. A server-side
+   scrub result also does not prove client-side pre-upload scrubbing; verify the
+   selected Desktop build carries the release-qualified R9 scrubber first.
 
 **Checkpoint:** a real pilot user can complete SSO, install the correct Desktop
 profile and approve their own device without Kubernetes or bootstrap access.
@@ -265,6 +308,11 @@ profile and approve their own device without Kubernetes or bootstrap access.
 - Capture a short real agent session with a harmless unique marker and the
   release's synthetic secret-test value. Verify removal **before upload**,
   then find the same session in app list, transcript and search.
+- After first sign-in, copy the real workspace ID into the umbrella release
+  overlay's `sessions-pipeline.worker.nativeBrief.workspaceIds`, apply that
+  corrected overlay through the reviewed upgrade procedure, and only then
+  enable descriptions. This is an explicit bounded list; never use `"*"`, and
+  add later workspaces deliberately.
 - Retry the supported delivery once and verify one logical result. Restart the
   relevant workloads and confirm durable readback and PostgreSQL messaging.
 - Use a second workspace/user to verify cross-tenant denial. Check that each

@@ -18,6 +18,9 @@
 #   PSQL_IMAGE             <repository>@sha256:... the PostgreSQL client image
 #   NAMESPACE              default agent-relay
 #   STATE_DIR              default $HOME/.agent-relay-install (mode 0700)
+#   KUBE_CONTEXT           kubectl context; empty uses the current context
+#   RELEASE                required in post mode; exact Helm release name
+#   MIGRATION_JOB          required in post mode; current rendered migrate Job
 #
 # It is safe to run again: existing roles, databases and generated passwords are
 # reused. It prints no passwords or connection strings. Credentials are written
@@ -42,6 +45,7 @@ PW_DIR="$STATE_DIR/passwords"
 FILES="$STATE_DIR/secret-files"
 JOB_TIMEOUT_SECONDS="${JOB_TIMEOUT_SECONDS:-600}"
 SQL_DIR=/app/supabase/bootstrap
+KUBE_CONTEXT="${KUBE_CONTEXT:-}"
 
 log() { printf '%s %s\n' "$(date -u +%H:%M:%SZ)" "$*"; }
 die() { log "ERROR: $*" >&2; exit 1; }
@@ -49,6 +53,9 @@ die() { log "ERROR: $*" >&2; exit 1; }
 for tool in aws kubectl jq openssl curl; do
   command -v "$tool" >/dev/null || die "$tool is not installed"
 done
+KUBECTL_CONTEXT_ARGS=()
+if [[ -n "$KUBE_CONTEXT" ]]; then KUBECTL_CONTEXT_ARGS=(--context "$KUBE_CONTEXT"); fi
+kubectl() { command kubectl "${KUBECTL_CONTEXT_ARGS[@]}" "$@"; }
 [[ "$SERVICES_IMAGE" == *@sha256:* ]] || die "SERVICES_IMAGE must be pinned by digest"
 [[ "$PSQL_IMAGE" == *@sha256:* ]] || die "PSQL_IMAGE must be pinned by digest"
 if [[ "$SERVICES_IMAGE" == *__* ]]; then die "SERVICES_IMAGE still holds a placeholder"; fi
@@ -283,16 +290,25 @@ EOS
 }
 
 do_post() {
+  : "${RELEASE:?set RELEASE to the exact Helm release name}"
+  : "${MIGRATION_JOB:?set MIGRATION_JOB to the current rendered migrate Job name}"
+  [[ "$MIGRATION_JOB" =~ ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$ ]] || die "MIGRATION_JOB must be a DNS-1123 label"
   local p
   for p in bulls96_read_api bulls96_session_ingest search_consumer_runtime; do
     [[ -s "$PW_DIR/$p" ]] || die "missing $p password: run '$0 pre' first"
   done
 
-  # helm --wait does not report a failed migrate Job, so check it here.
-  local migrated
-  migrated="$(kubectl -n "$NS" get jobs -o json | jq -r \
-    '[.items[] | select(.metadata.name | contains("worker-migrate")) | .status.succeeded // 0] | add // 0')"
-  [[ "$migrated" -ge 1 ]] || die "the HoopDb migrate Job has not succeeded yet"
+  # Refuse evidence from an older content-addressed Job or another release.
+  # MIGRATION_JOB comes from the selected release's current Helm manifest.
+  local migration_json
+  migration_json="$(kubectl -n "$NS" get job "$MIGRATION_JOB" -o json)" \
+    || die "current HoopDb migrate Job $MIGRATION_JOB does not exist"
+  jq -e --arg release "$RELEASE" '
+    .metadata.labels["app.kubernetes.io/instance"] == $release and
+    .metadata.labels["app.kubernetes.io/component"] == "hoopdb-migrate" and
+    (.status.succeeded // 0) >= 1
+  ' <<<"$migration_json" >/dev/null \
+    || die "current HoopDb migrate Job $MIGRATION_JOB has not succeeded for release $RELEASE"
 
   cat > "$WORK/run.sh" <<'EOS'
 set -eu

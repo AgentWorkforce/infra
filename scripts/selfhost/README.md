@@ -43,6 +43,7 @@ export RDS_HOST="$(terraform output -raw database_host)"
 export RDS_ADMIN_SECRET_ARN="$(terraform output -raw database_admin_secret_arn)"
 export SERVICES_IMAGE='registry.example/sessions-pipeline@sha256:<approved-digest>'
 export NAMESPACE=agent-relay
+export KUBE_CONTEXT=<approved-kube-context>
 export STATE_DIR="$PWD/.private/agent-relay-install"
 scripts/selfhost/rds-setup.sh pre
 ```
@@ -53,14 +54,27 @@ Do not commit or archive the state directory in the source bundle. One RDS
 instance supports one HoopDb install because a required search role is
 server-wide.
 
-After the Helm migration Jobs have completed, run the `post` phase. It refuses
-to proceed without a succeeded HoopDb migration Job, activates the read,
-ingest, and search logins over verified TLS, and leaves the application
-Deployments ready to restart.
+After the current Helm migration Job has completed, run the `post` phase. Pass
+the exact content-addressed Job name from the selected release manifest. The
+script verifies its release/component labels and succeeded status in the
+selected context before it activates the read, ingest, and search logins over
+verified TLS.
 
 ```bash
-scripts/selfhost/rds-setup.sh post
-kubectl -n "$NAMESPACE" rollout restart \
+export RELEASE=agent-relay
+export MIGRATION_JOB="$(
+  helm get manifest "$RELEASE" --kube-context "$KUBE_CONTEXT" \
+    --namespace "$NAMESPACE" |
+    yq -r 'select(.kind == "Job" and .metadata.labels."app.kubernetes.io/component" == "hoopdb-migrate") | .metadata.name'
+)"
+[[ -n "$MIGRATION_JOB" && "$MIGRATION_JOB" != *$'\n'* ]] || {
+  echo "expected exactly one current HoopDb migrate Job" >&2
+  exit 1
+}
+kubectl --context "$KUBE_CONTEXT" -n "$NAMESPACE" wait \
+  --for=condition=complete "job/$MIGRATION_JOB" --timeout=20m &&
+  scripts/selfhost/rds-setup.sh post
+kubectl --context "$KUBE_CONTEXT" -n "$NAMESPACE" rollout restart \
   deploy/agent-relay-read-api \
   deploy/agent-relay-ingest-edge \
   deploy/agent-relay-search-indexer
