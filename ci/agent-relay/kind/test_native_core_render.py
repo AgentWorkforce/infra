@@ -6,7 +6,7 @@ import unittest
 
 import yaml
 
-from native_core_values import compose
+from native_core_values import compose, PLANNING_WORKSPACE
 from native_inspect import NativeReadOnlyAdapter
 from native_core import NativeCoreAdapter
 from native_recipe import NativeRecipeError
@@ -30,7 +30,8 @@ class Render(unittest.TestCase):
         if change:
             change(value)
         result = subprocess.run(["helm", "template", "agent-relay", str(ROOT / "charts/agent-relay"),
-            "-n", "agent-relay", "-f", "-"], input=yaml.safe_dump(value), capture_output=True, text=True)
+            "-n", "agent-relay", "-f", "-", *(["--is-upgrade"] if phase != "control" else [])],
+            input=yaml.safe_dump(value), capture_output=True, text=True)
         return result
 
     def test_isolated_history_port_and_managed_email_signin_render_without_env_escape(self):
@@ -90,6 +91,26 @@ class Render(unittest.TestCase):
             pod.setdefault("volumes", []).append({"name": "hidden-owner", "secret": {"secretName": contract()["owner"]["name"]}})
             with self.subTest(target=target), self.assertRaisesRegex(NativeRecipeError, "owner_or_foreign_secret"):
                 a._validate_render_docs(self.s, changed)
+
+    def test_upgrade_retains_disabled_generic_names_without_claiming_a_drained_rename(self):
+        result = self.render("serve")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        docs = [d for d in yaml.safe_load_all(result.stdout) if d]
+        active = {d["metadata"]["name"] for d in docs if d["kind"] == "Deployment" and d["spec"].get("replicas", 1)}
+        self.assertEqual(active, {"relay-control", "relay-webapp", "relaycast", "session-read-api",
+                                  "session-native-ingest", "session-native-consumer"})
+        refused = self.render("serve", lambda v: v["sessions-pipeline"]["worker"].update(
+            legacyResourceNames=False, acknowledgeWorkloadRename=False))
+        self.assertNotEqual(refused.returncode, 0)
+        self.assertIn("workload rename requires a drained cutover", refused.stderr)
+
+    def test_real_prebootstrap_planning_render_checks_upgrade_without_inventing_tenant(self):
+        result = self.render("plan")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        docs = [d for d in yaml.safe_load_all(result.stdout) if d]
+        reader = next(d for d in docs if d["kind"] == "Deployment" and d["metadata"]["name"] == "session-read-api")
+        env = {e["name"]: e.get("value") for e in reader["spec"]["template"]["spec"]["containers"][0]["env"]}
+        self.assertEqual(env["READ_API_DIRECTORY_WORKSPACES"], PLANNING_WORKSPACE)
 
     def test_native_phase_cannot_bypass_core_component_or_authority_boundary(self):
         for phase, change in (("control", lambda v: v["components"].update(sessionsPipeline=True)),

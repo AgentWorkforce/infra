@@ -287,6 +287,9 @@ print(json.dumps(rows))
         self.assertEqual(api["bootstrap"]["orgName"], "")
         self.assertFalse(api["migrations"]["enabled"])
         self.assertFalse(pipeline["nativeConsumer"]["bootstrap"]["enabled"])
+        self.assertIs(pipeline["worker"]["legacyResourceNames"], True)
+        self.assertFalse(pipeline["worker"].get("acknowledgeWorkloadRename", False))
+        self.assertTrue(all(v["enabled"] is False for v in pipeline["worker"]["components"].values()))
         self.assertEqual(api["existingSecret"], c["runtime"]["name"])
         self.assertNotIn(c["owner"]["name"], str(api))
         self.assertNotIn(PLANNING_WORKSPACE, str(value))
@@ -311,7 +314,7 @@ print(json.dumps(rows))
         a._release_revision = None
         a._public_route = None
         a._public_route_binding = None
-        a._render_values = lambda v: []
+        a._render_values = lambda v, **kwargs: []
         a._transport_call = lambda *a, **kw: self.fail("unexpected mutation/transport")
         return a
 
@@ -331,6 +334,26 @@ print(json.dumps(rows))
         self.assertEqual(a._public_route_binding, original)
         with self.assertRaisesRegex(ValueError, 'gateway UID'): a._qualify_public_route(s)
         self.assertFalse(any(call[0] == 'k' and call[1][0] != 'get' for call in f.stack.calls))
+
+    def test_fresh_admission_renders_future_serve_as_upgrade_before_effects(self):
+        a = self.adapter(); s = self.selection(); s["reference"] = "docker.io/" + s["reference"]
+        a._tenant = None; a._inspected = {"mode": "fresh"}
+        a._bind_selection = lambda selected: None
+        a._values = lambda selected, phase: {"phase": phase}
+        rendered = []
+        a._render_values = lambda value, **kwargs: rendered.append((value, kwargs)) or []
+        a._validate_render_docs = lambda selected, docs: {"ok": True}
+        self.assertEqual(a.render(s), {"ok": True})
+        self.assertEqual(rendered, [({"phase": "plan"}, {"upgrade": True})])
+        self.assertEqual(a.effects, [])
+
+    def test_upgrade_template_flag_uses_actual_transport_and_install_stays_install(self):
+        a = self.adapter(); calls = []
+        a._transport_call = lambda *args, **kwargs: calls.append((args, kwargs)) or SimpleNamespace(stdout="")
+        for upgrade in (False, True):
+            NativeCoreAdapter._render_values(a, {}, upgrade=upgrade)
+            self.assertEqual("--is-upgrade" in calls[-1][0][1], upgrade)
+            self.assertTrue(calls[-1][1]["sensitive"])
 
     def test_serve_observes_gateway_before_rendering_alias_and_reuses_bound_identity(self):
         import native_network
@@ -383,7 +406,7 @@ print(json.dumps(rows))
         with self.assertRaisesRegex(NativeRecipeError, "must_never_be_deployed"):
             a._upgrade(s, value)
         value = compose({}, s, contract(), "serve", TENANT)
-        a._render_values = lambda v: [{"kind": "Job", "metadata": {"name": "unwanted-owner-job"}}]
+        a._render_values = lambda v, **kwargs: [{"kind": "Job", "metadata": {"name": "unwanted-owner-job"}}]
         with self.assertRaisesRegex(NativeRecipeError, "privileged_jobs"):
             a._upgrade(s, value)
 

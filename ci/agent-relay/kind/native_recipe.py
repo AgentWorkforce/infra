@@ -53,12 +53,14 @@ PHASE_FAILURE_CODES = frozenset({"command_failed", "command_timeout", "transport
 
 
 class NativePhaseError(NativeRecipeError):
-    """Only closed phase/code values may cross the public error boundary."""
-    def __init__(self, phase, code):
+    """Only closed phase/code/command details cross the public error boundary."""
+    def __init__(self, phase, code, details=None):
         if type(phase) is not str or type(code) is not str or phase not in (*CORE_OPERATIONS, "addons") or code not in PHASE_FAILURE_CODES:
             raise NativeRecipeError("invalid_native_phase_diagnostic")
         self.phase = phase
         self.code = code
+        from native_diagnostics import validate_details
+        self.details = validate_details(details)
         # Existing callers that emit only a safe ValueError string also retain
         # the phase, without reading or printing the underlying exception.
         super().__init__("native_phase_" + phase + "_" + code)
@@ -71,8 +73,14 @@ def phase_operation(name, operation, *args):
         raise
     except Exception as error:
         from stack import StackError
+        details = None
         if isinstance(error, StackError):
             code = error.safe_code
+            from native_diagnostics import validate_details
+            try:
+                details = validate_details(error.safe_details)
+            except (ValueError, AttributeError):
+                details = None
         elif isinstance(error, (subprocess.TimeoutExpired, TimeoutError)):
             code = "command_timeout"
         elif isinstance(error, subprocess.CalledProcessError):
@@ -81,7 +89,7 @@ def phase_operation(name, operation, *args):
             code = "invalid_response"
         else:
             code = "unexpected_failure"
-        raise NativePhaseError(name, code) from None
+        raise NativePhaseError(name, code, details) from None
 SELECTION_FIELDS = {"profile", "sourceRevision", "manifestDigest", "configDigest", "reference", "architecture", "generation",
                     "artifactReceiptSha256", "sourceClean", "control", "acceptedSource", "officialBootstrapSha256", "roles",
                     "postgres", "postgresCa", "secretRefs", "keyRoot", "orgFromPrefix", "backend", "backendId", "completeSince",
