@@ -16,7 +16,7 @@ dependencies:
   version: 0.4.6
 - name: relay-webapp
   repository: file://../relay-webapp
-  version: 0.2.1
+  version: 0.2.2
 - name: relayflows
   repository: file://../relayflows
   version: 0.2.5
@@ -32,5 +32,5 @@ dependencies:
 - name: relay-chief
   repository: file://../relay-chief
   version: 0.1.0
-digest: sha256:d0a00cd11ccf398e24e4a061296a366b6398bedac8d0ffd2e6a4e1cb7cd17cbc
-generated: "2026-11-10T12:33:41.082942-08:00"
+digest: sha256:23d1fb65a33afdf22feaed0349c2f784db2e098af15cb0a7a39f10a6be51e33f
+generated: "2026-11-10T12:43:08.36431-08:00"

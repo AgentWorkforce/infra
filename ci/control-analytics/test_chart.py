@@ -183,5 +183,44 @@ class ControlAdapters(unittest.TestCase):
         self.render(ADAPTER, dict(existingSecret="control-producer"), fail="dedicated producer")
 
 
+class DashboardAdapter(unittest.TestCase):
+    def render(self, value=None, explicit=False, umbrella=False, fail=False):
+        values = yaml.safe_load((ROOT / "charts/relay-webapp/ci/default-values.yaml").read_text())
+        if explicit:
+            values.setdefault("runtime", {})["analyticsEnabled"] = value
+        chart = "relay-webapp"
+        if umbrella:
+            chart = "agent-relay"
+            components = {key: False for key in yaml.safe_load((ROOT / "charts/agent-relay/values.yaml").read_text())["components"]}
+            components["webapp"] = True
+            values = {"components": components, "relay-webapp": values}
+        with tempfile.TemporaryDirectory() as folder:
+            p = Path(folder) / "values.yaml"
+            p.write_text(yaml.safe_dump(values))
+            result = subprocess.run(["helm", "template", "ci", str(ROOT / "charts" / chart), "-n", "ci", "-f", str(p)], text=True, capture_output=True)
+        if fail:
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("runtime.analyticsEnabled must be a boolean or null", result.stderr)
+            return {}
+        self.assertEqual(result.returncode, 0, result.stderr)
+        docs = [d for d in yaml.safe_load_all(result.stdout) if d]
+        pod = next(d for d in docs if d["kind"] == "Deployment")["spec"]["template"]["spec"]
+        env = {e["name"]: e.get("value") for e in pod["containers"][0]["env"]}
+        self.assertFalse(any("POSTHOG" in name or "TOKEN" in name or "SECRET" in name for name in env))
+        return env
+
+    def test_dashboard_selection_preserves_explicit_false_and_leaves_image_default_omitted(self):
+        for umbrella in [False, True]:
+            self.assertNotIn("DASHBOARD_ANALYTICS_ENABLED", self.render(umbrella=umbrella))
+            self.assertNotIn("DASHBOARD_ANALYTICS_ENABLED", self.render(None, explicit=True, umbrella=umbrella))
+            for value in [True, False]:
+                self.assertEqual(self.render(value, explicit=True, umbrella=umbrella)["DASHBOARD_ANALYTICS_ENABLED"], str(value).lower())
+
+    def test_dashboard_selection_refuses_non_boolean_values(self):
+        for value in ["true", "false", 1, [], {}]:
+            with self.subTest(value=value):
+                self.render(value, explicit=True, fail=True)
+
+
 if __name__ == "__main__":
     unittest.main()

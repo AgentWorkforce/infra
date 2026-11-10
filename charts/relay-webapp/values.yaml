@@ -26,6 +26,10 @@ runtime:
   # read API with the access token Control hands the page. Needs relay-webapp
   # main 53e39ca9 or later and the read API's CORS allowlist to name this origin.
   sessionReadApiEnabled: false
+  # DASHBOARD_ANALYTICS_ENABLED: browser events use Control's collector proxy.
+  # Null preserves the image default; explicit true/false is rendered faithfully.
+  # Requires a compatible dashboard image and separately configured Control adapter.
+  analyticsEnabled: null
 
 # Optional enterprise branding: one customer profile, rendered as JSON into
 # DASHBOARD_CUSTOMER_PROFILE and served in /runtime-config.js (no rebuild).

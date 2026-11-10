@@ -14,7 +14,7 @@ registered, every shipped entry must exist in the charts, planned entries must
 not be referenced by any template, and the compatibility matrix must equal
 the pinned digests.
 
-Source of truth: [`self-hosted/requirements.yaml`](../self-hosted/requirements.yaml). 140 entries: 50 requirements (50 shipped, 0 planned), 90 options (89 shipped, 1 planned).
+Source of truth: [`self-hosted/requirements.yaml`](../self-hosted/requirements.yaml). 141 entries: 50 requirements (50 shipped, 0 planned), 91 options (90 shipped, 1 planned).
 
 ## Contents
 
@@ -114,7 +114,8 @@ Services image (sessions-pipeline-worker, alleyoop and the privileged SQL Jobs):
 | relayauth-0.1.2 | shipped | relayauth 0.1.2 | relayauth: `ghcr.io/agentworkforce/relayauth@sha256:c23c92d25fdf…` |  |  | License-annotation patch bump of 0.1.1. Superseded by 0.1.3. |
 | relayauth-0.1.1 | shipped | relayauth 0.1.1 | relayauth: `ghcr.io/agentworkforce/relayauth@sha256:c23c92d25fdf…` |  |  | relayauth 784582ef (machine-bound History assertion contract, relayauth #113). Superseded by 0.1.2. |
 | relayauth-0.1.0 | shipped | relayauth 0.1.0 | relayauth: `ghcr.io/agentworkforce/relayauth@sha256:eb71daa28e30…` |  |  | superseded by 0.1.1. |
-| agent-relay-0.6.29 | unreleased | agent-relay 0.6.29<br>relayhistory 0.1.3<br>relay-control 0.4.6<br>relay-webapp 0.2.1<br>(deps: relaycast 0.3.7, relayauth 0.1.5, sessions-pipeline 0.8.19, relayhistory 0.1.3, relay-control 0.4.6, relay-webapp 0.2.1, relayflows 0.2.5, durable-actors 0.14.6-awf.1, relayfile 0.2.2, telemetry-collector 0.1.3, relay-chief 0.1.0) | relayhistory: `ghcr.io/agentworkforce/relayhistory@sha256:<required>`<br>relay-control: `ghcr.io/agentworkforce/relay-control@sha256:d8c26d44dccb…`<br>relay-webapp: `ghcr.io/agentworkforce/relay-webapp@sha256:<required>` |  |  | Carries relay-control 0.4.6, allowing the optional reader host alias to match sessionReadApiPublicUrl in native mode while leaving the private issuer handoff and legacy selection separate. Retains sessions-pipeline 0.8.19; no image pin, writer ruleset, component enablement, customer target or rollout is selected. |
+| agent-relay-0.6.30 | unreleased | agent-relay 0.6.30<br>relayhistory 0.1.3<br>relay-control 0.4.6<br>relay-webapp 0.2.2<br>(deps: relaycast 0.3.7, relayauth 0.1.5, sessions-pipeline 0.8.19, relayhistory 0.1.3, relay-control 0.4.6, relay-webapp 0.2.2, relayflows 0.2.5, durable-actors 0.14.6-awf.1, relayfile 0.2.2, telemetry-collector 0.1.3, relay-chief 0.1.0) | relayhistory: `ghcr.io/agentworkforce/relayhistory@sha256:<required>`<br>relay-control: `ghcr.io/agentworkforce/relay-control@sha256:d8c26d44dccb…`<br>relay-webapp: `ghcr.io/agentworkforce/relay-webapp@sha256:<required>` |  |  | Carries relay-webapp 0.2.2 with an explicit nullable dashboard analytics runtime flag, preserving both true and false without adding collector credentials to the browser. Retains relay-control 0.4.6 native public-reader aliases and sessions-pipeline 0.8.19. No image or rollout is selected. |
+| agent-relay-0.6.29 | **planned** | agent-relay 0.6.29<br>relayhistory 0.1.3<br>relay-control 0.4.6<br>relay-webapp 0.2.1 |  |  |  | Superseded before release by 0.6.30, which also preserves the dashboard analytics runtime selection. |
 | agent-relay-0.6.28 | **planned** | agent-relay 0.6.28<br>relayhistory 0.1.3<br>relay-control 0.4.5<br>relay-webapp 0.2.1 |  |  |  | Superseded before release by 0.6.29. Carries sessions-pipeline 0.8.19 reader ceilings; 0.6.29 also retains the native public-reader host alias. |
 | agent-relay-0.6.27 | **planned** | agent-relay 0.6.27<br>relayhistory 0.1.3<br>relay-control 0.4.5<br>relay-webapp 0.2.1 |  |  |  | Superseded before release by 0.6.28. Carries sessions-pipeline 0.8.18 reader ceilings; 0.6.28 also covers the native ingest-edge engine initializer. |
 | agent-relay-0.6.26 | **planned** | agent-relay 0.6.26<br>relayhistory 0.1.3<br>relay-control 0.4.5<br>relay-webapp 0.2.1 |  |  |  | Superseded before release by 0.6.27. Carries the exact native-ingest upload token refresh route repair without changing image, migration, authority or admission choices. |
@@ -861,6 +862,7 @@ chart `relay-webapp` · values [`ci/default-values.yaml`](../charts/relay-webapp
 | --- | --- | --- | --- | --- |
 | shipped | [Dashboard ingress and same-origin API proxy](#opt-relay-webapp-ingress) | `enabled`, `disabled` | `enabled` | values `runtime.publicUrl`, `runtime.appPath`, `runtime.apiBasePath`, `runtime.loginPath`, `ingress.tls`, `imagePullSecrets`; env `DASHBOARD_PUBLIC_URL`, `DASHBOARD_APP_PATH`, `DASHBOARD_API_BASE_PATH`, `DASHBOARD_LOGIN_PATH`, `DASHBOARD_SESSION_READ_API_ENABLED`; Secret `<ingress.tls[].secretName>` (kubernetes.io/tls); Secret `<imagePullSecrets[].name>` (optional registry pull Secret) |
 | shipped | [Dashboard customer profile (enterprise branding)](#opt-relay-webapp-customer-profile) | `none`, `customer profile` | `none` | values `customerProfile`; env `DASHBOARD_CUSTOMER_PROFILE` |
+| shipped | [Dashboard collector analytics runtime selection](#opt-relay-webapp-collector-analytics) | (no default), `true`, `false` | (no default) | values `runtime.analyticsEnabled`; env `DASHBOARD_ANALYTICS_ENABLED` |
 
 ### Profile: agent-relay
 
@@ -3787,6 +3789,25 @@ private sessionReadApiUrl issuer handoff remains unchanged.
 - Env: `RELAYHISTORY_READ_API_URL`, `RELAYHISTORY_READ_API_EVENTS`
 - Verify: Render no direct-reader env by default; preserve exact origin/port and reject authority mixing.
 - Sources: [`charts/relay-control/templates/_history-connection.tpl`](../charts/relay-control/templates/_history-connection.tpl)
+
+#### opt.relay-webapp.collector-analytics
+
+<a id="opt-relay-webapp-collector-analytics"></a>
+
+**Dashboard collector analytics runtime selection** · shipped · chart `relay-webapp` · profiles relay-webapp
+
+Null preserves the image default. Explicit true or false controls the
+compatible dashboard image's browser analytics through Control's collector
+proxy. Control's adapter and private collector must be configured separately;
+the dashboard receives no collector credentials or hosted exporter settings.
+
+- Default: (no default)
+- Choices: (no default); `true`; `false`
+- Provided by: operator
+- Values: `runtime.analyticsEnabled`
+- Env: `DASHBOARD_ANALYTICS_ENABLED`
+- Verify: Render no env for null and quoted true/false for explicit booleans; refuse other types and verify the compatible image uses Control's proxy.
+- Sources: [`charts/relay-webapp/templates/deployment.yaml`](../charts/relay-webapp/templates/deployment.yaml), [`charts/relay-webapp/values.yaml`](../charts/relay-webapp/values.yaml)
 
 #### opt.sessions-pipeline.native-routing
 
