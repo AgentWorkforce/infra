@@ -115,9 +115,9 @@ class NativeControlTransport:
         raw = self._psql(selected, "relaycontrol", """SELECT coalesce(json_agg(json_build_object(
 'name',rolname,'oid',oid::int,'login',rolcanlogin,'passwordAbsent',rolpassword IS NULL,
 'safe',NOT(rolsuper OR rolbypassrls OR rolcreatedb OR rolcreaterole OR rolreplication OR rolinherit),
-'settingsAbsent',rolconfig IS NULL AND rolvaliduntil IS NULL,
+'settingsAbsent',NOT EXISTS(SELECT 1 FROM pg_db_role_setting WHERE setrole=r.oid) AND rolvaliduntil IS NULL,
 'ownsDatabase',oid=(SELECT datdba FROM pg_database WHERE datname=current_database())))::text,'[]')
-FROM pg_authid WHERE rolname IN ('control_owner','control_api_runtime');""", read_only=True)
+FROM pg_authid r WHERE rolname IN ('control_owner','control_api_runtime');""", read_only=True)
         rows = json.loads(raw.strip())
         require(isinstance(rows, list) and len(rows) == 2 and
                 {r.get("name") for r in rows} == {"control_owner", "control_api_runtime"} and
@@ -162,11 +162,12 @@ FROM pg_authid WHERE rolname IN ('control_owner','control_api_runtime');""", rea
         self._secret(issuer["name"], {issuer["key"]: reader_issuer})
         del introspection, reader_issuer, cast_internal
         statements = ["BEGIN; SET LOCAL log_statement='none'; SET LOCAL log_min_error_statement='panic';",
-                      "SET LOCAL lock_timeout='5s'; LOCK TABLE pg_catalog.pg_authid IN SHARE ROW EXCLUSIVE MODE;"]
+                      "SET LOCAL lock_timeout='5s'; LOCK TABLE pg_catalog.pg_authid IN SHARE ROW EXCLUSIVE MODE;",
+                      "LOCK TABLE pg_catalog.pg_db_role_setting IN SHARE MODE;"]
         for role in ("control_owner", "control_api_runtime"):
             oid = roles[role]["oid"]
-            statements.append("DO $$ BEGIN IF NOT EXISTS(SELECT 1 FROM pg_authid WHERE oid=" + str(oid) +
-                " AND rolname='" + role + "' AND NOT(rolcanlogin OR rolsuper OR rolbypassrls OR rolcreatedb OR rolcreaterole OR rolreplication OR rolinherit) AND rolpassword IS NULL AND rolconfig IS NULL AND rolvaliduntil IS NULL) THEN RAISE EXCEPTION 'control role claim changed'; END IF; END $$;")
+            statements.append("DO $$ BEGIN IF NOT EXISTS(SELECT 1 FROM pg_authid r WHERE oid=" + str(oid) +
+                " AND rolname='" + role + "' AND NOT(rolcanlogin OR rolsuper OR rolbypassrls OR rolcreatedb OR rolcreaterole OR rolreplication OR rolinherit) AND rolpassword IS NULL AND NOT EXISTS(SELECT 1 FROM pg_db_role_setting WHERE setrole=r.oid) AND rolvaliduntil IS NULL) THEN RAISE EXCEPTION 'control role claim changed'; END IF; END $$;")
             statements.append("ALTER ROLE " + role + " LOGIN PASSWORD '" + scram(passwords[role]) + "';")
         self._psql(selected, "relaycontrol", "\n".join(statements) + "\nCOMMIT;\n")
         passwords.clear()
