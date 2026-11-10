@@ -101,8 +101,8 @@ ensure_ca() {
   chmod 600 "$bundle"
 
   actual_host="$(gcloud sql instances describe "$CLOUD_SQL_INSTANCE" --project "$GCP_PROJECT_ID" \
-    --format=json --quiet | jq -r '.dnsName // empty' | sed 's/\.$//')"
-  [[ -n "$actual_host" ]] || die "Cloud SQL instance has no DNS name; use GOOGLE_MANAGED_CAS_CA"
+    --format=json --quiet | jq -r '(.dnsNames // []) | map(select(.connectionType == "PRIVATE_SERVICES_ACCESS")) | first | .name // empty' | sed 's/\.$//')"
+  [[ -n "$actual_host" ]] || die "Cloud SQL instance has no private-services-access DNS name; use GOOGLE_MANAGED_CAS_CA"
   [[ "$actual_host" == "$CLOUD_SQL_HOST" ]] || die "CLOUD_SQL_HOST does not match the instance DNS name"
 
   kubectl -n "$NS" create configmap cloud-sql-ca --from-file=ca.crt="$bundle" \

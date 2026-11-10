@@ -9,7 +9,7 @@ mock_provider "google" {
     defaults = {
       connection_name    = "example:us-central1:agent-relay-pg"
       private_ip_address = "10.20.0.5"
-      dns_name           = "agent-relay-pg.abc123.us-central1.sql.goog."
+      dns_names          = [{ connection_type = "PRIVATE_SERVICES_ACCESS", dns_scope = "INSTANCE", name = "agent-relay-pg.abc123.us-central1.sql-psa.goog." }]
       server_ca_cert     = [{ cert = "-----BEGIN CERTIFICATE-----", common_name = "", create_time = "", expiration_time = "", sha1_fingerprint = "" }]
     }
   }
@@ -40,7 +40,7 @@ run "native_data_services_are_complete" {
     error_message = "The native profile must preserve the legacy RelayHistory database during cutover."
   }
   assert {
-    condition     = module.postgres.database_url_template == "postgresql://<role>:<password>@agent-relay-pg.abc123.us-central1.sql.goog:5432/<database>?sslmode=verify-full"
+    condition     = module.postgres.database_url_template == "postgresql://<role>:<password>@agent-relay-pg.abc123.us-central1.sql-psa.goog:5432/<database>?sslmode=verify-full"
     error_message = "Cloud SQL URLs must use its shared-CA DNS identity and verify-full."
   }
   assert {

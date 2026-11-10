@@ -88,6 +88,13 @@ resource "google_dns_managed_zone" "cloud_sql" {
   description = "Private verified-DNS route to ${var.name} Cloud SQL"
   visibility  = "private"
 
+  lifecycle {
+    precondition {
+      condition     = can(regex("^[^.].*\\.sql-psa\\.goog$", module.postgres.dns_name))
+      error_message = "Cloud SQL did not return a private-services-access DNS identity; refusing to create an empty or root private DNS zone."
+    }
+  }
+
   private_visibility_config {
     networks {
       network_url = var.network_self_link

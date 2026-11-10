@@ -3,7 +3,7 @@ mock_provider "google" {
     defaults = {
       connection_name    = "proj:us-central1:relay"
       private_ip_address = "10.10.0.5"
-      dns_name           = "relay.abc123.us-central1.sql.goog."
+      dns_names          = [{ connection_type = "PRIVATE_SERVICES_ACCESS", dns_scope = "INSTANCE", name = "relay.abc123.us-central1.sql-psa.goog." }]
       server_ca_cert     = [{ cert = "-----BEGIN CERTIFICATE-----", common_name = "", create_time = "", expiration_time = "", sha1_fingerprint = "" }]
     }
   }
@@ -87,11 +87,11 @@ run "shared_ca_has_verified_dns_url" {
   }
 
   assert {
-    condition     = output.dns_name == "relay.abc123.us-central1.sql.goog"
+    condition     = output.dns_name == "relay.abc123.us-central1.sql-psa.goog"
     error_message = "Cloud SQL DNS output has no trailing dot for use in URLs."
   }
   assert {
-    condition     = output.database_url_template == "postgresql://<role>:<password>@relay.abc123.us-central1.sql.goog:5432/<database>?sslmode=verify-full"
+    condition     = output.database_url_template == "postgresql://<role>:<password>@relay.abc123.us-central1.sql-psa.goog:5432/<database>?sslmode=verify-full"
     error_message = "Shared-CA URLs use the certificate DNS identity with verify-full."
   }
 }

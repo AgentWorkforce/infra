@@ -15,7 +15,10 @@ output "private_ip_address" {
 
 output "dns_name" {
   description = "Cloud SQL server DNS name. With GOOGLE_MANAGED_CAS_CA, use this host with sslmode=verify-full and private DNS pointing it to private_ip_address."
-  value       = try(trimsuffix(google_sql_database_instance.this.dns_name, "."), null)
+  value = trimsuffix(one([
+    for identity in google_sql_database_instance.this.dns_names : identity.name
+    if identity.connection_type == "PRIVATE_SERVICES_ACCESS"
+  ]), ".")
 }
 
 output "port" {
@@ -46,5 +49,8 @@ output "server_ca_cert" {
 
 output "database_url_template" {
   description = "Connection URL shape for chart Secrets. Shared-CA instances use their verified DNS identity; per-instance CA keeps the private-IP sslmode=require compatibility shape."
-  value       = var.server_ca_mode == "GOOGLE_MANAGED_CAS_CA" ? "postgresql://<role>:<password>@${trimsuffix(google_sql_database_instance.this.dns_name, ".")}:5432/<database>?sslmode=verify-full" : "postgresql://<role>:<password>@${google_sql_database_instance.this.private_ip_address}:5432/<database>?sslmode=require"
+  value = var.server_ca_mode == "GOOGLE_MANAGED_CAS_CA" ? "postgresql://<role>:<password>@${trimsuffix(one([
+    for identity in google_sql_database_instance.this.dns_names : identity.name
+    if identity.connection_type == "PRIVATE_SERVICES_ACCESS"
+  ]), ".")}:5432/<database>?sslmode=verify-full" : "postgresql://<role>:<password>@${google_sql_database_instance.this.private_ip_address}:5432/<database>?sslmode=require"
 }
