@@ -327,9 +327,35 @@ compatibility:
       images:
         session-read-api: { repository: ghcr.io/agentworkforce/96bulls-services, digest_required: true }
       notes: 'Defaults READ_API_COMPLETE_SINCE to epoch for a new self-host store populated only by its own ingest. Partial legacy imports must retain an explicit real coverage floor matching the indexer. Image, auth, routing and enabled defaults are unchanged; this does not assert coverage for an imported store or qualify a runtime.'
-    - id: sessions-pipeline-0.8.19
+    - id: sessions-pipeline-0.8.20
       status: unreleased
       current: true
+      charts: { sessions-pipeline: 0.8.20, sessions-pipeline-worker: 0.7.7, session-ingest-api: 0.4.4, session-read-api: 0.2.6 }
+      depends:
+        sessions-pipeline: { worker: 0.7.7, alleyoop: 0.4.4, sessionReadApi: 0.2.6, hoopdb: 0.9.0, session-object-storage: 5.4.0, otel: 0.178.0 }
+      images:
+        sessions-pipeline-worker: { repository: agentworkforce/96bulls-services, digest: sha256:6f22ea17dff336e1431664542759fd27958649388b90a0b2f0881883caa7c6b2 }
+        session-ingest-api: { repository: agentworkforce/96bulls-services, digest: sha256:6f22ea17dff336e1431664542759fd27958649388b90a0b2f0881883caa7c6b2 }
+        session-read-api: { repository: ghcr.io/agentworkforce/96bulls-services, digest_required: true }
+      images_note: "The aws-rds-native profile requires one approved release-overlay services digest for worker, alleyoop, sessionReadApi, ingestEdge and searchIndexer; every profile digest stays empty in source. Setting an explicit readerMaxRuleset requires an artifact containing relayhistory-pipeline #489 including its default-path compatibility and binding fixes, after exact-head review. The artifact must also include pipeline #484 for default-on claim-lock 429/Retry-After behavior, fresh-install search_index grants, schema through 046010, session query and coordination overlaps. Existing profile image pins are unchanged."
+      services:
+        source_commit: 7d7229bb31c121ecb98cd4e35c248fc2cf5669ad
+        migration_generation: eff8b3be46565b57ad8fa5e4a066dbb6d1fe608313d9c1680bfbcd484add259b
+      db_combos:
+        - { db_mode: selfhosted, boundary: global-default-revoke, hoopdb: cnpg, status: shipped, profiles: [selfhost-postgres, migration, aws-cnpg], notes: chart Jobs install the runtime role and the function default }
+        - { db_mode: selfhosted, boundary: global-default-revoke, hoopdb: external, status: shipped, profiles: [external-selfhosted], notes: operator runs the bootstrap files as a superuser }
+        - { db_mode: rds, boundary: global-default-revoke, hoopdb: external, status: shipped, profiles: [external-rds, aws-rds-native], notes: the RDS master runs the rds_*.sql bootstrap first }
+        - { db_mode: cloudsql, boundary: global-default-revoke, hoopdb: external, status: shipped, profiles: [gcp-cloudsql], notes: operator runs the Cloud SQL bootstrap files as the migration owner; roleBootstrap false }
+        - { db_mode: supabase, boundary: event-trigger, hoopdb: external, status: held, profiles: [external-supabase], notes: supabaseActivation.hold; migrate refuses until the reviewed event trigger is installed and --activation-check passes }
+        - { db_mode: supabase, boundary: null, hoopdb: external, status: fails closed, profiles: [aws-supabase], notes: renders; migrate refuses with function_boundary_unproven }
+        - { db_mode: local, boundary: null, hoopdb: any, status: dev only, profiles: [], notes: local stack only; never a self-host install }
+      sources:
+        - "charts/sessions-pipeline/Chart.yaml:4"
+        - "charts/sessions-pipeline/profiles/aws-rds-native.yaml"
+        - "ci/sessions-pipeline-profiles/matrix.sh"
+      notes: 'Carries the default-off native brief collector adapter. Opt-in requires a compatible brief worker image, collector registration and dedicated producer Secret. Existing image pins and database profiles are preserved.'
+    - id: sessions-pipeline-0.8.19
+      status: shipped
       charts: { sessions-pipeline: 0.8.19, sessions-pipeline-worker: 0.7.6, session-ingest-api: 0.4.4, session-read-api: 0.2.6 }
       depends:
         sessions-pipeline: { worker: 0.7.6, alleyoop: 0.4.4, sessionReadApi: 0.2.6, hoopdb: 0.9.0, session-object-storage: 5.4.0, otel: 0.178.0 }
@@ -1085,9 +1111,20 @@ compatibility:
       images:
         relayauth: { repository: ghcr.io/agentworkforce/relayauth, digest: sha256:eb71daa28e30eb7305f666d0bccc5a4002e53e8a574e3c4c32163d907a1b71df }
       notes: superseded by 0.1.1.
-    - id: agent-relay-0.6.31
+    - id: agent-relay-0.6.32
       status: unreleased
       current: true
+      charts: { agent-relay: 0.6.32, relayhistory: 0.1.3, relay-control: 0.4.6, relay-webapp: 0.2.2 }
+      app_versions: { agent-relay: 0.1.0, relayhistory: 0.1.0, relay-control: 0.1.0, relay-webapp: 0.1.0 }
+      depends:
+        agent-relay: { relaycast: 0.3.7, relayauth: 0.1.5, sessions-pipeline: 0.8.20, relayhistory: 0.1.3, relay-control: 0.4.6, relay-webapp: 0.2.2, relayflows: 0.2.5, durable-actors: 0.14.6-awf.1, relayfile: 0.2.2, telemetry-collector: 0.1.3, relay-chief: 0.1.0 }
+      images:
+        relayhistory: { repository: ghcr.io/agentworkforce/relayhistory, digest_required: true }
+        relay-control: { repository: ghcr.io/agentworkforce/relay-control, digest: sha256:d8c26d44dccb6dd21b7033288241a379e46ce5fbca69f276c4d4745001c3c3e2 }
+        relay-webapp: { repository: ghcr.io/agentworkforce/relay-webapp, digest_required: true }
+      notes: 'Carries sessions-pipeline 0.8.20 and the default-off native brief collector binding. Retains the approved Control GCP handoff and dashboard analytics values.'
+    - id: agent-relay-0.6.31
+      status: planned
       charts: { agent-relay: 0.6.31, relayhistory: 0.1.3, relay-control: 0.4.6, relay-webapp: 0.2.2 }
       app_versions: { agent-relay: 0.1.0, relayhistory: 0.1.0, relay-control: 0.1.0, relay-webapp: 0.1.0 }
       depends:
@@ -2886,6 +2923,37 @@ entries:
     sources:
       - charts/relay-control/values.yaml
       - charts/relay-control/templates/_helpers.tpl
+
+  - id: opt.sessions-pipeline.brief-collector-analytics
+    kind: option
+    status: shipped
+    title: Native brief collector analytics adapter
+    chart: sessions-pipeline
+    description: |
+      Send installation-scoped brief outcomes to the private collector from
+      a qualified native brief image. Register component session-brief with
+      its own producer credential and select the matching deployment ID.
+      The optional collector CA applies only to the HTTPS collector request.
+      Use explicit collector pod peers and pod port when the chart manages
+      egress. For operator-managed policy, permit that same connection and
+      admit the labeled brief pod at the collector.
+    values: [worker.nativeBrief.analytics.*]
+    env: [ANALYTICS_SINK, ANALYTICS_DEPLOYMENT_ID, ANALYTICS_COLLECTOR_URL, ANALYTICS_COLLECTOR_TOKEN, ANALYTICS_COLLECTOR_CA_FILE]
+    profiles: [selfhost-postgres, migration, external-selfhosted, external-rds, aws-rds-native, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql]
+    provided_by: operator
+    default: false
+    choices:
+      - { value: false }
+      - { value: true, note: Requires an image and collector that support session_brief.tick_completed. }
+    secrets:
+      - name: "<Native brief component-bound analytics producer Secret>"
+        name_paths: ["sessions-pipeline-worker:nativeBrief.analytics.existingSecret"]
+        keys:
+          - { key: token, key_path: "sessions-pipeline-worker:nativeBrief.analytics.tokenKey" }
+    verify: Check brief-only analytics credentials, separate CA paths and restricted egress. Verify a real session_brief.tick_completed in the private collector files and an unchanged model admission limit.
+    sources:
+      - charts/sessions-pipeline-worker/templates/_brief-analytics.tpl
+      - charts/sessions-pipeline-worker/templates/brief-analytics-networkpolicy.yaml
 
   - id: opt.relay-control.collector-analytics
     kind: option

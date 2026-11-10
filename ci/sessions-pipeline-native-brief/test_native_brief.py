@@ -29,6 +29,74 @@ class NativeBrief(unittest.TestCase):
     def brief(self,docs):
         return next(d for d in docs if d['kind']=='Deployment' and d['spec']['template']['metadata']['labels']['app.kubernetes.io/component']=='session-brief')['spec']['template']['spec']
 
+    def analytics_selected(self):
+        values = self.selected()
+        values['nativeBrief']['analytics'] = {
+            'enabled': True, 'deploymentId': 'test-install',
+            'collectorUrl': 'https://collector.agent-relay.svc:8443/v1/events',
+            'existingSecret': 'brief-producer', 'caConfigMap': 'collector-ca',
+            'egress': {'to': [{'podSelector': {'matchLabels': {'app': 'telemetry-collector'}}}]},
+        }
+        return values
+
+    def test_brief_analytics_is_off_by_default_and_scoped_when_enabled(self):
+        self.assertNotIn('ANALYTICS_', json.dumps(self.render(self.selected())))
+        values = self.analytics_selected()
+        values['image'] = deepcopy(values['nativeBrief']['image'])
+        values['components']['referee']['enabled'] = True
+        docs = self.render(values)
+        pod = self.brief(docs)
+        main = pod['containers'][0]
+        env = {entry['name']: entry for entry in main['env']}
+        self.assertEqual(len(env), len(main['env']))
+        self.assertEqual(env['ANALYTICS_SINK']['value'], 'collector')
+        self.assertEqual(env['ANALYTICS_COLLECTOR_TOKEN']['valueFrom']['secretKeyRef'], {
+            'name': 'brief-producer', 'key': 'token',
+        })
+        self.assertEqual(env['NODE_EXTRA_CA_CERTS']['value'], '/etc/postgres-ca/ca.crt')
+        self.assertEqual(env['ANALYTICS_COLLECTOR_CA_FILE']['value'], '/etc/brief-analytics-ca/ca.crt')
+        self.assertIn({'name': 'brief-analytics-ca', 'mountPath': '/etc/brief-analytics-ca', 'readOnly': True},
+                      main['volumeMounts'])
+        self.assertEqual(next(v for v in pod['volumes'] if v['name'] == 'brief-analytics-ca')['configMap']['name'],
+                         'collector-ca')
+        for resource in docs:
+            if resource['kind'] not in ('Deployment', 'Job'):
+                continue
+            template = resource['spec']['template']
+            if template['spec'] is pod:
+                self.assertEqual(template['metadata']['labels']['agentworkforce.dev/analytics-producer'], 'true')
+                self.assertNotIn('ANALYTICS_', json.dumps(pod['initContainers']))
+            else:
+                self.assertNotIn('agentworkforce.dev/analytics-producer', template['metadata']['labels'])
+                self.assertNotIn('brief-producer', json.dumps(template))
+        policy = next(d for d in docs if d['metadata']['name'].endswith('-brief-analytics'))
+        self.assertEqual(policy['spec']['podSelector']['matchLabels']['app.kubernetes.io/component'], 'session-brief')
+        self.assertEqual(policy['spec']['egress'], [{
+            'to': values['nativeBrief']['analytics']['egress']['to'],
+            'ports': [{'protocol': 'TCP', 'port': 8443}],
+        }])
+
+    def test_brief_analytics_refuses_unmanaged_and_unbounded_configuration(self):
+        for overrides, reason in [
+            ({'existingSecret': ''}, 'existingSecret is required'),
+            ({'enabled': 'true'}, 'enabled must be a boolean'),
+            ({'collectorUrl': 'https://collector:8443/v1/events?token=hidden'}, 'HTTPS collector URL'),
+            ({'egress': {'to': []}}, 'must list collector peers'),
+            ({'egress': {'to': [{'podSelector': {}}]}}, 'match explicit labels'),
+            ({'egress': {'port': 65536}}, 'port must be an integer'),
+        ]:
+            with self.subTest(overrides=overrides):
+                values = self.analytics_selected()
+                if 'egress' in overrides:
+                    overrides = {**overrides, 'egress': {
+                        **values['nativeBrief']['analytics']['egress'], **overrides['egress'],
+                    }}
+                values['nativeBrief']['analytics'].update(overrides)
+                self.render(values, reason)
+        values = self.analytics_selected()
+        values['extraEnv'] = [{'name': 'ANALYTICS_SINK', 'value': 'posthog'}]
+        self.render(values, 'managed brief analytics')
+
     def test_default_has_no_brief_resources_or_model_secret(self):
         docs=self.render({});s=json.dumps(docs)
         self.assertNotIn('SESSION_BRIEF_CANONICAL_INPUT',s);self.assertNotIn('OPENAI_API_KEY',s)

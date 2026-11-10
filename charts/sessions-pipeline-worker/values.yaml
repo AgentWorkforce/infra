@@ -290,6 +290,21 @@ nativeBrief:
   openaiEgress:
     enabled: false
     to: []
+  # Bind the brief worker to the self-host telemetry collector using its own
+  # producer registration. The optional public CA is scoped to collector HTTPS.
+  analytics:
+    enabled: false
+    deploymentId: ""
+    collectorUrl: ""
+    existingSecret: ""
+    tokenKey: token
+    caConfigMap: ""
+    caKey: ca.crt
+    # Required when chart-managed egress selects the brief pod. Use the
+    # collector's pod port and its pod selector, optionally across namespaces.
+    egress:
+      port: 8443
+      to: []
 
 components:
   session-brief:

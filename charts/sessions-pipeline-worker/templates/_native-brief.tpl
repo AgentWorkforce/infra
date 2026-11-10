@@ -1,6 +1,7 @@
 {{- define "sessions-pipeline-worker.validateNativeBrief" -}}
 {{- $n := .Values.nativeBrief -}}
 {{- $c := index .Values.components "session-brief" -}}
+{{- include "sessions-pipeline-worker.validateBriefAnalytics" . -}}
 {{- include "sessions-pipeline-worker.refuseUnmanagedBrief" (.Values.extraEnv | default list) -}}
 {{- range $component, $settings := .Values.components -}}
 {{- include "sessions-pipeline-worker.refuseUnmanagedBrief" ($settings.env | default list) -}}
@@ -126,6 +127,7 @@
     secretKeyRef:
       name: {{ .Values.nativeBrief.openaiSecret.name | quote }}
       key: {{ .Values.nativeBrief.openaiSecret.key | quote }}
+{{- include "sessions-pipeline-worker.briefAnalyticsEnv" . }}
 {{- end -}}
 
 {{- define "sessions-pipeline-worker.nativeBriefPreflight" -}}
