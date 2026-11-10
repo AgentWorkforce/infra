@@ -64,6 +64,10 @@ worker:
     region: ""
     credentials:
       mode: podIdentity
+  # Terraform owns bucket creation and versioning. The workload role has
+  # object access only and must not run the MinIO-style bucket initializer.
+  lockerInit:
+    enabled: false
 
 alleyoop:
   deployment:
@@ -75,7 +79,9 @@ alleyoop:
   existingSecret: agent-relay-secrets
   serviceAccount:
     create: true
-    name: agent-relay-alleyoop
+    # The disabled legacy Deployment still owns the ServiceAccount manifest
+    # selected by the native ingest edge and its Pod Identity association.
+    name: agent-relay-session-ingest-api
   hoopdb:
     existingSecret: agent-relay-secrets
     key: HOOPDB_URL

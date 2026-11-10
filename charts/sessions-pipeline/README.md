@@ -34,9 +34,12 @@ immutable destination digest, and a fresh-RDS read acceptance result in the
 private release packet.
 
 The profile disables the in-cluster HoopDb and MinIO, disables the legacy
-alleyoop Deployment, and uses dedicated Pod Identity ServiceAccounts. Run
-`scripts/selfhost/rds-setup.sh pre` before Helm and `post` only after the
-HoopDb migration Job succeeds.
+alleyoop Deployment, and uses dedicated Pod Identity ServiceAccounts. The
+disabled alleyoop subchart owns the native ingest edge's ServiceAccount object;
+the edge selects that same name. The S3 bucket initializer is disabled because
+Terraform owns bucket creation/versioning and the workload identity has object
+permissions only. Run `scripts/selfhost/rds-setup.sh pre` before Helm and `post`
+only after the HoopDb migration Job succeeds.
 
 Session descriptions are deliberately a second activation. After the first
 owner signs in, read the real workspace ID and add it to

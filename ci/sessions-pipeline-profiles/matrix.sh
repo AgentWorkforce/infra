@@ -289,6 +289,13 @@ if [ "$mode" = static ]; then
     [ "$got" = "$sa" ] || err "aws-rds-native: $name uses ServiceAccount $got, want $sa"
   done
 
+  service_accounts=$(yq -r 'select(.kind == "ServiceAccount") | .metadata.name' <<<"$out" | grep -v '^---$' | sort -u)
+  [ "$service_accounts" = $'agent-relay-search-indexer\nagent-relay-session-ingest-api\nagent-relay-session-read\nagent-relay-worker' ] \
+    || err "aws-rds-native: rendered ServiceAccounts are [$service_accounts]"
+
+  locker_init=$(yq -r 'select(.kind == "Job" and .metadata.labels."app.kubernetes.io/component" == "locker-init") | .metadata.name' <<<"$out" | grep -v '^---$' || true)
+  [ -z "$locker_init" ] || err "aws-rds-native: external Terraform bucket still renders locker initializer $locker_init"
+
   # Pod Identity means no static AWS/Locker key variables anywhere.
   static_keys=$(yq -r 'select(.kind == "Deployment" or .kind == "Job") | .spec.template.spec.containers[].env[]?.name | select(. == "AWS_ACCESS_KEY_ID" or . == "AWS_SECRET_ACCESS_KEY" or . == "LOCKER_ACCESS_KEY_ID" or . == "LOCKER_SECRET_ACCESS_KEY")' <<<"$out" | grep -v '^---$' || true)
   [ -z "$static_keys" ] || err "aws-rds-native: static object-store credentials rendered: $static_keys"

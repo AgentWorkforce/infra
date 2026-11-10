@@ -207,13 +207,35 @@ permits this **first-install** command:
 helm install "$RELEASE" "$CHART_PACKAGE" \
   --kube-context "$KUBE_CONTEXT" --namespace "$NAMESPACE" \
   --create-namespace --values /approved/private/customer.values.yaml \
-  --no-hooks --wait --wait-for-jobs --timeout 20m
+  --no-hooks --timeout 20m
 ```
 
-Run the packet's ordered pre-install SQL/Jobs before this command where required.
+Do not add `--wait` to this first command. The read API, ingest edge and search
+indexer cannot become ready until their RDS logins are activated, while login
+activation must wait for the HoopDb migration Job. Complete that barrier in
+order:
+
+```sh
+kubectl --context "$KUBE_CONTEXT" -n "$NAMESPACE" get jobs
+kubectl --context "$KUBE_CONTEXT" -n "$NAMESPACE" wait \
+  --for=condition=complete job -l "app.kubernetes.io/instance=$RELEASE" \
+  --timeout=20m
+scripts/selfhost/rds-setup.sh post
+kubectl --context "$KUBE_CONTEXT" -n "$NAMESPACE" rollout restart \
+  deployment/$RELEASE-read-api deployment/$RELEASE-ingest-edge \
+  deployment/$RELEASE-search-indexer
+kubectl --context "$KUBE_CONTEXT" -n "$NAMESPACE" rollout status deployment \
+  --all --timeout=20m
+```
+
+Inspect every Job before running `post`; a failed or missing current migration
+blocks activation. Run the packet's ordered pre-install SQL/Jobs before the
+Helm command where required.
 For an existing release, follow the [pre-upgrade gate](../scripts/selfhost/README.md#pre-upgrade-gate)
 and use `helm upgrade` with its reviewed package and values. Do not add `--install`
-to an upgrade, or `--atomic` to a database-changing installation.
+to an upgrade, or `--atomic` to a database-changing installation. If the
+upgrade rotates or creates RDS logins, use the same migrate-then-post ordering
+rather than waiting on Deployments first.
 
 **Checkpoint:** required Jobs complete and workloads become ready. Inspect a
 failed Job or missing image/profile instead of bypassing a verifier.
