@@ -46,6 +46,14 @@ class ControlAdapters(unittest.TestCase):
     def env(container):
         return {e["name"]: e for e in container.get("env", [])}
 
+    def assert_file_mount(self, container, variable, volume, projected_path):
+        mounts = {m["name"]: m for m in container.get("volumeMounts", [])}
+        self.assertIn(volume, mounts)
+        mount = mounts[volume]
+        self.assertIs(mount.get("readOnly"), True)
+        self.assertEqual(self.env(container)[variable]["value"],
+                         f'{mount["mountPath"].rstrip("/")}/{projected_path}')
+
     def test_default_off_adds_no_collector_authority(self):
         d = self.deployment(self.render())
         p = d["spec"]["template"]
@@ -70,9 +78,8 @@ class ControlAdapters(unittest.TestCase):
                 volumes = {v["name"]: v for v in p["spec"]["volumes"]}
                 self.assertEqual(volumes["analytics-producer"]["secret"], dict(secretName="control-producer", defaultMode=288, items=[dict(key="token", path="token")]))
                 self.assertEqual(volumes["analytics-ca"]["configMap"], dict(name="collector-ca", defaultMode=292, items=[dict(key="ca.pem", path="ca.crt")]))
-                for mount in c["volumeMounts"]:
-                    if mount["name"].startswith("analytics-"):
-                        self.assertTrue(mount["readOnly"])
+                self.assert_file_mount(c, "SELFHOST_ANALYTICS_COLLECTOR_TOKEN_FILE", "analytics-producer", "token")
+                self.assert_file_mount(c, "SELFHOST_ANALYTICS_COLLECTOR_CA_FILE", "analytics-ca", "ca.crt")
                 check = subprocess.run(["kubeconform", "-strict", "-summary"], input=yaml.safe_dump_all(docs), text=True, capture_output=True)
                 self.assertEqual(check.returncode, 0, check.stdout + check.stderr)
 
@@ -111,6 +118,7 @@ class ControlAdapters(unittest.TestCase):
         docs = self.render(intro=dict(existingSecret="control-introspection", key="bearer", audiences=["https://history.gcp-proof.agentrelay.com"]))
         p = self.deployment(docs)["spec"]["template"]["spec"]
         self.assertEqual(self.env(p["containers"][0])["RELAYCONTROL_INTROSPECT_SECRET_FILE"]["value"], "/var/run/agent-relay/introspection/secret")
+        self.assert_file_mount(p["containers"][0], "RELAYCONTROL_INTROSPECT_SECRET_FILE", "introspection-secret", "secret")
         self.assertEqual(next(v for v in p["volumes"] if v["name"] == "introspection-secret")["secret"], dict(secretName="control-introspection", defaultMode=288, items=[dict(key="bearer", path="secret")]))
         primary = next(v for v in p["volumes"] if v["name"] == "secrets")
         self.assertNotIn("bearer", {i["key"] for i in primary["secret"]["items"]})

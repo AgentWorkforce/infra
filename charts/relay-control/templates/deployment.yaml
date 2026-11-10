@@ -84,7 +84,9 @@ spec:
             {{- if .Values.introspection.existingSecret }}
             - { name: RELAYCONTROL_INTROSPECT_SECRET_FILE, value: /var/run/agent-relay/introspection/secret }
             {{- end }}
+            {{- if .Values.analytics.enabled }}
             {{- include "relay-control.analyticsEnv" . | nindent 12 }}
+            {{- end }}
             {{- if .Values.secretKeys.passwordPepper }}
             - { name: SELFHOST_PASSWORD_PEPPER_FILE, value: /var/run/agent-relay/password-pepper/pepper }
             {{- end }}
