@@ -7,7 +7,7 @@ kind: CustomerImageSourceManifest
 status: blocked
 metadata:
   name: agent-relay-gcp
-  auditedAt: "2026-11-09"
+  auditedAt: "2026-11-10"
   chart:
     name: agent-relay
     version: 0.6.21
@@ -349,29 +349,32 @@ images:
       - Deployment/relay-control:relay-control
     current:
       repository: ghcr.io/agentworkforce/relay-control
-      digest: sha256:c6648cc3d504b79f0e138993cb2e48dfcd2d8ba300a0969ff8c9c87c89c80d65
+      digest: sha256:88392b1827c263ab9eaad501ad902b37548f073a06a198444a8d91bcfb72d2b6
       chartStatus: shipped
     source:
       repository: https://github.com/AgentWorkforce/relay-control
-      revision: be21070ebf2d0649a9fb50d6608b0cd7bf12105c
+      revision: 1e55273745648c7bd8d2d1445fba75c285ec5fb0
       path: Dockerfile
       reproducibleReference: true
-      note: Relay Control 0.5.8 with native session-read handoff and desktop sign-in.
+      note: >-
+        Relay Control 0.5.10 with the co-branded login styling from #80,
+        relay-node credentials and broker from #83, and migration 0039. The
+        Desktop-feed and signer contracts are unchanged.
     license:
       status: approved
       spdx: Apache-2.0
-      evidence: https://github.com/AgentWorkforce/relay-control/blob/be21070ebf2d0649a9fb50d6608b0cd7bf12105c/LICENSE
+      evidence: https://github.com/AgentWorkforce/relay-control/blob/1e55273745648c7bd8d2d1445fba75c285ec5fb0/LICENSE
     platforms:
       expected: [linux/amd64, linux/arm64]
       verifiedFromRegistry: [linux/amd64, linux/arm64]
       status: verified
       verificationAccess: anonymous
     release:
-      workflow: https://github.com/AgentWorkforce/relay-control/blob/be21070ebf2d0649a9fb50d6608b0cd7bf12105c/.github/workflows/release-relay-control-image.yml
-      run: https://github.com/AgentWorkforce/relay-control/actions/runs/42653521106
+      workflow: https://github.com/AgentWorkforce/relay-control/blob/1e55273745648c7bd8d2d1445fba75c285ec5fb0/.github/workflows/release-relay-control-image.yml
+      run: https://github.com/AgentWorkforce/relay-control/actions/runs/42885074532
       trigger: workflow_dispatch
       buildsCommittedRevision: true
-      publishedTags: ["0.5.8", sha-be21070ebf2d0649a9fb50d6608b0cd7bf12105c]
+      publishedTags: ["0.5.10", sha-1e55273745648c7bd8d2d1445fba75c285ec5fb0]
       publishesSbom: true
       publishesProvenance: true
       provenanceMode: max
@@ -381,7 +384,7 @@ images:
     approval:
       status: approved
       basis: >-
-        Public digest from the successful reviewed 0.5.8 release workflow at
+        Public digest from the successful reviewed 0.5.10 release workflow at
         the recorded revision, with SBOM, provenance and amd64+arm64 verified
         anonymously.
       blockingReasons: []

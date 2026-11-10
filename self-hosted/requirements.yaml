@@ -1085,10 +1085,10 @@ compatibility:
       images:
         relayauth: { repository: ghcr.io/agentworkforce/relayauth, digest: sha256:eb71daa28e30eb7305f666d0bccc5a4002e53e8a574e3c4c32163d907a1b71df }
       notes: superseded by 0.1.1.
-    - id: agent-relay-0.6.29
+    - id: agent-relay-0.6.30
       status: unreleased
       current: true
-      charts: { agent-relay: 0.6.29, relayhistory: 0.1.3, relay-control: 0.4.6, relay-webapp: 0.2.1 }
+      charts: { agent-relay: 0.6.30, relayhistory: 0.1.3, relay-control: 0.4.6, relay-webapp: 0.2.1 }
       app_versions: { agent-relay: 0.1.0, relayhistory: 0.1.0, relay-control: 0.1.0, relay-webapp: 0.1.0 }
       depends:
         agent-relay: { relaycast: 0.3.7, relayauth: 0.1.5, sessions-pipeline: 0.8.19, relayhistory: 0.1.3, relay-control: 0.4.6, relay-webapp: 0.2.1, relayflows: 0.2.5, durable-actors: 0.14.6-awf.1, relayfile: 0.2.2, telemetry-collector: 0.1.3, relay-chief: 0.1.0 }
@@ -1096,7 +1096,11 @@ compatibility:
         relayhistory: { repository: ghcr.io/agentworkforce/relayhistory, digest_required: true }
         relay-control: { repository: ghcr.io/agentworkforce/relay-control, digest: sha256:d8c26d44dccb6dd21b7033288241a379e46ce5fbca69f276c4d4745001c3c3e2 }
         relay-webapp: { repository: ghcr.io/agentworkforce/relay-webapp, digest_required: true }
-      notes: 'Carries relay-control 0.4.6, allowing the optional reader host alias to match sessionReadApiPublicUrl in native mode while leaving the private issuer handoff and legacy selection separate. Retains sessions-pipeline 0.8.19; no image pin, writer ruleset, component enablement, customer target or rollout is selected.'
+      notes: 'Carries relay-control 0.4.6, allowing the optional reader host alias to match sessionReadApiPublicUrl in native mode while leaving the private issuer handoff and legacy selection separate. Retains sessions-pipeline 0.8.19 and its independently staged readerMaxRuleset ceilings, all default null/omitted so strict marker policy remains opt-in. The GCP customer handoff profile pins the approved relay-control 0.5.10 digest from source 1e552737, including login styling, relay-node credentials/broker and migration 0039; Desktop feed and signer behavior are unchanged. Raising a ceiling requires an approved #489-compatible services image. This records source-pack composition only; no customer target or rollout is selected.'
+    - id: agent-relay-0.6.29
+      status: planned
+      charts: { agent-relay: 0.6.29, relayhistory: 0.1.3, relay-control: 0.4.6, relay-webapp: 0.2.1 }
+      notes: 'Superseded before release by 0.6.30. Carries relay-control 0.4.6 and the native public-reader host alias; 0.6.30 additionally pins the approved relay-control 0.5.10 image in the GCP customer handoff profile.'
     - id: agent-relay-0.6.28
       status: planned
       charts: { agent-relay: 0.6.28, relayhistory: 0.1.3, relay-control: 0.4.5, relay-webapp: 0.2.1 }
