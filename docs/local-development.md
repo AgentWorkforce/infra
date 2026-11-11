@@ -14,13 +14,10 @@ Control, the dashboard, Relaycast, native ingest/consumer/reader, the brief work
 and the internal telemetry collector. It uses published immutable release images;
 no source build, old data, operator packet or admission file is required.
 
-Sessions, Relaycast and managed features come from the merged AA profile,
-`charts/agent-relay/values-eks.yaml`: Sessions alpha.5 and its SQLite Relaycast.
-The Kind-only overrides in `ci/agent-relay/kind/local-values.yaml` select
-Control 0.5.19 (`d1ef0495`, source `ad74a1a3`) and dashboard `3171edd0`
-(source `994ed422`), including the Workspace downloads card. The selected
-Control image's migrator runs before Control starts, including migrations
-0046 and 0047 on a fresh store. The AA install-pack pins are unchanged.
+Default Control, dashboard, Sessions, Relaycast and managed features come from
+the merged release profile, `charts/agent-relay/values-eks.yaml`. Default Kind
+bring-up follows that authority as new release pins land; the separate
+downloads-card experiment never repins the default or customer install pack.
 Only those release references/features are imported;
 the local fixture generates its own identity, endpoints, credentials and storage.
 The qualified `values-scrub-wasm-bindgen.yaml` overlay selects
@@ -31,7 +28,21 @@ timing assumption are enabled, matching Sales #50. The reader uses managed
 values when its chart supplies them. `ci/agent-relay/kind/local-values.yaml`
 also contains the local collector/proxy overrides.
 
-Settings > Workspace lists the Kind Desktop release from the public
+To try the **opt-in Kind downloads-card experiment** in a separate fresh
+fixture, run:
+
+```sh
+LOCAL_DESKTOP_RELEASES=1 make local-up
+```
+
+Keep this opt-in on subsequent local commands, including `local-dev-setup`.
+Switching image generations in place is refused; do not use this experiment
+for customer-release qualification. `desktop-releases-values.yaml` selects
+Control 0.5.19 (`d1ef0495`, source `ad74a1a3`) and dashboard `3171edd0`
+(source `994ed422`). Its official selected-image migrator runs before Control,
+including new migrations 0046 and 0047 on a fresh store.
+
+With this opt-in, Settings > Workspace lists the Kind Desktop release from the public
 `AgentWorkforce/relay-desktop-kind-releases` repository, labelled **GitHub
 releases**, with download URLs and checksum links. Local Control sets
 `SELFHOST_DESKTOP_RELEASES_REPO` for that repository. Its own API pods get a
@@ -39,6 +50,8 @@ public-IPv4 TCP443 egress exception so they can fetch GitHub release metadata;
 RFC1918 and link-local ranges are excluded. This standard NetworkPolicy is
 not a DNS hostname allowlist. Other pods retain their existing egress policies.
 Both dashboard copy and serving containers use the same local image pin.
+The default has neither that repository env setting nor the GitHub egress
+exception, and uses the release Control/dashboard images instead.
 
 On the Mac, complete this **one-time administrator step** for DNS and trust:
 

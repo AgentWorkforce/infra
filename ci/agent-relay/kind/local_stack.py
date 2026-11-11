@@ -28,6 +28,7 @@ from native_recipe import SECRET_KEYS
 from local_host_setup import certificate_present, host_aliases_present, managed_cas
 
 LOCAL_VALUES = yaml.safe_load((ROOT / "ci/agent-relay/kind/local-values.yaml").read_text())
+DESKTOP_RELEASE_VALUES = yaml.safe_load((ROOT / "ci/agent-relay/kind/desktop-releases-values.yaml").read_text())
 AA_VALUES = yaml.safe_load((ROOT / "charts/agent-relay/values-eks.yaml").read_text())
 READER_VALUES = yaml.safe_load((ROOT / "charts/session-read-api/values.yaml").read_text())
 SCRUB_VALUES = yaml.safe_load((ROOT / "charts/agent-relay/values-scrub-wasm-bindgen.yaml").read_text())["global"]["scrubEngine"]
@@ -37,11 +38,23 @@ def reference(value):
     return value["repository"] + "@" + value["digest"]
 
 
+def desktop_releases_enabled(environ=None):
+    value = (os.environ if environ is None else environ).get("LOCAL_DESKTOP_RELEASES", "0")
+    if value not in ("", "0", "1"):
+        raise StackError("LOCAL_DESKTOP_RELEASES must be 0 or 1")
+    return value == "1"
+
+
+def profile_images(experimental):
+    values = DESKTOP_RELEASE_VALUES if experimental else AA_VALUES
+    return tuple(reference(values[name]["image"]) for name in ("relay-control", "relay-webapp"))
+
+
+DESKTOP_RELEASES = desktop_releases_enabled()
 PIPELINE = reference(AA_VALUES["sessions-pipeline"]["worker"]["image"])
 if PIPELINE != reference(AA_VALUES["sessions-pipeline"]["alleyoop"]["image"]):
     raise StackError("the AA profile must select one services-image generation")
-CONTROL = reference(LOCAL_VALUES["relay-control"]["image"])
-WEBAPP = reference(LOCAL_VALUES["relay-webapp"]["image"])
+CONTROL, WEBAPP = profile_images(DESKTOP_RELEASES)
 CAST = reference(AA_VALUES["relaycast"]["image"])
 MINIO = "cgr.dev/chainguard/minio@sha256:e70b2b1e74d79457f808710483bd726ff364529ca30736eaa15a6ab547d3a5a7"
 SITE = "https://relay.kind.agentrelay.com"
@@ -271,8 +284,9 @@ class LocalStack(Stack):
         result["relay-control"]["image"] = image(CONTROL)
         # Usage and launch are Control APIs; they add no optional workload.
         result["relay-control"]["selectedFeatures"] = list(AA_VALUES["relay-control"]["selectedFeatures"])
-        result["relay-control"].setdefault("extraEnv", []).append(env("SELFHOST_DESKTOP_RELEASES_REPO",
-            LOCAL_VALUES["relay-control"]["desktopReleasesRepo"]))
+        if DESKTOP_RELEASES:
+            result["relay-control"].setdefault("extraEnv", []).append(env("SELFHOST_DESKTOP_RELEASES_REPO",
+                DESKTOP_RELEASE_VALUES["relay-control"]["desktopReleasesRepo"]))
         result["relay-control"]["auth"] = {"emailLink": {"enabled": True}}
         result["relay-control"]["smtp"] = {"host": "local-mail.agent-relay.svc.cluster.local", "port": 1025, "security": "none", "from": "Local Relay <signin@kind.example>"}
         result["relay-control"]["services"]["publicHostAliases"] = [{"ip": self.edge_ip, "hostnames": ["relay.kind.agentrelay.com"]}]
@@ -330,9 +344,10 @@ class LocalStack(Stack):
         self.configure_model()
 
     def github_releases_egress(self):
-        self.apply(public_https_egress("local-control-github-releases-egress", {
-            "app.kubernetes.io/name": "relay-control", "app.kubernetes.io/instance": "agent-relay",
-            "app.kubernetes.io/component": "api"}))
+        if DESKTOP_RELEASES:
+            self.apply(public_https_egress("local-control-github-releases-egress", {
+                "app.kubernetes.io/name": "relay-control", "app.kubernetes.io/instance": "agent-relay",
+                "app.kubernetes.io/component": "api"}))
 
     def configure_model(self, key=None):
         # Repeating local-up without an environment override preserves a key

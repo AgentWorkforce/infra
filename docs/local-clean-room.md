@@ -47,13 +47,13 @@ then be removed. Keep that exception list with the final pass/fail sheet.
   Sales #50 dashboard update (`dfdf6db6`) and fresh-store read settings.
   That recipe derived those image references and managed
   `[usage, launch]` features from merged `charts/agent-relay/values-eks.yaml`,
-  select the approved dashboard update in `ci/agent-relay/kind/local-values.yaml`,
-  and select the merged `values-scrub-wasm-bindgen.yaml` overlay. Do not copy
+  selected the approved Sales dashboard update, and selected the merged
+  `values-scrub-wasm-bindgen.yaml` overlay. Do not copy
   digest literals from a message or substitute a previous trial's pins.
-  New Kind
-  downloads-card trials use the separately approved Control/dashboard overrides
-  in `ci/agent-relay/kind/local-values.yaml`; record the selected pins and do not
-  describe such a trial as reproducing the unchanged AA pack.
+  Current default Kind bring-up follows the merged release profile for Control
+  and dashboard as well. Downloads-card trials require `LOCAL_DESKTOP_RELEASES=1`
+  and use `ci/agent-relay/kind/desktop-releases-values.yaml`; record that opt-in
+  and never describe an experimental trial as customer-release qualification.
 - Retain Git, Python 3.9+, Docker Desktop with its local Linux engine, and the
   authenticated Codex/Claude executables. Docker and kubectl must be on PATH;
   their standard directory is `/Applications/Docker.app/Contents/Resources/bin`.

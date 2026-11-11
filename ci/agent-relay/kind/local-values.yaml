@@ -1,20 +1,6 @@
-# Sessions/Relaycast/features derive from AA EKS values. Control/dashboard below
-# are Kind-only updates; changing these does not repin the AA install pack.
-# The scrub contract uses the qualified WASM overlay.
+# Core images/features derive from release values. The optional downloads-card
+# experiment is separate in desktop-releases-values.yaml, never the default.
 # local-up generates fresh tenant IDs, credentials and TLS without operator input.
-relay-control:
-  image:
-    # 0.5.19 / Control #116, publish 43115001878 (migrations 0046 and 0047).
-    repository: ghcr.io/agentworkforce/relay-control
-    digest: sha256:d1ef0495fb0cdbef27d0cfda221a5c0661a7a12a208c8c4ee3f8102a5101e68c
-    sourceRevision: ad74a1a3ee40a1048e375ab3762f119f3d9f7d3e
-  desktopReleasesRepo: AgentWorkforce/relay-desktop-kind-releases
-relay-webapp:
-  image:
-    # GitHub-backed Workspace downloads card, publish 43114590490.
-    repository: ghcr.io/agentworkforce/relay-webapp
-    digest: sha256:3171edd07263a63d3f99143e91706d70b857d494f819cba6b283193871888a98
-    sourceRevision: 994ed4228cef86fa4eb90b160c0d1ae8c76838a3
 telemetry-collector:
   image:
     # AA Control 0.5.16 includes the reviewed brief and Relaycast event catalog.
