@@ -55,35 +55,54 @@ if [ -n "$run" ] && [ -z "$version" ]; then echo "--version is required with --c
 env_name="desktop-$profile"
 base="$site/api/v1/organizations/$org/desktop-feed/profiles"
 
-api() { # method path [json]; prints body; fails on non-2xx without echoing secrets
-  local method="$1" url="$2" body="${3:-}" out code
+api() { # method path [json]; streams body and fails on non-2xx
+  local method="$1" url="$2" body="${3:-}"
   local -a curl_args
-  out=$(mktemp); trap 'rm -f "$out"' RETURN
-  curl_args=(-sS -o "$out" -w '%{http_code}' -X "$method" "$url"
+  curl_args=(-sS --fail -X "$method" "$url"
     -H 'Accept: application/json')
   if [ -n "$body" ]; then
     curl_args+=(-H 'Content-Type: application/json' --data "$body")
   fi
-  code=$(
-    printf 'header = "Authorization: Bearer %s"\n' "$admin_token" |
-      curl --config - "${curl_args[@]}"
-  )
-  case "$code" in 2??) cat "$out";; *) echo "$method $url -> HTTP $code: $(jq -c '{code:(.code // .error // null)}' "$out" 2>/dev/null)" >&2; return 1;; esac
+  printf 'header = "Authorization: Bearer %s"\n' "$admin_token" |
+    curl --config - "${curl_args[@]}"
+}
+api_with_status() { # method path [json]; streams body followed by a final HTTP status line
+  local method="$1" url="$2" body="${3:-}"
+  local -a curl_args
+  curl_args=(-sS -w $'\n%{http_code}' -X "$method" "$url"
+    -H 'Accept: application/json')
+  if [ -n "$body" ]; then
+    curl_args+=(-H 'Content-Type: application/json' --data "$body")
+  fi
+  printf 'header = "Authorization: Bearer %s"\n' "$admin_token" |
+    curl --config - "${curl_args[@]}"
 }
 say() { printf '%s\n' "$*"; }
 
 say "== plan ($([ $apply = 1 ] && echo APPLY || echo plan-only)): site=$site profile=$profile env=$env_name"
 
 # 1. Profile: reuse when present, otherwise register.
-profile_json=$(api GET "$base/$profile" 2>/dev/null || true)
-if [ -n "$profile_json" ]; then
-  say "profile exists"
-elif [ $apply = 1 ]; then
-  profile_json=$(api POST "$base" "$(jq -nc --arg id "$profile" --arg p "$prefix" '{id:$id, asset_prefix:$p}')")
-  say "profile registered"
-else
-  say "would register profile (asset_prefix=$prefix)"
-fi
+profile_response=$(api_with_status GET "$base/$profile")
+profile_code="${profile_response##*$'\n'}"
+profile_json="${profile_response%$'\n'*}"
+case "$profile_code" in
+  2??)
+    say "profile exists"
+    ;;
+  404)
+    profile_json=""
+    if [ $apply = 1 ]; then
+      profile_json=$(api POST "$base" "$(jq -nc --arg id "$profile" --arg p "$prefix" '{id:$id, asset_prefix:$p}')")
+      say "profile registered"
+    else
+      say "would register profile (asset_prefix=$prefix)"
+    fi
+    ;;
+  *)
+    echo "GET $base/$profile -> HTTP $profile_code" >&2
+    exit 1
+    ;;
+esac
 
 # 2. The signing public key the site will sign with (public, safe to print).
 pub=$(printf '%s' "$profile_json" | jq -r '.signing_key.public_key // .signing_keys[0].public_key // empty' 2>/dev/null || true)
@@ -95,13 +114,39 @@ if [ $apply = 1 ]; then api PUT "$base/$profile/workspaces/$workspace" >/dev/nul
 
 # 4. The candidate must carry this site's public key, or the app refuses its own feed.
 if [ -n "$run" ] && [ -n "$pub" ]; then
-  d=$(mktemp -d); trap 'rm -rf "$d"' EXIT
-  gh run download "$run" -R "$DESKTOP_REPO" -n dmg-arm64 -D "$d" >/dev/null
-  dmg=$(ls "$d"/*.dmg | head -1); mnt="$d/mnt"; mkdir "$mnt"
-  hdiutil attach -nobrowse -readonly -mountpoint "$mnt" "$dmg" >/dev/null
-  if grep -rqF -- "$pub" "$mnt" 2>/dev/null; then say "candidate $run embeds this site's feed key: OK"; key_ok=1
+  candidate_dir=$(mktemp -d)
+  candidate_mnt="$candidate_dir/mnt"
+  candidate_attached=0
+  cleanup_candidate() {
+    if [ "$candidate_attached" = 1 ]; then
+      if ! hdiutil detach "$candidate_mnt" -quiet; then
+        echo "failed to detach candidate volume at $candidate_mnt" >&2
+        return 1
+      fi
+      candidate_attached=0
+    fi
+    rm -rf "$candidate_dir"
+  }
+  cleanup_candidate_on_exit() {
+    local rc="$1"
+    trap - EXIT
+    cleanup_candidate || rc=1
+    exit "$rc"
+  }
+  trap 'cleanup_candidate_on_exit "$?"' EXIT
+  gh run download "$run" -R "$DESKTOP_REPO" -n dmg-arm64 -D "$candidate_dir" >/dev/null
+  dmg=$(find "$candidate_dir" -maxdepth 1 -type f -name '*.dmg' -print -quit)
+  [ -n "$dmg" ] || { echo "candidate run $run did not contain a dmg-arm64 DMG" >&2; exit 1; }
+  mkdir "$candidate_mnt"
+  hdiutil attach -nobrowse -readonly -mountpoint "$candidate_mnt" "$dmg" >/dev/null
+  candidate_attached=1
+  if grep -rqF -- "$pub" "$candidate_mnt" 2>/dev/null; then say "candidate $run embeds this site's feed key: OK"; key_ok=1
   else say "candidate $run does NOT embed this site's feed key: rebuild the candidate after step 5"; key_ok=0; fi
-  hdiutil detach "$mnt" -quiet || true
+  if ! cleanup_candidate; then
+    trap - EXIT
+    exit 1
+  fi
+  trap - EXIT
 fi
 
 # 5. Keep the profile environment's public key in step with the site, then mint
