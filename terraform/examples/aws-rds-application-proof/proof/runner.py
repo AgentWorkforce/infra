@@ -505,11 +505,12 @@ class Runner:
         contract = None
         if not destroying:
             contract = self.capture_contract()
-        # After a clean forward apply, or once a contract has been captured, the output must
-        # exist, so a failed read is retryable. A failed apply or a partial lifecycle's cleanup
-        # may legitimately have no output, and must not get stuck waiting for one.
-        expected = phase in FORWARD or self.path('contract.json').exists()
-        unreadable = not destroying and contract is None and self.contract_read_failed and code == 0 and error is None and expected
+        # Keep the phase retryable whenever the contract could not be read, even after a failed
+        # apply, or the ledger would keep stale IDs. Only a genuine absence with nothing
+        # captured yet (a first provision that failed) may proceed without one.
+        had_contract = self.path('contract.json').exists()
+        clean_forward = phase in FORWARD and code == 0 and error is None
+        unreadable = not destroying and contract is None and (self.contract_read_failed or (self.contract_absent and (had_contract or clean_forward)))
         native = False if unreadable else (self.capture_native(contract) if contract else None)
         save(self.path(phase + '.capture.json'), {**record, 'serial': value['serial'], 'resources': addresses, 'native_complete': native})
         if native is False:
@@ -545,20 +546,28 @@ class Runner:
         return {'phase': phase, 'status': self.status_of(phase)}
 
     def capture_contract(self):
-        # A failed read says nothing about the contract: it stays recoverable, unlike a
-        # successful read of a null or wrong-shaped output, which fails validation.
+        # Three outcomes matter. A failed read says nothing about the contract and stays
+        # retryable. "Output not found" means Terraform has none, which is normal after a
+        # first provision fails. A successful read of a null or wrong shape fails validation.
         self.contract_read_failed = False
+        self.contract_absent = False
         try:
             self.own_backend()
             result = self.run([self.terraform, 'output', '-json', 'proof_contract'], timeout=300, check=False)
             if result.returncode != 0:
-                self.contract_read_failed = True
+                text = f'{result.stdout or ""}{result.stderr or ""}'
+                if 'Output "proof_contract" not found' in text:
+                    self.contract_absent = True
+                else:
+                    self.contract_read_failed = True
                 return None
             value = json.loads(result.stdout) if result.stdout.strip() else None
         except (ValueError, OSError, subprocess.SubprocessError, Refused, CommandInterrupted):
             self.contract_read_failed = True
             return None
         if not isinstance(value, dict):
+            # Not a contract; once one was captured, keeping it would leave the ledger stale.
+            self.contract_read_failed = self.path('contract.json').exists()
             return None
         save(self.path('contract.json'), value)
         history = read(self.path('compute-history.json')) if self.path('compute-history.json').exists() else []
