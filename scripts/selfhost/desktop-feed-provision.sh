@@ -109,10 +109,7 @@ pub=$(printf '%s' "$profile_json" | jq -r '.signing_key.public_key // .signing_k
 key_id=$(printf '%s' "$profile_json" | jq -r '.signing_key.key_id // .signing_keys[0].key_id // empty' 2>/dev/null || true)
 [ -n "$pub" ] && say "signing key $key_id public_key=$pub"
 
-# 3. Workspace binding (idempotent PUT).
-if [ $apply = 1 ]; then api PUT "$base/$profile/workspaces/$workspace" >/dev/null; say "workspace bound"; else say "would bind workspace $workspace"; fi
-
-# 4. The candidate must carry this site's public key, or the app refuses its own feed.
+# 3. The candidate must carry this site's public key, or the app refuses its own feed.
 if [ -n "$run" ] && [ -n "$pub" ]; then
   candidate_dir=$(mktemp -d)
   candidate_mnt="$candidate_dir/mnt"
@@ -148,6 +145,16 @@ if [ -n "$run" ] && [ -n "$pub" ]; then
   fi
   trap - EXIT
 fi
+
+# An apply with a candidate is fail-closed: do not bind the workspace or change
+# GitHub secrets unless the candidate was actually checked against a public key.
+if [ $apply = 1 ] && [ -n "$run" ] && [ "${key_ok:-0}" != 1 ]; then
+  echo "refusing apply: candidate key check did not pass" >&2
+  exit 1
+fi
+
+# 4. Workspace binding (idempotent PUT).
+if [ $apply = 1 ]; then api PUT "$base/$profile/workspaces/$workspace" >/dev/null; say "workspace bound"; else say "would bind workspace $workspace"; fi
 
 # 5. Keep the profile environment's public key in step with the site, then mint
 #    the publisher token straight into the environment secret.

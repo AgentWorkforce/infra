@@ -358,12 +358,12 @@ into `DESKTOP_FEED_PUBLISHER_TOKEN` in `$DESKTOP_ENVIRONMENT`, and dispatches
 `desktop-promote.yml` only after the candidate's embedded key matches. The
 publisher token is never printed or written to disk.
 
-This operation is not transactional. On a candidate-key mismatch the script
-skips Promote, but the same apply still leaves any profile registration and
-workspace binding in place and still updates the GitHub secrets, including a
-new publisher token. Do not retry blindly: the profile retains at most two
-active tokens and a third mint revokes the oldest. Inspect the recorded state
-and reconcile a failed step before another apply.
+This operation is not transactional. A missing or mismatched candidate key
+fails apply before workspace binding, GitHub secret updates, token minting or
+Promote, although a newly registered profile can remain. A later failure can
+leave earlier completed mutations in place. Do not retry blindly: the profile
+retains at most two active tokens and a third mint revokes the oldest. Inspect
+the recorded state and reconcile a failed step before another apply.
 
 Verify secret names without reading their values, then require the dispatched
 Promote run and the profile feed acceptance to pass:

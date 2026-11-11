@@ -65,7 +65,11 @@ case "${method} ${url}" in
   "GET "*"/profiles/profile1")
     status="${MOCK_PROFILE_STATUS:-200}"
     if [[ "${status}" == "200" ]]; then
-      response='{"id":"profile1","signing_key":{"key_id":"fk_profile1_k1","public_key":"fixture-public-key"}}'
+      if [[ "${MOCK_PROFILE_PUBLIC_KEY_EMPTY:-0}" == 1 ]]; then
+        response='{"id":"profile1"}'
+      else
+        response='{"id":"profile1","signing_key":{"key_id":"fk_profile1_k1","public_key":"fixture-public-key"}}'
+      fi
     else
       response='{"error":"profile_lookup_failed"}'
     fi
@@ -154,7 +158,11 @@ case "${1:-}" in
     done
     [[ -n "${mountpoint}" ]] || exit 98
     mkdir -p "${mountpoint}"
-    printf 'fixture-public-key\n' >"${mountpoint}/embedded-feed-key.txt"
+    if [[ "${MOCK_CANDIDATE_KEY_MISMATCH:-0}" == 1 ]]; then
+      printf 'different-feed-key\n' >"${mountpoint}/embedded-feed-key.txt"
+    else
+      printf 'fixture-public-key\n' >"${mountpoint}/embedded-feed-key.txt"
+    fi
     ;;
   detach)
     printf 'detach\n' >>"${MOCK_HDIUTIL_LOG}"
@@ -239,6 +247,36 @@ missing_output="$(
 )"
 [[ "${missing_output}" == *"would register profile"* ]] || fail "profile HTTP 404 was not treated as absence"
 pass "only profile HTTP 404 is treated as absence"
+
+: >"${gh_log}"
+set +e
+mismatch_output="$(
+  RELAY_ADMIN_TOKEN="${admin_token}" MOCK_CANDIDATE_KEY_MISMATCH=1 DESKTOP_REPO=AgentWorkforce/relay-desktop \
+    bash "${PROVISIONER}" "${common_args[@]}" --apply 2>&1
+)"
+mismatch_rc=$?
+set -e
+[[ "${mismatch_rc}" == 1 ]] || fail "candidate key mismatch did not fail apply"
+[[ "${mismatch_output}" == *"refusing apply: candidate key check did not pass"* ]] || fail "candidate key mismatch refusal was unclear"
+if grep -Fxq 'arg:secret' "${gh_log}" || grep -Fxq 'arg:workflow' "${gh_log}"; then
+  fail "candidate key mismatch changed secrets or dispatched Promote"
+fi
+pass "candidate key mismatch fails apply before secrets or Promote"
+
+: >"${gh_log}"
+set +e
+missing_key_output="$(
+  RELAY_ADMIN_TOKEN="${admin_token}" MOCK_PROFILE_PUBLIC_KEY_EMPTY=1 DESKTOP_REPO=AgentWorkforce/relay-desktop \
+    bash "${PROVISIONER}" "${common_args[@]}" --apply 2>&1
+)"
+missing_key_rc=$?
+set -e
+[[ "${missing_key_rc}" == 1 ]] || fail "missing profile public key did not fail apply"
+[[ "${missing_key_output}" == *"refusing apply: candidate key check did not pass"* ]] || fail "missing profile public key refusal was unclear"
+if grep -Fxq 'arg:secret' "${gh_log}" || grep -Fxq 'arg:workflow' "${gh_log}"; then
+  fail "missing profile public key changed secrets or dispatched Promote"
+fi
+pass "missing profile public key fails apply before binding, secrets, or Promote"
 
 set +e
 detach_output="$(
