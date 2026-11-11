@@ -274,7 +274,7 @@ echo "rds_migration_roles ok"
 $P -v migration_owner="$PGUSER" -v runtime_role=sessions_pipeline_runtime -v runtime_login=true -f /sql/hoopdb_runtime_role_rds.sql
 echo "hoopdb_runtime_role_rds ok"
 printf '%s\n' "ALTER ROLE sessions_pipeline_runtime PASSWORD :'p1';" | $P -v p1="$sessions_pipeline_runtime"
-for f in session_directory_search_worker session_token_verifier session_ingest_roles session_read_api_roles; do
+for f in session_directory_search_worker session_token_verifier session_ingest_roles session_read_api_roles session_consumer_roles; do
   $P -f "/sql/$f.sql"
   echo "$f ok"
 done
