@@ -22,6 +22,15 @@ publicUrl: ""
 global:
   singleHost:
     host: ""
+  # The customer logo relay-webapp serves at <dashboard origin>/brand/<file>
+  # (see charts/relay-webapp/values.yaml; set once on the umbrella). This chart
+  # only reads it to derive login.logoUrl: logo.svg for svg, else key
+  # (default logo.png) when existingConfigMap is set.
+  branding:
+    logo:
+      svg: ""
+      existingConfigMap: ""
+      key: ""
 existingSecret: ""
 # null preserves existing extraEnv selection; [] explicitly selects core only.
 # Managed names: flows, relayfile, chief, usage, launch. No license is used.
@@ -119,6 +128,19 @@ bootstrap:
   adminName: ""
   # Empty uses "Default".
   workspaceName: ""
+
+# Sign-in page co-branding (relaycontrol docs/identity.md): a customer logo,
+# drawn small through <img> beside the Agent Relay lockup, and the name shown
+# next to it. Both are public through GET /api/v1/auth/login-config.
+login:
+  # SELFHOST_LOGIN_LOGO_URL, an absolute https URL. Empty with
+  # global.branding.logo set: <dashboard origin>/brand/<file>, the origin being
+  # https://<global.singleHost.host> or dashboardUrl's. Empty and no branding:
+  # no logo.
+  logoUrl: ""
+  # SELFHOST_LOGIN_ORG_NAME. Empty: Control uses bootstrap.orgName. Control
+  # publishes the name only while a logo is set.
+  orgName: ""
 
 # How people sign in at <dashboard>/login. Without OIDC or email links only
 # the operator break-glass (a device code approved with the bootstrap token)

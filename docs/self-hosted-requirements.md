@@ -14,7 +14,7 @@ registered, every shipped entry must exist in the charts, planned entries must
 not be referenced by any template, and the compatibility matrix must equal
 the pinned digests.
 
-Source of truth: [`self-hosted/requirements.yaml`](../self-hosted/requirements.yaml). 149 entries: 50 requirements (50 shipped, 0 planned), 99 options (98 shipped, 1 planned).
+Source of truth: [`self-hosted/requirements.yaml`](../self-hosted/requirements.yaml). 151 entries: 50 requirements (50 shipped, 0 planned), 101 options (100 shipped, 1 planned).
 
 ## Contents
 
@@ -125,7 +125,8 @@ Services image (sessions-pipeline-worker, alleyoop and the privileged SQL Jobs):
 | relayauth-0.1.2 | shipped | relayauth 0.1.2 | relayauth: `ghcr.io/agentworkforce/relayauth@sha256:c23c92d25fdf…` |  |  | License-annotation patch bump of 0.1.1. Superseded by 0.1.3. |
 | relayauth-0.1.1 | shipped | relayauth 0.1.1 | relayauth: `ghcr.io/agentworkforce/relayauth@sha256:c23c92d25fdf…` |  |  | relayauth 784582ef (machine-bound History assertion contract, relayauth #113). Superseded by 0.1.2. |
 | relayauth-0.1.0 | shipped | relayauth 0.1.0 | relayauth: `ghcr.io/agentworkforce/relayauth@sha256:eb71daa28e30…` |  |  | superseded by 0.1.1. |
-| agent-relay-0.6.46 | unreleased | agent-relay 0.6.46<br>relayhistory 0.1.3<br>relay-control 0.4.12<br>relay-webapp 0.2.3<br>(deps: relaycast 0.3.8, relayauth 0.1.5, sessions-pipeline 0.8.24, relayhistory 0.1.3, relay-control 0.4.12, relay-webapp 0.2.3, relayflows 0.2.5, durable-actors 0.14.6-awf.1, relayfile 0.2.2, telemetry-collector 0.1.5, relay-chief 0.1.0) | relaycast: `ghcr.io/agentworkforce/relaycast-self-host@sha256:ab9dd6781e68…`<br>sessions-pipeline-worker: `ghcr.io/agentworkforce/sessions-pipeline@sha256:77022c5b6a1d…`<br>relayhistory: `ghcr.io/agentworkforce/relayhistory@sha256:<required>`<br>relay-control: `ghcr.io/agentworkforce/relay-control@sha256:d8c26d44dccb…`<br>relay-webapp: `ghcr.io/agentworkforce/relay-webapp@sha256:bd295ccb7d13…` |  |  | Customer pack release candidate on top of 0.6.45 and its first-class output-facts/bootstrap/read API defaults plus the approved relay-control 0.5.16 pin from source 83a57d38: GCP and EKS pin the signed Sessions alpha.5 image from source 7e9b2f0f on every services-image workload and Job, including output-facts bootstrap, the collector-capable Relaycast image from cac175b5 and relay-webapp c485ba65. Both profiles are reader-first at ceiling 10; values-scrub-wasm-bindgen.yaml is the explicit phase-2 cutover. The AA EKS profile selects usage and launch after the ar-lap owner lifecycle proof passed capability, owned-target, spawn, idempotent replay, Ready, cross-session ownership refusal, release and roster-removal checks. Remove launch if its enrolled owner/admin Desktop target regresses at install time. Relaycast analytics, MinIO direct upload and password/setup-key options remain default off. |
+| agent-relay-0.6.47 | unreleased | agent-relay 0.6.47<br>relayhistory 0.1.3<br>relay-control 0.4.13<br>relay-webapp 0.2.4<br>(deps: relaycast 0.3.8, relayauth 0.1.5, sessions-pipeline 0.8.24, relayhistory 0.1.3, relay-control 0.4.13, relay-webapp 0.2.4, relayflows 0.2.5, durable-actors 0.14.6-awf.1, relayfile 0.2.2, telemetry-collector 0.1.5, relay-chief 0.1.0) | relaycast: `ghcr.io/agentworkforce/relaycast-self-host@sha256:ab9dd6781e68…`<br>sessions-pipeline-worker: `ghcr.io/agentworkforce/sessions-pipeline@sha256:77022c5b6a1d…`<br>relayhistory: `ghcr.io/agentworkforce/relayhistory@sha256:<required>`<br>relay-control: `ghcr.io/agentworkforce/relay-control@sha256:d8c26d44dccb…`<br>relay-webapp: `ghcr.io/agentworkforce/relay-webapp@sha256:bd295ccb7d13…` |  |  | Adds the hosted customer logo: global.branding.logo (inline svg, or existingConfigMap and key) is served by relay-webapp 0.2.4 at <dashboard origin>/brand/<file>, and relay-control 0.4.13 points SELFHOST_LOGIN_LOGO_URL at it (login.logoUrl overrides; login.orgName sets SELFHOST_LOGIN_ORG_NAME). Off by default; default renders differ from 0.6.46 only in the helm.sh/chart labels. Images unchanged from 0.6.46; a relay-webapp image from #132 adds the /brand/ CSP and 404. Otherwise as 0.6.46. |
+| agent-relay-0.6.46 | **planned** | agent-relay 0.6.46<br>relayhistory 0.1.3<br>relay-control 0.4.12<br>relay-webapp 0.2.3<br>(deps: relaycast 0.3.8, relayauth 0.1.5, sessions-pipeline 0.8.24, relayhistory 0.1.3, relay-control 0.4.12, relay-webapp 0.2.3, relayflows 0.2.5, durable-actors 0.14.6-awf.1, relayfile 0.2.2, telemetry-collector 0.1.5, relay-chief 0.1.0) | relaycast: `ghcr.io/agentworkforce/relaycast-self-host@sha256:ab9dd6781e68…`<br>sessions-pipeline-worker: `ghcr.io/agentworkforce/sessions-pipeline@sha256:77022c5b6a1d…`<br>relayhistory: `ghcr.io/agentworkforce/relayhistory@sha256:<required>`<br>relay-control: `ghcr.io/agentworkforce/relay-control@sha256:d8c26d44dccb…`<br>relay-webapp: `ghcr.io/agentworkforce/relay-webapp@sha256:bd295ccb7d13…` |  |  | Superseded before release by 0.6.47, which adds the hosted customer logo. Customer pack release candidate on top of 0.6.45 and its first-class output-facts/bootstrap/read API defaults plus the approved relay-control 0.5.16 pin from source 83a57d38: GCP and EKS pin the signed Sessions alpha.5 image from source 7e9b2f0f on every services-image workload and Job, including output-facts bootstrap, the collector-capable Relaycast image from cac175b5 and relay-webapp c485ba65. Both profiles are reader-first at ceiling 10; values-scrub-wasm-bindgen.yaml is the explicit phase-2 cutover. The AA EKS profile selects usage and launch after the ar-lap owner lifecycle proof passed capability, owned-target, spawn, idempotent replay, Ready, cross-session ownership refusal, release and roster-removal checks. Remove launch if its enrolled owner/admin Desktop target regresses at install time. Relaycast analytics, MinIO direct upload and password/setup-key options remain default off. |
 | agent-relay-0.6.45 | **planned** | agent-relay 0.6.45<br>relayhistory 0.1.3<br>relay-control 0.4.12<br>relay-webapp 0.2.3<br>(deps: relaycast 0.3.8, relayauth 0.1.5, sessions-pipeline 0.8.23, relayhistory 0.1.3, relay-control 0.4.12, relay-webapp 0.2.3, relayflows 0.2.5, durable-actors 0.14.6-awf.1, relayfile 0.2.2, telemetry-collector 0.1.5, relay-chief 0.1.0) | relayhistory: `ghcr.io/agentworkforce/relayhistory@sha256:<required>`<br>relay-control: `ghcr.io/agentworkforce/relay-control@sha256:d8c26d44dccb…`<br>relay-webapp: `ghcr.io/agentworkforce/relay-webapp@sha256:bd295ccb7d13…` |  |  | Superseded before release by 0.6.46. Carries sessions-pipeline 0.8.23: first-class output facts, the optional output facts bootstrap Job and session read API output/digest values; the aws-rds-native profile turns facts, Output and digest on with no narrative model. Pinned images are unchanged from 0.6.44. |
 | agent-relay-0.6.44 | **planned** | agent-relay 0.6.44<br>relayhistory 0.1.3<br>relay-control 0.4.12<br>relay-webapp 0.2.3<br>(deps: relaycast 0.3.8, relayauth 0.1.5, sessions-pipeline 0.8.22, relayhistory 0.1.3, relay-control 0.4.12, relay-webapp 0.2.3, relayflows 0.2.5, durable-actors 0.14.6-awf.1, relayfile 0.2.2, telemetry-collector 0.1.5, relay-chief 0.1.0) | relayhistory: `ghcr.io/agentworkforce/relayhistory@sha256:<required>`<br>relay-control: `ghcr.io/agentworkforce/relay-control@sha256:d8c26d44dccb…`<br>relay-webapp: `ghcr.io/agentworkforce/relay-webapp@sha256:bd295ccb7d13…` |  |  | Superseded before release by 0.6.45. Pins the approved relay-control 0.5.16 image from source 83a57d38 (run 42975781927) in the GCP customer handoff and the AWS EKS profile: it adds shared-session read auditing with an owner/admin export (#100, migration 0042) and the bounded native provider transport (#101) on top of 0.5.15. Otherwise as 0.6.43; no services pin or rollout is selected. |
 | agent-relay-0.6.43 | **planned** | agent-relay 0.6.43<br>relayhistory 0.1.3<br>relay-control 0.4.12<br>relay-webapp 0.2.3<br>(deps: relaycast 0.3.8, relayauth 0.1.5, sessions-pipeline 0.8.22, relayhistory 0.1.3, relay-control 0.4.12, relay-webapp 0.2.3, relayflows 0.2.5, durable-actors 0.14.6-awf.1, relayfile 0.2.2, telemetry-collector 0.1.5, relay-chief 0.1.0) | relayhistory: `ghcr.io/agentworkforce/relayhistory@sha256:<required>`<br>relay-control: `ghcr.io/agentworkforce/relay-control@sha256:d8c26d44dccb…`<br>relay-webapp: `ghcr.io/agentworkforce/relay-webapp@sha256:bd295ccb7d13…` |  |  | Superseded before release by 0.6.44, which pins relay-control 0.5.16. Pins the approved relay-control 0.5.15 image from source 31ff0737 (run 42973044715) in the GCP customer handoff and the AWS EKS profile: it carries the setup key, temporary passwords and password sign-in without SMTP (#96) that relay-control chart 0.4.12 exposes, MCP agent launch (#95), Desktop dashboard redirects (#97) and Claude chat attestation (#98), on top of 0.5.12. Otherwise as 0.6.42; no services pin or rollout is selected. |
@@ -918,6 +919,7 @@ chart `relay-control` · values [`ci/default-values.yaml`](../charts/relay-contr
 | shipped | [Integration OAuth apps for just-in-time connects](#opt-relay-control-integrations) | `none`, `one entry per provider with existingSecret` | `none (no integration can be connected until its app is configured)` | values `integrations`; Secret `<operator-chosen, integrations.<provider>.existingSecret>` keys `client-id`, `client-secret` |
 | shipped | [Relayflows control-plane storage and worker queue](#opt-relay-control-flows) | `postgres`, `gcs` | `postgres` | values `flows.*`; env `SELFHOST_FLOWS_STORAGE`, `SELFHOST_FLOWS_GCS_BUCKET`, `SELFHOST_FLOWS_GCS_PREFIX`, `SELFHOST_FLOWS_WORKER_RELAYCAST_URL`, `SELFHOST_FLOWS_QUEUE_PING_MS` |
 | shipped | [Self-host telemetry level and transport](#opt-relay-control-telemetry) | `errors`, `full`, `off` | `errors` | values `telemetry.*`, `secretKeys.telemetryInstallKey`; env `SELFHOST_TELEMETRY_LEVEL`, `SELFHOST_TELEMETRY_TRANSPORT`, `SELFHOST_TELEMETRY_ENDPOINT`, `SELFHOST_TELEMETRY_INSTALL_ID`, `SELFHOST_TELEMETRY_INSTALL_KEY_FILE`, `SELFHOST_TELEMETRY_PROBES`, `SELFHOST_TELEMETRY_DEPLOYMENT`; Secret `<existingSecret>` keys `<operator-chosen, no default>` |
+| shipped | [Sign-in page logo and organization name](#opt-relay-control-login-cobrand) | `none`, `hosted logo (global.branding.logo)`, `external https URL (login.logoUrl)` | `none (no customer logo; login-config logo_url and org_name are null)` | values `login.*`, `global.branding.logo.*`; env `SELFHOST_LOGIN_LOGO_URL`, `SELFHOST_LOGIN_ORG_NAME` |
 | shipped | [Control legacy RelayAuth client environment](#opt-control-legacy-relayauth) | `true`, `false` | `true` | values `services.relayauthEnabled`; env `RELAYAUTH_URL`, `RELAYAUTH_API_KEY_FILE` |
 | shipped | [Explicit optional Control features](#opt-relay-control-selected-features) | (no default), `[]`, `["flows","relayfile","chief"]`, `["usage"]`, `["launch"]` | (no default) | values `selectedFeatures`; env `SELFHOST_FEATURES` |
 | shipped | [Existing caller-token native reader connection](#opt-relay-control-direct-native-reader) | `disabled`, `enabled` | `disabled` | values `services.relayhistoryReadApiUrl`, `services.relayhistoryReadApiEvents`, `services.relayhistoryHostAliases`; env `RELAYHISTORY_READ_API_URL`, `RELAYHISTORY_READ_API_EVENTS` |
@@ -935,6 +937,7 @@ chart `relay-webapp` · values [`ci/default-values.yaml`](../charts/relay-webapp
 | --- | --- | --- | --- | --- |
 | shipped | [Dashboard ingress and same-origin API proxy](#opt-relay-webapp-ingress) | `enabled`, `disabled` | `enabled` | values `runtime.publicUrl`, `runtime.appPath`, `runtime.apiBasePath`, `runtime.loginPath`, `ingress.tls`, `imagePullSecrets`; env `DASHBOARD_PUBLIC_URL`, `DASHBOARD_APP_PATH`, `DASHBOARD_API_BASE_PATH`, `DASHBOARD_LOGIN_PATH`, `DASHBOARD_SESSION_READ_API_ENABLED`; Secret `<ingress.tls[].secretName>` (kubernetes.io/tls); Secret `<imagePullSecrets[].name>` (optional registry pull Secret) |
 | shipped | [Dashboard customer profile (enterprise branding)](#opt-relay-webapp-customer-profile) | `none`, `customer profile` | `none` | values `customerProfile`; env `DASHBOARD_CUSTOMER_PROFILE` |
+| shipped | [Hosted customer logo (sign-in page co-branding)](#opt-relay-webapp-branding-logo) | `none`, `inline SVG`, `existing ConfigMap (PNG)` | `none (no hosted logo)` | values `global.branding.logo.*` |
 | shipped | [Dashboard collector analytics runtime selection](#opt-relay-webapp-collector-analytics) | (no default), `true`, `false` | (no default) | values `runtime.analyticsEnabled`; env `DASHBOARD_ANALYTICS_ENABLED` |
 | shipped | [Dashboard coordination-overlaps view](#opt-relay-webapp-coordination-overlaps) | `false`, `true` | `false` | values `runtime.coordinationOverlapsEnabled`; env `DASHBOARD_COORDINATION_OVERLAPS_ENABLED` |
 
@@ -3005,6 +3008,62 @@ dashboard image built from relay-webapp #84 or later (its
 - Env: `DASHBOARD_CUSTOMER_PROFILE`
 - Verify: with customerProfile set, /runtime-config.js has customerProfile and the dashboard shows the product name and logo; without it, customerProfile is null
 - Sources: [`charts/relay-webapp/templates/deployment.yaml`](../charts/relay-webapp/templates/deployment.yaml), [`charts/relay-webapp/README.md`](../charts/relay-webapp/README.md), [`charts/relay-webapp/ci/branding.profile.yaml`](../charts/relay-webapp/ci/branding.profile.yaml)
+
+#### opt.relay-webapp.branding-logo
+
+<a id="opt-relay-webapp-branding-logo"></a>
+
+**Hosted customer logo (sign-in page co-branding)** · shipped · chart `relay-webapp` · profiles relay-webapp
+
+global.branding.logo hosts one customer logo on the dashboard origin,
+with no extra web server or ingress route: relay-webapp mounts it
+read-only at /usr/share/nginx/html/brand and serves it at
+<dashboard origin>/brand/<file>. Set svg (inline, at most 256 KiB,
+served as logo.svg; script, event handlers, javascript: URLs and
+foreignObject, character references and DTDs are refused) or
+existingConfigMap and key (a ConfigMap the operator creates; .png only,
+since its content is not checked). relay-control then sets
+SELFHOST_LOGIN_LOGO_URL to that https URL (the dashboard origin is
+https://<global.singleHost.host> or dashboardUrl's) unless
+login.logoUrl overrides it, and login.orgName sets
+SELFHOST_LOGIN_ORG_NAME (Control's default is bootstrap.orgName; it
+publishes the name only while a logo is set). Images from relay-webapp
+#132 serve /brand/ with a script-free sandbox CSP, nosniff and a
+five-minute cache and 404 a missing file; older images serve it through
+the app route (nosniff, no CSP), so the inline SVG checks matter there.
+Needs a relay-control image with the co-branded sign-in page
+(relaycontrol 7b57625 or later).
+
+- Default: `none (no hosted logo)`
+- Choices: `none`; `inline SVG`; `existing ConfigMap (PNG)`
+- Provided by: operator
+- Values: `global.branding.logo.*`
+- Verify: GET <dashboard>/brand/<file> returns the logo
+- Sources: [`charts/relay-webapp/templates/brand-configmap.yaml`](../charts/relay-webapp/templates/brand-configmap.yaml), [`charts/relay-webapp/templates/deployment.yaml`](../charts/relay-webapp/templates/deployment.yaml), [`scripts/ci/charts.sh`](../scripts/ci/charts.sh)
+
+#### opt.relay-control.login-cobrand
+
+<a id="opt-relay-control-login-cobrand"></a>
+
+**Sign-in page logo and organization name** · shipped · chart `relay-control` · profiles relay-control
+
+SELFHOST_LOGIN_LOGO_URL (an absolute https URL) puts a customer logo
+beside the Agent Relay lockup on the sign-in pages, and
+SELFHOST_LOGIN_ORG_NAME the name next to it (Control's default is
+bootstrap.orgName; GET /api/v1/auth/login-config publishes the name
+only while a logo is set). With global.branding.logo set (see
+opt.relay-webapp.branding-logo) the chart derives the URL as
+<dashboard origin>/brand/<file>; login.logoUrl overrides it with any
+https URL, and login.orgName sets the name. Needs a relay-control image
+from relaycontrol 7b57625 or later.
+
+- Default: `none (no customer logo; login-config logo_url and org_name are null)`
+- Choices: `none`; `hosted logo (global.branding.logo)`; `external https URL (login.logoUrl)`
+- Provided by: operator
+- Values: `login.*`, `global.branding.logo.*`
+- Env: `SELFHOST_LOGIN_LOGO_URL`, `SELFHOST_LOGIN_ORG_NAME`
+- Verify: GET /cloud/api/v1/auth/login-config returns the logo_url and org_name
+- Sources: [`charts/relay-control/templates/_helpers.tpl`](../charts/relay-control/templates/_helpers.tpl), [`scripts/ci/charts.sh`](../scripts/ci/charts.sh)
 
 #### opt.agent-relay.gke-ingress
 
