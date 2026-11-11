@@ -61,6 +61,36 @@ def signing_key(path):
     return public_key(command(["ssh-keygen", "-y", "-f", str(path)]).decode())
 
 
+def archive_previous(path):
+    """The default path must never describe an earlier run after this run fails."""
+    path = Path(path)
+    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    if path.is_symlink():
+        raise ValueError("output_symlink_refused")
+    if not path.exists():
+        return
+    info = path.lstat()
+    if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid():
+        raise ValueError("output_file_required")
+    history = path.parent / "history"
+    history.mkdir(mode=0o700, exist_ok=True)
+    info = history.lstat()
+    if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o077:
+        raise ValueError("private_history_directory_required")
+    fd, name = tempfile.mkstemp(prefix="acceptance-", suffix=".json", dir=history)
+    os.close(fd)
+    target = Path(name)
+    moved = False
+    try:
+        os.replace(path, target)
+        moved = True
+        target.chmod(0o600)
+    except BaseException:
+        if not moved:
+            target.unlink(missing_ok=True)
+        raise
+
+
 def write_signed(path, payload, key_path):
     key = signing_key(key_path)
     signature = command(["ssh-keygen", "-Y", "sign", "-f", str(key_path), "-n", NAMESPACE], canonical(payload))

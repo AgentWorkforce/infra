@@ -11,51 +11,61 @@ import tempfile
 import threading
 import unittest
 from unittest.mock import patch
+from urllib.parse import parse_qs, urlsplit
 
-from api import HOST, Failure, load_config
+from api import Api, HOST, Failure, load_config
 from context import ROLES, collect
 from report import canonical, verify
 from run import PENDING, execute
 
 SID = "11111111-1111-4111-8111-111111111111"
+ORG = "22222222-2222-4222-8222-222222222222"
+WORKSPACE = "33333333-3333-4333-8333-333333333333"
 MARKER = "KIND_ACCEPTANCE_FIXTURE_MARKER"
 SECRET = "DO_NOT_COPY_RESPONSE_OR_COOKIE_SECRET"
 
 
 class Handler(http.server.BaseHTTPRequestHandler):
     mode = "ok"
+    expected_since = None
 
     def log_message(self, *args):
         pass
 
     def do_GET(self):
-        status, body = 200, {}
+        status, body = 404, {"error": "not_found"}
         cookie = self.headers.get("Cookie", "")
-        if self.path == "/":
-            body = {"dashboard": True}
-        elif "/usage?" in self.path:
+        request = urlsplit(self.path)
+        query = parse_qs(request.query, keep_blank_values=True)
+        root = "/cloud/api/v1/workspaces/" + WORKSPACE + "/sessions"
+        if request.path == "/" and not query:
+            status, body = 200, {"dashboard": True}
+        elif not (cookie.startswith("owner=") or cookie.startswith("member=")):
+            status, body = 401, {"error": "unauthorized"}
+        elif request.path == "/cloud/api/v1/organizations/" + ORG + "/usage" and query == {"days": ["7"]}:
             if cookie.startswith("owner="):
-                body = {"totals": {"activeUsers": 2, "sessionsUploaded": 1, "searches": 3}, "secret": SECRET}
+                status, body = 200, {"totals": {"activeUsers": 2, "sessionsUploaded": 1, "searches": 3}, "secret": SECRET}
             else:
                 status, body = 403, {"error": "forbidden", "secret": SECRET}
-        elif cookie.startswith("member=") and self.mode == "member_expired":
-            status, body = 401, {"error": SECRET}
-        elif "/summary?" in self.path:
-            body = {"summary": {"status": "ready", "summary": "Generated fixture summary " + SECRET,
+        elif request.path == root + "/" + SID + "/summary" and query == {"source": ["codex"]}:
+            status, body = 200, {"summary": {"status": "ready", "summary": "Generated fixture summary " + SECRET,
                     "model": "fixture-model", "builtAt": datetime.datetime.now(datetime.timezone.utc).isoformat()}}
             if self.mode == "no_summary":
                 body = {"summary": {"status": "pending", "error": SECRET}}
-        elif "/search?" in self.path:
-            body = {"matches": [{"sessionId": SID, "content": MARKER + SECRET}]}
-        elif "/events?" in self.path:
-            body = {"events": [{"content": MARKER + SECRET}]}
-        elif self.mode == "redirect":
-            self.send_response(302)
-            self.send_header("Location", "https://unrelated.invalid/?token=" + SECRET)
-            self.end_headers()
-            return
-        else:
-            body = {"items": [{"sessionId": SID}]}
+        elif request.path == root + "/search" and query == {"q": [MARKER], "since": [self.expected_since]}:
+            status, body = 200, {"matches": [{"sessionId": SID, "content": MARKER + SECRET}]}
+        elif request.path == root + "/" + SID + "/events" and query == {"source": ["codex"]}:
+            status, body = 200, {"events": [{"content": MARKER + SECRET}]}
+        elif request.path == root and query == {"q": ["id:" + SID]}:
+            if cookie.startswith("member=") and self.mode == "member_expired":
+                status, body = 401, {"error": SECRET}
+            elif self.mode == "redirect":
+                self.send_response(302)
+                self.send_header("Location", "https://unrelated.invalid/?token=" + SECRET)
+                self.end_headers()
+                return
+            else:
+                status, body = 200, {"items": [{"sessionId": SID}]}
         encoded = json.dumps(body).encode()
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
@@ -93,10 +103,11 @@ class AcceptanceTests(unittest.TestCase):
         self.addCleanup(self.case.cleanup)
         self.path = Path(self.case.name)
         Handler.mode = "ok"
-        self.config = {"organizationId": SID, "workspaceId": SID, "sessionId": SID, "marker": MARKER,
+        self.config = {"organizationId": ORG, "workspaceId": WORKSPACE, "sessionId": SID, "marker": MARKER,
                        "historySince": (datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(minutes=1)).isoformat(),
                        "caFile": str(self.ca), "kubeconfig": "kubeconfig", "selectionFile": "selection.json",
                        "ownerState": "owner.json", "memberState": "member.json"}
+        Handler.expected_since = self.config["historySince"]
         self.write("config.json", self.config)
         for identity in ["owner", "member"]:
             self.write(identity + ".json", {"cookies": [{"name": identity, "value": SECRET,
@@ -181,6 +192,34 @@ class AcceptanceTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             verify(self.path / "other.json", self.path / "signing_key.pub")
 
+    def test_failed_signing_archives_old_pass_instead_of_leaving_a_stale_current_report(self):
+        self.assertEqual(self.run_suite()[0], 0)
+        with patch("report.command", side_effect=ValueError(SECRET)):
+            with self.assertRaises(ValueError):
+                execute(self.path / "config.json", self.path / "acceptance.json", self.path / "signing_key", suite="api",
+                        snapshotter=lambda *args: {})
+        self.assertFalse((self.path / "acceptance.json").exists())
+        previous = list((self.path / "history").glob("acceptance-*.json"))
+        self.assertEqual(len(previous), 1)
+        self.assertEqual(verify(previous[0], self.path / "signing_key.pub")["status"], "pass")
+        self.assertEqual(previous[0].stat().st_mode & 0o777, 0o600)
+
+    def test_unknown_paths_and_wrong_query_values_do_not_receive_success_fixtures(self):
+        api = Api(self.ca, self.path / "owner.json", self.path / "member.json")
+        root = "/cloud/api/v1/workspaces/" + WORKSPACE + "/sessions"
+        for path in ["/typo", root.replace(WORKSPACE, SID) + "?q=id:" + SID,
+                     root + "?q=id:" + ORG, root + "/" + ORG + "/events?source=codex",
+                     root + "/" + SID + "/events?source=claude",
+                     root + "/search?q=" + MARKER + "&since=wrong",
+                     "/cloud/api/v1/organizations/" + ORG + "/usage?days=30"]:
+            with self.subTest(path=path):
+                self.assertEqual(api.get(path, "owner")[0], 404)
+        self.config["workspaceId"] = SID
+        self.write("config.json", self.config)
+        code, payload = self.run_suite()
+        self.assertEqual(code, 1)
+        self.assertEqual(next(c for c in payload["checks"] if c["id"] == "session_reads")["status"], "fail")
+
     def test_private_file_permissions_and_symlinks_fail_preflight_without_secret_output(self):
         member = self.path / "member.json"
         member.chmod(0o644)
@@ -206,7 +245,7 @@ class AcceptanceTests(unittest.TestCase):
             load_config(self.path / "config.json")
 
     def test_pin_context_checks_dashboard_init_image_and_observed_generation(self):
-        self.write("tenant.json", {"organizationId": SID, "workspaceId": SID})
+        self.write("tenant.json", {"organizationId": ORG, "workspaceId": WORKSPACE})
         selected = {key: "ghcr.io/agentworkforce/" + key + "@sha256:" + "a" * 64 for _, _, key in ROLES}
         deployments = {}
         for name, container, key in ROLES:
@@ -239,7 +278,7 @@ class AcceptanceTests(unittest.TestCase):
             with self.assertRaises(Failure):
                 collect(config, self.path)
             deployments["relay-control"]["status"]["replicas"] = 1
-            self.write("tenant.json", {"organizationId": SID, "workspaceId": "different-fixture"})
+            self.write("tenant.json", {"organizationId": ORG, "workspaceId": "different-fixture"})
             with self.assertRaises(Failure):
                 collect(config, self.path)
 

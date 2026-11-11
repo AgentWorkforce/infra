@@ -70,7 +70,10 @@ not copied into reports. Reports contain statuses, counts, digests, fixture
 IDs, source/application pins and elapsed monotonic timings. Every API check is
 attempted even after another API failure. A preflight failure yields failed
 API checks and a signed report. A report/signing failure exits 2 rather than
-leaving a claimed successful result.
+leaving a claimed successful result. Before a new run starts, any previous
+report is moved to a private `history/acceptance-*.json` beside the output.
+If signing fails, the current report path stays absent; the older pass remains
+available only in history with its original signed run identity and timestamps.
 
 ## Signature and trust
 

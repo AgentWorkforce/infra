@@ -10,7 +10,7 @@ import uuid
 
 from api import Api, CHECKS, Failure, load_config
 from context import collect
-from report import verify, write_signed
+from report import archive_previous, verify, write_signed
 
 ROOT = Path(__file__).resolve().parents[4]
 PENDING = ["desktop_manual_evidence", "upload_wasm_drain", "playwright_ui", "telemetry_brief",
@@ -23,6 +23,7 @@ def now():
 
 
 def execute(config_path, output, key, suite="full", snapshotter=collect):
+    archive_previous(output)
     started = time.monotonic()
     payload = {"schema": "agent-relay.local-acceptance/v1", "runId": str(uuid.uuid4()),
                "suite": suite, "startedAt": now(), "site": "https://relay.kind.agentrelay.com",
