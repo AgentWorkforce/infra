@@ -112,6 +112,11 @@ pre_output="$(bash "${RDS_SETUP}" pre 2>&1)"
 [[ "$(stat -c '%a' "${STATE_DIR}/secret-files/agent-relay-secrets")" == 700 ]] || fail "secret directory mode is not 0700"
 pass "pre mode creates private credential files without leaking secrets"
 
+# HoopDb migration 20261105043900 refuses to run unless search_consumer_runtime
+# already exists, so pre (not post) must provision it on a fresh database.
+grep -Eq '^for f in .*session_consumer_roles.*; do$' "${RDS_SETUP}" || fail "pre mode does not provision search_consumer_runtime before migrate"
+pass "pre mode provisions the consumer role the migrations require"
+
 set +e
 wrong_release_output="$(RELEASE=another-release bash "${RDS_SETUP}" post 2>&1)"
 wrong_release_rc=$?
