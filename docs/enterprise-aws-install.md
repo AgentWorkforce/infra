@@ -333,6 +333,13 @@ Relay Control must start with the private feed enabled before this step:
   `SELFHOST_DESKTOP_FEED_S3_PREFIX` match the reviewed application overlay.
   Keep the bucket private.
 
+The AWS environment can create the key, alias, private bucket and Control role:
+set `desktop_feed` in its inputs (see
+[Private Desktop feed](../terraform/examples/aws-environments/README.md#private-desktop-feed-optional))
+and copy the `desktop_feed.control_env` output into `relay-control.extraEnv`.
+Confirm first that the selected Control image reads EKS Pod Identity
+credentials ([module note](../terraform/modules/aws/desktop-feed/README.md)).
+
 Confirm the Control migration Job completed before continuing. The admin
 runner needs `bash`, `curl`, `jq`, an authenticated GitHub CLI with permission
 to manage the Desktop repository's environment secrets and dispatch its

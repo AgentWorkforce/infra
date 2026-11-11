@@ -126,3 +126,14 @@ output "chief_execution_node" {
     worker_token_secret_arn = module.chief_execution_node[0].worker_token_secret_arn
   }
 }
+
+output "desktop_feed" {
+  description = "Relay Control private Desktop feed bindings, or null when desktop_feed is unset. control_env maps directly to relay-control.extraEnv; it holds no secret."
+  value = var.desktop_feed == null ? null : {
+    control_env     = module.desktop_feed[0].control_env
+    key_arns        = module.desktop_feed[0].key_arns
+    role_arn        = module.desktop_feed[0].role_arn
+    namespace       = local.namespace
+    service_account = coalesce(var.desktop_feed.service_account, "${var.release_name}-relay-control")
+  }
+}
