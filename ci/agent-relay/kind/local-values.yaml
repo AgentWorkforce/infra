@@ -1,26 +1,6 @@
-# Native clean-checkout local profile. Published refs come from main's GCP/CI
-# profiles or an owner-selected publish-image run; local-up supplies fresh credentials,
-# tenant IDs and TLS. No retained operator packet is an installation input.
-relay-control:
-  image:
-    repository: ghcr.io/agentworkforce/relay-control
-    # 0.5.14, source 1309ee65, published by run 42970141599 (Usage + MCP launch).
-    digest: sha256:eec96e31c4625291884d075f1c145caff0507badf2154a2ecf78763af1ececf3
-  selectedFeatures: [usage, launch]
-relay-webapp:
-  image:
-    repository: ghcr.io/agentworkforce/relay-webapp
-    # Source c485ba6, published by run 42966714669 (owner-only Usage page).
-    digest: sha256:34ef185ae4abad2b07f3f64b43bb4af1412d9e48c0053f8c2e38769c7b91cff3
-  runtime:
-    coordinationOverlapsEnabled: false
-sessions-pipeline:
-  sessionReadApi:
-    image:
-      repository: ghcr.io/agentworkforce/sessions-pipeline
-      # Published by run42961795525 from source2ed90b78190f92e8440c6d2bed9b5c40f7102012;
-      # infra-chief selected this generation for session-list query support.
-      digest: sha256:c677b1cde74c5d764e162b47bb64c67a99cdc18fe28948b62c251df07dac36fb
+# Local-only collector overrides. Core release images/features are derived from
+# the merged AA EKS values; the scrub contract uses its qualified WASM overlay.
+# local-up generates fresh tenant IDs, credentials and TLS without operator input.
 telemetry-collector:
   image:
     # Published and qualified candidate recorded in telemetry-collector/README.md.

@@ -5,6 +5,7 @@ This entry point owns only agent-relay-local and .kind/local in this checkout.
 It does not consume qualification packets from the separate operator lifecycle.
 """
 from datetime import datetime, timezone
+from copy import deepcopy
 import base64
 import hashlib
 import errno
@@ -27,27 +28,37 @@ from native_recipe import SECRET_KEYS
 from local_host_setup import certificate_present, host_aliases_present, managed_cas
 
 LOCAL_VALUES = yaml.safe_load((ROOT / "ci/agent-relay/kind/local-values.yaml").read_text())
+AA_VALUES = yaml.safe_load((ROOT / "charts/agent-relay/values-eks.yaml").read_text())
+SCRUB_VALUES = yaml.safe_load((ROOT / "charts/agent-relay/values-scrub-wasm-bindgen.yaml").read_text())["global"]["scrubEngine"]
 
 
 def reference(value):
     return value["repository"] + "@" + value["digest"]
 
 
-PIPELINE = reference(LOCAL_VALUES["sessions-pipeline"]["sessionReadApi"]["image"])
-CONTROL = reference(LOCAL_VALUES["relay-control"]["image"])
-WEBAPP = reference(LOCAL_VALUES["relay-webapp"]["image"])
+PIPELINE = reference(AA_VALUES["sessions-pipeline"]["worker"]["image"])
+if PIPELINE != reference(AA_VALUES["sessions-pipeline"]["alleyoop"]["image"]):
+    raise StackError("the AA profile must select one services-image generation")
+CONTROL = reference(AA_VALUES["relay-control"]["image"])
+WEBAPP = reference(AA_VALUES["relay-webapp"]["image"])
+CAST = reference(AA_VALUES["relaycast"]["image"])
 MINIO = "cgr.dev/chainguard/minio@sha256:e70b2b1e74d79457f808710483bd726ff364529ca30736eaa15a6ab547d3a5a7"
 SITE = "https://relay.kind.agentrelay.com"
 HISTORY = "https://history.kind.agentrelay.com:8443"
 PGHOST = "postgres.agent-relay.svc.cluster.local"
 COLLECTOR_URL = "https://telemetry-collector.agent-relay.svc.cluster.local:8443/v1/events"
-TELEMETRY = {"control": "relaycontrol", "ingest": "session-ingest", "consumer": "session-pipeline-consumer", "reader": "session-read-api", "brief": "session-brief"}
+TELEMETRY = {"control": "relaycontrol", "ingest": "session-ingest", "consumer": "session-pipeline-consumer", "reader": "session-read-api", "brief": "session-brief", "cast": "relaycast"}
 HOSTS = [PGHOST, "relay.kind.agentrelay.com", "cast.kind.agentrelay.com", "history.kind.agentrelay.com", "files.kind.agentrelay.com", "telemetry-collector.agent-relay.svc.cluster.local"]
 
 
 def image(ref):
     repository, digest = ref.split("@")
     return {"repository": repository, "digest": digest, "pullPolicy": "IfNotPresent"}
+
+
+def scrub_environment():
+    return [{"name": name, "value": SCRUB_VALUES[key]} for name, key in (
+        ("SCRUB_ENGINE", "engine"), ("SCRUB_ENGINE_REQUIRED", "required"), ("READER_MAX_RULESET", "readerMaxRuleset"))]
 
 
 def operator():
@@ -127,7 +138,12 @@ class LocalStack(Stack):
             if json.loads(old).get("status", {}).get("succeeded") == 1:
                 return
             raise StackError("local Job " + name + " did not succeed; inspect it, then recreate the disposable stack with make local-down/local-up")
-        container = {"name": "run", "image": image_ref, "env": env or [], "volumeMounts": mounts or [],
+        environment = list(env or [])
+        if image_ref == PIPELINE:
+            if {e["name"] for e in environment} & {e["name"] for e in scrub_environment()}:
+                raise StackError("local services Jobs must use the managed AA scrub contract")
+            environment.extend(scrub_environment())
+        container = {"name": "run", "image": image_ref, "env": environment, "volumeMounts": mounts or [],
             "securityContext": {"allowPrivilegeEscalation": False, "capabilities": {"drop": ["ALL"]}}}
         if command:
             container["command"] = command
@@ -223,12 +239,16 @@ class LocalStack(Stack):
         base = yaml.safe_load((ROOT / "charts/agent-relay/values-kind-core.yaml").read_text())
         base["relay-webapp"]["image"] = image(WEBAPP)
         result = compose(base, selected, operator(), phase, tenant)
+        # Import release authority only; no EKS identity, endpoint or cloud resource
+        # configuration belongs in this local fixture.
+        result["global"]["scrubEngine"] = deepcopy(SCRUB_VALUES)
+        result["relaycast"]["image"] = image(CAST)
         result["relay-webapp"]["image"] = image(WEBAPP)
         result["relay-webapp"]["runtime"]["coordinationOverlapsEnabled"] = False
         result["relay-webapp"]["customerProfile"]["desktop"]["siteUrl"] = SITE
         result["relay-control"]["image"] = image(CONTROL)
         # Usage and launch are Control APIs; they add no optional workload.
-        result["relay-control"]["selectedFeatures"] = LOCAL_VALUES["relay-control"]["selectedFeatures"]
+        result["relay-control"]["selectedFeatures"] = list(AA_VALUES["relay-control"]["selectedFeatures"])
         result["relay-control"]["auth"] = {"emailLink": {"enabled": True}}
         result["relay-control"]["smtp"] = {"host": "local-mail.agent-relay.svc.cluster.local", "port": 1025, "security": "none", "from": "Local Relay <signin@kind.example>"}
         result["relay-control"]["services"]["publicHostAliases"] = [{"ip": self.edge_ip, "hostnames": ["relay.kind.agentrelay.com"]}]
@@ -248,6 +268,7 @@ class LocalStack(Stack):
             analytics = lambda name: {"enabled": True, "deploymentId": "local-kind", "collectorUrl": COLLECTOR_URL,
                 "existingSecret": "local-telemetry-" + name, "caConfigMap": "local-ca"}
             result["relay-control"]["analytics"] = {**analytics("control"), "profile": "development"}
+            result["relaycast"]["analytics"] = analytics("cast")
             for slot, producer in (("ingestEdge", "ingest"), ("nativeConsumer", "consumer"), ("sessionReadApi", "reader")):
                 result["sessions-pipeline"][slot]["analytics"] = analytics(producer)
             worker = result["sessions-pipeline"]["worker"]
@@ -358,7 +379,7 @@ class LocalStack(Stack):
         self.apply({"apiVersion": "apps/v1", "kind": "Deployment", "metadata": {"name": "local-mail", "namespace": NS},
             "spec": {"replicas": 1, "selector": {"matchLabels": labels}, "template": {"metadata": {"labels": labels}, "spec": {
                 "automountServiceAccountToken": False, "securityContext": {"runAsUser": 1000, "runAsGroup": 1000},
-                "containers": [{"name": "mail", "image": PIPELINE, "command": ["bun", "/mail/mail.mjs"],
+                "containers": [{"name": "mail", "image": PIPELINE, "command": ["bun", "/mail/mail.mjs"], "env": scrub_environment(),
                     "volumeMounts": [{"name": "code", "mountPath": "/mail", "readOnly": True}],
                     "readinessProbe": {"tcpSocket": {"port": 1025}, "periodSeconds": 2},
                     "resources": {"requests": {"cpu": "10m", "memory": "32Mi"}, "limits": {"memory": "128Mi"}}}],
@@ -597,11 +618,8 @@ def check_selection(previous, selected):
 
 
 def selected_images():
-    cast = yaml.safe_load((ROOT / "charts/relaycast/values.yaml").read_text())["image"]
-    base = yaml.safe_load((ROOT / "charts/agent-relay/values-kind-core.yaml").read_text())
-    cast.update(base.get("relaycast", {}).get("image", {}))
     return {"pipeline": PIPELINE, "control": CONTROL, "webapp": WEBAPP, "postgres": POSTGRES, "minio": MINIO,
-        "relaycast": reference(cast), "collector": reference(LOCAL_VALUES["telemetry-collector"]["image"]),
+        "relaycast": CAST, "collector": reference(LOCAL_VALUES["telemetry-collector"]["image"]),
         "collectorProxy": reference(LOCAL_VALUES["telemetry-collector"]["tlsProxy"]["image"])}
 
 

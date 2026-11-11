@@ -27,23 +27,6 @@ kind-up:
 local-tools:
 	$(call sh_quote,$(PYTHON)) ci/agent-relay/kind/local_tools.py --prepare
 
-.PHONY: local-up local-down
-local-up: local-tools
-	PATH=$(call sh_quote,$(CURDIR)/.kind/tools):"$$PATH" $(call sh_quote,$(CURDIR)/.kind/tools/venv/bin/python3) ci/agent-relay/kind/local_stack.py up
-local-down: local-tools
-	PATH=$(call sh_quote,$(CURDIR)/.kind/tools):"$$PATH" $(call sh_quote,$(CURDIR)/.kind/tools/venv/bin/python3) ci/agent-relay/kind/local_stack.py down
-
-.PHONY: local-trust local-login local-llm-key
-local-trust:
-	sudo $(call sh_quote,$(PYTHON)) ci/agent-relay/kind/local_host_setup.py up
-local-login: local-tools
-	PATH=$(call sh_quote,$(CURDIR)/.kind/tools):"$$PATH" $(call sh_quote,$(CURDIR)/.kind/tools/venv/bin/python3) ci/agent-relay/kind/local_stack.py login
-local-llm-key: local-tools
-	@PATH=$(call sh_quote,$(CURDIR)/.kind/tools):"$$PATH" $(call sh_quote,$(CURDIR)/.kind/tools/venv/bin/python3) ci/agent-relay/kind/local_stack.py llm-key
-
-.PHONY: local-dev-setup
-local-dev-setup: local-tools
-	PATH=$(call sh_quote,$(CURDIR)/.kind/tools):"$$PATH" $(call sh_quote,$(CURDIR)/.kind/tools/venv/bin/python3) ci/agent-relay/kind/local_dev_setup.py --output $(call sh_quote,$(DEV_CONFIG))
 kind-up-local-control: kind-build-control
 	$(MAKE) kind-up PROFILE=$(profile_arg)
 
@@ -74,3 +57,21 @@ dev:
 dev-test:
 	$(call sh_quote,$(PYTHON)) -m unittest discover -s ci/agent-relay/dev -p 'test_*.py'
 	node --test ci/agent-relay/dev/test_frontend.mjs
+
+.PHONY: local-up local-down
+local-up: local-tools
+	PATH=$(call sh_quote,$(CURDIR)/.kind/tools):"$$PATH" $(call sh_quote,$(CURDIR)/.kind/tools/venv/bin/python3) ci/agent-relay/kind/local_stack.py up
+local-down: local-tools
+	PATH=$(call sh_quote,$(CURDIR)/.kind/tools):"$$PATH" $(call sh_quote,$(CURDIR)/.kind/tools/venv/bin/python3) ci/agent-relay/kind/local_stack.py down
+
+.PHONY: local-trust local-login local-llm-key
+local-trust:
+	sudo $(call sh_quote,$(PYTHON)) ci/agent-relay/kind/local_host_setup.py up
+local-login: local-tools
+	PATH=$(call sh_quote,$(CURDIR)/.kind/tools):"$$PATH" $(call sh_quote,$(CURDIR)/.kind/tools/venv/bin/python3) ci/agent-relay/kind/local_stack.py login
+local-llm-key: local-tools
+	@PATH=$(call sh_quote,$(CURDIR)/.kind/tools):"$$PATH" $(call sh_quote,$(CURDIR)/.kind/tools/venv/bin/python3) ci/agent-relay/kind/local_stack.py llm-key
+
+.PHONY: local-dev-setup
+local-dev-setup: local-tools
+	PATH=$(call sh_quote,$(CURDIR)/.kind/tools):"$$PATH" $(call sh_quote,$(CURDIR)/.kind/tools/venv/bin/python3) ci/agent-relay/kind/local_dev_setup.py --output $(call sh_quote,$(DEV_CONFIG))

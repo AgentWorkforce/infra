@@ -8,9 +8,7 @@ import re
 import shutil
 import sys
 
-import yaml
-
-from local_stack import LocalStack, PIPELINE, CONTROL, WEBAPP, reference
+from local_stack import LocalStack, PIPELINE, CONTROL, WEBAPP, CAST
 from stack import ROOT, private_json, StackError, run
 
 
@@ -43,11 +41,10 @@ def main():
     node = stack.cmd(["kind", "get", "nodes", "--name", stack.name]).stdout.splitlines()
     if len(node) != 1:
         raise StackError("local dev setup expects its single-node Kind cluster")
-    cast = yaml.safe_load((ROOT / "charts/relaycast/values.yaml").read_text())["image"]
     targets = {"webapp": ("relay-webapp", "relay-webapp", WEBAPP),
         "control": ("relay-control", "relay-control", CONTROL),
         "pipeline": ("relayhistory-pipeline", "sessions-pipeline", PIPELINE),
-        "cast": ("relaycast", "relaycast", reference(cast))}
+        "cast": ("relaycast", "relaycast", CAST)}
     sources = {}
     for group, (repo, directory, image) in targets.items():
         data = json.loads(stack.cmd([*stack.docker_args, "exec", node[0], "crictl", "inspecti", image], sensitive=True).stdout)

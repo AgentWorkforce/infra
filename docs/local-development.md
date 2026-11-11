@@ -14,11 +14,15 @@ Control, the dashboard, Relaycast, native ingest/consumer/reader, the brief work
 and the internal telemetry collector. It uses published immutable release images;
 no source build, old data, operator packet or admission file is required.
 
-The profile pins are in `ci/agent-relay/kind/local-values.yaml`. Control 0.5.14
-and dashboard source `c485ba6` are published releases selected for the owner-only
-Usage page and MCP agent launch. The services image is the published native generation selected for
-session-list query support. The scrubber uses that services image's defaults. No WASM-required or reader-ceiling
-override is selected before the replacement services image is published.
+Core images and managed features come directly from the merged AA profile,
+`charts/agent-relay/values-eks.yaml`: Control 0.5.16, Sessions alpha.5, its SQLite
+Relaycast and dashboard. Only those release references/features are imported;
+the local fixture generates its own identity, endpoints, credentials and storage.
+The qualified `values-scrub-wasm-bindgen.yaml` overlay selects
+`SCRUB_ENGINE=wasm-bindgen`, `SCRUB_ENGINE_REQUIRED=wasm-bindgen` and
+`READER_MAX_RULESET=10` for this fresh database. The same contract reaches local
+services-image Jobs. Session query is enabled. `ci/agent-relay/kind/local-values.yaml`
+contains only local collector/proxy overrides.
 
 On the Mac, complete this **one-time administrator step** for DNS and trust:
 
@@ -43,10 +47,10 @@ All generated database/service credentials stay in `.kind/local/credentials.json
 The owner-only Usage page is at
 `https://relay.kind.agentrelay.com/#/settings/usage`. The local profile enables
 the `usage` and `launch` features through the chart's managed `selectedFeatures`
-value (Control chart 0.4.11, including the launch support introduced in 0.4.10).
-Control applies migrations 0040 and 0041 during bootstrap. Upload counts come from session
+value. Control applies its official migrations, including 0040 and 0041, during
+bootstrap. Upload counts come from session
 directory activity; active-user and search counts start when usage is enabled.
-The current pipeline reports summary counts as unavailable (`n/a`). A member's
+If the reader does not provide summary counts, they display as `n/a`. A member's
 request to `/cloud/api/v1/organizations/<org-id>/usage?days=30` returns 403.
 
 MCP launch tools are served at `/cloud/api/v1/mcp/shared-sessions`. Use a normal
@@ -135,7 +139,12 @@ development; it is not the complete clean-room machine wipe.
 Use the [clean-room runbook](local-clean-room.md) for the dedicated Mac's
 wipe/repeat/wipe sequence and exact operator sudo boundaries.
 
-## Acceptance status
+## Prior acceptance observations and pending AA proof
+
+The observations below used the earlier Control 0.5.14/query-capable services
+generation. They are a baseline, not acceptance of the AA images now selected.
+The AA clean-room must repeat the full checklist, including an actual WASM
+processing witness and redaction of a planted, entirely fake credential.
 
 On ar-lap, the fresh native workloads and strict TLS dashboard request passed;
 repeat-up took 2.954 seconds after the query-capable pipeline upgrade. `make dev` built and ran all eight
@@ -166,15 +175,16 @@ that launch. These API results are recorded separately from Desktop screen
 evidence: native screenshot capture failed with `could not create image from
 display`.
 
-The current self-issued reader returns unsupported responses for optional turns,
-timing and output metrics; the canonical event transcript and summary render.
+That earlier self-issued reader returned unsupported responses for optional
+turns, timing and output metrics; its canonical event transcript and summary
+rendered. The AA run must record its actual supported behavior.
 Clean-room wipe/repeat/wipe remains pending. These observations do not establish
 that final reproducibility proof.
 
-Local ingest uses asynchronous admission. Control, ingest, consumer, reader and brief
-use separate private collector credentials. The currently pinned Relaycast image
-lacks collector support; Dashboard has no matching managed adapter in this profile.
-Brief telemetry wiring is covered by the rendered chart; its live event proof is
-pending the coordinated rollout. Collector readiness alone does not qualify event delivery.
+Local ingest uses asynchronous admission. Control, ingest, consumer, reader,
+brief and the AA Relaycast use separate private collector credentials.
+Dashboard has no matching managed adapter in this profile. Brief/Cast wiring is
+covered by the rendered chart; live event proof remains part of the AA run.
+Collector readiness alone does not qualify event delivery.
 An existing local model Secret survives repeated `make local-up` without an
 environment override; explicitly supplying an empty `OPENAI_API_KEY` disables it.

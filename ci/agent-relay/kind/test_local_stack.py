@@ -19,6 +19,19 @@ from stack import StackError
 
 
 class LocalTests(unittest.TestCase):
+    def test_services_jobs_keep_the_required_wasm_contract(self):
+        stack = LocalStack.__new__(LocalStack)
+        stack.k = lambda *args: SimpleNamespace(stdout="")
+        with patch.object(stack, "apply") as apply, patch.object(stack, "wait_job"):
+            stack.job("migrate", local_stack.PIPELINE, env=[{"name": "SERVICE", "value": "hoopdb-migrate"}])
+            container = apply.call_args.args[0]["spec"]["template"]["spec"]["containers"][0]
+            env = {e["name"]: e["value"] for e in container["env"]}
+            self.assertEqual(env, {"SERVICE": "hoopdb-migrate", "SCRUB_ENGINE": "wasm-bindgen",
+                "SCRUB_ENGINE_REQUIRED": "wasm-bindgen", "READER_MAX_RULESET": "10"})
+            self.assertEqual(len(container["env"]), len(env))
+            stack.job("control-migrate", local_stack.CONTROL)
+            self.assertEqual(apply.call_args.args[0]["spec"]["template"]["spec"]["containers"][0]["env"], [])
+
     def test_tls_consumer_waits_for_current_mount_before_reload_and_records_success(self):
         with tempfile.TemporaryDirectory() as tmp:
             stack = LocalStack.__new__(LocalStack)
@@ -292,7 +305,14 @@ class LocalTests(unittest.TestCase):
         active = [d for d in docs if d["kind"] == "Deployment" and d["spec"].get("replicas", 1) > 0]
         self.assertEqual({d["metadata"]["name"] for d in active}, {"relay-control", "relay-webapp", "relaycast", "session-native-ingest",
             "session-native-consumer", "session-read-api", "sessions-session-brief", "telemetry-collector"})
+        aa = yaml.safe_load((ROOT / "charts/agent-relay/values-eks.yaml").read_text())
+        release = {name: local_stack.reference(aa[name]["image"]) for name in ("relay-control", "relay-webapp", "relaycast")}
+        release.update({name: local_stack.reference(aa["sessions-pipeline"]["worker"]["image"])
+            for name in ("session-native-ingest", "session-native-consumer", "session-read-api", "sessions-session-brief")})
         for deployment in active:
+            pod = deployment["spec"]["template"]["spec"]
+            if deployment["metadata"]["name"] in release:
+                self.assertEqual(pod["containers"][0]["image"], release[deployment["metadata"]["name"]])
             if deployment["metadata"]["name"] == "relay-webapp":
                 pod = deployment["spec"]["template"]["spec"]
                 copy = next(c for c in pod["initContainers"] if c["name"] == "copy-dashboard")
@@ -303,9 +323,10 @@ class LocalTests(unittest.TestCase):
                 self.assertIn("@sha256:", container["image"])
                 self.assertIn(container["image"], selected_images().values())
                 env = {e["name"]: e for e in container.get("env", [])}
-                self.assertNotIn("SCRUB_ENGINE", env)
-                self.assertNotIn("SCRUB_ENGINE_REQUIRED", env)
-                self.assertNotIn("READER_MAX_RULESET", env)
+                if container["image"] == local_stack.PIPELINE:
+                    self.assertEqual(env["SCRUB_ENGINE"]["value"], "wasm-bindgen")
+                    self.assertEqual(env["SCRUB_ENGINE_REQUIRED"]["value"], "wasm-bindgen")
+                    self.assertEqual(env["READER_MAX_RULESET"]["value"], "10")
                 if "OPENAI_API_KEY" in env:
                     self.assertIn("valueFrom", env["OPENAI_API_KEY"])
                 name = deployment["metadata"]["name"]
@@ -329,6 +350,9 @@ class LocalTests(unittest.TestCase):
                     self.assertEqual(env["SELFHOST_FEATURES"]["value"], "usage,launch")
                     self.assertEqual(env["SELFHOST_ANALYTICS_DESTINATION"]["value"], "collector")
                     self.assertTrue(any(m["name"] == "analytics-producer" for m in container["volumeMounts"]))
+                if name == "relaycast":
+                    self.assertEqual(env["RELAYCAST_TELEMETRY_DESTINATION"]["value"], "collector")
+                    self.assertTrue(any(m["name"] == "analytics-token" for m in container["volumeMounts"]))
 
 
 if __name__ == "__main__":
