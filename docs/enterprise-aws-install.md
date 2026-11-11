@@ -296,9 +296,10 @@ workflows, and `hdiutil` to inspect the macOS candidate. Inject
 never put it in an argument, command transcript or handoff. It must be a Control
 bootstrap token or an organization owner/admin bearer for the selected site.
 
-Set the non-secret inputs from the private handoff. The current release packet
-selects Desktop candidate run `42903809516` and version `2026.11.5`; do not
-substitute another run or version without a new release review.
+Set every non-secret input from the current private handoff. In particular,
+`DESKTOP_CANDIDATE_RUN` and `DESKTOP_VERSION` must name the qualified Desktop
+candidate recorded in that handoff. Candidate identifiers from an older packet
+are superseded; never carry them forward or substitute an unreviewed run.
 
 ```bash
 export DESKTOP_REPO="AgentWorkforce/relay-desktop"
@@ -307,8 +308,8 @@ export DESKTOP_ORG_ID="<organization-id>"
 export DESKTOP_PROFILE_ID="<profile-id>"
 export DESKTOP_WORKSPACE_ID="<workspace-id>"
 export DESKTOP_ASSET_PREFIX="<approved-asset-prefix>"
-export DESKTOP_CANDIDATE_RUN="42903809516"
-export DESKTOP_VERSION="2026.11.5"
+export DESKTOP_CANDIDATE_RUN="<approved-candidate-run-id>"
+export DESKTOP_VERSION="<approved-desktop-version>"
 export DESKTOP_ENVIRONMENT="desktop-${DESKTOP_PROFILE_ID}"
 : "${RELAY_ADMIN_TOKEN:?inject RELAY_ADMIN_TOKEN from the approved secret system}"
 gh auth status -h github.com
@@ -332,9 +333,9 @@ scripts/selfhost/desktop-feed-provision.sh \
 
 Require the plan to identify the intended site, profile and
 `desktop-<profile>` GitHub environment. For an existing profile it must report
-that run `42903809516` embeds the site's public feed key. A first-time plan
-cannot perform that key check because the profile and KMS public key do not
-exist in Control yet; it reports `would register profile` instead.
+that `$DESKTOP_CANDIDATE_RUN` embeds the site's public feed key. A first-time
+plan cannot perform that key check because the profile and KMS public key do
+not exist in Control yet; it reports `would register profile` instead.
 
 After explicit approval of these exact inputs and the external mutations, run
 the same command once with `--apply`:
@@ -373,9 +374,9 @@ gh run list -R "$DESKTOP_REPO" --workflow desktop-promote.yml --limit 5
 ```
 
 **Checkpoint:** the intended workspace is bound, the GitHub environment lists
-both feed secret names, the Promote run for candidate `42903809516` and version
-`2026.11.5` succeeds, and a bound Desktop accepts the signed profile feed. A
-dispatch alone is not publication or client-acceptance proof.
+both feed secret names, the Promote run for `$DESKTOP_CANDIDATE_RUN` and
+`$DESKTOP_VERSION` succeeds, and a bound Desktop accepts the signed profile
+feed. A dispatch alone is not publication or client-acceptance proof.
 
 ## 7. Onboard the first owner and pilot users
 
