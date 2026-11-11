@@ -1,5 +1,12 @@
 # Local Kind code loop
 
+For a fresh checkout on the disposable local Mac, use `make local-up`, complete
+the one-time `make local-trust`, then run `make dev`. The first dev launch clones
+matching release sources and creates its private config automatically. See
+[local-development.md](local-development.md). No old operator admission or
+containment file is an input to that fresh local workflow. The manual setup
+below remains available for custom existing Kind targets.
+
 After the one-time target/source setup below, start the complete **existing**
 local core with:
 

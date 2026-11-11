@@ -12,7 +12,9 @@ control_archive_arg = '$(subst ','"'"',$(CONTROL_IMAGE_ARCHIVE))'
 
 .PHONY: help kind-up kind-up-local-control kind-down kind-render kind-build-addons kind-build-control kind-proof kind-proof-core kind-proof-addons kind-reconcile-names
 help:
+	@echo "Fresh local stack: make local-up; one-time macOS trust: make local-trust; source loop: make dev"
 	@echo "Clean Mac prerequisites: make local-tools (checkout-local pinned Kind, Helm and Python dependencies)"
+	@echo "Kind-profile Desktop: make desktop-install (docs/local-desktop.md)"
 	@echo "Code loop: make dev after one-time configure; optional make dev-plan (existing Kind; docs/kind-development.md)"
 	@echo "Local kind: make kind-render, kind-up, kind-proof, or kind-down PROFILE=core|addons"
 	@echo "Build: kind-build-control, kind-up-local-control, kind-build-addons; proof aliases: kind-proof-core, kind-proof-addons"
@@ -20,27 +22,31 @@ help:
 	@echo "Completed naming cutover: kind-reconcile-names CUTOVER_RECEIPT=... CONTROL_IMAGE_ARCHIVE=..."
 
 kind-up:
-	$(PYTHON) ci/agent-relay/kind/stack.py up --profile $(profile_arg)
+	$(call sh_quote,$(PYTHON)) ci/agent-relay/kind/stack.py up --profile $(profile_arg)
 
 .PHONY: local-tools
 local-tools:
-	$(PYTHON) ci/agent-relay/kind/local_tools.py --prepare
+	$(call sh_quote,$(PYTHON)) ci/agent-relay/kind/local_tools.py --prepare
+
+.PHONY: desktop-install
+desktop-install:
+	$(call sh_quote,$(PYTHON)) ci/agent-relay/kind/desktop_install.py $(if $(DESKTOP_RUN),--run $(call sh_quote,$(DESKTOP_RUN))) $(if $(DESKTOP_ARTIFACT_DIR),--artifact-dir $(call sh_quote,$(DESKTOP_ARTIFACT_DIR)))
 kind-up-local-control: kind-build-control
 	$(MAKE) kind-up PROFILE=$(profile_arg)
 
 kind-down:
-	$(PYTHON) ci/agent-relay/kind/stack.py down --profile $(profile_arg)
+	$(call sh_quote,$(PYTHON)) ci/agent-relay/kind/stack.py down --profile $(profile_arg)
 kind-render:
-	$(PYTHON) ci/agent-relay/kind/stack.py render --profile $(profile_arg)
+	$(call sh_quote,$(PYTHON)) ci/agent-relay/kind/stack.py render --profile $(profile_arg)
 kind-build-control:
-	$(PYTHON) ci/agent-relay/kind/stack.py build-control --profile $(profile_arg)
+	$(call sh_quote,$(PYTHON)) ci/agent-relay/kind/stack.py build-control --profile $(profile_arg)
 kind-reconcile-names:
-	$(PYTHON) ci/agent-relay/kind/stack.py reconcile-names --profile $(profile_arg) --cutover-receipt $(cutover_arg) --control-image-archive $(control_archive_arg)
+	$(call sh_quote,$(PYTHON)) ci/agent-relay/kind/stack.py reconcile-names --profile $(profile_arg) --cutover-receipt $(cutover_arg) --control-image-archive $(control_archive_arg)
 
 kind-build-addons:
-	$(PYTHON) ci/agent-relay/kind/stack.py build-addons --profile addons
+	$(call sh_quote,$(PYTHON)) ci/agent-relay/kind/stack.py build-addons --profile addons
 kind-proof:
-	$(PYTHON) ci/agent-relay/kind/proof.py --profile $(profile_arg)
+	$(call sh_quote,$(PYTHON)) ci/agent-relay/kind/proof.py --profile $(profile_arg)
 kind-proof-core:
 	$(MAKE) kind-proof PROFILE=core
 kind-proof-addons:
@@ -48,9 +54,28 @@ kind-proof-addons:
 
 .PHONY: dev dev-plan dev-test
 dev-plan:
-	$(PYTHON) ci/agent-relay/dev/dev.py plan --config $(call sh_quote,$(DEV_CONFIG)) $(if $(DEV_PLAN),--plan $(call sh_quote,$(DEV_PLAN))) --components $(call sh_quote,$(DEV_COMPONENTS))
+	$(call sh_quote,$(PYTHON)) ci/agent-relay/dev/dev.py plan --config $(call sh_quote,$(DEV_CONFIG)) $(if $(DEV_PLAN),--plan $(call sh_quote,$(DEV_PLAN))) --components $(call sh_quote,$(DEV_COMPONENTS))
 dev:
-	$(PYTHON) ci/agent-relay/dev/dev.py run --config $(call sh_quote,$(DEV_CONFIG)) $(if $(DEV_PLAN),--plan $(call sh_quote,$(DEV_PLAN))) --components $(call sh_quote,$(DEV_COMPONENTS))
+	@if ! test -f $(call sh_quote,$(DEV_CONFIG)) && test -f .kind/local/cluster.json; then $(MAKE) local-dev-setup DEV_CONFIG=$(call sh_quote,$(DEV_CONFIG)); fi
+	$(call sh_quote,$(PYTHON)) ci/agent-relay/dev/dev.py run --config $(call sh_quote,$(DEV_CONFIG)) $(if $(DEV_PLAN),--plan $(call sh_quote,$(DEV_PLAN))) --components $(call sh_quote,$(DEV_COMPONENTS))
 dev-test:
-	$(PYTHON) -m unittest discover -s ci/agent-relay/dev -p 'test_*.py'
+	$(call sh_quote,$(PYTHON)) -m unittest discover -s ci/agent-relay/dev -p 'test_*.py'
 	node --test ci/agent-relay/dev/test_frontend.mjs
+
+.PHONY: local-up local-down
+local-up: local-tools
+	PATH=$(call sh_quote,$(CURDIR)/.kind/tools):"$$PATH" $(call sh_quote,$(CURDIR)/.kind/tools/venv/bin/python3) ci/agent-relay/kind/local_stack.py up
+local-down: local-tools
+	PATH=$(call sh_quote,$(CURDIR)/.kind/tools):"$$PATH" $(call sh_quote,$(CURDIR)/.kind/tools/venv/bin/python3) ci/agent-relay/kind/local_stack.py down
+
+.PHONY: local-trust local-login local-llm-key
+local-trust:
+	sudo $(call sh_quote,$(PYTHON)) ci/agent-relay/kind/local_host_setup.py up
+local-login: local-tools
+	PATH=$(call sh_quote,$(CURDIR)/.kind/tools):"$$PATH" $(call sh_quote,$(CURDIR)/.kind/tools/venv/bin/python3) ci/agent-relay/kind/local_stack.py login
+local-llm-key: local-tools
+	@PATH=$(call sh_quote,$(CURDIR)/.kind/tools):"$$PATH" $(call sh_quote,$(CURDIR)/.kind/tools/venv/bin/python3) ci/agent-relay/kind/local_stack.py llm-key
+
+.PHONY: local-dev-setup
+local-dev-setup: local-tools
+	PATH=$(call sh_quote,$(CURDIR)/.kind/tools):"$$PATH" $(call sh_quote,$(CURDIR)/.kind/tools/venv/bin/python3) ci/agent-relay/kind/local_dev_setup.py --output $(call sh_quote,$(DEV_CONFIG))
