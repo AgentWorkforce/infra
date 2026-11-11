@@ -125,3 +125,42 @@ run "service_database_collides_with_control_refused" {
   variables { service_database_names = { hoopdb = "relaycontrol", relaycast = "relaycast", relayfile = "relayfile" } }
   expect_failures = [var.service_database_names]
 }
+
+run "search_sessions_bucket_read_is_on_by_default" {
+  assert {
+    condition = toset(flatten([for s in jsondecode(module.search[0].sessions_read_policy_json).Statement : s.Resource])) == toset([
+      "arn:aws:s3:::relay-sessions",
+      "arn:aws:s3:::relay-sessions/*",
+    ])
+    error_message = "By default the search roles read only the sessions bucket; the AWS-managed key needs no key grant."
+  }
+  assert {
+    condition     = toset(flatten([for s in jsondecode(module.search[0].sessions_read_policy_json).Statement : s.Action])) == toset(["s3:ListBucket", "s3:GetObject"])
+    error_message = "The default grant must be read-only and include no kms:Decrypt for the AWS-managed key."
+  }
+}
+
+run "search_sessions_bucket_read_uses_the_bucket_key" {
+  variables {
+    kms_key_arn = "arn:aws:kms:us-west-2:111111111111:key/11111111-2222-3333-4444-555555555555"
+  }
+  assert {
+    condition = toset(flatten([for s in jsondecode(module.search[0].sessions_read_policy_json).Statement : s.Resource])) == toset([
+      "arn:aws:s3:::relay-sessions",
+      "arn:aws:s3:::relay-sessions/*",
+      "arn:aws:kms:us-west-2:111111111111:key/11111111-2222-3333-4444-555555555555",
+    ])
+    error_message = "The default grant must decrypt only with the bucket's customer-managed key."
+  }
+}
+
+run "search_sessions_bucket_read_opt_out_adds_nothing" {
+  command = plan
+  variables {
+    search_sessions_bucket_read_enabled = false
+  }
+  assert {
+    condition     = module.search[0].sessions_read_policy_json == null
+    error_message = "Opting out must add no sessions read policy."
+  }
+}

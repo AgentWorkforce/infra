@@ -100,6 +100,13 @@ variable "enable_search" {
   default     = false
 }
 
+variable "search_sessions_bucket_read_enabled" {
+  description = "With enable_search, grant the search indexer and session-read roles read-only access to the sessions bucket and the kms_key_arn that encrypts it. Defaults on: without it the indexer fails with unauthorized and the read API lists no sessions. false omits the two inline policies."
+  type        = bool
+  default     = true
+  nullable    = false
+}
+
 variable "indexer_service_account" {
   description = "ServiceAccount (in namespace) of the search indexer (the hoopdb-indexer worker), bound to the write role. Must differ from reader_service_account and the sessions worker/alleyoop ServiceAccounts. null creates the role without an association."
   type        = string
