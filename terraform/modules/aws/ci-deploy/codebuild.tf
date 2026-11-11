@@ -75,6 +75,7 @@ resource "aws_codebuild_project" "this" {
         CI_DEPLOY_BUCKET              = module.artifacts.bucket_name
         CI_DEPLOY_CLUSTER             = var.cluster_name
         CI_DEPLOY_NAME                = var.name
+        CI_DEPLOY_SECRETS_KMS_KEY     = var.kms_key_arn
         CI_DEPLOY_BUNDLE_PREFIX       = each.value.bundle_prefix
         AWS_DEFAULT_REGION            = local.region
         PIP_DISABLE_PIP_VERSION_CHECK = "1"

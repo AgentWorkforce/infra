@@ -53,6 +53,30 @@ environment on an older chart still gets the current tooling), and `env/` is the
   read from the Secret inside the job and never printed. Use a session-mode (not transaction-mode) pooler URL.
 - `{"type": "none"}`.
 
+## Secrets
+
+Secret values live in AWS Secrets Manager, never in git, a laptop or a log. A `secrets` entry in `deploy.json`
+copies one Secrets Manager secret into Kubernetes Secret keys whenever an apply runs (server-side apply of
+that key only; other keys of the Secret are untouched). With `"generate": "base64url-32"` the apply job creates the
+secret the first time (32 random bytes, unpadded base64url), so a shared key such as the direct-upload
+witness is minted inside AWS and written to every consumer from the same value:
+
+```json
+"secrets": [
+  {"source": "agentrelay-dev/upload-witness-key", "generate": "base64url-32",
+   "targets": [{"namespace": "agent-relay-dev", "name": "agent-relay-upload-witness", "key": "upload-witness-key"}]}
+]
+```
+
+The module's `secrets_manager_prefix` (e.g. `agentrelay-dev/`) is the only Secrets Manager scope the apply job
+can read or create; the plan job has none, and its report lists the mappings without values.
+
+Secrets are synced only when an apply runs, that is when the plan has changes (or with `FORCE_UPGRADE=1`). Pods
+read a value when they start: the upgrade that first references a secret restarts its consumers, but after
+rotating a value in Secrets Manager, restart the consumers (or ship the rotation with a values change).
+Each data key is written with its own field manager, so mappings that share a Secret never remove each other's
+keys, and an existing Secret keeps its type.
+
 ## What each mode does
 
 **plan** (read-only; from the protected branch only): builds chart dependencies, reads each live release

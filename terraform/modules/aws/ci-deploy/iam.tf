@@ -193,6 +193,17 @@ data "aws_iam_policy_document" "build" {
       resources = [for id in var.rds_instance_identifiers : "arn:${local.partition}:rds:${local.region}:${local.account}:db:${id}"]
     }
   }
+  dynamic "statement" {
+    for_each = each.key == "apply" && var.secrets_manager_prefix != null ? [1] : []
+    content {
+      sid = "DeploySecrets"
+      actions = [
+        "secretsmanager:GetSecretValue", "secretsmanager:DescribeSecret", "secretsmanager:CreateSecret",
+        "secretsmanager:TagResource",
+      ]
+      resources = ["arn:${local.partition}:secretsmanager:${local.region}:${local.account}:secret:${coalesce(var.secrets_manager_prefix, "none/")}*"]
+    }
+  }
 }
 
 resource "aws_iam_role_policy" "build" {
