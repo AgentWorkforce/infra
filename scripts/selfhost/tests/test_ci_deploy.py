@@ -127,6 +127,7 @@ case "$*" in
   *"get deploy,statefulset"*) echo '{"items": [{"kind": "Deployment", "metadata": {"name": "web"}, "spec": {"template": {"spec": {"containers": [{"image": "img:1"}]}}}}]}' ;;
   *"apply --server-side --field-manager=ci-deploy-secret-"*)
     echo "$*" | grep -o 'field-manager=[^ ]*' >> "$FAKE/managers"; cat >> "$FAKE/applied-secrets" ;;
+  *"get configmap"*) echo '{"data": {"ca.crt": "-----BEGIN CERTIFICATE-----\\nX\\n-----END CERTIFICATE-----\\n"}}' ;;
   *"get secret"*) echo '{"data": {"url": "cG9zdGdyZXNxbDovL3U6U0VDUkVUUFdAaC9kYg=="}}' ;;
   *) exit 0 ;;
 esac
@@ -149,7 +150,7 @@ exit 0
 """
 
 FAKE_PG_DUMP = r"""#!/usr/bin/env bash
-echo "pg_dump called" >> "$FAKE/log"
+echo "pg_dump called ca=${PGSSLROOTCERT:+set}" >> "$FAKE/log"; [ -n "${PGSSLROOTCERT:-}" ] && grep -q BEGIN "$PGSSLROOTCERT" && echo "ca file ok" >> "$FAKE/log"
 echo DUMP
 """
 
@@ -239,6 +240,15 @@ class ScriptTest(unittest.TestCase):
         self.assertNotIn("SECRETPW", p.stderr + log + (report / "log.txt").read_text())
         self.assertIn("s3://bkt/snapshots/123-1/control.dump", (report / "snapshot").read_text())
         self.assertEqual(json.loads((self.fake / "state.json").read_text())["revision"], 8)
+
+    def test_pg_dump_uses_configured_ca(self):
+        self.render({"a": 2}, DEPLOY)
+        self.config({"type": "pg_dump", "databases": [{"label": "control", "namespace": "ns", "secret": "db", "key": "url",
+                                                        "ca": {"configMap": "supabase-ca", "key": "ca.crt"}}]})
+        p, _ = self.run_script("apply", EXPECT_REVISIONS="agent-relay=7")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertIn("pg_dump called ca=set", self.log())
+        self.assertIn("ca file ok", self.log())
 
     def test_rds_snapshot(self):
         self.render({"a": 2}, DEPLOY)
