@@ -240,6 +240,9 @@ relay-control:
     # registry and override repository.
     repository: ghcr.io/agentworkforce/relay-control
     digest: sha256:0b9c5a077b49b31178cc669e7c1d532f39e64c840087ca41636bb84a6c62631c
+  # The AA customer profile opts into the owner-only Usage page. The successor
+  # commit adds the now-qualified launch selection and its operator guidance.
+  selectedFeatures: [usage]
   database:
     runtimeRole: control_api_runtime
   encryption:
@@ -289,10 +292,10 @@ relay-control:
 relay-webapp:
   fullnameOverride: relay-webapp
   image:
-    # Release image (public GHCR, relay-webapp main d40c0b30), the approved
-    # successor to 3f38ab72 with the default-off coordination-overlaps view.
+    # Release image (public GHCR, relay-webapp main c485ba6) with the owner-only
+    # Usage page and the default-off coordination-overlaps view.
     repository: ghcr.io/agentworkforce/relay-webapp
-    digest: sha256:bd295ccb7d1323965dce890f19d0b7f857d706c00d7756f719c713763fdb49f3
+    digest: sha256:34ef185ae4abad2b07f3f64b43bb4af1412d9e48c0053f8c2e38769c7b91cff3
   runtime:
     coordinationOverlapsEnabled: false
     # REQUIRED OVERRIDE: the public dashboard origin.

@@ -60,7 +60,7 @@ class NativeNoRelayauth(unittest.TestCase):
             'ghcr.io/agentworkforce/relay-control@sha256:0b9c5a077b49b31178cc669e7c1d532f39e64c840087ca41636bb84a6c62631c')
         self.assertEqual(
             deployments['relay-webapp']['spec']['template']['spec']['containers'][0]['image'],
-            'ghcr.io/agentworkforce/relay-webapp@sha256:bd295ccb7d1323965dce890f19d0b7f857d706c00d7756f719c713763fdb49f3')
+            'ghcr.io/agentworkforce/relay-webapp@sha256:34ef185ae4abad2b07f3f64b43bb4af1412d9e48c0053f8c2e38769c7b91cff3')
         control_env = {
             item['name']: item.get('value')
             for item in deployments['relay-control']['spec']['template']['spec']['containers'][0]['env']
@@ -89,7 +89,16 @@ class NativeNoRelayauth(unittest.TestCase):
         self.assertNotIn('relayauth', names)
         self.assertNotIn('relayhistory', names)
         control_deploy = next(doc for doc in docs if doc.get('kind') == 'Deployment' and doc['metadata']['name'] == 'relay-control')
+        webapp_deploy = next(doc for doc in docs if doc.get('kind') == 'Deployment' and doc['metadata']['name'] == 'relay-webapp')
+        self.assertEqual(
+            control_deploy['spec']['template']['spec']['containers'][0]['image'],
+            'ghcr.io/agentworkforce/relay-control@sha256:db0201a9d7f0e6f55b2f88e96d243c19dc70c8c216fde6c2e58d25327dcb2c8a')
+        self.assertEqual(
+            webapp_deploy['spec']['template']['spec']['containers'][0]['image'],
+            'ghcr.io/agentworkforce/relay-webapp@sha256:34ef185ae4abad2b07f3f64b43bb4af1412d9e48c0053f8c2e38769c7b91cff3')
         env = {e['name']: e.get('value') for e in control_deploy['spec']['template']['spec']['containers'][0]['env']}
+        self.assertEqual(env['SELFHOST_FEATURES'], 'usage')
+        self.assertNotIn('launch', env['SELFHOST_FEATURES'].split(','))
         self.assertEqual(env['RELAYHISTORY_BACKEND'], 'native')
         self.assertEqual(env['SESSION_READ_API_PUBLIC_URL'], 'https://history.placeholder.company')
         for absent in ('RELAYAUTH_URL', 'RELAYAUTH_API_KEY_FILE', 'RELAYHISTORY_URL', 'RELAYHISTORY_PUBLIC_URL'):

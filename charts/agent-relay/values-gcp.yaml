@@ -337,10 +337,10 @@ relay-control:
 relay-webapp:
   fullnameOverride: relay-webapp
   image:
-    # Release image (public GHCR, relay-webapp main d40c0b30). Mirror it by
-    # digest to your registry and override repository.
+    # Release image (public GHCR, relay-webapp main c485ba6) with the owner-only
+    # Usage page. Mirror it by digest to your registry and override repository.
     repository: ghcr.io/agentworkforce/relay-webapp
-    digest: sha256:bd295ccb7d1323965dce890f19d0b7f857d706c00d7756f719c713763fdb49f3
+    digest: sha256:34ef185ae4abad2b07f3f64b43bb4af1412d9e48c0053f8c2e38769c7b91cff3
   runtime:
     coordinationOverlapsEnabled: false
     # REQUIRED OVERRIDE: publicUrl must use gkeIngress.hosts.root.
