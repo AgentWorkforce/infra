@@ -244,6 +244,18 @@ relay-control:
   # REQUIRED OVERRIDE: existing Secret name; database-url and
   # database-migrations-url point at RDS/Aurora (or in-cluster CNPG).
   existingSecret: example-agent-relay-secrets
+  # Optional first admin without SMTP or SSO (relay-control image from source
+  # bd1c9a03 or later): password sign-in plus a one-time setup key the
+  # operator generates into existingSecret (openssl rand -hex 32), read once
+  # and hands to bootstrap.adminEmail. The ALB is the single proxy that
+  # appends X-Forwarded-For, so trustedProxies stays 1; keep direct pod and
+  # Service access restricted (networkPolicy below).
+  # auth:
+  #   password:
+  #     enabled: true
+  #   trustedProxies: 1
+  # secretKeys:
+  #   setupKey: selfhost-setup-key
   services:
     relayauthUrl: http://relayauth:8787
     relaycastUrl: http://relaycast:8787

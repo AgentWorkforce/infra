@@ -59,7 +59,7 @@ of set a second time. Desktop and the CLI log in against that same origin. */ -}
 {{- if ne (int .Values.replicaCount) 1 }}{{ fail "replicaCount must be 1: the self-host API pilot has process-local login/device rate limits and is not HA" }}{{ end -}}
 {{- if not .Values.existingSecret }}{{ fail "existingSecret is required; inline credentials are not supported" }}{{ end -}}
 {{- if not (kindIs "bool" .Values.services.relayauthEnabled) }}{{ fail "services.relayauthEnabled must be a boolean" }}{{ end -}}
-{{- $optionalSecretKeys := list "previousEncryptionKey" "internalToken" "telemetryInstallKey" "relaycastInternalSecret" "oidcClientSecret" "microsoftClientSecret" "smtpPassword" "passwordPepper" "introspectSecret" "sessionReadApiSecret" -}}
+{{- $optionalSecretKeys := list "previousEncryptionKey" "internalToken" "telemetryInstallKey" "relaycastInternalSecret" "oidcClientSecret" "microsoftClientSecret" "smtpPassword" "passwordPepper" "introspectSecret" "sessionReadApiSecret" "setupKey" -}}
 {{- if and .Values.secretKeys.passwordPepper (eq (toString .Values.secretKeys.passwordPepper) (toString .Values.secretKeys.databaseMigrationsUrl)) }}{{ fail "secretKeys.passwordPepper must not name secretKeys.databaseMigrationsUrl" }}{{ end -}}
 {{- if not .Values.services.relayauthEnabled }}{{ $optionalSecretKeys = append $optionalSecretKeys "relayauthApiKey" }}{{ end -}}
 {{- range $name, $key := .Values.secretKeys }}{{ if and (has $name $optionalSecretKeys) (empty $key) }}{{ continue }}{{ end }}{{ if not (regexMatch "^[A-Za-z0-9._-]+$" (toString $key)) }}{{ fail (printf "secretKeys.%s must be a Kubernetes Secret data key" $name) }}{{ end }}{{ end -}}
@@ -115,7 +115,7 @@ the chart already sets, including duplicates inside extraEnv. */ -}}
   "RELAYAUTH_API_KEY_FILE" "RELAYCAST_INTERNAL_SECRET_FILE" "SELFHOST_BOOTSTRAP_TOKEN_FILE" "SELFHOST_ENCRYPTION_KEY_FILE"
   "SELFHOST_ENCRYPTION_PREVIOUS_KEY_FILE" "SELFHOST_INTERNAL_TOKEN_FILE" "SELFHOST_OIDC_CLIENT_SECRET_FILE" "SELFHOST_SMTP_PASSWORD_FILE"
   "SELFHOST_TELEMETRY_INSTALL_KEY_FILE" "RELAYCONTROL_INTROSPECT_SECRET_FILE" "SESSION_READ_API_SECRET_FILE"
-  "SELFHOST_PASSWORD_PEPPER_FILE"
+  "SELFHOST_PASSWORD_PEPPER_FILE" "SELFHOST_SETUP_KEY_FILE" "SELFHOST_SIGNIN_METHODS" "SELFHOST_TRUSTED_PROXIES"
   "SELFHOST_MICROSOFT_CLIENT_ID" "SELFHOST_MICROSOFT_TENANT" "SELFHOST_MICROSOFT_REDIRECT_URL" "SELFHOST_MICROSOFT_CLIENT_SECRET_FILE"
   "SESSION_READ_API_URL" "SESSION_READ_API_PUBLIC_URL" "SESSION_READ_API_MCP_READS" "SELFHOST_INTROSPECT_AUDIENCES"
   "RELAYHISTORY_BACKEND" -}}
@@ -172,6 +172,7 @@ Optional keys are left out while empty. */ -}}
 {{- with .Values.secretKeys.relaycastInternalSecret }}{{ $_ := set $files "RELAYCAST_INTERNAL_SECRET_FILE" . }}{{ end -}}
 {{- with .Values.secretKeys.introspectSecret }}{{ $_ := set $files "RELAYCONTROL_INTROSPECT_SECRET_FILE" . }}{{ end -}}
 {{- with .Values.secretKeys.sessionReadApiSecret }}{{ $_ := set $files "SESSION_READ_API_SECRET_FILE" . }}{{ end -}}
+{{- with .Values.secretKeys.setupKey }}{{ $_ := set $files "SELFHOST_SETUP_KEY_FILE" . }}{{ end -}}
 {{- if and .Values.auth.oidc.issuer .Values.secretKeys.oidcClientSecret }}{{ $_ := set $files "SELFHOST_OIDC_CLIENT_SECRET_FILE" .Values.secretKeys.oidcClientSecret }}{{ end -}}
 {{- if and .Values.auth.microsoft.clientId .Values.secretKeys.microsoftClientSecret }}{{ $_ := set $files "SELFHOST_MICROSOFT_CLIENT_SECRET_FILE" .Values.secretKeys.microsoftClientSecret }}{{ end -}}
 {{- if and .Values.smtp.host .Values.smtp.username .Values.secretKeys.smtpPassword }}{{ $_ := set $files "SELFHOST_SMTP_PASSWORD_FILE" .Values.secretKeys.smtpPassword }}{{ end -}}
@@ -472,12 +473,25 @@ blocks are empty, so existing renders are unchanged. */ -}}
 {{- if .Values.auth.emailLink.enabled }}
 - { name: SELFHOST_EMAIL_LOGIN, value: "true" }
 {{- end }}
+{{- if .Values.auth.password.enabled }}
+- { name: SELFHOST_SIGNIN_METHODS, value: {{ ternary "email_link,password" "password" (eq .Values.auth.emailLink.enabled true) | quote }} }
+{{- end }}
+{{- with include "relay-control.trustedProxies" . }}
+- { name: SELFHOST_TRUSTED_PROXIES, value: {{ . | quote }} }
+{{- end }}
 {{- with .Values.auth.autoJoinDomains }}
 - { name: SELFHOST_AUTO_JOIN_DOMAINS, value: {{ join "," . | lower | quote }} }
 {{- end }}
 {{- if not (kindIs "invalid" .Values.auth.inviteTtlHours) }}{{ if ne (toString .Values.auth.inviteTtlHours) "" }}
 - { name: SELFHOST_INVITE_TTL_HOURS, value: {{ int64 .Values.auth.inviteTtlHours | toString | quote }} }
 {{- end }}{{ end }}
+{{- end -}}
+
+{{- /* SELFHOST_TRUSTED_PROXIES: an explicit auth.trustedProxies, else 1 with
+password sign-in (Control refuses to start without a value), else empty. */ -}}
+{{- define "relay-control.trustedProxies" -}}
+{{- $tp := .Values.auth.trustedProxies -}}
+{{- if not (or (kindIs "invalid" $tp) (eq (toString $tp) "")) }}{{ int64 $tp }}{{ else if .Values.auth.password.enabled }}1{{ end -}}
 {{- end -}}
 
 {{- define "relay-control.validateIdentity" -}}
@@ -490,7 +504,12 @@ blocks are empty, so existing renders are unchanged. */ -}}
 {{- if and (or $b.adminName $b.workspaceName) (not $b.orgName) }}{{ fail "bootstrap.adminName and bootstrap.workspaceName need bootstrap.orgName and bootstrap.adminEmail" }}{{ end -}}
 {{- $oidc := .Values.auth.oidc -}}
 {{- $ms := .Values.auth.microsoft -}}
-{{- if and (or $b.orgName $oidc.issuer $ms.clientId .Values.auth.emailLink.enabled .Values.smtp.host) (not .Values.dashboardUrl) (not (include "relay-control.singleHost" .)) }}{{ fail "dashboardUrl is required with bootstrap, auth.oidc, auth.microsoft, auth.emailLink or smtp (outside single-host mode): sign-in and invite links land on the dashboard origin, where the session cookie must be set" }}{{ end -}}
+{{- $pw := .Values.auth.password | default dict -}}
+{{- if and (hasKey $pw "enabled") (not (kindIs "invalid" $pw.enabled)) (not (kindIs "bool" $pw.enabled)) }}{{ fail "auth.password.enabled must be a boolean" }}{{ end -}}
+{{- $tp := .Values.auth.trustedProxies -}}
+{{- if not (or (kindIs "invalid" $tp) (eq (toString $tp) "")) }}{{ if or (not (regexMatch "^[0-9]{1,2}$" (toString $tp))) (kindIs "bool" $tp) }}{{ fail "auth.trustedProxies must be an integer from 0 to 99 (or null)" }}{{ end }}{{ end -}}
+{{- if and .Values.secretKeys.setupKey (not $pw.enabled) }}{{ fail "secretKeys.setupKey requires auth.password.enabled: the setup key signs the first admin in through password sign-in" }}{{ end -}}
+{{- if and (or $b.orgName $oidc.issuer $ms.clientId .Values.auth.emailLink.enabled $pw.enabled .Values.smtp.host) (not .Values.dashboardUrl) (not (include "relay-control.singleHost" .)) }}{{ fail "dashboardUrl is required with bootstrap, auth.oidc, auth.microsoft, auth.emailLink, auth.password or smtp (outside single-host mode): sign-in and invite links land on the dashboard origin, where the session cookie must be set" }}{{ end -}}
 {{- if $oidc.issuer }}
 {{- if not (regexMatch (ternary "^https?://[^?#@\\s]+$" "^https://[^?#@\\s]+$" (eq $oidc.allowHttpIssuer true)) (toString $oidc.issuer)) }}{{ fail "auth.oidc.issuer must be an https URL without credentials, query or fragment (allowHttpIssuer=true, for tests only, also accepts http)" }}{{ end -}}
 {{- if not $oidc.clientId }}{{ fail "auth.oidc.clientId is required with auth.oidc.issuer" }}{{ end -}}

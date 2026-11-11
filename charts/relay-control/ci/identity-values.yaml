@@ -35,6 +35,7 @@ secretKeys:
   oidcClientSecret: oidc-client-secret
   microsoftClientSecret: microsoft-client-secret
   smtpPassword: smtp-password
+  setupKey: selfhost-setup-key
 bootstrap:
   orgName: Acme
   adminEmail: Ops@Acme.com
@@ -49,6 +50,8 @@ auth:
     clientId: 11111111-2222-3333-4444-555555555555
     tenant: common
   emailLink:
+    enabled: true
+  password:
     enabled: true
   autoJoinDomains: [acme.com]
   inviteTtlHours: 72

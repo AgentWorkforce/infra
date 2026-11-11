@@ -476,18 +476,43 @@ feed. A dispatch alone is not publication or client-acceptance proof.
    issuer in `relay-control.extraEnv`; never use it as a generic trust bypass.
    Until the release packet records a successful real-IdP SSO acceptance run,
    use the qualified password/email-link flow for day-one onboarding.
-2. If no sign-in method is configured, have the identity administrator finish
-   OIDC/SMTP. For first-owner recovery, the customer's authorized Kubernetes
-   operator uses the [device approval runbook](operator-device-login.md).
-   The bootstrap bearer stays inside Control; employees do not send it or
-   their approval codes to our engineers.
-3. Open the release packet's customer download page (the intended route is
+2. Without SSO or SMTP, use the one-time **setup key** for the first owner
+   (needs `relay-control.auth.password.enabled: true`,
+   `relay-control.secretKeys.setupKey: selfhost-setup-key` and a relay-control
+   image from source `bd1c9a03` or later; see the
+   [relay-control chart](../charts/relay-control/README.md#first-admin-without-smtp-or-sso-the-setup-key)).
+   Before the Helm install, the authorized Kubernetes operator generates it
+   into the existing Secret (`openssl rand -hex 32` as key
+   `selfhost-setup-key`). After install, the operator reads it back once and
+   passes it to the configured owner out of band:
+
+   ```sh
+   kubectl --context "$KUBE_CONTEXT" -n "$NAMESPACE" get secret "$CONTROL_SECRET" \
+     -o jsonpath='{.data.selfhost-setup-key}' | base64 -d
+   ```
+
+   The owner opens `/login`, chooses **First-time setup: enter setup key**,
+   sets a password and is signed in; the key is then spent. It expires 24
+   hours after Control first records it. If it is lost or expired, the
+   operator mints a fresh one with the bootstrap bearer
+   (`POST /api/v1/installation/setup-key`, returned once). The owner then
+   gives pilot users temporary passwords from Members, which also work
+   without SMTP. `relay-control.auth.trustedProxies` must equal the number of
+   proxies in front of Control (`1` for the single ALB/ingress, with direct
+   pod and Service access restricted).
+3. If no sign-in method is configured at all, have the identity administrator
+   finish OIDC/SMTP or the setup key above. For first-owner recovery, the
+   customer's authorized Kubernetes operator uses the
+   [device approval runbook](operator-device-login.md).
+   The bootstrap bearer stays inside Control; employees do not send it,
+   the setup key or their approval codes to our engineers.
+4. Open the release packet's customer download page (the intended route is
    `/downloads`). Install the signed package for the selected OS/CPU. A missing
    or wrong-profile package blocks onboarding; do not substitute a hosted build.
-4. Open Desktop and sign in to the customer site. Compare the computer,
+5. Open Desktop and sign in to the customer site. Compare the computer,
    workspace and code in the normal signed-in browser, approve only that
    request, and verify Desktop connects to the same customer workspace.
-5. Confirm the effective administrator capture policy and pre-upload scrubber.
+6. Confirm the effective administrator capture policy and pre-upload scrubber.
    Browser sign-in alone does not prove Desktop is connected. A server-side
    scrub result also does not prove client-side pre-upload scrubbing; verify the
    selected Desktop build carries the release-qualified R9 scrubber first.

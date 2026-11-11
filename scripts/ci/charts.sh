@@ -535,13 +535,35 @@ for chart in "${charts[@]}"; do
           "SELFHOST_MICROSOFT_CLIENT_SECRET_FILE=/var/run/agent-relay/secrets/microsoft-client-secret" \
           "RELAYCAST_INTERNAL_SECRET_FILE=/var/run/agent-relay/secrets/relaycast-internal-secret" \
           "SELFHOST_SMTP_PASSWORD_FILE=/var/run/agent-relay/secrets/smtp-password" "SELFHOST_SMTP_PORT=465" \
-          "SELFHOST_EMAIL_LOGIN=true" "SELFHOST_AUTO_JOIN_DOMAINS=acme.com" "SELFHOST_INVITE_TTL_HOURS=72"; do
+          "SELFHOST_EMAIL_LOGIN=true" "SELFHOST_AUTO_JOIN_DOMAINS=acme.com" "SELFHOST_INVITE_TTL_HOURS=72" \
+          "SELFHOST_SIGNIN_METHODS=email_link,password" "SELFHOST_TRUSTED_PROXIES=1" \
+          "SELFHOST_SETUP_KEY_FILE=/var/run/agent-relay/secrets/selfhost-setup-key"; do
           grep -qxF "$want" <<<"$id_env" || err "$chart: identity values did not render $want"
         done
-        [ "$(yq 'select(.kind == "Deployment") | .spec.template.spec.volumes[] | select(.name == "secrets") | .secret.items[].key' <<<"$id_out" | grep -cE '^(oidc-client-secret|microsoft-client-secret|smtp-password|relaycast-internal-secret)$')" = 4 ] \
+        [ "$(yq 'select(.kind == "Deployment") | .spec.template.spec.volumes[] | select(.name == "secrets") | .secret.items[].key' <<<"$id_out" | grep -cE '^(oidc-client-secret|microsoft-client-secret|smtp-password|relaycast-internal-secret|selfhost-setup-key)$')" = 5 ] \
           || err "$chart: identity secrets must be projected into the secrets volume"
-        ! grep -Eq 'SELFHOST_BOOTSTRAP_(ORG|ADMIN|WORKSPACE)|SELFHOST_(OIDC|MICROSOFT|SMTP|EMAIL|AUTO_JOIN|INVITE)_|RELAYCAST_INTERNAL_SECRET' <<<"$out" \
+        ! grep -Eq 'SELFHOST_BOOTSTRAP_(ORG|ADMIN|WORKSPACE)|SELFHOST_(OIDC|MICROSOFT|SMTP|EMAIL|AUTO_JOIN|INVITE)_|RELAYCAST_INTERNAL_SECRET|SELFHOST_(SIGNIN_METHODS|TRUSTED_PROXIES|SETUP_KEY)|selfhost-setup-key' <<<"$out" \
           || err "$chart: identity env must not render without identity values"
+        # The setup key reaches only the API pod, never the migration Job.
+        ! yq 'select(.kind == "Job")' <<<"$id_out" | grep -Eq 'selfhost-setup-key|SELFHOST_SETUP_KEY' \
+          || err "$chart: the migrate Job must not receive the setup key"
+        # Password sign-in alone renders only password; an explicit trustedProxies wins.
+        pw_env=$(render "$chart" "$v" --set dashboardUrl=https://gcp-proof.agentrelay.com/ --set auth.password.enabled=true --set auth.trustedProxies=0 \
+          | yq 'select(.kind == "Deployment") | .spec.template.spec.containers[0].env[] | .name + "=" + (.value // "")')
+        for want in "SELFHOST_SIGNIN_METHODS=password" "SELFHOST_TRUSTED_PROXIES=0"; do
+          grep -qxF "$want" <<<"$pw_env" || err "$chart: password sign-in did not render $want"
+        done
+        grep -q '^SELFHOST_EMAIL_LOGIN=' <<<"$pw_env" && err "$chart: password sign-in alone must not enable email links"
+        tp_env=$(render "$chart" "$v" --set auth.trustedProxies=2 | yq 'select(.kind == "Deployment") | .spec.template.spec.containers[0].env[] | .name + "=" + (.value // "")')
+        grep -qxF "SELFHOST_TRUSTED_PROXIES=2" <<<"$tp_env" || err "$chart: an explicit trustedProxies must render without password sign-in"
+        grep -q '^SELFHOST_SIGNIN_METHODS=' <<<"$tp_env" && err "$chart: trustedProxies alone must not set sign-in methods"
+        expect_render_failure "$chart" "$v" "setup key without password sign-in" "secretKeys.setupKey requires auth.password.enabled" --set secretKeys.setupKey=selfhost-setup-key
+        expect_render_failure "$chart" "$v" "numeric password setting" "auth.password.enabled must be a boolean" --set auth.password.enabled=0
+        expect_render_failure "$chart" "$v" "string password setting" "auth.password.enabled must be a boolean" --set-string auth.password.enabled=true
+        expect_render_failure "$chart" "$v" "trustedProxies out of range" "auth.trustedProxies must be an integer from 0 to 99" --set auth.trustedProxies=100
+        expect_render_failure "$chart" "$v" "trustedProxies not a number" "auth.trustedProxies must be an integer from 0 to 99" --set auth.trustedProxies=one
+        expect_render_failure "$chart" "$v" "password sign-in without dashboardUrl" "dashboardUrl is required with bootstrap, auth.oidc, auth.microsoft, auth.emailLink, auth.password or smtp" --set auth.password.enabled=true
+        expect_render_failure "$chart" "$v" "setup key naming the migrations URL" "both name Secret key" --set auth.password.enabled=true --set dashboardUrl=https://gcp-proof.agentrelay.com/ --set secretKeys.setupKey=database-migrations-url
         # Password pepper: off by default. When set, only the API gets it, as a
         # private copy made by the init container.
         pepper_out=$(render "$chart" "$v" --set secretKeys.passwordPepper=password-pepper)
@@ -575,7 +597,7 @@ for chart in "${charts[@]}"; do
         expect_render_failure "$chart" "$v" "SMTP without from" "smtp.from is required with smtp.host" --set dashboardUrl=https://gcp-proof.agentrelay.com/ --set smtp.host=smtp.acme.com
         expect_render_failure "$chart" "$v" "SMTP user without password" "smtp.username and secretKeys.smtpPassword must be set together" --set dashboardUrl=https://gcp-proof.agentrelay.com/ --set smtp.host=smtp.acme.com --set smtp.from=relay@acme.com --set smtp.username=u
         expect_render_failure "$chart" "$v" "SMTP port zero" "smtp.port must be 1-65535" --set dashboardUrl=https://gcp-proof.agentrelay.com/ --set smtp.host=smtp.acme.com --set smtp.from=relay@acme.com --set smtp.port=0
-        expect_render_failure "$chart" "$v" "SMTP without dashboardUrl" "dashboardUrl is required with bootstrap, auth.oidc, auth.microsoft, auth.emailLink or smtp" --set smtp.host=smtp.acme.com --set smtp.from=relay@acme.com
+        expect_render_failure "$chart" "$v" "SMTP without dashboardUrl" "dashboardUrl is required with bootstrap, auth.oidc, auth.microsoft, auth.emailLink, auth.password or smtp" --set smtp.host=smtp.acme.com --set smtp.from=relay@acme.com
         expect_render_failure "$chart" "$v" "bad invite TTL" "auth.inviteTtlHours must be an integer from 1 to 720" --set auth.inviteTtlHours=0
         expect_render_failure "$chart" "$v" "identity secret reusing an API key" "both name Secret key" --set secretKeys.relaycastInternalSecret=selfhost-bootstrap-token --set bootstrap.orgName=Acme --set bootstrap.adminEmail=ops@acme.com --set dashboardUrl=https://gcp-proof.agentrelay.com/
         [ -n "$(render "$chart" "$v" --set dashboardUrl=https://gcp-proof.agentrelay.com/ --set auth.oidc.issuer=http://dex:5556/dex --set auth.oidc.clientId=x --set secretKeys.oidcClientSecret=oidc-client-secret --set auth.oidc.allowHttpIssuer=true)" ] \

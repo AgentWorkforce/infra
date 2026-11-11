@@ -113,6 +113,8 @@ these values set, an install needs no manual steps after `helm install`:
    on the app registration and store its client secret under
    `secretKeys.microsoftClientSecret`. The fallback is
    `auth.emailLink.enabled` with `smtp`, which sends single-use sign-in links.
+   `auth.password.enabled` adds email and password sign-in, which works
+   without SMTP (only self-service registration and emailed resets need it).
    The admin signs in at `<dashboard>/login`.
 3. **Invites.** Owners and admins invite people by email from Settings →
    Members. Invite links are single use and expire after
@@ -123,6 +125,61 @@ these values set, an install needs no manual steps after `helm install`:
 
 Roles: `owner` (everything, including managing owners), `admin` (invites
 admins and members, and manages them) and `member`.
+
+### First admin without SMTP or SSO: the setup key
+
+With `auth.password.enabled`, the bootstrap admin (`bootstrap.adminEmail`) can
+get in with a one-time setup key instead of an email link or SSO. It needs a
+relay-control image from source `bd1c9a03` (#96) or later.
+
+1. Generate a key per install and add it to the `existingSecret`. The chart
+   has no default and never generates one:
+
+   ```sh
+   kubectl -n "$NAMESPACE" create secret generic <existingSecret> ... \
+     --from-literal=selfhost-setup-key="$(openssl rand -hex 32)"
+   ```
+
+   Set `secretKeys.setupKey: selfhost-setup-key`. The chart mounts it as
+   `SELFHOST_SETUP_KEY_FILE` into the API pod only; the migration Job never
+   receives it.
+2. Read it back once, out of band, and hand it to the admin:
+
+   ```sh
+   kubectl -n "$NAMESPACE" get secret <existingSecret> \
+     -o jsonpath='{.data.selfhost-setup-key}' | base64 -d
+   ```
+
+3. The admin opens `<dashboard>/login`, chooses **First-time setup: enter
+   setup key**, sets a password (12-128 characters) and is signed in. The key
+   is then spent.
+
+The key works only while the admin has never signed in. It expires 24 hours
+after the API first records it, used or not, and a restart does not renew
+it. If it is lost or expired, mint a fresh one (returned once; it revokes the
+earlier ones) with the bootstrap bearer:
+
+```sh
+curl -fsS -X POST -H "Authorization: Bearer $BOOTSTRAP_TOKEN" \
+  https://<api origin>/api/v1/installation/setup-key
+```
+
+That answers 409 `admin_already_signed_in` once the admin has signed in.
+Owners and admins then give members and invitees **temporary passwords**
+from the dashboard (single use, forced change at first sign-in), so invites
+work without SMTP too.
+
+**Trusted proxies.** Password sign-in locks out per account and per client
+address, so the API must know how many proxies append to `X-Forwarded-For`.
+`auth.trustedProxies` renders `SELFHOST_TRUSTED_PROXIES`; left `null`, it is
+`1` with password sign-in, which is right only when this chart's ingress (or
+the single load balancer in front of it) is the one proxy and direct access to
+the pod and Service is restricted, for example with `networkPolicy`. Set the
+real hop count for any other chain, or `0` when clients connect directly. The
+API refuses to start with password sign-in and no value. `SELFHOST_SIGNIN_METHODS`,
+`SELFHOST_TRUSTED_PROXIES` and `SELFHOST_SETUP_KEY_FILE` are managed values:
+move any `extraEnv` entries for them to `auth.password`, `auth.trustedProxies`
+and `secretKeys.setupKey`.
 
 The bootstrap token (`secretKeys.bootstrapToken`) remains the operator
 break-glass. It approves the **Operator sign-in** code on `/login` for a
