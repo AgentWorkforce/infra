@@ -468,6 +468,31 @@ for chart in "${charts[@]}"; do
         profile=$(yq 'select(.kind == "Deployment") | .spec.template.spec.containers[0].env[] | select(.name == "DASHBOARD_CUSTOMER_PROFILE") | .value' <<<"$brand")
         [ "$(jq -r '.productName + " " + .logo.dark + " " + (.poweredByAgentRelay | tostring)' <<<"$profile")" = "Acme Relay https://acme.example/brand/logo-on-dark.svg true" ] \
           || err "$chart: customerProfile must render as one JSON object in DASHBOARD_CUSTOMER_PROFILE"
+        # global.branding.logo: nothing by default; an inline SVG becomes a
+        # chart ConfigMap and an existing ConfigMap key is mounted read-only at
+        # html/brand/<key>, which the image serves at /brand/<key>.
+        ! grep -q brand <<<"$out" || err "$chart: no global.branding.logo must render no brand volume or ConfigMap"
+        svg='<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><rect width="10" height="10" style="fill:#123"/></svg>'
+        logo=$(render "$chart" "$v" --set-string "global.branding.logo.svg=$svg")
+        [ "$(yq 'select(.kind == "ConfigMap" and .metadata.name == "ci-relay-webapp-brand") | .data["logo.svg"]' <<<"$logo")" = "$svg" ] \
+          || err "$chart: an inline logo must render the ci-relay-webapp-brand ConfigMap with logo.svg"
+        [ "$(yq 'select(.kind == "Deployment") | .spec.template.spec.containers[0].volumeMounts[] | select(.name == "brand") | .mountPath + " " + (.readOnly | tostring)' <<<"$logo")" = "/usr/share/nginx/html/brand true" ] \
+          || err "$chart: the logo must be mounted read-only at /usr/share/nginx/html/brand"
+        [ "$(yq 'select(.kind == "Deployment") | .spec.template.spec.volumes[] | select(.name == "brand") | .configMap.name + " " + .configMap.items[0].key' <<<"$logo")" = "ci-relay-webapp-brand logo.svg" ] \
+          || err "$chart: the brand volume must project logo.svg from the chart ConfigMap"
+        logo=$(render "$chart" "$v" --set global.branding.logo.existingConfigMap=relay-brand --set global.branding.logo.key=acme-logo.png)
+        [ "$(yq 'select(.kind == "Deployment") | .spec.template.spec.volumes[] | select(.name == "brand") | .configMap.name + " " + .configMap.items[0].path' <<<"$logo")" = "relay-brand acme-logo.png" ] \
+          || err "$chart: existingConfigMap must project its key as the served file"
+        ! yq 'select(.kind == "ConfigMap") | .metadata.name' <<<"$logo" | grep -q brand || err "$chart: existingConfigMap must not render a chart ConfigMap"
+        kubeconform -strict -summary -ignore-missing-schemas -kubernetes-version "${KUBE_VERSION:-1.33.0}" <<<"$logo" >/dev/null || err "$chart: branding logo render failed kubeconform"
+        expect_render_failure "$chart" "$v" "logo with both sources" "set svg or existingConfigMap, not both" --set-string "global.branding.logo.svg=$svg" --set global.branding.logo.existingConfigMap=relay-brand
+        expect_render_failure "$chart" "$v" "logo key without a ConfigMap" "global.branding.logo.key names a key in existingConfigMap" --set global.branding.logo.key=logo.png
+        expect_render_failure "$chart" "$v" "logo key path" "global.branding.logo.key must be a file name" --set global.branding.logo.existingConfigMap=relay-brand --set global.branding.logo.key=../logo.png
+        expect_render_failure "$chart" "$v" "logo key type" "global.branding.logo.key must be a file name" --set global.branding.logo.existingConfigMap=relay-brand --set global.branding.logo.key=logo.gif
+        expect_render_failure "$chart" "$v" "non-SVG inline logo" "must be SVG markup" --set-string 'global.branding.logo.svg=hello'
+        expect_render_failure "$chart" "$v" "scripted SVG" "must not contain script" --set-string 'global.branding.logo.svg=<svg><script>alert(1)</script></svg>'
+        expect_render_failure "$chart" "$v" "SVG event handler" "must not contain script" --set-string 'global.branding.logo.svg=<svg onload=alert(1)></svg>'
+        expect_render_failure "$chart" "$v" "unknown logo setting" "global.branding.logo.url is not a setting" --set global.branding.logo.url=https://x.example/logo.svg
         ;;
       relay-control)
         v=charts/relay-control/ci/default-values.yaml
@@ -558,6 +583,27 @@ for chart in "${charts[@]}"; do
         grep -qxF "SELFHOST_TRUSTED_PROXIES=2" <<<"$tp_env" || err "$chart: an explicit trustedProxies must render without password sign-in"
         grep -q '^SELFHOST_SIGNIN_METHODS=' <<<"$tp_env" && err "$chart: trustedProxies alone must not set sign-in methods"
         expect_render_failure "$chart" "$v" "setup key without password sign-in" "secretKeys.setupKey requires auth.password.enabled" --set secretKeys.setupKey=selfhost-setup-key
+        # Sign-in co-branding: SELFHOST_LOGIN_LOGO_URL follows the
+        # relay-webapp-hosted global.branding.logo on the dashboard origin
+        # unless login.logoUrl overrides it; nothing renders by default.
+        ! grep -q 'SELFHOST_LOGIN_' <<<"$out$id_out" || err "$chart: no login logo or org name must render without branding"
+        lg_env() { render "$chart" "$@" | yq 'select(.kind == "Deployment") | .spec.template.spec.containers[0].env[] | select(.name | test("^SELFHOST_LOGIN_")) | .name + "=" + .value'; }
+        [ "$(lg_env "$idv" --set-string 'global.branding.logo.svg=<svg/>')" = "SELFHOST_LOGIN_LOGO_URL=https://gcp-proof.agentrelay.com/brand/logo.svg" ] \
+          || err "$chart: an inline logo must link <dashboardUrl origin>/brand/logo.svg"
+        [ "$(lg_env "$idv" --set global.branding.logo.existingConfigMap=relay-brand --set global.branding.logo.key=acme.png --set login.orgName='Example Corp' | paste -sd' ' -)" = "SELFHOST_LOGIN_LOGO_URL=https://gcp-proof.agentrelay.com/brand/acme.png SELFHOST_LOGIN_ORG_NAME=Example Corp" ] \
+          || err "$chart: an existing ConfigMap logo must link its key, and login.orgName must render"
+        [ "$(lg_env "$idv" --set-string 'global.branding.logo.svg=<svg/>' --set login.logoUrl=https://cdn.example.com/logo.svg)" = "SELFHOST_LOGIN_LOGO_URL=https://cdn.example.com/logo.svg" ] \
+          || err "$chart: login.logoUrl must override the hosted logo"
+        [ "$(lg_env charts/relay-control/ci/single-host-values.yaml --set-string 'global.branding.logo.svg=<svg/>')" = "SELFHOST_LOGIN_LOGO_URL=https://relay.gcp-proof.agentrelay.com/brand/logo.svg" ] \
+          || err "$chart: single-host mode must link the logo on the single host"
+        expect_render_failure "$chart" "$v" "hosted logo without a dashboard origin" "global.branding.logo needs dashboardUrl" --set-string 'global.branding.logo.svg=<svg/>'
+        expect_render_failure "$chart" "$v" "hosted logo on a plaintext dashboard" "the sign-in logo must be https" --set-string 'global.branding.logo.svg=<svg/>' --set dashboardUrl=http://dashboard.example.com/
+        expect_render_failure "$chart" "$v" "plaintext login logo" "login.logoUrl must be an absolute https URL" --set login.logoUrl=http://cdn.example.com/logo.svg
+        expect_render_failure "$chart" "$v" "login logo with credentials" "login.logoUrl must be an absolute https URL" --set login.logoUrl=https://u:p@cdn.example.com/logo.svg
+        expect_render_failure "$chart" "$v" "unknown login setting" "login.logo is not a setting" --set login.logo=x
+        expect_render_failure "$chart" "$idv" "login logo in extraEnv as well" "SELFHOST_LOGIN_LOGO_URL is managed" --set-string 'global.branding.logo.svg=<svg/>' --set-json 'extraEnv=[{"name":"SELFHOST_LOGIN_LOGO_URL","value":"https://cdn.example.com/x.svg"}]'
+        render "$chart" "$idv" --set-json 'extraEnv=[{"name":"SELFHOST_LOGIN_LOGO_URL","value":"https://cdn.example.com/x.svg"}]' >/dev/null \
+          || err "$chart: SELFHOST_LOGIN_LOGO_URL in extraEnv must keep working without branding values"
         expect_render_failure "$chart" "$v" "numeric password setting" "auth.password.enabled must be a boolean" --set auth.password.enabled=0
         expect_render_failure "$chart" "$v" "string password setting" "auth.password.enabled must be a boolean" --set-string auth.password.enabled=true
         expect_render_failure "$chart" "$v" "trustedProxies out of range" "auth.trustedProxies must be an integer from 0 to 99" --set auth.trustedProxies=100
@@ -801,6 +847,13 @@ for chart in "${charts[@]}"; do
         expect_render_failure "$chart" "$v" "missing dashboard image" "image.digest is required" --set relay-webapp.image.digest=
         expect_render_failure "$chart" "$v" "dashboardUrl off the root host" "relay-control.dashboardUrl must be on the dashboard host" --set relay-control.dashboardUrl=https://elsewhere.agentrelay.com/
         [ -n "$(render "$chart" "$v" --set relay-control.dashboardUrl=https://gcp-proof.agentrelay.com:443/)" ] || err "$chart: dashboardUrl with an explicit :443 on the root host must render"
+        # One global.branding.logo value hosts the logo on the dashboard and
+        # points Control's sign-in page at it.
+        logo=$(render "$chart" charts/agent-relay/ci/single-host-values.yaml --set-string 'global.branding.logo.svg=<svg xmlns="http://www.w3.org/2000/svg"/>')
+        [ "$(yq 'select(.kind == "Deployment") | .spec.template.spec.containers[0].env[] | select(.name == "SELFHOST_LOGIN_LOGO_URL") | .value' <<<"$logo")" = https://relay.gcp-proof.agentrelay.com/brand/logo.svg ] \
+          || err "$chart: global.branding.logo must set relay-control's SELFHOST_LOGIN_LOGO_URL on the dashboard origin"
+        [ "$(yq 'select(.kind == "Deployment") | .spec.template.spec.volumes[] | select(.name == "brand") | .configMap.name' <<<"$logo")" = "$(yq 'select(.kind == "ConfigMap" and (.data | has("logo.svg"))) | .metadata.name' <<<"$logo")" ] \
+          || err "$chart: global.branding.logo must mount the chart's logo ConfigMap into relay-webapp"
         expect_render_failure "$chart" "$v" "ar_ authority without relayauth" "relaycast.credentials.authority=relayauth requires components.relayauth=true" --set components.relayauth=false --set relaycast.credentials.format=ar --set relaycast.credentials.authority=relayauth --set relaycast.credentials.relayauth.url=http://relayauth:8787 --set relaycast.secretKeys.relayauthToken=relaycast-relayauth-token
         ;;
     esac

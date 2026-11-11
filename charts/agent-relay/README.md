@@ -132,6 +132,12 @@ image from relaycontrol #13 or later.
   tenant accounts need the `xms_edov` optional claim.
 - Optional `relay-control.smtp.*`: invite emails, and email sign-in links
   with `auth.emailLink.enabled`.
+- Optional `global.branding.logo.svg` (or `existingConfigMap` + `key`, SVG or
+  PNG): the customer logo on the sign-in page. relay-webapp serves it at
+  `https://<root host>/brand/<file>` and relay-control points
+  `SELFHOST_LOGIN_LOGO_URL` at it (`relay-control.login.logoUrl` overrides;
+  `relay-control.login.orgName` sets the name beside it, default
+  `bootstrap.orgName`). See the relay-webapp README "Hosted logo".
 - `relay-control.auth.password.enabled: true`: email and password sign-in,
   no SMTP required. Add `relay-control.secretKeys.setupKey: selfhost-setup-key`
   so the bootstrap admin can sign in once with the setup key (24 hours, single

@@ -115,3 +115,20 @@ topologySpreadConstraints: []
 global:
   singleHost:
     host: ""
+  # Optional customer logo, served by this chart at <dashboard origin>/brand/<file>
+  # (normally set once on the agent-relay umbrella, where relay-control also
+  # points SELFHOST_LOGIN_LOGO_URL at it for the sign-in page). Set exactly one
+  # source; nothing renders while both are empty. See the README "Hosted logo".
+  branding:
+    logo:
+      # Inline SVG markup (at most 256 KiB), served as /brand/logo.svg from a
+      # ConfigMap this chart creates. Script, event handlers, javascript: URLs
+      # and foreignObject are refused.
+      svg: ""
+      # Or a ConfigMap you create in the release namespace (SVG as data, PNG
+      # as binaryData), for example:
+      #   kubectl create configmap relay-brand --from-file=logo.png
+      existingConfigMap: ""
+      # The key in existingConfigMap, which is also the served file name:
+      # [A-Za-z0-9._-], ending in .svg or .png. Empty: logo.svg.
+      key: ""

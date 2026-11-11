@@ -99,6 +99,12 @@ spec:
               mountPath: /tmp
             - name: html
               mountPath: /usr/share/nginx/html
+            {{- with include "relay-webapp.brandLogoFile" . }}
+            # global.branding.logo, served at /brand/{{ . }}.
+            - name: brand
+              mountPath: /usr/share/nginx/html/brand
+              readOnly: true
+            {{- end }}
       volumes:
         - name: tmp
           emptyDir:
@@ -106,6 +112,14 @@ spec:
         - name: html
           emptyDir:
             sizeLimit: 32Mi
+        {{- with include "relay-webapp.brandLogoFile" . }}
+        - name: brand
+          configMap:
+            name: {{ include "relay-webapp.brandConfigMap" $ | quote }}
+            defaultMode: 0444
+            items:
+              - { key: {{ . | quote }}, path: {{ . | quote }} }
+        {{- end }}
       {{- with .Values.nodeSelector }}
       nodeSelector: {{ toYaml . | nindent 8 }}
       {{- end }}

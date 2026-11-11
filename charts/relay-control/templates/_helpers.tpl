@@ -429,6 +429,12 @@ blocks are empty, so existing renders are unchanged. */ -}}
 - { name: SELFHOST_BOOTSTRAP_WORKSPACE_NAME, value: {{ . | quote }} }
 {{- end }}
 {{- end }}
+{{- with include "relay-control.loginLogoUrl" . }}
+- { name: SELFHOST_LOGIN_LOGO_URL, value: {{ . | quote }} }
+{{- end }}
+{{- with (.Values.login | default dict).orgName }}
+- { name: SELFHOST_LOGIN_ORG_NAME, value: {{ . | quote }} }
+{{- end }}
 {{- $oidc := .Values.auth.oidc }}
 {{- with $oidc.issuer }}
 - { name: SELFHOST_OIDC_ISSUER, value: {{ . | quote }} }
@@ -494,7 +500,32 @@ password sign-in (Control refuses to start without a value), else empty. */ -}}
 {{- if not (or (kindIs "invalid" $tp) (eq (toString $tp) "")) }}{{ int64 $tp }}{{ else if .Values.auth.password.enabled }}1{{ end -}}
 {{- end -}}
 
+{{- /* Sign-in logo: login.logoUrl, else the relay-webapp-hosted
+global.branding.logo at <dashboard origin>/brand/<file>. The file name rule
+matches relay-webapp.brandLogoFile. */ -}}
+{{- define "relay-control.brandLogoFile" -}}
+{{- $logo := dig "branding" "logo" dict (.Values.global | default dict) | default dict -}}
+{{- if not (kindIs "map" $logo) }}{{ fail "global.branding.logo must be a map with svg, existingConfigMap or key" }}{{ end -}}
+{{- if $logo.svg }}logo.svg{{ else if $logo.existingConfigMap }}{{ $logo.key | default "logo.svg" }}{{ end -}}
+{{- end -}}
+{{- define "relay-control.loginLogoUrl" -}}
+{{- $login := .Values.login | default dict -}}
+{{- if $login.logoUrl }}{{ $login.logoUrl }}{{ else -}}
+{{- with include "relay-control.brandLogoFile" . -}}
+{{- $single := include "relay-control.singleHost" $ -}}
+{{- $origin := ternary (printf "https://%s" $single) (regexFind "^[A-Za-z][A-Za-z0-9+.-]*://[^/?#]+" ($.Values.dashboardUrl | default "")) (ne $single "") -}}
+{{- if not $origin }}{{ fail "global.branding.logo needs dashboardUrl (or global.singleHost.host) so the sign-in page can link <dashboard origin>/brand/<file>; or set login.logoUrl" }}{{ end -}}
+{{- if not (hasPrefix "https://" $origin) }}{{ fail (printf "global.branding.logo: the sign-in logo must be https, but the dashboard origin is %s; serve the dashboard over https or set login.logoUrl" $origin) }}{{ end -}}
+{{- printf "%s/brand/%s" $origin . -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+
 {{- define "relay-control.validateIdentity" -}}
+{{- $login := .Values.login | default dict -}}
+{{- range $k, $v := $login }}{{ if not (has $k (list "logoUrl" "orgName")) }}{{ fail (printf "login.%s is not a setting (use logoUrl or orgName)" $k) }}{{ end }}{{ if not (or (kindIs "invalid" $v) (kindIs "string" $v)) }}{{ fail (printf "login.%s must be a string" $k) }}{{ end }}{{ end -}}
+{{- with include "relay-control.loginLogoUrl" . }}{{ if or (gt (len .) 2048) (not (regexMatch "^https://[^/?#@\\s\"'<>\\\\]+(/[^\\s\"'<>\\\\]*)?$" .)) }}{{ fail "login.logoUrl must be an absolute https URL without credentials, spaces, quotes or angle brackets (at most 2048 characters)" }}{{ end }}{{ end -}}
+{{- with $login.orgName }}{{ if or (gt (len .) 200) (regexMatch "[[:cntrl:]]" .) }}{{ fail "login.orgName must be one line of at most 200 characters" }}{{ end }}{{ end -}}
 {{- $email := "^[^@\\s<>()\",;:]+@[^@\\s<>()\",;:]+\\.[^@\\s<>()\",;:]+$" -}}
 {{- $domain := "^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\\.)+[a-z]([a-z0-9-]{0,61}[a-z0-9])?$" -}}
 {{- $b := .Values.bootstrap -}}
