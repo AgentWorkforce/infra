@@ -13,11 +13,39 @@ import yaml
 from local_host_setup import host_contents
 import local_host_setup
 import local_stack
-from local_stack import LocalStack, ROOT, read_model_key
+from local_stack import LocalStack, ROOT, read_model_key, check_selection
 from stack import StackError
 
 
 class LocalTests(unittest.TestCase):
+    def test_existing_exact_credential_probe_is_verified_without_reinstalling(self):
+        stack = LocalStack.__new__(LocalStack)
+        installer = "AS $credential_probe$\nBEGIN RETURN true; END\n$credential_probe$;"
+        row = {"owner": "postgres", "definer": True, "config": ["search_path=pg_catalog"], "body": "\nBEGIN RETURN true; END\n"}
+        with patch.object(stack, "k", return_value=SimpleNamespace(stdout=json.dumps(row))), patch.object(stack, "sql") as sql:
+            stack.ensure_credential_probe(installer)
+            sql.assert_not_called()
+        for override in ({"owner": "unexpected"}, {"definer": False}, {"body": "changed"}, {"config": None}):
+            with patch.object(stack, "k", return_value=SimpleNamespace(stdout=json.dumps({**row, **override}))), patch.object(stack, "sql") as sql:
+                with self.assertRaisesRegex(StackError, "no function is overwritten"):
+                    stack.ensure_credential_probe(installer)
+                sql.assert_not_called()
+
+    def test_missing_credential_probe_uses_official_installer(self):
+        stack = LocalStack.__new__(LocalStack)
+        with patch.object(stack, "k", return_value=SimpleNamespace(stdout="")), patch.object(stack, "sql") as sql:
+            stack.ensure_credential_probe("official installer")
+            self.assertEqual(sql.call_args.args, ("hoopdb", "official installer"))
+
+    def test_pipeline_only_pin_change_runs_migrations_without_adopting_another_generation(self):
+        previous = {"pipeline": "old", "control": "control", "webapp": "web", "postgres": "pg", "minio": "s3"}
+        self.assertFalse(check_selection(None, previous))
+        self.assertFalse(check_selection(previous, previous))
+        self.assertTrue(check_selection(previous, {**previous, "pipeline": "new"}))
+        for selection in ({**previous, "control": "new"}, {**previous, "postgres": "new"}, {"pipeline": "new"}):
+            with self.assertRaisesRegex(StackError, "non-pipeline"):
+                check_selection(previous, selection)
+
     def test_model_key_input_is_bounded_single_line_and_never_echoed_in_errors(self):
         self.assertEqual(read_model_key(io.StringIO("fixture-key\n")), "fixture-key")
         for value in ("", "\n", "secret\nsecond", "secret value", "a" * 16385, "a" * 16384 + "\nsecond", "secret\x00"):
@@ -151,6 +179,11 @@ class LocalTests(unittest.TestCase):
                 if name == "session-native-ingest":
                     self.assertEqual(env["SELFHOST_INGEST_ADMISSION"]["value"], "async")
                     self.assertIn("admission", json.dumps(container["readinessProbe"]))
+                if name == "session-read-api":
+                    self.assertEqual(env["READ_API_SESSION_QUERY"]["value"], "true")
+                if name == "sessions-session-brief":
+                    self.assertEqual(env["SESSION_BRIEF_GLOBAL_DAILY_CAP"]["value"], "64")
+                    self.assertEqual(env["SESSION_BRIEF_SESSION_DAILY_CAP"]["value"], "3")
                 if name in ("session-native-ingest", "session-native-consumer", "session-read-api"):
                     self.assertEqual(env["ANALYTICS_SINK"]["value"], "collector")
                     self.assertIn("valueFrom", env["ANALYTICS_COLLECTOR_TOKEN"])

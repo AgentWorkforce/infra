@@ -15,7 +15,9 @@ sessions-pipeline:
   sessionReadApi:
     image:
       repository: ghcr.io/agentworkforce/sessions-pipeline
-      digest: sha256:dc95d94202c49573749f99cc548638ed185f782dc3b88691f551d7f1f700f769
+      # Published by run42961795525 from source2ed90b78190f92e8440c6d2bed9b5c40f7102012;
+      # infra-chief selected this generation for session-list query support.
+      digest: sha256:c677b1cde74c5d764e162b47bb64c67a99cdc18fe28948b62c251df07dac36fb
 telemetry-collector:
   image:
     # Published and qualified candidate recorded in telemetry-collector/README.md.

@@ -188,6 +188,14 @@ class LocalStack(Stack):
         self.sql("hoopdb", files["supabase/bootstrap/hoopdb_runtime_role.sql"], ["runtime_role=sessions_pipeline_runtime", "runtime_login=true"])
         self.sql("hoopdb", files["supabase/bootstrap/hoopdb_function_default_revoke.sql"], ["migration_owner=hoop"])
         self.secret("local-pipeline-owner", {"url": pgurl("hoop", c, "/var/run/local-ca/ca.crt"), "consumer-json": json.dumps({"hoopdb_url": pgurl("hoop", c, "/etc/native-consumer-postgres/ca.crt")})})
+
+    def migrate_pipeline(self):
+        # New migrations may name new principals; repeat the image's idempotent
+        # privileged pre-migrate bootstraps before the unprivileged migrator.
+        paths = ["supabase/bootstrap/" + n + ".sql" for n in (
+            "session_directory_search_worker", "session_token_verifier", "session_ingest_roles", "session_read_api_roles")]
+        for sql in self.source_files(paths).values():
+            self.sql("hoopdb", sql)
         migrate_env = [env("SERVICE", "hoopdb-migrate"), secret_env("HOOPDB_URL", "local-pipeline-owner", "url"),
             env("HOOPDB_DB_MODE", "selfhosted"), env("HOOPDB_SUPABASE_SHIM", "false"), env("HOOPDB_ROLE_BOOTSTRAP", "false"),
             env("HOOPDB_ROLE_VERIFY", "true"), env("HOOPDB_RUNTIME_ROLE", "sessions_pipeline_runtime"),
@@ -196,13 +204,14 @@ class LocalStack(Stack):
             env("SESSION_POSTGRES_CA_SHA256", self.ca_sha)]
         volumes = [{"name": "ca", "configMap": {"name": "local-ca"}}]
         mounts = [{"name": "ca", "mountPath": "/var/run/local-ca", "readOnly": True}]
-        self.job("local-pipeline-migrate", PIPELINE, env=migrate_env, mounts=mounts, volumes=volumes)
-        self.job("local-pipeline-migrate-noop", PIPELINE, env=migrate_env, mounts=mounts, volumes=volumes)
+        revision = PIPELINE.rsplit(":", 1)[1][:8]
+        self.job("local-pipeline-migrate-" + revision, PIPELINE, env=migrate_env, mounts=mounts, volumes=volumes)
+        self.job("local-pipeline-migrate-noop-" + revision, PIPELINE, env=migrate_env, mounts=mounts, volumes=volumes)
 
     def helm(self, values, wait=True):
         private_json(self.overrides, values)
         self.cmd(["helm", "upgrade", "--install", "agent-relay", "charts/agent-relay", "-n", NS,
-            "-f", self.overrides, *(["--wait", "--timeout", "10m"] if wait else [])], timeout=660)
+            "--force-conflicts", "-f", self.overrides, *(["--wait", "--timeout", "10m"] if wait else [])], timeout=660)
 
     def values(self, phase, tenant=None):
         selected = {"profile": "core", "control": {"reference": CONTROL, "independentIssuer": True},
@@ -224,6 +233,7 @@ class LocalStack(Stack):
         for slot in ("nativeConsumer", "ingestEdge", "sessionReadApi"):
             result["sessions-pipeline"][slot]["image"] = image(PIPELINE)
         result["sessions-pipeline"]["sessionReadApi"]["cors"] = {"allowedOrigins": [SITE]}
+        result["sessions-pipeline"]["sessionReadApi"].setdefault("extraEnv", []).append(env("READ_API_SESSION_QUERY", "true"))
         result["sessions-pipeline"]["ingestEdge"]["admission"] = {"mode": "async", "scanIntervalMs": 1000}
         if phase == "serve":
             result["components"]["telemetryCollector"] = True
@@ -244,7 +254,7 @@ class LocalStack(Stack):
                 locker={"endpoint": "http://locker.agent-relay.svc.cluster.local:9000", "bucket": "locker", "region": "us-east-1"},
                 secretKeys={"lockerAccessKeyId": "rootUser", "lockerSecretAccessKey": "rootPassword"},
                 nativeBrief={"enabled": True, "image": image(PIPELINE), "workspaceIds": [tenant["workspaceId"]],
-                    "keyPrefix": "96bulls", "sweepSeconds": 5, "batch": 1, "globalDailyCap": 20, "sessionDailyCap": 3,
+                    "keyPrefix": "96bulls", "sweepSeconds": 5, "batch": 1, "globalDailyCap": 64, "sessionDailyCap": 3,
                     "openaiSecret": {"name": "local-model", "key": "OPENAI_API_KEY"}})
             worker["components"]["session-brief"] = {"enabled": True, "fullnameOverride": "session-brief", "replicas": 1}
             worker["components"]["session-brief"]["env"] = [env("SESSION_BRIEF_IDLE_SECONDS", "0"), env("SESSION_BRIEF_MAX_WAIT_SECONDS", "0")]
@@ -390,13 +400,14 @@ class LocalStack(Stack):
         bootstrap.update(enabled=True, phase="prepare", existingSecret="local-pipeline-owner", key="consumer-json", ownerRole="hoop")
         docs = list(yaml.safe_load_all(self.cmd(["helm", "template", "agent-relay", "charts/agent-relay", "-n", NS, "-f", "-"], data=json.dumps(value)).stdout))
         files = self.source_files(["supabase/bootstrap/" + n + ".sql" for n in ("session_consumer_credential_probe", "session_ingest_role", "session_read_api_role")])
-        self.sql("hoopdb", files["supabase/bootstrap/session_consumer_credential_probe.sql"])
+        self.ensure_credential_probe(files["supabase/bootstrap/session_consumer_credential_probe.sql"])
         for doc in docs:
             if doc and doc["kind"] == "ConfigMap":
                 self.apply(doc, chart=True)
         jobs = [d for d in docs if d and d["kind"] == "Job" and d["metadata"].get("labels", {}).get("app.kubernetes.io/component") == "native-consumer-bootstrap"]
         if len(jobs) != 1:
             raise StackError("expected one official native consumer bootstrap Job")
+        jobs[0]["metadata"]["name"] += "-" + PIPELINE.rsplit(":", 1)[1][:8]
         self.apply(jobs[0], chart=True)
         self.wait_job(jobs[0]["metadata"]["name"])
         for name in ("session_ingest_role", "session_read_api_role"):
@@ -406,13 +417,24 @@ class LocalStack(Stack):
         self.secret("local-reader", {"reader-json": json.dumps({"supabase_url": pgurl("bulls96_read_api", c, "/etc/session-read-postgres/ca.crt")})})
         self.secret("local-ingest", {"database-url": pgurl("bulls96_session_ingest", c, "/etc/session-ingest-postgres/ca.crt"), "introspect-secret": c["introspection"]})
 
+    def ensure_credential_probe(self, installer):
+        row = json.loads(self.k("exec", "postgres-0", "--", "psql", "-X", "-At", "-U", "postgres", "-d", "hoopdb", "-c", """SELECT row_to_json(p) FROM (
+SELECT r.rolname AS owner, p.prosecdef AS definer, p.proconfig AS config, p.prosrc AS body
+FROM pg_proc p JOIN pg_roles r ON r.oid=p.proowner
+WHERE p.oid=to_regprocedure('session_consumer_bootstrap_private.consumer_has_password()')) p;""", sensitive=True).stdout.strip() or "null")
+        if row is None:
+            self.sql("hoopdb", installer)
+            return
+        body = installer.split("AS $credential_probe$", 1)[1].split("$credential_probe$", 1)[0]
+        if row != {"owner": "postgres", "definer": True, "config": ["search_path=pg_catalog"], "body": body}:
+            raise StackError("existing local credential probe differs from the selected official installer; no function is overwritten")
+
     def up_local(self):
         self.docker()
         selection = {"pipeline": PIPELINE, "control": CONTROL, "webapp": WEBAPP, "postgres": POSTGRES, "minio": MINIO}
         selected = self.state / "selection.json"
-        if selected.exists() and json.loads(selected.read_text()) != selection:
-            raise StackError("local release image selection changed; use make local-down before installing another schema/image generation")
-        private_json(selected, selection)
+        previous = json.loads(selected.read_text()) if selected.exists() else None
+        pipeline_changed = check_selection(previous, selection)
         capabilities = json.loads(self.cmd([*self.docker_args, "run", "--rm", "--read-only", "--network", "none",
             "--entrypoint", "bun", PIPELINE, "-e",
             "import fs from 'node:fs';console.log(JSON.stringify({reader:fs.existsSync('/app/src/session-read-api/self-issued.ts'),consumer:fs.existsSync('/app/src/session-pipeline/consumer-service.ts')}));"]).stdout)
@@ -444,12 +466,23 @@ class LocalStack(Stack):
         self.stage("databases", lambda: self.databases(c))
         self.stage("object-storage", lambda: self.storage(c))
         self.stage("pipeline-schema", lambda: self.pipeline_schema(c))
+        if pipeline_changed:
+            # Keep old runtimes out of the schema change; no data or quota
+            # records are deleted. A failure leaves the services stopped.
+            self.k("scale", "deployment/session-native-ingest", "deployment/session-native-consumer", "deployment/session-read-api",
+                "deployment/sessions-session-brief", "--replicas=0")
+        self.stage("pipeline-migrations-" + PIPELINE, self.migrate_pipeline)
         self.mail()
         self.stage("control", lambda: self.control(c))
-        self.stage("native-roles", lambda: self.native_roles(c))
+        self.sql("hoopdb", "ALTER ROLE hoop CREATEROLE;")
+        try:
+            self.stage("native-roles-" + PIPELINE, lambda: self.native_roles(c))
+        finally:
+            self.sql("hoopdb", "ALTER ROLE hoop NOCREATEROLE;")
         self.support_credentials(c)
         tenant = json.loads((self.state / "tenant.json").read_text())
         self.helm(self.values("serve", tenant))
+        private_json(selected, selection)
         print("Dashboard: " + SITE)
         print("Local administrator: owner@kind.example (email link via local mailbox)")
         print("Local secrets (0600): " + str(path))
@@ -472,6 +505,14 @@ class LocalStack(Stack):
 
 def env(name, value):
     return {"name": name, "value": value}
+
+
+def check_selection(previous, selected):
+    if previous is None or previous == selected:
+        return False
+    if set(previous) != set(selected) or any(previous[k] != v for k, v in selected.items() if k != "pipeline"):
+        raise StackError("local non-pipeline image selection changed; use make local-down before installing another generation")
+    return True
 
 
 def read_model_key(stream):

@@ -42,8 +42,11 @@ All generated database/service credentials stay in `.kind/local/credentials.json
 
 `make local-up` reuses only this checkout's matching cluster UID and Docker
 endpoint. An occupied local port or an existing foreign cluster refuses clearly;
-the command never deletes a foreign listener. An image generation change
-requires recreating this disposable stack. A failed immutable bootstrap Job
+the command never deletes a foreign listener. A pipeline-only pin change stops
+its runtimes, applies the new image's official migrations and no-op check,
+reapplies its official runtime grants, then restores the services. The selected
+generation is recorded after readiness succeeds. Other image generation changes
+require recreating this disposable stack. A failed immutable bootstrap Job
 also requires inspecting the error and recreating the fixture rather than
 silently rerunning it.
 
@@ -65,7 +68,9 @@ The key travels on standard input and is installed only into the owned local
 cluster's model Secret; it is not placed in command arguments, logged, or saved
 in a source file. The helper updates the model egress policy and waits for the
 brief worker rollout. Interactive input, empty input and multiline values are
-refused. It preserves the configured request caps and does not prove a summary
+refused. The local profile caps brief attempts at 64 globally per day and three
+per session; existing attempt records are retained. Installing a key preserves
+those caps and does not prove a summary
 was generated. Alternatively, set `OPENAI_API_KEY` before `make local-up`.
 An absent key on first install leaves the worker healthy with
 `model_not_configured` and no model calls. A key is required for summary acceptance.
