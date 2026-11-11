@@ -121,9 +121,10 @@ relayauth:
 sessions-pipeline:
   worker:
     image:
-      # Release image (public GHCR, sessions-pipeline ce9b4464). Mirror it by
-      # digest to your registry and override repository. Before its first
-      # migrate, run the Cloud SQL
+      # Preferred AA services image from relayhistory-pipeline main 7e9b2f0f
+      # (#509 alpha.5 on top of #505), signed publish run 42964243811. Mirror
+      # it by digest to your registry and override repository. Before its
+      # first migrate, run the Cloud SQL
       # bootstraps shipped in the image (/app/supabase/bootstrap/) as the
       # migration owner, in order: cloudsql_migration_roles.sql,
       # session_directory_search_worker.sql, session_token_verifier.sql,
@@ -132,7 +133,7 @@ sessions-pipeline:
       # upgrade from 0.3.6 adds session_token_verifier.sql and
       # session_ingest_roles.sql; the others already ran at install.
       repository: ghcr.io/agentworkforce/sessions-pipeline
-      digest: sha256:dc95d94202c49573749f99cc548638ed185f782dc3b88691f551d7f1f700f769
+      digest: sha256:77022c5b6a1d30f96f921d703eb27a1acada8ec273ad84aebdde24f8eddce305
     # REQUIRED OVERRIDE: existing Secret name; see README for required keys.
     existingSecret: example-agent-relay-secrets
     summaryEncryption:
@@ -182,7 +183,7 @@ sessions-pipeline:
     image:
       # Same services image repository and digest as worker.
       repository: ghcr.io/agentworkforce/sessions-pipeline
-      digest: sha256:dc95d94202c49573749f99cc548638ed185f782dc3b88691f551d7f1f700f769
+      digest: sha256:77022c5b6a1d30f96f921d703eb27a1acada8ec273ad84aebdde24f8eddce305
     # REQUIRED OVERRIDE: existing Secret name; see README for required keys.
     existingSecret: example-agent-relay-secrets
     hoopdb:

@@ -52,7 +52,7 @@ class NativeNoRelayauth(unittest.TestCase):
         for name in ('agent-relay-read-api', 'proof-ingest-edge', 'proof-search-indexer'):
             self.assertIn(name, deployments)
             self.assertTrue(deployments[name]['spec']['template']['spec']['containers'][0]['image'].startswith(
-                'ghcr.io/agentworkforce/sessions-pipeline@sha256:dc95d942'))
+                'ghcr.io/agentworkforce/sessions-pipeline@sha256:77022c5b'))
         services = {doc['metadata']['name']: doc for doc in docs if doc.get('kind') == 'Service'}
         self.assertIn('agent-relay-read-api', services)
         self.assertEqual(

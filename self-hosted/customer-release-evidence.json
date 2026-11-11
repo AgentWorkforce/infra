@@ -123,7 +123,7 @@
       "protected": false,
       "requiredApprovals": 0
     },
-    "imageManifestSha256": "sha256:4dd2e5f4d700ab2fbb4b983c3b08c13634fc61fb127bebdd690f7bd389bd124c",
+    "imageManifestSha256": "sha256:28552d314c3e3b6a78d6bb8df5d0fa784854d3cc74bff6dbea21a8a8f790e5f0",
     "valuesFile": "charts/agent-relay/values-gcp.yaml"
   },
   "releaseDecision": "blocked",

@@ -6,7 +6,7 @@ sessions-pipeline:
     enabled: true
     image:
       repository: ghcr.io/agentworkforce/sessions-pipeline
-      digest: sha256:dc95d94202c49573749f99cc548638ed185f782dc3b88691f551d7f1f700f769
+      digest: sha256:77022c5b6a1d30f96f921d703eb27a1acada8ec273ad84aebdde24f8eddce305
     origin: https://history.placeholder.company
     completeSince: epoch
     directoryWorkspaces: "*"
@@ -55,7 +55,7 @@ sessions-pipeline:
     enabled: true
     image:
       repository: ghcr.io/agentworkforce/sessions-pipeline
-      digest: sha256:dc95d94202c49573749f99cc548638ed185f782dc3b88691f551d7f1f700f769
+      digest: sha256:77022c5b6a1d30f96f921d703eb27a1acada8ec273ad84aebdde24f8eddce305
     origin: https://history.placeholder.company
     allowInClusterHttp: true
     relaycontrol: { url: http://relay-control.agent-relay.svc }
@@ -85,7 +85,7 @@ sessions-pipeline:
     enabled: true
     image:
       repository: ghcr.io/agentworkforce/sessions-pipeline
-      digest: sha256:dc95d94202c49573749f99cc548638ed185f782dc3b88691f551d7f1f700f769
+      digest: sha256:77022c5b6a1d30f96f921d703eb27a1acada8ec273ad84aebdde24f8eddce305
     completeSince: epoch
     config: { existingSecret: search-indexer-runtime }
     search: { backend: postgres, backendId: gcp-native }

@@ -109,15 +109,15 @@ relayauth:
 sessions-pipeline:
   worker:
     image:
-        # Public GHCR (sessions-pipeline f1c2672, with #204: the ingest
-      # verifies the origin-bound History assertion with no interim bearer).
+      # Preferred AA services image from relayhistory-pipeline main 7e9b2f0f
+      # (#509 alpha.5 on top of #505), signed publish run 42964243811.
       # Before its first migrate, run the privileged HoopDb role bootstraps
-      # the sessions-pipeline 0.6.0 chart does not (session_token_verifier,
+      # the chart does not (session_token_verifier,
       # session ingest roles) as the Postgres superuser:
       # scripts/selfhost/eks-proof-install.sh hoopdb-roles. Mirror it by
       # digest to your ECR to pull with the node role instead.
-      repository: ghcr.io/agentworkforce/96bulls-services
-      digest: sha256:070fe6fd46ecd1e1f9db32ff22379f6df9b9e6c4d48ede5312c8fb986a95f3a9
+      repository: ghcr.io/agentworkforce/sessions-pipeline
+      digest: sha256:77022c5b6a1d30f96f921d703eb27a1acada8ec273ad84aebdde24f8eddce305
     # REQUIRED OVERRIDE: existing Secret name; see the chart README for keys.
     existingSecret: example-agent-relay-secrets
     summaryEncryption:
@@ -153,8 +153,8 @@ sessions-pipeline:
   alleyoop:
     image:
       # Same services image repository and digest as worker.
-      repository: ghcr.io/agentworkforce/96bulls-services
-      digest: sha256:070fe6fd46ecd1e1f9db32ff22379f6df9b9e6c4d48ede5312c8fb986a95f3a9
+      repository: ghcr.io/agentworkforce/sessions-pipeline
+      digest: sha256:77022c5b6a1d30f96f921d703eb27a1acada8ec273ad84aebdde24f8eddce305
     # REQUIRED OVERRIDE: existing Secret name; see the chart README for keys.
     existingSecret: example-agent-relay-secrets
     locker:
@@ -192,8 +192,8 @@ sessions-pipeline:
   privilegedSql:
     sqlImage:
       # Same services image repository and digest as worker.
-      repository: ghcr.io/agentworkforce/96bulls-services
-      digest: sha256:070fe6fd46ecd1e1f9db32ff22379f6df9b9e6c4d48ede5312c8fb986a95f3a9
+      repository: ghcr.io/agentworkforce/sessions-pipeline
+      digest: sha256:77022c5b6a1d30f96f921d703eb27a1acada8ec273ad84aebdde24f8eddce305
   session-object-storage:
     enabled: false
 
