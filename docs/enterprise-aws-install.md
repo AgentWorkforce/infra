@@ -318,7 +318,10 @@ Use the release packet's complete RDS values overlay. The historical
 6. Render and lint the selected chart with that overlay. Check every namespace,
    origin, Secret reference, image and network setting before installation.
 
-Set `RELEASE`, `CHART_PACKAGE` and `KUBE_CONTEXT` from the handoff. `NAMESPACE`
+Set `RELEASE`, `CHART_PACKAGE`, `KUBE_CONTEXT` and `INSTALL_PACK_DIR` from the
+handoff. Prepare `/approved/private/release-images.values.yaml` from the
+verified pack copy by replacing only its documented mirror-root placeholder.
+`NAMESPACE`
 must be the Terraform environment's `namespace` recorded in step 2; a different
 namespace leaves every workload without its Pod Identity role.
 Run `helm list --all` in that exact context/namespace. Only confirmed absence
@@ -327,7 +330,11 @@ permits this **first-install** command:
 ```sh
 helm install "$RELEASE" "$CHART_PACKAGE" \
   --kube-context "$KUBE_CONTEXT" --namespace "$NAMESPACE" \
-  --create-namespace --values /approved/private/customer.values.yaml \
+  --create-namespace \
+  --values "$INSTALL_PACK_DIR/values.yaml" \
+  --values "$INSTALL_PACK_DIR/overlay.yaml" \
+  --values /approved/private/customer.values.yaml \
+  --values /approved/private/release-images.values.yaml \
   --no-hooks --timeout 20m
 ```
 
