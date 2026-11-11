@@ -307,6 +307,40 @@ rather than waiting on Deployments first.
 **Checkpoint:** required Jobs complete and workloads become ready. Inspect a
 failed Job or missing image/profile instead of bypassing a verifier.
 
+### Optional: enable the private telemetry collector
+
+The neutral EKS profile keeps application analytics off. To opt in, first
+select the release packet's approved collector and TLS-proxy digests and create
+the retained `ReadWriteOncePod` collector storage. Through the approved secret
+system, create a producer Secret containing `producers.json` plus a dedicated
+random Relaycast token, and a separate `kubernetes.io/tls` Secret whose
+certificate covers the collector Service DNS name. Put only the issuing CA in
+a ConfigMap; never put a token or private key in values.
+
+Enable `components.telemetryCollector` and configure its images,
+`producersSecret`, `tlsSecret`, and storage as described in the
+[collector chart](../charts/telemetry-collector/README.md). Then add the
+matching Relaycast binding to the private values overlay:
+
+```yaml
+relaycast:
+  analytics:
+    enabled: true
+    collectorUrl: https://telemetry-collector.<namespace>.svc.cluster.local:8443/v1/events
+    deploymentId: <stable-opaque-installation-id>
+    existingSecret: <relaycast-producer-token-secret>
+    tokenKey: token
+    caConfigMap: <collector-issuing-ca-configmap>
+    caKey: ca.crt
+```
+
+Render before applying; the chart refuses an unqualified Relaycast image,
+shared credentials, plaintext endpoints, or incomplete TLS inputs. Verify a
+real `dm.sent` event reaches the retained collector file before accepting this
+optional capability. The Dashboard Usage page reads Control/PostgreSQL and
+does not depend on this collector, so leaving analytics disabled does not block
+the core installation.
+
 ### Upgrades
 
 Use the release's pull-based upgrader instead of assembling a chart or image

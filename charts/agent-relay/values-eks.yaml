@@ -48,9 +48,11 @@ gkeIngress:
 relaycast:
   fullnameOverride: relaycast
   image:
-    # Release image (public GHCR, relaycast main bf713d86, engine 12.7.0).
+    # Release image (public GHCR, relaycast main cac175b5, engine 12.8.0).
+    # This build contains the optional collector adapter; analytics remains
+    # off until the operator supplies its dedicated token and TLS binding.
     repository: ghcr.io/agentworkforce/relaycast-self-host
-    digest: sha256:81274dca7ab58673383dc7a9c777f422f29606c7422e81b5ea15724770f1455e
+    digest: sha256:ab9dd6781e68f09d5e2e686a17088f9ad533978ef13d974a47d6c212d8eedbde
   # REQUIRED OVERRIDE: the public cast origin (https://cast.<your domain>,
   # served by the ALB with an ACM certificate). The charts refuse http
   # public origins.
