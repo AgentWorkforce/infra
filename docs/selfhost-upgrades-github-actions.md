@@ -1,0 +1,82 @@
+# Upgrading from your own GitHub Actions
+
+Agent Relay publishes each release as a GitHub release `agent-relay-<version>`
+in `AgentWorkforce/infra`: the packaged chart, `release-manifest.json`,
+`release-images.values.yaml` and `SHA256SUMS`, with GitHub build attestations.
+You pull releases into your install; Agent Relay never has access to your
+account or cluster.
+
+The reusable workflow `.github/workflows/selfhost-upgrade.yml` runs
+`scripts/selfhost/agent-relay-upgrade.sh` from your own repository:
+
+1. **plan** (no approval): selects the release (newest by default), verifies
+   the attestations and checksums, renders the chart with your values, checks
+   that every image is a release image in your ECR mirror, and writes the image
+   changes to the run summary.
+2. **apply** (only when images change, by default): runs in your environment
+   `agent-relay-upgrade`, so it waits for your required reviewers. It mirrors
+   the images, snapshots RDS, runs `helm upgrade` and waits for this release's
+   migrations and rollouts. A failure prints the rollback revision and snapshot.
+
+## Set up (once)
+
+1. **A repository** holding your values file(s), for example
+   `deploy/agent-relay/values.yaml`.
+2. **An environment** in it named `agent-relay-upgrade`, with required
+   reviewers. Every upgrade waits for one of them.
+3. **A self-hosted runner** that can reach the EKS API (a private cluster needs
+   one inside the VPC), with `gh jq yq helm kubectl tar aws crane` installed.
+   Outbound access: `github.com`, `api.github.com`, `ghcr.io`, AWS APIs.
+4. **An IAM role** trusted through GitHub OIDC for this repository and
+   environment (`token.actions.githubusercontent.com`, audience
+   `sts.amazonaws.com`, subject
+   `repo:<org>/<repo>:environment:agent-relay-upgrade`, plus
+   `repo:<org>/<repo>:ref:refs/heads/main` for the plan job). It needs:
+   - ECR: `ecr:GetAuthorizationToken`, and on `agent-relay/*` repositories
+     `ecr:CreateRepository`, `ecr:DescribeRepositories`, `ecr:PutImage`,
+     `ecr:InitiateLayerUpload`, `ecr:UploadLayerPart`,
+     `ecr:CompleteLayerUpload`, `ecr:BatchCheckLayerAvailability`,
+     `ecr:BatchGetImage`, `ecr:PutImageScanningConfiguration`,
+     `ecr:PutImageTagMutability`
+   - RDS: `rds:CreateDBSnapshot`, `rds:DescribeDBSnapshots` on the database
+   - EKS: `eks:DescribeCluster`, and an EKS access entry allowing it to manage
+     the `agent-relay` namespace (Helm release, Deployments, Jobs).
+
+## The workflow file
+
+```yaml
+# .github/workflows/agent-relay-upgrade.yml
+name: Agent Relay upgrade
+on:
+  schedule: [{ cron: "0 9 * * 1-5" }]   # check each weekday
+  workflow_dispatch:
+    inputs:
+      version: { description: "Release (empty = newest)", default: "" }
+permissions: { contents: read, id-token: write, attestations: read }
+jobs:
+  upgrade:
+    # Pin to the release tag (or commit) you have reviewed.
+    uses: AgentWorkforce/infra/.github/workflows/selfhost-upgrade.yml@agent-relay-2026.11.0
+    with:
+      version: ${{ inputs.version || '' }}
+      runs-on: '["self-hosted", "agent-relay"]'
+      aws-region: us-east-1
+      aws-role-arn: arn:aws:iam::<account>:role/agent-relay-upgrade
+      eks-cluster: <cluster-name>
+      registry: <account>.dkr.ecr.us-east-1.amazonaws.com
+      profile: eks-native
+      values: deploy/agent-relay/values.yaml
+      db-instance: <rds-instance-id>
+```
+
+To be notified of new releases, watch `AgentWorkforce/infra` for releases, or
+subscribe to `https://github.com/AgentWorkforce/infra/releases.atom`.
+
+Without GitHub Actions, run the same command by hand or from any CI:
+
+```sh
+scripts/selfhost/agent-relay-upgrade.sh --version <v> \
+  --registry <account>.dkr.ecr.<region>.amazonaws.com --profile eks-native \
+  --values values.yaml                        # plan
+# then add: --db-instance <rds-id> --apply
+```

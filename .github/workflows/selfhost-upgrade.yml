@@ -1,0 +1,161 @@
+# Reusable workflow: a self-hosted customer pulls an Agent Relay release into
+# their own EKS install from their own GitHub repository. It wraps
+# scripts/selfhost/agent-relay-upgrade.sh (verified release, ECR mirror,
+# RDS snapshot, helm upgrade). See docs/enterprise-aws-install.md, "Upgrades".
+#
+# The plan job only reads; the apply job runs in the caller's GitHub
+# environment (default "agent-relay-upgrade"), so the required reviewers the
+# customer sets on that environment approve every upgrade. AWS access is
+# GitHub OIDC -> the customer's IAM role; nothing long-lived is stored.
+# Callers pin this workflow to a release tag or commit.
+name: Self-hosted upgrade
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        description: Release to install (2026.11.1). Empty selects the newest agent-relay-* release.
+        type: string
+        default: ""
+      runs-on:
+        description: JSON runner labels; a self-hosted runner that can reach the cluster API.
+        type: string
+        default: '["self-hosted"]'
+      aws-region: { type: string, required: true }
+      aws-role-arn: { description: IAM role trusted for this repository via GitHub OIDC., type: string, required: true }
+      eks-cluster: { type: string, required: true }
+      registry: { description: "<account>.dkr.ecr.<region>.amazonaws.com", type: string, required: true }
+      profile: { description: "eks or eks-native: the profile the install already uses.", type: string, required: true }
+      values: { description: Newline-separated values files in the caller repository., type: string, required: true }
+      db-instance: { description: RDS instance snapshotted before every upgrade., type: string, required: true }
+      namespace: { type: string, default: agent-relay }
+      release: { type: string, default: agent-relay }
+      environment: { description: Caller environment that gates the apply job., type: string, default: agent-relay-upgrade }
+      apply:
+        description: "auto: apply (after approval) only when images change; always; never."
+        type: string
+        default: auto
+    outputs:
+      version: { value: "${{ jobs.plan.outputs.version }}" }
+      changes: { value: "${{ jobs.plan.outputs.changes }}" }
+
+permissions:
+  contents: read
+  id-token: write
+  attestations: read
+
+env:
+  INFRA_REPO: AgentWorkforce/infra
+
+jobs:
+  plan:
+    runs-on: ${{ fromJSON(inputs.runs-on) }}
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      changes: ${{ steps.plan.outputs.changes }}
+    steps:
+      - name: Caller configuration
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with: { path: site, persist-credentials: false }
+      - name: Select release
+        id: version
+        env:
+          GH_TOKEN: ${{ github.token }}
+          WANT: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          if [ -z "$WANT" ]; then
+            tag=$(gh release list -R "$INFRA_REPO" --exclude-drafts --exclude-pre-releases --limit 50 --json tagName \
+              -q '[.[].tagName|select(startswith("agent-relay-"))][0] // ""')
+            [ -n "$tag" ] || { echo "::error::no agent-relay release found"; exit 1; }
+            WANT=${tag#agent-relay-}
+          fi
+          [[ "$WANT" =~ ^[0-9]{4}\.[0-9]{1,2}\.[0-9]+$ ]] || { echo "::error::invalid version $WANT"; exit 1; }
+          echo "version=$WANT" >> "$GITHUB_OUTPUT"
+      - name: Upgrade script from the release
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          repository: AgentWorkforce/infra
+          ref: agent-relay-${{ steps.version.outputs.version }}
+          path: infra
+          persist-credentials: false
+          sparse-checkout: scripts/selfhost
+      - &aws
+        name: AWS credentials (GitHub OIDC)
+        env:
+          ROLE: ${{ inputs.aws-role-arn }}
+          AWS_REGION: ${{ inputs.aws-region }}
+          CLUSTER: ${{ inputs.eks-cluster }}
+        run: |
+          set -euo pipefail
+          token=$(curl -sSf -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=sts.amazonaws.com" | jq -r .value)
+          creds=$(aws sts assume-role-with-web-identity --role-arn "$ROLE" \
+            --role-session-name "agent-relay-upgrade-${GITHUB_RUN_ID}" --web-identity-token "$token" \
+            --duration-seconds 3600 --output json)
+          for k in AccessKeyId:AWS_ACCESS_KEY_ID SecretAccessKey:AWS_SECRET_ACCESS_KEY SessionToken:AWS_SESSION_TOKEN; do
+            v=$(jq -r ".Credentials.${k%%:*}" <<<"$creds"); echo "::add-mask::$v"; echo "${k##*:}=$v" >> "$GITHUB_ENV"
+          done
+          echo "AWS_REGION=$AWS_REGION" >> "$GITHUB_ENV"
+          echo "KUBECONFIG=$RUNNER_TEMP/kubeconfig" >> "$GITHUB_ENV"
+      - &kube
+        name: Cluster access and tools
+        env:
+          CLUSTER: ${{ inputs.eks-cluster }}
+          AWS_REGION: ${{ inputs.aws-region }}
+        run: |
+          set -euo pipefail
+          for t in gh jq yq helm kubectl tar aws crane; do command -v "$t" >/dev/null || { echo "::error::runner is missing $t"; exit 1; }; done
+          aws eks update-kubeconfig --name "$CLUSTER" --region "$AWS_REGION" --kubeconfig "$KUBECONFIG" >/dev/null
+      - name: Plan
+        id: plan
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+          REGISTRY: ${{ inputs.registry }}
+          PROFILE: ${{ inputs.profile }}
+          VALUES: ${{ inputs.values }}
+          NS: ${{ inputs.namespace }}
+          REL: ${{ inputs.release }}
+        run: |
+          set -euo pipefail
+          args=(--version "$VERSION" --registry "$REGISTRY" --profile "$PROFILE" --namespace "$NS" --release "$REL")
+          while IFS= read -r v; do [ -z "$v" ] || args+=(--values "site/$v"); done <<<"$VALUES"
+          infra/scripts/selfhost/agent-relay-upgrade.sh "${args[@]}" | tee "$RUNNER_TEMP/plan.txt"
+          if grep -q '(no image changes)' "$RUNNER_TEMP/plan.txt"; then echo "changes=false" >> "$GITHUB_OUTPUT"; else echo "changes=true" >> "$GITHUB_OUTPUT"; fi
+          { echo "## Agent Relay $VERSION plan"; echo '```'; cat "$RUNNER_TEMP/plan.txt"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+
+  apply:
+    needs: plan
+    if: inputs.apply == 'always' || (inputs.apply == 'auto' && needs.plan.outputs.changes == 'true')
+    runs-on: ${{ fromJSON(inputs.runs-on) }}
+    environment: ${{ inputs.environment }}
+    concurrency: { group: "agent-relay-upgrade-${{ inputs.release }}", cancel-in-progress: false }
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with: { path: site, persist-credentials: false }
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          repository: AgentWorkforce/infra
+          ref: agent-relay-${{ needs.plan.outputs.version }}
+          path: infra
+          persist-credentials: false
+          sparse-checkout: scripts/selfhost
+      - *aws
+      - *kube
+      - name: Snapshot and upgrade
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.plan.outputs.version }}
+          REGISTRY: ${{ inputs.registry }}
+          PROFILE: ${{ inputs.profile }}
+          VALUES: ${{ inputs.values }}
+          NS: ${{ inputs.namespace }}
+          REL: ${{ inputs.release }}
+          DB: ${{ inputs.db-instance }}
+        run: |
+          set -euo pipefail
+          args=(--version "$VERSION" --registry "$REGISTRY" --profile "$PROFILE" --namespace "$NS" --release "$REL" --db-instance "$DB" --apply --yes)
+          while IFS= read -r v; do [ -z "$v" ] || args+=(--values "site/$v"); done <<<"$VALUES"
+          infra/scripts/selfhost/agent-relay-upgrade.sh "${args[@]}" | tee "$RUNNER_TEMP/apply.txt"
+          { echo "## Agent Relay $VERSION apply"; echo '```'; cat "$RUNNER_TEMP/apply.txt"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
