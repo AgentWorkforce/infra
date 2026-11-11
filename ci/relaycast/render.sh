@@ -110,7 +110,7 @@ if o=$(sq --set-json 'extraEnv=[{"name":"RELAYCAST_DATABASE_URL","value":"x"}]')
 analytics=(--set analytics.enabled=true --set-string analytics.deploymentId=kind_fixture
   --set-string analytics.collectorUrl=https://collector.ci.svc.cluster.local:8443/v1/events
   --set-string analytics.existingSecret=cast-analytics --set-string analytics.caConfigMap=collector-ca)
-analytics_digest=sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+analytics_digest=sha256:ab9dd6781e68f09d5e2e686a17088f9ad533978ef13d974a47d6c212d8eedbde
 cast=$(sq "${analytics[@]}" --set-string "image.digest=$analytics_digest" | yq "$dep")
 pgcast=$(render "${analytics[@]}" --set-string "runtime.postgres.image.digest=$analytics_digest")
 pgpod=$(yq "$dep" <<<"$pgcast")

@@ -26,10 +26,12 @@ Fail early on missing required values (render time, not crash-loop time).
 {{- range $entry := .Values.extraEnv }}
 {{- if eq ($entry.name | default "") "ALLOW_INTERIM_RELAYAUTH_BEARER" }}{{ fail "alleyoop: configure auth.allowInterimRelayAuthBearer instead of extraEnv" }}{{ end -}}
 {{- if eq ($entry.name | default "") "READER_MAX_RULESET" }}{{ fail "alleyoop: configure readerMaxRuleset instead of extraEnv" }}{{ end -}}
+{{- if has ($entry.name | default "") (list "SCRUB_ENGINE" "SCRUB_ENGINE_REQUIRED") }}{{ fail (printf "alleyoop: configure global.scrubEngine instead of extraEnv %s" $entry.name) }}{{ end -}}
 {{- end -}}
 {{- range $entry := .Values.ingest.env }}
 {{- if eq ($entry.name | default "") "ALLOW_INTERIM_RELAYAUTH_BEARER" }}{{ fail "alleyoop: configure auth.allowInterimRelayAuthBearer instead of ingest.env" }}{{ end -}}
 {{- if eq ($entry.name | default "") "READER_MAX_RULESET" }}{{ fail "alleyoop: configure readerMaxRuleset instead of ingest.env" }}{{ end -}}
+{{- if has ($entry.name | default "") (list "SCRUB_ENGINE" "SCRUB_ENGINE_REQUIRED") }}{{ fail (printf "alleyoop: configure global.scrubEngine instead of ingest.env %s" $entry.name) }}{{ end -}}
 {{- end -}}
 {{- if not (has (toString .Values.allowInClusterHttp) (list "true" "false")) }}{{ fail "alleyoop: allowInClusterHttp must be true or false" }}{{ end -}}
 {{- with .Values.auth.historyOrigin }}
@@ -108,6 +110,7 @@ Usage: include "alleyoop.env" (dict "context" . "service" "referee")
   value: {{ .service | quote }}
 - name: OTEL_SERVICE_NAME
   value: {{ .service | quote }}
+{{- include "alleyoop.scrubEngine" (dict "root" .context "localReader" $v.readerMaxRuleset "localName" "readerMaxRuleset") }}
 - name: HOOPDB_URL
   valueFrom:
     secretKeyRef:

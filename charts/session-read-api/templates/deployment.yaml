@@ -66,9 +66,7 @@ spec:
             - { name: http, containerPort: {{ $c.port }}, protocol: TCP }
           env:
             - { name: SERVICE, value: session-read-api }
-            {{- if not (kindIs "invalid" $c.readerMaxRuleset) }}
-            - { name: READER_MAX_RULESET, value: {{ $c.readerMaxRuleset | quote }} }
-            {{- end }}
+            {{- include "session-read-api.scrubEngine" (dict "root" . "localReader" $c.readerMaxRuleset "localName" "readerMaxRuleset") | nindent 12 }}
             - { name: RELAYHISTORY_SELFHOST_READ_API, value: "true" }
             - { name: RELAYHISTORY_READ_API_PORT, value: {{ $c.port | quote }} }
             - name: RELAYHISTORY_READ_API_SECRET

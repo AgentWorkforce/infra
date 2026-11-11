@@ -10,6 +10,12 @@ into strict marker and chunk checks; `extraEnv` and
 containing the reviewed #489 compatibility and binding fixes.
 This is a reader ceiling only and does not change writer output.
 
+Under the sessions-pipeline umbrella, prefer the shared
+`global.scrubEngine` contract. Its reader ceiling applies to every Services
+workload, and its strict phase-2 selection manages `SCRUB_ENGINE` and
+`SCRUB_ENGINE_REQUIRED`. If both the legacy leaf value and shared ceiling are
+set, they must be equal.
+
 ## Retaining resources after replacing the workload
 
 `deployment.enabled` defaults to `true`. Set it to `false` only after the

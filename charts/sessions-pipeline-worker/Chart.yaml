@@ -1,7 +1,7 @@
 apiVersion: v2
 name: sessions-pipeline-worker
 type: application
-version: 0.7.7
+version: 0.7.8
 # appVersion tracks the default services image tag. Pin image.digest in
 # production values.
 appVersion: "0.1.0"

@@ -35,6 +35,18 @@ Sessions read API and ingest edge. A final site values file enables and
 configures `sessionReadApi`, `ingestEdge`, and the PostgreSQL `searchIndexer`;
 `ci/gcp-native-values.yaml` is a render-only example of that shape.
 
+The customer GCP and EKS profiles are release phase 1 for the ruleset-10
+scrubber migration: they set `global.scrubEngine.readerMaxRuleset: "10"` on
+every workload using the Sessions services image while leaving the selected
+engine unchanged. For an existing install, apply the profile and wait for all
+Sessions Deployments and Jobs before a second Helm revision adds
+`values-scrub-wasm-bindgen.yaml`. That explicit phase-2 overlay requires the
+qualified wasm-bindgen image and renders the full
+`SCRUB_ENGINE=wasm-bindgen`, `SCRUB_ENGINE_REQUIRED=wasm-bindgen`,
+`READER_MAX_RULESET=10` contract everywhere. A fresh install with an empty
+Sessions database may include the phase-2 overlay in its initial install.
+Keep the reader ceiling at 10 on rollback while ruleset-10 objects exist.
+
 The template is intentionally renderable: all-zero image digests are sentinel
 values, not deployable images. Replace every value marked `REQUIRED OVERRIDE`
 before installing. The required value overrides are:
@@ -193,6 +205,12 @@ helm template agent-relay . -n agent-relay -f values-gcp.yaml >/dev/null
 helm lint . -f values-gcp.yaml -f values-gcp-native.yaml -f <site-values.yaml>
 helm template agent-relay . -n agent-relay -f values-gcp.yaml \
   -f values-gcp-native.yaml -f <site-values.yaml> >/dev/null
+
+# Fresh empty database only: start every reader and writer on the qualified
+# wasm-bindgen contract in the same install.
+helm template agent-relay . -n agent-relay -f values-gcp.yaml \
+  -f values-gcp-native.yaml -f <site-values.yaml> \
+  -f values-scrub-wasm-bindgen.yaml >/dev/null
 ```
 
 `values-gcp-proof.yaml` is the portable, all-components customer shape.

@@ -178,7 +178,7 @@ class NativeBrief(unittest.TestCase):
             selected=self.selected();entry={'name':'READER_MAX_RULESET','value':'10'}
             if target=='extraEnv':selected['extraEnv']=[entry]
             else:selected['components']['session-brief']['env']=[entry]
-            self.render(selected,'manages')
+            self.render(selected,'use global.scrubEngine')
 
     def test_refuses_unbounded_selection_layout_key_and_image(self):
         for field,value,message in [('workspaceIds',[],'workspaceIds'),('workspaceIds',['*'],'workspaceIds'),('workspaceIds',['same','same'],'workspaceIds'),('keyPrefix','96bulls/org','bare writer root'),('model','bad model','model'),('sweepSeconds',0,'sweepSeconds'),('batch',0,'batch'),('batch',101,'batch'),('globalDailyCap',0,'globalDailyCap'),('globalDailyCap',1.5,'globalDailyCap'),('sessionDailyCap',10001,'sessionDailyCap'),('enabled','false','boolean')]:

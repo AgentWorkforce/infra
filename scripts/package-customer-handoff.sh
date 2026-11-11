@@ -119,6 +119,7 @@ REQUIRED_FILES = (
     "charts/agent-relay/templates/gke-ingress.yaml",
     "charts/agent-relay/values-gcp-native.yaml",
     "charts/agent-relay/values-gcp.yaml",
+    "charts/agent-relay/values-scrub-wasm-bindgen.yaml",
     "charts/agent-relay/values.yaml",
     "charts/relay-control/Chart.yaml",
     "charts/relay-control/values.yaml",

@@ -15,6 +15,13 @@ components:
 global:
   # REQUIRED OVERRIDE: Artifact Registry hostname for the chosen GCP region.
   imageRegistry: us-central1-docker.pkg.dev
+  # Release phase 1: every services-image reader starts at the ruleset-10
+  # ceiling while writer selection stays unchanged. Existing installs must
+  # reach Ready on this phase before applying values-scrub-wasm-bindgen.yaml.
+  scrubEngine:
+    engine: ""
+    required: ""
+    readerMaxRuleset: "10"
   tenant:
     # REQUIRED OVERRIDE: stable organization ID used to partition session data.
     orgId: example-org
@@ -114,9 +121,10 @@ relayauth:
 sessions-pipeline:
   worker:
     image:
-      # Release image (public GHCR, sessions-pipeline ce9b4464). Mirror it by
-      # digest to your registry and override repository. Before its first
-      # migrate, run the Cloud SQL
+      # Preferred AA services image from relayhistory-pipeline main 7e9b2f0f
+      # (#509 alpha.5 on top of #505), signed publish run 42964243811. Mirror
+      # it by digest to your registry and override repository. Before its
+      # first migrate, run the Cloud SQL
       # bootstraps shipped in the image (/app/supabase/bootstrap/) as the
       # migration owner, in order: cloudsql_migration_roles.sql,
       # session_directory_search_worker.sql, session_token_verifier.sql,
@@ -125,7 +133,7 @@ sessions-pipeline:
       # upgrade from 0.3.6 adds session_token_verifier.sql and
       # session_ingest_roles.sql; the others already ran at install.
       repository: ghcr.io/agentworkforce/sessions-pipeline
-      digest: sha256:dc95d94202c49573749f99cc548638ed185f782dc3b88691f551d7f1f700f769
+      digest: sha256:77022c5b6a1d30f96f921d703eb27a1acada8ec273ad84aebdde24f8eddce305
     # REQUIRED OVERRIDE: existing Secret name; see README for required keys.
     existingSecret: example-agent-relay-secrets
     summaryEncryption:
@@ -175,7 +183,7 @@ sessions-pipeline:
     image:
       # Same services image repository and digest as worker.
       repository: ghcr.io/agentworkforce/sessions-pipeline
-      digest: sha256:dc95d94202c49573749f99cc548638ed185f782dc3b88691f551d7f1f700f769
+      digest: sha256:77022c5b6a1d30f96f921d703eb27a1acada8ec273ad84aebdde24f8eddce305
     # REQUIRED OVERRIDE: existing Secret name; see README for required keys.
     existingSecret: example-agent-relay-secrets
     hoopdb:
@@ -329,10 +337,10 @@ relay-control:
 relay-webapp:
   fullnameOverride: relay-webapp
   image:
-    # Release image (public GHCR, relay-webapp main d40c0b30). Mirror it by
-    # digest to your registry and override repository.
+    # Release image (public GHCR, relay-webapp main c485ba6) with the owner-only
+    # Usage page. Mirror it by digest to your registry and override repository.
     repository: ghcr.io/agentworkforce/relay-webapp
-    digest: sha256:bd295ccb7d1323965dce890f19d0b7f857d706c00d7756f719c713763fdb49f3
+    digest: sha256:34ef185ae4abad2b07f3f64b43bb4af1412d9e48c0053f8c2e38769c7b91cff3
   runtime:
     coordinationOverlapsEnabled: false
     # REQUIRED OVERRIDE: publicUrl must use gkeIngress.hosts.root.

@@ -1,7 +1,7 @@
 apiVersion: v2
 name: session-ingest-api
 type: application
-version: 0.4.4
+version: 0.4.5
 appVersion: "0.1.0"
 description: >
   Session ingest API for the sessions pipeline: receives session

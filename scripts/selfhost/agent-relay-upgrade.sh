@@ -64,8 +64,8 @@ done
 [[ "$version" =~ ^[0-9]{4}\.[0-9]{1,2}\.[0-9]+$ ]] || die "--version must look like 2026.11.1"
 [[ "$registry" =~ ^[0-9]{12}\.dkr\.ecr\.[a-z0-9-]+\.amazonaws\.com$ ]] || die "--registry must be an ECR registry host"
 case "$profile" in
-  eks) profile_files=(values-eks.yaml) ;;
-  eks-native) profile_files=(values-eks.yaml values-eks-native.yaml) ;;
+  eks) overlay_profile=eks; profile_files=(values-eks.yaml) ;;
+  eks-native) overlay_profile=eks; profile_files=(values-eks.yaml values-eks-native.yaml) ;;
   *) die "--profile must be eks or eks-native (the profile this install already uses)" ;;
 esac
 [ "${#values[@]}" -gt 0 ] || die "--values must point to your existing values file(s)"
@@ -101,6 +101,8 @@ for f in release-manifest.json release-images.values.yaml; do
 done
 [ "$(jq -r .schema "$manifest")" = 1 ] || die "unsupported manifest schema"
 [ "$(jq -r .version "$manifest")" = "$version" ] || die "manifest version does not match $version"
+[ "$(jq -r '.valuesOverlayProfile // empty' "$manifest")" = "$overlay_profile" ] \
+  || die "release image overlay is not for the selected profile"
 commit=$(jq -r .infraCommit "$manifest"); [[ "$commit" =~ ^[0-9a-f]{40}$ ]] || die "manifest infraCommit invalid"
 jq -e '.images|length>0 and all(.[]; (.ref|test("^[a-z0-9.-]+/[a-z0-9._/-]+@sha256:[0-9a-f]{64}$")))' "$manifest" >/dev/null \
   || die "manifest images must all be pinned by digest"

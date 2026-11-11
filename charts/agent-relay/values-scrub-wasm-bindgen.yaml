@@ -1,0 +1,14 @@
+# Explicit release phase 2 for the qualified ruleset-10 wasm-bindgen scrubber.
+#
+# Existing installs: first upgrade with the customer profile alone (phase 1),
+# wait until every services-image Deployment and Job is Ready/complete with
+# READER_MAX_RULESET=10, then apply this overlay in a second Helm revision.
+# Keep the ceiling at 10 on rollback while ruleset-10 objects exist.
+#
+# Fresh installs with an empty Sessions database may apply this overlay in the
+# initial Helm install: every reader starts at 10 before any object is written.
+global:
+  scrubEngine:
+    engine: wasm-bindgen
+    required: wasm-bindgen
+    readerMaxRuleset: "10"

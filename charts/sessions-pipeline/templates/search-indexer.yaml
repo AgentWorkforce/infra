@@ -1,5 +1,6 @@
 {{- $c := .Values.searchIndexer -}}
 {{- if not (kindIs "bool" $c.enabled) }}{{ fail "searchIndexer.enabled must be a boolean" }}{{ end -}}
+{{- if and (not (kindIs "invalid" $c.readerMaxRuleset)) (not (has (toString $c.readerMaxRuleset) (list "8" "9" "10"))) }}{{ fail "searchIndexer.readerMaxRuleset must be one of 8, 9, or 10" }}{{ end -}}
 {{- if $c.enabled -}}
 {{- $name := default (printf "%s-search-indexer" .Release.Name) $c.fullnameOverride -}}
 {{- /* The bootstrap Job appends 19 characters; Job names are DNS-1123 labels. */ -}}
@@ -106,7 +107,7 @@ spec:
           image: {{ printf "%s@%s" $repository $digest | quote }}
           imagePullPolicy: {{ $c.image.pullPolicy }}
           env:
-            {{- include "sessions-pipeline.searchIndexer.env" (dict "c" $c "service" "session-pipeline-consumer" "secret" $secret "key" $c.config.key "outputFacts" $facts.enabled) | nindent 12 }}
+            {{- include "sessions-pipeline.searchIndexer.env" (dict "root" . "c" $c "service" "session-pipeline-consumer" "secret" $secret "key" $c.config.key "outputFacts" $facts.enabled) | nindent 12 }}
             - { name: WORKER_HEALTH_PORT, value: {{ $c.healthPort | quote }} }
           ports:
             - { name: health, containerPort: {{ $c.healthPort }}, protocol: TCP }
@@ -131,13 +132,16 @@ spec:
           {{- end }}
 {{- if $c.bootstrap.enabled }}
 {{- $bootstrapSecret := required "searchIndexer.bootstrap.existingSecret requires the owner-connection secret" $c.bootstrap.existingSecret }}
+{{- /* The shared scrub contract renders into this Job outside $c. Keep it in
+      the content address so each rollout phase creates a new immutable Job. */}}
+{{- $bootstrapInputs := dict "searchIndexer" (omit $c "outputFacts") "scrubEngine" (.Values.global.scrubEngine | default dict) }}
 ---
 apiVersion: batch/v1
 kind: Job
 metadata:
   # Any change to this block is a new Job: a Job's pod template is immutable,
   # and the bootstrap is idempotent.
-  name: {{ printf "%s-bootstrap-%s" $name (toJson (omit $c "outputFacts") | sha256sum | trunc 8) }}
+  name: {{ printf "%s-bootstrap-%s" $name (toJson $bootstrapInputs | sha256sum | trunc 8) }}
   namespace: {{ .Release.Namespace | quote }}
   labels:
     app.kubernetes.io/name: session-search-indexer
@@ -161,7 +165,7 @@ spec:
           image: {{ printf "%s@%s" $repository $digest | quote }}
           imagePullPolicy: {{ $c.image.pullPolicy }}
           env:
-            {{- include "sessions-pipeline.searchIndexer.env" (dict "c" $c "service" "session-pipeline-consumer-bootstrap" "secret" $bootstrapSecret "key" $c.bootstrap.key) | nindent 12 }}
+            {{- include "sessions-pipeline.searchIndexer.env" (dict "root" . "c" $c "service" "session-pipeline-consumer-bootstrap" "secret" $bootstrapSecret "key" $c.bootstrap.key) | nindent 12 }}
           {{- include "sessions-pipeline.searchIndexer.container" . | nindent 10 }}
           {{- with $c.resources }}
           resources:
@@ -169,7 +173,7 @@ spec:
           {{- end }}
 {{- end }}
 {{- if $factsJob.enabled }}
-{{- $factsEnv := include "sessions-pipeline.searchIndexer.env" (dict "c" $c "service" "session-pipeline-output-facts-bootstrap" "secret" $c.bootstrap.existingSecret "key" $c.bootstrap.key "outputFacts" true) }}
+{{- $factsEnv := include "sessions-pipeline.searchIndexer.env" (dict "root" . "c" $c "service" "session-pipeline-output-facts-bootstrap" "secret" $c.bootstrap.existingSecret "key" $c.bootstrap.key "outputFacts" true) }}
 {{- $factsPod := printf "restartPolicy: Never\n%s\ncontainers:\n  - name: output-facts-bootstrap\n    image: %s\n    imagePullPolicy: %s\n    env:\n      %s\n      - { name: RELAYHISTORY_SELFHOST_OUTPUT_FACTS_BOOTSTRAP_DEADLINE_SECONDS, value: %s }\n      - { name: RELAYHISTORY_SELFHOST_OUTPUT_FACTS_BOOTSTRAP_ALLOW_PARTIAL, value: %s }\n    %s%s" (include "sessions-pipeline.searchIndexer.pod" .) (printf "%s@%s" $repository $digest | quote) $c.image.pullPolicy ($factsEnv | nindent 6 | trim) (int $factsJob.deadlineSeconds | toString | quote) ($factsJob.allowPartial | toString | quote) (include "sessions-pipeline.searchIndexer.container" . | nindent 4 | trim) (ternary (printf "\n    resources:\n      %s" (toYaml $c.resources | nindent 6 | trim)) "" (not (empty $c.resources))) }}
 ---
 apiVersion: batch/v1

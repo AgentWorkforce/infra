@@ -148,9 +148,7 @@
 {{- define "sessions-pipeline.nativeConsumer.env" -}}
 {{- $c := .root.Values.nativeConsumer -}}
 - { name: SERVICE, value: {{ ternary "session-pipeline-consumer-bootstrap" "session-pipeline-consumer" .bootstrap }} }
-{{- if and (not .bootstrap) (not (kindIs "invalid" $c.readerMaxRuleset)) }}
-- { name: READER_MAX_RULESET, value: {{ $c.readerMaxRuleset | quote }} }
-{{- end }}
+{{- include "sessions-pipeline.scrubEngine" (dict "root" .root "localReader" $c.readerMaxRuleset "localName" "nativeConsumer.readerMaxRuleset") }}
 - { name: RELAYHISTORY_SELFHOST_PIPELINE_CONSUMER, value: "true" }
 {{- if and (not .bootstrap) $c.outputFacts.enabled }}
 - { name: RELAYHISTORY_SELFHOST_OUTPUT_FACTS, value: "true" }

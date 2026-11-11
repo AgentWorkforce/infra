@@ -8,6 +8,12 @@ global:
   otel:
     # OTLP/HTTP endpoint; rendered as OTEL_EXPORTER_OTLP_ENDPOINT. Empty = unset.
     endpoint: ""
+  # Inherited from the sessions-pipeline umbrella. Direct installs may set it
+  # here. Empty preserves the legacy runtime selection and reader ceiling.
+  scrubEngine:
+    engine: ""
+    required: ""
+    readerMaxRuleset: ""
 
 # One image for every component; SERVICE= selects the entry point.
 image:

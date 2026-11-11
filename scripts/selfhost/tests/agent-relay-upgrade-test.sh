@@ -24,7 +24,7 @@ make_release() {
   imgs="[{\"name\":\"relay-control\",\"ref\":\"ghcr.io/agentworkforce/relay-control@$D1\"},{\"name\":\"relay-webapp\",\"ref\":\"ghcr.io/agentworkforce/relay-webapp@$D2\"}]"
   if [ "$v" = unpinned ]; then imgs='[{"name":"relay-control","ref":"ghcr.io/agentworkforce/relay-control:latest"}]'; fi
   if [ "$v" = swapped ]; then o1=$D2; o2=$D1; fi
-  printf '{"schema":1,"version":"2026.11.1","infraCommit":"%s","chart":{"path":"charts/agent-relay","version":"%s"},"valuesOverlay":"release-images.values.yaml","images":%s}\n' "$COMMIT" "$cv" "$imgs" > "$d/release-manifest.json"
+  printf '{"schema":1,"version":"2026.11.1","infraCommit":"%s","chart":{"path":"charts/agent-relay","version":"%s"},"valuesOverlay":"release-images.values.yaml","valuesOverlayProfile":"eks","images":%s}\n' "$COMMIT" "$cv" "$imgs" > "$d/release-manifest.json"
   printf 'relayControl:\n  image: { repository: __IMAGE_MIRROR_ROOT__/ghcr.io/agentworkforce/relay-control, digest: "%s" }\nrelayWebapp:\n  image: { repository: __IMAGE_MIRROR_ROOT__/ghcr.io/agentworkforce/relay-webapp, digest: "%s" }\n' "$o1" "$o2" > "$d/release-images.values.yaml"
   if [ "$v" = chartver ]; then cv=9.9.9; fi
   printf 'name: agent-relay\nversion: "%s"\n' "$cv" > "$d/pkg/agent-relay/Chart.yaml"
@@ -96,39 +96,50 @@ out=$(run --version 2026.11.1 --registry "$REG" --profile eks --values "$vals" 2
 grep 'helm .*template' "$root/log" | grep -q 'values-eks-native.yaml' && fail "eks profile loaded the native overlay"
 pass "--profile is required and is never switched"
 
-# 3. a tampered manifest fails the checksum
+# 3. an overlay for a different cloud profile refuses before rendering
+make_release "$root/rel-wrong-profile" ok
+jq '.valuesOverlayProfile = "gcp"' "$root/rel-wrong-profile/release-manifest.json" \
+  > "$root/rel-wrong-profile/manifest.tmp"
+mv "$root/rel-wrong-profile/manifest.tmp" "$root/rel-wrong-profile/release-manifest.json"
+( cd "$root/rel-wrong-profile" && sha release-manifest.json release-images.values.yaml agent-relay-0.6.31.tgz > SHA256SUMS )
+setup_mocks "$root/rel-wrong-profile" ok
+out=$(run "${args[@]}" 2>&1) && fail "wrong-profile overlay was accepted"
+grep -q 'not for the selected profile' <<<"$out" || fail "wrong-profile overlay refused for the wrong reason: $out"
+pass "release overlay profile must match the selected install profile"
+
+# 4. a tampered manifest fails the checksum
 make_release "$root/rel-bad" ok; echo ' ' >> "$root/rel-bad/release-manifest.json"; setup_mocks "$root/rel-bad" ok
 run "${args[@]}" >/dev/null 2>&1 && fail "tampered manifest was accepted"
 pass "checksum mismatch refuses"
 
-# 4. a failed attestation refuses
+# 5. a failed attestation refuses
 setup_mocks "$root/rel-ok" fail
 run "${args[@]}" >/dev/null 2>&1 && fail "failed attestation was accepted"
 pass "failed attestation refuses"
 
-# 5. an unpinned image refuses
+# 6. an unpinned image refuses
 make_release "$root/rel-unpinned" unpinned; setup_mocks "$root/rel-unpinned" ok
 run "${args[@]}" >/dev/null 2>&1 && fail "unpinned image was accepted"
 pass "unpinned image refuses"
 
-# 6. a packaged chart whose version differs from the release refuses
+# 7. a packaged chart whose version differs from the release refuses
 make_release "$root/rel-chartver" chartver; setup_mocks "$root/rel-chartver" ok
 run "${args[@]}" >/dev/null 2>&1 && fail "mismatched chart version was accepted"
 pass "chart version mismatch refuses"
 
-# 7. an overlay that swaps digests between images refuses
+# 8. an overlay that swaps digests between images refuses
 make_release "$root/rel-swap" swapped; setup_mocks "$root/rel-swap" ok
 out=$(run "${args[@]}" 2>&1) && fail "swapped digests were accepted"
 grep -q 'not this release' <<<"$out" || fail "swapped digests refused for the wrong reason: $out"
 pass "overlay with swapped image digests refuses"
 
-# 8. --apply without --db-instance refuses before contacting anything
+# 9. --apply without --db-instance refuses before contacting anything
 setup_mocks "$root/rel-ok" ok
 run "${args[@]}" --apply >/dev/null 2>&1 && fail "apply without a snapshot target was accepted"
 [ -s "$root/log" ] && fail "apply without --db-instance contacted tools"
 pass "--apply requires --db-instance"
 
-# 9. --apply snapshots first, upgrades with the overlay, scopes checks to the release
+# 10. --apply snapshots first, upgrades with the overlay, scopes checks to the release
 setup_mocks "$root/rel-ok" ok
 out=$(run "${args[@]}" --apply --db-instance prod-db --yes 2>&1) || fail "apply failed: $out"
 snap=$(grep -n 'aws rds create-db-snapshot' "$root/log" | cut -d: -f1); up=$(grep -n 'helm .*upgrade' "$root/log" | cut -d: -f1)
@@ -137,7 +148,7 @@ grep 'helm .*upgrade' "$root/log" | grep -q 'release-images.values.yaml' || fail
 grep 'kubectl .*get jobs' "$root/log" | grep -q 'app.kubernetes.io/instance=agent-relay' || fail "job check not scoped to the release"
 pass "apply snapshots first, upgrades with the overlay, checks only this release"
 
-# 10. a failed upgrade prints the last DEPLOYED revision, not the latest one
+# 11. a failed upgrade prints the last DEPLOYED revision, not the latest one
 setup_mocks "$root/rel-ok" ok; write_helm "exit 1"
 out=$(run "${args[@]}" --apply --db-instance prod-db --yes 2>&1) && fail "failed upgrade reported success"
 grep -q 'rollback agent-relay 7' <<<"$out" || fail "rollback did not point at the last deployed revision: $out"

@@ -4,13 +4,13 @@ apiVersion: selfhost.agentrelay.com/v1alpha1
 kind: CustomerImageSourceManifest
 # Top-level per the gate schema (see the positive fixture in
 # ci/customer-release-gate); the release gate refuses anything but "ready".
-status: blocked
+status: ready
 metadata:
   name: agent-relay-gcp
   auditedAt: "2026-11-11"
   chart:
     name: agent-relay
-    version: 0.6.21
+    version: 0.6.46
     values:
       - charts/agent-relay/values-gcp.yaml
       - charts/agent-relay/values-gcp-native.yaml
@@ -24,6 +24,10 @@ scope:
     are optional components, off in this profile, and are not part of this
     matrix. Every active row is an immutable digest rendered by the two
     profile values files.
+    The active customer profiles are the reader-first release phase: every
+    Sessions services workload receives READER_MAX_RULESET=10 while the scrub
+    engine remains unchanged. values-scrub-wasm-bindgen.yaml is a separate,
+    explicit cutover overlay and is not active in this phase-1 inventory.
   activeUniqueImages: 5
   excludedConditionalImages:
     - image: cgr.dev/chainguard/minio
@@ -130,6 +134,60 @@ images:
         GitHub build-provenance attestation, and amd64+arm64 verified
         anonymously from the registry.
       blockingReasons: []
+  - id: relaycast-eks-collector
+    active: false
+    firstParty: true
+    component: relaycast
+    workloads:
+      - Deployment/relaycast:relaycast
+    current:
+      repository: ghcr.io/agentworkforce/relaycast-self-host
+      digest: sha256:ab9dd6781e68f09d5e2e686a17088f9ad533978ef13d974a47d6c212d8eedbde
+      chartStatus: shipped
+      valuesFile: charts/agent-relay/values-eks.yaml
+      note: >-
+        Relaycast 12.8.0 collector-capable Node runtime for EKS. The neutral
+        profile keeps analytics disabled until an operator supplies the
+        component-bound producer token and trusted collector TLS binding.
+    source:
+      repository: https://github.com/AgentWorkforce/relaycast
+      revision: cac175b5a682d12ff3d60529f1b12ced5a948be6
+      path: Dockerfile
+      reproducibleReference: true
+      note: The OCI revision label and engine-version label report cac175b5 and 12.8.0.
+    license:
+      status: approved
+      spdx: Apache-2.0
+      evidence: https://github.com/AgentWorkforce/relaycast/blob/cac175b5a682d12ff3d60529f1b12ced5a948be6/LICENSE
+    platforms:
+      expected: [linux/amd64, linux/arm64]
+      verifiedFromRegistry: [linux/amd64, linux/arm64]
+      status: verified
+      verificationAccess: anonymous
+    release:
+      workflow: https://github.com/AgentWorkforce/relaycast/blob/cac175b5a682d12ff3d60529f1b12ced5a948be6/.github/workflows/publish-container.yml
+      run: https://github.com/AgentWorkforce/relaycast/actions/runs/42962050107
+      trigger: workflow_dispatch
+      buildsCommittedRevision: true
+      publishedTags: ["12.8.0-collector.1"]
+      publishesSbom: true
+      publishesProvenance: true
+      provenanceMode: max-plus-github-attestation
+      note: >-
+        GitHub attestation verification was scoped to the recorded
+        publish-container workflow; the public OCI index contains amd64 and
+        arm64 manifests with per-platform attestation manifests.
+    customerAcquisition:
+      status: available-public
+      procedure: Mirror the public GHCR digest into the customer registry by digest and record the destination digest.
+    approval:
+      status: approved
+      basis: >-
+        Public digest from the reviewed publish-container workflow at the
+        recorded main revision. The signed attestation, OCI labels, collector
+        runtime files, SPDX SBOM/provenance and anonymous amd64+arm64 index
+        were verified before selecting the EKS pin.
+      blockingReasons: []
   - id: relayauth
     active: false
     firstParty: true
@@ -185,47 +243,56 @@ images:
       - Job/*-worker-migrate-*:migrate
     current:
       repository: ghcr.io/agentworkforce/sessions-pipeline
-      digest: sha256:dc95d94202c49573749f99cc548638ed185f782dc3b88691f551d7f1f700f769
+      digest: sha256:77022c5b6a1d30f96f921d703eb27a1acada8ec273ad84aebdde24f8eddce305
       chartStatus: shipped
       note: >-
         Rendered by the GCP native profile for read, ingest, search, worker and
-        migration workloads. The image label records the exact source revision.
+        migration workloads. The OCI revision label records the exact
+        relayhistory-pipeline source revision; the image contains migrations
+        046010 and 047000 plus the reviewed wasm-bindgen alpha.5 artifact.
     source:
-      repository: https://github.com/AgentWorkforce/sessions-pipeline
-      revision: ce9b4464ff16fad52d8507706356b7a4aebd59c3
+      repository: https://github.com/AgentWorkforce/relayhistory-pipeline
+      revision: 7e9b2f0f6b1af7af9b49087c4f4677f5d6d1a496
       path: docker/services.Dockerfile
       reproducibleReference: true
+      note: >-
+        Main after #509 (relayscrubber 0.5.0-alpha.5) on top of #505. Exact
+        source CI run 42959213510 completed all 34 checks before publication.
     license:
       status: approved
       spdx: Apache-2.0
-      evidence: https://github.com/AgentWorkforce/sessions-pipeline/blob/ce9b4464ff16fad52d8507706356b7a4aebd59c3/LICENSE
+      evidence: https://github.com/AgentWorkforce/relayhistory-pipeline/blob/7e9b2f0f6b1af7af9b49087c4f4677f5d6d1a496/LICENSE
     platforms:
       expected: [linux/amd64, linux/arm64]
       verifiedFromRegistry: [linux/amd64, linux/arm64]
       status: verified
       verificationAccess: anonymous
     release:
-      workflow: https://github.com/AgentWorkforce/sessions-pipeline/blob/ce9b4464ff16fad52d8507706356b7a4aebd59c3/.github/workflows/publish-image.yml
-      run: https://github.com/AgentWorkforce/sessions-pipeline/actions/runs/42701039876
+      workflow: https://github.com/AgentWorkforce/relayhistory-pipeline/blob/7e9b2f0f6b1af7af9b49087c4f4677f5d6d1a496/.github/workflows/publish-image.yml
+      run: https://github.com/AgentWorkforce/relayhistory-pipeline/actions/runs/42964243811
       trigger: workflow_dispatch-with-approval-phrase
       buildsCommittedRevision: true
-      publishedTags: [main, sha-ce9b4464ff16fad52d8507706356b7a4aebd59c3]
+      publishedTags: [sha-7e9b2f0f6b1af7af9b49087c4f4677f5d6d1a496]
       publishesSbom: true
       publishesProvenance: true
-      provenanceMode: max
+      provenanceMode: max-plus-sigstore-signed-receipt
       note: >-
-        The successful release run pushed a multi-platform index with BuildKit
-        SBOM and provenance attestation manifests for amd64 and arm64.
+        The successful release run copied the signed exact-source OCI index to
+        both repository names and uploaded a signed release receipt. The index
+        has BuildKit SBOM/provenance attestations for amd64 and arm64. Khaliq
+        approved publication and relayscrubber-lead recorded exact-head PASS.
     customerAcquisition:
       status: available-public
       procedure: Mirror the public GHCR digest into the customer registry by digest and record the destination digest.
     approval:
-      status: blocked
+      status: approved
       basis: >-
-        The digest remains recorded for traceability but is no longer eligible
-        for the November 11 customer install. It must be replaced by the
-        reviewed R9 successor from main.
-      blockingReasons: [sessions-pipeline-r9-customer-image]
+        Preferred alpha.5 production digest from the reviewed exact-source
+        workflow. The signed receipt ties the image to 7e9b2f0f; the public
+        index is amd64+arm64, its OCI revision matches, required migrations
+        046010 and 047000 are present, and the scrubber and publication owner
+        approvals are recorded.
+      blockingReasons: []
 
   - id: sessions-migration-postgresql
     active: true
@@ -366,7 +433,11 @@ images:
         the dashboard host (#97), Claude Code chat attestation (#98) and the
         owner-only usage API (#92). Retains 0.5.12's EKS Pod Identity / IRSA
         credentials (#91), direct-to-S3 History upload credentials (#90) and
-        the earlier login, relay-node and Microsoft sign-in changes.
+        the earlier login, relay-node and Microsoft sign-in changes. Usage and
+        MCP launch are selected only by the AA EKS profile after the owner
+        lifecycle proof on ar-lap passed capability, owned target, spawn,
+        idempotent replay, Ready, cross-session ownership refusal, release and
+        roster removal.
     license:
       status: approved
       spdx: Apache-2.0
@@ -404,34 +475,34 @@ images:
       - Deployment/relay-webapp:relay-webapp
     current:
       repository: ghcr.io/agentworkforce/relay-webapp
-      digest: sha256:bd295ccb7d1323965dce890f19d0b7f857d706c00d7756f719c713763fdb49f3
+      digest: sha256:34ef185ae4abad2b07f3f64b43bb4af1412d9e48c0053f8c2e38769c7b91cff3
       chartStatus: shipped
     source:
       repository: https://github.com/AgentWorkforce/relay-webapp
-      revision: d40c0b30e70ae32c865975c2c91e923c4e311d98
+      revision: c485ba65299a16eaf2da59f2379f8d081578db7c
       path: Dockerfile
       reproducibleReference: true
       note: >-
-        relay-webapp main d40c0b30 with #124's default-off coordination-overlaps
-        view gate. Static SPA built with
+        relay-webapp main c485ba65 with the owner-only Usage page from #125
+        and #124's default-off coordination-overlaps view gate. Static SPA built with
         DASHBOARD_BASE_PATH=/ and DASHBOARD_RUNTIME_CONFIG_URL=/runtime-config.js,
         served by unprivileged nginx on :8080. It talks only to the same-origin
         /cloud/api prefix (runtime.apiBasePath must stay /cloud/api).
     license:
       status: approved
       spdx: Apache-2.0
-      evidence: https://github.com/AgentWorkforce/relay-webapp/blob/d40c0b30e70ae32c865975c2c91e923c4e311d98/LICENSE
+      evidence: https://github.com/AgentWorkforce/relay-webapp/blob/c485ba65299a16eaf2da59f2379f8d081578db7c/LICENSE
     platforms:
       expected: [linux/amd64, linux/arm64]
       verifiedFromRegistry: [linux/amd64, linux/arm64]
       status: verified
       verificationAccess: anonymous
     release:
-      workflow: https://github.com/AgentWorkforce/relay-webapp/blob/d40c0b30e70ae32c865975c2c91e923c4e311d98/.github/workflows/container.yml
-      run: https://github.com/AgentWorkforce/relay-webapp/actions/runs/42936053821
+      workflow: https://github.com/AgentWorkforce/relay-webapp/blob/c485ba65299a16eaf2da59f2379f8d081578db7c/.github/workflows/container.yml
+      run: https://github.com/AgentWorkforce/relay-webapp/actions/runs/42966714669
       trigger: workflow_dispatch
       buildsCommittedRevision: true
-      publishedTags: [sha-d40c0b30e70ae32c865975c2c91e923c4e311d98]
+      publishedTags: [sha-c485ba65299a16eaf2da59f2379f8d081578db7c]
       publishesSbom: true
       publishesProvenance: true
       provenanceMode: max-plus-github-attestation
@@ -442,7 +513,7 @@ images:
     approval:
       status: approved
       basis: >-
-        Public digest from the reviewed #124 container workflow at the recorded
+        Public digest from the reviewed #125 container workflow at the recorded
         main revision, with an SPDX SBOM, max-mode provenance, a GitHub
         build-provenance attestation, and amd64+arm64 verified anonymously.
       blockingReasons: []
@@ -727,16 +798,4 @@ promotionProcedure:
 # services, RelayHistory and selfhost-api release images are public, built by
 # reviewed workflows from recorded main revisions, with an SBOM and max-mode
 # provenance, and amd64+arm64 verified anonymously.
-blockers:
-  - id: sessions-pipeline-r9-customer-image
-    severity: hard
-    images: [sessions-pipeline]
-    owner: sessions-pipeline
-    reason: >-
-      The recorded ce9b4464 services image was withdrawn from the November 11
-      customer install. The R9 scrub-fix successor has not yet merged to main
-      or been published as an approved immutable image.
-    resolution: >-
-      Replace the recorded source revision and digest with the exact merged R9
-      successor, record its reviewed release evidence, and rerun the customer
-      release gate before producing an install bundle.
+blockers: []
