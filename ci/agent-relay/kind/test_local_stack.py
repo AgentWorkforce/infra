@@ -21,9 +21,10 @@ from stack import StackError
 class LocalTests(unittest.TestCase):
     def test_fresh_reader_uses_managed_values_when_chart_reserves_environment(self):
         reader = {"extraEnv": [{"name": "READ_API_SESSION_QUERY", "value": "true"}]}
-        with patch.object(local_stack, "READER_VALUES", {"timing": {"assumeNoTurns": False}, "canonical": {"pinLaggingPointer": False}}):
+        with patch.object(local_stack, "READER_VALUES", {"turns": {"assumeNoLegacy": False},
+                "timing": {"assumeNoTurns": False}, "canonical": {"pinLaggingPointer": False}}):
             local_stack.fresh_reader(reader)
-        self.assertEqual(reader, {"timing": {"assumeNoTurns": True}, "canonical": {"pinLaggingPointer": True},
+        self.assertEqual(reader, {"turns": {"assumeNoLegacy": True}, "timing": {"assumeNoTurns": True}, "canonical": {"pinLaggingPointer": True},
             "extraEnv": [{"name": "READ_API_SESSION_QUERY", "value": "true"}]})
 
     def test_services_jobs_keep_the_required_wasm_contract(self):
@@ -344,7 +345,7 @@ class LocalTests(unittest.TestCase):
                     self.assertIn("admission", json.dumps(container["readinessProbe"]))
                 if name == "session-read-api":
                     self.assertEqual(env["READ_API_SESSION_QUERY"]["value"], "true")
-                    for flag in ("READ_API_TIMING_ASSUME_NO_TURNS", "READ_API_CANONICAL_PIN_LAGGING_POINTER"):
+                    for flag in ("READ_API_TURNS_ASSUME_NO_LEGACY", "READ_API_TIMING_ASSUME_NO_TURNS", "READ_API_CANONICAL_PIN_LAGGING_POINTER"):
                         self.assertEqual(env[flag]["value"], "true")
                         self.assertEqual(sum(e["name"] == flag for e in container["env"]), 1)
                 if name == "sessions-session-brief":

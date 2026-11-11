@@ -68,6 +68,13 @@ Control's normal sign-in rate limits apply. Repeat-up reuses a recent link.
 All generated database/service credentials stay in `.kind/local/credentials.json`
 (0600); never commit `.kind`.
 
+The local reader sets `turns.assumeNoLegacy=true`: this fresh Postgres/MinIO
+store has no Neon history whose coverage needs checking. Without that existing
+reader setting, the canonical transcript renders but `/turns` returns
+`501 turns_unknown` and the dashboard shows `Retry loading history`. The
+assumption is confined to this local recipe; custom and retained-data profiles
+must establish their own coverage.
+
 The owner-only Usage page is at
 `https://relay.kind.agentrelay.com/#/settings/usage`. The local profile enables
 the `usage` and `launch` features through the chart's managed `selectedFeatures`
