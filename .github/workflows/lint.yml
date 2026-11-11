@@ -140,6 +140,7 @@ jobs:
           python3 ci/control-analytics/test_chart.py -v
           python3 ci/sessions-pipeline-native-brief/test_native_brief.py -v
           python3 ci/agent-relay/kind/test_harness.py -v
+          python3 ci/agent-relay/kind/test_local_tools.py -v
           python3 ci/session-component-names/test_names.py -v
           python3 ci/telemetry-collector/test_chart.py -v
           node --test ci/agent-relay/kind/test_bootstrap.mjs
