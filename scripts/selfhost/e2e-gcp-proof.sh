@@ -845,7 +845,10 @@ PY
     code="$(edge_post "$HISTORY_ORIGIN/v1/auth/token/refresh")"
     [[ "$code" == 401 ]] && emit PASS public.ingest_refresh_refused "status=401" || emit FAIL public.ingest_refresh_refused "status=$code expected=401"
     code="$(curl --disable -s -o /dev/null --max-time 20 -w '%{http_code}' "$HISTORY_ORIGIN/internal/v1/session-read/sessions")"
-    [[ "$code" == 404 || "$code" == 403 ]] && emit PASS public.history_internal_denied "status=$code" || emit FAIL public.history_internal_denied "status=$code expected=404"
+    # The chart routes this path to a selector-less Service, so the Google edge
+    # answers 502 (no backend) and the request never reaches the read API.
+    [[ "$code" == 502 || "$code" == 404 || "$code" == 403 ]] && emit PASS public.history_internal_denied "status=$code edge_denied=true" ||
+      emit FAIL public.history_internal_denied "status=$code expected=404/403/502"
   fi
   rm -f "$WORK"/h-*
 fi
