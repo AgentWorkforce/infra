@@ -12,6 +12,7 @@ control_archive_arg = '$(subst ','"'"',$(CONTROL_IMAGE_ARCHIVE))'
 
 .PHONY: help kind-up kind-up-local-control kind-down kind-render kind-build-addons kind-build-control kind-proof kind-proof-core kind-proof-addons kind-reconcile-names
 help:
+	@echo "Clean Mac prerequisites: make local-tools (checkout-local pinned Kind, Helm and Python dependencies)"
 	@echo "Code loop: make dev after one-time configure; optional make dev-plan (existing Kind; docs/kind-development.md)"
 	@echo "Local kind: make kind-render, kind-up, kind-proof, or kind-down PROFILE=core|addons"
 	@echo "Build: kind-build-control, kind-up-local-control, kind-build-addons; proof aliases: kind-proof-core, kind-proof-addons"
@@ -20,6 +21,10 @@ help:
 
 kind-up:
 	$(PYTHON) ci/agent-relay/kind/stack.py up --profile $(profile_arg)
+
+.PHONY: local-tools
+local-tools:
+	$(PYTHON) ci/agent-relay/kind/local_tools.py --prepare
 kind-up-local-control: kind-build-control
 	$(MAKE) kind-up PROFILE=$(profile_arg)
 
