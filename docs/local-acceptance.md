@@ -98,6 +98,33 @@ Verification confirms integrity only; inspect `payload.status`, `suite`,
 lists each pending check as failed and exits 1, preventing an incomplete suite
 from becoming a green release gate.
 
+## Release-gate runner provisioning
+
+The release workflow uses the organization runner group
+`infra-acceptance-arlap` with labels `self-hosted`, `arlap` and `kind`. This
+group is a protected release resource, not a general CI pool. Its organization
+settings must have all of the following before registering the runner:
+
+- repository access set to **Selected repositories**, with only
+  `AgentWorkforce/infra` selected;
+- workflow access set to **Selected workflows**, with only
+  `AgentWorkforce/infra/.github/workflows/local-acceptance.yml@refs/heads/main`
+  selected; and
+- no runner with these labels attached to a less restrictive group.
+
+Pinning the allowed workflow to `refs/heads/main` is mandatory. A
+`pull_request` can carry a branch-edited workflow; same-repository and
+candidate-file checks inside the job do not protect the runner until after the
+job has started. Do not enable the group for a branch workflow, wildcard path
+or all workflows.
+
+Set the infra repository variable `ARLAP_ACCEPTANCE_CONFIG` to the provisioned
+absolute config path on that runner. The path must be a regular, non-symlink
+file. Keep its referenced credentials and kubeconfig outside the checkout with
+the ownership and mode requirements above. Until the protected runner group,
+this variable and every full-suite adapter are provisioned, release candidates
+must remain blocked; an API-only pass never satisfies `qualification`.
+
 ## Remaining qualification increments
 
 Port the retained-trust clean-room receipts into tracked adapters: real upload

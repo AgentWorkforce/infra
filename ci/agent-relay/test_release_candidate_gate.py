@@ -209,6 +209,7 @@ class ReleaseCandidateGateTest(unittest.TestCase):
         acceptance = (ROOT / ".github/workflows/local-acceptance.yml").read_text()
         tagging = (ROOT / ".github/workflows/release-candidate-tag.yml").read_text()
         makefile = (ROOT / "Makefile").read_text()
+        documentation = (ROOT / "docs/local-acceptance.md").read_text()
         self.assertIn("group: infra-acceptance-arlap", acceptance)
         self.assertIn("labels: [self-hosted, arlap, kind]", acceptance)
         self.assertIn("Reject executable or cross-candidate changes before checkout", acceptance)
@@ -227,6 +228,12 @@ class ReleaseCandidateGateTest(unittest.TestCase):
         self.assertIn('tag="agent-relay-${VERSION}"', tagging)
         self.assertIn("ACCEPTANCE_OUTPUT ?=", makefile)
         self.assertIn("ACCEPTANCE_KEY ?=", makefile)
+        self.assertIn(
+            "AgentWorkforce/infra/.github/workflows/local-acceptance.yml@refs/heads/main",
+            documentation,
+        )
+        self.assertIn("Selected repositories", documentation)
+        self.assertIn("Selected workflows", documentation)
 
 
 if __name__ == "__main__":
