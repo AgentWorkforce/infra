@@ -1,7 +1,8 @@
-# Disposable Mac clean-room run
+# Scoped Kind and q7m2k9 clean-room run
 
-This is the wipe, fresh-install, acceptance and final-wipe procedure for a
-dedicated Apple Silicon test Mac. It is not a receipt that those steps passed.
+This is the Kind/q7m2k9 wipe, fresh-install, acceptance and final-wipe procedure
+on Apple Silicon macOS. It is not a receipt that those steps passed.
+The JHS Rehearsal app is a known co-resident and must remain untouched.
 
 ## Preconditions and boundaries
 
@@ -22,12 +23,12 @@ dedicated Apple Silicon test Mac. It is not a receipt that those steps passed.
   repository access. No old app state is an installation input.
 - A human must be available at the three sudo boundaries below. Never transmit
   a sudo password or change sudoers.
-- Stop watchers through their owning sessions, confirm release restoration,
-  preserve source edits in pushed commits, and end test agents.
-- **Stop if another Desktop profile, customer installation, active agent work
-  or unclassified shared Relay data is present.** Its owner must remove or
-  relocate it independently before a whole-machine reset. Never delete another
-  profile's hooks, data, account, credentials or services.
+- Stop only the Kind watchers through their owners, confirm release restoration,
+  preserve source edits in pushed commits, and end only the Kind test agents.
+- Scope is the owned Kind cluster/images/volumes/state/CA/host aliases and the
+  q7m2k9 app, app data, its Keychain items and its shared Claude hook entries.
+  Preserve JHS and every non-Kind resource, credential, hook and service. If
+  ownership is ambiguous, stop that deletion rather than widening the reset.
 
 Preserve provider CLI authentication and unrelated provider history. Never copy
 old Desktop data, database volumes, local credentials, CA keys, selection records
@@ -39,6 +40,23 @@ state, MCP session credentials, email/device links, local credentials and model
 Secrets.
 
 ## First wipe: application cleanup
+
+Before each wipe, capture protected hook witnesses on the controller, outside
+the reset tree. The audit reads Claude settings and emits hashes/counts only:
+
+```sh
+umask 077
+ARLAP_EVIDENCE="$HOME/relay-briefs/arlap-clean-room-$(date -u +%Y%m%dT%H%M%SZ)"
+mkdir -p "$ARLAP_EVIDENCE"
+ssh agentrelay@100.104.148.105 \
+  '/usr/bin/python3 - snapshot --protected-marker jhs --require-protected' \
+  < ci/agent-relay/kind/local_hook_audit.py > "$ARLAP_EVIDENCE/hooks-before.json"
+```
+
+Record JHS's bundle/code identity and existing core job identity too, without
+contacting its site or changing its process. The hook witness includes group
+matchers and all non-q7 hooks, so removing q7 from a mixed group cannot silently
+change JHS behavior. Never restore a foreign hook backup to hide a mismatch.
 
 Do integration cleanup while the old stack and its trusted TLS still work.
 The installed helper must use its explicit q7m2k9 admin socket:
@@ -95,11 +113,15 @@ retain the CA files and state for retry; do not proceed with deletion.
 
 The builder then removes the owned cluster with `make local-down`.
 
-## Complete the disposable fixture cleanup
+## Complete only the Kind fixture cleanup
 
-These commands erase **all resources in the local Docker daemon**. Run them only
-after the dedicated-machine checks pass. The explicit Unix socket prevents an
-inherited remote context from selecting another server:
+Inventory container IDs, image IDs/references, volume mounts and development
+session labels before deletion. Preserve every resource not proved Kind-owned.
+In particular the co-resident rehearsal browser can share the Playwright image
+with `arlap-browser-proof`: delete only our browser container and retain the
+foreign container and any image it uses.
+
+Use the explicit local socket for inspection and scoped removal:
 
 ```sh
 docker_local() {
@@ -107,25 +129,20 @@ docker_local() {
     /Applications/Docker.app/Contents/Resources/bin/docker "$@"
 }
 docker_local info --format '{{.Name}} {{.OperatingSystem}}'
-for container_id in $(docker_local ps -aq); do
-  docker_local rm -f "$container_id"
-done
-docker_local builder prune --all --force
-for image_id in $(docker_local image ls -q | sort -u); do
-  docker_local image rm -f "$image_id"
-done
-for volume_name in $(docker_local volume ls -q); do
-  docker_local volume rm "$volume_name"
-done
-docker_local system prune --all --volumes --force
+docker_local ps -a --format '{{.ID}} {{.Names}} {{.Image}}'
+docker_local image ls --digests
+docker_local volume ls
 ```
 
-Verify empty container/image/volume lists and zero build-cache usage. This
-includes the browser-proof container and old `local/*-recovery` images.
-Container-based BuildKit caches disappear with their containers and volumes;
-do not select or prune a separately configured remote Buildx builder. Remove
-only the fixture's stale Kind entries from the user kubeconfig, preserving
-unrelated contexts and credentials.
+`make local-down` removes only the checkout's UID-checked Kind cluster.
+Remove the recorded `arlap-browser-proof` container only after its mounts
+confirm ownership. Remove recorded Kind-only image references, old Kind recovery
+images and Kind-owned volumes only when no non-Kind container references them.
+Remove only development images whose session label matches this fixture's
+journals. Retain shared images and unclassified resources and record them.
+Do not run daemon-wide system/image/volume/builder prune commands. Clear only
+scoped Kind build caches; do not select or prune another Buildx builder.
+Remove only fixture Kind kubeconfig entries, preserving unrelated contexts.
 
 Remove the q7m2k9 app and any previous copies with that exact bundle ID, its
 profile-specific Application Support/Caches/HTTPStorages/Preferences/Saved
@@ -133,18 +150,31 @@ Application State, core socket/lock, relay-socket pointer and probe alias.
 Confirm sign-out forgot the local app session. Remove any remaining fixture-owned
 auth storage through supported cleanup; never delete unrelated Keychain items.
 
-Shared probe aliases and
-`~/Library/Application Support/AgentRelay/SessionServices` require an ownership
-check. Remove shared Relay residue only after all other installations and
-unclassified data have been cleared by their owners. If managed hooks remain
-after supported uninstall, fix the scoped uninstall instead of deleting whole
-provider settings.
+Preserve shared probe aliases, all JHS aliases and its app/data/Keychain items.
+Do not delete `~/Library/Application Support/AgentRelay/SessionServices` as a
+whole. Remove only proved Kind/q7 entries in shared storage. If hooks remain
+after scoped uninstall, fix that uninstall instead of deleting whole settings.
 
-After preserving reviewed source edits elsewhere, remove the disposable roots
-`~/Projects/AgentWorkforce/local-e2e` and
-`~/Projects/AgentWorkforce/infra-worktrees`, downloaded artifacts, temporary test
-projects and any other inventoried fixture clone. Leave no app backup, CA/key,
-credentials, retained receipts or cached image to seed the fresh run.
+After preserving source edits elsewhere, remove the Kind-owned
+`~/Projects/AgentWorkforce/local-e2e` tree and inventoried Kind-only artifact,
+temporary-project and clone paths. Do not delete `infra-worktrees` or another
+shared parent wholesale; preserve non-Kind checkouts and rehearsal-verification
+work. Leave no q7 backup, Kind CA/key, credentials, receipts or owned image to
+seed the fresh run.
+
+After scoped cleanup, take a second controller-side witness:
+
+```sh
+ssh agentrelay@100.104.148.105 \
+  '/usr/bin/python3 - snapshot --protected-marker jhs --require-protected' \
+  < ci/agent-relay/kind/local_hook_audit.py > "$ARLAP_EVIDENCE/hooks-after.json"
+python3 ci/agent-relay/kind/local_hook_audit.py verify \
+  "$ARLAP_EVIDENCE/hooks-before.json" "$ARLAP_EVIDENCE/hooks-after.json"
+```
+
+Require zero q7 hooks and identical protected/non-Kind hook hashes. Confirm
+JHS's bundle/core identity and the retained foreign container/image identities
+are unchanged. A mismatch fails the cleanup; investigate without modifying JHS.
 
 ## Fresh install from main
 
@@ -244,12 +274,14 @@ cd "$HOME/Projects/AgentWorkforce/local-e2e/infra"
 sudo /usr/bin/python3 ci/agent-relay/kind/local_host_setup.py down
 ```
 
-After success, run `make local-down` and repeat the complete Docker/app/data/
-hooks/artifact/checkout cleanup. Verify there is no test cluster/node, container,
-image, volume, build cache, app/backup, auth session, profile data, socket, launch
-job, managed hook/MCP entry, fixture clone, artifact, saved/trusted CA or Kind
-hosts entry. Docker Desktop, Git, Python, provider CLIs/auth and unrelated provider
-history remain.
+After success, run `make local-down` and repeat the scoped Kind Docker/q7 app/
+data/Keychain/hooks/artifact/checkout cleanup, with fresh before/after witnesses
+for this wipe. Verify no Kind-owned cluster/node, container, image, volume,
+scoped build cache, q7 app/backup/auth/data/socket/job/hook/MCP entry, Kind clone,
+artifact, saved/trusted CA or Kind hosts entry remains. JHS, its hook hashes,
+the rehearsal browser/shared images, unrelated checkouts, provider CLI auth and
+other non-Kind resources remain. Do not describe the whole Docker daemon or Mac
+as empty.
 
 Only after that final verification report `READY FOR KHALIQ` with the tested
 commit, exact commands, actual timings and acceptance checklist.
