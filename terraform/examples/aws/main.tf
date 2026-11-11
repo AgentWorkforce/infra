@@ -93,6 +93,14 @@ module "search" {
     indexer_service_accounts = var.indexer_service_account == null ? [] : [{ cluster_name = var.eks_cluster_name, namespace = var.namespace, service_account = var.indexer_service_account }]
     reader_service_accounts  = var.reader_service_account == null ? [] : [{ cluster_name = var.eks_cluster_name, namespace = var.namespace, service_account = var.reader_service_account }]
   }
+  # The indexer and the session read API read session objects from this
+  # root's own sessions bucket: grant ListBucket/GetObject (and kms:Decrypt
+  # through S3 on kms_key_arn; none for the AWS-managed aws/s3 key) by
+  # default. search_sessions_bucket_read_enabled = false opts out.
+  sessions_bucket_read = var.search_sessions_bucket_read_enabled ? {
+    bucket_arn  = module.sessions_bucket.bucket_arn
+    kms_key_arn = var.kms_key_arn
+  } : null
   # In event mode the pipeline Lambda is also an indexer.
   additional_principal_arns = var.enable_functions ? [module.functions[0].execution_role_arn] : []
   tags                      = var.tags
