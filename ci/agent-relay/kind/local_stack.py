@@ -41,7 +41,7 @@ SITE = "https://relay.kind.agentrelay.com"
 HISTORY = "https://history.kind.agentrelay.com:8443"
 PGHOST = "postgres.agent-relay.svc.cluster.local"
 COLLECTOR_URL = "https://telemetry-collector.agent-relay.svc.cluster.local:8443/v1/events"
-TELEMETRY = {"control": "relaycontrol", "ingest": "session-ingest", "consumer": "session-pipeline-consumer", "reader": "session-read-api"}
+TELEMETRY = {"control": "relaycontrol", "ingest": "session-ingest", "consumer": "session-pipeline-consumer", "reader": "session-read-api", "brief": "session-brief"}
 HOSTS = [PGHOST, "relay.kind.agentrelay.com", "cast.kind.agentrelay.com", "history.kind.agentrelay.com", "files.kind.agentrelay.com", "telemetry-collector.agent-relay.svc.cluster.local"]
 
 
@@ -257,6 +257,7 @@ class LocalStack(Stack):
                 secretKeys={"lockerAccessKeyId": "rootUser", "lockerSecretAccessKey": "rootPassword"},
                 nativeBrief={"enabled": True, "image": image(PIPELINE), "workspaceIds": [tenant["workspaceId"]],
                     "keyPrefix": "96bulls", "sweepSeconds": 5, "batch": 1, "globalDailyCap": 64, "sessionDailyCap": 3,
+                    "analytics": analytics("brief"),
                     "openaiSecret": {"name": "local-model", "key": "OPENAI_API_KEY"}})
             worker["components"]["session-brief"] = {"enabled": True, "fullnameOverride": "session-brief", "replicas": 1}
             worker["components"]["session-brief"]["env"] = [env("SESSION_BRIEF_IDLE_SECONDS", "0"), env("SESSION_BRIEF_MAX_WAIT_SECONDS", "0")]
@@ -519,7 +520,7 @@ WHERE p.oid=to_regprocedure('session_consumer_bootstrap_private.consumer_has_pas
             "createdAt": datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")}
         private_json(path, self.credentials)
         c = self.credentials
-        for key in ("collector", "sessions_pipeline_runtime", "collector_ingest", "collector_consumer", "collector_reader"):
+        for key in ("collector", "sessions_pipeline_runtime", *("collector_" + name for name in TELEMETRY if name != "control")):
             c.setdefault(key, secrets.token_hex(32))
         private_json(path, c)
         self.stage("chart-dependencies", self.dependencies)

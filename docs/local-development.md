@@ -154,9 +154,10 @@ timing and output metrics; the canonical event transcript and summary render.
 Clean-room wipe/repeat/wipe remains pending. These observations do not establish
 that final reproducibility proof.
 
-Local ingest uses asynchronous admission. Control, ingest, consumer and reader
+Local ingest uses asynchronous admission. Control, ingest, consumer, reader and brief
 use separate private collector credentials. The currently pinned Relaycast image
-lacks collector support; Dashboard and brief have no matching managed adapter
-in this profile. Collector readiness alone does not qualify event delivery.
+lacks collector support; Dashboard has no matching managed adapter in this profile.
+Brief telemetry wiring is covered by the rendered chart; its live event proof is
+pending the coordinated rollout. Collector readiness alone does not qualify event delivery.
 An existing local model Secret survives repeated `make local-up` without an
 environment override; explicitly supplying an empty `OPENAI_API_KEY` disables it.

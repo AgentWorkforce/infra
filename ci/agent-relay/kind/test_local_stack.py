@@ -311,6 +311,10 @@ class LocalTests(unittest.TestCase):
                 if name == "sessions-session-brief":
                     self.assertEqual(env["SESSION_BRIEF_GLOBAL_DAILY_CAP"]["value"], "64")
                     self.assertEqual(env["SESSION_BRIEF_SESSION_DAILY_CAP"]["value"], "3")
+                    self.assertEqual(env["ANALYTICS_SINK"]["value"], "collector")
+                    self.assertIn("local-telemetry-brief", json.dumps(container))
+                    self.assertTrue(any(m["name"] == "brief-analytics-ca" for m in container["volumeMounts"]))
+                    self.assertEqual(deployment["spec"]["template"]["metadata"]["labels"]["agentworkforce.dev/analytics-producer"], "true")
                 if name in ("session-native-ingest", "session-native-consumer", "session-read-api"):
                     self.assertEqual(env["ANALYTICS_SINK"]["value"], "collector")
                     self.assertIn("valueFrom", env["ANALYTICS_COLLECTOR_TOKEN"])
