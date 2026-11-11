@@ -7,8 +7,8 @@ on:
   push:
     # The shell gate below applies a strict agent-relay-X.Y.Z regex. GitHub's
     # tag filter is intentionally only a coarse pre-filter. The tag scheme
-    # matches the repo convention: <chart>-<version> (e.g. agent-relay-0.1.0),
-    # which the self-hosted requirements registry and version-bump check read.
+    # is the customer release version (for example 2026.11.0). The manifest
+    # records the independently versioned Helm chart carried by that release.
     tags:
       - agent-relay-*
 
@@ -40,7 +40,7 @@ jobs:
     timeout-minutes: 30
     permissions:
       attestations: write
-      contents: read
+      contents: write
       id-token: write
       packages: write
     steps:
@@ -79,8 +79,8 @@ jobs:
           chart_type="$(awk '/^type:/ { print $2; exit }' <<<"$chart_metadata")"
           [[ "$chart_name" == "$CHART_NAME" ]] \
             || { echo "::error::Expected chart name $CHART_NAME, got $chart_name."; exit 1; }
-          [[ "$chart_version" == "$version" ]] \
-            || { echo "::error::Tag version $version does not match Chart.yaml version $chart_version."; exit 1; }
+          [[ "$chart_version" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] \
+            || { echo "::error::Chart version $chart_version is not stable SemVer."; exit 1; }
           [[ "$chart_type" == "application" ]] \
             || { echo "::error::The release target must be an application chart."; exit 1; }
 
@@ -93,6 +93,7 @@ jobs:
             || { echo "::error::The tagged commit is not reachable from origin/main."; exit 1; }
 
           echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "chart_version=$chart_version" >> "$GITHUB_OUTPUT"
 
       - name: Add locked dependency repositories
         shell: bash
@@ -124,17 +125,18 @@ jobs:
           git diff --exit-code -- charts/sessions-pipeline/Chart.lock "$CHART_DIR/Chart.lock" \
             || { echo "::error::Linting changed a lock file."; exit 1; }
 
-      - name: Package and checksum the chart
+      - name: Package chart and build pull-release assets
         id: package
         shell: bash
         env:
           VERSION: ${{ steps.release.outputs.version }}
+          CHART_VERSION: ${{ steps.release.outputs.chart_version }}
         run: |
           set -euo pipefail
           mkdir -p .release
           helm package "$CHART_DIR" --destination .release
 
-          package=".release/${CHART_NAME}-${VERSION}.tgz"
+          package=".release/${CHART_NAME}-${CHART_VERSION}.tgz"
           [[ -f "$package" ]] \
             || { echo "::error::Helm did not create the expected package $package."; exit 1; }
           [[ "$(find .release -maxdepth 1 -type f -name '*.tgz' | wc -l)" -eq 1 ]] \
@@ -142,11 +144,41 @@ jobs:
 
           packaged_metadata="$(helm show chart "$package")"
           [[ "$(awk '/^name:/ { print $2; exit }' <<<"$packaged_metadata")" == "$CHART_NAME" ]]
-          [[ "$(awk '/^version:/ { print $2; exit }' <<<"$packaged_metadata")" == "$VERSION" ]]
+          [[ "$(awk '/^version:/ { print $2; exit }' <<<"$packaged_metadata")" == "$CHART_VERSION" ]]
+
+          helm template "$CHART_NAME" "$CHART_DIR" \
+            -f "$CHART_DIR/values-gcp.yaml" \
+            > .release/customer-pack-render.yaml
+          yq -N -r \
+            '.. | select(tag == "!!map") | select(has("image") or has("imageName")) | (.image // .imageName) | select(tag == "!!str")' \
+            .release/customer-pack-render.yaml \
+            | sort -u > .release/customer-images.txt
+          yq -N -r \
+            '.images[] | [.id, .current.repository, .current.digest, .approval.status] | @tsv' \
+            self-hosted/customer-images.yaml \
+            > .release/customer-image-inventory.tsv
+          python3 scripts/release/build-agent-relay-release-manifest.py \
+            --version "$VERSION" \
+            --infra-commit "$GITHUB_SHA" \
+            --chart-path "$CHART_DIR" \
+            --chart-version "$CHART_VERSION" \
+            --images .release/customer-images.txt \
+            --inventory .release/customer-image-inventory.tsv \
+            --output .release/release-manifest.json \
+            --values-overlay-output .release/release-images.values.yaml
+          {
+            printf '# Agent Relay %s\n\n' "$VERSION"
+            printf 'Immutable chart and customer image pull manifest for infra commit `%s`.\n' "$GITHUB_SHA"
+          } > .release/release-notes.md
 
           (
             cd .release
-            sha256sum "${CHART_NAME}-${VERSION}.tgz" > SHA256SUMS
+            sha256sum \
+              "${CHART_NAME}-${CHART_VERSION}.tgz" \
+              release-manifest.json \
+              release-images.values.yaml \
+              release-notes.md \
+              > SHA256SUMS
             sha256sum --check SHA256SUMS
           )
           echo "path=$package" >> "$GITHUB_OUTPUT"
@@ -157,6 +189,9 @@ jobs:
           name: agent-relay-${{ steps.release.outputs.version }}
           path: |
             ${{ steps.package.outputs.path }}
+            .release/release-manifest.json
+            .release/release-images.values.yaml
+            .release/release-notes.md
             .release/SHA256SUMS
           if-no-files-found: error
           compression-level: 0
@@ -169,11 +204,19 @@ jobs:
         with:
           subject-path: ${{ steps.package.outputs.path }}
 
+      - name: Attest pull-release assets
+        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2.4.0
+        with:
+          subject-path: |
+            .release/release-manifest.json
+            .release/release-images.values.yaml
+            .release/SHA256SUMS
+
       - name: Publish only the Helm OCI artifact
         shell: bash
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          VERSION: ${{ steps.release.outputs.version }}
+          CHART_VERSION: ${{ steps.release.outputs.chart_version }}
         run: |
           set -euo pipefail
           owner="${GITHUB_REPOSITORY_OWNER,,}"
@@ -196,13 +239,27 @@ jobs:
             --write-out '%{http_code}' \
             --header "Authorization: Bearer ${registry_token}" \
             --header 'Accept: application/vnd.oci.image.manifest.v1+json' \
-            "https://ghcr.io/v2/${repository}/manifests/${VERSION}")"
+            "https://ghcr.io/v2/${repository}/manifests/${CHART_VERSION}")"
           unset registry_token
+          already_published=false
+
+          printf '%s' "$GITHUB_TOKEN" \
+            | helm registry login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+          trap 'helm registry logout ghcr.io >/dev/null 2>&1 || true' EXIT
+
           case "$status" in
             404) ;;
             200)
-              echo "::error::ghcr.io/${repository}:${VERSION} already exists; refusing to overwrite it."
-              exit 1
+              mkdir -p .release/existing
+              helm pull "${registry}/${CHART_NAME}" \
+                --version "$CHART_VERSION" \
+                --destination .release/existing
+              existing=".release/existing/${CHART_NAME}-${CHART_VERSION}.tgz"
+              if ! cmp --silent "$package" "$existing"; then
+                echo "::error::ghcr.io/${repository}:${CHART_VERSION} already exists with different bytes."
+                exit 1
+              fi
+              already_published=true
               ;;
             *)
               echo "::error::GHCR existence check failed with HTTP ${status}; refusing to publish."
@@ -210,19 +267,48 @@ jobs:
               ;;
           esac
 
-          printf '%s' "$GITHUB_TOKEN" \
-            | helm registry login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
-          trap 'helm registry logout ghcr.io >/dev/null 2>&1 || true' EXIT
-
           # There are deliberately no Docker/buildx operations in this
           # workflow: proof-only container images can never be published here.
-          helm push "$package" "$registry"
+          if [[ "$already_published" != true ]]; then
+            helm push "$package" "$registry"
+          fi
 
           mkdir -p .release/verify
           helm pull "${registry}/${CHART_NAME}" \
-            --version "$VERSION" \
+            --version "$CHART_VERSION" \
             --destination .release/verify
-          expected="$(awk '{ print $1 }' .release/SHA256SUMS)"
-          actual="$(sha256sum ".release/verify/${CHART_NAME}-${VERSION}.tgz" | awk '{ print $1 }')"
+          expected="$(awk -v file="${CHART_NAME}-${CHART_VERSION}.tgz" '$2 == file { print $1 }' .release/SHA256SUMS)"
+          [[ -n "$expected" ]] \
+            || { echo "::error::The chart is absent from SHA256SUMS."; exit 1; }
+          actual="$(sha256sum ".release/verify/${CHART_NAME}-${CHART_VERSION}.tgz" | awk '{ print $1 }')"
           [[ "$actual" == "$expected" ]] \
             || { echo "::error::The package pulled from GHCR does not match SHA256SUMS."; exit 1; }
+
+      - name: Publish GitHub release assets
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          set -euo pipefail
+          assets=(
+            "${{ steps.package.outputs.path }}"
+            .release/release-manifest.json
+            .release/release-images.values.yaml
+            .release/SHA256SUMS
+            .release/release-notes.md
+          )
+          if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" \
+              --clobber "${assets[@]}"
+            gh release edit "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" \
+              --title "Agent Relay $VERSION" \
+              --notes-file .release/release-notes.md
+          else
+            gh release create "$GITHUB_REF_NAME" \
+              --repo "$GITHUB_REPOSITORY" \
+              --verify-tag \
+              --title "Agent Relay $VERSION" \
+              --notes-file .release/release-notes.md \
+              "${assets[@]}"
+          fi
