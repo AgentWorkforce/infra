@@ -51,6 +51,8 @@ environment on an older chart still gets the current tooling), and `env/` is the
 - `{"type": "pg_dump", "databases": [{"label": "control", "namespace": "<ns>", "secret": "<Secret>", "key": "<key>"}]}`:
   a custom-format `pg_dump` per database, streamed to `s3://<bucket>/snapshots/<run>/<label>.dump`. The URL is
   read from the Secret inside the job and never printed. Use a session-mode (not transaction-mode) pooler URL.
+  For `sslmode=verify-full`, add `"ca": {"configMap": "<name>", "key": "ca.crt"}` (same namespace): the
+  CA the application trusts becomes `PGSSLROOTCERT` for the dump.
 - `{"type": "none"}`.
 
 ## Secrets

@@ -137,7 +137,7 @@ snapshot(){
       echo "rds:$id" > "$REPORT_DIR/snapshot"; log "snapshot: $id available" ;;
     pg_dump)
       # One custom-format dump per entry, streamed to S3; the URL is read from the cluster and never printed.
-      local n i ns name key url dest
+      local n i ns name key url dest ca
       n=$(jq '.snapshot.databases | length' "$CFG")
       [ "$n" -gt 0 ] || die "snapshot.databases is empty"
       : > "$REPORT_DIR/snapshot"
@@ -146,6 +146,21 @@ snapshot(){
         url=$(kubectl -n "$ns" get secret "${key%%/*}" -o json | jq -r --arg k "${key#*/}" '.data[$k] // empty' | base64 -d)
         [ -n "$url" ] || die "snapshot $name: secret key ${key} is empty or missing"
         dest="s3://$CI_DEPLOY_BUCKET/snapshots/$RUN_ID/$name.dump"
+        # Optional CA for sslmode=verify-full, from the ConfigMap the application itself trusts.
+        unset PGSSLROOTCERT
+        ca=$(jq -r ".snapshot.databases[$i].ca // empty | \"\\(.configMap)/\\(.key)\"" "$CFG")
+        if [ -n "$ca" ]; then
+          kubectl -n "$ns" get configmap "${ca%%/*}" -o json | jq -j --arg k "${ca#*/}" '.data[$k] // empty' > "$WORK/pg-ca-$name.crt"
+          [ -s "$WORK/pg-ca-$name.crt" ] || die "snapshot $name: CA ConfigMap $ca is empty or missing"
+          export PGSSLROOTCERT="$WORK/pg-ca-$name.crt"
+          # libpq prefers a URL sslrootcert (often a pod-only path) over PGSSLROOTCERT: point it at this CA.
+          url=$(printf '%s' "$url" | python3 -c 'import os, sys, urllib.parse as u
+p = u.urlsplit(sys.stdin.read())
+q = [(k, v) for k, v in u.parse_qsl(p.query, keep_blank_values=True) if k != "sslrootcert"]
+if len(q) != len(u.parse_qsl(p.query, keep_blank_values=True)):
+    q.append(("sslrootcert", os.environ["PGSSLROOTCERT"]))
+sys.stdout.write(u.urlunsplit(p._replace(query=u.urlencode(q, quote_via=u.quote, safe="/"))))')
+        fi
         log "snapshot: pg_dump $name -> $dest"
         pg_dump --format=custom --no-owner --no-privileges --dbname="$url" |
           aws s3 cp --only-show-errors - "$dest"   # the bucket's default customer key
