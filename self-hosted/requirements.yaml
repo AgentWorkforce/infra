@@ -1228,9 +1228,22 @@ compatibility:
       images:
         relayauth: { repository: ghcr.io/agentworkforce/relayauth, digest: sha256:eb71daa28e30eb7305f666d0bccc5a4002e53e8a574e3c4c32163d907a1b71df }
       notes: superseded by 0.1.1.
-    - id: agent-relay-0.6.48
+    - id: agent-relay-0.6.49
       status: unreleased
       current: true
+      charts: { agent-relay: 0.6.49, relayhistory: 0.1.3, relay-control: 0.4.14, relay-webapp: 0.2.4 }
+      app_versions: { agent-relay: 0.1.0, relayhistory: 0.1.0, relay-control: 0.1.0, relay-webapp: 0.1.0 }
+      depends:
+        agent-relay: { relaycast: 0.3.8, relayauth: 0.1.5, sessions-pipeline: 0.8.25, relayhistory: 0.1.3, relay-control: 0.4.14, relay-webapp: 0.2.4, relayflows: 0.2.5, durable-actors: 0.14.6-awf.1, relayfile: 0.2.2, telemetry-collector: 0.1.5, relay-chief: 0.1.0 }
+      images:
+        relaycast: { repository: ghcr.io/agentworkforce/relaycast-self-host, digest: sha256:ab9dd6781e68f09d5e2e686a17088f9ad533978ef13d974a47d6c212d8eedbde }
+        sessions-pipeline-worker: { repository: ghcr.io/agentworkforce/sessions-pipeline, digest: sha256:77022c5b6a1d30f96f921d703eb27a1acada8ec273ad84aebdde24f8eddce305 }
+        relayhistory: { repository: ghcr.io/agentworkforce/relayhistory, digest_required: true }
+        relay-control: { repository: ghcr.io/agentworkforce/relay-control, digest: sha256:d8c26d44dccb6dd21b7033288241a379e46ce5fbca69f276c4d4745001c3c3e2 }
+        relay-webapp: { repository: ghcr.io/agentworkforce/relay-webapp, digest: sha256:bd295ccb7d1323965dce890f19d0b7f857d706c00d7756f719c713763fdb49f3 }
+      notes: 'Adds the owner-only usage_people selection (relay-control chart 0.4.14 accepts selectedFeatures usage_people). Pinned digests are unchanged from 0.6.48; usage_people needs relay-control 0.5.17 or later and a dashboard image with the People view. Otherwise as 0.6.48.'
+    - id: agent-relay-0.6.48
+      status: planned
       charts: { agent-relay: 0.6.48, relayhistory: 0.1.3, relay-control: 0.4.13, relay-webapp: 0.2.4 }
       app_versions: { agent-relay: 0.1.0, relayhistory: 0.1.0, relay-control: 0.1.0, relay-webapp: 0.1.0 }
       depends:
@@ -1241,7 +1254,7 @@ compatibility:
         relayhistory: { repository: ghcr.io/agentworkforce/relayhistory, digest_required: true }
         relay-control: { repository: ghcr.io/agentworkforce/relay-control, digest: sha256:d8c26d44dccb6dd21b7033288241a379e46ce5fbca69f276c4d4745001c3c3e2 }
         relay-webapp: { repository: ghcr.io/agentworkforce/relay-webapp, digest: sha256:bd295ccb7d1323965dce890f19d0b7f857d706c00d7756f719c713763fdb49f3 }
-      notes: 'Adds the reusable customer-neutral values-eks-rds-native.yaml umbrella overlay on top of 0.6.47 and preserves its hosted customer-logo chart wiring: RDS, S3 Pod Identity, OpenSearch, native read/ingest/indexing, Output/digest/facts without a narrative model, structured password/setup-key sign-in, default-off coordination and agent-name views, and the approved 2026.11.0 image pins. Carries sessions-pipeline 0.8.25, whose AWS profile selects the fresh-native timing and lagging-canonical assumptions required by that image. It preserves the reader-first ceiling-10 phase and leaves output-facts bootstrap and wasm-bindgen writer selection explicit. Render and golden tests prove the four exact Pod Identity ServiceAccounts, no rendered Secrets, no legacy RelayAuth/History workloads, and the default EBS StorageClass contract.'
+      notes: 'Superseded before release by 0.6.49. Adds the reusable customer-neutral values-eks-rds-native.yaml umbrella overlay on top of 0.6.47 and preserves its hosted customer-logo chart wiring: RDS, S3 Pod Identity, OpenSearch, native read/ingest/indexing, Output/digest/facts without a narrative model, structured password/setup-key sign-in, default-off coordination and agent-name views, and the approved 2026.11.0 image pins. Carries sessions-pipeline 0.8.25, whose AWS profile selects the fresh-native timing and lagging-canonical assumptions required by that image. It preserves the reader-first ceiling-10 phase and leaves output-facts bootstrap and wasm-bindgen writer selection explicit. Render and golden tests prove the four exact Pod Identity ServiceAccounts, no rendered Secrets, no legacy RelayAuth/History workloads, and the default EBS StorageClass contract.'
     - id: agent-relay-0.6.47
       status: planned
       charts: { agent-relay: 0.6.47, relayhistory: 0.1.3, relay-control: 0.4.13, relay-webapp: 0.2.4 }
@@ -5852,7 +5865,7 @@ entries:
     title: Explicit optional Control features
     description: |
       selectedFeatures=null preserves the existing extraEnv/default selection.
-      A managed list selects only flows, relayfile, chief, usage and launch; [] explicitly
+      A managed list selects only flows, relayfile, chief, usage, launch and usage_people; [] explicitly
       serves core only. usage serves the owner-only Usage page (counts only).
       While it is off Control keeps no active-user or search counters; session
       and summary counts come from the session directory, which records
@@ -5861,6 +5874,11 @@ entries:
       entitlement is used. launch serves agent launch tools on the shared-sessions
       MCP endpoint (owners/admins on a person connection, onto this workspace's
       own claimed nodes) and needs relay-control 0.5.14 or later.
+      usage_people serves the owner-only per-member Usage drill-down (member
+      names, emails and recorded session summaries; every view is audited) and
+      needs relay-control 0.5.17 or later. With selectedFeatures=null and no
+      SELFHOST_FEATURES in extraEnv, such images select usage and usage_people
+      by default.
       Managed selection reserves SELFHOST_FEATURES against duplicate extraEnv.
     chart: relay-control
     values: [selectedFeatures]
@@ -5869,7 +5887,7 @@ entries:
     status: shipped
     provided_by: operator
     default: null
-    choices: [{ value: null }, { value: [], note: Core only }, { value: [flows, relayfile, chief] }, { value: [usage], note: Owner-only Usage page }, { value: [launch], note: MCP agent launch }]
+    choices: [{ value: null }, { value: [], note: Core only }, { value: [flows, relayfile, chief] }, { value: [usage], note: Owner-only Usage page }, { value: [launch], note: MCP agent launch }, { value: [usage, usage_people], note: Usage page with the per-member drill-down }]
     verify: Render explicit core with an empty SELFHOST_FEATURES and refuse unknown names, duplicates and duplicate extraEnv.
     sources: [charts/relay-control/templates/deployment.yaml, charts/relay-control/templates/_helpers.tpl]
 

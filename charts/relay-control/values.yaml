@@ -33,7 +33,14 @@ global:
       key: ""
 existingSecret: ""
 # null preserves existing extraEnv selection; [] explicitly selects core only.
-# Managed names: flows, relayfile, chief, usage, launch. No license is used.
+# Managed names: flows, relayfile, chief, usage, launch, usage_people. No
+# license is used. With selectedFeatures null and no SELFHOST_FEATURES in
+# extraEnv, relay-control 0.5.17 and later select usage and usage_people by
+# default; a managed list (including []) is exact.
+# usage_people: the owner-only per-member Usage drill-down. It shows member
+# names, emails and their sessions' recorded titles and summaries, and audits
+# every view. Needs relay-control 0.5.17 or later (0.5.18 for bounded read API
+# use) and a relay-webapp image with the People view.
 # usage: the owner-only dashboard Usage page (counts only). While it is off,
 # Control keeps no active-user or search counters; session and summary counts
 # are read from the session directory, which records sessions regardless.
