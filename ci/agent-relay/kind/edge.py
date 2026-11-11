@@ -1,4 +1,5 @@
 """Pinned local ingress with backend/API/DNS-only egress."""
+import base64
 import hashlib
 import ipaddress
 import http.client
@@ -14,25 +15,40 @@ DEFAULT_TLS = "kind-edge-default-tls"
 DEFAULT_TLS_MOUNT = "/kind-edge-default-tls"
 
 
-def default_certificate_values(stack):
+def default_certificate_values(stack, tls_secret=None):
     """Serve the local CA's leaf for unmatched SNI instead of Traefik's self-signed default.
 
     Without this, a request for an unrouted host fails as an unknown authority
     before hostname checks run, so a client cannot distinguish "wrong host"
     from "untrusted edge". The leaf is the same one the application ingresses
-    use (tls.create), copied into the edge namespace for the pod to mount.
+    use, copied into the edge namespace for the pod to mount. Native callers
+    pass their owned ingress Secret; legacy callers use tls.create's files.
     """
-    cert, key = stack.state / "tls.crt", stack.state / "tls.key"
-    if not (cert.exists() and key.exists()):
-        return {}
+    if tls_secret is None:
+        cert, key = stack.state / "tls.crt", stack.state / "tls.key"
+        if not (cert.exists() and key.exists()):
+            return {}
+        certificate, private_key = cert.read_bytes(), key.read_bytes()
+    else:
+        try:
+            if tls_secret["type"] != "kubernetes.io/tls":
+                raise ValueError()
+            certificate = base64.b64decode(tls_secret["data"]["tls.crt"], validate=True)
+            private_key = base64.b64decode(tls_secret["data"]["tls.key"], validate=True)
+            if not certificate or not private_key:
+                raise ValueError()
+            certificate.decode("ascii")
+            private_key.decode("ascii")
+        except (KeyError, TypeError, ValueError):
+            raise ValueError("native edge TLS Secret is incomplete or malformed") from None
     stack.apply({"apiVersion": "v1", "kind": "Secret", "metadata": {"name": DEFAULT_TLS, "namespace": EDGE_NAMESPACE},
-                 "type": "kubernetes.io/tls", "stringData": {"tls.crt": cert.read_text(), "tls.key": key.read_text()}})
+                 "type": "kubernetes.io/tls", "stringData": {"tls.crt": certificate.decode("ascii"), "tls.key": private_key.decode("ascii")}})
     # Chart 42.x's schema takes the file-provider content as an object, not YAML text.
     store = {"tls": {"stores": {"default": {"defaultCertificate": {
         "certFile": f"{DEFAULT_TLS_MOUNT}/tls.crt", "keyFile": f"{DEFAULT_TLS_MOUNT}/tls.key"}}}}}
     # The file-provider paths remain unchanged when this Secret rotates.
     # Put the public leaf's digest on the Pod so Helm restarts Traefik too.
-    annotations = {"checksum/kind-edge-default-tls": hashlib.sha256(cert.read_bytes()).hexdigest()}
+    annotations = {"checksum/kind-edge-default-tls": hashlib.sha256(certificate).hexdigest()}
     return {"deployment": {"podAnnotations": annotations},
             "volumes": [{"name": DEFAULT_TLS, "mountPath": DEFAULT_TLS_MOUNT, "type": "secret"}],
             "file": {"enabled": True, "watch": False, "content": store}}
@@ -98,7 +114,7 @@ def validate_policy(actual, desired):
         fail("edge egress policy differs from the exact backend/API/DNS-only contract")
 
 
-def install(stack, version, namespace, *, wait_for_route=True):
+def install(stack, version, namespace, *, wait_for_route=True, tls_secret=None):
     policy, exists = preflight_policy(stack, namespace)  # before any apply or Helm action
     stack.apply({"apiVersion": "v1", "kind": "Namespace", "metadata": {"name": EDGE_NAMESPACE}})
     if not exists:
@@ -112,7 +128,7 @@ def install(stack, version, namespace, *, wait_for_route=True):
         "ports": {"web": {"nodePort": 30080}, "websecure": {"nodePort": 30443}},
         "providers": {"kubernetesIngress": {"enabled": True}, "kubernetesCRD": {"enabled": False}},
         "ingressClass": {"enabled": True, "isDefaultClass": False, "name": "traefik"}}
-    default_tls = default_certificate_values(stack)
+    default_tls = default_certificate_values(stack, tls_secret)
     if default_tls:
         values["deployment"] = default_tls["deployment"]
         values["volumes"] = default_tls["volumes"]

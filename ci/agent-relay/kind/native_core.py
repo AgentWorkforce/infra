@@ -495,7 +495,10 @@ import('/app/node_modules/relay-control/dist/features.js').then(m=>{
         network_stack = self._network_stack(selected)
         native_network.preflight(network_stack, value)
         self._qualify_public_route(selected, self._public_route, allow_absent=True)
-        install(self.stack, TRAEFIK_CHART, "agent-relay", wait_for_route=False)
+        # Native bootstrap keeps its leaf in the owned Secret, not in the
+        # legacy stack.state TLS files. Reuse that exact leaf on repeat too.
+        install(self.stack, TRAEFIK_CHART, "agent-relay", wait_for_route=False,
+                tls_secret=self._get("secret/kind-tls"))
         observation = native_network.ensure(network_stack, value)
         require(native_network.selected_values(value, observation) == value,
                 "independent_reader_must_not_gain_legacy_alias_values")

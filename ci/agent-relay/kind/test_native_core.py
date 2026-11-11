@@ -367,8 +367,11 @@ print(json.dumps(rows))
         a._import_webapp = lambda selected: None
         a._upgrade = lambda selected, values: applied.append(deepcopy(values)) or []
         a._release_revision = 1
+        ingress_secret = {'type': 'kubernetes.io/tls', 'data': {'tls.crt': 'bmF0aXZl', 'tls.key': 'a2V5'}}
+        a._get = lambda name: ingress_secret if name == 'secret/kind-tls' else self.fail('unexpected Secret')
         with patch('edge.install', return_value=None) as install:
             a.serve(s, {'bootstrapEnabled': False, 'phase': 'serve'})
+            self.assertIs(install.call_args.kwargs['tls_secret'], ingress_secret)
             self.assertEqual(len(applied), 1)
             self.assertEqual(applied[0]['relay-control']['services']['publicHostAliases'], [
                 {'ip': '10.96.42.7', 'hostnames': ['relay.kind.agentrelay.com']}])

@@ -1,4 +1,5 @@
 """Dependency-free causal tests for owned local native network selection."""
+import base64
 import copy
 import json
 from pathlib import Path
@@ -321,6 +322,25 @@ class NativeNetwork(unittest.TestCase):
         self.assertEqual(values['providers']['file']['content'],{'tls':{'stores':{'default':{'defaultCertificate':{
             'certFile':f'{edge.DEFAULT_TLS_MOUNT}/tls.crt','keyFile':f'{edge.DEFAULT_TLS_MOUNT}/tls.key'}}}}})
         self.assertFalse(values['providers']['kubernetesCRD']['enabled'])
+
+    def test_native_leaf_is_copied_without_legacy_tls_files(self):
+        effects=[]; self.stack.apply=lambda doc:effects.append(doc)
+        secret={'type':'kubernetes.io/tls','data':{
+            'tls.crt':base64.b64encode(b'NATIVE-CERT').decode(),
+            'tls.key':base64.b64encode(b'NATIVE-KEY').decode()}}
+        self.assertFalse((self.stack.state/'tls.crt').exists())
+        value=edge.default_certificate_values(self.stack,secret)
+        self.assertEqual(effects[0]['stringData'],{'tls.crt':'NATIVE-CERT','tls.key':'NATIVE-KEY'})
+        self.assertIn('podAnnotations',value['deployment'])
+        self.assertFalse((self.stack.state/'tls.key').exists())
+
+    def test_malformed_native_leaf_is_not_copied_or_silently_skipped(self):
+        for secret in ({}, {'type':'Opaque','data':{}},
+                       {'type':'kubernetes.io/tls','data':{'tls.crt':'!!','tls.key':'!!'}}):
+            effects=[]; self.stack.apply=lambda doc:effects.append(doc)
+            with self.subTest(secret=secret), self.assertRaisesRegex(ValueError,'native edge TLS Secret'):
+                edge.default_certificate_values(self.stack,secret)
+            self.assertEqual(effects,[])
 
     def test_replacing_the_default_leaf_changes_the_edge_pod_template(self):
         self.stack.edge_policies=[self.edge_policy()]
