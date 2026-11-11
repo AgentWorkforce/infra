@@ -43,16 +43,31 @@ done
 [[ "$site" == https://* ]] || { echo "--site must be https" >&2; exit 2; }
 [[ "$profile" =~ ^[a-z0-9]{1,32}$ ]] || { echo "--profile must be a lowercase id" >&2; exit 2; }
 [ -n "${RELAY_ADMIN_TOKEN:-}" ] || { echo "RELAY_ADMIN_TOKEN is required (never pass it as an argument)" >&2; exit 2; }
+[[ "$RELAY_ADMIN_TOKEN" =~ ^[A-Za-z0-9._~+/=-]+$ ]] || {
+  echo "RELAY_ADMIN_TOKEN contains unsupported bearer-token characters" >&2
+  exit 2
+}
+# Keep the bearer in shell memory only. Child processes must not inherit it in
+# their environment, and curl receives it through its stdin config below.
+admin_token="$RELAY_ADMIN_TOKEN"
+unset RELAY_ADMIN_TOKEN
 if [ -n "$run" ] && [ -z "$version" ]; then echo "--version is required with --candidate-run" >&2; exit 2; fi
 env_name="desktop-$profile"
 base="$site/api/v1/organizations/$org/desktop-feed/profiles"
 
 api() { # method path [json]; prints body; fails on non-2xx without echoing secrets
   local method="$1" url="$2" body="${3:-}" out code
+  local -a curl_args
   out=$(mktemp); trap 'rm -f "$out"' RETURN
-  code=$(curl -sS -o "$out" -w '%{http_code}' -X "$method" "$url" \
-    -H "Authorization: Bearer $RELAY_ADMIN_TOKEN" -H 'Accept: application/json' \
-    ${body:+-H 'Content-Type: application/json' --data "$body"})
+  curl_args=(-sS -o "$out" -w '%{http_code}' -X "$method" "$url"
+    -H 'Accept: application/json')
+  if [ -n "$body" ]; then
+    curl_args+=(-H 'Content-Type: application/json' --data "$body")
+  fi
+  code=$(
+    printf 'header = "Authorization: Bearer %s"\n' "$admin_token" |
+      curl --config - "${curl_args[@]}"
+  )
   case "$code" in 2??) cat "$out";; *) echo "$method $url -> HTTP $code: $(jq -c '{code:(.code // .error // null)}' "$out" 2>/dev/null)" >&2; return 1;; esac
 }
 say() { printf '%s\n' "$*"; }

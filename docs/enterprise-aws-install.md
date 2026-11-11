@@ -270,7 +270,114 @@ verification or count a SPA HTML fallback as an API health response.
 **Checkpoint:** the script passes and a pilot laptop resolves and reaches all
 client-facing origins through VPN/ZTNA, including selected upload endpoints.
 
-## 6. Onboard the first owner and pilot users
+## 6. Provision and promote the private Desktop feed
+
+**Who:** platform administrator and Desktop release owner, from a macOS admin
+runner after Relay Control is healthy.
+
+Relay Control must start with the private feed enabled before this step:
+
+- `SELFHOST_DESKTOP_FEED_SIGNER=awskms` and
+  `SELFHOST_DESKTOP_FEED_STORAGE=s3`;
+- `SELFHOST_DESKTOP_FEED_KMS_KEY_ALIASES` maps the exact profile ID from the
+  private handoff to its AWS KMS alias. The referenced key must use key spec
+  `ECC_NIST_EDWARDS25519` and key usage `SIGN_VERIFY`;
+- the Control workload role can call `kms:Sign` and `kms:GetPublicKey` on that
+  key and can put, get and delete feed objects in the approved S3 prefix; and
+- `SELFHOST_DESKTOP_FEED_S3_BUCKET`, `SELFHOST_DESKTOP_FEED_S3_REGION` and
+  `SELFHOST_DESKTOP_FEED_S3_PREFIX` match the reviewed application overlay.
+  Keep the bucket private.
+
+Confirm the Control migration Job completed before continuing. The admin
+runner needs `bash`, `curl`, `jq`, an authenticated GitHub CLI with permission
+to manage the Desktop repository's environment secrets and dispatch its
+workflows, and `hdiutil` to inspect the macOS candidate. Inject
+`RELAY_ADMIN_TOKEN` from the approved secret system as an environment variable;
+never put it in an argument, command transcript or handoff. It must be a Control
+bootstrap token or an organization owner/admin bearer for the selected site.
+
+Set the non-secret inputs from the private handoff. The current release packet
+selects Desktop candidate run `42903809516` and version `2026.11.5`; do not
+substitute another run or version without a new release review.
+
+```bash
+export DESKTOP_REPO="AgentWorkforce/relay-desktop"
+export DESKTOP_SITE_URL="https://api.<customer-domain>"
+export DESKTOP_ORG_ID="<organization-id>"
+export DESKTOP_PROFILE_ID="<profile-id>"
+export DESKTOP_WORKSPACE_ID="<workspace-id>"
+export DESKTOP_ASSET_PREFIX="<approved-asset-prefix>"
+export DESKTOP_CANDIDATE_RUN="42903809516"
+export DESKTOP_VERSION="2026.11.5"
+export DESKTOP_ENVIRONMENT="desktop-${DESKTOP_PROFILE_ID}"
+: "${RELAY_ADMIN_TOKEN:?inject RELAY_ADMIN_TOKEN from the approved secret system}"
+gh auth status -h github.com
+```
+
+Run the provisioner without `--apply` first. This plan reads the existing
+profile and downloads the candidate for its embedded-key check, but does not
+register or bind a profile, mint a token, change a GitHub secret or dispatch a
+workflow.
+
+```bash
+scripts/selfhost/desktop-feed-provision.sh \
+  --site "$DESKTOP_SITE_URL" \
+  --org "$DESKTOP_ORG_ID" \
+  --profile "$DESKTOP_PROFILE_ID" \
+  --workspace "$DESKTOP_WORKSPACE_ID" \
+  --asset-prefix "$DESKTOP_ASSET_PREFIX" \
+  --candidate-run "$DESKTOP_CANDIDATE_RUN" \
+  --version "$DESKTOP_VERSION"
+```
+
+Require the plan to identify the intended site, profile and
+`desktop-<profile>` GitHub environment. For an existing profile it must report
+that run `42903809516` embeds the site's public feed key. A first-time plan
+cannot perform that key check because the profile and KMS public key do not
+exist in Control yet; it reports `would register profile` instead.
+
+After explicit approval of these exact inputs and the external mutations, run
+the same command once with `--apply`:
+
+```bash
+scripts/selfhost/desktop-feed-provision.sh \
+  --site "$DESKTOP_SITE_URL" \
+  --org "$DESKTOP_ORG_ID" \
+  --profile "$DESKTOP_PROFILE_ID" \
+  --workspace "$DESKTOP_WORKSPACE_ID" \
+  --asset-prefix "$DESKTOP_ASSET_PREFIX" \
+  --candidate-run "$DESKTOP_CANDIDATE_RUN" \
+  --version "$DESKTOP_VERSION" \
+  --apply
+```
+
+The apply registers or reuses the profile, binds the workspace, sets the
+public key in `DESKTOP_FEED_PUBLIC_KEY`, mints the publisher token directly
+into `DESKTOP_FEED_PUBLISHER_TOKEN` in `$DESKTOP_ENVIRONMENT`, and dispatches
+`desktop-promote.yml` only after the candidate's embedded key matches. The
+publisher token is never printed or written to disk.
+
+This operation is not transactional. On a candidate-key mismatch the script
+skips Promote, but the same apply still leaves any profile registration and
+workspace binding in place and still updates the GitHub secrets, including a
+new publisher token. Do not retry blindly: the profile retains at most two
+active tokens and a third mint revokes the oldest. Inspect the recorded state
+and reconcile a failed step before another apply.
+
+Verify secret names without reading their values, then require the dispatched
+Promote run and the profile feed acceptance to pass:
+
+```bash
+gh secret list -R "$DESKTOP_REPO" --env "$DESKTOP_ENVIRONMENT"
+gh run list -R "$DESKTOP_REPO" --workflow desktop-promote.yml --limit 5
+```
+
+**Checkpoint:** the intended workspace is bound, the GitHub environment lists
+both feed secret names, the Promote run for candidate `42903809516` and version
+`2026.11.5` succeeds, and a bound Desktop accepts the signed profile feed. A
+dispatch alone is not publication or client-acceptance proof.
+
+## 7. Onboard the first owner and pilot users
 
 **Who:** the configured customer owner, then each invited user.
 
@@ -301,7 +408,7 @@ client-facing origins through VPN/ZTNA, including selected upload endpoints.
 **Checkpoint:** a real pilot user can complete SSO, install the correct Desktop
 profile and approve their own device without Kubernetes or bootstrap access.
 
-## 7. Prove the workflow and hand it over
+## 8. Prove the workflow and hand it over
 
 **Who:** pilot user, customer administrator and release owner.
 
