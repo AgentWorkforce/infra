@@ -7,6 +7,12 @@ dedicated Apple Silicon test Mac. It is not a receipt that those steps passed.
 
 - Use merged infra main containing the local stack and Desktop installer.
   Wait for the coordinated prerequisite PRs before resetting the machine.
+  Final acceptance must use the AA pack from merged #211: Control 0.5.16,
+  Sessions alpha.5, the EKS SQLite Relaycast generation and the pack's webapp.
+  The local recipe must derive those image references and managed
+  `[usage, launch]` features from merged `charts/agent-relay/values-eks.yaml`,
+  and select the merged `values-scrub-wasm-bindgen.yaml` overlay. Do not copy
+  digest literals from a message or substitute a previous trial's pins.
 - Retain Git, Python 3.9+, Docker Desktop with its local Linux engine, and the
   authenticated Codex/Claude executables. Docker and kubectl must be on PATH;
   their standard directory is `/Applications/Docker.app/Contents/Resources/bin`.
@@ -155,9 +161,13 @@ make local-up
 
 Record the commit and cold bring-up duration. Require fresh 0600 credentials, a
 new CA, Kind, official migrations and all core roles ready on the published
-immutable source pins. Do not load recovery images or supply an operator packet.
-Keep the default scrubber settings until a qualified replacement is selected in
-source.
+immutable AA source pins. Do not load recovery images or supply an operator
+packet. Record each resolved image reference alongside the merged main commit.
+Require `SCRUB_ENGINE=wasm-bindgen`, `SCRUB_ENGINE_REQUIRED=wasm-bindgen`,
+`READER_MAX_RULESET=10`, and `READ_API_SESSION_QUERY=true` at the applicable
+services workloads. Check the migration/other services-image Jobs as well as
+Deployments. For this empty-database install, the qualified WASM overlay can be
+selected initially; this is not an in-place cutover of retained data.
 
 ### Operator sudo boundary 2: trust the new fixture
 
@@ -198,6 +208,15 @@ it from the deleted fixture.
 - A new unique marker from a real `codex exec` reaches Desktop upload,
   pointer/manifest storage, ready directory, transcript index, session-list
   search and dashboard transcript. Use fresh IDs, not old provider history.
+- Prove WASM scrubbing on that real upload. Generate a syntactically valid but
+  entirely invented credential fixture that is never used for authentication.
+  Include it beside the unique marker in the new Codex session, retain the local
+  input witness privately, and verify the raw fixture is absent and its expected
+  redaction is present in stored/transcript output. Keep the fixture out of git
+  and exported logs. Record actual WASM engine initialization/processing evidence,
+  required-engine/no-fallback behavior, ruleset and image identity. Environment
+  selection alone is not processing proof; never substitute a synthetic upload
+  or manually seed a manifest, transcript or summary.
 - A real generated brief for that session appears in the dashboard. Record
   model/token metadata without credentials.
 - Private collector events arrive from supported producers, including brief.
