@@ -1,6 +1,7 @@
 {{- define "sessions-pipeline.searchIndexer.env" -}}
 {{- $c := .c -}}
 - { name: SERVICE, value: {{ .service }} }
+{{- include "sessions-pipeline.scrubEngine" (dict "root" .root "localReader" $c.readerMaxRuleset "localName" "searchIndexer.readerMaxRuleset") }}
 - { name: RELAYHISTORY_SELFHOST_PIPELINE_CONSUMER, value: "true" }
 {{- if .outputFacts }}
 - { name: RELAYHISTORY_SELFHOST_OUTPUT_FACTS, value: "true" }

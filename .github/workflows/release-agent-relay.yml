@@ -169,6 +169,7 @@ jobs:
           {
             printf '# Agent Relay %s\n\n' "$VERSION"
             printf 'Immutable chart and customer image pull manifest for infra commit `%s`.\n' "$GITHUB_SHA"
+            printf '\nThe customer profiles apply the ruleset-10 reader-first phase. Existing installs must verify every Sessions workload before a separate revision adds `values-scrub-wasm-bindgen.yaml`; fresh empty installs may apply that overlay at install time.\n'
           } > .release/release-notes.md
 
           (

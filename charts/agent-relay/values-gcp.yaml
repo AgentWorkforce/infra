@@ -15,6 +15,13 @@ components:
 global:
   # REQUIRED OVERRIDE: Artifact Registry hostname for the chosen GCP region.
   imageRegistry: us-central1-docker.pkg.dev
+  # Release phase 1: every services-image reader starts at the ruleset-10
+  # ceiling while writer selection stays unchanged. Existing installs must
+  # reach Ready on this phase before applying values-scrub-wasm-bindgen.yaml.
+  scrubEngine:
+    engine: ""
+    required: ""
+    readerMaxRuleset: "10"
   tenant:
     # REQUIRED OVERRIDE: stable organization ID used to partition session data.
     orgId: example-org

@@ -12,6 +12,13 @@
 
 global:
   imageRegistry: ghcr.io
+  # One compatibility contract for every self-host workload that runs the
+  # services image. Existing installs first set only readerMaxRuleset: "10",
+  # then select wasm-bindgen in a separate upgrade after every reader is Ready.
+  scrubEngine:
+    engine: ""
+    required: ""
+    readerMaxRuleset: ""
   tenant:
     orgId: ""          # REQUIRED: your Agent Relay org id
   otel:
@@ -345,6 +352,9 @@ sessionReadApi:
 # default. Run it with exactly one replica. Its ServiceAccount must carry the
 # Pod Identity association Terraform creates for the search indexer role.
 searchIndexer:
+  # Legacy per-component fallback. Prefer global.scrubEngine.readerMaxRuleset
+  # so every services-image workload changes in one reader-first phase.
+  readerMaxRuleset: null
   enabled: false
   fullnameOverride: ""
   image:

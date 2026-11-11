@@ -340,6 +340,17 @@ revision and snapshot ID if a step fails. AWS, Kubernetes, and GitHub
 credentials come only from the administrator's normal environment or stdin;
 never add credentials to command arguments or values files.
 
+The EKS customer profile is the reader-first phase of the ruleset-10 scrubber
+rollout. On an existing installation, complete that upgrade and verify every
+Sessions Deployment is Ready and every current Sessions Job completed with
+`READER_MAX_RULESET=10` before a separate Helm revision adds
+`charts/agent-relay/values-scrub-wasm-bindgen.yaml`. The second revision
+selects and requires `wasm-bindgen` on every workload using the Services image.
+Do not combine the phases on a populated database. A fresh AA installation
+with an empty Sessions database may include the cutover overlay in its initial
+install because every reader starts at ceiling 10 before any data is written.
+On rollback, retain the ceiling at 10 while ruleset-10 objects exist.
+
 ## 5. Verify ingress, TLS and services
 
 **Who:** platform administrator, with a pilot laptop on the customer network.

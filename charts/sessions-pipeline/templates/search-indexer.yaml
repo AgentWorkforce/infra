@@ -1,5 +1,6 @@
 {{- $c := .Values.searchIndexer -}}
 {{- if not (kindIs "bool" $c.enabled) }}{{ fail "searchIndexer.enabled must be a boolean" }}{{ end -}}
+{{- if and (not (kindIs "invalid" $c.readerMaxRuleset)) (not (has (toString $c.readerMaxRuleset) (list "8" "9" "10"))) }}{{ fail "searchIndexer.readerMaxRuleset must be one of 8, 9, or 10" }}{{ end -}}
 {{- if $c.enabled -}}
 {{- $name := default (printf "%s-search-indexer" .Release.Name) $c.fullnameOverride -}}
 {{- /* The bootstrap Job appends 19 characters; Job names are DNS-1123 labels. */ -}}
@@ -106,7 +107,7 @@ spec:
           image: {{ printf "%s@%s" $repository $digest | quote }}
           imagePullPolicy: {{ $c.image.pullPolicy }}
           env:
-            {{- include "sessions-pipeline.searchIndexer.env" (dict "c" $c "service" "session-pipeline-consumer" "secret" $secret "key" $c.config.key "outputFacts" $facts.enabled) | nindent 12 }}
+            {{- include "sessions-pipeline.searchIndexer.env" (dict "root" . "c" $c "service" "session-pipeline-consumer" "secret" $secret "key" $c.config.key "outputFacts" $facts.enabled) | nindent 12 }}
             - { name: WORKER_HEALTH_PORT, value: {{ $c.healthPort | quote }} }
           ports:
             - { name: health, containerPort: {{ $c.healthPort }}, protocol: TCP }
@@ -161,7 +162,7 @@ spec:
           image: {{ printf "%s@%s" $repository $digest | quote }}
           imagePullPolicy: {{ $c.image.pullPolicy }}
           env:
-            {{- include "sessions-pipeline.searchIndexer.env" (dict "c" $c "service" "session-pipeline-consumer-bootstrap" "secret" $bootstrapSecret "key" $c.bootstrap.key) | nindent 12 }}
+            {{- include "sessions-pipeline.searchIndexer.env" (dict "root" . "c" $c "service" "session-pipeline-consumer-bootstrap" "secret" $bootstrapSecret "key" $c.bootstrap.key) | nindent 12 }}
           {{- include "sessions-pipeline.searchIndexer.container" . | nindent 10 }}
           {{- with $c.resources }}
           resources:

@@ -10,7 +10,7 @@ metadata:
   auditedAt: "2026-11-11"
   chart:
     name: agent-relay
-    version: 0.6.21
+    version: 0.6.37
     values:
       - charts/agent-relay/values-gcp.yaml
       - charts/agent-relay/values-gcp-native.yaml
@@ -24,6 +24,10 @@ scope:
     are optional components, off in this profile, and are not part of this
     matrix. Every active row is an immutable digest rendered by the two
     profile values files.
+    The active customer profiles are the reader-first release phase: every
+    Sessions services workload receives READER_MAX_RULESET=10 while the scrub
+    engine remains unchanged. values-scrub-wasm-bindgen.yaml is a separate,
+    explicit cutover overlay and is not active in this phase-1 inventory.
   activeUniqueImages: 5
   excludedConditionalImages:
     - image: cgr.dev/chainguard/minio

@@ -104,9 +104,6 @@
 
 {{- define "sessions-pipeline-worker.nativeBriefEnv" -}}
 - { name: SESSION_BRIEF_ENABLED, value: "true" }
-{{- if not (kindIs "invalid" .Values.nativeBrief.readerMaxRuleset) }}
-- { name: READER_MAX_RULESET, value: {{ .Values.nativeBrief.readerMaxRuleset | quote }} }
-{{- end }}
 - { name: SESSION_BRIEF_CANONICAL_INPUT, value: "true" }
 - { name: SESSION_BRIEF_WORKSPACE_IDS, value: {{ join "," .Values.nativeBrief.workspaceIds | quote }} }
 - { name: SESSION_BRIEF_MODEL, value: {{ .Values.nativeBrief.model | quote }} }

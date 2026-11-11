@@ -175,9 +175,7 @@ spec:
           env:
             {{- include "sessions-pipeline.analytics.env" $c.analytics | nindent 12 }}
             - { name: SERVICE, value: session-ingest }
-            {{- if not (kindIs "invalid" $c.readerMaxRuleset) }}
-            - { name: READER_MAX_RULESET, value: {{ $c.readerMaxRuleset | quote }} }
-            {{- end }}
+            {{- include "sessions-pipeline.scrubEngine" (dict "root" . "localReader" $c.readerMaxRuleset "localName" "ingestEdge.readerMaxRuleset") | nindent 12 }}
             - { name: RELAYHISTORY_SELFHOST_INGEST, value: "true" }
             - { name: RELAYHISTORY_INGEST_PORT, value: {{ $c.port | quote }} }
             - { name: RELAYHISTORY_INGEST_ORIGIN, value: {{ $origin | quote }} }

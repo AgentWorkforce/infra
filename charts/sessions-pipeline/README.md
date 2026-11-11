@@ -162,23 +162,37 @@ migration generation. See [the operator contract](../../docs/self-hosted-native-
 for its two-pool TLS requirements, separate owner/runtime Secrets, indexer drain
 and prepare/serve bootstrap order. No install profile enables it.
 
-## Reader ruleset ceiling
+## Scrub-engine and reader ruleset contract
 
-The compatibility surfaces expose independent `readerMaxRuleset` values and render
-`READER_MAX_RULESET`: `nativeConsumer`, `worker.nativeBrief`, `sessionReadApi`,
-`alleyoop`, and `ingestEdge`. Every value defaults to `null`, omitting the
-environment binding and preserving legacy reads. Explicit `8`, `9`, or `10` opts into strict marker and chunk checks.
-The ingest-edge engine initializer also uses this ceiling to reject an incompatible
-Rust/WASM pin before loading it. The pin gate retains its own ceiling of 8 when
-unset. A ceiling does not select the writer ruleset,
-enable a component, or activate Rust/WASM behavior.
+`global.scrubEngine` is one strict contract inherited by every self-host
+workload and Job that runs the Services image, including ingest, read API,
+publication, worker, search consumer and bootstrap entry points. Its three
+fields default to empty strings and emit nothing, preserving the prior engine
+and reader behavior:
 
-Raise readers before any writer can emit a newer ruleset, using an immutable
-services image containing the reviewed #489 compatibility and binding fixes. The five values deliberately do not have to match during a
-staged rollout. Before writer activation, prove each required read path against
-representative objects. If newer objects have been written, keep the readers at
-the needed explicit ceiling during rollback. Removing the policy or rolling back
-the chart does not convert those objects.
+```yaml
+global:
+  scrubEngine:
+    engine: ""
+    required: ""
+    readerMaxRuleset: ""
+```
+
+For an existing install, phase 1 sets only `readerMaxRuleset: "10"`; verify
+every Services workload is Ready or complete before phase 2 sets both `engine`
+and `required` to `wasm-bindgen`. The chart then emits the exact
+`SCRUB_ENGINE=wasm-bindgen`, `SCRUB_ENGINE_REQUIRED=wasm-bindgen`, and
+`READER_MAX_RULESET=10` triple everywhere. A fresh install with an empty
+Sessions database may start directly on the full triple because all readers
+start before any object exists.
+
+The chart refuses any engine other than empty or `wasm-bindgen`, a required
+engine that differs from the selection, a non-string ceiling, and a wasm-bindgen
+selection below ceiling 10. Legacy per-component `readerMaxRuleset` values are
+retained as fallbacks for compatibility; when the shared ceiling is set, they
+must be unset or equal it. Keep ceiling 10 during rollback while ruleset-10
+objects exist. Rendering the contract does not qualify an image or prove its
+runtime scrubber.
 
 ## Upload credential renewal route
 

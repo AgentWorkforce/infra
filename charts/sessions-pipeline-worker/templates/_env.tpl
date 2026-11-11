@@ -13,6 +13,9 @@ Fail early on missing required values (render time, not crash-loop time).
 {{- if not (has (toString .Values.allowInClusterHttp) (list "true" "false")) }}{{ fail "sessions-pipeline-worker: allowInClusterHttp must be true or false" }}{{ end -}}
 {{- range .Values.extraEnv }}{{ if eq (.name | default "") "ALLOW_IN_CLUSTER_HTTP" }}{{ fail "sessions-pipeline-worker: extraEnv must not set ALLOW_IN_CLUSTER_HTTP: use allowInClusterHttp" }}{{ end }}{{ end -}}
 {{- range $n, $c := .Values.components }}{{ range ($c.env | default list) }}{{ if eq (.name | default "") "ALLOW_IN_CLUSTER_HTTP" }}{{ fail (printf "sessions-pipeline-worker: components.%s.env must not set ALLOW_IN_CLUSTER_HTTP: use allowInClusterHttp" $n) }}{{ end }}{{ end }}{{ end -}}
+{{- $scrubReserved := list "SCRUB_ENGINE" "SCRUB_ENGINE_REQUIRED" "READER_MAX_RULESET" -}}
+{{- range .Values.extraEnv }}{{ if has (.name | default "") $scrubReserved }}{{ fail (printf "sessions-pipeline-worker: extraEnv must not set %s: use global.scrubEngine" .name) }}{{ end }}{{ end -}}
+{{- range $n, $c := .Values.components }}{{ range ($c.env | default list) }}{{ if has (.name | default "") $scrubReserved }}{{ fail (printf "sessions-pipeline-worker: components.%s.env must not set %s: use global.scrubEngine" $n .name) }}{{ end }}{{ end }}{{ end -}}
 {{- $migrations := .Values.migrations | default dict -}}
 {{- $migrationHoopdb := get $migrations "hoopdb" | default dict -}}
 {{- if not (or (eq $credentialsMode "secret") (eq $credentialsMode "podIdentity")) }}{{ fail "sessions-pipeline-worker: locker.credentials.mode must be secret or podIdentity" }}{{ end -}}
@@ -102,6 +105,9 @@ Usage: include "sessions-pipeline-worker.env" (dict "context" . "service" "refer
   value: {{ .service | quote }}
 - name: OTEL_SERVICE_NAME
   value: {{ .service | quote }}
+{{- $scrub := dict "root" .context "localName" "readerMaxRuleset" -}}
+{{- if eq .service "session-brief" }}{{ $_ := set $scrub "localReader" $v.nativeBrief.readerMaxRuleset }}{{ $_ := set $scrub "localName" "nativeBrief.readerMaxRuleset" }}{{ end -}}
+{{- include "sessions-pipeline-worker.scrubEngine" $scrub }}
 {{ include "sessions-pipeline-worker.hoopdbUrlEnv" (dict "root" .context "migrate" (eq .service "hoopdb-migrate")) }}
 - name: LOCKER_ENDPOINT
   value: {{ $v.locker.endpoint | quote }}

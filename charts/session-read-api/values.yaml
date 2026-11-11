@@ -1,6 +1,14 @@
 # Standalone chart for the session read API. sessions-pipeline carries it as a
 # default-off dependency under the sessionReadApi key.
 
+global:
+  # Inherited from the sessions-pipeline umbrella. Direct installs may set it
+  # here. Empty preserves the legacy runtime selection and reader ceiling.
+  scrubEngine:
+    engine: ""
+    required: ""
+    readerMaxRuleset: ""
+
 # Override the Deployment and Service name. Default: <release>-read-api, the
 # name the old sessions-pipeline readApi block used.
 fullnameOverride: ""

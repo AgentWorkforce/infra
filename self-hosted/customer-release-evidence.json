@@ -116,14 +116,14 @@
       "requiredStatusChecks": [],
       "requiresPullRequest": false
     },
-    "chartVersion": "0.3.12",
+    "chartVersion": "0.6.38",
     "environmentControls": {
       "name": "customer-release",
       "preventsSelfReview": false,
       "protected": false,
       "requiredApprovals": 0
     },
-    "imageManifestSha256": "sha256:6b5ca032931b8f11745ed861890b7cd349f872cb796469f1c535b6c30c2d634c",
+    "imageManifestSha256": "sha256:3a6d2120e70325b6c93e1feb9eb5e90c4c7063ac95c23cfd8c467aab57268da7",
     "valuesFile": "charts/agent-relay/values-gcp.yaml"
   },
   "releaseDecision": "blocked",

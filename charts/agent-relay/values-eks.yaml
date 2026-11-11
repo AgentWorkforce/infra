@@ -31,6 +31,13 @@ components:
 
 global:
   imageRegistry: ""
+  # Release phase 1: every services-image reader starts at the ruleset-10
+  # ceiling while writer selection stays unchanged. Existing installs must
+  # reach Ready on this phase before applying values-scrub-wasm-bindgen.yaml.
+  scrubEngine:
+    engine: ""
+    required: ""
+    readerMaxRuleset: "10"
   tenant:
     # REQUIRED OVERRIDE: stable organization ID used to partition session data.
     orgId: example-org
@@ -280,10 +287,12 @@ relay-control:
 relay-webapp:
   fullnameOverride: relay-webapp
   image:
-    # Release image (public GHCR, relay-webapp main e5003d0).
-    repository: ghcr.io/agentworkforce/relay-dashboard
-    digest: sha256:c50005fcdd1fc5ab5ef3dac9b621db8e0c7e03480406bfe519743ae435d8f1ad
+    # Release image (public GHCR, relay-webapp main d40c0b30), the approved
+    # successor to 3f38ab72 with the default-off coordination-overlaps view.
+    repository: ghcr.io/agentworkforce/relay-webapp
+    digest: sha256:bd295ccb7d1323965dce890f19d0b7f857d706c00d7756f719c713763fdb49f3
   runtime:
+    coordinationOverlapsEnabled: false
     # REQUIRED OVERRIDE: the public dashboard origin.
     publicUrl: https://dashboard.placeholder.company
     appPath: /
