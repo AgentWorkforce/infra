@@ -481,6 +481,10 @@ for chart in "${charts[@]}"; do
         expect_render_failure "$chart" "$v" "invalid internal History origin" "services.relayhistoryUrl must be an HTTP(S) origin" --set services.relayhistoryUrl=http://relayhistory:8080/v1
         expect_render_failure "$chart" "$v" "plaintext public Relaycast origin" "services.relaycastPublicUrl must be a public HTTPS origin" --set services.relaycastPublicUrl=http://cast.gcp-proof.agentrelay.com
         expect_render_failure "$chart" "$v" "private public History origin" "services.relayhistoryPublicUrl must be a public HTTPS origin" --set services.relayhistoryPublicUrl=https://relayhistory
+        # Optional features: usage is a managed name; an unknown one fails, default renders none.
+        [ "$(render "$chart" "$v" --set 'selectedFeatures={flows,usage}' | yq 'select(.kind == "Deployment") | .spec.template.spec.containers[0].env[] | select(.name == "SELFHOST_FEATURES") | .value')" = flows,usage ] \
+          || err "$chart: selectedFeatures={flows,usage} must render SELFHOST_FEATURES=flows,usage"
+        expect_render_failure "$chart" "$v" "unknown optional feature" "selectedFeatures contains an unknown optional component" --set 'selectedFeatures={usage,teleport}'
         out=$(render "$chart" "$v")
         grep -q 'name: SELFHOST_PUBLIC_URL' <<<"$out" || err "$chart: SELFHOST_PUBLIC_URL is not rendered"
         grep -q 'name: RELAYCAST_PUBLIC_URL' <<<"$out" || err "$chart: RELAYCAST_PUBLIC_URL is not rendered"
