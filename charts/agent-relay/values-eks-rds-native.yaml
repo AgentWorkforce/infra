@@ -315,7 +315,7 @@ relay-control:
 relay-webapp:
   image:
     repository: ghcr.io/agentworkforce/relay-webapp
-    digest: sha256:34ef185ae4abad2b07f3f64b43bb4af1412d9e48c0053f8c2e38769c7b91cff3
+    digest: sha256:da0cc80476eac734299c0c6ceb94e2bca7dae7913cce56a8ca8592cf086dd02e
   runtime:
     sessionReadApiEnabled: true
     # The backend endpoint is on; the customer-visible tab stays default off.
