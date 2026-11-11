@@ -7,7 +7,7 @@ dependencies:
   version: 0.4.4
 - name: session-read-api
   repository: file://../session-read-api
-  version: 0.2.7
+  version: 0.2.8
 - name: cluster
   repository: https://cloudnative-pg.github.io/charts
   version: 0.9.0
@@ -17,5 +17,5 @@ dependencies:
 - name: opentelemetry-collector
   repository: https://open-telemetry.github.io/opentelemetry-helm-charts
   version: 0.178.0
-digest: sha256:80643c403a4a5c27be7f6eb3f2a2a4b337047c49f8c10b35b63d9acf6f0fb8ac
-generated: "2026-11-10T17:03:53.976855956-08:00"
+digest: sha256:333a5a4fe6dfd4bb7be5e5de28d62767307d22bbb305c276475f26791fcaff31
+generated: "2026-11-10T22:28:52.396093-08:00"

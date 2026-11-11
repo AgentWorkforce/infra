@@ -2,6 +2,9 @@
 {{- $c := .c -}}
 - { name: SERVICE, value: {{ .service }} }
 - { name: RELAYHISTORY_SELFHOST_PIPELINE_CONSUMER, value: "true" }
+{{- if .outputFacts }}
+- { name: RELAYHISTORY_SELFHOST_OUTPUT_FACTS, value: "true" }
+{{- end }}
 - name: RELAYHISTORY_PIPELINE_CONSUMER_SECRET
   valueFrom:
     secretKeyRef: { name: {{ .secret | quote }}, key: {{ .key | quote }} }

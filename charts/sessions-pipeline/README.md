@@ -73,6 +73,87 @@ owner signs in, read the real workspace ID and add it to
 `worker.nativeBrief.workspaceIds`; the value is a bounded explicit list and
 never `"*"`. Repeat the render and acceptance checks when adding a workspace.
 
+## Output facts, Output and the daily digest
+
+`GET /v1/sessions/output`, `GET /v1/digest/daily` and coordination overlaps
+all read the Postgres output facts of migration
+`20261105045040_selfhost_output_facts` (commit, branch and file facts per
+session). Three switches produce and serve them; the `aws-rds-native` profile
+turns all three on:
+
+| Value | Default | Renders |
+| --- | --- | --- |
+| `searchIndexer.outputFacts.enabled` (or `nativeConsumer.outputFacts.enabled`) | `false` | `RELAYHISTORY_SELFHOST_OUTPUT_FACTS=true` on the consumer: every indexing pass also writes the session's facts, in the same transaction as its directory events |
+| `sessionReadApi.output.enabled` | `false` | `READ_API_OUTPUT_ENABLED=1`, `READ_API_OUTPUT_BACKEND=postgres` |
+| `sessionReadApi.digest.enabled` | `false` | `READ_API_DIGEST_ENABLED=1`, `READ_API_DIGEST_BACKEND=postgres` |
+
+The digest narrative model (`sessionReadApi.digest.narrative.model`) stays
+unset by default, so the read API makes no model call and no session content
+leaves the cluster. The digest statistics are still served; the narrative is
+`provider_not_configured`. See
+[the session read API guide](../../docs/self-hosted-session-read-api.md#output-and-the-daily-digest)
+before setting a model.
+
+**Database prerequisites.** None beyond the profile's normal install. The
+migration grants the four facts writers to `search_consumer_runtime` and the
+readers to `bulls96_read_api`, both of which `scripts/selfhost/rds-setup.sh`
+already provisions; turning the writer on needs no extra role or grant. The
+services image must contain migration `045040` (any artifact that serves
+coordination overlaps does).
+
+**Coverage watermark.** The read API answers a window only after the
+workspace has a coverage watermark
+(`sessions.output_facts_workspace_state.complete_since`). Until then every
+Output and digest window answers 501 `output_backfill_incomplete` /
+`digest_backfill_incomplete`, and a window that starts before it answers
+`*_before_watermark`. The only writer of the watermark is the output facts
+bootstrap Job, which the chart renders when
+`searchIndexer.outputFacts.bootstrap.enabled=true` (default off; there is no
+equivalent Job for `nativeConsumer`, run it there per the pipeline runbook
+`runbooks/selfhost-output-facts-bootstrap.md`).
+
+The Job runs `SERVICE=session-pipeline-output-facts-bootstrap` from the same
+services image as the indexer, as the schema owner from
+`searchIndexer.bootstrap.existingSecret` (`search-indexer-owner` in the
+profile). It queues every live session that owes facts for the running
+indexer, waits up to `deadlineSeconds` (default 7200) for them, then marks each
+workspace whose sessions all have complete facts, with `complete_since` set to
+its earliest session. A watermark is never moved once written. The Job only
+marks workspaces that already have sessions, so on a fresh install:
+
+1. Install with the writer on (the profile default) and finish
+   `rds-setup.sh post`. Facts are written from the first upload onward.
+2. After the first sessions of a workspace have arrived, add this to the
+   private values overlay and apply it with the release's normal
+   `helm upgrade ... --no-hooks` command:
+
+   ```yaml
+   sessions-pipeline:          # omit this level when installing this chart directly
+     searchIndexer:
+       outputFacts:
+         bootstrap:
+           enabled: true
+           runId: "1"
+   ```
+
+   Then wait for it:
+   `kubectl wait --for=condition=complete --timeout=2h job -l app.kubernetes.io/component=output-facts-bootstrap`.
+3. When another workspace starts uploading, change `runId` and run it again.
+
+The Job name is a hash of its spec and `runId`: a reapply with the same values
+never reruns it, and a new `runId` renders a new Job. `backoffLimit` is 0
+because its non-zero exits need an operator: 2 means refused (missing
+migration, consumer bootstrap not run, or not the owner identity; nothing was
+written), 3 means some workspaces still owe facts (check the indexer, then
+rerun; `allowPartial: true` turns 3 into 0 and leaves those workspaces
+unmarked). Running it against a database that already holds history is a
+database-owner decision: it only queues work for the indexer and inserts
+watermark rows, but record that approval in the release packet.
+
+Verify as the reader role inside a tenant transaction:
+`SELECT * FROM sessions.output_facts_coverage_for('<workspace>', '<from>', '<to>')`
+returns a non-null `complete_since` and `incomplete = 0`.
+
 ## Native canonical consumer (default off)
 
 `nativeConsumer` supplies a dedicated canonical pointer/Postgres-search consumer

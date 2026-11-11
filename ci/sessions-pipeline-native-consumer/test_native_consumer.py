@@ -70,6 +70,19 @@ class Consumer(unittest.TestCase):
         ca=next(v for v in p['volumes'] if v['name']=='postgres-ca-source')['configMap']
         self.assertEqual(ca['items'],[{'key':'ca.crt','path':'ca.crt'}]);self.assertEqual(ca['defaultMode'],292)
         self.assertEqual(self.env(p['containers'][0])['SERVICE']['value'],'session-pipeline-consumer')
+    def test_output_facts_is_a_default_off_runtime_only_flag(self):
+        for container in self.pod(self.render())['containers']:
+            self.assertNotIn('RELAYHISTORY_SELFHOST_OUTPUT_FACTS',self.env(container))
+        docs=self.render(self.native(outputFacts={'enabled':True}))
+        for container in self.pod(docs)['containers']+self.pod(docs)['initContainers']:
+            self.assertEqual(self.env(container)['RELAYHISTORY_SELFHOST_OUTPUT_FACTS']['value'],'true')
+        overlay=self.boot();overlay['nativeConsumer']['outputFacts']={'enabled':True}
+        job=self.pod(self.render(overlay),kind='Job')
+        for container in job['containers']+job['initContainers']:
+            self.assertNotIn('RELAYHISTORY_SELFHOST_OUTPUT_FACTS',self.env(container))
+        for value in ['true',1,None]:
+            with self.subTest(value=value):
+                self.assertIn('nativeConsumer.outputFacts.enabled must be a boolean',self.render(self.native(outputFacts={'enabled':value}),fail=True))
     def test_reader_ruleset_ceiling_is_exact_and_does_not_enable_the_consumer(self):
         for ceiling in [8,9,10]:
             with self.subTest(ceiling=ceiling):

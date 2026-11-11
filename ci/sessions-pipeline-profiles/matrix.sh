@@ -319,6 +319,42 @@ if [ "$mode" = static ]; then
   [ "$(read_value READ_API_COORDINATION_OVERLAPS_ENABLED)" = true ] || err "aws-rds-native: coordination overlaps are not enabled"
   [ "$(read_value READ_API_COORDINATION_OVERLAPS_BACKEND)" = postgres ] || err "aws-rds-native: coordination overlaps are not using postgres"
   [ "$(read_value READ_API_SESSION_QUERY)" = true ] || err "aws-rds-native: session query path is not enabled"
+  # Evaluation evidence: Output and the digest from the Postgres facts, no narrative model.
+  [ "$(read_value READ_API_OUTPUT_ENABLED)" = 1 ] || err "aws-rds-native: output route is not enabled"
+  [ "$(read_value READ_API_OUTPUT_BACKEND)" = postgres ] || err "aws-rds-native: output route is not using postgres"
+  [ "$(read_value READ_API_DIGEST_ENABLED)" = 1 ] || err "aws-rds-native: digest route is not enabled"
+  [ "$(read_value READ_API_DIGEST_BACKEND)" = postgres ] || err "aws-rds-native: digest route is not using postgres"
+  for name in READ_API_DIGEST_NARRATIVE_MODEL OPENAI_API_KEY OPENAI_BASE_URL READ_API_DIGEST_NARRATIVE_DB_URL; do
+    [ -z "$(read_value "$name")" ] || err "aws-rds-native: read API renders $name; the profile must make no model call"
+  done
+  [ "$(yq -r 'select(.kind == "Deployment" and .metadata.name == "ci-search-indexer") | .spec.template.spec.containers[0].env[] | select(.name == "RELAYHISTORY_SELFHOST_OUTPUT_FACTS") | .value' <<<"$out" | grep -v '^---$')" = true ] \
+    || err "aws-rds-native: search indexer does not write output facts"
+  facts_jobs=$(yq -r 'select(.kind == "Job" and .metadata.labels."app.kubernetes.io/component" == "output-facts-bootstrap") | .metadata.name' <<<"$out" | grep -v '^---$' || true)
+  [ -z "$facts_jobs" ] || err "aws-rds-native: the output facts bootstrap Job must stay an explicit operator step, rendered $facts_jobs"
+  # Selected, the Job is deterministic, hook-free, owner-identity and changes name only with its spec or runId.
+  facts_render() { render -f "$CHART/profiles/aws-rds-native.yaml" -f "$CHART/ci/aws-rds-native-inputs.yaml" --set searchIndexer.outputFacts.bootstrap.enabled=true "$@" \
+    | yq -r 'select(.kind == "Job" and .metadata.labels."app.kubernetes.io/component" == "output-facts-bootstrap")' | grep -v '^---$'; }
+  job=$(facts_render) || err "aws-rds-native: output facts bootstrap Job did not render"
+  job_name=$(yq -r '.metadata.name' <<<"$job")
+  [[ $job_name =~ ^ci-search-indexer-output-facts-[0-9a-f]{8}$ ]] || err "aws-rds-native: output facts Job name $job_name"
+  [ "$(facts_render | yq -r '.metadata.name')" = "$job_name" ] || err "aws-rds-native: output facts Job name is not deterministic"
+  [ "$(facts_render --set searchIndexer.outputFacts.bootstrap.runId=r2 | yq -r '.metadata.name')" != "$job_name" ] || err "aws-rds-native: runId does not rename the output facts Job"
+  # Any change to the immutable pod template must rename the Job, or the upgrade is rejected.
+  [ "$(facts_render --set searchIndexer.image.pullPolicy=Always | yq -r '.metadata.name')" != "$job_name" ] || err "aws-rds-native: a pull-policy change does not rename the output facts Job"
+  [ "$(facts_render --set searchIndexer.resources.limits.memory=2Gi | yq -r '.metadata.name')" != "$job_name" ] || err "aws-rds-native: a resources change does not rename the output facts Job"
+  [ "$(yq -r '.metadata.annotations // {} | keys | map(select(test("helm.sh/hook"))) | length' <<<"$job")" = 0 ] || err "aws-rds-native: output facts Job carries Helm hooks"
+  [ "$(yq -r '.spec.backoffLimit' <<<"$job")" = 0 ] || err "aws-rds-native: output facts Job retries"
+  job_env() { yq -r ".spec.template.spec.containers[0].env[] | select(.name == \"$1\") | (.value // .valueFrom.secretKeyRef.name)" <<<"$job"; }
+  [ "$(job_env SERVICE)" = session-pipeline-output-facts-bootstrap ] || err "aws-rds-native: output facts Job SERVICE"
+  [ "$(job_env RELAYHISTORY_SELFHOST_OUTPUT_FACTS)" = true ] || err "aws-rds-native: output facts Job flag"
+  [ "$(job_env RELAYHISTORY_PIPELINE_CONSUMER_SECRET)" = search-indexer-owner ] || err "aws-rds-native: output facts Job does not use the owner Secret"
+  [ "$(job_env RELAYHISTORY_SELFHOST_OUTPUT_FACTS_BOOTSTRAP_DEADLINE_SECONDS)" = 7200 ] || err "aws-rds-native: output facts Job deadline"
+  expect_fail "searchIndexer.outputFacts.bootstrap.enabled requires searchIndexer.outputFacts.enabled=true" \
+    -f "$CHART/profiles/aws-rds-native.yaml" -f "$CHART/ci/aws-rds-native-inputs.yaml" \
+    --set searchIndexer.outputFacts.enabled=false --set searchIndexer.outputFacts.bootstrap.enabled=true
+  expect_fail "activeDeadlineSeconds must exceed deadlineSeconds" \
+    -f "$CHART/profiles/aws-rds-native.yaml" -f "$CHART/ci/aws-rds-native-inputs.yaml" \
+    --set searchIndexer.outputFacts.bootstrap.enabled=true --set searchIndexer.outputFacts.bootstrap.deadlineSeconds=9000
   [ "$(yq -r 'select(.kind == "Deployment" and .metadata.name == "ci-ingest-edge") | .spec.template.spec.containers[0].env[] | select(.name == "RELAYCONTROL_INTROSPECT_URL") | .value' <<<"$out" | grep -v '^---$')" = http://ci-relay-control.ci.svc.cluster.local ] \
     || err "aws-rds-native: ingest edge does not use the release-overlay Control Service URL"
   [ "$(read_value SEARCH_INDEX_BACKEND)" = opensearch ] || err "aws-rds-native: read API does not select OpenSearch"

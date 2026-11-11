@@ -29,6 +29,22 @@
 {{- if eq $provider "gcs" -}}
 {{- range $name := $gcsNames }}{{ if not (hasKey $seen $name) }}{{ fail (printf "searchIndexer.locker.provider=gcs requires extraEnv %s" $name) }}{{ end }}{{ end -}}
 {{- else if $c.extraEnv }}{{ fail "searchIndexer.extraEnv is only supported with locker.provider=gcs" }}{{ end -}}
+{{- $facts := $c.outputFacts -}}
+{{- if not (kindIs "bool" $facts.enabled) }}{{ fail "searchIndexer.outputFacts.enabled must be a boolean" }}{{ end -}}
+{{- $factsJob := $facts.bootstrap -}}
+{{- range $field, $flag := dict "enabled" $factsJob.enabled "allowPartial" $factsJob.allowPartial -}}
+{{- if not (kindIs "bool" $flag) }}{{ fail (printf "searchIndexer.outputFacts.bootstrap.%s must be a boolean" $field) }}{{ end -}}
+{{- end -}}
+{{- if $factsJob.enabled -}}
+{{- if not $facts.enabled }}{{ fail "searchIndexer.outputFacts.bootstrap.enabled requires searchIndexer.outputFacts.enabled=true: the Job only queues work for an indexer that writes facts" }}{{ end -}}
+{{- if not $c.bootstrap.existingSecret }}{{ fail "searchIndexer.outputFacts.bootstrap.enabled requires searchIndexer.bootstrap.existingSecret (the schema owner connection)" }}{{ end -}}
+{{- if not (and (kindIs "string" $factsJob.runId) (regexMatch "^([a-z0-9]([-a-z0-9]{0,18}[a-z0-9])?)?$" $factsJob.runId)) }}{{ fail "searchIndexer.outputFacts.bootstrap.runId must be empty or lowercase letters, digits and dashes (at most 20 characters)" }}{{ end -}}
+{{- range $field, $n := dict "deadlineSeconds" $factsJob.deadlineSeconds "activeDeadlineSeconds" $factsJob.activeDeadlineSeconds -}}
+{{- if or (not (regexMatch "^[0-9]+$" (toString $n))) (lt (int $n) 1) (gt (int $n) 172800) }}{{ fail (printf "searchIndexer.outputFacts.bootstrap.%s must be a positive integer number of seconds" $field) }}{{ end -}}
+{{- end -}}
+{{- if gt (int $factsJob.deadlineSeconds) 86400 }}{{ fail "searchIndexer.outputFacts.bootstrap.deadlineSeconds must be at most 86400" }}{{ end -}}
+{{- if le (int $factsJob.activeDeadlineSeconds) (int $factsJob.deadlineSeconds) }}{{ fail "searchIndexer.outputFacts.bootstrap.activeDeadlineSeconds must exceed deadlineSeconds" }}{{ end -}}
+{{- end -}}
 {{- if and (not $c.bootstrap.enabled) (ne (toString $c.bootstrap.acknowledgeRunByOperator) "true") }}{{ fail "searchIndexer.bootstrap.enabled=false requires bootstrap.acknowledgeRunByOperator=true" }}{{ end -}}
 {{- if eq $backend "opensearch" -}}
 {{- $url := required "searchIndexer.search.opensearch.url is required" $c.search.opensearch.url -}}
@@ -90,7 +106,7 @@ spec:
           image: {{ printf "%s@%s" $repository $digest | quote }}
           imagePullPolicy: {{ $c.image.pullPolicy }}
           env:
-            {{- include "sessions-pipeline.searchIndexer.env" (dict "c" $c "service" "session-pipeline-consumer" "secret" $secret "key" $c.config.key) | nindent 12 }}
+            {{- include "sessions-pipeline.searchIndexer.env" (dict "c" $c "service" "session-pipeline-consumer" "secret" $secret "key" $c.config.key "outputFacts" $facts.enabled) | nindent 12 }}
             - { name: WORKER_HEALTH_PORT, value: {{ $c.healthPort | quote }} }
           ports:
             - { name: health, containerPort: {{ $c.healthPort }}, protocol: TCP }
@@ -121,7 +137,7 @@ kind: Job
 metadata:
   # Any change to this block is a new Job: a Job's pod template is immutable,
   # and the bootstrap is idempotent.
-  name: {{ printf "%s-bootstrap-%s" $name (toJson $c | sha256sum | trunc 8) }}
+  name: {{ printf "%s-bootstrap-%s" $name (toJson (omit $c "outputFacts") | sha256sum | trunc 8) }}
   namespace: {{ .Release.Namespace | quote }}
   labels:
     app.kubernetes.io/name: session-search-indexer
@@ -151,5 +167,35 @@ spec:
           resources:
             {{- toYaml . | nindent 12 }}
           {{- end }}
+{{- end }}
+{{- if $factsJob.enabled }}
+{{- $factsEnv := include "sessions-pipeline.searchIndexer.env" (dict "c" $c "service" "session-pipeline-output-facts-bootstrap" "secret" $c.bootstrap.existingSecret "key" $c.bootstrap.key "outputFacts" true) }}
+{{- $factsPod := printf "restartPolicy: Never\n%s\ncontainers:\n  - name: output-facts-bootstrap\n    image: %s\n    imagePullPolicy: %s\n    env:\n      %s\n      - { name: RELAYHISTORY_SELFHOST_OUTPUT_FACTS_BOOTSTRAP_DEADLINE_SECONDS, value: %s }\n      - { name: RELAYHISTORY_SELFHOST_OUTPUT_FACTS_BOOTSTRAP_ALLOW_PARTIAL, value: %s }\n    %s%s" (include "sessions-pipeline.searchIndexer.pod" .) (printf "%s@%s" $repository $digest | quote) $c.image.pullPolicy ($factsEnv | nindent 6 | trim) (int $factsJob.deadlineSeconds | toString | quote) ($factsJob.allowPartial | toString | quote) (include "sessions-pipeline.searchIndexer.container" . | nindent 4 | trim) (ternary (printf "\n    resources:\n      %s" (toYaml $c.resources | nindent 6 | trim)) "" (not (empty $c.resources))) }}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  # Deterministic: a hash of the whole pod spec, the deadline and runId, so a
+  # reapply with the same values never reruns it and any change to the
+  # (immutable) pod template renders a new Job. Change runId to run it again.
+  name: {{ printf "%s-output-facts-%s" ($name | trunc 41 | trimSuffix "-") (printf "%s\n%d\n%s" $factsPod (int $factsJob.activeDeadlineSeconds) $factsJob.runId | sha256sum | trunc 8) }}
+  namespace: {{ .Release.Namespace | quote }}
+  labels:
+    app.kubernetes.io/name: session-search-indexer
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: output-facts-bootstrap
+    helm.sh/chart: {{ printf "%s-%s" .Chart.Name .Chart.Version | quote }}
+spec:
+  # Exit 2 (refused) and 3 (incomplete) need an operator, not a retry.
+  backoffLimit: 0
+  activeDeadlineSeconds: {{ int $factsJob.activeDeadlineSeconds }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: session-search-indexer
+        app.kubernetes.io/instance: {{ .Release.Name }}
+        app.kubernetes.io/component: output-facts-bootstrap
+    spec:
+      {{- $factsPod | nindent 6 }}
 {{- end }}
 {{- end -}}

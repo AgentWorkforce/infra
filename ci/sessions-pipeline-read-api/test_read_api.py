@@ -254,6 +254,50 @@ class ReadApi(unittest.TestCase):
                     ),
                 )
 
+    def test_output_and_digest_are_default_off_postgres_routes_without_a_model(self):
+        names = ["READ_API_OUTPUT_ENABLED", "READ_API_OUTPUT_BACKEND", "READ_API_DIGEST_ENABLED", "READ_API_DIGEST_BACKEND",
+                 "READ_API_DIGEST_NARRATIVE_MODEL", "READ_API_DIGEST_NARRATIVE_DB_URL", "OPENAI_API_KEY", "OPENAI_BASE_URL"]
+        default = self.env_of(self.render())
+        for name in names:
+            self.assertNotIn(name, default)
+        env = self.env_of(self.render(overlay={"output": {"enabled": True}, "digest": {"enabled": True}}))
+        self.assertEqual(env["READ_API_OUTPUT_ENABLED"]["value"], "1")
+        self.assertEqual(env["READ_API_OUTPUT_BACKEND"]["value"], "postgres")
+        self.assertEqual(env["READ_API_DIGEST_ENABLED"]["value"], "1")
+        self.assertEqual(env["READ_API_DIGEST_BACKEND"]["value"], "postgres")
+        for name in names[4:]:
+            self.assertNotIn(name, env)  # no model call, nothing leaves the cluster
+
+        narrative = {"model": "gpt-4.1-mini", "baseUrl": "https://models.example.com/v1",
+                     "apiKey": {"existingSecret": "model-key"}, "writerDatabaseUrl": {"existingSecret": "narrative-writer"}}
+        env = self.env_of(self.render(overlay={"digest": {"enabled": True, "narrative": narrative}}))
+        self.assertEqual(env["READ_API_DIGEST_NARRATIVE_MODEL"]["value"], "gpt-4.1-mini")
+        self.assertEqual(env["OPENAI_BASE_URL"]["value"], "https://models.example.com/v1")
+        self.assertEqual(env["OPENAI_API_KEY"]["valueFrom"]["secretKeyRef"], {"name": "model-key", "key": "OPENAI_API_KEY"})
+        self.assertEqual(env["READ_API_DIGEST_NARRATIVE_DB_URL"]["valueFrom"]["secretKeyRef"],
+                         {"name": "narrative-writer", "key": "READ_API_DIGEST_NARRATIVE_DB_URL"})
+
+        for overlay, message in [
+            ({"output": {"enabled": "true"}}, "output.enabled must be a boolean"),
+            ({"digest": {"enabled": 1}}, "digest.enabled must be a boolean"),
+            ({"digest": {"enabled": False, "narrative": narrative}}, "requires digest.enabled=true"),
+            ({"digest": {"enabled": True, "narrative": {"model": "gpt-4.1-mini"}}}, "requires digest.narrative.apiKey"),
+            ({"digest": {"enabled": True, "narrative": {**narrative, "writerDatabaseUrl": {"existingSecret": ""}}}}, "writerDatabaseUrl"),
+            ({"digest": {"enabled": True, "narrative": {**narrative, "model": "bad model"}}}, "must be a model id"),
+            ({"digest": {"enabled": True, "narrative": {**narrative, "baseUrl": "https://u:p@example.com"}}}, "baseUrl"),
+            ({"digest": {"enabled": True, "narrative": {**narrative, "baseUrl": "http://models.example.com/v1"}}}, "plain http only to an in-cluster Service"),
+            ({"digest": {"enabled": True, "narrative": {"apiKey": {"existingSecret": "model-key"}}}}, "used only with digest.narrative.model"),
+        ]:
+            with self.subTest(overlay=overlay):
+                self.assertIn(message, self.render(overlay=overlay, fail=True))
+        in_cluster = self.env_of(self.render(overlay={"digest": {"enabled": True, "narrative": {**narrative, "baseUrl": "http://gateway.models.svc.cluster.local/v1"}}}))
+        self.assertEqual(in_cluster["OPENAI_BASE_URL"]["value"], "http://gateway.models.svc.cluster.local/v1")
+        for name in names[:6]:
+            with self.subTest(reserved=name):
+                self.assertIn("managed", self.render(overlay={"extraEnv": [{"name": name, "value": "1"}]}, fail=True))
+        self.assertIn("managed", self.render(overlay={"digest": {"enabled": True, "narrative": narrative},
+                                                      "extraEnv": [{"name": "OPENAI_BASE_URL", "value": "https://x.example.com"}]}, fail=True))
+
     def test_postgres_tls_requires_an_explicit_verified_profile(self):
         self.assertEqual(self.env_of(self.render())["SESSION_POSTGRES_TLS_PROFILE"]["value"], "custom-ca")
         docs = self.render(overlay={"postgres": {"tlsProfile": "supabase"}, "postgresCa": {"enabled": False, "configMap": "", "sha256": ""}})

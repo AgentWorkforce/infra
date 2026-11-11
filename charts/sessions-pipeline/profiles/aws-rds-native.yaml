@@ -116,6 +116,15 @@ functionDefaultRevoke:
 
 sessionReadApi:
   enabled: true
+  # Evaluation evidence from day 1: Output and the daily digest read the
+  # Postgres output facts the search indexer writes (searchIndexer.outputFacts).
+  # The digest narrative model stays unset, so no session content leaves the
+  # cluster. Windows answer 501 *_backfill_incomplete until the output facts
+  # bootstrap Job has marked the workspace (see the chart README).
+  output:
+    enabled: true
+  digest:
+    enabled: true
   image:
     repository: ghcr.io/agentworkforce/96bulls-services
     digest: ""
@@ -244,3 +253,8 @@ searchIndexer:
     enabled: true
     existingSecret: search-indexer-owner
     key: RELAYHISTORY_PIPELINE_CONSUMER_SECRET
+  # Writes commit/branch/file facts (migration 20261105045040) on every pass.
+  # Run the output facts bootstrap Job (outputFacts.bootstrap.enabled=true) once
+  # the first sessions of a workspace have arrived; see the chart README.
+  outputFacts:
+    enabled: true

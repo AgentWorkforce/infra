@@ -93,6 +93,41 @@ extraEnv overrides. The default legacy mode emits no `READ_API_AUTH_MODE`,
 preserving compatibility with earlier reader images. Neither mode is enabled
 by a profile, and the earlier reader-only image predates this backend feature.
 
+## Output and the daily digest
+
+`output.enabled` and `digest.enabled` (strict booleans, default `false`; the
+`aws-rds-native` profile sets both) serve `GET /v1/sessions/output` and
+`GET /v1/digest/daily` from the Postgres output facts of migration
+`20261105045040_selfhost_output_facts`, through the reader role:
+
+| Value | Renders |
+| --- | --- |
+| `output.enabled: true` | `READ_API_OUTPUT_ENABLED=1`, `READ_API_OUTPUT_BACKEND=postgres` |
+| `digest.enabled: true` | `READ_API_DIGEST_ENABLED=1`, `READ_API_DIGEST_BACKEND=postgres` |
+| `digest.narrative.model` | `READ_API_DIGEST_NARRATIVE_MODEL`, plus `OPENAI_API_KEY` and `READ_API_DIGEST_NARRATIVE_DB_URL` from `digest.narrative.apiKey` / `writerDatabaseUrl`, and `OPENAI_BASE_URL` from `baseUrl` when set |
+
+These names are reserved from `extraEnv`; move an existing `extraEnv` setting
+of them to the values above before upgrading.
+
+The routes need a facts writer (sessions-pipeline
+`searchIndexer.outputFacts.enabled` or `nativeConsumer.outputFacts.enabled`) and
+the per-workspace coverage watermark written by the output facts bootstrap Job.
+Until a workspace is marked, its windows answer 501 `*_backfill_incomplete`.
+The [sessions-pipeline chart README](../charts/sessions-pipeline/README.md#output-facts-output-and-the-daily-digest)
+says when to run the Job.
+
+`digest.narrative.model` is empty by default: the read API makes no model call
+and sends no session content out of the cluster. The digest statistics are
+served either way; without a model a narrative cache miss is a 200 with
+`narrative.unavailable = provider_not_configured`. Setting a model sends the
+scrubbed digest prompt to `<baseUrl>/chat/completions` (default
+`https://api.openai.com/v1`) and needs both Secret references. The writer URL
+must be the `bulls96_digest_narrative` login created by the pipeline's
+`supabase/bootstrap/digest_narrative_role.sql`, which `rds-setup.sh` does not
+provision; the service refuses any other login. Selecting a model is an
+egress and data-handling decision for the customer, and the namespace egress
+policy must allow the destination.
+
 ## Self-issued tokens
 
 `auth.mode=self_issued` makes the read API issue and check its own opaque tokens

@@ -169,6 +169,23 @@ workspace is not on a static list, and its reads would answer 501. */ -}}
 {{- end -}}
 {{- if not (kindIs "bool" $c.events.messageIds) }}{{ fail "session-read-api: events.messageIds must be a boolean" }}{{ end -}}
 {{- if not (kindIs "bool" $c.coordinationOverlaps.enabled) }}{{ fail "session-read-api: coordinationOverlaps.enabled must be a boolean" }}{{ end -}}
+{{- if not (kindIs "bool" $c.output.enabled) }}{{ fail "session-read-api: output.enabled must be a boolean" }}{{ end -}}
+{{- if not (kindIs "bool" $c.digest.enabled) }}{{ fail "session-read-api: digest.enabled must be a boolean" }}{{ end -}}
+{{- $narrative := $c.digest.narrative -}}
+{{- if not (kindIs "string" $narrative.model) }}{{ fail "session-read-api: digest.narrative.model must be a string" }}{{ end -}}
+{{- if $narrative.model -}}
+{{- if not $c.digest.enabled }}{{ fail "session-read-api: digest.narrative.model requires digest.enabled=true" }}{{ end -}}
+{{- if not (regexMatch "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$" $narrative.model) }}{{ fail "session-read-api: digest.narrative.model must be a model id ([A-Za-z0-9._:/-], at most 128 characters)" }}{{ end -}}
+{{- if or (not $narrative.apiKey.existingSecret) (not $narrative.apiKey.key) }}{{ fail "session-read-api: digest.narrative.model requires digest.narrative.apiKey.existingSecret and key" }}{{ end -}}
+{{- if or (not $narrative.writerDatabaseUrl.existingSecret) (not $narrative.writerDatabaseUrl.key) }}{{ fail "session-read-api: digest.narrative.model requires digest.narrative.writerDatabaseUrl.existingSecret and key (the bulls96_digest_narrative login)" }}{{ end -}}
+{{- if $narrative.baseUrl -}}
+{{- $httpsUrl := regexMatch "^https://[^/?#@ ]+(/[^?#@ ]*)?$" $narrative.baseUrl -}}
+{{- $inClusterUrl := and (eq (toString $c.allowInClusterHttp) "true") (regexMatch "^http://([a-z0-9]([-a-z0-9]*[a-z0-9])?|[a-z0-9]([-a-z0-9]*[a-z0-9])?\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?\\.svc(\\.cluster\\.local)?)(:[0-9]{1,5})?(/[^?#@ ]*)?$" $narrative.baseUrl) -}}
+{{- if not (or $httpsUrl $inClusterUrl) }}{{ fail "session-read-api: digest.narrative.baseUrl must be an https URL without credentials, query or fragment (plain http only to an in-cluster Service name with allowInClusterHttp=true)" }}{{ end -}}
+{{- end -}}
+{{- else if or $narrative.baseUrl $narrative.apiKey.existingSecret $narrative.writerDatabaseUrl.existingSecret -}}
+{{- fail "session-read-api: digest.narrative.baseUrl/apiKey/writerDatabaseUrl are used only with digest.narrative.model" -}}
+{{- end -}}
 {{- /* CORS: exact origins only, matching what the service itself accepts. */ -}}
 {{- if not (kindIs "slice" $c.cors.allowedOrigins) }}{{ fail "session-read-api: cors.allowedOrigins must be a list" }}{{ end -}}
 {{- range $o := $c.cors.allowedOrigins -}}
@@ -184,7 +201,8 @@ workspace is not on a static list, and its reads would answer 501. */ -}}
 {{- end -}}
 {{- end -}}
 {{- /* extraEnv: nothing managed above can be overridden or hidden here. */ -}}
-{{- $reserved := list "SERVICE" "READER_MAX_RULESET" "RELAYHISTORY_SELFHOST_READ_API" "RELAYHISTORY_READ_API_PORT" "RELAYHISTORY_READ_API_SECRET" "READ_API_ORIGIN" "READ_API_AUTH_MODE" "READ_API_COMPLETE_SINCE" "READ_API_DIRECTORY_WORKSPACES" "READ_API_CORS_ALLOWED_ORIGINS" "RELAYHISTORY_SELFHOST_LOGIN_ADVERTISES_SYNC" "READ_API_TURNS_ASSUME_NO_LEGACY" "READ_API_COORDINATION_OVERLAPS_ENABLED" "READ_API_COORDINATION_OVERLAPS_BACKEND" "SEARCH_INDEX_POSTGRES_BACKEND_ID" "SEARCH_INDEX_OPENSEARCH_URL" "SEARCH_INDEX_OPENSEARCH_AUTH" "SEARCH_INDEX_OPENSEARCH_AWS_REGION" "SEARCH_INDEX_OPENSEARCH_INDEX_PREFIX" "READ_API_INTERNAL_SECRET" "READ_API_INTERNAL_SECRET_PREVIOUS" "READ_API_ACCESS_TOKEN_TTL_SECONDS" "READ_API_EVENT_MESSAGE_IDS" "SEARCH_INDEX_BACKEND" "ALLOW_IN_CLUSTER_HTTP" "RELAYAUTH_JWKS_URL" "RELAYAUTH_ISSUER" "RELAYHISTORY_ACCEPT_RELAYCONTROL_TOKENS" "RELAYCONTROL_INTROSPECT_URL" "RELAYCONTROL_INTROSPECT_SECRET" "SESSION_POSTGRES_TLS_PROFILE" "SESSION_POSTGRES_CA_FILE" "SESSION_POSTGRES_CA_SHA256" -}}
+{{- $reserved := list "SERVICE" "READER_MAX_RULESET" "RELAYHISTORY_SELFHOST_READ_API" "RELAYHISTORY_READ_API_PORT" "RELAYHISTORY_READ_API_SECRET" "READ_API_ORIGIN" "READ_API_AUTH_MODE" "READ_API_COMPLETE_SINCE" "READ_API_DIRECTORY_WORKSPACES" "READ_API_CORS_ALLOWED_ORIGINS" "RELAYHISTORY_SELFHOST_LOGIN_ADVERTISES_SYNC" "READ_API_TURNS_ASSUME_NO_LEGACY" "READ_API_COORDINATION_OVERLAPS_ENABLED" "READ_API_COORDINATION_OVERLAPS_BACKEND" "READ_API_OUTPUT_ENABLED" "READ_API_OUTPUT_BACKEND" "READ_API_DIGEST_ENABLED" "READ_API_DIGEST_BACKEND" "READ_API_DIGEST_NARRATIVE_MODEL" "READ_API_DIGEST_NARRATIVE_DB_URL" "SEARCH_INDEX_POSTGRES_BACKEND_ID" "SEARCH_INDEX_OPENSEARCH_URL" "SEARCH_INDEX_OPENSEARCH_AUTH" "SEARCH_INDEX_OPENSEARCH_AWS_REGION" "SEARCH_INDEX_OPENSEARCH_INDEX_PREFIX" "READ_API_INTERNAL_SECRET" "READ_API_INTERNAL_SECRET_PREVIOUS" "READ_API_ACCESS_TOKEN_TTL_SECONDS" "READ_API_EVENT_MESSAGE_IDS" "SEARCH_INDEX_BACKEND" "ALLOW_IN_CLUSTER_HTTP" "RELAYAUTH_JWKS_URL" "RELAYAUTH_ISSUER" "RELAYHISTORY_ACCEPT_RELAYCONTROL_TOKENS" "RELAYCONTROL_INTROSPECT_URL" "RELAYCONTROL_INTROSPECT_SECRET" "SESSION_POSTGRES_TLS_PROFILE" "SESSION_POSTGRES_CA_FILE" "SESSION_POSTGRES_CA_SHA256" -}}
+{{- if $narrative.model }}{{ $reserved = concat $reserved (list "OPENAI_API_KEY" "OPENAI_BASE_URL") }}{{ end -}}
 {{- $seen := dict -}}
 {{- $canonical := dict -}}
 {{- range $e := $c.extraEnv -}}
