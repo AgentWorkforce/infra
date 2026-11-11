@@ -34,7 +34,7 @@
 {{- end -}}
 {{- define "sessions-pipeline.nativeConsumer.validate" -}}
 {{- $c := .Values.nativeConsumer -}}
-{{- range $name, $flag := dict "enabled" $c.enabled "migrationDriverVerified" $c.migrationDriverVerified "legacyRuntimesQualified" $c.legacyRuntimesQualified "legacyIndexerDrained" $c.legacyIndexerDrained "allowInClusterHttp" $c.allowInClusterHttp "bootstrap.enabled" $c.bootstrap.enabled -}}
+{{- range $name, $flag := dict "enabled" $c.enabled "migrationDriverVerified" $c.migrationDriverVerified "legacyRuntimesQualified" $c.legacyRuntimesQualified "legacyIndexerDrained" $c.legacyIndexerDrained "allowInClusterHttp" $c.allowInClusterHttp "bootstrap.enabled" $c.bootstrap.enabled "outputFacts.enabled" $c.outputFacts.enabled -}}
 {{- if not (kindIs "bool" $flag) }}{{ fail (printf "nativeConsumer.%s must be a boolean" $name) }}{{ end -}}
 {{- end -}}
 {{- if and (not (kindIs "invalid" $c.readerMaxRuleset)) (not (has (toString $c.readerMaxRuleset) (list "8" "9" "10"))) }}{{ fail "nativeConsumer.readerMaxRuleset must be one of 8, 9, or 10" }}{{ end -}}
@@ -152,6 +152,9 @@
 - { name: READER_MAX_RULESET, value: {{ $c.readerMaxRuleset | quote }} }
 {{- end }}
 - { name: RELAYHISTORY_SELFHOST_PIPELINE_CONSUMER, value: "true" }
+{{- if and (not .bootstrap) $c.outputFacts.enabled }}
+- { name: RELAYHISTORY_SELFHOST_OUTPUT_FACTS, value: "true" }
+{{- end }}
 - name: RELAYHISTORY_PIPELINE_CONSUMER_SECRET
   valueFrom:
     secretKeyRef:

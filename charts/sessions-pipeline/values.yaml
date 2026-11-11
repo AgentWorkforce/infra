@@ -402,6 +402,35 @@ searchIndexer:
     key: RELAYHISTORY_PIPELINE_CONSUMER_SECRET
     backoffLimit: 3
     activeDeadlineSeconds: 900
+  # Output facts (RELAYHISTORY_SELFHOST_OUTPUT_FACTS=true): every indexing pass
+  # also writes the session's commit/branch/file facts to Postgres (migration
+  # 20261105045040), in the same transaction as the directory events. They feed
+  # GET /v1/sessions/output, the daily digest and coordination overlaps. Needs a
+  # services image with that migration applied; the migration grants the writers
+  # to search_consumer_runtime, so no extra role or grant is needed. Off by default.
+  outputFacts:
+    enabled: false
+    # One-shot output facts bootstrap Job (SERVICE=session-pipeline-output-facts-bootstrap).
+    # It queues sessions that owe facts for the running indexer, waits for them,
+    # then writes the per-workspace coverage watermark the read API needs: until
+    # a workspace is marked, its output and digest windows answer 501
+    # *_backfill_incomplete. It marks only workspaces that already have sessions,
+    # so run it after the first sessions of each workspace arrive, and again
+    # (change runId) when a new workspace starts uploading. It runs as the schema
+    # owner from bootstrap.existingSecret. Off by default; see the chart README.
+    bootstrap:
+      enabled: false
+      # Any change renders a new Job (a completed Job is never re-run in place).
+      # Lowercase letters, digits and dashes, at most 20 characters.
+      runId: ""
+      # RELAYHISTORY_SELFHOST_OUTPUT_FACTS_BOOTSTRAP_DEADLINE_SECONDS (1..86400):
+      # how long the Job waits for the indexer to write the queued facts.
+      deadlineSeconds: 7200
+      # RELAYHISTORY_SELFHOST_OUTPUT_FACTS_BOOTSTRAP_ALLOW_PARTIAL: exit 0 instead
+      # of 3 when some workspaces stay incomplete (they still get no watermark).
+      allowPartial: false
+      # Must exceed deadlineSeconds.
+      activeDeadlineSeconds: 9000
   nodeSelector: {}
   tolerations: []
   affinity: {}
@@ -533,6 +562,13 @@ nativeConsumer:
   # Null preserves legacy reads; explicit 8/9/10 opts into strict checks. It neither
   # selects a writer ruleset nor enables this default-off component.
   readerMaxRuleset: null
+  # RELAYHISTORY_SELFHOST_OUTPUT_FACTS=true on the runtime consumer: writes the
+  # Postgres output facts (migration 20261105045040) for Output, the digest and
+  # coordination overlaps. Off by default. The output facts bootstrap Job is
+  # rendered only for searchIndexer; for this consumer run it per the
+  # sessions-pipeline runbook selfhost-output-facts-bootstrap.md.
+  outputFacts:
+    enabled: false
   fullnameOverride: ""
   replicas: 1
   # Both the chart's legacy indexer and the installed old indexer must be off.

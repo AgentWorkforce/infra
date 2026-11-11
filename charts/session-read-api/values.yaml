@@ -43,6 +43,37 @@ coordinationOverlaps:
   # the reviewed endpoint in a compatible read-api image. The sessions-pipeline
   # adapter overrides this leaf-chart default to true when it enables the reader.
   enabled: false
+output:
+  # GET /v1/sessions/output from the self-host Postgres output facts (migration
+  # 20261105045040). Renders READ_API_OUTPUT_ENABLED=1 and
+  # READ_API_OUTPUT_BACKEND=postgres. The facts come from the pipeline consumer
+  # with output facts on (sessions-pipeline searchIndexer.outputFacts or
+  # nativeConsumer.outputFacts); until the output facts bootstrap has marked a
+  # workspace, its windows answer 501 output_backfill_incomplete.
+  enabled: false
+digest:
+  # GET /v1/digest/daily from the same Postgres facts. Renders
+  # READ_API_DIGEST_ENABLED=1 and READ_API_DIGEST_BACKEND=postgres. The digest
+  # statistics need no model; the narrative is served from the cache only
+  # (a miss is narrative.unavailable=provider_not_configured, inside a 200).
+  enabled: false
+  narrative:
+    # READ_API_DIGEST_NARRATIVE_MODEL. Empty (the default) makes no model call,
+    # so no session content leaves the cluster. Setting it sends the scrubbed
+    # digest prompt to OPENAI_BASE_URL and needs apiKey and writerDatabaseUrl.
+    model: ""
+    # OPENAI_BASE_URL: https, or an in-cluster Service with allowInClusterHttp.
+    # Empty uses the image default (https://api.openai.com/v1).
+    baseUrl: ""
+    # OPENAI_API_KEY from this Secret key.
+    apiKey:
+      existingSecret: ""
+      key: OPENAI_API_KEY
+    # READ_API_DIGEST_NARRATIVE_DB_URL: the bulls96_digest_narrative login
+    # (supabase/bootstrap/digest_narrative_role.sql), never the reader login.
+    writerDatabaseUrl:
+      existingSecret: ""
+      key: READ_API_DIGEST_NARRATIVE_DB_URL
 turns:
   # True only where no Neon source exists, so no legacy coverage marker is expected.
   assumeNoLegacy: false

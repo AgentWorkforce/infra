@@ -239,7 +239,13 @@ Use the release packet's complete RDS values overlay. The historical
    a fresh database can list sessions and read events before accepting the
    services digest. Verify `GET /v1/coordination/overlaps` with an authorized
    workspace token too. A 501 from session list, 503 from events, or 404 from
-   overlaps blocks release.
+   overlaps blocks release. The profile also writes the evaluation data from
+   the first upload: `searchIndexer.outputFacts.enabled` stores each session's
+   commit, branch and file facts, and `sessionReadApi.output.enabled` /
+   `digest.enabled` serve them as `GET /v1/sessions/output` and
+   `GET /v1/digest/daily`. The digest narrative model stays unset, so no
+   session content leaves the cluster. These need migration `045040` in the
+   services artifact and no extra database role.
 4. For a core pilot, set `components.relayflows: false`; leave Relayfile and
    Chief uninstalled unless selected. Verify the matching server and UI
    capability behavior in the [controls checklist](enterprise-customer-controls.md).
@@ -534,6 +540,14 @@ profile and approve their own device without Kubernetes or bootstrap access.
 - Capture a short real agent session with a harmless unique marker and the
   release's synthetic secret-test value. Verify removal **before upload**,
   then find the same session in app list, transcript and search.
+- Once that workspace has its first sessions, run the output facts bootstrap
+  Job: set `sessions-pipeline.searchIndexer.outputFacts.bootstrap.enabled: true`
+  with a new `runId` in the release overlay and apply it through the reviewed
+  upgrade procedure ([when and how](../charts/sessions-pipeline/README.md#output-facts-output-and-the-daily-digest)).
+  It writes the workspace's coverage watermark; until then Output and the
+  digest answer 501 `*_backfill_incomplete` even though facts are being
+  written. Verify both routes return 200 with an authorized workspace token,
+  and rerun the Job with a new `runId` for each later workspace.
 - After first sign-in, copy the real workspace ID into the umbrella release
   overlay's `sessions-pipeline.worker.nativeBrief.workspaceIds`, apply that
   corrected overlay through the reviewed upgrade procedure, and only then

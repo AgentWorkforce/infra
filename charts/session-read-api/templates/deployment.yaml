@@ -142,6 +142,28 @@ spec:
             - { name: READ_API_COORDINATION_OVERLAPS_ENABLED, value: "true" }
             - { name: READ_API_COORDINATION_OVERLAPS_BACKEND, value: "postgres" }
             {{- end }}
+            {{- if $c.output.enabled }}
+            - { name: READ_API_OUTPUT_ENABLED, value: "1" }
+            - { name: READ_API_OUTPUT_BACKEND, value: "postgres" }
+            {{- end }}
+            {{- if $c.digest.enabled }}
+            - { name: READ_API_DIGEST_ENABLED, value: "1" }
+            - { name: READ_API_DIGEST_BACKEND, value: "postgres" }
+            {{- with $c.digest.narrative }}
+            {{- if .model }}
+            - { name: READ_API_DIGEST_NARRATIVE_MODEL, value: {{ .model | quote }} }
+            {{- with .baseUrl }}
+            - { name: OPENAI_BASE_URL, value: {{ . | quote }} }
+            {{- end }}
+            - name: OPENAI_API_KEY
+              valueFrom:
+                secretKeyRef: { name: {{ .apiKey.existingSecret | quote }}, key: {{ .apiKey.key | quote }} }
+            - name: READ_API_DIGEST_NARRATIVE_DB_URL
+              valueFrom:
+                secretKeyRef: { name: {{ .writerDatabaseUrl.existingSecret | quote }}, key: {{ .writerDatabaseUrl.key | quote }} }
+            {{- end }}
+            {{- end }}
+            {{- end }}
             {{- include "session-read-api.analytics.env" $c.analytics | nindent 12 }}
             {{- range $e := $c.extraEnv }}
             - name: {{ $e.name | quote }}
