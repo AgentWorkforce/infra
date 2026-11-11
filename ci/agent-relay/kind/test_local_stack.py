@@ -19,6 +19,13 @@ from stack import StackError
 
 
 class LocalTests(unittest.TestCase):
+    def test_fresh_reader_uses_managed_values_when_chart_reserves_environment(self):
+        reader = {"extraEnv": [{"name": "READ_API_SESSION_QUERY", "value": "true"}]}
+        with patch.object(local_stack, "READER_VALUES", {"timing": {"assumeNoTurns": False}, "canonical": {"pinLaggingPointer": False}}):
+            local_stack.fresh_reader(reader)
+        self.assertEqual(reader, {"timing": {"assumeNoTurns": True}, "canonical": {"pinLaggingPointer": True},
+            "extraEnv": [{"name": "READ_API_SESSION_QUERY", "value": "true"}]})
+
     def test_services_jobs_keep_the_required_wasm_contract(self):
         stack = LocalStack.__new__(LocalStack)
         stack.k = lambda *args: SimpleNamespace(stdout="")
@@ -307,6 +314,8 @@ class LocalTests(unittest.TestCase):
             "session-native-consumer", "session-read-api", "sessions-session-brief", "telemetry-collector"})
         aa = yaml.safe_load((ROOT / "charts/agent-relay/values-eks.yaml").read_text())
         release = {name: local_stack.reference(aa[name]["image"]) for name in ("relay-control", "relay-webapp", "relaycast")}
+        local = yaml.safe_load((ROOT / "ci/agent-relay/kind/local-values.yaml").read_text())
+        release["relay-webapp"] = local_stack.reference(local["relay-webapp"]["image"])
         release.update({name: local_stack.reference(aa["sessions-pipeline"]["worker"]["image"])
             for name in ("session-native-ingest", "session-native-consumer", "session-read-api", "sessions-session-brief")})
         for deployment in active:
@@ -335,6 +344,9 @@ class LocalTests(unittest.TestCase):
                     self.assertIn("admission", json.dumps(container["readinessProbe"]))
                 if name == "session-read-api":
                     self.assertEqual(env["READ_API_SESSION_QUERY"]["value"], "true")
+                    for flag in ("READ_API_TIMING_ASSUME_NO_TURNS", "READ_API_CANONICAL_PIN_LAGGING_POINTER"):
+                        self.assertEqual(env[flag]["value"], "true")
+                        self.assertEqual(sum(e["name"] == flag for e in container["env"]), 1)
                 if name == "sessions-session-brief":
                     self.assertEqual(env["SESSION_BRIEF_GLOBAL_DAILY_CAP"]["value"], "64")
                     self.assertEqual(env["SESSION_BRIEF_SESSION_DAILY_CAP"]["value"], "3")
