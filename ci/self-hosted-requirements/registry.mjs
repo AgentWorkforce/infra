@@ -350,9 +350,14 @@ checks.matrix = () => {
   for (const ch of ['sessions-pipeline-worker', 'session-ingest-api']) if (chartValues[ch].image.digest !== img.ghcr?.digest) err(c, `charts/${ch}/values.yaml image.digest is ${chartValues[ch].image.digest}, not the registry GHCR digest`);
   // Every sessions-pipeline profile pins the image the registry names for it.
   for (const p of profiles.filter((x) => x.chart === 'sessions-pipeline')) {
+    const pinned = (k) => getPath(profileValues(p.id), k);
+    if (p.services_image === 'release-overlay') {
+      for (const k of ['worker.image.digest', 'alleyoop.image.digest', 'sessionReadApi.image.digest', 'ingestEdge.image.digest', 'searchIndexer.image.digest']) {
+        if (pinned(k)) err(c, `profile ${p.id}: ${k} must stay empty for the approved release overlay`);
+      }
+    } else {
     const want = img[p.services_image];
     if (!want) { err(c, `profile ${p.id}: services_image must be ghcr or ecr`); continue; }
-    const pinned = (k) => getPath(profileValues(p.id), k);
     for (const k of ['worker.image.digest', 'alleyoop.image.digest', 'privilegedSql.sqlImage.digest']) {
       const v = pinned(k);
       if (k.startsWith('privilegedSql') && !v) continue;
@@ -360,6 +365,7 @@ checks.matrix = () => {
       if (eff !== want.digest) err(c, `profile ${p.id}: ${k} is ${eff}, registry ${p.services_image} digest is ${want.digest}`);
     }
     if (p.services_image === 'ecr' && pinned('worker.image.repository') !== want.repository) err(c, `profile ${p.id}: worker.image.repository is not ${want.repository}`);
+    }
     // dbMode / boundary / backend as the registry states them.
     const v = profileValues(p.id);
     const got = { hoopdb: v.hoopdb?.enabled ? 'cnpg' : 'external', db_mode: getPath(v, 'worker.migrations.databaseMode'), boundary: getPath(v, 'worker.migrations.functionBoundaryMode') || null };

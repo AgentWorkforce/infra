@@ -183,5 +183,86 @@ class ControlAdapters(unittest.TestCase):
         self.render(ADAPTER, dict(existingSecret="control-producer"), fail="dedicated producer")
 
 
+class DashboardAdapter(unittest.TestCase):
+    def render(self, value=None, explicit=False, coordination=None,
+               coordination_explicit=False, session_read=None, umbrella=False, fail=False,
+               error="runtime.analyticsEnabled must be a boolean or null"):
+        values = yaml.safe_load((ROOT / "charts/relay-webapp/ci/default-values.yaml").read_text())
+        if explicit:
+            values.setdefault("runtime", {})["analyticsEnabled"] = value
+        if coordination_explicit:
+            values.setdefault("runtime", {})["coordinationOverlapsEnabled"] = coordination
+        if session_read is not None:
+            values.setdefault("runtime", {})["sessionReadApiEnabled"] = session_read
+        chart = "relay-webapp"
+        if umbrella:
+            chart = "agent-relay"
+            components = {key: False for key in yaml.safe_load((ROOT / "charts/agent-relay/values.yaml").read_text())["components"]}
+            components["webapp"] = True
+            values = {"components": components, "relay-webapp": values}
+        with tempfile.TemporaryDirectory() as folder:
+            p = Path(folder) / "values.yaml"
+            p.write_text(yaml.safe_dump(values))
+            result = subprocess.run(["helm", "template", "ci", str(ROOT / "charts" / chart), "-n", "ci", "-f", str(p)], text=True, capture_output=True)
+        if fail:
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn(error, result.stderr)
+            return {}
+        self.assertEqual(result.returncode, 0, result.stderr)
+        docs = [d for d in yaml.safe_load_all(result.stdout) if d]
+        pod = next(d for d in docs if d["kind"] == "Deployment")["spec"]["template"]["spec"]
+        env = {e["name"]: e.get("value") for e in pod["containers"][0]["env"]}
+        self.assertFalse(any("POSTHOG" in name or "TOKEN" in name or "SECRET" in name for name in env))
+        return env
+
+    def test_dashboard_selection_preserves_explicit_false_and_leaves_image_default_omitted(self):
+        for umbrella in [False, True]:
+            self.assertNotIn("DASHBOARD_ANALYTICS_ENABLED", self.render(umbrella=umbrella))
+            self.assertNotIn("DASHBOARD_ANALYTICS_ENABLED", self.render(None, explicit=True, umbrella=umbrella))
+            for value in [True, False]:
+                self.assertEqual(self.render(value, explicit=True, umbrella=umbrella)["DASHBOARD_ANALYTICS_ENABLED"], str(value).lower())
+
+    def test_dashboard_selection_refuses_non_boolean_values(self):
+        for value in ["true", "false", 1, [], {}]:
+            with self.subTest(value=value):
+                self.render(value, explicit=True, fail=True)
+
+    def test_coordination_view_defaults_off_and_true_is_explicit(self):
+        for umbrella in [False, True]:
+            self.assertNotIn("DASHBOARD_COORDINATION_OVERLAPS_ENABLED", self.render(umbrella=umbrella))
+            self.assertNotIn(
+                "DASHBOARD_COORDINATION_OVERLAPS_ENABLED",
+                self.render(coordination=False, coordination_explicit=True, umbrella=umbrella),
+            )
+            self.render(
+                coordination=True,
+                coordination_explicit=True,
+                umbrella=umbrella,
+                fail=True,
+                error="runtime.coordinationOverlapsEnabled=true requires runtime.sessionReadApiEnabled=true",
+            )
+            enabled = self.render(
+                coordination=True,
+                coordination_explicit=True,
+                session_read=True,
+                umbrella=umbrella,
+            )
+            self.assertEqual(
+                enabled["DASHBOARD_COORDINATION_OVERLAPS_ENABLED"],
+                "true",
+            )
+            self.assertEqual(enabled["DASHBOARD_SESSION_READ_API_ENABLED"], "true")
+
+    def test_coordination_view_refuses_non_boolean_values(self):
+        for value in ["true", "false", 1, None, [], {}]:
+            with self.subTest(value=value):
+                self.render(
+                    coordination=value,
+                    coordination_explicit=True,
+                    fail=True,
+                    error="runtime.coordinationOverlapsEnabled must be a boolean",
+                )
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -4,10 +4,10 @@ apiVersion: selfhost.agentrelay.com/v1alpha1
 kind: CustomerImageSourceManifest
 # Top-level per the gate schema (see the positive fixture in
 # ci/customer-release-gate); the release gate refuses anything but "ready".
-status: ready
+status: blocked
 metadata:
   name: agent-relay-gcp
-  auditedAt: "2026-11-09"
+  auditedAt: "2026-11-10"
   chart:
     name: agent-relay
     version: 0.6.21
@@ -220,12 +220,12 @@ images:
       status: available-public
       procedure: Mirror the public GHCR digest into the customer registry by digest and record the destination digest.
     approval:
-      status: approved
+      status: blocked
       basis: >-
-        Public digest from the reviewed publish-image workflow at the recorded
-        main revision, with an SBOM, max-mode provenance, and amd64+arm64
-        verified anonymously.
-      blockingReasons: []
+        The digest remains recorded for traceability but is no longer eligible
+        for the November 11 customer install. It must be replaced by the
+        reviewed R9 successor from main.
+      blockingReasons: [sessions-pipeline-r9-customer-image]
 
   - id: sessions-migration-postgresql
     active: true
@@ -349,29 +349,32 @@ images:
       - Deployment/relay-control:relay-control
     current:
       repository: ghcr.io/agentworkforce/relay-control
-      digest: sha256:c6648cc3d504b79f0e138993cb2e48dfcd2d8ba300a0969ff8c9c87c89c80d65
+      digest: sha256:88392b1827c263ab9eaad501ad902b37548f073a06a198444a8d91bcfb72d2b6
       chartStatus: shipped
     source:
       repository: https://github.com/AgentWorkforce/relay-control
-      revision: be21070ebf2d0649a9fb50d6608b0cd7bf12105c
+      revision: 1e55273745648c7bd8d2d1445fba75c285ec5fb0
       path: Dockerfile
       reproducibleReference: true
-      note: Relay Control 0.5.8 with native session-read handoff and desktop sign-in.
+      note: >-
+        Relay Control 0.5.10 with the co-branded login styling from #80,
+        relay-node credentials and broker from #83, and migration 0039. The
+        Desktop-feed and signer contracts are unchanged.
     license:
       status: approved
       spdx: Apache-2.0
-      evidence: https://github.com/AgentWorkforce/relay-control/blob/be21070ebf2d0649a9fb50d6608b0cd7bf12105c/LICENSE
+      evidence: https://github.com/AgentWorkforce/relay-control/blob/1e55273745648c7bd8d2d1445fba75c285ec5fb0/LICENSE
     platforms:
       expected: [linux/amd64, linux/arm64]
       verifiedFromRegistry: [linux/amd64, linux/arm64]
       status: verified
       verificationAccess: anonymous
     release:
-      workflow: https://github.com/AgentWorkforce/relay-control/blob/be21070ebf2d0649a9fb50d6608b0cd7bf12105c/.github/workflows/release-relay-control-image.yml
-      run: https://github.com/AgentWorkforce/relay-control/actions/runs/42653521106
+      workflow: https://github.com/AgentWorkforce/relay-control/blob/1e55273745648c7bd8d2d1445fba75c285ec5fb0/.github/workflows/release-relay-control-image.yml
+      run: https://github.com/AgentWorkforce/relay-control/actions/runs/42885074532
       trigger: workflow_dispatch
       buildsCommittedRevision: true
-      publishedTags: ["0.5.8", sha-be21070ebf2d0649a9fb50d6608b0cd7bf12105c]
+      publishedTags: ["0.5.10", sha-1e55273745648c7bd8d2d1445fba75c285ec5fb0]
       publishesSbom: true
       publishesProvenance: true
       provenanceMode: max
@@ -381,7 +384,7 @@ images:
     approval:
       status: approved
       basis: >-
-        Public digest from the successful reviewed 0.5.8 release workflow at
+        Public digest from the successful reviewed 0.5.10 release workflow at
         the recorded revision, with SBOM, provenance and amd64+arm64 verified
         anonymously.
       blockingReasons: []
@@ -394,33 +397,34 @@ images:
       - Deployment/relay-webapp:relay-webapp
     current:
       repository: ghcr.io/agentworkforce/relay-webapp
-      digest: sha256:d28bb01d3545db204de8ba3d8927d6d14c2a1a256b0ec077abfc9a7a6242fdc4
+      digest: sha256:bd295ccb7d1323965dce890f19d0b7f857d706c00d7756f719c713763fdb49f3
       chartStatus: shipped
     source:
       repository: https://github.com/AgentWorkforce/relay-webapp
-      revision: 7a66f0eb8a51278a49d70216bb20e117532e6bd9
+      revision: d40c0b30e70ae32c865975c2c91e923c4e311d98
       path: Dockerfile
       reproducibleReference: true
       note: >-
-        relay-webapp main 7a66f0eb. Static SPA built with
+        relay-webapp main d40c0b30 with #124's default-off coordination-overlaps
+        view gate. Static SPA built with
         DASHBOARD_BASE_PATH=/ and DASHBOARD_RUNTIME_CONFIG_URL=/runtime-config.js,
         served by unprivileged nginx on :8080. It talks only to the same-origin
         /cloud/api prefix (runtime.apiBasePath must stay /cloud/api).
     license:
       status: approved
       spdx: Apache-2.0
-      evidence: https://github.com/AgentWorkforce/relay-webapp/blob/7a66f0eb8a51278a49d70216bb20e117532e6bd9/LICENSE
+      evidence: https://github.com/AgentWorkforce/relay-webapp/blob/d40c0b30e70ae32c865975c2c91e923c4e311d98/LICENSE
     platforms:
       expected: [linux/amd64, linux/arm64]
       verifiedFromRegistry: [linux/amd64, linux/arm64]
       status: verified
       verificationAccess: anonymous
     release:
-      workflow: https://github.com/AgentWorkforce/relay-webapp/blob/7a66f0eb8a51278a49d70216bb20e117532e6bd9/.github/workflows/container.yml
-      run: https://github.com/AgentWorkforce/relay-webapp/actions/runs/42681506353
+      workflow: https://github.com/AgentWorkforce/relay-webapp/blob/d40c0b30e70ae32c865975c2c91e923c4e311d98/.github/workflows/container.yml
+      run: https://github.com/AgentWorkforce/relay-webapp/actions/runs/42936053821
       trigger: workflow_dispatch
       buildsCommittedRevision: true
-      publishedTags: [sha-7a66f0eb8a51278a49d70216bb20e117532e6bd9]
+      publishedTags: [sha-d40c0b30e70ae32c865975c2c91e923c4e311d98]
       publishesSbom: true
       publishesProvenance: true
       provenanceMode: max-plus-github-attestation
@@ -431,7 +435,7 @@ images:
     approval:
       status: approved
       basis: >-
-        Public digest from the reviewed container workflow at the recorded
+        Public digest from the reviewed #124 container workflow at the recorded
         main revision, with an SPDX SBOM, max-mode provenance, a GitHub
         build-provenance attestation, and amd64+arm64 verified anonymously.
       blockingReasons: []
@@ -716,4 +720,16 @@ promotionProcedure:
 # services, RelayHistory and selfhost-api release images are public, built by
 # reviewed workflows from recorded main revisions, with an SBOM and max-mode
 # provenance, and amd64+arm64 verified anonymously.
-blockers: []
+blockers:
+  - id: sessions-pipeline-r9-customer-image
+    severity: hard
+    images: [sessions-pipeline]
+    owner: sessions-pipeline
+    reason: >-
+      The recorded ce9b4464 services image was withdrawn from the November 11
+      customer install. The R9 scrub-fix successor has not yet merged to main
+      or been published as an approved immutable image.
+    resolution: >-
+      Replace the recorded source revision and digest with the exact merged R9
+      successor, record its reviewed release evidence, and rerun the customer
+      release gate before producing an install bundle.

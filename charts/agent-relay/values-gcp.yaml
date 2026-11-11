@@ -243,10 +243,10 @@ relayhistory:
 relay-control:
   fullnameOverride: relay-control
   image:
-    # Release image (public GHCR, relay-control 0.5.8). Mirror it by digest to
+    # Release image (public GHCR, relay-control 0.5.10). Mirror it by digest to
     # your registry and override repository.
     repository: ghcr.io/agentworkforce/relay-control
-    digest: sha256:c6648cc3d504b79f0e138993cb2e48dfcd2d8ba300a0969ff8c9c87c89c80d65
+    digest: sha256:88392b1827c263ab9eaad501ad902b37548f073a06a198444a8d91bcfb72d2b6
   database:
     runtimeRole: control_api_runtime
   # Non-secret id of the encryption key (SELFHOST_ENCRYPTION_KEY_ID), stored
@@ -301,6 +301,12 @@ relay-control:
   #     clientId: 1234567890-abc.apps.googleusercontent.com
   #     allowedDomains: [acme.com]
   #     displayName: Google Workspace
+  #   # Optional: "Continue with Microsoft" (Outlook.com, Hotmail, Live and
+  #   # Entra ID accounts) with redirect URI
+  #   # https://<root host>/login/microsoft/callback.
+  #   microsoft:
+  #     clientId: 11111111-2222-3333-4444-555555555555
+  #     tenant: common
   #   # Optional: verified emails in these domains join as member without an
   #   # invite.
   #   # autoJoinDomains: [acme.com]
@@ -317,16 +323,18 @@ relay-control:
   #   # the workspace's Relaycast workspace with it).
   #   relaycastInternalSecret: relaycast-internal-secret
   #   oidcClientSecret: oidc-client-secret
+  #   microsoftClientSecret: microsoft-client-secret
   #   smtpPassword: smtp-password
 
 relay-webapp:
   fullnameOverride: relay-webapp
   image:
-    # Release image (public GHCR, relay-webapp main 7a66f0eb). Mirror it by
+    # Release image (public GHCR, relay-webapp main d40c0b30). Mirror it by
     # digest to your registry and override repository.
     repository: ghcr.io/agentworkforce/relay-webapp
-    digest: sha256:d28bb01d3545db204de8ba3d8927d6d14c2a1a256b0ec077abfc9a7a6242fdc4
+    digest: sha256:bd295ccb7d1323965dce890f19d0b7f857d706c00d7756f719c713763fdb49f3
   runtime:
+    coordinationOverlapsEnabled: false
     # REQUIRED OVERRIDE: publicUrl must use gkeIngress.hosts.root.
     publicUrl: https://dashboard.placeholder.company
     appPath: /

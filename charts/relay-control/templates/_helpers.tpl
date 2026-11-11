@@ -58,7 +58,7 @@ of set a second time. Desktop and the CLI log in against that same origin. */ -}
 {{- if ne (int .Values.replicaCount) 1 }}{{ fail "replicaCount must be 1: the self-host API pilot has process-local login/device rate limits and is not HA" }}{{ end -}}
 {{- if not .Values.existingSecret }}{{ fail "existingSecret is required; inline credentials are not supported" }}{{ end -}}
 {{- if not (kindIs "bool" .Values.services.relayauthEnabled) }}{{ fail "services.relayauthEnabled must be a boolean" }}{{ end -}}
-{{- $optionalSecretKeys := list "previousEncryptionKey" "internalToken" "telemetryInstallKey" "relaycastInternalSecret" "oidcClientSecret" "smtpPassword" "passwordPepper" "introspectSecret" "sessionReadApiSecret" -}}
+{{- $optionalSecretKeys := list "previousEncryptionKey" "internalToken" "telemetryInstallKey" "relaycastInternalSecret" "oidcClientSecret" "microsoftClientSecret" "smtpPassword" "passwordPepper" "introspectSecret" "sessionReadApiSecret" -}}
 {{- if and .Values.secretKeys.passwordPepper (eq (toString .Values.secretKeys.passwordPepper) (toString .Values.secretKeys.databaseMigrationsUrl)) }}{{ fail "secretKeys.passwordPepper must not name secretKeys.databaseMigrationsUrl" }}{{ end -}}
 {{- if not .Values.services.relayauthEnabled }}{{ $optionalSecretKeys = append $optionalSecretKeys "relayauthApiKey" }}{{ end -}}
 {{- range $name, $key := .Values.secretKeys }}{{ if and (has $name $optionalSecretKeys) (empty $key) }}{{ continue }}{{ end }}{{ if not (regexMatch "^[A-Za-z0-9._-]+$" (toString $key)) }}{{ fail (printf "secretKeys.%s must be a Kubernetes Secret data key" $name) }}{{ end }}{{ end -}}
@@ -115,6 +115,7 @@ the chart already sets, including duplicates inside extraEnv. */ -}}
   "SELFHOST_ENCRYPTION_PREVIOUS_KEY_FILE" "SELFHOST_INTERNAL_TOKEN_FILE" "SELFHOST_OIDC_CLIENT_SECRET_FILE" "SELFHOST_SMTP_PASSWORD_FILE"
   "SELFHOST_TELEMETRY_INSTALL_KEY_FILE" "RELAYCONTROL_INTROSPECT_SECRET_FILE" "SESSION_READ_API_SECRET_FILE"
   "SELFHOST_PASSWORD_PEPPER_FILE"
+  "SELFHOST_MICROSOFT_CLIENT_ID" "SELFHOST_MICROSOFT_TENANT" "SELFHOST_MICROSOFT_REDIRECT_URL" "SELFHOST_MICROSOFT_CLIENT_SECRET_FILE"
   "SESSION_READ_API_URL" "SESSION_READ_API_PUBLIC_URL" "SESSION_READ_API_MCP_READS" "SELFHOST_INTROSPECT_AUDIENCES"
   "RELAYHISTORY_BACKEND" -}}
 {{- if not (kindIs "invalid" .Values.selectedFeatures) }}{{ $managed = append $managed "SELFHOST_FEATURES" }}{{ end -}}
@@ -170,6 +171,7 @@ Optional keys are left out while empty. */ -}}
 {{- with .Values.secretKeys.introspectSecret }}{{ $_ := set $files "RELAYCONTROL_INTROSPECT_SECRET_FILE" . }}{{ end -}}
 {{- with .Values.secretKeys.sessionReadApiSecret }}{{ $_ := set $files "SESSION_READ_API_SECRET_FILE" . }}{{ end -}}
 {{- if and .Values.auth.oidc.issuer .Values.secretKeys.oidcClientSecret }}{{ $_ := set $files "SELFHOST_OIDC_CLIENT_SECRET_FILE" .Values.secretKeys.oidcClientSecret }}{{ end -}}
+{{- if and .Values.auth.microsoft.clientId .Values.secretKeys.microsoftClientSecret }}{{ $_ := set $files "SELFHOST_MICROSOFT_CLIENT_SECRET_FILE" .Values.secretKeys.microsoftClientSecret }}{{ end -}}
 {{- if and .Values.smtp.host .Values.smtp.username .Values.secretKeys.smtpPassword }}{{ $_ := set $files "SELFHOST_SMTP_PASSWORD_FILE" .Values.secretKeys.smtpPassword }}{{ end -}}
 {{- if and (ne (include "relay-control.telemetryLevel" .) "off") .Values.secretKeys.telemetryInstallKey }}{{ $_ := set $files "SELFHOST_TELEMETRY_INSTALL_KEY_FILE" .Values.secretKeys.telemetryInstallKey }}{{ end -}}
 {{- toJson $files -}}
@@ -444,6 +446,16 @@ blocks are empty, so existing renders are unchanged. */ -}}
 - { name: SELFHOST_OIDC_ALLOW_HTTP_ISSUER, value: "true" }
 {{- end }}
 {{- end }}
+{{- $ms := .Values.auth.microsoft }}
+{{- with $ms.clientId }}
+- { name: SELFHOST_MICROSOFT_CLIENT_ID, value: {{ . | quote }} }
+{{- with $ms.tenant }}
+- { name: SELFHOST_MICROSOFT_TENANT, value: {{ . | quote }} }
+{{- end }}
+{{- with $ms.redirectUrl }}
+- { name: SELFHOST_MICROSOFT_REDIRECT_URL, value: {{ . | quote }} }
+{{- end }}
+{{- end }}
 {{- with .Values.smtp.host }}
 - { name: SELFHOST_SMTP_HOST, value: {{ . | quote }} }
 - { name: SELFHOST_SMTP_PORT, value: {{ int64 (ternary 587 $.Values.smtp.port (or (kindIs "invalid" $.Values.smtp.port) (eq (toString $.Values.smtp.port) ""))) | toString | quote }} }
@@ -475,7 +487,8 @@ blocks are empty, so existing renders are unchanged. */ -}}
 {{- if and $b.orgName (not .Values.secretKeys.relaycastInternalSecret) }}{{ fail "bootstrap.orgName requires secretKeys.relaycastInternalSecret (the Secret key holding relaycast's internal secret, e.g. relaycast-internal-secret): the API creates the default workspace's Relaycast workspace with it" }}{{ end -}}
 {{- if and (or $b.adminName $b.workspaceName) (not $b.orgName) }}{{ fail "bootstrap.adminName and bootstrap.workspaceName need bootstrap.orgName and bootstrap.adminEmail" }}{{ end -}}
 {{- $oidc := .Values.auth.oidc -}}
-{{- if and (or $b.orgName $oidc.issuer .Values.auth.emailLink.enabled .Values.smtp.host) (not .Values.dashboardUrl) (not (include "relay-control.singleHost" .)) }}{{ fail "dashboardUrl is required with bootstrap, auth.oidc, auth.emailLink or smtp (outside single-host mode): sign-in and invite links land on the dashboard origin, where the session cookie must be set" }}{{ end -}}
+{{- $ms := .Values.auth.microsoft -}}
+{{- if and (or $b.orgName $oidc.issuer $ms.clientId .Values.auth.emailLink.enabled .Values.smtp.host) (not .Values.dashboardUrl) (not (include "relay-control.singleHost" .)) }}{{ fail "dashboardUrl is required with bootstrap, auth.oidc, auth.microsoft, auth.emailLink or smtp (outside single-host mode): sign-in and invite links land on the dashboard origin, where the session cookie must be set" }}{{ end -}}
 {{- if $oidc.issuer }}
 {{- if not (regexMatch (ternary "^https?://[^?#@\\s]+$" "^https://[^?#@\\s]+$" (eq $oidc.allowHttpIssuer true)) (toString $oidc.issuer)) }}{{ fail "auth.oidc.issuer must be an https URL without credentials, query or fragment (allowHttpIssuer=true, for tests only, also accepts http)" }}{{ end -}}
 {{- if not $oidc.clientId }}{{ fail "auth.oidc.clientId is required with auth.oidc.issuer" }}{{ end -}}
@@ -483,6 +496,13 @@ blocks are empty, so existing renders are unchanged. */ -}}
 {{- with $oidc.redirectUrl }}{{ if not (regexMatch "^https?://[^/?#@\\s]+/login/oidc/callback$" (toString .)) }}{{ fail "auth.oidc.redirectUrl must be <origin>/login/oidc/callback" }}{{ end }}{{ end -}}
 {{- else if or $oidc.clientId $oidc.allowedDomains $oidc.displayName $oidc.scopes $oidc.redirectUrl $oidc.allowHttpIssuer }}
 {{- fail "auth.oidc.* settings need auth.oidc.issuer" -}}
+{{- end -}}
+{{- if $ms.clientId }}
+{{- if not .Values.secretKeys.microsoftClientSecret }}{{ fail "auth.microsoft.clientId requires secretKeys.microsoftClientSecret (the Secret key holding the Microsoft client secret)" }}{{ end -}}
+{{- with $ms.tenant }}{{ if not (regexMatch "^(common|consumers|organizations|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$" (toString .)) }}{{ fail "auth.microsoft.tenant must be common, consumers, organizations or a tenant id" }}{{ end }}{{ end -}}
+{{- with $ms.redirectUrl }}{{ if not (regexMatch "^https?://[^/?#@\\s]+/login/microsoft/callback$" (toString .)) }}{{ fail "auth.microsoft.redirectUrl must be <origin>/login/microsoft/callback" }}{{ end }}{{ end -}}
+{{- else if or $ms.tenant $ms.redirectUrl }}
+{{- fail "auth.microsoft.* settings need auth.microsoft.clientId" -}}
 {{- end -}}
 {{- if not (kindIs "slice" ($oidc.allowedDomains | default list)) }}{{ fail "auth.oidc.allowedDomains must be a list of email domains" }}{{ end -}}
 {{- if not (kindIs "slice" (.Values.auth.autoJoinDomains | default list)) }}{{ fail "auth.autoJoinDomains must be a list of email domains" }}{{ end -}}
@@ -505,6 +525,7 @@ blocks are empty, so existing renders are unchanged. */ -}}
 {{- fail "smtp.* settings need smtp.host" -}}
 {{- end -}}
 {{- if and .Values.secretKeys.oidcClientSecret (not $oidc.issuer) }}{{ fail "secretKeys.oidcClientSecret is set but auth.oidc.issuer is empty" }}{{ end -}}
+{{- if and .Values.secretKeys.microsoftClientSecret (not $ms.clientId) }}{{ fail "secretKeys.microsoftClientSecret is set but auth.microsoft.clientId is empty" }}{{ end -}}
 {{- if and .Values.secretKeys.smtpPassword (not $smtp.username) }}{{ fail "secretKeys.smtpPassword needs smtp.host and smtp.username" }}{{ end -}}
 {{- end -}}
 

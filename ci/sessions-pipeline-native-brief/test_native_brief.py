@@ -29,6 +29,74 @@ class NativeBrief(unittest.TestCase):
     def brief(self,docs):
         return next(d for d in docs if d['kind']=='Deployment' and d['spec']['template']['metadata']['labels']['app.kubernetes.io/component']=='session-brief')['spec']['template']['spec']
 
+    def analytics_selected(self):
+        values = self.selected()
+        values['nativeBrief']['analytics'] = {
+            'enabled': True, 'deploymentId': 'test-install',
+            'collectorUrl': 'https://collector.agent-relay.svc:8443/v1/events',
+            'existingSecret': 'brief-producer', 'caConfigMap': 'collector-ca',
+            'egress': {'to': [{'podSelector': {'matchLabels': {'app': 'telemetry-collector'}}}]},
+        }
+        return values
+
+    def test_brief_analytics_is_off_by_default_and_scoped_when_enabled(self):
+        self.assertNotIn('ANALYTICS_', json.dumps(self.render(self.selected())))
+        values = self.analytics_selected()
+        values['image'] = deepcopy(values['nativeBrief']['image'])
+        values['components']['referee']['enabled'] = True
+        docs = self.render(values)
+        pod = self.brief(docs)
+        main = pod['containers'][0]
+        env = {entry['name']: entry for entry in main['env']}
+        self.assertEqual(len(env), len(main['env']))
+        self.assertEqual(env['ANALYTICS_SINK']['value'], 'collector')
+        self.assertEqual(env['ANALYTICS_COLLECTOR_TOKEN']['valueFrom']['secretKeyRef'], {
+            'name': 'brief-producer', 'key': 'token',
+        })
+        self.assertEqual(env['NODE_EXTRA_CA_CERTS']['value'], '/etc/postgres-ca/ca.crt')
+        self.assertEqual(env['ANALYTICS_COLLECTOR_CA_FILE']['value'], '/etc/brief-analytics-ca/ca.crt')
+        self.assertIn({'name': 'brief-analytics-ca', 'mountPath': '/etc/brief-analytics-ca', 'readOnly': True},
+                      main['volumeMounts'])
+        self.assertEqual(next(v for v in pod['volumes'] if v['name'] == 'brief-analytics-ca')['configMap']['name'],
+                         'collector-ca')
+        for resource in docs:
+            if resource['kind'] not in ('Deployment', 'Job'):
+                continue
+            template = resource['spec']['template']
+            if template['spec'] is pod:
+                self.assertEqual(template['metadata']['labels']['agentworkforce.dev/analytics-producer'], 'true')
+                self.assertNotIn('ANALYTICS_', json.dumps(pod['initContainers']))
+            else:
+                self.assertNotIn('agentworkforce.dev/analytics-producer', template['metadata']['labels'])
+                self.assertNotIn('brief-producer', json.dumps(template))
+        policy = next(d for d in docs if d['metadata']['name'].endswith('-brief-analytics'))
+        self.assertEqual(policy['spec']['podSelector']['matchLabels']['app.kubernetes.io/component'], 'session-brief')
+        self.assertEqual(policy['spec']['egress'], [{
+            'to': values['nativeBrief']['analytics']['egress']['to'],
+            'ports': [{'protocol': 'TCP', 'port': 8443}],
+        }])
+
+    def test_brief_analytics_refuses_unmanaged_and_unbounded_configuration(self):
+        for overrides, reason in [
+            ({'existingSecret': ''}, 'existingSecret is required'),
+            ({'enabled': 'true'}, 'enabled must be a boolean'),
+            ({'collectorUrl': 'https://collector:8443/v1/events?token=hidden'}, 'HTTPS collector URL'),
+            ({'egress': {'to': []}}, 'must list collector peers'),
+            ({'egress': {'to': [{'podSelector': {}}]}}, 'match explicit labels'),
+            ({'egress': {'port': 65536}}, 'port must be an integer'),
+        ]:
+            with self.subTest(overrides=overrides):
+                values = self.analytics_selected()
+                if 'egress' in overrides:
+                    overrides = {**overrides, 'egress': {
+                        **values['nativeBrief']['analytics']['egress'], **overrides['egress'],
+                    }}
+                values['nativeBrief']['analytics'].update(overrides)
+                self.render(values, reason)
+        values = self.analytics_selected()
+        values['extraEnv'] = [{'name': 'ANALYTICS_SINK', 'value': 'posthog'}]
+        self.render(values, 'managed brief analytics')
+
     def test_default_has_no_brief_resources_or_model_secret(self):
         docs=self.render({});s=json.dumps(docs)
         self.assertNotIn('SESSION_BRIEF_CANONICAL_INPUT',s);self.assertNotIn('OPENAI_API_KEY',s)
@@ -77,6 +145,7 @@ class NativeBrief(unittest.TestCase):
     def test_native_env_secret_ca_health_and_egress_are_component_scoped(self):
         docs=self.render(self.selected());pod=self.brief(docs);main=pod['containers'][0]
         env={e['name']:e for e in main['env']};self.assertEqual(len(env),len(main['env']))
+        self.assertNotIn('READER_MAX_RULESET',env)
         self.assertEqual(env['SESSION_BRIEF_WORKSPACE_IDS']['value'],'default-workspace')
         self.assertEqual(env['SESSION_BRIEF_BATCH']['value'],'1');self.assertEqual(env['SESSION_BRIEF_GLOBAL_DAILY_CAP']['value'],'20');self.assertEqual(env['SESSION_BRIEF_SESSION_DAILY_CAP']['value'],'3');self.assertEqual(env['PIPELINE_KEY_PREFIX']['value'],'96bulls');self.assertEqual(env['PIPELINE_ORG_FROM_PREFIX']['value'],'true')
         self.assertEqual(env['OPENAI_API_KEY']['valueFrom']['secretKeyRef'],{'name':'brief-model-key','key':'OPENAI_API_KEY'})
@@ -92,6 +161,24 @@ class NativeBrief(unittest.TestCase):
             p=d['spec']['template']['spec']
             if p is pod:continue
             self.assertNotIn('brief-model-key',json.dumps(p));self.assertNotIn('SESSION_BRIEF_CANONICAL_INPUT',json.dumps(p))
+
+    def test_reader_ruleset_ceiling_is_exact_managed_and_reader_scoped(self):
+        for ceiling in [8,9,10]:
+            with self.subTest(ceiling=ceiling):
+                selected=self.selected();selected['nativeBrief']['readerMaxRuleset']=ceiling
+                env={e['name']:e for e in self.brief(self.render(selected))['containers'][0]['env']}
+                self.assertEqual(env['READER_MAX_RULESET']['value'],str(ceiling))
+        for ceiling in [7,11,'09',' 8',8.5,True]:
+            with self.subTest(ceiling=ceiling):
+                selected=self.selected();selected['nativeBrief']['readerMaxRuleset']=ceiling
+                self.render(selected,'readerMaxRuleset')
+        selected=self.selected();selected['nativeBrief']['readerMaxRuleset']=None
+        self.assertEqual(self.render(selected),self.render(self.selected()))
+        for target in ['extraEnv','component']:
+            selected=self.selected();entry={'name':'READER_MAX_RULESET','value':'10'}
+            if target=='extraEnv':selected['extraEnv']=[entry]
+            else:selected['components']['session-brief']['env']=[entry]
+            self.render(selected,'manages')
 
     def test_refuses_unbounded_selection_layout_key_and_image(self):
         for field,value,message in [('workspaceIds',[],'workspaceIds'),('workspaceIds',['*'],'workspaceIds'),('workspaceIds',['same','same'],'workspaceIds'),('keyPrefix','96bulls/org','bare writer root'),('model','bad model','model'),('sweepSeconds',0,'sweepSeconds'),('batch',0,'batch'),('batch',101,'batch'),('globalDailyCap',0,'globalDailyCap'),('globalDailyCap',1.5,'globalDailyCap'),('sessionDailyCap',10001,'sessionDailyCap'),('enabled','false','boolean')]:

@@ -66,6 +66,9 @@ spec:
             - { name: http, containerPort: {{ $c.port }}, protocol: TCP }
           env:
             - { name: SERVICE, value: session-read-api }
+            {{- if not (kindIs "invalid" $c.readerMaxRuleset) }}
+            - { name: READER_MAX_RULESET, value: {{ $c.readerMaxRuleset | quote }} }
+            {{- end }}
             - { name: RELAYHISTORY_SELFHOST_READ_API, value: "true" }
             - { name: RELAYHISTORY_READ_API_PORT, value: {{ $c.port | quote }} }
             - name: RELAYHISTORY_READ_API_SECRET
@@ -134,6 +137,10 @@ spec:
                 secretKeyRef:
                   name: {{ $c.auth.relaycontrol.existingSecret | quote }}
                   key: {{ $c.auth.relaycontrol.key | quote }}
+            {{- end }}
+            {{- if $c.coordinationOverlaps.enabled }}
+            - { name: READ_API_COORDINATION_OVERLAPS_ENABLED, value: "true" }
+            - { name: READ_API_COORDINATION_OVERLAPS_BACKEND, value: "postgres" }
             {{- end }}
             {{- include "session-read-api.analytics.env" $c.analytics | nindent 12 }}
             {{- range $e := $c.extraEnv }}

@@ -87,6 +87,7 @@ class ReadApi(unittest.TestCase):
     def test_control_only_stays_the_default_and_unknown_modes_refuse(self):
         docs = self.render()
         env = self.env_of(docs)
+        self.assertNotIn("READER_MAX_RULESET",env)
         self.assertEqual(env["READ_API_AUTH_MODE"]["value"], "relaycontrol_only")
         self.assertNotIn("READ_API_INTERNAL_SECRET", env)
         self.assertNotIn("READ_API_ACCESS_TOKEN_TTL_SECONDS", env)
@@ -95,6 +96,17 @@ class ReadApi(unittest.TestCase):
         for name in ("READ_API_AUTH_MODE", "READ_API_INTERNAL_SECRET", "READ_API_INTERNAL_SECRET_PREVIOUS", "READ_API_ACCESS_TOKEN_TTL_SECONDS", "READ_API_EVENT_MESSAGE_IDS"):
             with self.subTest(name=name):
                 self.assertIn("managed", self.render(overlay={"extraEnv": [{"name": name, "valueFrom": {"secretKeyRef": {"name": "x", "key": "x"}}}]}, fail=True))
+
+    def test_reader_ruleset_ceiling_is_exact_and_managed(self):
+        for ceiling in (8, 9, 10):
+            with self.subTest(ceiling=ceiling):
+                self.assertEqual(self.env_of(self.render(overlay={"readerMaxRuleset": ceiling}))["READER_MAX_RULESET"]["value"], str(ceiling))
+        for ceiling in (7, 11, "padded", " 8", 8.5, True):
+            with self.subTest(ceiling=ceiling):
+                self.assertIn("readerMaxRuleset", self.render(overlay={"readerMaxRuleset": ceiling}, fail=True))
+        self.assertIn("managed", self.render(overlay={"extraEnv": [{"name": "READER_MAX_RULESET", "value": "10"}]}, fail=True))
+
+        self.assertEqual(self.render(overlay={"readerMaxRuleset":None}),self.render())
 
     def self_issued(self, **changes):
         """The fixture in self_issued mode; each change is a dotted path set on a complete overlay."""
@@ -208,6 +220,39 @@ class ReadApi(unittest.TestCase):
         self.assertEqual(env["READ_API_EVENT_MESSAGE_IDS"]["value"], "true")
         self.assertIn("requires LOCKER_BUCKET", self.render(overlay={"events": {"messageIds": True}}, fail=True))
         self.assertIn("must be a boolean", self.render(overlay={"events": {"messageIds": "true"}}, fail=True))
+
+    def test_coordination_overlaps_defaults_on_in_pipeline_with_postgres_backend(self):
+        env = self.env_of(self.render())
+        self.assertEqual(env["READ_API_COORDINATION_OVERLAPS_ENABLED"]["value"], "true")
+        self.assertEqual(env["READ_API_COORDINATION_OVERLAPS_BACKEND"]["value"], "postgres")
+        disabled = self.env_of(self.render(overlay={"coordinationOverlaps": {"enabled": False}}))
+        self.assertNotIn("READ_API_COORDINATION_OVERLAPS_ENABLED", disabled)
+        self.assertNotIn("READ_API_COORDINATION_OVERLAPS_BACKEND", disabled)
+
+        fixture = ROOT / "charts/session-read-api/ci/default-values.yaml"
+        result = subprocess.run(
+            ["helm", "template", "solo", str(ROOT / "charts/session-read-api"), "-n", "ci", "-f", str(fixture)],
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        standalone = self.env_of([d for d in yaml.safe_load_all(result.stdout) if d])
+        self.assertNotIn("READ_API_COORDINATION_OVERLAPS_ENABLED", standalone)
+        self.assertNotIn("READ_API_COORDINATION_OVERLAPS_BACKEND", standalone)
+
+        self.assertIn(
+            "coordinationOverlaps.enabled must be a boolean",
+            self.render(overlay={"coordinationOverlaps": {"enabled": "true"}}, fail=True),
+        )
+        for name in ["READ_API_COORDINATION_OVERLAPS_ENABLED", "READ_API_COORDINATION_OVERLAPS_BACKEND"]:
+            with self.subTest(name=name):
+                self.assertIn(
+                    "managed",
+                    self.render(
+                        overlay={"extraEnv": [{"name": name, "value": "true"}]},
+                        fail=True,
+                    ),
+                )
 
     def test_postgres_tls_requires_an_explicit_verified_profile(self):
         self.assertEqual(self.env_of(self.render())["SESSION_POSTGRES_TLS_PROFILE"]["value"], "custom-ca")
@@ -608,7 +653,7 @@ class IngestEdge(unittest.TestCase):
                 values = {"ingestEdge": overlay} if overlay else {}
                 if read_api:
                     values["sessionReadApi"] = read_api
-                f.write_text(yaml.safe_dump(values))
+                f.write_text(yaml.safe_dump(values, default_style='"'))
                 cmd += ["-f", str(f)]
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
         if fail:
@@ -622,6 +667,40 @@ class IngestEdge(unittest.TestCase):
         self.assertEqual(self.render(overlay={"enabled": False, "image": {"digest": ""},
                          "config": {"existingSecret": ""}, "postgres": {"caConfigMap": "", "caSha256": ""}}), [])
 
+    def test_ingest_engine_ceiling_is_independent_and_runtime_only(self):
+        for mode in ("sync", "async", "drain"):
+            for ceiling in (8, 9, 10):
+                with self.subTest(mode=mode, ceiling=ceiling):
+                    docs = self.render(overlay={"admission": {"mode": mode}, "readerMaxRuleset": ceiling})
+                    pod = next(d for d in docs if d["kind"] == "Deployment")["spec"]["template"]["spec"]
+                    self.assertEqual([e for e in pod["containers"][0]["env"] if e["name"] == "READER_MAX_RULESET"],
+                                     [{"name": "READER_MAX_RULESET", "value": str(ceiling)}])
+                    self.assertFalse(any(d["kind"] == "Job" for d in docs))
+                    self.assertFalse(any(e["name"] == "READER_MAX_RULESET"
+                        for c in pod.get("initContainers", []) for e in c.get("env", [])))
+        baseline = self.render(overlay={"readerMaxRuleset": 8}, all_objects=True)
+        raised = self.render(overlay={"readerMaxRuleset": 10}, all_objects=True)
+        for documents in (baseline, raised):
+            for document in documents:
+                if document["kind"] == "Deployment":
+                    for c in document["spec"]["template"]["spec"]["containers"]:
+                        c["env"] = [e for e in c.get("env", []) if e["name"] != "READER_MAX_RULESET"]
+        self.assertEqual(baseline, raised)
+        default = next(d for d in self.render() if d["kind"] == "Deployment")
+        self.assertFalse(any(e["name"] == "READER_MAX_RULESET" for e in
+                             default["spec"]["template"]["spec"]["containers"][0]["env"]))
+        self.assertEqual(self.render(overlay={"enabled": False, "readerMaxRuleset": 10}), [])
+        self.assertEqual(self.render(overlay={"readerMaxRuleset":None}),self.render())
+
+    def test_ingest_engine_ceiling_refuses_unsupported_or_ambiguous_values_even_disabled(self):
+        for ceiling in (0, 7, 11, "", "08", " 8", "8 ", "8.0", "future", True, False, [], {}):
+            for enabled in (True, False):
+                with self.subTest(ceiling=ceiling, enabled=enabled):
+                    self.assertIn("ingestEdge.readerMaxRuleset", self.render(
+                        overlay={"enabled": enabled, "readerMaxRuleset": ceiling}, fail=True))
+        self.assertIn("ingestEdge.extraEnv is not supported", self.render(
+            overlay={"extraEnv": [{"name": "READER_MAX_RULESET", "value": "10"}]}, fail=True))
+
     def test_admission_defaults_preserve_the_sync_container(self):
         def container(docs):
             return next(d for d in docs if d["kind"] == "Deployment")["spec"]["template"]["spec"]["containers"][0]
@@ -631,6 +710,25 @@ class IngestEdge(unittest.TestCase):
                              e["name"] == "SELFHOST_INGEST_ADMISSION" for e in default["env"]))
         self.assertIn("httpGet", default["startupProbe"])
         self.assertIn("httpGet", default["readinessProbe"])
+
+    def test_claim_lock_busy_defaults_on_in_every_admission_mode_and_can_be_disabled(self):
+        for mode in ("sync", "async", "drain"):
+            for enabled in (True, False):
+                with self.subTest(mode=mode, enabled=enabled):
+                    config = {"admission": {"mode": mode}}
+                    if not enabled:
+                        config["claimLockBusy"] = False
+                    docs = self.render(overlay=config)
+                    c = next(d for d in docs if d["kind"] == "Deployment")["spec"]["template"]["spec"]["containers"][0]
+                    entries = [e for e in c["env"] if e["name"] == "INGEST_CLAIM_LOCK_BUSY"]
+                    self.assertEqual(entries, [{"name": "INGEST_CLAIM_LOCK_BUSY", "value": "on"}] if enabled else [])
+                    self.assertEqual(c["image"].split("@")[1], "sha256:" + "f" * 64)
+
+    def test_claim_lock_busy_refuses_ambiguous_values(self):
+        for value in ("on", "true", "false", 0, 1, [], {}):
+            with self.subTest(value=value):
+                self.assertIn("ingestEdge.claimLockBusy must be a boolean",
+                              self.render(overlay={"claimLockBusy": value}, fail=True))
 
     def test_async_and_drain_emit_only_managed_admission_settings(self):
         for mode in ("async", "drain"):

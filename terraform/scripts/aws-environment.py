@@ -263,7 +263,7 @@ def load_receipt(directory, variables_path, backend_path, tool):
     recorded = read_json(receipt)
     if not isinstance(recorded, dict) or set(recorded) != RECEIPT_KEYS or type(recorded.get("schema_version")) is not int or recorded["schema_version"] != 3:
         raise Refused("Unsupported/corrupt saved-plan receipt; create a new plan")
-    if not isinstance(recorded["search_mode_history"], str) or recorded["search_mode_history"] not in {"fresh", "enrolled", "legacy-or-missing-marker unchanged-domain", "destroy"}:
+    if not isinstance(recorded["search_mode_history"], str) or recorded["search_mode_history"] not in {"fresh", "fresh-retry", "enrolled", "legacy-or-missing-marker unchanged-domain", "destroy"}:
         raise Refused("Invalid search history qualification")
     attempt_id = recorded["attempt_id"]
     if not isinstance(attempt_id, str) or not re.fullmatch(r"[a-f0-9]{12}4[a-f0-9]{3}[89ab][a-f0-9]{15}", attempt_id):

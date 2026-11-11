@@ -21,6 +21,10 @@ port: 8080
 probeRuntime: bun
 # Bare public HTTPS origin, used as the token audience.
 origin: ""
+# Null omits the binding and preserves legacy reads. Explicit 8/9/10 opts into
+# strict marker/chunk checks. This does not select the writer's
+# ruleset and must be raised only after the selected image supports it.
+readerMaxRuleset: null
 # A new self-host store populated only by its own ingest is complete from inception.
 # Set a real ISO coverage floor only when importing partial legacy history; keep
 # it aligned with the indexer's floor. This is not the chart installation time.
@@ -34,6 +38,11 @@ events:
   # READ_API_EVENT_MESSAGE_IDS. Serves includeMessageId on session events from
   # the canonical store, so it requires LOCKER_BUCKET in extraEnv.
   messageIds: false
+coordinationOverlaps:
+  # GET /v1/coordination/overlaps. Off unless the customer explicitly enables
+  # the reviewed endpoint in a compatible read-api image. The sessions-pipeline
+  # adapter overrides this leaf-chart default to true when it enables the reader.
+  enabled: false
 turns:
   # True only where no Neon source exists, so no legacy coverage marker is expected.
   assumeNoLegacy: false

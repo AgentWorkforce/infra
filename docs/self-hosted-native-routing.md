@@ -68,7 +68,12 @@ The generated Ingress sends exactly these paths to the selected Services:
 | `/v1/delivery/limits` | Exact | Native ingest |
 | `/v1` | Prefix | Reader |
 | `/v1/delivery/admission` | Exact, only `ingestEdge.admission.mode: async` or `drain` | Native ingest |
-| `/v1/auth/token/refresh` | Exact, only self-issued reader composition | Native ingest's explicit unsupported-refresh refusal |
+| `/v1/auth/token/refresh` | Exact, both supported reader modes | Native ingest's explicit unsupported-refresh refusal |
+
+The ingest service answers refresh requests with `401 refresh_not_supported`.
+Desktop then renews from its current Control sign-in. A reader's `405` response
+would instead be treated as a temporary outage, leaving an expired upload
+credential retrying without renewal.
 
 Backends use Service ports, not container ports. `/v1/delivery/records`,
 sessions, events, turns, search and login stay on the reader. Method and auth
@@ -105,7 +110,8 @@ relay-control:
 ```
 
 Do not copy this example IP into another cluster. This value accepts one
-canonical IPv4 address and exactly the configured reader hostname. Its empty
+canonical IPv4 address and exactly the configured public reader hostname:
+`sessionReadApiPublicUrl` in native mode, `relayhistoryReadApiUrl` otherwise. Its empty
 default emits no mapping. Certificate verification still requires the public
 name and an approved CA in the container's trust configuration. Project private
 CA bundles read-only as public certificate material, never server private keys.
@@ -115,7 +121,9 @@ Service, `sessionReadApiPublicUrl` for its exact public audience,
 `sessionReadApiMcpReads: true` and a dedicated `secretKeys.sessionReadApiSecret`.
 The reader's `auth.selfIssued.internalSecret` must name that same credential;
 ingest introspection uses a different secret. Do not enable the caller-token
-reader settings or reuse its legacy History DNS alias for the private issuer.
+reader settings. When the public reader needs an in-cluster gateway mapping,
+`relayhistoryHostAliases` names only `sessionReadApiPublicUrl`'s hostname; it
+does not map or replace the private `sessionReadApiUrl` issuer Service.
 
 MCP acquires workspace-bound reader tokens through Control's own public HTTPS
 URL. Where the kind gateway cannot be reached through normal public DNS, the

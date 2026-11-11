@@ -5,10 +5,11 @@ and pilot users. `AgentWorkforce/infra` is the installation source of truth;
 customer names, account details and credentials belong in a private handoff.
 
 **Status: the complete AWS installation is not ready for customer handoff.**
-Terraform and the application charts exist, but the current target still needs
-managed-RDS bootstrap and a complete application acceptance run. Finish the
-release checks below before scheduling an installation. The historical EKS and
-local kind demonstrations are useful development evidence, not this release.
+Terraform, the application charts, and the managed-RDS bootstrap exist, but the
+current target still needs a release-approved Sessions Pipeline image and a
+complete application acceptance run. Finish the release checks below before
+scheduling an installation. The historical EKS and local kind demonstrations
+are useful development evidence, not this release.
 
 ## Before you start
 
@@ -18,9 +19,9 @@ The release owner supplies one tested release packet:
 | --- | --- |
 | Infrastructure and application versions | An immutable infra commit, chart package and image inventory, including CPU architectures and customer ECR locations. |
 | RDS setup | A supported RDS bootstrap/LOGIN procedure, separate service databases, owner/runtime roles, verified TLS and completed migrations. |
-| Application wiring | Control sign-in, native ingest/read routes, authoritative PostgreSQL messaging, S3 and the selected OpenSearch/Lambda path tested together. |
+| Application wiring | Control sign-in, native ingest/read routes, authoritative PostgreSQL messaging, S3 and the selected OpenSearch/Lambda path tested together. The Sessions artifact includes schema generation `046010`, fresh-install `search_index` read grants, the session-query path and the coordination-overlaps endpoint. |
 | Desktop | Signed customer-profile installers, a working download location and the correct server, URL scheme and update feed. |
-| Operator controls | Capture policy, pre-upload scrubbing, authorized deletion and disabled add-ons verified in the actual client and app. |
+| Operator controls | Capture policy, pre-upload scrubbing, authorized deletion and disabled add-ons verified in the actual client and app. Do not claim client-side scrubbing until the selected Desktop build contains the release-qualified R9 scrubber. |
 | Recovery | A successful isolated restore and a reviewed upgrade/recovery procedure for this exact release. |
 
 Open work is tracked in the [application proof](terraform-helm-application-proof.md),
@@ -124,9 +125,30 @@ The AWS target is **one RDS instance with separate logical databases**:
 
 Use the accepted [database bootstrap contract](shared-postgres-storage-contract.md).
 Terraform creates only the initial RDS database; its binding outputs do not
-create the other databases, users or grants. This step is blocked until the
-release packet includes the supported, tested RDS SQL/activation procedure.
-Do not use the CNPG superuser bootstrap as an RDS substitute.
+create the other databases, users or grants. Use the tracked
+[`rds-setup.sh`](../scripts/selfhost/rds-setup.sh) procedure with the approved,
+digest-pinned Sessions Pipeline services image. Do not use the CNPG superuser
+bootstrap as an RDS substitute.
+
+Before Helm, export the non-secret Terraform outputs and the Secrets Manager
+ARN from the reviewed environment, then run `pre`:
+
+```sh
+export AWS_REGION=<approved-region>
+export RDS_HOST="$(terraform output -raw database_host)"
+export RDS_ADMIN_SECRET_ARN="$(terraform output -raw database_admin_secret_arn)"
+export SERVICES_IMAGE='<customer-registry>/sessions-pipeline@sha256:<approved-digest>'
+export NAMESPACE=agent-relay
+export KUBE_CONTEXT=<approved-kube-context>
+export STATE_DIR=/approved/private/agent-relay-install
+scripts/selfhost/rds-setup.sh pre
+```
+
+The command creates the `rds-ca` ConfigMap and mode-restricted Secret input
+files under `$STATE_DIR/secret-files`. It prints neither database passwords nor
+connection strings. Merge those files with the non-database secrets in the
+private release packet and create the referenced Kubernetes Secrets; never put
+their contents in values or the source checkout.
 
 For each service, create the dedicated database, install its owner/runtime
 identities and required extensions, then run its pinned migrations as the
@@ -136,6 +158,9 @@ existing installation's actual database names until a reviewed migration changes
 
 History is a pipeline capability in the target. Keep legacy History/Auth stores
 where the selected profile still requires them until their reviewed cutover.
+After the HoopDb migration Job succeeds, run `rds-setup.sh post` and restart the
+read API, ingest edge, and search indexer. The post phase refuses to activate
+those logins before migration evidence exists and verifies each login over TLS.
 
 **Checkpoint:** all required migrations and runtime-role checks pass on managed
 RDS. `application_sql_ready=false` or a pending generation means stop here.
@@ -160,6 +185,11 @@ Use the release packet's complete RDS values overlay. The historical
    qualified [native ingest](self-hosted-native-ingest.md) and
    [session reader](self-hosted-session-read-api.md) profile from the packet.
    Do not enable a slot without its supported image, role and authentication contract.
+   For the AWS RDS native profile, keep `READ_API_SESSION_QUERY=true` and verify
+   a fresh database can list sessions and read events before accepting the
+   services digest. Verify `GET /v1/coordination/overlaps` with an authorized
+   workspace token too. A 501 from session list, 503 from events, or 404 from
+   overlaps blocks release.
 4. For a core pilot, set `components.relayflows: false`; leave Relayfile and
    Chief uninstalled unless selected. Verify the matching server and UI
    capability behavior in the [controls checklist](enterprise-customer-controls.md).
@@ -178,13 +208,43 @@ permits this **first-install** command:
 helm install "$RELEASE" "$CHART_PACKAGE" \
   --kube-context "$KUBE_CONTEXT" --namespace "$NAMESPACE" \
   --create-namespace --values /approved/private/customer.values.yaml \
-  --no-hooks --wait --wait-for-jobs --timeout 20m
+  --no-hooks --timeout 20m
 ```
 
-Run the packet's ordered pre-install SQL/Jobs before this command where required.
+Do not add `--wait` to this first command. The read API, ingest edge and search
+indexer cannot become ready until their RDS logins are activated, while login
+activation must wait for the HoopDb migration Job. Complete that barrier in
+order:
+
+```sh
+MIGRATION_JOB="$(
+  helm get manifest "$RELEASE" --kube-context "$KUBE_CONTEXT" \
+    --namespace "$NAMESPACE" |
+    yq -r 'select(.kind == "Job" and .metadata.labels."app.kubernetes.io/component" == "hoopdb-migrate") | .metadata.name'
+)"
+[[ -n "$MIGRATION_JOB" && "$MIGRATION_JOB" != *$'\n'* ]] || {
+  echo "expected exactly one current HoopDb migrate Job" >&2
+  exit 1
+}
+kubectl --context "$KUBE_CONTEXT" -n "$NAMESPACE" wait \
+  --for=condition=complete "job/$MIGRATION_JOB" --timeout=20m &&
+KUBE_CONTEXT="$KUBE_CONTEXT" RELEASE="$RELEASE" MIGRATION_JOB="$MIGRATION_JOB" \
+  scripts/selfhost/rds-setup.sh post
+kubectl --context "$KUBE_CONTEXT" -n "$NAMESPACE" rollout restart \
+  deployment/$RELEASE-read-api deployment/$RELEASE-ingest-edge \
+  deployment/$RELEASE-search-indexer
+kubectl --context "$KUBE_CONTEXT" -n "$NAMESPACE" rollout status deployment \
+  --selector "app.kubernetes.io/instance=$RELEASE" --timeout=20m
+```
+
+Inspect every Job before running `post`; a failed or missing current migration
+blocks activation. Run the packet's ordered pre-install SQL/Jobs before the
+Helm command where required.
 For an existing release, follow the [pre-upgrade gate](../scripts/selfhost/README.md#pre-upgrade-gate)
 and use `helm upgrade` with its reviewed package and values. Do not add `--install`
-to an upgrade, or `--atomic` to a database-changing installation.
+to an upgrade, or `--atomic` to a database-changing installation. If the
+upgrade rotates or creates RDS logins, use the same migrate-then-post ordering
+rather than waiting on Deployments first.
 
 **Checkpoint:** required Jobs complete and workloads become ready. Inspect a
 failed Job or missing image/profile instead of bypassing a verifier.
@@ -210,13 +270,126 @@ verification or count a SPA HTML fallback as an API health response.
 **Checkpoint:** the script passes and a pilot laptop resolves and reaches all
 client-facing origins through VPN/ZTNA, including selected upload endpoints.
 
-## 6. Onboard the first owner and pilot users
+## 6. Provision and promote the private Desktop feed
+
+**Who:** platform administrator and Desktop release owner, from a macOS admin
+runner after Relay Control is healthy.
+
+Relay Control must start with the private feed enabled before this step:
+
+- `SELFHOST_DESKTOP_FEED_SIGNER=awskms` and
+  `SELFHOST_DESKTOP_FEED_STORAGE=s3`;
+- `SELFHOST_DESKTOP_FEED_KMS_KEY_ALIASES` maps the exact profile ID from the
+  private handoff to its AWS KMS alias. The referenced key must use key spec
+  `ECC_NIST_EDWARDS25519` and key usage `SIGN_VERIFY`;
+- the Control workload role can call `kms:Sign` and `kms:GetPublicKey` on that
+  key and can put, get and delete feed objects in the approved S3 prefix; and
+- `SELFHOST_DESKTOP_FEED_S3_BUCKET`, `SELFHOST_DESKTOP_FEED_S3_REGION` and
+  `SELFHOST_DESKTOP_FEED_S3_PREFIX` match the reviewed application overlay.
+  Keep the bucket private.
+
+Confirm the Control migration Job completed before continuing. The admin
+runner needs `bash`, `curl`, `jq`, an authenticated GitHub CLI with permission
+to manage the Desktop repository's environment secrets and dispatch its
+workflows, and `hdiutil` to inspect the macOS candidate. Inject
+`RELAY_ADMIN_TOKEN` from the approved secret system as an environment variable;
+never put it in an argument, command transcript or handoff. It must be a Control
+bootstrap token or an organization owner/admin bearer for the selected site.
+
+Set every non-secret input from the current private handoff. In particular,
+`DESKTOP_CANDIDATE_RUN` and `DESKTOP_VERSION` must name the qualified Desktop
+candidate recorded in that handoff. Candidate identifiers from an older packet
+are superseded; never carry them forward or substitute an unreviewed run.
+
+```bash
+export DESKTOP_REPO="AgentWorkforce/relay-desktop"
+export DESKTOP_SITE_URL="https://api.<customer-domain>"
+export DESKTOP_ORG_ID="<organization-id>"
+export DESKTOP_PROFILE_ID="<profile-id>"
+export DESKTOP_WORKSPACE_ID="<workspace-id>"
+export DESKTOP_ASSET_PREFIX="<approved-asset-prefix>"
+export DESKTOP_CANDIDATE_RUN="<approved-candidate-run-id>"
+export DESKTOP_VERSION="<approved-desktop-version>"
+export DESKTOP_ENVIRONMENT="desktop-${DESKTOP_PROFILE_ID}"
+: "${RELAY_ADMIN_TOKEN:?inject RELAY_ADMIN_TOKEN from the approved secret system}"
+gh auth status -h github.com
+```
+
+Run the provisioner without `--apply` first. This plan reads the existing
+profile and downloads the candidate for its embedded-key check, but does not
+register or bind a profile, mint a token, change a GitHub secret or dispatch a
+workflow.
+
+```bash
+scripts/selfhost/desktop-feed-provision.sh \
+  --site "$DESKTOP_SITE_URL" \
+  --org "$DESKTOP_ORG_ID" \
+  --profile "$DESKTOP_PROFILE_ID" \
+  --workspace "$DESKTOP_WORKSPACE_ID" \
+  --asset-prefix "$DESKTOP_ASSET_PREFIX" \
+  --candidate-run "$DESKTOP_CANDIDATE_RUN" \
+  --version "$DESKTOP_VERSION"
+```
+
+Require the plan to identify the intended site, profile and
+`desktop-<profile>` GitHub environment. For an existing profile it must report
+that `$DESKTOP_CANDIDATE_RUN` embeds the site's public feed key. A first-time
+plan cannot perform that key check because the profile and KMS public key do
+not exist in Control yet; it reports `would register profile` instead.
+
+After explicit approval of these exact inputs and the external mutations, run
+the same command once with `--apply`:
+
+```bash
+scripts/selfhost/desktop-feed-provision.sh \
+  --site "$DESKTOP_SITE_URL" \
+  --org "$DESKTOP_ORG_ID" \
+  --profile "$DESKTOP_PROFILE_ID" \
+  --workspace "$DESKTOP_WORKSPACE_ID" \
+  --asset-prefix "$DESKTOP_ASSET_PREFIX" \
+  --candidate-run "$DESKTOP_CANDIDATE_RUN" \
+  --version "$DESKTOP_VERSION" \
+  --apply
+```
+
+The apply registers or reuses the profile, binds the workspace, sets the
+public key in `DESKTOP_FEED_PUBLIC_KEY`, mints the publisher token directly
+into `DESKTOP_FEED_PUBLISHER_TOKEN` in `$DESKTOP_ENVIRONMENT`, and dispatches
+`desktop-promote.yml` only after the candidate's embedded key matches. The
+publisher token is never printed or written to disk.
+
+This operation is not transactional. A missing or mismatched candidate key
+fails apply before workspace binding, GitHub secret updates, token minting or
+Promote, although a newly registered profile can remain. A later failure can
+leave earlier completed mutations in place. Do not retry blindly: the profile
+retains at most two active tokens and a third mint revokes the oldest. Inspect
+the recorded state and reconcile a failed step before another apply.
+
+Verify secret names without reading their values, then require the dispatched
+Promote run and the profile feed acceptance to pass:
+
+```bash
+gh secret list -R "$DESKTOP_REPO" --env "$DESKTOP_ENVIRONMENT"
+gh run list -R "$DESKTOP_REPO" --workflow desktop-promote.yml --limit 5
+```
+
+**Checkpoint:** the intended workspace is bound, the GitHub environment lists
+both feed secret names, the Promote run for `$DESKTOP_CANDIDATE_RUN` and
+`$DESKTOP_VERSION` succeeds, and a bound Desktop accepts the signed profile
+feed. A dispatch alone is not publication or client-acceptance proof.
+
+## 7. Onboard the first owner and pilot users
 
 **Who:** the configured customer owner, then each invited user.
 
 1. Open the approved app's `/login` page and sign in through customer SSO.
    Confirm the organization/workspace, then invite pilot users in Members.
    Verify an uninvited account is refused.
+   Microsoft Entra issuers that omit `email_verified` need the narrowly scoped
+   `SELFHOST_OIDC_TRUST_MISSING_EMAIL_VERIFIED_ISSUER` setting for that exact
+   issuer in `relay-control.extraEnv`; never use it as a generic trust bypass.
+   Until the release packet records a successful real-IdP SSO acceptance run,
+   use the qualified password/email-link flow for day-one onboarding.
 2. If no sign-in method is configured, have the identity administrator finish
    OIDC/SMTP. For first-owner recovery, the customer's authorized Kubernetes
    operator uses the [device approval runbook](operator-device-login.md).
@@ -229,18 +402,25 @@ client-facing origins through VPN/ZTNA, including selected upload endpoints.
    workspace and code in the normal signed-in browser, approve only that
    request, and verify Desktop connects to the same customer workspace.
 5. Confirm the effective administrator capture policy and pre-upload scrubber.
-   Browser sign-in alone does not prove Desktop is connected.
+   Browser sign-in alone does not prove Desktop is connected. A server-side
+   scrub result also does not prove client-side pre-upload scrubbing; verify the
+   selected Desktop build carries the release-qualified R9 scrubber first.
 
 **Checkpoint:** a real pilot user can complete SSO, install the correct Desktop
 profile and approve their own device without Kubernetes or bootstrap access.
 
-## 7. Prove the workflow and hand it over
+## 8. Prove the workflow and hand it over
 
 **Who:** pilot user, customer administrator and release owner.
 
 - Capture a short real agent session with a harmless unique marker and the
   release's synthetic secret-test value. Verify removal **before upload**,
   then find the same session in app list, transcript and search.
+- After first sign-in, copy the real workspace ID into the umbrella release
+  overlay's `sessions-pipeline.worker.nativeBrief.workspaceIds`, apply that
+  corrected overlay through the reviewed upgrade procedure, and only then
+  enable descriptions. This is an explicit bounded list; never use `"*"`, and
+  add later workspaces deliberately.
 - Retry the supported delivery once and verify one logical result. Restart the
   relevant workloads and confirm durable readback and PostgreSQL messaging.
 - Use a second workspace/user to verify cross-tenant denial. Check that each

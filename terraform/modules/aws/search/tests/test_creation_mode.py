@@ -262,4 +262,69 @@ class SessionsRead(unittest.TestCase):
         with self.assertRaises(g.SearchModeError): g.admit(p)
 
 
+LOG_GROUP = g.PREFIX + 'aws_cloudwatch_log_group.this["application"]'
+
+
+def failed_create_retry(mode=True):
+    """The plan after a first apply recorded the marker, a role, its policy and a log group, then failed creating the domain."""
+    p = fixture(mode, fresh=True)
+    marker = {'id': 'mode-id', 'input': mode, 'output': mode}
+    prior = [row(g.MARKER, marker)]
+    m = change(p, g.MARKER)
+    m.update(actions=['no-op'], before=dict(marker), after=dict(marker))
+    for address, kind, values in [(ROLE, 'aws_iam_role', {'id': 'role'}), (ROLE_POLICY, 'aws_iam_role_policy', {'id': 'role:p', 'name': 'p', 'policy': DOC}), (LOG_GROUP, 'aws_cloudwatch_log_group', {'id': 'log'})]:
+        prior.append({'address': address, 'mode': 'managed', 'type': kind, 'values': values})
+        p['resource_changes'].append({'address': address, 'mode': 'managed', 'type': kind, 'change': {'actions': ['no-op'], 'before': values, 'after': values, 'after_unknown': {}}})
+    p['resource_changes'].append(creation(SESSIONS))
+    p['prior_state'] = {'values': {'root_module': {'child_modules': [{'address': 'module.search', 'resources': prior}]}}}
+    return p
+
+
+class FailedCreateRetry(unittest.TestCase):
+    def test_retry_of_a_failed_first_domain_create_is_admitted_in_both_modes(self):
+        for mode in [False, True]:
+            with self.subTest(mode=mode): self.assertEqual(g.admit(failed_create_retry(mode)), 'fresh-retry')
+
+    def test_marker_alone_in_state_is_admitted(self):
+        p = failed_create_retry()
+        state(p)[:] = [r for r in state(p) if r['address'] == g.MARKER]
+        p['resource_changes'] = [r for r in p['resource_changes'] if r['address'] not in (ROLE, ROLE_POLICY, LOG_GROUP)]
+        self.assertEqual(g.admit(p), 'fresh-retry')
+
+    def test_everything_else_still_holds(self):
+        def domain(p): return change(p, g.DISPOSABLE)
+        def marker(p): return change(p, g.MARKER)
+        def other_domain(p):
+            r = next(r for r in p['resource_changes'] if r['address'] == g.DISPOSABLE); r['address'] = g.PROTECTED
+        cases = {
+            'domain policy recorded': lambda p: state(p).append(row(POLICY, {'id': 'policy-id'})),
+            'domain policy recorded and unchanged': lambda p: (state(p).append(row(POLICY, {'id': 'policy-id'})), change(p, POLICY).update(actions=['no-op'], before={'id': 'policy-id'}, after={'id': 'policy-id'})),
+            'other-mode domain': other_domain,
+            'marker flipped': lambda p: marker(p)['after'].update(input=False),
+            'stored marker differs': lambda p: (state(p)[0]['values'].update(input=False), marker(p)['before'].update(input=False)),
+            'marker before differs from state': lambda p: marker(p)['before'].update(input=False),
+            'marker before id differs': lambda p: marker(p)['before'].update(id='foreign-id'),
+            'marker after id differs': lambda p: marker(p)['after'].update(id='other'),
+            'marker update': lambda p: marker(p).update(actions=['update']),
+            'marker replace': lambda p: marker(p).update(actions=['delete', 'create']),
+            'marker delete': lambda p: marker(p).update(actions=['delete']),
+            'marker unknown input': lambda p: marker(p).update(after_unknown={'input': True}),
+            'domain not created': lambda p: domain(p).update(actions=['no-op']),
+            'domain unknown after': lambda p: domain(p).update(after=None),
+            'domain missing': lambda p: p['resource_changes'].remove(next(r for r in p['resource_changes'] if r['address'] == g.DISPOSABLE)),
+            'recorded role updated': lambda p: change(p, ROLE).update(actions=['update']),
+            'recorded role replaced': lambda p: change(p, ROLE).update(actions=['delete', 'create']),
+            'recorded log group deleted': lambda p: change(p, LOG_GROUP).update(actions=['delete']),
+            'recorded object missing from changes': lambda p: p['resource_changes'].remove(next(r for r in p['resource_changes'] if r['address'] == LOG_GROUP)),
+            'recorded object recreated': lambda p: change(p, LOG_GROUP).update(actions=['create'], before=None),
+            'recorded object drift': lambda p: p.update(resource_drift=[{'address': LOG_GROUP, 'change': {'actions': ['update'], 'before': {'id': 'log'}, 'after': {'id': 'log'}}}]),
+            'deposed marker': lambda p: state(p)[0].update(deposed='abc'),
+            'importing': lambda p: domain(p).update(importing={'id': 'foreign'}),
+            'incomplete plan': lambda p: p.update(complete=False),
+        }
+        for name, mutate in cases.items():
+            p = failed_create_retry(); mutate(p)
+            with self.subTest(case=name), self.assertRaises(g.SearchModeError): g.admit(p)
+
+
 if __name__ == '__main__': unittest.main()

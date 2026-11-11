@@ -15,10 +15,7 @@ mock_provider "aws" {
     defaults = { arn = "arn:aws:secretsmanager:us-west-2:111111111111:secret:node/secret-AbCdEf" }
   }
   mock_resource "aws_iam_role" {
-    defaults = { arn = "arn:aws:iam::111111111111:role/node", name = "node", id = "node" }
-  }
-  mock_resource "aws_iam_instance_profile" {
-    defaults = { name = "node" }
+    defaults = { arn = "arn:aws:iam::111111111111:role/node", id = "node" }
   }
 }
 

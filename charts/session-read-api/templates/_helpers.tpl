@@ -36,6 +36,7 @@ app.kubernetes.io/part-of: sessions-pipeline
 {{- $digest := required "session-read-api: image.digest requires an owner-approved compatible image" $c.image.digest -}}
 {{- if not (regexMatch "^sha256:[a-f0-9]{64}$" $digest) }}{{ fail "session-read-api: image.digest must be sha256:<64 lowercase hex characters>" }}{{ end -}}
 {{- $origin := required "session-read-api: origin is required" $c.origin -}}
+{{- if and (not (kindIs "invalid" $c.readerMaxRuleset)) (not (has (toString $c.readerMaxRuleset) (list "8" "9" "10"))) }}{{ fail "session-read-api: readerMaxRuleset must be one of 8, 9, or 10" }}{{ end -}}
 {{- $publicOriginPattern := "^https://([A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?\\.)+[A-Za-z]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?(:[0-9]{1,5})?$" -}}
 {{- if or (not (regexMatch $publicOriginPattern $origin)) (regexMatch "(?i)\\.(localhost|local|internal|lan|invalid|test|example|home\\.arpa|onion)(:[0-9]{1,5})?$" $origin) (regexMatch "(?i)\\.example\\.(com|net|org)(:[0-9]{1,5})?$" $origin) }}{{ fail "session-read-api: origin must be a public HTTPS origin with multi-label DNS and no credentials, path, query, or fragment" }}{{ end -}}
 {{- $portToken := regexFind ":[0-9]+$" $origin -}}
@@ -167,6 +168,7 @@ workspace is not on a static list, and its reads would answer 501. */ -}}
 {{- if and $c.ingress.enabled (not $np.publicFrom) }}{{ fail "session-read-api: ingress.enabled with networkPolicy.enabled requires networkPolicy.publicFrom, or the policy would block the ingress" }}{{ end -}}
 {{- end -}}
 {{- if not (kindIs "bool" $c.events.messageIds) }}{{ fail "session-read-api: events.messageIds must be a boolean" }}{{ end -}}
+{{- if not (kindIs "bool" $c.coordinationOverlaps.enabled) }}{{ fail "session-read-api: coordinationOverlaps.enabled must be a boolean" }}{{ end -}}
 {{- /* CORS: exact origins only, matching what the service itself accepts. */ -}}
 {{- if not (kindIs "slice" $c.cors.allowedOrigins) }}{{ fail "session-read-api: cors.allowedOrigins must be a list" }}{{ end -}}
 {{- range $o := $c.cors.allowedOrigins -}}
@@ -182,7 +184,7 @@ workspace is not on a static list, and its reads would answer 501. */ -}}
 {{- end -}}
 {{- end -}}
 {{- /* extraEnv: nothing managed above can be overridden or hidden here. */ -}}
-{{- $reserved := list "SERVICE" "RELAYHISTORY_SELFHOST_READ_API" "RELAYHISTORY_READ_API_PORT" "RELAYHISTORY_READ_API_SECRET" "READ_API_ORIGIN" "READ_API_AUTH_MODE" "READ_API_COMPLETE_SINCE" "READ_API_DIRECTORY_WORKSPACES" "READ_API_CORS_ALLOWED_ORIGINS" "RELAYHISTORY_SELFHOST_LOGIN_ADVERTISES_SYNC" "READ_API_TURNS_ASSUME_NO_LEGACY" "SEARCH_INDEX_POSTGRES_BACKEND_ID" "SEARCH_INDEX_OPENSEARCH_URL" "SEARCH_INDEX_OPENSEARCH_AUTH" "SEARCH_INDEX_OPENSEARCH_AWS_REGION" "SEARCH_INDEX_OPENSEARCH_INDEX_PREFIX" "READ_API_INTERNAL_SECRET" "READ_API_INTERNAL_SECRET_PREVIOUS" "READ_API_ACCESS_TOKEN_TTL_SECONDS" "READ_API_EVENT_MESSAGE_IDS" "SEARCH_INDEX_BACKEND" "ALLOW_IN_CLUSTER_HTTP" "RELAYAUTH_JWKS_URL" "RELAYAUTH_ISSUER" "RELAYHISTORY_ACCEPT_RELAYCONTROL_TOKENS" "RELAYCONTROL_INTROSPECT_URL" "RELAYCONTROL_INTROSPECT_SECRET" "SESSION_POSTGRES_TLS_PROFILE" "SESSION_POSTGRES_CA_FILE" "SESSION_POSTGRES_CA_SHA256" -}}
+{{- $reserved := list "SERVICE" "READER_MAX_RULESET" "RELAYHISTORY_SELFHOST_READ_API" "RELAYHISTORY_READ_API_PORT" "RELAYHISTORY_READ_API_SECRET" "READ_API_ORIGIN" "READ_API_AUTH_MODE" "READ_API_COMPLETE_SINCE" "READ_API_DIRECTORY_WORKSPACES" "READ_API_CORS_ALLOWED_ORIGINS" "RELAYHISTORY_SELFHOST_LOGIN_ADVERTISES_SYNC" "READ_API_TURNS_ASSUME_NO_LEGACY" "READ_API_COORDINATION_OVERLAPS_ENABLED" "READ_API_COORDINATION_OVERLAPS_BACKEND" "SEARCH_INDEX_POSTGRES_BACKEND_ID" "SEARCH_INDEX_OPENSEARCH_URL" "SEARCH_INDEX_OPENSEARCH_AUTH" "SEARCH_INDEX_OPENSEARCH_AWS_REGION" "SEARCH_INDEX_OPENSEARCH_INDEX_PREFIX" "READ_API_INTERNAL_SECRET" "READ_API_INTERNAL_SECRET_PREVIOUS" "READ_API_ACCESS_TOKEN_TTL_SECONDS" "READ_API_EVENT_MESSAGE_IDS" "SEARCH_INDEX_BACKEND" "ALLOW_IN_CLUSTER_HTTP" "RELAYAUTH_JWKS_URL" "RELAYAUTH_ISSUER" "RELAYHISTORY_ACCEPT_RELAYCONTROL_TOKENS" "RELAYCONTROL_INTROSPECT_URL" "RELAYCONTROL_INTROSPECT_SECRET" "SESSION_POSTGRES_TLS_PROFILE" "SESSION_POSTGRES_CA_FILE" "SESSION_POSTGRES_CA_SHA256" -}}
 {{- $seen := dict -}}
 {{- $canonical := dict -}}
 {{- range $e := $c.extraEnv -}}

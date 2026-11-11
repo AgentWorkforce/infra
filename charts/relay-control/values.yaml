@@ -58,6 +58,8 @@ secretKeys:
   sessionReadApiSecret: ""
   # OIDC client secret (required with auth.oidc.issuer).
   oidcClientSecret: ""
+  # Microsoft client secret (required with auth.microsoft.clientId).
+  microsoftClientSecret: ""
   # SMTP password (required with smtp.username).
   smtpPassword: ""
   # Password pepper: one `v<version>:<secret>` line per pepper, each secret at
@@ -123,6 +125,18 @@ auth:
     redirectUrl: ""
     # Test only: accept an http:// issuer (e.g. an in-cluster Dex).
     allowHttpIssuer: false
+  # Microsoft sign-in (Outlook.com, Hotmail, Live and Entra ID accounts), a
+  # second provider beside auth.oidc. Register
+  # <dashboard origin>/login/microsoft/callback on the app registration; the
+  # client secret is secretKeys.microsoftClientSecret.
+  microsoft:
+    clientId: ""
+    # common (default: personal and work accounts), consumers, organizations
+    # or a tenant id.
+    tenant: ""
+    # Fixed redirect URI (<origin>/login/microsoft/callback); empty: the origin
+    # the sign-in started on.
+    redirectUrl: ""
   # Email sign-in links (single use, 15 minutes); requires smtp.host.
   emailLink:
     enabled: false
@@ -221,6 +235,9 @@ services:
   # Optional compatibility connection for existing caller-token readers.
   relayhistoryReadApiUrl: ""
   relayhistoryReadApiEvents: false
+  # Optional API-only mapping of the public reader hostname. In native mode it
+  # must match sessionReadApiPublicUrl; otherwise relayhistoryReadApiUrl.
+  # It never changes the private sessionReadApiUrl handoff or TLS/SNI/audience.
   relayhistoryHostAliases: []
   # Optional local gateway mapping for the API's own publicUrl. MCP obtains
   # workspace-bound reader tokens through that public HTTPS origin. Only that

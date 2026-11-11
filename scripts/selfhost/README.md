@@ -23,7 +23,69 @@ off: without `--apply` it prints the plan and contacts nothing. See its header
 for flags, and [the supply chain doc](../../docs/self-hosted-image-supply-chain.md)
 for what must be true before an image is used in a customer install.
 
-## Safety properties
+## Managed RDS bootstrap
+
+`rds-setup.sh` prepares the supported shared-instance AWS RDS layout: separate
+`relaycontrol`, `hoopdb`, and `relaycast` databases with distinct owner and
+runtime roles. Unlike the verification scripts below, it is intentionally
+mutating. Run it only from the approved administrator context for the target
+cluster and RDS instance.
+
+The `pre` phase runs before Helm. It retrieves the RDS administrator credential
+from AWS Secrets Manager, runs the reviewed bootstrap SQL in short-lived
+Kubernetes Jobs, creates the `rds-ca` ConfigMap, and writes Secret input files
+under a mode-0700 state directory. It never prints passwords or connection
+strings.
+
+```bash
+export AWS_REGION=us-west-2
+export RDS_HOST="$(terraform output -raw database_host)"
+export RDS_ADMIN_SECRET_ARN="$(terraform output -raw database_admin_secret_arn)"
+export SERVICES_IMAGE='registry.example/sessions-pipeline@sha256:<approved-digest>'
+export NAMESPACE=agent-relay
+export KUBE_CONTEXT=<approved-kube-context>
+export STATE_DIR="$PWD/.private/agent-relay-install"
+scripts/selfhost/rds-setup.sh pre
+```
+
+Merge the generated `secret-files/` entries with the other release-packet
+secrets, then create the named Kubernetes Secrets before installing the chart.
+Do not commit or archive the state directory in the source bundle. One RDS
+instance supports one HoopDb install because a required search role is
+server-wide.
+
+After the current Helm migration Job has completed, run the `post` phase. Pass
+the exact content-addressed Job name from the selected release manifest. The
+script verifies its release/component labels and succeeded status in the
+selected context before it activates the read, ingest, and search logins over
+verified TLS.
+
+```bash
+export RELEASE=agent-relay
+export MIGRATION_JOB="$(
+  helm get manifest "$RELEASE" --kube-context "$KUBE_CONTEXT" \
+    --namespace "$NAMESPACE" |
+    yq -r 'select(.kind == "Job" and .metadata.labels."app.kubernetes.io/component" == "hoopdb-migrate") | .metadata.name'
+)"
+[[ -n "$MIGRATION_JOB" && "$MIGRATION_JOB" != *$'\n'* ]] || {
+  echo "expected exactly one current HoopDb migrate Job" >&2
+  exit 1
+}
+kubectl --context "$KUBE_CONTEXT" -n "$NAMESPACE" wait \
+  --for=condition=complete "job/$MIGRATION_JOB" --timeout=20m &&
+  scripts/selfhost/rds-setup.sh post
+kubectl --context "$KUBE_CONTEXT" -n "$NAMESPACE" rollout restart \
+  deploy/agent-relay-read-api \
+  deploy/agent-relay-ingest-edge \
+  deploy/agent-relay-search-indexer
+```
+
+Re-run `pre` immediately before an upgrade so the local HoopDb migration-owner
+Secret input reflects the current rotating RDS administrator password. Both
+the services image and optional PostgreSQL client image must be immutable
+digest references.
+
+## Verification safety properties
 
 Both scripts:
 

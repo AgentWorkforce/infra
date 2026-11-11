@@ -2,8 +2,9 @@ replicaCount: 1
 
 image:
   repository: ghcr.io/agentworkforce/relay-webapp
-  # Required. Images are never selected by a mutable tag.
-  digest: ""
+  # relay-webapp d40c0b30 (#124), Container Image run 42936053821.
+  # Images are never selected by a mutable tag.
+  digest: sha256:bd295ccb7d1323965dce890f19d0b7f857d706c00d7756f719c713763fdb49f3
   pullPolicy: IfNotPresent
 imagePullSecrets: []
 
@@ -26,6 +27,14 @@ runtime:
   # read API with the access token Control hands the page. Needs relay-webapp
   # main 53e39ca9 or later and the read API's CORS allowlist to name this origin.
   sessionReadApiEnabled: false
+  # DASHBOARD_COORDINATION_OVERLAPS_ENABLED: show the coordination-overlaps view.
+  # Default off even when the sessions-pipeline backend endpoint is enabled.
+  # Requires a dashboard image containing relay-webapp #124.
+  coordinationOverlapsEnabled: false
+  # DASHBOARD_ANALYTICS_ENABLED: browser events use Control's collector proxy.
+  # Null preserves the image default; explicit true/false is rendered faithfully.
+  # Requires a compatible dashboard image and separately configured Control adapter.
+  analyticsEnabled: null
 
 # Optional enterprise branding: one customer profile, rendered as JSON into
 # DASHBOARD_CUSTOMER_PROFILE and served in /runtime-config.js (no rebuild).

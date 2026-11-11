@@ -13,15 +13,17 @@
 {{- if not (has $url $audiences) }}{{ fail "SELFHOST_INTROSPECT_AUDIENCES must include the exact managed native History reader origin" }}{{ end -}}
 {{- else if $services.relayhistoryReadApiEvents }}{{ fail "services.relayhistoryReadApiEvents requires services.relayhistoryReadApiUrl" }}{{ end -}}
 {{- $aliases := $services.relayhistoryHostAliases -}}
+{{- $readerOrigin := $url -}}
+{{- if eq $services.relayhistoryBackend "native" }}{{ $readerOrigin = $services.sessionReadApiPublicUrl }}{{ end -}}
 {{- if not (kindIs "slice" $aliases) }}{{ fail "services.relayhistoryHostAliases must be a list" }}{{ end -}}
 {{- if gt (len $aliases) 1 }}{{ fail "services.relayhistoryHostAliases accepts one explicit reader address" }}{{ end -}}
 {{- range $aliases -}}
-{{- if or (not $url) (not (kindIs "map" .)) }}{{ fail "services.relayhistoryHostAliases requires the managed reader URL and an ip/hostnames object" }}{{ end -}}
+{{- if or (not $readerOrigin) (not (kindIs "map" .)) }}{{ fail "services.relayhistoryHostAliases requires the managed reader URL and an ip/hostnames object" }}{{ end -}}
 {{- if or (ne (len (keys .)) 2) (not (hasKey . "ip")) (not (hasKey . "hostnames")) }}{{ fail "each reader hostAlias must contain only ip and hostnames" }}{{ end -}}
 {{- if or (not (kindIs "string" .ip)) (not (regexMatch "^([0-9]{1,3}\\.){3}[0-9]{1,3}$" (toString .ip))) }}{{ fail "reader hostAlias.ip must be an IPv4 literal" }}{{ end -}}
 {{- range splitList "." .ip }}{{ if or (gt (int .) 255) (ne . (toString (int .))) }}{{ fail "reader hostAlias.ip must use canonical IPv4 octets" }}{{ end }}{{ end -}}
 {{- if or (not (kindIs "slice" .hostnames)) (ne (len .hostnames) 1) }}{{ fail "reader hostAlias must name exactly the configured reader hostname" }}{{ end -}}
-{{- if or (not (kindIs "string" (index .hostnames 0))) (ne (index .hostnames 0) ((urlParse $url).hostname)) }}{{ fail "reader hostAlias hostname must equal services.relayhistoryReadApiUrl hostname" }}{{ end -}}
+{{- if or (not (kindIs "string" (index .hostnames 0))) (ne (index .hostnames 0) ((urlParse $readerOrigin).hostname)) }}{{ fail "reader hostAlias hostname must equal the configured public reader hostname" }}{{ end -}}
 {{- end -}}
 {{- $publicAliases := $services.publicHostAliases -}}
 {{- if not (kindIs "slice" $publicAliases) }}{{ fail "services.publicHostAliases must be a list" }}{{ end -}}

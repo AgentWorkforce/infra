@@ -524,14 +524,16 @@ for chart in "${charts[@]}"; do
         for want in "SELFHOST_BOOTSTRAP_ORG_NAME=Acme" "SELFHOST_BOOTSTRAP_ADMIN_EMAIL=ops@acme.com" \
           "SELFHOST_OIDC_ISSUER=https://accounts.google.com" "SELFHOST_OIDC_ALLOWED_DOMAINS=acme.com" \
           "SELFHOST_OIDC_CLIENT_SECRET_FILE=/var/run/agent-relay/secrets/oidc-client-secret" \
+          "SELFHOST_MICROSOFT_CLIENT_ID=11111111-2222-3333-4444-555555555555" "SELFHOST_MICROSOFT_TENANT=common" \
+          "SELFHOST_MICROSOFT_CLIENT_SECRET_FILE=/var/run/agent-relay/secrets/microsoft-client-secret" \
           "RELAYCAST_INTERNAL_SECRET_FILE=/var/run/agent-relay/secrets/relaycast-internal-secret" \
           "SELFHOST_SMTP_PASSWORD_FILE=/var/run/agent-relay/secrets/smtp-password" "SELFHOST_SMTP_PORT=465" \
           "SELFHOST_EMAIL_LOGIN=true" "SELFHOST_AUTO_JOIN_DOMAINS=acme.com" "SELFHOST_INVITE_TTL_HOURS=72"; do
           grep -qxF "$want" <<<"$id_env" || err "$chart: identity values did not render $want"
         done
-        [ "$(yq 'select(.kind == "Deployment") | .spec.template.spec.volumes[] | select(.name == "secrets") | .secret.items[].key' <<<"$id_out" | grep -cE '^(oidc-client-secret|smtp-password|relaycast-internal-secret)$')" = 3 ] \
+        [ "$(yq 'select(.kind == "Deployment") | .spec.template.spec.volumes[] | select(.name == "secrets") | .secret.items[].key' <<<"$id_out" | grep -cE '^(oidc-client-secret|microsoft-client-secret|smtp-password|relaycast-internal-secret)$')" = 4 ] \
           || err "$chart: identity secrets must be projected into the secrets volume"
-        ! grep -Eq 'SELFHOST_BOOTSTRAP_(ORG|ADMIN|WORKSPACE)|SELFHOST_(OIDC|SMTP|EMAIL|AUTO_JOIN|INVITE)_|RELAYCAST_INTERNAL_SECRET' <<<"$out" \
+        ! grep -Eq 'SELFHOST_BOOTSTRAP_(ORG|ADMIN|WORKSPACE)|SELFHOST_(OIDC|MICROSOFT|SMTP|EMAIL|AUTO_JOIN|INVITE)_|RELAYCAST_INTERNAL_SECRET' <<<"$out" \
           || err "$chart: identity env must not render without identity values"
         # Password pepper: off by default. When set, only the API gets it, as a
         # private copy made by the init container.
@@ -556,11 +558,17 @@ for chart in "${charts[@]}"; do
         expect_render_failure "$chart" "$v" "OIDC settings without issuer" "auth.oidc.* settings need auth.oidc.issuer" --set auth.oidc.clientId=x
         expect_render_failure "$chart" "$v" "bad allowed domain" "list email domains such as example.com" --set auth.oidc.issuer=https://accounts.google.com --set auth.oidc.clientId=x --set secretKeys.oidcClientSecret=oidc-client-secret --set-json 'auth.oidc.allowedDomains=["not a domain"]' --set dashboardUrl=https://gcp-proof.agentrelay.com/
         expect_render_failure "$chart" "$v" "bad redirect URL" "auth.oidc.redirectUrl must be <origin>/login/oidc/callback" --set auth.oidc.issuer=https://accounts.google.com --set auth.oidc.clientId=x --set secretKeys.oidcClientSecret=oidc-client-secret --set auth.oidc.redirectUrl=https://relay.acme.com/callback --set dashboardUrl=https://gcp-proof.agentrelay.com/
+        expect_render_failure "$chart" "$v" "Microsoft without client secret" "auth.microsoft.clientId requires secretKeys.microsoftClientSecret" --set auth.microsoft.clientId=x --set dashboardUrl=https://gcp-proof.agentrelay.com/
+        expect_render_failure "$chart" "$v" "Microsoft secret without client id" "secretKeys.microsoftClientSecret is set but auth.microsoft.clientId is empty" --set secretKeys.microsoftClientSecret=microsoft-client-secret
+        expect_render_failure "$chart" "$v" "Microsoft without dashboardUrl" "dashboardUrl is required with bootstrap, auth.oidc, auth.microsoft" --set auth.microsoft.clientId=x --set secretKeys.microsoftClientSecret=microsoft-client-secret
+        expect_render_failure "$chart" "$v" "bad Microsoft tenant" "auth.microsoft.tenant must be common, consumers, organizations or a tenant id" --set auth.microsoft.clientId=x --set secretKeys.microsoftClientSecret=microsoft-client-secret --set auth.microsoft.tenant=contoso.onmicrosoft.com --set dashboardUrl=https://gcp-proof.agentrelay.com/
+        expect_render_failure "$chart" "$v" "bad Microsoft redirect URL" "auth.microsoft.redirectUrl must be <origin>/login/microsoft/callback" --set auth.microsoft.clientId=x --set secretKeys.microsoftClientSecret=microsoft-client-secret --set auth.microsoft.redirectUrl=https://relay.acme.com/login/oidc/callback --set dashboardUrl=https://gcp-proof.agentrelay.com/
+        expect_render_failure "$chart" "$v" "Microsoft settings without client id" "auth.microsoft.* settings need auth.microsoft.clientId" --set auth.microsoft.tenant=common
         expect_render_failure "$chart" "$v" "email links without SMTP" "auth.emailLink.enabled requires smtp.host" --set dashboardUrl=https://gcp-proof.agentrelay.com/ --set auth.emailLink.enabled=true
         expect_render_failure "$chart" "$v" "SMTP without from" "smtp.from is required with smtp.host" --set dashboardUrl=https://gcp-proof.agentrelay.com/ --set smtp.host=smtp.acme.com
         expect_render_failure "$chart" "$v" "SMTP user without password" "smtp.username and secretKeys.smtpPassword must be set together" --set dashboardUrl=https://gcp-proof.agentrelay.com/ --set smtp.host=smtp.acme.com --set smtp.from=relay@acme.com --set smtp.username=u
         expect_render_failure "$chart" "$v" "SMTP port zero" "smtp.port must be 1-65535" --set dashboardUrl=https://gcp-proof.agentrelay.com/ --set smtp.host=smtp.acme.com --set smtp.from=relay@acme.com --set smtp.port=0
-        expect_render_failure "$chart" "$v" "SMTP without dashboardUrl" "dashboardUrl is required with bootstrap, auth.oidc, auth.emailLink or smtp" --set smtp.host=smtp.acme.com --set smtp.from=relay@acme.com
+        expect_render_failure "$chart" "$v" "SMTP without dashboardUrl" "dashboardUrl is required with bootstrap, auth.oidc, auth.microsoft, auth.emailLink or smtp" --set smtp.host=smtp.acme.com --set smtp.from=relay@acme.com
         expect_render_failure "$chart" "$v" "bad invite TTL" "auth.inviteTtlHours must be an integer from 1 to 720" --set auth.inviteTtlHours=0
         expect_render_failure "$chart" "$v" "identity secret reusing an API key" "both name Secret key" --set secretKeys.relaycastInternalSecret=selfhost-bootstrap-token --set bootstrap.orgName=Acme --set bootstrap.adminEmail=ops@acme.com --set dashboardUrl=https://gcp-proof.agentrelay.com/
         [ -n "$(render "$chart" "$v" --set dashboardUrl=https://gcp-proof.agentrelay.com/ --set auth.oidc.issuer=http://dex:5556/dex --set auth.oidc.clientId=x --set secretKeys.oidcClientSecret=oidc-client-secret --set auth.oidc.allowHttpIssuer=true)" ] \
@@ -631,7 +639,7 @@ for chart in "${charts[@]}"; do
         expect_render_failure "$chart" "$v" "server port on the admin port" "server.port must not be 3201" --set server.port=3201
         expect_render_failure "$chart" "$v" "public Service" "service.type must be ClusterIP" --set service.type=LoadBalancer
         expect_render_failure "$chart" "$v" "restricted egress with no rules" "requires networkPolicy.additionalEgress" --set-json 'networkPolicy.additionalEgress=[]'
-        for name in ADMIN_HOST ADMIN_PORT HOST PORT NANGO_HOST NANGO_SECRET_KEY DATABASE_URL; do
+        for name in ADMIN_HOST ADMIN_PORT HOST PORT NANGO_HOST NANGO_SECRET_KEY DATABASE_URL RELAYCHIEF_CONTROL_RELAY_SECRET RELAYCHIEF_CONTROL_ENCRYPTION_KEY_ID RELAYCHIEF_CONTROL_ENCRYPTION_KEY; do
           expect_render_failure "$chart" "$v" "$name through extraEnv" "$name is managed by structured chart values and must not appear in extraEnv" --set-json "extraEnv=[{\"name\":\"$name\",\"value\":\"x\"}]"
         done
         expect_render_failure "$chart" "$v" "ingress without hosts" "ingress.enabled=true requires at least one host" --set ingress.enabled=true
@@ -680,6 +688,21 @@ for chart in "${charts[@]}"; do
         nango_key=$(render "$chart" "$v" --set secretKeys.nangoSecretKey=NANGO_SECRET_KEY)
         [ "$(yq "$deployment | .containers[0].env[] | select(.name == \"NANGO_SECRET_KEY\") | .valueFrom.secretKeyRef.key" <<<"$nango_key")" = NANGO_SECRET_KEY ] \
           || err "$chart: NANGO_SECRET_KEY must come from the existing Secret"
+        # Relay identity: all three Secret keys or none.
+        ! grep -q 'RELAYCHIEF_CONTROL_\(RELAY_SECRET\|ENCRYPTION_KEY\)' <<<"$out" || err "$chart: relay identity env must not render when unset"
+        relay_identity=(--set secretKeys.relaySecret=RELAYCHIEF_CONTROL_RELAY_SECRET --set secretKeys.encryptionKeyId=RELAYCHIEF_CONTROL_ENCRYPTION_KEY_ID --set secretKeys.encryptionKey=RELAYCHIEF_CONTROL_ENCRYPTION_KEY)
+        relay=$(render "$chart" "$v" "${relay_identity[@]}")
+        for name in RELAYCHIEF_CONTROL_RELAY_SECRET RELAYCHIEF_CONTROL_ENCRYPTION_KEY_ID RELAYCHIEF_CONTROL_ENCRYPTION_KEY; do
+          [ "$(rq "$deployment | [.containers[0].env[] | select(.name == \"$name\") | .valueFrom.secretKeyRef.name + \"/\" + .valueFrom.secretKeyRef.key] | join(\",\")" "$relay")" = "relaychief-control-secrets/$name" ] \
+            || err "$chart: $name must render once from the existing Secret"
+        done
+        [ "$(rq "$job | [.containers[0].env[].name] | join(\",\")" "$relay")" = DATABASE_URL ] \
+          || err "$chart: relay identity env must not reach the migrate Job"
+        for missing in relaySecret encryptionKeyId encryptionKey; do
+          expect_render_failure "$chart" "$v" "relay identity without secretKeys.$missing" "must be set together or not at all" "${relay_identity[@]}" --set "secretKeys.$missing="
+        done
+        expect_render_failure "$chart" "$v" "relay secret alone" "must be set together or not at all" --set secretKeys.relaySecret=RELAYCHIEF_CONTROL_RELAY_SECRET
+        expect_render_failure "$chart" "$v" "unsafe relay identity key path" "secretKeys.encryptionKey must be a Kubernetes Secret data key" "${relay_identity[@]}" --set-string secretKeys.encryptionKey=../key
         v=charts/relaychief-control/ci/alb-values.yaml
         out=$(render "$chart" "$v")
         [ "$(rq 'select(.kind == "Ingress") | [.spec.rules[0].http.paths[] | .path + "=" + .pathType] | join(",")' "$out")" = "/chief/v1=Prefix" ] \

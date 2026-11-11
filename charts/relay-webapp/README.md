@@ -27,6 +27,13 @@ The current dashboard image is a single static replica. This chart makes no HA
 claim. Publish and verify the dashboard image before replacing the digest in a
 deployment values file.
 
+`runtime.analyticsEnabled` controls the compatible image's
+`DASHBOARD_ANALYTICS_ENABLED` runtime flag. Its default `null` emits nothing and
+preserves the image default; explicit `true` and `false` both render as strings.
+Browser analytics use Control's collector proxy. Configure the Control adapter
+and private collector separately; the dashboard receives no collector credential
+or hosted exporter configuration from this value.
+
 ## Customer profile (branding)
 
 `customerProfile` rebrands the dashboard for an enterprise customer without a
@@ -78,3 +85,12 @@ helm lint --strict charts/relay-webapp \
 ## Session read API
 
 `runtime.sessionReadApiEnabled: true` renders `DASHBOARD_SESSION_READ_API_ENABLED=true`, so the page reads session lists, search, activity, turns and events directly from the session read API with the access token Control hands it. It needs relay-webapp main `53e39ca9` or later, and the read API's `cors.allowedOrigins` must name this dashboard's origin.
+
+`runtime.coordinationOverlapsEnabled` is a strict boolean and defaults to
+`false`, so the coordination-overlaps view remains hidden even when the backend
+endpoint is available. Setting it to `true` renders
+`DASHBOARD_COORDINATION_OVERLAPS_ENABLED=true`. It requires a dashboard image
+containing relay-webapp #124 and also requires `runtime.sessionReadApiEnabled`
+plus a read API serving the Postgres coordination-overlaps contract. Pin and
+verify that image before enabling the view; the chart refuses the view flag
+without the direct-read flag, and older images ignore the setting.

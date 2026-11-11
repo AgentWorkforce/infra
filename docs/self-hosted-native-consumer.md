@@ -1,5 +1,12 @@
 # Native canonical consumer chart slot
 
+`nativeConsumer.readerMaxRuleset` manages `READER_MAX_RULESET` for this
+consumer. It defaults to `null`, omitting the binding to preserve legacy reads.
+Explicit `8`, `9`, or `10` opts into strict marker and chunk checks. Use a
+qualified image containing the reviewed #489 compatibility and binding fixes.
+The value neither enables the consumer nor selects writer output. Stage readers
+first and retain the required explicit ceiling while newer objects remain.
+
 `nativeConsumer` adds the merged pipeline #336
 `SERVICE=session-pipeline-consumer` reconciler and an optional
 `SERVICE=session-pipeline-consumer-bootstrap` Job. It is off by default; no

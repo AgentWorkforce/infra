@@ -142,7 +142,25 @@ No store, credentials, auth mode, image or reader is enabled in a profile here.
 
 `ingestEdge.admission.mode` defaults to `sync`. It preserves the existing
 request path and HTTP probes, emitting no admission-mode environment variables.
-The ingest edge itself remains disabled by default in every profile.
+The ingest edge remains disabled in the base values; the AWS RDS native profile
+enables it only with an explicit qualified release overlay.
+
+`ingestEdge.claimLockBusy` defaults to `true` and emits
+`INGEST_CLAIM_LOCK_BUSY="on"` in the native ingest container, including the AWS
+RDS native profile. This requires a services image containing pipeline
+[#484](https://github.com/AgentWorkforce/relayhistory-pipeline/pull/484).
+Qualify the merged source and immutable image before relying on the behavior;
+an older image can ignore the variable. The chart does not select a new image.
+
+With that runtime, a claim-stage lock wait (`55P03` or `40P01`) returns
+`429 delivery_busy` and `Retry-After` of 5–10 seconds instead of 503.
+Statement timeout `57014` and other failures remain 503. Set the boolean to
+`false` to omit the variable and retain the runtime's default behavior.
+This is a managed value: `ingestEdge.extraEnv` is deliberately refused.
+The mapping applies to sync/drain uploads; it does not remove their SQL claim,
+enable async admission, alter queued receipts or change consumer retry backoff.
+Verify the HTTP status and integer Retry-After using the qualified image;
+rendered configuration alone does not prove runtime support.
 
 The `async` and `drain` modes require the self-host admission implementation
 from pipeline [#398](https://github.com/AgentWorkforce/relayhistory-pipeline/pull/398).

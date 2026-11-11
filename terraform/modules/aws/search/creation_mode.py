@@ -117,6 +117,30 @@ def _sibling_written_drift(row, state, changes):
     return len(documents) == len(siblings) and all(values.get('name') in documents and _same_document(documents[values.get('name')], values.get('policy')) for values in siblings)
 
 
+def _failed_create_retry(scoped, scoped_state, domain, d, m):
+    """Admit the retry of a first apply that recorded the marker but never created the domain.
+
+    The marker has no dependencies, so a first apply whose domain create fails (for
+    example, a missing OpenSearch service-linked role) still records it alongside the
+    roles, policies, log groups and Pod Identity associations. The retry is admitted
+    only when it finishes that same fresh creation: the domain is created in the
+    branch the stored marker names, the marker is an exact no-op, and every other
+    search object is either unchanged or newly created. The domain policy depends on
+    the domain, so its presence in prior state means the domain once existed; that
+    lost-domain history still holds. Before IDs were already matched to prior state.
+    """
+    require(MARKER in scoped_state and not any(a in scoped_state for a in DOMAINS), 'retry requires a recorded marker and no prior domain')
+    require(DOMAIN_POLICY not in scoped_state, 'marker without domain is not fresh enrollment: the domain policy shows a domain existed')
+    require(isinstance(d.get('after'), dict) and d['actions'] == ['create'], 'failed-create retry must create the domain')
+    require(m['actions'] == ['no-op'], 'marker without domain is not fresh enrollment: the marker must be unchanged')
+    stored = _mode(scoped_state[MARKER]['values'])
+    require(_mode(m.get('before')) == stored and _mode(m.get('after')) == stored and _id(m.get('after')) == _id(m.get('before')), 'marker identity or mode changed')
+    require(stored == (domain == DISPOSABLE), 'stored marker and retried domain mode disagree')
+    require(all(r['change']['actions'] in (['no-op'], ['create']) for r in scoped.values()), 'failed-create retry may only create missing search objects')
+    require(all(r['change']['actions'] == ['no-op'] for a, r in scoped.items() if a in scoped_state), 'failed-create retry cannot change recorded search objects')
+    return 'fresh-retry'
+
+
 def admit(plan):
     """Return a qualified history classification; raise on ambiguous history.
 
@@ -201,7 +225,8 @@ def admit(plan):
     require(matched == set(scoped_state), 'prior search objects missing from changes')
 
     if not domain_state:
-        require(MARKER not in scoped_state, 'marker without domain is not fresh enrollment')
+        if MARKER in scoped_state:
+            return _failed_create_retry(scoped, scoped_state, domain, d, m)
         require(isinstance(d.get('after'), dict), 'unknown fresh domain')
         require(d['actions'] == ['create'] and m['actions'] == ['create'], 'fresh enrollment must create both domain and marker')
         require(all(r['change']['actions'] == ['create'] for r in scoped.values()), 'fresh state cannot adopt old search objects')

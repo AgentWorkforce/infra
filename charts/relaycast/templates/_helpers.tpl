@@ -83,6 +83,7 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- fail "runtime.backend must be sqlite, durable-actors or postgres" }}
 {{- end }}
 {{- include "relaycast.postgres.validate" . }}
+{{- include "relaycast.analytics.validate" . }}
 {{- if include "relaycast.actors.enabled" . }}
 {{- include "relaycast.actors.validate" . }}
 {{- end }}

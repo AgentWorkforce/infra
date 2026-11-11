@@ -19,6 +19,11 @@ global:
     # no export. With otel.enabled below: http://otel-collector:4318
     endpoint: ""
 
+# A private release profile can require every services workload and migration
+# Job to use one reviewed immutable artifact. Default off for existing profiles.
+releaseContract:
+  unifiedServicesDigest: false
+
 # Shared by both app charts (YAML anchors keep one copy).
 shared: &shared
   # Pull credentials for the private services image: every workload and Job,
@@ -327,9 +332,13 @@ supabaseActivation:
 
 # The session read API moved to its own chart (charts/session-read-api), carried
 # here as a default-off dependency. Its values, documented in that chart, go under
-# this key. The old readApi key refuses to render, so two readers cannot run.
+# this key. When the dependency is enabled, coordination overlaps use Postgres by
+# default; the dashboard view remains a separate default-off selection. The old
+# readApi key refuses to render, so two readers cannot run.
 sessionReadApi:
   enabled: false
+  coordinationOverlaps:
+    enabled: true
 
 # Optional self-host transcript search writer (pipeline SERVICE=session-pipeline-consumer):
 # reads the Locker and indexes sessions into the backend selected below. Off by
@@ -405,6 +414,11 @@ searchIndexer:
 # internal alleyoop-ingest worker. No profile enables it or supplies an image.
 # Initial supported assembly is test/pilot only; deletion/privacy is incomplete.
 ingestEdge:
+  # Omitted by default: legacy reads stay unchanged; the engine pin gate remains 8.
+  # Explicit 8/9/10 opts into the independent compatibility policy.
+  # Raising it requires a qualified #489-compatible image; it does not select
+  # writer output or enable Rust/WASM. Keep compatible readers staged first.
+  readerMaxRuleset: null
   # Business analytics adapter (pipeline source 71801741 or later). Off by default.
   # Self-host sends only to the private file collector, never hosted PostHog.
   analytics:
@@ -424,6 +438,10 @@ ingestEdge:
     concurrency: 4
     scanIntervalMs: 15000
     maxAttempts: 20
+  # Requires a qualified services image containing pipeline #484. Claim-stage
+  # lock waits become 429 + Retry-After; statement timeouts still return 503.
+  # This does not remove SQL from sync uploads or change async consumer backoff.
+  claimLockBusy: true
   fullnameOverride: ""
   image:
     repository: ghcr.io/agentworkforce/96bulls-services
@@ -498,6 +516,9 @@ nativeConsumer:
     caConfigMap: "" # optional public CA bundle, added to OS trust
     caKey: ca.crt
   enabled: false
+  # Null preserves legacy reads; explicit 8/9/10 opts into strict checks. It neither
+  # selects a writer ruleset nor enables this default-off component.
+  readerMaxRuleset: null
   fullnameOverride: ""
   replicas: 1
   # Both the chart's legacy indexer and the installed old indexer must be off.

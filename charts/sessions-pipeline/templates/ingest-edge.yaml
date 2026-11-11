@@ -1,7 +1,9 @@
 {{- include "sessions-pipeline.analytics.validate" .Values.ingestEdge.analytics -}}
 {{- $c := .Values.ingestEdge -}}
 {{- if not (kindIs "bool" $c.enabled) }}{{ fail "ingestEdge.enabled must be a boolean" }}{{ end -}}
+{{- if and (not (kindIs "invalid" $c.readerMaxRuleset)) (not (has (toString $c.readerMaxRuleset) (list "8" "9" "10"))) }}{{ fail "ingestEdge.readerMaxRuleset must be one of 8, 9, or 10" }}{{ end -}}
 {{- if $c.enabled -}}
+{{- if not (kindIs "bool" $c.claimLockBusy) }}{{ fail "ingestEdge.claimLockBusy must be a boolean" }}{{ end -}}
 {{- if not (kindIs "map" $c.admission) }}{{ fail "ingestEdge.admission must be an object" }}{{ end -}}
 {{- $admission := $c.admission -}}
 {{- if or (not (kindIs "string" $admission.mode)) (not (has $admission.mode (list "sync" "async" "drain"))) }}{{ fail "ingestEdge.admission.mode must be sync, async or drain" }}{{ end -}}
@@ -151,6 +153,9 @@ spec:
           env:
             {{- include "sessions-pipeline.analytics.env" $c.analytics | nindent 12 }}
             - { name: SERVICE, value: session-ingest }
+            {{- if not (kindIs "invalid" $c.readerMaxRuleset) }}
+            - { name: READER_MAX_RULESET, value: {{ $c.readerMaxRuleset | quote }} }
+            {{- end }}
             - { name: RELAYHISTORY_SELFHOST_INGEST, value: "true" }
             - { name: RELAYHISTORY_INGEST_PORT, value: {{ $c.port | quote }} }
             - { name: RELAYHISTORY_INGEST_ORIGIN, value: {{ $origin | quote }} }
@@ -189,6 +194,9 @@ spec:
             - { name: INGEST_KEY_ROOT, value: 96bulls }
             - { name: INGEST_MAX_PER_USER, value: {{ $c.maxPerUser | quote }} }
             - { name: INGEST_MAX_PER_ORG, value: {{ $c.maxPerOrg | quote }} }
+            {{- if $c.claimLockBusy }}
+            - { name: INGEST_CLAIM_LOCK_BUSY, value: "on" }
+            {{- end }}
             {{- if ne $admission.mode "sync" }}
             - { name: SELFHOST_INGEST_ADMISSION, value: {{ $admission.mode | quote }} }
             - { name: SELFHOST_ADMISSION_CONCURRENCY, value: {{ $admission.concurrency | quote }} }
