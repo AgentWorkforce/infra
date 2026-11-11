@@ -5,7 +5,7 @@ TEST_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 SQL="${TEST_DIR}/../rds-session-erase-search.sql"
 FIXTURE="erase-search-role-test-$$"
 CONTAINER=""
-cleanup() { if [[ -n "$CONTAINER" ]]; then docker rm -f "$CONTAINER" >/dev/null; fi; }
+cleanup() { if [[ -n "$CONTAINER" ]]; then docker rm -fv "$CONTAINER" >/dev/null; fi; }
 trap cleanup EXIT
 CONTAINER="$(docker run -d --name "$FIXTURE" -e POSTGRES_HOST_AUTH_METHOD=trust postgres:17)"
 for attempt in {1..30}; do
