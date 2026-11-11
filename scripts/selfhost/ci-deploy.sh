@@ -1,0 +1,217 @@
+#!/usr/bin/env bash
+# Plan, apply or roll back an environment's Helm releases from CI. Runs inside the CodeBuild jobs of
+# terraform/modules/aws/ci-deploy (see docs/selfhost-ci-deploy.md), from an unpacked deploy bundle:
+#
+#   <bundle>/infra/   this repository at the environment's pinned ref (charts, this script)
+#   <bundle>/env/     the environment: deploy.json, values files, allow-drop.txt, plan-rbac.yaml
+#
+#   ci-deploy.sh plan     <bundle>   diff every release against what is live; refuse an unlisted drop
+#   ci-deploy.sh apply    <bundle>   the same checks, then snapshot, upgrade, job and health checks
+#   ci-deploy.sh rollback <bundle>   helm rollback ROLLBACK_RELEASE to ROLLBACK_REVISION, then health checks
+#
+# Environment: REPORT_DIR (reports, uploaded by the job), RUN_ID. apply: EXPECT_REVISIONS
+# ("release=revision ..." from the reviewed plan; the apply refuses if anything was upgraded since).
+# apply with no changes does nothing unless FORCE_UPGRADE=1. Secret values are never printed.
+set -euo pipefail
+
+MODE=${1:?usage: ci-deploy.sh plan|apply|rollback <bundle>}
+B=$(cd "${2:?bundle dir}" && pwd)
+HERE=$(cd "$(dirname "$0")" && pwd)
+CFG="$B/env/deploy.json"
+REPORT_DIR=${REPORT_DIR:-$B/report}
+RUN_ID=${RUN_ID:-local}
+mkdir -p "$REPORT_DIR"
+log(){ printf '%s %s\n' "$(date -u +%H:%M:%SZ)" "$*" | tee -a "$REPORT_DIR/log.txt" >&2; }
+die(){ log "ERROR: $*"; exit 1; }
+
+[ -f "$CFG" ] || die "missing env/deploy.json"
+jq -e '.releases | length > 0' "$CFG" >/dev/null || die "deploy.json: no releases"
+case "$MODE" in plan|apply|rollback) ;; *) die "unknown mode $MODE" ;; esac
+
+# Paths in deploy.json are relative to the bundle root and must stay inside it.
+inside(){ local p; p=$(realpath -m "$B/$1"); [[ "$p" == "$B/"* ]] || die "path escapes the bundle: $1"; printf '%s' "$p"; }
+# Checked here, in the main shell: inside() also runs in subshells, where die cannot stop the script.
+while IFS= read -r p; do inside "$p" >/dev/null; done < <(jq -r '.releases[] | .chart, .values[]' "$CFG")
+[ -z "$(jq -r '.releases[] | select(.chart == null or .namespace == null or .values == null) | .name' "$CFG")" ] ||
+  die "deploy.json: every release needs name, namespace, chart and values"
+
+releases(){ jq -r '.releases[].name' "$CFG"; }
+rel(){ jq -r --arg n "$1" ".releases[] | select(.name == \$n) | $2" "$CFG"; }
+
+# helm dependency build, local file:// dependencies first (sessions-pipeline before agent-relay).
+declare -A BUILT=()
+build_deps(){
+  local chart=$1 _ repo
+  [ -n "${BUILT[$chart]:-}" ] && return 0
+  BUILT[$chart]=1
+  [ -f "$chart/Chart.yaml" ] || die "not a chart: ${chart#"$B"/}"
+  while IFS=$'\t' read -r _ repo; do
+    case "$repo" in
+      file://*) build_deps "$(realpath -m "$chart/${repo#file://}")" ;;
+      http*://*) helm repo add "d$(printf %s "$repo" | cksum | cut -d' ' -f1)" "$repo" --force-update >/dev/null ;;
+    esac
+  done < <(python3 -c 'import sys, yaml
+for d in yaml.safe_load(open(sys.argv[1])).get("dependencies") or []:
+    print(d["name"] + "\t" + (d.get("repository") or ""))' "$chart/Chart.yaml")
+  helm dependency build "$chart" >/dev/null || die "helm dependency build ${chart#"$B"/} failed"
+}
+
+helm_args(){ # release -> chart and values flags
+  local r=$1 v
+  printf '%s\0' "$(inside "$(rel "$r" .chart)")"
+  printf '%s\0' --namespace "$(rel "$r" .namespace)"
+  while IFS= read -r v; do printf '%s\0' -f "$(inside "$v")"; done < <(rel "$r" '.values[]')
+}
+
+live_revision(){ helm status "$1" -n "$2" -o json 2>/dev/null | jq -r '.version // empty'; }
+
+plan_release(){
+  local r=$1 ns live new args=()
+  ns=$(rel "$r" .namespace)
+  while IFS= read -r -d '' a; do args+=("$a"); done < <(helm_args "$r")
+  build_deps "${args[0]}"
+  live="$REPORT_DIR/live/$r"; mkdir -p "$live"
+  # Called under ||, where set -e does not apply: every step checks its own result.
+  if helm status "$r" -n "$ns" >/dev/null 2>&1; then
+    helm get values "$r" -n "$ns" -o json > "$live/values.json" &&
+      helm get manifest "$r" -n "$ns" > "$live/manifest.yaml" &&
+      helm get hooks "$r" -n "$ns" > "$live/hooks.yaml" &&
+      live_revision "$r" "$ns" > "$live/revision" || { log "reading live release $r failed"; return 1; }
+  fi
+  new="$REPORT_DIR/new-$r.json"
+  helm upgrade --install "$r" "${args[@]}" --dry-run=client -o json > "$new" ||
+    { rm -f "$new"; log "rendering $r failed"; return 1; }
+  local rc=0
+  python3 "$HERE/ci_deploy_plan.py" "$r" "$live" "$new" "$B/env/allow-drop.txt" "$REPORT_DIR/plan" || rc=$?
+  # The live copies hold rendered Secrets: never leave them in the report.
+  rm -rf "$live/manifest.yaml" "$live/hooks.yaml" "$live/values.json" "$new"
+  return $rc
+}
+
+plan_all(){
+  local r prc refused=0 summary="$REPORT_DIR/plan.md"
+  : > "$REPORT_DIR/revisions"
+  {
+    echo "## Plan: $(jq -r '.environment // "environment"' "$CFG") (run $RUN_ID)"
+    echo
+    echo "| Release | Live revision | Changes | Values +/~/- | Resources +/~/- | Refused drops |"
+    echo "|---|---|---|---|---|---|"
+  } > "$summary"
+  for r in $(releases); do
+    log "plan $r"
+    prc=0; plan_release "$r" || prc=$?
+    case $prc in 0) ;; 3) refused=1 ;; *) die "plan failed for $r" ;; esac
+    local j="$REPORT_DIR/plan/$r.json" rev
+    rev=$(cat "$REPORT_DIR/live/$r/revision" 2>/dev/null || echo none)
+    echo "$r=$rev" >> "$REPORT_DIR/revisions"
+    jq -r --arg rev "$rev" '"| \(.release) | \($rev) | \(if .no_changes then "none" else "yes" end) | " +
+      "\(.values.added|length)/\(.values.changed|length)/\(.values.dropped|length) | " +
+      "\(.resources.added|length)/\(.resources.changed|length)/\(.resources.dropped|length) | " +
+      "\((.refused.values + .refused.resources) | if length == 0 then "none" else join(", ") end) |"' "$j" >> "$summary"
+  done
+  cat "$REPORT_DIR"/plan/*.diff > "$REPORT_DIR/diff.txt" 2>/dev/null || true
+  jq -s 'map({(.release): (.no_changes | not)}) | add' "$REPORT_DIR"/plan/*.json > "$REPORT_DIR/changes.json"
+  [ $refused -eq 0 ] || { log "plan REFUSED: a live value or resource would be dropped (see plan.md)"; exit 3; }
+}
+
+snapshot(){
+  local type id
+  type=$(jq -r '.snapshot.type // "none"' "$CFG")
+  id="$(printf '%s' "${CI_DEPLOY_NAME:-deploy}-${RUN_ID}" | tr -c 'A-Za-z0-9-' '-' | cut -c1-63 | sed 's/-*$//')"
+  case "$type" in
+    none) log "snapshot: none configured"; echo "none" > "$REPORT_DIR/snapshot" ;;
+    rds)
+      local db; db=$(jq -r '.snapshot.instance' "$CFG")
+      log "snapshot: RDS $db -> $id"
+      aws rds create-db-snapshot --db-instance-identifier "$db" --db-snapshot-identifier "$id" \
+        --tags "Key=agent-relay/run,Value=$RUN_ID" >/dev/null
+      aws rds wait db-snapshot-available --db-snapshot-identifier "$id"
+      echo "rds:$id" > "$REPORT_DIR/snapshot"; log "snapshot: $id available" ;;
+    pg_dump)
+      # One custom-format dump per entry, streamed to S3; the URL is read from the cluster and never printed.
+      local n i ns name key url dest
+      n=$(jq '.snapshot.databases | length' "$CFG")
+      [ "$n" -gt 0 ] || die "snapshot.databases is empty"
+      : > "$REPORT_DIR/snapshot"
+      for ((i = 0; i < n; i++)); do
+        read -r name ns key < <(jq -r ".snapshot.databases[$i] | \"\(.label) \(.namespace) \(.secret)/\(.key)\"" "$CFG")
+        url=$(kubectl -n "$ns" get secret "${key%%/*}" -o json | jq -r --arg k "${key#*/}" '.data[$k] // empty' | base64 -d)
+        [ -n "$url" ] || die "snapshot $name: secret key ${key} is empty or missing"
+        dest="s3://$CI_DEPLOY_BUCKET/snapshots/$RUN_ID/$name.dump"
+        log "snapshot: pg_dump $name -> $dest"
+        pg_dump --format=custom --no-owner --no-privileges --dbname="$url" |
+          aws s3 cp --only-show-errors --sse aws:kms - "$dest"
+        unset url
+        echo "pg_dump:$dest" >> "$REPORT_DIR/snapshot"
+      done ;;
+    *) die "unknown snapshot type $type" ;;
+  esac
+}
+
+health(){
+  local url ok i
+  for url in $(jq -r '(.health // [])[]' "$CFG"); do
+    ok=0
+    for i in $(seq 1 30); do
+      if curl -fsS -o /dev/null --max-time 10 "$url"; then ok=1; break; fi
+      sleep 10
+    done
+    [ $ok = 1 ] || die "health: $url did not return 2xx in 5 minutes"
+    log "health: $url ok"
+  done
+}
+
+record_state(){ # versions now running, for the run record
+  local r ns
+  for r in $(releases); do
+    ns=$(rel "$r" .namespace)
+    helm status "$r" -n "$ns" -o json | jq -c '{release: .name, revision: .version, status: .info.status, chart: (.chart.metadata.name + "-" + .chart.metadata.version), app: .chart.metadata.appVersion}'
+    kubectl -n "$ns" get deploy,statefulset -l "app.kubernetes.io/instance=$r" -o json |
+      jq -c '.items[] | {kind, name: .metadata.name, images: [.spec.template.spec.containers[].image]}'
+  done | tee "$REPORT_DIR/state.jsonl" >&2
+}
+
+failed_jobs_since(){ # namespace, RFC3339 start: names of Jobs created since then that failed
+  kubectl -n "$1" get jobs -o json | jq -r --arg t "$2" \
+    '.items[] | select(.metadata.creationTimestamp >= $t) | select((.status.failed // 0) > 0 and (.status.succeeded // 0) == 0) | .metadata.name'
+}
+
+case "$MODE" in
+  plan) plan_all ;;
+  apply)
+    plan_all
+    expect=${EXPECT_REVISIONS:?EXPECT_REVISIONS from the reviewed plan is required}
+    now=$(tr '\n' ' ' < "$REPORT_DIR/revisions" | sed 's/ $//')
+    [ "$now" = "$expect" ] || die "live revisions changed since the plan: planned [$expect], now [$now]. Re-run the plan."
+    if [ "$(jq '[.[]] | any' "$REPORT_DIR/changes.json")" != true ] && [ "${FORCE_UPGRADE:-0}" != 1 ]; then
+      log "apply: no changes; nothing to do"; record_state; health; exit 0
+    fi
+    snapshot
+    if [ -f "$B/env/plan-rbac.yaml" ]; then kubectl apply -f "$B/env/plan-rbac.yaml" >/dev/null; log "plan RBAC applied"; fi
+    for r in $(releases); do
+      if [ "$(jq --arg r "$r" '.[$r]' "$REPORT_DIR/changes.json")" != true ] && [ "${FORCE_UPGRADE:-0}" != 1 ]; then
+        log "apply $r: no changes, skipped"; continue
+      fi
+      args=(); while IFS= read -r -d '' a; do args+=("$a"); done < <(helm_args "$r")
+      ns=$(rel "$r" .namespace); start=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+      log "apply $r (was revision $(live_revision "$r" "$ns"))"
+      if ! helm upgrade --install "$r" "${args[@]}" --wait --timeout "$(rel "$r" '.timeout // "20m"')" > "$REPORT_DIR/helm-$r.txt" 2>&1; then
+        tail -20 "$REPORT_DIR/helm-$r.txt" >&2
+        die "helm upgrade $r failed. Roll back: dispatch mode=rollback release=$r revision=<previous>"
+      fi
+      # helm --wait does not report a failed hook-less Job (e.g. migrate): check them.
+      failed=$(failed_jobs_since "$ns" "$start")
+      [ -z "$failed" ] || die "jobs failed after upgrading $r: $failed"
+      log "apply $r: now revision $(live_revision "$r" "$ns")"
+    done
+    record_state; health ;;
+  rollback)
+    r=${ROLLBACK_RELEASE:?}; rev=${ROLLBACK_REVISION:?}
+    [[ "$rev" =~ ^[0-9]+$ ]] || die "ROLLBACK_REVISION must be a number"
+    ns=$(rel "$r" .namespace); [ -n "$ns" ] || die "release $r is not in deploy.json"
+    log "rollback $r from revision $(live_revision "$r" "$ns") to $rev"
+    helm rollback "$r" "$rev" -n "$ns" --wait --timeout "$(rel "$r" '.timeout // "20m"')" > "$REPORT_DIR/helm-rollback.txt" 2>&1 ||
+      { tail -20 "$REPORT_DIR/helm-rollback.txt" >&2; die "helm rollback failed"; }
+    record_state; health ;;
+esac
+log "$MODE done"
