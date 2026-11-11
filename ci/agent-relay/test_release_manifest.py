@@ -4,6 +4,7 @@ import pathlib
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
@@ -159,6 +160,44 @@ class ReleaseManifestTest(unittest.TestCase):
         )
         self.assertEqual(manifest["version"], "2026.11.0")
         self.assertEqual(manifest["chart"]["version"], "0.6.36")
+
+    def test_main_does_not_write_partial_manifest_when_overlay_fails(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            images = root / "images.txt"
+            inventory = root / "inventory.tsv"
+            output = root / "release-manifest.json"
+            overlay = root / "release-images.values.yaml"
+            images.write_text(
+                f"ghcr.io/example/service@{DIGEST_A}\n", encoding="utf-8"
+            )
+            inventory.write_text(
+                f"service\tghcr.io/example/service\t{DIGEST_A}\tapproved\n",
+                encoding="utf-8",
+            )
+            argv = [
+                "build-agent-relay-release-manifest.py",
+                "--version",
+                "2026.11.0",
+                "--infra-commit",
+                COMMIT,
+                "--chart-path",
+                "charts/agent-relay",
+                "--chart-version",
+                "0.6.36",
+                "--images",
+                str(images),
+                "--inventory",
+                str(inventory),
+                "--output",
+                str(output),
+                "--values-overlay-output",
+                str(overlay),
+            ]
+            with mock.patch.object(sys, "argv", argv):
+                self.assertEqual(MODULE.main(), 1)
+            self.assertFalse(output.exists())
+            self.assertFalse(overlay.exists())
 
 
 if __name__ == "__main__":

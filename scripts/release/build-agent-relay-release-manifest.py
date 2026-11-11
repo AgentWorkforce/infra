@@ -8,6 +8,7 @@ import json
 import pathlib
 import re
 import sys
+from typing import NoReturn
 
 
 SEMVER = re.compile(r"^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$")
@@ -18,7 +19,7 @@ VALUES_OVERLAY = "release-images.values.yaml"
 APPROVED_IMAGE_STATUSES = {"approved", "customer-ready"}
 
 
-def fail(message: str) -> "NoReturn":
+def fail(message: str) -> NoReturn:
     raise ValueError(message)
 
 
@@ -232,15 +233,14 @@ def main() -> int:
     args = parse_args()
     try:
         manifest = build(args)
+        overlay = build_values_overlay(manifest)
     except (OSError, ValueError) as error:
         print(f"build-agent-relay-release-manifest: {error}", file=sys.stderr)
         return 1
     args.output.write_text(
         json.dumps(manifest, indent=2, sort_keys=False) + "\n", encoding="utf-8"
     )
-    args.values_overlay_output.write_text(
-        build_values_overlay(manifest), encoding="utf-8"
-    )
+    args.values_overlay_output.write_text(overlay, encoding="utf-8")
     return 0
 
 
