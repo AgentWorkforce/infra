@@ -25,22 +25,27 @@ The reusable workflow `.github/workflows/selfhost-upgrade.yml` runs
 2. **An environment** in it named `agent-relay-upgrade`, with required
    reviewers. Every upgrade waits for one of them.
 3. **A self-hosted runner** that can reach the EKS API (a private cluster needs
-   one inside the VPC), with `gh jq yq helm kubectl tar aws crane` installed.
+   one inside the VPC), with `gh curl jq yq helm kubectl tar aws crane` and
+   `sha256sum` (or `shasum`) installed. The workflow checks these first.
    Outbound access: `github.com`, `api.github.com`, `ghcr.io`, AWS APIs.
-4. **An IAM role** trusted through GitHub OIDC for this repository and
-   environment (`token.actions.githubusercontent.com`, audience
-   `sts.amazonaws.com`, subject
-   `repo:<org>/<repo>:environment:agent-relay-upgrade`, plus
-   `repo:<org>/<repo>:ref:refs/heads/main` for the plan job). It needs:
-   - ECR: `ecr:GetAuthorizationToken`, and on `agent-relay/*` repositories
-     `ecr:CreateRepository`, `ecr:DescribeRepositories`, `ecr:PutImage`,
-     `ecr:InitiateLayerUpload`, `ecr:UploadLayerPart`,
-     `ecr:CompleteLayerUpload`, `ecr:BatchCheckLayerAvailability`,
-     `ecr:BatchGetImage`, `ecr:PutImageScanningConfiguration`,
-     `ecr:PutImageTagMutability`
-   - RDS: `rds:CreateDBSnapshot`, `rds:DescribeDBSnapshots` on the database
-   - EKS: `eks:DescribeCluster`, and an EKS access entry allowing it to manage
-     the `agent-relay` namespace (Helm release, Deployments, Jobs).
+4. **Two IAM roles**, both trusted through GitHub OIDC
+   (`token.actions.githubusercontent.com`, audience `sts.amazonaws.com`):
+   - **Plan role (read-only)**, trusted for `repo:<org>/<repo>:ref:refs/heads/main`:
+     `eks:DescribeCluster`, and an EKS access entry with read-only (view)
+     access to the `agent-relay` namespace plus read of Helm release Secrets.
+     The plan job never writes to ECR, RDS or the cluster.
+   - **Apply role (write)**, trusted **only** for
+     `repo:<org>/<repo>:environment:agent-relay-upgrade`, so it can be assumed
+     only by a job your reviewers approved. It needs:
+     - ECR: `ecr:GetAuthorizationToken`, and on `agent-relay/*` repositories
+       `ecr:CreateRepository`, `ecr:DescribeRepositories`, `ecr:PutImage`,
+       `ecr:InitiateLayerUpload`, `ecr:UploadLayerPart`,
+       `ecr:CompleteLayerUpload`, `ecr:BatchCheckLayerAvailability`,
+       `ecr:BatchGetImage`, `ecr:PutImageScanningConfiguration`,
+       `ecr:PutImageTagMutability`
+     - RDS: `rds:CreateDBSnapshot`, `rds:DescribeDBSnapshots` on the database
+     - EKS: `eks:DescribeCluster`, and an EKS access entry allowing it to
+       manage the `agent-relay` namespace (Helm release, Deployments, Jobs).
 
 ## The workflow file
 
@@ -61,7 +66,8 @@ jobs:
       version: ${{ inputs.version || '' }}
       runs-on: '["self-hosted", "agent-relay"]'
       aws-region: us-east-1
-      aws-role-arn: arn:aws:iam::<account>:role/agent-relay-upgrade
+      aws-plan-role-arn: arn:aws:iam::<account>:role/agent-relay-upgrade-plan
+      aws-apply-role-arn: arn:aws:iam::<account>:role/agent-relay-upgrade-apply
       eks-cluster: <cluster-name>
       registry: <account>.dkr.ecr.us-east-1.amazonaws.com
       profile: eks-native
