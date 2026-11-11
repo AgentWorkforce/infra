@@ -95,6 +95,71 @@ jobs:
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "chart_version=$chart_version" >> "$GITHUB_OUTPUT"
 
+      - name: Reverify candidate policy and build provenance
+        shell: bash
+        env:
+          VERSION: ${{ steps.release.outputs.version }}
+          GH_TOKEN: ${{ secrets.BULLS96_READ_TOKEN || secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          candidate_pins="releases/agent-relay-${VERSION}/pins.json"
+          python3 scripts/release/update-release-candidate.py validate \
+            --pins "$candidate_pins" \
+            --version "$VERSION"
+          mapfile -t components < <(jq -er '.pins | keys[]' "$candidate_pins")
+          [[ "${#components[@]}" -gt 0 ]] \
+            || { echo "::error::The release candidate has no component pins."; exit 1; }
+
+          printf '%s' "$GH_TOKEN" | docker login ghcr.io \
+            --username "$GITHUB_ACTOR" --password-stdin
+          for component in "${components[@]}"; do
+            pin="$(jq -cer --arg component "$component" '.pins[$component]' "$candidate_pins")"
+            repository="$(jq -er '.repository' <<<"$pin")"
+            digest="$(jq -er '.digest' <<<"$pin")"
+            source_repository="$(jq -er '.sourceRepository' <<<"$pin")"
+            source_sha="$(jq -er '.sourceRevision' <<<"$pin")"
+            metadata="$(python3 scripts/release/update-release-candidate.py describe \
+              --component "$component")"
+            expected_repository="$(jq -er '.imageRepository' <<<"$metadata")"
+            expected_source_repository="$(jq -er '.sourceRepository' <<<"$metadata")"
+            signer_workflow="$(jq -er '.signerWorkflow' <<<"$metadata")"
+            [[ "$repository" == "$expected_repository" \
+              && "$source_repository" == "$expected_source_repository" ]] \
+              || { echo "::error::Candidate repository drift for $component."; exit 1; }
+
+            policy_args=(
+              --blocked scripts/release/blocked-image-digests.json
+              --component "$component"
+              --digest "$digest"
+              --source-sha "$source_sha"
+            )
+            if [[ "$component" == "sessions-pipeline" ]]; then
+              scrub_pin="$RUNNER_TEMP/${component}-scrub-bindgen-pin.json"
+              gh api \
+                "repos/${source_repository}/contents/packages/pipeline/scrub-bindgen-pin.json?ref=${source_sha}" \
+                --jq .content | base64 --decode > "$scrub_pin"
+              policy_args+=(--scrub-pin "$scrub_pin")
+            fi
+            python3 scripts/release/update-release-candidate.py check-policy \
+              "${policy_args[@]}"
+
+            attestation="$RUNNER_TEMP/${component}-verified-attestation.json"
+            gh attestation verify "oci://${repository}@${digest}" \
+              --repo "$source_repository" \
+              --signer-workflow "$source_repository/$signer_workflow" \
+              --source-digest "$source_sha" \
+              --source-ref refs/heads/main \
+              --format json > "$attestation"
+            jq -e \
+              --arg repository "https://github.com/$source_repository" \
+              --arg workflow "$signer_workflow" '
+                length > 0 and all(.[].verificationResult.statement.predicate;
+                  .buildDefinition.externalParameters.workflow.repository == $repository and
+                  .buildDefinition.externalParameters.workflow.path == $workflow and
+                  .buildDefinition.externalParameters.workflow.ref == "refs/heads/main")
+              ' "$attestation" >/dev/null
+          done
+
       - name: Add locked dependency repositories
         shell: bash
         run: |

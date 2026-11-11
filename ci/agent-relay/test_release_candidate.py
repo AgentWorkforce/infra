@@ -179,6 +179,16 @@ class ReleaseCandidateTest(unittest.TestCase):
             self.assertIn(DIGEST_B, second)
             self.assertNotIn(DIGEST_A, second)
 
+    def test_tag_publish_reverifies_candidate_provenance(self):
+        workflow = (ROOT / ".github/workflows/release-agent-relay.yml").read_text()
+        self.assertIn("Reverify candidate policy and build provenance", workflow)
+        self.assertIn("update-release-candidate.py validate", workflow)
+        self.assertIn("update-release-candidate.py check-policy", workflow)
+        self.assertIn('gh attestation verify "oci://${repository}@${digest}"', workflow)
+        self.assertIn('--source-digest "$source_sha"', workflow)
+        self.assertIn("--source-ref refs/heads/main", workflow)
+        self.assertIn("--signer-workflow", workflow)
+
 
 if __name__ == "__main__":
     unittest.main()
