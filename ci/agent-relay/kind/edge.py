@@ -1,4 +1,5 @@
 """Pinned local ingress with backend/API/DNS-only egress."""
+import hashlib
 import ipaddress
 import http.client
 import json
@@ -29,7 +30,11 @@ def default_certificate_values(stack):
     # Chart 42.x's schema takes the file-provider content as an object, not YAML text.
     store = {"tls": {"stores": {"default": {"defaultCertificate": {
         "certFile": f"{DEFAULT_TLS_MOUNT}/tls.crt", "keyFile": f"{DEFAULT_TLS_MOUNT}/tls.key"}}}}}
-    return {"volumes": [{"name": DEFAULT_TLS, "mountPath": DEFAULT_TLS_MOUNT, "type": "secret"}],
+    # The file-provider paths remain unchanged when this Secret rotates.
+    # Put the public leaf's digest on the Pod so Helm restarts Traefik too.
+    annotations = {"checksum/kind-edge-default-tls": hashlib.sha256(cert.read_bytes()).hexdigest()}
+    return {"deployment": {"podAnnotations": annotations},
+            "volumes": [{"name": DEFAULT_TLS, "mountPath": DEFAULT_TLS_MOUNT, "type": "secret"}],
             "file": {"enabled": True, "watch": False, "content": store}}
 
 
@@ -109,6 +114,7 @@ def install(stack, version, namespace, *, wait_for_route=True):
         "ingressClass": {"enabled": True, "isDefaultClass": False, "name": "traefik"}}
     default_tls = default_certificate_values(stack)
     if default_tls:
+        values["deployment"] = default_tls["deployment"]
         values["volumes"] = default_tls["volumes"]
         values["providers"]["file"] = default_tls["file"]
     path = stack.state / "edge-values.json"

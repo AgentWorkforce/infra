@@ -322,6 +322,26 @@ class NativeNetwork(unittest.TestCase):
             'certFile':f'{edge.DEFAULT_TLS_MOUNT}/tls.crt','keyFile':f'{edge.DEFAULT_TLS_MOUNT}/tls.key'}}}}})
         self.assertFalse(values['providers']['kubernetesCRD']['enabled'])
 
+    def test_replacing_the_default_leaf_changes_the_edge_pod_template(self):
+        self.stack.edge_policies=[self.edge_policy()]
+        original=self.stack.cmd
+        self.stack.apply=lambda doc:None
+        self.stack.cmd=lambda args,**kwargs:SimpleNamespace(stdout='')if args[:2]==['helm','upgrade']else original(args,**kwargs)
+        (self.stack.state/'tls.crt').write_text('FIRST-CERT')
+        (self.stack.state/'tls.key').write_text('FIRST-KEY')
+        edge.install(self.stack,'pinned',n.APP_NS,wait_for_route=False)
+        first=json.loads((self.stack.state/'edge-values.json').read_text())
+        edge.install(self.stack,'pinned',n.APP_NS,wait_for_route=False)
+        unchanged=json.loads((self.stack.state/'edge-values.json').read_text())
+        self.assertEqual(first,unchanged)
+        (self.stack.state/'tls.crt').write_text('RENEWED-CERT')
+        (self.stack.state/'tls.key').write_text('RENEWED-KEY')
+        edge.install(self.stack,'pinned',n.APP_NS,wait_for_route=False)
+        renewed=json.loads((self.stack.state/'edge-values.json').read_text())
+        self.assertEqual(first['providers']['file'],renewed['providers']['file'])
+        self.assertNotEqual(first.get('deployment',{}).get('podAnnotations'),
+                            renewed.get('deployment',{}).get('podAnnotations'))
+
     def test_absent_edge_policy_creation_cannot_overwrite_a_racing_manual_policy(self):
         original=self.stack.cmd
         self.stack.cmd=lambda args,**kwargs:SimpleNamespace(stdout='')if args[:2]==['helm','upgrade']else original(args,**kwargs)
