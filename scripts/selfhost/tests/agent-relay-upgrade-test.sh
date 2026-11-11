@@ -66,7 +66,10 @@ echo "helm \$*" >> "$root/log"
 case "\$*" in
   *template*) for a in "\$@"; do case "\$a" in *release-images.values.yaml) ov=\$a;; esac; done
     yq -r '.[] | .image | "---\nimage: " + .repository + "@" + .digest' "\$ov"
-    if [ -f "$root/rendered-extra.yaml" ]; then echo ---; cat "$root/rendered-extra.yaml"; fi ;;
+    if [ -f "$root/rendered-extra.yaml" ]; then echo ---; cat "$root/rendered-extra.yaml"; fi
+    # A capability-gated template, like the charts' VPA check.
+    case " \$* " in *" --api-versions autoscaling.k8s.io/v1 "*)
+      printf -- '---\nkind: VerticalPodAutoscaler\nmetadata:\n  name: relayfile\n' ;; esac ;;
   *" list "*) if [ -f "$root/exists" ]; then echo '[{"name":"agent-relay","status":"deployed"}]'; else echo '[]'; fi ;;
   *"get manifest"*) cat "$root/live-manifest.yaml" 2>/dev/null || true ;;
   *"get hooks"*) ;;
@@ -82,7 +85,8 @@ EOF
 setup_mocks() { # $1 release fixture dir, $2 attestation result (ok|fail)
   local bin="$root/bin"; rm -rf "$bin"; mkdir -p "$bin"; : > "$root/log"
   rm -f "$root/rendered-extra.yaml" "$root/live-manifest.yaml" "$root/patches"; touch "$root/exists"
-  rm -rf "$root/jobstate"; mkdir -p "$root/jobstate"
+  rm -rf "$root/jobstate"; mkdir -p "$root/jobstate"; rm -f "$root/no-version"
+  printf 'v1\napps/v1\nbatch/v1\npolicy/v1\nautoscaling/v2\n' > "$root/api-versions"
   cat > "$bin/gh" <<EOF
 #!/usr/bin/env bash
 echo "gh \$*" >> "$root/log"
@@ -96,6 +100,8 @@ EOF
 echo "kubectl \$*" >> "$root/log"
 case "\$*" in
   *jsonpath*) echo "old/relay-control@sha256:old" ;;
+  *"version -o json"*) [ -f "$root/no-version" ] || echo '{"serverVersion":{"gitVersion":"v1.31.4-eks-2d5f260"}}' ;;
+  *api-versions*) cat "$root/api-versions" ;;
   *"get job "*) # state from $root/jobstate/<name>, one per call; the last state sticks
     prev=""; for a in "\$@"; do [ "\$prev" = job ] && n=\$a; prev=\$a; done
     f="$root/jobstate/\$n"; st=complete
@@ -125,6 +131,7 @@ make_state() {
   rm -rf "$root/state"; mkdir -p "$root/state/passwords" "$root/state/secret-files/agent-relay-secrets" \
     "$root/state/secret-files/search-indexer-owner"
   for p in bulls96_read_api bulls96_session_ingest search_consumer_runtime; do printf x > "$root/state/passwords/$p"; done
+  find "$root/state" -type d -exec chmod 700 {} +; find "$root/state" -type f -exec chmod 600 {} +
 }
 rds_env=(AWS_REGION=us-east-1 RDS_HOST=db.example.internal RDS_ADMIN_SECRET_ARN=arn:aws:secretsmanager:us-east-1:111111111111:secret:rds STATE_DIR="$root/state")
 
@@ -412,3 +419,32 @@ printf 'running\nnotfound\n' > "$root/jobstate/agent-relay-search-indexer-bootst
 out=$(run_rds "${args[@]}" --rds-setup --first-install --apply --db-instance prod-db --yes 2>&1) && fail "a vanished running Job reported success"
 grep -q 'did not complete (removed before its outcome was seen)' <<<"$out" || fail "vanished Job message unclear: $out"
 pass "a Job never found times out clearly; one removed before completing fails"
+# 28. the plan renders with the cluster's version and API versions, so a
+# capability-gated resource the cluster has matches the deployed release
+vpa='kind: VerticalPodAutoscaler
+metadata:
+  name: relayfile'
+setup_mocks "$root/rel-ok" ok; echo autoscaling.k8s.io/v1 >> "$root/api-versions"; printf '%s\n' "$vpa" > "$root/live-manifest.yaml"
+out=$(run "${args[@]}" 2>&1) || fail "plan failed: $out"
+tmpl=$(grep 'helm .*template' "$root/log")
+grep -q -- '--kube-version v1.31.4-eks-2d5f260' <<<"$tmpl" || fail "plan did not render with the cluster version: $tmpl"
+grep -q -- '--api-versions autoscaling.k8s.io/v1' <<<"$tmpl" || fail "plan did not render with the cluster API versions: $tmpl"
+grep -q 'plan: changes=false' <<<"$out" || fail "VPA-gated template produced a spurious change: $out"
+setup_mocks "$root/rel-ok" ok; printf '%s\n' "$vpa" > "$root/live-manifest.yaml"
+out=$(run "${args[@]}" 2>&1) || fail "plan failed: $out"
+grep -q -- '- VerticalPodAutoscaler//relayfile' <<<"$out" || fail "capability gate was not driven by the cluster's API versions: $out"
+pass "plan renders with the cluster's capabilities (no spurious VPA change)"
+
+# 29. a cluster whose version cannot be read refuses the plan
+setup_mocks "$root/rel-ok" ok; touch "$root/no-version"
+out=$(run "${args[@]}" 2>&1) && fail "plan without a cluster version was accepted"
+grep -q "Kubernetes version" <<<"$out" || fail "missing version refused for the wrong reason: $out"
+pass "plan refuses without the cluster's Kubernetes version"
+
+# 30. --rds-setup refuses a STATE_DIR that group or others can read, before contacting anything
+make_state; setup_mocks "$root/rel-ok" ok
+chmod 644 "$root/state/passwords/bulls96_read_api"
+out=$(run_rds "${args[@]}" --rds-setup --apply --db-instance prod-db --yes 2>&1) && fail "an open STATE_DIR was accepted"
+grep -q 'readable beyond its owner' <<<"$out" || fail "open STATE_DIR refused for the wrong reason: $out"
+[ -s "$root/log" ] && fail "an open STATE_DIR contacted tools"
+pass "--rds-setup refuses a STATE_DIR readable beyond its owner"

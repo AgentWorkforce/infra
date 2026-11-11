@@ -77,6 +77,43 @@ every later upgrade runs `rds-setup.sh refresh-admin` and updates the two
 admin-derived Secret keys before `helm upgrade`. If an external secret
 controller owns those Secrets, leave `rds-setup` off and refresh them there.
 
+### The state directory holds database passwords
+
+`state-dir` (`STATE_DIR` for the script) is where `rds-setup.sh pre` keeps
+the generated database role passwords (`passwords/`) and the connection
+strings it builds from them, including the RDS admin-derived migration URL
+(`secret-files/`). They stay on the runner's disk in plain text so that
+`post` and `refresh-admin` can run later. Treat it like the Kubernetes Secrets
+it feeds:
+
+- **Self-hosted runner only.** Use a dedicated, persistent runner that only
+  this repository's approval environment can schedule jobs on. Never use a
+  GitHub-hosted or ephemeral runner, and never point `state-dir` inside
+  `$GITHUB_WORKSPACE`, the tool cache, or anything uploaded as an artifact or
+  cache.
+- **Permissions.** The runner's service user owns it; every directory is
+  `0700` and every file `0600` (`rds-setup.sh` creates them that way under
+  `umask 077`). The upgrader refuses `--rds-setup` when anything in it is
+  readable, writable or searchable by group or others. Check with:
+
+  ```sh
+  find "$STATE_DIR" \( -type d ! -perm 700 \) -o \( -type f ! -perm 600 \) -print   # must print nothing
+  ```
+
+- **Disk.** Keep it on an encrypted volume and out of backups and images
+  that are shared more widely than the Secrets themselves.
+- **Wiping it.** When the installation is decommissioned, or the state moves
+  to another host (copy it with its modes, then wipe the old copy), stop the
+  runner and remove the directory:
+
+  ```sh
+  rm -rf -- "$STATE_DIR"     # on a filesystem without copy-on-write, `shred -u` the files first
+  ```
+
+  Without it, `post` and `refresh-admin` cannot run, and the role passwords
+  exist only in the Kubernetes Secrets. If the directory may have been
+  exposed, rotate the database role passwords and the RDS admin password.
+
 ## The workflow file
 
 ```yaml
