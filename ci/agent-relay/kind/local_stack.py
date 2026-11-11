@@ -24,7 +24,7 @@ import yaml
 from stack import Stack, StackError, ROOT, NS, NODE, POSTGRES, private_json
 from native_core_values import compose
 from native_recipe import SECRET_KEYS
-from local_host_setup import certificate_present, host_aliases_present
+from local_host_setup import certificate_present, host_aliases_present, managed_cas
 
 LOCAL_VALUES = yaml.safe_load((ROOT / "ci/agent-relay/kind/local-values.yaml").read_text())
 
@@ -240,7 +240,7 @@ class LocalStack(Stack):
             result["telemetry-collector"] = {
                 "fullnameOverride": "telemetry-collector", "image": LOCAL_VALUES["telemetry-collector"]["image"],
                 "tlsProxy": LOCAL_VALUES["telemetry-collector"]["tlsProxy"], "producersSecret": "local-telemetry-producers",
-                "tlsSecret": "kind-tls", "rolloutRevision": "local-2",
+                "tlsSecret": "kind-tls", "rolloutRevision": "local-2-" + getattr(self, "leaf_sha", self.ca_sha),
                 "persistence": {"existingClaim": "local-telemetry"},
                 "networkPolicy": {"allowedFrom": [{"podSelector": {"matchLabels": {"agentworkforce.dev/analytics-producer": "true"}}}]}}
             analytics = lambda name: {"enabled": True, "deploymentId": "local-kind", "collectorUrl": COLLECTOR_URL,
@@ -431,9 +431,70 @@ WHERE p.oid=to_regprocedure('session_consumer_bootstrap_private.consumer_has_pas
         if row != {"owner": "postgres", "definer": True, "config": ["search_path=pg_catalog"], "body": body}:
             raise StackError("existing local credential probe differs from the selected official installer; no function is overwritten")
 
+    def reload_leaf_consumer(self, name, target, container, path, reload, seconds=180):
+        marker = self.state / (name + "-tls.sha256")
+        if marker.is_file() and marker.read_text().strip() == self.leaf_sha:
+            return
+        deadline = time.monotonic() + seconds
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise StackError(name + " TLS projection timed out; local state preserved for retry")
+            args = ["exec", target, *(["-c", container] if container else []), "--", "cat", path]
+            result = self.k(*args, check=False, timeout=min(15, remaining))
+            if result.returncode == 0 and hashlib.sha256(result.stdout.encode()).hexdigest() == self.leaf_sha:
+                break
+            time.sleep(min(1, remaining))
+        # The process must reopen its certificate only after the projected
+        # Secret contains the current leaf. Record success after the reload.
+        reload()
+        marker.touch(mode=0o600, exist_ok=True)
+        marker.chmod(0o600)
+        marker.write_text(self.leaf_sha + "\n")
+
+    def prepare_pipeline_generation(self, changed):
+        if changed:
+            self.stop_pipeline()
+        self.stage("pipeline-migrations-" + PIPELINE, self.migrate_pipeline)
+
+    def stop_pipeline(self, seconds=180):
+        names = ("session-native-ingest", "session-native-consumer", "session-read-api", "sessions-session-brief")
+        deadline = time.monotonic() + seconds
+        def timeout():
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise StackError("pipeline shutdown timed out; migrations not started and local state preserved")
+            return min(15, remaining)
+        def deployments():
+            return json.loads(self.k("get", "deployment", *names, "-o", "json", timeout=timeout()).stdout)["items"]
+        before = deployments()
+        if {d["metadata"]["name"] for d in before} != set(names):
+            raise StackError("pipeline shutdown requires all four owned Deployments")
+        selectors, identities = {}, {}
+        for deployment in before:
+            metadata, selector = deployment["metadata"], deployment["spec"]["selector"]
+            if metadata.get("namespace") != NS or metadata.get("annotations", {}).get("meta.helm.sh/release-name") != "agent-relay" or not selector.get("matchLabels") or selector.get("matchExpressions"):
+                raise StackError("pipeline shutdown refused an unowned or unsupported Deployment")
+            identities[metadata["name"]] = metadata["uid"]
+            selectors[metadata["name"]] = ",".join(k + "=" + v for k, v in sorted(selector["matchLabels"].items()))
+        self.k("scale", *("deployment/" + n for n in names), "--replicas=0", timeout=timeout())
+        while True:
+            current = deployments()
+            if {d["metadata"]["name"]: d["metadata"]["uid"] for d in current} != identities:
+                raise StackError("pipeline Deployment identity changed during shutdown; migrations not started")
+            settled = all(d["spec"].get("replicas") == 0 and d.get("status", {}).get("observedGeneration", 0) >= d["metadata"]["generation"] for d in current)
+            # Include terminating Pods: their old writers may still be draining.
+            remaining_pods = sum(len(json.loads(self.k("get", "pods", "-l", selector, "-o", "json", timeout=timeout()).stdout)["items"]) for selector in selectors.values())
+            if settled and remaining_pods == 0:
+                return
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise StackError("pipeline shutdown timed out; migrations not started and local state preserved")
+            time.sleep(min(1, remaining))
+
     def up_local(self):
         self.docker()
-        selection = {"pipeline": PIPELINE, "control": CONTROL, "webapp": WEBAPP, "postgres": POSTGRES, "minio": MINIO}
+        selection = selected_images()
         selected = self.state / "selection.json"
         previous = json.loads(selected.read_text()) if selected.exists() else None
         pipeline_changed = check_selection(previous, selection)
@@ -448,6 +509,7 @@ WHERE p.oid=to_regprocedure('session_consumer_bootstrap_private.consumer_has_pas
         from tls import create
         create(self, HOSTS, NS)
         self.ca_sha = hashlib.sha256((self.state / "ca.crt").read_bytes()).hexdigest()
+        self.leaf_sha = hashlib.sha256((self.state / "tls.crt").read_bytes()).hexdigest()
         self.apply({"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "local-ca", "namespace": NS}, "data": {"ca.crt": (self.state / "ca.crt").read_text()}})
         path = self.state / "credentials.json"
         self.credentials = json.loads(path.read_text()) if path.exists() else {
@@ -465,15 +527,12 @@ WHERE p.oid=to_regprocedure('session_consumer_bootstrap_private.consumer_has_pas
         install(self, "42.3.1", NS, wait_for_route=False)
         self.edge_ip = self.k("get", "service", "kind-edge-traefik", "-o", "jsonpath={.spec.clusterIP}", namespace="kind-edge").stdout
         self.stage("postgres", lambda: self.postgres_local(c))
+        self.reload_leaf_consumer("postgres", "postgres-0", None, "/tls/tls.crt",
+            lambda: self.sql("postgres", "SELECT pg_reload_conf();"))
         self.stage("databases", lambda: self.databases(c))
         self.stage("object-storage", lambda: self.storage(c))
         self.stage("pipeline-schema", lambda: self.pipeline_schema(c))
-        if pipeline_changed:
-            # Keep old runtimes out of the schema change; no data or quota
-            # records are deleted. A failure leaves the services stopped.
-            self.k("scale", "deployment/session-native-ingest", "deployment/session-native-consumer", "deployment/session-read-api",
-                "deployment/sessions-session-brief", "--replicas=0")
-        self.stage("pipeline-migrations-" + PIPELINE, self.migrate_pipeline)
+        self.prepare_pipeline_generation(pipeline_changed)
         self.mail()
         self.stage("control", lambda: self.control(c))
         self.sql("hoopdb", "ALTER ROLE hoop CREATEROLE;")
@@ -484,6 +543,8 @@ WHERE p.oid=to_regprocedure('session_consumer_bootstrap_private.consumer_has_pas
         self.support_credentials(c)
         tenant = json.loads((self.state / "tenant.json").read_text())
         self.helm(self.values("serve", tenant))
+        self.reload_leaf_consumer("collector", "deployment/telemetry-collector", "tls-proxy", "/var/run/secrets/telemetry-tls/tls.crt",
+            lambda: self.k("exec", "deployment/telemetry-collector", "-c", "tls-proxy", "--", "nginx", "-s", "reload"))
         private_json(selected, selection)
         print("Dashboard: " + SITE)
         print("Local administrator: owner@kind.example (email link via local mailbox)")
@@ -495,14 +556,29 @@ WHERE p.oid=to_regprocedure('session_consumer_bootstrap_private.consumer_has_pas
         clusters = self.cmd(["kind", "get", "clusters"]).stdout.splitlines()
         if self.name in clusters:
             self.owned()
-        ca = self.state / "ca.crt"
-        if sys.platform == "darwin" and ca.exists():
-            if certificate_present(ca) or host_aliases_present():
+        record = json.loads(self.marker.read_text()) if self.marker.exists() else None
+        if sys.platform == "darwin":
+            certificates = managed_cas(self.state / "ca.crt")
+            if any(certificate_present(ca) for ca in certificates) or host_aliases_present():
                 self.cmd(["sudo", sys.executable, ROOT / "ci/agent-relay/kind/local_host_setup.py", "down"], sensitive=True)
         if self.name in clusters:
             self.cmd(["kind", "delete", "cluster", "--name", self.name], timeout=180)
+        self.discard_dev_config(record)
         shutil.rmtree(self.state)
         print("Removed this checkout's local cluster, volumes and credentials.")
+
+    def discard_dev_config(self, record):
+        path = ROOT / ".kind/dev/config.json"
+        if not record or not path.is_file():
+            return
+        try:
+            config = json.loads(path.read_text())
+        except (OSError, ValueError):
+            return
+        expected = {"clusterUid": record.get("clusterUid"), "cluster": self.name, "context": "kind-" + self.name,
+            "namespace": NS, "dockerHost": self.env["DOCKER_HOST"], "kubeconfig": str(self.kubeconfig.resolve())}
+        if expected["clusterUid"] and all(config.get(key) == value for key, value in expected.items()):
+            path.unlink()
 
 
 def env(name, value):
@@ -515,6 +591,15 @@ def check_selection(previous, selected):
     if set(previous) != set(selected) or any(previous[k] != v for k, v in selected.items() if k != "pipeline"):
         raise StackError("local non-pipeline image selection changed; use make local-down before installing another generation")
     return True
+
+
+def selected_images():
+    cast = yaml.safe_load((ROOT / "charts/relaycast/values.yaml").read_text())["image"]
+    base = yaml.safe_load((ROOT / "charts/agent-relay/values-kind-core.yaml").read_text())
+    cast.update(base.get("relaycast", {}).get("image", {}))
+    return {"pipeline": PIPELINE, "control": CONTROL, "webapp": WEBAPP, "postgres": POSTGRES, "minio": MINIO,
+        "relaycast": reference(cast), "collector": reference(LOCAL_VALUES["telemetry-collector"]["image"]),
+        "collectorProxy": reference(LOCAL_VALUES["telemetry-collector"]["tlsProxy"]["image"])}
 
 
 def read_model_key(stream):

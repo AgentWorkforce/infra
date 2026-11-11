@@ -15,9 +15,28 @@ HOSTS = {name + ".kind.agentrelay.com" for name in ("relay", "cast", "history", 
 KEYCHAIN = "/Library/Keychains/System.keychain"
 
 
+def managed_cas(ca):
+    candidates = ([ca] if ca.is_file() else []) + sorted((ca.parent / "ca-history").glob("*.crt"))
+    result, seen = [], set()
+    for candidate in candidates:
+        try:
+            der = ssl.PEM_cert_to_DER_cert(candidate.read_text())
+        except (OSError, ValueError) as error:
+            raise RuntimeError("saved CA cannot be read; local state is preserved for cleanup") from error
+        fingerprint = hashlib.sha256(der).hexdigest()
+        if fingerprint not in seen:
+            result.append(candidate)
+            seen.add(fingerprint)
+    return result
+
+
 def certificate_present(ca):
     """Match the exact stored CA, independently of leaf validity or trust."""
-    result = subprocess.run(["security", "find-certificate", "-a", "-p", KEYCHAIN], check=True, capture_output=True, text=True)
+    result = subprocess.run(["security", "find-certificate", "-a", "-p", KEYCHAIN], capture_output=True, text=True)
+    if result.returncode:
+        if "The specified item could not be found in the keychain" in result.stderr:
+            return False
+        raise subprocess.CalledProcessError(result.returncode, result.args, result.stdout, result.stderr)
     wanted = ssl.PEM_cert_to_DER_cert(ca.read_text())
     return any(ssl.PEM_cert_to_DER_cert(pem) == wanted for pem in re.findall(
         r"-----BEGIN CERTIFICATE-----.*?-----END CERTIFICATE-----", result.stdout, re.DOTALL))
@@ -35,6 +54,13 @@ def remove_ca(ca, sha1):
         subprocess.run(["security", "delete-certificate", "-Z", sha1, KEYCHAIN], check=True)
     if certificate_present(ca):
         raise RuntimeError("local CA remains in System keychain; local state is preserved for retry")
+
+
+def remove_saved_cas(certificates, keep=None):
+    for certificate in certificates:
+        if certificate != keep:
+            der = ssl.PEM_cert_to_DER_cert(certificate.read_text())
+            remove_ca(certificate, hashlib.sha1(der).hexdigest().upper())
 
 
 def host_contents(original, enabled):
@@ -61,14 +87,15 @@ def main():
         parser.error("this trust helper supports macOS")
     if os.geteuid() != 0:
         parser.error("run make local-trust once from an interactive terminal; macOS requires sudo for /etc/hosts and CA trust")
-    if not CA.is_file():
+    if args.action == "up" and not CA.is_file():
         parser.error("this checkout has no local CA; run make local-up first")
-    der = ssl.PEM_cert_to_DER_cert(CA.read_text())
-    sha1 = hashlib.sha1(der).hexdigest().upper()
+    certificates = managed_cas(CA)
+    if not certificates:
+        parser.error("this checkout has no saved local CA")
+    der = ssl.PEM_cert_to_DER_cert(certificates[0].read_text())
     if args.action == "up":
         subprocess.run(["security", "add-trusted-cert", "-d", "-r", "trustRoot", "-k", KEYCHAIN, str(CA)], check=True)
-    else:
-        remove_ca(CA, sha1)
+    remove_saved_cas(certificates, keep=CA if args.action == "up" else None)
     hosts = Path("/etc/hosts")
     wanted = host_contents(hosts.read_text(), args.action == "up")
     # Preserve hosts inode, ownership and mode rather than replacing the file.

@@ -14,6 +14,7 @@ import stack
 import addons
 import tls
 import control
+import local_host_setup
 
 
 class Harness(unittest.TestCase):
@@ -369,6 +370,25 @@ class Harness(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "disagree"):
                 addons.build(self.local)
             cargo.assert_not_called()
+
+    def test_ca_renewal_retains_exact_old_public_certificate_for_trust_cleanup(self):
+        self.local.apply = lambda *args, **kwargs: None
+        self.local.tls()
+        ca = self.local.state / "ca.crt"
+        previous = ca.read_bytes()
+        command = self.local.cmd
+        def expiring_ca(args, **kwargs):
+            if "-checkend" in args and ca in args:
+                return subprocess.CompletedProcess(args, 1, "Certificate will expire", "")
+            return command(args, **kwargs)
+        self.local.cmd = expiring_ca
+        self.local.tls()
+        self.local.cmd = command
+        self.assertNotEqual(ca.read_bytes(), previous)
+        managed = local_host_setup.managed_cas(ca)
+        self.assertEqual(len(managed), 2)
+        self.assertEqual(managed[1].read_bytes(), previous)
+        self.assertEqual(managed[1].stat().st_mode & 0o777, 0o600)
 
     def test_leaf_failing_expiry_check_is_reissued_with_the_existing_host_ca(self):
         applied = []

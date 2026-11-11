@@ -45,7 +45,10 @@ endpoint. An occupied local port or an existing foreign cluster refuses clearly;
 the command never deletes a foreign listener. A pipeline-only pin change stops
 its runtimes, applies the new image's official migrations and no-op check,
 reapplies its official runtime grants, then restores the services. The selected
-generation is recorded after readiness succeeds. Other image generation changes
+generation is recorded after readiness succeeds. Migrations wait for all four
+old workloads' Pods, including terminating Pods, to exit; a timeout preserves
+state and stops before schema changes. Relaycast and both collector images are
+included in the saved selection. Other image generation changes
 require recreating this disposable stack. A failed immutable bootstrap Job
 also requires inspecting the error and recreating the fixture rather than
 silently rerunning it.
@@ -106,6 +109,12 @@ CA; see `docs/local-desktop.md` for the q7m2k9 candidate and artifact checks.
 `make local-down` removes only this checkout's owned local cluster, its volumes,
 and its generated local credentials. If the CA is trusted, removing that exact
 CA and its hostname aliases requires sudo before deleting its public certificate.
+Renewed public CA certificates remain in `.kind/local/ca-history` until trust
+cleanup completes, so older trusted certificates can be removed precisely.
+On leaf renewal, PostgreSQL and the collector reopen their certificate only
+after the mounted Secret contains the new leaf. Teardown removes the default
+development config only when its cluster UID, context and Docker endpoint match
+the deleted local cluster; the next `make dev` can configure its replacement.
 This command retains source checkouts, tools and Docker build caches for normal
 development; it is not the complete clean-room machine wipe.
 

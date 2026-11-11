@@ -14,11 +14,121 @@ import yaml
 from local_host_setup import host_contents
 import local_host_setup
 import local_stack
-from local_stack import LocalStack, ROOT, read_model_key, check_selection
+from local_stack import LocalStack, ROOT, read_model_key, check_selection, selected_images
 from stack import StackError
 
 
 class LocalTests(unittest.TestCase):
+    def test_tls_consumer_waits_for_current_mount_before_reload_and_records_success(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            stack = LocalStack.__new__(LocalStack)
+            stack.state = Path(tmp)
+            stack.leaf_sha = local_stack.hashlib.sha256(b"new certificate").hexdigest()
+            responses = iter(["old certificate", "new certificate"])
+            loaded = {"leaf": "old certificate", "reloads": 0}
+            def command(*args, **kwargs):
+                loaded["leaf"] = next(responses)
+                return SimpleNamespace(returncode=0, stdout=loaded["leaf"])
+            def reload():
+                self.assertEqual(loaded["leaf"], "new certificate")
+                loaded["reloads"] += 1
+            stack.k = command
+            with patch.object(local_stack.time, "sleep"):
+                stack.reload_leaf_consumer("postgres", "postgres-0", None, "/tls/tls.crt", reload)
+                stack.reload_leaf_consumer("postgres", "postgres-0", None, "/tls/tls.crt", reload)
+            self.assertEqual(loaded["reloads"], 1)
+            self.assertEqual((stack.state / "postgres-tls.sha256").read_text().strip(), stack.leaf_sha)
+
+    def test_tls_reload_failure_retains_old_success_marker(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            stack = LocalStack.__new__(LocalStack)
+            stack.state = Path(tmp)
+            marker = stack.state / "collector-tls.sha256"
+            marker.write_text("old")
+            stack.leaf_sha = local_stack.hashlib.sha256(b"new certificate").hexdigest()
+            stack.k = lambda *args, **kwargs: SimpleNamespace(returncode=0, stdout="new certificate")
+            def fail():
+                raise StackError("reload failed")
+            with self.assertRaisesRegex(StackError, "reload failed"):
+                stack.reload_leaf_consumer("collector", "deployment/telemetry-collector", "tls-proxy", "/tls/tls.crt", fail)
+            self.assertEqual(marker.read_text(), "old")
+
+    def test_trust_cleanup_covers_current_and_all_retained_ca_certificates(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            current, old = Path(tmp) / "ca.crt", Path(tmp) / "old.crt"
+            current.write_text("new certificate")
+            old.write_text("old certificate")
+            with patch.object(local_host_setup.ssl, "PEM_cert_to_DER_cert", side_effect=lambda text: text.encode()), patch.object(local_host_setup, "remove_ca") as remove:
+                local_host_setup.remove_saved_cas([current, old])
+                self.assertEqual([c.args[0] for c in remove.call_args_list], [current, old])
+                remove.reset_mock()
+                local_host_setup.remove_saved_cas([current, old], keep=current)
+                self.assertEqual([c.args[0] for c in remove.call_args_list], [old])
+
+    def test_teardown_discards_only_dev_config_bound_to_deleted_cluster(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            stack = LocalStack.__new__(LocalStack)
+            stack.name = "agent-relay-local"
+            stack.kubeconfig = root / ".kind/local/kubeconfig"
+            stack.env = {"DOCKER_HOST": "unix:///local/docker.sock"}
+            path = root / ".kind/dev/config.json"
+            path.parent.mkdir(parents=True)
+            config = {"clusterUid": "owned-uid", "cluster": stack.name, "context": "kind-" + stack.name,
+                "namespace": "agent-relay", "dockerHost": stack.env["DOCKER_HOST"], "kubeconfig": str(stack.kubeconfig.resolve())}
+            with patch.object(local_stack, "ROOT", root):
+                for key in config:
+                    path.write_text(json.dumps({**config, key: "another-target"}))
+                    stack.discard_dev_config({"clusterUid": "owned-uid"})
+                    self.assertTrue(path.exists(), key)
+                path.write_text(json.dumps(config))
+                stack.discard_dev_config({"clusterUid": "owned-uid"})
+                self.assertFalse(path.exists())
+            self.assertTrue(path.parent.exists())
+
+    def pipeline_shutdown_fixture(self, clears_after):
+        stack = LocalStack.__new__(LocalStack)
+        state = {"scaled": False, "polls": 0}
+        names = ("session-native-ingest", "session-native-consumer", "session-read-api", "sessions-session-brief")
+        def command(*args, **kwargs):
+            if args[0] == "scale":
+                state["scaled"] = True
+            elif args[:2] == ("get", "deployment"):
+                if state["scaled"]:
+                    state["polls"] += 1
+                return SimpleNamespace(stdout=json.dumps({"items": [
+                    {"metadata": {"name": n, "namespace": "agent-relay", "uid": n, "generation": 2 if state["scaled"] else 1,
+                        "annotations": {"meta.helm.sh/release-name": "agent-relay"}},
+                     "spec": {"replicas": 0 if state["scaled"] else 1, "selector": {"matchLabels": {"app": n}}},
+                     "status": {"observedGeneration": 2 if state["scaled"] else 1}} for n in names]}))
+            elif args[:2] == ("get", "pods"):
+                draining = args[3] == "app=session-native-ingest" and state["polls"] < clears_after
+                return SimpleNamespace(stdout=json.dumps({"items": [{"metadata": {"deletionTimestamp": "still-draining"}}] if draining else []}))
+            return SimpleNamespace(stdout="")
+        stack.k = command
+        return stack, state
+
+    def test_migrations_wait_for_terminating_old_pod_to_disappear(self):
+        stack, state = self.pipeline_shutdown_fixture(clears_after=3)
+        def stage(name, callback):
+            self.assertTrue(state["scaled"])
+            self.assertEqual(state["polls"], 3)
+            callback()
+        stack.stage = stage
+        with patch.object(stack, "migrate_pipeline") as migrate, patch.object(local_stack.time, "sleep"):
+            stack.prepare_pipeline_generation(True)
+        migrate.assert_called_once_with()
+
+    def test_shutdown_timeout_preserves_state_and_never_starts_migrations(self):
+        stack, state = self.pipeline_shutdown_fixture(clears_after=999)
+        clock = {"value": 0}
+        with patch.object(stack, "stage") as stage, patch.object(stack, "migrate_pipeline") as migrate, patch.object(local_stack.time, "monotonic", side_effect=lambda: clock["value"]), patch.object(local_stack.time, "sleep", side_effect=lambda seconds: clock.update(value=181)):
+            with self.assertRaisesRegex(StackError, "migrations not started.*state preserved"):
+                stack.prepare_pipeline_generation(True)
+        self.assertTrue(state["scaled"])
+        stage.assert_not_called()
+        migrate.assert_not_called()
+
     def test_existing_exact_credential_probe_is_verified_without_reinstalling(self):
         stack = LocalStack.__new__(LocalStack)
         installer = "AS $credential_probe$\nBEGIN RETURN true; END\n$credential_probe$;"
@@ -39,11 +149,11 @@ class LocalTests(unittest.TestCase):
             self.assertEqual(sql.call_args.args, ("hoopdb", "official installer"))
 
     def test_pipeline_only_pin_change_runs_migrations_without_adopting_another_generation(self):
-        previous = {"pipeline": "old", "control": "control", "webapp": "web", "postgres": "pg", "minio": "s3"}
+        previous = {**selected_images(), "pipeline": "old"}
         self.assertFalse(check_selection(None, previous))
         self.assertFalse(check_selection(previous, previous))
         self.assertTrue(check_selection(previous, {**previous, "pipeline": "new"}))
-        for selection in ({**previous, "control": "new"}, {**previous, "postgres": "new"}, {"pipeline": "new"}):
+        for selection in (*({**previous, key: "new"} for key in previous if key != "pipeline"), {"pipeline": "new"}):
             with self.assertRaisesRegex(StackError, "non-pipeline"):
                 check_selection(previous, selection)
 
@@ -102,6 +212,7 @@ class LocalTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             stack = LocalStack.__new__(LocalStack)
             stack.state = Path(tmp)
+            stack.marker = stack.state / "cluster.json"
             (stack.state / "ca.crt").write_text("saved CA, even with an expired leaf")
             stack.name = "agent-relay-local"
             stack.docker = lambda **kw: None
@@ -113,7 +224,7 @@ class LocalTests(unittest.TestCase):
                 return SimpleNamespace(stdout=stack.name + "\n")
             stack.cmd = command
             stack.owned = lambda: None
-            with patch.object(local_stack.sys, "platform", "darwin"), patch.object(local_stack, "certificate_present", return_value=True):
+            with patch.object(local_stack.sys, "platform", "darwin"), patch.object(local_stack, "managed_cas", return_value=[stack.state / "ca.crt"]), patch.object(local_stack, "certificate_present", return_value=True):
                 with self.assertRaisesRegex(StackError, "security failed"):
                     stack.down_local()
             self.assertTrue((stack.state / "ca.crt").exists())
@@ -184,6 +295,7 @@ class LocalTests(unittest.TestCase):
         for deployment in active:
             for container in deployment["spec"]["template"]["spec"]["containers"]:
                 self.assertIn("@sha256:", container["image"])
+                self.assertIn(container["image"], selected_images().values())
                 env = {e["name"]: e for e in container.get("env", [])}
                 self.assertNotIn("SCRUB_ENGINE", env)
                 self.assertNotIn("SCRUB_ENGINE_REQUIRED", env)

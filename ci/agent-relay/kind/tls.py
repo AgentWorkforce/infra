@@ -1,10 +1,25 @@
 """Host-only CA key and strict-verifier-compatible local server certificate."""
 import re
+import hashlib
 
 
 def create(stack, hosts, namespace):
     ca, ca_key = stack.state / "ca.crt", stack.state / "ca.key"
     cert, key = stack.state / "tls.crt", stack.state / "tls.key"
+
+    def archive_ca():
+        if not ca.exists() or stack.cmd(["openssl", "x509", "-in", ca, "-noout"], check=False).returncode != 0:
+            return
+        history = stack.state / "ca-history"
+        history.mkdir(mode=0o700, exist_ok=True)
+        previous = ca.read_bytes()
+        archived = history / (hashlib.sha256(previous).hexdigest() + ".crt")
+        if archived.exists():
+            if archived.read_bytes() != previous:
+                raise ValueError("saved CA history differs; refusing to overwrite it")
+            return
+        archived.touch(mode=0o600)
+        archived.write_bytes(previous)
 
     def current(path, extension, seconds):
         if not path.exists():
@@ -15,6 +30,9 @@ def create(stack, hosts, namespace):
 
     renew_ca = not current(ca, "Subject Key Identifier", 31 * 86400)
     if renew_ca:
+        # Keep the exact old public certificate before renewal, so its trust
+        # remains removable even after ca.crt is replaced.
+        archive_ca()
         config = stack.state / "ca.cnf"
         config.write_text("[req]\ndistinguished_name=dn\nx509_extensions=ext\nprompt=no\n[dn]\n"
                           "CN=Agent Relay kind local CA\n[ext]\nbasicConstraints=critical,CA:TRUE\n"
@@ -64,6 +82,9 @@ def create(stack, hosts, namespace):
                    "-days", "30", "-extfile", config, "-extensions", "ext", "-out", cert])
         key.chmod(0o600)
     stack.cmd(["openssl", "verify", "-x509_strict", "-CAfile", ca, cert])
+    # Save newly created CAs too, before a later corrupt/expired working copy
+    # could lose the bytes of a certificate that has been trusted.
+    archive_ca()
     stack.apply({"apiVersion": "v1", "kind": "Secret", "metadata": {"name": "kind-tls", "namespace": namespace},
                  "type": "kubernetes.io/tls", "stringData": {"tls.crt": cert.read_text(), "tls.key": key.read_text()}})
     (stack.state / "hosts").write_text("127.0.0.1 " + " ".join(hosts) + "\n")
