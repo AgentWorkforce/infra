@@ -1,0 +1,14 @@
+{
+  "site": "https://relay.kind.agentrelay.com",
+  "organizationId": "00000000-0000-4000-8000-000000000001",
+  "workspaceId": "00000000-0000-4000-8000-000000000002",
+  "sessionId": "00000000-0000-4000-8000-000000000003",
+  "source": "codex",
+  "marker": "KIND_ACCEPTANCE_REPLACE_WITH_UNIQUE_MARKER",
+  "historySince": "2026-11-11T00:00:00Z",
+  "ownerState": "owner.private.json",
+  "memberState": "member.private.json",
+  "caFile": "../local/ca.crt",
+  "kubeconfig": "../local/kubeconfig",
+  "selectionFile": "../local/selection.json"
+}

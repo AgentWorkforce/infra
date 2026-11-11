@@ -2,6 +2,8 @@
 DEV_CONFIG ?= .kind/dev/config.json
 DEV_PLAN ?=
 DEV_COMPONENTS ?= all
+ACCEPTANCE_CONFIG ?= .kind/acceptance/config.json
+ACCEPTANCE_SUITE ?= full
 sh_quote = '$(subst ','"'"',$(1))'
 PROFILE ?= core
 PYTHON ?= python3
@@ -15,6 +17,7 @@ help:
 	@echo "Fresh local stack: make local-up; one-time macOS trust: make local-trust; source loop: make dev"
 	@echo "Clean Mac prerequisites: make local-tools (checkout-local pinned Kind, Helm and Python dependencies)"
 	@echo "Kind-profile Desktop: make desktop-install (docs/local-desktop.md)"
+	@echo "Qualification runner: make local-acceptance (docs/local-acceptance.md; API foundation available)"
 	@echo "Code loop: make dev after one-time configure; optional make dev-plan (existing Kind; docs/kind-development.md)"
 	@echo "Local kind: make kind-render, kind-up, kind-proof, or kind-down PROFILE=core|addons"
 	@echo "Build: kind-build-control, kind-up-local-control, kind-build-addons; proof aliases: kind-proof-core, kind-proof-addons"
@@ -79,3 +82,9 @@ local-llm-key: local-tools
 .PHONY: local-dev-setup
 local-dev-setup: local-tools
 	PATH=$(call sh_quote,$(CURDIR)/.kind/tools):"$$PATH" $(call sh_quote,$(CURDIR)/.kind/tools/venv/bin/python3) ci/agent-relay/kind/local_dev_setup.py --output $(call sh_quote,$(DEV_CONFIG))
+
+.PHONY: local-acceptance local-acceptance-test
+local-acceptance:
+	@PATH=$(call sh_quote,$(CURDIR)/.kind/tools):"$$PATH" $(call sh_quote,$(PYTHON)) ci/agent-relay/kind/acceptance/run.py run --config $(call sh_quote,$(ACCEPTANCE_CONFIG)) --suite $(call sh_quote,$(ACCEPTANCE_SUITE))
+local-acceptance-test:
+	$(call sh_quote,$(PYTHON)) -m unittest discover -s ci/agent-relay/kind/acceptance -p 'test_*.py' -v
