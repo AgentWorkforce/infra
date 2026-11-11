@@ -73,7 +73,9 @@ def validate(config, installation, run_id=None):
     account, region, environment, environment_class, prefix, search_url, agent, lease = installation
     if run_id is not None:
         require(matches(r"[0-9a-f]{32}", run_id))
-    fields(config, ("account_id", "region", "environment", "environment_class", "name_prefix", "pippen", "postgres", "storage", "search", "pipeline"))
+    fields(config, ("account_id", "region", "environment", "environment_class", "name_prefix", "namespace", "pippen", "postgres", "storage", "search", "pipeline"))
+    # The Pod Identity namespace operators install into; a DNS-1123 label, not checked against AWS.
+    require(isinstance(config["namespace"], str) and matches(r"[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?", config["namespace"]))
     require((config["account_id"], config["region"], config["environment"], config["environment_class"], config["name_prefix"]) == installation[:5])
     require(config["pippen"] == (None if agent is None else {"agent": agent, "session_id": lease}))
     name = prefix + "-" + environment
