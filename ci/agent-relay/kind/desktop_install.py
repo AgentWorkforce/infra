@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """Install the verified Kind-profile macOS arm64 candidate in ~/Applications."""
 import argparse
+import ctypes
 import hashlib
 import json
+import os
 from pathlib import Path
 import platform
 import plistlib
@@ -72,6 +74,16 @@ def inspect_app(app):
         raise ValueError("candidate is not signed by the expected Agent Workforce team")
 
 
+def publish_app(staged, destination):
+    """Darwin exclusive rename publishes atomically without replacing any path."""
+    rename = ctypes.CDLL(None, use_errno=True).renamex_np
+    rename.argtypes = [ctypes.c_char_p, ctypes.c_char_p, ctypes.c_uint]
+    rename.restype = ctypes.c_int
+    if rename(os.fsencode(staged), os.fsencode(destination), 0x4) != 0:  # RENAME_EXCL
+        error = ctypes.get_errno()
+        raise OSError(error, os.strerror(error), str(destination))
+
+
 def install(directory, *, launch=True):
     dmg, checksum = verify_download(directory)
     attached = plistlib.loads(run(["hdiutil", "attach", "-readonly", "-nobrowse", "-plist", dmg]))
@@ -84,10 +96,13 @@ def install(directory, *, launch=True):
         inspect_app(app)
         destination = Path.home() / "Applications" / app.name
         destination.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-        if destination.exists():
+        if destination.exists() or destination.is_symlink():
             raise ValueError("Kind Desktop already exists at " + str(destination) + "; quit and remove that exact test app before reinstalling")
-        run(["ditto", app, destination])
-        inspect_app(destination)
+        with tempfile.TemporaryDirectory(prefix=".agent-relay-kind-", dir=destination.parent) as staging:
+            staged = Path(staging) / app.name
+            run(["ditto", app, staged])
+            inspect_app(staged)
+            publish_app(staged, destination)
     finally:
         for mount in mounts:
             run(["hdiutil", "detach", mount])
