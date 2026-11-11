@@ -51,6 +51,12 @@ variable "github_repository" {
   }
 }
 
+variable "oidc_subject_prefix" {
+  description = "Prefix of the GitHub OIDC sub claim. null: repo:<github_repository>. Set it when the repository's OIDC subject template differs (for example one that includes owner and repository IDs)."
+  type        = string
+  default     = null
+}
+
 variable "plan_subjects" {
   description = <<-EOT
     GitHub OIDC subjects allowed to start a plan. A plan reads the live release, whose storage holds Secrets, so

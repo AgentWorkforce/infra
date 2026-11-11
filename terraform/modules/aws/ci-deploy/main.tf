@@ -11,8 +11,9 @@ locals {
 
   # The placeholder only lets the plan reach terraform_data.guard, which names the missing input.
   oidc_provider_arn = var.create_github_oidc_provider ? aws_iam_openid_connect_provider.github[0].arn : coalesce(var.github_oidc_provider_arn, "missing-github_oidc_provider_arn")
-  plan_subjects     = var.plan_subjects != null ? var.plan_subjects : ["repo:${var.github_repository}:ref:refs/heads/main"]
-  apply_subject     = "repo:${var.github_repository}:environment:${var.apply_environment}"
+  subject_prefix    = var.oidc_subject_prefix != null ? var.oidc_subject_prefix : "repo:${var.github_repository}"
+  plan_subjects     = var.plan_subjects != null ? var.plan_subjects : ["${local.subject_prefix}:ref:refs/heads/main"]
+  apply_subject     = "${local.subject_prefix}:environment:${var.apply_environment}"
 
   # plan: read the live release and write its report. apply: also snapshot and upgrade.
   modes = {
@@ -52,6 +53,18 @@ module "artifacts" {
     { id = "runs", prefix = "runs/", expiration_days = var.artifact_retention_days },
     { id = "snapshots", prefix = "snapshots/", expiration_days = var.snapshot_retention_days },
   ]
+  # Uploads without an SSE header get the default (this key); an upload naming another key is refused.
+  additional_policy_statements = [{
+    Sid       = "DenyOtherKmsKeys"
+    Effect    = "Deny"
+    Principal = "*"
+    Action    = "s3:PutObject"
+    Resource  = "arn:${local.partition}:s3:::${local.bucket}/*"
+    Condition = {
+      Null            = { "s3:x-amz-server-side-encryption-aws-kms-key-id" = "false" }
+      StringNotEquals = { "s3:x-amz-server-side-encryption-aws-kms-key-id" = var.kms_key_arn }
+    }
+  }]
   tags = local.tags
 }
 

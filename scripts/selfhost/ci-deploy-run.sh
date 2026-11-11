@@ -30,7 +30,8 @@ case "${1:-}" in
     shift 6
     : "${RUN_ID:?RUN_ID}" "${LOG_GROUP:?LOG_GROUP}"
     digest=$(sha256 "$bundle")
-    aws s3 cp --only-show-errors --sse aws:kms "$bundle" "s3://$bucket/$key"
+    # No --sse: the bucket's default (customer) key applies; naming aws:kms alone would pick aws/s3.
+    aws s3 cp --only-show-errors "$bundle" "s3://$bucket/$key"
     vars=$(jq -n --arg k "$key" --arg d "$digest" --arg r "$RUN_ID" \
       '[{name: "BUNDLE_KEY", value: $k}, {name: "BUNDLE_SHA256", value: $d}, {name: "RUN_ID", value: $r}]')
     for kv in "$@"; do
@@ -40,6 +41,8 @@ case "${1:-}" in
     build=$(aws codebuild start-build --project-name "$project" --environment-variables-override "$vars" \
       --query build.id --output text)
     echo "build $build"
+    # A cancelled GitHub job must not leave the deploy running unseen.
+    trap 'echo "cancelled: stopping $build" >&2; aws codebuild stop-build --id "$build" >/dev/null; exit 130' INT TERM
     stream=""; token=""; status=IN_PROGRESS
     while :; do
       read -r status stream_now < <(aws codebuild batch-get-builds --ids "$build" \
@@ -57,13 +60,17 @@ case "${1:-}" in
         done
       fi
       [ "$status" != IN_PROGRESS ] && break
-      sleep 15
+      sleep 15 & wait $!   # wait returns at once on a signal, so the trap runs promptly
     done
     mode=$(aws codebuild batch-get-builds --ids "$build" \
       --query "builds[0].environment.environmentVariables[?name=='CI_DEPLOY_PROJECT_MODE'].value | [0]" --output text)
+    trap - INT TERM
     mkdir -p "$report"
-    aws s3 cp --only-show-errors --recursive "s3://$bucket/runs/$RUN_ID/$mode/" "$report/" || true
+    fetched=1
+    aws s3 cp --only-show-errors --recursive "s3://$bucket/runs/$RUN_ID/$mode/" "$report/" || fetched=0
     echo "build $build: $status"
-    [ "$status" = SUCCEEDED ] ;;
+    [ "$status" = SUCCEEDED ] || exit 1
+    # A successful build always writes its report: without it the outputs (changes, revisions) are unknown.
+    [ $fetched = 1 ] && [ -f "$report/log.txt" ] || { echo "build succeeded but its report is missing" >&2; exit 1; } ;;
   *) sed -n '2,12p' "$0" >&2; exit 2 ;;
 esac

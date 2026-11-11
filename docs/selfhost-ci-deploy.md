@@ -107,6 +107,8 @@ jobs:
       apply-project: <apply_project>
       bucket: <bucket_name>
       log-group: <log_group>
+      rollback-release: ${{ inputs.rollback_release }}
+      rollback-revision: ${{ inputs.rollback_revision }}
 ```
 
 5. Dispatch `plan`. The first plan must show no changes: that proves the committed values are what is live.

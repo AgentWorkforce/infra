@@ -26,16 +26,21 @@ import yaml
 SECRET_KINDS = {"Secret"}
 
 
-def leaves(value, prefix=""):
-    """Flatten user-supplied values to {dotted path: value}. Lists are leaves (Helm replaces them whole)."""
+def leaves(value, prefix=()):
+    """Flatten user-supplied values to {path tuple: value}. Lists are leaves (Helm replaces them whole).
+    Tuples keep {"a": {"b": 1}} and {"a.b": 1} apart."""
     if isinstance(value, dict):
         if not value and prefix:
             return {prefix: {}}
         out = {}
         for k, v in value.items():
-            out.update(leaves(v, f"{prefix}.{k}" if prefix else str(k)))
+            out.update(leaves(v, prefix + (str(k),)))
         return out
     return {prefix: value}
+
+
+def dotted(path):
+    return ".".join(path)
 
 
 def redact(doc):
@@ -65,10 +70,13 @@ SECRET_PATH = re.compile(r"(secret|password|passwd|token|credential|dsn|private|
 
 
 def show(path, values, absent):
+    """A value for the diff. Digest only when any path segment looks secret (dbPassword.value,
+    credentials.database.url) or the value is a list or map (extraEnv: [{name: DB_PASSWORD, value: ...}])."""
     if path not in values:
         return absent
-    text = json.dumps(values[path], sort_keys=True)
-    if SECRET_PATH.search(path.rsplit(".", 1)[-1]):
+    value = values[path]
+    text = json.dumps(value, sort_keys=True)
+    if any(SECRET_PATH.search(seg) for seg in path) or isinstance(value, (list, dict)):
         return "sha256:" + hashlib.sha256(text.encode()).hexdigest()[:16]
     return text
 
@@ -92,7 +100,9 @@ def load_allow(path, release):
 
 
 def value_allowed(path, allowed):
-    return any(path == a or path.startswith(a + ".") for a in allowed)
+    """path: tuple; allowed: dotted prefixes from the allow file."""
+    name = dotted(path)
+    return any(name == a or name.startswith(a + ".") for a in allowed)
 
 
 def compare(release, live_dir, new_release, allow_values, allow_resources):
@@ -109,14 +119,15 @@ def compare(release, live_dir, new_release, allow_values, allow_resources):
                         *(h.get("manifest", "") for h in new_release.get("hooks") or []))
 
     dropped_values = sorted(p for p in lv if p not in nv)
+    changed_values = sorted(p for p in nv if p in lv and nv[p] != lv[p])
     dropped_resources = sorted(k for k in live_res if k not in new_res)
     summary = {
         "release": release,
         "exists": exists,
         "values": {
-            "added": sorted(p for p in nv if p not in lv),
-            "changed": sorted(p for p in nv if p in lv and nv[p] != lv[p]),
-            "dropped": dropped_values,
+            "added": [dotted(p) for p in sorted(p for p in nv if p not in lv)],
+            "changed": [dotted(p) for p in changed_values],
+            "dropped": [dotted(p) for p in dropped_values],
         },
         "resources": {
             "added": sorted(k for k in new_res if k not in live_res),
@@ -124,7 +135,7 @@ def compare(release, live_dir, new_release, allow_values, allow_resources):
             "dropped": dropped_resources,
         },
         "refused": {
-            "values": [p for p in dropped_values if not value_allowed(p, allow_values)],
+            "values": [dotted(p) for p in dropped_values if not value_allowed(p, allow_values)],
             "resources": [k for k in dropped_resources if k not in allow_resources],
         },
     }
@@ -137,8 +148,8 @@ def compare(release, live_dir, new_release, allow_values, allow_resources):
     # Values diff by path. Values files are non-secret by policy, but a live value set by hand might not be:
     # a path that looks secret shows digests only.
     for p in sorted(set(lv) | set(nv)):
-        if lv.get(p, None) != nv.get(p, None):
-            diff.append(f"value {p}: {show(p, lv, '<absent>')} -> {show(p, nv, '<absent>')}\n")
+        if p not in lv or p not in nv or lv[p] != nv[p]:  # null -> absent is a change
+            diff.append(f"value {dotted(p)}: {show(p, lv, '<absent>')} -> {show(p, nv, '<absent>')}\n")
     summary["no_changes"] = not diff
     return summary, "".join(diff)
 

@@ -56,6 +56,22 @@ class CompareTest(unittest.TestCase):
             self.assertNotIn(v, diff)
         self.assertIn("sha256:", diff)
 
+    def test_null_to_absent_is_a_change(self):
+        with tempfile.TemporaryDirectory() as d:
+            live = live_dir(d, {"keep": 1, "a": None}, DEPLOY)
+            s, _ = compare("r", live, {"config": {"keep": 1}, "manifest": DEPLOY}, {"a"}, set())
+        self.assertFalse(s["no_changes"])
+
+    def test_nested_and_list_secrets_are_digests(self):
+        with tempfile.TemporaryDirectory() as d:
+            live = live_dir(d, {"dbPassword": {"value": "PW1"}, "credentials": {"database": {"url": "URL1"}},
+                                "extraEnv": [{"name": "DB_PASSWORD", "value": "PW2"}], "image": {"tag": "v1"}}, DEPLOY)
+            _, diff = compare("r", live, {"config": {"image": {"tag": "v2"}}, "manifest": DEPLOY},
+                              {"dbPassword", "credentials", "extraEnv"}, set())
+        for v in ("PW1", "URL1", "PW2"):
+            self.assertNotIn(v, diff)
+        self.assertIn('value image.tag: "v1" -> "v2"', diff)
+
     def test_hooks_count_as_resources(self):
         job = "apiVersion: batch/v1\nkind: Job\nmetadata: {name: migrate, namespace: ns}\n"
         with tempfile.TemporaryDirectory() as d:
@@ -70,7 +86,8 @@ class CompareTest(unittest.TestCase):
         self.assertEqual(s["resources"]["added"], ["Deployment/ns/web"])
 
     def test_leaves_and_allow_file(self):
-        self.assertEqual(leaves({"a": {"b": [1, 2], "c": {}}}), {"a.b": [1, 2], "a.c": {}})
+        self.assertEqual(leaves({"a": {"b": [1, 2], "c": {}}}), {("a", "b"): [1, 2], ("a", "c"): {}})
+        self.assertNotEqual(leaves({"a": {"b": 1}}), leaves({"a.b": 1}))
         with tempfile.TemporaryDirectory() as d:
             f = Path(d, "allow")
             f.write_text("# reviewed\nvalue r a.b\nresource r ConfigMap/ns/cfg\nvalue other x\n")
@@ -88,12 +105,13 @@ st="$FAKE/state.json"
 case "$1" in
   repo|dependency) exit 0 ;;
   status)
-    [ -f "$st" ] || exit 1
+    [ -n "${FAKE_STATUS_ERROR:-}" ] && { echo "Error: $FAKE_STATUS_ERROR" >&2; exit 1; }
+    [ -f "$st" ] || { echo "Error: release: not found" >&2; exit 1; }
     jq '{name: "agent-relay", version: .revision, info: {status: "deployed"}, chart: {metadata: {name: "agent-relay", version: "1.0.0", appVersion: "1"}}}' "$st" ;;
   get)
     case "$2" in values) jq .values "$st" ;; manifest) jq -r .manifest "$st" ;; hooks) echo "" ;; esac ;;
   upgrade)
-    if [[ " $* " == *" --dry-run=client "* ]]; then jq '{config: .values, manifest: .manifest, hooks: []}' "$FAKE/render.json"; exit 0; fi
+    if [[ " $* " == *" --dry-run=server "* ]]; then jq '{config: .values, manifest: .manifest, hooks: []}' "$FAKE/render.json"; exit 0; fi
     [ "${FAKE_UPGRADE_FAIL:-0}" = 1 ] && { echo "upgrade failed"; exit 1; }
     jq --slurpfile r "$FAKE/render.json" '.revision += 1 | .values = $r[0].values | .manifest = $r[0].manifest' "$st" > "$st.new" && mv "$st.new" "$st" ;;
   rollback) jq --arg v "$3" '.revision += 1' "$st" > "$st.new" && mv "$st.new" "$st" ;;
@@ -103,7 +121,9 @@ esac
 FAKE_KUBECTL = r"""#!/usr/bin/env bash
 echo "kubectl $*" >> "$FAKE/log"
 case "$*" in
-  *"get jobs"*) echo '{"items": []}' ;;
+  *"get jobs"*)
+    n=$(cat "$FAKE/jobs-calls" 2>/dev/null || echo 0); echo $((n + 1)) > "$FAKE/jobs-calls"
+    f="$FAKE/jobs-$n.json"; [ -f "$f" ] || f="$FAKE/jobs.json"; [ -f "$f" ] && cat "$f" || echo '{"items": []}' ;;
   *"get deploy,statefulset"*) echo '{"items": [{"kind": "Deployment", "metadata": {"name": "web"}, "spec": {"template": {"spec": {"containers": [{"image": "img:1"}]}}}}]}' ;;
   *"get secret"*) echo '{"data": {"url": "cG9zdGdyZXNxbDovL3U6U0VDUkVUUFdAaC9kYg=="}}' ;;
   *) exit 0 ;;
@@ -133,7 +153,7 @@ class ScriptTest(unittest.TestCase):
         (self.bundle / "infra/charts/c/Chart.yaml").write_text("apiVersion: v2\nname: c\nversion: 1.0.0\n")
         (self.bundle / "env/values.yaml").write_text("a: 1\n")
         for name, body in (("helm", FAKE_HELM), ("kubectl", FAKE_KUBECTL), ("aws", FAKE_AWS), ("pg_dump", FAKE_PG_DUMP),
-                           ("curl", "#!/bin/sh\necho \"curl $*\" >> \"$FAKE/log\"\n")):
+                           ("curl", "#!/bin/sh\necho \"curl $*\" >> \"$FAKE/log\"\nprintf %s \"${FAKE_HTTP:-200}\"\n")):
             p = self.bin / name
             p.write_text(body)
             p.chmod(0o755)
@@ -160,7 +180,7 @@ class ScriptTest(unittest.TestCase):
     def run_script(self, mode, **env):
         report = Path(self.tmp.name) / f"report-{mode}"
         e = {**os.environ, "PATH": f"{self.bin}:{os.environ['PATH']}", "FAKE": str(self.fake),
-             "REPORT_DIR": str(report), "RUN_ID": "123-1", "CI_DEPLOY_BUCKET": "bkt", **env}
+             "REPORT_DIR": str(report), "RUN_ID": "123-1", "POLL_SECONDS": "0", "CI_DEPLOY_BUCKET": "bkt", **env}
         p = subprocess.run(["bash", str(SELFHOST / "ci-deploy.sh"), mode, str(self.bundle)],
                            capture_output=True, text=True, env=e)
         return p, report
@@ -227,6 +247,47 @@ class ScriptTest(unittest.TestCase):
         self.assertIn("helm rollback agent-relay 6 -n ns --wait", self.log())
         p, _ = self.run_script("rollback", ROLLBACK_RELEASE="agent-relay", ROLLBACK_REVISION="6; rm")
         self.assertNotEqual(p.returncode, 0)
+
+    def job(self, state, created="2999-01-01T00:00:00Z", release="agent-relay"):
+        cond = {"done": [{"type": "Complete", "status": "True"}], "failed": [{"type": "Failed", "status": "True"}], "running": []}[state]
+        return {"metadata": {"name": f"migrate-{state}", "creationTimestamp": created,
+                             "annotations": {"meta.helm.sh/release-name": release}}, "status": {"conditions": cond}}
+
+    def test_apply_waits_for_release_jobs(self):
+        self.render({"a": 2}, DEPLOY)
+        (self.fake / "jobs-0.json").write_text(json.dumps({"items": [self.job("running")]}))
+        (self.fake / "jobs.json").write_text(json.dumps({"items": [self.job("done"), self.job("failed", release="other")]}))
+        p, _ = self.run_script("apply", EXPECT_REVISIONS="agent-relay=7", JOB_TIMEOUT_SECONDS="60")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertGreaterEqual(int((self.fake / "jobs-calls").read_text()), 2)
+
+    def test_apply_fails_on_failed_release_job(self):
+        self.render({"a": 2}, DEPLOY)
+        (self.fake / "jobs.json").write_text(json.dumps({"items": [self.job("failed")]}))
+        p, _ = self.run_script("apply", EXPECT_REVISIONS="agent-relay=7")
+        self.assertNotEqual(p.returncode, 0)
+        self.assertIn("migrate-failed", p.stderr)
+
+    def test_status_error_is_not_a_missing_release(self):
+        p, _ = self.run_script("plan", FAKE_STATUS_ERROR="Kubernetes cluster unreachable")
+        self.assertNotEqual(p.returncode, 0)
+        self.assertIn("cluster unreachable", p.stderr)
+
+    def test_redirect_is_not_healthy(self):
+        p, _ = self.run_script("rollback", ROLLBACK_RELEASE="agent-relay", ROLLBACK_REVISION="6", FAKE_HTTP="302",
+                               HEALTH_TRIES="1")
+        self.assertNotEqual(p.returncode, 0)
+        self.assertIn("did not return 2xx", p.stderr)
+
+    def test_live_state_never_in_report(self):
+        self.state({"db": {"pw": "LIVEPW"}}, SECRET)
+        self.render({"db": {"pw": "LIVEPW"}}, "{{ bad")  # render error in the comparer path
+        p, report = self.run_script("plan")
+        self.assertNotEqual(p.returncode, 0)
+        for f in report.rglob("*"):
+            if f.is_file():
+                self.assertNotIn("LIVEPW", f.read_text(errors="ignore"))
+                self.assertNotIn("TElWRVBX", f.read_text(errors="ignore"))
 
     def test_path_outside_bundle_refused(self):
         cfg = json.loads((self.bundle / "env/deploy.json").read_text())

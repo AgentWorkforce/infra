@@ -56,18 +56,18 @@ data "aws_iam_policy_document" "trigger" {
     resources = ["${local.bucket_arn}/${each.value.bundle_prefix}*"]
   }
   statement {
-    sid       = "ReadReports"
+    sid       = "ReadOwnReports"
     actions   = ["s3:GetObject"]
-    resources = ["${local.bucket_arn}/runs/*"]
+    resources = ["${local.bucket_arn}/runs/*/${each.key}/*"]
   }
   statement {
-    sid       = "ListReports"
+    sid       = "ListOwnReports"
     actions   = ["s3:ListBucket"]
     resources = [local.bucket_arn]
     condition {
       test     = "StringLike"
       variable = "s3:prefix"
-      values   = ["runs/*"]
+      values   = ["runs/*/${each.key}/*"]
     }
   }
   statement {

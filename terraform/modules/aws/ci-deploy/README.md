@@ -85,6 +85,7 @@ module refuses it). Pull requests can render offline instead.
 | create\_github\_oidc\_provider | Create the account's token.actions.githubusercontent.com OIDC provider. false: pass github\_oidc\_provider\_arn (an account has at most one). | `bool` | `true` | no |
 | github\_oidc\_provider\_arn | Existing GitHub OIDC provider, when create\_github\_oidc\_provider is false. | `string` | `null` | no |
 | log\_kms\_key\_arn | KMS key for the build log group. Its key policy must allow logs.<region>.amazonaws.com for /codebuild/<name>. null: CloudWatch Logs' default encryption. | `string` | `null` | no |
+| oidc\_subject\_prefix | Prefix of the GitHub OIDC sub claim. null: repo:<github\_repository>. Set it when the repository's OIDC subject template differs (for example one that includes owner and repository IDs). | `string` | `null` | no |
 | plan\_subjects | GitHub OIDC subjects allowed to start a plan. A plan reads the live release, whose storage holds Secrets, so keep it to protected refs: null means the default branch main only. Never add pull\_request: a pull request would run its own bundle with this read access. | `list(string)` | `null` | no |
 | rds\_instance\_identifiers | RDS instances the apply job snapshots before an upgrade. Empty: no RDS snapshot permission. | `list(string)` | `[]` | no |
 | snapshot\_retention\_days | Days pg\_dump snapshots written by apply are kept (RDS snapshots are managed in RDS). | `number` | `35` | no |
