@@ -7,7 +7,8 @@ FIXTURE="erase-search-role-test-$$"
 CONTAINER=""
 cleanup() { if [[ -n "$CONTAINER" ]]; then docker rm -fv "$CONTAINER" >/dev/null; fi; }
 trap cleanup EXIT
-CONTAINER="$(docker run -d --name "$FIXTURE" -e POSTGRES_HOST_AUTH_METHOD=trust postgres:17)"
+# Pin the multi-platform PostgreSQL 17 image for repeatable local and CI checks.
+CONTAINER="$(docker run -d --name "$FIXTURE" -e POSTGRES_HOST_AUTH_METHOD=trust postgres:17@sha256:ff87138949ad9a46f32ff23bd6852b52ce024a13dffe9b4087be98292cdd3b4f)"
 for attempt in {1..30}; do
   if docker exec "$CONTAINER" pg_isready -U postgres >/dev/null 2>&1; then break; fi
   [[ "$attempt" != 30 ]] || { echo "fixture did not become ready" >&2; exit 1; }
