@@ -83,6 +83,8 @@ def validate(args: argparse.Namespace) -> dict[str, object]:
         if login not in latest or review_id > latest[login]["id"]:
             latest[login] = review
     author = pr.get("user", {}).get("login")
+    if not isinstance(author, str) or not author:
+        fail("release pull request author identity is invalid")
     approved = [
         review
         for login, review in latest.items()
@@ -133,6 +135,7 @@ def validate(args: argparse.Namespace) -> dict[str, object]:
         "mergeSha": merge_sha,
         "acceptanceRunId": run["id"],
         "approvalCount": len(approved),
+        "approvers": sorted(review["user"]["login"] for review in approved),
     }
 
 

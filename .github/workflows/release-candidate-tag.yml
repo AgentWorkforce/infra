@@ -71,6 +71,17 @@ jobs:
             --runs "$evidence/runs.json" \
             --jobs "$evidence/jobs.json" \
             > "$evidence/selection.json"
+          authorized_approval=false
+          while IFS= read -r approver; do
+            can_push="$(gh api \
+              "repos/$GITHUB_REPOSITORY/collaborators/$approver/permission" \
+              --jq '.user.permissions.push // false')"
+            if [[ "$can_push" == "true" ]]; then
+              authorized_approval=true
+            fi
+          done < <(jq -er '.approvers[]' "$evidence/selection.json")
+          [[ "$authorized_approval" == "true" ]] \
+            || { echo "::error::No exact-head approver has repository push permission."; exit 1; }
           {
             echo "version=$(jq -er .version "$evidence/selection.json")"
             echo "head_sha=$(jq -er .headSha "$evidence/selection.json")"

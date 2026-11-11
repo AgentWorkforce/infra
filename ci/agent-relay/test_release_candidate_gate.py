@@ -99,6 +99,7 @@ class ReleaseCandidateGateTest(unittest.TestCase):
                 "mergeSha": MERGE,
                 "acceptanceRunId": 123,
                 "approvalCount": 1,
+                "approvers": ["reviewer"],
             },
         )
 
@@ -223,6 +224,8 @@ class ReleaseCandidateGateTest(unittest.TestCase):
         self.assertIn(".payload.pendingQualificationChecks | length", acceptance)
         self.assertIn("actions/workflows/local-acceptance.yml/runs", tagging)
         self.assertIn("validate-release-candidate-gate.py", tagging)
+        self.assertIn("collaborators/$approver/permission", tagging)
+        self.assertIn("No exact-head approver has repository push permission", tagging)
         self.assertIn("Check out the trusted release gate", tagging)
         self.assertNotIn('merge-base --is-ancestor "$HEAD_SHA"', tagging)
         self.assertIn('tag="agent-relay-${VERSION}"', tagging)
