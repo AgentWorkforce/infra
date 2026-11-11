@@ -531,6 +531,8 @@ WHERE p.oid=to_regprocedure('session_consumer_bootstrap_private.consumer_has_pas
 
     def up_local(self):
         self.docker()
+        from local_ca import prepare
+        retain_ca = prepare(self)
         selection = selected_images()
         selected = self.state / "selection.json"
         previous = json.loads(selected.read_text()) if selected.exists() else None
@@ -544,7 +546,7 @@ WHERE p.oid=to_regprocedure('session_consumer_bootstrap_private.consumer_has_pas
         self.stage("cni", self.cni)
         self.apply({"apiVersion": "v1", "kind": "Namespace", "metadata": {"name": NS}})
         from tls import create
-        create(self, HOSTS, NS)
+        create(self, HOSTS, NS, preserve_ca=retain_ca)
         self.ca_sha = hashlib.sha256((self.state / "ca.crt").read_bytes()).hexdigest()
         self.leaf_sha = hashlib.sha256((self.state / "tls.crt").read_bytes()).hexdigest()
         self.apply({"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "local-ca", "namespace": NS}, "data": {"ca.crt": (self.state / "ca.crt").read_text()}})
@@ -594,15 +596,26 @@ WHERE p.oid=to_regprocedure('session_consumer_bootstrap_private.consumer_has_pas
         if self.name in clusters:
             self.owned()
         record = json.loads(self.marker.read_text()) if self.marker.exists() else None
-        if sys.platform == "darwin":
+        from local_ca import prepare, FILES
+        retain_ca = prepare(self)
+        if sys.platform == "darwin" and not retain_ca:
             certificates = managed_cas(self.state / "ca.crt")
             if any(certificate_present(ca) for ca in certificates) or host_aliases_present():
                 self.cmd(["sudo", sys.executable, ROOT / "ci/agent-relay/kind/local_host_setup.py", "down"], sensitive=True)
         if self.name in clusters:
             self.cmd(["kind", "delete", "cluster", "--name", self.name], timeout=180)
         self.discard_dev_config(record)
-        shutil.rmtree(self.state)
-        print("Removed this checkout's local cluster, volumes and credentials.")
+        if retain_ca:
+            for path in self.state.iterdir():
+                if path.name not in FILES:
+                    if path.is_dir() and not path.is_symlink():
+                        shutil.rmtree(path)
+                    else:
+                        path.unlink()
+            print("Removed local cluster, volumes and credentials; retained only CA certificate/key and existing hosts/trust.")
+        else:
+            shutil.rmtree(self.state)
+            print("Removed this checkout's local cluster, volumes and credentials.")
 
     def discard_dev_config(self, record):
         path = ROOT / ".kind/dev/config.json"
