@@ -208,6 +208,12 @@ wait_release_jobs(){
 # Pods read a changed value on their next start (the Helm upgrade that first references it restarts them).
 #   {"source": "<Secrets Manager name>", "generate": "base64url-32",
 #    "targets": [{"namespace": "...", "name": "<Secret>", "key": "<data key>"}]}
+# Kubernetes limits fieldManager to 128 characters; Secret keys may be 253.
+field_manager(){
+  if [ ${#1} -le 100 ]; then printf 'ci-deploy-secret-%s' "$1"
+  else printf 'ci-deploy-secret-%s' "$(printf '%s' "$1" | sha256sum | cut -c1-32)"; fi
+}
+
 sync_secrets(){
   local n i j m src gen ns name key val="$WORK/secret-value"
   n=$(jq '(.secrets // []) | length' "$CFG")
@@ -236,7 +242,7 @@ sync_secrets(){
       # No type: an existing Secret keeps its own (a new one is Opaque).
       jq -Rs --arg ns "$ns" --arg n "$name" --arg k "$key" \
         '{apiVersion: "v1", kind: "Secret", metadata: {name: $n, namespace: $ns}, data: {($k): (. | @base64)}}' < "$val" |
-        kubectl apply --server-side --field-manager="ci-deploy-secret-$key" -f - >/dev/null || die "writing $ns/$name/$key failed"
+        kubectl apply --server-side --field-manager="$(field_manager "$key")" -f - >/dev/null || die "writing $ns/$name/$key failed"
       log "secrets: $src -> ${ns}/${name}[${key}]"
     done
     rm -f "$val"

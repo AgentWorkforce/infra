@@ -56,8 +56,8 @@ environment on an older chart still gets the current tooling), and `env/` is the
 ## Secrets
 
 Secret values live in AWS Secrets Manager, never in git, a laptop or a log. A `secrets` entry in `deploy.json`
-copies one Secrets Manager secret into Kubernetes Secret keys on every apply (server-side apply of that key
-only; other keys of the Secret are untouched). With `"generate": "base64url-32"` the apply job creates the
+copies one Secrets Manager secret into Kubernetes Secret keys whenever an apply runs (server-side apply of
+that key only; other keys of the Secret are untouched). With `"generate": "base64url-32"` the apply job creates the
 secret the first time (32 random bytes, unpadded base64url), so a shared key such as the direct-upload
 witness is minted inside AWS and written to every consumer from the same value:
 

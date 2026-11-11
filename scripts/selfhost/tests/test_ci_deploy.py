@@ -354,6 +354,13 @@ class ScriptTest(unittest.TestCase):
                          ["field-manager=ci-deploy-secret-a", "field-manager=ci-deploy-secret-b"])
         self.assertIn(base64.b64encode(b"token-a\n").decode(), (self.fake / "applied-secrets").read_text())
 
+    def test_field_manager_fits_for_long_keys(self):
+        key = "k" * 200
+        out = subprocess.run(["bash", "-c", f'eval "$(sed -n "/^field_manager(){{/,/^}}/p" {SELFHOST / "ci-deploy.sh"})"; field_manager {key}; echo; field_manager short'],
+                             capture_output=True, text=True, check=True).stdout.split()
+        self.assertLessEqual(len(out[0]), 128)
+        self.assertEqual(out[1], "ci-deploy-secret-short")
+
     def test_missing_secret_without_generate_fails(self):
         self.render({"a": 2}, DEPLOY)
         self.secrets_config(generate=False)
