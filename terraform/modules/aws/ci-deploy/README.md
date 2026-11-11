@@ -11,7 +11,8 @@ workflow, the bundle and the first run.
 - **CodeBuild projects** in the cluster's private subnets run `scripts/selfhost/ci-deploy.sh` from the bundle,
   with pinned, checksummed helm and kubectl. One build at a time per project.
 - **Kubernetes access.** plan: `AmazonEKSViewPolicy` in `namespaces` plus get/list on Secrets there (Helm
-  release state), from `plan_rbac_manifest`. apply: cluster admin.
+  release state), from `plan_rbac_manifest`. apply: cluster admin. Access entries need the cluster's
+  authentication mode to be `API` or `API_AND_CONFIG_MAP` (the foundation module uses `API`).
 - **Artifacts.** A private SSE-KMS bucket: `plan-bundles/`, `apply-bundles/`, `runs/<run>/<mode>/` reports,
   `snapshots/` (pg_dump). RDS snapshots are named `<name>-<run>`.
 
