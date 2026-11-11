@@ -73,7 +73,7 @@ module refuses it). Pull requests can render offline instead.
 | cluster\_name | EKS cluster the deploy jobs reach through its private endpoint. | `string` | n/a | yes |
 | cluster\_security\_group\_id | The cluster security group (aws\_eks\_cluster vpc\_config cluster\_security\_group\_id). The module allows HTTPS to it from the CodeBuild jobs. | `string` | n/a | yes |
 | github\_repository | owner/name of the repository whose workflows deploy (it holds the environment's values). | `string` | n/a | yes |
-| kms\_key\_arn | Customer managed KMS key for the artifact bucket and the build logs. Its key policy must allow the CloudWatch Logs service for the log group. | `string` | n/a | yes |
+| kms\_key\_arn | Customer managed KMS key for the artifact bucket and the builds (IAM grants the roles its use). | `string` | n/a | yes |
 | name | Prefix for every resource, e.g. agentrelay-dev-deploy. One module instance per environment (one EKS cluster). | `string` | n/a | yes |
 | namespaces | Namespaces holding the releases this environment deploys. The plan job may read them (helm release state); apply is cluster-wide. | `list(string)` | n/a | yes |
 | subnet\_ids | Private subnets (with NAT egress) the CodeBuild jobs run in. | `list(string)` | n/a | yes |
@@ -84,6 +84,7 @@ module refuses it). Pull requests can render offline instead.
 | compute\_type | CodeBuild compute type. | `string` | `"BUILD_GENERAL1_SMALL"` | no |
 | create\_github\_oidc\_provider | Create the account's token.actions.githubusercontent.com OIDC provider. false: pass github\_oidc\_provider\_arn (an account has at most one). | `bool` | `true` | no |
 | github\_oidc\_provider\_arn | Existing GitHub OIDC provider, when create\_github\_oidc\_provider is false. | `string` | `null` | no |
+| log\_kms\_key\_arn | KMS key for the build log group. Its key policy must allow logs.<region>.amazonaws.com for /codebuild/<name>. null: CloudWatch Logs' default encryption. | `string` | `null` | no |
 | plan\_subjects | GitHub OIDC subjects allowed to start a plan. A plan reads the live release, whose storage holds Secrets, so keep it to protected refs: null means the default branch main only. Never add pull\_request: a pull request would run its own bundle with this read access. | `list(string)` | `null` | no |
 | rds\_instance\_identifiers | RDS instances the apply job snapshots before an upgrade. Empty: no RDS snapshot permission. | `list(string)` | `[]` | no |
 | snapshot\_retention\_days | Days pg\_dump snapshots written by apply are kept (RDS snapshots are managed in RDS). | `number` | `35` | no |

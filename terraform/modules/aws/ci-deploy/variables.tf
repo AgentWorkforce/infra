@@ -32,8 +32,14 @@ variable "subnet_ids" {
 }
 
 variable "kms_key_arn" {
-  description = "Customer managed KMS key for the artifact bucket and the build logs. Its key policy must allow the CloudWatch Logs service for the log group."
+  description = "Customer managed KMS key for the artifact bucket and the builds (IAM grants the roles its use)."
   type        = string
+}
+
+variable "log_kms_key_arn" {
+  description = "KMS key for the build log group. Its key policy must allow logs.<region>.amazonaws.com for /codebuild/<name>. null: CloudWatch Logs' default encryption."
+  type        = string
+  default     = null
 }
 
 variable "github_repository" {

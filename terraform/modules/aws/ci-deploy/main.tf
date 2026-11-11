@@ -56,9 +56,10 @@ module "artifacts" {
 }
 
 resource "aws_cloudwatch_log_group" "builds" {
+  #checkov:skip=CKV_AWS_158:A customer managed key is optional (log_kms_key_arn); its key policy must name this log group. Build logs never contain secret values.
   name              = local.log_group
   retention_in_days = 365
-  kms_key_id        = var.kms_key_arn
+  kms_key_id        = var.log_kms_key_arn
   tags              = local.tags
 }
 
