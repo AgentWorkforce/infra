@@ -31,6 +31,10 @@ def classify(container, deployment=None):
 
 def discover(base, workspace, source_map, cmd):
     cmd.docker_context = base["dockerContext"]
+    cmd.public_docker_config = base.get("publicDockerConfig")
+    cmd.docker_host = base.get("dockerHost")
+    if cmd.public_docker_config:
+        dev.validate_public_docker_config(cmd.public_docker_config)
     k = dev.Cluster(base, cmd)
     base = dict(base)
     base["clusterUid"] = k.get("namespace", "kube-system")["metadata"]["uid"]
@@ -92,6 +96,8 @@ def main():
     p.add_argument("--kubectl", default="kubectl")
     p.add_argument("--kind", default="kind")
     p.add_argument("--sources", help="JSON map of component group to existing source checkout path (or {path,dockerfile})")
+    p.add_argument("--public-docker-config", help="Optional existing anonymous Docker config for public build base images")
+    p.add_argument("--docker-host", help="Explicit local unix Docker endpoint paired with --public-docker-config")
     p.add_argument("--output", default=".kind/dev/config.json")
     p.add_argument("--admission-file", help="Optional external clearance for an existing target hold")
     a = p.parse_args()
@@ -99,6 +105,11 @@ def main():
     base = {"kubeconfig": str(Path(a.kubeconfig).resolve()), "context": a.context, "cluster": a.context[5:],
             "namespace": a.namespace, "docker": a.docker, "dockerContext": a.docker_context,
             "kubectl": a.kubectl, "kind": a.kind}
+    dev.need(bool(a.public_docker_config) == bool(a.docker_host), "anonymous_local_docker_endpoint_required")
+    if a.public_docker_config:
+        base["publicDockerConfig"] = str(Path(a.public_docker_config).resolve())
+        dev.need(a.docker_host and a.docker_host.startswith("unix:///"), "anonymous_local_docker_endpoint_required")
+        base["dockerHost"] = a.docker_host
     result = discover(base, a.workspace, json.loads(Path(a.sources).read_text()) if a.sources else {}, dev.Commands())
     if a.admission_file: result["admissionFile"] = str(Path(a.admission_file).resolve())
     dev.save(a.output, result)

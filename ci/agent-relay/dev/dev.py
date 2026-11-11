@@ -76,6 +76,8 @@ def save(path, value):
 class Commands:
     def __init__(self):
         self.docker_context = None
+        self.public_docker_config = None
+        self.docker_host = None
 
     def run(self, argv, data=None, timeout=120):
         # Never echo environment, subprocess output or cluster error bodies.
@@ -83,6 +85,14 @@ class Commands:
             env = dict(os.environ)
             if self.docker_context:
                 env["DOCKER_CONTEXT"] = self.docker_context
+            if self.public_docker_config:
+                env["DOCKER_CONFIG"] = self.public_docker_config
+                # The anonymous config has no context metadata. Bind the same
+                # explicitly selected local socket for Docker and Kind.
+                env.pop("DOCKER_CONTEXT", None)
+                env["DOCKER_HOST"] = self.docker_host
+                for key in ("DOCKER_AUTH_CONFIG", "DOCKER_TLS_VERIFY", "DOCKER_CERT_PATH"):
+                    env.pop(key, None)
             p = subprocess.run([str(x) for x in argv], input=data, stdout=subprocess.PIPE,
                                stderr=subprocess.PIPE, timeout=timeout, check=False, env=env)
         except subprocess.TimeoutExpired:
@@ -106,6 +116,12 @@ def load_config(path):
     need(c["context"] == "kind-" + c["cluster"], "kind_context_required")
     need(c.get("architecture") in ("arm64", "amd64"), "architecture_required")
     need(isinstance(c.get("dockerContext"), str) and c["dockerContext"], "docker_context_required")
+    need(bool(c.get("publicDockerConfig")) == bool(c.get("dockerHost")), "anonymous_local_docker_endpoint_required")
+    if c.get("publicDockerConfig"):
+        validate_public_docker_config(c["publicDockerConfig"])
+        endpoint = urlsplit(c.get("dockerHost", ""))
+        need(endpoint.scheme == "unix" and not endpoint.netloc and endpoint.path.startswith("/") and
+             not endpoint.query and not endpoint.fragment and not any(ord(x) < 32 for x in c["dockerHost"]), "anonymous_local_docker_endpoint_required")
     need(Path(c["kubeconfig"]).is_file(), "explicit_kubeconfig_required")
     need(c.get("groups") and c.get("protectedDeployments"), "coverage_required")
     roles, names = set(), set()
@@ -133,6 +149,16 @@ def load_config(path):
     for role in ("file", "flows", "desktop", "chief"):
         need(role in roles or isinstance(c.get("excluded", {}).get(role), str), "optional_coverage_reason_required")
     return c
+
+
+def validate_public_docker_config(path):
+    """Opt-in anonymous pulls; never change the developer's credential store."""
+    try:
+        value = json.loads((Path(path) / "config.json").read_text())
+    except (OSError, ValueError, TypeError):
+        raise Refused("anonymous_docker_config_required") from None
+    need(isinstance(value, dict) and set(value) == {"auths"} and isinstance(value["auths"], dict)
+         and bool(value["auths"]) and all(item == {} for item in value["auths"].values()), "anonymous_docker_config_required")
 
 
 def select_components(config, value):
@@ -594,6 +620,8 @@ def main():
         return
     config = select_components(load_config(args.config), args.components)
     cmd.docker_context = config["dockerContext"]
+    cmd.public_docker_config = config.get("publicDockerConfig")
+    cmd.docker_host = config.get("dockerHost")
     if args.action == "plan":
         path = args.plan or ".kind/dev/plan.json"
         plan = prepare(config, cmd); save(path, plan)

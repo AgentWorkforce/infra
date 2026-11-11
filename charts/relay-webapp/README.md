@@ -82,6 +82,39 @@ helm lint --strict charts/relay-webapp \
   -f charts/relay-webapp/ci/default-values.yaml
 ```
 
+## Hosted logo (`global.branding.logo`)
+
+The chart can host one customer logo on the dashboard origin, at
+`<dashboard origin>/brand/<file>`, so the sign-in page and the dashboard can
+show it without another web server or ingress route. Under the agent-relay
+umbrella the same value also points relay-control's `SELFHOST_LOGIN_LOGO_URL`
+at it (see the relay-control README).
+
+| key | meaning |
+| --- | --- |
+| `global.branding.logo.svg` | Inline SVG markup, at most 256 KiB. The chart creates `<fullname>-brand` and serves it as `/brand/logo.svg`. Markup with `<script`, `on…=` event handlers, `javascript:` (also with whitespace inside), `<foreignObject`, character references (`&#…;`) or a `<!DOCTYPE`/`<!ENTITY` declaration is refused. |
+| `global.branding.logo.existingConfigMap` | A ConfigMap you create in the release namespace holding a PNG (`binaryData`, e.g. `kubectl create configmap relay-brand --from-file=logo.png`). Its content is not linted, so SVG is refused here: put an SVG in `svg`. |
+| `global.branding.logo.key` | The key in `existingConfigMap`, which is also the served file name: `[A-Za-z0-9._-]`, ending in `.png`. Default `logo.png`. |
+
+Set `svg` or `existingConfigMap`, not both. The file is mounted read-only at
+`/usr/share/nginx/html/brand`; ConfigMap edits reach the pod without a
+restart (after the kubelet sync). Images from relay-webapp
+[#132](https://github.com/AgentWorkforce/relay-webapp/pull/132) or later serve
+`/brand/` with `Content-Security-Policy: default-src 'none'; img-src data:; style-src 'unsafe-inline'; sandbox`,
+`X-Content-Type-Options: nosniff` and `Cache-Control: public, max-age=300`,
+and return 404 for a missing file. Older images serve it through the app
+route (`nosniff`, `Cache-Control: no-cache`, no CSP, and the app shell for a
+missing file), which is why inline SVG is checked. To use the logo as the
+dashboard's own mark too, set `customerProfile.logo: /brand/logo.svg`.
+
+```yaml
+global:
+  branding:
+    logo:
+      svg: |
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 32">...</svg>
+```
+
 ## Session read API
 
 `runtime.sessionReadApiEnabled: true` renders `DASHBOARD_SESSION_READ_API_ENABLED=true`, so the page reads session lists, search, activity, turns and events directly from the session read API with the access token Control hands it. It needs relay-webapp main `53e39ca9` or later, and the read API's `cors.allowedOrigins` must name this dashboard's origin.

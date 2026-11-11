@@ -1,0 +1,14 @@
+# Local-only collector overrides. Core release images/features are derived from
+# the merged AA EKS values; the scrub contract uses its qualified WASM overlay.
+# local-up generates fresh tenant IDs, credentials and TLS without operator input.
+telemetry-collector:
+  image:
+    # Published and qualified candidate recorded in telemetry-collector/README.md.
+    repository: ghcr.io/agentworkforce/relay-control
+    digest: sha256:37aa934ac5a39a950c53b93a5e03509cafaac2268471a3e398f276df6d95331a
+    sourceRevision: d2cb39635bbf163976c354582365b3d97dcd0b56
+  tlsProxy:
+    image:
+      # Same immutable nginx runtime base as the pinned dashboard Dockerfile.
+      repository: nginxinc/nginx-unprivileged
+      digest: sha256:f5116ed4606f3eb015dd4a8e28cb9b351476dc0ad4bc6e9f93b19cec130cdf03

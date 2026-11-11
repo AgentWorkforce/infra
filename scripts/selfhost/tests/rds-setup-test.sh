@@ -131,3 +131,20 @@ post_output="$(bash "${RDS_SETUP}" post 2>&1)"
 grep -q -- '--context customer-context -n agent-relay get job sessions-pipeline-worker-migrate-current -o json' "${COMMAND_LOG}" || fail "post mode did not verify the exact current migration Job in the selected context"
 grep -q 'agent-relay-rds-post' "${COMMAND_LOG}" || fail "post bootstrap Job was not applied"
 pass "post mode requires migration evidence and activates runtime roles"
+
+: > "${COMMAND_LOG}"
+rm -f "${STATE_DIR}/secret-files/agent-relay-secrets/HOOPDB_MIGRATION_URL" "${STATE_DIR}/secret-files/search-indexer-owner/RELAYHISTORY_PIPELINE_CONSUMER_SECRET"
+refresh_output="$(env -u SERVICES_IMAGE bash "${RDS_SETUP}" refresh-admin 2>&1)"
+[[ "${refresh_output}" == *"admin credential files refreshed"* ]] || fail "refresh-admin did not finish"
+[[ "${refresh_output}" != *"admin-secret-material"* ]] || fail "admin password leaked in refresh-admin"
+[[ -s "${STATE_DIR}/secret-files/agent-relay-secrets/HOOPDB_MIGRATION_URL" ]] || fail "refresh-admin did not rewrite HOOPDB_MIGRATION_URL"
+[[ -s "${STATE_DIR}/secret-files/search-indexer-owner/RELAYHISTORY_PIPELINE_CONSUMER_SECRET" ]] || fail "refresh-admin did not rewrite the search owner secret"
+! grep -q 'agent-relay-rds-' "${COMMAND_LOG}" || fail "refresh-admin must not run a database Job"
+pass "refresh-admin rewrites only the admin-derived files, without SERVICES_IMAGE or a database Job"
+
+set +e
+nostate_output="$(STATE_DIR="$(mktemp -d)" bash "${RDS_SETUP}" refresh-admin 2>&1)"
+nostate_rc=$?
+set -e
+[[ "${nostate_rc}" != 0 && "${nostate_output}" == *"run '"*"pre' first"* ]] || fail "refresh-admin without state must refuse"
+pass "refresh-admin refuses without pre state"
