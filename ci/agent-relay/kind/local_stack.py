@@ -219,6 +219,7 @@ class LocalStack(Stack):
         result["relay-control"]["services"]["publicHostAliases"] = [{"ip": self.edge_ip, "hostnames": ["relay.kind.agentrelay.com"]}]
         for slot in ("nativeConsumer", "ingestEdge", "sessionReadApi"):
             result["sessions-pipeline"][slot]["image"] = image(PIPELINE)
+        result["sessions-pipeline"]["sessionReadApi"]["cors"] = {"allowedOrigins": [SITE]}
         if phase == "serve":
             result["components"]["telemetryCollector"] = True
             result["telemetry-collector"] = {

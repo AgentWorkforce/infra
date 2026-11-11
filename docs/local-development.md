@@ -92,10 +92,17 @@ development; it is not the complete clean-room machine wipe.
 
 ## Acceptance status
 
-On ar-lap, the fresh native workload bring-up and strict TLS dashboard request
-using the generated public CA passed; repeat-up took 2.24 seconds in one measured
-run. The q7m2k9 candidate passed its checksum, signature and compiled-profile
-checks and was copied to `~/Applications`. macOS trust, Desktop launch/sign-in,
-browser HMR, backend timing, real upload/search/messaging, model summaries and
-the wipe/repeat/wipe proof are still being qualified. This document does not
-claim those pending acceptance steps passed.
+On ar-lap, the fresh native workloads and strict TLS dashboard request passed;
+repeat-up took 2.24 seconds in one measured run. `make dev` built and ran all eight
+application roles. A Control source edit executed its unique marker and reached
+Ready in 14.200 seconds; its shared collector reached Ready in 21.356 seconds.
+An authenticated Chromium fixture with normal CA/NSS trust observed a React
+edit through a Vite HMR update in 2.290 seconds, including the screenshot receipt.
+The measurement uses one host's monotonic clock; HTTPS errors were not ignored.
+Both source trees were restored and the dashboard's `npm run check` passed.
+
+The q7m2k9 candidate passed its checksum, signature and compiled-profile checks
+and was copied to `~/Applications`. A real `codex exec` session with a unique
+marker has been created. macOS trust, Desktop launch/sign-in, actual upload/
+search/messaging, model summaries and wipe/repeat/wipe remain pending. Linux
+browser trust does not qualify native macOS Desktop trust.
