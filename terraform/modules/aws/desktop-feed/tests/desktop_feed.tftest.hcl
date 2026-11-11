@@ -24,7 +24,7 @@ variables {
   profiles    = ["p1", "p2"]
   bucket_name = "relay-dev-desktop-feed"
   role = {
-    pod_identity_associations = [{ cluster_name = "relay-dev", namespace = "agent-relay-dev", service_account = "agent-relay-relay-control" }]
+    pod_identity_associations = [{ cluster_name = "relay-dev", namespace = "agent-relay-dev", service_account = "relay-control" }]
   }
   tags = { Environment = "dev" }
 }
@@ -56,7 +56,7 @@ run "private_bucket_role_and_pod_identity" {
     error_message = "The Control role is trusted by EKS Pod Identity."
   }
   assert {
-    condition     = length(aws_eks_pod_identity_association.control) == 1 && aws_eks_pod_identity_association.control["relay-dev/agent-relay-dev/agent-relay-relay-control"].namespace == "agent-relay-dev"
+    condition     = length(aws_eks_pod_identity_association.control) == 1 && aws_eks_pod_identity_association.control["relay-dev/agent-relay-dev/relay-control"].namespace == "agent-relay-dev"
     error_message = "Control's ServiceAccount is associated in the given namespace."
   }
   assert {

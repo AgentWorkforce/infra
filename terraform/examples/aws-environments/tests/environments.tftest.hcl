@@ -672,8 +672,8 @@ run "desktop_feed_binds_control_in_the_environment_namespace" {
     error_message = "desktop_feed.control_env must map directly to Control's SELFHOST_DESKTOP_FEED_* settings."
   }
   assert {
-    condition     = output.desktop_feed.namespace == "agent-relay-dev" && output.desktop_feed.service_account == "agent-relay-relay-control" && keys(module.desktop_feed[0].pod_identity_association_ids) == ["relay/agent-relay-dev/agent-relay-relay-control"]
-    error_message = "Control's Pod Identity binds the release's relay-control ServiceAccount in the environment namespace."
+    condition     = output.desktop_feed.namespace == "agent-relay-dev" && output.desktop_feed.service_account == "relay-control" && keys(module.desktop_feed[0].pod_identity_association_ids) == ["relay/agent-relay-dev/relay-control"]
+    error_message = "Control's Pod Identity binds the relay-control ServiceAccount the profile overlays render, in the environment namespace."
   }
   assert {
     condition     = length(output.desktop_feed.key_arns) == 2 && output.desktop_feed.role_arn != null

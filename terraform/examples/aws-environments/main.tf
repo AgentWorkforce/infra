@@ -200,7 +200,7 @@ module "desktop_feed" {
     pod_identity_associations = [{
       cluster_name    = var.eks_cluster_name
       namespace       = local.namespace
-      service_account = coalesce(var.desktop_feed.service_account, "${var.release_name}-relay-control")
+      service_account = var.desktop_feed.service_account
     }]
   }
   tags = local.tags

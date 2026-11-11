@@ -187,17 +187,20 @@ one `ECC_NIST_EDWARDS25519`/`SIGN_VERIFY` KMS key and alias
 private `<name_prefix>-<environment>-<account_id>-<region>-desktop-feed` bucket,
 and a `<name_prefix>-<environment>-desktop-feed` role (with the same path and
 Pippen boundary as the other roles) whose Pod Identity association binds
-Control's ServiceAccount, `<release_name>-relay-control` by default, in this
+Control's ServiceAccount, `relay-control` by default, in this
 environment's namespace:
 
 ```json
 "desktop_feed": { "profiles": ["<profile-id-from-the-private-handoff>"] }
 ```
 
-`prefix` (default `desktop-feed`) and `service_account` are optional. Set
-`service_account` to the name the reviewed values actually render: an overlay
-with `relay-control.fullnameOverride` (for example `values-eks.yaml` sets
-`relay-control`) or `serviceAccount.name` changes it. Check with
+`prefix` (default `desktop-feed`) and `service_account` are optional. The
+default `relay-control` is what every agent-relay profile overlay renders
+(`values-eks.yaml`, `values-gcp.yaml` and `values-kind-core.yaml` set
+`relay-control.fullnameOverride: relay-control`, and the chart names the
+ServiceAccount after its fullname). Values without that override render
+`<release>-relay-control`, and `relay-control.serviceAccount.name` overrides
+both; set `service_account` to match. Check with
 `helm template ... | yq 'select(.kind == "ServiceAccount") | .metadata.name'`. The
 `desktop_feed` output's `control_env` maps one to one onto Control's settings
 (`SELFHOST_DESKTOP_FEED_SIGNER=awskms`, `_STORAGE=s3`, `_KMS_REGION`,
@@ -536,7 +539,7 @@ exact destroy inventory and recovery proof; do not remove state to bypass them.
 | chief\_execution\_node | Optional dedicated Chief execution host (modules/aws/chief-execution-node). null creates nothing. Private installation values only; no credentials belong here. | ```object({ subnet_id = string relay_base_url = string instance_type = optional(string, "t3.medium") root_volume_size_gb = optional(number, 40) node_runtime = object({ url = string sha256 = string }) relay_node = object({ url = string sha256 = string }) harness = object({ npm_package = string version = string }) bridge = object({ repository = string commit = string }) repositories = list(string) })``` | `null` | no |
 | database\_instance\_class | Override the environment tier's instance class. Aurora needs an Aurora-supported class. | `string` | `null` | no |
 | deletion\_protection | Database API deletion protection. Production refuses false. Final snapshots and S3 versioning remain enabled. | `bool` | `true` | no |
-| desktop\_feed | Optional private Desktop feed for Relay Control (modules/aws/desktop-feed): one Ed25519 KMS signing key and alias per profile ID, a private bucket, and a Pod Identity role for Control's ServiceAccount. null creates nothing. Profile IDs (^[a-z0-9]{1,32}$) come from the private handoff. | ```object({ profiles = set(string) prefix = optional(string, "desktop-feed") service_account = optional(string) })``` | `null` | no |
+| desktop\_feed | Optional private Desktop feed for Relay Control (modules/aws/desktop-feed): one Ed25519 KMS signing key and alias per profile ID, a private bucket, and a Pod Identity role for Control's ServiceAccount. null creates nothing. Profile IDs (^[a-z0-9]{1,32}$) come from the private handoff. service\_account defaults to relay-control, the name every agent-relay profile overlay renders (relay-control.fullnameOverride). | ```object({ profiles = set(string) prefix = optional(string, "desktop-feed") service_account = optional(string, "relay-control") })``` | `null` | no |
 | enable\_relayfile | Include Relayfile in the full-suite application contract; its actor identities/Secrets must be configured by the application layer. | `bool` | `false` | no |
 | environment\_class | Sizing/protection tier; environment names remain independent of this classification. | `string` | `"development"` | no |
 | existing\_runtime\_roles | Operator-owned runtime identities. Null manages search/pipeline roles here. Otherwise supply both search roles and, only in Lambda mode, the pipeline role. Trust, policies, guards and EKS associations must already be verified outside this state. | ```object({ indexer_role_arn = string reader_role_arn = string pipeline_role_arn = optional(string) })``` | `null` | no |
