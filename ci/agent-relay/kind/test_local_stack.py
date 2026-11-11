@@ -229,6 +229,23 @@ class LocalTests(unittest.TestCase):
             secret.assert_called_once_with("local-model", {"OPENAI_API_KEY": ""})
             self.assertEqual(k.call_args.args[:2], ("delete", "networkpolicy"))
 
+    def test_github_releases_egress_is_control_api_only_and_excludes_private_https(self):
+        stack = LocalStack.__new__(LocalStack)
+        with patch.object(stack, "apply") as apply:
+            stack.github_releases_egress()
+        policy = apply.call_args.args[0]
+        self.assertEqual(policy["metadata"]["name"], "local-control-github-releases-egress")
+        self.assertEqual(policy["spec"]["podSelector"]["matchLabels"], {
+            "app.kubernetes.io/name": "relay-control", "app.kubernetes.io/instance": "agent-relay",
+            "app.kubernetes.io/component": "api"})
+        self.assertEqual(policy["spec"]["policyTypes"], ["Egress"])
+        self.assertEqual(len(policy["spec"]["egress"]), 1)
+        rule = policy["spec"]["egress"][0]
+        self.assertEqual(rule["ports"], [{"protocol": "TCP", "port": 443}])
+        block = rule["to"][0]["ipBlock"]
+        self.assertEqual(block["cidr"], "0.0.0.0/0")
+        self.assertEqual(set(block["except"]), {"10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "169.254.0.0/16"})
+
     def test_ca_removal_failure_stops_before_state_or_cluster_removal(self):
         with tempfile.TemporaryDirectory() as tmp:
             stack = LocalStack.__new__(LocalStack)
@@ -316,11 +333,17 @@ class LocalTests(unittest.TestCase):
         aa = yaml.safe_load((ROOT / "charts/agent-relay/values-eks.yaml").read_text())
         release = {name: local_stack.reference(aa[name]["image"]) for name in ("relay-control", "relay-webapp", "relaycast")}
         local = yaml.safe_load((ROOT / "ci/agent-relay/kind/local-values.yaml").read_text())
-        release["relay-webapp"] = local_stack.reference(local["relay-webapp"]["image"])
+        for name in ("relay-control", "relay-webapp"):
+            release[name] = local_stack.reference(local[name]["image"])
+        with patch.object(stack, "apply") as apply:
+            stack.github_releases_egress()
+        github_selector = apply.call_args.args[0]["spec"]["podSelector"]["matchLabels"]
         release.update({name: local_stack.reference(aa["sessions-pipeline"]["worker"]["image"])
             for name in ("session-native-ingest", "session-native-consumer", "session-read-api", "sessions-session-brief")})
         for deployment in active:
             pod = deployment["spec"]["template"]["spec"]
+            labels = deployment["spec"]["template"]["metadata"]["labels"]
+            self.assertEqual(all(labels.get(k) == v for k, v in github_selector.items()), deployment["metadata"]["name"] == "relay-control")
             if deployment["metadata"]["name"] in release:
                 self.assertEqual(pod["containers"][0]["image"], release[deployment["metadata"]["name"]])
             if deployment["metadata"]["name"] == "relay-webapp":
@@ -361,6 +384,8 @@ class LocalTests(unittest.TestCase):
                     self.assertTrue(any(m["name"] == "analytics-ca" for m in container["volumeMounts"]))
                 if name == "relay-control":
                     self.assertEqual(env["SELFHOST_FEATURES"]["value"], "usage,launch")
+                    self.assertEqual(env["SELFHOST_DESKTOP_RELEASES_REPO"]["value"], "AgentWorkforce/relay-desktop-kind-releases")
+                    self.assertEqual(sum(e["name"] == "SELFHOST_DESKTOP_RELEASES_REPO" for e in container["env"]), 1)
                     self.assertEqual(env["SELFHOST_ANALYTICS_DESTINATION"]["value"], "collector")
                     self.assertTrue(any(m["name"] == "analytics-producer" for m in container["volumeMounts"]))
                 if name == "relaycast":

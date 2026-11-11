@@ -42,14 +42,18 @@ then be removed. Keep that exception list with the final pass/fail sheet.
 
 - Use merged infra main containing the local stack and Desktop installer.
   Wait for the coordinated prerequisite PRs before resetting the machine.
-  Final acceptance must use the AA pack from merged #211: Control 0.5.16,
+  The archived 2026-11-11 acceptance used the AA pack from merged #211: Control 0.5.16,
   Sessions alpha.5 and the EKS SQLite Relaycast generation, plus the merged
   Sales #50 dashboard update (`dfdf6db6`) and fresh-store read settings.
-  The local recipe must derive those image references and managed
+  That recipe derived those image references and managed
   `[usage, launch]` features from merged `charts/agent-relay/values-eks.yaml`,
   select the approved dashboard update in `ci/agent-relay/kind/local-values.yaml`,
   and select the merged `values-scrub-wasm-bindgen.yaml` overlay. Do not copy
   digest literals from a message or substitute a previous trial's pins.
+  New Kind
+  downloads-card trials use the separately approved Control/dashboard overrides
+  in `ci/agent-relay/kind/local-values.yaml`; record the selected pins and do not
+  describe such a trial as reproducing the unchanged AA pack.
 - Retain Git, Python 3.9+, Docker Desktop with its local Linux engine, and the
   authenticated Codex/Claude executables. Docker and kubectl must be on PATH;
   their standard directory is `/Applications/Docker.app/Contents/Resources/bin`.
