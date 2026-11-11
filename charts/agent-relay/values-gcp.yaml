@@ -243,10 +243,10 @@ relayhistory:
 relay-control:
   fullnameOverride: relay-control
   image:
-    # Release image (public GHCR, relay-control 0.5.15). Mirror it by digest to
+    # Release image (public GHCR, relay-control 0.5.16). Mirror it by digest to
     # your registry and override repository.
     repository: ghcr.io/agentworkforce/relay-control
-    digest: sha256:db0201a9d7f0e6f55b2f88e96d243c19dc70c8c216fde6c2e58d25327dcb2c8a
+    digest: sha256:0b9c5a077b49b31178cc669e7c1d532f39e64c840087ca41636bb84a6c62631c
   database:
     runtimeRole: control_api_runtime
   # Non-secret id of the encryption key (SELFHOST_ENCRYPTION_KEY_ID), stored

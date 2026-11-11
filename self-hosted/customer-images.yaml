@@ -349,15 +349,17 @@ images:
       - Deployment/relay-control:relay-control
     current:
       repository: ghcr.io/agentworkforce/relay-control
-      digest: sha256:db0201a9d7f0e6f55b2f88e96d243c19dc70c8c216fde6c2e58d25327dcb2c8a
+      digest: sha256:0b9c5a077b49b31178cc669e7c1d532f39e64c840087ca41636bb84a6c62631c
       chartStatus: shipped
     source:
       repository: https://github.com/AgentWorkforce/relay-control
-      revision: 31ff0737bcf3fdba3607923d540b06353d1d9573
+      revision: 83a57d382e00cfcd8a10a477d1ccfc06c6959c01
       path: Dockerfile
       reproducibleReference: true
       note: >-
-        Relay Control 0.5.15: the one-time first-admin setup key and
+        Relay Control 0.5.16: adds shared-session read auditing with an
+        owner/admin export (#100, migration 0042) and the bounded native
+        provider transport (#101). Carries 0.5.15: the one-time first-admin setup key and
         admin-set temporary passwords with password sign-in that works without
         SMTP (#96, migration 0041), MCP agent launch behind
         SELFHOST_FEATURES=launch (#95), Desktop dashboard links redirected to
@@ -368,18 +370,18 @@ images:
     license:
       status: approved
       spdx: Apache-2.0
-      evidence: https://github.com/AgentWorkforce/relay-control/blob/31ff0737bcf3fdba3607923d540b06353d1d9573/LICENSE
+      evidence: https://github.com/AgentWorkforce/relay-control/blob/83a57d382e00cfcd8a10a477d1ccfc06c6959c01/LICENSE
     platforms:
       expected: [linux/amd64, linux/arm64]
       verifiedFromRegistry: [linux/amd64, linux/arm64]
       status: verified
       verificationAccess: anonymous
     release:
-      workflow: https://github.com/AgentWorkforce/relay-control/blob/31ff0737bcf3fdba3607923d540b06353d1d9573/.github/workflows/release-relay-control-image.yml
-      run: https://github.com/AgentWorkforce/relay-control/actions/runs/42973044715
+      workflow: https://github.com/AgentWorkforce/relay-control/blob/83a57d382e00cfcd8a10a477d1ccfc06c6959c01/.github/workflows/release-relay-control-image.yml
+      run: https://github.com/AgentWorkforce/relay-control/actions/runs/42975781927
       trigger: workflow_dispatch
       buildsCommittedRevision: true
-      publishedTags: ["0.5.15", sha-31ff0737bcf3fdba3607923d540b06353d1d9573]
+      publishedTags: ["0.5.16", sha-83a57d382e00cfcd8a10a477d1ccfc06c6959c01]
       publishesSbom: true
       publishesProvenance: true
       provenanceMode: max
@@ -389,7 +391,7 @@ images:
     approval:
       status: approved
       basis: >-
-        Public digest from the successful reviewed 0.5.15 release workflow at
+        Public digest from the successful reviewed 0.5.16 release workflow at
         the recorded revision, with SBOM, provenance and amd64+arm64 verified
         anonymously.
       blockingReasons: []
