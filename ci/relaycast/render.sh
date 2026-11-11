@@ -104,5 +104,30 @@ sq() { helm template ci "$CHART" --namespace ci -f "$CHART/ci/default-values.yam
 if o=$(sq --set postgresCa.enabled=true --set postgresCa.configMap=x); then err "postgresCa on sqlite: rendered"; else grep -Fq "requires runtime.backend=postgres" <<<"$o" || err "postgresCa on sqlite: $o"; fi
 if o=$(sq --set-json 'extraEnv=[{"name":"RELAYCAST_DATABASE_URL","value":"x"}]'); then err "database URL on sqlite: rendered"; else grep -Fq "set runtime.backend=postgres" <<<"$o" || err "database URL on sqlite: $o"; fi
 
-[ "$fail" = 0 ] && echo "relaycast postgres render: ok"
+# Managed analytics only changes the application pod. The database init and
+# migration retain their own trust root and never see the collector credential.
+! grep -Eq 'RELAYCAST_TELEMETRY_|analytics-producer|analytics-token' <<<"$d" || err "default render enables analytics"
+analytics=(--set analytics.enabled=true --set-string analytics.deploymentId=kind_fixture
+  --set-string analytics.collectorUrl=https://collector.ci.svc.cluster.local:8443/v1/events
+  --set-string analytics.existingSecret=cast-analytics --set-string analytics.caConfigMap=collector-ca)
+analytics_digest=sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+cast=$(sq "${analytics[@]}" --set-string "image.digest=$analytics_digest" | yq "$dep")
+pgcast=$(render "${analytics[@]}" --set-string "runtime.postgres.image.digest=$analytics_digest")
+pgpod=$(yq "$dep" <<<"$pgcast")
+is "SQLite analytics label" "$(yq '.spec.template.metadata.labels["agentworkforce.dev/analytics-producer"]' <<<"$cast")" true
+is "SQLite analytics token projection" "$(yq "$pod.volumes[] | select(.name == \"analytics-token\") | .secret.secretName" <<<"$cast")" cast-analytics
+is "SQLite analytics token file" "$(yq "$pod.containers[0].env[] | select(.name == \"RELAYCAST_TELEMETRY_COLLECTOR_TOKEN_FILE\") | .value" <<<"$cast")" /var/run/secrets/relaycast-analytics/token
+is "Postgres analytics CA" "$(yq "$pod.containers[0].env[] | select(.name == \"NODE_EXTRA_CA_CERTS\") | .value" <<<"$pgpod")" /etc/relaycast-analytics-ca/ca.crt
+is "Postgres explicit DB CA" "$(yq "$pod.containers[0].env[] | select(.name == \"RELAYCAST_DATABASE_CA_FILE\") | .value" <<<"$pgpod")" /etc/postgres-ca/ca.crt
+is "Postgres init CA stays separate" "$(yq "$pod.initContainers[0].env[] | select(.name == \"NODE_EXTRA_CA_CERTS\") | .value" <<<"$pgpod")" /etc/postgres-ca/ca.crt
+! yq "$job" <<<"$pgcast" | grep -Eq 'RELAYCAST_TELEMETRY_|analytics-token|analytics-ca' || err "migration Job carries analytics"
+expect_refused "old PostgreSQL image" "immutable Relaycast image with collector support" "${analytics[@]}"
+expect_refused "non-TLS collector" "HTTPS DNS endpoint" "${analytics[@]}" --set-string analytics.collectorUrl=http://collector.ci.svc:8080/v1/events
+expect_refused "collector userinfo" "HTTPS DNS endpoint" "${analytics[@]}" --set-string analytics.collectorUrl=https://user@collector.ci.svc:8443/v1/events
+expect_refused "bad collector port" "port must be" "${analytics[@]}" --set-string analytics.collectorUrl=https://collector.ci.svc:65536/v1/events
+expect_refused "reused credential secret" "separate from the Relaycast credential Secret" "${analytics[@]}" --set-string analytics.existingSecret=relaycast-secrets
+expect_refused "invalid collector identity" "stable opaque installation ID" "${analytics[@]}" --set-string analytics.deploymentId=bad.identity
+expect_refused "TLS override" "cannot override managed Relaycast analytics" "${analytics[@]}" --set-string "runtime.postgres.image.digest=$analytics_digest" --set-json 'extraEnv=[{"name":"NODE_TLS_REJECT_UNAUTHORIZED","value":"0"}]'
+
+[ "$fail" = 0 ] && echo "relaycast postgres and analytics render: ok"
 exit "$fail"

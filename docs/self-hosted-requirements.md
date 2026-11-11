@@ -14,7 +14,7 @@ registered, every shipped entry must exist in the charts, planned entries must
 not be referenced by any template, and the compatibility matrix must equal
 the pinned digests.
 
-Source of truth: [`self-hosted/requirements.yaml`](../self-hosted/requirements.yaml). 142 entries: 50 requirements (50 shipped, 0 planned), 92 options (91 shipped, 1 planned).
+Source of truth: [`self-hosted/requirements.yaml`](../self-hosted/requirements.yaml). 143 entries: 50 requirements (50 shipped, 0 planned), 93 options (92 shipped, 1 planned).
 
 ## Contents
 
@@ -60,7 +60,8 @@ Services image (sessions-pipeline-worker, alleyoop and the privileged SQL Jobs):
 
 | row | status | charts | image | services source / generation | supported dbMode + boundary | notes |
 | --- | --- | --- | --- | --- | --- | --- |
-| telemetry-collector-0.1.4 | unreleased | telemetry-collector 0.1.4 |  |  |  | Admits the reviewed brief-worker and coordination-overlaps collector vocabulary. Keeps the prior private-file recovery source available for existing installs and rollback. Images and producer registrations remain operator inputs. |
+| telemetry-collector-0.1.5 | unreleased | telemetry-collector 0.1.5 |  |  |  | Accepts the reviewed Relaycast native-workspace observation and installation exception vocabulary. Existing source revisions remain available for rollback. The operator supplies the image and registration. |
+| telemetry-collector-0.1.4 | shipped | telemetry-collector 0.1.4 |  |  |  | Admits the reviewed brief-worker and coordination-overlaps collector vocabulary. Keeps the prior private-file recovery source available for existing installs and rollback. Images and producer registrations remain operator inputs. |
 | telemetry-collector-0.1.3 | shipped | telemetry-collector 0.1.3 |  |  |  | Requires the qualified private-file recovery source; retired source declarations are refused. Restores owned committed segments to 0600 before listening after a remount, preserving bytes. Typed Control and sessions producer registries are available, but the chart selects no images or credentials and enables no producers. Verify signed source/digest and operator storage separately. |
 | telemetry-collector-0.1.2 | shipped | telemetry-collector 0.1.2 |  |  |  | Runs the current public Control collector package under an exclusive kernel file lock and renders numeric limits as decimal strings. Requires independently verified immutable images, TLS, producer credentials and exclusive Pod storage fencing; advisory lock contention does not replace storage fencing. No profile enablement or all-component telemetry coverage is implied. |
 | telemetry-collector-0.1.1 | shipped | telemetry-collector 0.1.1 |  |  |  | Refuses relay-control images at render time: they do not contain the collector CLI this chart runs. |
@@ -100,7 +101,8 @@ Services image (sessions-pipeline-worker, alleyoop and the privileged SQL Jobs):
 | 96bulls-0.5.2 | shipped | 96bulls 0.5.2<br>96bulls-worker 0.5.2<br>alleyoop 0.3.4<br>(deps: worker 0.5.2, alleyoop 0.3.4, hoopdb 0.9.0, locker 5.4.0, otel 0.178.0) | 96bulls-worker: `agentworkforce/96bulls-services@sha256:6f22ea17dff3…`<br>alleyoop: `agentworkforce/96bulls-services@sha256:6f22ea17dff3…` | `7d7229bb31c1` / `eff8b3be4656` | selfhosted + global-default-revoke (cnpg)<br>selfhosted + global-default-revoke (external)<br>cloudsql + global-default-revoke (external)<br>supabase + event-trigger (external) (held)<br>supabase + (unset) (external) (fails closed)<br>local + (unset) (any) (dev only) | License-annotation patch bump of 0.5.1; same services image and db combos. Superseded by 0.5.4. |
 | 96bulls-0.5.1 | shipped | 96bulls 0.5.1<br>96bulls-worker 0.5.1<br>alleyoop 0.3.3<br>(deps: worker 0.5.1, alleyoop 0.3.3, hoopdb 0.9.0, locker 5.4.0, otel 0.178.0) | 96bulls-worker: `agentworkforce/96bulls-services@sha256:6f22ea17dff3…`<br>alleyoop: `agentworkforce/96bulls-services@sha256:6f22ea17dff3…` | `7d7229bb31c1` / `eff8b3be4656` | selfhosted + global-default-revoke (cnpg)<br>selfhosted + global-default-revoke (external)<br>cloudsql + global-default-revoke (external)<br>supabase + event-trigger (external) (held)<br>supabase + (unset) (external) (fails closed)<br>local + (unset) (any) (dev only) | sessions-pipeline main 7d7229b (#124 session list RPC, #125 Supabase event-trigger boundary, #139 its manifest sync, #137 exact sessions function ACL). The AWS path pins the ECR digest of the same build. Superseded by 0.5.2. |
 | sessions-pipeline-next | **planned** | sessions-pipeline next | not built for the charts yet | `475d503216a2` / `5ed119133e36` |  | Follow-up re-pin to sessions-pipeline main after #127 (session briefs, generation 5ed11913...). Needs new GHCR/ECR digests, ci/sessions-pipeline-search-worker-role/services-commit and services-generation, and the session-brief entries below shipped. |
-| relaycast-0.3.7 | unreleased | relaycast 0.3.7 | relaycast: `ghcr.io/agentworkforce/relaycast-self-host@sha256:81274dca7ab5…` |  |  | Actor-mode keyed workspace bootstrap Secret and proof policy; matching gateway and actor environments and a qualified actor rollout are required. No live rollout is claimed. |
+| relaycast-0.3.8 | unreleased | relaycast 0.3.8 | relaycast: `ghcr.io/agentworkforce/relaycast-self-host@sha256:81274dca7ab5…` |  |  | Adds default-off Node runtime collector analytics using a dedicated credential and HTTPS CA. Default runtime images stay unchanged and the operator selects an image with collector support. |
+| relaycast-0.3.7 | shipped | relaycast 0.3.7 | relaycast: `ghcr.io/agentworkforce/relaycast-self-host@sha256:81274dca7ab5…` |  |  | Actor-mode keyed workspace bootstrap Secret and proof policy; matching gateway and actor environments and a qualified actor rollout are required. No live rollout is claimed. |
 | relaycast-0.3.6 | **planned** | relaycast 0.3.6 | relaycast: `ghcr.io/agentworkforce/relaycast-self-host@sha256:81274dca7ab5…` |  |  | Superseded before tagging by relaycast-0.3.7. Adds default-off runtime.backend=postgres (image relaycast-self-host 12.8.0-pg.1, sha256:84f59482cb82f3c50d38f45cfca7d004cffaa95652782dbfc93c179cc343ac59, pinned in runtime.postgres.image), a hash-named migration Job and postgresCa. sqlite and durable-actors renders differ only in the helm.sh/chart label. |
 | relaycast-0.3.5 | shipped | relaycast 0.3.5 | relaycast: `ghcr.io/agentworkforce/relaycast-self-host@sha256:81274dca7ab5…` |  |  | Repository rename to AgentWorkforce/infra: canonical source and Helm repository URLs, with matching local dependency patch versions. Runtime images, application source, migration generation and deployment values are unchanged. This release has no new live application proof. |
 | relaycast-0.3.4 | shipped | relaycast 0.3.4 | relaycast: `ghcr.io/agentworkforce/relaycast-self-host@sha256:81274dca7ab5…` |  |  | runtime.durableActors.deployer.artifactStore (driver gcs \| s3, s3.region/endpoint/forcePathStyle): the deploy Job uploads bundles to S3 for a durable-actors control plane on S3 (needs a relaycast-actors-deployer image from relaycast #626 or later). Default render unchanged apart from the helm.sh/chart label. Same default image as 0.3.3. |
@@ -116,7 +118,8 @@ Services image (sessions-pipeline-worker, alleyoop and the privileged SQL Jobs):
 | relayauth-0.1.2 | shipped | relayauth 0.1.2 | relayauth: `ghcr.io/agentworkforce/relayauth@sha256:c23c92d25fdf…` |  |  | License-annotation patch bump of 0.1.1. Superseded by 0.1.3. |
 | relayauth-0.1.1 | shipped | relayauth 0.1.1 | relayauth: `ghcr.io/agentworkforce/relayauth@sha256:c23c92d25fdf…` |  |  | relayauth 784582ef (machine-bound History assertion contract, relayauth #113). Superseded by 0.1.2. |
 | relayauth-0.1.0 | shipped | relayauth 0.1.0 | relayauth: `ghcr.io/agentworkforce/relayauth@sha256:eb71daa28e30…` |  |  | superseded by 0.1.1. |
-| agent-relay-0.6.34 | unreleased | agent-relay 0.6.34<br>relayhistory 0.1.3<br>relay-control 0.4.7<br>relay-webapp 0.2.2<br>(deps: relaycast 0.3.7, relayauth 0.1.5, sessions-pipeline 0.8.20, relayhistory 0.1.3, relay-control 0.4.7, relay-webapp 0.2.2, relayflows 0.2.5, durable-actors 0.14.6-awf.1, relayfile 0.2.2, telemetry-collector 0.1.4, relay-chief 0.1.0) | relayhistory: `ghcr.io/agentworkforce/relayhistory@sha256:<required>`<br>relay-control: `ghcr.io/agentworkforce/relay-control@sha256:d8c26d44dccb…`<br>relay-webapp: `ghcr.io/agentworkforce/relay-webapp@sha256:<required>` |  |  | Carries relay-control 0.4.7 with the optional auth.microsoft sign-in pass-through (SELFHOST_MICROSOFT_*, secretKeys.microsoftClientSecret). Nothing renders while auth.microsoft is empty; the API reads it only from an image with relay-control #87. |
+| agent-relay-0.6.35 | unreleased | agent-relay 0.6.35<br>relayhistory 0.1.3<br>relay-control 0.4.7<br>relay-webapp 0.2.2<br>(deps: relaycast 0.3.8, relayauth 0.1.5, sessions-pipeline 0.8.20, relayhistory 0.1.3, relay-control 0.4.7, relay-webapp 0.2.2, relayflows 0.2.5, durable-actors 0.14.6-awf.1, relayfile 0.2.2, telemetry-collector 0.1.5, relay-chief 0.1.0) | relayhistory: `ghcr.io/agentworkforce/relayhistory@sha256:<required>`<br>relay-control: `ghcr.io/agentworkforce/relay-control@sha256:d8c26d44dccb…`<br>relay-webapp: `ghcr.io/agentworkforce/relay-webapp@sha256:<required>` |  |  | Carries default-off Relaycast collector analytics and the matching collector vocabulary. No profile selects the feature by default. |
+| agent-relay-0.6.34 | **planned** | agent-relay 0.6.34<br>relayhistory 0.1.3<br>relay-control 0.4.7<br>relay-webapp 0.2.2<br>(deps: relaycast 0.3.7, relayauth 0.1.5, sessions-pipeline 0.8.20, relayhistory 0.1.3, relay-control 0.4.7, relay-webapp 0.2.2, relayflows 0.2.5, durable-actors 0.14.6-awf.1, relayfile 0.2.2, telemetry-collector 0.1.4, relay-chief 0.1.0) | relayhistory: `ghcr.io/agentworkforce/relayhistory@sha256:<required>`<br>relay-control: `ghcr.io/agentworkforce/relay-control@sha256:d8c26d44dccb…`<br>relay-webapp: `ghcr.io/agentworkforce/relay-webapp@sha256:<required>` |  |  | Carries relay-control 0.4.7 with the optional auth.microsoft sign-in pass-through (SELFHOST_MICROSOFT_*, secretKeys.microsoftClientSecret). Nothing renders while auth.microsoft is empty; the API reads it only from an image with relay-control #87. |
 | agent-relay-0.6.33 | **planned** | agent-relay 0.6.33<br>relayhistory 0.1.3<br>relay-control 0.4.6<br>relay-webapp 0.2.2<br>(deps: relaycast 0.3.7, relayauth 0.1.5, sessions-pipeline 0.8.20, relayhistory 0.1.3, relay-control 0.4.6, relay-webapp 0.2.2, relayflows 0.2.5, durable-actors 0.14.6-awf.1, relayfile 0.2.2, telemetry-collector 0.1.4, relay-chief 0.1.0) | relayhistory: `ghcr.io/agentworkforce/relayhistory@sha256:<required>`<br>relay-control: `ghcr.io/agentworkforce/relay-control@sha256:d8c26d44dccb…`<br>relay-webapp: `ghcr.io/agentworkforce/relay-webapp@sha256:<required>` |  |  | Carries telemetry-collector 0.1.4 with the brief-worker vocabulary source allowlist. Keeps the default-off brief analytics binding and the approved Control GCP handoff. |
 | agent-relay-0.6.32 | **planned** | agent-relay 0.6.32<br>relayhistory 0.1.3<br>relay-control 0.4.6<br>relay-webapp 0.2.2<br>(deps: relaycast 0.3.7, relayauth 0.1.5, sessions-pipeline 0.8.20, relayhistory 0.1.3, relay-control 0.4.6, relay-webapp 0.2.2, relayflows 0.2.5, durable-actors 0.14.6-awf.1, relayfile 0.2.2, telemetry-collector 0.1.3, relay-chief 0.1.0) | relayhistory: `ghcr.io/agentworkforce/relayhistory@sha256:<required>`<br>relay-control: `ghcr.io/agentworkforce/relay-control@sha256:d8c26d44dccb…`<br>relay-webapp: `ghcr.io/agentworkforce/relay-webapp@sha256:<required>` |  |  | Carries sessions-pipeline 0.8.20 and the default-off native brief collector binding. Retains the approved Control GCP handoff and dashboard analytics values. |
 | agent-relay-0.6.31 | **planned** | agent-relay 0.6.31<br>relayhistory 0.1.3<br>relay-control 0.4.6<br>relay-webapp 0.2.2<br>(deps: relaycast 0.3.7, relayauth 0.1.5, sessions-pipeline 0.8.19, relayhistory 0.1.3, relay-control 0.4.6, relay-webapp 0.2.2, relayflows 0.2.5, durable-actors 0.14.6-awf.1, relayfile 0.2.2, telemetry-collector 0.1.3, relay-chief 0.1.0) | relayhistory: `ghcr.io/agentworkforce/relayhistory@sha256:<required>`<br>relay-control: `ghcr.io/agentworkforce/relay-control@sha256:d8c26d44dccb…`<br>relay-webapp: `ghcr.io/agentworkforce/relay-webapp@sha256:<required>` |  |  | Carries relay-webapp 0.2.2 with an explicit nullable dashboard analytics runtime flag, preserving both true and false without adding collector credentials to the browser. Retains relay-control 0.4.6 native public-reader aliases, sessions-pipeline 0.8.19 and its opt-in reader ceilings, and the approved relay-control 0.5.10 GCP handoff pin from source 1e552737. Desktop feed and signer behavior are unchanged. No customer target or rollout is selected. |
@@ -1055,6 +1058,12 @@ chart `relaycast` · values [`ci/postgres-values.yaml`](../charts/relaycast/ci/p
 | | requirement | provided by | maps to | verify |
 | --- | --- | --- | --- | --- |
 | shipped | [Relaycast PostgreSQL backend (owner and runtime URLs, CA, migration Job)](#req-relaycast-postgres) | operator | values `runtime.postgres.image.repository`, `runtime.postgres.image.digest`, `runtime.postgres.migrations.identitySalt`, `runtime.postgres.migrations.backoffLimit`, `runtime.postgres.migrations.activeDeadlineSeconds`, `secretKeys.databaseOwnerUrl`, `secretKeys.databaseRuntimeUrl`, `postgresCa.enabled`, `postgresCa.configMap`, `postgresCa.secret`, `postgresCa.key`; env `RELAYCAST_DATABASE_URL_FILE`; Secret `<existingSecret>` keys `database-owner-url`, `database-runtime-url`; Secret `<postgresCa.secret>` keys `ca.crt` (or the same key in the ConfigMap named by postgresCa.configMap) | kubectl wait --for=condition=complete job -l app.kubernetes.io/name=relaycast-migrate; curl <baseUrl>/health |
+
+**Options (choose)**
+
+| | option | choices | default here | maps to |
+| --- | --- | --- | --- | --- |
+| shipped | [Relaycast collector analytics adapter](#opt-relaycast-collector-analytics) | `false`, `true` | `false` | values `analytics.*`; env `RELAYCAST_TELEMETRY_DESTINATION`, `RELAYCAST_TELEMETRY_COLLECTOR_URL`, `RELAYCAST_TELEMETRY_DEPLOYMENT_ID`, `RELAYCAST_TELEMETRY_COLLECTOR_TOKEN_FILE`, `NODE_EXTRA_CA_CERTS`; Secret `<Relaycast component-bound analytics producer Secret>` keys `token` |
 
 ### Profile: relayfile-durable-actors
 
@@ -3409,6 +3418,27 @@ backend: SQLite workspaces are not migrated.
 - Verify: kubectl get deploy relaycast -o jsonpath='{.metadata.labels.agentworkforce\.dev/relaycast-backend}' is durable-actors; curl <baseUrl>/readyz
 - Sources: [`charts/relaycast/values.yaml:29`](../charts/relaycast/values.yaml#L29), [`charts/relaycast/templates/_actors.tpl:98`](../charts/relaycast/templates/_actors.tpl#L98)
 
+#### opt.relaycast.collector-analytics
+
+<a id="opt-relaycast-collector-analytics"></a>
+
+**Relaycast collector analytics adapter** · shipped · chart `relaycast` · profiles relaycast-postgres
+
+The Node runtime can send a closed event vocabulary to the private HTTPS
+collector. The operator chooses a collector-capable image, a deployment ID,
+an existing producer Secret, and the CA ConfigMap. The application has
+separate collector and PostgreSQL CA paths. The migration Job receives
+neither the collector credential nor the collector CA.
+
+- Default: `false`
+- Choices: `false`; `true`
+- Provided by: operator
+- Values: `analytics.*`
+- Env: `RELAYCAST_TELEMETRY_DESTINATION`, `RELAYCAST_TELEMETRY_COLLECTOR_URL`, `RELAYCAST_TELEMETRY_DEPLOYMENT_ID`, `RELAYCAST_TELEMETRY_COLLECTOR_TOKEN_FILE`, `NODE_EXTRA_CA_CERTS`
+- Secret: `<Relaycast component-bound analytics producer Secret>` from `analytics.existingSecret`; keys `token` from `analytics.tokenKey`
+- Verify: Verify the application-only CA and token projections, and a real dm.sent event in the private collector files.
+- Sources: [`charts/relaycast/templates/_analytics.tpl`](../charts/relaycast/templates/_analytics.tpl), [`charts/relaycast/templates/deployment.yaml`](../charts/relaycast/templates/deployment.yaml)
+
 #### opt.relayfile.durable-actors
 
 <a id="opt-relayfile-durable-actors"></a>
@@ -3924,10 +3954,11 @@ Rendered by the charts but not a requirement or an option: fixed by the chart or
 | `RELAYCAST_WORKSPACE_BOOTSTRAP_SECRET` | relaycast | reserved prefix in the extraEnv guard; the Secret is mounted as a file |
 | `RELAYCAST_RELAYAUTH` | relaycast | reserved prefix in the extraEnv guard; the RelayAuth remote tagger is wired through credentials.relayauth.url and secretKeys.relayauthToken |
 | `RELAYCAST_CREDENTIAL` | relaycast | reserved prefix in the extraEnv guard; the credential format and local keyring are wired through credentials.* and secretKeys.credentialKeyring |
+| `RELAYCAST_TELEMETRY_` | relaycast | reserved prefix in extraEnv while the structured analytics binding is enabled |
 | `MIGRATION_WAIT_SECONDS` | relaycast | postgres backend wait-for-migrations init container; from runtime.postgres.migrations.activeDeadlineSeconds |
 | `RELAYCAST_DATABASE_` | relaycast | reserved prefix in the extraEnv guard on the sqlite and durable-actors backends |
 | `RELAYCAST_DATABASE_URL` | relaycast | reserved name in the postgres extraEnv guard; the URL is mounted as a file |
-| `RELAYCAST_DATABASE_CA_FILE` | relaycast | reserved name in the postgres extraEnv guard; the chart uses NODE_EXTRA_CA_CERTS |
+| `RELAYCAST_DATABASE_CA_FILE` | relaycast | explicit DB CA when managed analytics uses NODE_EXTRA_CA_CERTS for the collector; otherwise the DB uses NODE_EXTRA_CA_CERTS |
 | `RELAYCAST_DATABASE_SCHEMA` | relaycast | reserved name in the postgres extraEnv guard; left at the image default |
 | `RELAYCAST_DATABASE_OWNER_ROLE` | relaycast | reserved name in the postgres extraEnv guard; left at the image default |
 | `RELAYCAST_DATABASE_RUNTIME_ROLE` | relaycast | reserved name in the postgres extraEnv guard; left at the image default |
