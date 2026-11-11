@@ -372,7 +372,8 @@ class LocalStack(Stack):
         while True:
             try:
                 output = self.k("exec", "-i", pod, "--", "node", "-e", CONTROL_OBSERVER,
-                    data=json.dumps({"bootstrapKey": "bootstrap-token", "historyOrigin": HISTORY, "organizationName": "Local development", "administratorEmail": "owner@kind.example"}), sensitive=True).stdout
+                    data=json.dumps({"bootstrapKey": "bootstrap-token", "historyOrigin": HISTORY, "organizationName": "Local development", "administratorEmail": "owner@kind.example",
+                        "selectedFeatures": AA_VALUES["relay-control"]["selectedFeatures"]}), sensitive=True).stdout
                 break
             except StackError:
                 # First-boot tenant provisioning finishes after the process's
