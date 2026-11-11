@@ -23,6 +23,9 @@ COMMAND_LOG="${TEST_ROOT}/commands.log"
 mkdir -p "${MOCK_BIN}"
 : >"${COMMAND_LOG}"
 
+# Capture actual submitted scripts and helper SQL before the setup cleans up.
+export MOCK_CAPTURE_DIR="${TEST_ROOT}/capture"
+mkdir -p "$MOCK_CAPTURE_DIR"
 cat >"${MOCK_BIN}/aws" <<'MOCK'
 #!/usr/bin/env bash
 printf 'aws' >>"${MOCK_COMMAND_LOG}"
@@ -60,6 +63,12 @@ cat >"${MOCK_BIN}/kubectl" <<'MOCK'
 printf 'kubectl' >>"${MOCK_COMMAND_LOG}"
 printf ' %s' "$@" >>"${MOCK_COMMAND_LOG}"
 printf '\n' >>"${MOCK_COMMAND_LOG}"
+for argument in "$@"; do
+  case "$argument" in
+    --from-file=run.sh=*) cp "${argument#--from-file=run.sh=}" "$MOCK_CAPTURE_DIR/run.sh" ;;
+    --from-file=session-erase-search.sql=*) cp "${argument#--from-file=session-erase-search.sql=}" "$MOCK_CAPTURE_DIR/erase.sql" ;;
+  esac
+done
 case " $* " in
   *" apply -f - "*) cat >/dev/null; exit 0 ;;
   *" create secret generic "*) printf 'apiVersion: v1\nkind: Secret\nmetadata: {name: fixture}\n'; exit 0 ;;
@@ -131,3 +140,27 @@ post_output="$(bash "${RDS_SETUP}" post 2>&1)"
 grep -q -- '--context customer-context -n agent-relay get job sessions-pipeline-worker-migrate-current -o json' "${COMMAND_LOG}" || fail "post mode did not verify the exact current migration Job in the selected context"
 grep -q 'agent-relay-rds-post' "${COMMAND_LOG}" || fail "post bootstrap Job was not applied"
 pass "post mode requires migration evidence and activates runtime roles"
+
+[[ -s "$STATE_DIR/passwords/bulls96_session_erase_search" ]] || fail "erase search password missing"
+[[ -s "$STATE_DIR/secret-files/session-erase-search-runtime/SESSION_ERASE_SEARCH_POSTGRES_URL" ]] || fail "dedicated erase search input missing"
+[[ "$(stat -c '%a' "$STATE_DIR/secret-files/session-erase-search-runtime/SESSION_ERASE_SEARCH_POSTGRES_URL")" == 600 ]] || fail "erase input is not private"
+grep -q '^provision_erase_search_login=0$' "$MOCK_CAPTURE_DIR/run.sh" || fail "erase login enabled by default"
+[[ "$post_output" != *"aaaaaaaaaaaaaaaa"* ]] || fail "erase password leaked"
+pass "eraser credentials are separate and login activation defaults off"
+
+cp "$STATE_DIR/passwords/bulls96_session_erase_search" "$TEST_ROOT/original-password"
+bash "$RDS_SETUP" pre >/dev/null
+cmp "$STATE_DIR/passwords/bulls96_session_erase_search" "$TEST_ROOT/original-password" || fail "rerun rotated erase password"
+grep -q '\-v post=false -f /run-script/session-erase-search.sql' "$MOCK_CAPTURE_DIR/run.sh" || fail "pre does not create dormant role"
+cmp "$MOCK_CAPTURE_DIR/erase.sql" "${TEST_DIR}/../rds-session-erase-search.sql" || fail "Job did not receive exact reviewed SQL"
+pass "pre reuses eraser credentials and ships reviewed role SQL"
+
+PROVISION_ERASE_SEARCH_LOGIN=1 bash "$RDS_SETUP" post >/dev/null
+grep -q '^provision_erase_search_login=1$' "$MOCK_CAPTURE_DIR/run.sh" || fail "post lost explicit activation request"
+grep -q '\-v post=true -v p1="$bulls96_session_erase_search"' "$MOCK_CAPTURE_DIR/run.sh" || fail "post omitted dedicated eraser credential"
+pass "post carries explicit optional provisioning and dedicated credentials"
+
+mv "$STATE_DIR/passwords/bulls96_session_erase_search" "$TEST_ROOT/saved-password"
+if bash "$RDS_SETUP" post >"$TEST_ROOT/missing.out" 2>&1; then fail "post accepted missing eraser password"; fi
+grep -q 'missing bulls96_session_erase_search password' "$TEST_ROOT/missing.out" || fail "missing password refusal unclear"
+pass "post refuses missing eraser pre-phase input"

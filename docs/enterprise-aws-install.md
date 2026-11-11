@@ -212,6 +212,38 @@ After the HoopDb migration Job succeeds, run `rds-setup.sh post` and restart the
 read API, ingest edge, and search indexer. The post phase refuses to activate
 those logins before migration evidence exists and verifies each login over TLS.
 
+### Optional operator eraser role (2026.11.1 pull update)
+
+The alpha.5 AA install predates operator hard-delete and needs no eraser login.
+For the later approved update, `pre` also creates the separate
+`bulls96_session_erase_search` identity as `NOLOGIN NOINHERIT` and writes its
+private input to
+`$STATE_DIR/secret-files/session-erase-search-runtime/SESSION_ERASE_SEARCH_POSTGRES_URL`.
+Repeat runs reuse the password; they do not disable an already activated login.
+Neither this file nor the new role enables hard-delete or mounts credentials
+into a workload. No chart version changes accompany this role support.
+
+Provision the optional **Postgres search** eraser login only after both the
+current HoopDb migrate Job and the search-indexer owner bootstrap complete.
+With the approved pipeline runtime that accepts the RDS owner's admin-only
+creator edge, use `PROVISION_ERASE_SEARCH_LOGIN=1` with the normal `post`
+command. It refuses missing search tables, missing forced tenant RLS, broad
+content/write privileges, unsafe attributes, and borrowed memberships. The
+RDS owner retains only its creator ADMIN edge (no INHERIT or SET on PG16+),
+so later password rotation remains possible. The eraser itself belongs to no
+other role. The adapter grants only schema USAGE, DELETE, key-column SELECT
+and database CONNECT, with 5s statement, 2s lock and 10s idle-transaction limits.
+It does not use the direct-superuser CNPG bootstrap on RDS.
+
+Keep the default `PROVISION_ERASE_SEARCH_LOGIN=0` for old images and installs
+without the Postgres search schema; normal `post` continues to activate the
+existing read/ingest/indexer logins. OpenSearch deletion has a separate backend
+credential contract; this optional Postgres credential does not authorize it.
+Use the approved secret system to bind the dedicated input only in a separately
+reviewed hard-delete rollout. Applying role/grant changes to a real database,
+provisioning deletion credentials, deployments, and enabling erase flags still
+require Khaliq's explicit approval. Keep this out of the alpha.5 install packet.
+
 **Checkpoint:** all required migrations and runtime-role checks pass on managed
 RDS. `application_sql_ready=false` or a pending generation means stop here.
 

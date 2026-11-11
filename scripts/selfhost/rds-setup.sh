@@ -21,6 +21,8 @@
 #   KUBE_CONTEXT           kubectl context; empty uses the current context
 #   RELEASE                required in post mode; exact Helm release name
 #   MIGRATION_JOB          required in post mode; current rendered migrate Job
+#   PROVISION_ERASE_SEARCH_LOGIN  default 0; 1 activates the optional Postgres
+#                         eraser login after search bootstrap (not an erase flag)
 #
 # It is safe to run again: existing roles, databases and generated passwords are
 # reused. It prints no passwords or connection strings. Credentials are written
@@ -45,7 +47,10 @@ PW_DIR="$STATE_DIR/passwords"
 FILES="$STATE_DIR/secret-files"
 JOB_TIMEOUT_SECONDS="${JOB_TIMEOUT_SECONDS:-600}"
 SQL_DIR=/app/supabase/bootstrap
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 KUBE_CONTEXT="${KUBE_CONTEXT:-}"
+PROVISION_ERASE_SEARCH_LOGIN="${PROVISION_ERASE_SEARCH_LOGIN:-0}"
+[[ "$PROVISION_ERASE_SEARCH_LOGIN" == 0 || "$PROVISION_ERASE_SEARCH_LOGIN" == 1 ]] || { echo "PROVISION_ERASE_SEARCH_LOGIN must be 0 or 1" >&2; exit 2; }
 
 log() { printf '%s %s\n' "$(date -u +%H:%M:%SZ)" "$*"; }
 die() { log "ERROR: $*" >&2; exit 1; }
@@ -109,6 +114,7 @@ run_job() {
     --dry-run=client -o yaml | kubectl apply -f - >/dev/null
   rm -rf "$secret_dir"
   kubectl -n "$NS" create configmap "$name-run" --from-file=run.sh="$script" \
+    --from-file=session-erase-search.sql="$SCRIPT_DIR/rds-session-erase-search.sql" \
     --dry-run=client -o yaml | kubectl apply -f - >/dev/null
 
   jq -n --arg ns "$NS" --arg name "$name" --arg psql "$PSQL_IMAGE" --arg services "$SERVICES_IMAGE" \
@@ -187,6 +193,11 @@ write_credential_files() {
   write_file search-indexer-runtime RELAYHISTORY_PIPELINE_CONSUMER_SECRET \
     < <(json_url hoopdb_url "$(url postgresql search_consumer_runtime "$(pw search_consumer_runtime)" hoopdb)")
 
+  # Optional operator hard-delete uses a separate delete-only login. Creating
+  # this private input does not mount it into a workload or enable the feature.
+  write_file session-erase-search-runtime SESSION_ERASE_SEARCH_POSTGRES_URL \
+    < <(url postgresql bulls96_session_erase_search "$(pw bulls96_session_erase_search)" hoopdb)
+
   # The HoopDb migration owner is the RDS admin. RDS rotates that password, so
   # The HoopDb migration owner uses the rotating RDS admin password. Re-run
   # pre mode before a later Helm upgrade to refresh the local Secret input.
@@ -212,7 +223,7 @@ do_pre() {
 
   local p
   for p in control_owner control_api_runtime sessions_pipeline_runtime relaycast_owner \
-           relaycast_runtime bulls96_read_api bulls96_session_ingest search_consumer_runtime; do
+           relaycast_runtime bulls96_read_api bulls96_session_ingest search_consumer_runtime bulls96_session_erase_search; do
     password_for "$p"
   done
 
@@ -278,6 +289,8 @@ for f in session_directory_search_worker session_token_verifier session_ingest_r
   $P -f "/sql/$f.sql"
   echo "$f ok"
 done
+$P -v post=false -f /run-script/session-erase-search.sql
+echo "erase search identity ready (no new login until post)"
 $Q -c "select 'hoopdb owner: '||pg_get_userbyid(datdba) from pg_database where datname='hoopdb'"
 $Q -c "select 'rdsadmin superuser: '||rolsuper from pg_roles where rolname='rdsadmin'"
 $Q -c "select 'extensions: '||string_agg(extname,',' order by extname) from pg_extension"
@@ -294,7 +307,7 @@ do_post() {
   : "${MIGRATION_JOB:?set MIGRATION_JOB to the current rendered migrate Job name}"
   [[ "$MIGRATION_JOB" =~ ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$ ]] || die "MIGRATION_JOB must be a DNS-1123 label"
   local p
-  for p in bulls96_read_api bulls96_session_ingest search_consumer_runtime; do
+  for p in bulls96_read_api bulls96_session_ingest search_consumer_runtime bulls96_session_erase_search; do
     [[ -s "$PW_DIR/$p" ]] || die "missing $p password: run '$0 pre' first"
   done
 
@@ -310,7 +323,8 @@ do_post() {
   ' <<<"$migration_json" >/dev/null \
     || die "current HoopDb migrate Job $MIGRATION_JOB has not succeeded for release $RELEASE"
 
-  cat > "$WORK/run.sh" <<'EOS'
+  printf 'provision_erase_search_login=%s\n' "$PROVISION_ERASE_SEARCH_LOGIN" > "$WORK/run.sh"
+  cat >> "$WORK/run.sh" <<'EOS'
 set -eu
 export PGDATABASE=hoopdb
 P="psql -X -q -v ON_ERROR_STOP=1"
@@ -336,13 +350,23 @@ fi
 printf '%s\n' "ALTER ROLE search_consumer_runtime LOGIN NOINHERIT PASSWORD :'p1'; ALTER ROLE search_consumer_runtime SET statement_timeout = '60s';" | $P -v p1="$search_consumer_runtime"
 echo "search consumer role ok"
 
+# Both search tables are created by the separate search-indexer bootstrap Job.
+# A missing/incomplete schema refuses activation; rerun after it completes.
+if [ "$provision_erase_search_login" = 1 ]; then
+  $P -v post=true -v p1="$bulls96_session_erase_search" -f /run-script/session-erase-search.sql
+  PGUSER=bulls96_session_erase_search PGPASSWORD="$bulls96_session_erase_search" $Q -c "select 'erase search login ok: '||session_user||' tls='||(select ssl from pg_stat_ssl where pid=pg_backend_pid())"
+  echo "erase search role ok"
+else
+  echo "erase search login activation not requested"
+fi
+
 for role in bulls96_read_api bulls96_session_ingest search_consumer_runtime; do
   eval "secret=\$$role"
   PGUSER="$role" PGPASSWORD="$secret" $Q -c "select 'login ok: '||session_user||' tls='||(select ssl from pg_stat_ssl where pid=pg_backend_pid())"
 done
 EOS
 
-  run_job agent-relay-rds-post "$WORK/run.sh" bulls96_read_api bulls96_session_ingest search_consumer_runtime
+  run_job agent-relay-rds-post "$WORK/run.sh" bulls96_read_api bulls96_session_ingest search_consumer_runtime bulls96_session_erase_search
   log "post done; restart the read API, ingest edge and search indexer"
 }
 
