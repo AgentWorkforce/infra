@@ -229,21 +229,38 @@ relying on the role: the Control image must read Pod Identity credentials.
 
 ## Search access to the sessions bucket
 
-The search indexer and session-read roles have no bucket access by default. To
-grant them read-only access to this environment's sessions bucket, set:
+The search indexer (sessions-pipeline search stage) and session-read API roles
+get read-only access to this environment's sessions bucket by default:
+`s3:ListBucket` on the bucket, `s3:GetObject` on its objects and, when
+`kms_key_arn` is set, `kms:Decrypt` on that key through S3. With
+`kms_key_arn = null` the bucket uses the AWS-managed `aws/s3` key and no key
+grant is added. No input is needed. Without this grant the indexer fails every
+tick with `unauthorized` and the read API returns empty session lists, so
+uploads are accepted but nothing appears in the dashboard.
 
-```hcl
-search_sessions_bucket_read = {
-  bucket_arn  = "arn:aws:s3:::<name_prefix>-<environment>-<account_id>-<region>-sessions"
-  # The environment's kms_key_arn; omit for AWS-managed encryption.
-  kms_key_arn = "arn:aws:kms:<region>:<account_id>:key/<key-id>"
-}
-```
+The grant is one `sessions-read-<name>-search` inline policy on each role, a
+new `aws_iam_role_policy.sessions_read` resource. On an environment applied
+before this default, the next plan only creates those two policies; no role,
+domain or other policy changes. Environments that already set
+`search_sessions_bucket_read` see no change. External roles
+(`existing_runtime_roles`) get it as `runtime_role_policy_json.sessions_read`
+to attach themselves.
 
-Any other bucket or key is refused at plan. This adds one inline policy to each
-role and changes nothing else. External
-roles (`existing_runtime_roles`) get it as `runtime_role_policy_json.sessions_read`
-to attach themselves. After apply, map both roles in OpenSearch; see
+To opt out, set `search_sessions_bucket_read_enabled = false`. Do that for one
+apply if the search state has not yet recorded `creation_mode` (an
+environment applied before that marker existed): the runner holds a plan that
+both enrolls the marker and adds the policies. Apply once with the grant off,
+then remove the override.
+
+`search_sessions_bucket_read` remains as an explicit, equivalent form. It must
+name this environment's sessions bucket and its `kms_key_arn` (omit the key for
+AWS-managed encryption); any other bucket or key is refused at plan, as is
+combining it with `search_sessions_bucket_read_enabled = false`.
+
+Under a Pippen lease the roles keep the Pippen boundary, which still caps the
+grant.
+
+After apply, map both roles in OpenSearch; see
 [the search module](../../modules/aws/search/README.md#after-apply).
 
 ## Existing runtime identities
@@ -561,7 +578,8 @@ exact destroy inventory and recovery proof; do not remove state to bypass them.
 | release\_name | Helm release name used in generated ServiceAccount names. | `string` | `"agent-relay"` | no |
 | search\_engine\_version | Region-supported OpenSearch engine version. | `string` | `"OpenSearch_2.19"` | no |
 | search\_instance\_type | Override the environment tier's OpenSearch data node type. | `string` | `null` | no |
-| search\_sessions\_bucket\_read | Exact ARNs of this environment's sessions bucket and, for a customer-managed key, its kms\_key\_arn (null for AWS-managed encryption). Any other bucket or key is refused. Grants the search indexer and session-read roles read-only access. null changes nothing. | ```object({ bucket_arn = string kms_key_arn = optional(string) })``` | `null` | no |
+| search\_sessions\_bucket\_read | Optional explicit form of the default grant: exact ARNs of this environment's sessions bucket and, for a customer-managed key, its kms\_key\_arn (null for AWS-managed encryption). Any other bucket or key is refused. null uses the computed default. | ```object({ bucket_arn = string kms_key_arn = optional(string) })``` | `null` | no |
+| search\_sessions\_bucket\_read\_enabled | Grant the search indexer and session-read roles read-only access to this environment's sessions bucket and the kms\_key\_arn that encrypts it. Defaults on: without it the indexer fails with unauthorized and the read API lists no sessions. false omits the two inline policies (for example, for one apply that enrolls an unmarked search state first). | `bool` | `true` | no |
 | service\_database\_names | Existing or reviewed new database names for HoopDb, Relaycast and optional Relayfile on the same RDS instance. This metadata does not create or rename databases. Control uses application\_database\_name. | `map(string)` | ```{ "hoopdb": "hoopdb", "relaycast": "relaycast", "relayfile": "relayfile" }``` | no |
 | tags | Additional resource tags. Environment identity and Pippen conventions cannot be overridden. | `map(string)` | `{}` | no |
 

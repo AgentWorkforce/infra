@@ -98,7 +98,7 @@ output "runtime_role_policy_json" {
       reader   = module.search.reader_policy_json
       pipeline = var.pipeline_runtime == "lambda" ? module.pipeline[0].execution_role_policy_json : null
     },
-    var.search_sessions_bucket_read == null ? {} : { sessions_read = module.search.sessions_read_policy_json },
+    local.search_sessions_bucket_read == null ? {} : { sessions_read = module.search.sessions_read_policy_json },
   )
 }
 
