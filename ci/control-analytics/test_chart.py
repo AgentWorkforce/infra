@@ -185,13 +185,15 @@ class ControlAdapters(unittest.TestCase):
 
 class DashboardAdapter(unittest.TestCase):
     def render(self, value=None, explicit=False, coordination=None,
-               coordination_explicit=False, umbrella=False, fail=False,
+               coordination_explicit=False, session_read=None, umbrella=False, fail=False,
                error="runtime.analyticsEnabled must be a boolean or null"):
         values = yaml.safe_load((ROOT / "charts/relay-webapp/ci/default-values.yaml").read_text())
         if explicit:
             values.setdefault("runtime", {})["analyticsEnabled"] = value
         if coordination_explicit:
             values.setdefault("runtime", {})["coordinationOverlapsEnabled"] = coordination
+        if session_read is not None:
+            values.setdefault("runtime", {})["sessionReadApiEnabled"] = session_read
         chart = "relay-webapp"
         if umbrella:
             chart = "agent-relay"
@@ -232,12 +234,24 @@ class DashboardAdapter(unittest.TestCase):
                 "DASHBOARD_COORDINATION_OVERLAPS_ENABLED",
                 self.render(coordination=False, coordination_explicit=True, umbrella=umbrella),
             )
+            self.render(
+                coordination=True,
+                coordination_explicit=True,
+                umbrella=umbrella,
+                fail=True,
+                error="runtime.coordinationOverlapsEnabled=true requires runtime.sessionReadApiEnabled=true",
+            )
+            enabled = self.render(
+                coordination=True,
+                coordination_explicit=True,
+                session_read=True,
+                umbrella=umbrella,
+            )
             self.assertEqual(
-                self.render(coordination=True, coordination_explicit=True, umbrella=umbrella)[
-                    "DASHBOARD_COORDINATION_OVERLAPS_ENABLED"
-                ],
+                enabled["DASHBOARD_COORDINATION_OVERLAPS_ENABLED"],
                 "true",
             )
+            self.assertEqual(enabled["DASHBOARD_SESSION_READ_API_ENABLED"], "true")
 
     def test_coordination_view_refuses_non_boolean_values(self):
         for value in ["true", "false", 1, None, [], {}]:

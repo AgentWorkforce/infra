@@ -68,6 +68,9 @@ spec:
             {{- if not (kindIs "bool" .Values.runtime.coordinationOverlapsEnabled) }}
             {{- fail "runtime.coordinationOverlapsEnabled must be a boolean" }}
             {{- end }}
+            {{- if and .Values.runtime.coordinationOverlapsEnabled (not .Values.runtime.sessionReadApiEnabled) }}
+            {{- fail "runtime.coordinationOverlapsEnabled=true requires runtime.sessionReadApiEnabled=true" }}
+            {{- end }}
             {{- if .Values.runtime.coordinationOverlapsEnabled }}
             - { name: DASHBOARD_COORDINATION_OVERLAPS_ENABLED, value: "true" }
             {{- end }}

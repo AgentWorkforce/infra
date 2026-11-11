@@ -92,4 +92,5 @@ endpoint is available. Setting it to `true` renders
 `DASHBOARD_COORDINATION_OVERLAPS_ENABLED=true`. It requires a dashboard image
 containing relay-webapp #124 and also requires `runtime.sessionReadApiEnabled`
 plus a read API serving the Postgres coordination-overlaps contract. Pin and
-verify that image before enabling the view; older images ignore the setting.
+verify that image before enabling the view; the chart refuses the view flag
+without the direct-read flag, and older images ignore the setting.

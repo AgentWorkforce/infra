@@ -5490,7 +5490,7 @@ entries:
     provided_by: operator
     default: false
     choices: [{ value: false }, { value: true }]
-    verify: Render no environment binding by default or for false, render quoted true when selected, refuse non-booleans, and verify the compatible image makes no overlap request while off.
+    verify: Render no environment binding by default or for false; refuse non-booleans and true without runtime.sessionReadApiEnabled; render both quoted true bindings when selected; verify the compatible image makes no overlap request while off.
     sources: [charts/relay-webapp/templates/deployment.yaml, charts/relay-webapp/values.yaml, charts/relay-webapp/README.md]
 
   - id: opt.sessions-pipeline.native-routing

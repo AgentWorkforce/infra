@@ -3907,7 +3907,7 @@ managed Postgres coordination-overlaps backend must also be available.
 - Provided by: operator
 - Values: `runtime.coordinationOverlapsEnabled`
 - Env: `DASHBOARD_COORDINATION_OVERLAPS_ENABLED`
-- Verify: Render no environment binding by default or for false, render quoted true when selected, refuse non-booleans, and verify the compatible image makes no overlap request while off.
+- Verify: Render no environment binding by default or for false; refuse non-booleans and true without runtime.sessionReadApiEnabled; render both quoted true bindings when selected; verify the compatible image makes no overlap request while off.
 - Sources: [`charts/relay-webapp/templates/deployment.yaml`](../charts/relay-webapp/templates/deployment.yaml), [`charts/relay-webapp/values.yaml`](../charts/relay-webapp/values.yaml), [`charts/relay-webapp/README.md`](../charts/relay-webapp/README.md)
 
 #### opt.sessions-pipeline.native-routing
