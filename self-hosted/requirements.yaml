@@ -300,13 +300,17 @@ compatibility:
       status: shipped
       charts: { telemetry-collector: 0.1.0 }
       notes: 'Default-off umbrella analytics file collector. Requires accepted immutable collector and TLS-proxy images, producer and TLS Secrets and an exclusive persistent volume. Source rendering does not prove image entrypoint, TLS, durable acknowledgement, power-loss recovery or whole-application analytics coverage. The currently reviewed collector CLI registers relaycontrol events only.'
-    - id: session-read-api-0.2.6
+    - id: session-read-api-0.2.7
       status: unreleased
       current: true
-      charts: { session-read-api: 0.2.6 }
+      charts: { session-read-api: 0.2.7 }
       images:
         session-read-api: { repository: ghcr.io/agentworkforce/96bulls-services, digest_required: true }
-      notes: 'Makes readerMaxRuleset default null, omitting READER_MAX_RULESET so legacy reads remain unchanged. Explicit 8, 9 or 10 opts into strict marker checks. Raising it requires an independently qualified image containing relayhistory-pipeline #489 including its default-path compatibility and binding fixes, after exact-head review. This reader ceiling neither selects a writer ruleset nor enables a workload.'
+      notes: 'When coordinationOverlaps.enabled is selected, renders both READ_API_COORDINATION_OVERLAPS_ENABLED=true and the managed Postgres backend. The standalone leaf default remains off; sessions-pipeline 0.8.21 supplies its own default-on adapter. Requires an independently qualified services image from relayhistory-pipeline fe62ed80 or a reviewed successor, including migration 20261105047000_coordination_fact_readers.'
+    - id: session-read-api-0.2.6
+      status: planned
+      charts: { session-read-api: 0.2.6 }
+      notes: 'Superseded before release by 0.2.7. Makes readerMaxRuleset default null, omitting READER_MAX_RULESET so legacy reads remain unchanged.'
     - id: session-read-api-0.2.5
       status: shipped
       charts: { session-read-api: 0.2.5 }
@@ -337,17 +341,17 @@ compatibility:
       images:
         session-read-api: { repository: ghcr.io/agentworkforce/96bulls-services, digest_required: true }
       notes: 'Defaults READ_API_COMPLETE_SINCE to epoch for a new self-host store populated only by its own ingest. Partial legacy imports must retain an explicit real coverage floor matching the indexer. Image, auth, routing and enabled defaults are unchanged; this does not assert coverage for an imported store or qualify a runtime.'
-    - id: sessions-pipeline-0.8.20
+    - id: sessions-pipeline-0.8.21
       status: unreleased
       current: true
-      charts: { sessions-pipeline: 0.8.20, sessions-pipeline-worker: 0.7.7, session-ingest-api: 0.4.4, session-read-api: 0.2.6 }
+      charts: { sessions-pipeline: 0.8.21, sessions-pipeline-worker: 0.7.7, session-ingest-api: 0.4.4, session-read-api: 0.2.7 }
       depends:
-        sessions-pipeline: { worker: 0.7.7, alleyoop: 0.4.4, sessionReadApi: 0.2.6, hoopdb: 0.9.0, session-object-storage: 5.4.0, otel: 0.178.0 }
+        sessions-pipeline: { worker: 0.7.7, alleyoop: 0.4.4, sessionReadApi: 0.2.7, hoopdb: 0.9.0, session-object-storage: 5.4.0, otel: 0.178.0 }
       images:
         sessions-pipeline-worker: { repository: agentworkforce/96bulls-services, digest: sha256:6f22ea17dff336e1431664542759fd27958649388b90a0b2f0881883caa7c6b2 }
         session-ingest-api: { repository: agentworkforce/96bulls-services, digest: sha256:6f22ea17dff336e1431664542759fd27958649388b90a0b2f0881883caa7c6b2 }
         session-read-api: { repository: ghcr.io/agentworkforce/96bulls-services, digest_required: true }
-      images_note: "The aws-rds-native profile requires one approved release-overlay services digest for worker, alleyoop, sessionReadApi, ingestEdge and searchIndexer; every profile digest stays empty in source. Setting an explicit readerMaxRuleset requires an artifact containing relayhistory-pipeline #489 including its default-path compatibility and binding fixes, after exact-head review. The artifact must also include pipeline #484 for default-on claim-lock 429/Retry-After behavior, fresh-install search_index grants, schema through 046010, session query and coordination overlaps. Existing profile image pins are unchanged."
+      images_note: "The aws-rds-native profile requires one approved release-overlay services digest for worker, alleyoop, sessionReadApi, ingestEdge and searchIndexer; every profile digest stays empty in source. Coordination overlaps require an independently qualified artifact from relayhistory-pipeline fe62ed80 or a reviewed successor, including migration 20261105047000_coordination_fact_readers. Setting an explicit readerMaxRuleset also requires #489 including its default-path compatibility and binding fixes. The artifact must include #484 for default-on claim-lock 429/Retry-After behavior, fresh-install search_index grants, schema through 046010 and session query. Existing profile image pins are unchanged."
       services:
         source_commit: 7d7229bb31c121ecb98cd4e35c248fc2cf5669ad
         migration_generation: eff8b3be46565b57ad8fa5e4a066dbb6d1fe608313d9c1680bfbcd484add259b
@@ -363,7 +367,11 @@ compatibility:
         - "charts/sessions-pipeline/Chart.yaml:4"
         - "charts/sessions-pipeline/profiles/aws-rds-native.yaml"
         - "ci/sessions-pipeline-profiles/matrix.sh"
-      notes: 'Carries the default-off native brief collector adapter. Opt-in requires a compatible brief worker image, collector registration and dedicated producer Secret. Existing image pins and database profiles are preserved.'
+      notes: 'Defaults the coordination-overlaps endpoint on when sessionReadApi is enabled, with the managed Postgres backend. The standalone leaf reader remains default off and the Dashboard view remains separately default off. Populated databases must prebuild the two exact partial indexes concurrently before migration 20261105047000_coordination_fact_readers; fresh installs build them directly. No services image or runtime is selected.'
+    - id: sessions-pipeline-0.8.20
+      status: planned
+      charts: { sessions-pipeline: 0.8.20, sessions-pipeline-worker: 0.7.7, session-ingest-api: 0.4.4, session-read-api: 0.2.6 }
+      notes: 'Superseded before release by 0.8.21. Carries the default-off native brief collector adapter and nullable reader ceilings.'
     - id: sessions-pipeline-0.8.19
       status: shipped
       charts: { sessions-pipeline: 0.8.19, sessions-pipeline-worker: 0.7.6, session-ingest-api: 0.4.4, session-read-api: 0.2.6 }
@@ -1128,9 +1136,20 @@ compatibility:
       images:
         relayauth: { repository: ghcr.io/agentworkforce/relayauth, digest: sha256:eb71daa28e30eb7305f666d0bccc5a4002e53e8a574e3c4c32163d907a1b71df }
       notes: superseded by 0.1.1.
-    - id: agent-relay-0.6.35
+    - id: agent-relay-0.6.36
       status: unreleased
       current: true
+      charts: { agent-relay: 0.6.36, relayhistory: 0.1.3, relay-control: 0.4.7, relay-webapp: 0.2.3 }
+      app_versions: { agent-relay: 0.1.0, relayhistory: 0.1.0, relay-control: 0.1.0, relay-webapp: 0.1.0 }
+      depends:
+        agent-relay: { relaycast: 0.3.8, relayauth: 0.1.5, sessions-pipeline: 0.8.21, relayhistory: 0.1.3, relay-control: 0.4.7, relay-webapp: 0.2.3, relayflows: 0.2.5, durable-actors: 0.14.6-awf.1, relayfile: 0.2.2, telemetry-collector: 0.1.5, relay-chief: 0.1.0 }
+      images:
+        relayhistory: { repository: ghcr.io/agentworkforce/relayhistory, digest_required: true }
+        relay-control: { repository: ghcr.io/agentworkforce/relay-control, digest: sha256:d8c26d44dccb6dd21b7033288241a379e46ce5fbca69f276c4d4745001c3c3e2 }
+        relay-webapp: { repository: ghcr.io/agentworkforce/relay-webapp, digest: sha256:bd295ccb7d1323965dce890f19d0b7f857d706c00d7756f719c713763fdb49f3 }
+      notes: 'Carries sessions-pipeline 0.8.21 with its default-on Postgres coordination-overlaps endpoint when the reader is enabled, relay-webapp 0.2.3 with the strict default-off coordination-overlaps view and qualified #124 image from source d40c0b30 (run 42936053821), plus the default-off Relaycast collector analytics from 0.6.35. A qualified immutable services image remains a prerequisite; no services pin or rollout is selected.'
+    - id: agent-relay-0.6.35
+      status: planned
       charts: { agent-relay: 0.6.35, relayhistory: 0.1.3, relay-control: 0.4.7, relay-webapp: 0.2.2 }
       app_versions: { agent-relay: 0.1.0, relayhistory: 0.1.0, relay-control: 0.1.0, relay-webapp: 0.1.0 }
       depends:
@@ -1139,7 +1158,7 @@ compatibility:
         relayhistory: { repository: ghcr.io/agentworkforce/relayhistory, digest_required: true }
         relay-control: { repository: ghcr.io/agentworkforce/relay-control, digest: sha256:d8c26d44dccb6dd21b7033288241a379e46ce5fbca69f276c4d4745001c3c3e2 }
         relay-webapp: { repository: ghcr.io/agentworkforce/relay-webapp, digest_required: true }
-      notes: 'Carries default-off Relaycast collector analytics and the matching collector vocabulary. No profile selects the feature by default.'
+      notes: 'Superseded before release by 0.6.36. Carries default-off Relaycast collector analytics and the matching collector vocabulary.'
     - id: agent-relay-0.6.34
       status: planned
       charts: { agent-relay: 0.6.34, relayhistory: 0.1.3, relay-control: 0.4.7, relay-webapp: 0.2.2 }
@@ -4830,11 +4849,15 @@ entries:
       enables this option, through a mandatory qualified release overlay. The old
       sessions-pipeline readApi key refuses to render with a migration message.
       Source configuration alone does not claim runtime availability or proof.
-      coordinationOverlaps.enabled is separately default off and emits
-      READ_API_COORDINATION_OVERLAPS_ENABLED=true only when selected.
+      coordinationOverlaps.enabled is default off in the standalone leaf. The
+      sessions-pipeline adapter defaults it on when the dependency is enabled,
+      emitting READ_API_COORDINATION_OVERLAPS_ENABLED=true and the managed
+      READ_API_COORDINATION_OVERLAPS_BACKEND=postgres selection. It requires a
+      qualified fe62ed80-or-later services image and migration
+      20261105047000_coordination_fact_readers.
     chart: session-read-api
     values: [fullnameOverride, replicas, image.*, imagePullSecrets, port, probeRuntime, origin, completeSince, directoryWorkspaces, login.advertisesSync, turns.assumeNoLegacy, events.messageIds, coordinationOverlaps.enabled, serviceAccountCreate, allowInClusterHttp, config.*, postgres.*, postgresCa.*, search.*, auth.*, cors.*, ingress.*, networkPolicy.*, extraEnv, extraVolumes, extraVolumeMounts, serviceAccountName, nodeSelector, tolerations, affinity, podAnnotations, resources]
-    env: [SERVICE, RELAYHISTORY_SELFHOST_READ_API, RELAYHISTORY_READ_API_PORT, RELAYHISTORY_READ_API_SECRET, READ_API_ORIGIN, READ_API_AUTH_MODE, READ_API_COMPLETE_SINCE, READ_API_DIRECTORY_WORKSPACES, READ_API_CORS_ALLOWED_ORIGINS, RELAYHISTORY_SELFHOST_LOGIN_ADVERTISES_SYNC, READ_API_TURNS_ASSUME_NO_LEGACY, READ_API_EVENT_MESSAGE_IDS, READ_API_COORDINATION_OVERLAPS_ENABLED, READ_API_INTERNAL_SECRET, READ_API_INTERNAL_SECRET_PREVIOUS, READ_API_ACCESS_TOKEN_TTL_SECONDS, SEARCH_INDEX_POSTGRES_BACKEND_ID, SEARCH_INDEX_OPENSEARCH_URL, SEARCH_INDEX_OPENSEARCH_AUTH, SEARCH_INDEX_OPENSEARCH_AWS_REGION, SEARCH_INDEX_OPENSEARCH_INDEX_PREFIX, PIPELINE_ORG_FROM_PREFIX, PIPELINE_KEY_PREFIX, SEARCH_INDEX_BACKEND, ALLOW_IN_CLUSTER_HTTP, SESSION_POSTGRES_TLS_PROFILE, SESSION_POSTGRES_CA_FILE, SESSION_POSTGRES_CA_SHA256, RELAYAUTH_JWKS_URL, RELAYAUTH_ISSUER, RELAYHISTORY_ACCEPT_RELAYCONTROL_TOKENS, RELAYCONTROL_INTROSPECT_URL, RELAYCONTROL_INTROSPECT_SECRET]
+    env: [SERVICE, RELAYHISTORY_SELFHOST_READ_API, RELAYHISTORY_READ_API_PORT, RELAYHISTORY_READ_API_SECRET, READ_API_ORIGIN, READ_API_AUTH_MODE, READ_API_COMPLETE_SINCE, READ_API_DIRECTORY_WORKSPACES, READ_API_CORS_ALLOWED_ORIGINS, RELAYHISTORY_SELFHOST_LOGIN_ADVERTISES_SYNC, READ_API_TURNS_ASSUME_NO_LEGACY, READ_API_EVENT_MESSAGE_IDS, READ_API_COORDINATION_OVERLAPS_ENABLED, READ_API_COORDINATION_OVERLAPS_BACKEND, READ_API_INTERNAL_SECRET, READ_API_INTERNAL_SECRET_PREVIOUS, READ_API_ACCESS_TOKEN_TTL_SECONDS, SEARCH_INDEX_POSTGRES_BACKEND_ID, SEARCH_INDEX_OPENSEARCH_URL, SEARCH_INDEX_OPENSEARCH_AUTH, SEARCH_INDEX_OPENSEARCH_AWS_REGION, SEARCH_INDEX_OPENSEARCH_INDEX_PREFIX, PIPELINE_ORG_FROM_PREFIX, PIPELINE_KEY_PREFIX, SEARCH_INDEX_BACKEND, ALLOW_IN_CLUSTER_HTTP, SESSION_POSTGRES_TLS_PROFILE, SESSION_POSTGRES_CA_FILE, SESSION_POSTGRES_CA_SHA256, RELAYAUTH_JWKS_URL, RELAYAUTH_ISSUER, RELAYHISTORY_ACCEPT_RELAYCONTROL_TOKENS, RELAYCONTROL_INTROSPECT_URL, RELAYCONTROL_INTROSPECT_SECRET]
     profiles: [selfhost-postgres, migration, external-selfhosted, external-rds, aws-rds-native, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql]
     status: shipped
     provided_by: operator
@@ -5450,6 +5473,25 @@ entries:
     choices: [{ value: null }, { value: true }, { value: false }]
     verify: Render no env for null and quoted true/false for explicit booleans; refuse other types and verify the compatible image uses Control's proxy.
     sources: [charts/relay-webapp/templates/deployment.yaml, charts/relay-webapp/values.yaml]
+
+  - id: opt.relay-webapp.coordination-overlaps
+    kind: option
+    title: Dashboard coordination-overlaps view
+    description: |
+      Strict boolean, default false. True shows the coordination-overlaps view
+      in a compatible #124 dashboard image; false omits the environment binding
+      and the image keeps the view off. The session read API and its separately
+      managed Postgres coordination-overlaps backend must also be available.
+    chart: relay-webapp
+    values: [runtime.coordinationOverlapsEnabled]
+    env: [DASHBOARD_COORDINATION_OVERLAPS_ENABLED]
+    profiles: [relay-webapp]
+    status: shipped
+    provided_by: operator
+    default: false
+    choices: [{ value: false }, { value: true }]
+    verify: Render no environment binding by default or for false, render quoted true when selected, refuse non-booleans, and verify the compatible image makes no overlap request while off.
+    sources: [charts/relay-webapp/templates/deployment.yaml, charts/relay-webapp/values.yaml, charts/relay-webapp/README.md]
 
   - id: opt.sessions-pipeline.native-routing
     kind: option

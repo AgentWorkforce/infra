@@ -40,7 +40,8 @@ events:
   messageIds: false
 coordinationOverlaps:
   # GET /v1/coordination/overlaps. Off unless the customer explicitly enables
-  # the reviewed overlap view in a compatible read-api image.
+  # the reviewed endpoint in a compatible read-api image. The sessions-pipeline
+  # adapter overrides this leaf-chart default to true when it enables the reader.
   enabled: false
 turns:
   # True only where no Neon source exists, so no legacy coverage marker is expected.

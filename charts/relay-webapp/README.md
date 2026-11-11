@@ -85,3 +85,11 @@ helm lint --strict charts/relay-webapp \
 ## Session read API
 
 `runtime.sessionReadApiEnabled: true` renders `DASHBOARD_SESSION_READ_API_ENABLED=true`, so the page reads session lists, search, activity, turns and events directly from the session read API with the access token Control hands it. It needs relay-webapp main `53e39ca9` or later, and the read API's `cors.allowedOrigins` must name this dashboard's origin.
+
+`runtime.coordinationOverlapsEnabled` is a strict boolean and defaults to
+`false`, so the coordination-overlaps view remains hidden even when the backend
+endpoint is available. Setting it to `true` renders
+`DASHBOARD_COORDINATION_OVERLAPS_ENABLED=true`. It requires a dashboard image
+containing relay-webapp #124 and also requires `runtime.sessionReadApiEnabled`
+plus a read API serving the Postgres coordination-overlaps contract. Pin and
+verify that image before enabling the view; older images ignore the setting.

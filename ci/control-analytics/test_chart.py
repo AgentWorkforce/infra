@@ -184,10 +184,14 @@ class ControlAdapters(unittest.TestCase):
 
 
 class DashboardAdapter(unittest.TestCase):
-    def render(self, value=None, explicit=False, umbrella=False, fail=False):
+    def render(self, value=None, explicit=False, coordination=None,
+               coordination_explicit=False, umbrella=False, fail=False,
+               error="runtime.analyticsEnabled must be a boolean or null"):
         values = yaml.safe_load((ROOT / "charts/relay-webapp/ci/default-values.yaml").read_text())
         if explicit:
             values.setdefault("runtime", {})["analyticsEnabled"] = value
+        if coordination_explicit:
+            values.setdefault("runtime", {})["coordinationOverlapsEnabled"] = coordination
         chart = "relay-webapp"
         if umbrella:
             chart = "agent-relay"
@@ -200,7 +204,7 @@ class DashboardAdapter(unittest.TestCase):
             result = subprocess.run(["helm", "template", "ci", str(ROOT / "charts" / chart), "-n", "ci", "-f", str(p)], text=True, capture_output=True)
         if fail:
             self.assertNotEqual(result.returncode, 0)
-            self.assertIn("runtime.analyticsEnabled must be a boolean or null", result.stderr)
+            self.assertIn(error, result.stderr)
             return {}
         self.assertEqual(result.returncode, 0, result.stderr)
         docs = [d for d in yaml.safe_load_all(result.stdout) if d]
@@ -220,6 +224,30 @@ class DashboardAdapter(unittest.TestCase):
         for value in ["true", "false", 1, [], {}]:
             with self.subTest(value=value):
                 self.render(value, explicit=True, fail=True)
+
+    def test_coordination_view_defaults_off_and_true_is_explicit(self):
+        for umbrella in [False, True]:
+            self.assertNotIn("DASHBOARD_COORDINATION_OVERLAPS_ENABLED", self.render(umbrella=umbrella))
+            self.assertNotIn(
+                "DASHBOARD_COORDINATION_OVERLAPS_ENABLED",
+                self.render(coordination=False, coordination_explicit=True, umbrella=umbrella),
+            )
+            self.assertEqual(
+                self.render(coordination=True, coordination_explicit=True, umbrella=umbrella)[
+                    "DASHBOARD_COORDINATION_OVERLAPS_ENABLED"
+                ],
+                "true",
+            )
+
+    def test_coordination_view_refuses_non_boolean_values(self):
+        for value in ["true", "false", 1, None, [], {}]:
+            with self.subTest(value=value):
+                self.render(
+                    coordination=value,
+                    coordination_explicit=True,
+                    fail=True,
+                    error="runtime.coordinationOverlapsEnabled must be a boolean",
+                )
 
 
 if __name__ == "__main__":

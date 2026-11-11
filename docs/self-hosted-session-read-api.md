@@ -26,6 +26,32 @@ for unbounded searches. When importing partial legacy history, explicitly set
 the earliest ISO timestamp from which coverage is complete and align the
 indexer's floor. Preserve that explicit value on upgrades; do not claim epoch
 coverage for a partial import.
+
+The standalone reader keeps `coordinationOverlaps.enabled: false`. The
+sessions-pipeline adapter overrides it to `true` when the reader is enabled and
+renders both `READ_API_COORDINATION_OVERLAPS_ENABLED=true` and
+`READ_API_COORDINATION_OVERLAPS_BACKEND=postgres`. This requires a qualified
+services image from relayhistory-pipeline `fe62ed80` or a reviewed successor and
+migration `20261105047000_coordination_fact_readers`. The Dashboard view remains
+separately default off.
+
+On a fresh install the migration builds its two partial indexes directly on
+empty tables. On a populated database, prebuild the exact indexes with
+`CREATE INDEX CONCURRENTLY`, one statement at a time and outside a transaction:
+
+```sql
+CREATE INDEX CONCURRENTLY session_event_facts_coordination_writes_idx
+  ON sessions.session_event_facts USING btree (org_id, workspace_id, ts, row_id)
+  WHERE (cardinality(files_touched) > 0);
+CREATE INDEX CONCURRENTLY session_output_facts_coordination_outcomes_idx
+  ON sessions.session_output_facts USING btree (org_id, workspace_id, ts, row_id)
+  WHERE (fact_kind = ANY (ARRAY['commit'::text, 'outcome'::text]));
+```
+
+Verify both indexes are valid and ready before running the migration, which
+adopts the exact definitions. The blocking-index override is not a production
+upgrade path.
+
 A separate Secret supplies the optional relaycontrol introspection credential.
 `sessionReadApi.search.backend` defaults to `postgres` and renders `SEARCH_INDEX_BACKEND`.
 It selects the registered adapter in the compatible upstream image; it does not
