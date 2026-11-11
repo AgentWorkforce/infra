@@ -28,6 +28,22 @@ class CommandErrorTests(unittest.TestCase):
         self.assertIn("\ninvalid signature", desktop_install.error_message(error))
         self.assertEqual(desktop_install.error_message(ValueError("wrong profile")), "wrong profile")
 
+    def test_diagnostics_redact_credentials_and_bound_output(self):
+        error = subprocess.CalledProcessError(1, ["gh"], stderr=(
+            "artifact expired\nAuthorization: Bearer private-bearer-fixture\n"
+            "ghp_private_github_fixture github_pat_private_pat_fixture\n"
+            "https://example.invalid/artifact?token=private-query-fixture&other=keep\n"
+            + "x" * 10000))
+        message = desktop_install.error_message(error)
+        self.assertIn("artifact expired", message)
+        self.assertIn("[redacted]", message)
+        self.assertIn("&other=keep", message)
+        for secret in ("private-bearer-fixture", "ghp_private_github_fixture",
+                       "github_pat_private_pat_fixture", "private-query-fixture"):
+            self.assertNotIn(secret, message)
+        self.assertTrue(message.endswith("[diagnostics truncated]"))
+        self.assertLessEqual(len(message), 8192 + len("\n[diagnostics truncated]"))
+
 
 class DownloadTests(unittest.TestCase):
     def setUp(self):

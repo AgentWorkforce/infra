@@ -32,6 +32,13 @@ def error_message(error):
                 output = output.decode("utf-8", errors="replace")
             if output and output.strip():
                 message += "\n" + output.strip()
+    message = re.sub(r"\b(?:gh[pousr]_[A-Za-z0-9_]+|github_pat_[A-Za-z0-9_]+)\b", "[redacted]", message)
+    message = re.sub(r"(?i)(\bauthorization\s*:\s*(?:bearer|token|basic)\s+|\bbearer\s+)[A-Za-z0-9._~+/=-]+",
+        r"\1[redacted]", message)
+    message = re.sub(r"(?i)([?&](?:token|access_token|refresh_token|code|device_code|user_code|sig)=)[^&#\s]+",
+        r"\1[redacted]", message)
+    if len(message) > 8192:
+        message = message[:8192] + "\n[diagnostics truncated]"
     return message
 
 
