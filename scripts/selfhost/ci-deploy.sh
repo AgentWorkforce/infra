@@ -153,6 +153,13 @@ snapshot(){
           kubectl -n "$ns" get configmap "${ca%%/*}" -o json | jq -j --arg k "${ca#*/}" '.data[$k] // empty' > "$WORK/pg-ca-$name.crt"
           [ -s "$WORK/pg-ca-$name.crt" ] || die "snapshot $name: CA ConfigMap $ca is empty or missing"
           export PGSSLROOTCERT="$WORK/pg-ca-$name.crt"
+          # libpq prefers a URL sslrootcert (often a pod-only path) over PGSSLROOTCERT: point it at this CA.
+          url=$(printf '%s' "$url" | python3 -c 'import os, sys, urllib.parse as u
+p = u.urlsplit(sys.stdin.read())
+q = [(k, v) for k, v in u.parse_qsl(p.query, keep_blank_values=True) if k != "sslrootcert"]
+if len(q) != len(u.parse_qsl(p.query, keep_blank_values=True)):
+    q.append(("sslrootcert", os.environ["PGSSLROOTCERT"]))
+sys.stdout.write(u.urlunsplit(p._replace(query=u.urlencode(q))))')
         fi
         log "snapshot: pg_dump $name -> $dest"
         pg_dump --format=custom --no-owner --no-privileges --dbname="$url" |

@@ -127,7 +127,7 @@ case "$*" in
   *"get deploy,statefulset"*) echo '{"items": [{"kind": "Deployment", "metadata": {"name": "web"}, "spec": {"template": {"spec": {"containers": [{"image": "img:1"}]}}}}]}' ;;
   *"apply --server-side --field-manager=ci-deploy-secret-"*)
     echo "$*" | grep -o 'field-manager=[^ ]*' >> "$FAKE/managers"; cat >> "$FAKE/applied-secrets" ;;
-  *"get configmap"*) echo '{"data": {"ca.crt": "-----BEGIN CERTIFICATE-----\\nX\\n-----END CERTIFICATE-----\\n"}}' ;;
+  *"get configmap"*) jq -n '{data: {"ca.crt": "-----BEGIN CERTIFICATE-----\nX\n-----END CERTIFICATE-----\n"}}' ;;
   *"get secret"*) echo '{"data": {"url": "cG9zdGdyZXNxbDovL3U6U0VDUkVUUFdAaC9kYg=="}}' ;;
   *) exit 0 ;;
 esac
@@ -150,7 +150,9 @@ exit 0
 """
 
 FAKE_PG_DUMP = r"""#!/usr/bin/env bash
-echo "pg_dump called ca=${PGSSLROOTCERT:+set}" >> "$FAKE/log"; [ -n "${PGSSLROOTCERT:-}" ] && grep -q BEGIN "$PGSSLROOTCERT" && echo "ca file ok" >> "$FAKE/log"
+echo "pg_dump called ca=${PGSSLROOTCERT:+set}" >> "$FAKE/log"
+if [ -n "${PGSSLROOTCERT:-}" ] && [ "$(cat "$PGSSLROOTCERT")" = "$(printf -- '-----BEGIN CERTIFICATE-----\nX\n-----END CERTIFICATE-----')" ]; then echo "ca file ok" >> "$FAKE/log"; fi
+for a in "$@"; do case "$a" in --dbname=*) case "$a" in *sslrootcert=/pod/*) echo "url keeps pod ca" >> "$FAKE/log" ;; *sslrootcert=*) echo "url ca rewritten" >> "$FAKE/log" ;; esac ;; esac; done
 echo DUMP
 """
 
@@ -244,11 +246,25 @@ class ScriptTest(unittest.TestCase):
     def test_pg_dump_uses_configured_ca(self):
         self.render({"a": 2}, DEPLOY)
         self.config({"type": "pg_dump", "databases": [{"label": "control", "namespace": "ns", "secret": "db", "key": "url",
-                                                        "ca": {"configMap": "supabase-ca", "key": "ca.crt"}}]})
+                                                        "ca": {"configMap": "example-test-ca", "key": "ca.crt"}}]})
         p, _ = self.run_script("apply", EXPECT_REVISIONS="agent-relay=7")
         self.assertEqual(p.returncode, 0, p.stderr)
         self.assertIn("pg_dump called ca=set", self.log())
         self.assertIn("ca file ok", self.log())
+        self.assertNotIn("url ca rewritten", self.log())  # no sslrootcert in the URL: none added
+
+    def test_pg_dump_ca_replaces_url_sslrootcert(self):
+        self.render({"a": 2}, DEPLOY)
+        (self.bin / "kubectl").write_text((self.bin / "kubectl").read_text().replace(
+            "cG9zdGdyZXNxbDovL3U6U0VDUkVUUFdAaC9kYg==",
+            __import__("base64").b64encode(b"postgresql://u:SECRETPW@h/db?sslmode=verify-full&sslrootcert=/pod/ca.crt").decode()))
+        self.config({"type": "pg_dump", "databases": [{"label": "control", "namespace": "ns", "secret": "db", "key": "url",
+                                                        "ca": {"configMap": "example-test-ca", "key": "ca.crt"}}]})
+        p, report = self.run_script("apply", EXPECT_REVISIONS="agent-relay=7")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertIn("url ca rewritten", self.log())
+        self.assertNotIn("url keeps pod ca", self.log())
+        self.assertNotIn("SECRETPW", p.stderr + (report / "log.txt").read_text())
 
     def test_rds_snapshot(self):
         self.render({"a": 2}, DEPLOY)
