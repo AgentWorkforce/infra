@@ -117,6 +117,11 @@ if $apply && $rds_setup; then
   for var in AWS_REGION RDS_HOST RDS_ADMIN_SECRET_ARN; do
     [ -n "${!var:-}" ] || die "--rds-setup needs $var in the environment (see rds-setup.sh)"
   done
+  # STATE_DIR holds database passwords: refuse it if group or others can reach anything in it.
+  [ -d "$state_dir" ] || die "STATE_DIR $state_dir does not exist: run 'rds-setup.sh pre' first (or set STATE_DIR)"
+  open_perms=$(find "$state_dir" \( -perm -0001 -o -perm -0002 -o -perm -0004 -o -perm -0010 -o -perm -0020 -o -perm -0040 \) -print | head -3)
+  [ -z "$open_perms" ] || die "STATE_DIR holds database passwords but is readable beyond its owner (want 0700 directories, 0600 files):
+$open_perms"
   if $first_install; then
     for p in bulls96_read_api bulls96_session_ingest search_consumer_runtime; do
       [ -s "$state_dir/passwords/$p" ] || die "no rds-setup state under $state_dir: run 'rds-setup.sh pre' first (or set STATE_DIR)"
@@ -194,6 +199,14 @@ for v in "${values[@]}"; do base+=(-f "$v"); done
 base+=(-f "$overlay")
 render=(helm template "$release" "$chart" -n "$namespace")
 if ! $first_install; then render+=(--is-upgrade); fi
+# Render with the cluster's real capabilities, as helm install/upgrade will:
+# templates gated on .Capabilities.KubeVersion or .Capabilities.APIVersions
+# (podFailurePolicy, VPA, PDB) would otherwise differ from the deployed release.
+server_version=$("${kube[@]}" version -o json 2>/dev/null | jq -r '.serverVersion.gitVersion // empty' || true)
+[[ "$server_version" =~ ^v[0-9]+\.[0-9]+\.[0-9]+ ]] || die "could not read the cluster's Kubernetes version (kubectl version)"
+api_versions=$("${kube[@]}" api-versions) || die "could not list the cluster's API versions (kubectl api-versions)"
+render+=(--kube-version "$server_version")
+while IFS= read -r av; do [ -z "$av" ] || render+=(--api-versions "$av"); done <<<"$api_versions"
 "${render[@]}" "${base[@]}" > "$work/new.yaml"
 yq -N -r '.. | select(tag == "!!map") | select(has("image") or has("imageName")) | (.image // .imageName) | select(tag == "!!str")' \
   "$work/new.yaml" | sort -u > "$work/new-images.txt"

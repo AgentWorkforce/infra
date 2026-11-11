@@ -54,6 +54,24 @@ Do not commit or archive the state directory in the source bundle. One RDS
 instance supports one HoopDb install because a required search role is
 server-wide.
 
+`STATE_DIR` keeps the generated role passwords (`passwords/`) and the
+connection strings built from them and from the RDS admin credential
+(`secret-files/`) in plain text, because `post` and `refresh-admin` need them
+later. Keep it on one administrator host or one dedicated, persistent
+self-hosted runner (never a GitHub-hosted or ephemeral runner, and never
+inside a workflow workspace, cache or artifact), on an encrypted volume. Every
+directory must be `0700` and every file `0600`, owned by the user that runs
+the scripts; `rds-setup.sh` creates them that way, and
+`agent-relay-upgrade.sh --rds-setup` refuses a state directory that group or
+others can reach. Check with
+`find "$STATE_DIR" \( -type d ! -perm 700 \) -o \( -type f ! -perm 600 \) -print`
+(it must print nothing). To retire it, stop the runner and
+`rm -rf -- "$STATE_DIR"` (`shred -u` the files first where the filesystem
+allows). After that, `post` and `refresh-admin` cannot run for that install;
+if the directory may have been exposed, rotate the role and RDS admin
+passwords. See
+[Upgrading from your own GitHub Actions](../../docs/selfhost-upgrades-github-actions.md#the-state-directory-holds-database-passwords).
+
 After the current Helm migration Job has completed, run the `post` phase. Pass
 the exact content-addressed Job name from the selected release manifest. The
 script verifies its release/component labels and succeeded status in the
