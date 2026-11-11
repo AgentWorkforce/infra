@@ -517,6 +517,11 @@ exact destroy inventory and recovery proof; do not remove state to bypass them.
 
 | Name | Type |
 | ---- | ---- |
+| [aws_eks_pod_identity_association.history_consumer](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/eks_pod_identity_association) | resource |
+| [aws_eks_pod_identity_association.history_control](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/eks_pod_identity_association) | resource |
+| [aws_iam_role.history_consumer](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/iam_role) | resource |
+| [aws_iam_role.history_control](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/iam_role) | resource |
+| [aws_iam_role_policy.history_consumer](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/iam_role_policy) | resource |
 | [terraform_data.environment_contract](https://registry.terraform.io/providers/hashicorp/terraform/latest/docs/resources/data) | resource |
 | [aws_caller_identity.current](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/caller_identity) | data source |
 
@@ -544,6 +549,7 @@ exact destroy inventory and recovery proof; do not remove state to bypass them.
 | environment\_class | Sizing/protection tier; environment names remain independent of this classification. | `string` | `"development"` | no |
 | existing\_runtime\_roles | Operator-owned runtime identities. Null manages search/pipeline roles here. Otherwise supply both search roles and, only in Lambda mode, the pipeline role. Trust, policies, guards and EKS associations must already be verified outside this state. | ```object({ indexer_role_arn = string reader_role_arn = string pipeline_role_arn = optional(string) })``` | `null` | no |
 | function\_security\_group\_ids | Lambda security groups with private database/search access and egress to the required AWS services. | `list(string)` | `[]` | no |
+| history\_upload | Optional self-host direct uploads. Creates a write-only desktop role, a native ingest-edge consumer role, and a Control issuer binding (reuses desktop\_feed's binding). Does not activate Helm flags or create witness secrets. consumer\_service\_account must exactly match ingestEdge.serviceAccountName. | ```object({ key_root = optional(string, "96bulls") control_service_account = optional(string, "relay-control") consumer_service_account = string })``` | `null` | no |
 | kms\_key\_arn | Existing customer-managed key; null uses AWS-managed encryption keys. | `string` | `null` | no |
 | lambda\_package | Compatible pipeline artifact when pipeline\_runtime=lambda: exactly one immutable image, versioned S3 zip, or local zip with hash. No credential values. | ```object({ image_uri = optional(string) s3_bucket = optional(string) s3_key = optional(string) s3_object_version = optional(string) filename = optional(string) source_code_hash = optional(string) })``` | `null` | no |
 | lambda\_runtime\_bindings | Non-secret configuration for an independently verified private OpenSearch/Lambda artifact with its pinned public PostgreSQL CA at assets/postgres-ca.pem. Writer and reader must share these bindings. This is not artifact, bootstrap, FGAC or caller-transition proof. | ```object({ search_index = string state_backend_id = string complete_since = string postgres_ca_sha256 = string projection_schema = optional(string, "search_index") })``` | `null` | no |
@@ -567,6 +573,7 @@ exact destroy inventory and recovery proof; do not remove state to bypass them.
 | chief\_execution\_node | Chief execution host references, or null. Holds no secret value. |
 | desktop\_feed | Relay Control private Desktop feed bindings, or null when desktop\_feed is unset. control\_env maps to Control settings and extra\_env is the same as the relay-control.extraEnv list; neither holds a secret. |
 | environment | Environment identity to compare with the separately configured backend before apply. |
+| history\_upload | Direct upload wiring only; enablement needs compatible published Control/consumer images and the same witness Secret provisioned out of band. No secret values in Terraform. |
 | lambda\_shared\_environment | Non-secret writer/reader bindings, or null until explicitly configured. Independently qualify the matching reader artifact, read-only DB identity, JWT settings, schema/FGAC bootstrap and worker retirement before activation. |
 | pipeline | Lambda runtime bindings, or null in worker mode. Populate the secret out of band and verify actual handler compatibility before activation. |
 | postgres\_service\_bindings | Separate service databases and independent migration/runtime roles on the same RDS endpoint. Contains no credentials; reviewed database bootstrap, CONNECT/ACL isolation and runtime proof remain required. Optional-service bindings do not enable workloads. |

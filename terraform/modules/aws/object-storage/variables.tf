@@ -118,3 +118,25 @@ variable "tags" {
   type        = map(string)
   default     = {}
 }
+
+variable "history_upload" {
+  description = "Optional direct-upload issuer and write-only role. Consumer role ARNs alone may read the raw upload inbox (including versions). Control role must already exist; its KMS key policy must delegate IAM permissions to this account. Bucket Keys are disabled for new objects so per-user session encryption-context restrictions work. No credentials or witness keys belong in Terraform."
+  type = object({
+    name                     = string
+    path                     = optional(string, "/")
+    permissions_boundary_arn = optional(string)
+    control_role_arn         = string
+    consumer_role_arns       = set(string)
+    key_root                 = optional(string, "96bulls")
+  })
+  default = null
+  validation {
+    condition = var.history_upload == null ? true : (
+      can(regex("^[a-z0-9][a-z0-9-]{0,62}$", var.history_upload.key_root)) &&
+      can(regex("^arn:aws(-[a-z]+)*:iam::[0-9]{12}:role/.+", var.history_upload.control_role_arn)) &&
+      length(var.history_upload.consumer_role_arns) > 0 &&
+      alltrue([for arn in var.history_upload.consumer_role_arns : can(regex("^arn:aws(-[a-z]+)*:iam::[0-9]{12}:role/.+", arn))])
+    )
+    error_message = "history_upload requires a contract key root, a Control IAM role and at least one consumer IAM role."
+  }
+}

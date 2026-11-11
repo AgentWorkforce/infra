@@ -438,6 +438,20 @@ ingestEdge:
     concurrency: 4
     scanIntervalMs: 15000
     maxAttempts: 20
+  # Pipeline #515: scan .upload-inbox and promote into async admission.
+  # Requires a published image implementing HISTORY_UPLOAD_DIRECT. The witness
+  # must be the SAME Secret value used by Control's historyUpload.witness.
+  uploadDirect:
+    mode: "off" # off | allowlist | on
+    # Consumer allowlist uses org:<id>/ws:<id>, unlike Control's user ID list.
+    allowlist: []
+    scanBatch: 16
+    witness:
+      existingSecret: ""
+      key: upload-witness-key
+  keyRoot: 96bulls
+  # Create the explicitly named native consumer ServiceAccount (Pod Identity).
+  createServiceAccount: false
   # Requires a qualified services image containing pipeline #484. Claim-stage
   # lock waits become 429 + Retry-After; statement timeouts still return 503.
   # This does not remove SQL from sync uploads or change async consumer backoff.

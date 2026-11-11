@@ -321,3 +321,21 @@ variable "desktop_feed" {
   })
   default = null
 }
+
+variable "history_upload" {
+  description = "Optional self-host direct uploads. Creates a write-only desktop role, a native ingest-edge consumer role, and a Control issuer binding (reuses desktop_feed's binding). Does not activate Helm flags or create witness secrets. consumer_service_account must exactly match ingestEdge.serviceAccountName."
+  type = object({
+    key_root                 = optional(string, "96bulls")
+    control_service_account  = optional(string, "relay-control")
+    consumer_service_account = string
+  })
+  default = null
+  validation {
+    condition = var.history_upload == null ? true : (
+      can(regex("^[a-z0-9][a-z0-9-]{0,62}$", var.history_upload.key_root)) &&
+      alltrue([for sa in [var.history_upload.control_service_account, var.history_upload.consumer_service_account] : can(regex("^[a-z0-9]([-a-z0-9]*[a-z0-9])?$", sa))]) &&
+      var.history_upload.control_service_account != var.history_upload.consumer_service_account
+    )
+    error_message = "history_upload requires a valid key root and distinct Control/consumer ServiceAccounts."
+  }
+}

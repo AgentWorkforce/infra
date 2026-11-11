@@ -48,6 +48,7 @@ of set a second time. Desktop and the CLI log in against that same origin. */ -}
 {{- end -}}
 {{- end -}}
 {{- define "relay-control.validate" -}}
+{{- include "relay-control.historyUpload.validate" . -}}
 {{- include "relay-control.validateAdapters" . -}}
 {{- $image := include "relay-control.image" . -}}
 {{- if not (kindIs "invalid" .Values.selectedFeatures) -}}
@@ -132,6 +133,7 @@ the chart already sets, including duplicates inside extraEnv. */ -}}
 {{- range .Values.extraEnv -}}
 {{- if not (kindIs "map" .) }}{{ fail "every extraEnv entry must be an object" }}{{ end -}}
 {{- if or (not (kindIs "string" .name)) (not .name) }}{{ fail "every extraEnv name must be a non-empty string" }}{{ end -}}
+{{- if regexMatch "^SELFHOST_HISTORY_UPLOAD_" .name }}{{ fail "SELFHOST_HISTORY_UPLOAD_* is managed by historyUpload" }}{{ end -}}
 {{- if regexMatch "^SELFHOST_ANALYTICS_" .name }}{{ fail "SELFHOST_ANALYTICS_* is managed by analytics and must not appear in extraEnv" }}{{ end -}}
 {{- if or (not (kindIs "string" .name)) (not (regexMatch "^[A-Za-z_][A-Za-z0-9_]*$" (toString .name))) }}{{ fail "extraEnv.name must be a valid environment variable string" }}{{ end -}}
 {{- /* Provider hyphens become underscores; reserve unset OAuth names and raw secret FILE aliases. */ -}}

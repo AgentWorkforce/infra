@@ -703,3 +703,42 @@ run "desktop_feed_under_a_pippen_lease_with_overrides" {
     error_message = "An explicit Control ServiceAccount overrides the release default."
   }
 }
+
+run "history_upload_has_distinct_native_and_control_bindings" {
+  command = apply
+  variables {
+    kms_key_arn    = "arn:aws:kms:us-west-2:111111111111:key/00000000-0000-4000-8000-000000000000"
+    history_upload = { consumer_service_account = "native-ingest-edge" }
+  }
+  assert {
+    condition     = length(aws_eks_pod_identity_association.history_control) == 1 && aws_eks_pod_identity_association.history_control[0].service_account == "relay-control" && aws_eks_pod_identity_association.history_consumer[0].service_account == "native-ingest-edge"
+    error_message = "Control and native consumer have explicit independent Pod Identity bindings."
+  }
+  assert {
+    condition     = output.history_upload.control_values.historyUpload.mode == "off" && output.history_upload.control_values.historyUpload.keyRoot == "96bulls"
+    error_message = "Provisioning upload resources must not activate the feature."
+  }
+}
+
+run "history_upload_reuses_desktop_feed_control_identity" {
+  command = apply
+  variables {
+    kms_key_arn    = "arn:aws:kms:us-west-2:111111111111:key/00000000-0000-4000-8000-000000000000"
+    history_upload = { consumer_service_account = "native-ingest-edge" }
+    desktop_feed   = { profiles = ["kindtest"] }
+  }
+  assert {
+    condition     = length(aws_eks_pod_identity_association.history_control) == 0 && length(module.desktop_feed[0].pod_identity_association_ids) == 1 && output.history_upload.control_role_arn == module.desktop_feed[0].role_arn
+    error_message = "EKS permits one role per ServiceAccount: direct uploads reuse the feed role."
+  }
+}
+
+run "history_upload_feed_service_account_mismatch_refuses" {
+  command = plan
+  variables {
+    kms_key_arn    = "arn:aws:kms:us-west-2:111111111111:key/00000000-0000-4000-8000-000000000000"
+    history_upload = { consumer_service_account = "native-ingest-edge" }
+    desktop_feed   = { profiles = ["kindtest"], service_account = "other-control" }
+  }
+  expect_failures = [aws_iam_role.history_consumer]
+}
