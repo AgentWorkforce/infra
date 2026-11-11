@@ -170,14 +170,15 @@ spec:
 {{- end }}
 {{- if $factsJob.enabled }}
 {{- $factsEnv := include "sessions-pipeline.searchIndexer.env" (dict "c" $c "service" "session-pipeline-output-facts-bootstrap" "secret" $c.bootstrap.existingSecret "key" $c.bootstrap.key "outputFacts" true) }}
-{{- $factsSpec := toJson (dict "env" $factsEnv "runId" $factsJob.runId "deadlineSeconds" $factsJob.deadlineSeconds "allowPartial" $factsJob.allowPartial "activeDeadlineSeconds" $factsJob.activeDeadlineSeconds "image" (printf "%s@%s" $repository $digest) "pod" (include "sessions-pipeline.searchIndexer.pod" .) "resources" $c.resources) }}
+{{- $factsPod := printf "restartPolicy: Never\n%s\ncontainers:\n  - name: output-facts-bootstrap\n    image: %s\n    imagePullPolicy: %s\n    env:\n      %s\n      - { name: RELAYHISTORY_SELFHOST_OUTPUT_FACTS_BOOTSTRAP_DEADLINE_SECONDS, value: %s }\n      - { name: RELAYHISTORY_SELFHOST_OUTPUT_FACTS_BOOTSTRAP_ALLOW_PARTIAL, value: %s }\n    %s%s" (include "sessions-pipeline.searchIndexer.pod" .) (printf "%s@%s" $repository $digest | quote) $c.image.pullPolicy ($factsEnv | nindent 6 | trim) (int $factsJob.deadlineSeconds | toString | quote) ($factsJob.allowPartial | toString | quote) (include "sessions-pipeline.searchIndexer.container" . | nindent 4 | trim) (ternary (printf "\n    resources:\n      %s" (toYaml $c.resources | nindent 6 | trim)) "" (not (empty $c.resources))) }}
 ---
 apiVersion: batch/v1
 kind: Job
 metadata:
-  # Deterministic: the same values render the same Job, so a reapply never
-  # reruns it. Change outputFacts.bootstrap.runId to run it again.
-  name: {{ printf "%s-output-facts-%s" ($name | trunc 41 | trimSuffix "-") ($factsSpec | sha256sum | trunc 8) }}
+  # Deterministic: a hash of the whole pod spec, the deadline and runId, so a
+  # reapply with the same values never reruns it and any change to the
+  # (immutable) pod template renders a new Job. Change runId to run it again.
+  name: {{ printf "%s-output-facts-%s" ($name | trunc 41 | trimSuffix "-") (printf "%s\n%d\n%s" $factsPod (int $factsJob.activeDeadlineSeconds) $factsJob.runId | sha256sum | trunc 8) }}
   namespace: {{ .Release.Namespace | quote }}
   labels:
     app.kubernetes.io/name: session-search-indexer
@@ -195,20 +196,6 @@ spec:
         app.kubernetes.io/instance: {{ .Release.Name }}
         app.kubernetes.io/component: output-facts-bootstrap
     spec:
-      restartPolicy: Never
-      {{- include "sessions-pipeline.searchIndexer.pod" . | nindent 6 }}
-      containers:
-        - name: output-facts-bootstrap
-          image: {{ printf "%s@%s" $repository $digest | quote }}
-          imagePullPolicy: {{ $c.image.pullPolicy }}
-          env:
-            {{- $factsEnv | nindent 12 }}
-            - { name: RELAYHISTORY_SELFHOST_OUTPUT_FACTS_BOOTSTRAP_DEADLINE_SECONDS, value: {{ int $factsJob.deadlineSeconds | quote }} }
-            - { name: RELAYHISTORY_SELFHOST_OUTPUT_FACTS_BOOTSTRAP_ALLOW_PARTIAL, value: {{ $factsJob.allowPartial | quote }} }
-          {{- include "sessions-pipeline.searchIndexer.container" . | nindent 10 }}
-          {{- with $c.resources }}
-          resources:
-            {{- toYaml . | nindent 12 }}
-          {{- end }}
+      {{- $factsPod | nindent 6 }}
 {{- end }}
 {{- end -}}

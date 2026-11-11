@@ -178,7 +178,11 @@ workspace is not on a static list, and its reads would answer 501. */ -}}
 {{- if not (regexMatch "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$" $narrative.model) }}{{ fail "session-read-api: digest.narrative.model must be a model id ([A-Za-z0-9._:/-], at most 128 characters)" }}{{ end -}}
 {{- if or (not $narrative.apiKey.existingSecret) (not $narrative.apiKey.key) }}{{ fail "session-read-api: digest.narrative.model requires digest.narrative.apiKey.existingSecret and key" }}{{ end -}}
 {{- if or (not $narrative.writerDatabaseUrl.existingSecret) (not $narrative.writerDatabaseUrl.key) }}{{ fail "session-read-api: digest.narrative.model requires digest.narrative.writerDatabaseUrl.existingSecret and key (the bulls96_digest_narrative login)" }}{{ end -}}
-{{- if and $narrative.baseUrl (not (regexMatch "^https?://[^/?#@ ]+(/[^?#@ ]*)?$" $narrative.baseUrl)) }}{{ fail "session-read-api: digest.narrative.baseUrl must be an http(s) URL without credentials, query or fragment" }}{{ end -}}
+{{- if $narrative.baseUrl -}}
+{{- $httpsUrl := regexMatch "^https://[^/?#@ ]+(/[^?#@ ]*)?$" $narrative.baseUrl -}}
+{{- $inClusterUrl := and (eq (toString $c.allowInClusterHttp) "true") (regexMatch "^http://([a-z0-9]([-a-z0-9]*[a-z0-9])?|[a-z0-9]([-a-z0-9]*[a-z0-9])?\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?\\.svc(\\.cluster\\.local)?)(:[0-9]{1,5})?(/[^?#@ ]*)?$" $narrative.baseUrl) -}}
+{{- if not (or $httpsUrl $inClusterUrl) }}{{ fail "session-read-api: digest.narrative.baseUrl must be an https URL without credentials, query or fragment (plain http only to an in-cluster Service name with allowInClusterHttp=true)" }}{{ end -}}
+{{- end -}}
 {{- else if or $narrative.baseUrl $narrative.apiKey.existingSecret $narrative.writerDatabaseUrl.existingSecret -}}
 {{- fail "session-read-api: digest.narrative.baseUrl/apiKey/writerDatabaseUrl are used only with digest.narrative.model" -}}
 {{- end -}}

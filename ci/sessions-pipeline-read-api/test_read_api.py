@@ -285,10 +285,13 @@ class ReadApi(unittest.TestCase):
             ({"digest": {"enabled": True, "narrative": {**narrative, "writerDatabaseUrl": {"existingSecret": ""}}}}, "writerDatabaseUrl"),
             ({"digest": {"enabled": True, "narrative": {**narrative, "model": "bad model"}}}, "must be a model id"),
             ({"digest": {"enabled": True, "narrative": {**narrative, "baseUrl": "https://u:p@example.com"}}}, "baseUrl"),
+            ({"digest": {"enabled": True, "narrative": {**narrative, "baseUrl": "http://models.example.com/v1"}}}, "plain http only to an in-cluster Service"),
             ({"digest": {"enabled": True, "narrative": {"apiKey": {"existingSecret": "model-key"}}}}, "used only with digest.narrative.model"),
         ]:
             with self.subTest(overlay=overlay):
                 self.assertIn(message, self.render(overlay=overlay, fail=True))
+        in_cluster = self.env_of(self.render(overlay={"digest": {"enabled": True, "narrative": {**narrative, "baseUrl": "http://gateway.models.svc.cluster.local/v1"}}}))
+        self.assertEqual(in_cluster["OPENAI_BASE_URL"]["value"], "http://gateway.models.svc.cluster.local/v1")
         for name in names[:6]:
             with self.subTest(reserved=name):
                 self.assertIn("managed", self.render(overlay={"extraEnv": [{"name": name, "value": "1"}]}, fail=True))

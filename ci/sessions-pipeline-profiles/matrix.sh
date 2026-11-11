@@ -339,6 +339,9 @@ if [ "$mode" = static ]; then
   [[ $job_name =~ ^ci-search-indexer-output-facts-[0-9a-f]{8}$ ]] || err "aws-rds-native: output facts Job name $job_name"
   [ "$(facts_render | yq -r '.metadata.name')" = "$job_name" ] || err "aws-rds-native: output facts Job name is not deterministic"
   [ "$(facts_render --set searchIndexer.outputFacts.bootstrap.runId=r2 | yq -r '.metadata.name')" != "$job_name" ] || err "aws-rds-native: runId does not rename the output facts Job"
+  # Any change to the immutable pod template must rename the Job, or the upgrade is rejected.
+  [ "$(facts_render --set searchIndexer.image.pullPolicy=Always | yq -r '.metadata.name')" != "$job_name" ] || err "aws-rds-native: a pull-policy change does not rename the output facts Job"
+  [ "$(facts_render --set searchIndexer.resources.limits.memory=2Gi | yq -r '.metadata.name')" != "$job_name" ] || err "aws-rds-native: a resources change does not rename the output facts Job"
   [ "$(yq -r '.metadata.annotations // {} | keys | map(select(test("helm.sh/hook"))) | length' <<<"$job")" = 0 ] || err "aws-rds-native: output facts Job carries Helm hooks"
   [ "$(yq -r '.spec.backoffLimit' <<<"$job")" = 0 ] || err "aws-rds-native: output facts Job retries"
   job_env() { yq -r ".spec.template.spec.containers[0].env[] | select(.name == \"$1\") | (.value // .valueFrom.secretKeyRef.name)" <<<"$job"; }
