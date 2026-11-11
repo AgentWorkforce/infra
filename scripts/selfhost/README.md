@@ -85,7 +85,10 @@ Run `refresh-admin` immediately before every later upgrade, then update the
 files. RDS rotates the administrator password (every 7 days by default) and
 the HoopDb migration-owner URL carries it. Do not re-run `pre` for this: once
 `post` has given the session roles LOGIN, `pre` refuses (nothing changed).
-`refresh-admin` touches no database role and needs no services image. For
+`refresh-admin` touches no database role and needs no services image.
+`agent-relay-upgrade.sh --rds-setup` (implied by `--profile eks-rds-native`)
+does both steps before its `helm upgrade`, and on `--first-install` runs
+`post` after the HoopDb migration. For
 `pre` and `post`, the services image and optional PostgreSQL client image must
 be immutable digest references.
 

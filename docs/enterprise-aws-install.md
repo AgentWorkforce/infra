@@ -334,6 +334,15 @@ kubectl --context "$KUBE_CONTEXT" -n "$NAMESPACE" rollout status deployment \
   --selector "app.kubernetes.io/instance=$RELEASE" --timeout=20m
 ```
 
+The release's pull-based upgrader performs this same first-install sequence
+from a verified, published release (see [Upgrades](#upgrades)): add
+`--first-install` (and `--rds-setup` when `rds-setup.sh` bootstrapped the
+databases) to the command shown there. It refuses `--first-install` when the
+release already exists, and a plain upgrade when it does not. With
+`--rds-setup` it runs `rds-setup.sh post` with the release's own mirrored
+services and PostgreSQL client images, so export `AWS_REGION`, `RDS_HOST`,
+`RDS_ADMIN_SECRET_ARN` and `STATE_DIR` as for `pre` first.
+
 Inspect every Job before running `post`; a failed or missing current migration
 blocks activation. Run the packet's ordered pre-install SQL/Jobs before the
 Helm command where required.
@@ -471,8 +480,10 @@ Use the release's pull-based upgrader instead of assembling a chart or image
 set by hand. It is plan-only unless `--apply` is present. The plan downloads
 `release-manifest.json`, `release-images.values.yaml`, and `SHA256SUMS` from
 the requested GitHub release, verifies their checksums and GitHub build
-attestations, checks out the recorded infra commit, mirrors the manifest's
-exact image digests, and prints the chart/image change against the live
+attestations (bound to the `release-agent-relay.yml` workflow in
+`AgentWorkforce/infra`, the release tag, and a GitHub-hosted runner), checks
+the packaged chart, mirrors the manifest's exact image digests, and prints the
+image change and every rendered resource that differs from the deployed
 release. The manifest labels the image overlay for EKS, and the upgrader
 refuses to apply an overlay for a different profile. This preserves the
 approved collector-capable EKS Relaycast pin instead of substituting the GCP
@@ -490,10 +501,28 @@ scripts/selfhost/agent-relay-upgrade.sh \
 ```
 
 Set `AGENT_RELAY_PROFILE` to the profile already used by the installation:
-`eks` for `values-eks.yaml`, or `eks-native` when the installation also uses
-`values-eks-native.yaml`. The upgrader refuses to switch profiles implicitly.
+`eks` for `values-eks.yaml`, `eks-native` when the installation also uses
+`values-eks-native.yaml`, or `eks-rds-native` for `values-eks.yaml` +
+`values-eks-rds-native.yaml`. The upgrader refuses to switch profiles
+implicitly, and refuses `eks-rds-native` for a release whose chart does not
+ship `values-eks-rds-native.yaml` (2026.11.0 does not).
 
-Review that plan and its exact release identifiers. After approval, repeat the
+If `rds-setup.sh` bootstrapped the databases, add `--rds-setup` (implied by
+`eks-rds-native`) and export `AWS_REGION`, `RDS_HOST`, `RDS_ADMIN_SECRET_ARN`
+and `STATE_DIR` as for `pre`. Before every `helm upgrade` the upgrader then
+runs `rds-setup.sh refresh-admin` and writes the two rewritten keys
+(`agent-relay-secrets/HOOPDB_MIGRATION_URL` and
+`search-indexer-owner/RELAYHISTORY_PIPELINE_CONSUMER_SECRET`) into those
+Secrets with a merge patch read from a file, leaving their other keys alone.
+If an external secret controller owns those Secrets, update them through it
+instead and do not pass `--rds-setup`. When the values select
+`databaseMode: rds` without `--rds-setup`, the plan prints a note rather than
+guessing.
+
+For a new installation, add `--first-install`; see step 4.
+
+Review that plan and its exact release identifiers. The plan ends with
+`plan: changes=true` or `plan: changes=false`. After approval, repeat the
 same command with `--apply --db-instance "$RDS_INSTANCE_ID"`. Apply takes and
 waits for an RDS snapshot before Helm, passes the verified release image
 overlay last, waits for migrations and rollouts, and stops with the prior Helm
