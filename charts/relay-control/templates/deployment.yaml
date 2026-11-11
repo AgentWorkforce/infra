@@ -105,6 +105,9 @@ spec:
           volumeMounts:
             {{- if ne .Values.historyUpload.mode "off" }}
             - { name: history-upload, mountPath: /var/run/agent-relay/history-upload, readOnly: true }
+            {{- if .Values.historyUpload.publicEndpoint }}
+            - { name: history-upload-store, mountPath: /var/run/agent-relay/history-upload-store, readOnly: true }
+            {{- end }}
             {{- end }}
             - { name: secrets, mountPath: /var/run/agent-relay/secrets, readOnly: true }
             {{- if .Values.introspection.existingSecret }}
@@ -140,6 +143,15 @@ spec:
             secretName: {{ .Values.historyUpload.witness.existingSecret | quote }}
             defaultMode: 0440
             items: [{ key: {{ .Values.historyUpload.witness.key | quote }}, path: witness }]
+        {{- if .Values.historyUpload.publicEndpoint }}
+        - name: history-upload-store
+          secret:
+            secretName: {{ .Values.historyUpload.credentials.existingSecret | quote }}
+            defaultMode: 0440
+            items:
+              - { key: {{ .Values.historyUpload.credentials.accessKeyIdKey | quote }}, path: access-key-id }
+              - { key: {{ .Values.historyUpload.credentials.secretAccessKeyKey | quote }}, path: secret-access-key }
+        {{- end }}
         {{- end }}
         {{- if .Values.introspection.existingSecret }}
         - name: introspection-secret

@@ -1,0 +1,19 @@
+# Render-only example. Supply a real public DNS name, ingress class and TLS
+# Secret, and provision the separate upload issuer user before deployment.
+session-object-storage:
+  enabled: true
+  fullnameOverride: session-object-storage
+  existingSecret: sessions-pipeline-locker
+  ingress:
+    enabled: true
+    ingressClassName: nginx
+    path: /
+    hosts: [objects.selfhost.example]
+    tls:
+      - secretName: minio-public-tls
+        hosts: [objects.selfhost.example]
+    # No rewrite, authentication middleware, or redirects on signed PUTs.
+    annotations:
+      nginx.ingress.kubernetes.io/proxy-body-size: 2m
+  consoleIngress:
+    enabled: false

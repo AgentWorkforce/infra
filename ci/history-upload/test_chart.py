@@ -1,6 +1,7 @@
 """Direct-upload authority is API-only and strictly opt-in."""
 from pathlib import Path
 import hashlib
+import json
 import subprocess
 import tempfile
 import unittest
@@ -32,7 +33,15 @@ class HistoryUpload(unittest.TestCase):
 
     def test_frozen_contract_vector_pin(self):
         data=(ROOT/'ci/history-upload/relay-upload-inbox-v1.vectors.json').read_bytes()
-        self.assertEqual(hashlib.sha256(data).hexdigest(), '0753bf6f4111c03233d8defcb553e5d0783e101b04a402b079398d28a6bd901a')
+        self.assertEqual(hashlib.sha256(data).hexdigest(), '54438c939e85b11d255e25f80c0257994c54d5de5f8cf73adf9450aba94723c3')
+
+    def test_compatible_contract_vector_is_presigned_without_kms(self):
+        vector=json.loads((ROOT/'ci/history-upload/relay-upload-inbox-v1.vectors.json').read_text())['credentials']['presignedSelfhost']
+        self.assertEqual(vector['kind'],'presigned')
+        self.assertIsNone(vector['kmsKeyId'])
+        self.assertEqual(vector['endpoint'],'https://objects.example.test:9000/relayhistory')
+        self.assertNotIn('credentials',vector)
+        self.assertTrue(vector['urls'][0]['url'].startswith(vector['endpoint']+'/'))
 
     def test_default_off_has_no_upload_secret(self):
         pod = next(d for d in self.render() if d['kind'] == 'Deployment')['spec']['template']['spec']
@@ -61,6 +70,74 @@ class HistoryUpload(unittest.TestCase):
     def test_extra_env_cannot_override_guard_or_leak_witness(self):
         for name in ['SELFHOST_HISTORY_UPLOAD_DIRECT', 'SELFHOST_HISTORY_UPLOAD_WITNESS_KEY', 'SELFHOST_HISTORY_UPLOAD_WITNESS_KEY_FILE']:
             self.render(extra=dict(extraEnv=[dict(name=name, value='unsafe')]), failure='managed by historyUpload')
+
+class CompatibleUpload(unittest.TestCase):
+    render = HistoryUpload.render
+    def values(self, **changes):
+        return {**UPLOAD, 'roleArn':'', 'kmsKeyArn':'',
+                'publicEndpoint':'https://objects.selfhost.example/',
+                'internalEndpoint':'http://session-object-storage.ci.svc.cluster.local:9000',
+                'credentials':dict(existingSecret='minio-upload-issuer', accessKeyIdKey='id', secretAccessKeyKey='secret'), **changes}
+
+    def test_compatible_credentials_are_api_only_scoped_files(self):
+        docs=self.render(self.values())
+        pod=next(d for d in docs if d['kind']=='Deployment')['spec']['template']['spec']
+        c=pod['containers'][0]; env={e['name']:e for e in c['env']}
+        self.assertEqual(env['SELFHOST_HISTORY_UPLOAD_PUBLIC_ENDPOINT']['value'],'https://objects.selfhost.example')
+        self.assertEqual(env['SELFHOST_HISTORY_UPLOAD_INTERNAL_ENDPOINT']['value'],'http://session-object-storage.ci.svc.cluster.local:9000')
+        self.assertNotIn('SELFHOST_HISTORY_UPLOAD_ROLE_ARN',env)
+        self.assertNotIn('SELFHOST_HISTORY_UPLOAD_KMS_KEY_ARN',env)
+        self.assertFalse(any(e.startswith('AWS_') for e in env))
+        self.assertEqual(env['SELFHOST_HISTORY_UPLOAD_ACCESS_KEY_ID_FILE']['value'],'/var/run/agent-relay/history-upload-store/access-key-id')
+        self.assertEqual(env['SELFHOST_HISTORY_UPLOAD_SECRET_ACCESS_KEY_FILE']['value'],'/var/run/agent-relay/history-upload-store/secret-access-key')
+        volume=next(v for v in pod['volumes'] if v['name']=='history-upload-store')
+        self.assertEqual(volume['secret'],dict(secretName='minio-upload-issuer',defaultMode=288,items=[dict(key='id',path='access-key-id'),dict(key='secret',path='secret-access-key')]))
+        self.assertTrue(next(m for m in c['volumeMounts'] if m['name']=='history-upload-store')['readOnly'])
+        job=next(d for d in docs if d['kind']=='Job')['spec']['template']
+        base_job=next(d for d in self.render() if d['kind']=='Job')['spec']['template']
+        self.assertEqual(job,base_job)
+        check=subprocess.run(['kubeconform','-strict','-summary'],input=yaml.safe_dump_all(docs),capture_output=True,text=True)
+        self.assertEqual(check.returncode,0,check.stdout+check.stderr)
+
+    def test_opaque_kms_id_is_optional_only_for_compatible_store(self):
+        for key in ['kes/tenant-key','k'*2048]:
+            docs=self.render(self.values(kmsKeyArn=key))
+            env={e['name']:e for d in docs if d['kind']=='Deployment' for e in d['spec']['template']['spec']['containers'][0]['env']}
+            self.assertEqual(env['SELFHOST_HISTORY_UPLOAD_KMS_KEY_ARN']['value'],key)
+        for key in ['bad key','k'*2049]:
+            self.render(self.values(kmsKeyArn=key),failure='key ID without whitespace')
+        self.render({**UPLOAD,'kmsKeyArn':''},failure='customer-managed KMS')
+        self.render({**UPLOAD,'kmsKeyArn':'kes/tenant-key'},failure='customer-managed KMS')
+        self.render(self.values(roleArn=UPLOAD['roleArn']),failure='roleArn must be empty')
+
+    def test_endpoint_validation_and_dedicated_credentials(self):
+        for url in ['http://objects.example','https://objects.example/path','https://user:password@objects.example','https://objects.example?x=y','https://objects.example#x','https://objects.example:0','https://objects.example:65536','https://objects.example//']:
+            self.render(self.values(publicEndpoint=url),failure='historyUpload.publicEndpoint')
+        self.render(self.values(internalEndpoint='http://unrelated.example:9000'),failure='internalEndpoint')
+        self.render(self.values(credentials=dict(existingSecret='')),failure='credentials.existingSecret')
+        self.render({**UPLOAD,'internalEndpoint':'https://private.example'},failure='internalEndpoint requires')
+        self.render({**UPLOAD,'credentials':dict(existingSecret='minio-upload-issuer')},failure='credentials requires')
+
+    def test_upload_credentials_do_not_override_other_aws_features(self):
+        other=[dict(name='AWS_ACCESS_KEY_ID',valueFrom=dict(secretKeyRef=dict(name='separate-feed-aws',key='id')))]
+        docs=self.render(self.values(),extra=dict(extraEnv=other))
+        env={e['name']:e for d in docs if d['kind']=='Deployment' for e in d['spec']['template']['spec']['containers'][0]['env']}
+        self.assertEqual(env['AWS_ACCESS_KEY_ID']['valueFrom']['secretKeyRef']['name'],'separate-feed-aws')
+        self.assertIn('SELFHOST_HISTORY_UPLOAD_ACCESS_KEY_ID_FILE',env)
+
+    def test_issuer_cannot_mount_owner_key_or_duplicate_keys(self):
+        self.render(self.values(credentials=dict(existingSecret='relay-cloud-api',accessKeyIdKey='database-migrations-url',secretAccessKeyKey='secret')),failure='migration credential')
+        self.render(self.values(credentials=dict(existingSecret='minio-upload-issuer',accessKeyIdKey='same',secretAccessKeyKey='same')),failure='distinct access and secret')
+
+    def test_off_does_not_project_preconfigured_issuer_credentials(self):
+        docs=self.render(self.values(mode='off'))
+        pod=next(d for d in docs if d['kind']=='Deployment')['spec']['template']['spec']
+        self.assertFalse(any(v['name']=='history-upload-store' for v in pod['volumes']))
+        self.assertFalse(any(e['name'].startswith('SELFHOST_HISTORY_UPLOAD_') for e in pod['containers'][0]['env']))
+
+    def test_endpoint_and_issuer_env_cannot_bypass_chart_values(self):
+        for name in ['SELFHOST_HISTORY_UPLOAD_PUBLIC_ENDPOINT','SELFHOST_HISTORY_UPLOAD_INTERNAL_ENDPOINT','SELFHOST_HISTORY_UPLOAD_ACCESS_KEY_ID','SELFHOST_HISTORY_UPLOAD_SECRET_ACCESS_KEY_FILE']:
+            self.render(extra=dict(extraEnv=[dict(name=name,value='unsafe')]),failure='managed by historyUpload')
 
 class UploadConsumer(unittest.TestCase):
     def render(self, mode='allowlist', admission='async', allowlist=None, failure=None):
@@ -103,6 +180,25 @@ class UploadConsumer(unittest.TestCase):
     def test_empty_or_malformed_consumer_allowlist_refuses(self):
         for entries in [[],['user:test'],['org:.hidden'],['ws:a,b']]:
             self.render(allowlist=entries,failure='uploadDirect.allowlist')
+
+class BundledMinio(unittest.TestCase):
+    def test_public_ingress_exposes_only_the_s3_api_with_tls(self):
+        p=subprocess.run(['helm','template','test',str(ROOT/'charts/sessions-pipeline'),'-n','ci',
+            '-f',str(ROOT/'charts/sessions-pipeline/ci/ingest-edge-values.yaml'),
+            '-f',str(ROOT/'ci/history-upload/fixtures/minio-storage-values.yaml')],capture_output=True,text=True)
+        self.assertEqual(p.returncode,0,p.stderr)
+        docs=[d for d in yaml.safe_load_all(p.stdout) if d]
+        ingress=next(d for d in docs if d['kind']=='Ingress' and d['metadata']['name']=='session-object-storage')
+        self.assertEqual(ingress['spec']['ingressClassName'],'nginx')
+        self.assertEqual(ingress['spec']['tls'],[dict(hosts=['objects.selfhost.example'],secretName='minio-public-tls')])
+        self.assertEqual(ingress['spec']['rules'][0]['host'],'objects.selfhost.example')
+        path=ingress['spec']['rules'][0]['http']['paths'][0]
+        self.assertEqual(path['path'],'/')
+        self.assertEqual(path['backend']['service'],dict(name='session-object-storage',port=dict(number=9000)))
+        self.assertFalse(any('rewrite' in k for k in ingress['metadata'].get('annotations',{})))
+        self.assertFalse(any('console' in d['metadata']['name'] for d in docs if d['kind']=='Ingress'))
+        check=subprocess.run(['kubeconform','-strict','-summary'],input=yaml.safe_dump(ingress),capture_output=True,text=True)
+        self.assertEqual(check.returncode,0,check.stdout+check.stderr)
 
 if __name__ == '__main__':
     unittest.main()
