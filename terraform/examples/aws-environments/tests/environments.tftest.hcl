@@ -232,11 +232,27 @@ run "lambda_zip_must_be_immutable" {
 
 # Materialize only the local fence, so child-module data references are known
 # during subsequent mock plans. Never apply the protected service resources.
-run "sessions_bucket_read_unset_adds_nothing" {
+run "sessions_bucket_read_is_on_by_default" {
   command = plan
   assert {
+    condition = toset(flatten([for s in jsondecode(module.search.sessions_read_policy_json).Statement : s.Resource])) == toset([
+      "arn:aws:s3:::agent-relay-dev-111111111111-us-west-2-sessions",
+      "arn:aws:s3:::agent-relay-dev-111111111111-us-west-2-sessions/*",
+    ])
+    error_message = "By default the search roles read only this environment's bucket; the AWS-managed key needs no key grant."
+  }
+  assert {
+    condition     = toset(flatten([for s in jsondecode(output.runtime_role_policy_json.sessions_read).Statement : s.Action])) == toset(["s3:ListBucket", "s3:GetObject"])
+    error_message = "The default grant must be read-only and publish no kms:Decrypt for the AWS-managed key."
+  }
+}
+
+run "sessions_bucket_read_opt_out_adds_nothing" {
+  command = plan
+  variables { search_sessions_bucket_read_enabled = false }
+  assert {
     condition     = module.search.sessions_read_policy_json == null && !contains(keys(output.runtime_role_policy_json), "sessions_read")
-    error_message = "Existing environments must not change until the input is set."
+    error_message = "Opting out must add no sessions read policy."
   }
 }
 
@@ -268,6 +284,30 @@ run "sessions_bucket_read_is_scoped" {
     condition     = toset(flatten([for s in jsondecode(output.runtime_role_policy_json.sessions_read).Statement : s.Action])) == toset(["s3:ListBucket", "s3:GetObject", "kms:Decrypt"])
     error_message = "The root must publish exactly the read-only actions."
   }
+}
+
+run "sessions_bucket_read_default_uses_the_environment_key" {
+  command = plan
+  variables {
+    kms_key_arn = "arn:aws:kms:us-west-2:111111111111:key/11111111-2222-3333-4444-555555555555"
+  }
+  assert {
+    condition = toset(flatten([for s in jsondecode(module.search.sessions_read_policy_json).Statement : s.Resource])) == toset([
+      "arn:aws:s3:::agent-relay-dev-111111111111-us-west-2-sessions",
+      "arn:aws:s3:::agent-relay-dev-111111111111-us-west-2-sessions/*",
+      "arn:aws:kms:us-west-2:111111111111:key/11111111-2222-3333-4444-555555555555",
+    ])
+    error_message = "The default grant must decrypt only with the environment's customer-managed key."
+  }
+}
+
+run "sessions_bucket_read_explicit_conflicts_with_opt_out" {
+  command = plan
+  variables {
+    search_sessions_bucket_read_enabled = false
+    search_sessions_bucket_read         = { bucket_arn = "arn:aws:s3:::agent-relay-dev-111111111111-us-west-2-sessions" }
+  }
+  expect_failures = [terraform_data.environment_contract]
 }
 
 run "sessions_bucket_read_refuses_another_bucket" {

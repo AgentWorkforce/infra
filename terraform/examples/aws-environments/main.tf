@@ -27,6 +27,15 @@ locals {
   external_runtime_arns = var.existing_runtime_roles == null ? [] : compact(values(var.existing_runtime_roles))
   indexer_role_arn      = var.existing_runtime_roles == null ? module.search.indexer_role_arn : var.existing_runtime_roles.indexer_role_arn
   reader_role_arn       = var.existing_runtime_roles == null ? module.search.reader_role_arn : var.existing_runtime_roles.reader_role_arn
+  sessions_bucket_name  = "${local.name}-${var.account_id}-${var.region}-sessions"
+  # The search indexer and session-read API read session objects from this
+  # environment's own bucket, so grant it by default, with the key that
+  # encrypts it (null: the AWS-managed aws/s3 key needs no key grant).
+  # search_sessions_bucket_read remains an explicit, validated equivalent.
+  search_sessions_bucket_read = !var.search_sessions_bucket_read_enabled ? null : var.search_sessions_bucket_read != null ? var.search_sessions_bucket_read : {
+    bucket_arn  = "arn:aws:s3:::${local.sessions_bucket_name}"
+    kms_key_arn = var.kms_key_arn
+  }
 }
 
 resource "terraform_data" "environment_contract" {
@@ -53,10 +62,11 @@ resource "terraform_data" "environment_contract" {
     }
     precondition {
       condition = var.search_sessions_bucket_read == null ? true : (
-        var.search_sessions_bucket_read.bucket_arn == "arn:aws:s3:::${local.name}-${var.account_id}-${var.region}-sessions" &&
+        var.search_sessions_bucket_read_enabled &&
+        var.search_sessions_bucket_read.bucket_arn == "arn:aws:s3:::${local.sessions_bucket_name}" &&
         var.search_sessions_bucket_read.kms_key_arn == var.kms_key_arn
       )
-      error_message = "search_sessions_bucket_read must name this environment's sessions bucket and the kms_key_arn that encrypts it."
+      error_message = "search_sessions_bucket_read must name this environment's sessions bucket and the kms_key_arn that encrypts it, and cannot be combined with search_sessions_bucket_read_enabled = false."
     }
     precondition {
       condition = var.existing_runtime_roles == null ? true : (
@@ -136,7 +146,7 @@ module "postgres" {
 module "sessions_bucket" {
   source = "../../modules/aws/object-storage"
 
-  bucket_name   = "${local.name}-${var.account_id}-${var.region}-sessions"
+  bucket_name   = local.sessions_bucket_name
   kms_key_arn   = var.kms_key_arn
   force_destroy = false
   access_role = {
@@ -185,7 +195,7 @@ module "search" {
     indexer_service_accounts = [{ cluster_name = var.eks_cluster_name, namespace = local.namespace, service_account = local.search_indexer_sa }]
     reader_service_accounts  = [{ cluster_name = var.eks_cluster_name, namespace = local.namespace, service_account = local.search_reader_sa }]
   }
-  sessions_bucket_read      = var.search_sessions_bucket_read
+  sessions_bucket_read      = local.search_sessions_bucket_read
   additional_principal_arns = distinct(concat(local.external_runtime_arns, var.pipeline_runtime == "lambda" ? [module.pipeline[0].execution_role_arn] : []))
   tags                      = local.tags
 

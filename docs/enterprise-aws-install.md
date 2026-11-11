@@ -137,6 +137,13 @@ python3 terraform/scripts/aws-environment.py output \
   --backend /approved/private/customer.backend.json
 ```
 
+The plan grants the search indexer and session-read roles read-only access to
+the environment's own sessions bucket (and its `kms_key_arn`, when set) by
+default; there is no separate step. Without it uploads are accepted but no
+session reaches the dashboard. See
+[Search access to the sessions bucket](../terraform/examples/aws-environments/README.md#search-access-to-the-sessions-bucket)
+for the opt-out and for environments applied before this default.
+
 Retain the plan/apply receipt and non-secret `verification.json`. Reconcile a
 failed apply before preparing another plan. Preserve state and backup storage.
 

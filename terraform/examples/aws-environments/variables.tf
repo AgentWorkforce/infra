@@ -127,8 +127,15 @@ variable "database_instance_class" {
   default     = null
 }
 
+variable "search_sessions_bucket_read_enabled" {
+  description = "Grant the search indexer and session-read roles read-only access to this environment's sessions bucket and the kms_key_arn that encrypts it. Defaults on: without it the indexer fails with unauthorized and the read API lists no sessions. false omits the two inline policies (for example, for one apply that enrolls an unmarked search state first)."
+  type        = bool
+  default     = true
+  nullable    = false
+}
+
 variable "search_sessions_bucket_read" {
-  description = "Exact ARNs of this environment's sessions bucket and, for a customer-managed key, its kms_key_arn (null for AWS-managed encryption). Any other bucket or key is refused. Grants the search indexer and session-read roles read-only access. null changes nothing."
+  description = "Optional explicit form of the default grant: exact ARNs of this environment's sessions bucket and, for a customer-managed key, its kms_key_arn (null for AWS-managed encryption). Any other bucket or key is refused. null uses the computed default."
   type = object({
     bucket_arn  = string
     kms_key_arn = optional(string)
