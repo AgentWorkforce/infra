@@ -298,7 +298,9 @@ class LocalStack(Stack):
         if key:
             self.apply({"apiVersion": "networking.k8s.io/v1", "kind": "NetworkPolicy", "metadata": {"name": "local-brief-model-egress", "namespace": NS},
                 "spec": {"podSelector": {"matchLabels": {"app.kubernetes.io/instance": "agent-relay", "app.kubernetes.io/component": "session-brief"}},
-                    "policyTypes": ["Egress"], "egress": [{"to": [{"ipBlock": {"cidr": "0.0.0.0/0"}}], "ports": [{"protocol": "TCP", "port": 443}]}]}})
+                    "policyTypes": ["Egress"], "egress": [{"to": [{"ipBlock": {"cidr": "0.0.0.0/0",
+                        "except": ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "169.254.0.0/16"]}}],
+                        "ports": [{"protocol": "TCP", "port": 443}]}]}})
         else:
             self.k("delete", "networkpolicy", "local-brief-model-egress", "--ignore-not-found=true")
             print("OPENAI_API_KEY is missing: brief worker will run without making model calls.", flush=True)

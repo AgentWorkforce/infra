@@ -1,6 +1,7 @@
 """Local target ownership, host changes, and real native Helm composition."""
 import json
 import io
+import ipaddress
 from pathlib import Path
 import subprocess
 import tempfile
@@ -74,6 +75,20 @@ class LocalTests(unittest.TestCase):
             stack.configure_model()
             secret.assert_not_called()
             self.assertEqual(apply.call_args.args[0]["kind"], "NetworkPolicy")
+            spec = apply.call_args.args[0]["spec"]
+            self.assertEqual(spec["podSelector"]["matchLabels"], {"app.kubernetes.io/instance": "agent-relay", "app.kubernetes.io/component": "session-brief"})
+            self.assertEqual(spec["policyTypes"], ["Egress"])
+            self.assertEqual(len(spec["egress"]), 1)
+            rule = spec["egress"][0]
+            self.assertEqual(rule["ports"], [{"protocol": "TCP", "port": 443}])
+            block = rule["to"][0]["ipBlock"]
+            def allows(address):
+                ip = ipaddress.ip_address(address)
+                return ip in ipaddress.ip_network(block["cidr"]) and not any(ip in ipaddress.ip_network(n) for n in block["except"])
+            for address in ("1.1.1.1", "8.8.8.8", "172.15.255.255", "172.32.0.0", "169.253.255.255"):
+                self.assertTrue(allows(address), address)
+            for address in ("10.0.0.1", "172.16.0.1", "172.31.255.255", "192.168.1.1", "169.254.169.254"):
+                self.assertFalse(allows(address), address)
             self.assertEqual(stack.model_key_sha, local_stack.hashlib.sha256(b"fixture").hexdigest())
 
     def test_explicit_empty_model_override_disables_model_calls(self):

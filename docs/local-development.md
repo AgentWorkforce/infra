@@ -68,7 +68,8 @@ The key travels on standard input and is installed only into the owned local
 cluster's model Secret; it is not placed in command arguments, logged, or saved
 in a source file. The helper updates the model egress policy and waits for the
 brief worker rollout. Interactive input, empty input and multiline values are
-refused. The local profile caps brief attempts at 64 globally per day and three
+refused. Model egress selects only the brief worker and allows public IPv4 HTTPS
+on TCP 443, excluding RFC1918 and link-local networks. The local profile caps brief attempts at 64 globally per day and three
 per session; existing attempt records are retained. Installing a key preserves
 those caps and does not prove a summary
 was generated. Alternatively, set `OPENAI_API_KEY` before `make local-up`.
