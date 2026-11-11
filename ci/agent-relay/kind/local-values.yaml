@@ -4,11 +4,14 @@
 relay-control:
   image:
     repository: ghcr.io/agentworkforce/relay-control
-    digest: sha256:88392b1827c263ab9eaad501ad902b37548f073a06a198444a8d91bcfb72d2b6
+    # 0.5.13, source fa81b67, published by run 42966711050 (Usage API).
+    digest: sha256:443210335565a3079419437965abe1d4ffb48b9203fee81679477e03fafcadad
+  selectedFeatures: [usage]
 relay-webapp:
   image:
     repository: ghcr.io/agentworkforce/relay-webapp
-    digest: sha256:bd295ccb7d1323965dce890f19d0b7f857d706c00d7756f719c713763fdb49f3
+    # Source c485ba6, published by run 42966714669 (owner-only Usage page).
+    digest: sha256:34ef185ae4abad2b07f3f64b43bb4af1412d9e48c0053f8c2e38769c7b91cff3
   runtime:
     coordinationOverlapsEnabled: false
 sessions-pipeline:

@@ -14,10 +14,10 @@ Control, the dashboard, Relaycast, native ingest/consumer/reader, the brief work
 and the internal telemetry collector. It uses published immutable release images;
 no source build, old data, operator packet or admission file is required.
 
-The profile pins are in `ci/agent-relay/kind/local-values.yaml`. The services
-pin is the existing published native image from the main branch's native CI
-profile, and Control/dashboard use the main branch's GCP profile pins. The
-scrubber uses that services image's defaults. No WASM-required or reader-ceiling
+The profile pins are in `ci/agent-relay/kind/local-values.yaml`. Control 0.5.13
+and dashboard source `c485ba6` are published releases selected for the owner-only
+Usage page. The services image is the published native generation selected for
+session-list query support. The scrubber uses that services image's defaults. No WASM-required or reader-ceiling
 override is selected before the replacement services image is published.
 
 On the Mac, complete this **one-time administrator step** for DNS and trust:
@@ -39,6 +39,14 @@ Use `make local-login` to generate another, then open the URL from that file.
 Control's normal sign-in rate limits apply. Repeat-up reuses a recent link.
 All generated database/service credentials stay in `.kind/local/credentials.json`
 (0600); never commit `.kind`.
+
+The owner-only Usage page is at
+`https://relay.kind.agentrelay.com/#/settings/usage`. The local profile enables
+the `usage` feature through the chart's managed `selectedFeatures` value.
+Control applies migration 0040 during bootstrap. Upload counts come from session
+directory activity; active-user and search counts start when usage is enabled.
+The current pipeline reports summary counts as unavailable (`n/a`). A member's
+request to `/cloud/api/v1/organizations/<org-id>/usage?days=30` returns 403.
 
 `make local-up` reuses only this checkout's matching cluster UID and Docker
 endpoint. An occupied local port or an existing foreign cluster refuses clearly;
