@@ -82,11 +82,22 @@ Only after that drain check, uninstall integrations and sign out:
 "$kind_helper" call tools.status --socket "$kind_socket" --json
 "$kind_helper" call tools.manage --socket "$kind_socket" --params '{"tool_id":"codex","action":"uninstall"}' --json
 "$kind_helper" call tools.manage --socket "$kind_socket" --params '{"tool_id":"claude","action":"uninstall"}' --json
+"$kind_helper" call settings.get --socket "$kind_socket" --json
+"$kind_helper" call settings.set --socket "$kind_socket" --params '{"claude_session_hook":false,"codex_stop_hook":false}' --json
 "$kind_helper" call account.sign_out --socket "$kind_socket" --json
 ```
 
-These are supported integration uninstall and sign-out actions. Inspect their
-results: a transport success alone does not prove integrations were removed.
+MCP uninstall and native session hooks are separate integrations. The two hook
+preferences remove q7's Claude SessionStart/Codex stop integration and its own
+generated provider rules. Compare settings before/after: only those two hook
+preferences may change; every permission control and other setting must match.
+Use this explicit q7 admin socket throughout and require the protected hook
+witnesses to match. Do this before sign-out and quitting the core, while the
+supported hook teardown is available; do not edit shared settings by hand.
+
+These are supported integration uninstall, native hook teardown and sign-out
+actions. Inspect their results: a transport success alone does not prove
+integrations were removed.
 Remove any other installed local provider through its supported uninstall.
 Do not change spawn, sharing, trust or permission settings to make tests pass.
 
