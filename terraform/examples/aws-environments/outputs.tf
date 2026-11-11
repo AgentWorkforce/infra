@@ -135,6 +135,6 @@ output "desktop_feed" {
     key_arns        = module.desktop_feed[0].key_arns
     role_arn        = module.desktop_feed[0].role_arn
     namespace       = local.namespace
-    service_account = coalesce(var.desktop_feed.service_account, "${var.release_name}-relay-control")
+    service_account = var.desktop_feed.service_account
   }
 }
