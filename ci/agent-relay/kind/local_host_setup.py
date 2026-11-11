@@ -5,6 +5,7 @@ import hashlib
 import os
 from pathlib import Path
 import platform
+import re
 import ssl
 import subprocess
 
@@ -12,6 +13,28 @@ ROOT = Path(__file__).resolve().parents[3]
 CA = ROOT / ".kind/local/ca.crt"
 HOSTS = {name + ".kind.agentrelay.com" for name in ("relay", "cast", "history", "files")}
 KEYCHAIN = "/Library/Keychains/System.keychain"
+
+
+def certificate_present(ca):
+    """Match the exact stored CA, independently of leaf validity or trust."""
+    result = subprocess.run(["security", "find-certificate", "-a", "-p", KEYCHAIN], check=True, capture_output=True, text=True)
+    wanted = ssl.PEM_cert_to_DER_cert(ca.read_text())
+    return any(ssl.PEM_cert_to_DER_cert(pem) == wanted for pem in re.findall(
+        r"-----BEGIN CERTIFICATE-----.*?-----END CERTIFICATE-----", result.stdout, re.DOTALL))
+
+
+def host_aliases_present():
+    return bool(set(Path("/etc/hosts").read_text().split()) & HOSTS)
+
+
+def remove_ca(ca, sha1):
+    result = subprocess.run(["security", "remove-trusted-cert", "-d", str(ca)], capture_output=True, text=True)
+    if result.returncode and "The specified item could not be found in the keychain" not in result.stderr:
+        raise RuntimeError("could not remove local CA trust; local state is preserved for retry: " + result.stderr.strip())
+    if certificate_present(ca):
+        subprocess.run(["security", "delete-certificate", "-Z", sha1, KEYCHAIN], check=True)
+    if certificate_present(ca):
+        raise RuntimeError("local CA remains in System keychain; local state is preserved for retry")
 
 
 def host_contents(original, enabled):
@@ -45,8 +68,7 @@ def main():
     if args.action == "up":
         subprocess.run(["security", "add-trusted-cert", "-d", "-r", "trustRoot", "-k", KEYCHAIN, str(CA)], check=True)
     else:
-        subprocess.run(["security", "remove-trusted-cert", "-d", str(CA)], check=False)
-        subprocess.run(["security", "delete-certificate", "-Z", sha1, KEYCHAIN], check=False)
+        remove_ca(CA, sha1)
     hosts = Path("/etc/hosts")
     wanted = host_contents(hosts.read_text(), args.action == "up")
     # Preserve hosts inode, ownership and mode rather than replacing the file.

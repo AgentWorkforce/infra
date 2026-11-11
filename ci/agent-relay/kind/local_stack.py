@@ -5,6 +5,7 @@ This entry point owns only agent-relay-local and .kind/local in this checkout.
 It does not consume qualification packets from the separate operator lifecycle.
 """
 from datetime import datetime, timezone
+import base64
 import hashlib
 import errno
 from email import policy
@@ -23,6 +24,7 @@ import yaml
 from stack import Stack, StackError, ROOT, NS, NODE, POSTGRES, private_json
 from native_core_values import compose
 from native_recipe import SECRET_KEYS
+from local_host_setup import certificate_present, host_aliases_present
 
 LOCAL_VALUES = yaml.safe_load((ROOT / "ci/agent-relay/kind/local-values.yaml").read_text())
 
@@ -38,6 +40,8 @@ MINIO = "cgr.dev/chainguard/minio@sha256:e70b2b1e74d79457f808710483bd726ff364529
 SITE = "https://relay.kind.agentrelay.com"
 HISTORY = "https://history.kind.agentrelay.com:8443"
 PGHOST = "postgres.agent-relay.svc.cluster.local"
+COLLECTOR_URL = "https://telemetry-collector.agent-relay.svc.cluster.local:8443/v1/events"
+TELEMETRY = {"control": "relaycontrol", "ingest": "session-ingest", "consumer": "session-pipeline-consumer", "reader": "session-read-api"}
 HOSTS = [PGHOST, "relay.kind.agentrelay.com", "cast.kind.agentrelay.com", "history.kind.agentrelay.com", "files.kind.agentrelay.com", "telemetry-collector.agent-relay.svc.cluster.local"]
 
 
@@ -220,14 +224,20 @@ class LocalStack(Stack):
         for slot in ("nativeConsumer", "ingestEdge", "sessionReadApi"):
             result["sessions-pipeline"][slot]["image"] = image(PIPELINE)
         result["sessions-pipeline"]["sessionReadApi"]["cors"] = {"allowedOrigins": [SITE]}
+        result["sessions-pipeline"]["ingestEdge"]["admission"] = {"mode": "async", "scanIntervalMs": 1000}
         if phase == "serve":
             result["components"]["telemetryCollector"] = True
             result["telemetry-collector"] = {
                 "fullnameOverride": "telemetry-collector", "image": LOCAL_VALUES["telemetry-collector"]["image"],
                 "tlsProxy": LOCAL_VALUES["telemetry-collector"]["tlsProxy"], "producersSecret": "local-telemetry-producers",
-                "tlsSecret": "kind-tls", "rolloutRevision": "local-1",
+                "tlsSecret": "kind-tls", "rolloutRevision": "local-2",
                 "persistence": {"existingClaim": "local-telemetry"},
-                "networkPolicy": {"allowedFrom": [{"podSelector": {"matchLabels": {"app.kubernetes.io/name": "relay-control"}}}]}}
+                "networkPolicy": {"allowedFrom": [{"podSelector": {"matchLabels": {"agentworkforce.dev/analytics-producer": "true"}}}]}}
+            analytics = lambda name: {"enabled": True, "deploymentId": "local-kind", "collectorUrl": COLLECTOR_URL,
+                "existingSecret": "local-telemetry-" + name, "caConfigMap": "local-ca"}
+            result["relay-control"]["analytics"] = {**analytics("control"), "profile": "development"}
+            for slot, producer in (("ingestEdge", "ingest"), ("nativeConsumer", "consumer"), ("sessionReadApi", "reader")):
+                result["sessions-pipeline"][slot]["analytics"] = analytics(producer)
             worker = result["sessions-pipeline"]["worker"]
             worker.update(image=image(PIPELINE), existingSecret="local-brief", hoopdb={"existingSecret": "local-brief", "key": "HOOPDB_URL"},
                 postgresCa={"enabled": True, "configMap": "local-ca", "key": "ca.crt", "sha256": self.ca_sha},
@@ -238,7 +248,7 @@ class LocalStack(Stack):
                     "openaiSecret": {"name": "local-model", "key": "OPENAI_API_KEY"}})
             worker["components"]["session-brief"] = {"enabled": True, "fullnameOverride": "session-brief", "replicas": 1}
             worker["components"]["session-brief"]["env"] = [env("SESSION_BRIEF_IDLE_SECONDS", "0"), env("SESSION_BRIEF_MAX_WAIT_SECONDS", "0")]
-            worker["podAnnotations"] = {"local.agentrelay.dev/model-key-sha256": hashlib.sha256(os.environ.get("OPENAI_API_KEY", "").encode()).hexdigest()}
+            worker["podAnnotations"] = {"local.agentrelay.dev/model-key-sha256": getattr(self, "model_key_sha", "unconfigured")}
             result["sessions-pipeline"]["nativeConsumer"]["legacyRuntimesQualified"] = True
         return result
 
@@ -247,14 +257,33 @@ class LocalStack(Stack):
         # its local-path RWO volume; production's CSI/RWOP default is unchanged.
         self.apply({"apiVersion": "v1", "kind": "PersistentVolumeClaim", "metadata": {"name": "local-telemetry", "namespace": NS},
             "spec": {"accessModes": ["ReadWriteOnce"], "resources": {"requests": {"storage": "1Gi"}}}})
-        producer = {"name": "local-control", "component": "relaycontrol", "deployment_id": "local-kind",
-            "token_file": "/var/run/secrets/telemetry-producers/token"}
-        self.secret("local-telemetry-producers", {"producers.json": json.dumps([producer]), "token": c["collector"]})
+        producers, tokens = [], {}
+        for name, component in TELEMETRY.items():
+            token = c["collector"] if name == "control" else c["collector_" + name]
+            self.secret("local-telemetry-" + name, {"token": token})
+            tokens[name] = token
+            producers.append({"name": "local-" + name, "component": component, "deployment_id": "local-kind",
+                "token_file": "/var/run/secrets/telemetry-producers/" + name})
+        self.secret("local-telemetry-producers", {"producers.json": json.dumps(producers), **tokens})
         self.sql("hoopdb", "ALTER ROLE sessions_pipeline_runtime PASSWORD '" + c["sessions_pipeline_runtime"] + "';")
         self.secret("local-brief", {"HOOPDB_URL": pgurl("sessions_pipeline_runtime", c, "/etc/postgres-ca/ca.crt"),
             "rootUser": "locker", "rootPassword": c["locker"], "SUMMARY_MASTER_KEYS": "local1:" + c["encryption"]})
-        key = os.environ.get("OPENAI_API_KEY", "")
-        self.secret("local-model", {"OPENAI_API_KEY": key})
+        self.configure_model()
+
+    def configure_model(self):
+        # Repeating local-up without an environment override preserves a key
+        # already supplied to this disposable stack through its local Secret.
+        key = os.environ.get("OPENAI_API_KEY")
+        if key is None:
+            current = self.k("get", "secret", "local-model", "-o", "json", "--ignore-not-found=true", sensitive=True).stdout.strip()
+            if current:
+                key = base64.b64decode(json.loads(current).get("data", {}).get("OPENAI_API_KEY", "")).decode()
+            else:
+                key = ""
+                self.secret("local-model", {"OPENAI_API_KEY": key})
+        else:
+            self.secret("local-model", {"OPENAI_API_KEY": key})
+        self.model_key_sha = hashlib.sha256(key.encode()).hexdigest()
         if key:
             self.apply({"apiVersion": "networking.k8s.io/v1", "kind": "NetworkPolicy", "metadata": {"name": "local-brief-model-egress", "namespace": NS},
                 "spec": {"podSelector": {"matchLabels": {"app.kubernetes.io/instance": "agent-relay", "app.kubernetes.io/component": "session-brief"}},
@@ -390,7 +419,7 @@ class LocalStack(Stack):
             "createdAt": datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")}
         private_json(path, self.credentials)
         c = self.credentials
-        for key in ("collector", "sessions_pipeline_runtime"):
+        for key in ("collector", "sessions_pipeline_runtime", "collector_ingest", "collector_consumer", "collector_reader"):
             c.setdefault(key, secrets.token_hex(32))
         private_json(path, c)
         self.stage("chart-dependencies", self.dependencies)
@@ -417,10 +446,9 @@ class LocalStack(Stack):
         clusters = self.cmd(["kind", "get", "clusters"]).stdout.splitlines()
         if self.name in clusters:
             self.owned()
-        ca = self.state / "tls.crt"
+        ca = self.state / "ca.crt"
         if sys.platform == "darwin" and ca.exists():
-            trusted = self.cmd(["security", "verify-cert", "-c", ca, "-p", "ssl", "-s", "relay.kind.agentrelay.com"], check=False)
-            if trusted.returncode == 0:
+            if certificate_present(ca) or host_aliases_present():
                 self.cmd(["sudo", sys.executable, ROOT / "ci/agent-relay/kind/local_host_setup.py", "down"], sensitive=True)
         if self.name in clusters:
             self.cmd(["kind", "delete", "cluster", "--name", self.name], timeout=180)

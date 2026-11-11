@@ -102,7 +102,17 @@ The measurement uses one host's monotonic clock; HTTPS errors were not ignored.
 Both source trees were restored and the dashboard's `npm run check` passed.
 
 The q7m2k9 candidate passed its checksum, signature and compiled-profile checks
-and was copied to `~/Applications`. A real `codex exec` session with a unique
-marker has been created. macOS trust, Desktop launch/sign-in, actual upload/
-search/messaging, model summaries and wipe/repeat/wipe remain pending. Linux
-browser trust does not qualify native macOS Desktop trust.
+and was copied to `~/Applications`. Native macOS trust and the running Desktop's
+local administrator binding were observed working. A real `codex exec` session
+was uploaded by Desktop: the pointer, manifest reference, two chunks and directory
+entry were verified. The normal authenticated dashboard list API includes it.
+Marker search currently fails with HTTP 501 because the pinned reader rejects
+the `q` filter. Model summaries, local messaging, independent device-flow
+qualification and wipe/repeat/wipe remain pending.
+
+Local ingest uses asynchronous admission. Control, ingest, consumer and reader
+use separate private collector credentials. The currently pinned Relaycast image
+lacks collector support; Dashboard and brief have no matching managed adapter
+in this profile. Collector readiness alone does not qualify event delivery.
+An existing local model Secret survives repeated `make local-up` without an
+environment override; explicitly supplying an empty `OPENAI_API_KEY` disables it.

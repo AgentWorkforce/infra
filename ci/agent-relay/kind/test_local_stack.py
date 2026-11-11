@@ -5,15 +5,68 @@ import subprocess
 import tempfile
 from types import SimpleNamespace
 import unittest
+from unittest.mock import patch
 
 import yaml
 
 from local_host_setup import host_contents
+import local_host_setup
+import local_stack
 from local_stack import LocalStack, ROOT
 from stack import StackError
 
 
 class LocalTests(unittest.TestCase):
+    def test_repeat_without_model_override_preserves_existing_secret(self):
+        stack = LocalStack.__new__(LocalStack)
+        stack.k = lambda *args, **kw: SimpleNamespace(stdout=json.dumps({"data": {"OPENAI_API_KEY": "Zml4dHVyZQ=="}}))
+        with patch.dict(local_stack.os.environ, {}, clear=True), patch.object(stack, "secret") as secret, patch.object(stack, "apply") as apply:
+            stack.configure_model()
+            secret.assert_not_called()
+            self.assertEqual(apply.call_args.args[0]["kind"], "NetworkPolicy")
+            self.assertEqual(stack.model_key_sha, local_stack.hashlib.sha256(b"fixture").hexdigest())
+
+    def test_explicit_empty_model_override_disables_model_calls(self):
+        stack = LocalStack.__new__(LocalStack)
+        with patch.dict(local_stack.os.environ, {"OPENAI_API_KEY": ""}), patch.object(stack, "secret") as secret, patch.object(stack, "k") as k:
+            stack.configure_model()
+            secret.assert_called_once_with("local-model", {"OPENAI_API_KEY": ""})
+            self.assertEqual(k.call_args.args[:2], ("delete", "networkpolicy"))
+
+    def test_ca_removal_failure_stops_before_state_or_cluster_removal(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            stack = LocalStack.__new__(LocalStack)
+            stack.state = Path(tmp)
+            (stack.state / "ca.crt").write_text("saved CA, even with an expired leaf")
+            stack.name = "agent-relay-local"
+            stack.docker = lambda **kw: None
+            commands = []
+            def command(args, **kw):
+                commands.append(args)
+                if args[0] == "sudo":
+                    raise StackError("security failed")
+                return SimpleNamespace(stdout=stack.name + "\n")
+            stack.cmd = command
+            stack.owned = lambda: None
+            with patch.object(local_stack.sys, "platform", "darwin"), patch.object(local_stack, "certificate_present", return_value=True):
+                with self.assertRaisesRegex(StackError, "security failed"):
+                    stack.down_local()
+            self.assertTrue((stack.state / "ca.crt").exists())
+            self.assertFalse(any(cmd[:3] == ["kind", "delete", "cluster"] for cmd in commands))
+
+    def test_trust_removal_propagates_unexpected_security_failure(self):
+        failed = SimpleNamespace(returncode=1, stderr="authorization denied")
+        with patch.object(local_host_setup.subprocess, "run", return_value=failed), patch.object(local_host_setup, "certificate_present") as present:
+            with self.assertRaisesRegex(RuntimeError, "preserved"):
+                local_host_setup.remove_ca(Path("ca.crt"), "fingerprint")
+            present.assert_not_called()
+
+    def test_already_absent_ca_is_safe_to_remove_again(self):
+        absent = SimpleNamespace(returncode=1, stderr="The specified item could not be found in the keychain.")
+        with patch.object(local_host_setup.subprocess, "run", return_value=absent) as run, patch.object(local_host_setup, "certificate_present", return_value=False):
+            local_host_setup.remove_ca(Path("ca.crt"), "fingerprint")
+            self.assertEqual(run.call_count, 1)
+
     def test_host_setup_removes_only_kind_aliases_and_preserves_shared_lines(self):
         original = "127.0.0.1 localhost relay.kind.agentrelay.com # shared\n::1 relay.kind.agentrelay.com other.local\n192.0.2.1 unrelated.local\n"
         installed = host_contents(original, True)
@@ -72,6 +125,17 @@ class LocalTests(unittest.TestCase):
                 self.assertNotIn("READER_MAX_RULESET", env)
                 if "OPENAI_API_KEY" in env:
                     self.assertIn("valueFrom", env["OPENAI_API_KEY"])
+                name = deployment["metadata"]["name"]
+                if name == "session-native-ingest":
+                    self.assertEqual(env["SELFHOST_INGEST_ADMISSION"]["value"], "async")
+                    self.assertIn("admission", json.dumps(container["readinessProbe"]))
+                if name in ("session-native-ingest", "session-native-consumer", "session-read-api"):
+                    self.assertEqual(env["ANALYTICS_SINK"]["value"], "collector")
+                    self.assertIn("valueFrom", env["ANALYTICS_COLLECTOR_TOKEN"])
+                    self.assertTrue(any(m["name"] == "analytics-ca" for m in container["volumeMounts"]))
+                if name == "relay-control":
+                    self.assertEqual(env["SELFHOST_ANALYTICS_DESTINATION"]["value"], "collector")
+                    self.assertTrue(any(m["name"] == "analytics-producer" for m in container["volumeMounts"]))
 
 
 if __name__ == "__main__":
