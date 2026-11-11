@@ -10,13 +10,14 @@ The self-host scanner is authoritative; SQS is not required.
 ## Compatibility and contract
 
 This wiring implements `relay-upload-inbox-v1` at relayhistory-pipeline
-`a4ace85eb0cf250ee3ba83e133dc9302c0aab3a3` (#508). The exact vectors are vendored
+`5186ff1edd0b624f63b73adb2fd5d267f5e43f85` (#525, additive amendment to #508). The exact vectors are vendored
 in `ci/history-upload/relay-upload-inbox-v1.vectors.json`, SHA-256
-`0753bf6f4111c03233d8defcb553e5d0783e101b04a402b079398d28a6bd901a`.
+`54438c939e85b11d255e25f80c0257994c54d5de5f8cf73adf9450aba94723c3`.
 
 Use published immutable images containing relay-control #90 (merged at
 `28664c46`) and relayhistory-pipeline #515's self-host upload scanner/status
-implementation. #515 was still under review when this wiring was written.
+implementation (merged at `70d97a72ad2ac9123cc2235beffb2ee13a9920fe`; the
+consumer image must contain that commit or a later reviewed descendant).
 Do not enable the feature on an older image: it may ignore the new flags.
 The chart's default image pins are unchanged; these templates alone do not
 qualify or deploy a direct-upload runtime. Desktop must also implement both
@@ -119,24 +120,105 @@ There are no static S3 credentials embedded in the app.
 
 ## Bundled MinIO
 
-Use **presigned-only uploads** for bundled MinIO: clients should not receive a
-MinIO user/root credential. The issuer must sign a PUT against a dedicated
-public TLS S3 API origin without a path rewrite, while retaining a private
-in-cluster endpoint for privacy-journal reads. Do not expose the console or use
-the root credential as the issuer. Restrict a dedicated issuer user policy to
-upload-inbox PUTs and privacy-journal reads, plus the necessary journal existence
-check. Native scanning, witness verification and async SQL admission stay the
-same.
+Use **presigned-only uploads** for bundled MinIO. Control #94 at
+`473ce224ab9da42a67d2970a269e969109e64ae7` defines the scoped credential-file
+interface used by this chart. It requires a published image containing that
+change plus the amended `relay-upload-inbox-v1` nullable-KMS contract (#525) and
+compatible Desktop support. Keep the feature off until those exact artifacts
+are qualified; changing Helm values does not publish or qualify them.
 
-This path needs a compatible Control/contract update: current #90 hardcodes AWS
-STS, AWS URLs and SSE-KMS, and the frozen desktop response parser requires a
-nonempty `kmsKeyId`. MinIO without KES cannot meet that contract. Merely setting
-`endpoint` or enabling the upstream MinIO ingress would advertise a broken path.
-The Control owner has been asked to implement S3-compatible presigned issuance,
-separate public/internal endpoints and optional encryption metadata. Keep
-`historyUpload.mode=off` for bundled MinIO until that shared contract and the
-Desktop parser are updated and tested. No public MinIO ingress is installed by
-this AWS wiring.
+Control signs a create-only PUT for the caller's tenant prefix. Desktop receives
+only short-lived presigned URLs, never the MinIO issuer keys or root password.
+Control reads privacy journals through the private endpoint. These dedicated
+credential files do not change `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY` or the
+process-wide AWS credential chain used by Desktop feed signing/storage.
+
+A dedicated MinIO user must already exist, with an operator-provisioned Secret
+containing its access and secret keys. It should have only `s3:PutObject` on
+`<bucket>/<keyRoot>/.upload-inbox/*`, `s3:GetObject` on
+`<bucket>/<keyRoot>/.admission-inbox/*/v1/ws=*/m=srv_*/privacy-journal.json`,
+and bucket listing needed to distinguish a missing privacy journal from an
+authorization failure. It has no transcript read/delete or MinIO admin access.
+Do not reuse the root/admin Secret. Provision users/policies through your
+MinIO administration and secret-management workflow; Helm projects references
+and never provisions or stores credential values in source.
+
+The upload issuer always signs `If-None-Match: *`, the SHA-256 checksum,
+`content-encoding: zstd` and the witness metadata. Verify that your deployed
+MinIO version enforces conditional writes and the signed checksum. Keep the
+bucket private; exposing the authenticated S3 API does not require anonymous
+bucket access.
+
+```yaml
+relay-control:
+  historyUpload:
+    mode: allowlist
+    allowlist: [test_user_id]
+    bucket: customer-sessions
+    region: us-east-1
+    keyRoot: 96bulls
+    publicEndpoint: https://objects.customer.example
+    internalEndpoint: http://session-object-storage.agent-relay.svc.cluster.local:9000
+    roleArn: "" # compatible stores do not use AWS STS
+    kmsKeyArn: "" # no KES: response kmsKeyId is null; no SSE-KMS headers
+    credentials:
+      existingSecret: minio-upload-issuer
+      accessKeyIdKey: access-key-id
+      secretAccessKeyKey: secret-access-key
+    witness: {existingSecret: history-upload-witness, key: upload-witness-key}
+sessions-pipeline:
+  session-object-storage:
+    enabled: true
+    fullnameOverride: session-object-storage
+    ingress:
+      enabled: true
+      ingressClassName: nginx # use your installed ingress controller
+      annotations:
+        nginx.ingress.kubernetes.io/proxy-body-size: 2m
+      path: /
+      hosts: [objects.customer.example]
+      tls:
+        - secretName: minio-public-tls
+          hosts: [objects.customer.example]
+    consoleIngress: {enabled: false}
+```
+
+This is an overlay; retain the native ingest/consumer/reader database, TLS,
+credentials and routing configuration from the installation profile. Configure
+`ingestEdge.admission.mode: async`, enable its `uploadDirect` allowlist and
+reference the same witness Secret as Control. Its S3-compatible Locker endpoint
+and bucket must name the same private store and bucket. The scanner needs inbox
+read/delete and admission/status CAS-write permissions; existing native scanner
+credentials remain separate from the limited Control issuer user.
+
+Public upload endpoints must be bare HTTPS DNS origins with no path prefix,
+credentials, query or fragment. Use a dedicated S3 API ingress with no rewrite,
+authentication middleware, request decompression or redirect of signed PUTs;
+preserve Host and the signed headers. Provide a trusted TLS certificate and
+allow a 2 MiB body. The console remains private. The upstream pinned MinIO chart
+already renders this API ingress; the tested example is
+`ci/history-upload/fixtures/minio-storage-values.yaml`.
+
+The opt-in `ci/history-upload/probe_minio.py` transport test passed using the
+pinned MinIO image and Control source `473ce224`: first PUT 200, repeat 412,
+checksum rejection 400, missing signed conditional header 400, preserved zstd
+encoding/witness, no KMS headers, and STS issuance refused. It uses only an
+isolated temporary fixture container and does not replace published-image,
+Desktop, TLS-ingress or asynchronous-admission acceptance.
+
+The private endpoint may use HTTP only with explicit Kubernetes Service DNS
+(`service.namespace.svc` or `.svc.cluster.local`); otherwise use HTTPS. Empty
+`internalEndpoint` uses the public endpoint. Network policies must admit the
+ingress controller to the S3 API and Control/scanner traffic to the private
+Service. This chart's public-origin rule is stricter than Control's general URL
+parser and the amended shared contract: this ingress profile deliberately uses
+a dedicated hostname instead of a path-prefixed reverse proxy.
+
+For a compatible store with KES, `kmsKeyArn` may be an opaque key ID (up to
+2048 characters); Control signs the SSE-KMS headers. Empty means no SSE-KMS
+headers and does not configure storage encryption on its own. AWS mode still
+requires an AWS KMS key ARN and an upload role; its Terraform policies are
+unchanged by the MinIO branch.
 
 ## Acceptance and rollback
 

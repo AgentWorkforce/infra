@@ -427,8 +427,24 @@ historyUpload:
   bucket: ""
   region: ""
   keyRoot: 96bulls
+  # Empty: AWS STS and SSE-KMS, using Control's workload identity.
+  # Set: S3-compatible presigned PUTs only (requires Control #94 and the
+  # amended upload contract/Desktop). Bare public HTTPS origin; no path rewrite.
+  publicEndpoint: ""
+  # Optional private journal-read origin. HTTP only to Kubernetes Service DNS.
+  # Empty uses publicEndpoint. Never handed to Desktop.
+  internalEndpoint: ""
   roleArn: ""
+  # Required AWS KMS ARN without an endpoint. With publicEndpoint this is an
+  # optional opaque KMS key ID; empty means no SSE-KMS headers / kmsKeyId null.
   kmsKeyArn: ""
+  # S3-compatible issuer only: a dedicated restricted MinIO/S3 user. The
+  # projected files are scoped to history uploads, never global AWS_* env vars.
+  # Do not reference the MinIO root/admin credential.
+  credentials:
+    existingSecret: ""
+    accessKeyIdKey: access-key-id
+    secretAccessKeyKey: secret-access-key
   # Shared with the upload-inbox consumer. 32 random bytes, unpadded base64url.
   witness:
     existingSecret: ""
