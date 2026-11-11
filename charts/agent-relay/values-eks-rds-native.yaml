@@ -39,6 +39,7 @@ global:
 
 relaycast:
   # Native customer installs use RDS rather than Relaycast's SQLite backend.
+  existingSecret: agent-relay-secrets
   runtime:
     backend: postgres
     postgres:

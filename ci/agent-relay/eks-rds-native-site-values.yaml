@@ -5,6 +5,9 @@ global:
   tenant:
     orgId: ci-org
 
+relaycast:
+  baseUrl: https://cast.ci.company
+
 sessions-pipeline:
   worker:
     postgresCa:
@@ -60,10 +63,13 @@ sessions-pipeline:
       caSha256: "1111111111111111111111111111111111111111111111111111111111111111"
 
 relay-control:
+  publicUrl: https://api.ci.company
+  dashboardUrl: https://dashboard.ci.company/
   bootstrap:
     orgName: CI Organization
     adminEmail: admin@ci.company
   services:
+    relaycastPublicUrl: https://cast.ci.company
     sessionReadApiPublicUrl: https://history.ci.company
   introspection:
     audiences:

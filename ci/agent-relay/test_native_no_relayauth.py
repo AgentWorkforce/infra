@@ -161,7 +161,7 @@ class NativeNoRelayauth(unittest.TestCase):
         ], cwd=ROOT, capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stderr)
         for placeholder in ('0' * 64, 'example-agent-relay-sessions',
-                            'search.placeholder.company', 'history.placeholder.company'):
+                            'example-agent-relay-secrets', '.placeholder.company'):
             self.assertNotIn(placeholder, result.stdout)
         deployments = {doc['metadata']['name']: doc for doc in yaml.safe_load_all(result.stdout)
                        if doc and doc.get('kind') == 'Deployment'}
