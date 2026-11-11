@@ -293,6 +293,12 @@ class LocalTests(unittest.TestCase):
         self.assertEqual({d["metadata"]["name"] for d in active}, {"relay-control", "relay-webapp", "relaycast", "session-native-ingest",
             "session-native-consumer", "session-read-api", "sessions-session-brief", "telemetry-collector"})
         for deployment in active:
+            if deployment["metadata"]["name"] == "relay-webapp":
+                pod = deployment["spec"]["template"]["spec"]
+                copy = next(c for c in pod["initContainers"] if c["name"] == "copy-dashboard")
+                dashboard = next(c for c in pod["containers"] if c["name"] == "dashboard")
+                self.assertEqual(copy["image"], local_stack.WEBAPP)
+                self.assertEqual(dashboard["image"], copy["image"])
             for container in deployment["spec"]["template"]["spec"]["containers"]:
                 self.assertIn("@sha256:", container["image"])
                 self.assertIn(container["image"], selected_images().values())
