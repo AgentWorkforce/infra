@@ -48,7 +48,10 @@ Control has one Pod Identity association. When `desktop_feed` is configured,
 its role is reused and the ServiceAccount names must match. Otherwise a
 Control issuer role is created. Desktop never receives that role's credentials:
 Control assumes a separate one-hour upload role with a narrower per-user session
-policy and `SourceIdentity`. That role can only create encrypted inbox objects;
+policy and `SourceIdentity`. Target trust and issuer permissions allow
+`sts:TagSession` for the transitive tags supplied by EKS Pod Identity
+([AWS session-tag behavior](https://docs.aws.amazon.com/eks/latest/userguide/pod-id-abac.html)).
+That role can only create encrypted inbox objects;
 it cannot list, read, delete or overwrite objects. PUT requires `If-None-Match`.
 Control may read privacy journals and list bucket keys (needed to distinguish a
 missing journal's 404 from an authorization 403), but cannot read uploads or

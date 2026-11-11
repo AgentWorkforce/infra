@@ -37,7 +37,7 @@ resource "aws_iam_role" "history_upload" {
     Statement = [{
       Effect    = "Allow"
       Principal = { AWS = var.history_upload.control_role_arn }
-      Action    = ["sts:AssumeRole", "sts:SetSourceIdentity"]
+      Action    = ["sts:AssumeRole", "sts:SetSourceIdentity", "sts:TagSession"]
       Condition = { StringLike = { "sts:SourceIdentity" = "u_*" } }
     }]
   })
@@ -98,7 +98,7 @@ resource "aws_iam_role_policy" "history_upload_issuer" {
       {
         Sid      = "MintUploadSessions"
         Effect   = "Allow"
-        Action   = ["sts:AssumeRole", "sts:SetSourceIdentity"]
+        Action   = ["sts:AssumeRole", "sts:SetSourceIdentity", "sts:TagSession"]
         Resource = aws_iam_role.history_upload[0].arn
       },
       {

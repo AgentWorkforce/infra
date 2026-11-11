@@ -185,6 +185,10 @@ run "direct_upload_is_write_only_and_consumer_isolated" {
     error_message = "Only Control may assume the upload role, with traceable source identity."
   }
   assert {
+    condition     = contains(jsondecode(aws_iam_role.history_upload[0].assume_role_policy).Statement[0].Action, "sts:TagSession") && contains(jsondecode(aws_iam_role_policy.history_upload_issuer[0].policy).Statement[0].Action, "sts:TagSession")
+    error_message = "Both target trust and Control grant must permit EKS Pod Identity transitive session tags during role chaining."
+  }
+  assert {
     condition     = jsondecode(aws_iam_role_policy.history_upload[0].policy).Statement[0].Action == "s3:PutObject" && jsondecode(aws_iam_role_policy.history_upload[0].policy).Statement[0].Resource == "arn:aws:s3:::relay-sessions/96bulls/.upload-inbox/*" && jsondecode(aws_iam_role_policy.history_upload[0].policy).Statement[0].Condition.Null["s3:if-none-match"] == "false"
     error_message = "The client role can create inbox objects only, never read/list/delete transcripts."
   }
