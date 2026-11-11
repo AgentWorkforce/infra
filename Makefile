@@ -3,6 +3,8 @@ DEV_CONFIG ?= .kind/dev/config.json
 DEV_PLAN ?=
 DEV_COMPONENTS ?= all
 ACCEPTANCE_CONFIG ?= .kind/acceptance/config.json
+ACCEPTANCE_OUTPUT ?= .kind/acceptance/acceptance.json
+ACCEPTANCE_KEY ?= .kind/acceptance/signing_key
 ACCEPTANCE_SUITE ?= full
 sh_quote = '$(subst ','"'"',$(1))'
 PROFILE ?= core
@@ -85,6 +87,6 @@ local-dev-setup: local-tools
 
 .PHONY: local-acceptance local-acceptance-test
 local-acceptance:
-	@PATH=$(call sh_quote,$(CURDIR)/.kind/tools):"$$PATH" $(call sh_quote,$(PYTHON)) ci/agent-relay/kind/acceptance/run.py run --config $(call sh_quote,$(ACCEPTANCE_CONFIG)) --suite $(call sh_quote,$(ACCEPTANCE_SUITE))
+	@PATH=$(call sh_quote,$(CURDIR)/.kind/tools):"$$PATH" $(call sh_quote,$(PYTHON)) ci/agent-relay/kind/acceptance/run.py run --config $(call sh_quote,$(ACCEPTANCE_CONFIG)) --output $(call sh_quote,$(ACCEPTANCE_OUTPUT)) --key $(call sh_quote,$(ACCEPTANCE_KEY)) --suite $(call sh_quote,$(ACCEPTANCE_SUITE))
 local-acceptance-test:
 	$(call sh_quote,$(PYTHON)) -m unittest discover -s ci/agent-relay/kind/acceptance -p 'test_*.py' -v

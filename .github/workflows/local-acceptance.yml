@@ -1,0 +1,157 @@
+name: Local Acceptance
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths:
+      - "releases/**"
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: local-acceptance-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  qualification:
+    name: qualification
+    if: >-
+      github.event.pull_request.draft == false &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      startsWith(github.head_ref, 'release/agent-relay-')
+    runs-on:
+      group: infra-acceptance-arlap
+      labels: [self-hosted, arlap, kind]
+    timeout-minutes: 90
+    env:
+      ARLAP_ACCEPTANCE_CONFIG: ${{ vars.ARLAP_ACCEPTANCE_CONFIG }}
+    steps:
+      - name: Reject executable or cross-candidate changes before checkout
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          HEAD_BRANCH: ${{ github.event.pull_request.head.ref }}
+        run: |
+          set -euo pipefail
+          [[ "$HEAD_BRANCH" =~ ^release/agent-relay-((0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*))$ ]] \
+            || { echo "::error::Release branch must contain strict stable SemVer."; exit 1; }
+          version="${BASH_REMATCH[1]}"
+          prefix="releases/agent-relay-${version}/"
+          files="$RUNNER_TEMP/candidate-files.json"
+          python3 - "$files" <<'PY'
+          import json
+          import os
+          import sys
+          import urllib.parse
+          import urllib.request
+
+          pages = []
+          for page in range(1, 31):
+              query = urllib.parse.urlencode({"per_page": 100, "page": page})
+              url = (
+                  f"{os.environ['GITHUB_API_URL']}/repos/{os.environ['GITHUB_REPOSITORY']}"
+                  f"/pulls/{os.environ['PR_NUMBER']}/files?{query}"
+              )
+              request = urllib.request.Request(
+                  url,
+                  headers={
+                      "Accept": "application/vnd.github+json",
+                      "Authorization": f"Bearer {os.environ['GITHUB_TOKEN']}",
+                      "X-GitHub-Api-Version": "2022-11-28",
+                  },
+              )
+              with urllib.request.urlopen(request, timeout=30) as response:
+                  items = json.load(response)
+              if not isinstance(items, list):
+                  raise SystemExit("Pull request files response is malformed")
+              pages.append(items)
+              if len(items) < 100:
+                  break
+          else:
+              raise SystemExit("Pull request exceeds the 3,000-file validation limit")
+          with open(sys.argv[1], "w", encoding="utf-8") as output:
+              json.dump(pages, output)
+          PY
+          jq -e --arg prefix "$prefix" '
+            ([.[][] | .filename] | length) > 0 and
+            all(.[][];
+              (.filename | (type == "string" and startswith($prefix))) and
+              ((has("previous_filename") | not) or
+                (.previous_filename |
+                  (type == "string" and startswith($prefix))))) and
+            ([.[][] | .filename] | index($prefix + "pins.json")) != null and
+            ([.[][] | .filename] | index($prefix + "values.yaml")) != null
+          ' "$files" >/dev/null \
+            || { echo "::error::Release PR may change only its candidate directory and must include pins.json and values.yaml."; exit 1; }
+
+      - name: Check out the exact release candidate head
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Require the provisioned ar-lap fixture
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$ARLAP_ACCEPTANCE_CONFIG" == /* ]] \
+            || { echo "::error::ARLAP_ACCEPTANCE_CONFIG must be a provisioned absolute path."; exit 1; }
+          [[ -f "$ARLAP_ACCEPTANCE_CONFIG" && ! -L "$ARLAP_ACCEPTANCE_CONFIG" ]] \
+            || { echo "::error::The provisioned acceptance config is unavailable."; exit 1; }
+          version="${GITHUB_HEAD_REF#release/agent-relay-}"
+          candidate="releases/agent-relay-${version}"
+          [[ -f "$candidate/pins.json" && ! -L "$candidate/pins.json" &&
+             -f "$candidate/values.yaml" && ! -L "$candidate/values.yaml" ]] \
+            || { echo "::error::Candidate pins and values must be regular files."; exit 1; }
+
+      - name: Run the full local qualification
+        id: acceptance
+        shell: bash
+        env:
+          ACCEPTANCE_OUTPUT: ${{ runner.temp }}/acceptance.json
+          ACCEPTANCE_KEY: ${{ runner.temp }}/acceptance-signing-key
+        run: |
+          set -euo pipefail
+          set +e
+          make local-acceptance \
+            ACCEPTANCE_SUITE=full \
+            ACCEPTANCE_CONFIG="$ARLAP_ACCEPTANCE_CONFIG" \
+            ACCEPTANCE_OUTPUT="$ACCEPTANCE_OUTPUT" \
+            ACCEPTANCE_KEY="$ACCEPTANCE_KEY"
+          command_status=$?
+          set -e
+
+          [[ -f "$ACCEPTANCE_OUTPUT" && ! -L "$ACCEPTANCE_OUTPUT" ]] \
+            || { echo "::error::The full suite produced no acceptance receipt."; exit 1; }
+          python3 ci/agent-relay/kind/acceptance/run.py verify \
+            "$ACCEPTANCE_OUTPUT" \
+            --trusted-key "${ACCEPTANCE_KEY}.pub"
+          jq -e '
+            .payload.schema == "agent-relay.local-acceptance/v1" and
+            .payload.suite == "full" and
+            .payload.status == "pass" and
+            .payload.qualificationComplete == true and
+            (.payload.pendingQualificationChecks | length) == 0 and
+            all(.payload.checks[]; .status == "pass")
+          ' "$ACCEPTANCE_OUTPUT" >/dev/null
+          [[ "$command_status" -eq 0 ]] \
+            || { echo "::error::The full local acceptance command failed."; exit 1; }
+
+      - name: Store the signed acceptance receipt
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: local-acceptance-${{ github.event.pull_request.number }}-${{ github.event.pull_request.head.sha }}
+          path: ${{ runner.temp }}/acceptance.json
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Remove the ephemeral signing key
+        if: always()
+        shell: bash
+        run: rm -f "$RUNNER_TEMP/acceptance-signing-key" "$RUNNER_TEMP/acceptance-signing-key.pub"

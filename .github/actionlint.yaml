@@ -1,0 +1,6 @@
+self-hosted-runner:
+  labels:
+    - arlap
+    - kind
+
+config-variables: null
