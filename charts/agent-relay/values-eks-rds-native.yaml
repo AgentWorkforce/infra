@@ -13,6 +13,8 @@
 # Pod Identity associations to the release namespace and the four exact Service
 # Account names below. The cluster must have a default encrypted EBS StorageClass
 # unless relaycast.persistence.storageClass is set in the private site values.
+# Publish the native history origin with scripts/selfhost/eks-alb-ingress.sh,
+# EKS_ALB_INGEST=true and EKS_ALB_HISTORY_LEGACY_SERVICE unset (README).
 #
 # Reader-first upgrade contract: values-eks.yaml supplies READER_MAX_RULESET=10
 # while leaving SCRUB_ENGINE and SCRUB_ENGINE_REQUIRED unset. Wait for that
@@ -123,10 +125,12 @@ sessions-pipeline:
       enabled: true
       configMap: rds-ca
       key: ca.crt
+      # REQUIRED OVERRIDE: same RDS CA SHA-256 as worker.postgresCa.sha256.
       sha256: "0000000000000000000000000000000000000000000000000000000000000000"
     locker:
       provider: s3
       endpoint: ""
+      # REQUIRED OVERRIDE: same bucket/region as worker.locker.
       bucket: example-agent-relay-sessions
       region: us-west-2
       credentials: { mode: podIdentity }
@@ -156,6 +160,7 @@ sessions-pipeline:
       enabled: true
       configMap: rds-ca
       key: ca.crt
+      # REQUIRED OVERRIDE: same RDS CA SHA-256 as worker.postgresCa.sha256.
       sha256: "0000000000000000000000000000000000000000000000000000000000000000"
     search:
       backend: opensearch
@@ -163,6 +168,7 @@ sessions-pipeline:
       backendId: opensearch-main
       opensearch:
         url: https://search.placeholder.company
+        # REQUIRED OVERRIDE: same OpenSearch region as the indexer.
         region: us-west-2
         indexPrefix: relayhistory
     auth:
@@ -186,6 +192,7 @@ sessions-pipeline:
       publicFrom:
         - ipBlock: { cidr: 10.0.0.0/16 }
     extraEnv:
+      # REQUIRED OVERRIDE: LOCKER_BUCKET/REGION must match worker.locker.
       - { name: LOCKER_BUCKET, value: example-agent-relay-sessions }
       - { name: LOCKER_REGION, value: us-west-2 }
       - { name: PIPELINE_ORG_FROM_PREFIX, value: "true" }
@@ -196,6 +203,7 @@ sessions-pipeline:
     enabled: true
     claimLockBusy: true
     image: *services_image
+    # REQUIRED OVERRIDE: same public native History origin as the read API.
     origin: https://history.placeholder.company
     allowInClusterHttp: true
     sessionSelection: true
@@ -211,11 +219,13 @@ sessions-pipeline:
     postgres:
       caConfigMap: rds-ca
       caKey: ca.crt
+      # REQUIRED OVERRIDE: same RDS CA SHA-256 as worker.postgresCa.sha256.
       caSha256: "0000000000000000000000000000000000000000000000000000000000000000"
     serviceAccountName: agent-relay-session-ingest-api
     locker:
       provider: s3
       endpoint: ""
+      # REQUIRED OVERRIDE: same bucket/region as worker.locker.
       bucket: example-agent-relay-sessions
       region: us-west-2
       credentials: { mode: podIdentity }
@@ -230,6 +240,7 @@ sessions-pipeline:
       key: RELAYHISTORY_PIPELINE_CONSUMER_SECRET
     search:
       backend: opensearch
+      # REQUIRED OVERRIDE: same backend id and endpoint/region as the read API.
       backendId: opensearch-main
       opensearch:
         url: https://search.placeholder.company
@@ -238,12 +249,14 @@ sessions-pipeline:
     locker:
       provider: s3
       endpoint: ""
+      # REQUIRED OVERRIDE: same bucket/region as worker.locker.
       bucket: example-agent-relay-sessions
       region: us-west-2
     postgres:
       tlsProfile: custom-ca
       caConfigMap: rds-ca
       caKey: ca.crt
+      # REQUIRED OVERRIDE: same RDS CA SHA-256 as worker.postgresCa.sha256.
       caSha256: "0000000000000000000000000000000000000000000000000000000000000000"
     bootstrap:
       enabled: true

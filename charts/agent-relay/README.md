@@ -256,13 +256,37 @@ helm template agent-relay charts/agent-relay \
   -f <private-site-values.yaml> >/dev/null
 ```
 
-The private overlay must replace the values marked `REQUIRED OVERRIDE`: the
+The private overlay must replace every copy marked `REQUIRED OVERRIDE`: the
 organization ID, public origins, S3 bucket and region, RDS CA SHA-256,
 OpenSearch endpoint/backend ID/region, ALB subnet CIDRs, first owner details,
-and the ingest edge's namespace-qualified Control Service URL. It may mirror
-the four immutable release images into the customer's ECR, but it must retain
-their digests. This profile renders no Secret; create the named Secrets and the
-immutable `rds-ca` ConfigMap separately.
+and the ingest edge's namespace-qualified Control Service URL. The duplicated
+service values are deliberate chart boundaries, not fallback defaults: keep
+the bucket/region identical under `worker`, `alleyoop`, `sessionReadApi.extraEnv`,
+`ingestEdge` and `searchIndexer`; keep the CA SHA-256 identical on all five
+clients; and keep the read API and indexer OpenSearch projection settings
+identical. `ci/agent-relay/eks-rds-native-site-values.yaml` is a complete
+non-secret example, and its render test asserts those equalities. The private
+overlay may mirror the four immutable release images into the customer's ECR,
+but it must retain their digests. This profile renders no Secret; create the
+named Secrets and the immutable `rds-ca` ConfigMap separately.
+
+The chart leaves EKS ingress objects external. Publish dashboard, Control,
+Relaycast, native reads and native ingest through the supplied ALB generator;
+do not leave its legacy History backend set because this profile renders no
+standalone RelayHistory Service:
+
+```sh
+export EKS_ALB_DOMAIN=relay.example.com
+export EKS_ALB_CERT_ARN=arn:aws:acm:<region>:<account>:certificate/<id>
+export EKS_ALB_INGEST=true
+unset EKS_ALB_HISTORY_LEGACY_SERVICE
+scripts/selfhost/eks-alb-ingress.sh agent-relay-<environment> | kubectl apply -f -
+```
+
+This routes the exact native upload paths to `agent-relay-ingest-edge`, the
+read paths to `agent-relay-read-api`, and refuses all other History-host paths
+at the ALB. Set the script's Service overrides only when the private overlay
+renames those Services.
 
 Install into `agent-relay-<environment>` (or another namespace explicitly
 bound in Terraform). EKS Pod Identity associations must name that namespace

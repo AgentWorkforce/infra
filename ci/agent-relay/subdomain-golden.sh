@@ -37,12 +37,25 @@ relay-webapp|ci charts/relay-webapp -n ci -f charts/relay-webapp/ci/default-valu
 P
 }
 render_all() { # root outdir
-  local root=$1 out=$2 name args
+  local root=$1 out=$2 name args previous arg missing
   mkdir -p "$out"
   ( cd "$root"
     helm dependency build charts/sessions-pipeline >/dev/null
     helm dependency build charts/agent-relay >/dev/null
     profiles | while IFS='|' read -r name args; do
+      # A profile introduced after the comparison ref has no values file in the
+      # detached base worktree. Skip only that base render; diff then reports
+      # the profile as a new file while still comparing every older profile.
+      previous=""; missing=false
+      for arg in $args; do
+        if [ "$previous" = -f ] && [ ! -f "$arg" ]; then
+          echo "::notice::skipping $name under $root: missing $arg" >&2
+          missing=true
+          break
+        fi
+        previous=$arg
+      done
+      $missing && continue
       # shellcheck disable=SC2086
       helm template $args --no-hooks \
         | sed -E 's/^([[:space:]]*helm\.sh\/chart: "?)([a-z0-9-]+)-[0-9]+\.[0-9]+\.[0-9]+[^"[:space:]]*/\1\2-VERSION/' >"$out/$name.yaml"

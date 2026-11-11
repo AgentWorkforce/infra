@@ -116,6 +116,70 @@ class NativeNoRelayauth(unittest.TestCase):
                    and doc['metadata']['name'] == 'relaycast-data')
         self.assertNotIn('storageClassName', pvc['spec'])
 
+    def test_eks_rds_native_private_overlay_replaces_every_shared_input(self):
+        paths = [
+            'charts/agent-relay/values-eks.yaml',
+            'charts/agent-relay/values-eks-rds-native.yaml',
+            'ci/agent-relay/eks-rds-native-site-values.yaml',
+        ]
+        values = {}
+        for path in paths:
+            merge(values, yaml.safe_load((ROOT / path).read_text()))
+        sessions = values['sessions-pipeline']
+        ca_hash = '1' * 64
+        self.assertEqual({
+            sessions['worker']['postgresCa']['sha256'],
+            sessions['alleyoop']['postgresCa']['sha256'],
+            sessions['sessionReadApi']['postgresCa']['sha256'],
+            sessions['ingestEdge']['postgres']['caSha256'],
+            sessions['searchIndexer']['postgres']['caSha256'],
+        }, {ca_hash})
+        reader_extra = {item['name']: item['value'] for item in sessions['sessionReadApi']['extraEnv']}
+        self.assertEqual({
+            sessions['worker']['locker']['bucket'],
+            sessions['alleyoop']['locker']['bucket'],
+            reader_extra['LOCKER_BUCKET'],
+            sessions['ingestEdge']['locker']['bucket'],
+            sessions['searchIndexer']['locker']['bucket'],
+        }, {'ci-agent-relay-sessions'})
+        self.assertEqual({
+            sessions['worker']['locker']['region'],
+            sessions['alleyoop']['locker']['region'],
+            reader_extra['LOCKER_REGION'],
+            sessions['ingestEdge']['locker']['region'],
+            sessions['searchIndexer']['locker']['region'],
+        }, {'us-east-1'})
+        reader_search = sessions['sessionReadApi']['search']
+        indexer_search = sessions['searchIndexer']['search']
+        self.assertEqual(reader_search['backendId'], indexer_search['backendId'])
+        self.assertEqual(reader_search['opensearch'], indexer_search['opensearch'])
+        self.assertEqual(sessions['sessionReadApi']['origin'], sessions['ingestEdge']['origin'])
+
+        result = subprocess.run([
+            'helm', 'template', 'proof', 'charts/agent-relay', '-n', 'agent-relay-ci', '--no-hooks',
+            *sum((['-f', path] for path in paths), []),
+        ], cwd=ROOT, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        for placeholder in ('0' * 64, 'example-agent-relay-sessions',
+                            'search.placeholder.company', 'history.placeholder.company'):
+            self.assertNotIn(placeholder, result.stdout)
+        deployments = {doc['metadata']['name']: doc for doc in yaml.safe_load_all(result.stdout)
+                       if doc and doc.get('kind') == 'Deployment'}
+        envs = {}
+        for name, deployment in deployments.items():
+            container = deployment['spec']['template']['spec']['containers'][0]
+            envs[name] = {item['name']: item.get('value') for item in container.get('env', [])}
+        for name, env in envs.items():
+            if 'LOCKER_BUCKET' in env:
+                self.assertEqual(env['LOCKER_BUCKET'], 'ci-agent-relay-sessions', name)
+                self.assertEqual(env['LOCKER_REGION'], 'us-east-1', name)
+            if 'SESSION_POSTGRES_CA_SHA256' in env:
+                self.assertEqual(env['SESSION_POSTGRES_CA_SHA256'], ca_hash, name)
+        for name in ('proof-read-api', 'proof-search-indexer'):
+            self.assertEqual(envs[name]['SEARCH_INDEX_POSTGRES_BACKEND_ID'], 'ci-opensearch')
+            self.assertEqual(envs[name]['SEARCH_INDEX_OPENSEARCH_URL'], 'https://search.ci.company')
+            self.assertEqual(envs[name]['SEARCH_INDEX_OPENSEARCH_AWS_REGION'], 'us-east-1')
+
     def test_gcp_native_profile_routes_reader_ingest_and_postgres_search(self):
         result = subprocess.run([
             'helm', 'template', 'proof', 'charts/agent-relay', '-n', 'agent-relay', '--no-hooks',

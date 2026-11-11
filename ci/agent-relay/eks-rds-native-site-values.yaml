@@ -1,0 +1,75 @@
+# Non-secret private-site example for values-eks-rds-native.yaml. CI renders it
+# after the two public overlays and asserts that every duplicated chart boundary
+# receives the same RDS CA, S3 and OpenSearch settings.
+global:
+  tenant:
+    orgId: ci-org
+
+sessions-pipeline:
+  worker:
+    postgresCa:
+      sha256: "1111111111111111111111111111111111111111111111111111111111111111"
+    locker:
+      bucket: ci-agent-relay-sessions
+      region: us-east-1
+  alleyoop:
+    postgresCa:
+      sha256: "1111111111111111111111111111111111111111111111111111111111111111"
+    locker:
+      bucket: ci-agent-relay-sessions
+      region: us-east-1
+  sessionReadApi:
+    origin: https://history.ci.company
+    postgresCa:
+      sha256: "1111111111111111111111111111111111111111111111111111111111111111"
+    search:
+      backendId: ci-opensearch
+      opensearch:
+        url: https://search.ci.company
+        region: us-east-1
+    cors:
+      allowedOrigins: [https://dashboard.ci.company]
+    networkPolicy:
+      publicFrom:
+        - ipBlock: { cidr: 10.1.0.0/16 }
+    extraEnv:
+      - { name: LOCKER_BUCKET, value: ci-agent-relay-sessions }
+      - { name: LOCKER_REGION, value: us-east-1 }
+      - { name: PIPELINE_ORG_FROM_PREFIX, value: "true" }
+      - { name: PIPELINE_KEY_PREFIX, value: 96bulls }
+      - { name: READ_API_SESSION_QUERY, value: "true" }
+  ingestEdge:
+    origin: https://history.ci.company
+    relaycontrol:
+      url: http://relay-control.agent-relay-ci.svc.cluster.local
+    postgres:
+      caSha256: "1111111111111111111111111111111111111111111111111111111111111111"
+    locker:
+      bucket: ci-agent-relay-sessions
+      region: us-east-1
+  searchIndexer:
+    search:
+      backendId: ci-opensearch
+      opensearch:
+        url: https://search.ci.company
+        region: us-east-1
+    locker:
+      bucket: ci-agent-relay-sessions
+      region: us-east-1
+    postgres:
+      caSha256: "1111111111111111111111111111111111111111111111111111111111111111"
+
+relay-control:
+  bootstrap:
+    orgName: CI Organization
+    adminEmail: admin@ci.company
+  services:
+    sessionReadApiPublicUrl: https://history.ci.company
+  introspection:
+    audiences:
+      - https://history.ci.company
+      - https://api.ci.company
+
+relay-webapp:
+  runtime:
+    publicUrl: https://dashboard.ci.company
