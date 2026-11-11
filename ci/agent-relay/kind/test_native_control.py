@@ -165,14 +165,29 @@ class NativeControlTests(unittest.TestCase):
         result = run(aa, ["usage", "launch"])
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(json.loads(result.stdout.split("NATIVE_CONTROL_OBSERVATION ")[1]), {"organizationId": org, "workspaceId": workspace})
-        for kind in ("unselected", "missing-selected", "disabled-selected", "enabled-forbidden", "unknown-enabled", "nonboolean", "duplicate-selection", "unknown-selection"):
-            changed = deepcopy(aa)
+        # Exact capability shape at the opt-in 0.5.19 image's source ad74a1a3.
+        modern = deepcopy(aa)
+        modern["/readyz"]["capabilities"].update(usage_people=False, events_shim=False)
+        result = run(modern, ["usage", "launch"])
+        self.assertEqual(result.returncode, 0, result.stderr)
+        modern_core = deepcopy(modern)
+        modern_core["/readyz"]["capabilities"].update(usage=False, launch=False)
+        self.assertEqual(run(modern_core).returncode, 0)
+        for kind in ("unselected", "missing-selected", "disabled-selected", "enabled-forbidden", "unknown-enabled",
+                "unknown-disabled", "enabled-usage-people", "enabled-events-shim", "nonboolean-disabled", "missing-core",
+                "nonboolean", "duplicate-selection", "unknown-selection"):
+            changed = deepcopy(modern)
             features = ["usage", "launch"]
             if kind == "unselected": features = None
             if kind == "missing-selected": changed["/readyz"]["capabilities"].pop("launch")
             if kind == "disabled-selected": changed["/readyz"]["capabilities"]["usage"] = False
             if kind == "enabled-forbidden": changed["/readyz"]["capabilities"]["chief"] = True
             if kind == "unknown-enabled": changed["/readyz"]["capabilities"]["other"] = True
+            if kind == "unknown-disabled": changed["/readyz"]["capabilities"]["other"] = False
+            if kind == "enabled-usage-people": changed["/readyz"]["capabilities"]["usage_people"] = True
+            if kind == "enabled-events-shim": changed["/readyz"]["capabilities"]["events_shim"] = True
+            if kind == "nonboolean-disabled": changed["/readyz"]["capabilities"]["events_shim"] = 0
+            if kind == "missing-core": changed["/readyz"]["capabilities"].pop("chief")
             if kind == "nonboolean": changed["/readyz"]["capabilities"]["usage"] = 1
             if kind == "duplicate-selection": features.append("usage")
             if kind == "unknown-selection": features.append("other")
