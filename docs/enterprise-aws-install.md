@@ -392,7 +392,7 @@ global:
       svg: |
         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 32">...</svg>
       # ... or reference a ConfigMap the operator creates in $NAMESPACE first
-      # (SVG or PNG; key = served file name):
+      # (PNG only; key = served file name):
       #   kubectl -n "$NAMESPACE" create configmap relay-brand --from-file=logo.png
       # existingConfigMap: relay-brand
       # key: logo.png

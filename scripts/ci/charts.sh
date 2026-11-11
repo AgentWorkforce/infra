@@ -492,6 +492,13 @@ for chart in "${charts[@]}"; do
         expect_render_failure "$chart" "$v" "non-SVG inline logo" "must be SVG markup" --set-string 'global.branding.logo.svg=hello'
         expect_render_failure "$chart" "$v" "scripted SVG" "must not contain script" --set-string 'global.branding.logo.svg=<svg><script>alert(1)</script></svg>'
         expect_render_failure "$chart" "$v" "SVG event handler" "must not contain script" --set-string 'global.branding.logo.svg=<svg onload=alert(1)></svg>'
+        expect_render_failure "$chart" "$v" "SVG encoded javascript: URL" "must not contain script" --set-string 'global.branding.logo.svg=<svg><a href="javascript&#58;alert(1)"><rect/></a></svg>'
+        expect_render_failure "$chart" "$v" "SVG javascript: URL with a tab" "must not contain script" --set-string "global.branding.logo.svg=<svg><a href=\"java$(printf '\t')script:alert(1)\"><rect/></a></svg>"
+        expect_render_failure "$chart" "$v" "SVG entity declaration" "must not contain script" --set-string 'global.branding.logo.svg=<!DOCTYPE svg [<!ENTITY x "y">]><svg/>'
+        expect_render_failure "$chart" "$v" "SVG in an existing ConfigMap" "global.branding.logo.key must be a file name" --set global.branding.logo.existingConfigMap=relay-brand --set global.branding.logo.key=logo.svg
+        logo=$(render "$chart" "$v" --set global.branding.logo.existingConfigMap=relay-brand)
+        [ "$(yq 'select(.kind == "Deployment") | .spec.template.spec.volumes[] | select(.name == "brand") | .configMap.items[0].key' <<<"$logo")" = "logo.png" ] \
+          || err "$chart: existingConfigMap without key must serve logo.png"
         expect_render_failure "$chart" "$v" "unknown logo setting" "global.branding.logo.url is not a setting" --set global.branding.logo.url=https://x.example/logo.svg
         ;;
       relay-control)
@@ -594,6 +601,8 @@ for chart in "${charts[@]}"; do
           || err "$chart: an existing ConfigMap logo must link its key, and login.orgName must render"
         [ "$(lg_env "$idv" --set-string 'global.branding.logo.svg=<svg/>' --set login.logoUrl=https://cdn.example.com/logo.svg)" = "SELFHOST_LOGIN_LOGO_URL=https://cdn.example.com/logo.svg" ] \
           || err "$chart: login.logoUrl must override the hosted logo"
+        [ "$(lg_env "$idv" --set 'login.logoUrl=https://cdn.example.com?asset=logo')" = "SELFHOST_LOGIN_LOGO_URL=https://cdn.example.com?asset=logo" ] \
+          || err "$chart: login.logoUrl must accept a query right after the host"
         [ "$(lg_env charts/relay-control/ci/single-host-values.yaml --set-string 'global.branding.logo.svg=<svg/>')" = "SELFHOST_LOGIN_LOGO_URL=https://relay.gcp-proof.agentrelay.com/brand/logo.svg" ] \
           || err "$chart: single-host mode must link the logo on the single host"
         expect_render_failure "$chart" "$v" "hosted logo without a dashboard origin" "global.branding.logo needs dashboardUrl" --set-string 'global.branding.logo.svg=<svg/>'
@@ -854,6 +863,9 @@ for chart in "${charts[@]}"; do
           || err "$chart: global.branding.logo must set relay-control's SELFHOST_LOGIN_LOGO_URL on the dashboard origin"
         [ "$(yq 'select(.kind == "Deployment") | .spec.template.spec.volumes[] | select(.name == "brand") | .configMap.name' <<<"$logo")" = "$(yq 'select(.kind == "ConfigMap" and (.data | has("logo.svg"))) | .metadata.name' <<<"$logo")" ] \
           || err "$chart: global.branding.logo must mount the chart's logo ConfigMap into relay-webapp"
+        expect_render_failure "$chart" charts/agent-relay/ci/single-host-values.yaml "hosted logo without the dashboard" "components.webapp=false" --set gkeIngress.enabled=false --set components.webapp=false --set-string 'global.branding.logo.svg=<svg/>'
+        render "$chart" charts/agent-relay/ci/single-host-values.yaml --set gkeIngress.enabled=false --set components.webapp=false --set-string 'global.branding.logo.svg=<svg/>' --set relay-control.login.logoUrl=https://cdn.example.com/logo.svg >/dev/null \
+          || err "$chart: components.webapp=false with relay-control.login.logoUrl must render"
         expect_render_failure "$chart" "$v" "ar_ authority without relayauth" "relaycast.credentials.authority=relayauth requires components.relayauth=true" --set components.relayauth=false --set relaycast.credentials.format=ar --set relaycast.credentials.authority=relayauth --set relaycast.credentials.relayauth.url=http://relayauth:8787 --set relaycast.secretKeys.relayauthToken=relaycast-relayauth-token
         ;;
     esac

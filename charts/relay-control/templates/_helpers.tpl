@@ -506,7 +506,7 @@ matches relay-webapp.brandLogoFile. */ -}}
 {{- define "relay-control.brandLogoFile" -}}
 {{- $logo := dig "branding" "logo" dict (.Values.global | default dict) | default dict -}}
 {{- if not (kindIs "map" $logo) }}{{ fail "global.branding.logo must be a map with svg, existingConfigMap or key" }}{{ end -}}
-{{- if $logo.svg }}logo.svg{{ else if $logo.existingConfigMap }}{{ $logo.key | default "logo.svg" }}{{ end -}}
+{{- if $logo.svg }}logo.svg{{ else if $logo.existingConfigMap }}{{ $logo.key | default "logo.png" }}{{ end -}}
 {{- end -}}
 {{- define "relay-control.loginLogoUrl" -}}
 {{- $login := .Values.login | default dict -}}
@@ -524,7 +524,7 @@ matches relay-webapp.brandLogoFile. */ -}}
 {{- define "relay-control.validateIdentity" -}}
 {{- $login := .Values.login | default dict -}}
 {{- range $k, $v := $login }}{{ if not (has $k (list "logoUrl" "orgName")) }}{{ fail (printf "login.%s is not a setting (use logoUrl or orgName)" $k) }}{{ end }}{{ if not (or (kindIs "invalid" $v) (kindIs "string" $v)) }}{{ fail (printf "login.%s must be a string" $k) }}{{ end }}{{ end -}}
-{{- with include "relay-control.loginLogoUrl" . }}{{ if or (gt (len .) 2048) (not (regexMatch "^https://[^/?#@\\s\"'<>\\\\]+(/[^\\s\"'<>\\\\]*)?$" .)) }}{{ fail "login.logoUrl must be an absolute https URL without credentials, spaces, quotes or angle brackets (at most 2048 characters)" }}{{ end }}{{ end -}}
+{{- with include "relay-control.loginLogoUrl" . }}{{ if or (gt (len .) 2048) (not (regexMatch "^https://[^/?#@\\s\"'<>\\\\]+([/?#][^\\s\"'<>\\\\]*)?$" .)) }}{{ fail "login.logoUrl must be an absolute https URL without credentials, spaces, quotes or angle brackets (at most 2048 characters)" }}{{ end }}{{ end -}}
 {{- with $login.orgName }}{{ if or (gt (len .) 200) (regexMatch "[[:cntrl:]]" .) }}{{ fail "login.orgName must be one line of at most 200 characters" }}{{ end }}{{ end -}}
 {{- $email := "^[^@\\s<>()\",;:]+@[^@\\s<>()\",;:]+\\.[^@\\s<>()\",;:]+$" -}}
 {{- $domain := "^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\\.)+[a-z]([a-z0-9-]{0,61}[a-z0-9])?$" -}}

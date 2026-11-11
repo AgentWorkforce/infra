@@ -3866,8 +3866,9 @@ entries:
       read-only at /usr/share/nginx/html/brand and serves it at
       <dashboard origin>/brand/<file>. Set svg (inline, at most 256 KiB,
       served as logo.svg; script, event handlers, javascript: URLs and
-      foreignObject are refused) or existingConfigMap and key (a ConfigMap
-      the operator creates, .svg or .png). relay-control then sets
+      foreignObject, character references and DTDs are refused) or
+      existingConfigMap and key (a ConfigMap the operator creates; .png only,
+      since its content is not checked). relay-control then sets
       SELFHOST_LOGIN_LOGO_URL to that https URL (the dashboard origin is
       https://<global.singleHost.host> or dashboardUrl's) unless
       login.logoUrl overrides it, and login.orgName sets
@@ -3887,7 +3888,7 @@ entries:
     choices:
       - { value: none }
       - { value: inline SVG }
-      - { value: existing ConfigMap (SVG or PNG) }
+      - { value: existing ConfigMap (PNG) }
     verify: GET <dashboard>/brand/<file> returns the logo
     sources:
       - "charts/relay-webapp/templates/brand-configmap.yaml"

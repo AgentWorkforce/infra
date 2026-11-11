@@ -92,9 +92,9 @@ at it (see the relay-control README).
 
 | key | meaning |
 | --- | --- |
-| `global.branding.logo.svg` | Inline SVG markup, at most 256 KiB. The chart creates `<fullname>-brand` and serves it as `/brand/logo.svg`. Markup with `<script`, `on…=` event handlers, `javascript:` or `<foreignObject` is refused. |
-| `global.branding.logo.existingConfigMap` | A ConfigMap you create in the release namespace (SVG as `data`, PNG as `binaryData`, e.g. `kubectl create configmap relay-brand --from-file=logo.png`). Its content is not linted. |
-| `global.branding.logo.key` | The key in `existingConfigMap`, which is also the served file name: `[A-Za-z0-9._-]`, ending in `.svg` or `.png`. Default `logo.svg`. |
+| `global.branding.logo.svg` | Inline SVG markup, at most 256 KiB. The chart creates `<fullname>-brand` and serves it as `/brand/logo.svg`. Markup with `<script`, `on…=` event handlers, `javascript:` (also with whitespace inside), `<foreignObject`, character references (`&#…;`) or a `<!DOCTYPE`/`<!ENTITY` declaration is refused. |
+| `global.branding.logo.existingConfigMap` | A ConfigMap you create in the release namespace holding a PNG (`binaryData`, e.g. `kubectl create configmap relay-brand --from-file=logo.png`). Its content is not linted, so SVG is refused here: put an SVG in `svg`. |
+| `global.branding.logo.key` | The key in `existingConfigMap`, which is also the served file name: `[A-Za-z0-9._-]`, ending in `.png`. Default `logo.png`. |
 
 Set `svg` or `existingConfigMap`, not both. The file is mounted read-only at
 `/usr/share/nginx/html/brand`; ConfigMap edits reach the pod without a

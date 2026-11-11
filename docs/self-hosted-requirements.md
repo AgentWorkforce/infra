@@ -937,7 +937,7 @@ chart `relay-webapp` · values [`ci/default-values.yaml`](../charts/relay-webapp
 | --- | --- | --- | --- | --- |
 | shipped | [Dashboard ingress and same-origin API proxy](#opt-relay-webapp-ingress) | `enabled`, `disabled` | `enabled` | values `runtime.publicUrl`, `runtime.appPath`, `runtime.apiBasePath`, `runtime.loginPath`, `ingress.tls`, `imagePullSecrets`; env `DASHBOARD_PUBLIC_URL`, `DASHBOARD_APP_PATH`, `DASHBOARD_API_BASE_PATH`, `DASHBOARD_LOGIN_PATH`, `DASHBOARD_SESSION_READ_API_ENABLED`; Secret `<ingress.tls[].secretName>` (kubernetes.io/tls); Secret `<imagePullSecrets[].name>` (optional registry pull Secret) |
 | shipped | [Dashboard customer profile (enterprise branding)](#opt-relay-webapp-customer-profile) | `none`, `customer profile` | `none` | values `customerProfile`; env `DASHBOARD_CUSTOMER_PROFILE` |
-| shipped | [Hosted customer logo (sign-in page co-branding)](#opt-relay-webapp-branding-logo) | `none`, `inline SVG`, `existing ConfigMap (SVG or PNG)` | `none (no hosted logo)` | values `global.branding.logo.*` |
+| shipped | [Hosted customer logo (sign-in page co-branding)](#opt-relay-webapp-branding-logo) | `none`, `inline SVG`, `existing ConfigMap (PNG)` | `none (no hosted logo)` | values `global.branding.logo.*` |
 | shipped | [Dashboard collector analytics runtime selection](#opt-relay-webapp-collector-analytics) | (no default), `true`, `false` | (no default) | values `runtime.analyticsEnabled`; env `DASHBOARD_ANALYTICS_ENABLED` |
 | shipped | [Dashboard coordination-overlaps view](#opt-relay-webapp-coordination-overlaps) | `false`, `true` | `false` | values `runtime.coordinationOverlapsEnabled`; env `DASHBOARD_COORDINATION_OVERLAPS_ENABLED` |
 
@@ -3020,8 +3020,9 @@ with no extra web server or ingress route: relay-webapp mounts it
 read-only at /usr/share/nginx/html/brand and serves it at
 <dashboard origin>/brand/<file>. Set svg (inline, at most 256 KiB,
 served as logo.svg; script, event handlers, javascript: URLs and
-foreignObject are refused) or existingConfigMap and key (a ConfigMap
-the operator creates, .svg or .png). relay-control then sets
+foreignObject, character references and DTDs are refused) or
+existingConfigMap and key (a ConfigMap the operator creates; .png only,
+since its content is not checked). relay-control then sets
 SELFHOST_LOGIN_LOGO_URL to that https URL (the dashboard origin is
 https://<global.singleHost.host> or dashboardUrl's) unless
 login.logoUrl overrides it, and login.orgName sets
@@ -3034,7 +3035,7 @@ Needs a relay-control image with the co-branded sign-in page
 (relaycontrol 7b57625 or later).
 
 - Default: `none (no hosted logo)`
-- Choices: `none`; `inline SVG`; `existing ConfigMap (SVG or PNG)`
+- Choices: `none`; `inline SVG`; `existing ConfigMap (PNG)`
 - Provided by: operator
 - Values: `global.branding.logo.*`
 - Verify: GET <dashboard>/brand/<file> returns the logo

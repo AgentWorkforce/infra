@@ -122,13 +122,14 @@ global:
   branding:
     logo:
       # Inline SVG markup (at most 256 KiB), served as /brand/logo.svg from a
-      # ConfigMap this chart creates. Script, event handlers, javascript: URLs
-      # and foreignObject are refused.
+      # ConfigMap this chart creates. Script, event handlers, javascript: URLs,
+      # foreignObject, character references and DTDs are refused.
       svg: ""
-      # Or a ConfigMap you create in the release namespace (SVG as data, PNG
-      # as binaryData), for example:
+      # Or a ConfigMap you create in the release namespace holding a PNG
+      # (binaryData; its content is not checked, so SVG is refused here),
+      # for example:
       #   kubectl create configmap relay-brand --from-file=logo.png
       existingConfigMap: ""
       # The key in existingConfigMap, which is also the served file name:
-      # [A-Za-z0-9._-], ending in .svg or .png. Empty: logo.svg.
+      # [A-Za-z0-9._-], ending in .png. Empty: logo.png.
       key: ""

@@ -25,7 +25,7 @@ global:
   # The customer logo relay-webapp serves at <dashboard origin>/brand/<file>
   # (see charts/relay-webapp/values.yaml; set once on the umbrella). This chart
   # only reads it to derive login.logoUrl: logo.svg for svg, else key
-  # (default logo.svg) when existingConfigMap is set.
+  # (default logo.png) when existingConfigMap is set.
   branding:
     logo:
       svg: ""
