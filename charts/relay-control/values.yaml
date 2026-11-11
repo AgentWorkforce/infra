@@ -24,7 +24,11 @@ global:
     host: ""
 existingSecret: ""
 # null preserves existing extraEnv selection; [] explicitly selects core only.
-# Managed names: flows, relayfile, chief. No license is used.
+# Managed names: flows, relayfile, chief, usage. No license is used.
+# usage: the owner-only dashboard Usage page and its daily counters (counts
+# only; nothing is recorded while it is off). Needs a relay-control image with
+# the usage API (relay-control docs/usage.md) and a relay-webapp image with the
+# Usage page; an older Control image refuses the name at startup.
 selectedFeatures: null
 secretKeys:
   databaseUrl: database-url

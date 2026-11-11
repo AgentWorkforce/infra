@@ -880,7 +880,7 @@ chart `relay-control` · values [`ci/default-values.yaml`](../charts/relay-contr
 | shipped | [Relayflows control-plane storage and worker queue](#opt-relay-control-flows) | `postgres`, `gcs` | `postgres` | values `flows.*`; env `SELFHOST_FLOWS_STORAGE`, `SELFHOST_FLOWS_GCS_BUCKET`, `SELFHOST_FLOWS_GCS_PREFIX`, `SELFHOST_FLOWS_WORKER_RELAYCAST_URL`, `SELFHOST_FLOWS_QUEUE_PING_MS` |
 | shipped | [Self-host telemetry level and transport](#opt-relay-control-telemetry) | `errors`, `full`, `off` | `errors` | values `telemetry.*`, `secretKeys.telemetryInstallKey`; env `SELFHOST_TELEMETRY_LEVEL`, `SELFHOST_TELEMETRY_TRANSPORT`, `SELFHOST_TELEMETRY_ENDPOINT`, `SELFHOST_TELEMETRY_INSTALL_ID`, `SELFHOST_TELEMETRY_INSTALL_KEY_FILE`, `SELFHOST_TELEMETRY_PROBES`, `SELFHOST_TELEMETRY_DEPLOYMENT`; Secret `<existingSecret>` keys `<operator-chosen, no default>` |
 | shipped | [Control legacy RelayAuth client environment](#opt-control-legacy-relayauth) | `true`, `false` | `true` | values `services.relayauthEnabled`; env `RELAYAUTH_URL`, `RELAYAUTH_API_KEY_FILE` |
-| shipped | [Explicit optional Control features](#opt-relay-control-selected-features) | (no default), `[]`, `["flows","relayfile","chief"]` | (no default) | values `selectedFeatures`; env `SELFHOST_FEATURES` |
+| shipped | [Explicit optional Control features](#opt-relay-control-selected-features) | (no default), `[]`, `["flows","relayfile","chief"]`, `["usage"]` | (no default) | values `selectedFeatures`; env `SELFHOST_FEATURES` |
 | shipped | [Existing caller-token native reader connection](#opt-relay-control-direct-native-reader) | `disabled`, `enabled` | `disabled` | values `services.relayhistoryReadApiUrl`, `services.relayhistoryReadApiEvents`, `services.relayhistoryHostAliases`; env `RELAYHISTORY_READ_API_URL`, `RELAYHISTORY_READ_API_EVENTS` |
 | shipped | [Direct S3 upload credential issuer](#opt-history-direct-upload-issuer) | `off`, `allowlist`, `on` | `off` | values `historyUpload.*`; env `SELFHOST_HISTORY_UPLOAD_DIRECT`, `SELFHOST_HISTORY_UPLOAD_ALLOWLIST`, `SELFHOST_HISTORY_UPLOAD_BUCKET`, `SELFHOST_HISTORY_UPLOAD_REGION`, `SELFHOST_HISTORY_UPLOAD_KEY_ROOT`, `SELFHOST_HISTORY_UPLOAD_ROLE_ARN`, `SELFHOST_HISTORY_UPLOAD_KMS_KEY_ARN`, `SELFHOST_HISTORY_UPLOAD_MAX_OBJECT_BYTES`, `SELFHOST_HISTORY_UPLOAD_WITNESS_KEY_FILE`; Secret `<operator-chosen shared upload witness Secret>` keys `upload-witness-key` |
 
@@ -3851,12 +3851,13 @@ fanout, buffered/publication/GC activation or deletion/privacy acceptance.
 **Explicit optional Control features** · shipped · chart `relay-control` · profiles relay-control
 
 selectedFeatures=null preserves the existing extraEnv/default selection.
-A managed list selects only flows, relayfile and chief; [] explicitly
-serves core only. No license, customer metadata or entitlement is used.
+A managed list selects only flows, relayfile, chief and usage; [] explicitly
+serves core only. usage serves the owner-only Usage page (counts only,
+nothing recorded while off) and needs a Control image with the usage API. No license, customer metadata or entitlement is used.
 Managed selection reserves SELFHOST_FEATURES against duplicate extraEnv.
 
 - Default: (no default)
-- Choices: (no default); `[]`: Core only; `["flows","relayfile","chief"]`
+- Choices: (no default); `[]`: Core only; `["flows","relayfile","chief"]`; `["usage"]`: Owner-only Usage page
 - Provided by: operator
 - Values: `selectedFeatures`
 - Env: `SELFHOST_FEATURES`

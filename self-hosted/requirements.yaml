@@ -5467,8 +5467,9 @@ entries:
     title: Explicit optional Control features
     description: |
       selectedFeatures=null preserves the existing extraEnv/default selection.
-      A managed list selects only flows, relayfile and chief; [] explicitly
-      serves core only. No license, customer metadata or entitlement is used.
+      A managed list selects only flows, relayfile, chief and usage; [] explicitly
+      serves core only. usage serves the owner-only Usage page (counts only,
+      nothing recorded while off) and needs a Control image with the usage API. No license, customer metadata or entitlement is used.
       Managed selection reserves SELFHOST_FEATURES against duplicate extraEnv.
     chart: relay-control
     values: [selectedFeatures]
@@ -5477,7 +5478,7 @@ entries:
     status: shipped
     provided_by: operator
     default: null
-    choices: [{ value: null }, { value: [], note: Core only }, { value: [flows, relayfile, chief] }]
+    choices: [{ value: null }, { value: [], note: Core only }, { value: [flows, relayfile, chief] }, { value: [usage], note: Owner-only Usage page }]
     verify: Render explicit core with an empty SELFHOST_FEATURES and refuse unknown names, duplicates and duplicate extraEnv.
     sources: [charts/relay-control/templates/deployment.yaml, charts/relay-control/templates/_helpers.tpl]
 

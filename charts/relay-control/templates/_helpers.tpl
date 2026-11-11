@@ -54,7 +54,7 @@ of set a second time. Desktop and the CLI log in against that same origin. */ -}
 {{- if not (kindIs "invalid" .Values.selectedFeatures) -}}
 {{- if not (kindIs "slice" .Values.selectedFeatures) }}{{ fail "selectedFeatures must be a list or null" }}{{ end -}}
 {{- if ne (len .Values.selectedFeatures) (len (uniq .Values.selectedFeatures)) }}{{ fail "selectedFeatures must not contain duplicates" }}{{ end -}}
-{{- range .Values.selectedFeatures }}{{ if not (has . (list "flows" "relayfile" "chief")) }}{{ fail "selectedFeatures contains an unknown optional component" }}{{ end }}{{ end -}}
+{{- range .Values.selectedFeatures }}{{ if not (has . (list "flows" "relayfile" "chief" "usage")) }}{{ fail "selectedFeatures contains an unknown optional component" }}{{ end }}{{ end -}}
 {{- end -}}
 {{- if ne (int .Values.replicaCount) 1 }}{{ fail "replicaCount must be 1: the self-host API pilot has process-local login/device rate limits and is not HA" }}{{ end -}}
 {{- if not .Values.existingSecret }}{{ fail "existingSecret is required; inline credentials are not supported" }}{{ end -}}
