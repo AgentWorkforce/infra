@@ -62,7 +62,9 @@ behaviours apply to releases cut after they were added.
 Set `first-install: true` for one run to create the release: the plan refuses
 it if the release already exists (and a normal run refuses a missing release).
 Apply then snapshots RDS, runs `helm install --no-hooks` without `--wait`,
-waits for the HoopDb migrate Job and the Deployments. Remove the input after it
+waits for the HoopDb migrate Job, then for every Job in the installed release
+(bounded; a failed Job fails the run with its name and last logs) and the
+Deployments. Remove the input after it
 succeeds.
 
 If `scripts/selfhost/rds-setup.sh` bootstrapped the databases, set

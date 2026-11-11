@@ -82,6 +82,7 @@ EOF
 setup_mocks() { # $1 release fixture dir, $2 attestation result (ok|fail)
   local bin="$root/bin"; rm -rf "$bin"; mkdir -p "$bin"; : > "$root/log"
   rm -f "$root/rendered-extra.yaml" "$root/live-manifest.yaml" "$root/patches"; touch "$root/exists"
+  rm -rf "$root/jobstate"; mkdir -p "$root/jobstate"
   cat > "$bin/gh" <<EOF
 #!/usr/bin/env bash
 echo "gh \$*" >> "$root/log"
@@ -95,6 +96,16 @@ EOF
 echo "kubectl \$*" >> "$root/log"
 case "\$*" in
   *jsonpath*) echo "old/relay-control@sha256:old" ;;
+  *"get job "*) # state from $root/jobstate/<name>, one per call; the last state sticks
+    prev=""; for a in "\$@"; do [ "\$prev" = job ] && n=\$a; prev=\$a; done
+    f="$root/jobstate/\$n"; st=complete
+    if [ -s "\$f" ]; then st=\$(head -1 "\$f"); if [ "\$(wc -l < "\$f")" -gt 1 ]; then tail -n +2 "\$f" > "\$f.t"; mv "\$f.t" "\$f"; fi; fi
+    case "\$st" in
+      complete) echo '{"status":{"succeeded":1,"conditions":[{"type":"Complete","status":"True"}]}}' ;;
+      failed) echo '{"status":{"failed":3,"conditions":[{"type":"Failed","status":"True"}]}}' ;;
+      *) echo '{"status":{"active":1}}' ;;
+    esac ;;
+  *"logs job/"*) echo "bootstrap: relation sessions.search_documents does not exist" ;;
   *"-o json"*) echo '{"items":[]}' ;;
   *"get deploy -l"*"-o name"*) echo deployment.apps/agent-relay-read-api ;;
   *"patch secret"*) for a in "\$@"; do case "\$a" in */patch.json) cat "\$a" >> "$root/patches"; echo >> "$root/patches";; esac; done ;;
@@ -116,6 +127,7 @@ make_state() {
 }
 rds_env=(AWS_REGION=us-east-1 RDS_HOST=db.example.internal RDS_ADMIN_SECRET_ARN=arn:aws:secretsmanager:us-east-1:111111111111:secret:rds STATE_DIR="$root/state")
 
+export AGENT_RELAY_JOB_POLL_SECONDS=0
 run() { PATH="$root/bin:$PATH" "$TEST_BASH" "$SCRIPT" "$@"; }
 run_rds() { env "${rds_env[@]}" PATH="$root/bin:$PATH" "$TEST_BASH" "$SCRIPT" "$@"; }
 vals="$root/values.yaml"; : > "$vals"
@@ -255,7 +267,7 @@ grep -q -- '--wait' <<<"$inst" && fail "first install waited on Deployments befo
 grep -q 'release-images.values.yaml' <<<"$inst" || fail "first install did not use the release overlay"
 grep -q 'helm .* upgrade ' "$root/log" && fail "first install ran helm upgrade"
 before 'aws rds create-db-snapshot' 'helm .* install ' || fail "snapshot must precede helm install"
-before 'helm .* install ' 'kubectl .*wait --for=condition=complete job/agent-relay-worker-migrate-0a1b2c3d' \
+before 'helm .* install ' 'kubectl .*get job agent-relay-worker-migrate-0a1b2c3d ' \
   || fail "migration wait must follow helm install"
 grep -q '^rds-setup ' "$root/log" && fail "first install without --rds-setup ran rds-setup.sh"
 grep -q 'Installed agent-relay at 2026.11.1' <<<"$out" || fail "first install did not report success"
@@ -264,8 +276,8 @@ pass "first install: snapshot, helm install --no-hooks, then the migration wait"
 # 17. first install with --rds-setup: install -> migration wait -> post -> restart -> rollout status
 make_state; setup_mocks "$root/rel-ok" ok; rm -f "$root/exists"; printf '%s\n' "$migrate_job" > "$root/live-manifest.yaml"
 out=$(run_rds "${args[@]}" --rds-setup --first-install --apply --db-instance prod-db --yes 2>&1) || fail "rds first install failed: $out"
-before 'helm .* install ' 'kubectl .*wait --for=condition=complete' || fail "install must precede the migration wait"
-before 'kubectl .*wait --for=condition=complete' '^rds-setup post' || fail "post must follow the migration wait"
+before 'helm .* install ' 'kubectl .*get job agent-relay-worker-migrate' || fail "install must precede the migration wait"
+before 'kubectl .*get job agent-relay-worker-migrate' '^rds-setup post' || fail "post must follow the migration wait"
 before '^rds-setup post' 'kubectl .*rollout restart' || fail "restart must follow post"
 before 'kubectl .*rollout restart' 'kubectl .*rollout status' || fail "rollout status must follow the restart"
 post=$(grep '^rds-setup post' "$root/log")
@@ -337,3 +349,40 @@ printf 'sessions-pipeline:\n  worker:\n    migrations:\n      databaseMode: rds\
 out=$(run --version 2026.11.1 --registry "$REG" --profile eks-native --values "$root/rds-values.yaml" 2>&1) || fail "plan failed: $out"
 grep -q 'add --rds-setup' <<<"$out" || fail "rds values without --rds-setup were not flagged: $out"
 pass "rds values without --rds-setup are flagged in the plan"
+
+# 23. first install waits for EVERY Job in the release, including one still running after the migration
+bootstrap_job='kind: Job
+metadata:
+  name: agent-relay-search-indexer-bootstrap-9f8e7d6c
+  labels: { app.kubernetes.io/component: search-indexer-bootstrap }'
+make_state; setup_mocks "$root/rel-ok" ok; rm -f "$root/exists"
+printf '%s\n---\n%s\n' "$migrate_job" "$bootstrap_job" > "$root/live-manifest.yaml"
+printf 'running\nrunning\ncomplete\n' > "$root/jobstate/agent-relay-search-indexer-bootstrap-9f8e7d6c"
+out=$(run_rds "${args[@]}" --rds-setup --first-install --apply --db-instance prod-db --yes 2>&1) || fail "first install with a pending Job failed: $out"
+[ "$(grep -c 'kubectl .*get job agent-relay-search-indexer-bootstrap-9f8e7d6c ' "$root/log")" -ge 3 ] \
+  || fail "the pending bootstrap Job was not polled to completion"
+before '^rds-setup post' 'kubectl .*get job agent-relay-search-indexer-bootstrap' || fail "release Jobs must be awaited after the login barrier"
+line_b=$(grep -n 'Job agent-relay-search-indexer-bootstrap-9f8e7d6c completed' <<<"$out" | cut -d: -f1)
+line_i=$(grep -n 'Installed agent-relay' <<<"$out" | cut -d: -f1)
+[ -n "$line_b" ] && [ -n "$line_i" ] && [ "$line_b" -lt "$line_i" ] || fail "Installed was printed before every Job completed: $out"
+pass "first install waits for every release Job before reporting success"
+
+# 24. a failed release Job fails the first install with its name and last logs
+make_state; setup_mocks "$root/rel-ok" ok; rm -f "$root/exists"
+printf '%s\n---\n%s\n' "$migrate_job" "$bootstrap_job" > "$root/live-manifest.yaml"
+printf 'running\nfailed\n' > "$root/jobstate/agent-relay-search-indexer-bootstrap-9f8e7d6c"
+out=$(run_rds "${args[@]}" --rds-setup --first-install --apply --db-instance prod-db --yes 2>&1) && fail "a failed Job reported success"
+grep -q 'Job agent-relay-search-indexer-bootstrap-9f8e7d6c did not complete (failed)' <<<"$out" || fail "failed Job not named: $out"
+grep -q 'relation sessions.search_documents does not exist' <<<"$out" || fail "failed Job logs not shown: $out"
+grep -q 'Installed agent-relay' <<<"$out" && fail "Installed printed after a failed Job"
+grep -q 'INSTALL FAILED' <<<"$out" || fail "failure hint missing: $out"
+pass "a failed release Job fails the first install with its name and logs"
+
+# 25. a Job still running at the deadline fails the first install
+make_state; setup_mocks "$root/rel-ok" ok; rm -f "$root/exists"
+printf '%s\n' "$migrate_job" > "$root/live-manifest.yaml"; echo running > "$root/jobstate/agent-relay-worker-migrate-0a1b2c3d"
+out=$(AGENT_RELAY_JOB_TIMEOUT_SECONDS=0 run_rds "${args[@]}" --rds-setup --first-install --apply --db-instance prod-db --yes 2>&1) \
+  && fail "a Job past the deadline reported success"
+grep -q 'did not complete (timeout)' <<<"$out" || fail "deadline not reported: $out"
+grep -q '^rds-setup post' "$root/log" && fail "post ran without a completed migration"
+pass "Job waits are bounded"

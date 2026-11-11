@@ -51,7 +51,9 @@
 #      release's migration Jobs and Deployments.
 #      First install: helm install --no-hooks (no --wait), waits for the HoopDb
 #      migrate Job, [--rds-setup: rds-setup.sh post and a restart of the read
-#      API, ingest edge and search indexer], then waits for the Deployments.
+#      API, ingest edge and search indexer], then waits for every Job in the
+#      installed manifest (bounded; a failed Job fails with its logs) and the
+#      Deployments.
 #   On a failure it stops and prints the helm rollback command (the last
 #   successfully deployed revision) and the snapshot id.
 #
@@ -287,6 +289,31 @@ trap 'rollback_hint' ERR
 
 # rds-setup.sh reads its inputs from the environment (never argv).
 rds_env=(env NAMESPACE="$namespace" KUBE_CONTEXT="$context" STATE_DIR="$state_dir")
+# wait_jobs NAME...: poll each Job until it completes; a Job that fails (its
+# Failed condition) or is still unfinished at the deadline fails the run with
+# its name and the last lines of its logs.
+job_timeout="${AGENT_RELAY_JOB_TIMEOUT_SECONDS:-1200}" job_poll="${AGENT_RELAY_JOB_POLL_SECONDS:-10}"
+wait_jobs() {
+  local job state deadline
+  deadline=$(( $(date +%s) + job_timeout ))
+  for job in "$@"; do
+    while :; do
+      state=$("${kube[@]}" get job "$job" -o json | jq -r '
+        if ((.status.succeeded // 0) > 0) or any(.status.conditions[]?; .type == "Complete" and .status == "True") then "complete"
+        elif any(.status.conditions[]?; .type == "Failed" and .status == "True") then "failed"
+        else "running" end') || state=running  # a transient API error retries until the deadline
+      [ "$state" = running ] || break
+      if [ "$(date +%s)" -ge "$deadline" ]; then state=timeout; break; fi
+      sleep "$job_poll"
+    done
+    if [ "$state" != complete ]; then
+      say "   Job $job did not complete ($state); last logs:"
+      "${kube[@]}" logs "job/$job" --all-containers --tail=50 2>&1 | sed 's/^/     /' || true
+      return 1
+    fi
+    say "   Job $job completed"
+  done
+}
 mirrored_ref() { jq -r --arg n "$1" --arg root "${registry}/${prefix}" '[.images[] | select(.name == $n) | "\($root)/\(.ref)"] | first // empty' "$manifest"; }
 
 if $first_install; then
@@ -297,7 +324,7 @@ if $first_install; then
   if [ -n "$migration_job" ]; then
     [[ "$migration_job" != *$'\n'* ]] || { say "   expected exactly one current HoopDb migrate Job"; false; }
     say "   waiting for HoopDb migrate Job $migration_job"
-    "${kube[@]}" wait --for=condition=complete "job/$migration_job" --timeout=20m
+    wait_jobs "$migration_job"
   elif $rds_setup; then
     say "   the release renders no HoopDb migrate Job, so rds-setup.sh post has no migration evidence"; false
   fi
@@ -311,6 +338,16 @@ if $first_install; then
     "${rds_env[@]}" "$here/rds-setup.sh" post
     "${kube[@]}" rollout restart "deployment/$release-read-api" "deployment/$release-ingest-edge" \
       "deployment/$release-search-indexer"
+  fi
+  # --no-hooks and no --wait: nothing has waited for the release's other Jobs
+  # (bootstraps, other migrations). Every Job in the installed manifest must
+  # complete before the install is reported.
+  job_names=$("${helmx[@]}" get manifest "$release" | yq -N -r 'select(.kind == "Job") | .metadata.name')
+  release_jobs=()
+  while IFS= read -r j; do [ -z "$j" ] || release_jobs+=("$j"); done <<<"$job_names"
+  if [ "${#release_jobs[@]}" -gt 0 ]; then
+    say "   waiting for every Job in the release: ${release_jobs[*]}"
+    wait_jobs "${release_jobs[@]}"
   fi
 else
   if $rds_setup; then
