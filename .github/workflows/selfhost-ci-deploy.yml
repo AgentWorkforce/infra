@@ -1,0 +1,179 @@
+# Reusable workflow: plan, apply or roll back one environment's Helm releases from the repository that holds
+# its values. The cluster API stays private: GitHub only hands a bundle to the environment's CodeBuild
+# projects (terraform/modules/aws/ci-deploy), which run scripts/selfhost/ci-deploy.sh inside the VPC.
+# See docs/selfhost-ci-deploy.md.
+#
+# plan  : read-only. Diffs every release against what is live (artifact "plan-<env>") and refuses a change
+#         that drops a live value or resource unless the environment's allow-drop.txt lists it.
+# apply : plan, then (only when something changes) a job in the caller's approval environment rebuilds the
+#         same bundle (same digest), checks nothing was upgraded since the plan, snapshots the database,
+#         upgrades, checks Jobs and health.
+# rollback: helm rollback <release> <revision>, in the approval environment.
+#
+# Callers pin this workflow to a commit and grant `id-token: write`.
+name: Self-hosted CI deploy
+
+on:
+  workflow_call:
+    inputs:
+      environment-dir: { description: "Directory in the caller repository with deploy.json and values.", type: string, required: true }
+      infra-ref: { description: "Commit of AgentWorkforce/infra whose charts and scripts deploy (40 hex).", type: string, required: true }
+      mode: { description: "plan, apply or rollback.", type: string, default: plan }
+      approval-environment: { description: "Caller GitHub environment gating apply and rollback (its reviewers approve).", type: string, required: true }
+      aws-region: { type: string, required: true }
+      plan-role-arn: { type: string, required: true }
+      apply-role-arn: { type: string, required: true }
+      plan-project: { type: string, required: true }
+      apply-project: { type: string, required: true }
+      bucket: { type: string, required: true }
+      log-group: { type: string, required: true }
+      rollback-release: { type: string, default: "" }
+      rollback-revision: { type: string, default: "" }
+      runs-on: { description: "JSON runner labels.", type: string, default: '["ubuntu-latest"]' }
+    outputs:
+      changes: { value: "${{ jobs.plan.outputs.changes }}" }
+      revisions: { value: "${{ jobs.plan.outputs.revisions }}" }
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  plan:
+    if: inputs.mode == 'plan' || inputs.mode == 'apply'
+    runs-on: ${{ fromJSON(inputs.runs-on) }}
+    outputs:
+      changes: ${{ steps.run.outputs.changes }}
+      revisions: ${{ steps.run.outputs.revisions }}
+      bundle-sha256: ${{ steps.bundle.outputs.sha256 }}
+    steps:
+      - &checkout-site
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with: { path: site, persist-credentials: false }
+      - &checkout-infra
+        name: Infra at the pinned ref
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          repository: AgentWorkforce/infra
+          ref: ${{ inputs.infra-ref }}
+          path: infra
+          persist-credentials: false
+          sparse-checkout: |
+            charts
+            scripts/selfhost
+      - &check-ref
+        name: Pinned ref
+        env: { REF: "${{ inputs.infra-ref }}" }
+        run: |
+          [[ "$REF" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::infra-ref must be a full commit SHA"; exit 1; }
+          [ "$(git -C infra rev-parse HEAD)" = "$REF" ]
+      - &bundle
+        name: Bundle
+        id: bundle
+        env: { ENV_DIR: "${{ inputs.environment-dir }}" }
+        run: |
+          set -euo pipefail
+          sha=$(infra/scripts/selfhost/ci-deploy-run.sh bundle infra "site/$ENV_DIR" "$RUNNER_TEMP/bundle.tgz")
+          echo "sha256=$sha" >> "$GITHUB_OUTPUT"
+          echo "bundle sha256 $sha"
+      - name: AWS (plan role)
+        uses: aws-actions/configure-aws-credentials@b47578312673ae6fa5b5096b330d9fbac3d116df # v4.2.1
+        with:
+          role-to-assume: ${{ inputs.plan-role-arn }}
+          role-session-name: plan-${{ github.run_id }}-${{ github.run_attempt }}
+          aws-region: ${{ inputs.aws-region }}
+      - name: Plan
+        id: run
+        env:
+          RUN_ID: ${{ github.run_id }}-${{ github.run_attempt }}
+          LOG_GROUP: ${{ inputs.log-group }}
+          PROJECT: ${{ inputs.plan-project }}
+          BUCKET: ${{ inputs.bucket }}
+        run: |
+          set -uo pipefail
+          rc=0
+          infra/scripts/selfhost/ci-deploy-run.sh start "$PROJECT" "$BUCKET" "plan-bundles/$RUN_ID.tgz" \
+            "$RUNNER_TEMP/bundle.tgz" "$RUNNER_TEMP/report" || rc=$?
+          r="$RUNNER_TEMP/report"
+          [ -f "$r/plan.md" ] && cat "$r/plan.md" >> "$GITHUB_STEP_SUMMARY"
+          if [ -s "$r/diff.txt" ]; then
+            { echo; echo '<details><summary>Diff</summary>'; echo; echo '```diff'; head -c 60000 "$r/diff.txt"; echo '```'; echo '</details>'; } >> "$GITHUB_STEP_SUMMARY"
+          fi
+          echo "changes=$(jq -c '[.[]] | any' "$r/changes.json" 2>/dev/null || echo unknown)" >> "$GITHUB_OUTPUT"
+          echo "revisions=$(tr '\n' ' ' < "$r/revisions" 2>/dev/null | sed 's/ $//')" >> "$GITHUB_OUTPUT"
+          exit $rc
+      - &upload
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ${{ inputs.mode }}-${{ github.job }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/report
+          if-no-files-found: ignore
+          retention-days: 90
+
+  apply:
+    needs: plan
+    if: inputs.mode == 'apply' && needs.plan.outputs.changes == 'true'
+    runs-on: ${{ fromJSON(inputs.runs-on) }}
+    environment: ${{ inputs.approval-environment }}
+    concurrency: { group: "ci-deploy-${{ inputs.apply-project }}", cancel-in-progress: false }
+    steps:
+      - *checkout-site
+      - *checkout-infra
+      - *check-ref
+      - *bundle
+      - name: Same bundle as the reviewed plan
+        env: { PLANNED: "${{ needs.plan.outputs.bundle-sha256 }}", NOW: "${{ steps.bundle.outputs.sha256 }}" }
+        run: '[ "$PLANNED" = "$NOW" ] || { echo "::error::bundle changed since the plan ($PLANNED -> $NOW)"; exit 1; }'
+      - &aws-apply
+        name: AWS (apply role)
+        uses: aws-actions/configure-aws-credentials@b47578312673ae6fa5b5096b330d9fbac3d116df # v4.2.1
+        with:
+          role-to-assume: ${{ inputs.apply-role-arn }}
+          role-session-name: apply-${{ github.run_id }}-${{ github.run_attempt }}
+          aws-region: ${{ inputs.aws-region }}
+          role-duration-seconds: 7200
+      - name: Apply
+        env:
+          RUN_ID: ${{ github.run_id }}-${{ github.run_attempt }}
+          LOG_GROUP: ${{ inputs.log-group }}
+          PROJECT: ${{ inputs.apply-project }}
+          BUCKET: ${{ inputs.bucket }}
+          REVISIONS: ${{ needs.plan.outputs.revisions }}
+        run: |
+          set -uo pipefail
+          rc=0
+          infra/scripts/selfhost/ci-deploy-run.sh start "$PROJECT" "$BUCKET" "apply-bundles/$RUN_ID.tgz" \
+            "$RUNNER_TEMP/bundle.tgz" "$RUNNER_TEMP/report" MODE=apply "EXPECT_REVISIONS=$REVISIONS" || rc=$?
+          r="$RUNNER_TEMP/report"
+          { echo "## Apply (run $RUN_ID)"; echo; echo "Snapshot: \`$(tr '\n' ' ' < "$r/snapshot" 2>/dev/null)\`"; echo;
+            echo '```'; cat "$r/state.jsonl" 2>/dev/null; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          [ $rc = 0 ] || echo "::error::apply failed. Roll back with mode=rollback, the release and its previous revision (in plan.md)."
+          exit $rc
+      - *upload
+
+  rollback:
+    if: inputs.mode == 'rollback'
+    runs-on: ${{ fromJSON(inputs.runs-on) }}
+    environment: ${{ inputs.approval-environment }}
+    concurrency: { group: "ci-deploy-${{ inputs.apply-project }}", cancel-in-progress: false }
+    steps:
+      - *checkout-site
+      - *checkout-infra
+      - *check-ref
+      - *bundle
+      - *aws-apply
+      - name: Rollback
+        env:
+          RUN_ID: ${{ github.run_id }}-${{ github.run_attempt }}
+          LOG_GROUP: ${{ inputs.log-group }}
+          PROJECT: ${{ inputs.apply-project }}
+          BUCKET: ${{ inputs.bucket }}
+          RELEASE: ${{ inputs.rollback-release }}
+          REVISION: ${{ inputs.rollback-revision }}
+        run: |
+          set -euo pipefail
+          [[ "$RELEASE" =~ ^[a-z0-9-]+$ && "$REVISION" =~ ^[0-9]+$ ]] || { echo "::error::rollback-release and a numeric rollback-revision are required"; exit 1; }
+          infra/scripts/selfhost/ci-deploy-run.sh start "$PROJECT" "$BUCKET" "apply-bundles/$RUN_ID.tgz" \
+            "$RUNNER_TEMP/bundle.tgz" "$RUNNER_TEMP/report" MODE=rollback "ROLLBACK_RELEASE=$RELEASE" "ROLLBACK_REVISION=$REVISION"
+      - *upload
