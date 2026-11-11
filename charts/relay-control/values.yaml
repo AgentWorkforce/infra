@@ -79,6 +79,13 @@ secretKeys:
   # copies this key into a memory-backed emptyDir at mode 0600. Empty means no
   # pepper. Keep the value safe: peppered passwords stop verifying without it.
   passwordPepper: ""
+  # One-time first-admin setup key (SELFHOST_SETUP_KEY_FILE, 32-256 bytes, no
+  # spaces), e.g. selfhost-setup-key. Generate it per install with
+  # `openssl rand -hex 32`; there is no default. Lets the bootstrap admin set a
+  # password and sign in without SMTP or SSO, once, within 24 hours. Requires
+  # auth.password.enabled. Mounted only into the API pod, never the migration
+  # Job. Needs a relay-control image with setup keys (source bd1c9a03 or later).
+  setupKey: ""
 
 # Encryption key identifiers. Non-secret labels stored with every encrypted
 # value; the key material itself is secretKeys.encryptionKey.
@@ -151,6 +158,23 @@ auth:
   # Email sign-in links (single use, 15 minutes); requires smtp.host.
   emailLink:
     enabled: false
+  # Email and password sign-in. Adds password to SELFHOST_SIGNIN_METHODS
+  # (with email_link too when emailLink.enabled). SMTP is optional: without it
+  # only self-service registration and emailed resets are off, and people get
+  # in through secretKeys.setupKey (first admin) or a temporary password an
+  # owner or admin sets. Password sign-in without SMTP needs a relay-control
+  # image from source bd1c9a03 or later.
+  password:
+    enabled: false
+  # SELFHOST_TRUSTED_PROXIES: how many reverse proxies in front of the API
+  # append to X-Forwarded-For (0-99). It drives every per-IP limit and the
+  # password lockout. null: 1 when auth.password.enabled (Control refuses to
+  # start with password sign-in and no explicit value), otherwise not set
+  # (Control uses the TCP peer). 1 is right behind this chart's ingress as the
+  # single proxy, with direct access to the pod and Service restricted (for
+  # example networkPolicy.enabled with ingressFrom); use the real hop count
+  # for any other chain, and 0 when clients connect directly.
+  trustedProxies: null
   # Verified emails in these domains join as member on first sign-in without
   # an invite, e.g. [acme.com]. Empty: invites only.
   autoJoinDomains: []

@@ -80,9 +80,10 @@ The referenced Secret must provide these keys:
 - RelayAuth-issued relaycast credentials (optional, model B):
   `relaycast-credential-keyring` and `relaycast-relayauth-token`
 - Sign-in (optional; see "First boot and sign-in" below): `oidc-client-secret`
-  for OIDC, `microsoft-client-secret` for Microsoft sign-in, and
-  `smtp-password` for SMTP with a username. The bootstrap reads
-  the existing `relaycast-internal-secret` key.
+  for OIDC, `microsoft-client-secret` for Microsoft sign-in,
+  `smtp-password` for SMTP with a username, and an operator-generated
+  `selfhost-setup-key` (`openssl rand -hex 32`) for the one-time first-admin
+  setup key. The bootstrap reads the existing `relaycast-internal-secret` key.
 
 `relayauth-api-key` and `relayauth-bootstrap-api-key` must contain the same
 value. `selfhost-bootstrap-token` must be at least 32 bytes.
@@ -119,6 +120,14 @@ image from relaycontrol #13 or later.
   tenant accounts need the `xms_edov` optional claim.
 - Optional `relay-control.smtp.*`: invite emails, and email sign-in links
   with `auth.emailLink.enabled`.
+- `relay-control.auth.password.enabled: true`: email and password sign-in,
+  no SMTP required. Add `relay-control.secretKeys.setupKey: selfhost-setup-key`
+  so the bootstrap admin can sign in once with the setup key (24 hours, single
+  use) and set a password, then hand out temporary passwords to members.
+  `relay-control.auth.trustedProxies` (default `1` with password sign-in)
+  must equal the number of proxies in front of the API. Both need a
+  relay-control image from source `bd1c9a03` or later. See the
+  [relay-control chart](../relay-control/README.md#first-admin-without-smtp-or-sso-the-setup-key).
 
 The admin signs in at `https://<root host>/login`. Owners and admins then
 invite teammates from Settings → Members. Invite links are single use and
