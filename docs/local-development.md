@@ -132,6 +132,8 @@ development config only when its cluster UID, context and Docker endpoint match
 the deleted local cluster; the next `make dev` can configure its replacement.
 This command retains source checkouts, tools and Docker build caches for normal
 development; it is not the complete clean-room machine wipe.
+Use the [clean-room runbook](local-clean-room.md) for the dedicated Mac's
+wipe/repeat/wipe sequence and exact operator sudo boundaries.
 
 ## Acceptance status
 
