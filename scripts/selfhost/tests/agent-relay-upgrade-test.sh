@@ -24,7 +24,7 @@ make_release() { # $1 dir, $2 manifest-variant
     unpinned) imgs='[{"name":"relay-control","ref":"ghcr.io/agentworkforce/relay-control:latest"}]' ;;
   esac
   printf '{"schema":1,"version":"2026.11.1","infraCommit":"%s","chart":{"path":"charts/agent-relay","version":"0.6.31"},"valuesOverlay":"release-images.values.yaml","images":%s}\n' "$COMMIT" "$imgs" > "$d/release-manifest.json"
-  printf 'relayControl:\n  image: { repository: __IMAGE_REPO_PREFIX__/relay-control, digest: "%s" }\n' "$D1" > "$d/release-images.values.yaml"
+  printf 'relayControl:\n  image: { repository: __IMAGE_MIRROR_ROOT__/ghcr.io/agentworkforce/relay-control, digest: "%s" }\nrelayWebapp:\n  image: { repository: __IMAGE_MIRROR_ROOT__/ghcr.io/agentworkforce/relay-webapp, digest: "%s" }\n' "$D1" "$D2" > "$d/release-images.values.yaml"
   ( cd "$d" && sha release-manifest.json release-images.values.yaml > SHA256SUMS )
 }
 
@@ -45,6 +45,8 @@ if [ "\$1" = clone ]; then mkdir -p "\${@: -1}"; exit 0; fi
 if [ "\$3" = worktree ] && [ "\$4" = add ]; then
   t="\${@: -2:1}"; mkdir -p "\$t/charts/agent-relay" "\$t/scripts/selfhost"
   : > "\$t/charts/agent-relay/values-eks.yaml"; : > "\$t/charts/agent-relay/values-eks-native.yaml"
+  printf 'name: agent-relay\nversion: "%s"\n' "\${CHART_VERSION:-0.6.31}" > "\$t/charts/agent-relay/Chart.yaml"
+  mkdir -p "\$t/charts/sessions-pipeline"
   cp "$SELFHOST_DIR/mirror-images-to-ecr.sh" "\$t/scripts/selfhost/"
 fi
 exit 0
@@ -82,7 +84,7 @@ grep -q 'no image changes' <<<"$out" && fail "plan printed both changes and no c
 grep -q '^aws ' "$root/log" && fail "plan mode called aws"
 grep -q '^crane ' "$root/log" && fail "plan mode copied images"
 grep -q 'helm .*upgrade' "$root/log" && fail "plan mode ran helm upgrade"
-grep -q 'attestation verify' "$root/log" || fail "attestation not verified"
+grep -q 'attestation verify .*SHA256SUMS' "$root/log" || fail "SHA256SUMS attestation not verified"
 pass "plan-only verifies the release and changes nothing"
 
 # 2. a tampered manifest fails the checksum
@@ -99,6 +101,19 @@ pass "failed attestation refuses"
 make_release "$root/rel-unpinned" unpinned; setup_mocks "$root/rel-unpinned" ok
 run "${args[@]}" >/dev/null 2>&1 && fail "unpinned image was accepted"
 pass "unpinned image refuses"
+
+# 4b. a chart version that differs from the release refuses
+setup_mocks "$root/rel-ok" ok
+CHART_VERSION=9.9.9 run "${args[@]}" >/dev/null 2>&1 && fail "mismatched chart version was accepted"
+pass "chart version mismatch refuses"
+
+# 4c. an overlay that does not deploy a mirrored image refuses
+make_release "$root/rel-drift" ok
+sed -i.bak 's#ghcr.io/agentworkforce/relay-webapp#ghcr.io/other/relay-webapp#' "$root/rel-drift/release-images.values.yaml"; rm -f "$root/rel-drift/"*.bak
+( cd "$root/rel-drift" && sha release-manifest.json release-images.values.yaml > SHA256SUMS )
+setup_mocks "$root/rel-drift" ok
+run "${args[@]}" >/dev/null 2>&1 && fail "overlay drift was accepted"
+pass "overlay that does not match the mirrored images refuses"
 
 # 5. --apply without --db-instance refuses before contacting anything
 setup_mocks "$root/rel-ok" ok

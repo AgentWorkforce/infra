@@ -6,7 +6,7 @@
 #     --registry <account>.dkr.ecr.<region>.amazonaws.com \
 #     --values <path to your values.yaml> \
 #     [--db-instance <rds-instance-id>] [--context <kube-context>] \
-#     [--namespace agent-relay] [--release agent-relay] [--prefix agent-relay/ghcr.io/agentworkforce] \
+#     [--namespace agent-relay] [--release agent-relay] [--prefix agent-relay] \
 #     [--apply]
 #
 # What it does:
@@ -35,7 +35,7 @@ say() { printf '%s\n' "$*"; }
 
 repo="${AGENT_RELAY_INFRA_REPO:-AgentWorkforce/infra}"
 version="" registry="" values="" db_instance="" context="" namespace="agent-relay" release="agent-relay"
-prefix="agent-relay/ghcr.io/agentworkforce" apply=false assume_yes=false
+prefix="agent-relay" apply=false assume_yes=false
 while [ $# -gt 0 ]; do
   case "$1" in
     --version) [ $# -ge 2 ] || die "--version needs a value"; version=$2; shift 2 ;;
@@ -72,6 +72,7 @@ gh release download "$tag" -R "$repo" -D "$work/rel" \
   -p release-manifest.json -p release-images.values.yaml -p SHA256SUMS >/dev/null \
   || die "could not download release $tag from $repo"
 ( cd "$work/rel" && sha256 -c SHA256SUMS --ignore-missing >/dev/null ) || die "checksum mismatch in $tag"
+gh attestation verify "$work/rel/SHA256SUMS" --repo "$repo" >/dev/null || die "attestation verification failed for SHA256SUMS"
 for f in release-manifest.json release-images.values.yaml; do
   awk -v f="$f" '{n=$2; sub(/^\*/,"",n)} n==f {found=1} END {exit !found}' "$work/rel/SHA256SUMS" || die "$f is not covered by SHA256SUMS"
   gh attestation verify "$work/rel/$f" --repo "$repo" >/dev/null || die "attestation verification failed for $f"
@@ -89,18 +90,30 @@ say "== 2. Check out infra $commit"
 git clone --quiet --filter=blob:none --no-checkout "https://github.com/$repo.git" "$work/src"
 git -C "$work/src" worktree add --quiet --detach "$work/tree" "$commit"
 chart="$work/tree/$chart_path"
+# Same order as the release workflow: the sessions-pipeline subchart first, then the umbrella.
+[ -d "$work/tree/charts/sessions-pipeline" ] && helm dependency build "$work/tree/charts/sessions-pipeline" >/dev/null
 helm dependency build "$chart" >/dev/null
-for dep in "$work"/tree/charts/*/; do [ -f "$dep/Chart.lock" ] && helm dependency build "$dep" >/dev/null 2>&1 || true; done
+# The checked-out chart must be the version the release names.
+chart_version=$(jq -r .chart.version "$manifest")
+actual_version=$(sed -n 's/^version:[[:space:]]*"\{0,1\}\([^"]*\)"\{0,1\}[[:space:]]*$/\1/p' "$chart/Chart.yaml" | head -1)
+[ -n "$chart_version" ] && [ "$chart_version" = "$actual_version" ] || die "chart version $actual_version does not match the release ($chart_version)"
 
 overlay="$work/release-images.values.yaml"
-sed "s#__IMAGE_REPO_PREFIX__#${registry}/${prefix}#g" "$work/rel/release-images.values.yaml" > "$overlay"
-grep -q '__IMAGE_REPO_PREFIX__' "$overlay" && die "overlay still has an unreplaced prefix"
+# Repositories in the overlay are __IMAGE_MIRROR_ROOT__/<source host>/<source path>, exactly where
+# mirror-images-to-ecr.sh copies each image, so what is copied is what is deployed.
+sed "s#__IMAGE_MIRROR_ROOT__#${registry}/${prefix}#g" "$work/rel/release-images.values.yaml" > "$overlay"
+grep -q '__IMAGE_' "$overlay" && die "overlay still has an unreplaced placeholder"
+while read -r ref; do
+  src=${ref%@*}; digest=${ref##*@}
+  grep -q "${registry}/${prefix}/${src}" "$overlay" && grep -q "$digest" "$overlay" \
+    || die "release overlay does not deploy the mirrored image for $ref"
+done < <(jq -r '.images[].ref' "$manifest")
 base=(-f "$chart/values-eks.yaml" -f "$chart/values-eks-native.yaml" -f "$values" -f "$overlay")
 for f in "$chart/values-eks.yaml" "$chart/values-eks-native.yaml"; do [ -f "$f" ] || die "release chart is missing ${f#"$work/tree/"}"; done
 
 say "== 3. Mirror release images into $registry and compare"
 jq -r '.images[].ref | "---\nimage: \(.)"' "$manifest" > "$work/release-images.rendered.yaml"
-mirror=("$work/tree/scripts/selfhost/mirror-images-to-ecr.sh" --registry "$registry" --prefix "${prefix%%/*}" \
+mirror=("$work/tree/scripts/selfhost/mirror-images-to-ecr.sh" --registry "$registry" --prefix "$prefix" \
   --rendered "$work/release-images.rendered.yaml" --out "$work/mirror.tsv")
 if $apply; then "${mirror[@]}" --apply; else "${mirror[@]}"; fi
 helm template "$release" "$chart" -n "$namespace" "${base[@]}" > "$work/new.yaml"
