@@ -3,12 +3,30 @@ import hashlib
 from pathlib import Path
 import plistlib
 import platform
+import subprocess
+import sys
 import tempfile
 import unittest
 from unittest.mock import patch
 
 import desktop_install
 from desktop_install import verify_download
+
+
+class CommandErrorTests(unittest.TestCase):
+    def test_failed_command_keeps_captured_diagnostics(self):
+        with self.assertRaises(subprocess.CalledProcessError) as raised:
+            desktop_install.run([sys.executable, "-c",
+                "import sys; print('download context'); print('artifact expired', file=sys.stderr); sys.exit(2)"])
+        message = desktop_install.error_message(raised.exception)
+        self.assertIn("artifact expired", message)
+        self.assertIn("download context", message)
+        self.assertIn("exit status 2", message)
+
+    def test_text_diagnostics_and_plain_errors_remain_readable(self):
+        error = subprocess.CalledProcessError(1, ["codesign"], stderr="invalid signature\n")
+        self.assertIn("\ninvalid signature", desktop_install.error_message(error))
+        self.assertEqual(desktop_install.error_message(ValueError("wrong profile")), "wrong profile")
 
 
 class DownloadTests(unittest.TestCase):

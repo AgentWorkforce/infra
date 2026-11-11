@@ -24,6 +24,17 @@ def run(args, **kwargs):
     return subprocess.run([str(a) for a in args], check=True, capture_output=True, **kwargs).stdout
 
 
+def error_message(error):
+    message = str(error)
+    if isinstance(error, subprocess.CalledProcessError):
+        for output in (error.stderr, error.stdout):
+            if isinstance(output, bytes):
+                output = output.decode("utf-8", errors="replace")
+            if output and output.strip():
+                message += "\n" + output.strip()
+    return message
+
+
 def kind_run(ident):
     metadata = json.loads(run(["gh", "api", f"repos/{REPO}/actions/runs/{ident}"]))
     if metadata.get("conclusion") != "success" or metadata.get("event") != "workflow_dispatch" or metadata.get("path") != ".github/workflows/desktop-release.yml":
@@ -147,4 +158,4 @@ if __name__ == "__main__":
     try:
         main()
     except (ValueError, subprocess.CalledProcessError, OSError) as error:
-        raise SystemExit(str(error)) from None
+        raise SystemExit(error_message(error)) from None
