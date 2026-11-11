@@ -517,6 +517,8 @@ for chart in "${charts[@]}"; do
         # Optional features: usage is a managed name; an unknown one fails, default renders none.
         [ "$(render "$chart" "$v" --set 'selectedFeatures={flows,usage}' | yq 'select(.kind == "Deployment") | .spec.template.spec.containers[0].env[] | select(.name == "SELFHOST_FEATURES") | .value')" = flows,usage ] \
           || err "$chart: selectedFeatures={flows,usage} must render SELFHOST_FEATURES=flows,usage"
+        [ "$(render "$chart" "$v" --set 'selectedFeatures={usage,usage_people}' | yq 'select(.kind == "Deployment") | .spec.template.spec.containers[0].env[] | select(.name == "SELFHOST_FEATURES") | .value')" = usage,usage_people ] \
+          || err "$chart: selectedFeatures={usage,usage_people} must render SELFHOST_FEATURES=usage,usage_people"
         expect_render_failure "$chart" "$v" "unknown optional feature" "selectedFeatures contains an unknown optional component" --set 'selectedFeatures={usage,teleport}'
         # launch is a managed name too (relay-control docs/agent-launch.md).
         [ "$(render "$chart" "$v" --set 'selectedFeatures={usage,launch}' | yq 'select(.kind == "Deployment") | .spec.template.spec.containers[0].env[] | select(.name == "SELFHOST_FEATURES") | .value')" = usage,launch ] \
