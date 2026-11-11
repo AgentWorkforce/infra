@@ -17,6 +17,16 @@ imagePullSecrets: []
 nameOverride: ""
 fullnameOverride: ""
 
+# Optional Node-runtime analytics through a private HTTPS file collector.
+analytics:
+  enabled: false
+  collectorUrl: ""
+  deploymentId: ""
+  existingSecret: ""
+  tokenKey: token
+  caConfigMap: ""
+  caKey: ca.crt
+
 server:
   port: 8787
   environment: production

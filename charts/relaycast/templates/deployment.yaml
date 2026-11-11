@@ -1,6 +1,7 @@
 {{- include "relaycast.validate" . }}
 {{- if not (include "relaycast.actors.enabled" .) }}
 {{- $postgres := include "relaycast.postgres.enabled" . }}
+{{- $analytics := .Values.analytics | default dict }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -23,6 +24,9 @@ spec:
       {{- end }}
       labels:
         {{- include "relaycast.selectorLabels" . | nindent 8 }}
+        {{- if $analytics.enabled }}
+        agentworkforce.dev/analytics-producer: "true"
+        {{- end }}
         {{- with .Values.podLabels }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
@@ -65,10 +69,13 @@ spec:
             - name: PORT
               value: {{ .Values.server.port | quote }}
             {{- if $postgres }}
-            {{- include "relaycast.postgres.databaseEnv" (dict "root" . "file" "database-runtime-url") | nindent 12 }}
+            {{- include "relaycast.postgres.databaseEnv" (dict "root" . "file" "database-runtime-url" "separateAnalyticsCa" $analytics.enabled) | nindent 12 }}
             {{- else }}
             - name: RELAYCAST_DB_PATH
               value: /data/relaycast.db
+            {{- end }}
+            {{- if $analytics.enabled }}
+            {{- include "relaycast.analytics.env" . | nindent 12 }}
             {{- end }}
             - name: RELAYCAST_INTERNAL_SECRET_FILE
               value: {{ include "relaycast.secretMountPath" . }}/internal-secret
@@ -137,6 +144,10 @@ spec:
             - name: secrets
               mountPath: {{ include "relaycast.secretMountPath" . }}
               readOnly: true
+            {{- if $analytics.enabled }}
+            - { name: analytics-token, mountPath: /var/run/secrets/relaycast-analytics, readOnly: true }
+            - { name: analytics-ca, mountPath: /etc/relaycast-analytics-ca, readOnly: true }
+            {{- end }}
             {{- if $postgres }}
             - name: postgres-ca
               mountPath: /etc/postgres-ca
@@ -180,6 +191,18 @@ spec:
               {{- end }}
         {{- if $postgres }}
         {{- include "relaycast.postgres.caVolume" . | nindent 8 }}
+        {{- end }}
+        {{- if $analytics.enabled }}
+        - name: analytics-token
+          secret:
+            secretName: {{ $analytics.existingSecret | quote }}
+            defaultMode: 0440
+            items: [{ key: {{ $analytics.tokenKey | quote }}, path: token }]
+        - name: analytics-ca
+          configMap:
+            name: {{ $analytics.caConfigMap | quote }}
+            defaultMode: 0444
+            items: [{ key: {{ $analytics.caKey | quote }}, path: ca.crt }]
         {{- end }}
         {{- if .Values.backup.enabled }}
         - name: backup

@@ -22,8 +22,13 @@ workload identity on it) stays with the server. */ -}}
 {{- define "relaycast.postgres.databaseEnv" -}}
 - name: RELAYCAST_DATABASE_URL_FILE
   value: {{ include "relaycast.secretMountPath" .root }}/{{ .file }}
+{{- if .separateAnalyticsCa }}
+- name: RELAYCAST_DATABASE_CA_FILE
+  value: /etc/postgres-ca/ca.crt
+{{- else }}
 - name: NODE_EXTRA_CA_CERTS
   value: /etc/postgres-ca/ca.crt
+{{- end }}
 {{- end }}
 
 {{- define "relaycast.postgres.caVolume" -}}

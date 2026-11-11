@@ -345,6 +345,32 @@ is SQLite-only, so back up the database with its own tooling),
 
 Moving an existing SQLite release to this backend does not migrate its data.
 
+## Self-host analytics
+
+Relaycast analytics is off by default. To send typed events to your installation's
+telemetry collector, select a digest for a Node Relaycast image with collector
+support and set `analytics.enabled`. The collector needs a `relaycast` producer
+registration with the same deployment ID and a dedicated credential.
+
+```yaml
+analytics:
+  enabled: true
+  collectorUrl: https://telemetry-collector.agent-relay.svc.cluster.local:8443/v1/events
+  deploymentId: installation_1
+  existingSecret: relaycast-analytics-token
+  tokenKey: token
+  caConfigMap: telemetry-collector-ca
+  caKey: ca.crt
+```
+
+The chart mounts the token and CA read-only in the application container.
+Authorize its analytics producer pod label on the collector's ingress policy
+and allow the collector endpoint in any existing Relaycast egress policy.
+PostgreSQL keeps its explicit database CA and its migration Job and init
+container keep their existing CA environment. The durable-actors runtime
+does not expose this Node adapter. An enabled binding cannot override its
+TLS settings through `extraEnv`.
+
 ## Upgrades and rollback
 
 `0.1.0` pinned Relaycast `8.0.0`, which allows anonymous workspace creation with

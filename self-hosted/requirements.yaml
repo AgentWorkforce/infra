@@ -271,9 +271,14 @@ compatibility:
       digest: sha256:b2b74a19375e86bbd5c70a30ea5edbd28cac3de103490bc428de007f4a38b821
       built_by: publish-image run 42462161615
   releases:
-    - id: telemetry-collector-0.1.4
+    - id: telemetry-collector-0.1.5
       status: unreleased
       current: true
+      charts: { telemetry-collector: 0.1.5 }
+      app_versions: { telemetry-collector: d1089f8d05d6b87d642972d4214967f54182b617 }
+      notes: 'Accepts the reviewed Relaycast native-workspace observation and installation exception vocabulary. Existing source revisions remain available for rollback. The operator supplies the image and registration.'
+    - id: telemetry-collector-0.1.4
+      status: shipped
       charts: { telemetry-collector: 0.1.4 }
       app_versions: { telemetry-collector: ccc84b1a64435f18000dda299c64f0e84b3f751d }
       notes: 'Admits the reviewed brief-worker and coordination-overlaps collector vocabulary. Keeps the prior private-file recovery source available for existing installs and rollback. Images and producer registrations remain operator inputs.'
@@ -1001,9 +1006,16 @@ compatibility:
       images_note: not built for the charts yet
       notes: 'Follow-up re-pin to sessions-pipeline main after #127 (session briefs, generation 5ed11913...). Needs new GHCR/ECR digests, ci/sessions-pipeline-search-worker-role/services-commit and services-generation, and the session-brief entries below shipped.'
       db_combos: []
-    - id: relaycast-0.3.7
+    - id: relaycast-0.3.8
       status: unreleased
       current: true
+      charts: { relaycast: 0.3.8 }
+      app_versions: { relaycast: 12.7.0 }
+      images:
+        relaycast: { repository: ghcr.io/agentworkforce/relaycast-self-host, digest: sha256:81274dca7ab58673383dc7a9c777f422f29606c7422e81b5ea15724770f1455e }
+      notes: 'Adds default-off Node runtime collector analytics using a dedicated credential and HTTPS CA. Default runtime images stay unchanged and the operator selects an image with collector support.'
+    - id: relaycast-0.3.7
+      status: shipped
       charts: { relaycast: 0.3.7 }
       app_versions: { relaycast: 12.7.0 }
       images:
@@ -1116,9 +1128,20 @@ compatibility:
       images:
         relayauth: { repository: ghcr.io/agentworkforce/relayauth, digest: sha256:eb71daa28e30eb7305f666d0bccc5a4002e53e8a574e3c4c32163d907a1b71df }
       notes: superseded by 0.1.1.
-    - id: agent-relay-0.6.34
+    - id: agent-relay-0.6.35
       status: unreleased
       current: true
+      charts: { agent-relay: 0.6.35, relayhistory: 0.1.3, relay-control: 0.4.7, relay-webapp: 0.2.2 }
+      app_versions: { agent-relay: 0.1.0, relayhistory: 0.1.0, relay-control: 0.1.0, relay-webapp: 0.1.0 }
+      depends:
+        agent-relay: { relaycast: 0.3.8, relayauth: 0.1.5, sessions-pipeline: 0.8.20, relayhistory: 0.1.3, relay-control: 0.4.7, relay-webapp: 0.2.2, relayflows: 0.2.5, durable-actors: 0.14.6-awf.1, relayfile: 0.2.2, telemetry-collector: 0.1.5, relay-chief: 0.1.0 }
+      images:
+        relayhistory: { repository: ghcr.io/agentworkforce/relayhistory, digest_required: true }
+        relay-control: { repository: ghcr.io/agentworkforce/relay-control, digest: sha256:d8c26d44dccb6dd21b7033288241a379e46ce5fbca69f276c4d4745001c3c3e2 }
+        relay-webapp: { repository: ghcr.io/agentworkforce/relay-webapp, digest_required: true }
+      notes: 'Carries default-off Relaycast collector analytics and the matching collector vocabulary. No profile selects the feature by default.'
+    - id: agent-relay-0.6.34
+      status: planned
       charts: { agent-relay: 0.6.34, relayhistory: 0.1.3, relay-control: 0.4.7, relay-webapp: 0.2.2 }
       app_versions: { agent-relay: 0.1.0, relayhistory: 0.1.0, relay-control: 0.1.0, relay-webapp: 0.1.0 }
       depends:
@@ -1714,10 +1737,11 @@ internal_env:
   - { name: RELAYCAST_WORKSPACE_BOOTSTRAP_SECRET, chart: relaycast, why: reserved prefix in the extraEnv guard; the Secret is mounted as a file }
   - { name: RELAYCAST_RELAYAUTH, chart: relaycast, why: reserved prefix in the extraEnv guard; the RelayAuth remote tagger is wired through credentials.relayauth.url and secretKeys.relayauthToken }
   - { name: RELAYCAST_CREDENTIAL, chart: relaycast, why: reserved prefix in the extraEnv guard; the credential format and local keyring are wired through credentials.* and secretKeys.credentialKeyring }
+  - { name: RELAYCAST_TELEMETRY_, chart: relaycast, why: reserved prefix in extraEnv while the structured analytics binding is enabled }
   - { name: MIGRATION_WAIT_SECONDS, chart: relaycast, why: postgres backend wait-for-migrations init container; from runtime.postgres.migrations.activeDeadlineSeconds }
   - { name: RELAYCAST_DATABASE_, chart: relaycast, why: reserved prefix in the extraEnv guard on the sqlite and durable-actors backends }
   - { name: RELAYCAST_DATABASE_URL, chart: relaycast, why: reserved name in the postgres extraEnv guard; the URL is mounted as a file }
-  - { name: RELAYCAST_DATABASE_CA_FILE, chart: relaycast, why: reserved name in the postgres extraEnv guard; the chart uses NODE_EXTRA_CA_CERTS }
+  - { name: RELAYCAST_DATABASE_CA_FILE, chart: relaycast, why: explicit DB CA when managed analytics uses NODE_EXTRA_CA_CERTS for the collector; otherwise the DB uses NODE_EXTRA_CA_CERTS }
   - { name: RELAYCAST_DATABASE_SCHEMA, chart: relaycast, why: reserved name in the postgres extraEnv guard; left at the image default }
   - { name: RELAYCAST_DATABASE_OWNER_ROLE, chart: relaycast, why: reserved name in the postgres extraEnv guard; left at the image default }
   - { name: RELAYCAST_DATABASE_RUNTIME_ROLE, chart: relaycast, why: reserved name in the postgres extraEnv guard; left at the image default }
@@ -4554,6 +4578,33 @@ entries:
     sources:
       - "charts/relaycast/values.yaml:29"
       - "charts/relaycast/templates/_actors.tpl:98"
+
+  - id: opt.relaycast.collector-analytics
+    kind: option
+    status: shipped
+    title: Relaycast collector analytics adapter
+    chart: relaycast
+    description: |
+      The Node runtime can send a closed event vocabulary to the private HTTPS
+      collector. The operator chooses a collector-capable image, a deployment ID,
+      an existing producer Secret, and the CA ConfigMap. The application has
+      separate collector and PostgreSQL CA paths. The migration Job receives
+      neither the collector credential nor the collector CA.
+    values: [analytics.*]
+    env: [RELAYCAST_TELEMETRY_DESTINATION, RELAYCAST_TELEMETRY_COLLECTOR_URL, RELAYCAST_TELEMETRY_DEPLOYMENT_ID, RELAYCAST_TELEMETRY_COLLECTOR_TOKEN_FILE, NODE_EXTRA_CA_CERTS]
+    profiles: [relaycast-postgres]
+    provided_by: operator
+    default: false
+    choices: [{ value: false }, { value: true }]
+    secrets:
+      - name: "<Relaycast component-bound analytics producer Secret>"
+        name_paths: [analytics.existingSecret]
+        keys:
+          - { key: token, key_path: analytics.tokenKey }
+    verify: Verify the application-only CA and token projections, and a real dm.sent event in the private collector files.
+    sources:
+      - charts/relaycast/templates/_analytics.tpl
+      - charts/relaycast/templates/deployment.yaml
 
   - id: req.relaycast.postgres
     kind: requirement

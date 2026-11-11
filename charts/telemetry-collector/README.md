@@ -37,6 +37,12 @@ source. The earlier source remains accepted for existing installs and rollback.
 Verify the newer image's immutable digest and exact source before enabling the
 brief producer. The locally built ARM image is qualified for Kind.
 
+Chart 0.1.5 accepts relay-control source
+`d1089f8d05d6b87d642972d4214967f54182b617` for the Relaycast vocabulary.
+It keeps Relaycast workspace observations and installation exceptions in
+separate scopes. Select the matching immutable collector image before
+registering a Relaycast producer.
+
 The former qualified source `08cf1142303355a73a94dcf605045cdf363e02c5` is no
 longer admitted. Before upgrading, supply the new verified collector image
 and matching `image.sourceRevision`; do not retain the old declaration for a
@@ -88,10 +94,10 @@ process. Never put token values in Helm values or a ConfigMap:
    ```
 
    Use a separate random credential per producer and deployment. The collector
-   validates identity bindings and refuses shared credentials. This qualified CLI registers `relaycontrol`, `session-ingest`,
-   `session-read-api` and `session-pipeline-consumer`, each with a closed typed
-   vocabulary. Other components still need a reviewed runtime registry. Dashboard/Desktop events use the
-   authenticated Control gateway and never receive producer tokens.
+   validates identity bindings and refuses shared credentials. Use a source
+   revision whose closed vocabulary includes the producer you register.
+   Dashboard and Desktop events use the authenticated Control gateway and
+   never receive producer tokens.
 2. A TLS Secret with `tls.crt` and `tls.key`. The certificate must cover the
    exact internal Service DNS name, and producers must trust its issuing CA.
    This chart creates no certificate or trust exception. It refuses using the
