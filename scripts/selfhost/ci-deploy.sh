@@ -159,7 +159,7 @@ p = u.urlsplit(sys.stdin.read())
 q = [(k, v) for k, v in u.parse_qsl(p.query, keep_blank_values=True) if k != "sslrootcert"]
 if len(q) != len(u.parse_qsl(p.query, keep_blank_values=True)):
     q.append(("sslrootcert", os.environ["PGSSLROOTCERT"]))
-sys.stdout.write(u.urlunsplit(p._replace(query=u.urlencode(q, quote_via=u.quote, safe="/")))))')
+sys.stdout.write(u.urlunsplit(p._replace(query=u.urlencode(q, quote_via=u.quote, safe="/"))))')
         fi
         log "snapshot: pg_dump $name -> $dest"
         pg_dump --format=custom --no-owner --no-privileges --dbname="$url" |
