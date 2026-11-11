@@ -21,6 +21,7 @@
 set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)
 HERE="$ROOT/ci/sessions-pipeline-search-worker-role"
+. "$HERE/logs.sh"
 CLUSTER=${CLUSTER:-sessions-pipeline-role}
 CTX="kind-$CLUSTER"
 k() { kubectl --context "$CTX" "$@"; }
@@ -29,7 +30,7 @@ k() { kubectl --context "$CTX" "$@"; }
 # readiness probe failures for every namespace this test uses. No Secret
 # objects and no env dumps.
 diagnose() {
-  local rc=$? ns p
+  local rc=$? ns p c
   [ "$rc" -eq 0 ] && return
   echo "::group::diagnostics (exit $rc)"
   for ns in fresh existing flow-existing flow-drifted; do
@@ -40,6 +41,11 @@ diagnose() {
     for p in $(k -n "$ns" get pods -o name 2>/dev/null); do
       echo "--- $p"
       k -n "$ns" get "$p" -o jsonpath='{range .status.initContainerStatuses[*]}init {.name} ready={.ready} {.state}{"\n"}{end}{range .status.containerStatuses[*]}ctr {.name} ready={.ready} {.state}{"\n"}{end}' 2>&1 || true
+      # --all-containers can fail on a pending main container before emitting
+      # its active init container's logs. Fetch init containers explicitly.
+      for c in $(k -n "$ns" get "$p" -o jsonpath='{.spec.initContainers[*].name}' 2>/dev/null); do
+        k -n "$ns" logs "$p" -c "$c" --prefix --tail=40 2>&1 || true
+      done
       k -n "$ns" logs "$p" --all-containers --prefix --tail=40 2>&1 || true
       k -n "$ns" get events --field-selector "involvedObject.name=${p#pod/},reason=Unhealthy" -o jsonpath='{range .items[*]}{.message}{"\n"}{end}' 2>&1 | tail -3 || true
     done
@@ -220,7 +226,7 @@ done
 mp=$(pod_of flow-existing "$mj")
 [ -z "$(cstat flow-existing "$mp" 'containerStatuses[?(@.name=="migrate")].state.running')$(cstat flow-existing "$mp" 'containerStatuses[?(@.name=="migrate")].state.terminated')" ] \
   || { echo "flow-existing: the migrate container started while the role was absent"; exit 1; }
-k -n flow-existing logs "$mp" -c wait-for-role | grep -qF "wait-for-role: waiting for session_directory_search_worker $RT + owner function default" || { echo "flow-existing: wait-for-role did not wait for the roles and the function default"; exit 1; }
+log_matches -F "wait-for-role: waiting for session_directory_search_worker $RT + owner function default" k -n flow-existing logs "$mp" -c wait-for-role || { echo "flow-existing: wait-for-role did not wait for the roles and the function default"; exit 1; }
 echo "flow-existing: held 120s without the bootstrap: migrate waiting in wait-for-role, 0 app pods ready"
 
 # 2. Now the bootstrap Job. It runs; migrate follows; workloads become ready.
@@ -250,13 +256,13 @@ SELECT 'members', count(*) FROM pg_auth_members m JOIN pg_roles r ON r.oid = m.m
 "
 rt_got=$(psql_in flow-existing "$RTCHECK")
 [ "$rt_got" = $'attrs|t|f|f|f|f|f\nconnect|t\ntemp|f\npublic_temp|f\nmembers|0' ] || { echo "$rt_got"; echo "flow-existing: runtime role does not match (LOGIN, CONNECT, no TEMP, PUBLIC without TEMP, no memberships)"; exit 1; }
-k -n flow-existing logs "$(pod_of flow-existing "$rj")" -c bootstrap | grep -qxF "bootstrap hoopdb runtime role $RT: psql exit 0" || { echo "flow-existing: runtime role Job did not report psql exit 0"; exit 1; }
+log_matches -xF "bootstrap hoopdb runtime role $RT: psql exit 0" k -n flow-existing logs "$(pod_of flow-existing "$rj")" -c bootstrap || { echo "flow-existing: runtime role Job did not report psql exit 0"; exit 1; }
 echo "flow-existing: runtime role $RT: LOGIN, CONNECT yes, TEMP no (PUBLIC revoked), no memberships; bootstrap $r_start <= migrate $m_start"
 # The function boundary as hoopdb_function_default_revoke.sql leaves it: the owner's
 # and every superuser's global function default is exactly {<self>:EXECUTE}.
 f_start=$(epoch "$(cstat flow-existing "$(pod_of flow-existing "$fj")" 'containerStatuses[?(@.name=="bootstrap")].state.terminated.startedAt')")
 [ "$w_end" -ge "$f_start" ] && [ "$m_start" -ge "$f_start" ] || { echo "flow-existing: order violated (function default bootstrap start $f_start, wait end $w_end, migrate start $m_start)"; exit 1; }
-k -n flow-existing logs "$(pod_of flow-existing "$fj")" -c bootstrap | grep -qxF "bootstrap hoopdb function default for hoop: psql exit 0" || { echo "flow-existing: function default Job did not report psql exit 0"; exit 1; }
+log_matches -xF "bootstrap hoopdb function default for hoop: psql exit 0" k -n flow-existing logs "$(pod_of flow-existing "$fj")" -c bootstrap || { echo "flow-existing: function default Job did not report psql exit 0"; exit 1; }
 FDCHECK="SELECT r.rolname, (SELECT array_agg(a.grantee::regrole::text || ':' || a.privilege_type || ':' || a.is_grantable::text) FROM pg_default_acl d, aclexplode(d.defaclacl) a WHERE d.defaclrole = r.oid AND d.defaclnamespace = 0 AND d.defaclobjtype = 'f') FROM pg_roles r WHERE r.rolname = 'hoop' OR r.rolsuper ORDER BY 1"
 FDACL="SELECT d.defaclacl FROM pg_default_acl d JOIN pg_roles r ON r.oid = d.defaclrole WHERE r.rolname = 'hoop' AND d.defaclnamespace = 0 AND d.defaclobjtype = 'f'"
 fd_got=$(psql_in flow-existing "$FDCHECK")
@@ -337,7 +343,7 @@ for i in $(seq 1 6); do  # 60s
   [ -z "$(cstat flow-existing "$(pod_of flow-existing "$mj4")" 'containerStatuses[?(@.name=="migrate")].state.running')$(cstat flow-existing "$(pod_of flow-existing "$mj4")" 'containerStatuses[?(@.name=="migrate")].state.terminated')" ] \
     || { echo "poisoned: migrate started while the owner function default was poisoned"; exit 1; }
 done
-k -n flow-existing logs "$(pod_of flow-existing "$mj4")" -c wait-for-role | grep -qF "+ owner function default" || { echo "poisoned: wait-for-role did not wait for the function default"; exit 1; }
+log_matches -F "+ owner function default" k -n flow-existing logs "$(pod_of flow-existing "$mj4")" -c wait-for-role || { echo "poisoned: wait-for-role did not wait for the function default"; exit 1; }
 k -n flow-existing delete job "$mj4" --wait=true >/dev/null
 full_render flow-existing --set worker.migrations.activeDeadlineSeconds=3596 \
   | yq 'select(.kind == "Job" and .metadata.labels."app.kubernetes.io/component" == "hoopdb-migrate") | .spec.backoffLimit = 0 | (.spec.template.spec.initContainers[0].env[] | select(.name == "FUNCTION_DEFAULT") | .value) = "false"' \
