@@ -33,33 +33,36 @@ IAM only opens the door: OpenSearch fine-grained access control still has to map
 INDEX_PATTERN='relayhistory-*'   # <indexPrefix>-* when the chart overrides indexPrefix
 ```
 
-**In-VPC access.** The domain has only a VPC endpoint, so the requests must originate inside the VPC. From an operator laptop without a VPC route, relay through a temporary pod in the cluster (the node security groups already reach the domain on 443), sign locally as the master user, and delete the pod afterwards:
+**In-VPC access.** The domain has only a VPC endpoint, so the requests must originate inside the VPC. From an operator laptop without a VPC route, relay through a temporary pod in the cluster (the node security groups already reach the domain on 443). It runs in `default` because the application namespace may not exist before the Helm install. Run the `kubectl` steps with your operator identity, and assume the master role only inside a subshell so the cleanup still runs as the operator:
 
 ```sh
 ENDPOINT="$(aws opensearch describe-domain --domain-name "$DOMAIN" --query 'DomainStatus.Endpoints.vpc' --output text)"
-kubectl -n "$NAMESPACE" run opensearch-relay --image=alpine/socat --restart=Never -- \
+kubectl -n default run opensearch-relay --image=alpine/socat --restart=Never -- \
   TCP-LISTEN:9443,fork,reuseaddr "TCP:$ENDPOINT:443"
-kubectl -n "$NAMESPACE" wait --for=condition=Ready pod/opensearch-relay --timeout=120s
-kubectl -n "$NAMESPACE" port-forward pod/opensearch-relay 9443:9443 &
+kubectl -n default wait --for=condition=Ready pod/opensearch-relay --timeout=120s
+kubectl -n default port-forward pod/opensearch-relay 9443:9443 & PF=$!
 
-# Master-user credentials for this shell only.
-read -r AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN < <(
-  aws sts assume-role --role-arn "$MASTER_ROLE_ARN" --role-session-name opensearch-role-mapping \
-    --query 'Credentials.[AccessKeyId,SecretAccessKey,SessionToken]' --output text)
-export AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN
+(
+  # Master-user credentials exist only in this subshell.
+  read -r AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN < <(
+    aws sts assume-role --role-arn "$MASTER_ROLE_ARN" --role-session-name opensearch-role-mapping \
+      --query 'Credentials.[AccessKeyId,SecretAccessKey,SessionToken]' --output text)
+  # TLS and the SigV4 Host stay the real endpoint; --connect-to only redirects the TCP connection.
+  os() {  # os METHOD PATH [curl args...]
+    local method="$1" path="$2"; shift 2
+    curl -sS --fail-with-body --connect-to "$ENDPOINT:443:127.0.0.1:9443" \
+      --aws-sigv4 "aws:amz:$REGION:es" --user "$AWS_ACCESS_KEY_ID:$AWS_SECRET_ACCESS_KEY" \
+      -H "x-amz-security-token: $AWS_SESSION_TOKEN" -H 'Content-Type: application/json' \
+      -X "$method" "https://$ENDPOINT$path" "$@"
+  }
+  os GET /_plugins/_security/api/account   # must report the master role ARN
+  # ...the four mapping requests below...
+)
 
-# TLS and the SigV4 Host stay the real endpoint; --connect-to only redirects the TCP connection.
-os() {  # os METHOD PATH [curl args...]
-  local method="$1" path="$2"; shift 2
-  curl -sS --fail-with-body --connect-to "$ENDPOINT:443:127.0.0.1:9443" \
-    --aws-sigv4 "aws:amz:$REGION:es" --user "$AWS_ACCESS_KEY_ID:$AWS_SECRET_ACCESS_KEY" \
-    -H "x-amz-security-token: $AWS_SESSION_TOKEN" -H 'Content-Type: application/json' \
-    -X "$method" "https://$ENDPOINT$path" "$@"
-}
-os GET /_plugins/_security/api/account   # must report the master role ARN
+kill "$PF"; kubectl -n default delete pod opensearch-relay
 ```
 
-When finished, stop the port-forward, `kubectl -n "$NAMESPACE" delete pod opensearch-relay`, and unset the exported credentials. An approved runner that already has a route into the VPC can skip the pod and call the endpoint directly (for example with `awscurl --service es`).
+Put the four `os PUT` requests from the steps below inside the subshell. An approved runner that already has a route into the VPC can skip the pod and call the endpoint directly (for example with `awscurl --service es`).
 
 `indexer_role_arn` and `reader_role_arn` are module outputs.
 
