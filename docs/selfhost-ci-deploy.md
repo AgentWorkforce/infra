@@ -43,8 +43,9 @@ The EKS API stays private (or limited to operator addresses): GitHub runners nev
 }
 ```
 
-Paths are relative to the bundle: `infra/` is this repository at the caller's pinned `infra-ref`, `env/` is the
-environment directory. `snapshot` is one of:
+Paths are relative to the bundle: `infra/charts` is this repository's charts at the caller's `infra-ref` (what
+the environment runs), `infra/scripts/selfhost` the deploy scripts at `tools-ref` (the workflow's own pin, so an
+environment on an older chart still gets the current tooling), and `env/` is the environment directory. `snapshot` is one of:
 
 - `{"type": "rds", "instance": "<id>"}`: `CreateDBSnapshot` named `<module name>-<run>`, waited on.
 - `{"type": "pg_dump", "databases": [{"label": "control", "namespace": "<ns>", "secret": "<Secret>", "key": "<key>"}]}`:
@@ -98,6 +99,7 @@ jobs:
     with:
       environment-dir: deploy/dev
       infra-ref: <commit of AgentWorkforce/infra whose charts deploy>
+      tools-ref: <the commit in the uses: line above>
       mode: ${{ inputs.mode }}
       approval-environment: dev
       aws-region: us-west-2

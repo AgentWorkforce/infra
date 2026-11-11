@@ -308,7 +308,7 @@ class BundleTest(unittest.TestCase):
             (infra / "scripts/selfhost/x.sh").write_text("true\n")
             env.mkdir()
             (env / "deploy.json").write_text("{}")
-            run = lambda out: subprocess.run(["bash", str(SELFHOST / "ci-deploy-run.sh"), "bundle", str(infra), str(env),
+            run = lambda out: subprocess.run(["bash", str(SELFHOST / "ci-deploy-run.sh"), "bundle", str(infra), str(infra), str(env),
                                               str(Path(d, out))], capture_output=True, text=True, check=True).stdout.strip()
             first = run("a.tgz")
             os.utime(infra / "charts/c/Chart.yaml", (1, 1))  # a fresh checkout has other mtimes

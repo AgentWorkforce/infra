@@ -17,7 +17,8 @@ on:
   workflow_call:
     inputs:
       environment-dir: { description: "Directory in the caller repository with deploy.json and values.", type: string, required: true }
-      infra-ref: { description: "Commit of AgentWorkforce/infra whose charts and scripts deploy (40 hex).", type: string, required: true }
+      infra-ref: { description: "Commit of AgentWorkforce/infra whose charts deploy (40 hex): what the environment runs.", type: string, required: true }
+      tools-ref: { description: "Commit of AgentWorkforce/infra whose deploy scripts run (40 hex): the same commit this workflow is pinned to.", type: string, required: true }
       mode: { description: "plan, apply or rollback.", type: string, default: plan }
       approval-environment: { description: "Caller GitHub environment gating apply and rollback (its reviewers approve).", type: string, required: true }
       aws-region: { type: string, required: true }
@@ -51,29 +52,36 @@ jobs:
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with: { path: site, persist-credentials: false }
       - &checkout-infra
-        name: Infra at the pinned ref
+        name: Charts at infra-ref
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           repository: AgentWorkforce/infra
           ref: ${{ inputs.infra-ref }}
           path: infra
           persist-credentials: false
-          sparse-checkout: |
-            charts
-            scripts/selfhost
+          sparse-checkout: charts
+      - &checkout-tools
+        name: Deploy scripts at tools-ref
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          repository: AgentWorkforce/infra
+          ref: ${{ inputs.tools-ref }}
+          path: tools
+          persist-credentials: false
+          sparse-checkout: scripts/selfhost
       - &check-ref
         name: Pinned ref
-        env: { REF: "${{ inputs.infra-ref }}" }
+        env: { REF: "${{ inputs.infra-ref }}", TOOLS: "${{ inputs.tools-ref }}" }
         run: |
-          [[ "$REF" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::infra-ref must be a full commit SHA"; exit 1; }
-          [ "$(git -C infra rev-parse HEAD)" = "$REF" ]
+          [[ "$REF" =~ ^[0-9a-f]{40}$ && "$TOOLS" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::infra-ref and tools-ref must be full commit SHAs"; exit 1; }
+          [ "$(git -C infra rev-parse HEAD)" = "$REF" ] && [ "$(git -C tools rev-parse HEAD)" = "$TOOLS" ]
       - &bundle
         name: Bundle
         id: bundle
         env: { ENV_DIR: "${{ inputs.environment-dir }}" }
         run: |
           set -euo pipefail
-          sha=$(infra/scripts/selfhost/ci-deploy-run.sh bundle infra "site/$ENV_DIR" "$RUNNER_TEMP/bundle.tgz")
+          sha=$(tools/scripts/selfhost/ci-deploy-run.sh bundle infra tools "site/$ENV_DIR" "$RUNNER_TEMP/bundle.tgz")
           echo "sha256=$sha" >> "$GITHUB_OUTPUT"
           echo "bundle sha256 $sha"
       - name: AWS (plan role)
@@ -92,7 +100,7 @@ jobs:
         run: |
           set -uo pipefail
           rc=0
-          infra/scripts/selfhost/ci-deploy-run.sh start "$PROJECT" "$BUCKET" "plan-bundles/$RUN_ID.tgz" \
+          tools/scripts/selfhost/ci-deploy-run.sh start "$PROJECT" "$BUCKET" "plan-bundles/$RUN_ID.tgz" \
             "$RUNNER_TEMP/bundle.tgz" "$RUNNER_TEMP/report" || rc=$?
           r="$RUNNER_TEMP/report"
           [ -f "$r/plan.md" ] && cat "$r/plan.md" >> "$GITHUB_STEP_SUMMARY"
@@ -120,6 +128,7 @@ jobs:
     steps:
       - *checkout-site
       - *checkout-infra
+      - *checkout-tools
       - *check-ref
       - *bundle
       - name: Same bundle as the reviewed plan
@@ -143,7 +152,7 @@ jobs:
         run: |
           set -uo pipefail
           rc=0
-          infra/scripts/selfhost/ci-deploy-run.sh start "$PROJECT" "$BUCKET" "apply-bundles/$RUN_ID.tgz" \
+          tools/scripts/selfhost/ci-deploy-run.sh start "$PROJECT" "$BUCKET" "apply-bundles/$RUN_ID.tgz" \
             "$RUNNER_TEMP/bundle.tgz" "$RUNNER_TEMP/report" MODE=apply "EXPECT_REVISIONS=$REVISIONS" || rc=$?
           r="$RUNNER_TEMP/report"
           { echo "## Apply (run $RUN_ID)"; echo; echo "Snapshot: \`$(tr '\n' ' ' < "$r/snapshot" 2>/dev/null)\`"; echo;
@@ -160,6 +169,7 @@ jobs:
     steps:
       - *checkout-site
       - *checkout-infra
+      - *checkout-tools
       - *check-ref
       - *bundle
       - *aws-apply
@@ -174,6 +184,6 @@ jobs:
         run: |
           set -euo pipefail
           [[ "$RELEASE" =~ ^[a-z0-9-]+$ && "$REVISION" =~ ^[0-9]+$ ]] || { echo "::error::rollback-release and a numeric rollback-revision are required"; exit 1; }
-          infra/scripts/selfhost/ci-deploy-run.sh start "$PROJECT" "$BUCKET" "apply-bundles/$RUN_ID.tgz" \
+          tools/scripts/selfhost/ci-deploy-run.sh start "$PROJECT" "$BUCKET" "apply-bundles/$RUN_ID.tgz" \
             "$RUNNER_TEMP/bundle.tgz" "$RUNNER_TEMP/report" MODE=rollback "ROLLBACK_RELEASE=$RELEASE" "ROLLBACK_REVISION=$REVISION"
       - *upload
