@@ -46,6 +46,7 @@ jobs:
 
       - name: sessions-pipeline search Worker role render assertions
         run: |
+          bash ci/sessions-pipeline-search-worker-role/logs-test.sh
           for repo in https://cloudnative-pg.github.io/charts https://charts.min.io/ https://open-telemetry.github.io/opentelemetry-helm-charts; do
             helm repo add "dep-$(echo "$repo" | md5sum | cut -c1-8)" "$repo" >/dev/null 2>&1 || true
           done
