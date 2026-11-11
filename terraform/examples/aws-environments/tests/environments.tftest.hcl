@@ -33,6 +33,9 @@ mock_provider "aws" {
   mock_resource "aws_cloudwatch_event_rule" {
     defaults = { arn = "arn:aws:events:us-west-2:111111111111:rule/mock" }
   }
+  mock_resource "aws_kms_key" {
+    defaults = { arn = "arn:aws:kms:us-west-2:111111111111:key/00000000-0000-4000-8000-000000000000", key_id = "00000000-0000-4000-8000-000000000000" }
+  }
   mock_resource "aws_opensearch_domain" {
     defaults = { arn = "arn:aws:es:us-west-2:111111111111:domain/mock", endpoint = "vpc-mock.us-west-2.es.amazonaws.com" }
   }
@@ -640,4 +643,63 @@ run "service_database_collides_with_control_refused" {
   command = plan
   variables { service_database_names = { hoopdb = "relaycontrol", relaycast = "relaycast", relayfile = "relayfile" } }
   expect_failures = [var.service_database_names]
+}
+
+run "desktop_feed_off_by_default" {
+  command = plan
+
+  assert {
+    condition     = length(module.desktop_feed) == 0 && output.desktop_feed == null
+    error_message = "The Desktop feed creates nothing unless desktop_feed is set."
+  }
+}
+
+run "desktop_feed_binds_control_in_the_environment_namespace" {
+  variables {
+    desktop_feed = { profiles = ["p1", "p2"] }
+  }
+
+  assert {
+    condition = output.desktop_feed.control_env == {
+      SELFHOST_DESKTOP_FEED_SIGNER          = "awskms"
+      SELFHOST_DESKTOP_FEED_STORAGE         = "s3"
+      SELFHOST_DESKTOP_FEED_KMS_REGION      = "us-west-2"
+      SELFHOST_DESKTOP_FEED_KMS_KEY_ALIASES = jsonencode({ p1 = "alias/agent-relay-dev-desktop-feed-p1", p2 = "alias/agent-relay-dev-desktop-feed-p2" })
+      SELFHOST_DESKTOP_FEED_S3_BUCKET       = module.desktop_feed[0].control_env.SELFHOST_DESKTOP_FEED_S3_BUCKET
+      SELFHOST_DESKTOP_FEED_S3_REGION       = "us-west-2"
+      SELFHOST_DESKTOP_FEED_S3_PREFIX       = "desktop-feed"
+    }
+    error_message = "desktop_feed.control_env must map directly to Control's SELFHOST_DESKTOP_FEED_* settings."
+  }
+  assert {
+    condition     = output.desktop_feed.namespace == "agent-relay-dev" && output.desktop_feed.service_account == "agent-relay-relay-control" && keys(module.desktop_feed[0].pod_identity_association_ids) == ["relay/agent-relay-dev/agent-relay-relay-control"]
+    error_message = "Control's Pod Identity binds the release's relay-control ServiceAccount in the environment namespace."
+  }
+  assert {
+    condition     = length(output.desktop_feed.key_arns) == 2 && output.desktop_feed.role_arn != null
+    error_message = "One key per profile and a Control role are created."
+  }
+}
+
+run "desktop_feed_under_a_pippen_lease_with_overrides" {
+  command = plan
+
+  variables {
+    name_prefix  = "pippen-sbx-ar"
+    pippen       = { agent = "aws-proof", session_id = "approved-session" }
+    desktop_feed = { profiles = ["p1"], service_account = "custom-control", prefix = "feeds/dev" }
+  }
+  override_data {
+    target = data.aws_caller_identity.current
+    values = { account_id = "111111111111", arn = "arn:aws:sts::111111111111:assumed-role/agent-session/agent-approved-session" }
+  }
+
+  assert {
+    condition     = output.desktop_feed.control_env.SELFHOST_DESKTOP_FEED_S3_PREFIX == "feeds/dev" && output.desktop_feed.control_env.SELFHOST_DESKTOP_FEED_KMS_KEY_ALIASES == jsonencode({ p1 = "alias/pippen-sbx-ar-dev-desktop-feed-p1" })
+    error_message = "The prefix and Pippen-prefixed aliases pass through."
+  }
+  assert {
+    condition     = output.desktop_feed.service_account == "custom-control"
+    error_message = "An explicit Control ServiceAccount overrides the release default."
+  }
 }

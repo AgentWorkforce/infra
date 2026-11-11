@@ -47,6 +47,7 @@ resource "terraform_data" "environment_contract" {
         "arn:aws:iam::${var.account_id}:role${local.role_path}${local.name}-search-reader",
         "arn:aws:iam::${var.account_id}:role${local.role_path}${local.name}-session-pipeline",
         "arn:aws:iam::${var.account_id}:role${local.role_path}${local.name}-sessions",
+        "arn:aws:iam::${var.account_id}:role${local.role_path}${local.name}-desktop-feed",
       ], var.search_master_user_arn)
       error_message = "OpenSearch administration requires a separate role in this environment's account."
     }
@@ -179,6 +180,30 @@ module "search" {
   sessions_bucket_read      = var.search_sessions_bucket_read
   additional_principal_arns = distinct(concat(local.external_runtime_arns, var.pipeline_runtime == "lambda" ? [module.pipeline[0].execution_role_arn] : []))
   tags                      = local.tags
+
+  depends_on = [terraform_data.environment_contract]
+}
+
+# Off by default. Control's own Pod Identity role: Pod Identity allows one role
+# per ServiceAccount, so nothing else may associate Control's ServiceAccount.
+module "desktop_feed" {
+  source = "../../modules/aws/desktop-feed"
+  count  = var.desktop_feed == null ? 0 : 1
+
+  name        = "${local.name}-desktop-feed"
+  profiles    = var.desktop_feed.profiles
+  bucket_name = "${local.name}-${var.account_id}-${var.region}-desktop-feed"
+  prefix      = var.desktop_feed.prefix
+  role = {
+    path                     = local.role_path
+    permissions_boundary_arn = local.boundary
+    pod_identity_associations = [{
+      cluster_name    = var.eks_cluster_name
+      namespace       = local.namespace
+      service_account = coalesce(var.desktop_feed.service_account, "${var.release_name}-relay-control")
+    }]
+  }
+  tags = local.tags
 
   depends_on = [terraform_data.environment_contract]
 }
