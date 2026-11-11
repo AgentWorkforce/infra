@@ -33,6 +33,7 @@ dashboardUrl: https://gcp-proof.agentrelay.com/
 secretKeys:
   relaycastInternalSecret: relaycast-internal-secret
   oidcClientSecret: oidc-client-secret
+  microsoftClientSecret: microsoft-client-secret
   smtpPassword: smtp-password
 bootstrap:
   orgName: Acme
@@ -44,6 +45,9 @@ auth:
     clientId: 1234567890-abc.apps.googleusercontent.com
     allowedDomains: [Acme.com]
     displayName: Google Workspace
+  microsoft:
+    clientId: 11111111-2222-3333-4444-555555555555
+    tenant: common
   emailLink:
     enabled: true
   autoJoinDomains: [acme.com]

@@ -80,7 +80,8 @@ The referenced Secret must provide these keys:
 - RelayAuth-issued relaycast credentials (optional, model B):
   `relaycast-credential-keyring` and `relaycast-relayauth-token`
 - Sign-in (optional; see "First boot and sign-in" below): `oidc-client-secret`
-  for OIDC, and `smtp-password` for SMTP with a username. The bootstrap reads
+  for OIDC, `microsoft-client-secret` for Microsoft sign-in, and
+  `smtp-password` for SMTP with a username. The bootstrap reads
   the existing `relaycast-internal-secret` key.
 
 `relayauth-api-key` and `relayauth-bootstrap-api-key` must contain the same
@@ -111,6 +112,11 @@ image from relaycontrol #13 or later.
     `https://accounts.google.com`;
   - Okta: `https://<org>.okta.com/oauth2/default`;
   - Entra ID: `https://login.microsoftonline.com/<tenant>/v2.0`.
+- `relay-control.auth.microsoft.clientId` plus
+  `secretKeys.microsoftClientSecret`: "Continue with Microsoft" for
+  Outlook.com, Hotmail, Live and Entra ID accounts, beside OIDC. Register
+  `https://<root host>/login/microsoft/callback` on the app registration;
+  tenant accounts need the `xms_edov` optional claim.
 - Optional `relay-control.smtp.*`: invite emails, and email sign-in links
   with `auth.emailLink.enabled`.
 
