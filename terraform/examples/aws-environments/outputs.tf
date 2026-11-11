@@ -138,3 +138,23 @@ output "desktop_feed" {
     service_account = var.desktop_feed.service_account
   }
 }
+
+output "history_upload" {
+  description = "Direct upload wiring only; enablement needs compatible published Control/consumer images and the same witness Secret provisioned out of band. No secret values in Terraform."
+  value = local.history_upload_enabled ? {
+    control_role_arn         = local.history_control_role_arn
+    consumer_role_arn        = aws_iam_role.history_consumer[0].arn
+    control_service_account  = var.history_upload.control_service_account
+    consumer_service_account = var.history_upload.consumer_service_account
+    control_values = {
+      historyUpload = {
+        mode      = "off"
+        bucket    = module.sessions_bucket.bucket_name
+        region    = var.region
+        keyRoot   = var.history_upload.key_root
+        roleArn   = module.sessions_bucket.history_upload_role_arn
+        kmsKeyArn = var.kms_key_arn
+      }
+    }
+  } : null
+}

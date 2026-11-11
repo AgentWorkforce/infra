@@ -40,7 +40,7 @@ resource "aws_s3_bucket_server_side_encryption_configuration" "this" {
       sse_algorithm     = "aws:kms"
       kms_master_key_id = var.kms_key_arn
     }
-    bucket_key_enabled = true
+    bucket_key_enabled = !local.upload_enabled
   }
 }
 
@@ -143,7 +143,7 @@ resource "aws_s3_bucket_policy" "this" {
   bucket = aws_s3_bucket.this.id
   policy = jsonencode({
     Version   = "2012-10-17"
-    Statement = concat(local.tls_deny_statements, var.additional_policy_statements)
+    Statement = concat(local.tls_deny_statements, local.upload_bucket_denies, var.additional_policy_statements)
   })
 
   depends_on = [aws_s3_bucket_public_access_block.this]

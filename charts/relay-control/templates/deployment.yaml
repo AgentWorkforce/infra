@@ -79,6 +79,9 @@ spec:
             {{- if .Values.services.relayhistoryReadApiUrl }}
             {{- include "relay-control.historyConnectionEnv" . | nindent 12 }}
             {{- end }}
+            {{- if ne .Values.historyUpload.mode "off" }}
+            {{- include "relay-control.historyUpload.env" . | nindent 12 }}
+            {{- end }}
             {{- include "relay-control.runtimeEnv" . | nindent 12 }}
             {{- include "relay-control.secretEnv" . | nindent 12 }}
             {{- if .Values.introspection.existingSecret }}
@@ -100,6 +103,9 @@ spec:
             {{- toYaml . | nindent 12 }}
             {{- end }}
           volumeMounts:
+            {{- if ne .Values.historyUpload.mode "off" }}
+            - { name: history-upload, mountPath: /var/run/agent-relay/history-upload, readOnly: true }
+            {{- end }}
             - { name: secrets, mountPath: /var/run/agent-relay/secrets, readOnly: true }
             {{- if .Values.introspection.existingSecret }}
             - { name: introspection-secret, mountPath: /var/run/agent-relay/introspection, readOnly: true }
@@ -128,6 +134,13 @@ spec:
             {{- toYaml .Values.livenessProbe | nindent 12 }}
           resources: {{ toYaml .Values.resources | nindent 12 }}
       volumes:
+        {{- if ne .Values.historyUpload.mode "off" }}
+        - name: history-upload
+          secret:
+            secretName: {{ .Values.historyUpload.witness.existingSecret | quote }}
+            defaultMode: 0440
+            items: [{ key: {{ .Values.historyUpload.witness.key | quote }}, path: witness }]
+        {{- end }}
         {{- if .Values.introspection.existingSecret }}
         - name: introspection-secret
           secret:

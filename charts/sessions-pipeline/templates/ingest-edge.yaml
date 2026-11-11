@@ -10,6 +10,19 @@
 {{- range $field, $limit := dict "concurrency" (dict "value" $admission.concurrency "min" 1 "max" 32) "scanIntervalMs" (dict "value" $admission.scanIntervalMs "min" 1000 "max" 600000) "maxAttempts" (dict "value" $admission.maxAttempts "min" 1 "max" 100) -}}
 {{- if or (not (regexMatch "^[0-9]+$" (toString $limit.value))) (lt (int $limit.value) (int $limit.min)) (gt (int $limit.value) (int $limit.max)) }}{{ fail (printf "ingestEdge.admission.%s must be an integer from %d to %d" $field (int $limit.min) (int $limit.max)) }}{{ end -}}
 {{- end -}}
+{{- if not (kindIs "bool" $c.createServiceAccount) }}{{ fail "ingestEdge.createServiceAccount must be a boolean" }}{{ end -}}
+{{- if and $c.createServiceAccount (or (not $c.serviceAccountName) (gt (len $c.serviceAccountName) 63) (not (regexMatch "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$" $c.serviceAccountName))) }}{{ fail "ingestEdge.createServiceAccount requires a DNS-label serviceAccountName" }}{{ end -}}
+{{- $upload := $c.uploadDirect -}}
+{{- if not (has $upload.mode (list "off" "allowlist" "on")) }}{{ fail "ingestEdge.uploadDirect.mode must be off, allowlist or on" }}{{ end -}}
+{{- if not (regexMatch "^[a-z0-9][a-z0-9-]{0,62}$" $c.keyRoot) }}{{ fail "ingestEdge.keyRoot must follow relay-upload-inbox-v1" }}{{ end -}}
+{{- if ne $upload.mode "off" -}}
+{{- if ne $admission.mode "async" }}{{ fail "ingestEdge.uploadDirect requires admission.mode=async to keep SQL off the upload hot path" }}{{ end -}}
+{{- if ne $c.locker.provider "s3" }}{{ fail "ingestEdge.uploadDirect currently requires S3-compatible storage" }}{{ end -}}
+{{- if or (not $upload.witness.existingSecret) (not (regexMatch "^[A-Za-z0-9._-]+$" $upload.witness.key)) }}{{ fail "ingestEdge.uploadDirect.witness needs an existingSecret and data key" }}{{ end -}}
+{{- if and (eq $upload.mode "allowlist") (empty $upload.allowlist) }}{{ fail "ingestEdge.uploadDirect.allowlist is required in allowlist mode" }}{{ end -}}
+{{- range $entry := $upload.allowlist }}{{ if not (regexMatch "^(org|ws):[A-Za-z0-9_-][A-Za-z0-9._-]{0,127}$" $entry) }}{{ fail "ingestEdge.uploadDirect.allowlist entries must be org:<id> or ws:<id>" }}{{ end }}{{ end -}}
+{{- if or (not (regexMatch "^[0-9]+$" (toString $upload.scanBatch))) (lt (int $upload.scanBatch) 1) (gt (int $upload.scanBatch) 100) }}{{ fail "ingestEdge.uploadDirect.scanBatch must be 1..100" }}{{ end -}}
+{{- end -}}
 {{- if not (kindIs "bool" $c.allowInClusterHttp) }}{{ fail "ingestEdge.allowInClusterHttp must be a boolean" }}{{ end -}}
 {{- if hasKey $c "extraEnv" }}{{ fail "ingestEdge.extraEnv is not supported; use the managed configuration and Secret references" }}{{ end -}}
 {{- if not (kindIs "bool" $c.networkPolicy.enabled) }}{{ fail "ingestEdge.networkPolicy.enabled must be a boolean" }}{{ end -}}
@@ -79,6 +92,15 @@
 {{- $min := ternary 1024 1 (eq $field "port") -}}
 {{- if or (not (regexMatch "^[0-9]+$" (toString $n))) (lt (int $n) $min) (gt (int $n) $max) }}{{ fail (printf "ingestEdge.%s is outside the supported integer range (%d-%d)" $field $min $max) }}{{ end -}}
 {{- end -}}
+{{- if $c.createServiceAccount }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ $c.serviceAccountName | quote }}
+  namespace: {{ .Release.Namespace | quote }}
+automountServiceAccountToken: false
+---
+{{- end }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -191,7 +213,7 @@ spec:
             {{- if $c.heartbeatAccept }}
             - { name: RELAYHISTORY_SELFHOST_HEARTBEAT_ACCEPT, value: "true" }
             {{- end }}
-            - { name: INGEST_KEY_ROOT, value: 96bulls }
+            - { name: INGEST_KEY_ROOT, value: {{ $c.keyRoot | quote }} }
             - { name: INGEST_MAX_PER_USER, value: {{ $c.maxPerUser | quote }} }
             - { name: INGEST_MAX_PER_ORG, value: {{ $c.maxPerOrg | quote }} }
             {{- if $c.claimLockBusy }}
@@ -202,6 +224,14 @@ spec:
             - { name: SELFHOST_ADMISSION_CONCURRENCY, value: {{ $admission.concurrency | quote }} }
             - { name: SELFHOST_ADMISSION_SCAN_MS, value: {{ $admission.scanIntervalMs | quote }} }
             - { name: SELFHOST_ADMISSION_MAX_ATTEMPTS, value: {{ $admission.maxAttempts | quote }} }
+            {{- end }}
+            {{- if ne $upload.mode "off" }}
+            - { name: HISTORY_UPLOAD_DIRECT, value: {{ $upload.mode | quote }} }
+            - { name: HISTORY_UPLOAD_DIRECT_ALLOWLIST, value: {{ join "," $upload.allowlist | quote }} }
+            - { name: SELFHOST_UPLOAD_SCAN_BATCH, value: {{ $upload.scanBatch | quote }} }
+            - name: UPLOAD_WITNESS_KEY
+              valueFrom:
+                secretKeyRef: { name: {{ $upload.witness.existingSecret | quote }}, key: {{ $upload.witness.key | quote }} }
             {{- end }}
           startupProbe:
             {{- if eq $admission.mode "sync" }}

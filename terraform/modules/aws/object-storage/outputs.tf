@@ -27,3 +27,8 @@ output "pod_identity_association_ids" {
   description = "Pod Identity associations created, keyed by cluster/namespace/service-account."
   value       = { for k, v in aws_eks_pod_identity_association.access : k => v.association_id }
 }
+
+output "history_upload_role_arn" {
+  description = "Write-only upload role for Control's SELFHOST_HISTORY_UPLOAD_ROLE_ARN (null when disabled)."
+  value       = try(aws_iam_role.history_upload[0].arn, null)
+}

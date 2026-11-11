@@ -406,3 +406,19 @@ postgresCa:
   configMap: ""
   secret: ""
   key: ca.crt
+
+# relay-upload-inbox-v1. Requires a Control image containing relay-control #90,
+# plus a qualified upload-inbox consumer; configuration alone is not enablement.
+# Pod Identity supplies the issuer credentials; no AWS keys go in Desktop.
+historyUpload:
+  mode: "off" # off | allowlist | on
+  allowlist: [] # Control user IDs, not emails
+  bucket: ""
+  region: ""
+  keyRoot: 96bulls
+  roleArn: ""
+  kmsKeyArn: ""
+  # Shared with the upload-inbox consumer. 32 random bytes, unpadded base64url.
+  witness:
+    existingSecret: ""
+    key: upload-witness-key

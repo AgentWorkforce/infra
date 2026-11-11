@@ -149,6 +149,14 @@ module "sessions_bucket" {
       service_account = "${var.release_name}-${sa}"
     }]
   }
+  history_upload = local.history_upload_enabled ? {
+    name                     = "${local.name}-desktop-upload"
+    path                     = local.role_path
+    permissions_boundary_arn = local.boundary
+    key_root                 = var.history_upload.key_root
+    control_role_arn         = local.history_control_role_arn
+    consumer_role_arns       = [aws_iam_role.history_consumer[0].arn]
+  } : null
   tags = local.tags
 
   depends_on = [terraform_data.environment_contract]

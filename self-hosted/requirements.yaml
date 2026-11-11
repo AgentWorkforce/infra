@@ -341,9 +341,35 @@ compatibility:
       images:
         session-read-api: { repository: ghcr.io/agentworkforce/96bulls-services, digest_required: true }
       notes: 'Defaults READ_API_COMPLETE_SINCE to epoch for a new self-host store populated only by its own ingest. Partial legacy imports must retain an explicit real coverage floor matching the indexer. Image, auth, routing and enabled defaults are unchanged; this does not assert coverage for an imported store or qualify a runtime.'
-    - id: sessions-pipeline-0.8.21
+    - id: sessions-pipeline-0.8.22
       status: unreleased
       current: true
+      charts: { sessions-pipeline: 0.8.22, sessions-pipeline-worker: 0.7.7, session-ingest-api: 0.4.4, session-read-api: 0.2.7 }
+      depends:
+        sessions-pipeline: { worker: 0.7.7, alleyoop: 0.4.4, sessionReadApi: 0.2.7, hoopdb: 0.9.0, session-object-storage: 5.4.0, otel: 0.178.0 }
+      images:
+        sessions-pipeline-worker: { repository: agentworkforce/96bulls-services, digest: sha256:6f22ea17dff336e1431664542759fd27958649388b90a0b2f0881883caa7c6b2 }
+        session-ingest-api: { repository: agentworkforce/96bulls-services, digest: sha256:6f22ea17dff336e1431664542759fd27958649388b90a0b2f0881883caa7c6b2 }
+        session-read-api: { repository: ghcr.io/agentworkforce/96bulls-services, digest_required: true }
+      images_note: "The aws-rds-native profile requires one approved release-overlay services digest for worker, alleyoop, sessionReadApi, ingestEdge and searchIndexer; every profile digest stays empty in source. Coordination overlaps require an independently qualified artifact from relayhistory-pipeline fe62ed80 or a reviewed successor, including migration 20261105047000_coordination_fact_readers. Setting an explicit readerMaxRuleset also requires #489 including its default-path compatibility and binding fixes. The artifact must include #484 for default-on claim-lock 429/Retry-After behavior, fresh-install search_index grants, schema through 046010 and session query. Existing profile image pins are unchanged."
+      services:
+        source_commit: 7d7229bb31c121ecb98cd4e35c248fc2cf5669ad
+        migration_generation: eff8b3be46565b57ad8fa5e4a066dbb6d1fe608313d9c1680bfbcd484add259b
+      db_combos:
+        - { db_mode: selfhosted, boundary: global-default-revoke, hoopdb: cnpg, status: shipped, profiles: [selfhost-postgres, migration, aws-cnpg], notes: chart Jobs install the runtime role and the function default }
+        - { db_mode: selfhosted, boundary: global-default-revoke, hoopdb: external, status: shipped, profiles: [external-selfhosted], notes: operator runs the bootstrap files as a superuser }
+        - { db_mode: rds, boundary: global-default-revoke, hoopdb: external, status: shipped, profiles: [external-rds, aws-rds-native], notes: the RDS master runs the rds_*.sql bootstrap first }
+        - { db_mode: cloudsql, boundary: global-default-revoke, hoopdb: external, status: shipped, profiles: [gcp-cloudsql], notes: operator runs the Cloud SQL bootstrap files as the migration owner; roleBootstrap false }
+        - { db_mode: supabase, boundary: event-trigger, hoopdb: external, status: held, profiles: [external-supabase], notes: supabaseActivation.hold; migrate refuses until the reviewed event trigger is installed and --activation-check passes }
+        - { db_mode: supabase, boundary: null, hoopdb: external, status: fails closed, profiles: [aws-supabase], notes: renders; migrate refuses with function_boundary_unproven }
+        - { db_mode: local, boundary: null, hoopdb: any, status: dev only, profiles: [], notes: local stack only; never a self-host install }
+      sources:
+        - "charts/sessions-pipeline/Chart.yaml:4"
+        - "charts/sessions-pipeline/profiles/aws-rds-native.yaml"
+        - "ci/sessions-pipeline-profiles/matrix.sh"
+      notes: 'Adds default-off self-host upload-inbox scanning with an existing witness Secret and required async admission. Requires a qualified published image containing pipeline #515. No image pin or runtime enablement changes.'
+    - id: sessions-pipeline-0.8.21
+      status: shipped
       charts: { sessions-pipeline: 0.8.21, sessions-pipeline-worker: 0.7.7, session-ingest-api: 0.4.4, session-read-api: 0.2.7 }
       depends:
         sessions-pipeline: { worker: 0.7.7, alleyoop: 0.4.4, sessionReadApi: 0.2.7, hoopdb: 0.9.0, session-object-storage: 5.4.0, otel: 0.178.0 }
@@ -1136,9 +1162,20 @@ compatibility:
       images:
         relayauth: { repository: ghcr.io/agentworkforce/relayauth, digest: sha256:eb71daa28e30eb7305f666d0bccc5a4002e53e8a574e3c4c32163d907a1b71df }
       notes: superseded by 0.1.1.
-    - id: agent-relay-0.6.37
+    - id: agent-relay-0.6.38
       status: unreleased
       current: true
+      charts: { agent-relay: 0.6.38, relayhistory: 0.1.3, relay-control: 0.4.8, relay-webapp: 0.2.3 }
+      app_versions: { agent-relay: 0.1.0, relayhistory: 0.1.0, relay-control: 0.1.0, relay-webapp: 0.1.0 }
+      depends:
+        agent-relay: { relaycast: 0.3.8, relayauth: 0.1.5, sessions-pipeline: 0.8.22, relayhistory: 0.1.3, relay-control: 0.4.8, relay-webapp: 0.2.3, relayflows: 0.2.5, durable-actors: 0.14.6-awf.1, relayfile: 0.2.2, telemetry-collector: 0.1.5, relay-chief: 0.1.0 }
+      images:
+        relayhistory: { repository: ghcr.io/agentworkforce/relayhistory, digest_required: true }
+        relay-control: { repository: ghcr.io/agentworkforce/relay-control, digest: sha256:d8c26d44dccb6dd21b7033288241a379e46ce5fbca69f276c4d4745001c3c3e2 }
+        relay-webapp: { repository: ghcr.io/agentworkforce/relay-webapp, digest: sha256:bd295ccb7d1323965dce890f19d0b7f857d706c00d7756f719c713763fdb49f3 }
+      notes: 'Carries default-off direct-upload Control and native consumer values (Control 0.4.8 and sessions-pipeline 0.8.22), with isolated AWS upload/issuer/consumer IAM and Pod Identity wiring. Requires compatible published Control #90 and pipeline #515 artifacts before enablement. Existing image defaults and disabled manifests are unchanged.'
+    - id: agent-relay-0.6.37
+      status: planned
       charts: { agent-relay: 0.6.37, relayhistory: 0.1.3, relay-control: 0.4.7, relay-webapp: 0.2.3 }
       app_versions: { agent-relay: 0.1.0, relayhistory: 0.1.0, relay-control: 0.1.0, relay-webapp: 0.1.0 }
       depends:
@@ -5549,3 +5586,52 @@ entries:
       - "charts/relayhistory/values.yaml:4"
       - "charts/session-ingest-api/values.yaml:78"
       - "ci/agent-relay/test_retained_workloads.py:1"
+
+  - id: opt.history-direct-upload-issuer
+    kind: option
+    title: Direct S3 upload credential issuer
+    description: |
+      Default-off relay-upload-inbox-v1 credential issuance. Requires a published
+      Control image containing #90, a scoped upload role, a customer KMS key and
+      a matching native upload consumer before enablement. Witness key is a
+      shared existing Secret, never inline or sent to Desktop. MinIO needs a
+      compatible presigned/optional-KMS contract update and remains unsupported.
+    chart: relay-control
+    values: [historyUpload.*]
+    env: [SELFHOST_HISTORY_UPLOAD_DIRECT, SELFHOST_HISTORY_UPLOAD_ALLOWLIST, SELFHOST_HISTORY_UPLOAD_BUCKET, SELFHOST_HISTORY_UPLOAD_REGION, SELFHOST_HISTORY_UPLOAD_KEY_ROOT, SELFHOST_HISTORY_UPLOAD_ROLE_ARN, SELFHOST_HISTORY_UPLOAD_KMS_KEY_ARN, SELFHOST_HISTORY_UPLOAD_MAX_OBJECT_BYTES, SELFHOST_HISTORY_UPLOAD_WITNESS_KEY_FILE]
+    profiles: [relay-control]
+    status: shipped
+    provided_by: operator
+    default: "off"
+    choices: [{value: "off"}, {value: allowlist}, {value: "on"}]
+    secrets:
+      - name: "<operator-chosen shared upload witness Secret>"
+        name_paths: [historyUpload.witness.existingSecret]
+        keys:
+          - {key: upload-witness-key, key_path: historyUpload.witness.key}
+    verify: Prove per-user write-only STS scope, durable PUT with SQL unavailable, async admission and searchable readback with exact published artifacts. Local source tests do not establish live runtime qualification.
+    sources: ["charts/relay-control/templates/_history-upload.tpl:1", "docs/selfhost-direct-uploads.md:1"]
+
+  - id: opt.history-direct-upload-consumer
+    kind: option
+    title: Native direct upload inbox scan
+    description: |
+      Default-off native upload-inbox scan and status handling from pipeline #515.
+      Requires a compatible published image, S3-compatible store, matching issuer
+      witness Secret and async admission. Consumer allowlist entries are org:/ws:
+      segments; Control allowlists are user IDs. SQL admission is asynchronous.
+    chart: sessions-pipeline
+    values: [ingestEdge.uploadDirect.*, ingestEdge.keyRoot, ingestEdge.createServiceAccount]
+    env: [HISTORY_UPLOAD_DIRECT, HISTORY_UPLOAD_DIRECT_ALLOWLIST, SELFHOST_UPLOAD_SCAN_BATCH, UPLOAD_WITNESS_KEY]
+    profiles: [selfhost-postgres, migration, external-selfhosted, external-rds, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql, aws-rds-native]
+    status: shipped
+    provided_by: operator
+    default: "off"
+    choices: [{value: "off"}, {value: allowlist}, {value: "on"}]
+    secrets:
+      - name: "<operator-chosen shared upload witness Secret>"
+        name_paths: [ingestEdge.uploadDirect.witness.existingSecret]
+        keys:
+          - {key: upload-witness-key, key_path: ingestEdge.uploadDirect.witness.key}
+    verify: Prove PUT, admission polling, witness refusal, restart/retry and indexed readback. Keep the scanner running while pending uploads drain during rollback.
+    sources: ["charts/sessions-pipeline/templates/ingest-edge.yaml:1", "docs/selfhost-direct-uploads.md:1"]
