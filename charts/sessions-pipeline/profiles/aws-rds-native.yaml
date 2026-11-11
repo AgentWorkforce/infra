@@ -135,6 +135,10 @@ sessionReadApi:
     messageIds: true
   turns:
     assumeNoLegacy: true
+  timing:
+    assumeNoTurns: true
+  canonical:
+    pinLaggingPointer: true
   login:
     advertisesSync: false
   allowInClusterHttp: true

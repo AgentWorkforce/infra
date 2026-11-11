@@ -93,6 +93,12 @@ spec:
             {{- if $c.turns.assumeNoLegacy }}
             - { name: READ_API_TURNS_ASSUME_NO_LEGACY, value: "true" }
             {{- end }}
+            {{- if $c.timing.assumeNoTurns }}
+            - { name: READ_API_TIMING_ASSUME_NO_TURNS, value: "true" }
+            {{- end }}
+            {{- if $c.canonical.pinLaggingPointer }}
+            - { name: READ_API_CANONICAL_PIN_LAGGING_POINTER, value: "true" }
+            {{- end }}
             {{- if $c.events.messageIds }}
             - { name: READ_API_EVENT_MESSAGE_IDS, value: "true" }
             {{- end }}

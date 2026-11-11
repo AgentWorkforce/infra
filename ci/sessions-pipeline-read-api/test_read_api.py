@@ -108,6 +108,23 @@ class ReadApi(unittest.TestCase):
 
         self.assertEqual(self.render(overlay={"readerMaxRuleset":None}),self.render())
 
+    def test_fresh_native_timing_and_canonical_assumptions_are_typed_and_managed(self):
+        names = {
+            "timing": ("assumeNoTurns", "READ_API_TIMING_ASSUME_NO_TURNS"),
+            "canonical": ("pinLaggingPointer", "READ_API_CANONICAL_PIN_LAGGING_POINTER"),
+        }
+        default_env = self.env_of(self.render())
+        for parent, (leaf, env_name) in names.items():
+            with self.subTest(parent=parent):
+                self.assertNotIn(env_name, default_env)
+                selected = self.env_of(self.render(overlay={parent: {leaf: True}}))
+                self.assertEqual(selected[env_name]["value"], "true")
+                for invalid in ("true", 1, None):
+                    self.assertIn(f"{parent}.{leaf} must be a boolean",
+                                  self.render(overlay={parent: {leaf: invalid}}, fail=True))
+                self.assertIn("managed", self.render(overlay={"extraEnv": [{
+                    "name": env_name, "value": "true"}]}, fail=True))
+
     def self_issued(self, **changes):
         """The fixture in self_issued mode; each change is a dotted path set on a complete overlay."""
         overlay = {

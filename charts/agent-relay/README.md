@@ -239,6 +239,92 @@ For a base domain `relay.example.com`:
 Leaf ingresses are disabled and each ClusterIP backend uses a GKE standalone
 NEG. Sensitive Relaycast paths still route to an endpoint-less deny Service.
 
+## Customer-neutral EKS with RDS native History
+
+`values-eks-rds-native.yaml` is the reusable EKS overlay for the supported
+native History stack: Amazon RDS, S3 through EKS Pod Identity, OpenSearch, the
+session read API, ingest edge and search indexer. It replaces the former
+operator-side composition of `values-eks-native.yaml` plus the leaf
+`sessions-pipeline/profiles/aws-rds-native.yaml` file. Apply it after the base
+EKS values and before a private site overlay:
+
+```sh
+helm template agent-relay charts/agent-relay \
+  --namespace agent-relay-<environment> \
+  -f charts/agent-relay/values-eks.yaml \
+  -f charts/agent-relay/values-eks-rds-native.yaml \
+  -f <private-site-values.yaml> >/dev/null
+```
+
+The private overlay must replace every copy marked `REQUIRED OVERRIDE`: the
+organization ID, public origins, S3 bucket and region, RDS CA SHA-256,
+OpenSearch endpoint/backend ID/region, ALB subnet CIDRs, first owner details,
+and the ingest edge's namespace-qualified Control Service URL. The duplicated
+service values are deliberate chart boundaries, not fallback defaults: keep
+the bucket/region identical under `worker`, `alleyoop`, `sessionReadApi.extraEnv`,
+`ingestEdge` and `searchIndexer`; keep the CA SHA-256 identical on all five
+clients; and keep the read API and indexer OpenSearch projection settings
+identical. `ci/agent-relay/eks-rds-native-site-values.yaml` is a complete
+non-secret example, and its render test asserts those equalities. The private
+overlay may mirror the four immutable release images into the customer's ECR,
+but it must retain their digests. This profile renders no Secret; create the
+named Secrets and the immutable `rds-ca` ConfigMap separately.
+
+The chart leaves EKS ingress objects external. Publish dashboard, Control,
+Relaycast, native reads and native ingest through the supplied ALB generator;
+do not leave its legacy History backend set because this profile renders no
+standalone RelayHistory Service:
+
+```sh
+export EKS_ALB_DOMAIN=relay.example.com
+export EKS_ALB_CERT_ARN=arn:aws:acm:<region>:<account>:certificate/<id>
+export EKS_ALB_INGEST=true
+unset EKS_ALB_HISTORY_LEGACY_SERVICE
+scripts/selfhost/eks-alb-ingress.sh agent-relay-<environment> | kubectl apply -f -
+```
+
+This routes the exact native upload paths to `agent-relay-ingest-edge`, the
+read paths to `agent-relay-read-api`, and refuses all other History-host paths
+at the ALB. Set the script's Service overrides only when the private overlay
+renames those Services.
+
+Install into `agent-relay-<environment>` (or another namespace explicitly
+bound in Terraform). EKS Pod Identity associations must name that namespace
+and these exact Service Accounts:
+
+- `agent-relay-worker`
+- `agent-relay-session-ingest-api`
+- `agent-relay-session-read`
+- `agent-relay-search-indexer`
+
+Relaycast uses PostgreSQL and a PVC; an empty
+`relaycast.persistence.storageClass` means the cluster's default encrypted EBS
+StorageClass. Set it explicitly when the cluster has no suitable default.
+
+Run `scripts/selfhost/rds-setup.sh pre` before Helm and `post` only after the
+Sessions migration Job succeeds. On a populated database, build the two
+coordination-reader partial indexes concurrently before the migration; a fresh
+database builds them directly. The exact SQL and verification steps are in
+[`docs/self-hosted-session-read-api.md`](../../docs/self-hosted-session-read-api.md).
+After each workspace has sessions, run the output-facts bootstrap with a new
+`searchIndexer.outputFacts.bootstrap.runId`; the reusable overlay deliberately
+leaves that one-shot Job off.
+
+The profile enables Output, digest and their facts writer without a narrative
+model, so session content is not sent to an external model. It enables the
+coordination-overlaps API but leaves the dashboard view off. It also enables
+structured password sign-in with the one-time setup-key Secret entry supported
+by the pinned Control image. The session-agent-name dashboard filter also stays
+off: its read path remains unavailable until an operator separately plans and
+applies the native agent-catalog activation against the database.
+
+For existing data, this is reader-first: the base EKS values set
+`READER_MAX_RULESET=10` but leave `SCRUB_ENGINE` and
+`SCRUB_ENGINE_REQUIRED` unset. Wait for every Sessions Deployment and Job to
+be Ready, then apply `values-scrub-wasm-bindgen.yaml` in a second Helm revision.
+A fresh install with an empty Sessions database may include that strict overlay
+in its first revision.
+
 ## Single-host mode
 
 The per-service hosts above are the default. Single-host mode is opt-in: set
