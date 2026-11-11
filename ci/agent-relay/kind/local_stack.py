@@ -270,10 +270,11 @@ class LocalStack(Stack):
             "rootUser": "locker", "rootPassword": c["locker"], "SUMMARY_MASTER_KEYS": "local1:" + c["encryption"]})
         self.configure_model()
 
-    def configure_model(self):
+    def configure_model(self, key=None):
         # Repeating local-up without an environment override preserves a key
         # already supplied to this disposable stack through its local Secret.
-        key = os.environ.get("OPENAI_API_KEY")
+        if key is None:
+            key = os.environ.get("OPENAI_API_KEY")
         if key is None:
             current = self.k("get", "secret", "local-model", "-o", "json", "--ignore-not-found=true", sensitive=True).stdout.strip()
             if current:
@@ -291,6 +292,17 @@ class LocalStack(Stack):
         else:
             self.k("delete", "networkpolicy", "local-brief-model-egress", "--ignore-not-found=true")
             print("OPENAI_API_KEY is missing: brief worker will run without making model calls.", flush=True)
+
+    def install_model_key(self):
+        self.docker(require_space=False)
+        self.owned()
+        key = read_model_key(sys.stdin)
+        self.k("get", "deployment", "sessions-session-brief", "-o", "name")
+        self.configure_model(key)
+        patch = {"spec": {"template": {"metadata": {"annotations": {"local.agentrelay.dev/model-key-sha256": self.model_key_sha}}}}}
+        self.k("patch", "deployment", "sessions-session-brief", "--type", "merge", "--patch", json.dumps(patch))
+        self.k("rollout", "status", "deployment/sessions-session-brief", "--timeout=180s", timeout=210)
+        print("Local model key installed; brief worker ready. Search/summary acceptance must still be verified.")
 
     def control(self, c):
         self.secret("local-control-owner", {"database-migrations-url": pgurl("control_owner", c, "/etc/postgres-ca/ca.crt", "relaycontrol")})
@@ -460,6 +472,16 @@ def env(name, value):
     return {"name": name, "value": value}
 
 
+def read_model_key(stream):
+    if stream.isatty():
+        raise StackError("pipe the model key on standard input; interactive entry would echo it")
+    raw = stream.read(16387)
+    key = raw.rstrip("\r\n")
+    if len(raw) > 16386 or not key or len(key) > 16384 or any(c.isspace() or not c.isprintable() for c in key):
+        raise StackError("standard input must contain one nonempty model key, at most 16384 printable characters")
+    return key
+
+
 def secret_env(name, secret, key):
     return {"name": name, "valueFrom": {"secretKeyRef": {"name": secret, "key": key}}}
 
@@ -476,8 +498,8 @@ def locker_env():
 
 def main():
     stack = LocalStack("core")
-    if sys.argv[1:] not in (["up"], ["login"], ["down"]):
-        raise SystemExit("usage: local_stack.py up|login|down")
+    if sys.argv[1:] not in (["up"], ["login"], ["down"], ["llm-key"]):
+        raise SystemExit("usage: local_stack.py up|login|down|llm-key")
     try:
         if sys.argv[1] == "up":
             stack.up_local()
@@ -490,6 +512,8 @@ def main():
             stack.docker(require_space=False)
             stack.owned()
             stack.login_link(force=True)
+        elif sys.argv[1] == "llm-key":
+            stack.install_model_key()
         else:
             stack.down_local()
     except StackError as error:

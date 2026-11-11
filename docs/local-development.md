@@ -52,10 +52,23 @@ lock on this single Kind node's RWO local-path claim. This local storage choice
 does not change the production chart's CSI/RWOP default. No hosted analytics
 destination is configured.
 
-Set `OPENAI_API_KEY` in the environment before `make local-up` to configure the
-brief worker. An absent key creates an empty local model Secret: the worker is
-healthy and reports `model_not_configured`, and makes no model calls. A key is
-required for summary acceptance. It is never written to Git or printed.
+Configure the brief worker by piping the key to `make local-llm-key` after
+bring-up. For example, with an authenticated 1Password CLI on the source Mac
+and `OPENAI_KEY_REF` naming the appropriate `op://vault/item/field` reference:
+
+```sh
+op read "$OPENAI_KEY_REF" | ssh -T agentrelay@100.104.148.105 \
+  'cd ~/Projects/AgentWorkforce/local-e2e/infra && make -s local-llm-key'
+```
+
+The key travels on standard input and is installed only into the owned local
+cluster's model Secret; it is not placed in command arguments, logged, or saved
+in a source file. The helper updates the model egress policy and waits for the
+brief worker rollout. Interactive input, empty input and multiline values are
+refused. It preserves the configured request caps and does not prove a summary
+was generated. Alternatively, set `OPENAI_API_KEY` before `make local-up`.
+An absent key on first install leaves the worker healthy with
+`model_not_configured` and no model calls. A key is required for summary acceptance.
 
 ## Source loop
 

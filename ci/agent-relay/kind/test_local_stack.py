@@ -1,5 +1,6 @@
 """Local target ownership, host changes, and real native Helm composition."""
 import json
+import io
 from pathlib import Path
 import subprocess
 import tempfile
@@ -12,11 +13,32 @@ import yaml
 from local_host_setup import host_contents
 import local_host_setup
 import local_stack
-from local_stack import LocalStack, ROOT
+from local_stack import LocalStack, ROOT, read_model_key
 from stack import StackError
 
 
 class LocalTests(unittest.TestCase):
+    def test_model_key_input_is_bounded_single_line_and_never_echoed_in_errors(self):
+        self.assertEqual(read_model_key(io.StringIO("fixture-key\n")), "fixture-key")
+        for value in ("", "\n", "secret\nsecond", "secret value", "a" * 16385, "a" * 16384 + "\nsecond", "secret\x00"):
+            with self.assertRaises(StackError) as error:
+                read_model_key(io.StringIO(value))
+            self.assertNotIn("secret", str(error.exception))
+        interactive = io.StringIO("fixture-key")
+        interactive.isatty = lambda: True
+        with self.assertRaisesRegex(StackError, "echo"):
+            read_model_key(interactive)
+
+    def test_model_key_install_checks_ownership_before_reading_or_writing(self):
+        stack = LocalStack.__new__(LocalStack)
+        stack.docker = lambda **kw: None
+        stack.owned = lambda: (_ for _ in ()).throw(StackError("foreign cluster"))
+        with patch.object(local_stack, "read_model_key") as read, patch.object(stack, "configure_model") as configure:
+            with self.assertRaisesRegex(StackError, "foreign"):
+                stack.install_model_key()
+            read.assert_not_called()
+            configure.assert_not_called()
+
     def test_repeat_without_model_override_preserves_existing_secret(self):
         stack = LocalStack.__new__(LocalStack)
         stack.k = lambda *args, **kw: SimpleNamespace(stdout=json.dumps({"data": {"OPENAI_API_KEY": "Zml4dHVyZQ=="}}))
