@@ -24,13 +24,18 @@ global:
     host: ""
 existingSecret: ""
 # null preserves existing extraEnv selection; [] explicitly selects core only.
-# Managed names: flows, relayfile, chief, usage. No license is used.
+# Managed names: flows, relayfile, chief, usage, launch. No license is used.
 # usage: the owner-only dashboard Usage page (counts only). While it is off,
 # Control keeps no active-user or search counters; session and summary counts
 # are read from the session directory, which records sessions regardless.
 # Needs a relay-control image with the usage API (relay-control
 # docs/usage.md) and a relay-webapp image with the Usage page; an older
 # Control image refuses the name at startup.
+# launch: agent launch tools on the shared-sessions MCP endpoint (workspace
+# owners/admins on a person connection; never OAuth) onto this workspace's own
+# claimed Agent Relay Desktop nodes. Needs relay-control 0.5.14 or later
+# (relay-control docs/agent-launch.md) and Relaycast with the native node and
+# action API; an older Control image refuses the name at startup.
 selectedFeatures: null
 secretKeys:
   databaseUrl: database-url
