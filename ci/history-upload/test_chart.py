@@ -37,7 +37,7 @@ class HistoryUpload(unittest.TestCase):
     def test_default_off_has_no_upload_secret(self):
         pod = next(d for d in self.render() if d['kind'] == 'Deployment')['spec']['template']['spec']
         env = {v['name']: v for v in pod['containers'][0]['env']}
-        self.assertEqual(env['SELFHOST_HISTORY_UPLOAD_DIRECT']['value'], 'off')
+        self.assertFalse(any(e.startswith('SELFHOST_HISTORY_UPLOAD_') for e in env))
         self.assertFalse(any('WITNESS' in e for e in env))
         self.assertFalse(any(v['name'] == 'history-upload' for v in pod['volumes']))
 

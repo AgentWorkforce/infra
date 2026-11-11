@@ -18,8 +18,8 @@
 {{- end -}}
 
 {{- define "relay-control.historyUpload.env" -}}
-- { name: SELFHOST_HISTORY_UPLOAD_DIRECT, value: {{ .Values.historyUpload.mode | quote }} }
 {{- if ne .Values.historyUpload.mode "off" }}
+- { name: SELFHOST_HISTORY_UPLOAD_DIRECT, value: {{ .Values.historyUpload.mode | quote }} }
 {{- $c := .Values.historyUpload }}
 - { name: SELFHOST_HISTORY_UPLOAD_ALLOWLIST, value: {{ join "," $c.allowlist | quote }} }
 - { name: SELFHOST_HISTORY_UPLOAD_BUCKET, value: {{ $c.bucket | quote }} }

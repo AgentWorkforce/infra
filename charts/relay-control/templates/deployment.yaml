@@ -79,7 +79,9 @@ spec:
             {{- if .Values.services.relayhistoryReadApiUrl }}
             {{- include "relay-control.historyConnectionEnv" . | nindent 12 }}
             {{- end }}
+            {{- if ne .Values.historyUpload.mode "off" }}
             {{- include "relay-control.historyUpload.env" . | nindent 12 }}
+            {{- end }}
             {{- include "relay-control.runtimeEnv" . | nindent 12 }}
             {{- include "relay-control.secretEnv" . | nindent 12 }}
             {{- if .Values.introspection.existingSecret }}
