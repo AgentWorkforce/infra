@@ -53,8 +53,8 @@ class ReleaseManifestTest(unittest.TestCase):
                 f"ghcr.io/example/service:v1@{DIGEST_B}",
             ],
             [
-                f"service\tghcr.io/example/service\t{DIGEST_B}",
-                f"relay-control\tghcr.io/example/control\t{DIGEST_A}",
+                f"service\tghcr.io/example/service\t{DIGEST_B}\tapproved",
+                f"relay-control\tghcr.io/example/control\t{DIGEST_A}\tapproved",
             ],
         )
         self.assertEqual(
@@ -97,13 +97,13 @@ class ReleaseManifestTest(unittest.TestCase):
             digest = "sha256:" + str(index) * 64
             repository = f"ghcr.io/example/{name}"
             image_lines.append(f"{repository}@{digest}")
-            inventory_lines.append(f"{name}\t{repository}\t{digest}")
+            inventory_lines.append(f"{name}\t{repository}\t{digest}\tapproved")
         overlay = build_values_overlay(
             self.build_fixture(image_lines, inventory_lines)
         )
         self.assertEqual(
             overlay.count("__IMAGE_MIRROR_ROOT__/ghcr.io/example/sessions-pipeline"),
-            6,
+            10,
         )
         self.assertIn("sessionReadApi:\n    image:", overlay)
         self.assertIn("nativeConsumer:\n    image:", overlay)
@@ -117,20 +117,27 @@ class ReleaseManifestTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "not pinned"):
             self.build_fixture(
                 ["ghcr.io/example/service:latest"],
-                [f"service\tghcr.io/example/service\t{DIGEST_A}"],
+                [f"service\tghcr.io/example/service\t{DIGEST_A}\tapproved"],
             )
 
     def test_rejects_image_missing_from_inventory(self):
         with self.assertRaisesRegex(ValueError, "absent from the inventory"):
             self.build_fixture(
                 [f"ghcr.io/example/other@{DIGEST_B}"],
-                [f"service\tghcr.io/example/service\t{DIGEST_A}"],
+                [f"service\tghcr.io/example/service\t{DIGEST_A}\tapproved"],
+            )
+
+    def test_rejects_blocked_customer_image(self):
+        with self.assertRaisesRegex(ValueError, r"not release-approved \(blocked\)"):
+            self.build_fixture(
+                [f"ghcr.io/example/service@{DIGEST_A}"],
+                [f"service\tghcr.io/example/service\t{DIGEST_A}\tblocked"],
             )
 
     def test_release_version_is_independent_of_chart_version(self):
         manifest = self.build_fixture(
             [f"ghcr.io/example/service@{DIGEST_A}"],
-            [f"service\tghcr.io/example/service\t{DIGEST_A}"],
+            [f"service\tghcr.io/example/service\t{DIGEST_A}\tapproved"],
             chart_version="0.6.36",
         )
         self.assertEqual(manifest["version"], "2026.11.0")

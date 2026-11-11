@@ -39,8 +39,8 @@ def normalized_digest_ref(value: str) -> str:
     return f"{name}@{digest}"
 
 
-def load_inventory(path: pathlib.Path) -> dict[str, str]:
-    by_ref: dict[str, str] = {}
+def load_inventory(path: pathlib.Path) -> dict[str, tuple[str, str]]:
+    by_ref: dict[str, tuple[str, str]] = {}
     names: set[str] = set()
     with path.open(encoding="utf-8") as stream:
         for line_number, raw in enumerate(stream, start=1):
@@ -48,9 +48,12 @@ def load_inventory(path: pathlib.Path) -> dict[str, str]:
             if not line:
                 continue
             fields = line.split("\t")
-            if len(fields) != 3:
-                fail(f"{path}:{line_number}: expected name, repository, digest TSV")
-            name, repository, digest = fields
+            if len(fields) != 4:
+                fail(
+                    f"{path}:{line_number}: expected name, repository, digest, "
+                    "approval TSV"
+                )
+            name, repository, digest, approval = fields
             if not re.fullmatch(r"[a-z0-9][a-z0-9._-]*", name):
                 fail(f"{path}:{line_number}: invalid image name: {name}")
             ref = normalized_digest_ref(f"{repository}@{digest}")
@@ -59,7 +62,7 @@ def load_inventory(path: pathlib.Path) -> dict[str, str]:
             if ref in by_ref:
                 fail(f"{path}:{line_number}: duplicate inventory ref: {ref}")
             names.add(name)
-            by_ref[ref] = name
+            by_ref[ref] = (name, approval)
     if not by_ref:
         fail(f"{path}: inventory is empty")
     return by_ref
@@ -94,9 +97,14 @@ def build(args: argparse.Namespace) -> dict[str, object]:
     inventory = load_inventory(args.inventory)
     images = []
     for ref in load_rendered_refs(args.images):
-        name = inventory.get(ref)
-        if name is None:
+        entry = inventory.get(ref)
+        if entry is None:
             fail(f"rendered customer image is absent from the inventory: {ref}")
+        name, approval = entry
+        if approval != "approved":
+            fail(
+                f"rendered customer image is not release-approved ({approval}): {ref}"
+            )
         images.append({"name": name, "ref": ref})
     images.sort(key=lambda image: (image["name"], image["ref"]))
 
@@ -150,6 +158,21 @@ def build_values_overlay(manifest: dict[str, object]) -> str:
         "  image:",
         *pair("relayauth", 4),
         "sessions-pipeline:",
+        "  privilegedSql:",
+        "    sqlImage:",
+        *pair("sessions-pipeline", 6),
+        "  searchWorkerRole:",
+        "    bootstrapJob:",
+        "      sqlImage:",
+        *pair("sessions-pipeline", 8),
+        "  runtimeRole:",
+        "    bootstrapJob:",
+        "      sqlImage:",
+        *pair("sessions-pipeline", 8),
+        "  functionDefaultRevoke:",
+        "    bootstrapJob:",
+        "      sqlImage:",
+        *pair("sessions-pipeline", 8),
         "  worker:",
         "    image:",
         *pair("sessions-pipeline", 6),
