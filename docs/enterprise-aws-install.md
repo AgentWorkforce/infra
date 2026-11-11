@@ -263,11 +263,16 @@ release.
 scripts/selfhost/agent-relay-upgrade.sh \
   --version "$AGENT_RELAY_VERSION" \
   --registry "$ECR_REGISTRY" \
+  --profile "$AGENT_RELAY_PROFILE" \
   --values /approved/private/customer.values.yaml \
   --context "$KUBE_CONTEXT" \
   --namespace "$NAMESPACE" \
   --release "$RELEASE"
 ```
+
+Set `AGENT_RELAY_PROFILE` to the profile already used by the installation:
+`eks` for `values-eks.yaml`, or `eks-native` when the installation also uses
+`values-eks-native.yaml`. The upgrader refuses to switch profiles implicitly.
 
 Review that plan and its exact release identifiers. After approval, repeat the
 same command with `--apply --db-instance "$RDS_INSTANCE_ID"`. Apply takes and
