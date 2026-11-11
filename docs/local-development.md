@@ -34,6 +34,26 @@ On the Mac, complete this **one-time administrator step** for DNS and trust:
 make local-trust
 ```
 
+For a rebuild on a Mac that already trusts this fixture's CA, opt into retained
+trust instead of removing and reinstalling it:
+
+```sh
+LOCAL_CA_REUSE=1 make local-down
+# A fresh checkout may be cloned after the scoped cleanup.
+LOCAL_CA_REUSE=1 make local-up
+```
+
+This mode retains only `ca.crt` and `ca.key` in `.kind/local` during down and in
+the private `~/.agentworkforce/kind-local-ca` directory for a subsequent clone.
+`LOCAL_CA_REUSE_DIR` can select another private directory outside the checkout.
+Up imports only that pair, verifies its key, validity and existing macOS trust,
+and mints a fresh leaf when rebuilding. Missing, mismatched, expiring or untrusted
+roots fail; this mode never rotates the trusted root or edits `/etc/hosts`.
+All cluster credentials, databases, tokens and phase records are regenerated.
+Record the retained CA/hosts exception explicitly when reporting this rebuild;
+it is not a proof from a machine with no prior trust. The default command above
+still generates a new CA and requires the ordinary one-time trust step.
+
 macOS requires sudo to update `/etc/hosts` and trust this disposable fixture's CA
 in the System keychain. The script changes only the four `*.kind.agentrelay.com`
 aliases, removes duplicate/IPv6 entries for those aliases, preserves unrelated

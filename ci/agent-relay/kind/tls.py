@@ -3,7 +3,7 @@ import re
 import hashlib
 
 
-def create(stack, hosts, namespace):
+def create(stack, hosts, namespace, *, preserve_ca=False):
     ca, ca_key = stack.state / "ca.crt", stack.state / "ca.key"
     cert, key = stack.state / "tls.crt", stack.state / "tls.key"
 
@@ -29,6 +29,9 @@ def create(stack, hosts, namespace):
             ["openssl", "x509", "-in", path, "-checkend", str(seconds), "-noout"], check=False).returncode == 0
 
     renew_ca = not current(ca, "Subject Key Identifier", 31 * 86400)
+    if renew_ca and preserve_ca:
+        from stack import StackError
+        raise StackError("retained CA requires renewal; refused to change the trusted root")
     if renew_ca:
         # Keep the exact old public certificate before renewal, so its trust
         # remains removable even after ca.crt is replaced.

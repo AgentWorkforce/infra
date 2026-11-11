@@ -4,6 +4,40 @@ This is the Kind/q7m2k9 wipe, fresh-install, acceptance and final-wipe procedure
 on Apple Silicon macOS. It is not a receipt that those steps passed.
 The JHS Rehearsal app is a known co-resident and must remain untouched.
 
+## Rebuild with retained trust
+
+When the operator chooses to preserve the already-trusted CA and existing Kind
+hosts block, use this alternative to the sudo boundaries below. Report it as a
+rebuild with retained trust, not a zero-trust-state clean-room proof.
+
+After the same scoped app/integration teardown and protected witnesses:
+
+```sh
+LOCAL_CA_REUSE=1 make local-down
+```
+
+This verifies the existing CA/key and macOS trust, saves only the two files in
+private `~/.agentworkforce/kind-local-ca`, deletes the owned cluster and removes
+every other `.kind/local` file. It leaves only `ca.crt`/`ca.key` there. Preserve
+the external CA directory, System CA and Kind host aliases during the remaining
+scoped Docker/app/data/repository cleanup. Preserve JHS exactly as below.
+
+Clone merged main again, then run:
+
+```sh
+LOCAL_CA_REUSE=1 make local-up
+make desktop-install
+```
+
+Do not run `local-trust` or the privileged `down` helper in this mode. Require the
+same root fingerprint, a new leaf certificate, new cluster/tenant/credentials,
+TLS without a bypass and the full real-session acceptance below. All application
+data is fresh; no prior database, token, phase record or leaf key is imported.
+After acceptance use retained-CA `local-down` again and finish the scoped wipe.
+The final exceptions are precisely the two external CA files, the trusted public
+CA and the existing hosts block; the checkout and its remaining CA copies can
+then be removed. Keep that exception list with the final pass/fail sheet.
+
 ## Preconditions and boundaries
 
 - Use merged infra main containing the local stack and Desktop installer.
