@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Checkout-local tools for a clean Mac; never installs Homebrew or uses sudo."""
 import hashlib
+import json
 import os
 from pathlib import Path
 import platform
@@ -33,7 +34,14 @@ def ensure_tools():
     for name, (url, checksum, member) in RELEASES[target].items():
         path = TOOLS / name
         stamp = TOOLS / (name + ".sha256")
-        if path.exists() and stamp.exists() and hashlib.sha256(path.read_bytes()).hexdigest() == stamp.read_text():
+        try:
+            cached = json.loads(stamp.read_text())
+        except (OSError, ValueError):
+            cached = None
+        if path.is_file() and cached == {
+            "url": url, "release_sha256": checksum,
+            "binary_sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+        }:
             continue
         print("Download pinned " + name, flush=True)
         with urllib.request.urlopen(url, timeout=120) as response:
@@ -46,9 +54,17 @@ def ensure_tools():
                 archive.seek(0)
                 with tarfile.open(fileobj=archive, mode="r:gz") as tar:
                     data = tar.extractfile(member).read()
-        path.write_bytes(data)
-        path.chmod(0o700)
-        stamp.write_text(hashlib.sha256(data).hexdigest())
+        binary = tempfile.NamedTemporaryFile(dir=TOOLS, prefix=name + "-", delete=False)
+        temporary = Path(binary.name)
+        try:
+            with binary:
+                binary.write(data)
+            temporary.chmod(0o700)
+            os.replace(temporary, path)
+        finally:
+            temporary.unlink(missing_ok=True)
+        stamp.write_text(json.dumps({"url": url, "release_sha256": checksum,
+                                     "binary_sha256": hashlib.sha256(data).hexdigest()}))
     os.environ["PATH"] = str(TOOLS) + os.pathsep + os.environ["PATH"]
 
 
@@ -57,12 +73,13 @@ def main():
         raise SystemExit("usage: local_tools.py [--prepare]")
     ensure_tools()
     python = TOOLS / "venv" / "bin" / "python3"
-    if not python.exists():
+    created_venv = not python.exists()
+    if created_venv:
         subprocess.run([sys.executable, "-m", "venv", str(python.parents[1])], check=True)
     requirement = ROOT / "ci/agent-relay/kind/requirements.txt"
     stamp = TOOLS / "python-requirements.sha256"
     digest = hashlib.sha256(requirement.read_bytes()).hexdigest()
-    if not stamp.exists() or stamp.read_text() != digest:
+    if created_venv or not stamp.exists() or stamp.read_text() != digest:
         subprocess.run([str(python), "-m", "pip", "install", "--disable-pip-version-check", "-r", str(requirement)], check=True)
         stamp.write_text(digest)
     subprocess.run([str(TOOLS / "kind"), "version"], check=True)
