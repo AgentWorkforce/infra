@@ -66,7 +66,7 @@ run "development_composition" {
     error_message = "The verifier must export the complete independently confirmed installation and exact database identity."
   }
   assert {
-    condition     = output.environment.namespace == "agent-relay-dev" && output.verification.storage.prefix == "proofs/dev/"
+    condition     = output.environment.namespace == "agent-relay-dev" && output.verification.namespace == "agent-relay-dev" && output.verification.storage.prefix == "proofs/dev/"
     error_message = "Names must isolate the environment, account and region."
   }
   assert {

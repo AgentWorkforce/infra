@@ -1,0 +1,43 @@
+{
+  "Version": "2012-10-17",
+  "Id": "agent-relay-foundation-durable-key",
+  "Statement": [
+    {
+      "Sid": "AccountAdministrationThroughIam",
+      "Effect": "Allow",
+      "Principal": { "AWS": "arn:aws:iam::<account-id>:root" },
+      "Action": "kms:*",
+      "Resource": "*"
+    },
+    {
+      "Sid": "CloudWatchLogsForFoundationLogGroups",
+      "Effect": "Allow",
+      "Principal": { "Service": "logs.<region>.amazonaws.com" },
+      "Action": ["kms:Encrypt*", "kms:Decrypt*", "kms:ReEncrypt*", "kms:GenerateDataKey*", "kms:Describe*"],
+      "Resource": "*",
+      "Condition": {
+        "ArnEquals": {
+          "kms:EncryptionContext:aws:logs:arn": [
+            "arn:aws:logs:<region>:<account-id>:log-group:/aws/vpc/<name>/flow",
+            "arn:aws:logs:<region>:<account-id>:log-group:/aws/eks/<name>/cluster"
+          ]
+        }
+      }
+    },
+    {
+      "Sid": "AutoScalingServiceLinkedRoleUse",
+      "Effect": "Allow",
+      "Principal": { "AWS": "arn:aws:iam::<account-id>:role/aws-service-role/autoscaling.amazonaws.com/AWSServiceRoleForAutoScaling" },
+      "Action": ["kms:Encrypt", "kms:Decrypt", "kms:ReEncrypt*", "kms:GenerateDataKey*", "kms:DescribeKey"],
+      "Resource": "*"
+    },
+    {
+      "Sid": "AutoScalingServiceLinkedRoleGrants",
+      "Effect": "Allow",
+      "Principal": { "AWS": "arn:aws:iam::<account-id>:role/aws-service-role/autoscaling.amazonaws.com/AWSServiceRoleForAutoScaling" },
+      "Action": "kms:CreateGrant",
+      "Resource": "*",
+      "Condition": { "Bool": { "kms:GrantIsForAWSResource": "true" } }
+    }
+  ]
+}

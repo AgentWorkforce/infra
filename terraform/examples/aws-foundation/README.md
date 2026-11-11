@@ -2,14 +2,62 @@
 
 Source-only first layer. Read the [module scope, identity, KMS and lifecycle contract](../../modules/aws/foundation) before any execution plan. No cloud resource has been created by this example. Account, region, versions, operator roles/networks, key policy and subnet availability require separate review.
 
-1. Copy `terraform.tfvars.example` to an ignored local input file and replace every placeholder. Use an existing AWS account and durable customer-managed KMS key. No credentials or secret values belong in inputs.
+1. Copy `terraform.tfvars.example` to an ignored local input file and replace every placeholder. Use an existing AWS account and durable customer-managed KMS key. No credentials or secret values belong in inputs. Complete the [account prerequisites](#account-prerequisites) first: a brand-new account lacks service-linked roles that the key policy and data layer need.
 2. Copy `backend.hcl.example` to an ignored/operator-owned backend file. The pre-existing versioned/encrypted state bucket must survive foundation/data/application retirement. Use separate account/region/environment/layer keys, native S3 locking (`use_lockfile=true`) and bucket access limited to the intended operator; backend credentials come from the environment. Backend `allowed_account_ids` independently fences the backend account. A separate backend account is valid when explicitly reviewed.
 3. Validate without a backend or cloud credentials: `terraform init -backend=false`, `terraform validate`, `terraform test`. For the routing graph check, separately initialize `../../modules/aws/foundation` with `terraform init -backend=false`, then run `python3 tests/check_routing_graph.py` from that module directory. This verifies transitive routing/association ordering without initializing the S3 backend or making cloud calls. Tests use synthetic mock-only versions and IDs. For a later approved execution, initialize the reviewed S3 backend and credentials, then review a saved plan. Do not run a live plan/apply based on synthetic test defaults.
-4. Hand the non-secret `data_environment_inputs` object to a separately initialized `aws-environments` state as explicit inputs. It intentionally omits the search admin role and Lambda package. Do not point data or application at the foundation state key. StorageClass and actor outputs are application manifests/values to apply later with exec authentication.
+4. Hand the non-secret `data_environment_inputs` object to a separately initialized `aws-environments` state as explicit inputs. Its `namespace` is where every workload Pod Identity association is bound; with the default `namespace = null` it is `agent-relay-<environment>` (e.g. `agent-relay-dev`), **not** `agent-relay`. Install the application charts into exactly that namespace, or set foundation `namespace` explicitly before the first apply and pass the exported value to the data inputs unchanged; Pods in any other namespace silently get no AWS access. It intentionally omits the search admin role and Lambda package. Do not point data or application at the foundation state key. StorageClass and actor outputs are application manifests/values to apply later with exec authentication.
 
 Example key layout: `<existing-account>/<region>/<environment>/foundation/terraform.tfstate`, then separate `data/terraform.tfstate` and `application/terraform.tfstate`. The backend does not read root variables: replace its placeholders independently. Customer/Pippen identities and resource names must be checked against both the state key and target account.
 
 Foundation provides infrastructure prerequisites for the full suite, including Lambda networking and first-party Terse placement. It does not install Helm charts, a Lambda handler, secrets, DNS/certificates, auth services or application data. Existing proof resources are out of scope and remain running.
+
+## Account prerequisites
+
+Run these once per account, before creating the KMS key or applying foundation. They need `iam:CreateServiceLinkedRole` and are account-wide, so neither foundation nor data state creates or destroys them (in Pippen they are platform-owned baseline resources).
+
+1. **Service-linked roles.** A brand-new account has neither of these until something creates them. The KMS key policy below names the Auto Scaling role, and KMS rejects a policy whose principal does not exist yet. The data layer's OpenSearch domain fails with "you must enable a service-linked role to give Amazon OpenSearch Service permissions to access your VPC" without the OpenSearch role. Check each one and create only a missing role; `create-service-linked-role` fails if the role already exists:
+
+   ```sh
+   aws iam get-role --role-name AWSServiceRoleForAutoScaling >/dev/null 2>&1 ||
+     aws iam create-service-linked-role --aws-service-name autoscaling.amazonaws.com
+   aws iam get-role --role-name AWSServiceRoleForAmazonOpenSearchService >/dev/null 2>&1 ||
+     aws iam create-service-linked-role --aws-service-name opensearchservice.amazonaws.com
+   ```
+
+   EKS creates its own service-linked roles during apply when the deploying identity may call `iam:CreateServiceLinkedRole`.
+
+2. **Durable KMS key.** Create a symmetric `ENCRYPT_DECRYPT` customer-managed key in the target account and region, outside foundation state, and set `kms_key_arn` to it. [`kms-key-policy.json.example`](kms-key-policy.json.example) is a reference key policy. Replace `<account-id>`, `<region>` and `<name>` (`name_prefix-environment`, e.g. `agent-relay-dev`; it must match the two log groups foundation creates) and review it with the customer's key administrators:
+
+   | Statement | Why |
+   | --- | --- |
+   | Account root `kms:*` | Lets IAM policies grant use. The operator role (EKS secrets encryption) and the EBS CSI role's inline policy rely on it. |
+   | `logs.<region>.amazonaws.com` `Encrypt*`/`Decrypt*`/`ReEncrypt*`/`GenerateDataKey*`/`Describe*`, `ArnEquals kms:EncryptionContext:aws:logs:arn` | Encrypts only the two foundation log groups, `/aws/vpc/<name>/flow` and `/aws/eks/<name>/cluster`. |
+   | `AWSServiceRoleForAutoScaling` `Encrypt`/`Decrypt`/`ReEncrypt*`/`GenerateDataKey*`/`DescribeKey` | Managed node groups launch encrypted EBS root volumes through Auto Scaling. |
+   | `AWSServiceRoleForAutoScaling` `kms:CreateGrant` with `Bool kms:GrantIsForAWSResource=true` | Auto Scaling grants EC2 use of the key for those volumes. Without it, nodes never launch. |
+
+   ```sh
+   # After replacing the placeholders in a private copy:
+   aws kms create-key --key-spec SYMMETRIC_DEFAULT --key-usage ENCRYPT_DECRYPT \
+     --description "<name> durable foundation key" \
+     --policy file:///approved/private/kms-key-policy.json
+   aws kms enable-key-rotation --key-id <key-id>
+   ```
+
+   For an existing key, compare its policy with the reference instead (`aws kms get-key-policy --key-id <key-id> --policy-name default`) and add only the missing statements.
+
+## After apply
+
+Foundation creates AWS resources only. Before installing the data layer's workloads or any application chart, complete both Kubernetes steps in order with an operator kubeconfig for the new cluster (`aws eks update-kubeconfig --name <cluster_name> --region <region>`):
+
+1. **Install the AWS Load Balancer Controller** (requires `enable_load_balancer_controller = true`) with the values from `terraform output load_balancer_controller`. See [the command below](#aws-load-balancer-controller). Without it, no Ingress or `LoadBalancer` Service gets an AWS load balancer.
+2. **Apply the encrypted StorageClass**:
+
+   ```sh
+   terraform output -json storage_class_manifest | kubectl apply -f -
+   kubectl get storageclass
+   ```
+
+   It is named `<name>-gp3`; reference that name in the application values for persistent volumes.
 
 ## AWS Load Balancer Controller
 
@@ -18,17 +66,19 @@ Off by default. Setting `enable_load_balancer_controller = true` creates the con
 ```sh
 helm repo add eks https://aws.github.io/eks-charts
 helm repo update eks
+LBC="$(terraform output -json load_balancer_controller)"
 helm upgrade --install aws-load-balancer-controller eks/aws-load-balancer-controller \
   --version 3.6.2 \
   --namespace kube-system \
-  --set clusterName=<cluster_name> \
-  --set region=<region> \
-  --set vpcId=<vpc_id> \
+  --set clusterName="$(jq -r .cluster_name <<<"$LBC")" \
+  --set region="$(jq -r .region <<<"$LBC")" \
+  --set vpcId="$(jq -r .vpc_id <<<"$LBC")" \
   --set serviceAccount.create=true \
   --set serviceAccount.name=aws-load-balancer-controller
 ```
 
 The chart creates the ServiceAccount and needs no IRSA annotation: Pod Identity binds it to the role by namespace and name.
+Wait for `kubectl -n kube-system rollout status deployment/aws-load-balancer-controller` before applying anything that creates a load balancer.
 
 ### Adopting an existing installation
 

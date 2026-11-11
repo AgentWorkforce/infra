@@ -19,8 +19,13 @@ source preparation for a complete installation: mock tests do **not** prove a
 live deployment or application compatibility.
 
 The foundation supplies the private network, EKS, Pod Identity agent, security
-groups, administrative runner access, NAT/endpoints, state bucket, KMS grants
-and the OpenSearch service-linked role. Foundation and application lifecycle
+groups, administrative runner access, NAT/endpoints, state bucket and KMS grants.
+The account-wide OpenSearch service-linked role
+(`AWSServiceRoleForAmazonOpenSearchService`) is created by neither foundation
+nor this state; a brand-new account fails the domain create without it. Create
+it once per account with the foundation's
+[account prerequisites](../aws-foundation/README.md#account-prerequisites)
+before the first plan. Foundation and application lifecycle
 remain separate from this data state. Foundation automation is tracked in
 [infra#59](https://github.com/AgentWorkforce/infra/issues/59).
 
@@ -58,6 +63,26 @@ used: the runner refuses both an environment-selected workspace and a cached
 non-default workspace. Credentials belong to the approved runner, never backend
 JSON, Terraform variables, values files or command output. State and saved plans
 contain operational metadata and must remain private even without passwords.
+
+### Application namespace
+
+**Install the application charts into the namespace this state outputs.** Every
+workload Pod Identity association (sessions storage and the search
+indexer/reader) is bound to `namespace`. With the default `namespace = null`
+it is `agent-relay-<environment>`, e.g. `agent-relay-dev`, **not**
+`agent-relay`. Pods installed into any other namespace start normally but get
+no AWS credentials, so S3 and OpenSearch calls fail at runtime. Pass the
+foundation's `data_environment_inputs.namespace` through unchanged, then take
+the Helm `--namespace` from this state. After the runner's `output` command:
+
+```sh
+jq -r .namespace terraform/.runs/<account>/<region>/<environment>/verification.json
+```
+
+The `environment` output carries the same value, and `service_accounts` lists
+the exact ServiceAccount names in that namespace.
+Changing `namespace` on an existing environment replaces its Pod Identity
+associations; plan it as a reviewed migration together with the Helm release.
 
 ## Review and apply
 
