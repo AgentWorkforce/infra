@@ -85,6 +85,16 @@ digest:
 turns:
   # True only where no Neon source exists, so no legacy coverage marker is expected.
   assumeNoLegacy: false
+timing:
+  # Fresh native stores have no historical timing-turn population. When true,
+  # missing timing turns are treated as an empty native baseline rather than a
+  # timing_turns_unknown 501.
+  assumeNoTurns: false
+canonical:
+  # Async admission may advance session_index before its canonical pointer.
+  # When true, pin reads to the lagging canonical manifest rather than returning
+  # *_canonical_manifest_mismatch while the pointer catches up.
+  pinLaggingPointer: false
 login:
   # Lets POST /v1/cli/login advertise rth:sync when introspection granted it.
   # Control refuses sync sessions without it, so Desktop upload needs it true.

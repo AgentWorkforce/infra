@@ -22,9 +22,25 @@ publicUrl: ""
 global:
   singleHost:
     host: ""
+  # The customer logo relay-webapp serves at <dashboard origin>/brand/<file>
+  # (see charts/relay-webapp/values.yaml; set once on the umbrella). This chart
+  # only reads it to derive login.logoUrl: logo.svg for svg, else key
+  # (default logo.png) when existingConfigMap is set.
+  branding:
+    logo:
+      svg: ""
+      existingConfigMap: ""
+      key: ""
 existingSecret: ""
 # null preserves existing extraEnv selection; [] explicitly selects core only.
-# Managed names: flows, relayfile, chief, usage, launch. No license is used.
+# Managed names: flows, relayfile, chief, usage, launch, usage_people. No
+# license is used. With selectedFeatures null and no SELFHOST_FEATURES in
+# extraEnv, relay-control 0.5.17 and later select usage and usage_people by
+# default; a managed list (including []) is exact.
+# usage_people: the owner-only per-member Usage drill-down. It shows member
+# names, emails and their sessions' recorded titles and summaries, and audits
+# every view. Needs relay-control 0.5.17 or later (0.5.18 for bounded read API
+# use) and a relay-webapp image with the People view.
 # usage: the owner-only dashboard Usage page (counts only). While it is off,
 # Control keeps no active-user or search counters; session and summary counts
 # are read from the session directory, which records sessions regardless.
@@ -119,6 +135,19 @@ bootstrap:
   adminName: ""
   # Empty uses "Default".
   workspaceName: ""
+
+# Sign-in page co-branding (relaycontrol docs/identity.md): a customer logo,
+# drawn small through <img> beside the Agent Relay lockup, and the name shown
+# next to it. Both are public through GET /api/v1/auth/login-config.
+login:
+  # SELFHOST_LOGIN_LOGO_URL, an absolute https URL. Empty with
+  # global.branding.logo set: <dashboard origin>/brand/<file>, the origin being
+  # https://<global.singleHost.host> or dashboardUrl's. Empty and no branding:
+  # no logo.
+  logoUrl: ""
+  # SELFHOST_LOGIN_ORG_NAME. Empty: Control uses bootstrap.orgName. Control
+  # publishes the name only while a logo is set.
+  orgName: ""
 
 # How people sign in at <dashboard>/login. Without OIDC or email links only
 # the operator break-glass (a device code approved with the bootstrap token)

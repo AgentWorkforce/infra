@@ -80,10 +80,14 @@ kubectl --context "$KUBE_CONTEXT" -n "$NAMESPACE" rollout restart \
   deploy/agent-relay-search-indexer
 ```
 
-Re-run `pre` immediately before an upgrade so the local HoopDb migration-owner
-Secret input reflects the current rotating RDS administrator password. Both
-the services image and optional PostgreSQL client image must be immutable
-digest references.
+Run `refresh-admin` immediately before every later upgrade, then update the
+`agent-relay-secrets` and `search-indexer-owner` Secrets from the rewritten
+files. RDS rotates the administrator password (every 7 days by default) and
+the HoopDb migration-owner URL carries it. Do not re-run `pre` for this: once
+`post` has given the session roles LOGIN, `pre` refuses (nothing changed).
+`refresh-admin` touches no database role and needs no services image. For
+`pre` and `post`, the services image and optional PostgreSQL client image must
+be immutable digest references.
 
 ## Verification safety properties
 

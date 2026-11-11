@@ -161,6 +161,31 @@ grep -q '\-v post=true -v p1="$bulls96_session_erase_search"' "$MOCK_CAPTURE_DIR
 pass "post carries explicit optional provisioning and dedicated credentials"
 
 mv "$STATE_DIR/passwords/bulls96_session_erase_search" "$TEST_ROOT/saved-password"
-if bash "$RDS_SETUP" post >"$TEST_ROOT/missing.out" 2>&1; then fail "post accepted missing eraser password"; fi
-grep -q 'missing bulls96_session_erase_search password' "$TEST_ROOT/missing.out" || fail "missing password refusal unclear"
-pass "post refuses missing eraser pre-phase input"
+rm "$STATE_DIR/secret-files/session-erase-search-runtime/SESSION_ERASE_SEARCH_POSTGRES_URL"
+bash "$RDS_SETUP" post >/dev/null
+[[ ! -e "$STATE_DIR/passwords/bulls96_session_erase_search" ]] || fail "default post provisioned an optional credential"
+[[ ! -e "$STATE_DIR/secret-files/session-erase-search-runtime/SESSION_ERASE_SEARCH_POSTGRES_URL" ]] || fail "default post rewrote optional input"
+pass "ordinary post upgrades do not require or provision the optional eraser credential"
+PROVISION_ERASE_SEARCH_LOGIN=1 bash "$RDS_SETUP" post >/dev/null
+[[ -s "$STATE_DIR/passwords/bulls96_session_erase_search" ]] || fail "explicit post upgrade did not create optional credential"
+[[ -s "$STATE_DIR/secret-files/session-erase-search-runtime/SESSION_ERASE_SEARCH_POSTGRES_URL" ]] || fail "explicit post upgrade did not create optional input"
+pass "explicit optional provisioning upgrades an existing install without repeating pre"
+
+: > "${COMMAND_LOG}"
+rm -f "${STATE_DIR}/secret-files/agent-relay-secrets/HOOPDB_MIGRATION_URL" "${STATE_DIR}/secret-files/search-indexer-owner/RELAYHISTORY_PIPELINE_CONSUMER_SECRET"
+cp "$STATE_DIR/secret-files/session-erase-search-runtime/SESSION_ERASE_SEARCH_POSTGRES_URL" "$TEST_ROOT/eraser-input-before-refresh"
+refresh_output="$(PROVISION_ERASE_SEARCH_LOGIN=1 env -u SERVICES_IMAGE bash "${RDS_SETUP}" refresh-admin 2>&1)"
+[[ "${refresh_output}" == *"admin credential files refreshed"* ]] || fail "refresh-admin did not finish"
+[[ "${refresh_output}" != *"admin-secret-material"* ]] || fail "admin password leaked in refresh-admin"
+[[ -s "${STATE_DIR}/secret-files/agent-relay-secrets/HOOPDB_MIGRATION_URL" ]] || fail "refresh-admin did not rewrite HOOPDB_MIGRATION_URL"
+[[ -s "${STATE_DIR}/secret-files/search-indexer-owner/RELAYHISTORY_PIPELINE_CONSUMER_SECRET" ]] || fail "refresh-admin did not rewrite the search owner secret"
+! grep -q 'agent-relay-rds-' "${COMMAND_LOG}" || fail "refresh-admin must not run a database Job"
+cmp "$STATE_DIR/secret-files/session-erase-search-runtime/SESSION_ERASE_SEARCH_POSTGRES_URL" "$TEST_ROOT/eraser-input-before-refresh" || fail "refresh-admin changed the optional eraser input"
+pass "refresh-admin rewrites only the admin-derived files, without SERVICES_IMAGE or a database Job"
+
+set +e
+nostate_output="$(STATE_DIR="$(mktemp -d)" bash "${RDS_SETUP}" refresh-admin 2>&1)"
+nostate_rc=$?
+set -e
+[[ "${nostate_rc}" != 0 && "${nostate_output}" == *"run '"*"pre' first"* ]] || fail "refresh-admin without state must refuse"
+pass "refresh-admin refuses without pre state"

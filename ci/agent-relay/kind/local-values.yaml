@@ -1,0 +1,22 @@
+# Core release images/features are derived from the merged AA EKS values, with
+# the approved Sales #50 dashboard update below. The scrub contract uses the
+# qualified WASM overlay.
+# local-up generates fresh tenant IDs, credentials and TLS without operator input.
+relay-webapp:
+  image:
+    # Sales #50 / 91c94cdc; signed publish 42977431468 from 0a4dc037.
+    # Fixes Desktop's sourceless View on web; retains the owner-only Usage page.
+    repository: ghcr.io/agentworkforce/relay-webapp
+    digest: sha256:dfdf6db66808d8fa6a2921e8bfcea2dfd6b0cd78fb1bb636fbb4bd3302bc21fa
+    sourceRevision: 0a4dc037d6938f6860e59727b50664706e578bf3
+telemetry-collector:
+  image:
+    # AA Control 0.5.16 includes the reviewed brief and Relaycast event catalog.
+    repository: ghcr.io/agentworkforce/relay-control
+    digest: sha256:0b9c5a077b49b31178cc669e7c1d532f39e64c840087ca41636bb84a6c62631c
+    sourceRevision: 83a57d382e00cfcd8a10a477d1ccfc06c6959c01
+  tlsProxy:
+    image:
+      # Same immutable nginx runtime base as the pinned dashboard Dockerfile.
+      repository: nginxinc/nginx-unprivileged
+      digest: sha256:f5116ed4606f3eb015dd4a8e28cb9b351476dc0ad4bc6e9f93b19cec130cdf03

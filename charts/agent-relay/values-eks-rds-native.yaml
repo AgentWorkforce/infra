@@ -1,0 +1,322 @@
+# Customer-neutral AWS EKS profile for native History on Amazon RDS, S3 and
+# OpenSearch. Apply after values-eks.yaml; this file replaces the older
+# values-eks-native.yaml + nested sessions-pipeline profile composition:
+#
+#   helm upgrade --install agent-relay charts/agent-relay \
+#     --namespace agent-relay-<environment> --create-namespace \
+#     -f charts/agent-relay/values-eks.yaml \
+#     -f charts/agent-relay/values-eks-rds-native.yaml \
+#     -f <private-site-values.yaml>
+#
+# This file contains no credentials and is deliberately renderable. Replace
+# every value marked REQUIRED OVERRIDE before install. Terraform must bind EKS
+# Pod Identity associations to the release namespace and the four exact Service
+# Account names below. The cluster must have a default encrypted EBS StorageClass
+# unless relaycast.persistence.storageClass is set in the private site values.
+# Publish the native history origin with scripts/selfhost/eks-alb-ingress.sh,
+# EKS_ALB_INGEST=true and EKS_ALB_HISTORY_LEGACY_SERVICE unset (README).
+#
+# Reader-first upgrade contract: values-eks.yaml supplies READER_MAX_RULESET=10
+# while leaving SCRUB_ENGINE and SCRUB_ENGINE_REQUIRED unset. Wait for that
+# revision to become Ready before applying values-scrub-wasm-bindgen.yaml. A
+# fresh install with an empty Sessions database may apply both overlays at once.
+
+x-pins:
+  services-image: &services_image
+    repository: ghcr.io/agentworkforce/sessions-pipeline
+    digest: sha256:77022c5b6a1d30f96f921d703eb27a1acada8ec273ad84aebdde24f8eddce305
+
+components:
+  relayauth: false
+  relayhistory: false
+  relayflows: false
+
+global:
+  tenant:
+    # REQUIRED OVERRIDE: stable organization identifier; never change it after
+    # the first session is written.
+    orgId: example-org
+
+relaycast:
+  # Native customer installs use RDS rather than Relaycast's SQLite backend.
+  existingSecret: agent-relay-secrets
+  runtime:
+    backend: postgres
+    postgres:
+      image:
+        repository: ghcr.io/agentworkforce/relaycast-self-host
+        digest: sha256:ab9dd6781e68f09d5e2e686a17088f9ad533978ef13d974a47d6c212d8eedbde
+  postgresCa:
+    enabled: true
+    configMap: rds-ca
+    key: ca.crt
+  retention:
+    messageTtlDays: null
+  persistence:
+    enabled: true
+    # Empty means the cluster's default encrypted EBS StorageClass.
+    storageClass: ""
+
+sessions-pipeline:
+  releaseContract:
+    unifiedServicesDigest: true
+
+  # RDS is provisioned outside Helm. scripts/selfhost/rds-setup.sh owns the
+  # privileged pre/post bootstrap; no in-cluster role bootstrap Job may run.
+  hoopdb:
+    enabled: false
+  session-object-storage:
+    enabled: false
+  searchWorkerRole: { bootstrapJob: { enabled: false } }
+  runtimeRole: { bootstrapJob: { enabled: false } }
+  functionDefaultRevoke: { bootstrapJob: { enabled: false } }
+
+  worker:
+    image: *services_image
+    existingSecret: agent-relay-secrets
+    summaryEncryption:
+      existingSecret: agent-relay-secrets
+    serviceAccount:
+      create: true
+      name: agent-relay-worker
+    acknowledgeWorkloadRename: false
+    hoopdb:
+      existingSecret: agent-relay-secrets
+      key: HOOPDB_URL
+    migrations:
+      hoopdb:
+        existingSecret: agent-relay-secrets
+        key: HOOPDB_MIGRATION_URL
+      databaseMode: rds
+      supabaseShim: false
+      runtimeRole: sessions_pipeline_runtime
+      runtimeRoleLogin: true
+      functionBoundaryMode: global-default-revoke
+      waitForRole: { enabled: false, functionDefault: false }
+    postgresCa:
+      enabled: true
+      configMap: rds-ca
+      key: ca.crt
+      # REQUIRED OVERRIDE: lowercase SHA-256 of the immutable RDS CA bundle.
+      sha256: "0000000000000000000000000000000000000000000000000000000000000000"
+    locker:
+      provider: s3
+      endpoint: ""
+      # REQUIRED OVERRIDE: customer-owned bucket and its AWS region.
+      bucket: example-agent-relay-sessions
+      region: us-west-2
+      credentials: { mode: podIdentity }
+    lockerInit:
+      enabled: false
+
+  # The legacy RelayAuth ingest Deployment is absent. Its chart-owned Service
+  # Account remains the identity used by the native ingest edge.
+  alleyoop:
+    deployment:
+      enabled: false
+    image: *services_image
+    existingSecret: agent-relay-secrets
+    serviceAccount:
+      create: true
+      name: agent-relay-session-ingest-api
+    hoopdb:
+      existingSecret: agent-relay-secrets
+      key: HOOPDB_URL
+    postgresCa:
+      enabled: true
+      configMap: rds-ca
+      key: ca.crt
+      # REQUIRED OVERRIDE: same RDS CA SHA-256 as worker.postgresCa.sha256.
+      sha256: "0000000000000000000000000000000000000000000000000000000000000000"
+    locker:
+      provider: s3
+      endpoint: ""
+      # REQUIRED OVERRIDE: same bucket/region as worker.locker.
+      bucket: example-agent-relay-sessions
+      region: us-west-2
+      credentials: { mode: podIdentity }
+
+  sessionReadApi:
+    enabled: true
+    image: *services_image
+    # Output and digest use Postgres facts. No narrative model is configured,
+    # so no session content leaves the cluster.
+    output: { enabled: true }
+    digest: { enabled: true }
+    # REQUIRED OVERRIDE: public native History origin.
+    origin: https://history.placeholder.company
+    completeSince: epoch
+    directoryWorkspaces: "*"
+    events: { messageIds: true }
+    turns: { assumeNoLegacy: true }
+    timing: { assumeNoTurns: true }
+    canonical: { pinLaggingPointer: true }
+    login: { advertisesSync: false }
+    allowInClusterHttp: true
+    config:
+      existingSecret: agent-relay-read-api
+      key: RELAYHISTORY_READ_API_SECRET
+    postgres: { tlsProfile: custom-ca }
+    postgresCa:
+      enabled: true
+      configMap: rds-ca
+      key: ca.crt
+      # REQUIRED OVERRIDE: same RDS CA SHA-256 as worker.postgresCa.sha256.
+      sha256: "0000000000000000000000000000000000000000000000000000000000000000"
+    search:
+      backend: opensearch
+      # REQUIRED OVERRIDE: stable projection identifier and VPC endpoint.
+      backendId: opensearch-main
+      opensearch:
+        url: https://search.placeholder.company
+        # REQUIRED OVERRIDE: same OpenSearch region as the indexer.
+        region: us-west-2
+        indexPrefix: relayhistory
+    auth:
+      mode: self_issued
+      relaycontrol: { enabled: false, url: "", existingSecret: "" }
+      selfIssued:
+        internalSecret:
+          existingSecret: agent-relay-secrets
+          key: session-read-api-secret
+    cors:
+      allowedOrigins:
+        - https://dashboard.placeholder.company
+    serviceAccountCreate: true
+    serviceAccountName: agent-relay-session-read
+    networkPolicy:
+      enabled: true
+      controlFrom:
+        - podSelector:
+            matchLabels: { app.kubernetes.io/name: relay-control }
+      # REQUIRED OVERRIDE: the ALB subnet CIDRs, not the whole VPC.
+      publicFrom:
+        - ipBlock: { cidr: 10.0.0.0/16 }
+    extraEnv:
+      # REQUIRED OVERRIDE: LOCKER_BUCKET/REGION must match worker.locker.
+      - { name: LOCKER_BUCKET, value: example-agent-relay-sessions }
+      - { name: LOCKER_REGION, value: us-west-2 }
+      - { name: PIPELINE_ORG_FROM_PREFIX, value: "true" }
+      - { name: PIPELINE_KEY_PREFIX, value: 96bulls }
+      - { name: READ_API_SESSION_QUERY, value: "true" }
+
+  ingestEdge:
+    enabled: true
+    claimLockBusy: true
+    image: *services_image
+    # REQUIRED OVERRIDE: same public native History origin as the read API.
+    origin: https://history.placeholder.company
+    allowInClusterHttp: true
+    sessionSelection: true
+    heartbeatAccept: true
+    relaycontrol:
+      # REQUIRED OVERRIDE when the Control Service is renamed. HTTP is accepted
+      # only for a complete Kubernetes Service DNS origin.
+      url: http://relay-control.agent-relay-placeholder.svc.cluster.local
+    config:
+      existingSecret: agent-relay-ingest-edge-runtime
+      databaseUrlKey: database-url
+      introspectSecretKey: introspect-secret
+    postgres:
+      caConfigMap: rds-ca
+      caKey: ca.crt
+      # REQUIRED OVERRIDE: same RDS CA SHA-256 as worker.postgresCa.sha256.
+      caSha256: "0000000000000000000000000000000000000000000000000000000000000000"
+    serviceAccountName: agent-relay-session-ingest-api
+    locker:
+      provider: s3
+      endpoint: ""
+      # REQUIRED OVERRIDE: same bucket/region as worker.locker.
+      bucket: example-agent-relay-sessions
+      region: us-west-2
+      credentials: { mode: podIdentity }
+      existingSecret: ""
+
+  searchIndexer:
+    enabled: true
+    image: *services_image
+    completeSince: epoch
+    config:
+      existingSecret: search-indexer-runtime
+      key: RELAYHISTORY_PIPELINE_CONSUMER_SECRET
+    search:
+      backend: opensearch
+      # REQUIRED OVERRIDE: same backend id and endpoint/region as the read API.
+      backendId: opensearch-main
+      opensearch:
+        url: https://search.placeholder.company
+        region: us-west-2
+        indexPrefix: relayhistory
+    locker:
+      provider: s3
+      endpoint: ""
+      # REQUIRED OVERRIDE: same bucket/region as worker.locker.
+      bucket: example-agent-relay-sessions
+      region: us-west-2
+    postgres:
+      tlsProfile: custom-ca
+      caConfigMap: rds-ca
+      caKey: ca.crt
+      # REQUIRED OVERRIDE: same RDS CA SHA-256 as worker.postgresCa.sha256.
+      caSha256: "0000000000000000000000000000000000000000000000000000000000000000"
+    bootstrap:
+      enabled: true
+      existingSecret: search-indexer-owner
+      key: RELAYHISTORY_PIPELINE_CONSUMER_SECRET
+    serviceAccount:
+      create: true
+      name: agent-relay-search-indexer
+    # The indexer writes commit/branch/file facts consumed by Output, digest and
+    # coordination overlaps. Bootstrap remains an explicit per-workspace action.
+    outputFacts:
+      enabled: true
+      bootstrap:
+        enabled: false
+        runId: ""
+
+relay-control:
+  image:
+    repository: ghcr.io/agentworkforce/relay-control
+    digest: sha256:0b9c5a077b49b31178cc669e7c1d532f39e64c840087ca41636bb84a6c62631c
+  existingSecret: agent-relay-secrets
+  bootstrap:
+    # REQUIRED OVERRIDE: customer display name and first owner role mailbox.
+    orgName: Example Organization
+    adminEmail: admin@placeholder.company
+    workspaceName: Default
+  auth:
+    password: { enabled: true }
+    # One external ALB hop. Change only when the actual proxy chain differs.
+    trustedProxies: 1
+  secretKeys:
+    relayauthApiKey: ""
+    relaycastInternalSecret: relaycast-internal-secret
+    introspectSecret: relaycontrol-introspect-secret
+    sessionReadApiSecret: session-read-api-secret
+    setupKey: selfhost-setup-key
+  services:
+    relayauthEnabled: false
+    relayauthUrl: ""
+    relayhistoryUrl: ""
+    relayhistoryPublicUrl: ""
+    relayhistoryBackend: native
+    sessionReadApiUrl: http://agent-relay-read-api
+    sessionReadApiPublicUrl: https://history.placeholder.company
+    sessionReadApiMcpReads: true
+  introspection:
+    audiences:
+      - https://history.placeholder.company
+      - https://api.placeholder.company
+  postgresCa:
+    enabled: true
+    configMap: rds-ca
+    key: ca.crt
+
+relay-webapp:
+  image:
+    repository: ghcr.io/agentworkforce/relay-webapp
+    digest: sha256:da0cc80476eac734299c0c6ceb94e2bca7dae7913cce56a8ca8592cf086dd02e
+  runtime:
+    sessionReadApiEnabled: true
+    # The backend endpoint is on; the customer-visible tab stays default off.
+    coordinationOverlapsEnabled: false

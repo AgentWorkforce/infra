@@ -35,6 +35,21 @@ components:
 global:
   singleHost:
     host: ""
+  # Optional customer logo for the sign-in page and dashboard. relay-webapp
+  # serves it at <dashboard origin>/brand/<file> (no extra web server or
+  # ingress route: / already reaches the dashboard), and relay-control sets
+  # SELFHOST_LOGIN_LOGO_URL to that URL unless relay-control.login.logoUrl
+  # overrides it. Set svg (inline, served as logo.svg, at most 256 KiB) or
+  # existingConfigMap (+ key, the file name, .png only; default logo.png).
+  # Needs components.webapp unless relay-control.login.logoUrl is set.
+  # relay-control.login.orgName sets the name shown beside the logo (default
+  # relay-control.bootstrap.orgName). For the dashboard's own mark, also set
+  # relay-webapp.customerProfile.logo: /brand/<file>.
+  branding:
+    logo:
+      svg: ""
+      existingConfigMap: ""
+      key: ""
 
 gkeIngress:
   enabled: false

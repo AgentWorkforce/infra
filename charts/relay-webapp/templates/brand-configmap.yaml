@@ -1,0 +1,13 @@
+{{- include "relay-webapp.validate" . }}
+{{- with (include "relay-webapp.brandLogo" . | fromJson).svg }}
+# global.branding.logo.svg, mounted at html/brand/ and served at /brand/logo.svg.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "relay-webapp.brandConfigMap" $ | quote }}
+  namespace: {{ $.Release.Namespace | quote }}
+  labels:
+    {{- include "relay-webapp.labels" $ | nindent 4 }}
+data:
+  logo.svg: {{ . | quote }}
+{{- end }}

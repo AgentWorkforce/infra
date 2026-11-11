@@ -8,6 +8,10 @@
 {{- if and (dig "relaycast" true (.Values.components | default dict)) (eq (dig "credentials" "authority" "" (.Values.relaycast | default dict)) "relayauth") (not (dig "relayauth" true (.Values.components | default dict))) }}
 {{- fail "relaycast.credentials.authority=relayauth requires components.relayauth=true: RelayAuth is the ar_ credential authority that pushes ar_ws_ keys into Relaycast" }}
 {{- end }}
+{{- $brand := dig "branding" "logo" dict (.Values.global | default dict) | default dict -}}
+{{- if and (kindIs "map" $brand) (or $brand.svg $brand.existingConfigMap) (dig "control" true (.Values.components | default dict)) (not (dig "webapp" true (.Values.components | default dict))) (not (dig "login" "logoUrl" "" (index .Values "relay-control" | default dict))) }}
+{{- fail "global.branding.logo is hosted by relay-webapp, but components.webapp=false: the sign-in page would link a logo nothing serves. Enable components.webapp, or host the logo yourself and set relay-control.login.logoUrl" }}
+{{- end }}
 {{- include "agent-relay.validateHistoryOrigin" . }}
 {{- include "agent-relay.validateDurableActors" . }}
 {{- include "agent-relay.validateSingleHost" . }}

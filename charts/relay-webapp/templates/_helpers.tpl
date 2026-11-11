@@ -33,11 +33,48 @@ also routes /api (flows workers and the integrations OAuth callback call
 {{- $single := include "relay-webapp.singleHost" . -}}
 {{- if $single }}{{ printf "https://%s" $single }}{{ else }}{{ .Values.runtime.publicUrl }}{{ end -}}
 {{- end -}}
+{{- /* global.branding.logo: an operator logo served at <origin>/brand/<file>.
+relay-control derives SELFHOST_LOGIN_LOGO_URL from the same value with the
+same file name rule, so keep relay-control.brandLogoFile in step. */ -}}
+{{- define "relay-webapp.brandLogo" -}}{{ toJson (dig "branding" "logo" dict (.Values.global | default dict) | default dict) }}{{- end -}}
+{{- define "relay-webapp.brandLogoFile" -}}
+{{- $logo := include "relay-webapp.brandLogo" . | fromJson -}}
+{{- if $logo.svg }}logo.svg{{ else if $logo.existingConfigMap }}{{ $logo.key | default "logo.png" }}{{ end -}}
+{{- end -}}
+{{- define "relay-webapp.brandConfigMap" -}}
+{{- $logo := include "relay-webapp.brandLogo" . | fromJson -}}
+{{- if $logo.svg }}{{ printf "%s-brand" (include "relay-webapp.fullname" . | trunc 57 | trimSuffix "-") }}{{ else }}{{ $logo.existingConfigMap }}{{ end -}}
+{{- end -}}
+{{- define "relay-webapp.validateBrandLogo" -}}
+{{- $raw := dig "branding" "logo" dict (.Values.global | default dict) -}}
+{{- if not (or (kindIs "invalid" $raw) (kindIs "map" $raw)) }}{{ fail "global.branding.logo must be a map with svg, existingConfigMap or key" }}{{ end -}}
+{{- $logo := $raw | default dict -}}
+{{- range $k, $v := $logo }}{{ if not (has $k (list "svg" "existingConfigMap" "key")) }}{{ fail (printf "global.branding.logo.%s is not a setting (use svg, or existingConfigMap and key)" $k) }}{{ end }}{{ if not (or (kindIs "invalid" $v) (kindIs "string" $v)) }}{{ fail (printf "global.branding.logo.%s must be a string" $k) }}{{ end }}{{ end -}}
+{{- if and $logo.svg $logo.existingConfigMap }}{{ fail "global.branding.logo: set svg or existingConfigMap, not both" }}{{ end -}}
+{{- if and $logo.key (not $logo.existingConfigMap) }}{{ fail "global.branding.logo.key names a key in existingConfigMap; set existingConfigMap too (an inline svg is always served as logo.svg)" }}{{ end -}}
+{{- with $logo.existingConfigMap }}{{ if or (gt (len .) 253) (not (regexMatch "^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$" .)) }}{{ fail "global.branding.logo.existingConfigMap must be a ConfigMap name in the release namespace" }}{{ end }}{{ end -}}
+{{- /* existingConfigMap content is not linted, and images before relay-webapp
+#132 serve /brand/ without a CSP, so a ConfigMap SVG could run script on the
+dashboard origin when opened directly: only PNG is accepted there (served as
+image/png with nosniff); an SVG goes inline, where it is checked. */ -}}
+{{- with $logo.key }}{{ if or (gt (len .) 253) (not (regexMatch "^[A-Za-z0-9][A-Za-z0-9._-]*\\.png$" .)) }}{{ fail "global.branding.logo.key must be a file name of [A-Za-z0-9._-] ending in .png (an SVG logo goes inline in global.branding.logo.svg, where it is checked)" }}{{ end }}{{ end -}}
+{{- with $logo.svg -}}
+{{- if gt (len .) 262144 }}{{ fail "global.branding.logo.svg must be at most 256 KiB; use existingConfigMap for a larger file" }}{{ end -}}
+{{- if not (regexMatch "(?i)<([^\\s<>/:]+:)?svg[\\s/>]" .) }}{{ fail "global.branding.logo.svg must be SVG markup (<svg ...>...</svg>)" }}{{ end -}}
+{{- /* Browsers drop tabs and newlines inside URLs and decode character
+references in attribute values, so match javascript: with whitespace between
+its letters, match namespace-prefixed elements (<svg:script>), and refuse
+character references and DTDs (entities) outright;
+design-tool SVG needs neither. */ -}}
+{{- if regexMatch "(?i)<([^\\s<>/:]+:)?(script|foreignobject)|j\\s*a\\s*v\\s*a\\s*s\\s*c\\s*r\\s*i\\s*p\\s*t\\s*:|[\\s/]on[a-z]+\\s*=|&#|<!doctype|<!entity" . }}{{ fail "global.branding.logo.svg must not contain script, event handler attributes, javascript: URLs, foreignObject, character references (&#...;) or a DOCTYPE/ENTITY declaration" }}{{ end -}}
+{{- end -}}
+{{- end -}}
 {{- define "relay-webapp.ingressHost" -}}{{ include "relay-webapp.singleHost" . | default .Values.ingress.host }}{{- end -}}
 {{- define "relay-webapp.validate" -}}
 {{- $image := include "relay-webapp.image" . -}}
 {{- if ne (int .Values.replicaCount) 1 }}{{ fail "replicaCount must be 1: the dashboard image serves one static replica and the chart makes no HA claim" }}{{ end -}}
 {{- range $key, $_ := include "relay-webapp.selectorLabels" . | fromYaml }}{{ if hasKey ($.Values.podLabels | default dict) $key }}{{ fail (printf "podLabels must not set selector label %s: the Deployment selector would no longer match its pods" $key) }}{{ end }}{{ end -}}
+{{- include "relay-webapp.validateBrandLogo" . -}}
 {{- if ne .Values.service.type "ClusterIP" }}{{ fail "service.type must be ClusterIP; expose the dashboard only through ingress" }}{{ end -}}
 {{- $single := include "relay-webapp.singleHost" . -}}
 {{- if $single }}

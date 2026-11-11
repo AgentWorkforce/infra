@@ -215,11 +215,12 @@ those logins before migration evidence exists and verifies each login over TLS.
 ### Optional operator eraser role (2026.11.1 pull update)
 
 The alpha.5 AA install predates operator hard-delete and needs no eraser login.
-For the later approved update, `pre` also creates the separate
+For a fresh installation on the later approved update, `pre` also creates the separate
 `bulls96_session_erase_search` identity as `NOLOGIN NOINHERIT` and writes its
 private input to
 `$STATE_DIR/secret-files/session-erase-search-runtime/SESSION_ERASE_SEARCH_POSTGRES_URL`.
-Repeat runs reuse the password; they do not disable an already activated login.
+Optional-role provisioning reuses its password and does not disable an already
+activated eraser login.
 Neither this file nor the new role enables hard-delete or mounts credentials
 into a workload. No chart version changes accompany this role support.
 
@@ -227,7 +228,13 @@ Provision the optional **Postgres search** eraser login only after both the
 current HoopDb migrate Job and the search-indexer owner bootstrap complete.
 With the approved pipeline runtime that accepts the RDS owner's admin-only
 creator edge, use `PROVISION_ERASE_SEARCH_LOGIN=1` with the normal `post`
-command. It refuses missing search tables, missing forced tenant RLS, broad
+command. For an existing installation, use `refresh-admin` for the usual admin
+credential refresh and this explicit `post` provisioning for the optional role;
+do not repeat the full `pre` bootstrap after the core logins were activated.
+The optional portion creates or reuses the new identity and private credential;
+standard `post` behavior for core roles is unchanged. Default `post` needs no
+optional credential or new role on an old installation.
+It refuses missing search tables, missing forced tenant RLS, broad
 content/write privileges, unsafe attributes, and borrowed memberships. The
 RDS owner retains only its creator ADMIN edge (no INHERIT or SET on PG16+),
 so later password rotation remains possible. The eraser itself belongs to no
@@ -409,6 +416,54 @@ exercise list, spawn, idempotent replay, Ready status, release and roster
 removal against an enrolled owner/admin Desktop. If that lifecycle regresses,
 remove only `launch`. See relay-control `docs/agent-launch.md` for the complete
 contract.
+
+### Optional: customer logo on the sign-in page
+
+The charts host the customer's logo on the dashboard origin; no separate web
+server, ConfigMap-backed nginx or extra ingress route is needed (`/` already
+reaches the dashboard). Set it once on the umbrella:
+
+```yaml
+global:
+  branding:
+    logo:
+      # Either paste an SVG (at most 256 KiB, no script; served as logo.svg) ...
+      svg: |
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 32">...</svg>
+      # ... or reference a ConfigMap the operator creates in $NAMESPACE first
+      # (PNG only; key = served file name):
+      #   kubectl -n "$NAMESPACE" create configmap relay-brand --from-file=logo.png
+      # existingConfigMap: relay-brand
+      # key: logo.png
+relay-control:
+  login:
+    orgName: ""   # optional; empty shows relay-control.bootstrap.orgName
+relay-webapp:
+  customerProfile:
+    logo: /brand/logo.svg   # optional: also use it as the dashboard's mark
+                            # (/brand/<key>, e.g. /brand/logo.png, for a ConfigMap)
+```
+
+relay-webapp serves the file at `<dashboard origin>/brand/<file>`, and
+relay-control sets `SELFHOST_LOGIN_LOGO_URL` to that https URL (from
+`relay-control.dashboardUrl`, or `https://<global.singleHost.host>`). To use a
+logo hosted elsewhere instead, set `relay-control.login.logoUrl` to its https
+URL. Control publishes the organization name only while a logo is set, so
+`login-config` returns `org_name: null` without one even when
+`bootstrap.orgName` is set. Do not also set `SELFHOST_LOGIN_LOGO_URL` in
+`relay-control.extraEnv`; the chart refuses the duplicate. Needs a
+relay-control image with the co-branded sign-in page (relaycontrol `7b57625`
+or later). Dashboard images from relay-webapp #132 or later add a
+script-free CSP and a 404 for missing files under `/brand/`; older images
+still serve the file (with `nosniff`).
+
+Check it after install (step 7):
+
+```sh
+# Use /brand/<key> (e.g. logo.png) for an existingConfigMap logo.
+curl -sSI "https://$APP_HOST/brand/logo.svg" | grep -Ei '^(HTTP|content-type)'
+curl -sS "https://$APP_HOST/cloud/api/v1/auth/login-config" | jq '{logo_url, org_name}'
+```
 
 ### Upgrades
 
@@ -599,6 +654,9 @@ feed. A dispatch alone is not publication or client-acceptance proof.
 **Who:** the configured customer owner, then each invited user.
 
 1. Open the approved app's `/login` page and sign in through customer SSO.
+   If the customer logo was configured
+   ([sign-in logo](#optional-customer-logo-on-the-sign-in-page)), confirm it
+   and the organization name appear beside the Agent Relay lockup.
    Confirm the organization/workspace, then invite pilot users in Members.
    Verify an uninvited account is refused.
    Microsoft Entra issuers that omit `email_verified` need the narrowly scoped

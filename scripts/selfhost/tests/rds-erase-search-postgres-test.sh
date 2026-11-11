@@ -41,6 +41,8 @@ ALTER TABLE search_index.projection_state FORCE ROW LEVEL SECURITY;
 CREATE POLICY tenant_only ON search_index.transcript_events USING(org_id=current_setting('bulls96_read.org_id',true) AND workspace_id=current_setting('bulls96_read.workspace_id',true));
 CREATE POLICY tenant_only ON search_index.projection_state USING(org_id=current_setting('bulls96_read.org_id',true) AND workspace_id=current_setting('bulls96_read.workspace_id',true));
 SQL
+# Model an existing install whose normal pre/post ran before this role existed.
+admin -c 'DROP OWNED BY bulls96_session_erase_search; DROP ROLE bulls96_session_erase_search' >/dev/null
 role_sql true >/dev/null
 role_sql true >/dev/null
 role_sql false >/dev/null
