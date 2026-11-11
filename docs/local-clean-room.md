@@ -64,6 +64,21 @@ The installed helper must use its explicit q7m2k9 admin socket:
 ```sh
 kind_helper="$HOME/Applications/Agent Relay Kind.app/Contents/Helpers/Agent Relay Kind Helper"
 kind_socket="$HOME/.agentworkforce/desktop/core.com.agentrelay.desktop.q7m2k9.sock"
+"$kind_helper" call uploader.status --socket "$kind_socket" --json
+```
+
+After ending the owned test sessions, require timestamped uploader observations
+with `delivery.pending_records=0`, settled `unqueued_changes=0`, no unresolved
+failure or quarantined records, and `stopped=false`. Confirm the final test
+session was acknowledged. A running uploader or one successful upload is not
+proof that the queue drained. Investigate sustained retries before sign-out;
+never pause delivery, change sharing policy or delete queue records to force
+zero. Retain sanitized status evidence for both the old-fixture cleanup and the
+fresh AA acceptance.
+
+Only after that drain check, uninstall integrations and sign out:
+
+```sh
 "$kind_helper" call tools.status --socket "$kind_socket" --json
 "$kind_helper" call tools.manage --socket "$kind_socket" --params '{"tool_id":"codex","action":"uninstall"}' --json
 "$kind_helper" call tools.manage --socket "$kind_socket" --params '{"tool_id":"claude","action":"uninstall"}' --json
@@ -96,8 +111,12 @@ its canonical path and verifies it:
 cd "$HOME/Projects/AgentWorkforce/local-e2e/infra"
 git fetch origin main
 git show origin/main:ci/agent-relay/kind/local_host_setup.py > ci/agent-relay/kind/local_host_setup.py
-git diff --exit-code origin/main -- ci/agent-relay/kind/local_host_setup.py
+test "$(git hash-object ci/agent-relay/kind/local_host_setup.py)" = \
+  "$(git rev-parse origin/main:ci/agent-relay/kind/local_host_setup.py)"
 ```
+
+The blob comparison also works when the old checkout has not tracked this helper
+yet; `git diff` would report that untracked file as absent from the old index.
 
 Khaliq runs this exact command in an interactive terminal **on ar-lap**:
 
@@ -238,6 +257,9 @@ it from the deleted fixture.
 - A new unique marker from a real `codex exec` reaches Desktop upload,
   pointer/manifest storage, ready directory, transcript index, session-list
   search and dashboard transcript. Use fresh IDs, not old provider history.
+  After stopping the test producers, require the native uploader's pending and
+  unqueued counts to reach zero with no unresolved failure/quarantine. Record
+  the final acknowledgment and timestamped drain observations before wiping.
 - Prove WASM scrubbing on that real upload. Generate a syntactically valid but
   entirely invented credential fixture that is never used for authentication.
   Include it beside the unique marker in the new Codex session, retain the local
