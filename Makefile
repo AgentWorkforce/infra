@@ -12,6 +12,7 @@ control_archive_arg = '$(subst ','"'"',$(CONTROL_IMAGE_ARCHIVE))'
 
 .PHONY: help kind-up kind-up-local-control kind-down kind-render kind-build-addons kind-build-control kind-proof kind-proof-core kind-proof-addons kind-reconcile-names
 help:
+	@echo "Fresh local stack: make local-up; one-time macOS trust: make local-trust; source loop: make dev"
 	@echo "Clean Mac prerequisites: make local-tools (checkout-local pinned Kind, Helm and Python dependencies)"
 	@echo "Code loop: make dev after one-time configure; optional make dev-plan (existing Kind; docs/kind-development.md)"
 	@echo "Local kind: make kind-render, kind-up, kind-proof, or kind-down PROFILE=core|addons"
@@ -25,6 +26,22 @@ kind-up:
 .PHONY: local-tools
 local-tools:
 	$(PYTHON) ci/agent-relay/kind/local_tools.py --prepare
+
+.PHONY: local-up local-down
+local-up: local-tools
+	PATH=$(call sh_quote,$(CURDIR)/.kind/tools):"$$PATH" $(call sh_quote,$(CURDIR)/.kind/tools/venv/bin/python3) ci/agent-relay/kind/local_stack.py up
+local-down: local-tools
+	PATH=$(call sh_quote,$(CURDIR)/.kind/tools):"$$PATH" $(call sh_quote,$(CURDIR)/.kind/tools/venv/bin/python3) ci/agent-relay/kind/local_stack.py down
+
+.PHONY: local-trust local-login
+local-trust:
+	sudo $(PYTHON) ci/agent-relay/kind/local_host_setup.py up
+local-login: local-tools
+	PATH=$(call sh_quote,$(CURDIR)/.kind/tools):"$$PATH" $(call sh_quote,$(CURDIR)/.kind/tools/venv/bin/python3) ci/agent-relay/kind/local_stack.py login
+
+.PHONY: local-dev-setup
+local-dev-setup: local-tools
+	PATH=$(call sh_quote,$(CURDIR)/.kind/tools):"$$PATH" $(call sh_quote,$(CURDIR)/.kind/tools/venv/bin/python3) ci/agent-relay/kind/local_dev_setup.py --output $(call sh_quote,$(DEV_CONFIG))
 kind-up-local-control: kind-build-control
 	$(MAKE) kind-up PROFILE=$(profile_arg)
 
@@ -50,6 +67,7 @@ kind-proof-addons:
 dev-plan:
 	$(PYTHON) ci/agent-relay/dev/dev.py plan --config $(call sh_quote,$(DEV_CONFIG)) $(if $(DEV_PLAN),--plan $(call sh_quote,$(DEV_PLAN))) --components $(call sh_quote,$(DEV_COMPONENTS))
 dev:
+	@if ! test -f $(call sh_quote,$(DEV_CONFIG)) && test -f .kind/local/cluster.json; then $(MAKE) local-dev-setup DEV_CONFIG=$(call sh_quote,$(DEV_CONFIG)); fi
 	$(PYTHON) ci/agent-relay/dev/dev.py run --config $(call sh_quote,$(DEV_CONFIG)) $(if $(DEV_PLAN),--plan $(call sh_quote,$(DEV_PLAN))) --components $(call sh_quote,$(DEV_COMPONENTS))
 dev-test:
 	$(PYTHON) -m unittest discover -s ci/agent-relay/dev -p 'test_*.py'

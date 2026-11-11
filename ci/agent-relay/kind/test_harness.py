@@ -169,6 +169,8 @@ class Harness(unittest.TestCase):
         self.local.tls()
         ca = (self.local.state / "ca.crt").read_bytes()
         old = (self.local.state / "tls.crt").read_bytes()
+        self.local.tls()
+        self.assertEqual((self.local.state / "tls.crt").read_bytes(), old)
         tls.create(self.local, [*stack.HOSTS, "new.kind.agentrelay.com"], stack.NS)
         self.assertNotEqual((self.local.state / "tls.crt").read_bytes(), old)
         old = (self.local.state / "tls.crt").read_bytes()

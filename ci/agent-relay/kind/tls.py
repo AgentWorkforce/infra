@@ -1,4 +1,5 @@
 """Host-only CA key and strict-verifier-compatible local server certificate."""
+import re
 
 
 def create(stack, hosts, namespace):
@@ -30,9 +31,25 @@ def create(stack, hosts, namespace):
         paired = stack.cmd(["openssl", "pkey", "-in", private_key, "-pubout"], check=False)
         return public.returncode == paired.returncode == 0 and public.stdout == paired.stdout
 
-    valid_leaf = (current(cert, "Authority Key Identifier", 86400) and matches(cert, key)
-                  and all(stack.cmd(["openssl", "verify", "-CAfile", ca, "-verify_hostname", host, cert], check=False).returncode == 0
-                          for host in hosts))
+    # macOS LibreSSL has no verify -verify_hostname. Our generated certificates
+    # use literal DNS SANs, so check those exact names and the cryptographic
+    # chain separately rather than needlessly reissuing a valid leaf each up.
+    def matches_hosts():
+        parsed = stack.cmd(["openssl", "x509", "-in", cert, "-noout", "-text"], check=False)
+        names = set()
+        lines = parsed.stdout.splitlines()
+        for index, line in enumerate(lines):
+            if "X509v3 Subject Alternative Name:" not in line:
+                continue
+            indent = len(line) - len(line.lstrip())
+            for child in lines[index + 1:]:
+                if child.strip() and len(child) - len(child.lstrip()) <= indent:
+                    break
+                names.update(re.findall(r"DNS:([^,\s]+)", child))
+        return parsed.returncode == 0 and set(hosts) <= names
+
+    valid_leaf = (current(cert, "Authority Key Identifier", 86400) and matches(cert, key) and matches_hosts()
+                  and stack.cmd(["openssl", "verify", "-x509_strict", "-CAfile", ca, cert], check=False).returncode == 0)
     if renew_ca or not valid_leaf:
         config = stack.state / "tls.cnf"
         san = ",".join("DNS:" + host for host in hosts)
