@@ -66,6 +66,9 @@ jobs:
       - name: Self-hosted operator script tests
         run: scripts/selfhost/tests/run-tests.sh
 
+      - name: RDS eraser role with a non-superuser owner
+        run: scripts/selfhost/tests/rds-erase-search-postgres-test.sh
+
       # The development-preview customer handoff builds, verifies, extracts,
       # and its umbrella resolves every file:// dependency and renders.
       - name: Customer handoff package smoke
