@@ -105,6 +105,10 @@ class ReleaseManifestTest(unittest.TestCase):
             overlay.count("__IMAGE_MIRROR_ROOT__/ghcr.io/example/sessions-pipeline"),
             10,
         )
+        self.assertEqual(
+            overlay.count("__IMAGE_MIRROR_ROOT__/ghcr.io/example/relaycast"), 2
+        )
+        self.assertIn("runtime:\n    postgres:\n      image:", overlay)
         self.assertIn("sessionReadApi:\n    image:", overlay)
         self.assertIn("nativeConsumer:\n    image:", overlay)
         self.assertIn(
