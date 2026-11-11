@@ -117,6 +117,38 @@ class RetainedCaTests(unittest.TestCase):
                 local_ca.prepare(self.stack)
         self.assertFalse(any(c[0] in ("security", "sudo") for c in self.commands))
 
+    def test_macos_present_certificate_must_pass_trust_verification(self):
+        self.initial_ca()
+        original = self.stack.cmd
+        def command(args, **kwargs):
+            if args[0] == "security":
+                self.commands.append([str(a) for a in args])
+                self.assertEqual(args[:2], ["security", "verify-cert"])
+                self.assertEqual(args[-2:], ["-p", "basic"])
+                return SimpleNamespace(returncode=0, stdout="")
+            return original(args, **kwargs)
+        self.stack.cmd = command
+        with patch.object(local_ca.sys, "platform", "darwin"), patch.object(local_ca, "certificate_present", return_value=True):
+            self.assertTrue(local_ca.prepare(self.stack))
+        self.assertEqual({p.name for p in self.store.iterdir()}, set(local_ca.FILES))
+        self.assertTrue(any(c[0] == "security" for c in self.commands))
+        self.assertFalse(any(c[0] == "sudo" for c in self.commands))
+
+    def test_macos_present_but_untrusted_certificate_stops_before_export(self):
+        self.initial_ca()
+        before = (self.state / "ca.crt").read_bytes()
+        original = self.stack.cmd
+        def command(args, **kwargs):
+            if args[0] == "security":
+                raise StackError("trust verification failed")
+            return original(args, **kwargs)
+        self.stack.cmd = command
+        with patch.object(local_ca.sys, "platform", "darwin"), patch.object(local_ca, "certificate_present", return_value=True):
+            with self.assertRaisesRegex(StackError, "trust verification failed"):
+                local_ca.prepare(self.stack)
+        self.assertFalse(self.store.exists())
+        self.assertEqual((self.state / "ca.crt").read_bytes(), before)
+
     def test_retained_down_removes_business_state_without_sudo(self):
         self.initial_ca()
         stack = LocalStack.__new__(LocalStack)
