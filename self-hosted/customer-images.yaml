@@ -10,7 +10,7 @@ metadata:
   auditedAt: "2026-11-11"
   chart:
     name: agent-relay
-    version: 0.6.48
+    version: 0.6.50
     values:
       - charts/agent-relay/values-gcp.yaml
       - charts/agent-relay/values-gcp-native.yaml
@@ -475,34 +475,36 @@ images:
       - Deployment/relay-webapp:relay-webapp
     current:
       repository: ghcr.io/agentworkforce/relay-webapp
-      digest: sha256:34ef185ae4abad2b07f3f64b43bb4af1412d9e48c0053f8c2e38769c7b91cff3
+      digest: sha256:da0cc80476eac734299c0c6ceb94e2bca7dae7913cce56a8ca8592cf086dd02e
       chartStatus: shipped
     source:
       repository: https://github.com/AgentWorkforce/relay-webapp
-      revision: c485ba65299a16eaf2da59f2379f8d081578db7c
+      revision: be770cacfa22edef76caa28931a356afaf021350
       path: Dockerfile
       reproducibleReference: true
       note: >-
-        relay-webapp main c485ba65 with the owner-only Usage page from #125
-        and #124's default-off coordination-overlaps view gate. Static SPA built with
-        DASHBOARD_BASE_PATH=/ and DASHBOARD_RUNTIME_CONFIG_URL=/runtime-config.js,
-        served by unprivileged nginx on :8080. It talks only to the same-origin
-        /cloud/api prefix (runtime.apiBasePath must stay /cloud/api).
+        relay-webapp main be770cac includes #125's owner-only Usage page,
+        #126's Policies page, #128's split-host download CSRF fix, #129's
+        Downloads page, #130's source-free session links and #132's script-free
+        /brand/ CSP and missing-file 404. Static SPA built with DASHBOARD_BASE_PATH=/
+        and DASHBOARD_RUNTIME_CONFIG_URL=/runtime-config.js, served by
+        unprivileged nginx on :8080. It talks only to the same-origin /cloud/api
+        prefix (runtime.apiBasePath must stay /cloud/api).
     license:
       status: approved
       spdx: Apache-2.0
-      evidence: https://github.com/AgentWorkforce/relay-webapp/blob/c485ba65299a16eaf2da59f2379f8d081578db7c/LICENSE
+      evidence: https://github.com/AgentWorkforce/relay-webapp/blob/be770cacfa22edef76caa28931a356afaf021350/LICENSE
     platforms:
       expected: [linux/amd64, linux/arm64]
       verifiedFromRegistry: [linux/amd64, linux/arm64]
       status: verified
       verificationAccess: anonymous
     release:
-      workflow: https://github.com/AgentWorkforce/relay-webapp/blob/c485ba65299a16eaf2da59f2379f8d081578db7c/.github/workflows/container.yml
-      run: https://github.com/AgentWorkforce/relay-webapp/actions/runs/42966714669
+      workflow: https://github.com/AgentWorkforce/relay-webapp/blob/be770cacfa22edef76caa28931a356afaf021350/.github/workflows/container.yml
+      run: https://github.com/AgentWorkforce/relay-webapp/actions/runs/42999369264
       trigger: workflow_dispatch
       buildsCommittedRevision: true
-      publishedTags: [sha-c485ba65299a16eaf2da59f2379f8d081578db7c]
+      publishedTags: [sha-be770cacfa22edef76caa28931a356afaf021350]
       publishesSbom: true
       publishesProvenance: true
       provenanceMode: max-plus-github-attestation
@@ -513,9 +515,10 @@ images:
     approval:
       status: approved
       basis: >-
-        Public digest from the reviewed #125 container workflow at the recorded
-        main revision, with an SPDX SBOM, max-mode provenance, a GitHub
-        build-provenance attestation, and amd64+arm64 verified anonymously.
+        Public digest from successful Container Image run 42999369264 at the
+        recorded main revision. Its GitHub build-provenance attestation resolves
+        to be770cac, and the public OCI index exposes linux/amd64 and linux/arm64
+        manifests plus BuildKit SBOM/provenance attestations.
       blockingReasons: []
 
   # Optional durable-actors images (agent-relay 0.3.12, values-eks-actors.yaml).
