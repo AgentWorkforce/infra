@@ -15,6 +15,12 @@ CHART = ROOT / "charts/sessions-pipeline"
 DEFAULT = CHART / "ci/default-values.yaml"
 AWS_PROFILE = CHART / "profiles/aws-rds-native.yaml"
 AWS_INPUTS = CHART / "ci/aws-rds-native-inputs.yaml"
+AGENT_CHART = ROOT / "charts/agent-relay"
+GCP = AGENT_CHART / "values-gcp.yaml"
+GCP_NATIVE = AGENT_CHART / "values-gcp-native.yaml"
+GCP_NATIVE_INPUTS = AGENT_CHART / "ci/gcp-native-values.yaml"
+EKS = AGENT_CHART / "values-eks.yaml"
+CUTOVER = AGENT_CHART / "values-scrub-wasm-bindgen.yaml"
 MANAGED = {"SCRUB_ENGINE", "SCRUB_ENGINE_REQUIRED", "READER_MAX_RULESET"}
 
 
@@ -23,6 +29,13 @@ def helm(*args: str, values: tuple[Path, ...] = (DEFAULT,)) -> subprocess.Comple
     for value in values:
         command.extend(["-f", str(value)])
     command.extend(args)
+    return subprocess.run(command, text=True, capture_output=True)
+
+
+def helm_agent(*values: Path) -> subprocess.CompletedProcess[str]:
+    command = ["helm", "template", "scrub-ci", str(AGENT_CHART)]
+    for value in values:
+        command.extend(["-f", str(value)])
     return subprocess.run(command, text=True, capture_output=True)
 
 
@@ -98,6 +111,26 @@ class ScrubEngineContractTest(unittest.TestCase):
                 "global.scrubEngine.readerMaxRuleset=10",
                 values=(AWS_PROFILE, AWS_INPUTS),
             ),
+            {
+                "SCRUB_ENGINE": "wasm-bindgen",
+                "SCRUB_ENGINE_REQUIRED": "wasm-bindgen",
+                "READER_MAX_RULESET": "10",
+            },
+            minimum_services=8,
+        )
+
+    def test_customer_profiles_are_reader_first(self) -> None:
+        for profile in (GCP, EKS):
+            with self.subTest(profile=profile.name):
+                self.assert_contract(
+                    helm_agent(profile),
+                    {"READER_MAX_RULESET": "10"},
+                    minimum_services=5,
+                )
+
+    def test_customer_cutover_overlay_reaches_native_gcp_workloads(self) -> None:
+        self.assert_contract(
+            helm_agent(GCP, GCP_NATIVE, GCP_NATIVE_INPUTS, CUTOVER),
             {
                 "SCRUB_ENGINE": "wasm-bindgen",
                 "SCRUB_ENGINE_REQUIRED": "wasm-bindgen",
