@@ -9,9 +9,11 @@ The JHS Rehearsal app is a known co-resident and must remain untouched.
 - Use merged infra main containing the local stack and Desktop installer.
   Wait for the coordinated prerequisite PRs before resetting the machine.
   Final acceptance must use the AA pack from merged #211: Control 0.5.16,
-  Sessions alpha.5, the EKS SQLite Relaycast generation and the pack's webapp.
+  Sessions alpha.5 and the EKS SQLite Relaycast generation, plus the merged
+  Sales #50 dashboard update (`dfdf6db6`) and fresh-store read settings.
   The local recipe must derive those image references and managed
   `[usage, launch]` features from merged `charts/agent-relay/values-eks.yaml`,
+  select the approved dashboard update in `ci/agent-relay/kind/local-values.yaml`,
   and select the merged `values-scrub-wasm-bindgen.yaml` overlay. Do not copy
   digest literals from a message or substitute a previous trial's pins.
 - Retain Git, Python 3.9+, Docker Desktop with its local Linux engine, and the
@@ -225,7 +227,8 @@ immutable AA source pins. Do not load recovery images or supply an operator
 packet. Record each resolved image reference alongside the merged main commit.
 Require `SCRUB_ENGINE=wasm-bindgen`, `SCRUB_ENGINE_REQUIRED=wasm-bindgen`,
 `READER_MAX_RULESET=10`, and `READ_API_SESSION_QUERY=true` at the applicable
-services workloads. Check the migration/other services-image Jobs as well as
+services workloads. The reader also requires `READ_API_TIMING_ASSUME_NO_TURNS=true`
+and `READ_API_CANONICAL_PIN_LAGGING_POINTER=true`. Check the migration/other services-image Jobs as well as
 Deployments. For this empty-database install, the qualified WASM overlay can be
 selected initially; this is not an in-place cutover of retained data.
 

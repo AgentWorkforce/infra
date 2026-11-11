@@ -14,15 +14,19 @@ Control, the dashboard, Relaycast, native ingest/consumer/reader, the brief work
 and the internal telemetry collector. It uses published immutable release images;
 no source build, old data, operator packet or admission file is required.
 
-Core images and managed features come directly from the merged AA profile,
+Control, Sessions, Relaycast and managed features come directly from the merged AA profile,
 `charts/agent-relay/values-eks.yaml`: Control 0.5.16, Sessions alpha.5, its SQLite
-Relaycast and dashboard. Only those release references/features are imported;
+Relaycast. The dashboard uses the approved Sales #50 update (`dfdf6db6`, source
+`0a4dc037`) recorded in `ci/agent-relay/kind/local-values.yaml`, fixing Desktop's
+sourceless View on web flow. Only those release references/features are imported;
 the local fixture generates its own identity, endpoints, credentials and storage.
 The qualified `values-scrub-wasm-bindgen.yaml` overlay selects
 `SCRUB_ENGINE=wasm-bindgen`, `SCRUB_ENGINE_REQUIRED=wasm-bindgen` and
 `READER_MAX_RULESET=10` for this fresh database. The same contract reaches local
-services-image Jobs. Session query is enabled. `ci/agent-relay/kind/local-values.yaml`
-contains only local collector/proxy overrides.
+services-image Jobs. Session query, canonical-pointer pinning and the fresh-store
+timing assumption are enabled, matching Sales #50. The reader uses managed
+values when its chart supplies them. `ci/agent-relay/kind/local-values.yaml`
+also contains the local collector/proxy overrides.
 
 On the Mac, complete this **one-time administrator step** for DNS and trust:
 

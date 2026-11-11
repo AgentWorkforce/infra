@@ -29,6 +29,7 @@ from local_host_setup import certificate_present, host_aliases_present, managed_
 
 LOCAL_VALUES = yaml.safe_load((ROOT / "ci/agent-relay/kind/local-values.yaml").read_text())
 AA_VALUES = yaml.safe_load((ROOT / "charts/agent-relay/values-eks.yaml").read_text())
+READER_VALUES = yaml.safe_load((ROOT / "charts/session-read-api/values.yaml").read_text())
 SCRUB_VALUES = yaml.safe_load((ROOT / "charts/agent-relay/values-scrub-wasm-bindgen.yaml").read_text())["global"]["scrubEngine"]
 
 
@@ -40,7 +41,7 @@ PIPELINE = reference(AA_VALUES["sessions-pipeline"]["worker"]["image"])
 if PIPELINE != reference(AA_VALUES["sessions-pipeline"]["alleyoop"]["image"]):
     raise StackError("the AA profile must select one services-image generation")
 CONTROL = reference(AA_VALUES["relay-control"]["image"])
-WEBAPP = reference(AA_VALUES["relay-webapp"]["image"])
+WEBAPP = reference(LOCAL_VALUES["relay-webapp"]["image"])
 CAST = reference(AA_VALUES["relaycast"]["image"])
 MINIO = "cgr.dev/chainguard/minio@sha256:e70b2b1e74d79457f808710483bd726ff364529ca30736eaa15a6ab547d3a5a7"
 SITE = "https://relay.kind.agentrelay.com"
@@ -59,6 +60,17 @@ def image(ref):
 def scrub_environment():
     return [{"name": name, "value": SCRUB_VALUES[key]} for name, key in (
         ("SCRUB_ENGINE", "engine"), ("SCRUB_ENGINE_REQUIRED", "required"), ("READER_MAX_RULESET", "readerMaxRuleset"))]
+
+
+def fresh_reader(reader):
+    # Sales #50's fresh-native settings. The 0.2.9 reader accepts extraEnv;
+    # 0.2.10 adds managed values and reserves the corresponding env names.
+    for section, key, name in (("timing", "assumeNoTurns", "READ_API_TIMING_ASSUME_NO_TURNS"),
+            ("canonical", "pinLaggingPointer", "READ_API_CANONICAL_PIN_LAGGING_POINTER")):
+        if section in READER_VALUES:
+            reader.setdefault(section, {})[key] = True
+        else:
+            reader.setdefault("extraEnv", []).append(env(name, "true"))
 
 
 def operator():
@@ -256,6 +268,7 @@ class LocalStack(Stack):
             result["sessions-pipeline"][slot]["image"] = image(PIPELINE)
         result["sessions-pipeline"]["sessionReadApi"]["cors"] = {"allowedOrigins": [SITE]}
         result["sessions-pipeline"]["sessionReadApi"].setdefault("extraEnv", []).append(env("READ_API_SESSION_QUERY", "true"))
+        fresh_reader(result["sessions-pipeline"]["sessionReadApi"])
         result["sessions-pipeline"]["ingestEdge"]["admission"] = {"mode": "async", "scanIntervalMs": 1000}
         if phase == "serve":
             result["components"]["telemetryCollector"] = True
