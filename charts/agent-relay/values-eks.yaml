@@ -240,9 +240,10 @@ relay-control:
     # registry and override repository.
     repository: ghcr.io/agentworkforce/relay-control
     digest: sha256:0b9c5a077b49b31178cc669e7c1d532f39e64c840087ca41636bb84a6c62631c
-  # The AA customer profile opts into the owner-only Usage page. The successor
-  # commit adds the now-qualified launch selection and its operator guidance.
-  selectedFeatures: [usage]
+  # The AA customer profile opts into the owner-only Usage page and qualified
+  # MCP agent launch. Remove launch if the enrolled owner/admin Desktop target
+  # fails its install-time lifecycle check; Usage remains independent.
+  selectedFeatures: [usage, launch]
   database:
     runtimeRole: control_api_runtime
   encryption:

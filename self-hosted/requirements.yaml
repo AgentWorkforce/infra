@@ -1218,14 +1218,14 @@ compatibility:
       charts: { agent-relay: 0.6.46, relayhistory: 0.1.3, relay-control: 0.4.12, relay-webapp: 0.2.3 }
       app_versions: { agent-relay: 0.1.0, relayhistory: 0.1.0, relay-control: 0.1.0, relay-webapp: 0.1.0 }
       depends:
-        agent-relay: { relaycast: 0.3.8, relayauth: 0.1.5, sessions-pipeline: 0.8.23, relayhistory: 0.1.3, relay-control: 0.4.12, relay-webapp: 0.2.3, relayflows: 0.2.5, durable-actors: 0.14.6-awf.1, relayfile: 0.2.2, telemetry-collector: 0.1.5, relay-chief: 0.1.0 }
+        agent-relay: { relaycast: 0.3.8, relayauth: 0.1.5, sessions-pipeline: 0.8.24, relayhistory: 0.1.3, relay-control: 0.4.12, relay-webapp: 0.2.3, relayflows: 0.2.5, durable-actors: 0.14.6-awf.1, relayfile: 0.2.2, telemetry-collector: 0.1.5, relay-chief: 0.1.0 }
       images:
         relaycast: { repository: ghcr.io/agentworkforce/relaycast-self-host, digest: sha256:ab9dd6781e68f09d5e2e686a17088f9ad533978ef13d974a47d6c212d8eedbde }
         sessions-pipeline-worker: { repository: ghcr.io/agentworkforce/sessions-pipeline, digest: sha256:77022c5b6a1d30f96f921d703eb27a1acada8ec273ad84aebdde24f8eddce305 }
         relayhistory: { repository: ghcr.io/agentworkforce/relayhistory, digest_required: true }
         relay-control: { repository: ghcr.io/agentworkforce/relay-control, digest: sha256:d8c26d44dccb6dd21b7033288241a379e46ce5fbca69f276c4d4745001c3c3e2 }
         relay-webapp: { repository: ghcr.io/agentworkforce/relay-webapp, digest: sha256:bd295ccb7d1323965dce890f19d0b7f857d706c00d7756f719c713763fdb49f3 }
-      notes: 'Customer pack release candidate on top of 0.6.45 and its first-class output-facts/bootstrap/read API defaults plus the approved relay-control 0.5.16 pin from source 83a57d38: GCP and EKS pin the signed Sessions alpha.5 image from source 7e9b2f0f on every services-image workload and Job, including output-facts bootstrap, the collector-capable Relaycast image from cac175b5 and relay-webapp c485ba65. Both profiles are reader-first at ceiling 10; values-scrub-wasm-bindgen.yaml is the explicit phase-2 cutover. The AA EKS profile initially selects usage; the successor commit adds qualified launch. Relaycast analytics, MinIO direct upload and password/setup-key options remain default off.'
+      notes: 'Customer pack release candidate on top of 0.6.45 and its first-class output-facts/bootstrap/read API defaults plus the approved relay-control 0.5.16 pin from source 83a57d38: GCP and EKS pin the signed Sessions alpha.5 image from source 7e9b2f0f on every services-image workload and Job, including output-facts bootstrap, the collector-capable Relaycast image from cac175b5 and relay-webapp c485ba65. Both profiles are reader-first at ceiling 10; values-scrub-wasm-bindgen.yaml is the explicit phase-2 cutover. The AA EKS profile selects usage and launch after the ar-lap owner lifecycle proof passed capability, owned-target, spawn, idempotent replay, Ready, cross-session ownership refusal, release and roster-removal checks. Remove launch if its enrolled owner/admin Desktop target regresses at install time. Relaycast analytics, MinIO direct upload and password/setup-key options remain default off.'
     - id: agent-relay-0.6.45
       status: planned
       charts: { agent-relay: 0.6.45, relayhistory: 0.1.3, relay-control: 0.4.12, relay-webapp: 0.2.3 }
@@ -3149,7 +3149,7 @@ entries:
     status: shipped
     provided_by: operator
     default: null
-    profile_default: { default: null, aws-rds-native: { readerMaxRuleset: 10 } }
+    profile_default: { default: null }
     choices:
       - { value: null, note: Emit no bindings and preserve the legacy engine and reader ceiling. }
       - { value: reader-first, note: Emit only READER_MAX_RULESET=10 with the qualified image. }

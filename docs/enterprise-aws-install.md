@@ -341,6 +341,43 @@ optional capability. The Dashboard Usage page reads Control/PostgreSQL and
 does not depend on this collector, so leaving analytics disabled does not block
 the core installation.
 
+### Agent launch over MCP (optional, `launch`)
+
+The AA EKS profile selects `launch` together with `usage`. This requires
+relay-control image 0.5.14 or later and relay-control chart 0.4.10 or later.
+Migration `0041_relay_spawns` runs automatically and only adds a table. Remove
+`launch` from `selectedFeatures` to disable the tools without changing Usage or
+any other service.
+
+Each machine that should accept launches must run Agent Relay Desktop signed
+in to this installation. Desktop enrolls the machine as a Relaycast node and
+claims it for the signed-in person. Owners and admins then receive these MCP
+tools:
+
+- `list_relay_spawn_targets`: list eligible machines, best first, with each
+  target's allowed decision and reason.
+- `spawn_relay_agent`: start an advertised harness such as Codex or Claude on
+  one named machine.
+- `get_relay_spawn_status`: poll the launch through `ready` and obtain the
+  agent's address.
+- `release_relay_agent`: stop that exact launched agent.
+
+`describe_capabilities` reports `can_launch: true`. Members, OAuth MCP
+connectors, workspace API tokens and service tokens cannot use the launch
+tools. Targets are limited to machines enrolled in this installation and the
+caller's workspace. The caller's own claimed machine is allowed; a teammate's
+machine is allowed only after they enable **Allow teammates to spawn here** in
+Desktop. Unclaimed machines and machines from another workspace or install
+are never eligible. Nothing is provisioned, queued or rerouted.
+
+Control records each launch in `relay_spawns` before sending it and retains the
+record after release. The launch belongs to the initiating MCP session, and
+repeating the same `idempotency_key` cannot launch twice. At install time,
+exercise list, spawn, idempotent replay, Ready status, release and roster
+removal against an enrolled owner/admin Desktop. If that lifecycle regresses,
+remove only `launch`. See relay-control `docs/agent-launch.md` for the complete
+contract.
+
 ### Upgrades
 
 Use the release's pull-based upgrader instead of assembling a chart or image
@@ -349,7 +386,10 @@ set by hand. It is plan-only unless `--apply` is present. The plan downloads
 the requested GitHub release, verifies their checksums and GitHub build
 attestations, checks out the recorded infra commit, mirrors the manifest's
 exact image digests, and prints the chart/image change against the live
-release.
+release. The manifest labels the image overlay for EKS, and the upgrader
+refuses to apply an overlay for a different profile. This preserves the
+approved collector-capable EKS Relaycast pin instead of substituting the GCP
+Postgres Relaycast image.
 
 ```sh
 scripts/selfhost/agent-relay-upgrade.sh \

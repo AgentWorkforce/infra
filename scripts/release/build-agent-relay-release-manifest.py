@@ -16,6 +16,7 @@ DIGEST = re.compile(r"^sha256:[a-f0-9]{64}$")
 COMMIT = re.compile(r"^[a-f0-9]{40}$")
 CHART_PATH = re.compile(r"^[A-Za-z0-9._/-]+$")
 VALUES_OVERLAY = "release-images.values.yaml"
+VALUES_OVERLAY_PROFILES = {"gcp", "eks"}
 APPROVED_IMAGE_STATUSES = {"approved", "customer-ready"}
 
 
@@ -95,6 +96,8 @@ def build(args: argparse.Namespace) -> dict[str, object]:
         fail("chart path must be a relative repository path")
     if not SEMVER.fullmatch(args.chart_version):
         fail("chart version must be stable SemVer")
+    if args.values_overlay_profile not in VALUES_OVERLAY_PROFILES:
+        fail("valuesOverlayProfile must be gcp or eks")
 
     inventory = load_inventory(args.inventory)
     images = []
@@ -116,6 +119,7 @@ def build(args: argparse.Namespace) -> dict[str, object]:
         "infraCommit": args.infra_commit,
         "chart": {"path": args.chart_path, "version": args.chart_version},
         "valuesOverlay": VALUES_OVERLAY,
+        "valuesOverlayProfile": args.values_overlay_profile,
         "images": images,
     }
 
@@ -123,8 +127,14 @@ def build(args: argparse.Namespace) -> dict[str, object]:
 def build_values_overlay(manifest: dict[str, object]) -> str:
     """Render the final image value keys consumed by the customer pack."""
     images = {image["name"]: image["ref"] for image in manifest["images"]}
+    profile = manifest.get("valuesOverlayProfile")
+    if profile not in VALUES_OVERLAY_PROFILES:
+        fail("valuesOverlayProfile must be gcp or eks")
+    relaycast_image = (
+        "relaycast-eks-collector" if profile == "eks" else "relaycast"
+    )
     required = {
-        "relaycast",
+        relaycast_image,
         "relayauth",
         "sessions-pipeline",
         "relayhistory",
@@ -152,14 +162,15 @@ def build_values_overlay(manifest: dict[str, object]) -> str:
     )
     lines = [
         "# Generated release asset. Replace only __IMAGE_MIRROR_ROOT__ with the",
-        "# customer ECR mirror root, then pass this after the customer's values.",
+        f"# customer registry mirror root. Profile: {profile}.",
+        "# Pass this after the customer's values; do not reuse it for another profile.",
         "relaycast:",
         "  image:",
-        *pair("relaycast", 4),
+        *pair(relaycast_image, 4),
         "  runtime:",
         "    postgres:",
         "      image:",
-        *pair("relaycast", 8),
+        *pair(relaycast_image, 8),
         "relayauth:",
         "  image:",
         *pair("relayauth", 4),
@@ -222,6 +233,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--infra-commit", required=True)
     parser.add_argument("--chart-path", required=True)
     parser.add_argument("--chart-version", required=True)
+    parser.add_argument(
+        "--values-overlay-profile",
+        choices=sorted(VALUES_OVERLAY_PROFILES),
+        required=True,
+    )
     parser.add_argument("--images", type=pathlib.Path, required=True)
     parser.add_argument("--inventory", type=pathlib.Path, required=True)
     parser.add_argument("--output", type=pathlib.Path, required=True)

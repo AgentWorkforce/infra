@@ -173,7 +173,7 @@ spec:
           {{- end }}
 {{- end }}
 {{- if $factsJob.enabled }}
-{{- $factsEnv := include "sessions-pipeline.searchIndexer.env" (dict "c" $c "service" "session-pipeline-output-facts-bootstrap" "secret" $c.bootstrap.existingSecret "key" $c.bootstrap.key "outputFacts" true) }}
+{{- $factsEnv := include "sessions-pipeline.searchIndexer.env" (dict "root" . "c" $c "service" "session-pipeline-output-facts-bootstrap" "secret" $c.bootstrap.existingSecret "key" $c.bootstrap.key "outputFacts" true) }}
 {{- $factsPod := printf "restartPolicy: Never\n%s\ncontainers:\n  - name: output-facts-bootstrap\n    image: %s\n    imagePullPolicy: %s\n    env:\n      %s\n      - { name: RELAYHISTORY_SELFHOST_OUTPUT_FACTS_BOOTSTRAP_DEADLINE_SECONDS, value: %s }\n      - { name: RELAYHISTORY_SELFHOST_OUTPUT_FACTS_BOOTSTRAP_ALLOW_PARTIAL, value: %s }\n    %s%s" (include "sessions-pipeline.searchIndexer.pod" .) (printf "%s@%s" $repository $digest | quote) $c.image.pullPolicy ($factsEnv | nindent 6 | trim) (int $factsJob.deadlineSeconds | toString | quote) ($factsJob.allowPartial | toString | quote) (include "sessions-pipeline.searchIndexer.container" . | nindent 4 | trim) (ternary (printf "\n    resources:\n      %s" (toYaml $c.resources | nindent 6 | trim)) "" (not (empty $c.resources))) }}
 ---
 apiVersion: batch/v1

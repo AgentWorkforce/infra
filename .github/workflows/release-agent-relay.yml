@@ -152,7 +152,15 @@ jobs:
           yq -N -r \
             '.. | select(tag == "!!map") | select(has("image") or has("imageName")) | (.image // .imageName) | select(tag == "!!str")' \
             .release/customer-pack-render.yaml \
-            | sort -u > .release/customer-images.txt
+            > .release/customer-images.txt
+          # The pull upgrader currently supports EKS profiles. Include their
+          # approved collector-capable Relaycast pin instead of allowing the
+          # GCP render's Postgres Relaycast pin to overwrite EKS customer values.
+          yq -N -r \
+            '.images[] | select(.id == "relaycast-eks-collector") | .current.repository + "@" + .current.digest' \
+            self-hosted/customer-images.yaml \
+            >> .release/customer-images.txt
+          sort -u -o .release/customer-images.txt .release/customer-images.txt
           yq -N -r \
             '.images[] | [.id, .current.repository, .current.digest, .approval.status] | @tsv' \
             self-hosted/customer-images.yaml \
@@ -162,6 +170,7 @@ jobs:
             --infra-commit "$GITHUB_SHA" \
             --chart-path "$CHART_DIR" \
             --chart-version "$CHART_VERSION" \
+            --values-overlay-profile eks \
             --images .release/customer-images.txt \
             --inventory .release/customer-image-inventory.tsv \
             --output .release/release-manifest.json \
