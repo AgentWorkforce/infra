@@ -5,6 +5,12 @@
 #                       the rds-ca ConfigMap, and the credential files.
 #   rds-setup.sh post   After the HoopDb migrate Job succeeds. Activates the
 #                       read API, ingest and search logins.
+#   rds-setup.sh refresh-admin
+#                       Before every later Helm upgrade. RDS rotates the admin
+#                       password (7 days by default), and the HoopDb migration
+#                       owner URL carries it. Rewrites only the two admin-derived
+#                       credential files; touches no database role. pre cannot be
+#                       re-run once post has given the session roles LOGIN.
 #
 # RDS is private, so the SQL runs in short-lived Jobs inside your cluster. The
 # script needs aws, kubectl, jq, openssl and curl, and access to the cluster.
@@ -32,11 +38,12 @@ set -euo pipefail
 umask 077
 
 MODE="${1:-}"
-case "$MODE" in pre|post) ;; *) echo "usage: $0 pre|post" >&2; exit 2 ;; esac
+case "$MODE" in pre|post|refresh-admin) ;; *) echo "usage: $0 pre|post|refresh-admin" >&2; exit 2 ;; esac
 
 : "${AWS_REGION:?set AWS_REGION}"
 : "${RDS_HOST:?set RDS_HOST (terraform output -raw database_host)}"
 : "${RDS_ADMIN_SECRET_ARN:?set RDS_ADMIN_SECRET_ARN (terraform output -raw database_admin_secret_arn)}"
+if [[ "$MODE" == refresh-admin ]]; then SERVICES_IMAGE="${SERVICES_IMAGE:-unused@sha256:0}"; fi
 : "${SERVICES_IMAGE:?set SERVICES_IMAGE to the approved sessions-pipeline image digest}"
 PSQL_IMAGE="${PSQL_IMAGE:-ghcr.io/cloudnative-pg/postgresql:17-standard-trixie@sha256:ed6923f9ba2399cf9070379a353c710c29ced8a294be73986a2c3dae7e599ce3}"
 NS="${NAMESPACE:-agent-relay}"
@@ -187,12 +194,21 @@ write_credential_files() {
   write_file search-indexer-runtime RELAYHISTORY_PIPELINE_CONSUMER_SECRET \
     < <(json_url hoopdb_url "$(url postgresql search_consumer_runtime "$(pw search_consumer_runtime)" hoopdb)")
 
-  # The HoopDb migration owner is the RDS admin. RDS rotates that password, so
-  # The HoopDb migration owner uses the rotating RDS admin password. Re-run
-  # pre mode before a later Helm upgrade to refresh the local Secret input.
+  write_admin_files
+}
+
+# The HoopDb migration owner is the RDS admin, whose password RDS rotates. Run
+# refresh-admin (not pre) before a later Helm upgrade to refresh these two inputs.
+write_admin_files() {
   local owner; owner="$(admin_url hoopdb)"
   write_file agent-relay-secrets HOOPDB_MIGRATION_URL < <(printf '%s' "$owner")
   write_file search-indexer-owner RELAYHISTORY_PIPELINE_CONSUMER_SECRET < <(json_url hoopdb_url "$owner")
+}
+
+do_refresh-admin() {
+  [[ -d "$FILES/agent-relay-secrets" && -d "$FILES/search-indexer-owner" ]] || die "no credential files under $FILES: run '$0 pre' first, on the host that holds STATE_DIR"
+  write_admin_files
+  log "admin credential files refreshed under $FILES; update the agent-relay-secrets and search-indexer-owner Secrets from them"
 }
 
 ensure_ca() {
