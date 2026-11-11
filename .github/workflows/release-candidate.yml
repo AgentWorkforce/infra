@@ -224,24 +224,33 @@ jobs:
           VERSION: ${{ steps.request.outputs.version }}
         run: |
           set -euo pipefail
-          pr_number="$(gh pr list --repo "$GITHUB_REPOSITORY" --state open \
-            --head "$BRANCH" --limit 100 --json number --jq '.[0].number // empty')"
-          if [[ -n "$pr_number" ]]; then
-            gh pr view "$pr_number" --repo "$GITHUB_REPOSITORY" \
-              --json body --jq '.body // ""' > "$RUNNER_TEMP/pr-body.md"
-          else
-            printf 'Tracking PR for **agent-relay-%s**. Candidate pins are provenance-verified; acceptance and approval are separate release gates.\n' \
-              "$VERSION" > "$RUNNER_TEMP/pr-body.md"
-          fi
-          python3 "$RUNNER_TEMP/update-release-candidate.py" render-body \
-            --pins "releases/agent-relay-${VERSION}/pins.json" \
-            --body "$RUNNER_TEMP/pr-body.md" \
-            --output "$RUNNER_TEMP/updated-pr-body.md"
-          if [[ -n "$pr_number" ]]; then
-            gh pr edit "$pr_number" --repo "$GITHUB_REPOSITORY" \
-              --body-file "$RUNNER_TEMP/updated-pr-body.md"
-          else
-            if url="$(gh pr create --repo "$GITHUB_REPOSITORY" \
+          synchronized=false
+          pr_number=""
+          for attempt in 1 2 3 4 5; do
+            # Render only from the latest remote candidate state. If another
+            # run pushes while this body is being written, detect the new head
+            # afterward and repeat so an older table cannot win the race.
+            git fetch origin "$BRANCH"
+            head_before="$(git rev-parse FETCH_HEAD)"
+            git show "${head_before}:releases/agent-relay-${VERSION}/pins.json" \
+              > "$RUNNER_TEMP/latest-pins.json"
+            pr_number="$(gh pr list --repo "$GITHUB_REPOSITORY" --state open \
+              --head "$BRANCH" --limit 100 --json number --jq '.[0].number // empty')"
+            if [[ -n "$pr_number" ]]; then
+              gh pr view "$pr_number" --repo "$GITHUB_REPOSITORY" \
+                --json body --jq '.body // ""' > "$RUNNER_TEMP/pr-body.md"
+            else
+              printf 'Tracking PR for **agent-relay-%s**. Candidate pins are provenance-verified; acceptance and approval are separate release gates.\n' \
+                "$VERSION" > "$RUNNER_TEMP/pr-body.md"
+            fi
+            python3 "$RUNNER_TEMP/update-release-candidate.py" render-body \
+              --pins "$RUNNER_TEMP/latest-pins.json" \
+              --body "$RUNNER_TEMP/pr-body.md" \
+              --output "$RUNNER_TEMP/updated-pr-body.md"
+            if [[ -n "$pr_number" ]]; then
+              gh pr edit "$pr_number" --repo "$GITHUB_REPOSITORY" \
+                --body-file "$RUNNER_TEMP/updated-pr-body.md"
+            elif url="$(gh pr create --repo "$GITHUB_REPOSITORY" \
               --base main --head "$BRANCH" \
               --title "Release agent-relay-${VERSION}" \
               --body-file "$RUNNER_TEMP/updated-pr-body.md")"; then
@@ -252,10 +261,16 @@ jobs:
                 --head "$BRANCH" --limit 100 --json number --jq '.[0].number // empty')"
               [[ -n "$pr_number" ]] \
                 || { echo "::error::Could not create or find the release PR."; exit 1; }
-              gh pr edit "$pr_number" --repo "$GITHUB_REPOSITORY" \
-                --body-file "$RUNNER_TEMP/updated-pr-body.md"
             fi
-          fi
+            git fetch origin "$BRANCH"
+            if [[ "$(git rev-parse FETCH_HEAD)" == "$head_before" ]]; then
+              synchronized=true
+              break
+            fi
+            echo "Candidate changed while updating its PR table; retrying (${attempt}/5)."
+          done
+          [[ "$synchronized" == true ]] \
+            || { echo "::error::Could not synchronize the candidate PR table after 5 attempts."; exit 1; }
           url="$(gh pr view "$pr_number" --repo "$GITHUB_REPOSITORY" --json url --jq .url)"
           echo "url=$url" >> "$GITHUB_OUTPUT"
           printf 'Updated %s with `%s@%s`.\n' "$url" "$COMPONENT" "$DIGEST" >> "$GITHUB_STEP_SUMMARY"
