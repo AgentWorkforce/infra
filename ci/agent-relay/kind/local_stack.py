@@ -63,9 +63,11 @@ def scrub_environment():
 
 
 def fresh_reader(reader):
+    # This local store has no Neon history. Include that turns assumption with
     # Sales #50's fresh-native settings. The 0.2.9 reader accepts extraEnv;
     # 0.2.10 adds managed values and reserves the corresponding env names.
-    for section, key, name in (("timing", "assumeNoTurns", "READ_API_TIMING_ASSUME_NO_TURNS"),
+    for section, key, name in (("turns", "assumeNoLegacy", "READ_API_TURNS_ASSUME_NO_LEGACY"),
+            ("timing", "assumeNoTurns", "READ_API_TIMING_ASSUME_NO_TURNS"),
             ("canonical", "pinLaggingPointer", "READ_API_CANONICAL_PIN_LAGGING_POINTER")):
         if section in READER_VALUES:
             reader.setdefault(section, {})[key] = True
