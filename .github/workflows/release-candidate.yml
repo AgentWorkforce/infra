@@ -32,10 +32,6 @@ permissions:
   packages: read
   attestations: read
 
-concurrency:
-  group: agent-relay-release-candidate
-  cancel-in-progress: false
-
 jobs:
   update:
     runs-on: ubuntu-latest
@@ -53,7 +49,7 @@ jobs:
         id: pusher
         uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2
         with:
-          app-id: ${{ vars.GH_APP_PUSHER_ID }}
+          app-id: ${{ secrets.GH_APP_PUSHER_ID }}
           private-key: ${{ secrets.GH_APP_PUSHER_PRIVATE_KEY }}
           owner: ${{ github.repository_owner }}
           repositories: infra
@@ -63,6 +59,7 @@ jobs:
       - name: Check out the automation from main
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
+          ref: main
           fetch-depth: 0
           token: ${{ steps.pusher.outputs.token }}
 
@@ -172,51 +169,51 @@ jobs:
                 .buildDefinition.externalParameters.workflow.ref == "refs/heads/main")
             ' "$RUNNER_TEMP/verified-attestation.json" >/dev/null
 
-      - name: Check out or create the release branch
+      - name: Reconcile and push candidate state
         shell: bash
         env:
-          GH_TOKEN: ${{ steps.pusher.outputs.token }}
-          BRANCH: ${{ steps.request.outputs.branch }}
-        run: |
-          set -euo pipefail
-          if git ls-remote --exit-code --heads origin "$BRANCH" >/dev/null 2>&1; then
-            git fetch origin "$BRANCH"
-            git checkout -B "$BRANCH" FETCH_HEAD
-          else
-            git checkout -B "$BRANCH" origin/main
-          fi
-
-      - name: Update the provenance-bound values overlay
-        shell: bash
-        env:
-          VERSION: ${{ steps.request.outputs.version }}
-        run: |
-          set -euo pipefail
-          python3 "$RUNNER_TEMP/update-release-candidate.py" update \
-            --version "$VERSION" \
-            --component "$COMPONENT" \
-            --digest "$DIGEST" \
-            --source-sha "$SOURCE_SHA"
-
-      - name: Commit and push candidate state
-        id: commit
-        shell: bash
-        env:
-          GH_TOKEN: ${{ steps.pusher.outputs.token }}
           BRANCH: ${{ steps.request.outputs.branch }}
           VERSION: ${{ steps.request.outputs.version }}
         run: |
           set -euo pipefail
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git add "releases/agent-relay-${VERSION}"
-          if git diff --cached --quiet; then
-            echo "changed=false" >> "$GITHUB_OUTPUT"
-          else
-            git commit -m "release(agent-relay): candidate ${COMPONENT} pin"
-            git push origin "HEAD:${BRANCH}"
-            echo "changed=true" >> "$GITHUB_OUTPUT"
+          remote_exists=false
+          if git ls-remote --exit-code --heads origin "$BRANCH" >/dev/null 2>&1; then
+            remote_exists=true
           fi
+
+          # Every dispatch gets its own run. If two component publications race,
+          # a rejected push refetches the winner and reapplies this component so
+          # neither event can disappear in GitHub's one-pending concurrency queue.
+          pushed=false
+          for attempt in 1 2 3 4 5; do
+            if [[ "$remote_exists" == true ]]; then
+              git fetch origin "$BRANCH"
+              git checkout -B "$BRANCH" FETCH_HEAD
+            else
+              git checkout -B "$BRANCH" origin/main
+            fi
+            python3 "$RUNNER_TEMP/update-release-candidate.py" update \
+              --version "$VERSION" \
+              --component "$COMPONENT" \
+              --digest "$DIGEST" \
+              --source-sha "$SOURCE_SHA"
+            git add "releases/agent-relay-${VERSION}"
+            if git diff --cached --quiet; then
+              pushed=true
+              break
+            fi
+            git commit -m "release(agent-relay): candidate ${COMPONENT} pin"
+            if git push origin "HEAD:${BRANCH}"; then
+              pushed=true
+              break
+            fi
+            remote_exists=true
+            echo "Concurrent candidate update detected; retrying (${attempt}/5)."
+          done
+          [[ "$pushed" == true ]] \
+            || { echo "::error::Could not reconcile the candidate branch after 5 attempts."; exit 1; }
 
       - name: Open or update the release pull request
         id: pull_request
@@ -228,7 +225,7 @@ jobs:
         run: |
           set -euo pipefail
           pr_number="$(gh pr list --repo "$GITHUB_REPOSITORY" --state open \
-            --head "$BRANCH" --json number --jq '.[0].number // empty')"
+            --head "$BRANCH" --limit 100 --json number --jq '.[0].number // empty')"
           if [[ -n "$pr_number" ]]; then
             gh pr view "$pr_number" --repo "$GITHUB_REPOSITORY" \
               --json body --jq '.body // ""' > "$RUNNER_TEMP/pr-body.md"
@@ -244,11 +241,20 @@ jobs:
             gh pr edit "$pr_number" --repo "$GITHUB_REPOSITORY" \
               --body-file "$RUNNER_TEMP/updated-pr-body.md"
           else
-            url="$(gh pr create --repo "$GITHUB_REPOSITORY" \
+            if url="$(gh pr create --repo "$GITHUB_REPOSITORY" \
               --base main --head "$BRANCH" \
               --title "Release agent-relay-${VERSION}" \
-              --body-file "$RUNNER_TEMP/updated-pr-body.md")"
-            pr_number="${url##*/}"
+              --body-file "$RUNNER_TEMP/updated-pr-body.md")"; then
+              pr_number="${url##*/}"
+            else
+              # A concurrent first-component run may have created it.
+              pr_number="$(gh pr list --repo "$GITHUB_REPOSITORY" --state open \
+                --head "$BRANCH" --limit 100 --json number --jq '.[0].number // empty')"
+              [[ -n "$pr_number" ]] \
+                || { echo "::error::Could not create or find the release PR."; exit 1; }
+              gh pr edit "$pr_number" --repo "$GITHUB_REPOSITORY" \
+                --body-file "$RUNNER_TEMP/updated-pr-body.md"
+            fi
           fi
           url="$(gh pr view "$pr_number" --repo "$GITHUB_REPOSITORY" --json url --jq .url)"
           echo "url=$url" >> "$GITHUB_OUTPUT"
