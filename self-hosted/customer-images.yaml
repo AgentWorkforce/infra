@@ -10,7 +10,7 @@ metadata:
   auditedAt: "2026-11-11"
   chart:
     name: agent-relay
-    version: 0.6.47
+    version: 0.6.48
     values:
       - charts/agent-relay/values-gcp.yaml
       - charts/agent-relay/values-gcp-native.yaml

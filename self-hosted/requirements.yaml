@@ -300,13 +300,19 @@ compatibility:
       status: shipped
       charts: { telemetry-collector: 0.1.0 }
       notes: 'Default-off umbrella analytics file collector. Requires accepted immutable collector and TLS-proxy images, producer and TLS Secrets and an exclusive persistent volume. Source rendering does not prove image entrypoint, TLS, durable acknowledgement, power-loss recovery or whole-application analytics coverage. The currently reviewed collector CLI registers relaycontrol events only.'
-    - id: session-read-api-0.2.9
+    - id: session-read-api-0.2.10
       status: unreleased
       current: true
+      charts: { session-read-api: 0.2.10 }
+      images:
+        session-read-api: { repository: ghcr.io/agentworkforce/96bulls-services, digest_required: true }
+      notes: 'Adds managed default-off timing.assumeNoTurns and canonical.pinLaggingPointer values, rendering READ_API_TIMING_ASSUME_NO_TURNS and READ_API_CANONICAL_PIN_LAGGING_POINTER only when selected and reserving both from extraEnv. The AWS RDS native profile selects them because its fresh native store has no legacy timing-turn population and async admission can temporarily leave the canonical pointer behind session_index. Otherwise combines 0.2.9 output/digest and the shared scrub-engine contract; defaults remain unchanged.'
+    - id: session-read-api-0.2.9
+      status: planned
       charts: { session-read-api: 0.2.9 }
       images:
         session-read-api: { repository: ghcr.io/agentworkforce/96bulls-services, digest_required: true }
-      notes: 'Combines 0.2.8 default-off output.enabled and digest.enabled with the shared scrub-engine contract used by the umbrella reader-first and phase-2 rollout. Defaults emit no SCRUB_ENGINE, SCRUB_ENGINE_REQUIRED or READER_MAX_RULESET bindings and keep output/digest off; explicit rollout values require the qualified alpha.5 services image.'
+      notes: 'Superseded before release by 0.2.10. Combines 0.2.8 default-off output.enabled and digest.enabled with the shared scrub-engine contract used by the umbrella reader-first and phase-2 rollout. Defaults emit no SCRUB_ENGINE, SCRUB_ENGINE_REQUIRED or READER_MAX_RULESET bindings and keep output/digest off; explicit rollout values require the qualified alpha.5 services image.'
     - id: session-read-api-0.2.8
       status: planned
       charts: { session-read-api: 0.2.8 }
@@ -353,12 +359,12 @@ compatibility:
       images:
         session-read-api: { repository: ghcr.io/agentworkforce/96bulls-services, digest_required: true }
       notes: 'Defaults READ_API_COMPLETE_SINCE to epoch for a new self-host store populated only by its own ingest. Partial legacy imports must retain an explicit real coverage floor matching the indexer. Image, auth, routing and enabled defaults are unchanged; this does not assert coverage for an imported store or qualify a runtime.'
-    - id: sessions-pipeline-0.8.24
+    - id: sessions-pipeline-0.8.25
       status: unreleased
       current: true
-      charts: { sessions-pipeline: 0.8.24, sessions-pipeline-worker: 0.7.8, session-ingest-api: 0.4.5, session-read-api: 0.2.9 }
+      charts: { sessions-pipeline: 0.8.25, sessions-pipeline-worker: 0.7.8, session-ingest-api: 0.4.5, session-read-api: 0.2.10 }
       depends:
-        sessions-pipeline: { worker: 0.7.8, alleyoop: 0.4.5, sessionReadApi: 0.2.9, hoopdb: 0.9.0, session-object-storage: 5.4.0, otel: 0.178.0 }
+        sessions-pipeline: { worker: 0.7.8, alleyoop: 0.4.5, sessionReadApi: 0.2.10, hoopdb: 0.9.0, session-object-storage: 5.4.0, otel: 0.178.0 }
       images:
         sessions-pipeline-worker: { repository: agentworkforce/96bulls-services, digest: sha256:6f22ea17dff336e1431664542759fd27958649388b90a0b2f0881883caa7c6b2 }
         session-ingest-api: { repository: agentworkforce/96bulls-services, digest: sha256:6f22ea17dff336e1431664542759fd27958649388b90a0b2f0881883caa7c6b2 }
@@ -381,7 +387,17 @@ compatibility:
         - "ci/sessions-pipeline-profiles/matrix.sh"
         - "charts/sessions-pipeline/templates/_scrub-engine.tpl:1"
         - "ci/sessions-pipeline-scrub-engine/test_scrub_engine.py:1"
-      notes: 'Combines 0.8.23 first-class output facts, its deterministic hook-free bootstrap Job and read API output/digest values with one strict global.scrubEngine selection on every services-image workload and Job. The aws-rds-native profile turns on facts, Output and digest with no narrative model. Defaults emit no scrub selection; reader-first emits only ceiling 10 and the cutover overlay emits the full wasm-bindgen/required/10 triple.'
+      notes: 'Adds session-read-api 0.2.10 and selects its managed timing.assumeNoTurns and canonical.pinLaggingPointer values only in the aws-rds-native profile, preventing fresh native reads from failing timing_turns_unknown and transient *_canonical_manifest_mismatch while preserving every other profile default. Otherwise combines 0.8.24 output facts/bootstrap/read API values and the strict global.scrubEngine rollout; the AWS profile still has no narrative model.'
+    - id: sessions-pipeline-0.8.24
+      status: planned
+      charts: { sessions-pipeline: 0.8.24, sessions-pipeline-worker: 0.7.8, session-ingest-api: 0.4.5, session-read-api: 0.2.9 }
+      depends:
+        sessions-pipeline: { worker: 0.7.8, alleyoop: 0.4.5, sessionReadApi: 0.2.9, hoopdb: 0.9.0, session-object-storage: 5.4.0, otel: 0.178.0 }
+      images:
+        sessions-pipeline-worker: { repository: agentworkforce/96bulls-services, digest: sha256:6f22ea17dff336e1431664542759fd27958649388b90a0b2f0881883caa7c6b2 }
+        session-ingest-api: { repository: agentworkforce/96bulls-services, digest: sha256:6f22ea17dff336e1431664542759fd27958649388b90a0b2f0881883caa7c6b2 }
+        session-read-api: { repository: ghcr.io/agentworkforce/96bulls-services, digest_required: true }
+      notes: 'Superseded before release by 0.8.25. Combines 0.8.23 first-class output facts, its deterministic hook-free bootstrap Job and read API output/digest values with one strict global.scrubEngine selection on every services-image workload and Job.'
     - id: sessions-pipeline-0.8.23
       status: planned
       charts: { sessions-pipeline: 0.8.23, sessions-pipeline-worker: 0.7.7, session-ingest-api: 0.4.4, session-read-api: 0.2.8 }
@@ -1212,9 +1228,22 @@ compatibility:
       images:
         relayauth: { repository: ghcr.io/agentworkforce/relayauth, digest: sha256:eb71daa28e30eb7305f666d0bccc5a4002e53e8a574e3c4c32163d907a1b71df }
       notes: superseded by 0.1.1.
-    - id: agent-relay-0.6.47
+    - id: agent-relay-0.6.48
       status: unreleased
       current: true
+      charts: { agent-relay: 0.6.48, relayhistory: 0.1.3, relay-control: 0.4.13, relay-webapp: 0.2.4 }
+      app_versions: { agent-relay: 0.1.0, relayhistory: 0.1.0, relay-control: 0.1.0, relay-webapp: 0.1.0 }
+      depends:
+        agent-relay: { relaycast: 0.3.8, relayauth: 0.1.5, sessions-pipeline: 0.8.25, relayhistory: 0.1.3, relay-control: 0.4.13, relay-webapp: 0.2.4, relayflows: 0.2.5, durable-actors: 0.14.6-awf.1, relayfile: 0.2.2, telemetry-collector: 0.1.5, relay-chief: 0.1.0 }
+      images:
+        relaycast: { repository: ghcr.io/agentworkforce/relaycast-self-host, digest: sha256:ab9dd6781e68f09d5e2e686a17088f9ad533978ef13d974a47d6c212d8eedbde }
+        sessions-pipeline-worker: { repository: ghcr.io/agentworkforce/sessions-pipeline, digest: sha256:77022c5b6a1d30f96f921d703eb27a1acada8ec273ad84aebdde24f8eddce305 }
+        relayhistory: { repository: ghcr.io/agentworkforce/relayhistory, digest_required: true }
+        relay-control: { repository: ghcr.io/agentworkforce/relay-control, digest: sha256:d8c26d44dccb6dd21b7033288241a379e46ce5fbca69f276c4d4745001c3c3e2 }
+        relay-webapp: { repository: ghcr.io/agentworkforce/relay-webapp, digest: sha256:bd295ccb7d1323965dce890f19d0b7f857d706c00d7756f719c713763fdb49f3 }
+      notes: 'Adds the reusable customer-neutral values-eks-rds-native.yaml umbrella overlay on top of 0.6.47 and preserves its hosted customer-logo chart wiring: RDS, S3 Pod Identity, OpenSearch, native read/ingest/indexing, Output/digest/facts without a narrative model, structured password/setup-key sign-in, default-off coordination and agent-name views, and the approved 2026.11.0 image pins. Carries sessions-pipeline 0.8.25, whose AWS profile selects the fresh-native timing and lagging-canonical assumptions required by that image. It preserves the reader-first ceiling-10 phase and leaves output-facts bootstrap and wasm-bindgen writer selection explicit. Render and golden tests prove the four exact Pod Identity ServiceAccounts, no rendered Secrets, no legacy RelayAuth/History workloads, and the default EBS StorageClass contract.'
+    - id: agent-relay-0.6.47
+      status: planned
       charts: { agent-relay: 0.6.47, relayhistory: 0.1.3, relay-control: 0.4.13, relay-webapp: 0.2.4 }
       app_versions: { agent-relay: 0.1.0, relayhistory: 0.1.0, relay-control: 0.1.0, relay-webapp: 0.1.0 }
       depends:
@@ -1225,7 +1254,7 @@ compatibility:
         relayhistory: { repository: ghcr.io/agentworkforce/relayhistory, digest_required: true }
         relay-control: { repository: ghcr.io/agentworkforce/relay-control, digest: sha256:d8c26d44dccb6dd21b7033288241a379e46ce5fbca69f276c4d4745001c3c3e2 }
         relay-webapp: { repository: ghcr.io/agentworkforce/relay-webapp, digest: sha256:bd295ccb7d1323965dce890f19d0b7f857d706c00d7756f719c713763fdb49f3 }
-      notes: 'Adds the hosted customer logo: global.branding.logo (inline svg, or existingConfigMap and key) is served by relay-webapp 0.2.4 at <dashboard origin>/brand/<file>, and relay-control 0.4.13 points SELFHOST_LOGIN_LOGO_URL at it (login.logoUrl overrides; login.orgName sets SELFHOST_LOGIN_ORG_NAME). Off by default; default renders differ from 0.6.46 only in the helm.sh/chart labels. Images unchanged from 0.6.46; a relay-webapp image from #132 adds the /brand/ CSP and 404. Otherwise as 0.6.46.'
+      notes: 'Superseded before release by 0.6.48. Adds the hosted customer logo: global.branding.logo (inline svg, or existingConfigMap and key) is served by relay-webapp 0.2.4 at <dashboard origin>/brand/<file>, and relay-control 0.4.13 points SELFHOST_LOGIN_LOGO_URL at it (login.logoUrl overrides; login.orgName sets SELFHOST_LOGIN_ORG_NAME). Off by default; default renders differ from 0.6.46 only in the helm.sh/chart labels. Images unchanged from 0.6.46; a relay-webapp image from #132 adds the /brand/ CSP and 404. Otherwise as 0.6.46.'
     - id: agent-relay-0.6.46
       status: planned
       charts: { agent-relay: 0.6.46, relayhistory: 0.1.3, relay-control: 0.4.12, relay-webapp: 0.2.3 }
@@ -5166,9 +5195,14 @@ entries:
       READ_API_COORDINATION_OVERLAPS_BACKEND=postgres selection. It requires a
       qualified fe62ed80-or-later services image and migration
       20261105047000_coordination_fact_readers.
+      timing.assumeNoTurns and canonical.pinLaggingPointer are managed,
+      default-off assumptions. aws-rds-native enables both: a fresh native
+      store has no historical timing-turn population, and async admission may
+      temporarily leave session_index ahead of the canonical pointer. Other
+      profiles preserve the fail-closed defaults.
     chart: session-read-api
-    values: [fullnameOverride, replicas, image.*, imagePullSecrets, port, probeRuntime, origin, completeSince, directoryWorkspaces, login.advertisesSync, turns.assumeNoLegacy, events.messageIds, coordinationOverlaps.enabled, serviceAccountCreate, allowInClusterHttp, config.*, postgres.*, postgresCa.*, search.*, auth.*, cors.*, ingress.*, networkPolicy.*, extraEnv, extraVolumes, extraVolumeMounts, serviceAccountName, nodeSelector, tolerations, affinity, podAnnotations, resources]
-    env: [SERVICE, RELAYHISTORY_SELFHOST_READ_API, RELAYHISTORY_READ_API_PORT, RELAYHISTORY_READ_API_SECRET, READ_API_ORIGIN, READ_API_AUTH_MODE, READ_API_COMPLETE_SINCE, READ_API_DIRECTORY_WORKSPACES, READ_API_CORS_ALLOWED_ORIGINS, RELAYHISTORY_SELFHOST_LOGIN_ADVERTISES_SYNC, READ_API_TURNS_ASSUME_NO_LEGACY, READ_API_EVENT_MESSAGE_IDS, READ_API_COORDINATION_OVERLAPS_ENABLED, READ_API_COORDINATION_OVERLAPS_BACKEND, READ_API_INTERNAL_SECRET, READ_API_INTERNAL_SECRET_PREVIOUS, READ_API_ACCESS_TOKEN_TTL_SECONDS, SEARCH_INDEX_POSTGRES_BACKEND_ID, SEARCH_INDEX_OPENSEARCH_URL, SEARCH_INDEX_OPENSEARCH_AUTH, SEARCH_INDEX_OPENSEARCH_AWS_REGION, SEARCH_INDEX_OPENSEARCH_INDEX_PREFIX, PIPELINE_ORG_FROM_PREFIX, PIPELINE_KEY_PREFIX, SEARCH_INDEX_BACKEND, ALLOW_IN_CLUSTER_HTTP, SESSION_POSTGRES_TLS_PROFILE, SESSION_POSTGRES_CA_FILE, SESSION_POSTGRES_CA_SHA256, RELAYAUTH_JWKS_URL, RELAYAUTH_ISSUER, RELAYHISTORY_ACCEPT_RELAYCONTROL_TOKENS, RELAYCONTROL_INTROSPECT_URL, RELAYCONTROL_INTROSPECT_SECRET]
+    values: [fullnameOverride, replicas, image.*, imagePullSecrets, port, probeRuntime, origin, completeSince, directoryWorkspaces, login.advertisesSync, turns.assumeNoLegacy, timing.assumeNoTurns, canonical.pinLaggingPointer, events.messageIds, coordinationOverlaps.enabled, serviceAccountCreate, allowInClusterHttp, config.*, postgres.*, postgresCa.*, search.*, auth.*, cors.*, ingress.*, networkPolicy.*, extraEnv, extraVolumes, extraVolumeMounts, serviceAccountName, nodeSelector, tolerations, affinity, podAnnotations, resources]
+    env: [SERVICE, RELAYHISTORY_SELFHOST_READ_API, RELAYHISTORY_READ_API_PORT, RELAYHISTORY_READ_API_SECRET, READ_API_ORIGIN, READ_API_AUTH_MODE, READ_API_COMPLETE_SINCE, READ_API_DIRECTORY_WORKSPACES, READ_API_CORS_ALLOWED_ORIGINS, RELAYHISTORY_SELFHOST_LOGIN_ADVERTISES_SYNC, READ_API_TURNS_ASSUME_NO_LEGACY, READ_API_TIMING_ASSUME_NO_TURNS, READ_API_CANONICAL_PIN_LAGGING_POINTER, READ_API_EVENT_MESSAGE_IDS, READ_API_COORDINATION_OVERLAPS_ENABLED, READ_API_COORDINATION_OVERLAPS_BACKEND, READ_API_INTERNAL_SECRET, READ_API_INTERNAL_SECRET_PREVIOUS, READ_API_ACCESS_TOKEN_TTL_SECONDS, SEARCH_INDEX_POSTGRES_BACKEND_ID, SEARCH_INDEX_OPENSEARCH_URL, SEARCH_INDEX_OPENSEARCH_AUTH, SEARCH_INDEX_OPENSEARCH_AWS_REGION, SEARCH_INDEX_OPENSEARCH_INDEX_PREFIX, PIPELINE_ORG_FROM_PREFIX, PIPELINE_KEY_PREFIX, SEARCH_INDEX_BACKEND, ALLOW_IN_CLUSTER_HTTP, SESSION_POSTGRES_TLS_PROFILE, SESSION_POSTGRES_CA_FILE, SESSION_POSTGRES_CA_SHA256, RELAYAUTH_JWKS_URL, RELAYAUTH_ISSUER, RELAYHISTORY_ACCEPT_RELAYCONTROL_TOKENS, RELAYCONTROL_INTROSPECT_URL, RELAYCONTROL_INTROSPECT_SECRET]
     profiles: [selfhost-postgres, migration, external-selfhosted, external-rds, aws-rds-native, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql]
     status: shipped
     provided_by: operator

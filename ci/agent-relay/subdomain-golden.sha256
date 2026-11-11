@@ -1,4 +1,5 @@
 # helm v4.3.1
+fa0f9122b36a5c8dc7996c3580ba74408365382806c8a9e9ebfbde4fc57fd9b5  eks-rds-native.yaml
 37b7b34201edd9b1d631510bc364b8eef7896fc58abdbf0287d77d91a3666c05  gcp-durable-actors.yaml
 c7378c43aafd0517e3f1d05456767504f4627ab0b20e8c7467e6a43ed372b15b  gcp-proof-flows.yaml
 f6c6218744ff9bf2c25093813a9bcc4ff96a4826a760570db9ee209e530056f2  gcp-proof-live.yaml

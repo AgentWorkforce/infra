@@ -37,6 +37,85 @@ def control(overrides):
 
 
 class NativeNoRelayauth(unittest.TestCase):
+    def test_eks_rds_native_profile_is_reader_first_and_customer_neutral(self):
+        result = subprocess.run([
+            'helm', 'template', 'proof', 'charts/agent-relay', '-n', 'agent-relay-placeholder', '--no-hooks',
+            '-f', 'charts/agent-relay/values-eks.yaml',
+            '-f', 'charts/agent-relay/values-eks-rds-native.yaml',
+        ], cwd=ROOT, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        docs = [doc for doc in yaml.safe_load_all(result.stdout) if doc]
+        deployments = {doc['metadata']['name']: doc for doc in docs if doc.get('kind') == 'Deployment'}
+        jobs = {doc['metadata']['name']: doc for doc in docs if doc.get('kind') == 'Job'}
+        self.assertNotIn('relayauth', deployments)
+        self.assertNotIn('relayhistory', deployments)
+        for name in ('proof-read-api', 'proof-ingest-edge', 'proof-search-indexer'):
+            self.assertIn(name, deployments)
+
+        services_image = ('ghcr.io/agentworkforce/sessions-pipeline@sha256:'
+                          '77022c5b6a1d30f96f921d703eb27a1acada8ec273ad84aebdde24f8eddce305')
+        services_pods = []
+        for workload in [*deployments.values(), *jobs.values()]:
+            pod = workload['spec']['template']['spec']
+            for container in pod.get('containers', []):
+                if container['image'] == services_image:
+                    services_pods.append((workload['metadata']['name'], pod, container))
+        self.assertEqual(len(services_pods), 8)
+        for name, _, container in services_pods:
+            env = {item['name']: item.get('value') for item in container.get('env', [])}
+            self.assertEqual(env.get('READER_MAX_RULESET'), '10', name)
+            self.assertNotIn('SCRUB_ENGINE', env, name)
+            self.assertNotIn('SCRUB_ENGINE_REQUIRED', env, name)
+
+        expected_accounts = {
+            'proof-read-api': 'agent-relay-session-read',
+            'proof-ingest-edge': 'agent-relay-session-ingest-api',
+            'proof-search-indexer': 'agent-relay-search-indexer',
+            'proof-worker-session-summary-worker': 'agent-relay-worker',
+        }
+        for name, account in expected_accounts.items():
+            self.assertEqual(deployments[name]['spec']['template']['spec']['serviceAccountName'], account)
+        service_accounts = {doc['metadata']['name'] for doc in docs if doc.get('kind') == 'ServiceAccount'}
+        self.assertTrue(set(expected_accounts.values()).issubset(service_accounts))
+
+        reader = deployments['proof-read-api']['spec']['template']['spec']['containers'][0]
+        reader_env = {item['name']: item.get('value') for item in reader['env']}
+        self.assertEqual(reader_env['READ_API_SESSION_QUERY'], 'true')
+        self.assertEqual(reader_env['READ_API_TIMING_ASSUME_NO_TURNS'], 'true')
+        self.assertEqual(reader_env['READ_API_CANONICAL_PIN_LAGGING_POINTER'], 'true')
+        self.assertEqual(reader_env['READ_API_OUTPUT_ENABLED'], '1')
+        self.assertEqual(reader_env['READ_API_OUTPUT_BACKEND'], 'postgres')
+        self.assertEqual(reader_env['READ_API_DIGEST_ENABLED'], '1')
+        self.assertEqual(reader_env['READ_API_DIGEST_BACKEND'], 'postgres')
+        self.assertEqual(reader_env['READ_API_COORDINATION_OVERLAPS_ENABLED'], 'true')
+        self.assertEqual(reader_env['READ_API_COORDINATION_OVERLAPS_BACKEND'], 'postgres')
+        self.assertFalse(any('NARRATIVE' in name for name in reader_env))
+
+        indexer = deployments['proof-search-indexer']['spec']['template']['spec']['containers'][0]
+        indexer_env = {item['name']: item.get('value') for item in indexer['env']}
+        self.assertEqual(indexer_env['RELAYHISTORY_SELFHOST_OUTPUT_FACTS'], 'true')
+        self.assertFalse(any('output-facts' in name for name in jobs))
+
+        control = deployments['relay-control']['spec']['template']['spec']['containers'][0]
+        control_env = {item['name']: item.get('value') for item in control['env']}
+        self.assertEqual(control_env['RELAYHISTORY_BACKEND'], 'native')
+        self.assertEqual(control_env['SELFHOST_SIGNIN_METHODS'], 'password')
+        self.assertEqual(control_env['SELFHOST_TRUSTED_PROXIES'], '1')
+        self.assertEqual(control_env['SELFHOST_SETUP_KEY_FILE'], '/var/run/agent-relay/secrets/selfhost-setup-key')
+        self.assertEqual(control_env['SELFHOST_FEATURES'], 'usage,launch')
+        control_migrate = next(job for name, job in jobs.items() if name.startswith('relay-control-migrate-'))
+        migrate_env = {item['name'] for item in control_migrate['spec']['template']['spec']['containers'][0]['env']}
+        self.assertNotIn('SELFHOST_SETUP_KEY_FILE', migrate_env)
+
+        webapp = deployments['relay-webapp']['spec']['template']['spec']['containers'][0]
+        webapp_env = {item['name']: item.get('value') for item in webapp['env']}
+        self.assertEqual(webapp_env['DASHBOARD_SESSION_READ_API_ENABLED'], 'true')
+        self.assertNotIn('DASHBOARD_COORDINATION_OVERLAPS_ENABLED', webapp_env)
+        self.assertFalse(any(doc.get('kind') == 'Secret' for doc in docs))
+        pvc = next(doc for doc in docs if doc.get('kind') == 'PersistentVolumeClaim'
+                   and doc['metadata']['name'] == 'relaycast-data')
+        self.assertNotIn('storageClassName', pvc['spec'])
+
     def test_gcp_native_profile_routes_reader_ingest_and_postgres_search(self):
         result = subprocess.run([
             'helm', 'template', 'proof', 'charts/agent-relay', '-n', 'agent-relay', '--no-hooks',
