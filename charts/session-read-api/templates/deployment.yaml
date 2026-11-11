@@ -140,6 +140,7 @@ spec:
             {{- end }}
             {{- if $c.coordinationOverlaps.enabled }}
             - { name: READ_API_COORDINATION_OVERLAPS_ENABLED, value: "true" }
+            - { name: READ_API_COORDINATION_OVERLAPS_BACKEND, value: "postgres" }
             {{- end }}
             {{- include "session-read-api.analytics.env" $c.analytics | nindent 12 }}
             {{- range $e := $c.extraEnv }}

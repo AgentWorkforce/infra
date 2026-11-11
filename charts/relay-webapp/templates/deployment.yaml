@@ -65,6 +65,15 @@ spec:
             {{- if .Values.runtime.sessionReadApiEnabled }}
             - { name: DASHBOARD_SESSION_READ_API_ENABLED, value: "true" }
             {{- end }}
+            {{- if not (kindIs "bool" .Values.runtime.coordinationOverlapsEnabled) }}
+            {{- fail "runtime.coordinationOverlapsEnabled must be a boolean" }}
+            {{- end }}
+            {{- if and .Values.runtime.coordinationOverlapsEnabled (not .Values.runtime.sessionReadApiEnabled) }}
+            {{- fail "runtime.coordinationOverlapsEnabled=true requires runtime.sessionReadApiEnabled=true" }}
+            {{- end }}
+            {{- if .Values.runtime.coordinationOverlapsEnabled }}
+            - { name: DASHBOARD_COORDINATION_OVERLAPS_ENABLED, value: "true" }
+            {{- end }}
             {{- if not (kindIs "invalid" .Values.runtime.analyticsEnabled) }}
             {{- if not (kindIs "bool" .Values.runtime.analyticsEnabled) }}
             {{- fail "runtime.analyticsEnabled must be a boolean or null" }}

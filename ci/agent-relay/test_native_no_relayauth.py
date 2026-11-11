@@ -60,7 +60,7 @@ class NativeNoRelayauth(unittest.TestCase):
             'ghcr.io/agentworkforce/relay-control@sha256:88392b1827c263ab9eaad501ad902b37548f073a06a198444a8d91bcfb72d2b6')
         self.assertEqual(
             deployments['relay-webapp']['spec']['template']['spec']['containers'][0]['image'],
-            'ghcr.io/agentworkforce/relay-webapp@sha256:d28bb01d3545db204de8ba3d8927d6d14c2a1a256b0ec077abfc9a7a6242fdc4')
+            'ghcr.io/agentworkforce/relay-webapp@sha256:bd295ccb7d1323965dce890f19d0b7f857d706c00d7756f719c713763fdb49f3')
         control_env = {
             item['name']: item.get('value')
             for item in deployments['relay-control']['spec']['template']['spec']['containers'][0]['env']

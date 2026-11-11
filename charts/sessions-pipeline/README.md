@@ -30,14 +30,35 @@ edge defaults `claimLockBusy: true`; the artifact must include pipeline #484
 before claiming 429/Retry-After behavior for claim lock contention. An older
 image can ignore that setting; no services image is selected by this change.
 This does not remove the synchronous SQL claim or enable async admission.
-The artifact must also
-implement `GET /v1/coordination/overlaps`; this profile enables that endpoint
-through `sessionReadApi.coordinationOverlaps.enabled`. A digest that starts but
+The artifact must also come from relayhistory-pipeline `fe62ed80` or a reviewed
+successor and implement `GET /v1/coordination/overlaps`; sessions-pipeline
+defaults that endpoint on whenever `sessionReadApi.enabled=true`, rendering
+`READ_API_COORDINATION_OVERLAPS_ENABLED=true` and
+`READ_API_COORDINATION_OVERLAPS_BACKEND=postgres`. The Dashboard view is a
+separate default-off selection. A digest that starts but
 lacks any of those contracts is not acceptable: session list/search will answer
 501, events reads will answer 503, or the Dashboard Overlaps tab will stay
 hidden on 404. Record the merged source revision, successful publish run,
 immutable destination digest, and a fresh-RDS read acceptance result in the
 private release packet.
+
+Migration `20261105047000_coordination_fact_readers` creates two partial
+coordination-reader indexes. A fresh installation can let the migration build
+them directly because the target tables are empty. Before running that migration
+against a populated database, the database owner must prebuild the exact indexes
+outside a transaction, one statement at a time:
+
+```sql
+CREATE INDEX CONCURRENTLY session_event_facts_coordination_writes_idx
+  ON sessions.session_event_facts USING btree (org_id, workspace_id, ts, row_id)
+  WHERE (cardinality(files_touched) > 0);
+CREATE INDEX CONCURRENTLY session_output_facts_coordination_outcomes_idx
+  ON sessions.session_output_facts USING btree (org_id, workspace_id, ts, row_id)
+  WHERE (fact_kind = ANY (ARRAY['commit'::text, 'outcome'::text]));
+```
+
+Verify both indexes are valid and ready, then run the migration so it adopts
+their exact definitions. Do not use the blocking-index override in production.
 
 The profile disables the in-cluster HoopDb and MinIO, disables the legacy
 alleyoop Deployment, and uses dedicated Pod Identity ServiceAccounts. The

@@ -317,6 +317,7 @@ if [ "$mode" = static ]; then
   [ "$(read_value READ_API_AUTH_MODE)" = self_issued ] || err "aws-rds-native: read API is not self-issued"
   [ "$(read_value READ_API_EVENT_MESSAGE_IDS)" = true ] || err "aws-rds-native: read API message IDs are not enabled"
   [ "$(read_value READ_API_COORDINATION_OVERLAPS_ENABLED)" = true ] || err "aws-rds-native: coordination overlaps are not enabled"
+  [ "$(read_value READ_API_COORDINATION_OVERLAPS_BACKEND)" = postgres ] || err "aws-rds-native: coordination overlaps are not using postgres"
   [ "$(read_value READ_API_SESSION_QUERY)" = true ] || err "aws-rds-native: session query path is not enabled"
   [ "$(yq -r 'select(.kind == "Deployment" and .metadata.name == "ci-ingest-edge") | .spec.template.spec.containers[0].env[] | select(.name == "RELAYCONTROL_INTROSPECT_URL") | .value' <<<"$out" | grep -v '^---$')" = http://ci-relay-control.ci.svc.cluster.local ] \
     || err "aws-rds-native: ingest edge does not use the release-overlay Control Service URL"

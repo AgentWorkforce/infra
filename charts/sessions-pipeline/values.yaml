@@ -332,9 +332,13 @@ supabaseActivation:
 
 # The session read API moved to its own chart (charts/session-read-api), carried
 # here as a default-off dependency. Its values, documented in that chart, go under
-# this key. The old readApi key refuses to render, so two readers cannot run.
+# this key. When the dependency is enabled, coordination overlaps use Postgres by
+# default; the dashboard view remains a separate default-off selection. The old
+# readApi key refuses to render, so two readers cannot run.
 sessionReadApi:
   enabled: false
+  coordinationOverlaps:
+    enabled: true
 
 # Optional self-host transcript search writer (pipeline SERVICE=session-pipeline-consumer):
 # reads the Locker and indexes sessions into the backend selected below. Off by

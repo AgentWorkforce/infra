@@ -221,25 +221,38 @@ class ReadApi(unittest.TestCase):
         self.assertIn("requires LOCKER_BUCKET", self.render(overlay={"events": {"messageIds": True}}, fail=True))
         self.assertIn("must be a boolean", self.render(overlay={"events": {"messageIds": "true"}}, fail=True))
 
-    def test_coordination_overlaps_is_a_dedicated_default_off_value(self):
-        self.assertNotIn("READ_API_COORDINATION_OVERLAPS_ENABLED", self.env_of(self.render()))
-        env = self.env_of(self.render(overlay={"coordinationOverlaps": {"enabled": True}}))
+    def test_coordination_overlaps_defaults_on_in_pipeline_with_postgres_backend(self):
+        env = self.env_of(self.render())
         self.assertEqual(env["READ_API_COORDINATION_OVERLAPS_ENABLED"]["value"], "true")
+        self.assertEqual(env["READ_API_COORDINATION_OVERLAPS_BACKEND"]["value"], "postgres")
+        disabled = self.env_of(self.render(overlay={"coordinationOverlaps": {"enabled": False}}))
+        self.assertNotIn("READ_API_COORDINATION_OVERLAPS_ENABLED", disabled)
+        self.assertNotIn("READ_API_COORDINATION_OVERLAPS_BACKEND", disabled)
+
+        fixture = ROOT / "charts/session-read-api/ci/default-values.yaml"
+        result = subprocess.run(
+            ["helm", "template", "solo", str(ROOT / "charts/session-read-api"), "-n", "ci", "-f", str(fixture)],
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        standalone = self.env_of([d for d in yaml.safe_load_all(result.stdout) if d])
+        self.assertNotIn("READ_API_COORDINATION_OVERLAPS_ENABLED", standalone)
+        self.assertNotIn("READ_API_COORDINATION_OVERLAPS_BACKEND", standalone)
+
         self.assertIn(
             "coordinationOverlaps.enabled must be a boolean",
             self.render(overlay={"coordinationOverlaps": {"enabled": "true"}}, fail=True),
         )
-        self.assertIn(
-            "managed",
-            self.render(
-                overlay={
-                    "extraEnv": [
-                        {"name": "READ_API_COORDINATION_OVERLAPS_ENABLED", "value": "true"}
-                    ]
-                },
-                fail=True,
-            ),
-        )
+        for name in ["READ_API_COORDINATION_OVERLAPS_ENABLED", "READ_API_COORDINATION_OVERLAPS_BACKEND"]:
+            with self.subTest(name=name):
+                self.assertIn(
+                    "managed",
+                    self.render(
+                        overlay={"extraEnv": [{"name": name, "value": "true"}]},
+                        fail=True,
+                    ),
+                )
 
     def test_postgres_tls_requires_an_explicit_verified_profile(self):
         self.assertEqual(self.env_of(self.render())["SESSION_POSTGRES_TLS_PROFILE"]["value"], "custom-ca")
