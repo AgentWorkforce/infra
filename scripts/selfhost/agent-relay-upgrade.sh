@@ -291,19 +291,37 @@ trap 'rollback_hint' ERR
 rds_env=(env NAMESPACE="$namespace" KUBE_CONTEXT="$context" STATE_DIR="$state_dir")
 # wait_jobs NAME...: poll each Job until it completes; a Job that fails (its
 # Failed condition) or is still unfinished at the deadline fails the run with
-# its name and the last lines of its logs.
+# its name and the last lines of its logs. Jobs confirmed complete are
+# remembered and skipped later, because ttlSecondsAfterFinished may delete a
+# finished Job (a NotFound after it was seen complete counts as complete). A
+# Job that is NotFound from the start is waited for until the deadline; one
+# that disappears before its outcome was seen fails at once.
 job_timeout="${AGENT_RELAY_JOB_TIMEOUT_SECONDS:-1200}" job_poll="${AGENT_RELAY_JOB_POLL_SECONDS:-10}"
+completed_jobs=" "
 wait_jobs() {
-  local job state deadline
+  local job state deadline seen json
   deadline=$(( $(date +%s) + job_timeout ))
   for job in "$@"; do
+    case "$completed_jobs" in *" $job "*) say "   Job $job already completed"; continue ;; esac
+    seen=false
     while :; do
-      state=$("${kube[@]}" get job "$job" -o json | jq -r '
-        if ((.status.succeeded // 0) > 0) or any(.status.conditions[]?; .type == "Complete" and .status == "True") then "complete"
-        elif any(.status.conditions[]?; .type == "Failed" and .status == "True") then "failed"
-        else "running" end') || state=running  # a transient API error retries until the deadline
-      [ "$state" = running ] || break
-      if [ "$(date +%s)" -ge "$deadline" ]; then state=timeout; break; fi
+      if json=$("${kube[@]}" get job "$job" -o json 2>"$work/job.err"); then
+        seen=true
+        state=$(jq -r '
+          if ((.status.succeeded // 0) > 0) or any(.status.conditions[]?; .type == "Complete" and .status == "True") then "complete"
+          elif any(.status.conditions[]?; .type == "Failed" and .status == "True") then "failed"
+          else "running" end' <<<"$json") || state=running
+      elif grep -q NotFound "$work/job.err"; then
+        if $seen; then state="removed before its outcome was seen"; break; fi
+        state=missing
+      else
+        state=running  # a transient API error retries until the deadline
+      fi
+      [ "$state" = running ] || [ "$state" = missing ] || break
+      if [ "$(date +%s)" -ge "$deadline" ]; then
+        if [ "$state" = missing ]; then state="timeout; the Job was never found"; else state=timeout; fi
+        break
+      fi
       sleep "$job_poll"
     done
     if [ "$state" != complete ]; then
@@ -311,6 +329,7 @@ wait_jobs() {
       "${kube[@]}" logs "job/$job" --all-containers --tail=50 2>&1 | sed 's/^/     /' || true
       return 1
     fi
+    completed_jobs="$completed_jobs$job "
     say "   Job $job completed"
   done
 }

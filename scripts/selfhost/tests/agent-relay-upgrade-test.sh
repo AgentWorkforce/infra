@@ -103,6 +103,7 @@ case "\$*" in
     case "\$st" in
       complete) echo '{"status":{"succeeded":1,"conditions":[{"type":"Complete","status":"True"}]}}' ;;
       failed) echo '{"status":{"failed":3,"conditions":[{"type":"Failed","status":"True"}]}}' ;;
+      notfound) echo "Error from server (NotFound): jobs.batch \"\$n\" not found" >&2; exit 1 ;;
       *) echo '{"status":{"active":1}}' ;;
     esac ;;
   *"logs job/"*) echo "bootstrap: relation sessions.search_documents does not exist" ;;
@@ -386,3 +387,28 @@ out=$(AGENT_RELAY_JOB_TIMEOUT_SECONDS=0 run_rds "${args[@]}" --rds-setup --first
 grep -q 'did not complete (timeout)' <<<"$out" || fail "deadline not reported: $out"
 grep -q '^rds-setup post' "$root/log" && fail "post ran without a completed migration"
 pass "Job waits are bounded"
+
+# 26. a Job deleted by ttlSecondsAfterFinished after it was seen complete is not awaited again
+make_state; setup_mocks "$root/rel-ok" ok; rm -f "$root/exists"
+printf '%s\n---\n%s\n' "$migrate_job" "$bootstrap_job" > "$root/live-manifest.yaml"
+printf 'complete\nnotfound\n' > "$root/jobstate/agent-relay-worker-migrate-0a1b2c3d"
+out=$(AGENT_RELAY_JOB_TIMEOUT_SECONDS=0 run_rds "${args[@]}" --rds-setup --first-install --apply --db-instance prod-db --yes 2>&1) \
+  || fail "a completed then TTL-deleted Job failed the install: $out"
+[ "$(grep -c 'kubectl .*get job agent-relay-worker-migrate-0a1b2c3d ' "$root/log")" = 1 ] || fail "a completed Job was polled again"
+grep -q 'Job agent-relay-worker-migrate-0a1b2c3d already completed' <<<"$out" || fail "completed Job not skipped: $out"
+grep -q 'Installed agent-relay' <<<"$out" || fail "install not reported: $out"
+pass "a Job seen complete and then deleted counts as complete"
+
+# 27. a Job never found times out with a clear message; one that vanishes unseen-complete fails at once
+make_state; setup_mocks "$root/rel-ok" ok; rm -f "$root/exists"
+printf '%s\n---\n%s\n' "$migrate_job" "$bootstrap_job" > "$root/live-manifest.yaml"
+echo notfound > "$root/jobstate/agent-relay-search-indexer-bootstrap-9f8e7d6c"
+out=$(AGENT_RELAY_JOB_TIMEOUT_SECONDS=0 run_rds "${args[@]}" --rds-setup --first-install --apply --db-instance prod-db --yes 2>&1) \
+  && fail "a Job that never existed reported success"
+grep -q 'agent-relay-search-indexer-bootstrap-9f8e7d6c did not complete (timeout; the Job was never found)' <<<"$out" || fail "never-found Job message unclear: $out"
+make_state; setup_mocks "$root/rel-ok" ok; rm -f "$root/exists"
+printf '%s\n---\n%s\n' "$migrate_job" "$bootstrap_job" > "$root/live-manifest.yaml"
+printf 'running\nnotfound\n' > "$root/jobstate/agent-relay-search-indexer-bootstrap-9f8e7d6c"
+out=$(run_rds "${args[@]}" --rds-setup --first-install --apply --db-instance prod-db --yes 2>&1) && fail "a vanished running Job reported success"
+grep -q 'did not complete (removed before its outcome was seen)' <<<"$out" || fail "vanished Job message unclear: $out"
+pass "a Job never found times out clearly; one removed before completing fails"
