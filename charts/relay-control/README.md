@@ -60,6 +60,7 @@ whatever the API would refuse at startup:
 | `bootstrap.orgName`, `bootstrap.adminEmail` (+ optional `adminName`, `workspaceName`) | `SELFHOST_BOOTSTRAP_ORG_NAME`, `SELFHOST_BOOTSTRAP_ADMIN_EMAIL`, `SELFHOST_BOOTSTRAP_ADMIN_NAME`, `SELFHOST_BOOTSTRAP_WORKSPACE_NAME` | First-boot bootstrap (see "Sign-in, bootstrap and invites" below). `orgName` and `adminEmail` are set together; `adminName` and `workspaceName` are optional overrides. Requires `secretKeys.relaycastInternalSecret` and `dashboardUrl` (outside single-host mode). |
 | `secretKeys.relaycastInternalSecret` | `RELAYCAST_INTERNAL_SECRET_FILE` | Relaycast's internal admin secret, which is the same Secret key that `relaycast.secretKeys.internalSecret` names. The bootstrap creates the default workspace's Relaycast workspace with it. |
 | `auth.oidc.issuer`, `auth.oidc.clientId`, `secretKeys.oidcClientSecret` (+ `allowedDomains`, `displayName`, `scopes`, `redirectUrl`) | `SELFHOST_OIDC_ISSUER`, `SELFHOST_OIDC_CLIENT_ID`, `SELFHOST_OIDC_CLIENT_SECRET_FILE`, `SELFHOST_OIDC_ALLOWED_DOMAINS`, `SELFHOST_OIDC_DISPLAY_NAME`, `SELFHOST_OIDC_SCOPES`, `SELFHOST_OIDC_REDIRECT_URL` | OpenID Connect sign-in (authorization code with PKCE). The issuer must be https. `auth.oidc.allowHttpIssuer=true` (`SELFHOST_OIDC_ALLOW_HTTP_ISSUER`) also accepts http, and is for tests only. Register `<dashboard origin>/login/oidc/callback` with the IdP. |
+| `auth.microsoft.clientId`, `secretKeys.microsoftClientSecret` (+ `tenant`, `redirectUrl`) | `SELFHOST_MICROSOFT_CLIENT_ID`, `SELFHOST_MICROSOFT_CLIENT_SECRET_FILE`, `SELFHOST_MICROSOFT_TENANT`, `SELFHOST_MICROSOFT_REDIRECT_URL` | "Continue with Microsoft" for Outlook.com, Hotmail, Live and Entra ID accounts, beside `auth.oidc`. `tenant` is `common` (default), `consumers`, `organizations` or a tenant id. Register `<dashboard origin>/login/microsoft/callback` on the app registration. Tenant accounts need the `xms_edov` optional claim on the app registration. |
 | `auth.emailLink.enabled` | `SELFHOST_EMAIL_LOGIN` | Email sign-in links. Requires `smtp.host`. |
 | `auth.autoJoinDomains` | `SELFHOST_AUTO_JOIN_DOMAINS` | Verified emails in these domains join as `member` without an invite. |
 | `auth.inviteTtlHours` | `SELFHOST_INVITE_TTL_HOURS` | Invite link lifetime, 1-720 hours. The default is 168. |
@@ -106,7 +107,11 @@ these values set, an install needs no manual steps after `helm install`:
 2. **Sign-in.** Configure `auth.oidc` with Google Workspace, Okta, Microsoft
    Entra ID, Keycloak or any OIDC provider. Register
    `<dashboard origin>/login/oidc/callback` as the redirect URI, and store the
-   client secret under `secretKeys.oidcClientSecret`. The fallback is
+   client secret under `secretKeys.oidcClientSecret`. `auth.microsoft` adds a
+   "Continue with Microsoft" button beside it for Outlook.com, Hotmail, Live
+   and Entra ID accounts: register `<dashboard origin>/login/microsoft/callback`
+   on the app registration and store its client secret under
+   `secretKeys.microsoftClientSecret`. The fallback is
    `auth.emailLink.enabled` with `smtp`, which sends single-use sign-in links.
    The admin signs in at `<dashboard>/login`.
 3. **Invites.** Owners and admins invite people by email from Settings →

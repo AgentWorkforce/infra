@@ -301,6 +301,12 @@ relay-control:
   #     clientId: 1234567890-abc.apps.googleusercontent.com
   #     allowedDomains: [acme.com]
   #     displayName: Google Workspace
+  #   # Optional: "Continue with Microsoft" (Outlook.com, Hotmail, Live and
+  #   # Entra ID accounts) with redirect URI
+  #   # https://<root host>/login/microsoft/callback.
+  #   microsoft:
+  #     clientId: 11111111-2222-3333-4444-555555555555
+  #     tenant: common
   #   # Optional: verified emails in these domains join as member without an
   #   # invite.
   #   # autoJoinDomains: [acme.com]
@@ -317,6 +323,7 @@ relay-control:
   #   # the workspace's Relaycast workspace with it).
   #   relaycastInternalSecret: relaycast-internal-secret
   #   oidcClientSecret: oidc-client-secret
+  #   microsoftClientSecret: microsoft-client-secret
   #   smtpPassword: smtp-password
 
 relay-webapp:
