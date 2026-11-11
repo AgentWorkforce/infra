@@ -249,6 +249,34 @@ rather than waiting on Deployments first.
 **Checkpoint:** required Jobs complete and workloads become ready. Inspect a
 failed Job or missing image/profile instead of bypassing a verifier.
 
+### Upgrades
+
+Use the release's pull-based upgrader instead of assembling a chart or image
+set by hand. It is plan-only unless `--apply` is present. The plan downloads
+`release-manifest.json`, `release-images.values.yaml`, and `SHA256SUMS` from
+the requested GitHub release, verifies their checksums and GitHub build
+attestations, checks out the recorded infra commit, mirrors the manifest's
+exact image digests, and prints the chart/image change against the live
+release.
+
+```sh
+scripts/selfhost/agent-relay-upgrade.sh \
+  --version "$AGENT_RELAY_VERSION" \
+  --registry "$ECR_REGISTRY" \
+  --values /approved/private/customer.values.yaml \
+  --context "$KUBE_CONTEXT" \
+  --namespace "$NAMESPACE" \
+  --release "$RELEASE"
+```
+
+Review that plan and its exact release identifiers. After approval, repeat the
+same command with `--apply --db-instance "$RDS_INSTANCE_ID"`. Apply takes and
+waits for an RDS snapshot before Helm, passes the verified release image
+overlay last, waits for migrations and rollouts, and stops with the prior Helm
+revision and snapshot ID if a step fails. AWS, Kubernetes, and GitHub
+credentials come only from the administrator's normal environment or stdin;
+never add credentials to command arguments or values files.
+
 ## 5. Verify ingress, TLS and services
 
 **Who:** platform administrator, with a pilot laptop on the customer network.
