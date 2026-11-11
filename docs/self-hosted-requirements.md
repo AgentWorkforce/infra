@@ -4066,7 +4066,8 @@ MCP endpoint (owners/admins on a person connection, onto this workspace's
 own claimed nodes) and needs relay-control 0.5.14 or later.
 usage_people serves the owner-only per-member Usage drill-down (member
 names, emails and recorded session summaries; every view is audited) and
-needs relay-control 0.5.17 or later. With selectedFeatures=null and no
+needs relay-control 0.5.17 or later and a relay-webapp image with the
+People view (relay-webapp be85edc or later). With selectedFeatures=null and no
 SELFHOST_FEATURES in extraEnv, such images select usage and usage_people
 by default.
 Managed selection reserves SELFHOST_FEATURES against duplicate extraEnv.
