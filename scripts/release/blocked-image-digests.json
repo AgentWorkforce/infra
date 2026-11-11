@@ -1,0 +1,9 @@
+{
+  "schema": 1,
+  "blocked": {
+    "sessions-pipeline": {
+      "sha256:4cf44e471055360dad3d182cbe4e578da4c9c078315aa5126ef9c2de503535da": "withdrawn: relayscrubber 0.5.0-alpha.6 recall regression",
+      "sha256:e7dded94a0f62a30e529ce0e8ef708ca77b0bc1762a9fb080b8ecba2fc76f41c": "withdrawn: relayscrubber 0.5.0-alpha.6 recall regression and held migrations"
+    }
+  }
+}

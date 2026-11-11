@@ -20,6 +20,7 @@ DIGEST_A = "sha256:" + "1" * 64
 DIGEST_B = "sha256:" + "2" * 64
 SHA_A = "a" * 40
 SHA_B = "b" * 40
+BLOCKED = ROOT / "scripts/release/blocked-image-digests.json"
 
 
 class ReleaseCandidateTest(unittest.TestCase):
@@ -89,6 +90,74 @@ class ReleaseCandidateTest(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "repository drift"):
                 MODULE.update(
                     root, "2026.11.1", "relay-control", DIGEST_B, SHA_B
+                )
+
+    def write_scrub_pin(self, root, version, crate_version=None):
+        path = root / "scrub-bindgen-pin.json"
+        path.write_text(
+            json.dumps(
+                {
+                    "package_version": version,
+                    "manifest": {"crateVersion": crate_version or version},
+                }
+            )
+        )
+        return path
+
+    def test_withdrawn_sessions_digests_are_blocked(self):
+        policy = json.loads(BLOCKED.read_text())
+        self.assertEqual(len(policy["blocked"]["sessions-pipeline"]), 2)
+        with tempfile.TemporaryDirectory() as directory:
+            scrub_pin = self.write_scrub_pin(
+                pathlib.Path(directory), "0.5.0-alpha.8"
+            )
+            for digest in policy["blocked"]["sessions-pipeline"]:
+                with self.subTest(digest=digest):
+                    with self.assertRaisesRegex(ValueError, "blocked image digest"):
+                        MODULE.check_policy(
+                            BLOCKED,
+                            "sessions-pipeline",
+                            digest,
+                            SHA_A,
+                            scrub_pin,
+                        )
+
+    def test_sessions_scrubber_allows_alpha5_and_alpha8_plus_only(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            for version in ("0.5.0-alpha.5", "0.5.0-alpha.8", "0.5.0-alpha.19"):
+                with self.subTest(version=version):
+                    MODULE.check_policy(
+                        BLOCKED,
+                        "sessions-pipeline",
+                        DIGEST_A,
+                        SHA_A,
+                        self.write_scrub_pin(root, version),
+                    )
+            for version in (
+                "0.5.0-alpha.4",
+                "0.5.0-alpha.6",
+                "0.5.0-alpha.7",
+                "0.5.0-beta.1",
+            ):
+                with self.subTest(version=version):
+                    with self.assertRaisesRegex(ValueError, "disallowed relayscrubber"):
+                        MODULE.check_policy(
+                            BLOCKED,
+                            "sessions-pipeline",
+                            DIGEST_A,
+                            SHA_A,
+                            self.write_scrub_pin(root, version),
+                        )
+
+    def test_sessions_scrubber_manifest_version_must_match(self):
+        with tempfile.TemporaryDirectory() as directory:
+            pin = self.write_scrub_pin(
+                pathlib.Path(directory), "0.5.0-alpha.8", "0.5.0-alpha.7"
+            )
+            with self.assertRaisesRegex(ValueError, "crateVersion differ"):
+                MODULE.check_policy(
+                    BLOCKED, "sessions-pipeline", DIGEST_A, SHA_A, pin
                 )
 
     def test_pr_body_table_updates_in_place(self):

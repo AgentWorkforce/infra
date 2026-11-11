@@ -14,6 +14,7 @@ from typing import NoReturn
 SEMVER = re.compile(r"^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$")
 DIGEST = re.compile(r"^sha256:[a-f0-9]{64}$")
 COMMIT = re.compile(r"^[a-f0-9]{40}$")
+ALLOWED_SCRUBBER = re.compile(r"^0\.5\.0-alpha\.(5|[89]|[1-9][0-9]+)$")
 MARKER_START = "<!-- release-candidate-pins:start -->"
 MARKER_END = "<!-- release-candidate-pins:end -->"
 
@@ -24,14 +25,17 @@ COMPONENTS = {
     "relay-control": {
         "imageRepository": "ghcr.io/agentworkforce/relay-control",
         "sourceRepository": "AgentWorkforce/relay-control",
+        "signerWorkflow": ".github/workflows/release-relay-control-image.yml",
     },
     "relay-webapp": {
         "imageRepository": "ghcr.io/agentworkforce/relay-webapp",
         "sourceRepository": "AgentWorkforce/relay-webapp",
+        "signerWorkflow": ".github/workflows/container.yml",
     },
     "sessions-pipeline": {
         "imageRepository": "ghcr.io/agentworkforce/sessions-pipeline",
         "sourceRepository": "AgentWorkforce/relayhistory-pipeline",
+        "signerWorkflow": ".github/workflows/publish-image.yml",
     },
 }
 
@@ -52,6 +56,49 @@ def validate_pin(component: str, digest: str, source_sha: str) -> None:
         fail("digest must be lowercase sha256:<64 hex>")
     if not COMMIT.fullmatch(source_sha):
         fail("source_sha must be a full lowercase Git commit")
+
+
+def check_policy(
+    blocked_path: pathlib.Path,
+    component: str,
+    digest: str,
+    source_sha: str,
+    scrub_pin_path: pathlib.Path | None = None,
+) -> None:
+    validate_pin(component, digest, source_sha)
+    policy = json.loads(blocked_path.read_text(encoding="utf-8"))
+    if not isinstance(policy, dict) or set(policy) != {"schema", "blocked"}:
+        fail(f"{blocked_path}: malformed blocked-image policy")
+    if policy["schema"] != 1 or not isinstance(policy["blocked"], dict):
+        fail(f"{blocked_path}: unsupported blocked-image policy")
+    unknown = set(policy["blocked"]) - set(COMPONENTS)
+    if unknown:
+        fail(f"{blocked_path}: unknown blocked components: {', '.join(sorted(unknown))}")
+    blocked = policy["blocked"].get(component, {})
+    if not isinstance(blocked, dict):
+        fail(f"{blocked_path}: blocked digests for {component} must be an object")
+    for blocked_digest, reason in blocked.items():
+        if not DIGEST.fullmatch(blocked_digest) or not isinstance(reason, str) or not reason:
+            fail(f"{blocked_path}: malformed blocked digest for {component}")
+    if digest in blocked:
+        fail(f"blocked image digest for {component}: {blocked[digest]}")
+
+    if component != "sessions-pipeline":
+        if scrub_pin_path is not None:
+            fail("scrub-bindgen pin applies only to sessions-pipeline")
+        return
+    if scrub_pin_path is None:
+        fail("sessions-pipeline requires scrub-bindgen-pin.json from the exact source")
+    scrub_pin = json.loads(scrub_pin_path.read_text(encoding="utf-8"))
+    if not isinstance(scrub_pin, dict):
+        fail(f"{scrub_pin_path}: scrub pin must be an object")
+    package_version = scrub_pin.get("package_version")
+    manifest = scrub_pin.get("manifest")
+    crate_version = manifest.get("crateVersion") if isinstance(manifest, dict) else None
+    if not isinstance(package_version, str) or not ALLOWED_SCRUBBER.fullmatch(package_version):
+        fail(f"disallowed relayscrubber version: {package_version}")
+    if crate_version != package_version:
+        fail("scrub pin package_version and manifest.crateVersion differ")
 
 
 def candidate_dir(root: pathlib.Path, version: str) -> pathlib.Path:
@@ -202,6 +249,13 @@ def parse_args() -> argparse.Namespace:
     describe = subparsers.add_parser("describe")
     describe.add_argument("--component", required=True)
 
+    policy_parser = subparsers.add_parser("check-policy")
+    policy_parser.add_argument("--blocked", type=pathlib.Path, required=True)
+    policy_parser.add_argument("--component", required=True)
+    policy_parser.add_argument("--digest", required=True)
+    policy_parser.add_argument("--source-sha", required=True)
+    policy_parser.add_argument("--scrub-pin", type=pathlib.Path)
+
     update_parser = subparsers.add_parser("update")
     update_parser.add_argument("--root", type=pathlib.Path, default=pathlib.Path.cwd())
     update_parser.add_argument("--version", required=True)
@@ -223,6 +277,14 @@ def main() -> int:
             if args.component not in COMPONENTS:
                 fail(f"unsupported component: {args.component}")
             print(json.dumps(COMPONENTS[args.component], sort_keys=True))
+        elif args.command == "check-policy":
+            check_policy(
+                args.blocked,
+                args.component,
+                args.digest,
+                args.source_sha,
+                args.scrub_pin,
+            )
         elif args.command == "update":
             directory = update(
                 args.root, args.version, args.component, args.digest, args.source_sha
