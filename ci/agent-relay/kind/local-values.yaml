@@ -4,9 +4,9 @@
 relay-control:
   image:
     repository: ghcr.io/agentworkforce/relay-control
-    # 0.5.13, source fa81b67, published by run 42966711050 (Usage API).
-    digest: sha256:443210335565a3079419437965abe1d4ffb48b9203fee81679477e03fafcadad
-  selectedFeatures: [usage]
+    # 0.5.14, source 1309ee65, published by run 42970141599 (Usage + MCP launch).
+    digest: sha256:eec96e31c4625291884d075f1c145caff0507badf2154a2ecf78763af1ececf3
+  selectedFeatures: [usage, launch]
 relay-webapp:
   image:
     repository: ghcr.io/agentworkforce/relay-webapp

@@ -320,7 +320,7 @@ class LocalTests(unittest.TestCase):
                     self.assertIn("valueFrom", env["ANALYTICS_COLLECTOR_TOKEN"])
                     self.assertTrue(any(m["name"] == "analytics-ca" for m in container["volumeMounts"]))
                 if name == "relay-control":
-                    self.assertEqual(env["SELFHOST_FEATURES"]["value"], "usage")
+                    self.assertEqual(env["SELFHOST_FEATURES"]["value"], "usage,launch")
                     self.assertEqual(env["SELFHOST_ANALYTICS_DESTINATION"]["value"], "collector")
                     self.assertTrue(any(m["name"] == "analytics-producer" for m in container["volumeMounts"]))
 

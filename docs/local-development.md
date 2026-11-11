@@ -14,9 +14,9 @@ Control, the dashboard, Relaycast, native ingest/consumer/reader, the brief work
 and the internal telemetry collector. It uses published immutable release images;
 no source build, old data, operator packet or admission file is required.
 
-The profile pins are in `ci/agent-relay/kind/local-values.yaml`. Control 0.5.13
+The profile pins are in `ci/agent-relay/kind/local-values.yaml`. Control 0.5.14
 and dashboard source `c485ba6` are published releases selected for the owner-only
-Usage page. The services image is the published native generation selected for
+Usage page and MCP agent launch. The services image is the published native generation selected for
 session-list query support. The scrubber uses that services image's defaults. No WASM-required or reader-ceiling
 override is selected before the replacement services image is published.
 
@@ -42,11 +42,18 @@ All generated database/service credentials stay in `.kind/local/credentials.json
 
 The owner-only Usage page is at
 `https://relay.kind.agentrelay.com/#/settings/usage`. The local profile enables
-the `usage` feature through the chart's managed `selectedFeatures` value.
-Control applies migration 0040 during bootstrap. Upload counts come from session
+the `usage` and `launch` features through the chart's managed `selectedFeatures`
+value (Control chart 0.4.11, including the launch support introduced in 0.4.10).
+Control applies migrations 0040 and 0041 during bootstrap. Upload counts come from session
 directory activity; active-user and search counts start when usage is enabled.
 The current pipeline reports summary counts as unavailable (`n/a`). A member's
 request to `/cloud/api/v1/organizations/<org-id>/usage?days=30` returns 403.
+
+MCP launch tools are served at `/cloud/api/v1/mcp/shared-sessions`. Use a normal
+owner/admin person connection and keep its `Mcp-Session-Id` for target discovery,
+spawn, status and release. The Desktop must sign in to this site and enroll its
+node before it appears as an allowed target. Launch permission follows the
+Desktop's existing settings; these helpers do not change them.
 
 `make local-up` reuses only this checkout's matching cluster UID and Docker
 endpoint. An occupied local port or an existing foreign cluster refuses clearly;
@@ -148,6 +155,14 @@ summary in Details. Two real Codex sessions also completed a local native-socket
 message and reply. The Desktop backlog retained uploads through the migration
 outage and drained to zero afterward. A wrong-host request fails for hostname
 mismatch with the local CA trusted.
+
+On the deployed Control 0.5.14, a normal owner browser MCP connection reported
+launch capability and the local Desktop node as allowed and owned. A Codex
+launch reached `ready`, an identical replay returned the same spawn ID, and
+release removed it from the roster. Another MCP session was refused access to
+that launch. These API results are recorded separately from Desktop screen
+evidence: native screenshot capture failed with `could not create image from
+display`.
 
 The current self-issued reader returns unsupported responses for optional turns,
 timing and output metrics; the canonical event transcript and summary render.

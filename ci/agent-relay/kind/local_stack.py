@@ -227,7 +227,7 @@ class LocalStack(Stack):
         result["relay-webapp"]["runtime"]["coordinationOverlapsEnabled"] = False
         result["relay-webapp"]["customerProfile"]["desktop"]["siteUrl"] = SITE
         result["relay-control"]["image"] = image(CONTROL)
-        # Usage exposes counts within the core; it adds no optional workload.
+        # Usage and launch are Control APIs; they add no optional workload.
         result["relay-control"]["selectedFeatures"] = LOCAL_VALUES["relay-control"]["selectedFeatures"]
         result["relay-control"]["auth"] = {"emailLink": {"enabled": True}}
         result["relay-control"]["smtp"] = {"host": "local-mail.agent-relay.svc.cluster.local", "port": 1025, "security": "none", "from": "Local Relay <signin@kind.example>"}
