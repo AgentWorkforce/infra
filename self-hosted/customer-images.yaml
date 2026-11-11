@@ -7,7 +7,7 @@ kind: CustomerImageSourceManifest
 status: blocked
 metadata:
   name: agent-relay-gcp
-  auditedAt: "2026-11-10"
+  auditedAt: "2026-11-11"
   chart:
     name: agent-relay
     version: 0.6.21
@@ -349,32 +349,36 @@ images:
       - Deployment/relay-control:relay-control
     current:
       repository: ghcr.io/agentworkforce/relay-control
-      digest: sha256:88392b1827c263ab9eaad501ad902b37548f073a06a198444a8d91bcfb72d2b6
+      digest: sha256:215d7f20fad3eeecd092839cb26d0fa862cff95ebb413750aff3272c8729ab18
       chartStatus: shipped
     source:
       repository: https://github.com/AgentWorkforce/relay-control
-      revision: 1e55273745648c7bd8d2d1445fba75c285ec5fb0
+      revision: bf8924c36b92e76f008843d6e5e2681d2743834b
       path: Dockerfile
       reproducibleReference: true
       note: >-
-        Relay Control 0.5.10 with the co-branded login styling from #80,
-        relay-node credentials and broker from #83, and migration 0039. The
-        Desktop-feed and signer contracts are unchanged.
+        Relay Control 0.5.12: EKS Pod Identity / ECS container and web
+        identity (IRSA) credentials in the default AWS chain from #91, which
+        the Desktop-feed signer and S3 storage use on EKS; 0.5.11's Microsoft
+        sign-in, collector vocabularies and Relaycast broker envelopes; and the
+        default-off direct-to-S3 History upload credentials from #90. Retains
+        the 0.5.10 login styling, relay-node credentials/broker and migration
+        0039.
     license:
       status: approved
       spdx: Apache-2.0
-      evidence: https://github.com/AgentWorkforce/relay-control/blob/1e55273745648c7bd8d2d1445fba75c285ec5fb0/LICENSE
+      evidence: https://github.com/AgentWorkforce/relay-control/blob/bf8924c36b92e76f008843d6e5e2681d2743834b/LICENSE
     platforms:
       expected: [linux/amd64, linux/arm64]
       verifiedFromRegistry: [linux/amd64, linux/arm64]
       status: verified
       verificationAccess: anonymous
     release:
-      workflow: https://github.com/AgentWorkforce/relay-control/blob/1e55273745648c7bd8d2d1445fba75c285ec5fb0/.github/workflows/release-relay-control-image.yml
-      run: https://github.com/AgentWorkforce/relay-control/actions/runs/42885074532
+      workflow: https://github.com/AgentWorkforce/relay-control/blob/bf8924c36b92e76f008843d6e5e2681d2743834b/.github/workflows/release-relay-control-image.yml
+      run: https://github.com/AgentWorkforce/relay-control/actions/runs/42959388630
       trigger: workflow_dispatch
       buildsCommittedRevision: true
-      publishedTags: ["0.5.10", sha-1e55273745648c7bd8d2d1445fba75c285ec5fb0]
+      publishedTags: ["0.5.12", sha-bf8924c36b92e76f008843d6e5e2681d2743834b]
       publishesSbom: true
       publishesProvenance: true
       provenanceMode: max
@@ -384,7 +388,7 @@ images:
     approval:
       status: approved
       basis: >-
-        Public digest from the successful reviewed 0.5.10 release workflow at
+        Public digest from the successful reviewed 0.5.12 release workflow at
         the recorded revision, with SBOM, provenance and amd64+arm64 verified
         anonymously.
       blockingReasons: []

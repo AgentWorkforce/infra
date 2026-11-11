@@ -225,9 +225,11 @@ relayhistory:
 relay-control:
   fullnameOverride: relay-control
   image:
-    # Release image (public GHCR, relay-control 0.5.0, df4b390; 0.5.1 is not published yet, so the session read handoff is inert on this pin).
+    # Release image (public GHCR, relay-control 0.5.12, bf8924c): reads EKS Pod
+    # Identity / IRSA credentials, which the Desktop-feed role needs. Mirror it
+    # by digest to your registry and override repository.
     repository: ghcr.io/agentworkforce/relay-control
-    digest: sha256:d8c26d44dccb6dd21b7033288241a379e46ce5fbca69f276c4d4745001c3c3e2
+    digest: sha256:215d7f20fad3eeecd092839cb26d0fa862cff95ebb413750aff3272c8729ab18
   database:
     runtimeRole: control_api_runtime
   encryption:
