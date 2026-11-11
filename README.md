@@ -533,7 +533,7 @@ dependency, or durable-actors platform in either profile. Postgres search is
 selected explicitly. Locker stores session objects and is still needed.
 
 Prerequisites: Docker Engine 28+ (including native-platform image export),
-kind 0.31+, kubectl, Helm 3.10+, OpenSSL, Git, Python 3.9+, and PyYAML. Allocate
+kind 0.30+, kubectl, Helm 3.10+, OpenSSL, Git, Python 3.9+, and PyYAML. Allocate
 enough Docker memory for the suite and CNI; budget 20 GiB free disk for a cold
 setup. Current optional native Control builds fetch public
 `AgentWorkforce/relay-control` at the exact `53252e3` source pin. Explicit historical
