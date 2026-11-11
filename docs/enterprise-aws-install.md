@@ -402,6 +402,7 @@ relay-control:
 relay-webapp:
   customerProfile:
     logo: /brand/logo.svg   # optional: also use it as the dashboard's mark
+                            # (/brand/<key>, e.g. /brand/logo.png, for a ConfigMap)
 ```
 
 relay-webapp serves the file at `<dashboard origin>/brand/<file>`, and
@@ -420,6 +421,7 @@ still serve the file (with `nosniff`).
 Check it after install (step 7):
 
 ```sh
+# Use /brand/<key> (e.g. logo.png) for an existingConfigMap logo.
 curl -sSI "https://$APP_HOST/brand/logo.svg" | grep -Ei '^(HTTP|content-type)'
 curl -sS "https://$APP_HOST/cloud/api/v1/auth/login-config" | jq '{logo_url, org_name}'
 ```

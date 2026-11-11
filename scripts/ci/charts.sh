@@ -494,6 +494,7 @@ for chart in "${charts[@]}"; do
         expect_render_failure "$chart" "$v" "SVG event handler" "must not contain script" --set-string 'global.branding.logo.svg=<svg onload=alert(1)></svg>'
         expect_render_failure "$chart" "$v" "SVG encoded javascript: URL" "must not contain script" --set-string 'global.branding.logo.svg=<svg><a href="javascript&#58;alert(1)"><rect/></a></svg>'
         expect_render_failure "$chart" "$v" "SVG javascript: URL with a tab" "must not contain script" --set-string "global.branding.logo.svg=<svg><a href=\"java$(printf '\t')script:alert(1)\"><rect/></a></svg>"
+        expect_render_failure "$chart" "$v" "namespace-prefixed SVG script" "must not contain script" --set-string 'global.branding.logo.svg=<svg:svg xmlns:svg="http://www.w3.org/2000/svg"><svg:script>alert(1)</svg:script></svg:svg>'
         expect_render_failure "$chart" "$v" "SVG entity declaration" "must not contain script" --set-string 'global.branding.logo.svg=<!DOCTYPE svg [<!ENTITY x "y">]><svg/>'
         expect_render_failure "$chart" "$v" "SVG in an existing ConfigMap" "global.branding.logo.key must be a file name" --set global.branding.logo.existingConfigMap=relay-brand --set global.branding.logo.key=logo.svg
         logo=$(render "$chart" "$v" --set global.branding.logo.existingConfigMap=relay-brand)
@@ -608,6 +609,7 @@ for chart in "${charts[@]}"; do
         expect_render_failure "$chart" "$v" "hosted logo without a dashboard origin" "global.branding.logo needs dashboardUrl" --set-string 'global.branding.logo.svg=<svg/>'
         expect_render_failure "$chart" "$v" "hosted logo on a plaintext dashboard" "the sign-in logo must be https" --set-string 'global.branding.logo.svg=<svg/>' --set dashboardUrl=http://dashboard.example.com/
         expect_render_failure "$chart" "$v" "plaintext login logo" "login.logoUrl must be an absolute https URL" --set login.logoUrl=http://cdn.example.com/logo.svg
+        expect_render_failure "$chart" "$v" "login logo without a host" "login.logoUrl must be an absolute https URL" --set 'login.logoUrl=https://:443/logo.png'
         expect_render_failure "$chart" "$v" "login logo with credentials" "login.logoUrl must be an absolute https URL" --set login.logoUrl=https://u:p@cdn.example.com/logo.svg
         expect_render_failure "$chart" "$v" "unknown login setting" "login.logo is not a setting" --set login.logo=x
         expect_render_failure "$chart" "$idv" "login logo in extraEnv as well" "SELFHOST_LOGIN_LOGO_URL is managed" --set-string 'global.branding.logo.svg=<svg/>' --set-json 'extraEnv=[{"name":"SELFHOST_LOGIN_LOGO_URL","value":"https://cdn.example.com/x.svg"}]'

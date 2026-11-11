@@ -60,12 +60,13 @@ image/png with nosniff); an SVG goes inline, where it is checked. */ -}}
 {{- with $logo.key }}{{ if or (gt (len .) 253) (not (regexMatch "^[A-Za-z0-9][A-Za-z0-9._-]*\\.png$" .)) }}{{ fail "global.branding.logo.key must be a file name of [A-Za-z0-9._-] ending in .png (an SVG logo goes inline in global.branding.logo.svg, where it is checked)" }}{{ end }}{{ end -}}
 {{- with $logo.svg -}}
 {{- if gt (len .) 262144 }}{{ fail "global.branding.logo.svg must be at most 256 KiB; use existingConfigMap for a larger file" }}{{ end -}}
-{{- if not (regexMatch "(?i)<svg[\\s/>]" .) }}{{ fail "global.branding.logo.svg must be SVG markup (<svg ...>...</svg>)" }}{{ end -}}
+{{- if not (regexMatch "(?i)<([^\\s<>/:]+:)?svg[\\s/>]" .) }}{{ fail "global.branding.logo.svg must be SVG markup (<svg ...>...</svg>)" }}{{ end -}}
 {{- /* Browsers drop tabs and newlines inside URLs and decode character
 references in attribute values, so match javascript: with whitespace between
-its letters and refuse character references and DTDs (entities) outright;
+its letters, match namespace-prefixed elements (<svg:script>), and refuse
+character references and DTDs (entities) outright;
 design-tool SVG needs neither. */ -}}
-{{- if regexMatch "(?i)<script|<foreignobject|j\\s*a\\s*v\\s*a\\s*s\\s*c\\s*r\\s*i\\s*p\\s*t\\s*:|[\\s/]on[a-z]+\\s*=|&#|<!doctype|<!entity" . }}{{ fail "global.branding.logo.svg must not contain script, event handler attributes, javascript: URLs, foreignObject, character references (&#...;) or a DOCTYPE/ENTITY declaration" }}{{ end -}}
+{{- if regexMatch "(?i)<([^\\s<>/:]+:)?(script|foreignobject)|j\\s*a\\s*v\\s*a\\s*s\\s*c\\s*r\\s*i\\s*p\\s*t\\s*:|[\\s/]on[a-z]+\\s*=|&#|<!doctype|<!entity" . }}{{ fail "global.branding.logo.svg must not contain script, event handler attributes, javascript: URLs, foreignObject, character references (&#...;) or a DOCTYPE/ENTITY declaration" }}{{ end -}}
 {{- end -}}
 {{- end -}}
 {{- define "relay-webapp.ingressHost" -}}{{ include "relay-webapp.singleHost" . | default .Values.ingress.host }}{{- end -}}
