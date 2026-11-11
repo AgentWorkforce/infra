@@ -86,7 +86,7 @@ resource "aws_security_group" "builds" {
 resource "aws_vpc_security_group_egress_rule" "builds" {
   #checkov:skip=CKV_AWS_382:The jobs fetch helm/kubectl releases and chart dependencies from the internet through NAT and reach managed databases; there is no ingress.
   security_group_id = aws_security_group.builds.id
-  description       = "All egress through the VPC's NAT and endpoints."
+  description       = "All egress through the VPC NAT and endpoints"
   ip_protocol       = "-1"
   cidr_ipv4         = "0.0.0.0/0"
 }

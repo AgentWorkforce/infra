@@ -3,7 +3,8 @@
 # the environment's CodeBuild project, stream its log and fetch its report. AWS credentials are the GitHub OIDC
 # role of that project (terraform/modules/aws/ci-deploy).
 #
-#   ci-deploy-run.sh bundle <infra checkout> <environment dir> <out.tgz>   prints the bundle's sha256
+#   ci-deploy-run.sh bundle <charts checkout> <tools checkout> <environment dir> <out.tgz>   prints the sha256
+#     charts/ comes from the environment's infra commit, scripts/selfhost/ from the deploy tooling's commit.
 #   ci-deploy-run.sh start  <project> <bucket> <bundle key> <out.tgz> <report dir> [NAME=VALUE ...]
 #
 # start uploads the bundle, starts the build with BUNDLE_KEY, BUNDLE_SHA256, RUN_ID and the extra variables,
@@ -14,12 +15,12 @@ sha256(){ if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1"; else sha
 
 case "${1:-}" in
   bundle)
-    infra=${2:?infra checkout}; envdir=${3:?environment dir}; out=${4:?out.tgz}
+    infra=${2:?charts checkout}; tools=${3:?tools checkout}; envdir=${4:?environment dir}; out=${5:?out.tgz}
     [ -f "$envdir/deploy.json" ] || { echo "missing $envdir/deploy.json" >&2; exit 2; }
     stage=$(mktemp -d); trap 'rm -rf "$stage"' EXIT
     mkdir -p "$stage/infra/scripts"
     cp -R "$infra/charts" "$stage/infra/charts"
-    cp -R "$infra/scripts/selfhost" "$stage/infra/scripts/selfhost"
+    cp -R "$tools/scripts/selfhost" "$stage/infra/scripts/selfhost"
     cp -R "$envdir" "$stage/env"
     find "$stage" \( -name .git -o -name '*.tgz' -path '*/charts/*/charts/*' \) -prune -exec rm -rf {} + 2>/dev/null || true
     # Deterministic: the apply job rebuilds the bundle and must get the digest the plan reviewed.
