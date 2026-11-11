@@ -3853,8 +3853,12 @@ fanout, buffered/publication/GC activation or deletion/privacy acceptance.
 
 selectedFeatures=null preserves the existing extraEnv/default selection.
 A managed list selects only flows, relayfile, chief and usage; [] explicitly
-serves core only. usage serves the owner-only Usage page (counts only,
-nothing recorded while off) and needs a Control image with the usage API. No license, customer metadata or entitlement is used.
+serves core only. usage serves the owner-only Usage page (counts only).
+While it is off Control keeps no active-user or search counters; session
+and summary counts come from the session directory, which records
+sessions either way. usage needs a Control image with the usage API and a
+relay-webapp image with the Usage page. No license, customer metadata or
+entitlement is used.
 Managed selection reserves SELFHOST_FEATURES against duplicate extraEnv.
 
 - Default: (no default)
