@@ -15,6 +15,7 @@ DIGEST = re.compile(r"^sha256:[a-f0-9]{64}$")
 COMMIT = re.compile(r"^[a-f0-9]{40}$")
 CHART_PATH = re.compile(r"^[A-Za-z0-9._/-]+$")
 VALUES_OVERLAY = "release-images.values.yaml"
+APPROVED_IMAGE_STATUSES = {"approved", "customer-ready"}
 
 
 def fail(message: str) -> "NoReturn":
@@ -101,7 +102,7 @@ def build(args: argparse.Namespace) -> dict[str, object]:
         if entry is None:
             fail(f"rendered customer image is absent from the inventory: {ref}")
         name, approval = entry
-        if approval != "approved":
+        if approval not in APPROVED_IMAGE_STATUSES:
             fail(
                 f"rendered customer image is not release-approved ({approval}): {ref}"
             )

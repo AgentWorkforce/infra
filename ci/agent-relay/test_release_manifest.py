@@ -138,6 +138,19 @@ class ReleaseManifestTest(unittest.TestCase):
                 [f"service\tghcr.io/example/service\t{DIGEST_A}\tblocked"],
             )
 
+    def test_accepts_customer_ready_image_status(self):
+        manifest = self.build_fixture(
+            [f"ghcr.io/example/service@{DIGEST_A}"],
+            [
+                f"service\tghcr.io/example/service\t{DIGEST_A}"
+                "\tcustomer-ready"
+            ],
+        )
+        self.assertEqual(
+            manifest["images"],
+            [{"name": "service", "ref": f"ghcr.io/example/service@{DIGEST_A}"}],
+        )
+
     def test_release_version_is_independent_of_chart_version(self):
         manifest = self.build_fixture(
             [f"ghcr.io/example/service@{DIGEST_A}"],
