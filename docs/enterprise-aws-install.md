@@ -24,6 +24,29 @@ The release owner supplies one tested release packet:
 | Operator controls | Capture policy, pre-upload scrubbing, authorized deletion and disabled add-ons verified in the actual client and app. Do not claim client-side scrubbing until the selected Desktop build contains the release-qualified R9 scrubber. |
 | Recovery | A successful isolated restore and a reviewed upgrade/recovery procedure for this exact release. |
 
+The public tag includes a customer-neutral AWS install pack. Verify the outer
+release checksum, then the archive's own checksum before combining it with the
+private handoff:
+
+```sh
+gh release download "agent-relay-$AGENT_RELAY_VERSION" \
+  --repo AgentWorkforce/infra \
+  --pattern "agent-relay-$AGENT_RELAY_VERSION-install-pack.tar.gz" \
+  --pattern SHA256SUMS
+sha256sum --check --ignore-missing SHA256SUMS
+mkdir "agent-relay-$AGENT_RELAY_VERSION-install-pack"
+tar -xzf "agent-relay-$AGENT_RELAY_VERSION-install-pack.tar.gz" \
+  -C "agent-relay-$AGENT_RELAY_VERSION-install-pack"
+(cd "agent-relay-$AGENT_RELAY_VERSION-install-pack" && sha256sum --check SHA256SUMS)
+```
+
+`values.yaml` is the neutral EKS base, `overlay.yaml` selects the managed
+RDS/native AWS assembly, and `release-images.values.yaml` carries the accepted
+immutable images and must be applied last after replacing only its documented
+mirror-root placeholder. Customer names, hosts, account IDs, credentials and
+private policy values stay in the private values file; they are never release
+assets.
+
 Open work is tracked in the [application proof](terraform-helm-application-proof.md),
 [database contract](shared-postgres-storage-contract.md) and
 [customer controls checklist](enterprise-customer-controls.md). A missing item
@@ -295,7 +318,10 @@ Use the release packet's complete RDS values overlay. The historical
 6. Render and lint the selected chart with that overlay. Check every namespace,
    origin, Secret reference, image and network setting before installation.
 
-Set `RELEASE`, `CHART_PACKAGE` and `KUBE_CONTEXT` from the handoff. `NAMESPACE`
+Set `RELEASE`, `CHART_PACKAGE`, `KUBE_CONTEXT` and `INSTALL_PACK_DIR` from the
+handoff. Prepare `/approved/private/release-images.values.yaml` from the
+verified pack copy by replacing only its documented mirror-root placeholder.
+`NAMESPACE`
 must be the Terraform environment's `namespace` recorded in step 2; a different
 namespace leaves every workload without its Pod Identity role.
 Run `helm list --all` in that exact context/namespace. Only confirmed absence
@@ -304,7 +330,11 @@ permits this **first-install** command:
 ```sh
 helm install "$RELEASE" "$CHART_PACKAGE" \
   --kube-context "$KUBE_CONTEXT" --namespace "$NAMESPACE" \
-  --create-namespace --values /approved/private/customer.values.yaml \
+  --create-namespace \
+  --values "$INSTALL_PACK_DIR/values.yaml" \
+  --values "$INSTALL_PACK_DIR/overlay.yaml" \
+  --values /approved/private/customer.values.yaml \
+  --values /approved/private/release-images.values.yaml \
   --no-hooks --timeout 20m
 ```
 

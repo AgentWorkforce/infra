@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import pathlib
 import re
@@ -17,7 +18,21 @@ COMMIT = re.compile(r"^[a-f0-9]{40}$")
 CHART_PATH = re.compile(r"^[A-Za-z0-9._/-]+$")
 VALUES_OVERLAY = "release-images.values.yaml"
 VALUES_OVERLAY_PROFILES = {"gcp", "eks"}
-APPROVED_IMAGE_STATUSES = {"approved", "customer-ready"}
+APPROVED_IMAGE_STATUSES = {"approved", "customer-ready", "accepted-candidate"}
+RELEASE_CANDIDATE_COMPONENTS = {
+    "relay-control": (
+        "ghcr.io/agentworkforce/relay-control",
+        "AgentWorkforce/relay-control",
+    ),
+    "relay-webapp": (
+        "ghcr.io/agentworkforce/relay-webapp",
+        "AgentWorkforce/relay-webapp",
+    ),
+    "sessions-pipeline": (
+        "ghcr.io/agentworkforce/sessions-pipeline",
+        "AgentWorkforce/relayhistory-pipeline",
+    ),
+}
 
 
 def fail(message: str) -> NoReturn:
@@ -87,6 +102,42 @@ def load_rendered_refs(path: pathlib.Path) -> list[str]:
     return sorted(refs)
 
 
+def apply_candidate_pins(
+    inventory: dict[str, tuple[str, str]], path: pathlib.Path, version: str
+) -> tuple[str, dict[str, tuple[str, str]]]:
+    data = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(data, dict) or set(data) != {"schema", "version", "pins"}:
+        fail(f"{path}: malformed release candidate pins")
+    if data["schema"] != 1 or data["version"] != version:
+        fail(f"{path}: release candidate version mismatch")
+    pins = data["pins"]
+    if not isinstance(pins, dict) or not pins:
+        fail(f"{path}: release candidate has no pins")
+    for component, pin in pins.items():
+        if component not in RELEASE_CANDIDATE_COMPONENTS or not isinstance(pin, dict):
+            fail(f"{path}: unsupported release candidate component: {component}")
+        expected = {"repository", "digest", "sourceRepository", "sourceRevision"}
+        if set(pin) != expected:
+            fail(f"{path}: malformed release candidate pin: {component}")
+        image_repository, source_repository = RELEASE_CANDIDATE_COMPONENTS[component]
+        if pin["repository"] != image_repository:
+            fail(f"{path}: release candidate repository drift: {component}")
+        if pin["sourceRepository"] != source_repository:
+            fail(f"{path}: release candidate source repository drift: {component}")
+        if not COMMIT.fullmatch(pin["sourceRevision"]):
+            fail(f"{path}: invalid release candidate source revision: {component}")
+        ref = normalized_digest_ref(f"{pin['repository']}@{pin['digest']}")
+        inventory = {
+            existing_ref: entry
+            for existing_ref, entry in inventory.items()
+            if entry[0] != component
+        }
+        if ref in inventory:
+            fail(f"{path}: release candidate image collides with another component")
+        inventory[ref] = (component, "accepted-candidate")
+    return hashlib.sha256(path.read_bytes()).hexdigest(), inventory
+
+
 def build(args: argparse.Namespace) -> dict[str, object]:
     if not SEMVER.fullmatch(args.version):
         fail("version must be stable SemVer")
@@ -100,6 +151,11 @@ def build(args: argparse.Namespace) -> dict[str, object]:
         fail("valuesOverlayProfile must be gcp or eks")
 
     inventory = load_inventory(args.inventory)
+    candidate_sha256 = None
+    if args.candidate_pins is not None:
+        candidate_sha256, inventory = apply_candidate_pins(
+            inventory, args.candidate_pins, args.version
+        )
     images = []
     for ref in load_rendered_refs(args.images):
         entry = inventory.get(ref)
@@ -113,7 +169,7 @@ def build(args: argparse.Namespace) -> dict[str, object]:
         images.append({"name": name, "ref": ref})
     images.sort(key=lambda image: (image["name"], image["ref"]))
 
-    return {
+    manifest = {
         "schema": 1,
         "version": args.version,
         "infraCommit": args.infra_commit,
@@ -122,6 +178,12 @@ def build(args: argparse.Namespace) -> dict[str, object]:
         "valuesOverlayProfile": args.values_overlay_profile,
         "images": images,
     }
+    if candidate_sha256 is not None:
+        manifest["candidatePins"] = {
+            "path": "candidate-pins.json",
+            "sha256": candidate_sha256,
+        }
+    return manifest
 
 
 def build_values_overlay(manifest: dict[str, object]) -> str:
@@ -240,6 +302,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--images", type=pathlib.Path, required=True)
     parser.add_argument("--inventory", type=pathlib.Path, required=True)
+    parser.add_argument("--candidate-pins", type=pathlib.Path)
     parser.add_argument("--output", type=pathlib.Path, required=True)
     parser.add_argument("--values-overlay-output", type=pathlib.Path, required=True)
     return parser.parse_args()

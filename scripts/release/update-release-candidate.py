@@ -256,6 +256,10 @@ def parse_args() -> argparse.Namespace:
     policy_parser.add_argument("--source-sha", required=True)
     policy_parser.add_argument("--scrub-pin", type=pathlib.Path)
 
+    validate_parser = subparsers.add_parser("validate")
+    validate_parser.add_argument("--pins", type=pathlib.Path, required=True)
+    validate_parser.add_argument("--version", required=True)
+
     update_parser = subparsers.add_parser("update")
     update_parser.add_argument("--root", type=pathlib.Path, default=pathlib.Path.cwd())
     update_parser.add_argument("--version", required=True)
@@ -285,6 +289,8 @@ def main() -> int:
                 args.source_sha,
                 args.scrub_pin,
             )
+        elif args.command == "validate":
+            load_pins(args.pins, args.version)
         elif args.command == "update":
             directory = update(
                 args.root, args.version, args.component, args.digest, args.source_sha
