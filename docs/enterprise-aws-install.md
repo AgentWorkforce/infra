@@ -68,6 +68,39 @@ controller, storage, Pod Identity and required access. Follow the
 [foundation instructions](../terraform/examples/aws-foundation/README.md) for
 missing prerequisites; do not create or adopt a second cluster accidentally.
 
+In a brand-new AWS account, first complete the foundation's
+[account prerequisites](../terraform/examples/aws-foundation/README.md#account-prerequisites):
+create the missing `AWSServiceRoleForAutoScaling` and
+`AWSServiceRoleForAmazonOpenSearchService` service-linked roles, then the
+durable KMS key from the reference
+[key policy](../terraform/examples/aws-foundation/kms-key-policy.json.example).
+Without them the key policy is rejected, managed nodes never launch, or the
+OpenSearch domain create fails.
+
+When foundation creates the cluster, finish its Kubernetes prerequisites after
+the foundation apply and before step 2, in this order (details in
+[After apply](../terraform/examples/aws-foundation/README.md#after-apply)):
+
+```sh
+LBC="$(terraform output -json load_balancer_controller)"  # null unless enable_load_balancer_controller = true
+aws eks update-kubeconfig --name "$(jq -r .cluster_name <<<"$LBC")" --region "$(jq -r .region <<<"$LBC")"
+# 1. AWS Load Balancer Controller
+helm repo add eks https://aws.github.io/eks-charts && helm repo update eks
+helm upgrade --install aws-load-balancer-controller eks/aws-load-balancer-controller \
+  --version 3.6.2 --namespace kube-system \
+  --set clusterName="$(jq -r .cluster_name <<<"$LBC")" \
+  --set region="$(jq -r .region <<<"$LBC")" \
+  --set vpcId="$(jq -r .vpc_id <<<"$LBC")" \
+  --set serviceAccount.create=true \
+  --set serviceAccount.name=aws-load-balancer-controller
+kubectl -n kube-system rollout status deployment/aws-load-balancer-controller
+# 2. Encrypted, retained gp3 StorageClass
+terraform output -json storage_class_manifest | kubectl apply -f -
+```
+
+Run these from the initialized foundation root. Without the controller no
+Ingress gets a load balancer; without the StorageClass no persistent volume binds.
+
 **Checkpoint:** the admin runner and a pilot laptop can reach the intended
 network, and the deployment identity can manage only the approved resources.
 
@@ -107,6 +140,16 @@ python3 terraform/scripts/aws-environment.py output \
 Retain the plan/apply receipt and non-secret `verification.json`. Reconcile a
 failed apply before preparing another plan. Preserve state and backup storage.
 
+**Record the application namespace now.** Every workload Pod Identity
+association is bound to the environment's namespace, which defaults to
+`agent-relay-<environment>` (for example `agent-relay-dev`), not `agent-relay`.
+Pods installed into any other namespace run without AWS access. Take it from
+`verification.json` and use it for every later step:
+
+```sh
+export NAMESPACE="$(jq -r .namespace terraform/.runs/<account>/<region>/<environment>/verification.json)"
+```
+
 **Checkpoint:** actual RDS, S3 and selected search/function resources match the
 reviewed inventory and are privately reachable from the intended workloads.
 
@@ -138,7 +181,7 @@ export AWS_REGION=<approved-region>
 export RDS_HOST="$(terraform output -raw database_host)"
 export RDS_ADMIN_SECRET_ARN="$(terraform output -raw database_admin_secret_arn)"
 export SERVICES_IMAGE='<customer-registry>/sessions-pipeline@sha256:<approved-digest>'
-export NAMESPACE=agent-relay
+export NAMESPACE="$(jq -r .namespace terraform/.runs/<account>/<region>/<environment>/verification.json)"  # not a guessed agent-relay
 export KUBE_CONTEXT=<approved-kube-context>
 export STATE_DIR=/approved/private/agent-relay-install
 scripts/selfhost/rds-setup.sh pre
@@ -200,7 +243,9 @@ Use the release packet's complete RDS values overlay. The historical
 6. Render and lint the selected chart with that overlay. Check every namespace,
    origin, Secret reference, image and network setting before installation.
 
-Set `RELEASE`, `CHART_PACKAGE`, `KUBE_CONTEXT` and `NAMESPACE` from the handoff.
+Set `RELEASE`, `CHART_PACKAGE` and `KUBE_CONTEXT` from the handoff. `NAMESPACE`
+must be the Terraform environment's `namespace` recorded in step 2; a different
+namespace leaves every workload without its Pod Identity role.
 Run `helm list --all` in that exact context/namespace. Only confirmed absence
 permits this **first-install** command:
 

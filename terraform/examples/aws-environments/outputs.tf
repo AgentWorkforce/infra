@@ -11,6 +11,7 @@ output "verification" {
     name_prefix       = var.name_prefix
     account_id        = var.account_id
     region            = var.region
+    namespace         = local.namespace
     pippen            = var.pippen
     postgres = {
       identifier            = "${local.name}-pg"

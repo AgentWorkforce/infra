@@ -27,7 +27,7 @@ def fixture(mode="rds", confirmed=None):
     i = confirmed or installation()
     name = i.name_prefix + "-" + i.environment
     return {
-        "account_id": i.account, "environment": i.environment, "environment_class": i.environment_class, "name_prefix": i.name_prefix, "region": i.region,
+        "account_id": i.account, "environment": i.environment, "environment_class": i.environment_class, "name_prefix": i.name_prefix, "region": i.region, "namespace": "agent-relay-" + i.environment,
         "pippen": None if i.pippen_agent is None else {"agent": i.pippen_agent, "session_id": i.pippen_session},
         "storage": {"prefix": f"proofs/{i.environment}/", "bucket": f"{name}-{i.account}-{i.region}-sessions", "role_arn": f"arn:aws:iam::{i.account}:role/storage"},
         "postgres": {"identifier": name + "-pg", "host": f"{name}-pg.abc.{i.region}.rds.amazonaws.com", "secret_arn": f"arn:aws:secretsmanager:{i.region}:{i.account}:secret:rds!db-canary-AbCd12", "resource_arn": f"arn:aws:rds:{i.region}:{i.account}:{'db' if mode == 'rds' else 'cluster'}:{name}-pg", "port": 5432, "database": "relaycontrol", "master_username": "relay_admin", "engine_mode": mode, "backup_retention_days": {"development": 7, "staging": 14, "production": 35}[i.environment_class], "deletion_protection": True},
@@ -104,6 +104,13 @@ class DataProofRefusalTests(unittest.TestCase):
         c = fixture(); c["arbitrary"] = True
         with self.assertRaises(probe.Failed): probe.validate(c, installation(), RUN)
         with self.assertRaises(probe.Failed): probe.validate(fixture(), tuple(installation()), RUN)
+    def test_exported_namespace_is_required_and_a_dns_label(self):
+        probe.validate(fixture(), installation(), RUN)
+        for value in [None, "", "Agent-Relay", "agent_relay", "-agent", "a" * 64, 7]:
+            c = fixture(); c["namespace"] = value
+            with self.subTest(value=value), self.assertRaises(probe.Failed): probe.validate(c, installation(), RUN)
+        c = fixture(); del c["namespace"]
+        with self.assertRaises(probe.Failed): probe.validate(c, installation(), RUN)
     def test_production_lambda_and_foreign_installation_rds_are_refused(self):
         for section, key, value in (("pipeline", "function_arn", f"arn:aws:lambda:{REGION}:{ACCOUNT}:function:agent-relay-prod-session-pipeline"), ("pipeline", "function_name", "other-dev-session-pipeline"), ("postgres", "resource_arn", f"arn:aws:rds:{REGION}:{ACCOUNT}:db:other-dev-pg"), ("postgres", "host", "other-dev-pg.abc.us-west-2.rds.amazonaws.com"), ("postgres", "resource_arn", f"arn:aws:rds:{REGION}:{ACCOUNT}:snapshot:agent-relay-dev-pg"), ("pipeline", "function_arn", fixture()["pipeline"]["function_arn"] + ":alias")):
             c = fixture(); c[section][key] = value

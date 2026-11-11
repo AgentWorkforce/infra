@@ -26,36 +26,62 @@ Leaving it unset adds nothing. Setting it creates one `sessions-read-<domain_nam
 
 ### After apply
 
-IAM only opens the door: OpenSearch fine-grained access control still has to map each role. Both steps run once per domain, from inside the VPC, signed as `master_user_arn`. No other AWS change is needed, and pods pick up the IAM policy without a restart.
+IAM only opens the door: OpenSearch fine-grained access control still has to map each role. Both steps run once per domain, signed as `master_user_arn`. No other AWS change is needed, and pods pick up the IAM policy without a restart.
 
-Assume the master role, then read the endpoint and role ARNs:
+**Index pattern.** The sessions-pipeline search indexer writes one index, `<indexPrefix>-transcript-events`, where `<indexPrefix>` is the chart's `sessions-pipeline.searchIndexer.search.opensearch.indexPrefix` (rendered as `SEARCH_INDEX_OPENSEARCH_INDEX_PREFIX`). The chart defaults it to `relayhistory`, and the `aws-rds-native` profile sets `relayhistory` on both `searchIndexer` and `sessionReadApi` (an empty read API `indexPrefix` also means `relayhistory` in the pipeline), so the default pattern is `relayhistory-*`. If you override `indexPrefix`, set the same value on `searchIndexer` and `sessionReadApi` and use `<indexPrefix>-*` below. The `aws-environments` output `verification.search.index_prefix` (`<name_prefix>-<environment>-`, e.g. `agent-relay-dev-`) is different: it names only the data-path verifier's scratch indices (`<name>-proof-<run-id>`), and the verifier maps its own scoped roles. It does not cover the application index unless you deliberately set `indexPrefix` to match it.
 
 ```sh
-aws sts assume-role --role-arn "$MASTER_ROLE_ARN" --role-session-name opensearch-role-mapping
-aws opensearch describe-domain --domain-name "$DOMAIN" --query 'DomainStatus.Endpoints.vpc' --output text
+INDEX_PATTERN='relayhistory-*'   # <indexPrefix>-* when the chart overrides indexPrefix
 ```
 
-`indexer_role_arn` and `reader_role_arn` are module outputs. Export the assumed credentials and send each pair of requests signed for the `es` service, for example with `awscurl --service es --region "$REGION"`.
+**In-VPC access.** The domain has only a VPC endpoint, so the requests must originate inside the VPC. From an operator laptop without a VPC route, relay through a temporary pod in the cluster (the node security groups already reach the domain on 443). It runs in `default` because the application namespace may not exist before the Helm install. Run the `kubectl` steps with your operator identity, and assume the master role only inside a subshell so the cleanup still runs as the operator:
 
-1. Map the indexer to write and index bootstrap on `relayhistory-*`, with cluster monitor and bulk:
+```sh
+ENDPOINT="$(aws opensearch describe-domain --domain-name "$DOMAIN" --query 'DomainStatus.Endpoints.vpc' --output text)"
+kubectl -n default run opensearch-relay --image=alpine/socat --restart=Never -- \
+  TCP-LISTEN:9443,fork,reuseaddr "TCP:$ENDPOINT:443"
+kubectl -n default wait --for=condition=Ready pod/opensearch-relay --timeout=120s
+kubectl -n default port-forward pod/opensearch-relay 9443:9443 & PF=$!
+
+(
+  # Master-user credentials exist only in this subshell.
+  read -r AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN < <(
+    aws sts assume-role --role-arn "$MASTER_ROLE_ARN" --role-session-name opensearch-role-mapping \
+      --query 'Credentials.[AccessKeyId,SecretAccessKey,SessionToken]' --output text)
+  # TLS and the SigV4 Host stay the real endpoint; --connect-to only redirects the TCP connection.
+  os() {  # os METHOD PATH [curl args...]
+    local method="$1" path="$2"; shift 2
+    curl -sS --fail-with-body --connect-to "$ENDPOINT:443:127.0.0.1:9443" \
+      --aws-sigv4 "aws:amz:$REGION:es" --user "$AWS_ACCESS_KEY_ID:$AWS_SECRET_ACCESS_KEY" \
+      -H "x-amz-security-token: $AWS_SESSION_TOKEN" -H 'Content-Type: application/json' \
+      -X "$method" "https://$ENDPOINT$path" "$@"
+  }
+  os GET /_plugins/_security/api/account   # must report the master role ARN
+  # ...the four mapping requests below...
+)
+
+kill "$PF"; kubectl -n default delete pod opensearch-relay
+```
+
+Put the four `os PUT` requests from the steps below inside the subshell. An approved runner that already has a route into the VPC can skip the pod and call the endpoint directly (for example with `awscurl --service es`).
+
+`indexer_role_arn` and `reader_role_arn` are module outputs.
+
+1. Map the indexer to write and index bootstrap on the pattern, with cluster monitor and bulk:
 
    ```sh
-   awscurl --service es --region "$REGION" -X PUT "https://$ENDPOINT/_plugins/_security/api/roles/relayhistory_indexer" \
-     -H 'Content-Type: application/json' \
-     -d '{"cluster_permissions":["cluster_monitor","indices:data/write/bulk"],"index_permissions":[{"index_patterns":["relayhistory-*"],"allowed_actions":["write","create_index","indices:data/write/bulk*","indices:monitor/settings/get","indices:admin/mapping/put","indices:data/read/search*","indices:data/read/scroll*","indices:data/read/mget*","indices:data/write/delete/byquery","indices:admin/refresh*","indices:admin/get"]}]}'
-   awscurl --service es --region "$REGION" -X PUT "https://$ENDPOINT/_plugins/_security/api/rolesmapping/relayhistory_indexer" \
-     -H 'Content-Type: application/json' \
+   os PUT /_plugins/_security/api/roles/relayhistory_indexer \
+     -d '{"cluster_permissions":["cluster_monitor","indices:data/write/bulk"],"index_permissions":[{"index_patterns":["'"$INDEX_PATTERN"'"],"allowed_actions":["write","create_index","indices:data/write/bulk*","indices:monitor/settings/get","indices:admin/mapping/put","indices:data/read/search*","indices:data/read/scroll*","indices:data/read/mget*","indices:data/write/delete/byquery","indices:admin/refresh*","indices:admin/get"]}]}'
+   os PUT /_plugins/_security/api/rolesmapping/relayhistory_indexer \
      -d "{\"backend_roles\":[\"$INDEXER_ROLE_ARN\"]}"
    ```
 
-2. Map the reader to read on `relayhistory-*`:
+2. Map the reader to read on the pattern:
 
    ```sh
-   awscurl --service es --region "$REGION" -X PUT "https://$ENDPOINT/_plugins/_security/api/roles/relayhistory_reader" \
-     -H 'Content-Type: application/json' \
-     -d '{"index_permissions":[{"index_patterns":["relayhistory-*"],"allowed_actions":["read"]}]}'
-   awscurl --service es --region "$REGION" -X PUT "https://$ENDPOINT/_plugins/_security/api/rolesmapping/relayhistory_reader" \
-     -H 'Content-Type: application/json' \
+   os PUT /_plugins/_security/api/roles/relayhistory_reader \
+     -d '{"index_permissions":[{"index_patterns":["'"$INDEX_PATTERN"'"],"allowed_actions":["read"]}]}'
+   os PUT /_plugins/_security/api/rolesmapping/relayhistory_reader \
      -d "{\"backend_roles\":[\"$READER_ROLE_ARN\"]}"
    ```
 
