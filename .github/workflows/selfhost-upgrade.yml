@@ -1,7 +1,9 @@
 # Reusable workflow: a self-hosted customer pulls an Agent Relay release into
 # their own EKS install from their own GitHub repository. It wraps
 # scripts/selfhost/agent-relay-upgrade.sh (verified release, ECR mirror,
-# RDS snapshot, helm upgrade). See docs/enterprise-aws-install.md, "Upgrades".
+# RDS snapshot, helm upgrade, or with first-install the documented first
+# install). See docs/enterprise-aws-install.md, "Upgrades", and
+# docs/selfhost-upgrades-github-actions.md.
 #
 # The plan job only reads; the apply job runs in the caller's GitHub
 # environment (default "agent-relay-upgrade"), so the required reviewers the
@@ -29,14 +31,25 @@ on:
       aws-apply-role-arn: { description: "IAM role for the apply job, trusted ONLY for the caller's approval environment.", type: string, required: true }
       eks-cluster: { type: string, required: true }
       registry: { description: "<account>.dkr.ecr.<region>.amazonaws.com", type: string, required: true }
-      profile: { description: "eks or eks-native: the profile the install already uses.", type: string, required: true }
+      profile: { description: "eks, eks-native or eks-rds-native: the profile the install already uses.", type: string, required: true }
       values: { description: Newline-separated values files in the caller repository., type: string, required: true }
       db-instance: { description: RDS instance snapshotted before every upgrade., type: string, required: true }
       namespace: { type: string, default: agent-relay }
       release: { type: string, default: agent-relay }
       environment: { description: Caller environment that gates the apply job., type: string, default: agent-relay-upgrade }
+      first-install:
+        description: "The release does not exist yet: helm install plus the migration barrier. Refused if it exists."
+        type: boolean
+        default: false
+      rds-setup:
+        description: "The databases are managed with scripts/selfhost/rds-setup.sh (implied by eks-rds-native): post on first install, refresh-admin before each upgrade."
+        type: boolean
+        default: false
+      rds-host: { description: "rds-setup only: terraform output -raw database_host.", type: string, default: "" }
+      rds-admin-secret-arn: { description: "rds-setup only: terraform output -raw database_admin_secret_arn (an ARN, not the secret).", type: string, default: "" }
+      state-dir: { description: "rds-setup only: directory on the runner holding the files 'rds-setup.sh pre' wrote.", type: string, default: "" }
       apply:
-        description: "auto: apply (after approval) only when images change; always; never."
+        description: "auto: apply (after approval) only when the rendered release changes; always; never."
         type: string
         default: auto
     outputs:
@@ -129,12 +142,18 @@ jobs:
           VALUES: ${{ inputs.values }}
           NS: ${{ inputs.namespace }}
           REL: ${{ inputs.release }}
+          FIRST_INSTALL: ${{ inputs.first-install }}
+          RDS_SETUP: ${{ inputs.rds-setup }}
         run: |
           set -euo pipefail
           args=(--version "$VERSION" --registry "$REGISTRY" --profile "$PROFILE" --namespace "$NS" --release "$REL")
+          if [ "$FIRST_INSTALL" = true ]; then args+=(--first-install); fi
+          if [ "$RDS_SETUP" = true ]; then args+=(--rds-setup); fi
           while IFS= read -r v; do [ -z "$v" ] || args+=(--values "site/$v"); done <<<"$VALUES"
           infra/scripts/selfhost/agent-relay-upgrade.sh "${args[@]}" | tee "$RUNNER_TEMP/plan.txt"
-          if grep -q '(no image changes)' "$RUNNER_TEMP/plan.txt"; then echo "changes=false" >> "$GITHUB_OUTPUT"; else echo "changes=true" >> "$GITHUB_OUTPUT"; fi
+          # Any rendered-manifest difference (chart, values or images) counts; a
+          # plan without the explicit no-change line is treated as a change.
+          if grep -qx 'plan: changes=false' "$RUNNER_TEMP/plan.txt"; then echo "changes=false" >> "$GITHUB_OUTPUT"; else echo "changes=true" >> "$GITHUB_OUTPUT"; fi
           { echo "## Agent Relay $VERSION plan"; echo '```'; cat "$RUNNER_TEMP/plan.txt"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
 
   apply:
@@ -168,9 +187,18 @@ jobs:
           NS: ${{ inputs.namespace }}
           REL: ${{ inputs.release }}
           DB: ${{ inputs.db-instance }}
+          FIRST_INSTALL: ${{ inputs.first-install }}
+          RDS_SETUP: ${{ inputs.rds-setup }}
+          # Read by rds-setup.sh from the environment; AWS_REGION comes from the credentials step.
+          RDS_HOST: ${{ inputs.rds-host }}
+          RDS_ADMIN_SECRET_ARN: ${{ inputs.rds-admin-secret-arn }}
+          STATE_DIR_INPUT: ${{ inputs.state-dir }}
         run: |
           set -euo pipefail
+          if [ -n "$STATE_DIR_INPUT" ]; then export STATE_DIR="$STATE_DIR_INPUT"; fi
           args=(--version "$VERSION" --registry "$REGISTRY" --profile "$PROFILE" --namespace "$NS" --release "$REL" --db-instance "$DB" --apply --yes)
+          if [ "$FIRST_INSTALL" = true ]; then args+=(--first-install); fi
+          if [ "$RDS_SETUP" = true ]; then args+=(--rds-setup); fi
           while IFS= read -r v; do [ -z "$v" ] || args+=(--values "site/$v"); done <<<"$VALUES"
           infra/scripts/selfhost/agent-relay-upgrade.sh "${args[@]}" | tee "$RUNNER_TEMP/apply.txt"
           { echo "## Agent Relay $VERSION apply"; echo '```'; cat "$RUNNER_TEMP/apply.txt"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
