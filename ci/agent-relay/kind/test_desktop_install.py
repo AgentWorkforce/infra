@@ -1,5 +1,7 @@
 """Artifact refusal checks run without mounting an image or installing an app."""
 import hashlib
+import io
+import json
 from pathlib import Path
 import plistlib
 import platform
@@ -86,6 +88,8 @@ class InstallRetryTests(unittest.TestCase):
         self.fail_validation = False
         self.race = False
         self.detaches = 0
+        self.fail_detach = False
+        self.launched = False
         for p in (patch.object(Path, "home", return_value=self.root),
                   patch.object(desktop_install, "ROOT", self.root),
                   patch.object(desktop_install, "verify_download", return_value=(self.root / "test.dmg", "abc")),
@@ -100,6 +104,10 @@ class InstallRetryTests(unittest.TestCase):
             return plistlib.dumps({"system-entities": [{"mount-point": str(self.mount)}]})
         if args[:2] == ["hdiutil", "detach"]:
             self.detaches += 1
+            if self.fail_detach:
+                raise subprocess.CalledProcessError(16, args, stderr=b"Resource busy")
+        if args[0] == "open":
+            self.launched = True
         if args[0] == "ditto":
             staged = Path(args[2])
             staged.mkdir()
@@ -143,6 +151,28 @@ class InstallRetryTests(unittest.TestCase):
         self.fail_validation = False
         desktop_install.install(self.root, launch=False)
         self.assertTrue(self.destination.exists())
+
+    def test_busy_detach_keeps_receipt_and_launches_published_app(self):
+        self.fail_detach = True
+        with patch.object(sys, "stderr", new_callable=io.StringIO) as warnings:
+            receipt = desktop_install.install(self.root)
+        self.assertTrue(self.destination.exists())
+        self.assertTrue(self.launched)
+        self.assertIn("Resource busy", warnings.getvalue())
+        self.assertIn(str(self.mount), receipt["cleanupWarnings"][0])
+        saved = json.loads((self.root / ".kind/desktop/install.json").read_text())
+        self.assertEqual(saved, receipt)
+
+    def test_busy_detach_does_not_replace_original_install_failure(self):
+        self.fail_copy = self.fail_detach = True
+        with patch.object(sys, "stderr", new_callable=io.StringIO) as warnings:
+            with self.assertRaisesRegex(OSError, "copy interrupted"):
+                desktop_install.install(self.root)
+        self.assertIn("Resource busy", warnings.getvalue())
+        self.assertFalse(self.destination.exists())
+        self.assertFalse((self.root / ".kind/desktop/install.json").exists())
+        self.assertFalse(self.launched)
+        self.assert_no_staging()
 
     def test_existing_app_is_preserved(self):
         self.destination.mkdir(parents=True)

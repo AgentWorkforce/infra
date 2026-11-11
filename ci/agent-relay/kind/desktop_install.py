@@ -11,6 +11,7 @@ import plistlib
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 
 REPO = "AgentWorkforce/relay-desktop"
@@ -106,6 +107,7 @@ def install(directory, *, launch=True):
     dmg, checksum = verify_download(directory)
     attached = plistlib.loads(run(["hdiutil", "attach", "-readonly", "-nobrowse", "-plist", dmg]))
     mounts = [Path(x["mount-point"]) for x in attached.get("system-entities", []) if "mount-point" in x]
+    cleanup_warnings = []
     try:
         apps = [p for mount in mounts for p in mount.glob("*.app")]
         if len(apps) != 1:
@@ -123,8 +125,15 @@ def install(directory, *, launch=True):
             publish_app(staged, destination)
     finally:
         for mount in mounts:
-            run(["hdiutil", "detach", mount])
+            try:
+                run(["hdiutil", "detach", mount])
+            except (subprocess.CalledProcessError, OSError) as error:
+                warning = "Could not detach " + str(mount) + ": " + error_message(error)
+                cleanup_warnings.append(warning)
+                print("Warning: " + warning, file=sys.stderr)
     receipt = {"profile": PROFILE, "site": SITE, "dmgSha256": checksum, "app": str(destination)}
+    if cleanup_warnings:
+        receipt["cleanupWarnings"] = cleanup_warnings
     state = ROOT / ".kind" / "desktop"
     state.mkdir(mode=0o700, parents=True, exist_ok=True)
     path = state / "install.json"
