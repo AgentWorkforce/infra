@@ -90,15 +90,23 @@ class ScrubEngineContractTest(unittest.TestCase):
         self.assert_contract(helm(), {}, minimum_services=6)
 
     def test_reader_first_reaches_every_aws_services_workload(self) -> None:
+        rendered = helm(
+            "--set-string",
+            "global.scrubEngine.readerMaxRuleset=10",
+            values=(AWS_PROFILE, AWS_INPUTS),
+        )
         self.assert_contract(
-            helm(
-                "--set-string",
-                "global.scrubEngine.readerMaxRuleset=10",
-                values=(AWS_PROFILE, AWS_INPUTS),
-            ),
+            rendered,
             {"READER_MAX_RULESET": "10"},
             minimum_services=8,
         )
+        read_apis = [
+            env
+            for workload, env in service_envs(rendered.stdout)
+            if workload == "Deployment/scrub-ci-read-api:read-api"
+        ]
+        self.assertEqual(len(read_apis), 1)
+        self.assertEqual(read_apis[0].get("READ_API_SESSION_QUERY"), "true")
 
     def test_cutover_reaches_every_aws_services_workload(self) -> None:
         self.assert_contract(
