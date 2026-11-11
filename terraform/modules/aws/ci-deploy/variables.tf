@@ -99,6 +99,16 @@ variable "rds_instance_identifiers" {
   default     = []
 }
 
+variable "secrets_manager_prefix" {
+  description = "Secrets Manager name prefix (e.g. agentrelay-dev/) whose secrets the apply job may read, create and copy into Kubernetes Secrets (deploy.json \"secrets\"). null: no Secrets Manager access."
+  type        = string
+  default     = null
+  validation {
+    condition     = var.secrets_manager_prefix == null || can(regex("^[A-Za-z0-9_+=.@-]+/$", coalesce(var.secrets_manager_prefix, "x/")))
+    error_message = "secrets_manager_prefix: a name prefix ending in /, e.g. agentrelay-dev/."
+  }
+}
+
 variable "build_image" {
   description = "CodeBuild image. The build installs pinned helm, kubectl and a PostgreSQL client itself."
   type        = string

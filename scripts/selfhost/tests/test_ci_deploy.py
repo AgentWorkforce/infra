@@ -125,6 +125,7 @@ case "$*" in
     n=$(cat "$FAKE/jobs-calls" 2>/dev/null || echo 0); echo $((n + 1)) > "$FAKE/jobs-calls"
     f="$FAKE/jobs-$n.json"; [ -f "$f" ] || f="$FAKE/jobs.json"; [ -f "$f" ] && cat "$f" || echo '{"items": []}' ;;
   *"get deploy,statefulset"*) echo '{"items": [{"kind": "Deployment", "metadata": {"name": "web"}, "spec": {"template": {"spec": {"containers": [{"image": "img:1"}]}}}}]}' ;;
+  *"apply --server-side --field-manager=ci-deploy-secrets"*) cat >> "$FAKE/applied-secrets" ;;
   *"get secret"*) echo '{"data": {"url": "cG9zdGdyZXNxbDovL3U6U0VDUkVUUFdAaC9kYg=="}}' ;;
   *) exit 0 ;;
 esac
@@ -133,6 +134,16 @@ esac
 FAKE_AWS = r"""#!/usr/bin/env bash
 echo "aws $*" >> "$FAKE/log"
 [ "$1 $2" = "s3 cp" ] && cat > /dev/null
+if [ "$1" = secretsmanager ]; then
+  case "$2" in
+    get-secret-value)
+      f="$FAKE/sm-$(printf %s "$4" | tr / _)"
+      [ -f "$f" ] || { echo "An error occurred (ResourceNotFoundException)" >&2; exit 254; }
+      cat "$f" ;;
+    create-secret)
+      for a in "$@"; do case "$a" in file://*) cp "${a#file://}" "$FAKE/sm-$(printf %s "$4" | tr / _)" ;; esac; done ;;
+  esac
+fi
 exit 0
 """
 
@@ -288,6 +299,58 @@ class ScriptTest(unittest.TestCase):
             if f.is_file():
                 self.assertNotIn("LIVEPW", f.read_text(errors="ignore"))
                 self.assertNotIn("TElWRVBX", f.read_text(errors="ignore"))
+
+    def secrets_config(self, generate=True):
+        cfg = json.loads((self.bundle / "env/deploy.json").read_text())
+        entry = {"source": "env/upload-witness-key", "targets": [
+            {"namespace": "ns", "name": "agent-relay-upload-witness", "key": "upload-witness-key"},
+            {"namespace": "ns", "name": "agent-relay-ingest-edge-runtime", "key": "upload-witness-key"}]}
+        if generate:
+            entry["generate"] = "base64url-32"
+        cfg["secrets"] = [entry]
+        (self.bundle / "env/deploy.json").write_text(json.dumps(cfg))
+
+    def test_secret_generated_once_and_copied_to_every_target(self):
+        import base64
+        self.render({"a": 2}, DEPLOY)
+        self.secrets_config()
+        p, report = self.run_script("apply", EXPECT_REVISIONS="agent-relay=7")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        value = (self.fake / "sm-env_upload-witness-key").read_text()
+        self.assertEqual(len(base64.urlsafe_b64decode(value + "=")), 32)
+        self.assertNotIn("=", value)
+        text, docs, dec = (self.fake / "applied-secrets").read_text(), [], json.JSONDecoder()
+        i = 0
+        while text[i:].strip():
+            i += len(text[i:]) - len(text[i:].lstrip())
+            doc, n = dec.raw_decode(text, i)
+            docs.append(doc)
+            i = n
+        self.assertEqual({d["metadata"]["name"] for d in docs}, {"agent-relay-upload-witness", "agent-relay-ingest-edge-runtime"})
+        self.assertEqual({base64.b64decode(d["data"]["upload-witness-key"]).decode() for d in docs}, {value})
+        self.assertEqual(list(docs[0]["data"]), ["upload-witness-key"])  # only that key: others untouched
+        for text in (p.stderr, self.log(), (report / "log.txt").read_text()):
+            self.assertNotIn(value, text)
+        # second apply reuses the stored value
+        self.state({"a": 1}, DEPLOY, revision=8)
+        p, _ = self.run_script("apply", EXPECT_REVISIONS="agent-relay=8")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertEqual(self.log().count("create-secret"), 1)
+
+    def test_missing_secret_without_generate_fails(self):
+        self.render({"a": 2}, DEPLOY)
+        self.secrets_config(generate=False)
+        p, _ = self.run_script("apply", EXPECT_REVISIONS="agent-relay=7")
+        self.assertNotEqual(p.returncode, 0)
+        self.assertIn("no generate rule", p.stderr)
+        self.assertNotIn("--wait", self.log())  # stopped before the upgrade
+
+    def test_plan_lists_secrets_without_values(self):
+        self.secrets_config()
+        p, report = self.run_script("plan")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertIn("`env/upload-witness-key` -> `ns/agent-relay-upload-witness[upload-witness-key]`", (report / "plan.md").read_text())
+        self.assertNotIn("secretsmanager", self.log())  # plan never reads Secrets Manager
 
     def test_path_outside_bundle_refused(self):
         cfg = json.loads((self.bundle / "env/deploy.json").read_text())

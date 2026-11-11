@@ -200,8 +200,48 @@ wait_release_jobs(){
   done
 }
 
+# sync_secrets: copy each deploy.json "secrets" entry from AWS Secrets Manager into Kubernetes Secret keys, so
+# Secret values live in one durable store and never pass through a laptop, git or a log. An entry with
+# "generate": "base64url-32" is created in Secrets Manager the first time (32 random bytes, unpadded base64url).
+# Only the listed key is written (server-side apply): other keys of the Secret are untouched.
+#   {"source": "<Secrets Manager name>", "generate": "base64url-32",
+#    "targets": [{"namespace": "...", "name": "<Secret>", "key": "<data key>"}]}
+sync_secrets(){
+  local n i j src gen value t ns name key
+  n=$(jq '(.secrets // []) | length' "$CFG")
+  for ((i = 0; i < n; i++)); do
+    src=$(jq -r ".secrets[$i].source" "$CFG"); gen=$(jq -r ".secrets[$i].generate // empty" "$CFG")
+    [[ "$src" =~ ^[A-Za-z0-9/_+=.@-]+$ ]] || die "secrets[$i].source is not a Secrets Manager name"
+    if ! value=$(aws secretsmanager get-secret-value --secret-id "$src" --query SecretString --output text 2>"$WORK/sm.err"); then
+      grep -q ResourceNotFoundException "$WORK/sm.err" || die "reading $src failed: $(head -c 200 "$WORK/sm.err")"
+      [ "$gen" = base64url-32 ] || die "$src does not exist and has no generate rule"
+      python3 -c 'import base64, os, sys; sys.stdout.write(base64.urlsafe_b64encode(os.urandom(32)).rstrip(b"=").decode())' > "$WORK/new"
+      aws secretsmanager create-secret --name "$src" ${CI_DEPLOY_SECRETS_KMS_KEY:+--kms-key-id "$CI_DEPLOY_SECRETS_KMS_KEY"} \
+        --secret-string "file://$WORK/new" --tags "Key=agent-relay/generated-by,Value=ci-deploy" >/dev/null
+      rm -f "$WORK/new"
+      value=$(aws secretsmanager get-secret-value --secret-id "$src" --query SecretString --output text)
+      log "secrets: created $src"
+    fi
+    [ -n "$value" ] && [ "$value" != None ] || die "$src has no string value"
+    for ((j = 0; j < $(jq ".secrets[$i].targets | length" "$CFG"); j++)); do
+      read -r ns name key < <(jq -r ".secrets[$i].targets[$j] | \"\(.namespace) \(.name) \(.key)\"" "$CFG")
+      [[ "$key" =~ ^[A-Za-z0-9._-]+$ ]] || die "secrets[$i].targets[$j].key is not a Secret data key"
+      printf '%s' "$value" | jq -Rs --arg ns "$ns" --arg n "$name" --arg k "$key" \
+        '{apiVersion: "v1", kind: "Secret", type: "Opaque", metadata: {name: $n, namespace: $ns}, data: {($k): (. | @base64)}}' |
+        kubectl apply --server-side --field-manager=ci-deploy-secrets -f - >/dev/null || die "writing $ns/$name/$key failed"
+      log "secrets: $src -> ${ns}/${name}[${key}]"
+    done
+    unset value
+  done
+}
+
 case "$MODE" in
-  plan) plan_all ;;
+  plan)
+    plan_all
+    if [ "$(jq '(.secrets // []) | length' "$CFG")" -gt 0 ]; then
+      { echo; echo "Secrets synced from AWS Secrets Manager on apply (values never shown):"; echo
+        jq -r '.secrets[] | "- `\(.source)` -> " + ([.targets[] | "`\(.namespace)/\(.name)[\(.key)]`"] | join(", "))' "$CFG"; } >> "$REPORT_DIR/plan.md"
+    fi ;;
   apply)
     plan_all
     expect=${EXPECT_REVISIONS:?EXPECT_REVISIONS from the reviewed plan is required}
@@ -211,6 +251,7 @@ case "$MODE" in
       log "apply: no changes; nothing to do"; record_state; health; exit 0
     fi
     snapshot
+    sync_secrets
     if [ -f "$B/env/plan-rbac.yaml" ]; then kubectl apply -f "$B/env/plan-rbac.yaml" >/dev/null; log "plan RBAC applied"; fi
     for r in $(releases); do
       if [ "$(jq --arg r "$r" '.[$r]' "$REPORT_DIR/changes.json")" != true ] && [ "${FORCE_UPGRADE:-0}" != 1 ]; then

@@ -110,3 +110,18 @@ run "existing_oidc_provider_requires_arn" {
   }
   expect_failures = [terraform_data.guard]
 }
+
+run "secrets_manager_prefix" {
+  command = plan
+  variables {
+    secrets_manager_prefix = "env/"
+  }
+}
+
+run "secrets_manager_prefix_must_end_with_slash" {
+  command = plan
+  variables {
+    secrets_manager_prefix = "env"
+  }
+  expect_failures = [var.secrets_manager_prefix]
+}
