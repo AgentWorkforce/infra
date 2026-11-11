@@ -11,10 +11,10 @@ relay-webapp:
     sourceRevision: 0a4dc037d6938f6860e59727b50664706e578bf3
 telemetry-collector:
   image:
-    # Published and qualified candidate recorded in telemetry-collector/README.md.
+    # AA Control 0.5.16 includes the reviewed brief and Relaycast event catalog.
     repository: ghcr.io/agentworkforce/relay-control
-    digest: sha256:37aa934ac5a39a950c53b93a5e03509cafaac2268471a3e398f276df6d95331a
-    sourceRevision: d2cb39635bbf163976c354582365b3d97dcd0b56
+    digest: sha256:0b9c5a077b49b31178cc669e7c1d532f39e64c840087ca41636bb84a6c62631c
+    sourceRevision: 83a57d382e00cfcd8a10a477d1ccfc06c6959c01
   tlsProxy:
     image:
       # Same immutable nginx runtime base as the pinned dashboard Dockerfile.
