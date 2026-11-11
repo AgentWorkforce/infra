@@ -1162,9 +1162,20 @@ compatibility:
       images:
         relayauth: { repository: ghcr.io/agentworkforce/relayauth, digest: sha256:eb71daa28e30eb7305f666d0bccc5a4002e53e8a574e3c4c32163d907a1b71df }
       notes: superseded by 0.1.1.
-    - id: agent-relay-0.6.42
+    - id: agent-relay-0.6.43
       status: unreleased
       current: true
+      charts: { agent-relay: 0.6.43, relayhistory: 0.1.3, relay-control: 0.4.12, relay-webapp: 0.2.3 }
+      app_versions: { agent-relay: 0.1.0, relayhistory: 0.1.0, relay-control: 0.1.0, relay-webapp: 0.1.0 }
+      depends:
+        agent-relay: { relaycast: 0.3.8, relayauth: 0.1.5, sessions-pipeline: 0.8.22, relayhistory: 0.1.3, relay-control: 0.4.12, relay-webapp: 0.2.3, relayflows: 0.2.5, durable-actors: 0.14.6-awf.1, relayfile: 0.2.2, telemetry-collector: 0.1.5, relay-chief: 0.1.0 }
+      images:
+        relayhistory: { repository: ghcr.io/agentworkforce/relayhistory, digest_required: true }
+        relay-control: { repository: ghcr.io/agentworkforce/relay-control, digest: sha256:d8c26d44dccb6dd21b7033288241a379e46ce5fbca69f276c4d4745001c3c3e2 }
+        relay-webapp: { repository: ghcr.io/agentworkforce/relay-webapp, digest: sha256:bd295ccb7d1323965dce890f19d0b7f857d706c00d7756f719c713763fdb49f3 }
+      notes: 'Pins the approved relay-control 0.5.15 image from source 31ff0737 (run 42973044715) in the GCP customer handoff and the AWS EKS profile: it carries the setup key, temporary passwords and password sign-in without SMTP (#96) that relay-control chart 0.4.12 exposes, MCP agent launch (#95), Desktop dashboard redirects (#97) and Claude chat attestation (#98), on top of 0.5.12. Otherwise as 0.6.42; no services pin or rollout is selected.'
+    - id: agent-relay-0.6.42
+      status: planned
       charts: { agent-relay: 0.6.42, relayhistory: 0.1.3, relay-control: 0.4.12, relay-webapp: 0.2.3 }
       app_versions: { agent-relay: 0.1.0, relayhistory: 0.1.0, relay-control: 0.1.0, relay-webapp: 0.1.0 }
       depends:
@@ -1173,7 +1184,7 @@ compatibility:
         relayhistory: { repository: ghcr.io/agentworkforce/relayhistory, digest_required: true }
         relay-control: { repository: ghcr.io/agentworkforce/relay-control, digest: sha256:d8c26d44dccb6dd21b7033288241a379e46ce5fbca69f276c4d4745001c3c3e2 }
         relay-webapp: { repository: ghcr.io/agentworkforce/relay-webapp, digest: sha256:bd295ccb7d1323965dce890f19d0b7f857d706c00d7756f719c713763fdb49f3 }
-      notes: 'Carries relay-control 0.4.12: optional auth.password.enabled (SELFHOST_SIGNIN_METHODS with password, SMTP optional), auth.trustedProxies (SELFHOST_TRUSTED_PROXIES, 1 by default with password sign-in) and the operator-generated one-time first-admin secretKeys.setupKey (SELFHOST_SETUP_KEY_FILE, API pod only). Nothing renders while they are unset. Password sign-in without SMTP and the setup key need a relay-control image from source bd1c9a03 (#96) or later; the pinned digests are unchanged. Otherwise as 0.6.41.'
+      notes: 'Superseded before release by 0.6.43, which pins relay-control 0.5.15. Carries relay-control 0.4.12: optional auth.password.enabled (SELFHOST_SIGNIN_METHODS with password, SMTP optional), auth.trustedProxies (SELFHOST_TRUSTED_PROXIES, 1 by default with password sign-in) and the operator-generated one-time first-admin secretKeys.setupKey (SELFHOST_SETUP_KEY_FILE, API pod only). Nothing renders while they are unset. Password sign-in without SMTP and the setup key need a relay-control image from source bd1c9a03 (#96) or later; the pinned digests are unchanged. Otherwise as 0.6.41.'
     - id: agent-relay-0.6.41
       status: planned
       charts: { agent-relay: 0.6.41, relayhistory: 0.1.3, relay-control: 0.4.11, relay-webapp: 0.2.3 }
