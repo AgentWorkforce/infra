@@ -148,15 +148,38 @@ class NativeControlTests(unittest.TestCase):
             "/api/v1/organizations/" + org + "/memberships": {"memberships": [{"email": contract()["administrator"]["email"], "role": "owner"}]}}
         data = {"bootstrapKey": "synthetic-bootstrap", "organizationName": contract()["organizationName"],
                 "administratorEmail": contract()["administrator"]["email"], "historyOrigin": selected()["historyOrigin"]}
-        def run(responses):
+        def run(responses, selected_features=None):
+            request = deepcopy(data)
+            if selected_features is not None:
+                request["selectedFeatures"] = selected_features
             with tempfile.TemporaryDirectory() as d:
                 preload = Path(d) / "preload.cjs"
                 preload.write_text("const fs=require('node:fs');const orig=fs.readFileSync;fs.readFileSync=function(p,...a){if(p==='/var/run/agent-relay/secrets/synthetic-bootstrap')return 'synthetic-operator-bearer-32-characters';return orig.call(this,p,...a)};const responses=" + json.dumps(responses) + ";global.fetch=async(u,o)=>{if(o.method!=='GET'||o.redirect!=='error'||!u.startsWith('http://127.0.0.1:3000/'))throw Error('unsafe request');const path=new URL(u).pathname;return {status:responses[path]?200:404,json:async()=>responses[path]}};")
-                return subprocess.run(["node", "--require", str(preload), "-e", CONTROL_OBSERVER], input=json.dumps(data),
+                return subprocess.run(["node", "--require", str(preload), "-e", CONTROL_OBSERVER], input=json.dumps(request),
                     capture_output=True, text=True, timeout=5)
         result = run(good); self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(json.loads(result.stdout.split("NATIVE_CONTROL_OBSERVATION ")[1]), {"organizationId": org, "workspaceId": workspace})
         self.assertNotIn(data["administratorEmail"], result.stdout)
+        aa = deepcopy(good)
+        aa["/readyz"]["capabilities"].update(usage=True, launch=True)
+        result = run(aa, ["usage", "launch"])
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout.split("NATIVE_CONTROL_OBSERVATION ")[1]), {"organizationId": org, "workspaceId": workspace})
+        for kind in ("unselected", "missing-selected", "disabled-selected", "enabled-forbidden", "unknown-enabled", "nonboolean", "duplicate-selection", "unknown-selection"):
+            changed = deepcopy(aa)
+            features = ["usage", "launch"]
+            if kind == "unselected": features = None
+            if kind == "missing-selected": changed["/readyz"]["capabilities"].pop("launch")
+            if kind == "disabled-selected": changed["/readyz"]["capabilities"]["usage"] = False
+            if kind == "enabled-forbidden": changed["/readyz"]["capabilities"]["chief"] = True
+            if kind == "unknown-enabled": changed["/readyz"]["capabilities"]["other"] = True
+            if kind == "nonboolean": changed["/readyz"]["capabilities"]["usage"] = 1
+            if kind == "duplicate-selection": features.append("usage")
+            if kind == "unknown-selection": features.append("other")
+            with self.subTest(capability=kind):
+                refused = run(changed, features)
+                self.assertNotEqual(refused.returncode, 0)
+                self.assertEqual(refused.stdout, "")
         for kind in ("foreign-org", "second-workspace", "nonowner", "wrong-audience"):
             bad = deepcopy(good)
             if kind == "foreign-org": bad["/api/v1/organizations"]["organizations"][0]["name"] = "other"
