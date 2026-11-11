@@ -485,6 +485,9 @@ for chart in "${charts[@]}"; do
         [ "$(render "$chart" "$v" --set 'selectedFeatures={flows,usage}' | yq 'select(.kind == "Deployment") | .spec.template.spec.containers[0].env[] | select(.name == "SELFHOST_FEATURES") | .value')" = flows,usage ] \
           || err "$chart: selectedFeatures={flows,usage} must render SELFHOST_FEATURES=flows,usage"
         expect_render_failure "$chart" "$v" "unknown optional feature" "selectedFeatures contains an unknown optional component" --set 'selectedFeatures={usage,teleport}'
+        # launch is a managed name too (relay-control docs/agent-launch.md).
+        [ "$(render "$chart" "$v" --set 'selectedFeatures={usage,launch}' | yq 'select(.kind == "Deployment") | .spec.template.spec.containers[0].env[] | select(.name == "SELFHOST_FEATURES") | .value')" = usage,launch ] \
+          || err "$chart: selectedFeatures={usage,launch} must render SELFHOST_FEATURES=usage,launch"
         out=$(render "$chart" "$v")
         grep -q 'name: SELFHOST_PUBLIC_URL' <<<"$out" || err "$chart: SELFHOST_PUBLIC_URL is not rendered"
         grep -q 'name: RELAYCAST_PUBLIC_URL' <<<"$out" || err "$chart: RELAYCAST_PUBLIC_URL is not rendered"
