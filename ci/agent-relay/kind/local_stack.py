@@ -436,7 +436,9 @@ class LocalStack(Stack):
         private_json(path, c)
         self.stage("chart-dependencies", self.dependencies)
         from edge import install
-        self.stage("edge", lambda: install(self, "42.3.1", NS, wait_for_route=False))
+        # Reconcile the edge on repeats too: the default leaf and its checksum
+        # must follow TLS renewal rather than an old completed phase marker.
+        install(self, "42.3.1", NS, wait_for_route=False)
         self.edge_ip = self.k("get", "service", "kind-edge-traefik", "-o", "jsonpath={.spec.clusterIP}", namespace="kind-edge").stdout
         self.stage("postgres", lambda: self.postgres_local(c))
         self.stage("databases", lambda: self.databases(c))
