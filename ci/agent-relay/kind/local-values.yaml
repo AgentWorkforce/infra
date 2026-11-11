@@ -1,5 +1,5 @@
-# Native clean-checkout local profile. These published refs are already recorded
-# in main's GCP/CI native profiles; local-up supplies fresh local credentials,
+# Native clean-checkout local profile. Published refs come from main's GCP/CI
+# profiles or an owner-selected publish-image run; local-up supplies fresh credentials,
 # tenant IDs and TLS. No retained operator packet is an installation input.
 relay-control:
   image:

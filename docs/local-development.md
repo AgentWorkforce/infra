@@ -111,7 +111,7 @@ development; it is not the complete clean-room machine wipe.
 ## Acceptance status
 
 On ar-lap, the fresh native workloads and strict TLS dashboard request passed;
-repeat-up took 2.24 seconds in one measured run. `make dev` built and ran all eight
+repeat-up took 2.954 seconds after the query-capable pipeline upgrade. `make dev` built and ran all eight
 application roles. A Control source edit executed its unique marker and reached
 Ready in 14.200 seconds; its shared collector reached Ready in 21.356 seconds.
 An authenticated Chromium fixture with normal CA/NSS trust observed a React
@@ -122,11 +122,19 @@ Both source trees were restored and the dashboard's `npm run check` passed.
 The q7m2k9 candidate passed its checksum, signature and compiled-profile checks
 and was copied to `~/Applications`. Native macOS trust and the running Desktop's
 local administrator binding were observed working. A real `codex exec` session
-was uploaded by Desktop: the pointer, manifest reference, two chunks and directory
-entry were verified. The normal authenticated dashboard list API includes it.
-Marker search currently fails with HTTP 501 because the pinned reader rejects
-the `q` filter. Model summaries, local messaging, independent device-flow
-qualification and wipe/repeat/wipe remain pending.
+was uploaded by Desktop. On the query-capable pinned image, a fresh session has
+a pointer, three indexed marker events, and a real `gpt-5.6-luna` brief (483 input,
+70 output tokens). Authenticated Chromium with normal TLS trust finds the marker
+through session-list search, opens the transcript, and displays the generated
+summary in Details. Two real Codex sessions also completed a local native-socket
+message and reply. The Desktop backlog retained uploads through the migration
+outage and drained to zero afterward. A wrong-host request fails for hostname
+mismatch with the local CA trusted.
+
+The current self-issued reader returns unsupported responses for optional turns,
+timing and output metrics; the canonical event transcript and summary render.
+Clean-room wipe/repeat/wipe remains pending. These observations do not establish
+that final reproducibility proof.
 
 Local ingest uses asynchronous admission. Control, ingest, consumer and reader
 use separate private collector credentials. The currently pinned Relaycast image
