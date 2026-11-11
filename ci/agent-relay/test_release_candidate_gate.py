@@ -162,6 +162,18 @@ class ReleaseCandidateGateTest(unittest.TestCase):
             ):
                 self.validate(data)
 
+    def test_comment_only_review_does_not_erase_exact_head_approval(self):
+        data = fixture()
+        data["reviews"][0].append(
+            {
+                "id": 11,
+                "user": {"login": "reviewer"},
+                "state": "COMMENTED",
+                "commit_id": HEAD,
+            }
+        )
+        self.assertEqual(self.validate(data)["approvers"], ["reviewer"])
+
     def test_acceptance_run_must_be_exact_head_success_from_same_release_branch(self):
         for patch in (
             {"head_sha": "c" * 40},
@@ -218,10 +230,19 @@ class ReleaseCandidateGateTest(unittest.TestCase):
             acceptance.index("Reject executable or cross-candidate changes before checkout"),
             acceptance.index("Check out the exact release candidate head"),
         )
+        self.assertIn("Validate the immutable exact-head diff", acceptance)
+        self.assertLess(
+            acceptance.index("Validate the immutable exact-head diff"),
+            acceptance.index("make local-acceptance"),
+        )
         self.assertIn("ACCEPTANCE_SUITE=full", acceptance)
         self.assertNotIn("ACCEPTANCE_SUITE=api", acceptance)
         self.assertIn(".payload.qualificationComplete == true", acceptance)
         self.assertIn(".payload.pendingQualificationChecks | length", acceptance)
+        self.assertIn(".payload.context.sourceRevision == $head", acceptance)
+        self.assertIn("$observed.control == $image", acceptance)
+        self.assertIn("$observed.webapp == $image", acceptance)
+        self.assertIn("$observed.pipeline == $image", acceptance)
         self.assertIn("actions/workflows/local-acceptance.yml/runs", tagging)
         self.assertIn("validate-release-candidate-gate.py", tagging)
         self.assertIn("collaborators/$approver/permission", tagging)

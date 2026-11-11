@@ -80,6 +80,8 @@ def validate(args: argparse.Namespace) -> dict[str, object]:
             fail("release review metadata is malformed")
         if not isinstance(login, str) or not isinstance(review_id, int):
             fail("release review identity is malformed")
+        if review.get("state") == "COMMENTED":
+            continue
         if login not in latest or review_id > latest[login]["id"]:
             latest[login] = review
     author = pr.get("user", {}).get("login")

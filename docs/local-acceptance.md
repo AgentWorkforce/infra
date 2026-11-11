@@ -125,6 +125,13 @@ the ownership and mode requirements above. Until the protected runner group,
 this variable and every full-suite adapter are provisioned, release candidates
 must remain blocked; an API-only pass never satisfies `qualification`.
 
+The release check also requires the candidate ledger to contain Control,
+Webapp and Sessions Pipeline pins. The signed receipt's observed runtime images
+must match all three immutable `repository@sha256` values, and its source
+revision must match the exact candidate head. Provisioning must therefore roll
+the candidate onto the local fixture before rerunning qualification; a pass
+from an older ar-lap deployment cannot qualify a newer release candidate.
+
 ## Remaining qualification increments
 
 Port the retained-trust clean-room receipts into tracked adapters: real upload

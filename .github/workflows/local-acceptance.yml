@@ -95,6 +95,48 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
+      - name: Validate the immutable exact-head diff
+        shell: bash
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          HEAD_BRANCH: ${{ github.event.pull_request.head.ref }}
+        run: |
+          set -euo pipefail
+          version="${HEAD_BRANCH#release/agent-relay-}"
+          prefix="releases/agent-relay-${version}/"
+          python3 - "$BASE_SHA" "$HEAD_SHA" "$prefix" <<'PY'
+          import subprocess
+          import sys
+
+          base, head, prefix = sys.argv[1:]
+          raw = subprocess.check_output(
+              ["git", "diff", "--name-status", "-z", "--find-renames", f"{base}...{head}"]
+          )
+          fields = raw.split(b"\0")
+          if fields and fields[-1] == b"":
+              fields.pop()
+          current = []
+          index = 0
+          while index < len(fields):
+              status = fields[index].decode("ascii")
+              index += 1
+              count = 2 if status.startswith(("R", "C")) else 1
+              if index + count > len(fields):
+                  raise SystemExit("Exact-head diff is malformed")
+              names = [fields[index + offset].decode("utf-8") for offset in range(count)]
+              index += count
+              if not all(name.startswith(prefix) for name in names):
+                  raise SystemExit("Exact-head diff changes a path outside its candidate directory")
+              if not status.startswith("D"):
+                  current.append(names[-1])
+          if not current:
+              raise SystemExit("Exact-head candidate diff is empty")
+          required = {prefix + "pins.json", prefix + "values.yaml"}
+          if not required.issubset(current):
+              raise SystemExit("Exact-head candidate diff omits pins.json or values.yaml")
+          PY
+
       - name: Require the provisioned ar-lap fixture
         shell: bash
         run: |
@@ -131,13 +173,31 @@ jobs:
           python3 ci/agent-relay/kind/acceptance/run.py verify \
             "$ACCEPTANCE_OUTPUT" \
             --trusted-key "${ACCEPTANCE_KEY}.pub"
-          jq -e '
+          version="${GITHUB_HEAD_REF#release/agent-relay-}"
+          candidate="releases/agent-relay-${version}"
+          python3 scripts/release/update-release-candidate.py validate \
+            --pins "$candidate/pins.json" \
+            --version "$version"
+          jq -e \
+            --arg head "${{ github.event.pull_request.head.sha }}" \
+            --slurpfile candidate "$candidate/pins.json" '
+            .payload.context.pins as $observed |
             .payload.schema == "agent-relay.local-acceptance/v1" and
             .payload.suite == "full" and
             .payload.status == "pass" and
             .payload.qualificationComplete == true and
+            .payload.context.sourceRevision == $head and
             (.payload.pendingQualificationChecks | length) == 0 and
-            all(.payload.checks[]; .status == "pass")
+            all(.payload.checks[]; .status == "pass") and
+            ($candidate[0].pins | keys | sort) ==
+              ["relay-control", "relay-webapp", "sessions-pipeline"] and
+            all($candidate[0].pins | to_entries[];
+              (.value.repository + "@" + .value.digest) as $image |
+              if .key == "relay-control" then $observed.control == $image
+              elif .key == "relay-webapp" then $observed.webapp == $image
+              elif .key == "sessions-pipeline" then $observed.pipeline == $image
+              else false
+              end)
           ' "$ACCEPTANCE_OUTPUT" >/dev/null
           [[ "$command_status" -eq 0 ]] \
             || { echo "::error::The full local acceptance command failed."; exit 1; }
