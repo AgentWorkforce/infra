@@ -152,7 +152,7 @@ exit 0
 FAKE_PG_DUMP = r"""#!/usr/bin/env bash
 echo "pg_dump called ca=${PGSSLROOTCERT:+set}" >> "$FAKE/log"
 if [ -n "${PGSSLROOTCERT:-}" ] && [ "$(cat "$PGSSLROOTCERT")" = "$(printf -- '-----BEGIN CERTIFICATE-----\nX\n-----END CERTIFICATE-----')" ]; then echo "ca file ok" >> "$FAKE/log"; fi
-for a in "$@"; do case "$a" in --dbname=*) case "$a" in *sslrootcert=/pod/*) echo "url keeps pod ca" >> "$FAKE/log" ;; *sslrootcert=*) echo "url ca rewritten" >> "$FAKE/log" ;; esac ;; esac; done
+for a in "$@"; do case "$a" in *options=-c%20statement_timeout%3D0*) echo "options kept" >> "$FAKE/log" ;; esac; case "$a" in --dbname=*) case "$a" in *sslrootcert=/pod/*) echo "url keeps pod ca" >> "$FAKE/log" ;; *sslrootcert=*) echo "url ca rewritten" >> "$FAKE/log" ;; esac ;; esac; done
 echo DUMP
 """
 
@@ -257,12 +257,13 @@ class ScriptTest(unittest.TestCase):
         self.render({"a": 2}, DEPLOY)
         (self.bin / "kubectl").write_text((self.bin / "kubectl").read_text().replace(
             "cG9zdGdyZXNxbDovL3U6U0VDUkVUUFdAaC9kYg==",
-            __import__("base64").b64encode(b"postgresql://u:SECRETPW@h/db?sslmode=verify-full&sslrootcert=/pod/ca.crt").decode()))
+            __import__("base64").b64encode(b"postgresql://u:SECRETPW@h/db?sslmode=verify-full&options=-c%20statement_timeout%3D0&sslrootcert=/pod/ca.crt").decode()))
         self.config({"type": "pg_dump", "databases": [{"label": "control", "namespace": "ns", "secret": "db", "key": "url",
                                                         "ca": {"configMap": "example-test-ca", "key": "ca.crt"}}]})
         p, report = self.run_script("apply", EXPECT_REVISIONS="agent-relay=7")
         self.assertEqual(p.returncode, 0, p.stderr)
         self.assertIn("url ca rewritten", self.log())
+        self.assertIn("options kept", self.log())  # %20 stays %20 (libpq reads + literally)
         self.assertNotIn("url keeps pod ca", self.log())
         self.assertNotIn("SECRETPW", p.stderr + (report / "log.txt").read_text())
 
