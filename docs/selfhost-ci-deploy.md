@@ -69,8 +69,13 @@ witness is minted inside AWS and written to every consumer from the same value:
 ```
 
 The module's `secrets_manager_prefix` (e.g. `agentrelay-dev/`) is the only Secrets Manager scope the apply job
-can read or create; the plan job has none, and its report lists the mappings without values. Secrets are
-synced when an apply runs (that is, when the plan has changes).
+can read or create; the plan job has none, and its report lists the mappings without values.
+
+Secrets are synced only when an apply runs, that is when the plan has changes (or with `FORCE_UPGRADE=1`). Pods
+read a value when they start: the upgrade that first references a secret restarts its consumers, but after
+rotating a value in Secrets Manager, restart the consumers (or ship the rotation with a values change).
+Each data key is written with its own field manager, so mappings that share a Secret never remove each other's
+keys, and an existing Secret keeps its type.
 
 ## What each mode does
 
