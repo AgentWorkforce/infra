@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Offline tests for scripts/selfhost/agent-relay-upgrade.sh. gh, git, helm,
+# Offline tests for scripts/selfhost/agent-relay-upgrade.sh. gh, helm,
 # kubectl, aws and crane are mocked; nothing contacts GitHub, AWS or a cluster.
 set -euo pipefail
 
@@ -15,17 +15,39 @@ pass() { printf 'ok - %s\n' "$*"; }
 sha() { if command -v sha256sum >/dev/null; then sha256sum "$@"; else shasum -a 256 "$@"; fi; }
 
 COMMIT=0123456789abcdef0123456789abcdef01234567
+REG=111111111111.dkr.ecr.us-east-1.amazonaws.com
 D1="sha256:$(printf 'a%.0s' {1..64})"; D2="sha256:$(printf 'b%.0s' {1..64})"
 
-make_release() { # $1 dir, $2 manifest-variant
-  local d=$1; mkdir -p "$d"
-  case "${2:-ok}" in
-    ok) imgs="[{\"name\":\"relay-control\",\"ref\":\"ghcr.io/agentworkforce/relay-control@$D1\"},{\"name\":\"relay-webapp\",\"ref\":\"ghcr.io/agentworkforce/relay-webapp@$D2\"}]" ;;
-    unpinned) imgs='[{"name":"relay-control","ref":"ghcr.io/agentworkforce/relay-control:latest"}]' ;;
-  esac
-  printf '{"schema":1,"version":"2026.11.1","infraCommit":"%s","chart":{"path":"charts/agent-relay","version":"0.6.31"},"valuesOverlay":"release-images.values.yaml","images":%s}\n' "$COMMIT" "$imgs" > "$d/release-manifest.json"
-  printf 'relayControl:\n  image: { repository: __IMAGE_MIRROR_ROOT__/ghcr.io/agentworkforce/relay-control, digest: "%s" }\nrelayWebapp:\n  image: { repository: __IMAGE_MIRROR_ROOT__/ghcr.io/agentworkforce/relay-webapp, digest: "%s" }\n' "$D1" "$D2" > "$d/release-images.values.yaml"
-  ( cd "$d" && sha release-manifest.json release-images.values.yaml > SHA256SUMS )
+# $1 dir, $2 variant: ok | unpinned | swapped | chartver
+make_release() {
+  local d=$1 v=${2:-ok} cv=0.6.31 o1=$D1 o2=$D2 imgs; rm -rf "$d"; mkdir -p "$d/pkg/agent-relay"
+  imgs="[{\"name\":\"relay-control\",\"ref\":\"ghcr.io/agentworkforce/relay-control@$D1\"},{\"name\":\"relay-webapp\",\"ref\":\"ghcr.io/agentworkforce/relay-webapp@$D2\"}]"
+  if [ "$v" = unpinned ]; then imgs='[{"name":"relay-control","ref":"ghcr.io/agentworkforce/relay-control:latest"}]'; fi
+  if [ "$v" = swapped ]; then o1=$D2; o2=$D1; fi
+  printf '{"schema":1,"version":"2026.11.1","infraCommit":"%s","chart":{"path":"charts/agent-relay","version":"%s"},"valuesOverlay":"release-images.values.yaml","images":%s}\n' "$COMMIT" "$cv" "$imgs" > "$d/release-manifest.json"
+  printf 'relayControl:\n  image: { repository: __IMAGE_MIRROR_ROOT__/ghcr.io/agentworkforce/relay-control, digest: "%s" }\nrelayWebapp:\n  image: { repository: __IMAGE_MIRROR_ROOT__/ghcr.io/agentworkforce/relay-webapp, digest: "%s" }\n' "$o1" "$o2" > "$d/release-images.values.yaml"
+  if [ "$v" = chartver ]; then cv=9.9.9; fi
+  printf 'name: agent-relay\nversion: "%s"\n' "$cv" > "$d/pkg/agent-relay/Chart.yaml"
+  : > "$d/pkg/agent-relay/values-eks.yaml"; : > "$d/pkg/agent-relay/values-eks-native.yaml"
+  tar -czf "$d/agent-relay-0.6.31.tgz" -C "$d/pkg" agent-relay; rm -rf "$d/pkg"
+  ( cd "$d" && sha release-manifest.json release-images.values.yaml agent-relay-0.6.31.tgz > SHA256SUMS )
+}
+
+# helm mock: template renders "<repository>@<digest>" for each image in the release overlay.
+# $1: extra case arm for upgrade (e.g. "exit 1")
+write_helm() {
+  cat > "$root/bin/helm" <<EOF
+#!/usr/bin/env bash
+echo "helm \$*" >> "$root/log"
+case "\$*" in
+  *template*) for a in "\$@"; do case "\$a" in *release-images.values.yaml) ov=\$a;; esac; done
+    yq -r '.[] | .image | "---\nimage: " + .repository + "@" + .digest' "\$ov" ;;
+  *history*) echo '[{"revision":6,"status":"superseded"},{"revision":7,"status":"deployed"},{"revision":8,"status":"failed"}]' ;;
+  *upgrade*) ${1:-exit 0} ;;
+esac
+exit 0
+EOF
+  chmod +x "$root/bin/helm"
 }
 
 setup_mocks() { # $1 release fixture dir, $2 attestation result (ok|fail)
@@ -38,28 +60,6 @@ case "\$1 \$2" in
   "attestation verify") [ "$2" = ok ] ;;
 esac
 EOF
-  cat > "$bin/git" <<EOF
-#!/usr/bin/env bash
-echo "git \$*" >> "$root/log"
-if [ "\$1" = clone ]; then mkdir -p "\${@: -1}"; exit 0; fi
-if [ "\$3" = worktree ] && [ "\$4" = add ]; then
-  t="\${@: -2:1}"; mkdir -p "\$t/charts/agent-relay" "\$t/scripts/selfhost"
-  : > "\$t/charts/agent-relay/values-eks.yaml"; : > "\$t/charts/agent-relay/values-eks-native.yaml"
-  printf 'name: agent-relay\nversion: "%s"\n' "\${CHART_VERSION:-0.6.31}" > "\$t/charts/agent-relay/Chart.yaml"
-  mkdir -p "\$t/charts/sessions-pipeline"
-  cp "$SELFHOST_DIR/mirror-images-to-ecr.sh" "\$t/scripts/selfhost/"
-fi
-exit 0
-EOF
-  cat > "$bin/helm" <<EOF
-#!/usr/bin/env bash
-echo "helm \$*" >> "$root/log"
-case "\$*" in
-  *template*) echo "image: 111111111111.dkr.ecr.us-east-1.amazonaws.com/agent-relay/ghcr.io/agentworkforce/relay-control@$D1" ;;
-  *history*) echo '[{"revision":7}]' ;;
-esac
-exit 0
-EOF
   cat > "$bin/kubectl" <<EOF
 #!/usr/bin/env bash
 echo "kubectl \$*" >> "$root/log"
@@ -70,11 +70,12 @@ EOF
   # crane: report the pinned digest for any ref, so the mirror's digest check passes
   printf '#!/usr/bin/env bash\necho "crane $*" >> "%s/log"\nfor a in "$@"; do case "$a" in *@sha256:*) [ "$1" = digest ] && { echo "${a##*@}"; exit 0; };; *:sha256-*) [ "$1" = digest ] && { d=${a##*:sha256-}; echo "sha256:$d"; exit 0; };; esac; done\nexit 0\n' "$root" > "$bin/crane"
   chmod +x "$bin"/*
+  write_helm
 }
 
 run() { PATH="$root/bin:$PATH" "$TEST_BASH" "$SCRIPT" "$@"; }
 vals="$root/values.yaml"; : > "$vals"
-args=(--version 2026.11.1 --registry 111111111111.dkr.ecr.us-east-1.amazonaws.com --values "$vals")
+args=(--version 2026.11.1 --registry "$REG" --profile eks-native --values "$vals")
 
 # 1. plan-only verifies, mirrors in plan mode and changes nothing
 make_release "$root/rel-ok" ok; setup_mocks "$root/rel-ok" ok
@@ -85,46 +86,59 @@ grep -q '^aws ' "$root/log" && fail "plan mode called aws"
 grep -q '^crane ' "$root/log" && fail "plan mode copied images"
 grep -q 'helm .*upgrade' "$root/log" && fail "plan mode ran helm upgrade"
 grep -q 'attestation verify .*SHA256SUMS' "$root/log" || fail "SHA256SUMS attestation not verified"
+grep 'helm .*template' "$root/log" | grep -q 'values-eks-native.yaml' || fail "eks-native profile not applied"
 pass "plan-only verifies the release and changes nothing"
 
-# 2. a tampered manifest fails the checksum
+# 2. --profile is required and selects only that profile's files
+setup_mocks "$root/rel-ok" ok
+run --version 2026.11.1 --registry "$REG" --values "$vals" >/dev/null 2>&1 && fail "missing --profile was accepted"
+out=$(run --version 2026.11.1 --registry "$REG" --profile eks --values "$vals" 2>&1) || fail "eks profile failed: $out"
+grep 'helm .*template' "$root/log" | grep -q 'values-eks-native.yaml' && fail "eks profile loaded the native overlay"
+pass "--profile is required and is never switched"
+
+# 3. a tampered manifest fails the checksum
 make_release "$root/rel-bad" ok; echo ' ' >> "$root/rel-bad/release-manifest.json"; setup_mocks "$root/rel-bad" ok
 run "${args[@]}" >/dev/null 2>&1 && fail "tampered manifest was accepted"
 pass "checksum mismatch refuses"
 
-# 3. a failed attestation refuses
+# 4. a failed attestation refuses
 setup_mocks "$root/rel-ok" fail
 run "${args[@]}" >/dev/null 2>&1 && fail "failed attestation was accepted"
 pass "failed attestation refuses"
 
-# 4. an unpinned image refuses
+# 5. an unpinned image refuses
 make_release "$root/rel-unpinned" unpinned; setup_mocks "$root/rel-unpinned" ok
 run "${args[@]}" >/dev/null 2>&1 && fail "unpinned image was accepted"
 pass "unpinned image refuses"
 
-# 4b. a chart version that differs from the release refuses
-setup_mocks "$root/rel-ok" ok
-CHART_VERSION=9.9.9 run "${args[@]}" >/dev/null 2>&1 && fail "mismatched chart version was accepted"
+# 6. a packaged chart whose version differs from the release refuses
+make_release "$root/rel-chartver" chartver; setup_mocks "$root/rel-chartver" ok
+run "${args[@]}" >/dev/null 2>&1 && fail "mismatched chart version was accepted"
 pass "chart version mismatch refuses"
 
-# 4c. an overlay that does not deploy a mirrored image refuses
-make_release "$root/rel-drift" ok
-sed -i.bak 's#ghcr.io/agentworkforce/relay-webapp#ghcr.io/other/relay-webapp#' "$root/rel-drift/release-images.values.yaml"; rm -f "$root/rel-drift/"*.bak
-( cd "$root/rel-drift" && sha release-manifest.json release-images.values.yaml > SHA256SUMS )
-setup_mocks "$root/rel-drift" ok
-run "${args[@]}" >/dev/null 2>&1 && fail "overlay drift was accepted"
-pass "overlay that does not match the mirrored images refuses"
+# 7. an overlay that swaps digests between images refuses
+make_release "$root/rel-swap" swapped; setup_mocks "$root/rel-swap" ok
+out=$(run "${args[@]}" 2>&1) && fail "swapped digests were accepted"
+grep -q 'not this release' <<<"$out" || fail "swapped digests refused for the wrong reason: $out"
+pass "overlay with swapped image digests refuses"
 
-# 5. --apply without --db-instance refuses before contacting anything
+# 8. --apply without --db-instance refuses before contacting anything
 setup_mocks "$root/rel-ok" ok
 run "${args[@]}" --apply >/dev/null 2>&1 && fail "apply without a snapshot target was accepted"
 [ -s "$root/log" ] && fail "apply without --db-instance contacted tools"
 pass "--apply requires --db-instance"
 
-# 6. --apply snapshots before upgrading, then upgrades with the overlay last
+# 9. --apply snapshots first, upgrades with the overlay, scopes checks to the release
 setup_mocks "$root/rel-ok" ok
 out=$(run "${args[@]}" --apply --db-instance prod-db --yes 2>&1) || fail "apply failed: $out"
 snap=$(grep -n 'aws rds create-db-snapshot' "$root/log" | cut -d: -f1); up=$(grep -n 'helm .*upgrade' "$root/log" | cut -d: -f1)
 [ -n "$snap" ] && [ -n "$up" ] && [ "$snap" -lt "$up" ] || fail "snapshot must precede helm upgrade"
 grep 'helm .*upgrade' "$root/log" | grep -q 'release-images.values.yaml' || fail "upgrade did not use the release overlay"
-pass "apply snapshots first, then upgrades with the release overlay"
+grep 'kubectl .*get jobs' "$root/log" | grep -q 'app.kubernetes.io/instance=agent-relay' || fail "job check not scoped to the release"
+pass "apply snapshots first, upgrades with the overlay, checks only this release"
+
+# 10. a failed upgrade prints the last DEPLOYED revision, not the latest one
+setup_mocks "$root/rel-ok" ok; write_helm "exit 1"
+out=$(run "${args[@]}" --apply --db-instance prod-db --yes 2>&1) && fail "failed upgrade reported success"
+grep -q 'rollback agent-relay 7' <<<"$out" || fail "rollback did not point at the last deployed revision: $out"
+pass "failed upgrade prints rollback to the last deployed revision"
