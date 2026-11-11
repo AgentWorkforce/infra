@@ -1,8 +1,8 @@
 apiVersion: v2
 name: telemetry-collector
 type: application
-version: 0.1.5
-appVersion: "d1089f8d05d6b87d642972d4214967f54182b617"
+version: 0.1.6
+appVersion: "83a57d382e00cfcd8a10a477d1ccfc06c6959c01"
 kubeVersion: ">=1.29.0-0"
 description: Authenticated self-hosted analytics collector with durable NDJSON storage and internal TLS
 home: https://github.com/AgentWorkforce/infra
