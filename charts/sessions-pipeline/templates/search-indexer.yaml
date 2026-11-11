@@ -132,13 +132,16 @@ spec:
           {{- end }}
 {{- if $c.bootstrap.enabled }}
 {{- $bootstrapSecret := required "searchIndexer.bootstrap.existingSecret requires the owner-connection secret" $c.bootstrap.existingSecret }}
+{{- /* The shared scrub contract renders into this Job outside $c. Keep it in
+      the content address so each rollout phase creates a new immutable Job. */}}
+{{- $bootstrapInputs := dict "searchIndexer" (omit $c "outputFacts") "scrubEngine" (.Values.global.scrubEngine | default dict) }}
 ---
 apiVersion: batch/v1
 kind: Job
 metadata:
   # Any change to this block is a new Job: a Job's pod template is immutable,
   # and the bootstrap is idempotent.
-  name: {{ printf "%s-bootstrap-%s" $name (toJson (omit $c "outputFacts") | sha256sum | trunc 8) }}
+  name: {{ printf "%s-bootstrap-%s" $name (toJson $bootstrapInputs | sha256sum | trunc 8) }}
   namespace: {{ .Release.Namespace | quote }}
   labels:
     app.kubernetes.io/name: session-search-indexer

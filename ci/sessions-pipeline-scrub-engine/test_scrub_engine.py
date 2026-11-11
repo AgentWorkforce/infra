@@ -65,6 +65,22 @@ def service_envs(rendered: str) -> list[tuple[str, dict[str, str]]]:
     return found
 
 
+def search_bootstrap_name(rendered: str) -> str:
+    matches = [
+        document["metadata"]["name"]
+        for document in yaml.safe_load_all(rendered)
+        if isinstance(document, dict)
+        and document.get("kind") == "Job"
+        and document.get("metadata", {}).get("labels", {}).get(
+            "app.kubernetes.io/component"
+        )
+        == "search-indexer-bootstrap"
+    ]
+    if len(matches) != 1:
+        raise AssertionError(f"expected one search bootstrap Job, got {matches}")
+    return matches[0]
+
+
 class ScrubEngineContractTest(unittest.TestCase):
     maxDiff = None
 
@@ -145,6 +161,21 @@ class ScrubEngineContractTest(unittest.TestCase):
                 "READER_MAX_RULESET": "10",
             },
             minimum_services=8,
+        )
+
+    def test_search_bootstrap_job_name_tracks_shared_scrub_contract(self) -> None:
+        phase_one = helm_agent(GCP, GCP_NATIVE, GCP_NATIVE_INPUTS)
+        phase_two = helm_agent(GCP, GCP_NATIVE, GCP_NATIVE_INPUTS, CUTOVER)
+        repeated_phase_one = helm_agent(GCP, GCP_NATIVE, GCP_NATIVE_INPUTS)
+        for result in (phase_one, phase_two, repeated_phase_one):
+            self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(
+            search_bootstrap_name(phase_one.stdout),
+            search_bootstrap_name(repeated_phase_one.stdout),
+        )
+        self.assertNotEqual(
+            search_bootstrap_name(phase_one.stdout),
+            search_bootstrap_name(phase_two.stdout),
         )
 
     def test_refuses_unreviewed_engine(self) -> None:
