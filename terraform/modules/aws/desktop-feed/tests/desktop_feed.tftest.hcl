@@ -81,6 +81,42 @@ run "private_bucket_role_and_pod_identity" {
   }
 }
 
+run "extra_env_is_the_chart_list_shape" {
+  command = plan
+
+  variables {
+    create_bucket = false
+  }
+
+  assert {
+    condition = output.control_extra_env == [
+      { name = "SELFHOST_DESKTOP_FEED_KMS_KEY_ALIASES", value = jsonencode({ p1 = "alias/relay-dev-desktop-feed-p1", p2 = "alias/relay-dev-desktop-feed-p2" }) },
+      { name = "SELFHOST_DESKTOP_FEED_KMS_REGION", value = "us-west-2" },
+      { name = "SELFHOST_DESKTOP_FEED_S3_BUCKET", value = "relay-dev-desktop-feed" },
+      { name = "SELFHOST_DESKTOP_FEED_S3_PREFIX", value = "desktop-feed" },
+      { name = "SELFHOST_DESKTOP_FEED_S3_REGION", value = "us-west-2" },
+      { name = "SELFHOST_DESKTOP_FEED_SIGNER", value = "awskms" },
+      { name = "SELFHOST_DESKTOP_FEED_STORAGE", value = "s3" },
+    ]
+    error_message = "control_extra_env must be the [{name, value}] list relay-control.extraEnv accepts."
+  }
+}
+
+run "existing_bucket_in_another_region" {
+  command = plan
+
+  variables {
+    create_bucket = false
+    bucket_name   = "existing-shared-bucket"
+    bucket_region = "eu-west-1"
+  }
+
+  assert {
+    condition     = output.control_env.SELFHOST_DESKTOP_FEED_S3_REGION == "eu-west-1" && output.control_env.SELFHOST_DESKTOP_FEED_KMS_REGION == "us-west-2"
+    error_message = "An existing bucket's region is exported as given, independently of the key region."
+  }
+}
+
 run "existing_bucket_prefix_and_existing_role" {
   command = plan
 
@@ -159,4 +195,21 @@ run "invalid_profile_rejected" {
     profiles = ["bad profile"]
   }
   expect_failures = [var.profiles]
+}
+
+run "provisioner_incompatible_profiles_rejected" {
+  command = plan
+  variables {
+    profiles = ["team-a", "Upper", "a_b", "abcdefghijklmnopqrstuvwxyz0123456"]
+  }
+  expect_failures = [var.profiles]
+}
+
+run "invalid_bucket_region_rejected" {
+  command = plan
+  variables {
+    create_bucket = false
+    bucket_region = "nowhere"
+  }
+  expect_failures = [var.bucket_region]
 }

@@ -313,7 +313,7 @@ variable "chief_execution_node" {
 }
 
 variable "desktop_feed" {
-  description = "Optional private Desktop feed for Relay Control (modules/aws/desktop-feed): one Ed25519 KMS signing key and alias per profile ID, a private bucket, and a Pod Identity role for Control's ServiceAccount. null creates nothing. Profile IDs come from the private handoff."
+  description = "Optional private Desktop feed for Relay Control (modules/aws/desktop-feed): one Ed25519 KMS signing key and alias per profile ID, a private bucket, and a Pod Identity role for Control's ServiceAccount. null creates nothing. Profile IDs (^[a-z0-9]{1,32}$) come from the private handoff."
   type = object({
     profiles        = set(string)
     prefix          = optional(string, "desktop-feed")

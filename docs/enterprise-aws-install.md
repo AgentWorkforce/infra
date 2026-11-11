@@ -336,7 +336,8 @@ Relay Control must start with the private feed enabled before this step:
 The AWS environment can create the key, alias, private bucket and Control role:
 set `desktop_feed` in its inputs (see
 [Private Desktop feed](../terraform/examples/aws-environments/README.md#private-desktop-feed-optional))
-and copy the `desktop_feed.control_env` output into `relay-control.extraEnv`.
+and merge the `desktop_feed.extra_env` output (a `[{name, value}]` list) into
+`relay-control.extraEnv` in the private values overlay.
 Confirm first that the selected Control image reads EKS Pod Identity
 credentials ([module note](../terraform/modules/aws/desktop-feed/README.md)).
 

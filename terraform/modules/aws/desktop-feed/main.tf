@@ -21,7 +21,10 @@ locals {
       },
       {
         # Unconditional, as in modules/aws/object-storage: S3 answers 404 rather
-        # than 403 for a missing key only when the caller may list the bucket.
+        # than 403 for a missing key only when the caller may list the bucket,
+        # and Control's storage treats 404 as "missing". An s3:prefix condition
+        # would not apply to GetObject, so it cannot be narrowed; in a shared
+        # bucket this lets Control list other key names.
         Sid      = "ListFeedBucket"
         Effect   = "Allow"
         Action   = ["s3:ListBucket", "s3:GetBucketLocation"]
@@ -35,6 +38,18 @@ locals {
       },
     ]
   })
+}
+
+locals {
+  control_env = {
+    SELFHOST_DESKTOP_FEED_SIGNER          = "awskms"
+    SELFHOST_DESKTOP_FEED_STORAGE         = "s3"
+    SELFHOST_DESKTOP_FEED_KMS_REGION      = local.region
+    SELFHOST_DESKTOP_FEED_KMS_KEY_ALIASES = jsonencode({ for p, k in aws_kms_alias.feed : p => k.name })
+    SELFHOST_DESKTOP_FEED_S3_BUCKET       = var.create_bucket ? module.bucket[0].bucket_name : var.bucket_name
+    SELFHOST_DESKTOP_FEED_S3_REGION       = var.create_bucket ? module.bucket[0].bucket_region : coalesce(var.bucket_region, local.region)
+    SELFHOST_DESKTOP_FEED_S3_PREFIX       = var.prefix
+  }
 }
 
 # One asymmetric key per profile: each profile's Desktop builds embed that key's

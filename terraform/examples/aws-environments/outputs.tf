@@ -128,9 +128,10 @@ output "chief_execution_node" {
 }
 
 output "desktop_feed" {
-  description = "Relay Control private Desktop feed bindings, or null when desktop_feed is unset. control_env maps directly to relay-control.extraEnv; it holds no secret."
+  description = "Relay Control private Desktop feed bindings, or null when desktop_feed is unset. control_env maps to Control settings and extra_env is the same as the relay-control.extraEnv list; neither holds a secret."
   value = var.desktop_feed == null ? null : {
     control_env     = module.desktop_feed[0].control_env
+    extra_env       = module.desktop_feed[0].control_extra_env
     key_arns        = module.desktop_feed[0].key_arns
     role_arn        = module.desktop_feed[0].role_arn
     namespace       = local.namespace

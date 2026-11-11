@@ -201,8 +201,24 @@ with `relay-control.fullnameOverride` (for example `values-eks.yaml` sets
 `helm template ... | yq 'select(.kind == "ServiceAccount") | .metadata.name'`. The
 `desktop_feed` output's `control_env` maps one to one onto Control's settings
 (`SELFHOST_DESKTOP_FEED_SIGNER=awskms`, `_STORAGE=s3`, `_KMS_REGION`,
-`_KMS_KEY_ALIASES`, `_S3_BUCKET`, `_S3_REGION`, `_S3_PREFIX`); copy it into
-`relay-control.extraEnv`. Adding a profile later adds a key; removing one
+`_KMS_KEY_ALIASES`, `_S3_BUCKET`, `_S3_REGION`, `_S3_PREFIX`). `extra_env` is
+the same settings as the `[{name, value}]` list `relay-control.extraEnv`
+expects; merge it into the private values overlay, for example:
+
+```sh
+jq '.desktop_feed.value.extra_env' outputs.json   # from terraform output -json
+```
+
+```yaml
+relay-control:
+  extraEnv:
+    - { name: SELFHOST_DESKTOP_FEED_SIGNER, value: awskms }
+    - { name: SELFHOST_DESKTOP_FEED_KMS_KEY_ALIASES, value: '{"<profile>":"alias/<name>-desktop-feed-<profile>"}' }
+    # ...the remaining entries from extra_env
+```
+
+Profile IDs must match Control and `desktop-feed-provision.sh`
+(`^[a-z0-9]{1,32}$`). Adding a profile later adds a key; removing one
 schedules its key for deletion and breaks the Desktop builds that embed it.
 Pod Identity allows one role per ServiceAccount, so nothing else may associate
 Control's ServiceAccount. Check the module's credential-source note before
@@ -520,7 +536,7 @@ exact destroy inventory and recovery proof; do not remove state to bypass them.
 | chief\_execution\_node | Optional dedicated Chief execution host (modules/aws/chief-execution-node). null creates nothing. Private installation values only; no credentials belong here. | ```object({ subnet_id = string relay_base_url = string instance_type = optional(string, "t3.medium") root_volume_size_gb = optional(number, 40) node_runtime = object({ url = string sha256 = string }) relay_node = object({ url = string sha256 = string }) harness = object({ npm_package = string version = string }) bridge = object({ repository = string commit = string }) repositories = list(string) })``` | `null` | no |
 | database\_instance\_class | Override the environment tier's instance class. Aurora needs an Aurora-supported class. | `string` | `null` | no |
 | deletion\_protection | Database API deletion protection. Production refuses false. Final snapshots and S3 versioning remain enabled. | `bool` | `true` | no |
-| desktop\_feed | Optional private Desktop feed for Relay Control (modules/aws/desktop-feed): one Ed25519 KMS signing key and alias per profile ID, a private bucket, and a Pod Identity role for Control's ServiceAccount. null creates nothing. Profile IDs come from the private handoff. | ```object({ profiles = set(string) prefix = optional(string, "desktop-feed") service_account = optional(string) })``` | `null` | no |
+| desktop\_feed | Optional private Desktop feed for Relay Control (modules/aws/desktop-feed): one Ed25519 KMS signing key and alias per profile ID, a private bucket, and a Pod Identity role for Control's ServiceAccount. null creates nothing. Profile IDs (^[a-z0-9]{1,32}$) come from the private handoff. | ```object({ profiles = set(string) prefix = optional(string, "desktop-feed") service_account = optional(string) })``` | `null` | no |
 | enable\_relayfile | Include Relayfile in the full-suite application contract; its actor identities/Secrets must be configured by the application layer. | `bool` | `false` | no |
 | environment\_class | Sizing/protection tier; environment names remain independent of this classification. | `string` | `"development"` | no |
 | existing\_runtime\_roles | Operator-owned runtime identities. Null manages search/pipeline roles here. Otherwise supply both search roles and, only in Lambda mode, the pipeline role. Trust, policies, guards and EKS associations must already be verified outside this state. | ```object({ indexer_role_arn = string reader_role_arn = string pipeline_role_arn = optional(string) })``` | `null` | no |
@@ -546,7 +562,7 @@ exact destroy inventory and recovery proof; do not remove state to bypass them.
 | ---- | ----------- |
 | application\_contract | Required full-suite components and selected pipeline mode. This contract does not replace complete Helm values, actor roles, bootstrap or runtime compatibility proof. |
 | chief\_execution\_node | Chief execution host references, or null. Holds no secret value. |
-| desktop\_feed | Relay Control private Desktop feed bindings, or null when desktop\_feed is unset. control\_env maps directly to relay-control.extraEnv; it holds no secret. |
+| desktop\_feed | Relay Control private Desktop feed bindings, or null when desktop\_feed is unset. control\_env maps to Control settings and extra\_env is the same as the relay-control.extraEnv list; neither holds a secret. |
 | environment | Environment identity to compare with the separately configured backend before apply. |
 | lambda\_shared\_environment | Non-secret writer/reader bindings, or null until explicitly configured. Independently qualify the matching reader artifact, read-only DB identity, JWT settings, schema/FGAC bootstrap and worker retirement before activation. |
 | pipeline | Lambda runtime bindings, or null in worker mode. Populate the secret out of band and verify actual handler compatibility before activation. |

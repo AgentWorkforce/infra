@@ -1,14 +1,11 @@
 output "control_env" {
-  description = "Relay Control environment for the private feed, as strings for relay-control.extraEnv. Contains no secret."
-  value = {
-    SELFHOST_DESKTOP_FEED_SIGNER          = "awskms"
-    SELFHOST_DESKTOP_FEED_STORAGE         = "s3"
-    SELFHOST_DESKTOP_FEED_KMS_REGION      = local.region
-    SELFHOST_DESKTOP_FEED_KMS_KEY_ALIASES = jsonencode({ for p, k in aws_kms_alias.feed : p => k.name })
-    SELFHOST_DESKTOP_FEED_S3_BUCKET       = var.create_bucket ? module.bucket[0].bucket_name : var.bucket_name
-    SELFHOST_DESKTOP_FEED_S3_REGION       = var.create_bucket ? module.bucket[0].bucket_region : local.region
-    SELFHOST_DESKTOP_FEED_S3_PREFIX       = var.prefix
-  }
+  description = "Relay Control's SELFHOST_DESKTOP_FEED_* settings as a name-to-value map. Contains no secret; use control_extra_env for relay-control.extraEnv."
+  value       = local.control_env
+}
+
+output "control_extra_env" {
+  description = "control_env as the [{name, value}] list relay-control.extraEnv expects, sorted by name."
+  value       = [for k in sort(keys(local.control_env)) : { name = k, value = local.control_env[k] }]
 }
 
 output "key_aliases" {

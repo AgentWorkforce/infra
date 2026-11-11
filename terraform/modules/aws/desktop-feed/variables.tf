@@ -9,12 +9,12 @@ variable "name" {
 }
 
 variable "profiles" {
-  description = "Desktop profile IDs. Each gets its own Ed25519 SIGN_VERIFY key and alias alias/<name>-<profile>."
+  description = "Desktop profile IDs, as Control and desktop-feed-provision.sh accept them (^[a-z0-9]{1,32}$). Each gets its own Ed25519 SIGN_VERIFY key and alias alias/<name>-<profile>."
   type        = set(string)
 
   validation {
-    condition     = length(var.profiles) > 0 && alltrue([for p in var.profiles : can(regex("^[A-Za-z0-9_-]{1,64}$", p))])
-    error_message = "profiles must name at least one profile; each ID is 1-64 letters, digits, _ or -."
+    condition     = length(var.profiles) > 0 && alltrue([for p in var.profiles : can(regex("^[a-z0-9]{1,32}$", p))])
+    error_message = "profiles must name at least one profile; each ID is 1-32 lowercase letters or digits."
   }
 }
 
@@ -43,6 +43,17 @@ variable "create_bucket" {
   description = "Create bucket_name as a private bucket through modules/aws/object-storage. false grants access to the prefix of an existing private bucket in this account."
   type        = bool
   default     = true
+}
+
+variable "bucket_region" {
+  description = "Region of an existing bucket (create_bucket = false). null means the provider region; a created bucket always uses the provider region."
+  type        = string
+  default     = null
+
+  validation {
+    condition     = var.bucket_region == null || can(regex("^[a-z]{2}(-[a-z]+)+-[0-9]$", var.bucket_region))
+    error_message = "bucket_region must be an AWS region name such as us-west-2."
+  }
 }
 
 variable "prefix" {
