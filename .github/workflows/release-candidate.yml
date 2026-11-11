@@ -1,0 +1,276 @@
+name: Update Agent Relay release candidate
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Stable SemVer release version; blank selects the one open release PR
+        required: false
+        type: string
+      component:
+        description: Published component
+        required: true
+        type: choice
+        options:
+          - sessions-pipeline
+          - relay-control
+          - relay-webapp
+      digest:
+        description: Immutable sha256 image digest
+        required: true
+        type: string
+      source_sha:
+        description: Full lowercase source commit
+        required: true
+        type: string
+  repository_dispatch:
+    types: [component-published]
+
+permissions:
+  contents: write
+  pull-requests: write
+  packages: read
+  attestations: read
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      REQUESTED_VERSION: ${{ github.event.inputs.version || '' }}
+      COMPONENT: ${{ github.event.inputs.component || github.event.client_payload.component }}
+      DIGEST: ${{ github.event.inputs.digest || github.event.client_payload.digest }}
+      SOURCE_SHA: ${{ github.event.inputs.source_sha || github.event.client_payload.source_sha }}
+    steps:
+      # A GITHUB_TOKEN-authored push suppresses follow-on workflow events.
+      # The scoped App token is therefore required for release-branch CI and
+      # the acceptance check to run against each newly pushed candidate head.
+      - name: Mint repository-scoped pusher token
+        id: pusher
+        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2
+        with:
+          app-id: ${{ secrets.GH_APP_PUSHER_ID }}
+          private-key: ${{ secrets.GH_APP_PUSHER_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: infra
+          permission-contents: write
+          permission-pull-requests: write
+
+      - name: Check out the automation from main
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: main
+          fetch-depth: 0
+          token: ${{ steps.pusher.outputs.token }}
+
+      - name: Validate request and select release branch
+        id: request
+        shell: bash
+        env:
+          GH_TOKEN: ${{ steps.pusher.outputs.token }}
+        run: |
+          set -euo pipefail
+          # The target release branch may predate this workflow. Carry the
+          # reviewed default-branch implementation across the branch switch.
+          install -m 0755 scripts/release/update-release-candidate.py \
+            "$RUNNER_TEMP/update-release-candidate.py"
+          python3 ci/agent-relay/test_release_candidate.py -v
+          metadata="$(python3 "$RUNNER_TEMP/update-release-candidate.py" describe --component "$COMPONENT")"
+          repository="$(jq -er '.imageRepository' <<<"$metadata")"
+          source_repository="$(jq -er '.sourceRepository' <<<"$metadata")"
+          signer_workflow="$(jq -er '.signerWorkflow' <<<"$metadata")"
+
+          if [[ -n "$REQUESTED_VERSION" ]]; then
+            version="$REQUESTED_VERSION"
+          else
+            mapfile -t branches < <(
+              gh pr list --repo "$GITHUB_REPOSITORY" --state open --limit 100 \
+                --json headRefName \
+                --jq '.[].headRefName | select(test("^release/agent-relay-(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$"))'
+            )
+            if [[ "${#branches[@]}" -ne 1 ]]; then
+              echo "::error::Expected exactly one open release/agent-relay-X.Y.Z PR; found ${#branches[@]}."
+              exit 1
+            fi
+            version="${branches[0]#release/agent-relay-}"
+          fi
+          if [[ ! "$version" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+            echo "::error::Release version must be stable SemVer."
+            exit 1
+          fi
+          if [[ ! "$DIGEST" =~ ^sha256:[a-f0-9]{64}$ ]]; then
+            echo "::error::Digest must be lowercase sha256:<64 hex>."
+            exit 1
+          fi
+          if [[ ! "$SOURCE_SHA" =~ ^[a-f0-9]{40}$ ]]; then
+            echo "::error::source_sha must be a full lowercase Git commit."
+            exit 1
+          fi
+
+          branch="release/agent-relay-$version"
+          {
+            echo "version=$version"
+            echo "branch=$branch"
+            echo "repository=$repository"
+            echo "source_repository=$source_repository"
+            echo "signer_workflow=$signer_workflow"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Enforce image and scrubber policy
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.BULLS96_READ_TOKEN || secrets.GITHUB_TOKEN }}
+          SOURCE_REPOSITORY: ${{ steps.request.outputs.source_repository }}
+        run: |
+          set -euo pipefail
+          args=(
+            --blocked scripts/release/blocked-image-digests.json
+            --component "$COMPONENT"
+            --digest "$DIGEST"
+            --source-sha "$SOURCE_SHA"
+          )
+          if [[ "$COMPONENT" == "sessions-pipeline" ]]; then
+            gh api \
+              "repos/${SOURCE_REPOSITORY}/contents/packages/pipeline/scrub-bindgen-pin.json?ref=${SOURCE_SHA}" \
+              --jq .content | base64 --decode > "$RUNNER_TEMP/scrub-bindgen-pin.json"
+            args+=(--scrub-pin "$RUNNER_TEMP/scrub-bindgen-pin.json")
+          fi
+          python3 "$RUNNER_TEMP/update-release-candidate.py" check-policy "${args[@]}"
+
+      - name: Authenticate to GHCR
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.BULLS96_READ_TOKEN || secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$GH_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+
+      - name: Verify GitHub build provenance
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.BULLS96_READ_TOKEN || secrets.GITHUB_TOKEN }}
+          IMAGE_REPOSITORY: ${{ steps.request.outputs.repository }}
+          SOURCE_REPOSITORY: ${{ steps.request.outputs.source_repository }}
+          SIGNER_WORKFLOW: ${{ steps.request.outputs.signer_workflow }}
+        run: |
+          set -euo pipefail
+          gh attestation verify "oci://${IMAGE_REPOSITORY}@${DIGEST}" \
+            --repo "$SOURCE_REPOSITORY" \
+            --signer-workflow "$SOURCE_REPOSITORY/$SIGNER_WORKFLOW" \
+            --source-digest "$SOURCE_SHA" \
+            --source-ref refs/heads/main \
+            --format json > "$RUNNER_TEMP/verified-attestation.json"
+          jq -e \
+            --arg repository "https://github.com/$SOURCE_REPOSITORY" \
+            --arg workflow "$SIGNER_WORKFLOW" '
+              length > 0 and all(.[].verificationResult.statement.predicate;
+                .buildDefinition.externalParameters.workflow.repository == $repository and
+                .buildDefinition.externalParameters.workflow.path == $workflow and
+                .buildDefinition.externalParameters.workflow.ref == "refs/heads/main")
+            ' "$RUNNER_TEMP/verified-attestation.json" >/dev/null
+
+      - name: Reconcile and push candidate state
+        shell: bash
+        env:
+          BRANCH: ${{ steps.request.outputs.branch }}
+          VERSION: ${{ steps.request.outputs.version }}
+        run: |
+          set -euo pipefail
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          remote_exists=false
+          if git ls-remote --exit-code --heads origin "$BRANCH" >/dev/null 2>&1; then
+            remote_exists=true
+          fi
+
+          # Every dispatch gets its own run. If two component publications race,
+          # a rejected push refetches the winner and reapplies this component so
+          # neither event can disappear in GitHub's one-pending concurrency queue.
+          pushed=false
+          for attempt in 1 2 3 4 5; do
+            if [[ "$remote_exists" == true ]]; then
+              git fetch origin "$BRANCH"
+              git checkout -B "$BRANCH" FETCH_HEAD
+            else
+              git checkout -B "$BRANCH" origin/main
+            fi
+            python3 "$RUNNER_TEMP/update-release-candidate.py" update \
+              --version "$VERSION" \
+              --component "$COMPONENT" \
+              --digest "$DIGEST" \
+              --source-sha "$SOURCE_SHA"
+            git add "releases/agent-relay-${VERSION}"
+            if git diff --cached --quiet; then
+              pushed=true
+              break
+            fi
+            git commit -m "release(agent-relay): candidate ${COMPONENT} pin"
+            if git push origin "HEAD:${BRANCH}"; then
+              pushed=true
+              break
+            fi
+            remote_exists=true
+            echo "Concurrent candidate update detected; retrying (${attempt}/5)."
+          done
+          [[ "$pushed" == true ]] \
+            || { echo "::error::Could not reconcile the candidate branch after 5 attempts."; exit 1; }
+
+      - name: Open or update the release pull request
+        id: pull_request
+        shell: bash
+        env:
+          GH_TOKEN: ${{ steps.pusher.outputs.token }}
+          BRANCH: ${{ steps.request.outputs.branch }}
+          VERSION: ${{ steps.request.outputs.version }}
+        run: |
+          set -euo pipefail
+          synchronized=false
+          pr_number=""
+          for attempt in 1 2 3 4 5; do
+            # Render only from the latest remote candidate state. If another
+            # run pushes while this body is being written, detect the new head
+            # afterward and repeat so an older table cannot win the race.
+            git fetch origin "$BRANCH"
+            head_before="$(git rev-parse FETCH_HEAD)"
+            git show "${head_before}:releases/agent-relay-${VERSION}/pins.json" \
+              > "$RUNNER_TEMP/latest-pins.json"
+            pr_number="$(gh pr list --repo "$GITHUB_REPOSITORY" --state open \
+              --head "$BRANCH" --limit 100 --json number --jq '.[0].number // empty')"
+            if [[ -n "$pr_number" ]]; then
+              gh pr view "$pr_number" --repo "$GITHUB_REPOSITORY" \
+                --json body --jq '.body // ""' > "$RUNNER_TEMP/pr-body.md"
+            else
+              printf 'Tracking PR for **agent-relay-%s**. Candidate pins are provenance-verified; acceptance and approval are separate release gates.\n' \
+                "$VERSION" > "$RUNNER_TEMP/pr-body.md"
+            fi
+            python3 "$RUNNER_TEMP/update-release-candidate.py" render-body \
+              --pins "$RUNNER_TEMP/latest-pins.json" \
+              --body "$RUNNER_TEMP/pr-body.md" \
+              --output "$RUNNER_TEMP/updated-pr-body.md"
+            if [[ -n "$pr_number" ]]; then
+              gh pr edit "$pr_number" --repo "$GITHUB_REPOSITORY" \
+                --body-file "$RUNNER_TEMP/updated-pr-body.md"
+            elif url="$(gh pr create --repo "$GITHUB_REPOSITORY" \
+              --base main --head "$BRANCH" \
+              --title "Release agent-relay-${VERSION}" \
+              --body-file "$RUNNER_TEMP/updated-pr-body.md")"; then
+              pr_number="${url##*/}"
+            else
+              # A concurrent first-component run may have created it.
+              pr_number="$(gh pr list --repo "$GITHUB_REPOSITORY" --state open \
+                --head "$BRANCH" --limit 100 --json number --jq '.[0].number // empty')"
+              [[ -n "$pr_number" ]] \
+                || { echo "::error::Could not create or find the release PR."; exit 1; }
+            fi
+            git fetch origin "$BRANCH"
+            if [[ "$(git rev-parse FETCH_HEAD)" == "$head_before" ]]; then
+              synchronized=true
+              break
+            fi
+            echo "Candidate changed while updating its PR table; retrying (${attempt}/5)."
+          done
+          [[ "$synchronized" == true ]] \
+            || { echo "::error::Could not synchronize the candidate PR table after 5 attempts."; exit 1; }
+          url="$(gh pr view "$pr_number" --repo "$GITHUB_REPOSITORY" --json url --jq .url)"
+          echo "url=$url" >> "$GITHUB_OUTPUT"
+          printf 'Updated %s with `%s@%s`.\n' "$url" "$COMPONENT" "$DIGEST" >> "$GITHUB_STEP_SUMMARY"
