@@ -4,8 +4,7 @@
 #
 #   NS_SANDBOX=arm-actors-agent-relay bench/relaycast/scripts/profile-actor.sh <seconds> <out-prefix>
 #
-# Needs the actor process started with BUN_OPTIONS=--inspect=127.0.0.1:6499/rcb
-# (relaycast-actor-env; see docs/benchmarks). Writes:
+# Picks the actor host with the most invocations in the last minute. Writes:
 #   <out-prefix>.cpu.json          bun-profile.mjs output (CPU by category and
 #                                  function, GC events from the Heap domain)
 #   <out-prefix>.invocations.json  per-method queue wait / execution / state
@@ -17,24 +16,31 @@ NS="${NS_SANDBOX:-arm-actors-agent-relay}"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 K=(kubectl -n "$NS")
 
-# The host running a bun child with the inspector flag.
-pod=""
+# The busiest actor host: most "invocation completed" lines in the last 60 s.
+pod="" best=0
 for p in $("${K[@]}" get pods --no-headers -o custom-columns=:metadata.name); do
-  if "${K[@]}" exec "$p" -- sh -c 'for c in /proc/[0-9]*/cmdline; do tr "\0" " " <"$c" 2>/dev/null; echo; done' 2>/dev/null | grep -q '^bun\|/bun '; then
-    pod="$p"; break
-  fi
+  n="$("${K[@]}" logs "$p" --since=60s 2>/dev/null | grep -c '"actor host invocation completed"' || true)"
+  if (( n > best )); then best="$n"; pod="$p"; fi
 done
-[[ -n "$pod" ]] || { echo "no actor host with a bun process" >&2; exit 1; }
+[[ -n "$pod" ]] || { echo "no busy actor host" >&2; exit 1; }
 echo "profiling $pod for ${SECS}s" >&2
 
-"${K[@]}" exec -i "$pod" -- sh -c 'cat > /tmp/bun-profile.mjs' <"$HERE/../harness/bun-profile.mjs"
 ( end=$(( $(date +%s) + SECS )); echo "ts,working_set_mib" >"$OUT.memory.csv"
   while (( $(date +%s) < end )); do
     m="$("${K[@]}" exec "$pod" -- sh -c 'cat /sys/fs/cgroup/memory.current 2>/dev/null || cat /sys/fs/cgroup/memory/memory.usage_in_bytes' 2>/dev/null || echo 0)"
     echo "$(date +%s),$(( m / 1048576 ))" >>"$OUT.memory.csv"; sleep 5
   done ) &
 mem=$!
-"${K[@]}" exec "$pod" -- bun /tmp/bun-profile.mjs ws://127.0.0.1:6499/rcb "$SECS" >"$OUT.cpu.json"
+# In-process CPU sampling needs Bun started with --inspect; the durable-actors
+# host starts Bun in spares before an actor (and its env) is assigned and has
+# no flag passthrough, so it is attempted only when the inspector answers.
+if "${K[@]}" exec "$pod" -- bun -e 'const w=new WebSocket("ws://127.0.0.1:6499/rcb");w.onopen=()=>process.exit(0);w.onerror=()=>process.exit(1);setTimeout(()=>process.exit(1),2000)' 2>/dev/null; then
+  "${K[@]}" exec -i "$pod" -- sh -c 'cat > /tmp/bun-profile.mjs' <"$HERE/../harness/bun-profile.mjs"
+  "${K[@]}" exec "$pod" -- bun /tmp/bun-profile.mjs ws://127.0.0.1:6499/rcb "$SECS" >"$OUT.cpu.json"
+else
+  echo '{"unavailable":"actor Bun process has no inspector (no flag passthrough in the durable-actors host)"}' >"$OUT.cpu.json"
+  sleep "$SECS"
+fi
 wait "$mem" 2>/dev/null || true
 
 # Invocation phases (ms from invocation start) over the profiled window.

@@ -206,6 +206,8 @@ chaos() { # action out
       fi ;;
     rds-failover)
       aws --region "$REGION" rds reboot-db-instance --db-instance-identifier "$DB_ID" --force-failover >/dev/null ;;
+    profile:*)
+      NS_SANDBOX="${NS}-agent-relay" "$HERE/profile-actor.sh" "${action#profile:}" "${out%/*}/profile-$(date +%H%M%S)" || log "profile failed" ;;
     *) log "unknown chaos $action"; return 1 ;;
   esac
   printf '{"action":"%s","at":%s}\n' "$action" "$t" >>"$out"
@@ -254,9 +256,29 @@ run_phases() { # suite dir phases(json array) nprod nsink chaos(json)
   wait_ready rcb-producer "$np" /status 9191 "$budget"
   for ((i = 0; i < np; i++)); do "${K[@]}" exec "rcb-producer-$i" -- wget -qO- http://127.0.0.1:9191/result >"$dir/producer-$i.json"; done
   ((${#chaos_pids[@]})) && wait "${chaos_pids[@]}" 2>/dev/null || true
-  sleep 15 # trailing deliveries
+  quiesce "$ns_" "$dir"
   for ((i = 0; i < ns_; i++)); do "${K[@]}" exec "rcb-sink-$i" -- wget -qO- http://127.0.0.1:9090/stats >"$dir/sink-$i.json"; done
   node "$BENCH/harness/report.mjs" "$dir" --arm "$ARM" >/dev/null
+}
+
+# quiesce <nsinks> <dir>: wait until the sinks stop receiving deliveries (no
+# change for QUIET_S, default 60 s; at most QUIESCE_MAX_S, default 900 s) so
+# integrity is judged on what was delivered, not on what was still queued.
+quiesce() {
+  local n="$1" dir="$2" prev=-1 cur same=0 waited=0 i
+  local quiet="${QUIET_S:-60}" max="${QUIESCE_MAX_S:-900}"
+  while ((waited < max)); do
+    cur=0
+    for ((i = 0; i < n; i++)); do
+      cur=$((cur + $("${K[@]}" exec "rcb-sink-$i" -- wget -qO- http://127.0.0.1:9090/stats 2>/dev/null \
+        | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{console.log(JSON.parse(s).counters.deliver||0)}catch{console.log(0)}})')))
+    done
+    if ((cur == prev)); then same=$((same + 15)); else same=0; fi
+    ((same >= quiet)) && break
+    prev=$cur; sleep 15; waited=$((waited + 15))
+  done
+  printf '{"quiesced_after_s":%s,"deliveries":%s,"capped":%s}\n' "$waited" "$cur" "$((waited >= max))" >"$dir/quiesce.json"
+  log "quiesced after ${waited}s ($cur deliveries)"
 }
 
 cmd_suite() {

@@ -553,6 +553,48 @@
      "sizeBytes": 512
     }
    ]
+  },
+  {
+   "name": "profile-actor",
+   "sinks": 2,
+   "producers": 2,
+   "notes": "Per-invocation profile of one Workspace actor (channel-100 fixture): 2 channel posts/s, then 20 DMs/s; the actor is sampled for 150 s inside each phase. Run at durable-actors.actors.memoryMiB 256 and 1024.",
+   "fixture": {
+    "RCB_WORKSPACES": 1,
+    "RCB_PRODUCERS": 20,
+    "RCB_RECEIVERS": 80,
+    "RCB_CHANNELS": 5,
+    "RCB_CHANNEL_MEMBERS": 20,
+    "RCB_AGENTS_PER_NODE": 1
+   },
+   "phases": [
+    {
+     "label": "prof-ch2",
+     "kind": "channel",
+     "rate": 2,
+     "durationS": 300,
+     "sizeBytes": 512
+    },
+    {
+     "label": "prof-dm20",
+     "kind": "dm",
+     "rate": 20,
+     "durationS": 300,
+     "sizeBytes": 512
+    }
+   ],
+   "chaos": [
+    {
+     "phase": "prof-ch2",
+     "atS": 90,
+     "action": "profile:150"
+    },
+    {
+     "phase": "prof-dm20",
+     "atS": 90,
+     "action": "profile:150"
+    }
+   ]
   }
  ]
 }

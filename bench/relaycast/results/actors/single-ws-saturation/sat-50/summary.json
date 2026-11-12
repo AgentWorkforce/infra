@@ -1,0 +1,155 @@
+{
+ "arm": "actors",
+ "dir": "/home/khaliqgant/Projects/AgentWorkforce/infra-worktrees/relaycast-actors-bench/bench/relaycast/results/actors/single-ws-saturation/sat-50",
+ "phases": [
+  {
+   "label": "sat-50",
+   "kind": "mixed",
+   "offeredRate": 50,
+   "startedAt": 1794507227909,
+   "endedAt": 1794507587959,
+   "issued": 14998
+  }
+ ],
+ "routes": [
+  {
+   "arm": "actors",
+   "phase": "sat-50",
+   "route": "POST /v1/channels/:name/messages",
+   "requests": 2944,
+   "ok": 115,
+   "rps_ok": 0.32,
+   "err_rate": 0.96094,
+   "r429": 0,
+   "r5xx": 234,
+   "net_err": 2595,
+   "p50": 29968.179,
+   "p95": 29968.179,
+   "p99": 29968.179,
+   "max": 30007.770999999717,
+   "corrected_p50": 112623.144,
+   "corrected_p95": 210162.219,
+   "corrected_p99": 234811.544
+  },
+  {
+   "arm": "actors",
+   "phase": "sat-50",
+   "route": "POST /v1/dm",
+   "requests": 9121,
+   "ok": 185,
+   "rps_ok": 0.51,
+   "err_rate": 0.97972,
+   "r429": 0,
+   "r5xx": 693,
+   "net_err": 8243,
+   "p50": 29968.179,
+   "p95": 29968.179,
+   "p99": 29968.179,
+   "max": 30005.669999999925,
+   "corrected_p50": 29968.179,
+   "corrected_p95": 29968.179,
+   "corrected_p99": 29968.179
+  }
+ ],
+ "delivery": [
+  {
+   "arm": "actors",
+   "phase": "sat-50",
+   "deliveries": 2858,
+   "deliveries_per_s": 7.94,
+   "p50": 64238.198,
+   "p95": 136746.446,
+   "p99": 142553.488,
+   "p999": 143545.026,
+   "max": 144184
+  }
+ ],
+ "integrity": [
+  {
+   "arm": "actors",
+   "phase": "sat-50",
+   "expected": 1335,
+   "delivered": 677,
+   "lost": 658,
+   "duplicate": 0,
+   "redelivered": 0,
+   "reordered": 0,
+   "unexpected": 0,
+   "truncated": 0
+  }
+ ],
+ "sinks": [
+  {
+   "shard": 0,
+   "sockets": 25,
+   "connected": 0,
+   "drops": 25,
+   "connect": {
+    "n": 25,
+    "mean": 15817.6,
+    "min": 12447,
+    "p50": 16741.531,
+    "p95": 17819.186,
+    "p99": 17943.128,
+    "p999": 17943.128,
+    "max": 17999
+   },
+   "reconnect": {
+    "n": 0,
+    "mean": null,
+    "min": null,
+    "p50": null,
+    "p95": null,
+    "p99": null,
+    "p999": null,
+    "max": null
+   },
+   "counters": {
+    "frame context.update": 75,
+    "join 200": 25,
+    "deliver": 1437,
+    "ws_drop 4400": 25,
+    "connect_error ws error": 82,
+    "connect_error node.register timeout": 11
+   },
+   "drain": [],
+   "rssBytes": 83968000
+  },
+  {
+   "shard": 1,
+   "sockets": 25,
+   "connected": 0,
+   "drops": 25,
+   "connect": {
+    "n": 25,
+    "mean": 14194.28,
+    "min": 12062,
+    "p50": 14373.7,
+    "p95": 15838.453,
+    "p99": 16283.733,
+    "p999": 16283.733,
+    "max": 16228
+   },
+   "reconnect": {
+    "n": 0,
+    "mean": null,
+    "min": null,
+    "p50": null,
+    "p95": null,
+    "p99": null,
+    "p999": null,
+    "max": null
+   },
+   "counters": {
+    "frame context.update": 200,
+    "join 200": 25,
+    "deliver": 1421,
+    "ws_drop 4400": 25,
+    "connect_error ws error": 72,
+    "connect_error node.register timeout": 14
+   },
+   "drain": [],
+   "rssBytes": 83783680
+  }
+ ]
+}
