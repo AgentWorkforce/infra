@@ -145,7 +145,7 @@ spec:
           {{- end }}
 {{- if $c.bootstrap.enabled }}
 {{- $bootstrapSecret := required "searchIndexer.bootstrap.existingSecret requires the owner-connection secret" $c.bootstrap.existingSecret }}
-{{- $bootstrapGuard := .Files.Get "files/search-indexer-bootstrap-guard.ts" }}
+{{- $bootstrapGuard := .Files.Get "files/search-indexer-bootstrap-guard.mjs" }}
 {{- $bootstrapGuardName := printf "%s-bootstrap-guard-%s" ($name | trunc 35 | trimSuffix "-") ($bootstrapGuard | sha256sum | trunc 8) }}
 {{- /* The shared scrub contract renders into this Job outside $c. Keep it in
       the content address so each rollout phase creates a new immutable Job. */}}
@@ -163,7 +163,7 @@ metadata:
     helm.sh/chart: {{ printf "%s-%s" .Chart.Name .Chart.Version | quote }}
 immutable: true
 data:
-  bootstrap-guard.ts: |
+  bootstrap-guard.mjs: |
     {{- $bootstrapGuard | nindent 4 }}
 ---
 apiVersion: batch/v1
@@ -197,7 +197,7 @@ spec:
           image: {{ printf "%s@%s" $repository $digest | quote }}
           imagePullPolicy: {{ $c.image.pullPolicy }}
           command: ["/bin/sh", "-c"]
-          args: ["exec bun run /app/bootstrap-guard/bootstrap-guard.ts"]
+          args: ["exec bun run /app/bootstrap-guard/bootstrap-guard.mjs"]
           env:
             {{- include "sessions-pipeline.searchIndexer.env" (dict "root" . "c" $c "service" "session-pipeline-consumer-bootstrap" "secret" $bootstrapSecret "key" $c.bootstrap.key) | nindent 12 }}
             - { name: SEARCH_BOOTSTRAP_CATALOG_RETRY_MAX_ATTEMPTS, value: {{ $c.bootstrap.catalogRetry.maxAttempts | quote }} }

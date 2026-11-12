@@ -3,11 +3,11 @@ const CATALOG_RACE = /(?:tuple concurrently updated|concurrent catalog update)/u
 /** PostgreSQL reports concurrent role/catalog DDL as XX000. Match both the
  * stable SQLSTATE and its catalog-update text; unrelated bootstrap failures
  * must reach the Job immediately instead of being retried. */
-export function isRetryableCatalogRace(output: string): boolean {
+export function isRetryableCatalogRace(output) {
   return /\bXX000\b/u.test(output) && CATALOG_RACE.test(output);
 }
 
-function positiveInteger(name: string, maximum: number): number {
+function positiveInteger(name, maximum) {
   const raw = process.env[name] ?? "";
   if (!/^[1-9][0-9]*$/u.test(raw)) throw new Error(`${name} must be a positive integer`);
   const value = Number(raw);
@@ -15,14 +15,14 @@ function positiveInteger(name: string, maximum: number): number {
   return value;
 }
 
-function boolean(name: string): boolean {
+function boolean(name) {
   const raw = process.env[name];
   if (raw === "true") return true;
   if (raw === "false") return false;
   throw new Error(`${name} must be true or false`);
 }
 
-async function capture(stream: ReadableStream<Uint8Array>, target: typeof Bun.stdout): Promise<string> {
+async function capture(stream, target) {
   const reader = stream.getReader();
   const decoder = new TextDecoder();
   let tail = "";
@@ -35,7 +35,7 @@ async function capture(stream: ReadableStream<Uint8Array>, target: typeof Bun.st
   return `${tail}${decoder.decode()}`.slice(-65_536);
 }
 
-async function runBootstrap(): Promise<{ code: number; output: string }> {
+async function runBootstrap() {
   const child = Bun.spawn(["/entrypoint.sh"], {
     env: process.env,
     stdin: "inherit",
@@ -50,15 +50,13 @@ async function runBootstrap(): Promise<{ code: number; output: string }> {
   return { code, output: `${stdout}\n${stderr}` };
 }
 
-type RoleProbe = { query: (sql: string) => Promise<{ rows: Array<{ ready: boolean }> }> };
-
 export async function waitForRuntimeRoleActivation(
-  client: RoleProbe,
-  waitSeconds: number,
-  pollSeconds: number,
-  sleep: (milliseconds: number) => Promise<unknown> = Bun.sleep,
-  now: () => number = Date.now,
-): Promise<void> {
+  client,
+  waitSeconds,
+  pollSeconds,
+  sleep = Bun.sleep,
+  now = Date.now,
+) {
   const deadline = now() + waitSeconds * 1000;
   for (;;) {
     const result = await client.query(
@@ -72,7 +70,7 @@ export async function waitForRuntimeRoleActivation(
   }
 }
 
-async function main(): Promise<number> {
+async function main() {
   const maxAttempts = positiveInteger("SEARCH_BOOTSTRAP_CATALOG_RETRY_MAX_ATTEMPTS", 10);
   const delaySeconds = positiveInteger("SEARCH_BOOTSTRAP_CATALOG_RETRY_DELAY_SECONDS", 60);
   const waitForRuntimeRole = boolean("SEARCH_BOOTSTRAP_WAIT_FOR_RUNTIME_ROLE_LOGIN");
@@ -80,9 +78,9 @@ async function main(): Promise<number> {
   const rolePollSeconds = positiveInteger("SEARCH_BOOTSTRAP_RUNTIME_ROLE_POLL_SECONDS", 60);
   if (rolePollSeconds > roleWaitSeconds) throw new Error("runtime role poll interval exceeds its wait deadline");
   const rawSecret = process.env.RELAYHISTORY_PIPELINE_CONSUMER_SECRET ?? "";
-  let ownerUrl: string;
+  let ownerUrl;
   try {
-    const secret = JSON.parse(rawSecret) as { hoopdb_url?: unknown };
+    const secret = JSON.parse(rawSecret);
     if (typeof secret.hoopdb_url !== "string" || !secret.hoopdb_url) throw new Error("missing URL");
     ownerUrl = secret.hoopdb_url;
   } catch {
@@ -103,7 +101,7 @@ async function main(): Promise<number> {
     console.error("search-indexer bootstrap: waiting for rds-setup post to activate search_consumer_runtime");
     await waitForRuntimeRoleActivation({
       query: async sql => {
-        const result = await lock.query<{ ready: boolean }>(sql);
+        const result = await lock.query(sql);
         return { rows: result.rows };
       },
     }, roleWaitSeconds, rolePollSeconds);

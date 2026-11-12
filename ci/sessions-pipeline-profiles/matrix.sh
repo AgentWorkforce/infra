@@ -27,7 +27,7 @@ fail=0
 err() { echo "::error::$*"; fail=1; }
 render() { helm template ci "$CHART" --namespace ci --no-hooks "$@"; }
 
-bun test "$ROOT/ci/sessions-pipeline-profiles/search-indexer-bootstrap-guard.test.ts"
+node --test "$ROOT/ci/sessions-pipeline-profiles/search-indexer-bootstrap-guard.test.mjs"
 
 # The inputs a shipped profile leaves to the operator (CI values files carry
 # their own).
@@ -335,11 +335,11 @@ if [ "$mode" = static ]; then
   [ -n "$bootstrap_job" ] || err "aws-rds-native: search indexer bootstrap Job did not render"
   [ "$(yq -r '.spec.backoffLimit' <<<"$bootstrap_job")" = 0 ] || err "aws-rds-native: bootstrap uses Kubernetes retries and can leave an Error Pod"
   [ "$(yq -r '.spec.template.spec.restartPolicy' <<<"$bootstrap_job")" = Never ] || err "aws-rds-native: bootstrap restartPolicy changed"
-  [ "$(yq -r '.spec.template.spec.containers[0].args | join(" ")' <<<"$bootstrap_job")" = "exec bun run /app/bootstrap-guard/bootstrap-guard.ts" ] \
+  [ "$(yq -r '.spec.template.spec.containers[0].args | join(" ")' <<<"$bootstrap_job")" = "exec bun run /app/bootstrap-guard/bootstrap-guard.mjs" ] \
     || err "aws-rds-native: bootstrap does not run the catalog guard"
   guard_name=$(yq -r '.spec.template.spec.volumes[] | select(.name == "bootstrap-guard") | .configMap.name' <<<"$bootstrap_job")
   [ -n "$guard_name" ] || err "aws-rds-native: bootstrap guard ConfigMap volume missing"
-  guard=$(yq -r "select(.kind == \"ConfigMap\" and .metadata.name == \"$guard_name\") | .data.\"bootstrap-guard.ts\"" <<<"$out" | grep -v '^---$')
+  guard=$(yq -r "select(.kind == \"ConfigMap\" and .metadata.name == \"$guard_name\") | .data.\"bootstrap-guard.mjs\"" <<<"$out" | grep -v '^---$')
   grep -qF 'SELECT pg_advisory_lock(961996, 1)' <<<"$guard" || err "aws-rds-native: bootstrap does not share the Sessions migrator lock"
   grep -qF 'SELECT pg_advisory_unlock(961996, 1)' <<<"$guard" || err "aws-rds-native: bootstrap does not release the Sessions migrator lock"
   grep -qF "rolname='search_consumer_runtime'" <<<"$guard" || err "aws-rds-native: bootstrap does not wait for the post-migration runtime LOGIN"
