@@ -47,6 +47,19 @@
 {{- if le (int $factsJob.activeDeadlineSeconds) (int $factsJob.deadlineSeconds) }}{{ fail "searchIndexer.outputFacts.bootstrap.activeDeadlineSeconds must exceed deadlineSeconds" }}{{ end -}}
 {{- end -}}
 {{- if and (not $c.bootstrap.enabled) (ne (toString $c.bootstrap.acknowledgeRunByOperator) "true") }}{{ fail "searchIndexer.bootstrap.enabled=false requires bootstrap.acknowledgeRunByOperator=true" }}{{ end -}}
+{{- if $c.bootstrap.enabled -}}
+{{- if ne (toString $c.bootstrap.backoffLimit) "0" }}{{ fail "searchIndexer.bootstrap.backoffLimit must be 0: catalog races retry inside one Pod and other failures require inspection" }}{{ end -}}
+{{- if not (kindIs "bool" $c.bootstrap.waitForRuntimeRoleLogin) }}{{ fail "searchIndexer.bootstrap.waitForRuntimeRoleLogin must be a boolean" }}{{ end -}}
+{{- range $field, $limit := dict "maxAttempts" 10 "delaySeconds" 60 -}}
+{{- $value := index $c.bootstrap.catalogRetry $field -}}
+{{- if or (not (regexMatch "^[1-9][0-9]*$" (toString $value))) (gt (int $value) $limit) }}{{ fail (printf "searchIndexer.bootstrap.catalogRetry.%s must be an integer from 1 through %d" $field $limit) }}{{ end -}}
+{{- end -}}
+{{- range $field, $limit := dict "roleWaitSeconds" 840 "rolePollSeconds" 60 -}}
+{{- $value := index $c.bootstrap $field -}}
+{{- if or (not (regexMatch "^[1-9][0-9]*$" (toString $value))) (gt (int $value) $limit) }}{{ fail (printf "searchIndexer.bootstrap.%s must be an integer from 1 through %d" $field $limit) }}{{ end -}}
+{{- end -}}
+{{- if gt (int $c.bootstrap.rolePollSeconds) (int $c.bootstrap.roleWaitSeconds) }}{{ fail "searchIndexer.bootstrap.rolePollSeconds must not exceed roleWaitSeconds" }}{{ end -}}
+{{- end -}}
 {{- if eq $backend "opensearch" -}}
 {{- $url := required "searchIndexer.search.opensearch.url is required" $c.search.opensearch.url -}}
 {{- if not (regexMatch "^https://[a-z0-9.-]+(:[0-9]{1,5})?$" $url) }}{{ fail "searchIndexer.search.opensearch.url must be an https endpoint with no path, credentials or query" }}{{ end -}}
@@ -132,9 +145,26 @@ spec:
           {{- end }}
 {{- if $c.bootstrap.enabled }}
 {{- $bootstrapSecret := required "searchIndexer.bootstrap.existingSecret requires the owner-connection secret" $c.bootstrap.existingSecret }}
+{{- $bootstrapGuard := .Files.Get "files/search-indexer-bootstrap-guard.ts" }}
+{{- $bootstrapGuardName := printf "%s-bootstrap-guard-%s" ($name | trunc 35 | trimSuffix "-") ($bootstrapGuard | sha256sum | trunc 8) }}
 {{- /* The shared scrub contract renders into this Job outside $c. Keep it in
       the content address so each rollout phase creates a new immutable Job. */}}
-{{- $bootstrapInputs := dict "searchIndexer" (omit $c "outputFacts") "scrubEngine" (.Values.global.scrubEngine | default dict) }}
+{{- $bootstrapInputs := dict "searchIndexer" (omit $c "outputFacts") "scrubEngine" (.Values.global.scrubEngine | default dict) "guardSha256" ($bootstrapGuard | sha256sum) }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $bootstrapGuardName }}
+  namespace: {{ .Release.Namespace | quote }}
+  labels:
+    app.kubernetes.io/name: session-search-indexer
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: search-indexer-bootstrap
+    helm.sh/chart: {{ printf "%s-%s" .Chart.Name .Chart.Version | quote }}
+immutable: true
+data:
+  bootstrap-guard.ts: |
+    {{- $bootstrapGuard | nindent 4 }}
 ---
 apiVersion: batch/v1
 kind: Job
@@ -149,7 +179,9 @@ metadata:
     app.kubernetes.io/component: search-indexer-bootstrap
     helm.sh/chart: {{ printf "%s-%s" .Chart.Name .Chart.Version | quote }}
 spec:
-  backoffLimit: {{ $c.bootstrap.backoffLimit }}
+  # The guard retries only the known PostgreSQL catalog race in this Pod. A
+  # Kubernetes retry would leave an Error Pod and would retry unrelated faults.
+  backoffLimit: 0
   activeDeadlineSeconds: {{ $c.bootstrap.activeDeadlineSeconds }}
   template:
     metadata:
@@ -159,14 +191,21 @@ spec:
         app.kubernetes.io/component: search-indexer-bootstrap
     spec:
       restartPolicy: Never
-      {{- include "sessions-pipeline.searchIndexer.pod" . | nindent 6 }}
+      {{- include "sessions-pipeline.searchIndexer.pod" (dict "root" . "bootstrapGuard" $bootstrapGuardName) | nindent 6 }}
       containers:
         - name: bootstrap
           image: {{ printf "%s@%s" $repository $digest | quote }}
           imagePullPolicy: {{ $c.image.pullPolicy }}
+          command: ["/bin/sh", "-c"]
+          args: ["exec bun run /app/bootstrap-guard/bootstrap-guard.ts"]
           env:
             {{- include "sessions-pipeline.searchIndexer.env" (dict "root" . "c" $c "service" "session-pipeline-consumer-bootstrap" "secret" $bootstrapSecret "key" $c.bootstrap.key) | nindent 12 }}
-          {{- include "sessions-pipeline.searchIndexer.container" . | nindent 10 }}
+            - { name: SEARCH_BOOTSTRAP_CATALOG_RETRY_MAX_ATTEMPTS, value: {{ $c.bootstrap.catalogRetry.maxAttempts | quote }} }
+            - { name: SEARCH_BOOTSTRAP_CATALOG_RETRY_DELAY_SECONDS, value: {{ $c.bootstrap.catalogRetry.delaySeconds | quote }} }
+            - { name: SEARCH_BOOTSTRAP_WAIT_FOR_RUNTIME_ROLE_LOGIN, value: {{ $c.bootstrap.waitForRuntimeRoleLogin | quote }} }
+            - { name: SEARCH_BOOTSTRAP_RUNTIME_ROLE_WAIT_SECONDS, value: {{ $c.bootstrap.roleWaitSeconds | quote }} }
+            - { name: SEARCH_BOOTSTRAP_RUNTIME_ROLE_POLL_SECONDS, value: {{ $c.bootstrap.rolePollSeconds | quote }} }
+          {{- include "sessions-pipeline.searchIndexer.container" (dict "root" . "bootstrapGuard" $bootstrapGuardName) | nindent 10 }}
           {{- with $c.resources }}
           resources:
             {{- toYaml . | nindent 12 }}

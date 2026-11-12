@@ -23,6 +23,18 @@ The chart rejects a missing or mismatched services digest before rendering.
 Database credentials remain in existing Secrets created from the managed-RDS
 bootstrap output. No customer credential belongs in either values file.
 
+The search-indexer bootstrap is serialized with the Sessions migration Job by
+the migrator's existing PostgreSQL advisory lock. This is deliberately not a
+Helm hook: hookless installers render and apply the same resources. The Job has
+`backoffLimit: 0`; its guard retries only PostgreSQL `XX000` catalog races
+(`tuple concurrently updated` / `concurrent catalog update`) in the same Pod,
+using `searchIndexer.bootstrap.catalogRetry`. Permission, configuration and
+other database failures remain immediate failures for operator inspection.
+On the RDS-native profile the guard first waits, within the Job's deadline, for
+`rds-setup.sh post` to activate `search_consumer_runtime`; it does not hold the
+migrator lock while waiting. Thus the documented `pre` → Helm/migrate → `post`
+sequence converges without deleting and recreating a pre-post failed Job.
+
 That artifact must be qualified as one unit. It must include the schema through
 migration `046010`, the fresh-install read grants on `search_index`, and the
 session-query read path selected by `READ_API_SESSION_QUERY=true`. The ingest

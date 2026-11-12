@@ -415,8 +415,19 @@ searchIndexer:
     # JSON { "hoopdb_url": "<schema owner URL>" }.
     existingSecret: ""
     key: RELAYHISTORY_PIPELINE_CONSUMER_SECRET
-    backoffLimit: 3
+    # Exact PostgreSQL catalog races retry inside this Pod. Keep Job-level
+    # retries disabled so a recovered upgrade does not leave an Error Pod.
+    backoffLimit: 0
     activeDeadlineSeconds: 900
+    # Managed-RDS installers can start this Job before their post-migration
+    # ceremony activates the runtime login. Provider profiles opt into the
+    # bounded wait; ordinary profiles let the bootstrap create its own role.
+    waitForRuntimeRoleLogin: false
+    roleWaitSeconds: 600
+    rolePollSeconds: 2
+    catalogRetry:
+      maxAttempts: 3
+      delaySeconds: 2
   # Output facts (RELAYHISTORY_SELFHOST_OUTPUT_FACTS=true): every indexing pass
   # also writes the session's commit/branch/file facts to Postgres (migration
   # 20261105045040), in the same transaction as the directory events. They feed

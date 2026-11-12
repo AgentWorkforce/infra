@@ -27,6 +27,8 @@ fail=0
 err() { echo "::error::$*"; fail=1; }
 render() { helm template ci "$CHART" --namespace ci --no-hooks "$@"; }
 
+bun test "$ROOT/ci/sessions-pipeline-profiles/search-indexer-bootstrap-guard.test.ts"
+
 # The inputs a shipped profile leaves to the operator (CI values files carry
 # their own).
 REQUIRED=(--set global.tenant.orgId=org_ci --set alleyoop.auth.jwksUrl=https://relayauth.example.com/.well-known/jwks.json)
@@ -329,6 +331,31 @@ if [ "$mode" = static ]; then
   done
   [ "$(yq -r 'select(.kind == "Deployment" and .metadata.name == "ci-search-indexer") | .spec.template.spec.containers[0].env[] | select(.name == "RELAYHISTORY_SELFHOST_OUTPUT_FACTS") | .value' <<<"$out" | grep -v '^---$')" = true ] \
     || err "aws-rds-native: search indexer does not write output facts"
+  bootstrap_job=$(yq -r 'select(.kind == "Job" and .metadata.labels."app.kubernetes.io/component" == "search-indexer-bootstrap")' <<<"$out" | grep -v '^---$')
+  [ -n "$bootstrap_job" ] || err "aws-rds-native: search indexer bootstrap Job did not render"
+  [ "$(yq -r '.spec.backoffLimit' <<<"$bootstrap_job")" = 0 ] || err "aws-rds-native: bootstrap uses Kubernetes retries and can leave an Error Pod"
+  [ "$(yq -r '.spec.template.spec.restartPolicy' <<<"$bootstrap_job")" = Never ] || err "aws-rds-native: bootstrap restartPolicy changed"
+  [ "$(yq -r '.spec.template.spec.containers[0].args | join(" ")' <<<"$bootstrap_job")" = "exec bun run /app/bootstrap-guard/bootstrap-guard.ts" ] \
+    || err "aws-rds-native: bootstrap does not run the catalog guard"
+  guard_name=$(yq -r '.spec.template.spec.volumes[] | select(.name == "bootstrap-guard") | .configMap.name' <<<"$bootstrap_job")
+  [ -n "$guard_name" ] || err "aws-rds-native: bootstrap guard ConfigMap volume missing"
+  guard=$(yq -r "select(.kind == \"ConfigMap\" and .metadata.name == \"$guard_name\") | .data.\"bootstrap-guard.ts\"" <<<"$out" | grep -v '^---$')
+  grep -qF 'SELECT pg_advisory_lock(961996, 1)' <<<"$guard" || err "aws-rds-native: bootstrap does not share the Sessions migrator lock"
+  grep -qF 'SELECT pg_advisory_unlock(961996, 1)' <<<"$guard" || err "aws-rds-native: bootstrap does not release the Sessions migrator lock"
+  grep -qF "rolname='search_consumer_runtime'" <<<"$guard" || err "aws-rds-native: bootstrap does not wait for the post-migration runtime LOGIN"
+  grep -qF 'isRetryableCatalogRace(result.output)' <<<"$guard" || err "aws-rds-native: bootstrap catalog retry is not explicit"
+  bootstrap_env() { yq -r ".spec.template.spec.containers[0].env[] | select(.name == \"$1\") | .value" <<<"$bootstrap_job"; }
+  [ "$(bootstrap_env SEARCH_BOOTSTRAP_CATALOG_RETRY_MAX_ATTEMPTS)" = 3 ] || err "aws-rds-native: bootstrap retry attempts"
+  [ "$(bootstrap_env SEARCH_BOOTSTRAP_CATALOG_RETRY_DELAY_SECONDS)" = 2 ] || err "aws-rds-native: bootstrap retry delay"
+  [ "$(bootstrap_env SEARCH_BOOTSTRAP_WAIT_FOR_RUNTIME_ROLE_LOGIN)" = true ] || err "aws-rds-native: bootstrap does not wait for rds-setup post"
+  [ "$(bootstrap_env SEARCH_BOOTSTRAP_RUNTIME_ROLE_WAIT_SECONDS)" = 600 ] || err "aws-rds-native: bootstrap runtime-role wait"
+  [ "$(bootstrap_env SEARCH_BOOTSTRAP_RUNTIME_ROLE_POLL_SECONDS)" = 2 ] || err "aws-rds-native: bootstrap runtime-role poll"
+  expect_fail "searchIndexer.bootstrap.backoffLimit must be 0" \
+    -f "$CHART/profiles/aws-rds-native.yaml" -f "$CHART/ci/aws-rds-native-inputs.yaml" --set searchIndexer.bootstrap.backoffLimit=1
+  expect_fail "searchIndexer.bootstrap.catalogRetry.maxAttempts must be an integer from 1 through 10" \
+    -f "$CHART/profiles/aws-rds-native.yaml" -f "$CHART/ci/aws-rds-native-inputs.yaml" --set searchIndexer.bootstrap.catalogRetry.maxAttempts=0
+  expect_fail "searchIndexer.bootstrap.rolePollSeconds must not exceed roleWaitSeconds" \
+    -f "$CHART/profiles/aws-rds-native.yaml" -f "$CHART/ci/aws-rds-native-inputs.yaml" --set searchIndexer.bootstrap.roleWaitSeconds=1
   facts_jobs=$(yq -r 'select(.kind == "Job" and .metadata.labels."app.kubernetes.io/component" == "output-facts-bootstrap") | .metadata.name' <<<"$out" | grep -v '^---$' || true)
   [ -z "$facts_jobs" ] || err "aws-rds-native: the output facts bootstrap Job must stay an explicit operator step, rendered $facts_jobs"
   # Selected, the Job is deterministic, hook-free, owner-identity and changes name only with its spec or runId.

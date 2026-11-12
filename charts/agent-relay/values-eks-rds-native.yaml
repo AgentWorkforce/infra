@@ -79,7 +79,10 @@ sessions-pipeline:
     serviceAccount:
       create: true
       name: agent-relay-worker
-    acknowledgeWorkloadRename: false
+    # This profile has used the descriptive worker names since its first
+    # install. Persist the cutover acknowledgement so every later Helm upgrade
+    # remains idempotent instead of re-triggering the one-time rename guard.
+    acknowledgeWorkloadRename: true
     hoopdb:
       existingSecret: agent-relay-secrets
       key: HOOPDB_URL
@@ -261,6 +264,8 @@ sessions-pipeline:
       caSha256: "0000000000000000000000000000000000000000000000000000000000000000"
     bootstrap:
       enabled: true
+      # rds-setup.sh post activates the runtime LOGIN after migrate completes.
+      waitForRuntimeRoleLogin: true
       existingSecret: search-indexer-owner
       key: RELAYHISTORY_PIPELINE_CONSUMER_SECRET
     serviceAccount:

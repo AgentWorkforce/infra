@@ -44,18 +44,34 @@
 {{- end }}
 {{- end -}}
 {{- define "sessions-pipeline.searchIndexer.container" -}}
+{{- $root := . -}}
+{{- $bootstrapGuard := "" -}}
+{{- if hasKey . "root" -}}
+{{- $root = .root -}}
+{{- $bootstrapGuard = .bootstrapGuard -}}
+{{- end -}}
 securityContext:
   allowPrivilegeEscalation: false
   readOnlyRootFilesystem: true
   capabilities: { drop: [ALL] }
 volumeMounts:
   - { name: tmp, mountPath: /tmp }
-  {{- if eq .Values.searchIndexer.postgres.tlsProfile "custom-ca" }}
+  {{- if eq $root.Values.searchIndexer.postgres.tlsProfile "custom-ca" }}
   - { name: postgres-ca, mountPath: /etc/search-indexer-postgres, readOnly: true }
+  {{- end }}
+  {{- if $bootstrapGuard }}
+  # Keep the script below /app so Bun resolves the image's /app/node_modules.
+  - { name: bootstrap-guard, mountPath: /app/bootstrap-guard, readOnly: true }
   {{- end }}
 {{- end -}}
 {{- define "sessions-pipeline.searchIndexer.pod" -}}
-{{- $c := .Values.searchIndexer -}}
+{{- $root := . -}}
+{{- $bootstrapGuard := "" -}}
+{{- if hasKey . "root" -}}
+{{- $root = .root -}}
+{{- $bootstrapGuard = .bootstrapGuard -}}
+{{- end -}}
+{{- $c := $root.Values.searchIndexer -}}
 automountServiceAccountToken: false
 serviceAccountName: {{ $c.serviceAccount.name | quote }}
 {{- with $c.imagePullSecrets }}
@@ -89,5 +105,9 @@ volumes:
       name: {{ $c.postgres.caConfigMap | quote }}
       items:
         - { key: {{ $c.postgres.caKey | quote }}, path: ca.crt }
+  {{- end }}
+  {{- if $bootstrapGuard }}
+  - name: bootstrap-guard
+    configMap: { name: {{ $bootstrapGuard | quote }} }
   {{- end }}
 {{- end -}}
