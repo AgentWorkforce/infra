@@ -2,6 +2,16 @@ sessions-pipeline {{ .Chart.Version }} in namespace {{ .Release.Namespace }}
 
 One sessions-pipeline release per namespace: dependency objects use fixed names
 (hoopdb, session-object-storage, otel-collector) so the app charts can reference them.
+{{- $deprecatedReadEnv := list -}}
+{{- range $e := (.Values.sessionReadApi.extraEnv | default list) -}}
+{{- if has $e.name (list "READ_API_TIMING_ASSUME_NO_TURNS" "READ_API_CANONICAL_PIN_LAGGING_POINTER") -}}
+{{- $deprecatedReadEnv = append $deprecatedReadEnv $e.name -}}
+{{- end -}}
+{{- end -}}
+{{- if $deprecatedReadEnv }}
+
+DEPRECATION: {{ join ", " $deprecatedReadEnv }} in sessionReadApi.extraEnv was normalized to its structured value and the duplicate was dropped. Remove the legacy extraEnv entry before the next release.
+{{- end }}
 {{- if .Values.hoopdb.enabled }}
 
 HoopDb: CloudNativePG Cluster "hoopdb" (needs the CloudNativePG operator).

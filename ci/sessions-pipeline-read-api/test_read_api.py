@@ -145,19 +145,48 @@ class ReadApi(unittest.TestCase):
             with self.subTest(name=name):
                 self.assertEqual([entry for entry in entries if entry["name"] == name], [{"name": name, "value": "true"}])
 
+        umbrella_notes = subprocess.run([
+            "helm", "install", "legacy-umbrella", str(ROOT / "charts/agent-relay"), "-n", "agent-relay-ci",
+            "--dry-run=client", "--no-hooks",
+            "-f", str(ROOT / "charts/agent-relay/values-eks.yaml"),
+            "-f", str(ROOT / "charts/agent-relay/values-eks-rds-native.yaml"),
+            "-f", str(ROOT / "ci/agent-relay/eks-rds-native-site-values.yaml"),
+            "-f", str(LEGACY_READ_ASSUMPTIONS),
+            "--set", "sessions-pipeline.sessionReadApi.events.messageIds=false",
+        ], capture_output=True, text=True)
+        self.assertEqual(umbrella_notes.returncode, 0, umbrella_notes.stderr)
+        self.assertIn("DEPRECATION:", umbrella_notes.stdout)
+        self.assertIn("sessions-pipeline.sessionReadApi.extraEnv", umbrella_notes.stdout)
+
         legacy = yaml.safe_load(LEGACY_READ_ASSUMPTIONS.read_text())["sessions-pipeline"]["sessionReadApi"]
         with tempfile.TemporaryDirectory(prefix="read-api-notes-") as directory:
             overlay = Path(directory) / "legacy.yaml"
-            overlay.write_text(yaml.safe_dump(legacy))
-            notes = subprocess.run(
-                ["helm", "install", "legacy-notes", str(ROOT / "charts/session-read-api"), "-n", "ci",
-                 "--dry-run=client", "-f", str(ROOT / "charts/session-read-api/ci/default-values.yaml"), "-f", str(overlay)],
+            overlay.write_text(yaml.safe_dump({
+                "hoopdb": {"enabled": False},
+                "runtimeRole": {"bootstrapJob": {"enabled": False}},
+                "functionDefaultRevoke": {"bootstrapJob": {"enabled": False}},
+                "sessionReadApi": legacy,
+            }))
+            pipeline_notes = subprocess.run(
+                ["helm", "install", "legacy-pipeline", str(ROOT / "charts/sessions-pipeline"), "-n", "ci",
+                 "--dry-run=client", "-f", str(FIXTURE), "-f", str(overlay)],
                 capture_output=True,
                 text=True,
             )
-        self.assertEqual(notes.returncode, 0, notes.stderr)
-        self.assertIn("DEPRECATION:", notes.stdout)
-        self.assertIn("duplicate was dropped", notes.stdout)
+            leaf_overlay = Path(directory) / "leaf.yaml"
+            leaf_overlay.write_text(yaml.safe_dump(legacy))
+            leaf_notes = subprocess.run(
+                ["helm", "install", "legacy-notes", str(ROOT / "charts/session-read-api"), "-n", "ci",
+                 "--dry-run=client", "-f", str(ROOT / "charts/session-read-api/ci/default-values.yaml"), "-f", str(leaf_overlay)],
+                capture_output=True,
+                text=True,
+            )
+        self.assertEqual(pipeline_notes.returncode, 0, pipeline_notes.stderr)
+        self.assertIn("DEPRECATION:", pipeline_notes.stdout)
+        self.assertIn("sessionReadApi.extraEnv", pipeline_notes.stdout)
+        self.assertEqual(leaf_notes.returncode, 0, leaf_notes.stderr)
+        self.assertIn("DEPRECATION:", leaf_notes.stdout)
+        self.assertIn("duplicate was dropped", leaf_notes.stdout)
 
     def test_legacy_read_assumptions_accept_redundancy_but_refuse_conflicts(self):
         names = {
