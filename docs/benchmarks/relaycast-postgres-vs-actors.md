@@ -141,7 +141,8 @@ message is lost or duplicated.
 
 ## Results
 
-Pending the runs.
+<!-- results:start -->
+<!-- results:end -->
 
 ## Caveats
 

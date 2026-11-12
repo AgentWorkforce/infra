@@ -50,7 +50,8 @@ LOADGEN_NODES="${BENCH_LOADGEN_NODES:-2}"
 ACTOR_ZONE="${BENCH_ACTOR_ZONE:-${REGION}a}"
 DB_CLASS="${BENCH_DB_CLASS:-db.r7g.large}"
 DB_ENGINE_VERSION="${BENCH_DB_ENGINE_VERSION:-17}"
-DB_ID="${NAME}-pg"
+# One RDS instance per arm (rds-setup.sh: one HoopDb per instance): <NAME>-pg, <NAME>-actors.
+DB_ID="${NAME}-${BENCH_DB_ARM:-pg}"
 DB_SUBNET_GROUP="${NAME}-db"
 
 ACCOUNT="$(aws sts get-caller-identity --query Account --output text)"
@@ -329,6 +330,27 @@ cmd_assoc() {
   log "pod identity ${ns}/${sa} -> ${role}"
 }
 
+# db <arm>: create (and wait for) the arm's RDS instance in the bench VPC.
+cmd_db() {
+  DB_ID="${NAME}-${1:?pg|actors}"
+  local vpc subnets
+  vpc="$(vpc_id)"; [[ -n "$vpc" ]] || { echo "no bench VPC: run up first" >&2; exit 1; }
+  subnets="$(aws_ ec2 describe-subnets --filters "Name=vpc-id,Values=${vpc}" --query 'Subnets[].SubnetId' --output text)"
+  ensure_db "$vpc" "$subnets"
+  aws_ rds wait db-instance-available --db-instance-identifier "$DB_ID"
+  log "RDS $DB_ID available"
+}
+
+# db-down <arm>: delete the arm's RDS instance (no final snapshot: benchmark data only).
+cmd_db_down() {
+  local id="${NAME}-${1:?pg|actors}"
+  if aws_ rds describe-db-instances --db-instance-identifier "$id" >/dev/null 2>&1; then
+    log "delete RDS $id"
+    aws_ rds delete-db-instance --db-instance-identifier "$id" --skip-final-snapshot --delete-automated-backups >/dev/null 2>&1 || true
+    aws_ rds wait db-instance-deleted --db-instance-identifier "$id"; deleted "rds-instance $id"
+  fi
+}
+
 cmd_status() {
   aws_ eks describe-cluster --name "$NAME" --query 'cluster.{name:name,status:status,version:version}' --output json 2>/dev/null || echo '{"cluster":"absent"}'
   aws_ eks list-nodegroups --cluster-name "$NAME" --query nodegroups --output text 2>/dev/null || true
@@ -380,11 +402,8 @@ cmd_down() {
   for id in $(aws_ ec2 describe-volumes --filters "Name=tag:${TAG_KEY},Values=${TAG_VAL}" "Name=status,Values=available" --query 'Volumes[].VolumeId' --output text); do
     aws_ ec2 delete-volume --volume-id "$id"; deleted "ebs-volume $id"
   done
-  if aws_ rds describe-db-instances --db-instance-identifier "$DB_ID" >/dev/null 2>&1; then
-    log "delete RDS $DB_ID (no final snapshot: benchmark data only)"
-    aws_ rds delete-db-instance --db-instance-identifier "$DB_ID" --skip-final-snapshot --delete-automated-backups >/dev/null
-    aws_ rds wait db-instance-deleted --db-instance-identifier "$DB_ID"; deleted "rds-instance $DB_ID"
-  fi
+  cmd_db_down pg
+  cmd_db_down actors
   if aws_ rds describe-db-subnet-groups --db-subnet-group-name "$DB_SUBNET_GROUP" >/dev/null 2>&1; then
     aws_ rds delete-db-subnet-group --db-subnet-group-name "$DB_SUBNET_GROUP"; deleted "rds-subnet-group $DB_SUBNET_GROUP"
   fi
@@ -458,7 +477,7 @@ cmd_audit() {
   [[ -n "$out" ]] && { echo "secrets: $out"; left=1; }
   out="$(aws_ eks list-clusters --query "clusters[?@=='${NAME}']" --output text)"
   [[ -n "$out" ]] && { echo "eks: $out"; left=1; }
-  out="$(aws_ rds describe-db-instances --query "DBInstances[?DBInstanceIdentifier=='${DB_ID}'].DBInstanceIdentifier" --output text)"
+  out="$(aws_ rds describe-db-instances --query "DBInstances[?starts_with(DBInstanceIdentifier, '${NAME}-')].DBInstanceIdentifier" --output text)"
   [[ -n "$out" ]] && { echo "rds: $out"; left=1; }
   if ((left)); then echo "AUDIT: resources remain" >&2; return 1; fi
   echo "AUDIT: zero ${TAG_KEY}=${TAG_VAL} resources in ${ACCOUNT}/${REGION}"
@@ -466,6 +485,8 @@ cmd_audit() {
 
 case "${1:-}" in
   up) cmd_up ;;
+  db) shift; cmd_db "$@" ;;
+  db-down) shift; cmd_db_down "$@" ;;
   down) cmd_down ;;
   status) cmd_status ;;
   audit) cmd_audit ;;
