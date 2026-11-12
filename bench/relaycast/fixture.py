@@ -85,7 +85,7 @@ def main():
             private_json(credential_path, c)
         s.apply({"apiVersion": "v1", "kind": "Secret", "metadata": {"name": "benchmark-credentials", "namespace": NS},
             "stringData": {"internal-secret": c["internal"], "workspace-bootstrap-secret": c["bootstrap"],
-                "credential-keyring": json.dumps({"current": "benchmark", "keys": {"benchmark": c["keyring"]}}),
+                "credential-keyring": json.dumps({"current": "a", "keys": {"a": c["keyring"]}}),
                 "file-signing-secret": c["files"], "durable-actors-dev-secret": c["actors"]}})
         s.apply({"apiVersion": "v1", "kind": "PersistentVolumeClaim", "metadata": {"name": "benchmark-actors", "namespace": NS},
             "spec": {"accessModes": ["ReadWriteOnce"], "resources": {"requests": {"storage": "1Gi"}}}})

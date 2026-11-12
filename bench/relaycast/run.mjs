@@ -6,7 +6,7 @@ import { performance, monitorEventLoopDelay } from 'node:perf_hooks';
 const base = 'http://relaycast-bench.relaycast-bench.svc:8787';
 const config = JSON.parse(fs.readFileSync('/scripts/config.json', 'utf8'));
 const internal = fs.readFileSync('/credentials/internal', 'utf8').trim();
-const workspaces = [], sockets = new Set(), pendingMarkers = new Map();
+const workspaces = [], sockets = new Set(), socketKeys = new Map(), pendingMarkers = new Map();
 const deliveryMs = [];
 const calibrated = new Map();
 let sequence = 0, totalFrames = 0, socketsOpened = 0, socketsClosed = 0, socketAcks = 0;
@@ -38,15 +38,18 @@ function marker() {
 }
 function socket(path, token, node) {
   return new Promise((resolve, reject) => {
+    const key = path + ':' + (node?.nodeId ?? token);
     const ws = new WebSocket(base.replace(/^http/, 'ws') + path + '?token=' + encodeURIComponent(token));
     const timer = setTimeout(() => { ws.close(); reject(Error('socket_timeout')); }, 10000);
     ws.addEventListener('error', () => {clearTimeout(timer); reject(Error('socket_failed'));}, {once: true});
     ws.addEventListener('open', () => {
       clearTimeout(timer); socketsOpened++;
       if (path === '/v1/node/ws') ws.send(JSON.stringify({v: 1, id: 'bench-register-' + sequence++, type: 'node.register',
-        node_id: node.nodeId, name: node.nodeName, capabilities: [], max_agents: 1, tags: ['implicit', 'direct', 'bench'], version: 'benchmark'}));
+        node_id: node.nodeId, name: node.nodeName, capabilities: [], max_agents: 1, tags: ['implicit', 'direct', 'sdk'], version: 'benchmark'}));
       // Bound concurrent sockets. Churn replaces a previous connection.
-      if (sockets.size >= config.population.websockets) [...sockets][0].close();
+      const replaced = socketKeys.get(key) ?? (sockets.size >= config.population.websockets ? [...sockets][0] : null);
+      if (replaced) {sockets.delete(replaced);replaced.close();}
+      socketKeys.set(key, ws);
       sockets.add(ws); resolve({status: 101});
       const heartbeat = setInterval(() => {
         if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(path === '/v1/node/ws'
@@ -54,7 +57,7 @@ function socket(path, token, node) {
       }, 27000);
       ws.addEventListener('close', () => clearInterval(heartbeat), {once: true});
     }, {once: true});
-    ws.addEventListener('close', () => {sockets.delete(ws); socketsClosed++;});
+    ws.addEventListener('close', () => {sockets.delete(ws); if (socketKeys.get(key) === ws) socketKeys.delete(key); socketsClosed++;});
     ws.addEventListener('message', event => {
       totalFrames++;
       const text = String(event.data);
@@ -197,22 +200,33 @@ async function step(input) {
   const completed = routes.reduce((n, r) => n + r.completed, 0);
   const supportedRps = routes.filter(r => r.supported).reduce((n, r) => n + r.targetRps, 0);
   const bad = routes.reduce((n, r) => n + Object.entries(r.status).filter(([code]) => code !== '101' && !(Number(code) >= 200 && Number(code) < 300)).reduce((m, [, count]) => m + count, 0), 0);
+  const latencyMs = quantiles(routes.flatMap(r => r.latencies));
+  const dropped = routes.reduce((n, r) => n + r.dropped, 0);
+  const achievedRps = routes.reduce((n, r) => n + r.completedInWindow, 0) / offeredSeconds;
+  const generatorLimited = dropped > 0 || lag.percentile(99) / 1e6 > 25 || maximumLagMs > 100;
+  const sloPass = completed > 0 && bad / completed <= .01 && achievedRps >= supportedRps * .95
+    && latencyMs.p95 <= 200 && drainSeconds <= 5 && !generatorLimited;
   return {requestedScale: input.requestedScale, requestedGlobalRps: input.requestedPeakRps,
     startedAt: new Date(performance.timeOrigin + start).toISOString(),
     offeredSupportedRps: supportedRps, routeCoverageShare: supportedRps / input.targetPeakRps,
     populationMode: 'fixed_assumed', seconds: offeredSeconds, completed,
-    achievedRps: routes.reduce((n, r) => n + r.completedInWindow, 0) / offeredSeconds,
+    achievedRps, latencyMs, sloPass,
+    limitSignal: generatorLimited ? 'generator_limited' : sloPass ? 'none' : 'backend_or_policy_limit',
     drainAdjustedRps: completed / (offeredSeconds + drainSeconds),
     errorFraction: completed ? bad / completed : 1, drainSeconds, maximumInflight,
+    activeSocketsAtEnd: sockets.size,
     generator: {cpuSeconds: (used.user + used.system) / 1e6, maximumScheduleLagMs: maximumLagMs,
       eventLoopP99Ms: lag.percentile(99) / 1e6, rssBytes: process.memoryUsage().rss,
-      dropped: routes.reduce((n, r) => n + r.dropped, 0)}, routes: result};
+      dropped}, routes: result};
 }
 
 const report = {schema: 'agent-relay.actor-benchmark/v1', status: 'fail', startedAt: new Date().toISOString(),
+  workloadKind: config.plan.workloadKind ?? 'production_replay',
   productionReplay: 'partial until every hosted route has a valid self-host binding',
   population: config.population, populationMode: 'fixed_assumed', planSha256: config.plan.profileSha256,
   actorAnalytics: 'unsupported_skipped', steps: []};
+report.slo = {maximumErrorFraction: .01, minimumAchievedFraction: .95, maximumP95Ms: 200,
+  maximumDrainSeconds: 5, maximumGeneratorLoopP99Ms: 25, maximumGeneratorScheduleLagMs: 100, maximumGeneratorDrops: 0};
 try {
   await setup();report.actorMessageRoundTrip = true;
   for (const input of config.plan.steps) {report.steps.push(await step(input));await delay(10000);}
