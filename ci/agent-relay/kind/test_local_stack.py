@@ -2,8 +2,10 @@
 import json
 import io
 import ipaddress
+import importlib.util
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -21,6 +23,85 @@ from stack import StackError
 
 
 class LocalTests(unittest.TestCase):
+    def candidate_fixture(self, root):
+        spec = importlib.util.spec_from_file_location("candidate_test_helper", ROOT / "scripts/release/update-release-candidate.py")
+        helper = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(helper)
+        ledger = {"schema": 1, "version": "2026.11.1", "pins": {
+            name: {"repository": entry["imageRepository"], "digest": "sha256:" + str(index) * 64,
+                "sourceRepository": entry["sourceRepository"], "sourceRevision": "b" * 40}
+            for index, (name, entry) in enumerate(helper.COMPONENTS.items(), 1)}}
+        directory = root / "releases/agent-relay-2026.11.1"
+        directory.mkdir(parents=True)
+        pins, values = directory / "pins.json", directory / "values.yaml"
+        pins.write_text(json.dumps(ledger))
+        values.write_text(helper.render_values(ledger))
+        return helper, ledger, pins, values
+
+    def test_candidate_selector_preserves_default_and_rejects_preview_mix(self):
+        base = {"unchanged": True}
+        self.assertIs(local_stack.candidate_profile(base, environ={}), base)
+        for version in ("../2026.11.1", "2026.11.1-beta.1", "02026.11.1", " 2026.11.1"):
+            with self.subTest(version=version), self.assertRaisesRegex(StackError, "strict stable"):
+                local_stack.candidate_profile(base, environ={"LOCAL_RELEASE_CANDIDATE": version})
+        with self.assertRaisesRegex(StackError, "cannot be combined"):
+            local_stack.candidate_profile(base, environ={"LOCAL_RELEASE_CANDIDATE": "2026.11.1", "LOCAL_DESKTOP_RELEASES": "1"})
+
+    def test_candidate_selector_refuses_missing_drifted_incomplete_and_redirected_inputs(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            environ = {"LOCAL_RELEASE_CANDIDATE": "2026.11.1"}
+            with self.assertRaisesRegex(StackError, "validation failed"):
+                local_stack.candidate_profile({}, root, environ)
+            helper, ledger, pins, values = self.candidate_fixture(root)
+            canonical = values.read_text()
+            values.write_text(canonical + "unexpected: true\n")
+            with self.assertRaisesRegex(StackError, "validation failed"):
+                local_stack.candidate_profile({}, root, environ)
+            values.write_text(canonical)
+            ledger["pins"].pop("relay-control")
+            pins.write_text(json.dumps(ledger))
+            values.write_text(helper.render_values(ledger))
+            with self.assertRaisesRegex(StackError, "validation failed"):
+                local_stack.candidate_profile({}, root, environ)
+            ledger["pins"]["relay-webapp"]["repository"] = "ghcr.io/unexpected/webapp"
+            pins.write_text(json.dumps(ledger))
+            with self.assertRaisesRegex(StackError, "validation failed"):
+                local_stack.candidate_profile({}, root, environ)
+            pins.unlink()
+            pins.symlink_to(values)
+            with self.assertRaisesRegex(StackError, "symlinks"):
+                local_stack.candidate_profile({}, root, environ)
+
+    def test_candidate_images_reach_real_native_render_without_preview_env_or_policy(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _, ledger, _, _ = self.candidate_fixture(root)
+            base = yaml.safe_load((ROOT / "charts/agent-relay/values-eks.yaml").read_text())
+            profile = local_stack.candidate_profile(base, root, {"LOCAL_RELEASE_CANDIDATE": "2026.11.1"})
+            self.assertNotEqual(profile["relay-control"]["image"], base["relay-control"]["image"])
+            self.assertEqual(profile["relay-control"]["selectedFeatures"], base["relay-control"]["selectedFeatures"])
+            references = {name: value["repository"] + "@" + value["digest"] for name, value in ledger["pins"].items()}
+            for name in ("ci/agent-relay/kind/local-values.yaml", "ci/agent-relay/kind/desktop-releases-values.yaml",
+                    "charts/agent-relay/values-eks.yaml", "charts/agent-relay/values-scrub-wasm-bindgen.yaml",
+                    "charts/session-read-api/values.yaml", "scripts/release/update-release-candidate.py"):
+                target = root / name
+                target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(ROOT / name, target)
+            program = "import sys,json;from pathlib import Path;sys.path.insert(0,'ci/agent-relay/kind');import stack;stack.ROOT=Path(sys.argv[1]);import local_stack as s;print(json.dumps(s.selected_images()))"
+            environ = {**os.environ, "LOCAL_RELEASE_CANDIDATE": "2026.11.1"}
+            environ.pop("LOCAL_DESKTOP_RELEASES", None)
+            process = subprocess.run([sys.executable, "-c", program, str(root)], cwd=ROOT, env=environ, capture_output=True, text=True, check=True)
+            actual = json.loads(process.stdout)
+            self.assertEqual([actual[key] for key in ("control", "webapp", "pipeline")],
+                [references[name] for name in ("relay-control", "relay-webapp", "sessions-pipeline")])
+            with patch.multiple(local_stack, AA_VALUES=profile, DESKTOP_RELEASES=False,
+                    CONTROL=references["relay-control"], WEBAPP=references["relay-webapp"], PIPELINE=references["sessions-pipeline"]):
+                selected = selected_images()
+                self.assertEqual([selected[key] for key in ("control", "webapp", "pipeline")],
+                    [references[name] for name in ("relay-control", "relay-webapp", "sessions-pipeline")])
+                self.assert_final_render(experimental=False, profile=profile)
+
     def test_desktop_releases_opt_in_is_explicit_and_defaults_off(self):
         for environ in ({}, {"LOCAL_DESKTOP_RELEASES": ""}, {"LOCAL_DESKTOP_RELEASES": "0"}):
             self.assertFalse(local_stack.desktop_releases_enabled(environ))
@@ -344,7 +425,7 @@ class LocalTests(unittest.TestCase):
         with patch.multiple(local_stack, DESKTOP_RELEASES=True, CONTROL=control, WEBAPP=webapp):
             self.assert_final_render(experimental=True)
 
-    def assert_final_render(self, experimental):
+    def assert_final_render(self, experimental, profile=None):
         stack = LocalStack.__new__(LocalStack)
         stack.ca_sha = "c" * 64
         stack.edge_ip = "10.96.0.10"
@@ -360,7 +441,7 @@ class LocalTests(unittest.TestCase):
         active = [d for d in docs if d["kind"] == "Deployment" and d["spec"].get("replicas", 1) > 0]
         self.assertEqual({d["metadata"]["name"] for d in active}, {"relay-control", "relay-webapp", "relaycast", "session-native-ingest",
             "session-native-consumer", "session-read-api", "sessions-session-brief", "telemetry-collector"})
-        aa = yaml.safe_load((ROOT / "charts/agent-relay/values-eks.yaml").read_text())
+        aa = profile if profile is not None else yaml.safe_load((ROOT / "charts/agent-relay/values-eks.yaml").read_text())
         release = {name: local_stack.reference(aa[name]["image"]) for name in ("relay-control", "relay-webapp", "relaycast")}
         selected = local_stack.DESKTOP_RELEASE_VALUES if experimental else aa
         for name in ("relay-control", "relay-webapp"):

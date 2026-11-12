@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from copy import deepcopy
 import base64
 import hashlib
+import importlib.util
 import errno
 from email import policy
 from email.parser import Parser
@@ -24,7 +25,7 @@ import yaml
 
 from stack import Stack, StackError, ROOT, NS, NODE, POSTGRES, private_json
 from native_core_values import compose
-from native_recipe import SECRET_KEYS
+from native_recipe import SECRET_KEYS, merge_values
 from local_host_setup import certificate_present, host_aliases_present, managed_cas
 
 LOCAL_VALUES = yaml.safe_load((ROOT / "ci/agent-relay/kind/local-values.yaml").read_text())
@@ -45,12 +46,41 @@ def desktop_releases_enabled(environ=None):
     return value == "1"
 
 
+def candidate_profile(base, root=None, environ=None):
+    """Select a checked-in release ledger before any local infrastructure changes."""
+    environ = os.environ if environ is None else environ
+    version = environ.get("LOCAL_RELEASE_CANDIDATE", "")
+    if not version:
+        return base
+    if not re.fullmatch(r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)", version):
+        raise StackError("LOCAL_RELEASE_CANDIDATE must be a strict stable version")
+    if desktop_releases_enabled(environ):
+        raise StackError("LOCAL_RELEASE_CANDIDATE cannot be combined with LOCAL_DESKTOP_RELEASES")
+    root = ROOT if root is None else root
+    directory = root / "releases" / ("agent-relay-" + version)
+    pins, values = directory / "pins.json", directory / "values.yaml"
+    if any(path.is_symlink() for path in (root / "releases", directory, pins, values)):
+        raise StackError("local candidate files must not be symlinks")
+    try:
+        spec = importlib.util.spec_from_file_location("local_release_candidate", ROOT / "scripts/release/update-release-candidate.py")
+        helper = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(helper)
+        ledger = helper.validate_candidate(pins, values, version)
+        if set(ledger["pins"]) != {"relay-control", "relay-webapp", "sessions-pipeline"}:
+            raise ValueError("incomplete candidate")
+        overlay = yaml.safe_load(values.read_text())
+    except (OSError, ValueError, KeyError, TypeError):
+        raise StackError("local candidate ledger/values validation failed") from None
+    return merge_values(base, overlay)
+
+
 def profile_images(experimental):
     values = DESKTOP_RELEASE_VALUES if experimental else AA_VALUES
     return tuple(reference(values[name]["image"]) for name in ("relay-control", "relay-webapp"))
 
 
 DESKTOP_RELEASES = desktop_releases_enabled()
+AA_VALUES = candidate_profile(AA_VALUES)
 PIPELINE = reference(AA_VALUES["sessions-pipeline"]["worker"]["image"])
 if PIPELINE != reference(AA_VALUES["sessions-pipeline"]["alleyoop"]["image"]):
     raise StackError("the AA profile must select one services-image generation")
