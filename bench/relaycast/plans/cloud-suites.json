@@ -1,103 +1,471 @@
 {
-  "name": "relaycast-postgres-vs-actors",
-  "notes": "Each suite gets a fresh fixture (provision.mjs env in fixture), its own sinks and producers. Rates are fleet-wide msgs/s (HTTP sends; channel fan-out multiplies deliveries). breakOn stops a stepped suite at the first step that breaks.",
-  "breakOn": { "correctedP99Ms": 2000, "errorRate": 0.01, "lost": 0 },
-  "suites": [
+ "name": "relaycast-postgres-vs-actors",
+ "notes": "Each suite gets a fresh fixture (provision.mjs env in fixture), its own sinks and producers. Rates are fleet-wide msgs/s (HTTP sends; channel fan-out multiplies deliveries). breakOn stops a stepped suite at the first step that breaks.",
+ "breakOn": {
+  "correctedP99Ms": 2000,
+  "errorRate": 0.01,
+  "lost": 0
+ },
+ "suites": [
+  {
+   "name": "channel-100",
+   "sinks": 2,
+   "producers": 2,
+   "stepped": true,
+   "notes": "The PG collapse scenario (functional-100 shape): 1 workspace, 20 producers, 80 receivers, 5 channels x 20 members; channel posts stepped.",
+   "fixture": {
+    "RCB_WORKSPACES": 1,
+    "RCB_PRODUCERS": 20,
+    "RCB_RECEIVERS": 80,
+    "RCB_CHANNELS": 5,
+    "RCB_CHANNEL_MEMBERS": 20,
+    "RCB_AGENTS_PER_NODE": 1
+   },
+   "phases": [
     {
-      "name": "functional-10", "sinks": 1, "producers": 1,
-      "fixture": { "RCB_WORKSPACES": 1, "RCB_PRODUCERS": 5, "RCB_RECEIVERS": 5, "RCB_CHANNELS": 2, "RCB_CHANNEL_MEMBERS": 5, "RCB_AGENTS_PER_NODE": 1 },
-      "phases": [
-        { "label": "f10-dm", "kind": "dm", "rate": 20, "durationS": 120, "sizeBytes": 512 },
-        { "label": "f10-chan", "kind": "channel", "rate": 10, "durationS": 120, "sizeBytes": 512 },
-        { "label": "f10-upload", "kind": "upload", "rate": 2, "durationS": 60, "sizeBytes": 262144 }
-      ]
+     "label": "ch100-10",
+     "kind": "channel",
+     "rate": 10,
+     "durationS": 180,
+     "sizeBytes": 512
     },
     {
-      "name": "functional-100", "sinks": 1, "producers": 1,
-      "fixture": { "RCB_WORKSPACES": 1, "RCB_PRODUCERS": 20, "RCB_RECEIVERS": 80, "RCB_CHANNELS": 5, "RCB_CHANNEL_MEMBERS": 20, "RCB_AGENTS_PER_NODE": 1 },
-      "phases": [
-        { "label": "f100-dm", "kind": "dm", "rate": 50, "durationS": 180, "sizeBytes": 512 },
-        { "label": "f100-chan", "kind": "channel", "rate": 20, "durationS": 180, "sizeBytes": 512 },
-        { "label": "f100-upload", "kind": "upload", "rate": 5, "durationS": 60, "sizeBytes": 262144 }
-      ]
+     "label": "ch100-20",
+     "kind": "channel",
+     "rate": 20,
+     "durationS": 180,
+     "sizeBytes": 512
     },
     {
-      "name": "functional-1000", "sinks": 2, "producers": 2,
-      "fixture": { "RCB_WORKSPACES": 1, "RCB_PRODUCERS": 200, "RCB_RECEIVERS": 800, "RCB_CHANNELS": 20, "RCB_CHANNEL_MEMBERS": 50, "RCB_AGENTS_PER_NODE": 10 },
-      "phases": [
-        { "label": "f1000-dm", "kind": "dm", "rate": 100, "durationS": 180, "sizeBytes": 512 },
-        { "label": "f1000-chan", "kind": "channel", "rate": 20, "durationS": 180, "sizeBytes": 512 },
-        { "label": "f1000-upload", "kind": "upload", "rate": 5, "durationS": 60, "sizeBytes": 262144 }
-      ]
+     "label": "ch100-50",
+     "kind": "channel",
+     "rate": 50,
+     "durationS": 180,
+     "sizeBytes": 512
     },
     {
-      "name": "single-ws-saturation", "sinks": 2, "producers": 2, "stepped": true,
-      "fixture": { "RCB_WORKSPACES": 1, "RCB_PRODUCERS": 50, "RCB_RECEIVERS": 50, "RCB_CHANNELS": 5, "RCB_CHANNEL_MEMBERS": 10, "RCB_AGENTS_PER_NODE": 1 },
-      "phases": [
-        { "label": "sat-50", "kind": "mixed", "dmShare": 0.6, "rate": 50, "durationS": 300 },
-        { "label": "sat-100", "kind": "mixed", "dmShare": 0.6, "rate": 100, "durationS": 300 },
-        { "label": "sat-200", "kind": "mixed", "dmShare": 0.6, "rate": 200, "durationS": 300 },
-        { "label": "sat-400", "kind": "mixed", "dmShare": 0.6, "rate": 400, "durationS": 300 },
-        { "label": "sat-800", "kind": "mixed", "dmShare": 0.6, "rate": 800, "durationS": 300 }
-      ]
-    },
-    {
-      "name": "heavy", "sinks": 4, "producers": 6, "stepped": true,
-      "fixture": { "RCB_WORKSPACES": 40, "RCB_PRODUCERS": 10, "RCB_RECEIVERS": 25, "RCB_CHANNELS": 4, "RCB_CHANNEL_MEMBERS": 10, "RCB_AGENTS_PER_NODE": 1 },
-      "phases": [
-        { "label": "h-10", "kind": "mixed", "dmShare": 0.6, "rate": 10, "durationS": 1200 },
-        { "label": "h-100", "kind": "mixed", "dmShare": 0.6, "rate": 100, "durationS": 1200 },
-        { "label": "h-1000", "kind": "mixed", "dmShare": 0.6, "rate": 1000, "durationS": 1200 },
-        { "label": "h-5000", "kind": "mixed", "dmShare": 0.6, "rate": 5000, "durationS": 1200 },
-        { "label": "h-7500", "kind": "mixed", "dmShare": 0.6, "rate": 7500, "durationS": 600 },
-        { "label": "h-10000", "kind": "mixed", "dmShare": 0.6, "rate": 10000, "durationS": 600 }
-      ],
-      "after": [
-        { "label": "h-burst", "kind": "mixed", "dmShare": 0.6, "rate": 300, "burst": { "periodS": 60, "lenS": 10, "factor": 10 }, "durationS": 600 },
-        { "label": "h-bcast", "kind": "broadcast", "rate": 10, "targets": 25, "durationS": 300 }
-      ]
-    },
-    {
-      "name": "fanout", "sinks": 2, "producers": 1,
-      "fixture": { "RCB_WORKSPACES": 1, "RCB_PRODUCERS": 10, "RCB_RECEIVERS": 600, "RCB_CHANNELS": 1, "RCB_CHANNEL_MEMBERS": 10, "RCB_FANOUT_MEMBERS": 500, "RCB_AGENTS_PER_NODE": 10 },
-      "phases": [
-        { "label": "fo-2", "kind": "fanout", "rate": 2, "durationS": 300 },
-        { "label": "fo-10", "kind": "fanout", "rate": 10, "durationS": 300 }
-      ]
-    },
-    {
-      "name": "ws-5k", "sinks": 4, "producers": 2,
-      "fixture": { "RCB_WORKSPACES": 20, "RCB_PRODUCERS": 5, "RCB_RECEIVERS": 250, "RCB_CHANNELS": 4, "RCB_CHANNEL_MEMBERS": 25, "RCB_AGENTS_PER_NODE": 1 },
-      "phases": [ { "label": "ws5k-load", "kind": "mixed", "dmShare": 0.6, "rate": 1000, "durationS": 600 } ]
-    },
-    {
-      "name": "ws-10k", "sinks": 6, "producers": 2,
-      "fixture": { "RCB_WORKSPACES": 40, "RCB_PRODUCERS": 5, "RCB_RECEIVERS": 250, "RCB_CHANNELS": 4, "RCB_CHANNEL_MEMBERS": 25, "RCB_AGENTS_PER_NODE": 1 },
-      "phases": [ { "label": "ws10k-load", "kind": "mixed", "dmShare": 0.6, "rate": 1000, "durationS": 600 } ]
-    },
-    {
-      "name": "backlog", "sinks": 1, "producers": 1,
-      "fixture": { "RCB_WORKSPACES": 1, "RCB_PRODUCERS": 10, "RCB_RECEIVERS": 10, "RCB_CHANNELS": 1, "RCB_CHANNEL_MEMBERS": 5, "RCB_BACKLOG_RECEIVERS": 1, "RCB_AGENTS_PER_NODE": 1 },
-      "phases": [ { "label": "bl-10k", "kind": "backlog", "rate": 100, "durationS": 100, "sizeBytes": 512, "offlineHoldS": 30, "drainS": 600 } ]
-    },
-    {
-      "name": "chaos", "sinks": 4, "producers": 4,
-      "fixture": { "RCB_WORKSPACES": 40, "RCB_PRODUCERS": 10, "RCB_RECEIVERS": 25, "RCB_CHANNELS": 4, "RCB_CHANNEL_MEMBERS": 10, "RCB_AGENTS_PER_NODE": 1 },
-      "phases": [ { "label": "ch-load", "kind": "mixed", "dmShare": 0.6, "rate": 1000, "durationS": 900, "drainS": 300 } ],
-      "chaos": [
-        { "phase": "ch-load", "atS": 300, "action": "kill-relaycast" },
-        { "phase": "ch-load", "atS": 600, "action": "rds-failover" }
-      ]
-    },
-    {
-      "name": "replay", "sinks": 2, "producers": 2,
-      "fixture": { "RCB_WORKSPACES": 10, "RCB_PRODUCERS": 10, "RCB_RECEIVERS": 20, "RCB_CHANNELS": 4, "RCB_CHANNEL_MEMBERS": 10, "RCB_AGENTS_PER_NODE": 1 },
-      "phases": [
-        { "label": "rp-prime", "kind": "channel", "rate": 20, "durationS": 30 },
-        { "label": "rp-1x", "kind": "replay", "profile": "/bench/profiles/prod-2026-11-12.json", "basis": "rps_peak_minute_max", "scale": 1, "durationS": 600 },
-        { "label": "rp-3x", "kind": "replay", "profile": "/bench/profiles/prod-2026-11-12.json", "basis": "rps_peak_minute_max", "scale": 3, "durationS": 600 },
-        { "label": "rp-10x", "kind": "replay", "profile": "/bench/profiles/prod-2026-11-12.json", "basis": "rps_peak_minute_max", "scale": 10, "durationS": 600 }
-      ]
+     "label": "ch100-100",
+     "kind": "channel",
+     "rate": 100,
+     "durationS": 180,
+     "sizeBytes": 512
     }
-  ]
+   ]
+  },
+  {
+   "name": "functional-10",
+   "sinks": 1,
+   "producers": 1,
+   "fixture": {
+    "RCB_WORKSPACES": 1,
+    "RCB_PRODUCERS": 5,
+    "RCB_RECEIVERS": 5,
+    "RCB_CHANNELS": 2,
+    "RCB_CHANNEL_MEMBERS": 5,
+    "RCB_AGENTS_PER_NODE": 1
+   },
+   "phases": [
+    {
+     "label": "f10-dm",
+     "kind": "dm",
+     "rate": 20,
+     "durationS": 120,
+     "sizeBytes": 512
+    },
+    {
+     "label": "f10-chan",
+     "kind": "channel",
+     "rate": 10,
+     "durationS": 120,
+     "sizeBytes": 512
+    },
+    {
+     "label": "f10-upload",
+     "kind": "upload",
+     "rate": 2,
+     "durationS": 60,
+     "sizeBytes": 262144
+    }
+   ]
+  },
+  {
+   "name": "functional-100",
+   "sinks": 1,
+   "producers": 1,
+   "fixture": {
+    "RCB_WORKSPACES": 1,
+    "RCB_PRODUCERS": 20,
+    "RCB_RECEIVERS": 80,
+    "RCB_CHANNELS": 5,
+    "RCB_CHANNEL_MEMBERS": 20,
+    "RCB_AGENTS_PER_NODE": 1
+   },
+   "phases": [
+    {
+     "label": "f100-dm",
+     "kind": "dm",
+     "rate": 50,
+     "durationS": 180,
+     "sizeBytes": 512
+    },
+    {
+     "label": "f100-chan",
+     "kind": "channel",
+     "rate": 20,
+     "durationS": 180,
+     "sizeBytes": 512
+    },
+    {
+     "label": "f100-upload",
+     "kind": "upload",
+     "rate": 5,
+     "durationS": 60,
+     "sizeBytes": 262144
+    }
+   ]
+  },
+  {
+   "name": "functional-1000",
+   "sinks": 2,
+   "producers": 2,
+   "fixture": {
+    "RCB_WORKSPACES": 1,
+    "RCB_PRODUCERS": 200,
+    "RCB_RECEIVERS": 800,
+    "RCB_CHANNELS": 20,
+    "RCB_CHANNEL_MEMBERS": 50,
+    "RCB_AGENTS_PER_NODE": 10
+   },
+   "phases": [
+    {
+     "label": "f1000-dm",
+     "kind": "dm",
+     "rate": 100,
+     "durationS": 180,
+     "sizeBytes": 512
+    },
+    {
+     "label": "f1000-chan",
+     "kind": "channel",
+     "rate": 20,
+     "durationS": 180,
+     "sizeBytes": 512
+    },
+    {
+     "label": "f1000-upload",
+     "kind": "upload",
+     "rate": 5,
+     "durationS": 60,
+     "sizeBytes": 262144
+    }
+   ]
+  },
+  {
+   "name": "single-ws-saturation",
+   "sinks": 2,
+   "producers": 2,
+   "stepped": true,
+   "fixture": {
+    "RCB_WORKSPACES": 1,
+    "RCB_PRODUCERS": 50,
+    "RCB_RECEIVERS": 50,
+    "RCB_CHANNELS": 5,
+    "RCB_CHANNEL_MEMBERS": 10,
+    "RCB_AGENTS_PER_NODE": 1
+   },
+   "phases": [
+    {
+     "label": "sat-50",
+     "kind": "mixed",
+     "dmShare": 0.6,
+     "rate": 50,
+     "durationS": 300
+    },
+    {
+     "label": "sat-100",
+     "kind": "mixed",
+     "dmShare": 0.6,
+     "rate": 100,
+     "durationS": 300
+    },
+    {
+     "label": "sat-200",
+     "kind": "mixed",
+     "dmShare": 0.6,
+     "rate": 200,
+     "durationS": 300
+    },
+    {
+     "label": "sat-400",
+     "kind": "mixed",
+     "dmShare": 0.6,
+     "rate": 400,
+     "durationS": 300
+    },
+    {
+     "label": "sat-800",
+     "kind": "mixed",
+     "dmShare": 0.6,
+     "rate": 800,
+     "durationS": 300
+    }
+   ]
+  },
+  {
+   "name": "heavy",
+   "sinks": 4,
+   "producers": 6,
+   "stepped": true,
+   "fixture": {
+    "RCB_WORKSPACES": 40,
+    "RCB_PRODUCERS": 10,
+    "RCB_RECEIVERS": 25,
+    "RCB_CHANNELS": 4,
+    "RCB_CHANNEL_MEMBERS": 10,
+    "RCB_AGENTS_PER_NODE": 1
+   },
+   "phases": [
+    {
+     "label": "h-10",
+     "kind": "mixed",
+     "dmShare": 0.6,
+     "rate": 10,
+     "durationS": 1200
+    },
+    {
+     "label": "h-100",
+     "kind": "mixed",
+     "dmShare": 0.6,
+     "rate": 100,
+     "durationS": 1200
+    },
+    {
+     "label": "h-1000",
+     "kind": "mixed",
+     "dmShare": 0.6,
+     "rate": 1000,
+     "durationS": 1200
+    },
+    {
+     "label": "h-5000",
+     "kind": "mixed",
+     "dmShare": 0.6,
+     "rate": 5000,
+     "durationS": 1200
+    },
+    {
+     "label": "h-7500",
+     "kind": "mixed",
+     "dmShare": 0.6,
+     "rate": 7500,
+     "durationS": 600
+    },
+    {
+     "label": "h-10000",
+     "kind": "mixed",
+     "dmShare": 0.6,
+     "rate": 10000,
+     "durationS": 600
+    }
+   ],
+   "after": [
+    {
+     "label": "h-burst",
+     "kind": "mixed",
+     "dmShare": 0.6,
+     "rate": 300,
+     "burst": {
+      "periodS": 60,
+      "lenS": 10,
+      "factor": 10
+     },
+     "durationS": 600
+    },
+    {
+     "label": "h-bcast",
+     "kind": "broadcast",
+     "rate": 10,
+     "targets": 25,
+     "durationS": 300
+    }
+   ]
+  },
+  {
+   "name": "fanout",
+   "sinks": 2,
+   "producers": 1,
+   "fixture": {
+    "RCB_WORKSPACES": 1,
+    "RCB_PRODUCERS": 10,
+    "RCB_RECEIVERS": 600,
+    "RCB_CHANNELS": 1,
+    "RCB_CHANNEL_MEMBERS": 10,
+    "RCB_FANOUT_MEMBERS": 500,
+    "RCB_AGENTS_PER_NODE": 10
+   },
+   "phases": [
+    {
+     "label": "fo-2",
+     "kind": "fanout",
+     "rate": 2,
+     "durationS": 300
+    },
+    {
+     "label": "fo-10",
+     "kind": "fanout",
+     "rate": 10,
+     "durationS": 300
+    }
+   ]
+  },
+  {
+   "name": "ws-5k",
+   "sinks": 4,
+   "producers": 2,
+   "fixture": {
+    "RCB_WORKSPACES": 20,
+    "RCB_PRODUCERS": 5,
+    "RCB_RECEIVERS": 250,
+    "RCB_CHANNELS": 4,
+    "RCB_CHANNEL_MEMBERS": 25,
+    "RCB_AGENTS_PER_NODE": 1
+   },
+   "phases": [
+    {
+     "label": "ws5k-load",
+     "kind": "mixed",
+     "dmShare": 0.6,
+     "rate": 1000,
+     "durationS": 600
+    }
+   ]
+  },
+  {
+   "name": "ws-10k",
+   "sinks": 6,
+   "producers": 2,
+   "fixture": {
+    "RCB_WORKSPACES": 40,
+    "RCB_PRODUCERS": 5,
+    "RCB_RECEIVERS": 250,
+    "RCB_CHANNELS": 4,
+    "RCB_CHANNEL_MEMBERS": 25,
+    "RCB_AGENTS_PER_NODE": 1
+   },
+   "phases": [
+    {
+     "label": "ws10k-load",
+     "kind": "mixed",
+     "dmShare": 0.6,
+     "rate": 1000,
+     "durationS": 600
+    }
+   ]
+  },
+  {
+   "name": "backlog",
+   "sinks": 1,
+   "producers": 1,
+   "fixture": {
+    "RCB_WORKSPACES": 1,
+    "RCB_PRODUCERS": 10,
+    "RCB_RECEIVERS": 10,
+    "RCB_CHANNELS": 1,
+    "RCB_CHANNEL_MEMBERS": 5,
+    "RCB_BACKLOG_RECEIVERS": 1,
+    "RCB_AGENTS_PER_NODE": 1
+   },
+   "phases": [
+    {
+     "label": "bl-10k",
+     "kind": "backlog",
+     "rate": 100,
+     "durationS": 100,
+     "sizeBytes": 512,
+     "offlineHoldS": 30,
+     "drainS": 600
+    }
+   ]
+  },
+  {
+   "name": "chaos",
+   "sinks": 4,
+   "producers": 4,
+   "fixture": {
+    "RCB_WORKSPACES": 40,
+    "RCB_PRODUCERS": 10,
+    "RCB_RECEIVERS": 25,
+    "RCB_CHANNELS": 4,
+    "RCB_CHANNEL_MEMBERS": 10,
+    "RCB_AGENTS_PER_NODE": 1
+   },
+   "phases": [
+    {
+     "label": "ch-load",
+     "kind": "mixed",
+     "dmShare": 0.6,
+     "rate": 1000,
+     "durationS": 900,
+     "drainS": 300
+    }
+   ],
+   "chaos": [
+    {
+     "phase": "ch-load",
+     "atS": 300,
+     "action": "kill-relaycast"
+    },
+    {
+     "phase": "ch-load",
+     "atS": 600,
+     "action": "rds-failover"
+    }
+   ]
+  },
+  {
+   "name": "replay",
+   "sinks": 2,
+   "producers": 2,
+   "fixture": {
+    "RCB_WORKSPACES": 10,
+    "RCB_PRODUCERS": 10,
+    "RCB_RECEIVERS": 20,
+    "RCB_CHANNELS": 4,
+    "RCB_CHANNEL_MEMBERS": 10,
+    "RCB_AGENTS_PER_NODE": 1
+   },
+   "phases": [
+    {
+     "label": "rp-prime",
+     "kind": "channel",
+     "rate": 20,
+     "durationS": 30
+    },
+    {
+     "label": "rp-1x",
+     "kind": "replay",
+     "profile": "/bench/profiles/prod-2026-11-12.json",
+     "basis": "rps_peak_minute_max",
+     "scale": 1,
+     "durationS": 600
+    },
+    {
+     "label": "rp-3x",
+     "kind": "replay",
+     "profile": "/bench/profiles/prod-2026-11-12.json",
+     "basis": "rps_peak_minute_max",
+     "scale": 3,
+     "durationS": 600
+    },
+    {
+     "label": "rp-10x",
+     "kind": "replay",
+     "profile": "/bench/profiles/prod-2026-11-12.json",
+     "basis": "rps_peak_minute_max",
+     "scale": 10,
+     "durationS": 600
+    }
+   ]
+  }
+ ]
 }

@@ -126,8 +126,10 @@ gen_actors_secrets() {
   keep relayfile-actors RELAYFILE_JWT_SECRET || rnd_hex | put relayfile-actors RELAYFILE_JWT_SECRET
   keep relayfile-actors RELAYFILE_ACTORS_BROKER_TOKEN || rnd_hex | put relayfile-actors RELAYFILE_ACTORS_BROKER_TOKEN
   keep rcb-actors-db password || rnd_hex 24 | put rcb-actors-db password
-  # RDS PG17 enforces SSL; the control plane mounts no CA, so require (not verify-full).
-  node -e 'process.stdout.write(`postgresql://durable_actors_owner:${require("fs").readFileSync(process.argv[1],"utf8").trim()}@${process.argv[2]}:5432/durable_actors?sslmode=require`)' \
+  # The control plane mounts no CA and its TLS client refuses the RDS chain even
+  # with sslmode=require ("error performing TLS handshake"); the actors RDS runs
+  # rds.force_ssl=0 (cluster.sh db-nossl actors) and this URL disables TLS.
+  node -e 'process.stdout.write(`postgresql://durable_actors_owner:${require("fs").readFileSync(process.argv[1],"utf8").trim()}@${process.argv[2]}:5432/durable_actors?sslmode=disable`)' \
     "$f/rcb-actors-db/password" "$(db_host)" | put actors-credentials postgres-url
   # Workspace actor env (sandbox namespace, created by the chart in `install`).
   printf 'https://cast.%s' "${BENCH_DOMAIN}" | put relaycast-actor-env RELAYCAST_PUBLIC_URL

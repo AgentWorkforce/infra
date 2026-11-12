@@ -341,6 +341,27 @@ cmd_db() {
   log "RDS $DB_ID available"
 }
 
+# db-nossl <arm>: the durable-actors control plane cannot verify the RDS CA
+# (the chart mounts no CA bundle and its TLS client refuses the RDS chain), so
+# the actors arm's instance gets a parameter group with rds.force_ssl=0 and the
+# control plane connects with sslmode=disable inside the VPC. Every other
+# component keeps verify-full TLS. Static parameter: the instance reboots.
+cmd_db_nossl() {
+  local id="${NAME}-${1:?pg|actors}" pg="${NAME}-${1}-pg17"
+  if ! aws_ rds describe-db-parameter-groups --db-parameter-group-name "$pg" >/dev/null 2>&1; then
+    aws_ rds create-db-parameter-group --db-parameter-group-name "$pg" --db-parameter-group-family postgres17 \
+      --description "${NAME}: rds.force_ssl=0 for the durable-actors control plane" --tags "Key=${TAG_KEY},Value=${TAG_VAL}" >/dev/null
+  fi
+  aws_ rds modify-db-parameter-group --db-parameter-group-name "$pg" \
+    --parameters "ParameterName=rds.force_ssl,ParameterValue=0,ApplyMethod=pending-reboot" >/dev/null
+  aws_ rds modify-db-instance --db-instance-identifier "$id" --db-parameter-group-name "$pg" --apply-immediately >/dev/null
+  aws_ rds wait db-instance-available --db-instance-identifier "$id"
+  aws_ rds reboot-db-instance --db-instance-identifier "$id" >/dev/null
+  sleep 30
+  aws_ rds wait db-instance-available --db-instance-identifier "$id"
+  log "RDS $id: parameter group $pg (rds.force_ssl=0) applied"
+}
+
 # db-down <arm>: delete the arm's RDS instance (no final snapshot: benchmark data only).
 cmd_db_down() {
   local id="${NAME}-${1:?pg|actors}"
@@ -348,6 +369,9 @@ cmd_db_down() {
     log "delete RDS $id"
     aws_ rds delete-db-instance --db-instance-identifier "$id" --skip-final-snapshot --delete-automated-backups >/dev/null 2>&1 || true
     aws_ rds wait db-instance-deleted --db-instance-identifier "$id"; deleted "rds-instance $id"
+  fi
+  if aws_ rds describe-db-parameter-groups --db-parameter-group-name "${NAME}-${1}-pg17" >/dev/null 2>&1; then
+    aws_ rds delete-db-parameter-group --db-parameter-group-name "${NAME}-${1}-pg17"; deleted "rds-parameter-group ${NAME}-${1}-pg17"
   fi
 }
 
@@ -487,6 +511,7 @@ case "${1:-}" in
   up) cmd_up ;;
   db) shift; cmd_db "$@" ;;
   db-down) shift; cmd_db_down "$@" ;;
+  db-nossl) shift; cmd_db_nossl "$@" ;;
   down) cmd_down ;;
   status) cmd_status ;;
   audit) cmd_audit ;;
