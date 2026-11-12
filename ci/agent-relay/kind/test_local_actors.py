@@ -1,6 +1,8 @@
 import contextlib
 import io
 import json
+import hashlib
+import tarfile
 from pathlib import Path
 import tempfile
 from types import SimpleNamespace
@@ -104,7 +106,8 @@ class LocalActorBuildTests(unittest.TestCase):
             with contextlib.redirect_stdout(io.StringIO()):
                 built = local_actors.build(stack, selected)
             digest = "docker.io/local/relaycast-actors-dev@sha256:" + "3" * 64
-            status = {"id": built["actorImageId"], "repoDigests": [digest]}
+            built["actorConfigId"] = "sha256:" + "4" * 64
+            status = {"id": built["actorConfigId"], "repoDigests": [digest]}
             original = stack.cmd
             def command(args, **kwargs):
                 if args[:3] == ["kind", "get", "nodes"]:
@@ -118,6 +121,30 @@ class LocalActorBuildTests(unittest.TestCase):
             status["id"] = "sha256:" + "f" * 64
             with self.assertRaisesRegex(StackError, "differs from the local build"):
                 local_actors.load(stack, built)
+
+    def test_export_binds_a_different_config_digest_and_refuses_tag_races(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            selected, stack, calls, images = self.fixture(Path(tmp))
+            with contextlib.redirect_stdout(io.StringIO()):
+                built = local_actors.build(stack, selected)
+            config = b'{"architecture":"arm64","config":{"Env":["FIXTURE=1"]}}'
+            original = stack.cmd
+            def command(args, **kwargs):
+                if args[:3] == ["docker", "image", "save"]:
+                    with tarfile.open(args[4], "w") as saved:
+                        for name, data in (("manifest.json", b'[{"Config":"config.json"}]'), ("config.json", config)):
+                            info = tarfile.TarInfo(name);info.size = len(data);saved.addfile(info, io.BytesIO(data))
+                    return SimpleNamespace(stdout="", returncode=0)
+                return original(args, **kwargs)
+            stack.cmd = command
+            observed = local_actors.config_id(stack, built)
+            self.assertEqual(observed, "sha256:" + hashlib.sha256(config).hexdigest())
+            self.assertNotEqual(observed, built["actorImageId"])
+            self.assertFalse((stack.state / "actor-build/actor-image.tar").exists())
+            del built["actorConfigId"]
+            images[built["actorTag"]] = "sha256:" + "f" * 64
+            with self.assertRaisesRegex(StackError, "changed during export"):
+                local_actors.config_id(stack, built)
 
 
 if __name__ == "__main__":

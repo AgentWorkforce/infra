@@ -1,6 +1,8 @@
 """Pinned local actor build; no command runs when the module is imported."""
 import json
 import re
+import hashlib
+import tarfile
 
 from stack import StackError, private_json
 from local_actor_recipe import recipe
@@ -90,7 +92,35 @@ def build(stack, selected=None):
     return built
 
 
+def config_id(stack, built):
+    if IMAGE_ID.fullmatch(built.get("actorConfigId", "")):
+        return built["actorConfigId"]
+    # With Docker Desktop's containerd store, .Id / --iidfile can name an
+    # index, while CRI reports the image config digest. Bind both via the
+    # exact image export rather than equating those different identities.
+    archive = stack.state / "actor-build/actor-image.tar"
+    if archive.is_symlink():
+        raise StackError("actor export must not be a symlink")
+    try:
+        stack.cmd([*stack.docker_args, "image", "save", "-o", archive, built["actorTag"]], timeout=180)
+        with tarfile.open(archive) as saved:
+            manifest = json.load(saved.extractfile("manifest.json"))
+            if len(manifest) != 1:
+                raise StackError("actor export must contain one image")
+            member = saved.getmember(manifest[0]["Config"])
+            if not member.isfile() or member.size > 16 * 1024 * 1024:
+                raise StackError("actor export config is invalid")
+            digest = "sha256:" + hashlib.sha256(saved.extractfile(member).read()).hexdigest()
+        if inspect(stack, built["actorTag"]) != built["actorImageId"]:
+            raise StackError("local actor image changed during export")
+        built["actorConfigId"] = digest
+        return digest
+    finally:
+        archive.unlink(missing_ok=True)
+
+
 def load(stack, built):
+    expected_config = config_id(stack, built)
     stack.cmd(["kind", "load", "docker-image", "--name", stack.name, built["actorTag"]], timeout=300)
     # Bind the local Docker config ID to containerd's names on every owned node.
     # Pod imageID can be the config ID or a repository digest, depending on CRI.
@@ -100,7 +130,7 @@ def load(stack, built):
     imported = {}
     for node in nodes:
         status = json.loads(stack.cmd([*stack.docker_args, "exec", node, "crictl", "inspecti", built["actorTag"]]).stdout)["status"]
-        if status.get("id") != built["actorImageId"]:
+        if status.get("id") != expected_config:
             raise StackError("Kind imported actor image differs from the local build")
         digests = status.get("repoDigests", [])
         if not isinstance(digests, list) or any(not isinstance(d, str) or not re.fullmatch(r"[^\s]+@sha256:[0-9a-f]{64}", d) for d in digests):
@@ -108,3 +138,4 @@ def load(stack, built):
         imported[node] = {"imageId": status["id"], "repoDigests": digests}
     built["kindImages"] = imported
     private_json(stack.state / "actor-build/images.json", built)
+    print("Imported local actor image: " + json.dumps({key: built[key] for key in ("actorImageId", "actorConfigId", "kindImages")}), flush=True)

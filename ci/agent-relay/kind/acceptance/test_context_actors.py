@@ -29,9 +29,9 @@ class ActorContextTests(unittest.TestCase):
             (root / "selection.json").write_text(json.dumps(selected))
             (root / "tenant.json").write_text(json.dumps({"organizationId": UUID, "workspaceId": UUID}))
             built = {"recipeSha256": recipe["recipeSha256"], "actorTag": recipe["actorTag"],
-                "runtimeImageId": "sha256:" + "1" * 64, "actorImageId": "sha256:" + "2" * 64,
+                "runtimeImageId": "sha256:" + "1" * 64, "actorImageId": "sha256:" + "2" * 64, "actorConfigId": "sha256:" + "3" * 64,
                 "upstreamRevision": recipe["source"]["upstream"]["revision"], "relaycastRevision": recipe["source"]["relaycast"]["revision"]}
-            built["kindImages"] = {"owned-node": {"imageId": built["actorImageId"], "repoDigests": []}}
+            built["kindImages"] = {"owned-node": {"imageId": built["actorConfigId"], "repoDigests": []}}
             (root / "actor-build").mkdir()
             receipt = root / "actor-build/images.json"; receipt.write_text(json.dumps(built))
             roles = [(name, "gateway" if name == "relaycast" else container, key) for name, container, key in ROLES]
@@ -44,7 +44,7 @@ class ActorContextTests(unittest.TestCase):
                     "status": {"replicas": 1, "readyReplicas": 1, "availableReplicas": 1, "updatedReplicas": 1, "observedGeneration": 1}})
                 d["spec"]["template"]["spec"]["initContainers" if container == "copy-dashboard" else "containers"].append({"name": container, "image": selected[key]})
             pod = {"metadata": {"labels": {"app": "relaycast"}}, "spec": {"nodeName": "owned-node"},
-                   "status": {"containerStatuses": [{"name": "durable-actors-dev", "ready": True, "imageID": built["actorImageId"]}]}}
+                   "status": {"containerStatuses": [{"name": "durable-actors-dev", "ready": True, "imageID": built["actorConfigId"]}]}}
             def output(args):
                 if "jsonpath={.metadata.uid}" in args: return UUID
                 if "deployments" in args: return json.dumps({"items": list(deployments.values())})
@@ -61,7 +61,7 @@ class ActorContextTests(unittest.TestCase):
                 sidecar["image"] = recipe["actorTag"]
                 pod["status"]["containerStatuses"][0]["imageID"] = "sha256:" + "f" * 64
                 with self.assertRaises(Failure): collect(config, root)
-                pod["status"]["containerStatuses"][0]["imageID"] = built["actorImageId"]
+                pod["status"]["containerStatuses"][0]["imageID"] = built["actorConfigId"]
                 built["upstreamRevision"] = "f" * 40; receipt.write_text(json.dumps(built))
                 with self.assertRaises(Failure): collect(config, root)
 

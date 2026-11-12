@@ -50,8 +50,8 @@ def collect(config, root):
                 and raw.get("upstreamRevision") == recipe["source"]["upstream"]["revision"]
                 and raw.get("relaycastRevision") == recipe["source"]["relaycast"]["revision"], "local_actor_recipe_mismatch")
         require(all(isinstance(raw.get(key), str) and re.fullmatch(r"sha256:[0-9a-f]{64}", raw[key])
-                    for key in ("runtimeImageId", "actorImageId")), "local_actor_image_id_missing")
-        built = {key: raw[key] for key in ("recipeSha256", "upstreamRevision", "relaycastRevision", "runtimeImageId", "actorImageId")}
+                    for key in ("runtimeImageId", "actorImageId", "actorConfigId")), "local_actor_image_id_missing")
+        built = {key: raw[key] for key in ("recipeSha256", "upstreamRevision", "relaycastRevision", "runtimeImageId", "actorImageId", "actorConfigId")}
     expected = {key: selected[key] for _, _, key in roles}
     require(all(key == "relaycastActors" or isinstance(ref, str) and re.fullmatch(r"ghcr\.io/agentworkforce/[a-z0-9-]+@sha256:[0-9a-f]{64}", ref)
                 for key, ref in expected.items()), "published_digest_pins_required")
@@ -94,11 +94,11 @@ def collect(config, root):
         for pod in cast_pods:
             node = pod["spec"].get("nodeName")
             imported = raw.get("kindImages", {}).get(node, {})
-            require(imported.get("imageId") == built["actorImageId"], "actor_node_image_mismatch")
+            require(imported.get("imageId") == built["actorConfigId"], "actor_node_image_mismatch")
             statuses = [s for s in pod.get("status", {}).get("containerStatuses", []) if s["name"] == "durable-actors-dev"]
             require(len(statuses) == 1 and statuses[0].get("ready") is True, "actor_container_not_ready")
             image_id = statuses[0].get("imageID", "").removeprefix("docker-pullable://").removeprefix("docker://").removeprefix("containerd://")
-            require(image_id in [built["actorImageId"], *imported.get("repoDigests", [])], "running_actor_image_mismatch")
+            require(image_id in [built["actorConfigId"], *imported.get("repoDigests", [])], "running_actor_image_mismatch")
             running.append({"node": node, "imageId": image_id})
         built["runningContainers"] = running
         result["localBuilds"] = {"relaycastActors": built}
