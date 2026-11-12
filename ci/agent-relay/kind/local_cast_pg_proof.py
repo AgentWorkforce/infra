@@ -9,6 +9,8 @@ import time
 
 from stack import ROOT, NS, StackError, private_json
 
+COLLECTOR_SECRET = "local-telemetry-cast-proof"
+
 ROUNDTRIP = r"""
 import fs from 'node:fs';import {randomUUID} from 'node:crypto';
 const base='http://127.0.0.1:8787';
@@ -58,6 +60,12 @@ def prove_owned(stack):
         metadata = resource.get("spec", {}).get("template", {}).get("metadata", {}) if resource.get("kind") == "Deployment" else resource.get("metadata", {})
         if metadata.get("labels", {}).get("local.agentrelay.dev/proof"):
             raise StackError("A prior Postgres companion still exists; verify its cleanup before retrying")
+    # Return only a presence marker, never the collector token. Refuse before
+    # creating proof resources instead of waiting for a missing Secret mount.
+    ready = stack.k("get", "secret", COLLECTOR_SECRET, "--ignore-not-found=true", "-o",
+        "go-template={{if .data.token}}ready{{end}}").stdout.strip()
+    if ready != "ready":
+        raise StackError("Postgres companion collector credential is missing; run local-up before retrying")
     from local_stack import AA_VALUES, CAST_PROOF_DEPLOYMENT, reference, image, pgurl
     c = json.loads((stack.state / "credentials.json").read_text())
     if not all(c.get(key) for key in ("relaycast_owner", "relaycast_runtime")):
@@ -88,7 +96,7 @@ def prove_owned(stack):
             "baseUrl": "https://cast.kind.agentrelay.com", "runtime": {"backend": "postgres", "postgres": {"image": image(image_ref)}},
             "postgresCa": {"enabled": True, "configMap": "local-ca", "key": "ca.crt"},
             "analytics": {"enabled": True, "deploymentId": CAST_PROOF_DEPLOYMENT, "collectorUrl": "https://telemetry-collector.agent-relay.svc.cluster.local:8443/v1/events",
-                "existingSecret": "local-telemetry-cast-proof", "caConfigMap": "local-ca"},
+                "existingSecret": COLLECTOR_SECRET, "caConfigMap": "local-ca"},
             "persistence": {"size": "64Mi", "annotations": {"helm.sh/resource-policy": None}},
             "podLabels": {"local.agentrelay.dev/proof": run_id}, "networkPolicy": {"enabled": False}, "ingress": {"enabled": False}}
         private_json(values_file, values)
