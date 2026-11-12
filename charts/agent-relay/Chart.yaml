@@ -17,7 +17,7 @@ maintainers:
     url: https://github.com/AgentWorkforce
 dependencies:
   - name: relaycast
-    version: 0.3.9
+    version: 0.3.10
     repository: file://../relaycast
     condition: components.relaycast
   - name: relayauth
