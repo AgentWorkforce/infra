@@ -1,8 +1,9 @@
-# Applied to BOTH arms. The sessions search indexer's bootstrap Job fails on a
-# fresh RDS install with "consumer bootstrap: trusted credential probe
-# unavailable" (SQLSTATE 55000) after rds-setup.sh post. Search is outside the
-# Relaycast comparison, so it is off on both arms identically; the read API
-# keeps its postgres search backend.
+# Applied to BOTH arms. On a fresh RDS install the sessions search indexer's
+# bootstrap Job runs at `helm install`, i.e. BEFORE rds-setup.sh post activates
+# its login, and exhausts its retries with "consumer bootstrap: trusted
+# credential probe unavailable" (SQLSTATE 55000); it needs deleting and a
+# re-upgrade after post. Search is outside the Relaycast comparison, so it is
+# off on both arms identically; the read API keeps its postgres search backend.
 sessions-pipeline:
   searchIndexer:
     enabled: false
