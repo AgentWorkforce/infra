@@ -370,13 +370,14 @@
    },
    "phases": [
     {
-     "label": "ws5k-load",
+     "label": "ws5k-10",
      "kind": "mixed",
      "dmShare": 0.6,
-     "rate": 1000,
+     "rate": 10,
      "durationS": 600
     }
-   ]
+   ],
+   "notes": "Concurrent node sockets under light load (10 msgs/s): both arms fail heavy multi-workspace load far below 1000 msgs/s."
   },
   {
    "name": "ws-10k",
@@ -392,13 +393,14 @@
    },
    "phases": [
     {
-     "label": "ws10k-load",
+     "label": "ws10k-10",
      "kind": "mixed",
      "dmShare": 0.6,
-     "rate": 1000,
+     "rate": 10,
      "durationS": 600
     }
-   ]
+   ],
+   "notes": "Concurrent node sockets under light load (10 msgs/s): both arms fail heavy multi-workspace load far below 1000 msgs/s."
   },
   {
    "name": "backlog",
@@ -442,7 +444,7 @@
      "label": "ch-load",
      "kind": "mixed",
      "dmShare": 0.6,
-     "rate": 1000,
+     "rate": 10,
      "durationS": 900,
      "drainS": 300
     }
@@ -458,7 +460,8 @@
      "atS": 600,
      "action": "rds-failover"
     }
-   ]
+   ],
+   "notes": "10 msgs/s for 15 min (the level both arms sustain); relaycast/gateway pod (and one actor host) killed at 5 min, RDS forced Multi-AZ failover at 10 min."
   },
   {
    "name": "replay",

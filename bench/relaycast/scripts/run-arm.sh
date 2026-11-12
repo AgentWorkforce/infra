@@ -201,8 +201,9 @@ chaos() { # action out
       "${K[@]}" get pods -l "$KILL_SELECTOR" -o name >>"$out.pods" || true
       "${K[@]}" delete pod -l "$KILL_SELECTOR" --wait=false >/dev/null
       if [[ -n "$ACTOR_SELECTOR" ]]; then
-        local p; p="$("${K[@]}" get pods -l "$ACTOR_SELECTOR" -o name | head -1)"
-        [[ -n "$p" ]] && { echo "$p" >>"$out.pods"; "${K[@]}" delete "$p" --wait=false >/dev/null; }
+        # Actor hosts run in the sandbox namespace (<NS>-agent-relay).
+        local p; p="$(kubectl -n "${ACTOR_NS:-${NS}-agent-relay}" get pods -l "$ACTOR_SELECTOR" -o name | head -1)"
+        [[ -n "$p" ]] && { echo "$p" >>"$out.pods"; kubectl -n "${ACTOR_NS:-${NS}-agent-relay}" delete "$p" --wait=false >/dev/null; }
       fi ;;
     rds-failover)
       aws --region "$REGION" rds reboot-db-instance --db-instance-identifier "$DB_ID" --force-failover >/dev/null ;;
