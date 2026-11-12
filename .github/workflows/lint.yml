@@ -72,6 +72,11 @@ jobs:
           python3 -c "import yaml" 2>/dev/null || python3 -m pip install --quiet --break-system-packages "pyyaml==6.0.2"
           python3 -m unittest discover -s scripts/selfhost/tests -p 'test_ci_deploy.py' -v
 
+      # scripts/selfhost/ci-terraform.sh (Terraform state from CI): the real saved-plan runner with fake aws and
+      # terraform; exact-digest, single-use and stale-plan refusals, nothing secret in the summary.
+      - name: CI Terraform script tests
+        run: python3 -m unittest discover -s scripts/selfhost/tests -p 'test_ci_terraform.py' -v
+
       - name: RDS eraser role with a non-superuser owner
         run: scripts/selfhost/tests/rds-erase-search-postgres-test.sh
 

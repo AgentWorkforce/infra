@@ -86,6 +86,9 @@ associations; plan it as a reviewed migration together with the Helm release.
 
 ## Review and apply
 
+To plan and apply from GitHub Actions instead of a workstation (OIDC roles, saved plan kept in the state
+bucket, apply of the exact reviewed plan), see [Terraform state from CI](../../../docs/selfhost-ci-terraform.md).
+
 From the repository root, under the intended customer's AWS identity:
 
 ```sh
