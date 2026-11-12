@@ -8,6 +8,10 @@ global:
     engine: ""
     required: ""
     readerMaxRuleset: ""
+  # Inherited from sessions-pipeline (or set directly for a standalone chart).
+  # True renders SESSION_ERASE_FENCE_ENFORCED=1 on every read-API replica.
+  operatorSessionErase:
+    fenceEnforced: false
 
 # Override the Deployment and Service name. Default: <release>-read-api, the
 # name the old sessions-pipeline readApi block used.

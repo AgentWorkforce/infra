@@ -84,6 +84,9 @@ spec:
             {{- end }}
             {{- include "relay-control.runtimeEnv" . | nindent 12 }}
             {{- include "relay-control.secretEnv" . | nindent 12 }}
+            {{- if .Values.sessionErasureApi.enabled }}
+            {{- include "relay-control.sessionErasureApiEnv" . | nindent 12 }}
+            {{- end }}
             {{- if .Values.introspection.existingSecret }}
             - { name: RELAYCONTROL_INTROSPECT_SECRET_FILE, value: /var/run/agent-relay/introspection/secret }
             {{- end }}

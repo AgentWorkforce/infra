@@ -118,7 +118,7 @@ the chart already sets, including duplicates inside extraEnv. */ -}}
   "SELFHOST_PASSWORD_PEPPER_FILE" "SELFHOST_SETUP_KEY_FILE" "SELFHOST_SIGNIN_METHODS" "SELFHOST_TRUSTED_PROXIES"
   "SELFHOST_MICROSOFT_CLIENT_ID" "SELFHOST_MICROSOFT_TENANT" "SELFHOST_MICROSOFT_REDIRECT_URL" "SELFHOST_MICROSOFT_CLIENT_SECRET_FILE"
   "SESSION_READ_API_URL" "SESSION_READ_API_PUBLIC_URL" "SESSION_READ_API_MCP_READS" "SELFHOST_INTROSPECT_AUDIENCES"
-  "RELAYHISTORY_BACKEND" -}}
+  "RELAYHISTORY_BACKEND" "SESSION_ERASE_API_URL" "SESSION_ERASE_API_SECRET" -}}
 {{- if not (kindIs "invalid" .Values.selectedFeatures) }}{{ $managed = append $managed "SELFHOST_FEATURES" }}{{ end -}}
 {{- if .Values.services.relayhistoryReadApiUrl }}{{ $managed = concat $managed (list "RELAYHISTORY_READ_API_URL" "RELAYHISTORY_READ_API_EVENTS") }}{{ end -}}
 {{- if (.Values.postgresCa | default dict).enabled }}{{ $managed = append $managed "NODE_EXTRA_CA_CERTS" }}{{ end -}}

@@ -34,6 +34,18 @@
 {{- end -}}
 {{- if hasKey (.Values.podLabels | default dict) "agentworkforce.dev/analytics-producer" }}{{ fail "analytics manages the producer Pod label; remove it from podLabels" }}{{ end -}}
 {{- end -}}
+{{- $erase := .Values.sessionErasureApi -}}
+{{- if not (kindIs "map" $erase) }}{{ fail "sessionErasureApi must be an object" }}{{ end -}}
+{{- if not (kindIs "bool" $erase.enabled) }}{{ fail "sessionErasureApi.enabled must be a boolean" }}{{ end -}}
+{{- range $name := list "url" "existingSecret" "secretKey" }}{{ if not (kindIs "string" (index $erase $name)) }}{{ fail (printf "sessionErasureApi.%s must be a string" $name) }}{{ end }}{{ end -}}
+{{- if $erase.enabled -}}
+{{- $_ := include "relay-control.historyUpload.endpoint" (dict "name" "sessionErasureApi.url" "url" (required "sessionErasureApi.url is required" $erase.url) "internal" true) -}}
+{{- if or (not $erase.existingSecret) (gt (len $erase.existingSecret) 253) (not (regexMatch $object $erase.existingSecret)) }}{{ fail "sessionErasureApi.existingSecret must be a Kubernetes Secret name" }}{{ end -}}
+{{- if or (not $erase.secretKey) (gt (len $erase.secretKey) 253) (not (regexMatch $dataKey $erase.secretKey)) }}{{ fail "sessionErasureApi.secretKey must be a Kubernetes Secret data key" }}{{ end -}}
+{{- if or (eq $erase.existingSecret .Values.existingSecret) (eq $erase.existingSecret $i.existingSecret) (eq $erase.existingSecret $a.existingSecret) }}{{ fail "sessionErasureApi requires a dedicated Secret, separate from application, introspection and analytics credentials" }}{{ end -}}
+{{- else if or $erase.url $erase.existingSecret -}}
+{{- fail "sessionErasureApi.url and existingSecret require enabled=true" -}}
+{{- end -}}
 {{- end -}}
 
 {{- define "relay-control.analyticsEnv" -}}
@@ -46,5 +58,14 @@
 {{- if .Values.analytics.caConfigMap }}
 - { name: SELFHOST_ANALYTICS_COLLECTOR_CA_FILE, value: /var/run/analytics-collector-ca/ca.crt }
 {{- end }}
+{{- end }}
+{{- end -}}
+
+{{- define "relay-control.sessionErasureApiEnv" -}}
+{{- if .Values.sessionErasureApi.enabled }}
+- { name: SESSION_ERASE_API_URL, value: {{ .Values.sessionErasureApi.url | quote }} }
+- name: SESSION_ERASE_API_SECRET
+  valueFrom:
+    secretKeyRef: { name: {{ .Values.sessionErasureApi.existingSecret | quote }}, key: {{ .Values.sessionErasureApi.secretKey | quote }} }
 {{- end }}
 {{- end -}}

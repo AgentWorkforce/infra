@@ -35,6 +35,10 @@ components:
 global:
   singleHost:
     host: ""
+  # Shared by every Sessions ingest, consumer and read-API replica. The
+  # operator erase API and byte deletion remain separately default-off.
+  operatorSessionErase:
+    fenceEnforced: false
   # Optional customer logo for the sign-in page and dashboard. relay-webapp
   # serves it at <dashboard origin>/brand/<file> (no extra web server or
   # ingress route: / already reaches the dashboard), and relay-control sets

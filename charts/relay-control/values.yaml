@@ -333,6 +333,15 @@ services:
   # (relay-control #14/#18, first image 0.5.1). Requires the handoff above.
   sessionReadApiMcpReads: false
 
+# Operator per-session erase handoff to the private Sessions ingest Service.
+# Off by default. The bearer lives only in the referenced Secret; the chart
+# never accepts its value. The Sessions chart must use the same Secret/key.
+sessionErasureApi:
+  enabled: false
+  url: ""
+  existingSecret: ""
+  secretKey: SESSION_ERASE_API_SECRET
+
 # Token introspection audiences (SELFHOST_INTROSPECT_AUDIENCES): http(s)
 # origins a token may be introspected for. Empty uses
 # services.relayhistoryPublicUrl. Add the read API's exact READ_API_ORIGIN when
