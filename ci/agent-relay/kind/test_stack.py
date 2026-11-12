@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Render the actual charts and exercise acceptance/trust boundaries offline."""
 import json
+import importlib.util
 import os
 from pathlib import Path
 import subprocess
@@ -79,6 +80,10 @@ class Profiles(unittest.TestCase):
             config = json.loads((local.state / "docker-public/config.json").read_text())
             self.assertEqual(config, {"auths": {"https://index.docker.io/v1/": {}, "ghcr.io": {}},
                 "cliPluginsExtraDirs": ["/Applications/Docker.app/Contents/Resources/cli-plugins"]})
+            spec = importlib.util.spec_from_file_location("dev_config_writer_test", HERE.parent / "dev/dev.py")
+            dev = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(dev)
+            dev.validate_public_docker_config(local.state / "docker-public")
 
     def test_history_and_pipeline_have_independent_database_ownership(self):
         with tempfile.TemporaryDirectory(prefix="infra-kind-databases-") as directory, patch.object(stack, "ROOT", Path(directory)):

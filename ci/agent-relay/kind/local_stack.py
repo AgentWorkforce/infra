@@ -103,7 +103,8 @@ SITE = "https://relay.kind.agentrelay.com"
 HISTORY = "https://history.kind.agentrelay.com:8443"
 PGHOST = "postgres.agent-relay.svc.cluster.local"
 COLLECTOR_URL = "https://telemetry-collector.agent-relay.svc.cluster.local:8443/v1/events"
-TELEMETRY = {"control": "relaycontrol", "ingest": "session-ingest", "consumer": "session-pipeline-consumer", "reader": "session-read-api", "brief": "session-brief", "cast": "relaycast"}
+TELEMETRY = {"control": "relaycontrol", "ingest": "session-ingest", "consumer": "session-pipeline-consumer", "reader": "session-read-api", "brief": "session-brief", "cast": "relaycast", "cast-proof": "relaycast"}
+CAST_PROOF_DEPLOYMENT = "local-kind-postgres-proof"
 HOSTS = [PGHOST, "relay.kind.agentrelay.com", "cast.kind.agentrelay.com", "history.kind.agentrelay.com", "files.kind.agentrelay.com", "telemetry-collector.agent-relay.svc.cluster.local"]
 
 
@@ -412,7 +413,8 @@ GRANT TEMP ON DATABASE relaycast TO relaycast_owner;""")
             token = c["collector"] if name == "control" else c["collector_" + name]
             self.secret("local-telemetry-" + name, {"token": token})
             tokens[name] = token
-            producers.append({"name": "local-" + name, "component": component, "deployment_id": "local-kind",
+            producers.append({"name": "local-" + name, "component": component,
+                "deployment_id": CAST_PROOF_DEPLOYMENT if name == "cast-proof" else "local-kind",
                 "token_file": "/var/run/secrets/telemetry-producers/" + name})
         self.secret("local-telemetry-producers", {"producers.json": json.dumps(producers), **tokens})
         self.sql("hoopdb", "ALTER ROLE sessions_pipeline_runtime PASSWORD '" + c["sessions_pipeline_runtime"] + "';")

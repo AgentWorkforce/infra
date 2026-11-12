@@ -33,13 +33,35 @@ class CastCollectorTests(unittest.TestCase):
             path.write_text("\n".join(json.dumps(e) for e in [event, *others]) + "\n")
             path.chmod(0o600)
             script = SCRIPT.replace("const directory='/var/lib/telemetry/segments';", "const directory=" + json.dumps(tmp) + ";")
-            config = json.dumps({"since": (now - datetime.timedelta(seconds=10)).isoformat()})
+            config = json.dumps({"since": (now - datetime.timedelta(seconds=10)).isoformat(), "deploymentId": "local-kind"})
             result = subprocess.run(["node", "-e", script], input=config, capture_output=True, text=True, check=True)
             self.assertEqual(json.loads(result.stdout), {"matchingEvents": 1, "scannedSegments": 1, "privateSegments": True})
             self.assertNotIn("private-marker", result.stdout + result.stderr)
             path.chmod(0o644)
             result = subprocess.run(["node", "-e", script], input=config, capture_output=True, text=True)
             self.assertNotEqual(result.returncode, 0)
+
+    def test_main_cast_traffic_cannot_satisfy_the_postgres_companion(self):
+        now = datetime.datetime.now(datetime.timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "1700000000000-0000000000-11111111-1111-4111-8111-111111111111.ndjson"
+            event = {"component": "relaycast", "deployment_id": "local-kind", "occurred_at": now.isoformat()}
+            path.write_text(json.dumps(event) + "\n")
+            path.chmod(0o600)
+            script = SCRIPT.replace("const directory='/var/lib/telemetry/segments';", "const directory=" + json.dumps(tmp) + ";")
+            config = {"kubeconfig": "fixture", "historySince": (now - datetime.timedelta(seconds=10)).isoformat()}
+            real_run = subprocess.run
+            def run_observer(argv, **kwargs):
+                self.assertEqual(json.loads(kwargs["input"])["deploymentId"], "local-kind-postgres-proof")
+                return real_run(["node", "-e", script], **kwargs)
+            with patch("telemetry.subprocess.run", side_effect=run_observer):
+                with self.assertRaisesRegex(Failure, "cast_collector_events_not_proven"):
+                    cast_collector(config, "postgres", deployment_id="local-kind-postgres-proof")
+                with path.open("a") as target:
+                    target.write(json.dumps({**event, "deployment_id": "local-kind-postgres-proof"}) + "\n")
+                result = cast_collector(config, "postgres", deployment_id="local-kind-postgres-proof")
+            self.assertEqual(result["evidence"]["matchingEvents"], 1)
+            self.assertEqual(result["evidence"]["deploymentId"], "local-kind-postgres-proof")
 
 
 if __name__ == "__main__":

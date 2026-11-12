@@ -474,6 +474,27 @@ class LocalTests(unittest.TestCase):
             with self.subTest(backend=backend), patch.multiple(local_stack, CAST_BACKEND=backend, CAST=original):
                 self.assert_final_render(experimental=False)
 
+    def test_postgres_companion_has_a_separate_registered_collector_credential(self):
+        stack = LocalStack.__new__(LocalStack)
+        stack.apply = lambda *args, **kwargs: None
+        secrets = {}
+        stack.secret = lambda name, data: secrets.update({name: data})
+        stack.sql = lambda *args: None
+        stack.configure_model = lambda: None
+        credentials = {"collector": "control-token", "sessions_pipeline_runtime": "runtime",
+            "locker": "locker", "encryption": "encryption",
+            **{"collector_" + name: name + "-token" for name in local_stack.TELEMETRY if name != "control"}}
+        stack.support_credentials(credentials)
+        registry = secrets["local-telemetry-producers"]
+        producers = {producer["name"]: producer for producer in json.loads(registry["producers.json"])}
+        main, proof = producers["local-cast"], producers["local-cast-proof"]
+        self.assertEqual(main["deployment_id"], "local-kind")
+        self.assertEqual(proof["deployment_id"], local_stack.CAST_PROOF_DEPLOYMENT)
+        self.assertEqual(proof["component"], "relaycast")
+        self.assertNotEqual(main["token_file"], proof["token_file"])
+        self.assertNotEqual(secrets["local-telemetry-cast"]["token"], secrets["local-telemetry-cast-proof"]["token"])
+        self.assertEqual(registry["cast-proof"], secrets["local-telemetry-cast-proof"]["token"])
+
     def test_cast_backend_default_and_opt_outs_are_explicit(self):
         self.assertEqual(local_stack.cast_backend({}), "durable-actors")
         for name in ("durable-actors", "sqlite", "postgres"):

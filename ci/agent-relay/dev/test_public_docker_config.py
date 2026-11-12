@@ -35,6 +35,16 @@ class PublicDockerConfig(unittest.TestCase):
         self.assertEqual(environment["DOCKER_CONFIG"], "/local/anonymous-config")
         self.assertEqual(dict(os.environ), original)
 
+    def test_plugin_discovery_allows_only_the_bundled_desktop_directory(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.json"
+            auths = {"ghcr.io": {}, "https://index.docker.io/v1/": {}}
+            for plugins in ([], ["/tmp/plugins"], "bundled", [
+                    "/Applications/Docker.app/Contents/Resources/cli-plugins", "/tmp/plugins"]):
+                path.write_text(json.dumps({"auths": auths, "cliPluginsExtraDirs": plugins}))
+                with self.assertRaisesRegex(dev.Refused, "anonymous_docker_config_required"):
+                    dev.validate_public_docker_config(tmp)
+
 
 if __name__ == "__main__":
     unittest.main()

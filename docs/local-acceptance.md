@@ -14,7 +14,10 @@ and [issue #648](https://github.com/AgentWorkforce/relaycast/issues/648).
 A successful API scope therefore reports `pass_with_skips`, not an unqualified
 pass, and names the required `postgres_cast_collector` companion. Run
 `make local-postgres-cast-proof` for its separate real Postgres/messaging/event
-receipt. The full release gate still refuses skipped or incomplete checks.
+receipt. The companion has its own `local-kind-postgres-proof` producer identity
+and credential; ordinary `local-kind` traffic cannot satisfy its event check.
+Only one companion proof may run per fixture at a time. The full release gate
+still refuses skipped or incomplete checks.
 In Postgres/SQLite mode the observer requires a fresh Relaycast collector event
 since `historySince`; generate real messaging traffic before observing it.
 

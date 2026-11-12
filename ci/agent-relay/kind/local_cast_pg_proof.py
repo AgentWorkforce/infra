@@ -1,5 +1,6 @@
 """Isolated Postgres Relaycast messaging/collector proof beside the local actor lane."""
 from datetime import datetime, timezone
+import fcntl
 import json
 from pathlib import Path
 import secrets
@@ -38,10 +39,26 @@ def prove(stack):
     # Establish the owned cluster before reading credentials or writing resources.
     stack.docker(require_space=False)
     stack.owned()
+    # Only one companion may emit this fixture's dedicated producer identity.
+    # Keep the lock through observation and cleanup, including failed installs.
+    with (stack.state / "postgres-cast-proof.lock").open("a") as lock:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            raise StackError("Postgres companion proof is already running") from None
+        return prove_owned(stack)
+
+
+def prove_owned(stack):
     selected = json.loads((stack.state / "selection.json").read_text())
     if not selected.get("relaycastBackend"):
         raise StackError("Postgres companion requires a fresh local backend-aware fixture")
-    from local_stack import AA_VALUES, reference, image, pgurl
+    leftovers = json.loads(stack.k("get", "deployments,pods", "-o", "json").stdout)
+    for resource in leftovers.get("items", []):
+        metadata = resource.get("spec", {}).get("template", {}).get("metadata", {}) if resource.get("kind") == "Deployment" else resource.get("metadata", {})
+        if metadata.get("labels", {}).get("local.agentrelay.dev/proof"):
+            raise StackError("A prior Postgres companion still exists; verify its cleanup before retrying")
+    from local_stack import AA_VALUES, CAST_PROOF_DEPLOYMENT, reference, image, pgurl
     c = json.loads((stack.state / "credentials.json").read_text())
     if not all(c.get(key) for key in ("relaycast_owner", "relaycast_runtime")):
         raise StackError("Postgres companion credentials are unavailable; no existing roles are adopted")
@@ -70,8 +87,8 @@ def prove(stack):
         values = {"fullnameOverride": release, "image": image(image_ref), "existingSecret": secret_name,
             "baseUrl": "https://cast.kind.agentrelay.com", "runtime": {"backend": "postgres", "postgres": {"image": image(image_ref)}},
             "postgresCa": {"enabled": True, "configMap": "local-ca", "key": "ca.crt"},
-            "analytics": {"enabled": True, "deploymentId": "local-kind", "collectorUrl": "https://telemetry-collector.agent-relay.svc.cluster.local:8443/v1/events",
-                "existingSecret": "local-telemetry-cast", "caConfigMap": "local-ca"},
+            "analytics": {"enabled": True, "deploymentId": CAST_PROOF_DEPLOYMENT, "collectorUrl": "https://telemetry-collector.agent-relay.svc.cluster.local:8443/v1/events",
+                "existingSecret": "local-telemetry-cast-proof", "caConfigMap": "local-ca"},
             "persistence": {"size": "64Mi", "annotations": {"helm.sh/resource-policy": None}},
             "podLabels": {"local.agentrelay.dev/proof": run_id}, "networkPolicy": {"enabled": False}, "ingress": {"enabled": False}}
         private_json(values_file, values)
@@ -85,7 +102,8 @@ def prove(stack):
         deadline = time.monotonic() + 30
         while True:
             try:
-                collector = cast_collector({"kubeconfig": str(stack.kubeconfig), "historySince": started}, "postgres")
+                collector = cast_collector({"kubeconfig": str(stack.kubeconfig), "historySince": started}, "postgres",
+                    deployment_id=CAST_PROOF_DEPLOYMENT)
                 break
             except Exception:
                 if time.monotonic() >= deadline:
