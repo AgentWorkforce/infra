@@ -116,12 +116,18 @@ jobs:
           VERSION: ${{ steps.gate.outputs.version }}
           HEAD_SHA: ${{ steps.gate.outputs.head_sha }}
           MERGE_SHA: ${{ steps.gate.outputs.merge_sha }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
           set -euo pipefail
           [[ "$VERSION" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
           [[ "$(git rev-parse HEAD)" == "$MERGE_SHA" ]]
-          git fetch origin main --no-tags
+          git fetch --no-tags origin main
           git merge-base --is-ancestor "$MERGE_SHA" origin/main
+          git fetch --no-tags origin \
+            "refs/pull/${PR_NUMBER}/head:refs/remotes/origin/accepted-release-head"
+          [[ "$(git rev-parse refs/remotes/origin/accepted-release-head)" == "$HEAD_SHA" ]]
+          [[ "$(git rev-parse "$HEAD_SHA^{tree}")" == "$(git rev-parse "$MERGE_SHA^{tree}")" ]] \
+            || { echo "::error::Accepted head and tagged merge trees differ."; exit 1; }
           candidate="releases/agent-relay-${VERSION}"
           [[ -f "$candidate/pins.json" && -f "$candidate/values.yaml" ]]
           jq -e --arg version "$VERSION" \

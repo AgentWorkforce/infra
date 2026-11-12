@@ -188,9 +188,11 @@ jobs:
           # neither event can disappear in GitHub's one-pending concurrency queue.
           pushed=false
           for attempt in 1 2 3 4 5; do
+            git fetch origin main
             if [[ "$remote_exists" == true ]]; then
               git fetch origin "$BRANCH"
               git checkout -B "$BRANCH" FETCH_HEAD
+              git merge --no-edit origin/main
             else
               git checkout -B "$BRANCH" origin/main
             fi

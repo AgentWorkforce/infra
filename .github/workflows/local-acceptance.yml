@@ -172,6 +172,8 @@ jobs:
           checkout="$GITHUB_WORKSPACE/.acceptance/candidate"
           trusted_sha="$(git -C "$trusted" rev-parse HEAD)"
           [[ "$(git -C "$checkout" rev-parse HEAD)" == "$HEAD_SHA" ]]
+          git -C "$checkout" merge-base --is-ancestor "$BASE_SHA" "$HEAD_SHA" \
+            || { echo "::error::Candidate head does not contain the current main base."; exit 1; }
           prefix="releases/agent-relay-${VERSION}/"
           python3 - "$checkout" "$BASE_SHA" "$HEAD_SHA" "$prefix" <<'PY'
           import subprocess

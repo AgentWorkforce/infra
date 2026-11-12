@@ -133,6 +133,13 @@ that exact candidate commit; the tag gate accepts only that check and verifies
 that its backing Actions run used the main-defined workflow. A PR-ref workflow
 must never be admitted to the protected runner group.
 
+Candidate automation merges the current `main` into the release branch before
+requesting acceptance, and qualification refuses a head that does not contain
+the PR's current base commit. After merge, the tag gate compares the complete
+Git trees of the accepted head and merge commit. Any base advance, merge-time
+edit or release-input drift therefore requires a new candidate head and a new
+acceptance run rather than publishing unqualified files.
+
 The release check requires the candidate ledger to contain Control, Webapp and
 Sessions Pipeline pins. `values.yaml` must byte-for-byte equal the trusted
 UTF-8/LF render of that ledger. The signed receipt records the trusted observer
