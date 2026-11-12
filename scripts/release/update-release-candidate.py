@@ -14,6 +14,7 @@ from typing import NoReturn
 SEMVER = re.compile(r"^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$")
 DIGEST = re.compile(r"^sha256:[a-f0-9]{64}$")
 COMMIT = re.compile(r"^[a-f0-9]{40}$")
+RUN_ID = re.compile(r"^[1-9][0-9]{0,19}$")
 ALLOWED_SCRUBBER = re.compile(r"^0\.5\.0-alpha\.(5|[89]|[1-9][0-9]+)$")
 MARKER_START = "<!-- release-candidate-pins:start -->"
 MARKER_END = "<!-- release-candidate-pins:end -->"
@@ -106,7 +107,11 @@ def candidate_dir(root: pathlib.Path, version: str) -> pathlib.Path:
     return root / "releases" / f"agent-relay-{version}"
 
 
-def load_pins(path: pathlib.Path, version: str) -> dict[str, object]:
+def load_pins(
+    path: pathlib.Path,
+    version: str,
+    allow_legacy_sessions: bool = False,
+) -> dict[str, object]:
     if not path.exists():
         return {"schema": 1, "version": version, "pins": {}}
     data = json.loads(path.read_text(encoding="utf-8"))
@@ -120,8 +125,16 @@ def load_pins(path: pathlib.Path, version: str) -> dict[str, object]:
     for component, pin in pins.items():
         if component not in COMPONENTS or not isinstance(pin, dict):
             fail(f"{path}: unsupported pin: {component}")
-        expected = {"repository", "digest", "sourceRepository", "sourceRevision"}
-        if set(pin) != expected:
+        base_fields = {"repository", "digest", "sourceRepository", "sourceRevision"}
+        expected = set(base_fields)
+        if component == "sessions-pipeline":
+            expected.add("publishRunId")
+        legacy_sessions = (
+            component == "sessions-pipeline"
+            and allow_legacy_sessions
+            and set(pin) == base_fields
+        )
+        if set(pin) != expected and not legacy_sessions:
             fail(f"{path}: malformed pin: {component}")
         metadata = COMPONENTS[component]
         if pin["repository"] != metadata["imageRepository"]:
@@ -129,6 +142,12 @@ def load_pins(path: pathlib.Path, version: str) -> dict[str, object]:
         if pin["sourceRepository"] != metadata["sourceRepository"]:
             fail(f"{path}: source repository drift for {component}")
         validate_pin(component, pin["digest"], pin["sourceRevision"])
+        if component == "sessions-pipeline" and not legacy_sessions and (
+            not isinstance(pin["publishRunId"], int)
+            or isinstance(pin["publishRunId"], bool)
+            or not RUN_ID.fullmatch(str(pin["publishRunId"]))
+        ):
+            fail(f"{path}: sessions-pipeline publishRunId must be a positive run id")
     return data
 
 
@@ -199,19 +218,45 @@ def validate_candidate(pins_path: pathlib.Path, values_path: pathlib.Path, versi
     return data
 
 
-def update(root: pathlib.Path, version: str, component: str, digest: str, source_sha: str) -> pathlib.Path:
+def update(
+    root: pathlib.Path,
+    version: str,
+    component: str,
+    digest: str,
+    source_sha: str,
+    publish_run_id: int | None = None,
+) -> pathlib.Path:
     validate_version(version)
     validate_pin(component, digest, source_sha)
+    if component == "sessions-pipeline":
+        if (
+            not isinstance(publish_run_id, int)
+            or isinstance(publish_run_id, bool)
+            or not RUN_ID.fullmatch(str(publish_run_id))
+        ):
+            fail("sessions-pipeline requires a positive publish_run_id")
+    elif publish_run_id is not None:
+        fail("publish_run_id applies only to sessions-pipeline")
     directory = candidate_dir(root, version)
     pins_path = directory / "pins.json"
-    data = load_pins(pins_path, version)
+    # The first Sessions dispatch after this field was introduced must be able
+    # to migrate an already-open candidate. All validation and tag paths remain
+    # strict, and the update below immediately writes the provenance-bound id.
+    data = load_pins(
+        pins_path,
+        version,
+        allow_legacy_sessions=component == "sessions-pipeline",
+    )
     metadata = COMPONENTS[component]
-    data["pins"][component] = {
+    pin = {
         "repository": metadata["imageRepository"],
         "digest": digest,
         "sourceRepository": metadata["sourceRepository"],
         "sourceRevision": source_sha,
     }
+    if component == "sessions-pipeline":
+        pin["publishRunId"] = publish_run_id
+    data["pins"][component] = pin
     data["pins"] = dict(sorted(data["pins"].items()))
     directory.mkdir(parents=True, exist_ok=True)
     pins_path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
@@ -230,9 +275,15 @@ def pins_table(data: dict[str, object]) -> str:
     for component, pin in data["pins"].items():
         rows.append(
             f"| `{component}` | `{pin['repository']}@{pin['digest']}` | "
-            f"`{pin['sourceRepository']}@{pin['sourceRevision']}` |"
+            f"`{pin['sourceRepository']}@{pin['sourceRevision']}`"
+            + (
+                f" (publish run `{pin['publishRunId']}`)"
+                if component == "sessions-pipeline"
+                else ""
+            )
+            + " |"
         )
-    rows += ["", "Updated only after GitHub attestation verification.", MARKER_END]
+    rows += ["", "Updated only after component provenance verification.", MARKER_END]
     return "\n".join(rows)
 
 
@@ -274,6 +325,7 @@ def parse_args() -> argparse.Namespace:
     update_parser.add_argument("--component", required=True)
     update_parser.add_argument("--digest", required=True)
     update_parser.add_argument("--source-sha", required=True)
+    update_parser.add_argument("--publish-run-id", type=int)
 
     body_parser = subparsers.add_parser("render-body")
     body_parser.add_argument("--pins", type=pathlib.Path, required=True)
@@ -304,7 +356,12 @@ def main() -> int:
                 validate_candidate(args.pins, args.values, args.version)
         elif args.command == "update":
             directory = update(
-                args.root, args.version, args.component, args.digest, args.source_sha
+                args.root,
+                args.version,
+                args.component,
+                args.digest,
+                args.source_sha,
+                args.publish_run_id,
             )
             print(directory)
         else:
