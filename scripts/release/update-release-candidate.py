@@ -113,7 +113,7 @@ def frozen(path: pathlib.Path) -> bool:
         return False
     if path.is_symlink() or not path.is_file():
         fail(f"{path}: FROZEN marker must be a regular file")
-    if path.read_text(encoding="utf-8") != FROZEN_MARKER:
+    if path.read_bytes() != FROZEN_MARKER.encode("utf-8"):
         fail(f"{path}: malformed FROZEN marker")
     return True
 
