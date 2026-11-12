@@ -353,6 +353,12 @@ class ReleaseCandidateGateTest(unittest.TestCase):
         self.assertIn("repository_dispatch:", acceptance)
         self.assertIn("workflow_dispatch:", acceptance)
         self.assertNotIn("pull_request:", acceptance)
+        self.assertIn(
+            "group: local-acceptance-${{ github.event.client_payload.pr_number || "
+            "inputs.pr_number }}-${{ github.event.client_payload.head_sha || "
+            "inputs.head_sha }}",
+            acceptance,
+        )
         self.assertIn("cancel-in-progress: false", acceptance)
         self.assertNotIn("cancel-in-progress: true", acceptance)
         self.assertIn("Check out the trusted verifier from main", acceptance)
@@ -391,6 +397,17 @@ class ReleaseCandidateGateTest(unittest.TestCase):
         )
         self.assertIn("Selected repositories", documentation)
         self.assertIn("Selected workflows", documentation)
+
+    def test_acceptance_scheduler_slots_are_isolated_by_candidate_head(self):
+        def group(pr_number, head_sha):
+            return f"local-acceptance-{pr_number}-{head_sha}"
+
+        active_a = group(245, "a" * 40)
+        pending_b = group(245, "b" * 40)
+        delayed_a = group(245, "a" * 40)
+
+        self.assertEqual(active_a, delayed_a)
+        self.assertNotEqual(pending_b, delayed_a)
 
 
 if __name__ == "__main__":
