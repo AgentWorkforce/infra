@@ -74,7 +74,7 @@ const deliveryRows = [...deliv].map(([phase, h]) => {
 const recv = new Map();
 for (const s of sinks) for (const [k, v] of Object.entries(s.streams)) recv.set(k, v);
 const integ = new Map();
-const bump = (phase, f, n) => { const r = integ.get(phase) || { arm, phase, expected: 0, delivered: 0, lost: 0, duplicate: 0, redelivered: 0, reordered: 0, unexpected: 0, truncated: 0 }; r[f] += n; integ.set(phase, r); };
+const bump = (phase, f, n) => { const r = integ.get(phase) || { arm, phase, expected: 0, delivered: 0, lost: 0, duplicate: 0, redelivered: 0, reordered: 0, reordered_after_timeout: 0, unexpected: 0, truncated: 0 }; r[f] += n; integ.set(phase, r); };
 for (const p of producers) for (const st of p.streams) {
   const failed = new Set(st.failed); const amb = new Set(st.ambiguous);
   for (const t of st.targets) {
@@ -91,7 +91,13 @@ for (const p of producers) for (const st of p.streams) {
       if (failed.has(k)) unexpected++; else if (!amb.has(k)) got++;
     }
     bump(st.phase, 'delivered', got); bump(st.phase, 'lost', exp - got); bump(st.phase, 'unexpected', unexpected);
-    bump(st.phase, 'duplicate', r.dups); bump(st.phase, 'redelivered', r.redelivered || 0); bump(st.phase, 'reordered', r.ooo);
+    bump(st.phase, 'duplicate', r.dups); bump(st.phase, 'redelivered', r.redelivered || 0);
+    // A late arrival is a reorder only when neither it nor anything it
+    // overtook was a send the client gave up on (timeout): after a timeout the
+    // client sends N+1 while N may still be queued server-side.
+    const ooo = r.oooSeqs ? r.oooSeqs.filter((k) => !amb.has(k)).length : r.ooo;
+    bump(st.phase, 'reordered', amb.size ? ooo : r.ooo);
+    bump(st.phase, 'reordered_after_timeout', r.oooSeqs ? r.oooSeqs.length - ooo : 0);
   }
 }
 

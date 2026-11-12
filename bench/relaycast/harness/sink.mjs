@@ -50,14 +50,14 @@ function genOf(s, seq) {
 function track(phase, producer, stream, seq, receiver, gen) {
   const key = `${producer}|${stream}|${receiver}`;
   let s = streams.get(key);
-  if (!s) streams.set(key, (s = { phase, last: 0, distinct: 0, dups: 0, redelivered: 0, ooo: 0, missing: new Set(), gens: [[1, gen]] }));
+  if (!s) streams.set(key, (s = { phase, last: 0, distinct: 0, dups: 0, redelivered: 0, ooo: 0, missing: new Set(), oooSeqs: [], gens: [[1, gen]] }));
   if (seq > s.last && s.gens[s.gens.length - 1][1] !== gen) s.gens.push([seq, gen]);
   if (seq === s.last + 1) { s.last = seq; s.distinct++; return; }
   if (seq > s.last + 1) {
     for (let k = s.last + 1; k < seq; k++) s.missing.add(k);
     s.last = seq; s.distinct++; return;
   }
-  if (s.missing.delete(seq)) { s.distinct++; s.ooo++; return; }
+  if (s.missing.delete(seq)) { s.distinct++; s.ooo++; if (s.oooSeqs.length < 5000) s.oooSeqs.push(seq); return; }
   if (genOf(s, seq) === gen) s.dups++; else s.redelivered++;
 }
 
@@ -213,7 +213,7 @@ setInterval(() => { for (const c of conns) c.heartbeat(); }, HEARTBEAT_MS).unref
 
 function snapshot() {
   const st = {};
-  for (const [k, s] of streams) st[k] = { phase: s.phase, last: s.last, distinct: s.distinct, dups: s.dups, redelivered: s.redelivered, ooo: s.ooo, missing: [...s.missing].slice(0, 1000), missingCount: s.missing.size };
+  for (const [k, s] of streams) st[k] = { phase: s.phase, last: s.last, distinct: s.distinct, dups: s.dups, redelivered: s.redelivered, ooo: s.ooo, oooSeqs: s.oooSeqs, missing: [...s.missing].slice(0, 1000), missingCount: s.missing.size };
   return {
     kind: 'sink', shard: SHARD, run: fixture.run, at: new Date().toISOString(), ready,
     sockets: conns.length, connected: conns.filter((c) => c.ready).length, drops: conns.reduce((n, c) => n + c.drops, 0),
