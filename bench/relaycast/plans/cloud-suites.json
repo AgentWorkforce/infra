@@ -251,8 +251,8 @@
   },
   {
    "name": "heavy",
-   "sinks": 4,
-   "producers": 6,
+   "sinks": 6,
+   "producers": 12,
    "stepped": true,
    "fixture": {
     "RCB_WORKSPACES": 40,
@@ -358,7 +358,7 @@
   },
   {
    "name": "ws-5k",
-   "sinks": 4,
+   "sinks": 6,
    "producers": 2,
    "fixture": {
     "RCB_WORKSPACES": 20,
@@ -427,7 +427,7 @@
   },
   {
    "name": "chaos",
-   "sinks": 4,
+   "sinks": 6,
    "producers": 4,
    "fixture": {
     "RCB_WORKSPACES": 40,
@@ -636,5 +636,9 @@
     }
    ]
   }
- ]
+ ],
+ "loadgenCheck": {
+  "5000": "pass: 4994.5/s OK, corrected p99 2.6 ms (8 shards)",
+  "10000": "throughput 9940.6/s OK, corrected p95 3.6 ms, p99 2.8 s client tail with 8 shards; heavy uses 12 shards"
+ }
 }
