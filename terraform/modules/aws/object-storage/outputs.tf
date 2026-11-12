@@ -32,3 +32,13 @@ output "history_upload_role_arn" {
   description = "Write-only upload role for Control's SELFHOST_HISTORY_UPLOAD_ROLE_ARN (null when disabled)."
   value       = try(aws_iam_role.history_upload[0].arn, null)
 }
+
+output "bucket_policy_statements" {
+  description = "Every statement this module puts in the bucket policy (TLS denies, history_upload's inbox wall, additional_policy_statements), also when unmanaged includes \"policy\" and the policy is not applied. Merge them by hand into an unmanaged policy."
+  value       = concat(local.tls_deny_statements, local.upload_bucket_denies, var.additional_policy_statements)
+}
+
+output "upload_wall_statements" {
+  description = "history_upload's bucket-policy denies (the upload inbox wall), empty without history_upload. A caller with unmanaged \"policy\" must confirm the live policy contains them."
+  value       = local.upload_bucket_denies
+}

@@ -56,11 +56,11 @@ run "defaults_are_private_and_encrypted" {
     error_message = "force_destroy is off by default."
   }
   assert {
-    condition     = contains([for s in jsondecode(aws_s3_bucket_policy.this.policy).Statement : s.Sid], "DenyInsecureTransport")
+    condition     = contains([for s in jsondecode(aws_s3_bucket_policy.this[0].policy).Statement : s.Sid], "DenyInsecureTransport")
     error_message = "The bucket policy must deny non-TLS requests."
   }
   assert {
-    condition     = one([for s in jsondecode(aws_s3_bucket_policy.this.policy).Statement : s.Condition.NumericLessThan["s3:TlsVersion"] if s.Sid == "DenyTLSBelow12"]) == "1.2"
+    condition     = one([for s in jsondecode(aws_s3_bucket_policy.this[0].policy).Statement : s.Condition.NumericLessThan["s3:TlsVersion"] if s.Sid == "DenyTLSBelow12"]) == "1.2"
     error_message = "The bucket policy must deny TLS below 1.2."
   }
   assert {
@@ -197,7 +197,7 @@ run "direct_upload_is_write_only_and_consumer_isolated" {
     error_message = "The frozen cross-repository contract vector must be writable under the IAM namespace."
   }
   assert {
-    condition     = one([for s in jsondecode(aws_s3_bucket_policy.this.policy).Statement : s.Condition.ArnNotEquals["aws:PrincipalArn"] if s.Sid == "UploadInboxConsumerOnly"]) == ["arn:aws:iam::111111111111:role/consumer"]
+    condition     = one([for s in jsondecode(aws_s3_bucket_policy.this[0].policy).Statement : s.Condition.ArnNotEquals["aws:PrincipalArn"] if s.Sid == "UploadInboxConsumerOnly"]) == ["arn:aws:iam::111111111111:role/consumer"]
     error_message = "Reader/writer roles must not read raw upload objects through broad legacy prefix grants."
   }
   assert {
@@ -216,4 +216,31 @@ run "direct_upload_requires_a_customer_managed_key" {
     }
   }
   expect_failures = [aws_iam_role.history_upload]
+}
+
+run "unmanaged_policy_and_lifecycle_are_left_alone" {
+  command = plan
+  variables {
+    unmanaged   = ["policy", "lifecycle_configuration"]
+    kms_key_arn = "arn:aws:kms:us-west-2:111111111111:key/00000000-0000-4000-8000-000000000000"
+    history_upload = {
+      name               = "desktop-upload"
+      control_role_arn   = "arn:aws:iam::111111111111:role/control"
+      consumer_role_arns = ["arn:aws:iam::111111111111:role/consumer"]
+    }
+  }
+  assert {
+    condition     = length(aws_s3_bucket_policy.this) == 0 && length(aws_s3_bucket_lifecycle_configuration.this) == 0
+    error_message = "Unmanaged policy and lifecycle configuration are neither created nor replaced."
+  }
+  assert {
+    condition     = toset([for s in output.upload_wall_statements : s.Sid]) == toset(["UploadInboxConsumerOnly", "UploadInboxCreateOnly"]) && toset([for s in output.bucket_policy_statements : s.Sid]) == toset(["DenyInsecureTransport", "DenyTLSBelow12", "UploadInboxConsumerOnly", "UploadInboxCreateOnly"])
+    error_message = "The statements the unmanaged policy must carry are still published."
+  }
+}
+
+run "unmanaged_rejects_other_resources" {
+  command = plan
+  variables { unmanaged = ["versioning"] }
+  expect_failures = [var.unmanaged]
 }

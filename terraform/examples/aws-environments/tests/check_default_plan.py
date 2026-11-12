@@ -52,7 +52,9 @@ BOTH_OFF = {
     *(SESSIONS + 'aws_eks_pod_identity_association.access["relay/agent-relay-prod/agent-relay-' + sa + '"]' for sa in ("worker", "alleyoop", "session-ingest-api")),
     SESSIONS + "aws_iam_role.access[0]",
     SESSIONS + "aws_iam_role_policy.access[0]",
-    *(SESSIONS + "aws_s3_bucket" + suffix + ".this" for suffix in ("", "_lifecycle_configuration", "_ownership_controls", "_policy", "_public_access_block", "_server_side_encryption_configuration", "_versioning")),
+    *(SESSIONS + "aws_s3_bucket" + suffix + ".this" for suffix in ("", "_ownership_controls", "_public_access_block", "_server_side_encryption_configuration", "_versioning")),
+    SESSIONS + "aws_s3_bucket_lifecycle_configuration.this[0]",
+    SESSIONS + "aws_s3_bucket_policy.this[0]",
 }
 BUCKETS = {"both_off_minimal_inputs": "agent-relay-prod-111111111111-us-west-2-sessions", "both_off_existing_bucket_name": "existing-relay-sessions"}
 

@@ -8,11 +8,12 @@
 # plus in-place updates. Every import ID is the bucket name. A configuration the
 # existing bucket does not have (S3 has no bucket policy or lifecycle
 # configuration until one is set) cannot be imported: list it in
-# sessions_bucket_import_skip and it plans as a create instead.
+# sessions_bucket_import_skip and it plans as a create instead. A configuration
+# in sessions_bucket_unmanaged is neither imported nor created.
 locals {
   sessions_bucket_import_ids = var.sessions_bucket_import ? merge(
     { bucket = var.sessions_bucket_name },
-    { for kind in setsubtract(local.sessions_bucket_import_configurations, var.sessions_bucket_import_skip) : kind => var.sessions_bucket_name },
+    { for kind in setsubtract(local.sessions_bucket_import_configurations, setunion(var.sessions_bucket_import_skip, var.sessions_bucket_unmanaged)) : kind => var.sessions_bucket_name },
   ) : {}
   sessions_bucket_import_configurations = toset(["public_access_block", "ownership_controls", "server_side_encryption_configuration", "versioning", "lifecycle_configuration", "policy"])
 }
@@ -49,12 +50,12 @@ import {
 
 import {
   for_each = { for k, id in local.sessions_bucket_import_ids : k => id if k == "lifecycle_configuration" }
-  to       = module.sessions_bucket.aws_s3_bucket_lifecycle_configuration.this
+  to       = module.sessions_bucket.aws_s3_bucket_lifecycle_configuration.this[0]
   id       = each.value
 }
 
 import {
   for_each = { for k, id in local.sessions_bucket_import_ids : k => id if k == "policy" }
-  to       = module.sessions_bucket.aws_s3_bucket_policy.this
+  to       = module.sessions_bucket.aws_s3_bucket_policy.this[0]
   id       = each.value
 }

@@ -83,7 +83,7 @@ override_resource {
 }
 override_resource {
   override_during = plan
-  target          = module.sessions_bucket.aws_s3_bucket_lifecycle_configuration.this
+  target          = module.sessions_bucket.aws_s3_bucket_lifecycle_configuration.this[0]
   values          = { id = "existing-relay-sessions", bucket = "existing-relay-sessions", region = "us-west-2", expected_bucket_owner = "", transition_default_minimum_object_size = "all_storage_classes_128K" }
 }
 
@@ -159,4 +159,80 @@ run "off_by_default_imports_nothing" {
     condition     = length(local.sessions_bucket_import_ids) == 0
     error_message = "No import unless sessions_bucket_import is true."
   }
+}
+
+# The live policy as AWS returns it: one-item lists collapsed to strings,
+# reordered, with other statements around the wall.
+run "import_unmanaged_policy_and_lifecycle" {
+  command = plan
+  variables {
+    sessions_bucket_unmanaged = ["policy", "lifecycle_configuration"]
+  }
+  override_data {
+    target = data.aws_s3_bucket_policy.sessions_existing[0]
+    values = {
+      policy = jsonencode({
+        Version = "2012-10-17"
+        Statement = [
+          { Sid = "SomeoneElsesStatement", Effect = "Allow", Principal = { AWS = "arn:aws:iam::111111111111:role/other" }, Action = "s3:GetObject", Resource = "arn:aws:s3:::existing-relay-sessions/other/*" },
+          { Sid = "UploadInboxCreateOnly", Effect = "Deny", Principal = "*", Action = "s3:PutObject", Resource = "arn:aws:s3:::existing-relay-sessions/96bulls/.upload-inbox/*", Condition = { Null = { "s3:if-none-match" = "true" } } },
+          { Sid = "UploadInboxConsumerOnly", Effect = "Deny", Principal = { AWS = "*" }, Action = ["s3:DeleteObjectVersion", "s3:GetObject", "s3:DeleteObject", "s3:GetObjectVersion"], Resource = "arn:aws:s3:::existing-relay-sessions/96bulls/.upload-inbox/*", Condition = { ArnNotEquals = { "aws:PrincipalArn" = "arn:aws:iam::111111111111:role/agent-relay-prod-history-consumer" } } },
+        ]
+      })
+    }
+  }
+  assert {
+    condition     = length(terraform_data.sessions_policy_wall) == 1 && toset([for s in output.history_upload.bucket_policy_statements_to_merge : s.Sid]) == toset(["DenyInsecureTransport", "DenyTLSBelow12", "UploadInboxConsumerOnly", "UploadInboxCreateOnly"])
+    error_message = "With the wall already in the live policy, history_upload plans and publishes the statements to keep merged."
+  }
+  assert {
+    condition     = jsonencode(local.sessions_bucket_import_ids) == jsonencode({ for k in ["bucket", "public_access_block", "ownership_controls", "server_side_encryption_configuration", "versioning"] : k => "existing-relay-sessions" })
+    error_message = "Unmanaged configuration is never imported."
+  }
+}
+
+run "unmanaged_policy_without_the_wall_refuses_history_upload" {
+  command = plan
+  variables {
+    sessions_bucket_unmanaged = ["policy"]
+  }
+  override_data {
+    target = data.aws_s3_bucket_policy.sessions_existing[0]
+    values = {
+      policy = jsonencode({
+        Version = "2012-10-17"
+        Statement = [
+          { Sid = "UploadInboxConsumerOnly", Effect = "Deny", Principal = "*", Action = ["s3:GetObject", "s3:GetObjectVersion", "s3:DeleteObject", "s3:DeleteObjectVersion"], Resource = "arn:aws:s3:::existing-relay-sessions/96bulls/.upload-inbox/*", Condition = { ArnNotEquals = { "aws:PrincipalArn" = "arn:aws:iam::111111111111:role/someone-else" } } },
+        ]
+      })
+    }
+  }
+  expect_failures = [terraform_data.sessions_policy_wall]
+}
+
+run "unmanaged_lifecycle_without_history_upload_check" {
+  command = plan
+  variables {
+    sessions_bucket_unmanaged   = ["lifecycle_configuration"]
+    sessions_bucket_import_skip = ["policy"] # a mock cannot import the policy (see above)
+  }
+  assert {
+    condition     = length(terraform_data.sessions_policy_wall) == 0 && !contains(keys(output.history_upload), "bucket_policy_statements_to_merge")
+    error_message = "Only an unmanaged policy needs the wall check."
+  }
+}
+
+run "unmanaged_requires_import" {
+  command = plan
+  variables {
+    sessions_bucket_import    = false
+    sessions_bucket_unmanaged = ["policy"]
+  }
+  expect_failures = [var.sessions_bucket_unmanaged]
+}
+
+run "unmanaged_names_only_policy_or_lifecycle" {
+  command = plan
+  variables { sessions_bucket_unmanaged = ["versioning"] }
+  expect_failures = [var.sessions_bucket_unmanaged]
 }
