@@ -9,6 +9,9 @@ const internal = fs.readFileSync('/credentials/internal', 'utf8').trim();
 const workspaces = [], sockets = new Set(), socketKeys = new Map(), pendingMarkers = new Map();
 const deliveryMs = [];
 const calibrated = new Map();
+const SAFE_ERRORS = new Set(['agent_already_exists', 'node_token_required', 'node_token_invalid', 'node_not_found',
+  'node_credential_required', 'agent_not_found', 'channel_not_found', 'rate_limited', 'invalid_request', 'message_not_found',
+  'forbidden', 'unauthorized', 'workspace_not_found', 'internal_error', 'actor_unavailable', 'request_timeout', 'actor_call_failed']);
 let sequence = 0, totalFrames = 0, socketsOpened = 0, socketsClosed = 0, socketAcks = 0;
 let auxiliaryRegistrations = 0;
 let lastSetupOperation = null;
@@ -24,8 +27,9 @@ async function http(method, path, token, body, headers = {}) {
   const text = await response.text();
   let json;
   try { json = text ? JSON.parse(text) : null; } catch { json = null; }
+  const error = typeof json?.error === 'string' ? json.error : json?.error?.code;
   return {status: response.status, data: json?.data,
-    errorCode: /^[a-z0-9_]{1,100}$/.test(json?.error?.code ?? '') ? json.error.code : undefined};
+    errorCode: response.status >= 400 ? SAFE_ERRORS.has(error) ? error : 'other_error' : undefined};
 }
 async function required(method, path, token, body) {
   lastSetupOperation = method + ' ' + path;
