@@ -175,6 +175,7 @@ class OperatorSessionErase(unittest.TestCase):
             (lambda v: v["operatorSessionErase"]["api"].update(existingSecret="ingest-runtime"), "dedicated Secret"),
             (lambda v: v["operatorSessionErase"]["api"].update(previousSecretKey="current"), "previousSecretKey must differ"),
             (lambda v: v["operatorSessionErase"]["bytes"]["s3Credentials"].update(existingSecret="consumer-store"), "dedicated eraser Secret"),
+            (lambda v: (v["nativeConsumer"]["locker"].update(existingSecret="native-writer"), v["operatorSessionErase"]["bytes"]["s3Credentials"].update(existingSecret="native-writer")), "never ingest or consumer writer credentials"),
             (lambda v: v["operatorSessionErase"]["bytes"]["s3Credentials"].update(accessKeyIdKey="secret"), "distinct access and secret keys"),
             (lambda v: v["operatorSessionErase"]["bytes"]["s3Credentials"].update(existingSecret="erase-api"), "API and S3 eraser credentials"),
             (lambda v: v["operatorSessionErase"]["bytes"]["postgresSearch"].update(existingSecret="erase-s3"), "Postgres search and S3 eraser credentials"),

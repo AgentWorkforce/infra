@@ -96,7 +96,7 @@
 {{- $s3Access := include "sessions-pipeline.operatorSessionErase.key" (dict "name" "operatorSessionErase.bytes.s3Credentials.accessKeyIdKey" "value" $s3.accessKeyIdKey) -}}
 {{- $s3Key := include "sessions-pipeline.operatorSessionErase.key" (dict "name" "operatorSessionErase.bytes.s3Credentials.secretAccessKeyKey" "value" $s3.secretAccessKeyKey) -}}
 {{- if eq $s3Access $s3Key }}{{ fail "operatorSessionErase.bytes.s3Credentials requires distinct access and secret keys" }}{{ end -}}
-{{- if or (eq $s3Secret .Values.ingestEdge.config.existingSecret) (eq $s3Secret .Values.ingestEdge.locker.existingSecret) }}{{ fail "operatorSessionErase.bytes.s3Credentials requires a dedicated eraser Secret, never ingest writer credentials" }}{{ end -}}
+{{- if or (eq $s3Secret .Values.ingestEdge.config.existingSecret) (eq $s3Secret .Values.ingestEdge.locker.existingSecret) (and .Values.nativeConsumer.enabled (eq $s3Secret .Values.nativeConsumer.locker.existingSecret)) }}{{ fail "operatorSessionErase.bytes.s3Credentials requires a dedicated eraser Secret, never ingest or consumer writer credentials" }}{{ end -}}
 {{- if and $erase.api.enabled (eq $s3Secret $erase.api.existingSecret) }}{{ fail "operatorSessionErase API and S3 eraser credentials require separate Secrets" }}{{ end -}}
 {{- $backend := ternary "postgres" .Values.searchIndexer.search.backend .Values.nativeConsumer.enabled -}}
 {{- if eq $backend "postgres" -}}

@@ -44,7 +44,10 @@ All three controls default to `false`. A default render is unchanged.
    `operatorSessionErase.bytes.postgresSearch`. For OpenSearch, instead create
    a dedicated basic-auth user and Secret for
    `operatorSessionErase.bytes.opensearch`; the existing index URL and prefix
-   remain the target.
+   remain the target. This requires fine-grained access control with the
+   internal user database enabled; an IAM-only domain cannot satisfy the
+   runtime's dedicated username/password contract, so use PostgreSQL or leave
+   byte erasure off until a separately reviewed SigV4 eraser exists.
 5. Complete the image's migrations before rolling runtime replicas. Ensure
    `ingestEdge.postgres.poolMax` is at least 2.
 
@@ -71,7 +74,9 @@ All three controls default to `false`. A default render is unchanged.
 5. Enable the ingest API and Control handoff together. In the umbrella chart,
    set Control's URL to the exact in-cluster ingest Service origin (for example
    `http://<release>-ingest-edge.<namespace>.svc.cluster.local`) and make its
-   Secret name/key identical to the ingest API reference.
+   Secret name/key identical to the ingest API reference. If
+   `ingestEdge.networkPolicy.enabled=true`, include an `ingressFrom` peer that
+   admits the Control pods; the API Service remains private.
 6. Confirm the API refuses unauthenticated calls, a completed erase cannot be
    read through any replica, and no erase credentials appear in rendered
    values, pod arguments, logs, or non-runtime Jobs.
@@ -80,6 +85,9 @@ All three controls default to `false`. A default render is unchanged.
 
 Disable the Control handoff and ingest erase API first, then byte deletion.
 Keep the fence enforced. Once erase jobs exist, removing fences can resurrect
-stale bytes or projections and is not a supported rollback. On a failed
-upgrade, stop and use the recorded Helm revision and database snapshot; do not
-reuse partially completed erase jobs with an older image.
+stale bytes or projections and is not a supported rollback. Before any erase
+job exists, a failed upgrade may restore the recorded Helm revision and
+database snapshot. After the first erase job or receipt exists, preserve the
+erase records and recover only with fence-capable images and values; never
+restore a pre-erase snapshot or reuse partially completed work with an older
+image.
