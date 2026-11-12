@@ -17,7 +17,8 @@ locals {
   domain_arn = "arn:${local.partition}:es:${local.region}:${local.account_id}:domain/${var.domain_name}"
   az_count   = length(var.subnet_ids)
   # Smallest multiple of the AZ count that is at least 3.
-  instance_count = coalesce(var.instance_count, local.az_count * ceil(3 / local.az_count))
+  # max() only guards enabled = false, which passes no subnets.
+  instance_count = coalesce(var.instance_count, local.az_count * ceil(3 / max(local.az_count, 1)))
 
   create_roles = var.workload_roles.create
   role_prefix  = coalesce(var.workload_roles.name_prefix, var.domain_name)
@@ -71,7 +72,7 @@ locals {
     )
   })
 
-  roles = local.create_roles ? {
+  roles = var.enabled && local.create_roles ? {
     indexer = { service_accounts = var.workload_roles.indexer_service_accounts }
     reader  = { service_accounts = var.workload_roles.reader_service_accounts }
   } : {}
@@ -80,7 +81,7 @@ locals {
 
   access_principals = distinct(concat(local.workload_principal_arns, var.additional_principal_arns, [var.master_user_arn]))
 
-  log_types = toset(var.log_publishing)
+  log_types = var.enabled ? toset(var.log_publishing) : toset([])
 }
 
 # ---------------------------------------------------------------------------
@@ -195,6 +196,8 @@ resource "aws_cloudwatch_log_resource_policy" "this" {
 # Persist the creation mode. This blocks ordinary flips only after correct
 # enrollment; reviewed runners additionally check native prior-state history.
 # No prevent_destroy here: an owned disposable lifecycle must retire normally.
+# Not gated by `enabled`: it holds no AWS object, and a later enablement then
+# admits as the reviewed fresh-retry (marker unchanged, domain created).
 resource "terraform_data" "creation_mode" {
   input = var.disposable
   lifecycle {
@@ -213,7 +216,7 @@ moved {
 }
 
 resource "aws_opensearch_domain" "this" {
-  count = var.disposable ? 0 : 1
+  count = var.enabled && !var.disposable ? 1 : 0
   #checkov:skip=CKV_AWS_248:security_group_ids is a required input; the default security group is never used implicitly.
   #checkov:skip=CKV_AWS_317:Audit logs need the security plugin's audit config; add AUDIT_LOGS to log_publishing to enable them.
   domain_name    = var.domain_name
@@ -320,7 +323,7 @@ resource "aws_opensearch_domain" "this" {
 }
 
 resource "aws_opensearch_domain" "disposable" {
-  count = var.disposable ? 1 : 0
+  count = var.enabled && var.disposable ? 1 : 0
   #checkov:skip=CKV_AWS_248:security_group_ids is a required input; the default security group is never used implicitly.
   #checkov:skip=CKV_AWS_317:Audit logs need the security plugin's audit config; add AUDIT_LOGS to log_publishing to enable them.
   domain_name    = var.domain_name
@@ -430,6 +433,8 @@ resource "aws_opensearch_domain" "disposable" {
 # create-time cycle. Every request is also checked by fine-grained access
 # control, so IAM here is the outer gate only.
 resource "aws_opensearch_domain_policy" "this" {
+  count = var.enabled ? 1 : 0
+
   domain_name = local.domain.domain_name
   access_policies = jsonencode({
     Version = "2012-10-17"
@@ -441,4 +446,10 @@ resource "aws_opensearch_domain_policy" "this" {
       Resource  = "${local.domain_arn}/*"
     }]
   })
+}
+
+# Preserve the existing domain policy's state address without recreation.
+moved {
+  from = aws_opensearch_domain_policy.this
+  to   = aws_opensearch_domain_policy.this[0]
 }

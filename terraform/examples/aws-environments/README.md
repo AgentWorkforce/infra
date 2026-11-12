@@ -388,6 +388,64 @@ in the reviewed foundation/application installation. ServiceAccount outputs must
 chart component identities; creating Pod Identity associations alone grants no
 running workload the intended binding.
 
+## Opting out of the database or search
+
+Self-hosted installations keep the defaults: `enable_database = true` and
+`enable_search = true` create RDS and OpenSearch exactly as above. Both flags
+are opt-outs for an environment whose Control/history database and search
+already live elsewhere and that only needs this stack's sessions bucket and
+direct-upload (`history_upload`) wiring. Whether a given environment uses
+them is that environment owner's decision; nothing here enables them.
+
+| Flag | `false` removes | No longer required |
+|---|---|---|
+| `enable_database` | the RDS/Aurora instance and its subnet/parameter groups; `verification.postgres`, `postgres_service_bindings` and `postgres_topology` become null | `private_subnet_ids`, `database_security_group_ids` |
+| `enable_search` | the OpenSearch domain, its policy and log groups, the search-indexer/session-read roles and their Pod Identity associations; `verification.search` and `service_accounts.indexer`/`reader` become null, `runtime_role_policy_json` proposes no search policy | `search_subnet_ids`, `search_security_group_ids`, `search_master_user_arn` |
+
+Unchanged with either or both off: the sessions bucket and its
+worker/alleyoop/session-ingest-api storage bindings, `history_upload`,
+`desktop_feed` and `chief_execution_node`. `history_upload` needs only the
+sessions bucket and `kms_key_arn`. Three state-only objects (no AWS API object)
+remain so default states keep their addresses: the root contract, the postgres
+final-snapshot suffix and the search creation-mode marker. Refused combinations:
+`pipeline_runtime = "lambda"` needs both (it indexes into this OpenSearch and
+reads this PostgreSQL); `existing_runtime_roles` and an explicit
+`search_sessions_bucket_read` need `enable_search`. The runner admits a plan
+that creates no search object as `search-disabled`; a later enablement admits
+as the reviewed `fresh-retry`. `verify-aws-data.py` verifies the RDS/OpenSearch
+data path and does not apply to an opted-out environment.
+
+[`profiles/external-data.tfvars.json.example`](profiles/external-data.tfvars.json.example)
+is an additive fragment: merge it into an environment file and drop the
+database/search inputs listed above.
+
+**Do not turn a flag off on an environment that already has the resource.**
+That plans the destruction of the database or domain. The protected domain's
+`prevent_destroy` refuses it, and RDS deletion protection refuses the delete
+at apply, but neither is a migration. Opt out only on a state that never
+created them.
+
+### Sessions bucket name
+
+The sessions bucket is named `<name_prefix>-<environment>-<account_id>-<region>-sessions`
+(for example `agent-relay-prod-123456789012-us-west-2-sessions`). This state
+creates and owns it. If the environment's sessions bucket already exists, under
+that name or another, Terraform must not create a second one:
+
+1. Set `sessions_bucket_name` to the existing bucket's name when it differs
+   (default `null` keeps the computed name; a default install never sets it).
+2. Import the existing bucket and its configuration before the first apply,
+   with reviewed `import` blocks for `module.sessions_bucket.aws_s3_bucket.this`
+   and the `aws_s3_bucket_{public_access_block,ownership_controls,server_side_encryption_configuration,versioning,lifecycle_configuration,policy}.this`
+   resources of the same module (each imports by bucket name).
+3. Review the plan: the module enforces its own versioning, encryption,
+   public-access, ownership, lifecycle and bucket-policy settings, so any
+   difference from the existing bucket appears as an in-place update. A
+   create or replace of `aws_s3_bucket.this` means the import is missing.
+
+The override also flows to the storage role, the search read grant (when
+search is on), the Lambda pipeline and the `history_upload` bucket.
+
 ## Live verification
 
 Use an approved private Linux/macOS runner with refreshed AWS credentials, network access,
@@ -547,22 +605,20 @@ exact destroy inventory and recovery proof; do not remove state to bypass them.
 | Name | Description | Type | Default | Required |
 | ---- | ----------- | ---- | ------- | :------: |
 | account\_id | Exact target AWS account. The provider refuses any other account. Use the allocated account from Pippen in sandbox mode. | `string` | n/a | yes |
-| database\_security\_group\_ids | Database security groups allowing PostgreSQL only from the approved application/proof runner. | `list(string)` | n/a | yes |
 | eks\_cluster\_name | Existing EKS cluster for Pod Identity; the foundation root owns the cluster. | `string` | n/a | yes |
 | environment | Unique environment slug, e.g. dev, staging, production or team-a. It scopes resource names, tags, the namespace and the verification prefix. | `string` | n/a | yes |
-| private\_subnet\_ids | Existing private database subnets in at least two AZs. The foundation stack owns VPC/subnets/routes. | `list(string)` | n/a | yes |
 | region | AWS region for this environment. | `string` | n/a | yes |
-| search\_master\_user\_arn | Existing environment-specific IAM administrator for OpenSearch role bootstrap. Never a runtime role. | `string` | n/a | yes |
-| search\_security\_group\_ids | Search security groups allowing HTTPS only from approved application/proof runner identities. | `list(string)` | n/a | yes |
-| search\_subnet\_ids | Existing private OpenSearch subnets, one per AZ. Production requires three. | `list(string)` | n/a | yes |
 | activate\_lambda | Reserved activation input. This per-service-database profile currently refuses true until schema/bootstrap/runtime support is qualified by a reviewed implementation change; provision inactive infrastructure meanwhile. | `bool` | `false` | no |
 | application\_database\_name | Initial Control database only, on the shared RDS instance. Other services use separate logical databases. Default preserves the existing identity. Changing this value on an existing RDS instance forces instance replacement; review the plan and an explicit data migration/restore before changing it. | `string` | `"relaycontrol"` | no |
 | aurora\_engine\_version | Explicit region-supported Aurora PostgreSQL 17 minor version when Aurora is selected. | `string` | `null` | no |
 | chief\_execution\_node | Optional dedicated Chief execution host (modules/aws/chief-execution-node). null creates nothing. Private installation values only; no credentials belong here. | ```object({ subnet_id = string relay_base_url = string instance_type = optional(string, "t3.medium") root_volume_size_gb = optional(number, 40) node_runtime = object({ url = string sha256 = string }) relay_node = object({ url = string sha256 = string }) harness = object({ npm_package = string version = string }) bridge = object({ repository = string commit = string }) repositories = list(string) })``` | `null` | no |
 | database\_instance\_class | Override the environment tier's instance class. Aurora needs an Aurora-supported class. | `string` | `null` | no |
+| database\_security\_group\_ids | Database security groups allowing PostgreSQL only from the approved application/proof runner. Required when enable\_database. | `list(string)` | `[]` | no |
 | deletion\_protection | Database API deletion protection. Production refuses false. Final snapshots and S3 versioning remain enabled. | `bool` | `true` | no |
 | desktop\_feed | Optional private Desktop feed for Relay Control (modules/aws/desktop-feed): one Ed25519 KMS signing key and alias per profile ID, a private bucket, and a Pod Identity role for Control's ServiceAccount. null creates nothing. Profile IDs (^[a-z0-9]{1,32}$) come from the private handoff. service\_account defaults to relay-control, the name every agent-relay profile overlay renders (relay-control.fullnameOverride). | ```object({ profiles = set(string) prefix = optional(string, "desktop-feed") service_account = optional(string, "relay-control") })``` | `null` | no |
+| enable\_database | Create this environment's RDS/Aurora PostgreSQL (module.postgres). Default true: self-host keeps it. false is an opt-out for an environment whose databases live elsewhere: no database resource is created, private\_subnet\_ids/database\_security\_group\_ids are not required (unless pipeline\_runtime=lambda, which needs both modules), and the postgres verification/binding outputs are null. Turning it off on an existing environment plans the database's destruction; never do that without a reviewed migration. | `bool` | `true` | no |
 | enable\_relayfile | Include Relayfile in the full-suite application contract; its actor identities/Secrets must be configured by the application layer. | `bool` | `false` | no |
+| enable\_search | Create this environment's OpenSearch domain and its search-indexer/session-read roles and Pod Identity associations (module.search). Default true: self-host keeps it. false is an opt-out for an environment whose search lives elsewhere: no domain, search role or association is created; search\_subnet\_ids, search\_security\_group\_ids and search\_master\_user\_arn are not required; the search outputs are null. An existing protected domain refuses removal (prevent\_destroy). | `bool` | `true` | no |
 | environment\_class | Sizing/protection tier; environment names remain independent of this classification. | `string` | `"development"` | no |
 | existing\_runtime\_roles | Operator-owned runtime identities. Null manages search/pipeline roles here. Otherwise supply both search roles and, only in Lambda mode, the pipeline role. Trust, policies, guards and EKS associations must already be verified outside this state. | ```object({ indexer_role_arn = string reader_role_arn = string pipeline_role_arn = optional(string) })``` | `null` | no |
 | function\_security\_group\_ids | Lambda security groups with private database/search access and egress to the required AWS services. | `list(string)` | `[]` | no |
@@ -575,12 +631,17 @@ exact destroy inventory and recovery proof; do not remove state to bypass them.
 | pipeline\_runtime | workers or lambda. Lambda requires its own compatible immutable handler artifact; application deployment must disable overlapping worker stages. | `string` | `"workers"` | no |
 | pippen | Pippen lease identity from sandbox status/exec. null for customer accounts. No credentials belong here. | ```object({ agent = string session_id = string })``` | `null` | no |
 | postgres\_engine\_mode | rds or aurora. Aurora requires an explicit full engine version and separate live validation. | `string` | `"rds"` | no |
+| private\_subnet\_ids | Existing private database subnets in at least two AZs. The foundation stack owns VPC/subnets/routes. Required when enable\_database or pipeline\_runtime=lambda. | `list(string)` | `[]` | no |
 | release\_name | Helm release name used in generated ServiceAccount names. | `string` | `"agent-relay"` | no |
 | search\_engine\_version | Region-supported OpenSearch engine version. | `string` | `"OpenSearch_2.19"` | no |
 | search\_instance\_type | Override the environment tier's OpenSearch data node type. | `string` | `null` | no |
+| search\_master\_user\_arn | Existing environment-specific IAM administrator for OpenSearch role bootstrap. Never a runtime role. Required when enable\_search. | `string` | `null` | no |
+| search\_security\_group\_ids | Search security groups allowing HTTPS only from approved application/proof runner identities. Required when enable\_search. | `list(string)` | `[]` | no |
 | search\_sessions\_bucket\_read | Optional explicit form of the default grant: exact ARNs of this environment's sessions bucket and, for a customer-managed key, its kms\_key\_arn (null for AWS-managed encryption). Any other bucket or key is refused. null uses the computed default. | ```object({ bucket_arn = string kms_key_arn = optional(string) })``` | `null` | no |
 | search\_sessions\_bucket\_read\_enabled | Grant the search indexer and session-read roles read-only access to this environment's sessions bucket and the kms\_key\_arn that encrypts it. Defaults on: without it the indexer fails with unauthorized and the read API lists no sessions. false omits the two inline policies (for example, for one apply that enrolls an unmarked search state first). | `bool` | `true` | no |
+| search\_subnet\_ids | Existing private OpenSearch subnets, one per AZ. Production requires three. Required when enable\_search. | `list(string)` | `[]` | no |
 | service\_database\_names | Existing or reviewed new database names for HoopDb, Relaycast and optional Relayfile on the same RDS instance. This metadata does not create or rename databases. Control uses application\_database\_name. | `map(string)` | ```{ "hoopdb": "hoopdb", "relaycast": "relaycast", "relayfile": "relayfile" }``` | no |
+| sessions\_bucket\_name | Override the sessions bucket name. null (default) keeps the computed <name\_prefix>-<environment>-<account\_id>-<region>-sessions. Only for an environment whose sessions bucket already exists under another name: this state then manages that bucket, so import it first (see the README) instead of letting Terraform try to create a duplicate. | `string` | `null` | no |
 | tags | Additional resource tags. Environment identity and Pippen conventions cannot be overridden. | `map(string)` | `{}` | no |
 
 ### Outputs
@@ -594,9 +655,9 @@ exact destroy inventory and recovery proof; do not remove state to bypass them.
 | history\_upload | Direct upload wiring only; enablement needs compatible published Control/consumer images and the same witness Secret provisioned out of band. No secret values in Terraform. |
 | lambda\_shared\_environment | Non-secret writer/reader bindings, or null until explicitly configured. Independently qualify the matching reader artifact, read-only DB identity, JWT settings, schema/FGAC bootstrap and worker retirement before activation. |
 | pipeline | Lambda runtime bindings, or null in worker mode. Populate the secret out of band and verify actual handler compatibility before activation. |
-| postgres\_service\_bindings | Separate service databases and independent migration/runtime roles on the same RDS endpoint. Contains no credentials; reviewed database bootstrap, CONNECT/ACL isolation and runtime proof remain required. Optional-service bindings do not enable workloads. |
-| postgres\_topology | Single-instance, separate-service-database target; application\_sql\_ready=false until actual service integration and managed-RDS validation are completed. |
+| postgres\_service\_bindings | Separate service databases and independent migration/runtime roles on the same RDS endpoint. Contains no credentials; reviewed database bootstrap, CONNECT/ACL isolation and runtime proof remain required. Optional-service bindings do not enable workloads. null with enable\_database = false. |
+| postgres\_topology | Single-instance, separate-service-database target; application\_sql\_ready=false until actual service integration and managed-RDS validation are completed. null with enable\_database = false. |
 | runtime\_role\_policy\_json | Proposed search and Lambda runtime permissions for operator review. External mode does not attach them or validate existing IAM configuration. Values may be unknown until service resources exist. |
-| service\_accounts | Distinct environment-scoped workload bindings; the application chart must use these identities. |
-| verification | Non-secret input for the private-runner data-path verifier. Contains secret references, never secret values. |
+| service\_accounts | Distinct environment-scoped workload bindings; the application chart must use these identities. indexer and reader are null with enable\_search = false (no search Pod Identity associations exist). |
+| verification | Non-secret input for the private-runner data-path verifier. Contains secret references, never secret values. postgres is null with enable\_database = false and search is null with enable\_search = false. |
 <!-- END_TF_DOCS -->

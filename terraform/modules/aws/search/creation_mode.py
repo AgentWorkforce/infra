@@ -12,7 +12,12 @@ LEGACY = PREFIX + 'aws_opensearch_domain.this'
 DISPOSABLE = PREFIX + 'aws_opensearch_domain.disposable[0]'
 MARKER = PREFIX + 'terraform_data.creation_mode'
 DOMAINS = {PROTECTED, LEGACY, DISPOSABLE}
-DOMAIN_POLICY = PREFIX + 'aws_opensearch_domain_policy.this'
+DOMAIN_POLICY = PREFIX + 'aws_opensearch_domain_policy.this[0]'
+# The policy's pre-`enabled` address; the module's moved block maps it to DOMAIN_POLICY.
+LEGACY_DOMAIN_POLICY = PREFIX + 'aws_opensearch_domain_policy.this'
+DOMAIN_POLICIES = (DOMAIN_POLICY, LEGACY_DOMAIN_POLICY)
+# The only reviewed moved blocks: new address -> previous address.
+MOVES = {PROTECTED: LEGACY, DOMAIN_POLICY: LEGACY_DOMAIN_POLICY}
 WORKLOAD_ROLE = re.compile(re.escape(PREFIX) + r'aws_iam_role\.workload\["([^"]+)"\]')
 # Inline policies a workload role may read back, each its own managed resource.
 # The first is mandatory; the second exists only when sessions_bucket_read is set.
@@ -88,8 +93,11 @@ def _sibling_written_drift(row, state, changes):
         return False
     changed = {key for key in set(before) | set(after) if before.get(key) != after.get(key)}
     role = WORKLOAD_ROLE.fullmatch(address)
-    if address in (PROTECTED, DISPOSABLE) and changed == {'access_policies'} and row.get('type') == 'aws_opensearch_domain':
-        names = [DOMAIN_POLICY]
+    domain_policy = address in (PROTECTED, DISPOSABLE) and changed == {'access_policies'} and row.get('type') == 'aws_opensearch_domain'
+    if domain_policy:
+        names = [name for name in DOMAIN_POLICIES if name in state]
+        if len(names) != 1:
+            return False
     elif role and changed == {'inline_policy'} and row.get('type') == 'aws_iam_role':
         required, *optional = [PREFIX + 'aws_iam_role_policy.' + kind + '["' + role.group(1) + '"]' for kind in ROLE_POLICIES]
         names = [required] + [name for name in optional if name in state]
@@ -100,7 +108,9 @@ def _sibling_written_drift(row, state, changes):
         return False
     siblings = []
     for name in names:
-        sibling, planned = state.get(name), changes.get(name)
+        sibling = state.get(name)
+        # Under the reviewed moved block the recorded policy plans at its new address.
+        planned = changes.get(name) or (changes.get(DOMAIN_POLICY) if domain_policy else None)
         if not isinstance(sibling, dict) or sibling.get('mode') != 'managed':
             return False
         if not isinstance(planned, dict) or not isinstance(planned.get('change'), dict) or planned['change'].get('actions') != ['no-op']:
@@ -108,7 +118,7 @@ def _sibling_written_drift(row, state, changes):
         if not isinstance(sibling.get('values'), dict):
             return False
         siblings.append(sibling['values'])
-    if names == [DOMAIN_POLICY]:
+    if domain_policy:
         return _same_document(after.get('access_policies'), siblings[0].get('access_policies'))
     inline = after.get('inline_policy')
     if not isinstance(inline, list) or len(inline) != len(siblings) or not all(isinstance(entry, dict) for entry in inline):
@@ -130,7 +140,7 @@ def _failed_create_retry(scoped, scoped_state, domain, d, m):
     lost-domain history still holds. Before IDs were already matched to prior state.
     """
     require(MARKER in scoped_state and not any(a in scoped_state for a in DOMAINS), 'retry requires a recorded marker and no prior domain')
-    require(DOMAIN_POLICY not in scoped_state, 'marker without domain is not fresh enrollment: the domain policy shows a domain existed')
+    require(not any(p in scoped_state for p in DOMAIN_POLICIES), 'marker without domain is not fresh enrollment: the domain policy shows a domain existed')
     require(isinstance(d.get('after'), dict) and d['actions'] == ['create'], 'failed-create retry must create the domain')
     require(m['actions'] == ['no-op'], 'marker without domain is not fresh enrollment: the marker must be unchanged')
     stored = _mode(scoped_state[MARKER]['values'])
@@ -139,6 +149,31 @@ def _failed_create_retry(scoped, scoped_state, domain, d, m):
     require(all(r['change']['actions'] in (['no-op'], ['create']) for r in scoped.values()), 'failed-create retry may only create missing search objects')
     require(all(r['change']['actions'] == ['no-op'] for a, r in scoped.items() if a in scoped_state), 'failed-create retry cannot change recorded search objects')
     return 'fresh-retry'
+
+
+def _disabled(scoped, scoped_state):
+    """Admit a root that does not create search (module enabled = false).
+
+    Only the unindexed local marker may exist: no domain, domain policy, role,
+    log group or association is planned or recorded. A domain that once existed
+    is never admitted here: its removal plans a delete and takes the domain path.
+    The marker is created once or stays an exact no-op, so a later enablement
+    is admitted as the reviewed fresh-retry.
+    """
+    require(set(scoped) <= {MARKER} and set(scoped_state) <= {MARKER}, 'search-disabled plan must not plan or retain any search object besides the marker')
+    if MARKER not in scoped:
+        require(MARKER not in scoped_state, 'lost marker')
+        return 'search-disabled'
+    m = scoped[MARKER]['change']
+    require(scoped[MARKER].get('type') == 'terraform_data' and isinstance(m.get('after_unknown', {}), dict) and m.get('after_unknown', {}).get('input', False) is False, 'unknown marker input')
+    if MARKER in scoped_state:
+        stored = _mode(scoped_state[MARKER]['values'])
+        require(m['actions'] == ['no-op'] and scoped[MARKER].get('previous_address') is None, 'marker replacement/update/removal is forbidden')
+        require(_mode(m.get('before')) == stored and _mode(m.get('after')) == stored and _id(m.get('before')) == _id(scoped_state[MARKER].get('values')) and _id(m.get('after')) == _id(m.get('before')), 'marker identity or mode changed')
+    else:
+        require(m['actions'] == ['create'] and m.get('before') is None, 'search-disabled marker must be created or unchanged')
+        _mode(m.get('after'))
+    return 'search-disabled'
 
 
 def admit(plan):
@@ -189,7 +224,7 @@ def admit(plan):
         require(isinstance(change, dict) and isinstance(change.get('actions'), list), 'malformed search change')
         require(change.get('importing') is None, 'import/adoption is not mode enrollment')
         previous = row.get('previous_address')
-        require(previous is None or (address == PROTECTED and previous == LEGACY), 'unsupported moved address')
+        require(previous is None or MOVES.get(address) == previous, 'unsupported moved address')
         scoped[address] = row
     for row in prior:
         if row.get('type') == 'aws_opensearch_domain':
@@ -199,6 +234,8 @@ def admit(plan):
     require(all(isinstance(r, dict) and isinstance(r.get('address'), str) and (not r['address'].startswith(PREFIX) or _sibling_written_drift(r, all_state, scoped)) for r in drift), 'search drift requires reconciliation')
     domain_changes = [a for a in scoped if a in DOMAINS]
     domain_state = [a for a in scoped_state if a in DOMAINS]
+    if not domain_changes and not domain_state:
+        return _disabled(scoped, scoped_state)
     require(len(domain_changes) == 1 and len(domain_state) <= 1 and MARKER in scoped, 'mixed/lost/missing domain or marker')
     domain = domain_changes[0]
     require(domain != LEGACY, 'legacy configuration must use the reviewed moved block')

@@ -45,40 +45,73 @@ variable "name_prefix" {
   }
 }
 
+variable "enable_database" {
+  description = "Create this environment's RDS/Aurora PostgreSQL (module.postgres). Default true: self-host keeps it. false is an opt-out for an environment whose databases live elsewhere: no database resource is created, private_subnet_ids/database_security_group_ids are not required (unless pipeline_runtime=lambda, which needs both modules), and the postgres verification/binding outputs are null. Turning it off on an existing environment plans the database's destruction; never do that without a reviewed migration."
+  type        = bool
+  default     = true
+  nullable    = false
+}
+
+variable "enable_search" {
+  description = "Create this environment's OpenSearch domain and its search-indexer/session-read roles and Pod Identity associations (module.search). Default true: self-host keeps it. false is an opt-out for an environment whose search lives elsewhere: no domain, search role or association is created; search_subnet_ids, search_security_group_ids and search_master_user_arn are not required; the search outputs are null. An existing protected domain refuses removal (prevent_destroy)."
+  type        = bool
+  default     = true
+  nullable    = false
+}
+
 variable "private_subnet_ids" {
-  description = "Existing private database subnets in at least two AZs. The foundation stack owns VPC/subnets/routes."
+  description = "Existing private database subnets in at least two AZs. The foundation stack owns VPC/subnets/routes. Required when enable_database or pipeline_runtime=lambda."
   type        = list(string)
+  default     = []
+  nullable    = false
   validation {
-    condition     = length(distinct(var.private_subnet_ids)) >= 2
+    condition     = !(var.enable_database || var.pipeline_runtime == "lambda") || length(distinct(var.private_subnet_ids)) >= 2
     error_message = "Supply at least two distinct private database subnet IDs."
   }
 }
 
 variable "database_security_group_ids" {
-  description = "Database security groups allowing PostgreSQL only from the approved application/proof runner."
+  description = "Database security groups allowing PostgreSQL only from the approved application/proof runner. Required when enable_database."
   type        = list(string)
+  default     = []
+  nullable    = false
 }
 
 variable "search_subnet_ids" {
-  description = "Existing private OpenSearch subnets, one per AZ. Production requires three."
+  description = "Existing private OpenSearch subnets, one per AZ. Production requires three. Required when enable_search."
   type        = list(string)
+  default     = []
+  nullable    = false
   validation {
-    condition     = length(var.search_subnet_ids) >= 1 && length(var.search_subnet_ids) <= 3 && length(distinct(var.search_subnet_ids)) == length(var.search_subnet_ids)
+    condition     = !var.enable_search || (length(var.search_subnet_ids) >= 1 && length(var.search_subnet_ids) <= 3 && length(distinct(var.search_subnet_ids)) == length(var.search_subnet_ids))
     error_message = "Supply one to three distinct OpenSearch subnet IDs, one per AZ."
   }
 }
 
 variable "search_security_group_ids" {
-  description = "Search security groups allowing HTTPS only from approved application/proof runner identities."
+  description = "Search security groups allowing HTTPS only from approved application/proof runner identities. Required when enable_search."
   type        = list(string)
+  default     = []
+  nullable    = false
 }
 
 variable "search_master_user_arn" {
-  description = "Existing environment-specific IAM administrator for OpenSearch role bootstrap. Never a runtime role."
+  description = "Existing environment-specific IAM administrator for OpenSearch role bootstrap. Never a runtime role. Required when enable_search."
   type        = string
+  default     = null
   validation {
-    condition     = can(regex("^arn:aws:iam::[0-9]{12}:role/.+$", var.search_master_user_arn))
+    condition     = !var.enable_search || can(regex("^arn:aws:iam::[0-9]{12}:role/.+$", var.search_master_user_arn))
     error_message = "search_master_user_arn must be an explicit AWS IAM administrator role ARN."
+  }
+}
+
+variable "sessions_bucket_name" {
+  description = "Override the sessions bucket name. null (default) keeps the computed <name_prefix>-<environment>-<account_id>-<region>-sessions. Only for an environment whose sessions bucket already exists under another name: this state then manages that bucket, so import it first (see the README) instead of letting Terraform try to create a duplicate."
+  type        = string
+  default     = null
+  validation {
+    condition     = var.sessions_bucket_name == null || can(regex("^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$", var.sessions_bucket_name))
+    error_message = "sessions_bucket_name must be a valid S3 bucket name (3-63 lowercase letters, digits, dots and hyphens)."
   }
 }
 

@@ -1,3 +1,8 @@
+output "enabled" {
+  description = "Whether the domain exists. false (enabled = false) creates no AWS resource and every domain, role and policy output is null or empty."
+  value       = var.enabled
+}
+
 output "domain_name" {
   description = "Domain name."
   value       = local.domain.domain_name
@@ -15,7 +20,7 @@ output "endpoint" {
 
 output "url" {
   description = "https://<endpoint>."
-  value       = "https://${local.domain.endpoint}"
+  value       = var.enabled ? "https://${local.domain.endpoint}" : null
 }
 
 output "dashboard_endpoint" {
@@ -40,15 +45,15 @@ output "pod_identity_association_ids" {
 
 output "indexer_policy_json" {
   description = "The indexer's IAM policy, to attach to an existing role (EKS Pod Identity allows one role per ServiceAccount, so a pod that already has a role gets this policy on that role)."
-  value       = local.policies["indexer"]
+  value       = var.enabled ? local.policies["indexer"] : null
 }
 
 output "reader_policy_json" {
   description = "The reader's IAM policy, to attach to an existing role."
-  value       = local.policies["reader"]
+  value       = var.enabled ? local.policies["reader"] : null
 }
 
 output "sessions_read_policy_json" {
   description = "Read-only sessions bucket policy for existing roles (workload_roles.create = false), or null when sessions_bucket_read is unset."
-  value       = local.sessions_read_policy
+  value       = var.enabled ? local.sessions_read_policy : null
 }

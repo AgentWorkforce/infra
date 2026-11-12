@@ -4,7 +4,7 @@ output "environment" {
 }
 
 output "verification" {
-  description = "Non-secret input for the private-runner data-path verifier. Contains secret references, never secret values."
+  description = "Non-secret input for the private-runner data-path verifier. Contains secret references, never secret values. postgres is null with enable_database = false and search is null with enable_search = false."
   value = {
     environment       = var.environment
     environment_class = var.environment_class
@@ -13,7 +13,7 @@ output "verification" {
     region            = var.region
     namespace         = local.namespace
     pippen            = var.pippen
-    postgres = {
+    postgres = !var.enable_database ? null : {
       identifier            = "${local.name}-pg"
       master_username       = module.postgres.master_username
       host                  = module.postgres.host
@@ -30,7 +30,7 @@ output "verification" {
       prefix   = local.storage_prefix
       role_arn = module.sessions_bucket.access_role_arn
     }
-    search = {
+    search = !var.enable_search ? null : {
       url              = module.search.url
       domain_name      = module.search.domain_name
       domain_arn       = module.search.domain_arn
@@ -81,12 +81,12 @@ output "application_contract" {
 }
 
 output "service_accounts" {
-  description = "Distinct environment-scoped workload bindings; the application chart must use these identities."
+  description = "Distinct environment-scoped workload bindings; the application chart must use these identities. indexer and reader are null with enable_search = false (no search Pod Identity associations exist)."
   value = {
     namespace = local.namespace
     storage   = ["${var.release_name}-worker", "${var.release_name}-alleyoop", "${var.release_name}-session-ingest-api"]
-    indexer   = local.search_indexer_sa
-    reader    = local.search_reader_sa
+    indexer   = var.enable_search ? local.search_indexer_sa : null
+    reader    = var.enable_search ? local.search_reader_sa : null
   }
 }
 
@@ -98,7 +98,7 @@ output "runtime_role_policy_json" {
       reader   = module.search.reader_policy_json
       pipeline = var.pipeline_runtime == "lambda" ? module.pipeline[0].execution_role_policy_json : null
     },
-    local.search_sessions_bucket_read == null ? {} : { sessions_read = module.search.sessions_read_policy_json },
+    local.search_sessions_bucket_read == null || !var.enable_search ? {} : { sessions_read = module.search.sessions_read_policy_json },
   )
 }
 
@@ -108,13 +108,13 @@ output "lambda_shared_environment" {
 }
 
 output "postgres_service_bindings" {
-  description = "Separate service databases and independent migration/runtime roles on the same RDS endpoint. Contains no credentials; reviewed database bootstrap, CONNECT/ACL isolation and runtime proof remain required. Optional-service bindings do not enable workloads."
-  value       = module.postgres_layout.bindings
+  description = "Separate service databases and independent migration/runtime roles on the same RDS endpoint. Contains no credentials; reviewed database bootstrap, CONNECT/ACL isolation and runtime proof remain required. Optional-service bindings do not enable workloads. null with enable_database = false."
+  value       = var.enable_database ? module.postgres_layout[0].bindings : null
 }
 
 output "postgres_topology" {
-  description = "Single-instance, separate-service-database target; application_sql_ready=false until actual service integration and managed-RDS validation are completed."
-  value       = module.postgres_layout.topology
+  description = "Single-instance, separate-service-database target; application_sql_ready=false until actual service integration and managed-RDS validation are completed. null with enable_database = false."
+  value       = var.enable_database ? module.postgres_layout[0].topology : null
 }
 
 output "chief_execution_node" {

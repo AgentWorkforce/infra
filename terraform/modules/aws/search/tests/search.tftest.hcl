@@ -81,7 +81,7 @@ run "access_policy_names_principals" {
   }
 
   assert {
-    condition     = toset(flatten([jsondecode(aws_opensearch_domain_policy.this.access_policies).Statement[0].Principal.AWS])) == toset(["arn:aws:iam::111111111111:role/indexer", "arn:aws:iam::111111111111:role/search-admin"])
+    condition     = toset(flatten([jsondecode(aws_opensearch_domain_policy.this[0].access_policies).Statement[0].Principal.AWS])) == toset(["arn:aws:iam::111111111111:role/indexer", "arn:aws:iam::111111111111:role/search-admin"])
     error_message = "The access policy names exactly the listed principals and the master user, never *."
   }
   assert {
@@ -132,4 +132,45 @@ run "master_user_is_required" {
   }
 
   expect_failures = [var.master_user_arn]
+}
+
+run "disabled_creates_no_aws_resource" {
+  command = plan
+
+  variables {
+    enabled            = false
+    subnet_ids         = []
+    security_group_ids = []
+    master_user_arn    = null
+    sessions_bucket_read = {
+      bucket_arn = "arn:aws:s3:::relay-sessions"
+    }
+  }
+
+  assert {
+    condition = (
+      length(aws_opensearch_domain.this) + length(aws_opensearch_domain.disposable) + length(aws_opensearch_domain_policy.this) +
+      length(aws_iam_role.workload) + length(aws_iam_role_policy.workload) + length(aws_iam_role_policy.sessions_read) +
+      length(aws_eks_pod_identity_association.workload) + length(aws_cloudwatch_log_group.this) + length(aws_cloudwatch_log_resource_policy.this)
+    ) == 0
+    error_message = "enabled = false must create no domain, policy, log group, workload role or Pod Identity association."
+  }
+  assert {
+    condition = (
+      !output.enabled && output.domain_name == null && output.domain_arn == null && output.endpoint == null && output.url == null &&
+      output.indexer_role_arn == null && output.reader_role_arn == null && length(output.pod_identity_association_ids) == 0 &&
+      output.indexer_policy_json == null && output.reader_policy_json == null && output.sessions_read_policy_json == null
+    )
+    error_message = "Every domain, role and policy output must be null or empty when search is disabled."
+  }
+}
+
+run "enabled_still_requires_subnets" {
+  command = plan
+
+  variables {
+    subnet_ids = []
+  }
+
+  expect_failures = [var.subnet_ids]
 }

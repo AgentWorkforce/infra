@@ -327,4 +327,82 @@ class FailedCreateRetry(unittest.TestCase):
             with self.subTest(case=name), self.assertRaises(g.SearchModeError): g.admit(p)
 
 
+NEW_POLICY = g.DOMAIN_POLICY
+
+
+def disabled_plan(enrolled=False):
+    """A root with enabled = false: only the local marker is planned."""
+    marker = {'id': 'mode-id', 'input': False, 'output': False}
+    before = dict(marker) if enrolled else None
+    after = dict(marker) if enrolled else {**marker, 'id': None}
+    p = {'format_version': '1.2', 'errored': False, 'complete': True, 'resource_changes': [
+        {'address': g.MARKER, 'mode': 'managed', 'type': 'terraform_data', 'change': {'actions': ['no-op' if enrolled else 'create'], 'before': before, 'after': after, 'after_unknown': {}}},
+    ]}
+    if enrolled:
+        p['prior_state'] = {'values': {'root_module': {'child_modules': [{'address': 'module.search', 'resources': [row(g.MARKER, marker)]}]}}}
+    return p
+
+
+class PolicyMove(unittest.TestCase):
+    """enabled added count to the domain policy; its moved block keeps the object."""
+
+    def moved(self, mode=False):
+        p = fixture(mode)
+        r = next(r for r in p['resource_changes'] if r['address'] == POLICY)
+        r['address'], r['previous_address'] = NEW_POLICY, POLICY
+        return p
+
+    def test_moved_policy_is_admitted_unchanged(self):
+        for mode in [False, True]:
+            with self.subTest(mode=mode): self.assertEqual(g.admit(self.moved(mode)), 'enrolled')
+
+    def test_moved_policy_with_sibling_drift_is_admitted(self):
+        p = sibling_plan()
+        r = next(r for r in p['resource_changes'] if r['address'] == POLICY)
+        r['address'], r['previous_address'] = NEW_POLICY, POLICY
+        self.assertEqual(g.admit(p), 'enrolled')
+
+    def test_policy_move_from_anywhere_else_holds(self):
+        cases = {
+            'foreign previous address': lambda p: next(r for r in p['resource_changes'] if r['address'] == NEW_POLICY).update(previous_address=g.PREFIX + 'aws_opensearch_domain_policy.other'),
+            'policy id differs': lambda p: change(p, NEW_POLICY).update(before={'id': 'foreign'}),
+            'domain moved too': lambda p: next(r for r in p['resource_changes'] if r['address'] == g.PROTECTED).update(previous_address=POLICY),
+        }
+        for name, mutate in cases.items():
+            p = self.moved(); mutate(p)
+            with self.subTest(case=name), self.assertRaises(g.SearchModeError): g.admit(p)
+
+
+class SearchDisabled(unittest.TestCase):
+    def test_fresh_and_enrolled_disabled_roots_are_admitted(self):
+        self.assertEqual(g.admit(disabled_plan()), 'search-disabled')
+        self.assertEqual(g.admit(disabled_plan(enrolled=True)), 'search-disabled')
+
+    def test_enabling_later_is_the_reviewed_fresh_retry(self):
+        p = fixture(False, fresh=True)
+        marker = {'id': 'mode-id', 'input': False, 'output': False}
+        change(p, g.MARKER).update(actions=['no-op'], before=dict(marker), after=dict(marker))
+        p['prior_state'] = {'values': {'root_module': {'child_modules': [{'address': 'module.search', 'resources': [row(g.MARKER, marker)]}]}}}
+        self.assertEqual(g.admit(p), 'fresh-retry')
+
+    def test_disabling_an_existing_domain_or_leaving_objects_holds(self):
+        def with_state(p, address, kind):
+            p.setdefault('prior_state', {'values': {'root_module': {'child_modules': [{'address': 'module.search', 'resources': []}]}}})
+            state(p).append({'address': address, 'mode': 'managed', 'type': kind, 'values': {'id': 'x'}})
+        cases = {
+            'protected domain deleted': lambda: (lambda p: (p['resource_changes'].__setitem__(0, {**p['resource_changes'][0], 'change': {**p['resource_changes'][0]['change'], 'actions': ['delete'], 'after': None}}), p))(fixture(False, destroy=True))[1],
+            'recorded policy without domain': lambda: (lambda p: (with_state(p, NEW_POLICY, 'aws_opensearch_domain_policy'), p))(disabled_plan(True))[1],
+            'recorded legacy policy without domain': lambda: (lambda p: (with_state(p, POLICY, 'aws_opensearch_domain_policy'), p))(disabled_plan(True))[1],
+            'recorded role without domain': lambda: (lambda p: (with_state(p, ROLE, 'aws_iam_role'), p))(disabled_plan(True))[1],
+            'role planned without domain': lambda: (lambda p: (p['resource_changes'].append(creation(ROLE)), p))(disabled_plan())[1],
+            'marker flipped': lambda: (lambda p: (p['resource_changes'][0]['change']['after'].update(input=True), p))(disabled_plan(True))[1],
+            'marker replaced': lambda: (lambda p: (p['resource_changes'][0]['change'].update(actions=['delete', 'create']), p))(disabled_plan(True))[1],
+            'marker deleted': lambda: (lambda p: (p['resource_changes'][0]['change'].update(actions=['delete'], after=None), p))(disabled_plan(True))[1],
+            'marker lost': lambda: (lambda p: (p['resource_changes'].clear(), p))(disabled_plan(True))[1],
+            'marker unknown input': lambda: (lambda p: (p['resource_changes'][0]['change'].update(after_unknown={'input': True}), p))(disabled_plan())[1],
+        }
+        for name, build in cases.items():
+            with self.subTest(case=name), self.assertRaises(g.SearchModeError): g.admit(build())
+
+
 if __name__ == '__main__': unittest.main()
