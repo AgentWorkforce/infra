@@ -42,9 +42,10 @@ mkdir release && gh release download agent-relay-2026.11.1 -R AgentWorkforce/inf
 (cd release && sha256sum -c SHA256SUMS && tar -xzf agent-relay-0.6.53.tgz) | tail -1
 ```
 
-**Got this guide as a gist?** Replace the first and fourth lines with
-`git clone <gist clone URL> agent-relay-install && cd agent-relay-install`;
-the gist already holds the guide's files.
+**Got this guide as a gist?** Replace the `mkdir agent-relay-install ...` line
+with `git clone <gist clone URL> agent-relay-install && cd agent-relay-install`,
+and delete the `git -C infra archive ...` line: the gist already holds the
+guide's files.
 
 No `gh`? Download the same assets from
 https://github.com/AgentWorkforce/infra/releases/tag/agent-relay-2026.11.1 into
