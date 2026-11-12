@@ -37,6 +37,21 @@ def control(overrides):
 
 
 class NativeNoRelayauth(unittest.TestCase):
+    def test_eks_rds_native_profile_is_idempotent_across_repeated_upgrades(self):
+        command = [
+            'helm', 'template', 'proof', 'charts/agent-relay', '-n', 'agent-relay-placeholder',
+            '--no-hooks', '--is-upgrade',
+            '-f', 'charts/agent-relay/values-eks.yaml',
+            '-f', 'charts/agent-relay/values-eks-rds-native.yaml',
+        ]
+        first = subprocess.run(command, cwd=ROOT, capture_output=True, text=True)
+        second = subprocess.run(command, cwd=ROOT, capture_output=True, text=True)
+        self.assertEqual(first.returncode, 0, first.stderr)
+        self.assertEqual(second.returncode, 0, second.stderr)
+        self.assertEqual(first.stdout, second.stdout)
+        values = yaml.safe_load((ROOT / 'charts/agent-relay/values-eks-rds-native.yaml').read_text())
+        self.assertIs(values['sessions-pipeline']['worker']['acknowledgeWorkloadRename'], True)
+
     def test_eks_actors_profile_can_layer_on_rds_native(self):
         # Replace only the documented customer placeholders. The three profile
         # files themselves must compose without leaking Relaycast's RDS CA into
