@@ -74,6 +74,7 @@ for d in "${dirs[@]}"; do
   if want test && [ "$d" = "examples/aws-environments" ] && have python3; then
     run -C "$ROOT/$d" python3 tests/check_lambda_bindings.py "$TF_BIN"
     run -C "$ROOT/$d" python3 tests/check_default_plan.py "$TF_BIN"
+    run -C "$ROOT/$d" python3 tests/check_sessions_bucket_import.py "$TF_BIN"
   fi
   if want test && { [ "$d" = "examples/aws" ] || [ "$d" = "examples/aws-existing-cluster" ]; } && have python3; then
     run -C "$ROOT/$d" python3 tests/check_default_plan.py "$TF_BIN"

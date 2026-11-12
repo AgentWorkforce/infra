@@ -434,10 +434,9 @@ that name or another, Terraform must not create a second one:
 
 1. Set `sessions_bucket_name` to the existing bucket's name when it differs
    (default `null` keeps the computed name; a default install never sets it).
-2. Import the existing bucket and its configuration before the first apply,
-   with reviewed `import` blocks for `module.sessions_bucket.aws_s3_bucket.this`
-   and the `aws_s3_bucket_{public_access_block,ownership_controls,server_side_encryption_configuration,versioning,lifecycle_configuration,policy}.this`
-   resources of the same module (each imports by bucket name).
+2. Set `sessions_bucket_import = true` (see [Adopting an existing sessions
+   bucket](#adopting-an-existing-sessions-bucket)) so the first plan imports
+   the bucket and its configuration instead of creating them.
 3. Review the plan: the module enforces its own versioning, encryption,
    public-access, ownership, lifecycle and bucket-policy settings, so any
    difference from the existing bucket appears as an in-place update. A
@@ -445,6 +444,77 @@ that name or another, Terraform must not create a second one:
 
 The override also flows to the storage role, the search read grant (when
 search is on), the Lambda pipeline and the `history_upload` bucket.
+
+### Adopting an existing sessions bucket
+
+> [!CAUTION]
+> **Never import the relayhistory-pipeline `aws-sessions-prod` bucket.** It is
+> managed by Alchemy, and adopting it here would give two tools ownership of
+> one bucket, with this state overwriting its policy, lifecycle and
+> encryption. The variable refuses any `sessions_bucket_name` containing
+> `aws-sessions-prod` while `sessions_bucket_import = true`. Only import a
+> bucket that this state is meant to own from now on.
+
+`sessions_bucket_import = true` (default `false`, which emits no import)
+requires `sessions_bucket_name` and adds `import` blocks
+(`import { for_each = ... }`, Terraform and OpenTofu >= 1.7; this root already
+requires >= 1.11). Every import ID is the bucket name:
+
+| Resource (`module.sessions_bucket.`) | Import ID | Why import | What the first plan does to it |
+|---|---|---|---|
+| `aws_s3_bucket.this` | `<bucket>` | CreateBucket on an existing name conflicts | Imported. Tags are updated in place to this environment's tags; `force_destroy = false` is state-only |
+| `aws_s3_bucket_public_access_block.this` | `<bucket>` | would otherwise plan as an extra create | Imported, then updated in place to block all four public-access settings |
+| `aws_s3_bucket_ownership_controls.this` | `<bucket>` | as above | Imported, then updated in place to `BucketOwnerEnforced`, which disables ACLs. Check that nothing relies on object ACLs |
+| `aws_s3_bucket_server_side_encryption_configuration.this` | `<bucket>` | as above | Imported, then updated in place to `aws:kms` with `kms_key_arn` (bucket key off while `history_upload` is set). Only new objects are affected |
+| `aws_s3_bucket_versioning.this` | `<bucket>` | as above | Imported, then updated in place to `Enabled`. Once enabled, a bucket can only be suspended, never unversioned |
+| `aws_s3_bucket_lifecycle_configuration.this` | `<bucket>` | as above | Imported, then **replaced in place as a whole**: abort incomplete uploads after 7 days and expire noncurrent versions after 30 days. Existing rules not in this module are removed |
+| `aws_s3_bucket_policy.this` | `<bucket>` | as above | Imported, then **replaced in place as a whole**: TLS-only plus the `history_upload` denies. Existing statements are dropped unless passed as module `additional_policy_statements` |
+
+Not managed here, so they are left untouched: access logging (`access_log_bucket`
+is unset), event notifications (only `pipeline_runtime = "lambda"` manages
+them), CORS, replication and object lock.
+
+S3 has no bucket policy or lifecycle configuration until one is set, and
+importing a missing one fails at plan. If the existing bucket lacks either, list
+it in `sessions_bucket_import_skip` (for example
+`["policy", "lifecycle_configuration"]`), and it plans as a create (an
+idempotent PUT, with no conflict) instead. Versioning and default encryption
+can always be read. The public access block and ownership controls exist on
+every bucket created since April 2023; skip them as well on an older bucket
+that never set them. The bucket itself is always imported.
+
+What the first plan shows besides the imports: `history_upload`'s Control,
+consumer and desktop-upload roles, policies and Pod Identity associations, the
+sessions storage role, and its `<release>-worker`, `<release>-alleyoop` and
+`<release>-session-ingest-api` Pod Identity associations, plus three state-only
+objects (root contract, postgres snapshot suffix, search mode marker). EKS
+allows one association per ServiceAccount, so if those ServiceAccounts are
+already bound to another role, those creates fail at apply. Check them first.
+A correct plan has **0 to destroy** and nothing replaced. The mocked test
+`tests/check_sessions_bucket_import.py` asserts exactly that composition with
+both opt-outs.
+
+For an environment such as agentrelay-prod that adopts its existing bucket
+with both opt-outs, merge something like the following into its private
+environment file. The bucket name, account and plan path are the environment
+owner's decisions:
+
+```json
+{
+  "enable_database": false,
+  "enable_search": false,
+  "sessions_bucket_name": "REPLACE_WITH_EXISTING_SESSIONS_BUCKET",
+  "sessions_bucket_import": true,
+  "sessions_bucket_import_skip": [],
+  "kms_key_arn": "REPLACE_WITH_THE_BUCKET_KMS_KEY_ARN",
+  "history_upload": { "consumer_service_account": "REPLACE_WITH_INGEST_EDGE_SERVICE_ACCOUNT" }
+}
+```
+
+Plan with the runner, review the imports and in-place updates above line by
+line, and apply only that reviewed plan. After the apply the import blocks are
+no-ops (the objects are in state), so `sessions_bucket_import` can stay `true`
+or be set back to `false`.
 
 ## Live verification
 
@@ -641,6 +711,8 @@ exact destroy inventory and recovery proof; do not remove state to bypass them.
 | search\_sessions\_bucket\_read\_enabled | Grant the search indexer and session-read roles read-only access to this environment's sessions bucket and the kms\_key\_arn that encrypts it. Defaults on: without it the indexer fails with unauthorized and the read API lists no sessions. false omits the two inline policies (for example, for one apply that enrolls an unmarked search state first). | `bool` | `true` | no |
 | search\_subnet\_ids | Existing private OpenSearch subnets, one per AZ. Production requires three. Required when enable\_search. | `list(string)` | `[]` | no |
 | service\_database\_names | Existing or reviewed new database names for HoopDb, Relaycast and optional Relayfile on the same RDS instance. This metadata does not create or rename databases. Control uses application\_database\_name. | `map(string)` | ```{ "hoopdb": "hoopdb", "relaycast": "relaycast", "relayfile": "relayfile" }``` | no |
+| sessions\_bucket\_import | Adopt the EXISTING bucket named by sessions\_bucket\_name into this state with import blocks instead of creating it. Requires sessions\_bucket\_name. Imports the bucket and its public access block, ownership controls, encryption, versioning, lifecycle and policy (each by bucket name), except those in sessions\_bucket\_import\_skip; the module's settings then apply as in-place updates. Default false: no import. Never point it at a bucket another tool manages (see the README). | `bool` | `false` | no |
+| sessions\_bucket\_import\_skip | Bucket configuration resources to create instead of import when sessions\_bucket\_import is true, because the existing bucket has none (S3 returns no bucket policy or lifecycle configuration until one is set, and importing a missing one fails). Allowed: public\_access\_block, ownership\_controls, server\_side\_encryption\_configuration, versioning, lifecycle\_configuration, policy. The bucket itself is always imported. | `set(string)` | `[]` | no |
 | sessions\_bucket\_name | Override the sessions bucket name. null (default) keeps the computed <name\_prefix>-<environment>-<account\_id>-<region>-sessions. Only for an environment whose sessions bucket already exists under another name: this state then manages that bucket, so import it first (see the README) instead of letting Terraform try to create a duplicate. | `string` | `null` | no |
 | tags | Additional resource tags. Environment identity and Pippen conventions cannot be overridden. | `map(string)` | `{}` | no |
 

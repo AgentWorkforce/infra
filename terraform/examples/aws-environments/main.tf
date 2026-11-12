@@ -85,6 +85,10 @@ resource "terraform_data" "environment_contract" {
       error_message = "Aurora requires an explicit engine version and compatible instance class."
     }
     precondition {
+      condition     = alltrue([for id in values(local.sessions_bucket_import_ids) : id == local.sessions_bucket_name]) && (length(local.sessions_bucket_import_ids) == 0 || contains(keys(local.sessions_bucket_import_ids), "bucket"))
+      error_message = "Sessions bucket imports must adopt the bucket itself and target only the configured sessions_bucket_name."
+    }
+    precondition {
       condition     = var.pipeline_runtime != "lambda" || (var.enable_database && var.enable_search)
       error_message = "Lambda mode indexes into this environment's OpenSearch and reads its PostgreSQL: it requires enable_database and enable_search."
     }

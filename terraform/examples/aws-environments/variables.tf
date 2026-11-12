@@ -115,6 +115,32 @@ variable "sessions_bucket_name" {
   }
 }
 
+variable "sessions_bucket_import" {
+  description = "Adopt the EXISTING bucket named by sessions_bucket_name into this state with import blocks instead of creating it. Requires sessions_bucket_name. Imports the bucket and its public access block, ownership controls, encryption, versioning, lifecycle and policy (each by bucket name), except those in sessions_bucket_import_skip; the module's settings then apply as in-place updates. Default false: no import. Never point it at a bucket another tool manages (see the README)."
+  type        = bool
+  default     = false
+  nullable    = false
+  validation {
+    condition     = !var.sessions_bucket_import || var.sessions_bucket_name != null
+    error_message = "sessions_bucket_import requires sessions_bucket_name: the name of the existing bucket to adopt."
+  }
+  validation {
+    condition     = !var.sessions_bucket_import || !strcontains(coalesce(var.sessions_bucket_name, "-"), "aws-sessions-prod")
+    error_message = "Refusing to import the relayhistory-pipeline aws-sessions-prod bucket: it is Alchemy-managed and must not be adopted into this state."
+  }
+}
+
+variable "sessions_bucket_import_skip" {
+  description = "Bucket configuration resources to create instead of import when sessions_bucket_import is true, because the existing bucket has none (S3 returns no bucket policy or lifecycle configuration until one is set, and importing a missing one fails). Allowed: public_access_block, ownership_controls, server_side_encryption_configuration, versioning, lifecycle_configuration, policy. The bucket itself is always imported."
+  type        = set(string)
+  default     = []
+  nullable    = false
+  validation {
+    condition     = length(setsubtract(var.sessions_bucket_import_skip, ["public_access_block", "ownership_controls", "server_side_encryption_configuration", "versioning", "lifecycle_configuration", "policy"])) == 0
+    error_message = "sessions_bucket_import_skip may only name public_access_block, ownership_controls, server_side_encryption_configuration, versioning, lifecycle_configuration or policy."
+  }
+}
+
 variable "eks_cluster_name" {
   description = "Existing EKS cluster for Pod Identity; the foundation root owns the cluster."
   type        = string
