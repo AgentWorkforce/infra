@@ -188,9 +188,11 @@ jobs:
           # neither event can disappear in GitHub's one-pending concurrency queue.
           pushed=false
           for attempt in 1 2 3 4 5; do
+            git fetch origin main
             if [[ "$remote_exists" == true ]]; then
               git fetch origin "$BRANCH"
               git checkout -B "$BRANCH" FETCH_HEAD
+              git merge --no-edit origin/main
             else
               git checkout -B "$BRANCH" origin/main
             fi
@@ -200,11 +202,9 @@ jobs:
               --digest "$DIGEST" \
               --source-sha "$SOURCE_SHA"
             git add "releases/agent-relay-${VERSION}"
-            if git diff --cached --quiet; then
-              pushed=true
-              break
+            if ! git diff --cached --quiet; then
+              git commit -m "release(agent-relay): candidate ${COMPONENT} pin"
             fi
-            git commit -m "release(agent-relay): candidate ${COMPONENT} pin"
             if git push origin "HEAD:${BRANCH}"; then
               pushed=true
               break
@@ -272,5 +272,24 @@ jobs:
           [[ "$synchronized" == true ]] \
             || { echo "::error::Could not synchronize the candidate PR table after 5 attempts."; exit 1; }
           url="$(gh pr view "$pr_number" --repo "$GITHUB_REPOSITORY" --json url --jq .url)"
-          echo "url=$url" >> "$GITHUB_OUTPUT"
+          {
+            echo "url=$url"
+            echo "number=$pr_number"
+            echo "head_sha=$head_before"
+          } >> "$GITHUB_OUTPUT"
           printf 'Updated %s with `%s@%s`.\n' "$url" "$COMPONENT" "$DIGEST" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Request exact-head full acceptance
+        shell: bash
+        env:
+          GH_TOKEN: ${{ steps.pusher.outputs.token }}
+          PR_NUMBER: ${{ steps.pull_request.outputs.number }}
+          HEAD_SHA: ${{ steps.pull_request.outputs.head_sha }}
+          VERSION: ${{ steps.request.outputs.version }}
+        run: |
+          set -euo pipefail
+          gh api --method POST "repos/$GITHUB_REPOSITORY/dispatches" \
+            -f event_type=release-candidate-acceptance \
+            -F "client_payload[pr_number]=$PR_NUMBER" \
+            -f "client_payload[version]=$VERSION" \
+            -f "client_payload[head_sha]=$HEAD_SHA"

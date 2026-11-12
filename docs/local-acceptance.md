@@ -98,6 +98,61 @@ Verification confirms integrity only; inspect `payload.status`, `suite`,
 lists each pending check as failed and exits 1, preventing an incomplete suite
 from becoming a green release gate.
 
+## Release-gate runner provisioning
+
+The release workflow uses the organization runner group
+`infra-acceptance-arlap` with labels `self-hosted`, `arlap` and `kind`. This
+group is a protected release resource, not a general CI pool. Its organization
+settings must have all of the following before registering the runner:
+
+- repository access set to **Selected repositories**, with only
+  `AgentWorkforce/infra` selected;
+- workflow access set to **Selected workflows**, with only
+  `AgentWorkforce/infra/.github/workflows/local-acceptance.yml@refs/heads/main`
+  selected; and
+- no runner with these labels attached to a less restrictive group.
+
+Pinning the allowed workflow to `refs/heads/main` is mandatory. A
+`pull_request` can carry a branch-edited workflow; same-repository and
+candidate-file checks inside the job do not protect the runner until after the
+job has started. Do not enable the group for a branch workflow, wildcard path
+or all workflows.
+
+Set the infra repository variable `ARLAP_ACCEPTANCE_CONFIG` to the provisioned
+absolute config path on that runner. The path must be a regular, non-symlink
+file. Keep its referenced credentials and kubeconfig outside the checkout with
+the ownership and mode requirements above. Until the protected runner group,
+this variable and every full-suite adapter are provisioned, release candidates
+must remain blocked; an API-only pass never satisfies `qualification`.
+
+The main-defined release workflow receives the open candidate PR number,
+version and exact head through `repository_dispatch` (or explicit manual
+dispatch). It checks out `main` as the trusted verifier and the candidate head
+in a separate directory as data. It publishes a custom `acceptance` check on
+that exact candidate commit; the tag gate accepts only that check and verifies
+that its backing Actions run used the main-defined workflow. A PR-ref workflow
+must never be admitted to the protected runner group. Concurrency slots include
+the requested immutable head because GitHub retains only one pending run per
+group. A delayed request for an older head therefore cannot replace or cancel a
+pending or active current-head qualification; it fails its immutable-head check
+in its own scheduler group.
+
+Candidate automation merges the current `main` into the release branch before
+requesting acceptance, and qualification refuses a head that does not contain
+the PR's current base commit. After merge, the tag gate compares the complete
+Git trees of the accepted head and merge commit. Any base advance, merge-time
+edit or release-input drift therefore requires a new candidate head and a new
+acceptance run rather than publishing unqualified files.
+
+The release check requires the candidate ledger to contain Control, Webapp and
+Sessions Pipeline pins. `values.yaml` must byte-for-byte equal the trusted
+UTF-8/LF render of that ledger. The signed receipt records the trusted observer
+checkout as `sourceRevision`, while its observed runtime images must match all
+three candidate `repository@sha256` values. The custom check binds those
+observations to the candidate head. Provisioning must therefore roll the
+candidate onto the local fixture before rerunning qualification; a pass from
+an older ar-lap deployment cannot qualify a newer release candidate.
+
 ## Remaining qualification increments
 
 Port the retained-trust clean-room receipts into tracked adapters: real upload

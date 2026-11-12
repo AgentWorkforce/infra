@@ -103,8 +103,10 @@ jobs:
         run: |
           set -euo pipefail
           candidate_pins="releases/agent-relay-${VERSION}/pins.json"
+          candidate_values="releases/agent-relay-${VERSION}/values.yaml"
           python3 scripts/release/update-release-candidate.py validate \
             --pins "$candidate_pins" \
+            --values "$candidate_values" \
             --version "$VERSION"
           mapfile -t components < <(jq -er '.pins | keys[]' "$candidate_pins")
           [[ "${#components[@]}" -gt 0 ]] \

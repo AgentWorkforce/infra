@@ -92,6 +92,32 @@ class ReleaseCandidateTest(unittest.TestCase):
                     root, "2026.11.1", "relay-control", DIGEST_B, SHA_B
                 )
 
+    def test_values_overlay_must_be_the_exact_ledger_render(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            output = MODULE.update(
+                root, "2026.11.1", "relay-control", DIGEST_A, SHA_A
+            )
+            MODULE.validate_candidate(
+                output / "pins.json", output / "values.yaml", "2026.11.1"
+            )
+            (output / "values.yaml").write_text(
+                (output / "values.yaml").read_text() + "relay-control: {}\n"
+            )
+            with self.assertRaisesRegex(ValueError, "does not match"):
+                MODULE.validate_candidate(
+                    output / "pins.json", output / "values.yaml", "2026.11.1"
+                )
+            (output / "values.yaml").write_bytes(
+                MODULE.render_values(
+                    MODULE.load_pins(output / "pins.json", "2026.11.1")
+                ).replace("\n", "\r\n").encode("utf-8")
+            )
+            with self.assertRaisesRegex(ValueError, "does not match"):
+                MODULE.validate_candidate(
+                    output / "pins.json", output / "values.yaml", "2026.11.1"
+                )
+
     def write_scrub_pin(self, root, version, crate_version=None):
         path = root / "scrub-bindgen-pin.json"
         path.write_text(
@@ -183,6 +209,7 @@ class ReleaseCandidateTest(unittest.TestCase):
         workflow = (ROOT / ".github/workflows/release-agent-relay.yml").read_text()
         self.assertIn("Reverify candidate policy and build provenance", workflow)
         self.assertIn("update-release-candidate.py validate", workflow)
+        self.assertIn('--values "$candidate_values"', workflow)
         self.assertIn("update-release-candidate.py check-policy", workflow)
         self.assertIn('gh attestation verify "oci://${repository}@${digest}"', workflow)
         self.assertIn('--source-digest "$source_sha"', workflow)

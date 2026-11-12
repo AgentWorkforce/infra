@@ -1,0 +1,305 @@
+name: Local Acceptance
+
+on:
+  repository_dispatch:
+    types: [release-candidate-acceptance]
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: Open release candidate pull request number
+        required: true
+        type: string
+      version:
+        description: Strict stable SemVer candidate version
+        required: true
+        type: string
+      head_sha:
+        description: Exact lowercase candidate commit SHA
+        required: true
+        type: string
+
+permissions:
+  checks: write
+  contents: read
+  pull-requests: read
+
+concurrency:
+  # Isolate scheduler slots by immutable head. GitHub keeps only one pending run
+  # per group, so a stale head must not replace a pending current-head request.
+  group: local-acceptance-${{ github.event.client_payload.pr_number || inputs.pr_number }}-${{ github.event.client_payload.head_sha || inputs.head_sha }}
+  cancel-in-progress: false
+
+jobs:
+  qualification:
+    name: qualification
+    runs-on:
+      group: infra-acceptance-arlap
+      labels: [self-hosted, arlap, kind]
+    timeout-minutes: 90
+    env:
+      ARLAP_ACCEPTANCE_CONFIG: ${{ vars.ARLAP_ACCEPTANCE_CONFIG }}
+      TARGET_PR: ${{ github.event.client_payload.pr_number || inputs.pr_number }}
+      TARGET_VERSION: ${{ github.event.client_payload.version || inputs.version }}
+      TARGET_HEAD: ${{ github.event.client_payload.head_sha || inputs.head_sha }}
+    steps:
+      - name: Resolve the immutable candidate from GitHub
+        id: candidate
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          [[ "$TARGET_PR" =~ ^[1-9][0-9]*$ ]]
+          [[ "$TARGET_VERSION" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
+          [[ "$TARGET_HEAD" =~ ^[a-f0-9]{40}$ ]]
+          metadata="$RUNNER_TEMP/candidate-pr.json"
+          python3 - "$metadata" <<'PY'
+          import json
+          import os
+          import sys
+          import urllib.request
+
+          url = (
+              f"{os.environ['GITHUB_API_URL']}/repos/{os.environ['GITHUB_REPOSITORY']}"
+              f"/pulls/{os.environ['TARGET_PR']}"
+          )
+          request = urllib.request.Request(
+              url,
+              headers={
+                  "Accept": "application/vnd.github+json",
+                  "Authorization": f"Bearer {os.environ['GITHUB_TOKEN']}",
+                  "X-GitHub-Api-Version": "2022-11-28",
+              },
+          )
+          with urllib.request.urlopen(request, timeout=30) as response:
+              data = json.load(response)
+          with open(sys.argv[1], "w", encoding="utf-8") as output:
+              json.dump(data, output)
+          PY
+          jq -e \
+            --arg repository "$GITHUB_REPOSITORY" \
+            --arg branch "release/agent-relay-${TARGET_VERSION}" \
+            --arg head "$TARGET_HEAD" '
+            .state == "open" and .draft == false and .merged == false and
+            .head.ref == $branch and .head.sha == $head and
+            .head.repo.full_name == $repository and
+            .base.ref == "main" and .base.repo.full_name == $repository and
+            (.base.sha | test("^[a-f0-9]{40}$"))
+          ' "$metadata" >/dev/null
+          {
+            echo "pr=$TARGET_PR"
+            echo "version=$TARGET_VERSION"
+            echo "head_sha=$TARGET_HEAD"
+            echo "base_sha=$(jq -er .base.sha "$metadata")"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Create the exact-head acceptance check
+        id: check
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          HEAD_SHA: ${{ steps.candidate.outputs.head_sha }}
+        run: |
+          set -euo pipefail
+          check_id="$(python3 - <<'PY'
+          import json
+          import os
+          import urllib.request
+
+          run_id = os.environ["GITHUB_RUN_ID"]
+          head = os.environ["HEAD_SHA"]
+          payload = json.dumps({
+              "name": "acceptance",
+              "head_sha": head,
+              "status": "in_progress",
+              "external_id": f"agent-relay-acceptance:{run_id}:{head}",
+              "details_url": (
+                  f"{os.environ['GITHUB_SERVER_URL']}/{os.environ['GITHUB_REPOSITORY']}"
+                  f"/actions/runs/{run_id}"
+              ),
+              "output": {
+                  "title": "Full ar-lap qualification is running",
+                  "summary": "Candidate identity was resolved from the open release pull request.",
+              },
+          }).encode()
+          request = urllib.request.Request(
+              f"{os.environ['GITHUB_API_URL']}/repos/{os.environ['GITHUB_REPOSITORY']}/check-runs",
+              data=payload,
+              method="POST",
+              headers={
+                  "Accept": "application/vnd.github+json",
+                  "Authorization": f"Bearer {os.environ['GITHUB_TOKEN']}",
+                  "Content-Type": "application/json",
+                  "X-GitHub-Api-Version": "2022-11-28",
+              },
+          )
+          with urllib.request.urlopen(request, timeout=30) as response:
+              result = json.load(response)
+          check_id = result.get("id")
+          if not isinstance(check_id, int) or check_id < 1:
+              raise SystemExit("GitHub returned an invalid check-run identity")
+          print(check_id)
+          PY
+          )"
+          echo "id=$check_id" >> "$GITHUB_OUTPUT"
+
+      - name: Check out the trusted verifier from main
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: false
+          path: .acceptance/trusted
+
+      - name: Check out the candidate head as data
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ steps.candidate.outputs.head_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+          path: .acceptance/candidate
+
+      - name: Run exact-head full qualification
+        id: acceptance
+        shell: bash
+        env:
+          ACCEPTANCE_OUTPUT: ${{ runner.temp }}/acceptance.json
+          ACCEPTANCE_KEY: ${{ runner.temp }}/acceptance-signing-key
+          BASE_SHA: ${{ steps.candidate.outputs.base_sha }}
+          HEAD_SHA: ${{ steps.candidate.outputs.head_sha }}
+          VERSION: ${{ steps.candidate.outputs.version }}
+        run: |
+          set -euo pipefail
+          trusted="$GITHUB_WORKSPACE/.acceptance/trusted"
+          checkout="$GITHUB_WORKSPACE/.acceptance/candidate"
+          trusted_sha="$(git -C "$trusted" rev-parse HEAD)"
+          [[ "$(git -C "$checkout" rev-parse HEAD)" == "$HEAD_SHA" ]]
+          git -C "$checkout" merge-base --is-ancestor "$BASE_SHA" "$HEAD_SHA" \
+            || { echo "::error::Candidate head does not contain the current main base."; exit 1; }
+          prefix="releases/agent-relay-${VERSION}/"
+          python3 - "$checkout" "$BASE_SHA" "$HEAD_SHA" "$prefix" <<'PY'
+          import subprocess
+          import sys
+
+          checkout, base, head, prefix = sys.argv[1:]
+          raw = subprocess.check_output(
+              ["git", "-C", checkout, "diff", "--name-status", "-z", "--find-renames", f"{base}...{head}"]
+          )
+          fields = raw.split(b"\0")
+          if fields and fields[-1] == b"":
+              fields.pop()
+          current = []
+          index = 0
+          while index < len(fields):
+              status = fields[index].decode("ascii")
+              index += 1
+              count = 2 if status.startswith(("R", "C")) else 1
+              if index + count > len(fields):
+                  raise SystemExit("Exact-head diff is malformed")
+              names = [fields[index + offset].decode("utf-8") for offset in range(count)]
+              index += count
+              if not all(name.startswith(prefix) for name in names):
+                  raise SystemExit("Exact-head diff changes a path outside its candidate directory")
+              if not status.startswith("D"):
+                  current.append(names[-1])
+          required = {prefix + "pins.json", prefix + "values.yaml"}
+          if not current or not required.issubset(current):
+              raise SystemExit("Exact-head candidate diff omits pins.json or values.yaml")
+          PY
+
+          candidate="$checkout/releases/agent-relay-${VERSION}"
+          [[ -f "$candidate/pins.json" && ! -L "$candidate/pins.json" &&
+             -f "$candidate/values.yaml" && ! -L "$candidate/values.yaml" ]] \
+            || { echo "::error::Candidate pins and values must be regular files."; exit 1; }
+          python3 "$trusted/scripts/release/update-release-candidate.py" validate \
+            --pins "$candidate/pins.json" \
+            --values "$candidate/values.yaml" \
+            --version "$VERSION"
+          jq -e '.pins | keys | sort == ["relay-control", "relay-webapp", "sessions-pipeline"]' \
+            "$candidate/pins.json" >/dev/null
+          [[ "$ARLAP_ACCEPTANCE_CONFIG" == /* ]] \
+            || { echo "::error::ARLAP_ACCEPTANCE_CONFIG must be a provisioned absolute path."; exit 1; }
+          [[ -f "$ARLAP_ACCEPTANCE_CONFIG" && ! -L "$ARLAP_ACCEPTANCE_CONFIG" ]] \
+            || { echo "::error::The provisioned acceptance config is unavailable."; exit 1; }
+
+          set +e
+          make -C "$trusted" local-acceptance \
+            ACCEPTANCE_SUITE=full \
+            ACCEPTANCE_CONFIG="$ARLAP_ACCEPTANCE_CONFIG" \
+            ACCEPTANCE_OUTPUT="$ACCEPTANCE_OUTPUT" \
+            ACCEPTANCE_KEY="$ACCEPTANCE_KEY"
+          command_status=$?
+          set -e
+          [[ -f "$ACCEPTANCE_OUTPUT" && ! -L "$ACCEPTANCE_OUTPUT" ]] \
+            || { echo "::error::The full suite produced no acceptance receipt."; exit 1; }
+          python3 "$trusted/ci/agent-relay/kind/acceptance/run.py" verify \
+            "$ACCEPTANCE_OUTPUT" \
+            --trusted-key "${ACCEPTANCE_KEY}.pub"
+          python3 "$trusted/scripts/release/validate-release-acceptance.py" \
+            --receipt "$ACCEPTANCE_OUTPUT" \
+            --pins "$candidate/pins.json" \
+            --trusted-source "$trusted_sha"
+          [[ "$command_status" -eq 0 ]] \
+            || { echo "::error::The full local acceptance command failed."; exit 1; }
+
+      - name: Complete the exact-head acceptance check
+        if: always() && steps.check.outputs.id != ''
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          CHECK_ID: ${{ steps.check.outputs.id }}
+          ACCEPTANCE_OUTCOME: ${{ steps.acceptance.outcome }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import datetime
+          import json
+          import os
+          import urllib.request
+
+          passed = os.environ["ACCEPTANCE_OUTCOME"] == "success"
+          payload = json.dumps({
+              "status": "completed",
+              "conclusion": "success" if passed else "failure",
+              "completed_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+              "output": {
+                  "title": "Full ar-lap qualification passed" if passed else "Full ar-lap qualification failed",
+                  "summary": (
+                      "The signed full-suite receipt, exact candidate head, deterministic values overlay "
+                      "and observed runtime image pins passed all release gates."
+                      if passed else
+                      "The candidate did not satisfy every full-suite, identity and runtime-pin gate."
+                  ),
+              },
+          }).encode()
+          request = urllib.request.Request(
+              (
+                  f"{os.environ['GITHUB_API_URL']}/repos/{os.environ['GITHUB_REPOSITORY']}"
+                  f"/check-runs/{os.environ['CHECK_ID']}"
+              ),
+              data=payload,
+              method="PATCH",
+              headers={
+                  "Accept": "application/vnd.github+json",
+                  "Authorization": f"Bearer {os.environ['GITHUB_TOKEN']}",
+                  "Content-Type": "application/json",
+                  "X-GitHub-Api-Version": "2022-11-28",
+              },
+          )
+          with urllib.request.urlopen(request, timeout=30):
+              pass
+          PY
+
+      - name: Store the signed acceptance receipt
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: local-acceptance-${{ steps.candidate.outputs.pr }}-${{ steps.candidate.outputs.head_sha }}
+          path: ${{ runner.temp }}/acceptance.json
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Remove the ephemeral signing key
+        if: always()
+        shell: bash
+        run: rm -f "$RUNNER_TEMP/acceptance-signing-key" "$RUNNER_TEMP/acceptance-signing-key.pub"
