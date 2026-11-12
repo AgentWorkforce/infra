@@ -69,6 +69,17 @@ class Profiles(unittest.TestCase):
             with self.assertRaisesRegex(stack.StackError, "remote Docker contexts are refused"):
                 local.docker()
 
+    def test_private_docker_config_discovers_desktop_buildx_without_credentials(self):
+        with tempfile.TemporaryDirectory() as directory, patch.object(stack, "ROOT", Path(directory)):
+            local = stack.Stack("core")
+            local.env["DOCKER_HOST"] = "unix:///fixture/docker.sock"
+            local.cmd = lambda *args, **kw: subprocess.CompletedProcess(args, 0, stdout="arm64\n")
+            with patch.object(stack.sys, "platform", "darwin"), patch.object(Path, "is_dir", return_value=True):
+                local.docker(require_space=False)
+            config = json.loads((local.state / "docker-public/config.json").read_text())
+            self.assertEqual(config, {"auths": {"https://index.docker.io/v1/": {}, "ghcr.io": {}},
+                "cliPluginsExtraDirs": ["/Applications/Docker.app/Contents/Resources/cli-plugins"]})
+
     def test_history_and_pipeline_have_independent_database_ownership(self):
         with tempfile.TemporaryDirectory(prefix="infra-kind-databases-") as directory, patch.object(stack, "ROOT", Path(directory)):
             local = stack.Stack("core")
