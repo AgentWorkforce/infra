@@ -13,7 +13,7 @@ is the first performance comparison.
 
 | | Postgres arm | Actors arm |
 |---|---|---|
-| Chart | `charts/agent-relay` 0.6.53 (this branch's base) | same |
+| Chart | `charts/agent-relay` 0.6.55, infra `main` @ `7bf3bf2` for both arms | same |
 | Profiles | `values-eks.yaml` + `values-eks-rds-native.yaml` | same + `values-eks-actors.yaml` + `bench/relaycast/values/arm-actors-suite.yaml` |
 | Relaycast | `relaycast-self-host@sha256:ab9dd678…` (engine 12.8.0), `runtime.backend=postgres`, 1 replica (the chart refuses more), 100m/256Mi requested, **1 CPU / 1Gi limit** (chart default) | `relaycast-actors-gateway@sha256:6d4f77c4…` (relaycast 12.7.0-actors.1), 1 gateway replica, 100m/128Mi requested, **no CPU limit**, one `Workspace` actor per workspace (250m/256Mi each) |
 | Relaycast state | RDS PostgreSQL 17 `db.r7g.large` Multi-AZ, gp3 200 GB | durable-actors (control plane + pool manager on `db.r7g.large` Multi-AZ, database `durable_actors`), actor state and files in S3 |
@@ -53,8 +53,9 @@ backlog test is not cut at the default 1000 deliveries per recipient.
 
 1. **The combined actors + full-suite profile did not render** on 0.6.53:
    `values-eks-rds-native.yaml` sets `relaycast.postgresCa` (ConfigMap `rds-ca`),
-   which the durable-actors backend rejects. `arm-actors-suite.yaml` clears it and
-   turns the suite back on. Fixed upstream by #267 (chart 0.6.55).
+   which the durable-actors backend rejects. Fixed by #267 (chart 0.6.55), which
+   this benchmark uses; `arm-actors-suite.yaml` now only turns the rest of the
+   suite back on.
 2. A raw checkout renders a third of the suite unless `helm dependency build
    charts/sessions-pipeline` runs first (the in-repo `sessions-pipeline-0.8.26.tgz`
    has no nested subcharts). The published 0.6.53 package is complete (33
