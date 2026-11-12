@@ -27,4 +27,3 @@ def recipe(root=None):
     return {"source": source, "recipeSha256": fingerprint, "dockerfile": dockerfile,
             "runtimeTag": "local/durable-actors:" + fingerprint,
             "actorTag": "local/relaycast-actors-dev:" + fingerprint}
-
