@@ -73,6 +73,7 @@ for d in "${dirs[@]}"; do
   fi
   if want test && [ "$d" = "examples/aws-environments" ] && have python3; then
     run -C "$ROOT/$d" python3 tests/check_lambda_bindings.py "$TF_BIN"
+    run -C "$ROOT/$d" python3 tests/check_default_plan.py "$TF_BIN"
   fi
   if want test && [ "$d" = "examples/aws-search-proof" ] && have python3; then
     run -C "$ROOT/$d" python3 -m unittest discover -s proof -p 'test_*.py'
