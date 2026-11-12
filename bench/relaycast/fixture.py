@@ -122,6 +122,8 @@ def main():
     if args.command == "down":
         s.cmd(["kind", "delete", "cluster", "--name", NAME], timeout=180)
         s.marker.unlink()
+        (s.state / "benchmark-credentials.json").unlink(missing_ok=True)
+        s.kubeconfig.unlink(missing_ok=True)
         print(json.dumps({"removedCluster": NAME, "viewingFixture": "untouched", "buildCache": "retained"}))
         return
     if args.command == "observe":
