@@ -43,6 +43,8 @@ newest successful reviewed actors publish, run `41805228035`. On first up,
 Docker builds the upstream TypeScript runtime and matching Workspace actor.
 Rust compilation can make this cold step slow; Rust/Node are built inside
 containers. GitHub and package-registry read access are prerequisites.
+The generated upstream Dockerfile adds only `ARG CARGO_BUILD_JOBS=2` to its
+Rust build stage to bound laptop memory pressure; the source checkout stays exact.
 Exact clean source caches and matching Docker image IDs permit reuse on later
 ups. The printed IDs and `.kind/local/actor-build/images.json` are **local build
 image IDs**, not published registry digests. The upstream Dockerfile's distro

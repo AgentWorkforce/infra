@@ -20,6 +20,8 @@ def recipe(root=None):
             raise ValueError("local actors require pinned source revisions")
     if not GATEWAY.fullmatch(source["gateway"].get("reference", "")) or source["gateway"].get("sourceRevision") != source["relaycast"]["revision"]:
         raise ValueError("local actor gateway and actor source must match")
+    if type(source["upstream"].get("cargoJobs")) is not int or not 1 <= source["upstream"]["cargoJobs"] <= 4:
+        raise ValueError("local actor Rust build requires bounded parallelism")
     dockerfile = root / "ci/agent-relay/kind/relaycast-actors-dev.Dockerfile"
     fingerprint = hashlib.sha256(json.dumps(source, sort_keys=True, separators=(",", ":")).encode() + dockerfile.read_bytes()).hexdigest()
     return {"source": source, "recipeSha256": fingerprint, "dockerfile": dockerfile,

@@ -3,7 +3,8 @@
   "upstream": {
     "repository": "https://github.com/TerseAI/durable-actors.git",
     "revision": "5f0a2d62ed08e3060befd9b009333e1f0c3c6cd8",
-    "sdkVersion": "0.14.6"
+    "sdkVersion": "0.14.6",
+    "cargoJobs": 2
   },
   "relaycast": {
     "repository": "https://github.com/AgentWorkforce/relaycast.git",

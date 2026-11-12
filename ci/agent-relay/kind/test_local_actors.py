@@ -17,6 +17,7 @@ class LocalActorBuildTests(unittest.TestCase):
         source = state / "actor-build/sources"
         for name in ("upstream", "relaycast"):
             (source / name).mkdir(parents=True)
+        (source / "upstream/Dockerfile").write_text("FROM rust:1.91.0-bookworm AS builder\nRUN cargo build --locked --release\n")
         package = source / "relaycast/packages/actors-workspace/package.json"
         package.parent.mkdir(parents=True)
         package.write_text(json.dumps({"dependencies": {"durable-actors": selected["source"]["upstream"]["sdkVersion"]}}))
@@ -55,6 +56,7 @@ class LocalActorBuildTests(unittest.TestCase):
             builds = [c for c in calls if c[:2] == ["docker", "build"]]
             self.assertEqual(len(builds), 2)
             self.assertIn("typescript", builds[0])
+            self.assertIn("ARG CARGO_BUILD_JOBS=2", (stack.state / "actor-build/upstream.Dockerfile").read_text())
             self.assertIn("DURABLE_ACTORS_TYPESCRIPT_IMAGE=" + selected["runtimeTag"], builds[1])
             self.assertTrue(all(calls.index(c) < calls.index(builds[0]) for c in calls if c[0] == "git"))
             self.assertEqual((stack.state / "actor-build/images.json").stat().st_mode & 0o777, 0o600)

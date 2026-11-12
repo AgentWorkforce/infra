@@ -50,6 +50,16 @@ def build(stack, selected=None):
     for name in ("upstream", "relaycast"):
         checkout(stack, source_directory / name, selected["source"][name])
     upstream, relaycast = source_directory / "upstream", source_directory / "relaycast"
+    # Keep the source checkout exact. This sole Dockerfile transformation bounds
+    # Rust memory pressure on a laptop that may also run a viewing fixture.
+    dockerfile = (upstream / "Dockerfile").read_text()
+    marker = "FROM rust:1.91.0-bookworm AS builder\n"
+    if dockerfile.count(marker) != 1:
+        raise StackError("pinned upstream Rust build stage was not recognized")
+    runtime_dockerfile = directory / "upstream.Dockerfile"
+    if runtime_dockerfile.is_symlink():
+        raise StackError("local actor build Dockerfile must not be a symlink")
+    runtime_dockerfile.write_text(dockerfile.replace(marker, marker + "ARG CARGO_BUILD_JOBS=" + str(selected["source"]["upstream"]["cargoJobs"]) + "\n", 1))
     package = json.loads((relaycast / "packages/actors-workspace/package.json").read_text())
     if package.get("dependencies", {}).get("durable-actors") != selected["source"]["upstream"]["sdkVersion"]:
         raise StackError("local actor SDK does not match the pinned upstream runtime")
@@ -59,7 +69,7 @@ def build(stack, selected=None):
             raise StackError("local actor image ID file must not be a symlink")
     stack.cmd([*stack.docker_args, "build", "--builder", "default", "--target", "typescript", "--iidfile", runtime_id,
         "--label", "org.opencontainers.image.revision=" + selected["source"]["upstream"]["revision"],
-        "-t", selected["runtimeTag"], "-f", upstream / "Dockerfile", upstream], timeout=3600)
+        "-t", selected["runtimeTag"], "-f", runtime_dockerfile, upstream], timeout=3600)
     stack.cmd([*stack.docker_args, "build", "--builder", "default", "--iidfile", actor_id,
         "--build-arg", "DURABLE_ACTORS_TYPESCRIPT_IMAGE=" + selected["runtimeTag"],
         "--label", "org.opencontainers.image.revision=" + selected["source"]["relaycast"]["revision"],
