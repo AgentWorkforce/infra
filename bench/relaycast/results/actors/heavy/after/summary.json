@@ -1,0 +1,372 @@
+{
+ "arm": "actors",
+ "dir": "/home/khaliqgant/Projects/AgentWorkforce/infra-worktrees/relaycast-actors-bench/bench/relaycast/results/actors/heavy/after",
+ "phases": [
+  {
+   "label": "h-burst",
+   "kind": "mixed",
+   "offeredRate": 300,
+   "startedAt": 1794522849147,
+   "endedAt": 1794523509485,
+   "issued": 449991
+  },
+  {
+   "label": "h-bcast",
+   "kind": "broadcast",
+   "offeredRate": 10,
+   "startedAt": 1794523509166,
+   "endedAt": 1794523818802,
+   "issued": 2988
+  }
+ ],
+ "routes": [
+  {
+   "arm": "actors",
+   "phase": "h-burst",
+   "route": "POST /v1/channels/:name/messages",
+   "requests": 140118,
+   "ok": 1927,
+   "rps_ok": 2.92,
+   "err_rate": 0.98625,
+   "r429": 0,
+   "r5xx": 74020,
+   "net_err": 64171,
+   "p50": 7440.293,
+   "p95": 29968.179,
+   "p99": 29968.179,
+   "max": 30140.29699999839,
+   "corrected_p50": 65587.979,
+   "corrected_p95": 246485.595,
+   "corrected_p99": 311990.767
+  },
+  {
+   "arm": "actors",
+   "phase": "h-burst",
+   "route": "POST /v1/dm",
+   "requests": 269977,
+   "ok": 1934,
+   "rps_ok": 2.93,
+   "err_rate": 0.99284,
+   "r429": 0,
+   "r5xx": 63563,
+   "net_err": 204480,
+   "p50": 10377.302,
+   "p95": 29968.179,
+   "p99": 29968.179,
+   "max": 30144.735000001267,
+   "corrected_p50": 11277.376,
+   "corrected_p95": 40095.253,
+   "corrected_p99": 47681.56
+  },
+  {
+   "arm": "actors",
+   "phase": "h-bcast",
+   "route": "POST /v1/dm",
+   "requests": 74700,
+   "ok": 3334,
+   "rps_ok": 10.77,
+   "err_rate": 0.95537,
+   "r429": 0,
+   "r5xx": 61981,
+   "net_err": 9385,
+   "p50": 10234.435,
+   "p95": 10522.164,
+   "p99": 21044.328,
+   "max": 30006.276999998838,
+   "corrected_p50": 10234.435,
+   "corrected_p95": 10522.164,
+   "corrected_p99": 21044.328
+  }
+ ],
+ "delivery": [
+  {
+   "arm": "actors",
+   "phase": "h-10",
+   "deliveries": 54909,
+   "deliveries_per_s": null,
+   "p50": 1860.073,
+   "p95": 4611.895,
+   "p99": 7492.045,
+   "p999": 10377.302,
+   "max": 11412
+  },
+  {
+   "arm": "actors",
+   "phase": "h-burst",
+   "deliveries": 35298,
+   "deliveries_per_s": 53.45,
+   "p50": 582195.358,
+   "p95": 1086414.953,
+   "p99": 1116958.234,
+   "p999": 1140427.901,
+   "max": 1148223
+  },
+  {
+   "arm": "actors",
+   "phase": "h-bcast",
+   "deliveries": 5097,
+   "deliveries_per_s": 16.46,
+   "p50": 353449.313,
+   "p95": 403202.151,
+   "p99": 414537.707,
+   "p999": 426191.948,
+   "max": 433941
+  }
+ ],
+ "integrity": [
+  {
+   "arm": "actors",
+   "phase": "h-burst",
+   "expected": 21204,
+   "delivered": 21204,
+   "lost": 0,
+   "duplicate": 0,
+   "redelivered": 10947,
+   "reordered": 3,
+   "reordered_after_timeout": 0,
+   "unexpected": 213,
+   "truncated": 0
+  },
+  {
+   "arm": "actors",
+   "phase": "h-bcast",
+   "expected": 3334,
+   "delivered": 3334,
+   "lost": 0,
+   "duplicate": 0,
+   "redelivered": 1738,
+   "reordered": 0,
+   "reordered_after_timeout": 0,
+   "unexpected": 18,
+   "truncated": 0
+  }
+ ],
+ "sinks": [
+  {
+   "shard": 0,
+   "sockets": 167,
+   "connected": 167,
+   "drops": 271,
+   "connect": {
+    "n": 167,
+    "mean": 27052.222,
+    "min": 478,
+    "p50": 11838.05,
+    "p95": 62481.601,
+    "p99": 64238.198,
+    "p999": 64685.01,
+    "max": 64537
+   },
+   "reconnect": {
+    "n": 271,
+    "mean": 662997.159,
+    "min": 287202,
+    "p50": 721752.068,
+    "p95": 1093971.566,
+    "p99": 1124727.293,
+    "p999": 1132550.39,
+    "max": 1130484
+   },
+   "counters": {
+    "connect_error ws error": 14633,
+    "frame context.update": 377,
+    "join 200": 268,
+    "deliver": 15812,
+    "ws_drop 1001": 271,
+    "connect_error node.register timeout": 28,
+    "connect_error ws closed 1001": 126,
+    "connect_error ws closed 1011": 1
+   },
+   "drain": [],
+   "rssBytes": 106037248
+  },
+  {
+   "shard": 1,
+   "sockets": 166,
+   "connected": 166,
+   "drops": 277,
+   "connect": {
+    "n": 166,
+    "mean": 26589.223,
+    "min": 422,
+    "p50": 7974.309,
+    "p95": 67431.909,
+    "p99": 69327.678,
+    "p999": 70295.456,
+    "max": 70386
+   },
+   "reconnect": {
+    "n": 277,
+    "mean": 644343.372,
+    "min": 192083,
+    "p50": 716766.562,
+    "p95": 1093971.566,
+    "p99": 1132550.39,
+    "p999": 1132550.39,
+    "max": 1132086
+   },
+   "counters": {
+    "connect_error ws error": 14061,
+    "frame context.update": 1266,
+    "join 200": 266,
+    "deliver": 15975,
+    "ws_drop 1001": 277,
+    "connect_error node.register timeout": 34,
+    "connect_error ws closed 1001": 144
+   },
+   "drain": [],
+   "rssBytes": 102629376
+  },
+  {
+   "shard": 2,
+   "sockets": 166,
+   "connected": 166,
+   "drops": 269,
+   "connect": {
+    "n": 166,
+    "mean": 27776.627,
+    "min": 540,
+    "p50": 12255.518,
+    "p95": 65587.979,
+    "p99": 68373.223,
+    "p999": 68848.796,
+    "max": 69068
+   },
+   "reconnect": {
+    "n": 269,
+    "mean": 664221.301,
+    "min": 281057,
+    "p50": 721752.068,
+    "p95": 1086414.953,
+    "p99": 1124727.293,
+    "p999": 1132550.39,
+    "max": 1131156
+   },
+   "counters": {
+    "connect_error ws error": 14265,
+    "frame context.update": 801,
+    "join 200": 265,
+    "deliver": 15938,
+    "ws_drop 1001": 269,
+    "connect_error node.register timeout": 30,
+    "connect_error ws closed 1001": 136,
+    "connect_error ws closed 1011": 1
+   },
+   "drain": [],
+   "rssBytes": 110006272
+  },
+  {
+   "shard": 3,
+   "sockets": 167,
+   "connected": 167,
+   "drops": 271,
+   "connect": {
+    "n": 167,
+    "mean": 28695.617,
+    "min": 333,
+    "p50": 21635.964,
+    "p95": 66966.122,
+    "p99": 68848.796,
+    "p999": 69809.89,
+    "max": 69981
+   },
+   "reconnect": {
+    "n": 271,
+    "mean": 663778.236,
+    "min": 282203,
+    "p50": 716766.562,
+    "p95": 1086414.953,
+    "p99": 1124727.293,
+    "p999": 1140427.901,
+    "max": 1141752
+   },
+   "counters": {
+    "connect_error ws error": 14420,
+    "frame context.update": 2119,
+    "join 200": 266,
+    "deliver": 15792,
+    "ws_drop 1001": 271,
+    "connect_error node.register timeout": 25,
+    "connect_error ws closed 1001": 146,
+    "connect_error ws closed 1011": 1
+   },
+   "drain": [],
+   "rssBytes": 109809664
+  },
+  {
+   "shard": 4,
+   "sockets": 167,
+   "connected": 167,
+   "drops": 275,
+   "connect": {
+    "n": 167,
+    "mean": 28047.575,
+    "min": 417,
+    "p50": 17452.472,
+    "p95": 65134.93,
+    "p99": 67431.909,
+    "p999": 68373.223,
+    "max": 68415
+   },
+   "reconnect": {
+    "n": 275,
+    "mean": 653130.764,
+    "min": 194996,
+    "p50": 716766.562,
+    "p95": 1109242.84,
+    "p99": 1124727.293,
+    "p999": 1132550.39,
+    "max": 1130891
+   },
+   "counters": {
+    "connect_error ws error": 14227,
+    "frame context.update": 1665,
+    "join 200": 267,
+    "deliver": 15989,
+    "ws_drop 1001": 275,
+    "connect_error node.register timeout": 27,
+    "connect_error ws closed 1001": 179
+   },
+   "drain": [],
+   "rssBytes": 104837120
+  },
+  {
+   "shard": 5,
+   "sockets": 167,
+   "connected": 167,
+   "drops": 263,
+   "connect": {
+    "n": 167,
+    "mean": 27241.557,
+    "min": 383,
+    "p50": 5797.213,
+    "p95": 66966.122,
+    "p99": 69327.678,
+    "p999": 69809.89,
+    "max": 69759
+   },
+   "reconnect": {
+    "n": 263,
+    "mean": 683934.38,
+    "min": 281381,
+    "p50": 721752.068,
+    "p95": 1093971.566,
+    "p99": 1132550.39,
+    "p999": 1140427.901,
+    "max": 1138116
+   },
+   "counters": {
+    "connect_error ws error": 15030,
+    "frame context.update": 2572,
+    "join 200": 268,
+    "deliver": 15798,
+    "ws_drop 1001": 263,
+    "connect_error node.register timeout": 28,
+    "connect_error ws closed 1001": 144,
+    "connect_error ws closed 1011": 1
+   },
+   "drain": [],
+   "rssBytes": 108736512
+  }
+ ]
+}
