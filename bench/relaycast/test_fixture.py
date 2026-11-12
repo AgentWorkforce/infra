@@ -24,6 +24,11 @@ class FixtureBoundaries(unittest.TestCase):
             with self.subTest(rate=rate), self.assertRaises(ValueError): validate_plan(tampered, 10)
         tampered = copy.deepcopy(plan);tampered["steps"][0]["routes"][0]["targetRps"] += 1
         with self.assertRaises(ValueError): validate_plan(tampered, 10)
+        # An authority suffix concatenated onto the fixed base URL would turn
+        # the local hostname into URL userinfo and send credentials elsewhere.
+        for path in ("@external.example/v1/agents", "https://external.example/v1/agents", "/v1/../internal/secret"):
+            tampered = copy.deepcopy(plan);tampered["steps"][0]["routes"][0]["pathTemplate"] = path
+            with self.subTest(path=path), self.assertRaises(ValueError): validate_plan(tampered, 10)
 
 
 if __name__ == "__main__":

@@ -6,6 +6,7 @@ import json
 import math
 import os
 from pathlib import Path
+import re
 import secrets
 import sys
 import time
@@ -24,6 +25,12 @@ def validate_plan(plan, seconds):
         if type(target) not in (int, float) or not math.isfinite(target) or not 0 < target <= 5000:
             raise ValueError("benchmark target must be finite and at most 5000 RPS")
         rates = [route.get("targetRps") for route in step.get("routes", [])]
+        for route in step.get("routes", []):
+            path = route.get("pathTemplate", "")
+            if (route.get("method") not in {"GET", "POST", "PATCH", "PUT", "DELETE", "HEAD", "OPTIONS"}
+                    or not isinstance(path, str) or not re.fullmatch(r"/(?:v1|internal)/(?:[A-Za-z0-9_:-]+/?)+", path)
+                    or ".." in path):
+                raise ValueError("benchmark routes must remain local API path templates")
         if (not rates or len(rates) > 256 or any(type(rate) not in (int, float) or not math.isfinite(rate) or rate < 0 for rate in rates)
                 or not math.isclose(sum(rates), target, abs_tol=1e-6)):
             raise ValueError("route rates do not equal the step target")
