@@ -67,6 +67,14 @@ runtime:
     controlPlaneUrl: ""
     # Optional DURABLE_ACTORS_HOME_REGION for the gateway's invocations.
     homeRegion: ""
+    # Where the gateway dials actor sockets (DURABLE_ACTORS_SOCKET_ORIGIN, needs
+    # an actors gateway built from relaycast #655 or later). The control plane
+    # hands out socket URLs on durable-actors.publicUrl; a cluster that cannot
+    # resolve or reach that host (no split-horizon DNS or hairpin) closes
+    # every /v1/ws and /v1/node/ws client with 1011. "controlPlane": the
+    # in-cluster control plane URL above; an http(s) origin: that; "": the
+    # public URL.
+    socketOrigin: ""
     gateway:
       image:
         repository: ghcr.io/agentworkforce/relaycast-actors-gateway
@@ -436,8 +444,8 @@ extraEnv: []
 # applies it itself; never set these in a release's values.
 migration:
   enabled: false
-  # preflight | export (on the postgres release) | files | import (after the
-  # cutover to durable-actors).
+  # preflight | export (on the postgres release) | files | import | verify |
+  # open (after the cutover to durable-actors; open is the go-live).
   step: ""
   # 8-64 URL-safe characters; names the export directory on the data claim
   # (/data/migration/<runId>) and the import run.
@@ -445,4 +453,7 @@ migration:
   # preflight: epoch seconds when credentials.format=ar was enabled; principals
   # created before it and never upgraded are reported as legacy.
   arSince: ""
+  # preflight: report principals still on legacy credentials without failing
+  # (their holders re-register after the move; their data still moves).
+  allowLegacy: false
   activeDeadlineSeconds: 21600

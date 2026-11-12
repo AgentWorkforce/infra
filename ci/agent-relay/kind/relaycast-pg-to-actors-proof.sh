@@ -37,16 +37,25 @@ for image in relaycast-self-host relaycast-actors-gateway relaycast-actors-dev; 
   docker tag "$image:kind" "$REG/$image:kind"
   docker push -q "$REG/$image:kind" >/dev/null
 done
-SELFHOST_DIGEST=$(docker inspect --format '{{range .RepoDigests}}{{println .}}{{end}}' "$REG/relaycast-self-host:kind" | grep "^$REG/" | head -1 | cut -d@ -f2)
-[[ "$SELFHOST_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "no registry digest for relaycast-self-host"; exit 1; }
+# Pin by digest: a reused tag can resolve to an image a kind node cached earlier.
+digest_of() { docker inspect --format '{{range .RepoDigests}}{{println .}}{{end}}' "$REG/$1:kind" | grep "^$REG/" | head -1 | cut -d@ -f2; }
+SELFHOST_DIGEST=$(digest_of relaycast-self-host); GATEWAY_DIGEST=$(digest_of relaycast-actors-gateway); DEV_DIGEST=$(digest_of relaycast-actors-dev)
+for d in "$SELFHOST_DIGEST" "$GATEWAY_DIGEST" "$DEV_DIGEST"; do
+  [[ "$d" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "no registry digest for an image"; exit 1; }
+done
 
 log "namespace, TLS PostgreSQL ($NS), MinIO, secrets"
-# A namespace left by an earlier run must be gone first: its pods would answer
-# the port-forward with the old secrets.
+# A namespace left by an earlier run of this proof must be gone first (its pods
+# would answer the port-forward with old secrets). Any other namespace of that
+# name is not ours: refuse rather than delete it.
+MARK=agentworkforce.dev/relaycast-pg-to-actors-proof
 if kubectl --context "$CTX" get namespace "$NS" >/dev/null 2>&1; then
+  [ "$(kubectl --context "$CTX" get namespace "$NS" -o jsonpath="{.metadata.labels.agentworkforce\.dev/relaycast-pg-to-actors-proof}")" = "true" ] \
+    || { echo "namespace $NS exists and was not created by this proof: choose another NAMESPACE"; exit 1; }
   kubectl --context "$CTX" delete namespace "$NS" --wait=true --timeout=5m >/dev/null
 fi
-kubectl --context "$CTX" create namespace "$NS" --dry-run=client -o yaml | kubectl --context "$CTX" apply -f - >/dev/null
+kubectl --context "$CTX" create namespace "$NS" >/dev/null
+kubectl --context "$CTX" label namespace "$NS" "$MARK=true" >/dev/null
 (
   cd "$WORK"; umask 077
   openssl req -x509 -newkey rsa:2048 -nodes -days 7 -subj "/CN=relaycast-proof-ca" -keyout ca.key -out ca.crt 2>/dev/null
@@ -165,7 +174,7 @@ runtime:
   backend: durable-actors
   durableActors:
     gateway:
-      image: { repository: $REG/relaycast-actors-gateway, tag: kind }
+      image: { repository: $REG/relaycast-actors-gateway, digest: "$GATEWAY_DIGEST" }
     fileStore:
       driver: s3
       bucket: relaycast
@@ -173,7 +182,7 @@ runtime:
     devRuntime:
       enabled: true
       acknowledgeNonProduction: true
-      image: { repository: $REG/relaycast-actors-dev, tag: kind }
+      image: { repository: $REG/relaycast-actors-dev, digest: "$DEV_DIGEST" }
 EOF
 
 forward() { # (re)start a port-forward to the Relaycast Service
@@ -226,6 +235,8 @@ log "cutover: helm upgrade onto durable-actors"
 log "copy files, then import every workspace"
 step files "$WORK/values-actors.yaml"
 step import "$WORK/values-actors.yaml"
+step verify "$WORK/values-actors.yaml"
+step open "$WORK/values-actors.yaml"
 
 log "verify: every read identical, messaging works with the old credentials"
 forward

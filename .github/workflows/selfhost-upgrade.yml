@@ -161,10 +161,13 @@ jobs:
           FIRST_INSTALL: ${{ inputs.first-install }}
           RDS_SETUP: ${{ inputs.rds-setup }}
           RELAYCAST_ACTORS: ${{ inputs.relaycast-actors }}
+          # The cutover's plan reads the credentials phase's record from the same STATE_DIR.
+          STATE_DIR_INPUT: ${{ inputs.state-dir }}
           ACTORS_VALUES: ${{ inputs.actors-values }}
           REREGISTER_LEGACY: ${{ inputs.reregister-legacy }}
         run: |
           set -euo pipefail
+          if [ -n "$STATE_DIR_INPUT" ]; then export STATE_DIR="$STATE_DIR_INPUT"; fi
           args=(--version "$VERSION" --registry "$REGISTRY" --profile "$PROFILE" --namespace "$NS" --release "$REL")
           if [ "$FIRST_INSTALL" = true ]; then args+=(--first-install); fi
           if [ "$RDS_SETUP" = true ]; then args+=(--rds-setup); fi

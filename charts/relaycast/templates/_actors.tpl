@@ -171,6 +171,10 @@ keyed create answers 503 workspace_create_idempotency_unavailable.
 - name: DURABLE_ACTORS_HOME_REGION
   value: {{ . | quote }}
 {{- end }}
+{{- with $da.socketOrigin }}
+- name: DURABLE_ACTORS_SOCKET_ORIGIN
+  value: {{ eq (toString .) "controlPlane" | ternary (include "relaycast.actors.controlPlaneUrl" $) . | quote }}
+{{- end }}
 {{ include "relaycast.actors.secretEnv" (dict "name" "RELAYCAST_FILE_SIGNING_SECRET" "secret" .Values.existingSecret "key" $da.fileSigningSecretKey) }}
 - name: RELAYCAST_CREDENTIAL_KEYRING_FILE
   value: {{ include "relaycast.secretMountPath" . }}/credential-keyring

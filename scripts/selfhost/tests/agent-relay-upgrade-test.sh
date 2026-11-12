@@ -67,6 +67,8 @@ case "\$*" in
   *template*) for a in "\$@"; do case "\$a" in *release-images.values.yaml) ov=\$a;; esac; done
     yq -r '.[] | .image | "---\nimage: " + .repository + "@" + .digest' "\$ov"
     if [ -f "$root/rendered-extra.yaml" ]; then echo ---; cat "$root/rendered-extra.yaml"; fi
+    # The cutover's target render (the Relaycast-only actors overlay) adds these.
+    case "\$*" in *rta-actors-profile.yaml*) [ -f "$root/rendered-target.yaml" ] && { echo ---; cat "$root/rendered-target.yaml"; } ;; esac
     # A capability-gated template, like the charts' VPA check.
     case " \$* " in *" --api-versions autoscaling.k8s.io/v1 "*)
       printf -- '---\nkind: VerticalPodAutoscaler\nmetadata:\n  name: relayfile\n' ;; esac ;;
@@ -85,7 +87,7 @@ EOF
 
 setup_mocks() { # $1 release fixture dir, $2 attestation result (ok|fail)
   local bin="$root/bin"; rm -rf "$bin"; mkdir -p "$bin"; : > "$root/log"
-  rm -f "$root/rendered-extra.yaml" "$root/live-manifest.yaml" "$root/patches" "$root/live-values.yaml" "$root/keyring"; touch "$root/exists"
+  rm -f "$root/rendered-extra.yaml" "$root/rendered-target.yaml" "$root/live-manifest.yaml" "$root/patches" "$root/live-values.yaml"; rm -rf "$root/secrets"; touch "$root/exists"
   rm -rf "$root/jobstate"; mkdir -p "$root/jobstate"; rm -f "$root/no-version"
   printf 'v1\napps/v1\nbatch/v1\npolicy/v1\nautoscaling/v2\n' > "$root/api-versions"
   cat > "$bin/gh" <<EOF
@@ -114,7 +116,9 @@ case "\$*" in
       *) echo '{"status":{"active":1}}' ;;
     esac ;;
   *"logs job/"*) echo "bootstrap: relation sessions.search_documents does not exist" ;;
-  *"get secret relaycast-secrets -o json"*) if [ -f "$root/keyring" ]; then echo '{"data":{"credential-keyring":"eA=="}}'; else echo '{"data":{}}'; fi ;;
+  *"get secret "*"-o json"*) # $root/secrets/<namespace>/<name>.json, else an empty Secret
+    ns=""; name=""; prev=""; for a in "\$@"; do [ "\$prev" = -n ] && ns=\$a; [ "\$prev" = secret ] && name=\$a; prev=\$a; done
+    cat "$root/secrets/\$ns/\$name.json" 2>/dev/null || echo '{"data":{}}' ;;
   *"-o json"*) echo '{"items":[]}' ;;
   *"get deploy -l"*"-o name"*) echo deployment.apps/agent-relay-read-api ;;
   *"patch secret"*) for a in "\$@"; do case "\$a" in */patch.json) cat "\$a" >> "$root/patches"; echo >> "$root/patches";; esac; done ;;
@@ -456,7 +460,11 @@ rds_args=(--version 2026.11.1 --registry "$REG" --profile eks-rds-native --value
 live_pg='relaycast:
   existingSecret: relaycast-secrets
   runtime: { backend: postgres }
-  credentials: { format: legacy }'
+  credentials: { format: legacy }
+relay-control:
+  encryption: { keyId: k1 }'
+secret() { mkdir -p "$root/secrets/$1"; printf '%s\n' "$3" > "$root/secrets/$1/$2.json"; }
+keyring() { secret agent-relay relaycast-secrets '{"data":{"credential-keyring":"eA==","internal-secret":"aQ==","file-signing-secret":"Zg==","workspace-bootstrap-secret":"Yg=="}}'; }
 make_release "$root/rel-ok" ok; setup_mocks "$root/rel-ok" ok
 out=$(run "${args[@]}" --relaycast-actors cutover 2>&1) && fail "--relaycast-actors on eks-native was accepted"
 grep -q 'needs --profile eks-rds-native' <<<"$out" || fail "wrong-profile migration refused for the wrong reason: $out"
@@ -465,19 +473,18 @@ out=$(run "${rds_args[@]}" --actors-values "$vals" 2>&1) && fail "--actors-value
 grep -q 'need --relaycast-actors' <<<"$out" || fail "--actors-values alone refused for the wrong reason: $out"
 setup_mocks "$root/rel-ok" ok; printf 'relaycast:\n  runtime: { backend: durable-actors }\n' > "$root/live-values.yaml"
 out=$(run_rds "${rds_args[@]}" --relaycast-actors credentials 2>&1) && fail "a release already on actors was accepted"
-grep -q 'not on runtime.backend=postgres' <<<"$out" || fail "actors backend refused for the wrong reason: $out"
+grep -q 'not postgres; nothing to migrate' <<<"$out" || fail "actors backend refused for the wrong reason: $out"
 setup_mocks "$root/rel-ok" ok; printf '%s\n' "$live_pg" > "$root/live-values.yaml"
 out=$(run_rds "${rds_args[@]}" --relaycast-actors credentials 2>&1) && fail "a Secret without the keyring was accepted"
 grep -q 'has no credential-keyring key' <<<"$out" || fail "missing keyring refused for the wrong reason: $out"
-touch "$root/keyring"
+keyring
 out=$(run_rds "${rds_args[@]}" --relaycast-actors credentials 2>&1) || fail "credentials plan failed: $out"
 grep -q 'preconditions hold' <<<"$out" || fail "credentials plan did not report its preconditions: $out"
 grep -Eq 'helm .* upgrade |kubectl .*(scale|apply|exec)' "$root/log" && fail "migration plan mode changed the cluster"
 pass "--relaycast-actors is opt-in and refuses wrong profile, phase, backend and keyring in plan mode"
 
-# 32. cutover refuses legacy credentials, missing actors values, and a control plane without an RDS CA
-setup_mocks "$root/rel-ok" ok; printf '%s\n' "$live_pg" > "$root/live-values.yaml"; touch "$root/keyring"
-make_state
+# 32. cutover: a Relaycast-only overlay, and every precondition refuses
+setup_mocks "$root/rel-ok" ok; printf '%s\n' "$live_pg" > "$root/live-values.yaml"; keyring; make_state
 out=$(run_rds "${rds_args[@]}" --relaycast-actors cutover --actors-values "$vals" 2>&1) && fail "cutover on legacy credentials was accepted"
 grep -q 'run --relaycast-actors credentials first' <<<"$out" || fail "legacy cutover refused for the wrong reason: $out"
 sed -i.bak 's/format: legacy/format: ar/' "$root/live-values.yaml"
@@ -486,20 +493,54 @@ grep -q 'cutover needs --actors-values' <<<"$out" || fail "missing actors values
 out=$(run_rds "${rds_args[@]}" --relaycast-actors cutover --actors-values "$vals" 2>&1) && fail "cutover without a credentials-phase record was accepted"
 grep -q 'no record of the credentials phase' <<<"$out" || fail "missing ar-since refused for the wrong reason: $out"
 mkdir -p "$root/state/relaycast-actors"; echo 1794500000 > "$root/state/relaycast-actors/agent-relay-agent-relay.ar-since"
-cat > "$root/rendered-extra.yaml" <<'YAML'
+echo k1 > "$root/state/relaycast-actors/agent-relay-agent-relay.control-key"
+target() { # $1: postgres-ca volume on the control plane (yes|no), $2: keyring key, $3: extra image
+  cat > "$root/rendered-target.yaml" <<YAML
 kind: Deployment
-metadata: { name: relaycast }
-spec: { template: { spec: { containers: [{ name: gateway }], volumes: [{ name: secrets, secret: { secretName: relaycast-secrets } }] } } }
+metadata: { name: relaycast, labels: { app.kubernetes.io/name: relaycast } }
+spec:
+  template:
+    spec:
+      containers:
+        - name: gateway
+          image: ${3:-$REG/agent-relay/ghcr.io/agentworkforce/relay-control@$D1}
+          env:
+            - { name: RELAYCAST_FILE_SIGNING_SECRET, valueFrom: { secretKeyRef: { name: relaycast-secrets, key: file-signing-secret } } }
+            - { name: RELAYCAST_WORKSPACE_BOOTSTRAP_SECRET, valueFrom: { secretKeyRef: { name: relaycast-secrets, key: workspace-bootstrap-secret } } }
+      volumes: [{ name: secrets, secret: { secretName: relaycast-secrets, items: [{ key: ${2:-credential-keyring}, path: credential-keyring }] } }]
 ---
 kind: Deployment
 metadata: { name: agent-relay-durable-actors }
-spec: { template: { spec: { volumes: [{ name: tmp }] } } }
+spec: { template: { spec: { volumes: [{ name: tmp }$( [ "$1" = yes ] && echo ', { name: postgres-ca }' )] } } }
+---
+kind: Role
+metadata: { name: agent-relay-durable-actors, namespace: agent-relay-agent-relay }
+---
+kind: Job
+metadata: { name: relaycast-actors-deploy-0a1b2c3d }
+spec: { template: { spec: { containers: [{ name: deploy, env: [{ name: DURABLE_ACTORS_SECRET_REFS, value: relaycast-actor-env }] }] } } }
 YAML
+}
+actor_env() { secret agent-relay-agent-relay relaycast-actor-env "{\"data\":{\"RELAYCAST_INTERNAL_SECRET\":\"aQ==\",\"RELAYCAST_FILE_SIGNING_SECRET\":\"Zg==\",\"RELAYCAST_WORKSPACE_BOOTSTRAP_SECRET\":\"${1:-Yg==}\"}}"; }
+target no; actor_env
 out=$(run_rds "${rds_args[@]}" --relaycast-actors cutover --actors-values "$vals" 2>&1) && fail "a control plane without an RDS CA was accepted"
-grep -q 'without a CA bundle' <<<"$out" || fail "CA-less control plane refused for the wrong reason: $out"
-grep -q 'agent-relay-durable-actors' <<<"$out" || fail "the CA refusal did not name the Deployment: $out"
-sed -i.bak 's/volumes: \[{ name: tmp }\]/volumes: [{ name: tmp }, { name: postgres-ca }]/' "$root/rendered-extra.yaml"
+grep -q 'without a CA bundle' <<<"$out" && grep -q 'agent-relay-durable-actors' <<<"$out" || fail "CA-less control plane refused for the wrong reason: $out"
+target yes other-keyring
+out=$(run_rds "${rds_args[@]}" --relaycast-actors cutover --actors-values "$vals" 2>&1) && fail "a gateway on another keyring key was accepted"
+grep -q 'must read keyring relaycast-secrets/credential-keyring' <<<"$out" || fail "keyring change refused for the wrong reason: $out"
+target yes credential-keyring ghcr.io/agentworkforce/relaycast-actors-gateway@$D3
+out=$(run_rds "${rds_args[@]}" --relaycast-actors cutover --actors-values "$vals" 2>&1) && fail "an unmirrored cutover image was accepted"
+grep -q 'neither release images nor mirrored' <<<"$out" || fail "unmirrored image refused for the wrong reason: $out"
+target yes; actor_env Wg==
+out=$(run_rds "${rds_args[@]}" --relaycast-actors cutover --actors-values "$vals" 2>&1) && fail "an actor env Secret with other bytes was accepted"
+grep -q 'RELAYCAST_WORKSPACE_BOOTSTRAP_SECRET' <<<"$out" || fail "actor secret mismatch refused for the wrong reason: $out"
+actor_env; sed -i.bak 's/keyId: k1/keyId: k2/' "$root/live-values.yaml"
+out=$(run_rds "${rds_args[@]}" --relaycast-actors cutover --actors-values "$vals" 2>&1) && fail "a changed relay-control encryption key was accepted"
+grep -q "encryption key changed" <<<"$out" || fail "encryption key change refused for the wrong reason: $out"
+sed -i.bak 's/keyId: k2/keyId: k1/' "$root/live-values.yaml"
 out=$(run_rds "${rds_args[@]}" --relaycast-actors cutover --actors-values "$vals" 2>&1) || fail "a complete cutover plan failed: $out"
 grep -q 'preconditions hold' <<<"$out" || fail "cutover plan did not report its preconditions: $out"
+grep 'helm .*template' "$root/log" | tail -1 | grep -q 'rta-actors-profile.yaml' || fail "cutover did not render the Relaycast-only actors overlay"
+grep 'helm .*template' "$root/log" | tail -1 | grep -q 'values-eks-actors.yaml' && fail "cutover layered the whole actors profile (it turns the suite off)"
 grep -Eq 'helm .* upgrade |kubectl .*(scale|apply|exec)' "$root/log" && fail "cutover plan mode changed the cluster"
-pass "cutover refuses legacy credentials, missing values or state, and an RDS control plane without a CA"
+pass "cutover uses a Relaycast-only overlay and refuses CA, keyring, image, actor secret and encryption-key mismatches"
