@@ -1,0 +1,18 @@
+{
+  "schema": 1,
+  "upstream": {
+    "repository": "https://github.com/TerseAI/durable-actors.git",
+    "revision": "5f0a2d62ed08e3060befd9b009333e1f0c3c6cd8",
+    "sdkVersion": "0.14.6",
+    "cargoJobs": 2
+  },
+  "relaycast": {
+    "repository": "https://github.com/AgentWorkforce/relaycast.git",
+    "revision": "4e90b169c60dc0948ac4d4fc86233fedd831fd80"
+  },
+  "gateway": {
+    "reference": "ghcr.io/agentworkforce/relaycast-actors-gateway@sha256:6d4f77c4285becac66f56601a36ac3580b19ad37331db4ad2b87f68b2a68abe4",
+    "sourceRevision": "4e90b169c60dc0948ac4d4fc86233fedd831fd80",
+    "publishRun": 41805228035
+  }
+}

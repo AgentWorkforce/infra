@@ -27,6 +27,7 @@ from stack import Stack, StackError, ROOT, NS, NODE, POSTGRES, private_json
 from native_core_values import compose
 from native_recipe import SECRET_KEYS, merge_values
 from local_host_setup import certificate_present, host_aliases_present, managed_cas
+from local_actors import recipe as actor_recipe, build as build_actors, load as load_actors
 
 LOCAL_VALUES = yaml.safe_load((ROOT / "ci/agent-relay/kind/local-values.yaml").read_text())
 DESKTOP_RELEASE_VALUES = yaml.safe_load((ROOT / "ci/agent-relay/kind/desktop-releases-values.yaml").read_text())
@@ -81,17 +82,29 @@ def profile_images(experimental):
 
 DESKTOP_RELEASES = desktop_releases_enabled()
 AA_VALUES = candidate_profile(AA_VALUES)
+
+
+def cast_backend(environ=None):
+    value = (os.environ if environ is None else environ).get("LOCAL_RELAYCAST_BACKEND", "durable-actors")
+    if value not in {"durable-actors", "postgres", "sqlite"}:
+        raise StackError("LOCAL_RELAYCAST_BACKEND must be durable-actors, postgres or sqlite")
+    return value
+
+
+CAST_BACKEND = cast_backend()
+ACTORS = actor_recipe()
 PIPELINE = reference(AA_VALUES["sessions-pipeline"]["worker"]["image"])
 if PIPELINE != reference(AA_VALUES["sessions-pipeline"]["alleyoop"]["image"]):
     raise StackError("the AA profile must select one services-image generation")
 CONTROL, WEBAPP = profile_images(DESKTOP_RELEASES)
-CAST = reference(AA_VALUES["relaycast"]["image"])
+CAST = ACTORS["source"]["gateway"]["reference"] if CAST_BACKEND == "durable-actors" else reference(AA_VALUES["relaycast"]["image"])
 MINIO = "cgr.dev/chainguard/minio@sha256:e70b2b1e74d79457f808710483bd726ff364529ca30736eaa15a6ab547d3a5a7"
 SITE = "https://relay.kind.agentrelay.com"
 HISTORY = "https://history.kind.agentrelay.com:8443"
 PGHOST = "postgres.agent-relay.svc.cluster.local"
 COLLECTOR_URL = "https://telemetry-collector.agent-relay.svc.cluster.local:8443/v1/events"
-TELEMETRY = {"control": "relaycontrol", "ingest": "session-ingest", "consumer": "session-pipeline-consumer", "reader": "session-read-api", "brief": "session-brief", "cast": "relaycast"}
+TELEMETRY = {"control": "relaycontrol", "ingest": "session-ingest", "consumer": "session-pipeline-consumer", "reader": "session-read-api", "brief": "session-brief", "cast": "relaycast", "cast-proof": "relaycast"}
+CAST_PROOF_DEPLOYMENT = "local-kind-postgres-proof"
 HOSTS = [PGHOST, "relay.kind.agentrelay.com", "cast.kind.agentrelay.com", "history.kind.agentrelay.com", "files.kind.agentrelay.com", "telemetry-collector.agent-relay.svc.cluster.local"]
 
 
@@ -236,9 +249,21 @@ class LocalStack(Stack):
         self.k("rollout", "status", "statefulset/postgres", "--timeout=300s", timeout=330)
 
     def databases(self, c):
-        roles = ("hoop", "control_owner", "control_api_runtime")
+        # The isolated Postgres collector companion is available in every lane.
+        roles = ("hoop", "control_owner", "control_api_runtime", "relaycast_owner", "relaycast_runtime")
         self.sql("postgres", "\n".join("CREATE ROLE " + role + " LOGIN NOINHERIT PASSWORD '" + c[role] + "';" for role in roles) +
-            "\nCREATE DATABASE hoopdb OWNER hoop;\nCREATE DATABASE relaycontrol OWNER control_owner;")
+            "\nCREATE DATABASE hoopdb OWNER hoop;\nCREATE DATABASE relaycontrol OWNER control_owner;\nCREATE DATABASE relaycast;")
+        # Match the image's identity checks: the migration role owns only the
+        # schema, never the database; runtime has DML, no DDL or TEMP privilege.
+        self.sql("relaycast", """ALTER SCHEMA public OWNER TO relaycast_owner;
+REVOKE CREATE ON SCHEMA public FROM PUBLIC;
+GRANT USAGE ON SCHEMA public TO relaycast_runtime;
+ALTER DEFAULT PRIVILEGES FOR ROLE relaycast_owner IN SCHEMA public
+  GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO relaycast_runtime;
+ALTER DEFAULT PRIVILEGES FOR ROLE relaycast_owner IN SCHEMA public
+  GRANT SELECT, USAGE, UPDATE ON SEQUENCES TO relaycast_runtime;
+REVOKE TEMP, CREATE ON DATABASE relaycast FROM PUBLIC;
+GRANT TEMP ON DATABASE relaycast TO relaycast_owner;""")
         self.sql("hoopdb", "CREATE EXTENSION vector; CREATE EXTENSION pg_trgm; CREATE EXTENSION btree_gin;")
 
     def storage(self, c):
@@ -308,6 +333,28 @@ class LocalStack(Stack):
         # configuration belongs in this local fixture.
         result["global"]["scrubEngine"] = deepcopy(SCRUB_VALUES)
         result["relaycast"]["image"] = image(CAST)
+        cast = result["relaycast"]
+        cast.setdefault("runtime", {})["backend"] = CAST_BACKEND
+        if CAST_BACKEND == "durable-actors":
+            repository, tag = ACTORS["actorTag"].rsplit(":", 1)
+            cast["runtime"]["durableActors"] = {
+                "gateway": {"image": image(CAST),
+                    "resources": {"requests": {"cpu": "100m", "memory": "128Mi"}, "limits": {"memory": "1Gi"}}},
+                "fileStore": {"driver": "local"},
+                "deployer": {"enabled": False},
+                "devRuntime": {"enabled": True, "acknowledgeNonProduction": True,
+                    "existingClaim": "local-relaycast-actors", "image": {"repository": repository, "tag": tag, "pullPolicy": "Never"},
+                    "resources": {"requests": {"cpu": "100m", "memory": "256Mi"}, "limits": {"memory": "2Gi"}}}}
+            cast["credentials"] = {"format": "ar", "authority": "self"}
+            cast["secretKeys"].update(credentialKeyring="credential-keyring", workspaceBootstrapSecret="workspace-bootstrap-secret")
+            cast["analytics"] = {"enabled": False}
+            cast["podSecurityContext"] = {"fsGroup": 10000}
+            built = getattr(self, "actor_build", None)
+            if built:
+                cast.setdefault("podAnnotations", {})["local.agentrelay.dev/actor-image-id"] = built["actorImageId"]
+        elif CAST_BACKEND == "postgres":
+            cast["runtime"]["postgres"] = {"image": image(CAST)}
+            cast["postgresCa"] = {"enabled": True, "configMap": "local-ca", "key": "ca.crt"}
         result["relay-webapp"]["image"] = image(WEBAPP)
         result["relay-webapp"]["runtime"]["coordinationOverlapsEnabled"] = False
         result["relay-webapp"]["customerProfile"]["desktop"]["siteUrl"] = SITE
@@ -337,7 +384,8 @@ class LocalStack(Stack):
             analytics = lambda name: {"enabled": True, "deploymentId": "local-kind", "collectorUrl": COLLECTOR_URL,
                 "existingSecret": "local-telemetry-" + name, "caConfigMap": "local-ca"}
             result["relay-control"]["analytics"] = {**analytics("control"), "profile": "development"}
-            result["relaycast"]["analytics"] = analytics("cast")
+            if CAST_BACKEND != "durable-actors":
+                result["relaycast"]["analytics"] = analytics("cast")
             for slot, producer in (("ingestEdge", "ingest"), ("nativeConsumer", "consumer"), ("sessionReadApi", "reader")):
                 result["sessions-pipeline"][slot]["analytics"] = analytics(producer)
             worker = result["sessions-pipeline"]["worker"]
@@ -365,7 +413,8 @@ class LocalStack(Stack):
             token = c["collector"] if name == "control" else c["collector_" + name]
             self.secret("local-telemetry-" + name, {"token": token})
             tokens[name] = token
-            producers.append({"name": "local-" + name, "component": component, "deployment_id": "local-kind",
+            producers.append({"name": "local-" + name, "component": component,
+                "deployment_id": CAST_PROOF_DEPLOYMENT if name == "cast-proof" else "local-kind",
                 "token_file": "/var/run/secrets/telemetry-producers/" + name})
         self.secret("local-telemetry-producers", {"producers.json": json.dumps(producers), **tokens})
         self.sql("hoopdb", "ALTER ROLE sessions_pipeline_runtime PASSWORD '" + c["sessions_pipeline_runtime"] + "';")
@@ -417,7 +466,16 @@ class LocalStack(Stack):
         self.secret("local-control", {"database-url": pgurl("control_api_runtime", c, "/etc/postgres-ca/ca.crt", "relaycontrol"),
             "bootstrap-token": c["bootstrap"], "encryption-key": c["encryption"], "cast-secret": c["cast"],
             "internal-token": c["internal"], "introspect-secret": c["introspection"], "reader-secret": c["readerIssuer"]})
-        self.secret("local-cast", {"internal-secret": c["cast"], "workspace-bootstrap-secret": c["castBootstrap"]})
+        cast = {"internal-secret": c["cast"], "workspace-bootstrap-secret": c["castBootstrap"]}
+        if CAST_BACKEND == "durable-actors":
+            cast.update({"credential-keyring": json.dumps({"current": "a", "keys": {"a": c["castKeyring"]}}),
+                "file-signing-secret": c["castFiles"], "durable-actors-dev-secret": c["castActors"]})
+            self.apply({"apiVersion": "v1", "kind": "PersistentVolumeClaim", "metadata": {"name": "local-relaycast-actors", "namespace": NS},
+                "spec": {"accessModes": ["ReadWriteOnce"], "resources": {"requests": {"storage": "1Gi"}}}})
+        elif CAST_BACKEND == "postgres":
+            cast.update({"database-owner-url": pgurl("relaycast_owner", c, None, "relaycast"),
+                "database-runtime-url": pgurl("relaycast_runtime", c, None, "relaycast")})
+        self.secret("local-cast", cast)
         self.secret("local-introspection", {"introspect-secret": c["introspection"]})
         self.secret("local-readerissuer", {"internal-secret": c["readerIssuer"]})
         self.job("local-control-migrate", CONTROL, ["node", "/app/node_modules/relay-control/dist/migrate-cli.js"],
@@ -603,6 +661,11 @@ WHERE p.oid=to_regprocedure('session_consumer_bootstrap_private.consumer_has_pas
         if capabilities != {"reader": True, "consumer": True}:
             raise StackError("the Kind profile's pinned services image lacks the native reader/consumer; update the source pin before local-up can install a complete core")
         self.cluster()
+        # Refuse a foreign/other-checkout fixture before spending time building.
+        built_actors = build_actors(self, ACTORS) if CAST_BACKEND == "durable-actors" else None
+        self.actor_build = built_actors
+        if built_actors:
+            load_actors(self, built_actors)
         self.stage("cni", self.cni)
         self.apply({"apiVersion": "v1", "kind": "Namespace", "metadata": {"name": NS}})
         from tls import create
@@ -616,7 +679,8 @@ WHERE p.oid=to_regprocedure('session_consumer_bootstrap_private.consumer_has_pas
             "createdAt": datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")}
         private_json(path, self.credentials)
         c = self.credentials
-        for key in ("collector", "sessions_pipeline_runtime", *("collector_" + name for name in TELEMETRY if name != "control")):
+        for key in ("collector", "sessions_pipeline_runtime", "castKeyring", "castFiles", "castActors", "relaycast_owner", "relaycast_runtime",
+                *("collector_" + name for name in TELEMETRY if name != "control")):
             c.setdefault(key, secrets.token_hex(32))
         private_json(path, c)
         self.stage("chart-dependencies", self.dependencies)
@@ -705,9 +769,12 @@ def check_selection(previous, selected):
 
 
 def selected_images():
-    return {"pipeline": PIPELINE, "control": CONTROL, "webapp": WEBAPP, "postgres": POSTGRES, "minio": MINIO,
+    result = {"pipeline": PIPELINE, "control": CONTROL, "webapp": WEBAPP, "postgres": POSTGRES, "minio": MINIO,
         "relaycast": CAST, "collector": reference(LOCAL_VALUES["telemetry-collector"]["image"]),
-        "collectorProxy": reference(LOCAL_VALUES["telemetry-collector"]["tlsProxy"]["image"])}
+        "collectorProxy": reference(LOCAL_VALUES["telemetry-collector"]["tlsProxy"]["image"]), "relaycastBackend": CAST_BACKEND}
+    if CAST_BACKEND == "durable-actors":
+        result["relaycastActors"] = ACTORS["actorTag"]
+    return result
 
 
 def read_model_key(stream):
@@ -725,7 +792,9 @@ def secret_env(name, secret, key):
 
 
 def pgurl(role, credentials, ca, database="hoopdb"):
-    return "postgresql://" + role + ":" + credentials[role] + "@" + PGHOST + ":5432/" + database + "?sslmode=verify-full&sslrootcert=" + ca
+    # Relaycast accepts only sslmode in the URL; its CA is a separate chart env.
+    return ("postgresql://" + role + ":" + credentials[role] + "@" + PGHOST + ":5432/" + database
+            + "?sslmode=verify-full" + ("&sslrootcert=" + ca if ca else ""))
 
 
 def locker_env():
@@ -736,8 +805,8 @@ def locker_env():
 
 def main():
     stack = LocalStack("core")
-    if sys.argv[1:] not in (["up"], ["login"], ["down"], ["llm-key"]):
-        raise SystemExit("usage: local_stack.py up|login|down|llm-key")
+    if sys.argv[1:] not in (["up"], ["login"], ["down"], ["llm-key"], ["postgres-cast-proof"]):
+        raise SystemExit("usage: local_stack.py up|login|down|llm-key|postgres-cast-proof")
     try:
         if sys.argv[1] == "up":
             stack.up_local()
@@ -752,6 +821,9 @@ def main():
             stack.login_link(force=True)
         elif sys.argv[1] == "llm-key":
             stack.install_model_key()
+        elif sys.argv[1] == "postgres-cast-proof":
+            from local_cast_pg_proof import prove
+            prove(stack)
         else:
             stack.down_local()
     except StackError as error:

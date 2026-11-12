@@ -11,10 +11,11 @@ make local-up
 The command downloads checksum-pinned Kind and Helm into this checkout, creates
 `agent-relay-local`, and installs PostgreSQL, MinIO, official migrations,
 Control, the dashboard, Relaycast, native ingest/consumer/reader, the brief worker,
-and the internal telemetry collector. It uses published immutable release images;
-no source build, old data, operator packet or admission file is required.
+and the internal telemetry collector. Services use published immutable release
+images, except the local actor dev runtime described below. No old data,
+operator packet or admission file is required.
 
-Default Control, dashboard, Sessions, Relaycast and managed features come from
+Default Control, dashboard, Sessions and managed features come from
 the merged release profile, `charts/agent-relay/values-eks.yaml`. Default Kind
 bring-up follows that authority as new release pins land; the separate
 downloads-card experiment never repins the default or customer install pack.
@@ -27,6 +28,60 @@ services-image Jobs. Session query, canonical-pointer pinning and the fresh-stor
 timing assumption are enabled, matching Sales #50. The reader uses managed
 values when its chart supplies them. `ci/agent-relay/kind/local-values.yaml`
 also contains the local collector/proxy overrides.
+
+## Relaycast actor backend and opt-outs
+
+`make local-up` defaults to `LOCAL_RELAYCAST_BACKEND=durable-actors`. The local
+profile uses the supported single-process Terse dev sidecar, rather than the
+cloud sandbox control-plane chart (`components.durableActors` stays off).
+The sidecar's `/data` uses a local PVC and survives pod replacements.
+The local actor budget is 2 GiB for the dev sidecar and 1 GiB for the gateway,
+matching the isolated benchmark fixture. Docker's own memory ceiling still
+applies across the full stack; these are container limits, not reservations.
+
+`relaycast-actors-source.json` pins upstream durable-actors commit
+`5f0a2d62ed08e3060befd9b009333e1f0c3c6cd8` (SDK 0.14.6) and matching Relaycast
+commit `4e90b169c60dc0948ac4d4fc86233fedd831fd80`. The gateway digest is the
+newest successful reviewed actors publish, run `41805228035`. On first up,
+Docker builds the upstream TypeScript runtime and matching Workspace actor.
+Rust compilation can make this cold step slow; Rust/Node are built inside
+containers. GitHub and package-registry read access are prerequisites.
+The generated upstream Dockerfile adds only `ARG CARGO_BUILD_JOBS=2` to its
+Rust build stage to bound laptop memory pressure; the source checkout stays exact.
+Exact clean source caches and matching Docker image IDs permit reuse on later
+ups. The printed IDs and `.kind/local/actor-build/images.json` are **local build
+image IDs**, not published registry digests. The upstream Dockerfile's distro
+dependencies are not a claim of bit-for-bit reproducible builds.
+
+Use an explicit portable backend in a separate fresh fixture:
+
+```sh
+LOCAL_RELAYCAST_BACKEND=postgres make local-up
+# Or retain the former local SQLite backend:
+LOCAL_RELAYCAST_BACKEND=sqlite make local-up
+```
+
+Keep the selector on later local commands. Backend changes require a fresh
+fixture; old SQLite workspaces and credentials are not migrated into actors.
+Obtain the owner's approval before resetting a live viewing fixture. The
+gateway-only source dev loop uses `docker/actors-gateway.Dockerfile`; changes
+to the pinned actor bundle require updating its source recipe and rebuilding.
+
+Actor-mode Relaycast analytics is explicitly disabled because the chart and
+actor source do not support collector export. Acceptance reports that check as
+`skipped`, links [Relaycast #648](https://github.com/AgentWorkforce/relaycast/issues/648),
+and never calls the skip a pass. Run the isolated Postgres companion alongside
+the owned local fixture to retain an actual messaging and collector proof:
+
+```sh
+make local-postgres-cast-proof
+```
+
+It creates a uniquely named Postgres-backed Relaycast release, uses the official
+migrator and separate credential Secret, sends/reads a synthetic message, and
+requires a fresh persisted collector event in private segment files. It cleans
+up only its labelled release/Secret and writes `.kind/local/proofs/postgres-cast.json`.
+This is a real mutation/proof command, unlike the read-only acceptance observer.
 
 To try the **opt-in Kind downloads-card experiment** in a separate fresh
 fixture, run:

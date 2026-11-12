@@ -81,6 +81,10 @@ local-login: local-tools
 local-llm-key: local-tools
 	@PATH=$(call sh_quote,$(CURDIR)/.kind/tools):"$$PATH" $(call sh_quote,$(CURDIR)/.kind/tools/venv/bin/python3) ci/agent-relay/kind/local_stack.py llm-key
 
+.PHONY: local-postgres-cast-proof
+local-postgres-cast-proof: local-tools
+	@PATH=$(call sh_quote,$(CURDIR)/.kind/tools):"$$PATH" $(call sh_quote,$(CURDIR)/.kind/tools/venv/bin/python3) ci/agent-relay/kind/local_stack.py postgres-cast-proof
+
 .PHONY: local-dev-setup
 local-dev-setup: local-tools
 	PATH=$(call sh_quote,$(CURDIR)/.kind/tools):"$$PATH" $(call sh_quote,$(CURDIR)/.kind/tools/venv/bin/python3) ci/agent-relay/kind/local_dev_setup.py --output $(call sh_quote,$(DEV_CONFIG))

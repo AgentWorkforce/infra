@@ -252,8 +252,14 @@ class Stack:
         # An empty auths map makes Docker CLI auto-detect the native credential
         # helper, which can prompt for a locked login keychain over SSH. Explicit
         # anonymous entries select the file store without supplying credentials.
-        private_json(config / "config.json", {"auths": {
-            "https://index.docker.io/v1/": {}, "ghcr.io": {}}})
+        public_config = {"auths": {"https://index.docker.io/v1/": {}, "ghcr.io": {}}}
+        # Docker Desktop normally exposes Buildx through the user's config.
+        # Our isolated credential-free config must discover the bundled plugin
+        # explicitly, without adopting that user's config or credential helper.
+        desktop_plugins = Path("/Applications/Docker.app/Contents/Resources/cli-plugins")
+        if sys.platform == "darwin" and desktop_plugins.is_dir():
+            public_config["cliPluginsExtraDirs"] = [str(desktop_plugins)]
+        private_json(config / "config.json", public_config)
         # Only public images are pulled. Do not inherit a separate credential
         # source or touch the user's credential helper/global configuration.
         self.env.pop("DOCKER_AUTH_CONFIG", None)

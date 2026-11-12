@@ -11,6 +11,7 @@ import uuid
 from api import Api, CHECKS, Failure, load_config
 from context import collect
 from report import archive_previous, verify, write_signed
+from telemetry import cast_collector
 
 ROOT = Path(__file__).resolve().parents[4]
 PENDING = ["desktop_manual_evidence", "upload_wasm_drain", "playwright_ui", "telemetry_brief",
@@ -57,6 +58,19 @@ def execute(config_path, output, key, suite="full", snapshotter=collect):
     if check("preflight", setup):
         for name, function in CHECKS:
             check(name, lambda f=function: f(state["api"], state["config"]))
+        backend = payload["context"].get("relaycastBackend")
+        if backend:
+            before = time.monotonic()
+            try:
+                result = cast_collector(state["config"], backend)
+            except Failure as error:
+                result = {"id": "cast_collector", "status": "fail", "code": error.code}
+            except Exception:
+                result = {"id": "cast_collector", "status": "fail", "code": "observation_failed"}
+            result["seconds"] = round(time.monotonic() - before, 6)
+            payload["checks"].append(result)
+            if result["status"] == "skipped":
+                payload["requiredCompanionProfiles"] = ["postgres_cast_collector"]
     else:
         for name, _ in CHECKS:
             payload["checks"].append({"id": name, "status": "fail", "code": "preflight_failed", "seconds": 0})
@@ -64,11 +78,13 @@ def execute(config_path, output, key, suite="full", snapshotter=collect):
         for name in PENDING:
             payload["checks"].append({"id": name, "status": "fail", "code": "not_implemented", "seconds": 0})
     payload["pendingQualificationChecks"] = PENDING
-    payload["status"] = "pass" if all(c["status"] == "pass" for c in payload["checks"]) else "fail"
+    failed = any(c["status"] == "fail" for c in payload["checks"])
+    skipped = any(c["status"] == "skipped" for c in payload["checks"])
+    payload["status"] = "fail" if failed else "pass_with_skips" if skipped else "pass"
     payload["finishedAt"] = now()
     payload["seconds"] = round(time.monotonic() - started, 6)
     envelope = write_signed(output, payload, key)
-    return (0 if payload["status"] == "pass" else 1), envelope
+    return (1 if failed else 0), envelope
 
 
 def main(argv=None):

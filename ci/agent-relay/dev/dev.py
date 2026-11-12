@@ -157,7 +157,10 @@ def validate_public_docker_config(path):
         value = json.loads((Path(path) / "config.json").read_text())
     except (OSError, ValueError, TypeError):
         raise Refused("anonymous_docker_config_required") from None
-    need(isinstance(value, dict) and set(value) == {"auths"} and isinstance(value["auths"], dict)
+    need(isinstance(value, dict) and {"auths"} <= set(value) <= {"auths", "cliPluginsExtraDirs"}
+         and ("cliPluginsExtraDirs" not in value or value["cliPluginsExtraDirs"] ==
+              ["/Applications/Docker.app/Contents/Resources/cli-plugins"])
+         and isinstance(value["auths"], dict)
          and bool(value["auths"]) and all(item == {} for item in value["auths"].values()), "anonymous_docker_config_required")
 
 

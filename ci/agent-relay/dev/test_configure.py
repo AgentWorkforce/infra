@@ -102,6 +102,8 @@ class DiscoveryTests(unittest.TestCase):
         with self.assertRaisesRegex(dev.Refused, "collector_command_shape_changed"):
             configure.classify(c, "telemetry-collector")
         self.assertEqual(configure.classify({"name": "server", "image": "example/relaycast-self-host:dev"}), "cast")
+        self.assertEqual(configure.classify({"name": "gateway", "image": "example/relaycast-actors-gateway:dev"}), "cast")
+        self.assertIsNone(configure.classify({"name": "durable-actors-dev", "image": "local/relaycast-actors-dev:source"}))
 
     def test_migration_entrypoint_is_not_a_runtime_role(self):
         self.assertIsNone(configure.classify({"image": "example/pipeline-native:dev", "env": [{"name": "SERVICE", "value": "hoopdb-migrate"}]}))
