@@ -83,7 +83,9 @@ and the actual image identities are retained in private run receipts.
 
 Replay keeps an **assumed fixed** five workspaces, ten workload agents per
 workspace and fifty sockets across rate steps. Each workspace also has a
-credential-churn agent; bounded registration/node churn can add identities.
+credential-churn agent. Registration traffic creates uniquely named auxiliary
+agents outside `general`; registration counts are reported, and bounded node
+enrollment churn can also add identities.
 These counts are not measured hosted populations. Use separate population
 sweeps before drawing conclusions about production concurrency.
 

@@ -10,6 +10,7 @@ const workspaces = [], sockets = new Set(), socketKeys = new Map(), pendingMarke
 const deliveryMs = [];
 const calibrated = new Map();
 let sequence = 0, totalFrames = 0, socketsOpened = 0, socketsClosed = 0, socketAcks = 0;
+let auxiliaryRegistrations = 0;
 let lastSetupOperation = null;
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 const quantiles = values => {
@@ -23,7 +24,8 @@ async function http(method, path, token, body, headers = {}) {
   const text = await response.text();
   let json;
   try { json = text ? JSON.parse(text) : null; } catch { json = null; }
-  return {status: response.status, data: json?.data};
+  return {status: response.status, data: json?.data,
+    errorCode: /^[a-z0-9_]{1,100}$/.test(json?.error?.code ?? '') ? json.error.code : undefined};
 }
 async function required(method, path, token, body) {
   lastSetupOperation = method + ' ' + path;
@@ -128,7 +130,7 @@ function binding(route, index) {
   path = path.replace(':channel', 'general');
   if (route.method === 'POST') {
     if (path === '/v1/agents/heartbeat') body = {};
-    else if (path === '/v1/agents') body = {name: 'bench-register-' + (index % 20)};
+    else if (path === '/v1/agents') body = {name: 'bench-register-' + randomUUID(), auto_join_general: false};
     else if (path === '/v1/agent/node-token') {token = w.spare.token; body = {};}
     else if (path === '/v1/nodes') {
       const name = 'bench-node-' + (index % 20);
@@ -150,12 +152,16 @@ function binding(route, index) {
     else if (path === '/v1/observer-tokens') body = {name: 'observer-' + index, scopes: ['messages:read', 'stream:read']};
     else return null;
   } else if (route.method === 'PATCH') body = {status: 'idle'};
-  return () => http(route.method, path, token, body?.text === '$MARKER' ? {...body, text: marker()} : body);
+  return async () => {
+    const response = await http(route.method, path, token, body?.text === '$MARKER' ? {...body, text: marker()} : body);
+    if (route.method === 'POST' && path === '/v1/agents' && response.status === 201) auxiliaryRegistrations++;
+    return response;
+  };
 }
 
 async function step(input) {
   const routes = input.routes.map(route => ({...route, scheduled: 0, completed: 0, completedInWindow: 0, dropped: 0,
-    status: {}, latencies: [], supported: binding(route, 0) !== null}));
+    status: {}, errorCodes: {}, latencies: [], supported: binding(route, 0) !== null}));
   for (const route of routes) {
     const key = route.method + ' ' + route.pathTemplate;
     if (!calibrated.has(key)) {
@@ -181,6 +187,7 @@ async function step(input) {
     inflight++; maximumInflight = Math.max(maximumInflight, inflight);
     const promise = operation().then(response => {
       route.status[response.status] = (route.status[response.status] ?? 0) + 1;
+      if (response.errorCode) route.errorCodes[response.errorCode] = (route.errorCodes[response.errorCode] ?? 0) + 1;
     }).catch(() => {route.status.network_error = (route.status.network_error ?? 0) + 1;}).finally(() => {
       route.completed++;inflight--;
       if (performance.now() - start <= config.seconds * 1000) route.completedInWindow++;
@@ -209,7 +216,7 @@ async function step(input) {
     supported: route.supported, probeStatus: route.probeStatus ?? 'not_bound', intendedRps: route.targetRps, scheduled: route.scheduled,
     completed: route.completed, completedInWindow: route.completedInWindow, droppedByGenerator: route.dropped,
     achievedRps: route.completedInWindow / offeredSeconds,
-    status: route.status, latencyMs: quantiles(route.latencies), latencySamples: route.latencies.length}));
+    status: route.status, errorCodes: route.errorCodes, latencyMs: quantiles(route.latencies), latencySamples: route.latencies.length}));
   const completed = routes.reduce((n, r) => n + r.completed, 0);
   const supportedRps = routes.filter(r => r.supported).reduce((n, r) => n + r.targetRps, 0);
   const bad = routes.reduce((n, r) => n + Object.entries(r.status).filter(([code]) => code !== '101' && !(Number(code) >= 200 && Number(code) < 300)).reduce((m, [, count]) => m + count, 0), 0);
@@ -266,6 +273,7 @@ try {
   report.websockets = {opened: socketsOpened, closed: socketsClosed, frames: totalFrames,
     deliveryAcks: socketAcks, deliveredMarkers: deliveryMs.length, deliveryMs: quantiles(deliveryMs), pendingMarkers: pendingMarkers.size};
   report.workspaceCleanup = {deleted: 0, failed: 0};
+  report.auxiliaryRegistrations = auxiliaryRegistrations;
   for (const w of workspaces) {
     try {
       const response = await http('DELETE', '/internal/workspaces/' + encodeURIComponent(w.id), internal);
