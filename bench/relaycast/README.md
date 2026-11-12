@@ -55,3 +55,61 @@ CPU/backlog, server CPU/memory/throttling/restarts, actor/database contention an
 backlog drain. Generator saturation cannot establish backend saturation.
 Keep synthetic heavy-load steps separate from the observed replay; passing a
 light observed workload does not demonstrate the capacity of the laptop.
+
+## Isolated local execution
+
+The executor requires an infra checkout containing the pinned actor builder
+(#268). It creates only `agent-relay-actors-bench`, with its own namespace,
+credentials, PVC, kubeconfig and ownership marker. It publishes no host ports
+and touches no hosts entries, system CA, Desktop profile or `local-up` state.
+An existing cluster is reusable/removable only with matching UID and Docker
+socket identity. The final command below removes this benchmark cluster only.
+
+```sh
+make local-tools
+export PATH="$PWD/.kind/tools:$PATH"
+python3 bench/relaycast/fixture.py up --infra-root "$PWD"
+# Generate the plan into a private ignored file first (umask 077).
+python3 bench/relaycast/fixture.py run --infra-root "$PWD" \
+  --plan .kind/bench/production-replay-plan.json --seconds 60
+python3 bench/relaycast/fixture.py down --infra-root "$PWD"
+```
+
+The generator runs inside this Kind cluster, avoiding a port-forward bottleneck.
+The backend has a 1 GiB gateway limit and a 2 GiB actor limit; the generator has
+1 GiB. CPU has no explicit container cap; Docker's own limits and co-resident
+workloads must accompany every result. Kubelet CPU/memory/restart observations
+and the actual image identities are retained in private run receipts.
+
+Replay keeps an **assumed fixed** five workspaces, ten workload agents per
+workspace and fifty sockets across rate steps. Each workspace also has a
+credential-churn agent. Registration traffic creates uniquely named auxiliary
+agents outside `general`; registration counts are reported, and bounded node
+enrollment churn can also add identities.
+These counts are not measured hosted populations. Use separate population
+sweeps before drawing conclusions about production concurrency.
+
+An actor-backed message round trip is required before load. Sockets perform
+node registration, heartbeats and delivery acknowledgements. Route bindings
+are calibrated once before measurement and remain fixed across steps, so a
+later backend failure cannot silently remove a route. Hosted internal actions,
+signed Relayfile ingress, terminal/spawn calls and destructive operations have
+no substituted cheap endpoint. They are reported as uncovered. A partial
+replay cannot be called full production equivalence.
+
+The generator uses open-loop scheduling, a bounded in-flight count, explicit
+drops and event-loop/scheduling lag. It distinguishes completions during the
+offered window from later drain and reports both throughput denominators.
+Latency samples are bounded at 100,000 per route/step. Reports contain route
+templates and counters, never tokens or response/message bodies. The complete
+fixture is disposable; no result is a release qualification or a collector pass.
+
+The declared screening SLO is at least 95% of the supported offered rate,
+at most 1% errors, aggregate HTTP/upgrade p95 at most 200 ms and drain at most
+5 seconds. A generator drop, loop p99 above 25 ms or scheduling lag above
+100 ms makes the step generator-limited; it cannot establish backend saturation.
+Socket delivery latency is reported separately. Payloads are short synthetic
+messages with default API pagination, not measured hosted body sizes. The
+`recycle` command restarts only this owned benchmark deployment between
+independent campaigns to release resident actor processes; it retains the PVC
+and is never called between rate steps within a campaign.
