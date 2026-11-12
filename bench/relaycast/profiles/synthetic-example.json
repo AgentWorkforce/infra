@@ -1,0 +1,20 @@
+{
+  "source": "Synthetic example only; these are not production observations or benchmark results",
+  "window": {
+    "hourly_and_totals": "2000-01-01T00:00Z/2000-01-08T00:00Z",
+    "routes_and_minute_peaks": "2000-01-07T00:00Z/2000-01-08T00:00Z"
+  },
+  "rps_avg": 10,
+  "rps_peak_hour": 20,
+  "rps_peak_minute_p99": 30,
+  "rps_peak_minute_max": 40,
+  "hourly_curve": [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
+  "burst": {"max_1min_over_avg": 4},
+  "messages_per_s": {"writes_avg": 1},
+  "status_mix": {"2xx": 0.97, "4xx": 0.01, "5xx": 0, "1xx_ws_upgrade": 0.02},
+  "ws_upgrades_per_s": {"node_ws": 0.1, "ws": 0.1},
+  "routes": [
+    {"method": "GET", "path": "/v1/workspace", "rps_avg": 9, "rps_peak": 36, "share": 0.9},
+    {"method": "POST", "path": "/v1/channels/:channel/messages", "rps_avg": 1, "rps_peak": 4, "share": 0.1}
+  ]
+}
