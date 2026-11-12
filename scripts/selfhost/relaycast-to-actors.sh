@@ -19,6 +19,17 @@
 # Every step fails the run: no step's failure is ignored or retried silently.
 
 rta_state() { printf '%s/relaycast-actors/%s-%s' "$state_dir" "$namespace" "$release"; }
+# Atomically replace a state file with stdin, owner-only (0600 in a 0700
+# directory): the STATE_DIR guard refuses anything wider on the next run.
+rta_write() { # path < content
+  local dir tmp; dir=$(dirname "$1")
+  ( umask 077; mkdir -p "$dir" ); chmod 700 "$dir"
+  tmp=$(mktemp "$dir/.rta.XXXXXX") || die "could not write $1"
+  chmod 600 "$tmp"
+  cat > "$tmp" || { rm -f "$tmp"; die "could not write $1"; }
+  mv -f "$tmp" "$1" || { rm -f "$tmp"; die "could not write $1"; }
+}
+rta_mark() { : | rta_write "$1"; }
 rta_live() { yq -r "$1 // \"\"" "$work/rta-live-values.yaml"; }
 # sha256 of one Secret key's bytes ("" when absent); the value never leaves the pipe.
 rta_secret_digest() { # namespace secret key
@@ -208,11 +219,10 @@ rta_scale_down() { # deployment...: to 0 replicas, and confirm their pods are go
 
 rta_credentials() {
   say "== R1. Switch $release's Relaycast to ar_ credentials (legacy ones keep working during the grace period)"
-  mkdir -p "$(dirname "$(rta_state)")"; chmod 700 "$(dirname "$(rta_state)")"
   # The earliest switch time stands: a retried phase must not hide principals
   # created between the first switch and the retry.
-  [ -s "$(rta_state).ar-since" ] || date -u +%s > "$(rta_state).ar-since"
-  [ -s "$(rta_state).control-key" ] || rta_live '.["relay-control"].encryption.keyId' > "$(rta_state).control-key"
+  [ -s "$(rta_state).ar-since" ] || date -u +%s | rta_write "$(rta_state).ar-since"
+  [ -s "$(rta_state).control-key" ] || rta_live '.["relay-control"].encryption.keyId' | rta_write "$(rta_state).control-key"
   cat > "$work/rta-credentials.yaml" <<EOF
 relaycast:
   credentials:
@@ -233,8 +243,8 @@ EOF
     sed 's/^/     /' "$work/rta-rekey.jsonl"
     rekey_run=$(jq -r 'select(.event == "relaycast_rekey.summary") | .run_id // empty' "$work/rta-rekey.jsonl" 2>/dev/null | tail -1)
     [ -n "$rekey_run" ] || die "relaycast-rekey printed no run id: cannot record it for --undo / --purge"
-    printf '%s\n' "$rekey_run" >> "$(rta_state).rekey-runs"
-    cp "$work/rta-rekey.jsonl" "$(rta_state).rekey-$rekey_run.jsonl"
+    { if [ -f "$(rta_state).rekey-runs" ]; then cat "$(rta_state).rekey-runs"; fi; printf '%s\n' "$rekey_run"; } | rta_write "$(rta_state).rekey-runs"
+    rta_write "$(rta_state).rekey-$rekey_run.jsonl" < "$work/rta-rekey.jsonl"
     say "   relaycast-rekey run $rekey_run recorded in $(rta_state).rekey-runs (for --undo / --purge)"
   fi
   say ""
@@ -254,8 +264,8 @@ rta_cutover() {
     # shellcheck disable=SC2086
     rta_scale_down $rta_control $rta_relaycast
     say "== R3. Export from one snapshot (sealed, owner-only)"
-    printf '%s\n' "$rta_run" > "$(rta_state).run"
-    printf '%s\n' "${control_replicas:-1}" > "$(rta_state).control-replicas"
+    printf '%s\n' "$rta_run" | rta_write "$(rta_state).run"
+    printf '%s\n' "${control_replicas:-1}" | rta_write "$(rta_state).control-replicas"
     rta_run_step export
     say "== R4. helm upgrade $release: Relaycast onto durable-actors (same chart $chart_version)"
     "${helmx[@]}" upgrade "$release" "$chart" "${base[@]}" "${rta_actor_files[@]}" --wait --wait-for-jobs --timeout 20m
@@ -278,10 +288,10 @@ rta_cutover() {
   # only goes forward (an opened workspace takes writes Postgres never sees), and
   # a rerun finishes opening the rest. Every workspace is verified (the import
   # step failed the run otherwise), so open only flips each to serving.
-  touch "$(rta_state).golive"
+  rta_mark "$(rta_state).golive"
   say "== R7. Go live: go-live recorded for run $rta_run; opening every workspace"
   rta_run_step open
-  touch "$(rta_state).opened"
+  rta_mark "$(rta_state).opened"
   if [ -n "$rta_control" ]; then
     "${kube[@]}" scale "$rta_control" --replicas="$control_replicas" >/dev/null
     "${kube[@]}" rollout status "$rta_control" --timeout 10m

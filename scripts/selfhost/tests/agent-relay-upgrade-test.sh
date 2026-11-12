@@ -87,7 +87,7 @@ EOF
 
 setup_mocks() { # $1 release fixture dir, $2 attestation result (ok|fail)
   local bin="$root/bin"; rm -rf "$bin"; mkdir -p "$bin"; : > "$root/log"
-  rm -f "$root/crane-missing" "$root/rendered-extra.yaml" "$root/rendered-target.yaml" "$root/live-manifest.yaml" "$root/patches" "$root/live-values.yaml"; rm -rf "$root/secrets"; touch "$root/exists"
+  rm -f "$root/rekey-fail" "$root/crane-missing" "$root/rendered-extra.yaml" "$root/rendered-target.yaml" "$root/live-manifest.yaml" "$root/patches" "$root/live-values.yaml"; rm -rf "$root/secrets"; touch "$root/exists"
   rm -rf "$root/jobstate"; mkdir -p "$root/jobstate"; rm -f "$root/no-version"
   printf 'v1\napps/v1\nbatch/v1\npolicy/v1\nautoscaling/v2\n' > "$root/api-versions"
   cat > "$bin/gh" <<EOF
@@ -116,7 +116,7 @@ case "\$*" in
       *) echo '{"status":{"active":1}}' ;;
     esac ;;
   *"logs job/"*) echo "bootstrap: relation sessions.search_documents does not exist" ;;
-  *" exec "*relaycast-rekey*) echo '{"event":"relaycast_rekey.credential","table":"workspaces","outcome":"rotated"}'; echo '{"event":"relaycast_rekey.summary","run_id":"rekey-run-1","by_column":{}}' ;;
+  *" exec "*relaycast-rekey*) [ -f "$root/rekey-fail" ] && { echo '{"event":"relaycast_rekey.summary","failed":1}'; exit 1; }; echo '{"event":"relaycast_rekey.credential","table":"workspaces","outcome":"rotated"}'; echo '{"event":"relaycast_rekey.summary","run_id":"rekey-run-1","by_column":{}}' ;;
   *"get secret "*"-o json"*) # $root/secrets/<namespace>/<name>.json, else an empty Secret
     ns=""; name=""; prev=""; for a in "\$@"; do [ "\$prev" = -n ] && ns=\$a; [ "\$prev" = secret ] && name=\$a; prev=\$a; done
     cat "$root/secrets/\$ns/\$name.json" 2>/dev/null || echo '{"data":{}}' ;;
@@ -144,7 +144,8 @@ rds_env=(AWS_REGION=us-east-1 RDS_HOST=db.example.internal RDS_ADMIN_SECRET_ARN=
 
 export AGENT_RELAY_JOB_POLL_SECONDS=0
 run() { PATH="$root/bin:$PATH" "$TEST_BASH" "$SCRIPT" "$@"; }
-run_rds() { env "${rds_env[@]}" PATH="$root/bin:$PATH" "$TEST_BASH" "$SCRIPT" "$@"; }
+# A normal operator umask (022): state the scripts write must still be owner-only.
+run_rds() { ( umask 022; env "${rds_env[@]}" PATH="$root/bin:$PATH" "$TEST_BASH" "$SCRIPT" "$@" ); }
 vals="$root/values.yaml"; : > "$vals"
 args=(--version 2026.11.1 --registry "$REG" --profile eks-native --values "$vals")
 migrate_job='kind: Job
@@ -493,8 +494,8 @@ out=$(run_rds "${rds_args[@]}" --relaycast-actors cutover 2>&1) && fail "cutover
 grep -q 'cutover needs --actors-values' <<<"$out" || fail "missing actors values refused for the wrong reason: $out"
 out=$(run_rds "${rds_args[@]}" --relaycast-actors cutover --actors-values "$vals" 2>&1) && fail "cutover without a credentials-phase record was accepted"
 grep -q 'no record of the credentials phase' <<<"$out" || fail "missing ar-since refused for the wrong reason: $out"
-mkdir -p "$root/state/relaycast-actors"; echo 1794500000 > "$root/state/relaycast-actors/agent-relay-agent-relay.ar-since"
-echo k1 > "$root/state/relaycast-actors/agent-relay-agent-relay.control-key"
+( umask 077; mkdir -p "$root/state/relaycast-actors"; echo 1794500000 > "$root/state/relaycast-actors/agent-relay-agent-relay.ar-since"
+  echo k1 > "$root/state/relaycast-actors/agent-relay-agent-relay.control-key" )
 target() { # $1: postgres-ca volume on the control plane (yes|no), $2: keyring key, $3: extra image
   cat > "$root/rendered-target.yaml" <<YAML
 kind: Deployment
@@ -549,17 +550,25 @@ pass "cutover uses a Relaycast-only overlay and refuses CA, keyring, image, acto
 # 33. credentials apply: a retry keeps the first switch time; the rekey run is recorded
 setup_mocks "$root/rel-ok" ok; printf '%s\n' "$live_pg" > "$root/live-values.yaml"; keyring; make_state
 st="$root/state/relaycast-actors/agent-relay-agent-relay"
-mkdir -p "$root/state/relaycast-actors"; echo 1700000000 > "$st.ar-since"
+( umask 077; mkdir -p "$root/state/relaycast-actors"; echo 1700000000 > "$st.ar-since" )
 out=$(run_rds "${rds_args[@]}" --relaycast-actors credentials --apply --db-instance prod-db --yes 2>&1) || fail "credentials apply failed: $out"
 [ "$(cat "$st.ar-since")" = 1700000000 ] || fail "a retried credentials phase overwrote the first switch time"
 grep -qx rekey-run-1 "$st.rekey-runs" || fail "the relaycast-rekey run id was not recorded"
 grep -q 'relaycast_rekey.summary' "$st.rekey-rekey-run-1.jsonl" || fail "the relaycast-rekey report was not kept"
+# Under umask 022 the state stays owner-only, so the STATE_DIR guard accepts the next run.
+open_perms=$(find "$root/state" \( -perm -0001 -o -perm -0002 -o -perm -0004 -o -perm -0010 -o -perm -0020 -o -perm -0040 \) -print)
+[ -z "$open_perms" ] || fail "migration state is readable beyond its owner: $open_perms"
+out=$(run_rds "${rds_args[@]}" --relaycast-actors credentials --apply --db-instance prod-db --yes 2>&1) || fail "a retried credentials phase failed: $out"
+touch "$root/rekey-fail"
+out=$(run_rds "${rds_args[@]}" --relaycast-actors credentials --apply --db-instance prod-db --yes 2>&1) && fail "a failed relaycast-rekey was accepted"
+grep -q 'relaycast-rekey failed' <<<"$out" && grep -q 'Relaycast migration (credentials' <<<"$out" && grep -q 'database snapshot:' <<<"$out" \
+  || fail "a failed re-key did not print the rollback with the snapshot: $out"
 pass "a retried credentials phase keeps the first switch time and records the rekey run"
 
 # 34. cutover apply: a mirrored image missing from the registry refuses before anything stops
 setup_mocks "$root/rel-ok" ok; printf '%s\n' "$live_pg" > "$root/live-values.yaml"; keyring; make_state
 sed -i.bak 's/format: legacy/format: ar/' "$root/live-values.yaml"
-mkdir -p "$root/state/relaycast-actors"; echo 1794500000 > "$st.ar-since"; echo k1 > "$st.control-key"
+( umask 077; mkdir -p "$root/state/relaycast-actors"; echo 1794500000 > "$st.ar-since"; echo k1 > "$st.control-key" )
 target yes credential-keyring "$REG/relaycast-migration/relaycast-actors-gateway@$D3"; actor_env; touch "$root/crane-missing"
 out=$(run_rds "${rds_args[@]}" --relaycast-actors cutover --actors-values "$vals" --apply --db-instance prod-db --yes 2>&1) && fail "a missing mirrored image was accepted"
 grep -q 'is not in' <<<"$out" || fail "missing mirror refused for the wrong reason: $out"
@@ -567,6 +576,6 @@ grep -Eq 'kubectl .*(scale|apply)' "$root/log" && fail "the cutover stopped or c
 pass "cutover checks every mirrored image digest before stopping anything"
 
 # 35. once go-live is recorded the rollback hint is forward-only
-touch "$st.golive"; echo relaycast-actors-1 > "$st.run"
+( umask 077; touch "$st.golive"; echo relaycast-actors-1 > "$st.run" )
 grep -q 'GO-LIVE IS RECORDED' "$SELFHOST_DIR/relaycast-to-actors.sh" || fail "no forward-only rollback hint"
 pass "go-live is recorded before the first workspace opens and the hint turns forward-only"

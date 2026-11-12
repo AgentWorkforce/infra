@@ -137,6 +137,12 @@ case "$rta_phase" in
     [ -f "$here/relaycast-to-actors.sh" ] || die "relaycast-to-actors.sh must sit next to this script"
     # shellcheck source=relaycast-to-actors.sh
     . "$here/relaycast-to-actors.sh"
+    # Its state under STATE_DIR (and the work files) must stay owner-only:
+    # the STATE_DIR guard above refuses anything wider on the next run.
+    umask 077
+    # A failure inside its functions must reach the ERR trap (rollback hint),
+    # not end the run silently.
+    set -o errtrace
     # shellcheck disable=SC2034  # read by relaycast-to-actors.sh
     rta_run="relaycast-actors-$(date -u +%Y%m%d%H%M%S)" rta_actor_files=() ;;
   *) die "--relaycast-actors must be credentials or cutover" ;;
@@ -343,6 +349,9 @@ rollback_hint() {
   exit 1
 }
 trap 'rollback_hint' ERR
+# A Relaycast migration refusal after the snapshot also prints the rollback
+# for the phase it reached.
+if [ -n "$rta_phase" ]; then die() { printf 'agent-relay-upgrade: %s\n' "$*" >&2; rollback_hint; }; fi
 
 # rds-setup.sh reads its inputs from the environment (never argv).
 rds_env=(env NAMESPACE="$namespace" KUBE_CONTEXT="$context" STATE_DIR="$state_dir")
