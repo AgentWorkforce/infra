@@ -85,19 +85,19 @@ case "${1:-}" in
       }' > "$out/changes.json"
     "${tf[@]}" show -no-color "$plan" > "$out/plan.txt"
     tar --sort=name --mtime=@0 --owner=0 --group=0 --numeric-owner --format=gnu \
-      --exclude=./.terraform --exclude=./operation.lock -C "$RUN_DIR" -cf - . | gzip -n > "$out/run.tgz"
+      --exclude=./.terraform --exclude=./operation.lock -C "$RUN_DIR" -cf - . | gzip -n > "$WORK/run.tgz"
     changed=$(jq '(.resources + .outputs) | length > 0' "$out/changes.json")
     jq -n --arg run "$RUN_ID" --arg tools "$TOOLS_REF" --arg acct "$ACCOUNT" --arg region "$REGION" \
       --arg env "$ENVIRONMENT" --arg state "$(cfg .backend.key)" --arg backend "$(sha256 "$BACKEND")" \
       --arg param "$PARAM" --arg ver "$TFVARS_VERSION" --arg vars "$(sha256 "$VARS")" --arg plan "$plan_sha" \
-      --arg tgz "$(sha256 "$out/run.tgz")" --argjson changed "$changed" --arg sha "${GITHUB_SHA:-}" \
+      --arg tgz "$(sha256 "$WORK/run.tgz")" --argjson changed "$changed" --arg sha "${GITHUB_SHA:-}" \
       '{schema_version: 1, plan_run_id: $run, tools_ref: $tools, caller_sha: $sha, account_id: $acct, region: $region,
         environment: $env, state_key: $state, backend_sha256: $backend, tfvars_parameter: $param,
         tfvars_version: $ver, tfvars_sha256: $vars, plan_sha256: $plan, run_tgz_sha256: $tgz, changes: $changed}' \
       > "$out/manifest.json"
-    s3_put_once "$PREFIX/$RUN_ID/run.tgz" "$out/run.tgz"
+    # run.tgz holds the saved plan and tfvars: it never goes under out/ (which callers publish as an artifact).
+    s3_put_once "$PREFIX/$RUN_ID/run.tgz" "$WORK/run.tgz"
     s3_put_once "$PREFIX/$RUN_ID/manifest.json" "$out/manifest.json"
-    rm -f "$out/run.tgz"
     {
       echo "## Terraform plan: $ENVIRONMENT ($ACCOUNT, $REGION)"
       echo

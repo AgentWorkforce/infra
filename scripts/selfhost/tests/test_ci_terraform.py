@@ -175,7 +175,7 @@ class CiTerraformTest(unittest.TestCase):
         for f in (self.work / "out").iterdir():
             self.assertNotIn(SECRET, f.read_text(), f.name)
             self.assertNotIn("agent-relay-ingest-edge", f.read_text(), f"tfvars values leaked into {f.name}")
-        self.assertFalse((self.work / "out/run.tgz").exists())
+        self.assertEqual(sorted(p.name for p in (self.work / "out").iterdir()), ["changes.json", "manifest.json", "outputs", "plan.txt", "summary.md"])
         aws_log = (self.fake / "aws.log").read_text()
         self.assertNotIn("apply", (self.fake / "tf.log").read_text())
         self.assertNotIn("data.tfstate --body", aws_log)  # never writes the state object
