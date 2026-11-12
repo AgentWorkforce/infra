@@ -45,7 +45,7 @@ for _ in $(seq 1 60); do [[ "$(curl -s -o /dev/null -w '%{http_code}' 127.0.0.1:
 
 # Chaos: restart the container RESTART_AT seconds into the "s-chaos" phase.
 if [[ -n "$RESTART_AT" ]]; then
-  (bench/relaycast/scripts/at-phase.sh http://127.0.0.1:19190/ s-chaos "$RESTART_AT" -- docker restart rcb-local >"$OUT/restart.txt" 2>&1 || true) &
+  (bench/relaycast/scripts/at-phase.sh http://127.0.0.1:19190/ s-chaos "$RESTART_AT" -- ${RCB_CHAOS_CMD:-docker restart rcb-local} >"$OUT/restart.txt" 2>&1 || true) &
 fi
 
 RCB_SINK_URLS=http://127.0.0.1:19090 RCB_STATUS_PORT=19190 RCB_PLAN="$PLAN" RCB_SHARD=0 RCB_SHARDS=1 RCB_OUT="$OUT/producer-0.json" node bench/relaycast/harness/producer.mjs 2>"$OUT/producer-0.log"

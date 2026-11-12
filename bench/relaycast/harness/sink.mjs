@@ -91,7 +91,7 @@ class NodeConn {
         return now() - t0;
       } catch (e) {
         counters.inc(`connect_error ${e.message.slice(0, 60)}`);
-        await sleep(Math.min(10000, 250 * 2 ** attempt));
+        await sleep(Math.min(2000, 100 * 2 ** attempt) * (0.5 + Math.random() / 2));
       }
     }
   }

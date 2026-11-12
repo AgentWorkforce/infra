@@ -32,7 +32,13 @@ const SINKS = env('RCB_SINK_URLS', '').split(',').filter(Boolean);
 // /status for the coordinator, which times chaos actions against the phase clock.
 const STATUS_PORT = envInt('RCB_STATUS_PORT', 0);
 const progress = { phase: null, phaseStartedAt: null, done: false, completed: [] };
-if (STATUS_PORT) http.createServer((req, res) => { res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify({ ...progress, now: Date.now(), inflight })); }).listen(STATUS_PORT).unref();
+if (STATUS_PORT) {
+  http.createServer((req, res) => {
+    res.writeHead(200, { 'content-type': 'application/json' });
+    // /result: the full result (histograms and stream accounting) for the coordinator.
+    res.end(JSON.stringify(req.url.startsWith('/result') ? result() : { ...progress, now: Date.now(), inflight }));
+  }).listen(STATUS_PORT).unref();
+}
 async function sinkControl(action, agents) {
   const out = [];
   for (const u of SINKS) {
@@ -298,6 +304,6 @@ function result() {
 if (OUT) writeJsonAtomic(OUT, result());
 progress.done = true; progress.phase = null;
 log(`shard ${SHARD} done`);
-// Linger so the coordinator can read the final /status.
+// Linger so the coordinator can read the final /status and /result.
 if (STATUS_PORT) await sleep(envInt('RCB_LINGER_S', 5) * 1000);
 process.exit(0);

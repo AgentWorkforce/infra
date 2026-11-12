@@ -1,0 +1,1 @@
+{"name":"local-stop","phases":[{"label":"s-chaos","kind":"mixed","rate":30,"durationS":20,"dmShare":0.5,"drainS":30}]}
