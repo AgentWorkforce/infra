@@ -202,11 +202,9 @@ jobs:
               --digest "$DIGEST" \
               --source-sha "$SOURCE_SHA"
             git add "releases/agent-relay-${VERSION}"
-            if git diff --cached --quiet; then
-              pushed=true
-              break
+            if ! git diff --cached --quiet; then
+              git commit -m "release(agent-relay): candidate ${COMPONENT} pin"
             fi
-            git commit -m "release(agent-relay): candidate ${COMPONENT} pin"
             if git push origin "HEAD:${BRANCH}"; then
               pushed=true
               break

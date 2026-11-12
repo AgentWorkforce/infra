@@ -372,6 +372,7 @@ class ReleaseCandidateGateTest(unittest.TestCase):
         self.assertIn("release-candidate-acceptance", intake)
         self.assertIn("client_payload[head_sha]", intake)
         self.assertIn("git merge --no-edit origin/main", intake)
+        self.assertIn("if ! git diff --cached --quiet; then", intake)
         self.assertIn("validate-release-candidate-gate.py", tagging)
         self.assertIn("collaborators/$approver/permission", tagging)
         self.assertIn("No exact-head approver has repository push permission", tagging)
