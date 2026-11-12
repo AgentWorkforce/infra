@@ -14,6 +14,7 @@ components:
   relayauth: true
   relayflows: false
   relayfile: false
+  # make local-up overlays the Terse dev sidecar; no cloud sandbox control plane.
   durableActors: false
 global:
   tenant: { orgId: kind-bootstrap }

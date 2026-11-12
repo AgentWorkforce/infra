@@ -132,6 +132,8 @@ jobs:
           python3 ci/agent-relay/test_retained_workloads.py -v
           python3 ci/agent-relay/kind/test_stack.py -v
           python3 ci/agent-relay/kind/test_local_stack.py -v
+          python3 ci/agent-relay/kind/test_local_actors.py -v
+          python3 ci/agent-relay/kind/test_local_cast_pg_proof.py -v
           python3 ci/agent-relay/kind/test_local_ca.py -v
           python3 ci/agent-relay/kind/test_local_hook_audit.py -v
           python3 ci/agent-relay/kind/test_ownership.py -v

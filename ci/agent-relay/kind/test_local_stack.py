@@ -23,6 +23,24 @@ from stack import StackError
 
 
 class LocalTests(unittest.TestCase):
+    def test_postgres_cast_identities_have_schema_ownership_and_dml_without_database_ownership(self):
+        queries = []
+        stack = object.__new__(LocalStack)
+        stack.sql = lambda database, sql: queries.append((database, sql))
+        stack.databases({key: "fixture-password" for key in (
+            "hoop", "control_owner", "control_api_runtime", "relaycast_owner", "relaycast_runtime")})
+        admin = queries[0][1]
+        self.assertIn("CREATE DATABASE relaycast;", admin)
+        self.assertNotIn("DATABASE relaycast OWNER", admin)
+        cast = next(sql for database, sql in queries if database == "relaycast")
+        for required in ("ALTER SCHEMA public OWNER TO relaycast_owner", "REVOKE CREATE ON SCHEMA public FROM PUBLIC",
+                "GRANT USAGE ON SCHEMA public TO relaycast_runtime", "GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO relaycast_runtime",
+                "GRANT SELECT, USAGE, UPDATE ON SEQUENCES TO relaycast_runtime", "REVOKE TEMP, CREATE ON DATABASE relaycast FROM PUBLIC",
+                "GRANT TEMP ON DATABASE relaycast TO relaycast_owner"):
+            self.assertIn(required, cast)
+        url = local_stack.pgurl("relaycast_runtime", {"relaycast_runtime": "fixture"}, None, "relaycast")
+        self.assertEqual(url.split("?", 1)[1], "sslmode=verify-full")
+
     def test_actor_dev_state_can_use_an_existing_pvc_without_changing_default(self):
         command = ["helm", "template", "ci", "charts/relaycast", "-n", "ci",
             "-f", "charts/relaycast/ci/durable-actors-dev-values.yaml"]
@@ -108,7 +126,8 @@ class LocalTests(unittest.TestCase):
             references = {name: value["repository"] + "@" + value["digest"] for name, value in ledger["pins"].items()}
             for name in ("ci/agent-relay/kind/local-values.yaml", "ci/agent-relay/kind/desktop-releases-values.yaml",
                     "charts/agent-relay/values-eks.yaml", "charts/agent-relay/values-scrub-wasm-bindgen.yaml",
-                    "charts/session-read-api/values.yaml", "scripts/release/update-release-candidate.py"):
+                    "charts/session-read-api/values.yaml", "scripts/release/update-release-candidate.py",
+                    "ci/agent-relay/kind/relaycast-actors-source.json", "ci/agent-relay/kind/relaycast-actors-dev.Dockerfile"):
                 target = root / name
                 target.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(ROOT / name, target)
@@ -449,6 +468,33 @@ class LocalTests(unittest.TestCase):
         with patch.multiple(local_stack, DESKTOP_RELEASES=True, CONTROL=control, WEBAPP=webapp):
             self.assert_final_render(experimental=True)
 
+    def test_cast_opt_outs_keep_the_collector_enabled_in_real_renders(self):
+        original = local_stack.reference(local_stack.AA_VALUES["relaycast"]["image"])
+        for backend in ("postgres", "sqlite"):
+            with self.subTest(backend=backend), patch.multiple(local_stack, CAST_BACKEND=backend, CAST=original):
+                self.assert_final_render(experimental=False)
+
+    def test_cast_backend_default_and_opt_outs_are_explicit(self):
+        self.assertEqual(local_stack.cast_backend({}), "durable-actors")
+        for name in ("durable-actors", "sqlite", "postgres"):
+            self.assertEqual(local_stack.cast_backend({"LOCAL_RELAYCAST_BACKEND": name}), name)
+        for name in ("", "actors", "false"):
+            with self.assertRaises(StackError):
+                local_stack.cast_backend({"LOCAL_RELAYCAST_BACKEND": name})
+
+    def test_foreign_cluster_is_refused_before_local_actor_build(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            stack = LocalStack.__new__(LocalStack)
+            stack.state = Path(tmp)
+            stack.docker_args = ["docker"]
+            stack.docker = lambda: None
+            stack.cmd = lambda *args, **kwargs: SimpleNamespace(stdout=json.dumps({"reader": True, "consumer": True}))
+            stack.cluster = lambda: (_ for _ in ()).throw(StackError("foreign cluster"))
+            with patch("local_ca.prepare", return_value=False), patch.object(local_stack, "build_actors") as build:
+                with self.assertRaisesRegex(StackError, "foreign cluster"):
+                    stack.up_local()
+            build.assert_not_called()
+
     def assert_final_render(self, experimental, profile=None):
         stack = LocalStack.__new__(LocalStack)
         stack.ca_sha = "c" * 64
@@ -461,12 +507,19 @@ class LocalTests(unittest.TestCase):
             cwd=ROOT, input=json.dumps(values), capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stderr)
         docs = [d for d in yaml.safe_load_all(result.stdout) if d]
-        self.assertFalse(any(d["kind"] in ("Secret", "Job") for d in docs))
+        self.assertFalse(any(d["kind"] == "Secret" for d in docs))
+        jobs = [d for d in docs if d["kind"] == "Job"]
+        if local_stack.CAST_BACKEND == "postgres":
+            self.assertEqual(len(jobs), 1)
+            self.assertIn("relaycast-migrate", jobs[0]["metadata"]["name"])
+        else:
+            self.assertEqual(jobs, [])
         active = [d for d in docs if d["kind"] == "Deployment" and d["spec"].get("replicas", 1) > 0]
         self.assertEqual({d["metadata"]["name"] for d in active}, {"relay-control", "relay-webapp", "relaycast", "session-native-ingest",
             "session-native-consumer", "session-read-api", "sessions-session-brief", "telemetry-collector"})
         aa = profile if profile is not None else yaml.safe_load((ROOT / "charts/agent-relay/values-eks.yaml").read_text())
         release = {name: local_stack.reference(aa[name]["image"]) for name in ("relay-control", "relay-webapp", "relaycast")}
+        release["relaycast"] = local_stack.CAST
         selected = local_stack.DESKTOP_RELEASE_VALUES if experimental else aa
         for name in ("relay-control", "relay-webapp"):
             release[name] = local_stack.reference(selected[name]["image"])
@@ -493,7 +546,11 @@ class LocalTests(unittest.TestCase):
                 self.assertEqual(copy["image"], local_stack.WEBAPP)
                 self.assertEqual(dashboard["image"], copy["image"])
             for container in deployment["spec"]["template"]["spec"]["containers"]:
-                self.assertIn("@sha256:", container["image"])
+                if container["name"] == "durable-actors-dev":
+                    self.assertEqual(container["image"], local_stack.ACTORS["actorTag"])
+                    self.assertEqual(container["imagePullPolicy"], "Never")
+                else:
+                    self.assertIn("@sha256:", container["image"])
                 self.assertIn(container["image"], selected_images().values())
                 env = {e["name"]: e for e in container.get("env", [])}
                 if container["image"] == local_stack.PIPELINE:
@@ -534,8 +591,14 @@ class LocalTests(unittest.TestCase):
                     self.assertEqual(env["SELFHOST_ANALYTICS_DESTINATION"]["value"], "collector")
                     self.assertTrue(any(m["name"] == "analytics-producer" for m in container["volumeMounts"]))
                 if name == "relaycast":
-                    self.assertEqual(env["RELAYCAST_TELEMETRY_DESTINATION"]["value"], "collector")
-                    self.assertTrue(any(m["name"] == "analytics-token" for m in container["volumeMounts"]))
+                    if local_stack.CAST_BACKEND == "durable-actors":
+                        self.assertFalse(values["relaycast"]["analytics"]["enabled"])
+                        self.assertNotIn("RELAYCAST_TELEMETRY_DESTINATION", env)
+                        state = next(v for v in pod["volumes"] if v["name"] == "dev-data")
+                        self.assertEqual(state["persistentVolumeClaim"]["claimName"], "local-relaycast-actors")
+                    else:
+                        self.assertEqual(env["RELAYCAST_TELEMETRY_DESTINATION"]["value"], "collector")
+                        self.assertTrue(any(m["name"] == "analytics-token" for m in container["volumeMounts"]))
 
 
 if __name__ == "__main__":

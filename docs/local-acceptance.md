@@ -3,9 +3,20 @@
 `make local-acceptance` writes a signed `.kind/acceptance/acceptance.json` and
 returns nonzero if a check fails. It is restricted to
 `https://relay.kind.agentrelay.com`; it cannot point at a hosted/customer site.
-This first increment implements **four API checks** and the report/signature
-runner. The default full suite deliberately fails with `not_implemented` for
+This increment implements **four API checks**, the backend-aware cast collector
+observation, and the report/signature runner. The default full suite deliberately fails with `not_implemented` for
 remaining qualification work. An API-only pass is not a 2026.11.1 qualification.
+
+The default local Relaycast actor lane has one explicit unsupported check:
+`cast_collector` is `skipped` with reason
+`unsupported on durable-actors (charts/relaycast rejects analytics with actors)`
+and [issue #648](https://github.com/AgentWorkforce/relaycast/issues/648).
+A successful API scope therefore reports `pass_with_skips`, not an unqualified
+pass, and names the required `postgres_cast_collector` companion. Run
+`make local-postgres-cast-proof` for its separate real Postgres/messaging/event
+receipt. The full release gate still refuses skipped or incomplete checks.
+In Postgres/SQLite mode the observer requires a fresh Relaycast collector event
+since `historySince`; generate real messaging traffic before observing it.
 
 ## Run the API foundation
 
@@ -66,8 +77,12 @@ model-key read, upload or wipe occurs in the API suite.
 
 Preflight checks the configured tenant against the stack's `tenant.json`, reads
 the cluster UID, requires a clean tracked source tree, compares
-all nine application copy/serve containers with published GHCR digest pins in
-the local selection, and requires the deployments to be updated and available.
+all application copy/serve containers with the local selection, and requires
+the deployments to be updated and available. The actor lane checks both the
+published gateway and source-built sidecar, bound to the checked-in recipe,
+recorded local image IDs, the imported containerd identities and the running
+sidecar's imageID. Local build identity
+is reported separately from published registry digests.
 Support-store images are outside this first pin assertion. The four checks are:
 
 1. Dashboard HTTPS 200 with the local CA, then a certificate hostname mismatch
