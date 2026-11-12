@@ -122,8 +122,9 @@ jobs:
           trap 'rm -rf "$oidc_dir"' EXIT
           printf 'Authorization: bearer %s\n' "$ACTIONS_ID_TOKEN_REQUEST_TOKEN" > "$oidc_dir/header"
           curl -sSf -H "@$oidc_dir/header" \
-            "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=sts.amazonaws.com" | jq -jr .value > "$oidc_dir/jwt"
-          [ -s "$oidc_dir/jwt" ] || { echo "::error::empty GitHub OIDC token"; exit 1; }
+            "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=sts.amazonaws.com" \
+            | jq -ejr '.value | select(type == "string" and length > 0)' > "$oidc_dir/jwt" \
+            || { echo "::error::GitHub OIDC token response had no non-empty .value"; exit 1; }
           creds=$(aws sts assume-role-with-web-identity --role-arn "$ROLE_ARN" \
             --role-session-name "agent-relay-upgrade-${GITHUB_RUN_ID}" \
             --web-identity-token "file://$oidc_dir/jwt" \
