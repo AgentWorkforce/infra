@@ -1,0 +1,14 @@
+# Actors arm = values-eks.yaml + values-eks-rds-native.yaml + values-eks-actors.yaml
+# + this file. Turns the rest of the suite back on (values-eks-actors.yaml turns
+# it off) and undoes the Postgres-only Relaycast settings from the rds-native
+# profile, which the durable-actors backend rejects.
+components:
+  sessionsPipeline: true
+  control: true
+  webapp: true
+relaycast:
+  postgresCa:
+    enabled: false
+    configMap: ""
+  persistence:
+    enabled: false
