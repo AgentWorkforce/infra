@@ -227,7 +227,8 @@ async function step(input) {
   const latencyMs = quantiles(routes.flatMap(r => r.latencies));
   const dropped = routes.reduce((n, r) => n + r.dropped, 0);
   const achievedRps = routes.reduce((n, r) => n + r.completedInWindow, 0) / offeredSeconds;
-  const generatorLimited = dropped > 0 || lag.percentile(99) / 1e6 > 25 || maximumLagMs > 100;
+  const schedulingPressure = lag.percentile(99) / 1e6 > 25 || maximumLagMs > 100;
+  const generatorLimited = dropped > 0 || schedulingPressure;
   const sloPass = completed > 0 && bad / completed <= .01 && achievedRps >= supportedRps * .95
     && latencyMs.p95 <= 200 && drainSeconds <= 5 && !generatorLimited;
   return {requestedScale: input.requestedScale, requestedGlobalRps: input.requestedPeakRps,
@@ -235,13 +236,14 @@ async function step(input) {
     offeredSupportedRps: supportedRps, routeCoverageShare: supportedRps / input.targetPeakRps,
     populationMode: 'fixed_assumed', seconds: offeredSeconds, completed,
     achievedRps, latencyMs, sloPass,
-    limitSignal: generatorLimited ? 'generator_limited' : sloPass ? 'none' : 'backend_or_policy_limit',
+    limitSignal: schedulingPressure ? 'generator_scheduling_pressure' : dropped > 0 ? 'inflight_cap_backpressure'
+      : sloPass ? 'none' : 'backend_or_policy_limit',
     drainAdjustedRps: completed / (offeredSeconds + drainSeconds),
     errorFraction: completed ? bad / completed : 1, drainSeconds, maximumInflight,
     activeSocketsAtEnd: sockets.size,
     generator: {cpuSeconds: (used.user + used.system) / 1e6, maximumScheduleLagMs: maximumLagMs,
       eventLoopP99Ms: lag.percentile(99) / 1e6, rssBytes: process.memoryUsage().rss,
-      dropped}, routes: result};
+      dropped, schedulingPressure, inflightCapReached: dropped > 0}, routes: result};
 }
 
 const report = {schema: 'agent-relay.actor-benchmark/v1', status: 'fail', startedAt: new Date().toISOString(),
