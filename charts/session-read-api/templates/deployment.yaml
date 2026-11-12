@@ -1,5 +1,8 @@
 {{- include "session-read-api.validate" . -}}
 {{- $c := .Values -}}
+{{- $timingCompat := include "session-read-api.compatLegacyBool" (dict "structured" $c.timing.assumeNoTurns "path" "timing.assumeNoTurns" "name" "READ_API_TIMING_ASSUME_NO_TURNS" "extraEnv" $c.extraEnv) | fromJson -}}
+{{- $canonicalCompat := include "session-read-api.compatLegacyBool" (dict "structured" $c.canonical.pinLaggingPointer "path" "canonical.pinLaggingPointer" "name" "READ_API_CANONICAL_PIN_LAGGING_POINTER" "extraEnv" $c.extraEnv) | fromJson -}}
+{{- $legacyBoolNames := list "READ_API_TIMING_ASSUME_NO_TURNS" "READ_API_CANONICAL_PIN_LAGGING_POINTER" -}}
 {{- $clickhouse := $c.search.clickhouse -}}
 {{- $configSecret := ternary $clickhouse.existingSecret $c.config.existingSecret $clickhouse.enabled -}}
 {{- $configKey := ternary $clickhouse.key $c.config.key $clickhouse.enabled -}}
@@ -93,10 +96,10 @@ spec:
             {{- if $c.turns.assumeNoLegacy }}
             - { name: READ_API_TURNS_ASSUME_NO_LEGACY, value: "true" }
             {{- end }}
-            {{- if $c.timing.assumeNoTurns }}
+            {{- if $timingCompat.enabled }}
             - { name: READ_API_TIMING_ASSUME_NO_TURNS, value: "true" }
             {{- end }}
-            {{- if $c.canonical.pinLaggingPointer }}
+            {{- if $canonicalCompat.enabled }}
             - { name: READ_API_CANONICAL_PIN_LAGGING_POINTER, value: "true" }
             {{- end }}
             {{- if $c.events.messageIds }}
@@ -170,6 +173,7 @@ spec:
             {{- end }}
             {{- include "session-read-api.analytics.env" $c.analytics | nindent 12 }}
             {{- range $e := $c.extraEnv }}
+            {{- if not (has $e.name $legacyBoolNames) }}
             - name: {{ $e.name | quote }}
               {{- if hasKey $e "value" }}
               value: {{ $e.value | quote }}
@@ -177,6 +181,7 @@ spec:
               valueFrom:
                 {{- toYaml $e.valueFrom | nindent 16 }}
               {{- end }}
+            {{- end }}
             {{- end }}
           # Dormant services return HTTP 200 but enabled:false. A status-only
           # readiness probe would falsely accept the disabled runtime.
