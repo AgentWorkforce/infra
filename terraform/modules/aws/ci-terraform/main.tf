@@ -25,7 +25,6 @@ locals {
   tfvars_key_arn   = coalesce(var.tfvars_kms_key_arn, var.state.kms_key_arn)
   tfvars_arn       = "${local.arn}:ssm:${local.region}:${local.account}:parameter${var.tfvars_parameter_name}"
   public_params    = "${local.arn}:ssm:${local.region}::parameter/aws/service/*"
-  job_workflow_ref = "${var.workflow}@refs/heads/${var.branch}"
 
   subjects = {
     plan  = "${var.oidc_subject_prefix}:ref:refs/heads/${var.branch}"
@@ -34,9 +33,11 @@ locals {
   tags = merge(var.tags, { "agent-relay/component" = "ci-terraform" })
 }
 
-# ---- Trust: this repository, this workflow, this branch. apply additionally: the approval environment. The
-# environment alone proves nothing on a plan without environment protection rules (any branch can name it),
-# so apply also requires the branch ref and the workflow.
+# ---- Trust: aud and sub only, the GitHub claims AWS evaluates (ref, repository_id and job_workflow_ref are
+# not condition keys). The repository's sub template carries its immutable owner and repository IDs.
+# plan: jobs on branch. apply: jobs in apply_environment. GitHub environments for private repositories on the
+# free plan have no reviewers, but they do have a deployment-branch policy: set apply_environment to deploy
+# from branch only, and use it for this workflow alone, so its sub names this workflow's apply job and nothing else.
 
 data "aws_iam_policy_document" "trust" {
   for_each = local.subjects
@@ -56,21 +57,6 @@ data "aws_iam_policy_document" "trust" {
       variable = "token.actions.githubusercontent.com:sub"
       values   = [each.value]
     }
-    condition {
-      test     = "StringEquals"
-      variable = "token.actions.githubusercontent.com:repository_id"
-      values   = [var.repository_id]
-    }
-    condition {
-      test     = "StringEquals"
-      variable = "token.actions.githubusercontent.com:ref"
-      values   = ["refs/heads/${var.branch}"]
-    }
-    condition {
-      test     = "StringEquals"
-      variable = "token.actions.githubusercontent.com:job_workflow_ref"
-      values   = [local.job_workflow_ref]
-    }
   }
 }
 
@@ -86,6 +72,9 @@ resource "aws_iam_role" "github" {
 # ---- Policies
 
 locals {
+  # Plan-store objects are written once (If-None-Match: *): a saved plan, its manifest and an apply claim can
+  # never be replaced after review, not even by a later run of the same role.
+  create_only = { Null = { "s3:if-none-match" = "false" } }
   state_kms = {
     Sid       = "StateKey"
     Effect    = "Allow"
@@ -146,6 +135,8 @@ locals {
         ]
         Resource = "${local.arn}:s3:::*"
       },
+      # HeadBucket (how the provider reads aws_s3_bucket) is s3:ListBucket; the stack's own buckets only.
+      { Sid = "StackBucketHead", Effect = "Allow", Action = "s3:ListBucket", Resource = "${local.arn}:s3:::${local.stack}-*" },
       { Sid = "PublicParameters", Effect = "Allow", Action = ["ssm:GetParameter", "ssm:GetParameters"], Resource = local.public_params },
       { Sid = "NoSecretValues", Effect = "Deny", Action = "secretsmanager:GetSecretValue", Resource = "*" },
       {
@@ -172,10 +163,11 @@ locals {
       local.state_kms,
       # Saved plans go to the state bucket (same key, same protection as the state they contain), never to GitHub.
       {
-        Sid      = "SavePlan"
-        Effect   = "Allow"
-        Action   = "s3:PutObject"
-        Resource = ["${local.store_arn}/*/run.tgz", "${local.store_arn}/*/manifest.json"]
+        Sid       = "SavePlan"
+        Effect    = "Allow"
+        Action    = "s3:PutObject"
+        Resource  = ["${local.store_arn}/*/run.tgz", "${local.store_arn}/*/manifest.json"]
+        Condition = local.create_only
       },
       # Not even the lock-free variant: the plan role never writes the state.
       { Sid = "NeverWriteState", Effect = "Deny", Action = ["s3:PutObject", "s3:DeleteObject"], Resource = local.state_object_arn },
@@ -192,10 +184,11 @@ locals {
       { Sid = "ReadPlan", Effect = "Allow", Action = "s3:GetObject", Resource = "${local.store_arn}/*" },
       # Single use: apply-attempt.json is written with If-None-Match before Terraform runs.
       {
-        Sid      = "RecordApply"
-        Effect   = "Allow"
-        Action   = "s3:PutObject"
-        Resource = ["${local.store_arn}/*/apply-attempt.json", "${local.store_arn}/*/apply-result.json"]
+        Sid       = "RecordApply"
+        Effect    = "Allow"
+        Action    = "s3:PutObject"
+        Resource  = ["${local.store_arn}/*/apply-attempt.json", "${local.store_arn}/*/apply-result.json"]
+        Condition = local.create_only
       },
     ], local.tfvars)
   }
@@ -218,7 +211,7 @@ locals {
         Effect    = "Allow"
         Action    = "iam:PassRole"
         Resource  = local.stack_role_arn
-        Condition = { StringEquals = { "iam:PassedToService" = concat(["pods.eks.amazonaws.com"], var.lambda_pipeline ? ["lambda.amazonaws.com"] : [], var.chief_execution_node ? ["ec2.amazonaws.com"] : []) } }
+        Condition = { StringEquals = { "iam:PassedToService" = concat(["pods.eks.amazonaws.com"], var.lambda_pipeline ? ["lambda.amazonaws.com"] : []) } }
       },
       {
         Sid       = "RdsServiceLinkedRole"
@@ -268,7 +261,7 @@ locals {
         Action   = ["kms:CreateGrant", "kms:DescribeKey", "kms:Decrypt", "kms:GenerateDataKey", "kms:GenerateDataKeyWithoutPlaintext"]
         Resource = var.stack.kms_key_arn
         Condition = {
-          StringEquals = { "kms:ViaService" = [for s in concat(["rds", "es", "secretsmanager"], var.lambda_pipeline ? ["sqs", "lambda"] : [], var.chief_execution_node ? ["ec2"] : []) : "${s}.${local.region}.amazonaws.com"] }
+          StringEquals = { "kms:ViaService" = [for s in concat(["rds", "es", "secretsmanager"], var.lambda_pipeline ? ["sqs", "lambda"] : []) : "${s}.${local.region}.amazonaws.com"] }
         }
       },
     ]
@@ -369,45 +362,6 @@ locals {
     ]
   }
 
-  # EC2 has no name-based ARNs; this is broad and therefore off unless the stack runs the chief node.
-  apply_chief_policy = {
-    Version = "2012-10-17"
-    Statement = [
-      {
-        Sid    = "ChiefInstance"
-        Effect = "Allow"
-        Action = [
-          "ec2:RunInstances", "ec2:TerminateInstances", "ec2:StopInstances", "ec2:StartInstances", "ec2:ModifyInstanceAttribute",
-          "ec2:ModifyInstanceMetadataOptions", "ec2:CreateSecurityGroup", "ec2:DeleteSecurityGroup", "ec2:AuthorizeSecurityGroupEgress",
-          "ec2:RevokeSecurityGroupEgress", "ec2:AuthorizeSecurityGroupIngress", "ec2:RevokeSecurityGroupIngress", "ec2:CreateTags", "ec2:DeleteTags",
-        ]
-        Resource = "*"
-      },
-      {
-        Sid    = "ChiefInstanceProfile"
-        Effect = "Allow"
-        Action = [
-          "iam:CreateInstanceProfile", "iam:DeleteInstanceProfile", "iam:AddRoleToInstanceProfile", "iam:RemoveRoleFromInstanceProfile",
-          "iam:TagInstanceProfile", "iam:UntagInstanceProfile",
-        ]
-        Resource = "${local.arn}:iam::${local.account}:instance-profile/${local.stack}-*"
-      },
-      {
-        Sid       = "ChiefSsmCore"
-        Effect    = "Allow"
-        Action    = ["iam:AttachRolePolicy", "iam:DetachRolePolicy"]
-        Resource  = local.stack_role_arn
-        Condition = { ArnEquals = { "iam:PolicyARN" = "${local.arn}:iam::aws:policy/AmazonSSMManagedInstanceCore" } }
-      },
-      {
-        Sid      = "ChiefSecrets"
-        Effect   = "Allow"
-        Action   = ["secretsmanager:CreateSecret", "secretsmanager:DeleteSecret", "secretsmanager:UpdateSecret", "secretsmanager:TagResource", "secretsmanager:UntagResource"]
-        Resource = "${local.arn}:secretsmanager:${local.region}:${local.account}:secret:${local.stack}-*"
-      },
-    ]
-  }
-
   policies = merge(
     {
       read           = { roles = ["plan", "apply"], document = local.read_policy }
@@ -417,7 +371,6 @@ locals {
       apply-data     = { roles = ["apply"], document = local.apply_data_policy }
     },
     var.lambda_pipeline ? { apply-pipeline = { roles = ["apply"], document = local.apply_pipeline_policy } } : {},
-    var.chief_execution_node ? { apply-chief = { roles = ["apply"], document = local.apply_chief_policy } } : {},
   )
   attachments = merge([for p, v in local.policies : { for r in v.roles : "${r}/${p}" => { role = r, policy = p } }]...)
 }
@@ -425,7 +378,7 @@ locals {
 resource "aws_iam_policy" "this" {
   #checkov:skip=CKV_AWS_290:Refresh reads (Describe/List) and KMS CreateKey/logs resource policies have no resource-level permissions; writes are scoped to <stack>-* or by condition.
   #checkov:skip=CKV_AWS_355:Same: read-only Describe/List actions need "*".
-  #checkov:skip=CKV_AWS_289:Same: the "*" write actions (KMS CreateKey on a tag/key-spec condition, logs resource policy, chief EC2 when enabled) cannot be scoped by ARN.
+  #checkov:skip=CKV_AWS_289:Same: the "*" write actions (KMS CreateKey on a tag/key-spec condition, logs resource policy, Lambda event source mappings on a function condition) cannot be scoped by ARN.
   for_each    = local.policies
   name        = "${var.name}-${each.key}"
   description = "${var.name}: ${each.key} (Terraform CI for ${local.stack})."

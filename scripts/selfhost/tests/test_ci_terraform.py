@@ -69,7 +69,7 @@ elif a[:2] == ["show", "-json"]:
     plan = json.loads(os.environ["FAKE_PLAN_JSON"])
     print(json.dumps(plan))
 elif a[:2] == ["show", "-no-color"]:
-    print("  # module.search.aws_opensearch_domain.disposable[0] will be created\n  + master_password = (sensitive value)")
+    print("  # aws_eks_pod_identity_association.history_consumer[0] will be created\n  + service_account = \"agent-relay-ingest-edge\"\n  + master_password = (sensitive value)")
 elif a[0] == "apply":
     planned = json.loads(Path(a[-1]).read_text())["serial"]
     if planned != int(serial.read_text()):
@@ -174,7 +174,9 @@ class CiTerraformTest(unittest.TestCase):
         self.assertNotIn("data.aws_caller_identity", summary)
         for f in (self.work / "out").iterdir():
             self.assertNotIn(SECRET, f.read_text(), f.name)
-            self.assertNotIn("agent-relay-ingest-edge", f.read_text(), f"tfvars values leaked into {f.name}")
+            if f.name != "plan.txt":  # plan.txt is the reviewed text plan: configuration values, never sensitive ones
+                self.assertNotIn("agent-relay-ingest-edge", f.read_text(), f"tfvars values leaked into {f.name}")
+        self.assertIn("(sensitive value)", (self.work / "out/plan.txt").read_text())
         self.assertEqual(sorted(p.name for p in (self.work / "out").iterdir()), ["changes.json", "manifest.json", "outputs", "plan.txt", "summary.md"])
         aws_log = (self.fake / "aws.log").read_text()
         self.assertNotIn("apply", (self.fake / "tf.log").read_text())

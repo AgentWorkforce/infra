@@ -13,21 +13,12 @@ variable "github_oidc_provider_arn" {
 }
 
 variable "oidc_subject_prefix" {
-  description = "Prefix of the caller repository's GitHub OIDC sub claim, e.g. repo:owner@<id>/name@<id> for immutable subjects."
+  description = "Prefix of the caller repository's GitHub OIDC sub claim. Use a subject template with immutable owner and repository IDs (repo:owner@<id>/name@<id>), so a renamed or recreated repository cannot match."
   type        = string
-}
-
-variable "repository_id" {
-  description = "Numeric GitHub repository ID of the caller (the repository_id claim)."
-  type        = string
-  validation {
-    condition     = can(regex("^[0-9]+$", var.repository_id))
-    error_message = "repository_id: the numeric GitHub repository ID."
-  }
 }
 
 variable "workflow" {
-  description = "Caller workflow file, owner/repo/.github/workflows/<file>.yml. Both roles trust only jobs of this workflow on branch (the job_workflow_ref claim)."
+  description = "Caller workflow file, owner/repo/.github/workflows/<file>.yml. Recorded in the role descriptions; trust itself is the sub claim (see apply_environment)."
   type        = string
   validation {
     condition     = can(regex("^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/\\.github/workflows/[A-Za-z0-9_.-]+\\.ya?ml$", var.workflow))
@@ -42,7 +33,7 @@ variable "branch" {
 }
 
 variable "apply_environment" {
-  description = "GitHub environment the apply job runs in. The apply role trusts only that environment, on branch, in workflow."
+  description = "GitHub environment the apply job runs in; the apply role trusts its sub. Dedicate it to this workflow and limit its deployment branches to branch, because without required reviewers that policy is what keeps other branches and workflows out."
   type        = string
 }
 
@@ -101,14 +92,10 @@ variable "stack" {
   }
 }
 
+# The chief execution node (EC2) is not covered: EC2 writes cannot be scoped to it by name. A stack that enables
+# it plans fine and fails to apply until a reviewed policy is added.
 variable "lambda_pipeline" {
   description = "Also allow the Lambda/SQS/EventBridge pipeline (aws-environments pipeline_runtime = lambda)."
-  type        = bool
-  default     = false
-}
-
-variable "chief_execution_node" {
-  description = "Also allow the chief execution node (EC2 instance, security group, instance profile, its secrets)."
   type        = bool
   default     = false
 }

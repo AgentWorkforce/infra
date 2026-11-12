@@ -23,7 +23,6 @@ variables {
   name                     = "env-data"
   github_oidc_provider_arn = "arn:aws:iam::111111111111:oidc-provider/token.actions.githubusercontent.com"
   oidc_subject_prefix      = "repo:example@1/ops@2"
-  repository_id            = "2"
   workflow                 = "example/ops/.github/workflows/env-data.yml"
   apply_environment        = "env-prod"
   state = {
@@ -70,6 +69,17 @@ run "defaults" {
     error_message = "The plan role writes only the lock and its saved plan, never the state."
   }
   assert {
+    condition = alltrue([
+      one([for s in jsondecode(output.policies["plan"]).Statement : s if s.Sid == "SavePlan"]).Condition.Null["s3:if-none-match"] == "false",
+      one([for s in jsondecode(output.policies["apply-state"]).Statement : s if s.Sid == "RecordApply"]).Condition.Null["s3:if-none-match"] == "false",
+    ])
+    error_message = "Plan-store objects are create-only (If-None-Match), so a reviewed plan cannot be replaced."
+  }
+  assert {
+    condition     = one([for s in jsondecode(output.policies["read"]).Statement : s if s.Sid == "StackBucketHead"]).Resource == "arn:aws:s3:::agent-relay-prod-*"
+    error_message = "HeadBucket on the stack's buckets only."
+  }
+  assert {
     condition     = one([for s in jsondecode(output.policies["plan"]).Statement : s if s.Sid == "NeverWriteState"]).Resource == "arn:aws:s3:::env-tfstate-111111111111/agent-relay/111111111111/us-west-2/prod/data.tfstate"
     error_message = "The plan role is denied writes to the state object."
   }
@@ -97,7 +107,7 @@ run "defaults" {
   }
   assert {
     condition     = !strcontains(join(" ", values(output.policies)), "iam:AttachRolePolicy")
-    error_message = "No managed policy attachment without the chief node."
+    error_message = "No managed policy attachments."
   }
   assert {
     condition     = output.ci.plan_store.prefix == "ci-plans/111111111111/us-west-2/prod/data" && output.ci.approval_environment == "env-prod"
@@ -117,35 +127,29 @@ run "trust" {
     error_message = "apply trusts the approval environment."
   }
   assert {
-    condition     = local.job_workflow_ref == "example/ops/.github/workflows/env-data.yml@refs/heads/main"
-    error_message = "Both roles trust only the named workflow on main."
-  }
-  assert {
-    condition = alltrue([for k in ["plan", "apply"] : alltrue([
-      for v in ["token.actions.githubusercontent.com:ref", "token.actions.githubusercontent.com:job_workflow_ref", "token.actions.githubusercontent.com:repository_id"] :
-      contains([for c in one(data.aws_iam_policy_document.trust[k].statement).condition : c.variable], v)
+    condition = alltrue([for k in ["plan", "apply"] : toset([for c in one(data.aws_iam_policy_document.trust[k].statement).condition : c.variable]) == toset([
+      "token.actions.githubusercontent.com:aud", "token.actions.githubusercontent.com:sub",
     ])])
-    error_message = "Both roles pin ref, job_workflow_ref and repository_id."
+    error_message = "Trust uses only aud and sub, the GitHub claims AWS evaluates."
   }
 }
 
-run "pipeline_and_chief" {
+run "pipeline" {
   command = plan
   variables {
-    lambda_pipeline      = true
-    chief_execution_node = true
+    lambda_pipeline = true
   }
   assert {
-    condition     = contains(keys(aws_iam_policy.this), "apply-pipeline") && contains(keys(aws_iam_policy.this), "apply-chief")
-    error_message = "Opt-ins add their policies."
+    condition     = contains(keys(aws_iam_policy.this), "apply-pipeline")
+    error_message = "The opt-in adds its policy."
   }
   assert {
     condition     = alltrue([for k, v in aws_iam_policy.this : length(v.policy) <= 6144])
     error_message = "Every managed policy fits the 6,144-character limit."
   }
   assert {
-    condition     = one([for s in jsondecode(output.policies["apply-chief"]).Statement : s if s.Sid == "ChiefSsmCore"]).Condition.ArnEquals["iam:PolicyARN"] == "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
-    error_message = "The chief node may attach only the SSM core policy."
+    condition     = one([for s in jsondecode(output.policies["apply-identity"]).Statement : s if s.Sid == "PassStackRoles"]).Condition.StringEquals["iam:PassedToService"] == ["pods.eks.amazonaws.com", "lambda.amazonaws.com"]
+    error_message = "Stack roles pass to Pod Identity and, with the pipeline, Lambda only."
   }
 }
 
