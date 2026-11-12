@@ -123,7 +123,10 @@ Preconditions:
 - the Relaycast-only actors overlay renders, removes no running Deployment,
   and keeps the gateway on the same Secret and keyring key;
 - **every durable-actors Deployment (control plane, pool manager) mounts a
-  `postgres-ca` volume: verify-full TLS to RDS** (infra#274);
+  `postgres-ca` volume: verified TLS to RDS** (infra#274: the stock image's
+  OpenSSL trusts `SSL_CERT_FILE`, a bundle of the system roots plus the RDS CA,
+  and `sslmode=require` checks the chain and the hostname; a wrong CA, no CA
+  or a hostname mismatch fails at startup);
 - every cutover image is a release image or already mirrored into the
   install's registry (pods must start after messaging stops);
 - the actor env Secret in the sandbox namespace holds the same bytes as the
@@ -226,7 +229,7 @@ Job time.
 | --- | --- |
 | relaycast | #653: `migration-preflight` / `export-for-actors` (sealed, owner-only, byte-bounded), actor `importData` (begin/chunk/finish/open/abort/status, replayable), gateway import route, `relaycast-migrate files/import/verify-realtime/open/abort`, an end-to-end test from a real Postgres server into an actor. #652 (merged): actor raw reads. #655: `DURABLE_ACTORS_SOCKET_ORIGIN`. #656: upload completion without actor egress. #654: unordered inbox/DM lists (cosmetic). |
 | relay-control | #122: `relaycast-rekey` (+ `--undo`, `--purge`), per-workspace locking, all-or-nothing undo. |
-| durable-actors + infra | #274: verify-full TLS from the control plane and pool manager to RDS (`postgres-ca` mount). |
+| infra | #274: verified TLS from the control plane and pool manager to RDS with the stock upstream image (CA bundle via `SSL_CERT_FILE`, `postgres-ca` volume); no fork release. |
 | infra | this doc; #272: relaycast `migration.*` Jobs, `persistence.retainForMigration`, `runtime.durableActors.socketOrigin`, the upgrader's `--relaycast-actors`, the workflow inputs, offline tests and the kind proof. |
 
 ## Known gaps
