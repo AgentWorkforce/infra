@@ -9,6 +9,23 @@ remaining qualification work. An API-only pass is not a 2026.11.1 qualification.
 
 ## Run the API foundation
 
+For a release candidate, use its checked-in ledger and generated overlay instead
+of the default release profile:
+
+```sh
+LOCAL_RELEASE_CANDIDATE=2026.11.1 make local-up
+```
+
+Use a fresh checkout of the corresponding candidate branch. The selector requires
+all three component pins in `releases/agent-relay-2026.11.1/pins.json` and exact
+generated `values.yaml` bytes, and validates them before touching the cluster.
+Keep `LOCAL_DESKTOP_RELEASES` unset; combining its preview with a candidate is
+refused. Keep the candidate selector on later local commands, including
+`local-dev-setup`, so development starts from the same images. The default
+`make local-up` continues to use the base release profile. This selector does not
+replace another checkout's live cluster: obtain the owner's approval before
+removing a viewing fixture that occupies the Kind hostname and ports.
+
 Start the local stack with `make local-up`, install the Kind Desktop with
 `make desktop-install`, then complete its normal browser/device sign-in.
 Desktop installation, macOS trust and update clicks remain manual steps; this
