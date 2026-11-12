@@ -45,10 +45,12 @@
 {{- $backendId := ternary .Values.nativeConsumer.backendId .Values.searchIndexer.search.backendId $native -}}
 {{- $completeSince := ternary .Values.nativeConsumer.completeSince .Values.searchIndexer.completeSince $native -}}
 {{- $keyRoot := ternary .Values.nativeConsumer.keyPrefix .Values.searchIndexer.keyPrefix $native -}}
+{{- $consumerProvider := ternary "s3" .Values.searchIndexer.locker.provider $native -}}
 {{- if ne .Values.sessionReadApi.search.backend $backend }}{{ fail "operator session erase requires the read API and active consumer to use the same search backend" }}{{ end -}}
 {{- if ne .Values.sessionReadApi.search.backendId $backendId }}{{ fail "operator session erase requires the read API and active consumer to use the same search backendId" }}{{ end -}}
 {{- if ne .Values.sessionReadApi.completeSince $completeSince }}{{ fail "operator session erase requires the read API and active consumer to use the same completeSince" }}{{ end -}}
 {{- if ne .Values.ingestEdge.keyRoot $keyRoot }}{{ fail "operator session erase requires the ingest and active consumer key roots to match" }}{{ end -}}
+{{- if ne .Values.ingestEdge.locker.provider $consumerProvider }}{{ fail "operator session erase requires the ingest and active consumer Locker providers to match" }}{{ end -}}
 {{- if or (ne .Values.ingestEdge.locker.bucket $consumer.locker.bucket) (ne .Values.ingestEdge.locker.endpoint $consumer.locker.endpoint) (ne .Values.ingestEdge.locker.region $consumer.locker.region) }}{{ fail "operator session erase requires the ingest and active consumer Locker bucket/endpoint/region to match" }}{{ end -}}
 {{- if eq $backend "opensearch" -}}
 {{- if or (ne .Values.sessionReadApi.search.opensearch.url .Values.searchIndexer.search.opensearch.url) (ne .Values.sessionReadApi.search.opensearch.region .Values.searchIndexer.search.opensearch.region) (ne .Values.sessionReadApi.search.opensearch.indexPrefix .Values.searchIndexer.search.opensearch.indexPrefix) }}{{ fail "operator session erase requires the read API and searchIndexer OpenSearch target to match" }}{{ end -}}
@@ -60,9 +62,18 @@
 {{- $entry := index $reader $name | default dict -}}
 {{- if or (not (hasKey $entry "value")) (not (kindIs "string" $entry.value)) (ne $entry.value $value) }}{{ fail (printf "operator session erase requires literal sessionReadApi.extraEnv %s matching ingestEdge" $name) }}{{ end -}}
 {{- end -}}
+{{- $providerEntry := index $reader "LOCKER_PROVIDER" | default dict -}}
+{{- $readerProvider := "s3" -}}
+{{- if $providerEntry -}}
+{{- if or (not (hasKey $providerEntry "value")) (not (kindIs "string" $providerEntry.value)) }}{{ fail "operator session erase requires literal sessionReadApi.extraEnv LOCKER_PROVIDER when set" }}{{ end -}}
+{{- $readerProvider = $providerEntry.value -}}
+{{- end -}}
+{{- if ne $readerProvider .Values.ingestEdge.locker.provider }}{{ fail "operator session erase requires the ingest, consumer and read API Locker providers to match" }}{{ end -}}
+{{- $endpointEntry := index $reader "LOCKER_ENDPOINT" | default dict -}}
 {{- if .Values.ingestEdge.locker.endpoint -}}
-{{- $entry := index $reader "LOCKER_ENDPOINT" | default dict -}}
-{{- if or (not (hasKey $entry "value")) (not (kindIs "string" $entry.value)) (ne $entry.value .Values.ingestEdge.locker.endpoint) }}{{ fail "operator session erase requires literal sessionReadApi.extraEnv LOCKER_ENDPOINT matching ingestEdge" }}{{ end -}}
+{{- if or (not (hasKey $endpointEntry "value")) (not (kindIs "string" $endpointEntry.value)) (ne $endpointEntry.value .Values.ingestEdge.locker.endpoint) }}{{ fail "operator session erase requires literal sessionReadApi.extraEnv LOCKER_ENDPOINT matching ingestEdge" }}{{ end -}}
+{{- else if and $endpointEntry (or (not (hasKey $endpointEntry "value")) (not (kindIs "string" $endpointEntry.value)) (ne $endpointEntry.value "")) -}}
+{{- fail "operator session erase requires sessionReadApi.extraEnv LOCKER_ENDPOINT empty or absent when ingestEdge uses the provider default" -}}
 {{- end -}}
 {{- end -}}
 

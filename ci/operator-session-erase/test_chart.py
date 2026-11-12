@@ -143,6 +143,15 @@ class OperatorSessionErase(unittest.TestCase):
         self.assertEqual(env["SESSION_ERASE_OPENSEARCH_PASSWORD"]["valueFrom"]["secretKeyRef"], {"name": "erase-opensearch", "key": "password"})
         self.assertEqual(env["SEARCH_INDEX_OPENSEARCH_URL"]["value"], search["search"]["opensearch"]["url"])
 
+        mismatch = copy.deepcopy(values)
+        mismatch["ingestEdge"]["locker"]["provider"] = "gcs"
+        self.render("sessions-pipeline", mismatch, fail="Locker providers to match")
+
+        mismatch = copy.deepcopy(values)
+        mismatch["ingestEdge"]["locker"]["endpoint"] = ""
+        mismatch["searchIndexer"]["locker"]["endpoint"] = ""
+        self.render("sessions-pipeline", mismatch, fail="LOCKER_ENDPOINT empty or absent")
+
     def test_fail_closed_guards(self):
         cases = [
             (lambda v: v["global"]["operatorSessionErase"].update(fenceEnforced=False), "requires global.operatorSessionErase.fenceEnforced=true"),
@@ -159,7 +168,8 @@ class OperatorSessionErase(unittest.TestCase):
             (lambda v: v["sessionReadApi"]["search"].update(backendId="different"), "same search backendId"),
             (lambda v: v["ingestEdge"].update(keyRoot="different"), "key roots to match"),
             (lambda v: v["ingestEdge"]["locker"].update(bucket="different"), "Locker bucket/endpoint/region to match"),
-            (lambda v: v["ingestEdge"]["locker"].update(provider="gcs"), "locker.provider=s3"),
+            (lambda v: v["ingestEdge"]["locker"].update(provider="gcs"), "Locker providers to match"),
+            (lambda v: v["sessionReadApi"]["extraEnv"].append({"name": "LOCKER_PROVIDER", "value": "gcs"}), "ingest, consumer and read API Locker providers to match"),
             (lambda v: v["ingestEdge"]["postgres"].update(poolMax=1), "poolMax at least 2"),
             (lambda v: v["operatorSessionErase"]["api"].update(existingSecret=""), "api.existingSecret is required"),
             (lambda v: v["operatorSessionErase"]["api"].update(existingSecret="ingest-runtime"), "dedicated Secret"),
