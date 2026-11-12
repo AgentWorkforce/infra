@@ -3,6 +3,18 @@ Agent Relay messaging and sessions suite rendered.
 This proof is not HA. Wait for the migration Jobs to complete, then verify the
 API, Relaycast and Relay History health endpoints before onboarding clients.
 {{- $da := index .Values "durable-actors" | default dict }}
+{{- $pipeline := index .Values "sessions-pipeline" | default dict }}
+{{- $readApi := get $pipeline "sessionReadApi" | default dict }}
+{{- $deprecatedReadEnv := list -}}
+{{- range $e := (get $readApi "extraEnv" | default list) -}}
+{{- if has $e.name (list "READ_API_TIMING_ASSUME_NO_TURNS" "READ_API_CANONICAL_PIN_LAGGING_POINTER") -}}
+{{- $deprecatedReadEnv = append $deprecatedReadEnv $e.name -}}
+{{- end -}}
+{{- end -}}
+{{- if $deprecatedReadEnv }}
+
+DEPRECATION: {{ join ", " $deprecatedReadEnv }} in sessions-pipeline.sessionReadApi.extraEnv was normalized and the duplicate was dropped. Before removing the legacy entry, preserve it with sessions-pipeline.sessionReadApi.timing.assumeNoTurns=true for READ_API_TIMING_ASSUME_NO_TURNS or sessions-pipeline.sessionReadApi.canonical.pinLaggingPointer=true for READ_API_CANONICAL_PIN_LAGGING_POINTER.
+{{- end }}
 {{- if and (dig "durableActors" false (.Values.components | default dict)) (eq (dig "storage" "provider" "gcs" $da) "s3") (eq (dig "storage" "s3" "actorCredentials" "" $da) "control-plane") }}
 
 WARNING: durable-actors.storage.s3.actorCredentials=control-plane. Actor hosts

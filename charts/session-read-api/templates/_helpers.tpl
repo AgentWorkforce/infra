@@ -23,6 +23,30 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 app.kubernetes.io/part-of: sessions-pipeline
 {{- end }}
 
+{{- /*
+Compatibility for the two native-read assumptions that the 2026.11.0
+customer pack still put in extraEnv. Return JSON because include returns text.
+The structured value is nullable so omitted can be distinguished from an
+explicit false, which must continue to conflict with the legacy true.
+*/ -}}
+{{- define "session-read-api.compatLegacyBool" -}}
+{{- $structuredSet := not (kindIs "invalid" .structured) -}}
+{{- if and $structuredSet (not (kindIs "bool" .structured)) }}{{ fail (printf "session-read-api: %s must be a boolean" .path) }}{{ end -}}
+{{- $enabled := false -}}
+{{- if and $structuredSet .structured }}{{ $enabled = true }}{{ end -}}
+{{- $legacy := false -}}
+{{- range $e := .extraEnv -}}
+{{- if eq (toString (get $e "name")) $.name -}}
+{{- if $legacy }}{{ fail (printf "session-read-api: extraEnv duplicates a managed or repeated variable: %s" $.name) }}{{ end -}}
+{{- $legacy = true -}}
+{{- if or (not (hasKey $e "value")) (hasKey $e "valueFrom") (not (kindIs "string" $e.value)) (ne $e.value "true") }}{{ fail (printf "session-read-api: deprecated extraEnv %s conflicts with %s; only literal value \"true\" is compatible" $.name $.path) }}{{ end -}}
+{{- if and $structuredSet (not $.structured) }}{{ fail (printf "session-read-api: deprecated extraEnv %s=true conflicts with %s=false" $.name $.path) }}{{ end -}}
+{{- $enabled = true -}}
+{{- end -}}
+{{- end -}}
+{{- dict "enabled" $enabled "legacy" $legacy | toJson -}}
+{{- end }}
+
 {{- /* Everything that must refuse to render, in one place. Emits nothing. */ -}}
 {{- define "session-read-api.validate" -}}
 {{- include "session-read-api.analytics.validate" .Values.analytics -}}
@@ -75,8 +99,8 @@ workspace is not on a static list, and its reads would answer 501. */ -}}
 {{- if and $c.search.opensearch.indexPrefix (not (regexMatch "^[a-z0-9][a-z0-9_-]{0,63}$" (toString $c.search.opensearch.indexPrefix))) }}{{ fail "session-read-api: search.opensearch.indexPrefix must be lowercase letters, digits, _ or -" }}{{ end -}}
 {{- end -}}
 {{- if not (kindIs "bool" $c.turns.assumeNoLegacy) }}{{ fail "session-read-api: turns.assumeNoLegacy must be a boolean" }}{{ end -}}
-{{- if not (kindIs "bool" $c.timing.assumeNoTurns) }}{{ fail "session-read-api: timing.assumeNoTurns must be a boolean" }}{{ end -}}
-{{- if not (kindIs "bool" $c.canonical.pinLaggingPointer) }}{{ fail "session-read-api: canonical.pinLaggingPointer must be a boolean" }}{{ end -}}
+{{- $timingCompat := include "session-read-api.compatLegacyBool" (dict "structured" $c.timing.assumeNoTurns "path" "timing.assumeNoTurns" "name" "READ_API_TIMING_ASSUME_NO_TURNS" "extraEnv" $c.extraEnv) | fromJson -}}
+{{- $canonicalCompat := include "session-read-api.compatLegacyBool" (dict "structured" $c.canonical.pinLaggingPointer "path" "canonical.pinLaggingPointer" "name" "READ_API_CANONICAL_PIN_LAGGING_POINTER" "extraEnv" $c.extraEnv) | fromJson -}}
 {{- if not (kindIs "bool" $c.serviceAccountCreate) }}{{ fail "session-read-api: serviceAccountCreate must be a boolean" }}{{ end -}}
 {{- if and $c.serviceAccountCreate (not $c.serviceAccountName) }}{{ fail "session-read-api: serviceAccountCreate requires serviceAccountName" }}{{ end -}}
 {{- /* Postgres TLS: always verified, against the image's pin or a mounted CA. */ -}}
@@ -207,9 +231,10 @@ workspace is not on a static list, and its reads would answer 501. */ -}}
 {{- if $narrative.model }}{{ $reserved = concat $reserved (list "OPENAI_API_KEY" "OPENAI_BASE_URL") }}{{ end -}}
 {{- $seen := dict -}}
 {{- $canonical := dict -}}
+{{- $legacyBoolNames := list "READ_API_TIMING_ASSUME_NO_TURNS" "READ_API_CANONICAL_PIN_LAGGING_POINTER" -}}
 {{- range $e := $c.extraEnv -}}
 {{- $envName := required "session-read-api: extraEnv entries require name" $e.name -}}
-{{- if or (has $envName $reserved) (hasKey $seen $envName) (hasPrefix "ANALYTICS_" $envName) (and $c.analytics.enabled (eq $envName "NODE_EXTRA_CA_CERTS")) }}{{ fail (printf "session-read-api: extraEnv duplicates a managed or repeated variable: %s" $envName) }}{{ end -}}
+{{- if or (and (has $envName $reserved) (not (has $envName $legacyBoolNames))) (hasKey $seen $envName) (hasPrefix "ANALYTICS_" $envName) (and $c.analytics.enabled (eq $envName "NODE_EXTRA_CA_CERTS")) }}{{ fail (printf "session-read-api: extraEnv duplicates a managed or repeated variable: %s" $envName) }}{{ end -}}
 {{- if not (regexMatch "^[A-Za-z_][A-Za-z0-9_]*$" $envName) }}{{ fail "session-read-api: extraEnv has an invalid variable name" }}{{ end -}}
 {{- if hasPrefix "CLICKHOUSE_" $envName }}{{ fail "session-read-api: the service reads no CLICKHOUSE_* environment; put ClickHouse in the read API Secret's clickhouse block" }}{{ end -}}
 {{- if eq (hasKey $e "value") (hasKey $e "valueFrom") }}{{ fail "session-read-api: extraEnv requires exactly one of value or valueFrom" }}{{ end -}}

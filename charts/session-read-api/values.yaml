@@ -89,12 +89,16 @@ timing:
   # Fresh native stores have no historical timing-turn population. When true,
   # missing timing turns are treated as an empty native baseline rather than a
   # timing_turns_unknown 501.
-  assumeNoTurns: false
+  # Null is off unless the deprecated extraEnv key supplies literal "true".
+  # Explicit false conflicts with that legacy key; new values should use a bool.
+  assumeNoTurns: null
 canonical:
   # Async admission may advance session_index before its canonical pointer.
   # When true, pin reads to the lagging canonical manifest rather than returning
   # *_canonical_manifest_mismatch while the pointer catches up.
-  pinLaggingPointer: false
+  # Null is off unless the deprecated extraEnv key supplies literal "true".
+  # Explicit false conflicts with that legacy key; new values should use a bool.
+  pinLaggingPointer: null
 login:
   # Lets POST /v1/cli/login advertise rth:sync when introspection granted it.
   # Control refuses sync sessions without it, so Desktop upload needs it true.
