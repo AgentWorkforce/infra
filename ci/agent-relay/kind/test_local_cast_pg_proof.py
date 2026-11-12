@@ -5,7 +5,7 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from local_cast_pg_proof import prove, prove_owned
+from local_cast_pg_proof import COLLECTOR_SECRET, prove, prove_owned
 from stack import StackError
 
 
@@ -39,6 +39,25 @@ class PostgresProofBoundaryTests(unittest.TestCase):
                 stack = SimpleNamespace(state=state, k=lambda *args: SimpleNamespace(stdout=json.dumps({"items": [resource]})))
                 with self.assertRaisesRegex(StackError, "prior Postgres companion"):
                     prove_owned(stack)
+
+    def test_missing_collector_secret_refuses_before_any_proof_mutation(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            state = Path(tmp)
+            (state / "selection.json").write_text(json.dumps({"relaycastBackend": "postgres"}))
+            calls = []
+            def read(*args):
+                calls.append(args)
+                if args == ("get", "deployments,pods", "-o", "json"):
+                    return SimpleNamespace(stdout=json.dumps({"items": []}))
+                self.assertEqual(args, ("get", "secret", COLLECTOR_SECRET, "--ignore-not-found=true", "-o",
+                    "go-template={{if .data.token}}ready{{end}}"))
+                return SimpleNamespace(stdout="")
+            stack = SimpleNamespace(state=state, k=read,
+                secret=lambda *args: self.fail("created proof credentials before preflight"),
+                cmd=lambda *args, **kw: self.fail("ran Helm or another command before preflight"))
+            with self.assertRaisesRegex(StackError, "collector credential is missing"):
+                prove_owned(stack)
+            self.assertEqual(len(calls), 2)
 
 
 if __name__ == "__main__":
