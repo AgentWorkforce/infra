@@ -62,6 +62,7 @@ for arm in pg actors; do
   # durable-actors the chart refuses mailbox.* and install-arm.sh puts the same
   # RELAYCAST_MAILBOX_DEPTH_CAP into the relaycast-actor-env Secret instead.
   if [[ "$arm" == pg ]]; then cp "$V/bench-common.yaml" "$d/bench-common.yaml"; files+=(-f "$d/bench-common.yaml"); fi
+  cp "$V/bench-suite.yaml" "$d/bench-suite.yaml"; files+=(-f "$d/bench-suite.yaml")
   printf '%s\n' "${files[@]}" | paste -sd' ' >"$d/helm-args"
   if [[ "$arm" == pg ]]; then
     { diff -u "$C/values-eks.yaml" "$d/values-eks.yaml" || true; diff -u "$C/values-eks-rds-native.yaml" "$d/values-eks-rds-native.yaml" || true; } \

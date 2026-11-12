@@ -44,7 +44,9 @@ mkdir -p "$STATE"; chmod 700 "$STATE"
 K=(kubectl -n "$NS")
 
 log() { printf '%s [%s] %s\n' "$(date -u +%H:%M:%SZ)" "$ARM" "$*" >&2; }
-rnd_hex() { openssl rand -hex "${1:-32}"; }
+# Secret values carry no trailing newline (the read API and others refuse
+# surrounding whitespace).
+rnd_hex() { openssl rand -hex "${1:-32}" | tr -d '\n'; }
 # put <secret> <key> < value : one file per key under STATE/files/<secret>/
 put() { mkdir -p "$STATE/files/$1"; cat >"$STATE/files/$1/$2"; }
 keep() { [[ -s "$STATE/files/$1/$2" ]]; } # generated values survive re-runs
@@ -119,7 +121,7 @@ gen_actors_secrets() {
   keep relaycast-secrets credential-keyring || printf '{"current":"a","keys":{"a":"%s"}}' "$(rnd_hex)" | put relaycast-secrets credential-keyring
   keep actors-credentials api-key || rnd_hex | put actors-credentials api-key
   keep actors-credentials invoke-api-key || rnd_hex | put actors-credentials invoke-api-key
-  keep actors-credentials jwt-signing-key || openssl genpkey -algorithm ED25519 -outform DER | openssl base64 -A | put actors-credentials jwt-signing-key
+  keep actors-credentials jwt-signing-key || openssl genpkey -algorithm ED25519 -outform DER | openssl base64 -A | tr -d '\n' | put actors-credentials jwt-signing-key
   put relaycast-durable-actors-invoke durable-actors-invoke-key <"$f/actors-credentials/invoke-api-key"
   keep relayfile-actors RELAYFILE_JWT_SECRET || rnd_hex | put relayfile-actors RELAYFILE_JWT_SECRET
   keep relayfile-actors RELAYFILE_ACTORS_BROKER_TOKEN || rnd_hex | put relayfile-actors RELAYFILE_ACTORS_BROKER_TOKEN
@@ -191,7 +193,7 @@ cmd_install() {
   args="$(cat "$out/$ARM/helm-args")"
   log "helm upgrade --install ($args)"
   # shellcheck disable=SC2086
-  helm upgrade --install "$RELEASE" "$ROOT/charts/agent-relay" -n "$NS" $args >&2
+  helm upgrade --install "$RELEASE" "$ROOT/charts/agent-relay" -n "$NS" $args >&2 || { log "helm upgrade FAILED"; exit 1; }
 }
 
 cmd_post() {

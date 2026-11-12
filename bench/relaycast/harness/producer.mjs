@@ -70,7 +70,7 @@ function stream(prod, kind, target, targets, phase) {
   const sid = `${phase}/${kind}:${target}`;
   const key = `${prod.id}|${sid}`;
   let s = streamState.get(key);
-  if (!s) streamState.set(key, (s = { key, sid, prod, kind, target, ws: prod.ws.i, targets, seq: 0, failed: [], ambiguous: [], queue: [], busy: false, phase: null }));
+  if (!s) streamState.set(key, (s = { key, sid, prod, kind, target, ws: prod.ws.i, targets, seq: 0, failed: [], ambiguous: [], pending: new Set(), queue: [], busy: false, phase: null }));
   return s;
 }
 
@@ -79,6 +79,7 @@ const routeOf = { dm: 'POST /v1/dm', channel: 'POST /v1/channels/:name/messages'
 async function sendOn(s, phase, intended, sizeBytes) {
   s.busy = true; inflight++;
   const seq = ++s.seq;
+  s.pending.add(seq); // in flight: ambiguous if the result is read before it settles
   const sent = now();
   const text = marker(phase, s.prod.id, s.sid, seq, sent, sizeBytes);
   const r = s.kind === 'dm'
@@ -100,6 +101,7 @@ async function sendOn(s, phase, intended, sizeBytes) {
       if (skipped) status.inc(`${phase} delivery_not_queued`, skipped);
     }
   } else if (r.status === 0) s.ambiguous.push(seq); else s.failed.push(seq);
+  s.pending.delete(seq);
   inflight--; s.busy = false;
   const next = s.queue.shift();
   if (next) sendOn(s, next.phase, next.intended, next.sizeBytes);
@@ -276,6 +278,11 @@ async function runPhase(ph) {
   // Let in-flight sends and stream queues finish (bounded).
   const drainUntil = now() + (ph.drainS ?? 60) * 1000;
   while (now() < drainUntil && (inflight > 0 || [...streamState.values()].some((s) => s.queue.length))) await sleep(50);
+  // Sends still queued when the drain window ends were never issued: count
+  // them (client-side backlog, a saturation signal) and drop them.
+  for (const s of streamState.values()) {
+    if (s.queue.length && s.phase === ph.label) { status.inc(`${ph.label} unsent_at_end`, s.queue.length); s.queue.length = 0; }
+  }
   return { label: ph.label, kind: ph.kind, startedAt: t0, endedAt: now(), issued, offeredRate: ph.rate, ...extra };
 }
 
@@ -298,7 +305,7 @@ function result() {
     kind: 'producer', shard: SHARD, shards: SHARDS, run: fixture.run, plan: plan.name, phases,
     status: status.toJSON(), latency, corrected, hist: lat.toJSON(), histCorrected: latC.toJSON(),
     streams: [...streamState.values()].map((s) => ({ key: s.key, phase: s.phase, ws: s.ws, kind: s.kind, target: s.target,
-      targets: s.targets, sent: s.seq, failed: s.failed, ambiguous: s.ambiguous })),
+      targets: s.targets, sent: s.seq, failed: s.failed, ambiguous: [...s.ambiguous, ...s.pending] })),
   };
 }
 if (OUT) writeJsonAtomic(OUT, result());

@@ -1,0 +1,13 @@
+# Applied to BOTH arms. The sessions search indexer's bootstrap Job fails on a
+# fresh RDS install with "consumer bootstrap: trusted credential probe
+# unavailable" (SQLSTATE 55000) after rds-setup.sh post. Search is outside the
+# Relaycast comparison, so it is off on both arms identically; the read API
+# keeps its postgres search backend.
+sessions-pipeline:
+  searchIndexer:
+    enabled: false
+  # A fresh install gets descriptive worker names, and every later
+  # `helm upgrade` then fails the rename guard unless the acknowledgement is
+  # persisted (docs/descriptive-session-names.md). Neither profile sets it.
+  worker:
+    acknowledgeWorkloadRename: true
