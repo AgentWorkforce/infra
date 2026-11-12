@@ -150,6 +150,56 @@ class ReleaseCandidateTest(unittest.TestCase):
                 data["pins"]["sessions-pipeline"]["publishRunId"], RUN_ID
             )
 
+    def test_frozen_candidate_requires_explicit_allow_and_preserves_marker(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            output = MODULE.update(
+                root, "2026.11.1", "relay-control", DIGEST_A, SHA_A
+            )
+            marker = output / "FROZEN"
+            marker.write_text(MODULE.FROZEN_MARKER)
+            with self.assertRaisesRegex(ValueError, "FROZEN as a qualified candidate"):
+                MODULE.update(
+                    root, "2026.11.1", "relay-control", DIGEST_B, SHA_B
+                )
+            MODULE.update(
+                root,
+                "2026.11.1",
+                "relay-control",
+                DIGEST_B,
+                SHA_B,
+                allow_frozen=True,
+            )
+            self.assertEqual(marker.read_text(), MODULE.FROZEN_MARKER)
+
+    def test_frozen_override_and_marker_shape_fail_closed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            with self.assertRaisesRegex(ValueError, "requires an existing"):
+                MODULE.update(
+                    root,
+                    "2026.11.1",
+                    "relay-control",
+                    DIGEST_A,
+                    SHA_A,
+                    allow_frozen=True,
+                )
+            output = MODULE.update(
+                root, "2026.11.1", "relay-control", DIGEST_A, SHA_A
+            )
+            marker = output / "FROZEN"
+            marker.write_text("qualified-candidate/v2\n")
+            with self.assertRaisesRegex(ValueError, "malformed FROZEN"):
+                MODULE.update(
+                    root, "2026.11.1", "relay-control", DIGEST_B, SHA_B
+                )
+            marker.unlink()
+            marker.symlink_to(output / "pins.json")
+            with self.assertRaisesRegex(ValueError, "regular file"):
+                MODULE.update(
+                    root, "2026.11.1", "relay-control", DIGEST_B, SHA_B
+                )
+
     def test_existing_ledger_cannot_redirect_repository(self):
         with tempfile.TemporaryDirectory() as directory:
             root = pathlib.Path(directory)
@@ -301,6 +351,17 @@ class ReleaseCandidateTest(unittest.TestCase):
         self.assertIn("verify-sessions-pipeline-sigstore.py", workflow)
         self.assertIn("gh run download \"$PUBLISH_RUN_ID\"", workflow)
         self.assertIn('gh attestation verify "oci://${IMAGE_REPOSITORY}@${DIGEST}"', workflow)
+
+    def test_candidate_workflow_protects_frozen_qualified_candidates(self):
+        workflow = (ROOT / ".github/workflows/release-candidate.yml").read_text()
+        self.assertIn("override_frozen:", workflow)
+        self.assertIn("override_reason:", workflow)
+        self.assertIn("repository_dispatch cannot overwrite it", workflow)
+        self.assertIn("collaborators/$GITHUB_ACTOR/permission", workflow)
+        self.assertIn("FROZEN override requires an approver", workflow)
+        self.assertIn("update_args+=(--allow-frozen)", workflow)
+        marker = ROOT / "releases/agent-relay-2026.11.1/FROZEN"
+        self.assertEqual(marker.read_text(), MODULE.FROZEN_MARKER)
 
 
 class SessionsSigstoreReceiptTest(unittest.TestCase):
