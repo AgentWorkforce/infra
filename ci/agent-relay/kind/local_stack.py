@@ -463,7 +463,7 @@ GRANT TEMP ON DATABASE relaycast TO relaycast_owner;""")
             "internal-token": c["internal"], "introspect-secret": c["introspection"], "reader-secret": c["readerIssuer"]})
         cast = {"internal-secret": c["cast"], "workspace-bootstrap-secret": c["castBootstrap"]}
         if CAST_BACKEND == "durable-actors":
-            cast.update({"credential-keyring": json.dumps({"current": "local", "keys": {"local": c["castKeyring"]}}),
+            cast.update({"credential-keyring": json.dumps({"current": "a", "keys": {"a": c["castKeyring"]}}),
                 "file-signing-secret": c["castFiles"], "durable-actors-dev-secret": c["castActors"]})
             self.apply({"apiVersion": "v1", "kind": "PersistentVolumeClaim", "metadata": {"name": "local-relaycast-actors", "namespace": NS},
                 "spec": {"accessModes": ["ReadWriteOnce"], "resources": {"requests": {"storage": "1Gi"}}}})
