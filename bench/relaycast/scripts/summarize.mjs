@@ -13,8 +13,10 @@ import { fileURLToPath } from 'node:url';
 const BENCH = join(dirname(fileURLToPath(import.meta.url)), '..');
 const RES = join(BENCH, 'results');
 const DOC = join(BENCH, '..', '..', 'docs', 'benchmarks', 'relaycast-postgres-vs-actors.md');
-const ARMS = ['pg', 'actors'];
-const ARM_NAME = { pg: 'Postgres', actors: 'Actors' };
+// Series: the shipped PG build, PG with the relaycast#651 fix (#657), actors.
+const ARMS = ['pg', 'pgfix', 'actors'];
+const ARM_NAME = { pg: 'Postgres (shipped)', pgfix: 'Postgres + #657', actors: 'Actors' };
+const ARM_DIR = { pg: 'pg', pgfix: join('fix651', 'pg'), actors: 'actors' };
 const SEND_RE = /^POST \/v1\/(dm|channels\/:name\/messages)$/;
 const fmt = (v, d = 0) => (v === null || v === undefined || Number.isNaN(v) ? '–' : Number(v).toFixed(d));
 const ms = (v) => (v === null || v === undefined ? '–' : v >= 1000 ? `${(v / 1000).toFixed(1)} s` : `${Math.round(v)}`);
@@ -26,11 +28,11 @@ const dirs = (p) => (existsSync(p) ? readdirSync(p).filter((d) => statSync(join(
 const rows = [];
 const steps = {};
 for (const arm of ARMS) {
-  for (const suite of dirs(join(RES, arm))) {
-    const st = join(RES, arm, suite, 'steps.txt');
+  for (const suite of dirs(join(RES, ARM_DIR[arm]))) {
+    const st = join(RES, ARM_DIR[arm], suite, 'steps.txt');
     if (existsSync(st)) steps[`${arm}/${suite}`] = readFileSync(st, 'utf8').trim().split('\n').map((l) => l.split(' ')).map(([label, ...v]) => ({ label, verdict: v.join(' ') }));
-    for (const part of dirs(join(RES, arm, suite))) {
-      const s = readJson(join(RES, arm, suite, part, 'summary.json'));
+    for (const part of dirs(join(RES, ARM_DIR[arm], suite))) {
+      const s = readJson(join(RES, ARM_DIR[arm], suite, part, 'summary.json'));
       if (!s) continue;
       for (const ph of s.phases) {
         const sends = s.routes.filter((r) => r.phase === ph.label && SEND_RE.test(r.route));
@@ -64,20 +66,21 @@ for (const arm of ARMS) {
 // and memory (MiB) of the Relaycast-side workloads, and RDS from CloudWatch.
 const RELAYCAST_POD = /^(relaycast|agent-relay-durable-actors|sandbox|ws-|actor)/;
 function resources(arm, suite) {
-  const p = join(RES, arm, suite, 'metrics.csv');
+  const p = join(RES, ARM_DIR[arm], suite, 'metrics.csv');
   if (!existsSync(p)) return null;
   const byTs = new Map();
   for (const line of readFileSync(p, 'utf8').split('\n').slice(1)) {
     const [ts, kind, ns, name, , cpu, mem] = line.split(',');
     if (kind !== 'pod' || !name) continue;
-    const isArm = ns === `arm-${arm}` || ns === `arm-${arm}-agent-relay`;
-    if (!isArm || (!RELAYCAST_POD.test(name) && ns !== `arm-${arm}-agent-relay`)) continue;
+    const nsArm = arm === 'pgfix' ? 'pg' : arm;
+    const isArm = ns === `arm-${nsArm}` || ns === `arm-${nsArm}-agent-relay`;
+    if (!isArm || (!RELAYCAST_POD.test(name) && ns !== `arm-${nsArm}-agent-relay`)) continue;
     const t = byTs.get(ts) || { cpu: 0, mem: 0 };
     t.cpu += Number(cpu) || 0; t.mem += Number(mem) || 0; byTs.set(ts, t);
   }
   const v = [...byTs.values()];
   if (!v.length) return null;
-  const rds = readJson(join(RES, arm, suite, 'rds-cloudwatch.json'));
+  const rds = readJson(join(RES, ARM_DIR[arm], suite, 'rds-cloudwatch.json'));
   const series = (id) => rds?.MetricDataResults?.find((m) => m.Id === id)?.Values || [];
   const max = (a) => (a.length ? Math.max(...a) : null);
   return {
@@ -108,7 +111,7 @@ if (stepKeys.length) {
   out.push('\n### Stepped suites: where each arm breaks\n');
   out.push('| Arm / suite | Steps (verdict) |');
   out.push('|---|---|');
-  for (const k of stepKeys) out.push(`| ${k.replace('pg/', 'Postgres / ').replace('actors/', 'Actors / ')} | ${steps[k].map((s) => `${s.label}: ${s.verdict}`).join('; ')} |`);
+  for (const k of stepKeys) out.push(`| ${ARM_NAME[k.split('/')[0]]} / ${k.split('/')[1]} | ${steps[k].map((s) => `${s.label}: ${s.verdict}`).join('; ')} |`);
 }
 
 const others = rows.filter((r) => r.other_routes.length);
@@ -130,7 +133,7 @@ if (drains.length) {
   for (const r of drains) for (const d of r.drain) out.push(`| ${ARM_NAME[r.arm]} | ${r.phase} | ${d.node} | ${d.drained} | ${ms(d.drainMs)} |`);
 }
 
-const cold = ARMS.map((a) => [a, readJson(join(RES, a, 'coldstart', 'coldstart.json'))]).filter(([, c]) => c);
+const cold = ARMS.map((a) => [a, readJson(join(RES, ARM_DIR[a], 'coldstart', 'coldstart.json'))]).filter(([, c]) => c);
 if (cold.length) {
   out.push('\n### Cold versus warm start (ms)\n');
   out.push('| Arm | Workspace create p50 / p95 | First request p50 / p95 | Warm p50 / p95 | After 180 s idle p50 / p95 | Rewarm p50 / p95 |');
@@ -144,7 +147,7 @@ if (cold.length) {
 out.push('\n### Resources per suite (Relaycast-side pods; RDS from CloudWatch)\n');
 out.push('| Arm | Suite | CPU peak / mean (m) | Memory peak (MiB) | RDS CPU peak % | RDS connections peak | RDS write IOPS peak |');
 out.push('|---|---|---|---|---|---|---|');
-for (const a of ARMS) for (const suite of dirs(join(RES, a))) {
+for (const a of ARMS) for (const suite of dirs(join(RES, ARM_DIR[a]))) {
   const r = resources(a, suite);
   if (r) out.push(`| ${ARM_NAME[a]} | ${suite} | ${r.cpu_peak_m} / ${r.cpu_mean_m} | ${r.mem_peak_mi} | ${fmt(r.rds_cpu_peak, 1)} | ${fmt(r.rds_conns_peak)} | ${fmt(r.rds_wiops_peak)} |`);
 }
