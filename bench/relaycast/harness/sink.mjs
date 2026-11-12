@@ -101,6 +101,10 @@ class NodeConn {
       this.sock = sock;
       let settled = false; let established = false;
       sock.onopen = async () => {
+        // A new generation starts when the socket opens: the engine re-drains
+        // unacked deliveries right after node.register, before agent setup
+        // finishes, and those must count as redeliveries on this socket.
+        this.gen = ++genCounter;
         try {
           await this.request({ type: 'node.register', name: this.node.name, node_id: this.node.id, capabilities: [],
             max_agents: Math.max(this.node.agents.length, 1), tags: [], version: 'rcb-1' });
@@ -111,7 +115,7 @@ class NodeConn {
             const d = await this.request({ type: 'agent.register', name });
             this.agents.set(name, { id: d.agent_id, token: d.token, maxSeq: 0, ackedSeq: 0 });
           }
-          this.gen = ++genCounter; this.ready = true; established = true; settled = true; resolve();
+          this.ready = true; established = true; settled = true; resolve();
         } catch (e) { settled = true; try { sock.close(); } catch { /* */ } reject(e); }
       };
       sock.onerror = () => { if (!settled) { settled = true; reject(new Error('ws error')); } };
