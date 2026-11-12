@@ -10,13 +10,19 @@ The reusable workflow `.github/workflows/selfhost-upgrade.yml` runs
 `scripts/selfhost/agent-relay-upgrade.sh` from your own repository:
 
 1. **plan** (no approval): selects the release (newest by default), verifies
-   the attestations and checksums, renders the chart with your values, checks
-   that every image is a release image in your ECR mirror, and writes the image
-   changes to the run summary.
-2. **apply** (only when images change, by default): runs in your environment
+   the attestations (bound to `AgentWorkforce/infra`'s
+   `release-agent-relay.yml` workflow and the release tag) and checksums,
+   renders the chart with your values, checks that every image is a release
+   image in your ECR mirror, and writes the image changes and every rendered
+   resource that differs from the deployed release to the run summary.
+2. **apply** (by default only when the rendered release changes: a new chart,
+   values or images): runs in your environment
    `agent-relay-upgrade`, so it waits for your required reviewers. It mirrors
    the images, snapshots RDS, runs `helm upgrade` and waits for this release's
    migrations and rollouts. A failure prints the rollback revision and snapshot.
+
+The workflow and upgrader come from the release tag you select, so these
+behaviours apply to releases cut after they were added.
 
 ## Set up (once)
 
@@ -46,6 +52,67 @@ The reusable workflow `.github/workflows/selfhost-upgrade.yml` runs
      - RDS: `rds:CreateDBSnapshot`, `rds:DescribeDBSnapshots` on the database
      - EKS: `eks:DescribeCluster`, and an EKS access entry allowing it to
        manage the `agent-relay` namespace (Helm release, Deployments, Jobs).
+     - With `rds-setup: true` also `secretsmanager:GetSecretValue` on the RDS
+       admin secret, and in the namespace: create/delete Jobs and Secrets
+       (`rds-setup.sh` runs its SQL in short-lived Jobs) and patch the
+       `agent-relay-secrets` and `search-indexer-owner` Secrets.
+
+## First install and RDS-managed installs
+
+Set `first-install: true` for one run to create the release: the plan refuses
+it if the release already exists (and a normal run refuses a missing release).
+Apply then snapshots RDS, runs `helm install --no-hooks` without `--wait`,
+waits for the HoopDb migrate Job, then for every Job in the installed release
+(bounded; a failed Job fails the run with its name and last logs) and the
+Deployments. Remove the input after it
+succeeds.
+
+If `scripts/selfhost/rds-setup.sh` bootstrapped the databases, set
+`rds-setup: true` (implied by `profile: eks-rds-native`) with `rds-host`,
+`rds-admin-secret-arn` and `state-dir`. `state-dir` is the directory on the
+self-hosted runner holding the files `rds-setup.sh pre` wrote, so the apply
+job must run on that runner. A first install then runs `rds-setup.sh post`
+after the migration and restarts the read API, ingest edge and search indexer;
+every later upgrade runs `rds-setup.sh refresh-admin` and updates the two
+admin-derived Secret keys before `helm upgrade`. If an external secret
+controller owns those Secrets, leave `rds-setup` off and refresh them there.
+
+### The state directory holds database passwords
+
+`state-dir` (`STATE_DIR` for the script) is where `rds-setup.sh pre` keeps
+the generated database role passwords (`passwords/`) and the connection
+strings it builds from them, including the RDS admin-derived migration URL
+(`secret-files/`). They stay on the runner's disk in plain text so that
+`post` and `refresh-admin` can run later. Treat it like the Kubernetes Secrets
+it feeds:
+
+- **Self-hosted runner only.** Use a dedicated, persistent runner that only
+  this repository's approval environment can schedule jobs on. Never use a
+  GitHub-hosted or ephemeral runner, and never point `state-dir` inside
+  `$GITHUB_WORKSPACE`, the tool cache, or anything uploaded as an artifact or
+  cache.
+- **Permissions.** The runner's service user owns it; every directory is
+  `0700` and every file `0600` (`rds-setup.sh` creates them that way under
+  `umask 077`). The upgrader refuses `--rds-setup` when anything in it is
+  readable, writable or searchable by group or others. Check with:
+
+  ```sh
+  find "$STATE_DIR" \( -type d ! -perm 700 \) -o \( -type f ! -perm 600 \) -print   # must print nothing
+  ```
+
+- **Disk.** Keep it on an encrypted volume and out of backups and images
+  that are shared more widely than the Secrets themselves.
+- **Wiping it.** When the installation is decommissioned, or the state moves
+  to another host (copy it with its modes, then wipe the old copy), stop the
+  runner and remove the directory:
+
+  ```sh
+  rm -rf -- "$STATE_DIR"     # on a filesystem without copy-on-write, `shred -u` the files first
+  ```
+
+  Without it, `post` and `refresh-admin` cannot run, and the role passwords
+  exist only in the Kubernetes Secrets. If the directory may have been
+  exposed, rotate the database role passwords and the RDS admin password.
 
 ## The workflow file
 
@@ -73,6 +140,11 @@ jobs:
       profile: eks-native
       values: deploy/agent-relay/values.yaml
       db-instance: <rds-instance-id>
+      # first-install: true                 # one run, for a new install
+      # rds-setup: true                     # databases managed by rds-setup.sh
+      # rds-host: <terraform output -raw database_host>
+      # rds-admin-secret-arn: <terraform output -raw database_admin_secret_arn>
+      # state-dir: /srv/agent-relay-install # on the self-hosted runner
 ```
 
 To be notified of new releases, watch `AgentWorkforce/infra` for releases, or
@@ -85,4 +157,5 @@ scripts/selfhost/agent-relay-upgrade.sh --version <v> \
   --registry <account>.dkr.ecr.<region>.amazonaws.com --profile eks-native \
   --values values.yaml                        # plan
 # then add: --db-instance <rds-id> --apply
+# new install: add --first-install; rds-setup.sh-managed databases: add --rds-setup
 ```

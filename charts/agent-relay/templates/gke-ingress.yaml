@@ -501,6 +501,12 @@ spec:
             backend:
               service: { name: {{ $nativeReadEdge }}, port: { number: 80 } }
           {{- end }}
+          # Public health endpoint for the native history host; same probe the
+          # GCE health check uses. Everything else falls through to deny.
+          - path: /healthz
+            pathType: Exact
+            backend:
+              service: { name: {{ $nativeReadEdge }}, port: { number: 80 } }
           {{- range $path := list "/v1/delivery" "/v1/turns" "/v1/onboarding" }}
           - path: {{ $path }}
             pathType: Prefix

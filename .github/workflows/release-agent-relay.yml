@@ -95,6 +95,73 @@ jobs:
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "chart_version=$chart_version" >> "$GITHUB_OUTPUT"
 
+      - name: Reverify candidate policy and build provenance
+        shell: bash
+        env:
+          VERSION: ${{ steps.release.outputs.version }}
+          GH_TOKEN: ${{ secrets.BULLS96_READ_TOKEN || secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          candidate_pins="releases/agent-relay-${VERSION}/pins.json"
+          candidate_values="releases/agent-relay-${VERSION}/values.yaml"
+          python3 scripts/release/update-release-candidate.py validate \
+            --pins "$candidate_pins" \
+            --values "$candidate_values" \
+            --version "$VERSION"
+          mapfile -t components < <(jq -er '.pins | keys[]' "$candidate_pins")
+          [[ "${#components[@]}" -gt 0 ]] \
+            || { echo "::error::The release candidate has no component pins."; exit 1; }
+
+          printf '%s' "$GH_TOKEN" | docker login ghcr.io \
+            --username "$GITHUB_ACTOR" --password-stdin
+          for component in "${components[@]}"; do
+            pin="$(jq -cer --arg component "$component" '.pins[$component]' "$candidate_pins")"
+            repository="$(jq -er '.repository' <<<"$pin")"
+            digest="$(jq -er '.digest' <<<"$pin")"
+            source_repository="$(jq -er '.sourceRepository' <<<"$pin")"
+            source_sha="$(jq -er '.sourceRevision' <<<"$pin")"
+            metadata="$(python3 scripts/release/update-release-candidate.py describe \
+              --component "$component")"
+            expected_repository="$(jq -er '.imageRepository' <<<"$metadata")"
+            expected_source_repository="$(jq -er '.sourceRepository' <<<"$metadata")"
+            signer_workflow="$(jq -er '.signerWorkflow' <<<"$metadata")"
+            [[ "$repository" == "$expected_repository" \
+              && "$source_repository" == "$expected_source_repository" ]] \
+              || { echo "::error::Candidate repository drift for $component."; exit 1; }
+
+            policy_args=(
+              --blocked scripts/release/blocked-image-digests.json
+              --component "$component"
+              --digest "$digest"
+              --source-sha "$source_sha"
+            )
+            if [[ "$component" == "sessions-pipeline" ]]; then
+              scrub_pin="$RUNNER_TEMP/${component}-scrub-bindgen-pin.json"
+              gh api \
+                "repos/${source_repository}/contents/packages/pipeline/scrub-bindgen-pin.json?ref=${source_sha}" \
+                --jq .content | base64 --decode > "$scrub_pin"
+              policy_args+=(--scrub-pin "$scrub_pin")
+            fi
+            python3 scripts/release/update-release-candidate.py check-policy \
+              "${policy_args[@]}"
+
+            attestation="$RUNNER_TEMP/${component}-verified-attestation.json"
+            gh attestation verify "oci://${repository}@${digest}" \
+              --repo "$source_repository" \
+              --signer-workflow "$source_repository/$signer_workflow" \
+              --source-digest "$source_sha" \
+              --source-ref refs/heads/main \
+              --format json > "$attestation"
+            jq -e \
+              --arg repository "https://github.com/$source_repository" \
+              --arg workflow "$signer_workflow" '
+                length > 0 and all(.[].verificationResult.statement.predicate;
+                  .buildDefinition.externalParameters.workflow.repository == $repository and
+                  .buildDefinition.externalParameters.workflow.path == $workflow and
+                  .buildDefinition.externalParameters.workflow.ref == "refs/heads/main")
+              ' "$attestation" >/dev/null
+          done
+
       - name: Add locked dependency repositories
         shell: bash
         run: |
@@ -146,8 +213,16 @@ jobs:
           [[ "$(awk '/^name:/ { print $2; exit }' <<<"$packaged_metadata")" == "$CHART_NAME" ]]
           [[ "$(awk '/^version:/ { print $2; exit }' <<<"$packaged_metadata")" == "$CHART_VERSION" ]]
 
+          candidate_dir="releases/agent-relay-${VERSION}"
+          candidate_pins="${candidate_dir}/pins.json"
+          candidate_values="${candidate_dir}/values.yaml"
+          [[ -f "$candidate_pins" && -f "$candidate_values" ]] \
+            || { echo "::error::The tagged release has no candidate pins and values."; exit 1; }
+          cp "$candidate_pins" .release/candidate-pins.json
+
           helm template "$CHART_NAME" "$CHART_DIR" \
             -f "$CHART_DIR/values-gcp.yaml" \
+            -f "$candidate_values" \
             > .release/customer-pack-render.yaml
           yq -N -r \
             '.. | select(tag == "!!map") | select(has("image") or has("imageName")) | (.image // .imageName) | select(tag == "!!str")' \
@@ -173,11 +248,22 @@ jobs:
             --values-overlay-profile eks \
             --images .release/customer-images.txt \
             --inventory .release/customer-image-inventory.tsv \
+            --candidate-pins .release/candidate-pins.json \
             --output .release/release-manifest.json \
             --values-overlay-output .release/release-images.values.yaml
+          install_pack=".release/agent-relay-${VERSION}-install-pack.tar.gz"
+          python3 scripts/release/build-agent-relay-install-pack.py \
+            --version "$VERSION" \
+            --base-values "$CHART_DIR/values-eks.yaml" \
+            --platform-overlay "$CHART_DIR/values-eks-rds-native.yaml" \
+            --image-overlay .release/release-images.values.yaml \
+            --manifest .release/release-manifest.json \
+            --candidate-pins .release/candidate-pins.json \
+            --output "$install_pack"
           {
             printf '# Agent Relay %s\n\n' "$VERSION"
             printf 'Immutable chart and customer image pull manifest for infra commit `%s`.\n' "$GITHUB_SHA"
+            printf '\nThe customer-neutral AWS install pack contains `values.yaml`, `overlay.yaml`, the accepted image/provenance pins, and an inner `SHA256SUMS`. Apply the release image overlay last after mirroring its immutable digests.\n'
             printf '\nThe customer profiles apply the ruleset-10 reader-first phase. Existing installs must verify every Sessions workload before a separate revision adds `values-scrub-wasm-bindgen.yaml`; fresh empty installs may apply that overlay at install time.\n'
           } > .release/release-notes.md
 
@@ -185,6 +271,8 @@ jobs:
             cd .release
             sha256sum \
               "${CHART_NAME}-${CHART_VERSION}.tgz" \
+              "agent-relay-${VERSION}-install-pack.tar.gz" \
+              candidate-pins.json \
               release-manifest.json \
               release-images.values.yaml \
               release-notes.md \
@@ -192,6 +280,7 @@ jobs:
             sha256sum --check SHA256SUMS
           )
           echo "path=$package" >> "$GITHUB_OUTPUT"
+          echo "install_pack=$install_pack" >> "$GITHUB_OUTPUT"
 
       - name: Store package and checksums
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -199,6 +288,8 @@ jobs:
           name: agent-relay-${{ steps.release.outputs.version }}
           path: |
             ${{ steps.package.outputs.path }}
+            ${{ steps.package.outputs.install_pack }}
+            .release/candidate-pins.json
             .release/release-manifest.json
             .release/release-images.values.yaml
             .release/release-notes.md
@@ -219,7 +310,9 @@ jobs:
         with:
           subject-path: |
             .release/release-manifest.json
+            .release/candidate-pins.json
             .release/release-images.values.yaml
+            ${{ steps.package.outputs.install_pack }}
             .release/SHA256SUMS
 
       - name: Publish only the Helm OCI artifact
@@ -303,6 +396,8 @@ jobs:
           set -euo pipefail
           assets=(
             "${{ steps.package.outputs.path }}"
+            "${{ steps.package.outputs.install_pack }}"
+            .release/candidate-pins.json
             .release/release-manifest.json
             .release/release-images.values.yaml
             .release/SHA256SUMS

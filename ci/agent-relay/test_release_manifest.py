@@ -1,5 +1,7 @@
 import argparse
+import hashlib
 import importlib.util
+import json
 import pathlib
 import sys
 import tempfile
@@ -43,6 +45,7 @@ class ReleaseManifestTest(unittest.TestCase):
                 "values_overlay_profile": "eks",
                 "images": images,
                 "inventory": inventory,
+                "candidate_pins": None,
             }
             values.update(overrides)
             return build(argparse.Namespace(**values))
@@ -171,6 +174,79 @@ class ReleaseManifestTest(unittest.TestCase):
         )
         self.assertEqual(manifest["version"], "2026.11.0")
         self.assertEqual(manifest["chart"]["version"], "0.6.36")
+
+    def test_candidate_pins_override_inventory_and_are_checksum_bound(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            pins = root / "pins.json"
+            pins.write_text(
+                json.dumps(
+                    {
+                        "schema": 1,
+                        "version": "2026.11.0",
+                        "pins": {
+                            "relay-control": {
+                                "repository": "ghcr.io/agentworkforce/relay-control",
+                                "digest": DIGEST_B,
+                                "sourceRepository": "AgentWorkforce/relay-control",
+                                "sourceRevision": COMMIT,
+                            }
+                        },
+                    }
+                )
+                + "\n"
+            )
+            manifest = self.build_fixture(
+                [f"ghcr.io/agentworkforce/relay-control@{DIGEST_B}"],
+                [
+                    "relay-control\tghcr.io/agentworkforce/relay-control\t"
+                    f"{DIGEST_A}\tapproved"
+                ],
+                candidate_pins=pins,
+            )
+            self.assertEqual(
+                manifest["images"],
+                [
+                    {
+                        "name": "relay-control",
+                        "ref": f"ghcr.io/agentworkforce/relay-control@{DIGEST_B}",
+                    }
+                ],
+            )
+            self.assertEqual(
+                manifest["candidatePins"]["sha256"],
+                hashlib.sha256(pins.read_bytes()).hexdigest(),
+            )
+
+    def test_candidate_pin_repository_drift_is_rejected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            pins = pathlib.Path(directory) / "pins.json"
+            pins.write_text(
+                json.dumps(
+                    {
+                        "schema": 1,
+                        "version": "2026.11.0",
+                        "pins": {
+                            "relay-control": {
+                                "repository": "evil.example/control",
+                                "digest": DIGEST_B,
+                                "sourceRepository": "AgentWorkforce/relay-control",
+                                "sourceRevision": COMMIT,
+                            }
+                        },
+                    }
+                )
+                + "\n"
+            )
+            with self.assertRaisesRegex(ValueError, "repository drift"):
+                self.build_fixture(
+                    [f"evil.example/control@{DIGEST_B}"],
+                    [
+                        "relay-control\tghcr.io/agentworkforce/relay-control\t"
+                        f"{DIGEST_A}\tapproved"
+                    ],
+                    candidate_pins=pins,
+                )
 
     def test_gcp_overlay_keeps_the_gcp_relaycast_image(self):
         names = [

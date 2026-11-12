@@ -24,6 +24,29 @@ The release owner supplies one tested release packet:
 | Operator controls | Capture policy, pre-upload scrubbing, authorized deletion and disabled add-ons verified in the actual client and app. Do not claim client-side scrubbing until the selected Desktop build contains the release-qualified R9 scrubber. |
 | Recovery | A successful isolated restore and a reviewed upgrade/recovery procedure for this exact release. |
 
+The public tag includes a customer-neutral AWS install pack. Verify the outer
+release checksum, then the archive's own checksum before combining it with the
+private handoff:
+
+```sh
+gh release download "agent-relay-$AGENT_RELAY_VERSION" \
+  --repo AgentWorkforce/infra \
+  --pattern "agent-relay-$AGENT_RELAY_VERSION-install-pack.tar.gz" \
+  --pattern SHA256SUMS
+sha256sum --check --ignore-missing SHA256SUMS
+mkdir "agent-relay-$AGENT_RELAY_VERSION-install-pack"
+tar -xzf "agent-relay-$AGENT_RELAY_VERSION-install-pack.tar.gz" \
+  -C "agent-relay-$AGENT_RELAY_VERSION-install-pack"
+(cd "agent-relay-$AGENT_RELAY_VERSION-install-pack" && sha256sum --check SHA256SUMS)
+```
+
+`values.yaml` is the neutral EKS base, `overlay.yaml` selects the managed
+RDS/native AWS assembly, and `release-images.values.yaml` carries the accepted
+immutable images and must be applied last after replacing only its documented
+mirror-root placeholder. Customer names, hosts, account IDs, credentials and
+private policy values stay in the private values file; they are never release
+assets.
+
 Open work is tracked in the [application proof](terraform-helm-application-proof.md),
 [database contract](shared-postgres-storage-contract.md) and
 [customer controls checklist](enterprise-customer-controls.md). A missing item
@@ -295,7 +318,10 @@ Use the release packet's complete RDS values overlay. The historical
 6. Render and lint the selected chart with that overlay. Check every namespace,
    origin, Secret reference, image and network setting before installation.
 
-Set `RELEASE`, `CHART_PACKAGE` and `KUBE_CONTEXT` from the handoff. `NAMESPACE`
+Set `RELEASE`, `CHART_PACKAGE`, `KUBE_CONTEXT` and `INSTALL_PACK_DIR` from the
+handoff. Prepare `/approved/private/release-images.values.yaml` from the
+verified pack copy by replacing only its documented mirror-root placeholder.
+`NAMESPACE`
 must be the Terraform environment's `namespace` recorded in step 2; a different
 namespace leaves every workload without its Pod Identity role.
 Run `helm list --all` in that exact context/namespace. Only confirmed absence
@@ -304,7 +330,11 @@ permits this **first-install** command:
 ```sh
 helm install "$RELEASE" "$CHART_PACKAGE" \
   --kube-context "$KUBE_CONTEXT" --namespace "$NAMESPACE" \
-  --create-namespace --values /approved/private/customer.values.yaml \
+  --create-namespace \
+  --values "$INSTALL_PACK_DIR/values.yaml" \
+  --values "$INSTALL_PACK_DIR/overlay.yaml" \
+  --values /approved/private/customer.values.yaml \
+  --values /approved/private/release-images.values.yaml \
   --no-hooks --timeout 20m
 ```
 
@@ -333,6 +363,15 @@ kubectl --context "$KUBE_CONTEXT" -n "$NAMESPACE" rollout restart \
 kubectl --context "$KUBE_CONTEXT" -n "$NAMESPACE" rollout status deployment \
   --selector "app.kubernetes.io/instance=$RELEASE" --timeout=20m
 ```
+
+The release's pull-based upgrader performs this same first-install sequence
+from a verified, published release (see [Upgrades](#upgrades)): add
+`--first-install` (and `--rds-setup` when `rds-setup.sh` bootstrapped the
+databases) to the command shown there. It refuses `--first-install` when the
+release already exists, and a plain upgrade when it does not. With
+`--rds-setup` it runs `rds-setup.sh post` with the release's own mirrored
+services and PostgreSQL client images, so export `AWS_REGION`, `RDS_HOST`,
+`RDS_ADMIN_SECRET_ARN` and `STATE_DIR` as for `pre` first.
 
 Inspect every Job before running `post`; a failed or missing current migration
 blocks activation. Run the packet's ordered pre-install SQL/Jobs before the
@@ -471,8 +510,10 @@ Use the release's pull-based upgrader instead of assembling a chart or image
 set by hand. It is plan-only unless `--apply` is present. The plan downloads
 `release-manifest.json`, `release-images.values.yaml`, and `SHA256SUMS` from
 the requested GitHub release, verifies their checksums and GitHub build
-attestations, checks out the recorded infra commit, mirrors the manifest's
-exact image digests, and prints the chart/image change against the live
+attestations (bound to the `release-agent-relay.yml` workflow in
+`AgentWorkforce/infra`, the release tag, and a GitHub-hosted runner), checks
+the packaged chart, mirrors the manifest's exact image digests, and prints the
+image change and every rendered resource that differs from the deployed
 release. The manifest labels the image overlay for EKS, and the upgrader
 refuses to apply an overlay for a different profile. This preserves the
 approved collector-capable EKS Relaycast pin instead of substituting the GCP
@@ -490,10 +531,28 @@ scripts/selfhost/agent-relay-upgrade.sh \
 ```
 
 Set `AGENT_RELAY_PROFILE` to the profile already used by the installation:
-`eks` for `values-eks.yaml`, or `eks-native` when the installation also uses
-`values-eks-native.yaml`. The upgrader refuses to switch profiles implicitly.
+`eks` for `values-eks.yaml`, `eks-native` when the installation also uses
+`values-eks-native.yaml`, or `eks-rds-native` for `values-eks.yaml` +
+`values-eks-rds-native.yaml`. The upgrader refuses to switch profiles
+implicitly, and refuses `eks-rds-native` for a release whose chart does not
+ship `values-eks-rds-native.yaml` (2026.11.0 does not).
 
-Review that plan and its exact release identifiers. After approval, repeat the
+If `rds-setup.sh` bootstrapped the databases, add `--rds-setup` (implied by
+`eks-rds-native`) and export `AWS_REGION`, `RDS_HOST`, `RDS_ADMIN_SECRET_ARN`
+and `STATE_DIR` as for `pre`. Before every `helm upgrade` the upgrader then
+runs `rds-setup.sh refresh-admin` and writes the two rewritten keys
+(`agent-relay-secrets/HOOPDB_MIGRATION_URL` and
+`search-indexer-owner/RELAYHISTORY_PIPELINE_CONSUMER_SECRET`) into those
+Secrets with a merge patch read from a file, leaving their other keys alone.
+If an external secret controller owns those Secrets, update them through it
+instead and do not pass `--rds-setup`. When the values select
+`databaseMode: rds` without `--rds-setup`, the plan prints a note rather than
+guessing.
+
+For a new installation, add `--first-install`; see step 4.
+
+Review that plan and its exact release identifiers. The plan ends with
+`plan: changes=true` or `plan: changes=false`. After approval, repeat the
 same command with `--apply --db-instance "$RDS_INSTANCE_ID"`. Apply takes and
 waits for an RDS snapshot before Helm, passes the verified release image
 overlay last, waits for migrations and rollouts, and stops with the prior Helm
