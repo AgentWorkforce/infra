@@ -53,6 +53,44 @@
    ]
   },
   {
+   "name": "channel-100-fine",
+   "sinks": 2,
+   "producers": 2,
+   "stepped": true,
+   "notes": "Per-workspace ceiling: same fixture as channel-100, finer steps.",
+   "fixture": {
+    "RCB_WORKSPACES": 1,
+    "RCB_PRODUCERS": 20,
+    "RCB_RECEIVERS": 80,
+    "RCB_CHANNELS": 5,
+    "RCB_CHANNEL_MEMBERS": 20,
+    "RCB_AGENTS_PER_NODE": 1
+   },
+   "phases": [
+    {
+     "label": "ch100f-2",
+     "kind": "channel",
+     "rate": 2,
+     "durationS": 180,
+     "sizeBytes": 512
+    },
+    {
+     "label": "ch100f-3",
+     "kind": "channel",
+     "rate": 3,
+     "durationS": 180,
+     "sizeBytes": 512
+    },
+    {
+     "label": "ch100f-5",
+     "kind": "channel",
+     "rate": 5,
+     "durationS": 180,
+     "sizeBytes": 512
+    }
+   ]
+  },
+  {
    "name": "functional-10",
    "sinks": 1,
    "producers": 1,
