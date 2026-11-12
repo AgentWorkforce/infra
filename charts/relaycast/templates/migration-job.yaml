@@ -135,7 +135,7 @@ spec:
             {{- if eq $step "files" }}
             {{- /* The gateway's file store settings, exactly as the gateway reads them. */}}
             {{- range (include "relaycast.actors.gatewayEnv" . | fromYamlArray) }}
-            {{- if or (has .name (list "RELAYCAST_FILE_STORE" "RELAYCAST_FILE_DIR")) (hasPrefix "RELAYCAST_S3_" .name) (hasPrefix "RELAYCAST_GCS_" .name) (has .name (list "AWS_ACCESS_KEY_ID" "AWS_SECRET_ACCESS_KEY")) }}
+            {{- if has .name (list "RELAYCAST_FILE_STORE" "RELAYCAST_FILE_DIR" "RELAYCAST_GCS_BUCKET" "RELAYCAST_GCS_PREFIX" "RELAYCAST_S3_BUCKET" "RELAYCAST_S3_REGION" "RELAYCAST_S3_ENDPOINT" "RELAYCAST_S3_PREFIX" "RELAYCAST_S3_FORCE_PATH_STYLE" "AWS_ACCESS_KEY_ID" "AWS_SECRET_ACCESS_KEY") }}
             - {{ toJson . }}
             {{- end }}
             {{- end }}
