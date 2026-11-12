@@ -114,10 +114,20 @@ jobs:
           AWS_REGION: ${{ inputs.aws-region }}
         run: |
           set -euo pipefail
-          token=$(curl -sSf -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
-            "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=sts.amazonaws.com" | jq -r .value)
+          # Keep both bearer tokens out of argv (visible to other processes on a
+          # shared self-hosted runner): the request token goes to curl via a
+          # 0600 header file, the OIDC JWT to the AWS CLI via file://.
+          umask 077
+          oidc_dir=$(mktemp -d "$RUNNER_TEMP/oidc.XXXXXX")
+          trap 'rm -rf "$oidc_dir"' EXIT
+          printf 'Authorization: bearer %s\n' "$ACTIONS_ID_TOKEN_REQUEST_TOKEN" > "$oidc_dir/header"
+          curl -sSf -H "@$oidc_dir/header" \
+            "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=sts.amazonaws.com" \
+            | jq -ejr '.value | select(type == "string" and length > 0)' > "$oidc_dir/jwt" \
+            || { echo "::error::GitHub OIDC token response had no non-empty .value"; exit 1; }
           creds=$(aws sts assume-role-with-web-identity --role-arn "$ROLE_ARN" \
-            --role-session-name "agent-relay-upgrade-${GITHUB_RUN_ID}" --web-identity-token "$token" \
+            --role-session-name "agent-relay-upgrade-${GITHUB_RUN_ID}" \
+            --web-identity-token "file://$oidc_dir/jwt" \
             --duration-seconds 3600 --output json)
           for k in AccessKeyId:AWS_ACCESS_KEY_ID SecretAccessKey:AWS_SECRET_ACCESS_KEY SessionToken:AWS_SESSION_TOKEN; do
             v=$(jq -r ".Credentials.${k%%:*}" <<<"$creds"); echo "::add-mask::$v"; echo "${k##*:}=$v" >> "$GITHUB_ENV"
