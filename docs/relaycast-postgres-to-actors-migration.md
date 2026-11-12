@@ -101,6 +101,15 @@ time>`, image = the release's relaycast self-host image, mounting the existing
 - the Postgres engine migration head equals the actor bundle's engine
   migration head (same engine version on both sides);
 - PVC file bytes present for every `files` row (missing object = refuse);
+- **the durable-actors control plane verifies RDS over TLS** (verify-full: a
+  CA bundle mounted, the server certificate and hostname checked). The
+  shipped chart mounts no CA and its Postgres client fails the TLS handshake
+  (found by relaycast-actors-bench); disabling `rds.force_ssl` or using
+  `sslmode=disable` is not acceptable. The upgrader refuses a cutover whose
+  control plane has no `postgres-ca` volume;
+- the target release includes relaycast#652 (actor workspaces answered raw
+  reads such as `GET /v1/inbox` with positional tuples): a required fix, since
+  clients break on it after the cutover;
 - prints per-workspace counts for every table, which are the export manifest's
   expected counts.
 
@@ -195,6 +204,16 @@ it back to check size and sha256; a rerun skips objects already present.
   the same `seq`; then the check agents and channel are deleted;
 - relay-control `/healthz` and its Relaycast probe green after scale-up.
 
+### Phase 7: clean up (after go-live is confirmed)
+
+- `relaycast-rekey --purge <run id>` in the relay-control pod removes the
+  old credential ciphertexts from `relaycast_rekey_backups` (relay-control#122
+  follow-up). They are only needed for `--undo`.
+- Delete the export (`/data/migration/<run id>` on the data claim) unless the
+  operator keeps it, then the old data claim once the files are confirmed in
+  S3, and drop the Relaycast PostgreSQL database after the retention the
+  operator chooses. The RDS snapshot from phase 2 stays as the last copy.
+
 ## Rollback
 
 Postgres is never written after phase 2, so it remains the pre-cutover state.
@@ -237,7 +256,8 @@ estimate from the preflight counts before asking to proceed.
 | Repo | Change |
 | --- | --- |
 | relaycast | #653: `relaycast-engine migration-preflight` / `export-for-actors`; actor `importData` with the 503 gate; gateway `POST /internal/workspaces/:id/import`; `relaycast-migrate files` / `import` / `abort`; an end-to-end test from a real Postgres server into an actor comparing reads. #652: actor raw reads (inbox) returned tuples, found by that comparison. |
-| relay-control | #122: `relaycast-rekey` (+ `--undo`), `relaycast_rekey_backups`, tests. |
+| relay-control | #122: `relaycast-rekey` (+ `--undo`, `--purge`), `relaycast_rekey_backups`, tests. |
+| durable-actors (fork) + infra | verify-full TLS from the control plane to RDS: CA support in the control plane's Postgres client and a CA mount in the vendored `charts/durable-actors` (patch recorded in `UPSTREAM.md`). Precondition for any actors-on-RDS install. |
 | infra | this doc; relaycast chart migration Jobs (`migration.*`, off by default); upgrader flag and workflow input; Kind proof (`ci/agent-relay`); runbook in `docs/operations`. |
 
 ## Proof
