@@ -18,6 +18,7 @@ RUN_ID = re.compile(r"^[1-9][0-9]{0,19}$")
 ALLOWED_SCRUBBER = re.compile(r"^0\.5\.0-alpha\.(5|[89]|[1-9][0-9]+)$")
 MARKER_START = "<!-- release-candidate-pins:start -->"
 MARKER_END = "<!-- release-candidate-pins:end -->"
+FROZEN_MARKER = "qualified-candidate/v1\n"
 
 # This is deliberately an allowlist. A dispatch payload can select a known
 # component, digest and source commit; it cannot select a registry, repository,
@@ -105,6 +106,16 @@ def check_policy(
 def candidate_dir(root: pathlib.Path, version: str) -> pathlib.Path:
     validate_version(version)
     return root / "releases" / f"agent-relay-{version}"
+
+
+def frozen(path: pathlib.Path) -> bool:
+    if not path.exists() and not path.is_symlink():
+        return False
+    if path.is_symlink() or not path.is_file():
+        fail(f"{path}: FROZEN marker must be a regular file")
+    if path.read_text(encoding="utf-8") != FROZEN_MARKER:
+        fail(f"{path}: malformed FROZEN marker")
+    return True
 
 
 def load_pins(
@@ -225,6 +236,7 @@ def update(
     digest: str,
     source_sha: str,
     publish_run_id: int | None = None,
+    allow_frozen: bool = False,
 ) -> pathlib.Path:
     validate_version(version)
     validate_pin(component, digest, source_sha)
@@ -238,6 +250,11 @@ def update(
     elif publish_run_id is not None:
         fail("publish_run_id applies only to sessions-pipeline")
     directory = candidate_dir(root, version)
+    is_frozen = frozen(directory / "FROZEN")
+    if is_frozen and not allow_frozen:
+        fail(f"agent-relay-{version} is FROZEN as a qualified candidate")
+    if allow_frozen and not is_frozen:
+        fail("allow_frozen requires an existing qualified-candidate FROZEN marker")
     pins_path = directory / "pins.json"
     # The first Sessions dispatch after this field was introduced must be able
     # to migrate an already-open candidate. All validation and tag paths remain
@@ -319,6 +336,9 @@ def parse_args() -> argparse.Namespace:
     validate_parser.add_argument("--values", type=pathlib.Path)
     validate_parser.add_argument("--version", required=True)
 
+    frozen_parser = subparsers.add_parser("check-frozen")
+    frozen_parser.add_argument("--path", type=pathlib.Path, required=True)
+
     update_parser = subparsers.add_parser("update")
     update_parser.add_argument("--root", type=pathlib.Path, default=pathlib.Path.cwd())
     update_parser.add_argument("--version", required=True)
@@ -326,6 +346,7 @@ def parse_args() -> argparse.Namespace:
     update_parser.add_argument("--digest", required=True)
     update_parser.add_argument("--source-sha", required=True)
     update_parser.add_argument("--publish-run-id", type=int)
+    update_parser.add_argument("--allow-frozen", action="store_true")
 
     body_parser = subparsers.add_parser("render-body")
     body_parser.add_argument("--pins", type=pathlib.Path, required=True)
@@ -354,6 +375,8 @@ def main() -> int:
                 load_pins(args.pins, args.version)
             else:
                 validate_candidate(args.pins, args.values, args.version)
+        elif args.command == "check-frozen":
+            print("true" if frozen(args.path) else "false")
         elif args.command == "update":
             directory = update(
                 args.root,
@@ -362,6 +385,7 @@ def main() -> int:
                 args.digest,
                 args.source_sha,
                 args.publish_run_id,
+                args.allow_frozen,
             )
             print(directory)
         else:

@@ -27,6 +27,15 @@ on:
         description: relayhistory-pipeline publish run; required only for sessions-pipeline
         required: false
         type: string
+      override_frozen:
+        description: Approver-only override for a FROZEN qualified candidate
+        required: false
+        default: false
+        type: boolean
+      override_reason:
+        description: Audit reason; required when override_frozen is true
+        required: false
+        type: string
   repository_dispatch:
     types: [component-published]
 
@@ -46,6 +55,8 @@ jobs:
       DIGEST: ${{ github.event.inputs.digest || github.event.client_payload.digest }}
       SOURCE_SHA: ${{ github.event.inputs.source_sha || github.event.client_payload.source_sha }}
       PUBLISH_RUN_ID: ${{ github.event.inputs.publish_run_id || github.event.client_payload.publish_run_id || github.event.client_payload.publishRunId || '' }}
+      OVERRIDE_FROZEN: ${{ inputs.override_frozen && 'true' || 'false' }}
+      OVERRIDE_REASON: ${{ github.event.inputs.override_reason || '' }}
     steps:
       # A GITHUB_TOKEN-authored push suppresses follow-on workflow events.
       # The scoped App token is therefore required for release-branch CI and
@@ -72,7 +83,7 @@ jobs:
         id: request
         shell: bash
         env:
-          GH_TOKEN: ${{ steps.pusher.outputs.token }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
           # The target release branch may predate this workflow. Carry the
@@ -124,12 +135,54 @@ jobs:
           fi
 
           branch="release/agent-relay-$version"
+          frozen_path="releases/agent-relay-${version}/FROZEN"
+          is_frozen="$(python3 "$RUNNER_TEMP/update-release-candidate.py" \
+            check-frozen --path "$frozen_path")"
+          if git ls-remote --exit-code --heads origin "$branch" >/dev/null 2>&1; then
+            git fetch origin "$branch"
+            if git cat-file -e "FETCH_HEAD:${frozen_path}" 2>/dev/null; then
+              git show "FETCH_HEAD:${frozen_path}" > "$RUNNER_TEMP/remote-FROZEN"
+              python3 "$RUNNER_TEMP/update-release-candidate.py" \
+                check-frozen --path "$RUNNER_TEMP/remote-FROZEN" >/dev/null
+              is_frozen=true
+            fi
+          fi
+          allow_frozen=false
+          if [[ "$is_frozen" == "true" ]]; then
+            if [[ "$GITHUB_EVENT_NAME" != "workflow_dispatch" ]]; then
+              echo "::error::agent-relay-${version} is FROZEN as a qualified candidate; repository_dispatch cannot overwrite it."
+              exit 1
+            fi
+            if [[ "$OVERRIDE_FROZEN" != "true" ]]; then
+              echo "::error::agent-relay-${version} is FROZEN; manual dispatch requires override_frozen=true."
+              exit 1
+            fi
+            if [[ ${#OVERRIDE_REASON} -lt 10 || ${#OVERRIDE_REASON} -gt 200 \
+              || "$OVERRIDE_REASON" == *$'\n'* || "$OVERRIDE_REASON" == *$'\r'* \
+              || "$OVERRIDE_REASON" == *[![:print:]]* ]]; then
+              echo "::error::A printable single-line 10-200 character override_reason is required."
+              exit 1
+            fi
+            can_push="$(gh api \
+              "repos/$GITHUB_REPOSITORY/collaborators/$GITHUB_ACTOR/permission" \
+              --jq '.user.permissions.push // false')"
+            [[ "$can_push" == "true" ]] \
+              || { echo "::error::FROZEN override requires an approver with repository push permission."; exit 1; }
+            allow_frozen=true
+            echo "::notice::FROZEN candidate override by ${GITHUB_ACTOR}: ${OVERRIDE_REASON}"
+            printf 'FROZEN candidate override by `%s`: %s\n' \
+              "$GITHUB_ACTOR" "$OVERRIDE_REASON" >> "$GITHUB_STEP_SUMMARY"
+          elif [[ "$OVERRIDE_FROZEN" == "true" ]]; then
+            echo "::error::override_frozen is valid only for an existing FROZEN candidate."
+            exit 1
+          fi
           {
             echo "version=$version"
             echo "branch=$branch"
             echo "repository=$repository"
             echo "source_repository=$source_repository"
             echo "signer_workflow=$signer_workflow"
+            echo "allow_frozen=$allow_frozen"
           } >> "$GITHUB_OUTPUT"
 
       - name: Enforce image and scrubber policy
@@ -210,6 +263,7 @@ jobs:
         env:
           BRANCH: ${{ steps.request.outputs.branch }}
           VERSION: ${{ steps.request.outputs.version }}
+          ALLOW_FROZEN: ${{ steps.request.outputs.allow_frozen }}
         run: |
           set -euo pipefail
           git config user.name github-actions[bot]
@@ -240,6 +294,9 @@ jobs:
             )
             if [[ "$COMPONENT" == "sessions-pipeline" ]]; then
               update_args+=(--publish-run-id "$PUBLISH_RUN_ID")
+            fi
+            if [[ "$ALLOW_FROZEN" == "true" ]]; then
+              update_args+=(--allow-frozen)
             fi
             python3 "$RUNNER_TEMP/update-release-candidate.py" update "${update_args[@]}"
             git add "releases/agent-relay-${VERSION}"
