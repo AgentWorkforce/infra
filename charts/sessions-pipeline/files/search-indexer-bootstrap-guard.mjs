@@ -70,6 +70,42 @@ export async function waitForRuntimeRoleActivation(
   }
 }
 
+export async function executeBootstrapGuard(client, config) {
+  await client.connect();
+  let locked = false;
+  try {
+    if (config.waitForRuntimeRole) {
+      config.log("search-indexer bootstrap: waiting for rds-setup post to activate search_consumer_runtime");
+      await waitForRuntimeRoleActivation(
+        { query: async sql => {
+          const result = await client.query(sql);
+          return { rows: result.rows };
+        } },
+        config.roleWaitSeconds,
+        config.rolePollSeconds,
+        config.sleep,
+        config.now,
+      );
+    }
+    // The Sessions migrator already holds this session lock around every
+    // schema step. Sharing it prevents overlapping role/catalog DDL without
+    // relying on Helm hooks.
+    await client.query("SELECT pg_advisory_lock(961996, 1)");
+    locked = true;
+    for (let attempt = 1; attempt <= config.maxAttempts; attempt += 1) {
+      const result = await config.runBootstrap();
+      if (result.code === 0) return 0;
+      if (!isRetryableCatalogRace(result.output) || attempt === config.maxAttempts) return result.code || 1;
+      config.log(`search-indexer bootstrap: retrying PostgreSQL catalog race (attempt ${attempt + 1}/${config.maxAttempts})`);
+      await config.sleep(config.delaySeconds * 1000);
+    }
+    return 1;
+  } finally {
+    if (locked) await client.query("SELECT pg_advisory_unlock(961996, 1)").catch(() => {});
+    await client.end().catch(() => {});
+  }
+}
+
 async function main() {
   const maxAttempts = positiveInteger("SEARCH_BOOTSTRAP_CATALOG_RETRY_MAX_ATTEMPTS", 10);
   const delaySeconds = positiveInteger("SEARCH_BOOTSTRAP_CATALOG_RETRY_DELAY_SECONDS", 60);
@@ -96,33 +132,17 @@ async function main() {
     ssl: tls.postgresTlsOptions(),
     application_name: "search-indexer-bootstrap-guard",
   });
-  await lock.connect();
-  if (waitForRuntimeRole) {
-    console.error("search-indexer bootstrap: waiting for rds-setup post to activate search_consumer_runtime");
-    await waitForRuntimeRoleActivation({
-      query: async sql => {
-        const result = await lock.query(sql);
-        return { rows: result.rows };
-      },
-    }, roleWaitSeconds, rolePollSeconds);
-  }
-  // The Sessions migrator already holds this session lock around every schema
-  // step. Holding the same lock keeps its role/catalog DDL from overlapping the
-  // search bootstrap transaction, without relying on Helm hooks.
-  await lock.query("SELECT pg_advisory_lock(961996, 1)");
-  try {
-    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
-      const result = await runBootstrap();
-      if (result.code === 0) return 0;
-      if (!isRetryableCatalogRace(result.output) || attempt === maxAttempts) return result.code || 1;
-      console.error(`search-indexer bootstrap: retrying PostgreSQL catalog race (attempt ${attempt + 1}/${maxAttempts})`);
-      await Bun.sleep(delaySeconds * 1000);
-    }
-    return 1;
-  } finally {
-    await lock.query("SELECT pg_advisory_unlock(961996, 1)").catch(() => {});
-    await lock.end().catch(() => {});
-  }
+  return executeBootstrapGuard(lock, {
+    waitForRuntimeRole,
+    roleWaitSeconds,
+    rolePollSeconds,
+    maxAttempts,
+    delaySeconds,
+    runBootstrap,
+    sleep: Bun.sleep,
+    now: Date.now,
+    log: message => console.error(message),
+  });
 }
 
 if (import.meta.main) process.exitCode = await main();
