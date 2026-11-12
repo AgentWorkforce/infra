@@ -51,6 +51,9 @@ explicit false, which must continue to conflict with the legacy true.
 {{- define "session-read-api.validate" -}}
 {{- include "session-read-api.analytics.validate" .Values.analytics -}}
 {{- $c := .Values -}}
+{{- $erase := .Values.global.operatorSessionErase | default dict -}}
+{{- if not (kindIs "map" $erase) }}{{ fail "session-read-api: global.operatorSessionErase must be an object" }}{{ end -}}
+{{- if not (kindIs "bool" $erase.fenceEnforced) }}{{ fail "session-read-api: global.operatorSessionErase.fenceEnforced must be a boolean" }}{{ end -}}
 {{- $repository := required "session-read-api: image.repository is required" $c.image.repository -}}
 {{- $repositoryPattern := "^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\\.)+[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(:[0-9]{1,5})?/[a-z0-9]+(([._]|__|-+)[a-z0-9]+)*(/[a-z0-9]+(([._]|__|-+)[a-z0-9]+)*)*$" -}}
 {{- $registryHost := regexReplaceAll ":[0-9]+$" (first (splitList "/" $repository)) "" -}}
@@ -234,6 +237,7 @@ workspace is not on a static list, and its reads would answer 501. */ -}}
 {{- $legacyBoolNames := list "READ_API_TIMING_ASSUME_NO_TURNS" "READ_API_CANONICAL_PIN_LAGGING_POINTER" -}}
 {{- range $e := $c.extraEnv -}}
 {{- $envName := required "session-read-api: extraEnv entries require name" $e.name -}}
+{{- if eq $envName "SESSION_ERASE_FENCE_ENFORCED" }}{{ fail "session-read-api: extraEnv duplicates a managed or repeated variable: SESSION_ERASE_FENCE_ENFORCED" }}{{ end -}}
 {{- if or (and (has $envName $reserved) (not (has $envName $legacyBoolNames))) (hasKey $seen $envName) (hasPrefix "ANALYTICS_" $envName) (and $c.analytics.enabled (eq $envName "NODE_EXTRA_CA_CERTS")) }}{{ fail (printf "session-read-api: extraEnv duplicates a managed or repeated variable: %s" $envName) }}{{ end -}}
 {{- if not (regexMatch "^[A-Za-z_][A-Za-z0-9_]*$" $envName) }}{{ fail "session-read-api: extraEnv has an invalid variable name" }}{{ end -}}
 {{- if hasPrefix "CLICKHOUSE_" $envName }}{{ fail "session-read-api: the service reads no CLICKHOUSE_* environment; put ClickHouse in the read API Secret's clickhouse block" }}{{ end -}}

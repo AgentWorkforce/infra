@@ -19,6 +19,11 @@ global:
     engine: ""
     required: ""
     readerMaxRuleset: ""
+  # One fence switch for every native ingest, consumer and read-API replica.
+  # It is deliberately global so the session-read-api dependency receives the
+  # same value. Enabling the operator API or byte deletion requires this true.
+  operatorSessionErase:
+    fenceEnforced: false
   tenant:
     orgId: ""          # REQUIRED: your Agent Relay org id
   otel:
@@ -448,6 +453,41 @@ searchIndexer:
   resources:
     requests: { cpu: 50m, memory: 256Mi }
     limits: { memory: 1Gi }
+
+# Per-session operator hard-delete composition. Every switch is off by default.
+# The chart renders only Secret references; create the Secrets separately and
+# keep their values out of values files and command arguments.
+operatorSessionErase:
+  api:
+    # SESSION_ERASE_API_ENABLED=1 on ingestEdge. Control needs the matching
+    # relay-control.sessionErasureApi URL and Secret reference.
+    enabled: false
+    # Dedicated bearer, at least 32 non-whitespace characters at runtime.
+    existingSecret: ""
+    secretKey: SESSION_ERASE_API_SECRET
+    # Optional overlap key from the same Secret during rotation.
+    previousSecretKey: ""
+  bytes:
+    # SESSION_ERASE_BYTES_ENABLED=1 on ingestEdge. S3 identity settings are
+    # derived from ingestEdge.locker and ingestEdge.keyRoot, never duplicated.
+    enabled: false
+    s3Credentials:
+      # Dedicated ListBucketVersions/DeleteObjectVersion credentials. The
+      # ingest writer Secret is explicitly refused.
+      existingSecret: ""
+      accessKeyIdKey: SESSION_ERASE_S3_ACCESS_KEY_ID
+      secretAccessKeyKey: SESSION_ERASE_S3_SECRET_ACCESS_KEY
+    postgresSearch:
+      # bulls96_session_erase_search URL created by rds-setup.sh post with
+      # PROVISION_ERASE_SEARCH_LOGIN=1. Used only with the postgres backend.
+      existingSecret: ""
+      urlKey: SESSION_ERASE_SEARCH_POSTGRES_URL
+    opensearch:
+      # Dedicated basic-auth eraser identity. Used only when the active search
+      # consumer and reader use OpenSearch.
+      existingSecret: ""
+      usernameKey: SESSION_ERASE_OPENSEARCH_USERNAME
+      passwordKey: SESSION_ERASE_OPENSEARCH_PASSWORD
 
 # Separate public upload edge from merged pipeline #363. This is NOT the
 # internal alleyoop-ingest worker. No profile enables it or supplies an image.

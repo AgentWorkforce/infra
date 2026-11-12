@@ -1,0 +1,1 @@
+{{- include "sessions-pipeline.operatorSessionErase.validate" . -}}

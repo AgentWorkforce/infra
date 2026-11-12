@@ -68,6 +68,9 @@ spec:
           ports:
             - { name: http, containerPort: {{ $c.port }}, protocol: TCP }
           env:
+            {{- if $c.global.operatorSessionErase.fenceEnforced }}
+            - { name: SESSION_ERASE_FENCE_ENFORCED, value: "1" }
+            {{- end }}
             - { name: SERVICE, value: session-read-api }
             {{- include "session-read-api.scrubEngine" (dict "root" . "localReader" $c.readerMaxRuleset "localName" "readerMaxRuleset") | nindent 12 }}
             - { name: RELAYHISTORY_SELFHOST_READ_API, value: "true" }

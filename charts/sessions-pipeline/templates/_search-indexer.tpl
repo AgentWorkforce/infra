@@ -3,6 +3,9 @@
 - { name: SERVICE, value: {{ .service }} }
 {{- include "sessions-pipeline.scrubEngine" (dict "root" .root "localReader" $c.readerMaxRuleset "localName" "searchIndexer.readerMaxRuleset") }}
 - { name: RELAYHISTORY_SELFHOST_PIPELINE_CONSUMER, value: "true" }
+{{- if eq .service "session-pipeline-consumer" }}
+{{- include "sessions-pipeline.operatorSessionErase.fenceEnv" .root }}
+{{- end }}
 {{- if .outputFacts }}
 - { name: RELAYHISTORY_SELFHOST_OUTPUT_FACTS, value: "true" }
 {{- end }}
