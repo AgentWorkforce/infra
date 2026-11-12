@@ -128,6 +128,11 @@ Chart behaviour and validation:
   `relaycast-actors-dev`, the durable-actors TypeScript runtime plus the
   relaycast actor project and the full `durable-actors` npm package). The actor
   env is set on the sidecar.
+  Its `/data` uses an `emptyDir` by default. Set
+  `runtime.durableActors.devRuntime.existingClaim` to a separately provisioned
+  RWO PVC to retain actor state across local pod replacements. The gateway
+  remains a single-replica Recreate deployment; the dev runtime remains a local
+  development configuration. This does not migrate SQLite workspaces.
 
 Fresh-install backend: SQLite workspaces are not migrated and legacy
 credentials are refused; keep the SQLite release for existing workspaces.

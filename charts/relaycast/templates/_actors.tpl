@@ -97,6 +97,11 @@ The durable-actors control-plane Service name. Must equal the vendored chart's
 {{- $reserved := include "relaycast.actors.reservedEnv" . | fromJsonArray -}}
 {{- range .Values.extraEnv }}{{ if has (toString .name) $reserved }}{{ fail (printf "%s is set by the durable-actors gateway and must not appear in extraEnv" .name) }}{{ end }}{{ end -}}
 {{- if not (has (toString $da.logFormat) (list "json" "text")) }}{{ fail "runtime.durableActors.logFormat must be json or text" }}{{ end -}}
+{{- if not (kindIs "string" $da.devRuntime.existingClaim) }}{{ fail "runtime.durableActors.devRuntime.existingClaim must be a string" }}{{ end -}}
+{{- if $da.devRuntime.existingClaim -}}
+{{- if not $da.devRuntime.enabled }}{{ fail "runtime.durableActors.devRuntime.existingClaim requires devRuntime.enabled=true" }}{{ end -}}
+{{- if or (gt (len $da.devRuntime.existingClaim) 253) (not (regexMatch "^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$" $da.devRuntime.existingClaim)) }}{{ fail "runtime.durableActors.devRuntime.existingClaim must name a Kubernetes PVC" }}{{ end -}}
+{{- end -}}
 {{- if $da.devRuntime.enabled -}}
 {{- if not $da.devRuntime.acknowledgeNonProduction }}{{ fail "runtime.durableActors.devRuntime.enabled requires devRuntime.acknowledgeNonProduction=true: the dev runtime is single-process with local state and its key sits in the gateway pod" }}{{ end -}}
 {{- if not $da.devRuntime.secretKey }}{{ fail "runtime.durableActors.devRuntime.secretKey is required: the dev runtime must not run unauthenticated" }}{{ end -}}

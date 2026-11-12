@@ -117,7 +117,12 @@ spec:
         {{- end }}
         {{- if $dev }}
         - name: dev-data
+          {{- if $da.devRuntime.existingClaim }}
+          persistentVolumeClaim:
+            claimName: {{ $da.devRuntime.existingClaim | quote }}
+          {{- else }}
           emptyDir: {}
+          {{- end }}
         - name: dev-tmp
           emptyDir: {}
         {{- end }}

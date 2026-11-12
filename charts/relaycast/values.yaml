@@ -161,6 +161,9 @@ runtime:
     devRuntime:
       enabled: false
       acknowledgeNonProduction: false
+      # Local-only actor state. Empty keeps the disposable CI emptyDir.
+      # Provision this RWO claim separately before using a persistent Kind fixture.
+      existingClaim: ""
       image:
         repository: ghcr.io/agentworkforce/relaycast-actors-dev
         digest: ""

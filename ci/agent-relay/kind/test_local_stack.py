@@ -23,6 +23,29 @@ from stack import StackError
 
 
 class LocalTests(unittest.TestCase):
+    def test_actor_dev_state_can_use_an_existing_pvc_without_changing_default(self):
+        command = ["helm", "template", "ci", "charts/relaycast", "-n", "ci",
+            "-f", "charts/relaycast/ci/durable-actors-dev-values.yaml"]
+        for claim in ("", "local-relaycast-actors"):
+            with self.subTest(claim=claim):
+                result = subprocess.run(command + ["--set-string", "runtime.durableActors.devRuntime.existingClaim=" + claim],
+                    cwd=ROOT, text=True, capture_output=True, check=True)
+                deployment = next(d for d in yaml.safe_load_all(result.stdout) if d and d["kind"] == "Deployment")
+                self.assertEqual(deployment["spec"]["replicas"], 1)
+                self.assertEqual(deployment["spec"]["strategy"]["type"], "Recreate")
+                pod = deployment["spec"]["template"]["spec"]
+                state = next(v for v in pod["volumes"] if v["name"] == "dev-data")
+                self.assertEqual(state, {"name": "dev-data", **({"persistentVolumeClaim": {"claimName": claim}} if claim else {"emptyDir": {}})})
+                sidecar = next(c for c in pod["containers"] if c["name"] == "durable-actors-dev")
+                self.assertIn({"name": "dev-data", "mountPath": "/data"}, sidecar["volumeMounts"])
+        for override, expected in (("runtime.durableActors.devRuntime.existingClaim=true", "must be a string"),
+                ("runtime.durableActors.devRuntime.existingClaim=../other", "must name a Kubernetes PVC"),
+                ("runtime.durableActors.devRuntime.existingClaim=state,runtime.durableActors.devRuntime.enabled=false", "requires devRuntime.enabled=true")):
+            with self.subTest(override=override):
+                result = subprocess.run(command + ["--set", override], cwd=ROOT, text=True, capture_output=True)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(expected, result.stderr)
+
     def candidate_fixture(self, root):
         spec = importlib.util.spec_from_file_location("candidate_test_helper", ROOT / "scripts/release/update-release-candidate.py")
         helper = importlib.util.module_from_spec(spec)
