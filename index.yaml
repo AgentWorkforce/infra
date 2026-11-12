@@ -1295,6 +1295,33 @@ entries:
       artifacthub.io/license: Apache-2.0
     apiVersion: v2
     appVersion: 0.1.0
+    created: "2026-11-12T15:17:01.285841109Z"
+    description: Self-hosted Agent Relay control-plane API for messaging and sessions
+    digest: 3ed8c46a1f3da14feb6f52105722f408b321b2492887224024dab5fbab7b00ec
+    home: https://github.com/AgentWorkforce/relay-control
+    keywords:
+    - agent-relay
+    - control-plane
+    - api
+    - self-hosted
+    kubeVersion: '>=1.28.0-0'
+    maintainers:
+    - name: AgentWorkforce
+      url: https://github.com/AgentWorkforce
+    name: relay-control
+    sources:
+    - https://github.com/AgentWorkforce/relay-control
+    type: application
+    urls:
+    - https://github.com/AgentWorkforce/infra/releases/download/relay-control-0.4.15/relay-control-0.4.15.tgz
+    version: 0.4.15
+  - annotations:
+      agentworkforce.dev/license-scope: First-party chart code only; dependencies
+        and images retain their own licenses.
+      agentworkforce.dev/min-helm-version: 3.10.0
+      artifacthub.io/license: Apache-2.0
+    apiVersion: v2
+    appVersion: 0.1.0
     created: "2026-11-11T10:19:26.905896362Z"
     description: Self-hosted Agent Relay control-plane API for messaging and sessions
     digest: 4921710ac12d8bcad92d34bf44ef65ef4bf9e9fc49b4796f1030d598408d9c81
@@ -3124,6 +3151,33 @@ entries:
       artifacthub.io/license: Apache-2.0
     apiVersion: v2
     appVersion: 0.1.0
+    created: "2026-11-12T15:17:01.424297385Z"
+    description: 'Read-only session API for the sessions pipeline (SERVICE=session-read-api):
+      list, turns, search and activity over the reader database role. Installs and
+      tests on its own; sessions-pipeline also carries it as a default-off dependency.
+      Hook-free. '
+    digest: 373481002c305a957c9f2747a6d430b983f377623ffe924a6361e70b0e7b4775
+    home: https://github.com/AgentWorkforce/relayhistory-pipeline
+    keywords:
+    - sessions-pipeline
+    - session-read-api
+    - agentworkforce
+    maintainers:
+    - name: AgentWorkforce
+      url: https://github.com/AgentWorkforce/infra
+    name: session-read-api
+    sources:
+    - https://github.com/AgentWorkforce/infra/tree/main/charts/session-read-api
+    type: application
+    urls:
+    - https://github.com/AgentWorkforce/infra/releases/download/session-read-api-0.2.12/session-read-api-0.2.12.tgz
+    version: 0.2.12
+  - annotations:
+      agentworkforce.dev/license-scope: First-party chart code only; dependencies
+        and images retain their own licenses.
+      artifacthub.io/license: Apache-2.0
+    apiVersion: v2
+    appVersion: 0.1.0
     created: "2026-11-12T05:59:12.249698609Z"
     description: 'Read-only session API for the sessions pipeline (SERVICE=session-read-api):
       list, turns, search and activity over the reader database role. Installs and
@@ -3443,6 +3497,65 @@ entries:
     - https://github.com/AgentWorkforce/infra/releases/download/session-read-api-0.1.0/session-read-api-0.1.0.tgz
     version: 0.1.0
   sessions-pipeline:
+  - annotations:
+      agentworkforce.dev/license-scope: First-party chart code only; dependencies
+        and images retain their own licenses.
+      artifacthub.io/license: Apache-2.0
+    apiVersion: v2
+    appVersion: 0.1.0
+    created: "2026-11-12T15:17:01.609591641Z"
+    dependencies:
+    - alias: worker
+      name: sessions-pipeline-worker
+      repository: file://../sessions-pipeline-worker
+      version: 0.7.8
+    - alias: alleyoop
+      name: session-ingest-api
+      repository: file://../session-ingest-api
+      version: 0.4.5
+    - alias: sessionReadApi
+      condition: sessionReadApi.enabled
+      name: session-read-api
+      repository: file://../session-read-api
+      version: 0.2.12
+    - alias: hoopdb
+      condition: hoopdb.enabled
+      name: cluster
+      repository: https://cloudnative-pg.github.io/charts
+      version: 0.9.0
+    - alias: session-object-storage
+      condition: session-object-storage.enabled
+      name: minio
+      repository: https://charts.min.io/
+      version: 5.4.0
+    - alias: otel
+      condition: otel.enabled
+      name: opentelemetry-collector
+      repository: https://open-telemetry.github.io/opentelemetry-helm-charts
+      version: 0.178.0
+    description: 'The sessions pipeline in one release: the sessions-pipeline-worker
+      and session-ingest-api app charts, plus optional Postgres (CloudNativePG Cluster),
+      session-object-storage (MinIO) and an OpenTelemetry collector. Hook-free, so
+      `helm install` and Alchemy''s `helm template --no-hooks` + server-side apply
+      behave the same. Requires the CloudNativePG operator when hoopdb.enabled (see
+      deps/PINS.md). '
+    digest: 39e857b6dcc7eb9c5a86d4c0e24e3f394b5ab9962db601f4e1074a035b55bf87
+    home: https://github.com/AgentWorkforce/sessions-pipeline
+    keywords:
+    - sessions-pipeline
+    - sessions
+    - pipeline
+    - agentworkforce
+    maintainers:
+    - name: AgentWorkforce
+      url: https://github.com/AgentWorkforce/infra
+    name: sessions-pipeline
+    sources:
+    - https://github.com/AgentWorkforce/infra/tree/main/charts/sessions-pipeline
+    type: application
+    urls:
+    - https://github.com/AgentWorkforce/infra/releases/download/sessions-pipeline-0.8.27/sessions-pipeline-0.8.27.tgz
+    version: 0.8.27
   - annotations:
       agentworkforce.dev/license-scope: First-party chart code only; dependencies
         and images retain their own licenses.
@@ -5751,4 +5864,4 @@ entries:
     urls:
     - https://github.com/AgentWorkforce/infra/releases/download/telemetry-collector-0.1.0/telemetry-collector-0.1.0.tgz
     version: 0.1.0
-generated: "2026-11-12T05:59:12.48319494Z"
+generated: "2026-11-12T15:17:01.610075605Z"
