@@ -44,9 +44,9 @@ API_CIDR="${BENCH_API_CIDR:-}"
 VPC_CIDR=10.91.0.0/16
 APP_TYPE="${BENCH_APP_TYPE:-m7i.2xlarge}"
 APP_NODES="${BENCH_APP_NODES:-3}"
-ACTOR_NODES="${BENCH_ACTOR_NODES:-3}"
+ACTOR_NODES="${BENCH_ACTOR_NODES:-0}"
 LOADGEN_TYPE="${BENCH_LOADGEN_TYPE:-c7i.4xlarge}"
-LOADGEN_NODES="${BENCH_LOADGEN_NODES:-3}"
+LOADGEN_NODES="${BENCH_LOADGEN_NODES:-2}"
 ACTOR_ZONE="${BENCH_ACTOR_ZONE:-${REGION}a}"
 DB_CLASS="${BENCH_DB_CLASS:-db.r7g.large}"
 DB_ENGINE_VERSION="${BENCH_DB_ENGINE_VERSION:-17}"
@@ -66,7 +66,9 @@ CP_ROLE="${NAME}-cp"
 STORAGE_ROLE="${NAME}-storage"
 DEPLOYER_ROLE="${NAME}-deployer"
 FILES_ROLE="${NAME}-files"
-ROLES=("$FILES_ROLE" "$DEPLOYER_ROLE" "$STORAGE_ROLE" "$CP_ROLE" "$NODE_ROLE" "$CLUSTER_ROLE")
+SESSIONS_ROLE="${NAME}-sessions"
+EBS_ROLE="${NAME}-ebs-csi"
+ROLES=("$EBS_ROLE" "$SESSIONS_ROLE" "$FILES_ROLE" "$DEPLOYER_ROLE" "$STORAGE_ROLE" "$CP_ROLE" "$NODE_ROLE" "$CLUSTER_ROLE")
 LAUNCH_TEMPLATE="${NAME}-nodes"
 TAG_SPEC_TAGS="{Key=${TAG_KEY},Value=${TAG_VAL}},{Key=Name,Value=${NAME}}"
 
@@ -93,8 +95,15 @@ ensure_role() {
   local role="$1" trust="$2"; shift 2
   if ! aws_ iam get-role --role-name "$role" >/dev/null 2>&1; then
     log "create role ${ROLE_PATH}${role}"
-    aws_ iam create-role --role-name "$role" --path "$ROLE_PATH" \
-      --tags "Key=${TAG_KEY},Value=${TAG_VAL}" --assume-role-policy-document "$trust" >/dev/null
+    # A trust policy naming a role created seconds earlier is refused
+    # (MalformedPolicyDocument) until IAM propagates it: retry.
+    local try err
+    for try in $(seq 1 12); do
+      if err="$(aws_ iam create-role --role-name "$role" --path "$ROLE_PATH" \
+          --tags "Key=${TAG_KEY},Value=${TAG_VAL}" --assume-role-policy-document "$trust" 2>&1 >/dev/null)"; then break; fi
+      grep -q MalformedPolicyDocument <<<"$err" && ((try < 12)) || { echo "$err" >&2; exit 1; }
+      sleep 5
+    done
   else
     role_owned "$role" || { echo "role $role exists without ${TAG_KEY}=${TAG_VAL}: refusing to change it" >&2; exit 1; }
     aws_ iam update-assume-role-policy --role-name "$role" --policy-document "$trust"
@@ -115,6 +124,8 @@ ensure_roles() {
     "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Principal\":{\"AWS\":\"${ROLE_ARN_PREFIX}${CP_ROLE}\"},\"Action\":[\"sts:AssumeRole\",\"sts:TagSession\"]}]}"
   ensure_role "$DEPLOYER_ROLE" "$(trust_service pods.eks.amazonaws.com "$pods")"
   ensure_role "$FILES_ROLE" "$(trust_service pods.eks.amazonaws.com "$pods")"
+  ensure_role "$SESSIONS_ROLE" "$(trust_service pods.eks.amazonaws.com "$pods")"
+  ensure_role "$EBS_ROLE" "$(trust_service pods.eks.amazonaws.com "$pods")" service-role/AmazonEBSCSIDriverPolicy
   local b="arn:aws:s3:::${BUCKET}"
   put_policy "$CP_ROLE" durable-actors \
     "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Action\":[\"s3:ListBucket\",\"s3:GetBucketLocation\"],\"Resource\":\"${b}\"},{\"Effect\":\"Allow\",\"Action\":[\"s3:GetObject\",\"s3:PutObject\"],\"Resource\":\"${b}/durable-actors/*\"},{\"Effect\":\"Allow\",\"Action\":[\"sts:AssumeRole\",\"sts:TagSession\"],\"Resource\":\"${ROLE_ARN_PREFIX}${STORAGE_ROLE}\"}]}"
@@ -124,6 +135,9 @@ ensure_roles() {
     "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Action\":[\"s3:GetObject\",\"s3:PutObject\"],\"Resource\":\"${b}/durable-actors/v3/artifacts/*\"}]}"
   put_policy "$FILES_ROLE" file-stores \
     "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Action\":[\"s3:ListBucket\",\"s3:GetBucketLocation\"],\"Resource\":\"${b}\"},{\"Effect\":\"Allow\",\"Action\":[\"s3:GetObject\",\"s3:PutObject\",\"s3:DeleteObject\",\"s3:AbortMultipartUpload\",\"s3:ListMultipartUploadParts\"],\"Resource\":[\"${b}/relaycast/*\",\"${b}/relayfile/*\"]}]}"
+  # Sessions pipeline locker (worker, ingest edge, read API, search indexer).
+  put_policy "$SESSIONS_ROLE" locker \
+    "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Action\":[\"s3:ListBucket\",\"s3:GetBucketLocation\"],\"Resource\":\"${b}\"},{\"Effect\":\"Allow\",\"Action\":[\"s3:GetObject\",\"s3:PutObject\",\"s3:DeleteObject\"],\"Resource\":\"${b}/96bulls/*\"}]}"
 }
 
 ensure_vpc() {
@@ -268,10 +282,26 @@ cmd_up() {
     --taints "key=bench/loadgen,value=true,effect=NO_SCHEDULE"
   ensure_addon coredns
   ensure_addon metrics-server
+  # EBS CSI (Relaycast's PVC on the Postgres backend). Volumes carry the bench
+  # tag so `down` can find ones left by the chart's keep policy.
+  ensure_addon aws-ebs-csi-driver \
+    --pod-identity-associations "serviceAccount=ebs-csi-controller-sa,roleArn=${ROLE_ARN_PREFIX}${EBS_ROLE}" \
+    --configuration-values "{\"controller\":{\"extraVolumeTags\":{\"${TAG_KEY}\":\"${TAG_VAL}\"}}}"
   log "waiting for node groups and RDS"
   for g in app actors loadgen; do aws_ eks wait nodegroup-active --cluster-name "$NAME" --nodegroup-name "$g"; done
   aws_ rds wait db-instance-available --db-instance-identifier "$DB_ID"
   kubeconfig
+  kubectl apply -f - >/dev/null <<EOF
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: gp3
+  annotations: {storageclass.kubernetes.io/is-default-class: "true"}
+provisioner: ebs.csi.aws.com
+parameters: {type: gp3, encrypted: "true"}
+reclaimPolicy: Delete
+volumeBindingMode: WaitForFirstConsumer
+EOF
   kubectl get nodes -L bench/role,topology.kubernetes.io/zone,node.kubernetes.io/instance-type
   cmd_status
 }
@@ -285,8 +315,8 @@ cmd_scale() {
 
 cmd_assoc() {
   local ns="${1:?namespace}" sa="${2:?serviceaccount}" kind="${3:?cp|deployer|files}" role
-  case "$kind" in cp) role="$CP_ROLE" ;; deployer) role="$DEPLOYER_ROLE" ;; files) role="$FILES_ROLE" ;;
-    *) echo "role kind must be cp, deployer or files" >&2; exit 2 ;; esac
+  case "$kind" in cp) role="$CP_ROLE" ;; deployer) role="$DEPLOYER_ROLE" ;; files) role="$FILES_ROLE" ;; sessions) role="$SESSIONS_ROLE" ;;
+    *) echo "role kind must be cp, deployer, files or sessions" >&2; exit 2 ;; esac
   local want="${ROLE_ARN_PREFIX}${role}" id
   id="$(aws_ eks list-pod-identity-associations --cluster-name "$NAME" --namespace "$ns" \
     --service-account "$sa" --query 'associations[0].associationId' --output text | none_empty)"
@@ -346,6 +376,10 @@ cmd_down() {
     done
     aws_ eks wait cluster-deleted --name "$NAME"; deleted "eks-cluster $NAME"
   fi
+  # Volumes kept by helm.sh/resource-policy: keep (relaycast-data) outlive the cluster.
+  for id in $(aws_ ec2 describe-volumes --filters "Name=tag:${TAG_KEY},Values=${TAG_VAL}" "Name=status,Values=available" --query 'Volumes[].VolumeId' --output text); do
+    aws_ ec2 delete-volume --volume-id "$id"; deleted "ebs-volume $id"
+  done
   if aws_ rds describe-db-instances --db-instance-identifier "$DB_ID" >/dev/null 2>&1; then
     log "delete RDS $DB_ID (no final snapshot: benchmark data only)"
     aws_ rds delete-db-instance --db-instance-identifier "$DB_ID" --skip-final-snapshot --delete-automated-backups >/dev/null
