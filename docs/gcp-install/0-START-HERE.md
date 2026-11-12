@@ -30,14 +30,21 @@ storage while pulling the images.
 ## 1. Get the files
 
 ```sh
-git clone <this gist's clone URL> agent-relay-install
-cd agent-relay-install
+mkdir agent-relay-install && cd agent-relay-install
 git clone https://github.com/AgentWorkforce/infra.git
+# This guide's files (values.yaml and the scripts) come from main: the release
+# tag predates them. Terraform and the chart come from the tag below.
+git -C infra archive origin/main docs/gcp-install | tar -x --strip-components=2
+ls 0-START-HERE.md values.yaml cloud-sql-setup.sh helm-secrets-prepare.sh add-user.sh >/dev/null && echo "guide ok"
 git -C infra checkout agent-relay-2026.11.1
 test "$(git -C infra rev-parse HEAD)" = c6087c2fc6daee5359900b18da78c2522ffd1526 && echo "release ok"
 mkdir release && gh release download agent-relay-2026.11.1 -R AgentWorkforce/infra -D release
 (cd release && sha256sum -c SHA256SUMS && tar -xzf agent-relay-0.6.53.tgz) | tail -1
 ```
+
+**Got this guide as a gist?** Replace the first and fourth lines with
+`git clone <gist clone URL> agent-relay-install && cd agent-relay-install`;
+the gist already holds the guide's files.
 
 No `gh`? Download the same assets from
 https://github.com/AgentWorkforce/infra/releases/tag/agent-relay-2026.11.1 into
@@ -48,7 +55,7 @@ OpenTofu), `helm` 3, `kubectl`, `jq`, `yq`, `openssl`, and
 [`crane`](https://github.com/google/go-containerregistry/releases) for step 5.
 Cloud Shell has everything except `crane` and Terraform ≥ 1.11.
 
-**Done when:** `release ok`, then `release-notes.md: OK` (the last checksum line).
+**Done when:** `guide ok`, `release ok`, then `release-notes.md: OK` (the last checksum line).
 
 ## 2. Connect to Google Cloud and the cluster
 
