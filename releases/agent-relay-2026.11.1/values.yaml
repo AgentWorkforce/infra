@@ -48,7 +48,7 @@ sessions-pipeline:
 relay-control:
   image:
     repository: ghcr.io/agentworkforce/relay-control
-    digest: sha256:7eaee303a9da600a55014d221f55e52b1d51d12df9af5ea1e2fc3d880576f6f8
+    digest: sha256:ed179628b6c04e9721620fd0c31648aa50d1c72d65c3fdda4b5473e9194d8e7c
 relay-webapp:
   image:
     repository: ghcr.io/agentworkforce/relay-webapp
