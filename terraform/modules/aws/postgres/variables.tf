@@ -1,3 +1,10 @@
+variable "enabled" {
+  description = "Create the database. false creates no AWS resource (for a stack whose database lives elsewhere) and every connection output is null. Default true; turning it off on an existing database plans its destruction, which deletion_protection refuses."
+  type        = bool
+  default     = true
+  nullable    = false
+}
+
 variable "name" {
   description = "Identifier for the instance or cluster and the prefix for its subnet and parameter groups. Lowercase letters, digits and hyphens."
   type        = string
@@ -38,11 +45,11 @@ variable "db_subnet_group_name" {
 }
 
 variable "vpc_security_group_ids" {
-  description = "Existing security groups for the database. Allow TCP 5432 only from the cluster nodes or pods that run agent-relay. The module never opens anything."
+  description = "Existing security groups for the database. Allow TCP 5432 only from the cluster nodes or pods that run agent-relay. The module never opens anything. Required when enabled; may be empty when enabled = false."
   type        = list(string)
 
   validation {
-    condition     = length(var.vpc_security_group_ids) > 0
+    condition     = !var.enabled || length(var.vpc_security_group_ids) > 0
     error_message = "Pass at least one security group; the module creates none."
   }
 }
