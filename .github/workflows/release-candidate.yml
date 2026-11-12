@@ -163,11 +163,13 @@ jobs:
               echo "::error::A printable single-line 10-200 character override_reason is required."
               exit 1
             fi
-            can_push="$(gh api \
+            repository_permission="$(gh api \
               "repos/$GITHUB_REPOSITORY/collaborators/$GITHUB_ACTOR/permission" \
-              --jq '.user.permissions.push // false')"
-            [[ "$can_push" == "true" ]] \
-              || { echo "::error::FROZEN override requires an approver with repository push permission."; exit 1; }
+              --jq '.permission // "none"')"
+            case "$repository_permission" in
+              admin|write) ;;
+              *) echo "::error::FROZEN override requires an approver with repository push permission."; exit 1 ;;
+            esac
             allow_frozen=true
             echo "::notice::FROZEN candidate override by ${GITHUB_ACTOR}: ${OVERRIDE_REASON}"
             printf 'FROZEN candidate override by `%s`: %s\n' \

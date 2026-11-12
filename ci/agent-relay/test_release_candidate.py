@@ -193,6 +193,15 @@ class ReleaseCandidateTest(unittest.TestCase):
                 MODULE.update(
                     root, "2026.11.1", "relay-control", DIGEST_B, SHA_B
                 )
+            for line_ending in (
+                b"qualified-candidate/v1\r\n",
+                b"qualified-candidate/v1\r",
+            ):
+                marker.write_bytes(line_ending)
+                with self.assertRaisesRegex(ValueError, "malformed FROZEN"):
+                    MODULE.update(
+                        root, "2026.11.1", "relay-control", DIGEST_B, SHA_B
+                    )
             marker.unlink()
             marker.symlink_to(output / "pins.json")
             with self.assertRaisesRegex(ValueError, "regular file"):
@@ -358,6 +367,8 @@ class ReleaseCandidateTest(unittest.TestCase):
         self.assertIn("override_reason:", workflow)
         self.assertIn("repository_dispatch cannot overwrite it", workflow)
         self.assertIn("collaborators/$GITHUB_ACTOR/permission", workflow)
+        self.assertIn("--jq '.permission // \"none\"'", workflow)
+        self.assertIn("admin|write)", workflow)
         self.assertIn("FROZEN override requires an approver", workflow)
         self.assertIn("update_args+=(--allow-frozen)", workflow)
         marker = ROOT / "releases/agent-relay-2026.11.1/FROZEN"
