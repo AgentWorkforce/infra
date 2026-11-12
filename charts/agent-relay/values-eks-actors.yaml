@@ -103,6 +103,13 @@ relaycast:
   credentials:
     format: ar
     authority: self
+  # This profile replaces Relaycast's PostgreSQL backend. Clear any RDS CA
+  # source inherited when it is layered after values-eks-rds-native.yaml;
+  # Control and Sessions continue to use their RDS settings independently.
+  postgresCa:
+    enabled: false
+    configMap: ""
+    secret: ""
   runtime:
     backend: durable-actors
     durableActors:
