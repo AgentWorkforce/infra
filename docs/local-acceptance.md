@@ -131,7 +131,10 @@ dispatch). It checks out `main` as the trusted verifier and the candidate head
 in a separate directory as data. It publishes a custom `acceptance` check on
 that exact candidate commit; the tag gate accepts only that check and verifies
 that its backing Actions run used the main-defined workflow. A PR-ref workflow
-must never be admitted to the protected runner group.
+must never be admitted to the protected runner group. Acceptance requests for
+one candidate PR are queued without canceling the active run. A delayed request
+for an older head therefore fails its immutable-head check without evicting
+qualification already running for the current head.
 
 Candidate automation merges the current `main` into the release branch before
 requesting acceptance, and qualification refuses a head that does not contain

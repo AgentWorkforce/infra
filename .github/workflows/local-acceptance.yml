@@ -25,7 +25,9 @@ permissions:
 
 concurrency:
   group: local-acceptance-${{ github.event.client_payload.pr_number || inputs.pr_number }}
-  cancel-in-progress: true
+  # Keep requests ordered. A delayed event for an older head must not cancel
+  # qualification already running for the current candidate head.
+  cancel-in-progress: false
 
 jobs:
   qualification:

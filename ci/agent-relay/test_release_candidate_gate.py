@@ -353,6 +353,8 @@ class ReleaseCandidateGateTest(unittest.TestCase):
         self.assertIn("repository_dispatch:", acceptance)
         self.assertIn("workflow_dispatch:", acceptance)
         self.assertNotIn("pull_request:", acceptance)
+        self.assertIn("cancel-in-progress: false", acceptance)
+        self.assertNotIn("cancel-in-progress: true", acceptance)
         self.assertIn("Check out the trusted verifier from main", acceptance)
         self.assertIn("Check out the candidate head as data", acceptance)
         self.assertIn('"diff", "--name-status", "-z", "--find-renames"', acceptance)
