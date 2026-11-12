@@ -35,6 +35,9 @@ also contains the local collector/proxy overrides.
 profile uses the supported single-process Terse dev sidecar, rather than the
 cloud sandbox control-plane chart (`components.durableActors` stays off).
 The sidecar's `/data` uses a local PVC and survives pod replacements.
+The local actor budget is 2 GiB for the dev sidecar and 1 GiB for the gateway,
+matching the isolated benchmark fixture. Docker's own memory ceiling still
+applies across the full stack; these are container limits, not reservations.
 
 `relaycast-actors-source.json` pins upstream durable-actors commit
 `5f0a2d62ed08e3060befd9b009333e1f0c3c6cd8` (SDK 0.14.6) and matching Relaycast

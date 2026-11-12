@@ -337,10 +337,13 @@ GRANT TEMP ON DATABASE relaycast TO relaycast_owner;""")
         if CAST_BACKEND == "durable-actors":
             repository, tag = ACTORS["actorTag"].rsplit(":", 1)
             cast["runtime"]["durableActors"] = {
-                "gateway": {"image": image(CAST)}, "fileStore": {"driver": "local"},
+                "gateway": {"image": image(CAST),
+                    "resources": {"requests": {"cpu": "100m", "memory": "128Mi"}, "limits": {"memory": "1Gi"}}},
+                "fileStore": {"driver": "local"},
                 "deployer": {"enabled": False},
                 "devRuntime": {"enabled": True, "acknowledgeNonProduction": True,
-                    "existingClaim": "local-relaycast-actors", "image": {"repository": repository, "tag": tag, "pullPolicy": "Never"}}}
+                    "existingClaim": "local-relaycast-actors", "image": {"repository": repository, "tag": tag, "pullPolicy": "Never"},
+                    "resources": {"requests": {"cpu": "100m", "memory": "256Mi"}, "limits": {"memory": "2Gi"}}}}
             cast["credentials"] = {"format": "ar", "authority": "self"}
             cast["secretKeys"].update(credentialKeyring="credential-keyring", workspaceBootstrapSecret="workspace-bootstrap-secret")
             cast["analytics"] = {"enabled": False}
