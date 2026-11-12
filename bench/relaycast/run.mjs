@@ -244,7 +244,18 @@ report.slo = {maximumErrorFraction: .01, minimumAchievedFraction: .95, maximumP9
   maximumDrainSeconds: 5, maximumGeneratorLoopP99Ms: 25, maximumGeneratorScheduleLagMs: 100, maximumGeneratorDrops: 0};
 try {
   await setup();report.actorMessageRoundTrip = true;
-  for (const input of config.plan.steps) {report.steps.push(await step(input));await delay(10000);}
+  for (const input of config.plan.steps) {
+    const result = await step(input);report.steps.push(result);
+    console.log(JSON.stringify({event: 'step_finished', requestedRps: result.requestedGlobalRps,
+      supportedRps: result.offeredSupportedRps, achievedRps: result.achievedRps, p95Ms: result.latencyMs.p95,
+      errorFraction: result.errorFraction, limitSignal: result.limitSignal}));
+    await delay(10000);
+  }
+  try {
+    const w = workspaces[0], text = 'postload-' + randomUUID();
+    await required('POST', '/v1/channels/general/messages', w.agents[0].token, {text});
+    report.postLoadMessageRoundTrip = JSON.stringify(await required('GET', '/v1/channels/general/messages', w.agents[1].token)).includes(text);
+  } catch {report.postLoadMessageRoundTrip = false;}
   report.status = 'measured';
 } catch (error) {
   report.failure = 'fixture_or_generator_failed';
