@@ -595,6 +595,46 @@
      "action": "profile:150"
     }
    ]
+  },
+  {
+   "name": "channel-100-hi",
+   "sinks": 2,
+   "producers": 2,
+   "notes": "channel-100 fixture, steps 20/50/100 posts/s run unconditionally (no break stop) to see how a step past the gate degrades.",
+   "fixture": {
+    "RCB_WORKSPACES": 1,
+    "RCB_PRODUCERS": 20,
+    "RCB_RECEIVERS": 80,
+    "RCB_CHANNELS": 5,
+    "RCB_CHANNEL_MEMBERS": 20,
+    "RCB_AGENTS_PER_NODE": 1
+   },
+   "phases": [
+    {
+     "label": "ch100h-20",
+     "kind": "channel",
+     "rate": 20,
+     "durationS": 180,
+     "sizeBytes": 512,
+     "drainS": 120
+    },
+    {
+     "label": "ch100h-50",
+     "kind": "channel",
+     "rate": 50,
+     "durationS": 180,
+     "sizeBytes": 512,
+     "drainS": 120
+    },
+    {
+     "label": "ch100h-100",
+     "kind": "channel",
+     "rate": 100,
+     "durationS": 180,
+     "sizeBytes": 512,
+     "drainS": 120
+    }
+   ]
   }
  ]
 }
