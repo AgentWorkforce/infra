@@ -8,5 +8,5 @@ It is ready only when /healthz reports enabled:true. Expose /v1/ only through yo
 {{- end -}}
 {{- if $deprecated }}
 
-DEPRECATION: {{ join ", " $deprecated }} in extraEnv was normalized to its structured sessionReadApi value and the duplicate was dropped. Remove the legacy extraEnv entry before the next release.
+DEPRECATION: {{ join ", " $deprecated }} in extraEnv was normalized and the duplicate was dropped. Before removing the legacy entry, preserve it with timing.assumeNoTurns=true for READ_API_TIMING_ASSUME_NO_TURNS or canonical.pinLaggingPointer=true for READ_API_CANONICAL_PIN_LAGGING_POINTER.
 {{- end }}

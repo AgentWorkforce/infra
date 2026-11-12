@@ -13,7 +13,7 @@ API, Relaycast and Relay History health endpoints before onboarding clients.
 {{- end -}}
 {{- if $deprecatedReadEnv }}
 
-DEPRECATION: {{ join ", " $deprecatedReadEnv }} in sessions-pipeline.sessionReadApi.extraEnv was normalized to its structured value and the duplicate was dropped. Remove the legacy extraEnv entry before the next release.
+DEPRECATION: {{ join ", " $deprecatedReadEnv }} in sessions-pipeline.sessionReadApi.extraEnv was normalized and the duplicate was dropped. Before removing the legacy entry, preserve it with sessions-pipeline.sessionReadApi.timing.assumeNoTurns=true for READ_API_TIMING_ASSUME_NO_TURNS or sessions-pipeline.sessionReadApi.canonical.pinLaggingPointer=true for READ_API_CANONICAL_PIN_LAGGING_POINTER.
 {{- end }}
 {{- if and (dig "durableActors" false (.Values.components | default dict)) (eq (dig "storage" "provider" "gcs" $da) "s3") (eq (dig "storage" "s3" "actorCredentials" "" $da) "control-plane") }}
 

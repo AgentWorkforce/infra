@@ -10,7 +10,7 @@ One sessions-pipeline release per namespace: dependency objects use fixed names
 {{- end -}}
 {{- if $deprecatedReadEnv }}
 
-DEPRECATION: {{ join ", " $deprecatedReadEnv }} in sessionReadApi.extraEnv was normalized to its structured value and the duplicate was dropped. Remove the legacy extraEnv entry before the next release.
+DEPRECATION: {{ join ", " $deprecatedReadEnv }} in sessionReadApi.extraEnv was normalized and the duplicate was dropped. Before removing the legacy entry, preserve it with sessionReadApi.timing.assumeNoTurns=true for READ_API_TIMING_ASSUME_NO_TURNS or sessionReadApi.canonical.pinLaggingPointer=true for READ_API_CANONICAL_PIN_LAGGING_POINTER.
 {{- end }}
 {{- if .Values.hoopdb.enabled }}
 

@@ -157,6 +157,8 @@ class ReadApi(unittest.TestCase):
         self.assertEqual(umbrella_notes.returncode, 0, umbrella_notes.stderr)
         self.assertIn("DEPRECATION:", umbrella_notes.stdout)
         self.assertIn("sessions-pipeline.sessionReadApi.extraEnv", umbrella_notes.stdout)
+        self.assertIn("sessions-pipeline.sessionReadApi.timing.assumeNoTurns=true", umbrella_notes.stdout)
+        self.assertIn("sessions-pipeline.sessionReadApi.canonical.pinLaggingPointer=true", umbrella_notes.stdout)
 
         legacy = yaml.safe_load(LEGACY_READ_ASSUMPTIONS.read_text())["sessions-pipeline"]["sessionReadApi"]
         with tempfile.TemporaryDirectory(prefix="read-api-notes-") as directory:
@@ -184,9 +186,13 @@ class ReadApi(unittest.TestCase):
         self.assertEqual(pipeline_notes.returncode, 0, pipeline_notes.stderr)
         self.assertIn("DEPRECATION:", pipeline_notes.stdout)
         self.assertIn("sessionReadApi.extraEnv", pipeline_notes.stdout)
+        self.assertIn("sessionReadApi.timing.assumeNoTurns=true", pipeline_notes.stdout)
+        self.assertIn("sessionReadApi.canonical.pinLaggingPointer=true", pipeline_notes.stdout)
         self.assertEqual(leaf_notes.returncode, 0, leaf_notes.stderr)
         self.assertIn("DEPRECATION:", leaf_notes.stdout)
         self.assertIn("duplicate was dropped", leaf_notes.stdout)
+        self.assertIn("timing.assumeNoTurns=true", leaf_notes.stdout)
+        self.assertIn("canonical.pinLaggingPointer=true", leaf_notes.stdout)
 
     def test_legacy_read_assumptions_accept_redundancy_but_refuse_conflicts(self):
         names = {
