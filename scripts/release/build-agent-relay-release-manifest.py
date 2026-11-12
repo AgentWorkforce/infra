@@ -15,6 +15,7 @@ from typing import NoReturn
 SEMVER = re.compile(r"^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$")
 DIGEST = re.compile(r"^sha256:[a-f0-9]{64}$")
 COMMIT = re.compile(r"^[a-f0-9]{40}$")
+RUN_ID = re.compile(r"^[1-9][0-9]{0,19}$")
 CHART_PATH = re.compile(r"^[A-Za-z0-9._/-]+$")
 VALUES_OVERLAY = "release-images.values.yaml"
 VALUES_OVERLAY_PROFILES = {"gcp", "eks"}
@@ -117,6 +118,8 @@ def apply_candidate_pins(
         if component not in RELEASE_CANDIDATE_COMPONENTS or not isinstance(pin, dict):
             fail(f"{path}: unsupported release candidate component: {component}")
         expected = {"repository", "digest", "sourceRepository", "sourceRevision"}
+        if component == "sessions-pipeline":
+            expected.add("publishRunId")
         if set(pin) != expected:
             fail(f"{path}: malformed release candidate pin: {component}")
         image_repository, source_repository = RELEASE_CANDIDATE_COMPONENTS[component]
@@ -126,6 +129,12 @@ def apply_candidate_pins(
             fail(f"{path}: release candidate source repository drift: {component}")
         if not COMMIT.fullmatch(pin["sourceRevision"]):
             fail(f"{path}: invalid release candidate source revision: {component}")
+        if component == "sessions-pipeline" and (
+            not isinstance(pin["publishRunId"], int)
+            or isinstance(pin["publishRunId"], bool)
+            or not RUN_ID.fullmatch(str(pin["publishRunId"]))
+        ):
+            fail(f"{path}: invalid sessions-pipeline publish run id")
         ref = normalized_digest_ref(f"{pin['repository']}@{pin['digest']}")
         inventory = {
             existing_ref: entry

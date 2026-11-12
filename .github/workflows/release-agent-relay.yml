@@ -56,6 +56,11 @@ jobs:
         with:
           version: ${{ env.HELM_VERSION }}
 
+      - name: Install Cosign for Sessions provenance
+        uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
+        with:
+          cosign-release: v3.1.4
+
       - name: Validate release tag and commit
         id: release
         shell: bash
@@ -145,21 +150,36 @@ jobs:
             python3 scripts/release/update-release-candidate.py check-policy \
               "${policy_args[@]}"
 
-            attestation="$RUNNER_TEMP/${component}-verified-attestation.json"
-            gh attestation verify "oci://${repository}@${digest}" \
-              --repo "$source_repository" \
-              --signer-workflow "$source_repository/$signer_workflow" \
-              --source-digest "$source_sha" \
-              --source-ref refs/heads/main \
-              --format json > "$attestation"
-            jq -e \
-              --arg repository "https://github.com/$source_repository" \
-              --arg workflow "$signer_workflow" '
-                length > 0 and all(.[].verificationResult.statement.predicate;
-                  .buildDefinition.externalParameters.workflow.repository == $repository and
-                  .buildDefinition.externalParameters.workflow.path == $workflow and
-                  .buildDefinition.externalParameters.workflow.ref == "refs/heads/main")
-              ' "$attestation" >/dev/null
+            if [[ "$component" == "sessions-pipeline" ]]; then
+              publish_run_id="$(jq -er '.publishRunId' <<<"$pin")"
+              receipt_dir="$RUNNER_TEMP/${component}-release-receipt"
+              mkdir "$receipt_dir"
+              gh run download "$publish_run_id" \
+                --repo AgentWorkforce/relayhistory-pipeline \
+                --name release-receipt \
+                --dir "$receipt_dir"
+              python3 scripts/release/verify-sessions-pipeline-sigstore.py \
+                --receipt-dir "$receipt_dir" \
+                --digest "$digest" \
+                --source-sha "$source_sha" \
+                --publish-run-id "$publish_run_id"
+            else
+              attestation="$RUNNER_TEMP/${component}-verified-attestation.json"
+              gh attestation verify "oci://${repository}@${digest}" \
+                --repo "$source_repository" \
+                --signer-workflow "$source_repository/$signer_workflow" \
+                --source-digest "$source_sha" \
+                --source-ref refs/heads/main \
+                --format json > "$attestation"
+              jq -e \
+                --arg repository "https://github.com/$source_repository" \
+                --arg workflow "$signer_workflow" '
+                  length > 0 and all(.[].verificationResult.statement.predicate;
+                    .buildDefinition.externalParameters.workflow.repository == $repository and
+                    .buildDefinition.externalParameters.workflow.path == $workflow and
+                    .buildDefinition.externalParameters.workflow.ref == "refs/heads/main")
+                ' "$attestation" >/dev/null
+            fi
           done
 
       - name: Add locked dependency repositories
@@ -219,6 +239,16 @@ jobs:
           [[ -f "$candidate_pins" && -f "$candidate_values" ]] \
             || { echo "::error::The tagged release has no candidate pins and values."; exit 1; }
           cp "$candidate_pins" .release/candidate-pins.json
+          receipt_dir="$RUNNER_TEMP/sessions-pipeline-release-receipt"
+          for receipt_file in \
+            release-receipt.json \
+            services-index.json \
+            build-provenance.sigstore.json \
+            reviewed-source.sigstore.json; do
+            [[ -f "$receipt_dir/$receipt_file" && ! -L "$receipt_dir/$receipt_file" ]] \
+              || { echo "::error::Verified Sessions receipt file is unavailable: $receipt_file"; exit 1; }
+            cp "$receipt_dir/$receipt_file" ".release/$receipt_file"
+          done
 
           helm template "$CHART_NAME" "$CHART_DIR" \
             -f "$CHART_DIR/values-gcp.yaml" \
@@ -265,6 +295,7 @@ jobs:
             printf 'Immutable chart and customer image pull manifest for infra commit `%s`.\n' "$GITHUB_SHA"
             printf '\nThe customer-neutral AWS install pack contains `values.yaml`, `overlay.yaml`, the accepted image/provenance pins, and an inner `SHA256SUMS`. Apply the release image overlay last after mirroring its immutable digests.\n'
             printf '\nThe customer profiles apply the ruleset-10 reader-first phase. Existing installs must verify every Sessions workload before a separate revision adds `values-scrub-wasm-bindgen.yaml`; fresh empty installs may apply that overlay at install time.\n'
+            printf '\nThe four Sessions provenance receipt files are retained as release assets after their source workflow artifact expires.\n'
           } > .release/release-notes.md
 
           (
@@ -273,6 +304,10 @@ jobs:
               "${CHART_NAME}-${CHART_VERSION}.tgz" \
               "agent-relay-${VERSION}-install-pack.tar.gz" \
               candidate-pins.json \
+              release-receipt.json \
+              services-index.json \
+              build-provenance.sigstore.json \
+              reviewed-source.sigstore.json \
               release-manifest.json \
               release-images.values.yaml \
               release-notes.md \
@@ -290,6 +325,10 @@ jobs:
             ${{ steps.package.outputs.path }}
             ${{ steps.package.outputs.install_pack }}
             .release/candidate-pins.json
+            .release/release-receipt.json
+            .release/services-index.json
+            .release/build-provenance.sigstore.json
+            .release/reviewed-source.sigstore.json
             .release/release-manifest.json
             .release/release-images.values.yaml
             .release/release-notes.md
@@ -311,6 +350,10 @@ jobs:
           subject-path: |
             .release/release-manifest.json
             .release/candidate-pins.json
+            .release/release-receipt.json
+            .release/services-index.json
+            .release/build-provenance.sigstore.json
+            .release/reviewed-source.sigstore.json
             .release/release-images.values.yaml
             ${{ steps.package.outputs.install_pack }}
             .release/SHA256SUMS
@@ -398,6 +441,10 @@ jobs:
             "${{ steps.package.outputs.path }}"
             "${{ steps.package.outputs.install_pack }}"
             .release/candidate-pins.json
+            .release/release-receipt.json
+            .release/services-index.json
+            .release/build-provenance.sigstore.json
+            .release/reviewed-source.sigstore.json
             .release/release-manifest.json
             .release/release-images.values.yaml
             .release/SHA256SUMS
