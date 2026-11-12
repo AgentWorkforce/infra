@@ -26,6 +26,12 @@ locals {
   tfvars_arn       = "${local.arn}:ssm:${local.region}:${local.account}:parameter${var.tfvars_parameter_name}"
   public_params    = "${local.arn}:ssm:${local.region}::parameter/aws/service/*"
 
+  pinned_claims = {
+    repository_id    = var.repository_id
+    ref              = "refs/heads/${var.branch}"
+    job_workflow_ref = "${var.workflow}@refs/heads/${var.branch}"
+  }
+
   subjects = {
     plan  = "${var.oidc_subject_prefix}:ref:refs/heads/${var.branch}"
     apply = "${var.oidc_subject_prefix}:environment:${var.apply_environment}"
@@ -33,11 +39,11 @@ locals {
   tags = merge(var.tags, { "agent-relay/component" = "ci-terraform" })
 }
 
-# ---- Trust: aud and sub only, the GitHub claims AWS evaluates (ref, repository_id and job_workflow_ref are
-# not condition keys). The repository's sub template carries its immutable owner and repository IDs.
-# plan: jobs on branch. apply: jobs in apply_environment. GitHub environments for private repositories on the
-# free plan have no reviewers, but they do have a deployment-branch policy: set apply_environment to deploy
-# from branch only, and use it for this workflow alone, so its sub names this workflow's apply job and nothing else.
+# ---- Trust. aud and sub always. With pin_github_claims (default) also the GitHub claims AWS STS evaluates as
+# condition keys (IAM User Guide, "Available keys for AWS OIDC federation", GitHub): repository_id, ref and
+# job_workflow_ref (this workflow file at branch) for both roles, and environment for apply. pin_github_claims =
+# false is the fallback if STS refuses them: sub alone still names the branch (plan) or the dedicated
+# apply environment, which deploys from branch only.
 
 data "aws_iam_policy_document" "trust" {
   for_each = local.subjects
@@ -56,6 +62,14 @@ data "aws_iam_policy_document" "trust" {
       test     = "StringEquals"
       variable = "token.actions.githubusercontent.com:sub"
       values   = [each.value]
+    }
+    dynamic "condition" {
+      for_each = var.pin_github_claims ? merge(local.pinned_claims, each.key == "apply" ? { environment = var.apply_environment } : {}) : {}
+      content {
+        test     = "StringEquals"
+        variable = "token.actions.githubusercontent.com:${condition.key}"
+        values   = [condition.value]
+      }
     }
   }
 }

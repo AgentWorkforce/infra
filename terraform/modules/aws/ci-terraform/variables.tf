@@ -17,8 +17,23 @@ variable "oidc_subject_prefix" {
   type        = string
 }
 
+variable "repository_id" {
+  description = "Numeric GitHub repository ID of the caller (the repository_id claim)."
+  type        = string
+  validation {
+    condition     = can(regex("^[0-9]+$", var.repository_id))
+    error_message = "repository_id: the numeric GitHub repository ID."
+  }
+}
+
+variable "pin_github_claims" {
+  description = "Also require repository_id, ref, job_workflow_ref (and environment for apply) in the trust policies. false: aud and sub only (the fallback if STS refuses these claims)."
+  type        = bool
+  default     = true
+}
+
 variable "workflow" {
-  description = "Caller workflow file, owner/repo/.github/workflows/<file>.yml. Recorded in the role descriptions; trust itself is the sub claim (see apply_environment)."
+  description = "Caller workflow file, owner/repo/.github/workflows/<file>.yml. Both roles trust only its jobs on branch (job_workflow_ref, with pin_github_claims)."
   type        = string
   validation {
     condition     = can(regex("^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/\\.github/workflows/[A-Za-z0-9_.-]+\\.ya?ml$", var.workflow))

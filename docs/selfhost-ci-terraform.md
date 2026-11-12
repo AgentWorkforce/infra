@@ -91,8 +91,10 @@ password and the witness key stays in Secrets Manager. The roles are denied `sec
 ## Roles
 
 See the [module README](../terraform/modules/aws/ci-terraform/README.md). In short, trust is `aud` and `sub`
-(the only GitHub claims AWS evaluates). plan trusts `main`. apply trusts a GitHub environment that only this
-workflow uses and that deploys only from `main`. plan can read the state, take the lock and save its plan, and
+plus the GitHub claims STS evaluates: `repository_id`, `ref`, `job_workflow_ref` (the caller workflow at
+`main`) and, for apply, `environment`. plan trusts `main`. apply trusts a GitHub environment that only this
+workflow uses and that deploys only from `main`. The first plan dispatch proves the trust; if STS refuses the
+extra claims, set `pin_github_claims = false` (aud and sub only). plan can read the state, take the lock and save its plan, and
 is explicitly denied writing the state. apply can write the state and resources named
 `<name_prefix>-<environment>-*`.
 
@@ -134,6 +136,7 @@ owner's explicit approval of a named plan SHA-256; it never follows a plan autom
 
 1. Apply the module (the roles) for the account. That is an IAM change outside this CI and needs its own
    reviewed apply. Create the apply GitHub environment with deployment branches limited to `main`.
+   The first plan dispatch is also the proof that STS accepts the pinned claims.
 2. Put the tfvars parameter.
 3. Dispatch `plan`. Review the summary: the resource list, the plan SHA-256 and the tfvars version.
 4. Dispatch `apply` with that plan run id and SHA-256 after explicit approval.

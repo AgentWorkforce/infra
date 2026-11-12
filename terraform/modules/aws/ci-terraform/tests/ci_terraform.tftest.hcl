@@ -23,6 +23,7 @@ variables {
   name                     = "env-data"
   github_oidc_provider_arn = "arn:aws:iam::111111111111:oidc-provider/token.actions.githubusercontent.com"
   oidc_subject_prefix      = "repo:example@1/ops@2"
+  repository_id            = "2"
   workflow                 = "example/ops/.github/workflows/env-data.yml"
   apply_environment        = "env-prod"
   state = {
@@ -119,18 +120,39 @@ run "trust" {
   command = plan
 
   assert {
-    condition     = local.subjects.plan == "repo:example@1/ops@2:ref:refs/heads/main"
-    error_message = "plan trusts the main branch."
+    condition     = local.subjects.plan == "repo:example@1/ops@2:ref:refs/heads/main" && local.subjects.apply == "repo:example@1/ops@2:environment:env-prod"
+    error_message = "plan trusts main; apply trusts the approval environment."
   }
   assert {
-    condition     = local.subjects.apply == "repo:example@1/ops@2:environment:env-prod"
-    error_message = "apply trusts the approval environment."
+    condition = {
+      for c in one(data.aws_iam_policy_document.trust["plan"].statement).condition : trimprefix(c.variable, "token.actions.githubusercontent.com:") => one(c.values)
+      } == {
+      aud              = "sts.amazonaws.com", sub = "repo:example@1/ops@2:ref:refs/heads/main", repository_id = "2", ref = "refs/heads/main",
+      job_workflow_ref = "example/ops/.github/workflows/env-data.yml@refs/heads/main"
+    }
+    error_message = "plan pins repository_id, ref and job_workflow_ref on top of aud and sub."
+  }
+  assert {
+    condition = {
+      for c in one(data.aws_iam_policy_document.trust["apply"].statement).condition : trimprefix(c.variable, "token.actions.githubusercontent.com:") => one(c.values)
+      } == {
+      aud              = "sts.amazonaws.com", sub = "repo:example@1/ops@2:environment:env-prod", repository_id = "2", ref = "refs/heads/main",
+      job_workflow_ref = "example/ops/.github/workflows/env-data.yml@refs/heads/main", environment = "env-prod"
+    }
+    error_message = "apply also pins the environment."
+  }
+}
+
+run "trust_fallback" {
+  command = plan
+  variables {
+    pin_github_claims = false
   }
   assert {
     condition = alltrue([for k in ["plan", "apply"] : toset([for c in one(data.aws_iam_policy_document.trust[k].statement).condition : c.variable]) == toset([
       "token.actions.githubusercontent.com:aud", "token.actions.githubusercontent.com:sub",
     ])])
-    error_message = "Trust uses only aud and sub, the GitHub claims AWS evaluates."
+    error_message = "The fallback trusts aud and sub only."
   }
 }
 
