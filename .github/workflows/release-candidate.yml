@@ -272,5 +272,24 @@ jobs:
           [[ "$synchronized" == true ]] \
             || { echo "::error::Could not synchronize the candidate PR table after 5 attempts."; exit 1; }
           url="$(gh pr view "$pr_number" --repo "$GITHUB_REPOSITORY" --json url --jq .url)"
-          echo "url=$url" >> "$GITHUB_OUTPUT"
+          {
+            echo "url=$url"
+            echo "number=$pr_number"
+            echo "head_sha=$head_before"
+          } >> "$GITHUB_OUTPUT"
           printf 'Updated %s with `%s@%s`.\n' "$url" "$COMPONENT" "$DIGEST" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Request exact-head full acceptance
+        shell: bash
+        env:
+          GH_TOKEN: ${{ steps.pusher.outputs.token }}
+          PR_NUMBER: ${{ steps.pull_request.outputs.number }}
+          HEAD_SHA: ${{ steps.pull_request.outputs.head_sha }}
+          VERSION: ${{ steps.request.outputs.version }}
+        run: |
+          set -euo pipefail
+          gh api --method POST "repos/$GITHUB_REPOSITORY/dispatches" \
+            -f event_type=release-candidate-acceptance \
+            -F "client_payload[pr_number]=$PR_NUMBER" \
+            -f "client_payload[version]=$VERSION" \
+            -f "client_payload[head_sha]=$HEAD_SHA"

@@ -192,6 +192,13 @@ def render_values(data: dict[str, object]) -> str:
     return "\n".join(lines) + "\n"
 
 
+def validate_candidate(pins_path: pathlib.Path, values_path: pathlib.Path, version: str) -> dict[str, object]:
+    data = load_pins(pins_path, version)
+    if values_path.read_bytes() != render_values(data).encode("utf-8"):
+        fail(f"{values_path}: values overlay does not match the provenance ledger")
+    return data
+
+
 def update(root: pathlib.Path, version: str, component: str, digest: str, source_sha: str) -> pathlib.Path:
     validate_version(version)
     validate_pin(component, digest, source_sha)
@@ -258,6 +265,7 @@ def parse_args() -> argparse.Namespace:
 
     validate_parser = subparsers.add_parser("validate")
     validate_parser.add_argument("--pins", type=pathlib.Path, required=True)
+    validate_parser.add_argument("--values", type=pathlib.Path)
     validate_parser.add_argument("--version", required=True)
 
     update_parser = subparsers.add_parser("update")
@@ -290,7 +298,10 @@ def main() -> int:
                 args.scrub_pin,
             )
         elif args.command == "validate":
-            load_pins(args.pins, args.version)
+            if args.values is None:
+                load_pins(args.pins, args.version)
+            else:
+                validate_candidate(args.pins, args.values, args.version)
         elif args.command == "update":
             directory = update(
                 args.root, args.version, args.component, args.digest, args.source_sha

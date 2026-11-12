@@ -125,12 +125,22 @@ the ownership and mode requirements above. Until the protected runner group,
 this variable and every full-suite adapter are provisioned, release candidates
 must remain blocked; an API-only pass never satisfies `qualification`.
 
-The release check also requires the candidate ledger to contain Control,
-Webapp and Sessions Pipeline pins. The signed receipt's observed runtime images
-must match all three immutable `repository@sha256` values, and its source
-revision must match the exact candidate head. Provisioning must therefore roll
-the candidate onto the local fixture before rerunning qualification; a pass
-from an older ar-lap deployment cannot qualify a newer release candidate.
+The main-defined release workflow receives the open candidate PR number,
+version and exact head through `repository_dispatch` (or explicit manual
+dispatch). It checks out `main` as the trusted verifier and the candidate head
+in a separate directory as data. It publishes a custom `acceptance` check on
+that exact candidate commit; the tag gate accepts only that check and verifies
+that its backing Actions run used the main-defined workflow. A PR-ref workflow
+must never be admitted to the protected runner group.
+
+The release check requires the candidate ledger to contain Control, Webapp and
+Sessions Pipeline pins. `values.yaml` must byte-for-byte equal the trusted
+UTF-8/LF render of that ledger. The signed receipt records the trusted observer
+checkout as `sourceRevision`, while its observed runtime images must match all
+three candidate `repository@sha256` values. The custom check binds those
+observations to the candidate head. Provisioning must therefore roll the
+candidate onto the local fixture before rerunning qualification; a pass from
+an older ar-lap deployment cannot qualify a newer release candidate.
 
 ## Remaining qualification increments
 

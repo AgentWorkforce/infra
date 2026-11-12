@@ -32,8 +32,8 @@ def validate(args: argparse.Namespace) -> dict[str, object]:
     pr = load(args.pr)
     reviews = flatten_pages(load(args.reviews), "reviews")
     files = flatten_pages(load(args.files), "files")
-    runs = load(args.runs)
-    jobs = load(args.jobs)
+    checks = load(args.checks)
+    acceptance_run = load(args.acceptance_run)
     if not isinstance(pr, dict) or not pr.get("merged"):
         fail("release pull request is not merged")
     head = pr.get("head", {})
@@ -97,45 +97,53 @@ def validate(args: argparse.Namespace) -> dict[str, object]:
     if not approved:
         fail("release pull request lacks a different-user exact-head approval")
 
-    workflow_runs = runs.get("workflow_runs") if isinstance(runs, dict) else None
-    if not isinstance(workflow_runs, list):
-        fail("acceptance workflow metadata is malformed")
-    matching_runs = [
-        run
-        for run in workflow_runs
-        if run.get("head_sha") == head_sha
-        and run.get("event") == "pull_request"
-        and run.get("status") == "completed"
-        and run.get("conclusion") == "success"
-        and run.get("head_branch") == head.get("ref")
-        and run.get("repository", {}).get("full_name") == args.repository
-        and run.get("head_repository", {}).get("full_name") == args.repository
+    check_runs = checks.get("check_runs") if isinstance(checks, dict) else None
+    if not isinstance(check_runs, list):
+        fail("acceptance check metadata is malformed")
+    candidate_checks = [
+        check
+        for check in check_runs
+        if check.get("name") == "acceptance"
+        and check.get("head_sha") == head_sha
+        and check.get("app", {}).get("slug") == "github-actions"
+        and isinstance(check.get("pull_requests"), list)
+        and any(item.get("number") == pr.get("number") for item in check["pull_requests"])
     ]
-    if not matching_runs:
-        fail("release pull request lacks successful exact-head local acceptance")
-    if not all(isinstance(item.get("id"), int) and item["id"] > 0 for item in matching_runs):
-        fail("acceptance workflow run identity is invalid")
-    run = max(matching_runs, key=lambda item: item.get("id", -1))
-
-    job_list = jobs.get("jobs") if isinstance(jobs, dict) else None
-    if not isinstance(job_list, list):
-        fail("acceptance job metadata is malformed")
-    qualification = [
-        job
-        for job in job_list
-        if job.get("run_id") == run["id"]
-        and job.get("head_sha") == head_sha
-        and job.get("name") == "qualification"
-        and job.get("status") == "completed"
-        and job.get("conclusion") == "success"
-    ]
-    if len(qualification) != 1:
-        fail("exact-head qualification job is missing or ambiguous")
+    if not candidate_checks or not all(
+        isinstance(check.get("id"), int) and check["id"] > 0 for check in candidate_checks
+    ):
+        fail("exact-head acceptance check is missing or malformed")
+    check = max(candidate_checks, key=lambda item: item["id"])
+    if check.get("status") != "completed" or check.get("conclusion") != "success":
+        fail("latest exact-head acceptance check did not succeed")
+    external_id = check.get("external_id")
+    if not isinstance(external_id, str):
+        fail("exact-head acceptance check identity is invalid")
+    external = re.fullmatch(
+        rf"agent-relay-acceptance:([1-9][0-9]*):{re.escape(head_sha)}",
+        external_id,
+    )
+    if not external:
+        fail("exact-head acceptance check identity is invalid")
+    run_id = int(external.group(1))
+    if check.get("details_url") != f"https://github.com/{args.repository}/actions/runs/{run_id}":
+        fail("exact-head acceptance check run link is invalid")
+    if (
+        not isinstance(acceptance_run, dict)
+        or acceptance_run.get("id") != run_id
+        or acceptance_run.get("event") not in {"repository_dispatch", "workflow_dispatch"}
+        or acceptance_run.get("path") != ".github/workflows/local-acceptance.yml"
+        or acceptance_run.get("head_branch") != "main"
+        or acceptance_run.get("status") != "completed"
+        or acceptance_run.get("conclusion") != "success"
+        or acceptance_run.get("repository", {}).get("full_name") != args.repository
+    ):
+        fail("acceptance check does not belong to the trusted main workflow")
     return {
         "version": version,
         "headSha": head_sha,
         "mergeSha": merge_sha,
-        "acceptanceRunId": run["id"],
+        "acceptanceRunId": run_id,
         "approvalCount": len(approved),
         "approvers": sorted(review["user"]["login"] for review in approved),
     }
@@ -147,8 +155,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--pr", type=pathlib.Path, required=True)
     parser.add_argument("--reviews", type=pathlib.Path, required=True)
     parser.add_argument("--files", type=pathlib.Path, required=True)
-    parser.add_argument("--runs", type=pathlib.Path, required=True)
-    parser.add_argument("--jobs", type=pathlib.Path, required=True)
+    parser.add_argument("--checks", type=pathlib.Path, required=True)
+    parser.add_argument("--acceptance-run", type=pathlib.Path, required=True)
     return parser.parse_args()
 
 
