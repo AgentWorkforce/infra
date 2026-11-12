@@ -86,13 +86,16 @@ sides must run the same engine schema.
 1. `helm upgrade` of the Postgres release with `credentials.format: ar`,
    `authority: self` and the install's keyring key. Legacy credentials keep
    working during the engine's grace period; new ones are `ar_`. The switch
-   time is recorded under `STATE_DIR`, with relay-control's encryption key id.
+   time is recorded under `STATE_DIR` (a retried phase keeps the first one),
+   with relay-control's encryption key id.
 2. `relaycast-rekey` in the relay-control pod: rotates each workspace key
    (`POST /internal/workspaces/:id/api-key`, server-minted `ar_ws_`, with a
    grace) and upgrades each agent and webhook token it holds
    (`POST /v1/credentials/upgrade`), under a per-workspace lock, backing up the
-   old ciphertexts (`--undo`). The old workspace key keeps working for at most
-   one hour (engine cap): run it with relay-control up so clients refresh.
+   old ciphertexts (`--undo`). Each rekey run id and its report (ids, kinds,
+   counts) are recorded under `STATE_DIR` for `--undo` and `--purge`. The old
+   workspace key keeps working for at most one hour (engine cap): run it with
+   relay-control up so clients refresh.
 3. Desktops and SDK agents upgrade their own tokens. The cutover preflight
    reports what is still legacy.
 
@@ -127,8 +130,9 @@ Preconditions:
   OpenSSL trusts `SSL_CERT_FILE`, a bundle of the system roots plus the RDS CA,
   and `sslmode=require` checks the chain and the hostname; a wrong CA, no CA
   or a hostname mismatch fails at startup);
-- every cutover image is a release image or already mirrored into the
-  install's registry (pods must start after messaging stops);
+- every cutover image is a release image or a digest-pinned mirror in the
+  install's registry, and with `--apply` each mirrored digest is confirmed in
+  the registry before anything stops (pods must start after messaging stops);
 - the actor env Secret in the sandbox namespace holds the same bytes as the
   gateway for `RELAYCAST_INTERNAL_SECRET`, `RELAYCAST_FILE_SIGNING_SECRET` and
   `RELAYCAST_WORKSPACE_BOOTSTRAP_SECRET` (the Postgres runtime's
@@ -185,11 +189,14 @@ streams each workspace's blocks to `POST /internal/workspaces/:id/import`:
 
 - `relaycast-migrate verify-realtime`: a throwaway workspace streams a new post
   over `/v1/ws` through the gateway (the actor socket bridge), then is deleted;
-- `relaycast-migrate open`: each workspace starts serving;
+- go-live is recorded for the run, then `relaycast-migrate open` makes each
+  (already verified) workspace serve;
 - relay-control is scaled back up.
 
 A rerun of `--relaycast-actors cutover` after a failure in phase 5 or 6
-resumes the run (files, import, verify, open) instead of starting over.
+resumes the run (files, import, verify, open) instead of starting over. Once
+go-live is recorded the run only goes forward: a rerun opens the remaining
+workspaces, and the rollback hint says not to roll back.
 
 ### Phase 7: clean up (after go-live is confirmed)
 
@@ -203,7 +210,7 @@ resumes the run (files, import, verify, open) instead of starting over.
 ## Rollback
 
 Postgres is never written after the export, and the actors serve nothing
-until `open`, so up to go-live a rollback loses nothing:
+until go-live, so before go-live is recorded a rollback loses nothing:
 
 - before the helm upgrade: scale relay-control and Relaycast back up;
 - after it, before `open`: `helm rollback` to the pre-cutover revision (the
@@ -213,8 +220,9 @@ until `open`, so up to go-live a rollback loses nothing:
 - relay-control's re-key: `relaycast-rekey --undo <run id>` (needs the same
   encryption key).
 
-After `open`, writes made on the actors are not on Postgres; a rollback then
-loses them (a reverse copy is out of scope for v1).
+Once go-live is recorded (before the first `open`), workspaces may take
+writes Postgres never sees: the run is forward-only, a rerun finishes opening,
+and a rollback would lose those writes (a reverse copy is out of scope for v1).
 
 ## Downtime
 
