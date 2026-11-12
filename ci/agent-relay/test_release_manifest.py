@@ -248,6 +248,66 @@ class ReleaseManifestTest(unittest.TestCase):
                     candidate_pins=pins,
                 )
 
+    def test_sessions_candidate_pin_requires_publish_run_id(self):
+        with tempfile.TemporaryDirectory() as directory:
+            pins = pathlib.Path(directory) / "pins.json"
+            pin = {
+                "repository": "ghcr.io/agentworkforce/sessions-pipeline",
+                "digest": DIGEST_B,
+                "sourceRepository": "AgentWorkforce/relayhistory-pipeline",
+                "sourceRevision": COMMIT,
+                "publishRunId": 11111111111,
+            }
+            pins.write_text(
+                json.dumps(
+                    {
+                        "schema": 1,
+                        "version": "2026.11.0",
+                        "pins": {"sessions-pipeline": pin},
+                    }
+                )
+                + "\n"
+            )
+            manifest = self.build_fixture(
+                [f"ghcr.io/agentworkforce/sessions-pipeline@{DIGEST_B}"],
+                [
+                    "sessions-pipeline\tghcr.io/agentworkforce/sessions-pipeline\t"
+                    f"{DIGEST_A}\tapproved"
+                ],
+                candidate_pins=pins,
+            )
+            self.assertEqual(
+                manifest["images"],
+                [
+                    {
+                        "name": "sessions-pipeline",
+                        "ref": (
+                            "ghcr.io/agentworkforce/sessions-pipeline@" + DIGEST_B
+                        ),
+                    }
+                ],
+            )
+            del pin["publishRunId"]
+            pins.write_text(
+                json.dumps(
+                    {
+                        "schema": 1,
+                        "version": "2026.11.0",
+                        "pins": {"sessions-pipeline": pin},
+                    }
+                )
+                + "\n"
+            )
+            with self.assertRaisesRegex(ValueError, "malformed release candidate pin"):
+                self.build_fixture(
+                    [f"ghcr.io/agentworkforce/sessions-pipeline@{DIGEST_B}"],
+                    [
+                        "sessions-pipeline\tghcr.io/agentworkforce/sessions-pipeline\t"
+                        f"{DIGEST_A}\tapproved"
+                    ],
+                    candidate_pins=pins,
+                )
+
     def test_gcp_overlay_keeps_the_gcp_relaycast_image(self):
         names = [
             "relaycast",

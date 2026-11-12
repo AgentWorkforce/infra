@@ -31,6 +31,7 @@ class LocalTests(unittest.TestCase):
             name: {"repository": entry["imageRepository"], "digest": "sha256:" + str(index) * 64,
                 "sourceRepository": entry["sourceRepository"], "sourceRevision": "b" * 40}
             for index, (name, entry) in enumerate(helper.COMPONENTS.items(), 1)}}
+        ledger["pins"]["sessions-pipeline"]["publishRunId"] = 11111111111
         directory = root / "releases/agent-relay-2026.11.1"
         directory.mkdir(parents=True)
         pins, values = directory / "pins.json", directory / "values.yaml"
