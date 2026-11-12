@@ -41,10 +41,16 @@ rta_check() { # plan-time guards, shared by both phases
     || die "--relaycast-actors runs on the deployed chart version (deployed $live_chart, release $chart_version): upgrade first, then migrate"
   rta_resume=false
   backend=$(rta_live .relaycast.runtime.backend)
+  rta_golive=false
   if [ "$rta_phase" = cutover ] && [ "$backend" = durable-actors ] && [ -s "$(rta_state).run" ] && [ ! -e "$(rta_state).opened" ]; then
     rta_resume=true
     rta_run=$(cat "$(rta_state).run")
-    say "   resuming cutover run $rta_run: Relaycast is on durable-actors and its import has not been opened"
+    if [ -e "$(rta_state).golive" ]; then
+      rta_golive=true
+      say "   go-live of cutover run $rta_run is recorded but unfinished: resuming it (opening every workspace); forward only"
+    else
+      say "   resuming cutover run $rta_run: Relaycast is on durable-actors and its import has not been opened"
+    fi
   elif [ "$backend" != postgres ]; then
     die "Relaycast in $release is on runtime.backend=$backend, not postgres; nothing to migrate"
   fi
@@ -119,8 +125,8 @@ $without_ca"
   # release image (mirrored above) or one already mirrored into $registry.
   yq -N -r '.. | select(tag == "!!map") | select(has("image")) | .image | select(tag == "!!str")' "$t" | sort -u > "$work/rta-target-images"
   rta_extra_images=$(comm -23 "$work/rta-target-images" "$work/expected-images.txt")
-  outside=$(grep -v "^${registry}/" <<<"$rta_extra_images" || true)
-  [ -z "$outside" ] || die "the cutover would run images that are neither release images nor mirrored into $registry (mirror them and set their repositories in --actors-values):
+  outside=$( { grep -v "^${registry}/" <<<"$rta_extra_images"; grep "^${registry}/" <<<"$rta_extra_images" | grep -v '@sha256:[0-9a-f]\{64\}$'; } || true)
+  [ -z "$outside" ] || die "the cutover would run images that are neither release images nor digest-pinned mirrors in $registry (mirror them and set repository + digest in --actors-values):
 $outside"
   # The actors read the gateway's secrets from their own Secret in the sandbox
   # namespace: the same bytes, or keyed creates, file URLs and the internal
@@ -150,6 +156,16 @@ $outside"
     [ "$now_key" = "$rec_key" ] || [ "$prev_key" = "$rec_key" ] \
       || die "relay-control's encryption key changed since the credentials phase ($rec_key): keep it (or as previousKeyId) until relaycast-rekey --purge"
   fi
+}
+
+rta_check_mirrored() { # every image the cutover adds beyond the release must exist in the registry
+  local img
+  while IFS= read -r img; do
+    [ -n "$img" ] || continue
+    [ "$(crane digest "$img" 2>/dev/null)" = "${img##*@}" ] \
+      || die "cutover image $img is not in $registry (or its digest differs): mirror it before the cutover; nothing was stopped"
+  done <<<"$rta_extra_images"
+  say "   every cutover image is present in $registry"
 }
 
 rta_render_step() { # step [extra helm args]: render one migration Job to $work/rta-<step>.yaml, echo its name
@@ -193,8 +209,10 @@ rta_scale_down() { # deployment...: to 0 replicas, and confirm their pods are go
 rta_credentials() {
   say "== R1. Switch $release's Relaycast to ar_ credentials (legacy ones keep working during the grace period)"
   mkdir -p "$(dirname "$(rta_state)")"; chmod 700 "$(dirname "$(rta_state)")"
-  date -u +%s > "$(rta_state).ar-since"
-  rta_live '.["relay-control"].encryption.keyId' > "$(rta_state).control-key"
+  # The earliest switch time stands: a retried phase must not hide principals
+  # created between the first switch and the retry.
+  [ -s "$(rta_state).ar-since" ] || date -u +%s > "$(rta_state).ar-since"
+  [ -s "$(rta_state).control-key" ] || rta_live '.["relay-control"].encryption.keyId' > "$(rta_state).control-key"
   cat > "$work/rta-credentials.yaml" <<EOF
 relaycast:
   credentials:
@@ -207,8 +225,17 @@ EOF
   "${kube[@]}" rollout status "$rta_relaycast" --timeout 10m
   if [ -n "$rta_control" ]; then
     say "== R2. Re-key the Relaycast credentials relay-control holds (relaycast-rekey)"
-    "${kube[@]}" exec "$rta_control" -- node /app/node_modules/relay-control/dist/relaycast-rekey-cli.js | sed 's/^/     /'
-    [ "${PIPESTATUS[0]}" = 0 ] || die "relaycast-rekey failed: rerun this phase (it skips credentials already re-keyed)"
+    # Its output is ids, kinds and counts only; kept for --undo / --purge.
+    if ! "${kube[@]}" exec "$rta_control" -- node /app/node_modules/relay-control/dist/relaycast-rekey-cli.js > "$work/rta-rekey.jsonl"; then
+      sed 's/^/     /' "$work/rta-rekey.jsonl"
+      die "relaycast-rekey failed: rerun this phase (it skips credentials already re-keyed)"
+    fi
+    sed 's/^/     /' "$work/rta-rekey.jsonl"
+    rekey_run=$(jq -r 'select(.event == "relaycast_rekey.summary") | .run_id // empty' "$work/rta-rekey.jsonl" 2>/dev/null | tail -1)
+    [ -n "$rekey_run" ] || die "relaycast-rekey printed no run id: cannot record it for --undo / --purge"
+    printf '%s\n' "$rekey_run" >> "$(rta_state).rekey-runs"
+    cp "$work/rta-rekey.jsonl" "$(rta_state).rekey-$rekey_run.jsonl"
+    say "   relaycast-rekey run $rekey_run recorded in $(rta_state).rekey-runs (for --undo / --purge)"
   fi
   say ""
   say "Credentials phase done. Add this to your values so later upgrades keep it:"
@@ -219,6 +246,7 @@ EOF
 rta_cutover() {
   local control_replicas=0
   if [ -n "$rta_control" ]; then control_replicas=$("${kube[@]}" get "$rta_control" -o jsonpath='{.spec.replicas}'); fi
+  rta_check_mirrored
   if ! $rta_resume; then
     say "== R1. Preflight (read-only)"
     rta_preflight
@@ -238,12 +266,20 @@ rta_cutover() {
   # imported workspace until it is opened, so nothing can write meanwhile.
   # shellcheck disable=SC2086
   if [ -n "$rta_control" ]; then rta_scale_down $rta_control; fi
-  say "== R5. Copy files, then import every workspace (each verified by count and digest, closed until open)"
-  rta_run_step files
-  rta_run_step import
-  "${kube[@]}" rollout status "$rta_relaycast" --timeout 10m
-  say "== R6. Verify realtime through the gateway, then go live"
-  rta_run_step verify
+  if ! $rta_golive; then
+    say "== R5. Copy files, then import every workspace (each verified by count and digest, closed until open)"
+    rta_run_step files
+    rta_run_step import
+    "${kube[@]}" rollout status "$rta_relaycast" --timeout 10m
+    say "== R6. Verify realtime through the gateway"
+    rta_run_step verify
+  fi
+  # Go-live is recorded before the first workspace opens: from here the run
+  # only goes forward (an opened workspace takes writes Postgres never sees), and
+  # a rerun finishes opening the rest. Every workspace is verified (the import
+  # step failed the run otherwise), so open only flips each to serving.
+  touch "$(rta_state).golive"
+  say "== R7. Go live: go-live recorded for run $rta_run; opening every workspace"
   rta_run_step open
   touch "$(rta_state).opened"
   if [ -n "$rta_control" ]; then
@@ -261,7 +297,12 @@ rta_cutover() {
 rta_rollback_hint() {
   say "   Relaycast migration ($rta_phase, run ${rta_run:-none}): PostgreSQL is not written after the export, so it holds the pre-move state."
   say "   - before the helm upgrade: scale relay-control and Relaycast back up"
-  say "   - after it, before open: helm rollback as above; nothing was served from the actors (503 until open)."
+  if [ -e "$(rta_state).golive" ]; then
+    say "   - GO-LIVE IS RECORDED for run ${rta_run}: do NOT roll back (opened workspaces may have taken writes)."
+    say "     Rerun --relaycast-actors cutover: it resumes and opens the remaining workspaces."
+    return
+  fi
+  say "   - after it, before go-live: helm rollback as above; nothing was served from the actors (503 until open)."
   say "     To retry instead, rerun --relaycast-actors cutover: it resumes this run's files, import, verify and open."
   say "     To empty a workspace's actor: relaycast-migrate abort --dir /data/migration/${rta_run:-<run>} --gateway <url> --workspace <id> (import Job image)"
   say "   - relay-control re-key: relaycast-rekey --undo <run id> in the relay-control pod"

@@ -87,7 +87,7 @@ EOF
 
 setup_mocks() { # $1 release fixture dir, $2 attestation result (ok|fail)
   local bin="$root/bin"; rm -rf "$bin"; mkdir -p "$bin"; : > "$root/log"
-  rm -f "$root/rendered-extra.yaml" "$root/rendered-target.yaml" "$root/live-manifest.yaml" "$root/patches" "$root/live-values.yaml"; rm -rf "$root/secrets"; touch "$root/exists"
+  rm -f "$root/crane-missing" "$root/rendered-extra.yaml" "$root/rendered-target.yaml" "$root/live-manifest.yaml" "$root/patches" "$root/live-values.yaml"; rm -rf "$root/secrets"; touch "$root/exists"
   rm -rf "$root/jobstate"; mkdir -p "$root/jobstate"; rm -f "$root/no-version"
   printf 'v1\napps/v1\nbatch/v1\npolicy/v1\nautoscaling/v2\n' > "$root/api-versions"
   cat > "$bin/gh" <<EOF
@@ -116,6 +116,7 @@ case "\$*" in
       *) echo '{"status":{"active":1}}' ;;
     esac ;;
   *"logs job/"*) echo "bootstrap: relation sessions.search_documents does not exist" ;;
+  *" exec "*relaycast-rekey*) echo '{"event":"relaycast_rekey.credential","table":"workspaces","outcome":"rotated"}'; echo '{"event":"relaycast_rekey.summary","run_id":"rekey-run-1","by_column":{}}' ;;
   *"get secret "*"-o json"*) # $root/secrets/<namespace>/<name>.json, else an empty Secret
     ns=""; name=""; prev=""; for a in "\$@"; do [ "\$prev" = -n ] && ns=\$a; [ "\$prev" = secret ] && name=\$a; prev=\$a; done
     cat "$root/secrets/\$ns/\$name.json" 2>/dev/null || echo '{"data":{}}' ;;
@@ -127,7 +128,7 @@ exit 0
 EOF
   printf '#!/usr/bin/env bash\necho "aws $*" >> "%s/log"\nexit 0\n' "$root" > "$bin/aws"
   # crane: report the pinned digest for any ref, so the mirror's digest check passes
-  printf '#!/usr/bin/env bash\necho "crane $*" >> "%s/log"\nfor a in "$@"; do case "$a" in *@sha256:*) [ "$1" = digest ] && { echo "${a##*@}"; exit 0; };; *:sha256-*) [ "$1" = digest ] && { d=${a##*:sha256-}; echo "sha256:$d"; exit 0; };; esac; done\nexit 0\n' "$root" > "$bin/crane"
+  printf '#!/usr/bin/env bash\necho "crane $*" >> "%s/log"\n[ -f "%s/crane-missing" ] && [ "$1" = digest ] && case "$2" in *relaycast-migration/*) exit 1;; esac\nfor a in "$@"; do case "$a" in *@sha256:*) [ "$1" = digest ] && { echo "${a##*@}"; exit 0; };; *:sha256-*) [ "$1" = digest ] && { d=${a##*:sha256-}; echo "sha256:$d"; exit 0; };; esac; done\nexit 0\n' "$root" "$root" > "$bin/crane"
   chmod +x "$bin"/*
   write_helm
 }
@@ -530,7 +531,7 @@ out=$(run_rds "${rds_args[@]}" --relaycast-actors cutover --actors-values "$vals
 grep -q 'must read keyring relaycast-secrets/credential-keyring' <<<"$out" || fail "keyring change refused for the wrong reason: $out"
 target yes credential-keyring ghcr.io/agentworkforce/relaycast-actors-gateway@$D3
 out=$(run_rds "${rds_args[@]}" --relaycast-actors cutover --actors-values "$vals" 2>&1) && fail "an unmirrored cutover image was accepted"
-grep -q 'neither release images nor mirrored' <<<"$out" || fail "unmirrored image refused for the wrong reason: $out"
+grep -q 'neither release images nor digest-pinned mirrors' <<<"$out" || fail "unmirrored image refused for the wrong reason: $out"
 target yes; actor_env Wg==
 out=$(run_rds "${rds_args[@]}" --relaycast-actors cutover --actors-values "$vals" 2>&1) && fail "an actor env Secret with other bytes was accepted"
 grep -q 'RELAYCAST_WORKSPACE_BOOTSTRAP_SECRET' <<<"$out" || fail "actor secret mismatch refused for the wrong reason: $out"
@@ -544,3 +545,28 @@ grep 'helm .*template' "$root/log" | tail -1 | grep -q 'rta-actors-profile.yaml'
 grep 'helm .*template' "$root/log" | tail -1 | grep -q 'values-eks-actors.yaml' && fail "cutover layered the whole actors profile (it turns the suite off)"
 grep -Eq 'helm .* upgrade |kubectl .*(scale|apply|exec)' "$root/log" && fail "cutover plan mode changed the cluster"
 pass "cutover uses a Relaycast-only overlay and refuses CA, keyring, image, actor secret and encryption-key mismatches"
+
+# 33. credentials apply: a retry keeps the first switch time; the rekey run is recorded
+setup_mocks "$root/rel-ok" ok; printf '%s\n' "$live_pg" > "$root/live-values.yaml"; keyring; make_state
+st="$root/state/relaycast-actors/agent-relay-agent-relay"
+mkdir -p "$root/state/relaycast-actors"; echo 1700000000 > "$st.ar-since"
+out=$(run_rds "${rds_args[@]}" --relaycast-actors credentials --apply --db-instance prod-db --yes 2>&1) || fail "credentials apply failed: $out"
+[ "$(cat "$st.ar-since")" = 1700000000 ] || fail "a retried credentials phase overwrote the first switch time"
+grep -qx rekey-run-1 "$st.rekey-runs" || fail "the relaycast-rekey run id was not recorded"
+grep -q 'relaycast_rekey.summary' "$st.rekey-rekey-run-1.jsonl" || fail "the relaycast-rekey report was not kept"
+pass "a retried credentials phase keeps the first switch time and records the rekey run"
+
+# 34. cutover apply: a mirrored image missing from the registry refuses before anything stops
+setup_mocks "$root/rel-ok" ok; printf '%s\n' "$live_pg" > "$root/live-values.yaml"; keyring; make_state
+sed -i.bak 's/format: legacy/format: ar/' "$root/live-values.yaml"
+mkdir -p "$root/state/relaycast-actors"; echo 1794500000 > "$st.ar-since"; echo k1 > "$st.control-key"
+target yes credential-keyring "$REG/relaycast-migration/relaycast-actors-gateway@$D3"; actor_env; touch "$root/crane-missing"
+out=$(run_rds "${rds_args[@]}" --relaycast-actors cutover --actors-values "$vals" --apply --db-instance prod-db --yes 2>&1) && fail "a missing mirrored image was accepted"
+grep -q 'is not in' <<<"$out" || fail "missing mirror refused for the wrong reason: $out"
+grep -Eq 'kubectl .*(scale|apply)' "$root/log" && fail "the cutover stopped or created something before the image check"
+pass "cutover checks every mirrored image digest before stopping anything"
+
+# 35. once go-live is recorded the rollback hint is forward-only
+touch "$st.golive"; echo relaycast-actors-1 > "$st.run"
+grep -q 'GO-LIVE IS RECORDED' "$SELFHOST_DIR/relaycast-to-actors.sh" || fail "no forward-only rollback hint"
+pass "go-live is recorded before the first workspace opens and the hint turns forward-only"
