@@ -101,3 +101,13 @@ offered window from later drain and reports both throughput denominators.
 Latency samples are bounded at 100,000 per route/step. Reports contain route
 templates and counters, never tokens or response/message bodies. The complete
 fixture is disposable; no result is a release qualification or a collector pass.
+
+The declared screening SLO is at least 95% of the supported offered rate,
+at most 1% errors, aggregate HTTP/upgrade p95 at most 200 ms and drain at most
+5 seconds. A generator drop, loop p99 above 25 ms or scheduling lag above
+100 ms makes the step generator-limited; it cannot establish backend saturation.
+Socket delivery latency is reported separately. Payloads are short synthetic
+messages with default API pagination, not measured hosted body sizes. The
+`recycle` command restarts only this owned benchmark deployment between
+independent campaigns to release resident actor processes; it retains the PVC
+and is never called between rate steps within a campaign.

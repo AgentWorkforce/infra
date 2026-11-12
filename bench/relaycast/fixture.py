@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """An isolated local Kind fixture for the actor benchmark. Never adopts local-up."""
 import argparse
+import hashlib
 import json
 import math
 import os
@@ -133,6 +134,7 @@ def main():
     pod_name = "load-" + run_id
     config = {"plan": plan, "seconds": args.seconds, "maxInflight": 512,
               "population": {"workspaces": 5, "agentsPerWorkspace": 10, "websockets": 50},
+              "harness": {name: hashlib.sha256(Path(__file__).with_name(name).read_bytes()).hexdigest() for name in ("fixture.py", "run.mjs")},
               "populationMode": "fixed_assumed", "socketLifetime": "replaced by observed upgrade traffic"}
     s.apply({"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": pod_name, "namespace": NS},
         "data": {"run.mjs": Path(__file__).with_name("run.mjs").read_text(), "config.json": json.dumps(config)}})
@@ -165,6 +167,7 @@ def main():
             private_json(directory / "report.json", report)
             private_json(directory / "resources.json", observations)
             private_json(directory / "identity.json", {"clusterUid": s.cluster_uid(s.kubeconfig),
+                "harness": config["harness"],
                 "build": json.loads((s.state / "actor-build/images.json").read_text()), "infraRevision": s.cmd(["git", "-C", root, "rev-parse", "HEAD"]).stdout.strip()})
             print(json.dumps({"directory": str(directory), "status": report["status"], "steps": report.get("steps", [])}))
             s.k("delete", "pod", pod_name, "--wait=true")

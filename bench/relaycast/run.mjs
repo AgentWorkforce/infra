@@ -237,6 +237,8 @@ const report = {schema: 'agent-relay.actor-benchmark/v1', status: 'fail', starte
   workloadKind: config.plan.workloadKind ?? 'production_replay',
   productionReplay: 'partial until every hosted route has a valid self-host binding',
   population: config.population, populationMode: 'fixed_assumed', planSha256: config.plan.profileSha256,
+  harness: config.harness,
+  payloadModel: 'short synthetic messages and default API pagination; hosted payload sizes unmeasured',
   actorAnalytics: 'unsupported_skipped', steps: []};
 report.slo = {maximumErrorFraction: .01, minimumAchievedFraction: .95, maximumP95Ms: 200,
   maximumDrainSeconds: 5, maximumGeneratorLoopP99Ms: 25, maximumGeneratorScheduleLagMs: 100, maximumGeneratorDrops: 0};
