@@ -412,6 +412,35 @@ for chart in "${charts[@]}"; do
           [ "$(gw_env "$c" RELAYCAST_WORKSPACE_BOOTSTRAP_PROOF_REQUIRED .value)" = true ] \
             || err "$chart: devRuntime $c must render RELAYCAST_WORKSPACE_BOOTSTRAP_PROOF_REQUIRED=true"
         done
+        # Postgres -> durable-actors migration steps (docs/relaycast-postgres-to-actors-migration.md).
+        mig=(--set migration.enabled=true --set migration.runId=run-ci-0001)
+        pg=charts/relaycast/ci/postgres-values.yaml
+        s3=charts/relaycast/ci/durable-actors-s3-values.yaml
+        expect_render_failure "$chart" "$pg" "migration step on the wrong backend" "migration.step=import runs after the cutover" "${mig[@]}" --set migration.step=import
+        expect_render_failure "$chart" "$s3" "export after the cutover" "migration.step=export runs on the PostgreSQL release" "${mig[@]}" --set migration.step=export
+        expect_render_failure "$chart" "$pg" "unknown migration step" "migration.step must be preflight, export, files or import" "${mig[@]}" --set migration.step=copy
+        expect_render_failure "$chart" "$pg" "short migration run id" "migration.runId must be 8-64 URL-safe characters" --set migration.enabled=true --set migration.runId=x --set migration.step=export
+        expect_render_failure "$chart" "$pg" "non-numeric arSince" "migration.arSince must be epoch seconds" "${mig[@]}" --set migration.step=preflight --set migration.arSince=yesterday
+        ! yq 'select(.kind == "Job") | .metadata.name' <<<"$(render "$chart" "$pg")" | grep -q migration \
+          || err "$chart: migration Jobs must not render unless migration.enabled"
+        out=$(render "$chart" "$pg" "${mig[@]}" --set migration.step=export)
+        mj='select(.kind == "Job" and .metadata.labels["app.kubernetes.io/component"] == "migration-export")'
+        [ "$(yq "$mj | .spec.template.spec.containers[0].args | join(\" \")" <<<"$out" | sed '/^$/d')" = "export-for-actors --out /data/migration/run-ci-0001 --run-id run-ci-0001" ] \
+          || err "$chart: migration export must write to the data claim under the run id"
+        [ "$(yq "$mj | .spec.template.spec.volumes[] | select(.name == \"secrets\") | .secret.items[].path" <<<"$out" | sed '/^$/d')" = database-runtime-url ] \
+          || err "$chart: migration export must mount only the runtime database URL"
+        [ "$(yq "$mj | .spec.template.spec.containers[0].env[] | select(.name == \"RELAYCAST_DATABASE_CA_FILE\") | .value" <<<"$out" | sed '/^$/d')" = /etc/postgres-ca/ca.crt ] \
+          || err "$chart: migration export must verify the database against the CA"
+        out=$(render "$chart" "$s3" "${mig[@]}" --set migration.step=files)
+        mj='select(.kind == "Job" and .metadata.labels["app.kubernetes.io/component"] == "migration-files")'
+        [ "$(yq "$mj | [.spec.template.spec.containers[0].env[].name] | join(\",\")" <<<"$out" | sed '/^$/d')" = "RELAYCAST_FILE_STORE,RELAYCAST_S3_BUCKET,RELAYCAST_S3_REGION,RELAYCAST_S3_PREFIX,RELAYCAST_S3_FORCE_PATH_STYLE" ] \
+          || err "$chart: migration files must get the gateway's file store settings and no secrets"
+        [ "$(yq "$mj | .spec.template.spec.containers[0].volumeMounts[] | select(.name == \"data\") | .readOnly" <<<"$out" | sed '/^$/d')" = true ] \
+          || err "$chart: migration files must read the old files read-only"
+        out=$(render "$chart" "$s3" "${mig[@]}" --set migration.step=import)
+        mj='select(.kind == "Job" and .metadata.labels["app.kubernetes.io/component"] == "migration-import")'
+        [ "$(yq "$mj | .spec.template.spec.containers[0].args[-1]" <<<"$out" | sed '/^$/d')" = "http://ci-relaycast.ci.svc:8787" ] \
+          || err "$chart: migration import must reach the gateway Service"
         ;;
       relayfile)
         v=charts/relayfile/ci/durable-actors-values.yaml

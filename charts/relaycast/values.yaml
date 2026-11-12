@@ -421,3 +421,22 @@ topologySpreadConstraints: []
 # Additional non-secret environment variables. Names managed by the structured
 # values above are reserved and rejected here.
 extraEnv: []
+
+# Moving a runtime.backend=postgres release to durable-actors with every row
+# and file (docs/relaycast-postgres-to-actors-migration.md in
+# AgentWorkforce/infra). Off: renders nothing. The upgrader
+# (agent-relay-upgrade.sh --relaycast-actors cutover) renders one step at a
+# time with `helm template --show-only templates/migration-job.yaml` and
+# applies it itself; never set these in a release's values.
+migration:
+  enabled: false
+  # preflight | export (on the postgres release) | files | import (after the
+  # cutover to durable-actors).
+  step: ""
+  # 8-64 URL-safe characters; names the export directory on the data claim
+  # (/data/migration/<runId>) and the import run.
+  runId: ""
+  # preflight: epoch seconds when credentials.format=ar was enabled; principals
+  # created before it and never upgraded are reported as legacy.
+  arSince: ""
+  activeDeadlineSeconds: 21600

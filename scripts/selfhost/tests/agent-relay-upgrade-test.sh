@@ -22,7 +22,7 @@ before() { # $1 pattern, $2 pattern: both logged, $1 first
 # The upgrader runs from a copy so rds-setup.sh next to it is the mock below.
 SCRIPT="$root/selfhost/agent-relay-upgrade.sh"
 mkdir -p "$root/selfhost"
-cp "$SELFHOST_DIR/agent-relay-upgrade.sh" "$SELFHOST_DIR/mirror-images-to-ecr.sh" "$root/selfhost/"
+cp "$SELFHOST_DIR/agent-relay-upgrade.sh" "$SELFHOST_DIR/mirror-images-to-ecr.sh" "$SELFHOST_DIR/relaycast-to-actors.sh" "$root/selfhost/"
 cat > "$root/selfhost/rds-setup.sh" <<EOF
 #!/usr/bin/env bash
 echo "rds-setup \$1 NAMESPACE=\${NAMESPACE:-} RELEASE=\${RELEASE:-} MIGRATION_JOB=\${MIGRATION_JOB:-} SERVICES_IMAGE=\${SERVICES_IMAGE:-} PSQL_IMAGE=\${PSQL_IMAGE:-} STATE_DIR=\${STATE_DIR:-}" >> "$root/log"
@@ -50,7 +50,7 @@ make_release() {
   if [ "$v" = chartver ]; then cv=9.9.9; fi
   printf 'name: agent-relay\nversion: "%s"\n' "$cv" > "$d/pkg/agent-relay/Chart.yaml"
   : > "$d/pkg/agent-relay/values-eks.yaml"; : > "$d/pkg/agent-relay/values-eks-native.yaml"
-  if [ "$v" != no-rds-native ]; then : > "$d/pkg/agent-relay/values-eks-rds-native.yaml"; fi
+  if [ "$v" != no-rds-native ]; then : > "$d/pkg/agent-relay/values-eks-rds-native.yaml"; : > "$d/pkg/agent-relay/values-eks-actors.yaml"; fi
   tar -czf "$d/agent-relay-0.6.31.tgz" -C "$d/pkg" agent-relay; rm -rf "$d/pkg"
   ( cd "$d" && sha release-manifest.json release-images.values.yaml agent-relay-0.6.31.tgz > SHA256SUMS )
 }
@@ -70,7 +70,8 @@ case "\$*" in
     # A capability-gated template, like the charts' VPA check.
     case " \$* " in *" --api-versions autoscaling.k8s.io/v1 "*)
       printf -- '---\nkind: VerticalPodAutoscaler\nmetadata:\n  name: relayfile\n' ;; esac ;;
-  *" list "*) if [ -f "$root/exists" ]; then echo '[{"name":"agent-relay","status":"deployed"}]'; else echo '[]'; fi ;;
+  *" list "*) if [ -f "$root/exists" ]; then echo '[{"name":"agent-relay","status":"deployed","chart":"agent-relay-0.6.31"}]'; else echo '[]'; fi ;;
+  *"get values"*) cat "$root/live-values.yaml" 2>/dev/null || true ;;
   *"get manifest"*) cat "$root/live-manifest.yaml" 2>/dev/null || true ;;
   *"get hooks"*) ;;
   *history*) echo '[{"revision":6,"status":"superseded"},{"revision":7,"status":"deployed"},{"revision":8,"status":"failed"}]' ;;
@@ -84,7 +85,7 @@ EOF
 
 setup_mocks() { # $1 release fixture dir, $2 attestation result (ok|fail)
   local bin="$root/bin"; rm -rf "$bin"; mkdir -p "$bin"; : > "$root/log"
-  rm -f "$root/rendered-extra.yaml" "$root/live-manifest.yaml" "$root/patches"; touch "$root/exists"
+  rm -f "$root/rendered-extra.yaml" "$root/live-manifest.yaml" "$root/patches" "$root/live-values.yaml" "$root/keyring"; touch "$root/exists"
   rm -rf "$root/jobstate"; mkdir -p "$root/jobstate"; rm -f "$root/no-version"
   printf 'v1\napps/v1\nbatch/v1\npolicy/v1\nautoscaling/v2\n' > "$root/api-versions"
   cat > "$bin/gh" <<EOF
@@ -113,6 +114,7 @@ case "\$*" in
       *) echo '{"status":{"active":1}}' ;;
     esac ;;
   *"logs job/"*) echo "bootstrap: relation sessions.search_documents does not exist" ;;
+  *"get secret relaycast-secrets -o json"*) if [ -f "$root/keyring" ]; then echo '{"data":{"credential-keyring":"eA=="}}'; else echo '{"data":{}}'; fi ;;
   *"-o json"*) echo '{"items":[]}' ;;
   *"get deploy -l"*"-o name"*) echo deployment.apps/agent-relay-read-api ;;
   *"patch secret"*) for a in "\$@"; do case "\$a" in */patch.json) cat "\$a" >> "$root/patches"; echo >> "$root/patches";; esac; done ;;
@@ -448,3 +450,56 @@ out=$(run_rds "${args[@]}" --rds-setup --apply --db-instance prod-db --yes 2>&1)
 grep -q 'readable beyond its owner' <<<"$out" || fail "open STATE_DIR refused for the wrong reason: $out"
 [ -s "$root/log" ] && fail "an open STATE_DIR contacted tools"
 pass "--rds-setup refuses a STATE_DIR readable beyond its owner"
+
+# 31. --relaycast-actors: opt-in, plan-mode guards that refuse before changing anything
+rds_args=(--version 2026.11.1 --registry "$REG" --profile eks-rds-native --values "$vals")
+live_pg='relaycast:
+  existingSecret: relaycast-secrets
+  runtime: { backend: postgres }
+  credentials: { format: legacy }'
+make_release "$root/rel-ok" ok; setup_mocks "$root/rel-ok" ok
+out=$(run "${args[@]}" --relaycast-actors cutover 2>&1) && fail "--relaycast-actors on eks-native was accepted"
+grep -q 'needs --profile eks-rds-native' <<<"$out" || fail "wrong-profile migration refused for the wrong reason: $out"
+out=$(run "${rds_args[@]}" --relaycast-actors everything 2>&1) && fail "an unknown phase was accepted"
+out=$(run "${rds_args[@]}" --actors-values "$vals" 2>&1) && fail "--actors-values without a phase was accepted"
+grep -q 'need --relaycast-actors' <<<"$out" || fail "--actors-values alone refused for the wrong reason: $out"
+setup_mocks "$root/rel-ok" ok; printf 'relaycast:\n  runtime: { backend: durable-actors }\n' > "$root/live-values.yaml"
+out=$(run_rds "${rds_args[@]}" --relaycast-actors credentials 2>&1) && fail "a release already on actors was accepted"
+grep -q 'not on runtime.backend=postgres' <<<"$out" || fail "actors backend refused for the wrong reason: $out"
+setup_mocks "$root/rel-ok" ok; printf '%s\n' "$live_pg" > "$root/live-values.yaml"
+out=$(run_rds "${rds_args[@]}" --relaycast-actors credentials 2>&1) && fail "a Secret without the keyring was accepted"
+grep -q 'has no credential-keyring key' <<<"$out" || fail "missing keyring refused for the wrong reason: $out"
+touch "$root/keyring"
+out=$(run_rds "${rds_args[@]}" --relaycast-actors credentials 2>&1) || fail "credentials plan failed: $out"
+grep -q 'preconditions hold' <<<"$out" || fail "credentials plan did not report its preconditions: $out"
+grep -Eq 'helm .* upgrade |kubectl .*(scale|apply|exec)' "$root/log" && fail "migration plan mode changed the cluster"
+pass "--relaycast-actors is opt-in and refuses wrong profile, phase, backend and keyring in plan mode"
+
+# 32. cutover refuses legacy credentials, missing actors values, and a control plane without an RDS CA
+setup_mocks "$root/rel-ok" ok; printf '%s\n' "$live_pg" > "$root/live-values.yaml"; touch "$root/keyring"
+make_state
+out=$(run_rds "${rds_args[@]}" --relaycast-actors cutover --actors-values "$vals" 2>&1) && fail "cutover on legacy credentials was accepted"
+grep -q 'run --relaycast-actors credentials first' <<<"$out" || fail "legacy cutover refused for the wrong reason: $out"
+sed -i.bak 's/format: legacy/format: ar/' "$root/live-values.yaml"
+out=$(run_rds "${rds_args[@]}" --relaycast-actors cutover 2>&1) && fail "cutover without --actors-values was accepted"
+grep -q 'cutover needs --actors-values' <<<"$out" || fail "missing actors values refused for the wrong reason: $out"
+out=$(run_rds "${rds_args[@]}" --relaycast-actors cutover --actors-values "$vals" 2>&1) && fail "cutover without a credentials-phase record was accepted"
+grep -q 'no record of the credentials phase' <<<"$out" || fail "missing ar-since refused for the wrong reason: $out"
+mkdir -p "$root/state/relaycast-actors"; echo 1794500000 > "$root/state/relaycast-actors/agent-relay-agent-relay.ar-since"
+cat > "$root/rendered-extra.yaml" <<'YAML'
+kind: Deployment
+metadata: { name: relaycast }
+spec: { template: { spec: { containers: [{ name: gateway }], volumes: [{ name: secrets, secret: { secretName: relaycast-secrets } }] } } }
+---
+kind: Deployment
+metadata: { name: agent-relay-durable-actors }
+spec: { template: { spec: { volumes: [{ name: tmp }] } } }
+YAML
+out=$(run_rds "${rds_args[@]}" --relaycast-actors cutover --actors-values "$vals" 2>&1) && fail "a control plane without an RDS CA was accepted"
+grep -q 'without a CA bundle' <<<"$out" || fail "CA-less control plane refused for the wrong reason: $out"
+grep -q 'agent-relay-durable-actors' <<<"$out" || fail "the CA refusal did not name the Deployment: $out"
+sed -i.bak 's/volumes: \[{ name: tmp }\]/volumes: [{ name: tmp }, { name: postgres-ca }]/' "$root/rendered-extra.yaml"
+out=$(run_rds "${rds_args[@]}" --relaycast-actors cutover --actors-values "$vals" 2>&1) || fail "a complete cutover plan failed: $out"
+grep -q 'preconditions hold' <<<"$out" || fail "cutover plan did not report its preconditions: $out"
+grep -Eq 'helm .* upgrade |kubectl .*(scale|apply|exec)' "$root/log" && fail "cutover plan mode changed the cluster"
+pass "cutover refuses legacy credentials, missing values or state, and an RDS control plane without a CA"

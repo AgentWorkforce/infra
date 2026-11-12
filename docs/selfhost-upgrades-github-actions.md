@@ -114,6 +114,15 @@ it feeds:
   exist only in the Kubernetes Secrets. If the directory may have been
   exposed, rotate the database role passwords and the RDS admin password.
 
+## Relaycast to durable-actors (opt-in)
+
+Moving Relaycast from PostgreSQL to durable-actors runs through the same
+workflow, on the version already deployed, in two approved runs: first
+`relaycast-actors: credentials`, then (once the plan reports no legacy
+principals) `relaycast-actors: cutover` with `actors-values` naming your
+overrides for `values-eks-actors.yaml`. Messaging is down during the cutover.
+See [relaycast-postgres-to-actors-migration.md](relaycast-postgres-to-actors-migration.md).
+
 ## The workflow file
 
 ```yaml
