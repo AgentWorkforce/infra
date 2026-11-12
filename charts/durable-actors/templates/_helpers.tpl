@@ -27,6 +27,12 @@
 {{- else if empty .Values.storage.s3.actorRoleArn }}{{ fail "storage.s3.actorCredentials=assume-role requires storage.s3.actorRoleArn" }}{{ end -}}
 {{- if eq .Values.storage.mode "rapid" }}{{ fail "Rapid persistence requires storage.provider=gcs" }}{{ end -}}
 {{- end -}}
+{{- /* Local patch 12: a half-configured Postgres CA would look verified while it is not. */ -}}
+{{- with .Values.postgresCa -}}
+{{- if .enabled -}}
+{{- if eq (empty .configMap) (empty .secret) }}{{ fail "postgresCa.enabled=true requires exactly one of postgresCa.configMap or postgresCa.secret" }}{{ end -}}
+{{- else if or .configMap .secret }}{{ fail "postgresCa.configMap and postgresCa.secret require postgresCa.enabled=true" }}{{ end -}}
+{{- end -}}
 {{- if .Values.ingress.enabled -}}
 {{- if or (empty .Values.ingress.className) (empty .Values.ingress.tlsSecret) }}{{ fail "ingress requires className and tlsSecret" }}{{ end -}}
 {{- end -}}

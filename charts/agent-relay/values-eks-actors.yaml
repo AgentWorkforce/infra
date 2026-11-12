@@ -62,6 +62,12 @@ durable-actors:
       actorRoleArn: arn:aws:iam::<account>:role/<actor storage role>
   credentialsSecret: actors-credentials
   invokeApiKeySecretKey: invoke-api-key
+  # PostgreSQL on Amazon RDS: layer this file after values-eks-rds-native.yaml,
+  # which turns on durable-actors.postgresCa (rds-ca plus the system roots in
+  # volume postgres-ca at /etc/postgres-ca/ca.crt, SSL_CERT_FILE), and use
+  # ?sslmode=require in the postgres-url key; the client then verifies the RDS
+  # chain and hostname. Standalone, as in eks-actors-install.sh, it stays off.
+  # Never work around it with rds.force_ssl=0 or sslmode=disable.
   images:
     controlPlane:
       repository: ghcr.io/agentworkforce/durable-actors-control-plane

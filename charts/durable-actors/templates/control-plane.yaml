@@ -52,6 +52,30 @@ spec:
         runAsGroup: 10000
         fsGroup: 10000
         seccompProfile: {type: RuntimeDefault}
+      {{- if $.Values.postgresCa.enabled }}
+      # Local patch 12: OpenSSL (the PostgreSQL client) and rustls-native-certs (GCS, S3,
+      # STS, Redis) both replace their roots with SSL_CERT_FILE, so the file must hold the
+      # image's system roots plus the PostgreSQL CA, not the CA alone.
+      initContainers:
+        - name: postgres-ca-bundle
+          image: {{ include "actors.image" $.Values.images.controlPlane | quote }}
+          command:
+            - sh
+            - -ec
+            - |
+              grep -q 'BEGIN CERTIFICATE' /etc/postgres-ca-source/ca.crt
+              { cat /etc/ssl/certs/ca-certificates.crt; echo; cat /etc/postgres-ca-source/ca.crt; } > /etc/postgres-ca/ca.crt
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+          resources:
+            requests: {cpu: 10m, memory: 16Mi}
+            limits: {memory: 32Mi}
+          volumeMounts:
+            - {name: postgres-ca-source, mountPath: /etc/postgres-ca-source, readOnly: true}
+            - {name: postgres-ca, mountPath: /etc/postgres-ca}
+      {{- end }}
       containers:
         - name: control-plane
           image: {{ include "actors.image" $.Values.images.controlPlane | quote }}
@@ -65,6 +89,10 @@ spec:
             {{- toYaml $.Values.resources | nindent 12 }}
           volumeMounts:
             - {name: tmp, mountPath: /tmp}
+            {{- /* Local patch 12: Postgres server CA bundle. */}}
+            {{- if $.Values.postgresCa.enabled }}
+            - {name: postgres-ca, mountPath: /etc/postgres-ca, readOnly: true}
+            {{- end }}
           {{- if eq $workload.role "control_plane" }}
           startupProbe:
             httpGet: {path: /healthz, port: http}
@@ -172,6 +200,10 @@ spec:
             - name: DURABLE_ACTORS_POSTGRES_URL
               valueFrom:
                 secretKeyRef: {name: {{ $.Values.credentialsSecret | quote }}, key: postgres-url}
+            {{- if $.Values.postgresCa.enabled }}
+            # Local patch 12: system roots plus the PostgreSQL CA, built by postgres-ca-bundle.
+            - {name: SSL_CERT_FILE, value: /etc/postgres-ca/ca.crt}
+            {{- end }}
             - name: DURABLE_ACTORS_JWT_SIGNING_KEY
               valueFrom:
                 secretKeyRef: {name: {{ $.Values.credentialsSecret | quote }}, key: jwt-signing-key}
@@ -196,6 +228,24 @@ spec:
       volumes:
         - name: tmp
           emptyDir: {}
+        {{- with $.Values.postgresCa }}
+        {{- if .enabled }}
+        - name: postgres-ca
+          emptyDir: {medium: Memory, sizeLimit: 2Mi}
+        - name: postgres-ca-source
+          {{- if .configMap }}
+          configMap:
+            name: {{ .configMap | quote }}
+            items: [{key: {{ .key | quote }}, path: ca.crt}]
+          {{- else }}
+          secret:
+            secretName: {{ .secret | quote }}
+            # Public certificates, readable whatever the Pod's fsGroup is.
+            defaultMode: 0444
+            items: [{key: {{ .key | quote }}, path: ca.crt}]
+          {{- end }}
+        {{- end }}
+        {{- end }}
 {{- end }}
 ---
 apiVersion: v1

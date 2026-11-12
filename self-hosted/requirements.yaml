@@ -1288,9 +1288,22 @@ compatibility:
       images:
         relayauth: { repository: ghcr.io/agentworkforce/relayauth, digest: sha256:eb71daa28e30eb7305f666d0bccc5a4002e53e8a574e3c4c32163d907a1b71df }
       notes: superseded by 0.1.1.
-    - id: agent-relay-0.6.57
+    - id: agent-relay-0.6.58
       status: unreleased
       current: true
+      charts: { agent-relay: 0.6.58, relayhistory: 0.1.3, relay-control: 0.4.15, relay-webapp: 0.2.4 }
+      app_versions: { agent-relay: 0.1.0, relayhistory: 0.1.0, relay-control: 0.1.0, relay-webapp: 0.1.0 }
+      depends:
+        agent-relay: { relaycast: 0.3.9, relayauth: 0.1.5, sessions-pipeline: 0.8.28, relayhistory: 0.1.3, relay-control: 0.4.15, relay-webapp: 0.2.4, relayflows: 0.2.5, durable-actors: 0.14.6-awf.2, relayfile: 0.2.2, telemetry-collector: 0.1.6, relay-chief: 0.1.0 }
+      images:
+        relaycast: { repository: ghcr.io/agentworkforce/relaycast-self-host, digest: sha256:ab9dd6781e68f09d5e2e686a17088f9ad533978ef13d974a47d6c212d8eedbde }
+        sessions-pipeline-worker: { repository: ghcr.io/agentworkforce/sessions-pipeline, digest: sha256:77022c5b6a1d30f96f921d703eb27a1acada8ec273ad84aebdde24f8eddce305 }
+        relayhistory: { repository: ghcr.io/agentworkforce/relayhistory, digest_required: true }
+        relay-control: { repository: ghcr.io/agentworkforce/relay-control, digest: sha256:d8c26d44dccb6dd21b7033288241a379e46ce5fbca69f276c4d4745001c3c3e2 }
+        relay-webapp: { repository: ghcr.io/agentworkforce/relay-webapp, digest: sha256:bd295ccb7d1323965dce890f19d0b7f857d706c00d7756f719c713763fdb49f3 }
+      notes: 'Carries 0.6.57 and adds durable-actors 0.14.6-awf.2 (UPSTREAM.md patch 12): an optional postgresCa value appends a PostgreSQL server CA to the image system roots (init container postgres-ca-bundle, in-memory volume postgres-ca at /etc/postgres-ca/ca.crt, SSL_CERT_FILE) in the control plane and pool manager, so the stock upstream client verifies RDS with sslmode=require. values-eks-rds-native.yaml points it at rds-ca for the layered EKS actors profile. Default renders are unchanged.'
+    - id: agent-relay-0.6.57
+      status: planned
       charts: { agent-relay: 0.6.57, relayhistory: 0.1.3, relay-control: 0.4.15, relay-webapp: 0.2.4 }
       app_versions: { agent-relay: 0.1.0, relayhistory: 0.1.0, relay-control: 0.1.0, relay-webapp: 0.1.0 }
       depends:
@@ -1301,7 +1314,7 @@ compatibility:
         relayhistory: { repository: ghcr.io/agentworkforce/relayhistory, digest_required: true }
         relay-control: { repository: ghcr.io/agentworkforce/relay-control, digest: sha256:d8c26d44dccb6dd21b7033288241a379e46ce5fbca69f276c4d4745001c3c3e2 }
         relay-webapp: { repository: ghcr.io/agentworkforce/relay-webapp, digest: sha256:bd295ccb7d1323965dce890f19d0b7f857d706c00d7756f719c713763fdb49f3 }
-      notes: 'Carries 0.6.56 with relaycast 0.3.9 optional existing-claim actor dev storage; preserves the AWS bootstrap ordering and Sessions 0.8.28. No image or customer profile changes.'
+      notes: 'Superseded before a chart tag by 0.6.58. Carries 0.6.56 with relaycast 0.3.9 optional existing-claim actor dev storage; preserves the AWS bootstrap ordering and Sessions 0.8.28. No image or customer profile changes.'
     - id: agent-relay-0.6.56
       status: planned
       charts: { agent-relay: 0.6.56, relayhistory: 0.1.3, relay-control: 0.4.15, relay-webapp: 0.2.4 }
@@ -2048,12 +2061,17 @@ compatibility:
       images:
         relayfile: { repository: ghcr.io/agentworkforce/relayfile }
       notes: 'License-annotation bump of 0.1.1 (unreleased 0.1.2) plus runtime.backend=durable-actors (gateway, session broker: ghcr.io/agentworkforce/relayfile-actors by digest; deploy Job and dev sidecar: relayfile-actors-workspace by digest). Go server image by tag (Chart.appVersion), not digest; default render unchanged.'
-    - id: durable-actors-0.14.6-awf.1
+    - id: durable-actors-0.14.6-awf.2
       status: unreleased
       current: true
+      charts: { durable-actors: 0.14.6-awf.2 }
+      app_versions: { durable-actors: 0.14.6 }
+      notes: 'Carries 0.14.6-awf.1 and adds UPSTREAM.md patch 12: postgresCa {enabled, configMap|secret, key}: an init container writes the image system roots plus the CA into in-memory volume postgres-ca (/etc/postgres-ca/ca.crt) for the control plane and pool manager, and SSL_CERT_FILE points at it. Works with the unmodified upstream images (OpenSSL native-tls verifies chain and hostname for sslmode=require). Default renders are unchanged.'
+    - id: durable-actors-0.14.6-awf.1
+      status: planned
       charts: { durable-actors: 0.14.6-awf.1 }
       app_versions: { durable-actors: 0.14.6 }
-      notes: 'The vendored v0.14.6 chart plus UPSTREAM.md patch 10 (AWS: storage.provider s3, storage.s3.{region,actorCredentials,actorRoleArn,endpoint,forcePathStyle}, serviceAccount.annotations, sandbox.{runtimeClassName,nodeSelector,tolerations}, AWS availability zones in placement.zone) and patch 11 (the -awf.1 version suffix). The S3 values need a control-plane image from the AgentWorkforce durable-actors fork (selfhost/aws-s3, GHCR durable-actors-control-plane); upstream 0.14.6 images ignore them. GCS defaults render as the upstream chart apart from the helm.sh/chart label. Supersedes the never-released 0.14.6 row: Vendored TerseAI/durable-actors release chart v0.14.6 (tag commit 5f0a2d62, asset sha256 a489cd15...bee) with the local patches listed in charts/durable-actors/UPSTREAM.md (root global, invoke-only key, host idle timeout, pool-manager name length, zero-valued bounds, lowercase ingress host, schema patterns, README links). Never published by this repo; images pinned by upstream digest (charts/durable-actors/UPSTREAM.md).'
+      notes: 'Superseded before a chart tag by 0.14.6-awf.2. The vendored v0.14.6 chart plus UPSTREAM.md patch 10 (AWS: storage.provider s3, storage.s3.{region,actorCredentials,actorRoleArn,endpoint,forcePathStyle}, serviceAccount.annotations, sandbox.{runtimeClassName,nodeSelector,tolerations}, AWS availability zones in placement.zone) and patch 11 (the -awf.1 version suffix). The S3 values need a control-plane image from the AgentWorkforce durable-actors fork (selfhost/aws-s3, GHCR durable-actors-control-plane); upstream 0.14.6 images ignore them. GCS defaults render as the upstream chart apart from the helm.sh/chart label. Supersedes the never-released 0.14.6 row: Vendored TerseAI/durable-actors release chart v0.14.6 (tag commit 5f0a2d62, asset sha256 a489cd15...bee) with the local patches listed in charts/durable-actors/UPSTREAM.md (root global, invoke-only key, host idle timeout, pool-manager name length, zero-valued bounds, lowercase ingress host, schema patterns, README links). Never published by this repo; images pinned by upstream digest (charts/durable-actors/UPSTREAM.md).'
     - id: relayfile-0.1.1
       status: shipped
       charts: { relayfile: 0.1.1 }
