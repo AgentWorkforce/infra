@@ -13,6 +13,14 @@ import json
 from pathlib import Path
 import subprocess
 
+# Reviewed moved {} blocks inside shared modules, applied to every instance of
+# the module wherever it is called: new address suffix -> golden suffix.
+# modules/aws/object-storage gave these a count for `unmanaged`.
+MOVED_SUFFIXES = {
+    ".aws_s3_bucket_lifecycle_configuration.this[0]": ".aws_s3_bucket_lifecycle_configuration.this",
+    ".aws_s3_bucket_policy.this[0]": ".aws_s3_bucket_policy.this",
+}
+
 
 def require(value, message):
     if not value:
@@ -50,6 +58,9 @@ def reduce(found, moved):
         resources = {}
         for row in plan.get("resource_changes", []):
             address = moved.get(row["address"], row["address"])
+            for new, old in MOVED_SUFFIXES.items():
+                if address.endswith(new):
+                    address = address[: -len(new)] + old
             require(address not in resources, "Duplicate planned address: " + address)
             change = row["change"]
             resources[address] = digest({"mode": row.get("mode"), "type": row.get("type"), **{k: change.get(k) for k in ("actions", "after", "after_unknown", "after_sensitive")}})
@@ -82,4 +93,4 @@ def check(root, engine, fixture, golden_path, moved, write=False):
                     state = "added" if name not in want[kind] else "removed" if name not in got[kind] else "changed"
                     problems.append(f"{run}: {kind[:-1]} {name} {state}")
     require(not problems, "Default plan differs from the recorded golden plan:\n  " + "\n  ".join(problems))
-    return found, {"ok": True, "engine": key, "runs": len(runs), "resources": sum(len(r["resources"]) for r in runs.values()), "outputs": sum(len(r["outputs"]) for r in runs.values()), "byte_identical": True, "moved_aliases": sorted(moved)}
+    return found, {"ok": True, "engine": key, "runs": len(runs), "resources": sum(len(r["resources"]) for r in runs.values()), "outputs": sum(len(r["outputs"]) for r in runs.values()), "byte_identical": True, "moved_aliases": sorted(moved), "moved_module_suffixes": sorted(MOVED_SUFFIXES)}

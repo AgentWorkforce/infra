@@ -141,6 +141,32 @@ variable "sessions_bucket_import_skip" {
   }
 }
 
+variable "sessions_bucket_unmanaged" {
+  description = "With sessions_bucket_import, bucket configuration to leave exactly as it is on the existing bucket: \"policy\" and/or \"lifecycle_configuration\". Listed resources are neither imported, created nor replaced. An unmanaged policy gets no TLS denies from this state, and history_upload then plans only if the live policy already contains the upload inbox wall (see the README). Default [] manages both."
+  type        = set(string)
+  default     = []
+  nullable    = false
+  validation {
+    condition     = length(setsubtract(var.sessions_bucket_unmanaged, ["policy", "lifecycle_configuration"])) == 0
+    error_message = "sessions_bucket_unmanaged may only list policy and lifecycle_configuration."
+  }
+  validation {
+    condition     = length(var.sessions_bucket_unmanaged) == 0 || var.sessions_bucket_import
+    error_message = "sessions_bucket_unmanaged applies only to an adopted bucket (sessions_bucket_import = true); a bucket this state creates is fully managed."
+  }
+}
+
+variable "existing_pod_identity_service_accounts" {
+  description = "ServiceAccounts in this environment's namespace that already have an EKS Pod Identity association, which must already grant equivalent access. No association is created for them (EKS allows one per ServiceAccount). Applies to the sessions storage (<release>-worker, -alleyoop, -session-ingest-api) and search (<release>-search-indexer, -session-read) ServiceAccounts. Control and the history consumer cannot be listed: history_upload and desktop_feed authorize those exact roles. Default [] creates every association."
+  type        = set(string)
+  default     = []
+  nullable    = false
+  validation {
+    condition     = alltrue([for sa in var.existing_pod_identity_service_accounts : can(regex("^[a-z0-9]([-a-z0-9]*[a-z0-9])?$", sa))])
+    error_message = "existing_pod_identity_service_accounts must be Kubernetes ServiceAccount names."
+  }
+}
+
 variable "eks_cluster_name" {
   description = "Existing EKS cluster for Pod Identity; the foundation root owns the cluster."
   type        = string

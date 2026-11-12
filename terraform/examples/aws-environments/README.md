@@ -489,10 +489,64 @@ sessions storage role, and its `<release>-worker`, `<release>-alleyoop` and
 `<release>-session-ingest-api` Pod Identity associations, plus three state-only
 objects (root contract, postgres snapshot suffix, search mode marker). EKS
 allows one association per ServiceAccount, so if those ServiceAccounts are
-already bound to another role, those creates fail at apply. Check them first.
+already bound to another role, those creates fail at apply. Check them first,
+and list the bound ones in `existing_pod_identity_service_accounts` (below).
 A correct plan has **0 to destroy** and nothing replaced. The mocked test
 `tests/check_sessions_bucket_import.py` asserts exactly that composition with
 both opt-outs.
+
+#### Leaving the existing policy or lifecycle unmanaged
+
+Importing replaces the whole bucket policy and lifecycle configuration in place.
+To keep either exactly as it is, list it in
+`sessions_bucket_unmanaged` (`["policy"]`, `["lifecycle_configuration"]` or
+both; default `[]` manages both and requires `sessions_bucket_import`). A listed
+resource is neither imported, created nor replaced, and nothing else in this
+state reads it. What you give up:
+
+- **Lifecycle:** no abort-incomplete-multipart rule and no noncurrent-version
+  expiry from this state. Keep equivalents in the existing configuration, or
+  versions and incomplete uploads accumulate.
+- **Policy:** no TLS-only denies (`DenyInsecureTransport`, `DenyTLSBelow12`)
+  from this state, and no `history_upload` **inbox wall**. The wall is two
+  bucket-policy denies: `UploadInboxConsumerOnly` (only the history consumer
+  role may read or delete `<key_root>/.upload-inbox/*`) and
+  `UploadInboxCreateOnly` (no overwriting `PutObject` there). Those are
+  currently the only upload denies in the policy.
+
+The wall cannot silently disappear. It also cannot move into IAM identity
+policies, because "every principal except the consumer" is not expressible
+there. Terraform also does not read, merge and rewrite the live policy: it
+would still own the whole document and race whoever else maintains it.
+Instead, with `history_upload` and an unmanaged policy, every plan reads the
+**live** bucket policy (`data.aws_s3_bucket_policy`, read-only). It refuses
+(`terraform_data.sessions_policy_wall`) unless every wall statement is
+already present, compared statement by statement after normalising AWS's
+collapsed one-item lists and key order. The refusal names the missing Sids
+and prints the exact statements to merge by hand. The consumer role ARN in
+them is the predicted `arn:aws:iam::<account>:role<path><name_prefix>-<environment>-history-consumer`,
+so the operator can merge before the role exists, and a postcondition checks
+the created role matches. After apply, `output.history_upload.bucket_policy_statements_to_merge`
+lists every statement this state would have managed, the TLS denies included.
+Because the check runs on every plan, a later removal of the wall is caught at
+the next plan, not before.
+
+#### ServiceAccounts that already have a Pod Identity association
+
+`existing_pod_identity_service_accounts` lists ServiceAccounts in the
+environment namespace that are already bound. No association is created for
+them. Applies to the storage (`<release>-worker`, `-alleyoop`,
+`-session-ingest-api`) and search (`<release>-search-indexer`,
+`-session-read`) ServiceAccounts. The roles and policies are still created,
+and `service_accounts` still names them. **The existing association's role
+must already grant equivalent access**: the storage role's bucket and KMS
+permissions, or the search role's domain and sessions-read permissions. Merge
+them from `runtime_role_policy_json` and the module's documented policy, or the
+workload fails at runtime. Control (`history_upload.control_service_account`,
+`desktop_feed.service_account`) and the history consumer cannot be listed: the
+issuer grant and the inbox wall authorize exactly the roles this state binds
+to them, so another role there would break uploads or be locked out of the
+inbox.
 
 For an environment such as agentrelay-prod that adopts its existing bucket
 with both opt-outs, merge something like the following into its private
@@ -506,6 +560,8 @@ owner's decisions:
   "sessions_bucket_name": "REPLACE_WITH_EXISTING_SESSIONS_BUCKET",
   "sessions_bucket_import": true,
   "sessions_bucket_import_skip": [],
+  "sessions_bucket_unmanaged": ["policy", "lifecycle_configuration"],
+  "existing_pod_identity_service_accounts": [],
   "kms_key_arn": "REPLACE_WITH_THE_BUCKET_KMS_KEY_ARN",
   "history_upload": { "consumer_service_account": "REPLACE_WITH_INGEST_EDGE_SERVICE_ACCOUNT" }
 }
@@ -668,7 +724,9 @@ exact destroy inventory and recovery proof; do not remove state to bypass them.
 | [aws_iam_role.history_control](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/iam_role) | resource |
 | [aws_iam_role_policy.history_consumer](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/iam_role_policy) | resource |
 | [terraform_data.environment_contract](https://registry.terraform.io/providers/hashicorp/terraform/latest/docs/resources/data) | resource |
+| [terraform_data.sessions_policy_wall](https://registry.terraform.io/providers/hashicorp/terraform/latest/docs/resources/data) | resource |
 | [aws_caller_identity.current](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/caller_identity) | data source |
+| [aws_s3_bucket_policy.sessions_existing](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/s3_bucket_policy) | data source |
 
 ### Inputs
 
@@ -690,6 +748,7 @@ exact destroy inventory and recovery proof; do not remove state to bypass them.
 | enable\_relayfile | Include Relayfile in the full-suite application contract; its actor identities/Secrets must be configured by the application layer. | `bool` | `false` | no |
 | enable\_search | Create this environment's OpenSearch domain and its search-indexer/session-read roles and Pod Identity associations (module.search). Default true: self-host keeps it. false is an opt-out for an environment whose search lives elsewhere: no domain, search role or association is created; search\_subnet\_ids, search\_security\_group\_ids and search\_master\_user\_arn are not required; the search outputs are null. An existing protected domain refuses removal (prevent\_destroy). | `bool` | `true` | no |
 | environment\_class | Sizing/protection tier; environment names remain independent of this classification. | `string` | `"development"` | no |
+| existing\_pod\_identity\_service\_accounts | ServiceAccounts in this environment's namespace that already have an EKS Pod Identity association, which must already grant equivalent access. No association is created for them (EKS allows one per ServiceAccount). Applies to the sessions storage (<release>-worker, -alleyoop, -session-ingest-api) and search (<release>-search-indexer, -session-read) ServiceAccounts. Control and the history consumer cannot be listed: history\_upload and desktop\_feed authorize those exact roles. Default [] creates every association. | `set(string)` | `[]` | no |
 | existing\_runtime\_roles | Operator-owned runtime identities. Null manages search/pipeline roles here. Otherwise supply both search roles and, only in Lambda mode, the pipeline role. Trust, policies, guards and EKS associations must already be verified outside this state. | ```object({ indexer_role_arn = string reader_role_arn = string pipeline_role_arn = optional(string) })``` | `null` | no |
 | function\_security\_group\_ids | Lambda security groups with private database/search access and egress to the required AWS services. | `list(string)` | `[]` | no |
 | history\_upload | Optional self-host direct uploads. Creates a write-only desktop role, a native ingest-edge consumer role, and a Control issuer binding (reuses desktop\_feed's binding). Does not activate Helm flags or create witness secrets. consumer\_service\_account must exactly match ingestEdge.serviceAccountName. | ```object({ key_root = optional(string, "96bulls") control_service_account = optional(string, "relay-control") consumer_service_account = string })``` | `null` | no |
@@ -714,6 +773,7 @@ exact destroy inventory and recovery proof; do not remove state to bypass them.
 | sessions\_bucket\_import | Adopt the EXISTING bucket named by sessions\_bucket\_name into this state with import blocks instead of creating it. Requires sessions\_bucket\_name. Imports the bucket and its public access block, ownership controls, encryption, versioning, lifecycle and policy (each by bucket name), except those in sessions\_bucket\_import\_skip; the module's settings then apply as in-place updates. Default false: no import. Never point it at a bucket another tool manages (see the README). | `bool` | `false` | no |
 | sessions\_bucket\_import\_skip | Bucket configuration resources to create instead of import when sessions\_bucket\_import is true, because the existing bucket has none (S3 returns no bucket policy or lifecycle configuration until one is set, and importing a missing one fails). Allowed: public\_access\_block, ownership\_controls, server\_side\_encryption\_configuration, versioning, lifecycle\_configuration, policy. The bucket itself is always imported. | `set(string)` | `[]` | no |
 | sessions\_bucket\_name | Override the sessions bucket name. null (default) keeps the computed <name\_prefix>-<environment>-<account\_id>-<region>-sessions. Only for an environment whose sessions bucket already exists under another name: this state then manages that bucket, so import it first (see the README) instead of letting Terraform try to create a duplicate. | `string` | `null` | no |
+| sessions\_bucket\_unmanaged | With sessions\_bucket\_import, bucket configuration to leave exactly as it is on the existing bucket: "policy" and/or "lifecycle\_configuration". Listed resources are neither imported, created nor replaced. An unmanaged policy gets no TLS denies from this state, and history\_upload then plans only if the live policy already contains the upload inbox wall (see the README). Default [] manages both. | `set(string)` | `[]` | no |
 | tags | Additional resource tags. Environment identity and Pippen conventions cannot be overridden. | `map(string)` | `{}` | no |
 
 ### Outputs

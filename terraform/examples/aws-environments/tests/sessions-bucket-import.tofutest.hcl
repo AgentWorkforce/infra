@@ -120,3 +120,18 @@ run "off_by_default_imports_nothing" {
     error_message = "No import unless sessions_bucket_import is true."
   }
 }
+
+run "unmanaged_requires_import" {
+  command = plan
+  variables {
+    sessions_bucket_import    = false
+    sessions_bucket_unmanaged = ["policy"]
+  }
+  expect_failures = [var.sessions_bucket_unmanaged]
+}
+
+run "unmanaged_names_only_policy_or_lifecycle" {
+  command = plan
+  variables { sessions_bucket_unmanaged = ["versioning"] }
+  expect_failures = [var.sessions_bucket_unmanaged]
+}

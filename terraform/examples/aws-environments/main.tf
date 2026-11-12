@@ -89,6 +89,14 @@ resource "terraform_data" "environment_contract" {
       error_message = "Sessions bucket imports must adopt the bucket itself and target only the configured sessions_bucket_name."
     }
     precondition {
+      condition = length(setintersection(var.existing_pod_identity_service_accounts, compact([
+        try(var.history_upload.control_service_account, null),
+        try(var.history_upload.consumer_service_account, null),
+        try(var.desktop_feed.service_account, null),
+      ]))) == 0
+      error_message = "existing_pod_identity_service_accounts cannot list the Control or history consumer ServiceAccount: history_upload and desktop_feed authorize (and the inbox wall admits) exactly the roles this state binds to them."
+    }
+    precondition {
       condition     = var.pipeline_runtime != "lambda" || (var.enable_database && var.enable_search)
       error_message = "Lambda mode indexes into this environment's OpenSearch and reads its PostgreSQL: it requires enable_database and enable_search."
     }
@@ -162,6 +170,7 @@ module "sessions_bucket" {
   bucket_name   = local.sessions_bucket_name
   kms_key_arn   = var.kms_key_arn
   force_destroy = false
+  unmanaged     = var.sessions_bucket_unmanaged
   access_role = {
     name                     = "${local.name}-sessions"
     path                     = local.role_path
@@ -170,7 +179,7 @@ module "sessions_bucket" {
       cluster_name    = var.eks_cluster_name
       namespace       = local.namespace
       service_account = "${var.release_name}-${sa}"
-    }]
+    } if !contains(var.existing_pod_identity_service_accounts, "${var.release_name}-${sa}")]
   }
   history_upload = local.history_upload_enabled ? {
     name                     = "${local.name}-desktop-upload"
@@ -178,7 +187,9 @@ module "sessions_bucket" {
     permissions_boundary_arn = local.boundary
     key_root                 = var.history_upload.key_root
     control_role_arn         = local.history_control_role_arn
-    consumer_role_arns       = [aws_iam_role.history_consumer[0].arn]
+    # With an unmanaged policy the wall is compared with the live policy at
+    # plan time, before the role exists: use its exact predicted ARN.
+    consumer_role_arns = [local.unmanaged_policy ? local.history_consumer_role_arn : aws_iam_role.history_consumer[0].arn]
   } : null
   tags = local.tags
 
@@ -206,8 +217,8 @@ module "search" {
     name_prefix              = "${local.name}-search"
     path                     = local.role_path
     permissions_boundary_arn = local.boundary
-    indexer_service_accounts = [{ cluster_name = var.eks_cluster_name, namespace = local.namespace, service_account = local.search_indexer_sa }]
-    reader_service_accounts  = [{ cluster_name = var.eks_cluster_name, namespace = local.namespace, service_account = local.search_reader_sa }]
+    indexer_service_accounts = [for sa in [local.search_indexer_sa] : { cluster_name = var.eks_cluster_name, namespace = local.namespace, service_account = sa } if !contains(var.existing_pod_identity_service_accounts, sa)]
+    reader_service_accounts  = [for sa in [local.search_reader_sa] : { cluster_name = var.eks_cluster_name, namespace = local.namespace, service_account = sa } if !contains(var.existing_pod_identity_service_accounts, sa)]
   }
   sessions_bucket_read      = local.search_sessions_bucket_read
   additional_principal_arns = distinct(concat(local.external_runtime_arns, var.pipeline_runtime == "lambda" ? [module.pipeline[0].execution_role_arn] : []))

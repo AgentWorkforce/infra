@@ -60,6 +60,7 @@ resource "aws_s3_bucket_versioning" "this" {
 
 resource "aws_s3_bucket_lifecycle_configuration" "this" {
   #checkov:skip=CKV_AWS_300:The abort-incomplete-multipart-uploads rule applies to the whole bucket (empty filter).
+  count  = contains(var.unmanaged, "lifecycle_configuration") ? 0 : 1
   bucket = aws_s3_bucket.this.id
 
   rule {
@@ -140,6 +141,7 @@ locals {
 }
 
 resource "aws_s3_bucket_policy" "this" {
+  count  = contains(var.unmanaged, "policy") ? 0 : 1
   bucket = aws_s3_bucket.this.id
   policy = jsonencode({
     Version   = "2012-10-17"
@@ -231,4 +233,15 @@ resource "aws_eks_pod_identity_association" "access" {
   service_account = each.value.service_account
   role_arn        = aws_iam_role.access[0].arn
   tags            = var.tags
+}
+
+# `unmanaged` gave these two a count; keep existing states' addresses.
+moved {
+  from = aws_s3_bucket_lifecycle_configuration.this
+  to   = aws_s3_bucket_lifecycle_configuration.this[0]
+}
+
+moved {
+  from = aws_s3_bucket_policy.this
+  to   = aws_s3_bucket_policy.this[0]
 }

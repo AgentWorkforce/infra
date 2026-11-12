@@ -75,6 +75,17 @@ variable "object_lock_enabled" {
   default     = false
 }
 
+variable "unmanaged" {
+  description = "Bucket configuration this module must leave alone on an existing bucket: \"policy\" and/or \"lifecycle_configuration\". Listed resources are neither created, imported nor replaced; whatever the bucket already has stays. With \"policy\" the TLS denies, history_upload's inbox wall and additional_policy_statements are NOT applied: bucket_policy_statements lists them for the operator, and the caller must verify them (aws-environments does). Default [] manages both."
+  type        = set(string)
+  default     = []
+  nullable    = false
+  validation {
+    condition     = length(setsubtract(var.unmanaged, ["policy", "lifecycle_configuration"])) == 0
+    error_message = "unmanaged may only list policy and lifecycle_configuration."
+  }
+}
+
 variable "additional_policy_statements" {
   description = "Extra bucket policy statements (decoded IAM statement objects), merged after the TLS-only denies."
   type        = any

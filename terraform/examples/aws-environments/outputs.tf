@@ -141,7 +141,7 @@ output "desktop_feed" {
 
 output "history_upload" {
   description = "Direct upload wiring only; enablement needs compatible published Control/consumer images and the same witness Secret provisioned out of band. No secret values in Terraform."
-  value = local.history_upload_enabled ? {
+  value = local.history_upload_enabled ? merge({
     control_role_arn         = local.history_control_role_arn
     consumer_role_arn        = aws_iam_role.history_consumer[0].arn
     control_service_account  = var.history_upload.control_service_account
@@ -156,5 +156,8 @@ output "history_upload" {
         kmsKeyArn = var.kms_key_arn
       }
     }
-  } : null
+    }, local.unmanaged_policy ? {
+    # The unmanaged bucket policy must carry these (the plan refuses otherwise).
+    bucket_policy_statements_to_merge = module.sessions_bucket.bucket_policy_statements
+  } : {}) : null
 }
