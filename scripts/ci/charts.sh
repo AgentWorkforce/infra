@@ -437,6 +437,10 @@ for chart in "${charts[@]}"; do
           || err "$chart: migration files must get the gateway's file store settings and no secrets"
         [ "$(yq "$mj | .spec.template.spec.containers[0].volumeMounts[] | select(.name == \"data\") | .readOnly" <<<"$out" | sed '/^$/d')" = true ] \
           || err "$chart: migration files must read the old files read-only"
+        ! yq 'select(.kind == "PersistentVolumeClaim") | .metadata.name' <<<"$(render "$chart" "$s3")" | grep -q . \
+          || err "$chart: durable-actors with s3 files must not render a data claim by default"
+        [ "$(yq 'select(.kind == "PersistentVolumeClaim") | .metadata.name' <<<"$(render "$chart" "$s3" --set persistence.retainForMigration=true)" | sed '/^$/d')" = ci-relaycast-data ] \
+          || err "$chart: persistence.retainForMigration must keep the previous backend's data claim"
         out=$(render "$chart" "$s3" "${mig[@]}" --set migration.step=import)
         mj='select(.kind == "Job" and .metadata.labels["app.kubernetes.io/component"] == "migration-import")'
         [ "$(yq "$mj | .spec.template.spec.containers[0].args[-1]" <<<"$out" | sed '/^$/d')" = "http://ci-relaycast.ci.svc:8787" ] \

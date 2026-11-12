@@ -47,6 +47,11 @@ rta_check_cutover() {
   [ -s "$(rta_state).ar-since" ] || die "no record of the credentials phase under $state_dir (run --relaycast-actors credentials with this STATE_DIR)"
   rta_actor_files=(-f "$chart/values-eks-actors.yaml")
   for v in "${rta_actor_values[@]}"; do [ -f "$v" ] || die "actors values file not found: $v"; rta_actor_files+=(-f "$v"); done
+  # The data claim stays in the release (files, export, rollback): see
+  # relaycast persistence.retainForMigration. Keep it in your values until the
+  # clean-up phase.
+  printf 'relaycast:\n  persistence:\n    retainForMigration: true\n' > "$work/rta-retain.yaml"
+  rta_actor_files+=(-f "$work/rta-retain.yaml")
   rta_target_values > "$work/rta-target.yaml" || die "the actors values do not render"
   # Nothing running may disappear: values-eks-actors.yaml turns every other
   # component off unless the overrides turn it back on.

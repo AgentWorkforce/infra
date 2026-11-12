@@ -321,6 +321,12 @@ ingress:
   externalTls: false
 
 persistence:
+  # runtime.backend=durable-actors only: keep rendering the data claim of the
+  # PostgreSQL/SQLite backend this release moved from (its files and the
+  # migration export live there). Set by the move to durable-actors
+  # (docs/relaycast-postgres-to-actors-migration.md) and kept until its
+  # clean-up, so a helm rollback finds the claim it created unchanged.
+  retainForMigration: false
   existingClaim: ""
   storageClass: ""
   # ReadWriteOnce is required when backup.enabled: the backup pod is scheduled
