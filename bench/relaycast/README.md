@@ -25,6 +25,13 @@ peak estimates are not assumed simultaneous, and their sum is not used as a
 substitute for the measured global peak. Different observation windows remain
 explicit. Rounded zero shares do not remove observed rare routes.
 
+Per-route burst shape is assumed proportional to each route's average mix;
+per-route peaks are not independently measured. A supplied `rps_peak` derived
+by multiplying every route average by the same global burst factor adds no
+route-specific burst evidence. When the route inventory is incomplete,
+normalization redistributes the unlisted tail across the known route mix;
+that is a planning assumption, not measured coverage of that tail.
+
 Message counts and WebSocket upgrades are subsets of route requests; adding
 them again would double-count load. Production status mix is reference data,
 not an instruction to create errors. The hourly curve is retained as supplied;
