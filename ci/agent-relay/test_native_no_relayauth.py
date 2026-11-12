@@ -37,6 +37,51 @@ def control(overrides):
 
 
 class NativeNoRelayauth(unittest.TestCase):
+    def test_eks_actors_profile_can_layer_on_rds_native(self):
+        # Replace only the documented customer placeholders. The three profile
+        # files themselves must compose without leaking Relaycast's RDS CA into
+        # its durable-actors backend.
+        actor_values = {
+            'durable-actors.publicUrl': 'https://actors.ci.invalid',
+            'durable-actors.placement.zone': 'us-west-2a',
+            'durable-actors.storage.bucket': 'ci-actors',
+            'durable-actors.storage.s3.region': 'us-west-2',
+            'durable-actors.storage.s3.actorRoleArn': 'arn:aws:iam::123456789012:role/ci-actors',
+            'relaycast.baseUrl': 'https://cast.ci.invalid',
+            'relaycast.existingSecret': 'relaycast-secrets',
+            'relaycast.runtime.durableActors.deployer.artifactBucket': 'ci-actors',
+            'relaycast.runtime.durableActors.deployer.artifactStore.s3.region': 'us-west-2',
+            'relaycast.runtime.durableActors.fileStore.bucket': 'ci-relaycast-files',
+            'relaycast.runtime.durableActors.fileStore.s3.region': 'us-west-2',
+            'relayfile.runtime.durableActors.deployer.artifactBucket': 'ci-actors',
+            'relayfile.runtime.durableActors.deployer.artifactStore.s3.region': 'us-west-2',
+            'relayfile.runtime.durableActors.blobStore.bucket': 'ci-relayfile-blobs',
+            'relayfile.runtime.durableActors.blobStore.s3.region': 'us-west-2',
+        }
+        helm_set = [
+            '--set', 'components.control=true',
+            '--set', 'components.sessionsPipeline=true',
+            *sum((['--set-string', f'{key}={value}'] for key, value in actor_values.items()), []),
+        ]
+        result = subprocess.run([
+            'helm', 'template', 'proof', 'charts/agent-relay', '-n', 'agent-relay-ci', '--no-hooks',
+            '-f', 'charts/agent-relay/values-eks.yaml',
+            '-f', 'charts/agent-relay/values-eks-rds-native.yaml',
+            '-f', 'charts/agent-relay/values-eks-actors.yaml',
+            *helm_set,
+        ], cwd=ROOT, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        docs = [doc for doc in yaml.safe_load_all(result.stdout) if doc]
+        deployments = {doc['metadata']['name']: doc for doc in docs if doc.get('kind') == 'Deployment'}
+        self.assertIn('relaycast', deployments)
+        relaycast_pod = deployments['relaycast']['spec']['template']['spec']
+        self.assertFalse(any('postgres' in volume['name'] for volume in relaycast_pod.get('volumes', [])))
+        for name in ('relay-control', 'proof-ingest-edge'):
+            self.assertIn(name, deployments)
+            pod = deployments[name]['spec']['template']['spec']
+            postgres_ca = next(volume for volume in pod['volumes'] if volume['name'] == 'postgres-ca')
+            self.assertEqual(postgres_ca['configMap']['name'], 'rds-ca', name)
+
     def test_eks_rds_native_profile_is_reader_first_and_customer_neutral(self):
         result = subprocess.run([
             'helm', 'template', 'proof', 'charts/agent-relay', '-n', 'agent-relay-placeholder', '--no-hooks',
