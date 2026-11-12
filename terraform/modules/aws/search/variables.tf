@@ -1,3 +1,10 @@
+variable "enabled" {
+  description = "Create the domain. false creates no AWS resource (for a stack whose search lives elsewhere): no domain, policy, log groups, workload roles or Pod Identity associations, and subnet_ids, security_group_ids and master_user_arn are not required. Only the local creation_mode marker remains in state. Default true; turning it off on an existing protected domain is refused by prevent_destroy."
+  type        = bool
+  default     = true
+  nullable    = false
+}
+
 variable "disposable" {
   description = "Explicitly create a new disposable domain with Terraform destruction enabled. Defaults to protected. Stored-mode enrollment blocks later ordinary flips; unmarked existing states require independently reviewed unchanged-mode enrollment. Raw Terraform cannot prove first-enrollment history."
   type        = bool
@@ -31,7 +38,7 @@ variable "subnet_ids" {
   type        = list(string)
 
   validation {
-    condition     = length(var.subnet_ids) >= 1 && length(var.subnet_ids) <= 3
+    condition     = !var.enabled || (length(var.subnet_ids) >= 1 && length(var.subnet_ids) <= 3)
     error_message = "Pass 1-3 subnet_ids (one per AZ); 3 is recommended for production."
   }
 }
@@ -41,7 +48,7 @@ variable "security_group_ids" {
   type        = list(string)
 
   validation {
-    condition     = length(var.security_group_ids) > 0
+    condition     = !var.enabled || length(var.security_group_ids) > 0
     error_message = "Pass at least one security group; the module creates none."
   }
 }
@@ -128,7 +135,7 @@ variable "master_user_arn" {
   type        = string
 
   validation {
-    condition     = var.master_user_arn != null && can(regex("^arn:aws[a-z-]*:iam::[0-9]{12}:", var.master_user_arn))
+    condition     = !var.enabled || (var.master_user_arn != null && can(regex("^arn:aws[a-z-]*:iam::[0-9]{12}:", var.master_user_arn)))
     error_message = "master_user_arn must be an IAM role or user ARN."
   }
 }
