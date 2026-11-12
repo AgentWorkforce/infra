@@ -1,2 +1,12 @@
 Session read API (auth mode {{ .Values.auth.mode }}) is at Service {{ include "session-read-api.fullname" . }}, port 80.
 It is ready only when /healthz reports enabled:true. Expose /v1/ only through your ingress; never route /internal/* publicly.
+{{- $deprecated := list -}}
+{{- range $e := .Values.extraEnv -}}
+{{- if has $e.name (list "READ_API_TIMING_ASSUME_NO_TURNS" "READ_API_CANONICAL_PIN_LAGGING_POINTER") -}}
+{{- $deprecated = append $deprecated $e.name -}}
+{{- end -}}
+{{- end -}}
+{{- if $deprecated }}
+
+DEPRECATION: {{ join ", " $deprecated }} in extraEnv was normalized to its structured sessionReadApi value and the duplicate was dropped. Remove the legacy extraEnv entry before the next release.
+{{- end }}
