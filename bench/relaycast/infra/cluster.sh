@@ -428,6 +428,11 @@ cmd_down() {
   done
   cmd_db_down pg
   cmd_db_down actors
+  # ECR repositories under the bench prefix (the self-built PG-fix image).
+  local repo
+  for repo in $(aws_ ecr describe-repositories --query "repositories[?starts_with(repositoryName, '${NAME}/')].repositoryName" --output text 2>/dev/null); do
+    aws_ ecr delete-repository --repository-name "$repo" --force >/dev/null; deleted "ecr-repository $repo"
+  done
   if aws_ rds describe-db-subnet-groups --db-subnet-group-name "$DB_SUBNET_GROUP" >/dev/null 2>&1; then
     aws_ rds delete-db-subnet-group --db-subnet-group-name "$DB_SUBNET_GROUP"; deleted "rds-subnet-group $DB_SUBNET_GROUP"
   fi
@@ -499,6 +504,8 @@ cmd_audit() {
   [[ -n "$out" ]] && { echo "iam roles: $out"; left=1; }
   out="$(aws_ secretsmanager list-secrets --filters "Key=name,Values=${NAME}/" --query 'SecretList[].Name' --output text)"
   [[ -n "$out" ]] && { echo "secrets: $out"; left=1; }
+  out="$(aws_ ecr describe-repositories --query "repositories[?starts_with(repositoryName, '${NAME}/')].repositoryName" --output text 2>/dev/null)"
+  [[ -n "$out" ]] && { echo "ecr: $out"; left=1; }
   out="$(aws_ eks list-clusters --query "clusters[?@=='${NAME}']" --output text)"
   [[ -n "$out" ]] && { echo "eks: $out"; left=1; }
   out="$(aws_ rds describe-db-instances --query "DBInstances[?starts_with(DBInstanceIdentifier, '${NAME}-')].DBInstanceIdentifier" --output text)"

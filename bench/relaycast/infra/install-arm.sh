@@ -193,6 +193,8 @@ cmd_install() {
     ACTOR_ROLE_ARN="arn:aws:iam::${ACCOUNT}:role/${NAME}/${NAME}-storage" \
     "$ROOT/bench/relaycast/scripts/render-arms.sh" "$out" --check >&2
   args="$(cat "$out/$ARM/helm-args")"
+  # EXTRA_VALUES: space-separated extra -f files (e.g. an image override).
+  local f; for f in ${EXTRA_VALUES:-}; do args+=" -f $f"; done
   log "helm upgrade --install ($args)"
   # shellcheck disable=SC2086
   helm upgrade --install "$RELEASE" "$ROOT/charts/agent-relay" -n "$NS" $args >&2 || { log "helm upgrade FAILED"; exit 1; }
@@ -221,6 +223,45 @@ cmd_post() {
   cmd_status
 }
 
+# fresh-db <name> (pg arm): a new, empty Relaycast database on the arm's RDS,
+# with the same roles and grants rds-setup.sh gives `relaycast`, and the
+# relaycast URLs in agent-relay-secrets repointed at it. A run against it starts
+# from an empty schema (the migrate Job creates it), like a fresh install.
+cmd_fresh_db() {
+  local db="${1:?database name}"
+  [[ "$ARM" == pg && "$db" =~ ^[a-z][a-z0-9_]{2,40}$ ]] || { echo "pg arm and a simple lowercase name only" >&2; exit 2; }
+  cat >"$STATE/fresh-db.sh" <<EOS
+set -eu
+P="psql -X -q -v ON_ERROR_STOP=1"
+\$P "\$ADMIN_URL" -c "GRANT relaycast_owner TO CURRENT_USER WITH SET TRUE" 
+# The admin owns the database and relaycast_owner owns only the schema, as
+# rds-setup.sh does: the migrate Job refuses an owner identity that owns the
+# database (pg_database_owner membership, CREATE on the database).
+\$P "\$ADMIN_URL" -tAc "SELECT 1 FROM pg_database WHERE datname='${db}'" | grep -q 1 || \$P "\$ADMIN_URL" -c "CREATE DATABASE ${db}"
+\$P "\$ADMIN_URL" -c "ALTER DATABASE ${db} OWNER TO CURRENT_USER"
+DB_URL=\$(echo "\$ADMIN_URL" | sed 's#/postgres?#/${db}?#')
+\$P "\$DB_URL" <<'SQL'
+ALTER SCHEMA public OWNER TO relaycast_owner;
+REVOKE CREATE ON SCHEMA public FROM PUBLIC;
+GRANT USAGE ON SCHEMA public TO relaycast_runtime;
+ALTER DEFAULT PRIVILEGES FOR ROLE relaycast_owner IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO relaycast_runtime;
+ALTER DEFAULT PRIVILEGES FOR ROLE relaycast_owner IN SCHEMA public GRANT SELECT, USAGE, UPDATE ON SEQUENCES TO relaycast_runtime;
+REVOKE TEMP, CREATE ON DATABASE ${db} FROM PUBLIC;
+GRANT TEMP ON DATABASE ${db} TO relaycast_owner;
+GRANT CONNECT ON DATABASE ${db} TO relaycast_owner, relaycast_runtime;
+SQL
+echo "${db} ready"
+EOS
+  psql_job rcb-fresh-db "$STATE/fresh-db.sh"
+  local k
+  for k in database-owner-url database-runtime-url; do
+    sed -E "s#(@[^/]+/)relaycast([?]|$)#\1${db}\2#" "$STATE/files/agent-relay-secrets/$k" >"$STATE/files/agent-relay-secrets/$k.new"
+    mv "$STATE/files/agent-relay-secrets/$k.new" "$STATE/files/agent-relay-secrets/$k"
+  done
+  apply_secret agent-relay-secrets
+  log "relaycast now points at database ${db}"
+}
+
 cmd_status() {
   "${K[@]}" get pods -o wide
   "${K[@]}" get jobs
@@ -240,6 +281,7 @@ case "$CMD" in
   install) cmd_install ;;
   post) cmd_post ;;
   status) cmd_status ;;
+  fresh-db) cmd_fresh_db "${3:-}" ;;
   uninstall) cmd_uninstall ;;
   *) echo "usage: $0 <pg|actors> prereqs|install|post|status|uninstall" >&2; exit 2 ;;
 esac
