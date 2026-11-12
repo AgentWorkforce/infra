@@ -126,6 +126,31 @@ grep -F 'sslmode=verify-full' "$STATE/secret-files/agent-relay-secrets/HOOPDB_UR
 [[ "$(stat -c %a "$STATE/secret-files/agent-relay-secrets/HOOPDB_URL")" == 600 ]] || fail "credential file mode is not 0600"
 pass "pre creates hardened Job, create-only temporary Secret and credential files"
 
+# Terraform's chart_values pin sha256(server_ca_cert): the PEM with exactly one
+# trailing newline. The bundle written for the ConfigMap must be those bytes.
+expected_ca_sha="$(printf -- '-----BEGIN CERTIFICATE-----\nMOCK\n-----END CERTIFICATE-----\n' | sha256sum | cut -d' ' -f1)"
+[[ "$(sha256sum "$STATE/cloud-sql-ca.pem" | cut -d' ' -f1)" == "$expected_ca_sha" ]] || fail "CA bundle bytes differ from Terraform's server_ca_cert"
+[[ "$(cat "$STATE/cloud-sql-ca.sha256")" == "$expected_ca_sha" ]] || fail "recorded CA sha256 differs from Terraform's pin"
+pass "CA bundle matches the Terraform caSha256 pin"
+
+: >"$LOG"
+CLOUD_SQL_ADMIN_SECRET_ID=projects/secret-project/secrets/agent-relay-pg-admin \
+  CLOUD_SQL_CA_SHA256="$expected_ca_sha" "$TEST_BASH" "$SCRIPT" pre >/dev/null
+grep -F 'gcloud secrets versions access latest --project secret-project --secret agent-relay-pg-admin' "$LOG" >/dev/null \
+  || fail "full Secret Manager resource name was not split into project and id"
+pass "pre accepts the Terraform admin_password_secret_id resource name"
+
+: >"$LOG"
+if CLOUD_SQL_CA_SHA256=0000000000000000000000000000000000000000000000000000000000000000 \
+    "$TEST_BASH" "$SCRIPT" pre >"$ROOT/pre-ca-mismatch.log" 2>&1; then
+  fail "pre accepted a CA bundle that differs from CLOUD_SQL_CA_SHA256"
+fi
+grep -F 'differs from CLOUD_SQL_CA_SHA256' "$ROOT/pre-ca-mismatch.log" >/dev/null || fail "CA pin mismatch diagnostic is missing"
+if grep -Fq 'create secret generic agent-relay-cloud-sql-pre-secret' "$LOG"; then
+  fail "pre ran database setup after a CA pin mismatch"
+fi
+pass "pre stops when the CA bundle differs from the chart pin"
+
 : >"$LOG"
 MOCK_MIGRATION_STATUS=complete "$TEST_BASH" "$SCRIPT" post >/dev/null
 grep -F 'helm -n agent-relay get manifest agent-relay' "$LOG" >/dev/null || fail "post did not inspect the current Helm manifest"

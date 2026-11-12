@@ -15,9 +15,12 @@
 #   CLOUD_SQL_HOST              terraform output postgres.dns_name
 #   CLOUD_SQL_ADMIN_USER        terraform output postgres.admin_username
 #   CLOUD_SQL_ADMIN_SECRET_ID   terraform output postgres.admin_password_secret_id
+#                               (a secret id, or projects/<project>/secrets/<id>)
 #   SERVICES_IMAGE              sessions-pipeline image pinned by digest
 # Optional:
 #   CLOUD_SQL_CA_FILE           shared-CA PEM bundle (otherwise fetched by gcloud)
+#   CLOUD_SQL_CA_SHA256         expected bundle sha256 (the caSha256 in Terraform's
+#                               chart_values); pre fails if the bundle differs
 #   PSQL_IMAGE                  PostgreSQL client image pinned by digest
 #   NAMESPACE                   default agent-relay
 #   HELM_RELEASE                default agent-relay
@@ -82,8 +85,12 @@ write_file() {
 }
 
 admin_password() {
-  gcloud secrets versions access latest --project "$GCP_PROJECT_ID" \
-    --secret "$CLOUD_SQL_ADMIN_SECRET_ID" --quiet
+  # Terraform outputs the full resource name; gcloud --secret wants the id.
+  local project="$GCP_PROJECT_ID" id="$CLOUD_SQL_ADMIN_SECRET_ID"
+  if [[ "$id" =~ ^projects/([^/]+)/secrets/([^/]+)$ ]]; then
+    project="${BASH_REMATCH[1]}"; id="${BASH_REMATCH[2]}"
+  fi
+  gcloud secrets versions access latest --project "$project" --secret "$id" --quiet
 }
 
 ensure_ca() {
@@ -98,7 +105,15 @@ ensure_ca() {
       --format=json --quiet | jq -er '.serverCaCert.cert' >"$bundle"
   fi
   [[ "$(grep -c 'BEGIN CERTIFICATE' "$bundle")" -gt 0 ]] || die "Cloud SQL CA bundle is empty"
+  # Exactly one trailing newline, the same bytes as Terraform's server_ca_cert,
+  # so the caSha256 pins in its chart_values match this ConfigMap.
+  local normalized; normalized="$(cat "$bundle")"
+  printf '%s\n' "$normalized" >"$bundle"
   chmod 600 "$bundle"
+  if [[ -n "${CLOUD_SQL_CA_SHA256:-}" ]]; then
+    [[ "$(sha256sum "$bundle" | cut -d' ' -f1)" == "$CLOUD_SQL_CA_SHA256" ]] || \
+      die "Cloud SQL CA bundle sha256 differs from CLOUD_SQL_CA_SHA256 (re-run terraform output chart_values)"
+  fi
 
   actual_host="$(gcloud sql instances describe "$CLOUD_SQL_INSTANCE" --project "$GCP_PROJECT_ID" \
     --format=json --quiet | jq -r '(.dnsNames // []) | map(select(.connectionType == "PRIVATE_SERVICES_ACCESS")) | first | .name // empty')"
