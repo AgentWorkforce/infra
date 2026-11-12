@@ -160,7 +160,8 @@ async function upload(ph, intended) {
     const putUrl = u.replace(/^https?:\/\/[^/]+/, fixture.baseUrl);
     const tp = hr();
     let ps = 0;
-    try { ps = (await fetch(putUrl, { method: 'PUT', body: new Uint8Array(size), signal: AbortSignal.timeout(60000) })).status; } catch { ps = 0; }
+    // The actors file store checks that Content-Type matches the upload request.
+    try { ps = (await fetch(putUrl, { method: 'PUT', headers: { 'content-type': 'application/octet-stream' }, body: new Uint8Array(size), signal: AbortSignal.timeout(60000) })).status; } catch { ps = 0; }
     lat.add(`${ph.label} PUT /_relayfiles`, hr() - tp); status.inc(`${ph.label} PUT /_relayfiles ${ps}`);
     r = await call('POST', `/v1/files/${id}/complete`, m.p.token);
     lat.add(`${ph.label} POST /v1/files/:id/complete`, r.ms); status.inc(`${ph.label} POST /v1/files/:id/complete ${r.status}`);

@@ -504,6 +504,55 @@
      "durationS": 600
     }
    ]
+  },
+  {
+   "name": "multi-ws-8",
+   "sinks": 2,
+   "producers": 2,
+   "stepped": true,
+   "notes": "Fits in the 64 vCPU quota: 8 workspaces (8 Workspace actors on 2 actor nodes), mixed DM/channel traffic stepped across all of them.",
+   "fixture": {
+    "RCB_WORKSPACES": 8,
+    "RCB_PRODUCERS": 10,
+    "RCB_RECEIVERS": 20,
+    "RCB_CHANNELS": 2,
+    "RCB_CHANNEL_MEMBERS": 10,
+    "RCB_AGENTS_PER_NODE": 1
+   },
+   "phases": [
+    {
+     "label": "mw8-10",
+     "kind": "mixed",
+     "dmShare": 0.6,
+     "rate": 10,
+     "durationS": 180,
+     "sizeBytes": 512
+    },
+    {
+     "label": "mw8-20",
+     "kind": "mixed",
+     "dmShare": 0.6,
+     "rate": 20,
+     "durationS": 180,
+     "sizeBytes": 512
+    },
+    {
+     "label": "mw8-40",
+     "kind": "mixed",
+     "dmShare": 0.6,
+     "rate": 40,
+     "durationS": 180,
+     "sizeBytes": 512
+    },
+    {
+     "label": "mw8-80",
+     "kind": "mixed",
+     "dmShare": 0.6,
+     "rate": 80,
+     "durationS": 180,
+     "sizeBytes": 512
+    }
+   ]
   }
  ]
 }
