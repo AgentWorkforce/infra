@@ -43,10 +43,11 @@ and after.
    upgraded on Postgres before cutover, and their `ar_` hashes are then copied
    verbatim.** No upgraded holder re-registers.
 4. **relay-control holds Relaycast credentials.** The workspace key
-   (`workspaces.relaycast_api_key_ciphertext`) and agent tokens in
-   `selfhost_hosted_relay_participants` (0012), `capy_bindings` (0045) and the
-   person/desktop identities (0011, 0020). It must upgrade each one it holds
-   (the "re-key" op below).
+   (`workspaces.relaycast_api_key_ciphertext`), agent tokens in
+   `person_identities`, `hosted_relay_participants`,
+   `desktop_relay_identities`, `amp_bindings`, `factory_bindings` and
+   `capy_bindings`, and a webhook token in `events_shims`. It must upgrade
+   each one it holds (`relaycast-rekey`, relay-control#122).
 5. **Files.** On Postgres the bytes are on the relaycast PVC
    (`RELAYCAST_FILE_DIR`); on EKS actors they are in S3 (`fileStore: s3`) under
    the store's key layout. The metadata is in `files`/`message_attachments`.
@@ -70,23 +71,25 @@ and after.
 | `webhooks`, `event_subscriptions`, `webhook_deliveries`, `deliveries`, `pending_events`, `triggers`, `actions`, `action_invocations` | copied; webhook tokens upgraded in phase 1 |
 | `directory_*`, `routing_*`, `certifications`, `session_events`, `workspace_events`, `usage_records`, `maintenance_cursors` | copied |
 | `credential_upgrades` | **not copied**: the legacy hashes it maps cannot route on actors (fact 3) |
+| `maintenance_cursors` | **not copied**: deployment-wide maintenance state; the actor keeps its own |
 | `workspace_create_idempotency`, `file_cleanup_queue` | copied (small; keeps retries and cleanup correct) |
 | Actor adapter tables (kv, outbox, sockets, credential tag) | created fresh by the actor; nothing to copy |
 | Rate limits, presence, live sockets | ephemeral, rebuilt on reconnect |
 | Analytics / telemetry going forward | **gap**: actor collector is a no-op (relaycast#648) |
 
-Any table the tool does not know (a newer engine schema) fails preflight: the
-tool's table list is pinned to the engine schema version, and source and
-target must report the same migration head.
+The table plan is derived from the engine schema in foreign-key order, and
+fails for a table it cannot scope to one workspace. The actor's `begin`
+refuses an export whose per-table column lists differ from its own, so source
+and target must run the same engine schema.
 
 ## Phases
 
 ### Phase 0: preflight (read-only, refuses on failure)
 
 The upgrader (`--migrate-relaycast-to-actors`, default off) runs a preflight Job
-(`relaycast-migrate preflight`, image = the release's relaycast self-host
-image, mounting the existing `RELAYCAST_DATABASE_URL` Secret; nothing echoed)
-and refuses unless all hold:
+(`relaycast-engine migration-preflight --file-dir <data dir> --ar-since <phase 1
+time>`, image = the release's relaycast self-host image, mounting the existing
+`RELAYCAST_DATABASE_URL` Secret; nothing echoed) and refuses unless all hold:
 
 - the release's relaycast is `runtime.backend: postgres`, `--profile
   eks-rds-native`, `--apply` and `--db-instance` given;
@@ -106,11 +109,17 @@ and refuses unless all hold:
 1. `helm upgrade` the **Postgres** release with `credentials.format: ar`,
    `authority: self`, the keyring, and a long legacy grace. Legacy credentials
    keep working, new ones are `ar_`.
-2. relay-control `relaycast rekey` (new): for each bound workspace, rotate the
-   workspace key through `POST /internal/workspaces/:id/api-key` (server-minted
-   `ar_ws_`, grace for the old one) and store it; upgrade every agent token it
-   holds through `POST /v1/credentials/upgrade` and store the results. Old
-   ciphertexts go to a backup table first (`rekey --undo`).
+2. relay-control `relaycast-rekey` (relay-control#122): for each bound
+   workspace, rotate the workspace key through
+   `POST /internal/workspaces/:id/api-key` (server-minted `ar_ws_`) and store
+   it; upgrade every agent and webhook token it holds through
+   `POST /v1/credentials/upgrade` (idempotent: the same legacy token always
+   upgrades to the same `ar_` token, so a desktop upgrading its own copy does
+   not conflict). Old ciphertexts go to `relaycast_rekey_backups` first
+   (`--undo <run id>`). The old workspace key keeps working for at most one
+   hour (the engine caps `grace_ms` at 3600000): clients that cached it
+   through relay-control must refresh within that hour, so run the re-key
+   with relay-control up.
 3. Desktops and SDK agents upgrade their own tokens (SDK `upgradeCredential`).
    The preflight reports **principals still on legacy hashes** per kind (a
    principal whose current hash is not an `ar_` hash). The operator waits
@@ -127,13 +136,16 @@ and refuses unless all hold:
 
 ### Phase 3: export
 
-`relaycast-migrate export` (Job, same image) reads each workspace in one
-`REPEATABLE READ` transaction, in FK order, and writes NDJSON per table plus a
-manifest: row count and a checksum per table (sha256 over rows serialized
-canonically and sorted by primary key; timestamps as epoch ms; JSON columns
-canonicalized) and the engine migration head. Output goes to a PVC (or S3
-prefix) owned by the Job. It contains credential **hashes**, never plaintext,
-and is deleted after verification unless `--keep-export`.
+`relaycast-engine export-for-actors --out <dir> --run-id <id>` (Job, same
+image) reads every workspace in one `REPEATABLE READ READ ONLY` transaction,
+in FK order, and writes per workspace a `manifest.json` and one NDJSON file
+per table. Each line is a block of rows `[rowid, ...values]` in the exact form
+the actor's SQLite stores (timestamps as epoch seconds, booleans 0/1, JSON as
+text). The manifest holds, per table, the columns, the row count and a digest
+(sha256 over the blocks' sha256s; WebCrypto, so the actor computes the same).
+Output goes to the relaycast data PVC (kept by `helm.sh/resource-policy:
+keep`) under `migration/<run id>/`. It contains credential **hashes**, never
+plaintext, and is deleted after verification unless `--keep-export`.
 
 ### Phase 4: cutover
 
@@ -144,21 +156,31 @@ is gone, and the Postgres database is untouched.
 
 ### Phase 5: import
 
-`relaycast-migrate import` streams each workspace's NDJSON to
-`POST /internal/workspaces/:id/import` (new; internal secret; chunked) on the
-gateway, which forwards to that workspace's actor:
+`relaycast-migrate import --dir <export> --gateway <url>` (actor gateway
+image) streams each workspace's NDJSON to
+`POST /internal/workspaces/:id/import` (internal secret; relaycast#653) on the
+gateway, which forwards to that workspace's actor with the routing tag its
+keyring signs for the id:
 
 - refused unless the actor's workspace does not exist yet, or holds an
   unfinished import with the same `run_id` (resume after a failed chunk);
 - each chunk is one table slice inserted with original ids inside the actor's
   transaction, idempotent by `(run_id, table, chunk)`;
-- `finish` checks referential integrity, rebuilds derived state (`seq`
-  counters, unread counts), recomputes the per-table counts and checksums from
-  actor SQLite and returns them; the workspace is not served (public routes
-  answer 503) until `finish` succeeds.
+- rows are inserted with their original rowids (ordering the engine reads
+  by rowid survives), and each block is read back and digested in the same
+  call;
+- triggers other than full-text search are suspended for the import (they
+  would re-derive delivery high-water marks, liveness revisions and cleanup
+  queues the source already stored) and restored by `finish` or `abort`;
+- `finish` runs `PRAGMA foreign_key_check`, compares every table's count and
+  digest with the manifest, and only then opens the workspace: until then
+  every request answers `503 workspace_importing` and maintenance does
+  nothing.
 
-File bytes: `relaycast-migrate files` copies each object from the PVC to the S3
-store under the key its row names and checks sha256 after upload.
+File bytes (run first: a workspace serves as soon as its import finishes):
+`relaycast-migrate files --dir <export> --from <old data dir>` copies each
+completed file into the gateway's store under the key its row names, reading
+it back to check size and sha256; a rerun skips objects already present.
 
 ### Phase 6: verify (gates "done")
 
@@ -214,8 +236,8 @@ estimate from the preflight counts before asking to proceed.
 
 | Repo | Change |
 | --- | --- |
-| relaycast | `relaycast-migrate` CLI in the self-host image (`preflight`, `export`, `files`, `import`, `verify`); actor internal route `POST /internal/workspaces/:id/import` (+ `finish`, `status`) with the not-served-until-finished gate; gateway pass-through; conformance tests copying a seeded Postgres workspace into an actor and comparing checksums. |
-| relay-control | `relaycast rekey` (+ `--undo`), backup table migration, tests. |
+| relaycast | #653: `relaycast-engine migration-preflight` / `export-for-actors`; actor `importData` with the 503 gate; gateway `POST /internal/workspaces/:id/import`; `relaycast-migrate files` / `import` / `abort`; an end-to-end test from a real Postgres server into an actor comparing reads. #652: actor raw reads (inbox) returned tuples, found by that comparison. |
+| relay-control | #122: `relaycast-rekey` (+ `--undo`), `relaycast_rekey_backups`, tests. |
 | infra | this doc; relaycast chart migration Jobs (`migration.*`, off by default); upgrader flag and workflow input; Kind proof (`ci/agent-relay`); runbook in `docs/operations`. |
 
 ## Proof
