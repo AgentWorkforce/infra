@@ -220,7 +220,7 @@ seedjs snapshot before
 
 log "preflight (read-only)"
 step preflight "$WORK/values-pg.yaml" --set migration.arSince="$(cat "$WORK/ar-since")"
-grep '^{' "$WORK/job-preflight.log" | jq -c '{workspace_id, messages: .counts.messages, files: .counts.files, missing_files, legacy_principals}'
+grep '^{' "$WORK/job-preflight.log" | jq -c 'if .export_capacity then . else {workspace_id, messages: .counts.messages, files: .counts.files, missing_files, legacy_principals} end'
 
 log "quiesce and export from one snapshot"
 kill "$PF" 2>/dev/null || true; PF=
