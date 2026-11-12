@@ -18,7 +18,8 @@
       "repository": "ghcr.io/agentworkforce/sessions-pipeline",
       "digest": "sha256:aa8d86854db28debe326bcffd705e44ae93e20f40f587d80d635bc3b404ed117",
       "sourceRepository": "AgentWorkforce/relayhistory-pipeline",
-      "sourceRevision": "4f32501a1a2bdb7b23d8c8a417bab89596d4cc5c"
+      "sourceRevision": "4f32501a1a2bdb7b23d8c8a417bab89596d4cc5c",
+      "publishRunId": 43139625240
     }
   }
 }
