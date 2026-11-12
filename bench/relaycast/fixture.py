@@ -37,7 +37,7 @@ def validate_identity(record, cluster_uid, docker_host):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=["up", "down", "observe", "run"])
+    parser.add_argument("command", choices=["up", "down", "observe", "run", "recycle"])
     parser.add_argument("--infra-root", type=Path, required=True)
     parser.add_argument("--plan", type=Path)
     parser.add_argument("--seconds", type=int, default=60)
@@ -111,6 +111,13 @@ def main():
                           "actorImageId": built["actorImageId"], "actorAnalytics": "unsupported_skipped"}))
         return
     s.owned()
+    if args.command == "recycle":
+        # Between independent campaigns, discard resident actor processes while
+        # retaining the isolated PVC. Never used between rate steps in a run.
+        s.k("rollout", "restart", "deployment/relaycast-bench")
+        s.k("rollout", "status", "deployment/relaycast-bench", "--timeout=180s", timeout=200)
+        print(json.dumps({"recycled": "isolated benchmark processes", "persistentData": "retained"}))
+        return
     if args.command == "down":
         s.cmd(["kind", "delete", "cluster", "--name", NAME], timeout=180)
         s.marker.unlink()

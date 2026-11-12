@@ -16,9 +16,9 @@ const quantiles = values => {
   const sorted = [...values].sort((a, b) => a - b);
   return Object.fromEntries([.5, .95, .99].map(q => ['p' + Math.round(q * 100), sorted.length ? sorted[Math.min(sorted.length - 1, Math.floor(q * sorted.length))] : null]));
 };
-async function http(method, path, token, body) {
+async function http(method, path, token, body, headers = {}) {
   const response = await fetch(base + path, {method,
-    headers: {authorization: 'Bearer ' + token, 'content-type': 'application/json'},
+    headers: {authorization: 'Bearer ' + token, 'content-type': 'application/json', ...headers},
     body: body === undefined ? undefined : JSON.stringify(body), signal: AbortSignal.timeout(10000)});
   const text = await response.text();
   let json;
@@ -77,7 +77,7 @@ function socket(path, token, node) {
 async function setup() {
   for (let n = 0; n < config.population.workspaces; n++) {
     const created = await required('POST', '/internal/workspaces', internal, {name: 'benchmark-' + randomUUID()});
-    const w = {key: created.api_key, id: created.workspace_id, agents: []};
+    const w = {key: created.api_key, id: created.workspace_id, agents: [], nodeEnrolls: new Map()};
     workspaces.push(w);
     for (let i = 0; i < config.population.agentsPerWorkspace; i++) {
       const agent = await required('POST', '/v1/agents', w.key, {name: 'bench-agent-' + i});
@@ -124,13 +124,26 @@ function binding(route, index) {
   if (['/v1/agents', '/v1/workspace', '/v1/workspace/events', '/v1/nodes', '/v1/observer-tokens'].includes(path)) token = w.key;
   if (path.startsWith('/v1/agents/:id')) {path = path.replace(':id', a.name); token = w.key;}
   if (path.startsWith('/v1/messages/:id')) path = path.replace(':id', w.messageId);
-  if (path === '/v1/dm/:id/messages') path = path.replace(':id', w.dmId);
+  if (path === '/v1/dm/:id/messages') {path = path.replace(':id', w.dmId); token = w.agents[0].token;}
   path = path.replace(':channel', 'general');
   if (route.method === 'POST') {
     if (path === '/v1/agents/heartbeat') body = {};
     else if (path === '/v1/agents') body = {name: 'bench-register-' + (index % 20)};
     else if (path === '/v1/agent/node-token') {token = w.spare.token; body = {};}
-    else if (path === '/v1/nodes') body = {name: 'bench-node-' + (index % 20), kind: 'ws'};
+    else if (path === '/v1/nodes') {
+      const name = 'bench-node-' + (index % 20);
+      if (!w.nodeEnrolls.has(name)) w.nodeEnrolls.set(name, {pending: Promise.resolve()});
+      const entry = w.nodeEnrolls.get(name);
+      return () => {
+        const pending = entry.pending.then(async () => {
+          const response = await http('POST', path, w.key, {name, kind: 'ws'}, entry.token ? {'X-Relaycast-Node-Token': entry.token} : {});
+          if (response.data?.token) entry.token = response.data.token;
+          return response;
+        });
+        entry.pending = pending.catch(() => {});
+        return pending;
+      };
+    }
     else if (path === '/v1/dm') body = {to: b.name, text: '$MARKER'};
     else if (path.endsWith('/messages') || path.endsWith('/replies')) body = {text: '$MARKER'};
     else if (path.endsWith('/read') || path.endsWith('/join')) body = {};
@@ -239,6 +252,13 @@ try {
   for (const ws of sockets) ws.close();
   report.websockets = {opened: socketsOpened, closed: socketsClosed, frames: totalFrames,
     deliveryAcks: socketAcks, deliveredMarkers: deliveryMs.length, deliveryMs: quantiles(deliveryMs), pendingMarkers: pendingMarkers.size};
+  report.workspaceCleanup = {deleted: 0, failed: 0};
+  for (const w of workspaces) {
+    try {
+      const response = await http('DELETE', '/internal/workspaces/' + encodeURIComponent(w.id), internal);
+      report.workspaceCleanup[response.status === 204 ? 'deleted' : 'failed']++;
+    } catch {report.workspaceCleanup.failed++;}
+  }
   report.finishedAt = new Date().toISOString();
   fs.writeFileSync('/results/report.json', JSON.stringify(report), {mode: 0o600});
   // Keep the pod available for its read-only result collector.
