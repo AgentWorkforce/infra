@@ -8,22 +8,15 @@ mock_provider "aws" {
   mock_data "aws_partition" {
     defaults = { partition = "aws", dns_suffix = "amazonaws.com" }
   }
+  mock_data "aws_iam_policy_document" {
+    defaults = { json = "{}" }
+  }
   mock_resource "aws_iam_role" {
     defaults = { arn = "arn:aws:iam::111111111111:role/mock" }
   }
   mock_resource "aws_iam_policy" {
     defaults = { arn = "arn:aws:iam::111111111111:policy/mock" }
   }
-}
-
-override_data {
-  target = data.aws_iam_policy_document.trust["plan"]
-  values = { json = "{}" }
-}
-
-override_data {
-  target = data.aws_iam_policy_document.trust["apply"]
-  values = { json = "{}" }
 }
 
 variables {
