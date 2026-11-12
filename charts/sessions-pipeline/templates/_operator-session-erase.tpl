@@ -30,6 +30,11 @@
 {{- if ne .Values.ingestEdge.admission.mode "sync" }}{{ fail "operator session erase requires ingestEdge.admission.mode=sync; async and drain have no writer-drain protocol" }}{{ end -}}
 {{- if ne .Values.ingestEdge.uploadDirect.mode "off" }}{{ fail "operator session erase requires ingestEdge.uploadDirect.mode=off (HISTORY_UPLOAD_DIRECT must remain off)" }}{{ end -}}
 {{- if not .Values.sessionReadApi.enabled }}{{ fail "operator session erase requires sessionReadApi.enabled=true so every read replica enforces the permanent fence" }}{{ end -}}
+{{- if .Values.sessionReadApi.search.clickhouse.enabled }}{{ fail "operator session erase requires sessionReadApi.search.clickhouse.enabled=false; the eraser supports only PostgreSQL or OpenSearch projections" }}{{ end -}}
+{{- if and .Values.alleyoop.deployment.enabled (gt (int .Values.alleyoop.ingest.replicas) 0) }}{{ fail "operator session erase requires every legacy ingest Deployment scaled to zero; only the fenced ingestEdge may write canonical storage" }}{{ end -}}
+{{- range $component, $entry := .Values.worker.components -}}
+{{- if and $entry.enabled (gt (int $entry.replicas) 0) }}{{ fail (printf "operator session erase requires every legacy worker Deployment scaled to zero; worker.components.%s is active" $component) }}{{ end -}}
+{{- end -}}
 {{- $native := .Values.nativeConsumer.enabled -}}
 {{- $indexer := .Values.searchIndexer.enabled -}}
 {{- if eq $native $indexer }}{{ fail "operator session erase requires exactly one enabled consumer: nativeConsumer or searchIndexer" }}{{ end -}}

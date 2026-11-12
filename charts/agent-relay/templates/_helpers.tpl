@@ -27,11 +27,13 @@
 {{- $handoff := dig "sessionErasureApi" dict $control | default dict -}}
 {{- $apiOn := dig "enabled" false $api -}}
 {{- $handoffOn := dig "enabled" false $handoff -}}
+{{- $fence := dig "operatorSessionErase" "fenceEnforced" false (.Values.global | default dict) -}}
+{{- if and $fence (dig "control" true $components) (ne (dig "historyUpload" "mode" "off" $control) "off") }}{{ fail "operator session erase fencing requires relay-control.historyUpload.mode=off; Control must not issue direct-upload grants without a supported writer-drain protocol" }}{{ end -}}
 {{- if or $apiOn $handoffOn -}}
 {{- if not (dig "sessionsPipeline" true $components) }}{{ fail "operator session erase API requires components.sessionsPipeline=true" }}{{ end -}}
 {{- if not (dig "control" true $components) }}{{ fail "operator session erase API requires components.control=true" }}{{ end -}}
 {{- if ne $apiOn $handoffOn }}{{ fail "sessions-pipeline.operatorSessionErase.api.enabled and relay-control.sessionErasureApi.enabled must be enabled together" }}{{ end -}}
-{{- if not (dig "operatorSessionErase" "fenceEnforced" false (.Values.global | default dict)) }}{{ fail "operator session erase API requires global.operatorSessionErase.fenceEnforced=true" }}{{ end -}}
+{{- if not $fence }}{{ fail "operator session erase API requires global.operatorSessionErase.fenceEnforced=true" }}{{ end -}}
 {{- if or (ne (dig "existingSecret" "" $api) (dig "existingSecret" "" $handoff)) (ne (dig "secretKey" "" $api) (dig "secretKey" "" $handoff)) }}{{ fail "Control and ingest must reference the same operator session erase API Secret and key" }}{{ end -}}
 {{- $ingest := dig "ingestEdge" dict $pipeline | default dict -}}
 {{- $service := default (printf "%s-ingest-edge" .Release.Name) (dig "fullnameOverride" "" $ingest) -}}

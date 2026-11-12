@@ -42,6 +42,13 @@ class OperatorSessionErase(unittest.TestCase):
         return values
 
     def enable_pipeline(self, values, *, api=True, bytes_=True):
+        # The supported erase composition has no legacy writers. Establish a
+        # valid baseline before individual fail-closed tests turn one back on.
+        values.setdefault("alleyoop", {}).setdefault("ingest", {})["replicas"] = 0
+        components = values.setdefault("worker", {}).setdefault("components", {})
+        worker_defaults = yaml.safe_load((ROOT / "charts/sessions-pipeline-worker/values.yaml").read_text())["components"]
+        for name in worker_defaults:
+            components.setdefault(name, {})["replicas"] = 0
         values.setdefault("global", {}).setdefault("operatorSessionErase", {})["fenceEnforced"] = True
         values["operatorSessionErase"] = {
             "api": {"enabled": api, "existingSecret": "erase-api", "secretKey": "current", "previousSecretKey": "previous"},
@@ -144,6 +151,9 @@ class OperatorSessionErase(unittest.TestCase):
             (lambda v: v["ingestEdge"]["admission"].update(mode="async"), "admission.mode=sync"),
             (lambda v: v["ingestEdge"]["uploadDirect"].update(mode="on"), "uploadDirect.mode=off"),
             (lambda v: v["sessionReadApi"].update(enabled=False), "sessionReadApi.enabled=true"),
+            (lambda v: v["sessionReadApi"]["search"].setdefault("clickhouse", {}).update(enabled=True, existingSecret="clickhouse-reader", key="RELAYHISTORY_READ_API_SECRET"), "clickhouse.enabled=false"),
+            (lambda v: v["alleyoop"]["ingest"].update(replicas=1), "legacy ingest Deployment scaled to zero"),
+            (lambda v: v["worker"]["components"]["referee"].update(enabled=True, replicas=1), "legacy worker Deployment scaled to zero"),
             (lambda v: v["nativeConsumer"].update(enabled=False), "exactly one enabled consumer"),
             (lambda v: v["nativeConsumer"].setdefault("bootstrap", {}).update(enabled=True, phase="prepare"), "runtime Deployment"),
             (lambda v: v["sessionReadApi"]["search"].update(backendId="different"), "same search backendId"),
@@ -200,6 +210,13 @@ class OperatorSessionErase(unittest.TestCase):
         components.update(sessionsPipeline=True, control=True)
         values = {"components": components, "global": {"operatorSessionErase": {"fenceEnforced": True}}, "sessions-pipeline": pipeline, "relay-control": control}
         self.render("agent-relay", values)
+        history_upload = copy.deepcopy(yaml.safe_load((ROOT / "charts/relay-control/values.yaml").read_text())["historyUpload"])
+        history_upload.update(mode="on", bucket="erase-upload-inbox", region="us-east-1", publicEndpoint="https://uploads.example.com")
+        history_upload["credentials"].update(existingSecret="upload-issuer", accessKeyIdKey="access", secretAccessKeyKey="secret")
+        history_upload["witness"].update(existingSecret="upload-witness", key="witness")
+        values["relay-control"]["historyUpload"] = history_upload
+        self.render("agent-relay", values, fail="relay-control.historyUpload.mode=off")
+        values["relay-control"]["historyUpload"]["mode"] = "off"
         values["relay-control"]["sessionErasureApi"]["secretKey"] = "other"
         self.render("agent-relay", values, fail="same operator session erase API Secret and key")
 

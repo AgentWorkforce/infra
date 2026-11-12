@@ -50,23 +50,29 @@ All three controls default to `false`. A default render is unchanged.
 
 ## Roll out
 
-1. Drain any asynchronous ingest admission work. Set
-   `ingestEdge.admission.mode=sync` and `ingestEdge.uploadDirect.mode=off`.
-   The chart refuses erase fencing with `async`, `drain`, or
-   `HISTORY_UPLOAD_DIRECT` because those paths have no erase writer-drain
-   protocol.
-2. Enable only `global.operatorSessionErase.fenceEnforced`. Keep both API and
+1. Drain any asynchronous ingest admission work and revoke/drain outstanding
+   direct-upload grants. Set `ingestEdge.admission.mode=sync`,
+   `ingestEdge.uploadDirect.mode=off`, and
+   `relay-control.historyUpload.mode=off`. The chart refuses erase fencing
+   while either the scanner or Control's grant issuer is enabled because those
+   paths have no erase writer-drain protocol.
+2. Scale every legacy `alleyoop` ingest and `worker.components.*` Deployment to
+   zero, and disable `sessionReadApi.search.clickhouse`. The initial eraser
+   supports only the managed ingest edge, one managed consumer, and PostgreSQL
+   or OpenSearch projections; it cannot fence legacy writers or erase
+   ClickHouse projections.
+3. Enable only `global.operatorSessionErase.fenceEnforced`. Keep both API and
    byte deletion off. Roll and verify the read API first, then the active
    consumer, then ingest. Every runtime Deployment must contain
    `SESSION_ERASE_FENCE_ENFORCED=1`; bootstrap and migration Jobs must not.
-3. Enable `operatorSessionErase.bytes.enabled` with the dedicated S3 and search
+4. Enable `operatorSessionErase.bytes.enabled` with the dedicated S3 and search
    Secret references. Verify a controlled erase removes the expected Locker
    object versions and search rows while retaining an auditable receipt.
-4. Enable the ingest API and Control handoff together. In the umbrella chart,
+5. Enable the ingest API and Control handoff together. In the umbrella chart,
    set Control's URL to the exact in-cluster ingest Service origin (for example
    `http://<release>-ingest-edge.<namespace>.svc.cluster.local`) and make its
    Secret name/key identical to the ingest API reference.
-5. Confirm the API refuses unauthenticated calls, a completed erase cannot be
+6. Confirm the API refuses unauthenticated calls, a completed erase cannot be
    read through any replica, and no erase credentials appear in rendered
    values, pod arguments, logs, or non-runtime Jobs.
 
