@@ -1,7 +1,4 @@
 # restore-overlay.yaml: no migration, init or backup Jobs during a restore.
-relayhistory:
-  migrations:
-    enabled: false
 relay-control:
   migrations:
     enabled: false

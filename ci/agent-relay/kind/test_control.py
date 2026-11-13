@@ -15,7 +15,6 @@ from unittest.mock import Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import control
-from stack import tenant_values
 
 
 class ControlArchive(unittest.TestCase):
@@ -35,19 +34,19 @@ class ControlArchive(unittest.TestCase):
                 self.assertEqual(json.loads(stack.overrides.read_text()), original)
 
     def test_selected_entrypoints_reach_the_rendered_api_and_migration_job(self):
-        root = Path(__file__).resolve().parents[3]
+        # The kind base layer renders only through the native composition.
+        from test_stack import Profiles
+        profiles = Profiles()
         image = "agent-relay-kind/selfhost-api@sha256:" + "a" * 64
         for revision, package in ((control.REVISION, "relay-control"),
                                   (control.HISTORICAL_REVISION, "@cloud/selfhost-api")):
-            with self.subTest(revision=revision), tempfile.TemporaryDirectory() as directory:
-                values = {"relay-control": {"image": {
-                    "repository": control.REPOSITORY, "digest": "sha256:" + "a" * 64, "pullPolicy": "Never"}}}
+            with self.subTest(revision=revision):
+                values = profiles.compose("control")
+                values["relay-control"].update(image={
+                    "repository": control.REPOSITORY, "digest": "sha256:" + "a" * 64, "pullPolicy": "Never"},
+                    migrations={"enabled": True})
                 control.select_local_entrypoints(values, revision)
-                path = Path(directory) / "values.json"
-                path.write_text(json.dumps(values))
-                rendered = subprocess.run(["helm", "template", "agent-relay", "charts/agent-relay", "-n", "agent-relay",
-                                           "-f", "charts/agent-relay/values-kind-core.yaml", "-f", str(path)],
-                                          cwd=root, capture_output=True, text=True)
+                rendered = profiles.helm(values)
                 self.assertEqual(rendered.returncode, 0, rendered.stderr)
                 containers = [container for doc in yaml.safe_load_all(rendered.stdout)
                               if doc and doc.get("kind") in ("Deployment", "Job")
@@ -92,20 +91,6 @@ class ControlArchive(unittest.TestCase):
                 item = tarfile.TarInfo(name); item.size = len(data)
                 archive.addfile(item, io.BytesIO(data))
         return "sha256:" + digest
-
-    def test_bootstrap_preserves_selected_image_and_other_profile_settings(self):
-        image = {"repository": control.REPOSITORY, "digest": "sha256:" + "a" * 64, "pullPolicy": "Never"}
-        values = {"relay-control": {"image": image}, "global": {"otel": {"endpoint": ""}},
-                  "sessions-pipeline": {"worker": {"tenant": {"orgId": "keep"}, "podAnnotations": {"keep": "yes"}}},
-                  "relayflows": {"nodeSelector": {"keep": "yes"}}}
-        result = tenant_values(values, {"orgId": "real-org", "workspaceId": "real-workspace"}, "addons", "arm64", "recipe")
-        self.assertEqual(result["relay-control"]["image"], image)
-        self.assertEqual(result["global"]["otel"], {"endpoint": ""})
-        self.assertEqual(result["global"]["tenant"]["orgId"], "real-org")
-        self.assertEqual(result["sessions-pipeline"]["worker"]["tenant"], {"orgId": "real-org", "workspaceId": "real-workspace"})
-        self.assertEqual(result["sessions-pipeline"]["worker"]["podAnnotations"]["keep"], "yes")
-        self.assertEqual(result["sessions-pipeline"]["alleyoop"]["tenant"]["orgId"], "real-org")
-        self.assertEqual(result["relayflows"]["nodeSelector"], {"keep": "yes", "kubernetes.io/arch": "arm64"})
 
     def test_valid_native_manifest_is_pinned_by_content_not_config_or_tag(self):
         with tempfile.TemporaryDirectory() as directory:

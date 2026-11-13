@@ -34,13 +34,11 @@ also retain `agent-relay-kind/selfhost-api`. This change neither republishes nor
 relabels any artifact. CI-only synthetic digests test rendering, not image
 availability.
 
-The self-host target removes RelayAuth and the standalone relayhistory-cloud
-provider, while keeping session history through sessions-* (reads, search,
-deletion and privacy controls). That cutover is dependency-gated: the composed
-single-origin native service, Control-only auth, ingest, writer, detail routes,
-privacy/deletion contract and compatible image/generation must land and be
-qualified first. This naming change retains the current provider dependencies
-and does not claim that cutover, a Desktop install, or upload-to-app acceptance.
+Session history uses the native Sessions path (read API, ingest edge and
+Control's native backend; see
+[self-hosted-no-relayauth.md](self-hosted-no-relayauth.md)). The standalone
+History component was removed in agent-relay 0.7.0. This naming change does not
+claim a Desktop install or upload-to-app acceptance.
 
 ## Existing releases: preserve identities before changing names
 

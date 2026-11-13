@@ -7,9 +7,7 @@ credentials nor scopes.
 
 This opt-in configures an already qualified native ingest/consumer/reader
 installation. It does not bootstrap the database, provision role credentials,
-grant a license or enable deletion. The existing legacy `kind-up` bootstrap
-does not establish native first-boot support; native orchestration needs its
-own qualification.
+grant a license or enable deletion.
 
 ## Chart configuration
 
@@ -34,10 +32,6 @@ sessions-pipeline:
   ingestEdge:
     enabled: true
     origin: https://history.kind.agentrelay.com:8443
-
-relayhistory:
-  ingress:
-    enabled: false
 
 relay-control:
   services:
@@ -84,10 +78,7 @@ the root do not reach the reader. Internal issuer routes remain private in both
 supported reader modes. The admission status exception does not enable async;
 sync remains the default and needs separate operator qualification to change.
 
-Origins must match byte-for-byte, including the port. The umbrella rejects a
-competing standalone History ingress or the older shared GKE History backend.
-A selected legacy server and its data can remain internally available for
-rollback without owning the public route. Routing is not permission to erase it.
+Origins must match byte-for-byte, including the port.
 
 ## Control and verified TLS
 

@@ -1,5 +1,7 @@
 # Local kind evidence — 2026-11-08 (Europe/Oslo)
 
+> Note (2026-11-12): historical record of the retired single-phase `make kind-up` / `kind-proof` profile, which ran the since-removed standalone RelayHistory server (`kind-up`, `kind-proof` and `proof.py` now refuse or are gone; use `make local-up` or the native core installer). Its RelayHistory image entry was dropped from `core-images.json` and `ar-lap-images.json`; everything else below is unchanged.
+
 Status: **core setup READY; core proof PENDING (57 PASS, 0 FAIL, 3 PENDING); add-on E2E not run**.
 These are local development results, not the customer release or managed-cloud
 infrastructure proof. Reproduction uses the current repository checkout;

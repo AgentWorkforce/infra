@@ -2,7 +2,7 @@
 # still find it in the rendered output and match it to customer-images.yaml.
 waitForRole:
   image: ghcr.io/cloudnative-pg/postgresql:17-standard-trixie@sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
-relayhistory:
+control:
   image:
     repository: ""
     digest: ""

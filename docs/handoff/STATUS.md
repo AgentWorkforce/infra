@@ -1,5 +1,8 @@
 # Release status: what is proven and what is preview
 
+(The standalone RelayHistory component referenced here was removed in
+agent-relay 0.7.0; History is now the native read API and ingest edge.)
+
 Current release: `agent-relay` chart 0.3.12, published from the
 `agent-relay-0.3.12` tag by `release-agent-relay.yml`
 ([release run](https://github.com/AgentWorkforce/infra/actions/runs/41985579885)).

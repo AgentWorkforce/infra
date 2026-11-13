@@ -35,7 +35,7 @@ are planned. None proves or satisfies the new shared-store target.
 - [Request flow](diagrams/agent-relay-request-flow.png)
   ([SVG](diagrams/agent-relay-request-flow.svg),
   [mermaid source](diagrams/agent-relay-request-flow.mmd)): Desktop sign-in
-  with device approval, session upload to RelayHistory, the Dashboard read
+  with device approval, session upload to the History ingest edge, the Dashboard read
   path, and agent messaging through Relaycast.
 - [Detailed GKE shape](diagrams/self-hosted-architecture.md): ports, routes,
   Secrets and the Relayflows run modes.
@@ -102,17 +102,15 @@ not hidden in chart conditionals.
 ## Transcript search profiles
 
 Operator decision (2026-11-01): self-hosted deployments support two transcript
-search profiles. They select a backend; they do not fork RelayHistory
-behavior, which already has a Postgres search path and a derived ClickHouse
-path. A RelayHistory chart (`charts/relayhistory`, single-replica, digest-pinned
-proof image) ships on this branch; no ClickHouse chart ships in this repository
-today.
+search profiles. They select a backend; they do not fork History behavior.
+History is native: the Sessions search indexer and read API
+(`sessions-pipeline.searchIndexer`, `sessions-pipeline.sessionReadApi`) behind
+Control's native backend. No ClickHouse chart ships in this repository today.
 
 ### Standard (default): PostgreSQL + `pg_trgm`
 
 - PostgreSQL 17 is both the system of record and the search backend.
-- `pg_trgm` is enabled and the existing RelayHistory GIN expression indexes
-  are installed. The CNPG HoopDb image already ships the extension and its
+- `pg_trgm` is enabled. The CNPG HoopDb image already ships the extension and its
   bootstrap creates it (`deps/cnpg-cluster-values.yaml`, `deps/PINS.md`).
 - Exact `ILIKE` behavior and tenant filters are preserved.
 - It adds no service beyond the Postgres already in the stack, so it is the

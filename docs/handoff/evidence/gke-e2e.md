@@ -1,5 +1,8 @@
 # GKE end-to-end evidence: control plane, sessions, admin, flows, dashboard
 
+(The standalone RelayHistory component referenced here was removed in
+agent-relay 0.7.0; History is now the native read API and ingest edge.)
+
 Summary of the internal end-to-end run on the Agent Relay GKE reference
 deployment, 2026-11-03. Internal identifiers (project, cluster, workspace and
 pod IDs, addresses, keys) are removed. The harness is

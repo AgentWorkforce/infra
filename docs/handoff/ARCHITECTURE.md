@@ -15,8 +15,7 @@ flowchart TB
       Dashboard["Relay Dashboard\nstatic SPA"]
       API["Headless Control API\ndevice auth · tenancy · credential exchange"]
       Cast["Relaycast\nmessaging · roster · delivery"]
-      History["RelayHistory\nsession ingest · search · replay"]
-      Auth["RelayAuth\nsigned scoped assertions"]
+      History["History read API + ingest edge\nsession upload · search · replay"]
       Pipeline["Sessions Pipeline\nworkers · AlleyOop"]
       Secrets["Kubernetes Secrets\nor external secret delivery"]
       CastPVC[("Relaycast RWO PVC")]
@@ -24,7 +23,6 @@ flowchart TB
 
     subgraph Data["Managed data services"]
       ControlDB[("PostgreSQL\ncontrol-plane tables")]
-      HistoryDB[("Dedicated PostgreSQL\nRelayHistory ledger")]
       SessionsDB[("PostgreSQL hoopdb\nSessions Pipeline")]
       GCS[("GCS session objects")]
       Registry["Artifact Registry\nimmutable image digests"]
@@ -41,18 +39,17 @@ flowchart TB
   LB -->|history host| History
 
   Dashboard -->|same-origin API| API
-  API -->|mint assertion| Auth
   API -->|workspace key resolution| Cast
   API -->|scoped History session| History
   Desktop -->|durable delivery batches| History
 
   API --> ControlDB
-  History --> HistoryDB
+  History --> SessionsDB
+  History --> GCS
   Pipeline --> SessionsDB
   Pipeline --> GCS
   Cast --> CastPVC
   Secrets -.credentials.-> API
-  Secrets -.credentials.-> Auth
   Secrets -.credentials.-> History
   Secrets -.credentials.-> Pipeline
   Registry -.digest-pinned images.-> GKE
@@ -63,13 +60,14 @@ flowchart TB
 - The Desktop persists one public HTTPS control-plane origin. It does not store
   a deployment-wide workspace key in `deployment.json`.
 - The control API binds users to an organization and workspace, then returns
-  scoped Relaycast and RelayHistory credentials.
-- RelayHistory uses a dedicated database and migration ledger. It must not
-  share the Sessions Pipeline `hoopdb` database.
+  scoped Relaycast and History credentials. History is native: relay-control's
+  native backend, the Sessions read API and the ingest edge share the history
+  host and read and write the Sessions Pipeline `hoopdb` and GCS objects. No
+  RelayAuth is needed.
 - Public traffic enters through one GKE Ingress. Services remain `ClusterIP`;
   sensitive Relaycast administration paths are denied at the edge.
 - Runtime and migration-owner database credentials are separate.
-- Relaycast, RelayAuth, and the proof profile are single-writer components.
+- Relaycast and the proof profile are single-writer components.
   This architecture is `portable-single`, not HA.
 
 ## Included and excluded

@@ -15,11 +15,14 @@ global Python packages or Docker configuration changes are needed. Repeating
 the command reuses the tools after checking their cached hashes. amd64 Linux
 is also supported.
 
-To use those binaries with existing commands:
+To use those binaries with existing commands, for example the native core
+installer's read-only static plan:
 
 ```sh
-PATH="$PWD/.kind/tools:$PATH" make kind-render PYTHON="$PWD/.kind/tools/venv/bin/python3"
+PATH="$PWD/.kind/tools:$PATH" "$PWD/.kind/tools/venv/bin/python3" ci/agent-relay/kind/native_core_cli.py
 ```
+
+`make local-up` already selects these tools itself.
 
 `local-tools` only prepares prerequisites. It creates no cluster, installs no
 applications, and changes no hostname or certificate trust settings. Docker

@@ -1,7 +1,7 @@
 // In-cluster driver for e2e-gcp-proof.sh.
 //
 // Runs inside the relay-control pod (the only agent-relay workload whose
-// NetworkPolicy reaches Relaycast, RelayHistory, and RelayAuth) with Node's
+// NetworkPolicy reaches Relaycast, the Sessions read API, and the ingest edge) with Node's
 // built-in fetch. The `sessions` and `admin` phases instead run on the
 // operator's machine with E2E_API_URL set to the public dashboard origin, so
 // they exercise the same /cloud/api path the browser uses. Usage:
@@ -14,21 +14,16 @@
 // and is kept by the caller in a mode-0600 file; `proofs` holds only curated,
 // non-secret details. Nothing here logs a token, key, or response body.
 
-import { createHash, createPublicKey, randomBytes, randomUUID, verify as cryptoVerify } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 
 const RELAYCAST = process.env.E2E_RELAYCAST_URL ?? "http://relaycast:8787";
-const HISTORY = process.env.E2E_RELAYHISTORY_URL ?? "http://relayhistory:8080";
-// --history-profile pipeline: uploads go to the ingest edge and reads to the
-// read API (relay-control RELAYHISTORY_BACKEND=native), with no RelayAuth or
-// standalone RelayHistory. Unset keeps the legacy proof.
-const PIPELINE = process.env.E2E_HISTORY_PROFILE === "pipeline";
-const READ_API = process.env.E2E_READ_API_URL ?? HISTORY;
-const INGEST = process.env.E2E_INGEST_URL ?? HISTORY;
+// Native History (relay-control RELAYHISTORY_BACKEND=native): uploads go to
+// the ingest edge and reads to the Sessions read API, with no RelayAuth.
+const READ_API = process.env.E2E_READ_API_URL ?? "http://agent-relay-read-api";
+const INGEST = process.env.E2E_INGEST_URL ?? "http://agent-relay-ingest-edge";
 const API = process.env.E2E_API_URL ?? "http://localhost:3000";
-const RELAYAUTH = process.env.E2E_RELAYAUTH_URL ?? "http://relayauth.relayauth.svc:8787";
 const BOOTSTRAP_FILE = "/var/run/agent-relay/secrets/selfhost-bootstrap-token";
-const RELAYAUTH_KEY_FILE = "/var/run/agent-relay/secrets/relayauth-api-key";
 const SOURCE = "claude";
 
 const phase = process.argv[2];
@@ -563,38 +558,21 @@ function markerEvents(events) {
   return (events ?? []).filter((event) => JSON.stringify(event).includes(state.marker));
 }
 
-// The event content RelayHistory projects from each record kind (the delivery
-// projection: history -> prompt, session_event -> text, tool_call -> "name
-// target"). The `session` record updates the catalogue and projects no event.
-function expectedProjection() {
-  const content = ({ kind, payload }) => {
-    if (kind === "history") return payload.prompt;
-    if (kind === "session_event") return payload.text;
-    if (kind === "tool_call") return [payload.name, payload.target].filter(Boolean).join(" ");
-    return null;
-  };
-  return buildBatch().batch.records.map(content).filter((text) => text !== null).sort();
-}
-
+// The canonical projection dedupes the prompt and shapes tool rows, so both
+// transcript lines must be present rather than an exact record-per-event match.
 function projectionMatches(events) {
-  if (PIPELINE) {
-    // The canonical projection dedupes the prompt and shapes tool rows
-    // differently from RelayHistory's; both transcript lines must be present.
-    const contents = events.map((event) => event.content ?? "");
-    return [`${state.marker} first prompt`, `${state.marker} assistant answer`]
-      .every((text) => contents.some((content) => content.includes(text)));
-  }
-  const actual = events.map((event) => event.content ?? "").sort();
-  return JSON.stringify(actual) === JSON.stringify(expectedProjection());
+  const contents = events.map((event) => event.content ?? "");
+  return [`${state.marker} first prompt`, `${state.marker} assistant answer`]
+    .every((text) => contents.some((content) => content.includes(text)));
 }
 
 // A read that must not return the given session's events passes only on a
 // successful response without them or an explicit denial/not-found; a server
 // error, a redirect or an unparseable body proves nothing.
 function absentOrDenied(response, extract, denied = [403, 404]) {
-  // The pipeline read API answers 501 (no pointers in scope) for a session
-  // that is absent or out of scope.
-  if ([...denied, ...(PIPELINE ? [501] : [])].includes(response.status)) return { ok: true, leaked: 0 };
+  // The read API answers 501 (no pointers in scope) for a session that is
+  // absent or out of scope.
+  if ([...denied, 501].includes(response.status)) return { ok: true, leaked: 0 };
   if (response.status !== 200 || !response.json) return { ok: false, leaked: null };
   const leaked = extract(response.json);
   return { ok: leaked === 0, leaked };
@@ -607,7 +585,7 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 // read proves durability only after polling.
 // The pipeline indexer reconciles on a 5-minute tick, so a new session can take
 // longer than one tick to appear in the read API's directory and search.
-const VISIBLE_TIMEOUT_MS = PIPELINE ? 420_000 : 240_000;
+const VISIBLE_TIMEOUT_MS = 420_000;
 async function waitFor(label, check, timeoutMs = VISIBLE_TIMEOUT_MS) {
   const deadline = Date.now() + timeoutMs;
   for (;;) {
@@ -648,7 +626,7 @@ function pipelineTurnBatch() {
   };
 }
 
-async function phaseDeliveryPipeline() {
+async function phaseDelivery() {
   state.session = {
     sessionId: `e2e-${state.marker}-session`,
     originId: sha256(`origin:${state.marker}`).slice(0, 32),
@@ -697,83 +675,6 @@ async function phaseDeliveryPipeline() {
   pass("delivery.single_projection", `projected_events=${projected.length} content_matches=true unique=${new Set(ids).size} turns=2`);
 }
 
-async function phaseDelivery() {
-  if (PIPELINE) return phaseDeliveryPipeline();
-  state.session = {
-    sessionId: `e2e-${state.marker}-session`,
-    originId: sha256(`origin:${state.marker}`).slice(0, 32),
-  };
-  const sync = await historySession(state.a, "sync");
-  pass("delivery.session_token", `base_url=${sync.baseUrl} scopes=${(sync.scopes ?? []).join(",")}`);
-  const request = buildBatch();
-
-  const limits = await call("GET", `${HISTORY}/v1/delivery/limits`, { token: sync.accessToken });
-  must(limits.status === 200, `delivery limits status=${limits.status}`);
-
-  const first = await call("POST", `${HISTORY}/v1/delivery/batches`, { token: sync.accessToken, body: request });
-  must(first.status === 200, `first delivery status=${first.status} error=${errorCode(first)}`);
-  const receipt = first.json;
-  const submitted = request.batch.records.map((record) => record.revision_id);
-  must(receipt.acceptanceLevel === "durable", `acceptanceLevel=${receipt.acceptanceLevel}`);
-  must(
-    JSON.stringify(receipt.acceptedRevisionIds) === JSON.stringify(submitted),
-    "receipt does not list every submitted revision in order",
-  );
-  must(typeof receipt.receiptId === "string", "receipt has no receiptId");
-  state.session.batchId = request.batch.batch_id;
-  state.session.receiptId = receipt.receiptId;
-  state.session.records = submitted.length;
-  pass(
-    "delivery.first",
-    `batch=${receipt.batchId} receipt=${receipt.receiptId} accepted=${receipt.acceptedRevisionIds.length} level=${receipt.acceptanceLevel}`,
-  );
-
-  // Retry the identical batch as Desktop does after losing the first response.
-  const retry = await call("POST", `${HISTORY}/v1/delivery/batches`, { token: sync.accessToken, body: request });
-  must(retry.status === 200, `retry delivery status=${retry.status} error=${errorCode(retry)}`);
-  must(retry.json.receiptId === receipt.receiptId, "retry returned a different receipt");
-  must(
-    JSON.stringify(retry.json.acceptedRevisionIds) === JSON.stringify(submitted),
-    "retry accepted a different revision set",
-  );
-  pass("delivery.retry_same_receipt", `receipt=${retry.json.receiptId}`);
-
-  const records = await call(
-    "GET",
-    `${HISTORY}/v1/delivery/records?${new URLSearchParams({ session_id: state.session.sessionId, source: SOURCE })}`,
-    { token: sync.accessToken, headers: { "X-RelayHistory-Expected-Account": accountId(state.a) } },
-  );
-  const recordCount = Array.isArray(records.json?.records) ? records.json.records.length : null;
-
-  must(records.status === 200, `delivery records status=${records.status} error=${errorCode(records)}`);
-  must(recordCount === submitted.length, `retained delivery records=${recordCount} expected=${submitted.length}`);
-  const events = await eventsDirect(sync.accessToken, state.a, state.session.sessionId);
-  must(events.status === 200, `events status=${events.status}`);
-  const projected = markerEvents(events.json.events);
-  const ids = projected.map((event) => event.eventId);
-  must(new Set(ids).size === ids.length, "duplicate projected events after retry");
-  const expected = expectedProjection();
-  must(
-    projected.length === expected.length && projectionMatches(projected),
-    `projected events=${projected.length} expected=${expected.length} content_matches=${projectionMatches(projected)}`,
-  );
-  state.session.projectedEvents = projected.length;
-  pass(
-    "delivery.single_projection",
-    `projected_events=${projected.length} expected=${expected.length} content_matches=true unique=${new Set(ids).size} retained_records=${recordCount}`,
-  );
-
-  // Conversation turns are a separate RelayHistory stream (Desktop's session
-  // handoff writes them); the delivery batch does not create them. Ingest two
-  // so the sessions API transcript case has turns to read.
-  const turns = await call("POST", `${HISTORY}/v1/sessions/${encodeURIComponent(state.session.sessionId)}/turns`, {
-    token: sync.accessToken,
-    body: { sessionOwner: `e2e-${state.marker}`, turns: expectedTurns() },
-  });
-  must(turns.status === 200 && turns.json?.accepted === 2, `turn ingest status=${turns.status} accepted=${turns.json?.accepted}`);
-  pass("delivery.turns", `accepted=${turns.json.accepted}`);
-}
-
 function expectedTurns() {
   const now = Date.parse(state.startedAt);
   const turn = (turnIndex, role, content, ts) => ({
@@ -804,24 +705,17 @@ async function dashboardEvents(tenant, workspaceId, sessionId) {
 }
 
 // The read API lists sessions by directory only; marker search is event search
-// (GET /v1/events through Control's /sessions/search). Legacy has both.
+// (GET /v1/events through Control's /sessions/search).
 async function dashboardSearch(tenant, workspaceId, query) {
-  if (PIPELINE) {
-    const response = await call("GET", `${API}/cloud/api/v1/workspaces/${workspaceId}/sessions/search?${new URLSearchParams({ q: query })}`, { token: tenant.accessToken });
-    const rows = response.status === 200 && Array.isArray(response.json?.matches) ? response.json.matches : [];
-    return { status: response.status, count: rows.length, found: (id) => rows.some((row) => row.sessionId === id) };
-  }
-  const response = await dashboardList(tenant, workspaceId, query);
-  const rows = response.status === 200 && Array.isArray(response.json?.items) ? response.json.items : [];
+  const response = await call("GET", `${API}/cloud/api/v1/workspaces/${workspaceId}/sessions/search?${new URLSearchParams({ q: query })}`, { token: tenant.accessToken });
+  const rows = response.status === 200 && Array.isArray(response.json?.matches) ? response.json.matches : [];
   return { status: response.status, count: rows.length, found: (id) => rows.some((row) => row.sessionId === id) };
 }
 
 async function directSearch(token, tenant, query) {
-  const url = PIPELINE
-    ? `${READ_API}/v1/events?${new URLSearchParams({ workspace: tenant.workspaceId, q: query, limit: "50" })}`
-    : `${READ_API}/v1/sessions?${new URLSearchParams({ workspace: tenant.workspaceId, q: query, limit: "50" })}`;
+  const url = `${READ_API}/v1/events?${new URLSearchParams({ workspace: tenant.workspaceId, q: query, limit: "50" })}`;
   const response = await call("GET", url, { token });
-  const rows = response.status === 200 ? (response.json?.events ?? response.json?.sessions ?? []) : [];
+  const rows = response.status === 200 ? (response.json?.events ?? []) : [];
   return { status: response.status, count: rows.length, found: (id) => rows.some((row) => row.sessionId === id) };
 }
 
@@ -848,13 +742,13 @@ async function readsPresent(prefix) {
 
   const read = await historySession(state.a, "read");
   const direct = await directSearch(read.accessToken, state.a, state.marker);
-  must(direct.status === 200, `relayhistory search status=${direct.status}`);
-  must(direct.found(sessionId), "relayhistory search does not find the marker");
+  must(direct.status === 200, `read API search status=${direct.status}`);
+  must(direct.found(sessionId), "read API search does not find the marker");
   const directEvents = await eventsDirect(read.accessToken, state.a, sessionId);
   const directReplayed = directEvents.status === 200 ? markerEvents(directEvents.json?.events) : [];
   must(directReplayed.length === state.session.projectedEvents && projectionMatches(directReplayed),
-    `relayhistory replay status=${directEvents.status} events=${directReplayed.length} expected=${state.session.projectedEvents}`);
-  pass(`${prefix}.relayhistory_direct`, `search_matches=${direct.count} replay_events=${state.session.projectedEvents}`);
+    `read API replay status=${directEvents.status} events=${directReplayed.length} expected=${state.session.projectedEvents}`);
+  pass(`${prefix}.read_api_direct`, `search_matches=${direct.count} replay_events=${state.session.projectedEvents}`);
 }
 
 async function phaseReads() {
@@ -1052,24 +946,24 @@ async function phaseIsolation() {
   pass("isolation.b_workspace_views", `search_matches=${ownSearch.count} replay_status=${ownReplay.status} leaked_events=0`);
 
   const bSync = await historySession(state.b, "sync");
-  const bRead = PIPELINE ? await historySession(state.b, "read") : bSync;
+  const bRead = await historySession(state.b, "read");
   const forged = await call(
     "GET",
-    `${READ_API}/v1/sessions?${new URLSearchParams(PIPELINE ? { workspace: state.a.workspaceId } : { workspace: state.a.workspaceId, q: state.marker })}`,
+    `${READ_API}/v1/sessions?${new URLSearchParams({ workspace: state.a.workspaceId })}`,
     { token: bRead.accessToken },
   );
   const forgedList = absentOrDenied(forged, (json) => (json.sessions ?? []).filter((item) => item.sessionId === sessionId).length);
-  must(forgedList.ok, `B's RelayHistory token listing A's workspace status=${forged.status} leaked_sessions=${forgedList.leaked ?? "unknown"}`);
+  must(forgedList.ok, `B's read token listing A's workspace status=${forged.status} leaked_sessions=${forgedList.leaked ?? "unknown"}`);
   const forgedEvents = await eventsDirect(bRead.accessToken, state.a, sessionId);
   const forgedReplay = absentOrDenied(forgedEvents, eventLeaks);
-  must(forgedReplay.ok, `B's RelayHistory token replaying A's session status=${forgedEvents.status} leaked_events=${forgedReplay.leaked ?? "unknown"}`);
+  must(forgedReplay.ok, `B's read token replaying A's session status=${forgedEvents.status} leaked_events=${forgedReplay.leaked ?? "unknown"}`);
   const forgedDelivery = await call("POST", `${INGEST}/v1/delivery/batches`, {
     token: bSync.accessToken,
     body: buildBatch(),
   });
   must(forgedDelivery.status === 403, `B delivering with A's account_id status=${forgedDelivery.status}`);
   pass(
-    "isolation.relayhistory_direct",
+    "isolation.history_direct",
     `b_list_with_a_workspace=${forged.status} b_events_with_a_workspace=${forgedEvents.status} b_deliver_as_a=${forgedDelivery.status}`,
   );
 
@@ -1115,29 +1009,12 @@ async function phaseSessions() {
 
   // Filters: each one must keep the session when it matches and drop it when
   // it does not.
-  const since = new Date(Date.parse(state.startedAt) - 3_600_000).toISOString();
-  const until = new Date(Date.now() + 3_600_000).toISOString();
-  const future = new Date(Date.now() + 86_400_000).toISOString();
-  const past = new Date(Date.parse(state.startedAt) - 7 * 86_400_000).toISOString();
   const filters = [
     ["source_match", `?source=${SOURCE}`, true],
     ["source_other", "?source=codex", false],
   ];
-  if (!PIPELINE) {
-    // The pipeline read API's list answers only source (others are 501);
-    // search and activity cover the rest of the marker path.
-    filters.push(
-      ["window_match", `?since=${encodeURIComponent(since)}&until=${encodeURIComponent(until)}`, true],
-      ["window_future", `?since=${encodeURIComponent(future)}`, false],
-      ["window_past", `?until=${encodeURIComponent(past)}`, false],
-      ["q_match", `?q=${state.marker}`, true],
-      ["q_other", `?q=${state.marker}zz-no-such-text`, false],
-    );
-    // The fixture session carries a project, so the list must expose it.
-    must(typeof item.project?.name === "string" && item.project.name.length > 0, "list item is missing the fixture project");
-    filters.push(["project_match", `?project=${encodeURIComponent(item.project.name)}`, true]);
-    filters.push(["project_other", `?project=${encodeURIComponent(`/e2e/${state.marker}-other`)}`, false]);
-  }
+  // The read API's list answers only source (other filters are 501); search
+  // and activity cover the rest of the marker path.
   const filterDetail = [];
   for (const [name, query, expected] of filters) {
     const response = await get(query);
@@ -1175,9 +1052,9 @@ async function phaseSessions() {
   const want = expectedTurns().map((turn) => `${turn.turnIndex}:${turn.role}:${turn.content}`);
   must(JSON.stringify(got) === JSON.stringify(want), `turns=${turns.json.turns.length} expected=${want.length} content_matches=false`);
   const timing = await get(`/${sid}/timing?source=${SOURCE}`);
-  must((timing.status === 200 && "timing" in (timing.json ?? {})) || (PIPELINE && timing.status === 501), `timing status=${timing.status} error=${errorCode(timing)}`);
+  must((timing.status === 200 && "timing" in (timing.json ?? {})) || timing.status === 501, `timing status=${timing.status} error=${errorCode(timing)}`);
   const catalog = await get(`/${sid}/catalog?source=${SOURCE}`);
-  must((catalog.status === 200 && Array.isArray(catalog.json?.children)) || (PIPELINE && catalog.status === 501), `catalog status=${catalog.status} error=${errorCode(catalog)}`);
+  must((catalog.status === 200 && Array.isArray(catalog.json?.children)) || catalog.status === 501, `catalog status=${catalog.status} error=${errorCode(catalog)}`);
   pass("sessions.transcript", `events=${replayed.length} ordered=true desc_limit_is_last_two=true asc_limit_is_first_two=true turns=${turns.json.turns.length} turns_match=true timing=${timing.json?.timing ? "present" : "null"} catalog=${catalog.status}`);
 
   // Search (event-level matches with citation paths).
@@ -1199,16 +1076,10 @@ async function phaseSessions() {
   const row = activity.json.days.find((entry) => entry.date === day);
   must(row && row.conversations >= 1 && (row.bySource?.[SOURCE] ?? 0) >= 1,
     `activity ${day} conversations=${row?.conversations} ${SOURCE}=${row?.bySource?.[SOURCE]}`);
-  let filteredTotal = 0;
-  if (!PIPELINE) { // the read API's activity has no q filter
-    const filtered = await get(`/activity?first=${day}&last=${today()}&q=${state.marker}zz-no-such-text`);
-    must(filtered.status === 200 && Array.isArray(filtered.json?.days), `activity q status=${filtered.status}`);
-    filteredTotal = filtered.json.days.reduce((sum, entry) => sum + entry.conversations, 0);
-    must(filteredTotal === 0, `activity with a non-matching q counted ${filteredTotal}`);
-  }
+  // The read API's activity has no q filter.
   const backwards = await get(`/activity?first=${today()}&last=${day === today() ? "2000-01-01" : day}`);
   must(backwards.status === 400, `activity reversed range status=${backwards.status}`);
-  pass("sessions.activity", `day=${day} conversations=${row.conversations} ${SOURCE}=${row.bySource[SOURCE]} non_matching_q_total=0 reversed_range=${backwards.status}`);
+  pass("sessions.activity", `day=${day} conversations=${row.conversations} ${SOURCE}=${row.bySource[SOURCE]} reversed_range=${backwards.status}`);
 
   // B's token on every one of these A routes, through the public edge.
   const crossPaths = ["", `/${sid}/events?source=${SOURCE}`, `/${sid}/turns?source=${SOURCE}`, `/${sid}/timing?source=${SOURCE}`,
@@ -1485,20 +1356,11 @@ async function phaseDurabilityRelaycast() {
 
 // ---------------------------------------------------------------- auth
 
-function jwtParts(token) {
-  const raw = token.replace(/^relay_(ag|pa|ws|id)_/, "");
-  const [header, payload] = raw.split(".");
-  return {
-    header: JSON.parse(Buffer.from(header, "base64url").toString("utf8")),
-    payload: JSON.parse(Buffer.from(payload, "base64url").toString("utf8")),
-  };
-}
-
-// Pipeline profile: no RelayAuth exists to mint or verify an assertion. The
+// Native History has no RelayAuth to mint or verify an assertion. The
 // proof is that the ingest edge authorizes uploads and the read API reads
 // through Control-issued credentials only, and that each refuses the other's
 // tokens and tampered or anonymous callers.
-async function phaseAuthPipeline() {
+async function phaseAuth() {
   const sync = await historySession(state.a, "sync");
   const ok = await call("GET", `${INGEST}/v1/delivery/limits`, { token: sync.accessToken });
   must(ok.status === 200, `upload token at the ingest edge status=${ok.status}`);
@@ -1532,100 +1394,6 @@ async function phaseAuthPipeline() {
   pass("auth.relaycast_key", `resolved_key=${rcOk.status} wrong_key=${rcBad.status}`);
 }
 
-async function phaseAuth() {
-  if (PIPELINE) return phaseAuthPipeline();
-  const jwks = await call("GET", `${RELAYAUTH}/.well-known/jwks.json`);
-  must(jwks.status === 200 && Array.isArray(jwks.json?.keys) && jwks.json.keys.length > 0, `jwks status=${jwks.status}`);
-  const kids = jwks.json.keys.map((key) => key.kid);
-  pass("auth.jwks", `keys=${kids.length} algs=${[...new Set(jwks.json.keys.map((k) => k.alg))].join(",")}`);
-
-  // A control-plane-issued RelayHistory session must authenticate at
-  // RelayHistory; a tampered one must not.
-  const session = await historySession(state.a, "sync");
-  const ok = await call("GET", `${HISTORY}/v1/delivery/limits`, { token: session.accessToken });
-  must(ok.status === 200, `issued RelayHistory token status=${ok.status}`);
-  const bogus = await call("GET", `${HISTORY}/v1/delivery/limits`, { token: `${session.accessToken.slice(0, -4)}AAAA` });
-  must(bogus.status === 401, `tampered RelayHistory token status=${bogus.status}`);
-  const none = await call("GET", `${HISTORY}/v1/delivery/limits`);
-  must(none.status === 401, `anonymous RelayHistory status=${none.status}`);
-  let kidDetail = "opaque_token";
-  try {
-    const parts = jwtParts(session.accessToken);
-    kidDetail = `jwt_kid_in_jwks=${kids.includes(parts.header.kid)} aud=${parts.payload.aud}`;
-  } catch {
-    // RelayHistory session tokens may be opaque; the assertion check below
-    // covers the RelayAuth signature path.
-  }
-  pass("auth.relayhistory_token", `issued=${ok.status} tampered=${bogus.status} anonymous=${none.status} ${kidDetail}`);
-
-  // Mint the same RelayAuth assertion the control plane mints, verify its
-  // RS256 signature against the served JWKS here, then exchange it at
-  // RelayHistory. The RelayAuth API key is read from the pod's own mount.
-  const relayauthKey = readFileSync(RELAYAUTH_KEY_FILE, "utf8").trim();
-  const historyOrigin = session.baseUrl;
-  const minted = await call("POST", `${RELAYAUTH}/v1/tokens/relayhistory-assertion`, {
-    headers: { "x-api-key": relayauthKey },
-    body: {
-      orgId: state.a.organizationId,
-      workspaceId: state.a.workspaceId,
-      sponsorId: state.a.ownerUserId,
-      scopes: ["rth:read"],
-      expiresIn: 60,
-      historyOrigin,
-      metadata: { productId: "selfhost-control-plane", purpose: "relayhistory-login", requestedMode: "read", grantedMode: "read", label: `e2e-${state.marker}` },
-    },
-  });
-  must(minted.status === 200 || minted.status === 201, `relayauth assertion status=${minted.status}`);
-  const assertion = minted.json.accessToken;
-  const raw = assertion.replace(/^relay_(ag|pa|ws|id)_/, "");
-  const [h64, p64, s64] = raw.split(".");
-  const header = JSON.parse(Buffer.from(h64, "base64url").toString("utf8"));
-  const claims = JSON.parse(Buffer.from(p64, "base64url").toString("utf8"));
-  const jwk = jwks.json.keys.find((key) => key.kid === header.kid);
-  must(jwk, "assertion kid is not in the JWKS");
-  const signatureOk = cryptoVerify(
-    "RSA-SHA256",
-    Buffer.from(`${h64}.${p64}`),
-    createPublicKey({ key: jwk, format: "jwk" }),
-    Buffer.from(s64, "base64url"),
-  );
-  must(signatureOk, "assertion signature does not verify against the JWKS");
-  must(
-    claims.org === state.a.organizationId && claims.wks === state.a.workspaceId &&
-      (claims.aud === historyOrigin || (Array.isArray(claims.aud) && claims.aud[0] === historyOrigin)),
-    "assertion claims do not match the tenant",
-  );
-  const exchanged = await call("POST", `${HISTORY}/v1/cli/login`, { body: { agentRelayToken: assertion } });
-  must(exchanged.status === 200 && typeof exchanged.json?.accessToken === "string", `assertion exchange status=${exchanged.status}`);
-  const tamperedSig = `${assertion.slice(0, assertion.lastIndexOf(".") + 1)}${Buffer.from(randomBytes(256)).toString("base64url")}`;
-  const tamperedExchange = await call("POST", `${HISTORY}/v1/cli/login`, { body: { agentRelayToken: tamperedSig } });
-  must(tamperedExchange.status === 401 || tamperedExchange.status === 403, `tampered assertion status=${tamperedExchange.status}`);
-  pass(
-    "auth.relayauth_assertion",
-    `alg=${header.alg} kid_in_jwks=true signature_valid=true aud=${historyOrigin} exchange=${exchanged.status} tampered_exchange=${tamperedExchange.status}`,
-  );
-
-  // A structurally valid but unsigned/forged assertion must also fail.
-  const forged = await call("POST", `${HISTORY}/v1/cli/login`, {
-    body: { agentRelayToken: "eyJhbGciOiJSUzI1NiIsImtpZCI6ImZvcmdlZCJ9.eyJzdWIiOiJ4In0.c2ln" },
-  });
-  must(forged.status >= 400 && forged.status < 500, `forged assertion status=${forged.status}`);
-  pass("auth.relayhistory_rejects_forged_assertion", `status=${forged.status}`);
-
-  // Control-plane access tokens: valid works, revoked/garbage fails.
-  const who = await call("GET", `${API}/api/v1/auth/whoami`, { token: state.a.accessToken });
-  const garbage = await call("GET", `${API}/api/v1/auth/whoami`, { token: "sh_at_invalid" });
-  must(who.status === 200 && garbage.status === 401, `whoami=${who.status} garbage=${garbage.status}`);
-  pass("auth.control_plane_token", `valid=${who.status} invalid=${garbage.status}`);
-
-  // The Relaycast workspace key the control plane resolves authenticates at
-  // Relaycast; a wrong key does not.
-  const rcOk = await call("GET", `${RELAYCAST}/v1/agents`, { token: state.a.relaycastKey });
-  const rcBad = await call("GET", `${RELAYCAST}/v1/agents`, { token: `rk_live_${"0".repeat(32)}` });
-  must(rcOk.status === 200 && rcBad.status === 401, `relaycast resolved=${rcOk.status} wrong=${rcBad.status}`);
-  pass("auth.relaycast_key", `resolved_key=${rcOk.status} wrong_key=${rcBad.status}`);
-}
-
 // ---------------------------------------------------------------- erasure
 
 async function phaseErasure() {
@@ -1652,34 +1420,27 @@ async function phaseErasure() {
   must(replayAbsent.ok, `replay after erasure status=${replay.status} events=${replayAbsent.leaked ?? "unknown"}`);
   const read = await historySession(state.a, "read");
   const direct = await directSearch(read.accessToken, state.a, state.marker);
-  must(direct.status === 200, `relayhistory search after erasure status=${direct.status}`);
-  must(!direct.found(sessionId), "relayhistory search still returns it");
+  must(direct.status === 200, `read API search after erasure status=${direct.status}`);
+  must(!direct.found(sessionId), "read API search still returns it");
   const turns = state.capabilities?.sessions
     ? await call("GET", `${API}/cloud/api/v1/workspaces/${state.a.workspaceId}/sessions/${encodeURIComponent(sessionId)}/turns?source=${SOURCE}`, { token: state.a.accessToken })
     : { status: 404, json: null, text: "" };
   const turnsLeft = turns.status === 200 && Array.isArray(turns.json?.turns) ? turns.json.turns.length : null;
-  must(turns.status === 404 || turnsLeft !== null || (PIPELINE && turns.status === 501), `turns after erasure status=${turns.status}`);
-  // Known RelayHistory gap: session erasure (sessions.set_session_uploads) and
-  // the full reset never delete sessions.conversation_turns, so the turns
-  // stay readable. Strict by default; --allow-known-gap relayhistory-turns-erasure
-  // reports it as SKIP instead, never as PASS.
+  must(turns.status === 404 || turnsLeft !== null || turns.status === 501, `turns after erasure status=${turns.status}`);
   if (!state.capabilities?.sessions) {
     proof("SKIP", "erasure.turns_purged", "control plane has no sessions turns route");
-  } else if (turns.status === 404 || turnsLeft === 0 || (PIPELINE && turns.status === 501)) {
+  } else if (turns.status === 404 || turnsLeft === 0 || turns.status === 501) {
     pass("erasure.turns_purged", `turns_status=${turns.status} turns_left=0`);
-  } else if ((state.allowedGaps ?? []).includes("relayhistory-turns-erasure")) {
-    proof("SKIP", "erasure.turns_purged", `KNOWN GAP relayhistory-turns-erasure: turns_left=${turnsLeft} after erasure (allowed by --allow-known-gap)`);
   } else {
-    fail("erasure.turns_purged", `turns_left=${turnsLeft} after erasure; RelayHistory erasure does not delete conversation turns`);
+    fail("erasure.turns_purged", `turns_left=${turnsLeft} after erasure; erasure did not remove the conversation turns`);
   }
-  pass("erasure.verified", `list_absent=true search_absent=true replay_status=${replay.status} replay_events=0 relayhistory_status=${direct.status} relayhistory_absent=true`);
+  pass("erasure.verified", `list_absent=true search_absent=true replay_status=${replay.status} replay_events=0 read_api_status=${direct.status} read_api_absent=true`);
 
   // The receipt survives erasure, so a stale client retry of the original
   // batch must replay that receipt without resurrecting the session.
   const stale = await call("POST", `${INGEST}/v1/delivery/batches`, { token: sync.accessToken, body: buildBatch() });
-  // The pipeline has no receipt to replay after the erase fence.
-  must(stale.status === 200 && (PIPELINE || stale.json?.receiptId === state.session.receiptId),
-    `stale retry status=${stale.status} same_receipt=${stale.json?.receiptId === state.session.receiptId}`);
+  // The ingest edge has no receipt to replay after the erase fence.
+  must(stale.status === 200, `stale retry status=${stale.status}`);
   const after = await eventsDirect(read.accessToken, state.a, sessionId);
   const afterAbsent = absentOrDenied(after, eventLeaks, [404]);
   must(afterAbsent.ok, `replay after stale retry status=${after.status} events=${afterAbsent.leaked ?? "unknown"}`);
@@ -1698,31 +1459,6 @@ async function phaseIssuePublic() {
   const read = await historySession(state.a, "read");
   state.publicHistoryToken = read.accessToken;
   pass("public.issue_history_session", `base_url=${read.baseUrl}`);
-}
-
-async function phaseMintSessionsPipeline() {
-  // The sessions-pipeline courier's RelayAuth mode only accepts an HTTPS or loopback
-  // RelayAuth URL, so mint the same origin-bound, machine-bound assertion here
-  // (RelayAuth is reachable from this pod) and hand it to a fixed-token pass.
-  // RelayAuth caps assertions at 60 seconds; the caller uses it immediately.
-  const bulls = state.bulls;
-  must(bulls?.orgId && bulls?.workspaceId && bulls?.origin && bulls?.machineId, "missing sessions-pipeline tenant parameters");
-  const relayauthKey = readFileSync(RELAYAUTH_KEY_FILE, "utf8").trim();
-  const minted = await call("POST", `${RELAYAUTH}/v1/tokens/relayhistory-assertion`, {
-    headers: { "x-api-key": relayauthKey },
-    body: {
-      orgId: bulls.orgId,
-      workspaceId: bulls.workspaceId,
-      machineId: bulls.machineId,
-      sponsorId: bulls.userId ?? `e2e-${state.marker}`,
-      scopes: ["rth:sync", "rth:read"],
-      expiresIn: 60,
-      historyOrigin: bulls.origin,
-    },
-  });
-  must(minted.status === 201 && typeof minted.json?.accessToken === "string", `sessions-pipeline assertion mint status=${minted.status}`);
-  state.bullsAssertion = minted.json.accessToken;
-  pass("pipeline.mint_assertion", `org=${bulls.orgId} workspace=${bulls.workspaceId} machine=${bulls.machineId} aud=${bulls.origin} ttl=60s`);
 }
 
 // Removes whatever tracked control-plane resources are still left in A
@@ -1900,7 +1636,6 @@ const phases = {
   auth: phaseAuth,
   erasure: phaseErasure,
   "issue-public": phaseIssuePublic,
-  "mint-sessions-pipeline": phaseMintSessionsPipeline,
   sessions: phaseSessions,
   admin: phaseAdmin,
   "admin-internal": phaseAdminInternal,

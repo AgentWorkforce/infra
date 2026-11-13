@@ -153,10 +153,11 @@ def compose(base, selected, operator, phase, observed_tenant=None):
             "native_canonical_env_must_be_managed_not_duplicated")
     reader["extraEnv"] = canonical_env + reader.get("extraEnv", [])
     # Missing component flags must not inherit chart defaults and accidentally
-    # start a legacy History/RelayAuth/worker or an optional product.
+    # start RelayAuth, a legacy worker or an optional product. The standalone
+    # History component was removed from the chart, so it is never named here.
     result["components"] = {k: k in ({"control", "relaycast"} if phase == "control" else
                                     {"control", "relaycast", "sessionsPipeline", "webapp"})
-                            for k in ("control", "relaycast", "sessionsPipeline", "webapp", "relayhistory", "relayauth",
+                            for k in ("control", "relaycast", "sessionsPipeline", "webapp", "relayauth",
                                       "relayflows", "relayfile", "durableActors", "telemetryCollector", "relayChief")}
     if phase == "control":
         result["sessions-pipeline"]["nativeRouting"] = {"enabled": False}

@@ -32,13 +32,13 @@ relayflows:
             type: deterministic
             command: >-
               node -e 'fetch("http://relay-control/healthz").then(r=>{console.log("control-api",r.status);process.exit(r.ok?0:1)}).catch(e=>{console.error(e.cause?.code||e.message);process.exit(1)})'
-          - id: relayhistory
+          - id: history
             type: deterministic
             command: >-
-              node -e 'fetch("http://relayhistory:8080/healthz").then(r=>{console.log("relayhistory",r.status);process.exit(r.ok?0:1)}).catch(e=>{console.error(e.cause?.code||e.message);process.exit(1)})'
+              node -e 'fetch("http://agent-relay-read-api/healthz").then(r=>{console.log("history",r.status);process.exit(r.ok?0:1)}).catch(e=>{console.error(e.cause?.code||e.message);process.exit(1)})'
           - id: gate
             type: deterministic
             command: printf 'suite-smoke-verified\n'
             verification:
               type: steps_green
-              ids: [relaycast, control-api, relayhistory]
+              ids: [relaycast, control-api, history]

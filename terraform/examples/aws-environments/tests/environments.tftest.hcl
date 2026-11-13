@@ -189,8 +189,8 @@ run "lambda_composition" {
     error_message = "Lambda mode must create its runtime and explicitly require overlapping worker stages to be disabled."
   }
   assert {
-    condition     = alltrue([for component in ["cloudApi", "dashboard", "sessionsPipeline", "relaycast", "relayfile"] : output.application_contract.components[component]]) && !output.application_contract.components.durableActors && !output.application_contract.components.relayauth && !output.application_contract.components.relayhistory
-    error_message = "The target suite includes control, dashboard, pipeline History capability, Relaycast and optional Relayfile; standalone History/Auth/actor stores are not required."
+    condition     = alltrue([for component in ["cloudApi", "dashboard", "sessionsPipeline", "relaycast", "relayfile"] : output.application_contract.components[component]]) && !output.application_contract.components.durableActors && !output.application_contract.components.relayauth && !contains(keys(output.application_contract.components), "relayhistory")
+    error_message = "The target suite includes control, dashboard, pipeline History capability, Relaycast and optional Relayfile; RelayAuth and actor stores are not required and there is no standalone History component."
   }
   assert {
     condition     = !output.pipeline.activation_enabled && output.application_contract.hoopdb_bootstrap_profile == "dedicated-rds-database-review-required"

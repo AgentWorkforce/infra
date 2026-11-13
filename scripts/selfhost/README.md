@@ -248,7 +248,8 @@ Run `./verify-agent-relay.sh --help` for all options.
 
 For the current native History architecture, add
 `--require-native-history`. That gate requires the read API, ingest edge and
-search indexer Deployments; rejects RelayAuth and standalone RelayHistory; and
+search indexer Deployments; rejects RelayAuth and any leftover standalone
+RelayHistory Deployment; and
 requires Relay Control to use `RELAYHISTORY_BACKEND=native` without either
 legacy URL environment variable.
 
@@ -270,12 +271,13 @@ visible in Dashboard list, replay and search:
 ./e2e-gcp-proof.sh \
   --context my-gcp-context \
   --namespace agent-relay \
-  --sessions-namespace agent-relay \
   --secret agent-relay-secrets \
-  --history-profile pipeline \
   --base-domain relay.example.com \
   --require-public
 ```
+
+History is always native, so the proof has no History profile to choose
+(`--history-profile pipeline` is still accepted and changes nothing).
 
 The e2e proof creates disposable workspaces, agents and session data, then
 removes them in its cleanup case. It emits `CASE|...` records and ends with

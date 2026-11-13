@@ -10,16 +10,16 @@
       },
       "current": {
         "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-        "repository": "registry.northwind.io/agent-relay/relayhistory"
+        "repository": "registry.northwind.io/agent-relay/relay-control"
       },
       "customerAcquisition": {
         "procedure": "Copy the signed digest into the customer registry by digest.",
         "status": "promoted-customer-registry"
       },
       "firstParty": true,
-      "id": "relayhistory",
+      "id": "relay-control",
       "license": {
-        "evidence": "legal/relayhistory-license-decision.json",
+        "evidence": "legal/relay-control-license-decision.json",
         "spdx": "LicenseRef-AgentWorkforce-Commercial",
         "status": "approved"
       },
@@ -42,7 +42,7 @@
         "workflow": "https://ci.example.com/workflows/customer-image"
       },
       "source": {
-        "repository": "https://github.com/AgentWorkforce/relayhistory-cloud",
+        "repository": "https://github.com/AgentWorkforce/relay-control",
         "reproducibleReference": true,
         "revision": "1111111111111111111111111111111111111111"
       }

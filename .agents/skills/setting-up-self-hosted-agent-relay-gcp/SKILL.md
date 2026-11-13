@@ -1,6 +1,6 @@
 ---
 name: setting-up-self-hosted-agent-relay-gcp
-description: Guides and verifies a customer-owned self-hosted Agent Relay installation on GCP using the agent-relay Helm umbrella chart, GKE, Cloud SQL, GCS, Relaycast, RelayAuth, RelayHistory, Sessions Pipeline, the control-plane API, Dashboard, and Agent Relay Desktop. Use whenever planning, installing, upgrading, recovering, or validating this GCP self-hosted suite.
+description: Guides and verifies a customer-owned self-hosted Agent Relay installation on GCP using the agent-relay Helm umbrella chart, GKE, Cloud SQL, GCS, Relaycast, Sessions Pipeline with native History (read API and ingest edge), the control-plane API, Dashboard, and Agent Relay Desktop. Use whenever planning, installing, upgrading, recovering, or validating this GCP self-hosted suite.
 license: Apache-2.0
 compatibility: Requires gcloud, kubectl, Helm 3.10+, python3, kubeconform, jq, yq, node, openssl, curl and timeout (dig when VERIFY_DNS_RESOLVER is set), network access to the target GKE cluster and the image registry, and operator credentials for the customer GCP project.
 metadata:
@@ -68,7 +68,7 @@ The default public origins are:
 - Dashboard: `https://$BASE_DOMAIN`
 - Control plane: `https://api.$BASE_DOMAIN`
 - Relaycast: `https://cast.$BASE_DOMAIN`
-- RelayHistory: `https://history.$BASE_DOMAIN`
+- History (Sessions read API and ingest edge): `https://history.$BASE_DOMAIN`
 
 The preview hosts exist only when the customer overlay sets them:
 `gkeIngress.hosts.actors` (durable-actors, `https://actors.$BASE_DOMAIN`) and
@@ -134,9 +134,9 @@ reviewed infrastructure workflow:
 
 - GKE with Workload Identity;
 - PostgreSQL 17 with `vector` and `pg_trgm`, private connectivity, backups,
-  deletion protection, and separate runtime/migration-owner roles. Give
-  RelayHistory its own database and migration ledger; never point it at the
-  Sessions Pipeline `hoopdb` database;
+  deletion protection, and separate runtime/migration-owner roles. History is
+  native: the read API and ingest edge use the Sessions Pipeline `hoopdb`
+  database through their own logins; no RelayAuth is needed;
 - GCS with retention and workload-identity access;
 - Artifact Registry access from GKE;
 - global static address and authoritative DNS control;
@@ -158,7 +158,7 @@ secret values. Override every proof-specific setting from
 - `global.tenant.orgId`;
 - `gkeIngress.name`, `staticIpName`, `managedCertificateName`,
   `frontendConfigName`, and all four hosts;
-- Relaycast, control-plane, RelayHistory, and Dashboard public origins;
+- Relaycast, control-plane, History, and Dashboard public origins;
 - GCS bucket and region;
 - every image repository and immutable digest;
 - every `existingSecret` reference;
@@ -348,7 +348,7 @@ the one-time workspace key directly into the approved secret store, then
 delete any mode-0600 temporary input. Never print or message it.
 
 Set Agent Relay Desktop's trusted deployment origin to the control-plane
-origin. The control plane returns scoped Relaycast and RelayHistory
+origin. The control plane returns scoped Relaycast and History
 credentials; do not configure a separate workspace key in Desktop.
 
 Complete device approval, then verify:
@@ -370,7 +370,7 @@ Use unique markers and record only non-secret IDs:
    durable projection.
 5. Verify the session appears in Dashboard list, replay, and search.
 6. Verify another workspace cannot read it.
-7. Restart RelayHistory and repeat the reads.
+7. Restart the read API and ingest edge and repeat the reads.
 8. Run an approved idempotent Helm upgrade only after the pre-upgrade gate
    passes.
 9. Exercise erasure and prove list, replay, and search no longer return it.

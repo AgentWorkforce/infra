@@ -14,8 +14,11 @@
 #
 #   --profile P     the chart profile this install uses, so an upgrade never
 #                   switches it. Required. One of:
-#                     eks             values-eks.yaml
+#                     eks             values-eks.yaml (native History)
 #                     eks-native      values-eks.yaml + values-eks-native.yaml
+#                                     (an empty compatibility overlay: renders
+#                                     the same as eks; kept for installs that
+#                                     already name it)
 #                     eks-rds-native  values-eks.yaml + values-eks-rds-native.yaml
 #                                     (implies --rds-setup; needs a release
 #                                     whose chart ships that file)
@@ -124,8 +127,10 @@ done
 [[ "$release" =~ ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$ ]] || die "--release must be a DNS-1123 label"
 case "$profile" in
   eks) overlay_profile=eks; profile_files=(values-eks.yaml) ;;
+  # values-eks.yaml is native on its own; values-eks-native.yaml is an empty
+  # compatibility overlay, still layered so an install naming it never changes.
   eks-native) overlay_profile=eks; profile_files=(values-eks.yaml values-eks-native.yaml) ;;
-  # values-eks-rds-native.yaml layers on values-eks.yaml and replaces
+  # values-eks-rds-native.yaml layers on values-eks.yaml in place of
   # values-eks-native.yaml; its databases are bootstrapped by rds-setup.sh.
   eks-rds-native) overlay_profile=eks; profile_files=(values-eks.yaml values-eks-rds-native.yaml); rds_setup=true ;;
   *) die "--profile must be eks, eks-native or eks-rds-native (the profile this install already uses)" ;;

@@ -26,6 +26,9 @@ class ControlAdapters(unittest.TestCase):
             chart = "agent-relay"
             components = {k: False for k in yaml.safe_load((ROOT / "charts/agent-relay/values.yaml").read_text())["components"]}
             components["control"] = True
+            # The leaf fixture configures the leaf's legacy History client; the
+            # umbrella defaults to native, so keep the fixture's mode explicit.
+            v.setdefault("services", {}).setdefault("relayhistoryBackend", "legacy")
             v = {"components": components, "relay-control": v}
         with tempfile.TemporaryDirectory() as folder:
             p = Path(folder) / "values.yaml"

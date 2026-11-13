@@ -26,10 +26,9 @@ and the release gate’s `helm-charts` license-decision ID retain their original
 
 | Chart | Description |
 |-------|-------------|
-| [agent-relay](charts/agent-relay) | Self-hosted Agent Relay suite umbrella — relaycast, relayauth, sessions-pipeline, relayhistory, control-plane API, dashboard (one GKE Ingress, no HA claim) |
+| [agent-relay](charts/agent-relay) | Self-hosted Agent Relay suite umbrella — relaycast, sessions-pipeline with native History (read API + ingest edge), control-plane API, dashboard, optional relayauth (one GKE Ingress, no HA claim) |
 | [relay-control](charts/relay-control) | Self-host control-plane API — organizations, workspaces, device auth; existing-Secret file mounts only, separate migration Job |
 | [relay-webapp](charts/relay-webapp) | Static self-host dashboard — nginx SPA calling same-origin `/cloud/api` |
-| [relayhistory](charts/relayhistory) | Relay History data plane — session delivery, search, replay on its own Postgres database (digest-pinned proof image) |
 | [relaychief-control](charts/relaychief-control) | Optional Relay Chief registry and slot-binding add-on on PostgreSQL — one replica, loopback-only admin listener, Ingress limited to `/chief/v1` by default (not part of the umbrella) |
 | [relayfile-control](charts/relayfile-control) | Optional Relayfile webhook ingest and Flows API add-on on PostgreSQL. One replica, digest-only image, existing Secrets only, Flows and Ingress off by default. |
 | [relaycast](charts/relaycast) | Portable self-hosted Relaycast core — realtime agent communication with single-writer SQLite persistence |
@@ -284,8 +283,7 @@ Where the migrator has no default, neither does the chart:
   `sessions_pipeline_runtime` with LOGIN and no workload role (a database
   bootstrapped before the rename keeps its role: set
   `worker.migrations.runtimeRole` to that name, for example `bulls96_runtime`).
-  Do not use the drifted
-  legacy `relayhistory_runtime`. The Worker role is
+  The Worker role is
   `session_directory_search_worker`.
 
   The profile pins the 7d7229b GHCR image and selects
@@ -505,6 +503,12 @@ Run the same checks locally with `scripts/ci/charts.sh static` and `scripts/ci/c
 
 ## Local kind profiles
 
+> The single-phase `make kind-up` profiles described below ran the
+> standalone RelayHistory component, which was removed in agent-relay 0.7.0;
+> they are retired. Use `make local-up` (native core,
+> [docs/local-development.md](docs/local-development.md)) or the native core
+> installer below. The rest of this section is kept as a record.
+
 For the independent-reader native core, use the explicit
 [native core lifecycle](docs/native-kind-core-lifecycle.md). Its command defaults
 to a static plan; execution requires qualified source/image packets and an
@@ -521,7 +525,7 @@ from the customer release and AWS/GCP managed-infrastructure proofs.
 
 | Profile | Components |
 | --- | --- |
-| `core` | relaycontrol, relay-app, Relaycast, RelayHistory, sessions-pipeline ingest/workers, Postgres + pgvector with per-service databases, MinIO Locker |
+| `core` | relaycontrol, relay-app, Relaycast, the former standalone History server, sessions-pipeline ingest/workers, Postgres + pgvector with per-service databases, MinIO Locker |
 | `addons` | core + relayfile Go server with Postgres state, standalone Flows with Kubernetes CronJobs |
 
 Both currently include **real, internal-only temporary RelayAuth**. The
@@ -591,10 +595,7 @@ superuser initializes those databases and roles; application runtime connections
 use the separate runtime logins. Its image/generation receipt is
 `.kind/<profile>/images.json`. Current catalog images are pinned by digest;
 their compatibility with current source remains subject to runtime proof.
-History uses its own `relayhistory` database and migration owner; the pipeline
-is the sole migrator of `sessions` in `hoopdb`. This matches the existing EKS
-installer. Co-locating both migrators in HoopDB is unsupported and is rejected
-by the unchanged final ACL check.
+The pipeline is the sole migrator of `sessions` in `hoopdb`.
 Relayfile and the pinned Flows runtime are built locally for the add-on profile.
 The Flows Rust kernel is compiled natively from release `v2.0.50`, commit
 `9a9086be16fd33eea15af2adf3ce0a7cf1239aa9`, with its locked dependencies.
@@ -745,8 +746,8 @@ offline profile.
 
 ### Evidence and current gaps
 
-`kind-proof-core` and `kind-proof-addons` share
-[`ci/agent-relay/kind/proof.py`](ci/agent-relay/kind/proof.py). They reuse the
+`kind-proof-core` and `kind-proof-addons` shared `ci/agent-relay/kind/proof.py`
+(removed with the single-phase profiles in agent-relay 0.7.0). They reused the
 existing real protocol drivers for device login, Relaycast DMs, History
 durable delivery/read-back, session API filters and isolation, and the real
 sessions courier/indexer path. The new wrapper checks the live namespace
@@ -776,8 +777,7 @@ a database row. See [captured evidence](ci/agent-relay/kind/evidence.md).
 
 | Gap | Owner / current evidence |
 | --- | --- |
-| Courier → RelayHistory → application read path | Pipeline and RelayHistory owners, coordinated by pipeline-lead: the real-owner courier session is indexed and stored, but RelayHistory does not return it through the authenticated Default workspace application API. Relaycontrol already proxies to `RELAYHISTORY_URL`; it needs no new pipeline URL in control, while the compatible History read service remains unqualified. The pipeline-to-History workspace session visibility contract is a required pending check. Merged pipeline #317/#318 add a default-off container entry and login/catalog routes; [source review and read-only diagnosis](ci/agent-relay/kind/read-api-contract.md) track remaining Postgres-only composition, TLS, canonical source and auth-pair blockers. The courier fixture already has a matching directory row. Nothing is enabled. |
-| Shared-schema ownership | The local recipe now isolates History and HoopDB, matching the existing EKS installer; both migrators and the exact final ACL check pass. The earlier 160 violations remain as negative evidence for unsupported co-location. A future shared-schema design requires the schema and History application owners; the pipeline owner does not own the separate `relayhistory-cloud` application repo. |
+| Courier → application read path | Recorded against the retired profile's standalone History server, which did not return the courier session through the authenticated Default workspace application API. Native installs read through the Sessions read API instead ([source review and read-only diagnosis](ci/agent-relay/kind/read-api-contract.md)). |
 | Add-on E2E | infra-kind-stack + file owners: native images and offline engine/storage preflights pass; the installed add-on profile, actual CronJob firing and authenticated file roundtrip remain unproved pending genuine filesystem-scoped authority. |
 | Current image/source compatibility | Component owners: record exact source SHA and migrator generation; a tag named `main` is insufficient. This run used services source `f1c2672581b6f88d26d0549b4d1cb78fce0d5f16`, generation `0dcd0e89bebbdad789a40fa61311c601b4c0e49e389e3b2b0167b6fd5fdf542e`. |
 | RelayAuth removal | layered-control + layered-sessions-pipeline: default-off introspection branch, `sh_at_`, `rth:read/rth:sync`; keep the temporary internal component until compatible images ship. |
