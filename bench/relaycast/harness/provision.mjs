@@ -38,6 +38,10 @@ const CONC = envInt('RCB_CONCURRENCY', 16);
 // so every channel member is delivery-ready (no queued/retried deliveries to
 // HTTP-only members). Default 0: producers are HTTP-only members.
 const PRODUCERS_ON_NODES = envInt('RCB_PRODUCERS_ON_NODES', 0) === 1;
+// 1: receivers are created over HTTP, join their channels here and are bound
+// to their nodes, so a sink connect is node.register only (socket-capacity
+// suites). Default 0: receivers register over the node socket (agent.register).
+const BIND_RECEIVERS = envInt('RCB_BIND_RECEIVERS', 0) === 1;
 if (FANOUT > R) throw new Error(`RCB_FANOUT_MEMBERS ${FANOUT} > RCB_RECEIVERS ${R}`);
 
 const call = httpClient(base, { timeoutMs: 60000 });
@@ -101,7 +105,16 @@ for (const ws of wsList) {
   const nodes = await pool(groups, async (agents, n) => {
     const name = `n${n}`;
     const nd = await req('POST /v1/nodes', 'POST', '/v1/nodes', ws.key, { name, max_agents: Math.max(agents.length, 1) });
-    return { name, id: nd.id, token: nd.token, agents, shard: (ws.i * 7919 + n) % SHARDS, backlog: agents[0]?.startsWith('b') };
+    if (BIND_RECEIVERS) {
+      for (const a of agents) {
+        const ag = await req('POST /v1/agents', 'POST', '/v1/agents', ws.key, { name: a });
+        for (const ch of channels.filter((c) => c.members.includes(a))) {
+          await req('POST /v1/channels/:name/join', 'POST', `/v1/channels/${ch.name}/join`, ag.token);
+        }
+        await req('POST /v1/nodes/:name/agents', 'POST', `/v1/nodes/${name}/agents`, ws.key, { agent_name: a });
+      }
+    }
+    return { name, id: nd.id, token: nd.token, agents, shard: (ws.i * 7919 + n) % SHARDS, backlog: agents[0]?.startsWith('b'), bound: BIND_RECEIVERS };
   });
   if (PRODUCERS_ON_NODES) {
     const bound = await pool(producers, async (p, k) => {
@@ -119,7 +132,7 @@ for (const ws of wsList) {
 writeJsonAtomic(env('RCB_FIXTURE'), fixture);
 const out = env('RCB_OUT', '');
 const result = {
-  kind: 'provision', run, params: { W, P, R, PER_NODE, C, CM, FANOUT, BACKLOG, SHARDS, PRODUCERS_ON_NODES },
+  kind: 'provision', run, params: { W, P, R, PER_NODE, C, CM, FANOUT, BACKLOG, SHARDS, PRODUCERS_ON_NODES, BIND_RECEIVERS },
   wallMs: hr() - t0, status: status.toJSON(),
   latency: Object.fromEntries([...lat.m].map(([k, h]) => [k, h.summary()])), hist: lat.toJSON(),
 };

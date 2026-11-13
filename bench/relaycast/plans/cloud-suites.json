@@ -366,7 +366,8 @@
     "RCB_RECEIVERS": 250,
     "RCB_CHANNELS": 4,
     "RCB_CHANNEL_MEMBERS": 25,
-    "RCB_AGENTS_PER_NODE": 1
+    "RCB_AGENTS_PER_NODE": 1,
+    "RCB_BIND_RECEIVERS": 1
    },
    "phases": [
     {
@@ -377,7 +378,7 @@
      "durationS": 600
     }
    ],
-   "notes": "Concurrent node sockets under light load (10 msgs/s): both arms fail heavy multi-workspace load far below 1000 msgs/s."
+   "notes": "Concurrent node sockets under light load (10 msgs/s): both arms fail heavy multi-workspace load far below 1000 msgs/s. Receivers are created and bound over HTTP in provision (RCB_BIND_RECEIVERS=1), so the measured connect is node.register on the socket."
   },
   {
    "name": "ws-10k",
@@ -389,7 +390,8 @@
     "RCB_RECEIVERS": 250,
     "RCB_CHANNELS": 4,
     "RCB_CHANNEL_MEMBERS": 25,
-    "RCB_AGENTS_PER_NODE": 1
+    "RCB_AGENTS_PER_NODE": 1,
+    "RCB_BIND_RECEIVERS": 1
    },
    "phases": [
     {
@@ -400,7 +402,7 @@
      "durationS": 600
     }
    ],
-   "notes": "Concurrent node sockets under light load (10 msgs/s): both arms fail heavy multi-workspace load far below 1000 msgs/s."
+   "notes": "Concurrent node sockets under light load (10 msgs/s): both arms fail heavy multi-workspace load far below 1000 msgs/s. Receivers are created and bound over HTTP in provision (RCB_BIND_RECEIVERS=1), so the measured connect is node.register on the socket."
   },
   {
    "name": "backlog",

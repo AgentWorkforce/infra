@@ -295,7 +295,8 @@ cmd_suite() {
   metrics_loop "$dir/metrics.csv" & local mpid=$!
   provision "$suite" "$dir" "$run" "$ns_"
   "${K[@]}" delete statefulset rcb-sink --ignore-not-found --wait=true >/dev/null
-  statefulset rcb-sink "$ns_" 9090 sink.mjs "            - {name: RCB_PORT, value: \"9090\"}" 2 4Gi
+  statefulset rcb-sink "$ns_" 9090 sink.mjs "            - {name: RCB_PORT, value: \"9090\"}
+            - {name: RCB_READY_FRACTION, value: \"${SINK_READY_FRACTION:-0.95}\"}" 2 4Gi
   wait_ready rcb-sink "$ns_" /ready 9090
   if [[ "$stepped" == true ]]; then
     local n label verdict

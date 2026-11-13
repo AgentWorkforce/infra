@@ -115,8 +115,17 @@ class NodeConn {
             // Agents bound over HTTP (POST /v1/nodes/:name/agents) receive on
             // node.register; they already exist and are already channel members.
             if (this.node.bound) { this.agents.set(name, { id: null, token: null, maxSeq: 0, ackedSeq: 0 }); continue; }
-            const d = await this.request({ type: 'agent.register', name });
-            this.agents.set(name, { id: d.agent_id, token: d.token, maxSeq: 0, ackedSeq: 0 });
+            try {
+              const d = await this.request({ type: 'agent.register', name });
+              this.agents.set(name, { id: d.agent_id, token: d.token, maxSeq: 0, ackedSeq: 0 });
+            } catch (e) {
+              // An earlier attempt registered it but its reply timed out: the
+              // agent exists and is bound to this node; its token is lost, so
+              // it cannot join channels (counted), but it receives.
+              if (!/agent_already_exists/.test(e.message)) throw e;
+              counters.inc('agent_registered_reply_lost');
+              this.agents.set(name, { id: null, token: null, maxSeq: 0, ackedSeq: 0 });
+            }
           }
           this.ready = true; established = true; settled = true; resolve();
         } catch (e) { settled = true; try { sock.close(); } catch { /* */ } reject(e); }
@@ -189,7 +198,15 @@ const connectLat = new Hist();
   const CONC = envInt('RCB_CONNECT_CONCURRENCY', 64);
   let i = 0;
   await Promise.all(Array.from({ length: Math.min(CONC, conns.length) }, async () => {
-    while (i < conns.length) { const c = conns[i++]; connectLat.add(await c.open()); }
+    // A socket that cannot connect within CONNECT_WAIT_S keeps retrying in the
+    // background but no longer holds a worker, so one slow socket cannot stall
+    // the rest of the shard.
+    const waitMs = envInt('RCB_CONNECT_WAIT_S', 120) * 1000;
+    while (i < conns.length) {
+      const c = conns[i++];
+      const t = await Promise.race([c.open(), sleep(waitMs).then(() => null)]);
+      if (t === null) counters.inc('connect_slow_backgrounded'); else connectLat.add(t);
+    }
   }));
   // Receivers join their channels with the token agent.register returned.
   const joins = [];
@@ -236,7 +253,13 @@ const pick = (url) => new Set((url.searchParams.get('agents') || '').split(',').
 http.createServer(async (req, res) => {
   const url = new URL(req.url, 'http://x');
   const reply = (code, body) => { res.writeHead(code, { 'content-type': 'application/json' }); res.end(JSON.stringify(body)); };
-  if (url.pathname === '/ready') return reply(ready ? 200 : 503, { ready, connected: conns.filter((c) => c.ready).length, sockets: conns.length });
+  if (url.pathname === '/ready') {
+    // Ready once the connect pass is done and at least RCB_READY_FRACTION of
+    // the sockets are up (default 1: all); the rest are reported, not awaited.
+    const connected = conns.filter((c) => c.ready).length;
+    const ok = ready && connected >= Math.ceil(conns.length * Number(env('RCB_READY_FRACTION', '1')));
+    return reply(ok ? 200 : 503, { ready: ok, connected, sockets: conns.length });
+  }
   if (url.pathname === '/stats') return reply(200, snapshot());
   if (req.method === 'POST' && url.pathname === '/offline') {
     const want = pick(url); const hit = conns.filter((c) => c.node.agents.some((a) => want.has(a)));
