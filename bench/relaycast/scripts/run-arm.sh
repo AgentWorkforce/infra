@@ -29,6 +29,8 @@ set -euo pipefail
 export TMPDIR="${TMPDIR:-$HOME/.agent-tmp}"; mkdir -p "$TMPDIR"
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
+# Detached runs do not inherit an interactive KUBECONFIG: default to the bench one.
+export KUBECONFIG="${KUBECONFIG:-${BENCH_KUBECONFIG:-$HOME/.agent-tmp/relaycast-actors-bench.kubeconfig}}"
 BENCH="$(cd "$HERE/.." && pwd)"
 ARM="${ARM:?ARM=pg|actors}"
 NS="${NS:?NS=<namespace>}"
