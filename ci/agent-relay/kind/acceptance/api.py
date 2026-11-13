@@ -120,9 +120,10 @@ def summary(api, config):
 def usage(api, config):
     path = "/cloud/api/v1/organizations/" + config["organizationId"] + "/usage?days=7"
     status, body = api.get(path, "owner")
-    totals = body.get("totals", {})
     require(status == 200, "owner_usage_not_200")
-    require(all(type(totals.get(k)) is int and totals[k] > 0 for k in
+    require(isinstance(body, dict) and isinstance(body.get("usage"), dict), "usage_report_missing")
+    totals = body["usage"].get("totals")
+    require(isinstance(totals, dict) and all(type(totals.get(k)) is int and totals[k] > 0 for k in
                 ["activeUsers", "sessionsUploaded", "searches"]), "usage_positive_counts_missing")
     # The non-owner's credential must actually work for this workspace first.
     positive, listed = api.get(base(config) + "?" + urlencode({"q": "id:" + config["sessionId"]}), "member")
