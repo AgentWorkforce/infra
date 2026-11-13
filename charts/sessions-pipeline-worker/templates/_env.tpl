@@ -32,6 +32,7 @@ unless a separate mark_pass step runs, which this chart does not have. */ -}}
 {{- range .Values.extraEnv }}{{ if has (.name | default "") $reserved }}{{ fail (printf "sessions-pipeline-worker: extraEnv must not set %s: it is a migrations.* value, rendered into migrate only" .name) }}{{ end }}{{ end -}}
 {{- range $n, $c := .Values.components }}{{ range ($c.env | default list) }}{{ if has (.name | default "") $reserved }}{{ fail (printf "sessions-pipeline-worker: components.%s.env must not set %s: it is a migrations.* value, rendered into migrate only" $n .name) }}{{ end }}{{ end }}{{ end -}}
 {{- if .Values.migrations.enabled }}{{ include "sessions-pipeline-worker.validateProfile" . }}{{ end -}}
+{{- if and .Values.migrations.databaseMode (not (has .Values.migrations.databaseMode (list "local" "selfhosted" "cloudsql" "supabase" "rds"))) }}{{ fail "sessions-pipeline-worker: migrations.databaseMode must be local, selfhosted, cloudsql, supabase or rds" }}{{ end -}}
 {{- $bob := index .Values.components "bob-costas" -}}
 {{- if and $bob.enabled (not (.Values.summaryEncryption.existingSecret | default .Values.existingSecret)) }}{{ fail "sessions-pipeline-worker: summaryEncryption.existingSecret or existingSecret is required when bob-costas is enabled" }}{{ end -}}
 {{- if and $bob.enabled (not .Values.summaryEncryption.key) }}{{ fail "sessions-pipeline-worker: summaryEncryption.key is required when bob-costas is enabled" }}{{ end -}}
@@ -162,6 +163,14 @@ Usage: include "sessions-pipeline-worker.env" (dict "context" . "service" "refer
 {{- end }}
 - name: TMPDIR
   value: /tmp
+{{- /* The services' live role gate binds the same mode the migrator verified with
+(expectedSchema() reads HOOPDB_DB_MODE); without it, supabase-only compatibility
+edges (the postgres admin membership) always fail the gate. migrate gets it from
+profileEnv instead, so it is rendered exactly once per container. */ -}}
+{{- if and $v.migrations.databaseMode (ne .service "hoopdb-migrate") }}
+- name: HOOPDB_DB_MODE
+  value: {{ $v.migrations.databaseMode | quote }}
+{{- end }}
 {{- with $v.extraEnv }}
 {{ include "sessions-pipeline-worker.renderEnv" . }}
 {{- end }}

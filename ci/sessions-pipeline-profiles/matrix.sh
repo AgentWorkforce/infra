@@ -5,7 +5,8 @@
 # Each is rendered the way Alchemy installs (helm template --no-hooks) and
 # checked against the sessions-pipeline #99 migration contract. The checks cover:
 # - the app workloads and the migrate Job;
-# - the migrator profile env, exactly once and in migrate only;
+# - the migrator profile env, exactly once and in migrate only (HOOPDB_DB_MODE also
+#   once in each worker service container);
 # - HoopDb and Locker;
 # - the role/boundary bootstrap path. A fresh in-cluster cluster gets initdb
 #   plus the runtime-role and function-default Jobs. An existing cluster also
@@ -206,7 +207,11 @@ for row in "${MATRIX[@]}"; do
   if [ "$shape" = native ]; then want=""; got=""; else got=$(profile_env); fi
   [ "$got" = "$want" ] || err "$label: migrate profile env is [$(tr '\n' ' ' <<<"$got")], want [$(tr '\n' ' ' <<<"$want")]"
   for n in $PROFILE_ENV HOOPDB_FUNCTION_BOUNDARY_APPROVED; do
-    c=$(yq -r "select(.metadata.labels.\"app.kubernetes.io/name\" != \"session-pipeline-consumer\") | [.. | select(type == \"!!map\" and .name == \"$n\" and has(\"value\"))] | length" <<<"$out" | awk '{s+=$1} END {print s+0}')
+    # HOOPDB_DB_MODE also reaches the worker chart's services (their live role gate binds
+    # it); the databaseMode assertions below cover those. Everything else: migrate only.
+    skip='false'
+    [ "$n" = HOOPDB_DB_MODE ] && skip='((.metadata.labels."helm.sh/chart" // "") | test("^worker-")) and .metadata.labels."app.kubernetes.io/component" != "hoopdb-migrate"'
+    c=$(yq -r "select(.metadata.labels.\"app.kubernetes.io/name\" != \"session-pipeline-consumer\" and ($skip | not)) | [.. | select(type == \"!!map\" and .name == \"$n\" and has(\"value\"))] | length" <<<"$out" | awk '{s+=$1} END {print s+0}')
     case $n in HOOPDB_FUNCTION_BOUNDARY_APPROVED) w=0 ;; *) w=$(grep -c "^$n=" <<<"$want" || true) ;; esac
     [ "$c" = "$w" ] || err "$label: $n rendered $c times, want $w (migrate only)"
   done
@@ -294,6 +299,23 @@ if [ "$mode" = static ]; then
   expect_fail "extraEnv must not set HOOPDB_ALLOW_BLOCKING_INDEX_BUILD" \
     -f "$CHART/profiles/aws-rds-native.yaml" -f "$CHART/ci/aws-rds-native-inputs.yaml" \
     --set 'worker.extraEnv[0].name=HOOPDB_ALLOW_BLOCKING_INDEX_BUILD' --set-string 'worker.extraEnv[0].value=true'
+
+  # worker.migrations.databaseMode reaches every service container (the live role gate
+  # binds it), exactly once each, also with migrations.enabled=false; unset renders none.
+  # One line per worker container: "<count>=<value>".
+  dbmode_lines() { yq -r 'select((.kind == "Deployment" or .kind == "Job") and ((.metadata.labels."helm.sh/chart" // "") | test("^worker-"))) | .spec.template.spec | ((.initContainers // []) + .containers)[] | (((.env // []) | map(select(.name == "HOOPDB_DB_MODE"))) as $e | ($e | length | tostring) + "=" + ($e[0].value // ""))' <<<"$1" | grep -E '^[0-9]+='; }
+  dbmode_once() { local l; l=$(dbmode_lines "$1"); [ -n "$l" ] && [ -z "$(grep -vx "1=$2" <<<"$l")" ]; }
+  dbmode_once "$out" rds \
+    || err "databaseMode: aws-rds-native worker containers must each carry HOOPDB_DB_MODE=rds once, got [$(dbmode_lines "$out" | tr '\n' ' ')]"
+  sout=$(render -f "$CHART/profiles/aws-rds-native.yaml" -f "$CHART/ci/aws-rds-native-inputs.yaml" --set worker.migrations.enabled=false --set worker.migrations.databaseMode=supabase) \
+    || err "databaseMode=supabase with migrations off did not render"
+  dbmode_once "$sout" supabase \
+    || err "databaseMode=supabase, migrations off: want HOOPDB_DB_MODE=supabase once per worker container, got [$(dbmode_lines "$sout" | tr '\n' ' ')]"
+  nout=$(render -f "$CHART/profiles/aws-rds-native.yaml" -f "$CHART/ci/aws-rds-native-inputs.yaml" --set worker.migrations.enabled=false --set-string worker.migrations.databaseMode=) \
+    || err "databaseMode unset with migrations off did not render"
+  [ -z "$(dbmode_lines "$nout" | grep -v '^0=$')" ] || err "databaseMode unset: HOOPDB_DB_MODE rendered [$(dbmode_lines "$nout" | tr '\n' ' ')]"
+  expect_fail "migrations.databaseMode must be local, selfhosted, cloudsql, supabase or rds" \
+    -f "$CHART/profiles/aws-rds-native.yaml" -f "$CHART/ci/aws-rds-native-inputs.yaml" --set worker.migrations.enabled=false --set worker.migrations.databaseMode=bogus
 
   expect_fail "releaseContract.unifiedServicesDigest must be a boolean" \
     -f "$CHART/profiles/aws-rds-native.yaml" -f "$CHART/ci/aws-rds-native-inputs.yaml" \
