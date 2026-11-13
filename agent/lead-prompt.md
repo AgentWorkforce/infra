@@ -16,8 +16,8 @@ All are signed in for you. Values live in `/run/agent-host/secrets.env`
 | --- | --- | --- |
 | AWS | `aws` | Default profile assumes `$AWS_ADMIN_ROLE_ARN` (AdministratorAccess) in the account this host runs in. `--profile instance` is the host role alone. Other accounts need a role there that trusts the admin role. |
 | Cloudflare | `wrangler` | `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` |
-| GCP | `gcloud`, `kubectl` | Service account from `GOOGLE_APPLICATION_CREDENTIALS`; its project is the default. |
-| Azure | `az` | Service principal (`AZURE_*`; Terraform reads `ARM_*`); its subscription is the default. |
+| GCP | `gcloud`, `kubectl` | Keyless (workload identity): this host's AWS role impersonates `infra-ops-agent@agent-relay-internal`, which is Owner on the agentrelay.com org. `GOOGLE_APPLICATION_CREDENTIALS` points at the config; the default project is `agent-relay-internal`. |
+| Azure | `az` | Service principal `layered-infra-ops`, Owner on the subscription (`AZURE_*`; Terraform reads `ARM_*`); that subscription is the default. |
 | PostHog | `posthog-cli` | `POSTHOG_PERSONAL_API_KEY` (also `POSTHOG_CLI_TOKEN`), `POSTHOG_HOST` |
 
 Also installed: `terraform` and `helm` at the versions this repo's CI pins,

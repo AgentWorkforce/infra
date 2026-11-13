@@ -2,8 +2,10 @@
 # infra-ops' lane step, run as root after the kit writes
 # /run/agent-host/secrets.env (boot and every secrets refresh). Idempotent;
 # a missing credential is skipped, never fatal, and no value is printed.
-#  - GCP: the service-account key (JSON) to /run/agent-host/gcp-service-account.json
+#  - GCP: the credential JSON to /run/agent-host/gcp-service-account.json
 #    (root:agent 0640), gcloud signed in with it, its project as the default.
+#    Either a workload identity config (external_account: keyless, the host
+#    role impersonates the service account) or a service-account key.
 #  - Aliases in secrets.env for the names other tools read: GOOGLE_APPLICATION_CREDENTIALS,
 #    ARM_* (Terraform azurerm), POSTHOG_CLI_TOKEN / POSTHOG_CLI_HOST.
 #  - Azure: az signed in as the service principal, its subscription the default.
@@ -17,14 +19,14 @@ val() { sed -n "s/^$1=//p" "$out" | tail -1; }
 tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
 if [ -n "${GCP_SA_KEY_PARAM:-}" ] \
   && aws ssm get-parameter --region "$AWS_REGION" --with-decryption --name "$GCP_SA_KEY_PARAM" --query Parameter.Value --output text > "$tmp/gcp" 2>/dev/null \
-  && jq -e '.type == "service_account"' "$tmp/gcp" >/dev/null 2>&1; then
+  && jq -e '.type == "service_account" or .type == "external_account"' "$tmp/gcp" >/dev/null 2>&1; then
   install -m 0640 -o root -g agent "$tmp/gcp" "$key"
-  project=$(jq -r '.project_id // empty' "$key")
+  project=$(jq -r '.project_id // .quota_project_id // empty' "$key")
   sudo -H -u agent env KEY="$key" PROJECT="$project" bash -c '
-    gcloud auth activate-service-account --key-file="$KEY" --quiet >/dev/null 2>&1 || echo "load-secrets-lane: gcloud sign-in failed" >&2
+    gcloud auth login --cred-file="$KEY" --quiet >/dev/null 2>&1 || echo "load-secrets-lane: gcloud sign-in failed" >&2
     [ -z "$PROJECT" ] || gcloud config set project "$PROJECT" --quiet >/dev/null 2>&1' || true
 else
-  echo "load-secrets-lane: no GCP service-account key; gcloud not signed in" >&2
+  echo "load-secrets-lane: no GCP credential config; gcloud not signed in" >&2
 fi
 
 {

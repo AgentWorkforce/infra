@@ -38,7 +38,7 @@ export default defineLayeredAgent({
   secrets: [
     { envVar: "CLOUDFLARE_API_TOKEN_PARAM", param: "cloudflare-api-token", exportAs: "CLOUDFLARE_API_TOKEN" },
     { envVar: "CLOUDFLARE_ACCOUNT_ID_PARAM", param: "cloudflare-account-id", exportAs: "CLOUDFLARE_ACCOUNT_ID" },
-    // A service-account key is JSON: load-secrets-lane.sh writes it to a file.
+    // GCP credential JSON (a keyless workload identity config, or a key): load-secrets-lane.sh writes it to a file.
     { envVar: "GCP_SA_KEY_PARAM", param: "gcp-service-account-key" },
     { envVar: "POSTHOG_API_KEY_PARAM", param: "posthog-personal-api-key", exportAs: "POSTHOG_PERSONAL_API_KEY" },
     { envVar: "POSTHOG_HOST_PARAM", param: "posthog-host", exportAs: "POSTHOG_HOST" },
