@@ -2,6 +2,7 @@
 {{- $c := .Values.ingestEdge -}}
 {{- if not (kindIs "bool" $c.enabled) }}{{ fail "ingestEdge.enabled must be a boolean" }}{{ end -}}
 {{- if and (not (kindIs "invalid" $c.readerMaxRuleset)) (not (has (toString $c.readerMaxRuleset) (list "8" "9" "10"))) }}{{ fail "ingestEdge.readerMaxRuleset must be one of 8, 9, or 10" }}{{ end -}}
+{{- $ledger := include "sessions-pipeline.ingestEdge.ledger" . -}}
 {{- if $c.enabled -}}
 {{- if not (kindIs "bool" $c.claimLockBusy) }}{{ fail "ingestEdge.claimLockBusy must be a boolean" }}{{ end -}}
 {{- if not (kindIs "map" $c.admission) }}{{ fail "ingestEdge.admission must be an object" }}{{ end -}}
@@ -215,6 +216,9 @@ spec:
             - { name: RELAYHISTORY_SELFHOST_HEARTBEAT_ACCEPT, value: "true" }
             {{- end }}
             - { name: INGEST_KEY_ROOT, value: {{ $c.keyRoot | quote }} }
+            {{- if eq $ledger "s3" }}
+            - { name: INGEST_LEDGER, value: "s3" }
+            {{- end }}
             - { name: INGEST_MAX_PER_USER, value: {{ $c.maxPerUser | quote }} }
             - { name: INGEST_MAX_PER_ORG, value: {{ $c.maxPerOrg | quote }} }
             {{- if $c.claimLockBusy }}
