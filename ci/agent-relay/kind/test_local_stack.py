@@ -520,6 +520,57 @@ class LocalTests(unittest.TestCase):
             with self.assertRaises(local_stack.StackError):
                 stack.google_oidc()
 
+    def test_google_oidc_secret_reconciles_when_control_bootstrap_is_cached(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            stack = LocalStack.__new__(LocalStack)
+            stack.state = Path(tmp)
+            stack.docker_args = ["docker"]
+            credentials = {key: "fixture-" + key for key in (
+                "control_api_runtime", "bootstrap", "encryption", "cast", "internal", "introspection", "readerIssuer")}
+            credentials["createdAt"] = "2026-11-13T00:00:00Z"
+            (stack.state / "credentials.json").write_text(json.dumps(credentials))
+            (stack.state / "tenant.json").write_text("{}")
+            for name in ("ca.crt", "tls.crt"):
+                (stack.state / name).write_text("fixture-certificate")
+            stored = stack.state / "google-oidc.json"
+            secrets = {}
+            stages = []
+            stack.secret = lambda name, data: secrets.update({name: data})
+            # Every bootstrap stage, especially control/migrations, is already
+            # complete on this existing fixture: no callback may run again.
+            stack.stage = lambda name, callback: stages.append(name)
+            stack.cmd = lambda *args, **kwargs: SimpleNamespace(stdout=json.dumps({"reader": True, "consumer": True}))
+            stack.k = lambda *args, **kwargs: SimpleNamespace(stdout="10.96.0.10")
+            stack.values = lambda *args: {}
+            for name in ("docker", "cluster", "apply", "chart_dependencies", "reload_leaf_consumer",
+                    "prepare_pipeline_generation", "mail", "github_releases_egress", "sql", "support_credentials", "login_link"):
+                setattr(stack, name, lambda *args, **kwargs: None)
+            expected_secret = {"value": None}
+            def helm(values):
+                data = secrets["local-control"]
+                self.assertEqual(data["bootstrap-token"], credentials["bootstrap"])
+                self.assertEqual(data["encryption-key"], credentials["encryption"])
+                self.assertEqual(data["reader-secret"], credentials["readerIssuer"])
+                self.assertIn("database-url", data)
+                if expected_secret["value"] is None:
+                    self.assertNotIn("oidc-client-secret", data)
+                else:
+                    self.assertEqual(data["oidc-client-secret"], expected_secret["value"])
+            stack.helm = helm
+            with patch.multiple(local_stack, CAST_BACKEND="sqlite"), patch("local_ca.prepare", return_value=False), \
+                    patch("tls.create"), patch("edge.install"), patch.object(stack, "control") as bootstrap:
+                for value in ("fake-google-secret-one", "fake-google-secret-two", None):
+                    with self.subTest(secret_present=value is not None):
+                        if value is None:
+                            stored.unlink()
+                        else:
+                            stored.write_text(json.dumps({"client_id": "1-x.apps.googleusercontent.com",
+                                "client_secret": value, "allowed_domains": ["agentrelay.com"]}))
+                        expected_secret["value"] = value
+                        stack.up_local()
+                bootstrap.assert_not_called()
+            self.assertEqual(stages.count("control"), 3)
+
     def test_opt_in_final_render_selects_downloads_images_env_and_policy(self):
         control, webapp = local_stack.profile_images(True)
         with patch.multiple(local_stack, DESKTOP_RELEASES=True, CONTROL=control, WEBAPP=webapp):
