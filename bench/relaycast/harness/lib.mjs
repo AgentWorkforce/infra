@@ -1,6 +1,7 @@
 // Shared helpers for the Relaycast benchmark harness. Zero dependencies:
 // Node >= 22 (global fetch and WebSocket).
 import { readFileSync, writeFileSync, renameSync } from 'node:fs';
+import { gunzipSync } from 'node:zlib';
 
 export const env = (name, def) => {
   const v = process.env[name];
@@ -17,6 +18,12 @@ export const hr = () => Number(process.hrtime.bigint() / 1000n) / 1000; // ms, m
 
 export function readSecretFile(path) {
   return readFileSync(path, 'utf8').trim();
+}
+
+// Fixtures may be gzipped (fixture.json.gz) to stay under the 1 MiB Secret limit.
+export function readFixture(path) {
+  const raw = readFileSync(path);
+  return JSON.parse((path.endsWith('.gz') ? gunzipSync(raw) : raw).toString('utf8'));
 }
 
 export function writeJsonAtomic(path, value) {

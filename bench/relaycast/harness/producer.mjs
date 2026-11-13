@@ -17,9 +17,9 @@
 // burst: {periodS, lenS, factor} multiplies the rate inside each window.
 import { readFileSync } from 'node:fs';
 import http from 'node:http';
-import { env, envInt, httpClient, HistMap, Counter, marker, log, hr, now, sleep, writeJsonAtomic } from './lib.mjs';
+import { env, envInt, httpClient, HistMap, Counter, marker, log, hr, now, sleep, writeJsonAtomic, readFixture } from './lib.mjs';
 
-const fixture = JSON.parse(readFileSync(env('RCB_FIXTURE'), 'utf8'));
+const fixture = readFixture(env('RCB_FIXTURE'));
 const plan = JSON.parse(readFileSync(env('RCB_PLAN'), 'utf8'));
 const SHARD = envInt('RCB_SHARD', 0);
 const SHARDS = envInt('RCB_SHARDS', 1);

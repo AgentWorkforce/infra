@@ -16,9 +16,9 @@
 //   POST /online?agents=b0,b1    reopen them; drain is measured from here
 import http from 'node:http';
 import { readFileSync } from 'node:fs';
-import { env, envInt, httpClient, HistMap, Hist, Counter, MARKER_RE, log, now, sleep, writeJsonAtomic } from './lib.mjs';
+import { env, envInt, httpClient, HistMap, Hist, Counter, MARKER_RE, log, now, sleep, writeJsonAtomic, readFixture } from './lib.mjs';
 
-const fixture = JSON.parse(readFileSync(env('RCB_FIXTURE'), 'utf8'));
+const fixture = readFixture(env('RCB_FIXTURE'));
 const SHARD = envInt('RCB_SHARD', 0);
 const PORT = envInt('RCB_PORT', 9090);
 const ACK_MS = envInt('RCB_ACK_MS', 50);

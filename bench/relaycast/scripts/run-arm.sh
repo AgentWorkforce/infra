@@ -106,7 +106,8 @@ provision() {
     node /bench/harness/provision.mjs 2>&1 | tail -2 >&2
   "${K[@]}" exec rcb-driver -- cat /work/provision.json >"$out/provision.json"
   "${K[@]}" delete secret rcb-fixture --ignore-not-found >/dev/null
-  "${K[@]}" exec rcb-driver -- cat /work/fixture.json | "${K[@]}" create secret generic rcb-fixture --from-file=fixture.json=/dev/stdin >/dev/null
+  # gzip keeps 10k-node fixtures under the 1 MiB Secret limit.
+  "${K[@]}" exec rcb-driver -- sh -c 'gzip -9c /work/fixture.json' | "${K[@]}" create secret generic rcb-fixture --from-file=fixture.json.gz=/dev/stdin >/dev/null
   "${K[@]}" exec rcb-driver -- rm -f /work/fixture.json
 }
 
@@ -137,7 +138,7 @@ $(pod_common 6)
           command: [sh, -c, 'export RCB_SHARD="\${HOSTNAME##*-}"; exec node --max-old-space-size=6144 /bench/harness/${script}']
           ${CONTAINER_SEC}
           env:
-            - {name: RCB_FIXTURE, value: /fixture/fixture.json}
+            - {name: RCB_FIXTURE, value: /fixture/fixture.json.gz}
             - {name: UV_THREADPOOL_SIZE, value: "16"}
 ${extra_env}
           resources: {requests: {cpu: "${cpu}", memory: ${mem}}, limits: {memory: 8Gi}}
