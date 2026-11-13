@@ -9,6 +9,7 @@ Terraform modules and Helm charts for customer-owned Agent Relay installations o
 - [Local code loop](docs/kind-development.md): `make dev` on an existing Kind stack, frontend HMR and backend code-watch rebuilds.
 - [Full application proof](docs/terraform-helm-application-proof.md): required lifecycle evidence and current gaps.
 - [Enterprise AWS installation and first-user guide](docs/enterprise-aws-install.md): customer roles, SSO, Desktop downloads, device approval and acceptance; release preparation with explicit remaining gates.
+- [GCP (GKE) install guide](docs/gcp-install/0-START-HERE.md): customer-neutral, tested copy-paste install of agent-relay-2026.11.1 on an existing GKE cluster (Terraform or bring-your-own Cloud SQL, GCS, Memorystore, Pub/Sub, Workload Identity), with what is not yet qualified on GKE.
 - [Enterprise operator controls](docs/enterprise-customer-controls.md): generic operator controls, profile-specific downloads and disabled-Flows acceptance.
 
 This repository was renamed from `AgentWorkforce/helm-charts` to `AgentWorkforce/infra`.

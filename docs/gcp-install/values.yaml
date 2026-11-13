@@ -1,0 +1,285 @@
+# Agent Relay on your own GKE cluster: site values.
+#
+# Apply after the chart's GCP profiles and Terraform's managed-values.json, and
+# before the release image overlay, in this order:
+#   helm upgrade --install agent-relay charts/agent-relay --namespace __NAMESPACE__ \
+#     -f charts/agent-relay/values-gcp.yaml \
+#     -f charts/agent-relay/values-gcp-native.yaml \
+#     -f managed-values.json \
+#     -f values.yaml \
+#     -f release-images.values.yaml
+#
+# Replace every placeholder first (0-START-HERE.md step 9 does it with sed).
+# This file holds no secret values: it only names Secrets and keys.
+#
+# Managed services come from managed-values.json (Terraform output
+# chart_values): the GCS bucket, Memorystore, Pub/Sub and the Cloud SQL CA.
+# Images come from release-images.values.yaml (the release asset).
+#
+# Sizing: a small install for one or two teams (Cloud SQL db-custom-2-7680
+# regional, Memorystore Standard HA 5 GB, 3 x e2-standard-4 nodes). Estimates,
+# not load tested.
+
+components:
+  relaycast: true
+  relayauth: false
+  sessionsPipeline: true
+  relayhistory: false
+  control: true
+  webapp: true
+  relayflows: false
+  durableActors: false
+  relayfile: false
+
+global:
+  # Images come from the release overlay with full registry paths.
+  imageRegistry: ""
+  # Fresh, empty installs start every Services reader and writer on the
+  # ruleset-10 wasm-bindgen contract. A populated install must instead follow
+  # the reader-first two-revision procedure (INSTALL notes in the release).
+  scrubEngine:
+    engine: wasm-bindgen
+    required: wasm-bindgen
+    readerMaxRuleset: "10"
+  tenant:
+    # Stable organization ID that partitions session data. Never change it after
+    # the first upload.
+    orgId: __ORG_ID__
+
+# One global external Application Load Balancer (GKE Ingress) with a
+# Google-managed certificate for the four hosts. Reserve the global static IP
+# first (step 5); the chart creates the Ingress, ManagedCertificate,
+# FrontendConfig and BackendConfigs.
+gkeIngress:
+  enabled: true
+  name: agent-relay
+  staticIpName: __STATIC_IP_NAME__
+  managedCertificateName: agent-relay
+  frontendConfigName: agent-relay
+  hosts:
+    root: __DOMAIN__
+    api: api.__DOMAIN__
+    cast: cast.__DOMAIN__
+    history: history.__DOMAIN__
+
+relaycast:
+  # PostgreSQL backend (database relaycast on Cloud SQL). The chart allows
+  # exactly one replica on this backend.
+  runtime:
+    backend: postgres
+  postgresCa:
+    enabled: true
+    configMap: cloud-sql-ca
+    key: ca.crt
+  # A SQLite-only setting that this backend refuses.
+  retention:
+    messageTtlDays: null
+  baseUrl: https://cast.__DOMAIN__
+  existingSecret: agent-relay-secrets
+  secretKeys:
+    internalSecret: relaycast-internal-secret
+    bootstrapSecret: relaycast-workspace-bootstrap-secret
+  persistence:
+    enabled: true
+    size: 20Gi
+  service:
+    backendConfig: agent-relay-cast
+
+sessions-pipeline:
+  # HoopDb is on Cloud SQL; cloud-sql-setup.sh runs its privileged bootstrap.
+  hoopdb:
+    enabled: false
+  searchWorkerRole: { bootstrapJob: { enabled: false } }
+  runtimeRole: { bootstrapJob: { enabled: false } }
+  functionDefaultRevoke: { bootstrapJob: { enabled: false } }
+
+  # The read API: session reads and search, on the history origin.
+  sessionReadApi:
+    enabled: true
+    output: { enabled: true }
+    digest: { enabled: true }
+    replicas: 1
+    origin: https://history.__DOMAIN__
+    completeSince: epoch
+    directoryWorkspaces: "*"
+    events: { messageIds: true }
+    turns: { assumeNoLegacy: true }
+    timing: { assumeNoTurns: true }
+    canonical: { pinLaggingPointer: true }
+    login: { advertisesSync: false }
+    config:
+      existingSecret: agent-relay-read-api
+      key: RELAYHISTORY_READ_API_SECRET
+    # Transcript search is stored in Cloud SQL (no search cluster to run).
+    search:
+      backend: postgres
+      backendId: postgres-main
+    auth:
+      mode: self_issued
+      relaycontrol: { enabled: false, url: "", existingSecret: "" }
+      selfIssued:
+        internalSecret:
+          existingSecret: agent-relay-secrets
+          key: session-read-api-secret
+    cors:
+      allowedOrigins:
+        - https://__DOMAIN__
+    networkPolicy:
+      enabled: true
+      controlFrom:
+        - podSelector: { matchLabels: { app.kubernetes.io/name: relay-control } }
+      # Google Front End proxies and health checkers.
+      publicFrom:
+        - ipBlock: { cidr: 35.191.0.0/16 }
+        - ipBlock: { cidr: 130.211.0.0/22 }
+    # Workload Identity principal for the GCS bucket (Terraform grants it).
+    serviceAccountName: agent-relay-read-api
+    serviceAccountCreate: true
+    # managed-values.json supplies LOCKER_* and PIPELINE_* here; Helm replaces
+    # lists, so these entries repeat them.
+    extraEnv:
+      - { name: LOCKER_PROVIDER, value: gcs }
+      - { name: LOCKER_BUCKET, value: __SESSIONS_BUCKET__ }
+      - { name: LOCKER_REGION, value: __REGION__ }
+      - { name: PIPELINE_ORG_FROM_PREFIX, value: "true" }
+      - { name: PIPELINE_KEY_PREFIX, value: 96bulls }
+      - { name: READ_API_BRIEF_TITLES_WORKSPACES, value: "*" }
+      - { name: READ_API_SESSION_QUERY, value: "true" }
+      # How much of one session the read API loads. Raise it only together with
+      # the memory limit below: 64MiB needs at least 1Gi.
+      - { name: READ_API_CANONICAL_SCOPE_BYTES, value: "64MiB" }
+    resources:
+      requests: { cpu: 100m, memory: 256Mi }
+      limits: { memory: 1536Mi }
+
+  # The upload edge, on the same history origin.
+  ingestEdge:
+    enabled: true
+    origin: https://history.__DOMAIN__
+    allowInClusterHttp: true
+    sessionSelection: true
+    heartbeatAccept: true
+    relaycontrol:
+      url: http://relay-control.__NAMESPACE__.svc.cluster.local
+    config:
+      existingSecret: agent-relay-ingest-edge-runtime
+      databaseUrlKey: database-url
+      introspectSecretKey: introspect-secret
+    serviceAccountName: agent-relay-session-ingest-api
+    locker:
+      credentials: { mode: podIdentity }
+    networkPolicy:
+      enabled: true
+      ingressFrom:
+        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: __NAMESPACE__ } }
+        - ipBlock: { cidr: 35.191.0.0/16 }
+        - ipBlock: { cidr: 130.211.0.0/22 }
+
+  # Indexes transcripts for search into Cloud SQL. The chart runs one replica.
+  searchIndexer:
+    enabled: true
+    completeSince: epoch
+    config: { existingSecret: search-indexer-runtime }
+    search:
+      backend: postgres
+      backendId: postgres-main
+    bootstrap:
+      enabled: true
+      existingSecret: search-indexer-owner
+    # Writes the Postgres facts used by Output, digest and coordination views.
+    outputFacts:
+      enabled: true
+
+  nativeConsumer:
+    reconcileEveryMinutes: 1
+    reconcileLookbackMinutes: 30
+
+  worker:
+    acknowledgeWorkloadRename: true
+    existingSecret: agent-relay-secrets
+    summaryEncryption:
+      existingSecret: agent-relay-secrets
+    hoopdb:
+      existingSecret: agent-relay-secrets
+      key: HOOPDB_URL
+    migrations:
+      hoopdb:
+        existingSecret: agent-relay-secrets
+        key: HOOPDB_MIGRATION_URL
+      databaseMode: cloudsql
+      supabaseShim: false
+      roleBootstrap: false
+      functionBoundaryMode: global-default-revoke
+      waitForRole: { enabled: false, functionDefault: false }
+    # Session titles and briefs. Needs a workspace ID, which exists only after
+    # first sign-in; turn it on afterwards.
+    nativeBrief:
+      enabled: false
+      workspaceIds: []
+      model: __LLM_MODEL__
+      sweepSeconds: 300
+      openaiSecret:
+        name: agent-relay-llm
+        key: OPENAI_API_KEY
+    components:
+      session-brief:
+        enabled: false
+      bob-costas:
+        # "off" writes extractive summaries only.
+        env:
+          - { name: BOB_COSTAS_MODEL, value: "off" }
+
+  # The legacy RelayAuth ingest path is unused: uploads go to the ingest edge.
+  # Only its Deployment is omitted (values-gcp-native.yaml).
+  alleyoop:
+    hoopdb:
+      existingSecret: agent-relay-secrets
+      key: HOOPDB_URL
+    existingSecret: agent-relay-secrets
+    auth:
+      historyOrigin: https://history.__DOMAIN__
+      allowInterimRelayAuthBearer: false
+    environment: production
+
+relay-control:
+  # The chart allows one replica: login and device rate limits are per process.
+  replicaCount: 1
+  existingSecret: agent-relay-secrets
+  secretKeys:
+    relayauthApiKey: ""
+    introspectSecret: relaycontrol-introspect-secret
+    relaycastInternalSecret: relaycast-internal-secret
+    sessionReadApiSecret: session-read-api-secret
+    # First admin signs in with this one-time key: no SMTP needed.
+    setupKey: selfhost-setup-key
+    smtpPassword: ""
+  bootstrap:
+    orgName: __ORG_NAME__
+    adminEmail: __ADMIN_EMAIL__
+    workspaceName: Default
+  auth:
+    password:
+      enabled: true
+    # One hop: the Google load balancer. Rate limits depend on this being right.
+    trustedProxies: 1
+  selectedFeatures: [usage, launch]
+  publicUrl: https://api.__DOMAIN__
+  dashboardUrl: https://__DOMAIN__/
+  services:
+    relaycastPublicUrl: https://cast.__DOMAIN__
+    sessionReadApiUrl: http://agent-relay-read-api.__NAMESPACE__.svc.cluster.local
+    sessionReadApiPublicUrl: https://history.__DOMAIN__
+  introspection:
+    audiences:
+      - https://history.__DOMAIN__
+      - https://api.__DOMAIN__
+  service:
+    backendConfig: agent-relay-api
+
+relay-webapp:
+  # The chart allows one replica.
+  replicaCount: 1
+  runtime:
+    publicUrl: https://__DOMAIN__
+    sessionReadApiEnabled: true
+    coordinationOverlapsEnabled: false
