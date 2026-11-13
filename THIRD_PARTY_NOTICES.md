@@ -100,7 +100,7 @@ cover an image's transitive packages.
 | Relay Dashboard | [`AgentWorkforce/relay-webapp`](https://github.com/AgentWorkforce/relay-webapp) | Repository contains an [Apache-2.0 `LICENSE`](https://github.com/AgentWorkforce/relay-webapp/blob/main/LICENSE). |
 | Relayflows | [`AgentWorkforce/flows`](https://github.com/AgentWorkforce/flows) | Repository contains an [Apache-2.0 `LICENSE`](https://github.com/AgentWorkforce/flows/blob/main/LICENSE). |
 | Relayfile | [`AgentWorkforce/relayfile`](https://github.com/AgentWorkforce/relayfile) | Repository contains an [Apache-2.0 `LICENSE`](https://github.com/AgentWorkforce/relayfile/blob/main/LICENSE). |
-| Sessions Pipeline worker and AlleyOop | Chart metadata names the private `AgentWorkforce/sessions-pipeline` repository (formerly `AgentWorkforce/96BullSessions`) | No license or notice file was found in the inspected repository. License not established. |
+| Sessions Pipeline (worker, AlleyOop, session ingest API, session read API; image `96bulls-services`) | [`AgentWorkforce/relayhistory-pipeline`](https://github.com/AgentWorkforce/relayhistory-pipeline) (formerly `AgentWorkforce/sessions-pipeline` and `AgentWorkforce/96BullSessions`) | Repository contains an [Apache-2.0 `LICENSE`](https://github.com/AgentWorkforce/relayhistory-pipeline/blob/main/LICENSE). |
 | Relaycontrol API | [`AgentWorkforce/relay-control`](https://github.com/AgentWorkforce/relay-control) (canonical source now used by the API chart) | The previous inspection covered the deprecated `AgentWorkforce/cloud` port source, not this repository. License/redistribution status for the current application image is not established by that historical inspection. |
 
 ## Referenced runtime images
