@@ -450,8 +450,13 @@ for chart in "${charts[@]}"; do
           || err "$chart: migration export must verify the database against the CA"
         out=$(render "$chart" "$s3" "${mig[@]}" --set migration.step=files)
         mj='select(.kind == "Job" and .metadata.labels["app.kubernetes.io/component"] == "migration-files")'
-        [ "$(yq "$mj | [.spec.template.spec.containers[0].env[].name] | join(\",\")" <<<"$out" | sed '/^$/d')" = "RELAYCAST_FILE_STORE,RELAYCAST_S3_BUCKET,RELAYCAST_S3_REGION,RELAYCAST_S3_PREFIX,RELAYCAST_S3_FORCE_PATH_STYLE,RELAYCAST_INTERNAL_SECRET_FILE" ] \
+        [ "$(yq "$mj | [.spec.template.spec.containers[0].env[].name] | join(\",\")" <<<"$out" | sed '/^$/d')" = "RELAYCAST_FILE_STORE,RELAYCAST_S3_BUCKET,RELAYCAST_S3_REGION,RELAYCAST_S3_PREFIX,RELAYCAST_S3_FORCE_PATH_STYLE,NODE_OPTIONS,RELAYCAST_INTERNAL_SECRET_FILE" ] \
           || err "$chart: migration files must get the gateway's file store settings and no secrets"
+        [ "$(yq "$mj | .spec.template.spec.containers[0].env[] | select(.name == \"NODE_OPTIONS\") | .value" <<<"$out" | sed '/^$/d')" = --max-old-space-size=768 ] \
+          || err "$chart: migration Jobs must size the heap from the memory limit"
+        out=$(render "$chart" "$s3" "${mig[@]}" --set migration.step=files --set-json 'extraEnv=[{"name":"NODE_OPTIONS","value":"--max-old-space-size=300"}]')
+        [ "$(yq "$mj | [.spec.template.spec.containers[0].env[] | select(.name == \"NODE_OPTIONS\") | .value] | join(\",\")" <<<"$out" | sed '/^$/d')" = --max-old-space-size=300 ] \
+          || err "$chart: an operator NODE_OPTIONS must reach the migration Jobs, once"
         [ "$(yq "$mj | .spec.template.spec.containers[0].volumeMounts[] | select(.name == \"data\") | .readOnly" <<<"$out" | sed '/^$/d')" = true ] \
           || err "$chart: migration files must read the old files read-only"
         ! yq 'select(.kind == "PersistentVolumeClaim") | .metadata.name' <<<"$(render "$chart" "$s3")" | grep -q . \

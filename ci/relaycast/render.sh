@@ -150,6 +150,9 @@ zone='.spec.template.spec.affinity.nodeAffinity.requiredDuringSchedulingIgnoredD
 is "zone pin" "$(render --set-string persistence.zone=us-west-2a | yq "$dep" | yq "$zone")" "topology.kubernetes.io/zone=us-west-2a"
 is "zone keeps podAntiAffinity" "$(render --set-string persistence.zone=us-west-2a --set-json 'affinity={"podAntiAffinity":{"preferredDuringSchedulingIgnoredDuringExecution":[]}}' | yq "$dep" | yq '.spec.template.spec.affinity | has("podAntiAffinity")')" true
 is "no zone, no affinity" "$(dy '.spec.template.spec | has("affinity")')" false
+expect_refused "probe typo" "healthProbes must be legacy or split" --set healthProbes=spilt
+expect_refused "zero keepalive interval" "intervalSeconds must be an integer from 1 to 32767" --set runtime.postgres.tcpKeepalive.intervalSeconds=0
+expect_refused "bad keepalive probes" "probes must be an integer from 1 to 127" --set runtime.postgres.tcpKeepalive.probes=200
 expect_refused "zone with nodeAffinity" "persistence.zone and affinity.nodeAffinity" --set-string persistence.zone=us-west-2a --set-json 'affinity={"nodeAffinity":{}}'
 
 [ "$fail" = 0 ] && echo "relaycast postgres and analytics render: ok"
