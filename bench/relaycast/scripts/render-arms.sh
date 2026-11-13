@@ -23,6 +23,8 @@
 # RDS_CA_SHA256, NS_PG, NS_ACTORS, REGION, ACTOR_ZONE, ACTOR_ROLE_ARN.
 # --check also runs helm template for both arms and kubeconform when present.
 set -euo pipefail
+# Scratch never goes to /tmp on shared hosts.
+export TMPDIR="${TMPDIR:-$HOME/.agent-tmp}"; mkdir -p "$TMPDIR"
 ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
 OUT="${1:?out dir}"; CHECK="${2:-}"
 C="$ROOT/charts/agent-relay"

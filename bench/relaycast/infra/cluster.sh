@@ -34,6 +34,8 @@
 #     managed by RDS in Secrets Manager (never printed or passed in argv).
 
 set -euo pipefail
+# Scratch never goes to /tmp on shared hosts.
+export TMPDIR="${TMPDIR:-$HOME/.agent-tmp}"; mkdir -p "$TMPDIR"
 
 REGION="${AWS_REGION:-us-west-2}"
 NAME="${BENCH_NAME:-relaycast-actors-bench}"

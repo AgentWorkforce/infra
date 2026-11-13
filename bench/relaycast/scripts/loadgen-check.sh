@@ -10,6 +10,8 @@
 #
 # Runs in its own namespace (rcb-loadgen-check), deleted afterwards.
 set -euo pipefail
+# Scratch never goes to /tmp on shared hosts.
+export TMPDIR="${TMPDIR:-$HOME/.agent-tmp}"; mkdir -p "$TMPDIR"
 HERE="$(cd "$(dirname "$0")" && pwd)"; BENCH="$(cd "$HERE/.." && pwd)"
 RATE="${1:?rate}"; SECS="${2:?seconds}"; NP="${3:?producers}"
 NS=rcb-loadgen-check

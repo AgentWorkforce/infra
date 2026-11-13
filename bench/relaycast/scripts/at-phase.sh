@@ -4,6 +4,8 @@
 #
 #   at-phase.sh <status-url> <phase-label> <seconds-into-phase> -- <command...>
 set -euo pipefail
+# Scratch never goes to /tmp on shared hosts.
+export TMPDIR="${TMPDIR:-$HOME/.agent-tmp}"; mkdir -p "$TMPDIR"
 url="$1" phase="$2" at="$3"; shift 3
 [[ "${1:-}" == -- ]] && shift
 while true; do

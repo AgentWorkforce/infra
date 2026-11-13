@@ -22,6 +22,8 @@
 # credentials come from the RDS-managed Secrets Manager secret. Nothing is
 # printed and no secret value reaches argv.
 set -euo pipefail
+# Scratch never goes to /tmp on shared hosts.
+export TMPDIR="${TMPDIR:-$HOME/.agent-tmp}"; mkdir -p "$TMPDIR"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$HERE/../../.." && pwd)"
 ARM="${1:?pg|actors}"; CMD="${2:?prereqs|install|post|status|uninstall}"

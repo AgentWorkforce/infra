@@ -11,6 +11,8 @@
 #                                  publication from the host's structured logs
 #   <out-prefix>.memory.csv        the pod's working set every 5 s
 set -euo pipefail
+# Scratch never goes to /tmp on shared hosts.
+export TMPDIR="${TMPDIR:-$HOME/.agent-tmp}"; mkdir -p "$TMPDIR"
 SECS="${1:?seconds}"; OUT="${2:?out prefix}"
 NS="${NS_SANDBOX:-arm-actors-agent-relay}"
 HERE="$(cd "$(dirname "$0")" && pwd)"

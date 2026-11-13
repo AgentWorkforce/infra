@@ -23,6 +23,8 @@
 #     is a kubectl patch on top of the Helm release, recorded in the report.
 # `down` reverts the CoreDNS rewrite and deletes the objects.
 set -euo pipefail
+# Scratch never goes to /tmp on shared hosts.
+export TMPDIR="${TMPDIR:-$HOME/.agent-tmp}"; mkdir -p "$TMPDIR"
 NS=arm-actors
 HOST="${ACTORS_HOST:-actors.relaycast-bench.agentrelay.com}"
 STATE="${BENCH_STATE:-$HOME/.agent-tmp/rcb-state}/actors/ingress"

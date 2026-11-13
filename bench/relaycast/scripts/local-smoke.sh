@@ -9,6 +9,8 @@
 # Scratch goes to ${TMPDIR:-$HOME/.agent-tmp}/rcb-local; generated secrets
 # stay in files there (0600) and never reach argv or logs.
 set -euo pipefail
+# Scratch never goes to /tmp on shared hosts.
+export TMPDIR="${TMPDIR:-$HOME/.agent-tmp}"; mkdir -p "$TMPDIR"
 cd "$(dirname "$0")/../../.."
 PLAN="${1:-bench/relaycast/plans/local-smoke.json}"
 RESTART_AT=""
