@@ -311,6 +311,9 @@ Secrets Operator with a `SecretStore` for Secret Manager works too: create the
 same five Secrets with the same keys.
 
 - **Already ran (a)?** Delete those five Secrets first, so helm can own them.
+- **`could not find default credentials`?** Run `gcloud auth application-default login`,
+  then **delete `secrets.yaml.dec`** before retrying: helm-secrets reuses that
+  file, and a failed run leaves it empty, which installs empty Secrets.
 
 ## 11. Install with Helm
 
