@@ -6,10 +6,10 @@
 //
 // For every step below that the migration ledger has not recorded, and each
 // index it declares, it reports the index state (adoptable, not_ready, mismatch
-// or absent) and, for an absent index, the size of its table: the planner's
-// estimate (pg_class.reltuples) and, when that is small or unknown, an exact
-// count bounded at limit+1 rows with row_security off (an error, never a
-// smaller number, if row-level security applies to this role).
+// or absent) and, for an absent index, the size of its table: an exact count
+// bounded at limit+1 rows with row_security off (an error, never a smaller
+// number, if row-level security applies to this role), plus the planner's
+// estimate (pg_class.reltuples) for display only.
 //
 // Output: one line "INDEX_CENSUS <json>" on success; "INDEX_CENSUS_ERROR <code>
 // <message>" and exit 1 otherwise. No connection string is printed.
@@ -133,15 +133,12 @@ export async function census(client, limit) {
     for (const table of tables.keys()) {
       const [{ estimate }] = await q("SELECT c.reltuples::bigint AS estimate FROM pg_class c WHERE c.oid = to_regclass($1)", [`sessions.${table}`]);
       const est = Number(estimate);
-      const t = { estimate: est, rows: est, exact: false };
-      // An unknown (-1, never analyzed) or small estimate gets an exact count, bounded at limit+1.
-      if (est < 0 || est <= 2 * limit) {
-        await client.query("SET LOCAL row_security = off");
-        const [{ n }] = await q(`SELECT count(*)::bigint AS n FROM (SELECT 1 FROM sessions.${table} LIMIT $1) s`, [limit + 1]);
-        t.rows = Number(n);
-        t.exact = t.rows <= limit;
-      }
-      tables.set(table, t);
+      // Always count, bounded at limit+1 rows: reltuples can be stale (a table
+      // emptied since its last ANALYZE) or unknown (-1), so it is shown, never decided on.
+      await client.query("SET LOCAL row_security = off");
+      const [{ n }] = await q(`SELECT count(*)::bigint AS n FROM (SELECT 1 FROM sessions.${table} LIMIT $1) s`, [limit + 1]);
+      const rows = Number(n);
+      tables.set(table, { estimate: est, rows, exact: rows <= limit });
     }
     for (const step of steps)
       for (const x of step.indexes) {

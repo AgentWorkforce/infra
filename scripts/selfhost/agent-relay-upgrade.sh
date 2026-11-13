@@ -200,7 +200,7 @@ work=$(mktemp -d)
 census_name=""
 index_census_cleanup() {
   [ -n "$census_name" ] || return 0
-  "${kube[@]}" delete pod,configmap "$census_name" --ignore-not-found --wait=true --timeout=30s >/dev/null 2>&1 || true
+  "${kube[@]}" delete pod,configmap,secret "$census_name" --ignore-not-found --wait=true --timeout=30s >/dev/null 2>&1 || true
   census_name=""
 }
 trap 'index_census_cleanup; rm -rf "$work"' EXIT
@@ -231,7 +231,7 @@ index_max_rows="${AGENT_RELAY_BLOCKING_INDEX_MAX_ROWS:-1000000}"
 index_rows_per_second="${AGENT_RELAY_INDEX_BUILD_ROWS_PER_SECOND:-250000}"
 census_timeout="${AGENT_RELAY_INDEX_CENSUS_TIMEOUT_SECONDS:-300}"
 sessions_index_check() {
-  local v job name pod_json phase deadline census decision n_build rows tables secs
+  local v job name pod_json phase deadline census decision n_build rows tables secs url_file=""
   [[ "$index_max_rows" =~ ^[0-9]+$ ]] || die "AGENT_RELAY_BLOCKING_INDEX_MAX_ROWS must be a whole number of rows"
   [[ "$index_rows_per_second" =~ ^[1-9][0-9]*$ ]] || die "AGENT_RELAY_INDEX_BUILD_ROWS_PER_SECOND must be a positive whole number"
   for v in "${values[@]}"; do
@@ -244,18 +244,41 @@ sessions_index_check() {
   job=$("${helmx[@]}" get manifest "$release" \
     | yq -o=json -I=0 'select(.kind == "Job" and .metadata.labels."app.kubernetes.io/component" == "hoopdb-migrate")') \
     || die "could not read the deployed manifest of $release"
-  if [ -z "$job" ]; then say "   the deployed release has no HoopDb migrate Job: nothing to check"; return 0; fi
+  if [ -z "$job" ]; then
+    say "   the deployed release has no HoopDb migrate Job to clone: no census"
+    index_census_skipped=true; return 0
+  fi
   [[ "$job" != *$'\n'* ]] || die "the deployed release has more than one HoopDb migrate Job"
   jq -e '.spec.template.spec.containers[0].image | strings' <<<"$job" >/dev/null \
     || die "the deployed HoopDb migrate Job has no container to clone for the index census"
   [ -f "$here/sessions-index-census.mjs" ] || die "sessions-index-census.mjs must sit next to this script"
+  # RDS rotates the admin password that the migration owner URL carries. With
+  # --rds-setup and its inputs, refresh it first (rds-setup.sh refresh-admin
+  # reads Secrets Manager and rewrites only STATE_DIR files) and give the census
+  # that URL through a temporary Secret, so a rotation never blocks the plan.
+  if $rds_setup && [ -n "${AWS_REGION:-}" ] && [ -n "${RDS_HOST:-}" ] && [ -n "${RDS_ADMIN_SECRET_ARN:-}" ] \
+    && [ -d "$state_dir/secret-files/agent-relay-secrets" ] \
+    && jq -e '[.spec.template.spec.containers[0].env[]? | select(.name == "HOOPDB_URL") | .valueFrom.secretKeyRef
+        | select(.name == "agent-relay-secrets" and .key == "HOOPDB_MIGRATION_URL")] | length == 1' <<<"$job" >/dev/null; then
+    say "   refreshing the RDS admin credential (rds-setup.sh refresh-admin) for the census"
+    env NAMESPACE="$namespace" KUBE_CONTEXT="$context" STATE_DIR="$state_dir" "$here/rds-setup.sh" refresh-admin >/dev/null \
+      || die "rds-setup.sh refresh-admin failed, so the census has no current database credential; nothing was changed"
+    url_file="$state_dir/secret-files/agent-relay-secrets/HOOPDB_MIGRATION_URL"
+    [ -s "$url_file" ] || die "rds-setup.sh refresh-admin did not write agent-relay-secrets/HOOPDB_MIGRATION_URL; nothing was changed"
+  fi
   name="$release-index-census-$(date -u +%Y%m%d%H%M%S)"
   say "   one read-only pod, $name, cloned from the deployed migrate Job; deleted afterwards"
   # From here any exit deletes the pod and ConfigMap (the EXIT trap).
   census_name=$name
   "${kube[@]}" create configmap "$name" --from-file=sessions-index-census.mjs="$here/sessions-index-census.mjs" \
     --dry-run=client -o yaml | "${kube[@]}" apply -f - >/dev/null || die "could not create the index census ConfigMap"
-  pod_json=$(jq --arg name "$name" --arg ns "$namespace" --arg limit "$index_max_rows" --argjson deadline "$census_timeout" '
+  if [ -n "$url_file" ]; then
+    # The value goes from the 0600 state file into the Secret; never argv or logs.
+    "${kube[@]}" create secret generic "$name" --from-file=HOOPDB_URL="$url_file" \
+      --dry-run=client -o yaml | "${kube[@]}" apply -f - >/dev/null || die "could not create the index census credential Secret"
+  fi
+  pod_json=$(jq --arg name "$name" --arg ns "$namespace" --arg limit "$index_max_rows" --argjson deadline "$census_timeout" \
+      --argjson fresh "$([ -n "$url_file" ] && echo true || echo false)" '
     .spec.template as $t
     | { apiVersion: "v1", kind: "Pod",
         metadata: { name: $name, namespace: $ns,
@@ -269,7 +292,9 @@ sessions_index_check() {
               | .name = "census"
               | .command = ["bun", "/index-census/sessions-index-census.mjs"]
               | del(.args, .livenessProbe, .readinessProbe, .startupProbe, .ports)
-              | .env = ([(.env // [])[] | select(.name != "INDEX_CENSUS_LIMIT")] + [{ name: "INDEX_CENSUS_LIMIT", value: $limit }])
+              | .env = ([(.env // [])[] | select(.name != "INDEX_CENSUS_LIMIT")
+                  | if $fresh and .name == "HOOPDB_URL" then { name: "HOOPDB_URL", valueFrom: { secretKeyRef: { name: $name, key: "HOOPDB_URL" } } } else . end]
+                  + [{ name: "INDEX_CENSUS_LIMIT", value: $limit }])
               | .volumeMounts = ((.volumeMounts // []) + [{ name: "index-census", mountPath: "/index-census", readOnly: true }]) ]) }' <<<"$job")
   if ! "${kube[@]}" apply -f - <<<"$pod_json" >/dev/null; then index_census_cleanup; die "could not start the index census pod"; fi
   deadline=$(( $(date +%s) + census_timeout + 60 ))
@@ -283,6 +308,7 @@ sessions_index_check() {
   index_census_cleanup
   case "$census" in
     "INDEX_CENSUS "*) census=${census#INDEX_CENSUS } ;;
+    "INDEX_CENSUS_ERROR 28P01 "*) die "the index census could not log in to the Sessions database (${census#INDEX_CENSUS_ERROR }); nothing was changed. If the RDS admin password rotated, refresh the admin inputs first (rds-setup.sh refresh-admin, then update the agent-relay-secrets Secret, or pass --rds-setup with its environment so this upgrader does it), then re-run" ;;
     "INDEX_CENSUS_ERROR "*) die "the index census failed (${census#INDEX_CENSUS_ERROR }); nothing was changed. Fix that and re-run" ;;
     *) die "the index census pod ended $phase without a result; nothing was changed (kubectl -n $namespace describe pod $name, before it is gone)" ;;
   esac
@@ -379,7 +405,7 @@ fi
 # read-only census, whether this upgrade's HoopDb migrate Job may build missing
 # indexes with a blocking CREATE INDEX (worker.migrations.allowBlockingIndexBuild,
 # set for this upgrade only) or must wait for a CONCURRENTLY prebuild.
-index_values=()
+index_values=() index_census_skipped=false
 if ! $first_install && [ -z "$rta_phase" ]; then sessions_index_check; fi
 overlay="$work/release-images.values.yaml"
 # Overlay repositories are __IMAGE_MIRROR_ROOT__/<source host>/<source path>, exactly where
@@ -410,6 +436,11 @@ unexpected=$(comm -23 "$work/new-images.txt" "$work/expected-images.txt")
 [ -z "$unexpected" ] || die "the render would deploy images that are not this release's mirrored images:
 $unexpected"
 [ -s "$work/new-images.txt" ] || die "the render contains no images"
+if $index_census_skipped && [ -n "$(yq -N -r 'select(.kind == "Job" and .metadata.labels."app.kubernetes.io/component" == "hoopdb-migrate") | .metadata.name' "$work/new.yaml")" ]; then
+  say "   NOTE: this upgrade adds a HoopDb migrate Job that the deployed release did not have, so no index census ran."
+  say "         If the Sessions database is populated, that Job refuses (read-only, before any write) any index it"
+  say "         would have to build on a populated table; prebuild those CONCURRENTLY with the packet it names, then re-run."
+fi
 if ! $rds_setup; then
   db_mode=""
   for f in "${profile_files[@]/#/$chart/}" "${values[@]}"; do

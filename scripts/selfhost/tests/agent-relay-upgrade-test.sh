@@ -636,7 +636,7 @@ jq -e '.spec.serviceAccountName == "agent-relay-worker-migrate" and .metadata.la
 jq -e '[.spec.containers[0].env[] | select(.name == "HOOPDB_URL") | .valueFrom.secretKeyRef.key] == ["HOOPDB_MIGRATION_URL"]' <<<"$pod" >/dev/null || fail "census pod must read the migrate Job's HOOPDB_URL Secret reference"
 jq -e '[.spec.containers[0].env[] | select(.name == "INDEX_CENSUS_LIMIT") | .value] == ["1000000"]' <<<"$pod" >/dev/null || fail "census pod limit"
 jq -e '[.spec.containers[0].volumeMounts[].name] == ["postgres-ca", "index-census"]' <<<"$pod" >/dev/null || fail "census pod must keep the CA mount and add the script"
-grep -q 'kubectl .*delete pod,configmap agent-relay-index-census-' "$root/log" || fail "census pod and ConfigMap were not deleted"
+grep -q 'kubectl .*delete pod,configmap,secret agent-relay-index-census-' "$root/log" || fail "census pod and ConfigMap were not deleted"
 grep -q 'postgresql://' "$root/applied.yaml" && fail "a connection string reached the census manifest"
 pass "census: empty tables need no opt-in; the pod clones the deployed migrate container and is deleted"
 
@@ -703,7 +703,7 @@ grep -q 'the index census failed (42501 permission denied' <<<"$out" || fail "ce
 census_setup; echo Failed > "$root/census-phase"
 out=$(run "${args[@]}" 2>&1) && fail "a census without a result was accepted"
 grep -q 'the index census pod ended Failed without a result' <<<"$out" || fail "missing census result not reported: $out"
-grep -q 'kubectl .*delete pod,configmap agent-relay-index-census-' "$root/log" || fail "a failed census pod was not deleted"
+grep -q 'kubectl .*delete pod,configmap,secret agent-relay-index-census-' "$root/log" || fail "a failed census pod was not deleted"
 pass "census: an error or a missing result refuses (fail closed) and still cleans up"
 
 # 43. the opt-in belongs to the upgrader: site values setting it refuse
@@ -742,7 +742,38 @@ pass "census: a non-integer row count refuses (fail closed)"
 for sig in INT TERM; do
   census_setup; census absent 10; echo "$sig" > "$root/census-phase"
   run "${args[@]}" >"$root/out" 2>&1 && fail "an interrupted ($sig) census plan succeeded"
-  grep -q 'kubectl .*delete pod,configmap agent-relay-index-census-' "$root/log" || fail "a $sig during the census left the pod and ConfigMap: $(cat "$root/out")"
+  grep -q 'kubectl .*delete pod,configmap,secret agent-relay-index-census-' "$root/log" || fail "a $sig during the census left the pod and ConfigMap: $(cat "$root/out")"
   grep -q 'helm template' "$root/log" && fail "an interrupted ($sig) census still rendered"
 done
 pass "census: INT or TERM mid-census deletes the pod and ConfigMap"
+
+# 48. --rds-setup: the census connects with a freshly refreshed admin URL, through a temporary Secret
+census_setup; census absent 0; make_state
+out=$(run_rds --version 2026.11.1 --registry "$REG" --profile eks-native --values "$vals" --rds-setup 2>&1) || fail "rds-setup census plan failed: $out"
+before '^rds-setup refresh-admin' 'kubectl .*create secret generic agent-relay-index-census-' || fail "refresh-admin must run before the census Secret is made"
+grep -q 'kubectl .*create secret generic agent-relay-index-census-[0-9]* --from-file=HOOPDB_URL=.*/secret-files/agent-relay-secrets/HOOPDB_MIGRATION_URL' "$root/log" \
+  || fail "the census Secret must come from the refreshed state file"
+pod=$(yq -o=json 'select(.kind == "Pod")' "$root/applied.yaml")
+jq -e '[.spec.containers[0].env[] | select(.name == "HOOPDB_URL") | .valueFrom.secretKeyRef] == [{"name": .metadata.name, "key": "HOOPDB_URL"}]' <<<"$pod" >/dev/null \
+  || fail "the census pod must read HOOPDB_URL from its own refreshed Secret: $(jq -c '.spec.containers[0].env' <<<"$pod")"
+grep -q 'rotated-admin-pw' "$root/log" && fail "the refreshed credential reached argv or the log"
+grep -q 'kubectl .*delete pod,configmap,secret agent-relay-index-census-' "$root/log" || fail "the census Secret was not deleted"
+census_setup; census absent 0
+out=$(run "${args[@]}" 2>&1) || fail "census plan without --rds-setup failed: $out"
+grep -q 'create secret generic agent-relay-index-census' "$root/log" && fail "a census without --rds-setup made a credential Secret"
+pass "census: --rds-setup refreshes the admin URL first and hands it over in a temporary Secret"
+
+# 49. a login failure names the admin-credential refresh
+census_setup; printf 'INDEX_CENSUS_ERROR 28P01 password authentication failed for user "admin"\n' > "$root/census.out"
+out=$(run "${args[@]}" 2>&1) && fail "a census login failure was accepted"
+grep -q 'If the RDS admin password rotated, refresh the admin inputs first' <<<"$out" || fail "a login failure did not name the refresh: $out"
+pass "census: a login failure points at refreshing the admin inputs"
+
+# 50. an upgrade that adds a migrate Job the deployed release lacked says no census ran
+setup_mocks "$root/rel-ok" ok; printf '%s\n' "$migrate_job" > "$root/rendered-extra.yaml"
+out=$(run "${args[@]}" 2>&1) || fail "plan adding a migrate Job failed: $out"
+grep -q 'NOTE: this upgrade adds a HoopDb migrate Job that the deployed release did not have' <<<"$out" || fail "no note for a newly added migrate Job: $out"
+setup_mocks "$root/rel-ok" ok
+out=$(run "${args[@]}" 2>&1) || fail "plain plan failed: $out"
+grep -q 'NOTE: this upgrade adds a HoopDb migrate Job' <<<"$out" && fail "the note printed without a new migrate Job"
+pass "census: a newly added migrate Job is called out when no census could run"
