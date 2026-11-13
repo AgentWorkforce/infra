@@ -1,7 +1,8 @@
 # Runbook: move an existing install's Relaycast from PostgreSQL to durable-actors
 
-Operator procedure for an EKS install on `--profile eks-rds-native` whose
-Relaycast runs on `runtime.backend: postgres`. It moves every workspace, with
+Operator procedure for an EKS install (`--profile eks-native` or
+`eks-rds-native`, whichever it already uses) whose Relaycast runs on
+`runtime.backend: postgres` against RDS. It moves every workspace, with
 all its rows and files, under the same ids. Design and rationale:
 [relaycast-postgres-to-actors-migration.md](../relaycast-postgres-to-actors-migration.md).
 Keep install-specific values (account, hosts, windows) out of this repo.
@@ -48,7 +49,7 @@ precondition. Plan mode (no `--apply`) only checks and prints.
 
 ```sh
 scripts/selfhost/agent-relay-upgrade.sh --version <current> --registry <ecr> \
-  --profile eks-rds-native --values <values>... --db-instance <rds id> \
+  --profile <your profile> --values <values>... --db-instance <rds id> \
   --relaycast-actors credentials            # plan; then add --apply
 ```
 
@@ -66,7 +67,7 @@ after the move; their data still moves).
 
 ```sh
 scripts/selfhost/agent-relay-upgrade.sh --version <current> --registry <ecr> \
-  --profile eks-rds-native --values <values>... --db-instance <rds id> \
+  --profile <your profile> --values <values>... --db-instance <rds id> \
   --relaycast-actors cutover --actors-values <actors overrides>   # plan; then --apply
 ```
 
