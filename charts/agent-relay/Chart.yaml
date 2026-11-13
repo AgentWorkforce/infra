@@ -17,7 +17,7 @@ maintainers:
     url: https://github.com/AgentWorkforce
 dependencies:
   - name: relaycast
-    version: 0.3.10
+    version: 0.3.11
     repository: file://../relaycast
     condition: components.relaycast
   - name: relayauth
@@ -43,7 +43,7 @@ dependencies:
   # Vendored upstream TerseAI chart (charts/durable-actors/UPSTREAM.md); its
   # values key is `durable-actors` and its Service is <release>-durable-actors.
   - name: durable-actors
-    version: 0.14.6-awf.2
+    version: 0.14.6-awf.3
     repository: file://../durable-actors
     condition: components.durableActors
   - name: relayfile

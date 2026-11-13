@@ -192,7 +192,7 @@ profiles:
     chart: relaycast
     values_file: ci/durable-actors-values.yaml
     install: helm install relaycast agentworkforce/relaycast -f values.yaml (runtime.backend=durable-actors, a durable-actors control plane, ar_ credentials)
-    summary: Stateless gateway (relaycast-actors-gateway) in front of one Workspace actor per workspace; deployer Job registers the actor bundle; files in GCS or S3. Fresh-install backend; SQLite workspaces are not migrated.
+    summary: Stateless gateway (relaycast-actors-gateway) in front of one Workspace actor per workspace; deployer Job registers the actor bundle; files in GCS or S3. PostgreSQL installs use the full-copy upgrader; SQLite workspaces are not migrated.
   - id: relaycast-postgres
     title: Relaycast on PostgreSQL (runtime.backend=postgres)
     chart: relaycast
@@ -1188,9 +1188,16 @@ compatibility:
       images_note: not built for the charts yet
       notes: 'Follow-up re-pin to sessions-pipeline main after #127 (session briefs, generation 5ed11913...). Needs new GHCR/ECR digests, ci/sessions-pipeline-search-worker-role/services-commit and services-generation, and the session-brief entries below shipped.'
       db_combos: []
-    - id: relaycast-0.3.10
+    - id: relaycast-0.3.11
       status: unreleased
       current: true
+      charts: { relaycast: 0.3.11 }
+      app_versions: { relaycast: 12.7.0 }
+      images:
+        relaycast: { repository: ghcr.io/agentworkforce/relaycast-self-host, digest: sha256:81274dca7ab58673383dc7a9c777f422f29606c7422e81b5ea15724770f1455e }
+      notes: 'Durable-actors gateway robustness: object-store gateways with more than one replica render a maxUnavailable=1 PDB, and runtime.durableActors.gateway.topologySpread generates a release-scoped topology selector. SQLite and PostgreSQL default renders are unchanged.'
+    - id: relaycast-0.3.10
+      status: planned
       charts: { relaycast: 0.3.10 }
       app_versions: { relaycast: 12.7.0 }
       images:
@@ -1330,13 +1337,14 @@ compatibility:
       charts: { agent-relay: 0.7.1, relay-control: 0.4.15, relay-webapp: 0.2.4 }
       app_versions: { agent-relay: 0.1.0, relay-control: 0.1.0, relay-webapp: 0.1.0 }
       depends:
-        agent-relay: { relaycast: 0.3.10, relayauth: 0.1.5, sessions-pipeline: 0.8.29, relay-control: 0.4.15, relay-webapp: 0.2.4, relayflows: 0.2.5, durable-actors: 0.14.6-awf.2, relayfile: 0.2.2, telemetry-collector: 0.1.7, relay-chief: 0.1.0 }
+        agent-relay: { relaycast: 0.3.11, relayauth: 0.1.5, sessions-pipeline: 0.8.29, relay-control: 0.4.15, relay-webapp: 0.2.4, relayflows: 0.2.5, durable-actors: 0.14.6-awf.3, relayfile: 0.2.2, telemetry-collector: 0.1.7, relay-chief: 0.1.0 }
       images:
         relaycast: { repository: ghcr.io/agentworkforce/relaycast-self-host, digest: sha256:ab9dd6781e68f09d5e2e686a17088f9ad533978ef13d974a47d6c212d8eedbde }
+        relaycast-postgres: { repository: ghcr.io/agentworkforce/relaycast-self-host, digest: sha256:1307bd845031a7466e65ebaf08bc8b826e2837d90f58c9b5a6a1d673c62dad93 }
         sessions-pipeline-worker: { repository: ghcr.io/agentworkforce/sessions-pipeline, digest: sha256:77022c5b6a1d30f96f921d703eb27a1acada8ec273ad84aebdde24f8eddce305 }
         relay-control: { repository: ghcr.io/agentworkforce/relay-control, digest: sha256:d8c26d44dccb6dd21b7033288241a379e46ce5fbca69f276c4d4745001c3c3e2 }
         relay-webapp: { repository: ghcr.io/agentworkforce/relay-webapp, digest: sha256:bd295ccb7d1323965dce890f19d0b7f857d706c00d7756f719c713763fdb49f3 }
-      notes: 'Carries 0.7.0 with neutral values comments and telemetry-collector 0.1.7. No template or default render changes.'
+      notes: 'Carries 0.7.0, neutral values comments, telemetry-collector 0.1.7, and prepares the AA/EKS Relaycast durable-actors target: profile pins the post-migration actor images, uses S3 with no Relaycast PVC, three zone-spread gateways with a PDB, tuned 1 GiB actor hosts (warm 3, maxStarting 8), and a protected 1 CPU/1-2 GiB singleton controller. Existing PostgreSQL installs still move only through the full-copy credentials/cutover upgrader; no automatic backend flip.'
     - id: agent-relay-0.7.0
       status: planned
       charts: { agent-relay: 0.7.0, relay-control: 0.4.15, relay-webapp: 0.2.4 }
@@ -2147,9 +2155,14 @@ compatibility:
       images:
         relayfile: { repository: ghcr.io/agentworkforce/relayfile }
       notes: 'License-annotation bump of 0.1.1 (unreleased 0.1.2) plus runtime.backend=durable-actors (gateway, session broker: ghcr.io/agentworkforce/relayfile-actors by digest; deploy Job and dev sidecar: relayfile-actors-workspace by digest). Go server image by tag (Chart.appVersion), not digest; default render unchanged.'
-    - id: durable-actors-0.14.6-awf.2
+    - id: durable-actors-0.14.6-awf.3
       status: unreleased
       current: true
+      charts: { durable-actors: 0.14.6-awf.3 }
+      app_versions: { durable-actors: 0.14.6 }
+      notes: 'Carries awf.2 and adds optional controller podDisruptionBudget and generated topologySpread values. Both stay off by default; replicaCount > 1 retains its automatic maxUnavailable=1 PDB.'
+    - id: durable-actors-0.14.6-awf.2
+      status: planned
       charts: { durable-actors: 0.14.6-awf.2 }
       app_versions: { durable-actors: 0.14.6 }
       notes: 'Carries 0.14.6-awf.1 and adds UPSTREAM.md patch 12: postgresCa {enabled, configMap|secret, key}: an init container writes the image system roots plus the CA into in-memory volume postgres-ca (/etc/postgres-ca/ca.crt) for the control plane and pool manager, and SSL_CERT_FILE points at it. Works with the unmodified upstream images (OpenSSL native-tls verifies chain and hostname for sslmode=require). Default renders are unchanged.'
@@ -4962,7 +4975,7 @@ entries:
       Controllers avoid gVisor nodes. There is no kind/MinIO/S3 provider upstream;
       local proofs use the durable-actors dev runtime instead.
     chart: durable-actors
-    values: [placement.zone, sandboxNamespace, nodeSelector, networkPolicy.dnsCidrs, actors.*, organizationLimits.*, alarms.*, resources.*, replicaCount, analytics.backend, usage.topic, postgres.maxConnections]
+    values: [placement.zone, sandboxNamespace, nodeSelector, networkPolicy.dnsCidrs, actors.*, organizationLimits.*, alarms.*, resources.*, replicaCount, podDisruptionBudget.*, topologySpread.*, analytics.backend, usage.topic, postgres.maxConnections]
     env: [DURABLE_ACTORS_PROCESS_ROLE, DURABLE_ACTORS_CONTROL_PLANE_BIND, DURABLE_ACTORS_ALARM_POLL_INTERVAL_MS, DURABLE_ACTORS_POSTGRES_MAX_CONNECTIONS, DURABLE_ACTORS_ANALYTICS_BACKEND, DURABLE_ACTORS_USAGE_TOPIC, DURABLE_ACTORS_ORGANIZATION_LIMITS_ENABLED, DURABLE_ACTORS_ORGANIZATION_MAX_ACTIVE_ACTORS, DURABLE_ACTORS_ORGANIZATION_ACTOR_STARTS_PER_SECOND, DURABLE_ACTORS_ORGANIZATION_ACTOR_START_BURST, DURABLE_ACTORS_TYPESCRIPT_IMAGE, DURABLE_ACTORS_PYTHON_IMAGE, DURABLE_ACTORS_GKE_NAMESPACE, DURABLE_ACTORS_GKE_ZONE, DURABLE_ACTORS_SPARE_IDLE, DURABLE_ACTORS_HOST_IDLE_TIMEOUT_MS, DURABLE_ACTORS_SPARE_MAX_STARTING, DURABLE_ACTORS_SPARE_REFILL_INTERVAL_MS, DURABLE_ACTORS_SPARE_RETIRE_CONCURRENCY, DURABLE_ACTORS_SPARE_REAP_INTERVAL_MS, DURABLE_ACTORS_SPARE_POD_REAP_INTERVAL_MS, DURABLE_ACTORS_GKE_REAP_CONCURRENCY, DURABLE_ACTORS_HOST_CPU_MILLIS, DURABLE_ACTORS_HOST_CPU_LIMIT_MILLIS, DURABLE_ACTORS_HOST_MEMORY_MIB, DURABLE_ACTORS_HOST_MEMORY_LIMIT_MIB, DURABLE_ACTORS_SANDBOX_MIN_CPU_MILLIS, DURABLE_ACTORS_SANDBOX_MAX_CPU_MILLIS, DURABLE_ACTORS_SANDBOX_MIN_MEMORY_MIB, DURABLE_ACTORS_SANDBOX_MAX_MEMORY_MIB]
     profiles: [durable-actors, agent-relay-durable-actors]
     status: shipped
@@ -5123,8 +5136,9 @@ entries:
       relaycast-actors-gateway (same Service, ingress and edge-deny rules; PORT 8787,
       /healthz and /readyz). Requires ar_ credentials with a keyring, an HTTPS public
       baseUrl (sandbox egress blocks private ranges), and a durable-actors control
-      plane. More than one gateway replica needs fileStore gcs or s3. A fresh-install
-      backend: SQLite workspaces are not migrated.
+      plane. More than one gateway replica needs fileStore gcs or s3 and renders
+      a PDB; generated topology spread is available. PostgreSQL installs use the
+      full-copy upgrader; SQLite workspaces are not migrated.
     chart: relaycast
     values: [runtime.backend, runtime.durableActors.projectId, runtime.durableActors.organizationId, runtime.durableActors.controlPlaneUrl, runtime.durableActors.homeRegion, runtime.durableActors.socketOrigin, runtime.durableActors.gateway.*, runtime.durableActors.maxUploadBytes, runtime.durableActors.shutdownGraceMs, runtime.durableActors.logFormat, runtime.durableActors.fileStore.*, runtime.durableActors.devRuntime.*]
     env: [DURABLE_ACTORS_CONTROL_PLANE_URL, DURABLE_ACTORS_PROJECT_ID, DURABLE_ACTORS_HOME_REGION, DURABLE_ACTORS_SOCKET_ORIGIN, RELAYCAST_FILE_STORE, RELAYCAST_FILE_DIR, RELAYCAST_GCS_BUCKET, RELAYCAST_GCS_PREFIX, RELAYCAST_S3_BUCKET, RELAYCAST_S3_REGION, RELAYCAST_S3_ENDPOINT, RELAYCAST_S3_PREFIX, RELAYCAST_S3_FORCE_PATH_STYLE, AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, RELAYCAST_MAX_UPLOAD_BYTES, RELAYCAST_SHUTDOWN_GRACE_MS, RELAYCAST_LOG_FORMAT, DURABLE_ACTORS_PORT, DURABLE_ACTORS_DATA_DIR, RELAYCAST_PUBLIC_URL, RELAYCAST_INTERNAL_SECRET]

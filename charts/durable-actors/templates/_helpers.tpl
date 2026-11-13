@@ -14,6 +14,10 @@
 {{- define "actors.validate" -}}
 {{- if eq (include "actors.sandboxNamespace" .) .Release.Namespace }}{{ fail "sandbox namespace must differ from the control-plane namespace" }}{{ end -}}
 {{- if and (gt (int .Values.replicaCount) 1) (not .Values.redis.urlSecretKey) }}{{ fail "replicaCount above 1 requires redis.urlSecretKey" }}{{ end -}}
+{{- with .Values.topologySpread -}}
+{{- if and .enabled (or (lt (int .maxSkew) 1) (ne (toString (int .maxSkew)) (toString .maxSkew))) }}{{ fail "topologySpread.maxSkew must be a positive integer" }}{{ end -}}
+{{- if and .enabled (not (has (toString .whenUnsatisfiable) (list "DoNotSchedule" "ScheduleAnyway"))) }}{{ fail "topologySpread.whenUnsatisfiable must be DoNotSchedule or ScheduleAnyway" }}{{ end -}}
+{{- end -}}
 {{- if eq .Values.analytics.backend "clickhouse" -}}
 {{- range $key, $value := .Values.analytics.clickhouse -}}
 {{- if empty $value }}{{ fail (printf "analytics.clickhouse.%s is required" $key) }}{{ end -}}

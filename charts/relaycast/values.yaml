@@ -47,8 +47,10 @@ runtime:
     # Used instead of image.* on this backend.
     image:
       repository: ghcr.io/agentworkforce/relaycast-self-host
-      # relaycast-self-host:12.8.0-pg.1.
-      digest: sha256:84f59482cb82f3c50d38f45cfca7d004cffaa95652782dbfc93c179cc343ac59
+      # relaycast-self-host:12.8.0-pg.2, relaycast main a63961bd (#653 full
+      # actor migration and #657 PostgreSQL deadlock fix), publish-container
+      # run 43351584271. Multi-platform with GitHub build provenance.
+      digest: sha256:1307bd845031a7466e65ebaf08bc8b826e2837d90f58c9b5a6a1d673c62dad93
     # The `migrate` Job: a plain Job (no Helm hook) named by a hash of its
     # rendered pod template, so any change to it runs a new Job.
     migrations:
@@ -84,6 +86,15 @@ runtime:
         pullPolicy: IfNotPresent
       # More than one replica requires fileStore.driver gcs or s3.
       replicaCount: 1
+      # Generated topology spread for the gateway Deployment. Unlike the
+      # chart-wide topologySpreadConstraints escape hatch, this selector is
+      # derived from the release labels and cannot accidentally select a
+      # different Relaycast release in the namespace.
+      topologySpread:
+        enabled: false
+        maxSkew: 1
+        topologyKey: topology.kubernetes.io/zone
+        whenUnsatisfiable: ScheduleAnyway
       resources:
         requests: { cpu: 100m, memory: 128Mi }
         limits: { memory: 512Mi }

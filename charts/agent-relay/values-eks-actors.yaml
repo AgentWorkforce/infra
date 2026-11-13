@@ -10,12 +10,11 @@
 # profile (values-eks.yaml, docs/self-hosted-eks.md) and set the other
 # components back to true in your overrides, after this file.
 #
-# The image digests below are the GHCR builds of the durable-actors fork (S3
-# storage, AWS placement and sandbox scheduling; charts/durable-actors
-# UPSTREAM.md patch 10) and of relaycast #626 / relayfile #559 (S3 artifact
-# upload). These GHCR packages may still be private: until they are public,
-# mirror them into a registry the nodes can pull from and override the
-# repositories. Replace every <...> value. No credential values appear
+# The image digests below are public GHCR builds of the durable-actors fork
+# (S3 storage, AWS placement and sandbox scheduling; charts/durable-actors
+# UPSTREAM.md patch 10), the reviewed Relaycast migration/runtime changes, and
+# relayfile #559. Mirror them by digest into the customer's registry before a
+# customer rollout. Replace every <...> value. No credential values appear
 # here: the Secrets are listed in docs/self-hosted-durable-actors.md.
 #
 # Identity (EKS Pod Identity; IRSA works through serviceAccount annotations):
@@ -89,10 +88,29 @@ durable-actors:
       - {key: durable-actors/actor-host, operator: Exists, effect: NoSchedule}
   ingress:
     enabled: false
+  # One controller is the tested AWS shape. It keeps its state in PostgreSQL,
+  # but cannot be made multi-replica until the installation supplies Redis.
+  # Protect the singleton from voluntary eviction; a node/AZ loss still needs
+  # the Deployment to reschedule and is not an HA claim.
+  replicaCount: 1
+  podDisruptionBudget:
+    enabled: true
+    maxUnavailable: 0
+  topologySpread:
+    enabled: true
+    maxSkew: 1
+    topologyKey: topology.kubernetes.io/zone
+    whenUnsatisfiable: DoNotSchedule
+  resources:
+    requests: {cpu: "1", memory: 1Gi}
+    limits: {memory: 2Gi}
   actors:
     hostIdleTimeoutMs: 120000
-    warm: 1
-    maxStarting: 4
+    # The shipped 256 MiB actor host repeatedly failed readiness under the AA
+    # workload. These are the tuned soak inputs; keep them together.
+    memoryMiB: 1024
+    warm: 3
+    maxStarting: 8
 
 relaycast:
   # Public HTTPS origin of Relaycast. The Workspace actor reads uploaded files
@@ -121,11 +139,18 @@ relaycast:
       # Dial actor sockets in-cluster: the actors' public URL is an internet
       # name the gateway may not reach from inside the VPC.
       socketOrigin: controlPlane
-      # relaycast main 4e90b169 (#626), publish-actors-images run 41805228035, tag 12.7.0-actors.1
+      # Relaycast main after #653/#655/#656/#663; immutable digest and publish
+      # run are recorded in docs/self-hosted-image-supply-chain.md.
       gateway:
+        replicaCount: 3
+        topologySpread:
+          enabled: true
+          maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: DoNotSchedule
         image:
           repository: ghcr.io/agentworkforce/relaycast-actors-gateway
-          digest: sha256:6d4f77c4285becac66f56601a36ac3580b19ad37331db4ad2b87f68b2a68abe4
+          digest: sha256:8148aa62db3a387dbfc266a8baddcfce4adf90ae089c434d86eecf1aa24973e1
       invocationSecret:
         name: relaycast-durable-actors-invoke
         key: durable-actors-invoke-key
@@ -136,7 +161,7 @@ relaycast:
       deployer:
         image:
           repository: ghcr.io/agentworkforce/relaycast-actors-deployer
-          digest: sha256:f539982442305c61f2c7a7d979cb110e18f3be83fed69befd8755b6ad5476b51
+          digest: sha256:3a407c3138ff56ff14686031b40925ee2f843cfc690eaaf4469f5a518c57213d
         artifactBucket: <bucket>
         artifactStore:
           driver: s3
