@@ -841,6 +841,45 @@
      "action": "rds-failover"
     }
    ]
+  },
+  {
+   "name": "aa-failover",
+   "sinks": 2,
+   "producers": 2,
+   "notes": "relaycast#665 exit test: AA soak shape, 30 min, RDS forced Multi-AZ failover at +10 and +20 min. Pass: no human, recovery < 90 s, 0 lost/dup/reorder.",
+   "fixture": {
+    "RCB_WORKSPACES": 3,
+    "RCB_PRODUCERS": 10,
+    "RCB_RECEIVERS": 20,
+    "RCB_CHANNELS": 4,
+    "RCB_CHANNEL_MEMBERS": 12,
+    "RCB_AGENTS_PER_NODE": 1,
+    "RCB_PRODUCERS_ON_NODES": 1
+   },
+   "phases": [
+    {
+     "label": "aa-fo",
+     "kind": "mixed",
+     "dmShare": 0.6,
+     "uploadShare": 0.05,
+     "rate": 3,
+     "durationS": 1800,
+     "sizeBytes": 1024,
+     "drainS": 300
+    }
+   ],
+   "chaos": [
+    {
+     "phase": "aa-fo",
+     "atS": 600,
+     "action": "rds-failover"
+    },
+    {
+     "phase": "aa-fo",
+     "atS": 1200,
+     "action": "rds-failover"
+    }
+   ]
   }
  ],
  "loadgenCheck": {
