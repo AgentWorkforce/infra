@@ -33,8 +33,12 @@ run "least_privilege" {
   }
   assert {
     condition = anytrue([for s in jsondecode(aws_iam_role_policy.worker.policy).Statement :
-    s.Sid == "SessionsKeyViaS3" && s.Condition.StringEquals["kms:ViaService"] == "s3.us-east-1.amazonaws.com"])
+    s.Sid == "SessionsKeyViaS3" && try(s.Condition.StringEquals["kms:ViaService"], "") == "s3.us-east-1.amazonaws.com"])
     error_message = "The key is used through S3 in the key's region only."
+  }
+  assert {
+    condition     = jsondecode(aws_iam_role.worker.assume_role_policy).Statement[0].Condition.StringEquals["aws:RequestTag/eks-cluster-arn"] == "arn:aws:eks:us-west-2:111111111111:cluster/relay"
+    error_message = "Only the named cluster in this account and Region may assume the role."
   }
   assert {
     condition     = jsondecode(aws_iam_role.worker.assume_role_policy).Statement[0].Condition.StringEquals["aws:RequestTag/kubernetes-service-account"] == "agent-relay-worker"

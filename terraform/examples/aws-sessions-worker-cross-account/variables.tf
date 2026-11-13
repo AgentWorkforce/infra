@@ -62,7 +62,7 @@ variable "sessions_kms_key_arn" {
   description = "The bucket's SSE-KMS key (a key ARN, not an alias)."
   type        = string
   validation {
-    condition     = can(regex("^arn:aws:kms:[a-z0-9-]+:[0-9]{12}:key/[0-9a-f-]{36}$", var.sessions_kms_key_arn))
+    condition     = can(regex("^arn:aws:kms:[a-z0-9-]+:[0-9]{12}:key/([0-9a-f-]{36}|mrk-[0-9a-f]{32})$", var.sessions_kms_key_arn))
     error_message = "sessions_kms_key_arn must be a KMS key ARN."
   }
 }

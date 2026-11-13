@@ -15,7 +15,8 @@ resource "aws_iam_role" "worker" {
   name                 = var.role_name
   path                 = var.role_path
   permissions_boundary = var.permissions_boundary_arn
-  # EKS Pod Identity tags the session with the cluster, namespace and
+  # EKS Pod Identity tags the session with the cluster (ARN, so a same-named
+  # cluster in another Region does not match), namespace and
   # ServiceAccount (the shape the cluster's EBS CSI role uses); only this
   # release's worker may assume the role.
   assume_role_policy = jsonencode({
@@ -26,6 +27,7 @@ resource "aws_iam_role" "worker" {
       Action    = ["sts:AssumeRole", "sts:TagSession"]
       Condition = {
         StringEquals = {
+          "aws:RequestTag/eks-cluster-arn"            = "arn:aws:eks:${var.region}:${var.account_id}:cluster/${var.eks_cluster_name}"
           "aws:RequestTag/eks-cluster-name"           = var.eks_cluster_name
           "aws:RequestTag/kubernetes-namespace"       = var.namespace
           "aws:RequestTag/kubernetes-service-account" = var.service_account
