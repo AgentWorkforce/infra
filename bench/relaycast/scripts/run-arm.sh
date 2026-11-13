@@ -25,6 +25,8 @@
 #   DB_ID               RDS instance for rds-failover and CloudWatch (default relaycast-actors-bench-pg)
 #   NODE_IMAGE          default public.ecr.aws/docker/library/node:22-alpine
 set -euo pipefail
+# Scratch never goes to /tmp on shared hosts.
+export TMPDIR="${TMPDIR:-$HOME/.agent-tmp}"; mkdir -p "$TMPDIR"
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 BENCH="$(cd "$HERE/.." && pwd)"
