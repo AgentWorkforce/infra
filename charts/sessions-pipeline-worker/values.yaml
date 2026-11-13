@@ -184,6 +184,15 @@ migrations:
   # event-trigger; unset, the migrator's function-boundary gate fails closed.
   # The old name, HOOPDB_FUNCTION_BOUNDARY_APPROVED, is refused.
   functionBoundaryMode: ""
+  # HOOPDB_ALLOW_BLOCKING_INDEX_BUILD (default false): lets the adopt-or-create
+  # index steps (20261105044020, 044040, 047000, 058000) run a blocking CREATE
+  # INDEX on a populated table instead of refusing (SQLSTATE 55000). The build
+  # holds a SHARE lock on each table: reads continue, writes wait. Rendered into
+  # the migrate container only, and only when true. Set it for one upgrade of a
+  # small database (scripts/selfhost/agent-relay-upgrade.sh decides this from a
+  # row census); prebuild CONCURRENTLY instead on a large one (the packet named
+  # in the refusal).
+  allowBlockingIndexBuild: false
   backoffLimit: 3
   activeDeadlineSeconds: 3600
   # Opt-in TTL for plain `helm install` users only. Leave 0 under Alchemy.

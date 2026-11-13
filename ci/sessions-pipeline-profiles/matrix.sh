@@ -280,6 +280,21 @@ if [ "$mode" = static ]; then
   out=$(render -f "$CHART/profiles/aws-rds-native.yaml" -f "$CHART/ci/aws-rds-native-inputs.yaml") \
     || err "aws-rds-native: synthetic release overlay did not render"
 
+  # worker.migrations.allowBlockingIndexBuild: off renders no opt-in anywhere; on
+  # renders HOOPDB_ALLOW_BLOCKING_INDEX_BUILD=true in the migrate container only.
+  blocking_env() { yq -r '.. | select(tag == "!!map" and .name == "HOOPDB_ALLOW_BLOCKING_INDEX_BUILD") | .value' <<<"$1" | sed '/^$/d'; }
+  [ -z "$(blocking_env "$out")" ] || err "allowBlockingIndexBuild: the default render sets HOOPDB_ALLOW_BLOCKING_INDEX_BUILD"
+  bout=$(render -f "$CHART/profiles/aws-rds-native.yaml" -f "$CHART/ci/aws-rds-native-inputs.yaml" --set worker.migrations.allowBlockingIndexBuild=true) \
+    || err "allowBlockingIndexBuild=true did not render"
+  [ "$(blocking_env "$bout")" = true ] || err "allowBlockingIndexBuild=true: want exactly one HOOPDB_ALLOW_BLOCKING_INDEX_BUILD=true, got [$(blocking_env "$bout" | tr '\n' ' ')]"
+  [ "$(yq -r 'select(.kind == "Job" and .metadata.labels."app.kubernetes.io/component" == "hoopdb-migrate") | .spec.template.spec.containers[0].env[] | select(.name == "HOOPDB_ALLOW_BLOCKING_INDEX_BUILD") | .value' <<<"$bout")" = true ] \
+    || err "allowBlockingIndexBuild=true: the opt-in is not on the migrate container"
+  expect_fail "migrations.allowBlockingIndexBuild must be true or false" \
+    -f "$CHART/profiles/aws-rds-native.yaml" -f "$CHART/ci/aws-rds-native-inputs.yaml" --set-string worker.migrations.allowBlockingIndexBuild=yes
+  expect_fail "extraEnv must not set HOOPDB_ALLOW_BLOCKING_INDEX_BUILD" \
+    -f "$CHART/profiles/aws-rds-native.yaml" -f "$CHART/ci/aws-rds-native-inputs.yaml" \
+    --set 'worker.extraEnv[0].name=HOOPDB_ALLOW_BLOCKING_INDEX_BUILD' --set-string 'worker.extraEnv[0].value=true'
+
   expect_fail "releaseContract.unifiedServicesDigest must be a boolean" \
     -f "$CHART/profiles/aws-rds-native.yaml" -f "$CHART/ci/aws-rds-native-inputs.yaml" \
     --set-string releaseContract.unifiedServicesDigest=true

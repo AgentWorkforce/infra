@@ -22,7 +22,7 @@ before() { # $1 pattern, $2 pattern: both logged, $1 first
 # The upgrader runs from a copy so rds-setup.sh next to it is the mock below.
 SCRIPT="$root/selfhost/agent-relay-upgrade.sh"
 mkdir -p "$root/selfhost"
-cp "$SELFHOST_DIR/agent-relay-upgrade.sh" "$SELFHOST_DIR/mirror-images-to-ecr.sh" "$SELFHOST_DIR/relaycast-to-actors.sh" "$root/selfhost/"
+cp "$SELFHOST_DIR/agent-relay-upgrade.sh" "$SELFHOST_DIR/mirror-images-to-ecr.sh" "$SELFHOST_DIR/relaycast-to-actors.sh" "$SELFHOST_DIR/sessions-index-census.mjs" "$root/selfhost/"
 cat > "$root/selfhost/rds-setup.sh" <<EOF
 #!/usr/bin/env bash
 echo "rds-setup \$1 NAMESPACE=\${NAMESPACE:-} RELEASE=\${RELEASE:-} MIGRATION_JOB=\${MIGRATION_JOB:-} SERVICES_IMAGE=\${SERVICES_IMAGE:-} PSQL_IMAGE=\${PSQL_IMAGE:-} STATE_DIR=\${STATE_DIR:-}" >> "$root/log"
@@ -88,7 +88,7 @@ EOF
 setup_mocks() { # $1 release fixture dir, $2 attestation result (ok|fail)
   local bin="$root/bin"; rm -rf "$bin"; mkdir -p "$bin"; : > "$root/log"
   rm -f "$root/rekey-fail" "$root/crane-missing" "$root/rendered-extra.yaml" "$root/rendered-target.yaml" "$root/live-manifest.yaml" "$root/patches" "$root/live-values.yaml"; rm -rf "$root/secrets"; touch "$root/exists"
-  rm -rf "$root/jobstate"; mkdir -p "$root/jobstate"; rm -f "$root/no-version"
+  rm -rf "$root/jobstate"; mkdir -p "$root/jobstate"; rm -f "$root/no-version" "$root/applied.yaml" "$root/census.out" "$root/census-phase"
   printf 'v1\napps/v1\nbatch/v1\npolicy/v1\nautoscaling/v2\n' > "$root/api-versions"
   cat > "$bin/gh" <<EOF
 #!/usr/bin/env bash
@@ -102,6 +102,10 @@ EOF
 #!/usr/bin/env bash
 echo "kubectl \$*" >> "$root/log"
 case "\$*" in
+  # The Sessions index census: the pod manifest is kept, its phase and logs come from fixtures.
+  *" apply -f -"*) cat >> "$root/applied.yaml"; echo --- >> "$root/applied.yaml" ;;
+  *"get pod "*"-o json"*) printf '{"status":{"phase":"%s"}}\n' "\$(cat "$root/census-phase" 2>/dev/null || echo Succeeded)" ;;
+  *"logs pod/"*"-c census"*) cat "$root/census.out" 2>/dev/null || true ;;
   *jsonpath*) echo "old/relay-control@sha256:old" ;;
   *"version -o json"*) [ -f "$root/no-version" ] || echo '{"serverVersion":{"gitVersion":"v1.31.4-eks-2d5f260"}}' ;;
   *api-versions*) cat "$root/api-versions" ;;
@@ -579,3 +583,129 @@ pass "cutover checks every mirrored image digest before stopping anything"
 ( umask 077; touch "$st.golive"; echo relaycast-actors-1 > "$st.run" )
 grep -q 'GO-LIVE IS RECORDED' "$SELFHOST_DIR/relaycast-to-actors.sh" || fail "no forward-only rollback hint"
 pass "go-live is recorded before the first workspace opens and the hint turns forward-only"
+
+# 36-44. Sessions adopt-or-create index steps: a read-only census from the
+# deployed migrate Job decides the blocking-build opt-in for this upgrade only.
+live_migrate='kind: Job
+metadata:
+  name: agent-relay-worker-migrate-0a1b2c3d
+  labels: { app.kubernetes.io/component: hoopdb-migrate }
+spec:
+  template:
+    metadata:
+      labels: { app.kubernetes.io/component: hoopdb-migrate, app.kubernetes.io/instance: agent-relay }
+    spec:
+      serviceAccountName: agent-relay-worker-migrate
+      restartPolicy: Never
+      initContainers: [{ name: wait-for-role, image: old/psql@sha256:old }]
+      containers:
+        - name: migrate
+          image: old/sessions-pipeline@sha256:old
+          args: [migrate]
+          env:
+            - { name: HOOPDB_URL, valueFrom: { secretKeyRef: { name: agent-relay-secrets, key: HOOPDB_MIGRATION_URL } } }
+            - { name: NODE_EXTRA_CA_CERTS, value: /etc/postgres-ca/ca.crt }
+          volumeMounts: [{ name: postgres-ca, mountPath: /etc/postgres-ca, readOnly: true }]
+      volumes: [{ name: postgres-ca, configMap: { name: rds-ca } }]'
+E58=upstream:20261105058000_operator_user_erase_indexes.sql
+PK58=docs/packets/operator-user-erase-index-packet.md
+# census STATE ROWS [APPLIED]: 044020 applied; 058000 pending (unless APPLIED=true) with one index
+# in STATE on a table of ROWS rows plus one absent index on an empty table.
+census() {
+  local exact=true; [ "$2" -gt 1000000 ] && exact=false
+  printf 'INDEX_CENSUS {"limit":1000000,"steps":[{"step":"upstream:20261105044020_claim_bootstrap_org_indexes.sql","packet":"p","applied":true,"indexes":[]},{"step":"%s","packet":"%s","applied":%s,"indexes":[{"name":"ingest_lazy_ack_decisions_native_key_sha256_idx","table":"sessions.ingest_lazy_ack_decisions","state":"%s","table_exists":true,"rows":%s,"exact":%s,"estimate":%s},{"name":"ingest_receipt_ord_seats_key_sha256_idx","table":"sessions.ingest_receipt_ord_seats","state":"absent","table_exists":true,"rows":0,"exact":true,"estimate":0}]}]}\n' \
+    "$E58" "$PK58" "${3:-false}" "$1" "$2" "$exact" "$2" > "$root/census.out"
+}
+blocking_in() { grep "helm .*$1" "$root/log" | grep -q 'blocking-index.values.yaml'; }
+census_setup() { setup_mocks "$root/rel-ok" ok; printf '%s\n' "$live_migrate" > "$root/live-manifest.yaml"; }
+
+# 36. empty tables: no opt-in; the census pod is the deployed migrate container, read-only, and is deleted
+census_setup; census absent 0
+out=$(run "${args[@]}" 2>&1) || fail "census plan with empty tables failed: $out"
+grep -q 'no blocking build' <<<"$out" || fail "empty tables did not report the no-opt-in path: $out"
+blocking_in template && fail "empty tables rendered the blocking-build opt-in"
+pod=$(yq -o=json 'select(.kind == "Pod")' "$root/applied.yaml")
+[ "$(jq -r '.spec.containers | length' <<<"$pod")" = 1 ] || fail "census pod must have exactly one container"
+[ "$(jq -r '.spec.containers[0].image' <<<"$pod")" = old/sessions-pipeline@sha256:old ] || fail "census pod must use the deployed migrate image"
+[ "$(jq -r '.spec.containers[0].command | join(" ")' <<<"$pod")" = "bun /index-census/sessions-index-census.mjs" ] || fail "census pod runs the wrong command"
+jq -e '.spec.initContainers == null and .spec.containers[0].args == null and .spec.restartPolicy == "Never"' <<<"$pod" >/dev/null || fail "census pod kept init containers or args"
+jq -e '.spec.serviceAccountName == "agent-relay-worker-migrate" and .metadata.labels."app.kubernetes.io/component" == "hoopdb-migrate"' <<<"$pod" >/dev/null || fail "census pod lost the migrate Job identity or labels"
+jq -e '[.spec.containers[0].env[] | select(.name == "HOOPDB_URL") | .valueFrom.secretKeyRef.key] == ["HOOPDB_MIGRATION_URL"]' <<<"$pod" >/dev/null || fail "census pod must read the migrate Job's HOOPDB_URL Secret reference"
+jq -e '[.spec.containers[0].env[] | select(.name == "INDEX_CENSUS_LIMIT") | .value] == ["1000000"]' <<<"$pod" >/dev/null || fail "census pod limit"
+jq -e '[.spec.containers[0].volumeMounts[].name] == ["postgres-ca", "index-census"]' <<<"$pod" >/dev/null || fail "census pod must keep the CA mount and add the script"
+grep -q 'kubectl .*delete pod,configmap agent-relay-index-census-' "$root/log" || fail "census pod and ConfigMap were not deleted"
+grep -q 'postgresql://' "$root/applied.yaml" && fail "a connection string reached the census manifest"
+pass "census: empty tables need no opt-in; the pod clones the deployed migrate container and is deleted"
+
+# 37. small populated tables: the opt-in for this upgrade only, with rows and lock time in the plan
+census_setup; census absent 4000
+out=$(run "${args[@]}" 2>&1) || fail "census plan with a small table failed: $out"
+grep -q 'path: blocking build for this upgrade. 4000 rows' <<<"$out" || fail "small table did not take the blocking path: $out"
+grep -q 'Expected lock: about 1s of SHARE lock on sessions.ingest_lazy_ack_decisions' <<<"$out" || fail "plan did not state the expected lock: $out"
+grep -q 'sessions.ingest_lazy_ack_decisions_native_key_sha256_idx on sessions.ingest_lazy_ack_decisions: 4000 rows' <<<"$out" || fail "plan did not name the index and rows: $out"
+blocking_in template || fail "the blocking path did not render the opt-in"
+census_setup; census absent 4000
+out=$(run "${args[@]}" --apply --db-instance prod-db --yes 2>&1) || fail "apply on the blocking path failed: $out"
+blocking_in ' upgrade ' || fail "helm upgrade did not carry the opt-in"
+grep 'helm .* upgrade ' "$root/log" | grep -o -- '-f [^ ]*' | tail -1 | grep -q blocking-index.values.yaml || fail "the opt-in values must come last"
+pass "census: a small populated table gets the blocking-build opt-in for this upgrade only"
+
+# 38. above the limit: refuse in plan and apply, naming the packet; nothing rendered, mirrored or snapshotted
+census_setup; census absent 2500000
+out=$(run "${args[@]}" 2>&1) && fail "a large table was accepted"
+grep -q "refusing: 1 index(es) are absent on populated tables with 2500000 rows to index, above the blocking-build limit of 1000000" <<<"$out" || fail "large table refused for the wrong reason: $out"
+grep -q "$PK58" <<<"$out" || fail "the refusal did not name the prebuild packet: $out"
+grep -q '(at least; estimate 2500000)' <<<"$out" || fail "an estimated count was not marked: $out"
+grep -q 'helm template' "$root/log" && fail "a refused census still rendered"
+census_setup; census absent 2500000
+run "${args[@]}" --apply --db-instance prod-db --yes >/dev/null 2>&1 && fail "apply accepted a large table"
+grep -Eq 'aws rds create-db-snapshot|helm .* upgrade |crane ' "$root/log" && fail "a refused census still snapshotted, mirrored or upgraded"
+pass "census: above the limit it refuses before anything changes and names the CONCURRENTLY packet"
+
+# 39. the limit is configurable
+census_setup; census absent 4000
+AGENT_RELAY_BLOCKING_INDEX_MAX_ROWS=1000 run "${args[@]}" >"$root/out" 2>&1 && fail "rows above a lowered limit were accepted"
+grep -q 'above the blocking-build limit of 1000 rows' "$root/out" || fail "a lowered limit was not applied: $(cat "$root/out")"
+AGENT_RELAY_BLOCKING_INDEX_MAX_ROWS=lots run "${args[@]}" >"$root/out" 2>&1 && fail "a non-numeric limit was accepted"
+pass "census: AGENT_RELAY_BLOCKING_INDEX_MAX_ROWS sets the limit and must be a number"
+
+# 40. prebuilt (adoptable) indexes, or every step applied: nothing to set
+census_setup; census adoptable 2500000
+out=$(run "${args[@]}" 2>&1) || fail "a prebuilt index on a large table was refused: $out"
+grep -q '1 index(es) prebuilt and adopted' <<<"$out" && grep -q 'no blocking build' <<<"$out" || fail "prebuilt index not reported as adopted: $out"
+blocking_in template && fail "a prebuilt index rendered the opt-in"
+census_setup; census absent 2500000 true
+out=$(run "${args[@]}" 2>&1) || fail "applied steps were refused: $out"
+grep -q 'already applied: nothing to build' <<<"$out" || fail "applied steps not reported: $out"
+pass "census: prebuilt indexes and applied steps need no opt-in"
+
+# 41. an INVALID or drifted index refuses even when small
+for st in not_ready mismatch; do
+  census_setup; census "$st" 10
+  out=$(run "${args[@]}" 2>&1) && fail "a $st index was accepted"
+  grep -q 'refusing: an index the Sessions migration would adopt is not usable' <<<"$out" || fail "$st refused for the wrong reason: $out"
+done
+pass "census: an INVALID or drifted index refuses"
+
+# 42. fail closed: a census error, or a pod that ends without a result, refuses
+census_setup; printf 'INDEX_CENSUS_ERROR 42501 permission denied for table ingest_lazy_ack_decisions\n' > "$root/census.out"
+out=$(run "${args[@]}" 2>&1) && fail "a census error was accepted"
+grep -q 'the index census failed (42501 permission denied' <<<"$out" || fail "census error not reported: $out"
+census_setup; echo Failed > "$root/census-phase"
+out=$(run "${args[@]}" 2>&1) && fail "a census without a result was accepted"
+grep -q 'the index census pod ended Failed without a result' <<<"$out" || fail "missing census result not reported: $out"
+grep -q 'kubectl .*delete pod,configmap agent-relay-index-census-' "$root/log" || fail "a failed census pod was not deleted"
+pass "census: an error or a missing result refuses (fail closed) and still cleans up"
+
+# 43. the opt-in belongs to the upgrader: site values setting it refuse
+census_setup; census absent 0
+printf 'sessions-pipeline:\n  worker:\n    migrations:\n      allowBlockingIndexBuild: true\n' > "$root/optin.yaml"
+out=$(run --version 2026.11.1 --registry "$REG" --profile eks-native --values "$root/optin.yaml" 2>&1) && fail "site values setting the opt-in were accepted"
+grep -q 'sets sessions-pipeline.worker.migrations.allowBlockingIndexBuild: remove it' <<<"$out" || fail "site opt-in refused for the wrong reason: $out"
+pass "census: site values may not set the blocking-build opt-in"
+
+# 44. first install and the Relaycast phases never run the census
+census_setup; census absent 2500000; rm -f "$root/exists"
+run "${args[@]}" --first-install >/dev/null 2>&1 || fail "first install plan failed with a census fixture present"
+grep -q 'index-census' "$root/log" && fail "first install ran the index census"
+pass "census: first install skips the index census"
