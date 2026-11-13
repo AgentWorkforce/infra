@@ -1,0 +1,6 @@
+# Actors arm, tuned: actor hosts get 1024 MiB instead of the 256 MiB default
+# (durable-actors.actors.memoryMiB). The as-shipped AA soak showed hosts at
+# 219-237 of 256 MiB failing readiness and being re-placed in a loop.
+durable-actors:
+  actors:
+    memoryMiB: 1024

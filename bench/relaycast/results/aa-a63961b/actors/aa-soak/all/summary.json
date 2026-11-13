@@ -1,0 +1,239 @@
+{
+ "arm": "actors",
+ "dir": "/home/khaliqgant/Projects/AgentWorkforce/infra-worktrees/relaycast-actors-bench/bench/relaycast/results/aa-a63961b/actors/aa-soak/all",
+ "phases": [
+  {
+   "label": "aa-soak",
+   "kind": "mixed",
+   "offeredRate": 3,
+   "startedAt": 1794537973872,
+   "endedAt": 1794545179097,
+   "issued": 21598
+  }
+ ],
+ "routes": [
+  {
+   "arm": "actors",
+   "phase": "aa-soak",
+   "route": "POST /v1/dm",
+   "requests": 12389,
+   "ok": 8208,
+   "rps_ok": 1.14,
+   "err_rate": 0.33748,
+   "r429": 0,
+   "r5xx": 3634,
+   "net_err": 547,
+   "p50": 4214.494,
+   "p95": 28155.786,
+   "p99": 29968.179,
+   "max": 30001.51000000164,
+   "corrected_p50": 4214.494,
+   "corrected_p95": 28155.786,
+   "corrected_p99": 29968.179
+  },
+  {
+   "arm": "actors",
+   "phase": "aa-soak",
+   "route": "POST /v1/files/upload",
+   "requests": 1050,
+   "ok": 732,
+   "rps_ok": 0.1,
+   "err_rate": 0.30286,
+   "r429": 0,
+   "r5xx": 277,
+   "net_err": 41,
+   "p50": 3694.45,
+   "p95": 23676.1,
+   "p99": 29968.179,
+   "max": 30001.061000000685,
+   "corrected_p50": null,
+   "corrected_p95": null,
+   "corrected_p99": null
+  },
+  {
+   "arm": "actors",
+   "phase": "aa-soak",
+   "route": "PUT /_relayfiles",
+   "requests": 732,
+   "ok": 566,
+   "rps_ok": 0.08,
+   "err_rate": 0.22678,
+   "r429": 0,
+   "r5xx": 165,
+   "net_err": 1,
+   "p50": 3593.425,
+   "p95": 5046.767,
+   "p99": 5081.87,
+   "max": 5266.947000000626,
+   "corrected_p50": null,
+   "corrected_p95": null,
+   "corrected_p99": null
+  },
+  {
+   "arm": "actors",
+   "phase": "aa-soak",
+   "route": "POST /v1/channels/:name/messages",
+   "requests": 8159,
+   "ok": 5670,
+   "rps_ok": 0.79,
+   "err_rate": 0.30506,
+   "r429": 0,
+   "r5xx": 2125,
+   "net_err": 364,
+   "p50": 4070.933,
+   "p95": 27196.697,
+   "p99": 29968.179,
+   "max": 30001.36100000143,
+   "corrected_p50": 4070.933,
+   "corrected_p95": 27196.697,
+   "corrected_p99": 29968.179
+  },
+  {
+   "arm": "actors",
+   "phase": "aa-soak",
+   "route": "POST /v1/files/:id/complete",
+   "requests": 732,
+   "ok": 657,
+   "rps_ok": 0.09,
+   "err_rate": 0.10246,
+   "r429": 0,
+   "r5xx": 67,
+   "net_err": 8,
+   "p50": 3519.473,
+   "p95": 16059.55,
+   "p99": 29968.179,
+   "max": 30000.484000001103,
+   "corrected_p50": null,
+   "corrected_p95": null,
+   "corrected_p99": null
+  },
+  {
+   "arm": "actors",
+   "phase": "aa-soak",
+   "route": "upload_total_raw",
+   "requests": 0,
+   "ok": 0,
+   "rps_ok": 0,
+   "err_rate": null,
+   "r429": 0,
+   "r5xx": 0,
+   "net_err": 0,
+   "p50": 10305.621,
+   "p95": 29968.179,
+   "p99": 43875.982,
+   "max": 59804,
+   "corrected_p50": null,
+   "corrected_p95": null,
+   "corrected_p99": null
+  }
+ ],
+ "delivery": [
+  {
+   "arm": "actors",
+   "phase": "aa-soak",
+   "deliveries": 164620,
+   "deliveries_per_s": 22.85,
+   "p50": 4977.287,
+   "p95": 181693.063,
+   "p99": 339051.244,
+   "p999": 492971.19,
+   "max": 540567
+  }
+ ],
+ "integrity": [
+  {
+   "arm": "actors",
+   "phase": "aa-soak",
+   "expected": 76248,
+   "delivered": 76248,
+   "lost": 0,
+   "duplicate": 0,
+   "redelivered": 19373,
+   "reordered": 0,
+   "reordered_after_timeout": 0,
+   "unexpected": 60,
+   "truncated": 0
+  }
+ ],
+ "sinks": [
+  {
+   "shard": 0,
+   "sockets": 45,
+   "connected": 15,
+   "drops": 1660,
+   "connect": {
+    "n": 45,
+    "mean": 7061.533,
+    "min": 4831,
+    "p50": 7287.174,
+    "p95": 8546.653,
+    "p99": 8726.236,
+    "p999": 8726.236,
+    "max": 8720
+   },
+   "reconnect": {
+    "n": 1630,
+    "mean": 64541.193,
+    "min": 5749,
+    "p50": 46700.287,
+    "p95": 146561.212,
+    "p99": 228390.61,
+    "p999": 258740.041,
+    "max": 258952
+   },
+   "counters": {
+    "frame context.update": 119325,
+    "join 200": 72,
+    "deliver": 81903,
+    "ws_drop 4400": 1600,
+    "connect_error ws error": 34390,
+    "ws_drop 1012": 59,
+    "connect_error ws closed 4400": 146,
+    "ws_drop 1001": 1,
+    "connect_error ws closed 4012": 8,
+    "connect_error node.register timeout": 85
+   },
+   "drain": [],
+   "rssBytes": 109027328
+  },
+  {
+   "shard": 1,
+   "sockets": 45,
+   "connected": 15,
+   "drops": 1689,
+   "connect": {
+    "n": 45,
+    "mean": 7222.756,
+    "min": 3708,
+    "p50": 7544.156,
+    "p95": 8726.236,
+    "p99": 8848.05,
+    "p999": 8848.05,
+    "max": 8844
+   },
+   "reconnect": {
+    "n": 1659,
+    "mean": 62822.321,
+    "min": 6483,
+    "p50": 45423.266,
+    "p95": 140590.912,
+    "p99": 228390.61,
+    "p999": 260539.721,
+    "max": 261091
+   },
+   "counters": {
+    "frame context.update": 122092,
+    "join 200": 72,
+    "deliver": 82717,
+    "ws_drop 4400": 1630,
+    "connect_error ws error": 34291,
+    "ws_drop 1012": 59,
+    "connect_error ws closed 4400": 133,
+    "connect_error ws closed 4012": 4,
+    "connect_error node.register timeout": 78
+   },
+   "drain": [],
+   "rssBytes": 117424128
+  }
+ ]
+}
