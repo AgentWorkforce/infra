@@ -516,12 +516,15 @@ GRANT TEMP ON DATABASE relaycast TO relaycast_owner;""")
         self.k("rollout", "status", "deployment/sessions-session-brief", "--timeout=180s", timeout=210)
         print("Local model key installed; brief worker ready. Search/summary acceptance must still be verified.")
 
-    def control(self, c):
-        self.secret("local-control-owner", {"database-migrations-url": pgurl("control_owner", c, "/etc/postgres-ca/ca.crt", "relaycontrol")})
+    def control_secret(self, c):
+        oidc = self.google_oidc()
         self.secret("local-control", {"database-url": pgurl("control_api_runtime", c, "/etc/postgres-ca/ca.crt", "relaycontrol"),
             "bootstrap-token": c["bootstrap"], "encryption-key": c["encryption"], "cast-secret": c["cast"],
             "internal-token": c["internal"], "introspect-secret": c["introspection"], "reader-secret": c["readerIssuer"],
-            **({"oidc-client-secret": self.google_oidc()["client_secret"]} if self.google_oidc() else {})})
+            **({"oidc-client-secret": oidc["client_secret"]} if oidc else {})})
+
+    def control(self, c):
+        self.secret("local-control-owner", {"database-migrations-url": pgurl("control_owner", c, "/etc/postgres-ca/ca.crt", "relaycontrol")})
         cast = {"internal-secret": c["cast"], "workspace-bootstrap-secret": c["castBootstrap"]}
         if CAST_BACKEND == "durable-actors":
             cast.update({"credential-keyring": json.dumps({"current": "a", "keys": {"a": c["castKeyring"]}}),
@@ -755,6 +758,9 @@ WHERE p.oid=to_regprocedure('session_consumer_bootstrap_private.consumer_has_pas
         self.mail()
         self.github_releases_egress()
         self.google_oidc_egress()
+        # Configured credentials must exist before every rendered upgrade,
+        # even when first-install migrations/bootstrap are already complete.
+        self.control_secret(c)
         self.stage("control", lambda: self.control(c))
         self.sql("hoopdb", "ALTER ROLE hoop CREATEROLE;")
         try:
