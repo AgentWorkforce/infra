@@ -586,6 +586,16 @@ ingestEdge:
   # Serves the per-session erase on POST /v1/delivery/sessions/selection
   # (RELAYHISTORY_SELFHOST_SESSION_SELECTION). Needs pipeline migration 043910.
   sessionSelection: false
+  # Upload accounting ledger (pipeline decision 0005, INGEST_LEDGER). sql (the
+  # default) renders nothing and keeps the SQL ledger. s3 renders INGEST_LEDGER=s3:
+  # every admission path of this ingest (sync, async consumer, direct-upload
+  # promotion) claims and commits through the S3 ledger, and no org is admitted
+  # until an operator writes its fence-authority marker (README "S3 upload
+  # ledger"). The database stays required: s3 controls still mirror deletions to
+  # SQL. s3 refuses (render fails, as the binary does at startup) sessionSelection,
+  # the operator session erase and upload consent. Needs a services image from
+  # pipeline 8b2430c7 or later.
+  ledger: sql
   # Answers the Desktop's POST /v1/onboarding/heartbeat 204 and discards it
   # (RELAYHISTORY_SELFHOST_HEARTBEAT_ACCEPT). Needs a services image from pipeline
   # #431 or later.
@@ -600,6 +610,54 @@ ingestEdge:
   networkPolicy:
     enabled: false
     ingressFrom: []
+  resources:
+    requests: { cpu: 50m, memory: 128Mi }
+    limits: { memory: 512Mi }
+
+# S3 ledger re-arm sweeper (pipeline decision 0005, rearm-sweeper-main.ts).
+# Default off: nothing renders. Enabled, a CronJob runs one sweeper pass per
+# schedule tick with ingestEdge's image, bucket, region, endpoint and keyRoot
+# (derived, never duplicated: the marker's rearmSweeper "live" means it sweeps
+# THIS bucket and key root). Requires ingestEdge.enabled and ingestEdge.ledger=s3.
+# A pass erases canonical object versions named by ledger/rearm/ markers, so it
+# needs its own credential (README "Re-arm sweeper IAM").
+rearmSweeper:
+  enabled: false
+  schedule: "*/5 * * * *"
+  # A tick that cannot start within this window is skipped; the next one resumes
+  # from the durable cursor in the bucket.
+  startingDeadlineSeconds: 240
+  # Upper bound on one pass. A killed pass resumes after the last finished marker.
+  activeDeadlineSeconds: 1800
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  # Optional org scope (INGEST_REARM_ORGS). Empty sweeps every org. A per-org
+  # fence-authority marker may claim rearmSweeper "live" only for an org listed
+  # here (or with this empty); the deployment-wide marker needs this empty.
+  orgs: []
+  # INGEST_REARM_DRY_RUN=1: classify and count only, no write and no delete. A dry
+  # run is NOT "live" for the fence-authority marker.
+  dryRun: false
+  # Optional INGEST_REARM_CONCURRENCY (1..16) and INGEST_REARM_MAX_MARKERS
+  # (1..10000); null keeps the binary defaults (4 and 500).
+  concurrency: null
+  maxMarkers: null
+  credentials:
+    # secret only. rearm-sweeper-main's "role" mode reads AWS_ACCESS_KEY_ID and
+    # AWS_SECRET_ACCESS_KEY from the environment (as Lambda injects them); EKS Pod
+    # Identity and IRSA do not set those, so podIdentity is refused here.
+    mode: secret
+    # Dedicated Secret (mounted as files, INGEST_REARM_S3_*_FILE). The ingest
+    # runtime, Locker writer and upload witness Secrets are refused.
+    existingSecret: ""
+    accessKeyIdKey: access-key-id
+    secretAccessKeyKey: secret-access-key
+  createServiceAccount: false
+  serviceAccountName: ""
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  podAnnotations: {}
   resources:
     requests: { cpu: 50m, memory: 128Mi }
     limits: { memory: 512Mi }

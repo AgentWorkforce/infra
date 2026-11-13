@@ -214,3 +214,188 @@ The edge returns `401 refresh_not_supported`; Desktop then renews its upload
 credential from its current Control sign-in. Sending this POST to the reader
 returns `405` and leaves expired uploads retrying as an outage. Descendant paths
 continue to use the reader; this adds no public internal issuer route.
+
+## S3 upload ledger (decision 0005, default off)
+
+Pipeline decision 0005 (`docs/decisions/0005-s3-native-upload-ledger.md`) moves
+upload accounting (batch idempotency, stored revisions, ownership, deletion
+fences, re-arm markers) from SQL into objects under each user's admission
+directory. Both values below are off by default, and the default render is
+byte-identical to the chart before they existed.
+
+### `ingestEdge.ledger: sql | s3`
+
+- `sql` (default) renders nothing and keeps the SQL ledger.
+- `s3` renders `INGEST_LEDGER=s3` on the ingest edge. Every admission path of
+  that process (sync, the async consumer and direct-upload promotion) then claims
+  and commits through `ledger-s3.ts`. Needs a services image built from
+  pipeline main `8b2430c7` or later.
+- Only the ingest edge gets `INGEST_LEDGER`. It is the only workload in this
+  chart that admits uploads through the upload ledger
+  (`src/session-ingest/selfhost-server.ts`). The legacy `alleyoop-ingest`
+  (`src/alleyoop/ingest.ts`, the pipeline chunk/manifest routes), the worker
+  components and the read API never call `ledger-sql.ts` or `ledger-s3.ts`.
+  The read API and the eraser still read SQL `upload_deletions`. That is why
+  `s3` keeps the database requirement (see the control mirror below).
+- The render fails, as the binary fails at startup
+  (`selfhost-config.ts` `selfhostLedger`), when `s3` is combined with features
+  whose state is SQL-only:
+  - `ingestEdge.sessionSelection: true` (`RELAYHISTORY_SELFHOST_SESSION_SELECTION`);
+  - the operator session erase (`global.operatorSessionErase.fenceEnforced`,
+    `operatorSessionErase.api.enabled`, `operatorSessionErase.bytes.enabled`).
+  - Upload consent (`INGEST_UPLOAD_CONSENT`) is never rendered by this chart and
+    `ingestEdge.extraEnv` is refused, so it is always `off` here.
+- With `s3`, `ingestEdge.maxPerUser` and `maxPerOrg` no longer bound the sync
+  path. The S3 ledger has no tenant slots.
+- The ingest's Locker credential also needs GetObject and conditional PutObject
+  (`If-None-Match: *` and `If-Match`) under
+  `<keyRoot>/.admission-inbox/*/ledger/` (`batches/`, `revisions/`, `owners/`,
+  `rearm/`) and on `…/upload-fences.json`. A reset also needs ListBucket on
+  `…/ledger/owners/`, and the markers need GetObject on
+  `<keyRoot>/.ledger/fence-authority.json` and
+  `<keyRoot>/.ledger/fence-authority/*`. Nothing in the S3 ledger is ever
+  deleted (pipeline `docs/selfhost-composition.md`).
+
+### Operator steps on self-host
+
+With `s3`, **no org is admitted until a fence-authority marker covers it.**
+Until then, every claim for that org is a retry, and its sync uploads answer
+503. The chart never writes a marker. An operator writes one only after every
+condition below holds. The fields are exactly:
+
+```json
+{"v":1,"fenceBackfill":"complete","revisionBackfill":"complete","ownershipBackfill":"complete","controlMirror":"on","rearmSweeper":"live","workerHttpAdmission":"off","writtenAtMs":<ms>}
+```
+
+- **Per org (use this first):** `<keyRoot>/.ledger/fence-authority/<org>.json`.
+  Add `"orgId":"<org>"`, which must equal the org in the key.
+- **Deployment-wide:** `<keyRoot>/.ledger/fence-authority.json`, with no
+  `orgId`. Use it only after the full backfill of every org.
+
+What each field asserts (`ledger-s3.ts` `FenceAuthorityDoc`), and what it means
+on self-host:
+
+1. **`workerHttpAdmission: "off"`.** The field names the hosted Worker's HTTP
+   upload path, whose ledger is SQL (`INGEST_LEDGER=s3` refuses there). This
+   chart has no such Worker. The condition behind the field still applies: nothing
+   else may admit these users through a SQL ledger any more. For example, no other
+   ingest release or replica with `ledger: sql` may serve the same bucket and key
+   root. It must hold **before** the revision and ownership backfills run. An
+   admission made after them would be missing from the S3 index and owner
+   stubs.
+2. **`fenceBackfill`, `revisionBackfill`, `ownershipBackfill: "complete"`.**
+   Each user's SQL deletions and resets (`upload_deletions`, `upload_resets`)
+   must be in their fence. SQL `ingest_record_revisions` must be in the revision
+   index, and SQL `ingest_session_ownership` (and every session with SQL
+   revisions) must be in owner stubs. These copies run after step 1. This chart
+   ships no backfill Job. If the SQL tables hold nothing for the users the marker
+   covers (for example, an ingest that never ran with `ledger: sql`), there is
+   nothing to copy. Verify that against the database rather than assume it.
+3. **`controlMirror: "on"`.** Every control route must write the S3 fence before
+   SQL, so no deletion lands in SQL alone. On self-host the ledger's own controls
+   do this: with `INGEST_LEDGER=s3`, selection and reset write the S3 fence first
+   and then reconcile SQL `upload_deletions` (`withSqlControlMirror`). A failure
+   on either side fails the control. It holds once every ingest replica serving
+   these users runs `ledger: s3`. A replica on `sql` writes controls to SQL only.
+4. **`rearmSweeper: "live"`.** The re-arm sweeper runs against this bucket and
+   key root, armed and not in dry run (`rearmSweeper.enabled: true`,
+   `dryRun: false`). With `rearmSweeper.orgs` set, it is live only for the
+   listed orgs. The deployment-wide marker needs `orgs` empty.
+
+Kill switch (pipeline `docs/selfhost-composition.md`, "Stopping admission"):
+
+- To stop one org, write an **invalid** marker (for example `{}`) at its per-org
+  key. Deleting it is not enough while a valid deployment-wide marker exists.
+- To stop every org, delete or invalidate the deployment-wide marker **and**
+  every per-org marker.
+
+Either way, already-claimed batches still commit, and each warm instance stops
+within its 60 s cache.
+
+Suggested order:
+
+1. Set `ledger: s3` and enable `rearmSweeper` in the same upgrade. The sweeper
+   requires `ledger: s3`, and nothing is admitted yet. A first pass with
+   `dryRun: true` is optional, but it is not live.
+2. Set `dryRun: false`.
+3. Confirm step 1 of the list above, then run and verify the backfills.
+4. Write the per-org marker.
+
+Enabling any of this on an environment is a deliberate operator decision.
+
+### Re-arm sweeper (`rearmSweeper`)
+
+A commit that a deletion, disable or reset reached after its claim writes a
+re-arm marker under `…/ledger/rearm/`. The sweeper
+(`rearm-sweeper.ts`) erases that session's canonical copy again and records
+completion. It is a precondition of the marker's `rearmSweeper: "live"`.
+
+- **Shape.** A CronJob (`<release>-rearm-sweeper`). The default schedule is
+  `*/5 * * * *` with `concurrencyPolicy: Forbid`, `backoffLimit: 0` and
+  `activeDeadlineSeconds: 1800`. It runs one pass of
+  `bun run /app/src/session-ingest/rearm-sweeper-main.ts`. The image's
+  `SERVICE=s3-ledger-rearm-sweeper` entry runs `--loop` for a Deployment, so the
+  CronJob runs the one-shot main directly.
+- **Exit codes and resume.** A pass exits:
+  - `0` when complete;
+  - `3` when incomplete or a marker failed;
+  - `2` when refused or misconfigured, for example `access_denied` on a
+    401/403;
+  - `4` on any other failure.
+
+  A real pass saves its position in a durable cursor at
+  `<keyRoot>/.ledger/rearm-sweeper/cursor-<hash>.json`, so a failed or killed
+  Job resumes on the next tick. Alert on failed Jobs, and on the `corrupt` count
+  in the one JSON line each pass logs.
+- **Targets.** Image, bucket, region, endpoint, `ALLOW_IN_CLUSTER_HTTP` and key
+  root are taken from `ingestEdge`. They are never set separately, because
+  "live" means this bucket and key root. Optional:
+  - `orgs` (`INGEST_REARM_ORGS`);
+  - `dryRun` (`INGEST_REARM_DRY_RUN=1`, no write and no delete, so not live);
+  - `concurrency` (1-16) and `maxMarkers` (1-10000).
+- **Credentials.** Set `credentials.mode: secret` and a dedicated
+  `existingSecret`. The chart mounts it as files and sets
+  `INGEST_REARM_CREDENTIALS=keys` with `INGEST_REARM_S3_*_FILE`. The render
+  refuses the ingest runtime, Locker writer and upload witness Secrets, because
+  this credential deletes object versions. `podIdentity` is refused.
+  `rearm-sweeper-main`'s other mode (`role`) reads `AWS_ACCESS_KEY_ID` and
+  `AWS_SECRET_ACCESS_KEY` from the environment, as Lambda injects them, and EKS
+  Pod Identity and IRSA set neither. `serviceAccountName` (and
+  `createServiceAccount`) give the Pod its own identity, distinct from the
+  ingest's.
+- **Requirements.** `ingestEdge.enabled: true`, `ingestEdge.ledger: s3` and
+  `ingestEdge.locker.provider: s3`. The sweeper lists and deletes S3 object
+  versions.
+
+#### Re-arm sweeper IAM
+
+Derived from the operations in `rearm-sweeper.ts`, `rearm-sweeper-main.ts` and
+the shared eraser (`neon-s3-erasure/eraser.ts`), matching the pipeline's
+`docs/selfhost-composition.md`:
+
+- `s3:ListBucket` on the bucket, **unconditioned**. A prefix condition turns the
+  HEAD of a missing completion record into a 403, which aborts the pass with
+  `access_denied`.
+- `s3:GetObject` (GET and HEAD) on:
+  - `<keyRoot>/.admission-inbox/*/ledger/rearm/*` (markers and their
+    `.done/`/`.corrupt/` records);
+  - `<keyRoot>/.admission-inbox/*/ledger/owners/*`;
+  - `<keyRoot>/.admission-inbox/*/upload-fences.json`;
+  - `<keyRoot>/.ledger/rearm-sweeper/*`;
+  - the canonical `…/manifest.json` (deriving an unstamped owner stub's machine).
+- `s3:PutObject` (conditional) on:
+  - `<keyRoot>/.admission-inbox/*/ledger/rearm/*.done/*`;
+  - `<keyRoot>/.admission-inbox/*/ledger/rearm/*.corrupt/*`;
+  - `<keyRoot>/.ledger/rearm-sweeper/*` (the cursor).
+- `s3:ListBucketVersions` on the bucket, and `s3:DeleteObjectVersion` on the
+  canonical layout. This covers each session's transcript directory
+  `<keyRoot>/<org>/v1/ws=…/m=srv_…/h=…/` and its live pointer
+  `<keyRoot>/<org>/live-sessions/v1/ws=…/m=srv_…/h=…/`.
+- With SSE-KMS on the bucket, the matching `kms:Decrypt` and
+  `kms:GenerateDataKey` grants on the key.
+
+The sweeper never deletes a ledger object, never writes SQL and never writes
+search. For index and search rows, `rearm-sweeper.ts` relies on the
+`ObjectRemoved:Delete` events of its version deletes reaching the indexer.
+Whether a self-host consumer receives those events depends on that install's
+bucket notifications. This chart does not configure them.

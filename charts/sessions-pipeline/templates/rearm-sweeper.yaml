@@ -1,0 +1,173 @@
+{{- /*
+S3 ledger re-arm sweeper (pipeline decision 0005; src/session-ingest/rearm-sweeper-main.ts). Default off.
+One pass per tick: the image's SERVICE=s3-ledger-rearm-sweeper entry runs `--loop` (a Deployment shape), so the
+CronJob runs the one-shot main directly. Exit codes: 0 complete, 3 incomplete or a marker failed (the next tick
+resumes from the durable cursor), 2 refused or misconfigured, 4 any other failure.
+*/ -}}
+{{- $ledger := include "sessions-pipeline.ingestEdge.ledger" . -}}
+{{- $s := .Values.rearmSweeper -}}
+{{- if not (kindIs "map" $s) }}{{ fail "rearmSweeper must be an object" }}{{ end -}}
+{{- if not (kindIs "bool" $s.enabled) }}{{ fail "rearmSweeper.enabled must be a boolean" }}{{ end -}}
+{{- if $s.enabled -}}
+{{- $c := .Values.ingestEdge -}}
+{{- if not $c.enabled }}{{ fail "rearmSweeper.enabled=true requires ingestEdge.enabled=true (it sweeps the ingest's bucket and key root)" }}{{ end -}}
+{{- if ne $ledger "s3" }}{{ fail "rearmSweeper.enabled=true requires ingestEdge.ledger=s3 (only the S3 ledger writes re-arm markers)" }}{{ end -}}
+{{- if ne $c.locker.provider "s3" }}{{ fail "rearmSweeper requires ingestEdge.locker.provider=s3 (it lists and deletes S3 object versions)" }}{{ end -}}
+{{- range $field := list "dryRun" "createServiceAccount" -}}
+{{- if not (kindIs "bool" (index $s $field)) }}{{ fail (printf "rearmSweeper.%s must be a boolean" $field) }}{{ end -}}
+{{- end -}}
+{{- if or (not (kindIs "string" $s.schedule)) (not (regexMatch "^\\S+( \\S+){4}$" $s.schedule)) }}{{ fail "rearmSweeper.schedule must be a five-field cron expression" }}{{ end -}}
+{{- range $field, $limit := dict "startingDeadlineSeconds" (dict "value" $s.startingDeadlineSeconds "min" 10 "max" 86400) "activeDeadlineSeconds" (dict "value" $s.activeDeadlineSeconds "min" 60 "max" 86400) "successfulJobsHistoryLimit" (dict "value" $s.successfulJobsHistoryLimit "min" 0 "max" 10) "failedJobsHistoryLimit" (dict "value" $s.failedJobsHistoryLimit "min" 0 "max" 10) -}}
+{{- if or (not (regexMatch "^[0-9]+$" (toString $limit.value))) (lt (int $limit.value) (int $limit.min)) (gt (int $limit.value) (int $limit.max)) }}{{ fail (printf "rearmSweeper.%s must be an integer from %d to %d" $field (int $limit.min) (int $limit.max)) }}{{ end -}}
+{{- end -}}
+{{- range $field, $limit := dict "concurrency" (dict "value" $s.concurrency "min" 1 "max" 16) "maxMarkers" (dict "value" $s.maxMarkers "min" 1 "max" 10000) -}}
+{{- if and (not (kindIs "invalid" $limit.value)) (or (not (regexMatch "^[0-9]+$" (toString $limit.value))) (lt (int $limit.value) (int $limit.min)) (gt (int $limit.value) (int $limit.max))) }}{{ fail (printf "rearmSweeper.%s must be null or an integer from %d to %d" $field (int $limit.min) (int $limit.max)) }}{{ end -}}
+{{- end -}}
+{{- if not (kindIs "slice" $s.orgs) }}{{ fail "rearmSweeper.orgs must be a list" }}{{ end -}}
+{{- range $org := $s.orgs -}}
+{{- if or (not (kindIs "string" $org)) (not (regexMatch "^[A-Za-z0-9_-][A-Za-z0-9._-]{0,127}$" $org)) }}{{ fail "rearmSweeper.orgs entries must be org ids (1-128 of A-Za-z0-9._-, not starting with a dot)" }}{{ end -}}
+{{- end -}}
+{{- $creds := $s.credentials -}}
+{{- if not (kindIs "map" $creds) }}{{ fail "rearmSweeper.credentials must be an object" }}{{ end -}}
+{{- if eq $creds.mode "podIdentity" }}{{ fail "rearmSweeper.credentials.mode=podIdentity is not supported: rearm-sweeper-main reads static keys (INGEST_REARM_CREDENTIALS=keys) or AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY from the environment, which Pod Identity does not set" }}{{ end -}}
+{{- if ne $creds.mode "secret" }}{{ fail "rearmSweeper.credentials.mode must be secret" }}{{ end -}}
+{{- $secret := include "sessions-pipeline.operatorSessionErase.ref" (dict "name" "rearmSweeper.credentials.existingSecret" "value" $creds.existingSecret) -}}
+{{- $accessKey := include "sessions-pipeline.operatorSessionErase.key" (dict "name" "rearmSweeper.credentials.accessKeyIdKey" "value" $creds.accessKeyIdKey) -}}
+{{- $secretKey := include "sessions-pipeline.operatorSessionErase.key" (dict "name" "rearmSweeper.credentials.secretAccessKeyKey" "value" $creds.secretAccessKeyKey) -}}
+{{- if eq $accessKey $secretKey }}{{ fail "rearmSweeper.credentials requires distinct access and secret keys" }}{{ end -}}
+{{- if has $secret (compact (list $c.config.existingSecret $c.locker.existingSecret $c.uploadDirect.witness.existingSecret)) }}{{ fail "rearmSweeper.credentials.existingSecret must be a dedicated sweeper Secret, never the ingest runtime, Locker writer or upload witness Secret" }}{{ end -}}
+{{- if and $s.createServiceAccount (or (not $s.serviceAccountName) (gt (len $s.serviceAccountName) 63) (not (regexMatch "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$" $s.serviceAccountName))) }}{{ fail "rearmSweeper.createServiceAccount requires a DNS-label serviceAccountName" }}{{ end -}}
+{{- if and $s.createServiceAccount $c.createServiceAccount (eq $s.serviceAccountName $c.serviceAccountName) }}{{ fail "rearmSweeper.serviceAccountName must differ from ingestEdge.serviceAccountName when both are created" }}{{ end -}}
+{{- $name := printf "%s-rearm-sweeper" .Release.Name -}}
+{{- if or (gt (len $name) 52) (not (regexMatch "^[a-z]([-a-z0-9]*[a-z0-9])?$" $name)) }}{{ fail "the rearm-sweeper CronJob name (<release>-rearm-sweeper) must be a DNS-1035 label of at most 52 characters" }}{{ end -}}
+{{- $repository := required "ingestEdge.image.repository is required" $c.image.repository -}}
+{{- $digest := required "ingestEdge.image.digest requires a qualified SERVICE=session-ingest image" $c.image.digest -}}
+{{- $bucket := required "ingestEdge.locker.bucket is required" $c.locker.bucket -}}
+{{- $region := required "ingestEdge.locker.region is required" $c.locker.region -}}
+{{- $endpoint := "" -}}
+{{- if $c.locker.endpoint -}}
+{{- $endpoint = include "sessions-pipeline.ingestEdge.endpoint" (dict "name" "ingestEdge.locker.endpoint" "url" $c.locker.endpoint "allowHttp" $c.allowInClusterHttp) -}}
+{{- end -}}
+{{- if $s.createServiceAccount }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ $s.serviceAccountName | quote }}
+  namespace: {{ .Release.Namespace | quote }}
+automountServiceAccountToken: false
+---
+{{- end }}
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace | quote }}
+  labels:
+    app.kubernetes.io/name: s3-ledger-rearm-sweeper
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: rearm-sweeper
+    helm.sh/chart: {{ printf "%s-%s" .Chart.Name .Chart.Version | quote }}
+spec:
+  schedule: {{ $s.schedule | quote }}
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: {{ int $s.startingDeadlineSeconds }}
+  successfulJobsHistoryLimit: {{ int $s.successfulJobsHistoryLimit }}
+  failedJobsHistoryLimit: {{ int $s.failedJobsHistoryLimit }}
+  jobTemplate:
+    metadata:
+      labels:
+        app.kubernetes.io/name: s3-ledger-rearm-sweeper
+        app.kubernetes.io/instance: {{ .Release.Name }}
+        app.kubernetes.io/component: rearm-sweeper
+    spec:
+      # No in-Job retry: an incomplete pass (exit 3) resumes on the next tick from the durable cursor.
+      backoffLimit: 0
+      activeDeadlineSeconds: {{ int $s.activeDeadlineSeconds }}
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: s3-ledger-rearm-sweeper
+            app.kubernetes.io/instance: {{ .Release.Name }}
+            app.kubernetes.io/component: rearm-sweeper
+          {{- with $s.podAnnotations }}
+          annotations:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+        spec:
+          restartPolicy: Never
+          automountServiceAccountToken: false
+          {{- with $s.serviceAccountName }}
+          serviceAccountName: {{ . | quote }}
+          {{- end }}
+          {{- with $c.imagePullSecrets }}
+          imagePullSecrets:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            runAsGroup: 1000
+            fsGroup: 1000
+            seccompProfile: { type: RuntimeDefault }
+          {{- with $s.nodeSelector }}
+          nodeSelector:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with $s.tolerations }}
+          tolerations:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with $s.affinity }}
+          affinity:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          containers:
+            - name: rearm-sweeper
+              image: {{ printf "%s@%s" $repository $digest | quote }}
+              imagePullPolicy: {{ $c.image.pullPolicy }}
+              # One pass (no --loop); see the header.
+              command: ["bun", "run", "/app/src/session-ingest/rearm-sweeper-main.ts"]
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities: { drop: [ALL] }
+              env:
+                - { name: INGEST_REARM_SWEEPER_ENABLED, value: "true" }
+                - { name: INGEST_REARM_BUCKET, value: {{ $bucket | quote }} }
+                - { name: INGEST_REARM_REGION, value: {{ $region | quote }} }
+                {{- with $endpoint }}
+                - { name: INGEST_REARM_ENDPOINT, value: {{ . | quote }} }
+                {{- end }}
+                - { name: ALLOW_IN_CLUSTER_HTTP, value: {{ $c.allowInClusterHttp | quote }} }
+                - { name: INGEST_REARM_KEY_ROOT, value: {{ $c.keyRoot | quote }} }
+                {{- with $s.orgs }}
+                - { name: INGEST_REARM_ORGS, value: {{ join "," . | quote }} }
+                {{- end }}
+                {{- if $s.dryRun }}
+                - { name: INGEST_REARM_DRY_RUN, value: "1" }
+                {{- end }}
+                {{- if not (kindIs "invalid" $s.concurrency) }}
+                - { name: INGEST_REARM_CONCURRENCY, value: {{ $s.concurrency | toString | quote }} }
+                {{- end }}
+                {{- if not (kindIs "invalid" $s.maxMarkers) }}
+                - { name: INGEST_REARM_MAX_MARKERS, value: {{ $s.maxMarkers | toString | quote }} }
+                {{- end }}
+                - { name: INGEST_REARM_CREDENTIALS, value: keys }
+                - { name: INGEST_REARM_S3_ACCESS_KEY_ID_FILE, value: /var/run/secrets/rearm-sweeper/access-key-id }
+                - { name: INGEST_REARM_S3_SECRET_ACCESS_KEY_FILE, value: /var/run/secrets/rearm-sweeper/secret-access-key }
+              resources:
+                {{- toYaml $s.resources | nindent 16 }}
+              volumeMounts:
+                - { name: tmp, mountPath: /tmp }
+                - { name: credentials, mountPath: /var/run/secrets/rearm-sweeper, readOnly: true }
+          volumes:
+            - name: tmp
+              emptyDir: { sizeLimit: 64Mi }
+            - name: credentials
+              secret:
+                secretName: {{ $secret | quote }}
+                defaultMode: 288
+                items:
+                  - { key: {{ $accessKey | quote }}, path: access-key-id }
+                  - { key: {{ $secretKey | quote }}, path: secret-access-key }
+{{- end }}

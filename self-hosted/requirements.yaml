@@ -246,6 +246,8 @@ ci_only_values:
     why: Render-only native ingest fixture with synthetic image/CA identities; never
   - file: ci/ingest-edge-pod-identity-values.yaml
     why: Ingest edge with Pod Identity S3 credentials and per-session erase.
+  - file: ci/ingest-edge-s3-ledger-values.yaml
+    why: Render-only ingest edge on the S3 upload ledger with the re-arm sweeper; synthetic identities, never install it.
       install it.
   - file: ci/search-indexer-values.yaml
     why: Render-only search indexer fixture with a fake image identity; never install it.
@@ -376,9 +378,37 @@ compatibility:
       images:
         session-read-api: { repository: ghcr.io/agentworkforce/96bulls-services, digest_required: true }
       notes: 'Defaults READ_API_COMPLETE_SINCE to epoch for a new self-host store populated only by its own ingest. Partial legacy imports must retain an explicit real coverage floor matching the indexer. Image, auth, routing and enabled defaults are unchanged; this does not assert coverage for an imported store or qualify a runtime.'
-    - id: sessions-pipeline-0.8.28
+    - id: sessions-pipeline-0.8.29
       status: unreleased
       current: true
+      charts: { sessions-pipeline: 0.8.29, sessions-pipeline-worker: 0.7.8, session-ingest-api: 0.4.5, session-read-api: 0.2.12 }
+      depends:
+        sessions-pipeline: { worker: 0.7.8, alleyoop: 0.4.5, sessionReadApi: 0.2.12, hoopdb: 0.9.0, session-object-storage: 5.4.0, otel: 0.178.0 }
+      images:
+        sessions-pipeline-worker: { repository: agentworkforce/96bulls-services, digest: sha256:6f22ea17dff336e1431664542759fd27958649388b90a0b2f0881883caa7c6b2 }
+        session-ingest-api: { repository: agentworkforce/96bulls-services, digest: sha256:6f22ea17dff336e1431664542759fd27958649388b90a0b2f0881883caa7c6b2 }
+        session-read-api: { repository: ghcr.io/agentworkforce/96bulls-services, digest_required: true }
+      images_note: "Operator session erase values remain default-off and do not pin the 2026.11.2 candidate image. Runtime qualification is separate. Existing chart/profile image pins remain unchanged."
+      services:
+        source_commit: 7d7229bb31c121ecb98cd4e35c248fc2cf5669ad
+        migration_generation: eff8b3be46565b57ad8fa5e4a066dbb6d1fe608313d9c1680bfbcd484add259b
+      db_combos:
+        - { db_mode: selfhosted, boundary: global-default-revoke, hoopdb: cnpg, status: shipped, profiles: [selfhost-postgres, migration, aws-cnpg], notes: chart Jobs install the runtime role and the function default }
+        - { db_mode: selfhosted, boundary: global-default-revoke, hoopdb: external, status: shipped, profiles: [external-selfhosted], notes: operator runs the bootstrap files as a superuser }
+        - { db_mode: rds, boundary: global-default-revoke, hoopdb: external, status: shipped, profiles: [external-rds, aws-rds-native], notes: the RDS master runs the rds_*.sql bootstrap first }
+        - { db_mode: cloudsql, boundary: global-default-revoke, hoopdb: external, status: shipped, profiles: [gcp-cloudsql], notes: operator runs the Cloud SQL bootstrap files as the migration owner; roleBootstrap false }
+        - { db_mode: supabase, boundary: event-trigger, hoopdb: external, status: held, profiles: [external-supabase], notes: supabaseActivation.hold; migrate refuses until the reviewed event trigger is installed and --activation-check passes }
+        - { db_mode: supabase, boundary: null, hoopdb: external, status: fails closed, profiles: [aws-supabase], notes: renders; migrate refuses with function_boundary_unproven }
+        - { db_mode: local, boundary: null, hoopdb: any, status: dev only, profiles: [], notes: local stack only; never a self-host install }
+      sources:
+        - "charts/sessions-pipeline/Chart.yaml:4"
+        - "charts/sessions-pipeline/profiles/aws-rds-native.yaml"
+        - "ci/sessions-pipeline-profiles/matrix.sh"
+        - "charts/sessions-pipeline/templates/_scrub-engine.tpl:1"
+        - "ci/sessions-pipeline-scrub-engine/test_scrub_engine.py:1"
+      notes: 'Carries 0.8.28 and adds default-off ingestEdge.ledger (sql|s3, pipeline decision 0005: INGEST_LEDGER=s3 on the ingest edge only, with render-time refusals of sessionSelection and the operator session erase) and a default-off rearmSweeper CronJob (one rearm-sweeper-main pass per tick, Forbid, dedicated file-mounted S3 credential). Default renders are byte-identical. No image pin or live install changes.'
+    - id: sessions-pipeline-0.8.28
+      status: shipped
       charts: { sessions-pipeline: 0.8.28, sessions-pipeline-worker: 0.7.8, session-ingest-api: 0.4.5, session-read-api: 0.2.12 }
       depends:
         sessions-pipeline: { worker: 0.7.8, alleyoop: 0.4.5, sessionReadApi: 0.2.12, hoopdb: 0.9.0, session-object-storage: 5.4.0, otel: 0.178.0 }
@@ -1295,9 +1325,22 @@ compatibility:
       images:
         relayauth: { repository: ghcr.io/agentworkforce/relayauth, digest: sha256:eb71daa28e30eb7305f666d0bccc5a4002e53e8a574e3c4c32163d907a1b71df }
       notes: superseded by 0.1.1.
-    - id: agent-relay-0.6.59
+    - id: agent-relay-0.6.60
       status: unreleased
       current: true
+      charts: { agent-relay: 0.6.60, relayhistory: 0.1.3, relay-control: 0.4.15, relay-webapp: 0.2.4 }
+      app_versions: { agent-relay: 0.1.0, relayhistory: 0.1.0, relay-control: 0.1.0, relay-webapp: 0.1.0 }
+      depends:
+        agent-relay: { relaycast: 0.3.10, relayauth: 0.1.5, sessions-pipeline: 0.8.29, relayhistory: 0.1.3, relay-control: 0.4.15, relay-webapp: 0.2.4, relayflows: 0.2.5, durable-actors: 0.14.6-awf.2, relayfile: 0.2.2, telemetry-collector: 0.1.6, relay-chief: 0.1.0 }
+      images:
+        relaycast: { repository: ghcr.io/agentworkforce/relaycast-self-host, digest: sha256:ab9dd6781e68f09d5e2e686a17088f9ad533978ef13d974a47d6c212d8eedbde }
+        sessions-pipeline-worker: { repository: ghcr.io/agentworkforce/sessions-pipeline, digest: sha256:77022c5b6a1d30f96f921d703eb27a1acada8ec273ad84aebdde24f8eddce305 }
+        relayhistory: { repository: ghcr.io/agentworkforce/relayhistory, digest_required: true }
+        relay-control: { repository: ghcr.io/agentworkforce/relay-control, digest: sha256:d8c26d44dccb6dd21b7033288241a379e46ce5fbca69f276c4d4745001c3c3e2 }
+        relay-webapp: { repository: ghcr.io/agentworkforce/relay-webapp, digest: sha256:bd295ccb7d1323965dce890f19d0b7f857d706c00d7756f719c713763fdb49f3 }
+      notes: 'Carries 0.6.59 with sessions-pipeline 0.8.29 (default-off ingestEdge.ledger and rearmSweeper for pipeline decision 0005). No image or default render changes.'
+    - id: agent-relay-0.6.59
+      status: planned
       charts: { agent-relay: 0.6.59, relayhistory: 0.1.3, relay-control: 0.4.15, relay-webapp: 0.2.4 }
       app_versions: { agent-relay: 0.1.0, relayhistory: 0.1.0, relay-control: 0.1.0, relay-webapp: 0.1.0 }
       depends:
@@ -1308,7 +1351,7 @@ compatibility:
         relayhistory: { repository: ghcr.io/agentworkforce/relayhistory, digest_required: true }
         relay-control: { repository: ghcr.io/agentworkforce/relay-control, digest: sha256:d8c26d44dccb6dd21b7033288241a379e46ce5fbca69f276c4d4745001c3c3e2 }
         relay-webapp: { repository: ghcr.io/agentworkforce/relay-webapp, digest: sha256:bd295ccb7d1323965dce890f19d0b7f857d706c00d7756f719c713763fdb49f3 }
-      notes: 'Carries 0.6.58 with relaycast 0.3.10 (opt-in Relaycast PostgreSQL to durable-actors migration Jobs, retained data claim, in-cluster actor socket origin), values-eks-actors.yaml dialling actor sockets through the in-cluster control plane, and scripts/selfhost/agent-relay-upgrade.sh --relaycast-actors credentials|cutover with the selfhost-upgrade.yml inputs. No image or default render changes outside the actors profile.'
+      notes: 'Superseded before a chart tag by 0.6.60. Carries 0.6.58 with relaycast 0.3.10 (opt-in Relaycast PostgreSQL to durable-actors migration Jobs, retained data claim, in-cluster actor socket origin), values-eks-actors.yaml dialling actor sockets through the in-cluster control plane, and scripts/selfhost/agent-relay-upgrade.sh --relaycast-actors credentials|cutover with the selfhost-upgrade.yml inputs. No image or default render changes outside the actors profile.'
     - id: agent-relay-0.6.58
       status: planned
       charts: { agent-relay: 0.6.58, relayhistory: 0.1.3, relay-control: 0.4.15, relay-webapp: 0.2.4 }
@@ -6301,3 +6344,50 @@ entries:
           - {key: upload-witness-key, key_path: ingestEdge.uploadDirect.witness.key}
     verify: Prove PUT, admission polling, witness refusal, restart/retry and indexed readback. Keep the scanner running while pending uploads drain during rollback.
     sources: ["charts/sessions-pipeline/templates/ingest-edge.yaml:1", "docs/selfhost-direct-uploads.md:1"]
+
+  - id: opt.sessions-pipeline-s3-ledger
+    kind: option
+    title: S3 upload ledger for the native ingest (decision 0005)
+    description: |
+      Default sql renders nothing. s3 renders INGEST_LEDGER=s3 on the ingest edge
+      only: every admission path claims and commits through the S3 ledger, and no
+      org is admitted until an operator writes its fence-authority marker. Render
+      fails, as the binary does at startup, when s3 is combined with
+      ingestEdge.sessionSelection or the operator session erase. The database
+      stays required (controls mirror deletions to SQL).
+    chart: sessions-pipeline
+    values: [ingestEdge.ledger]
+    env: [INGEST_LEDGER]
+    profiles: [selfhost-postgres, migration, external-selfhosted, external-rds, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql, aws-rds-native]
+    status: shipped
+    provided_by: operator
+    default: sql
+    choices: [{value: sql}, {value: s3, note: Requires a services image from pipeline 8b2430c7 or later and the README "S3 upload ledger" operator steps.}]
+    verify: Render default sql byte-identical; render s3 and confirm INGEST_LEDGER only on the ingest edge; confirm the sessionSelection and operator erase refusals.
+    sources: ["charts/sessions-pipeline/templates/_ingest-edge.tpl:1", "charts/sessions-pipeline/README.md:1", "ci/sessions-pipeline-s3-ledger/test_chart.py:1"]
+
+  - id: opt.sessions-pipeline-rearm-sweeper
+    kind: option
+    title: S3 ledger re-arm sweeper CronJob
+    description: |
+      Default-off CronJob running one rearm-sweeper-main pass per tick
+      (concurrencyPolicy Forbid) with the ingest edge's image, bucket, region,
+      endpoint and key root. Requires ingestEdge.ledger=s3 and a dedicated static
+      S3 credential Secret mounted as files; Pod Identity is refused because the
+      binary does not read it.
+    chart: sessions-pipeline
+    values: [rearmSweeper.*]
+    env: [INGEST_REARM_SWEEPER_ENABLED, INGEST_REARM_BUCKET, INGEST_REARM_REGION, INGEST_REARM_ENDPOINT, INGEST_REARM_KEY_ROOT, INGEST_REARM_ORGS, INGEST_REARM_DRY_RUN, INGEST_REARM_CONCURRENCY, INGEST_REARM_MAX_MARKERS, INGEST_REARM_CREDENTIALS, INGEST_REARM_S3_ACCESS_KEY_ID_FILE, INGEST_REARM_S3_SECRET_ACCESS_KEY_FILE]
+    profiles: [selfhost-postgres, migration, external-selfhosted, external-rds, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql, aws-rds-native]
+    status: shipped
+    provided_by: operator
+    default: false
+    choices: [{value: false}, {value: true, note: Requires ingestEdge.ledger=s3 and a dedicated sweeper credential (README "Re-arm sweeper IAM").}]
+    secrets:
+      - name: "<dedicated re-arm sweeper S3 Secret>"
+        name_paths: [rearmSweeper.credentials.existingSecret]
+        keys:
+          - {key: access-key-id, key_path: rearmSweeper.credentials.accessKeyIdKey}
+          - {key: secret-access-key, key_path: rearmSweeper.credentials.secretAccessKeyKey}
+    verify: Render default-off (no CronJob); render enabled and confirm the derived bucket and key root, Forbid, file-mounted keys and the refusals.
+    sources: ["charts/sessions-pipeline/templates/rearm-sweeper.yaml:1", "charts/sessions-pipeline/README.md:1", "ci/sessions-pipeline-s3-ledger/test_chart.py:1"]

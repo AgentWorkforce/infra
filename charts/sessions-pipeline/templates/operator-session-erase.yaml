@@ -1,1 +1,2 @@
+{{- $_ := include "sessions-pipeline.ingestEdge.ledger" . -}}
 {{- include "sessions-pipeline.operatorSessionErase.validate" . -}}

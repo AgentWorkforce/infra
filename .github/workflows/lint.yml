@@ -159,6 +159,7 @@ jobs:
           python3 ci/pipeline-analytics/test_chart.py -v
           python3 ci/control-analytics/test_chart.py -v
           python3 ci/operator-session-erase/test_chart.py -v
+          python3 ci/sessions-pipeline-s3-ledger/test_chart.py -v
           python3 ci/history-upload/test_chart.py -v
           python3 ci/sessions-pipeline-native-brief/test_native_brief.py -v
           python3 ci/agent-relay/kind/test_harness.py -v

@@ -53,6 +53,7 @@ MATRIX=(
   "ci/default-values.yaml|yes|yes|selfhosted|fresh"
   "ci/read-api-values.yaml|yes|yes|selfhosted|fresh"
   "ci/ingest-edge-values.yaml|yes|yes|selfhosted|fresh"
+  "ci/ingest-edge-s3-ledger-values.yaml|yes|yes|selfhosted|fresh"
   "ci/native-consumer-values.yaml|no|yes|selfhosted|native"
   "ci/search-indexer-values.yaml|yes|yes|selfhosted|fresh"
   "ci/kind-values.yaml|yes|yes|selfhosted|fresh"
