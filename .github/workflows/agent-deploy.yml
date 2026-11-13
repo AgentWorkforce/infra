@@ -157,8 +157,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: AgentWorkforce/layered-agents
-          # TODO before the first deploy: layered-agents main once #32 (awsAdmin, 0.1.16) merges.
-          ref: c618dd40f274a230b28e0eaa46c7a1a358512878 # layered-agents feat/infra-ops-agent (#32): layered-agent 0.1.16
+          ref: 54458aa540147083c30ebc94bfc0dd87704f7b1d # layered-agents main 2026-11-13: layered-agent 0.1.16, awsAdmin and infra-ops (#32)
           token: ${{ steps.kit-token.outputs.token }}
           path: .layered-agents
           persist-credentials: false
