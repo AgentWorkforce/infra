@@ -1,5 +1,8 @@
-# The full self-hosted suite on AWS EKS with Relaycast on TerseAI durable
-# actors instead of its PostgreSQL engine. values-eks-actors.yaml on its own is
+# OPT-IN, NOT THE DEFAULT: the full self-hosted suite on AWS EKS with Relaycast
+# on TerseAI durable actors instead of its PostgreSQL engine. Production
+# self-hosts stay on PostgreSQL Relaycast for now (actors trail it on delivery
+# latency and on recovery from a database failover); use this for evaluation
+# and the later move. values-eks-actors.yaml on its own is
 # a standalone actors profile that turns every other component off; this file
 # layers after it and turns the suite back on:
 #
@@ -12,7 +15,9 @@
 #     -f <site actors values: bucket, zone, roles>
 #
 # This is the composition the full-stack actors e2e passed with (Control, the
-# Sessions pipeline, the dashboard and Relaycast on actors; 2026-11-13). Every
+# Sessions pipeline, the dashboard and Relaycast on actors; 2026-11-13, on
+# 12.8.0-actors.1). values-eks-actors.yaml carries the tuned actor and gateway
+# sizing. Every
 # <...> in values-eks-actors.yaml still needs a site value. Infrastructure the
 # actors add (node group, bucket, roles, the actors database and Secrets):
 # docs/self-hosted-durable-actors.md.
@@ -26,7 +31,6 @@ components:
   # turns it on in actor mode, so turn it off unless the site runs it on actors.
   relayfile: false
   relayauth: false
-  relayhistory: false
   relayflows: false
 
 durable-actors:

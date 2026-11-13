@@ -330,7 +330,7 @@ performing TLS handshake" until the CA is added. Do not work around it with
    ```
 
    For the full suite on actors (Control, the Sessions pipeline and the dashboard
-   with Relaycast on actors), layer `values-eks-actors-suite.yaml` after
+   with Relaycast on actors; opt-in, not the default), layer `values-eks-actors-suite.yaml` after
    `values-eks-actors.yaml`. It turns the suite back on and sets this CA and
    `storage.s3.actorCredentials: assume-role`; its header has the full `-f` order.
 
