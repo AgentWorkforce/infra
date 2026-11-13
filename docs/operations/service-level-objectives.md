@@ -9,7 +9,7 @@ cannot hide a broken low-volume endpoint:
 2. connect an agent and publish a Relaycast message;
 3. deliver that message to an online recipient;
 4. accept a session ingest request durably;
-5. read and search an authorized session through RelayHistory;
+5. read and search an authorized session through the History read API;
 6. load the dashboard and complete a control API request.
 
 An eligible operation is a production request or synthetic attempt for one of
@@ -63,7 +63,7 @@ each critical journey independently during the supported-tier load test.
 | Online message delivery | 1 s | 5 s | publish accepted to recipient event received |
 | Identity/control API | 500 ms | 2 s | edge receive to complete response |
 | Session ingest acceptance | 500 ms | 2 s | edge receive to durable acceptance |
-| RelayHistory authorized read/search | 1 s | 3 s | edge receive to complete response |
+| History authorized read/search | 1 s | 3 s | edge receive to complete response |
 | Dashboard initial HTML | 1 s | 2 s | edge receive to complete HTML response |
 | Session searchable lag | 60 s | 300 s | ingest acceptance to authorized search visibility |
 

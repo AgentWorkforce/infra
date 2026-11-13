@@ -77,8 +77,8 @@ separate evidence and recovery requirements.
    repeat the reads. Exercise erasure and require all read paths to stop
    returning the session.
 5. **All requested components and profiles.** Include RelayControl, Dashboard
-   (chart `relay-webapp`), Sessions Pipeline,
-   RelayHistory and Relaycast with authoritative PostgreSQL state in its own
+   (chart `relay-webapp`), Sessions Pipeline (including the native History
+   read API and ingest edge) and Relaycast with authoritative PostgreSQL state in its own
    logical database on the shared RDS instance. Prove runtime placement, transaction
    semantics and durable recovery; do not count a SQLite-backed profile. Run the
    reviewed base values plus each selected add-on overlay as separate proof runs;

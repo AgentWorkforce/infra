@@ -1,11 +1,16 @@
 # Customer-neutral GKE deployment template derived from values-gcp-proof.yaml.
 # It contains no credentials. Before deployment, replace every value marked
 # REQUIRED OVERRIDE and create the referenced Secret and GCP resources.
+#
+# History is native (docs/self-hosted-no-relayauth.md): Control's native
+# backend, the Sessions read API, ingest edge and PostgreSQL search indexer on
+# the one history host, which the GKE edge routes to the reader and ingest
+# Services. There is no RelayAuth and no standalone History server.
+# values-gcp-native.yaml is now an empty compatibility overlay.
 components:
   relaycast: true
-  relayauth: true
+  relayauth: false
   sessionsPipeline: true
-  relayhistory: true
   control: true
   webapp: true
   # Optional: run flows in-cluster. Off by default; see the relayflows block
@@ -88,6 +93,8 @@ relaycast:
       - ipBlock: { cidr: 35.191.0.0/16 }
       - ipBlock: { cidr: 130.211.0.0/22 }
 
+# Used only with components.relayauth=true (RelayAuth-issued Relaycast ar_
+# credentials, model B above); native History needs no RelayAuth.
 relayauth:
   fullnameOverride: relayauth
   image:
@@ -199,54 +206,153 @@ sessions-pipeline:
         mode: podIdentity
     # Same GCS data-path settings as worker.extraEnv.
     extraEnv: *sessionsGcsDataPath
-    # The legacy courier ingest validates its RelayAuth/JWKS
-    # URLs: https, or (with this) plain http to an in-cluster Service FQDN
-    # only (<svc>.<ns>.svc), as in values-eks.yaml.
+    # The legacy courier ingest Deployment depends on RelayAuth and is off.
+    # Native uploads use ingestEdge; the chart keeps alleyoop's ServiceAccount
+    # because it is the GCS identity the ingest edge selects below.
+    deployment:
+      enabled: false
+    # Validated even while the Deployment is off: https, or (with this) plain
+    # http to an in-cluster Service FQDN only (<svc>.<ns>.svc).
     allowInClusterHttp: true
     auth:
-      # REQUIRED OVERRIDE: <release namespace> in the FQDN.
       jwksUrl: http://relayauth.agent-relay.svc:8787/.well-known/jwks.json
-      # Must equal relayauth.issuer; the chart default (https://96bulls.local)
-      # rejects every RelayAuth-signed courier assertion.
       issuer: http://relayauth:8787
-      # REQUIRED OVERRIDE: the bare origin couriers use as the History
-      # assertion audience (byte-equal to RELAYAUTH_HISTORY_ORIGIN). It must
-      # equal relayhistory.relayauth.historyOrigin (the chart refuses a
-      # mismatch) and relay-control.services.relayhistoryPublicUrl.
+      # REQUIRED OVERRIDE: the bare History origin, gkeIngress.hosts.history.
       historyOrigin: https://history.placeholder.company
   hoopdb:
     enabled: false
   session-object-storage:
     enabled: false
 
-relayhistory:
-  fullnameOverride: relayhistory
-  image:
-    # Release image (public GHCR, relayhistory-cloud 53c3333). Mirror it by digest to your registry and override repository.
-    repository: ghcr.io/agentworkforce/relayhistory
-    digest: sha256:d3166bb14e1d6043426a4dd8cc05408b94574c8d79ad5fd6e789e0de00ab371b
-  database:
-    # REQUIRED OVERRIDE: existing Secret name; see README for required keys.
-    existingSecret: example-agent-relay-secrets
-  relayauth:
-    # REQUIRED OVERRIDE: historyOrigin must use gkeIngress.hosts.history.
-    historyOrigin: https://history.placeholder.company
-    jwksUrl: http://relayauth:8787/.well-known/jwks.json
-    issuer: http://relayauth:8787
-  agentRelayCloud:
-    apiUrl: http://relay-control
-  service:
-    annotations:
-      cloud.google.com/neg: '{"ingress": true}'
-  ingress:
-    enabled: false
-  networkPolicy:
+  # Native History reader. relay-control uses the stable in-cluster handoff
+  # URL http://agent-relay-read-api; keep the Service name independent of the
+  # Helm release name so the two values cannot drift.
+  sessionReadApi:
     enabled: true
-    ingressFrom:
-      - podSelector: {}
-      - ipBlock: { cidr: 35.191.0.0/16 }
-      - ipBlock: { cidr: 130.211.0.0/22 }
-    allowAllEgress: true
+    fullnameOverride: agent-relay-read-api
+    image:
+      # Same services image repository and digest as worker.
+      repository: ghcr.io/agentworkforce/sessions-pipeline
+      digest: sha256:77022c5b6a1d30f96f921d703eb27a1acada8ec273ad84aebdde24f8eddce305
+    # REQUIRED OVERRIDE: https://<gkeIngress.hosts.history>.
+    origin: https://history.placeholder.company
+    completeSince: epoch
+    directoryWorkspaces: "*"
+    events: { messageIds: true }
+    turns: { assumeNoLegacy: true }
+    login: { advertisesSync: false }
+    config:
+      existingSecret: agent-relay-read-api
+      key: RELAYHISTORY_READ_API_SECRET
+    postgres: { tlsProfile: custom-ca }
+    postgresCa:
+      enabled: true
+      configMap: cloud-sql-ca
+      key: ca.crt
+      # REQUIRED OVERRIDE: lowercase SHA-256 of the Cloud SQL server CA bundle.
+      sha256: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    search:
+      backend: postgres
+      backendId: gcp-native
+    auth:
+      mode: self_issued
+      relaycontrol: { enabled: false, url: "", existingSecret: "" }
+      selfIssued:
+        internalSecret:
+          existingSecret: example-agent-relay-secrets
+          key: session-read-api-secret
+    cors:
+      # REQUIRED OVERRIDE: https://<gkeIngress.hosts.root>.
+      allowedOrigins: [https://dashboard.placeholder.company]
+    serviceAccountCreate: true
+    serviceAccountName: agent-relay-read-api
+    networkPolicy:
+      enabled: true
+      controlFrom:
+        - podSelector:
+            matchLabels: { app.kubernetes.io/name: relay-control }
+      publicFrom:
+        - ipBlock: { cidr: 35.191.0.0/16 }
+        - ipBlock: { cidr: 130.211.0.0/22 }
+    extraEnv:
+      # REQUIRED OVERRIDE: the same GCS bucket and region as worker.locker.
+      - { name: LOCKER_PROVIDER, value: gcs }
+      - { name: LOCKER_BUCKET, value: example-agent-relay-sessions }
+      - { name: LOCKER_REGION, value: us-central1 }
+      - { name: PIPELINE_KEY_PREFIX, value: 96bulls }
+      - { name: PIPELINE_ORG_FROM_PREFIX, value: "true" }
+
+  # Native History uploads (docs/self-hosted-native-ingest.md).
+  ingestEdge:
+    enabled: true
+    image:
+      # Same services image repository and digest as worker.
+      repository: ghcr.io/agentworkforce/sessions-pipeline
+      digest: sha256:77022c5b6a1d30f96f921d703eb27a1acada8ec273ad84aebdde24f8eddce305
+    # REQUIRED OVERRIDE: the same origin as sessionReadApi.origin.
+    origin: https://history.placeholder.company
+    allowInClusterHttp: true
+    # REQUIRED OVERRIDE: <release namespace> in the Control Service FQDN.
+    relaycontrol: { url: http://relay-control.agent-relay.svc }
+    config:
+      existingSecret: agent-relay-ingest-edge-runtime
+      databaseUrlKey: database-url
+      introspectSecretKey: introspect-secret
+    postgres:
+      caConfigMap: cloud-sql-ca
+      caKey: ca.crt
+      # REQUIRED OVERRIDE: same CA SHA-256 as sessionReadApi.postgresCa.sha256.
+      caSha256: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    locker:
+      provider: gcs
+      # REQUIRED OVERRIDE: same GCS bucket and region as worker.locker.
+      bucket: example-agent-relay-sessions
+      region: us-central1
+      credentials: { mode: podIdentity }
+    sessionSelection: true
+    heartbeatAccept: true
+    serviceAccountName: agent-relay-session-ingest-api
+    networkPolicy:
+      enabled: true
+      ingressFrom:
+        - ipBlock: { cidr: 35.191.0.0/16 }
+        - ipBlock: { cidr: 130.211.0.0/22 }
+
+  # Session search projection in PostgreSQL.
+  searchIndexer:
+    enabled: true
+    image:
+      # Same services image repository and digest as worker.
+      repository: ghcr.io/agentworkforce/sessions-pipeline
+      digest: sha256:77022c5b6a1d30f96f921d703eb27a1acada8ec273ad84aebdde24f8eddce305
+    completeSince: epoch
+    config: { existingSecret: search-indexer-runtime }
+    search: { backend: postgres, backendId: gcp-native }
+    locker:
+      provider: gcs
+      # REQUIRED OVERRIDE: same GCS bucket and region as worker.locker.
+      bucket: example-agent-relay-sessions
+      region: us-central1
+    postgres:
+      tlsProfile: custom-ca
+      caConfigMap: cloud-sql-ca
+      caKey: ca.crt
+      # REQUIRED OVERRIDE: same CA SHA-256 as sessionReadApi.postgresCa.sha256.
+      caSha256: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    bootstrap:
+      enabled: true
+      existingSecret: search-indexer-owner
+    # REQUIRED OVERRIDE: the same Cloud SQL, Memorystore and Pub/Sub settings
+    # as worker.extraEnv.
+    extraEnv:
+      - { name: CLOUD_SQL_CONNECTION_NAME, value: "example-project:us-central1:example-sessions" }
+      - { name: REDIS_HOST, value: "10.0.0.3" }
+      - { name: REDIS_PORT, value: "6378" }
+      - { name: REDIS_AUTH_ENABLED, value: "false" }
+      - { name: REDIS_TRANSIT_ENCRYPTION, value: SERVER_AUTHENTICATION }
+      - { name: REDIS_TLS_CA_PEM, value: "REQUIRED OVERRIDE: Memorystore server CA PEM bundle" }
+      - { name: PUBSUB_TOPIC, value: "projects/example-project/topics/example-sessions" }
+      - { name: PUBSUB_SUBSCRIPTION, value: "projects/example-project/subscriptions/example-sessions" }
 
 relay-control:
   fullnameOverride: relay-control
@@ -266,13 +372,28 @@ relay-control:
   publicUrl: https://api.placeholder.company
   # REQUIRED OVERRIDE: existing Secret name; see README for required keys.
   existingSecret: example-agent-relay-secrets
+  secretKeys:
+    relayauthApiKey: ""
+    introspectSecret: relaycontrol-introspect-secret
+    sessionReadApiSecret: session-read-api-secret
   services:
-    relayauthUrl: http://relayauth:8787
+    relayauthEnabled: false
+    relayauthUrl: ""
     relaycastUrl: http://relaycast:8787
     # REQUIRED OVERRIDE: public service URLs must match the corresponding hosts.
     relaycastPublicUrl: https://cast.placeholder.company
-    relayhistoryUrl: http://relayhistory:8080
-    relayhistoryPublicUrl: https://history.placeholder.company
+    # The native backend takes the History origin from the read API.
+    relayhistoryUrl: ""
+    relayhistoryPublicUrl: ""
+    relayhistoryBackend: native
+    sessionReadApiUrl: http://agent-relay-read-api
+    # REQUIRED OVERRIDE: https://<gkeIngress.hosts.history>.
+    sessionReadApiPublicUrl: https://history.placeholder.company
+    sessionReadApiMcpReads: true
+  introspection:
+    # REQUIRED OVERRIDE: the same history origin.
+    audiences:
+      - https://history.placeholder.company
   service:
     annotations:
       cloud.google.com/neg: '{"ingress": true}'
@@ -326,7 +447,7 @@ relay-control:
   #   port: 587
   #   username: relay@acme.com
   #   from: Agent Relay <relay@acme.com>
-  # secretKeys:
+  # secretKeys: (merge into the secretKeys block above)
   #   # Same key relaycast.secretKeys.internalSecret names (bootstrap creates
   #   # the workspace's Relaycast workspace with it).
   #   relaycastInternalSecret: relaycast-internal-secret

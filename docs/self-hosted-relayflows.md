@@ -36,7 +36,7 @@ The operator supplies:
   ESO-created Secret holding `ANTHROPIC_API_KEY`).
 
 The flow can reach the suite's in-cluster services (`relaycast`,
-`relay-control`, `relayhistory`) over plain ClusterIP service DNS; nothing
+`relay-control`, `agent-relay-read-api`) over plain ClusterIP service DNS; nothing
 in the chart hard-codes those URLs, so credentials and endpoints are passed
 explicitly as env. These are fresh-layout examples: existing releases retain
 their observed Service names (for example `relaycontrol` or `relay-cloud-api`).
@@ -72,7 +72,7 @@ mint the one-time enrollment token
 The self-host control plane (`relay-control`, source
 `cloud-selfhost-current/packages/selfhost-api/src/app.ts`) implements none of
 this family. Its route table covers auth/device flow, organizations,
-memberships, workspace resolve/runtime, session search and relayhistory
+memberships, workspace resolve/runtime, session search and History
 session issuance only — a request to `/api/v1/workers/*` (or
 `/cloud/api/v1/workers/*`, which `normalizeRoutePath` maps onto the same
 table) returns `404 not_found`. `store.ts` has no worker or enrollment state.

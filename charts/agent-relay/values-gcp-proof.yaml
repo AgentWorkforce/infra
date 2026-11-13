@@ -1,11 +1,13 @@
-# Portable full-customer GKE proof shape. All suite components stay enabled.
-# This file contains Secret names and keys, but no credential values. Supply
-# the three immutable image digests and create the referenced Secrets.
+# Portable full-customer GKE proof shape with native History: Control's
+# native backend, the Sessions read API, ingest edge and PostgreSQL search
+# indexer behind the history host; no RelayAuth and no standalone History
+# server. This file contains Secret names and keys, but no credential values.
+# Supply the two immutable Control and dashboard image digests and create the
+# referenced Secrets.
 components:
   relaycast: true
-  relayauth: true
+  relayauth: false
   sessionsPipeline: true
-  relayhistory: true
   control: true
   webapp: true
 
@@ -46,22 +48,10 @@ relaycast:
       - ipBlock: { cidr: 35.191.0.0/16 }
       - ipBlock: { cidr: 130.211.0.0/22 }
 
-relayauth:
-  fullnameOverride: relayauth
-  baseUrl: http://relayauth:8787
-  issuer: http://relayauth:8787
-  existingSecret: agent-relay-gcp-proof
-  secretKeys:
-    internalSecret: relayauth-internal-secret
-    signingKey: relayauth-signing-key.pem
-    bootstrapApiKey: relayauth-bootstrap-api-key
-  jwksIngress: { enabled: false }
-  networkPolicy:
-    enabled: true
-
 sessions-pipeline:
   worker:
-    image:
+    image: &proofServicesImage
+      repository: ghcr.io/agentworkforce/96bulls-services
       digest: sha256:6f22ea17dff336e1431664542759fd27958649388b90a0b2f0881883caa7c6b2
     existingSecret: agent-relay-gcp-proof
     summaryEncryption:
@@ -86,8 +76,11 @@ sessions-pipeline:
       runtimeRoleLogin: true
       functionBoundaryMode: global-default-revoke
   alleyoop:
-    image:
-      digest: sha256:6f22ea17dff336e1431664542759fd27958649388b90a0b2f0881883caa7c6b2
+    image: *proofServicesImage
+    # The RelayAuth courier ingest is off; the native ingest edge below uses
+    # alleyoop's ServiceAccount as its GCS identity.
+    deployment:
+      enabled: false
     existingSecret: agent-relay-gcp-proof
     hoopdb:
       existingSecret: agent-relay-gcp-proof
@@ -101,32 +94,108 @@ sessions-pipeline:
       jwksUrl: http://relayauth:8787/.well-known/jwks.json
   hoopdb: { enabled: false }
   session-object-storage: { enabled: false }
-
-relayhistory:
-  fullnameOverride: relayhistory
-  image:
-    repository: us-central1-docker.pkg.dev/agentrelay-96bulls-soc2-2610/awf-conformance-images/relayhistory
-    digest: ""
-  database:
-    existingSecret: agent-relay-gcp-proof
-  relayauth:
-    historyOrigin: https://history.gcp-proof.agentrelay.com
-    jwksUrl: http://relayauth:8787/.well-known/jwks.json
-    issuer: http://relayauth:8787
-  agentRelayCloud:
-    apiUrl: http://relay-control
-  service:
-    annotations:
-      cloud.google.com/neg: '{"ingress": true}'
-  ingress:
-    enabled: false
-  networkPolicy:
+  sessionReadApi:
     enabled: true
-    ingressFrom:
-      - podSelector: {}
-      - ipBlock: { cidr: 35.191.0.0/16 }
-      - ipBlock: { cidr: 130.211.0.0/22 }
-    allowAllEgress: true
+    fullnameOverride: agent-relay-read-api
+    image: *proofServicesImage
+    origin: https://history.gcp-proof.agentrelay.com
+    completeSince: epoch
+    directoryWorkspaces: "*"
+    events: { messageIds: true }
+    turns: { assumeNoLegacy: true }
+    login: { advertisesSync: false }
+    config:
+      existingSecret: agent-relay-gcp-proof
+      key: RELAYHISTORY_READ_API_SECRET
+    postgres: { tlsProfile: custom-ca }
+    postgresCa:
+      enabled: true
+      configMap: cloud-sql-ca
+      key: ca.crt
+      # Proof Cloud SQL server CA bundle hash (public, not a secret).
+      sha256: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    search: { backend: postgres, backendId: gcp-proof }
+    auth:
+      mode: self_issued
+      relaycontrol: { enabled: false, url: "", existingSecret: "" }
+      selfIssued:
+        internalSecret:
+          existingSecret: agent-relay-gcp-proof
+          key: session-read-api-secret
+    cors:
+      allowedOrigins: [https://gcp-proof.agentrelay.com]
+    serviceAccountCreate: true
+    serviceAccountName: agent-relay-read-api
+    networkPolicy:
+      enabled: true
+      controlFrom:
+        - podSelector:
+            matchLabels: { app.kubernetes.io/name: relay-control }
+      publicFrom:
+        - ipBlock: { cidr: 35.191.0.0/16 }
+        - ipBlock: { cidr: 130.211.0.0/22 }
+    extraEnv:
+      - { name: LOCKER_PROVIDER, value: gcs }
+      - { name: LOCKER_BUCKET, value: agent-relay-gcp-proof }
+      - { name: LOCKER_REGION, value: us-central1 }
+      - { name: PIPELINE_KEY_PREFIX, value: 96bulls }
+      - { name: PIPELINE_ORG_FROM_PREFIX, value: "true" }
+  ingestEdge:
+    enabled: true
+    fullnameOverride: agent-relay-ingest-edge
+    image: *proofServicesImage
+    origin: https://history.gcp-proof.agentrelay.com
+    allowInClusterHttp: true
+    relaycontrol: { url: http://relay-control.agent-relay.svc }
+    config:
+      existingSecret: agent-relay-gcp-proof
+      databaseUrlKey: ingest-database-url
+      introspectSecretKey: relaycontrol-introspect-secret
+    postgres:
+      caConfigMap: cloud-sql-ca
+      caKey: ca.crt
+      caSha256: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    locker:
+      provider: gcs
+      bucket: agent-relay-gcp-proof
+      region: us-central1
+      credentials: { mode: podIdentity }
+    sessionSelection: true
+    heartbeatAccept: true
+    serviceAccountName: agent-relay-session-ingest-api
+    networkPolicy:
+      enabled: true
+      ingressFrom:
+        - ipBlock: { cidr: 35.191.0.0/16 }
+        - ipBlock: { cidr: 130.211.0.0/22 }
+  searchIndexer:
+    enabled: true
+    fullnameOverride: agent-relay-search-indexer
+    image: *proofServicesImage
+    completeSince: epoch
+    config: { existingSecret: agent-relay-gcp-proof }
+    search: { backend: postgres, backendId: gcp-proof }
+    locker:
+      provider: gcs
+      bucket: agent-relay-gcp-proof
+      region: us-central1
+    postgres:
+      tlsProfile: custom-ca
+      caConfigMap: cloud-sql-ca
+      caKey: ca.crt
+      caSha256: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    bootstrap:
+      enabled: true
+      existingSecret: agent-relay-gcp-proof
+    extraEnv:
+      - { name: CLOUD_SQL_CONNECTION_NAME, value: "agentrelay-96bulls-soc2-2610:us-central1:awf-conformance" }
+      - { name: REDIS_HOST, value: "10.0.0.3" }
+      - { name: REDIS_PORT, value: "6378" }
+      - { name: REDIS_AUTH_ENABLED, value: "false" }
+      - { name: REDIS_TRANSIT_ENCRYPTION, value: SERVER_AUTHENTICATION }
+      - { name: REDIS_TLS_CA_PEM, value: "proof Memorystore server CA PEM bundle" }
+      - { name: PUBSUB_TOPIC, value: "projects/agentrelay-96bulls-soc2-2610/topics/agent-relay-gcp-proof" }
+      - { name: PUBSUB_SUBSCRIPTION, value: "projects/agentrelay-96bulls-soc2-2610/subscriptions/agent-relay-gcp-proof" }
 
 relay-control:
   fullnameOverride: relay-control
@@ -137,12 +206,24 @@ relay-control:
     runtimeRole: control_api_runtime
   publicUrl: https://api.gcp-proof.agentrelay.com
   existingSecret: agent-relay-gcp-proof
+  secretKeys:
+    relayauthApiKey: ""
+    introspectSecret: relaycontrol-introspect-secret
+    sessionReadApiSecret: session-read-api-secret
   services:
-    relayauthUrl: http://relayauth:8787
+    relayauthEnabled: false
+    relayauthUrl: ""
     relaycastUrl: http://relaycast:8787
     relaycastPublicUrl: https://cast.gcp-proof.agentrelay.com
-    relayhistoryUrl: http://relayhistory:8080
-    relayhistoryPublicUrl: https://history.gcp-proof.agentrelay.com
+    relayhistoryUrl: ""
+    relayhistoryPublicUrl: ""
+    relayhistoryBackend: native
+    sessionReadApiUrl: http://agent-relay-read-api
+    sessionReadApiPublicUrl: https://history.gcp-proof.agentrelay.com
+    sessionReadApiMcpReads: true
+  introspection:
+    audiences:
+      - https://history.gcp-proof.agentrelay.com
   service:
     annotations:
       cloud.google.com/neg: '{"ingress": true}'

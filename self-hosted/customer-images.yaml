@@ -18,8 +18,8 @@ metadata:
 scope:
   description: >-
     Unique images rendered by the supported GCP native History profile
-    (values-gcp.yaml plus values-gcp-native.yaml). RelayAuth and standalone
-    RelayHistory are disabled; the Sessions Pipeline provides ingest, read,
+    (values-gcp.yaml plus values-gcp-native.yaml). RelayAuth is disabled and
+    the chart has no standalone History server; the Sessions Pipeline provides ingest, read,
     indexing and worker workloads. Durable actors, Relayfile and Relayflows
     are optional components, off in this profile, and are not part of this
     matrix. Every active row is an immutable digest rendered by the two
@@ -38,8 +38,6 @@ scope:
       reason: all three privileged SQL bootstrap Jobs are disabled
     - image: ghcr.io/agentworkforce/relayauth
       reason: components.relayauth=false in values-gcp-native.yaml
-    - image: ghcr.io/agentworkforce/relayhistory
-      reason: components.relayhistory=false in values-gcp-native.yaml
     - image: ghcr.io/agentworkforce/durable-actors-control-plane
       reason: >-
         components.durableActors and the Relaycast/Relayfile actor modes are
@@ -355,57 +353,6 @@ images:
         Public multi-arch upstream digest tied to a recorded upstream commit
         and release run, with SBOM, SLSA provenance and a verified keyless
         signature; Apache-2.0 image packaging.
-      blockingReasons: []
-
-  - id: relayhistory
-    active: false
-    firstParty: true
-    component: relayhistory
-    workloads:
-      - Deployment/relayhistory:history
-      - Job/relayhistory-migrate-*:migrate
-    current:
-      repository: ghcr.io/agentworkforce/relayhistory
-      digest: sha256:d3166bb14e1d6043426a4dd8cc05408b94574c8d79ad5fd6e789e0de00ab371b
-      chartStatus: shipped
-      note: Rendered by values-gcp.yaml on relayhistory.image (tag sha-53c333349cb9210832013cd3a2423f5f19062d36).
-    source:
-      repository: https://github.com/AgentWorkforce/relayhistory-cloud
-      revision: 53c333349cb9210832013cd3a2423f5f19062d36
-      path: Dockerfile
-      reproducibleReference: true
-      note: relayhistory-cloud main after the self-host runtime PR (#280).
-    license:
-      status: approved
-      spdx: Apache-2.0
-      evidence: https://github.com/AgentWorkforce/relayhistory-cloud/blob/53c333349cb9210832013cd3a2423f5f19062d36/LICENSE
-    platforms:
-      expected: [linux/amd64, linux/arm64]
-      verifiedFromRegistry: [linux/amd64, linux/arm64]
-      status: verified
-      verificationAccess: anonymous
-    release:
-      workflow: https://github.com/AgentWorkforce/relayhistory-cloud/blob/53c333349cb9210832013cd3a2423f5f19062d36/.github/workflows/container.yml
-      run: https://github.com/AgentWorkforce/relayhistory-cloud/actions/runs/41773941051
-      trigger: workflow_dispatch
-      buildsCommittedRevision: true
-      publishedTags: [sha-53c333349cb9210832013cd3a2423f5f19062d36]
-      publishesSbom: true
-      publishesProvenance: true
-      provenanceMode: max
-      note: >-
-        The run pushed the image with a BuildKit SBOM and max-mode provenance
-        (attestation manifests verified in the registry index); its GitHub
-        build-provenance attestation step failed (private repository).
-    customerAcquisition:
-      status: available-public
-      procedure: Mirror the public GHCR digest into the customer registry by digest and record the destination digest.
-    approval:
-      status: approved
-      basis: >-
-        Public digest from the reviewed container workflow at the recorded
-        main revision, with an SBOM, max-mode provenance, and amd64+arm64
-        verified anonymously.
       blockingReasons: []
 
   - id: relay-control

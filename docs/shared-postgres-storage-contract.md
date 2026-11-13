@@ -26,8 +26,9 @@ reviewed bindings; a non-public installation needs compatible application suppor
 
 A binding does not create a database or enable an add-on. Database bindings
 represent components with authoritative relational stores.
-History is a sessions-pipeline capability. Keep existing legacy History/Auth
-stores until their reviewed cutover; they are not new target dependencies.
+History is a sessions-pipeline capability with no store of its own. Keep an
+older installation's History or Auth database until its reviewed cutover; they
+are not target dependencies.
 
 All bindings use the same writer endpoint/port and `sslmode=verify-full`, with
 independent database names and migration/runtime identities. Credentials remain

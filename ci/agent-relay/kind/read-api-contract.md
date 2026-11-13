@@ -1,5 +1,7 @@
 # Pending self-host read API contract
 
+> Note (2026-11-12): historical review. The standalone RelayHistory server and its `RELAYHISTORY_URL` proxy target were since removed; History is always the native Sessions path (`relayhistoryBackend=native`).
+
 This is source review and read-only diagnosis, not an enabled deployment or an
 end-to-end pass. Historical proofs at `1c203f59` (ar-lap) and `fd8565c`
 (local-control) each record 57 PASS, 0 FAIL, 3 PENDING. They predate the

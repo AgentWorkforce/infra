@@ -162,7 +162,7 @@ application. Backend/recovery storage must be external and outlive all three.
 Use a reviewed explicit **non-secret output manifest** between states if the next
 operator must not read the whole foundation state. `terraform_remote_state` grants
 access to the complete state, including Redis AUTH when enabled. Data state owns
-Cloud SQL/PostgreSQL 17, separate relaycontrol/relayhistory/hoopdb databases and
+Cloud SQL/PostgreSQL 17, separate relaycontrol/hoopdb databases and
 migration ledgers, GCS, optional search/function resources and least-privilege
 workload bindings. Foundation does not bootstrap SQL roles, extensions or secrets.
 Application state owns namespaces/KSAs, External Secrets integration, Kubernetes,

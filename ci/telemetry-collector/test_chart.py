@@ -3,6 +3,7 @@ import http.server
 from pathlib import Path
 import subprocess
 import json
+import sys
 import unittest
 import threading
 
@@ -13,13 +14,22 @@ CHART = "charts/telemetry-collector"
 FIXTURE = CHART + "/ci/default-values.yaml"
 
 
+def kind_umbrella_values():
+    # The kind base layer renders only through the native core composition
+    # (its single-phase kind-up profile ran the removed standalone History).
+    sys.path.insert(0, str(ROOT / "ci/agent-relay/kind"))
+    import test_stack as kind_profiles
+    return yaml.safe_dump(kind_profiles.Profiles().compose("serve"))
+
+
 def render(extra=(), ok=True, umbrella=False):
     command = ["helm", "template", "ci", "charts/agent-relay" if umbrella else CHART, "-n", "ci", "--no-hooks"]
     if umbrella:
-        command += ["-f", "charts/agent-relay/values-kind-core.yaml"]
+        command += ["--is-upgrade", "-f", "-"]
     else:
         command += ["-f", FIXTURE]
-    result = subprocess.run(command + list(extra), cwd=ROOT, text=True, capture_output=True, timeout=45)
+    result = subprocess.run(command + list(extra), cwd=ROOT, text=True, capture_output=True, timeout=45,
+                            input=kind_umbrella_values() if umbrella else None)
     if not ok:
         if result.returncode == 0:
             raise AssertionError("unsafe configuration rendered")

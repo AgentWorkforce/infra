@@ -13,8 +13,8 @@
 # Pod Identity associations to the release namespace and the four exact Service
 # Account names below. The cluster must have a default encrypted EBS StorageClass
 # unless relaycast.persistence.storageClass is set in the private site values.
-# Publish the native history origin with scripts/selfhost/eks-alb-ingress.sh,
-# EKS_ALB_INGEST=true and EKS_ALB_HISTORY_LEGACY_SERVICE unset (README).
+# Publish the native history origin with scripts/selfhost/eks-alb-ingress.sh
+# and its default routes (README).
 #
 # Reader-first upgrade contract: values-eks.yaml supplies READER_MAX_RULESET=10
 # while leaving SCRUB_ENGINE and SCRUB_ENGINE_REQUIRED unset. Wait for that
@@ -28,7 +28,6 @@ x-pins:
 
 components:
   relayauth: false
-  relayhistory: false
   relayflows: false
 
 global:

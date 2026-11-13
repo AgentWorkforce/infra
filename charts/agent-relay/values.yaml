@@ -5,9 +5,10 @@ components:
   # Enable after accepting the collector/proxy images, TLS and durable volume.
   telemetryCollector: false
   relaycast: true
-  relayauth: true
+  # Optional. Native History needs no RelayAuth; enable it only for
+  # relaycast.credentials.authority=relayauth (RelayAuth-issued ar_ keys).
+  relayauth: false
   sessionsPipeline: true
-  relayhistory: true
   control: true
   webapp: true
   relayflows: false
@@ -87,7 +88,6 @@ gkeIngress:
     # /v1/node/ws) outlive GCE's 30 s default. Set
     # relaycast.service.backendConfig to <name>-cast.
     cast: { serviceName: "", servicePort: 8787, timeoutSec: 3600 }
-    history: { serviceName: "", servicePort: 8080 }
     files: { serviceName: "", servicePort: 8080 }
   # Seconds the GCE backend keeps a request (and an upgraded WebSocket) open
   # for the actors host; durable-actors sockets are long-lived.
@@ -103,13 +103,18 @@ relayauth:
   jwksIngress:
     enabled: false
 sessions-pipeline: {}
-relayhistory: {}
 # relay-control: see charts/relay-control/values.yaml. encryption.keyId is
 # required; optional: encryption.previousKeyId, secretKeys.previousEncryptionKey,
 # secretKeys.internalToken, secretKeys.telemetryInstallKey, dashboardUrl,
 # flows.*, telemetry.* (telemetry.level defaults to errors, effective once the
 # install is registered with installId, install key and endpoint).
-relay-control: {}
+# History is native: Control hands out the Sessions read API origin
+# (services.sessionReadApiUrl and sessionReadApiPublicUrl, required) and needs no
+# RelayAuth. The standalone RelayHistory server was removed from this chart.
+relay-control:
+  services:
+    relayauthEnabled: false
+    relayhistoryBackend: native
 relay-webapp: {}
 # Opt-in only: enabling components.relayflows without configuring this block
 # renders a standalone Job that fails for lack of a flow source (or a
@@ -129,8 +134,9 @@ localKind:
   enabled: false
   allowLocalOnly: false
   profile: core
-  temporaryRelayauth: true
-  # Explicit complete-native core installer phase; empty preserves legacy profiles.
+  temporaryRelayauth: false
+  # Native core installer phase (control, then serve). Required when enabled:
+  # the single-phase profile that ran the standalone RelayHistory was removed.
   nativePhase: ""
 # Umbrella NetworkPolicy for the durable-actors control plane (port 7100):
 # release-namespace pods, the actor sandbox namespace and, with

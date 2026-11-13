@@ -40,12 +40,6 @@
       },
       {
         "decision": "approved",
-        "evidence": "Owner decision (Khaliq, 2026-11-03): Apache-2.0. The canonical LICENSE and package.json license are in https://github.com/AgentWorkforce/relayhistory-cloud/pull/279 (open, held with the RelayHistory release image). The proof revision recorded in customer-images.yaml predates it.",
-        "id": "relayhistory",
-        "spdx": "Apache-2.0"
-      },
-      {
-        "decision": "approved",
         "evidence": "https://github.com/AgentWorkforce/relaycontrol/blob/main/LICENSE (Apache-2.0; package.json license Apache-2.0)",
         "id": "selfhost-api",
         "spdx": "Apache-2.0"
@@ -102,12 +96,6 @@
       "users": 100
     }
   },
-  "relayHistoryMigrations": {
-    "evidence": "2026-11-03 GKE drill: relayhistory-cloud 74a6e526 has 47 packages/relayhistory/db/migrations/*.sql; the image built from it (sha256:72a057c27edbec53412a2b3a665913810b5d9a95d8b6b818946f1892590147bf, the live-proof RelayHistory image) has 47 *.sql in /app/db/migrations, and after install and after the 0.3.0 upgrade the sessions.__migrations ledger had 47 rows with 47/47 checksums equal to the file hashes (release-lane drill evidence migrations/relayhistory-previous.json, relayhistory-post-upgrade.json). This is NOT the RelayHistory image in customer-images.yaml (4b5839f proof image) and NOT a release image: the release image is unpublished (relayhistory-cloud #280 held). The revision intentionally differs, so the release gate rejects this record (relayhistory-migrations) until migration evidence is recorded for the released image.",
-    "imageCount": 47,
-    "sourceCount": 47,
-    "sourceRevision": "74a6e526afd2a821860afd341fb2a12907164829"
-  },
   "release": {
     "branchControls": {
       "branch": "main",
@@ -123,7 +111,7 @@
       "protected": false,
       "requiredApprovals": 0
     },
-    "imageManifestSha256": "sha256:e0fa1336d0af6dfee452ec8871425b3688fd2a213194413f9bdab97f2d8c360e",
+    "imageManifestSha256": "sha256:026c5d156016a9eaf51ab1443073fbbbebef8a56dd4efb0a9ba5a9f4bf40bb7a",
     "valuesFile": "charts/agent-relay/values-gcp.yaml"
   },
   "releaseDecision": "blocked",

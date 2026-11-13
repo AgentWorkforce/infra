@@ -11,8 +11,6 @@ PROFILE ?= core
 PYTHON ?= python3
 # Quote arbitrary PROFILE text as one shell argument before Python validates it.
 profile_arg = '$(subst ','"'"',$(PROFILE))'
-cutover_arg = '$(subst ','"'"',$(CUTOVER_RECEIPT))'
-control_archive_arg = '$(subst ','"'"',$(CONTROL_IMAGE_ARCHIVE))'
 
 .PHONY: help kind-up kind-up-local-control kind-down kind-render kind-build-addons kind-build-control kind-proof kind-proof-core kind-proof-addons kind-reconcile-names
 help:
@@ -21,12 +19,13 @@ help:
 	@echo "Kind-profile Desktop: make desktop-install (docs/local-desktop.md)"
 	@echo "Qualification runner: make local-acceptance (docs/local-acceptance.md; API foundation available)"
 	@echo "Code loop: make dev after one-time configure; optional make dev-plan (existing Kind; docs/kind-development.md)"
-	@echo "Local kind: make kind-render, kind-up, kind-proof, or kind-down PROFILE=core|addons"
-	@echo "Build: kind-build-control, kind-up-local-control, kind-build-addons; proof aliases: kind-proof-core, kind-proof-addons"
-	@echo "Provisioning requires an explicit target; kind readiness is not a full application proof."
-	@echo "Completed naming cutover: kind-reconcile-names CUTOVER_RECEIPT=... CONTROL_IMAGE_ARCHIVE=..."
+	@echo "Native core installer: docs/native-kind-core-lifecycle.md; delete an old single-phase cluster: make kind-down PROFILE=core|addons"
+	@echo "Image builds: kind-build-control, kind-build-addons. Retired with the standalone RelayHistory server: kind-up, kind-render, kind-proof, kind-reconcile-names"
 
-kind-up:
+# The single-phase kind profile ran the removed standalone RelayHistory server.
+# These targets refuse (before any state or cluster access) and point at
+# make local-up and the native core installer.
+kind-up kind-up-local-control kind-render kind-proof kind-proof-core kind-proof-addons kind-reconcile-names:
 	$(call sh_quote,$(PYTHON)) ci/agent-relay/kind/stack.py up --profile $(profile_arg)
 
 .PHONY: local-tools
@@ -36,26 +35,14 @@ local-tools:
 .PHONY: desktop-install
 desktop-install:
 	$(call sh_quote,$(PYTHON)) ci/agent-relay/kind/desktop_install.py $(if $(DESKTOP_RUN),--run $(call sh_quote,$(DESKTOP_RUN))) $(if $(DESKTOP_ARTIFACT_DIR),--artifact-dir $(call sh_quote,$(DESKTOP_ARTIFACT_DIR)))
-kind-up-local-control: kind-build-control
-	$(MAKE) kind-up PROFILE=$(profile_arg)
 
 kind-down:
 	$(call sh_quote,$(PYTHON)) ci/agent-relay/kind/stack.py down --profile $(profile_arg)
-kind-render:
-	$(call sh_quote,$(PYTHON)) ci/agent-relay/kind/stack.py render --profile $(profile_arg)
 kind-build-control:
 	$(call sh_quote,$(PYTHON)) ci/agent-relay/kind/stack.py build-control --profile $(profile_arg)
-kind-reconcile-names:
-	$(call sh_quote,$(PYTHON)) ci/agent-relay/kind/stack.py reconcile-names --profile $(profile_arg) --cutover-receipt $(cutover_arg) --control-image-archive $(control_archive_arg)
 
 kind-build-addons:
 	$(call sh_quote,$(PYTHON)) ci/agent-relay/kind/stack.py build-addons --profile addons
-kind-proof:
-	$(call sh_quote,$(PYTHON)) ci/agent-relay/kind/proof.py --profile $(profile_arg)
-kind-proof-core:
-	$(MAKE) kind-proof PROFILE=core
-kind-proof-addons:
-	$(MAKE) kind-proof PROFILE=addons
 
 .PHONY: dev dev-plan dev-test
 dev-plan:

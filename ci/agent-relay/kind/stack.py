@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
-"""Local-only kind lifecycle. Every Kubernetes call uses a private kubeconfig.
+"""Shared local kind helpers. Every Kubernetes call uses a private kubeconfig.
 
+The native installers (local_stack.py for make local-up, native_core_cli.py for
+the native core installer) build on this module. Its own single-phase install
+(make kind-up) was retired with the standalone RelayHistory server and refuses.
 No cloud CLI, registry publication, global Docker configuration or host trust
 store changes. PyYAML is a prerequisite, shared with the chart verification.
 """
@@ -17,7 +20,6 @@ import secrets
 import shutil
 import subprocess
 import sys
-import tempfile
 import time
 import urllib.request
 
@@ -33,6 +35,11 @@ CALICO_URL = "https://raw.githubusercontent.com/projectcalico/calico/v3.31.3/man
 CALICO_SHA = "4b2e4053abc87427c214128f0e1b065d2f0dbadeb6be4ca3bdc6754e33af0ca7"
 TRAEFIK_CHART = "42.3.1"
 HOSTS = [f"{s}.kind.agentrelay.com" for s in ("relay", "cast", "history", "files")]
+RETIRED = ("the single-phase kind profile (make kind-up, kind-render, kind-proof, kind-reconcile-names) "
+           "was retired with the standalone RelayHistory server; History is always the native Sessions "
+           "path now. Use make local-up (docs/local-development.md) or the native core installer "
+           "(docs/native-kind-core-lifecycle.md). make kind-down PROFILE=core|addons still deletes an "
+           "owned legacy cluster. Nothing was changed.")
 
 
 class StackError(Exception):
@@ -73,70 +80,12 @@ def private_json(path, value):
     path.chmod(0o600)
 
 
-def auth_signing_key(stack):
-    """RelayAuth requires PKCS#8; preserve legacy RSA identity on conversion."""
-    key = stack.state / "auth-signing.pem"
-    legacy = key.exists() and key.read_bytes().startswith(b"-----BEGIN RSA PRIVATE KEY-----")
-    if key.exists() and not legacy:
-        key.chmod(0o600)
-        if not key.read_bytes().startswith(b"-----BEGIN PRIVATE KEY-----"):
-            raise StackError("local RelayAuth signing key is not unencrypted PKCS#8")
-        stack.cmd(["openssl", "pkey", "-in", key, "-pubout"], sensitive=True)
-        return key
-    fd, name = tempfile.mkstemp(prefix="auth-signing-", suffix=".pem", dir=stack.state)
-    os.close(fd)
-    temporary = Path(name)
-    try:
-        if legacy:
-            key.chmod(0o600)
-            original_public = stack.cmd(["openssl", "pkey", "-in", key, "-pubout"], sensitive=True).stdout
-            stack.cmd(["openssl", "pkcs8", "-topk8", "-nocrypt", "-in", key, "-out", temporary], sensitive=True)
-        else:
-            stack.cmd(["openssl", "genpkey", "-algorithm", "RSA", "-pkeyopt", "rsa_keygen_bits:2048", "-out", temporary], sensitive=True)
-        temporary.chmod(0o600)
-        if not temporary.read_bytes().startswith(b"-----BEGIN PRIVATE KEY-----"):
-            raise StackError("OpenSSL did not produce a PKCS#8 RelayAuth signing key")
-        public = stack.cmd(["openssl", "pkey", "-in", temporary, "-pubout"], sensitive=True).stdout
-        if legacy:
-            if public != original_public:
-                raise StackError("RelayAuth key conversion changed the signing identity")
-            backup = key.with_name("auth-signing.pkcs1-backup.pem")
-            if backup.exists():
-                if backup.read_bytes() != key.read_bytes():
-                    raise StackError("existing RelayAuth key backup differs; refusing to overwrite it")
-                backup.chmod(0o600)
-            else:
-                with backup.open("xb") as stream:
-                    os.chmod(backup, 0o600)
-                    stream.write(key.read_bytes())
-            os.replace(temporary, key)
-        else:
-            os.link(temporary, key)  # Refuse a concurrently created signing key.
-        return key
-    finally:
-        temporary.unlink(missing_ok=True)  # Only this conversion/generation's file.
-
-
-def tenant_values(values, ids, profile, arch, recipe):
-    """Set discovered tenant IDs without dropping selected images or settings."""
-    values.setdefault("global", {}).setdefault("tenant", {})["orgId"] = ids["orgId"]
-    pipeline = values.setdefault("sessions-pipeline", {})
-    worker = pipeline.setdefault("worker", {})
-    worker.setdefault("tenant", {}).update({"orgId": ids["orgId"], "workspaceId": ids["workspaceId"]})
-    worker.setdefault("podAnnotations", {})["kind.agentrelay.dev/bootstrap-source"] = recipe
-    pipeline.setdefault("alleyoop", {}).setdefault("tenant", {}).update({"orgId": ids["orgId"], "workspaceId": ids["workspaceId"]})
-    if profile == "addons":
-        values.setdefault("relayflows", {}).setdefault("nodeSelector", {})["kubernetes.io/arch"] = arch
-    return values
-
-
 class Stack:
     def __init__(self, profile):
         if profile not in ("core", "addons"):
             raise StackError("profile must be core or addons")
         self.profile = profile
         self.root = ROOT
-        self.named_layout = None
         # Select the identity before any state-directory filesystem access.
         self.name, self.state = self.identity_layout(profile)
         # State contains local credentials. Keep it on the checkout's volume.
@@ -216,12 +165,6 @@ class Stack:
             args += ["-f", self.overrides]
         return args
 
-    def render(self):
-        raw = self.cmd(["helm", "template", RELEASE, "charts/agent-relay", "-n", NS,
-                        *self.values_args()]).stdout
-        (self.state / "rendered.yaml").write_text(raw)
-        return [d for d in yaml.safe_load_all(raw) if d]
-
     def recipe_hash(self):
         files = [ROOT / "Makefile", ROOT / "ci/agent-relay/kind/stack.py", ROOT / "ci/agent-relay/kind/addons.py",
                  ROOT / "ci/agent-relay/kind/edge.py", ROOT / "ci/agent-relay/kind/tls.py",
@@ -230,7 +173,6 @@ class Stack:
                    ("native_recipe", "native_inspect", "native_bootstrap", "native_pipeline", "native_control", "native_control_artifact",
                     "native_core_values", "native_core", "native_core_cli", "native_webapp", "native_target", "native_diagnostics")],
                  ROOT / "ci/agent-relay/kind/bootstrap.mjs", ROOT / "ci/agent-relay/kind/control.py",
-                 ROOT / "ci/agent-relay/kind/named_upgrade.py",
                  ROOT / "ci/agent-relay/kind/storage-name-renderer/plugin.yaml",
                  ROOT / "ci/agent-relay/kind/storage-name-renderer/postrender.py",
                  ROOT / "ci/agent-relay/kind/flows-sdk/package.json",
@@ -289,21 +231,6 @@ class Stack:
         free = shutil.disk_usage(backing).free
         if free < needed:
             raise StackError(f"Docker backing volume has {free / 1024**3:.1f} GiB free; this image preparation needs {needed / 1024**3:.1f} GiB. No cleanup is performed.")
-
-    def image_space(self, images):
-        # Warm setups need room for native node copies, not another complete
-        # cold registry cache. Measure cached native images instead of blocking
-        # a small configuration fix behind the cold-install budget.
-        size = 2 * 1024**3  # CNI, local volumes and unpacking headroom.
-        from control import resolve
-        for image in set(images):
-            p = self.cmd([*self.docker_args, "image", "inspect", "--format", "{{.Size}} {{.Architecture}}", resolve(self, image)], check=False)
-            fields = p.stdout.split()
-            if p.returncode or len(fields) != 2 or fields[1] != self.arch:
-                self.check_space(20 * 1024**3)
-                return
-            size += int(fields[0])
-        self.check_space(size)
 
     def load(self, image):
         print(f"Prepare node image {image}", flush=True)
@@ -424,7 +351,7 @@ class Stack:
                          "clusterUid": expected_uid})
             os.replace(pending, self.marker)
             print(f"Recovered local ownership receipt from prior UID; backup: {backup}")
-            print("Cluster and kubeconfig unchanged. Rerun kind-up before acceptance.")
+            print("Cluster and kubeconfig unchanged. make kind-down can now delete it; reinstall with make local-up.")
         finally:
             candidate.unlink(missing_ok=True)
             pending.unlink(missing_ok=True)
@@ -462,95 +389,8 @@ class Stack:
         print("Calico and kind node ready", flush=True)
 
     def secret(self, name, values):
-        if self.named_layout is not None:
-            from named_upgrade import preserve_secret
-            preserve_secret(self, name, values)
-            return
         self.apply({"apiVersion": "v1", "kind": "Secret", "metadata": {"name": name, "namespace": NS},
                     "type": "Opaque", "stringData": values})
-
-    def credentials(self):
-        path = self.state / "credentials.json"
-        s = json.loads(path.read_text()) if path.exists() else {}
-        for k in ("postgres", "hoop", "runtime", "history_owner", "history_runtime", "control_owner", "control_api_runtime",
-                  "relayfile", "bootstrap", "encryption", "internal", "auth_internal", "auth_key", "cast", "cast_bootstrap", "locker"):
-            s.setdefault(k, secrets.token_hex(32))
-        private_json(path, s)
-        key = auth_signing_key(self)
-        for name, values in self.credential_values(s, key.read_text()).items():
-            self.secret(name, values)
-        return s
-
-    def credential_values(self, s, signing_key):
-        """Pure projection shared by fresh creation and named-reuse checks."""
-        db = lambda user, database: f"postgresql://{user}:{s[user]}@postgres.{NS}.svc.cluster.local:5432/{database}"
-        values = {
-            "kind-postgres": {"password": s["postgres"]},
-            "kind-cast": {"internal-secret": s["cast"], "workspace-bootstrap-secret": s["cast_bootstrap"]},
-            "kind-auth": {"internal-secret": s["auth_internal"], "signing-key.pem": signing_key, "bootstrap-api-key": s["auth_key"]},
-            "kind-control": {"database-url": db("control_api_runtime", "relaycontrol"),
-            "database-migrations-url": db("control_owner", "relaycontrol"), "relayauth-api-key": s["auth_key"],
-            "selfhost-bootstrap-token": s["bootstrap"], "selfhost-encryption-key": s["encryption"],
-            "selfhost-internal-token": s["internal"], "relaycast-internal-secret": s["cast"]}}
-        runtime = f"postgresql://sessions_pipeline_runtime:{s['runtime']}@postgres.{NS}.svc.cluster.local:5432/hoopdb"
-        values["kind-pipeline"] = {"HOOPDB_URL": runtime, "HOOPDB_MIGRATION_URL": db("hoop", "hoopdb"),
-                    "rootUser": "locker", "rootPassword": s["locker"], "SUMMARY_MASTER_KEYS": "kind1:" + s["encryption"]}
-        values["kind-history-db"] = {"DATABASE_URL": db("history_runtime", "relayhistory"),
-                                    "DATABASE_MIGRATIONS_URL": db("history_owner", "relayhistory")}
-        if self.profile == "addons":
-            values["kind-relayfile"] = {"RELAYFILE_INTERNAL_HMAC_SECRET": s["internal"],
-                                          # lib/pq defaults to TLS; local Postgres has TLS off.
-                                      "RELAYFILE_PRODUCTION_DSN": db("relayfile", "relayfile") + "?sslmode=disable"}
-        return values
-
-    def postgres(self, s, services_image):
-        if self.named_layout is not None:
-            # A qualified existing fixture may have a reviewed TLS server
-            # configuration. Reuse it; naming is not authority to replace it
-            # with the fresh-install plaintext server below.
-            self.k("rollout", "status", "statefulset/postgres", "--timeout=180s", timeout=210)
-            self.postgres_roles(s, services_image)
-            return
-        labels = {"app": "kind-postgres"}
-        self.apply({"apiVersion": "v1", "kind": "Service", "metadata": {"name": "postgres", "namespace": NS},
-                    "spec": {"selector": labels, "ports": [{"port": 5432}]}})
-        self.apply({"apiVersion": "apps/v1", "kind": "StatefulSet", "metadata": {"name": "postgres", "namespace": NS},
-          "spec": {"serviceName": "postgres", "replicas": 1, "selector": {"matchLabels": labels},
-            "template": {"metadata": {"labels": labels}, "spec": {"containers": [{"name": "postgres", "image": POSTGRES,
-              "env": [{"name": "POSTGRES_PASSWORD", "valueFrom": {"secretKeyRef": {"name": "kind-postgres", "key": "password"}}},
-                      {"name": "PGDATA", "value": "/var/lib/postgresql/data/pgdata"}],
-              "ports": [{"containerPort": 5432}], "volumeMounts": [{"name": "data", "mountPath": "/var/lib/postgresql/data"}],
-              "readinessProbe": {"exec": {"command": ["pg_isready", "-U", "postgres"]}, "periodSeconds": 3}}]}},
-            "volumeClaimTemplates": [{"metadata": {"name": "data"}, "spec": {"accessModes": ["ReadWriteOnce"], "resources": {"requests": {"storage": "4Gi"}}}}]}})
-        self.k("rollout", "status", "statefulset/postgres", "--timeout=180s", timeout=210)
-        self.postgres_roles(s, services_image)
-
-    def postgres_roles(self, s, services_image):
-        sql = []
-        for role in ("hoop", "history_owner", "history_runtime", "control_owner", "control_api_runtime", "relayfile"):
-            sql.append(f"SELECT 'CREATE ROLE {role} LOGIN PASSWORD ''{s[role]}''' WHERE NOT EXISTS (SELECT FROM pg_roles WHERE rolname='{role}') \\gexec")
-        for database, owner in (("hoopdb", "hoop"), ("relayhistory", "history_owner"),
-                                ("relaycontrol", "control_owner"), ("relayfile", "relayfile")):
-            sql.append(f"SELECT 'CREATE DATABASE {database} OWNER {owner}' WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname='{database}') \\gexec")
-        self.psql("postgres", "\n".join(sql), sensitive=True)
-        for database in ("hoopdb", "relayhistory"):
-            self.psql(database, "CREATE EXTENSION IF NOT EXISTS vector; CREATE EXTENSION IF NOT EXISTS pg_trgm;")
-        # The migration owner is deliberately not a superuser. Reuse the
-        # CNPG chart's compatibility-role definitions before its role shim.
-        fixture = yaml.safe_load((ROOT / "charts/sessions-pipeline/values.yaml").read_text())
-        for statement in fixture["hoopdb"]["cluster"]["initdb"]["postInitApplicationSQL"]:
-            match = re.match(r"CREATE ROLE (anon|authenticated|service_role) ", statement)
-            if match:
-                role = match.group(1)
-                literal = statement.replace("'", "''")
-                self.psql("hoopdb", f"SELECT '{literal}' WHERE NOT EXISTS (SELECT FROM pg_roles WHERE rolname='{role}') \\gexec")
-        # Use bootstrap bytes from exactly the services image being installed.
-        for name in ("session_directory_search_worker", "session_token_verifier", "session_ingest_roles",
-                     "hoopdb_runtime_role", "hoopdb_function_default_revoke"):
-            text = self.cmd([*self.docker_args, "run", "--rm", "--network", "none", "--entrypoint", "cat",
-                             services_image, f"/app/supabase/bootstrap/{name}.sql"]).stdout
-            self.psql("hoopdb", text, variables=["runtime_role=sessions_pipeline_runtime", "runtime_login=true", "migration_owner=hoop"])
-        self.psql("hoopdb", f"ALTER ROLE sessions_pipeline_runtime PASSWORD '{s['runtime']}';", sensitive=True)
 
     def psql(self, database, text, variables=(), sensitive=False):
         args = ["exec", "-i", "postgres-0", "--", "psql", "-X", "-v", "ON_ERROR_STOP=1", "-U", "postgres", "-d", database]
@@ -559,24 +399,8 @@ class Stack:
         return self.k(*args, data=text, sensitive=sensitive).stdout
 
     def tls(self):
-        if self.named_layout is not None:
-            from named_upgrade import verify_tls
-            verify_tls(self)
-            return
         from tls import create
         create(self, HOSTS, NS)
-
-    def migration(self, docs, app, component=None):
-        print(f"Run chart Job {app}/{component or 'migration'}", flush=True)
-        jobs = [d for d in docs if d["kind"] == "Job" and d["metadata"].get("labels", {}).get("app.kubernetes.io/name") == app
-                and (component is None or d["metadata"].get("labels", {}).get("app.kubernetes.io/component") == component)]
-        if len(jobs) != 1:
-            raise StackError(f"expected one {app}/{component} Job, found {len(jobs)}")
-        job = jobs[0]
-        self.apply(job, chart=True)
-        status = self.wait_job(job["metadata"]["name"])
-        if status.get("failed", 0):
-            raise StackError(f"{app}/{component} had failed attempts; refusing to hide a startup race")
 
     def wait_job(self, name, seconds=600):
         deadline = time.monotonic() + seconds
@@ -590,191 +414,13 @@ class Stack:
             time.sleep(2)
         raise StackError(f"Job {name} did not complete in {seconds}s")
 
-    def require_no_legacy_storage(self):
-        from named_upgrade import RECORD, validate
-        if (self.state / RECORD).exists():
-            # A missing namespace/claim after a qualified cutover is drift, not
-            # permission to silently replace the volume with a fresh install.
-            self.named_layout = validate(self)
-            return
-        if not self.k("get", "namespace", NS, "--ignore-not-found", "-o", "json", namespace=None).stdout.strip():
-            return  # A previously created, owned cluster may still be empty.
-        objects = json.loads(self.k("get", "deploy,pvc", "-o", "json").stdout).get("items", [])
-        for item in objects:
-            metadata = item.get("metadata", {})
-            if metadata.get("name") == "locker" or metadata.get("annotations", {}).get("meta.helm.sh/release-name") == "kind-locker":
-                raise StackError("legacy kind-locker storage exists: preserve its release/PVC and complete a reviewed data-preserving cutover before kind-up; no reset or replacement was attempted")
-
-    def require_control_webapp_layout(self):
-        """A public-name change must not orphan the existing QA resources."""
-        if not self.k("get", "namespace", NS, "--ignore-not-found", "-o", "json", namespace=None).stdout.strip():
-            return
-        resources = json.loads(self.k("get", "deployments,services", "-o", "json").stdout)
-        legacy = []
-        for resource in resources.get("items", []):
-            meta = resource.get("metadata", {})
-            name = meta.get("name", "")
-            app = meta.get("labels", {}).get("app.kubernetes.io/name", "")
-            if name in ("relaycontrol", "relay-app") or app in ("relay-cloud-api", "relay-dashboard"):
-                legacy.append(resource.get("kind", "resource") + "/" + name)
-        if legacy:
-            raise StackError("existing Control/Webapp layout requires a reviewed identity-preserving upgrade; "
-                             "kind-up refuses before changing ready.json, images or cluster resources: "
-                             + ", ".join(sorted(legacy)))
-
     def up(self):
-        if getattr(self, "native_target", None) is not None:
-            raise StackError("native instance requires the explicit native core transport")
-        for tool in ("docker", "kind", "kubectl", "helm", "openssl", "git"):
-            if not shutil.which(tool):
-                raise StackError(f"missing prerequisite: {tool}")
-        from native_network import refuse_legacy_bootstrap
-        try:
-            layers = [yaml.safe_load((ROOT / "charts/agent-relay/values.yaml").read_text())]
-            args = self.values_args()
-            for index in range(0, len(args), 2):
-                if args[index] != "-f":
-                    raise StackError("unrecognized bootstrap values argument")
-                layers.append(yaml.safe_load(Path(args[index + 1]).read_text()))
-        except yaml.YAMLError:
-            raise StackError("malformed bootstrap values; no runtime mutation attempted") from None
-        refuse_legacy_bootstrap(layers)
-        self.docker(require_space=False)
-        # Legacy recovery needs the original ready.json as an independent UID
-        # anchor. Refuse foreign/legacy ownership BEFORE invalidating it or
-        # preparing any images/resources; cluster() checks again before use.
-        if self.name in self.cmd(["kind", "get", "clusters"], timeout=30).stdout.splitlines():
-            self.require_owned_cluster()
-            self.require_no_legacy_storage()
-            self.require_control_webapp_layout()
-            # Edge policy ownership may predate the current installer. Refuse
-            # unqualified reuse before invalidating readiness or touching DBs,
-            # images or Helm; install() repeats this same read-only gate.
-            from edge import preflight_policy
-            preflight_policy(self, NS)
-        ready = self.state / "ready.json"
-        if ready.exists():
-            ready.unlink()
-        self.dependencies()
-        docs = self.render()
-        images = sorted({c["image"] for d in docs for c in pod_spec(d).get("containers", []) + pod_spec(d).get("initContainers", [])})
-        if self.profile == "addons":
-            self.build_addons()
-        self.image_space([NODE, POSTGRES, PROBE, *images])
-        for image in [NODE, POSTGRES, PROBE, *images]:
-            if not image.startswith("agent-relay-kind/"):
-                self.pull(image)
-        self.cluster()
-        self.cni()
-        self.apply({"apiVersion": "v1", "kind": "Namespace", "metadata": {"name": NS}})
-        for image in [POSTGRES, PROBE, *images]:
-            self.load(image)
-        s = self.credentials()
-        self.tls()
-        for d in docs:
-            if d["kind"] in ("NetworkPolicy", "ServiceAccount", "ConfigMap", "PersistentVolumeClaim"):
-                self.apply(d, chart=True)
-        services_image = next(i for i in images if "/96bulls-services@" in i)
-        generation = self.cmd([*self.docker_args, "run", "--rm", "--network", "none", "--entrypoint", "bun", services_image,
-                               "src/hoopdb/migrate.ts", "--generation"]).stdout.strip()
-        if not re.fullmatch(r"[a-f0-9]{64}", generation):
-            raise StackError("services image did not return an exact migration generation")
-        catalog = yaml.safe_load((ROOT / "self-hosted/customer-images.yaml").read_text())["images"]
-        source = next((i["source"]["revision"] for i in catalog
-                       if i["current"]["repository"] + "@" + i["current"]["digest"] == services_image), None)
-        if not source:
-            raise StackError("services image has no exact audited source SHA in customer-images.yaml")
-        private_json(self.state / "images.json", {"images": images, "servicesGeneration": generation,
-                     "servicesSourceRevision": source,
-                     "infraRevision": self.cmd(["git", "rev-parse", "HEAD"]).stdout.strip()})
-        self.postgres(s, services_image)
-        if self.named_layout is not None:
-            from named_upgrade import install_storage
-            install_storage(self)
-        else:
-            locker_values = self.state / "locker-values.json"
-            defaults = yaml.safe_load((ROOT / "charts/sessions-pipeline/values.yaml").read_text())["session-object-storage"]
-            defaults.update(existingSecret="kind-pipeline", persistence={"enabled": True, "size": "2Gi"})
-            private_json(locker_values, defaults)
-            self.cmd(["helm", "upgrade", "--install", "kind-session-object-storage", "charts/sessions-pipeline/charts/minio-5.4.0.tgz", "-n", NS,
-                      "-f", locker_values, "--wait", "--timeout", "5m"], timeout=330)
-        for d in docs:
-            if d["kind"] in ("Deployment", "Service") and d["metadata"]["name"] in ("relaycast", "relayauth"):
-                self.apply(d, chart=True)
-        self.migration(docs, "relay-control")
-        for d in docs:
-            if d["kind"] in ("Deployment", "Service") and d["metadata"]["name"] == "relay-control":
-                self.apply(d, chart=True)
-        self.k("rollout", "status", "deployment/relay-control", "--timeout=180s", timeout=210)
-        # Query the real first-boot records, not a fixture organization id.
-        bootstrap = (ROOT / "ci/agent-relay/kind/bootstrap.mjs").read_text()
-        self.k("exec", "-i", "deploy/relay-control", "--", "sh", "-c", "cat > /tmp/kind-bootstrap.mjs", data=bootstrap)
-        bootstrap_name = next((e["value"] for d in docs if d["kind"] == "Deployment" and d["metadata"]["name"] == "relay-control"
-                              for e in pod_spec(d)["containers"][0]["env"] if e["name"] == "SELFHOST_BOOTSTRAP_WORKSPACE_NAME"), "Default")
-        ids = json.loads(self.k("exec", "deploy/relay-control", "--", "node", "/tmp/kind-bootstrap.mjs", bootstrap_name).stdout)
-        private_json(self.state / "tenant.json", ids)
-        values = json.loads(self.overrides.read_text()) if self.overrides.exists() else {}
-        selected = tenant_values(values, ids, self.profile, self.arch, self.recipe_hash())
-        if self.named_layout is not None:
-            from named_upgrade import stage_selection
-            stage_selection(self, selected)
-        private_json(self.overrides, selected)
-        docs = self.render()
-        final_images = sorted({c["image"] for d in docs for c in pod_spec(d).get("containers", []) + pod_spec(d).get("initContainers", [])})
-        if final_images != images:
-            raise StackError("tenant bootstrap changed the selected image set; readiness refused")
-        # Helm dependency alias "worker" is the rendered app name.
-        self.migration(docs, "worker", "locker-init")
-        self.migration(docs, "worker", "hoopdb-migrate")
-        # Match the existing EKS installer's database isolation. Each migrator
-        # owns its schema in a distinct database; never co-locate both in HoopDB.
-        self.migration(docs, "relayhistory")
-        acl_job = self.verify_combined_acl(services_image)
-        # Bootstrap applies the same release objects client-side before Helm
-        # can wait for the whole suite. Keep that mode on Helm 4 as well; its
-        # default SSA conflicts when bootstrap changes the control image.
-        help_text = self.cmd(["helm", "upgrade", "--help"]).stdout
-        apply_mode = ["--server-side=false"] if "--server-side" in help_text else []
-        self.cmd(["helm", "upgrade", "--install", RELEASE, "charts/agent-relay", "-n", NS,
-                  *self.values_args(), *apply_mode, "--wait", "--wait-for-jobs", "--timeout", "10m"], timeout=660)
-        from edge import install
-        install(self, TRAEFIK_CHART, NS)
-        if self.named_layout is not None:
-            from named_upgrade import refresh_after_up
-            refresh_after_up(self)
-        private_json(ready, {"profile": self.profile, "recipeSha256": self.recipe_hash(),
-                     "renderSha256": hashlib.sha256((self.state / "rendered.yaml").read_bytes()).hexdigest(),
-                     "clusterUid": self.k("get", "namespace", "kube-system", "-o", "jsonpath={.metadata.uid}", namespace=None).stdout,
-                     "ownershipVersion": json.loads(self.marker.read_text())["version"],
-                     "combinedAclJob": acl_job, "nodeImage": NODE,
-                     "infraRevision": self.cmd(["git", "rev-parse", "HEAD"]).stdout.strip()})
-        print(f"Ready: https://{HOSTS[0]}:8443; local trust certificate: {self.state / 'ca.crt'}")
-        print(f"Desktop host entries: {self.state / 'hosts'}. Run make kind-proof PROFILE={self.profile}; readiness is not an E2E pass.")
+        """Retired: the single-phase profile ran the removed standalone History.
 
-    def verify_combined_acl(self, image):
-        # Recheck after BOTH migrators. Database isolation, rather than ordering
-        # or a manifest union, must preserve the pipeline's own ACL contract.
-        code = '''import {runtimeRoleViolations,sessionsFunctionAclPreview} from "/app/src/hoopdb/migrate-guards.ts";
-import {openHoopDb} from "/app/src/shared/db.ts";
-const db=openHoopDb();
-try {
- const role=await runtimeRoleViolations(db,{mode:"selfhosted",role:"sessions_pipeline_runtime",login:true},{ledger:"sessions.__96bulls_migrations",marker:"sessions.__96bulls_role_validation"},"post");
- const acl=await sessionsFunctionAclPreview(db,"sessions_pipeline_runtime",false);
- const drift=[...role,...acl.function_acl_drift_extra,...acl.function_acl_missing_refused,...acl.function_acl_missing];
- console.log(JSON.stringify({check:"combined-runtime-acl",violations:drift}));
- if(drift.length)process.exitCode=1;
-} catch(e) {console.log(JSON.stringify({check:"combined-runtime-acl",error:e.code||"check_failed"}));process.exitCode=1;}
-finally {await db.end();}'''
-        spec = {"backoffLimit": 0, "activeDeadlineSeconds": 60, "template": {"spec": {
-            "restartPolicy": "Never", "automountServiceAccountToken": False, "containers": [
-                {"name": "check", "image": image, "command": ["bun", "-e", code], "env": [
-                    {"name": "HOOPDB_URL", "valueFrom": {"secretKeyRef": {"name": "kind-pipeline", "key": "HOOPDB_MIGRATION_URL"}}}]}]}}}
-        # A terminal Job is not a current database check. Keep every attempt
-        # distinct, including failures, rather than adopting a prior result.
-        name = "kind-combined-acl-" + secrets.token_hex(8)
-        self.apply({"apiVersion": "batch/v1", "kind": "Job", "metadata": {"name": name, "namespace": NS}, "spec": spec})
-        self.wait_job(name, 90)
-        return name
+        Refuse before any tool, Docker, readiness or cluster access so an old
+        checkout's state (ready.json, ownership receipt, kubeconfig) is kept.
+        """
+        raise StackError(RETIRED)
 
     def build_addons(self):
         from addons import build
@@ -833,45 +479,34 @@ def pod_spec(doc):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("action", choices=("up", "down", "render", "build-addons", "build-control", "recover", "reconcile-names", "prepare-native-network"))
+    parser.add_argument("action", choices=("up", "down", "render", "build-addons", "build-control", "recover",
+                                           "reconcile-names", "prepare-native-network"))
     parser.add_argument("--profile", choices=("core", "addons"), default="core")
     parser.add_argument("--expected-cluster-uid", help="original readiness UID; required only for explicit recover")
-    parser.add_argument("--cutover-receipt", help="completed private seeded storage naming proof; reconcile-names only")
-    parser.add_argument("--control-image-archive", help="matching native OCI Control archive; reconcile-names only")
-    parser.add_argument("--readiness-anchor", help="preserved naming-history ready.json after interruption; reconcile-names only")
     parser.add_argument("--native-values", help="selected values JSON; required only for prepare-native-network")
     args = parser.parse_args()
     if args.expected_cluster_uid and args.action != "recover":
         parser.error("--expected-cluster-uid is only valid for recover")
-    if args.action == "reconcile-names" and not args.cutover_receipt:
-        parser.error("reconcile-names requires --cutover-receipt")
-    if args.action != "reconcile-names" and (args.cutover_receipt or args.control_image_archive or args.readiness_anchor):
-        parser.error("cutover arguments are only valid for reconcile-names")
     if (args.action == "prepare-native-network") != bool(args.native_values):
         parser.error("prepare-native-network requires --native-values; other actions must omit it")
     os.umask(0o077)
     try:
+        if args.action in ("up", "render", "reconcile-names"):
+            raise StackError(RETIRED)  # before any state directory is created
         stack = Stack(args.profile)
-        if args.action == "render":
-            stack.dependencies()
-            stack.render()
-            print(stack.state / "rendered.yaml")
-        elif args.action == "build-control":
+        if args.action == "build-control":
             stack.docker(require_space=False)
             from control import build
             build(stack)
         elif args.action == "recover":
             stack.recover(args.expected_cluster_uid)
-        elif args.action == "reconcile-names":
-            from named_upgrade import reconcile
-            reconcile(stack, args.cutover_receipt, args.control_image_archive, args.readiness_anchor)
         elif args.action == "build-addons":
             stack.docker(require_space=False)
             stack.build_addons()
         elif args.action == "prepare-native-network":
             stack.prepare_native_network(args.native_values)
         else:
-            getattr(stack, args.action)()
+            stack.down()
     except (StackError, OSError, ValueError) as e:
         print(f"FAIL: {e}", file=sys.stderr)
         return 1

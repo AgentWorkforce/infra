@@ -24,7 +24,6 @@ components:
   relaycast: true
   relayauth: false
   sessionsPipeline: true
-  relayhistory: false
   control: true
   webapp: true
   relayflows: false

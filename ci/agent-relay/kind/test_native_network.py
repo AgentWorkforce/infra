@@ -429,43 +429,6 @@ class NativeNetwork(unittest.TestCase):
                 with self.assertRaises(legacy.StackError): edge.install(local, 'pinned', n.APP_NS, wait_for_route=False)
                 self.assertEqual(effects, [])
 
-    def test_legacy_up_policy_refusal_preserves_all_local_anchors_before_dependencies(self):
-        import stack as legacy
-        from types import MethodType
-        for profile in ('core', 'addons'):
-            for fault in ('manual', 'foreign-cluster', 'changed-spec', 'terminating'):
-                with self.subTest(profile=profile, fault=fault), tempfile.TemporaryDirectory() as directory:
-                    root = Path(directory)
-                    charts = root / 'charts/agent-relay'; charts.mkdir(parents=True)
-                    (charts / 'values.yaml').write_text('{}\n')
-                    profile_values = charts / ('values-kind-' + profile + '.yaml')
-                    profile_values.write_text('{}\n')
-                    local = Fixture(root, profile)
-                    local.values_args = lambda: ['-f', profile_values]
-                    local.docker = lambda **kwargs: None
-                    local.require_no_legacy_storage = lambda: None
-                    local.require_control_webapp_layout = lambda: None
-                    local.dependencies = lambda: self.fail('late refusal reached dependencies')
-                    local.apply = lambda doc: self.fail('early refusal changed resources')
-                    owner = {'name': local.name, 'profile': profile, 'clusterUid': UID}
-                    policy = edge.egress_policy_document(owner, edge.egress_policy_spec(local, n.APP_NS))
-                    policy['metadata']['uid'] = 'original-edge-policy'
-                    if fault == 'manual': policy['metadata'].update(labels={}, annotations={})
-                    elif fault == 'foreign-cluster': policy['metadata']['annotations']['kind.agentrelay.dev/cluster-uid'] = 'foreign'
-                    elif fault == 'changed-spec': policy['spec']['egress'].append({'ports': [{'protocol': 'TCP', 'port': 80}]})
-                    else: policy['metadata']['deletionTimestamp'] = '2026-11-09T00:00:00Z'
-                    local.edge_policies = [policy]
-                    for name in ('values.json', 'proof.json', 'kubeconfig'):
-                        (root / name).write_text('original-' + name)
-                    before = {p: p.read_bytes() for p in root.iterdir() if p.is_file()}
-                    with patch.object(legacy, 'ROOT', root), patch.object(legacy.shutil, 'which', return_value='tool'):
-                        with self.assertRaisesRegex(ValueError, 'edge egress policy'):
-                            MethodType(legacy.Stack.up, local)()
-                    self.assertEqual(before, {p: p.read_bytes() for p in root.iterdir() if p.is_file()})
-                    self.assertEqual(local.edge_policies, [policy])
-                    self.assertFalse(any(c[0] == 'k' and c[1][0] in ('create', 'apply', 'patch', 'delete', 'scale') for c in local.calls))
-                    self.assertFalse(any(c[0] == 'cmd' and c[1][:1] == ['helm'] for c in local.calls))
-
     def test_existing_manual_service_refuses_even_when_spec_would_match(self):
         self.stack.service = n.service_document({'name': self.stack.name, 'profile': 'core', 'clusterUid': UID})
         self.stack.service['metadata'] = {'name': n.SERVICE, 'namespace': n.EDGE_NS, 'uid': 'manual'}

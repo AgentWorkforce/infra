@@ -1,37 +1,11 @@
-# Existing proof-cluster overlay. Apply after values-gcp-proof.yaml.
-# RelayAuth and the Sessions Pipeline already run in their own namespaces.
-# The exposed components inherit the proof profile's GKE load-balancer
-# NetworkPolicy rules.
-#
-# Cross-namespace requirement: relayhistory and relay-control below call
-# http://relayauth.relayauth.svc:8787 from this namespace. If the RelayAuth
-# release in the relayauth namespace runs with networkPolicy.enabled, its
-# default ingressFrom admits same-namespace pods only and these calls are
-# dropped. That release must admit this namespace, for example:
-#   networkPolicy:
-#     ingressFrom:
-#       - podSelector: {}
-#       - namespaceSelector:
-#           matchLabels: { kubernetes.io/metadata.name: agent-relay }
-components:
-  relayauth: false
-  sessionsPipeline: false
-
-relayhistory:
-  agentRelayCloud:
-    apiUrl: http://relay-cloud-api
-  image:
-    # Erasure-fix proof build of relayhistory-cloud 3cb76752 (experimental;
-    # branch proof/erasure-turns-on-4b5839f). Its 0074 arms the write hold:
-    # upgrade with the two-step drain in charts/relayhistory/README.md.
-    digest: sha256:f36ae1671bdcd88a2b8b2df62c8edecb1381237d9f968747b39298959ad33563
-  resources:
-    requests: { cpu: 25m, memory: 128Mi }
-    limits: { memory: 512Mi }
-  relayauth:
-    jwksUrl: http://relayauth.relayauth.svc:8787/.well-known/jwks.json
-    issuer: http://relayauth.relayauth.svc:8787
-
+# Legacy-name proof overlay. Apply after values-gcp-proof.yaml. It keeps the
+# object names (relay-cloud-api, relay-dashboard), proof-registry images and
+# settings of the original GCP proof release, and is the base of the
+# durable-actors, Relayfile and flows proof overlays. That original release
+# also ran the standalone RelayHistory server and RelayAuth in their own
+# namespaces; both were removed from this chart and the release is being
+# retired, so History here is the native Sessions path from
+# values-gcp-proof.yaml.
 relay-control:
   nameOverride: relay-cloud-api
   fullnameOverride: relay-cloud-api
@@ -42,8 +16,6 @@ relay-control:
   resources:
     requests: { cpu: 25m, memory: 128Mi }
     limits: { memory: 512Mi }
-  services:
-    relayauthUrl: http://relayauth.relayauth.svc:8787
   # The live data is encrypted under this key id (set by hand on the
   # deployment before the chart rendered it).
   encryption:
@@ -80,3 +52,14 @@ relay-webapp:
     desktop:
       urlScheme: agentrelay-gcpproof
       siteUrl: https://gcp-proof.agentrelay.com
+
+# The renamed Control Service and pod labels, for the native History reader and
+# ingest edge from values-gcp-proof.yaml.
+sessions-pipeline:
+  sessionReadApi:
+    networkPolicy:
+      controlFrom:
+        - podSelector:
+            matchLabels: { app.kubernetes.io/name: relay-cloud-api }
+  ingestEdge:
+    relaycontrol: { url: http://relay-cloud-api.agent-relay.svc }

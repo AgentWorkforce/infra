@@ -29,11 +29,11 @@ def fixture():
 def umbrella_fixture():
     values = yaml.safe_load((ROOT / "charts/agent-relay/values-kind-core.yaml").read_text())
     values["localKind"]["enabled"] = False
-    values["components"].update({"webapp": False, "relaycast": False, "relayauth": False, "relayhistory": False})
+    values["components"].update({"webapp": False, "relaycast": False, "relayauth": False})
     values["sessions-pipeline"] = fixture()
-    values["relayhistory"]["ingress"]["enabled"] = False
     api = values["relay-control"]
-    api["services"].update({"relayauthEnabled": False, "relayhistoryUrl": "http://routing-test-read-api.ci.svc.cluster.local", "relayhistoryPublicUrl": ORIGIN, "relayhistoryReadApiUrl": ORIGIN, "relayhistoryReadApiEvents": True})
+    # Managed mode: Control's legacy History client pointed at the native reader.
+    api["services"].update({"relayhistoryBackend": "legacy", "relayauthEnabled": False, "relayhistoryUrl": "http://routing-test-read-api.ci.svc.cluster.local", "relayhistoryPublicUrl": ORIGIN, "relayhistoryReadApiUrl": ORIGIN, "relayhistoryReadApiEvents": True})
     api.setdefault("secretKeys", {}).update(introspectSecret="control-introspection")
     api["introspection"] = {"audiences": [ORIGIN]}
     return values
@@ -179,8 +179,8 @@ class NativeRouting(unittest.TestCase):
         reader = next(d for d in docs if d["kind"] == "Deployment" and d["metadata"]["name"] == "routing-test-read-api")
         reader_env = {e["name"]: e for e in reader["spec"]["template"]["spec"]["containers"][0]["env"]}
         self.assertEqual(reader_env["RELAYHISTORY_SELFHOST_LOGIN_ADVERTISES_SYNC"]["value"], "true")
-        self.render({"components": {"relayhistory": True}, "relayhistory": {"ingress": {"enabled": True}}}, umbrella=True, error="relayhistory.ingress.enabled=false")
-        self.render({"gkeIngress": {"enabled": True}}, umbrella=True, error="cannot share the legacy gkeIngress")
+        self.render({"components": {"relayhistory": True}}, umbrella=True, error="components.relayhistory was removed")
+        self.render({"gkeIngress": {"enabled": True}}, umbrella=True, error="cannot be combined with gkeIngress")
         for key in ["relayhistoryPublicUrl", "relayhistoryReadApiUrl"]:
             api = {"services": {key: "https://other.selfhosted.company:8443"}}
             # Keep leaf authentication admission valid so this causal case
