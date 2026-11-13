@@ -31,7 +31,7 @@ from local_actors import recipe as actor_recipe, build as build_actors, load as 
 
 LOCAL_VALUES = yaml.safe_load((ROOT / "ci/agent-relay/kind/local-values.yaml").read_text())
 DESKTOP_RELEASE_VALUES = yaml.safe_load((ROOT / "ci/agent-relay/kind/desktop-releases-values.yaml").read_text())
-AA_VALUES = yaml.safe_load((ROOT / "charts/agent-relay/values-eks.yaml").read_text())
+PROFILE_VALUES = yaml.safe_load((ROOT / "charts/agent-relay/values-eks.yaml").read_text())
 READER_VALUES = yaml.safe_load((ROOT / "charts/session-read-api/values.yaml").read_text())
 SCRUB_VALUES = yaml.safe_load((ROOT / "charts/agent-relay/values-scrub-wasm-bindgen.yaml").read_text())["global"]["scrubEngine"]
 
@@ -76,12 +76,12 @@ def candidate_profile(base, root=None, environ=None):
 
 
 def profile_images(experimental):
-    values = DESKTOP_RELEASE_VALUES if experimental else AA_VALUES
+    values = DESKTOP_RELEASE_VALUES if experimental else PROFILE_VALUES
     return tuple(reference(values[name]["image"]) for name in ("relay-control", "relay-webapp"))
 
 
 DESKTOP_RELEASES = desktop_releases_enabled()
-AA_VALUES = candidate_profile(AA_VALUES)
+PROFILE_VALUES = candidate_profile(PROFILE_VALUES)
 
 
 def cast_backend(environ=None):
@@ -93,11 +93,11 @@ def cast_backend(environ=None):
 
 CAST_BACKEND = cast_backend()
 ACTORS = actor_recipe()
-PIPELINE = reference(AA_VALUES["sessions-pipeline"]["worker"]["image"])
-if PIPELINE != reference(AA_VALUES["sessions-pipeline"]["alleyoop"]["image"]):
-    raise StackError("the AA profile must select one services-image generation")
+PIPELINE = reference(PROFILE_VALUES["sessions-pipeline"]["worker"]["image"])
+if PIPELINE != reference(PROFILE_VALUES["sessions-pipeline"]["alleyoop"]["image"]):
+    raise StackError("the customer profile must select one services-image generation")
 CONTROL, WEBAPP = profile_images(DESKTOP_RELEASES)
-CAST = ACTORS["source"]["gateway"]["reference"] if CAST_BACKEND == "durable-actors" else reference(AA_VALUES["relaycast"]["image"])
+CAST = ACTORS["source"]["gateway"]["reference"] if CAST_BACKEND == "durable-actors" else reference(PROFILE_VALUES["relaycast"]["image"])
 MINIO = "cgr.dev/chainguard/minio@sha256:e70b2b1e74d79457f808710483bd726ff364529ca30736eaa15a6ab547d3a5a7"
 SITE = "https://relay.kind.agentrelay.com"
 HISTORY = "https://history.kind.agentrelay.com:8443"
@@ -229,7 +229,7 @@ class LocalStack(Stack):
         environment = list(env or [])
         if image_ref == PIPELINE:
             if {e["name"] for e in environment} & {e["name"] for e in scrub_environment()}:
-                raise StackError("local services Jobs must use the managed AA scrub contract")
+                raise StackError("local services Jobs must use the managed customer scrub contract")
             environment.extend(scrub_environment())
         container = {"name": "run", "image": image_ref, "env": environment, "volumeMounts": mounts or [],
             "securityContext": {"allowPrivilegeEscalation": False, "capabilities": {"drop": ["ALL"]}}}
@@ -370,7 +370,7 @@ GRANT TEMP ON DATABASE relaycast TO relaycast_owner;""")
         result["relay-webapp"]["customerProfile"]["desktop"]["siteUrl"] = SITE
         result["relay-control"]["image"] = image(CONTROL)
         # Usage and launch are Control APIs; they add no optional workload.
-        result["relay-control"]["selectedFeatures"] = list(AA_VALUES["relay-control"]["selectedFeatures"])
+        result["relay-control"]["selectedFeatures"] = list(PROFILE_VALUES["relay-control"]["selectedFeatures"])
         if DESKTOP_RELEASES:
             result["relay-control"].setdefault("extraEnv", []).append(env("SELFHOST_DESKTOP_RELEASES_REPO",
                 DESKTOP_RELEASE_VALUES["relay-control"]["desktopReleasesRepo"]))
@@ -500,7 +500,7 @@ GRANT TEMP ON DATABASE relaycast TO relaycast_owner;""")
             try:
                 output = self.k("exec", "-i", pod, "--", "node", "-e", CONTROL_OBSERVER,
                     data=json.dumps({"bootstrapKey": "bootstrap-token", "historyOrigin": HISTORY, "organizationName": "Local development", "administratorEmail": "owner@kind.example",
-                        "selectedFeatures": AA_VALUES["relay-control"]["selectedFeatures"]}), sensitive=True).stdout
+                        "selectedFeatures": PROFILE_VALUES["relay-control"]["selectedFeatures"]}), sensitive=True).stdout
                 break
             except StackError:
                 # First-boot tenant provisioning finishes after the process's

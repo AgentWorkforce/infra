@@ -128,7 +128,7 @@ relayauth:
 sessions-pipeline:
   worker:
     image:
-      # Preferred AA services image from relayhistory-pipeline main 7e9b2f0f
+      # Preferred customer services image from relayhistory-pipeline main 7e9b2f0f
       # (#509 alpha.5 on top of #505), signed publish run 42964243811. Mirror
       # it by digest to your registry and override repository. Before its
       # first migrate, run the Cloud SQL
