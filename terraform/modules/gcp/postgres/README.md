@@ -10,7 +10,7 @@ PostgreSQL 17 for agent-relay on **Cloud SQL**, private IP only, on your VPC.
 - Regional HA, backups (14 retained) with point-in-time recovery (7 days), and deletion protection on both the Terraform and API side.
 - Logging flags on (checkpoints, connections, disconnections, lock waits), IAM database authentication, and Query Insights without client addresses.
 - `pg_trgm` and `vector` are supported on Cloud SQL without flags.
-- `databases`: optional databases (for example `relaycontrol`, `relayhistory`, `hoopdb`).
+- `databases`: optional databases (for example `relaycontrol`, `hoopdb`).
 - **Admin password never in state.** An ephemeral `random_password` is written with write-only attributes (`password_wo`, `secret_data_wo`) to the built-in admin user and to a Secret Manager version. Bump `admin_user.password_version` to rotate. Requires Terraform or OpenTofu >= 1.11.
 - `connection_name` feeds `CLOUD_SQL_CONNECTION_NAME` in the sessions `extraEnv` (`values-gcp.yaml`). Use the `cloudsql` HoopDb mode and its bootstrap SQL: see [`terraform/README.md`](../../../README.md#postgres-bootstrap-before-the-first-migrate).
 

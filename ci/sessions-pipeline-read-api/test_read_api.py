@@ -553,16 +553,19 @@ class ReadApi(unittest.TestCase):
             "secretKeyRef": {"name": "custom", "key": "token"}}}]})
 
     def test_both_kind_profiles_keep_read_api_disabled(self):
-        for profile in ("core", "addons"):
-            with self.subTest(profile=profile):
-                command = ["helm", "template", "agent-relay", str(ROOT / "charts/agent-relay"), "-n", "agent-relay",
-                           "-f", str(ROOT / "charts/agent-relay/values-kind-core.yaml")]
-                if profile == "addons":
-                    command += ["-f", str(ROOT / "charts/agent-relay/values-kind-addons.yaml")]
-                result = subprocess.run(command, capture_output=True, text=True)
-                self.assertEqual(result.returncode, 0, result.stderr)
-                docs = [d for d in yaml.safe_load_all(result.stdout) if d]
-                self.assertFalse(any(d.get("metadata", {}).get("labels", {}).get("app.kubernetes.io/component") == "read-api" for d in docs))
+        # The kind base layer renders only through the native core composition.
+        # The control-only bootstrap phase starts no reader; serve runs only the
+        # native session-read-api, never a second (legacy readApi) reader.
+        import sys
+        sys.path.insert(0, str(ROOT / "ci/agent-relay/kind"))
+        import test_stack as kind_profiles
+        profiles = kind_profiles.Profiles()
+        for phase, expected in (("control", set()), ("serve", {"session-read-api"})):
+            with self.subTest(phase=phase):
+                docs = profiles.render(phase)
+                readers = {d["metadata"]["name"] for d in docs if d["kind"] == "Deployment" and
+                           d.get("metadata", {}).get("labels", {}).get("app.kubernetes.io/component") == "read-api"}
+                self.assertEqual(readers, expected)
 
     def test_enabled_is_internal_and_config_credentials_are_secret_refs(self):
         docs = self.render()
@@ -1123,8 +1126,8 @@ class IngestEdge(unittest.TestCase):
     def test_umbrella_default_off_and_enabled_slot_preserve_existing_specs(self):
         fixture = yaml.safe_load((ROOT / "charts/sessions-pipeline/ci/ingest-edge-values.yaml").read_text())
         command = ["helm", "template", "agent-relay", str(ROOT / "charts/agent-relay"),
-                   "-n", "agent-relay", "--is-upgrade", "-f", str(ROOT / "charts/agent-relay/values-kind-core.yaml"),
-                   "-f", str(ROOT / "charts/agent-relay/upgrade/kind-control-webapp-identities.yaml")]
+                   "-n", "agent-relay", "--is-upgrade", "-f", str(ROOT / "charts/agent-relay/values-eks.yaml"),
+                   "--set", "sessions-pipeline.worker.acknowledgeWorkloadRename=true"]
         before = subprocess.run(command, capture_output=True, text=True, timeout=30)
         self.assertEqual(before.returncode, 0, before.stderr)
         with tempfile.TemporaryDirectory(prefix="ingest-edge-umbrella-") as directory:

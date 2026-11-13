@@ -12,7 +12,7 @@
 {{- if and (kindIs "map" $brand) (or $brand.svg $brand.existingConfigMap) (dig "control" true (.Values.components | default dict)) (not (dig "webapp" true (.Values.components | default dict))) (not (dig "login" "logoUrl" "" (index .Values "relay-control" | default dict))) }}
 {{- fail "global.branding.logo is hosted by relay-webapp, but components.webapp=false: the sign-in page would link a logo nothing serves. Enable components.webapp, or host the logo yourself and set relay-control.login.logoUrl" }}
 {{- end }}
-{{- include "agent-relay.validateHistoryOrigin" . }}
+{{- include "agent-relay.validateRemovedHistory" . }}
 {{- include "agent-relay.validateDurableActors" . }}
 {{- include "agent-relay.validateSingleHost" . }}
 {{- include "agent-relay.validateNativeHistory" . }}
@@ -46,8 +46,7 @@
 {{- $pipeline := index .Values "sessions-pipeline" | default dict -}}
 {{- if dig "nativeRouting" "enabled" false $pipeline -}}
 {{- if not .Values.components.sessionsPipeline }}{{ fail "native History routing requires components.sessionsPipeline=true" }}{{ end -}}
-{{- if and .Values.components.relayhistory (dig "ingress" "enabled" false (.Values.relayhistory | default dict)) }}{{ fail "native History routing requires relayhistory.ingress.enabled=false; retain the server separately if needed" }}{{ end -}}
-{{- if (.Values.gkeIngress | default dict).enabled }}{{ fail "native History routing cannot share the legacy gkeIngress History backend" }}{{ end -}}
+{{- if (.Values.gkeIngress | default dict).enabled }}{{ fail "native History routing (sessions-pipeline.nativeRouting) cannot be combined with gkeIngress, which routes the history host itself" }}{{ end -}}
 {{- if .Values.components.control -}}
 {{- $api := index .Values "relay-control" -}}
 {{- $origin := dig "nativeRouting" "origin" "" $pipeline -}}
@@ -66,18 +65,14 @@
 {{- end -}}
 
 {{/*
-Session ingest (alleyoop) verifies courier History assertions against the same
-audience RelayHistory issues them for, so the two origins must be byte-equal.
+The standalone RelayHistory server and its chart were removed: History is the
+Sessions read API and ingest edge (relay-control.services.relayhistoryBackend
+native). Refuse values that would have deployed it rather than silently
+dropping an install's History service on upgrade.
 */}}
-{{- define "agent-relay.validateHistoryOrigin" -}}
-{{- $components := .Values.components | default dict -}}
-{{- if and (dig "sessionsPipeline" true $components) (dig "relayhistory" true $components) }}
-{{- $ingest := dig "alleyoop" "auth" "historyOrigin" "" (index .Values "sessions-pipeline" | default dict) -}}
-{{- $history := dig "relayauth" "historyOrigin" "" (.Values.relayhistory | default dict) -}}
-{{- if and $ingest $history (ne $ingest $history) }}
-{{- fail (printf "sessions-pipeline.alleyoop.auth.historyOrigin (%s) must equal relayhistory.relayauth.historyOrigin (%s): session ingest verifies courier History assertions against that audience" $ingest $history) }}
-{{- end }}
-{{- end }}
+{{- define "agent-relay.validateRemovedHistory" -}}
+{{- if dig "relayhistory" false (.Values.components | default dict) }}{{ fail "components.relayhistory was removed: the standalone RelayHistory server is no longer part of this chart. History is served by the Sessions read API and ingest edge; see docs/self-hosted-no-relayauth.md" }}{{ end -}}
+{{- if .Values.relayhistory }}{{ fail "the relayhistory values block was removed with the standalone RelayHistory server; delete it and configure sessions-pipeline.sessionReadApi and ingestEdge instead (docs/self-hosted-no-relayauth.md)" }}{{ end -}}
 {{- end }}
 
 {{/*
@@ -124,14 +119,14 @@ and its actor-mode consumers (relaycast, relayfile).
 
 {{/*
 Single-host mode (global.singleHost.host): the dashboard and the control API
-share one host (/ and /cloud/api, /login, /api). Relaycast, Relay History,
+share one host (/ and /cloud/api, /login, /api). Relaycast, History,
 Relayfile and the durable-actors control plane cannot be served under a path
 prefix on that host without app changes, so they stay on their own hosts and
 the chart refuses to put them on the single host.
 */}}
 {{- define "agent-relay.singleHostGaps" -}}
 relaycast: the relaycast-self-host entrypoint refuses a --base-url with a path, the TypeScript SDK drops a base path, and relaycontrol and Desktop refuse a path-prefixed Relaycast URL
-relayhistory: relaycontrol and Desktop require relayhistoryPublicUrl to be a bare origin (it is both the History assertion audience and the base URL handed to clients), so a /history prefix cannot be expressed
+history: relay-control and Desktop require the History origin (sessionReadApiPublicUrl) to be a bare origin (it is both the reader token audience and the base URL handed to clients), so a /history prefix cannot be expressed
 relayfile: the relayfile mount and listen clients build their WebSocket URLs by replacing the path, which drops a server base path
 durable-actors: the control plane refuses a publicUrl with a path and issues actor WebSocket URLs at <origin>/v1/socket, and the SDK refuses a base path
 {{- end -}}
@@ -149,9 +144,11 @@ durable-actors: the control plane refuses a publicUrl with a path and issues act
 {{- $urls := list
   (list "relaycast" "relaycast.baseUrl" (dig "baseUrl" "" (.Values.relaycast | default dict)) (dig "relaycast" true $components))
   (list "relaycast" "relay-control.services.relaycastPublicUrl" (dig "services" "relaycastPublicUrl" "" $cloudApi) (dig "control" true $components))
-  (list "relayhistory" "relayhistory.relayauth.historyOrigin" (dig "relayauth" "historyOrigin" "" (.Values.relayhistory | default dict)) (dig "relayhistory" true $components))
-  (list "relayhistory" "relay-control.services.relayhistoryPublicUrl" (dig "services" "relayhistoryPublicUrl" "" $cloudApi) (dig "control" true $components))
-  (list "relayhistory" "sessions-pipeline.alleyoop.auth.historyOrigin" (dig "alleyoop" "auth" "historyOrigin" "" $sessions) (dig "sessionsPipeline" true $components))
+  (list "history" "relay-control.services.relayhistoryPublicUrl" (dig "services" "relayhistoryPublicUrl" "" $cloudApi) (dig "control" true $components))
+  (list "history" "relay-control.services.sessionReadApiPublicUrl" (dig "services" "sessionReadApiPublicUrl" "" $cloudApi) (dig "control" true $components))
+  (list "history" "sessions-pipeline.alleyoop.auth.historyOrigin" (dig "alleyoop" "auth" "historyOrigin" "" $sessions) (dig "sessionsPipeline" true $components))
+  (list "history" "sessions-pipeline.sessionReadApi.origin" (dig "sessionReadApi" "origin" "" $sessions) (and (dig "sessionsPipeline" true $components) (dig "sessionReadApi" "enabled" false $sessions)))
+  (list "history" "sessions-pipeline.ingestEdge.origin" (dig "ingestEdge" "origin" "" $sessions) (and (dig "sessionsPipeline" true $components) (dig "ingestEdge" "enabled" false $sessions)))
   (list "durable-actors" "durable-actors.publicUrl" (dig "publicUrl" "" (index .Values "durable-actors" | default dict)) (dig "durableActors" false $components))
 -}}
 {{- range $u := $urls }}
@@ -162,7 +159,6 @@ durable-actors: the control plane refuses a publicUrl with a path and issues act
 {{- end }}
 {{- $leafHosts := list
   (list "relaycast" "relaycast.ingress.hosts" (dig "ingress" "hosts" (list) (.Values.relaycast | default dict)) (dig "relaycast" true $components))
-  (list "relayhistory" "relayhistory.ingress.hosts" (dig "ingress" "hosts" (list) (.Values.relayhistory | default dict)) (dig "relayhistory" true $components))
 -}}
 {{- range $l := $leafHosts }}
 {{- if and (index $l 3) (has $single (index $l 2)) }}

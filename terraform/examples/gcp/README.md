@@ -4,7 +4,8 @@ A root for the native-history Agent Relay profile on an existing GKE cluster
 and VPC:
 
 - `gcp/postgres` (Cloud SQL with `relaycontrol`, `relaycast` and `hoopdb`, plus
-  a retained `relayhistory` database that prevents destructive legacy updates),
+  a retained `relayhistory` database, left over from the removed standalone
+  History, so applying to an older installation does not destroy it),
   using a shared CA plus private DNS so application URLs can use
   `sslmode=verify-full`.
 - `gcp/object-storage` for the GCS Locker, with direct Workload Identity for
@@ -23,7 +24,7 @@ terraform init && terraform plan
 ```
 
 `chart_values` is a complete, nested non-secret overlay for
-`values-gcp.yaml` plus `values-gcp-native.yaml`, including the eight required
+`values-gcp.yaml` (native on its own), including the eight required
 worker/search pipeline variables, the `sessions_pipeline_runtime` role and the
 Cloud SQL CA bindings for every PostgreSQL client. Save it directly as a Helm
 values file after apply:
@@ -32,9 +33,9 @@ values file after apply:
 terraform output -json chart_values > managed-values.json
 ```
 
-The native overlay is delivered by the preceding GCP profile change; apply
-the three files in this order: `values-gcp.yaml`, `values-gcp-native.yaml`,
-then `managed-values.json`. Run
+Apply `values-gcp.yaml`, then `managed-values.json`
+(`values-gcp-native.yaml` is now an empty compatibility overlay and may be
+kept between them). Run
 `scripts/selfhost/cloud-sql-setup.sh pre` after apply and before Helm. Requires
 Terraform or OpenTofu >= 1.11 (the Cloud SQL admin password is write-only).
 

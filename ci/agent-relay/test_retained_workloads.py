@@ -8,7 +8,7 @@ from pathlib import Path
 import yaml
 
 ROOT = Path(__file__).resolve().parents[2]
-CHARTS = ("relayauth", "relayhistory", "session-ingest-api")
+CHARTS = ("relayauth", "session-ingest-api")
 
 
 def render(chart, extra=()):
@@ -65,7 +65,6 @@ class RetainedWorkloads(unittest.TestCase):
 
     def test_disabled_does_not_skip_existing_secret_validation(self):
         for chart, missing in (("relayauth", "existingSecret"),
-                               ("relayhistory", "database.existingSecret"),
                                ("session-ingest-api", "existingSecret")):
             with self.subTest(chart=chart):
                 result = render(chart, ["--set", "deployment.enabled=false",
@@ -84,14 +83,17 @@ class RetainedWorkloads(unittest.TestCase):
                     self.assertNotEqual(result.returncode, 0)
                     self.assertIn(message, result.stderr)
 
-    def test_umbrella_retirement_removes_exact_five_and_keeps_all_others(self):
+    def test_umbrella_retirement_removes_exact_deployments_and_keeps_all_others(self):
         command = ["helm", "template", "retained", "charts/agent-relay", "-n", "retained",
                    "--no-hooks", "-f", "charts/agent-relay/values-gcp-proof.yaml",
                    "-f", "charts/agent-relay/ci/gcp-proof-values.yaml"]
         baseline = objects(subprocess.run(command, cwd=ROOT, capture_output=True, text=True))
+        # The native proof profile already omits RelayAuth and the legacy
+        # alleyoop ingest Deployment (its Service and ServiceAccount remain).
+        self.assertNotIn(("Deployment", "retained-session-ingest-api"), baseline)
+        self.assertIn(("Service", "retained-session-ingest-api"), baseline)
         settings = {
             "relayauth.deployment.enabled": False,
-            "relayhistory.deployment.enabled": False,
             "sessions-pipeline.alleyoop.deployment.enabled": False,
             "sessions-pipeline.worker.components.bob-costas.enabled": False,
             "sessions-pipeline.worker.components.referee.enabled": False,
@@ -100,11 +102,10 @@ class RetainedWorkloads(unittest.TestCase):
                 for part in ("--set-json", key + "=" + json.dumps(value))]
         disabled = objects(subprocess.run(command + args, cwd=ROOT, capture_output=True, text=True))
         removed = {k for k in baseline if k not in disabled}
-        self.assertEqual(len(removed), 5)
+        self.assertEqual(len(removed), 2)
         self.assertTrue(all(k[0] == "Deployment" for k in removed))
         self.assertEqual(disabled, {k: v for k, v in baseline.items() if k not in removed})
-        self.assertIn(("PersistentVolumeClaim", "relayauth-data"), disabled)
-        for service in ("relayauth", "relayhistory", "relaycast"):
+        for service in ("relaycast", "retained-session-ingest-api"):
             self.assertIn(("Service", service), disabled)
 
 

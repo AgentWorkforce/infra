@@ -265,8 +265,8 @@ Other services keep their own databases (`relaycontrol`, `relaycast`,
 implemented, and this fixture doesn't create the `hoopdb` database: that belongs
 to the activation contract below.
 The layout has no legacy History binding: self-host history remains a
-sessions-pipeline capability, and the standalone History server is being removed
-separately.
+sessions-pipeline capability (the standalone History server was removed in
+agent-relay 0.7.0).
 
 **Application execution is refused by default** and `application_sql_ready` is `false`.
 `terraform_data.application_gate` refuses any verifier compute unless

@@ -229,8 +229,9 @@ owner. Use real runtime LOGINs over verified TLS to prove allowed operations,
 denial of other service databases, and denial of DDL/owner access. Preserve an
 existing installation's actual database names until a reviewed migration changes them.
 
-History is a pipeline capability in the target. Keep legacy History/Auth stores
-where the selected profile still requires them until their reviewed cutover.
+History is a pipeline capability (read API, ingest edge and search indexer on
+HoopDb); no profile uses a standalone History store. Keep an older
+installation's History or Auth database until its reviewed cutover.
 After the HoopDb migration Job succeeds, run `rds-setup.sh post` and restart the
 read API, ingest edge, and search indexer. The post phase refuses to activate
 those logins before migration evidence exists and verifies each login over TLS.
@@ -531,8 +532,8 @@ scripts/selfhost/agent-relay-upgrade.sh \
 ```
 
 Set `AGENT_RELAY_PROFILE` to the profile already used by the installation:
-`eks` for `values-eks.yaml`, `eks-native` when the installation also uses
-`values-eks-native.yaml`, or `eks-rds-native` for `values-eks.yaml` +
+`eks` for `values-eks.yaml`, `eks-native` when the installation also names
+`values-eks-native.yaml` (now an empty compatibility overlay), or `eks-rds-native` for `values-eks.yaml` +
 `values-eks-rds-native.yaml`. The upgrader refuses to switch profiles
 implicitly, and refuses `eks-rds-native` for a release whose chart does not
 ship `values-eks-rds-native.yaml` (2026.11.0 does not).

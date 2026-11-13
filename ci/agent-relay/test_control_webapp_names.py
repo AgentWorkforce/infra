@@ -30,12 +30,12 @@ def identity(d):
 
 
 class Names(unittest.TestCase):
-    def render(self, profile='core', extra=(), ok=True):
-        cmd = ['helm', 'template', 'agent-relay', 'charts/agent-relay', '-n', 'agent-relay',
-               '-f', 'charts/agent-relay/values-kind-core.yaml']
-        if profile == 'addons':
-            cmd += ['-f', 'charts/agent-relay/values-kind-addons.yaml']
-        p = subprocess.run([*cmd, *extra], cwd=ROOT, text=True, capture_output=True, timeout=30)
+    def render(self, extra=(), ok=True):
+        # The kind base layer renders only through the native core composition
+        # (its single-phase kind-up profile ran the removed standalone History).
+        import test_stack as kind_profiles
+        profiles = kind_profiles.Profiles()
+        p = profiles.helm(profiles.compose('serve'), extra, upgrade=True)
         self.assertEqual(p.returncode == 0, ok, p.stderr)
         return [d for d in yaml.safe_load_all(p.stdout) if d] if ok else p.stderr
 
@@ -114,7 +114,7 @@ class Names(unittest.TestCase):
         bad = render({'EKS_ALB_RELAYFILE_CONTROL': 'yes'})
         self.assertEqual(bad.returncode, 2)
 
-    def test_eks_alb_ingest_routes_are_opt_in_and_exact(self):
+    def test_eks_alb_history_routes_are_native_and_exact(self):
         base = {**os.environ, 'EKS_ALB_DOMAIN': 'relay.example.com', 'EKS_ALB_CERT_ARN': 'arn:aws:acm:test'}
         render = lambda extra: subprocess.run(['bash', 'scripts/selfhost/eks-alb-ingress.sh', 'ns'], cwd=ROOT,
                                               env={**base, **extra}, capture_output=True, text=True)
@@ -125,11 +125,11 @@ class Names(unittest.TestCase):
             return doc, [(p['path'], p['pathType'], p['backend']['service']['name'], p['backend']['service']['port'])
                          for p in rule['http']['paths']]
 
+        # The history host always routes to native History; EKS_ALB_INGEST=true
+        # is the default and renders the same Ingress.
         doc, paths = history_paths(render({}))
-        self.assertEqual(paths, [('/', 'Prefix', 'relayhistory', {'number': 8080})])
-        self.assertNotIn('alb.ingress.kubernetes.io/healthcheck-path', doc['metadata']['annotations'])
-
-        doc, paths = history_paths(render({'EKS_ALB_INGEST': 'true'}))
+        self.assertEqual(render({'EKS_ALB_INGEST': 'true'}).stdout, render({}).stdout)
+        self.assertNotIn('relayhistory', [p[2] for p in paths])
         ingest = {'number': 80}
         self.assertEqual(paths, [
             ('/v1/delivery/batches', 'Exact', 'agent-relay-ingest-edge', ingest),
@@ -154,69 +154,17 @@ class Names(unittest.TestCase):
         refused = render({'EKS_ALB_INGEST': 'true', 'EKS_ALB_HISTORY': 'false'})
         self.assertEqual(refused.returncode, 2)
 
-        doc, paths = history_paths(render({'EKS_ALB_INGEST': 'true', 'EKS_ALB_HISTORY_LEGACY_SERVICE': 'relayhistory'}))
-        action = {'name': 'use-annotation'}
-        self.assertEqual(paths[6:], [
-            ('/v1/sessions', 'Prefix', 'read-api-token', action),
-            ('/v1/sessions', 'Prefix', 'read-api-cors', action),
-            ('/v1/events', 'Exact', 'read-api-token', action),
-            ('/v1/events', 'Exact', 'read-api-cors', action),
-            ('/v1/auth/token/revoke', 'Exact', 'read-api-token', action),
-            ('/*', 'ImplementationSpecific', 'relayhistory', {'number': 8080}),
-        ])
-        conditions = doc['metadata']['annotations']['alb.ingress.kubernetes.io/conditions.read-api-token']
-        self.assertIn('Bearer rth_at_read_*', conditions)
-        self.assertEqual(render({'EKS_ALB_HISTORY_LEGACY_SERVICE': 'relayhistory'}).returncode, 2)
-
-    def test_historical_eks_installer_uses_its_selected_chart_values(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            tools = root / 'bin'; tools.mkdir()
-            (tools / 'aws').write_text('#!/bin/sh\nexit 0\n')
-            (tools / 'helm').write_text('''#!/usr/bin/env python3
-import json, os, sys
-from pathlib import Path
-args=sys.argv[1:]
-call={'args':args}
-if args[0]=='pull':
-    target=Path(args[args.index('--untardir')+1])/'agent-relay'
-    target.mkdir()
-    (target/'values-eks.yaml').write_text('relay-cloud-api: {}\\nrelay-dashboard: {}\\n')
-elif args[0]=='upgrade':
-    call['base_values']=Path(args[args.index('-f')+1]).read_text()
-with open(os.environ['HELM_CALLS'], 'a') as f: f.write(json.dumps(call)+'\\n')
-''')
-            for file in tools.iterdir(): file.chmod(0o755)
-            (root / 'tmp').mkdir()
-            source = (ROOT / 'scripts/selfhost/eks-proof-install.sh').read_text()
-            definitions = source.rsplit('\ncase "${1:-}" in', 1)[0]
-            env = {**os.environ, 'PATH': str(tools) + os.pathsep + os.environ['PATH'],
-                   'PIPPEN_SANDBOX_ACCOUNT_ID': 'render-only', 'EKS_PROOF_CHART_VERSION': '0.3.11',
-                   'TMPDIR': str(root / 'tmp'),
-                   'EKS_PROOF_STATE_DIR': str(root / 'state'), 'HELM_CALLS': str(root / 'helm.jsonl')}
-            result = subprocess.run(['bash', '-c', definitions + '\nproof_overlay\nhelm_apply\nprintf "%s" "$WORK_TMP"\n'],
-                                    cwd=ROOT, env=env, capture_output=True, text=True)
-            self.assertEqual(result.returncode, 0, result.stderr)
-            calls = [json.loads(line) for line in (root / 'helm.jsonl').read_text().splitlines()]
-            self.assertEqual([call['args'][0] for call in calls], ['pull', 'upgrade'])
-            for call in calls:
-                args = call['args']
-                self.assertEqual(args[args.index('--version') + 1], '0.3.11')
-            args = calls[1]['args']
-            base = Path(args[args.index('-f') + 1])
-            self.assertTrue(base.is_relative_to(Path(result.stdout.strip())))
-            self.assertFalse(base.exists())
-            self.assertIn('relay-cloud-api', yaml.safe_load(calls[1]['base_values']))
-            overlay = yaml.safe_load((root / 'state/values-eks-proof.yaml').read_text())
-            self.assertTrue({'relay-cloud-api', 'relay-dashboard'} <= overlay.keys())
-            self.assertFalse({'relay-control', 'relay-webapp'} & overlay.keys())
-            future = {**env, 'EKS_PROOF_CHART_VERSION': '0.5.0'}
-            loaded = subprocess.run(['bash', '-c', definitions + '\ntrue\n'], cwd=ROOT,
-                                    env=future, capture_output=True, text=True)
-            self.assertEqual(loaded.returncode, 0, loaded.stderr)
-            refused = subprocess.run(['bash', '-c', definitions + '\nhelm_apply\n'], cwd=ROOT,
-                                     env=future, capture_output=True, text=True)
-            self.assertEqual(refused.returncode, 2)
+        # The standalone RelayHistory backend is gone: no legacy Service, and no
+        # history host without the ingest edge unless it is explicitly read-only.
+        for extra in ({'EKS_ALB_INGEST': 'true', 'EKS_ALB_HISTORY_LEGACY_SERVICE': 'relayhistory'},
+                      {'EKS_ALB_HISTORY_LEGACY_SERVICE': 'relayhistory'},
+                      {'EKS_ALB_INGEST': 'false'}):
+            self.assertEqual(render(extra).returncode, 2, extra)
+        doc, paths = history_paths(render({'EKS_ALB_HISTORY_READ_ONLY': 'true'}))
+        self.assertEqual({p[2] for p in paths}, {'agent-relay-read-api', 'edge-deny'})
+        none = render({'EKS_ALB_HISTORY': 'false'})
+        self.assertEqual(none.returncode, 0, none.stderr)
+        self.assertNotIn('history.relay.example.com', none.stdout)
 
     def test_eks_proof_discovers_the_legacy_control_domain(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -295,96 +243,49 @@ esac
             deployment = next(d for d in docs if d['kind'] == 'Deployment' and d['metadata']['name'] == name)
             self.assertEqual(deployment['spec']['selector']['matchLabels']['app.kubernetes.io/name'], name)
             self.assertTrue(any(d['kind'] == 'Service' and d['metadata']['name'] == name for d in docs))
-        client = next(d for d in docs if d['kind'] == 'ConfigMap' and
-                      'AGENT_RELAY_CLOUD_API_URL' in d.get('data', {}))
-        self.assertEqual(client['data']['AGENT_RELAY_CLOUD_API_URL'], 'http://relay-cloud-api')
-
-    def test_kind_compatibility_keeps_all_old_selectors_services_claims_and_jobs(self):
-        fixture = json.loads((ROOT / 'ci/agent-relay/fixtures/control-webapp-legacy-identities.json').read_text())
-        for profile in ('core', 'addons'):
-            with self.subTest(profile=profile):
-                docs = self.render(profile, ['--is-upgrade', '-f', 'charts/agent-relay/upgrade/kind-control-webapp-identities.yaml'])
-                actual = sorted([identity(d) for d in docs], key=lambda d: (d['kind'], d['name']))
-                expected = fixture['profiles'][profile]
-                if profile == 'addons':
-                    # Main #145 replaced the license slot with explicit
-                    # SELFHOST_FEATURES=flows,relayfile. extraEnv is part of
-                    # the migration pod, so its content-addressed Job must
-                    # change. Keep the historical golden immutable and admit
-                    # exactly this transition, not other identity drift.
-                    before, after = 'relaycontrol-migrate-96ebd477', 'relaycontrol-migrate-68c7d903'
-                    self.assertEqual(sum(d['kind'] == 'Job' and d['name'] == before for d in expected), 1)
-                    expected = [dict(d, name=after) if d['kind'] == 'Job' and d['name'] == before else d
-                                for d in expected]
-                    expected = sorted(expected, key=lambda d: (d['kind'], d['name']))
-                self.assertEqual(actual, expected)
-
-    def test_addons_job_transition_is_caused_by_the_new_explicit_feature_input(self):
-        fixture = json.loads((ROOT / 'ci/agent-relay/fixtures/control-webapp-legacy-identities.json').read_text())
-        compatibility = ['--is-upgrade', '-f', 'charts/agent-relay/upgrade/kind-control-webapp-identities.yaml']
-        current = self.render('addons', compatibility)
-        migration = next(d for d in current if d['kind'] == 'Job' and
-                         d['metadata']['name'] == 'relaycontrol-migrate-68c7d903')
-        env = migration['spec']['template']['spec']['containers'][0]['env']
-        self.assertIn({'name': 'SELFHOST_FEATURES', 'value': 'flows,relayfile'}, env)
-        # Naming-only compatibility with the translated historical runtime
-        # input still preserves every golden Job as well as selectors/PVCs.
-        historical_input = self.render('addons', compatibility + ['--set-json', 'relay-control.extraEnv=[]'])
-        identities = sorted([identity(d) for d in historical_input], key=lambda d: (d['kind'], d['name']))
-        self.assertEqual(identities, fixture['profiles']['addons'])
+        # The native ingest edge calls the retained Control Service name.
+        edge = next(d for d in docs if d['kind'] == 'Deployment' and
+                    any(e.get('name') == 'RELAYCONTROL_INTROSPECT_URL'
+                        for e in d['spec']['template']['spec']['containers'][0].get('env', [])))
+        env = {e['name']: e.get('value') for e in edge['spec']['template']['spec']['containers'][0]['env']}
+        self.assertEqual(env['RELAYCONTROL_INTROSPECT_URL'], 'http://relay-cloud-api.agent-relay.svc')
 
     def test_default_kind_upgrade_requires_explicit_worker_cutover(self):
-        error = self.render(extra=['--is-upgrade'], ok=False)
+        # The native composition retains the generic worker names on upgrade;
+        # dropping them without a drained cutover acknowledgement refuses.
+        self.render()
+        error = self.render(extra=['--set', 'sessions-pipeline.worker.legacyResourceNames=false'], ok=False)
         self.assertIn('workload rename requires a drained cutover', error)
 
     def test_real_profile_images_are_not_relabelled_as_unpublished_repositories(self):
-        docs = self.render()
+        # The native composition selects a qualified Control image; render the
+        # kind base layer's published Control pin in its place.
+        base = yaml.safe_load((ROOT / 'charts/agent-relay/values-kind-core.yaml').read_text())
+        docs = self.render(extra=['--set-json', 'relay-control.image=' + json.dumps(base['relay-control']['image'])])
         images = {c['image'] for d in docs for c in stack.pod_spec(d).get('containers', [])}
         self.assertTrue(any(i.startswith('ghcr.io/agentworkforce/relay-control@sha256:') for i in images))
         self.assertTrue(any(i.startswith('ghcr.io/agentworkforce/relay-dashboard@sha256:') for i in images))
         self.assertFalse(any(i.startswith(('ghcr.io/agentworkforce/selfhost-api@', 'ghcr.io/agentworkforce/relay-webapp@')) for i in images))
 
     def test_old_cluster_is_refused_before_ready_or_images_are_changed(self):
-        with tempfile.TemporaryDirectory() as tmp, patch.object(stack, 'ROOT', Path(tmp)), patch.object(stack.shutil, 'which', return_value='/fixture/tool'):
-            # Read-only native selection admission precedes runtime calls.
-            # Keep this fixture non-native so the real legacy-name guard is
-            # still reached, with all original no-mutation assertions intact.
-            charts = Path(tmp) / 'charts/agent-relay'
-            charts.mkdir(parents=True)
-            (charts / 'values.yaml').write_text('{}\n')
-            (charts / 'values-kind-core.yaml').write_text('{}\n')
+        # The legacy single-phase kind-up (and its old Control/Webapp layout
+        # preflight) was retired with the standalone RelayHistory server. It
+        # refuses every cluster before any ready, image or cluster access.
+        with tempfile.TemporaryDirectory() as tmp, patch.object(stack, 'ROOT', Path(tmp)):
             local = stack.Stack('core')
             ready = local.state / 'ready.json'
             ready.write_text('saved-independent-receipt')
             local.docker = Mock()
             local.require_owned_cluster = Mock()
-            local.require_no_legacy_storage = Mock()
             local.dependencies = Mock(side_effect=AssertionError('must refuse before dependencies'))
             local.cmd = Mock(return_value=subprocess.CompletedProcess([], 0, 'agent-relay-core\n', ''))
             local.k = Mock(return_value=subprocess.CompletedProcess([], 0, json.dumps({'items': [
                 {'kind': 'Deployment', 'metadata': {'name': 'relaycontrol'}}]}), ''))
-            with self.assertRaisesRegex(stack.StackError, 'existing Control/Webapp layout'):
+            with self.assertRaisesRegex(stack.StackError, 'retired.*make local-up'):
                 local.up()
-            local.require_owned_cluster.assert_called_once()
-            local.dependencies.assert_not_called()
+            for call in (local.docker, local.require_owned_cluster, local.dependencies, local.cmd, local.k):
+                call.assert_not_called()
             self.assertEqual(ready.read_text(), 'saved-independent-receipt')
-            local.require_no_legacy_storage.assert_called_once()
-            self.assertEqual(local.k.call_count, 2)
-            self.assertEqual(local.k.call_args_list[0].args, ('get', 'namespace', 'agent-relay', '--ignore-not-found', '-o', 'json'))
-            self.assertEqual(local.k.call_args_list[1].args, ('get', 'deployments,services', '-o', 'json'))
-
-    def test_control_webapp_preflight_allows_an_empty_owned_cluster(self):
-        local = object.__new__(stack.Stack)
-        local.k = Mock(return_value=subprocess.CompletedProcess([], 0, '', ''))
-        local.require_control_webapp_layout()
-        local.k.assert_called_once_with('get', 'namespace', 'agent-relay', '--ignore-not-found', '-o', 'json', namespace=None)
-
-    def test_new_layout_preflight_accepts_only_observed_new_resources(self):
-        local = object.__new__(stack.Stack)
-        local.k = Mock(return_value=subprocess.CompletedProcess([], 0, json.dumps({'items': [
-            {'kind': 'Deployment', 'metadata': {'name': 'relay-control', 'labels': {'app.kubernetes.io/name': 'relay-control'}}},
-            {'kind': 'Service', 'metadata': {'name': 'relay-webapp'}}]}), ''))
-        local.require_control_webapp_layout()
 
 
 if __name__ == '__main__':

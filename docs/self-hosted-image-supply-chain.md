@@ -5,6 +5,11 @@ Status: every image in the gated GCP profile (`values-gcp.yaml`) is approved
 images below are public but not approved; they are outside the gated profile. The customer release gate stays blocked on the non-image items
 in [`docs/handoff/STATUS.md`](handoff/STATUS.md).
 
+This audit predates agent-relay 0.7.0, which removed the standalone
+RelayHistory chart and its image (the `relayhistory` row below). The current
+`values-gcp.yaml` runs History natively on the Sessions services image (read
+API, ingest edge and search indexer), which this audit does not cover.
+
 The machine-readable source of this audit is
 [`self-hosted/customer-images.yaml`](../self-hosted/customer-images.yaml); this
 page summarizes it, and the manifest wins if they ever disagree. Recorded

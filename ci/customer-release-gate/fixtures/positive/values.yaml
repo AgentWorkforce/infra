@@ -1,8 +1,8 @@
 {
-  "relayhistory": {
+  "control": {
     "image": {
       "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-      "repository": "registry.northwind.io/agent-relay/relayhistory",
+      "repository": "registry.northwind.io/agent-relay/relay-control",
       "tag": ""
     }
   }

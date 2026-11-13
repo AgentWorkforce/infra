@@ -2,11 +2,16 @@
 #
 # End-to-end proof of a self-hosted Agent Relay suite on GKE (the gcp-proof
 # layout): Relaycast messaging, control-plane bootstrap and device auth,
-# RelayHistory durable delivery, dashboard reads, the sessions API, workspace
-# isolation, restart durability, RelayAuth token verification, erasure, the
-# Sessions Pipeline, the public HTTPS edge, workspace admin (env vars,
+# native History durable delivery (the ingest edge), dashboard reads and the
+# Sessions read API, the sessions API, workspace isolation, restart
+# durability, token verification at Control, the ingest edge, the read API and
+# Relaycast, erasure, the public HTTPS edge, workspace admin (env vars,
 # /internal edge denial), Relayflows on a registered worker, and the dashboard
 # SPA.
+#
+# History is always the native Sessions path (relay-control
+# RELAYHISTORY_BACKEND=native): the read API and the ingest edge on one
+# history.<domain> origin, with no RelayAuth and no standalone RelayHistory.
 #
 # The control plane holds exactly one organization. Every run reuses it and
 # adds two fresh, uniquely named test workspaces (A and B), each backed by its
@@ -23,7 +28,7 @@
 # installation organization, adds and removes one outsider membership, runs a
 # short-lived worker Pod (plus a Secret holding its single-use enrollment
 # token) in the agent-relay namespace, and (unless --skip-restart) runs
-# `kubectl rollout restart` on relayhistory and relaycast. It never changes
+# `kubectl rollout restart` on the read API, the ingest edge and relaycast. It never changes
 # Helm releases, NetworkPolicies, release Secrets or the ingress. Cleanup (case
 # 15, on by default) deletes the Relaycast workspaces, revokes the device
 # tokens, removes the flow, worker, Pod and Secret, and deletes the two
@@ -41,25 +46,19 @@ set -uo pipefail
 PROGRAM="${0##*/}"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 DRIVER="$HERE/e2e-gcp-proof-driver.mjs"
-BULLS_PROBE="$HERE/e2e-gcp-proof-sessions-pipeline.ts"
 
 CONTEXT=""
 NAMESPACE="agent-relay"
-BULLS_NAMESPACE="96bulls"
 SECRET_NAME=""
 BASE_DOMAIN=""
 SKIP_RESTART=false
-SKIP_SESSIONS_PIPELINE=false
 SKIP_PUBLIC=false
 REQUIRE_PUBLIC=false
 CERT_WAIT=0
-PIPELINE_TIMEOUT=300
 CLEANUP=true
 RELAYCAST_SECRET_KEY=""
 RELAYCAST_MODE=unknown
 RELAYCAST_CREATE_TIMEOUT=180
-ALLOWED_GAPS=()
-KNOWN_GAPS=(relayhistory-turns-erasure)
 SKIP_FLOWS=false
 EDGE_WAIT=900
 WORKER_WAIT=600
@@ -73,10 +72,9 @@ DASHBOARD_ORIGIN=""
 API_ORIGIN=""
 CAST_ORIGIN=""
 HISTORY_ORIGIN=""
-RELAYAUTH_URL=""
-# legacy (default) keeps the original proof; pipeline proves the install with
-# no RelayAuth or standalone RelayHistory (relay-control RELAYHISTORY_BACKEND=native).
-HISTORY_PROFILE="${E2E_HISTORY_PROFILE:-legacy}"
+# pipeline (native History) is the only profile; the option is kept so older
+# invocations that pass it still parse.
+HISTORY_PROFILE="${E2E_HISTORY_PROFILE:-pipeline}"
 READ_API_URL="${E2E_READ_API_URL:-http://agent-relay-read-api}"
 INGEST_URL="${E2E_INGEST_URL:-http://agent-relay-ingest-edge}"
 READ_API_DEPLOY="${E2E_READ_API_DEPLOY:-agent-relay-read-api}"
@@ -92,10 +90,6 @@ Required:
 
 Options:
   -n, --namespace NAME        agent-relay namespace (default: agent-relay)
-      --sessions-namespace NAME
-                              Sessions Pipeline namespace (default: 96bulls,
-                              the live proof's namespace; --bulls-namespace is
-                              an alias)
       --secret NAME           release Secret holding the Relaycast internal secret
                               (required; e.g. the release's existingSecret)
       --base-domain DOMAIN    public base domain (default: derived from the
@@ -106,25 +100,17 @@ Options:
       --dashboard-origin URL  public dashboard origin (default https://<base-domain>)
       --api-origin URL        public api origin (default https://api.<base-domain>)
       --cast-origin URL       public Relaycast origin (default https://cast.<base-domain>)
-      --history-origin URL    public RelayHistory origin (default https://history.<base-domain>)
-      --relayauth-url URL     in-cluster RelayAuth URL for the driver (default: the
-                              driver's http://relayauth.relayauth.svc:8787, the GKE
-                              proof's separate namespace)
-      --history-profile NAME  legacy (default) or pipeline: read API and ingest
-                              edge, no RelayAuth or standalone RelayHistory. Case 8
-                              is SKIP in pipeline (its courier needs RelayAuth).
-      --read-api-url URL      in-cluster read API URL for the driver in the pipeline
-                              profile (default http://agent-relay-read-api)
-      --ingest-url URL        in-cluster ingest edge URL for the driver in the
-                              pipeline profile (default http://agent-relay-ingest-edge)
-      --skip-restart          do not restart relayhistory/relaycast (case 6 SKIP)
-      --skip-sessions-pipeline
-                              skip the Sessions Pipeline (case 8 SKIP;
-                              --skip-96bulls is a deprecated alias)
+      --history-origin URL    public History origin: the read API and ingest edge
+                              (default https://history.<base-domain>)
+      --read-api-url URL      in-cluster read API URL for the driver
+                              (default http://agent-relay-read-api)
+      --ingest-url URL        in-cluster ingest edge URL for the driver
+                              (default http://agent-relay-ingest-edge)
+      --skip-restart          do not restart the read API/ingest edge/relaycast
+                              (case 6 SKIP)
       --skip-public           skip the public HTTPS checks (case 10 SKIP)
       --require-public        fail (not skip) case 10 when the cert is not Active
       --cert-wait SECONDS     wait up to this long for the ManagedCertificate
-      --pipeline-timeout SEC  how long to wait for sessions-pipeline workers (default 300)
       --skip-flows            skip the Relayflows worker case (case 13 SKIP)
       --edge-wait SECONDS     how long to poll for the api-host /internal edge
                               denial (default 900)
@@ -132,9 +118,6 @@ Options:
                               (default 600)
       --worker-image IMAGE    worker Pod image (default node:22.23.3-bookworm-slim)
       --agent-relay-version V agent-relay CLI the worker runs (default 12.4.1)
-      --allow-known-gap NAME  report a documented product gap as SKIP instead of
-                              FAIL (repeatable). Known: relayhistory-turns-erasure
-                              (session erasure leaves conversation turns readable)
       --relaycast-secret-key K  key in --secret for Relaycast's /internal API
                               (default: detected; relaycast-actors-internal-secret
                               for the durable-actors gateway, relaycast-internal-secret
@@ -145,6 +128,13 @@ Options:
       --no-cleanup            keep the Relaycast workspaces and device tokens
                               (case 15 SKIP); --cleanup is the default
   -h, --help                  show this help
+
+Compatibility (accepted, no effect): --history-profile pipeline (native History
+is the only profile; any other value is refused), --relayauth-url URL,
+--sessions-namespace/--bulls-namespace NAME, --skip-sessions-pipeline/
+--skip-96bulls and --pipeline-timeout SEC. Case 8 (the RelayAuth courier path
+into the Sessions Pipeline) is always SKIP: native History has no RelayAuth;
+uploads are proven in cases 3 and 4 through the ingest edge.
 
 Exit status: 0 when every case passes or is skipped, 1 on any failure,
 2 on invalid usage.
@@ -165,13 +155,12 @@ need_value() {
 
 while (($#)); do
   case "$1" in
-    --history-profile|--read-api-url|--ingest-url|--context|-n|--namespace|--sessions-namespace|--bulls-namespace|--secret|--base-domain|--edge|--dashboard-origin|--api-origin|--cast-origin|--history-origin|--relayauth-url|--cert-wait|--pipeline-timeout|--edge-wait|--worker-wait|--worker-image|--agent-relay-version|--allow-known-gap|--relaycast-secret-key|--relaycast-create-timeout)
+    --history-profile|--read-api-url|--ingest-url|--context|-n|--namespace|--sessions-namespace|--bulls-namespace|--secret|--base-domain|--edge|--dashboard-origin|--api-origin|--cast-origin|--history-origin|--relayauth-url|--cert-wait|--pipeline-timeout|--edge-wait|--worker-wait|--worker-image|--agent-relay-version|--relaycast-secret-key|--relaycast-create-timeout)
       need_value "$1" "$#" ;;
   esac
   case "$1" in
     --context) CONTEXT="$2"; shift 2 ;;
     -n|--namespace) NAMESPACE="$2"; shift 2 ;;
-    --sessions-namespace|--bulls-namespace) BULLS_NAMESPACE="$2"; shift 2 ;;
     --secret) SECRET_NAME="$2"; shift 2 ;;
     --base-domain) BASE_DOMAIN="$2"; shift 2 ;;
     --edge) EDGE="$2"; shift 2 ;;
@@ -179,23 +168,20 @@ while (($#)); do
     --api-origin) API_ORIGIN="${2%/}"; shift 2 ;;
     --cast-origin) CAST_ORIGIN="${2%/}"; shift 2 ;;
     --history-origin) HISTORY_ORIGIN="${2%/}"; shift 2 ;;
-    --relayauth-url) RELAYAUTH_URL="${2%/}"; shift 2 ;;
     --history-profile) HISTORY_PROFILE="$2"; shift 2 ;;
     --read-api-url) READ_API_URL="${2%/}"; shift 2 ;;
     --ingest-url) INGEST_URL="${2%/}"; shift 2 ;;
     --skip-restart) SKIP_RESTART=true; shift ;;
-    --skip-sessions-pipeline|--skip-96bulls) SKIP_SESSIONS_PIPELINE=true; shift ;;
     --skip-public) SKIP_PUBLIC=true; shift ;;
     --require-public) REQUIRE_PUBLIC=true; shift ;;
     --cert-wait) CERT_WAIT="$2"; shift 2 ;;
-    --pipeline-timeout) PIPELINE_TIMEOUT="$2"; shift 2 ;;
     --cleanup) CLEANUP=true; shift ;;
     --no-cleanup) CLEANUP=false; shift ;;
     --relaycast-secret-key) RELAYCAST_SECRET_KEY="$2"; shift 2 ;;
     --relaycast-create-timeout) RELAYCAST_CREATE_TIMEOUT="$2"; shift 2 ;;
-    --allow-known-gap)
-      [[ " ${KNOWN_GAPS[*]} " == *" $2 "* ]] || die_usage "unknown gap: $2 (known: ${KNOWN_GAPS[*]})"
-      ALLOWED_GAPS+=("$2"); shift 2 ;;
+    # Compatibility no-ops from the removed legacy History profile.
+    --relayauth-url|--sessions-namespace|--bulls-namespace|--pipeline-timeout) shift 2 ;;
+    --skip-sessions-pipeline|--skip-96bulls) shift ;;
     --skip-flows) SKIP_FLOWS=true; shift ;;
     --edge-wait) EDGE_WAIT="$2"; shift 2 ;;
     --worker-wait) WORKER_WAIT="$2"; shift 2 ;;
@@ -212,32 +198,27 @@ for origin in "$DASHBOARD_ORIGIN" "$API_ORIGIN" "$CAST_ORIGIN" "$HISTORY_ORIGIN"
   # https only: authenticated checks send bearer tokens to these origins.
   [[ -z "$origin" || "$origin" =~ ^https://[A-Za-z0-9.-]+(:[0-9]+)?$ ]] || die_usage "origins must be https://host[:port] with no path"
 done
-[[ "$HISTORY_PROFILE" == legacy || "$HISTORY_PROFILE" == pipeline ]] || die_usage "--history-profile must be legacy or pipeline"
-PIPELINE_PROFILE=$([[ "$HISTORY_PROFILE" == pipeline ]] && echo true || echo false)
-[[ -z "$RELAYAUTH_URL" || "$RELAYAUTH_URL" =~ ^https?://[A-Za-z0-9.-]+(:[0-9]+)?$ ]] || die_usage "--relayauth-url must be http(s)://host[:port]"
+[[ "$HISTORY_PROFILE" == pipeline ]] ||
+  die_usage "--history-profile: only pipeline (native History) is supported; the legacy standalone RelayHistory profile was removed"
 if [[ "$EDGE" == alb ]]; then
   [[ -n "$DASHBOARD_ORIGIN" && -n "$API_ORIGIN" && -n "$CAST_ORIGIN" && -n "$HISTORY_ORIGIN" ]] ||
     die_usage "--edge alb needs --dashboard-origin, --api-origin, --cast-origin and --history-origin"
 fi
-[[ -n "$NAMESPACE" && -n "$BULLS_NAMESPACE" && -n "$SECRET_NAME" ]] || die_usage "namespace and secret options must not be empty"
+[[ -n "$NAMESPACE" && -n "$SECRET_NAME" ]] || die_usage "namespace and secret options must not be empty"
 [[ "$CERT_WAIT" =~ ^[0-9]+$ ]] || die_usage "--cert-wait must be a non-negative integer"
-[[ "$PIPELINE_TIMEOUT" =~ ^[1-9][0-9]*$ ]] || die_usage "--pipeline-timeout must be a positive integer"
 [[ "$RELAYCAST_CREATE_TIMEOUT" =~ ^[1-9][0-9]*$ ]] || die_usage "--relaycast-create-timeout must be a positive integer"
 [[ -z "$RELAYCAST_SECRET_KEY" || "$RELAYCAST_SECRET_KEY" =~ ^[A-Za-z0-9._-]+$ ]] || die_usage "--relaycast-secret-key is not a valid Secret key"
 [[ "$EDGE_WAIT" =~ ^[0-9]+$ ]] || die_usage "--edge-wait must be a non-negative integer"
 [[ "$WORKER_WAIT" =~ ^[1-9][0-9]*$ ]] || die_usage "--worker-wait must be a positive integer"
 [[ "$AGENT_RELAY_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || die_usage "--agent-relay-version must be an exact x.y.z version"
 [[ -n "$WORKER_IMAGE" ]] || die_usage "--worker-image must not be empty"
-for f in "$DRIVER" "$BULLS_PROBE"; do
-  [[ -f "$f" ]] || die_usage "missing helper: $f"
-done
+[[ -f "$DRIVER" ]] || die_usage "missing helper: $DRIVER"
 for tool in kubectl python3 curl node; do
   command -v "$tool" >/dev/null 2>&1 || die_usage "missing tool: $tool"
 done
 
 K=(kubectl --context "$CONTEXT")
 KN=("${K[@]}" -n "$NAMESPACE")
-KB=("${K[@]}" -n "$BULLS_NAMESPACE")
 
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/e2e-gcp-proof.XXXXXX")"
 chmod 700 "$WORK"
@@ -247,7 +228,6 @@ RCS="$WORK/relaycast-internal-secret"
 : >"$STATE"
 
 API_POD=""
-BULLS_POD=""
 
 remove_worker() {
   if [[ -n "$WORKER_POD" ]]; then
@@ -271,9 +251,6 @@ cleanup_exit() {
   fi
   if [[ -n "$API_POD" ]]; then
     "${KN[@]}" exec "$API_POD" -- rm -f /tmp/e2e-gcp-proof-driver.mjs >/dev/null 2>&1 || true
-  fi
-  if [[ -n "$BULLS_POD" ]]; then
-    "${KB[@]}" exec "$BULLS_POD" -- rm -f /tmp/e2e-gcp-proof-sessions-pipeline.ts >/dev/null 2>&1 || true
   fi
   rm -rf "$WORK"
 }
@@ -402,12 +379,8 @@ run_phase() {
     emit FAIL "$phase.driver" "relay-control pod unavailable"
     return 1
   fi
-  local driver_env=()
-  [[ -n "$RELAYAUTH_URL" ]] && driver_env=("E2E_RELAYAUTH_URL=$RELAYAUTH_URL")
-  if $PIPELINE_PROFILE; then
-    driver_env+=("E2E_HISTORY_PROFILE=pipeline" "E2E_READ_API_URL=$READ_API_URL" "E2E_INGEST_URL=$INGEST_URL")
-  fi
-  phase_input | "${KN[@]}" exec -i "$API_POD" -- ${driver_env[@]+env "${driver_env[@]}"} node /tmp/e2e-gcp-proof-driver.mjs "$phase" >"$out" 2>/dev/null
+  phase_input | "${KN[@]}" exec -i "$API_POD" -- env "E2E_READ_API_URL=$READ_API_URL" "E2E_INGEST_URL=$INGEST_URL" \
+    node /tmp/e2e-gcp-proof-driver.mjs "$phase" >"$out" 2>/dev/null
   consume_phase_output "$phase" "$out" $?
 }
 
@@ -415,24 +388,8 @@ run_phase() {
 # origin, so the calls cross the GCE edge exactly as the SPA's do.
 run_public_phase() {
   local phase="$1" out="$WORK/out.json"
-  phase_input | E2E_API_URL="$DASHBOARD_ORIGIN" E2E_HISTORY_PROFILE="$HISTORY_PROFILE" E2E_READ_API_URL="$READ_API_URL" E2E_INGEST_URL="$INGEST_URL" node "$DRIVER" "$phase" >"$out" 2>/dev/null
+  phase_input | E2E_API_URL="$DASHBOARD_ORIGIN" E2E_READ_API_URL="$READ_API_URL" E2E_INGEST_URL="$INGEST_URL" node "$DRIVER" "$phase" >"$out" 2>/dev/null
   consume_phase_output "$phase" "$out" $?
-}
-
-# emit_probe_output <label> <exec rc> <output> <required check>...
-# Re-emits the probe's PROOF lines, then fails when the exec failed or any
-# required check did not report PASS, so an empty or truncated output can
-# never pass.
-emit_probe_output() {
-  local label="$1" rc="$2" out="$3" required
-  shift 3
-  while IFS='|' read -r _ result check detail; do emit "$result" "$check" "$detail"; done \
-    < <(grep '^PROOF|' <<<"$out")
-  ((rc == 0)) || emit FAIL "pipeline.${label}_exec" "kubectl exec rc=$rc"
-  for required in "$@"; do
-    grep -q "^PROOF|PASS|$required|" <<<"$out" ||
-      emit FAIL "$required" "no PASS record from the $label probe"
-  done
 }
 
 state_get() { # dotted.path -> value (non-secret fields only)
@@ -442,15 +399,6 @@ value = json.load(open(sys.argv[1]))
 for part in sys.argv[2].split("."):
     value = value.get(part) if isinstance(value, dict) else None
 print("" if value is None else value)
-PY
-}
-
-state_set_json() { # key json
-  python3 - "$STATE" "$1" "$2" <<'PY'
-import json, sys
-state = json.load(open(sys.argv[1]))
-state[sys.argv[2]] = json.loads(sys.argv[3])
-json.dump(state, open(sys.argv[1], "w"))
 PY
 }
 
@@ -629,7 +577,7 @@ DELIVERED=$([[ -n "$(state_get session.receiptId)" ]] && echo true || echo false
 
 case_begin 4 "reads"
 if $DELIVERED; then run_phase reads; else emit FAIL reads.blocked "no delivered session"; fi
-case_end 4 "reads: dashboard list/replay/search and RelayHistory direct"
+case_end 4 "reads: dashboard list/replay/search and the read API direct"
 
 # Case 11 runs here, before erasure (case 9) removes the session.
 case_begin 11 "sessions API"
@@ -644,7 +592,7 @@ case_end 11 "sessions API via the public /cloud/api: list, filters, transcript/t
 
 case_begin 5 "isolation"
 if $DELIVERED; then run_phase isolation; else emit FAIL isolation.blocked "no delivered session"; fi
-case_end 5 "isolation: B token gets 404 on A sessions/flows/env/settings, RelayHistory and Relaycast"
+case_end 5 "isolation: B token gets 404 on A sessions/flows/env/settings, the read API/ingest edge and Relaycast"
 
 # ---------------------------------------------------------------- case 6
 
@@ -654,11 +602,7 @@ if $SKIP_RESTART; then
 elif ! $DELIVERED; then
   emit FAIL durability.blocked "no delivered session"
 else
-  if $PIPELINE_PROFILE; then
-    restart_and_wait "$READ_API_DEPLOY" && restart_and_wait "$INGEST_DEPLOY" && run_phase durability-history
-  else
-    restart_and_wait relayhistory && run_phase durability-history
-  fi
+  restart_and_wait "$READ_API_DEPLOY" && restart_and_wait "$INGEST_DEPLOY" && run_phase durability-history
   restart_and_wait relaycast && run_phase durability-relaycast
 fi
 case_end 6 "durability: history backend and relaycast restarts"
@@ -666,101 +610,34 @@ case_end 6 "durability: history backend and relaycast restarts"
 # ---------------------------------------------------------------- case 7
 
 case_begin 7 "auth"
-if $PIPELINE_PROFILE; then
-  # The profile's premise: no RelayAuth, no standalone History, Control not pointed at them.
-  still_present=""
-  for deployment in relayauth relayhistory; do
-    "${KN[@]}" get deploy "$deployment" >/dev/null 2>&1 && still_present+="$deployment "
-  done
-  control_env="$("${KN[@]}" get deploy "${E2E_CONTROL_DEPLOYMENT:-relay-control}" -o jsonpath='{.spec.template.spec.containers[0].env[*].name}' 2>/dev/null)"
-  [[ -n "$control_env" ]] || still_present+="control-env-unreadable "
-  for name in RELAYAUTH_URL RELAYHISTORY_URL; do
-    [[ " $control_env " == *" $name "* ]] && still_present+="$name "
-  done
-  [[ " $control_env " == *" RELAYHISTORY_BACKEND "* ]] || still_present+="no-RELAYHISTORY_BACKEND "
-  if [[ -z "$still_present" ]]; then emit PASS auth.no_relayauth_or_history "no relayauth/relayhistory Deployments; Control has RELAYHISTORY_BACKEND and neither legacy URL"
-  else emit FAIL auth.no_relayauth_or_history "still present or wrong: ${still_present% }"; fi
-fi
+# Native History's premise: no RelayAuth, no leftover standalone RelayHistory,
+# Control not pointed at either.
+still_present=""
+for deployment in relayauth relayhistory; do
+  "${KN[@]}" get deploy "$deployment" >/dev/null 2>&1 && still_present+="$deployment "
+done
+control_env="$("${KN[@]}" get deploy "${E2E_CONTROL_DEPLOYMENT:-relay-control}" -o jsonpath='{.spec.template.spec.containers[0].env[*].name}' 2>/dev/null)"
+[[ -n "$control_env" ]] || still_present+="control-env-unreadable "
+for name in RELAYAUTH_URL RELAYHISTORY_URL; do
+  [[ " $control_env " == *" $name "* ]] && still_present+="$name "
+done
+[[ " $control_env " == *" RELAYHISTORY_BACKEND "* ]] || still_present+="no-RELAYHISTORY_BACKEND "
+if [[ -z "$still_present" ]]; then emit PASS auth.no_relayauth_or_history "no relayauth/relayhistory Deployments; Control has RELAYHISTORY_BACKEND and neither legacy URL"
+else emit FAIL auth.no_relayauth_or_history "still present or wrong: ${still_present% }"; fi
 if $BOOTSTRAPPED; then run_phase auth; else emit FAIL auth.blocked "no tenant"; fi
-case_end 7 "auth: token verification at Control, the history backend and Relaycast"
+case_end 7 "auth: token verification at Control, the ingest edge, the read API and Relaycast"
 
 # ---------------------------------------------------------------- case 8
 
 case_begin 8 "Sessions Pipeline"
-if $PIPELINE_PROFILE; then
-  case_skip "pipeline profile: the courier path needs a RelayAuth assertion; uploads are proven in cases 3 and 4 through the ingest edge"
-elif $SKIP_SESSIONS_PIPELINE; then
-  case_skip "--skip-sessions-pipeline"
-else
-  BULLS_POD="$("${KB[@]}" get pods --field-selector=status.phase=Running -o json 2>/dev/null | python3 "$HERE/session-identities.py" ingest-pod)"
-  if [[ -z "$BULLS_POD" ]]; then
-    emit FAIL pipeline.ingest_pod "no running alleyoop ingest pod"
-  else
-    env_of() {
-      "${KB[@]}" get pod "$BULLS_POD" \
-        -o jsonpath="{.spec.containers[0].env[?(@.name==\"$1\")].value}" 2>/dev/null
-    }
-    marker="$(state_get marker)"
-    [[ -n "$marker" ]] || marker="e2e$(date +%s)"
-    machine="e2e-$marker"
-    pipeline_user="${E2E_PIPELINE_USER_ID:-$(state_get a.ownerUserId)}"
-    state_set_json bulls "$(python3 -c 'import json,sys; print(json.dumps(dict(orgId=sys.argv[1], workspaceId=sys.argv[2] or "default", origin=sys.argv[3], machineId=sys.argv[4], userId=sys.argv[5])))' \
-      "$(env_of TENANT_ORG_ID)" "$(env_of WORKSPACE_ID)" "$(env_of RELAYHISTORY_ORIGIN)" "$machine" "$pipeline_user")"
-    [[ -n "$(state_get marker)" ]] || state_set_json marker "\"$marker\""
-    # Remove any helper left by an earlier run first, so a failed copy can
-    # never execute a stale probe.
-    if ! "${KB[@]}" exec -i "$BULLS_POD" -- sh -c 'umask 077; rm -f /tmp/e2e-gcp-proof-sessions-pipeline.ts && cat > /tmp/e2e-gcp-proof-sessions-pipeline.ts' <"$BULLS_PROBE"; then
-      emit FAIL pipeline.install_probe "could not copy the probe into $BULLS_POD; skipping the rest of case 8"
-    else
-    pushed_at="$(date -u +%FT%TZ)"
-    run_phase mint-sessions-pipeline
-    state_pop_to_file bullsAssertion "$WORK/assertion"
-    push_out="$("${KB[@]}" exec -i "$BULLS_POD" -- env "E2E_PIPELINE_USER_ID=$pipeline_user" sh -c "cd /app && bun run /tmp/e2e-gcp-proof-sessions-pipeline.ts push '$marker' '$machine'" \
-      <"$WORK/assertion" 2>/dev/null)"
-    push_rc=$?
-    rm -f "$WORK/assertion"
-    emit_probe_output push "$push_rc" "$push_out" pipeline.courier_push
-    bulls_session="$(sed -n 's/^SESSION_ID=//p' <<<"$push_out")"
-    if [[ -n "$bulls_session" ]]; then
-      verify_out="$("${KB[@]}" exec "$BULLS_POD" -- env "E2E_PIPELINE_USER_ID=$pipeline_user" sh -c "cd /app && bun run /tmp/e2e-gcp-proof-sessions-pipeline.ts verify '$marker' '$bulls_session' '$PIPELINE_TIMEOUT'" 2>/dev/null)"
-      verify_rc=$?
-      emit_probe_output verify "$verify_rc" "$verify_out" \
-        pipeline.hoopdb_indexer pipeline.owner_attribution pipeline.referee_state pipeline.referee_verdict \
-        pipeline.bob_costas_summaries pipeline.events pipeline.no_dead_letters \
-        pipeline.bucket_objects pipeline.technical_foul_scrub
-      trace="$(sed -n 's/^TRACE_ID=//p' <<<"$verify_out")"
-      if [[ -z "$trace" ]]; then
-        emit FAIL pipeline.trace "verify returned no trace id; worker logs not checked"
-      else
-        for worker in hoopdb-indexer referee bob-costas; do
-          # Resolve the unchanged engine SERVICE, independent of legacy/new
-          # public resource names. Ambiguous matches fail instead of guessing.
-          dep="$("${KB[@]}" get deploy -o json 2>/dev/null | python3 "$HERE/session-identities.py" worker "$worker")"
-          if [[ -z "$dep" ]]; then
-            emit FAIL "pipeline.logs_$worker" "expected one deployment for engine stage $worker"
-            continue
-          fi
-          lines="$("${KB[@]}" logs "$dep" --since-time="$pushed_at" 2>/dev/null | grep -c -- "$trace")"
-          leaks="$("${KB[@]}" logs "$dep" --since-time="$pushed_at" 2>/dev/null | grep -c -- "$marker")"
-          if ((lines > 0 && leaks == 0)); then
-            emit PASS "pipeline.logs_$worker" "trace_lines=$lines marker_in_logs=0"
-          else
-            emit FAIL "pipeline.logs_$worker" "trace_lines=$lines marker_in_logs=$leaks"
-          fi
-        done
-      fi
-    else
-      emit FAIL pipeline.verify "courier push produced no session"
-    fi
-    fi
-  fi
-fi
-case_end 8 "Sessions Pipeline: courier push, indexer, referee, bob-costas, bucket"
+# The courier path needs a RelayAuth assertion, and native History runs no
+# RelayAuth; uploads are proven in cases 3 and 4 through the ingest edge.
+case_skip "native History: the courier path needs a RelayAuth assertion; uploads are proven in cases 3 and 4 through the ingest edge"
+case_end 8 "Sessions Pipeline: courier push (not applicable to native History)"
 
 # ---------------------------------------------------------------- case 9
 
 case_begin 9 "erasure"
-state_set_json allowedGaps "$(python3 -c 'import json,sys; print(json.dumps(sys.argv[1:]))' ${ALLOWED_GAPS[@]+"${ALLOWED_GAPS[@]}"})" 2>/dev/null || true
 if $DELIVERED; then run_phase erasure; else emit FAIL erasure.blocked "no delivered session"; fi
 case_end 9 "erasure: session removed from list, replay, search and turns"
 
@@ -837,19 +714,17 @@ PY
     emit FAIL public.cast_internal_denied "status=$code"
   pub public.history_sessions 200 h-history "$HISTORY_ORIGIN/v1/sessions?workspace=$ws_a&limit=1"
   pub public.history_anonymous 401 "" "$HISTORY_ORIGIN/v1/delivery/limits"
-  if $PIPELINE_PROFILE; then
-    # The ingest edge answers on the history origin, and /internal stays private.
-    edge_post() { curl --disable -s -o /dev/null --max-time 20 -w '%{http_code}' -X POST -H 'content-type: application/json' --data '{}' "$1"; }
-    code="$(edge_post "$HISTORY_ORIGIN/v1/delivery/batches")"
-    [[ "$code" == 401 ]] && emit PASS public.ingest_batch_anonymous "status=401" || emit FAIL public.ingest_batch_anonymous "status=$code expected=401"
-    code="$(edge_post "$HISTORY_ORIGIN/v1/auth/token/refresh")"
-    [[ "$code" == 401 ]] && emit PASS public.ingest_refresh_refused "status=401" || emit FAIL public.ingest_refresh_refused "status=$code expected=401"
-    code="$(curl --disable -s -o /dev/null --max-time 20 -w '%{http_code}' "$HISTORY_ORIGIN/internal/v1/session-read/sessions")"
-    # The chart routes this path to a selector-less Service, so the Google edge
-    # answers 502 (no backend) and the request never reaches the read API.
-    [[ "$code" == 502 || "$code" == 404 || "$code" == 403 ]] && emit PASS public.history_internal_denied "status=$code edge_denied=true" ||
-      emit FAIL public.history_internal_denied "status=$code expected=404/403/502"
-  fi
+  # The ingest edge answers on the history origin, and /internal stays private.
+  edge_post() { curl --disable -s -o /dev/null --max-time 20 -w '%{http_code}' -X POST -H 'content-type: application/json' --data '{}' "$1"; }
+  code="$(edge_post "$HISTORY_ORIGIN/v1/delivery/batches")"
+  [[ "$code" == 401 ]] && emit PASS public.ingest_batch_anonymous "status=401" || emit FAIL public.ingest_batch_anonymous "status=$code expected=401"
+  code="$(edge_post "$HISTORY_ORIGIN/v1/auth/token/refresh")"
+  [[ "$code" == 401 ]] && emit PASS public.ingest_refresh_refused "status=401" || emit FAIL public.ingest_refresh_refused "status=$code expected=401"
+  code="$(curl --disable -s -o /dev/null --max-time 20 -w '%{http_code}' "$HISTORY_ORIGIN/internal/v1/session-read/sessions")"
+  # The chart routes this path to a selector-less Service, so the Google edge
+  # answers 502 (no backend) and the request never reaches the read API.
+  [[ "$code" == 502 || "$code" == 404 || "$code" == 403 ]] && emit PASS public.history_internal_denied "status=$code edge_denied=true" ||
+    emit FAIL public.history_internal_denied "status=$code expected=404/403/502"
   rm -f "$WORK"/h-*
 fi
 case_end 10 "public: verify-public.sh and authenticated calls through the HTTPS edge"
@@ -1136,7 +1011,6 @@ fi
 case_end 15 "cleanup: Relaycast workspaces deleted, device tokens revoked, control-plane test workspaces deleted"
 
 printf '\n== summary (%s)\n' "$(ts)"
-((${#ALLOWED_GAPS[@]})) && printf 'E2E_ALLOWED_GAPS=%s\n' "${ALLOWED_GAPS[*]}"
 printf 'E2E_MARKER=%s\n' "$(state_get marker)"
 printf '%s\n' "${CASE_LINES[@]}" | sort -t'|' -k2,2n
 if ((FAILS == 0)); then

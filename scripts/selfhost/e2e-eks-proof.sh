@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 #
-# End-to-end proof of the agent-relay suite on AWS EKS (values-eks.yaml, the
-# layout eks-proof-install.sh creates). It runs the same cases as the GKE
+# End-to-end proof of the agent-relay suite on AWS EKS (values-eks.yaml). It runs the same cases as the GKE
 # proof (e2e-gcp-proof.sh) with the ALB edge (--edge alb), then adds the
 # AWS-specific checks:
 #
@@ -17,7 +16,7 @@
 #     eks.tls.<host>         public DNS -> ALB, the certificate verifies with the
 #                            system trust store, http:// redirects to https://
 #     eks.cnpg               the expected CNPG clusters are healthy. Defaults to
-#                            control-api-pg, hoopdb and relayhistory-pg; set
+#                            control-api-pg and hoopdb; set
 #                            EKS_PROOF_CNPG_CLUSTERS (space separated) when
 #                            some databases are external, such as RDS
 #                            or to "none" to require that no CNPG cluster exists
@@ -28,17 +27,15 @@
 #   pippen sandbox exec aws-proof -- scripts/selfhost/e2e-eks-proof.sh [e2e-gcp-proof.sh options]
 #
 # Options it sets itself: --context (a temporary kubeconfig), --namespace,
-# --sessions-namespace (the same namespace: the umbrella installs the
-# Sessions Pipeline next to the rest), --secret, --edge alb and the four
-# https origins (from the observed Control SELFHOST_PUBLIC_URL = https://api.<domain>),
-# --require-public, and --relayauth-url (RelayAuth runs in the release
-# namespace under the umbrella). Any other option is passed through, e.g.
-# --skip-flows, --allow-known-gap NAME or --no-cleanup.
+# --secret, --edge alb and the four https origins (from the observed Control
+# SELFHOST_PUBLIC_URL = https://api.<domain>), --read-api-url (the history
+# origin) and --require-public. Any other option is passed through, e.g.
+# --skip-flows, --no-cleanup, or --ingest-url if the release name is not
+# agent-relay.
 #
-# For an install with no RelayAuth and no standalone RelayHistory
-# (relay-control RELAYHISTORY_BACKEND=native) add --history-profile pipeline, and
-# --read-api-url / --ingest-url if the release name is not agent-relay. The
-# default profile keeps the legacy proof.
+# History is always native (relay-control RELAYHISTORY_BACKEND=native: the
+# Sessions read API and the ingest edge, no RelayAuth and no standalone
+# RelayHistory), so there is no profile to choose.
 #
 # --eks-checks-only runs only the EKS checks (no e2e-gcp-proof.sh cases).
 #
@@ -95,9 +92,9 @@ ALB="$("${K[@]}" get ingress "${EKS_ALB_INGRESS_NAME:-agent-relay}" -o jsonpath=
 rc=0
 EKS_ONLY=false
 if [[ "${1:-}" == --eks-checks-only ]]; then EKS_ONLY=true; shift; fi
-$EKS_ONLY || bash "$HERE/e2e-gcp-proof.sh" --context eks-proof --namespace "$NS" --sessions-namespace "$NS" \
+$EKS_ONLY || bash "$HERE/e2e-gcp-proof.sh" --context eks-proof --namespace "$NS" \
   --secret "$SECRET" --edge alb --dashboard-origin "$DASHBOARD" --api-origin "$API" \
-  --cast-origin "$CAST" --history-origin "$HISTORY" --read-api-url "$HISTORY" --relayauth-url http://relayauth:8787 --require-public "$@" || rc=$?
+  --cast-origin "$CAST" --history-origin "$HISTORY" --read-api-url "$HISTORY" --require-public "$@" || rc=$?
 
 printf '\n== EKS checks (%s)\n' "$(date -u +%FT%TZ)"
 EKS_FAILS=0
@@ -177,7 +174,7 @@ done
 
 # Every expected CNPG cluster must exist and be healthy. External databases are
 # proven by the application cases, which read and write through them.
-read -r -a cnpg_wanted <<<"${EKS_PROOF_CNPG_CLUSTERS:-control-api-pg hoopdb relayhistory-pg}"
+read -r -a cnpg_wanted <<<"${EKS_PROOF_CNPG_CLUSTERS:-control-api-pg hoopdb}"
 cnpg="$("${K[@]}" get cluster.postgresql.cnpg.io -o jsonpath='{range .items[*]}{.metadata.name}={.status.phase}{";"}{end}' 2>/dev/null)"
 cnpg_rc=$?
 cnpg_ok=true

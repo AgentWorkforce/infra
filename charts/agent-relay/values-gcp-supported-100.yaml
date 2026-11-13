@@ -64,11 +64,6 @@ sessions-pipeline:
         requests: { cpu: 500m, memory: 512Mi }
         limits: { cpu: "2", memory: 2Gi }
 
-relayhistory:
-  resources:
-    requests: { cpu: 500m, memory: 512Mi }
-    limits: { cpu: "2", memory: 2Gi }
-
 relay-control:
   resources:
     requests: { cpu: 500m, memory: 1Gi }
