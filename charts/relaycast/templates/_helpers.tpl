@@ -219,10 +219,10 @@ through relaycast.nodeHeapEnvStandalone.
 {{- define "relaycast.nodeHeapEnvStandalone" -}}
 {{- $mine := "" -}}
 {{- range .Values.extraEnv }}{{ if eq (toString .name) "NODE_OPTIONS" }}{{ $mine = toJson . }}{{ end }}{{ end -}}
-{{- if $mine }}
+{{- if $mine -}}
 - {{ $mine }}
-{{- else }}
-{{- include "relaycast.nodeHeapEnv" . }}
+{{- else -}}
+{{- include "relaycast.nodeHeapEnv" . -}}
 {{- end }}
 {{- end }}
 
@@ -238,7 +238,7 @@ through relaycast.nodeHeapEnvStandalone.
 {{- $heap := div (mul $mib 3) 4 -}}
 {{- $operator := false -}}
 {{- range .Values.extraEnv }}{{ if eq (toString .name) "NODE_OPTIONS" }}{{ $operator = true }}{{ end }}{{ end -}}
-{{- if and (ge (int64 $heap) 64) (le (int64 $heap) 1048576) (not $operator) }}
+{{- if and (ge (int64 $heap) 64) (le (int64 $heap) 1048576) (not $operator) -}}
 - name: NODE_OPTIONS
   value: {{ printf "--max-old-space-size=%d" (int64 $heap) | quote }}
 {{- end }}
