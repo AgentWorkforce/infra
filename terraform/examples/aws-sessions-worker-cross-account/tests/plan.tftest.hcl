@@ -22,9 +22,14 @@ run "least_privilege" {
     error_message = "The association binds the release's worker ServiceAccount."
   }
   assert {
-    condition = alltrue([for s in jsondecode(aws_iam_role_policy.worker.policy).Statement :
+    condition = alltrue([for s in jsondecode(aws_iam_role_policy.worker.policy).Statement : s.Effect == "Deny" ||
     !contains(flatten([s.Action]), "s3:DeleteObject") && !contains(flatten([s.Action]), "s3:DeleteObjectVersion") && !contains(flatten([s.Action]), "s3:*")])
     error_message = "The worker never deletes."
+  }
+  assert {
+    condition = anytrue([for s in jsondecode(aws_iam_role_policy.worker.policy).Statement :
+    s.Sid == "NoUploadInbox" && s.Effect == "Deny" && s.Resource == "arn:aws:s3:::sessions-bucket/96bulls/.upload-inbox/*"])
+    error_message = "The worker never touches the upload inbox."
   }
   assert {
     condition = anytrue([for s in jsondecode(aws_iam_role_policy.worker.policy).Statement :

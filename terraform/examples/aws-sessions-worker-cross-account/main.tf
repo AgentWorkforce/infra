@@ -9,6 +9,9 @@ locals {
   kms_region      = split(":", var.sessions_kms_key_arn)[3]
   session_objects = "${var.sessions_bucket_arn}/${var.key_base}/*/v1/*"
   summary_objects = "${var.sessions_bucket_arn}/${var.key_base}/*/v1/*/summary/*"
+  # IAM * spans /, so session_objects also matches the upload inbox (unverified desktop uploads). The
+  # bucket's inbox wall denies it in the other account; this Deny keeps that true from this side too.
+  upload_inbox = "${var.sessions_bucket_arn}/${var.key_base}/.upload-inbox/*"
 }
 
 resource "aws_iam_role" "worker" {
@@ -48,6 +51,7 @@ resource "aws_iam_role_policy" "worker" {
       { Sid = "ListForMissingKeySemantics", Effect = "Allow", Action = ["s3:ListBucket"], Resource = var.sessions_bucket_arn },
       { Sid = "ReadSessionObjects", Effect = "Allow", Action = ["s3:GetObject"], Resource = local.session_objects },
       { Sid = "WriteEncryptedSummaries", Effect = "Allow", Action = ["s3:PutObject"], Resource = local.summary_objects },
+      { Sid = "NoUploadInbox", Effect = "Deny", Action = ["s3:*"], Resource = local.upload_inbox },
       {
         Sid       = "SessionsKeyViaS3"
         Effect    = "Allow"
