@@ -122,11 +122,12 @@ relaycast:
       # Dial actor sockets in-cluster: the actors' public URL is an internet
       # name the gateway may not reach from inside the VPC.
       socketOrigin: controlPlane
-      # relaycast main 4e90b169 (#626), publish-actors-images run 41805228035, tag 12.7.0-actors.1
+      # relaycast main 10e93f94, publish-actors-images run 43350514591, tag 12.8.0-actors.1
+      # (the AA full-stack actors e2e, 2026-11-13)
       gateway:
         image:
           repository: ghcr.io/agentworkforce/relaycast-actors-gateway
-          digest: sha256:6d4f77c4285becac66f56601a36ac3580b19ad37331db4ad2b87f68b2a68abe4
+          digest: sha256:5e1dc05084ee17c9b84b4146a0f875df5bed7aa73d50ec2fa05258fdbd122a4a
       invocationSecret:
         name: relaycast-durable-actors-invoke
         key: durable-actors-invoke-key
@@ -137,7 +138,7 @@ relaycast:
       deployer:
         image:
           repository: ghcr.io/agentworkforce/relaycast-actors-deployer
-          digest: sha256:f539982442305c61f2c7a7d979cb110e18f3be83fed69befd8755b6ad5476b51
+          digest: sha256:a78fe6d63508b77b2193bb26869c907bab3f0c23319b26e7ff3b55ebcae92a79
         artifactBucket: <bucket>
         artifactStore:
           driver: s3

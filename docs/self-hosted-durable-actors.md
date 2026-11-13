@@ -329,6 +329,11 @@ performing TLS handshake" until the CA is added. Do not work around it with
        key: ca.crt
    ```
 
+   For the full suite on actors (Control, the Sessions pipeline and the dashboard
+   with Relaycast on actors), layer `values-eks-actors-suite.yaml` after
+   `values-eks-actors.yaml`. It turns the suite back on and sets this CA and
+   `storage.s3.actorCredentials: assume-role`; its header has the full `-f` order.
+
    An init container appends the CA to the image's system roots in an
    in-memory volume `postgres-ca`, mounted read-only at
    `/etc/postgres-ca/ca.crt` in both Deployments, and `SSL_CERT_FILE` points at

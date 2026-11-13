@@ -617,29 +617,29 @@ images:
       - Deployment/relaycast actors gateway
     current:
       repository: ghcr.io/agentworkforce/relaycast-actors-gateway
-      digest: sha256:6d4f77c4285becac66f56601a36ac3580b19ad37331db4ad2b87f68b2a68abe4
+      digest: sha256:5e1dc05084ee17c9b84b4146a0f875df5bed7aa73d50ec2fa05258fdbd122a4a
       chartStatus: optional-preview
       valuesFile: charts/agent-relay/values-eks-actors.yaml
     source:
       repository: https://github.com/AgentWorkforce/relaycast
-      revision: 4e90b169c60dc0948ac4d4fc86233fedd831fd80
+      revision: 10e93f94069a42e64f952e8342056b6e8fb889e6
       reproducibleReference: true
       note: >-
-        Relaycast actor-mode gateway, relaycast main 4e90b169 (#626). The image has no revision or license label; the source revision is the publish run's head.
+        Relaycast actor-mode gateway, relaycast main 10e93f94. The image has no revision or license label; the source revision is the publish run's head.
     license:
       status: recorded
       spdx: Apache-2.0
-      evidence: https://github.com/AgentWorkforce/relaycast/blob/4e90b169c60dc0948ac4d4fc86233fedd831fd80/LICENSE
+      evidence: https://github.com/AgentWorkforce/relaycast/blob/10e93f94069a42e64f952e8342056b6e8fb889e6/LICENSE
     platforms:
       expected: [linux/amd64, linux/arm64]
       verifiedFromRegistry: [linux/amd64, linux/arm64]
       status: verified
       verificationAccess: anonymous
     release:
-      run: https://github.com/AgentWorkforce/relaycast/actions/runs/41805228035
+      run: https://github.com/AgentWorkforce/relaycast/actions/runs/43350514591
       trigger: workflow_dispatch (main)
       buildsCommittedRevision: true
-      publishedTags: [12.7.0-actors.1]
+      publishedTags: [12.8.0-actors.1]
       verifiesAnonymousPull: true
     customerAcquisition:
       status: available-public
@@ -658,29 +658,29 @@ images:
       - Job/relaycast actors deploy
     current:
       repository: ghcr.io/agentworkforce/relaycast-actors-deployer
-      digest: sha256:f539982442305c61f2c7a7d979cb110e18f3be83fed69befd8755b6ad5476b51
+      digest: sha256:a78fe6d63508b77b2193bb26869c907bab3f0c23319b26e7ff3b55ebcae92a79
       chartStatus: optional-preview
       valuesFile: charts/agent-relay/values-eks-actors.yaml
     source:
       repository: https://github.com/AgentWorkforce/relaycast
-      revision: 4e90b169c60dc0948ac4d4fc86233fedd831fd80
+      revision: 10e93f94069a42e64f952e8342056b6e8fb889e6
       reproducibleReference: true
       note: >-
-        Relaycast actor deploy Job (S3 artifact store), relaycast main 4e90b169 (#626). Its OCI labels read revision 38afee6c and licenses NOASSERTION (inherited); the source revision is the publish run's head.
+        Relaycast actor deploy Job (S3 artifact store), relaycast main 10e93f94. Its OCI labels read revision 38afee6c and licenses NOASSERTION (inherited); the source revision is the publish run's head.
     license:
       status: recorded
       spdx: Apache-2.0
-      evidence: https://github.com/AgentWorkforce/relaycast/blob/4e90b169c60dc0948ac4d4fc86233fedd831fd80/LICENSE
+      evidence: https://github.com/AgentWorkforce/relaycast/blob/10e93f94069a42e64f952e8342056b6e8fb889e6/LICENSE
     platforms:
       expected: [linux/amd64, linux/arm64]
       verifiedFromRegistry: [linux/amd64, linux/arm64]
       status: verified
       verificationAccess: anonymous
     release:
-      run: https://github.com/AgentWorkforce/relaycast/actions/runs/41805228035
+      run: https://github.com/AgentWorkforce/relaycast/actions/runs/43350514591
       trigger: workflow_dispatch (main)
       buildsCommittedRevision: true
-      publishedTags: [12.7.0-actors.1]
+      publishedTags: [12.8.0-actors.1]
       verifiesAnonymousPull: true
     customerAcquisition:
       status: available-public

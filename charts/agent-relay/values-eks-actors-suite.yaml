@@ -1,0 +1,44 @@
+# The full self-hosted suite on AWS EKS with Relaycast on TerseAI durable
+# actors instead of its PostgreSQL engine. values-eks-actors.yaml on its own is
+# a standalone actors profile that turns every other component off; this file
+# layers after it and turns the suite back on:
+#
+#   helm upgrade --install agent-relay charts/agent-relay -n agent-relay \
+#     -f charts/agent-relay/values-eks.yaml \
+#     -f charts/agent-relay/values-eks-native.yaml \
+#     -f <site values: RDS, OpenSearch, hosts, buckets> \
+#     -f charts/agent-relay/values-eks-actors.yaml \
+#     -f charts/agent-relay/values-eks-actors-suite.yaml \
+#     -f <site actors values: bucket, zone, roles>
+#
+# This is the composition the full-stack actors e2e passed with (Control, the
+# Sessions pipeline, the dashboard and Relaycast on actors; 2026-11-13). Every
+# <...> in values-eks-actors.yaml still needs a site value. Infrastructure the
+# actors add (node group, bucket, roles, the actors database and Secrets):
+# docs/self-hosted-durable-actors.md.
+components:
+  relaycast: true
+  durableActors: true
+  control: true
+  sessionsPipeline: true
+  webapp: true
+  # Relayfile stays on its own engine in this composition; the actors profile
+  # turns it on in actor mode, so turn it off unless the site runs it on actors.
+  relayfile: false
+  relayauth: false
+  relayhistory: false
+  relayflows: false
+
+durable-actors:
+  storage:
+    s3:
+      # Actor hosts get only the per-actor storage role (actorRoleArn), never
+      # the control plane's credentials.
+      actorCredentials: assume-role
+  # The actors database is on the same RDS as Control and Sessions: verify the
+  # RDS chain (rds-ca ConfigMap, as values-eks-rds-native.yaml sets it) and use
+  # ?sslmode=require in the postgres-url key.
+  postgresCa:
+    enabled: true
+    configMap: rds-ca
+    key: ca.crt
