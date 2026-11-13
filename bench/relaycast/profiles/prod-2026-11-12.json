@@ -1,0 +1,334 @@
+{
+ "source": "cloudflare (workers + zone analytics, hosted relaycast-cloud-api / cast.agentrelay.com)",
+ "window": {
+  "hourly_and_totals": "2026-11-05T14:00Z/2026-11-12T14:00Z",
+  "routes_and_minute_peaks": "2026-11-11T14:00Z/2026-11-12T14:00Z"
+ },
+ "requests_7d": 17146898,
+ "rps_avg": 28.2,
+ "rps_peak_hour": 36.6,
+ "rps_peak_minute_p99": 40.8,
+ "rps_peak_minute_max": 68.1,
+ "peak_hour_utc": 2,
+ "hourly_curve": [
+  1.05,
+  1.03,
+  1.05,
+  1.05,
+  1.05,
+  1.06,
+  1.05,
+  1.05,
+  1.09,
+  1.06,
+  1.03,
+  0.98,
+  0.96,
+  0.95,
+  0.82,
+  0.93,
+  0.97,
+  0.96,
+  0.96,
+  1.03,
+  0.98,
+  0.95,
+  1.0,
+  0.98
+ ],
+ "burst": {
+  "max_1min_over_avg": 2.67,
+  "note": "1-minute resolution; 1-second bursts not available from Cloudflare"
+ },
+ "messages_per_s": {
+  "writes_avg": 0.07,
+  "note": "5,650 message writes/day (POST /v1/dm 3362, replies 1359, channel posts 538, read marks 391); internal agent action POSTs (~2.1 rps) counted under routes"
+ },
+ "status_mix": {
+  "2xx": 0.835,
+  "4xx": 0.142,
+  "5xx": 0.0024,
+  "1xx_ws_upgrade": 0.02
+ },
+ "ws_upgrades_per_s": {
+  "node_ws": 0.85,
+  "ws": 0.33,
+  "note": "connection opens per second; concurrent connection count not available from Cloudflare"
+ },
+ "routes": [
+  {
+   "method": "GET",
+   "path": "/v1/deliveries",
+   "rps_avg": 4.885,
+   "rps_peak": 13.046,
+   "share": 0.1966
+  },
+  {
+   "method": "POST",
+   "path": "/v1/agents/heartbeat",
+   "rps_avg": 2.611,
+   "rps_peak": 6.973,
+   "share": 0.1051
+  },
+  {
+   "method": "GET",
+   "path": "/v1/messages/:id/replies",
+   "rps_avg": 2.509,
+   "rps_peak": 6.699,
+   "share": 0.1009
+  },
+  {
+   "method": "POST",
+   "path": "/internal/workspaces/:ws/agents/:id/:action",
+   "rps_avg": 2.102,
+   "rps_peak": 5.613,
+   "share": 0.0846
+  },
+  {
+   "method": "GET",
+   "path": "/v1/agents/:id",
+   "rps_avg": 2.06,
+   "rps_peak": 5.501,
+   "share": 0.0829
+  },
+  {
+   "method": "GET",
+   "path": "/v1/agents",
+   "rps_avg": 2.021,
+   "rps_peak": 5.397,
+   "share": 0.0813
+  },
+  {
+   "method": "GET",
+   "path": "/v1/agent",
+   "rps_avg": 1.99,
+   "rps_peak": 5.314,
+   "share": 0.0801
+  },
+  {
+   "method": "GET",
+   "path": "/v1/workspace",
+   "rps_avg": 1.116,
+   "rps_peak": 2.981,
+   "share": 0.0449
+  },
+  {
+   "method": "GET",
+   "path": "/v1/dm/:id/messages",
+   "rps_avg": 1.068,
+   "rps_peak": 2.852,
+   "share": 0.043
+  },
+  {
+   "method": "GET",
+   "path": "/v1/node/ws",
+   "rps_avg": 0.852,
+   "rps_peak": 2.274,
+   "share": 0.0343
+  },
+  {
+   "method": "GET",
+   "path": "/v1/inbox",
+   "rps_avg": 0.564,
+   "rps_peak": 1.507,
+   "share": 0.0227
+  },
+  {
+   "method": "GET",
+   "path": "/v1/workspace/events",
+   "rps_avg": 0.537,
+   "rps_peak": 1.433,
+   "share": 0.0216
+  },
+  {
+   "method": "GET",
+   "path": "/v1/channels/:channel/messages",
+   "rps_avg": 0.453,
+   "rps_peak": 1.209,
+   "share": 0.0182
+  },
+  {
+   "method": "POST",
+   "path": "/v1/agent/node-token",
+   "rps_avg": 0.411,
+   "rps_peak": 1.098,
+   "share": 0.0165
+  },
+  {
+   "method": "POST",
+   "path": "/v1/nodes",
+   "rps_avg": 0.372,
+   "rps_peak": 0.993,
+   "share": 0.015
+  },
+  {
+   "method": "GET",
+   "path": "/v1/ws",
+   "rps_avg": 0.333,
+   "rps_peak": 0.888,
+   "share": 0.0134
+  },
+  {
+   "method": "GET",
+   "path": "/v1/dm/conversations",
+   "rps_avg": 0.309,
+   "rps_peak": 0.825,
+   "share": 0.0124
+  },
+  {
+   "method": "POST",
+   "path": "/v1/agents",
+   "rps_avg": 0.203,
+   "rps_peak": 0.541,
+   "share": 0.0082
+  },
+  {
+   "method": "PATCH",
+   "path": "/v1/agents/:id",
+   "rps_avg": 0.117,
+   "rps_peak": 0.314,
+   "share": 0.0047
+  },
+  {
+   "method": "GET",
+   "path": "/v1/messages/:id",
+   "rps_avg": 0.069,
+   "rps_peak": 0.185,
+   "share": 0.0028
+  },
+  {
+   "method": "POST",
+   "path": "/v1/integrations/relayfile/inbound/:ws/:id",
+   "rps_avg": 0.049,
+   "rps_peak": 0.13,
+   "share": 0.002
+  },
+  {
+   "method": "GET",
+   "path": "/v1/channels",
+   "rps_avg": 0.046,
+   "rps_peak": 0.123,
+   "share": 0.0019
+  },
+  {
+   "method": "POST",
+   "path": "/v1/dm",
+   "rps_avg": 0.039,
+   "rps_peak": 0.104,
+   "share": 0.0016
+  },
+  {
+   "method": "GET",
+   "path": "/v1/nodes",
+   "rps_avg": 0.025,
+   "rps_peak": 0.066,
+   "share": 0.001
+  },
+  {
+   "method": "POST",
+   "path": "/v1/agents/:id/events",
+   "rps_avg": 0.016,
+   "rps_peak": 0.043,
+   "share": 0.0006
+  },
+  {
+   "method": "POST",
+   "path": "/v1/messages/:id/replies",
+   "rps_avg": 0.016,
+   "rps_peak": 0.042,
+   "share": 0.0006
+  },
+  {
+   "method": "GET",
+   "path": "/v1/channels/:channel",
+   "rps_avg": 0.01,
+   "rps_peak": 0.028,
+   "share": 0.0004
+  },
+  {
+   "method": "POST",
+   "path": "/v1/channels/:channel/messages",
+   "rps_avg": 0.006,
+   "rps_peak": 0.017,
+   "share": 0.0003
+  },
+  {
+   "method": "POST",
+   "path": "/v1/messages/:id/read",
+   "rps_avg": 0.005,
+   "rps_peak": 0.012,
+   "share": 0.0002
+  },
+  {
+   "method": "POST",
+   "path": "/v1/agents/:id/takeover",
+   "rps_avg": 0.004,
+   "rps_peak": 0.011,
+   "share": 0.0002
+  },
+  {
+   "method": "POST",
+   "path": "/v1/workspaces",
+   "rps_avg": 0.004,
+   "rps_peak": 0.011,
+   "share": 0.0002
+  },
+  {
+   "method": "GET",
+   "path": "/v1/actions/spawn/invocations/:invocation",
+   "rps_avg": 0.01,
+   "rps_peak": 0.027,
+   "share": 0.0004
+  },
+  {
+   "method": "POST",
+   "path": "/v1/agents/:id",
+   "rps_avg": 0.002,
+   "rps_peak": 0.005,
+   "share": 0.0001
+  },
+  {
+   "method": "GET",
+   "path": "/v1/node/terminal/ws",
+   "rps_avg": 0.001,
+   "rps_peak": 0.004,
+   "share": 0.0001
+  },
+  {
+   "method": "DELETE",
+   "path": "/v1/agents/:id",
+   "rps_avg": 0.001,
+   "rps_peak": 0.004,
+   "share": 0.0001
+  },
+  {
+   "method": "POST",
+   "path": "/v1/observer-tokens",
+   "rps_avg": 0.001,
+   "rps_peak": 0.002,
+   "share": 0.0
+  },
+  {
+   "method": "POST",
+   "path": "/v1/channels/:channel/join",
+   "rps_avg": 0.001,
+   "rps_peak": 0.002,
+   "share": 0.0
+  },
+  {
+   "method": "GET",
+   "path": "/v1/messages/:id/readers",
+   "rps_avg": 0.001,
+   "rps_peak": 0.002,
+   "share": 0.0
+  }
+ ],
+ "unmeasured_use_defaults": [
+  "workspaces_active_peak",
+  "agents_per_workspace",
+  "ws_connections_peak",
+  "channel_members",
+  "upload"
+ ],
+ "normalization": "per-invocation spawn ids collapsed to :invocation by relaycast-actors-bench"
+}

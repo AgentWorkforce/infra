@@ -1,0 +1,32 @@
+# Actors arm: fills the <...> markers of values-eks-actors.yaml for the bench
+# sandbox. scripts/render-arms.sh substitutes ${...}; no credentials here.
+# One bucket holds actor state, artifacts and both file stores (prefixes
+# relaycast/ and relayfile/), as in eks-actors-sandbox.sh.
+durable-actors:
+  publicUrl: https://actors.${BENCH_DOMAIN}
+  placement: {zone: ${ACTOR_ZONE}}
+  storage:
+    bucket: ${BUCKET}
+    s3:
+      region: ${REGION}
+      actorRoleArn: ${ACTOR_ROLE_ARN}
+relaycast:
+  baseUrl: https://cast.${BENCH_DOMAIN}
+  existingSecret: relaycast-secrets
+  runtime:
+    durableActors:
+      deployer:
+        artifactBucket: ${BUCKET}
+        artifactStore: {s3: {region: ${REGION}}}
+      fileStore:
+        bucket: ${BUCKET}
+        s3: {region: ${REGION}}
+relayfile:
+  runtime:
+    durableActors:
+      deployer:
+        artifactBucket: ${BUCKET}
+        artifactStore: {s3: {region: ${REGION}}}
+      blobStore:
+        bucket: ${BUCKET}
+        s3: {region: ${REGION}}

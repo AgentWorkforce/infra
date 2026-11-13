@@ -1,0 +1,130 @@
+{
+ "arm": "pg",
+ "dir": "<results dir>",
+ "phases": [
+  {
+   "label": "ch100-10",
+   "kind": "channel",
+   "offeredRate": 10,
+   "startedAt": 1794511176119,
+   "endedAt": 1794511356775,
+   "issued": 1798
+  }
+ ],
+ "routes": [
+  {
+   "arm": "pg",
+   "phase": "ch100-10",
+   "route": "POST /v1/channels/:name/messages",
+   "requests": 1798,
+   "ok": 1798,
+   "rps_ok": 9.95,
+   "err_rate": 0,
+   "r429": 0,
+   "r5xx": 0,
+   "net_err": 0,
+   "p50": 771.298,
+   "p95": 1075.762,
+   "p99": 2540.935,
+   "max": 3257.1569999996573,
+   "corrected_p50": 771.298,
+   "corrected_p95": 1075.762,
+   "corrected_p99": 2540.935
+  }
+ ],
+ "delivery": [
+  {
+   "arm": "pg",
+   "phase": "ch100-10",
+   "deliveries": 35960,
+   "deliveries_per_s": 199.05,
+   "p50": 1201.936,
+   "p95": 1630.551,
+   "p99": 3306.625,
+   "p999": 4099.249,
+   "max": 4159
+  }
+ ],
+ "integrity": [
+  {
+   "arm": "pg",
+   "phase": "ch100-10",
+   "expected": 35960,
+   "delivered": 35960,
+   "lost": 0,
+   "duplicate": 0,
+   "redelivered": 0,
+   "reordered": 0,
+   "unexpected": 0,
+   "truncated": 0
+  }
+ ],
+ "sinks": [
+  {
+   "shard": 0,
+   "sockets": 40,
+   "connected": 40,
+   "drops": 0,
+   "connect": {
+    "n": 40,
+    "mean": 1280.175,
+    "min": 1144,
+    "p50": 1235.727,
+    "p95": 1585.963,
+    "p99": 1653.313,
+    "p999": 1653.313,
+    "max": 1659
+   },
+   "reconnect": {
+    "n": 0,
+    "mean": null,
+    "min": null,
+    "p50": null,
+    "p95": null,
+    "p99": null,
+    "p999": null,
+    "max": null
+   },
+   "counters": {
+    "frame context.update": 7872,
+    "join 200": 50,
+    "deliver": 17980
+   },
+   "drain": [],
+   "rssBytes": 85311488
+  },
+  {
+   "shard": 1,
+   "sockets": 40,
+   "connected": 40,
+   "drops": 0,
+   "connect": {
+    "n": 40,
+    "mean": 1471.525,
+    "min": 1344,
+    "p50": 1479.756,
+    "p95": 1585.963,
+    "p99": 1585.963,
+    "p999": 1585.963,
+    "max": 1591
+   },
+   "reconnect": {
+    "n": 0,
+    "mean": null,
+    "min": null,
+    "p50": null,
+    "p95": null,
+    "p99": null,
+    "p999": null,
+    "max": null
+   },
+   "counters": {
+    "frame context.update": 8007,
+    "join 200": 50,
+    "deliver": 17980
+   },
+   "drain": [],
+   "rssBytes": 86106112
+  }
+ ]
+}

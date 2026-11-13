@@ -1,0 +1,10 @@
+# PG arm on relaycast P1 for #659 (fix/pg-park-undeliverable-bounded-memory @
+# 758ff306 = a63961bd + 4 commits: ack coalescing, cgroup-sized V8 heap via
+# start.sh, 5 min not-ready recheck, 503 shedding). Self-built, bench ECR only.
+# Chart-default resources, no NODE_OPTIONS (the #659 exit test).
+relaycast:
+  runtime:
+    postgres:
+      image:
+        repository: 805532413586.dkr.ecr.us-west-2.amazonaws.com/relaycast-actors-bench/relaycast-self-host
+        digest: sha256:b2da83ff61647c7b781f9f80e1c17f3f73273790be2c924afcd489a50c255363

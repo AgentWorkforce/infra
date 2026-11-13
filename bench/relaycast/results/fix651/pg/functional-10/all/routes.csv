@@ -1,0 +1,7 @@
+arm,phase,route,requests,ok,rps_ok,err_rate,r429,r5xx,net_err,p50,p95,p99,max,corrected_p50,corrected_p95,corrected_p99
+pg,f10-dm,POST /v1/dm,2399,2399,19.99,0,0,0,0,33.155,48.541,125.465,309.08600000001024,32.926,47.873,124.599
+pg,f10-chan,POST /v1/channels/:name/messages,1199,1199,9.99,0,0,0,0,24.953,37.56,128.993,232.47600000002421,24.953,38.085,128.993
+pg,f10-upload,POST /v1/files/upload,119,119,1.98,0,0,0,0,8.231,10.638,40.256,41.63000000000466,,,
+pg,f10-upload,PUT /_relayfiles,119,119,1.98,0,0,0,0,2.93,5.174,19.042,90.65399999998044,,,
+pg,f10-upload,POST /v1/files/:id/complete,119,119,1.98,0,0,0,0,9.133,19.042,23.937,33.49699999997392,,,
+pg,f10-upload,upload_total_raw,0,0,0,,0,0,0,20.983,34.087,74.087,141,,,

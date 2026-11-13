@@ -1,0 +1,3 @@
+arm,phase,expected,delivered,lost,duplicate,redelivered,reordered,unexpected,truncated
+actors,f100-dm,177,177,0,0,0,0,0,0
+actors,f100-chan,0,0,0,0,0,0,0,0

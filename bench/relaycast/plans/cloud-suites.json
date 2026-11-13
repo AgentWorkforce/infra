@@ -1,0 +1,889 @@
+{
+ "name": "relaycast-postgres-vs-actors",
+ "notes": "Each suite gets a fresh fixture (provision.mjs env in fixture), its own sinks and producers. Rates are fleet-wide msgs/s (HTTP sends; channel fan-out multiplies deliveries). breakOn stops a stepped suite at the first step that breaks.",
+ "breakOn": {
+  "correctedP99Ms": 2000,
+  "errorRate": 0.01,
+  "lost": 0
+ },
+ "suites": [
+  {
+   "name": "channel-100",
+   "sinks": 2,
+   "producers": 2,
+   "stepped": true,
+   "notes": "The PG collapse scenario (functional-100 shape): 1 workspace, 20 producers, 80 receivers, 5 channels x 20 members; channel posts stepped.",
+   "fixture": {
+    "RCB_WORKSPACES": 1,
+    "RCB_PRODUCERS": 20,
+    "RCB_RECEIVERS": 80,
+    "RCB_CHANNELS": 5,
+    "RCB_CHANNEL_MEMBERS": 20,
+    "RCB_AGENTS_PER_NODE": 1
+   },
+   "phases": [
+    {
+     "label": "ch100-10",
+     "kind": "channel",
+     "rate": 10,
+     "durationS": 180,
+     "sizeBytes": 512
+    },
+    {
+     "label": "ch100-20",
+     "kind": "channel",
+     "rate": 20,
+     "durationS": 180,
+     "sizeBytes": 512
+    },
+    {
+     "label": "ch100-50",
+     "kind": "channel",
+     "rate": 50,
+     "durationS": 180,
+     "sizeBytes": 512
+    },
+    {
+     "label": "ch100-100",
+     "kind": "channel",
+     "rate": 100,
+     "durationS": 180,
+     "sizeBytes": 512
+    }
+   ]
+  },
+  {
+   "name": "channel-100-fine",
+   "sinks": 2,
+   "producers": 2,
+   "stepped": true,
+   "notes": "Per-workspace ceiling: same fixture as channel-100, finer steps.",
+   "fixture": {
+    "RCB_WORKSPACES": 1,
+    "RCB_PRODUCERS": 20,
+    "RCB_RECEIVERS": 80,
+    "RCB_CHANNELS": 5,
+    "RCB_CHANNEL_MEMBERS": 20,
+    "RCB_AGENTS_PER_NODE": 1
+   },
+   "phases": [
+    {
+     "label": "ch100f-2",
+     "kind": "channel",
+     "rate": 2,
+     "durationS": 180,
+     "sizeBytes": 512
+    },
+    {
+     "label": "ch100f-3",
+     "kind": "channel",
+     "rate": 3,
+     "durationS": 180,
+     "sizeBytes": 512
+    },
+    {
+     "label": "ch100f-5",
+     "kind": "channel",
+     "rate": 5,
+     "durationS": 180,
+     "sizeBytes": 512
+    }
+   ]
+  },
+  {
+   "name": "functional-10",
+   "sinks": 1,
+   "producers": 1,
+   "fixture": {
+    "RCB_WORKSPACES": 1,
+    "RCB_PRODUCERS": 5,
+    "RCB_RECEIVERS": 5,
+    "RCB_CHANNELS": 2,
+    "RCB_CHANNEL_MEMBERS": 5,
+    "RCB_AGENTS_PER_NODE": 1
+   },
+   "phases": [
+    {
+     "label": "f10-dm",
+     "kind": "dm",
+     "rate": 20,
+     "durationS": 120,
+     "sizeBytes": 512
+    },
+    {
+     "label": "f10-chan",
+     "kind": "channel",
+     "rate": 10,
+     "durationS": 120,
+     "sizeBytes": 512
+    },
+    {
+     "label": "f10-upload",
+     "kind": "upload",
+     "rate": 2,
+     "durationS": 60,
+     "sizeBytes": 262144
+    }
+   ]
+  },
+  {
+   "name": "functional-100",
+   "sinks": 1,
+   "producers": 1,
+   "fixture": {
+    "RCB_WORKSPACES": 1,
+    "RCB_PRODUCERS": 20,
+    "RCB_RECEIVERS": 80,
+    "RCB_CHANNELS": 5,
+    "RCB_CHANNEL_MEMBERS": 20,
+    "RCB_AGENTS_PER_NODE": 1
+   },
+   "phases": [
+    {
+     "label": "f100-dm",
+     "kind": "dm",
+     "rate": 50,
+     "durationS": 180,
+     "sizeBytes": 512
+    },
+    {
+     "label": "f100-chan",
+     "kind": "channel",
+     "rate": 20,
+     "durationS": 180,
+     "sizeBytes": 512
+    },
+    {
+     "label": "f100-upload",
+     "kind": "upload",
+     "rate": 5,
+     "durationS": 60,
+     "sizeBytes": 262144
+    }
+   ]
+  },
+  {
+   "name": "functional-1000",
+   "sinks": 2,
+   "producers": 2,
+   "fixture": {
+    "RCB_WORKSPACES": 1,
+    "RCB_PRODUCERS": 200,
+    "RCB_RECEIVERS": 800,
+    "RCB_CHANNELS": 20,
+    "RCB_CHANNEL_MEMBERS": 50,
+    "RCB_AGENTS_PER_NODE": 10
+   },
+   "phases": [
+    {
+     "label": "f1000-dm",
+     "kind": "dm",
+     "rate": 100,
+     "durationS": 180,
+     "sizeBytes": 512
+    },
+    {
+     "label": "f1000-chan",
+     "kind": "channel",
+     "rate": 20,
+     "durationS": 180,
+     "sizeBytes": 512
+    },
+    {
+     "label": "f1000-upload",
+     "kind": "upload",
+     "rate": 5,
+     "durationS": 60,
+     "sizeBytes": 262144
+    }
+   ]
+  },
+  {
+   "name": "single-ws-saturation",
+   "sinks": 2,
+   "producers": 2,
+   "stepped": true,
+   "fixture": {
+    "RCB_WORKSPACES": 1,
+    "RCB_PRODUCERS": 50,
+    "RCB_RECEIVERS": 50,
+    "RCB_CHANNELS": 5,
+    "RCB_CHANNEL_MEMBERS": 10,
+    "RCB_AGENTS_PER_NODE": 1
+   },
+   "phases": [
+    {
+     "label": "sat-50",
+     "kind": "mixed",
+     "dmShare": 0.6,
+     "rate": 50,
+     "durationS": 300
+    },
+    {
+     "label": "sat-100",
+     "kind": "mixed",
+     "dmShare": 0.6,
+     "rate": 100,
+     "durationS": 300
+    },
+    {
+     "label": "sat-200",
+     "kind": "mixed",
+     "dmShare": 0.6,
+     "rate": 200,
+     "durationS": 300
+    },
+    {
+     "label": "sat-400",
+     "kind": "mixed",
+     "dmShare": 0.6,
+     "rate": 400,
+     "durationS": 300
+    },
+    {
+     "label": "sat-800",
+     "kind": "mixed",
+     "dmShare": 0.6,
+     "rate": 800,
+     "durationS": 300
+    }
+   ]
+  },
+  {
+   "name": "heavy",
+   "sinks": 6,
+   "producers": 12,
+   "stepped": true,
+   "fixture": {
+    "RCB_WORKSPACES": 40,
+    "RCB_PRODUCERS": 10,
+    "RCB_RECEIVERS": 25,
+    "RCB_CHANNELS": 4,
+    "RCB_CHANNEL_MEMBERS": 10,
+    "RCB_AGENTS_PER_NODE": 1
+   },
+   "phases": [
+    {
+     "label": "h-10",
+     "kind": "mixed",
+     "dmShare": 0.6,
+     "rate": 10,
+     "durationS": 1200
+    },
+    {
+     "label": "h-100",
+     "kind": "mixed",
+     "dmShare": 0.6,
+     "rate": 100,
+     "durationS": 1200
+    },
+    {
+     "label": "h-1000",
+     "kind": "mixed",
+     "dmShare": 0.6,
+     "rate": 1000,
+     "durationS": 1200
+    },
+    {
+     "label": "h-5000",
+     "kind": "mixed",
+     "dmShare": 0.6,
+     "rate": 5000,
+     "durationS": 1200
+    },
+    {
+     "label": "h-7500",
+     "kind": "mixed",
+     "dmShare": 0.6,
+     "rate": 7500,
+     "durationS": 600
+    },
+    {
+     "label": "h-10000",
+     "kind": "mixed",
+     "dmShare": 0.6,
+     "rate": 10000,
+     "durationS": 600
+    }
+   ],
+   "after": [
+    {
+     "label": "h-burst",
+     "kind": "mixed",
+     "dmShare": 0.6,
+     "rate": 300,
+     "burst": {
+      "periodS": 60,
+      "lenS": 10,
+      "factor": 10
+     },
+     "durationS": 600
+    },
+    {
+     "label": "h-bcast",
+     "kind": "broadcast",
+     "rate": 10,
+     "targets": 25,
+     "durationS": 300
+    }
+   ]
+  },
+  {
+   "name": "fanout",
+   "sinks": 2,
+   "producers": 1,
+   "fixture": {
+    "RCB_WORKSPACES": 1,
+    "RCB_PRODUCERS": 10,
+    "RCB_RECEIVERS": 600,
+    "RCB_CHANNELS": 1,
+    "RCB_CHANNEL_MEMBERS": 10,
+    "RCB_FANOUT_MEMBERS": 500,
+    "RCB_AGENTS_PER_NODE": 10
+   },
+   "phases": [
+    {
+     "label": "fo-2",
+     "kind": "fanout",
+     "rate": 2,
+     "durationS": 300
+    },
+    {
+     "label": "fo-10",
+     "kind": "fanout",
+     "rate": 10,
+     "durationS": 300
+    }
+   ]
+  },
+  {
+   "name": "ws-5k",
+   "sinks": 6,
+   "producers": 2,
+   "fixture": {
+    "RCB_WORKSPACES": 20,
+    "RCB_PRODUCERS": 5,
+    "RCB_RECEIVERS": 250,
+    "RCB_CHANNELS": 4,
+    "RCB_CHANNEL_MEMBERS": 25,
+    "RCB_AGENTS_PER_NODE": 1,
+    "RCB_BIND_RECEIVERS": 1
+   },
+   "phases": [
+    {
+     "label": "ws5k-10",
+     "kind": "mixed",
+     "dmShare": 0.6,
+     "rate": 10,
+     "durationS": 600
+    }
+   ],
+   "notes": "Concurrent node sockets under light load (10 msgs/s): both arms fail heavy multi-workspace load far below 1000 msgs/s. Receivers are created and bound over HTTP in provision (RCB_BIND_RECEIVERS=1), so the measured connect is node.register on the socket."
+  },
+  {
+   "name": "ws-10k",
+   "sinks": 6,
+   "producers": 2,
+   "fixture": {
+    "RCB_WORKSPACES": 40,
+    "RCB_PRODUCERS": 5,
+    "RCB_RECEIVERS": 250,
+    "RCB_CHANNELS": 4,
+    "RCB_CHANNEL_MEMBERS": 25,
+    "RCB_AGENTS_PER_NODE": 1,
+    "RCB_BIND_RECEIVERS": 1
+   },
+   "phases": [
+    {
+     "label": "ws10k-10",
+     "kind": "mixed",
+     "dmShare": 0.6,
+     "rate": 10,
+     "durationS": 600
+    }
+   ],
+   "notes": "Concurrent node sockets under light load (10 msgs/s): both arms fail heavy multi-workspace load far below 1000 msgs/s. Receivers are created and bound over HTTP in provision (RCB_BIND_RECEIVERS=1), so the measured connect is node.register on the socket."
+  },
+  {
+   "name": "backlog",
+   "sinks": 1,
+   "producers": 1,
+   "fixture": {
+    "RCB_WORKSPACES": 1,
+    "RCB_PRODUCERS": 10,
+    "RCB_RECEIVERS": 10,
+    "RCB_CHANNELS": 1,
+    "RCB_CHANNEL_MEMBERS": 5,
+    "RCB_BACKLOG_RECEIVERS": 1,
+    "RCB_AGENTS_PER_NODE": 1
+   },
+   "phases": [
+    {
+     "label": "bl-10k",
+     "kind": "backlog",
+     "rate": 100,
+     "durationS": 100,
+     "sizeBytes": 512,
+     "offlineHoldS": 30,
+     "drainS": 600
+    }
+   ]
+  },
+  {
+   "name": "chaos",
+   "sinks": 6,
+   "producers": 4,
+   "fixture": {
+    "RCB_WORKSPACES": 40,
+    "RCB_PRODUCERS": 10,
+    "RCB_RECEIVERS": 25,
+    "RCB_CHANNELS": 4,
+    "RCB_CHANNEL_MEMBERS": 10,
+    "RCB_AGENTS_PER_NODE": 1
+   },
+   "phases": [
+    {
+     "label": "ch-load",
+     "kind": "mixed",
+     "dmShare": 0.6,
+     "rate": 10,
+     "durationS": 900,
+     "drainS": 300
+    }
+   ],
+   "chaos": [
+    {
+     "phase": "ch-load",
+     "atS": 300,
+     "action": "kill-relaycast"
+    },
+    {
+     "phase": "ch-load",
+     "atS": 600,
+     "action": "rds-failover"
+    }
+   ],
+   "notes": "10 msgs/s for 15 min (the level both arms sustain); relaycast/gateway pod (and one actor host) killed at 5 min, RDS forced Multi-AZ failover at 10 min."
+  },
+  {
+   "name": "replay",
+   "sinks": 2,
+   "producers": 2,
+   "fixture": {
+    "RCB_WORKSPACES": 10,
+    "RCB_PRODUCERS": 10,
+    "RCB_RECEIVERS": 20,
+    "RCB_CHANNELS": 4,
+    "RCB_CHANNEL_MEMBERS": 10,
+    "RCB_AGENTS_PER_NODE": 1
+   },
+   "phases": [
+    {
+     "label": "rp-prime",
+     "kind": "channel",
+     "rate": 20,
+     "durationS": 30
+    },
+    {
+     "label": "rp-1x",
+     "kind": "replay",
+     "profile": "/bench/profiles/prod-2026-11-12.json",
+     "basis": "rps_peak_minute_max",
+     "scale": 1,
+     "durationS": 600
+    },
+    {
+     "label": "rp-3x",
+     "kind": "replay",
+     "profile": "/bench/profiles/prod-2026-11-12.json",
+     "basis": "rps_peak_minute_max",
+     "scale": 3,
+     "durationS": 600
+    },
+    {
+     "label": "rp-10x",
+     "kind": "replay",
+     "profile": "/bench/profiles/prod-2026-11-12.json",
+     "basis": "rps_peak_minute_max",
+     "scale": 10,
+     "durationS": 600
+    }
+   ]
+  },
+  {
+   "name": "multi-ws-8",
+   "sinks": 2,
+   "producers": 2,
+   "stepped": true,
+   "notes": "Fits in the 64 vCPU quota: 8 workspaces (8 Workspace actors on 2 actor nodes), mixed DM/channel traffic stepped across all of them.",
+   "fixture": {
+    "RCB_WORKSPACES": 8,
+    "RCB_PRODUCERS": 10,
+    "RCB_RECEIVERS": 20,
+    "RCB_CHANNELS": 2,
+    "RCB_CHANNEL_MEMBERS": 10,
+    "RCB_AGENTS_PER_NODE": 1
+   },
+   "phases": [
+    {
+     "label": "mw8-10",
+     "kind": "mixed",
+     "dmShare": 0.6,
+     "rate": 10,
+     "durationS": 180,
+     "sizeBytes": 512
+    },
+    {
+     "label": "mw8-20",
+     "kind": "mixed",
+     "dmShare": 0.6,
+     "rate": 20,
+     "durationS": 180,
+     "sizeBytes": 512
+    },
+    {
+     "label": "mw8-40",
+     "kind": "mixed",
+     "dmShare": 0.6,
+     "rate": 40,
+     "durationS": 180,
+     "sizeBytes": 512
+    },
+    {
+     "label": "mw8-80",
+     "kind": "mixed",
+     "dmShare": 0.6,
+     "rate": 80,
+     "durationS": 180,
+     "sizeBytes": 512
+    }
+   ]
+  },
+  {
+   "name": "profile-actor",
+   "sinks": 2,
+   "producers": 2,
+   "notes": "Per-invocation profile of one Workspace actor (channel-100 fixture): 2 channel posts/s, then 20 DMs/s; the actor is sampled for 150 s inside each phase. Run at durable-actors.actors.memoryMiB 256 and 1024.",
+   "fixture": {
+    "RCB_WORKSPACES": 1,
+    "RCB_PRODUCERS": 20,
+    "RCB_RECEIVERS": 80,
+    "RCB_CHANNELS": 5,
+    "RCB_CHANNEL_MEMBERS": 20,
+    "RCB_AGENTS_PER_NODE": 1
+   },
+   "phases": [
+    {
+     "label": "prof-ch2",
+     "kind": "channel",
+     "rate": 2,
+     "durationS": 300,
+     "sizeBytes": 512
+    },
+    {
+     "label": "prof-dm20",
+     "kind": "dm",
+     "rate": 20,
+     "durationS": 300,
+     "sizeBytes": 512
+    }
+   ],
+   "chaos": [
+    {
+     "phase": "prof-ch2",
+     "atS": 90,
+     "action": "profile:150"
+    },
+    {
+     "phase": "prof-dm20",
+     "atS": 90,
+     "action": "profile:150"
+    }
+   ]
+  },
+  {
+   "name": "channel-100-hi",
+   "sinks": 2,
+   "producers": 2,
+   "notes": "channel-100 fixture, steps 20/50/100 posts/s run unconditionally (no break stop) to see how a step past the gate degrades.",
+   "fixture": {
+    "RCB_WORKSPACES": 1,
+    "RCB_PRODUCERS": 20,
+    "RCB_RECEIVERS": 80,
+    "RCB_CHANNELS": 5,
+    "RCB_CHANNEL_MEMBERS": 20,
+    "RCB_AGENTS_PER_NODE": 1
+   },
+   "phases": [
+    {
+     "label": "ch100h-20",
+     "kind": "channel",
+     "rate": 20,
+     "durationS": 180,
+     "sizeBytes": 512,
+     "drainS": 120
+    },
+    {
+     "label": "ch100h-50",
+     "kind": "channel",
+     "rate": 50,
+     "durationS": 180,
+     "sizeBytes": 512,
+     "drainS": 120
+    },
+    {
+     "label": "ch100h-100",
+     "kind": "channel",
+     "rate": 100,
+     "durationS": 180,
+     "sizeBytes": 512,
+     "drainS": 120
+    }
+   ]
+  },
+  {
+   "name": "channel-100-allsock",
+   "sinks": 2,
+   "producers": 2,
+   "notes": "channel-100 with every producer also bound to a node socket (RCB_PRODUCERS_ON_NODES=1): all channel members delivery-ready. Steps 10/20/50, unconditional.",
+   "fixture": {
+    "RCB_WORKSPACES": 1,
+    "RCB_PRODUCERS": 20,
+    "RCB_RECEIVERS": 80,
+    "RCB_CHANNELS": 5,
+    "RCB_CHANNEL_MEMBERS": 20,
+    "RCB_AGENTS_PER_NODE": 1,
+    "RCB_PRODUCERS_ON_NODES": 1
+   },
+   "phases": [
+    {
+     "label": "cha-10",
+     "kind": "channel",
+     "rate": 10,
+     "durationS": 180,
+     "sizeBytes": 512,
+     "drainS": 120
+    },
+    {
+     "label": "cha-20",
+     "kind": "channel",
+     "rate": 20,
+     "durationS": 180,
+     "sizeBytes": 512,
+     "drainS": 120
+    },
+    {
+     "label": "cha-50",
+     "kind": "channel",
+     "rate": 50,
+     "durationS": 180,
+     "sizeBytes": 512,
+     "drainS": 120
+    }
+   ]
+  },
+  {
+   "name": "soak",
+   "sinks": 2,
+   "producers": 2,
+   "notes": "customer-realistic: 3 workspaces x 30 agents (10 producers + 20 receivers, all on node sockets), channels of 12 (+ the producers), 3 msgs/s mixed DM/channel with 5% uploads, 2 h. Chaos inside: relaycast/gateway kill +30 min, actor host kill +45 (actors), node drain +60, RDS forced failover +80.",
+   "fixture": {
+    "RCB_WORKSPACES": 3,
+    "RCB_PRODUCERS": 10,
+    "RCB_RECEIVERS": 20,
+    "RCB_CHANNELS": 4,
+    "RCB_CHANNEL_MEMBERS": 12,
+    "RCB_AGENTS_PER_NODE": 1,
+    "RCB_PRODUCERS_ON_NODES": 1
+   },
+   "phases": [
+    {
+     "label": "soak",
+     "kind": "mixed",
+     "dmShare": 0.6,
+     "uploadShare": 0.05,
+     "rate": 3,
+     "durationS": 7200,
+     "sizeBytes": 1024,
+     "drainS": 300
+    }
+   ],
+   "chaos": [
+    {
+     "phase": "soak",
+     "atS": 1800,
+     "action": "kill-relaycast"
+    },
+    {
+     "phase": "soak",
+     "atS": 2700,
+     "action": "kill-actor"
+    },
+    {
+     "phase": "soak",
+     "atS": 3600,
+     "action": "node-drain"
+    },
+    {
+     "phase": "soak",
+     "atS": 4800,
+     "action": "rds-failover"
+    }
+   ]
+  },
+  {
+   "name": "headroom-mix",
+   "sinks": 2,
+   "producers": 2,
+   "notes": "customer-shape at 10/20/50 msgs/s (5 min each), then 10 min overload at 100 msgs/s, then back to 3 msgs/s for 15 min: self-healing and catch-up time without intervention.",
+   "fixture": {
+    "RCB_WORKSPACES": 3,
+    "RCB_PRODUCERS": 10,
+    "RCB_RECEIVERS": 20,
+    "RCB_CHANNELS": 4,
+    "RCB_CHANNEL_MEMBERS": 12,
+    "RCB_AGENTS_PER_NODE": 1,
+    "RCB_PRODUCERS_ON_NODES": 1
+   },
+   "phases": [
+    {
+     "label": "hm-10",
+     "kind": "mixed",
+     "dmShare": 0.6,
+     "uploadShare": 0.05,
+     "rate": 10,
+     "durationS": 300,
+     "sizeBytes": 1024,
+     "drainS": 30
+    },
+    {
+     "label": "hm-20",
+     "kind": "mixed",
+     "dmShare": 0.6,
+     "uploadShare": 0.05,
+     "rate": 20,
+     "durationS": 300,
+     "sizeBytes": 1024,
+     "drainS": 30
+    },
+    {
+     "label": "hm-50",
+     "kind": "mixed",
+     "dmShare": 0.6,
+     "uploadShare": 0.05,
+     "rate": 50,
+     "durationS": 300,
+     "sizeBytes": 1024,
+     "drainS": 30
+    },
+    {
+     "label": "hm-overload",
+     "kind": "mixed",
+     "dmShare": 0.6,
+     "uploadShare": 0.05,
+     "rate": 100,
+     "durationS": 600,
+     "sizeBytes": 1024,
+     "drainS": 5
+    },
+    {
+     "label": "hm-recover",
+     "kind": "mixed",
+     "dmShare": 0.6,
+     "uploadShare": 0.05,
+     "rate": 3,
+     "durationS": 900,
+     "sizeBytes": 1024,
+     "drainS": 300
+    }
+   ]
+  },
+  {
+   "name": "soak-60",
+   "sinks": 2,
+   "producers": 2,
+   "notes": "soak shape for 60 min (tuned actors rerun): gateway kill +20 min, actor host kill +30, RDS forced failover +40.",
+   "fixture": {
+    "RCB_WORKSPACES": 3,
+    "RCB_PRODUCERS": 10,
+    "RCB_RECEIVERS": 20,
+    "RCB_CHANNELS": 4,
+    "RCB_CHANNEL_MEMBERS": 12,
+    "RCB_AGENTS_PER_NODE": 1,
+    "RCB_PRODUCERS_ON_NODES": 1
+   },
+   "phases": [
+    {
+     "label": "soak60",
+     "kind": "mixed",
+     "dmShare": 0.6,
+     "uploadShare": 0.05,
+     "rate": 3,
+     "durationS": 3600,
+     "sizeBytes": 1024,
+     "drainS": 300
+    }
+   ],
+   "chaos": [
+    {
+     "phase": "soak60",
+     "atS": 1200,
+     "action": "kill-relaycast"
+    },
+    {
+     "phase": "soak60",
+     "atS": 1800,
+     "action": "kill-actor"
+    },
+    {
+     "phase": "soak60",
+     "atS": 2400,
+     "action": "rds-failover"
+    }
+   ]
+  },
+  {
+   "name": "failover-soak",
+   "sinks": 2,
+   "producers": 2,
+   "notes": "relaycast#665 exit test: customer-soak shape, 30 min, RDS forced Multi-AZ failover at +10 and +20 min. Pass: no human, recovery < 90 s, 0 lost/dup/reorder.",
+   "fixture": {
+    "RCB_WORKSPACES": 3,
+    "RCB_PRODUCERS": 10,
+    "RCB_RECEIVERS": 20,
+    "RCB_CHANNELS": 4,
+    "RCB_CHANNEL_MEMBERS": 12,
+    "RCB_AGENTS_PER_NODE": 1,
+    "RCB_PRODUCERS_ON_NODES": 1
+   },
+   "phases": [
+    {
+     "label": "fo",
+     "kind": "mixed",
+     "dmShare": 0.6,
+     "uploadShare": 0.05,
+     "rate": 3,
+     "durationS": 1800,
+     "sizeBytes": 1024,
+     "drainS": 300
+    }
+   ],
+   "chaos": [
+    {
+     "phase": "fo",
+     "atS": 600,
+     "action": "rds-failover"
+    },
+    {
+     "phase": "fo",
+     "atS": 1200,
+     "action": "rds-failover"
+    }
+   ]
+  }
+ ],
+ "loadgenCheck": {
+  "5000": "pass: 4994.5/s OK, corrected p99 2.6 ms (8 shards)",
+  "10000": "throughput 9940.6/s OK, corrected p95 3.6 ms, p99 2.8 s client tail with 8 shards; heavy uses 12 shards"
+ }
+}

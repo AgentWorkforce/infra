@@ -1,0 +1,1 @@
+{"connected":8065,"sockets":10000,"rds_cpu_pct":"72.5-73.8 sustained, no message load","relaycast":"1168m CPU, 2676Mi","cause":"node.heartbeat capability re-aggregation UPDATE + commit per beat (relaycast#661)"}

@@ -1,0 +1,11 @@
+# PG arm on the relaycast#651 fix (AgentWorkforce/relaycast PR #657,
+# fix/pg-channel-post-deadlock @ 2465d8f3: lockSeq FOR NO KEY UPDATE plus a
+# bounded, logged 40P01 retry; engine 12.8.0 otherwise, base cac175b5).
+# Built by relaycast-actors-bench from that commit with the repo Dockerfile's
+# default stage and pushed to the bench account's ECR (not released).
+relaycast:
+  runtime:
+    postgres:
+      image:
+        repository: 805532413586.dkr.ecr.us-west-2.amazonaws.com/relaycast-actors-bench/relaycast-self-host
+        digest: sha256:a8fabcd1048d728c5a3e27fd82fa57edeea1d658b43118646e0c50a3f488d488
