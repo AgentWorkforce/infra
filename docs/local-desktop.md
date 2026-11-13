@@ -7,7 +7,9 @@ After the local dashboard is serving trusted HTTPS at
 make desktop-install
 ```
 
-Requires authenticated GitHub CLI access to the relay-desktop Actions artifacts.
+Requires authenticated GitHub CLI access to the
+[relay-app](https://github.com/AgentWorkforce/relay-app) Actions artifacts (the
+desktop app's open-source repository; it replaces the private relay-desktop).
 The script discovers the newest successful `desktop-release.yml` dispatch whose
 version job records both `PROFILE_ID: q7m2k9` and `PREPARE_ONLY: true`, then runs
 `gh run download <run> -n dmg-arm64`. Override the run with `DESKTOP_RUN=<id>`.
@@ -22,14 +24,15 @@ For a target Mac without GitHub CLI credentials, download on an authenticated
 machine, transfer the complete artifact directory, and run on the target:
 
 ```sh
-gh run download 42916872484 --repo AgentWorkforce/relay-desktop -n dmg-arm64 -D kind-desktop
+gh run download <run> --repo AgentWorkforce/relay-app -n dmg-arm64 -D kind-desktop
 # Transfer kind-desktop to the target Mac, then:
 make desktop-install DESKTOP_ARTIFACT_DIR=/path/to/kind-desktop
 ```
 
-Run `42916872484` was the latest successful q7m2k9 prepare-only build inspected
-on 2026-11-11. Its arm64 DMG SHA-256 is
-`f0190643099e9c6691d813a464ec83da86ae61d6fda60da9474a6d5ff1d8e158`.
-The app is signed by `QUJ7SA6X8X` and carries a stapled notarization ticket.
+Use the newest successful relay-app `desktop-release.yml` dispatch with
+`profile=q7m2k9` and `prepare-only=true`. The app is signed by `QUJ7SA6X8X` and
+carries a stapled notarization ticket. Builds made before the move live in
+AgentWorkforce/relay-desktop (for example run `42916872484`); install one of those
+with `DESKTOP_ARTIFACT_DIR` after downloading it from that repository.
 These artifact checks do not establish local sign-in, session upload or dashboard
 acceptance; those require the running local stack.
