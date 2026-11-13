@@ -29,5 +29,5 @@ dependencies:
 - name: relay-chief
   repository: file://../relay-chief
   version: 0.1.0
-digest: sha256:8369b99cda55b9679d3a386914cd74847422c2a79d17d6da4dcc435988eac570
-generated: "2026-11-13T11:04:16.870737254-08:00"
+digest: sha256:12a4bfe9eb8062c65726773084dcb537b0fc47a7b1b9d6493e3001521f6262ee
+generated: "2026-11-13T11:16:37.281441929-08:00"

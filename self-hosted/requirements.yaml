@@ -1331,10 +1331,10 @@ compatibility:
       images:
         relayauth: { repository: ghcr.io/agentworkforce/relayauth, digest: sha256:eb71daa28e30eb7305f666d0bccc5a4002e53e8a574e3c4c32163d907a1b71df }
       notes: superseded by 0.1.1.
-    - id: agent-relay-0.7.1
+    - id: agent-relay-0.7.2
       status: unreleased
       current: true
-      charts: { agent-relay: 0.7.1, relay-control: 0.4.15, relay-webapp: 0.2.4 }
+      charts: { agent-relay: 0.7.2, relay-control: 0.4.15, relay-webapp: 0.2.4 }
       app_versions: { agent-relay: 0.1.0, relay-control: 0.1.0, relay-webapp: 0.1.0 }
       depends:
         agent-relay: { relaycast: 0.3.11, relayauth: 0.1.5, sessions-pipeline: 0.8.29, relay-control: 0.4.15, relay-webapp: 0.2.4, relayflows: 0.2.5, durable-actors: 0.14.6-awf.3, relayfile: 0.2.2, telemetry-collector: 0.1.7, relay-chief: 0.1.0 }
@@ -1345,6 +1345,18 @@ compatibility:
         relay-control: { repository: ghcr.io/agentworkforce/relay-control, digest: sha256:d8c26d44dccb6dd21b7033288241a379e46ce5fbca69f276c4d4745001c3c3e2 }
         relay-webapp: { repository: ghcr.io/agentworkforce/relay-webapp, digest: sha256:bd295ccb7d1323965dce890f19d0b7f857d706c00d7756f719c713763fdb49f3 }
       notes: 'Carries 0.7.0, neutral values comments, telemetry-collector 0.1.7, and prepares the AA/EKS Relaycast durable-actors target: profile pins the post-migration actor images, uses S3 with no Relaycast PVC, three zone-spread gateways with a PDB, tuned 1 GiB actor hosts (warm 3, maxStarting 8), and a protected 1 CPU/1-2 GiB singleton controller. Existing PostgreSQL installs still move only through the full-copy credentials/cutover upgrader; no automatic backend flip.'
+    - id: agent-relay-0.7.1
+      status: planned
+      charts: { agent-relay: 0.7.1, relay-control: 0.4.15, relay-webapp: 0.2.4 }
+      app_versions: { agent-relay: 0.1.0, relay-control: 0.1.0, relay-webapp: 0.1.0 }
+      depends:
+        agent-relay: { relaycast: 0.3.10, relayauth: 0.1.5, sessions-pipeline: 0.8.29, relay-control: 0.4.15, relay-webapp: 0.2.4, relayflows: 0.2.5, durable-actors: 0.14.6-awf.2, relayfile: 0.2.2, telemetry-collector: 0.1.7, relay-chief: 0.1.0 }
+      images:
+        relaycast: { repository: ghcr.io/agentworkforce/relaycast-self-host, digest: sha256:ab9dd6781e68f09d5e2e686a17088f9ad533978ef13d974a47d6c212d8eedbde }
+        sessions-pipeline-worker: { repository: ghcr.io/agentworkforce/sessions-pipeline, digest: sha256:77022c5b6a1d30f96f921d703eb27a1acada8ec273ad84aebdde24f8eddce305 }
+        relay-control: { repository: ghcr.io/agentworkforce/relay-control, digest: sha256:d8c26d44dccb6dd21b7033288241a379e46ce5fbca69f276c4d4745001c3c3e2 }
+        relay-webapp: { repository: ghcr.io/agentworkforce/relay-webapp, digest: sha256:bd295ccb7d1323965dce890f19d0b7f857d706c00d7756f719c713763fdb49f3 }
+      notes: 'Superseded before a chart tag by 0.7.2. Carries 0.7.0 with neutral values comments and telemetry-collector 0.1.7. No template or default render changes.'
     - id: agent-relay-0.7.0
       status: planned
       charts: { agent-relay: 0.7.0, relay-control: 0.4.15, relay-webapp: 0.2.4 }
