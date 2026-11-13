@@ -134,7 +134,7 @@ images:
       blockingReasons: []
 
   - id: relaycast-postgres
-    active: true
+    active: false
     firstParty: true
     component: relaycast
     workloads:
