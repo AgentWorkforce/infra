@@ -208,7 +208,9 @@ def build_values_overlay(manifest: dict[str, object]) -> str:
     # the PostgreSQL migration/export path has its own reviewed pin. Never let
     # the final release overlay overwrite runtime.postgres.image with the
     # generic application image.
-    relaycast_postgres_image = "relaycast"
+    relaycast_postgres_image = (
+        "relaycast-postgres" if profile == "eks" else "relaycast"
+    )
     required = {
         relaycast_image,
         relaycast_postgres_image,

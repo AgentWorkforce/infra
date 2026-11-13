@@ -95,8 +95,56 @@ images:
       - Deployment/relaycast:relaycast
     current:
       repository: ghcr.io/agentworkforce/relaycast-self-host
-      digest: sha256:1307bd845031a7466e65ebaf08bc8b826e2837d90f58c9b5a6a1d673c62dad93
+      digest: sha256:84f59482cb82f3c50d38f45cfca7d004cffaa95652782dbfc93c179cc343ac59
       chartStatus: shipped
+    source:
+      repository: https://github.com/AgentWorkforce/relaycast
+      revision: 0858d73ea59f5bc674ae8cc41b023e0688bdde01
+      path: Dockerfile
+      reproducibleReference: true
+      note: Relaycast 12.8.0-pg.1; the image engine-version label is 12.8.0.
+    license:
+      status: approved
+      spdx: Apache-2.0
+      evidence: https://github.com/AgentWorkforce/relaycast/blob/0858d73ea59f5bc674ae8cc41b023e0688bdde01/LICENSE
+    platforms:
+      expected: [linux/amd64, linux/arm64]
+      verifiedFromRegistry: [linux/amd64, linux/arm64]
+      status: verified
+      verificationAccess: anonymous
+    release:
+      workflow: https://github.com/AgentWorkforce/relaycast/blob/0858d73ea59f5bc674ae8cc41b023e0688bdde01/.github/workflows/publish-container.yml
+      run: https://github.com/AgentWorkforce/relaycast/actions/runs/42527871342
+      trigger: workflow_dispatch
+      buildsCommittedRevision: true
+      publishedTags: ["12.8.0-pg.1"]
+      publishesSbom: true
+      publishesProvenance: true
+      provenanceMode: max-plus-github-attestation
+    customerAcquisition:
+      status: available-public
+      procedure: Mirror the public GHCR digest into the customer registry by digest and record the destination digest.
+    approval:
+      status: approved
+      basis: >-
+        Public digest from the reviewed publish-container workflow at the
+        recorded main revision, with an SPDX SBOM, max-mode provenance, a
+        GitHub build-provenance attestation, and amd64+arm64 verified
+        anonymously from the registry.
+      blockingReasons: []
+
+  - id: relaycast-postgres
+    active: true
+    firstParty: true
+    component: relaycast
+    workloads:
+      - Job/relaycast-migration-preflight-*:preflight
+      - Job/relaycast-migration-export-*:export
+    current:
+      repository: ghcr.io/agentworkforce/relaycast-self-host
+      digest: sha256:1307bd845031a7466e65ebaf08bc8b826e2837d90f58c9b5a6a1d673c62dad93
+      chartStatus: optional-preview
+      valuesFile: charts/agent-relay/values-eks-actors.yaml
     source:
       repository: https://github.com/AgentWorkforce/relaycast
       revision: a63961bd5c453f0eaecbe4c5e67364b0a4696852
@@ -135,6 +183,7 @@ images:
         GitHub build-provenance attestation, and amd64+arm64 verified
         anonymously from the registry.
       blockingReasons: []
+
   - id: relaycast-eks-collector
     active: false
     firstParty: true

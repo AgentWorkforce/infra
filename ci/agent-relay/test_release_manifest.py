@@ -89,7 +89,7 @@ class ReleaseManifestTest(unittest.TestCase):
 
     def test_overlay_sets_all_services_surfaces_and_postgres_scalar(self):
         names = [
-            "relaycast",
+            "relaycast-postgres",
             "relaycast-eks-collector",
             "relayauth",
             "sessions-pipeline",
@@ -118,12 +118,12 @@ class ReleaseManifestTest(unittest.TestCase):
             1,
         )
         self.assertIn(
-            "repository: __IMAGE_MIRROR_ROOT__/ghcr.io/example/relaycast\n",
+            "repository: __IMAGE_MIRROR_ROOT__/ghcr.io/example/relaycast-postgres\n",
             overlay,
         )
         self.assertIn(
             "runtime:\n    postgres:\n      image:\n"
-            "        repository: __IMAGE_MIRROR_ROOT__/ghcr.io/example/relaycast\n",
+            "        repository: __IMAGE_MIRROR_ROOT__/ghcr.io/example/relaycast-postgres\n",
             overlay,
         )
         self.assertIn("# customer registry mirror root. Profile: eks.", overlay)

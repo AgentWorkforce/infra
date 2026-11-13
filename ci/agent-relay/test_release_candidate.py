@@ -350,6 +350,10 @@ class ReleaseCandidateTest(unittest.TestCase):
         self.assertIn("verify-sessions-pipeline-sigstore.py", workflow)
         self.assertIn('publish_run_id="$(jq -er \'.publishRunId\'', workflow)
         self.assertIn("gh run download", workflow)
+        self.assertIn(
+            '.id == "relaycast-eks-collector" or .id == "relaycast-postgres" or .id == "relayauth"',
+            workflow,
+        )
         for receipt_file in VERIFY.FILES:
             self.assertIn(f".release/{receipt_file}", workflow)
 
