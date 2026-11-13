@@ -1,0 +1,7 @@
+account_id           = "000000000000" # the EKS cluster's account
+region               = "us-west-2"
+eks_cluster_name     = "agent-relay-prod"
+namespace            = "agent-relay-prod"
+role_name            = "agent-relay-prod-sessions-worker"
+sessions_bucket_arn  = "arn:aws:s3:::<sessions bucket in the other account>"
+sessions_kms_key_arn = "arn:aws:kms:us-east-1:<other account>:key/<key id>"
