@@ -351,7 +351,7 @@ PVC. The target runs three stateless gateway replicas with a
 TerseAI actor hosts use 1024 MiB, three warm hosts and at most eight concurrent
 starts; the controller requests 1 CPU / 1 GiB and is limited to 2 GiB. These
 replace the 256 MiB upstream actor-host default, which was not stable under the
-AA workload.
+production-shaped workload.
 
 The tested AWS target still has one durable-actors controller. Its PDB refuses
 voluntary eviction and topology spread constrains its placement, but neither

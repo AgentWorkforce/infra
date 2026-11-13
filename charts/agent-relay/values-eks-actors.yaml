@@ -106,8 +106,8 @@ durable-actors:
     limits: {memory: 2Gi}
   actors:
     hostIdleTimeoutMs: 120000
-    # The shipped 256 MiB actor host repeatedly failed readiness under the AA
-    # workload. These are the tuned soak inputs; keep them together.
+    # The shipped 256 MiB actor host repeatedly failed readiness under the
+    # production-shaped workload. These are the tuned soak inputs; keep them together.
     memoryMiB: 1024
     warm: 3
     maxStarting: 8

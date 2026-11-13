@@ -1344,7 +1344,7 @@ compatibility:
         sessions-pipeline-worker: { repository: ghcr.io/agentworkforce/sessions-pipeline, digest: sha256:77022c5b6a1d30f96f921d703eb27a1acada8ec273ad84aebdde24f8eddce305 }
         relay-control: { repository: ghcr.io/agentworkforce/relay-control, digest: sha256:d8c26d44dccb6dd21b7033288241a379e46ce5fbca69f276c4d4745001c3c3e2 }
         relay-webapp: { repository: ghcr.io/agentworkforce/relay-webapp, digest: sha256:bd295ccb7d1323965dce890f19d0b7f857d706c00d7756f719c713763fdb49f3 }
-      notes: 'Carries 0.7.0, neutral values comments, telemetry-collector 0.1.7, and prepares the AA/EKS Relaycast durable-actors target: profile pins the post-migration actor images, uses S3 with no Relaycast PVC, three zone-spread gateways with a PDB, tuned 1 GiB actor hosts (warm 3, maxStarting 8), and a protected 1 CPU/1-2 GiB singleton controller. Existing PostgreSQL installs still move only through the full-copy credentials/cutover upgrader; no automatic backend flip.'
+      notes: 'Carries 0.7.0, neutral values comments, telemetry-collector 0.1.7, and prepares the AWS EKS Relaycast durable-actors target: profile pins the post-migration actor images, uses S3 with no Relaycast PVC, three zone-spread gateways with a PDB, tuned 1 GiB actor hosts (warm 3, maxStarting 8), and a protected 1 CPU/1-2 GiB singleton controller. Existing PostgreSQL installs still move only through the full-copy credentials/cutover upgrader; no automatic backend flip.'
     - id: agent-relay-0.7.1
       status: planned
       charts: { agent-relay: 0.7.1, relay-control: 0.4.15, relay-webapp: 0.2.4 }

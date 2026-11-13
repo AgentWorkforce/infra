@@ -18,7 +18,7 @@ to that exact candidate:
    command and its database migration.
 
 The earlier as-shipped actor profile is not a qualification receipt: its
-256 MiB actor hosts repeatedly failed readiness under the AA-shaped soak. The
+256 MiB actor hosts repeatedly failed readiness under the production-shaped soak. The
 runtime target below is the tuned profile being qualified for this release.
 
 ## Before the move
