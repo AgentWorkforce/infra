@@ -1,14 +1,14 @@
 /**
  * The host this folder defines: user data under EC2's limit with no secret
- * values, the AWS admin role wired in, the AMI pinned, and every credential a
- * named SSM parameter under /infra-ops/<stage>/.
+ * values, the AWS admin role wired in, the AMI pinned, every credential a
+ * named SSM parameter under /infra-ops/<stage>/, and the A2A card it publishes.
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { gunzipSync } from "node:zlib";
-import { EC2_USER_DATA_ENCODED_LIMIT, RELAY_SESSIONS_KIT_FILES, WORKER_KIT_FILES, fileReader, hostRolePolicy, hostTemplate, userDataBase64 } from "@agentworkforce/layered-agent";
+import { AGENT_CARD_FILE, EC2_USER_DATA_ENCODED_LIMIT, RELAY_SESSIONS_KIT_FILES, WORKER_KIT_FILES, fileReader, hostRolePolicy, hostTemplate, renderAgentCard, userDataBase64 } from "@agentworkforce/layered-agent";
 import agent from "../agent.config.ts";
 
 const read = fileReader(fileURLToPath(new URL("..", import.meta.url)));
@@ -21,7 +21,8 @@ test("user data: under EC2's limit, every kit and lane file, no secret values", 
   const optional: readonly string[] = ["headless.py", "delegation.md", ...WORKER_KIT_FILES, ...RELAY_SESSIONS_KIT_FILES];
   for (const f of agent.files) {
     const shipped = script.includes(`cat > /opt/agent-host/${f.name} <<'`);
-    assert.equal(shipped, !(f.source === "kit" && optional.includes(f.name)), f.name);
+    // The generated card file travels by hot update, never in user data.
+    assert.equal(shipped, !(f.source === "generated" || (f.source === "kit" && optional.includes(f.name))), f.name);
   }
   assert.doesNotMatch(script, /sk-ant-|ghp_|ghs_|gho_|BEGIN [A-Z ]*PRIVATE KEY|"private_key"/);
 });
@@ -58,4 +59,30 @@ test("no lane script passes a secret on a sudo command line (sudo logs it to the
       assert.doesNotMatch(line, /\$\(val [A-Z_]*(SECRET|TOKEN|KEY)/, `${f}: ${line.trim()}`);
     }
   }
+});
+
+test("the A2A card: renders within the relay's limits, one skill per kind of work, generated and kept out of user data", () => {
+  assert.ok(agent.input.relaySessions, "the lead publishes the card with the agent-relay MCP");
+  const rendered = renderAgentCard(agent.input.card!);
+  const card = JSON.parse(rendered) as { description: string; skills: { id: string; tags?: string[]; examples?: string[] }[]; tags?: string[]; documentation_url?: string; version: string };
+  assert.match(card.description, /^layered-infra-ops is AgentWorkforce's infrastructure operator/);
+  assert.deepEqual(card.skills.map((s) => s.id), [
+    "provision-cloud-resources",
+    "cloudflare-dns-and-workers",
+    "terraform-helm-changes",
+    "rotate-credentials",
+    "posthog-setup",
+    "investigate-infrastructure",
+  ]);
+  for (const s of card.skills) {
+    assert.ok((s.tags?.length ?? 0) > 0, `${s.id} has tags`);
+    assert.ok((s.examples?.length ?? 0) >= 2 && (s.examples?.length ?? 0) <= 4, `${s.id} has 2 to 4 examples`);
+  }
+  assert.deepEqual(card.tags, ["infra", "aws", "gcp", "azure", "cloudflare", "posthog", "terraform", "helm"]);
+  assert.equal(card.documentation_url, "https://github.com/AgentWorkforce/infra");
+  assert.match(card.version, /^[0-9a-f]{12}$/);
+  assert.equal(agent.generated[AGENT_CARD_FILE], rendered);
+  assert.deepEqual(agent.files.filter((f) => f.source === "generated"), [{ name: AGENT_CARD_FILE, source: "generated" }]);
+  const script = gunzipSync(Buffer.from(userDataBase64(agent, read), "base64")).toString("utf8");
+  assert.ok(!script.includes(`cat > /opt/agent-host/${AGENT_CARD_FILE}`), "the card never rides in user data");
 });
