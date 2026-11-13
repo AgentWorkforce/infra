@@ -18,9 +18,10 @@ fetched at build or release time, pinned by name, version, and the
 
 ## License scope
 
-The `artifacthub.io/license: FSL-1.1-ALv2` annotation in each first-party
+The `artifacthub.io/license` annotation in each first-party
 `Chart.yaml` identifies the license of the AgentWorkforce-authored chart
-content. It does not apply FSL-1.1-ALv2 to bundled chart dependencies, referenced
+content; it stays `Apache-2.0` until each chart's next release updates it to
+`FSL-1.1-ALv2`. It does not apply that license to bundled chart dependencies, referenced
 container images, or application source code maintained in other repositories.
 Those materials remain subject to their respective license terms and the
 redistribution limits recorded below.
