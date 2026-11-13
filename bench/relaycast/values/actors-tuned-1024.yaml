@@ -1,6 +1,21 @@
-# Actors arm, tuned: actor hosts get 1024 MiB instead of the 256 MiB default
-# (durable-actors.actors.memoryMiB). The as-shipped AA soak showed hosts at
-# 219-237 of 256 MiB failing readiness and being re-placed in a loop.
+# Actors arm, TUNED (agreed with infra-chief). Knobs, all relative to shipped defaults:
+#   durable-actors.actors.memoryMiB 256 -> 1024: the as-shipped AA soak showed
+#     hosts at 219-237 of 256 MiB failing readiness and being re-placed in a loop.
+#   durable-actors.actors.warm 1 -> 3, maxStarting 4 -> 8: faster re-placement.
+#   durable-actors.resources: control plane 250m/512Mi (limit 1Gi) -> 1 CPU/1Gi
+#     (limit 2Gi); it grew 152 -> 638 MiB over the as-shipped soak.
+#   relaycast.runtime.durableActors.gateway.replicaCount 1 -> 3 (stateless; the
+#     S3 file store allows more than one).
 durable-actors:
   actors:
     memoryMiB: 1024
+    warm: 3
+    maxStarting: 8
+  resources:
+    requests: {cpu: "1", memory: 1Gi}
+    limits: {memory: 2Gi}
+relaycast:
+  runtime:
+    durableActors:
+      gateway:
+        replicaCount: 3

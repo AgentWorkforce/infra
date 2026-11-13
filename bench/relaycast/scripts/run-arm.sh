@@ -201,8 +201,14 @@ chaos() { # action out
   t="$(date +%s%3N)"
   case "$action" in
     kill-relaycast)
-      "${K[@]}" get pods -l "$KILL_SELECTOR" -o name >>"$out.pods" || true
-      "${K[@]}" delete pod -l "$KILL_SELECTOR" --wait=false >/dev/null
+      # KILL_ONE=1: one replica only (replicated gateway); default: all matches.
+      if [[ -n "${KILL_ONE:-}" ]]; then
+        local one; one="$("${K[@]}" get pods -l "$KILL_SELECTOR" -o name | head -1)"
+        echo "$one" >>"$out.pods"; "${K[@]}" delete "$one" --wait=false >/dev/null
+      else
+        "${K[@]}" get pods -l "$KILL_SELECTOR" -o name >>"$out.pods" || true
+        "${K[@]}" delete pod -l "$KILL_SELECTOR" --wait=false >/dev/null
+      fi
       ;;
     kill-actor)
       # One busy actor host (sandbox namespace <NS>-agent-relay).
