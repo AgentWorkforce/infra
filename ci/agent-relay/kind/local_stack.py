@@ -382,6 +382,9 @@ GRANT TEMP ON DATABASE relaycast TO relaycast_owner;""")
             # Okta or Entra ID); the email link stays as the operator fallback.
             result["relay-control"]["auth"]["oidc"] = {"issuer": GOOGLE_ISSUER, "clientId": oidc["client_id"],
                 "allowedDomains": oidc["allowed_domains"], "displayName": "Google"}
+            # allowedDomains only gates who may authenticate; joining the single
+            # organization without an invite is auth.autoJoinDomains.
+            result["relay-control"]["auth"]["autoJoinDomains"] = oidc["allowed_domains"]
             result["relay-control"]["secretKeys"]["oidcClientSecret"] = "oidc-client-secret"
         result["relay-control"]["smtp"] = {"host": "local-mail.agent-relay.svc.cluster.local", "port": 1025, "security": "none", "from": "Local Relay <signin@kind.example>"}
         result["relay-control"]["services"]["publicHostAliases"] = [{"ip": self.edge_ip, "hostnames": ["relay.kind.agentrelay.com"]}]
