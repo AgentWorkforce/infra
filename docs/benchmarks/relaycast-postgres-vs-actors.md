@@ -126,6 +126,36 @@ Notes:
   race the relaycast-pg-deadlock agent root-caused (a fix is on a separate
   branch).
 
+### Fix exit tests on the PostgreSQL arm
+
+**relaycast#665 → PR #667 (`90de0b31`): forced RDS failover under the
+decision-set load: PASS.** Setup: 30 min, two forced Multi-AZ failovers, chart
+default 1 CPU / 1 Gi, readiness `/health/ready`, liveness `/health/live`,
+sysctls `tcp_keepalive_intvl=5` / `tcp_keepalive_probes=3`.
+
+| Failover | Pool on new primary | Errors in window | Errors stopped after | Pod restarts | Node-socket drops |
+|---|---|---|---|---|---|
+| #1 (18:52:55Z) | +24 s (10/10 sockets) | 48 × 5xx, 0 timeouts | ~43 s | 0 | 0 |
+| #2 (19:02:56Z) | +23 s (10/10 sockets) | 50 × 5xx, 1 timeout | ~26 s | 0 | 0 |
+
+Integrity after quiescence: 0 lost / 0 duplicate / 0 reordered of 26,973, with
+0 redeliveries. Errors over the 30 min: 1.7 %, all inside the two windows.
+Delivery p50 36 ms, p99 176 ms; uploads 100 % complete. Without the fix, the
+same failover never recovered until a manual restart.
+
+**relaycast#659 → P1 (`758ff306`): channel overload (20 → 50 → 100 posts/s, one
+workspace): PARTIAL.**
+
+| Criterion | Result |
+|---|---|
+| No OOM / restart | PASS (0 restarts) |
+| Bounded memory | PASS (peak 255 Mi vs 570 Mi then OOM without it; start.sh sets `--max-old-space-size=768`) |
+| No redelivery storm | PASS (0 redeliveries) |
+| Shed with 503 rather than time out | FAIL (0 × 503; 893 client 30 s timeouts) |
+| 0 lost / duplicate | 0 lost; 527 same-socket duplicates (the #663 race, merged after P1's base) |
+| Throughput vs #657 | lower: ~6-7 posts/s sustained vs ~11-14; 20/s gave 510 OK / 793 timeouts |
+
+
 ### Findings filed
 
 | Issue | Backend | Finding |
@@ -133,9 +163,9 @@ Notes:
 | relaycast#649 | self-host | Ignores SIGTERM while node sockets are open (SIGKILL after the grace period) |
 | relaycast#650 | both | `delivery.ack` has no reply, so redelivery happens after a restart; same-socket duplicates follow restarts |
 | relaycast#651 | PG | Concurrent channel posts deadlock (500s at 10 posts/s). Fixed by #657 |
-| relaycast#659 | PG | Heap OOM under overload, then crash-loops; fix in test (P1) |
+| relaycast#659 | PG | Heap OOM under overload, then crash-loops; P1 fixes the OOM, but does not shed with 503 and has lower throughput |
 | relaycast#661 | PG | `node.heartbeat` re-aggregates capabilities on every beat; about 8k idle sockets saturate the DB |
-| relaycast#665 | PG | No recovery after an RDS failover (half-open pool sockets); fix #667 in test |
+| relaycast#665 | PG | No recovery after an RDS failover (half-open pool sockets); **fixed by #667 (exit test passed)** |
 | durable-actors#2 | actors | PR: Bun-flag passthrough to actor hosts, for in-cluster profiling |
 
 
