@@ -5,6 +5,7 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { gunzipSync } from "node:zlib";
 import { EC2_USER_DATA_ENCODED_LIMIT, RELAY_SESSIONS_KIT_FILES, WORKER_KIT_FILES, fileReader, hostRolePolicy, hostTemplate, userDataBase64 } from "@agentworkforce/layered-agent";
@@ -47,4 +48,14 @@ test("with an account id: the host may assume exactly its admin role, and the en
   const sts = hostRolePolicy(a, ACCOUNT).Statement.filter((s) => s.Action.some((x) => x.startsWith("sts:")));
   assert.deepEqual(sts.map((s) => s.Resource), [[admin]]);
   assert.match(a.envFile, new RegExp(`^AWS_ADMIN_ROLE_ARN=${admin}$`, "m"));
+});
+
+test("no lane script passes a secret on a sudo command line (sudo logs it to the journal)", () => {
+  for (const f of ["setup-lane.sh", "load-secrets-lane.sh"]) {
+    const text = readFileSync(new URL(`../${f}`, import.meta.url), "utf8");
+    for (const line of text.split("\n").filter((l) => /\bsudo\b/.test(l) && !/^\s*#/.test(l))) {
+      assert.doesNotMatch(line, /\b[A-Z_]*(SECRET|TOKEN|PASSWORD|API_KEY|_KEY|AZ_S)[A-Z_]*=/, `${f}: ${line.trim()}`);
+      assert.doesNotMatch(line, /\$\(val [A-Z_]*(SECRET|TOKEN|KEY)/, `${f}: ${line.trim()}`);
+    }
+  }
 });

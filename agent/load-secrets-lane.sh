@@ -9,6 +9,7 @@
 #  - Aliases in secrets.env for the names other tools read: GOOGLE_APPLICATION_CREDENTIALS,
 #    ARM_* (Terraform azurerm), POSTHOG_CLI_TOKEN / POSTHOG_CLI_HOST.
 #  - Azure: az signed in as the service principal, its subscription the default.
+# No secret is ever passed on a sudo command line (sudo logs it to the journal).
 set -uo pipefail
 # shellcheck source=/dev/null
 . /opt/agent-host/env
@@ -44,11 +45,14 @@ cat "$tmp/aliases" >> "$tmp/env"
 install -m 0600 -o agent -g agent "$tmp/env" "$out.new" && mv -f "$out.new" "$out"
 
 if [ -n "$(val AZURE_CLIENT_SECRET)" ] && [ -n "$(val AZURE_TENANT_ID)" ] && [ -n "$(val AZURE_CLIENT_ID)" ]; then
-  # az takes the secret only as an argument, so it is briefly in this host's
-  # process list; only root and the agent user (which holds it anyway) run here.
-  sudo -H -u agent env AZ_T="$(val AZURE_TENANT_ID)" AZ_C="$(val AZURE_CLIENT_ID)" AZ_S="$(val AZURE_CLIENT_SECRET)" AZ_SUB="$(val AZURE_SUBSCRIPTION_ID)" bash -c '
-    az login --service-principal --tenant "$AZ_T" --username "$AZ_C" --password "$AZ_S" --output none >/dev/null 2>&1 || { echo "load-secrets-lane: az sign-in failed" >&2; exit 0; }
-    [ -z "$AZ_SUB" ] || az account set --subscription "$AZ_SUB" >/dev/null 2>&1' || true
+  # The agent's shell reads the values from secrets.env itself: sudo logs its
+  # whole command line (env assignments included) to the journal, so no secret
+  # may be passed on it. az takes the secret only as an argument, so it is
+  # briefly in this host's process list, never in a log.
+  sudo -H -u agent bash -c '
+    set -a; . /run/agent-host/secrets.env; set +a
+    az login --service-principal --tenant "$AZURE_TENANT_ID" --username "$AZURE_CLIENT_ID" --password "$AZURE_CLIENT_SECRET" --output none >/dev/null 2>&1 || { echo "load-secrets-lane: az sign-in failed" >&2; exit 0; }
+    [ -z "${AZURE_SUBSCRIPTION_ID:-}" ] || az account set --subscription "$AZURE_SUBSCRIPTION_ID" >/dev/null 2>&1' || true
 else
   echo "load-secrets-lane: no Azure service principal; az not signed in" >&2
 fi
