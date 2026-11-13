@@ -7,6 +7,14 @@ all its rows and files, under the same ids. Design and rationale:
 [relaycast-postgres-to-actors-migration.md](../relaycast-postgres-to-actors-migration.md).
 Keep install-specific values (account, hosts, windows) out of this repo.
 
+> **Status (2026-11-13): not recommended for production self-hosts yet.** Keep
+> production installs on `runtime.backend: postgres`. In the tuned comparison,
+> durable-actors delivery was about 100x slower (p50 3.5 s vs 36 ms), and
+> recovery from an RDS failover took about 4.5 min (vs under 45 s on
+> PostgreSQL with relaycast #667). The move waits for sub-workspace sharding
+> and latency work. The tooling and this procedure stay current for that
+> later move.
+
 Two upgrader runs, on the release the install already runs (the chart version
 does not change). Each takes an RDS snapshot first and refuses on any failed
 precondition. Plan mode (no `--apply`) only checks and prints.
