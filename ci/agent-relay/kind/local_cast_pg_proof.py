@@ -18,7 +18,8 @@ async function request(method,path,token,body){
  const response=await fetch(base+path,{method,headers:{authorization:'Bearer '+token,'content-type':'application/json'},body:body?JSON.stringify(body):undefined,signal:AbortSignal.timeout(10000)});
  if(!response.ok)throw Error('request_failed');return await response.json();
 }
-if(!process.env.RELAYCAST_DATABASE_URL_FILE||process.env.RELAYCAST_DB_PATH)throw Error('postgres_required');
+// A database URL selects Postgres even when the image's SQLite fallback is set.
+if(!process.env.RELAYCAST_DATABASE_URL_FILE)throw Error('postgres_required');
 const internal=fs.readFileSync('/run/secrets/relaycast/internal-secret','utf8').trim(),suffix=randomUUID().slice(0,8);
 const workspace=await request('POST','/internal/workspaces',internal,{name:'pg-proof-'+suffix});
 try{
