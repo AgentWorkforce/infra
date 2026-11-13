@@ -203,6 +203,16 @@ class LocalStack(Stack):
             fn()
             private_json(path, phases + [name])
 
+    def chart_dependencies(self):
+        # A cached main install can retain an orphaned subchart package after
+        # its dependency is removed. Refresh the packages when the locked graph
+        # changes, without rerunning any completed database/bootstrap phases.
+        metadata = [ROOT / "charts" / chart / name
+                    for chart in ("agent-relay", "sessions-pipeline")
+                    for name in ("Chart.yaml", "Chart.lock")]
+        revision = hashlib.sha256(b"\0".join(path.read_bytes() for path in metadata)).hexdigest()
+        self.stage("chart-dependencies-" + revision, self.dependencies)
+
     def sql(self, database, text, variables=()):
         return self.psql(database, text, variables=variables, sensitive=True)
 
@@ -683,7 +693,7 @@ WHERE p.oid=to_regprocedure('session_consumer_bootstrap_private.consumer_has_pas
                 *("collector_" + name for name in TELEMETRY if name != "control")):
             c.setdefault(key, secrets.token_hex(32))
         private_json(path, c)
-        self.stage("chart-dependencies", self.dependencies)
+        self.chart_dependencies()
         from edge import install
         # Reconcile the edge on repeats too: the default leaf and its checksum
         # must follow TLS renewal rather than an old completed phase marker.

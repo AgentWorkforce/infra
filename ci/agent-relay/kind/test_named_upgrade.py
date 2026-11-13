@@ -9,6 +9,7 @@ import contextlib
 import io
 from pathlib import Path
 import subprocess
+import shutil
 import sys
 import tempfile
 import unittest
@@ -22,6 +23,22 @@ import stack
 
 
 class RetiredReconcile(unittest.TestCase):
+    def test_retired_cli_needs_no_optional_yaml_or_external_tools(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            target = root / "ci/agent-relay/kind"
+            target.mkdir(parents=True)
+            for name in ("stack.py", "native_diagnostics.py"):
+                shutil.copy2(HERE / name, target / name)
+            for action in ("up", "render", "reconcile-names"):
+                with self.subTest(action=action):
+                    result = subprocess.run([sys.executable, "-S", str(target / "stack.py"), action,
+                        "--profile", "core"], env={"PATH": "/no-tools"}, capture_output=True, text=True)
+                    self.assertEqual(result.returncode, 1)
+                    self.assertIn(stack.RETIRED, result.stderr)
+                    self.assertNotIn("ModuleNotFoundError", result.stderr)
+            self.assertFalse((root / ".kind").exists())
+
     def test_reconcile_names_refuses_before_any_state_or_cluster_access(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory); stderr = io.StringIO()

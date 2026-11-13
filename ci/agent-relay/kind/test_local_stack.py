@@ -23,6 +23,29 @@ from stack import StackError
 
 
 class LocalTests(unittest.TestCase):
+    def test_dependency_graph_change_refreshes_packages_without_repeating_bootstrap(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            for chart in ("agent-relay", "sessions-pipeline"):
+                directory = root / "charts" / chart
+                directory.mkdir(parents=True)
+                for name in ("Chart.yaml", "Chart.lock"):
+                    (directory / name).write_text("old metadata\n")
+            stack = LocalStack.__new__(LocalStack)
+            stack.state = root / "state"; stack.state.mkdir()
+            completed = ["chart-dependencies", "databases", "control", "pipeline-schema"]
+            (stack.state / "phases.json").write_text(json.dumps(completed))
+            builds = []
+            stack.dependencies = lambda: builds.append("rebuilt")
+            with patch.object(local_stack, "ROOT", root):
+                stack.chart_dependencies()
+                stack.chart_dependencies()
+                self.assertEqual(builds, ["rebuilt"])
+                (root / "charts/agent-relay/Chart.lock").write_text("removed history dependency\n")
+                stack.chart_dependencies()
+                self.assertEqual(builds, ["rebuilt", "rebuilt"])
+            self.assertTrue(set(completed) <= set(json.loads((stack.state / "phases.json").read_text())))
+
     def test_postgres_cast_identities_have_schema_ownership_and_dml_without_database_ownership(self):
         queries = []
         stack = object.__new__(LocalStack)
