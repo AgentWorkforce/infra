@@ -66,3 +66,16 @@ run "refuses_the_default_service_account" {
   }
   expect_failures = [var.service_account]
 }
+
+run "accepts_a_multi_region_key" {
+  command = plan
+  variables {
+    sessions_kms_key_arn = "arn:aws:kms:eu-west-1:222222222222:key/mrk-0123456789abcdef0123456789abcdef"
+  }
+  assert {
+    condition = anytrue([for s in jsondecode(aws_iam_role_policy.worker.policy).Statement :
+      s.Sid == "SessionsKeyViaS3" && s.Resource == "arn:aws:kms:eu-west-1:222222222222:key/mrk-0123456789abcdef0123456789abcdef" &&
+    try(s.Condition.StringEquals["kms:ViaService"], "") == "s3.eu-west-1.amazonaws.com"])
+    error_message = "A multi-Region key is used through S3 in its own Region."
+  }
+}
