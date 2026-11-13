@@ -311,7 +311,7 @@ Deployment back to 1.
 ## PostgreSQL backend
 
 `runtime.backend: postgres` (default off) runs the server on an external
-PostgreSQL database. Uploaded files stay on the data PVC, and realtime, presence
+PostgreSQL database. Uploaded files stay on the data PVC (see Node drains), and realtime, presence
 and rate limits are in-process, so `replicaCount` must stay 1. The image is
 `runtime.postgres.image` (12.8.0-pg.2), not `image.*`.
 
@@ -353,6 +353,49 @@ The chart refuses a half-configured backend at render: no CA, a missing or
 shared URL key, `replicaCount` other than 1, `backup.enabled` (the backup CronJob
 is SQLite-only, so back up the database with its own tooling),
 `retention.messageTtlDays`, or chart-managed database variables in `extraEnv`.
+
+### Database failover
+
+With an image from relaycast main 810f48ce or later (relaycast#667), the server
+recovers from a database failover without a restart. Turn the chart side on
+with it:
+
+- `healthProbes: split`. Startup and liveness use `/health/live`, which fails
+  only after 90 s without a successful database probe, so the pod is restarted
+  only if it did not recover. Readiness uses `/health/ready`, which fails while
+  the database does not answer within 2 s, so the Service stops routing to the
+  pod during the failover. Keep `legacy` (every probe on `/health`) for older
+  images: they answer 404 on the new paths and never become ready.
+- `runtime.postgres.tcpKeepalive` (on by default on this backend) sets the
+  `net.ipv4.tcp_keepalive_intvl=5` and `tcp_keepalive_probes=3` sysctls on the
+  pod, so a half-open connection to the old primary is detected in about 15 s.
+  They are namespaced safe sysctls from Kubernetes 1.29 and are not rendered on
+  older clusters. Sysctls of the same name in `podSecurityContext` win.
+
+The `wait-for-migrations` init container and the migration Jobs start Node
+directly, so the chart sets `NODE_OPTIONS=--max-old-space-size` to 75 % of
+`resources.limits.memory` for them (the image entrypoint does the same for the
+server, relaycast#668). An operator `NODE_OPTIONS` in `extraEnv` wins.
+
+### Node drains
+
+Uploaded files keep the server on its `ReadWriteOnce` data claim, and an EBS (or
+other zonal) volume attaches only in its own availability zone. The Deployment
+uses `Recreate`, so a drain stops the pod, the volume detaches, and the pod
+starts again on another node of that zone. Keep it short:
+
+- Run at least two schedulable nodes in the volume's zone. With one, the pod
+  stays Pending until a node in that zone exists again.
+- Set `persistence.zone` to that zone so the scheduler only considers nodes
+  that can attach the volume. Find it with
+  `kubectl get pv "$(kubectl get pvc <release>-relaycast-data -o jsonpath='{.spec.volumeName}')" -o jsonpath='{.spec.nodeAffinity}'`
+  and check the nodes with `kubectl get nodes -L topology.kubernetes.io/zone`.
+- There is no PodDisruptionBudget: with one replica, any budget that protects
+  the pod blocks every drain.
+
+Losing the zone is an outage until the zone returns or the volume is restored
+from a snapshot in another zone. The S3 file store that removes the claim on
+this backend is planned for a later release.
 
 Moving an existing SQLite release to this backend does not migrate its data.
 

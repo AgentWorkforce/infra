@@ -98,6 +98,7 @@ spec:
             {{- end }}
           env:
             {{- include "relaycast.postgres.databaseEnv" (dict "root" . "file" "database-runtime-url" "separateAnalyticsCa" true) | nindent 12 }}
+            {{- include "relaycast.nodeHeapEnv" . | nindent 12 }}
             {{- if eq $step "export" }}
             # Export blocks are sealed with a key derived from it.
             - name: RELAYCAST_INTERNAL_SECRET_FILE
@@ -140,6 +141,7 @@ spec:
             {{- end }}
             {{- end }}
             {{- end }}
+            {{- include "relaycast.nodeHeapEnv" . | nindent 12 }}
             # Opens the sealed export blocks, and authenticates to the gateway.
             - name: RELAYCAST_INTERNAL_SECRET_FILE
               value: {{ include "relaycast.secretMountPath" . }}/internal-secret

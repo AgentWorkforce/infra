@@ -206,3 +206,65 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end }}
 {{- end }}
 {{- end }}
+
+{{/*
+NODE_OPTIONS for containers that start node directly (command: node), which
+skips the image entrypoint's heap sizing (relaycast#668): V8's old space at 75 %
+of resources.limits.memory instead of Node's default of about half. Nothing is
+emitted without a parseable limit below 1 TiB, or when extraEnv sets
+NODE_OPTIONS (the operator's value wins).
+*/}}
+{{- define "relaycast.nodeHeapEnv" -}}
+{{- $mem := toString (dig "limits" "memory" "" (.Values.resources | default dict)) -}}
+{{- $mib := 0 -}}
+{{- if regexMatch "^[0-9]+Gi$" $mem }}{{ $mib = mul (atoi (trimSuffix "Gi" $mem)) 1024 }}
+{{- else if regexMatch "^[0-9]+Mi$" $mem }}{{ $mib = atoi (trimSuffix "Mi" $mem) }}
+{{- else if regexMatch "^[0-9]+G$" $mem }}{{ $mib = div (mul (atoi (trimSuffix "G" $mem)) 1000000000) 1048576 }}
+{{- else if regexMatch "^[0-9]+M$" $mem }}{{ $mib = div (mul (atoi (trimSuffix "M" $mem)) 1000000) 1048576 }}
+{{- else if regexMatch "^[0-9]+$" $mem }}{{ $mib = div (atoi $mem) 1048576 }}
+{{- end -}}
+{{- $heap := div (mul $mib 3) 4 -}}
+{{- $operator := false -}}
+{{- range .Values.extraEnv }}{{ if eq (toString .name) "NODE_OPTIONS" }}{{ $operator = true }}{{ end }}{{ end -}}
+{{- if and (ge (int64 $heap) 64) (le (int64 $heap) 1048576) (not $operator) }}
+- name: NODE_OPTIONS
+  value: {{ printf "--max-old-space-size=%d" (int64 $heap) | quote }}
+{{- end }}
+{{- end }}
+
+{{/*
+A probe with the image's split health endpoints (relaycast#667) when
+healthProbes is "split": /health/live for startup and liveness, /health/ready
+for readiness. "legacy" keeps the probe exactly as configured. A probe without
+httpGet is never changed.
+*/}}
+{{- define "relaycast.probe" -}}
+{{- $p := deepCopy .probe -}}
+{{- if and (eq (toString .root.Values.healthProbes) "split") (hasKey $p "httpGet") }}
+{{- $get := deepCopy $p.httpGet -}}
+{{- $_ := set $get "path" .path -}}
+{{- $_ := set $p "httpGet" $get -}}
+{{- end -}}
+{{- toYaml $p -}}
+{{- end }}
+
+{{/*
+Pod securityContext plus the TCP keepalive sysctls for the PostgreSQL backend,
+so a half-open connection to a failed-over primary is detected in about 15 s
+(relaycast docs/self-host-postgres.md). Both are namespaced safe sysctls from
+Kubernetes 1.29; earlier clusters and other backends get the context as is.
+Sysctls already set in podSecurityContext are kept.
+*/}}
+{{- define "relaycast.podSecurityContext" -}}
+{{- $psc := deepCopy (.Values.podSecurityContext | default dict) -}}
+{{- $ka := .Values.runtime.postgres.tcpKeepalive | default dict -}}
+{{- if and (include "relaycast.postgres.enabled" .) $ka.enabled (semverCompare ">=1.29-0" .Capabilities.KubeVersion.Version) }}
+{{- $have := list -}}
+{{- range ($psc.sysctls | default list) }}{{ $have = append $have (toString .name) }}{{ end -}}
+{{- $add := list -}}
+{{- if not (has "net.ipv4.tcp_keepalive_intvl" $have) }}{{ $add = append $add (dict "name" "net.ipv4.tcp_keepalive_intvl" "value" (toString (int $ka.intervalSeconds))) }}{{ end -}}
+{{- if not (has "net.ipv4.tcp_keepalive_probes" $have) }}{{ $add = append $add (dict "name" "net.ipv4.tcp_keepalive_probes" "value" (toString (int $ka.probes))) }}{{ end -}}
+{{- $_ := set $psc "sysctls" (concat ($psc.sysctls | default list) $add) -}}
+{{- end -}}
+{{- toYaml $psc -}}
+{{- end }}

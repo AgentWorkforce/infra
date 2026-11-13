@@ -39,7 +39,7 @@ spec:
         {{- toYaml . | nindent 8 }}
       {{- end }}
       securityContext:
-        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+        {{- include "relaycast.podSecurityContext" . | nindent 8 }}
       {{- if $postgres }}
       initContainers:
         {{- include "relaycast.postgres.waitContainer" . | nindent 8 }}
@@ -129,11 +129,11 @@ spec:
             {{- toYaml . | nindent 12 }}
             {{- end }}
           startupProbe:
-            {{- toYaml .Values.startupProbe | nindent 12 }}
+            {{- include "relaycast.probe" (dict "root" . "probe" .Values.startupProbe "path" "/health/live") | nindent 12 }}
           livenessProbe:
-            {{- toYaml .Values.livenessProbe | nindent 12 }}
+            {{- include "relaycast.probe" (dict "root" . "probe" .Values.livenessProbe "path" "/health/live") | nindent 12 }}
           readinessProbe:
-            {{- toYaml .Values.readinessProbe | nindent 12 }}
+            {{- include "relaycast.probe" (dict "root" . "probe" .Values.readinessProbe "path" "/health/ready") | nindent 12 }}
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
           volumeMounts:
@@ -214,9 +214,24 @@ spec:
       nodeSelector:
         {{- toYaml . | nindent 8 }}
       {{- end }}
+      {{- if .Values.persistence.zone }}
+      {{- if hasKey (.Values.affinity | default dict) "nodeAffinity" }}{{ fail "persistence.zone and affinity.nodeAffinity cannot both be set; put the zone term in affinity.nodeAffinity" }}{{ end }}
+      affinity:
+        {{- with (omit (.Values.affinity | default dict) "nodeAffinity") }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: topology.kubernetes.io/zone
+                    operator: In
+                    values: [{{ .Values.persistence.zone | quote }}]
+      {{- else }}
       {{- with .Values.affinity }}
       affinity:
         {{- toYaml . | nindent 8 }}
+      {{- end }}
       {{- end }}
       {{- with .Values.tolerations }}
       tolerations:
