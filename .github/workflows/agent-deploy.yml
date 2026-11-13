@@ -157,7 +157,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: AgentWorkforce/layered-agents
-          ref: 54458aa540147083c30ebc94bfc0dd87704f7b1d # layered-agents main 2026-11-13: layered-agent 0.1.16, awsAdmin and infra-ops (#32)
+          ref: ee52974a9a6ebe2ecabbfa351084c2803a18e9fe # layered-agents v0.1.16: awsAdmin and infra-ops (#32), raw user-data limit (#20), headless umask (#25)
           token: ${{ steps.kit-token.outputs.token }}
           path: .layered-agents
           persist-credentials: false
