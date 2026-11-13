@@ -155,10 +155,10 @@ into the `local-control` Secret, Control gets HTTPS egress, and the stack is
 reconciled. `LOCAL_OIDC_ALLOWED_DOMAINS` (comma-separated, default
 `agentrelay.com`) limits who can sign in; allowed users join as members, and the
 email link above stays the administrator fallback. From a Mac with the 1Password
-CLI, using the "Cloud local dev Google OAuth client" item:
+CLI, using the "Local Kind Google OAuth client" item (a dedicated web client whose only redirect URI is the one above):
 
 ```sh
-op item get "Cloud local dev Google OAuth client" --vault "AI Agents" --reveal --format json \
+op item get "Local Kind Google OAuth client" --vault "AI Agents" --reveal --format json \
   | jq '{client_id: (.fields[]|select(.label=="client_id").value), client_secret: (.fields[]|select(.label=="client_secret").value)}' \
   | ssh -T agentrelay@100.104.148.105 'cd <checkout>/infra && make -s local-google-oidc'
 ```
