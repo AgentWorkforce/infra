@@ -3,7 +3,8 @@
 This file records source and license evidence for software bundled as chart dependencies
 or referenced by this Helm chart repository. AgentWorkforce-authored material
 in this repository, including first-party Helm chart code, is licensed under
-Apache License 2.0 by the root [`LICENSE`](LICENSE). Third-party components
+FSL-1.1-ALv2 by the root [`LICENSE`](LICENSE) (Apache License 2.0 before
+release agent-relay-2026.11.2; see [`NOTICE`](NOTICE)). Third-party components
 retain their own licenses and notices; this file does not relicense them and
 is not legal advice.
 
@@ -17,9 +18,9 @@ fetched at build or release time, pinned by name, version, and the
 
 ## License scope
 
-The `artifacthub.io/license: Apache-2.0` annotation in each first-party
+The `artifacthub.io/license: FSL-1.1-ALv2` annotation in each first-party
 `Chart.yaml` identifies the license of the AgentWorkforce-authored chart
-content. It does not apply Apache-2.0 to bundled chart dependencies, referenced
+content. It does not apply FSL-1.1-ALv2 to bundled chart dependencies, referenced
 container images, or application source code maintained in other repositories.
 Those materials remain subject to their respective license terms and the
 redistribution limits recorded below.

@@ -51,4 +51,7 @@ change that doesn't fit the project's direction.
 ## License
 
 By contributing, you agree that your contributions are licensed under the
-[Apache License 2.0](LICENSE), the license of this repository.
+the [Functional Source License 1.1, ALv2 Future License](LICENSE)
+(FSL-1.1-ALv2), the license of this repository, and that Agent Workforce, Inc.
+may also offer them under the Apache License 2.0 and under its commercial
+licenses.

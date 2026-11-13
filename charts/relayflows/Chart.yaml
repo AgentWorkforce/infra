@@ -8,7 +8,7 @@ appVersion: "2.0.50"
 description: >-
   Run durable Relayflows workflows locally on Kubernetes, with optional Cloud assignment mode.
 annotations:
-  artifacthub.io/license: Apache-2.0
+  artifacthub.io/license: FSL-1.1-ALv2
   agentworkforce.dev/license-scope: "First-party chart code only; dependencies and images retain their own licenses."
 home: https://github.com/AgentWorkforce/flows
 keywords:
