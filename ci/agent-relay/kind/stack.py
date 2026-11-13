@@ -23,8 +23,6 @@ import sys
 import time
 import urllib.request
 
-import yaml
-
 ROOT = Path(__file__).resolve().parents[3]
 NS = "agent-relay"
 RELEASE = "agent-relay"
@@ -369,6 +367,8 @@ class Stack:
                              "extraPortMappings": [{"containerPort": 30080, "hostPort": 8080, "listenAddress": "127.0.0.1"},
                                                    {"containerPort": 30443, "hostPort": 8443, "listenAddress": "127.0.0.1"}]}]}
         path = self.state / "kind.yaml"
+        # Retirement and cleanup commands need only the standard library.
+        import yaml
         path.write_text(yaml.safe_dump(config))
         self.cmd(["kind", "create", "cluster", "--name", self.name, "--image", NODE,
                   "--config", path, "--kubeconfig", self.kubeconfig], timeout=300)
