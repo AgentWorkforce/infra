@@ -19,9 +19,12 @@ and the dev sidecar read is wired in this file only.
 {{- if and (include "relaycast.actors.enabled" .) .Values.runtime.durableActors.devRuntime.enabled }}true{{ end -}}
 {{- end }}
 
-{{/* PVC needed: sqlite always; durable-actors only for the local file store. */}}
+{{/* PVC needed: sqlite and postgres always; durable-actors for the local file
+store, or while persistence.retainForMigration keeps the previous backend's
+claim in the release (a helm rollback to that backend then finds the same
+claim instead of re-adopting a bound one it can no longer patch). */}}
 {{- define "relaycast.needsDataClaim" -}}
-{{- if or (not (include "relaycast.actors.enabled" .)) (eq (toString .Values.runtime.durableActors.fileStore.driver) "local") }}true{{ end -}}
+{{- if or (not (include "relaycast.actors.enabled" .)) (eq (toString .Values.runtime.durableActors.fileStore.driver) "local") .Values.persistence.retainForMigration }}true{{ end -}}
 {{- end }}
 
 {{- define "relaycast.actors.deployerName" -}}
@@ -167,6 +170,10 @@ keyed create answers 503 workspace_create_idempotency_unavailable.
 {{- with $da.homeRegion }}
 - name: DURABLE_ACTORS_HOME_REGION
   value: {{ . | quote }}
+{{- end }}
+{{- with $da.socketOrigin }}
+- name: DURABLE_ACTORS_SOCKET_ORIGIN
+  value: {{ eq (toString .) "controlPlane" | ternary (include "relaycast.actors.controlPlaneUrl" $) . | quote }}
 {{- end }}
 {{ include "relaycast.actors.secretEnv" (dict "name" "RELAYCAST_FILE_SIGNING_SECRET" "secret" .Values.existingSecret "key" $da.fileSigningSecretKey) }}
 - name: RELAYCAST_CREDENTIAL_KEYRING_FILE

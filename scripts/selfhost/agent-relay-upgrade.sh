@@ -8,6 +8,9 @@
 #     [--db-instance <rds-instance-id>] [--context <kube-context>] \
 #     [--namespace agent-relay] [--release agent-relay] [--prefix agent-relay] \
 #     [--first-install] [--rds-setup] [--apply]
+#   scripts/selfhost/agent-relay-upgrade.sh ... --profile eks-rds-native \
+#     --relaycast-actors credentials|cutover [--actors-values <file>]... \
+#     [--reregister-legacy] [--apply]
 #
 #   --profile P     the chart profile this install uses, so an upgrade never
 #                   switches it. Required. One of:
@@ -20,6 +23,25 @@
 #                   install (helm install, then the migration barrier) instead
 #                   of helm upgrade. Refused when the release already exists;
 #                   a plain upgrade is refused when it does not.
+#   --relaycast-actors PHASE
+#                   opt-in: move Relaycast from its PostgreSQL backend to
+#                   durable-actors with every row and file
+#                   (docs/relaycast-postgres-to-actors-migration.md), on the
+#                   chart version already deployed, in two runs:
+#                     credentials  switch Relaycast to ar_ credentials (the
+#                                  keyring in relaycast.existingSecret) and
+#                                  re-key what relay-control holds; online
+#                     cutover      preflight, quiesce, export, helm upgrade with
+#                                  values-eks-actors.yaml + --actors-values,
+#                                  copy files, import and verify; messaging is
+#                                  down meanwhile
+#                   Both take the RDS snapshot first and refuse on any failed
+#                   precondition (wrong backend or chart version, a component
+#                   the actors values would remove, a control plane without an
+#                   RDS CA bundle, missing files, legacy credentials).
+#   --actors-values F  your overrides for values-eks-actors.yaml (cutover)
+#   --reregister-legacy  cutover: accept that holders of never-upgraded legacy
+#                   credentials re-register afterwards (their data still moves)
 #   --rds-setup     this install's RDS databases are managed with
 #                   scripts/selfhost/rds-setup.sh (next to this script). First
 #                   install then runs "rds-setup.sh post" after the HoopDb
@@ -74,6 +96,7 @@ repo="${AGENT_RELAY_INFRA_REPO:-AgentWorkforce/infra}"
 signer_workflow="$repo/.github/workflows/release-agent-relay.yml"
 version="" registry="" profile="" db_instance="" context="" namespace="agent-relay" release="agent-relay"
 prefix="agent-relay" apply=false assume_yes=false first_install=false rds_setup=false values=()
+rta_phase="" rta_actor_values=() rta_reregister_legacy=false
 while [ $# -gt 0 ]; do
   case "$1" in
     --version) [ $# -ge 2 ] || die "--version needs a value"; version=$2; shift 2 ;;
@@ -87,6 +110,9 @@ while [ $# -gt 0 ]; do
     --prefix) [ $# -ge 2 ] || die "--prefix needs a value"; prefix=$2; shift 2 ;;
     --first-install) first_install=true; shift ;;
     --rds-setup) rds_setup=true; shift ;;
+    --relaycast-actors) [ $# -ge 2 ] || die "--relaycast-actors needs credentials or cutover"; rta_phase=$2; shift 2 ;;
+    --actors-values) [ $# -ge 2 ] || die "--actors-values needs a value"; rta_actor_values+=("$2"); shift 2 ;;
+    --reregister-legacy) rta_reregister_legacy=true; shift ;;
     --apply) apply=true; shift ;;
     --yes) assume_yes=true; shift ;;
     -h|--help) usage; exit 0 ;;
@@ -105,6 +131,22 @@ case "$profile" in
   *) die "--profile must be eks, eks-native or eks-rds-native (the profile this install already uses)" ;;
 esac
 [ "${#values[@]}" -gt 0 ] || die "--values must point to your existing values file(s)"
+case "$rta_phase" in
+  "") [ "${#rta_actor_values[@]}" -eq 0 ] && ! $rta_reregister_legacy || die "--actors-values and --reregister-legacy need --relaycast-actors" ;;
+  credentials|cutover)
+    [ -f "$here/relaycast-to-actors.sh" ] || die "relaycast-to-actors.sh must sit next to this script"
+    # shellcheck source=relaycast-to-actors.sh
+    . "$here/relaycast-to-actors.sh"
+    # Its state under STATE_DIR (and the work files) must stay owner-only:
+    # the STATE_DIR guard above refuses anything wider on the next run.
+    umask 077
+    # A failure inside its functions must reach the ERR trap (rollback hint),
+    # not end the run silently.
+    set -o errtrace
+    # shellcheck disable=SC2034  # read by relaycast-to-actors.sh
+    rta_run="relaycast-actors-$(date -u +%Y%m%d%H%M%S)" rta_actor_files=() ;;
+  *) die "--relaycast-actors must be credentials or cutover" ;;
+esac
 for v in "${values[@]}"; do [ -f "$v" ] || die "values file not found: $v"; done
 if $apply && [ -z "$db_instance" ]; then die "--apply needs --db-instance so a snapshot is taken first"; fi
 for tool in gh jq yq helm kubectl tar; do command -v "$tool" >/dev/null || die "missing tool: $tool"; done
@@ -261,6 +303,12 @@ else
   fi
 fi
 say "plan: changes=$plan_changes"
+if [ -n "$rta_phase" ]; then
+  say "== 2b. Relaycast to durable-actors ($rta_phase): preconditions"
+  rta_check
+  if [ "$rta_phase" = cutover ]; then rta_check_cutover; fi
+  say "   preconditions hold (Relaycast on PostgreSQL in $release, chart $chart_version)"
+fi
 
 say "== 3. Mirror release images into $registry"
 jq -r '.images[].ref | "---\nimage: \(.)"' "$manifest" > "$work/release-images.rendered.yaml"
@@ -272,7 +320,8 @@ if ! $apply; then
   say ""; say "Plan only. Re-run with --apply --db-instance <id> to snapshot and $($first_install && echo install || echo upgrade)."
   exit 0
 fi
-if $first_install; then action="Install new release"; else action="Upgrade release"; fi
+if [ -n "$rta_phase" ]; then action="Run the Relaycast durable-actors $rta_phase phase on"
+elif $first_install; then action="Install new release"; else action="Upgrade release"; fi
 if ! $assume_yes; then
   printf '%s %s in %s to %s? Type the version to continue: ' "$action" "$release" "$namespace" "$version"
   read -r answer; [ "$answer" = "$version" ] || die "not confirmed; nothing changed"
@@ -296,9 +345,13 @@ rollback_hint() {
     say "   the new release has no earlier revision; inspect its Jobs and Pods before retrying"
   fi
   say "   database snapshot:      $snapshot (restore only if a migration damaged data)"
+  if [ -n "$rta_phase" ]; then rta_rollback_hint; fi
   exit 1
 }
 trap 'rollback_hint' ERR
+# A Relaycast migration refusal after the snapshot also prints the rollback
+# for the phase it reached.
+if [ -n "$rta_phase" ]; then die() { printf 'agent-relay-upgrade: %s\n' "$*" >&2; rollback_hint; }; fi
 
 # rds-setup.sh reads its inputs from the environment (never argv).
 rds_env=(env NAMESPACE="$namespace" KUBE_CONTEXT="$context" STATE_DIR="$state_dir")
@@ -348,7 +401,9 @@ wait_jobs() {
 }
 mirrored_ref() { jq -r --arg n "$1" --arg root "${registry}/${prefix}" '[.images[] | select(.name == $n) | "\($root)/\(.ref)"] | first // empty' "$manifest"; }
 
-if $first_install; then
+if [ -n "$rta_phase" ]; then
+  if [ "$rta_phase" = credentials ]; then rta_credentials; else rta_cutover; fi
+elif $first_install; then
   say "== 5. helm install $release at $version"
   "${helmx[@]}" install "$release" "$chart" "${base[@]}" --create-namespace --no-hooks --timeout 20m
   migration_job=$("${helmx[@]}" get manifest "$release" \
@@ -402,7 +457,9 @@ fi
 failed=$("${kube[@]}" get jobs -l "$release_selector" -o json | jq -r '[.items[]|select((.status.failed // 0) > 0 and (.status.succeeded // 0) == 0)|.metadata.name]|join(",")')
 [ -z "$failed" ] || { say "   failed Jobs: $failed"; false; }
 trap - ERR
-if $first_install; then
+if [ -n "$rta_phase" ]; then
+  say ""; say "Relaycast durable-actors $rta_phase phase done in $release (chart $chart_version). Snapshot kept: $snapshot"
+elif $first_install; then
   say ""; say "Installed $release at $version (infra $commit, chart $chart_version). Snapshot kept: $snapshot"
 else
   say ""; say "Upgraded $release to $version (infra $commit, chart $chart_version). Snapshot kept: $snapshot"

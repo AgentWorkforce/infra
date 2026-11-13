@@ -119,6 +119,9 @@ relaycast:
   runtime:
     backend: durable-actors
     durableActors:
+      # Dial actor sockets in-cluster: the actors' public URL is an internet
+      # name the gateway may not reach from inside the VPC.
+      socketOrigin: controlPlane
       # relaycast main 4e90b169 (#626), publish-actors-images run 41805228035, tag 12.7.0-actors.1
       gateway:
         image:

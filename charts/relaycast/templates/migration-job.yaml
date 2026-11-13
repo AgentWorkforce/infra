@@ -1,0 +1,216 @@
+{{- /*
+Moving a runtime.backend=postgres release to durable-actors with every row and
+file (docs/relaycast-postgres-to-actors-migration.md). Renders nothing unless
+migration.enabled. scripts/selfhost/agent-relay-upgrade.sh
+--relaycast-actors cutover renders one step at a time with
+`helm template --show-only templates/migration-job.yaml` and applies it
+itself, so a step is never part of a release:
+
+  preflight, export  backend postgres, the self-host image; the Relaycast
+                     Deployment must be scaled to 0 for export (one snapshot,
+                     no writers, and the data claim is ReadWriteOnce)
+  files, import      backend durable-actors, the actors gateway image
+                     (relaycast-migrate), after the cutover
+  verify             backend durable-actors: a realtime round trip through
+                     the gateway (throwaway workspace, /v1/ws) before go-live
+  open               backend durable-actors: go-live; until then every
+                     imported workspace answers 503
+
+Every step mounts the data claim (kept across the cutover by
+persistence.annotations helm.sh/resource-policy: keep) at /data: the old
+files are /data/relaycast-files and the export is /data/migration/<runId>.
+*/ -}}
+{{- if (.Values.migration | default dict).enabled }}
+{{- include "relaycast.validate" . }}
+{{- $m := .Values.migration }}
+{{- $step := toString $m.step }}
+{{- $runId := toString $m.runId }}
+{{- if not (regexMatch "^[A-Za-z0-9_-]{8,64}$" $runId) }}{{ fail "migration.runId must be 8-64 URL-safe characters" }}{{ end }}
+{{- $postgresStep := has $step (list "preflight" "export") }}
+{{- $actorStep := has $step (list "files" "import" "verify" "open") }}
+{{- if not (or $postgresStep $actorStep) }}{{ fail "migration.step must be preflight, export, files, import, verify or open" }}{{ end }}
+{{- if and $postgresStep (not (include "relaycast.postgres.enabled" .)) }}{{ fail (printf "migration.step=%s runs on the PostgreSQL release (runtime.backend=postgres)" $step) }}{{ end }}
+{{- if and $actorStep (not (include "relaycast.actors.enabled" .)) }}{{ fail (printf "migration.step=%s runs after the cutover (runtime.backend=durable-actors)" $step) }}{{ end }}
+{{- if and (eq $step "files") (eq (toString .Values.runtime.durableActors.fileStore.driver) "local") (not (hasPrefix "/data/" (toString .Values.runtime.durableActors.fileStore.dir))) }}{{ fail "migration.step=files with a local file store needs runtime.durableActors.fileStore.dir under /data (the data claim the step mounts)" }}{{ end }}
+{{- if and (eq $step "preflight") (not (regexMatch "^[0-9]+$" (toString $m.arSince))) }}{{ fail "migration.arSince must be epoch seconds (when credentials.format=ar was enabled)" }}{{ end }}
+{{- /* The online preflight shares the data claim with the running pod: it runs on
+that pod's node, which a ReadWriteOncePod claim cannot allow. */ -}}
+{{- if and (eq $step "preflight") (eq (toString .Values.persistence.accessMode) "ReadWriteOncePod") }}{{ fail "migration.step=preflight cannot share a ReadWriteOncePod data claim with the running Relaycast pod" }}{{ end }}
+{{- $exportDir := printf "/data/migration/%s" $runId }}
+{{- $da := .Values.runtime.durableActors }}
+{{- $name := printf "%s-migration-%s-%s" (include "relaycast.fullname" . | trunc 30 | trimSuffix "-") $step ($runId | sha256sum | trunc 8) }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace | quote }}
+  labels:
+    {{- include "relaycast.labels" . | nindent 4 }}
+    app.kubernetes.io/component: migration-{{ $step }}
+    agentworkforce.dev/migration-run: {{ $runId | quote }}
+spec:
+  # A step is idempotent (export rewrites its files, import resumes), but a
+  # failure needs an operator to read it: no automatic retries.
+  backoffLimit: 0
+  activeDeadlineSeconds: {{ $m.activeDeadlineSeconds | int64 }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ include "relaycast.name" . }}-migration
+        app.kubernetes.io/instance: {{ .Release.Name }}
+        app.kubernetes.io/component: migration-{{ $step }}
+    spec:
+      restartPolicy: Never
+      # The gateway's identity (files: it holds the file store's bucket
+      # permissions through workload identity, as the gateway does).
+      serviceAccountName: {{ include "relaycast.serviceAccountName" . }}
+      automountServiceAccountToken: false
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: {{ $step }}
+          {{- if $postgresStep }}
+          image: {{ include "relaycast.image" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args:
+            {{- if eq $step "preflight" }}
+            - migration-preflight
+            - --file-dir
+            - /data/relaycast-files
+            - --ar-since
+            - {{ $m.arSince | toString | quote }}
+            # The export goes to the data claim: room for it is part of the gate.
+            - --export-dir
+            - /data
+            {{- if $m.allowLegacy }}
+            - --allow-legacy
+            {{- end }}
+            {{- else }}
+            - export-for-actors
+            - --out
+            - {{ $exportDir | quote }}
+            - --run-id
+            - {{ $runId | quote }}
+            {{- end }}
+          env:
+            {{- include "relaycast.postgres.databaseEnv" (dict "root" . "file" "database-runtime-url" "separateAnalyticsCa" true) | nindent 12 }}
+            {{- if eq $step "export" }}
+            # Export blocks are sealed with a key derived from it.
+            - name: RELAYCAST_INTERNAL_SECRET_FILE
+              value: {{ include "relaycast.secretMountPath" . }}/internal-secret
+            {{- end }}
+          {{- else }}
+          image: {{ include "relaycast.actors.imageRef" (dict "image" $da.gateway.image "path" "runtime.durableActors.gateway.image") | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: [node, /opt/relaycast/node_modules/@relaycast/actors-gateway/dist/migrate.js]
+          args:
+            {{- if eq $step "files" }}
+            - files
+            - --dir
+            - {{ $exportDir | quote }}
+            - --from
+            - /data/relaycast-files
+            {{- else if eq $step "verify" }}
+            - verify-realtime
+            - --gateway
+            - {{ printf "http://%s.%s.svc:%d" (include "relaycast.fullname" .) .Release.Namespace (.Values.service.port | int) | quote }}
+            {{- else if eq $step "open" }}
+            - open
+            - --dir
+            - {{ $exportDir | quote }}
+            - --gateway
+            - {{ printf "http://%s.%s.svc:%d" (include "relaycast.fullname" .) .Release.Namespace (.Values.service.port | int) | quote }}
+            {{- else }}
+            - import
+            - --dir
+            - {{ $exportDir | quote }}
+            - --gateway
+            - {{ printf "http://%s.%s.svc:%d" (include "relaycast.fullname" .) .Release.Namespace (.Values.service.port | int) | quote }}
+            {{- end }}
+          env:
+            {{- if eq $step "files" }}
+            {{- /* The gateway's file store settings, exactly as the gateway reads them. */}}
+            {{- range (include "relaycast.actors.gatewayEnv" . | fromYamlArray) }}
+            {{- if has .name (list "RELAYCAST_FILE_STORE" "RELAYCAST_FILE_DIR" "RELAYCAST_GCS_BUCKET" "RELAYCAST_GCS_PREFIX" "RELAYCAST_S3_BUCKET" "RELAYCAST_S3_REGION" "RELAYCAST_S3_ENDPOINT" "RELAYCAST_S3_PREFIX" "RELAYCAST_S3_FORCE_PATH_STYLE" "AWS_ACCESS_KEY_ID" "AWS_SECRET_ACCESS_KEY") }}
+            - {{ toJson . }}
+            {{- end }}
+            {{- end }}
+            {{- end }}
+            # Opens the sealed export blocks, and authenticates to the gateway.
+            - name: RELAYCAST_INTERNAL_SECRET_FILE
+              value: {{ include "relaycast.secretMountPath" . }}/internal-secret
+          {{- end }}
+          securityContext:
+            {{- toYaml .Values.containerSecurityContext | nindent 12 }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+            - name: data
+              mountPath: /data
+              {{- if ne $step "export" }}
+              {{- if not (and (eq $step "files") (eq (toString $da.fileStore.driver) "local")) }}
+              readOnly: true
+              {{- end }}
+              {{- end }}
+            - name: secrets
+              mountPath: {{ include "relaycast.secretMountPath" . }}
+              readOnly: true
+            {{- if $postgresStep }}
+            - name: postgres-ca
+              mountPath: /etc/postgres-ca
+              readOnly: true
+            {{- end }}
+      volumes:
+        - name: tmp
+          emptyDir:
+            sizeLimit: 256Mi
+        - name: data
+          persistentVolumeClaim:
+            claimName: {{ include "relaycast.claimName" . }}
+        # Only what the step needs: never the application's other secrets.
+        - name: secrets
+          secret:
+            secretName: {{ .Values.existingSecret | quote }}
+            defaultMode: 0440
+            items:
+              {{- if $postgresStep }}
+              - key: {{ .Values.secretKeys.databaseRuntimeUrl | quote }}
+                path: database-runtime-url
+              {{- end }}
+              {{- if ne $step "preflight" }}
+              - key: {{ .Values.secretKeys.internalSecret | quote }}
+                path: internal-secret
+              {{- end }}
+        {{- if $postgresStep }}
+        {{- include "relaycast.postgres.caVolume" . | nindent 8 }}
+        {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- if eq $step "preflight" }}
+      # Online: on the running Relaycast pod's node, so a ReadWriteOnce claim attaches.
+      affinity:
+        podAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchLabels:
+                  {{- include "relaycast.selectorLabels" . | nindent 18 }}
+              topologyKey: kubernetes.io/hostname
+      {{- else }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}
