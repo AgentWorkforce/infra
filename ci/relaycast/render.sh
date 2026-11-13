@@ -6,7 +6,7 @@ set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)
 CHART="$ROOT/charts/relaycast"
 V="$CHART/ci/postgres-values.yaml"
-DIGEST=sha256:84f59482cb82f3c50d38f45cfca7d004cffaa95652782dbfc93c179cc343ac59
+DIGEST=sha256:1307bd845031a7466e65ebaf08bc8b826e2837d90f58c9b5a6a1d673c62dad93
 fail=0
 err() { echo "::error::$*"; fail=1; }
 render() { helm template ci "$CHART" --namespace ci -f "$V" "$@"; }
@@ -121,7 +121,8 @@ is "Postgres analytics CA" "$(yq "$pod.containers[0].env[] | select(.name == \"N
 is "Postgres explicit DB CA" "$(yq "$pod.containers[0].env[] | select(.name == \"RELAYCAST_DATABASE_CA_FILE\") | .value" <<<"$pgpod")" /etc/postgres-ca/ca.crt
 is "Postgres init CA stays separate" "$(yq "$pod.initContainers[0].env[] | select(.name == \"NODE_EXTRA_CA_CERTS\") | .value" <<<"$pgpod")" /etc/postgres-ca/ca.crt
 ! yq "$job" <<<"$pgcast" | grep -Eq 'RELAYCAST_TELEMETRY_|analytics-token|analytics-ca' || err "migration Job carries analytics"
-expect_refused "old PostgreSQL image" "immutable Relaycast image with collector support" "${analytics[@]}"
+expect_refused "old PostgreSQL image" "immutable Relaycast image with collector support" "${analytics[@]}" \
+  --set-string runtime.postgres.image.digest=sha256:84f59482cb82f3c50d38f45cfca7d004cffaa95652782dbfc93c179cc343ac59
 expect_refused "non-TLS collector" "HTTPS DNS endpoint" "${analytics[@]}" --set-string analytics.collectorUrl=http://collector.ci.svc:8080/v1/events
 expect_refused "collector userinfo" "HTTPS DNS endpoint" "${analytics[@]}" --set-string analytics.collectorUrl=https://user@collector.ci.svc:8443/v1/events
 expect_refused "bad collector port" "port must be" "${analytics[@]}" --set-string analytics.collectorUrl=https://collector.ci.svc:65536/v1/events
