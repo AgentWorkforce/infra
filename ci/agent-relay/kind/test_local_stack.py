@@ -510,6 +510,7 @@ class LocalTests(unittest.TestCase):
             names = {e["name"]: e.get("value") for c in api["spec"]["template"]["spec"]["containers"] for e in c.get("env", [])}
             self.assertEqual(names["SELFHOST_OIDC_ISSUER"], "https://accounts.google.com")
             self.assertEqual(names["SELFHOST_OIDC_ALLOWED_DOMAINS"], "agentrelay.com")
+            self.assertEqual(names["SELFHOST_AUTO_JOIN_DOMAINS"], "agentrelay.com")
             self.assertIn("SELFHOST_OIDC_CLIENT_SECRET_FILE", names)
             with patch.object(stack, "apply") as apply:
                 stack.google_oidc_egress()
