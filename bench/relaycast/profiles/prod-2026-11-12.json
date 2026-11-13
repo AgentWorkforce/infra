@@ -1,0 +1,147 @@
+{
+ "source": "hosted Relaycast edge analytics, aggregated by relaycast-actors-bench (7-day window, November 2026)",
+ "aggregation": "Public, aggregated profile. Rates are rounded to the nearest 10 req/s and the burst factor to 0.5. Routes are grouped into categories whose shares are rounded to 5 % (message writes: 0.5 %); a category share is split evenly across its listed routes, so per-route shares are synthetic, not measured. About 15 % of traffic (sockets, internal and admin calls) is not replayed. No hostnames, tenant data or raw per-route counts.",
+ "rps_avg": 30,
+ "rps_peak_hour": 40,
+ "rps_peak_minute_max": 70,
+ "burst": {
+  "max_1min_over_avg": 2.5
+ },
+ "categories": {
+  "delivery and inbox polling": 0.25,
+  "presence heartbeat": 0.1,
+  "agent and workspace reads": 0.3,
+  "message history reads": 0.2,
+  "message writes": 0.005,
+  "not replayed (sockets, internal, admin)": 0.145
+ },
+ "routes": [
+  {
+   "method": "GET",
+   "path": "/v1/deliveries",
+   "category": "delivery and inbox polling",
+   "share": 0.08333
+  },
+  {
+   "method": "GET",
+   "path": "/v1/inbox",
+   "category": "delivery and inbox polling",
+   "share": 0.08333
+  },
+  {
+   "method": "GET",
+   "path": "/v1/workspace/events",
+   "category": "delivery and inbox polling",
+   "share": 0.08333
+  },
+  {
+   "method": "POST",
+   "path": "/v1/agents/heartbeat",
+   "category": "presence heartbeat",
+   "share": 0.1
+  },
+  {
+   "method": "GET",
+   "path": "/v1/agents/:id",
+   "category": "agent and workspace reads",
+   "share": 0.04286
+  },
+  {
+   "method": "GET",
+   "path": "/v1/agents",
+   "category": "agent and workspace reads",
+   "share": 0.04286
+  },
+  {
+   "method": "GET",
+   "path": "/v1/agent",
+   "category": "agent and workspace reads",
+   "share": 0.04286
+  },
+  {
+   "method": "GET",
+   "path": "/v1/workspace",
+   "category": "agent and workspace reads",
+   "share": 0.04286
+  },
+  {
+   "method": "GET",
+   "path": "/v1/nodes",
+   "category": "agent and workspace reads",
+   "share": 0.04286
+  },
+  {
+   "method": "GET",
+   "path": "/v1/channels",
+   "category": "agent and workspace reads",
+   "share": 0.04286
+  },
+  {
+   "method": "GET",
+   "path": "/v1/channels/:channel",
+   "category": "agent and workspace reads",
+   "share": 0.04286
+  },
+  {
+   "method": "GET",
+   "path": "/v1/messages/:id/replies",
+   "category": "message history reads",
+   "share": 0.04
+  },
+  {
+   "method": "GET",
+   "path": "/v1/dm/:id/messages",
+   "category": "message history reads",
+   "share": 0.04
+  },
+  {
+   "method": "GET",
+   "path": "/v1/channels/:channel/messages",
+   "category": "message history reads",
+   "share": 0.04
+  },
+  {
+   "method": "GET",
+   "path": "/v1/dm/conversations",
+   "category": "message history reads",
+   "share": 0.04
+  },
+  {
+   "method": "GET",
+   "path": "/v1/messages/:id",
+   "category": "message history reads",
+   "share": 0.04
+  },
+  {
+   "method": "POST",
+   "path": "/v1/dm",
+   "category": "message writes",
+   "share": 0.00125
+  },
+  {
+   "method": "POST",
+   "path": "/v1/channels/:channel/messages",
+   "category": "message writes",
+   "share": 0.00125
+  },
+  {
+   "method": "POST",
+   "path": "/v1/messages/:id/replies",
+   "category": "message writes",
+   "share": 0.00125
+  },
+  {
+   "method": "POST",
+   "path": "/v1/messages/:id/read",
+   "category": "message writes",
+   "share": 0.00125
+  }
+ ],
+ "unmeasured_use_defaults": [
+  "workspaces_active_peak",
+  "agents_per_workspace",
+  "ws_connections_peak",
+  "channel_members",
+  "upload"
+ ]
+}

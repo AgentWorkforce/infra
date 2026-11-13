@@ -1,0 +1,10 @@
+# PG arm on relaycast#658 alone on top of #657: AgentWorkforce/relaycast
+# bench/pg-event-coalescing-on-2465d8f3 @ 3527ecc8 (direct child of 2465d8f3;
+# per-workspace group commit of workspace_events appends, +267 lines incl. a
+# test). Self-built with the repo Dockerfile, bench ECR only (not released).
+relaycast:
+  runtime:
+    postgres:
+      image:
+        repository: 805532413586.dkr.ecr.us-west-2.amazonaws.com/relaycast-actors-bench/relaycast-self-host
+        digest: sha256:e896665056dc7b826bc7e68f91d8ca731732ba8250bc0c53a17a9f8c26d4ced0

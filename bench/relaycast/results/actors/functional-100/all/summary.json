@@ -1,0 +1,184 @@
+{
+ "arm": "actors",
+ "dir": "<results dir>",
+ "phases": [
+  {
+   "label": "f100-dm",
+   "kind": "dm",
+   "offeredRate": 50,
+   "startedAt": 1794506611259,
+   "endedAt": 1794506821247,
+   "issued": 8999
+  },
+  {
+   "label": "f100-chan",
+   "kind": "channel",
+   "offeredRate": 20,
+   "startedAt": 1794506821247,
+   "endedAt": 1794507061294,
+   "issued": 3599
+  },
+  {
+   "label": "f100-upload",
+   "kind": "upload",
+   "offeredRate": 5,
+   "startedAt": 1794507061294,
+   "endedAt": 1794507121297,
+   "issued": 299
+  }
+ ],
+ "routes": [
+  {
+   "arm": "actors",
+   "phase": "f100-dm",
+   "route": "POST /v1/dm",
+   "requests": 8999,
+   "ok": 177,
+   "rps_ok": 0.84,
+   "err_rate": 0.98033,
+   "r429": 0,
+   "r5xx": 0,
+   "net_err": 8822,
+   "p50": 29968.179,
+   "p95": 29968.179,
+   "p99": 29968.179,
+   "max": 30008.632000000216,
+   "corrected_p50": 29968.179,
+   "corrected_p95": 29968.179,
+   "corrected_p99": 29968.179
+  },
+  {
+   "arm": "actors",
+   "phase": "f100-chan",
+   "route": "POST /v1/channels/:name/messages",
+   "requests": 800,
+   "ok": 0,
+   "rps_ok": 0,
+   "err_rate": 1,
+   "r429": 0,
+   "r5xx": 0,
+   "net_err": 800,
+   "p50": 29968.179,
+   "p95": 29968.179,
+   "p99": 29968.179,
+   "max": 30001.3610000005,
+   "corrected_p50": 105081.109,
+   "corrected_p95": 204415.322,
+   "corrected_p99": 204415.322
+  },
+  {
+   "arm": "actors",
+   "phase": "f100-upload",
+   "route": "POST /v1/files/upload",
+   "requests": 299,
+   "ok": 0,
+   "rps_ok": 0,
+   "err_rate": 1,
+   "r429": 0,
+   "r5xx": 189,
+   "net_err": 110,
+   "p50": 22244.234,
+   "p95": 29968.179,
+   "p99": 29968.179,
+   "max": 30001.332999999635,
+   "corrected_p50": null,
+   "corrected_p95": null,
+   "corrected_p99": null
+  },
+  {
+   "arm": "actors",
+   "phase": "f100-upload",
+   "route": "upload_total_raw",
+   "requests": 0,
+   "ok": 0,
+   "rps_ok": 0,
+   "err_rate": null,
+   "r429": 0,
+   "r5xx": 0,
+   "net_err": 0,
+   "p50": 22244.234,
+   "p95": 29968.179,
+   "p99": 29968.179,
+   "max": 30002,
+   "corrected_p50": null,
+   "corrected_p95": null,
+   "corrected_p99": null
+  }
+ ],
+ "delivery": [
+  {
+   "arm": "actors",
+   "phase": "f100-dm",
+   "deliveries": 2920,
+   "deliveries_per_s": 13.91,
+   "p50": 214578.174,
+   "p95": 417421.044,
+   "p99": 438173.834,
+   "p999": 444290.513,
+   "max": 443499
+  }
+ ],
+ "integrity": [
+  {
+   "arm": "actors",
+   "phase": "f100-dm",
+   "expected": 177,
+   "delivered": 177,
+   "lost": 0,
+   "duplicate": 0,
+   "redelivered": 0,
+   "reordered": 0,
+   "unexpected": 0,
+   "truncated": 0
+  },
+  {
+   "arm": "actors",
+   "phase": "f100-chan",
+   "expected": 0,
+   "delivered": 0,
+   "lost": 0,
+   "duplicate": 0,
+   "redelivered": 0,
+   "reordered": 0,
+   "unexpected": 0,
+   "truncated": 0
+  }
+ ],
+ "sinks": [
+  {
+   "shard": 0,
+   "sockets": 80,
+   "connected": 1,
+   "drops": 79,
+   "connect": {
+    "n": 80,
+    "mean": 18778.063,
+    "min": 10658,
+    "p50": 19909.147,
+    "p95": 23350.144,
+    "p99": 23676.1,
+    "p999": 23676.1,
+    "max": 23622
+   },
+   "reconnect": {
+    "n": 0,
+    "mean": null,
+    "min": null,
+    "p50": null,
+    "p95": null,
+    "p99": null,
+    "p999": null,
+    "max": null
+   },
+   "counters": {
+    "frame context.update": 1050,
+    "join 200": 100,
+    "deliver": 2920,
+    "ws_drop 4400": 79,
+    "connect_error ws error": 1276
+   },
+   "drain": [],
+   "rssBytes": 116174848
+  }
+ ]
+}

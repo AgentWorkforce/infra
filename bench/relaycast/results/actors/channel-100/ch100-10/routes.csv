@@ -1,0 +1,2 @@
+arm,phase,route,requests,ok,rps_ok,err_rate,r429,r5xx,net_err,p50,p95,p99,max,corrected_p50,corrected_p95,corrected_p99
+actors,ch100-10,POST /v1/channels/:name/messages,795,114,0.47,0.8566,0,0,681,29968.179,29968.179,29968.179,30002.03599999938,85352.383,155995.384,161496.549

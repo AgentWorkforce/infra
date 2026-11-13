@@ -1,0 +1,201 @@
+{
+ "pg": {
+  "name": "Postgres (+#657, as shipped)",
+  "integrity": {
+   "expected": 68798,
+   "delivered": 68798,
+   "lost": 0,
+   "duplicate": 4,
+   "redelivered": 0,
+   "reordered": 0,
+   "reordered_after_timeout": 0,
+   "unexpected": 0
+  },
+  "sends": {
+   "req": 20605,
+   "ok": 12753,
+   "errRate": 0.3810725552050473
+  },
+  "codes": {
+   "429": 0,
+   "5xx": 0,
+   "timeout": 8205
+  },
+  "send": {
+   "p50": 37.043,
+   "p95": 29968.179,
+   "p99": 29968.179
+  },
+  "delivery": {
+   "p50": 34.087,
+   "p95": 107.72,
+   "p99": 206.664
+  },
+  "uploads": [
+   {
+    "route": "POST /v1/files/upload",
+    "n": 993,
+    "err": 0.35549,
+    "p95": 29968.179
+   },
+   {
+    "route": "PUT /_relayfiles",
+    "n": 640,
+    "err": 0,
+    "p95": 9.587
+   },
+   {
+    "route": "POST /v1/files/:id/complete",
+    "n": 640,
+    "err": 0,
+    "p95": 35.289
+   }
+  ],
+  "chaos": [
+   {
+    "action": "kill-relaycast",
+    "at": 1794539167394,
+    "recoveredS": 47,
+    "errorsDuring": 14,
+    "socketDrops": 90
+   },
+   {
+    "action": "kill-actor",
+    "at": 1794540066216,
+    "recoveredS": 62,
+    "errorsDuring": 0,
+    "socketDrops": 0
+   },
+   {
+    "action": "node-drain",
+    "at": 1794540966819,
+    "recoveredS": 367,
+    "errorsDuring": 1028,
+    "socketDrops": 90
+   },
+   {
+    "action": "rds-failover",
+    "at": 1794542165716,
+    "recoveredS": null,
+    "errorsDuring": -1042,
+    "note": "not recovered before end"
+   },
+   {
+    "action": "manual-restart-after-rds-failover",
+    "at": 1794593753000,
+    "note": "not recovered before end",
+    "recoveredS": null,
+    "errorsDuring": 0
+   }
+  ],
+  "pods": {
+   "relaycast": {
+    "startMi": 87,
+    "endMi": 479,
+    "peakMi": 574
+   },
+   "controlPlane": null,
+   "actorHosts": null
+  }
+ },
+ "actors": {
+  "name": "Durable actors (12.8.0-actors.1, as shipped)",
+  "integrity": {
+   "expected": 76248,
+   "delivered": 76248,
+   "lost": 0,
+   "duplicate": 0,
+   "redelivered": 19373,
+   "reordered": 0,
+   "reordered_after_timeout": 0,
+   "unexpected": 60
+  },
+  "sends": {
+   "req": 20548,
+   "ok": 13878,
+   "errRate": 0.3246058010511972
+  },
+  "codes": {
+   "429": 0,
+   "5xx": 6268,
+   "timeout": 961
+  },
+  "send": {
+   "p50": 4214.494,
+   "p95": 28155.786,
+   "p99": 29968.179
+  },
+  "delivery": {
+   "p50": 4977.287,
+   "p95": 181693.063,
+   "p99": 339051.244
+  },
+  "uploads": [
+   {
+    "route": "POST /v1/files/upload",
+    "n": 1050,
+    "err": 0.30286,
+    "p95": 23676.1
+   },
+   {
+    "route": "PUT /_relayfiles",
+    "n": 732,
+    "err": 0.22678,
+    "p95": 5046.767
+   },
+   {
+    "route": "POST /v1/files/:id/complete",
+    "n": 732,
+    "err": 0.10246,
+    "p95": 16059.55
+   }
+  ],
+  "chaos": [
+   {
+    "action": "kill-relaycast",
+    "at": 1794539774312,
+    "recoveredS": 63,
+    "errorsDuring": 50,
+    "socketDrops": 90
+   },
+   {
+    "action": "kill-actor",
+    "at": 1794540676813,
+    "recoveredS": null,
+    "errorsDuring": -515,
+    "note": "not recovered before end"
+   },
+   {
+    "action": "node-drain",
+    "at": 1794541574965,
+    "recoveredS": null,
+    "errorsDuring": -1336,
+    "note": "not recovered before end"
+   },
+   {
+    "action": "rds-failover",
+    "at": 1794542774850,
+    "recoveredS": null,
+    "errorsDuring": -3035,
+    "note": "not recovered before end"
+   }
+  ],
+  "pods": {
+   "relaycast": {
+    "startMi": 54,
+    "endMi": 70,
+    "peakMi": 71
+   },
+   "controlPlane": {
+    "startMi": 152,
+    "endMi": 638,
+    "peakMi": 645
+   },
+   "actorHosts": {
+    "startMi": 428,
+    "endMi": 363,
+    "peakMi": 1063
+   }
+  }
+ }
+}
