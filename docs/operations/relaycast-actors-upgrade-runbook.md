@@ -48,8 +48,8 @@ precondition. Plan mode (no `--apply`) only checks and prints.
       `publicUrl`, zone, mirrored image repositories and digests). The
       upgrader pins the Relaycast Secret, keyring, bootstrap mapping,
       `retainForMigration` and analytics-off itself. Restate the install's
-  `relaycast.baseUrl` there: the actors profile's placeholder replaces it, and
-  the render fails without it.
+      `relaycast.baseUrl` there: the actors profile's placeholder replaces it,
+      and the render fails without it.
 - [ ] The Relaycast Secret has a `file-signing-secret` key with the same bytes
       as the actor env's `RELAYCAST_FILE_SIGNING_SECRET`. A PostgreSQL install
       never needed it. Without it the gateway can't start, and the plan
@@ -129,8 +129,13 @@ clean-up.
 1. Put the pinned values the upgrader printed and your `--actors-values` into
    your values.
 2. `relaycast-rekey --purge <run id> --confirm` in relay-control.
-3. Delete `/data/migration/<run>` on the Relaycast data claim, then set
-   `persistence.retainForMigration: false` once files are confirmed in S3.
+3. Once the files are confirmed in S3, set
+   `persistence.retainForMigration: false` and upgrade. The data claim carries
+   `helm.sh/resource-policy: keep`, so Helm leaves it in place (with the
+   export under `/data/migration/<run>`). Delete it yourself:
+   `kubectl -n <namespace> get pvc` names it; `kubectl -n <namespace> delete pvc <claim>`.
+   If its StorageClass retains volumes, also delete the released PV and its
+   EBS volume (`kubectl get pv` shows the volume id).
 4. Drop the Relaycast PostgreSQL database after your retention period.
 
 Known gaps: Relaycast analytics stop at the cutover (relaycast #648); blob
