@@ -1,8 +1,21 @@
-Agent Relay Helm charts
-Copyright 2025-2026 Agent Workforce Incorporated
+Agent Relay infrastructure (Helm charts, Terraform and install scripts)
+Copyright 2025-2026 Agent Workforce, Inc.
 
-The first-party Helm chart content in this repository is licensed under the
-Apache License, Version 2.0 (see LICENSE).
+From release agent-relay-2026.11.2, the first-party content in this repository
+is licensed under the Functional Source License, Version 1.1, ALv2 Future
+License (FSL-1.1-ALv2; see LICENSE). Each version converts to the Apache
+License, Version 2.0 two years after it is made available.
+
+Releases before agent-relay-2026.11.2, and commits before this change, remain
+available under the Apache License, Version 2.0 (docs/licenses/Apache-2.0.txt).
+
+Contributions made under the Apache License, Version 2.0 before this change
+keep that license and their authors' notices; they are included in this work
+as Apache-2.0 licensed material.
+
+Enterprise features (single sign-on, SCIM provisioning, audit logs, hard delete
+and retention controls) require an Agent Relay Enterprise agreement for
+production use. Contact founders@agentrelay.com.
 
 Third-party chart dependencies keep their own licenses and notices; see
 THIRD_PARTY_NOTICES.md.

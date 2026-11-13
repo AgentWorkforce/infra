@@ -1,7 +1,7 @@
 ---
 name: setting-up-self-hosted-agent-relay-gcp
 description: Guides and verifies a customer-owned self-hosted Agent Relay installation on GCP using the agent-relay Helm umbrella chart, GKE, Cloud SQL, GCS, Relaycast, Sessions Pipeline with native History (read API and ingest edge), the control-plane API, Dashboard, and Agent Relay Desktop. Use whenever planning, installing, upgrading, recovering, or validating this GCP self-hosted suite.
-license: Apache-2.0
+license: FSL-1.1-ALv2
 compatibility: Requires gcloud, kubectl, Helm 3.10+, python3, kubeconform, jq, yq, node, openssl, curl and timeout (dig when VERIFY_DNS_RESOLVER is set), network access to the target GKE cluster and the image registry, and operator credentials for the customer GCP project.
 metadata:
   chart: agent-relay

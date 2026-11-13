@@ -3,7 +3,8 @@
 This file records source and license evidence for software bundled as chart dependencies
 or referenced by this Helm chart repository. AgentWorkforce-authored material
 in this repository, including first-party Helm chart code, is licensed under
-Apache License 2.0 by the root [`LICENSE`](LICENSE). Third-party components
+FSL-1.1-ALv2 by the root [`LICENSE`](LICENSE) (Apache License 2.0 before
+release agent-relay-2026.11.2; see [`NOTICE`](NOTICE)). Third-party components
 retain their own licenses and notices; this file does not relicense them and
 is not legal advice.
 
@@ -17,9 +18,10 @@ fetched at build or release time, pinned by name, version, and the
 
 ## License scope
 
-The `artifacthub.io/license: Apache-2.0` annotation in each first-party
+The `artifacthub.io/license` annotation in each first-party
 `Chart.yaml` identifies the license of the AgentWorkforce-authored chart
-content. It does not apply Apache-2.0 to bundled chart dependencies, referenced
+content; it stays `Apache-2.0` until each chart's next release updates it to
+`FSL-1.1-ALv2`. It does not apply that license to bundled chart dependencies, referenced
 container images, or application source code maintained in other repositories.
 Those materials remain subject to their respective license terms and the
 redistribution limits recorded below.
@@ -99,7 +101,7 @@ cover an image's transitive packages.
 | Relay Dashboard | [`AgentWorkforce/relay-webapp`](https://github.com/AgentWorkforce/relay-webapp) | Repository contains an [Apache-2.0 `LICENSE`](https://github.com/AgentWorkforce/relay-webapp/blob/main/LICENSE). |
 | Relayflows | [`AgentWorkforce/flows`](https://github.com/AgentWorkforce/flows) | Repository contains an [Apache-2.0 `LICENSE`](https://github.com/AgentWorkforce/flows/blob/main/LICENSE). |
 | Relayfile | [`AgentWorkforce/relayfile`](https://github.com/AgentWorkforce/relayfile) | Repository contains an [Apache-2.0 `LICENSE`](https://github.com/AgentWorkforce/relayfile/blob/main/LICENSE). |
-| Sessions Pipeline worker and AlleyOop | Chart metadata names the private `AgentWorkforce/sessions-pipeline` repository (formerly `AgentWorkforce/96BullSessions`) | No license or notice file was found in the inspected repository. License not established. |
+| Sessions Pipeline (worker, AlleyOop, session ingest API, session read API; image `96bulls-services`) | [`AgentWorkforce/relayhistory-pipeline`](https://github.com/AgentWorkforce/relayhistory-pipeline) (formerly `AgentWorkforce/sessions-pipeline` and `AgentWorkforce/96BullSessions`) | Repository contains an [Apache-2.0 `LICENSE`](https://github.com/AgentWorkforce/relayhistory-pipeline/blob/main/LICENSE). |
 | Relaycontrol API | [`AgentWorkforce/relay-control`](https://github.com/AgentWorkforce/relay-control) (canonical source now used by the API chart) | The previous inspection covered the deprecated `AgentWorkforce/cloud` port source, not this repository. License/redistribution status for the current application image is not established by that historical inspection. |
 
 ## Referenced runtime images
