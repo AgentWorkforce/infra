@@ -757,6 +757,8 @@ pod=$(yq -o=json 'select(.kind == "Pod")' "$root/applied.yaml")
 jq -e '[.spec.containers[0].env[] | select(.name == "HOOPDB_URL") | .valueFrom.secretKeyRef] == [{"name": .metadata.name, "key": "HOOPDB_URL"}]' <<<"$pod" >/dev/null \
   || fail "the census pod must read HOOPDB_URL from its own refreshed Secret: $(jq -c '.spec.containers[0].env' <<<"$pod")"
 grep -q 'rotated-admin-pw' "$root/log" && fail "the refreshed credential reached argv or the log"
+yq -e 'select(.kind == "Secret")' "$root/applied.yaml" >/dev/null 2>&1 && fail "the census Secret went through kubectl apply (last-applied annotation)"
+grep -q 'kubectl .*create secret generic agent-relay-index-census-.*--dry-run' "$root/log" && fail "the census Secret must be created directly, not rendered for apply"
 grep -q 'kubectl .*delete pod,configmap,secret agent-relay-index-census-' "$root/log" || fail "the census Secret was not deleted"
 census_setup; census absent 0
 out=$(run "${args[@]}" 2>&1) || fail "census plan without --rds-setup failed: $out"

@@ -274,8 +274,11 @@ sessions_index_check() {
     --dry-run=client -o yaml | "${kube[@]}" apply -f - >/dev/null || die "could not create the index census ConfigMap"
   if [ -n "$url_file" ]; then
     # The value goes from the 0600 state file into the Secret; never argv or logs.
-    "${kube[@]}" create secret generic "$name" --from-file=HOOPDB_URL="$url_file" \
-      --dry-run=client -o yaml | "${kube[@]}" apply -f - >/dev/null || die "could not create the index census credential Secret"
+    # Plain create, not apply: apply would copy the whole object, password
+    # included, into the last-applied-configuration annotation. The name is new
+    # per run, so create never meets an existing object.
+    "${kube[@]}" create secret generic "$name" --from-file=HOOPDB_URL="$url_file" >/dev/null \
+      || die "could not create the index census credential Secret"
   fi
   pod_json=$(jq --arg name "$name" --arg ns "$namespace" --arg limit "$index_max_rows" --argjson deadline "$census_timeout" \
       --argjson fresh "$([ -n "$url_file" ] && echo true || echo false)" '
