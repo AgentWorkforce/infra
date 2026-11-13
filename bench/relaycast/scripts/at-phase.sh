@@ -3,13 +3,17 @@
 # /status clock, and prints the epoch-ms it fired (for the chaos timeline).
 #
 #   at-phase.sh <status-url> <phase-label> <seconds-into-phase> -- <command...>
+#   (set STATUS_CMD to fetch the status JSON with a command instead of the URL)
 set -euo pipefail
 # Scratch never goes to /tmp on shared hosts.
 export TMPDIR="${TMPDIR:-$HOME/.agent-tmp}"; mkdir -p "$TMPDIR"
 url="$1" phase="$2" at="$3"; shift 3
 [[ "${1:-}" == -- ]] && shift
 while true; do
-  s="$(curl -sf "$url" || true)"
+  # STATUS_CMD (e.g. kubectl exec ... wget -qO- .../status) replaces the URL:
+  # a long-lived port-forward can die silently and leave this loop polling
+  # nothing forever.
+  if [[ -n "${STATUS_CMD:-}" ]]; then s="$(bash -c "$STATUS_CMD" 2>/dev/null || true)"; else s="$(curl -sf "$url" || true)"; fi
   if [[ -n "$s" ]]; then
     fire="$(node -e '
       const s = JSON.parse(process.argv[1]); const [p, at] = [process.argv[2], Number(process.argv[3])];
