@@ -47,7 +47,13 @@ precondition. Plan mode (no `--apply`) only checks and prints.
 - [ ] `--actors-values` file: your overrides for the actors profile (bucket,
       `publicUrl`, zone, mirrored image repositories and digests). The
       upgrader pins the Relaycast Secret, keyring, bootstrap mapping,
-      `retainForMigration` and analytics-off itself.
+      `retainForMigration` and analytics-off itself. Restate the install's
+  `relaycast.baseUrl` there: the actors profile's placeholder replaces it, and
+  the render fails without it.
+- [ ] The Relaycast Secret has a `file-signing-secret` key with the same bytes
+      as the actor env's `RELAYCAST_FILE_SIGNING_SECRET`. A PostgreSQL install
+      never needed it. Without it the gateway can't start, and the plan
+      refuses with a message about the actor env Secret.
 - [ ] `STATE_DIR` is the same directory for both runs (the workflow input
       `state-dir`), owned by the operator, 0700.
 - [ ] relay-control's encryption key will not change until the re-key backups
@@ -90,10 +96,12 @@ Order, each step failing the run:
 6. verify Job (a throwaway workspace streams a post over `/v1/ws`), go-live
    recorded, open Job, relay-control back to its replicas.
 
-Measured on a two-workspace rehearsal (8.6k rows): preflight 7 s, export
-12-22 s, cutover 26 s, files 13 s, import 21 s, verify 11 s, open 6 s. Plan the
-window from the preflight's row counts; with a few thousand rows it is about
-ten minutes including pod starts.
+Measured on a five-workspace rehearsal (101k rows, 27 files, RDS db.r7g.large
+Multi-AZ): preflight 8 s, quiesce 2 s, export 19 s, cutover 18 s, files 12 s,
+import 96 s, verify 15 s, open 18 s; downtime 180 s. Estimate downtime from the
+preflight's counts: about 75 s, plus 0.8 s per 1,000 rows, plus 3 s per
+workspace, plus the file copy. Add the RDS snapshot before it (about 3 min for
+50 GB). At 1M rows, plan for about 15 minutes.
 
 ## 3. Verify after go-live
 
@@ -109,6 +117,7 @@ ten minutes including pod starts.
 | --- | --- |
 | before the helm upgrade | scale relay-control and Relaycast back up; nothing changed but credentials (safe to keep) |
 | after the helm upgrade, before go-live | either rerun `cutover` (it resumes the recorded run: files, import, verify, open), or `helm rollback <release> <printed revision>`; nothing was served from the actors, so nothing is lost |
+| a new `cutover` after such a rollback | the new run's import fails with `409 import_run_mismatch` while the old run still owns the actors. First empty each workspace's actor with the old run id: `relaycast-migrate abort --dir /data/migration/<old run> --gateway <url> --workspace <id>` (import Job image; about 8 s per workspace) |
 | after go-live is recorded | forward only: rerun `cutover` to open the remaining workspaces; do not roll back (opened workspaces may have taken writes PostgreSQL never sees) |
 | relay-control re-key | `relaycast-rekey --undo <run id>` in the relay-control pod (run ids under `STATE_DIR`) |
 
