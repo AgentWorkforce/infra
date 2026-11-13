@@ -486,6 +486,40 @@ class LocalTests(unittest.TestCase):
         with patch.multiple(local_stack, DESKTOP_RELEASES=False, CONTROL=control, WEBAPP=webapp):
             self.assert_final_render(experimental=False)
 
+    def test_google_oidc_renders_control_sign_in_and_egress_only_when_stored(self):
+        control, webapp = local_stack.profile_images(False)
+        with tempfile.TemporaryDirectory() as tmp, patch.multiple(local_stack, DESKTOP_RELEASES=False, CONTROL=control, WEBAPP=webapp):
+            stack = LocalStack.__new__(LocalStack)
+            stack.state = Path(tmp)
+            stack.ca_sha = "c" * 64
+            stack.edge_ip = "10.96.0.10"
+            stack.credentials = {"createdAt": "2026-11-11T00:00:00Z"}
+            tenant = {"organizationId": "11111111-1111-4111-8111-111111111111", "workspaceId": "22222222-2222-4222-8222-222222222222"}
+            self.assertIsNone(stack.google_oidc())
+            self.assertNotIn("oidc", stack.values("serve", tenant)["relay-control"]["auth"])
+            (stack.state / "google-oidc.json").write_text(json.dumps({"client_id": "1-x.apps.googleusercontent.com",
+                "client_secret": "not-a-real-secret", "allowed_domains": ["agentrelay.com"]}))
+            values = stack.values("serve", tenant)
+            self.assertEqual(values["relay-control"]["auth"]["oidc"]["issuer"], "https://accounts.google.com")
+            self.assertTrue(values["relay-control"]["auth"]["emailLink"]["enabled"])
+            result = subprocess.run(["helm", "template", "agent-relay", "charts/agent-relay", "-n", "agent-relay", "-f", "-", "--is-upgrade"],
+                cwd=ROOT, input=json.dumps(values), capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertNotIn("not-a-real-secret", result.stdout)
+            api = next(d for d in yaml.safe_load_all(result.stdout) if d and d["kind"] == "Deployment" and d["metadata"]["name"] == "relay-control")
+            names = {e["name"]: e.get("value") for c in api["spec"]["template"]["spec"]["containers"] for e in c.get("env", [])}
+            self.assertEqual(names["SELFHOST_OIDC_ISSUER"], "https://accounts.google.com")
+            self.assertEqual(names["SELFHOST_OIDC_ALLOWED_DOMAINS"], "agentrelay.com")
+            self.assertIn("SELFHOST_OIDC_CLIENT_SECRET_FILE", names)
+            with patch.object(stack, "apply") as apply:
+                stack.google_oidc_egress()
+            selector = apply.call_args.args[0]["spec"]["podSelector"]["matchLabels"]
+            labels = api["spec"]["template"]["metadata"]["labels"]
+            self.assertTrue(all(labels.get(k) == v for k, v in selector.items()))
+            (stack.state / "google-oidc.json").write_text(json.dumps({"client_id": "not-google", "client_secret": "x"}))
+            with self.assertRaises(local_stack.StackError):
+                stack.google_oidc()
+
     def test_opt_in_final_render_selects_downloads_images_env_and_policy(self):
         control, webapp = local_stack.profile_images(True)
         with patch.multiple(local_stack, DESKTOP_RELEASES=True, CONTROL=control, WEBAPP=webapp):

@@ -60,13 +60,15 @@ local-up: local-tools
 local-down: local-tools
 	PATH=$(call sh_quote,$(CURDIR)/.kind/tools):"$$PATH" $(call sh_quote,$(CURDIR)/.kind/tools/venv/bin/python3) ci/agent-relay/kind/local_stack.py down
 
-.PHONY: local-trust local-login local-llm-key
+.PHONY: local-trust local-login local-llm-key local-google-oidc
 local-trust:
 	sudo $(call sh_quote,$(PYTHON)) ci/agent-relay/kind/local_host_setup.py up
 local-login: local-tools
 	PATH=$(call sh_quote,$(CURDIR)/.kind/tools):"$$PATH" $(call sh_quote,$(CURDIR)/.kind/tools/venv/bin/python3) ci/agent-relay/kind/local_stack.py login
 local-llm-key: local-tools
 	@PATH=$(call sh_quote,$(CURDIR)/.kind/tools):"$$PATH" $(call sh_quote,$(CURDIR)/.kind/tools/venv/bin/python3) ci/agent-relay/kind/local_stack.py llm-key
+local-google-oidc: local-tools
+	@PATH=$(call sh_quote,$(CURDIR)/.kind/tools):"$$PATH" $(call sh_quote,$(CURDIR)/.kind/tools/venv/bin/python3) ci/agent-relay/kind/local_stack.py google-oidc
 
 .PHONY: local-postgres-cast-proof
 local-postgres-cast-proof: local-tools
