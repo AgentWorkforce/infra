@@ -10,6 +10,8 @@ output "service_account" {
 
 output "resource_policy_statements" {
   description = "Statements the bucket's owner merges into the bucket policy and the key policy (by Sid). Nothing here writes them: they live in the other account."
+  # With S3 Bucket Keys, S3 sends the bucket ARN as the encryption context, so each key grant also
+  # accepts it; the S3 statements still limit which objects the worker reads and writes.
   value = {
     bucket_policy = [
       { Sid = "SessionsWorkerLists", Effect = "Allow", Principal = { AWS = aws_iam_role.worker.arn }, Action = "s3:ListBucket", Resource = var.sessions_bucket_arn },
@@ -25,7 +27,7 @@ output "resource_policy_statements" {
         Resource  = "*"
         Condition = {
           StringEquals = { "kms:ViaService" = "s3.${local.kms_region}.amazonaws.com", "kms:CallerAccount" = var.account_id }
-          StringLike   = { "kms:EncryptionContext:aws:s3:arn" = "arn:aws:s3:::${local.bucket_name}/${var.key_base}/*/v1/*" }
+          StringLike   = { "kms:EncryptionContext:aws:s3:arn" = ["arn:aws:s3:::${local.bucket_name}/${var.key_base}/*/v1/*", var.sessions_bucket_arn] }
         }
       },
       {
@@ -36,7 +38,7 @@ output "resource_policy_statements" {
         Resource  = "*"
         Condition = {
           StringEquals = { "kms:ViaService" = "s3.${local.kms_region}.amazonaws.com", "kms:CallerAccount" = var.account_id }
-          StringLike   = { "kms:EncryptionContext:aws:s3:arn" = "arn:aws:s3:::${local.bucket_name}/${var.key_base}/*/v1/*/summary/*" }
+          StringLike   = { "kms:EncryptionContext:aws:s3:arn" = ["arn:aws:s3:::${local.bucket_name}/${var.key_base}/*/v1/*/summary/*", var.sessions_bucket_arn] }
         }
       },
     ]
