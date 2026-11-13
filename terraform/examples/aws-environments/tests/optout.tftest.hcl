@@ -117,6 +117,44 @@ run "both_off_history_upload" {
   }
 }
 
+run "history_upload_rearm_sweeper" {
+  command = plan
+  variables {
+    kms_key_arn    = "arn:aws:kms:us-west-2:111111111111:key/00000000-0000-4000-8000-000000000000"
+    history_upload = { consumer_service_account = "native-ingest-edge", rearm_sweeper_service_account = "agent-relay-rearm-sweeper" }
+  }
+  assert {
+    condition     = length(aws_iam_role.rearm_sweeper) == 1 && aws_eks_pod_identity_association.rearm_sweeper[0].service_account == "agent-relay-rearm-sweeper"
+    error_message = "The re-arm sweeper gets its own role and Pod Identity association."
+  }
+  assert {
+    condition = anytrue([for s in jsondecode(aws_iam_role_policy.rearm_sweeper[0].policy).Statement :
+    s.Effect == "Deny" && contains(flatten([s.Action]), "s3:DeleteObjectVersion") && endswith(s.Resource, "/96bulls/.*")])
+    error_message = "Version deletes are denied on every dot-prefixed namespace under the key root."
+  }
+}
+
+run "history_upload_without_rearm_sweeper" {
+  command = plan
+  variables {
+    kms_key_arn    = "arn:aws:kms:us-west-2:111111111111:key/00000000-0000-4000-8000-000000000000"
+    history_upload = { consumer_service_account = "native-ingest-edge" }
+  }
+  assert {
+    condition     = length(aws_iam_role.rearm_sweeper) == 0 && length(aws_eks_pod_identity_association.rearm_sweeper) == 0
+    error_message = "Without a sweeper ServiceAccount nothing is created."
+  }
+}
+
+run "rearm_sweeper_refuses_the_ingest_account" {
+  command = plan
+  variables {
+    kms_key_arn    = "arn:aws:kms:us-west-2:111111111111:key/00000000-0000-4000-8000-000000000000"
+    history_upload = { consumer_service_account = "native-ingest-edge", rearm_sweeper_service_account = "native-ingest-edge" }
+  }
+  expect_failures = [var.history_upload]
+}
+
 run "search_off_database_on" {
   command = plan
   variables {

@@ -146,6 +146,9 @@ output "history_upload" {
     consumer_role_arn        = aws_iam_role.history_consumer[0].arn
     control_service_account  = var.history_upload.control_service_account
     consumer_service_account = var.history_upload.consumer_service_account
+    # Chart rearmSweeper.serviceAccountName (credentials.mode podIdentity); null when not requested.
+    rearm_sweeper_role_arn        = local.rearm_sweeper_enabled ? aws_iam_role.rearm_sweeper[0].arn : null
+    rearm_sweeper_service_account = local.rearm_sweeper_enabled ? var.history_upload.rearm_sweeper_service_account : null
     control_values = {
       historyUpload = {
         mode      = "off"
