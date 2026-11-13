@@ -51,6 +51,15 @@ runtime:
       # actor migration and #657 PostgreSQL deadlock fix), publish-container
       # run 43351584271. Multi-platform with GitHub build provenance.
       digest: sha256:1307bd845031a7466e65ebaf08bc8b826e2837d90f58c9b5a6a1d673c62dad93
+    # TCP keepalive sysctls on the server pod (net.ipv4.tcp_keepalive_intvl /
+    # tcp_keepalive_probes, namespaced safe sysctls from Kubernetes 1.29). With
+    # the engine's socket keepalive a half-open connection to a failed-over
+    # primary is found in about intervalSeconds x probes instead of ~11 min of
+    # kernel defaults. Ignored on clusters before 1.29.
+    tcpKeepalive:
+      enabled: true
+      intervalSeconds: 5
+      probes: 3
     # The `migrate` Job: a plain Job (no Helm hook) named by a hash of its
     # rendered pod template, so any change to it runs a new Job.
     migrations:
@@ -351,6 +360,14 @@ persistence:
   # ReadWriteOnce is required when backup.enabled: the backup pod is scheduled
   # onto the Relaycast pod's node and mounts the same claim.
   accessMode: ReadWriteOnce
+  # Availability zone of the data claim's volume (topology.kubernetes.io/zone).
+  # Set, the pod requires a node in that zone, so a reschedule (node drain,
+  # node loss) never waits on a node elsewhere that cannot attach the volume.
+  # A drain only stays short with at least two schedulable nodes in that zone;
+  # losing the zone is an outage until it returns (README "Node drains").
+  # Leave empty to rely on the volume's own node affinity. Not combinable with
+  # affinity.nodeAffinity.
+  zone: ""
   size: 10Gi
   annotations:
     helm.sh/resource-policy: keep
@@ -408,6 +425,14 @@ resources:
   limits:
     cpu: "1"
     memory: 1Gi
+
+# "split": the image serves /health/live (process) and /health/ready (database
+# answers within 2 s), relaycast#667; startup and liveness use /health/live and
+# readiness /health/ready, so a database failover takes the pod out of the
+# Service without restarting it. "legacy": every probe uses /health as set
+# below. Set split only with an image that has the endpoints (relaycast main
+# 810f48ce or later); an older one answers 404 and never becomes ready.
+healthProbes: legacy
 
 startupProbe:
   httpGet:

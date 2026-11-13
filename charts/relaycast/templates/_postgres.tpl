@@ -74,6 +74,7 @@ need an operator fix and fail the init container at once. */ -}}
     {{- include "relaycast.postgres.databaseEnv" (dict "root" . "file" "database-runtime-url") | nindent 4 }}
     - name: MIGRATION_WAIT_SECONDS
       value: {{ .Values.runtime.postgres.migrations.activeDeadlineSeconds | int64 | toString | quote }}
+    {{- with (include "relaycast.nodeHeapEnv" .) }}{{ . | nindent 4 }}{{ end }}
     {{- with .Values.extraEnv }}
     {{- toYaml . | nindent 4 }}
     {{- end }}
@@ -115,6 +116,7 @@ spec:
         {{- toYaml .Values.containerSecurityContext | nindent 8 }}
       env:
         {{- include "relaycast.postgres.databaseEnv" (dict "root" . "file" "database-owner-url") | nindent 8 }}
+        {{- with (include "relaycast.nodeHeapEnv" .) }}{{ . | nindent 8 }}{{ end }}
         {{- with .Values.extraEnv }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
