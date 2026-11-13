@@ -1,8 +1,8 @@
 # Relaycast on PostgreSQL versus durable-actors: EKS benchmark
 
-Status: decision set (as shipped) complete. Tuned-actors soak, the #659 P1
-and #665/#667 failover exit tests, headroom and cold start are in progress and
-are added to this document as they land. Raw data: `bench/relaycast/results/`
+Status: decision set (as shipped), tuned-actors soak and the #659 / #665 fix
+exit tests are complete. Headroom (overload then recover) and cold start are in
+progress and are added here as they land. Raw data: `bench/relaycast/results/`
 (per-pod `producer-*.json` / `sink-*.json` / `metrics.csv` are gzipped; `gunzip`
 them before re-running `harness/report.mjs`).
 
@@ -18,38 +18,40 @@ Weighting, per Khaliq: robustness first (integrity under failure, behaviour
 under overload, recovery without a human, blast radius, crash loops, memory
 drift), throughput and latency second.
 
-**Near-term recommendation: make the PostgreSQL backend robust for the customer; keep
-durable-actors as a candidate only if the tuned-actors soak is clean.**
+**Recommendation: make the PostgreSQL backend robust for the customer install now.
+Durable actors become viable when tuned, but still carry seconds of latency and
+a low per-workspace ceiling.**
 
-- **PostgreSQL.** Every blocker found is a discrete defect with a small,
-  targeted fix, most of them already in review:
+- **PostgreSQL** (main `a63961bd` plus the fixes below). Every blocker found
+  was a discrete defect with a targeted fix:
   - deadlock (#651, fixed by #657);
-  - heap OOM under overload (#659, P1 in test);
-  - no recovery after an RDS failover (#665, #667 in test);
-  - heartbeat write amplification capping it near 8k node sockets (#661);
+  - no recovery after an RDS failover (#665). **Fixed by #667: an exit test
+    under load recovered from two forced failovers in < 45 s with no human,
+    0 restarts and 0 lost / duplicate / reorder.**
+  - heap OOM under overload (#659). P1 fixes the OOM but does not shed with
+    503s and lowers throughput;
+  - heartbeat write amplification, capping it near 8k node sockets (#661);
   - a per-workspace event-lock ceiling (#658).
 
-  At customer-shape load it is fast and loses nothing: send p50 37 ms, delivery p99
-  207 ms. The structural gap is high availability. One replica plus a zonal RWO
-  PVC turns a node drain into minutes of full outage, and an AZ loss into an
+  At customer-shape load it is fast: delivery p50 36 ms, p99 176 ms. The
+  remaining structural gap is high availability. A single replica plus a zonal
+  RWO PVC turns a node drain into minutes of full outage, and an AZ loss into an
   outage. Production grade needs uploads moved off the PVC (S3), then two or
   more replicas with shared realtime, presence and rate-limit state.
-- **Durable actors (as shipped).** Not robust at customer-shape load:
-  - Hosts at the 256 MiB default fail readiness and are re-placed in a loop,
-    without any fault injected.
-  - There is no return to steady state after an actor-host kill, a node drain
-    or an RDS failover.
-  - Seconds of latency: send p50 4.2 s.
-  - A serial per-workspace ceiling of about 1.5-2 channel posts/s with 20-member
-    fan-out, or about 6 DMs/s.
-  - The shared tier saturates first: a single-replica control plane (more
-    replicas need Redis) and the gateway.
-  - Provisioning is about 50x slower than on PostgreSQL.
-  - Some sends return 5xx yet are delivered, so retries need idempotency keys.
+- **Durable actors** (official 12.8.0-actors.1).
+  - **As shipped:** not robust. Hosts at the 256 MiB default churn, and the arm
+    does not return to steady state after an actor-host kill, node drain or RDS
+    failover.
+  - **Tuned** (1 GiB hosts, warm spares, larger control plane, 3 gateways):
+    self-healing, with 0 lost / duplicate / reorder and recovery from every
+    injected fault (an RDS failover takes ~4.5 min).
+  - **Still:** send p50 ~3.7 s even at 3 msgs/s, a serial per-workspace ceiling
+    (~1.5-2 channel posts/s with 20-member fan-out, ~6 DMs/s), a single-replica
+    control plane (more replicas need Redis), provisioning ~50x slower, and
+    5xx-but-delivered sends (retries need idempotency keys).
+  - Its strengths: no PVC, cross-AZ rescheduling and per-workspace isolation.
 
-  Its strengths are per-workspace isolation, no PVC and horizontal spread.
-
-### decision set: as shipped, relaycast main
+### Decision set: as shipped, relaycast main
 
 3 workspaces x 30 agents (10 producers and 20 receivers, all on node
 sockets), channels of 12, 3 msgs/s of mixed DM and channel traffic with 5 %
@@ -125,6 +127,39 @@ Notes:
 - **PG duplicates.** The 4 duplicates on the same socket come from the redrive
   race the relaycast-pg-deadlock agent root-caused (a fix is on a separate
   branch).
+
+### Tuned durable actors (60 min, same decision-set load and chaos)
+
+Tuning knobs (`bench/relaycast/values/actors-tuned-1024.yaml`):
+
+| Knob | Tuned | Shipped default |
+|---|---|---|
+| `durable-actors.actors.memoryMiB` | 1024 | 256 |
+| `actors.warm` | 3 | 1 |
+| `actors.maxStarting` | 8 | 4 |
+| Control-plane resources | 1 CPU / 1 Gi request, 2 Gi limit | 250m / 512 Mi, 1 Gi limit |
+| `relaycast.runtime.durableActors.gateway.replicaCount` | 3 | 1 |
+| Control-plane replicas | 1 (more needs Redis, not tested) | 1 |
+
+Same images (official 12.8.0-actors.1). Chaos: one gateway replica killed at
++20 min, one actor host killed at +30, RDS forced failover of the
+control-plane database at +40.
+
+| | Tuned actors | As-shipped actors | PostgreSQL + #657/#667 |
+|---|---|---|---|
+| Integrity (lost / dup / reorder) | 0 / 0 / 0 of 53,053 (1,906 redeliveries) | 0 / 0 / 0 of 76,248 (19,373 redeliveries) | 0 / 0 / 0 of 26,973 (0 redeliveries) |
+| Self-inflicted churn | none | continuous from ~27 min | none |
+| Pod / gateway kill | one replica: its 29 sockets reconnect at once, 2 errors | whole gateway: ~60 s | relaycast pod: ~47 s |
+| Actor-host kill | no visible impact | never back to steady state | n/a |
+| RDS failover | self-healed in ~4.5 min (sockets down to 26/90) | never back to steady state | self-healed in < 45 s |
+| Send errors | ~3.4 % (mostly in the failover window) | 32 % | 1.7 % (only in the failover windows) |
+| Send p50 / p95 | 3.7 s / 6.2 s | 4.2 s / 28.2 s | n/a (delivery p50 36 ms) |
+| Delivery p50 / p99 | 3.5 s / 366 s | 5.0 s / 339 s | 36 ms / 176 ms |
+| Memory peaks | control plane 575 Mi, actor hosts 463 Mi total, gateways 53-71 Mi | control plane 645 Mi | relaycast 255-574 Mi |
+
+Tuning turns actors from unstable into self-healing. The seconds of latency at
+3 msgs/s remain, which points to design (a serial per-workspace actor behind
+the gateway and control-plane hop) rather than sizing.
 
 ### Fix exit tests on the PostgreSQL arm
 
