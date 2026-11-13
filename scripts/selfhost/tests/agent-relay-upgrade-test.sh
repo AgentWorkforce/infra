@@ -104,7 +104,10 @@ echo "kubectl \$*" >> "$root/log"
 case "\$*" in
   # The Sessions index census: the pod manifest is kept, its phase and logs come from fixtures.
   *" apply -f -"*) cat >> "$root/applied.yaml"; echo --- >> "$root/applied.yaml" ;;
-  *"get pod "*"-o json"*) printf '{"status":{"phase":"%s"}}\n' "\$(cat "$root/census-phase" 2>/dev/null || echo Succeeded)" ;;
+  *"get pod "*"-o json"*) ph=\$(cat "$root/census-phase" 2>/dev/null || echo Succeeded)
+    # INT/TERM: signal the upgrader itself mid-census, as an operator's Ctrl-C would.
+    case "\$ph" in INT|TERM) kill -"\$ph" "\$(pgrep -o -f "$root/selfhost/agent-relay-upgrade.sh")"; ph=Running ;; esac
+    printf '{"status":{"phase":"%s"}}\n' "\$ph" ;;
   *"logs pod/"*"-c census"*) cat "$root/census.out" 2>/dev/null || true ;;
   *jsonpath*) echo "old/relay-control@sha256:old" ;;
   *"version -o json"*) [ -f "$root/no-version" ] || echo '{"serverVersion":{"gitVersion":"v1.31.4-eks-2d5f260"}}' ;;
@@ -715,3 +718,31 @@ census_setup; census absent 2500000; rm -f "$root/exists"
 run "${args[@]}" --first-install >/dev/null 2>&1 || fail "first install plan failed with a census fixture present"
 grep -q 'index-census' "$root/log" && fail "first install ran the index census"
 pass "census: first install skips the index census"
+
+# 45. the limit boundary: exactly the limit takes the blocking build, one more row refuses
+census_setup; census absent 1000000
+out=$(run "${args[@]}" 2>&1) || fail "exactly the limit was refused: $out"
+grep -q 'path: blocking build for this upgrade. 1000000 rows' <<<"$out" || fail "exactly the limit did not take the blocking path: $out"
+census_setup; census absent 1000001
+out=$(run "${args[@]}" 2>&1) && fail "one row over the limit was accepted"
+grep -q 'with 1000001 rows to index, above the blocking-build limit of 1000000' <<<"$out" || fail "one row over refused for the wrong reason: $out"
+pass "census: exactly the limit builds, one row more refuses"
+
+# 46. a row count that is not a whole number refuses on purpose
+for bad in '"lots"' '1.5' '-3' '1e300'; do
+  census_setup; census absent 10
+  sed -i.bak "s/\"rows\":10,/\"rows\":$bad,/" "$root/census.out"
+  out=$(run "${args[@]}" 2>&1) && fail "a row count of $bad was accepted"
+  grep -q 'returned a row count that is not a whole number' <<<"$out" || fail "row count $bad refused for the wrong reason: $out"
+  blocking_in template && fail "row count $bad rendered the opt-in"
+done
+pass "census: a non-integer row count refuses (fail closed)"
+
+# 47. Ctrl-C or TERM during the census still deletes the pod and its ConfigMap
+for sig in INT TERM; do
+  census_setup; census absent 10; echo "$sig" > "$root/census-phase"
+  run "${args[@]}" >"$root/out" 2>&1 && fail "an interrupted ($sig) census plan succeeded"
+  grep -q 'kubectl .*delete pod,configmap agent-relay-index-census-' "$root/log" || fail "a $sig during the census left the pod and ConfigMap: $(cat "$root/out")"
+  grep -q 'helm template' "$root/log" && fail "an interrupted ($sig) census still rendered"
+done
+pass "census: INT or TERM mid-census deletes the pod and ConfigMap"

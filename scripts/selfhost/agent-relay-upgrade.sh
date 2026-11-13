@@ -194,7 +194,18 @@ sha256_of() { if command -v sha256sum >/dev/null; then sha256sum "$1"; else shas
 
 kube=(kubectl -n "$namespace"); helmx=(helm -n "$namespace")
 if [ -n "$context" ]; then kube+=(--context "$context"); helmx+=(--kube-context "$context"); fi
-work=$(mktemp -d); trap 'rm -rf "$work"' EXIT
+work=$(mktemp -d)
+# The index census pod mounts the migration owner's database Secret: any exit
+# (error, set -e, Ctrl-C, TERM) deletes it and its ConfigMap, idempotently.
+census_name=""
+index_census_cleanup() {
+  [ -n "$census_name" ] || return 0
+  "${kube[@]}" delete pod,configmap "$census_name" --ignore-not-found --wait=true --timeout=30s >/dev/null 2>&1 || true
+  census_name=""
+}
+trap 'index_census_cleanup; rm -rf "$work"' EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 tag="agent-relay-$version"; rel="$work/rel"
 verify_attestation() {
   gh attestation verify "$1" --repo "$repo" --signer-workflow "$signer_workflow" \
@@ -240,6 +251,8 @@ sessions_index_check() {
   [ -f "$here/sessions-index-census.mjs" ] || die "sessions-index-census.mjs must sit next to this script"
   name="$release-index-census-$(date -u +%Y%m%d%H%M%S)"
   say "   one read-only pod, $name, cloned from the deployed migrate Job; deleted afterwards"
+  # From here any exit deletes the pod and ConfigMap (the EXIT trap).
+  census_name=$name
   "${kube[@]}" create configmap "$name" --from-file=sessions-index-census.mjs="$here/sessions-index-census.mjs" \
     --dry-run=client -o yaml | "${kube[@]}" apply -f - >/dev/null || die "could not create the index census ConfigMap"
   pod_json=$(jq --arg name "$name" --arg ns "$namespace" --arg limit "$index_max_rows" --argjson deadline "$census_timeout" '
@@ -258,7 +271,6 @@ sessions_index_check() {
               | del(.args, .livenessProbe, .readinessProbe, .startupProbe, .ports)
               | .env = ([(.env // [])[] | select(.name != "INDEX_CENSUS_LIMIT")] + [{ name: "INDEX_CENSUS_LIMIT", value: $limit }])
               | .volumeMounts = ((.volumeMounts // []) + [{ name: "index-census", mountPath: "/index-census", readOnly: true }]) ]) }' <<<"$job")
-  index_census_cleanup() { "${kube[@]}" delete pod,configmap "$name" --ignore-not-found --wait=false >/dev/null 2>&1 || true; }
   if ! "${kube[@]}" apply -f - <<<"$pod_json" >/dev/null; then index_census_cleanup; die "could not start the index census pod"; fi
   deadline=$(( $(date +%s) + census_timeout + 60 ))
   while :; do
@@ -280,7 +292,8 @@ sessions_index_check() {
         refused: [$ix[] | select(.state == "mismatch" or .state == "not_ready")],
         build: [$ix[] | select(.state == "absent" and .table_exists and ((.rows // 0) > 0))],
         empty: [$ix[] | select(.state == "absent" and ((.table_exists | not) or ((.rows // 0) == 0)))],
-        adopted: [$ix[] | select(.state == "adoptable")] }
+        adopted: [$ix[] | select(.state == "adoptable")],
+        counts: [$ix[] | select(.state == "absent" and .table_exists) | .rows] }
     | .rows = ([.build[].rows] | add // 0)
     | .packets = ([.build[], .refused[] | .packet] | unique)' <<<"$census") \
     || die "the index census result could not be read; nothing was changed"
@@ -298,6 +311,10 @@ sessions_index_check() {
     die "refusing: an index the Sessions migration would adopt is not usable (above). Follow \"Failed or cancelled builds\" in the packet ($(jq -r '.packets | join("; ")' <<<"$decision"), Sessions repository), then re-run. Nothing was changed."
   fi
   n_build=$(jq '.build | length' <<<"$decision"); rows=$(jq '.rows' <<<"$decision")
+  # Every count must be a whole number of rows (fail closed on anything else).
+  jq -e '.counts | all(type == "number" and . >= 0 and . == floor and . < 1e15)' <<<"$decision" >/dev/null \
+    && [[ "$rows" =~ ^[0-9]+$ ]] \
+    || die "the index census returned a row count that is not a whole number ($(jq -c '.counts' <<<"$decision")); nothing was changed"
   if [ "$n_build" -eq 0 ]; then
     say "   path: no blocking build; the migration adopts or builds every index itself"; return 0
   fi

@@ -66,6 +66,10 @@ At the default limit, the lock lasts a few seconds.
 Leave `allowBlockingIndexBuild` out of your values: the upgrader refuses a
 values file that sets it.
 
+`helm rollback` to the revision such an upgrade made restores that revision's
+values, the opt-in included. If you roll back, then upgrade again with the
+upgrader: its fresh census sets the opt-in, or drops it, for the new run.
+
 ## Durable-actors for Relaycast: available, opt-in, not recommended yet
 
 The move of an existing Relaycast from PostgreSQL to TerseAI durable-actors
