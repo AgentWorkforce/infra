@@ -34,6 +34,10 @@ const FANOUT = envInt('RCB_FANOUT_MEMBERS', 0);
 const BACKLOG = envInt('RCB_BACKLOG_RECEIVERS', 0);
 const SHARDS = envInt('RCB_SINK_SHARDS', 1);
 const CONC = envInt('RCB_CONCURRENCY', 16);
+// 1: every producer is also bound to its own node socket (held by the sinks),
+// so every channel member is delivery-ready (no queued/retried deliveries to
+// HTTP-only members). Default 0: producers are HTTP-only members.
+const PRODUCERS_ON_NODES = envInt('RCB_PRODUCERS_ON_NODES', 0) === 1;
 if (FANOUT > R) throw new Error(`RCB_FANOUT_MEMBERS ${FANOUT} > RCB_RECEIVERS ${R}`);
 
 const call = httpClient(base, { timeoutMs: 60000 });
@@ -99,6 +103,15 @@ for (const ws of wsList) {
     const nd = await req('POST /v1/nodes', 'POST', '/v1/nodes', ws.key, { name, max_agents: Math.max(agents.length, 1) });
     return { name, id: nd.id, token: nd.token, agents, shard: (ws.i * 7919 + n) % SHARDS, backlog: agents[0]?.startsWith('b') };
   });
+  if (PRODUCERS_ON_NODES) {
+    const bound = await pool(producers, async (p, k) => {
+      const name = `np${k}`;
+      const nd = await req('POST /v1/nodes', 'POST', '/v1/nodes', ws.key, { name, max_agents: 1 });
+      await req('POST /v1/nodes/:name/agents', 'POST', `/v1/nodes/${name}/agents`, ws.key, { agent_name: p.name });
+      return { name, id: nd.id, token: nd.token, agents: [p.name], shard: (ws.i * 7919 + nodes.length + k) % SHARDS, bound: true };
+    });
+    nodes.push(...bound);
+  }
   fixture.workspaces.push({ ...ws, producers, receivers, backlog, channels, nodes });
   log(`workspace ${ws.i}: ${P} producers, ${R} receivers, ${channels.length} channels, ${nodes.length} nodes`);
 }
@@ -106,7 +119,7 @@ for (const ws of wsList) {
 writeJsonAtomic(env('RCB_FIXTURE'), fixture);
 const out = env('RCB_OUT', '');
 const result = {
-  kind: 'provision', run, params: { W, P, R, PER_NODE, C, CM, FANOUT, BACKLOG, SHARDS },
+  kind: 'provision', run, params: { W, P, R, PER_NODE, C, CM, FANOUT, BACKLOG, SHARDS, PRODUCERS_ON_NODES },
   wallMs: hr() - t0, status: status.toJSON(),
   latency: Object.fromEntries([...lat.m].map(([k, h]) => [k, h.summary()])), hist: lat.toJSON(),
 };

@@ -638,6 +638,47 @@
      "drainS": 120
     }
    ]
+  },
+  {
+   "name": "channel-100-allsock",
+   "sinks": 2,
+   "producers": 2,
+   "notes": "channel-100 with every producer also bound to a node socket (RCB_PRODUCERS_ON_NODES=1): all channel members delivery-ready. Steps 10/20/50, unconditional.",
+   "fixture": {
+    "RCB_WORKSPACES": 1,
+    "RCB_PRODUCERS": 20,
+    "RCB_RECEIVERS": 80,
+    "RCB_CHANNELS": 5,
+    "RCB_CHANNEL_MEMBERS": 20,
+    "RCB_AGENTS_PER_NODE": 1,
+    "RCB_PRODUCERS_ON_NODES": 1
+   },
+   "phases": [
+    {
+     "label": "cha-10",
+     "kind": "channel",
+     "rate": 10,
+     "durationS": 180,
+     "sizeBytes": 512,
+     "drainS": 120
+    },
+    {
+     "label": "cha-20",
+     "kind": "channel",
+     "rate": 20,
+     "durationS": 180,
+     "sizeBytes": 512,
+     "drainS": 120
+    },
+    {
+     "label": "cha-50",
+     "kind": "channel",
+     "rate": 50,
+     "durationS": 180,
+     "sizeBytes": 512,
+     "drainS": 120
+    }
+   ]
   }
  ],
  "loadgenCheck": {

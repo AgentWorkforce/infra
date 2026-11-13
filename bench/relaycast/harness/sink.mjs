@@ -112,6 +112,9 @@ class NodeConn {
           // re-drains their unacked deliveries), so they register once.
           for (const name of this.node.agents) {
             if (this.agents.has(name)) continue;
+            // Agents bound over HTTP (POST /v1/nodes/:name/agents) receive on
+            // node.register; they already exist and are already channel members.
+            if (this.node.bound) { this.agents.set(name, { id: null, token: null, maxSeq: 0, ackedSeq: 0 }); continue; }
             const d = await this.request({ type: 'agent.register', name });
             this.agents.set(name, { id: d.agent_id, token: d.token, maxSeq: 0, ackedSeq: 0 });
           }
@@ -193,7 +196,7 @@ const connectLat = new Hist();
   for (const c of conns) {
     for (const ch of c.ws.channels) for (const name of ch.members) {
       const a = c.agents.get(name);
-      if (a) joins.push([ch.name, a.token]);
+      if (a?.token) joins.push([ch.name, a.token]);
     }
   }
   let j = 0;
