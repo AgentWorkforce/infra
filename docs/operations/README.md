@@ -30,6 +30,7 @@ and image manifest passes every gate below.
 
 1. [Service levels and SLIs](service-level-objectives.md)
 2. [Capacity hypotheses and load-test gates](capacity-and-load-test.md)
+3. [Runbook: Relaycast from PostgreSQL to durable-actors](relaycast-actors-upgrade-runbook.md)
 
 Backup and restore mechanics are documented in the existing
 [backup and restore runbook](../selfhost-backup-restore.md). That procedure is
