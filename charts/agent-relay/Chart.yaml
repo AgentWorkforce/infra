@@ -2,7 +2,7 @@ apiVersion: v2
 name: agent-relay
 description: Self-hosted Agent Relay messaging and sessions suite
 type: application
-version: 0.7.0
+version: 0.7.1
 appVersion: "0.1.0"
 kubeVersion: ">=1.28.0-0"
 annotations:
@@ -51,7 +51,7 @@ dependencies:
     repository: file://../relayfile
     condition: components.relayfile
   - name: telemetry-collector
-    version: 0.1.6
+    version: 0.1.7
     repository: file://../telemetry-collector
     condition: components.telemetryCollector
   - name: relay-chief

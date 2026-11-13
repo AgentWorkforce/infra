@@ -42,7 +42,7 @@ then be removed. Keep that exception list with the final pass/fail sheet.
 
 - Use merged infra main containing the local stack and Desktop installer.
   Wait for the coordinated prerequisite PRs before resetting the machine.
-  The archived 2026-11-11 acceptance used the AA pack from merged #211: Control 0.5.16,
+  The archived 2026-11-11 acceptance used the customer pack from merged #211: Control 0.5.16,
   Sessions alpha.5 and the EKS SQLite Relaycast generation, plus the merged
   Sales #50 dashboard update (`dfdf6db6`) and fresh-store read settings.
   That recipe derived those image references and managed
@@ -114,7 +114,7 @@ session was acknowledged. A running uploader or one successful upload is not
 proof that the queue drained. Investigate sustained retries before sign-out;
 never pause delivery, change sharing policy or delete queue records to force
 zero. Retain sanitized status evidence for both the old-fixture cleanup and the
-fresh AA acceptance.
+fresh customer acceptance.
 
 Only after that drain check, uninstall integrations and sign out:
 
@@ -261,7 +261,7 @@ make local-up
 
 Record the commit and cold bring-up duration. Require fresh 0600 credentials, a
 new CA, Kind, official migrations and all core roles ready on the published
-immutable AA source pins. Do not load recovery images or supply an operator
+immutable customer source pins. Do not load recovery images or supply an operator
 packet. Record each resolved image reference alongside the merged main commit.
 Require `SCRUB_ENGINE=wasm-bindgen`, `SCRUB_ENGINE_REQUIRED=wasm-bindgen`,
 `READER_MAX_RULESET=10`, and `READ_API_SESSION_QUERY=true` at the applicable

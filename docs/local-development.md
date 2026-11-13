@@ -250,11 +250,11 @@ development; it is not the complete clean-room machine wipe.
 Use the [clean-room runbook](local-clean-room.md) for the dedicated Mac's
 wipe/repeat/wipe sequence and exact operator sudo boundaries.
 
-## Prior acceptance observations and pending AA proof
+## Prior acceptance observations and pending customer proof
 
 The observations below used the earlier Control 0.5.14/query-capable services
-generation. They are a baseline, not acceptance of the AA images now selected.
-The AA clean-room must repeat the full checklist, including an actual WASM
+generation. They are a baseline, not acceptance of the customer images now selected.
+The customer clean-room must repeat the full checklist, including an actual WASM
 processing witness and redaction of a planted, entirely fake credential.
 
 On ar-lap, the fresh native workloads and strict TLS dashboard request passed;
@@ -288,14 +288,14 @@ display`.
 
 That earlier self-issued reader returned unsupported responses for optional
 turns, timing and output metrics; its canonical event transcript and summary
-rendered. The AA run must record its actual supported behavior.
+rendered. The customer run must record its actual supported behavior.
 Clean-room wipe/repeat/wipe remains pending. These observations do not establish
 that final reproducibility proof.
 
 Local ingest uses asynchronous admission. Control, ingest, consumer, reader,
-brief and the AA Relaycast use separate private collector credentials.
+brief and the customer Relaycast use separate private collector credentials.
 Dashboard has no matching managed adapter in this profile. Brief/Cast wiring is
-covered by the rendered chart; live event proof remains part of the AA run.
+covered by the rendered chart; live event proof remains part of the customer run.
 Collector readiness alone does not qualify event delivery.
 An existing local model Secret survives repeated `make local-up` without an
 environment override; explicitly supplying an empty `OPENAI_API_KEY` disables it.

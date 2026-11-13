@@ -116,7 +116,7 @@ relayauth:
 sessions-pipeline:
   worker:
     image:
-      # Preferred AA services image from relayhistory-pipeline main 7e9b2f0f
+      # Preferred customer services image from relayhistory-pipeline main 7e9b2f0f
       # (#509 alpha.5 on top of #505), signed publish run 42964243811.
       # Before its first migrate, run the privileged HoopDb role bootstraps
       # the chart does not (session_token_verifier,
@@ -213,7 +213,7 @@ relay-control:
     # registry and override repository.
     repository: ghcr.io/agentworkforce/relay-control
     digest: sha256:0b9c5a077b49b31178cc669e7c1d532f39e64c840087ca41636bb84a6c62631c
-  # The AA customer profile opts into the owner-only Usage page and qualified
+  # The customer profile opts into the owner-only Usage page and qualified
   # MCP agent launch. Remove launch if the enrolled owner/admin Desktop target
   # fails its install-time lifecycle check; Usage remains independent.
   selectedFeatures: [usage, launch]

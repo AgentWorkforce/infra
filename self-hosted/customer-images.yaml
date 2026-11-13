@@ -381,7 +381,7 @@ images:
         owner-only usage API (#92). Retains 0.5.12's EKS Pod Identity / IRSA
         credentials (#91), direct-to-S3 History upload credentials (#90) and
         the earlier login, relay-node and Microsoft sign-in changes. Usage and
-        MCP launch are selected only by the AA EKS profile after the owner
+        MCP launch are selected only by the customer EKS profile after the owner
         lifecycle proof on ar-lap passed capability, owned target, spawn,
         idempotent replay, Ready, cross-session ownership refusal, release and
         roster removal.

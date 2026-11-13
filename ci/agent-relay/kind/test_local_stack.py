@@ -161,7 +161,7 @@ class LocalTests(unittest.TestCase):
             actual = json.loads(process.stdout)
             self.assertEqual([actual[key] for key in ("control", "webapp", "pipeline")],
                 [references[name] for name in ("relay-control", "relay-webapp", "sessions-pipeline")])
-            with patch.multiple(local_stack, AA_VALUES=profile, DESKTOP_RELEASES=False,
+            with patch.multiple(local_stack, PROFILE_VALUES=profile, DESKTOP_RELEASES=False,
                     CONTROL=references["relay-control"], WEBAPP=references["relay-webapp"], PIPELINE=references["sessions-pipeline"]):
                 selected = selected_images()
                 self.assertEqual([selected[key] for key in ("control", "webapp", "pipeline")],
@@ -492,7 +492,7 @@ class LocalTests(unittest.TestCase):
             self.assert_final_render(experimental=True)
 
     def test_cast_opt_outs_keep_the_collector_enabled_in_real_renders(self):
-        original = local_stack.reference(local_stack.AA_VALUES["relaycast"]["image"])
+        original = local_stack.reference(local_stack.PROFILE_VALUES["relaycast"]["image"])
         for backend in ("postgres", "sqlite"):
             with self.subTest(backend=backend), patch.multiple(local_stack, CAST_BACKEND=backend, CAST=original):
                 self.assert_final_render(experimental=False)
@@ -561,10 +561,10 @@ class LocalTests(unittest.TestCase):
         active = [d for d in docs if d["kind"] == "Deployment" and d["spec"].get("replicas", 1) > 0]
         self.assertEqual({d["metadata"]["name"] for d in active}, {"relay-control", "relay-webapp", "relaycast", "session-native-ingest",
             "session-native-consumer", "session-read-api", "sessions-session-brief", "telemetry-collector"})
-        aa = profile if profile is not None else yaml.safe_load((ROOT / "charts/agent-relay/values-eks.yaml").read_text())
-        release = {name: local_stack.reference(aa[name]["image"]) for name in ("relay-control", "relay-webapp", "relaycast")}
+        pinned = profile if profile is not None else yaml.safe_load((ROOT / "charts/agent-relay/values-eks.yaml").read_text())
+        release = {name: local_stack.reference(pinned[name]["image"]) for name in ("relay-control", "relay-webapp", "relaycast")}
         release["relaycast"] = local_stack.CAST
-        selected = local_stack.DESKTOP_RELEASE_VALUES if experimental else aa
+        selected = local_stack.DESKTOP_RELEASE_VALUES if experimental else pinned
         for name in ("relay-control", "relay-webapp"):
             release[name] = local_stack.reference(selected[name]["image"])
         with patch.object(stack, "apply") as apply:
@@ -574,7 +574,7 @@ class LocalTests(unittest.TestCase):
         else:
             apply.assert_not_called()
             github_selector = None
-        release.update({name: local_stack.reference(aa["sessions-pipeline"]["worker"]["image"])
+        release.update({name: local_stack.reference(pinned["sessions-pipeline"]["worker"]["image"])
             for name in ("session-native-ingest", "session-native-consumer", "session-read-api", "sessions-session-brief")})
         for deployment in active:
             pod = deployment["spec"]["template"]["spec"]
@@ -631,7 +631,7 @@ class LocalTests(unittest.TestCase):
                     else:
                         self.assertNotIn("SELFHOST_DESKTOP_RELEASES_REPO", env)
                         for component in ("relay-control", "relay-webapp"):
-                            self.assertEqual(release[component], local_stack.reference(aa[component]["image"]))
+                            self.assertEqual(release[component], local_stack.reference(pinned[component]["image"]))
                     self.assertEqual(env["SELFHOST_ANALYTICS_DESTINATION"]["value"], "collector")
                     self.assertTrue(any(m["name"] == "analytics-producer" for m in container["volumeMounts"]))
                 if name == "relaycast":
