@@ -22,7 +22,7 @@ dependencies:
   version: 0.2.5
 - name: durable-actors
   repository: file://../durable-actors
-  version: 0.14.6-awf.1
+  version: 0.14.6-awf.2
 - name: relayfile
   repository: file://../relayfile
   version: 0.2.2
@@ -32,5 +32,5 @@ dependencies:
 - name: relay-chief
   repository: file://../relay-chief
   version: 0.1.0
-digest: sha256:2e6d0a8b465d9c74c72197fb41d35ad5a4062e7a1d880f28e797b613b62c7eb8
-generated: "2026-11-12T19:12:25.608955+01:00"
+digest: sha256:80643464e13e9dafc77277d04a3ba62cec8fcc679da82e654089804514a707e3
+generated: "2026-11-12T10:50:29.265938854-08:00"

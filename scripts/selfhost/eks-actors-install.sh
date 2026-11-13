@@ -18,7 +18,8 @@
 #   existing Postgres password so actors-credentials always matches actors-pg.
 #   Postgres traffic is plaintext (sslmode=disable): accepted for this proof
 #   only, because the database never leaves the release namespace. A real
-#   install uses a managed Postgres (RDS) with sslmode=require or verify-full.
+#   install uses a managed Postgres (RDS) with sslmode=require and
+#   durable-actors.postgresCa (values-eks-rds-native.yaml, rds-ca ConfigMap).
 #   The namespace is created with label agent-relay.dev/eks-actors-proof=owned
 #   when it does not exist yet; `uninstall` deletes a namespace only when it
 #   carries that label, and otherwise removes just this proof's objects.

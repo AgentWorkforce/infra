@@ -853,6 +853,40 @@ for chart in "${charts[@]}"; do
             || err "$chart: $name must come from the existing Secret"
         done
         ;;
+      durable-actors)
+        # Local patch 12 (UPSTREAM.md): postgresCa appends the Postgres server CA to the
+        # image's system roots (init container postgres-ca-bundle, volume postgres-ca)
+        # and points SSL_CERT_FILE at it in the control plane and the pool manager.
+        v=charts/durable-actors/ci/eks-values.yaml
+        off=$(render "$chart" "$v")
+        ! grep -Eq 'postgres-ca|SSL_CERT_FILE|initContainers' <<<"$off" || err "$chart: postgresCa off must render nothing"
+        for src in "configMap=rds-ca" "secret=rds-ca-secret"; do
+          on=$(render "$chart" "$v" --set postgresCa.enabled=true --set "postgresCa.$src" --set postgresCa.key=global-bundle.pem) || { err "$chart: postgresCa $src did not render"; continue; }
+          [ "$(yq 'select(.kind == "Deployment") | .metadata.name' <<<"$on" | grep -v '^---$' | sort | tr '\n' ' ')" = "ci-durable-actors ci-durable-actors-pool-manager " ] \
+            || err "$chart: expected the control-plane and pool-manager Deployments"
+          if [ "${src%%=*}" = configMap ]; then
+            source='.configMap.name == "rds-ca" and (.configMap.items | length) == 1 and .configMap.items[0].key == "global-bundle.pem" and .configMap.items[0].path == "ca.crt"'
+          else
+            source='.secret.secretName == "rds-ca-secret" and .secret.defaultMode == 0444 and (.secret.items | length) == 1 and .secret.items[0].key == "global-bundle.pem" and .secret.items[0].path == "ca.crt"'
+          fi
+          ok='([.spec.template.spec.volumes[] | select(.name == "postgres-ca-source" and '"$source"')] | length) == 1'
+          ok+=' and ([.spec.template.spec.volumes[] | select(.name == "postgres-ca" and .emptyDir.medium == "Memory")] | length) == 1'
+          ok+=' and ([.spec.template.spec.initContainers[] | select(.name == "postgres-ca-bundle" and (.command[-1] | contains("/etc/ssl/certs/ca-certificates.crt")) and (.command[-1] | contains("/etc/postgres-ca-source/ca.crt")) and .securityContext.readOnlyRootFilesystem == true)] | length) == 1'
+          ok+=' and .spec.template.spec.initContainers[0].image == .spec.template.spec.containers[0].image'
+          ok+=' and ([.spec.template.spec.containers[0].volumeMounts[] | select(.name == "postgres-ca" and .mountPath == "/etc/postgres-ca" and .readOnly == true)] | length) == 1'
+          ok+=' and ([.spec.template.spec.containers[0].volumeMounts[] | select(.name == "postgres-ca-source")] | length) == 0'
+          ok+=' and ([.spec.template.spec.containers[0].env[] | select(.name == "SSL_CERT_FILE" and .value == "/etc/postgres-ca/ca.crt")] | length) == 1'
+          missing=$(yq "select(.kind == \"Deployment\") | select(($ok) | not) | .metadata.name" <<<"$on" | grep -v '^---$' || true)
+          [ -z "$missing" ] || err "$chart: postgresCa $src did not reach: $missing"
+          kubeconform -strict -summary -ignore-missing-schemas -kubernetes-version "${KUBE_VERSION:-1.33.0}" <<<"$on" >/dev/null || err "$chart: postgresCa $src failed kubeconform"
+        done
+        expect_render_failure "$chart" "$v" "postgresCa without a source" "postgresCa.enabled=true requires exactly one of postgresCa.configMap or postgresCa.secret" --set postgresCa.enabled=true
+        expect_render_failure "$chart" "$v" "postgresCa with both sources" "postgresCa.enabled=true requires exactly one of postgresCa.configMap or postgresCa.secret" --set postgresCa.enabled=true --set postgresCa.configMap=a --set postgresCa.secret=b
+        expect_render_failure "$chart" "$v" "postgresCa source while disabled" "postgresCa.configMap and postgresCa.secret require postgresCa.enabled=true" --set postgresCa.configMap=rds-ca
+        expect_render_failure "$chart" "$v" "postgresCa non-boolean enabled" "/postgresCa/enabled" --set-string postgresCa.enabled=true
+        expect_render_failure "$chart" "$v" "postgresCa bad name" "/postgresCa/configMap" --set postgresCa.enabled=true --set postgresCa.configMap=Bad_Name
+        expect_render_failure "$chart" "$v" "postgresCa bad key" "/postgresCa/key" --set postgresCa.enabled=true --set postgresCa.configMap=rds-ca --set postgresCa.key=../x
+        ;;
       agent-relay)
         v=charts/agent-relay/ci/gcp-proof-values.yaml
         expect_render_failure "$chart" "$v" "missing History image" "image.digest is required" --set relayhistory.image.digest=

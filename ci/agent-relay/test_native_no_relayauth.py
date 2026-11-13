@@ -96,6 +96,29 @@ class NativeNoRelayauth(unittest.TestCase):
             pod = deployments[name]['spec']['template']['spec']
             postgres_ca = next(volume for volume in pod['volumes'] if volume['name'] == 'postgres-ca')
             self.assertEqual(postgres_ca['configMap']['name'], 'rds-ca', name)
+        # The durable-actors control plane and pool manager verify RDS with the
+        # same bundle (charts/durable-actors UPSTREAM.md patch 12).
+        for name in ('proof-durable-actors', 'proof-durable-actors-pool-manager'):
+            self.assertIn(name, deployments)
+            pod = deployments[name]['spec']['template']['spec']
+            volumes = {volume['name']: volume for volume in pod['volumes']}
+            self.assertEqual(volumes['postgres-ca'].get('emptyDir', {}).get('medium'), 'Memory', name)
+            self.assertEqual(volumes['postgres-ca-source']['configMap'], {'name': 'rds-ca', 'items': [{'key': 'ca.crt', 'path': 'ca.crt'}]}, name)
+            self.assertEqual([c['name'] for c in pod['initContainers']], ['postgres-ca-bundle'], name)
+            self.assertIn('/etc/ssl/certs/ca-certificates.crt', pod['initContainers'][0]['command'][-1], name)
+            container = pod['containers'][0]
+            self.assertIn({'name': 'postgres-ca', 'mountPath': '/etc/postgres-ca', 'readOnly': True}, container['volumeMounts'], name)
+            self.assertIn({'name': 'SSL_CERT_FILE', 'value': '/etc/postgres-ca/ca.crt'}, container['env'], name)
+
+        # Standalone (eks-actors-install.sh, in-namespace Postgres) mounts no CA.
+        result = subprocess.run([
+            'helm', 'template', 'proof', 'charts/agent-relay', '-n', 'agent-relay-ci', '--no-hooks',
+            '-f', 'charts/agent-relay/values-eks-actors.yaml',
+            *sum((['--set-string', f'{key}={value}'] for key, value in actor_values.items()), []),
+        ], cwd=ROOT, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn('postgres-ca', result.stdout)
+        self.assertNotIn('SSL_CERT_FILE', result.stdout)
 
     def test_eks_rds_native_profile_is_reader_first_and_customer_neutral(self):
         result = subprocess.run([

@@ -94,10 +94,31 @@ Patches to upstream files (report upstream; drop when fixed there):
     Defaults render byte-identical to upstream apart from the `helm.sh/chart`
     label (patch 11). Upstream proposal: TerseAI/durable-actors PRs (see
     relay-briefs actors-aws.md).
-11. `Chart.yaml`: `version` is `0.14.6-awf.1` (upstream `0.14.6`), so a packaged
-    chart carrying patch 10 can never be mistaken for the upstream release.
+11. `Chart.yaml`: `version` is `0.14.6-awf.2` (upstream `0.14.6`; `awf.1` carried
+    patches 1-10, `awf.2` adds patch 12), so a packaged chart carrying the patches
+    can never be mistaken for the upstream release.
     `appVersion` stays `0.14.6`. Reset the suffix when re-vendoring a release
     that contains these patches.
+12. PostgreSQL server CA (`values.yaml`, `values.schema.json`,
+    `templates/control-plane.yaml`, `templates/_helpers.tpl`). New value
+    `postgresCa: {enabled, configMap, secret, key}` (default off, `key: ca.crt`),
+    the same shape as the first-party charts here. Works with the unmodified
+    upstream images (proven on 0.14.6 and 0.17.0): the control plane's
+    `tokio-postgres` + `native-tls` client is OpenSSL, which verifies the chain
+    and hostname for every `sslmode` except `disable` and takes its roots from
+    `SSL_CERT_FILE`. When enabled, an init container `postgres-ca-bundle` (the
+    control-plane image) writes the image's `/etc/ssl/certs/ca-certificates.crt`
+    plus the PEM at `key` in exactly one existing ConfigMap or Secret (volume
+    `postgres-ca-source`) into an in-memory emptyDir, mounted read-only as volume
+    `postgres-ca` at `/etc/postgres-ca/ca.crt` in the control plane and the pool
+    manager, and `SSL_CERT_FILE` points at it. The system roots must stay in the
+    file: `rustls-native-certs` (reqwest for GCS and Google auth, the AWS SDK for
+    S3/STS in the fork, tonic, Redis) also replaces its roots with
+    `SSL_CERT_FILE`. Use `sslmode=require` in the `postgres-url` key: this client
+    rejects `verify-full`, and `require` already verifies chain and hostname. A
+    half-set value (a source while disabled, none or both while enabled) fails the
+    render. Defaults render byte-identical to `awf.1`. Drop when upstream accepts a
+    CA path (`sslrootcert`).
 
 ## Re-vendoring
 

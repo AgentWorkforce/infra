@@ -325,3 +325,16 @@ relay-webapp:
     sessionReadApiEnabled: true
     # The backend endpoint is on; the customer-visible tab stays default off.
     coordinationOverlapsEnabled: false
+
+# Used only when values-eks-actors.yaml is layered after this file
+# (components.durableActors): the durable-actors control plane and pool manager
+# verify RDS against the rds-ca bundle plus the image's system roots, through
+# SSL_CERT_FILE (charts/durable-actors UPSTREAM.md patch 12). Works with the
+# stock control-plane image. Set the actors-credentials postgres-url key to
+# postgresql://<user>:<password>@<rds endpoint>:5432/<db>?sslmode=require
+# (this client verifies chain and hostname for require; it rejects verify-full).
+durable-actors:
+  postgresCa:
+    enabled: true
+    configMap: rds-ca
+    key: ca.crt
