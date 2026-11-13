@@ -18,6 +18,13 @@ the upgrader layers only the `relaycast` and `durable-actors` parts of
 `values-eks-actors.yaml` (the profile as a whole turns the rest of the suite
 off and moves Relayfile).
 
+The release must first deploy a PostgreSQL image containing the export side of
+the protocol. The EKS RDS-native profile pins `12.8.0-pg.2`, source
+`a63961bd` (relaycast #653 plus #657), digest
+`sha256:1307bd845031a7466e65ebaf08bc8b826e2837d90f58c9b5a6a1d673c62dad93`,
+from attested publish run 43351584271. The upgrader deliberately requires the
+target chart version to be live before either migration phase.
+
 ## Facts that shape the design
 
 1. **Engine schema is shared.** Both backends run the same engine and the same

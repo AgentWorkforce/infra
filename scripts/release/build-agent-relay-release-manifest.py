@@ -204,8 +204,16 @@ def build_values_overlay(manifest: dict[str, object]) -> str:
     relaycast_image = (
         "relaycast-eks-collector" if profile == "eks" else "relaycast"
     )
+    # The EKS application image may be the collector-qualified build, while
+    # the PostgreSQL migration/export path has its own reviewed pin. Never let
+    # the final release overlay overwrite runtime.postgres.image with the
+    # generic application image.
+    relaycast_postgres_image = (
+        "relaycast-postgres" if profile == "eks" else "relaycast"
+    )
     required = {
         relaycast_image,
+        relaycast_postgres_image,
         "relayauth",
         "sessions-pipeline",
         "relay-control",
@@ -240,7 +248,7 @@ def build_values_overlay(manifest: dict[str, object]) -> str:
         "  runtime:",
         "    postgres:",
         "      image:",
-        *pair(relaycast_image, 8),
+        *pair(relaycast_postgres_image, 8),
         "relayauth:",
         "  image:",
         *pair("relayauth", 4),

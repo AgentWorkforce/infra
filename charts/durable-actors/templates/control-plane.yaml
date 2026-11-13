@@ -46,6 +46,15 @@ spec:
                   - key: sandbox.gke.io/runtime
                     operator: NotIn
                     values: [gvisor]
+      {{- if $.Values.topologySpread.enabled }}
+      topologySpreadConstraints:
+        - maxSkew: {{ $.Values.topologySpread.maxSkew }}
+          topologyKey: {{ $.Values.topologySpread.topologyKey | quote }}
+          whenUnsatisfiable: {{ $.Values.topologySpread.whenUnsatisfiable }}
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: {{ $workload.name }}
+      {{- end }}
       securityContext:
         runAsNonRoot: true
         runAsUser: 10000
@@ -257,14 +266,14 @@ spec:
     app.kubernetes.io/name: {{ include "actors.name" . }}
   ports:
     - {name: http, port: 7100, targetPort: http}
-{{- if gt (int .Values.replicaCount) 1 }}
+{{- if or .Values.podDisruptionBudget.enabled (gt (int .Values.replicaCount) 1) }}
 ---
 apiVersion: policy/v1
 kind: PodDisruptionBudget
 metadata:
   name: {{ include "actors.name" . }}
 spec:
-  maxUnavailable: 1
+  maxUnavailable: {{ .Values.podDisruptionBudget.maxUnavailable }}
   selector:
     matchLabels:
       app.kubernetes.io/name: {{ include "actors.name" . }}

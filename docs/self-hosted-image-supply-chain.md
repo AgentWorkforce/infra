@@ -73,19 +73,20 @@ approval yet; approve them before they join a gated profile.
 |---|---|---|---|
 | `ghcr.io/agentworkforce/durable-actors-control-plane` | `sha256:0dc76905554055c8f063d764799410e2a2f385c2274661dd07d8fd9b12117971` | AgentWorkforce/durable-actors (fork of TerseAI) tag `awf-v0.14.6-aws.2` (`a5a7e245`), [run 41800410035](https://github.com/AgentWorkforce/durable-actors/actions/runs/41800410035), MIT | linux/amd64 only |
 | `ghcr.io/agentworkforce/durable-actors-typescript` | `sha256:b7118ed1377ccc20f0389d194dd589bcd4845394f72f91410cbaf0f62d4a2ed9` | same fork tag and run, MIT | linux/amd64 only |
-| `ghcr.io/agentworkforce/relaycast-actors-gateway` | `sha256:6d4f77c4285becac66f56601a36ac3580b19ad37331db4ad2b87f68b2a68abe4` | relaycast main `4e90b169` (#626), [run 41805228035](https://github.com/AgentWorkforce/relaycast/actions/runs/41805228035), Apache-2.0 | linux/amd64, linux/arm64 |
-| `ghcr.io/agentworkforce/relaycast-actors-deployer` | `sha256:f539982442305c61f2c7a7d979cb110e18f3be83fed69befd8755b6ad5476b51` | same relaycast revision and run, Apache-2.0 | linux/amd64, linux/arm64 |
+| `ghcr.io/agentworkforce/relaycast-actors-gateway` | `sha256:8148aa62db3a387dbfc266a8baddcfce4adf90ae089c434d86eecf1aa24973e1` | relaycast main `997dbb28` (#653/#655/#656/#663), [run 43481968560](https://github.com/AgentWorkforce/relaycast/actions/runs/43481968560), tag `12.8.0-actors.2`, Apache-2.0 | linux/amd64, linux/arm64 |
+| `ghcr.io/agentworkforce/relaycast-actors-deployer` | `sha256:3a407c3138ff56ff14686031b40925ee2f843cfc690eaaf4469f5a518c57213d` | same relaycast revision, run and tag, Apache-2.0 | linux/amd64, linux/arm64 |
 | `ghcr.io/agentworkforce/relayfile-actors` | `sha256:27dfc8d5bbceb7161af9aa4c4923c0efd5045b2d332f60c30492fd599b434522` | relayfile main `30a5e007` (#559), [run 41805271012](https://github.com/AgentWorkforce/relayfile/actions/runs/41805271012), Apache-2.0 | linux/amd64, linux/arm64 |
 | `ghcr.io/agentworkforce/relayfile-actors-workspace` | `sha256:6845272aa103724e4da8d6f29653e4ea06ab57b71900b807e4a38b8f41c11d32` | same relayfile revision and run, Apache-2.0 | linux/amd64, linux/arm64 |
 
-The header comment of `values-eks-actors.yaml` still says these packages may
-be private and need mirroring. It is out of date: they are public. Mirror them
-by digest anyway, like every other image. The comment is corrected with the
-next chart version bump, because chart files cannot change without one.
+These packages are public, but a customer installation still mirrors them by
+digest into its registry. `values-eks-actors.yaml` records the public source
+digests; the migration's `--actors-values` file supplies the matching mirror
+repositories and digests.
 
-The relaycast-actors-gateway image has no OCI revision or license label, and
-the deployer's labels read revision `38afee6c` and licenses `NOASSERTION`
-(inherited). The table records the publish run's head revision instead.
+The actor image index includes buildx provenance manifests, but the image
+config does not carry an OCI revision or license label. The table therefore
+records the publish run's exact head revision and the repository's reviewed
+Apache-2.0 license instead.
 
 ## Customer acquisition and promotion
 

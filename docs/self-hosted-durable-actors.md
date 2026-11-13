@@ -342,6 +342,26 @@ performing TLS handshake" until the CA is added. Do not work around it with
 
 The bundle is built at pod start, so rotating the CA needs a pod restart.
 
+### AWS Relaycast capacity and disruption defaults
+
+`values-eks-actors.yaml` is the EKS target for Relaycast after the full-copy
+PostgreSQL migration. Relaycast file bytes are in S3 and its gateway has no
+PVC. The target runs three stateless gateway replicas with a
+`maxUnavailable: 1` PodDisruptionBudget and release-scoped zone spread. The
+TerseAI actor hosts use 1024 MiB, three warm hosts and at most eight concurrent
+starts; the controller requests 1 CPU / 1 GiB and is limited to 2 GiB. These
+replace the 256 MiB upstream actor-host default, which was not stable under the
+production-shaped workload.
+
+The tested AWS target still has one durable-actors controller. Its PDB refuses
+voluntary eviction and topology spread constrains its placement, but neither
+turns a singleton into HA: node or AZ loss waits for rescheduling. More than
+one controller requires a tested Redis deployment and `redis.urlSecretKey`;
+do not raise `replicaCount` without it. Actor placement is also one configured
+availability zone in this TerseAI fork. Treat multi-controller Redis and
+multi-zone actor placement as separate prerequisites before making an
+AZ-survival claim.
+
 ## kind / local proof
 
 kind cannot run the upstream control plane (no GKE Sandbox, no GCS). The kind
@@ -363,9 +383,11 @@ runtime image ships only the actor host, not the compiler) and
 - Upstream has no invoke-only credential: Relaycast's gateway still holds a copy
   of the admin key (`invocationSecret.scope: admin`); Relayfile isolates it in
   the session broker. Socket grants (`find-websocket`) need the admin key.
-- No SQLite → actors migration tooling; actor mode is a fresh-install backend.
-- AWS EKS with S3 actor storage ships as a proof profile in agent-relay 0.3.12
-  (`values-eks-actors.yaml`, `scripts/selfhost/eks-actors-install.sh`). Other
+- No SQLite → actors migration tooling. PostgreSQL installs use the refusing,
+  full-copy workflow in
+  [relaycast-postgres-to-actors-migration.md](relaycast-postgres-to-actors-migration.md).
+- AWS EKS with S3 actor storage ships in `values-eks-actors.yaml`; the proof
+  harness remains `scripts/selfhost/eks-actors-install.sh`. Other
   non-GKE self-host (generic Kubernetes, MinIO actor storage) is an upstream gap.
 - Changing an installation's `storage.mode` or bucket identities needs a data
   migration; a values change alone does not move actor state.

@@ -112,6 +112,17 @@ secretKeys:
   relayauthToken: relaycast-relayauth-token   # key in existingSecret
 ```
 
+## Durable-actors gateway availability
+
+With an object file store (`gcs` or `s3`),
+`runtime.durableActors.gateway.replicaCount` may be greater than one. The chart
+then renders a `maxUnavailable: 1` PodDisruptionBudget automatically. Enable
+`runtime.durableActors.gateway.topologySpread` to generate a zone (or hostname)
+spread constraint whose selector is derived from this release's labels. The
+generic root `topologySpreadConstraints` remains available when the generated
+shape is disabled. Local files and the development runtime remain one replica
+and render no PDB.
+
 ## Keyed workspace creates on durable-actors
 
 With `runtime.backend: durable-actors`, a keyed workspace create
@@ -302,7 +313,7 @@ Deployment back to 1.
 `runtime.backend: postgres` (default off) runs the server on an external
 PostgreSQL database. Uploaded files stay on the data PVC, and realtime, presence
 and rate limits are in-process, so `replicaCount` must stay 1. The image is
-`runtime.postgres.image` (12.8.0-pg.1), not `image.*`.
+`runtime.postgres.image` (12.8.0-pg.2), not `image.*`.
 
 Prepare the database first: the `relaycast_owner` and `relaycast_runtime` roles
 and schema `public`, as in `docs/self-host-postgres.md` in AgentWorkforce/relaycast.

@@ -374,6 +374,13 @@ for chart in "${charts[@]}"; do
           || err "$chart: the actors gateway allows public workspace create"
         ! yq 'select(.kind == "PersistentVolumeClaim") | .metadata.name' <<<"$out" | grep -q . \
           || err "$chart: the actors gateway with an object file store renders a PVC"
+        [ "$(yq 'select(.kind == "PodDisruptionBudget") | .spec.maxUnavailable' <<<"$out" | sed '/^$/d')" = 1 ] \
+          || err "$chart: the multi-replica actors gateway must render a maxUnavailable=1 PDB"
+        [ "$(yq 'select(.kind == "PodDisruptionBudget") | .spec.selector.matchLabels["app.kubernetes.io/name"]' <<<"$out" | sed '/^$/d')" = relaycast ] \
+          || err "$chart: the actors gateway PDB selector must match the gateway"
+        spread=$(render "$chart" "$v" --set runtime.durableActors.gateway.topologySpread.enabled=true)
+        [ "$(yq 'select(.kind == "Deployment") | .spec.template.spec.topologySpreadConstraints[0].labelSelector.matchLabels["app.kubernetes.io/name"]' <<<"$spread" | sed '/^$/d')" = relaycast ] \
+          || err "$chart: generated gateway topology spread must match the release labels"
         # Keyed creates: the workspace bootstrap secret and proof policy (relaycast #622).
         expect_render_failure "$chart" "$v" "actors proof without bootstrap secret" "bootstrapProofRequired=true with runtime.backend=durable-actors requires secretKeys.workspaceBootstrapSecret" --set bootstrapProofRequired=true
         expect_render_failure "$chart" "$v" "actors proof not a bool" "bootstrapProofRequired must be true or false" --set-string bootstrapProofRequired=yes --set secretKeys.workspaceBootstrapSecret=wbs
@@ -893,6 +900,11 @@ for chart in "${charts[@]}"; do
         expect_render_failure "$chart" "$v" "postgresCa non-boolean enabled" "/postgresCa/enabled" --set-string postgresCa.enabled=true
         expect_render_failure "$chart" "$v" "postgresCa bad name" "/postgresCa/configMap" --set postgresCa.enabled=true --set postgresCa.configMap=Bad_Name
         expect_render_failure "$chart" "$v" "postgresCa bad key" "/postgresCa/key" --set postgresCa.enabled=true --set postgresCa.configMap=rds-ca --set postgresCa.key=../x
+        resilient=$(render "$chart" "$v" --set podDisruptionBudget.enabled=true --set podDisruptionBudget.maxUnavailable=0 --set topologySpread.enabled=true)
+        [ "$(yq 'select(.kind == "PodDisruptionBudget") | .spec.maxUnavailable' <<<"$resilient" | sed '/^$/d')" = 0 ] \
+          || err "$chart: singleton control-plane PDB must preserve maxUnavailable=0"
+        missing=$(yq 'select(.kind == "Deployment") | select((.spec.template.spec.topologySpreadConstraints[0].labelSelector.matchLabels["app.kubernetes.io/name"] == .metadata.name) | not) | .metadata.name' <<<"$resilient" | grep -v '^---$' || true)
+        [ -z "$missing" ] || err "$chart: generated topology spread does not select its Deployment: $missing"
         ;;
       agent-relay)
         v=charts/agent-relay/ci/gcp-proof-values.yaml
