@@ -290,6 +290,9 @@ sessions_index_check() {
   say "   pending steps: $(jq -r '.pending | join(", ")' <<<"$decision")"
   say "   $(jq -r '"\(.adopted | length) index(es) prebuilt and adopted, \(.empty | length) built on empty tables, \(.build | length) absent on populated tables"' <<<"$decision")"
   jq -r '.build[] | "     sessions.\(.name) on \(.table): \(.rows) rows\(if .exact then "" else " (at least; estimate \(.estimate))" end)"' <<<"$decision"
+  # Rows to index count a table once per absent index: each build scans it again.
+  jq -r '.build | group_by(.table)[] | select(length > 1)
+    | "     \(.[0].table) gets \(length) indexes: \(length) x \(.[0].rows) = \(length * .[0].rows) rows to index"' <<<"$decision"
   if [ "$(jq '.refused | length' <<<"$decision")" -gt 0 ]; then
     jq -r '.refused[] | "     sessions.\(.name) on \(.table): \(if .state == "not_ready" then "INVALID or still building (check pg_stat_progress_create_index before any DROP INDEX CONCURRENTLY)" else "exists but is not the declared index; reconcile it by hand" end)"' <<<"$decision"
     die "refusing: an index the Sessions migration would adopt is not usable (above). Follow \"Failed or cancelled builds\" in the packet ($(jq -r '.packets | join("; ")' <<<"$decision"), Sessions repository), then re-run. Nothing was changed."

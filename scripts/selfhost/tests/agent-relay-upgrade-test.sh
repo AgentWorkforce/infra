@@ -660,6 +660,12 @@ grep -q 'helm template' "$root/log" && fail "a refused census still rendered"
 census_setup; census absent 2500000
 run "${args[@]}" --apply --db-instance prod-db --yes >/dev/null 2>&1 && fail "apply accepted a large table"
 grep -Eq 'aws rds create-db-snapshot|helm .* upgrade |crane ' "$root/log" && fail "a refused census still snapshotted, mirrored or upgraded"
+# A table that gets two absent indexes is named with its rows counted twice.
+census_setup; census absent 600000
+jq -c '.steps[1].indexes[1] = (.steps[1].indexes[0] | .name = "ingest_lazy_ack_decisions_seat_key_sha256_idx")' <(sed 's/^INDEX_CENSUS //' "$root/census.out") | sed 's/^/INDEX_CENSUS /' > "$root/census.2" && mv "$root/census.2" "$root/census.out"
+out=$(run "${args[@]}" 2>&1) && fail "two indexes on a 600000-row table were accepted"
+grep -q 'sessions.ingest_lazy_ack_decisions gets 2 indexes: 2 x 600000 = 1200000 rows to index' <<<"$out" || fail "the twice-indexed table was not stated: $out"
+grep -q 'with 1200000 rows to index, above the blocking-build limit' <<<"$out" || fail "rows were not counted per absent index: $out"
 pass "census: above the limit it refuses before anything changes and names the CONCURRENTLY packet"
 
 # 39. the limit is configurable
