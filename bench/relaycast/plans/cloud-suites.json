@@ -681,6 +681,122 @@
      "drainS": 120
     }
    ]
+  },
+  {
+   "name": "aa-soak",
+   "sinks": 2,
+   "producers": 2,
+   "notes": "AA-realistic: 3 workspaces x 30 agents (10 producers + 20 receivers, all on node sockets), channels of 12 (+ the producers), 3 msgs/s mixed DM/channel with 5% uploads, 2 h. Chaos inside: relaycast/gateway kill +30 min, actor host kill +45 (actors), node drain +60, RDS forced failover +80.",
+   "fixture": {
+    "RCB_WORKSPACES": 3,
+    "RCB_PRODUCERS": 10,
+    "RCB_RECEIVERS": 20,
+    "RCB_CHANNELS": 4,
+    "RCB_CHANNEL_MEMBERS": 12,
+    "RCB_AGENTS_PER_NODE": 1,
+    "RCB_PRODUCERS_ON_NODES": 1
+   },
+   "phases": [
+    {
+     "label": "aa-soak",
+     "kind": "mixed",
+     "dmShare": 0.6,
+     "uploadShare": 0.05,
+     "rate": 3,
+     "durationS": 7200,
+     "sizeBytes": 1024,
+     "drainS": 300
+    }
+   ],
+   "chaos": [
+    {
+     "phase": "aa-soak",
+     "atS": 1800,
+     "action": "kill-relaycast"
+    },
+    {
+     "phase": "aa-soak",
+     "atS": 2700,
+     "action": "kill-actor"
+    },
+    {
+     "phase": "aa-soak",
+     "atS": 3600,
+     "action": "node-drain"
+    },
+    {
+     "phase": "aa-soak",
+     "atS": 4800,
+     "action": "rds-failover"
+    }
+   ]
+  },
+  {
+   "name": "aa-headroom",
+   "sinks": 2,
+   "producers": 2,
+   "notes": "AA shape at 10/20/50 msgs/s (5 min each), then 10 min overload at 100 msgs/s, then back to 3 msgs/s for 15 min: self-healing and catch-up time without intervention.",
+   "fixture": {
+    "RCB_WORKSPACES": 3,
+    "RCB_PRODUCERS": 10,
+    "RCB_RECEIVERS": 20,
+    "RCB_CHANNELS": 4,
+    "RCB_CHANNEL_MEMBERS": 12,
+    "RCB_AGENTS_PER_NODE": 1,
+    "RCB_PRODUCERS_ON_NODES": 1
+   },
+   "phases": [
+    {
+     "label": "aah-10",
+     "kind": "mixed",
+     "dmShare": 0.6,
+     "uploadShare": 0.05,
+     "rate": 10,
+     "durationS": 300,
+     "sizeBytes": 1024,
+     "drainS": 30
+    },
+    {
+     "label": "aah-20",
+     "kind": "mixed",
+     "dmShare": 0.6,
+     "uploadShare": 0.05,
+     "rate": 20,
+     "durationS": 300,
+     "sizeBytes": 1024,
+     "drainS": 30
+    },
+    {
+     "label": "aah-50",
+     "kind": "mixed",
+     "dmShare": 0.6,
+     "uploadShare": 0.05,
+     "rate": 50,
+     "durationS": 300,
+     "sizeBytes": 1024,
+     "drainS": 30
+    },
+    {
+     "label": "aah-overload",
+     "kind": "mixed",
+     "dmShare": 0.6,
+     "uploadShare": 0.05,
+     "rate": 100,
+     "durationS": 600,
+     "sizeBytes": 1024,
+     "drainS": 5
+    },
+    {
+     "label": "aah-recover",
+     "kind": "mixed",
+     "dmShare": 0.6,
+     "uploadShare": 0.05,
+     "rate": 3,
+     "durationS": 900,
+     "sizeBytes": 1024,
+     "drainS": 300
+    }
+   ]
   }
  ],
  "loadgenCheck": {

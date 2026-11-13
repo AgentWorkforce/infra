@@ -203,11 +203,19 @@ chaos() { # action out
     kill-relaycast)
       "${K[@]}" get pods -l "$KILL_SELECTOR" -o name >>"$out.pods" || true
       "${K[@]}" delete pod -l "$KILL_SELECTOR" --wait=false >/dev/null
-      if [[ -n "$ACTOR_SELECTOR" ]]; then
-        # Actor hosts run in the sandbox namespace (<NS>-agent-relay).
-        local p; p="$(kubectl -n "${ACTOR_NS:-${NS}-agent-relay}" get pods -l "$ACTOR_SELECTOR" -o name | head -1)"
-        [[ -n "$p" ]] && { echo "$p" >>"$out.pods"; kubectl -n "${ACTOR_NS:-${NS}-agent-relay}" delete "$p" --wait=false >/dev/null; }
-      fi ;;
+      ;;
+    kill-actor)
+      # One busy actor host (sandbox namespace <NS>-agent-relay).
+      local an="${ACTOR_NS:-${NS}-agent-relay}" p
+      p="$(kubectl -n "$an" get pods -l "${ACTOR_SELECTOR:-terse.ai/purpose=actor}" --field-selector=status.phase=Running -o name | head -1)"
+      if [[ -n "$p" ]]; then echo "$p" >>"$out.pods"; kubectl -n "$an" delete "$p" --wait=false >/dev/null; else log "no actor host to kill"; fi ;;
+    node-drain)
+      # Drain the app node hosting relaycast (PG) or the gateway (actors),
+      # then uncordon after 5 min; DaemonSets and emptyDir are tolerated.
+      local node; node="$("${K[@]}" get pods -l "$KILL_SELECTOR" -o jsonpath='{.items[0].spec.nodeName}')"
+      echo "node/$node" >>"$out.pods"
+      kubectl drain "$node" --ignore-daemonsets --delete-emptydir-data --force --timeout=120s >/dev/null 2>&1 || true
+      ( sleep 300; kubectl uncordon "$node" >/dev/null 2>&1 ) & ;;
     rds-failover)
       aws --region "$REGION" rds reboot-db-instance --db-instance-identifier "$DB_ID" --force-failover >/dev/null ;;
     profile:*)
@@ -247,12 +255,11 @@ run_phases() { # suite dir phases(json array) nprod nsink chaos(json)
   local chaos_pids=()
   if [[ -n "$chaosj" && "$chaosj" != "[]" ]]; then
     while IFS=$'\t' read -r cph cat cact; do
-      local lport=$((19191 + ${#chaos_pids[@]}))
-      ( # at-phase polls a local port: forward producer-0's status for it.
-        "${K[@]}" port-forward pod/rcb-producer-0 "${lport}:9191" >/dev/null 2>&1 & pf=$!
-        sleep 3
-        "$HERE/at-phase.sh" "http://127.0.0.1:${lport}/" "$cph" "$cat" -- true >/dev/null 2>&1 && chaos "$cact" "$dir/chaos.jsonl"
-        kill "$pf" 2>/dev/null ) &
+      # Status via kubectl exec (a long-lived port-forward can die silently and
+      # leave the trigger polling forever, which lost the first action twice).
+      ( STATUS_CMD="kubectl -n $NS exec rcb-producer-0 -- wget -qO- http://127.0.0.1:9191/status" \
+          "$HERE/at-phase.sh" "unused" "$cph" "$cat" -- true >>"$dir/chaos-trigger.log" 2>&1 \
+          && chaos "$cact" "$dir/chaos.jsonl" >>"$dir/chaos-trigger.log" 2>&1 ) </dev/null &
       chaos_pids+=($!)
     done < <(node -e 'for (const c of JSON.parse(process.argv[1])) console.log([c.phase, c.atS, c.action].join("\t"))' "$chaosj")
   fi

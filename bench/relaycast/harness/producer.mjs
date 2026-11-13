@@ -249,6 +249,9 @@ async function runPhase(ph) {
     const share = ph.kind === 'dm' ? 1 : ph.kind === 'channel' || ph.kind === 'fanout' ? 0 : (ph.dmShare ?? 0.6);
     if ((share > 0 && !dms.length) || (share < 1 && !chs.length)) { log(`shard ${SHARD}: phase ${ph.label} has no streams here`); await sleep(ph.durationS * 1000); }
     else issued = await runRate(ph, (intended) => {
+      // uploadShare: that fraction of events is a full upload (upload, PUT,
+      // complete) instead of a message, for AA-like mixed traffic.
+      if (ph.uploadShare && Math.random() < ph.uploadShare) { if (inflight < MAX_INFLIGHT) upload(ph, intended); return; }
       const useDm = Math.random() < share;
       const s = useDm ? pick(dms, rr++)() : pick(chs, rr++)();
       enqueue(s, ph.label, intended, size);
