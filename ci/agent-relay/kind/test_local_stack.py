@@ -486,6 +486,92 @@ class LocalTests(unittest.TestCase):
         with patch.multiple(local_stack, DESKTOP_RELEASES=False, CONTROL=control, WEBAPP=webapp):
             self.assert_final_render(experimental=False)
 
+    def test_google_oidc_renders_control_sign_in_and_egress_only_when_stored(self):
+        control, webapp = local_stack.profile_images(False)
+        with tempfile.TemporaryDirectory() as tmp, patch.multiple(local_stack, DESKTOP_RELEASES=False, CONTROL=control, WEBAPP=webapp):
+            stack = LocalStack.__new__(LocalStack)
+            stack.state = Path(tmp)
+            stack.ca_sha = "c" * 64
+            stack.edge_ip = "10.96.0.10"
+            stack.credentials = {"createdAt": "2026-11-11T00:00:00Z"}
+            tenant = {"organizationId": "11111111-1111-4111-8111-111111111111", "workspaceId": "22222222-2222-4222-8222-222222222222"}
+            self.assertIsNone(stack.google_oidc())
+            self.assertNotIn("oidc", stack.values("serve", tenant)["relay-control"]["auth"])
+            (stack.state / "google-oidc.json").write_text(json.dumps({"client_id": "1-x.apps.googleusercontent.com",
+                "client_secret": "not-a-real-secret", "allowed_domains": ["agentrelay.com"]}))
+            values = stack.values("serve", tenant)
+            self.assertEqual(values["relay-control"]["auth"]["oidc"]["issuer"], "https://accounts.google.com")
+            self.assertTrue(values["relay-control"]["auth"]["emailLink"]["enabled"])
+            result = subprocess.run(["helm", "template", "agent-relay", "charts/agent-relay", "-n", "agent-relay", "-f", "-", "--is-upgrade"],
+                cwd=ROOT, input=json.dumps(values), capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertNotIn("not-a-real-secret", result.stdout)
+            api = next(d for d in yaml.safe_load_all(result.stdout) if d and d["kind"] == "Deployment" and d["metadata"]["name"] == "relay-control")
+            names = {e["name"]: e.get("value") for c in api["spec"]["template"]["spec"]["containers"] for e in c.get("env", [])}
+            self.assertEqual(names["SELFHOST_OIDC_ISSUER"], "https://accounts.google.com")
+            self.assertEqual(names["SELFHOST_OIDC_ALLOWED_DOMAINS"], "agentrelay.com")
+            self.assertEqual(names["SELFHOST_AUTO_JOIN_DOMAINS"], "agentrelay.com")
+            self.assertIn("SELFHOST_OIDC_CLIENT_SECRET_FILE", names)
+            with patch.object(stack, "apply") as apply:
+                stack.google_oidc_egress()
+            selector = apply.call_args.args[0]["spec"]["podSelector"]["matchLabels"]
+            labels = api["spec"]["template"]["metadata"]["labels"]
+            self.assertTrue(all(labels.get(k) == v for k, v in selector.items()))
+            (stack.state / "google-oidc.json").write_text(json.dumps({"client_id": "not-google", "client_secret": "x"}))
+            with self.assertRaises(local_stack.StackError):
+                stack.google_oidc()
+
+    def test_google_oidc_secret_reconciles_when_control_bootstrap_is_cached(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            stack = LocalStack.__new__(LocalStack)
+            stack.state = Path(tmp)
+            stack.docker_args = ["docker"]
+            credentials = {key: "fixture-" + key for key in (
+                "control_api_runtime", "bootstrap", "encryption", "cast", "internal", "introspection", "readerIssuer")}
+            credentials["createdAt"] = "2026-11-13T00:00:00Z"
+            (stack.state / "credentials.json").write_text(json.dumps(credentials))
+            (stack.state / "tenant.json").write_text("{}")
+            for name in ("ca.crt", "tls.crt"):
+                (stack.state / name).write_text("fixture-certificate")
+            stored = stack.state / "google-oidc.json"
+            secrets = {}
+            stages = []
+            stack.secret = lambda name, data: secrets.update({name: data})
+            # Every bootstrap stage, especially control/migrations, is already
+            # complete on this existing fixture: no callback may run again.
+            stack.stage = lambda name, callback: stages.append(name)
+            stack.cmd = lambda *args, **kwargs: SimpleNamespace(stdout=json.dumps({"reader": True, "consumer": True}))
+            stack.k = lambda *args, **kwargs: SimpleNamespace(stdout="10.96.0.10")
+            stack.values = lambda *args: {}
+            for name in ("docker", "cluster", "apply", "chart_dependencies", "reload_leaf_consumer",
+                    "prepare_pipeline_generation", "mail", "github_releases_egress", "sql", "support_credentials", "login_link"):
+                setattr(stack, name, lambda *args, **kwargs: None)
+            expected_secret = {"value": None}
+            def helm(values):
+                data = secrets["local-control"]
+                self.assertEqual(data["bootstrap-token"], credentials["bootstrap"])
+                self.assertEqual(data["encryption-key"], credentials["encryption"])
+                self.assertEqual(data["reader-secret"], credentials["readerIssuer"])
+                self.assertIn("database-url", data)
+                if expected_secret["value"] is None:
+                    self.assertNotIn("oidc-client-secret", data)
+                else:
+                    self.assertEqual(data["oidc-client-secret"], expected_secret["value"])
+            stack.helm = helm
+            with patch.multiple(local_stack, CAST_BACKEND="sqlite"), patch("local_ca.prepare", return_value=False), \
+                    patch("tls.create"), patch("edge.install"), patch.object(stack, "control") as bootstrap:
+                for value in ("fake-google-secret-one", "fake-google-secret-two", None):
+                    with self.subTest(secret_present=value is not None):
+                        if value is None:
+                            stored.unlink()
+                        else:
+                            stored.write_text(json.dumps({"client_id": "1-x.apps.googleusercontent.com",
+                                "client_secret": value, "allowed_domains": ["agentrelay.com"]}))
+                        expected_secret["value"] = value
+                        stack.up_local()
+                bootstrap.assert_not_called()
+            self.assertEqual(stages.count("control"), 3)
+
     def test_opt_in_final_render_selects_downloads_images_env_and_policy(self):
         control, webapp = local_stack.profile_images(True)
         with patch.multiple(local_stack, DESKTOP_RELEASES=True, CONTROL=control, WEBAPP=webapp):

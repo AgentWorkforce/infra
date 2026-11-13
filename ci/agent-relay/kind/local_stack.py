@@ -100,6 +100,7 @@ CONTROL, WEBAPP = profile_images(DESKTOP_RELEASES)
 CAST = ACTORS["source"]["gateway"]["reference"] if CAST_BACKEND == "durable-actors" else reference(PROFILE_VALUES["relaycast"]["image"])
 MINIO = "cgr.dev/chainguard/minio@sha256:e70b2b1e74d79457f808710483bd726ff364529ca30736eaa15a6ab547d3a5a7"
 SITE = "https://relay.kind.agentrelay.com"
+GOOGLE_ISSUER = "https://accounts.google.com"
 HISTORY = "https://history.kind.agentrelay.com:8443"
 PGHOST = "postgres.agent-relay.svc.cluster.local"
 COLLECTOR_URL = "https://telemetry-collector.agent-relay.svc.cluster.local:8443/v1/events"
@@ -375,6 +376,16 @@ GRANT TEMP ON DATABASE relaycast TO relaycast_owner;""")
             result["relay-control"].setdefault("extraEnv", []).append(env("SELFHOST_DESKTOP_RELEASES_REPO",
                 DESKTOP_RELEASE_VALUES["relay-control"]["desktopReleasesRepo"]))
         result["relay-control"]["auth"] = {"emailLink": {"enabled": True}}
+        oidc = self.google_oidc()
+        if oidc:
+            # Real Google sign-in through Control's OIDC (the same code path as
+            # Okta or Entra ID); the email link stays as the operator fallback.
+            result["relay-control"]["auth"]["oidc"] = {"issuer": GOOGLE_ISSUER, "clientId": oidc["client_id"],
+                "allowedDomains": oidc["allowed_domains"], "displayName": "Google"}
+            # allowedDomains only gates who may authenticate; joining the single
+            # organization without an invite is auth.autoJoinDomains.
+            result["relay-control"]["auth"]["autoJoinDomains"] = oidc["allowed_domains"]
+            result["relay-control"]["secretKeys"]["oidcClientSecret"] = "oidc-client-secret"
         result["relay-control"]["smtp"] = {"host": "local-mail.agent-relay.svc.cluster.local", "port": 1025, "security": "none", "from": "Local Relay <signin@kind.example>"}
         result["relay-control"]["services"]["publicHostAliases"] = [{"ip": self.edge_ip, "hostnames": ["relay.kind.agentrelay.com"]}]
         for slot in ("nativeConsumer", "ingestEdge", "sessionReadApi"):
@@ -438,6 +449,43 @@ GRANT TEMP ON DATABASE relaycast TO relaycast_owner;""")
                 "app.kubernetes.io/name": "relay-control", "app.kubernetes.io/instance": "agent-relay",
                 "app.kubernetes.io/component": "api"}))
 
+    def google_oidc(self):
+        """The Google OAuth client for local sign-in, or None (email link only)."""
+        state = getattr(self, "state", None)
+        path = state / "google-oidc.json" if state else None
+        if path is None or not path.exists():
+            return None
+        value = json.loads(path.read_text())
+        if not (isinstance(value.get("client_id"), str) and value["client_id"].endswith(".apps.googleusercontent.com")
+                and isinstance(value.get("client_secret"), str) and value["client_secret"]):
+            raise StackError(str(path) + " must hold a Google web client_id and client_secret")
+        value.setdefault("allowed_domains", ["agentrelay.com"])
+        return value
+
+    def google_oidc_egress(self):
+        selector = {"app.kubernetes.io/name": "relay-control", "app.kubernetes.io/instance": "agent-relay",
+            "app.kubernetes.io/component": "api"}
+        if self.google_oidc():
+            self.apply(public_https_egress("local-control-oidc-egress", selector))
+        else:
+            self.k("delete", "networkpolicy", "local-control-oidc-egress", "--ignore-not-found=true")
+
+    def install_google_oidc(self):
+        """Store a Google OAuth client (JSON on stdin) for this owned stack, then reconcile it."""
+        self.docker(require_space=False)
+        self.owned()
+        if sys.stdin.isatty():
+            raise StackError("pipe the client JSON on standard input; interactive entry would echo the secret")
+        raw = json.loads(sys.stdin.read())
+        domains = [d.strip() for d in os.environ.get("LOCAL_OIDC_ALLOWED_DOMAINS", "agentrelay.com").split(",") if d.strip()]
+        value = {"client_id": raw.get("client_id", ""), "client_secret": raw.get("client_secret", ""), "allowed_domains": domains}
+        private_json(self.state / "google-oidc.json", value)
+        self.google_oidc()  # validate before spending a reconcile
+        print("Google sign-in stored (0600; allowed domains: " + ", ".join(domains) + "). Reconciling the local stack...", flush=True)
+        self.up_local()
+        print("Register " + SITE + "/login/oidc/callback as an authorized redirect URI on that Google client, "
+            "then use 'Continue with Google' at " + SITE + "/login.")
+
     def configure_model(self, key=None):
         # Repeating local-up without an environment override preserves a key
         # already supplied to this disposable stack through its local Secret.
@@ -471,11 +519,15 @@ GRANT TEMP ON DATABASE relaycast TO relaycast_owner;""")
         self.k("rollout", "status", "deployment/sessions-session-brief", "--timeout=180s", timeout=210)
         print("Local model key installed; brief worker ready. Search/summary acceptance must still be verified.")
 
-    def control(self, c):
-        self.secret("local-control-owner", {"database-migrations-url": pgurl("control_owner", c, "/etc/postgres-ca/ca.crt", "relaycontrol")})
+    def control_secret(self, c):
+        oidc = self.google_oidc()
         self.secret("local-control", {"database-url": pgurl("control_api_runtime", c, "/etc/postgres-ca/ca.crt", "relaycontrol"),
             "bootstrap-token": c["bootstrap"], "encryption-key": c["encryption"], "cast-secret": c["cast"],
-            "internal-token": c["internal"], "introspect-secret": c["introspection"], "reader-secret": c["readerIssuer"]})
+            "internal-token": c["internal"], "introspect-secret": c["introspection"], "reader-secret": c["readerIssuer"],
+            **({"oidc-client-secret": oidc["client_secret"]} if oidc else {})})
+
+    def control(self, c):
+        self.secret("local-control-owner", {"database-migrations-url": pgurl("control_owner", c, "/etc/postgres-ca/ca.crt", "relaycontrol")})
         cast = {"internal-secret": c["cast"], "workspace-bootstrap-secret": c["castBootstrap"]}
         if CAST_BACKEND == "durable-actors":
             cast.update({"credential-keyring": json.dumps({"current": "a", "keys": {"a": c["castKeyring"]}}),
@@ -708,6 +760,10 @@ WHERE p.oid=to_regprocedure('session_consumer_bootstrap_private.consumer_has_pas
         self.prepare_pipeline_generation(pipeline_changed)
         self.mail()
         self.github_releases_egress()
+        self.google_oidc_egress()
+        # Configured credentials must exist before every rendered upgrade,
+        # even when first-install migrations/bootstrap are already complete.
+        self.control_secret(c)
         self.stage("control", lambda: self.control(c))
         self.sql("hoopdb", "ALTER ROLE hoop CREATEROLE;")
         try:
@@ -815,8 +871,8 @@ def locker_env():
 
 def main():
     stack = LocalStack("core")
-    if sys.argv[1:] not in (["up"], ["login"], ["down"], ["llm-key"], ["postgres-cast-proof"]):
-        raise SystemExit("usage: local_stack.py up|login|down|llm-key|postgres-cast-proof")
+    if sys.argv[1:] not in (["up"], ["login"], ["down"], ["llm-key"], ["google-oidc"], ["postgres-cast-proof"]):
+        raise SystemExit("usage: local_stack.py up|login|down|llm-key|google-oidc|postgres-cast-proof")
     try:
         if sys.argv[1] == "up":
             stack.up_local()
@@ -831,6 +887,8 @@ def main():
             stack.login_link(force=True)
         elif sys.argv[1] == "llm-key":
             stack.install_model_key()
+        elif sys.argv[1] == "google-oidc":
+            stack.install_google_oidc()
         elif sys.argv[1] == "postgres-cast-proof":
             from local_cast_pg_proof import prove
             prove(stack)

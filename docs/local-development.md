@@ -145,6 +145,23 @@ Open `https://relay.kind.agentrelay.com`. The local administrator is
 normal Control sign-in flow and kept in `.kind/local/admin-login.txt` (0600).
 Use `make local-login` to generate another, then open the URL from that file.
 Control's normal sign-in rate limits apply. Repeat-up reuses a recent link.
+
+**Sign in with Google (optional).** Control's OIDC sign-in (the same code path
+customers use for Okta or Entra ID) can use a Google OAuth web client. Register
+`https://relay.kind.agentrelay.com/login/oidc/callback` as an authorized
+redirect URI on the client, then pipe its JSON to `make local-google-oidc`. It
+is stored in `.kind/local/google-oidc.json` (0600), the client secret goes only
+into the `local-control` Secret, Control gets HTTPS egress, and the stack is
+reconciled. `LOCAL_OIDC_ALLOWED_DOMAINS` (comma-separated, default
+`agentrelay.com`) limits who can sign in; allowed users join as members, and the
+email link above stays the administrator fallback. From a Mac with the 1Password
+CLI, using the "Local Kind Google OAuth client" item (a dedicated web client whose only redirect URI is the one above):
+
+```sh
+op item get "Local Kind Google OAuth client" --vault "AI Agents" --reveal --format json \
+  | jq '{client_id: (.fields[]|select(.label=="client_id").value), client_secret: (.fields[]|select(.label=="client_secret").value)}' \
+  | ssh -T agentrelay@100.104.148.105 'cd <checkout>/infra && make -s local-google-oidc'
+```
 All generated database/service credentials stay in `.kind/local/credentials.json`
 (0600); never commit `.kind`.
 
