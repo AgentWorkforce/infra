@@ -438,8 +438,8 @@ variable "history_upload" {
     condition = try(var.history_upload.rearm_sweeper_service_account, null) == null ? true : (
       can(regex("^[a-z0-9]([-a-z0-9]*[a-z0-9])?$", var.history_upload.rearm_sweeper_service_account)) &&
       !contains(concat([var.history_upload.control_service_account, var.history_upload.consumer_service_account, "default"],
-      [for sa in ["worker", "alleyoop", "session-ingest-api"] : "${var.release_name}-${sa}"]), var.history_upload.rearm_sweeper_service_account)
+      [for sa in ["worker", "alleyoop", "session-ingest-api", "search-indexer", "session-read"] : "${var.release_name}-${sa}"]), var.history_upload.rearm_sweeper_service_account)
     )
-    error_message = "history_upload.rearm_sweeper_service_account must be a dedicated ServiceAccount (not default, Control, the ingest consumer or a legacy storage account)."
+    error_message = "history_upload.rearm_sweeper_service_account must be a dedicated ServiceAccount (not default, Control, the ingest consumer, a legacy storage account or a search account)."
   }
 }

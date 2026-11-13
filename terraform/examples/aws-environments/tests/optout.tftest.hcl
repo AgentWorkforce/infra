@@ -155,6 +155,15 @@ run "rearm_sweeper_refuses_the_ingest_account" {
   expect_failures = [var.history_upload]
 }
 
+run "rearm_sweeper_refuses_a_search_account" {
+  command = plan
+  variables {
+    kms_key_arn    = "arn:aws:kms:us-west-2:111111111111:key/00000000-0000-4000-8000-000000000000"
+    history_upload = { consumer_service_account = "native-ingest-edge", rearm_sweeper_service_account = "agent-relay-search-indexer" }
+  }
+  expect_failures = [var.history_upload]
+}
+
 run "search_off_database_on" {
   command = plan
   variables {
