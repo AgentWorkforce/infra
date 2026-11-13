@@ -6,7 +6,7 @@ version: 0.7.0
 appVersion: "0.1.0"
 kubeVersion: ">=1.28.0-0"
 annotations:
-  artifacthub.io/license: FSL-1.1-ALv2
+  artifacthub.io/license: Apache-2.0
   agentworkforce.dev/license-scope: "First-party chart code only; dependencies and images retain their own licenses."
   # Templates use {{ continue }} (Helm 3.10+).
   agentworkforce.dev/min-helm-version: "3.10.0"

@@ -9,7 +9,7 @@ description: >
   tests on its own; sessions-pipeline also carries it as a default-off dependency.
   Hook-free.
 annotations:
-  artifacthub.io/license: FSL-1.1-ALv2
+  artifacthub.io/license: Apache-2.0
   agentworkforce.dev/license-scope: "First-party chart code only; dependencies and images retain their own licenses."
 home: https://github.com/AgentWorkforce/relayhistory-pipeline
 keywords: [sessions-pipeline, session-read-api, agentworkforce]

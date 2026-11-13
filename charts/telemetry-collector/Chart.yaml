@@ -9,7 +9,7 @@ home: https://github.com/AgentWorkforce/infra
 sources:
   - https://github.com/AgentWorkforce/infra/tree/main/charts/telemetry-collector
 annotations:
-  artifacthub.io/license: FSL-1.1-ALv2
+  artifacthub.io/license: Apache-2.0
   agentworkforce.dev/license-scope: "First-party chart code only; dependencies and images retain their own licenses."
 maintainers:
   - name: AgentWorkforce
