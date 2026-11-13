@@ -114,6 +114,19 @@ class S3Ledger(unittest.TestCase):
         sa = [d for d in docs if d["kind"] == "ServiceAccount" and d["metadata"]["name"] == "rearm-sweeper"]
         self.assertEqual(len(sa), 1)
 
+    def test_sweeper_pod_identity(self):
+        docs = self.render(merge(load(S3_FIXTURE), {"rearmSweeper": {"credentials": {"mode": "podIdentity", "existingSecret": ""}}}))
+        pod = self.cronjob(docs)["spec"]["jobTemplate"]["spec"]["template"]["spec"]
+        c = pod["containers"][0]
+        env = {e["name"]: e.get("value") for e in c["env"]}
+        self.assertEqual(env["INGEST_REARM_CREDENTIALS"], "podIdentity")
+        self.assertFalse([n for n in env if n.startswith("INGEST_REARM_S3_") or n.startswith("AWS_")])
+        self.assertTrue(all("valueFrom" not in e for e in c["env"]))
+        self.assertEqual([m["name"] for m in c["volumeMounts"]], ["tmp"])
+        self.assertEqual([v["name"] for v in pod["volumes"]], ["tmp"])
+        self.assertEqual(pod["serviceAccountName"], "rearm-sweeper")
+        self.assertFalse(pod["automountServiceAccountToken"])
+
     def test_sweeper_optional_settings(self):
         base = load(S3_FIXTURE)
         docs = self.render(merge(base, {"rearmSweeper": {"orgs": [], "dryRun": True, "concurrency": None, "maxMarkers": 50,
@@ -147,7 +160,13 @@ class S3Ledger(unittest.TestCase):
         cases = [
             ({"ingestEdge": {"ledger": "sql"}}, "rearmSweeper.enabled=true requires ingestEdge.ledger=s3"),
             ({"ingestEdge": {"enabled": False}}, "rearmSweeper.enabled=true requires ingestEdge.enabled=true"),
-            ({"rearmSweeper": {"credentials": {"mode": "podIdentity"}}}, "rearmSweeper.credentials.mode=podIdentity is not supported"),
+            ({"rearmSweeper": {"credentials": {"mode": "webIdentity"}}}, "rearmSweeper.credentials.mode=webIdentity (IRSA) is not supported"),
+            ({"rearmSweeper": {"credentials": {"mode": "role"}}}, "rearmSweeper.credentials.mode must be secret or podIdentity"),
+            ({"rearmSweeper": {"credentials": {"mode": "podIdentity"}}}, "rearmSweeper.credentials.existingSecret must be empty with credentials.mode=podIdentity"),
+            ({"rearmSweeper": {"serviceAccountName": "", "createServiceAccount": False, "credentials": {"mode": "podIdentity", "existingSecret": ""}}},
+             "rearmSweeper.credentials.mode=podIdentity requires rearmSweeper.serviceAccountName"),
+            ({"ingestEdge": {"serviceAccountName": "shared-sa"}, "rearmSweeper": {"serviceAccountName": "shared-sa", "createServiceAccount": False,
+              "credentials": {"mode": "podIdentity", "existingSecret": ""}}}, "rearmSweeper.serviceAccountName must differ from ingestEdge.serviceAccountName"),
             ({"rearmSweeper": {"credentials": {"existingSecret": ""}}}, "rearmSweeper.credentials.existingSecret is required"),
             ({"rearmSweeper": {"credentials": {"existingSecret": "ingest-store"}}}, "must be a dedicated sweeper Secret"),
             ({"rearmSweeper": {"credentials": {"existingSecret": "ingest-runtime"}}}, "must be a dedicated sweeper Secret"),

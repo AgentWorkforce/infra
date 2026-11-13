@@ -643,12 +643,15 @@ rearmSweeper:
   concurrency: null
   maxMarkers: null
   credentials:
-    # secret only. rearm-sweeper-main's "role" mode reads AWS_ACCESS_KEY_ID and
-    # AWS_SECRET_ACCESS_KEY from the environment (as Lambda injects them); EKS Pod
-    # Identity and IRSA do not set those, so podIdentity is refused here.
+    # secret: static keys from existingSecret (MinIO or AWS), mounted as files
+    # (INGEST_REARM_CREDENTIALS=keys, INGEST_REARM_S3_*_FILE).
+    # podIdentity: INGEST_REARM_CREDENTIALS=podIdentity; no Secret. Requires
+    # serviceAccountName (its own EKS Pod Identity association, distinct from the
+    # ingest's) and a services image from pipeline 9be2ad8e or later.
+    # webIdentity (IRSA) is refused: the binary has no such mode.
     mode: secret
-    # Dedicated Secret (mounted as files, INGEST_REARM_S3_*_FILE). The ingest
-    # runtime, Locker writer and upload witness Secrets are refused.
+    # Dedicated Secret for mode=secret; must stay empty with podIdentity. The
+    # ingest runtime, Locker writer and upload witness Secrets are refused.
     existingSecret: ""
     accessKeyIdKey: access-key-id
     secretAccessKeyKey: secret-access-key

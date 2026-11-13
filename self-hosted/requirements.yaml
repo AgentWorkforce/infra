@@ -406,7 +406,7 @@ compatibility:
         - "ci/sessions-pipeline-profiles/matrix.sh"
         - "charts/sessions-pipeline/templates/_scrub-engine.tpl:1"
         - "ci/sessions-pipeline-scrub-engine/test_scrub_engine.py:1"
-      notes: 'Carries 0.8.28 and adds default-off ingestEdge.ledger (sql|s3, pipeline decision 0005: INGEST_LEDGER=s3 on the ingest edge only, with render-time refusals of sessionSelection and the operator session erase) and a default-off rearmSweeper CronJob (one rearm-sweeper-main pass per tick, Forbid, dedicated file-mounted S3 credential). Default renders are byte-identical. No image pin or live install changes.'
+      notes: 'Carries 0.8.28 and adds default-off ingestEdge.ledger (sql|s3, pipeline decision 0005: INGEST_LEDGER=s3 on the ingest edge only, with render-time refusals of sessionSelection and the operator session erase) and a default-off rearmSweeper CronJob (one rearm-sweeper-main pass per tick, Forbid, dedicated file-mounted S3 credential or EKS Pod Identity from pipeline 9be2ad8e). Default renders are byte-identical. No image pin or live install changes.'
     - id: sessions-pipeline-0.8.28
       status: shipped
       charts: { sessions-pipeline: 0.8.28, sessions-pipeline-worker: 0.7.8, session-ingest-api: 0.4.5, session-read-api: 0.2.12 }
@@ -6372,9 +6372,10 @@ entries:
     description: |
       Default-off CronJob running one rearm-sweeper-main pass per tick
       (concurrencyPolicy Forbid) with the ingest edge's image, bucket, region,
-      endpoint and key root. Requires ingestEdge.ledger=s3 and a dedicated static
-      S3 credential Secret mounted as files; Pod Identity is refused because the
-      binary does not read it.
+      endpoint and key root. Requires ingestEdge.ledger=s3. Credentials are a
+      dedicated static S3 Secret mounted as files, or EKS Pod Identity
+      (INGEST_REARM_CREDENTIALS=podIdentity, its own serviceAccountName, no Secret;
+      needs a services image from pipeline 9be2ad8e or later). IRSA is refused.
     chart: sessions-pipeline
     values: [rearmSweeper.*]
     env: [INGEST_REARM_SWEEPER_ENABLED, INGEST_REARM_BUCKET, INGEST_REARM_REGION, INGEST_REARM_ENDPOINT, INGEST_REARM_KEY_ROOT, INGEST_REARM_ORGS, INGEST_REARM_DRY_RUN, INGEST_REARM_CONCURRENCY, INGEST_REARM_MAX_MARKERS, INGEST_REARM_CREDENTIALS, INGEST_REARM_S3_ACCESS_KEY_ID_FILE, INGEST_REARM_S3_SECRET_ACCESS_KEY_FILE]
@@ -6382,7 +6383,7 @@ entries:
     status: shipped
     provided_by: operator
     default: false
-    choices: [{value: false}, {value: true, note: Requires ingestEdge.ledger=s3 and a dedicated sweeper credential (README "Re-arm sweeper IAM").}]
+    choices: [{value: false}, {value: true, note: Requires ingestEdge.ledger=s3 and a dedicated sweeper credential or Pod Identity role (README "Re-arm sweeper IAM").}]
     secrets:
       - name: "<dedicated re-arm sweeper S3 Secret>"
         name_paths: [rearmSweeper.credentials.existingSecret]

@@ -353,16 +353,31 @@ completion. It is a precondition of the marker's `rearmSweeper: "live"`.
   - `orgs` (`INGEST_REARM_ORGS`);
   - `dryRun` (`INGEST_REARM_DRY_RUN=1`, no write and no delete, so not live);
   - `concurrency` (1-16) and `maxMarkers` (1-10000).
-- **Credentials.** Set `credentials.mode: secret` and a dedicated
-  `existingSecret`. The chart mounts it as files and sets
-  `INGEST_REARM_CREDENTIALS=keys` with `INGEST_REARM_S3_*_FILE`. The render
-  refuses the ingest runtime, Locker writer and upload witness Secrets, because
-  this credential deletes object versions. `podIdentity` is refused.
-  `rearm-sweeper-main`'s other mode (`role`) reads `AWS_ACCESS_KEY_ID` and
-  `AWS_SECRET_ACCESS_KEY` from the environment, as Lambda injects them, and EKS
-  Pod Identity and IRSA set neither. `serviceAccountName` (and
-  `createServiceAccount`) give the Pod its own identity, distinct from the
-  ingest's.
+- **Credentials.** `credentials.mode` is `secret` (the default) or
+  `podIdentity`:
+  - `secret`: set a dedicated `existingSecret`. The chart mounts it as files and
+    sets `INGEST_REARM_CREDENTIALS=keys` with `INGEST_REARM_S3_*_FILE`. The render
+    refuses the ingest runtime, Locker writer and upload witness Secrets, because
+    this credential deletes object versions.
+  - `podIdentity`: the chart sets `INGEST_REARM_CREDENTIALS=podIdentity` and
+    nothing else, and mounts no Secret (`existingSecret` must stay empty). The EKS
+    Pod Identity agent injects `AWS_CONTAINER_CREDENTIALS_FULL_URI` and
+    `AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE`, and the endpoint must be the trusted
+    Pod Identity address. The binary reads them through the same helper as every
+    Locker client (`src/shared/locker.ts`).
+    - It needs `serviceAccountName` with its own Pod Identity association. The
+      render refuses the ingest's ServiceAccount, because the sweeper's role
+      deletes object versions.
+    - It needs a services image built from pipeline main `9be2ad8e`
+      (relayhistory-pipeline #602) or later. An older image refuses the mode at
+      startup and exits `2`.
+    - A pass ends 5 minutes before the Pod's credentials expire, and refuses to
+      start (`credentials_expiring`, exit `2`) if they are already that close.
+    - An error from the container credential endpoint exits `4` (retryable, the
+      next tick tries again). A missing or untrusted endpoint exits `2`.
+  - `webIdentity` (IRSA) is refused: the binary has no web identity mode.
+  - `serviceAccountName` (and `createServiceAccount`) give the Pod its own
+    identity in either mode.
 - **Requirements.** `ingestEdge.enabled: true`, `ingestEdge.ledger: s3` and
   `ingestEdge.locker.provider: s3`. The sweeper lists and deletes S3 object
   versions.
@@ -393,6 +408,8 @@ the shared eraser (`neon-s3-erasure/eraser.ts`), matching the pipeline's
   `<keyRoot>/<org>/live-sessions/v1/ws=…/m=srv_…/h=…/`.
 - With SSE-KMS on the bucket, the matching `kms:Decrypt` and
   `kms:GenerateDataKey` grants on the key.
+- The same policy applies to the static-key user (`secret`) or to the Pod
+  Identity role (`podIdentity`).
 
 The sweeper never deletes a ledger object, never writes SQL and never writes
 search. For index and search rows, `rearm-sweeper.ts` relies on the

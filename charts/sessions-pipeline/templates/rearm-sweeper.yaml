@@ -2,7 +2,8 @@
 S3 ledger re-arm sweeper (pipeline decision 0005; src/session-ingest/rearm-sweeper-main.ts). Default off.
 One pass per tick: the image's SERVICE=s3-ledger-rearm-sweeper entry runs `--loop` (a Deployment shape), so the
 CronJob runs the one-shot main directly. Exit codes: 0 complete, 3 incomplete or a marker failed (the next tick
-resumes from the durable cursor), 2 refused or misconfigured, 4 any other failure.
+resumes from the durable cursor), 2 refused or misconfigured (including a missing or untrusted Pod Identity
+endpoint), 4 any other failure (including a Pod Identity endpoint error: retryable).
 */ -}}
 {{- $ledger := include "sessions-pipeline.ingestEdge.ledger" . -}}
 {{- $s := .Values.rearmSweeper -}}
@@ -29,13 +30,25 @@ resumes from the durable cursor), 2 refused or misconfigured, 4 any other failur
 {{- end -}}
 {{- $creds := $s.credentials -}}
 {{- if not (kindIs "map" $creds) }}{{ fail "rearmSweeper.credentials must be an object" }}{{ end -}}
-{{- if eq $creds.mode "podIdentity" }}{{ fail "rearmSweeper.credentials.mode=podIdentity is not supported: rearm-sweeper-main reads static keys (INGEST_REARM_CREDENTIALS=keys) or AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY from the environment, which Pod Identity does not set" }}{{ end -}}
-{{- if ne $creds.mode "secret" }}{{ fail "rearmSweeper.credentials.mode must be secret" }}{{ end -}}
-{{- $secret := include "sessions-pipeline.operatorSessionErase.ref" (dict "name" "rearmSweeper.credentials.existingSecret" "value" $creds.existingSecret) -}}
-{{- $accessKey := include "sessions-pipeline.operatorSessionErase.key" (dict "name" "rearmSweeper.credentials.accessKeyIdKey" "value" $creds.accessKeyIdKey) -}}
-{{- $secretKey := include "sessions-pipeline.operatorSessionErase.key" (dict "name" "rearmSweeper.credentials.secretAccessKeyKey" "value" $creds.secretAccessKeyKey) -}}
+{{- if eq $creds.mode "webIdentity" }}{{ fail "rearmSweeper.credentials.mode=webIdentity (IRSA) is not supported: rearm-sweeper-main's credential helper has no web identity mode; use podIdentity or secret" }}{{ end -}}
+{{- if not (has $creds.mode (list "secret" "podIdentity")) }}{{ fail "rearmSweeper.credentials.mode must be secret or podIdentity" }}{{ end -}}
+{{- $podIdentity := eq $creds.mode "podIdentity" -}}
+{{- $secret := "" -}}
+{{- $accessKey := "" -}}
+{{- $secretKey := "" -}}
+{{- if $podIdentity -}}
+{{- /* INGEST_REARM_CREDENTIALS=podIdentity (pipeline 9be2ad8e, #602): the EKS Pod Identity agent injects the container
+credential endpoint and token file into the Pod; the chart sets nothing else and mounts no Secret. */ -}}
+{{- if not $s.serviceAccountName }}{{ fail "rearmSweeper.credentials.mode=podIdentity requires rearmSweeper.serviceAccountName with its own Pod Identity association" }}{{ end -}}
+{{- if $creds.existingSecret }}{{ fail "rearmSweeper.credentials.existingSecret must be empty with credentials.mode=podIdentity" }}{{ end -}}
+{{- if eq $s.serviceAccountName ($c.serviceAccountName | default "") }}{{ fail "rearmSweeper.serviceAccountName must differ from ingestEdge.serviceAccountName: the sweeper's role deletes object versions" }}{{ end -}}
+{{- else -}}
+{{- $secret = include "sessions-pipeline.operatorSessionErase.ref" (dict "name" "rearmSweeper.credentials.existingSecret" "value" $creds.existingSecret) -}}
+{{- $accessKey = include "sessions-pipeline.operatorSessionErase.key" (dict "name" "rearmSweeper.credentials.accessKeyIdKey" "value" $creds.accessKeyIdKey) -}}
+{{- $secretKey = include "sessions-pipeline.operatorSessionErase.key" (dict "name" "rearmSweeper.credentials.secretAccessKeyKey" "value" $creds.secretAccessKeyKey) -}}
 {{- if eq $accessKey $secretKey }}{{ fail "rearmSweeper.credentials requires distinct access and secret keys" }}{{ end -}}
 {{- if has $secret (compact (list $c.config.existingSecret $c.locker.existingSecret $c.uploadDirect.witness.existingSecret)) }}{{ fail "rearmSweeper.credentials.existingSecret must be a dedicated sweeper Secret, never the ingest runtime, Locker writer or upload witness Secret" }}{{ end -}}
+{{- end -}}
 {{- if and $s.createServiceAccount (or (not $s.serviceAccountName) (gt (len $s.serviceAccountName) 63) (not (regexMatch "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$" $s.serviceAccountName))) }}{{ fail "rearmSweeper.createServiceAccount requires a DNS-label serviceAccountName" }}{{ end -}}
 {{- if and $s.createServiceAccount $c.createServiceAccount (eq $s.serviceAccountName $c.serviceAccountName) }}{{ fail "rearmSweeper.serviceAccountName must differ from ingestEdge.serviceAccountName when both are created" }}{{ end -}}
 {{- $name := printf "%s-rearm-sweeper" .Release.Name -}}
@@ -152,17 +165,24 @@ spec:
                 {{- if not (kindIs "invalid" $s.maxMarkers) }}
                 - { name: INGEST_REARM_MAX_MARKERS, value: {{ $s.maxMarkers | toString | quote }} }
                 {{- end }}
+                {{- if $podIdentity }}
+                - { name: INGEST_REARM_CREDENTIALS, value: podIdentity }
+                {{- else }}
                 - { name: INGEST_REARM_CREDENTIALS, value: keys }
                 - { name: INGEST_REARM_S3_ACCESS_KEY_ID_FILE, value: /var/run/secrets/rearm-sweeper/access-key-id }
                 - { name: INGEST_REARM_S3_SECRET_ACCESS_KEY_FILE, value: /var/run/secrets/rearm-sweeper/secret-access-key }
+                {{- end }}
               resources:
                 {{- toYaml $s.resources | nindent 16 }}
               volumeMounts:
                 - { name: tmp, mountPath: /tmp }
+                {{- if not $podIdentity }}
                 - { name: credentials, mountPath: /var/run/secrets/rearm-sweeper, readOnly: true }
+                {{- end }}
           volumes:
             - name: tmp
               emptyDir: { sizeLimit: 64Mi }
+            {{- if not $podIdentity }}
             - name: credentials
               secret:
                 secretName: {{ $secret | quote }}
@@ -170,4 +190,5 @@ spec:
                 items:
                   - { key: {{ $accessKey | quote }}, path: access-key-id }
                   - { key: {{ $secretKey | quote }}, path: secret-access-key }
+            {{- end }}
 {{- end }}
