@@ -115,10 +115,15 @@ class ReleaseManifestTest(unittest.TestCase):
             overlay.count(
                 "__IMAGE_MIRROR_ROOT__/ghcr.io/example/relaycast-eks-collector"
             ),
-            2,
+            1,
         )
-        self.assertNotIn(
+        self.assertIn(
             "repository: __IMAGE_MIRROR_ROOT__/ghcr.io/example/relaycast\n",
+            overlay,
+        )
+        self.assertIn(
+            "runtime:\n    postgres:\n      image:\n"
+            "        repository: __IMAGE_MIRROR_ROOT__/ghcr.io/example/relaycast\n",
             overlay,
         )
         self.assertIn("# customer registry mirror root. Profile: eks.", overlay)
