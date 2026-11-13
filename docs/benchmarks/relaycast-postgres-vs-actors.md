@@ -1,8 +1,9 @@
 # Relaycast on PostgreSQL versus durable-actors: EKS benchmark
 
-Status: decision set (as shipped), tuned-actors soak and the #659 / #665 fix
-exit tests are complete. Headroom (overload then recover) and cold start are in
-progress and are added here as they land. Raw data: `bench/relaycast/results/`
+Status: complete. The decision set (as shipped), tuned-actors soak, #659 / #665
+fix exit tests and headroom with overload-then-recover are done. Cold start
+under actors was covered earlier (see the cold versus warm table) and was not
+repeated. The bench cluster was torn down afterwards (see Teardown). Raw data: `bench/relaycast/results/`
 (per-pod `producer-*.json` / `sink-*.json` / `metrics.csv` are gzipped; `gunzip`
 them before re-running `harness/report.mjs`).
 
@@ -17,6 +18,12 @@ is the first performance comparison.
 Weighting, per Khaliq: robustness first (integrity under failure, behaviour
 under overload, recovery without a human, blast radius, crash loops, memory
 drift), throughput and latency second.
+
+**Decision (Khaliq, 2026-11-13).** The enterprise self-host stays on PostgreSQL
+Relaycast now. Durable actors come later, after sub-workspace sharding and
+latency work. 2026.11.2 ships PostgreSQL with #657, #663, #664, #667 and #668,
+plus the chart probes, keepalive and a fix that removes the zonal-disk
+dependency.
 
 **Recommendation: make the PostgreSQL backend robust for the customer install now.
 Durable actors become viable when tuned, but still carry seconds of latency and
@@ -161,6 +168,23 @@ Tuning turns actors from unstable into self-healing. The seconds of latency at
 3 msgs/s remain, which points to design (a serial per-workspace actor behind
 the gateway and control-plane hop) rather than sizing.
 
+### Headroom and overload, then recover (both arms, concurrently)
+
+Setup: decision-set shape at 10, 20 and 50 msgs/s (5 min each), then 10 min at
+100 msgs/s, then 15 min back at 3 msgs/s, with no intervention. PostgreSQL ran
+with #667 (`90de0b31`, which does not include #663); actors ran tuned. Both arms
+ran at the same time on shared app nodes, with separate RDS instances.
+
+| Phase | PostgreSQL + #667 | Durable actors (tuned) |
+|---|---|---|
+| 10 msgs/s | all OK, send p50 38-46 ms | all OK, send p50 6-9 s |
+| 20 msgs/s | all OK, send p50 0.7-1.6 s | 4 % timeouts, send p50 ~22 s |
+| 50 msgs/s | all OK, but queueing (send p50 7-19 s) | 91 % timeouts |
+| 100 msgs/s for 10 min | ~40 sends/s served, 6,479 timeouts; one relaycast restart (pg 57P03, no RDS event) | 0 successful sends; every actor host failing readiness; new spares hit CNI network-policy sandbox errors |
+| Recover at 3 msgs/s | **self-healed**: 0 errors, send p50 0.7-1.4 s | **not recovered after 15 min**: ~56 % timeouts |
+| Integrity | 0 lost overall; during overload 2,283 same-socket duplicates and 1,844 reorders (the #663 race, which this image lacks) | 0 lost / 0 duplicate / 0 reorder |
+
+
 ### Fix exit tests on the PostgreSQL arm
 
 **relaycast#665 → PR #667 (`90de0b31`): forced RDS failover under the
@@ -200,7 +224,7 @@ workspace): PARTIAL.**
 | relaycast#651 | PG | Concurrent channel posts deadlock (500s at 10 posts/s). Fixed by #657 |
 | relaycast#659 | PG | Heap OOM under overload, then crash-loops; P1 fixes the OOM, but does not shed with 503 and has lower throughput |
 | relaycast#661 | PG | `node.heartbeat` re-aggregates capabilities on every beat; about 8k idle sockets saturate the DB |
-| relaycast#665 | PG | No recovery after an RDS failover (half-open pool sockets); **fixed by #667 (exit test passed)** |
+| relaycast#665 | PG | No recovery after an RDS failover (half-open pool sockets); **fixed by #667 (exit test passed; merged as 810f48ce)** |
 | durable-actors#2 | actors | PR: Bun-flag passthrough to actor hosts, for in-cluster profiling |
 
 
