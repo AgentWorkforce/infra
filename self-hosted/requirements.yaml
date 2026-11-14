@@ -1244,9 +1244,16 @@ compatibility:
       images_note: not built for the charts yet
       notes: 'Follow-up re-pin to sessions-pipeline main after #127 (session briefs, generation 5ed11913...). Needs new GHCR/ECR digests, ci/sessions-pipeline-search-worker-role/services-commit and services-generation, and the session-brief entries below shipped.'
       db_combos: []
-    - id: relaycast-0.3.12
+    - id: relaycast-0.3.13
       status: unreleased
       current: true
+      charts: { relaycast: 0.3.13 }
+      app_versions: { relaycast: 12.7.0 }
+      images:
+        relaycast: { repository: ghcr.io/agentworkforce/relaycast-self-host, digest: sha256:81274dca7ab58673383dc7a9c777f422f29606c7422e81b5ea15724770f1455e }
+      notes: 'Carries 0.3.12 and pins runtime.postgres.image to relaycast-self-host 12.8.0-pg.3 (sha256:cc2a79f02d39978fa04322b5a45497737ff137bc2a5db5615c7eee690030de83, relaycast main 810f48ce: #653, #657, #663, #664, #667, #668). healthProbes split now has the endpoints it needs on the pinned PostgreSQL image. SQLite renders differ only in the helm.sh/chart label.'
+    - id: relaycast-0.3.12
+      status: shipped
       charts: { relaycast: 0.3.12 }
       app_versions: { relaycast: 12.7.0 }
       images:
@@ -1394,9 +1401,22 @@ compatibility:
       images:
         relayauth: { repository: ghcr.io/agentworkforce/relayauth, digest: sha256:eb71daa28e30eb7305f666d0bccc5a4002e53e8a574e3c4c32163d907a1b71df }
       notes: superseded by 0.1.1.
-    - id: agent-relay-0.7.5
+    - id: agent-relay-0.7.6
       status: unreleased
       current: true
+      charts: { agent-relay: 0.7.6, relay-control: 0.4.15, relay-webapp: 0.2.4 }
+      app_versions: { agent-relay: 0.1.0, relay-control: 0.1.0, relay-webapp: 0.1.0 }
+      depends:
+        agent-relay: { relaycast: 0.3.13, relayauth: 0.1.5, sessions-pipeline: 0.8.31, relay-control: 0.4.15, relay-webapp: 0.2.4, relayflows: 0.2.5, durable-actors: 0.14.6-awf.3, relayfile: 0.2.2, telemetry-collector: 0.1.7, relay-chief: 0.1.0 }
+      images:
+        relaycast: { repository: ghcr.io/agentworkforce/relaycast-self-host, digest: sha256:ab9dd6781e68f09d5e2e686a17088f9ad533978ef13d974a47d6c212d8eedbde }
+        relaycast-postgres: { repository: ghcr.io/agentworkforce/relaycast-self-host, digest: sha256:cc2a79f02d39978fa04322b5a45497737ff137bc2a5db5615c7eee690030de83 }
+        sessions-pipeline-worker: { repository: ghcr.io/agentworkforce/sessions-pipeline, digest: sha256:77022c5b6a1d30f96f921d703eb27a1acada8ec273ad84aebdde24f8eddce305 }
+        relay-control: { repository: ghcr.io/agentworkforce/relay-control, digest: sha256:d8c26d44dccb6dd21b7033288241a379e46ce5fbca69f276c4d4745001c3c3e2 }
+        relay-webapp: { repository: ghcr.io/agentworkforce/relay-webapp, digest: sha256:bd295ccb7d1323965dce890f19d0b7f857d706c00d7756f719c713763fdb49f3 }
+      notes: 'Carries 0.7.5 (never released) and relaycast 0.3.13: the PostgreSQL image is 12.8.0-pg.3 (relaycast main 810f48ce: failover recovery without a restart and /health/live + /health/ready). Also carries sessions-pipeline 0.8.31 (worker.migrations.databaseMode reaches the worker services live role gate) and default-off worker.migrations.allowBlockingIndexBuild.'
+    - id: agent-relay-0.7.5
+      status: planned
       charts: { agent-relay: 0.7.5, relay-control: 0.4.15, relay-webapp: 0.2.4 }
       app_versions: { agent-relay: 0.1.0, relay-control: 0.1.0, relay-webapp: 0.1.0 }
       depends:
@@ -1407,7 +1427,7 @@ compatibility:
         sessions-pipeline-worker: { repository: ghcr.io/agentworkforce/sessions-pipeline, digest: sha256:77022c5b6a1d30f96f921d703eb27a1acada8ec273ad84aebdde24f8eddce305 }
         relay-control: { repository: ghcr.io/agentworkforce/relay-control, digest: sha256:d8c26d44dccb6dd21b7033288241a379e46ce5fbca69f276c4d4745001c3c3e2 }
         relay-webapp: { repository: ghcr.io/agentworkforce/relay-webapp, digest: sha256:bd295ccb7d1323965dce890f19d0b7f857d706c00d7756f719c713763fdb49f3 }
-      notes: 'Carries 0.7.4 (never released) and sessions-pipeline 0.8.31: worker.migrations.databaseMode reaches the worker services live role gate as HOOPDB_DB_MODE (Supabase installs need it). Also carries default-off worker.migrations.allowBlockingIndexBuild from 0.8.30.'
+      notes: 'Superseded before release by 0.7.6.'
     - id: agent-relay-0.7.4
       status: planned
       charts: { agent-relay: 0.7.4, relay-control: 0.4.15, relay-webapp: 0.2.4 }

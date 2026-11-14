@@ -142,33 +142,35 @@ images:
       - Job/relaycast-migration-export-*:export
     current:
       repository: ghcr.io/agentworkforce/relaycast-self-host
-      digest: sha256:1307bd845031a7466e65ebaf08bc8b826e2837d90f58c9b5a6a1d673c62dad93
+      digest: sha256:cc2a79f02d39978fa04322b5a45497737ff137bc2a5db5615c7eee690030de83
       chartStatus: optional-preview
       valuesFile: charts/agent-relay/values-eks-actors.yaml
     source:
       repository: https://github.com/AgentWorkforce/relaycast
-      revision: a63961bd5c453f0eaecbe4c5e67364b0a4696852
+      revision: 810f48cebdacf3cee5362da43020c3216880c333
       path: Dockerfile
       reproducibleReference: true
       note: >-
-        Relaycast 12.8.0-pg.2 with the reviewed PostgreSQL-to-actors export
-        path (#653) and PostgreSQL deadlock fix (#657); the image
-        engine-version label is 12.8.0.
+        Relaycast 12.8.0-pg.3 (publish run 43497501006) with the reviewed
+        PostgreSQL-to-actors export path (#653), the PostgreSQL deadlock fix
+        (#657), #663, #664, failover recovery without a restart and split
+        health endpoints (#667), and #668; the image engine-version label is
+        12.8.0.
     license:
       status: approved
       spdx: Apache-2.0
-      evidence: https://github.com/AgentWorkforce/relaycast/blob/a63961bd5c453f0eaecbe4c5e67364b0a4696852/LICENSE
+      evidence: https://github.com/AgentWorkforce/relaycast/blob/810f48cebdacf3cee5362da43020c3216880c333/LICENSE
     platforms:
       expected: [linux/amd64, linux/arm64]
       verifiedFromRegistry: [linux/amd64, linux/arm64]
       status: verified
       verificationAccess: anonymous
     release:
-      workflow: https://github.com/AgentWorkforce/relaycast/blob/a63961bd5c453f0eaecbe4c5e67364b0a4696852/.github/workflows/publish-container.yml
-      run: https://github.com/AgentWorkforce/relaycast/actions/runs/43351584271
+      workflow: https://github.com/AgentWorkforce/relaycast/blob/810f48cebdacf3cee5362da43020c3216880c333/.github/workflows/publish-container.yml
+      run: https://github.com/AgentWorkforce/relaycast/actions/runs/43497501006
       trigger: workflow_dispatch
       buildsCommittedRevision: true
-      publishedTags: ["12.8.0-pg.2"]
+      publishedTags: ["12.8.0-pg.3"]
       publishesSbom: true
       publishesProvenance: true
       provenanceMode: max-plus-github-attestation
