@@ -39,7 +39,10 @@ behaviours apply to releases cut after they were added.
    - **Plan role (read-only)**, trusted for `repo:<org>/<repo>:ref:refs/heads/main`:
      `eks:DescribeCluster`, and an EKS access entry with read-only (view)
      access to the `agent-relay` namespace plus read of Helm release Secrets.
-     The plan job never writes to ECR, RDS or the cluster.
+     The plan job never writes to ECR, RDS or the cluster. With this role the
+     Sessions index census (a short-lived read-only pod) cannot run in plan, so
+     the plan says it is deferred; the apply job runs it before any snapshot,
+     image push or helm change, and refuses there with nothing changed.
    - **Apply role (write)**, trusted **only** for
      `repo:<org>/<repo>:environment:agent-relay-upgrade`, so it can be assumed
      only by a job your reviewers approved. It needs:
