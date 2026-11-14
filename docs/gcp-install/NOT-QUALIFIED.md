@@ -28,6 +28,23 @@ production rollout.
    `feature_not_enabled` / `403` even with `--skip-flows`; enable flows to run
    them.
 
+   **Long sessions need a longer read deadline.** The read API reads a
+   session's chunks from GCS one after another (about 30 ms each), so with the
+   default 3 s deadline a session of more than about 100 chunks answers
+   `501 turns_canonical_deadline`. The guide's `values.yaml` sets
+   `READ_API_CANONICAL_DEADLINE_MS=15000` in `sessionReadApi.extraEnv`;
+   measured on GKE, a 109-chunk (4.8 MB) session then reads in about 4.4 s.
+   Parallel chunk reads are coming in a later Sessions image.
+
+   **`/turns` and `/metadata` are empty on self-host.** They serve Agent Relay
+   conversation-turn records, which only the hosted service forwards into
+   ingest; nothing in a self-hosted install produces them, so `/turns` answers
+   200 with no turns and `/metadata` 404. The session itself is complete:
+   `/events` carries the whole transcript, and the dashboard's session view
+   renders the full conversation from it (checked on GKE with a desktop
+   upload). Session summaries need titles and summaries turned on
+   (`__LLM_MODEL__`, after install).
+
 2. **The release image overlay is the EKS one.** `release-images.values.yaml`
    and the install pack are generated for the `eks` profile, and the release
    ships no GCP overlay or GCP pack. The images are cloud-neutral (the same
