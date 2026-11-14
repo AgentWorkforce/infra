@@ -128,10 +128,10 @@ gen_actors_secrets() {
   keep relayfile-actors RELAYFILE_JWT_SECRET || rnd_hex | put relayfile-actors RELAYFILE_JWT_SECRET
   keep relayfile-actors RELAYFILE_ACTORS_BROKER_TOKEN || rnd_hex | put relayfile-actors RELAYFILE_ACTORS_BROKER_TOKEN
   keep rcb-actors-db password || rnd_hex 24 | put rcb-actors-db password
-  # The control plane mounts no CA and its TLS client refuses the RDS chain even
-  # with sslmode=require ("error performing TLS handshake"); the actors RDS runs
-  # rds.force_ssl=0 (cluster.sh db-nossl actors) and this URL disables TLS.
-  node -e 'process.stdout.write(`postgresql://durable_actors_owner:${require("fs").readFileSync(process.argv[1],"utf8").trim()}@${process.argv[2]}:5432/durable_actors?sslmode=disable`)' \
+  # TLS to RDS: agent-relay >= 0.6.58 (#274) mounts the RDS CA for the control
+  # plane (durable-actors.postgresCa, SSL_CERT_FILE), so the URL requires TLS and
+  # the RDS default rds.force_ssl=1 stays on (db-nossl is no longer needed).
+  node -e 'process.stdout.write(`postgresql://durable_actors_owner:${require("fs").readFileSync(process.argv[1],"utf8").trim()}@${process.argv[2]}:5432/durable_actors?sslmode=require`)' \
     "$f/rcb-actors-db/password" "$(db_host)" | put actors-credentials postgres-url
   # Workspace actor env (sandbox namespace, created by the chart in `install`).
   printf 'https://cast.%s' "${BENCH_DOMAIN}" | put relaycast-actor-env RELAYCAST_PUBLIC_URL
