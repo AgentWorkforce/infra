@@ -397,6 +397,16 @@ searchIndexer:
     region: us-east-1
     # Empty uses the AWS S3 endpoint for the region (Pod Identity credentials).
     endpoint: ""
+    # podIdentity: no keys; the AWS credential chain of the ServiceAccount.
+    # secret: static keys from existingSecret, for an S3-compatible endpoint
+    # (MinIO) where no pod identity exists, such as AKS. Needs endpoint.
+    # Left unset here so existing renders (and the content-addressed bootstrap
+    # Job name) do not change:
+    # credentials:
+    #   mode: secret
+    # existingSecret: <Secret name>
+    # accessKeyIdKey: access-key-id
+    # secretAccessKeyKey: secret-access-key
   # GCS readiness settings (Cloud SQL, Memorystore and Pub/Sub). Empty for S3.
   extraEnv: []
   postgres:
