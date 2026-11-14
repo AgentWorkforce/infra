@@ -4327,7 +4327,11 @@ entries:
       served as logo.svg; script, event handlers, javascript: URLs and
       foreignObject, character references and DTDs are refused) or
       existingConfigMap and key (a ConfigMap the operator creates; .png only,
-      since its content is not checked). relay-control then sets
+      since its content is not checked). For co-branding, dashboardKey
+      names a second PNG in the same ConfigMap, served at
+      /brand/<dashboardKey> for relay-webapp.customerProfile.logo (a combined
+      Agent Relay + customer logo), while key stays the sign-in mark
+      (charts/agent-relay/values-branding-example.yaml). relay-control then sets
       SELFHOST_LOGIN_LOGO_URL to that https URL (the dashboard origin is
       https://<global.singleHost.host> or dashboardUrl's) unless
       login.logoUrl overrides it, and login.orgName sets
@@ -4348,6 +4352,7 @@ entries:
       - { value: none }
       - { value: inline SVG }
       - { value: existing ConfigMap (PNG) }
+      - { value: "existing ConfigMap with dashboardKey (co-brand: two PNGs)" }
     verify: GET <dashboard>/brand/<file> returns the logo
     sources:
       - "charts/relay-webapp/templates/brand-configmap.yaml"
