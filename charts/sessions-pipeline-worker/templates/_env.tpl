@@ -159,9 +159,10 @@ Usage: include "sessions-pipeline-worker.env" (dict "context" . "service" "refer
   value: /tmp
 {{- /* The services' live role gate binds the same mode the migrator verified with
 (expectedSchema() reads HOOPDB_DB_MODE); without it, supabase-only compatibility
-edges (the postgres admin membership) always fail the gate. migrate gets it from
-profileEnv instead, so it is rendered exactly once per container. */ -}}
-{{- if and $v.migrations.databaseMode (ne .service "hoopdb-migrate") }}
+edges (the postgres admin membership) always fail the gate. Only the long-running
+services run the gate: migrate gets the mode from profileEnv, locker-init never
+reads it. */ -}}
+{{- if and $v.migrations.databaseMode (not (has .service (list "hoopdb-migrate" "locker-init"))) }}
 - name: HOOPDB_DB_MODE
   value: {{ $v.migrations.databaseMode | quote }}
 {{- end }}
