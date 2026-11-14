@@ -52,4 +52,4 @@ relay-control:
 relay-webapp:
   image:
     repository: ghcr.io/agentworkforce/relay-webapp
-    digest: sha256:9414d55446bbd4db9c82e344c109a4e829d76f536a49bd5917e7ebcc86ed3f23
+    digest: sha256:8cadf08921b16ac4a19d0c4daecad1813e521bdfc9b141fb284415fd6349d499
