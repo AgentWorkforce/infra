@@ -4,7 +4,7 @@
 # image.repository; the digest stays the same.
 image:
   repository: ghcr.io/agentworkforce/slack-relay
-  digest: sha256:98f5507e96abad06ff2d8fdafc118e2f26c55a079b49969518120ce4c517b83a
+  digest: sha256:295daf9f6b8f918c9dc50a739554c77a6cfa6a7b6ce0d7d2e09fce1f6133d317
 relaycast:
   baseUrl: http://relaycast:8787
   channel: slack
