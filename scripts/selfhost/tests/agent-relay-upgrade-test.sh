@@ -105,7 +105,7 @@ case "\$*" in
   # The Sessions index census: the pod manifest is kept, its phase and logs come from fixtures.
   *" apply -f -"*) cat >> "$root/applied.yaml"; echo --- >> "$root/applied.yaml" ;;
   # RBAC: "yes" unless \$root/can-i-denied lists the resource (a read-only plan role).
-  *"auth can-i create "*) r=\${*##* }; grep -qx "\$r" "$root/can-i-denied" 2>/dev/null && { echo no; exit 1; }; echo yes ;;
+  *"auth can-i create "*) r=""; prev=""; for a in "\$@"; do [ "\$prev" = create ] && r=\$a; prev=\$a; done; grep -qx "\$r" "$root/can-i-denied" 2>/dev/null && { echo no; exit 1; }; echo yes ;;
   *"get pod "*"-o json"*) ph=\$(cat "$root/census-phase" 2>/dev/null || echo Succeeded)
     # INT/TERM: signal the upgrader itself mid-census, as an operator's Ctrl-C would.
     case "\$ph" in INT|TERM) kill -"\$ph" "\$(pgrep -o -f "$root/selfhost/agent-relay-upgrade.sh")"; ph=Running ;; esac
