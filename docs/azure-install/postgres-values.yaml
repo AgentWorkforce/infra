@@ -1,0 +1,15 @@
+# Overrides for the pinned HoopDb Postgres (deps/cnpg-cluster-values.yaml,
+# chart cnpg/cluster 0.9.0), applied after it:
+#
+#   helm upgrade --install hoopdb cnpg/cluster --version 0.9.0 -n agent-relay \
+#     -f infra/deps/cnpg-cluster-values.yaml -f postgres-values.yaml
+#
+# The server certificate comes from cert-manager (postgres-tls.yaml) under a
+# 10-year CA. CloudNativePG's own CA lasts 90 days and rotates, which would
+# break the CA SHA-256 that the read API, ingest edge and search indexer pin.
+cluster:
+  storage:
+    size: 32Gi
+  certificates:
+    serverCASecret: postgres-ca
+    serverTLSSecret: hoopdb-server-tls

@@ -18,6 +18,13 @@
 {{- if not (has $provider (list "s3" "gcs")) }}{{ fail "searchIndexer.locker.provider must be s3 or gcs" }}{{ end -}}
 {{- $_ := required "searchIndexer.locker.bucket is required" $c.locker.bucket -}}
 {{- if and (eq $provider "gcs") $c.locker.endpoint }}{{ fail "searchIndexer.locker.endpoint must be empty for gcs" }}{{ end -}}
+{{- $lockerCredentials := dig "credentials" "mode" "podIdentity" $c.locker -}}
+{{- if not (has $lockerCredentials (list "secret" "podIdentity")) }}{{ fail "searchIndexer.locker.credentials.mode must be secret or podIdentity" }}{{ end -}}
+{{- if eq $lockerCredentials "secret" -}}
+{{- if ne $provider "s3" }}{{ fail "searchIndexer.locker.credentials.mode=secret is only supported with locker.provider=s3" }}{{ end -}}
+{{- $_ := required "searchIndexer.locker.endpoint is required for static S3/MinIO credentials" $c.locker.endpoint -}}
+{{- $_ := required "searchIndexer.locker.existingSecret is required for static S3/MinIO credentials" $c.locker.existingSecret -}}
+{{- end -}}
 {{- if not (kindIs "slice" $c.extraEnv) }}{{ fail "searchIndexer.extraEnv must be a list" }}{{ end -}}
 {{- $gcsNames := list "CLOUD_SQL_CONNECTION_NAME" "REDIS_HOST" "REDIS_PORT" "REDIS_AUTH_ENABLED" "REDIS_TRANSIT_ENCRYPTION" "REDIS_TLS_CA_PEM" "PUBSUB_TOPIC" "PUBSUB_SUBSCRIPTION" -}}
 {{- $seen := dict -}}
