@@ -10,28 +10,6 @@
 # first: terraform import 'google_artifact_registry_repository.mirror[0]' \
 #   projects/<project>/locations/<region>/repositories/<name>
 
-variable "image_mirror_repository" {
-  description = "Artifact Registry repository for the release images (guide step 5), created in var.region. Empty: no repository and no grant."
-  type        = string
-  default     = ""
-
-  validation {
-    condition     = var.image_mirror_repository == "" || can(regex("^[a-z]([a-z0-9-]{0,61}[a-z0-9])?$", var.image_mirror_repository))
-    error_message = "image_mirror_repository must be a repository id: lowercase letters, digits and hyphens, starting with a letter."
-  }
-}
-
-variable "gke_node_service_account" {
-  description = "Email of the GKE node pool's service account, granted roles/artifactregistry.reader on the mirror. Empty: the project's default Compute Engine service account (a node pool whose serviceAccount is \"default\")."
-  type        = string
-  default     = ""
-
-  validation {
-    condition     = var.gke_node_service_account == "" || can(regex("^[^@\\s]+@[^@\\s]+\\.iam\\.gserviceaccount\\.com$", var.gke_node_service_account))
-    error_message = "gke_node_service_account must be a service account email (…@….iam.gserviceaccount.com)."
-  }
-}
-
 locals {
   image_mirror_enabled = var.image_mirror_repository != ""
   gke_node_sa          = var.gke_node_service_account != "" ? var.gke_node_service_account : "${data.google_project.this.number}-compute@developer.gserviceaccount.com"
@@ -56,9 +34,4 @@ resource "google_artifact_registry_repository_iam_member" "mirror_node_reader" {
   repository = google_artifact_registry_repository.mirror[0].name
   role       = "roles/artifactregistry.reader"
   member     = "serviceAccount:${local.gke_node_sa}"
-}
-
-output "image_mirror_root" {
-  description = "MIRROR_ROOT for install guide step 5 (null unless image_mirror_repository is set)."
-  value       = local.image_mirror_enabled ? "${var.region}-docker.pkg.dev/${var.project_id}/${var.image_mirror_repository}" : null
 }

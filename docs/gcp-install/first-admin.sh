@@ -50,13 +50,14 @@ CODE="$(PW="$PW" KEY="$(kubectl -n "$NAMESPACE" get secret agent-relay-secrets -
   jq -n '{setupKey:env.KEY,password:env.PW}' |
   curl -sS -o "$BODY" -w '%{http_code}' -X POST \
     -H 'Content-Type: application/json' -H "Origin: https://$DOMAIN" \
-    --data-binary @- "https://api.$DOMAIN/api/v1/auth/password/setup-key")"
+    --data-binary @- "https://api.$DOMAIN/api/v1/auth/password/setup-key")" || CODE="${CODE:-000}"
 unset PW
 if [ "$CODE" = 200 ]; then
   echo "first admin set: sign in at https://$DOMAIN/login with the password in $SECRET"
   exit 0
 fi
 # Error bodies carry a code and a message, never the key or the password.
+# 000: curl could not reach the API (DNS, certificate, network); the key was not sent.
 echo "setup-key sign-in failed: HTTP $CODE $(jq -c '{error,message}' "$BODY" 2>/dev/null || true)" >&2
 echo "The stored password was not accepted; delete $SECRET before running again." >&2
 exit 1

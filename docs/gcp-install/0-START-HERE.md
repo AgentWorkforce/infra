@@ -126,7 +126,7 @@ release_name         = "agent-relay"
 network_self_link    = "projects/<project id>/global/networks/<cluster VPC>"
 sessions_bucket_name = "<globally unique bucket name, e.g. acme-agent-relay-sessions>"
 deletion_protection  = true
-image_mirror_repository = "agent-relay-mirror"   # step 5's registry, readable by the GKE nodes
+image_mirror_repository = "agent-relay-mirror"   # step 5's registry, readable by the GKE nodes (release 2026.11.2 or later; on 2026.11.1 leave it out and use step 5's fallback)
 # gke_node_service_account = "<email>"   # only if the node pool has its own service account
 # kms_key_name = "projects/<p>/locations/<region>/keyRings/<ring>/cryptoKeys/<key>"   # optional CMEK
 labels = { app = "agent-relay" }
