@@ -158,7 +158,7 @@ export class AgentHost {
       });
     }
     // Keep retrying the ones that failed, so their DMs reach them eventually.
-    for (let delay = 30_000; failed.length && delay <= 30 * 60_000; delay *= 2) {
+    for (let delay = 30_000; failed.length; delay = Math.min(delay * 2, 30 * 60_000)) {
       await new Promise((r) => setTimeout(r, delay).unref());
       for (const name of [...failed]) {
         try {
@@ -200,8 +200,17 @@ export class AgentHost {
   async #dmTurn(name: string, dm: DmEvent): Promise<string | null> {
     const live = await this.#wake(name);
     let data = dm.data;
-    if (!data && live.session.client.message) data = dataOf(await live.session.client.message(dm.id).catch(() => undefined));
-    const isAnswer = data?.kind === DM_REPLY;
+    let unknownKind = false;
+    if (!data && live.session.client.message) {
+      try {
+        data = dataOf(await live.session.client.message(dm.id));
+      } catch {
+        unknownKind = true; // the read failed; a DM with no data at all is an ordinary one
+      }
+    }
+    // If it can't be told whether this is another agent's automatic answer,
+    // take it in without replying: a missed reply beats an endless loop.
+    const isAnswer = data?.kind === DM_REPLY || unknownKind;
     const run = live.queue.catch(() => undefined).then(async () => {
       live.busy++;
       try {

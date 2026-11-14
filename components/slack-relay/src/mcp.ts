@@ -59,6 +59,7 @@ export class McpClient {
   readonly #s: OAuthMcpServer;
   readonly #tokens: TokenSource;
   #session: string | null = null;
+  #protocolVersion: string | null = null;
   #id = 0;
 
   constructor(s: OAuthMcpServer, tokens = new TokenSource(s)) {
@@ -74,6 +75,7 @@ export class McpClient {
       // Session expired on the server: start a new one once.
       if ((err as { status?: number }).status === 404 || (err as { status?: number }).status === 400) {
         this.#session = null;
+        this.#protocolVersion = null;
         await this.#initialize();
         return this.#toolCall(name, args);
       }
@@ -88,7 +90,7 @@ export class McpClient {
   }
 
   async #initialize(): Promise<void> {
-    await this.#rpc("initialize", { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "slack-relay", version: "0.1" } });
+    await this.#rpc("initialize", { protocolVersion: PROTOCOL_VERSION, capabilities: {}, clientInfo: { name: "slack-relay", version: "0.1" } });
     await this.#notify("notifications/initialized");
   }
 
@@ -99,10 +101,10 @@ export class McpClient {
   async #rpc(method: string, params: Record<string, unknown>): Promise<unknown> {
     const id = ++this.#id;
     const res = await this.#post({ jsonrpc: "2.0", id, method, params });
-    const body = await res.text();
-    const msg = parseRpcBody(body, id);
-    if (!msg) throw new Error(`${this.#s.name} ${method}: empty response`);
+    const msg = await readRpcResponse(res, id);
+    if (!msg) throw new Error(`${this.#s.name} ${method}: no response`);
     if (msg.error) throw Object.assign(new Error(`${this.#s.name} ${method}: ${msg.error.message}`), { code: msg.error.code });
+    if (method === "initialize") this.#protocolVersion = (msg.result as { protocolVersion?: string } | undefined)?.protocolVersion ?? PROTOCOL_VERSION;
     return msg.result;
   }
 
@@ -115,6 +117,7 @@ export class McpClient {
         "content-type": "application/json",
         accept: "application/json, text/event-stream",
         ...(this.#session ? { "mcp-session-id": this.#session } : {}),
+        ...(this.#protocolVersion ? { "mcp-protocol-version": this.#protocolVersion } : {}),
       },
       body: JSON.stringify(payload),
     });
@@ -127,22 +130,67 @@ export class McpClient {
   }
 }
 
+const PROTOCOL_VERSION = "2025-06-18";
+
 type RpcMessage = { id?: number; result?: unknown; error?: { code: number; message: string } };
 
-/** A JSON-RPC response body, either plain JSON or a server-sent-events stream. */
-export function parseRpcBody(body: string, id: number): RpcMessage | null {
-  const candidates: string[] = [];
-  if (body.trimStart().startsWith("{")) candidates.push(body);
-  else for (const line of body.split(/\r?\n/)) if (line.startsWith("data:")) candidates.push(line.slice(5).trim());
-  for (const c of candidates) {
+/** JSON-RPC messages in a body: plain JSON, or the events of a server-sent-events stream (data lines joined). */
+export function rpcMessagesIn(body: string): RpcMessage[] {
+  const text = body.trim();
+  if (!text) return [];
+  if (text.startsWith("{") || text.startsWith("[")) {
     try {
-      const m = JSON.parse(c) as RpcMessage;
-      if (m.id === id || candidates.length === 1) return m;
+      const v = JSON.parse(text) as RpcMessage | RpcMessage[];
+      return Array.isArray(v) ? v : [v];
+    } catch {
+      return [];
+    }
+  }
+  const out: RpcMessage[] = [];
+  for (const event of text.split(/\r?\n\r?\n/)) {
+    const data = event
+      .split(/\r?\n/)
+      .filter((l) => l.startsWith("data:"))
+      .map((l) => l.slice(5).replace(/^ /, ""))
+      .join("\n");
+    if (!data) continue;
+    try {
+      out.push(JSON.parse(data) as RpcMessage);
     } catch {
       // not JSON; skip
     }
   }
-  return null;
+  return out;
+}
+
+/** The response with this id, or null; notifications and other ids are ignored. */
+export function parseRpcBody(body: string, id: number): RpcMessage | null {
+  return rpcMessagesIn(body).find((m) => m.id === id) ?? null;
+}
+
+/**
+ * Reads a response until the message with this id arrives. An SSE stream is
+ * read event by event and released as soon as it has that message, so a
+ * server that keeps the stream open can't hold the call.
+ */
+async function readRpcResponse(res: Response, id: number): Promise<RpcMessage | null> {
+  if (!(res.headers.get("content-type") ?? "").includes("text/event-stream") || !res.body) return parseRpcBody(await res.text(), id);
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buf = "";
+  try {
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (value) buf += decoder.decode(value, { stream: true });
+      const events = buf.split(/\r?\n\r?\n/);
+      buf = done ? "" : events.pop() ?? "";
+      const found = parseRpcBody(events.join("\n\n"), id);
+      if (found) return found;
+      if (done) return parseRpcBody(buf, id);
+    }
+  } finally {
+    await reader.cancel().catch(() => undefined);
+  }
 }
 
 /** Parses MCP_OAUTH_SERVERS_JSON; each entry names the env var holding its client secret. */

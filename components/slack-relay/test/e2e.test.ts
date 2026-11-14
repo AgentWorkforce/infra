@@ -152,6 +152,7 @@ test("slack threads route to resumable per-thread agents over a real relay", { s
     // Another agent on the relay DMs a1: the host wakes a1 for it, in a1's own
     // session, and a1 answers by DM. The answer itself triggers no reply back.
     const peer = await connectAgent({ baseUrl: url!, workspaceKey: key!, name: `peer-${suffix}`, persona: "peer", proofSecret: "e2e", log });
+    try {
     const peerInbox: Array<{ text: string; kind?: unknown }> = [];
     peer.agent.subscribe(["@self"], (raw: unknown) => {
       const e = raw as { type?: string; message?: { text?: string; metadata?: Record<string, unknown>; data?: Record<string, unknown> } };
@@ -170,7 +171,9 @@ test("slack threads route to resumable per-thread agents over a real relay", { s
     await until(() => turns.length >= before + 2);
     await new Promise((r) => setTimeout(r, 1500));
     assert.equal(peerInbox.length, 1, "no reply to an automatic answer");
-    await peer.agent.disconnect().catch(() => undefined);
+    } finally {
+      await peer.agent.disconnect().catch(() => undefined);
+    }
   } finally {
     await s?.stop().catch(() => undefined);
     server.close();

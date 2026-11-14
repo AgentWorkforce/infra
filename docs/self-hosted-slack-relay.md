@@ -59,8 +59,10 @@ never leave your control.
    ```
 2. In <https://api.slack.com/apps>, choose **Create New App**, then **From a
    manifest**. Pick your workspace and paste `manifest.json`.
-3. In **Basic Information**, under **App-Level Tokens**, choose **Generate Token
-   and Scopes**. Add the scope `connections:write` and copy the `xapp-...`
+3. In **Basic Information**, under **Display Information**, upload
+   `components/slack-relay/manifest/app-icon.png` as the **App icon** (Slack
+   manifests can't carry an icon). Then under **App-Level Tokens**, choose
+   **Generate Token and Scopes**. Add the scope `connections:write` and copy the `xapp-...`
    token. Socket Mode uses this token.
 4. In **Install App**, choose **Install to Workspace** and copy the **Bot User
    OAuth Token** (`xoxb-...`).

@@ -123,7 +123,7 @@ export function channelInfoOf(c: Record<string, unknown>): ChannelInfo {
   return { id: str(c.id), name: str(c.name) || str(c.id), isPrivate: c.is_private === true, isShared: shared };
 }
 
-/** Caches conversations.info per channel for ten minutes. */
+/** Caches conversations.info per channel for a minute (it gates answers and ingest on sharing). */
 export class ChannelDirectory {
   readonly #web: SlackWeb;
   readonly #cache = new Map<string, { info: ChannelInfo; at: number }>();
@@ -132,7 +132,7 @@ export class ChannelDirectory {
   }
   async get(id: string, now = Date.now()): Promise<ChannelInfo> {
     const hit = this.#cache.get(id);
-    if (hit && now - hit.at < 10 * 60_000) return hit.info;
+    if (hit && now - hit.at < 60_000) return hit.info;
     const r = await this.#web.call("conversations.info", { channel: id });
     const info = channelInfoOf(r.channel as Record<string, unknown>);
     this.#cache.set(id, { info, at: now });

@@ -117,18 +117,17 @@ async function runRouter(): Promise<void> {
   // Channels shared outside the workspace are refused for answers and ingest
   // (needs channels:read / groups:read). Fail closed when Slack can't say.
   const directory = new ChannelDirectory(slack);
-  const channelOk = async (id: string): Promise<{ ok: boolean; name: string; isPrivate: boolean }> => {
-    if (allowed.size > 0 && !allowed.has(id)) return { ok: false, name: id, isPrivate: true };
-    // Ingest still needs to know whether a channel is private even when shared
-    // channels are allowed; when Slack can't say, treat it as private.
-    const needInfo = refuseShared || (ingest !== null && !ingestPrivate);
-    if (!needInfo) return { ok: true, name: id, isPrivate: true };
+  const channelOk = async (id: string): Promise<{ ok: boolean; name: string; isPrivate: boolean; known: boolean }> => {
+    if (allowed.size > 0 && !allowed.has(id)) return { ok: false, name: id, isPrivate: true, known: false };
+    // Ingest needs the channel's real name and privacy to pick its source, so
+    // look it up whenever ingest is on, not only to refuse shared channels.
+    if (!refuseShared && ingest === null) return { ok: true, name: id, isPrivate: true, known: false };
     try {
       const info = await directory.get(id);
-      return { ok: !refuseShared || !info.isShared, name: info.name, isPrivate: info.isPrivate };
+      return { ok: !refuseShared || !info.isShared, name: info.name, isPrivate: info.isPrivate, known: true };
     } catch (err) {
-      log(`channel ${id}: info unavailable (${(err as Error).message}); ${refuseShared ? "refusing" : "not ingesting"}`);
-      return { ok: !refuseShared, name: id, isPrivate: true };
+      log(`channel ${id}: info unavailable (${(err as Error).message}); ${refuseShared ? "refusing" : "answering without ingest"}`);
+      return { ok: !refuseShared, name: id, isPrivate: true, known: false };
     }
   };
 
@@ -149,7 +148,8 @@ async function runRouter(): Promise<void> {
       const id = (m ?? cm)!.channel;
       const gate = await channelOk(id);
       if (!gate.ok) return void log(`ignored message in ${id} (not allowed or shared)`);
-      if (cm && ingest && (!gate.isPrivate || ingestPrivate)) {
+      // Ingest only with real channel details: its source depends on them.
+      if (cm && ingest && gate.known && (!gate.isPrivate || ingestPrivate)) {
         void ingest.add({ ...cm, channelName: gate.name, isPrivate: gate.isPrivate }).catch((err) => log(`ingest failed in #${gate.name}: ${(err as Error).message}`));
       }
       if (m) await router.fromSlack({ ...m, team });
@@ -184,20 +184,24 @@ async function runRouter(): Promise<void> {
         // Bounded before the signature check: an unsigned caller can't make
         // the router buffer an arbitrarily large body.
         const MAX_BODY = 1024 * 1024;
-        let body = "";
+        const chunks: Buffer[] = [];
+        let size = 0;
         let tooLarge = false;
         req.on("data", (c: Buffer) => {
           if (tooLarge) return;
-          if (body.length + c.length > MAX_BODY) {
+          size += c.length;
+          if (size > MAX_BODY) {
             tooLarge = true;
             res.writeHead(413, { connection: "close" }).end();
             req.destroy();
             return;
           }
-          body += c;
+          chunks.push(c);
         });
         req.on("end", () => {
           if (tooLarge) return;
+          // Decoded once, whole: a multibyte character split across chunks stays intact for the signature.
+          const body = Buffer.concat(chunks).toString("utf8");
           const ok = verifySlackSignature({
             signingSecret,
             timestamp: req.headers["x-slack-request-timestamp"] as string | undefined,

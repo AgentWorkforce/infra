@@ -19,8 +19,8 @@ import type { SlackInbound, SlackWebLike } from "./slack.ts";
 
 export interface RouterRelay {
   message?(id: string): Promise<RelayMessageLike>;
-  send(channel: string, text: string, opts?: { data?: Record<string, unknown> }): Promise<{ id: string }>;
-  reply(id: string, text: string, opts?: { data?: Record<string, unknown> }): Promise<{ id: string }>;
+  send(channel: string, text: string, opts?: { data?: Record<string, unknown>; idempotencyKey?: string }): Promise<{ id: string }>;
+  reply(id: string, text: string, opts?: { data?: Record<string, unknown>; idempotencyKey?: string }): Promise<{ id: string }>;
 }
 
 
@@ -117,14 +117,17 @@ export class Router {
     };
     if (!agent?.sessionId) this.#ledger.setAgentStatus(agentName, agent?.status ?? "spawning", { sessionId });
     const body = `[slack <@${m.user}>${m.kind === "dm" ? " dm" : ""}] ${m.text}`;
+    // One key per Slack message: a retry after a write that committed but
+    // whose response was lost can't post the message twice.
+    const idempotencyKey = `slack:${key.team}:${key.channel}:${m.ts}`;
     let relayId: string;
     try {
       relayId = await withRetry(async () => {
         const thread = this.#ledger.thread(key);
         if (thread?.relayParentId) {
-          return (await this.#relay.reply(thread.relayParentId, body, { data: data as unknown as Record<string, unknown> })).id;
+          return (await this.#relay.reply(thread.relayParentId, body, { data: data as unknown as Record<string, unknown>, idempotencyKey })).id;
         }
-        const id = (await this.#relay.send(this.#channel, `@${agentName} ${body}`, { data: data as unknown as Record<string, unknown> })).id;
+        const id = (await this.#relay.send(this.#channel, `@${agentName} ${body}`, { data: data as unknown as Record<string, unknown>, idempotencyKey })).id;
         this.#ledger.setRelayParent(key, id);
         return id;
       }, this.#retryDelaysMs);

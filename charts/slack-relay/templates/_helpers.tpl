@@ -66,10 +66,19 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- if and (eq .Values.slack.mode "http") (not .Values.secrets.slackSigningSecret.name) }}
 {{- fail "slack-relay: secrets.slackSigningSecret.name is required in http mode" }}
 {{- end }}
+{{- $envNames := dict }}
 {{- range .Values.mcpServers }}
 {{- if not (and .name .url .tokenUrl .clientId .clientSecret .clientSecret.name) }}
 {{- fail "slack-relay: each mcpServers entry needs name, url, tokenUrl, clientId and clientSecret.name" }}
 {{- end }}
+{{- if not (regexMatch "^[a-z][a-z0-9-]{0,40}$" .name) }}
+{{- fail (printf "slack-relay: mcpServers name %q must be lowercase letters, digits and hyphens" .name) }}
+{{- end }}
+{{- $env := printf "MCP_%s_CLIENT_SECRET" (.name | upper | replace "-" "_") }}
+{{- if hasKey $envNames $env }}
+{{- fail (printf "slack-relay: mcpServers names %q and %q map to the same %s" (get $envNames $env) .name $env) }}
+{{- end }}
+{{- $_ := set $envNames $env .name }}
 {{- end }}
 {{- if .Values.ingest.enabled }}
 {{- $found := false }}

@@ -148,8 +148,9 @@ test("ingest appends each message to its channel-day page, creating it once, ide
   };
   const ing = new SlackIngest({ brain, sourceId: "company" });
   const ts1 = "1794693736.001989";
-  const slug = pageSlug("slack", "Market Research", ts1);
-  assert.equal(slug, "slack/market-research/2026-11-14");
+  const slug = pageSlug("slack", "Market Research", ts1, "C1");
+  assert.equal(slug, "slack/market-research-c1/2026-11-14");
+  assert.notEqual(pageSlug("slack", "ops_legal", ts1, "C7"), pageSlug("slack", "ops-legal", ts1, "C8"));
   await ing.add({ channel: "C1", channelName: "Market Research", ts: ts1, user: "U1", text: "competitor X raised" });
   await ing.add({ channel: "C1", channelName: "Market Research", ts: "1794693740.000100", threadTs: ts1, user: "U2", text: "how much?" });
   await ing.add({ channel: "C1", channelName: "Market Research", ts: "1794693740.000100", threadTs: ts1, user: "U2", text: "how much?" }); // Slack retry
@@ -235,4 +236,11 @@ test("ingest routes channels to sources like the brain's own classification", as
   assert.equal(ing.sourceFor("ops-finance", false), "founders");
   assert.equal(ing.sourceFor("ext-acme", false), "slack-connect");
   assert.equal(ing.sourceFor("leadership", true), "founders");
+});
+
+test("MCP SSE: multi-line data joins, notifications before the response are skipped", async () => {
+  const { parseRpcBody } = await import("../src/mcp.ts");
+  const sse = 'event: message\ndata: {"jsonrpc":"2.0","method":"notifications/progress"}\n\nevent: message\ndata: {"jsonrpc":"2.0",\ndata: "id":5,"result":{"ok":3}}\n\n';
+  assert.deepEqual(parseRpcBody(sse, 5)?.result, { ok: 3 });
+  assert.equal(parseRpcBody('data: {"jsonrpc":"2.0","method":"notifications/progress"}\n\n', 5), null, "a lone notification is not the response");
 });

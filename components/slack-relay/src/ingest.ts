@@ -29,10 +29,11 @@ export function requestId(...parts: string[]): string {
   return `${h.slice(0, 8)}-${h.slice(8, 12)}-5${h.slice(13, 16)}-8${h.slice(17, 20)}-${h.slice(20, 32)}`;
 }
 
-export function pageSlug(prefix: string, channelName: string, ts: string): string {
+/** slack/<channel name>-<channel id>/<YYYY-MM-DD>: readable, and distinct even when two names normalize alike. */
+export function pageSlug(prefix: string, channelName: string, ts: string, channelId: string): string {
   const day = new Date(Number(ts.split(".")[0]) * 1000).toISOString().slice(0, 10);
   const name = channelName.toLowerCase().replace(/[^a-z0-9-]+/g, "-").replace(/^-+|-+$/g, "") || "channel";
-  return `${prefix}/${name}/${day}`;
+  return `${prefix}/${name}-${channelId.toLowerCase()}/${day}`;
 }
 
 export function lineFor(m: IngestMessage): string {
@@ -73,13 +74,14 @@ export class SlackIngest {
       this.#log(`ingest: withheld a message in #${m.channelName} that looks like a credential`);
       return Promise.resolve(null);
     }
-    const slug = pageSlug(this.#prefix, m.channelName, m.ts);
+    const slug = pageSlug(this.#prefix, m.channelName, m.ts, m.channel);
     const prior = this.#chains.get(slug) ?? Promise.resolve();
     const run = prior.catch(() => undefined).then(() => this.#append(slug, m));
     this.#chains.set(slug, run);
-    void run.finally(() => {
+    const cleanup = () => {
       if (this.#chains.get(slug) === run) this.#chains.delete(slug);
-    });
+    };
+    run.then(cleanup, cleanup);
     return run;
   }
 

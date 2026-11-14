@@ -2,7 +2,7 @@
   "display_information": {
     "name": "Agent Relay",
     "description": "Ask your team's agents in Slack. Every thread gets its own agent.",
-    "background_color": "#1a1a2e",
+    "background_color": "#0b1c2a",
     "long_description": "Agent Relay connects this Slack workspace to your self-hosted Agent Relay. Mention the app in a channel (or message it directly, if enabled) and an agent picks up the thread: follow-ups in the same thread go to the same agent, which keeps its context, and several people can talk to it at once. The agents run in your own infrastructure; Slack only sees what they post back into the thread."
   },
   "features": {
