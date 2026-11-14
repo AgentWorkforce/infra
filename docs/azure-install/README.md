@@ -12,9 +12,14 @@ operator device approval worked, two agents exchanged messages through
 Relaycast, and an uploaded session was indexed. See
 [What was not proven](#what-was-not-proven) before a production rollout.
 
+This guide installs the published chart **agent-relay 0.7.7** (sessions-pipeline
+0.8.32) from `oci://ghcr.io/agentworkforce/charts`, the first release that
+carries `searchIndexer.locker.credentials`. Earlier releases do not render the
+indexer's MinIO keys, so its uploads are never indexed.
+
 | File | What it is |
 |---|---|
-| `values.yaml` | Site values, applied after `charts/agent-relay/values-eks.yaml` |
+| `values.yaml` | Site values, applied after the chart package's `values-eks.yaml` |
 | `postgres-tls.yaml` | cert-manager Issuers and Certificates: a 10-year CA and the server certificate for the in-cluster Postgres |
 | `postgres-values.yaml` | Overrides for `deps/cnpg-cluster-values.yaml` (the pinned HoopDb Postgres) |
 | `postgres-setup.sh` | Databases, roles and credential files: the `selfhosted` counterpart of `rds-setup.sh` and `cloud-sql-setup.sh` |
@@ -39,8 +44,19 @@ not change.
 
 ## Steps
 
-Tools: `az`, `kubectl`, `helm` 3.10+, `jq`, `yq`, `openssl`. Run from a clone of
-this repository at the release tag, with these files beside it.
+Tools: `az`, `kubectl`, `helm` 3.10+, `jq`, `yq`, `openssl`.
+
+The chart comes from the registry; nothing is built from a checkout. Clone this
+repository only for this directory's files and the pinned `deps/` values, and
+pull the chart package for its `values-eks.yaml`. Every later command runs
+in `docs/azure-install`:
+
+```sh
+git clone https://github.com/AgentWorkforce/infra.git && cd infra/docs/azure-install
+CHART=oci://ghcr.io/agentworkforce/charts/agent-relay
+CHART_VERSION=0.7.7
+helm pull "$CHART" --version "$CHART_VERSION" --untar -d chart
+```
 
 ### 1. Cluster
 
@@ -63,7 +79,7 @@ helm repo add cnpg https://cloudnative-pg.github.io/charts
 helm repo add jetstack https://charts.jetstack.io
 helm repo add traefik https://traefik.github.io/charts
 helm upgrade --install cnpg cnpg/cloudnative-pg --version 0.29.1 -n cnpg-system --create-namespace \
-  -f deps/cnpg-operator-values.yaml --wait
+  -f ../../deps/cnpg-operator-values.yaml --wait
 helm upgrade --install cert-manager jetstack/cert-manager -n cert-manager --create-namespace \
   --set crds.enabled=true --wait
 helm upgrade --install traefik traefik/traefik -n traefik --create-namespace \
@@ -90,7 +106,7 @@ kubectl create namespace agent-relay
 kubectl apply -f postgres-tls.yaml
 kubectl -n agent-relay wait --for=condition=Ready certificate/postgres-ca certificate/hoopdb-server
 helm upgrade --install hoopdb cnpg/cluster --version 0.9.0 -n agent-relay \
-  -f deps/cnpg-cluster-values.yaml -f postgres-values.yaml
+  -f ../../deps/cnpg-cluster-values.yaml -f postgres-values.yaml
 ```
 
 The server certificate is issued under a 10-year CA because the read API,
@@ -123,7 +139,9 @@ Replace the placeholders in `values.yaml`: `__ORG_ID__`, `__ORG_NAME__`,
 `~/.agent-relay-install/postgres-ca.sha256`). `__LLM_MODEL__` stays, as in the
 EKS guide.
 
-Create the Secrets as in step 10 of the EKS guide, without the Relaycast
+Create the Secrets as in
+[step 10 of the GKE guide](../gcp-install/0-START-HERE.md#10-create-the-secrets),
+without the Relaycast
 database keys (Relaycast runs on SQLite here) and with one more Secret for
 MinIO:
 
@@ -149,9 +167,8 @@ done
 ### 6. Install
 
 ```sh
-helm dependency build charts/sessions-pipeline && helm dependency build charts/agent-relay
-helm upgrade --install agent-relay charts/agent-relay --namespace agent-relay \
-  -f charts/agent-relay/values-eks.yaml -f values.yaml --timeout 25m
+helm upgrade --install agent-relay "$CHART" --version "$CHART_VERSION" --namespace agent-relay \
+  -f chart/agent-relay/values-eks.yaml -f values.yaml --timeout 25m
 for j in $(kubectl -n agent-relay get jobs -o name | grep -E 'relay-control-migrate|agent-relay-worker-migrate'); do
   kubectl -n agent-relay wait --for=condition=complete "$j" --timeout=20m
 done
@@ -166,8 +183,8 @@ done
 bash postgres-setup.sh post
 kubectl -n agent-relay rollout restart deploy/agent-relay-read-api deploy/agent-relay-ingest-edge deploy/agent-relay-search-indexer
 for j in $(kubectl -n agent-relay get jobs -o name | grep search-indexer-bootstrap); do kubectl -n agent-relay delete "$j"; done
-helm upgrade --install agent-relay charts/agent-relay --namespace agent-relay \
-  -f charts/agent-relay/values-eks.yaml -f values.yaml --timeout 25m
+helm upgrade --install agent-relay "$CHART" --version "$CHART_VERSION" --namespace agent-relay \
+  -f chart/agent-relay/values-eks.yaml -f values.yaml --timeout 25m
 kubectl -n agent-relay wait --for=condition=complete "$(kubectl -n agent-relay get jobs -o name | grep search-indexer-bootstrap)" --timeout=10m
 kubectl -n agent-relay rollout status deploy --timeout=10m
 bash postgres-setup.sh finalize
@@ -194,12 +211,48 @@ curl -s -o /dev/null -w "history %{http_code}\n" "https://<history host>/v1/sess
 Edge denials go to a Service with no endpoints, as on GKE, so they answer 503
 (the ALB edge answers 404).
 
-Then continue with the EKS guide's first sign-in step.
+### 9. First sign-in
+
+Continue with
+[step 15 of the GKE guide](../gcp-install/0-START-HERE.md#15-first-sign-in-then-add-users)
+(setup-key sign-in, then users).
+
+### 10. Output and the daily digest
+
+`values.yaml` turns on the Output and daily-digest reads and the indexer's
+output facts writer, but a workspace answers them only after the output facts
+bootstrap Job has marked it (until then: 501 `output_backfill_incomplete` /
+`digest_backfill_incomplete`). The Job marks only workspaces that already have
+sessions, so run it after the first sessions of a workspace arrive. Merge this
+into the existing `sessions-pipeline.searchIndexer` block of `values.yaml`:
+
+```yaml
+sessions-pipeline:
+  searchIndexer:
+    outputFacts:
+      bootstrap:
+        enabled: true
+        runId: "1"
+```
+
+```sh
+helm upgrade agent-relay "$CHART" --version "$CHART_VERSION" --namespace agent-relay \
+  -f chart/agent-relay/values-eks.yaml -f values.yaml --timeout 25m
+kubectl -n agent-relay wait --for=condition=complete --timeout=2h \
+  job -l app.kubernetes.io/component=output-facts-bootstrap
+```
+
+When another workspace starts uploading, change `runId` and run it again. Exit
+codes and verification are in the
+[sessions-pipeline chart README](../../charts/sessions-pipeline/README.md).
+
+**Done when:** the Job completes and the workspace's Output page loads.
 
 ## What was not proven
 
-- Any release other than agent-relay-2026.11.0; `values.yaml` renders against
-  `main` but was not installed from it.
+- Any release other than agent-relay-2026.11.0 (patched); `values.yaml` renders
+  against agent-relay 0.7.7 but was not installed from it.
+- The output facts bootstrap (step 10).
 - Azure Database for PostgreSQL, Azure Blob Storage, Application Gateway.
 - NetworkPolicy enforcement beyond a default install, private clusters,
   internal load balancers.

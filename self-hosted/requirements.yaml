@@ -5667,11 +5667,14 @@ entries:
       connection JSON in a Secret, and an owner-role bootstrap (the chart's
       bootstrap Job, or a run acknowledged by the operator). The ServiceAccount
       must carry the search indexer Pod Identity association and the Locker
-      read grant. The aws-rds-native profile is the only install profile that
+      read grant, or, for an S3-compatible store with no workload identity
+      (MinIO on AKS), searchIndexer.locker.credentials.mode=secret reads static
+      Locker keys from searchIndexer.locker.existingSecret (endpoint required,
+      s3 only). The aws-rds-native profile is the only install profile that
       enables this option, through a mandatory qualified release overlay.
     chart: sessions-pipeline
     values: [searchIndexer.*]
-    env: [SERVICE, RELAYHISTORY_SELFHOST_PIPELINE_CONSUMER, RELAYHISTORY_PIPELINE_CONSUMER_SECRET, SEARCH_INDEX_BACKEND, SEARCH_INDEX_POSTGRES_BACKEND_ID, READ_API_COMPLETE_SINCE, PIPELINE_KEY_PREFIX, PIPELINE_ORG_FROM_PREFIX, SESSION_POSTGRES_TLS_PROFILE, SESSION_POSTGRES_CA_FILE, SESSION_POSTGRES_CA_SHA256, LOCKER_BUCKET, LOCKER_REGION, LOCKER_ENDPOINT, SEARCH_INDEX_OPENSEARCH_URL, SEARCH_INDEX_OPENSEARCH_AUTH, SEARCH_INDEX_OPENSEARCH_AWS_REGION, SEARCH_INDEX_OPENSEARCH_INDEX_PREFIX, WORKER_HEALTH_PORT]
+    env: [SERVICE, RELAYHISTORY_SELFHOST_PIPELINE_CONSUMER, RELAYHISTORY_PIPELINE_CONSUMER_SECRET, SEARCH_INDEX_BACKEND, SEARCH_INDEX_POSTGRES_BACKEND_ID, READ_API_COMPLETE_SINCE, PIPELINE_KEY_PREFIX, PIPELINE_ORG_FROM_PREFIX, SESSION_POSTGRES_TLS_PROFILE, SESSION_POSTGRES_CA_FILE, SESSION_POSTGRES_CA_SHA256, LOCKER_PROVIDER, LOCKER_BUCKET, LOCKER_REGION, LOCKER_ENDPOINT, LOCKER_ACCESS_KEY_ID, LOCKER_SECRET_ACCESS_KEY, SEARCH_INDEX_OPENSEARCH_URL, SEARCH_INDEX_OPENSEARCH_AUTH, SEARCH_INDEX_OPENSEARCH_AWS_REGION, SEARCH_INDEX_OPENSEARCH_INDEX_PREFIX, WORKER_HEALTH_PORT]
     profiles: [selfhost-postgres, migration, external-selfhosted, external-rds, aws-rds-native, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql]
     status: shipped
     provided_by: operator
@@ -5689,12 +5692,18 @@ entries:
         name_paths: [searchIndexer.bootstrap.existingSecret]
         keys:
           - { key: RELAYHISTORY_PIPELINE_CONSUMER_SECRET, key_path: searchIndexer.bootstrap.key }
+      - name: { default: "<search indexer Locker Secret, only with locker.credentials.mode=secret>", aws-rds-native: "<not used: EKS Pod Identity>" }
+        name_paths: [searchIndexer.locker.existingSecret]
+        keys:
+          - { key: "<accessKeyIdKey; unset renders access-key-id>", key_path: searchIndexer.locker.accessKeyIdKey, optional: true }
+          - { key: "<secretAccessKeyKey; unset renders secret-access-key>", key_path: searchIndexer.locker.secretAccessKeyKey, optional: true }
     verify:
       default: Leave disabled until the image and the role grants land; render tests prove plumbing only.
       aws-rds-native: With the exact qualified release image, verify indexer consumer ticks and search hits through the read API; render tests prove plumbing only.
     sources:
       - "charts/sessions-pipeline/templates/search-indexer.yaml:1"
       - "charts/sessions-pipeline/values.yaml:1"
+      - "docs/azure-install/README.md:1"
 
   - id: opt.sessions-output-facts
     kind: option
