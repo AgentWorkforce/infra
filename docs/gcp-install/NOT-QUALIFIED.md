@@ -1,4 +1,4 @@
-# What agent-relay-2026.11.3 does not yet qualify on GKE
+# What agent-relay-2026.11.5 does not yet qualify on GKE
 
 The steps in 0-START-HERE.md were run end to end on a private regional GKE
 cluster (Kubernetes 1.35, Workload Identity, IAP-only control plane) with the
@@ -12,7 +12,7 @@ production rollout.
    `storage_provider = s3`, even when the objects are in GCS, so the read API
    on GCS answered `GET /v1/sessions/<id>/turns` with
    `501 turns_canonical_pointer_invalid`. This release's Sessions image
-   (relayhistory-pipeline `601d6a65`) records the configured provider, so a
+   (relayhistory-pipeline `f8ac49b3`) records the configured provider, so a
    fresh install writes correct rows from the start. An install upgraded from
    2026.11.1 keeps its older rows as they were; no repair tool ships yet.
    The `/turns` check on a GKE install with this image is pending.
@@ -32,7 +32,7 @@ production rollout.
 
 4. **`values-gcp.yaml` at the tag pins the previous release's images**
    (sessions-pipeline `77022c5b`, relay-control 0.5.16). Only the release
-   overlay brings the 2026.11.3 images. Always apply
+   overlay brings the 2026.11.5 images. Always apply
    `release-images.values.yaml` last; without it you would install older
    images.
 
@@ -59,7 +59,7 @@ production rollout.
 8. **Not HA.** Relay control, the dashboard, Relaycast (PostgreSQL backend)
    and the search indexer each run one replica, as on EKS.
 
-9. **Release notes.** `docs/releases/agent-relay-2026.11.3.md` (and the
+9. **Release notes.** `docs/releases/agent-relay-2026.11.5.md` (and the
    2026.11.2 notes it builds on) describe the changes; the published GitHub
    release and its signed assets are final.
 
