@@ -127,6 +127,18 @@ Patches to upstream files (report upstream; drop when fixed there):
     multiple controllers with selectors generated from each workload's own
     labels. Both are off by default, so upstream renders are unchanged. The
     existing automatic maxUnavailable=1 PDB for replicaCount > 1 remains.
+14. S3 Express state with a regional checkpoint (`values.yaml`,
+    `values.schema.json`, `templates/control-plane.yaml`,
+    `templates/_helpers.tpl`). New values `storage.artifactBucket` (default
+    `""`: `storage.bucket`, as upstream) and
+    `storage.s3.checkpoint.{bucket,maxLagMs}` (rendered as
+    `DURABLE_ACTORS_S3_CHECKPOINT_BUCKET` / `_MAX_LAG_MS`). A directory bucket
+    (`*--x-s3`) as `storage.bucket` fails the render unless both the checkpoint
+    and the artifact bucket are regional. The deployers upload with plain
+    SigV4, which Express rejects. Needs a fork image with
+    AgentWorkforce/durable-actors#4; older images ignore the checkpoint
+    variables. Defaults render byte-identical. Bucket and IAM:
+    `terraform/modules/aws/durable-actors-express`.
 
 ## Re-vendoring
 
