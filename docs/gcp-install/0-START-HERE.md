@@ -4,7 +4,7 @@ Numbered steps, in order. Copy each block, replace `<...>`, and check the
 **Done when** line before moving on. This takes about 1½ hours, most of it
 waiting on Google Cloud (the HTTPS certificate alone can take up to an hour).
 
-Release: **agent-relay-2026.11.3** (infra commit `a9b29222`, chart 0.7.8).
+Release: **agent-relay-2026.11.5** (infra commit `ef3f69ab`, chart 0.7.10).
 
 **You need:**
 
@@ -41,10 +41,10 @@ git clone https://github.com/AgentWorkforce/infra.git
 # tag predates them. Terraform and the chart come from the tag below.
 git -C infra archive origin/main docs/gcp-install | tar -x --strip-components=2
 ls 0-START-HERE.md values.yaml cloud-sql-setup.sh helm-secrets-prepare.sh first-admin.sh add-user.sh >/dev/null && echo "guide ok"
-git -C infra checkout agent-relay-2026.11.3
-test "$(git -C infra rev-parse HEAD)" = a9b29222aee2a8347f6fa0c5a191d8f0a9a0fb8b && echo "release ok"
-mkdir release && gh release download agent-relay-2026.11.3 -R AgentWorkforce/infra -D release
-(cd release && sha256sum -c SHA256SUMS && tar -xzf agent-relay-0.7.8.tgz) | tail -1
+git -C infra checkout agent-relay-2026.11.5
+test "$(git -C infra rev-parse HEAD)" = ef3f69ab8e557fb9282eb292b6975c210501c61f && echo "release ok"
+mkdir release && gh release download agent-relay-2026.11.5 -R AgentWorkforce/infra -D release
+(cd release && sha256sum -c SHA256SUMS && tar -xzf agent-relay-0.7.10.tgz) | tail -1
 ```
 
 **Got this guide as a gist?** Replace the `mkdir agent-relay-install ...` line
@@ -53,7 +53,7 @@ and delete the `git -C infra archive ...` line: the gist already holds the
 guide's files.
 
 No `gh`? Download the same assets from
-https://github.com/AgentWorkforce/infra/releases/tag/agent-relay-2026.11.3 into
+https://github.com/AgentWorkforce/infra/releases/tag/agent-relay-2026.11.5 into
 `release/`. On macOS use `shasum -a 256 -c SHA256SUMS`.
 
 Tools: `gcloud` (with `gke-gcloud-auth-plugin`), `terraform` ≥ 1.11 (or
@@ -236,7 +236,7 @@ export MIRROR_ROOT=<region>-docker.pkg.dev/<project id>/agent-relay-mirror
 export NAMESPACE=agent-relay
 export HELM_RELEASE=agent-relay
 export STATIC_IP_NAME=agent-relay-ingress
-export SERVICES_IMAGE=$MIRROR_ROOT/ghcr.io/agentworkforce/sessions-pipeline@sha256:42ccfba3c085d525846045a646b4c82cf8a849367ec94751934b3749fa90a36f
+export SERVICES_IMAGE=$MIRROR_ROOT/ghcr.io/agentworkforce/sessions-pipeline@sha256:ba02f1498d53a089da7ff8fdb7e47215f561c55d9f292e1995b7b5c97d9c37a1
 export PSQL_IMAGE=$MIRROR_ROOT/ghcr.io/cloudnative-pg/postgresql@sha256:ed6923f9ba2399cf9070379a353c710c29ced8a294be73986a2c3dae7e599ce3
 export INSTALL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 export CHART="$INSTALL_DIR/release/agent-relay"
@@ -399,7 +399,7 @@ same five Secrets with the same keys.
 ## 11. Install with Helm
 
 ```sh
-helm upgrade --install $HELM_RELEASE "$INSTALL_DIR/release/agent-relay-0.7.8.tgz" --namespace $NAMESPACE \
+helm upgrade --install $HELM_RELEASE "$INSTALL_DIR/release/agent-relay-0.7.10.tgz" --namespace $NAMESPACE \
   -f "$CHART/values-gcp.yaml" -f "$CHART/values-gcp-native.yaml" \
   -f "$INSTALL_DIR/managed-values.json" -f "$INSTALL_DIR/values.yaml" \
   -f "$INSTALL_DIR/release-images.values.yaml" --timeout 25m
@@ -429,7 +429,7 @@ done
 bash cloud-sql-setup.sh post
 kubectl -n $NAMESPACE rollout restart deploy/agent-relay-read-api deploy/agent-relay-ingest-edge deploy/agent-relay-search-indexer
 for j in $(kubectl -n $NAMESPACE get jobs -o name | grep search-indexer-bootstrap); do kubectl -n $NAMESPACE delete "$j"; done
-helm upgrade --install $HELM_RELEASE "$INSTALL_DIR/release/agent-relay-0.7.8.tgz" --namespace $NAMESPACE \
+helm upgrade --install $HELM_RELEASE "$INSTALL_DIR/release/agent-relay-0.7.10.tgz" --namespace $NAMESPACE \
   -f "$CHART/values-gcp.yaml" -f "$CHART/values-gcp-native.yaml" \
   -f "$INSTALL_DIR/managed-values.json" -f "$INSTALL_DIR/values.yaml" \
   -f "$INSTALL_DIR/release-images.values.yaml" --timeout 25m
