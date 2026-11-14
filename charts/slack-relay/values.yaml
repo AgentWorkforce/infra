@@ -43,6 +43,34 @@ slack:
   allowedChannels: []
   # Answer direct messages to the bot.
   allowDms: false
+  # Refuse channels shared outside the workspace (Slack Connect), for answers
+  # and ingest. Unknown sharing state counts as shared.
+  refuseSharedChannels: true
+
+# Remote MCP servers behind OAuth client credentials, e.g. a gbrain company
+# brain. Agents get the ones listed in host.mcpServers as tools (add
+# "mcp__<name>" to host.allowedTools); the router can ingest Slack into one.
+#   - name: brain
+#     url: https://brain.example.com/mcp
+#     tokenUrl: https://brain.example.com/token
+#     scope: read
+#     clientId: slack-agents
+#     clientSecret: { name: slack-relay-brain, key: read-client-secret }
+mcpServers: []
+
+# Continuous Slack ingest: every human message in the channels the app is in
+# (subject to slack.allowedChannels and the shared-channel refusal) is
+# appended, as it arrives, to slack/<channel>/<YYYY-MM-DD> in a knowledge base
+# over MCP (gbrain append_page/put_page; needs a write-scoped client).
+ingest:
+  enabled: false
+  # Name of an entry in mcpServers with write scope.
+  mcpServer: ""
+  # gbrain source the pages go to, e.g. "company".
+  sourceId: ""
+  pagePrefix: slack
+  # Also ingest private channels the app is in.
+  privateChannels: false
 
 router:
   # The router's relay name; the host only acts on messages from it.
@@ -85,6 +113,8 @@ host:
   permissionMode: dontAsk
   # Give each agent a Relaycast MCP bound to its own token (DMs, channels).
   relaycastMcp: true
+  # Names from the top-level mcpServers list agents get as tools. Empty: all.
+  mcpServers: []
   turnTimeoutSeconds: 600
   # An agent leaves the relay after this long idle; the next message wakes it.
   idleReleaseMinutes: 15

@@ -85,6 +85,60 @@ function str(v: unknown): string {
   return typeof v === "string" ? v : "";
 }
 
+/**
+ * A human message in a channel (not a DM), for ingest: top-level or in a
+ * thread, mention or not. Bots, edits and other subtypes are skipped.
+ */
+export function channelMessageOf(event: Record<string, unknown> | undefined, botUserId?: string): { channel: string; ts: string; threadTs?: string; user: string; text: string } | null {
+  if (!event || event.type !== "message" || event.bot_id || event.subtype || event.hidden) return null;
+  const channelType = str(event.channel_type);
+  if (channelType === "im" || channelType === "mpim") return null;
+  const channel = str(event.channel);
+  const ts = str(event.ts);
+  const user = str(event.user);
+  const text = str(event.text);
+  if (!channel || !ts || !user || !text || user === botUserId) return null;
+  return { channel, ts, user, text, ...(str(event.thread_ts) ? { threadTs: str(event.thread_ts) } : {}) };
+}
+
+export interface ChannelInfo {
+  id: string;
+  name: string;
+  isPrivate: boolean;
+  /** True when the channel is shared outside the workspace (or that can't be ruled out). */
+  isShared: boolean;
+}
+
+/** Any shared flag set, or a missing one, counts as shared: fail closed. */
+export function channelInfoOf(c: Record<string, unknown>): ChannelInfo {
+  const flags = [c.is_shared, c.is_ext_shared];
+  const unknown = flags.some((f) => typeof f !== "boolean");
+  const shared =
+    unknown ||
+    flags.some(Boolean) ||
+    c.is_org_shared === true ||
+    c.is_pending_ext_shared === true ||
+    (Array.isArray(c.pending_shared) && c.pending_shared.length > 0);
+  return { id: str(c.id), name: str(c.name) || str(c.id), isPrivate: c.is_private === true, isShared: shared };
+}
+
+/** Caches conversations.info per channel for ten minutes. */
+export class ChannelDirectory {
+  readonly #web: SlackWeb;
+  readonly #cache = new Map<string, { info: ChannelInfo; at: number }>();
+  constructor(web: SlackWeb) {
+    this.#web = web;
+  }
+  async get(id: string, now = Date.now()): Promise<ChannelInfo> {
+    const hit = this.#cache.get(id);
+    if (hit && now - hit.at < 10 * 60_000) return hit.info;
+    const r = await this.#web.call("conversations.info", { channel: id });
+    const info = channelInfoOf(r.channel as Record<string, unknown>);
+    this.#cache.set(id, { info, at: now });
+    return info;
+  }
+}
+
 export interface SlackWebLike {
   postMessage(args: { channel: string; text: string; threadTs?: string }): Promise<{ ts?: string }>;
 }

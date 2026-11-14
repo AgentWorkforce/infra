@@ -18,6 +18,9 @@ slack:
   # The proof's test channel only.
   allowedChannels: [C0CHX8UK4CC]
   allowDms: true
+  # The test app predates the channels:read scope the check needs; off until
+  # the app is reinstalled from the current manifest.
+  refuseSharedChannels: false
 router:
   orchestrator: claude
   orchestratorModel: claude-fable-5-2

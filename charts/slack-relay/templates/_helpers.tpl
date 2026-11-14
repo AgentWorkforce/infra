@@ -66,11 +66,39 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- if and (eq .Values.slack.mode "http") (not .Values.secrets.slackSigningSecret.name) }}
 {{- fail "slack-relay: secrets.slackSigningSecret.name is required in http mode" }}
 {{- end }}
+{{- range .Values.mcpServers }}
+{{- if not (and .name .url .tokenUrl .clientId .clientSecret .clientSecret.name) }}
+{{- fail "slack-relay: each mcpServers entry needs name, url, tokenUrl, clientId and clientSecret.name" }}
+{{- end }}
+{{- end }}
+{{- if .Values.ingest.enabled }}
+{{- $found := false }}
+{{- range .Values.mcpServers }}{{- if eq .name $.Values.ingest.mcpServer }}{{- $found = true }}{{- end }}{{- end }}
+{{- if not $found }}
+{{- fail "slack-relay: ingest.mcpServer must name an entry in mcpServers" }}
+{{- end }}
+{{- end }}
 {{- if and (eq .Values.slack.mode "http") (not .Values.ingress.enabled) }}
 {{- fail "slack-relay: http mode needs ingress.enabled so Slack can reach /slack/events" }}
 {{- end }}
 {{- if not (has .Values.router.orchestrator (list "claude" "deterministic")) }}
 {{- fail "slack-relay: router.orchestrator must be claude or deterministic" }}
+{{- end }}
+{{- end }}
+
+{{/* OAuth MCP servers: the JSON list (no secrets) plus one secret env per server. */}}
+{{- define "slack-relay.mcpEnv" -}}
+{{- if .Values.mcpServers }}
+{{- $list := list }}
+{{- range .Values.mcpServers }}
+{{- $env := printf "MCP_%s_CLIENT_SECRET" (.name | upper | replace "-" "_") }}
+{{- $list = append $list (dict "name" .name "url" .url "tokenUrl" .tokenUrl "scope" (.scope | default "") "clientId" .clientId "clientSecretEnv" $env) }}
+{{- end }}
+- name: MCP_OAUTH_SERVERS_JSON
+  value: {{ $list | toJson | quote }}
+{{- range .Values.mcpServers }}
+{{ include "slack-relay.secretEnv" (dict "env" (printf "MCP_%s_CLIENT_SECRET" (.name | upper | replace "-" "_")) "ref" .clientSecret) }}
+{{- end }}
 {{- end }}
 {{- end }}
 

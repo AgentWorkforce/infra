@@ -65,6 +65,11 @@ spec:
               value: {{ .Values.host.idleReleaseMinutes | quote }}
             - name: DATA_DIR
               value: /data
+            {{- include "slack-relay.mcpEnv" . | nindent 12 }}
+            {{- with .Values.host.mcpServers }}
+            - name: AGENT_MCP_SERVERS
+              value: {{ join "," . | quote }}
+            {{- end }}
             {{- include "slack-relay.secretEnv" (dict "env" "ANTHROPIC_API_KEY" "ref" .Values.secrets.anthropicApiKey) | nindent 12 }}
           ports:
             - { name: http, containerPort: 8080 }

@@ -74,6 +74,19 @@ spec:
             {{- else }}
             {{- include "slack-relay.secretEnv" (dict "env" "SLACK_SIGNING_SECRET" "ref" .Values.secrets.slackSigningSecret) | nindent 12 }}
             {{- end }}
+            - name: SLACK_REFUSE_SHARED_CHANNELS
+              value: {{ .Values.slack.refuseSharedChannels | quote }}
+            {{- include "slack-relay.mcpEnv" . | nindent 12 }}
+            {{- if .Values.ingest.enabled }}
+            - name: INGEST_MCP_SERVER
+              value: {{ .Values.ingest.mcpServer | quote }}
+            - name: INGEST_SOURCE_ID
+              value: {{ .Values.ingest.sourceId | quote }}
+            - name: INGEST_PAGE_PREFIX
+              value: {{ .Values.ingest.pagePrefix | quote }}
+            - name: INGEST_PRIVATE_CHANNELS
+              value: {{ .Values.ingest.privateChannels | quote }}
+            {{- end }}
             - name: ORCHESTRATOR
               value: {{ .Values.router.orchestrator | quote }}
             - name: ORCHESTRATOR_MODEL

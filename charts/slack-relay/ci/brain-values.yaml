@@ -1,0 +1,29 @@
+image:
+  digest: sha256:0000000000000000000000000000000000000000000000000000000000000000
+relaycast:
+  baseUrl: https://cast.example.com
+secrets:
+  relaycastWorkspaceKey: { name: slack-relay-relaycast, key: workspace-key }
+  slackBotToken: { name: slack-relay-slack, key: bot-token }
+  slackAppToken: { name: slack-relay-slack, key: app-token }
+  anthropicApiKey: { name: slack-relay-anthropic, key: api-key }
+mcpServers:
+  - name: brain
+    url: https://brain.example.com/mcp
+    tokenUrl: https://brain.example.com/token
+    scope: read
+    clientId: slack-agents
+    clientSecret: { name: slack-relay-brain, key: read-client-secret }
+  - name: brain-write
+    url: https://brain.example.com/mcp
+    tokenUrl: https://brain.example.com/token
+    scope: write
+    clientId: slack-ingest
+    clientSecret: { name: slack-relay-brain, key: write-client-secret }
+ingest:
+  enabled: true
+  mcpServer: brain-write
+  sourceId: company
+host:
+  mcpServers: [brain]
+  allowedTools: ["Read(./**)", "Glob(./**)", "Grep(./**)", mcp__relaycast, mcp__brain]

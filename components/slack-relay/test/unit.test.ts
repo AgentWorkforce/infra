@@ -124,3 +124,60 @@ test("one agent per thread: reuse is refused, pinned agents allowed, no model ca
   const reuse = await new ThreadPolicy({ inner: reusing("slack-c1-1001"), allowReuse: true }).decide(input);
   assert.equal(reuse.agent, "slack-c1-1001");
 });
+
+test("ingest appends each message to its channel-day page, creating it once, idempotently", async () => {
+  const { SlackIngest, pageSlug, requestId } = await import("../src/ingest.ts");
+  const { McpToolError } = await import("../src/mcp.ts");
+  const pages = new Map<string, string>();
+  const seen = new Set<string>();
+  const calls: string[] = [];
+  const brain = {
+    async callTool(name: string, a: Record<string, unknown>) {
+      calls.push(name);
+      const slug = a.slug as string;
+      if (seen.has(a.request_id as string)) return {};
+      if (name === "append_page") {
+        if (!pages.has(slug)) throw new McpToolError(`page_not_found: ${slug}`, name);
+        pages.set(slug, `${pages.get(slug)}${a.text}\n`);
+      } else if (name === "put_page") {
+        pages.set(slug, a.content as string);
+      }
+      seen.add(a.request_id as string);
+      return {};
+    },
+  };
+  const ing = new SlackIngest({ brain, sourceId: "company" });
+  const ts1 = "1794693736.001989";
+  const slug = pageSlug("slack", "Market Research", ts1);
+  assert.equal(slug, "slack/market-research/2026-11-14");
+  await ing.add({ channel: "C1", channelName: "Market Research", ts: ts1, user: "U1", text: "competitor X raised" });
+  await ing.add({ channel: "C1", channelName: "Market Research", ts: "1794693740.000100", threadTs: ts1, user: "U2", text: "how much?" });
+  await ing.add({ channel: "C1", channelName: "Market Research", ts: "1794693740.000100", threadTs: ts1, user: "U2", text: "how much?" }); // Slack retry
+  assert.equal(await ing.add({ channel: "C1", channelName: "Market Research", ts: "1794693741.0", user: "U3", text: "key xoxb-1234567890-abcdefghij" }), null);
+  const page = pages.get(slug)!;
+  assert.match(page, /^# #Market Research: 2026-11-14/);
+  assert.match(page, /<@U1>: competitor X raised/);
+  assert.equal(page.match(/how much\?/g)?.length, 1, "retry appended once");
+  assert.doesNotMatch(page, /xoxb/);
+  assert.equal(requestId("append", "C1", ts1), requestId("append", "C1", ts1));
+});
+
+test("MCP responses parse from JSON or SSE", async () => {
+  const { parseRpcBody } = await import("../src/mcp.ts");
+  assert.deepEqual(parseRpcBody('{"jsonrpc":"2.0","id":3,"result":{"ok":1}}', 3)?.result, { ok: 1 });
+  assert.deepEqual(parseRpcBody('event: message\ndata: {"jsonrpc":"2.0","id":4,"result":{"ok":2}}\n\n', 4)?.result, { ok: 2 });
+  assert.equal(parseRpcBody("", 1), null);
+});
+
+test("shared or unknown channels are treated as shared; channel messages skip bots and DMs", async () => {
+  const { channelInfoOf, channelMessageOf } = await import("../src/slack.ts");
+  assert.equal(channelInfoOf({ id: "C1", name: "market-research", is_shared: false, is_ext_shared: false }).isShared, false);
+  assert.equal(channelInfoOf({ id: "C2", name: "ext-acme", is_shared: true, is_ext_shared: true }).isShared, true);
+  assert.equal(channelInfoOf({ id: "C3", name: "x" }).isShared, true, "missing flags fail closed");
+  assert.equal(channelInfoOf({ id: "C4", name: "x", is_shared: false, is_ext_shared: false, pending_shared: ["T9"] }).isShared, true);
+  assert.equal(channelMessageOf({ type: "message", channel: "C1", ts: "1.1", user: "U1", text: "hi" })?.text, "hi");
+  assert.equal(channelMessageOf({ type: "message", channel: "C1", ts: "1.2", thread_ts: "1.1", user: "U1", text: "re" })?.threadTs, "1.1");
+  assert.equal(channelMessageOf({ type: "message", channel_type: "im", channel: "D1", ts: "1.1", user: "U1", text: "hi" }), null);
+  assert.equal(channelMessageOf({ type: "message", channel: "C1", ts: "1.1", user: "U1", bot_id: "B", text: "hi" }), null);
+  assert.equal(channelMessageOf({ type: "message", channel: "C1", ts: "1.1", user: "UBOT", text: "hi" }, "UBOT"), null);
+});

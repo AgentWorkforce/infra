@@ -11,7 +11,9 @@ import { ClaudeOrchestrator, DeterministicOrchestrator, ThreadPolicy, type Known
 import type { RelayEventLike } from "./protocol.ts";
 import { connectAgent, ensureChannel } from "./relay.ts";
 import { Router } from "./router.ts";
-import { normalizeSlackEvent, SlackWeb, SocketModeClient, verifySlackSignature, type SlackEventEnvelope } from "./slack.ts";
+import { McpClient, oauthServersFromEnv, TokenSource } from "./mcp.ts";
+import { SlackIngest } from "./ingest.ts";
+import { channelMessageOf, ChannelDirectory, normalizeSlackEvent, SlackWeb, SocketModeClient, verifySlackSignature, type SlackEventEnvelope } from "./slack.ts";
 
 const env = process.env;
 const log = (m: string) => console.log(`${new Date().toISOString()} [${env.ROLE ?? "?"}] ${m}`);
@@ -94,19 +96,54 @@ async function runRouter(): Promise<void> {
     void router.fromRelay(toEvent(raw as Record<string, unknown>)).catch((err) => log(`relay -> slack failed: ${(err as Error).message}`));
   });
 
-  const onEnvelope = (p: SlackEventEnvelope) => {
-    const team = p.team_id ?? me.teamId;
-    const m = normalizeSlackEvent(p.event, {
-      botUserId: me.userId,
-      teamId: team,
-      isTrackedThread: (ch, ts) => router.isTrackedThread(team, ch, ts),
-    });
-    if (!m) return;
-    if (m.kind === "dm" ? !allowDms : allowed.size > 0 && !allowed.has(m.channel)) {
-      log(`ignored ${m.kind} in ${m.channel} (not allowed)`);
-      return;
+  // Channels shared outside the workspace are refused for answers and ingest
+  // (needs channels:read / groups:read). Fail closed when Slack can't say.
+  const refuseShared = env.SLACK_REFUSE_SHARED_CHANNELS !== "false";
+  const directory = new ChannelDirectory(slack);
+  const channelOk = async (id: string): Promise<{ ok: boolean; name: string; isPrivate: boolean }> => {
+    if (allowed.size > 0 && !allowed.has(id)) return { ok: false, name: id, isPrivate: false };
+    if (!refuseShared) return { ok: true, name: id, isPrivate: false };
+    try {
+      const info = await directory.get(id);
+      return { ok: !info.isShared, name: info.name, isPrivate: info.isPrivate };
+    } catch (err) {
+      log(`channel ${id}: info unavailable (${(err as Error).message}); refusing`);
+      return { ok: false, name: id, isPrivate: false };
     }
-    void router.fromSlack({ ...m, team }).catch((err) => log(`slack -> relay failed: ${(err as Error).message}`));
+  };
+
+  // Continuous ingest of channel messages into a knowledge base over MCP.
+  const servers = oauthServersFromEnv(env);
+  const ingestServer = env.INGEST_MCP_SERVER ? servers.find((s) => s.name === env.INGEST_MCP_SERVER) : undefined;
+  if (env.INGEST_MCP_SERVER && !ingestServer) throw new Error(`INGEST_MCP_SERVER ${env.INGEST_MCP_SERVER} is not in MCP_OAUTH_SERVERS_JSON`);
+  const ingest = ingestServer
+    ? new SlackIngest({ brain: new McpClient(ingestServer), sourceId: env.INGEST_SOURCE_ID, prefix: env.INGEST_PAGE_PREFIX ?? "slack", log })
+    : null;
+  const ingestPrivate = env.INGEST_PRIVATE_CHANNELS === "true";
+  log(`ingest: ${ingest ? `on -> ${ingestServer!.name}${env.INGEST_SOURCE_ID ? ` (source ${env.INGEST_SOURCE_ID})` : ""}${ingestPrivate ? ", private channels too" : ", public channels"}` : "off"}; shared channels ${refuseShared ? "refused" : "allowed"}`);
+
+  const onEnvelope = (p: SlackEventEnvelope) => {
+    void (async () => {
+      const team = p.team_id ?? me.teamId;
+      const cm = ingest ? channelMessageOf(p.event, me.userId) : null;
+      const m = normalizeSlackEvent(p.event, {
+        botUserId: me.userId,
+        teamId: team,
+        isTrackedThread: (ch, ts) => router.isTrackedThread(team, ch, ts),
+      });
+      if (!m && !cm) return;
+      if (m?.kind === "dm") {
+        if (!allowDms) return void log(`ignored dm (DMs off)`);
+        return void (await router.fromSlack({ ...m, team }));
+      }
+      const id = (m ?? cm)!.channel;
+      const gate = await channelOk(id);
+      if (!gate.ok) return void log(`ignored message in ${id} (not allowed or shared)`);
+      if (cm && ingest && (!gate.isPrivate || ingestPrivate)) {
+        void ingest.add({ ...cm, channelName: gate.name }).catch((err) => log(`ingest failed in #${gate.name}: ${(err as Error).message}`));
+      }
+      if (m) await router.fromSlack({ ...m, team });
+    })().catch((err) => log(`slack -> relay failed: ${(err as Error).message}`));
   };
 
   let socket: SocketModeClient | null = null;
@@ -167,6 +204,10 @@ async function runHost(): Promise<void> {
   const { agent: hostAgent } = await connectAgent({ baseUrl: relayBase, workspaceKey, name: hostName, persona: "Hosts Slack thread agents", proofSecret, log });
   await ensureChannel(hostAgent, channel, "Slack threads routed to agents");
 
+  const agentServers = oauthServersFromEnv(env)
+    .filter((s) => !env.AGENT_MCP_SERVERS || env.AGENT_MCP_SERVERS.split(",").includes(s.name))
+    .map((s) => [s, new TokenSource(s)] as const);
+  if (agentServers.length) log(`agent MCP servers: ${agentServers.map(([s]) => s.name).join(", ")}`);
   const mcpEntry = env.RELAYCAST_MCP_ENTRY ?? join(dirname(fileURLToPath(import.meta.url)), "..", "node_modules", "@relaycast", "mcp", "dist", "stdio.js");
   // Path-scoped: an agent reads only its own workdir (./**). With dontAsk,
   // anything else (other agents' workdirs, /proc, env) is refused.
@@ -185,18 +226,22 @@ async function runHost(): Promise<void> {
       await ensureChannel(agent, channel, "Slack threads routed to agents");
       return { client: agent, token };
     },
-    mcpConfig:
-      env.RELAYCAST_MCP === "false"
-        ? undefined
-        : (name, token) => ({
-            mcpServers: {
-              relaycast: {
-                command: process.execPath,
-                args: [mcpEntry],
-                env: { RELAY_BASE_URL: relayBase, RELAY_AGENT_TOKEN: token, RELAY_AGENT_NAME: name, RELAY_SKIP_BOOTSTRAP: "1", RELAYCAST_TELEMETRY_DISABLED: "1" },
-              },
-            },
-          }),
+    // Relay tools bound to the agent's own token, plus any OAuth MCP servers
+    // (e.g. a company brain), each with a fresh bearer token per turn.
+    mcpConfig: async (name, token) => {
+      const mcpServers: Record<string, unknown> = {};
+      if (env.RELAYCAST_MCP !== "false") {
+        mcpServers.relaycast = {
+          command: process.execPath,
+          args: [mcpEntry],
+          env: { RELAY_BASE_URL: relayBase, RELAY_AGENT_TOKEN: token, RELAY_AGENT_NAME: name, RELAY_SKIP_BOOTSTRAP: "1", RELAYCAST_TELEMETRY_DISABLED: "1" },
+        };
+      }
+      for (const [s, tokens] of agentServers) {
+        mcpServers[s.name] = { type: "http", url: s.url, headers: { Authorization: `Bearer ${await tokens.get()}` } };
+      }
+      return Object.keys(mcpServers).length ? { mcpServers } : null;
+    },
     runTurn: claudeTurn({
       bin: env.CLAUDE_BIN,
       model: env.AGENT_MODEL ?? "claude-opus-5-5",

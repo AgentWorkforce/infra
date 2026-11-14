@@ -70,8 +70,9 @@ never leave your control.
    `slack.allowedChannels`.
 
 Bot scopes the manifest requests: `app_mentions:read`, `channels:history`,
-`groups:history`, `im:history` (to read the threads it is in) and `chat:write`
-(to answer). Events: `app_mention`, `message.channels`, `message.groups` and
+`groups:history`, `im:history` (to read the threads it is in), `chat:write`
+(to answer) and `channels:read` / `groups:read` (to refuse channels shared
+outside the workspace). Events: `app_mention`, `message.channels`, `message.groups` and
 `message.im`. The router ignores channel messages unless they mention the app
 or are in a thread it already holds. It ignores DMs unless `slack.allowDms` is
 set.
@@ -136,6 +137,34 @@ kubectl -n agent-relay port-forward deploy/slack-relay-router 8080
 curl -s localhost:8080/ledger/roster   # agents, status, what they're doing, their threads and people
 curl -s localhost:8080/ledger/events   # append-only routing log: inbound, assign, agent.*, outbound
 ```
+
+## Knowledge base: answer from it, ingest into it (optional)
+
+Give the agents a remote MCP server (e.g. a gbrain company brain) and stream
+the channels the app is in into it:
+
+```yaml
+mcpServers:
+  - { name: brain, url: https://brain.example.com/mcp, tokenUrl: https://brain.example.com/token,
+      scope: read, clientId: slack-agents, clientSecret: { name: slack-relay-brain, key: read-client-secret } }
+  - { name: brain-write, url: https://brain.example.com/mcp, tokenUrl: https://brain.example.com/token,
+      scope: write, clientId: slack-ingest, clientSecret: { name: slack-relay-brain, key: write-client-secret } }
+host:
+  mcpServers: [brain]
+  allowedTools: ["Read(./**)", "Glob(./**)", "Grep(./**)", mcp__relaycast, mcp__brain]
+  persona: "You are the company brain. Search the brain before answering and cite what you found."
+ingest:
+  enabled: true
+  mcpServer: brain-write
+  sourceId: company
+```
+
+Agents get a fresh OAuth token for each turn. Ingest appends every human
+message (top level and in threads) to `slack/<channel>/<YYYY-MM-DD>` as it
+arrives; it is idempotent per Slack message, skips bots, withholds messages
+that look like credentials, skips private channels unless
+`ingest.privateChannels`, and never touches channels shared outside the
+workspace.
 
 ## Data boundaries and audit
 

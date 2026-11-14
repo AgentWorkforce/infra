@@ -77,7 +77,7 @@ export interface HostOptions {
   /** Reads a relay message by id: thread.reply events carry no `data`. */
   getMessage?: (id: string) => Promise<RelayMessageLike>;
   /** Builds the MCP config for an agent's turn, or null for none. */
-  mcpConfig?: (agent: string, token: string) => Record<string, unknown> | null;
+  mcpConfig?: (agent: string, token: string) => Record<string, unknown> | null | Promise<Record<string, unknown> | null>;
   persona?: string;
   idleMs?: number;
   log?: (m: string) => void;
@@ -188,7 +188,7 @@ export class AgentHost {
             ? `${dm.from} answered your direct message on the relay:\n\n${dm.text}\n\n(Take this into account; no reply is sent for this turn.)`
             : `Direct message on the relay from ${dm.from}:\n\n${dm.text}\n\n(Your answer is sent back to ${dm.from} as a direct message.)`,
           system: [`You are ${name}, an agent on Agent Relay.`, this.#o.persona].join("\n\n"),
-          mcpConfigPath: this.#mcpPath(name, workdir, live),
+          mcpConfigPath: await this.#mcpPath(name, workdir, live),
         });
         if (!result.error) writeFileSync(marker, result.sessionId);
         if (isAnswer || !live.session.client.dm) return null;
@@ -204,8 +204,8 @@ export class AgentHost {
     return run;
   }
 
-  #mcpPath(name: string, workdir: string, live: Live): string | null {
-    const mcp = this.#o.mcpConfig?.(name, live.session.token) ?? null;
+  async #mcpPath(name: string, workdir: string, live: Live): Promise<string | null> {
+    const mcp = (await this.#o.mcpConfig?.(name, live.session.token)) ?? null;
     if (!mcp) return null;
     const p = join(workdir, ".mcp.json");
     writeFileSync(p, JSON.stringify(mcp), { mode: 0o600 });
@@ -226,7 +226,7 @@ export class AgentHost {
         const dm = dmOf(raw);
         if (dm) void this.onDm(name, dm).catch((err) => this.#o.log(`${name} DM turn failed: ${(err as Error).message}`));
       });
-      this.#o.log(`woke ${name}`);
+      this.#o.log(`${name} joined the relay`);
       return live;
     })();
     this.#connecting.set(name, p);
@@ -245,7 +245,7 @@ export class AgentHost {
       mkdirSync(workdir, { recursive: true });
       // The session already exists on disk if any earlier turn ran, whatever the router believes.
       const started = existsSync(join(workdir, ".session-started"));
-      const mcpConfigPath = this.#mcpPath(name, workdir, live);
+      const mcpConfigPath = await this.#mcpPath(name, workdir, live);
       const result = await this.#o.runTurn({
         agent: name,
         workdir,
