@@ -452,7 +452,7 @@ per-workspace ceiling.
 | ws-5k, ws-10k | 5,000 and 10,000 concurrent node sockets under 1000 msg/s |
 | backlog | one agent offline while 10,000 messages queue, then reconnect: drain time and order |
 | chaos | 1000 msg/s for 15 min; Relaycast pod (and on actors, the gateway and one actor host) killed at 5 min; RDS forced Multi-AZ failover at 10 min |
-| replay | hosted production mix (`profiles/prod-2026-11-12.json`, Cloudflare, aggregate) at 1x / 3x / 10x of the peak minute (68 req/s) |
+| replay | hosted Relaycast traffic mix, aggregated (`profiles/prod-2026-11-12.json`: route categories rounded to 5 %, rates to 10 req/s) at 1x / 3x / 10x of the peak minute (~70 req/s) |
 | coldstart | 20 new workspaces: first, warm, after-idle, rewarm |
 
 A step **breaks** when send-to-ack corrected p99 > 2 s, errors > 1 %, or any
@@ -589,12 +589,37 @@ Send = POST `/v1/dm` or channel message, corrected latency in ms (from the inten
   ships it); the actors gateway has no CPU limit. One heavy rerun on the PG arm
   at 4 CPU shows the headroom.
 - Production replay covers the routes the harness can reproduce safely; the
-  skipped share is listed per run. WebSocket count, agents per workspace,
-  channel size and upload mix were not measurable from Cloudflare and use the
-  defaults above (marked assumed).
+  skipped share is listed per run. The published profile is aggregated: route
+  categories with shares rounded to 5 %, split evenly across each category's
+  routes, and rates rounded to 10 req/s. Replaying it reproduces the category
+  mix, not the exact per-route mix of the hosted service; no replay results
+  are published here. WebSocket count, agents per workspace, channel size and
+  upload mix were not measurable from edge analytics and use the defaults
+  above (marked assumed).
 - Sender and receiver clocks are on different loadgen nodes (Amazon Time Sync,
   sub-millisecond); delivery latency below ~1 ms is not meaningful.
 
+
+## Teardown
+
+Every bench resource lived in the sandbox account (805532413586, us-west-2) and
+carried the tag `purpose=relaycast-actors-bench`. `cluster.sh down` deletes them
+in dependency order and logs each deletion; `cluster.sh audit` (also run at the
+end of `down`) checks the Tagging API plus direct describe/list calls the
+Tagging API cannot see. A separate proof scan rechecks each item. Both teardowns
+were countersigned by the infrastructure reviewers.
+
+| Teardown | Deleted | Proof scan |
+|---|---|---|
+| 1 (2026-11-13/14, after the decision set) | 14 pod-identity associations; node groups app, actors, loadgen; EKS cluster; RDS `-pg` and `-actors` with their parameter groups; 3 ECR repositories under `relaycast-actors-bench/`; RDS subnet group; launch template; S3 bucket; VPC with its security group, internet gateway, 3 subnets and route table; 8 IAM roles under `/relaycast-actors-bench/` | 2026-11-14T05:06Z: all zero, including the Tagging API in us-west-2 and us-east-1 |
+| 2 (2026-11-14, after the S3 Express run) | 10 pod-identity associations; the same node groups, cluster, RDS (both), subnet group and launch template; S3 bucket; S3 Express directory bucket `relaycast-actors-bench-805532413586--usw2-az1--x-s3`; VPC with its security group, internet gateway, 3 subnets and route table; 8 IAM roles | 2026-11-14T07:45Z: every direct check zero (VPC, ENIs, NAT, EIPs, EBS, ELBs, IAM path, S3 and S3 Express prefixes, EKS, RDS, ECR, secrets, launch templates). The Tagging API still listed purged EC2 instances and already-deleted ENIs/volumes from the node groups (29, then 14 two hours later), all `NotFound` or with no reservation: index lag, not live resources |
+
+Proof scan items: Tagging API `purpose=relaycast-actors-bench` (each region
+used, plus us-east-1); VPC, ENIs, NAT gateways and Elastic IPs in the bench VPC;
+EBS volumes (tagged or owned by the cluster); load balancers; IAM roles under
+`/relaycast-actors-bench/`; general-purpose and directory buckets with the
+`relaycast-actors-bench-` prefix; EKS cluster; RDS instances and parameter
+groups; ECR repositories; tagged Secrets Manager secrets; launch templates.
 
 ## Reproduce
 
@@ -605,5 +630,6 @@ AWS_PROFILE=<sandbox> BENCH_API_CIDR=<you>/32 bench/relaycast/infra/cluster.sh u
 bench/relaycast/infra/install-arm.sh pg prereqs && … install && … post
 ARM=pg NS=arm-pg bench/relaycast/scripts/run-arm.sh all
 bench/relaycast/infra/install-arm.sh pg uninstall   # then the actors arm
+bench/relaycast/infra/cluster.sh express            # optional: S3 Express bucket + IAM (see the S3 Express section)
 bench/relaycast/infra/cluster.sh down               # prints the AUDIT line
 ```
