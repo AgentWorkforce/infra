@@ -16,6 +16,7 @@ locals {
 }
 
 resource "google_artifact_registry_repository" "mirror" {
+  #checkov:skip=CKV_GCP_84:Holds copies of the public, digest-pinned release images; Google-managed encryption is the default.
   count = local.image_mirror_enabled ? 1 : 0
 
   project       = var.project_id
