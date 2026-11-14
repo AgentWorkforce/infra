@@ -88,7 +88,7 @@ EOF
 setup_mocks() { # $1 release fixture dir, $2 attestation result (ok|fail)
   local bin="$root/bin"; rm -rf "$bin"; mkdir -p "$bin"; : > "$root/log"
   rm -f "$root/rekey-fail" "$root/crane-missing" "$root/rendered-extra.yaml" "$root/rendered-target.yaml" "$root/live-manifest.yaml" "$root/patches" "$root/live-values.yaml"; rm -rf "$root/secrets"; touch "$root/exists"
-  rm -rf "$root/jobstate"; mkdir -p "$root/jobstate"; rm -f "$root/no-version" "$root/applied.yaml" "$root/census.out" "$root/census-phase"
+  rm -rf "$root/jobstate"; mkdir -p "$root/jobstate"; rm -f "$root/no-version" "$root/applied.yaml" "$root/census.out" "$root/census-phase" "$root/can-i-denied"
   printf 'v1\napps/v1\nbatch/v1\npolicy/v1\nautoscaling/v2\n' > "$root/api-versions"
   cat > "$bin/gh" <<EOF
 #!/usr/bin/env bash
@@ -104,6 +104,8 @@ echo "kubectl \$*" >> "$root/log"
 case "\$*" in
   # The Sessions index census: the pod manifest is kept, its phase and logs come from fixtures.
   *" apply -f -"*) cat >> "$root/applied.yaml"; echo --- >> "$root/applied.yaml" ;;
+  # RBAC: "yes" unless \$root/can-i-denied lists the resource (a read-only plan role).
+  *"auth can-i create "*) r=""; prev=""; for a in "\$@"; do [ "\$prev" = create ] && r=\$a; prev=\$a; done; grep -qx "\$r" "$root/can-i-denied" 2>/dev/null && { echo no; exit 1; }; echo yes ;;
   *"get pod "*"-o json"*) ph=\$(cat "$root/census-phase" 2>/dev/null || echo Succeeded)
     # INT/TERM: signal the upgrader itself mid-census, as an operator's Ctrl-C would.
     case "\$ph" in INT|TERM) kill -"\$ph" "\$(pgrep -o -f "$root/selfhost/agent-relay-upgrade.sh")"; ph=Running ;; esac
@@ -779,3 +781,16 @@ setup_mocks "$root/rel-ok" ok
 out=$(run "${args[@]}" 2>&1) || fail "plain plan failed: $out"
 grep -q 'NOTE: this upgrade adds a HoopDb migrate Job' <<<"$out" && fail "the note printed without a new migrate Job"
 pass "census: a newly added migrate Job is called out when no census could run"
+
+# 51. a read-only plan role (no create on configmaps/pods) defers the census to --apply instead of failing
+census_setup; census absent 4000; printf 'configmaps\npods\nsecrets\n' > "$root/can-i-denied"
+out=$(run "${args[@]}" 2>&1) || fail "a read-only plan failed instead of deferring the census: $out"
+grep -q 'census deferred to --apply' <<<"$out" || fail "a read-only plan did not say the census was deferred: $out"
+grep -q 'NOTE: the index census did not run in this read-only plan' <<<"$out" || fail "no deferral note in the plan: $out"
+grep -Eq 'kubectl .*(create configmap|create secret generic) agent-relay-index-census' "$root/log" && fail "a read-only plan still tried to create census objects"
+grep -q 'index-census' "$root/applied.yaml" 2>/dev/null && fail "a read-only plan still applied the census pod"
+blocking_in template && fail "a deferred census must not render the blocking opt-in in the plan"
+out=$(run "${args[@]}" --apply --db-instance prod-db --yes 2>&1) || fail "apply after a deferred plan failed: $out"
+grep -q 'census deferred' <<<"$out" && fail "--apply must never defer the census"
+grep -q 'path: blocking build for this upgrade. 4000 rows' <<<"$out" || fail "--apply did not run the census: $out"
+pass "census: a read-only plan role defers the census to --apply, which always runs it"

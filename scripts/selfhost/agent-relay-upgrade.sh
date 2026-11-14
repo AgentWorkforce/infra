@@ -266,6 +266,19 @@ sessions_index_check() {
     url_file="$state_dir/secret-files/agent-relay-secrets/HOOPDB_MIGRATION_URL"
     [ -s "$url_file" ] || die "rds-setup.sh refresh-admin did not write agent-relay-secrets/HOOPDB_MIGRATION_URL; nothing was changed"
   fi
+  # The census creates a ConfigMap, a pod and (with a refreshed URL) a Secret.
+  # A plan run under the documented read-only plan role may not: defer the
+  # census to --apply, which always runs it before any change (snapshot,
+  # mirror push or helm) and refuses there exactly as it would here.
+  if ! $apply; then
+    local verb_resource
+    for verb_resource in configmaps pods $([ -n "$url_file" ] && echo secrets); do
+      if [ "$("${kube[@]}" auth can-i create "$verb_resource" 2>/dev/null || true)" != yes ]; then
+        say "   this plan's credentials cannot create $verb_resource in $namespace (read-only plan role): census deferred to --apply"
+        index_census_deferred=true; return 0
+      fi
+    done
+  fi
   name="$release-index-census-$(date -u +%Y%m%d%H%M%S)"
   say "   one read-only pod, $name, cloned from the deployed migrate Job; deleted afterwards"
   # From here any exit deletes the pod and ConfigMap (the EXIT trap).
@@ -408,7 +421,7 @@ fi
 # read-only census, whether this upgrade's HoopDb migrate Job may build missing
 # indexes with a blocking CREATE INDEX (worker.migrations.allowBlockingIndexBuild,
 # set for this upgrade only) or must wait for a CONCURRENTLY prebuild.
-index_values=() index_census_skipped=false
+index_values=() index_census_skipped=false index_census_deferred=false
 if ! $first_install && [ -z "$rta_phase" ]; then sessions_index_check; fi
 overlay="$work/release-images.values.yaml"
 # Overlay repositories are __IMAGE_MIRROR_ROOT__/<source host>/<source path>, exactly where
@@ -443,6 +456,11 @@ if $index_census_skipped && [ -n "$(yq -N -r 'select(.kind == "Job" and .metadat
   say "   NOTE: this upgrade adds a HoopDb migrate Job that the deployed release did not have, so no index census ran."
   say "         If the Sessions database is populated, that Job refuses (read-only, before any write) any index it"
   say "         would have to build on a populated table; prebuild those CONCURRENTLY with the packet it names, then re-run."
+fi
+if $index_census_deferred; then
+  say "   NOTE: the index census did not run in this read-only plan. The apply job runs it first, before any"
+  say "         snapshot, image push or helm change. It may add allowBlockingIndexBuild for that one upgrade"
+  say "         (printing tables, rows and expected lock time), or refuse with nothing changed."
 fi
 if ! $rds_setup; then
   db_mode=""
