@@ -44,6 +44,12 @@ global:
     # Stable organization ID that partitions session data. Never change it after
     # the first upload.
     orgId: __ORG_ID__
+  # Optional co-branding (step 9): the relay-brand ConfigMap's two PNGs.
+  # branding:
+  #   logo:
+  #     existingConfigMap: relay-brand
+  #     key: mark.png          # sign-in page, under the Agent Relay lockup
+  #     dashboardKey: cobrand.png   # dashboard: Agent Relay + your logo
 
 # One global external Application Load Balancer (GKE Ingress) with a
 # Google-managed certificate for the four hosts. Reserve the global static IP
@@ -274,6 +280,9 @@ relay-control:
       - https://api.__DOMAIN__
   service:
     backendConfig: agent-relay-api
+  # Optional co-branding (step 9): the name beside the sign-in logo.
+  # login:
+  #   orgName: __ORG_NAME__
 
 relay-webapp:
   # The chart allows one replica.
@@ -282,3 +291,15 @@ relay-webapp:
     publicUrl: https://__DOMAIN__
     sessionReadApiEnabled: true
     coordinationOverlapsEnabled: false
+  # Optional co-branding (step 9). productName stays unset: the product is
+  # Agent Relay. desktop: your branded desktop build's link scheme and site.
+  # customerProfile:
+  #   logo: /brand/cobrand.png
+  #   favicon: /brand/mark.png
+  #   accentColor: "#4d65ff"
+  #   brandColor: "#5b21b6"
+  #   supportUrl: mailto:support@<your domain>
+  #   poweredByAgentRelay: true
+  #   desktop:
+  #     urlScheme: <desktop link scheme>
+  #     siteUrl: https://__DOMAIN__

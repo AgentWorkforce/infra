@@ -49,12 +49,18 @@ global:
   # Needs components.webapp unless relay-control.login.logoUrl is set.
   # relay-control.login.orgName sets the name shown beside the logo (default
   # relay-control.bootstrap.orgName). For the dashboard's own mark, also set
-  # relay-webapp.customerProfile.logo: /brand/<file>.
+  # relay-webapp.customerProfile.logo: /brand/<file>. To co-brand (the
+  # customer's mark under the Agent Relay lockup on the sign-in page, a
+  # combined Agent Relay + customer logo in the dashboard), put both PNGs in
+  # existingConfigMap: key is the sign-in mark, dashboardKey the combined logo
+  # (served at /brand/<dashboardKey>; point customerProfile.logo at it).
+  # values-branding-example.yaml shows the whole set.
   branding:
     logo:
       svg: ""
       existingConfigMap: ""
       key: ""
+      dashboardKey: ""
 
 gkeIngress:
   enabled: false

@@ -133,3 +133,9 @@ global:
       # The key in existingConfigMap, which is also the served file name:
       # [A-Za-z0-9._-], ending in .png. Empty: logo.png.
       key: ""
+      # Optional second PNG in existingConfigMap, served at
+      # /brand/<dashboardKey> beside key, for customerProfile.logo: for
+      # example a combined Agent Relay + customer logo for the dashboard
+      # while key stays the customer's mark for the sign-in page. Same name
+      # rule as key; must differ from it.
+      dashboardKey: ""

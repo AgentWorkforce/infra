@@ -68,6 +68,8 @@ Terraform or OpenTofu >= 1.11 (the Cloud SQL admin password is write-only).
 
 | Name | Type |
 | ---- | ---- |
+| [google_artifact_registry_repository.mirror](https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/artifact_registry_repository) | resource |
+| [google_artifact_registry_repository_iam_member.mirror_node_reader](https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/artifact_registry_repository_iam_member) | resource |
 | [google_dns_managed_zone.cloud_sql](https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/dns_managed_zone) | resource |
 | [google_dns_record_set.cloud_sql](https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/dns_record_set) | resource |
 | [google_pubsub_subscription.pipeline](https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/pubsub_subscription) | resource |
@@ -96,7 +98,9 @@ Terraform or OpenTofu >= 1.11 (the Cloud SQL admin password is write-only).
 | enable\_search | Install the optional OpenSearch cluster on GKE. | `bool` | `false` | no |
 | gke\_cluster\_location | Its region or zone. | `string` | `null` | no |
 | gke\_cluster\_name | Existing GKE cluster that runs agent-relay (only for enable\_search). | `string` | `null` | no |
+| gke\_node\_service\_account | Email of the GKE node pool's service account, granted roles/artifactregistry.reader on the mirror. Empty: the project's default Compute Engine service account (a node pool whose serviceAccount is "default"). | `string` | `""` | no |
 | gke\_use\_private\_endpoint | Reach the control plane on its private endpoint. | `bool` | `true` | no |
+| image\_mirror\_repository | Artifact Registry repository for the release images (guide step 5), created in var.region. Empty: no repository and no grant. | `string` | `""` | no |
 | kms\_key\_name | CMEK key for Cloud SQL and the bucket (null: Google-managed). Grant the service agents on it first. | `string` | `null` | no |
 | labels | Labels for every resource that supports them. | `map(string)` | `{}` | no |
 | name | Name prefix for every resource. | `string` | `"agent-relay"` | no |
@@ -120,6 +124,7 @@ Terraform or OpenTofu >= 1.11 (the Cloud SQL admin password is write-only).
 | ---- | ----------- |
 | chart\_values | Complete non-secret managed-service overlay for values-gcp.yaml plus values-gcp-native.yaml. Save with: terraform output -json chart\_values > managed-values.json. |
 | functions | Pipeline function, topics and secret (null unless enable\_functions). |
+| image\_mirror\_root | MIRROR\_ROOT for install guide step 5 (null unless image\_mirror\_repository is set). |
 | pipeline | Native Sessions pipeline values. The Redis CA is public certificate material, not a credential. |
 | postgres | Cloud SQL private IP, admin secret and URL template. connection\_name feeds CLOUD\_SQL\_CONNECTION\_NAME in the sessions worker and alleyoop extraEnv. |
 | search\_url | In-cluster OpenSearch URL (null unless enable\_search). |
