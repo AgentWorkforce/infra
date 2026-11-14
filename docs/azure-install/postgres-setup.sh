@@ -173,10 +173,17 @@ write_credential_files() {
 # certificate must carry that name. postgres-tls.yaml lists the names for the
 # default CLUSTER and NAMESPACE; with other values, change its dnsNames first.
 require_certificate_name() {
-  local names
-  names="$(kubectl -n "$NS" get cluster.postgresql.cnpg.io "$CLUSTER" -o json | jq -r '.status.certificates.serverAltDNSNames // [] | .[]')"
+  # The names on the certificate the server actually presents: the Cluster's
+  # status lists the names CloudNativePG would issue, not those of a
+  # certificate supplied through serverTLSSecret.
+  local secret names
+  secret="$(kubectl -n "$NS" get cluster.postgresql.cnpg.io "$CLUSTER" -o jsonpath='{.status.certificates.serverTLSSecret}')"
+  [[ -n "$secret" ]] || die "CloudNativePG cluster $CLUSTER reports no server TLS Secret yet"
+  names="$(kubectl -n "$NS" get secret "$secret" -o json | jq -er '.data["tls.crt"]' | openssl base64 -d -A \
+    | openssl x509 -noout -ext subjectAltName 2>/dev/null | tr ',' '\n' | sed -n 's/^[[:space:]]*DNS://p')" \
+    || die "could not read the server certificate in Secret $secret"
   grep -qxF "$DB_HOST" <<<"$names" \
-    || die "the $CLUSTER server certificate has no name $DB_HOST: add it to the dnsNames in postgres-tls.yaml (CLUSTER=$CLUSTER, NAMESPACE=$NS) and apply it"
+    || die "the server certificate in Secret $secret has no name $DB_HOST: add it to the dnsNames in postgres-tls.yaml (CLUSTER=$CLUSTER, NAMESPACE=$NS) and apply it"
 }
 
 do_pre() {
