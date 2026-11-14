@@ -1,0 +1,26 @@
+# The f6b9x4unfg GCP test stack: a separate `slack-relay` release in namespace
+# agent-relay, next to (not inside) the agent-relay release. The operator
+# mirrors the image into the install's Artifact Registry and overrides
+# image.repository; the digest stays the same.
+image:
+  repository: ghcr.io/agentworkforce/slack-relay
+  digest: sha256:6ada42e0ce98f9f7793e16b49ca2e99483b2e7b6e3022b5de3bcfaecf51bc48d
+relaycast:
+  baseUrl: http://relaycast:8787
+  channel: slack
+secrets:
+  relaycastWorkspaceKey: { name: slack-relay-relaycast, key: workspace-key }
+  slackBotToken: { name: slack-relay-slack, key: bot-token }
+  slackAppToken: { name: slack-relay-slack, key: app-token }
+  anthropicApiKey: { name: slack-relay-anthropic, key: api-key }
+slack:
+  mode: socket
+  # Set to the test channel's ID once the app is installed; empty answers in
+  # any channel the bot is invited to.
+  allowedChannels: []
+  allowDms: true
+router:
+  orchestrator: claude
+  orchestratorModel: claude-fable-5-2
+host:
+  agentModel: claude-opus-5-5
