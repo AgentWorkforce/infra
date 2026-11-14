@@ -149,6 +149,9 @@ migrations:
   # REQUIRED. HOOPDB_DB_MODE: local | selfhosted (CNPG, any
   # operator-controlled plain Postgres with a superuser) | cloudsql (Google Cloud
   # SQL) | rds (Amazon RDS for PostgreSQL 16+, not Aurora) | supabase.
+  # Also rendered into every service (not only migrate), because their live role
+  # gate needs it. Set it even with migrations.enabled=false when the database is
+  # migrated elsewhere: on supabase the gate fails closed without it.
   databaseMode: ""
   # HOOPDB_ROLE_BOOTSTRAP (optional): true/false; the migrator defaults it to the
   # shim choice. Refused as true in supabase mode. Cloud SQL sets false (no
