@@ -1,0 +1,77 @@
+# The public edge for Agent Relay on AKS: one Traefik Ingress with host rules,
+# the same layout as the ALB Ingress (scripts/selfhost/eks-alb-ingress.sh
+# with EKS_ALB_INGEST=true) and GKE Ingress.
+#
+#   __HOST_ROOT__     dashboard, with /cloud/api and /login routed to the control API
+#   __HOST_API__      control API
+#   __HOST_CAST__     Relaycast
+#   __HOST_HISTORY__  native History: ingest edge for uploads, read API for reads
+#
+# TLS: cert-manager (ClusterIssuer `letsencrypt`, HTTP-01 through Traefik) keeps
+# one certificate for the four names in Secret agent-relay-tls. The router
+# listens on HTTPS only.
+#
+# Edge denials (/internal on api, cast and history, Relaycast workspace create,
+# and everything unlisted on the history host) go to `edge-deny`, a Service with
+# no endpoints, as the GKE edge does: Traefik answers 503 without reaching a
+# backend. Traefik collapses a leading "//", so "//internal" matches "/internal".
+apiVersion: v1
+kind: Service
+metadata:
+  name: edge-deny
+  namespace: agent-relay
+spec:
+  type: ClusterIP
+  ports:
+    - { name: http, port: 80, targetPort: 65535 }
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: agent-relay
+  namespace: agent-relay
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+    traefik.ingress.kubernetes.io/router.tls: "true"
+spec:
+  ingressClassName: traefik
+  tls:
+    - secretName: agent-relay-tls
+      hosts: [__HOST_ROOT__, __HOST_API__, __HOST_CAST__, __HOST_HISTORY__]
+  rules:
+    - host: __HOST_ROOT__
+      http:
+        paths:
+          - { path: /cloud/api, pathType: Prefix, backend: { service: { name: relay-control, port: { number: 80 } } } }
+          - { path: /login, pathType: Prefix, backend: { service: { name: relay-control, port: { number: 80 } } } }
+          - { path: /, pathType: Prefix, backend: { service: { name: relay-webapp, port: { number: 8080 } } } }
+    - host: __HOST_API__
+      http:
+        paths:
+          - { path: /internal, pathType: Prefix, backend: { service: { name: edge-deny, port: { number: 80 } } } }
+          - { path: /, pathType: Prefix, backend: { service: { name: relay-control, port: { number: 80 } } } }
+    - host: __HOST_CAST__
+      http:
+        paths:
+          - { path: /internal, pathType: Prefix, backend: { service: { name: edge-deny, port: { number: 80 } } } }
+          - { path: /v1/workspaces, pathType: Exact, backend: { service: { name: edge-deny, port: { number: 80 } } } }
+          - { path: /v1/workspaces/, pathType: Exact, backend: { service: { name: edge-deny, port: { number: 80 } } } }
+          - { path: /, pathType: Prefix, backend: { service: { name: relaycast, port: { number: 8787 } } } }
+    - host: __HOST_HISTORY__
+      http:
+        paths:
+          - { path: /v1/delivery/batches, pathType: Exact, backend: { service: { name: agent-relay-ingest-edge, port: { number: 80 } } } }
+          - { path: /v1/turns/batches, pathType: Exact, backend: { service: { name: agent-relay-ingest-edge, port: { number: 80 } } } }
+          - { path: /v1/delivery/limits, pathType: Exact, backend: { service: { name: agent-relay-ingest-edge, port: { number: 80 } } } }
+          - { path: /v1/auth/token/refresh, pathType: Exact, backend: { service: { name: agent-relay-ingest-edge, port: { number: 80 } } } }
+          - { path: /v1/delivery/records, pathType: Exact, backend: { service: { name: agent-relay-read-api, port: { number: 80 } } } }
+          - { path: /v1/cli/login, pathType: Exact, backend: { service: { name: agent-relay-read-api, port: { number: 80 } } } }
+          - { path: /v1/events, pathType: Exact, backend: { service: { name: agent-relay-read-api, port: { number: 80 } } } }
+          - { path: /v1/auth/token/revoke, pathType: Exact, backend: { service: { name: agent-relay-read-api, port: { number: 80 } } } }
+          - { path: /v1/sessions, pathType: Prefix, backend: { service: { name: agent-relay-read-api, port: { number: 80 } } } }
+          - { path: /v1/digest, pathType: Prefix, backend: { service: { name: agent-relay-read-api, port: { number: 80 } } } }
+          - { path: /v1/delivery, pathType: Prefix, backend: { service: { name: agent-relay-ingest-edge, port: { number: 80 } } } }
+          - { path: /v1/turns, pathType: Prefix, backend: { service: { name: agent-relay-ingest-edge, port: { number: 80 } } } }
+          - { path: /v1/onboarding, pathType: Prefix, backend: { service: { name: agent-relay-ingest-edge, port: { number: 80 } } } }
+          - { path: /, pathType: Prefix, backend: { service: { name: edge-deny, port: { number: 80 } } } }

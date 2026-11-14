@@ -1,0 +1,209 @@
+# Agent Relay on Azure (AKS): install guide
+
+A working install of the `agent-relay` chart on Azure Kubernetes Service, the
+Azure counterpart of the EKS and GKE guides. It follows the EKS guide's steps
+and site values and changes only what Azure forces.
+
+**Status: community-contributed, proven once.** One fresh install on
+2026-11-14 (AKS 1.36, East US 2) of release **agent-relay-2026.11.0** (chart
+0.6.46) with the `searchIndexer.locker.credentials` option from this change
+applied to that chart. The four edge checks passed, a headless sign-in by
+operator device approval worked, two agents exchanged messages through
+Relaycast, and an uploaded session was indexed. See
+[What was not proven](#what-was-not-proven) before a production rollout.
+
+| File | What it is |
+|---|---|
+| `values.yaml` | Site values, applied after `charts/agent-relay/values-eks.yaml` |
+| `postgres-tls.yaml` | cert-manager Issuers and Certificates: a 10-year CA and the server certificate for the in-cluster Postgres |
+| `postgres-values.yaml` | Overrides for `deps/cnpg-cluster-values.yaml` (the pinned HoopDb Postgres) |
+| `postgres-setup.sh` | Databases, roles and credential files: the `selfhosted` counterpart of `rds-setup.sh` and `cloud-sql-setup.sh` |
+| `ingress.yaml` | The edge: one Traefik Ingress, the host and path rules of `scripts/selfhost/eks-alb-ingress.sh` |
+
+## How Azure differs
+
+| AWS (EKS guide) | Azure (this guide) | Why |
+|---|---|---|
+| RDS + `rds-setup.sh` (`databaseMode: rds`) | In-cluster CloudNativePG, the pinned `deps/cnpg-cluster-values.yaml`, + `postgres-setup.sh` (`databaseMode: selfhosted`) | The services image has `rds`, `cloudsql` and `selfhosted` database modes. Azure Database for PostgreSQL fits none: its admin role is neither `rds_superuser` nor `cloudsqlsuperuser`, and it is not a superuser. |
+| S3 through EKS Pod Identity | The chart's bundled MinIO (`session-object-storage`) on an Azure disk, static keys from a Secret | The services speak S3 or GCS. There is no Azure Blob Locker provider. |
+| OpenSearch (SigV4) | PostgreSQL search (`search.backend: postgres`), as on GKE | The OpenSearch writer signs with AWS credentials. |
+| ALB + ACM | Traefik + cert-manager (Let's Encrypt HTTP-01) | Same hosts, paths and edge denials. |
+| Route 53 or your DNS | Optional: an Azure public IP DNS label per host (`<label>.<region>.cloudapp.azure.com`) | No DNS zone is needed. |
+
+One chart change makes this possible: the search indexer could not take static
+S3 keys, so it could not read a MinIO Locker. `searchIndexer.locker.credentials.mode: secret`
+(with `existingSecret`, `accessKeyIdKey`, `secretAccessKeyKey`) renders
+`LOCKER_ACCESS_KEY_ID` and `LOCKER_SECRET_ACCESS_KEY`, as `ingestEdge` and
+`nativeConsumer` already can. It is unset by default and existing renders do
+not change.
+
+## Steps
+
+Tools: `az`, `kubectl`, `helm` 3.10+, `jq`, `yq`, `openssl`. Run from a clone of
+this repository at the release tag, with these files beside it.
+
+### 1. Cluster
+
+```sh
+az group create -n <resource group> -l <region>
+az aks create -g <resource group> -n <cluster> --node-count 2 --node-vm-size <4 vCPU / 16 GB size> \
+  --node-osdisk-size 128 --enable-cluster-autoscaler --min-count 2 --max-count 4 \
+  --network-plugin azure --network-plugin-mode overlay --network-dataplane cilium \
+  --enable-oidc-issuer --enable-workload-identity --enable-managed-identity --no-ssh-key
+az aks get-credentials -g <resource group> -n <cluster>
+```
+
+**Done when:** `kubectl get nodes` shows two `Ready` nodes and one StorageClass
+is marked `(default)`.
+
+### 2. Operators and the edge
+
+```sh
+helm repo add cnpg https://cloudnative-pg.github.io/charts
+helm repo add jetstack https://charts.jetstack.io
+helm repo add traefik https://traefik.github.io/charts
+helm upgrade --install cnpg cnpg/cloudnative-pg --version 0.29.1 -n cnpg-system --create-namespace \
+  -f deps/cnpg-operator-values.yaml --wait
+helm upgrade --install cert-manager jetstack/cert-manager -n cert-manager --create-namespace \
+  --set crds.enabled=true --wait
+helm upgrade --install traefik traefik/traefik -n traefik --create-namespace \
+  --set "service.annotations.service\.beta\.kubernetes\.io/azure-dns-label-name=<root label>" \
+  --set service.spec.externalTrafficPolicy=Local --set ingressClass.enabled=true --wait
+```
+
+The CloudNativePG version is this repository's pin (`deps/pins.txt`).
+
+For Azure DNS labels, add one more `LoadBalancer` Service per remaining host
+(api, cast, history), each selecting the Traefik pods and carrying its own
+`service.beta.kubernetes.io/azure-dns-label-name` annotation. With your own
+DNS zone, point four names at Traefik's one address instead.
+
+Create a `ClusterIssuer` named `letsencrypt` with an HTTP-01 solver on the
+`traefik` ingress class.
+
+**Done when:** all four host names resolve to a Traefik address.
+
+### 3. Postgres
+
+```sh
+kubectl create namespace agent-relay
+kubectl apply -f postgres-tls.yaml
+kubectl -n agent-relay wait --for=condition=Ready certificate/postgres-ca certificate/hoopdb-server
+helm upgrade --install hoopdb cnpg/cluster --version 0.9.0 -n agent-relay \
+  -f deps/cnpg-cluster-values.yaml -f postgres-values.yaml
+```
+
+The server certificate is issued under a 10-year CA because the read API,
+ingest edge and search indexer pin the CA's SHA-256. CloudNativePG's own CA
+lasts 90 days and rotates.
+
+**Done when:** `kubectl -n agent-relay get cluster hoopdb` reports
+`Cluster in healthy state`.
+
+### 4. Databases and roles
+
+```sh
+export SERVICES_IMAGE=ghcr.io/agentworkforce/sessions-pipeline@sha256:<the release's services digest>
+bash postgres-setup.sh pre
+```
+
+It creates the `relaycontrol` database and its roles, the HoopDb bootstrap
+roles, the `postgres-ca` ConfigMap and every credential file under
+`~/.agent-relay-install` (mode 0700). It prints no password. SQL runs as the
+CloudNativePG superuser by `kubectl exec` into the primary, as the chart's own
+privileged Jobs do.
+
+**Done when:** it ends with `pre done`.
+
+### 5. Values and Secrets
+
+Replace the placeholders in `values.yaml`: `__ORG_ID__`, `__ORG_NAME__`,
+`__ADMIN_EMAIL__`, `__HOST_ROOT__`, `__HOST_API__`, `__HOST_CAST__`,
+`__HOST_HISTORY__`, `__SESSIONS_BUCKET__`, and `__POSTGRES_CA_SHA256__` (from
+`~/.agent-relay-install/postgres-ca.sha256`). `__LLM_MODEL__` stays, as in the
+EKS guide.
+
+Create the Secrets as in step 10 of the EKS guide, without the Relaycast
+database keys (Relaycast runs on SQLite here) and with one more Secret for
+MinIO:
+
+```sh
+S=~/.agent-relay-install/secret-files
+( umask 077; mkdir -p "$S/sessions-pipeline-locker"
+for k in selfhost-bootstrap-token selfhost-setup-key relaycast-internal-secret \
+         relaycast-workspace-bootstrap-secret relaycontrol-introspect-secret session-read-api-secret \
+         selfhost-encryption-key; do
+  [ -s "$S/agent-relay-secrets/$k" ] || openssl rand -hex 32 | tr -d '\n' > "$S/agent-relay-secrets/$k"
+done
+[ -s "$S/agent-relay-secrets/SUMMARY_MASTER_KEYS" ] || printf 'k1:%s' "$(openssl rand -hex 32)" > "$S/agent-relay-secrets/SUMMARY_MASTER_KEYS"
+cp "$S/agent-relay-secrets/relaycontrol-introspect-secret" "$S/agent-relay-ingest-edge-runtime/introspect-secret"
+[ -s "$S/sessions-pipeline-locker/rootUser" ] || printf 'agentrelay' > "$S/sessions-pipeline-locker/rootUser"
+[ -s "$S/sessions-pipeline-locker/rootPassword" ] || openssl rand -hex 24 | tr -d '\n' > "$S/sessions-pipeline-locker/rootPassword" )
+for name in agent-relay-secrets agent-relay-read-api agent-relay-ingest-edge-runtime \
+            search-indexer-runtime search-indexer-owner sessions-pipeline-locker; do
+  kubectl -n agent-relay create secret generic "$name" --from-file="$S/$name" \
+    --dry-run=client -o yaml | kubectl apply -f -
+done
+```
+
+### 6. Install
+
+```sh
+helm dependency build charts/sessions-pipeline && helm dependency build charts/agent-relay
+helm upgrade --install agent-relay charts/agent-relay --namespace agent-relay \
+  -f charts/agent-relay/values-eks.yaml -f values.yaml --timeout 25m
+for j in $(kubectl -n agent-relay get jobs -o name | grep -E 'relay-control-migrate|agent-relay-worker-migrate'); do
+  kubectl -n agent-relay wait --for=condition=complete "$j" --timeout=20m
+done
+```
+
+**Expected:** the read API, ingest edge, search indexer and the
+`search-indexer-bootstrap` Job fail until step 7, as on EKS.
+
+### 7. Switch on the service logins
+
+```sh
+bash postgres-setup.sh post
+kubectl -n agent-relay rollout restart deploy/agent-relay-read-api deploy/agent-relay-ingest-edge deploy/agent-relay-search-indexer
+for j in $(kubectl -n agent-relay get jobs -o name | grep search-indexer-bootstrap); do kubectl -n agent-relay delete "$j"; done
+helm upgrade --install agent-relay charts/agent-relay --namespace agent-relay \
+  -f charts/agent-relay/values-eks.yaml -f values.yaml --timeout 25m
+kubectl -n agent-relay wait --for=condition=complete "$(kubectl -n agent-relay get jobs -o name | grep search-indexer-bootstrap)" --timeout=10m
+kubectl -n agent-relay rollout status deploy --timeout=10m
+bash postgres-setup.sh finalize
+```
+
+**Done when:** three `login ok ... tls=true` lines, the bootstrap Job
+completes, every pod is `Running`, and `finalize` prints `owner createrole: false`.
+
+### 8. Edge and checks
+
+Replace the four `__HOST_*__` placeholders in `ingress.yaml`, then:
+
+```sh
+kubectl apply -f ingress.yaml
+kubectl -n agent-relay wait --for=condition=Ready certificate/agent-relay-tls --timeout=10m
+curl -fsS "https://<api host>/readyz" && echo " api ok"
+curl -fsS "https://<cast host>/health" && echo " cast ok"
+curl -fsS -o /dev/null -w "dashboard %{http_code}\n" "https://<root host>/"
+curl -s -o /dev/null -w "history %{http_code}\n" "https://<history host>/v1/sessions"
+```
+
+**Done when:** `api ok`, `cast ok`, `dashboard 200` and `history 401`.
+
+Edge denials go to a Service with no endpoints, as on GKE, so they answer 503
+(the ALB edge answers 404).
+
+Then continue with the EKS guide's first sign-in step.
+
+## What was not proven
+
+- Any release other than agent-relay-2026.11.0; `values.yaml` renders against
+  `main` but was not installed from it.
+- Azure Database for PostgreSQL, Azure Blob Storage, Application Gateway.
+- NetworkPolicy enforcement beyond a default install, private clusters,
+  internal load balancers.
+- Backup and restore, upgrades, HA (every stateful component is one replica on
+  one Azure disk).
+- The desktop app, the dashboard, SSO, titles and summaries.
+- The Traefik edge keeps HTTP closed rather than redirecting it to HTTPS.

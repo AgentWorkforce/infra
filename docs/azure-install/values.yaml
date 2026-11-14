@@ -1,0 +1,323 @@
+# Agent Relay on Azure Kubernetes Service (AKS): site values.
+#
+# Apply after the chart's EKS profile, which is the portable base
+# (public GHCR images by digest, no GKE-only resources):
+#
+#   helm upgrade --install agent-relay charts/agent-relay --namespace agent-relay \
+#     -f charts/agent-relay/values-eks.yaml \
+#     -f values.yaml
+#
+# What differs from the EKS site values, and why:
+#
+#   AWS (EKS site values)            Azure (this file)
+#   RDS PostgreSQL + rds-setup.sh    in-cluster CloudNativePG (the pinned
+#                                    deps/cnpg-cluster-values.yaml, its own Helm
+#                                    release) + postgres-setup.sh, database mode
+#                                    `selfhosted`: the services image has `rds`,
+#                                    `cloudsql` and `selfhosted` database modes
+#                                    and none for Azure Database for PostgreSQL
+#   S3 through EKS Pod Identity      the chart's bundled S3-compatible store
+#                                    (MinIO) on an Azure disk, static keys from
+#                                    a Secret: the services speak S3 or GCS only
+#   OpenSearch (SigV4)               PostgreSQL search, as on GKE
+#   ALB + ACM                        Traefik Ingress + cert-manager (Let's
+#                                    Encrypt), one Azure public IP DNS label per
+#                                    host (ingress.yaml)
+#
+# This file holds no secret values: it only names Secrets and keys.
+# postgres-setup.sh creates the database roles and writes the credential files.
+
+x-pins:
+  services-image: &services_image { repository: ghcr.io/agentworkforce/sessions-pipeline, digest: "sha256:77022c5b6a1d30f96f921d703eb27a1acada8ec273ad84aebdde24f8eddce305" }
+  webapp-image: &webapp_image { repository: ghcr.io/agentworkforce/relay-webapp, digest: "sha256:dfdf6db66808d8fa6a2921e8bfcea2dfd6b0cd78fb1bb636fbb4bd3302bc21fa" }
+  # Traefik runs in its own namespace; every public backend admits it.
+  edge: &edge
+    - podSelector: {}
+    - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: traefik } }
+  locker: &locker
+    provider: s3
+    bucket: __SESSIONS_BUCKET__
+    region: us-east-1
+    endpoint: http://session-object-storage.agent-relay.svc.cluster.local:9000
+
+components:
+  relaycast: true
+  relayauth: false
+  sessionsPipeline: true
+  relayhistory: false
+  control: true
+  webapp: true
+  relayflows: false
+  durableActors: false
+  relayfile: false
+
+global:
+  scrubEngine:
+    engine: wasm-bindgen
+    required: wasm-bindgen
+    readerMaxRuleset: "10"
+  tenant:
+    # Stable organization ID that partitions session data. Never change it after
+    # the first upload.
+    orgId: __ORG_ID__
+
+relaycast:
+  # SQLite backend on an Azure disk (the EKS base profile's backend). One replica.
+  baseUrl: https://__HOST_CAST__
+  existingSecret: agent-relay-secrets
+  persistence:
+    enabled: true
+    size: 20Gi
+  networkPolicy:
+    ingressFrom: *edge
+
+sessions-pipeline:
+  # HoopDb is the standalone `hoopdb` CloudNativePG release (postgres-values.yaml);
+  # postgres-setup.sh runs its privileged bootstrap.
+  hoopdb:
+    enabled: false
+  searchWorkerRole: { bootstrapJob: { enabled: false } }
+  runtimeRole: { bootstrapJob: { enabled: false } }
+  functionDefaultRevoke: { bootstrapJob: { enabled: false } }
+  # Session objects: the chart's bundled MinIO on the default (Azure disk)
+  # StorageClass.
+  session-object-storage:
+    enabled: true
+    persistence:
+      size: 64Gi
+  acknowledgeStorageRename: true
+
+  sessionReadApi:
+    enabled: true
+    image: *services_image
+    output: { enabled: true }
+    digest: { enabled: true }
+    replicas: 1
+    origin: https://__HOST_HISTORY__
+    completeSince: epoch
+    directoryWorkspaces: "*"
+    events: { messageIds: true }
+    turns: { assumeNoLegacy: true }
+    login: { advertisesSync: false }
+    config:
+      existingSecret: agent-relay-read-api
+      key: RELAYHISTORY_READ_API_SECRET
+    postgres: { tlsProfile: custom-ca }
+    postgresCa:
+      enabled: true
+      configMap: postgres-ca
+      key: ca.crt
+      sha256: __POSTGRES_CA_SHA256__
+    search:
+      backend: postgres
+      backendId: postgres-main
+    auth:
+      mode: self_issued
+      relaycontrol: { enabled: false, url: "", existingSecret: "" }
+      selfIssued:
+        internalSecret:
+          existingSecret: agent-relay-secrets
+          key: session-read-api-secret
+    cors:
+      allowedOrigins:
+        - https://__HOST_ROOT__
+    networkPolicy:
+      enabled: true
+      controlFrom:
+        - podSelector: { matchLabels: { app.kubernetes.io/name: relay-control } }
+      publicFrom:
+        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: traefik } }
+    serviceAccountName: agent-relay-session-read
+    serviceAccountCreate: true
+    extraEnv:
+      - { name: LOCKER_BUCKET, value: __SESSIONS_BUCKET__ }
+      - { name: LOCKER_REGION, value: us-east-1 }
+      - { name: LOCKER_ENDPOINT, value: "http://session-object-storage.agent-relay.svc.cluster.local:9000" }
+      - name: LOCKER_ACCESS_KEY_ID
+        valueFrom: { secretKeyRef: { name: sessions-pipeline-locker, key: rootUser } }
+      - name: LOCKER_SECRET_ACCESS_KEY
+        valueFrom: { secretKeyRef: { name: sessions-pipeline-locker, key: rootPassword } }
+      - { name: PIPELINE_ORG_FROM_PREFIX, value: "true" }
+      - { name: PIPELINE_KEY_PREFIX, value: 96bulls }
+      - { name: READ_API_CANONICAL_PIN_LAGGING_POINTER, value: "true" }
+      - { name: READ_API_TIMING_ASSUME_NO_TURNS, value: "true" }
+      - { name: READ_API_BRIEF_TITLES_WORKSPACES, value: "*" }
+      - { name: READ_API_SESSION_QUERY, value: "true" }
+      - { name: READ_API_CANONICAL_SCOPE_BYTES, value: "64MiB" }
+    resources:
+      requests: { cpu: 100m, memory: 256Mi }
+      limits: { memory: 1536Mi }
+
+  ingestEdge:
+    enabled: true
+    image: *services_image
+    origin: https://__HOST_HISTORY__
+    allowInClusterHttp: true
+    sessionSelection: true
+    heartbeatAccept: true
+    relaycontrol:
+      url: http://relay-control.agent-relay.svc.cluster.local
+    config:
+      existingSecret: agent-relay-ingest-edge-runtime
+      databaseUrlKey: database-url
+      introspectSecretKey: introspect-secret
+    postgres:
+      caConfigMap: postgres-ca
+      caSha256: __POSTGRES_CA_SHA256__
+    serviceAccountName: agent-relay-session-ingest-api
+    locker:
+      <<: *locker
+      credentials: { mode: secret }
+      existingSecret: sessions-pipeline-locker
+      accessKeyIdKey: rootUser
+      secretAccessKeyKey: rootPassword
+
+  searchIndexer:
+    enabled: true
+    image: *services_image
+    completeSince: epoch
+    config: { existingSecret: search-indexer-runtime }
+    search:
+      backend: postgres
+      backendId: postgres-main
+    locker:
+      <<: *locker
+      credentials: { mode: secret }
+      existingSecret: sessions-pipeline-locker
+      accessKeyIdKey: rootUser
+      secretAccessKeyKey: rootPassword
+    postgres:
+      tlsProfile: custom-ca
+      caConfigMap: postgres-ca
+      caSha256: __POSTGRES_CA_SHA256__
+    bootstrap:
+      enabled: true
+      existingSecret: search-indexer-owner
+    outputFacts:
+      enabled: true
+
+  nativeConsumer:
+    reconcileEveryMinutes: 1
+    reconcileLookbackMinutes: 30
+
+  worker:
+    acknowledgeWorkloadRename: true
+    image: *services_image
+    existingSecret: sessions-pipeline-locker
+    summaryEncryption:
+      existingSecret: agent-relay-secrets
+    postgresCa:
+      enabled: true
+      configMap: postgres-ca
+      key: ca.crt
+      sha256: __POSTGRES_CA_SHA256__
+    hoopdb:
+      existingSecret: agent-relay-secrets
+      key: HOOPDB_URL
+    migrations:
+      hoopdb:
+        existingSecret: agent-relay-secrets
+        key: HOOPDB_MIGRATION_URL
+      databaseMode: selfhosted
+      supabaseShim: true
+      runtimeRole: sessions_pipeline_runtime
+      runtimeRoleLogin: true
+      functionBoundaryMode: global-default-revoke
+      waitForRole: { enabled: false, functionDefault: false }
+    locker:
+      <<: *locker
+      credentials: { mode: secret }
+    lockerInit:
+      enabled: true
+    nativeBrief:
+      enabled: false
+      image: *services_image
+      workspaceIds: []
+      model: __LLM_MODEL__
+      sweepSeconds: 300
+      openaiSecret:
+        name: agent-relay-llm
+        key: OPENAI_API_KEY
+    components:
+      session-brief:
+        enabled: false
+      bob-costas:
+        env:
+          - { name: BOB_COSTAS_MODEL, value: "off" }
+
+  # The legacy RelayAuth ingest path is unused: uploads go to the ingest edge.
+  alleyoop:
+    deployment:
+      enabled: false
+    postgresCa:
+      enabled: true
+      configMap: postgres-ca
+      key: ca.crt
+    image: *services_image
+    hoopdb:
+      existingSecret: agent-relay-secrets
+      key: HOOPDB_URL
+    existingSecret: sessions-pipeline-locker
+    locker:
+      <<: *locker
+      credentials: { mode: secret }
+    auth:
+      historyOrigin: https://__HOST_HISTORY__
+      allowInterimRelayAuthBearer: false
+    environment: production
+
+relay-control:
+  image:
+    repository: ghcr.io/agentworkforce/relay-control
+    digest: sha256:0b9c5a077b49b31178cc669e7c1d532f39e64c840087ca41636bb84a6c62631c
+  replicaCount: 1
+  existingSecret: agent-relay-secrets
+  secretKeys:
+    relayauthApiKey: ""
+    introspectSecret: relaycontrol-introspect-secret
+    relaycastInternalSecret: relaycast-internal-secret
+    sessionReadApiSecret: session-read-api-secret
+    setupKey: selfhost-setup-key
+    smtpPassword: ""
+  bootstrap:
+    orgName: __ORG_NAME__
+    adminEmail: __ADMIN_EMAIL__
+    workspaceName: Default
+  auth:
+    password:
+      enabled: true
+    # One hop: Traefik.
+    trustedProxies: 1
+  selectedFeatures: [usage, launch]
+  publicUrl: https://__HOST_API__
+  dashboardUrl: https://__HOST_ROOT__/
+  services:
+    relaycastPublicUrl: https://__HOST_CAST__
+    relayauthEnabled: false
+    relayauthUrl: ""
+    relayhistoryUrl: ""
+    relayhistoryPublicUrl: ""
+    relayhistoryBackend: native
+    sessionReadApiUrl: http://agent-relay-read-api.agent-relay.svc.cluster.local
+    sessionReadApiPublicUrl: https://__HOST_HISTORY__
+    sessionReadApiMcpReads: true
+  introspection:
+    audiences:
+      - https://__HOST_HISTORY__
+      - https://__HOST_API__
+  postgresCa:
+    enabled: true
+    configMap: postgres-ca
+    key: ca.crt
+  networkPolicy:
+    ingressFrom: *edge
+
+relay-webapp:
+  image: *webapp_image
+  replicaCount: 1
+  runtime:
+    publicUrl: https://__HOST_ROOT__
+    sessionReadApiEnabled: true
+    coordinationOverlapsEnabled: false
+  networkPolicy:
+    ingressFrom: *edge
