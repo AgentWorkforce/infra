@@ -1,0 +1,3 @@
+arm,phase,expected,delivered,lost,duplicate,redelivered,reordered,reordered_after_timeout,unexpected,truncated
+actors,h-burst,21204,21204,0,0,10947,3,0,213,0
+actors,h-bcast,3334,3334,0,0,1738,0,0,18,0

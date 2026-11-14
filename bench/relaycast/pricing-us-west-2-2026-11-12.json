@@ -1,0 +1,11 @@
+{
+  "source": "AWS Pricing API (get-products), on-demand, US West (Oregon), fetched 2026-11-12 by relaycast-actors-bench; EKS and gp3 from the public price list",
+  "usd_per_hour": {
+    "m7i.2xlarge": 0.4032,
+    "c7i.4xlarge": 0.714,
+    "db.r7g.large.postgresql.multi_az": 0.478,
+    "eks_cluster": 0.10
+  },
+  "usd_per_gb_month": { "rds_gp3_multi_az": 0.23 },
+  "notes": "Loadgen nodes are excluded from per-arm cost (client side). S3 request and transfer costs are not included (small at these volumes; listed as a caveat)."
+}

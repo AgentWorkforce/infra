@@ -1,0 +1,10 @@
+# Applied to the Postgres arm after the (substituted) chart profiles; see
+# scripts/render-arms.sh for the substitutions themselves.
+#
+# The 10k-message backlog test needs a mailbox deeper than the default 1000
+# active deliveries per recipient, or the engine skips recipients
+# (reason depth_cap) instead of queueing. The actors arm gets the same cap
+# through RELAYCAST_MAILBOX_DEPTH_CAP in relaycast-actor-env (install-arm.sh).
+relaycast:
+  mailbox:
+    depthCap: 20000

@@ -1,0 +1,6 @@
+# Smoke B / soak: actors use the control-plane role instead of per-actor STS
+# creds. The per-actor session policy (s3_access.rs) grants only arn:aws:s3:::
+# prefixes, which cannot authorize s3express:CreateSession. This drops per-actor
+# prefix isolation; acceptable for the sandbox bench only.
+durable-actors:
+  storage: {s3: {actorCredentials: control-plane, actorRoleArn: ""}}

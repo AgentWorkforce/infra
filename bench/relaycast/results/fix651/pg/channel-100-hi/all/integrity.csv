@@ -1,0 +1,4 @@
+arm,phase,expected,delivered,lost,duplicate,redelivered,reordered,unexpected,truncated
+pg,ch100h-20,71960,71960,0,0,64562,0,0,0
+pg,ch100h-50,65440,65440,0,0,65440,0,0,0
+pg,ch100h-100,24000,24000,0,831,24398,0,0,0

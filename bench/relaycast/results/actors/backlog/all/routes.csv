@@ -1,0 +1,2 @@
+arm,phase,route,requests,ok,rps_ok,err_rate,r429,r5xx,net_err,p50,p95,p99,max,corrected_p50,corrected_p95,corrected_p99
+actors,bl-10k,POST /v1/dm,9999,8500,5.55,0.14991,0,1499,0,1553.325,2761.323,3471.02,7235.890999998897,812013.288,1413797.25,1413797.25

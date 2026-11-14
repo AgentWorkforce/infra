@@ -1,0 +1,9 @@
+# Actors arm = values-eks.yaml + values-eks-rds-native.yaml + values-eks-actors.yaml
+# + this file. values-eks-actors.yaml is a standalone profile that turns every
+# other component off; the brief runs actors with the rest of the suite, so
+# this turns it back on (as the profile's header says to). Since chart 0.6.55
+# (#267) the profile itself clears the rds-native relaycast.postgresCa.
+components:
+  sessionsPipeline: true
+  control: true
+  webapp: true

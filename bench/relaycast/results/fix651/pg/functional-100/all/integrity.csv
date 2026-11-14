@@ -1,0 +1,3 @@
+arm,phase,expected,delivered,lost,duplicate,redelivered,reordered,unexpected,truncated
+pg,f100-dm,8999,8999,0,0,0,0,0,0
+pg,f100-chan,71980,71980,0,0,0,0,0,0
