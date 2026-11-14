@@ -7,7 +7,7 @@ import { mkdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { AgentHost, claudeTurn } from "./host.ts";
 import { Ledger } from "./ledger.ts";
-import { ClaudeOrchestrator, DeterministicOrchestrator, type KnownAgent, type Orchestrator } from "./orchestrator.ts";
+import { ClaudeOrchestrator, DeterministicOrchestrator, ThreadPolicy, type KnownAgent, type Orchestrator } from "./orchestrator.ts";
 import type { RelayEventLike } from "./protocol.ts";
 import { connectAgent, ensureChannel } from "./relay.ts";
 import { Router } from "./router.ts";
@@ -81,9 +81,12 @@ async function runRouter(): Promise<void> {
   const known: KnownAgent[] = env.KNOWN_AGENTS_JSON ? (JSON.parse(env.KNOWN_AGENTS_JSON) as KnownAgent[]) : [];
   const anthropicKey = secret("ANTHROPIC_API_KEY", false);
   const prefix = env.AGENT_PREFIX ?? "slack";
-  const orchestrator: Orchestrator = anthropicKey && env.ORCHESTRATOR !== "deterministic"
+  const model: Orchestrator = anthropicKey && env.ORCHESTRATOR !== "deterministic"
     ? new ClaudeOrchestrator({ apiKey: anthropicKey, model: env.ORCHESTRATOR_MODEL ?? "claude-fable-5-2", known, prefix, log })
     : new DeterministicOrchestrator(prefix);
+  const allowReuse = env.ALLOW_AGENT_REUSE === "true";
+  const orchestrator = new ThreadPolicy({ inner: model, known, allowReuse, prefix, log });
+  log(`routing: one agent per thread${allowReuse ? " (reuse allowed)" : ""}; pinned agents: ${known.map((k) => k.name).join(", ") || "none"}`);
 
   const router = new Router({ ledger, relay: agent, slack, orchestrator, channel, selfName: routerName, log });
 

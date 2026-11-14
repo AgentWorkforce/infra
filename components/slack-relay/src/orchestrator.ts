@@ -42,6 +42,37 @@ export class DeterministicOrchestrator implements Orchestrator {
   }
 }
 
+/**
+ * Enforces one agent per thread: a new thread gets a fresh agent unless the
+ * orchestrator routes it to a pinned agent. Reusing an agent that already
+ * owns other threads is allowed only with `allowReuse`. With no pinned
+ * agents and no reuse there is nothing to decide, so the model isn't asked.
+ */
+export class ThreadPolicy implements Orchestrator {
+  readonly #inner: Orchestrator;
+  readonly #fallback: DeterministicOrchestrator;
+  readonly #pinned: Set<string>;
+  readonly #allowReuse: boolean;
+  readonly #log: (m: string) => void;
+
+  constructor(opts: { inner: Orchestrator; known?: KnownAgent[]; allowReuse?: boolean; prefix?: string; log?: (m: string) => void }) {
+    this.#inner = opts.inner;
+    this.#fallback = new DeterministicOrchestrator(opts.prefix);
+    this.#pinned = new Set((opts.known ?? []).map((k) => k.name));
+    this.#allowReuse = Boolean(opts.allowReuse);
+    this.#log = opts.log ?? (() => {});
+  }
+
+  async decide(input: DecideInput): Promise<Decision> {
+    const fresh = await this.#fallback.decide(input);
+    if (!this.#allowReuse && this.#pinned.size === 0) return fresh;
+    const d = await this.#inner.decide(input);
+    if (d.agent === fresh.agent || this.#pinned.has(d.agent) || this.#allowReuse) return d;
+    this.#log(`orchestrator chose ${d.agent} for a new thread; one agent per thread, starting ${fresh.agent}`);
+    return { ...fresh, brief: d.brief, reason: `one agent per thread (orchestrator suggested ${d.agent}: ${d.reason})`, by: d.by };
+  }
+}
+
 const NAME_RE = /^[a-z0-9][a-z0-9-]{1,62}$/;
 
 const SCHEMA = {
@@ -61,6 +92,7 @@ A Slack thread with no owner just arrived. Decide who handles it:
 - "assign" it to an existing agent when the thread clearly continues that agent's work (same topic, same people) or a pinned agent is the right specialist;
 - otherwise "new": start a fresh agent for this thread.
 Prefer "new" when unsure: one agent per conversation keeps context clean.
+Same person or same topic is not a reason to assign: each Slack thread is its own conversation.
 Never route a thread to an agent that is failed. Reply with the JSON object only.`;
 
 export class ClaudeOrchestrator implements Orchestrator {

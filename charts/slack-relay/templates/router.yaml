@@ -80,6 +80,8 @@ spec:
               value: {{ .Values.router.orchestratorModel | quote }}
             - name: AGENT_PREFIX
               value: {{ .Values.router.agentPrefix | quote }}
+            - name: ALLOW_AGENT_REUSE
+              value: {{ .Values.router.allowAgentReuse | quote }}
             - name: KNOWN_AGENTS_JSON
               value: {{ .Values.router.knownAgents | toJson | quote }}
             - name: IDLE_RELEASE_MINUTES

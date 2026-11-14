@@ -30,7 +30,7 @@ Slack ◀──── router posts the answer into the Slack thread the ledger m
 | Piece | Kind | What it does |
 | --- | --- | --- |
 | Router | Deployment, 1 replica, PVC | Holds the Slack connection. Records every message in the **ledger**: threads, the people in them, agents, and an append-only event log. Routes by ledger lookup and asks the orchestrator only about threads nobody owns yet. It is the only component with Slack credentials. |
-| Orchestrator | in the router | A Claude model (default `claude-fable-5-2`) that sees every agent, its status, what it's working on and whose threads it holds. For a new thread it either assigns an existing or pinned agent, or starts a new agent with a brief. Set `router.orchestrator: deterministic` to start one agent per thread with no model call. |
+| Orchestrator | in the router | Each Slack thread gets its own agent; that is enforced in code. A Claude model (default `claude-fable-5-2`) that sees every agent, its status, what it's working on and whose threads it holds, decides only whether a new thread goes to a pinned agent (`router.knownAgents`) instead. With no pinned agents it isn't called. `router.allowAgentReuse: true` lets it also hand a thread to an agent that already owns others. |
 | Agent host | StatefulSet, 1 replica, PVC | Runs the per-thread agents with headless Claude Code (default `claude-opus-5-5`). Each agent is its own relay identity with its own workdir and Claude session on the volume. It runs no process between messages: a message wakes it and resumes its session, and it leaves the relay after `host.idleReleaseMinutes`. It has no Slack credentials. |
 
 Restarts are safe. The ledger and the sessions live on volumes. Agents
@@ -167,6 +167,7 @@ See `charts/slack-relay/values.yaml`. The ones you're most likely to change:
 | `router.orchestrator` | `claude` | `deterministic` to skip the model and start one agent per thread. |
 | `router.orchestratorModel` | `claude-fable-5-2` | |
 | `router.knownAgents` | `[]` | Pinned agents the orchestrator may route to, e.g. a company knowledge agent. |
+| `router.allowAgentReuse` | `false` | Let one agent own several threads. |
 | `host.agentModel` | `claude-opus-5-5` | |
 | `host.persona` | generalist | Appended to each agent's system prompt. |
 | `host.allowedTools` | `[Read(./**), Glob(./**), Grep(./**), mcp__relaycast]` | Scoped to the agent's workdir. |

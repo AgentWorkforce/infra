@@ -31,6 +31,6 @@ dependencies:
   version: 0.1.0
 - name: slack-relay
   repository: file://../slack-relay
-  version: 0.1.1
-digest: sha256:d4bba86103ff271689982122a01c0ce0bb148ae9f7a0834c6baf2f32d6f01a0b
-generated: "2026-11-14T13:13:56.736687-08:00"
+  version: 0.1.2
+digest: sha256:200485857575faa37f9da4d622fe7c3c5551a5f5b50f7998191bec8a881712a5
+generated: "2026-11-14T14:08:22.225893-08:00"

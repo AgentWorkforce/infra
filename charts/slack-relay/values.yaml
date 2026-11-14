@@ -53,6 +53,10 @@ router:
   orchestratorModel: claude-fable-5-2
   # Prefix of agent names for new threads: <prefix>-<channel>-<thread ts>.
   agentPrefix: slack
+  # Each Slack thread gets its own agent. The orchestrator may send a new
+  # thread to a pinned agent (knownAgents) instead; with this true it may
+  # also reuse an agent that already owns other threads.
+  allowAgentReuse: false
   # Pinned agents the orchestrator may route to, e.g.
   # - { name: company-brain, description: "Answers questions about the company" }
   knownAgents: []

@@ -3,7 +3,7 @@ import { createHmac } from "node:crypto";
 import { test } from "node:test";
 import { promptFor, systemFor } from "../src/host.ts";
 import { Ledger, threadAgentName } from "../src/ledger.ts";
-import { ClaudeOrchestrator, DeterministicOrchestrator } from "../src/orchestrator.ts";
+import { ClaudeOrchestrator, DeterministicOrchestrator, ThreadPolicy, type Orchestrator } from "../src/orchestrator.ts";
 import { dataOf, inboundOf } from "../src/protocol.ts";
 import { sessionIdFor } from "../src/router.ts";
 import { normalizeSlackEvent, verifySlackSignature } from "../src/slack.ts";
@@ -102,4 +102,25 @@ test("agent prompt carries the roster, brief and thread people", () => {
   assert.match(sys, /a2 \(active\): billing question/);
   assert.match(sys, /Orchestrator brief for this thread: Help U1 debug/);
   assert.match(promptFor(inbound, "@a1 [slack <@U1>] why?"), /^\[slack <@U1>\] why\?\n\n\(slack channel C1, thread 1.1; people in the thread: <@U1>, <@U2>\)$/);
+});
+
+test("one agent per thread: reuse is refused, pinned agents allowed, no model call without pinned agents", async () => {
+  let calls = 0;
+  const reusing = (agent: string): Orchestrator => ({ decide: async () => (calls++, { agent, reason: "same user", by: "orchestrator:test" }) });
+  const t2 = { team: "T1", channel: "C1", threadTs: "200.1" };
+  const input = { thread: t2, text: "x", user: "U1", participants: ["U1"], roster: [] };
+
+  const none = await new ThreadPolicy({ inner: reusing("slack-c1-1001") }).decide(input);
+  assert.equal(none.agent, "slack-c1-2001");
+  assert.equal(calls, 0, "no pinned agents: the model is not asked");
+
+  const refused = await new ThreadPolicy({ inner: reusing("slack-c1-1001"), known: [{ name: "brain", description: "kb" }] }).decide(input);
+  assert.equal(refused.agent, "slack-c1-2001");
+  assert.match(refused.reason, /one agent per thread/);
+
+  const pinned = await new ThreadPolicy({ inner: reusing("brain"), known: [{ name: "brain", description: "kb" }] }).decide(input);
+  assert.equal(pinned.agent, "brain");
+
+  const reuse = await new ThreadPolicy({ inner: reusing("slack-c1-1001"), allowReuse: true }).decide(input);
+  assert.equal(reuse.agent, "slack-c1-1001");
 });
