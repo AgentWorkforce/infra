@@ -407,7 +407,7 @@ compatibility:
         - "ci/sessions-pipeline-scrub-engine/test_scrub_engine.py:1"
       notes: 'Carries 0.8.30. migrations.databaseMode is now also rendered as HOOPDB_DB_MODE into every service container (migrate keeps it from its profile env, so each container has it once), and validated when set with migrations.enabled=false. The services live role gate binds that mode; on supabase it fails closed without it (the postgres admin membership is a supabase-only edge). Renders without databaseMode are unchanged.'
     - id: sessions-pipeline-0.8.30
-      status: unreleased
+      status: shipped
       charts: { sessions-pipeline: 0.8.30, sessions-pipeline-worker: 0.7.9, session-ingest-api: 0.4.5, session-read-api: 0.2.12 }
       depends:
         sessions-pipeline: { worker: 0.7.9, alleyoop: 0.4.5, sessionReadApi: 0.2.12, hoopdb: 0.9.0, session-object-storage: 5.4.0, otel: 0.178.0 }
@@ -1394,10 +1394,10 @@ compatibility:
       images:
         relayauth: { repository: ghcr.io/agentworkforce/relayauth, digest: sha256:eb71daa28e30eb7305f666d0bccc5a4002e53e8a574e3c4c32163d907a1b71df }
       notes: superseded by 0.1.1.
-    - id: agent-relay-0.7.4
+    - id: agent-relay-0.7.5
       status: unreleased
       current: true
-      charts: { agent-relay: 0.7.4, relay-control: 0.4.15, relay-webapp: 0.2.4 }
+      charts: { agent-relay: 0.7.5, relay-control: 0.4.15, relay-webapp: 0.2.4 }
       app_versions: { agent-relay: 0.1.0, relay-control: 0.1.0, relay-webapp: 0.1.0 }
       depends:
         agent-relay: { relaycast: 0.3.12, relayauth: 0.1.5, sessions-pipeline: 0.8.31, relay-control: 0.4.15, relay-webapp: 0.2.4, relayflows: 0.2.5, durable-actors: 0.14.6-awf.3, relayfile: 0.2.2, telemetry-collector: 0.1.7, relay-chief: 0.1.0 }
@@ -1407,7 +1407,20 @@ compatibility:
         sessions-pipeline-worker: { repository: ghcr.io/agentworkforce/sessions-pipeline, digest: sha256:77022c5b6a1d30f96f921d703eb27a1acada8ec273ad84aebdde24f8eddce305 }
         relay-control: { repository: ghcr.io/agentworkforce/relay-control, digest: sha256:d8c26d44dccb6dd21b7033288241a379e46ce5fbca69f276c4d4745001c3c3e2 }
         relay-webapp: { repository: ghcr.io/agentworkforce/relay-webapp, digest: sha256:bd295ccb7d1323965dce890f19d0b7f857d706c00d7756f719c713763fdb49f3 }
-      notes: 'Carries 0.7.3 and sessions-pipeline 0.8.31 (default-off worker.migrations.allowBlockingIndexBuild, set by the self-host upgrader for one upgrade of a small database from its Sessions index census; worker.migrations.databaseMode reaches the services live role gate). Default renders are unchanged.'
+      notes: 'Carries 0.7.4 (never released) and sessions-pipeline 0.8.31: worker.migrations.databaseMode reaches the worker services live role gate as HOOPDB_DB_MODE (Supabase installs need it). Also carries default-off worker.migrations.allowBlockingIndexBuild from 0.8.30.'
+    - id: agent-relay-0.7.4
+      status: planned
+      charts: { agent-relay: 0.7.4, relay-control: 0.4.15, relay-webapp: 0.2.4 }
+      app_versions: { agent-relay: 0.1.0, relay-control: 0.1.0, relay-webapp: 0.1.0 }
+      depends:
+        agent-relay: { relaycast: 0.3.12, relayauth: 0.1.5, sessions-pipeline: 0.8.30, relay-control: 0.4.15, relay-webapp: 0.2.4, relayflows: 0.2.5, durable-actors: 0.14.6-awf.3, relayfile: 0.2.2, telemetry-collector: 0.1.7, relay-chief: 0.1.0 }
+      images:
+        relaycast: { repository: ghcr.io/agentworkforce/relaycast-self-host, digest: sha256:ab9dd6781e68f09d5e2e686a17088f9ad533978ef13d974a47d6c212d8eedbde }
+        relaycast-postgres: { repository: ghcr.io/agentworkforce/relaycast-self-host, digest: sha256:1307bd845031a7466e65ebaf08bc8b826e2837d90f58c9b5a6a1d673c62dad93 }
+        sessions-pipeline-worker: { repository: ghcr.io/agentworkforce/sessions-pipeline, digest: sha256:77022c5b6a1d30f96f921d703eb27a1acada8ec273ad84aebdde24f8eddce305 }
+        relay-control: { repository: ghcr.io/agentworkforce/relay-control, digest: sha256:d8c26d44dccb6dd21b7033288241a379e46ce5fbca69f276c4d4745001c3c3e2 }
+        relay-webapp: { repository: ghcr.io/agentworkforce/relay-webapp, digest: sha256:bd295ccb7d1323965dce890f19d0b7f857d706c00d7756f719c713763fdb49f3 }
+      notes: 'Superseded before release by 0.7.5.'
     - id: agent-relay-0.7.3
       status: planned
       charts: { agent-relay: 0.7.3, relay-control: 0.4.15, relay-webapp: 0.2.4 }
