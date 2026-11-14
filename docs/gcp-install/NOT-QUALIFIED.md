@@ -7,15 +7,17 @@ project (regional GKE 1.36) on 2026.11.1. These are the places where the GKE
 path differs from what the release itself qualifies. Read them before a
 production rollout.
 
-1. **Session transcript reads (`/turns`) on GCS: fixed, check pending.**
-   The 2026.11.1 services image recorded every uploaded session with
-   `storage_provider = s3`, even when the objects are in GCS, so the read API
-   on GCS answered `GET /v1/sessions/<id>/turns` with
-   `501 turns_canonical_pointer_invalid`. This release's Sessions image
-   (relayhistory-pipeline `f8ac49b3`) records the configured provider, so a
-   fresh install writes correct rows from the start. An install upgraded from
-   2026.11.1 keeps its older rows as they were; no repair tool ships yet.
-   The `/turns` check on a GKE install with this image is pending.
+1. **Session transcripts and metadata don't open on GCS yet.** Every uploaded
+   session is indexed with `storage_provider = s3`, even when its objects are
+   in GCS, so the read API answers `GET /v1/sessions/<id>/turns` and
+   `/metadata` with `501 turns_canonical_pointer_invalid`. Checked on a GKE
+   install running this release's Sessions image (relayhistory-pipeline
+   `f8ac49b3`) with a fresh desktop upload: uploads, the session list, event
+   reads (`/events`) and search work; transcripts and metadata don't. The
+   cause is the queue event parser stamping `s3`
+   (`src/session-pipeline/s3-events.ts`), which the earlier fix didn't cover.
+   A fix and a repair for already-indexed sessions are in progress upstream;
+   EKS is not affected.
 
 2. **The release image overlay is the EKS one.** `release-images.values.yaml`
    and the install pack are generated for the `eks` profile, and the release

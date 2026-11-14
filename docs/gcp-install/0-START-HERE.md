@@ -536,8 +536,8 @@ sign-in.
 ## What this release does not yet qualify on GKE
 
 **Read NOT-QUALIFIED.md before a production rollout.** In particular, item 1:
-this release's Sessions image fixes the GCS transcript reads (`/turns`) that
-failed on 2026.11.1; the `/turns` check on a GKE install is pending.
+session transcripts and metadata don't open on GCS yet (uploads, the session
+list, event reads and search work).
 
 ## Starting from an empty project
 
