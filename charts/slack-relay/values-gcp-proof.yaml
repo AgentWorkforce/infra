@@ -15,9 +15,8 @@ secrets:
   anthropicApiKey: { name: slack-relay-anthropic, key: api-key }
 slack:
   mode: socket
-  # Set to the test channel's ID once the app is installed; empty answers in
-  # any channel the bot is invited to.
-  allowedChannels: []
+  # The proof's test channel only.
+  allowedChannels: [C0CHX8UK4CC]
   allowDms: true
 router:
   orchestrator: claude
