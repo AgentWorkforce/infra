@@ -4,9 +4,9 @@
   "pins": {
     "relay-control": {
       "repository": "ghcr.io/agentworkforce/relay-control",
-      "digest": "sha256:46e2cb514ba2ab3ec753fb3f3c0e17caff562350cbb671dbfc9f49b9463e0d49",
+      "digest": "sha256:e0611386a080b4e8e0c0629fdb23f5cf48027e7ceed77322b8086337e54f5112",
       "sourceRepository": "AgentWorkforce/relay-control",
-      "sourceRevision": "c276e6385dc9378957bec18cc583d30929ec2ba4"
+      "sourceRevision": "7c2337a89c82897e2974962d7eefdeef6246ed64"
     },
     "relay-webapp": {
       "repository": "ghcr.io/agentworkforce/relay-webapp",
