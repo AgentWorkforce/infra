@@ -422,7 +422,7 @@ if [ "$mode" = static ]; then
     --set searchIndexer.outputFacts.bootstrap.enabled=true --set searchIndexer.outputFacts.bootstrap.deadlineSeconds=9000
   # Static Locker keys (S3-compatible store without workload identity, e.g. MinIO on AKS):
   # opt-in, unset by default, and reaching the Deployment and both bootstrap Jobs.
-  [ -z "$(yq -r 'select(.metadata.name | test("^ci-search-indexer")) | .. | select(has("name")?) | select(.name == "LOCKER_ACCESS_KEY_ID" or .name == "LOCKER_SECRET_ACCESS_KEY") | .name' <<<"$out" | grep -v '^---$' || true)" ] \
+  [ -z "$(yq -r 'select(.metadata.name | test("^ci-search-indexer")) | .. | select(tag == "!!map") | select(.name == "LOCKER_ACCESS_KEY_ID" or .name == "LOCKER_SECRET_ACCESS_KEY") | .name' <<<"$out" | grep -v '^---$' || true)" ] \
     || err "aws-rds-native: the search indexer renders static Locker keys by default"
   static_keys=(-f "$CHART/profiles/aws-rds-native.yaml" -f "$CHART/ci/aws-rds-native-inputs.yaml"
     --set searchIndexer.locker.credentials.mode=secret --set searchIndexer.locker.endpoint=http://minio.ci.svc:9000
