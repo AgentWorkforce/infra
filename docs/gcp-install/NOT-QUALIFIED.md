@@ -67,3 +67,9 @@ production rollout.
    pipeline (`enable_functions`), GKE Autopilot, Shared VPC, SSO (OIDC/Okta),
    titles and summaries with an LLM, and the desktop app's live upload against
    this install (the upload path was proven with the e2e driver).
+
+11. **Desktop builds for a GKE install don't update themselves.** The signed
+   desktop release feed the control API can serve signs with AWS KMS and
+   stores in S3 only (`SELFHOST_DESKTOP_FEED_SIGNER=awskms`,
+   `SELFHOST_DESKTOP_FEED_STORAGE=s3`). A desktop build for a GKE install works,
+   but a newer version means installing the new build over the old one.

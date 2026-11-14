@@ -103,8 +103,16 @@ check_profile() { # label rendered expected-lines...
   local want; want=$(printf '%s\n' "$@" | sort)
   [ "$got" = "$want" ] || err "$label: migrate profile env is [$(tr '\n' ' ' <<<"$got")], want [$(tr '\n' ' ' <<<"$want")]"
   for n in $PROFILE_NAMES; do
+    [ "$n" = HOOPDB_DB_MODE ] && continue
     others_env "$o" | grep -qxF "$n" && err "$label: $n rendered outside migrate"
   done
+  # HOOPDB_DB_MODE: migrate, plus once in each long-running worker service container (the
+  # live role gate binds it), with the migrate value; never in any other Job or container.
+  local mode; mode=$(migrate_env "$o" | sed -n 's/^HOOPDB_DB_MODE=//p')
+  [ -z "$(yq -r 'select((.kind == "Job" and .metadata.labels."app.kubernetes.io/component" != "hoopdb-migrate") or (.kind == "Deployment" and ((.metadata.labels."helm.sh/chart" // "") | test("^(sessions-pipeline-)?worker-") | not))) | .spec.template.spec | ((.initContainers // []) + .containers)[] | (.env // [])[] | select(.name == "HOOPDB_DB_MODE") | .name' <<<"$o" | grep .)" ] \
+    || err "$label: HOOPDB_DB_MODE rendered outside migrate and the worker services"
+  local svc; svc=$(yq -r 'select(.kind == "Deployment" and ((.metadata.labels."helm.sh/chart" // "") | test("^(sessions-pipeline-)?worker-"))) | .spec.template.spec.containers[] | (((.env // []) | map(select(.name == "HOOPDB_DB_MODE"))) as $e | ($e | length | tostring) + "=" + ($e[0].value // ""))' <<<"$o" | grep -E '^[0-9]+=' || true)
+  [ -z "$(grep -vx "1=$mode" <<<"$svc")" ] || err "$label: worker services must each carry HOOPDB_DB_MODE=$mode once, got [$(tr '\n' ' ' <<<"$svc")]"
   # The waiter's init container must not see the profile either.
   [ -z "$(yq -r 'select(.kind == "Job" and .metadata.labels."app.kubernetes.io/component" == "hoopdb-migrate") | .spec.template.spec.initContainers[]?.env[]? | select(.name | test("^HOOPDB_(DB_MODE|SUPABASE_SHIM|RUNTIME_|FUNCTION_)")) | .name' <<<"$o" | grep .)" ] || err "$label: profile env in the wait-for-role container"
   return 0
