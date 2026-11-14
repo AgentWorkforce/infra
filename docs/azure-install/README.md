@@ -12,7 +12,7 @@ operator device approval worked, two agents exchanged messages through
 Relaycast, and an uploaded session was indexed. See
 [What was not proven](#what-was-not-proven) before a production rollout.
 
-This guide installs the published chart **agent-relay 0.7.6** (sessions-pipeline
+This guide installs the published chart **agent-relay 0.7.7** (sessions-pipeline
 0.8.32) from `oci://ghcr.io/agentworkforce/charts`, the first release that
 carries `searchIndexer.locker.credentials`. Earlier releases do not render the
 indexer's MinIO keys, so its uploads are never indexed.
@@ -54,7 +54,7 @@ in `docs/azure-install`:
 ```sh
 git clone https://github.com/AgentWorkforce/infra.git && cd infra/docs/azure-install
 CHART=oci://ghcr.io/agentworkforce/charts/agent-relay
-CHART_VERSION=0.7.6
+CHART_VERSION=0.7.7
 helm pull "$CHART" --version "$CHART_VERSION" --untar -d chart
 ```
 
@@ -251,7 +251,7 @@ codes and verification are in the
 ## What was not proven
 
 - Any release other than agent-relay-2026.11.0 (patched); `values.yaml` renders
-  against agent-relay 0.7.6 but was not installed from it.
+  against agent-relay 0.7.7 but was not installed from it.
 - The output facts bootstrap (step 10).
 - Azure Database for PostgreSQL, Azure Blob Storage, Application Gateway.
 - NetworkPolicy enforcement beyond a default install, private clusters,
