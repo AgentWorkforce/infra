@@ -9,14 +9,38 @@
 // a Relaycast MCP server bound to the agent's own token, so it can see and
 // message the other agents on the relay.
 import { spawn } from "node:child_process";
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { sessionIdFor } from "./session-id.ts";
 import { dataOf, inboundOf, type InboundData, type RelayEventLike, type RelayMessageLike, type ReplyData } from "./protocol.ts";
 
 export interface HostAgentClient {
   reply(id: string, text: string, opts?: { data?: Record<string, unknown> }): Promise<{ id: string }>;
+  dm?(to: string, text: string, opts?: { data?: Record<string, unknown> }): Promise<unknown>;
+  /** Realtime for the agent's own DMs ("@self"). */
+  subscribe?(channels: string[], handler: (raw: unknown) => void): unknown;
   disconnect?(): Promise<void>;
 }
+
+/** A DM to a hosted agent, normalized from the SDK's camelized or the engine's snake_case event. */
+export interface DmEvent {
+  id: string;
+  from: string;
+  text: string;
+  data?: Record<string, unknown>;
+}
+
+export function dmOf(raw: unknown): DmEvent | null {
+  const e = raw as Record<string, unknown> | null;
+  if (!e || e.type !== "dm.received") return null;
+  const m = (e.message ?? {}) as Record<string, unknown>;
+  const from = (m.agentName ?? m.agent_name) as string | undefined;
+  if (typeof m.id !== "string" || !from || typeof m.text !== "string") return null;
+  return { id: m.id, from, text: m.text, data: dataOf({ id: m.id, metadata: m.metadata as Record<string, unknown> | undefined, data: m.data as Record<string, unknown> | undefined }) };
+}
+
+/** Marks an agent's automatic DM answer, so the answer itself doesn't trigger another one. */
+const DM_REPLY = "agent.dm.reply";
 
 export interface AgentSession {
   client: HostAgentClient;
@@ -107,17 +131,81 @@ export class AgentHost {
     return run;
   }
 
-  /** Releases agents idle longer than `idleMs`: they leave the relay until woken. */
-  async releaseIdle(now = Date.now()): Promise<string[]> {
-    const released: string[] = [];
+  /**
+   * Agents idle longer than `idleMs`. No process runs for an idle agent; the
+   * host keeps only its relay connection, so a DM or a routed Slack message
+   * can wake it, as a node keeps its agents reachable.
+   */
+  idleAgents(now = Date.now()): string[] {
+    return [...this.#live].filter(([, l]) => l.busy === 0 && now - l.lastUsed >= this.#o.idleMs).map(([n]) => n);
+  }
+
+  /** Re-joins every agent this host has hosted (after a restart), so their DMs reach them. */
+  async rejoinKnown(): Promise<string[]> {
+    const dir = join(this.#o.dataDir, "agents");
+    const names = existsSync(dir) ? readdirSync(dir, { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => d.name) : [];
+    for (const name of names) await this.#wake(name).catch((err) => this.#o.log(`rejoin ${name} failed: ${(err as Error).message}`));
+    return names;
+  }
+
+  /** Leaves the relay for every agent (shutdown and tests). */
+  async disconnectAll(): Promise<void> {
     for (const [name, live] of this.#live) {
-      if (live.busy > 0 || now - live.lastUsed < this.#o.idleMs) continue;
       this.#live.delete(name);
-      released.push(name);
       await live.session.client.disconnect?.().catch(() => undefined);
-      this.#o.log(`released ${name} (idle)`);
     }
-    return released;
+  }
+
+  /**
+   * A DM to a hosted agent: one turn in the agent's own session. A normal DM
+   * is answered by DM; an automatic answer from another agent is taken in
+   * without replying, so two agents can't ping-pong forever.
+   */
+  async onDm(name: string, dm: DmEvent): Promise<string | null> {
+    if (dm.from === name || dm.from === this.#o.routerName) return null;
+    if (this.#seen.has(dm.id)) return null;
+    this.#seen.add(dm.id);
+    const live = await this.#wake(name);
+    const isAnswer = dm.data?.kind === DM_REPLY;
+    const run = live.queue.catch(() => undefined).then(async () => {
+      live.busy++;
+      try {
+        const workdir = join(this.#o.dataDir, "agents", name);
+        mkdirSync(workdir, { recursive: true });
+        const marker = join(workdir, ".session-started");
+        const started = existsSync(marker);
+        const sessionId = started ? readFileSync(marker, "utf8").trim() : sessionIdFor(name);
+        const result = await this.#o.runTurn({
+          agent: name,
+          workdir,
+          sessionId,
+          resume: started,
+          prompt: isAnswer
+            ? `${dm.from} answered your direct message on the relay:\n\n${dm.text}\n\n(Take this into account; no reply is sent for this turn.)`
+            : `Direct message on the relay from ${dm.from}:\n\n${dm.text}\n\n(Your answer is sent back to ${dm.from} as a direct message.)`,
+          system: [`You are ${name}, an agent on Agent Relay.`, this.#o.persona].join("\n\n"),
+          mcpConfigPath: this.#mcpPath(name, workdir, live),
+        });
+        if (!result.error) writeFileSync(marker, result.sessionId);
+        if (isAnswer || !live.session.client.dm) return null;
+        await live.session.client.dm(dm.from, result.text, { data: { kind: DM_REPLY, session_id: result.sessionId } });
+        this.#o.log(`${name} answered a DM from ${dm.from}`);
+        return dm.from;
+      } finally {
+        live.busy--;
+        live.lastUsed = Date.now();
+      }
+    });
+    live.queue = run;
+    return run;
+  }
+
+  #mcpPath(name: string, workdir: string, live: Live): string | null {
+    const mcp = this.#o.mcpConfig?.(name, live.session.token) ?? null;
+    if (!mcp) return null;
+    const p = join(workdir, ".mcp.json");
+    writeFileSync(p, JSON.stringify(mcp), { mode: 0o600 });
+    return p;
   }
 
   async #wake(name: string): Promise<Live> {
@@ -129,6 +217,11 @@ export class AgentHost {
       const session = await this.#o.connect(name);
       const live: Live = { session, queue: Promise.resolve(), lastUsed: Date.now(), busy: 0 };
       this.#live.set(name, live);
+      // DMs wake the agent too: from people, or from other agents on the relay.
+      session.client.subscribe?.(["@self"], (raw) => {
+        const dm = dmOf(raw);
+        if (dm) void this.onDm(name, dm).catch((err) => this.#o.log(`${name} DM turn failed: ${(err as Error).message}`));
+      });
       this.#o.log(`woke ${name}`);
       return live;
     })();
@@ -148,12 +241,7 @@ export class AgentHost {
       mkdirSync(workdir, { recursive: true });
       // The session already exists on disk if any earlier turn ran, whatever the router believes.
       const started = existsSync(join(workdir, ".session-started"));
-      const mcp = this.#o.mcpConfig?.(name, live.session.token) ?? null;
-      let mcpConfigPath: string | null = null;
-      if (mcp) {
-        mcpConfigPath = join(workdir, ".mcp.json");
-        writeFileSync(mcpConfigPath, JSON.stringify(mcp), { mode: 0o600 });
-      }
+      const mcpConfigPath = this.#mcpPath(name, workdir, live);
       const result = await this.#o.runTurn({
         agent: name,
         workdir,

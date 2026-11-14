@@ -108,7 +108,7 @@ test("slack threads route to resumable per-thread agents over a real relay", { s
     return { ledger, router, host, stop: async () => {
       await r.agent.disconnect().catch(() => undefined);
       await h.agent.disconnect().catch(() => undefined);
-      await host.releaseIdle(Date.now() + 10 * 3_600_000);
+      await host.disconnectAll();
       ledger.close();
     } };
   }
@@ -147,6 +147,29 @@ test("slack threads route to resumable per-thread agents over a real relay", { s
     assert.deepEqual(posts[3], { channel: "C1", thread_ts: "100.1", text: `${a1} heard: still there? (resumed)` });
     assert.equal(s.ledger.agent(a1)?.status, "active");
     assert.ok(s.ledger.events(100).some((e) => e.kind === "assign"));
+
+    // Another agent on the relay DMs a1: the host wakes a1 for it, in a1's own
+    // session, and a1 answers by DM. The answer itself triggers no reply back.
+    const peer = await connectAgent({ baseUrl: url!, workspaceKey: key!, name: `peer-${suffix}`, persona: "peer", proofSecret: "e2e", log });
+    const peerInbox: Array<{ text: string; kind?: unknown }> = [];
+    peer.agent.subscribe(["@self"], (raw: unknown) => {
+      const e = raw as { type?: string; message?: { text?: string; metadata?: Record<string, unknown>; data?: Record<string, unknown> } };
+      if (e.type === "dm.received") peerInbox.push({ text: e.message?.text ?? "", kind: (e.message?.metadata ?? e.message?.data)?.kind });
+    });
+    await new Promise((r) => setTimeout(r, 1000));
+    const before = turns.length;
+    await peer.agent.dm(a1, "what are you working on?");
+    await until(() => peerInbox.length >= 1);
+    assert.equal(peerInbox[0]!.text, `${a1} heard: Direct message on the relay from peer-${suffix}: (resumed)`);
+    const dmTurn = turns.slice(before).find((t) => t.agent === a1)!;
+    assert.equal(dmTurn.resume, true, "the DM resumes a1's existing session");
+    assert.equal(dmTurn.sessionId, t1[0]!.sessionId);
+    // A peer's automatic answer back to a1 is taken in without another reply.
+    await peer.agent.dm(a1, "thanks", { data: { kind: "agent.dm.reply" } });
+    await until(() => turns.length >= before + 2);
+    await new Promise((r) => setTimeout(r, 1500));
+    assert.equal(peerInbox.length, 1, "no reply to an automatic answer");
+    await peer.agent.disconnect().catch(() => undefined);
   } finally {
     await s.stop();
     server.close();

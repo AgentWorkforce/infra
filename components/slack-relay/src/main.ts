@@ -218,7 +218,8 @@ async function runHost(): Promise<void> {
   hostAgent.subscribe([channel], (raw: unknown) => {
     void host.onEvent(toEvent(raw as Record<string, unknown>)).catch((err) => log(`agent turn failed: ${(err as Error).message}`));
   });
-  setInterval(() => void host.releaseIdle(), 60_000).unref();
+  const rejoined = await host.rejoinKnown();
+  if (rejoined.length) log(`rejoined ${rejoined.length} agent(s): ${rejoined.join(", ")}`);
   serve(int("PORT", 8080), {
     ready: () => true,
     extra: (req, res) => {

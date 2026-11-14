@@ -11,7 +11,7 @@
 //                thread the ledger maps it to
 //
 // The orchestrator is the only model call here; everything else is a lookup.
-import { createHash } from "node:crypto";
+import { sessionIdFor } from "./session-id.ts";
 import type { Ledger, ThreadKey } from "./ledger.ts";
 import type { Orchestrator } from "./orchestrator.ts";
 import { dataOf, replyOf, type InboundData, type RelayEventLike, type RelayMessageLike, type RosterEntry } from "./protocol.ts";
@@ -23,11 +23,6 @@ export interface RouterRelay {
   reply(id: string, text: string, opts?: { data?: Record<string, unknown> }): Promise<{ id: string }>;
 }
 
-/** A stable Claude session id (UUID-shaped) for an agent: the same agent always resumes the same session. */
-export function sessionIdFor(agentName: string): string {
-  const h = createHash("sha256").update(`agent-relay-slack-session:${agentName}`).digest("hex");
-  return `${h.slice(0, 8)}-${h.slice(8, 12)}-4${h.slice(13, 16)}-a${h.slice(17, 20)}-${h.slice(20, 32)}`;
-}
 
 export class Router {
   readonly #ledger: Ledger;
@@ -164,3 +159,5 @@ export class Router {
       .map((a) => ({ name: a.agentName, status: a.status, summary: a.summary, threads: a.threads.length }));
   }
 }
+
+export { sessionIdFor };
