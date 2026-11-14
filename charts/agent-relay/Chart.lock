@@ -29,5 +29,8 @@ dependencies:
 - name: relay-chief
   repository: file://../relay-chief
   version: 0.1.0
-digest: sha256:f766f0536ca3aa6a112941060169817a43fda934cee3f6edc69fb8311ea3d095
-generated: "2026-11-14T07:45:57.520327416-08:00"
+- name: slack-relay
+  repository: file://../slack-relay
+  version: 0.1.0
+digest: sha256:482c70668da8e993490c58937cd970cad56afc04952e81ef2d45a09d2d93ed65
+generated: "2026-11-14T12:40:46.897577-08:00"

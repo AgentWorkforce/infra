@@ -1,0 +1,21 @@
+apiVersion: v2
+name: slack-relay
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+kubeVersion: ">=1.27.0-0"
+description: >-
+  Optional Slack app for Agent Relay: a router that maps Slack threads to
+  per-thread agents through a ledger, a Claude orchestrator for new threads,
+  and an agent host that runs the agents on the relay.
+annotations:
+  artifacthub.io/license: Apache-2.0
+  agentworkforce.dev/license-scope: "First-party chart code only; dependencies and images retain their own licenses."
+home: https://github.com/AgentWorkforce/infra
+keywords: [slack, agents, agent-relay, relaycast]
+maintainers:
+  - name: AgentWorkforce
+    url: https://github.com/AgentWorkforce/infra
+sources:
+  - https://github.com/AgentWorkforce/infra/tree/main/components/slack-relay
+  - https://github.com/AgentWorkforce/infra/tree/main/charts/slack-relay

@@ -1,0 +1,11 @@
+image:
+  digest: sha256:0000000000000000000000000000000000000000000000000000000000000000
+relaycast:
+  baseUrl: http://relaycast:8787
+secrets:
+  relaycastWorkspaceKey: { name: slack-relay-relaycast, key: workspace-key }
+  slackBotToken: { name: slack-relay-slack, key: bot-token }
+  slackAppToken: { name: slack-relay-slack, key: app-token }
+  anthropicApiKey: { name: slack-relay-anthropic, key: api-key }
+slack:
+  allowedChannels: [C0123456789]

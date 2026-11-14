@@ -1,0 +1,126 @@
+{{- include "slack-relay.validate" . }}
+{{- $full := include "slack-relay.fullname" . }}
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ $full }}-host
+  labels:
+    {{- include "slack-relay.labels" . | nindent 4 }}
+    app.kubernetes.io/component: host
+spec:
+  # One host: each agent's Claude session lives on its volume.
+  replicas: 1
+  serviceName: {{ $full }}-host
+  podManagementPolicy: Parallel
+  selector:
+    matchLabels:
+      {{- include "slack-relay.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: host
+  template:
+    metadata:
+      labels:
+        {{- include "slack-relay.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: host
+      {{- with .Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      automountServiceAccountToken: false
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: host
+          image: {{ include "slack-relay.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            {{- toYaml .Values.containerSecurityContext | nindent 12 }}
+          # No Slack credentials here: agents answer through the relay, and
+          # only the router talks to Slack.
+          env:
+            - name: ROLE
+              value: host
+            {{- include "slack-relay.commonEnv" . | nindent 12 }}
+            - name: HOST_AGENT_NAME
+              value: {{ .Values.host.agentName | quote }}
+            - name: AGENT_MODEL
+              value: {{ .Values.host.agentModel | quote }}
+            - name: AGENT_PERSONA
+              value: {{ .Values.host.persona | quote }}
+            - name: AGENT_ALLOWED_TOOLS
+              value: {{ join " " .Values.host.allowedTools | quote }}
+            - name: AGENT_PERMISSION_MODE
+              value: {{ .Values.host.permissionMode | quote }}
+            - name: RELAYCAST_MCP
+              value: {{ .Values.host.relaycastMcp | quote }}
+            - name: TURN_TIMEOUT_SECONDS
+              value: {{ .Values.host.turnTimeoutSeconds | quote }}
+            - name: IDLE_RELEASE_MINUTES
+              value: {{ .Values.host.idleReleaseMinutes | quote }}
+            - name: DATA_DIR
+              value: /data
+            {{- include "slack-relay.secretEnv" (dict "env" "ANTHROPIC_API_KEY" "ref" .Values.secrets.anthropicApiKey) | nindent 12 }}
+          ports:
+            - { name: http, containerPort: 8080 }
+          livenessProbe:
+            httpGet: { path: /healthz, port: http }
+            periodSeconds: 20
+          readinessProbe:
+            httpGet: { path: /readyz, port: http }
+            periodSeconds: 10
+          resources:
+            {{- toYaml .Values.host.resources | nindent 12 }}
+          volumeMounts:
+            - { name: sessions, mountPath: /data }
+            - { name: tmp, mountPath: /tmp }
+      volumes:
+        - name: tmp
+          emptyDir: {}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+  persistentVolumeClaimRetentionPolicy:
+    whenDeleted: Retain
+    whenScaled: Retain
+  volumeClaimTemplates:
+    - metadata:
+        name: sessions
+        labels:
+          {{- include "slack-relay.selectorLabels" . | nindent 10 }}
+          app.kubernetes.io/component: host
+      spec:
+        accessModes: [ReadWriteOnce]
+        {{- with .Values.host.persistence.storageClassName }}
+        storageClassName: {{ . }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ .Values.host.persistence.size }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $full }}-host
+  labels:
+    {{- include "slack-relay.labels" . | nindent 4 }}
+    app.kubernetes.io/component: host
+spec:
+  clusterIP: None
+  selector:
+    {{- include "slack-relay.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: host
+  ports:
+    - { name: http, port: 8080, targetPort: http }
