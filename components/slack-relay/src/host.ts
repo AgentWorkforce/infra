@@ -17,6 +17,8 @@ import { dataOf, inboundOf, type InboundData, type RelayEventLike, type RelayMes
 export interface HostAgentClient {
   reply(id: string, text: string, opts?: { data?: Record<string, unknown> }): Promise<{ id: string }>;
   dm?(to: string, text: string, opts?: { data?: Record<string, unknown> }): Promise<unknown>;
+  /** Reads a message the agent can see: DM events carry no `data`. */
+  message?(id: string): Promise<RelayMessageLike>;
   /** Realtime for the agent's own DMs ("@self"). */
   subscribe?(channels: string[], handler: (raw: unknown) => void): unknown;
   disconnect?(): Promise<void>;
@@ -166,7 +168,9 @@ export class AgentHost {
     if (this.#seen.has(dm.id)) return null;
     this.#seen.add(dm.id);
     const live = await this.#wake(name);
-    const isAnswer = dm.data?.kind === DM_REPLY;
+    let data = dm.data;
+    if (!data && live.session.client.message) data = dataOf(await live.session.client.message(dm.id).catch(() => undefined));
+    const isAnswer = data?.kind === DM_REPLY;
     const run = live.queue.catch(() => undefined).then(async () => {
       live.busy++;
       try {
