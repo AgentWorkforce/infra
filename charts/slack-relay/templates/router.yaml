@@ -1,0 +1,155 @@
+{{- include "slack-relay.validate" . }}
+{{- $full := include "slack-relay.fullname" . }}
+{{- if not .Values.router.persistence.existingClaim }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ $full }}-ledger
+  labels:
+    {{- include "slack-relay.labels" . | nindent 4 }}
+    app.kubernetes.io/component: router
+  annotations:
+    helm.sh/resource-policy: keep
+spec:
+  accessModes: [ReadWriteOnce]
+  {{- with .Values.router.persistence.storageClassName }}
+  storageClassName: {{ . }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.router.persistence.size }}
+---
+{{- end }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $full }}-router
+  labels:
+    {{- include "slack-relay.labels" . | nindent 4 }}
+    app.kubernetes.io/component: router
+spec:
+  # The ledger is single-writer SQLite: exactly one router, never two at once.
+  replicas: 1
+  strategy: { type: Recreate }
+  selector:
+    matchLabels:
+      {{- include "slack-relay.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: router
+  template:
+    metadata:
+      labels:
+        {{- include "slack-relay.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: router
+      {{- with .Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      automountServiceAccountToken: false
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: router
+          image: {{ include "slack-relay.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            {{- toYaml .Values.containerSecurityContext | nindent 12 }}
+          env:
+            - name: ROLE
+              value: router
+            {{- include "slack-relay.commonEnv" . | nindent 12 }}
+            - name: SLACK_MODE
+              value: {{ .Values.slack.mode | quote }}
+            - name: SLACK_ALLOWED_CHANNELS
+              value: {{ join "," .Values.slack.allowedChannels | quote }}
+            - name: SLACK_ALLOW_DMS
+              value: {{ .Values.slack.allowDms | quote }}
+            {{- include "slack-relay.secretEnv" (dict "env" "SLACK_BOT_TOKEN" "ref" .Values.secrets.slackBotToken) | nindent 12 }}
+            {{- if eq .Values.slack.mode "socket" }}
+            {{- include "slack-relay.secretEnv" (dict "env" "SLACK_APP_TOKEN" "ref" .Values.secrets.slackAppToken) | nindent 12 }}
+            {{- else }}
+            {{- include "slack-relay.secretEnv" (dict "env" "SLACK_SIGNING_SECRET" "ref" .Values.secrets.slackSigningSecret) | nindent 12 }}
+            {{- end }}
+            - name: SLACK_REFUSE_SHARED_CHANNELS
+              value: {{ .Values.slack.refuseSharedChannels | quote }}
+            {{- include "slack-relay.mcpEnv" . | nindent 12 }}
+            {{- if .Values.ingest.enabled }}
+            - name: INGEST_MCP_SERVER
+              value: {{ .Values.ingest.mcpServer | quote }}
+            - name: INGEST_SOURCE_ID
+              value: {{ .Values.ingest.sourceId | quote }}
+            - name: INGEST_PAGE_PREFIX
+              value: {{ .Values.ingest.pagePrefix | quote }}
+            - name: INGEST_PRIVATE_CHANNELS
+              value: {{ .Values.ingest.privateChannels | quote }}
+            - name: INGEST_PRIVATE_SOURCE_ID
+              value: {{ .Values.ingest.privateSourceId | quote }}
+            - name: INGEST_SOURCE_RULES
+              value: {{ .Values.ingest.sourceRules | toJson | quote }}
+            {{- end }}
+            - name: ORCHESTRATOR
+              value: {{ .Values.router.orchestrator | quote }}
+            - name: ORCHESTRATOR_MODEL
+              value: {{ .Values.router.orchestratorModel | quote }}
+            - name: AGENT_PREFIX
+              value: {{ .Values.router.agentPrefix | quote }}
+            - name: ALLOW_AGENT_REUSE
+              value: {{ .Values.router.allowAgentReuse | quote }}
+            - name: KNOWN_AGENTS_JSON
+              value: {{ .Values.router.knownAgents | toJson | quote }}
+            - name: IDLE_RELEASE_MINUTES
+              value: {{ .Values.router.idleReleaseMinutes | quote }}
+            - name: LEDGER_PATH
+              value: /data/ledger.sqlite
+            {{- if eq .Values.router.orchestrator "claude" }}
+            {{- include "slack-relay.secretEnv" (dict "env" "ANTHROPIC_API_KEY" "ref" .Values.secrets.anthropicApiKey) | nindent 12 }}
+            {{- end }}
+          ports:
+            - { name: http, containerPort: 8080 }
+          livenessProbe:
+            httpGet: { path: /healthz, port: http }
+            periodSeconds: 20
+          readinessProbe:
+            httpGet: { path: /readyz, port: http }
+            periodSeconds: 10
+          resources:
+            {{- toYaml .Values.router.resources | nindent 12 }}
+          volumeMounts:
+            - { name: data, mountPath: /data }
+            - { name: tmp, mountPath: /tmp }
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: {{ .Values.router.persistence.existingClaim | default (printf "%s-ledger" $full) }}
+        - name: tmp
+          emptyDir: {}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $full }}-router
+  labels:
+    {{- include "slack-relay.labels" . | nindent 4 }}
+    app.kubernetes.io/component: router
+spec:
+  selector:
+    {{- include "slack-relay.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: router
+  ports:
+    - { name: http, port: 8080, targetPort: http }

@@ -23,6 +23,11 @@ components:
   # image.digest, relay.baseUrl, controlPlane.url, existingSecret and config
   # are required. Its CronJob stays suspended until relay-chief.suspend=false.
   relayChief: false
+  # Slack app (charts/slack-relay): routes Slack threads to per-thread agents
+  # on this install's relay. Configure it under the slack-relay key:
+  # image.digest, relaycast.baseUrl and the secrets.* names are required.
+  # See docs/self-hosted-slack-relay.md.
+  slackRelay: false
 
 # Single-host mode (off when empty): the dashboard and the control API share
 # this one host. The dashboard is served at /, the API under /cloud/api,

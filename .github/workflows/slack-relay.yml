@@ -1,0 +1,100 @@
+# components/slack-relay: test on pull requests, publish the image on main.
+#   pull request -> typecheck, unit tests, e2e against a real Relaycast engine, image build (no push)
+#   push to main -> ghcr.io/agentworkforce/slack-relay:sha-<short> and :main (multi-arch)
+# charts/slack-relay pins the image by digest; take it from this run's summary.
+name: slack-relay
+
+on:
+  pull_request:
+    paths: ["components/slack-relay/**", ".github/workflows/slack-relay.yml"]
+  push:
+    branches: [main]
+    paths: ["components/slack-relay/**", ".github/workflows/slack-relay.yml"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: slack-relay-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+defaults:
+  run:
+    working-directory: components/slack-relay
+
+jobs:
+  test:
+    runs-on: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork) && 'ubuntu-latest' || vars.CI_LINUX_RUNNER || 'ubuntu-latest' }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: components/slack-relay/package-lock.json
+      - run: npm ci --no-audit --no-fund
+      - run: npm run typecheck
+      - name: Start a Relaycast engine for the e2e test
+        run: |
+          mkdir -p "$RUNNER_TEMP/engine" && cd "$RUNNER_TEMP/engine"
+          npm init -y >/dev/null
+          npm install --no-audit --no-fund @relaycast/engine@12.8.0
+          PORT=8787 RELAYCAST_DB_PATH="$RUNNER_TEMP/rc.db" RELAYCAST_ENV=development \
+            nohup node node_modules/@relaycast/engine/dist/bin/serve.js >"$RUNNER_TEMP/engine.log" 2>&1 &
+          for _ in $(seq 1 30); do curl -sf localhost:8787/health >/dev/null && break; sleep 1; done
+          key=$(curl -sf -XPOST localhost:8787/v1/workspaces -H 'content-type: application/json' -d '{"name":"ci"}' | jq -r '.data.api_key // .api_key')
+          echo "::add-mask::$key"
+          echo "RELAYCAST_E2E_KEY=$key" >> "$GITHUB_ENV"
+          echo "RELAYCAST_E2E_URL=http://localhost:8787" >> "$GITHUB_ENV"
+      - run: npm test
+      - name: Manifest renders
+        run: |
+          manifest/render-manifest.py | jq -e '.settings.socket_mode_enabled == true' >/dev/null
+          manifest/render-manifest.py --mode http --url https://slack.example.com/slack/events \
+            | jq -e '.settings.event_subscriptions.request_url == "https://slack.example.com/slack/events"' >/dev/null
+      - name: Engine log
+        if: failure()
+        run: cat "$RUNNER_TEMP/engine.log" || true
+
+  image:
+    needs: test
+    runs-on: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork) && 'ubuntu-latest' || vars.CI_LINUX_RUNNER || 'ubuntu-latest' }}
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - name: Log in to GHCR
+        if: github.event_name == 'push' && github.repository == 'AgentWorkforce/infra'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Tags
+        id: tags
+        shell: bash
+        run: |
+          image="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/slack-relay"
+          echo "tags=$image:sha-${GITHUB_SHA:0:7},$image:main" >> "$GITHUB_OUTPUT"
+      - name: Build (and push on main)
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: components/slack-relay
+          platforms: linux/amd64,linux/arm64
+          push: ${{ github.event_name == 'push' && github.repository == 'AgentWorkforce/infra' }}
+          tags: ${{ steps.tags.outputs.tags }}
+          provenance: true
+          sbom: true
+      - name: Digest
+        if: github.event_name == 'push'
+        working-directory: .
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          echo "slack-relay image digest: \`$DIGEST\`" >> "$GITHUB_STEP_SUMMARY"

@@ -167,6 +167,12 @@ profiles:
     values_file: ci/default-values.yaml
     install: helm install relay-chief agentworkforce/relay-chief -f <your values>
     summary: Not qualified and not part of the suite yet; no image is published. Suspended by default. Runs one bounded cycle per CronJob firing against SQLite on a persistent volume, and every cycle may dispatch.
+  - id: slack-relay
+    title: Slack app for Agent Relay (router and agent host)
+    chart: slack-relay
+    values_file: ci/default-values.yaml
+    install: helm upgrade --install slack-relay agentworkforce/slack-relay -f <your values> (or components.slackRelay=true in the agent-relay umbrella, values under slack-relay)
+    summary: Optional and off by default in the umbrella (components.slackRelay); not qualified. A one-replica router Deployment (Socket Mode by default, SQLite ledger on a PVC, the only holder of Slack credentials) and a one-replica agent host StatefulSet running per-thread Claude Code agents on the relay. Every credential is an existing Secret referenced by name; the chart creates none. See docs/self-hosted-slack-relay.md.
   - id: relaychief-control
     title: Relay Chief control add-on
     chart: relaychief-control
@@ -1457,9 +1463,22 @@ compatibility:
       images:
         relayauth: { repository: ghcr.io/agentworkforce/relayauth, digest: sha256:eb71daa28e30eb7305f666d0bccc5a4002e53e8a574e3c4c32163d907a1b71df }
       notes: superseded by 0.1.1.
-    - id: agent-relay-0.7.12
+    - id: agent-relay-0.7.13
       status: unreleased
       current: true
+      charts: { agent-relay: 0.7.13, relay-control: 0.4.16, relay-webapp: 0.2.5 }
+      app_versions: { agent-relay: 0.1.0, relay-control: 0.1.0, relay-webapp: 0.1.0 }
+      depends:
+        agent-relay: { relaycast: 0.3.13, relayauth: 0.1.5, sessions-pipeline: 0.8.33, relay-control: 0.4.16, relay-webapp: 0.2.5, relayflows: 0.2.5, durable-actors: 0.14.6-awf.3, relayfile: 0.2.2, telemetry-collector: 0.1.7, relay-chief: 0.1.0, slack-relay: 0.2.0 }
+      images:
+        relaycast: { repository: ghcr.io/agentworkforce/relaycast-self-host, digest: sha256:ab9dd6781e68f09d5e2e686a17088f9ad533978ef13d974a47d6c212d8eedbde }
+        relaycast-postgres: { repository: ghcr.io/agentworkforce/relaycast-self-host, digest: sha256:cc2a79f02d39978fa04322b5a45497737ff137bc2a5db5615c7eee690030de83 }
+        sessions-pipeline-worker: { repository: ghcr.io/agentworkforce/sessions-pipeline, digest: sha256:77022c5b6a1d30f96f921d703eb27a1acada8ec273ad84aebdde24f8eddce305 }
+        relay-control: { repository: ghcr.io/agentworkforce/relay-control, digest: sha256:d8c26d44dccb6dd21b7033288241a379e46ce5fbca69f276c4d4745001c3c3e2 }
+        relay-webapp: { repository: ghcr.io/agentworkforce/relay-webapp, digest: sha256:bd295ccb7d1323965dce890f19d0b7f857d706c00d7756f719c713763fdb49f3 }
+      notes: 'Adds slack-relay 0.2.0 as a default-off component (components.slackRelay). With it off, every render differs only in the helm.sh/chart labels.'
+    - id: agent-relay-0.7.12
+      status: planned
       charts: { agent-relay: 0.7.12, relay-control: 0.4.16, relay-webapp: 0.2.5 }
       app_versions: { agent-relay: 0.1.0, relay-control: 0.1.0, relay-webapp: 0.1.0 }
       depends:
@@ -2452,6 +2471,14 @@ compatibility:
       charts: { relay-chief: 0.1.0 }
       app_versions: { relay-chief: 0.1.0 }
       notes: First chart, rendered only. No Relay Chief image is published and the digest is operator-supplied until one exists.
+    - id: slack-relay-0.2.0
+      status: unreleased
+      current: true
+      charts: { slack-relay: 0.2.0 }
+      app_versions: { slack-relay: 0.1.0 }
+      images:
+        slack-relay: { repository: ghcr.io/agentworkforce/slack-relay, digest_required: true }
+      notes: First registered chart, rendered only; default-off in the agent-relay umbrella (components.slackRelay). The chart ships no default digest and refuses to render without image.digest.
     - id: relayfile-control-0.1.0
       status: unreleased
       current: true
@@ -2525,6 +2552,9 @@ internal_env:
   - { name: MIGRATE_ON_START, chart: relayfile-control, why: fixed at 1 so the server applies migrations under its advisory lock; refused in extraEnv }
   - { name: ADMIN_HOST, chart: relaychief-control, why: fixed at 127.0.0.1 so the admin listener stays on loopback; refused in extraEnv }
   - { name: ADMIN_PORT, chart: relaychief-control, why: reserved from extraEnv so the admin listener stays on its documented port; no chart value offers it }
+  - { name: ROLE, chart: slack-relay, why: selects the router or host entry point of the one slack-relay image; fixed per workload }
+  - { name: LEDGER_PATH, chart: slack-relay, why: fixed /data/ledger.sqlite on the router's ledger PVC }
+  - { name: DATA_DIR, chart: slack-relay, why: fixed /data on the agent host's sessions volume }
   - { name: SERVICE, chart: [sessions-pipeline-worker, session-ingest-api], why: selects the entry point of the one services image }
   - { name: OTEL_SERVICE_NAME, chart: [sessions-pipeline-worker, session-ingest-api], why: equals SERVICE }
   - { name: TMPDIR, chart: [sessions-pipeline-worker, session-ingest-api], why: the writable emptyDir under a read-only root filesystem }
@@ -6085,6 +6115,285 @@ entries:
     sources:
       - "charts/relay-chief/values.yaml:9"
       - "charts/relay-chief/templates/cronjob.yaml:34"
+
+  - id: req.slack-relay.image
+    kind: requirement
+    title: Slack relay image digest
+    description: The router and the agent host run the one slack-relay image, deployed by immutable digest only. The chart ships no default digest.
+    chart: slack-relay
+    values: [image.repository, image.digest, image.pullPolicy]
+    profiles: [slack-relay]
+    status: shipped
+    provided_by: operator
+    verify: helm template fails with "image.digest is required (sha256:<64 hex>)" when it is unset
+    sources:
+      - "charts/slack-relay/values.yaml:4-8"
+      - "charts/slack-relay/templates/_helpers.tpl:45-47"
+
+  - id: req.slack-relay.relaycast
+    kind: requirement
+    title: Slack relay Relaycast origin and channel
+    description: The Relaycast origin both roles talk to, e.g. the in-cluster Service http://relaycast:8787 next to an agent-relay release, and the relay channel that carries Slack threads (created on first start). The host acts only on messages from the router's relay name (router.agentName).
+    chart: slack-relay
+    values: [relaycast.baseUrl, relaycast.channel, router.agentName]
+    env: [RELAYCAST_BASE_URL, RELAY_CHANNEL, ROUTER_AGENT_NAME]
+    profiles: [slack-relay]
+    status: shipped
+    provided_by: operator
+    verify: helm template fails with "relaycast.baseUrl is required" when it is unset; the host logs "registered relay agent slack-agent-host"
+    sources:
+      - "charts/slack-relay/values.yaml:11-16"
+      - "charts/slack-relay/templates/_helpers.tpl:106-117"
+
+  - id: req.slack-relay.relaycast-credentials
+    kind: requirement
+    title: Slack relay Relaycast workspace key
+    description: A Relaycast workspace key (rk_live_...) for the workspace the agents join, from an existing Secret named by secrets.relaycastWorkspaceKey.name. Both roles register their relay agents with it. The chart only references the Secret.
+    chart: slack-relay
+    values: ["secrets.relaycastWorkspaceKey.*"]
+    env: [RELAYCAST_WORKSPACE_KEY]
+    profiles: [slack-relay]
+    status: shipped
+    provided_by: operator
+    secrets:
+      - name: "<secrets.relaycastWorkspaceKey.name>"
+        keys:
+          - { key: workspace-key, key_path: secrets.relaycastWorkspaceKey.key }
+    verify: helm template fails with "secrets.relaycastWorkspaceKey.name is required" when it is unset; both pods start without a CreateContainerConfigError
+    sources:
+      - "charts/slack-relay/values.yaml:18-23"
+      - "charts/slack-relay/templates/_helpers.tpl:51-53"
+      - "charts/slack-relay/templates/_helpers.tpl:113"
+
+  - id: req.slack-relay.slack-credentials
+    kind: requirement
+    title: Slack app tokens
+    description: The bot token (xoxb-) always, plus the app-level token (xapp-, connections:write) in socket mode or the signing secret in http mode, each from an existing Secret named in secrets.*. Only the router receives Slack credentials; the agent host has none. Create the Slack app from components/slack-relay/manifest in your own workspace.
+    chart: slack-relay
+    values: ["secrets.slackBotToken.*", "secrets.slackAppToken.*", "secrets.slackSigningSecret.*"]
+    env: [SLACK_BOT_TOKEN, SLACK_APP_TOKEN, SLACK_SIGNING_SECRET]
+    profiles: [slack-relay]
+    status: shipped
+    provided_by: operator
+    secrets:
+      - name: "<secrets.slackBotToken.name>"
+        keys:
+          - { key: bot-token, key_path: secrets.slackBotToken.key }
+      - name: "<secrets.slackAppToken.name>"
+        keys:
+          - { key: app-token, key_path: secrets.slackAppToken.key }
+        note: socket mode only
+      - name: "<secrets.slackSigningSecret.name>"
+        keys:
+          - { key: signing-secret, key_path: secrets.slackSigningSecret.key }
+        note: http mode only
+    verify: helm template fails with "secrets.slackBotToken.name is required", or "secrets.slackAppToken.name is required in socket mode" / "secrets.slackSigningSecret.name is required in http mode"; the router logs "socket mode connected"
+    sources:
+      - "charts/slack-relay/values.yaml:24-29"
+      - "charts/slack-relay/templates/_helpers.tpl:54-68"
+      - "charts/slack-relay/templates/router.yaml:71-76"
+      - "docs/self-hosted-slack-relay.md:51-83"
+
+  - id: req.slack-relay.anthropic
+    kind: requirement
+    title: Slack relay Anthropic API key
+    description: An Anthropic API key from an existing Secret. Required because the agent host runs headless Claude Code; the router also receives it when router.orchestrator is claude. Outbound HTTPS to api.anthropic.com is needed from both roles.
+    chart: slack-relay
+    values: ["secrets.anthropicApiKey.*"]
+    env: [ANTHROPIC_API_KEY]
+    profiles: [slack-relay]
+    status: shipped
+    provided_by: operator
+    secrets:
+      - name: "<secrets.anthropicApiKey.name>"
+        keys:
+          - { key: api-key, key_path: secrets.anthropicApiKey.key }
+    verify: helm template fails with "secrets.anthropicApiKey.name is required (the agent host runs Claude Code)" when it is unset; the host logs "… answered" for a test mention
+    sources:
+      - "charts/slack-relay/values.yaml:30-32"
+      - "charts/slack-relay/templates/_helpers.tpl:57-59"
+      - "charts/slack-relay/templates/host.yaml:73"
+      - "charts/slack-relay/templates/router.yaml:108-110"
+
+  - id: opt.slack-relay.agent-identity-secret
+    kind: option
+    title: Slack relay agent identity secret
+    description: A stable secret the agents' relay identities are recovered with across restarts, so no agent tokens are stored. When unset the workspace key is used.
+    chart: slack-relay
+    values: ["secrets.agentIdentitySecret.*"]
+    env: [AGENT_IDENTITY_SECRET]
+    profiles: [slack-relay]
+    status: shipped
+    provided_by: operator
+    default: unset
+    choices:
+      - { value: unset, note: derived from the Relaycast workspace key }
+      - { value: set }
+    secrets:
+      - name: "<secrets.agentIdentitySecret.name>"
+        keys:
+          - { key: identity-secret, key_path: secrets.agentIdentitySecret.key }
+        note: optional
+    verify: helm template renders AGENT_IDENTITY_SECRET only when secrets.agentIdentitySecret.name is set
+    sources:
+      - "charts/slack-relay/values.yaml:33-35"
+      - "charts/slack-relay/templates/_helpers.tpl:114-116"
+
+  - id: opt.slack-relay.mode
+    kind: option
+    title: Slack event delivery (Socket Mode or HTTP)
+    description: socket (default) holds an outbound WebSocket to Slack and needs no inbound traffic or Ingress. http has Slack post events to https://<host>/slack/events and requires ingress.enabled; the Ingress exposes only /slack/events, with an optional TLS Secret named by ingress.tlsSecretName.
+    chart: slack-relay
+    values: [slack.mode, ingress.enabled, "ingress.*"]
+    env: [SLACK_MODE]
+    profiles: [slack-relay]
+    status: shipped
+    provided_by: operator
+    default: socket
+    choices:
+      - { value: socket }
+      - { value: http, note: needs ingress.enabled and secrets.slackSigningSecret }
+    verify: helm template fails with "http mode needs ingress.enabled so Slack can reach /slack/events"; socket mode renders no Ingress
+    sources:
+      - "charts/slack-relay/values.yaml:37-40"
+      - "charts/slack-relay/values.yaml:133-139"
+      - "charts/slack-relay/templates/ingress.yaml:1-33"
+
+  - id: opt.slack-relay.channels
+    kind: option
+    title: Slack channels, DMs and shared-channel refusal
+    description: slack.allowedChannels lists the channel IDs (C...) the app answers in; empty answers in every channel the bot is invited to, so restrict it for a first rollout. slack.allowDms answers direct messages. slack.refuseSharedChannels (default on, fail closed) refuses channels shared outside the workspace for answers and ingest.
+    chart: slack-relay
+    values: [slack.allowedChannels, slack.allowDms, slack.refuseSharedChannels]
+    env: [SLACK_ALLOWED_CHANNELS, SLACK_ALLOW_DMS, SLACK_REFUSE_SHARED_CHANNELS]
+    profiles: [slack-relay]
+    status: shipped
+    provided_by: operator
+    default: all invited channels
+    choices:
+      - { value: all invited channels }
+      - { value: listed }
+    verify: a mention in a channel outside slack.allowedChannels gets no answer and the router logs nothing for it
+    sources:
+      - "charts/slack-relay/values.yaml:41-48"
+      - "charts/slack-relay/templates/router.yaml:65-78"
+
+  - id: opt.slack-relay.orchestrator
+    kind: option
+    title: Slack relay orchestrator and routing
+    description: Each Slack thread gets its own agent. router.orchestrator claude (default model claude-fable-5-2, needs the Anthropic key) decides only whether a new thread goes to a pinned agent in router.knownAgents; deterministic makes no model call. router.allowAgentReuse lets it hand a thread to an agent that already owns others; router.idleReleaseMinutes marks agents released in the ledger.
+    chart: slack-relay
+    values: [router.orchestrator, router.orchestratorModel, router.agentPrefix, router.allowAgentReuse, router.knownAgents, router.idleReleaseMinutes, router.resources]
+    env: [ORCHESTRATOR, ORCHESTRATOR_MODEL, AGENT_PREFIX, ALLOW_AGENT_REUSE, KNOWN_AGENTS_JSON, IDLE_RELEASE_MINUTES]
+    profiles: [slack-relay]
+    status: shipped
+    provided_by: operator
+    default: claude
+    choices:
+      - { value: claude }
+      - { value: deterministic, note: one agent per thread, no model call }
+    verify: helm template fails with "router.orchestrator must be claude or deterministic"; the router logs "assigned <channel>:<ts> -> slack-<channel>-<ts>"
+    sources:
+      - "charts/slack-relay/values.yaml:80-97"
+      - "charts/slack-relay/templates/router.yaml:94-110"
+
+  - id: opt.slack-relay.agents
+    kind: option
+    title: Slack relay agent model, persona and tools
+    description: The agent host runs each thread's agent with headless Claude Code (host.agentModel, default claude-opus-5-5) and appends host.persona to its system prompt. By default agents get Read, Glob and Grep scoped to their own workdir plus the relay tools; Bash, WebFetch, WebSearch and /proc are always refused and permissionMode dontAsk refuses anything else. Each tool added to host.allowedTools is a new way for data to leave.
+    chart: slack-relay
+    values: [host.agentName, host.agentModel, host.persona, host.allowedTools, host.disallowedTools, host.permissionMode, host.relaycastMcp, host.turnTimeoutSeconds, host.idleReleaseMinutes, host.resources]
+    env: [HOST_AGENT_NAME, AGENT_MODEL, AGENT_PERSONA, AGENT_ALLOWED_TOOLS, AGENT_DISALLOWED_TOOLS, AGENT_PERMISSION_MODE, RELAYCAST_MCP, TURN_TIMEOUT_SECONDS, IDLE_RELEASE_MINUTES]
+    profiles: [slack-relay]
+    status: shipped
+    provided_by: operator
+    default: workdir-scoped read tools
+    choices:
+      - { value: workdir-scoped read tools }
+      - { value: widened, note: operator-listed host.allowedTools }
+    verify: helm template renders AGENT_ALLOWED_TOOLS and AGENT_DISALLOWED_TOOLS on the host StatefulSet as configured
+    sources:
+      - "charts/slack-relay/values.yaml:106-131"
+      - "charts/slack-relay/templates/host.yaml:44-73"
+      - "docs/self-hosted-slack-relay.md:169-186"
+
+  - id: opt.slack-relay.mcp-servers
+    kind: option
+    title: Slack relay remote MCP servers (knowledge base)
+    description: Remote MCP servers behind OAuth client credentials (e.g. a gbrain company brain). Each mcpServers entry needs name, url, tokenUrl, clientId and clientSecret {name, key} of an existing Secret, rendered as MCP_<NAME>_CLIENT_SECRET. Agents get the servers listed in host.mcpServers (empty is all) as tools with a fresh token per turn; add mcp__<name> to host.allowedTools.
+    chart: slack-relay
+    values: [mcpServers, host.mcpServers]
+    env: [MCP_OAUTH_SERVERS_JSON, AGENT_MCP_SERVERS]
+    profiles: [slack-relay]
+    status: shipped
+    provided_by: operator
+    default: none
+    choices:
+      - { value: none }
+      - { value: listed }
+    verify: helm template fails with "each mcpServers entry needs name, url, tokenUrl, clientId and clientSecret.name" for an incomplete entry
+    sources:
+      - "charts/slack-relay/values.yaml:50-59"
+      - "charts/slack-relay/templates/_helpers.tpl:89-103"
+      - "docs/self-hosted-slack-relay.md:141-167"
+
+  - id: opt.slack-relay.ingest
+    kind: option
+    title: Slack relay continuous Slack ingest
+    description: ingest.enabled appends every human message in the app's channels (subject to slack.allowedChannels and the shared-channel refusal) to <pagePrefix>/<channel>/<YYYY-MM-DD> in a knowledge base over MCP. ingest.mcpServer must name a write-scoped mcpServers entry. Bots and credential-looking messages are skipped; private channels only with ingest.privateChannels. Each channel's page source is the first ingest.sourceRules entry ({match, sourceId}, a channel-name regex) that matches, else ingest.privateSourceId for a private channel (default ingest.sourceId), else ingest.sourceId.
+    chart: slack-relay
+    values: [ingest.enabled, ingest.mcpServer, ingest.sourceId, ingest.pagePrefix, ingest.privateChannels, ingest.privateSourceId, ingest.sourceRules]
+    env: [INGEST_MCP_SERVER, INGEST_SOURCE_ID, INGEST_PAGE_PREFIX, INGEST_PRIVATE_CHANNELS, INGEST_PRIVATE_SOURCE_ID, INGEST_SOURCE_RULES]
+    profiles: [slack-relay]
+    status: shipped
+    provided_by: operator
+    default: "false"
+    choices:
+      - { value: "false" }
+      - { value: "true" }
+    verify: helm template fails with "ingest.mcpServer must name an entry in mcpServers" when ingest is on without a matching server
+    sources:
+      - "charts/slack-relay/values.yaml:61-78"
+      - "charts/slack-relay/templates/_helpers.tpl:74-80"
+      - "charts/slack-relay/templates/router.yaml:80-93"
+
+  - id: opt.slack-relay.persistence
+    kind: option
+    title: Slack relay ledger and session volumes
+    description: The router's single-writer SQLite ledger lives on a PVC (chart-created and kept on uninstall, or router.persistence.existingClaim); the agent host's Claude sessions live on a StatefulSet volume retained on delete. One router and one host replica; this scales by machine size, not replica count.
+    chart: slack-relay
+    values: ["router.persistence.*", "host.persistence.*"]
+    profiles: [slack-relay]
+    status: shipped
+    provided_by: operator
+    default: chart-created
+    choices:
+      - { value: chart-created }
+      - { value: existingClaim, note: router ledger only }
+    verify: helm template renders the <release>-ledger PVC unless router.persistence.existingClaim is set
+    sources:
+      - "charts/slack-relay/values.yaml:98-101"
+      - "charts/slack-relay/templates/router.yaml:3-22"
+      - "charts/slack-relay/templates/host.yaml:102-118"
+
+  - id: opt.slack-relay.image-pull-secrets
+    kind: option
+    title: Slack relay image pull Secrets
+    description: Pull Secrets for a private registry or customer mirror, applied to both the router and the host.
+    chart: slack-relay
+    values: [imagePullSecrets]
+    profiles: [slack-relay]
+    status: shipped
+    provided_by: operator
+    default: none
+    choices:
+      - { value: none }
+      - { value: listed }
+    verify: helm template lists imagePullSecrets on the router Deployment and host StatefulSet when set
+    sources:
+      - "charts/slack-relay/values.yaml:9"
+      - "charts/slack-relay/templates/router.yaml:49-52"
+      - "charts/slack-relay/templates/host.yaml:30-33"
 
   - id: req.relayfile-control.config
     kind: requirement
