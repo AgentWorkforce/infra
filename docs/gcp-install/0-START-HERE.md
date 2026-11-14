@@ -470,12 +470,15 @@ PW=$(openssl rand -base64 33 | tr -d '\n/+=' | cut -c1-32)
 printf '%s' "$PW" | gcloud secrets create agent-relay-first-admin-password --project $GCP_PROJECT_ID \
   --replication-policy automatic --labels app=agent-relay --data-file=-
 KEY=$(kubectl -n $NAMESPACE get secret agent-relay-secrets -o jsonpath='{.data.selfhost-setup-key}' | base64 -d)
-jq -n --arg k "$KEY" --arg p "$PW" '{setupKey:$k,password:$p}' | curl -sS -o /dev/null -w '%{http_code}\n' \
-  -X POST -H 'content-type: application/json' --data-binary @- "https://api.$DOMAIN/api/v1/auth/password/setup-key"
+KEY="$KEY" PW="$PW" jq -n '{setupKey:env.KEY,password:env.PW}' | curl -sS -o /dev/null -w '%{http_code}\n' \
+  -X POST -H 'content-type: application/json' -H "Origin: https://$DOMAIN" \
+  --data-binary @- "https://api.$DOMAIN/api/v1/auth/password/setup-key"
 unset KEY PW
 ```
 
-It prints `200`. The admin reads the password with
+It prints `200`. The `Origin` header is required: sign-in routes refuse a
+request without your dashboard's origin (`403 csrf_rejected`) before they
+read the key, so a refused call leaves the key unused. The admin reads the password with
 `gcloud secrets versions access latest --secret agent-relay-first-admin-password --project <project id>`
 and signs in at `https://<domain>/login`. The setup key works once, within 24
 hours: don't retry a failure in a loop.
