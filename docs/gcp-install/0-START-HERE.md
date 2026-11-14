@@ -20,6 +20,11 @@ IPs from it). For nodes, plan on at least **3 × e2-standard-4 with 100 GB
 disks** for Agent Relay. Small nodes with 20 GB disks run out of ephemeral
 storage while pulling the images.
 
+**No cluster or project yet?** Start with "Starting from an empty project" at
+the end, then come back to step 1. Creating a project needs
+`resourcemanager.projects.create` on the organization (or folder) and
+`billing.user` on the billing account: ask whoever holds them early.
+
 **Network:**
 
 - Steps 1, 4, 5 and 6 need only Google Cloud access, not `kubectl`. Start them
@@ -56,6 +61,10 @@ OpenTofu), `helm` 3, `kubectl`, `jq`, `yq`, `openssl`, and
 [`crane`](https://github.com/google/go-containerregistry/releases) for step 5.
 Cloud Shell has everything except `crane` and Terraform ≥ 1.11.
 
+**Helm 3, not Helm 4.** The chart is tested with Helm 3.10 or later; Helm 4 is
+untested with this guide. If `helm version` prints `v4`, install Helm 3 beside
+it (for example as `helm3`) and use it for steps 10, 11 and 13.
+
 **Done when:** `guide ok`, `release ok`, then `release-notes.md: OK` (the last checksum line).
 
 ## 2. Connect to Google Cloud and the cluster
@@ -86,6 +95,12 @@ kubectl get storageclass
 **Every node pool must use the GKE metadata server** for Workload Identity:
 `gcloud container node-pools list --cluster <cluster> --location <region> --format='table(name,config.workloadMetadataConfig.mode)'`
 shows `GKE_METADATA` for each.
+
+**`billing account ... disabled` from Cloud Storage or Service Networking?**
+Your Application Default Credentials bill API calls to a quota project without
+billing. Run `gcloud auth application-default set-quota-project <project id>`,
+or export `GOOGLE_CLOUD_QUOTA_PROJECT` and `CLOUDSDK_BILLING_QUOTA_PROJECT` set
+to the project id.
 
 ## 3. Using your own Cloud SQL, bucket or other resources? (skip if Terraform creates them)
 
@@ -125,6 +140,20 @@ cd -
 **Done when:** the `grep` prints nothing, the plan shows `27 to add, 0 to
 change, 0 to destroy`, the apply completes, and `managed-values.json` exists.
 
+**Terraform state.** The example has no `backend` block, so the state stays in
+a local file. To keep it in Cloud Storage, create a private, versioned bucket
+and add a backend before `terraform init`:
+
+```sh
+gcloud storage buckets create gs://<project id>-tfstate --location <region> \
+  --uniform-bucket-level-access --public-access-prevention
+gcloud storage buckets update gs://<project id>-tfstate --versioning
+printf 'terraform {\n  backend "gcs" {}\n}\n' > backend_override.tf
+terraform init -backend-config="bucket=<project id>-tfstate" -backend-config="prefix=agent-relay"
+```
+
+Either way, keep the state: upgrades and teardown need it.
+
 - **`Error 403 ... servicenetworking`** or **`no private services access
   connection`:** the VPC has no Private Services Access. Your network team
   configures it on the cluster's VPC; then apply again.
@@ -151,11 +180,23 @@ sed "s|__IMAGE_MIRROR_ROOT__|$MIRROR_ROOT|g" release/release-images.values.yaml 
 grep -c "$MIRROR_ROOT" release-images.values.yaml
 ```
 
-The GKE **node service account** must be able to pull from this repository
-(`roles/artifactregistry.reader` on it, or on the project). The default
-Compute Engine service account usually already can.
+The GKE **node service account** must be able to pull from this repository.
+In an older project the default Compute Engine service account often can
+already, through a project-wide Editor role. In a **new project** it usually
+has no roles, and every pull fails with `403`. Grant the reader role on this
+repository only:
 
-**Done when:** eight `ok` lines, and the last line prints a number above 10.
+```sh
+NODE_SA=$(gcloud container node-pools describe <node pool> --cluster <cluster> --location $REGION \
+  --format='value(config.serviceAccount)')
+[ "$NODE_SA" = default ] && NODE_SA="$(gcloud projects describe $PROJECT --format='value(projectNumber)')-compute@developer.gserviceaccount.com"
+gcloud artifacts repositories add-iam-policy-binding $REPO --location $REGION \
+  --member "serviceAccount:$NODE_SA" --role roles/artifactregistry.reader
+```
+
+**Done when:** eight `ok` lines, the `grep -c` line prints a number above 10,
+and the binding lists the node service account. Do it before step 8: its Job is
+the first pod that pulls from the mirror.
 
 ## 6. Reserve the IP address and point DNS at it (DNS owner)
 
@@ -230,8 +271,20 @@ admin password from Secret Manager and never prints it.
 `extensions: btree_gin,pg_trgm,plpgsql,vector`.
 
 Copy `~/.agent-relay-install` to your secret store: it holds the database
-passwords.
+passwords. With Secret Manager, for example:
 
+```sh
+tar -C ~ -czf - .agent-relay-install | gcloud secrets create agent-relay-install-files \
+  --project $GCP_PROJECT_ID --replication-policy automatic --labels app=agent-relay --data-file=-
+```
+
+Later copies add a version instead: `gcloud secrets versions add agent-relay-install-files --project $GCP_PROJECT_ID --data-file=-`.
+
+- **It waits about 10 minutes, then says the Job did not succeed:** look at
+  the Job's pod (`kubectl -n $NAMESPACE describe pod -l job-name=agent-relay-cloud-sql-pre`).
+  `ImagePullBackOff` or `403 Forbidden` means the node service account can't
+  read the mirror: grant it as in step 5, then run `pre` again. Nothing was
+  written to Cloud SQL, and the script recreates its Job.
 - **`differs from CLOUD_SQL_CA_SHA256`:** `managed-values.json` is from an
   older apply. Rerun the last command of step 4, then `source settings.sh`.
 - **The Job is evicted (`low on resource: ephemeral-storage`):** the nodes'
@@ -276,7 +329,7 @@ done
 ```
 
 **Done when:** five lines that end in `created`. Copy `~/.agent-relay-install`
-to your secret store again: it now holds the encryption keys.
+to your secret store again (step 8 shows how): it now holds the encryption keys.
 
 **b. helm-secrets with SOPS** (every secret in one encrypted values file, for
 example encrypted with a Cloud KMS key):
@@ -406,6 +459,27 @@ kubectl -n $NAMESPACE get secret agent-relay-secrets -o jsonpath='{.data.selfhos
    key**.
 2. Paste the key and choose a password.
 
+**No `kubectl` from the admin's machine?** With a private control plane the
+first admin often can't reach the cluster. Whoever runs the install can do the
+same first sign-in through the API, without the key or password ever being
+shown: it stores a generated password in Secret Manager, then posts it with the
+key.
+
+```sh
+PW=$(openssl rand -base64 33 | tr -d '\n/+=' | cut -c1-32)
+printf '%s' "$PW" | gcloud secrets create agent-relay-first-admin-password --project $GCP_PROJECT_ID \
+  --replication-policy automatic --labels app=agent-relay --data-file=-
+KEY=$(kubectl -n $NAMESPACE get secret agent-relay-secrets -o jsonpath='{.data.selfhost-setup-key}' | base64 -d)
+jq -n --arg k "$KEY" --arg p "$PW" '{setupKey:$k,password:$p}' | curl -sS -o /dev/null -w '%{http_code}\n' \
+  -X POST -H 'content-type: application/json' --data-binary @- "https://api.$DOMAIN/api/v1/auth/password/setup-key"
+unset KEY PW
+```
+
+It prints `200`. The admin reads the password with
+`gcloud secrets versions access latest --secret agent-relay-first-admin-password --project <project id>`
+and signs in at `https://<domain>/login`. The setup key works once, within 24
+hours: don't retry a failure in a loop.
+
 Then add users:
 
 ```sh
@@ -422,7 +496,8 @@ sign-in.
 - **Before people start:** in the dashboard, under Settings › Policies, set
   what the desktop app uploads.
 - **Desktop app:** install it, sign in to `https://<domain>`, run one agent
-  session, and check it appears under **Sessions**.
+  session, and check it appears under **Sessions**. A desktop build for a GKE
+  install doesn't update itself (NOT-QUALIFIED.md item 11).
 - **Search:** transcript search is stored in Cloud SQL (`search.backend:
   postgres`); there is no search cluster to run.
 - **Problems:** to ask for help, send:
@@ -438,3 +513,48 @@ sign-in.
 **Read NOT-QUALIFIED.md before a production rollout.** In particular, item 1:
 with the 2026.11.1 services image, session transcript reads fail on GCS
 (fixed in 2026.11.2).
+
+## Starting from an empty project
+
+The steps above assume a GKE cluster in a VPC with Private Services Access. If
+you have neither, this creates a dedicated project in a minimal shape that meets
+"The cluster" at the top: private nodes, Cloud NAT for their outbound traffic,
+and a public control plane open only to the addresses you list. Change the
+ranges if they overlap your other networks.
+
+```sh
+P=<project id>; R=<region, e.g. us-central1>
+gcloud projects create $P --organization <organization id> --labels app=agent-relay
+gcloud billing projects link $P --billing-account <billing account id>
+gcloud config set project $P
+gcloud services enable container.googleapis.com compute.googleapis.com servicenetworking.googleapis.com \
+  cloudresourcemanager.googleapis.com iam.googleapis.com storage.googleapis.com
+gcloud compute networks create agent-relay-vpc --subnet-mode custom
+gcloud compute networks subnets create agent-relay-subnet --network agent-relay-vpc --region $R \
+  --range 10.10.0.0/20 --secondary-range pods=10.20.0.0/16,services=10.30.0.0/20 \
+  --enable-private-ip-google-access
+gcloud compute addresses create agent-relay-psa --global --purpose VPC_PEERING \
+  --prefix-length 16 --network agent-relay-vpc --addresses 10.40.0.0
+gcloud services vpc-peerings connect --service servicenetworking.googleapis.com \
+  --network agent-relay-vpc --ranges agent-relay-psa
+gcloud compute routers create agent-relay-router --network agent-relay-vpc --region $R
+gcloud compute routers nats create agent-relay-nat --router agent-relay-router --region $R \
+  --auto-allocate-nat-external-ips --nat-all-subnet-ip-ranges
+gcloud container clusters create agent-relay --location $R --num-nodes 1 \
+  --machine-type e2-standard-4 --disk-type pd-balanced --disk-size 100 \
+  --network agent-relay-vpc --subnetwork agent-relay-subnet --enable-ip-alias \
+  --cluster-secondary-range-name pods --services-secondary-range-name services \
+  --workload-pool=$P.svc.id.goog --workload-metadata=GKE_METADATA \
+  --addons HttpLoadBalancing,GcePersistentDiskCsiDriver --release-channel regular \
+  --enable-private-nodes --master-ipv4-cidr 172.16.0.0/28 \
+  --enable-master-authorized-networks --master-authorized-networks <your IP>/32 \
+  --enable-shielded-nodes
+```
+
+A regional cluster with `--num-nodes 1` gets one node in each of the region's
+three zones. Then continue at step 1 with `<cluster>` = `agent-relay` and
+`<cluster VPC>` = `agent-relay-vpc`, and grant the node service account in
+step 5. Run everything that needs `kubectl` from an address in the authorized
+list.
+
+**Done when:** step 2's checks pass on the new cluster.
