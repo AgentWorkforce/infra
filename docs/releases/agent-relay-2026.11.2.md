@@ -1,4 +1,4 @@
-# Agent Relay 2026.11.2 (draft)
+# Agent Relay 2026.11.2
 
 A PostgreSQL robustness release. Relaycast stays on its PostgreSQL backend:
 it recovers from a database failover without a restart, and it no longer
@@ -32,22 +32,6 @@ migration runs on your database (below).
     needs;
   - migration 20261105059000 lets a GCS install publish canonical copies (the
     publication RPCs accepted only `s3`).
-
-- **GKE installs** (from an end-to-end install into a new Google Cloud
-  project):
-  - the GCP Terraform example can create the image mirror and grant the GKE
-    node service account read access on it (`image_mirror_repository`,
-    `gke_node_service_account`). In a new project the nodes had no access, and
-    step 8's Job timed out on `403` image pulls. Off unless set, so an existing
-    install's plan doesn't change;
-  - co-branding (relay-webapp chart 0.2.5): `global.branding.logo.dashboardKey`
-    serves a second PNG beside the sign-in mark, so the sign-in page shows the
-    customer's mark under the Agent Relay lockup and the dashboard shows a
-    combined logo. `values-branding-example.yaml` shows the whole set, and the
-    install's `values.yaml` carries it commented out;
-  - `first-admin.sh` does the first admin's sign-in through the API when the
-    admin can't reach the cluster: the password goes to Secret Manager first,
-    and neither it nor the setup key is printed.
 
 ## Upgrading: the Sessions index step
 
