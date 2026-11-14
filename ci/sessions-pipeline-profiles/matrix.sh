@@ -420,6 +420,36 @@ if [ "$mode" = static ]; then
   expect_fail "activeDeadlineSeconds must exceed deadlineSeconds" \
     -f "$CHART/profiles/aws-rds-native.yaml" -f "$CHART/ci/aws-rds-native-inputs.yaml" \
     --set searchIndexer.outputFacts.bootstrap.enabled=true --set searchIndexer.outputFacts.bootstrap.deadlineSeconds=9000
+  # Static Locker keys (S3-compatible store without workload identity, e.g. MinIO on AKS):
+  # opt-in, unset by default, and reaching the Deployment and both bootstrap Jobs.
+  [ -z "$(yq -r 'select(.metadata.name | test("^ci-search-indexer")) | .. | select(has("name")?) | select(.name == "LOCKER_ACCESS_KEY_ID" or .name == "LOCKER_SECRET_ACCESS_KEY") | .name' <<<"$out" | grep -v '^---$' || true)" ] \
+    || err "aws-rds-native: the search indexer renders static Locker keys by default"
+  static_keys=(-f "$CHART/profiles/aws-rds-native.yaml" -f "$CHART/ci/aws-rds-native-inputs.yaml"
+    --set searchIndexer.locker.credentials.mode=secret --set searchIndexer.locker.endpoint=http://minio.ci.svc:9000
+    --set searchIndexer.locker.existingSecret=ci-locker --set searchIndexer.outputFacts.bootstrap.enabled=true)
+  static_out=$(render "${static_keys[@]}") || err "aws-rds-native: static Locker keys do not render"
+  for sel in 'select(.kind == "Deployment" and .metadata.name == "ci-search-indexer")' \
+             'select(.kind == "Job" and .metadata.labels."app.kubernetes.io/component" == "output-facts-bootstrap")' \
+             'select(.kind == "Job" and (.metadata.name | test("^ci-search-indexer-bootstrap-[0-9a-f]{8}$")))'; do
+    for pair in LOCKER_ACCESS_KEY_ID=access-key-id LOCKER_SECRET_ACCESS_KEY=secret-access-key; do
+      ref=$(yq -r "$sel | .spec.template.spec.containers[0].env[] | select(.name == \"${pair%%=*}\") | .valueFrom.secretKeyRef | .name + \"/\" + .key" <<<"$static_out" | grep -v '^---$')
+      [ "$ref" = "ci-locker/${pair#*=}" ] || err "aws-rds-native: static Locker keys: ${pair%%=*} in $sel is '$ref', want ci-locker/${pair#*=}"
+    done
+  done
+  ref=$(render "${static_keys[@]}" --set searchIndexer.locker.accessKeyIdKey=rootUser --set searchIndexer.locker.secretAccessKeyKey=rootPassword \
+    | yq -r 'select(.kind == "Deployment" and .metadata.name == "ci-search-indexer") | .spec.template.spec.containers[0].env[] | select(.name | test("^LOCKER_(ACCESS_KEY_ID|SECRET_ACCESS_KEY)$")) | .valueFrom.secretKeyRef.key' | grep -v '^---$' | paste -sd, -)
+  [ "$ref" = rootUser,rootPassword ] || err "aws-rds-native: static Locker key names are not overridable ($ref)"
+  expect_fail "searchIndexer.locker.endpoint is required for static S3/MinIO credentials" \
+    -f "$CHART/profiles/aws-rds-native.yaml" -f "$CHART/ci/aws-rds-native-inputs.yaml" \
+    --set searchIndexer.locker.credentials.mode=secret --set searchIndexer.locker.existingSecret=ci-locker
+  expect_fail "searchIndexer.locker.existingSecret is required for static S3/MinIO credentials" \
+    -f "$CHART/profiles/aws-rds-native.yaml" -f "$CHART/ci/aws-rds-native-inputs.yaml" \
+    --set searchIndexer.locker.credentials.mode=secret --set searchIndexer.locker.endpoint=http://minio.ci.svc:9000
+  expect_fail "searchIndexer.locker.credentials.mode=secret is only supported with locker.provider=s3" \
+    -f "$CHART/profiles/aws-rds-native.yaml" -f "$CHART/ci/aws-rds-native-inputs.yaml" \
+    --set searchIndexer.locker.credentials.mode=secret --set searchIndexer.locker.provider=gcs --set searchIndexer.locker.existingSecret=ci-locker
+  expect_fail "searchIndexer.locker.credentials.mode must be secret or podIdentity" \
+    -f "$CHART/profiles/aws-rds-native.yaml" -f "$CHART/ci/aws-rds-native-inputs.yaml" --set searchIndexer.locker.credentials.mode=keys
   [ "$(yq -r 'select(.kind == "Deployment" and .metadata.name == "ci-ingest-edge") | .spec.template.spec.containers[0].env[] | select(.name == "RELAYCONTROL_INTROSPECT_URL") | .value' <<<"$out" | grep -v '^---$')" = http://ci-relay-control.ci.svc.cluster.local ] \
     || err "aws-rds-native: ingest edge does not use the release-overlay Control Service URL"
   [ "$(read_value SEARCH_INDEX_BACKEND)" = opensearch ] || err "aws-rds-native: read API does not select OpenSearch"

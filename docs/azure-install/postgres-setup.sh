@@ -21,6 +21,8 @@
 #   SERVICES_IMAGE   approved sessions-pipeline services image, pinned by digest
 # Optional:
 #   NAMESPACE        default agent-relay
+#   RELEASE          Helm release name, default agent-relay (post checks its
+#                    current HoopDb migrate Job)
 #   CLUSTER          CloudNativePG Cluster name, default hoopdb. With another
 #                    NAMESPACE or CLUSTER, the server certificate in
 #                    postgres-tls.yaml needs the matching dnsNames; pre refuses
@@ -41,6 +43,7 @@ case "$MODE" in pre|post|finalize) ;; *) echo "usage: $0 pre|post|finalize" >&2;
 if [[ "$MODE" == finalize ]]; then SERVICES_IMAGE="${SERVICES_IMAGE:-unused@sha256:0}"; fi
 : "${SERVICES_IMAGE:?set SERVICES_IMAGE to the approved sessions-pipeline image digest}"
 NS="${NAMESPACE:-agent-relay}"
+RELEASE="${RELEASE:-agent-relay}"
 CLUSTER="${CLUSTER:-hoopdb}"
 CA_SECRET="${CA_SECRET:-postgres-ca}"
 STATE_DIR="${STATE_DIR:-$HOME/.agent-relay-install}"
@@ -55,7 +58,7 @@ RUNTIME=sessions_pipeline_runtime
 log() { printf '%s %s\n' "$(date -u +%H:%M:%SZ)" "$*"; }
 die() { log "ERROR: $*" >&2; exit 1; }
 
-for tool in kubectl jq openssl tar; do
+for tool in kubectl helm jq openssl tar; do
   command -v "$tool" >/dev/null || die "$tool is not installed"
 done
 KUBECTL_CONTEXT_ARGS=()
@@ -262,10 +265,16 @@ do_post() {
   for p in bulls96_read_api bulls96_session_ingest search_consumer_runtime; do
     [[ -s "$PW_DIR/$p" ]] || die "missing $p password: run '$0 pre' first"
   done
-  local migrated
-  migrated="$(kubectl -n "$NS" get jobs -o json | jq -r \
-    '[.items[] | select(.metadata.name | contains("worker-migrate")) | .status.succeeded // 0] | add // 0')"
-  [[ "$migrated" -ge 1 ]] || die "the HoopDb migrate Job has not succeeded yet"
+  # The migrate Job name is content-addressed, so older succeeded Jobs can
+  # linger after an upgrade. Check only the one the current release renders.
+  local job migrated
+  job="$(helm ${KUBECTL_CONTEXT_ARGS[@]+--kube-context "$KUBE_CONTEXT"} -n "$NS" get manifest "$RELEASE" \
+    | awk '/^---/{k=""} /^kind: Job$/{k=1} k && /^  name: /{print $2; k=""}' \
+    | grep -E -- '-worker-migrate-[0-9a-f]+$' || true)"
+  [[ -n "$job" && "$(printf '%s\n' "$job" | wc -l)" -eq 1 ]] \
+    || die "cannot find exactly one HoopDb migrate Job in Helm release $RELEASE (set RELEASE)"
+  migrated="$(kubectl -n "$NS" get job "$job" -o jsonpath='{.status.succeeded}' 2>/dev/null || true)"
+  [[ "${migrated:-0}" -ge 1 ]] || die "the HoopDb migrate Job $job of release $RELEASE has not succeeded yet"
   fetch_sql
 
   sql_file session_read_api_role.sql | psql_su hoopdb
