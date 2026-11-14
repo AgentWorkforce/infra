@@ -166,11 +166,11 @@ images:
       status: verified
       verificationAccess: anonymous
     release:
-      workflow: https://github.com/AgentWorkforce/relaycast/blob/a63961bd5c453f0eaecbe4c5e67364b0a4696852/.github/workflows/publish-container.yml
-      run: https://github.com/AgentWorkforce/relaycast/actions/runs/43351584271
+      workflow: https://github.com/AgentWorkforce/relaycast/blob/810f48cebdacf3cee5362da43020c3216880c333/.github/workflows/publish-container.yml
+      run: https://github.com/AgentWorkforce/relaycast/actions/runs/43497501006
       trigger: workflow_dispatch
       buildsCommittedRevision: true
-      publishedTags: ["12.8.0-pg.2"]
+      publishedTags: ["12.8.0-pg.3"]
       publishesSbom: true
       publishesProvenance: true
       provenanceMode: max-plus-github-attestation
