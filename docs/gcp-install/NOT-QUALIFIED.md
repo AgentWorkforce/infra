@@ -7,15 +7,18 @@ project (regional GKE 1.36) on 2026.11.1. These are the places where the GKE
 path differs from what the release itself qualifies. Read them before a
 production rollout.
 
-1. **Session transcript reads (`/turns`) on GCS: fixed, check pending.**
-   The 2026.11.1 services image recorded every uploaded session with
-   `storage_provider = s3`, even when the objects are in GCS, so the read API
-   on GCS answered `GET /v1/sessions/<id>/turns` with
-   `501 turns_canonical_pointer_invalid`. This release's Sessions image
-   (relayhistory-pipeline `f8ac49b3`) records the configured provider, so a
-   fresh install writes correct rows from the start. An install upgraded from
-   2026.11.1 keeps its older rows as they were; no repair tool ships yet.
-   The `/turns` check on a GKE install with this image is pending.
+1. **Session reads on GCS fail: not fixed in this release.**
+   The services image records every uploaded session with
+   `storage_provider = s3`, even when the objects are in GCS. The read API on
+   GCS refuses those rows, so dashboard replay, `GET /v1/sessions/<id>/events`
+   and `/turns` answer `501 unsupported_by_backend`. This release's Sessions
+   image (relayhistory-pipeline `f8ac49b3`, the same as 2026.11.4) still has
+   this bug: relayhistory-pipeline #571 fixed only the publication path, and
+   the queue consumer still stamps `s3`. A 2026.11.4 GKE upgrade reproduced it
+   on newly uploaded sessions. The fix (the consumer stamps the Locker's
+   provider, plus an operator re-stamp tool for rows already stamped `s3`) is
+   in review and ships in a later release; until then, GKE installs cannot
+   read sessions back.
 
 2. **The release image overlay is the EKS one.** `release-images.values.yaml`
    and the install pack are generated for the `eks` profile, and the release
