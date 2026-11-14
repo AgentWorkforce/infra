@@ -11,11 +11,12 @@
 #     --from-file=mark.png=<customer mark, square PNG> \
 #     --from-file=cobrand.png=<Agent Relay lockup + customer mark, wide PNG>
 #
-# - Sign-in page: the Agent Relay lockup, with mark.png and orgName under it
-#   (relay-control publishes it as SELFHOST_LOGIN_LOGO_URL,
-#   https://<dashboard host>/brand/mark.png).
-# - Dashboard: cobrand.png replaces the Agent Relay mark and wordmark, so draw
-#   both in it; productName stays "Agent Relay" because it is not set.
+# - Sign-in page and dashboard: cobrand.png (relay-webapp.customerProfile.logo)
+#   replaces the Agent Relay mark and wordmark at the top, so draw the Agent
+#   Relay lockup and the customer mark both in it. The sign-in page adds
+#   "for <orgName>" under it; productName stays "Agent Relay" because it is
+#   not set. mark.png is the favicon, and relay-control publishes it as
+#   SELFHOST_LOGIN_LOGO_URL (https://<dashboard host>/brand/mark.png).
 # - Settings > "Connect your agents" opens the customer's Desktop build
 #   (customerProfile.desktop: the build's link scheme and site).
 #
