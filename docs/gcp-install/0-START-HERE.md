@@ -40,7 +40,7 @@ git clone https://github.com/AgentWorkforce/infra.git
 # This guide's files (values.yaml and the scripts) come from main: the release
 # tag predates them. Terraform and the chart come from the tag below.
 git -C infra archive origin/main docs/gcp-install | tar -x --strip-components=2
-ls 0-START-HERE.md values.yaml cloud-sql-setup.sh helm-secrets-prepare.sh add-user.sh >/dev/null && echo "guide ok"
+ls 0-START-HERE.md values.yaml cloud-sql-setup.sh helm-secrets-prepare.sh first-admin.sh add-user.sh >/dev/null && echo "guide ok"
 git -C infra checkout agent-relay-2026.11.1
 test "$(git -C infra rev-parse HEAD)" = c6087c2fc6daee5359900b18da78c2522ffd1526 && echo "release ok"
 mkdir release && gh release download agent-relay-2026.11.1 -R AgentWorkforce/infra -D release
@@ -126,6 +126,8 @@ release_name         = "agent-relay"
 network_self_link    = "projects/<project id>/global/networks/<cluster VPC>"
 sessions_bucket_name = "<globally unique bucket name, e.g. acme-agent-relay-sessions>"
 deletion_protection  = true
+image_mirror_repository = "agent-relay-mirror"   # step 5's registry, readable by the GKE nodes
+# gke_node_service_account = "<email>"   # only if the node pool has its own service account
 # kms_key_name = "projects/<p>/locations/<region>/keyRings/<ring>/cryptoKeys/<key>"   # optional CMEK
 labels = { app = "agent-relay" }
 EOF
@@ -137,8 +139,8 @@ terraform output -json chart_values > ../../../../managed-values.json
 cd -
 ```
 
-**Done when:** the `grep` prints nothing, the plan shows `27 to add, 0 to
-change, 0 to destroy`, the apply completes, and `managed-values.json` exists.
+**Done when:** the `grep` prints nothing, the plan shows `29 to add, 0 to
+change, 0 to destroy` (27 without `image_mirror_repository`), the apply completes, and `managed-values.json` exists.
 
 **Terraform state.** The example has no `backend` block, so the state stays in
 a local file. To keep it in Cloud Storage, create a private, versioned bucket
@@ -163,14 +165,13 @@ Either way, keep the state: upgrades and teardown need it.
 
 ## 5. Mirror the images to Artifact Registry
 
-Copy the eight release images, by digest, into your own registry. Run this from
-**Cloud Shell or a VM in Google Cloud**: from there it takes about a minute;
-from a laptop it can take half an hour.
+Copy the eight release images, by digest, into the registry step 4 created. Run
+this from **Cloud Shell or a VM in Google Cloud**: from there it takes about a
+minute; from a laptop it can take half an hour.
 
 ```sh
-REGION=<region>; PROJECT=<project id>; REPO=agent-relay-mirror
-gcloud artifacts repositories create $REPO --repository-format=docker --location=$REGION
-export MIRROR_ROOT=$REGION-docker.pkg.dev/$PROJECT/$REPO
+REGION=<region>
+export MIRROR_ROOT=$(terraform -chdir=infra/terraform/examples/gcp output -raw image_mirror_root)
 gcloud auth print-access-token | crane auth login $REGION-docker.pkg.dev -u oauth2accesstoken --password-stdin
 for ref in $(jq -r '.images[].ref' release/release-manifest.json); do
   crane copy "$ref" "$MIRROR_ROOT/${ref%@*}"
@@ -180,23 +181,27 @@ sed "s|__IMAGE_MIRROR_ROOT__|$MIRROR_ROOT|g" release/release-images.values.yaml 
 grep -c "$MIRROR_ROOT" release-images.values.yaml
 ```
 
-The GKE **node service account** must be able to pull from this repository.
-In an older project the default Compute Engine service account often can
-already, through a project-wide Editor role. In a **new project** it usually
-has no roles, and every pull fails with `403`. Grant the reader role on this
-repository only:
+The GKE **node service account** pulls these images. Step 4 granted it
+`roles/artifactregistry.reader` on this repository only: the project's default
+Compute Engine service account, or `gke_node_service_account`. Check which
+account your node pool uses:
 
 ```sh
-NODE_SA=$(gcloud container node-pools describe <node pool> --cluster <cluster> --location $REGION \
-  --format='value(config.serviceAccount)')
-[ "$NODE_SA" = default ] && NODE_SA="$(gcloud projects describe $PROJECT --format='value(projectNumber)')-compute@developer.gserviceaccount.com"
-gcloud artifacts repositories add-iam-policy-binding $REPO --location $REGION \
-  --member "serviceAccount:$NODE_SA" --role roles/artifactregistry.reader
+gcloud container node-pools list --cluster <cluster> --location $REGION --format='value(name,config.serviceAccount)'
 ```
 
-**Done when:** eight `ok` lines, the `grep -c` line prints a number above 10,
-and the binding lists the node service account. Do it before step 8: its Job is
-the first pod that pulls from the mirror.
+`default` means the default Compute Engine service account. If it names
+another account, set `gke_node_service_account` to it and apply step 4 again.
+In a new project nothing else grants that read, and every pull fails with
+`403` (step 8's Job is the first pod that pulls).
+
+**Done when:** `MIRROR_ROOT` is not empty, eight `ok` lines, and the `grep -c`
+line prints a number above 10.
+
+**Using a registry Terraform doesn't manage?** Leave `image_mirror_repository`
+out of step 4, create the repository yourself, set
+`MIRROR_ROOT=$REGION-docker.pkg.dev/<project id>/<repository>`, and grant the
+node service account `roles/artifactregistry.reader` on it (2-SERVICE-ACCOUNTS.md).
 
 ## 6. Reserve the IP address and point DNS at it (DNS owner)
 
@@ -283,7 +288,7 @@ Later copies add a version instead: `gcloud secrets versions add agent-relay-ins
 - **It waits about 10 minutes, then says the Job did not succeed:** look at
   the Job's pod (`kubectl -n $NAMESPACE describe pod -l job-name=agent-relay-cloud-sql-pre`).
   `ImagePullBackOff` or `403 Forbidden` means the node service account can't
-  read the mirror: grant it as in step 5, then run `pre` again. Nothing was
+  read the mirror: check it as in step 5, then run `pre` again. Nothing was
   written to Cloud SQL, and the script recreates its Job.
 - **`differs from CLOUD_SQL_CA_SHA256`:** `managed-values.json` is from an
   older apply. Rerun the last command of step 4, then `source settings.sh`.
@@ -304,6 +309,22 @@ grep -n '__[A-Z_]*__' values.yaml
 
 **Done when:** the only line printed is `__LLM_MODEL__`. That one is set later,
 when you turn on titles and summaries.
+
+**Optional: co-branding.** The product stays Agent Relay; your logo goes beside
+it. The sign-in page shows your square mark under the Agent Relay lockup, and
+the dashboard shows one wide image with both logos. Put both PNGs in a
+ConfigMap before step 11:
+
+```sh
+kubectl -n $NAMESPACE create configmap relay-brand \
+  --from-file=mark.png=<your square mark>.png --from-file=cobrand.png=<Agent Relay + your logo>.png
+```
+
+Then uncomment the three "Optional co-branding" blocks in `values.yaml`
+(`global.branding`, `relay-control.login`, `relay-webapp.customerProfile`) and
+fill in their placeholders. For a branded desktop app,
+`customerProfile.desktop` takes that build's link scheme and site.
+`$CHART/values-branding-example.yaml` explains each value.
 
 ## 10. Create the secrets
 
@@ -460,28 +481,22 @@ kubectl -n $NAMESPACE get secret agent-relay-secrets -o jsonpath='{.data.selfhos
 2. Paste the key and choose a password.
 
 **No `kubectl` from the admin's machine?** With a private control plane the
-first admin often can't reach the cluster. Whoever runs the install can do the
+first admin often can't reach the cluster. Whoever runs the install does the
 same first sign-in through the API, without the key or password ever being
-shown: it stores a generated password in Secret Manager, then posts it with the
-key.
+shown:
 
 ```sh
-PW=$(openssl rand -base64 33 | tr -d '\n/+=' | cut -c1-32)
-printf '%s' "$PW" | gcloud secrets create agent-relay-first-admin-password --project $GCP_PROJECT_ID \
-  --replication-policy automatic --labels app=agent-relay --data-file=-
-KEY=$(kubectl -n $NAMESPACE get secret agent-relay-secrets -o jsonpath='{.data.selfhost-setup-key}' | base64 -d)
-KEY="$KEY" PW="$PW" jq -n '{setupKey:env.KEY,password:env.PW}' | curl -sS -o /dev/null -w '%{http_code}\n' \
-  -X POST -H 'content-type: application/json' -H "Origin: https://$DOMAIN" \
-  --data-binary @- "https://api.$DOMAIN/api/v1/auth/password/setup-key"
-unset KEY PW
+bash first-admin.sh "$DOMAIN" "$GCP_PROJECT_ID" "$NAMESPACE"
 ```
 
-It prints `200`. The `Origin` header is required: sign-in routes refuse a
-request without your dashboard's origin (`403 csrf_rejected`) before they
-read the key, so a refused call leaves the key unused. The admin reads the password with
+It stores a generated password in Secret Manager as
+`agent-relay-first-admin-password`, then posts it with the setup key, and
+prints `first admin set`. The admin reads the password with
 `gcloud secrets versions access latest --secret agent-relay-first-admin-password --project <project id>`
 and signs in at `https://<domain>/login`. The setup key works once, within 24
-hours: don't retry a failure in a loop.
+hours: the script never retries, and it stops if the secret already exists.
+A `403 csrf_rejected` means the request lacked your dashboard's origin; it is
+refused before the key is read, so the key stays unused.
 
 Then add users:
 

@@ -41,6 +41,10 @@ same file name rule, so keep relay-control.brandLogoFile in step. */ -}}
 {{- $logo := include "relay-webapp.brandLogo" . | fromJson -}}
 {{- if $logo.svg }}logo.svg{{ else if $logo.existingConfigMap }}{{ $logo.key | default "logo.png" }}{{ end -}}
 {{- end -}}
+{{- define "relay-webapp.brandDashboardFile" -}}
+{{- $logo := include "relay-webapp.brandLogo" . | fromJson -}}
+{{- if $logo.existingConfigMap }}{{ $logo.dashboardKey | default "" }}{{ end -}}
+{{- end -}}
 {{- define "relay-webapp.brandConfigMap" -}}
 {{- $logo := include "relay-webapp.brandLogo" . | fromJson -}}
 {{- if $logo.svg }}{{ printf "%s-brand" (include "relay-webapp.fullname" . | trunc 57 | trimSuffix "-") }}{{ else }}{{ $logo.existingConfigMap }}{{ end -}}
@@ -49,7 +53,7 @@ same file name rule, so keep relay-control.brandLogoFile in step. */ -}}
 {{- $raw := dig "branding" "logo" dict (.Values.global | default dict) -}}
 {{- if not (or (kindIs "invalid" $raw) (kindIs "map" $raw)) }}{{ fail "global.branding.logo must be a map with svg, existingConfigMap or key" }}{{ end -}}
 {{- $logo := $raw | default dict -}}
-{{- range $k, $v := $logo }}{{ if not (has $k (list "svg" "existingConfigMap" "key")) }}{{ fail (printf "global.branding.logo.%s is not a setting (use svg, or existingConfigMap and key)" $k) }}{{ end }}{{ if not (or (kindIs "invalid" $v) (kindIs "string" $v)) }}{{ fail (printf "global.branding.logo.%s must be a string" $k) }}{{ end }}{{ end -}}
+{{- range $k, $v := $logo }}{{ if not (has $k (list "svg" "existingConfigMap" "key" "dashboardKey")) }}{{ fail (printf "global.branding.logo.%s is not a setting (use svg, or existingConfigMap with key and dashboardKey)" $k) }}{{ end }}{{ if not (or (kindIs "invalid" $v) (kindIs "string" $v)) }}{{ fail (printf "global.branding.logo.%s must be a string" $k) }}{{ end }}{{ end -}}
 {{- if and $logo.svg $logo.existingConfigMap }}{{ fail "global.branding.logo: set svg or existingConfigMap, not both" }}{{ end -}}
 {{- if and $logo.key (not $logo.existingConfigMap) }}{{ fail "global.branding.logo.key names a key in existingConfigMap; set existingConfigMap too (an inline svg is always served as logo.svg)" }}{{ end -}}
 {{- with $logo.existingConfigMap }}{{ if or (gt (len .) 253) (not (regexMatch "^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$" .)) }}{{ fail "global.branding.logo.existingConfigMap must be a ConfigMap name in the release namespace" }}{{ end }}{{ end -}}
@@ -58,6 +62,15 @@ same file name rule, so keep relay-control.brandLogoFile in step. */ -}}
 dashboard origin when opened directly: only PNG is accepted there (served as
 image/png with nosniff); an SVG goes inline, where it is checked. */ -}}
 {{- with $logo.key }}{{ if or (gt (len .) 253) (not (regexMatch "^[A-Za-z0-9][A-Za-z0-9._-]*\\.png$" .)) }}{{ fail "global.branding.logo.key must be a file name of [A-Za-z0-9._-] ending in .png (an SVG logo goes inline in global.branding.logo.svg, where it is checked)" }}{{ end }}{{ end -}}
+{{- /* dashboardKey: a second PNG in the same existingConfigMap, served at
+/brand/<dashboardKey> for customerProfile.logo, so the sign-in page can show
+the customer's mark (key) under the Agent Relay lockup while the dashboard
+shows a combined Agent Relay + customer logo. */ -}}
+{{- with $logo.dashboardKey }}
+{{- if not $logo.existingConfigMap }}{{ fail "global.branding.logo.dashboardKey names a key in existingConfigMap; set existingConfigMap too" }}{{ end -}}
+{{- if or (gt (len .) 253) (not (regexMatch "^[A-Za-z0-9][A-Za-z0-9._-]*\\.png$" .)) }}{{ fail "global.branding.logo.dashboardKey must be a file name of [A-Za-z0-9._-] ending in .png" }}{{ end -}}
+{{- if eq . ($logo.key | default "logo.png") }}{{ fail "global.branding.logo.dashboardKey must differ from key (the sign-in logo)" }}{{ end -}}
+{{- end -}}
 {{- with $logo.svg -}}
 {{- if gt (len .) 262144 }}{{ fail "global.branding.logo.svg must be at most 256 KiB; use existingConfigMap for a larger file" }}{{ end -}}
 {{- if not (regexMatch "(?i)<([^\\s<>/:]+:)?svg[\\s/>]" .) }}{{ fail "global.branding.logo.svg must be SVG markup (<svg ...>...</svg>)" }}{{ end -}}

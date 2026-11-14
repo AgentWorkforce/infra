@@ -1,0 +1,46 @@
+# Co-branding: an overlay for values-gcp.yaml (or any profile) that keeps the
+# Agent Relay name and adds the customer's logo beside it. No image rebuild.
+#
+#   helm template agent-relay . -n agent-relay \
+#     -f values-gcp.yaml -f values-branding-example.yaml
+#
+# Both logos are PNGs in one ConfigMap you create in the release namespace
+# before the install (its content is not checked, so only PNG is accepted):
+#
+#   kubectl -n agent-relay create configmap relay-brand \
+#     --from-file=mark.png=<customer mark, square PNG> \
+#     --from-file=cobrand.png=<Agent Relay lockup + customer mark, wide PNG>
+#
+# - Sign-in page: the Agent Relay lockup, with mark.png and orgName under it
+#   (relay-control publishes it as SELFHOST_LOGIN_LOGO_URL,
+#   https://<dashboard host>/brand/mark.png).
+# - Dashboard: cobrand.png replaces the Agent Relay mark and wordmark, so draw
+#   both in it; productName stays "Agent Relay" because it is not set.
+# - Settings > "Connect your agents" opens the customer's Desktop build
+#   (customerProfile.desktop: the build's link scheme and site).
+#
+# Every value below is a placeholder; replace each before installing.
+global:
+  branding:
+    logo:
+      existingConfigMap: relay-brand
+      key: mark.png
+      dashboardKey: cobrand.png
+
+relay-control:
+  login:
+    # Shown beside the sign-in logo. Empty: relay-control.bootstrap.orgName.
+    orgName: Placeholder Company
+
+relay-webapp:
+  customerProfile:
+    title: Agent Relay
+    logo: /brand/cobrand.png
+    favicon: /brand/mark.png
+    accentColor: "#4d65ff"
+    brandColor: "#5b21b6"
+    supportUrl: mailto:support@placeholder.company
+    poweredByAgentRelay: true
+    desktop:
+      urlScheme: placeholder-relay
+      siteUrl: https://relay.placeholder.company
