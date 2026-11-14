@@ -133,3 +133,8 @@ output "functions" {
     secret_id            = module.functions[0].secret_id
   } : null
 }
+
+output "image_mirror_root" {
+  description = "MIRROR_ROOT for install guide step 5 (null unless image_mirror_repository is set)."
+  value       = local.image_mirror_enabled ? "${var.region}-docker.pkg.dev/${var.project_id}/${var.image_mirror_repository}" : null
+}

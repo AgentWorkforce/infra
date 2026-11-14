@@ -119,6 +119,9 @@ spec:
             defaultMode: 0444
             items:
               - { key: {{ . | quote }}, path: {{ . | quote }} }
+              {{- with include "relay-webapp.brandDashboardFile" $ }}
+              - { key: {{ . | quote }}, path: {{ . | quote }} }
+              {{- end }}
         {{- end }}
       {{- with .Values.nodeSelector }}
       nodeSelector: {{ toYaml . | nindent 8 }}

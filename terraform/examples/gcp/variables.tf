@@ -167,3 +167,27 @@ variable "notification_channels" {
   type        = list(string)
   default     = []
 }
+
+# --- Image mirror (image-mirror.tf) ------------------------------------------
+
+variable "image_mirror_repository" {
+  description = "Artifact Registry repository for the release images (guide step 5), created in var.region. Empty: no repository and no grant."
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = var.image_mirror_repository == "" || can(regex("^[a-z]([a-z0-9-]{0,61}[a-z0-9])?$", var.image_mirror_repository))
+    error_message = "image_mirror_repository must be a repository id: lowercase letters, digits and hyphens, starting with a letter."
+  }
+}
+
+variable "gke_node_service_account" {
+  description = "Email of the GKE node pool's service account, granted roles/artifactregistry.reader on the mirror. Empty: the project's default Compute Engine service account (a node pool whose serviceAccount is \"default\")."
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = var.gke_node_service_account == "" || can(regex("^[^@\\s]+@[^@\\s]+\\.iam\\.gserviceaccount\\.com$", var.gke_node_service_account))
+    error_message = "gke_node_service_account must be a service account email (…@….iam.gserviceaccount.com)."
+  }
+}

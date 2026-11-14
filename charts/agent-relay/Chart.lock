@@ -10,10 +10,10 @@ dependencies:
   version: 0.8.32
 - name: relay-control
   repository: file://../relay-control
-  version: 0.4.15
+  version: 0.4.16
 - name: relay-webapp
   repository: file://../relay-webapp
-  version: 0.2.4
+  version: 0.2.5
 - name: relayflows
   repository: file://../relayflows
   version: 0.2.5
@@ -29,5 +29,5 @@ dependencies:
 - name: relay-chief
   repository: file://../relay-chief
   version: 0.1.0
-digest: sha256:bcd7893747b66f0468f045388fa87354234e4a6e6701708b63adbcd4651feab0
-generated: "2026-11-13T21:43:24.334651-08:00"
+digest: sha256:26f6932dd3e753a23bb734762aa192c7d842be8fe580b541a78b40a90ddf3cf2
+generated: "2026-11-13T21:53:00.939228-08:00"

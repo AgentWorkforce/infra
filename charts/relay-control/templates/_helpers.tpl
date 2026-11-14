@@ -505,7 +505,7 @@ global.branding.logo at <dashboard origin>/brand/<file>. The file name rule
 matches relay-webapp.brandLogoFile. */ -}}
 {{- define "relay-control.brandLogoFile" -}}
 {{- $logo := dig "branding" "logo" dict (.Values.global | default dict) | default dict -}}
-{{- if not (kindIs "map" $logo) }}{{ fail "global.branding.logo must be a map with svg, existingConfigMap or key" }}{{ end -}}
+{{- if not (kindIs "map" $logo) }}{{ fail "global.branding.logo must be a map with svg, existingConfigMap, key or dashboardKey" }}{{ end -}}
 {{- if $logo.svg }}logo.svg{{ else if $logo.existingConfigMap }}{{ $logo.key | default "logo.png" }}{{ end -}}
 {{- end -}}
 {{- define "relay-control.loginLogoUrl" -}}

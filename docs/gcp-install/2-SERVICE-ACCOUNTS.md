@@ -22,7 +22,10 @@ change it everywhere.
   (`workloadPool: <project id>.svc.id.goog`), and every node pool that runs
   Agent Relay uses the GKE metadata server (`workloadMetadataConfig: GKE_METADATA`).
 - The **node service account** can pull from your Artifact Registry mirror
-  (`roles/artifactregistry.reader` on that repository).
+  (`roles/artifactregistry.reader` on that repository). With
+  `image_mirror_repository` set, step 4's Terraform creates the repository and
+  this grant (for the default Compute Engine service account, or
+  `gke_node_service_account`).
 
 Check:
 
@@ -54,7 +57,7 @@ name.
 | Pub/Sub subscription `<name>-pipeline` | `roles/pubsub.subscriber` | `agent-relay-worker`, `agent-relay-search-indexer` |
 | Pub/Sub topic `<name>-pipeline-dead-letter` | `roles/pubsub.publisher` | the Pub/Sub service agent `service-<project number>@gcp-sa-pubsub.iam.gserviceaccount.com` |
 | Pub/Sub subscription `<name>-pipeline` | `roles/pubsub.subscriber` | the same Pub/Sub service agent (needed for dead-lettering) |
-| Artifact Registry repository (your mirror) | `roles/artifactregistry.reader` | the GKE node service account |
+| Artifact Registry repository (your mirror; Terraform-made with `image_mirror_repository`) | `roles/artifactregistry.reader` | the GKE node service account |
 | Secret Manager secret holding the Cloud SQL admin password | `roles/secretmanager.secretAccessor` | **the person running the install** (not a pod) |
 
 `agent-relay-alleyoop` isn't used by this install: its Deployment is off. The

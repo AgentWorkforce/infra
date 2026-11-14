@@ -562,6 +562,14 @@ for chart in "${charts[@]}"; do
         [ "$(yq 'select(.kind == "Deployment") | .spec.template.spec.volumes[] | select(.name == "brand") | .configMap.items[0].key' <<<"$logo")" = "logo.png" ] \
           || err "$chart: existingConfigMap without key must serve logo.png"
         expect_render_failure "$chart" "$v" "unknown logo setting" "global.branding.logo.url is not a setting" --set global.branding.logo.url=https://x.example/logo.svg
+        # Co-branding: dashboardKey serves a second PNG from the same ConfigMap.
+        logo=$(render "$chart" "$v" --set global.branding.logo.existingConfigMap=relay-brand --set global.branding.logo.key=mark.png --set global.branding.logo.dashboardKey=cobrand.png)
+        [ "$(yq 'select(.kind == "Deployment") | .spec.template.spec.volumes[] | select(.name == "brand") | [.configMap.items[].path] | join(" ")' <<<"$logo" | grep -v '^---$' | grep .)" = "mark.png cobrand.png" ] \
+          || err "$chart: dashboardKey must project a second file beside key"
+        kubeconform -strict -summary -ignore-missing-schemas -kubernetes-version "${KUBE_VERSION:-1.33.0}" <<<"$logo" >/dev/null || err "$chart: co-brand logo render failed kubeconform"
+        expect_render_failure "$chart" "$v" "dashboardKey without a ConfigMap" "global.branding.logo.dashboardKey names a key in existingConfigMap" --set global.branding.logo.dashboardKey=cobrand.png
+        expect_render_failure "$chart" "$v" "dashboardKey type" "global.branding.logo.dashboardKey must be a file name" --set global.branding.logo.existingConfigMap=relay-brand --set global.branding.logo.dashboardKey=cobrand.svg
+        expect_render_failure "$chart" "$v" "dashboardKey equal to key" "dashboardKey must differ from key" --set global.branding.logo.existingConfigMap=relay-brand --set global.branding.logo.dashboardKey=logo.png
         ;;
       relay-control)
         v=charts/relay-control/ci/default-values.yaml
@@ -930,6 +938,16 @@ for chart in "${charts[@]}"; do
           || err "$chart: global.branding.logo must set relay-control's SELFHOST_LOGIN_LOGO_URL on the dashboard origin"
         [ "$(yq 'select(.kind == "Deployment") | .spec.template.spec.volumes[] | select(.name == "brand") | .configMap.name' <<<"$logo")" = "$(yq 'select(.kind == "ConfigMap" and (.data | has("logo.svg"))) | .metadata.name' <<<"$logo")" ] \
           || err "$chart: global.branding.logo must mount the chart's logo ConfigMap into relay-webapp"
+        # values-branding-example.yaml (co-branding) renders: the sign-in page
+        # links the customer mark, relay-webapp serves both PNGs, and the
+        # dashboard profile points at the combined logo.
+        cobrand=$(render "$chart" charts/agent-relay/ci/single-host-values.yaml -f charts/agent-relay/values-branding-example.yaml) || err "$chart: values-branding-example.yaml did not render"
+        [ "$(yq 'select(.kind == "Deployment") | .spec.template.spec.containers[0].env[] | select(.name == "SELFHOST_LOGIN_LOGO_URL") | .value' <<<"$cobrand")" = https://relay.gcp-proof.agentrelay.com/brand/mark.png ] \
+          || err "$chart: the co-brand example must link the sign-in mark on the dashboard origin"
+        [ "$(yq 'select(.kind == "Deployment") | .spec.template.spec.volumes[] | select(.name == "brand") | [.configMap.items[].path] | join(" ")' <<<"$cobrand" | grep -v '^---$' | grep .)" = "mark.png cobrand.png" ] \
+          || err "$chart: the co-brand example must serve mark.png and cobrand.png"
+        [ "$(yq 'select(.kind == "Deployment") | .spec.template.spec.containers[0].env[] | select(.name == "DASHBOARD_CUSTOMER_PROFILE") | .value' <<<"$cobrand" | jq -r '.logo + " " + (.productName // "unset")')" = "/brand/cobrand.png unset" ] \
+          || err "$chart: the co-brand example must keep the Agent Relay name and use the combined logo"
         expect_render_failure "$chart" charts/agent-relay/ci/single-host-values.yaml "hosted logo without the dashboard" "components.webapp=false" --set gkeIngress.enabled=false --set components.webapp=false --set-string 'global.branding.logo.svg=<svg/>'
         render "$chart" charts/agent-relay/ci/single-host-values.yaml --set gkeIngress.enabled=false --set components.webapp=false --set-string 'global.branding.logo.svg=<svg/>' --set relay-control.login.logoUrl=https://cdn.example.com/logo.svg >/dev/null \
           || err "$chart: components.webapp=false with relay-control.login.logoUrl must render"

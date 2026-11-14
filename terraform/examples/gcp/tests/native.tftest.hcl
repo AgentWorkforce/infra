@@ -72,3 +72,47 @@ run "native_data_services_are_complete" {
     error_message = "The generated read API overlay must retain the GCS object-key contract when it replaces site extraEnv."
   }
 }
+
+run "image_mirror_is_off_by_default" {
+  command = plan
+
+  assert {
+    condition     = length(google_artifact_registry_repository.mirror) == 0 && length(google_artifact_registry_repository_iam_member.mirror_node_reader) == 0 && output.image_mirror_root == null
+    error_message = "Without image_mirror_repository the example must plan no mirror and no grant, so existing installs see no change."
+  }
+}
+
+run "image_mirror_grants_the_default_node_service_account" {
+  command = apply
+
+  variables {
+    image_mirror_repository = "agent-relay-mirror"
+  }
+
+  assert {
+    condition     = google_artifact_registry_repository.mirror[0].repository_id == "agent-relay-mirror" && google_artifact_registry_repository.mirror[0].format == "DOCKER" && google_artifact_registry_repository.mirror[0].location == "us-central1"
+    error_message = "The mirror must be a Docker repository in the install region."
+  }
+  assert {
+    condition     = google_artifact_registry_repository_iam_member.mirror_node_reader[0].role == "roles/artifactregistry.reader" && google_artifact_registry_repository_iam_member.mirror_node_reader[0].member == "serviceAccount:123456789012-compute@developer.gserviceaccount.com"
+    error_message = "Nodes on the default Compute Engine service account must get read access on the mirror only."
+  }
+  assert {
+    condition     = output.image_mirror_root == "us-central1-docker.pkg.dev/example/agent-relay-mirror"
+    error_message = "image_mirror_root must be the step 5 MIRROR_ROOT."
+  }
+}
+
+run "image_mirror_grants_a_custom_node_service_account" {
+  command = plan
+
+  variables {
+    image_mirror_repository  = "agent-relay-mirror"
+    gke_node_service_account = "gke-nodes@example.iam.gserviceaccount.com"
+  }
+
+  assert {
+    condition     = google_artifact_registry_repository_iam_member.mirror_node_reader[0].member == "serviceAccount:gke-nodes@example.iam.gserviceaccount.com"
+    error_message = "A node pool's own service account must be the one granted."
+  }
+}
