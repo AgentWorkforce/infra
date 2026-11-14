@@ -162,10 +162,17 @@ done
 cp "$S/agent-relay-secrets/relaycontrol-introspect-secret" "$S/agent-relay-ingest-edge-runtime/introspect-secret"
 [ -s "$S/sessions-pipeline-locker/rootUser" ] || printf 'agentrelay' > "$S/sessions-pipeline-locker/rootUser"
 [ -s "$S/sessions-pipeline-locker/rootPassword" ] || openssl rand -hex 24 | tr -d '\n' > "$S/sessions-pipeline-locker/rootPassword" )
+put_secret() { # create the Secret, or replace it in place; never kubectl apply, which copies
+               # every value into a last-applied annotation (replace also drops an old one)
+  if kubectl -n agent-relay get secret "$1" >/dev/null 2>&1; then
+    kubectl -n agent-relay create secret generic "$@" --dry-run=client -o yaml | kubectl replace -f -
+  else
+    kubectl -n agent-relay create secret generic "$@"
+  fi
+}
 for name in agent-relay-secrets agent-relay-read-api agent-relay-ingest-edge-runtime \
             search-indexer-runtime search-indexer-owner sessions-pipeline-locker; do
-  kubectl -n agent-relay create secret generic "$name" --from-file="$S/$name" \
-    --dry-run=client -o yaml | kubectl apply -f -
+  put_secret "$name" --from-file="$S/$name"
 done
 ```
 

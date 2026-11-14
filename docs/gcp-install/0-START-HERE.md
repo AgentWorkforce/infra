@@ -342,14 +342,21 @@ for k in selfhost-bootstrap-token selfhost-setup-key relaycast-internal-secret \
 done
 [ -s "$S/agent-relay-secrets/SUMMARY_MASTER_KEYS" ] || printf 'k1:%s' "$(openssl rand -hex 32)" > "$S/agent-relay-secrets/SUMMARY_MASTER_KEYS"
 cp "$S/agent-relay-secrets/relaycontrol-introspect-secret" "$S/agent-relay-ingest-edge-runtime/introspect-secret" )
+put_secret() { # create the Secret, or replace it in place; never kubectl apply, which copies
+               # every value into a last-applied annotation (replace also drops an old one)
+  if kubectl -n $NAMESPACE get secret "$1" >/dev/null 2>&1; then
+    kubectl -n $NAMESPACE create secret generic "$@" --dry-run=client -o yaml | kubectl replace -f -
+  else
+    kubectl -n $NAMESPACE create secret generic "$@"
+  fi
+}
 for name in agent-relay-secrets agent-relay-read-api agent-relay-ingest-edge-runtime \
             search-indexer-runtime search-indexer-owner; do
-  kubectl -n $NAMESPACE create secret generic "$name" --from-file="$S/$name" \
-    --dry-run=client -o yaml | kubectl apply -f -
+  put_secret "$name" --from-file="$S/$name"
 done
 ```
 
-**Done when:** five lines that end in `created`. Copy `~/.agent-relay-install`
+**Done when:** five lines that end in `created` (`replaced` on a rerun). Copy `~/.agent-relay-install`
 to your secret store again (step 8 shows how): it now holds the encryption keys.
 
 **b. helm-secrets with SOPS** (every secret in one encrypted values file, for

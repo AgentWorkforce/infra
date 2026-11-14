@@ -117,8 +117,9 @@ run_job() {
   for p in "$@"; do cp "$PW_DIR/$p" "$secret_dir/$p"; done
 
   kubectl -n "$NS" delete job "$name" --ignore-not-found >/dev/null
-  kubectl -n "$NS" create secret generic "$JOB_SECRET" --from-file="$secret_dir" \
-    --dry-run=client -o yaml | kubectl apply -f - >/dev/null
+  # Delete and create, never apply: apply would copy the admin password into a last-applied annotation.
+  kubectl -n "$NS" delete secret "$JOB_SECRET" --ignore-not-found >/dev/null
+  kubectl -n "$NS" create secret generic "$JOB_SECRET" --from-file="$secret_dir" >/dev/null
   rm -rf "$secret_dir"
   kubectl -n "$NS" create configmap "$name-run" --from-file=run.sh="$script" \
     --from-file=session-erase-search.sql="$SCRIPT_DIR/rds-session-erase-search.sql" \
