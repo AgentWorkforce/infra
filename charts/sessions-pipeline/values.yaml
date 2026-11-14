@@ -575,6 +575,10 @@ ingestEdge:
     databaseUrlKey: database-url
     introspectSecretKey: introspect-secret
   postgres:
+    # custom-ca (default): verify against caConfigMap/caKey, pinned by caSha256.
+    # supabase: the image's built-in Supabase CA; it also lets the role check
+    # accept Supabase's creator membership edge. Leave the CA fields empty.
+    tlsProfile: custom-ca
     # The server must already serve TLS under this CA, with matching DNS.
     caConfigMap: ""
     caKey: ca.crt
