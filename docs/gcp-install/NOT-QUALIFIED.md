@@ -1,21 +1,21 @@
-# What agent-relay-2026.11.1 does not yet qualify on GKE
+# What agent-relay-2026.11.3 does not yet qualify on GKE
 
 The steps in 0-START-HERE.md were run end to end on a private regional GKE
 cluster (Kubernetes 1.35, Workload Identity, IAP-only control plane) with the
-release assets of agent-relay-2026.11.1. These are the places where the GKE
+release assets of agent-relay-2026.11.1, then again in a new Google Cloud
+project (regional GKE 1.36) on 2026.11.1. These are the places where the GKE
 path differs from what the release itself qualifies. Read them before a
 production rollout.
 
-1. **Session transcript reads (`/turns`) fail with 501 on GCP in 2026.11.1.**
-   The 2026.11.1 services image records every uploaded session with
-   `storage_provider = s3`, even when the objects are in GCS. The read API on
-   GCS then refuses those records: `GET /v1/sessions/<id>/turns` (and other
-   canonical transcript reads) answers `501 turns_canonical_pointer_invalid`.
-   Uploads, event reads and search indexing work. EKS is not affected.
-   **This is fixed in the 2026.11.2 Sessions image** (with a backfill for
-   sessions already uploaded). Don't onboard a GKE customer who needs
-   transcript reads before then. GKE is qualified for 2026.11.2 once the fixed
-   image passes the same `/turns` check on the dry-run install.
+1. **Session transcript reads (`/turns`) on GCS: fixed, check pending.**
+   The 2026.11.1 services image recorded every uploaded session with
+   `storage_provider = s3`, even when the objects are in GCS, so the read API
+   on GCS answered `GET /v1/sessions/<id>/turns` with
+   `501 turns_canonical_pointer_invalid`. This release's Sessions image
+   (relayhistory-pipeline `601d6a65`) records the configured provider, so a
+   fresh install writes correct rows from the start. An install upgraded from
+   2026.11.1 keeps its older rows as they were; no repair tool ships yet.
+   The `/turns` check on a GKE install with this image is pending.
 
 2. **The release image overlay is the EKS one.** `release-images.values.yaml`
    and the install pack are generated for the `eks` profile, and the release
@@ -32,8 +32,8 @@ production rollout.
 
 4. **`values-gcp.yaml` at the tag pins the previous release's images**
    (sessions-pipeline `77022c5b`, relay-control 0.5.16). Only the release
-   overlay brings the 2026.11.1 images. Always apply
-   `release-images.values.yaml` last; without it you would install 2026.11.0
+   overlay brings the 2026.11.3 images. Always apply
+   `release-images.values.yaml` last; without it you would install older
    images.
 
 5. **Search runs in Cloud SQL, not OpenSearch.** The chart's OpenSearch
@@ -59,8 +59,8 @@ production rollout.
 8. **Not HA.** Relay control, the dashboard, Relaycast (PostgreSQL backend)
    and the search indexer each run one replica, as on EKS.
 
-9. **The release notes at the tag say "draft".** `docs/releases/agent-relay-2026.11.1.md`
-   in the tagged tree still reads "Status: preparing". The published GitHub
+9. **Release notes.** `docs/releases/agent-relay-2026.11.3.md` (and the
+   2026.11.2 notes it builds on) describe the changes; the published GitHub
    release and its signed assets are final.
 
 10. **Not covered by the dry run:** CMEK keys, the optional event-driven

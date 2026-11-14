@@ -4,7 +4,7 @@ Numbered steps, in order. Copy each block, replace `<...>`, and check the
 **Done when** line before moving on. This takes about 1½ hours, most of it
 waiting on Google Cloud (the HTTPS certificate alone can take up to an hour).
 
-Release: **agent-relay-2026.11.1** (infra commit `c6087c2f`, chart 0.6.53).
+Release: **agent-relay-2026.11.3** (infra commit `a9b29222`, chart 0.7.8).
 
 **You need:**
 
@@ -41,10 +41,10 @@ git clone https://github.com/AgentWorkforce/infra.git
 # tag predates them. Terraform and the chart come from the tag below.
 git -C infra archive origin/main docs/gcp-install | tar -x --strip-components=2
 ls 0-START-HERE.md values.yaml cloud-sql-setup.sh helm-secrets-prepare.sh first-admin.sh add-user.sh >/dev/null && echo "guide ok"
-git -C infra checkout agent-relay-2026.11.1
-test "$(git -C infra rev-parse HEAD)" = c6087c2fc6daee5359900b18da78c2522ffd1526 && echo "release ok"
-mkdir release && gh release download agent-relay-2026.11.1 -R AgentWorkforce/infra -D release
-(cd release && sha256sum -c SHA256SUMS && tar -xzf agent-relay-0.6.53.tgz) | tail -1
+git -C infra checkout agent-relay-2026.11.3
+test "$(git -C infra rev-parse HEAD)" = a9b29222aee2a8347f6fa0c5a191d8f0a9a0fb8b && echo "release ok"
+mkdir release && gh release download agent-relay-2026.11.3 -R AgentWorkforce/infra -D release
+(cd release && sha256sum -c SHA256SUMS && tar -xzf agent-relay-0.7.8.tgz) | tail -1
 ```
 
 **Got this guide as a gist?** Replace the `mkdir agent-relay-install ...` line
@@ -53,7 +53,7 @@ and delete the `git -C infra archive ...` line: the gist already holds the
 guide's files.
 
 No `gh`? Download the same assets from
-https://github.com/AgentWorkforce/infra/releases/tag/agent-relay-2026.11.1 into
+https://github.com/AgentWorkforce/infra/releases/tag/agent-relay-2026.11.3 into
 `release/`. On macOS use `shasum -a 256 -c SHA256SUMS`.
 
 Tools: `gcloud` (with `gke-gcloud-auth-plugin`), `terraform` ≥ 1.11 (or
@@ -126,7 +126,7 @@ release_name         = "agent-relay"
 network_self_link    = "projects/<project id>/global/networks/<cluster VPC>"
 sessions_bucket_name = "<globally unique bucket name, e.g. acme-agent-relay-sessions>"
 deletion_protection  = true
-image_mirror_repository = "agent-relay-mirror"   # step 5's registry, readable by the GKE nodes (release 2026.11.2 or later; on 2026.11.1 leave it out and use step 5's fallback)
+image_mirror_repository = "agent-relay-mirror"   # step 5's registry, readable by the GKE nodes
 # gke_node_service_account = "<email>"   # only if the node pool has its own service account
 # kms_key_name = "projects/<p>/locations/<region>/keyRings/<ring>/cryptoKeys/<key>"   # optional CMEK
 labels = { app = "agent-relay" }
@@ -399,7 +399,7 @@ same five Secrets with the same keys.
 ## 11. Install with Helm
 
 ```sh
-helm upgrade --install $HELM_RELEASE "$INSTALL_DIR/release/agent-relay-0.6.53.tgz" --namespace $NAMESPACE \
+helm upgrade --install $HELM_RELEASE "$INSTALL_DIR/release/agent-relay-0.7.8.tgz" --namespace $NAMESPACE \
   -f "$CHART/values-gcp.yaml" -f "$CHART/values-gcp-native.yaml" \
   -f "$INSTALL_DIR/managed-values.json" -f "$INSTALL_DIR/values.yaml" \
   -f "$INSTALL_DIR/release-images.values.yaml" --timeout 25m
@@ -429,7 +429,7 @@ done
 bash cloud-sql-setup.sh post
 kubectl -n $NAMESPACE rollout restart deploy/agent-relay-read-api deploy/agent-relay-ingest-edge deploy/agent-relay-search-indexer
 for j in $(kubectl -n $NAMESPACE get jobs -o name | grep search-indexer-bootstrap); do kubectl -n $NAMESPACE delete "$j"; done
-helm upgrade --install $HELM_RELEASE "$INSTALL_DIR/release/agent-relay-0.6.53.tgz" --namespace $NAMESPACE \
+helm upgrade --install $HELM_RELEASE "$INSTALL_DIR/release/agent-relay-0.7.8.tgz" --namespace $NAMESPACE \
   -f "$CHART/values-gcp.yaml" -f "$CHART/values-gcp-native.yaml" \
   -f "$INSTALL_DIR/managed-values.json" -f "$INSTALL_DIR/values.yaml" \
   -f "$INSTALL_DIR/release-images.values.yaml" --timeout 25m
@@ -536,8 +536,8 @@ sign-in.
 ## What this release does not yet qualify on GKE
 
 **Read NOT-QUALIFIED.md before a production rollout.** In particular, item 1:
-with the 2026.11.1 services image, session transcript reads fail on GCS
-(fixed in 2026.11.2).
+this release's Sessions image fixes the GCS transcript reads (`/turns`) that
+failed on 2026.11.1; the `/turns` check on a GKE install is pending.
 
 ## Starting from an empty project
 
