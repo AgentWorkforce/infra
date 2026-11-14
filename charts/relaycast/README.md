@@ -313,7 +313,7 @@ Deployment back to 1.
 `runtime.backend: postgres` (default off) runs the server on an external
 PostgreSQL database. Uploaded files stay on the data PVC (see Node drains), and realtime, presence
 and rate limits are in-process, so `replicaCount` must stay 1. The image is
-`runtime.postgres.image` (12.8.0-pg.2), not `image.*`.
+`runtime.postgres.image` (12.8.0-pg.3), not `image.*`.
 
 Prepare the database first: the `relaycast_owner` and `relaycast_runtime` roles
 and schema `public`, as in `docs/self-host-postgres.md` in AgentWorkforce/relaycast.

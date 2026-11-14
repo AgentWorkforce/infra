@@ -6,7 +6,7 @@ set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)
 CHART="$ROOT/charts/relaycast"
 V="$CHART/ci/postgres-values.yaml"
-DIGEST=sha256:1307bd845031a7466e65ebaf08bc8b826e2837d90f58c9b5a6a1d673c62dad93
+DIGEST=sha256:cc2a79f02d39978fa04322b5a45497737ff137bc2a5db5615c7eee690030de83
 fail=0
 err() { echo "::error::$*"; fail=1; }
 render() { helm template ci "$CHART" --namespace ci -f "$V" "$@"; }

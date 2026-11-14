@@ -44,10 +44,11 @@ relaycast:
     postgres:
       image:
         repository: ghcr.io/agentworkforce/relaycast-self-host
-        # 12.8.0-pg.2, relaycast main a63961bd: first attested image with the
-        # full Postgres-to-actors export path (#653), plus the PG deadlock fix
-        # (#657). Required before --relaycast-actors credentials/cutover.
-        digest: sha256:1307bd845031a7466e65ebaf08bc8b826e2837d90f58c9b5a6a1d673c62dad93
+        # 12.8.0-pg.3, relaycast main 810f48ce (publish run 43497501006): the
+        # Postgres-to-actors export path (#653), the PG deadlock fix (#657),
+        # #663, #664, failover recovery without a restart (#667) and #668.
+        # Required before --relaycast-actors credentials/cutover.
+        digest: sha256:cc2a79f02d39978fa04322b5a45497737ff137bc2a5db5615c7eee690030de83
   postgresCa:
     enabled: true
     configMap: rds-ca

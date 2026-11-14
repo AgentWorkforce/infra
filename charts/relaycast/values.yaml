@@ -47,10 +47,11 @@ runtime:
     # Used instead of image.* on this backend.
     image:
       repository: ghcr.io/agentworkforce/relaycast-self-host
-      # relaycast-self-host:12.8.0-pg.2, relaycast main a63961bd (#653 full
-      # actor migration and #657 PostgreSQL deadlock fix), publish-container
-      # run 43351584271. Multi-platform with GitHub build provenance.
-      digest: sha256:1307bd845031a7466e65ebaf08bc8b826e2837d90f58c9b5a6a1d673c62dad93
+      # relaycast-self-host:12.8.0-pg.3, relaycast main 810f48ce (#653 full
+      # actor migration export, #657 PostgreSQL deadlock fix, #663, #664, #667
+      # failover recovery and /health/live + /health/ready, #668), publish run
+      # 43497501006. Multi-platform with GitHub build provenance.
+      digest: sha256:cc2a79f02d39978fa04322b5a45497737ff137bc2a5db5615c7eee690030de83
     # TCP keepalive sysctls on the server pod (net.ipv4.tcp_keepalive_intvl /
     # tcp_keepalive_probes, namespaced safe sysctls from Kubernetes 1.29). With
     # the engine's socket keepalive a half-open connection to a failed-over
