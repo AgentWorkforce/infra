@@ -548,10 +548,15 @@ correctly; this one-off tool fixes the rows written before. A fresh 2026.11.6
 install doesn't need it. It changes only rows whose objects it finds in your
 bucket, writes nothing in plan mode, and is safe to rerun.
 
+Run it in a terminal where you ran `cd agent-relay-install && source settings.sh`
+(step 7): it needs `NAMESPACE`, `REGION` and `SESSIONS_BUCKET` from there.
+
 ```sh
 IMG="$(kubectl -n $NAMESPACE get deploy agent-relay-read-api -o jsonpath='{.spec.template.spec.containers[0].image}')"
 CA_SHA="$(kubectl -n $NAMESPACE get deploy agent-relay-read-api -o jsonpath='{.spec.template.spec.containers[0].env[?(@.name=="SESSION_POSTGRES_CA_SHA256")].value}')"
 restamp() {  # restamp plan | restamp apply
+  [ -n "$NAMESPACE" ] && [ -n "$REGION" ] && [ -n "$SESSIONS_BUCKET" ] && [ -n "$CA_SHA" ] && [ -n "$IMG" ] \
+    || { echo "missing settings: run 'source settings.sh' (step 7) first"; return 1; }
   APPLY=""; [ "$1" = apply ] && APPLY=", --apply"
   kubectl -n $NAMESPACE delete pod index-restamp --ignore-not-found
   kubectl -n $NAMESPACE apply -f - <<YAML
@@ -586,16 +591,21 @@ spec:
         - { name: ca, mountPath: /etc/restamp-ca, readOnly: true }
         - { name: url, mountPath: /run/restamp, readOnly: true }
 YAML
-  until p="$(kubectl -n $NAMESPACE get pod index-restamp -o jsonpath='{.status.phase}')"; [ "$p" = Succeeded ] || [ "$p" = Failed ]; do sleep 3; done
+  t=0
+  until p="$(kubectl -n $NAMESPACE get pod index-restamp -o jsonpath='{.status.phase}')"; [ "$p" = Succeeded ] || [ "$p" = Failed ]; do
+    sleep 5; t=$((t + 5))
+    [ $t -lt 600 ] || { echo "index-restamp still $p after 10 min"; kubectl -n $NAMESPACE describe pod index-restamp | tail -20; return 1; }
+  done
   kubectl -n $NAMESPACE logs index-restamp | tail -1
   kubectl -n $NAMESPACE get pod index-restamp -o jsonpath='exit {.status.containerStatuses[0].state.terminated.exitCode}{"\n"}'
 }
 restamp plan
 ```
 
-Check the plan's JSON line: `scanned` rows still recorded as S3, `proven` (their
-objects are in your bucket, so they will be fixed) and `unproven` (left alone).
-Then apply it:
+Check the plan's JSON line, and keep a copy of it: `restamp apply` replaces the
+pod, so its output is gone afterwards. `scanned` is the rows still recorded as
+S3, `proven` those whose objects are in your bucket (they will be fixed) and
+`unproven` those left alone. Then apply it:
 
 ```sh
 restamp apply
@@ -603,7 +613,11 @@ kubectl -n $NAMESPACE delete pod index-restamp
 ```
 
 **Done when:** the last JSON line shows `"complete":true` with `restamped`
-equal to the plan's `proven`, and `exit 0`.
+equal to the `proven` in the plan line you kept, and `exit 0`.
+
+- **`missing settings`:** this terminal hasn't run `source settings.sh`.
+- **`still Pending after 10 min`:** the `describe` output shows why (usually an
+  image pull from your mirror). Fix it, then run the same command again.
 
 - **`exit 3`:** incomplete (a page limit, or a row refused mid-run). Run
   `restamp apply` again.
