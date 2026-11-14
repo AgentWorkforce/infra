@@ -5563,8 +5563,8 @@ entries:
       node group's availability zone. Needs a control-plane image from the
       AgentWorkforce durable-actors fork (charts/durable-actors/UPSTREAM.md patch 10).
     chart: durable-actors
-    values: [storage.provider, storage.s3.*, sandbox.*, serviceAccount.annotations]
-    env: [DURABLE_ACTORS_STORAGE_PROVIDER, DURABLE_ACTORS_S3_REGION, DURABLE_ACTORS_S3_ACTOR_CREDENTIALS, DURABLE_ACTORS_S3_ACTOR_ROLE_ARN, DURABLE_ACTORS_S3_ENDPOINT, DURABLE_ACTORS_S3_FORCE_PATH_STYLE, DURABLE_ACTORS_SANDBOX_RUNTIME_CLASS, DURABLE_ACTORS_SANDBOX_NODE_SELECTOR, DURABLE_ACTORS_SANDBOX_TOLERATIONS]
+    values: [storage.provider, storage.artifactBucket, storage.s3.*, sandbox.*, serviceAccount.annotations]
+    env: [DURABLE_ACTORS_STORAGE_PROVIDER, DURABLE_ACTORS_S3_REGION, DURABLE_ACTORS_S3_ACTOR_CREDENTIALS, DURABLE_ACTORS_S3_ACTOR_ROLE_ARN, DURABLE_ACTORS_S3_ENDPOINT, DURABLE_ACTORS_S3_FORCE_PATH_STYLE, DURABLE_ACTORS_S3_CHECKPOINT_BUCKET, DURABLE_ACTORS_S3_CHECKPOINT_MAX_LAG_MS, DURABLE_ACTORS_SANDBOX_RUNTIME_CLASS, DURABLE_ACTORS_SANDBOX_NODE_SELECTOR, DURABLE_ACTORS_SANDBOX_TOLERATIONS]
     profiles: [agent-relay-eks-durable-actors]
     status: shipped
     provided_by: operator
