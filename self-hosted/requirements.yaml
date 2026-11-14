@@ -377,9 +377,37 @@ compatibility:
       images:
         session-read-api: { repository: ghcr.io/agentworkforce/96bulls-services, digest_required: true }
       notes: 'Defaults READ_API_COMPLETE_SINCE to epoch for a new self-host store populated only by its own ingest. Partial legacy imports must retain an explicit real coverage floor matching the indexer. Image, auth, routing and enabled defaults are unchanged; this does not assert coverage for an imported store or qualify a runtime.'
-    - id: sessions-pipeline-0.8.30
+    - id: sessions-pipeline-0.8.31
       status: unreleased
       current: true
+      charts: { sessions-pipeline: 0.8.31, sessions-pipeline-worker: 0.7.10, session-ingest-api: 0.4.5, session-read-api: 0.2.12 }
+      depends:
+        sessions-pipeline: { worker: 0.7.10, alleyoop: 0.4.5, sessionReadApi: 0.2.12, hoopdb: 0.9.0, session-object-storage: 5.4.0, otel: 0.178.0 }
+      images:
+        sessions-pipeline-worker: { repository: agentworkforce/96bulls-services, digest: sha256:6f22ea17dff336e1431664542759fd27958649388b90a0b2f0881883caa7c6b2 }
+        session-ingest-api: { repository: agentworkforce/96bulls-services, digest: sha256:6f22ea17dff336e1431664542759fd27958649388b90a0b2f0881883caa7c6b2 }
+        session-read-api: { repository: ghcr.io/agentworkforce/96bulls-services, digest_required: true }
+      images_note: "Operator session erase values remain default-off and do not pin the 2026.11.2 candidate image. Runtime qualification is separate. Existing chart/profile image pins remain unchanged."
+      services:
+        source_commit: 7d7229bb31c121ecb98cd4e35c248fc2cf5669ad
+        migration_generation: eff8b3be46565b57ad8fa5e4a066dbb6d1fe608313d9c1680bfbcd484add259b
+      db_combos:
+        - { db_mode: selfhosted, boundary: global-default-revoke, hoopdb: cnpg, status: shipped, profiles: [selfhost-postgres, migration, aws-cnpg], notes: chart Jobs install the runtime role and the function default }
+        - { db_mode: selfhosted, boundary: global-default-revoke, hoopdb: external, status: shipped, profiles: [external-selfhosted], notes: operator runs the bootstrap files as a superuser }
+        - { db_mode: rds, boundary: global-default-revoke, hoopdb: external, status: shipped, profiles: [external-rds, aws-rds-native], notes: the RDS master runs the rds_*.sql bootstrap first }
+        - { db_mode: cloudsql, boundary: global-default-revoke, hoopdb: external, status: shipped, profiles: [gcp-cloudsql], notes: operator runs the Cloud SQL bootstrap files as the migration owner; roleBootstrap false }
+        - { db_mode: supabase, boundary: event-trigger, hoopdb: external, status: held, profiles: [external-supabase], notes: supabaseActivation.hold; migrate refuses until the reviewed event trigger is installed and --activation-check passes }
+        - { db_mode: supabase, boundary: null, hoopdb: external, status: fails closed, profiles: [aws-supabase], notes: renders; migrate refuses with function_boundary_unproven }
+        - { db_mode: local, boundary: null, hoopdb: any, status: dev only, profiles: [], notes: local stack only; never a self-host install }
+      sources:
+        - "charts/sessions-pipeline/Chart.yaml:4"
+        - "charts/sessions-pipeline/profiles/aws-rds-native.yaml"
+        - "ci/sessions-pipeline-profiles/matrix.sh"
+        - "charts/sessions-pipeline/templates/_scrub-engine.tpl:1"
+        - "ci/sessions-pipeline-scrub-engine/test_scrub_engine.py:1"
+      notes: 'Carries 0.8.30. migrations.databaseMode is now also rendered as HOOPDB_DB_MODE into every service container (migrate keeps it from its profile env, so each container has it once), and validated when set with migrations.enabled=false. The services live role gate binds that mode; on supabase it fails closed without it (the postgres admin membership is a supabase-only edge). Renders without databaseMode are unchanged.'
+    - id: sessions-pipeline-0.8.30
+      status: shipped
       charts: { sessions-pipeline: 0.8.30, sessions-pipeline-worker: 0.7.9, session-ingest-api: 0.4.5, session-read-api: 0.2.12 }
       depends:
         sessions-pipeline: { worker: 0.7.9, alleyoop: 0.4.5, sessionReadApi: 0.2.12, hoopdb: 0.9.0, session-object-storage: 5.4.0, otel: 0.178.0 }
@@ -1366,9 +1394,22 @@ compatibility:
       images:
         relayauth: { repository: ghcr.io/agentworkforce/relayauth, digest: sha256:eb71daa28e30eb7305f666d0bccc5a4002e53e8a574e3c4c32163d907a1b71df }
       notes: superseded by 0.1.1.
-    - id: agent-relay-0.7.4
+    - id: agent-relay-0.7.5
       status: unreleased
       current: true
+      charts: { agent-relay: 0.7.5, relay-control: 0.4.15, relay-webapp: 0.2.4 }
+      app_versions: { agent-relay: 0.1.0, relay-control: 0.1.0, relay-webapp: 0.1.0 }
+      depends:
+        agent-relay: { relaycast: 0.3.12, relayauth: 0.1.5, sessions-pipeline: 0.8.31, relay-control: 0.4.15, relay-webapp: 0.2.4, relayflows: 0.2.5, durable-actors: 0.14.6-awf.3, relayfile: 0.2.2, telemetry-collector: 0.1.7, relay-chief: 0.1.0 }
+      images:
+        relaycast: { repository: ghcr.io/agentworkforce/relaycast-self-host, digest: sha256:ab9dd6781e68f09d5e2e686a17088f9ad533978ef13d974a47d6c212d8eedbde }
+        relaycast-postgres: { repository: ghcr.io/agentworkforce/relaycast-self-host, digest: sha256:1307bd845031a7466e65ebaf08bc8b826e2837d90f58c9b5a6a1d673c62dad93 }
+        sessions-pipeline-worker: { repository: ghcr.io/agentworkforce/sessions-pipeline, digest: sha256:77022c5b6a1d30f96f921d703eb27a1acada8ec273ad84aebdde24f8eddce305 }
+        relay-control: { repository: ghcr.io/agentworkforce/relay-control, digest: sha256:d8c26d44dccb6dd21b7033288241a379e46ce5fbca69f276c4d4745001c3c3e2 }
+        relay-webapp: { repository: ghcr.io/agentworkforce/relay-webapp, digest: sha256:bd295ccb7d1323965dce890f19d0b7f857d706c00d7756f719c713763fdb49f3 }
+      notes: 'Carries 0.7.4 (never released) and sessions-pipeline 0.8.31: worker.migrations.databaseMode reaches the worker services live role gate as HOOPDB_DB_MODE (Supabase installs need it). Also carries default-off worker.migrations.allowBlockingIndexBuild from 0.8.30.'
+    - id: agent-relay-0.7.4
+      status: planned
       charts: { agent-relay: 0.7.4, relay-control: 0.4.15, relay-webapp: 0.2.4 }
       app_versions: { agent-relay: 0.1.0, relay-control: 0.1.0, relay-webapp: 0.1.0 }
       depends:
@@ -1379,7 +1420,7 @@ compatibility:
         sessions-pipeline-worker: { repository: ghcr.io/agentworkforce/sessions-pipeline, digest: sha256:77022c5b6a1d30f96f921d703eb27a1acada8ec273ad84aebdde24f8eddce305 }
         relay-control: { repository: ghcr.io/agentworkforce/relay-control, digest: sha256:d8c26d44dccb6dd21b7033288241a379e46ce5fbca69f276c4d4745001c3c3e2 }
         relay-webapp: { repository: ghcr.io/agentworkforce/relay-webapp, digest: sha256:bd295ccb7d1323965dce890f19d0b7f857d706c00d7756f719c713763fdb49f3 }
-      notes: 'Carries 0.7.3 and sessions-pipeline 0.8.30 (default-off worker.migrations.allowBlockingIndexBuild, set by the self-host upgrader for one upgrade of a small database from its Sessions index census). Default renders are unchanged.'
+      notes: 'Superseded before release by 0.7.5.'
     - id: agent-relay-0.7.3
       status: planned
       charts: { agent-relay: 0.7.3, relay-control: 0.4.15, relay-webapp: 0.2.4 }
