@@ -12,8 +12,8 @@ operator device approval worked, two agents exchanged messages through
 Relaycast, and an uploaded session was indexed. See
 [What was not proven](#what-was-not-proven) before a production rollout.
 
-This guide installs release **agent-relay-2026.11.3** (chart agent-relay 0.7.8,
-sessions-pipeline 0.8.32). `searchIndexer.locker.credentials` first shipped
+This guide installs release **agent-relay-2026.11.5** (chart agent-relay 0.7.10,
+sessions-pipeline 0.8.33). `searchIndexer.locker.credentials` first shipped
 in agent-relay-2026.11.2. Earlier releases do not render the
 indexer's MinIO keys, so its uploads are never indexed.
 
@@ -52,11 +52,11 @@ pinned `deps/` values. Every later command runs in `docs/azure-install`:
 
 ```sh
 git clone https://github.com/AgentWorkforce/infra.git && cd infra/docs/azure-install
-mkdir release && gh release download agent-relay-2026.11.3 -R AgentWorkforce/infra -D release
-(cd release && shasum -a 256 -c SHA256SUMS && tar -xzf agent-relay-0.7.8.tgz) | tail -1
+mkdir release && gh release download agent-relay-2026.11.5 -R AgentWorkforce/infra -D release
+(cd release && shasum -a 256 -c SHA256SUMS && tar -xzf agent-relay-0.7.10.tgz) | tail -1
 # Public GHCR images: no mirror root.
 sed 's#__IMAGE_MIRROR_ROOT__/##' release/release-images.values.yaml > release-images.values.yaml
-CHART=release/agent-relay-0.7.8.tgz
+CHART=release/agent-relay-0.7.10.tgz
 ```
 
 **Done when:** every checksum line ends in `OK` (the last is
@@ -263,7 +263,7 @@ codes and verification are in the
 ## What was not proven
 
 - Any release other than agent-relay-2026.11.0 (patched); `values.yaml` renders
-  against agent-relay-2026.11.3 but was not installed from it.
+  against agent-relay-2026.11.5 but was not installed from it.
 - The output facts bootstrap (step 10).
 - Azure Database for PostgreSQL, Azure Blob Storage, Application Gateway.
 - NetworkPolicy enforcement beyond a default install, private clusters,
