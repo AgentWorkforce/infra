@@ -446,6 +446,11 @@ cmd_down() {
     aws_ s3 rm "s3://${BUCKET}" --recursive --only-show-errors
     aws_ s3api delete-bucket --bucket "$BUCKET"; deleted "s3-bucket $BUCKET"
   fi
+  local xb
+  for xb in $(express_buckets); do
+    aws_ s3 rm "s3://${xb}" --recursive --only-show-errors
+    aws_ s3api delete-bucket --bucket "$xb"; deleted "s3express-directory-bucket $xb"
+  done
   vpc="$(vpc_id)"
   if [[ -n "$vpc" ]]; then
     local lb
@@ -487,6 +492,30 @@ cmd_down() {
   cmd_audit
 }
 
+# S3 Express One Zone (exploratory): one directory bucket in the actor node
+# zone, used as storage.bucket (standard mode). Directory buckets authorize
+# through s3express:CreateSession on the whole bucket, so the roles get that on
+# top of their prefix-scoped s3:* grants.
+express_az_id() { aws_ ec2 describe-availability-zones --zone-names "$ACTOR_ZONE" --query 'AvailabilityZones[0].ZoneId' --output text; }
+express_bucket() { local az; az="$(express_az_id)"; echo "${NAME}-${ACCOUNT}--${az}--x-s3"; }
+express_buckets() { aws_ s3api list-directory-buckets --query "Buckets[?starts_with(Name, '${NAME}-')].Name" --output text 2>/dev/null; }
+cmd_express() {
+  local az b arn role
+  az="$(express_az_id)"; b="$(express_bucket)"
+  arn="arn:aws:s3express:${REGION}:${ACCOUNT}:bucket/${b}"
+  if ! aws_ s3api head-bucket --bucket "$b" >/dev/null 2>&1; then
+    log "create directory bucket $b ($ACTOR_ZONE = $az)"
+    aws_ s3api create-bucket --bucket "$b" \
+      --create-bucket-configuration "Location={Type=AvailabilityZone,Name=${az}},Bucket={DataRedundancy=SingleAvailabilityZone,Type=Directory}" >/dev/null
+  fi
+  aws_ s3control tag-resource --account-id "$ACCOUNT" --resource-arn "$arn" --tags "Key=${TAG_KEY},Value=${TAG_VAL}" \
+    || log "WARN: could not tag $b (tracked by name prefix in down/audit)"
+  for role in "$CP_ROLE" "$STORAGE_ROLE" "$DEPLOYER_ROLE"; do
+    put_policy "$role" s3express "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Action\":\"s3express:CreateSession\",\"Resource\":\"${arn}\"}]}"
+  done
+  echo "$b"
+}
+
 # audit: prints every resource still tagged purpose=relaycast-actors-bench plus
 # checks the Tagging API cannot see. Exit 1 when anything is left.
 cmd_audit() {
@@ -512,6 +541,10 @@ cmd_audit() {
   [[ -n "$out" ]] && { echo "eks: $out"; left=1; }
   out="$(aws_ rds describe-db-instances --query "DBInstances[?starts_with(DBInstanceIdentifier, '${NAME}-')].DBInstanceIdentifier" --output text)"
   [[ -n "$out" ]] && { echo "rds: $out"; left=1; }
+  out="$(express_buckets)"
+  [[ -n "$out" ]] && { echo "s3express directory buckets: $out"; left=1; }
+  out="$(aws_ s3api list-buckets --query "Buckets[?starts_with(Name, '${NAME}-')].Name" --output text)"
+  [[ -n "$out" ]] && { echo "s3 buckets: $out"; left=1; }
   if ((left)); then echo "AUDIT: resources remain" >&2; return 1; fi
   echo "AUDIT: zero ${TAG_KEY}=${TAG_VAL} resources in ${ACCOUNT}/${REGION}"
 }
@@ -526,5 +559,6 @@ case "${1:-}" in
   audit) cmd_audit ;;
   scale) shift; cmd_scale "$@" ;;
   assoc) shift; cmd_assoc "$@" ;;
-  *) echo "usage: $0 up|status|scale <group> <n>|assoc <ns> <sa> <cp|deployer|files>|down|audit" >&2; exit 2 ;;
+  express) cmd_express ;;
+  *) echo "usage: $0 up|status|scale <group> <n>|assoc <ns> <sa> <cp|deployer|files>|express|down|audit" >&2; exit 2 ;;
 esac

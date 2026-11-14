@@ -1,0 +1,14 @@
+# S3 Express One Zone (exploratory, not part of the decision set): standard
+# persistence mode with the actor state + artifact bucket on a directory bucket
+# in the actor node zone (cluster.sh express). File stores stay on S3 Standard.
+# Single-AZ: losing that zone loses actor state that is not elsewhere.
+durable-actors:
+  storage: {bucket: ${EXPRESS_BUCKET}}
+relaycast:
+  runtime:
+    durableActors:
+      deployer: {artifactBucket: ${EXPRESS_BUCKET}}
+relayfile:
+  runtime:
+    durableActors:
+      deployer: {artifactBucket: ${EXPRESS_BUCKET}}

@@ -1,7 +1,7 @@
 # Relaycast on PostgreSQL versus durable-actors: EKS benchmark
 
 Status: complete. The decision set (as shipped), tuned-actors soak, #659 / #665
-fix exit tests and headroom with overload-then-recover are done. Cold start
+fix exit tests and headroom with overload-then-recover are done. An exploratory S3 Express run (2026-11-14) is reported separately and is not part of the decision set. Cold start
 under actors was covered earlier (see the cold versus warm table) and was not
 repeated. The bench cluster was torn down afterwards (see Teardown). Raw data: `bench/relaycast/results/`
 (per-pod `producer-*.json` / `sink-*.json` / `metrics.csv` are gzipped; `gunzip`
@@ -167,6 +167,95 @@ control-plane database at +40.
 Tuning turns actors from unstable into self-healing. The seconds of latency at
 3 msgs/s remain, which points to design (a serial per-workspace actor behind
 the gateway and control-plane hop) rather than sizing.
+
+### S3 Express (exploratory, not part of the decision set)
+
+Run on 2026-11-14 to check whether S3 Express One Zone, as the actor state
+store, removes the actors latency. It does not change the decision above.
+
+**Single-AZ durability caveat.** A directory bucket keeps data in one
+Availability Zone. In this configuration it holds *all* actor state, ownership
+records and code artifacts. If that zone is lost, any state not yet archived
+elsewhere is lost too, and every actor in the installation stops. Standard S3
+stores across at least three zones. Any production use needs a second copy
+(the engine's Rapid mode does that for GCS; it has no S3 Express backend yet).
+
+**What is configuration and what is not.**
+
+- Rapid mode (`storage.mode: rapid`, the append-log write path) is GCS-only.
+  Its log zones exist only for GCS appendable objects (`src/bucket/rapid/gcs.rs`),
+  zones must be Google Cloud zones, and the chart refuses `provider=s3` with
+  `mode=rapid`. We found no S3 Express code in durable-actors (fork v0.14.6,
+  main v0.14.7, upstream main as of 2026-11-13).
+- Config-only path used here: standard mode with `storage.bucket` set to a
+  directory bucket (`<name>--usw2-az1--x-s3`). The engine's S3 surface is
+  Put (If-None-Match / If-Match), Get (+Range), Head and ListObjectsV2 with
+  `/`-terminated prefixes, and the AWS Rust SDK signs Express sessions
+  itself. All of that worked.
+- IAM: `s3express:CreateSession` on the bucket ARN for the control-plane,
+  storage and deployer roles (`cluster.sh express`).
+- **Per-actor credentials do not work** (smoke A). With the default
+  `storage.s3.actorCredentials: assume-role`, each actor host gets STS
+  credentials narrowed by a session policy that grants only `arn:aws:s3:::`
+  prefixes, so `CreateSession` is denied. The host exits at startup with
+  `durable-actors process failed: ... (AccessDenied): Access Denied`
+  (`results/express/smoke-a-error.log`). The workaround is
+  `actorCredentials: control-plane` (`values/actors-express-cpcreds.yaml`).
+  It gives every actor host whole-bucket access, so per-actor prefix isolation
+  is gone. That is acceptable for a sandbox but a security regression for a real
+  install. Fixing it needs engine work (Express-aware session policy).
+- Zone placement: Express is not offered in every AZ. us-west-2a maps to
+  usw2-az2 in this account, which has no Express, so the actor node group
+  moved to us-west-2b (usw2-az1).
+- The relayfile deployer uploads artifacts with a raw HTTP PUT rather than an
+  Express-aware SDK, so it fails with `NoSuchBucket`. Relayfile is not on the
+  Relaycast message path; the Relaycast deployer (AWS SDK) worked.
+
+**Soak: same `soak-60` load and chaos as the tuned run**, same images and
+tuning (`actors-tuned-1024.yaml`) plus `values/actors-express.yaml.tmpl` and
+`actors-express-cpcreds.yaml`. File stores stayed on S3 Standard. Fresh
+cluster and RDS. Chaos: one gateway replica killed at +20 min, one actor
+host at +30, RDS failover at +40.
+
+| | Tuned actors + S3 Express | Tuned actors, S3 Standard | PostgreSQL + #657/#667 |
+|---|---|---|---|
+| Integrity (lost / dup / reorder) | 0 / 0 / 0 of 54,664 (37 redeliveries) | 0 / 0 / 0 of 53,053 (1,906 redeliveries) | 0 / 0 / 0 of 26,973 (0 redeliveries) |
+| Send errors | 1.9 % (195 of 10,254; 5xx 79, timeouts 125) | 3.4 % (344 of 10,211) | 1.7 % |
+| Gateway replica kill | recovered in 47 s, 0 errors | 46 s, 2 errors | relaycast pod: ~47 s |
+| Actor-host kill | recovered in 25 s, 0 errors | 43 s, 0 errors | n/a |
+| RDS failover (control-plane DB) | self-healed in ~2.6 min, 204 errors | ~3.9 min, 360 errors | < 45 s |
+| Send p50 / p95 / p99 (corrected) | 886 ms / 1.7 s / 30 s | 3.7 s / 6.4 s / 30 s | n/a |
+| Delivery p50 / p95 / p99 | 771 ms / 1.5 s / 2.5 s | 3.5 s / 81 s / 366 s | 36 ms / – / 176 ms |
+| Upload p95 (`/v1/files/upload`) | 1.6 s, 1.7 % errors | 5.3 s, 2.9 % errors | – |
+| Memory peaks | control plane 415 Mi, actor hosts 1.6 Gi total | control plane 591 Mi, actor hosts 1.3 Gi total | relaycast 255-574 Mi |
+
+The recovery times in this table come from `scripts/decision-table.mjs` for
+both actors runs (the tuned run's prose above rounds its RDS recovery to
+~4.5 min).
+
+Per-operation write latency, from the engine's own `actor_state_write` and
+`actor_host_invocation` events (112,798 committed state writes, 10,721
+`handle` invocations; `results/express/soak/actor-write-latency.json`):
+
+| ms | p50 | p95 | p99 | max |
+|---|---|---|---|---|
+| Snapshot PUT to the Express bucket | 12.3 | 14.0 | 16.8 | 435 |
+| State write, total (commit) | 12.8 | 14.9 | 18.0 | 1,913 |
+| Invocation queue wait (serial per workspace) | 421 | 1,481 | 2,278 | 3,518 |
+| Actor execution | 48 | 125 | 145 | 1,966 |
+| Invocation total | 490 | 1,570 | 2,394 | 3,630 |
+
+No per-op baseline was captured on S3 Standard.
+
+Readout:
+
+- Express cuts actor latency about 4x (send p50 3.7 s to 0.9 s) and removes
+  the delivery tail (p95 81 s to 1.5 s).
+- Robustness is equal or better on every chaos event.
+- The write itself is now ~13 ms. The time goes to the per-workspace queue:
+  the logs show ~10 committed state writes per `handle` invocation, and invocations run serially. That puts sub-workspace
+  sharding back as the next step.
+- Still ~20x PostgreSQL on delivery p50 (771 ms vs 36 ms) at 3 msgs/s.
 
 ### Headroom and overload, then recover (both arms, concurrently)
 
