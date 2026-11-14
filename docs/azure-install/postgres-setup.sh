@@ -87,7 +87,8 @@ write_file() { # secret key  (content on stdin)
 url() { # role password database
   printf 'postgresql://%s:%s@%s:5432/%s?sslmode=verify-full' "$1" "$2" "$DB_HOST" "$3"
 }
-json_url() { jq -cn --arg k "$1" --arg v "$2" '{($k): $v}'; }
+# The URL carries a password: it goes to jq on stdin, never as an argument.
+json_url() { printf '%s' "$2" | jq -Rsc --arg k "$1" '{($k): .}'; }
 
 PRIMARY=""
 primary() {
@@ -283,11 +284,14 @@ do_post() {
   { quiet; printf "ALTER ROLE search_consumer_runtime LOGIN NOINHERIT PASSWORD '%s';\nALTER ROLE search_consumer_runtime SET statement_timeout = '60s';\n" "$(pw search_consumer_runtime)"; } | psql_su hoopdb
   log "search consumer role ok"
 
-  # Each runtime login, over the network path the services use, with TLS.
-  local role
+  # Each runtime login, over the network path the services use, verifying the
+  # server against the CA the primary holds (CloudNativePG mounts it there).
+  local role ca=/controller/certificates/server-ca.crt
+  kubectl -n "$NS" exec "$(primary)" -c postgres -- test -s "$ca" \
+    || die "the primary has no server CA at $ca"
   for role in bulls96_read_api bulls96_session_ingest search_consumer_runtime; do
-    printf '\\connect "host=%s port=5432 dbname=hoopdb user=%s password=%s sslmode=require"\n%s\n' \
-      "$DB_HOST" "$role" "$(pw "$role")" \
+    printf '\\connect "host=%s port=5432 dbname=hoopdb user=%s password=%s sslmode=verify-full sslrootcert=%s"\n%s\n' \
+      "$DB_HOST" "$role" "$(pw "$role")" "$ca" \
       "select 'login ok: '||session_user||' tls='||(select ssl from pg_stat_ssl where pid=pg_backend_pid());" \
       | kubectl -n "$NS" exec -i "$(primary)" -c postgres -- psql -X -A -t -q -v ON_ERROR_STOP=1 -d postgres 2>&1 \
       | grep -E '^login ok' || die "$role could not log in over TLS"
