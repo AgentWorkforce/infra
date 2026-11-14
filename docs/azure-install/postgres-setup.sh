@@ -21,7 +21,10 @@
 #   SERVICES_IMAGE   approved sessions-pipeline services image, pinned by digest
 # Optional:
 #   NAMESPACE        default agent-relay
-#   CLUSTER          CloudNativePG Cluster name, default hoopdb
+#   CLUSTER          CloudNativePG Cluster name, default hoopdb. With another
+#                    NAMESPACE or CLUSTER, the server certificate in
+#                    postgres-tls.yaml needs the matching dnsNames; pre refuses
+#                    to run until it has them.
 #   CA_SECRET        Secret holding the server CA as ca.crt, default postgres-ca
 #   STATE_DIR        default $HOME/.agent-relay-install (mode 0700)
 #   KUBE_CONTEXT     kubectl context; empty uses the current context
@@ -166,8 +169,19 @@ write_credential_files() {
   write_file search-indexer-owner RELAYHISTORY_PIPELINE_CONSUMER_SECRET < <(json_url hoopdb_url "$owner")
 }
 
+# Every generated URL uses sslmode=verify-full against DB_HOST, so the server
+# certificate must carry that name. postgres-tls.yaml lists the names for the
+# default CLUSTER and NAMESPACE; with other values, change its dnsNames first.
+require_certificate_name() {
+  local names
+  names="$(kubectl -n "$NS" get cluster.postgresql.cnpg.io "$CLUSTER" -o json | jq -r '.status.certificates.serverAltDNSNames // [] | .[]')"
+  grep -qxF "$DB_HOST" <<<"$names" \
+    || die "the $CLUSTER server certificate has no name $DB_HOST: add it to the dnsNames in postgres-tls.yaml (CLUSTER=$CLUSTER, NAMESPACE=$NS) and apply it"
+}
+
 do_pre() {
   kubectl get namespace "$NS" >/dev/null 2>&1 || kubectl create namespace "$NS" >/dev/null
+  require_certificate_name
   [[ "$(query_su postgres 'select rolsuper from pg_roles where rolname=current_user')" == t ]] \
     || die "kubectl exec into $(primary) is not a Postgres superuser session"
   ensure_ca
