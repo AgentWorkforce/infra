@@ -1,0 +1,12 @@
+{
+  "schema": 1,
+  "version": "2026.11.3",
+  "pins": {
+    "relay-webapp": {
+      "repository": "ghcr.io/agentworkforce/relay-webapp",
+      "digest": "sha256:9414d55446bbd4db9c82e344c109a4e829d76f536a49bd5917e7ebcc86ed3f23",
+      "sourceRepository": "AgentWorkforce/relay-web",
+      "sourceRevision": "0090a040d5700921218652b96de85e4f612d2c5a"
+    }
+  }
+}
