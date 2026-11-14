@@ -215,7 +215,7 @@ const ERROR_REPLY = "Sorry, I hit an error working on this. Try again in a momen
  * created it) is resumed instead of started. CLI errors go to the log, never
  * to Slack.
  */
-export function claudeTurn(opts: { bin?: string; model: string; env: NodeJS.ProcessEnv; timeoutMs: number; permissionMode?: string; allowedTools?: string[] }): RunTurn {
+export function claudeTurn(opts: { bin?: string; model: string; env: NodeJS.ProcessEnv; timeoutMs: number; permissionMode?: string; allowedTools?: string[]; disallowedTools?: string[] }): RunTurn {
   const once = (t: TurnInput, resume: boolean) =>
     new Promise<TurnResult & { inUse?: boolean }>((resolve) => {
       const args = [
@@ -232,6 +232,7 @@ export function claudeTurn(opts: { bin?: string; model: string; env: NodeJS.Proc
         ...(resume ? ["--resume", t.sessionId] : ["--session-id", t.sessionId]),
         ...(t.mcpConfigPath ? ["--mcp-config", t.mcpConfigPath, "--strict-mcp-config"] : []),
         ...(opts.allowedTools?.length ? ["--allowedTools", ...opts.allowedTools] : []),
+        ...(opts.disallowedTools?.length ? ["--disallowedTools", ...opts.disallowedTools] : []),
       ];
       const fail = (detail: string) => {
         process.stderr.write(`[claude ${t.agent}] ${detail.slice(-2000)}\n`);

@@ -72,8 +72,12 @@ host:
   agentModel: claude-opus-5-5
   # Appended to every agent's system prompt.
   persona: "You are a helpful generalist working for the team. Be accurate and concise."
-  # Claude Code tools the agents may use without asking. No Bash, no web by default.
-  allowedTools: [Read, Glob, Grep, mcp__relaycast]
+  # Claude Code tools the agents may use without asking. Path rules are
+  # relative to the agent's own workdir, so an agent cannot read another
+  # agent's files, /proc or the pod's environment.
+  allowedTools: ["Read(./**)", "Glob(./**)", "Grep(./**)", mcp__relaycast]
+  # Always refused, even if allowed above.
+  disallowedTools: [Bash, WebFetch, WebSearch, "Read(//proc/**)"]
   permissionMode: dontAsk
   # Give each agent a Relaycast MCP bound to its own token (DMs, channels).
   relaycastMcp: true

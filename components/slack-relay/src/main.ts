@@ -165,7 +165,10 @@ async function runHost(): Promise<void> {
   await ensureChannel(hostAgent, channel, "Slack threads routed to agents");
 
   const mcpEntry = env.RELAYCAST_MCP_ENTRY ?? join(dirname(fileURLToPath(import.meta.url)), "..", "node_modules", "@relaycast", "mcp", "dist", "stdio.js");
-  const tools = (env.AGENT_ALLOWED_TOOLS ?? "Read Glob Grep mcp__relaycast").split(/[\s,]+/).filter(Boolean);
+  // Path-scoped: an agent reads only its own workdir (./**). With dontAsk,
+  // anything else (other agents' workdirs, /proc, env) is refused.
+  const tools = (env.AGENT_ALLOWED_TOOLS ?? "Read(./**) Glob(./**) Grep(./**) mcp__relaycast").split(/[\s,]+/).filter(Boolean);
+  const denied = (env.AGENT_DISALLOWED_TOOLS ?? "Bash WebFetch WebSearch Read(//proc/**)").split(/[\s,]+/).filter(Boolean);
   const host = new AgentHost({
     routerName,
     channel,
@@ -197,6 +200,7 @@ async function runHost(): Promise<void> {
       timeoutMs: int("TURN_TIMEOUT_SECONDS", 600) * 1000,
       permissionMode: env.AGENT_PERMISSION_MODE ?? "dontAsk",
       allowedTools: tools,
+      disallowedTools: denied,
       env: {
         PATH: env.PATH,
         HOME: join(dataDir, "home"),

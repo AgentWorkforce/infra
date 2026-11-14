@@ -142,10 +142,12 @@ curl -s localhost:8080/ledger/events   # append-only routing log: inbound, assig
 - **What leaves the cluster:** Slack API calls from the router only, and
   Anthropic API calls from the router (orchestrator) and the host (agents).
   Agents have no Slack credentials and post only through the relay.
-- **Agent tools:** by default `Read`, `Glob`, `Grep` and the relay tools only.
-  No shell, no web fetch/search, and `permissionMode: dontAsk`, so any other
-  tool call is refused. Widen `host.allowedTools` deliberately. Each tool you
-  add is a new way for data to leave.
+- **Agent tools:** by default `Read`, `Glob` and `Grep` scoped to the agent's
+  own workdir (`./**`), plus the relay tools. No shell, no web fetch/search,
+  `/proc` denied, and `permissionMode: dontAsk`, so any other tool call is
+  refused. An agent can't read another thread's files or the pod's
+  environment (API keys). Widen `host.allowedTools` deliberately. Each tool
+  you add is a new way for data to leave.
 - **Audit trail:** the ledger's `events` table records every inbound Slack
   message (who, where, when, truncated text), every routing decision (who
   decided: `orchestrator:<model>` or `deterministic`) and every outbound post.
@@ -167,7 +169,8 @@ See `charts/slack-relay/values.yaml`. The ones you're most likely to change:
 | `router.knownAgents` | `[]` | Pinned agents the orchestrator may route to, e.g. a company knowledge agent. |
 | `host.agentModel` | `claude-opus-5-5` | |
 | `host.persona` | generalist | Appended to each agent's system prompt. |
-| `host.allowedTools` | `[Read, Glob, Grep, mcp__relaycast]` | |
+| `host.allowedTools` | `[Read(./**), Glob(./**), Grep(./**), mcp__relaycast]` | Scoped to the agent's workdir. |
+| `host.disallowedTools` | `[Bash, WebFetch, WebSearch, Read(//proc/**)]` | Always refused. |
 | `host.idleReleaseMinutes` | `15` | |
 
 ## Limits of this version

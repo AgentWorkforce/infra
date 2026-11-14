@@ -53,6 +53,8 @@ spec:
               value: {{ .Values.host.persona | quote }}
             - name: AGENT_ALLOWED_TOOLS
               value: {{ join " " .Values.host.allowedTools | quote }}
+            - name: AGENT_DISALLOWED_TOOLS
+              value: {{ join " " .Values.host.disallowedTools | quote }}
             - name: AGENT_PERMISSION_MODE
               value: {{ .Values.host.permissionMode | quote }}
             - name: RELAYCAST_MCP
