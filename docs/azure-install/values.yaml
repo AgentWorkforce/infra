@@ -1,11 +1,12 @@
 # Agent Relay on Azure Kubernetes Service (AKS): site values.
 #
-# Apply after the chart's EKS profile, which is the portable base
-# (public GHCR images by digest, no GKE-only resources):
+# Apply after the chart's EKS profile, which is the portable base (no
+# GKE-only resources), and before the release's release-images.values.yaml.
+# This file pins no images: the release file sets every image digest.
 #
-#   helm upgrade --install agent-relay charts/agent-relay --namespace agent-relay \
-#     -f charts/agent-relay/values-eks.yaml \
-#     -f values.yaml
+#   helm upgrade --install agent-relay "$CHART" --namespace agent-relay \
+#     -f release/agent-relay/values-eks.yaml -f values.yaml \
+#     -f release-images.values.yaml
 #
 # What differs from the EKS site values, and why:
 #
@@ -27,9 +28,7 @@
 # This file holds no secret values: it only names Secrets and keys.
 # postgres-setup.sh creates the database roles and writes the credential files.
 
-x-pins:
-  services-image: &services_image { repository: ghcr.io/agentworkforce/sessions-pipeline, digest: "sha256:77022c5b6a1d30f96f921d703eb27a1acada8ec273ad84aebdde24f8eddce305" }
-  webapp-image: &webapp_image { repository: ghcr.io/agentworkforce/relay-webapp, digest: "sha256:dfdf6db66808d8fa6a2921e8bfcea2dfd6b0cd78fb1bb636fbb4bd3302bc21fa" }
+x-anchors:
   # Traefik runs in its own namespace; every public backend admits it.
   edge: &edge
     - podSelector: {}
@@ -89,7 +88,6 @@ sessions-pipeline:
 
   sessionReadApi:
     enabled: true
-    image: *services_image
     output: { enabled: true }
     digest: { enabled: true }
     replicas: 1
@@ -150,7 +148,6 @@ sessions-pipeline:
 
   ingestEdge:
     enabled: true
-    image: *services_image
     origin: https://__HOST_HISTORY__
     allowInClusterHttp: true
     sessionSelection: true
@@ -174,7 +171,6 @@ sessions-pipeline:
 
   searchIndexer:
     enabled: true
-    image: *services_image
     completeSince: epoch
     config: { existingSecret: search-indexer-runtime }
     search:
@@ -202,7 +198,6 @@ sessions-pipeline:
 
   worker:
     acknowledgeWorkloadRename: true
-    image: *services_image
     existingSecret: sessions-pipeline-locker
     summaryEncryption:
       existingSecret: agent-relay-secrets
@@ -231,7 +226,6 @@ sessions-pipeline:
       enabled: true
     nativeBrief:
       enabled: false
-      image: *services_image
       workspaceIds: []
       model: __LLM_MODEL__
       sweepSeconds: 300
@@ -253,7 +247,6 @@ sessions-pipeline:
       enabled: true
       configMap: postgres-ca
       key: ca.crt
-    image: *services_image
     hoopdb:
       existingSecret: agent-relay-secrets
       key: HOOPDB_URL
@@ -267,9 +260,6 @@ sessions-pipeline:
     environment: production
 
 relay-control:
-  image:
-    repository: ghcr.io/agentworkforce/relay-control
-    digest: sha256:0b9c5a077b49b31178cc669e7c1d532f39e64c840087ca41636bb84a6c62631c
   replicaCount: 1
   existingSecret: agent-relay-secrets
   secretKeys:
@@ -313,7 +303,6 @@ relay-control:
     ingressFrom: *edge
 
 relay-webapp:
-  image: *webapp_image
   replicaCount: 1
   runtime:
     publicUrl: https://__HOST_ROOT__
