@@ -181,3 +181,41 @@ test("shared or unknown channels are treated as shared; channel messages skip bo
   assert.equal(channelMessageOf({ type: "message", channel: "C1", ts: "1.1", user: "U1", bot_id: "B", text: "hi" }), null);
   assert.equal(channelMessageOf({ type: "message", channel: "C1", ts: "1.1", user: "UBOT", text: "hi" }, "UBOT"), null);
 });
+
+test("long channel ids still give each thread its own agent name", async () => {
+  const { threadAgentName } = await import("../src/ledger.ts");
+  const prefix = "a-very-long-agent-prefix-for-a-deployment-name";
+  const a = threadAgentName({ team: "T1", channel: "C1234567890", threadTs: "1794693736.001989" }, prefix);
+  const b = threadAgentName({ team: "T1", channel: "C1234567890", threadTs: "1794693753.480599" }, prefix);
+  assert.ok(a.length <= 63 && b.length <= 63);
+  assert.notEqual(a, b);
+  assert.equal(threadAgentName({ team: "T1", channel: "C1", threadTs: "100.1" }), "slack-c1-1001", "short names unchanged");
+});
+
+test("mentions are removed without flattening multiline messages", () => {
+  const m = normalizeSlackEvent({ type: "app_mention", channel: "C1", ts: "1.1", user: "U1", text: "<@UBOT> why does this fail?\n```\n  if (x) {\n    y()\n  }\n```" }, { botUserId: "UBOT" });
+  assert.equal(m?.text, "why does this fail?\n```\n  if (x) {\n    y()\n  }\n```");
+});
+
+test("an undelivered Slack message is forgotten, so it can be routed again, and the thread is told", async () => {
+  const { Router } = await import("../src/router.ts");
+  const ledger = new Ledger(":memory:");
+  const posts: string[] = [];
+  let sends = 0;
+  const router = new Router({
+    ledger,
+    relay: { send: async () => { sends++; throw new Error("relay down"); }, reply: async () => ({ id: "r" }) },
+    slack: { postMessage: async (a) => { posts.push(a.text); return {}; } },
+    orchestrator: new DeterministicOrchestrator(),
+    channel: "slack",
+    selfName: "router",
+    retryDelaysMs: [1, 1],
+  });
+  const msg = { team: "T1", channel: "C1", threadTs: "9.1", ts: "9.1", user: "U1", text: "hi", kind: "mention" as const };
+  await assert.rejects(router.fromSlack(msg), /relay down/);
+  assert.equal(sends, 3, "two retries");
+  assert.match(posts[0]!, /couldn't reach the agent/);
+  // Routed again (not a duplicate) once the relay is back.
+  assert.notEqual(ledger.recordInbound({ team: "T1", channel: "C1", threadTs: "9.1", ts: "9.1", user: "U1", text: "hi" }), null);
+  assert.ok(router.isTrackedThread("T1", "C1", "9.1"), "a recorded thread is tracked even before it has an owner");
+});

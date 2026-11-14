@@ -17,7 +17,8 @@ slack:
   mode: socket
   # The proof's test channel only.
   allowedChannels: [C0CHX8UK4CC]
-  allowDms: true
+  # DMs bypass allowedChannels; the proof answers only in its test channel.
+  allowDms: false
   # The test app predates the channels:read scope the check needs; off until
   # the app is reinstalled from the current manifest.
   refuseSharedChannels: false

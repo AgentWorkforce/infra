@@ -94,4 +94,7 @@ jobs:
       - name: Digest
         if: github.event_name == 'push'
         working-directory: .
-        run: echo "slack-relay image digest: \`${{ steps.build.outputs.digest }}\`" >> "$GITHUB_STEP_SUMMARY"
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          echo "slack-relay image digest: \`$DIGEST\`" >> "$GITHUB_STEP_SUMMARY"

@@ -33,6 +33,7 @@ export class Router {
   readonly #self: string;
   readonly #log: (m: string) => void;
   readonly #chains = new Map<string, Promise<unknown>>();
+  readonly #retryDelaysMs: number[];
 
   constructor(opts: {
     ledger: Ledger;
@@ -42,6 +43,8 @@ export class Router {
     channel: string;
     selfName: string;
     log?: (m: string) => void;
+    /** Waits between relay delivery attempts. */
+    retryDelaysMs?: number[];
   }) {
     this.#ledger = opts.ledger;
     this.#relay = opts.relay;
@@ -50,13 +53,16 @@ export class Router {
     this.#channel = opts.channel.replace(/^#/, "");
     this.#self = opts.selfName;
     this.#log = opts.log ?? (() => {});
+    this.#retryDelaysMs = opts.retryDelaysMs ?? [500, 2000, 5000];
   }
 
-  /** Slack threads the ledger already knows: plain replies in them are relayed without a mention. */
-  isTrackedThread = (team: string, channel: string, threadTs: string): boolean => {
-    const t = this.#ledger.thread({ team, channel, threadTs });
-    return Boolean(t?.agentName);
-  };
+  /**
+   * Slack threads the ledger already knows: plain replies in them are relayed
+   * without a mention. A thread counts from its first recorded message, so a
+   * reply that arrives while the owner is still being chosen waits behind it.
+   */
+  isTrackedThread = (team: string, channel: string, threadTs: string): boolean =>
+    this.#ledger.thread({ team, channel, threadTs }) !== null;
 
   /** Steps 1-4 for one Slack message. Serialized per Slack thread. */
   fromSlack(m: SlackInbound & { team: string }): Promise<string | null> {
@@ -65,9 +71,10 @@ export class Router {
     const prior = this.#chains.get(chainKey) ?? Promise.resolve();
     const run = prior.catch(() => undefined).then(() => this.#route(m, key));
     this.#chains.set(chainKey, run);
-    void run.finally(() => {
+    const cleanup = () => {
       if (this.#chains.get(chainKey) === run) this.#chains.delete(chainKey);
-    });
+    };
+    run.then(cleanup, cleanup);
     return run;
   }
 
@@ -110,13 +117,26 @@ export class Router {
     };
     if (!agent?.sessionId) this.#ledger.setAgentStatus(agentName, agent?.status ?? "spawning", { sessionId });
     const body = `[slack <@${m.user}>${m.kind === "dm" ? " dm" : ""}] ${m.text}`;
-    const thread = this.#ledger.thread(key);
     let relayId: string;
-    if (thread?.relayParentId) {
-      relayId = (await this.#relay.reply(thread.relayParentId, body, { data: data as unknown as Record<string, unknown> })).id;
-    } else {
-      relayId = (await this.#relay.send(this.#channel, `@${agentName} ${body}`, { data: data as unknown as Record<string, unknown> })).id;
-      this.#ledger.setRelayParent(key, relayId);
+    try {
+      relayId = await withRetry(async () => {
+        const thread = this.#ledger.thread(key);
+        if (thread?.relayParentId) {
+          return (await this.#relay.reply(thread.relayParentId, body, { data: data as unknown as Record<string, unknown> })).id;
+        }
+        const id = (await this.#relay.send(this.#channel, `@${agentName} ${body}`, { data: data as unknown as Record<string, unknown> })).id;
+        this.#ledger.setRelayParent(key, id);
+        return id;
+      }, this.#retryDelaysMs);
+    } catch (err) {
+      // Undelivered: forget it, so the same Slack message can be routed again,
+      // and say so in the thread rather than leave it unanswered.
+      this.#ledger.forgetInbound(key, m.ts);
+      this.#log(`relay delivery failed for ${m.channel}:${m.ts}: ${(err as Error).message}`);
+      await this.#slack
+        .postMessage({ channel: key.channel, threadTs: key.threadTs, text: "I couldn't reach the agent for this thread just now. Please send that again in a minute." })
+        .catch(() => undefined);
+      throw err;
     }
     this.#log(`slack ${m.kind} ${m.channel}:${m.ts} -> relay ${relayId} @${agentName}${resume ? " (resume)" : ""}`);
     return relayId;
@@ -161,3 +181,14 @@ export class Router {
 }
 
 export { sessionIdFor };
+
+async function withRetry<T>(fn: () => Promise<T>, delaysMs: number[]): Promise<T> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await fn();
+    } catch (err) {
+      if (attempt >= delaysMs.length) throw err;
+      await new Promise((r) => setTimeout(r, delaysMs[attempt]));
+    }
+  }
+}

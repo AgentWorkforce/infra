@@ -76,9 +76,10 @@ export function normalizeSlackEvent(
   return null;
 }
 
+/** Removes the bot's mention (and one space after it); keeps the message's own line breaks and spacing. */
 function stripMention(text: string, botUserId?: string): string {
-  const out = botUserId ? text.split(`<@${botUserId}>`).join(" ") : text;
-  return out.replace(/\s+/g, " ").trim();
+  const out = botUserId ? text.split(`<@${botUserId}> `).join("").split(`<@${botUserId}>`).join("") : text;
+  return out.trim();
 }
 
 function str(v: unknown): string {

@@ -113,8 +113,9 @@ test("slack threads route to resumable per-thread agents over a real relay", { s
     } };
   }
 
-  let s = await start();
+  let s: Awaited<ReturnType<typeof start>> | null = null;
   try {
+    s = await start();
     // Two people start two threads at once.
     await Promise.all([
       s.router.fromSlack({ team: "T1", channel: "C1", threadTs: "100.1", ts: "100.1", user: "U1", text: "the password is fluffy bunny", kind: "mention" }),
@@ -171,7 +172,7 @@ test("slack threads route to resumable per-thread agents over a real relay", { s
     assert.equal(peerInbox.length, 1, "no reply to an automatic answer");
     await peer.agent.disconnect().catch(() => undefined);
   } finally {
-    await s.stop();
+    await s?.stop().catch(() => undefined);
     server.close();
   }
 });

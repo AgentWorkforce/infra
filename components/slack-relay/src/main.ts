@@ -96,22 +96,7 @@ async function runRouter(): Promise<void> {
     void router.fromRelay(toEvent(raw as Record<string, unknown>)).catch((err) => log(`relay -> slack failed: ${(err as Error).message}`));
   });
 
-  // Channels shared outside the workspace are refused for answers and ingest
-  // (needs channels:read / groups:read). Fail closed when Slack can't say.
   const refuseShared = env.SLACK_REFUSE_SHARED_CHANNELS !== "false";
-  const directory = new ChannelDirectory(slack);
-  const channelOk = async (id: string): Promise<{ ok: boolean; name: string; isPrivate: boolean }> => {
-    if (allowed.size > 0 && !allowed.has(id)) return { ok: false, name: id, isPrivate: false };
-    if (!refuseShared) return { ok: true, name: id, isPrivate: false };
-    try {
-      const info = await directory.get(id);
-      return { ok: !info.isShared, name: info.name, isPrivate: info.isPrivate };
-    } catch (err) {
-      log(`channel ${id}: info unavailable (${(err as Error).message}); refusing`);
-      return { ok: false, name: id, isPrivate: false };
-    }
-  };
-
   // Continuous ingest of channel messages into a knowledge base over MCP.
   const servers = oauthServersFromEnv(env);
   const ingestServer = env.INGEST_MCP_SERVER ? servers.find((s) => s.name === env.INGEST_MCP_SERVER) : undefined;
@@ -121,6 +106,24 @@ async function runRouter(): Promise<void> {
     : null;
   const ingestPrivate = env.INGEST_PRIVATE_CHANNELS === "true";
   log(`ingest: ${ingest ? `on -> ${ingestServer!.name}${env.INGEST_SOURCE_ID ? ` (source ${env.INGEST_SOURCE_ID})` : ""}${ingestPrivate ? ", private channels too" : ", public channels"}` : "off"}; shared channels ${refuseShared ? "refused" : "allowed"}`);
+
+  // Channels shared outside the workspace are refused for answers and ingest
+  // (needs channels:read / groups:read). Fail closed when Slack can't say.
+  const directory = new ChannelDirectory(slack);
+  const channelOk = async (id: string): Promise<{ ok: boolean; name: string; isPrivate: boolean }> => {
+    if (allowed.size > 0 && !allowed.has(id)) return { ok: false, name: id, isPrivate: true };
+    // Ingest still needs to know whether a channel is private even when shared
+    // channels are allowed; when Slack can't say, treat it as private.
+    const needInfo = refuseShared || (ingest !== null && !ingestPrivate);
+    if (!needInfo) return { ok: true, name: id, isPrivate: true };
+    try {
+      const info = await directory.get(id);
+      return { ok: !refuseShared || !info.isShared, name: info.name, isPrivate: info.isPrivate };
+    } catch (err) {
+      log(`channel ${id}: info unavailable (${(err as Error).message}); ${refuseShared ? "refusing" : "not ingesting"}`);
+      return { ok: !refuseShared, name: id, isPrivate: true };
+    }
+  };
 
   const onEnvelope = (p: SlackEventEnvelope) => {
     void (async () => {
@@ -171,9 +174,23 @@ async function runRouter(): Promise<void> {
         return true;
       }
       if (mode === "http" && req.method === "POST" && req.url === "/slack/events") {
+        // Bounded before the signature check: an unsigned caller can't make
+        // the router buffer an arbitrarily large body.
+        const MAX_BODY = 1024 * 1024;
         let body = "";
-        req.on("data", (c) => (body += c));
+        let tooLarge = false;
+        req.on("data", (c: Buffer) => {
+          if (tooLarge) return;
+          if (body.length + c.length > MAX_BODY) {
+            tooLarge = true;
+            res.writeHead(413, { connection: "close" }).end();
+            req.destroy();
+            return;
+          }
+          body += c;
+        });
         req.on("end", () => {
+          if (tooLarge) return;
           const ok = verifySlackSignature({
             signingSecret,
             timestamp: req.headers["x-slack-request-timestamp"] as string | undefined,
@@ -181,7 +198,12 @@ async function runRouter(): Promise<void> {
             rawBody: body,
           });
           if (!ok) return void res.writeHead(401).end();
-          const p = JSON.parse(body) as SlackEventEnvelope;
+          let p: SlackEventEnvelope;
+          try {
+            p = JSON.parse(body) as SlackEventEnvelope;
+          } catch {
+            return void res.writeHead(400).end();
+          }
           if (p.type === "url_verification") return void res.writeHead(200, { "content-type": "text/plain" }).end(p.challenge ?? "");
           res.writeHead(200).end();
           if (p.type === "event_callback") onEnvelope(p);
@@ -238,7 +260,12 @@ async function runHost(): Promise<void> {
         };
       }
       for (const [s, tokens] of agentServers) {
-        mcpServers[s.name] = { type: "http", url: s.url, headers: { Authorization: `Bearer ${await tokens.get()}` } };
+        try {
+          mcpServers[s.name] = { type: "http", url: s.url, headers: { Authorization: `Bearer ${await tokens.get()}` } };
+        } catch (err) {
+          // The agent still answers, without this server, rather than not at all.
+          log(`${name}: ${s.name} unavailable this turn (${(err as Error).message})`);
+        }
       }
       return Object.keys(mcpServers).length ? { mcpServers } : null;
     },
@@ -263,8 +290,9 @@ async function runHost(): Promise<void> {
   hostAgent.subscribe([channel], (raw: unknown) => {
     void host.onEvent(toEvent(raw as Record<string, unknown>)).catch((err) => log(`agent turn failed: ${(err as Error).message}`));
   });
-  const rejoined = await host.rejoinKnown();
-  if (rejoined.length) log(`rejoined ${rejoined.length} agent(s): ${rejoined.join(", ")}`);
+  // Health first, then re-join known agents in the background (retrying the
+  // ones that fail), so a slow relay can't hold the pod unready.
+  void host.rejoinKnown().then((names) => names.length && log(`rejoined ${names.length} agent(s): ${names.join(", ")}`));
   serve(int("PORT", 8080), {
     ready: () => true,
     extra: (req, res) => {

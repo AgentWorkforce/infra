@@ -96,7 +96,8 @@ export class AgentHost {
   readonly #o: HostConfig;
   readonly #live = new Map<string, Live>();
   readonly #connecting = new Map<string, Promise<Live>>();
-  readonly #seen = new Set<string>();
+  /** Message ids being handled or answered; a failed one is forgotten so a redelivery retries it. */
+  readonly #handled = new BoundedIds(20_000);
 
   constructor(o: HostOptions) {
     this.#o = {
@@ -116,21 +117,24 @@ export class AgentHost {
     const msg = ev.message;
     if (!msg?.id || msg.agentName !== this.#o.routerName) return null;
     if (ev.channel && ev.channel.replace(/^#/, "") !== this.#o.channel.replace(/^#/, "")) return null;
-    if (this.#seen.has(msg.id)) return null;
+    if (this.#handled.has(msg.id)) return null;
     let inbound = inboundOf(dataOf(msg));
     if (!inbound && ev.type === "thread.reply" && this.#o.getMessage) {
       inbound = inboundOf(dataOf(await this.#o.getMessage(msg.id)));
     }
     if (!inbound) return null;
-    if (this.#seen.has(msg.id)) return null;
-    this.#seen.add(msg.id);
-    if (this.#seen.size > 20_000) this.#seen.clear();
-
-    const parentId = ev.type === "thread.reply" && ev.parentId ? ev.parentId : msg.id;
-    const live = await this.#wake(inbound.target);
-    const run = live.queue.catch(() => undefined).then(() => this.#turn(live, inbound, msg.text ?? "", parentId));
-    live.queue = run;
-    return run;
+    if (this.#handled.has(msg.id)) return null;
+    this.#handled.add(msg.id);
+    try {
+      const parentId = ev.type === "thread.reply" && ev.parentId ? ev.parentId : msg.id;
+      const live = await this.#wake(inbound.target);
+      const run = live.queue.catch(() => undefined).then(() => this.#turn(live, inbound, msg.text ?? "", parentId));
+      live.queue = run;
+      return await run;
+    } catch (err) {
+      this.#handled.delete(msg.id);
+      throw err;
+    }
   }
 
   /**
@@ -146,8 +150,26 @@ export class AgentHost {
   async rejoinKnown(): Promise<string[]> {
     const dir = join(this.#o.dataDir, "agents");
     const names = existsSync(dir) ? readdirSync(dir, { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => d.name) : [];
-    for (const name of names) await this.#wake(name).catch((err) => this.#o.log(`rejoin ${name} failed: ${(err as Error).message}`));
-    return names;
+    const failed: string[] = [];
+    for (const name of names) {
+      await this.#wake(name).catch((err) => {
+        failed.push(name);
+        this.#o.log(`rejoin ${name} failed: ${(err as Error).message}; retrying`);
+      });
+    }
+    // Keep retrying the ones that failed, so their DMs reach them eventually.
+    for (let delay = 30_000; failed.length && delay <= 30 * 60_000; delay *= 2) {
+      await new Promise((r) => setTimeout(r, delay).unref());
+      for (const name of [...failed]) {
+        try {
+          await this.#wake(name);
+          failed.splice(failed.indexOf(name), 1);
+        } catch {
+          // next round
+        }
+      }
+    }
+    return names.filter((n) => !failed.includes(n));
   }
 
   /** Leaves the relay for every agent (shutdown and tests). */
@@ -165,8 +187,17 @@ export class AgentHost {
    */
   async onDm(name: string, dm: DmEvent): Promise<string | null> {
     if (dm.from === name || dm.from === this.#o.routerName) return null;
-    if (this.#seen.has(dm.id)) return null;
-    this.#seen.add(dm.id);
+    if (this.#handled.has(dm.id)) return null;
+    this.#handled.add(dm.id);
+    try {
+      return await this.#dmTurn(name, dm);
+    } catch (err) {
+      this.#handled.delete(dm.id);
+      throw err;
+    }
+  }
+
+  async #dmTurn(name: string, dm: DmEvent): Promise<string | null> {
     const live = await this.#wake(name);
     let data = dm.data;
     if (!data && live.session.client.message) data = dataOf(await live.session.client.message(dm.id).catch(() => undefined));
@@ -259,7 +290,9 @@ export class AgentHost {
       const data: ReplyData = {
         kind: "agent.reply",
         session_id: result.sessionId,
-        summary: summarize(text),
+        // What the agent is on, without the thread's words: the roster is
+        // shown to other agents, and a thread may be private.
+        summary: `Slack thread in ${inbound.slack.channel} with ${inbound.slack.participants.length} ${inbound.slack.participants.length === 1 ? "person" : "people"}`,
         ...(result.error ? { error: true } : {}),
       };
       const reply = await live.session.client.reply(parentId, result.text, { data: data as unknown as Record<string, unknown> });
@@ -295,9 +328,6 @@ export function promptFor(inbound: InboundData, text: string): string {
   return `${said}\n\n(slack channel ${inbound.slack.channel}, thread ${inbound.slack.thread_ts}; people in the thread: ${inbound.slack.participants.map((p) => `<@${p}>`).join(", ")})`;
 }
 
-function summarize(text: string): string {
-  return text.replace(/^@\S+\s+/, "").replace(/^\[slack [^\]]*\]\s*/, "").replace(/\s+/g, " ").slice(0, 140);
-}
 
 const ERROR_REPLY = "Sorry, I hit an error working on this. Try again in a moment; the details are in the agent host's logs.";
 
@@ -340,7 +370,22 @@ export function claudeTurn(opts: { bin?: string; model: string; env: NodeJS.Proc
       let err = "";
       child.stdout!.on("data", (d) => (out += d));
       child.stderr!.on("data", (d) => (err += d));
-      const timer = setTimeout(() => child.kill("SIGTERM"), opts.timeoutMs);
+      let settled = false;
+      const done = resolve;
+      resolve = ((r: TurnResult & { inUse?: boolean }) => {
+        if (settled) return;
+        settled = true;
+        done(r);
+      }) as typeof resolve;
+      // Past the deadline: SIGTERM, then SIGKILL, and the turn settles either
+      // way, so the agent's queue never waits on a stuck process.
+      const timer = setTimeout(() => {
+        child.kill("SIGTERM");
+        setTimeout(() => {
+          if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+          fail(`turn timed out after ${opts.timeoutMs} ms`);
+        }, 10_000).unref();
+      }, opts.timeoutMs);
       child.on("error", (e) => {
         clearTimeout(timer);
         fail(`spawn failed: ${e.message}`);
@@ -362,4 +407,23 @@ export function claudeTurn(opts: { bin?: string; model: string; env: NodeJS.Proc
     if (first.error && first.inUse && !t.resume) return once(t, true);
     return first;
   };
+}
+
+/** A set of ids that keeps the most recent `max`, evicting the oldest. */
+class BoundedIds {
+  readonly #max: number;
+  readonly #ids = new Map<string, true>();
+  constructor(max: number) {
+    this.#max = max;
+  }
+  has(id: string): boolean {
+    return this.#ids.has(id);
+  }
+  add(id: string): void {
+    this.#ids.set(id, true);
+    while (this.#ids.size > this.#max) this.#ids.delete(this.#ids.keys().next().value as string);
+  }
+  delete(id: string): void {
+    this.#ids.delete(id);
+  }
 }

@@ -5,6 +5,7 @@
 //
 // SQLite (node:sqlite, no native dependency). Append-only `events` is the
 // audit trail; `threads`, `participants` and `agents` are its current state.
+import { createHash } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 
 export type AgentStatus = "spawning" | "active" | "idle" | "released" | "failed";
@@ -115,6 +116,12 @@ export class Ledger {
     const agent = this.agent(thread.agentName);
     if (!agent) return { kind: "unowned", thread };
     return { kind: "owned", thread, agent, wake: agent.status === "released" || agent.status === "idle" || agent.status === "failed" };
+  }
+
+  /** Forgets an inbound Slack message that could not be delivered, so it can be routed again. */
+  forgetInbound(key: ThreadKey, ts: string): void {
+    this.db.prepare("DELETE FROM events WHERE slack_ts = ?").run(`${key.team}/${key.channel}/${ts}`);
+    this.#event("inbound.undelivered", { ...key, detail: { ts } });
   }
 
   /** Assigns a thread to an agent (the orchestrator's decision, or a deterministic default). */
@@ -263,7 +270,12 @@ export class Ledger {
 /** Deterministic default agent name for a thread: stable, relay-safe, unique per thread. */
 export function threadAgentName(key: ThreadKey, prefix = "slack"): string {
   const ts = key.threadTs.replace(/\D/g, "");
-  return `${prefix}-${key.channel.toLowerCase()}-${ts}`.slice(0, 63);
+  const name = `${prefix}-${key.channel.toLowerCase()}-${ts}`;
+  if (name.length <= 63) return name;
+  // Too long: keep a readable head and a hash of the whole thread key, so
+  // distinct threads never collapse onto one agent.
+  const hash = createHash("sha256").update(`${key.team}/${key.channel}/${key.threadTs}`).digest("hex").slice(0, 12);
+  return `${name.slice(0, 63 - 13).replace(/-+$/, "")}-${hash}`;
 }
 
 function toThread(r: Record<string, unknown>): ThreadRow {
