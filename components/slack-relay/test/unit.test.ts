@@ -219,3 +219,20 @@ test("an undelivered Slack message is forgotten, so it can be routed again, and 
   assert.notEqual(ledger.recordInbound({ team: "T1", channel: "C1", threadTs: "9.1", ts: "9.1", user: "U1", text: "hi" }), null);
   assert.ok(router.isTrackedThread("T1", "C1", "9.1"), "a recorded thread is tracked even before it has an owner");
 });
+
+test("ingest routes channels to sources like the brain's own classification", async () => {
+  const { SlackIngest } = await import("../src/ingest.ts");
+  const ing = new SlackIngest({
+    brain: { callTool: async () => ({}) },
+    sourceId: "company",
+    privateSourceId: "founders",
+    rules: [
+      { match: "^ops-(hiring|investors|legal|finance|board|comp|sales|yc)", sourceId: "founders" },
+      { match: "^ext-", sourceId: "slack-connect" },
+    ],
+  });
+  assert.equal(ing.sourceFor("market-research", false), "company");
+  assert.equal(ing.sourceFor("ops-finance", false), "founders");
+  assert.equal(ing.sourceFor("ext-acme", false), "slack-connect");
+  assert.equal(ing.sourceFor("leadership", true), "founders");
+});

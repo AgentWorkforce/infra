@@ -9,6 +9,8 @@ import { McpToolError } from "./mcp.ts";
 export interface IngestMessage {
   channel: string;
   channelName: string;
+  /** Private channels can go to their own source (privateSourceId). */
+  isPrivate?: boolean;
   ts: string;
   threadTs?: string;
   user: string;
@@ -40,16 +42,26 @@ export function lineFor(m: IngestMessage): string {
   return `- ${time} UTC <@${m.user}>${thread}: ${text}`;
 }
 
+/** A channel-name rule: channels whose name matches go to `sourceId`. First match wins. */
+export interface SourceRule {
+  match: string;
+  sourceId: string;
+}
+
 export class SlackIngest {
   readonly #brain: ToolCaller;
   readonly #sourceId: string | undefined;
+  readonly #privateSourceId: string | undefined;
+  readonly #rules: Array<{ re: RegExp; sourceId: string }>;
   readonly #prefix: string;
   readonly #log: (m: string) => void;
   readonly #chains = new Map<string, Promise<unknown>>();
 
-  constructor(opts: { brain: ToolCaller; sourceId?: string; prefix?: string; log?: (m: string) => void }) {
+  constructor(opts: { brain: ToolCaller; sourceId?: string; privateSourceId?: string; rules?: SourceRule[]; prefix?: string; log?: (m: string) => void }) {
     this.#brain = opts.brain;
     this.#sourceId = opts.sourceId || undefined;
+    this.#privateSourceId = opts.privateSourceId || undefined;
+    this.#rules = (opts.rules ?? []).map((r) => ({ re: new RegExp(r.match), sourceId: r.sourceId }));
     this.#prefix = opts.prefix ?? "slack";
     this.#log = opts.log ?? (() => {});
   }
@@ -71,9 +83,18 @@ export class SlackIngest {
     return run;
   }
 
+  /** The source a channel's messages go to: name rules first, then private, then the default. */
+  sourceFor(channelName: string, isPrivate: boolean): string | undefined {
+    const rule = this.#rules.find((r) => r.re.test(channelName));
+    if (rule) return rule.sourceId;
+    if (isPrivate && this.#privateSourceId) return this.#privateSourceId;
+    return this.#sourceId;
+  }
+
   async #append(slug: string, m: IngestMessage): Promise<string> {
     const line = lineFor(m);
-    const source = this.#sourceId ? { source_id: this.#sourceId } : {};
+    const sourceId = this.sourceFor(m.channelName, m.isPrivate === true);
+    const source = sourceId ? { source_id: sourceId } : {};
     try {
       await this.#brain.callTool("append_page", { slug, text: line, request_id: requestId("append", m.channel, m.ts), ...source });
     } catch (err) {

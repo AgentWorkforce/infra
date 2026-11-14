@@ -24,6 +24,11 @@ ingest:
   enabled: true
   mcpServer: brain-write
   sourceId: company
+  privateChannels: true
+  privateSourceId: founders
+  sourceRules:
+    - { match: "^ops-(hiring|investors|legal|finance|board|comp|sales|yc)", sourceId: founders }
+    - { match: "^ext-", sourceId: slack-connect }
 host:
   mcpServers: [brain]
   allowedTools: ["Read(./**)", "Glob(./**)", "Grep(./**)", mcp__relaycast, mcp__brain]

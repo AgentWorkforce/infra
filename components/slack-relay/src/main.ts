@@ -12,7 +12,7 @@ import type { RelayEventLike } from "./protocol.ts";
 import { connectAgent, ensureChannel } from "./relay.ts";
 import { Router } from "./router.ts";
 import { McpClient, oauthServersFromEnv, TokenSource } from "./mcp.ts";
-import { SlackIngest } from "./ingest.ts";
+import { SlackIngest, type SourceRule } from "./ingest.ts";
 import { channelMessageOf, ChannelDirectory, normalizeSlackEvent, SlackWeb, SocketModeClient, verifySlackSignature, type SlackEventEnvelope } from "./slack.ts";
 
 const env = process.env;
@@ -102,7 +102,14 @@ async function runRouter(): Promise<void> {
   const ingestServer = env.INGEST_MCP_SERVER ? servers.find((s) => s.name === env.INGEST_MCP_SERVER) : undefined;
   if (env.INGEST_MCP_SERVER && !ingestServer) throw new Error(`INGEST_MCP_SERVER ${env.INGEST_MCP_SERVER} is not in MCP_OAUTH_SERVERS_JSON`);
   const ingest = ingestServer
-    ? new SlackIngest({ brain: new McpClient(ingestServer), sourceId: env.INGEST_SOURCE_ID, prefix: env.INGEST_PAGE_PREFIX ?? "slack", log })
+    ? new SlackIngest({
+        brain: new McpClient(ingestServer),
+        sourceId: env.INGEST_SOURCE_ID,
+        privateSourceId: env.INGEST_PRIVATE_SOURCE_ID,
+        rules: env.INGEST_SOURCE_RULES ? (JSON.parse(env.INGEST_SOURCE_RULES) as SourceRule[]) : [],
+        prefix: env.INGEST_PAGE_PREFIX ?? "slack",
+        log,
+      })
     : null;
   const ingestPrivate = env.INGEST_PRIVATE_CHANNELS === "true";
   log(`ingest: ${ingest ? `on -> ${ingestServer!.name}${env.INGEST_SOURCE_ID ? ` (source ${env.INGEST_SOURCE_ID})` : ""}${ingestPrivate ? ", private channels too" : ", public channels"}` : "off"}; shared channels ${refuseShared ? "refused" : "allowed"}`);
@@ -143,7 +150,7 @@ async function runRouter(): Promise<void> {
       const gate = await channelOk(id);
       if (!gate.ok) return void log(`ignored message in ${id} (not allowed or shared)`);
       if (cm && ingest && (!gate.isPrivate || ingestPrivate)) {
-        void ingest.add({ ...cm, channelName: gate.name }).catch((err) => log(`ingest failed in #${gate.name}: ${(err as Error).message}`));
+        void ingest.add({ ...cm, channelName: gate.name, isPrivate: gate.isPrivate }).catch((err) => log(`ingest failed in #${gate.name}: ${(err as Error).message}`));
       }
       if (m) await router.fromSlack({ ...m, team });
     })().catch((err) => log(`slack -> relay failed: ${(err as Error).message}`));

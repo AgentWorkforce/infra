@@ -86,6 +86,10 @@ spec:
               value: {{ .Values.ingest.pagePrefix | quote }}
             - name: INGEST_PRIVATE_CHANNELS
               value: {{ .Values.ingest.privateChannels | quote }}
+            - name: INGEST_PRIVATE_SOURCE_ID
+              value: {{ .Values.ingest.privateSourceId | quote }}
+            - name: INGEST_SOURCE_RULES
+              value: {{ .Values.ingest.sourceRules | toJson | quote }}
             {{- end }}
             - name: ORCHESTRATOR
               value: {{ .Values.router.orchestrator | quote }}

@@ -71,6 +71,11 @@ ingest:
   pagePrefix: slack
   # Also ingest private channels the app is in.
   privateChannels: false
+  # Source for private channels (default: sourceId).
+  privateSourceId: ""
+  # Channel-name rules, first match wins, ahead of the private/default source:
+  # - { match: "^ops-(finance|legal)", sourceId: founders }
+  sourceRules: []
 
 router:
   # The router's relay name; the host only acts on messages from it.
