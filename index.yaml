@@ -1295,6 +1295,33 @@ entries:
       artifacthub.io/license: Apache-2.0
     apiVersion: v2
     appVersion: 0.1.0
+    created: "2026-11-14T06:39:11.690458795Z"
+    description: Self-hosted Agent Relay control-plane API for messaging and sessions
+    digest: 8f9e56f24b1a06265e20ad96335f1aa9a48e4240734212dedba580d7344ede66
+    home: https://github.com/AgentWorkforce/relay-control
+    keywords:
+    - agent-relay
+    - control-plane
+    - api
+    - self-hosted
+    kubeVersion: '>=1.28.0-0'
+    maintainers:
+    - name: AgentWorkforce
+      url: https://github.com/AgentWorkforce
+    name: relay-control
+    sources:
+    - https://github.com/AgentWorkforce/relay-control
+    type: application
+    urls:
+    - https://github.com/AgentWorkforce/infra/releases/download/relay-control-0.4.16/relay-control-0.4.16.tgz
+    version: 0.4.16
+  - annotations:
+      agentworkforce.dev/license-scope: First-party chart code only; dependencies
+        and images retain their own licenses.
+      agentworkforce.dev/min-helm-version: 3.10.0
+      artifacthub.io/license: Apache-2.0
+    apiVersion: v2
+    appVersion: 0.1.0
     created: "2026-11-12T15:17:01.285841109Z"
     description: Self-hosted Agent Relay control-plane API for messaging and sessions
     digest: 3ed8c46a1f3da14feb6f52105722f408b321b2492887224024dab5fbab7b00ec
@@ -1849,6 +1876,31 @@ entries:
     - https://github.com/AgentWorkforce/helm-charts/releases/download/relay-dashboard-0.1.0/relay-dashboard-0.1.0.tgz
     version: 0.1.0
   relay-webapp:
+  - annotations:
+      agentworkforce.dev/license-scope: First-party chart code only; dependencies
+        and images retain their own licenses.
+      artifacthub.io/license: Apache-2.0
+    apiVersion: v2
+    appVersion: 0.1.0
+    created: "2026-11-14T06:39:11.862692483Z"
+    description: Static self-hosted Agent Relay sessions and messaging dashboard
+    digest: df530207b6dfbe4432ba3862fe8a3b8ab51aefd7ecca8a7dd06ca83f4e9dc33a
+    home: https://github.com/AgentWorkforce/relay-webapp
+    keywords:
+    - agent-relay
+    - dashboard
+    - self-hosted
+    kubeVersion: '>=1.28.0-0'
+    maintainers:
+    - name: AgentWorkforce
+      url: https://github.com/AgentWorkforce
+    name: relay-webapp
+    sources:
+    - https://github.com/AgentWorkforce/relay-webapp
+    type: application
+    urls:
+    - https://github.com/AgentWorkforce/infra/releases/download/relay-webapp-0.2.5/relay-webapp-0.2.5.tgz
+    version: 0.2.5
   - annotations:
       agentworkforce.dev/license-scope: First-party chart code only; dependencies
         and images retain their own licenses.
@@ -6377,4 +6429,4 @@ entries:
     urls:
     - https://github.com/AgentWorkforce/infra/releases/download/telemetry-collector-0.1.0/telemetry-collector-0.1.0.tgz
     version: 0.1.0
-generated: "2026-11-14T06:04:40.373103288Z"
+generated: "2026-11-14T06:39:11.863239504Z"
