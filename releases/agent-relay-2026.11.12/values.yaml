@@ -45,3 +45,7 @@ sessions-pipeline:
     image:
       repository: ghcr.io/agentworkforce/sessions-pipeline
       digest: sha256:978e8ed8c3c4e311907e7ba65b53d7c49208b8a575c36cebc04277cfd03b2839
+relay-control:
+  image:
+    repository: ghcr.io/agentworkforce/relay-control
+    digest: sha256:5261e0bed045c93196710f021a37cb87222d385ab29ed3d2184453a801b369d7
