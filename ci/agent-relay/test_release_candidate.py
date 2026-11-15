@@ -559,5 +559,58 @@ class SessionsSigstoreReceiptTest(unittest.TestCase):
                     VERIFY.verify(root, digest, source_sha, str(RUN_ID))
 
 
+try:
+    import yaml  # noqa: F401  (render-fast-path.py needs PyYAML)
+except ImportError:  # release-candidate.yml runs this file without PyYAML
+    yaml = None
+
+
+@unittest.skipIf(yaml is None, "PyYAML is not installed")
+class FastPathWorkflowTest(unittest.TestCase):
+    """fast-path.yml is rendered from the release workflows, never hand-edited."""
+
+    def load_renderer(self):
+        spec = importlib.util.spec_from_file_location(
+            "render_fast_path", ROOT / "scripts/ci/render-fast-path.py"
+        )
+        assert spec and spec.loader
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+
+    def test_fast_path_matches_a_fresh_render(self):
+        rendered = self.load_renderer().render()
+        current = (ROOT / ".github/workflows/fast-path.yml").read_text()
+        self.assertEqual(
+            current,
+            rendered,
+            "fast-path.yml is stale: run python3 scripts/ci/render-fast-path.py",
+        )
+
+    def test_fast_path_keeps_the_source_guards_and_gate(self):
+        renderer = self.load_renderer()
+        workflow = yaml.safe_load(renderer.render())
+        jobs = workflow["jobs"]
+        self.assertEqual(jobs["gate"]["environment"], "fast-path")
+        for name, job in jobs.items():
+            if name != "gate":
+                self.assertIn("gate", job["needs"], name)
+                self.assertNotIn("environment", job, name)
+        sources = {
+            "candidate": renderer.load("release-candidate.yml")["jobs"]["update"],
+            "tag": renderer.load("release-candidate-tag.yml")["jobs"]["tag"],
+            "charts": renderer.load("release.yml")["jobs"]["release"],
+        }
+        for name, job in renderer.load("lint.yml")["jobs"].items():
+            sources[f"lint-{name}"] = job
+        for name, source in sources.items():
+            scripts = [step["run"] for step in jobs[name]["steps"] if "run" in step]
+            for step in source["steps"]:
+                if "run" in step:
+                    self.assertIn(step["run"], scripts, f"{name}: {step.get('name')}")
+        # The umbrella publish keeps its GitHub-hosted signer identity.
+        self.assertNotIn("attest-build-provenance", renderer.render())
+
+
 if __name__ == "__main__":
     unittest.main()
