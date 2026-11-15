@@ -933,6 +933,21 @@ for chart in "${charts[@]}"; do
         expect_render_failure "$chart" "$v" "split upstream without sessionsUrl" "need proxy.sessionsUrl" --set proxy.sessionsUrl=
         expect_render_failure "$chart" "$v" "sessionsHosts without split upstreams" "proxy.sessionsHosts needs proxy.sessionsUploadUrl and proxy.sessionsReadUrl" --set proxy.sessionsReadUrl=
         expect_render_failure "$chart" "$v" "sessionsHosts loop" "requests would loop back to relaygate" --set proxy.sessionsReadUrl=https://History.example.com:443
+        v=charts/relaygate/ci/control-values.yaml
+        out=$(render "$chart" "$v")
+        [ "$(env_value RELAYCONTROL_INTROSPECT_URL)" = http://relay-control:8080/internal/v1/auth/introspect ] || err "$chart: RELAYCONTROL_INTROSPECT_URL not rendered"
+        [ "$(env_value SESSION_INGEST_AUDIENCE)" = https://history.example.com ] || err "$chart: SESSION_INGEST_AUDIENCE not rendered"
+        [ "$(env_value SESSIONS_CORS_ORIGINS)" = https://app.example.com,https://history.example.com ] || err "$chart: SESSIONS_CORS_ORIGINS not comma-joined"
+        grep -A1 -F -- '- name: RELAYCONTROL_INTROSPECT_SECRET' <<<"$out" | grep -Fq 'name: relaygate-control' || err "$chart: introspect secret not rendered"
+        grep -A1 -F -- '- name: SESSIONS_INTERNAL_SECRET' <<<"$out" | grep -Fq 'name: relaygate-sessions-internal' || err "$chart: sessions internal secret not rendered"
+        grep -Fq '"controlPrincipals"' <<<"$out" || err "$chart: policy.controlPrincipals not in the policy ConfigMap"
+        out=$(render "$chart" charts/relaygate/ci/proxy-values.yaml)
+        ! grep -Eq 'name: (RELAYCONTROL_INTROSPECT_URL|SESSION_INGEST_AUDIENCE|SESSIONS_CORS_ORIGINS|SESSIONS_INTERNAL_SECRET)$' <<<"$out" || err "$chart: unset Control settings rendered"
+        [ "$(yq 'select(.kind == "ConfigMap") | .data["policy.json"] | from_json | .controlPrincipals | length' <<<"$out" | sed '/^---$/d;/^$/d')" = 0 ] \
+          || err "$chart: default policy must not grant Control principals"
+        expect_render_failure "$chart" "$v" "Control principals without sessionsUrl" "need proxy.sessionsUrl" --set proxy.sessionsUrl=
+        expect_render_failure "$chart" "$v" "introspect without audience" "control.introspectUrl needs control.sessionIngestAudience" --set control.sessionIngestAudience=
+        expect_render_failure "$chart" "$v" "introspect without secret" "control.introspectUrl needs control.sessionIngestAudience and secrets.relaycontrolIntrospectSecret.name" --set secrets.relaycontrolIntrospectSecret.name=
         ;;
       agent-relay)
         v=charts/agent-relay/ci/gcp-proof-values.yaml

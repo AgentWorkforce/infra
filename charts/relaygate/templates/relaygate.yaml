@@ -99,6 +99,22 @@ spec:
             - name: SESSIONS_HOSTS
               value: {{ join "," . | quote }}
             {{- end }}
+            {{- with $.Values.proxy.sessionsCorsOrigins }}
+            - name: SESSIONS_CORS_ORIGINS
+              value: {{ join "," . | quote }}
+            {{- end }}
+            {{- if $.Values.secrets.sessionsInternalSecret.name }}
+            - name: SESSIONS_INTERNAL_SECRET
+              valueFrom: { secretKeyRef: { name: {{ $.Values.secrets.sessionsInternalSecret.name }}, key: {{ $.Values.secrets.sessionsInternalSecret.key }} } }
+            {{- end }}
+            {{- with $.Values.control.introspectUrl | trim }}
+            - name: RELAYCONTROL_INTROSPECT_URL
+              value: {{ . | quote }}
+            - name: RELAYCONTROL_INTROSPECT_SECRET
+              valueFrom: { secretKeyRef: { name: {{ $.Values.secrets.relaycontrolIntrospectSecret.name }}, key: {{ $.Values.secrets.relaycontrolIntrospectSecret.key }} } }
+            - name: SESSION_INGEST_AUDIENCE
+              value: {{ $.Values.control.sessionIngestAudience | trim | quote }}
+            {{- end }}
             {{- if $.Values.secrets.sessionsToken.name }}
             - name: SESSIONS_TOKEN
               valueFrom: { secretKeyRef: { name: {{ $.Values.secrets.sessionsToken.name }}, key: {{ $.Values.secrets.sessionsToken.key }} } }
