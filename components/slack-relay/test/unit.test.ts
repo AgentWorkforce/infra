@@ -134,6 +134,10 @@ test("ingest appends each message to its channel-day page, creating it once, ide
   const brain = {
     async callTool(name: string, a: Record<string, unknown>) {
       calls.push(name);
+      if (name === "get_write_request") {
+        if (seen.has(a.request_id as string)) return {};
+        throw new McpToolError("not_found", name);
+      }
       const slug = a.slug as string;
       if (seen.has(a.request_id as string)) return {};
       if (name === "append_page") {
@@ -159,6 +163,9 @@ test("ingest appends each message to its channel-day page, creating it once, ide
   assert.match(page, /^# #Market Research: 2026-11-14/);
   assert.match(page, /<@U1>: competitor X raised/);
   assert.equal(page.match(/how much\?/g)?.length, 1, "retry appended once");
+  // A backfill replays the day's first message: it created the page, so it isn't appended again.
+  await ing.add({ channel: "C1", channelName: "Market Research", ts: ts1, user: "U1", text: "competitor X raised" });
+  assert.equal(pages.get(slug)!.match(/competitor X raised/g)?.length, 1, "page-creating message replayed once");
   assert.doesNotMatch(page, /xoxb/);
   assert.equal(requestId("append", "C1", ts1), requestId("append", "C1", ts1));
 });
@@ -243,4 +250,114 @@ test("MCP SSE: multi-line data joins, notifications before the response are skip
   const sse = 'event: message\ndata: {"jsonrpc":"2.0","method":"notifications/progress"}\n\nevent: message\ndata: {"jsonrpc":"2.0",\ndata: "id":5,"result":{"ok":3}}\n\n';
   assert.deepEqual(parseRpcBody(sse, 5)?.result, { ok: 3 });
   assert.equal(parseRpcBody('data: {"jsonrpc":"2.0","method":"notifications/progress"}\n\n', 5), null, "a lone notification is not the response");
+});
+
+test("ingest writes each source through its own client; unmapped sources use the default", async () => {
+  const { ingestFromEnv } = await import("../src/ingest-config.ts");
+  const { McpToolError } = await import("../src/mcp.ts");
+  const writes: Array<{ server: string; source: unknown }> = [];
+  const checked: string[] = [];
+  const cfg = ingestFromEnv(
+    {
+      MCP_OAUTH_SERVERS_JSON: JSON.stringify([
+        { name: "brain-write", url: "u", tokenUrl: "t", scope: "write", clientId: "a", clientSecretEnv: "S1" },
+        { name: "brain-founders", url: "u", tokenUrl: "t", scope: "write", clientId: "b", clientSecretEnv: "S2" },
+      ]),
+      S1: "x",
+      S2: "y",
+      INGEST_MCP_SERVER: "brain-write",
+      INGEST_SOURCE_ID: "company",
+      INGEST_PRIVATE_SOURCE_ID: "founders",
+      INGEST_PRIVATE_CHANNELS: "true",
+      INGEST_SOURCE_SERVERS: JSON.stringify({ founders: "brain-founders" }),
+      INGEST_SOURCE_RULES: JSON.stringify([{ match: "^ext-", sourceId: "slack-connect" }]),
+    },
+    {
+      log: () => {},
+      beforeWrite: async (server, slug) => void checked.push(`${server}:${slug}`),
+      client: (s) => ({
+        async callTool(n: string, a: Record<string, unknown>) {
+          if (n === "get_write_request") throw new McpToolError("not_found", n);
+          writes.push({ server: s.name, source: a.source_id });
+          return {};
+        },
+      }),
+    },
+  )!;
+  assert.match(cfg.describe, /founders -> brain-founders/);
+  await cfg.ingest.add({ channel: "C1", channelName: "general", ts: "1794693736.0", user: "U1", text: "hi" });
+  await cfg.ingest.add({ channel: "C2", channelName: "ops-board", isPrivate: true, ts: "1794693737.0", user: "U1", text: "secret plans" });
+  await cfg.ingest.add({ channel: "C3", channelName: "ext-acme", ts: "1794693738.0", user: "U1", text: "hello partner" });
+  assert.deepEqual(writes, [
+    { server: "brain-write", source: "company" },
+    { server: "brain-founders", source: "founders" },
+    { server: "brain-write", source: "slack-connect" }, // no writer mapped: the default (gbrain refuses it)
+  ]);
+  assert.equal(checked[1], "brain-founders:slack/ops-board-c2/2026-11-14");
+  assert.throws(
+    () => ingestFromEnv({ MCP_OAUTH_SERVERS_JSON: "[]", INGEST_MCP_SERVER: "nope" }, { log: () => {} }),
+    /INGEST_MCP_SERVER nope is not in MCP_OAUTH_SERVERS_JSON/,
+  );
+});
+
+test("backfill history: human messages and thread replies, oldest first, paged; --since keeps late replies to older threads", async () => {
+  const { channelHistory } = await import("../src/backfill.ts");
+  const calls: string[] = [];
+  const slack = {
+    async call(method: string, body: Record<string, unknown>) {
+      calls.push(`${method}${body.ts ? `:${body.ts}` : ""}${body.cursor ? `@${body.cursor}` : ""}${body.oldest ? `>${body.oldest}` : ""}`);
+      if (method === "conversations.history" && !body.cursor) {
+        return { messages: [{ ts: "30.0", user: "U2", text: "latest" }, { ts: "20.0", user: "U1", text: "parent", reply_count: 2, latest_reply: "40.0" }], response_metadata: { next_cursor: "p2" } };
+      }
+      if (method === "conversations.history") {
+        return {
+          messages: [
+            { ts: "10.0", user: "UB", text: "from the app" },
+            { ts: "8.0", user: "U4", text: "old root", reply_count: 1, latest_reply: "9.0" },
+            { ts: "6.0", user: "U4", text: "old root, late reply", reply_count: 1, latest_reply: "35.0" },
+            { ts: "5.0", subtype: "channel_join", user: "U3", text: "joined" },
+            { ts: "4.0", bot_id: "B1", text: "bot" },
+          ],
+        };
+      }
+      // conversations.replies: the parent first, then the replies (Slack applies oldest).
+      if (body.ts === "6.0") return { messages: [{ ts: "6.0", user: "U4", text: "old root, late reply" }, { ts: "35.0", user: "U5", text: "picked up", thread_ts: "6.0" }] };
+      return { messages: [{ ts: "20.0", user: "U1", text: "parent" }, { ts: "21.0", user: "U3", text: "reply", thread_ts: "20.0" }, { ts: "40.0", user: "U2", text: "late reply", thread_ts: "20.0" }] };
+    },
+  };
+  const got = await channelHistory(slack, "C1", "UB", "15.0");
+  assert.deepEqual(got.map((m) => [m.ts, m.text, m.threadTs ?? null]), [
+    ["20.0", "parent", null],
+    ["21.0", "reply", "20.0"],
+    ["30.0", "latest", null],
+    ["35.0", "picked up", "6.0"],
+    ["40.0", "late reply", "20.0"],
+  ]);
+  // History is read without the cutoff; replies only for threads active since it.
+  assert.deepEqual(calls, ["conversations.history", "conversations.replies:20.0>15.0", "conversations.history@p2", "conversations.replies:6.0>15.0"]);
+});
+
+test("ingest still writes when the server has no receipt tool", async () => {
+  const { SlackIngest } = await import("../src/ingest.ts");
+  const writes: string[] = [];
+  const ing = new SlackIngest({
+    brain: {
+      async callTool(name: string) {
+        if (name === "get_write_request") throw new Error("MCP error -32601: unknown tool get_write_request");
+        writes.push(name);
+        return {};
+      },
+    },
+    sourceId: "company",
+  });
+  assert.ok(await ing.add({ channel: "C1", channelName: "general", ts: "1794693736.0", user: "U1", text: "hi" }));
+  assert.deepEqual(writes, ["append_page"]);
+});
+
+test("slack calls are form-encoded; pagination stops on a repeated cursor", async () => {
+  const { formBody } = await import("../src/slack.ts");
+  assert.equal(formBody({ channel: "C1", limit: 200, unfurl_links: false, skip: undefined }), "channel=C1&limit=200&unfurl_links=false");
+  const { paged } = await import("../src/backfill.ts");
+  const stuck = { async call() { return { messages: [{ ts: "1.0" }], response_metadata: { next_cursor: "same" } }; } };
+  await assert.rejects(async () => { for await (const _ of paged(stuck, "conversations.history", {}, "messages")) void _; }, /cursor did not advance/);
 });

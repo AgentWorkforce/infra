@@ -144,6 +144,16 @@ export interface SlackWebLike {
   postMessage(args: { channel: string; text: string; threadTs?: string }): Promise<{ ts?: string }>;
 }
 
+/** Slack form arguments: strings as-is, everything else JSON (Slack's convention for blocks etc.). */
+export function formBody(body: Record<string, unknown>): string {
+  const form = new URLSearchParams();
+  for (const [k, v] of Object.entries(body)) {
+    if (v === undefined || v === null) continue;
+    form.set(k, typeof v === "string" ? v : typeof v === "object" ? JSON.stringify(v) : String(v));
+  }
+  return form.toString();
+}
+
 /** The few Slack Web API calls the bridge makes. */
 export class SlackWeb implements SlackWebLike {
   readonly #token: string;
@@ -158,8 +168,10 @@ export class SlackWeb implements SlackWebLike {
     for (let attempt = 0; ; attempt++) {
       const res = await fetch(`${this.#baseUrl}/${method}`, {
         method: "POST",
-        headers: { authorization: `Bearer ${token}`, "content-type": "application/json; charset=utf-8" },
-        body: JSON.stringify(body),
+        // Form-encoded: every Web API method accepts it, while read methods
+        // (conversations.info/history/replies) ignore JSON bodies.
+        headers: { authorization: `Bearer ${token}`, "content-type": "application/x-www-form-urlencoded" },
+        body: formBody(body),
       });
       if (res.status === 429 && attempt < 3) {
         const wait = Number(res.headers.get("retry-after") ?? "1");

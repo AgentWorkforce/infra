@@ -35,7 +35,7 @@ function fakeSlack(): Promise<{ server: Server; base: string; posts: Post[] }> {
     req.on("data", (c) => (body += c));
     req.on("end", () => {
       const method = req.url?.split("/").pop();
-      const j = body ? (JSON.parse(body) as Record<string, string>) : {};
+      const j = Object.fromEntries(new URLSearchParams(body)) as Record<string, string>;
       res.setHeader("content-type", "application/json");
       if (method === "auth.test") return void res.end(JSON.stringify({ ok: true, user_id: "UBOT", team_id: "T1", team: "test" }));
       if (method === "chat.postMessage") {
