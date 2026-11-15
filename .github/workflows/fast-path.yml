@@ -84,9 +84,6 @@ run-name: fast-path ${{ inputs.ref }} (${{ inputs.reason }})
         type: string
 permissions:
   contents: read
-concurrency:
-  group: fast-path-${{ inputs.stage }}-${{ inputs.stage == 'candidate' && github.run_id || inputs.pr_number || inputs.ref }}
-  cancel-in-progress: false
 jobs:
   gate:
     environment: fast-path
@@ -618,6 +615,9 @@ jobs:
       checks: read
       contents: read
       pull-requests: read
+    concurrency:
+      group: fast-path-tag-${{ inputs.pr_number }}
+      cancel-in-progress: false
   lint-static:
     if: inputs.stage == 'charts'
     needs:
@@ -1040,3 +1040,6 @@ jobs:
               "$(sed -n 's/^version: *//p' "$chart" | tr -d '"')"
           done
         } >> "$GITHUB_STEP_SUMMARY"
+    concurrency:
+      group: fast-path-charts
+      cancel-in-progress: false

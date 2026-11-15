@@ -270,6 +270,7 @@ def render() -> str:
             ),
         },
     )
+    tag["concurrency"] = {"group": "fast-path-tag-${{ inputs.pr_number }}", "cancel-in-progress": False}
     jobs["tag"] = tag
 
     # stage: charts. release.yml publishes only after every lint.yml job passes.
@@ -302,6 +303,7 @@ def render() -> str:
             ),
         }
     )
+    charts["concurrency"] = {"group": "fast-path-charts", "cancel-in-progress": False}
     jobs["charts"] = charts
 
     workflow = {
@@ -309,12 +311,11 @@ def render() -> str:
         "run-name": "fast-path ${{ inputs.ref }} (${{ inputs.reason }})",
         "on": {"workflow_dispatch": {"inputs": inputs}},
         "permissions": {"contents": "read"},
-        "concurrency": {
-            # The candidate intake reconciles its own races and must not lose a
-            # pending run to GitHub's one-pending-per-group rule.
-            "group": "fast-path-${{ inputs.stage }}-${{ inputs.stage == 'candidate' && github.run_id || inputs.pr_number || inputs.ref }}",
-            "cancel-in-progress": False,
-        },
+        # No workflow-level concurrency: a run waiting for approval would hold
+        # the group, and GitHub keeps one pending run per group, so a third
+        # dispatch would silently cancel the second. The tag and charts jobs
+        # serialize at job level, which only applies once a run is approved.
+        # The candidate intake reconciles its own races (see its source).
         "jobs": jobs,
     }
     check_runs(workflow)
