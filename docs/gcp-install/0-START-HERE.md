@@ -800,15 +800,20 @@ sed -i.orig 's/^deletion_protection *= *true/deletion_protection  = false/' terr
 grep -n '^deletion_protection' terraform.tfvars
 terraform apply
 gcloud storage rm -r -a "gs://$SESSIONS_BUCKET/**"
+FEED="$(sed -n 's/^desktop_feed_bucket_name *= *"\(.*\)"/\1/p' terraform.tfvars)"
+[ -z "$FEED" ] || gcloud storage rm -r -a "gs://$FEED/**"
 terraform destroy
 cd -
 ```
 
-The bucket is versioned, so `-a` removes every object version; Terraform
-won't delete a bucket that still holds any.
+The buckets are versioned, so `-a` removes every object version; Terraform
+won't delete a bucket that still holds any. The second `rm` empties the
+desktop update feed bucket, and runs only if you set
+`desktop_feed_bucket_name` in step 4.
 
 **Done when:** `terraform destroy` reports `Destroy complete!` and
-`terraform state list | grep -v '^data\.'` prints nothing.
+`terraform -chdir=infra/terraform/examples/gcp state list | grep -v '^data\.'`
+prints nothing.
 
 **`must be owner of database` or `role ... cannot be dropped`:** your infra
 checkout predates AgentWorkforce/infra#367 (every release up to and
@@ -832,6 +837,9 @@ gcloud artifacts repositories delete agent-relay-mirror --location $REGION
 ```
 
 - The DNS owner deletes the four A records from step 6.
+- **Used `first-admin.sh` (step 15)?** Delete the password it stored, or it
+  will refuse to run for a new install in this project:
+  `gcloud secrets delete agent-relay-first-admin-password --project $GCP_PROJECT_ID`.
 - **Used vals with Secret Manager (step 10c)?** Delete its secrets:
   `gcloud secrets list --filter='name~agent-relay--' --format='value(name)' | xargs -r -n1 gcloud secrets delete --quiet`.
 - Delete `~/.agent-relay-install` from wherever you copied it: the database
