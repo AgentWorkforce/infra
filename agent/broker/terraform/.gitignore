@@ -2,4 +2,6 @@
 *.tfstate
 *.tfstate.*
 terraform.tfvars
+backend.hcl
+*.tfplan
 modules/*/.terraform.lock.hcl

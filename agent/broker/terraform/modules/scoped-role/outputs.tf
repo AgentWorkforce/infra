@@ -12,3 +12,8 @@ output "ceiling_policy" {
   description = "The scoped role's deny ceiling, for review."
   value       = local.ceiling_policy
 }
+
+output "ceiling_by_sid" {
+  description = "The ceiling's statements keyed by Sid (for tests and review)."
+  value       = { for s in local.ceiling_policy.Statement : s.Sid => s }
+}

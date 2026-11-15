@@ -1,0 +1,8 @@
+# Copy to backend.hcl (gitignored) and run: terraform init -backend-config=backend.hcl
+# A versioned, private bucket in the broker account; state holds no secrets
+# (role names and policies only).
+bucket       = "<state bucket in the broker account>"
+key          = "aws-cred-broker/sandbox.tfstate"
+region       = "us-east-1"
+encrypt      = true
+use_lockfile = true

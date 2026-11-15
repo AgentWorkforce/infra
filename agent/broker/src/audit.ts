@@ -2,8 +2,10 @@
  * The broker's audit log: one JSON line per event, append-only, each line
  * hash-chained to the one before it so an edit or a dropped line shows up in
  * verifyAudit. It never holds a secret: an entry is built from AuditEvent,
- * which has no credential field, and appendAudit refuses any line that looks
- * like it carries one. The access key id is not a secret and is logged so a
+ * which has no credential field, and appendAudit refuses a line with a
+ * credential field name or one of the exact secret values just minted. It
+ * never guesses from a value's shape: a commit SHA in a purpose or a long run
+ * tag is ordinary metadata. The access key id is not a secret and is logged so a
  * CloudTrail event can be traced back to its request.
  */
 import { createHash } from "node:crypto";
@@ -48,8 +50,8 @@ export interface AuditLine extends AuditEvent {
 }
 
 const GENESIS = "0".repeat(64);
-/** Shapes of secret material: STS secret keys are 40 base64 chars, session tokens are long base64. */
-const SECRETISH = /("(secretAccessKey|SecretAccessKey|sessionToken|SessionToken)"\s*:)|[A-Za-z0-9/+]{40}(?![A-Za-z0-9/+])|IQoJb3JpZ2lu/;
+/** Credential field names, as any JSON key. */
+const CREDENTIAL_KEY = /"(secret_?access_?key|session_?token|aws_secret_access_key|aws_session_token)"\s*:/i;
 
 function lineHash(prev: string, body: Omit<AuditLine, "hash">): string {
   return createHash("sha256").update(prev).update("\n").update(JSON.stringify(body)).digest("hex");
@@ -67,8 +69,7 @@ export function appendAudit(path: string, event: AuditEvent, now: Date, forbidde
   const body: Omit<AuditLine, "hash"> = { seq: (prev?.seq ?? 0) + 1, ts: now.toISOString(), prev: prev?.hash ?? GENESIS, ...event };
   const line: AuditLine = { ...body, hash: lineHash(body.prev, body) };
   const text = JSON.stringify(line);
-  const policyDigestFree = text.replace(/"(hash|prev|policyDigest)":"[0-9a-f]{64}"/g, "");
-  if (SECRETISH.test(policyDigestFree) || forbidden.some((s) => s && text.includes(s))) {
+  if (CREDENTIAL_KEY.test(text) || forbidden.some((s) => s.length >= 16 && text.includes(s))) {
     throw new Error("audit: refusing to write a line that looks like it holds a credential");
   }
   appendFileSync(path, text + "\n", { mode: 0o600 });

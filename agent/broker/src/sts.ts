@@ -61,11 +61,14 @@ export function assumeRoleArgs(input: AssumeInput, profile: string): string[] {
   return args;
 }
 
+/** An STS call that takes longer is killed: the broker never holds its lock on an unbounded call. */
+export const STS_TIMEOUT_MS = 30_000;
+
 export function awsCliSts(profile = process.env.BROKER_AWS_PROFILE ?? "aws-cred-broker"): StsClient {
   return {
     assumeRole(input) {
       return new Promise((resolve, reject) => {
-        execFile("aws", assumeRoleArgs(input, profile), { maxBuffer: 1 << 20, env: { ...process.env, AWS_PAGER: "" } }, (err, stdout, stderr) => {
+        execFile("aws", assumeRoleArgs(input, profile), { maxBuffer: 1 << 20, timeout: STS_TIMEOUT_MS, killSignal: "SIGKILL", env: { ...process.env, AWS_PAGER: "", AWS_MAX_ATTEMPTS: "2" } }, (err, stdout, stderr) => {
           if (err) {
             // stderr from STS names the error code; it never holds the credentials.
             reject(new Error(`sts assume-role failed: ${String(stderr).trim().split("\n").at(-1) ?? err.message}`));

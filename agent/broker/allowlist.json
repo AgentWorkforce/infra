@@ -1,15 +1,24 @@
 {
-  "$comment": "AWS credential broker policy allowlist. Reviewed by Khaliq: a change here changes what agents can get without asking him. See broker/DESIGN.md.",
+  "$comment": "AWS credential broker policy allowlist. Reviewed by Khaliq: a change here changes what agents can get without asking him. See broker/DESIGN.md. Creates outside EC2 must be named <runTag>-\u2026: their tag-on-create permission is granted only on those names.",
   "version": 1,
   "tagKey": "agent-run",
-  "humanApprovers": ["khaliq-gant"],
-  "duration": { "minMinutes": 15, "maxMinutes": 60, "autoMaxMinutes": 60 },
+  "humanApprovers": [
+    "khaliq-gant"
+  ],
+  "duration": {
+    "minMinutes": 15,
+    "maxMinutes": 60,
+    "autoMaxMinutes": 60
+  },
   "approvalWindowMinutes": 30,
   "accounts": {
     "805532413586": {
       "label": "sandbox",
       "tier": "sandbox",
-      "regions": ["us-east-1", "us-west-2"],
+      "regions": [
+        "us-east-1",
+        "us-west-2"
+      ],
       "roles": {
         "scoped": "arn:aws:iam::805532413586:role/agent-broker-sandbox-scoped"
       }
@@ -62,21 +71,134 @@
       ]
     },
     {
-      "id": "create-with-run-tag",
+      "id": "sqs-create",
       "scope": "request-tag",
       "actions": [
-        "sqs:CreateQueue",
-        "sns:CreateTopic",
-        "logs:CreateLogGroup",
-        "dynamodb:CreateTable",
-        "secretsmanager:CreateSecret",
+        "sqs:CreateQueue"
+      ],
+      "resources": [
+        "arn:aws:sqs:*:*:{ns}--*"
+      ]
+    },
+    {
+      "id": "sns-create",
+      "scope": "request-tag",
+      "actions": [
+        "sns:CreateTopic"
+      ],
+      "resources": [
+        "arn:aws:sns:*:*:{ns}--*"
+      ]
+    },
+    {
+      "id": "logs-create",
+      "scope": "request-tag",
+      "actions": [
+        "logs:CreateLogGroup"
+      ],
+      "resources": [
+        "arn:aws:logs:*:*:log-group:{ns}--*"
+      ]
+    },
+    {
+      "id": "dynamodb-create",
+      "scope": "request-tag",
+      "actions": [
+        "dynamodb:CreateTable"
+      ],
+      "resources": [
+        "arn:aws:dynamodb:*:*:table/{ns}--*"
+      ]
+    },
+    {
+      "id": "secretsmanager-create",
+      "scope": "request-tag",
+      "actions": [
+        "secretsmanager:CreateSecret"
+      ],
+      "resources": [
+        "arn:aws:secretsmanager:*:*:secret:{ns}--*"
+      ]
+    },
+    {
+      "id": "sqs-tag-on-create",
+      "scope": "request-tag",
+      "actions": [
+        "sqs:TagQueue"
+      ],
+      "impliedBy": [
+        "sqs:CreateQueue"
+      ],
+      "resources": [
+        "arn:aws:sqs:*:*:{ns}--*"
+      ]
+    },
+    {
+      "id": "sns-tag-on-create",
+      "scope": "request-tag",
+      "actions": [
+        "sns:TagResource"
+      ],
+      "impliedBy": [
+        "sns:CreateTopic"
+      ],
+      "resources": [
+        "arn:aws:sns:*:*:{ns}--*"
+      ]
+    },
+    {
+      "id": "logs-tag-on-create",
+      "scope": "request-tag",
+      "actions": [
+        "logs:TagResource",
+        "logs:TagLogGroup"
+      ],
+      "impliedBy": [
+        "logs:CreateLogGroup"
+      ],
+      "resources": [
+        "arn:aws:logs:*:*:log-group:{ns}--*"
+      ]
+    },
+    {
+      "id": "dynamodb-tag-on-create",
+      "scope": "request-tag",
+      "actions": [
+        "dynamodb:TagResource"
+      ],
+      "impliedBy": [
+        "dynamodb:CreateTable"
+      ],
+      "resources": [
+        "arn:aws:dynamodb:*:*:table/{ns}--*"
+      ]
+    },
+    {
+      "id": "secretsmanager-tag-on-create",
+      "scope": "request-tag",
+      "actions": [
+        "secretsmanager:TagResource"
+      ],
+      "impliedBy": [
+        "secretsmanager:CreateSecret"
+      ],
+      "resources": [
+        "arn:aws:secretsmanager:*:*:secret:{ns}--*"
+      ]
+    },
+    {
+      "id": "ec2-create-volume",
+      "scope": "request-tag",
+      "actions": [
         "ec2:CreateVolume"
       ]
     },
     {
       "id": "ec2-run-instances-tagged",
       "scope": "request-tag",
-      "actions": ["ec2:RunInstances"],
+      "actions": [
+        "ec2:RunInstances"
+      ],
       "resources": [
         "arn:aws:ec2:*:*:instance/*",
         "arn:aws:ec2:*:*:volume/*",
@@ -86,7 +208,9 @@
     {
       "id": "ec2-run-instances-inputs",
       "scope": "any",
-      "actions": ["ec2:RunInstances"],
+      "actions": [
+        "ec2:RunInstances"
+      ],
       "resources": [
         "arn:aws:ec2:*::image/*",
         "arn:aws:ec2:*:*:subnet/*",
@@ -97,8 +221,21 @@
     {
       "id": "ec2-tag-on-create",
       "scope": "request-tag",
-      "actions": ["ec2:CreateTags"],
-      "condition": { "StringEquals": { "ec2:CreateAction": ["RunInstances", "CreateVolume"] } }
+      "actions": [
+        "ec2:CreateTags"
+      ],
+      "condition": {
+        "StringEquals": {
+          "ec2:CreateAction": [
+            "RunInstances",
+            "CreateVolume"
+          ]
+        }
+      },
+      "impliedBy": [
+        "ec2:RunInstances",
+        "ec2:CreateVolume"
+      ]
     },
     {
       "id": "own-run-tagged",

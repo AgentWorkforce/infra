@@ -21,15 +21,25 @@ variable "region" {
 }
 
 variable "broker_profile" {
-  description = "AWS CLI profile with IAM rights in the broker account (a human's)."
+  description = "AWS CLI profile with IAM rights in the broker account. Null: the default profile (infra-ops' admin role)."
   type        = string
   default     = null
 }
 
 variable "sandbox_profile" {
-  description = "AWS CLI profile with IAM rights in the sandbox account (a human's)."
+  description = "AWS CLI profile with IAM rights in the sandbox account. Null: the default profile, plus sandbox_assume_role_arn."
   type        = string
   default     = null
+}
+
+variable "sandbox_assume_role_arn" {
+  description = "Role in the sandbox account, trusted by infra-ops' admin role, that the sandbox provider assumes. Null: use the profile as is."
+  type        = string
+  default     = null
+  validation {
+    condition     = var.sandbox_assume_role_arn == null || can(regex("^arn:aws:iam::\\d{12}:role/[\\w+=,.@/-]+$", var.sandbox_assume_role_arn))
+    error_message = "sandbox_assume_role_arn must be an exact IAM role ARN."
+  }
 }
 
 variable "allowed_regions" {
