@@ -361,3 +361,73 @@ test("slack calls are form-encoded; pagination stops on a repeated cursor", asyn
   const stuck = { async call() { return { messages: [{ ts: "1.0" }], response_metadata: { next_cursor: "same" } }; } };
   await assert.rejects(async () => { for await (const _ of paged(stuck, "conversations.history", {}, "messages")) void _; }, /cursor did not advance/);
 });
+
+test("ingest against an async brain: write_pending is accepted, appends wait for the page's create to commit", async () => {
+  const { SlackIngest, receiptState } = await import("../src/ingest.ts");
+  const { McpToolError } = await import("../src/mcp.ts");
+  const err = (code: string) => new McpToolError(JSON.stringify({ error: code, code }, null, 2), "x");
+  const lines: string[] = [];
+  const receipts = new Map<string, { state: string; polls: number }>();
+  let page: string | null = null;
+  const brain = {
+    async callTool(name: string, a: Record<string, unknown>) {
+      const id = a.request_id as string;
+      if (name === "get_write_request") {
+        const r = receipts.get(id);
+        if (!r) throw err("not_found");
+        if (r.state === "pending" && ++r.polls >= 2) { r.state = "committed"; page = "created"; }
+        return { content: [{ type: "text", text: JSON.stringify({ request_id: id, state: r.state }) }] };
+      }
+      if (receipts.has(id)) throw err("write_pending");
+      if (name === "append_page") {
+        if (!page) throw err("page_not_found");
+        receipts.set(id, { state: "committed", polls: 0 });
+        lines.push(a.text as string);
+        throw err("write_pending"); // accepted, applied later
+      }
+      receipts.set(id, { state: "pending", polls: 0 });
+      lines.push(a.content as string);
+      throw err("write_pending");
+    },
+  };
+  const ing = new SlackIngest({ brain, sourceId: "company", pollMs: 1 });
+  await Promise.all([
+    ing.add({ channel: "C1", channelName: "general", ts: "1794693736.0", user: "U1", text: "first" }),
+    ing.add({ channel: "C1", channelName: "general", ts: "1794693737.0", user: "U2", text: "second" }),
+  ]);
+  assert.equal(lines.length, 2);
+  assert.match(lines[0]!, /^# #general: .*first/s, "the first message created the page");
+  assert.match(lines[1]!, /<@U2>: second/, "the second was appended after the create committed");
+  assert.equal(receiptState({ structuredContent: { state: "committed" } }), "committed");
+});
+
+test("the create wait survives a receipt that isn't visible yet and transient lookup failures", async () => {
+  const { SlackIngest } = await import("../src/ingest.ts");
+  const { McpToolError } = await import("../src/mcp.ts");
+  const err = (code: string) => new McpToolError(JSON.stringify({ error: code, code }), "x");
+  const calls: string[] = [];
+  let lookups = 0;
+  let created = false;
+  const brain = {
+    async callTool(name: string, a: Record<string, unknown>) {
+      calls.push(name);
+      if (name === "get_write_request") {
+        if (!created) throw err("not_found"); // before put_page: not created by this message
+        lookups++;
+        if (lookups === 1) throw err("not_found"); // receipt not visible yet
+        if (lookups === 2) throw new Error("fetch failed"); // transient
+        return { content: [{ type: "text", text: JSON.stringify({ state: lookups < 4 ? "pending" : "committed" }) }] };
+      }
+      if (name === "append_page" && !created) throw err("page_not_found");
+      if (name === "put_page") { created = true; throw err("write_pending"); }
+      return {};
+    },
+  };
+  const ing = new SlackIngest({ brain, sourceId: "company", pollMs: 1 });
+  await ing.add({ channel: "C1", channelName: "general", ts: "1794693736.0", user: "U1", text: "first" });
+  assert.equal(lookups, 4, "kept polling through not_found and a transient failure until committed");
+  assert.equal(calls.filter((c) => c === "put_page").length, 1);
+  const { noReceipts } = await import("../src/ingest.ts");
+  assert.ok(noReceipts(new Error("MCP error -32601: Unknown tool: get_write_request")));
+  assert.ok(!noReceipts(err("not_found")));
+});
