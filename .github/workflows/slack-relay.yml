@@ -6,7 +6,7 @@ name: slack-relay
 
 on:
   pull_request:
-    paths: ["components/slack-relay/**", ".github/workflows/slack-relay.yml"]
+    paths: ["components/slack-relay/**", "charts/relaygate/**", ".github/workflows/slack-relay.yml"]
   push:
     branches: [main]
     paths: ["components/slack-relay/**", ".github/workflows/slack-relay.yml"]
@@ -47,15 +47,37 @@ jobs:
           echo "::add-mask::$key"
           echo "RELAYCAST_E2E_KEY=$key" >> "$GITHUB_ENV"
           echo "RELAYCAST_E2E_URL=http://localhost:8787" >> "$GITHUB_ENV"
+      - name: Start relaygate for the gate e2e test
+        working-directory: .
+        run: |
+          set -euo pipefail
+          dir="$RUNNER_TEMP/relaygate"; mkdir -p "$dir/data"; chmod 777 "$dir/data"
+          bridge=$(openssl rand -hex 32); local=$(openssl rand -hex 32)
+          echo "::add-mask::$bridge"; echo "::add-mask::$local"
+          h() { printf '%s' "$1" | sha256sum | cut -d' ' -f1; }
+          jq -n --arg b "$(h "$bridge")" --arg l "$(h "$local")" '{
+            groups: [{gid: 11, name: "local"}, {gid: 22, name: "pit"}],
+            enrollmentKeys: [{id: "local", gid: 11, sha256: $l}, {id: "slack-bridge", gid: 22, sha256: $b, namePrefix: "slack-"}],
+            streamDefaults: [{prefix: "relaycast:inbox/", gid: 11, mode: "664"}, {prefix: "slack:", gid: 22, mode: "660", classify: true}, {prefix: "kb:", gid: 22, mode: "660", classify: true}],
+            streamOverrides: [],
+            classifier: {rules: [{id: "us-ssn", pattern: "\\b\\d{3}-\\d{2}-\\d{4}\\b"}, {id: "prompt-injection", pattern: "ignore (all )?(previous|prior) instructions"}], model: {enabled: false}}
+          }' > "$dir/policy.json"
+          docker run -d --name relaygate -p 18090:8080 -v "$dir/policy.json:/policy/policy.json:ro" -v "$dir/data:/data" \
+            -e RELAYGATE_POLICY=/policy/policy.json -e RELAYGATE_DB=/data/relaygate.db \
+            ghcr.io/agentworkforce/relaygate@sha256:c41ff07cd0b9b2ed6c13b9ba20272658024e3d0e59c6de16035a19d488cf61ca
+          for _ in $(seq 1 30); do curl -sf localhost:18090/readyz >/dev/null && break; sleep 1; done
+          { echo "RELAYGATE_E2E_URL=http://localhost:18090"; echo "RELAYGATE_E2E_BRIDGE_KEY=$bridge"; echo "RELAYGATE_E2E_LOCAL_KEY=$local"; } >> "$GITHUB_ENV"
       - run: npm test
       - name: Manifest renders
         run: |
           manifest/render-manifest.py | jq -e '.settings.socket_mode_enabled == true' >/dev/null
           manifest/render-manifest.py --mode http --url https://slack.example.com/slack/events \
             | jq -e '.settings.event_subscriptions.request_url == "https://slack.example.com/slack/events"' >/dev/null
-      - name: Engine log
+      - name: Engine and relaygate logs
         if: failure()
-        run: cat "$RUNNER_TEMP/engine.log" || true
+        run: |
+          cat "$RUNNER_TEMP/engine.log" || true
+          docker logs relaygate || true
 
   image:
     needs: test

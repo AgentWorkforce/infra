@@ -1,0 +1,10 @@
+image:
+  digest: sha256:c41ff07cd0b9b2ed6c13b9ba20272658024e3d0e59c6de16035a19d488cf61ca
+secrets:
+  anthropicApiKey: { name: relaygate-anthropic, key: api-key }
+policy:
+  enrollmentKeys:
+    - { id: pit, gid: 22, sha256: "0000000000000000000000000000000000000000000000000000000000000000" }
+  classifier:
+    rules: []
+    model: { enabled: true, model: claude-opus-5-5, effort: low, timeoutMs: 8000, guidance: "Patient records stay inside the pit." }

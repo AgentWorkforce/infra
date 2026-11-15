@@ -170,7 +170,7 @@ workspace.
 
 ## Governance with relaygate (optional)
 
-[relaygate](https://github.com/AgentWorkforce/relaygate) puts a permission
+[relaygate](https://github.com/AgentWorkforce/relaygate) (install: [self-hosted-relaygate.md](self-hosted-relaygate.md)) puts a permission
 gate between agents and Relaycast/Sessions: agents belong to a group (set at
 registration), every request is checked against mode bits, and anything that
 crosses a group boundary or leaves through Slack is classified first. It is

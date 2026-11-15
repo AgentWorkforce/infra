@@ -173,6 +173,12 @@ profiles:
     values_file: ci/default-values.yaml
     install: helm upgrade --install slack-relay agentworkforce/slack-relay -f <your values> (or components.slackRelay=true in the agent-relay umbrella, values under slack-relay)
     summary: Optional and off by default in the umbrella (components.slackRelay); not qualified. A one-replica router Deployment (Socket Mode by default, SQLite ledger on a PVC, the only holder of Slack credentials) and a one-replica agent host StatefulSet running per-thread Claude Code agents on the relay. Every credential is an existing Secret referenced by name; the chart creates none. See docs/self-hosted-slack-relay.md.
+  - id: relaygate
+    title: relaygate (governance gate for agents)
+    chart: relaygate
+    values_file: ci/default-values.yaml
+    install: helm upgrade --install relaygate agentworkforce/relaygate -f <your values> (or components.relaygate=true in the agent-relay umbrella, values under relaygate)
+    summary: Optional and off by default in the umbrella (components.relaygate); not qualified. One replica (SQLite audit and registrations on a PVC). Agents register into a group with an enrollment key; every request is checked against mode bits, and writes that cross a group boundary or leave through an external stream are classified (rules, plus an optional Claude model). The policy is a ConfigMap holding only sha256s of enrollment keys. See AgentWorkforce/relaygate.
   - id: relaychief-control
     title: Relay Chief control add-on
     chart: relaychief-control
@@ -1469,7 +1475,7 @@ compatibility:
       charts: { agent-relay: 0.7.14, relay-control: 0.4.16, relay-webapp: 0.2.5 }
       app_versions: { agent-relay: 0.1.0, relay-control: 0.1.0, relay-webapp: 0.1.0 }
       depends:
-        agent-relay: { relaycast: 0.3.13, relayauth: 0.1.5, sessions-pipeline: 0.8.33, relay-control: 0.4.16, relay-webapp: 0.2.5, relayflows: 0.2.5, durable-actors: 0.14.6-awf.3, relayfile: 0.2.2, telemetry-collector: 0.1.7, relay-chief: 0.1.0, slack-relay: 0.3.0 }
+        agent-relay: { relaycast: 0.3.13, relayauth: 0.1.5, sessions-pipeline: 0.8.33, relay-control: 0.4.16, relay-webapp: 0.2.5, relayflows: 0.2.5, durable-actors: 0.14.6-awf.3, relayfile: 0.2.2, telemetry-collector: 0.1.7, relay-chief: 0.1.0, slack-relay: 0.3.0, relaygate: 0.1.0 }
       images:
         relaycast: { repository: ghcr.io/agentworkforce/relaycast-self-host, digest: sha256:ab9dd6781e68f09d5e2e686a17088f9ad533978ef13d974a47d6c212d8eedbde }
         relaycast-postgres: { repository: ghcr.io/agentworkforce/relaycast-self-host, digest: sha256:cc2a79f02d39978fa04322b5a45497737ff137bc2a5db5615c7eee690030de83 }
@@ -2484,6 +2490,14 @@ compatibility:
       charts: { relay-chief: 0.1.0 }
       app_versions: { relay-chief: 0.1.0 }
       notes: First chart, rendered only. No Relay Chief image is published and the digest is operator-supplied until one exists.
+    - id: relaygate-0.1.0
+      status: unreleased
+      current: true
+      charts: { relaygate: 0.1.0 }
+      app_versions: { relaygate: 0.1.0 }
+      images:
+        relaygate: { repository: ghcr.io/agentworkforce/relaygate, digest_required: true }
+      notes: First registered chart, rendered only; default-off in the agent-relay umbrella (components.relaygate). Build 1 of the server (registration, mode check, /v1/check, classifier, audit); the Relaycast/Sessions proxy follows. Ships no default digest.
     - id: slack-relay-0.3.0
       status: unreleased
       current: true
@@ -2575,6 +2589,8 @@ internal_env:
   - { name: ROLE, chart: slack-relay, why: selects the router or host entry point of the one slack-relay image; fixed per workload }
   - { name: LEDGER_PATH, chart: slack-relay, why: fixed /data/ledger.sqlite on the router's ledger PVC }
   - { name: DATA_DIR, chart: slack-relay, why: fixed /data on the agent host's sessions volume }
+  - { name: RELAYGATE_POLICY, chart: relaygate, why: fixed /policy/policy.json, the mounted policy ConfigMap }
+  - { name: RELAYGATE_DB, chart: relaygate, why: fixed /data/relaygate.db on the gate's PVC }
   - { name: SERVICE, chart: [sessions-pipeline-worker, session-ingest-api], why: selects the entry point of the one services image }
   - { name: OTEL_SERVICE_NAME, chart: [sessions-pipeline-worker, session-ingest-api], why: equals SERVICE }
   - { name: TMPDIR, chart: [sessions-pipeline-worker, session-ingest-api], why: the writable emptyDir under a read-only root filesystem }
@@ -6438,6 +6454,62 @@ entries:
       - "charts/slack-relay/values.yaml:9"
       - "charts/slack-relay/templates/router.yaml:49-52"
       - "charts/slack-relay/templates/host.yaml:30-33"
+
+  - id: req.relaygate.policy
+    kind: requirement
+    title: relaygate policy and enrollment keys
+    description: The gate's policy (groups, enrollment keys, stream defaults and overrides, classifier) in policy, rendered to a ConfigMap, or an existing ConfigMap with a policy.json key. Enrollment keys are listed only as the sha256 of each key; the keys themselves are handed to the clients that register (e.g. slack-relay's secrets.relaygateEnrollmentKey). The chart refuses an enrollment key whose sha256 isn't 64 hex.
+    chart: relaygate
+    values: ["policy.*", existingConfigMap]
+    profiles: [relaygate]
+    status: shipped
+    provided_by: operator
+    verify: helm template fails on a non-sha256 enrollment key; the relaygate pod reports /readyz 200 once the policy loads
+    sources:
+      - "charts/relaygate/values.yaml"
+      - "charts/relaygate/templates/relaygate.yaml"
+
+  - id: opt.relaygate.model-classifier
+    kind: option
+    title: relaygate model classifier
+    description: Off by default (rules only). With policy.classifier.model.enabled a Claude model also judges classified writes; it needs an Anthropic API key from an existing Secret (use a zero-data-retention key where regulated data may be classified). A classifier error or timeout fails closed (503, nothing sent).
+    chart: relaygate
+    values: ["policy.classifier.model.*", "secrets.anthropicApiKey.*"]
+    env: [ANTHROPIC_API_KEY]
+    profiles: [relaygate]
+    status: shipped
+    provided_by: operator
+    default: rules-only
+    choices:
+      - { value: rules-only }
+      - { value: rules-and-model, note: needs secrets.anthropicApiKey.name }
+    secrets:
+      - name: "<secrets.anthropicApiKey.name>"
+        keys:
+          - { key: api-key, key_path: secrets.anthropicApiKey.key }
+        note: only with the model classifier
+    verify: helm template fails with model.enabled and no secrets.anthropicApiKey.name; the gate logs model_classifier true
+    sources:
+      - "charts/relaygate/values.yaml"
+      - "charts/relaygate/templates/_helpers.tpl"
+
+  - id: opt.relaygate.image-pull-secrets
+    kind: option
+    title: relaygate image pull Secrets
+    description: Pull Secrets for a private registry or customer mirror.
+    chart: relaygate
+    values: [imagePullSecrets]
+    profiles: [relaygate]
+    status: shipped
+    provided_by: operator
+    default: none
+    choices:
+      - { value: none }
+      - { value: listed }
+    verify: helm template lists imagePullSecrets on the relaygate Deployment when set
+    sources:
+      - "charts/relaygate/values.yaml"
+      - "charts/relaygate/templates/relaygate.yaml"
 
   - id: req.relayfile-control.config
     kind: requirement
