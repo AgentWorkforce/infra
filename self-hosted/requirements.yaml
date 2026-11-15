@@ -318,9 +318,15 @@ compatibility:
       status: shipped
       charts: { telemetry-collector: 0.1.0 }
       notes: 'Default-off umbrella analytics file collector. Requires accepted immutable collector and TLS-proxy images, producer and TLS Secrets and an exclusive persistent volume. Source rendering does not prove image entrypoint, TLS, durable acknowledgement, power-loss recovery or whole-application analytics coverage. The currently reviewed collector CLI registers relaycontrol events only.'
-    - id: session-read-api-0.2.13
+    - id: session-read-api-0.2.14
       status: unreleased
       current: true
+      charts: { session-read-api: 0.2.14 }
+      images:
+        session-read-api: { repository: ghcr.io/agentworkforce/96bulls-services, digest_required: true }
+      notes: 'Adds search.partialSessions (refuse or skip; empty renders nothing, the image default is refuse), rendering READ_API_SEARCH_PARTIAL_SESSIONS (issue 610). Default renders are unchanged apart from the chart version.'
+    - id: session-read-api-0.2.13
+      status: planned
       charts: { session-read-api: 0.2.13 }
       images:
         session-read-api: { repository: ghcr.io/agentworkforce/96bulls-services, digest_required: true }
@@ -395,9 +401,37 @@ compatibility:
       images:
         session-read-api: { repository: ghcr.io/agentworkforce/96bulls-services, digest_required: true }
       notes: 'Defaults READ_API_COMPLETE_SINCE to epoch for a new self-host store populated only by its own ingest. Partial legacy imports must retain an explicit real coverage floor matching the indexer. Image, auth, routing and enabled defaults are unchanged; this does not assert coverage for an imported store or qualify a runtime.'
-    - id: sessions-pipeline-0.8.34
+    - id: sessions-pipeline-0.8.35
       status: unreleased
       current: true
+      charts: { sessions-pipeline: 0.8.35, sessions-pipeline-worker: 0.7.10, session-ingest-api: 0.4.5, session-read-api: 0.2.14 }
+      depends:
+        sessions-pipeline: { worker: 0.7.10, alleyoop: 0.4.5, sessionReadApi: 0.2.14, hoopdb: 0.9.0, session-object-storage: 5.4.0, otel: 0.178.0 }
+      images:
+        sessions-pipeline-worker: { repository: agentworkforce/96bulls-services, digest: sha256:6f22ea17dff336e1431664542759fd27958649388b90a0b2f0881883caa7c6b2 }
+        session-ingest-api: { repository: agentworkforce/96bulls-services, digest: sha256:6f22ea17dff336e1431664542759fd27958649388b90a0b2f0881883caa7c6b2 }
+        session-read-api: { repository: ghcr.io/agentworkforce/96bulls-services, digest_required: true }
+      images_note: "Operator session erase values remain default-off and do not pin the 2026.11.2 candidate image. Runtime qualification is separate. Existing chart/profile image pins remain unchanged."
+      services:
+        source_commit: 7d7229bb31c121ecb98cd4e35c248fc2cf5669ad
+        migration_generation: eff8b3be46565b57ad8fa5e4a066dbb6d1fe608313d9c1680bfbcd484add259b
+      db_combos:
+        - { db_mode: selfhosted, boundary: global-default-revoke, hoopdb: cnpg, status: shipped, profiles: [selfhost-postgres, migration, aws-cnpg], notes: chart Jobs install the runtime role and the function default }
+        - { db_mode: selfhosted, boundary: global-default-revoke, hoopdb: external, status: shipped, profiles: [external-selfhosted], notes: operator runs the bootstrap files as a superuser }
+        - { db_mode: rds, boundary: global-default-revoke, hoopdb: external, status: shipped, profiles: [external-rds, aws-rds-native], notes: the RDS master runs the rds_*.sql bootstrap first }
+        - { db_mode: cloudsql, boundary: global-default-revoke, hoopdb: external, status: shipped, profiles: [gcp-cloudsql], notes: operator runs the Cloud SQL bootstrap files as the migration owner; roleBootstrap false }
+        - { db_mode: supabase, boundary: event-trigger, hoopdb: external, status: held, profiles: [external-supabase], notes: supabaseActivation.hold; migrate refuses until the reviewed event trigger is installed and --activation-check passes }
+        - { db_mode: supabase, boundary: null, hoopdb: external, status: fails closed, profiles: [aws-supabase], notes: renders; migrate refuses with function_boundary_unproven }
+        - { db_mode: local, boundary: null, hoopdb: any, status: dev only, profiles: [], notes: local stack only; never a self-host install }
+      sources:
+        - "charts/sessions-pipeline/Chart.yaml:4"
+        - "charts/sessions-pipeline/profiles/aws-rds-native.yaml"
+        - "ci/sessions-pipeline-profiles/matrix.sh"
+        - "charts/sessions-pipeline/templates/_scrub-engine.tpl:1"
+        - "ci/sessions-pipeline-scrub-engine/test_scrub_engine.py:1"
+      notes: 'Carries session-read-api 0.2.14 and adds searchIndexer.limits.{maxScopeBytes,maxScopeEvents,maxRows} on the consumer only (SEARCH_INDEX_MAX_SCOPE_BYTES 64MiB..256MiB, SEARCH_INDEX_MAX_SCOPE_EVENTS 100000..1000000, SEARCH_INDEX_MAX_ROWS 500000..1000000; issue 610), all unset by default. Default renders are unchanged apart from chart versions.'
+    - id: sessions-pipeline-0.8.34
+      status: planned
       charts: { sessions-pipeline: 0.8.34, sessions-pipeline-worker: 0.7.10, session-ingest-api: 0.4.5, session-read-api: 0.2.13 }
       depends:
         sessions-pipeline: { worker: 0.7.10, alleyoop: 0.4.5, sessionReadApi: 0.2.13, hoopdb: 0.9.0, session-object-storage: 5.4.0, otel: 0.178.0 }
@@ -1510,9 +1544,22 @@ compatibility:
       images:
         relayauth: { repository: ghcr.io/agentworkforce/relayauth, digest: sha256:eb71daa28e30eb7305f666d0bccc5a4002e53e8a574e3c4c32163d907a1b71df }
       notes: superseded by 0.1.1.
-    - id: agent-relay-0.7.23
+    - id: agent-relay-0.7.24
       status: unreleased
       current: true
+      charts: { agent-relay: 0.7.24, relay-control: 0.4.18, relay-webapp: 0.2.6 }
+      app_versions: { agent-relay: 0.1.0, relay-control: 0.1.0, relay-webapp: 0.1.0 }
+      depends:
+        agent-relay: { relaycast: 0.3.14, relayauth: 0.1.5, sessions-pipeline: 0.8.35, relay-control: 0.4.18, relay-webapp: 0.2.6, relayflows: 0.2.5, durable-actors: 0.14.6-awf.4, relayfile: 0.2.2, telemetry-collector: 0.1.7, relay-chief: 0.1.0, slack-relay: 0.3.2, relaygate: 0.1.1 }
+      images:
+        relaycast: { repository: ghcr.io/agentworkforce/relaycast-self-host, digest: sha256:ec062ef901af15cf575b53a71d7eb09f2e6ab6e7c0d5be2da35339a275a5c6cc }
+        relaycast-postgres: { repository: ghcr.io/agentworkforce/relaycast-self-host, digest: sha256:ec062ef901af15cf575b53a71d7eb09f2e6ab6e7c0d5be2da35339a275a5c6cc }
+        sessions-pipeline-worker: { repository: ghcr.io/agentworkforce/sessions-pipeline, digest: sha256:77022c5b6a1d30f96f921d703eb27a1acada8ec273ad84aebdde24f8eddce305 }
+        relay-control: { repository: ghcr.io/agentworkforce/relay-control, digest: sha256:d1b6ca95fab240a9d41208d83de3b1f4245408b0765038762f1c419ee60f43bc }
+        relay-webapp: { repository: ghcr.io/agentworkforce/relay-webapp, digest: sha256:bd295ccb7d1323965dce890f19d0b7f857d706c00d7756f719c713763fdb49f3 }
+      notes: 'Carries 0.7.23 and sessions-pipeline 0.8.35 (issue 610 search limits: searchIndexer.limits and sessionReadApi.search.partialSessions, all unset by default). Default renders are unchanged apart from chart versions.'
+    - id: agent-relay-0.7.23
+      status: planned
       charts: { agent-relay: 0.7.23, relay-control: 0.4.18, relay-webapp: 0.2.6 }
       app_versions: { agent-relay: 0.1.0, relay-control: 0.1.0, relay-webapp: 0.1.0 }
       depends:
@@ -7271,6 +7318,44 @@ entries:
     choices: [{ value: false }, { value: true }]
     verify: Render no environment binding by default or for false; refuse non-booleans and true without runtime.sessionReadApiEnabled; render a quoted true binding when selected.
     sources: [charts/relay-webapp/templates/deployment.yaml, charts/relay-webapp/values.yaml, charts/relay-webapp/README.md]
+
+  - id: opt.sessions-pipeline.search-index-limits
+    kind: option
+    title: Search index per-scope limits
+    description: |
+      Unset by default (the image keeps its lower-bound limits). Raising them lets
+      larger sessions be indexed whole instead of being recorded as partial
+      (scope_too_large); the consumer re-sends partial sessions every reconcile
+      tick, so no manual re-index is needed. Raise the indexer's memory limit
+      with them.
+    chart: sessions-pipeline
+    values: [searchIndexer.limits.maxScopeBytes, searchIndexer.limits.maxScopeEvents, searchIndexer.limits.maxRows]
+    env: [SEARCH_INDEX_MAX_SCOPE_BYTES, SEARCH_INDEX_MAX_SCOPE_EVENTS, SEARCH_INDEX_MAX_ROWS]
+    profiles: [selfhost-postgres, migration, external-selfhosted, external-rds, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql, aws-rds-native]
+    status: shipped
+    provided_by: operator
+    default: null
+    choices: [{ value: null }]
+    verify: Render none of the three by default; render each only on the session-pipeline-consumer Deployment when set; refuse bytes outside a byte or MiB/GiB size, and events or rows outside 100000..1000000 and 500000..1000000.
+    sources: [charts/sessions-pipeline/templates/_search-indexer.tpl, charts/sessions-pipeline/templates/search-indexer.yaml, charts/sessions-pipeline/values.yaml]
+
+  - id: opt.session-read-api.search-partial-sessions
+    kind: option
+    title: Search answer for partially indexed sessions
+    description: |
+      Empty by default (the image refuses a workspace search that would include a
+      partially indexed session). skip answers 200 with incomplete and the
+      X-Sessions-Read-Incomplete header, leaving those sessions' rows out.
+    chart: session-read-api
+    values: [search.partialSessions]
+    env: [READ_API_SEARCH_PARTIAL_SESSIONS]
+    profiles: [selfhost-postgres, migration, external-selfhosted, external-rds, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql, aws-rds-native]
+    status: shipped
+    provided_by: operator
+    default: null
+    choices: [{ value: null }, { value: refuse }, { value: skip }]
+    verify: Render nothing by default; render refuse or skip when set; refuse any other value.
+    sources: [charts/session-read-api/templates/deployment.yaml, charts/session-read-api/values.yaml]
 
   - id: opt.sessions-pipeline.native-routing
     kind: option

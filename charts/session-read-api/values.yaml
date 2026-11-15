@@ -146,6 +146,10 @@ search:
   # SEARCH_INDEX_POSTGRES_BACKEND_ID. Required for postgres and opensearch. It and
   # completeSince must match the indexer's values.
   backendId: ""
+  # READ_API_SEARCH_PARTIAL_SESSIONS: refuse (the image default) or skip. skip
+  # answers a workspace search 200 with `incomplete` and leaves out sessions the
+  # index lists as partial. Empty renders nothing.
+  partialSessions: ""
   # Used only when backend=opensearch. Auth is sigv4, so serviceAccountName needs
   # an AWS identity (agent-relay-session-read in the agent-relay composition).
   opensearch:

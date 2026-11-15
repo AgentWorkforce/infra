@@ -127,6 +127,7 @@ jobs:
           python3 ci/agent-relay/test_release_candidate_gate.py -v
           python3 ci/agent-relay/test_install_pack.py -v
           python3 ci/agent-relay/test_release_manifest.py -v
+          python3 ci/agent-relay/test_search_limits.py -v
           python3 ci/agent-relay/test_native_history_connection.py -v
           python3 ci/agent-relay/test_native_kind_policy.py -v
           python3 ci/sessions-pipeline-native-routing/test_native_routing.py -v

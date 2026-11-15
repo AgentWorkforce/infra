@@ -14,6 +14,19 @@
     secretKeyRef: { name: {{ .secret | quote }}, key: {{ .key | quote }} }
 - { name: SEARCH_INDEX_BACKEND, value: {{ $c.search.backend | quote }} }
 - { name: SEARCH_INDEX_POSTGRES_BACKEND_ID, value: {{ $c.search.backendId | quote }} }
+{{- if eq .service "session-pipeline-consumer" }}
+{{- with $c.limits }}
+{{- with .maxScopeBytes }}
+- { name: SEARCH_INDEX_MAX_SCOPE_BYTES, value: {{ . | toString | quote }} }
+{{- end }}
+{{- with .maxScopeEvents }}
+- { name: SEARCH_INDEX_MAX_SCOPE_EVENTS, value: {{ . | int64 | toString | quote }} }
+{{- end }}
+{{- with .maxRows }}
+- { name: SEARCH_INDEX_MAX_ROWS, value: {{ . | int64 | toString | quote }} }
+{{- end }}
+{{- end }}
+{{- end }}
 - { name: READ_API_COMPLETE_SINCE, value: {{ $c.completeSince | quote }} }
 - { name: PIPELINE_KEY_PREFIX, value: {{ $c.keyPrefix | quote }} }
 - { name: PIPELINE_ORG_FROM_PREFIX, value: "true" }
