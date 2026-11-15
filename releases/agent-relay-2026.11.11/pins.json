@@ -2,6 +2,12 @@
   "schema": 1,
   "version": "2026.11.11",
   "pins": {
+    "relay-control": {
+      "repository": "ghcr.io/agentworkforce/relay-control",
+      "digest": "sha256:5261e0bed045c93196710f021a37cb87222d385ab29ed3d2184453a801b369d7",
+      "sourceRepository": "AgentWorkforce/relay-control",
+      "sourceRevision": "643bce892bbadda9208f1063f6fd474bfc4689f0"
+    },
     "sessions-pipeline": {
       "repository": "ghcr.io/agentworkforce/sessions-pipeline",
       "digest": "sha256:b398c943d2cf8f1be263a9c4ba51298dbbaaf64fb97bff024ba659844e8f7c5e",
