@@ -36,6 +36,37 @@ export function pageSlug(prefix: string, channelName: string, ts: string, channe
   return `${prefix}/${name}-${channelId.toLowerCase()}/${day}`;
 }
 
+/** A gbrain tool error's code (its JSON body's "code"), if any. */
+export function toolCode(err: unknown): string | undefined {
+  if (!(err instanceof McpToolError)) return undefined;
+  return /"code"\s*:\s*"([a-z_]+)"/.exec(err.message)?.[1];
+}
+
+/** The state in a get_write_request result (structured or as JSON text). */
+export function receiptState(r: unknown): string {
+  const o = r as { structuredContent?: { state?: string }; content?: Array<{ text?: string }>; state?: string } | undefined;
+  if (typeof o?.state === "string") return o.state;
+  if (typeof o?.structuredContent?.state === "string") return o.structuredContent.state;
+  const text = o?.content?.map((c) => c.text ?? "").join("") ?? "";
+  return /"state"\s*:\s*"([a-z_]+)"/.exec(text)?.[1] ?? "";
+}
+
+/** The server has no get_write_request tool at all (JSON-RPC method/tool unknown). */
+export function noReceipts(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err);
+  return /-32601|unknown tool|tool not found|no such tool|method not found/i.test(msg);
+}
+
+/** A write gbrain accepted but hasn't applied yet (write_pending) is accepted: it is idempotent by request_id. */
+async function write(brain: ToolCaller, name: string, args: Record<string, unknown>): Promise<void> {
+  try {
+    await brain.callTool(name, args);
+  } catch (err) {
+    if (toolCode(err) === "write_pending") return;
+    throw err;
+  }
+}
+
 export function lineFor(m: IngestMessage): string {
   const time = new Date(Number(m.ts.split(".")[0]) * 1000).toISOString().slice(11, 16);
   const thread = m.threadTs && m.threadTs !== m.ts ? ` (in thread ${m.threadTs})` : "";
@@ -51,27 +82,42 @@ export interface SourceRule {
 
 export class SlackIngest {
   readonly #brain: ToolCaller;
+  readonly #brains: Map<string, ToolCaller>;
   readonly #sourceId: string | undefined;
   readonly #privateSourceId: string | undefined;
   readonly #rules: Array<{ re: RegExp; sourceId: string }>;
   readonly #prefix: string;
   readonly #log: (m: string) => void;
   readonly #chains = new Map<string, Promise<unknown>>();
+  readonly #commitTimeoutMs: number;
+  readonly #pollMs: number;
 
-  readonly #beforeWrite: ((slug: string, text: string) => Promise<void>) | undefined;
+  readonly #beforeWrite: ((slug: string, text: string, sourceId: string | undefined) => Promise<void>) | undefined;
 
   constructor(opts: {
     brain: ToolCaller;
+    /**
+     * A writer per source. gbrain lets a remote client write only to its own
+     * write source, so each source other than the default needs its own
+     * client. A source with no entry here uses `brain`.
+     */
+    brains?: Record<string, ToolCaller>;
     sourceId?: string;
     privateSourceId?: string;
     rules?: SourceRule[];
     prefix?: string;
     log?: (m: string) => void;
     /** Asked before each write (relaygate /v1/check); rejects to skip it. */
-    beforeWrite?: (slug: string, text: string) => Promise<void>;
+    beforeWrite?: (slug: string, text: string, sourceId: string | undefined) => Promise<void>;
+    /** How long to wait for a page create to commit before appending to it. */
+    commitTimeoutMs?: number;
+    pollMs?: number;
   }) {
+    this.#commitTimeoutMs = opts.commitTimeoutMs ?? 60_000;
+    this.#pollMs = opts.pollMs ?? 1_000;
     this.#beforeWrite = opts.beforeWrite;
     this.#brain = opts.brain;
+    this.#brains = new Map(Object.entries(opts.brains ?? {}));
     this.#sourceId = opts.sourceId || undefined;
     this.#privateSourceId = opts.privateSourceId || undefined;
     this.#rules = (opts.rules ?? []).map((r) => ({ re: new RegExp(r.match), sourceId: r.sourceId }));
@@ -105,28 +151,76 @@ export class SlackIngest {
     return this.#sourceId;
   }
 
+  /** True when this message's create request is on record (gbrain get_write_request). */
+  async #created(brain: ToolCaller, m: IngestMessage): Promise<boolean> {
+    const id = requestId("create", m.channel, m.ts);
+    try {
+      await brain.callTool("get_write_request", { request_id: id });
+    } catch {
+      // not_found, a server without receipts (unknown tool) or a failed lookup:
+      // treat it as not created and append. The append itself still fails loudly
+      // if the server is unreachable; at worst a replayed first line repeats.
+      return false;
+    }
+    // Created by this message before (maybe still pending): its page must
+    // exist before anything after it is appended.
+    await this.#committed(brain, id);
+    return true;
+  }
+
   async #append(slug: string, m: IngestMessage): Promise<string> {
     const line = lineFor(m);
-    if (this.#beforeWrite) await this.#beforeWrite(slug, line);
     const sourceId = this.sourceFor(m.channelName, m.isPrivate === true);
+    if (this.#beforeWrite) await this.#beforeWrite(slug, line, sourceId);
     const source = sourceId ? { source_id: sourceId } : {};
+    const brain = (sourceId && this.#brains.get(sourceId)) || this.#brain;
+    // The day's first message created the page under its "create" request;
+    // a replay (backfill, Slack retry) would append it again under "append".
+    if (await this.#created(brain, m)) return slug;
+    const appendId = requestId("append", m.channel, m.ts);
     try {
-      await this.#brain.callTool("append_page", { slug, text: line, request_id: requestId("append", m.channel, m.ts), ...source });
+      await write(brain, "append_page", { slug, text: line, request_id: appendId, ...source });
     } catch (err) {
       if (!(err instanceof McpToolError) || !/not.?found|no such page|does not exist|unknown page/i.test(err.message)) throw err;
       // First message of the day in this channel: create the page with it.
       const day = slug.split("/").pop();
       const content = `# #${m.channelName}: ${day}\n\nSlack messages in #${m.channelName} (${m.channel}) on ${day}, ingested as they were posted.\n\n${line}\n`;
       // relaygate's rule: what is written is exactly what was checked.
-      if (this.#beforeWrite) await this.#beforeWrite(slug, content);
+      if (this.#beforeWrite) await this.#beforeWrite(slug, content, sourceId);
+      const createId = requestId("create", m.channel, m.ts);
       try {
-        await this.#brain.callTool("put_page", { slug, content, request_id: requestId("create", m.channel, m.ts), ...source });
+        await write(brain, "put_page", { slug, content, request_id: createId, ...source });
       } catch (e) {
         // Another writer created it first: append after all.
         if (!(e instanceof McpToolError)) throw e;
-        await this.#brain.callTool("append_page", { slug, text: line, request_id: requestId("append", m.channel, m.ts), ...source });
+        await write(brain, "append_page", { slug, text: line, request_id: appendId, ...source });
+        return slug;
       }
+      // gbrain applies writes asynchronously: the page exists only once the
+      // create commits, so the next append to it (serialized behind this one)
+      // waits for that.
+      await this.#committed(brain, createId);
     }
     return slug;
+  }
+
+  /** Waits until a write request is committed (gbrain get_write_request); throws if it ends otherwise or times out. */
+  async #committed(brain: ToolCaller, id: string): Promise<void> {
+    const deadline = Date.now() + this.#commitTimeoutMs;
+    for (;;) {
+      let state = "pending";
+      try {
+        // A receipt that reports no state at all: nothing to wait for.
+        state = receiptState(await brain.callTool("get_write_request", { request_id: id })) || "committed";
+      } catch (err) {
+        // Only a server that has no receipt tool ends the wait; not_found
+        // (the receipt isn't visible yet) and transient failures keep polling.
+        if (noReceipts(err)) return;
+      }
+      if (state === "committed") return;
+      if (/conflict|failed|refused|rejected|cancel/.test(state)) throw new Error(`brain write ${id} ended ${state}`);
+      if (Date.now() > deadline) throw new Error(`brain write ${id} still ${state} after ${this.#commitTimeoutMs} ms`);
+      await new Promise((r) => setTimeout(r, this.#pollMs));
+    }
   }
 }

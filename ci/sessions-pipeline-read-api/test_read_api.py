@@ -330,6 +330,14 @@ class ReadApi(unittest.TestCase):
         self.assertIn("requires LOCKER_BUCKET", self.render(overlay={"events": {"messageIds": True}}, fail=True))
         self.assertIn("must be a boolean", self.render(overlay={"events": {"messageIds": "true"}}, fail=True))
 
+    def test_list_short_summary_is_a_dedicated_default_off_boolean(self):
+        self.assertNotIn("READ_API_LIST_SHORT_SUMMARY_ENABLED", self.env_of(self.render()))
+        env = self.env_of(self.render(overlay={"summaries": {"listShortSummary": True}}))
+        self.assertEqual(env["READ_API_LIST_SHORT_SUMMARY_ENABLED"]["value"], "true")
+        self.assertNotIn("READ_API_LIST_SHORT_SUMMARY_ENABLED", self.env_of(self.render(overlay={"summaries": {"listShortSummary": False}})))
+        for bad in ("false", "true"):
+            self.assertIn("summaries.listShortSummary must be a boolean", self.render(overlay={"summaries": {"listShortSummary": bad}}, fail=True))
+
     def test_coordination_overlaps_defaults_on_in_pipeline_with_postgres_backend(self):
         env = self.env_of(self.render())
         self.assertEqual(env["READ_API_COORDINATION_OVERLAPS_ENABLED"]["value"], "true")

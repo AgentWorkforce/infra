@@ -131,10 +131,17 @@ test("ingest: a denied write is skipped, an allowed one goes through", async () 
   try {
     const gate = new RelaygateClient({ url: g.url, enrollmentKey: "ek_pit" });
     const writes: string[] = [];
+    let createdId = "";
     const ing = new SlackIngest({
       brain: {
         // The day's page doesn't exist yet: the first append fails, the page is created.
         callTool: async (name, a) => {
+          if (name === "get_write_request") {
+            // The create's receipt exists once the page was put.
+            if (writes.some((w) => w.startsWith("put_page:")) && String(a.request_id) === createdId) return {};
+            throw new McpToolError("not_found", name);
+          }
+          if (name === "put_page") createdId = String(a.request_id);
           if (name === "append_page" && !writes.some((w) => w.startsWith("put_page:"))) throw new McpToolError("page_not_found", name);
           writes.push(`${name}:${a.text ?? a.content}`);
           return {};

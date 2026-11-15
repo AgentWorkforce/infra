@@ -102,6 +102,8 @@ sessions-pipeline:
     completeSince: epoch
     directoryWorkspaces: "*"
     events: { messageIds: true }
+    # MCP list_session_summaries reads the recorded short summaries.
+    summaries: { listShortSummary: true }
     turns: { assumeNoLegacy: true }
     login: { advertisesSync: false }
     config:

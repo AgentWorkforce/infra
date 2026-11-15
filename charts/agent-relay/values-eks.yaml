@@ -53,11 +53,12 @@ gkeIngress:
 relaycast:
   fullnameOverride: relaycast
   image:
-    # Release image (public GHCR, relaycast main cac175b5, engine 12.8.0).
-    # This build contains the optional collector adapter; analytics remains
-    # off until the operator supplies its dedicated token and TLS binding.
+    # Release image (public GHCR, relaycast main fd10195, engine 12.10.0,
+    # publish run 43671881371). This build contains the optional collector
+    # adapter; analytics remains off until the operator supplies its dedicated
+    # token and TLS binding.
     repository: ghcr.io/agentworkforce/relaycast-self-host
-    digest: sha256:ab9dd6781e68f09d5e2e686a17088f9ad533978ef13d974a47d6c212d8eedbde
+    digest: sha256:ec062ef901af15cf575b53a71d7eb09f2e6ab6e7c0d5be2da35339a275a5c6cc
   # REQUIRED OVERRIDE: the public cast origin (https://cast.<your domain>,
   # served by the ALB with an ACM certificate). The charts refuse http
   # public origins.
@@ -207,12 +208,15 @@ sessions-pipeline:
 relay-control:
   fullnameOverride: relay-control
   image:
-    # Release image (public GHCR, relay-control 0.5.16, 83a57d3): reads EKS Pod
-    # Identity / IRSA credentials (Desktop-feed role) and supports the setup
-    # key and password sign-in without SMTP. Mirror it by digest to your
-    # registry and override repository.
+    # Release image (public GHCR, relay-control 0.5.24, edad6432: #134 desktop
+    # enrollment keys (migration 0050), #136 Grok Bot wake-ups (0051), #137 sender
+    # receipts and grant-bound OAuth launches, #138 optional Ed25519 file feed
+    # signer; publish run 43673082170).
+    # Reads EKS Pod Identity / IRSA credentials (Desktop-feed role) and
+    # supports the setup key and password sign-in without SMTP. Mirror it by
+    # digest to your registry and override repository.
     repository: ghcr.io/agentworkforce/relay-control
-    digest: sha256:0b9c5a077b49b31178cc669e7c1d532f39e64c840087ca41636bb84a6c62631c
+    digest: sha256:d1b6ca95fab240a9d41208d83de3b1f4245408b0765038762f1c419ee60f43bc
   # The customer profile opts into the owner-only Usage page and qualified
   # MCP agent launch. Remove launch if the enrolled owner/admin Desktop target
   # fails its install-time lifecycle check; Usage remains independent.

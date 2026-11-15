@@ -90,6 +90,10 @@ spec:
               value: {{ .Values.ingest.privateSourceId | quote }}
             - name: INGEST_SOURCE_RULES
               value: {{ .Values.ingest.sourceRules | toJson | quote }}
+            {{- with .Values.ingest.sourceServers }}
+            - name: INGEST_SOURCE_SERVERS
+              value: {{ . | toJson | quote }}
+            {{- end }}
             {{- end }}
             - name: ORCHESTRATOR
               value: {{ .Values.router.orchestrator | quote }}

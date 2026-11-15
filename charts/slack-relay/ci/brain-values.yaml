@@ -20,6 +20,12 @@ mcpServers:
     scope: write
     clientId: slack-ingest
     clientSecret: { name: slack-relay-brain, key: write-client-secret }
+  - name: brain-write-founders
+    url: https://brain.example.com/mcp
+    tokenUrl: https://brain.example.com/token
+    scope: write
+    clientId: slack-ingest-founders
+    clientSecret: { name: slack-relay-brain, key: write-founders-client-secret }
 ingest:
   enabled: true
   mcpServer: brain-write
@@ -29,6 +35,8 @@ ingest:
   sourceRules:
     - { match: "^ops-(hiring|investors|legal|finance|board|comp|sales|yc)", sourceId: founders }
     - { match: "^ext-", sourceId: slack-connect }
+  sourceServers:
+    founders: brain-write-founders
 host:
   mcpServers: [brain]
   allowedTools: ["Read(./**)", "Glob(./**)", "Grep(./**)", mcp__relaycast, mcp__brain]
