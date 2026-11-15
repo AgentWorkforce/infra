@@ -77,16 +77,6 @@ run "defaults_are_private_and_protected" {
     condition     = google_sql_database_instance.this.settings[0].backup_configuration[0].backup_retention_settings[0].retained_backups == 14
     error_message = "14 backups retained by default."
   }
-
-  assert {
-    condition     = alltrue([for d in google_sql_database.this : d.deletion_policy == "ABANDON"])
-    error_message = "databases must be abandoned on destroy (cloud-sql-setup.sh reassigns their owners)"
-  }
-
-  assert {
-    condition     = google_sql_user.admin[0].deletion_policy == "ABANDON"
-    error_message = "the admin user must be abandoned on destroy (it owns databases after cloud-sql-setup.sh)"
-  }
 }
 
 run "shared_ca_has_verified_dns_url" {

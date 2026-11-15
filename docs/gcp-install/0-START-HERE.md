@@ -802,32 +802,26 @@ terraform apply
 gcloud storage rm -r -a "gs://$SESSIONS_BUCKET/**"
 FEED="$(sed -n 's/^desktop_feed_bucket_name *= *"\(.*\)"/\1/p' terraform.tfvars)"
 [ -z "$FEED" ] || gcloud storage rm -r -a "gs://$FEED/**"
-terraform destroy
-cd -
-```
-
-The buckets are versioned, so `-a` removes every object version; Terraform
-won't delete a bucket that still holds any. The second `rm` empties the
-desktop update feed bucket, and runs only if you set
-`desktop_feed_bucket_name` in step 4.
-
-**Done when:** `terraform destroy` reports `Destroy complete!` and
-`terraform -chdir=infra/terraform/examples/gcp state list | grep -v '^data\.'`
-prints nothing.
-
-**`must be owner of database` or `role ... cannot be dropped`:** your infra
-checkout predates AgentWorkforce/infra#367 (every release up to and
-including 2026.11.6). `cloud-sql-setup.sh` gave the databases to their own
-roles, so Terraform can't drop them one by one. Deleting the instance removes
-them, so drop them from Terraform's state and destroy again:
-
-```sh
-cd infra/terraform/examples/gcp
-terraform state list | grep -E 'module\.postgres\.google_sql_(database|user)\.' |
+terraform state list | grep -E '^module\.postgres\.google_sql_(database|user)\.' |
   while read -r r; do terraform state rm "$r"; done
 terraform destroy
 cd -
 ```
+
+- **Buckets:** they are versioned, so `-a` removes every object version;
+  Terraform won't delete a bucket that still holds any. The second `rm`
+  empties the desktop update feed bucket, and runs only if you set
+  `desktop_feed_bucket_name` in step 4.
+- **Databases and admin user:** `cloud-sql-setup.sh` gave the databases to
+  their own roles, so Terraform can't drop them, or the admin user who owns
+  them, one by one (`must be owner of database`, `role ... cannot be
+  dropped`). The `state rm` loop takes the three databases and the admin user
+  out of Terraform's state only; the instance deletion that follows removes
+  them with it. Run it only as part of this full teardown.
+
+**Done when:** `terraform destroy` reports `Destroy complete!` and
+`terraform -chdir=infra/terraform/examples/gcp state list | grep -v '^data\.'`
+prints nothing.
 
 Last, what Terraform didn't create:
 
