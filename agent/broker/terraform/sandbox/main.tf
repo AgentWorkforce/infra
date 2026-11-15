@@ -1,6 +1,12 @@
 # The broker role (in the layered-infra-ops host's account) and the scoped
-# role it vends sandbox sessions on (805532413586). Applied by a human, never
-# by an agent or CI. See ../../DESIGN.md.
+# role it vends sandbox sessions on (805532413586). Applied by layered-infra-ops
+# once this is merged to main (Khaliq, 2026-11-15): plan first, apply from main,
+# never from a branch and never from CI. See ../../DESIGN.md.
+#
+# allowed_account_ids makes a run against the wrong account fail before it
+# changes anything. infra-ops' default AWS profile is its admin role in its own
+# account; to reach the sandbox it assumes sandbox_assume_role_arn (a role in
+# 805532413586 that trusts that admin role) unless sandbox_profile is set.
 
 provider "aws" {
   alias               = "broker"
@@ -14,6 +20,14 @@ provider "aws" {
   region              = var.region
   profile             = var.sandbox_profile
   allowed_account_ids = [var.sandbox_account_id]
+
+  dynamic "assume_role" {
+    for_each = var.sandbox_assume_role_arn == null ? [] : [var.sandbox_assume_role_arn]
+    content {
+      role_arn     = assume_role.value
+      session_name = "layered-infra-ops-cred-broker-tf"
+    }
+  }
 }
 
 locals {

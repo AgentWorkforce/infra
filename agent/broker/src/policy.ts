@@ -14,8 +14,10 @@ export interface AutoRule {
   id: string;
   scope: Scope;
   actions: string[];
-  /** Defaults to "*". A requester's own resources narrow only rules left on "*". */
+  /** Defaults to "*". "{runTag}" is replaced by the request's run tag. A requester's own resources narrow only rules left on "*". */
   resources?: string[];
+  /** Also granted, in this rule's statement, whenever one of these is requested (create-time tagging). */
+  impliedBy?: string[];
   /** Extra IAM condition merged into the rule's statement. */
   condition?: Record<string, Record<string, string | string[]>>;
 }
@@ -65,8 +67,10 @@ export type Delivery = { kind: "file" } | { kind: "1password"; vault: string };
 export interface PolicyStatement {
   Sid: string;
   Effect: "Allow" | "Deny";
-  Action: string[];
-  Resource: string | string[];
+  Action?: string[];
+  NotAction?: string[];
+  Resource?: string | string[];
+  NotResource?: string[];
   Condition?: Record<string, Record<string, string | string[]>>;
 }
 
@@ -135,6 +139,7 @@ export function validate(req: CredentialRequest, list: Allowlist): string[] {
   }
   if (req.scope !== undefined && req.scope !== "run-tag" && req.scope !== "account") problems.push("scope must be run-tag or account");
   for (const r of req.resources ?? []) if (typeof r !== "string" || !ARN_RE.test(r)) problems.push(`resource ${JSON.stringify(r)} is not an ARN`);
+  if (req.regions !== undefined && (!Array.isArray(req.regions) || req.regions.length === 0)) problems.push("regions, when given, must list at least one region");
   for (const r of req.regions ?? []) if (typeof r !== "string" || !REGION_RE.test(r)) problems.push(`region ${JSON.stringify(r)} is not a region`);
   const del = req.delivery as { kind?: string; vault?: string } | undefined;
   if (!del || (del.kind !== "file" && del.kind !== "1password")) problems.push("delivery.kind must be file or 1password");
@@ -144,23 +149,77 @@ export function validate(req: CredentialRequest, list: Allowlist): string[] {
 
 function regionsFor(req: CredentialRequest, account: AccountPolicy): { regions?: string[]; problem?: string } {
   if (!account.regions) return { regions: req.regions };
-  if (!req.regions) return { regions: account.regions };
+  if (!req.regions?.length) return { regions: account.regions };
   const outside = req.regions.filter((r) => !account.regions!.includes(r));
   if (outside.length) return { problem: `regions ${outside.join(", ")} are not allowed in ${account.label}` };
   return { regions: req.regions };
 }
 
-function withRegion(cond: PolicyStatement["Condition"], regions: string[] | undefined): PolicyStatement["Condition"] {
-  if (!regions?.length) return cond;
-  return { ...cond, StringEquals: { ...(cond?.StringEquals ?? {}), "aws:RequestedRegion": regions } };
+/** Global services, whose calls carry us-east-1 (or no region) whatever region the session works in. */
+export const GLOBAL_ACTIONS = ["iam:*", "sts:*", "cloudfront:*", "route53:*", "support:*", "health:*", "s3:ListAllMyBuckets"];
+
+/** One deny for the region limit, rather than a condition on every allow: keeps the policy under STS's size limit. */
+function regionStatement(regions: string[] | undefined): PolicyStatement[] {
+  if (!regions?.length) return [];
+  return [{ Sid: "DenyOutsideRegions", Effect: "Deny", NotAction: GLOBAL_ACTIONS, Resource: "*", Condition: { StringNotEquals: { "aws:RequestedRegion": regions } } }];
 }
 
 function sid(id: string): string {
   return id.replace(/[^A-Za-z0-9]/g, " ").split(" ").filter(Boolean).map((w) => w[0]!.toUpperCase() + w.slice(1)).join("");
 }
 
-/** Statements that hold on every issued session, whatever the tier: the run tag can't be moved or forged. */
-function guardStatements(tagKey: string, runTag: string): PolicyStatement[] {
+/**
+ * Resources a run owns by name: what it creates must be named "<runTag>-…".
+ * Tag-on-create authorization (CreateQueue also checks sqs:TagQueue, and so
+ * on) is granted only on these, so a session can never put its run tag on an
+ * existing resource it didn't create: an untagged queue named otherwise, or
+ * another run's. EC2 instead uses ec2:CreateAction (see ec2-tag-on-create).
+ * terraform/modules/scoped-role holds the same patterns with
+ * ${aws:PrincipalTag/agent-run} in place of the run tag.
+ */
+export function ownNamedResources(runTag: string): string[] {
+  return [
+    `arn:aws:sqs:*:*:${runTag}-*`,
+    `arn:aws:sns:*:*:${runTag}-*`,
+    `arn:aws:logs:*:*:log-group:${runTag}-*`,
+    `arn:aws:dynamodb:*:*:table/${runTag}-*`,
+    `arn:aws:secretsmanager:*:*:secret:${runTag}-*`,
+  ];
+}
+
+/** Tag writes that add a tag key; allowed for the run tag only on the run's own named resources. */
+export const TAG_ACTIONS = ["sqs:TagQueue", "sns:TagResource", "logs:TagResource", "logs:TagLogGroup", "dynamodb:TagResource", "secretsmanager:TagResource"];
+
+/** Tag writes that remove the run tag, or tag through the generic tagging API: never with the run tag. */
+export const UNTAG_ACTIONS = [
+  "ec2:DeleteTags",
+  "tag:TagResources",
+  "tag:UntagResources",
+  "sqs:UntagQueue",
+  "sns:UntagResource",
+  "logs:UntagResource",
+  "logs:UntagLogGroup",
+  "dynamodb:UntagResource",
+  "secretsmanager:UntagResource",
+];
+
+/**
+ * Denies that keep the run tag from being forged, moved or removed. A session
+ * policy only narrows, so a deny matters only for actions the session also
+ * allows: each guard keeps just the actions that overlap the allows (which keeps
+ * the policy under STS's 2048-character limit). The role's ceiling
+ * (terraform/modules/scoped-role) holds all of them in full regardless.
+ */
+function guardStatements(tagKey: string, runTag: string, allows: PolicyStatement[]): PolicyStatement[] {
+  const allowed = allows.flatMap((s) => s.Action ?? []);
+  const overlap = (actions: string[]) => actions.filter((a) => a === "*" || allowed.some((x) => globsIntersect(a, x)));
+  return allGuards(tagKey, runTag)
+    .map((g) => ({ ...g, Action: overlap(g.Action ?? []) }))
+    .filter((g) => g.Action.length > 0);
+}
+
+function allGuards(tagKey: string, runTag: string): PolicyStatement[] {
+  const hasRunTag = { "ForAnyValue:StringEquals": { "aws:TagKeys": [tagKey] } };
   return [
     {
       Sid: "DenyForeignRunTagOnCreate",
@@ -169,72 +228,70 @@ function guardStatements(tagKey: string, runTag: string): PolicyStatement[] {
       Resource: "*",
       Condition: { StringNotEquals: { [`aws:RequestTag/${tagKey}`]: runTag }, Null: { [`aws:RequestTag/${tagKey}`]: "false" } },
     },
-    {
-      Sid: "DenyRetaggingRunTag",
-      Effect: "Deny",
-      Action: RETAG_ACTIONS,
-      Resource: "*",
-      Condition: { "ForAnyValue:StringEquals": { "aws:TagKeys": [tagKey] } },
-    },
-    {
-      Sid: "DenyEc2TagsAfterCreate",
-      Effect: "Deny",
-      Action: ["ec2:CreateTags"],
-      Resource: "*",
-      Condition: { Null: { "ec2:CreateAction": "true" } },
-    },
+    { Sid: "DenyRemovingRunTag", Effect: "Deny", Action: UNTAG_ACTIONS, Resource: "*", Condition: hasRunTag },
+    { Sid: "DenyRunTagOnOthers", Effect: "Deny", Action: TAG_ACTIONS, NotResource: ownNamedResources(runTag), Condition: hasRunTag },
+    { Sid: "DenyEc2TagsAfterCreate", Effect: "Deny", Action: ["ec2:CreateTags"], Resource: "*", Condition: { Null: { "ec2:CreateAction": "true" } } },
   ];
 }
 
-/**
- * Tag writes that could move the run tag onto someone else's resource. Only
- * matters when an approved session's actions are broad (an auto session can't
- * tag at all: a session policy only narrows). The role's own policy denies the
- * same set (terraform/modules/scoped-role).
- */
-export const RETAG_ACTIONS = [
-  "ec2:DeleteTags",
-  "tag:TagResources",
-  "tag:UntagResources",
-  "sqs:TagQueue",
-  "sqs:UntagQueue",
-  "sns:TagResource",
-  "sns:UntagResource",
-  "logs:TagResource",
-  "logs:UntagResource",
-  "logs:TagLogGroup",
-  "logs:UntagLogGroup",
-  "dynamodb:TagResource",
-  "dynamodb:UntagResource",
-  "secretsmanager:TagResource",
-  "secretsmanager:UntagResource",
-];
+function scopeCondition(scope: Scope, list: Allowlist, runTag: string, base?: PolicyStatement["Condition"]): PolicyStatement["Condition"] {
+  let cond: PolicyStatement["Condition"] = base ? structuredClone(base) : undefined;
+  if (scope === "resource-tag") cond = { ...cond, StringEquals: { ...(cond?.StringEquals ?? {}), [`aws:ResourceTag/${list.tagKey}`]: runTag } };
+  if (scope === "request-tag") cond = { ...cond, StringEquals: { ...(cond?.StringEquals ?? {}), [`aws:RequestTag/${list.tagKey}`]: runTag } };
+  return cond;
+}
 
-function autoStatements(req: CredentialRequest, list: Allowlist, regions: string[] | undefined): { statements: PolicyStatement[]; unmatched: string[] } {
+function statement(id: string, actions: string[], resources: string[], cond: PolicyStatement["Condition"]): PolicyStatement {
+  return { Sid: sid(id), Effect: "Allow", Action: actions, Resource: resources.length === 1 ? resources[0]! : resources, ...(cond ? { Condition: cond } : {}) };
+}
+
+function ruleResources(rule: AutoRule, req: CredentialRequest): string[] {
+  if (rule.resources === undefined) return req.resources?.length ? req.resources : ["*"];
+  return rule.resources.map((r) => r.replaceAll("{runTag}", req.runTag));
+}
+
+function autoStatements(req: CredentialRequest, list: Allowlist): { statements: PolicyStatement[]; unmatched: string[] } {
   const statements: PolicyStatement[] = [];
   const matched = new Set<string>();
   const lower = new Map(req.actions.map((a) => [a.toLowerCase(), a]));
+  const requested = (a: string) => lower.has(a.toLowerCase());
   for (const rule of list.autoRules) {
-    const acts = rule.actions.filter((a) => lower.has(a.toLowerCase())).map((a) => lower.get(a.toLowerCase())!);
-    if (!acts.length) continue;
-    acts.forEach((a) => matched.add(a));
-    const ruleResources = rule.resources ?? ["*"];
-    const resources = rule.resources === undefined && req.resources?.length ? req.resources : ruleResources;
-    let cond: PolicyStatement["Condition"] = rule.condition ? structuredClone(rule.condition) : undefined;
-    if (rule.scope === "resource-tag") cond = { ...cond, StringEquals: { ...(cond?.StringEquals ?? {}), [`aws:ResourceTag/${list.tagKey}`]: req.runTag } };
-    if (rule.scope === "request-tag") cond = { ...cond, StringEquals: { ...(cond?.StringEquals ?? {}), [`aws:RequestTag/${list.tagKey}`]: req.runTag } };
-    cond = withRegion(cond, regions);
-    statements.push({ Sid: sid(rule.id), Effect: "Allow", Action: acts, Resource: resources.length === 1 ? resources[0]! : resources, ...(cond ? { Condition: cond } : {}) });
+    const direct = rule.actions.filter(requested).map((a) => lower.get(a.toLowerCase())!);
+    const implied = rule.impliedBy?.some(requested) ?? false;
+    if (!direct.length && !implied) continue;
+    direct.forEach((a) => matched.add(a));
+    const acts = implied ? [...new Set([...direct, ...rule.actions])] : direct;
+    statements.push(statement(rule.id, acts, ruleResources(rule, req), scopeCondition(rule.scope, list, req.runTag, rule.condition)));
   }
   return { statements, unmatched: req.actions.filter((a) => !matched.has(a)) };
 }
 
-function approvalStatements(req: CredentialRequest, list: Allowlist, regions: string[] | undefined): PolicyStatement[] {
+/** How an approved action that no auto rule covers is scoped under scope run-tag, by its verb. */
+function approvalScope(action: string): Scope {
+  const verb = action.split(":")[1] ?? "";
+  if (/^(Describe|List)/.test(verb)) return "any";
+  if (/^(Create|Run|Put|Import|Allocate|Register)/.test(verb)) return "request-tag";
+  return "resource-tag";
+}
+
+/**
+ * Approved sessions. Under scope account: the actions on the requested
+ * resources, no tag condition (Khaliq approves that explicitly). Under scope
+ * run-tag: each action gets the condition IAM can actually enforce for it:
+ * an auto rule's scope where one covers it, otherwise by verb (account-level
+ * reads unconditioned, creates must carry the run tag, everything else only on
+ * resources carrying it). The approval prompt lists the statements, so no
+ * isolation is claimed that IAM can't provide.
+ */
+function approvalStatements(req: CredentialRequest, list: Allowlist): PolicyStatement[] {
   const resources = req.resources?.length ? req.resources : ["*"];
-  let cond: PolicyStatement["Condition"] = undefined;
-  if ((req.scope ?? "run-tag") === "run-tag") cond = { StringEquals: { [`aws:ResourceTag/${list.tagKey}`]: req.runTag } };
-  cond = withRegion(cond, regions);
-  return [{ Sid: "ApprovedActions", Effect: "Allow", Action: [...req.actions], Resource: resources.length === 1 ? resources[0]! : resources, ...(cond ? { Condition: cond } : {}) }];
+  if (req.scope === "account") return [statement("approved-account-wide", [...req.actions], resources, undefined)];
+  const auto = autoStatements(req, list);
+  const groups: Record<Scope, string[]> = { any: [], "request-tag": [], "resource-tag": [] };
+  for (const a of auto.unmatched) groups[approvalScope(a)].push(a);
+  const names: Record<Scope, string> = { any: "approved-reads", "request-tag": "approved-creates-with-run-tag", "resource-tag": "approved-on-run-tagged" };
+  const extra = (Object.keys(groups) as Scope[]).filter((s) => groups[s].length).map((s) => statement(names[s], groups[s], resources, scopeCondition(s, list, req.runTag)));
+  return [...auto.statements, ...extra];
 }
 
 /**
@@ -261,7 +318,7 @@ export function decide(req: CredentialRequest, requester: Principal, list: Allow
   if (req.durationMinutes > list.duration.autoMaxMinutes) needs.push(`${req.durationMinutes} minutes is over the ${list.duration.autoMaxMinutes}-minute auto limit`);
   if (runTagOwner && runTagOwner !== requester.name) needs.push(`run tag ${req.runTag} belongs to ${runTagOwner}`);
 
-  const auto = autoStatements(req, list, regions);
+  const auto = autoStatements(req, list);
   const accountWide = (req.scope ?? "run-tag") === "account";
   if (accountWide) {
     const readOnly = auto.unmatched.length === 0 && list.autoRules.filter((r) => r.scope !== "any").every((r) => !r.actions.some((x) => req.actions.some((a) => a.toLowerCase() === x.toLowerCase())));
@@ -270,14 +327,15 @@ export function decide(req: CredentialRequest, requester: Principal, list: Allow
   for (const a of auto.unmatched) if (!a.includes("*") && !list.approvalOnly.some((p) => globsIntersect(a, p))) needs.push(`${a} is not on the auto allowlist`);
 
   if (needs.length === 0 && account.roles.scoped) {
-    const policy: SessionPolicy = { Version: "2012-10-17", Statement: [...auto.statements, ...guardStatements(list.tagKey, req.runTag)] };
+    const policy: SessionPolicy = { Version: "2012-10-17", Statement: [...auto.statements, ...guardStatements(list.tagKey, req.runTag, auto.statements), ...regionStatement(regions)] };
     const size = JSON.stringify(policy).length;
     if (size > SESSION_POLICY_MAX_CHARS) return { outcome: "deny", reasons: [`session policy is ${size} characters, over AWS's ${SESSION_POLICY_MAX_CHARS}: split the request`] };
     return { outcome: "auto", roleArn: account.roles.scoped, sessionPolicy: policy, durationSeconds, reasons: [`${account.label}: allowlisted actions on run tag ${req.runTag}`] };
   }
   if (needs.length === 0) needs.push(`${account.label} has no scoped role for automatic issue`);
   if (!account.roles.elevated) return { outcome: "deny", reasons: [...needs, `${account.label} has no approval-tier role configured, so this cannot be issued even with approval`] };
-  const policy: SessionPolicy = { Version: "2012-10-17", Statement: [...approvalStatements(req, list, regions), ...guardStatements(list.tagKey, req.runTag)] };
+  const allows = approvalStatements(req, list);
+  const policy: SessionPolicy = { Version: "2012-10-17", Statement: [...allows, ...guardStatements(list.tagKey, req.runTag, allows), ...regionStatement(regions)] };
   const size = JSON.stringify(policy).length;
   if (size > SESSION_POLICY_MAX_CHARS) return { outcome: "deny", reasons: [`session policy is ${size} characters, over AWS's ${SESSION_POLICY_MAX_CHARS}: split the request`] };
   return { outcome: "approval", roleArn: account.roles.elevated, sessionPolicy: policy, durationSeconds, reasons: needs };

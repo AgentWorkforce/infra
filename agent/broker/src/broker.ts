@@ -7,7 +7,8 @@
  *
  * State lives in one directory (single writer, serialized by a lock):
  *   pending/<id>.json   requests waiting for approval
- *   issued/<id>.json    delivery refs to remove after expiry (no credentials)
+ *   issued/<id>.json    delivery refs to remove after expiry (no credentials),
+ *                       written before minting so a delivery is never untracked
  *   run-tags.json       run tag -> the agent that first got credentials for it
  *   audit.jsonl         the hash-chained audit log
  */
@@ -84,22 +85,69 @@ function writeJson(path: string, value: unknown): void {
   renameSync(tmp, path);
 }
 
-async function withLock<T>(dir: string, fn: () => Promise<T>): Promise<T> {
+function alive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (e) {
+    return (e as NodeJS.ErrnoException).code === "EPERM";
+  }
+}
+
+/**
+ * One broker run at a time. The lock directory holds its owner's pid and a
+ * random token. It is taken over only when that pid is dead (or the owner file
+ * was never written and the lock is old), never by age while its owner runs;
+ * every external call it covers has a timeout (sts.ts, deliver.ts). A run
+ * releases the lock only if the token is still its own.
+ */
+export async function withLock<T>(dir: string, fn: () => Promise<T>, waitMs = 60_000): Promise<T> {
   const lock = join(dir, ".lock");
-  for (let i = 0; ; i++) {
+  const owner = join(lock, "owner");
+  const token = randomBytes(8).toString("hex");
+  const deadline = Date.now() + waitMs;
+  for (;;) {
     try {
       mkdirSync(lock);
+      writeFileSync(owner, `${process.pid} ${token}\n`, { mode: 0o600 });
       break;
-    } catch {
-      if (existsSync(lock) && Date.now() - statSync(lock).mtimeMs > 120_000) rmSync(lock, { recursive: true, force: true });
-      else if (i > 100) throw new Error("broker: state is locked by another run");
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== "EEXIST") throw e;
+      let stale = false;
+      try {
+        const pid = Number(readFileSync(owner, "utf8").split(" ")[0]);
+        stale = !Number.isInteger(pid) || pid <= 0 || !alive(pid);
+      } catch {
+        // mkdir'd but no owner yet: a crash between the two steps, or a run that is just starting.
+        try {
+          stale = Date.now() - statSync(lock).mtimeMs > 10_000;
+        } catch {
+          stale = false;
+        }
+      }
+      if (stale) {
+        // Take it over atomically: rename first, so two waiters can't both remove it.
+        const grave = `${lock}.stale-${token}`;
+        try {
+          renameSync(lock, grave);
+          rmSync(grave, { recursive: true, force: true });
+        } catch {
+          // someone else took it over first
+        }
+        continue;
+      }
+      if (Date.now() > deadline) throw new Error("broker: state is locked by another run");
       await new Promise((r) => setTimeout(r, 50));
     }
   }
   try {
     return await fn();
   } finally {
-    rmSync(lock, { recursive: true, force: true });
+    try {
+      if (readFileSync(owner, "utf8").trim().endsWith(token)) rmSync(lock, { recursive: true, force: true });
+    } catch {
+      // already gone: nothing of ours to release
+    }
   }
 }
 
@@ -139,8 +187,13 @@ export class Broker {
   request(req: CredentialRequest, requester: Principal, relayMessageId?: string): Promise<Reply> {
     return withLock(this.deps.stateDir, async () => {
       const requestId = this.deps.newId();
-      const base = this.base(requestId, req, requester, relayMessageId);
-      this.audit(base);
+      let base: AuditEvent;
+      try {
+        base = this.base(requestId, req, requester, relayMessageId);
+        this.audit(base);
+      } catch (e) {
+        return { requestId, outcome: "error", reasons: [`could not audit the request: ${(e as Error).message}`] };
+      }
       let decision: Decision;
       let name: string;
       try {
@@ -233,26 +286,65 @@ export class Broker {
 
   private async issue(requestId: string, req: CredentialRequest, requester: Principal, name: string, roleArn: string, sessionPolicy: SessionPolicy, durationSeconds: number, digest: string, base: AuditEvent, reasons: string[]): Promise<Reply> {
     const tags = { "broker-request-id": requestId, [this.deps.allowlist.tagKey]: req.runTag, agent: name };
+    const fail = (reason: string, extra: Partial<AuditEvent> = {}, forbidden: string[] = []): Reply => {
+      this.audit({ ...base, kind: "error", roleArn, sessionName: name, ...extra, reasons: [reason] }, forbidden);
+      return { requestId, outcome: "error", reasons: [reason] };
+    };
+    // Every state write that can fail happens before anything is minted: the
+    // run-tag claim and the cleanup record (with the planned delivery and the
+    // longest possible expiry), so sweep can always find and remove a delivery.
+    const tagsFile = join(this.deps.stateDir, "run-tags.json");
+    const owners = this.runTags();
+    const claimed = !owners[req.runTag];
+    const issuedFile = join(this.deps.stateDir, "issued", `${requestId}.json`);
+    let planned: DeliveryRef;
+    try {
+      planned = this.deps.deliverer.planned(req.delivery, name, requestId);
+      if (claimed) writeJson(tagsFile, { ...owners, [req.runTag]: requester.name });
+      writeJson(issuedFile, { requestId, delivery: planned, expiration: new Date(this.deps.now().getTime() + durationSeconds * 1000 + 60_000).toISOString() } satisfies Issued);
+    } catch (e) {
+      return fail(`could not record the issue: ${(e as Error).message}`);
+    }
+    const unclaim = () => {
+      if (!claimed) return;
+      try {
+        const now = this.runTags();
+        if (now[req.runTag] === requester.name) {
+          delete now[req.runTag];
+          writeJson(tagsFile, now);
+        }
+      } catch {
+        // a leftover claim only keeps the tag with the agent that asked for it
+      }
+    };
     let creds;
     try {
       creds = await this.deps.sts.assumeRole({ roleArn, sessionName: name, sourceIdentity: name, durationSeconds, policy: sessionPolicy, tags });
     } catch (e) {
-      this.audit({ ...base, kind: "error", roleArn, sessionName: name, reasons: [(e as Error).message] });
-      return { requestId, outcome: "error", reasons: [(e as Error).message] };
+      rmSync(issuedFile, { force: true });
+      unclaim();
+      return fail((e as Error).message);
     }
     const forbidden = [creds.secretAccessKey, creds.sessionToken];
     let delivery: DeliveryRef;
     try {
       delivery = await this.deps.deliverer.deliver(req.delivery, name, requestId, creds);
     } catch (e) {
-      // Minted but not delivered: nobody holds them; they lapse at expiry. Logged so CloudTrail can confirm no use.
-      this.audit({ ...base, kind: "error", roleArn, sessionName: name, accessKeyId: creds.accessKeyId, expiration: creds.expiration, reasons: [`delivery failed: ${(e as Error).message}`] }, forbidden);
-      return { requestId, outcome: "error", reasons: [`delivery failed: ${(e as Error).message}`] };
+      // Maybe partly written (e.g. op timed out after creating the item): try to remove it now; the
+      // planned record stays for sweep if that fails too. The credentials lapse at expiry.
+      try {
+        await this.deps.deliverer.remove(planned);
+        rmSync(issuedFile, { force: true });
+      } catch {
+        // sweep retries from the planned record
+      }
+      return fail(`delivery failed: ${(e as Error).message}`, { accessKeyId: creds.accessKeyId, expiration: creds.expiration }, forbidden);
     }
-    writeJson(join(this.deps.stateDir, "issued", `${requestId}.json`), { requestId, delivery, expiration: creds.expiration } satisfies Issued);
-    const tagsFile = join(this.deps.stateDir, "run-tags.json");
-    const owners = this.runTags();
-    if (!owners[req.runTag]) writeJson(tagsFile, { ...owners, [req.runTag]: requester.name });
+    try {
+      writeJson(issuedFile, { requestId, delivery, expiration: creds.expiration } satisfies Issued);
+    } catch {
+      // The planned record (same file path, or the 1Password item's title) still lets sweep remove it.
+    }
     this.audit({ ...base, kind: "issued", roleArn, sessionName: name, durationSeconds, policyDigest: digest, accessKeyId: creds.accessKeyId, expiration: creds.expiration, delivery, reasons }, forbidden);
     return { requestId, outcome: "issued", reasons, account: req.account, roleArn, sessionName: name, delivery, expiration: creds.expiration, accessKeyId: creds.accessKeyId, policyDigest: digest };
   }
@@ -261,6 +353,18 @@ export class Broker {
 function safeId(id: string): string {
   if (!/^cb-[0-9a-f]{12}$/.test(id)) throw new Error(`bad request id ${JSON.stringify(id)}`);
   return id;
+}
+
+function describeCondition(c: SessionPolicy["Statement"][number]["Condition"]): string {
+  const eq = c?.StringEquals ?? {};
+  const parts: string[] = [];
+  for (const [k, v] of Object.entries(eq)) {
+    if (k.startsWith("aws:ResourceTag/")) parts.push(`only resources tagged ${k.slice(16)}=${String(v)}`);
+    else if (k.startsWith("aws:RequestTag/")) parts.push(`must tag ${k.slice(15)}=${String(v)} at create`);
+    else if (k === "aws:RequestedRegion") parts.push(`regions ${[v].flat().join("/")}`);
+    else parts.push(`${k}=${[v].flat().join("/")}`);
+  }
+  return parts.length ? ` (${parts.join("; ")})` : " (account-wide, no tag condition)";
 }
 
 export function approvalPrompt(p: Pending, list: Allowlist): string {
@@ -273,6 +377,8 @@ export function approvalPrompt(p: Pending, list: Allowlist): string {
     `Actions: ${p.request.actions.join(", ")}`,
     `Resources: ${(p.request.resources ?? ["*"]).join(", ")}  Scope: ${p.request.scope ?? "run-tag"} (${p.request.runTag})`,
     `Duration: ${p.durationSeconds / 60} min. Why approval: ${p.reasons.join("; ")}`,
+    "Grants (exactly what IAM will enforce):",
+    ...p.sessionPolicy.Statement.filter((s) => s.Effect === "Allow").map((s) => `  - ${(s.Action ?? []).join(", ")} on ${[s.Resource ?? "*"].flat().join(", ")}${describeCondition(s.Condition)}`),
     `Session policy digest: ${p.digest.slice(0, 16)}`,
     `To approve, reply exactly: approve ${p.requestId} ${p.digest.slice(0, 16)}`,
     `To refuse: refuse ${p.requestId}. Expires in ${list.approvalWindowMinutes} min.`,

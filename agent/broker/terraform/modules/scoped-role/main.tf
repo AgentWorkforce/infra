@@ -7,7 +7,8 @@
 #    names the agent and the request on every call);
 #  - no IAM, identity, organization, account, audit or STS control;
 #  - no session without the run tag; nothing created with another run's tag;
-#    the run tag can't be added, moved or removed after creation;
+#    the run tag can't be removed, and can be added only at create time (EC2)
+#    or on resources named for the run (other services' tag-on-create);
 #  - deletes and stops only on resources tagged with the session's own run;
 #  - only the allowed regions.
 
@@ -52,12 +53,26 @@ locals {
     ]
   }
 
-  retag_actions = [
+  # Tag writes that add a key: with the run tag, only on resources the run
+  # owns by name (<run tag>-…), so tag-on-create works (CreateQueue also checks
+  # sqs:TagQueue, and so on) but an existing resource can't be claimed.
+  # Must match broker/src/policy.ts TAG_ACTIONS and ownNamedResources.
+  tag_actions = [
+    "sqs:TagQueue", "sns:TagResource", "logs:TagResource", "logs:TagLogGroup",
+    "dynamodb:TagResource", "secretsmanager:TagResource",
+  ]
+  own_named_resources = [
+    "arn:aws:sqs:*:*:${local.own_run}-*",
+    "arn:aws:sns:*:*:${local.own_run}-*",
+    "arn:aws:logs:*:*:log-group:${local.own_run}-*",
+    "arn:aws:dynamodb:*:*:table/${local.own_run}-*",
+    "arn:aws:secretsmanager:*:*:secret:${local.own_run}-*",
+  ]
+  # Removing the run tag, or tagging through the generic API: never with the run tag. Matches UNTAG_ACTIONS.
+  untag_actions = [
     "ec2:DeleteTags", "tag:TagResources", "tag:UntagResources",
-    "sqs:TagQueue", "sqs:UntagQueue", "sns:TagResource", "sns:UntagResource",
-    "logs:TagResource", "logs:UntagResource", "logs:TagLogGroup", "logs:UntagLogGroup",
-    "dynamodb:TagResource", "dynamodb:UntagResource",
-    "secretsmanager:TagResource", "secretsmanager:UntagResource",
+    "sqs:UntagQueue", "sns:UntagResource", "logs:UntagResource", "logs:UntagLogGroup",
+    "dynamodb:UntagResource", "secretsmanager:UntagResource",
   ]
 
   # Stop and delete class actions the broker can grant automatically: only on the session's own run.
@@ -100,11 +115,18 @@ locals {
         }
       },
       {
-        Sid       = "DenyMovingTheRunTag"
+        Sid       = "DenyRemovingTheRunTag"
         Effect    = "Deny"
-        Action    = local.retag_actions
+        Action    = local.untag_actions
         Resource  = "*"
         Condition = { "ForAnyValue:StringEquals" = { "aws:TagKeys" = [var.tag_key] } }
+      },
+      {
+        Sid         = "DenyRunTagOnResourcesNotNamedForTheRun"
+        Effect      = "Deny"
+        Action      = local.tag_actions
+        NotResource = local.own_named_resources
+        Condition   = { "ForAnyValue:StringEquals" = { "aws:TagKeys" = [var.tag_key] } }
       },
       {
         Sid       = "DenyEc2TagsAfterCreate"

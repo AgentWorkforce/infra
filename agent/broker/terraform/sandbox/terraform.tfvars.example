@@ -1,6 +1,8 @@
 # Copy to terraform.tfvars (gitignored) and fill in. No secrets here.
+# On the layered-infra-ops host the default AWS profile is its admin role in
+# the broker account, so broker_profile stays unset.
 broker_account_id    = "000000000000"
 broker_host_role_arn = "arn:aws:iam::000000000000:role/layered-agent-infra-ops-dev"
 sandbox_account_id   = "805532413586"
-broker_profile       = "your-admin-profile-in-the-broker-account"
-sandbox_profile      = "your-admin-profile-in-the-sandbox-account"
+# A role in 805532413586 that trusts infra-ops' admin role (or set sandbox_profile instead).
+sandbox_assume_role_arn = "arn:aws:iam::805532413586:role/<role that trusts layered-agent-admin-infra-ops-dev>"

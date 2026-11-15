@@ -6,6 +6,7 @@ terraform {
       version = ">= 6.0, < 7.0"
     }
   }
-  # No backend here on purpose: whoever applies this (Khaliq) picks the state
-  # backend. Never apply it from an agent.
+  # S3 state, configured at init: terraform init -backend-config=backend.hcl
+  # (see backend.hcl.example). Tests run with -backend=false.
+  backend "s3" {}
 }
