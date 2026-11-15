@@ -1,0 +1,232 @@
+{
+ "arm": "actors",
+ "dir": "<results dir>",
+ "phases": [
+  {
+   "label": "soak60",
+   "kind": "mixed",
+   "offeredRate": 3,
+   "startedAt": 1794594262473,
+   "endedAt": 1794597867051,
+   "issued": 10798
+  }
+ ],
+ "routes": [
+  {
+   "arm": "actors",
+   "phase": "soak60",
+   "route": "POST /v1/dm",
+   "requests": 6159,
+   "ok": 5941,
+   "rps_ok": 1.65,
+   "err_rate": 0.0354,
+   "r429": 0,
+   "r5xx": 43,
+   "net_err": 175,
+   "p50": 3720.147,
+   "p95": 6213.299,
+   "p99": 29968.179,
+   "max": 30001.36599999992,
+   "corrected_p50": 3720.147,
+   "corrected_p95": 6213.299,
+   "corrected_p99": 29968.179
+  },
+  {
+   "arm": "actors",
+   "phase": "soak60",
+   "route": "POST /v1/channels/:name/messages",
+   "requests": 4052,
+   "ok": 3926,
+   "rps_ok": 1.09,
+   "err_rate": 0.0311,
+   "r429": 0,
+   "r5xx": 38,
+   "net_err": 88,
+   "p50": 3643.587,
+   "p95": 6387.979,
+   "p99": 29968.179,
+   "max": 30001.253000000026,
+   "corrected_p50": 3643.587,
+   "corrected_p95": 6387.979,
+   "corrected_p99": 29968.179
+  },
+  {
+   "arm": "actors",
+   "phase": "soak60",
+   "route": "POST /v1/files/upload",
+   "requests": 587,
+   "ok": 570,
+   "rps_ok": 0.16,
+   "err_rate": 0.02896,
+   "r429": 0,
+   "r5xx": 6,
+   "net_err": 11,
+   "p50": 3063.879,
+   "p95": 5297.676,
+   "p99": 29968.179,
+   "max": 30000.814000000246,
+   "corrected_p50": null,
+   "corrected_p95": null,
+   "corrected_p99": null
+  },
+  {
+   "arm": "actors",
+   "phase": "soak60",
+   "route": "PUT /_relayfiles",
+   "requests": 570,
+   "ok": 559,
+   "rps_ok": 0.16,
+   "err_rate": 0.0193,
+   "r429": 0,
+   "r5xx": 11,
+   "net_err": 0,
+   "p50": 3021.698,
+   "p95": 4643.973,
+   "p99": 5046.767,
+   "max": 5067.777000000235,
+   "corrected_p50": null,
+   "corrected_p95": null,
+   "corrected_p99": null
+  },
+  {
+   "arm": "actors",
+   "phase": "soak60",
+   "route": "POST /v1/files/:id/complete",
+   "requests": 570,
+   "ok": 570,
+   "rps_ok": 0.16,
+   "err_rate": 0,
+   "r429": 0,
+   "r5xx": 0,
+   "net_err": 0,
+   "p50": 2939.07,
+   "p95": 4708.8,
+   "p99": 5638.688,
+   "max": 8466.611000000034,
+   "corrected_p50": null,
+   "corrected_p95": null,
+   "corrected_p99": null
+  },
+  {
+   "arm": "actors",
+   "phase": "soak60",
+   "route": "upload_total_raw",
+   "requests": 0,
+   "ok": 0,
+   "rps_ok": 0,
+   "err_rate": null,
+   "r429": 0,
+   "r5xx": 0,
+   "net_err": 0,
+   "p50": 9287.946,
+   "p95": 13598.348,
+   "p99": 29968.179,
+   "max": 30001,
+   "corrected_p50": null,
+   "corrected_p95": null,
+   "corrected_p99": null
+  }
+ ],
+ "delivery": [
+  {
+   "arm": "actors",
+   "phase": "soak60",
+   "deliveries": 93985,
+   "deliveries_per_s": 26.07,
+   "p50": 3519.473,
+   "p95": 81309.923,
+   "p99": 365913.676,
+   "p999": 521079.441,
+   "max": 560919
+  }
+ ],
+ "integrity": [
+  {
+   "arm": "actors",
+   "phase": "soak60",
+   "expected": 53053,
+   "delivered": 53053,
+   "lost": 0,
+   "duplicate": 0,
+   "redelivered": 1906,
+   "reordered": 0,
+   "reordered_after_timeout": 0,
+   "unexpected": 0,
+   "truncated": 0
+  }
+ ],
+ "sinks": [
+  {
+   "shard": 0,
+   "sockets": 45,
+   "connected": 45,
+   "drops": 63,
+   "connect": {
+    "n": 45,
+    "mean": 8718,
+    "min": 4542,
+    "p50": 8848.05,
+    "p95": 11122.117,
+    "p99": 11277.376,
+    "p999": 11277.376,
+    "max": 11272
+   },
+   "reconnect": {
+    "n": 63,
+    "mean": 66525.984,
+    "min": 8550,
+    "p50": 25551.915,
+    "p95": 135801.869,
+    "p99": 141568.799,
+    "p999": 141568.799,
+    "max": 141362
+   },
+   "counters": {
+    "frame context.update": 86720,
+    "join 200": 72,
+    "deliver": 47038,
+    "ws_drop 1012": 18,
+    "connect_error ws error": 63,
+    "ws_drop 4400": 45
+   },
+   "drain": [],
+   "rssBytes": 89542656
+  },
+  {
+   "shard": 1,
+   "sockets": 45,
+   "connected": 45,
+   "drops": 56,
+   "connect": {
+    "n": 45,
+    "mean": 7834.156,
+    "min": 4624,
+    "p50": 8085.626,
+    "p95": 10234.435,
+    "p99": 10449.482,
+    "p999": 10449.482,
+    "max": 10423
+   },
+   "reconnect": {
+    "n": 56,
+    "mean": 75144.714,
+    "min": 8373,
+    "p50": 105081.109,
+    "p95": 147580.626,
+    "p99": 151729.682,
+    "p999": 151729.682,
+    "max": 152059
+   },
+   "counters": {
+    "frame context.update": 87300,
+    "join 200": 72,
+    "deliver": 46947,
+    "ws_drop 1012": 11,
+    "connect_error ws error": 65,
+    "ws_drop 4400": 45
+   },
+   "drain": [],
+   "rssBytes": 89952256
+  }
+ ]
+}

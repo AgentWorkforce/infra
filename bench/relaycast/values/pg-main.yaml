@@ -1,0 +1,8 @@
+# PG arm at relaycast main a63961bd (includes #657), self-built with the repo
+# Dockerfile (bench ECR, not released). Chart-default resources (as shipped).
+relaycast:
+  runtime:
+    postgres:
+      image:
+        repository: 805532413586.dkr.ecr.us-west-2.amazonaws.com/relaycast-actors-bench/relaycast-self-host
+        digest: sha256:03edc61e3d35228050ba7f4ee1c63848511e8f9e36e47e220bfddf798fbdb2be

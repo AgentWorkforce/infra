@@ -1,0 +1,7 @@
+{
+ "at": "2026-11-12T23:27Z",
+ "minutes_since_provisioned": 17,
+ "connected": 3200,
+ "sockets": 5000,
+ "note": "actors: 5,000 node sockets did not all connect in 17 min; node.register timeouts dominate; run stopped (runner would hit its 30 min readiness cap)"
+}
