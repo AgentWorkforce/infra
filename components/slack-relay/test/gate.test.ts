@@ -135,6 +135,7 @@ test("ingest: a denied write is skipped, an allowed one goes through", async () 
       brain: {
         // The day's page doesn't exist yet: the first append fails, the page is created.
         callTool: async (name, a) => {
+          if (name === "get_write_request") throw new McpToolError("not_found", name);
           if (name === "append_page" && !writes.some((w) => w.startsWith("put_page:"))) throw new McpToolError("page_not_found", name);
           writes.push(`${name}:${a.text ?? a.content}`);
           return {};

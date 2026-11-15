@@ -37,17 +37,21 @@ export async function* paged(slack: Pick<SlackWeb, "call">, method: string, body
 
 /**
  * A channel's human messages since `oldest` (Slack ts seconds), thread replies
- * included, oldest first: the order live ingest would have written them in.
+ * included, oldest first. History is read in full: a thread started before
+ * `oldest` can have replies after it, and only its root leads to them.
  */
 export async function channelHistory(slack: Pick<SlackWeb, "call">, channel: string, botUserId: string, oldest?: string): Promise<Array<Omit<IngestMessage, "channelName" | "isPrivate">>> {
   const out = new Map<string, Omit<IngestMessage, "channelName" | "isPrivate">>();
+  const after = (ts: unknown) => !oldest || Number(ts) >= Number(oldest);
   const take = (raw: Record<string, unknown>) => {
-    const m = channelMessageOf({ type: "message", ...raw, channel }, botUserId);
+    if (!after(raw.ts)) return;
+    // Channel conversations only (the caller has refused DMs); channelMessageOf drops bots and subtypes.
+    const m = channelMessageOf({ type: "message", ...raw, channel, channel_type: "channel" }, botUserId);
     if (m) out.set(m.ts, m);
   };
-  for await (const msg of paged(slack, "conversations.history", { channel, ...(oldest ? { oldest } : {}) }, "messages")) {
+  for await (const msg of paged(slack, "conversations.history", { channel }, "messages")) {
     take(msg);
-    if (Number(msg.reply_count ?? 0) > 0 && typeof msg.ts === "string") {
+    if (Number(msg.reply_count ?? 0) > 0 && typeof msg.ts === "string" && after(msg.latest_reply ?? msg.ts)) {
       for await (const reply of paged(slack, "conversations.replies", { channel, ts: msg.ts, ...(oldest ? { oldest } : {}) }, "messages")) {
         if (reply.ts !== msg.ts) take(reply);
       }
@@ -88,10 +92,15 @@ async function main(): Promise<void> {
   const slack = new SlackWeb(secret("SLACK_BOT_TOKEN"), env.SLACK_API_URL);
   const me = await slack.authTest();
   const refuseShared = env.SLACK_REFUSE_SHARED_CHANNELS !== "false";
+  const allowed = new Set((env.SLACK_ALLOWED_CHANNELS ?? "").split(",").map((s) => s.trim()).filter(Boolean));
   let failed = 0;
   for (const id of channels) {
-    // The same rules as live ingest: shared channels refused, private ones only when enabled.
-    const info = channelInfoOf((await slack.call("conversations.info", { channel: id })).channel as Record<string, unknown>);
+    // The same rules as live ingest: the allowlist, no DMs, shared channels
+    // refused, private ones only when enabled.
+    if (allowed.size > 0 && !allowed.has(id)) { log(`${id}: not in SLACK_ALLOWED_CHANNELS; skipped`); continue; }
+    const raw = (await slack.call("conversations.info", { channel: id })).channel as Record<string, unknown>;
+    if (raw.is_im === true || raw.is_mpim === true || (raw.is_channel !== true && raw.is_group !== true)) { log(`${id}: not a channel (DMs are never ingested); skipped`); continue; }
+    const info = channelInfoOf(raw);
     if (refuseShared && info.isShared) { log(`#${info.name} (${id}): shared outside the workspace; skipped`); continue; }
     if (info.isPrivate && !cfg.privateChannels) { log(`#${info.name} (${id}): private and INGEST_PRIVATE_CHANNELS is off; skipped`); continue; }
     const source = cfg.ingest.sourceFor(info.name, info.isPrivate);

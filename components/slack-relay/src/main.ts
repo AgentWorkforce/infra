@@ -257,8 +257,11 @@ async function runHost(): Promise<void> {
   const { agent: hostAgent } = await connectAgent({ baseUrl: relayBase, workspaceKey, name: hostName, persona: "Hosts Slack thread agents", proofSecret, log, gate });
   await ensureChannel(hostAgent, channel, "Slack threads routed to agents");
 
+  const listed = env.AGENT_MCP_SERVERS ? env.AGENT_MCP_SERVERS.split(",").map((n) => n.trim()) : null;
   const agentServers = oauthServersFromEnv(env)
-    .filter((s) => !env.AGENT_MCP_SERVERS || env.AGENT_MCP_SERVERS.split(",").includes(s.name))
+    // Unlisted, agents get only read-scoped servers: ingest writers (one per
+    // source) are the router's, not the agents'. Listing one opts it in.
+    .filter((s) => (listed ? listed.includes(s.name) : !/\bwrite\b/.test(s.scope ?? "")))
     // Behind relaygate, agents only get read-scoped servers: their writes would
     // go straight to the server and never be checked.
     .filter((s) => {

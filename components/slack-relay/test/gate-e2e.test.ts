@@ -8,6 +8,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { checkWithRetry, GateDenied, kbStreamId, RelaygateClient, slackStreamId } from "../src/gate.ts";
 import { SlackIngest } from "../src/ingest.ts";
+import { McpToolError } from "../src/mcp.ts";
 import { Ledger } from "../src/ledger.ts";
 import { DeterministicOrchestrator } from "../src/orchestrator.ts";
 import { Router } from "../src/router.ts";
@@ -72,7 +73,12 @@ test("KB ingest: writes are checked; a classified one is skipped", { skip }, asy
   const router = await gate.register(`slack-router-${sfx}`, recoveryProof("e2e-secret", `slack-router-${sfx}`));
   const writes: string[] = [];
   const ing = new SlackIngest({
-    brain: { callTool: async (name, a) => (writes.push(String(a.text ?? a.content)), {}) },
+    brain: {
+      callTool: async (name, a) => {
+        if (name === "get_write_request") throw new McpToolError("not_found", name);
+        return (writes.push(String(a.text ?? a.content)), {});
+      },
+    },
     beforeWrite: (slug, text) => checkWithRetry(gate, router.token, { op: "w", resource: { kind: "stream", id: kbStreamId("brain-write", slug) }, content: text }, [1]),
   });
   await ing.add({ channel: "C1", channelName: "general", ts: `${Math.floor(Date.now() / 1000)}.000100`, user: "U1", text: "standup moved to 10am" });

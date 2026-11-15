@@ -113,12 +113,27 @@ export class SlackIngest {
     return this.#sourceId;
   }
 
+  /** True when this message's create request is on record (gbrain get_write_request). */
+  async #created(brain: ToolCaller, m: IngestMessage): Promise<boolean> {
+    try {
+      await brain.callTool("get_write_request", { request_id: requestId("create", m.channel, m.ts) });
+      return true;
+    } catch (err) {
+      // not_found (or a server without receipts): not created by this message.
+      if (err instanceof McpToolError) return false;
+      throw err;
+    }
+  }
+
   async #append(slug: string, m: IngestMessage): Promise<string> {
     const line = lineFor(m);
     const sourceId = this.sourceFor(m.channelName, m.isPrivate === true);
     if (this.#beforeWrite) await this.#beforeWrite(slug, line, sourceId);
     const source = sourceId ? { source_id: sourceId } : {};
     const brain = (sourceId && this.#brains.get(sourceId)) || this.#brain;
+    // The day's first message created the page under its "create" request;
+    // a replay (backfill, Slack retry) would append it again under "append".
+    if (await this.#created(brain, m)) return slug;
     try {
       await brain.callTool("append_page", { slug, text: line, request_id: requestId("append", m.channel, m.ts), ...source });
     } catch (err) {

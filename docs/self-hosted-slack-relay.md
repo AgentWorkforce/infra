@@ -184,7 +184,9 @@ ingest:
 ```
 
 A source with no entry is written through `ingest.mcpServer`, and gbrain
-refuses it (nothing is misfiled).
+refuses it (nothing is misfiled). Agents never get a write-scoped server
+unless `host.mcpServers` names it: with `host.mcpServers` empty they get the
+read-scoped ones only.
 
 ### Backfill a channel's history
 
@@ -199,9 +201,12 @@ kubectl exec -n agent-relay deploy/slack-relay-router -- \
 
 It reads the channel's history and thread replies through the bot token
 (`channels:history`, `groups:history`) and writes them through the same
-ingest, oldest first, applying the same rules: the same pages and sources,
-shared channels refused, private ones only with `ingest.privateChannels`, and
-messages that look like credentials withheld. Every write is keyed by its
+ingest, oldest first, applying the same rules: `slack.allowedChannels`, no
+DMs, the same pages and sources, shared channels refused, private ones only
+with `ingest.privateChannels`, and messages that look like credentials
+withheld. `--since` keeps replies posted after the date in threads that
+started before it. On a day live ingest has already started, backfilled lines
+are appended after the live ones; every line carries its UTC time. Every write is keyed by its
 Slack message, so a backfill can be re-run or overlap live ingest without
 duplicating a line. `--dry-run` reports counts and target sources without
 writing. With relaygate on, it registers as `<router name>-backfill` and every

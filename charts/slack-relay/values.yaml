@@ -134,7 +134,8 @@ host:
   permissionMode: dontAsk
   # Give each agent a Relaycast MCP bound to its own token (DMs, channels).
   relaycastMcp: true
-  # Names from the top-level mcpServers list agents get as tools. Empty: all.
+  # Names from the top-level mcpServers list agents get as tools. Empty: every
+  # read-scoped one (write-scoped servers, e.g. ingest writers, only when named).
   mcpServers: []
   turnTimeoutSeconds: 600
   # An agent leaves the relay after this long idle; the next message wakes it.

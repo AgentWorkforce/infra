@@ -134,6 +134,10 @@ test("ingest appends each message to its channel-day page, creating it once, ide
   const brain = {
     async callTool(name: string, a: Record<string, unknown>) {
       calls.push(name);
+      if (name === "get_write_request") {
+        if (seen.has(a.request_id as string)) return {};
+        throw new McpToolError("not_found", name);
+      }
       const slug = a.slug as string;
       if (seen.has(a.request_id as string)) return {};
       if (name === "append_page") {
@@ -159,6 +163,9 @@ test("ingest appends each message to its channel-day page, creating it once, ide
   assert.match(page, /^# #Market Research: 2026-11-14/);
   assert.match(page, /<@U1>: competitor X raised/);
   assert.equal(page.match(/how much\?/g)?.length, 1, "retry appended once");
+  // A backfill replays the day's first message: it created the page, so it isn't appended again.
+  await ing.add({ channel: "C1", channelName: "Market Research", ts: ts1, user: "U1", text: "competitor X raised" });
+  assert.equal(pages.get(slug)!.match(/competitor X raised/g)?.length, 1, "page-creating message replayed once");
   assert.doesNotMatch(page, /xoxb/);
   assert.equal(requestId("append", "C1", ts1), requestId("append", "C1", ts1));
 });
@@ -247,6 +254,7 @@ test("MCP SSE: multi-line data joins, notifications before the response are skip
 
 test("ingest writes each source through its own client; unmapped sources use the default", async () => {
   const { ingestFromEnv } = await import("../src/ingest-config.ts");
+  const { McpToolError } = await import("../src/mcp.ts");
   const writes: Array<{ server: string; source: unknown }> = [];
   const checked: string[] = [];
   const cfg = ingestFromEnv(
@@ -267,7 +275,13 @@ test("ingest writes each source through its own client; unmapped sources use the
     {
       log: () => {},
       beforeWrite: async (server, slug) => void checked.push(`${server}:${slug}`),
-      client: (s) => ({ async callTool(_n: string, a: Record<string, unknown>) { writes.push({ server: s.name, source: a.source_id }); return {}; } }),
+      client: (s) => ({
+        async callTool(n: string, a: Record<string, unknown>) {
+          if (n === "get_write_request") throw new McpToolError("not_found", n);
+          writes.push({ server: s.name, source: a.source_id });
+          return {};
+        },
+      }),
     },
   )!;
   assert.match(cfg.describe, /founders -> brain-founders/);
@@ -286,28 +300,39 @@ test("ingest writes each source through its own client; unmapped sources use the
   );
 });
 
-test("backfill history: human messages and thread replies, oldest first, paged", async () => {
+test("backfill history: human messages and thread replies, oldest first, paged; --since keeps late replies to older threads", async () => {
   const { channelHistory } = await import("../src/backfill.ts");
   const calls: string[] = [];
   const slack = {
     async call(method: string, body: Record<string, unknown>) {
-      calls.push(`${method}${body.cursor ? `@${body.cursor}` : ""}${body.oldest ? `>${body.oldest}` : ""}`);
+      calls.push(`${method}${body.ts ? `:${body.ts}` : ""}${body.cursor ? `@${body.cursor}` : ""}${body.oldest ? `>${body.oldest}` : ""}`);
       if (method === "conversations.history" && !body.cursor) {
-        return { messages: [{ ts: "30.0", user: "U2", text: "latest" }, { ts: "20.0", user: "U1", text: "parent", reply_count: 2 }], response_metadata: { next_cursor: "p2" } };
+        return { messages: [{ ts: "30.0", user: "U2", text: "latest" }, { ts: "20.0", user: "U1", text: "parent", reply_count: 2, latest_reply: "40.0" }], response_metadata: { next_cursor: "p2" } };
       }
       if (method === "conversations.history") {
-        return { messages: [{ ts: "10.0", user: "UB", text: "from the app" }, { ts: "5.0", subtype: "channel_join", user: "U3", text: "joined" }, { ts: "4.0", bot_id: "B1", text: "bot" }] };
+        return {
+          messages: [
+            { ts: "10.0", user: "UB", text: "from the app" },
+            { ts: "8.0", user: "U4", text: "old root", reply_count: 1, latest_reply: "9.0" },
+            { ts: "6.0", user: "U4", text: "old root, late reply", reply_count: 1, latest_reply: "35.0" },
+            { ts: "5.0", subtype: "channel_join", user: "U3", text: "joined" },
+            { ts: "4.0", bot_id: "B1", text: "bot" },
+          ],
+        };
       }
-      // conversations.replies: the parent first, then the replies.
+      // conversations.replies: the parent first, then the replies (Slack applies oldest).
+      if (body.ts === "6.0") return { messages: [{ ts: "6.0", user: "U4", text: "old root, late reply" }, { ts: "35.0", user: "U5", text: "picked up", thread_ts: "6.0" }] };
       return { messages: [{ ts: "20.0", user: "U1", text: "parent" }, { ts: "21.0", user: "U3", text: "reply", thread_ts: "20.0" }, { ts: "40.0", user: "U2", text: "late reply", thread_ts: "20.0" }] };
     },
   };
-  const got = await channelHistory(slack, "C1", "UB", "1.0");
+  const got = await channelHistory(slack, "C1", "UB", "15.0");
   assert.deepEqual(got.map((m) => [m.ts, m.text, m.threadTs ?? null]), [
     ["20.0", "parent", null],
     ["21.0", "reply", "20.0"],
     ["30.0", "latest", null],
+    ["35.0", "picked up", "6.0"],
     ["40.0", "late reply", "20.0"],
   ]);
-  assert.deepEqual(calls, ["conversations.history>1.0", "conversations.replies>1.0", "conversations.history@p2>1.0"]);
+  // History is read without the cutoff; replies only for threads active since it.
+  assert.deepEqual(calls, ["conversations.history", "conversations.replies:20.0>15.0", "conversations.history@p2", "conversations.replies:6.0>15.0"]);
 });
