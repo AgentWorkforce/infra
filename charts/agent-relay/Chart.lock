@@ -13,7 +13,7 @@ dependencies:
   version: 0.4.18
 - name: relay-webapp
   repository: file://../relay-webapp
-  version: 0.2.5
+  version: 0.2.6
 - name: relayflows
   repository: file://../relayflows
   version: 0.2.5
@@ -31,9 +31,9 @@ dependencies:
   version: 0.1.0
 - name: slack-relay
   repository: file://../slack-relay
-  version: 0.3.1
+  version: 0.3.2
 - name: relaygate
   repository: file://../relaygate
-  version: 0.1.0
-digest: sha256:5631bdd4f60013deb4f55da8f12fa6bc6eb8b6819a0d76f0cf72ee9ca54e3aed
-generated: "2026-11-14T20:35:20.387771-08:00"
+  version: 0.1.1
+digest: sha256:07be307d033ebb3b6b21373365efe525d3e00c86be452e04a672acb63a023d8d
+generated: "2026-11-14T21:40:00.672372-08:00"

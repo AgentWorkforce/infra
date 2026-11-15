@@ -4,7 +4,7 @@
 # image.repository; the digest stays the same.
 image:
   repository: ghcr.io/agentworkforce/slack-relay
-  digest: sha256:295daf9f6b8f918c9dc50a739554c77a6cfa6a7b6ce0d7d2e09fce1f6133d317
+  digest: sha256:6ea17f5feaa16fae80edd6008c8c646b73fc217d283dae7663315a7301811a09
 relaycast:
   baseUrl: http://relaycast:8787
   channel: slack
@@ -19,9 +19,8 @@ slack:
   allowedChannels: [C0CHX8UK4CC]
   # DMs bypass allowedChannels; the proof answers only in its test channel.
   allowDms: false
-  # The test app predates the channels:read scope the check needs; off until
-  # the app is reinstalled from the current manifest.
-  refuseSharedChannels: false
+  # Refuse channels shared outside the workspace (needs channels:read).
+  refuseSharedChannels: true
 router:
   orchestrator: claude
   orchestratorModel: claude-fable-5-2

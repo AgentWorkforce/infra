@@ -96,8 +96,8 @@ production rollout.
    titles and summaries with an LLM, and the desktop app's live upload against
    this install (the upload path was proven with the e2e driver).
 
-11. **Desktop builds for a GKE install don't update themselves.** The signed
-   desktop release feed the control API can serve signs with AWS KMS and
-   stores in S3 only (`SELFHOST_DESKTOP_FEED_SIGNER=awskms`,
-   `SELFHOST_DESKTOP_FEED_STORAGE=s3`). A desktop build for a GKE install works,
-   but a newer version means installing the new build over the old one.
+11. **Desktop builds for a GKE install update themselves only from relay-control
+   0.5.25.** That version stores the signed desktop feed in a GCS bucket
+   (`desktop_feed_bucket_name`, step 4) and signs it with a key file
+   (`relay-control.desktopFeed.signingKeys`). Until a release pins it, a newer
+   desktop version means installing the new build over the old one.

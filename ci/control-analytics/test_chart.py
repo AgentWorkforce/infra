@@ -256,6 +256,45 @@ class DashboardAdapter(unittest.TestCase):
             )
             self.assertEqual(enabled["DASHBOARD_SESSION_READ_API_ENABLED"], "true")
 
+    def render_runtime(self, runtime, umbrella=False, fail=None):
+        values = yaml.safe_load((ROOT / "charts/relay-webapp/ci/default-values.yaml").read_text())
+        values.setdefault("runtime", {}).update(runtime)
+        chart = "relay-webapp"
+        if umbrella:
+            chart = "agent-relay"
+            components = {key: False for key in yaml.safe_load((ROOT / "charts/agent-relay/values.yaml").read_text())["components"]}
+            components["webapp"] = True
+            values = {"components": components, "relay-webapp": values}
+        with tempfile.TemporaryDirectory() as folder:
+            p = Path(folder) / "values.yaml"
+            p.write_text(yaml.safe_dump(values))
+            result = subprocess.run(["helm", "template", "ci", str(ROOT / "charts" / chart), "-n", "ci", "-f", str(p)], text=True, capture_output=True)
+        if fail:
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn(fail, result.stderr)
+            return {}
+        self.assertEqual(result.returncode, 0, result.stderr)
+        docs = [d for d in yaml.safe_load_all(result.stdout) if d]
+        pod = next(d for d in docs if d["kind"] == "Deployment")["spec"]["template"]["spec"]
+        return {e["name"]: e.get("value") for e in pod["containers"][0]["env"]}
+
+    def test_session_list_metadata_defaults_off_and_true_is_explicit(self):
+        for umbrella in [False, True]:
+            env = self.render(umbrella=umbrella)
+            self.assertNotIn("DASHBOARD_SESSION_AGENT_NAMES_ENABLED", env)
+            self.assertNotIn("DASHBOARD_SESSION_SHORT_SUMMARIES_ENABLED", env)
+            self.assertEqual(self.render_runtime({"sessionAgentNamesEnabled": True}, umbrella)["DASHBOARD_SESSION_AGENT_NAMES_ENABLED"], "true")
+            self.render_runtime({"sessionShortSummariesEnabled": True}, umbrella,
+                                fail="runtime.sessionShortSummariesEnabled=true requires runtime.sessionReadApiEnabled=true")
+            enabled = self.render_runtime({"sessionShortSummariesEnabled": True, "sessionReadApiEnabled": True}, umbrella)
+            self.assertEqual(enabled["DASHBOARD_SESSION_SHORT_SUMMARIES_ENABLED"], "true")
+
+    def test_session_list_metadata_refuses_non_boolean_values(self):
+        for key in ["sessionAgentNamesEnabled", "sessionShortSummariesEnabled"]:
+            for value in ["true", 1, None, []]:
+                with self.subTest(key=key, value=value):
+                    self.render_runtime({key: value}, fail=f"runtime.{key} must be a boolean")
+
     def test_coordination_view_refuses_non_boolean_values(self):
         for value in ["true", "false", 1, None, [], {}]:
             with self.subTest(value=value):

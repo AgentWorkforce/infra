@@ -8,12 +8,13 @@ knowledge base) go through a **classifier** (rules, plus an optional Claude
 model). Denials never reach upstream. It is opt-in: `components.relaygate` in
 the umbrella, or its own release.
 
-> **Status: build 1.** Registration, mode checks, the classifier, `/v1/check`
-> and the audit log work today, so Slack posts and knowledge-base writes are
-> gated. The proxy in front of Relaycast and Sessions is build 2 and not yet
-> shipped: until it is, agents still reach Relaycast and Sessions directly and
-> relaygate does **not** isolate pit data from other agents. Don't rely on it
-> for that yet.
+> **Status: build 2.** Registration, mode checks and ACLs, the classifier,
+> `/v1/check` and the audit log, plus proxies in front of Relaycast (REST
+> allowlist and `/v1/node/ws`) and Sessions (`/sessions`). Isolation holds only
+> when agents can reach Relaycast and Sessions **through relaygate alone**:
+> turn the proxies on (`proxy.relaycastUrl`, `proxy.sessionsUrl`) and
+> enforce it by narrowing Relaycast's and Sessions' own NetworkPolicies to the
+> gate (below), or keep regulated agents in their own install.
 
 ![Slack app and relaygate](diagrams/slack-relay-relaygate.png)
 
@@ -25,10 +26,23 @@ the umbrella, or its own release.
 | Local agents (laptops, editors) | 11 | write into pit inboxes; read and write local streams | read anything in the pit; post to Slack |
 | The Slack bridge (router) | 22 | post to `slack:` streams after `/v1/check` | post anything the classifier denies |
 
-Mode bits follow the filesystem: owner/group/other × read/write. Defaults
-(`slack:` and `kb:` → group 22, `660`, classified) live in the policy;
-enrollment keys decide an agent's group at registration and can be limited to
-a name prefix.
+Mode bits follow the filesystem: owner/group/other × read/write. Every
+default stream is `660` (owner and group only) plus an explicit **ACL** for
+each cross-group grant; there is no catch-all, so a stream no default matches
+is private to its owner's group:
+
+| Streams | Owner group | ACL |
+| --- | --- | --- |
+| `relaycast:channel/`, `relaycast:inbox/local-` | 11 | pit (22) may read |
+| `relaycast:channel/pit-`, `relaycast:inbox/pit-`, `relaycast:inbox/slack-` | 22 | local (11) may write |
+| `slack:`, `kb:` | 22 | none; classified |
+
+Enrollment keys decide an agent's group at registration; give each a name
+prefix matching its streams (`local-`, `pit-`, `slack-`) so a key can't take
+another group's names. Guests (another company's agents) get their own group,
+`guest: true`, an `expiresAt`, and a ceiling (`ceilings: [{gid: 44, never:
+[22]}]`) that no ACL can override. A 403 can change after an ACL change
+(`PUT /v1/streams/{id}`).
 
 ```yaml
 # relaygate-values.yaml (Anthropic: use a zero-data-retention key where regulated data may be classified)
@@ -37,7 +51,8 @@ image:
 policy:
   enrollmentKeys:
     # sha256 of each key only; the keys go to the clients that register
-    - { id: pit, gid: 22, sha256: "<sha256 of the pit key>" }
+    - { id: local, gid: 11, sha256: "<sha256 of the local key>", namePrefix: "local-" }
+    - { id: pit, gid: 22, sha256: "<sha256 of the pit key>", namePrefix: "pit-" }
     - { id: slack-bridge, gid: 22, sha256: "<sha256 of the bridge key>", namePrefix: "slack-" }
   classifier:
     model: { enabled: true, model: claude-opus-5-5, effort: low, timeoutMs: 8000 }
@@ -60,3 +75,50 @@ takes `relaygate.url` and the bridge key. Build 1 serves registration and
 `/v1/check`; the Relaycast/Sessions proxy follows, after which agents need no
 Relaycast credential at all (and Relaycast should accept traffic only from the
 gate, by NetworkPolicy).
+
+## Proxying Relaycast and Sessions (build 2)
+
+```yaml
+# relaygate-values.yaml, in addition to the policy above
+proxy:
+  relaycastUrl: http://relaycast:8787
+  sessionsUrl: https://history.example.com   # sessions-pipeline nativeRouting.origin (reads and uploads)
+secrets:
+  relaycastWorkspaceKey: { name: relaygate-relaycast, key: workspace-key }  # rk_live_ key relaygate registers agents with upstream
+  relaygateSecret: { name: relaygate-seal, key: secret }                   # >= 32 chars; keep it for the life of the PVC (seals upstream tokens)
+  sessionsToken: { name: relaygate-sessions, key: token }                  # rth_st_ with rth:sync, rth:read
+  adminToken: { name: relaygate-admin, key: token }                        # optional: POST /admin/v1/explain
+```
+
+Then close the direct path. NetworkPolicies are additive, so a policy that
+admits only the gate does nothing while Relaycast's own policy admits the whole
+namespace (its default). Narrow Relaycast's policy instead, in the relaycast
+values (or `relaycast:` in the umbrella):
+
+```yaml
+networkPolicy:
+  enabled: true
+  ingressFrom:
+    - podSelector: { matchLabels: { app.kubernetes.io/name: relaygate } }
+    # plus every caller that must stay direct (relay-control, the ingress
+    # controller if Relaycast is exposed, ...); anything not listed is cut off
+```
+
+`proxy.sessionsUrl` must be one origin that routes both session reads and
+uploads. In the sessions-pipeline chart those are separate Services (the reader
+and the ingest edge); `nativeRouting` joins them under one HTTPS origin
+([self-hosted-native-routing.md](self-hosted-native-routing.md)), and that
+origin is the value to use. If it is served with a private CA, give relaygate
+that CA too.
+
+Then point clients at the gate: the Slack app sets `relaygate.url` (it registers
+through the gate and uses it as its Relaycast base URL), and session uploads use
+`https://<gate>/sessions`. Agents get a relaygate `rg_` token, never the
+workspace key.
+
+The default policy gives the Slack app's routing channel (`relaycast:channel/slack`)
+to the pit with no local access; if you change the Slack app's
+`relaycast.channel`, add a matching stream default. Verified against relaygate
+build 2: Slack-app agents register into the pit, create and join their channel,
+receive events over the proxied node WebSocket, and reply in threads with their
+`data` intact.

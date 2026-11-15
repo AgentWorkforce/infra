@@ -76,6 +76,24 @@ spec:
               value: /policy/policy.json
             - name: RELAYGATE_DB
               value: /data/relaygate.db
+            {{- with .Values.proxy.relaycastUrl | trim }}
+            - name: RELAYCAST_URL
+              value: {{ . | quote }}
+            - name: RELAYCAST_WORKSPACE_KEY
+              valueFrom: { secretKeyRef: { name: {{ $.Values.secrets.relaycastWorkspaceKey.name }}, key: {{ $.Values.secrets.relaycastWorkspaceKey.key }} } }
+            - name: RELAYGATE_SECRET
+              valueFrom: { secretKeyRef: { name: {{ $.Values.secrets.relaygateSecret.name }}, key: {{ $.Values.secrets.relaygateSecret.key }} } }
+            {{- end }}
+            {{- with .Values.proxy.sessionsUrl | trim }}
+            - name: SESSIONS_URL
+              value: {{ . | quote }}
+            - name: SESSIONS_TOKEN
+              valueFrom: { secretKeyRef: { name: {{ $.Values.secrets.sessionsToken.name }}, key: {{ $.Values.secrets.sessionsToken.key }} } }
+            {{- end }}
+            {{- if .Values.secrets.adminToken.name }}
+            - name: RELAYGATE_ADMIN_TOKEN
+              valueFrom: { secretKeyRef: { name: {{ .Values.secrets.adminToken.name }}, key: {{ .Values.secrets.adminToken.key }} } }
+            {{- end }}
             {{- if .Values.secrets.anthropicApiKey.name }}
             - name: ANTHROPIC_API_KEY
               valueFrom:
