@@ -69,16 +69,16 @@ test("local channel (relaycast:channel/…): the pit may read it but not write",
 
 test("inboxes: local may DM a pit agent; the pit may not DM a local agent", { skip, timeout: 60_000 }, async () => {
   const { sfx, pit, local, pitName, localName } = await agents();
-  const got: string[] = [];
-  pit.subscribe([], (raw: unknown) => {
-    const e = raw as { type?: string; message?: { text?: string } };
-    if (e.type === "dm.received") got.push(e.message?.text ?? "");
-  });
-  await sleep(2000);
   await local.dm(pitName, `question ${sfx}`);
   await assert.rejects(pit.dm(localName, `answer ${sfx}`), denied, "the pit can't write into a local inbox");
-  await sleep(2500);
-  assert.ok(got.some((t) => t.includes(`question ${sfx}`)), "the local agent's DM reached the pit agent");
+  // The pit agent finds the local agent's DM in its inbox (what message.inbox.check reads).
+  let texts: string[] = [];
+  for (let i = 0; i < 10 && !texts.some((t) => t.includes(`question ${sfx}`)); i++) {
+    await sleep(500);
+    const inbox = (await pit.inbox()) as { unreadDms?: Array<{ from?: string; lastMessage?: { text?: string } }> };
+    texts = (inbox.unreadDms ?? []).filter((d) => d.from === localName).map((d) => d.lastMessage?.text ?? "");
+  }
+  assert.ok(texts.some((t) => t.includes(`question ${sfx}`)), "the local agent's DM reached the pit agent");
 });
 
 test("agent listing is filtered to what the caller may message or read", { skip, timeout: 60_000 }, async () => {

@@ -74,11 +74,18 @@ jobs:
           }' > "$dir/policy.json"
           # Keep this policy's streamDefaults identical to the chart's defaults.
           diff <(jq -S .streamDefaults "$dir/policy.json") <(yq -o=json '.policy.streamDefaults' charts/relaygate/values.yaml | jq -S .)
-          docker run -d --name relaygate -p 18090:8080 -v "$dir/policy.json:/policy/policy.json:ro" -v "$dir/data:/data" \
+          # The Relaycast proxy is on: agents reach the engine only through the gate,
+          # so test/gate-proxy-e2e.test.ts checks group isolation on real traffic.
+          seal=$(openssl rand -hex 32); echo "::add-mask::$seal"
+          ( umask 077; printf 'RELAYCAST_WORKSPACE_KEY=%s\nRELAYGATE_SECRET=%s\n' "$RELAYCAST_E2E_KEY" "$seal" > "$dir/env" )
+          docker run -d --name relaygate -p 18090:8080 --add-host host.docker.internal:host-gateway --env-file "$dir/env" \
+            -e RELAYCAST_URL=http://host.docker.internal:8787 \
+            -v "$dir/policy.json:/policy/policy.json:ro" -v "$dir/data:/data" \
             -e RELAYGATE_POLICY=/policy/policy.json -e RELAYGATE_DB=/data/relaygate.db \
-            ghcr.io/agentworkforce/relaygate@sha256:78e904798a5a79571b0ebcf406595aa340074446b6cfdbafa082f1f6ad8ca9b2
+            ghcr.io/agentworkforce/relaygate@sha256:c2bbbd9c47fdab519c8a85042ea28841fe4b632f257883fc8d5f0e143bccb9ab
+          rm -f "$dir/env"
           for _ in $(seq 1 30); do curl -sf localhost:18090/readyz >/dev/null && break; sleep 1; done
-          { echo "RELAYGATE_E2E_URL=http://localhost:18090"; echo "RELAYGATE_E2E_BRIDGE_KEY=$bridge"; echo "RELAYGATE_E2E_LOCAL_KEY=$local"; } >> "$GITHUB_ENV"
+          { echo "RELAYGATE_E2E_URL=http://localhost:18090"; echo "RELAYGATE_E2E_BRIDGE_KEY=$bridge"; echo "RELAYGATE_E2E_LOCAL_KEY=$local"; echo "RELAYGATE_E2E_PROXY=1"; } >> "$GITHUB_ENV"
       - run: npm test
       - name: Manifest renders
         run: |
