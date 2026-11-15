@@ -122,6 +122,7 @@ the chart already sets, including duplicates inside extraEnv. */ -}}
 {{- if not (kindIs "invalid" .Values.selectedFeatures) }}{{ $managed = append $managed "SELFHOST_FEATURES" }}{{ end -}}
 {{- if .Values.services.relayhistoryReadApiUrl }}{{ $managed = concat $managed (list "RELAYHISTORY_READ_API_URL" "RELAYHISTORY_READ_API_EVENTS") }}{{ end -}}
 {{- if (.Values.postgresCa | default dict).enabled }}{{ $managed = append $managed "NODE_EXTRA_CA_CERTS" }}{{ end -}}
+{{- if .Values.desktopFeed.signingKeys.existingSecret }}{{ $managed = concat $managed (list "SELFHOST_DESKTOP_FEED_SIGNER" "SELFHOST_DESKTOP_FEED_KEY_FILES") }}{{ end -}}
 {{- range $name := $managed }}{{ if hasSuffix "_FILE" $name }}{{ $managed = append $managed (trimSuffix "_FILE" $name) }}{{ end }}{{ end -}}
 {{- range $src := list (include "relay-control.runtimeEnv" .) (include "relay-control.secretEnv" .) -}}
 {{- range $item := $src | fromYamlArray }}{{ $managed = append $managed (toString $item.name) }}{{ end -}}
