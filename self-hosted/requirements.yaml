@@ -2570,7 +2570,7 @@ compatibility:
       app_versions: { relaygate: 0.1.0 }
       images:
         relaygate: { repository: ghcr.io/agentworkforce/relaygate, digest_required: true }
-      notes: Build 2 support (opt-in Relaycast and Sessions proxies, sessionDefaults, admin explain, an optional NetworkPolicy so only relaygate reaches Relaycast) and policy defaults that follow relaygate examples/policy.pit.json (every stream 660 plus explicit ACLs, the Slack app channel pit-only, per-key name prefixes, no catch-all inbox, ceilings). Needs relaygate build 2 (sha256:c2bbbd9c or later) for the proxies. Default-off in the agent-relay umbrella; ships no default digest.
+      notes: Build 2 support (opt-in Relaycast and Sessions proxies, sessionDefaults, admin explain, an optional NetworkPolicy so only relaygate reaches Relaycast) and policy defaults that follow relaygate examples/policy.pit.json (every stream 660 plus explicit ACLs, the Slack app channel pit-only, per-key name prefixes, no catch-all inbox, ceilings). Needs relaygate build 2 (sha256:84cb5e83 or later) for the proxies. Default-off in the agent-relay umbrella; ships no default digest.
     - id: relaygate-0.1.0
       status: planned
       charts: { relaygate: 0.1.0 }

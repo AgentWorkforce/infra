@@ -79,6 +79,11 @@ test("inboxes: local may DM a pit agent; the pit may not DM a local agent", { sk
     texts = (inbox.unreadDms ?? []).filter((d) => d.from === localName).map((d) => d.lastMessage?.text ?? "");
   }
   assert.ok(texts.some((t) => t.includes(`question ${sfx}`)), "the local agent's DM reached the pit agent");
+  // And both participants see the 1:1 conversation (message.dm.list).
+  for (const [who, a] of [["pit", pit], ["local", local]] as const) {
+    const convs = (await a.dms.conversations()) as Array<{ id?: string; conversationId?: string }>;
+    assert.ok(convs.length >= 1, `${who} lists its DM conversation`);
+  }
 });
 
 test("agent listing is filtered to what the caller may message or read", { skip, timeout: 60_000 }, async () => {
