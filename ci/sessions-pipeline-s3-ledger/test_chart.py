@@ -75,6 +75,20 @@ class S3Ledger(unittest.TestCase):
         self.render(merge(base, {"ingestEdge": {"postgres": {"tlsProfile": "verify-full"}}}),
                     fail="ingestEdge.postgres.tlsProfile must be supabase or custom-ca")
 
+    def test_s3_tenant_limit(self):
+        s3 = load(S3_FIXTURE)
+        self.assertNotIn("INGEST_S3_TENANT_LIMIT", self.ingest_env(self.render(s3)))
+        self.assertEqual(helm(s3).stdout, helm(merge(s3, {"ingestEdge": {"s3TenantLimit": False}})).stdout)
+        env = self.ingest_env(self.render(merge(s3, {"ingestEdge": {"s3TenantLimit": True}})))
+        self.assertEqual(env["INGEST_S3_TENANT_LIMIT"], {"name": "INGEST_S3_TENANT_LIMIT", "value": "on"})
+        self.assertEqual(env["INGEST_LEDGER"]["value"], "s3")
+        self.render(merge(load(SQL_FIXTURE), {"ingestEdge": {"s3TenantLimit": True}}),
+                    fail="ingestEdge.s3TenantLimit requires ingestEdge.ledger=s3")
+        for value in ("on", "true", 1, [], {}):
+            with self.subTest(value=value):
+                self.render(merge(s3, {"ingestEdge": {"s3TenantLimit": value}}),
+                            fail="ingestEdge.s3TenantLimit must be a boolean")
+
     def test_default_is_sql_and_byte_identical_when_explicit(self):
         base = load(SQL_FIXTURE)
         implicit = helm(base)
