@@ -1,0 +1,6 @@
+arm,phase,expected,delivered,lost,duplicate,redelivered,reordered,reordered_after_timeout,unexpected,truncated
+pg,hm-10,15523,15523,0,0,0,0,0,0,0
+pg,hm-20,30522,30522,0,8,768,0,0,0,0
+pg,hm-50,68298,68298,0,0,65414,0,0,0,0
+pg,hm-overload,77472,77472,0,2283,19916,1844,639,48,0
+pg,hm-recover,13993,13993,0,3,0,0,0,0,0

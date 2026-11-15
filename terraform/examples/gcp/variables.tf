@@ -191,3 +191,21 @@ variable "gke_node_service_account" {
     error_message = "gke_node_service_account must be a service account email (…@….iam.gserviceaccount.com)."
   }
 }
+
+variable "desktop_feed_bucket_name" {
+  description = "Globally unique bucket for relay-control's signed Desktop feed (SELFHOST_DESKTOP_FEED_GCS_BUCKET). Empty disables it."
+  type        = string
+  default     = ""
+}
+
+variable "desktop_feed_service_account_id" {
+  description = "account_id of the Google service account relay-control uses for the Desktop feed bucket (6-30 characters)."
+  type        = string
+  default     = "agent-relay-control"
+}
+
+variable "relay_control_service_account" {
+  description = "relay-control's Kubernetes service account. charts/agent-relay/values-gcp.yaml sets fullnameOverride: relay-control, so it is relay-control."
+  type        = string
+  default     = "relay-control"
+}

@@ -136,6 +136,43 @@ class ReleaseManifestTest(unittest.TestCase):
             overlay,
         )
 
+    def test_names_sharing_one_digest_each_get_an_entry(self):
+        shared = f"ghcr.io/example/relaycast@{DIGEST_A}"
+        manifest = self.build_fixture(
+            [shared],
+            [
+                f"relaycast\tghcr.io/example/relaycast\t{DIGEST_A}\tapproved",
+                f"relaycast-postgres\tghcr.io/example/relaycast\t{DIGEST_A}\tapproved",
+            ],
+        )
+        self.assertEqual(
+            manifest["images"],
+            [
+                {"name": "relaycast", "ref": shared},
+                {"name": "relaycast-postgres", "ref": shared},
+            ],
+        )
+
+    def test_shared_digest_with_an_unapproved_name_is_rejected(self):
+        with self.assertRaisesRegex(ValueError, "not release-approved"):
+            self.build_fixture(
+                [f"ghcr.io/example/relaycast@{DIGEST_A}"],
+                [
+                    f"relaycast\tghcr.io/example/relaycast\t{DIGEST_A}\tapproved",
+                    f"relaycast-postgres\tghcr.io/example/relaycast\t{DIGEST_A}\tblocked",
+                ],
+            )
+
+    def test_duplicate_inventory_name_is_still_rejected(self):
+        with self.assertRaisesRegex(ValueError, "duplicate image name"):
+            self.build_fixture(
+                [f"ghcr.io/example/relaycast@{DIGEST_A}"],
+                [
+                    f"relaycast\tghcr.io/example/relaycast\t{DIGEST_A}\tapproved",
+                    f"relaycast\tghcr.io/example/relaycast\t{DIGEST_B}\tapproved",
+                ],
+            )
+
     def test_rejects_unpinned_customer_image(self):
         with self.assertRaisesRegex(ValueError, "not pinned"):
             self.build_fixture(

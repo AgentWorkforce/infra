@@ -1,0 +1,11 @@
+{"name":"local-smoke","phases":[
+ {"label":"s-dm","kind":"dm","rate":20,"durationS":5,"sizeBytes":256,"drainS":5},
+ {"label":"s-chan","kind":"channel","rate":10,"durationS":5,"drainS":5},
+ {"label":"s-mixed-burst","kind":"mixed","rate":20,"durationS":6,"dmShare":0.5,"burst":{"periodS":3,"lenS":1,"factor":5},"drainS":5},
+ {"label":"s-fanout","kind":"fanout","rate":2,"durationS":5,"drainS":5},
+ {"label":"s-bcast","kind":"broadcast","rate":1,"targets":10,"durationS":4,"drainS":5},
+ {"label":"s-upload","kind":"upload","rate":2,"durationS":4,"sizeBytes":65536,"drainS":5},
+ {"label":"s-replay","kind":"replay","profile":"bench/relaycast/profiles/prod-2026-11-12.json","basis":"rps_avg","scale":1,"durationS":8,"drainS":5},
+ {"label":"s-backlog","kind":"backlog","rate":100,"durationS":10,"drainS":15},
+ {"label":"s-chaos","kind":"mixed","rate":30,"durationS":20,"dmShare":0.5,"drainS":30}
+]}
