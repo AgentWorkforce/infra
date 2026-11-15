@@ -565,6 +565,10 @@ ingestEdge:
   # lock waits become 429 + Retry-After; statement timeouts still return 503.
   # This does not remove SQL from sync uploads or change async consumer backoff.
   claimLockBusy: true
+  # Requires ledger=s3 and a services image with the S3 tenant limit (relayhistory-pipeline
+  # 09f6a70b). true renders INGEST_S3_TENANT_LIMIT=on: maxPerUser and maxPerOrg are then
+  # enforced against the S3 ledger too. false (default) renders nothing.
+  s3TenantLimit: false
   fullnameOverride: ""
   image:
     repository: ghcr.io/agentworkforce/96bulls-services

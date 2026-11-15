@@ -5,6 +5,8 @@
 {{- $ledger := include "sessions-pipeline.ingestEdge.ledger" . -}}
 {{- if $c.enabled -}}
 {{- if not (kindIs "bool" $c.claimLockBusy) }}{{ fail "ingestEdge.claimLockBusy must be a boolean" }}{{ end -}}
+{{- if not (kindIs "bool" $c.s3TenantLimit) }}{{ fail "ingestEdge.s3TenantLimit must be a boolean" }}{{ end -}}
+{{- if and $c.s3TenantLimit (ne $ledger "s3") }}{{ fail "ingestEdge.s3TenantLimit requires ingestEdge.ledger=s3" }}{{ end -}}
 {{- if not (kindIs "map" $c.admission) }}{{ fail "ingestEdge.admission must be an object" }}{{ end -}}
 {{- $admission := $c.admission -}}
 {{- if or (not (kindIs "string" $admission.mode)) (not (has $admission.mode (list "sync" "async" "drain"))) }}{{ fail "ingestEdge.admission.mode must be sync, async or drain" }}{{ end -}}
@@ -228,6 +230,9 @@ spec:
             - { name: INGEST_KEY_ROOT, value: {{ $c.keyRoot | quote }} }
             {{- if eq $ledger "s3" }}
             - { name: INGEST_LEDGER, value: "s3" }
+            {{- if $c.s3TenantLimit }}
+            - { name: INGEST_S3_TENANT_LIMIT, value: "on" }
+            {{- end }}
             {{- end }}
             - { name: INGEST_MAX_PER_USER, value: {{ $c.maxPerUser | quote }} }
             - { name: INGEST_MAX_PER_ORG, value: {{ $c.maxPerOrg | quote }} }
