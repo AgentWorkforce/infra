@@ -24,13 +24,20 @@ run "manages_only_the_scoped_role_and_its_state" {
   command = plan
   assert {
     condition = alltrue([
-      for s in output.permissions_policy.Statement : s.Effect == "Deny" || contains([
+      for s in output.permissions_policy.Statement : s.Effect == "Deny" || alltrue([for r in flatten([s.Resource]) : contains([
         "arn:aws:iam::805532413586:role/agent-broker-sandbox-scoped",
         "arn:aws:s3:::agent-cred-broker-tfstate-805532413586",
-        "arn:aws:s3:::agent-cred-broker-tfstate-805532413586/aws-cred-broker/*",
-      ], s.Resource)
+        "arn:aws:s3:::agent-cred-broker-tfstate-805532413586/aws-cred-broker/sandbox.tfstate",
+        "arn:aws:s3:::agent-cred-broker-tfstate-805532413586/aws-cred-broker/sandbox.tfstate.tflock",
+      ], r)])
     ])
-    error_message = "every allow names the scoped role, the bucket or the state prefix: no wildcard resource"
+    error_message = "every allow names the scoped role, the bucket, or exactly the sandbox state and its lock: no wildcard resource"
+  }
+  assert {
+    condition = alltrue([
+      for s in output.permissions_policy.Statement : alltrue([for r in flatten([s.Resource]) : !strcontains(r, "bootstrap.tfstate")])
+    ])
+    error_message = "the role can never touch the bootstrap state that defines it"
   }
   assert {
     condition = alltrue([
@@ -52,9 +59,17 @@ run "manages_only_the_scoped_role_and_its_state" {
     error_message = "attach only PowerUserAccess"
   }
   assert {
-    condition     = output.permissions_policy.Statement[3].Condition.StringLike["s3:prefix"] == ["aws-cred-broker/*"]
-    error_message = "list only the state prefix"
+    condition     = output.permissions_policy.Statement[3].Condition.StringEquals["s3:prefix"] == ["aws-cred-broker/sandbox.tfstate", "aws-cred-broker/sandbox.tfstate.tflock"]
+    error_message = "list only the sandbox state and its lock"
   }
+}
+
+run "refuses_the_bootstrap_state_as_its_key" {
+  command = plan
+  variables {
+    sandbox_state_key = "aws-cred-broker/bootstrap.tfstate"
+  }
+  expect_failures = [var.sandbox_state_key]
 }
 
 run "state_bucket_is_private_versioned_encrypted_tls_only" {

@@ -6,7 +6,7 @@ A human admin there applies this once with SSO; an agent never does.
 | Resource | What |
 | --- | --- |
 | `aws_iam_role.bootstrap` (`layered-infra-ops-broker-tf`) | Assumable only by `arn:aws:iam::500268966557:role/layered-agent-admin-infra-ops-dev` (exact, `aws:PrincipalArn`), 1 h sessions |
-| `aws_iam_role_policy.bootstrap` | Manage exactly `agent-broker-sandbox-scoped`: create, get, update, delete, tag, trust, inline policies; attach/detach only `PowerUserAccess`. Read and write state under `aws-cred-broker/` in the bucket. Nothing else. |
+| `aws_iam_role_policy.bootstrap` | Manage exactly `agent-broker-sandbox-scoped`: create, get, update, delete, tag, trust, inline policies; attach/detach only `PowerUserAccess`. Read and write exactly `aws-cred-broker/sandbox.tfstate` and its `.tflock` in the bucket, never this root's own `bootstrap.tfstate`. Nothing else. |
 | `aws_s3_bucket.state` (`agent-cred-broker-tfstate-805532413586`) + versioning, SSE-S3, public access block, `BucketOwnerEnforced`, bucket policy | Broker state. TLS only, this account's principals only. |
 
 ## Status

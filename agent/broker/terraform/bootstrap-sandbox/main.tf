@@ -79,15 +79,17 @@ locals {
         Action   = ["s3:ListBucket"]
         Resource = local.bucket_arn
         Condition = {
-          StringLike = { "s3:prefix" = ["${var.state_key_prefix}*"] }
+          StringEquals = { "s3:prefix" = [var.sandbox_state_key, "${var.sandbox_state_key}.tflock"] }
         }
       },
       {
-        # State objects and the use_lockfile lock (<key>.tflock) under the prefix.
-        Sid      = "StateObjects"
+        # Exactly ../sandbox's state and its use_lockfile lock. Never this
+        # root's own state (bootstrap.tfstate): the role it defines must not be
+        # able to rewrite the state that defines it.
+        Sid      = "SandboxStateObjectsOnly"
         Effect   = "Allow"
         Action   = ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"]
-        Resource = "${local.bucket_arn}/${var.state_key_prefix}*"
+        Resource = ["${local.bucket_arn}/${var.sandbox_state_key}", "${local.bucket_arn}/${var.sandbox_state_key}.tflock"]
       },
     ]
   }

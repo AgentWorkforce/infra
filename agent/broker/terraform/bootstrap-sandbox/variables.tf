@@ -32,8 +32,12 @@ variable "scoped_role_name" {
   default     = "agent-broker-sandbox-scoped"
 }
 
-variable "state_key_prefix" {
-  description = "Key prefix in the state bucket that the bootstrap role may read and write."
+variable "sandbox_state_key" {
+  description = "The one state object (plus its .tflock) the bootstrap role may read and write: ../sandbox's key in backend.hcl."
   type        = string
-  default     = "aws-cred-broker/"
+  default     = "aws-cred-broker/sandbox.tfstate"
+  validation {
+    condition     = !strcontains(var.sandbox_state_key, "*") && var.sandbox_state_key != "aws-cred-broker/bootstrap.tfstate"
+    error_message = "sandbox_state_key must be one exact key, and never this root's own state."
+  }
 }
