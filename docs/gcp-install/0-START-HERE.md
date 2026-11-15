@@ -811,7 +811,7 @@ won't delete a bucket that still holds any.
 `terraform state list | grep -v '^data\.'` prints nothing.
 
 **`must be owner of database` or `role ... cannot be dropped`:** your infra
-checkout predates AgentWorkforce/infra#<PR> (every release up to and
+checkout predates AgentWorkforce/infra#367 (every release up to and
 including 2026.11.6). `cloud-sql-setup.sh` gave the databases to their own
 roles, so Terraform can't drop them one by one. Deleting the instance removes
 them, so drop them from Terraform's state and destroy again:
