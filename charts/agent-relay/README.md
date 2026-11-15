@@ -21,7 +21,11 @@ see `docs/self-hosted-relayflows.md`). Relayfile (`components.relayfile`) and
 the durable-actors control plane (`components.durableActors`) are optional and
 off by default; see `docs/self-hosted-durable-actors.md`. Relay Chief
 (`components.relayChief`) is also off by default and configured under the
-`relay-chief` key; see `charts/relay-chief/README.md`.
+`relay-chief` key; see `charts/relay-chief/README.md`. The Slack app
+(`components.slackRelay`, values under `slack-relay`) and the relaygate
+governance gate (`components.relaygate`, values under `relaygate`) are off by
+default; see `docs/self-hosted-slack-relay.md`, `docs/self-hosted-relaygate.md`
+and the diagram `docs/diagrams/slack-relay-relaygate.png`.
 
 Requires Helm 3.10 or newer: the relay-control subchart uses
 `{{ continue }}`, which older Helm versions cannot parse.

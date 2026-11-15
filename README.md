@@ -11,6 +11,8 @@ Terraform modules and Helm charts for customer-owned Agent Relay installations o
 - [Enterprise AWS installation and first-user guide](docs/enterprise-aws-install.md): customer roles, SSO, Desktop downloads, device approval and acceptance; release preparation with explicit remaining gates.
 - [GCP (GKE) install guide](docs/gcp-install/0-START-HERE.md): customer-neutral, tested copy-paste install of agent-relay-2026.11.1 on an existing GKE cluster (Terraform or bring-your-own Cloud SQL, GCS, Memorystore, Pub/Sub, Workload Identity), with what is not yet qualified on GKE.
 - [Enterprise operator controls](docs/enterprise-customer-controls.md): generic operator controls, profile-specific downloads and disabled-Flows acceptance.
+- [Slack app](docs/self-hosted-slack-relay.md) (optional): people talk to agents in Slack; each thread gets its own long-running, resumable agent on the install's relay.
+- [relaygate](docs/self-hosted-relaygate.md) (optional): the governance gate between agents and Relaycast/Sessions: groups, mode bits and a classifier on everything that crosses a group boundary or leaves through Slack. [Diagram](docs/diagrams/slack-relay-relaygate.png).
 
 This repository was renamed from `AgentWorkforce/helm-charts` to `AgentWorkforce/infra`.
 Update existing clones with `git remote set-url origin git@github.com:AgentWorkforce/infra.git`;
@@ -29,6 +31,8 @@ and the release gate’s `helm-charts` license-decision ID retain their original
 | [agent-relay](charts/agent-relay) | Self-hosted Agent Relay suite umbrella — relaycast, sessions-pipeline with native History (read API + ingest edge), control-plane API, dashboard, optional relayauth (one GKE Ingress, no HA claim) |
 | [relay-control](charts/relay-control) | Self-host control-plane API — organizations, workspaces, device auth; existing-Secret file mounts only, separate migration Job |
 | [relay-webapp](charts/relay-webapp) | Static self-host dashboard — nginx SPA calling same-origin `/cloud/api` |
+| [slack-relay](charts/slack-relay) | Optional Slack app: a router (Socket Mode, SQLite thread ledger, the only holder of Slack credentials) and an agent host running one Claude Code agent per Slack thread on the relay; default off in the umbrella (`components.slackRelay`) |
+| [relaygate](charts/relaygate) | Optional governance gate: agents register into a group, every request is checked against mode bits, cross-group and external writes are classified; one replica, policy ConfigMap; default off in the umbrella (`components.relaygate`) |
 | [relaychief-control](charts/relaychief-control) | Optional Relay Chief registry and slot-binding add-on on PostgreSQL — one replica, loopback-only admin listener, Ingress limited to `/chief/v1` by default (not part of the umbrella) |
 | [relayfile-control](charts/relayfile-control) | Optional Relayfile webhook ingest and Flows API add-on on PostgreSQL. One replica, digest-only image, existing Secrets only, Flows and Ingress off by default. |
 | [relaycast](charts/relaycast) | Portable self-hosted Relaycast core — realtime agent communication with single-writer SQLite persistence |

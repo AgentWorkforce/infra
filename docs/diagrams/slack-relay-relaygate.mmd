@@ -1,0 +1,47 @@
+%% Slack app (charts/slack-relay) and the relaygate governance gate (charts/relaygate), both opt-in.
+%% Source of truth for slack-relay-relaygate.svg / .png. Render with
+%% @mermaid-js/mermaid-cli 11.4.2: mmdc -i slack-relay-relaygate.mmd -o slack-relay-relaygate.svg -b white
+%% and the same with -o slack-relay-relaygate.png -s 2.
+%% Solid edges: what happens for every Slack message. Dashed: checks and optional paths.
+%%{init: {"theme": "base", "themeVariables": {"fontSize": "15px", "clusterBkg": "#f8fafc", "clusterBorder": "#94a3b8", "lineColor": "#475569", "primaryTextColor": "#0f172a", "edgeLabelBackground": "#ffffff"}, "flowchart": {"curve": "basis", "nodeSpacing": 40, "rankSpacing": 60, "padding": 12, "wrappingWidth": 260}}}%%
+flowchart TB
+  subgraph SLACK["Customer Slack workspace"]
+    people["People in a channel or DM<br/>@mention the app; reply in the thread"]
+  end
+
+  subgraph OUT["Outside the pit (group 11, local)"]
+    local["Local agents<br/>laptops, Cursor, Claude Code"]
+  end
+
+  subgraph NS["Customer cluster · namespace agent-relay · the pit (group 22)"]
+    subgraph SR["slack-relay (opt-in)"]
+      router["Router<br/>Slack app over Socket Mode (outbound only)<br/>ledger: thread → agent, people, audit events<br/>orchestrator (optional): pinned agents"]
+      host["Agent host<br/>one agent per Slack thread<br/>headless Claude Code, resumable session<br/>woken by a message or DM, idle otherwise"]
+    end
+
+    subgraph RG["relaygate (opt-in)"]
+      gate["Gate<br/>register: enrollment key → group<br/>mode bits (owner/group/other rwx)<br/>classifier: rules + optional Claude<br/>audit log"]
+    end
+
+    cast["Relaycast<br/>channels, threads, DMs<br/>(accepts traffic only from the gate)"]
+    sessions["Sessions<br/>agent session lake"]
+    kb["Knowledge base (optional)<br/>e.g. gbrain over MCP"]
+  end
+
+  anthropic["Anthropic API (ZDR)<br/>agents, orchestrator, classifier"]
+
+  people <-->|"messages in · answers out"| router
+  router -->|"1 · ledger lookup, then deliver to the thread's agent"| gate
+  gate -->|"proxied, rg_ token"| cast
+  cast -->|"2 · wakes the agent"| host
+  host -->|"3 · answer in its relay thread"| gate
+  router -.->|"4 · /v1/check before every Slack post<br/>(withheld if denied)"| gate
+  router -.->|"ingest: /v1/check, then append"| kb
+  host -.->|"read-only search"| kb
+  host -.->|"session upload (headless uploader)"| sessions
+  local -.->|"may write into the pit · can't read it"| gate
+  host --> anthropic
+  gate -.-> anthropic
+
+  classDef optional stroke-dasharray: 5 4
+  class kb,sessions optional

@@ -15,17 +15,16 @@ release, or turn it on in the umbrella chart with `components.slackRelay`.
 
 ## How it works
 
-```text
-Slack ──(Socket Mode, outbound WSS)──▶ router ──▶ ledger (SQLite: thread → agent)
-                                         │  unowned thread? ask the orchestrator (Claude) once
-                                         ▼
-                                  relay channel #slack  (one relay thread per Slack thread)
-                                         ▼
-                                  agent host ──▶ wakes the owning agent, resumes its Claude session,
-                                         │       runs one turn, answers as that agent
-                                         ▼
-Slack ◀──── router posts the answer into the Slack thread the ledger maps it to
-```
+![Slack app and relaygate](diagrams/slack-relay-relaygate.png)
+
+([SVG](diagrams/slack-relay-relaygate.svg) · source [slack-relay-relaygate.mmd](diagrams/slack-relay-relaygate.mmd); relaygate is optional, without it the router and host talk to Relaycast directly.)
+
+One message, end to end:
+
+![One Slack message, end to end](diagrams/slack-relay-flow.png)
+
+([SVG](diagrams/slack-relay-flow.svg) · source [slack-relay-flow.mmd](diagrams/slack-relay-flow.mmd))
+
 
 | Piece | Kind | What it does |
 | --- | --- | --- |

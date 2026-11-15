@@ -1,0 +1,36 @@
+%% One Slack message, end to end, with relaygate on (charts/slack-relay + charts/relaygate).
+%% Source of truth for slack-relay-flow.svg / .png. Render with
+%% @mermaid-js/mermaid-cli 11.4.2: mmdc -i slack-relay-flow.mmd -o slack-relay-flow.svg -b white
+%% and the same with -o slack-relay-flow.png -s 2.
+%%{init: {"theme": "base", "themeVariables": {"fontSize": "15px", "lineColor": "#475569", "primaryTextColor": "#0f172a"}, "sequence": {"mirrorActors": false, "wrap": true, "width": 190}}}%%
+sequenceDiagram
+  autonumber
+  participant P as Person in Slack
+  participant R as Router (ledger)
+  participant G as relaygate
+  participant C as Relaycast
+  participant H as Agent host
+  participant A as Thread's agent (Claude Code)
+
+  P->>R: @app question (Socket Mode event)
+  R->>R: record in the ledger (dedupe), look up the thread's agent<br/>new thread → new agent (or a pinned one)
+  R->>G: post to the thread's relay thread (rg_ token)
+  G->>G: mode check (group 22 → stream 660)
+  G->>C: forward
+  C->>H: event for the thread's agent
+  H->>A: wake: resume its session, run one turn
+  A-->>H: answer
+  H->>G: reply in the relay thread as the agent
+  G->>C: forward
+  C->>R: thread reply from the owning agent
+  R->>G: /v1/check: may this text go to slack:T/C/thread?
+  G->>G: mode check, then classifier (rules + model)
+  alt allow
+    G-->>R: allow
+    R->>P: post the answer in the Slack thread
+  else deny
+    G-->>R: 403 relaygate_classified
+    R->>R: record outbound.withheld
+    R->>P: "That answer was withheld by policy."
+  end
+  Note over H,A: between messages the agent is idle, with no process running
