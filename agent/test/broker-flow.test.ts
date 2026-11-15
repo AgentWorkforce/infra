@@ -340,7 +340,54 @@ test("an existing claim is never released by a later failed issue", async () => 
   assert.equal((await broker.request(req(), requester)).outcome, "issued");
   fail = true;
   assert.equal((await broker.request(req(), requester)).outcome, "error");
-  assert.deepEqual(JSON.parse(readFileSync(join(broker.deps.stateDir, "run-tags.json"), "utf8")), { "terse-mig-42": { owner: "tersemigrationgrok", namespace: "terse-mig-42-0a1b2c3d" } });
+  assert.deepEqual(JSON.parse(readFileSync(join(broker.deps.stateDir, "run-tags.json"), "utf8")), { "terse-mig-42": { owner: "tersemigrationgrok", namespace: "terse-mig-42-0a1b2c3d", delivered: true } });
+});
+
+/** A fake 1Password deliverer: the first delivery times out (an op create that may still commit), later ones succeed. */
+function flakyVault() {
+  const state = { failNext: true, removed: [] as string[] };
+  const deliverer = (): Deliverer => ({
+    planned: (_d, _a, id) => ({ kind: "1password", ref: `op://agents/aws-broker-${id}` }),
+    async deliver(_d, _a, id) {
+      if (state.failNext) {
+        state.failNext = false;
+        throw new Error("op item create timed out");
+      }
+      return { kind: "1password", ref: `op://agents/item${id.slice(3)}` };
+    },
+    async remove(ref) {
+      state.removed.push(ref.ref);
+    },
+  });
+  return { state, deliverer };
+}
+
+const claims = (b: Broker) => JSON.parse(readFileSync(join(b.deps.stateDir, "run-tags.json"), "utf8")) as Record<string, unknown>;
+
+test("a timed-out 1Password delivery: the planned record stays and sweep releases the claim only after removing it", async () => {
+  const v = flakyVault();
+  const { broker, tick } = setup(undefined, { deliverer: v.deliverer });
+  const r = await broker.request(req({ delivery: { kind: "1password", vault: "agents" } }), requester);
+  assert.equal(r.outcome, "error");
+  assert.ok(claims(broker)["terse-mig-42"], "held while a late create might still land");
+  assert.equal(readdirSync(join(broker.deps.stateDir, "issued")).length, 1, "planned record kept for sweep");
+  tick(17);
+  assert.equal(await broker.sweep(), 1);
+  assert.ok(v.state.removed.includes(`op://agents/aws-broker-${r.requestId}`), "deleted again by title after expiry");
+  assert.deepEqual(claims(broker), {}, "released once nothing can hold credentials");
+});
+
+test("a successful retry makes the claim permanent: sweeping the earlier failed delivery never frees an active run", async () => {
+  const v = flakyVault();
+  const { broker, tick } = setup(undefined, { deliverer: v.deliverer });
+  const op = { kind: "1password" as const, vault: "agents" };
+  assert.equal((await broker.request(req({ delivery: op }), requester)).outcome, "error");
+  const ok = await broker.request(req({ delivery: op }), requester);
+  assert.equal(ok.outcome, "issued");
+  tick(17);
+  assert.equal(await broker.sweep(), 2);
+  assert.deepEqual(claims(broker), { "terse-mig-42": { owner: "tersemigrationgrok", namespace: "terse-mig-42-0a1b2c3d", delivered: true } });
+  assert.equal((await broker.request(req(), other)).outcome, "denied", "another agent still can't take the run");
 });
 
 test("the lock: processes competing after a holder is killed never run at the same time", async () => {

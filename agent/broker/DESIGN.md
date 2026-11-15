@@ -159,8 +159,11 @@ undoes both. A delivery that fails partway is removed straight away:
 - If removal fails, both stay for `sweep`. The claim stays with the
   requester, the only agent who could read a leftover delivery.
 
-A claim that existed before the request is never released. Every `aws` and
-`op` call has a 30 s timeout.
+A claim that existed before the request is never released. Once any
+credentials for a run are delivered, its claim is marked `delivered` and is
+permanent: a deferred release left by an earlier failed delivery can't free
+a run that has since been used (and whose resources carry its tag). Every
+`aws` and `op` call has a 30 s timeout.
 
 One broker run holds the state at a time, under a kernel lock: `flock(1)`
 (util-linux) on `<state>/.lock`, held by a child that reads the broker's

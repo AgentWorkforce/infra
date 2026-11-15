@@ -123,10 +123,11 @@ export class Broker {
     return claim ?? { namespace: newNamespace(String(runTag), this.deps.newNamespaceSuffix) };
   }
 
+  /** Releases a claim no credentials were ever delivered for. Once a run has had credentials, its claim stays. */
   private releaseClaim(runTag: string, owner: string): void {
     try {
       const now = this.runTags();
-      if (now[runTag]?.owner === owner) {
+      if (now[runTag]?.owner === owner && !now[runTag]!.delivered) {
         delete now[runTag];
         writeJson(join(this.deps.stateDir, "run-tags.json"), now);
       }
@@ -317,6 +318,15 @@ export class Broker {
       writeJson(issuedFile, { requestId, delivery, expiration: creds.expiration } satisfies Issued);
     } catch {
       // The planned record (same file path, or the 1Password item's title) still lets sweep remove it.
+    }
+    // The run has had credentials: its claim is permanent now, so no deferred release from an
+    // earlier failed delivery (a releaseClaim record still waiting for sweep) can free it.
+    try {
+      const claims = this.runTags();
+      const claim = claims[req.runTag];
+      if (claim?.owner === requester.name && !claim.delivered) writeJson(join(this.deps.stateDir, "run-tags.json"), { ...claims, [req.runTag]: { ...claim, delivered: true } });
+    } catch {
+      // Unmarked, a later sweep could release the claim; the issue itself already succeeded.
     }
     this.audit({ ...base, kind: "issued", roleArn, sessionName: name, durationSeconds, policyDigest: digest, accessKeyId: creds.accessKeyId, expiration: creds.expiration, delivery, reasons }, forbidden);
     return { requestId, outcome: "issued", reasons, account: req.account, roleArn, sessionName: name, delivery, expiration: creds.expiration, accessKeyId: creds.accessKeyId, policyDigest: digest, namespace };

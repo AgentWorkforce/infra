@@ -110,6 +110,8 @@ export const NAMESPACE_TAG_KEY = "agent-ns";
 export interface RunClaim {
   owner: string;
   namespace: string;
+  /** Set once credentials for the run were delivered: from then on the claim is never released. */
+  delivered?: boolean;
 }
 const ACTION_RE = /^[a-z0-9-]+:[A-Za-z0-9*]+$/;
 const ARN_RE = /^arn:aws[a-z-]*:[a-z0-9-]+:[a-z0-9-]*:(\d{12})?:[^\s]+$/;
