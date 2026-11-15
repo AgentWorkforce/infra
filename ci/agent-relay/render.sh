@@ -698,7 +698,13 @@ expect_da_umbrella_failure "components.durableActors=true has no consumer" \
   --set relaycast.credentials.format=legacy --set relaycast.credentials.authority= --set relayfile.secrets.existingSecret=relayfile
 expect_da_umbrella_failure "durable-actors.publicUrl must be https://actors.gcp-proof.agentrelay.com" --set durable-actors.publicUrl=https://other.example.com
 expect_da_umbrella_failure "must be durable-actors.credentialsSecret" --set relayfile.runtime.durableActors.adminKeySecret.name=other-admin
-expect_da_umbrella_failure "must be durable-actors.storage.bucket" --set relaycast.runtime.durableActors.deployer.artifactBucket=other-bucket
+expect_da_umbrella_failure "must be durable-actors.storage.artifactBucket" --set relaycast.runtime.durableActors.deployer.artifactBucket=other-bucket
+# A separate durable-actors artifact bucket (UPSTREAM.md patch 14) is where the deployers must upload.
+helm template agent-relay charts/agent-relay -n agent-relay --no-hooks "${da_args[@]}" \
+  --set durable-actors.storage.artifactBucket=regional-artifacts \
+  --set relaycast.runtime.durableActors.deployer.artifactBucket=regional-artifacts \
+  --set relayfile.runtime.durableActors.deployer.artifactBucket=regional-artifacts >/dev/null 2>&1 \
+  || da_fail "deployers on durable-actors.storage.artifactBucket did not render"
 expect_da_umbrella_failure "gkeIngress.hosts.files requires relayfile.service.annotations" --set 'relayfile.service.annotations=null'
 expect_da_umbrella_failure "gkeIngress.hosts must all be distinct" --set gkeIngress.hosts.files=actors.gcp-proof.agentrelay.com
 expect_da_umbrella_failure "/images/controlPlane/digest" --set durable-actors.images.controlPlane.digest=

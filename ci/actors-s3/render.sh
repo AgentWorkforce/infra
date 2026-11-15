@@ -45,6 +45,23 @@ cp=$(helm template ci "$ROOT/charts/durable-actors" --namespace ci -f "$ROOT/cha
 expect "durable-actors control plane" "$cp" "DURABLE_ACTORS_STORAGE_PROVIDER=s3"
 expect "durable-actors control plane" "$cp" "DURABLE_ACTORS_S3_FORCE_PATH_STYLE=false"
 
+absent "durable-actors control plane" "$cp" "DURABLE_ACTORS_S3_CHECKPOINT_BUCKET"
+expect "durable-actors control plane" "$cp" "DURABLE_ACTORS_ARTIFACT_BUCKET=example-actor-state"
+
+# S3 Express state with a regional checkpoint and artifact bucket (charts/durable-actors/ci/eks-express-values.yaml).
+xp=$(helm template ci "$ROOT/charts/durable-actors" --namespace ci -f "$ROOT/charts/durable-actors/ci/eks-express-values.yaml" \
+  | yq -r 'select(.kind == "Deployment") | .spec.template.spec.containers[].env[] | select(has("value")) | .name + "=" + (.value | tostring)')
+expect "durable-actors express" "$xp" "DURABLE_ACTORS_BUCKET=example-actors--usw2-az1--x-s3"
+expect "durable-actors express" "$xp" "DURABLE_ACTORS_ARTIFACT_BUCKET=example-actors-regional"
+expect "durable-actors express" "$xp" "DURABLE_ACTORS_S3_CHECKPOINT_BUCKET=example-actors-regional"
+expect "durable-actors express" "$xp" "DURABLE_ACTORS_S3_CHECKPOINT_MAX_LAG_MS=5000"
+# An Express state bucket without a regional checkpoint or with artifacts on Express must not render.
+for bad in "storage.s3.checkpoint.bucket=" "storage.artifactBucket=" "storage.s3.checkpoint.bucket=x--usw2-az3--x-s3"; do
+  if helm template ci "$ROOT/charts/durable-actors" --namespace ci -f "$ROOT/charts/durable-actors/ci/eks-express-values.yaml" --set "$bad" >/dev/null 2>&1; then
+    err "durable-actors express: --set $bad must fail the render"
+  fi
+done
+
 # Relayfile gateway blob store on S3 (Deployment env of the same fixture).
 gw=$(helm template ci "$ROOT/charts/relayfile" --namespace ci -f "$ROOT/charts/relayfile/ci/durable-actors-s3-values.yaml" \
   | yq -r 'select(.kind == "Deployment") | .spec.template.spec.containers[].env[] | select(has("value")) | .name + "=" + (.value | tostring)')

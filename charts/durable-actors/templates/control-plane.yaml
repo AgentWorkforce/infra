@@ -156,6 +156,15 @@ spec:
             - {name: DURABLE_ACTORS_S3_ENDPOINT, value: {{ . | quote }}}
             {{- end }}
             - {name: DURABLE_ACTORS_S3_FORCE_PATH_STYLE, value: {{ $.Values.storage.s3.forcePathStyle | toString | quote }}}
+            {{- with $.Values.storage.s3.checkpoint }}
+            {{- if .bucket }}
+            # Local patch 14: async copy of single-zone S3 Express state to a regional bucket.
+            - {name: DURABLE_ACTORS_S3_CHECKPOINT_BUCKET, value: {{ .bucket | quote }}}
+            {{- with .maxLagMs }}
+            - {name: DURABLE_ACTORS_S3_CHECKPOINT_MAX_LAG_MS, value: {{ . | quote }}}
+            {{- end }}
+            {{- end }}
+            {{- end }}
             {{- end }}
             {{- with $.Values.sandbox }}
             {{- if not (kindIs "invalid" .runtimeClassName) }}
@@ -170,7 +179,8 @@ spec:
             {{- end }}
             - {name: DURABLE_ACTORS_PERSISTENCE, value: {{ $.Values.storage.mode | quote }}}
             - {name: DURABLE_ACTORS_BUCKET, value: {{ $.Values.storage.bucket | quote }}}
-            - {name: DURABLE_ACTORS_ARTIFACT_BUCKET, value: {{ $.Values.storage.bucket | quote }}}
+            {{- /* Local patch 14: artifacts may live outside the state bucket (S3 Express state). */}}
+            - {name: DURABLE_ACTORS_ARTIFACT_BUCKET, value: {{ $.Values.storage.artifactBucket | default $.Values.storage.bucket | quote }}}
             {{- if eq $.Values.storage.mode "rapid" }}
             - {name: DURABLE_ACTORS_ARCHIVE_BUCKET, value: {{ $.Values.storage.bucket | quote }}}
             - {name: DURABLE_ACTORS_RAPID_BUCKETS, value: {{ $.Values.storage.rapid.buckets | toJson | quote }}}

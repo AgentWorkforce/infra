@@ -94,8 +94,8 @@ Patches to upstream files (report upstream; drop when fixed there):
     Defaults render byte-identical to upstream apart from the `helm.sh/chart`
     label (patch 11). Upstream proposal: TerseAI/durable-actors PRs (see
     relay-briefs actors-aws.md).
-11. `Chart.yaml`: `version` is `0.14.6-awf.3` (upstream `0.14.6`; `awf.1` carried
-    patches 1-10, `awf.2` adds patch 12, `awf.3` adds patch 13), so a packaged chart carrying the patches
+11. `Chart.yaml`: `version` is `0.14.6-awf.4` (upstream `0.14.6`; `awf.1` carried
+    patches 1-10, `awf.2` adds patch 12, `awf.3` adds patch 13, `awf.4` adds patch 14), so a packaged chart carrying the patches
     can never be mistaken for the upstream release.
     `appVersion` stays `0.14.6`. Reset the suffix when re-vendoring a release
     that contains these patches.
@@ -127,6 +127,18 @@ Patches to upstream files (report upstream; drop when fixed there):
     multiple controllers with selectors generated from each workload's own
     labels. Both are off by default, so upstream renders are unchanged. The
     existing automatic maxUnavailable=1 PDB for replicaCount > 1 remains.
+14. S3 Express state with a regional checkpoint (`values.yaml`,
+    `values.schema.json`, `templates/control-plane.yaml`,
+    `templates/_helpers.tpl`). New values `storage.artifactBucket` (default
+    `""`: `storage.bucket`, as upstream) and
+    `storage.s3.checkpoint.{bucket,maxLagMs}` (rendered as
+    `DURABLE_ACTORS_S3_CHECKPOINT_BUCKET` / `_MAX_LAG_MS`). A directory bucket
+    (`*--x-s3`) as `storage.bucket` fails the render unless both the checkpoint
+    and the artifact bucket are regional. The deployers upload with plain
+    SigV4, which Express rejects. Needs a fork image with
+    AgentWorkforce/durable-actors#4; older images ignore the checkpoint
+    variables. Defaults render byte-identical. Bucket and IAM:
+    `terraform/modules/aws/durable-actors-express`.
 
 ## Re-vendoring
 
