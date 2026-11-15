@@ -19,8 +19,8 @@
       },
       {
         "decision": "approved",
-        "evidence": "legal/relayhistory-license-decision.json",
-        "id": "relayhistory",
+        "evidence": "legal/relay-control-license-decision.json",
+        "id": "relay-control",
         "spdx": "LicenseRef-AgentWorkforce-Commercial"
       }
     ]
@@ -30,7 +30,7 @@
       "artifactSha256": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
       "chartVersion": "1.0.0",
       "evidence": "https://ci.example.com/runs/load-100",
-      "imageManifestSha256": "sha256:8526904db0b687d8b3203ad8aa798f2d47ed52ba329ea00d76514c6b438545a7",
+      "imageManifestSha256": "sha256:628006d1372f0bd7dc09fd4914e46e0c8d952cfc8ee3b6279444a71d602cc521",
       "result": "pass",
       "workloadProfile": "supported-100"
     },
@@ -69,12 +69,6 @@
       "users": 100
     }
   },
-  "relayHistoryMigrations": {
-    "evidence": "https://ci.example.com/runs/relayhistory-migrations-100",
-    "imageCount": 24,
-    "sourceCount": 24,
-    "sourceRevision": "1111111111111111111111111111111111111111"
-  },
   "release": {
     "branchControls": {
       "branch": "main",
@@ -92,7 +86,7 @@
       "protected": true,
       "requiredApprovals": 1
     },
-    "imageManifestSha256": "sha256:8526904db0b687d8b3203ad8aa798f2d47ed52ba329ea00d76514c6b438545a7",
+    "imageManifestSha256": "sha256:628006d1372f0bd7dc09fd4914e46e0c8d952cfc8ee3b6279444a71d602cc521",
     "valuesFile": "values.yaml"
   },
   "releaseDecision": "approved",
@@ -102,14 +96,14 @@
       "artifactSha256": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
       "chartVersion": "1.0.0",
       "evidence": "https://ci.example.com/runs/restore-100",
-      "imageManifestSha256": "sha256:8526904db0b687d8b3203ad8aa798f2d47ed52ba329ea00d76514c6b438545a7",
+      "imageManifestSha256": "sha256:628006d1372f0bd7dc09fd4914e46e0c8d952cfc8ee3b6279444a71d602cc521",
       "result": "pass"
     },
     "upgrade": {
       "artifactSha256": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
       "chartVersion": "1.0.0",
       "evidence": "https://ci.example.com/runs/upgrade-100",
-      "imageManifestSha256": "sha256:8526904db0b687d8b3203ad8aa798f2d47ed52ba329ea00d76514c6b438545a7",
+      "imageManifestSha256": "sha256:628006d1372f0bd7dc09fd4914e46e0c8d952cfc8ee3b6279444a71d602cc521",
       "result": "pass"
     }
   },

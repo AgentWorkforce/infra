@@ -1,36 +1,39 @@
 dependencies:
 - name: relaycast
   repository: file://../relaycast
-  version: 0.3.10
+  version: 0.3.14
 - name: relayauth
   repository: file://../relayauth
   version: 0.1.5
 - name: sessions-pipeline
   repository: file://../sessions-pipeline
-  version: 0.8.29
-- name: relayhistory
-  repository: file://../relayhistory
-  version: 0.1.3
+  version: 0.8.34
 - name: relay-control
   repository: file://../relay-control
-  version: 0.4.15
+  version: 0.4.18
 - name: relay-webapp
   repository: file://../relay-webapp
-  version: 0.2.4
+  version: 0.2.6
 - name: relayflows
   repository: file://../relayflows
   version: 0.2.5
 - name: durable-actors
   repository: file://../durable-actors
-  version: 0.14.6-awf.2
+  version: 0.14.6-awf.3
 - name: relayfile
   repository: file://../relayfile
   version: 0.2.2
 - name: telemetry-collector
   repository: file://../telemetry-collector
-  version: 0.1.6
+  version: 0.1.7
 - name: relay-chief
   repository: file://../relay-chief
   version: 0.1.0
-digest: sha256:f0ffff11217ce3e03c68e8df1709f8794d5078ce6d3fae664f35ae03d79bfa37
-generated: "2026-11-12T20:41:23.876502315-08:00"
+- name: slack-relay
+  repository: file://../slack-relay
+  version: 0.3.2
+- name: relaygate
+  repository: file://../relaygate
+  version: 0.1.1
+digest: sha256:07be307d033ebb3b6b21373365efe525d3e00c86be452e04a672acb63a023d8d
+generated: "2026-11-14T21:40:00.672372-08:00"

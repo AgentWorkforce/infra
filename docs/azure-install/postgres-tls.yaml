@@ -1,0 +1,53 @@
+# Server TLS for the in-cluster HoopDb Postgres, issued by cert-manager.
+# Apply before installing the hoopdb CloudNativePG cluster (postgres-values.yaml).
+#
+# The CA lasts 10 years so the SHA-256 that the read API, ingest edge and search
+# indexer pin stays valid; cert-manager renews the 90-day server certificate
+# under it and CloudNativePG reloads it (the cnpg.io/reload label).
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata: { name: postgres-selfsigned, namespace: agent-relay }
+spec: { selfSigned: {} }
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata: { name: postgres-ca, namespace: agent-relay }
+spec:
+  isCA: true
+  commonName: agent-relay-postgres-ca
+  secretName: postgres-ca
+  secretTemplate: { labels: { cnpg.io/reload: "" } }
+  duration: 87600h
+  renewBefore: 8760h
+  privateKey: { algorithm: ECDSA, size: 256 }
+  issuerRef: { name: postgres-selfsigned, kind: Issuer }
+---
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata: { name: postgres-ca, namespace: agent-relay }
+spec: { ca: { secretName: postgres-ca } }
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata: { name: hoopdb-server, namespace: agent-relay }
+spec:
+  secretName: hoopdb-server-tls
+  secretTemplate: { labels: { cnpg.io/reload: "" } }
+  duration: 2160h
+  renewBefore: 720h
+  usages: [server auth]
+  privateKey: { algorithm: ECDSA, size: 256 }
+  dnsNames:
+    - hoopdb-rw
+    - hoopdb-rw.agent-relay
+    - hoopdb-rw.agent-relay.svc
+    - hoopdb-rw.agent-relay.svc.cluster.local
+    - hoopdb-r
+    - hoopdb-r.agent-relay
+    - hoopdb-r.agent-relay.svc
+    - hoopdb-r.agent-relay.svc.cluster.local
+    - hoopdb-ro
+    - hoopdb-ro.agent-relay
+    - hoopdb-ro.agent-relay.svc
+    - hoopdb-ro.agent-relay.svc.cluster.local
+  issuerRef: { name: postgres-ca, kind: Issuer }

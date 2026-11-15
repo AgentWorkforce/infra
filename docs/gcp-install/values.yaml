@@ -24,7 +24,6 @@ components:
   relaycast: true
   relayauth: false
   sessionsPipeline: true
-  relayhistory: false
   control: true
   webapp: true
   relayflows: false
@@ -45,6 +44,12 @@ global:
     # Stable organization ID that partitions session data. Never change it after
     # the first upload.
     orgId: __ORG_ID__
+  # Optional co-branding (step 9): the relay-brand ConfigMap's two PNGs.
+  # branding:
+  #   logo:
+  #     existingConfigMap: relay-brand
+  #     key: mark.png          # sign-in page, under the Agent Relay lockup
+  #     dashboardKey: cobrand.png   # dashboard: Agent Relay + your logo
 
 # One global external Application Load Balancer (GKE Ingress) with a
 # Google-managed certificate for the four hosts. Reserve the global static IP
@@ -103,6 +108,8 @@ sessions-pipeline:
     completeSince: epoch
     directoryWorkspaces: "*"
     events: { messageIds: true }
+    # MCP list_session_summaries reads the recorded short summaries.
+    summaries: { listShortSummary: true }
     turns: { assumeNoLegacy: true }
     timing: { assumeNoTurns: true }
     canonical: { pinLaggingPointer: true }
@@ -148,6 +155,11 @@ sessions-pipeline:
       # How much of one session the read API loads. Raise it only together with
       # the memory limit below: 64MiB needs at least 1Gi.
       - { name: READ_API_CANONICAL_SCOPE_BYTES, value: "64MiB" }
+      # The read API reads a session's chunks from GCS one after another, about
+      # 30 ms each; the default 3 s deadline fails sessions past ~100 chunks
+      # (501 turns_canonical_deadline). 15 s (allowed 3000-60000) leaves room and
+      # stays under the load balancer's read timeout.
+      - { name: READ_API_CANONICAL_DEADLINE_MS, value: "15000" }
     resources:
       requests: { cpu: 100m, memory: 256Mi }
       limits: { memory: 1536Mi }
@@ -212,7 +224,7 @@ sessions-pipeline:
       functionBoundaryMode: global-default-revoke
       waitForRole: { enabled: false, functionDefault: false }
     # Session titles and briefs. Needs a workspace ID, which exists only after
-    # first sign-in; turn it on afterwards.
+    # first sign-in; step 16 of 0-START-HERE.md turns it on.
     nativeBrief:
       enabled: false
       workspaceIds: []
@@ -225,7 +237,8 @@ sessions-pipeline:
       session-brief:
         enabled: false
       bob-costas:
-        # "off" writes extractive summaries only.
+        # "off": extractive summaries, no model. Step 16 of 0-START-HERE.md sets
+        # a model and its key here (this list replaces the chart default).
         env:
           - { name: BOB_COSTAS_MODEL, value: "off" }
 
@@ -275,6 +288,9 @@ relay-control:
       - https://api.__DOMAIN__
   service:
     backendConfig: agent-relay-api
+  # Optional co-branding (step 9): the name beside the sign-in logo.
+  # login:
+  #   orgName: __ORG_NAME__
 
 relay-webapp:
   # The chart allows one replica.
@@ -283,3 +299,15 @@ relay-webapp:
     publicUrl: https://__DOMAIN__
     sessionReadApiEnabled: true
     coordinationOverlapsEnabled: false
+  # Optional co-branding (step 9). productName stays unset: the product is
+  # Agent Relay. desktop: your branded desktop build's link scheme and site.
+  # customerProfile:
+  #   logo: /brand/cobrand.png
+  #   favicon: /brand/mark.png
+  #   accentColor: "#4d65ff"
+  #   brandColor: "#5b21b6"
+  #   supportUrl: mailto:support@<your domain>
+  #   poweredByAgentRelay: true
+  #   desktop:
+  #     urlScheme: <desktop link scheme>
+  #     siteUrl: https://__DOMAIN__

@@ -54,6 +54,27 @@ class S3Ledger(unittest.TestCase):
     def cronjob(docs):
         return next(d for d in docs if d["kind"] == "CronJob" and d["metadata"]["name"] == "ci-rearm-sweeper")
 
+    def test_ingest_tls_profile(self):
+        base = load(SQL_FIXTURE)
+        dep = lambda docs: next(d for d in docs if d["kind"] == "Deployment" and d["metadata"]["name"] == "ci-ingest-edge")
+        self.assertEqual(helm(base).stdout, helm(merge(base, {"ingestEdge": {"postgres": {"tlsProfile": "custom-ca"}}})).stdout)
+        env = self.ingest_env(self.render(base))
+        self.assertEqual(env["SESSION_POSTGRES_TLS_PROFILE"]["value"], "custom-ca")
+        self.assertIn("SESSION_POSTGRES_CA_FILE", env)
+        supa = merge(base, {"ingestEdge": {"postgres": {"tlsProfile": "supabase", "caConfigMap": "", "caSha256": ""}}})
+        docs = self.render(supa)
+        env = self.ingest_env(docs)
+        self.assertEqual(env["SESSION_POSTGRES_TLS_PROFILE"]["value"], "supabase")
+        self.assertNotIn("SESSION_POSTGRES_CA_FILE", env)
+        self.assertNotIn("SESSION_POSTGRES_CA_SHA256", env)
+        pod = dep(docs)["spec"]["template"]["spec"]
+        self.assertNotIn("postgres-ca", [v["name"] for v in pod["volumes"]])
+        self.assertNotIn("postgres-ca", [m["name"] for m in pod["containers"][0]["volumeMounts"]])
+        self.render(merge(base, {"ingestEdge": {"postgres": {"tlsProfile": "supabase"}}}),
+                    fail="tlsProfile=supabase pins the built-in Supabase CA")
+        self.render(merge(base, {"ingestEdge": {"postgres": {"tlsProfile": "verify-full"}}}),
+                    fail="ingestEdge.postgres.tlsProfile must be supabase or custom-ca")
+
     def test_default_is_sql_and_byte_identical_when_explicit(self):
         base = load(SQL_FIXTURE)
         implicit = helm(base)

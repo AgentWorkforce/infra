@@ -94,8 +94,8 @@ Patches to upstream files (report upstream; drop when fixed there):
     Defaults render byte-identical to upstream apart from the `helm.sh/chart`
     label (patch 11). Upstream proposal: TerseAI/durable-actors PRs (see
     relay-briefs actors-aws.md).
-11. `Chart.yaml`: `version` is `0.14.6-awf.2` (upstream `0.14.6`; `awf.1` carried
-    patches 1-10, `awf.2` adds patch 12), so a packaged chart carrying the patches
+11. `Chart.yaml`: `version` is `0.14.6-awf.3` (upstream `0.14.6`; `awf.1` carried
+    patches 1-10, `awf.2` adds patch 12, `awf.3` adds patch 13), so a packaged chart carrying the patches
     can never be mistaken for the upstream release.
     `appVersion` stays `0.14.6`. Reset the suffix when re-vendoring a release
     that contains these patches.
@@ -119,6 +119,14 @@ Patches to upstream files (report upstream; drop when fixed there):
     half-set value (a source while disabled, none or both while enabled) fails the
     render. Defaults render byte-identical to `awf.1`. Drop when upstream accepts a
     CA path (`sslrootcert`).
+13. Controller disruption and topology policy (`values.yaml`,
+    `values.schema.json`, `templates/control-plane.yaml`, `README.md`). New values
+    `podDisruptionBudget.{enabled,maxUnavailable}` and
+    `topologySpread.{enabled,maxSkew,topologyKey,whenUnsatisfiable}` let the
+    operator protect a singleton controller from voluntary eviction or spread
+    multiple controllers with selectors generated from each workload's own
+    labels. Both are off by default, so upstream renders are unchanged. The
+    existing automatic maxUnavailable=1 PDB for replicaCount > 1 remains.
 
 ## Re-vendoring
 

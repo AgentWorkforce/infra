@@ -68,7 +68,6 @@ output "application_contract" {
       cloudApi         = true
       dashboard        = true
       sessionsPipeline = true
-      relayhistory     = false # History is a pipeline capability, not a standalone target server.
       relaycast        = true
       relayauth        = false # Target services authenticate through Control.
       durableActors    = false

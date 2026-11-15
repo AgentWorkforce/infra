@@ -22,9 +22,14 @@ run "least_privilege" {
     error_message = "The association binds the release's worker ServiceAccount."
   }
   assert {
-    condition = alltrue([for s in jsondecode(aws_iam_role_policy.worker.policy).Statement :
+    condition = alltrue([for s in jsondecode(aws_iam_role_policy.worker.policy).Statement : s.Effect == "Deny" ||
     !contains(flatten([s.Action]), "s3:DeleteObject") && !contains(flatten([s.Action]), "s3:DeleteObjectVersion") && !contains(flatten([s.Action]), "s3:*")])
     error_message = "The worker never deletes."
+  }
+  assert {
+    condition = anytrue([for s in jsondecode(aws_iam_role_policy.worker.policy).Statement :
+    s.Sid == "NoUploadInbox" && s.Effect == "Deny" && s.Resource == "arn:aws:s3:::sessions-bucket/96bulls/.upload-inbox/*"])
+    error_message = "The worker never touches the upload inbox."
   }
   assert {
     condition = anytrue([for s in jsondecode(aws_iam_role_policy.worker.policy).Statement :
@@ -33,8 +38,12 @@ run "least_privilege" {
   }
   assert {
     condition = anytrue([for s in jsondecode(aws_iam_role_policy.worker.policy).Statement :
-    s.Sid == "SessionsKeyViaS3" && s.Condition.StringEquals["kms:ViaService"] == "s3.us-east-1.amazonaws.com"])
+    s.Sid == "SessionsKeyViaS3" && try(s.Condition.StringEquals["kms:ViaService"], "") == "s3.us-east-1.amazonaws.com"])
     error_message = "The key is used through S3 in the key's region only."
+  }
+  assert {
+    condition     = jsondecode(aws_iam_role.worker.assume_role_policy).Statement[0].Condition.StringEquals["aws:RequestTag/eks-cluster-arn"] == "arn:aws:eks:us-west-2:111111111111:cluster/relay"
+    error_message = "Only the named cluster in this account and Region may assume the role."
   }
   assert {
     condition     = jsondecode(aws_iam_role.worker.assume_role_policy).Statement[0].Condition.StringEquals["aws:RequestTag/kubernetes-service-account"] == "agent-relay-worker"
@@ -56,4 +65,17 @@ run "refuses_the_default_service_account" {
     service_account = "default"
   }
   expect_failures = [var.service_account]
+}
+
+run "accepts_a_multi_region_key" {
+  command = plan
+  variables {
+    sessions_kms_key_arn = "arn:aws:kms:eu-west-1:222222222222:key/mrk-0123456789abcdef0123456789abcdef"
+  }
+  assert {
+    condition = anytrue([for s in jsondecode(aws_iam_role_policy.worker.policy).Statement :
+      s.Sid == "SessionsKeyViaS3" && s.Resource == "arn:aws:kms:eu-west-1:222222222222:key/mrk-0123456789abcdef0123456789abcdef" &&
+    try(s.Condition.StringEquals["kms:ViaService"], "") == "s3.eu-west-1.amazonaws.com"])
+    error_message = "A multi-Region key is used through S3 in its own Region."
+  }
 }

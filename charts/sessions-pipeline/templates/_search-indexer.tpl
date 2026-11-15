@@ -33,6 +33,14 @@
 {{- with $c.locker.endpoint }}
 - { name: LOCKER_ENDPOINT, value: {{ . | quote }} }
 {{- end }}
+{{- if eq (dig "credentials" "mode" "podIdentity" $c.locker) "secret" }}
+- name: LOCKER_ACCESS_KEY_ID
+  valueFrom:
+    secretKeyRef: { name: {{ $c.locker.existingSecret | quote }}, key: {{ $c.locker.accessKeyIdKey | default "access-key-id" | quote }} }
+- name: LOCKER_SECRET_ACCESS_KEY
+  valueFrom:
+    secretKeyRef: { name: {{ $c.locker.existingSecret | quote }}, key: {{ $c.locker.secretAccessKeyKey | default "secret-access-key" | quote }} }
+{{- end }}
 {{- with $c.extraEnv }}
 {{- toYaml . | nindent 0 }}
 {{- end }}

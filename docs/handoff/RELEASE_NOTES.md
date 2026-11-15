@@ -31,12 +31,15 @@ Each archive unpacks to `agent-relay-customer-handoff/` and contains:
 
 See [`HANDOFF.md`](HANDOFF.md) for the full layout and verification steps.
 
-The charts cover Relaycast, RelayAuth, Sessions Pipeline, RelayHistory, the
-headless control-plane API (relaycontrol), Relay Dashboard, and custom-origin
-Desktop setup. Relayflows, durable actors and Relayfile are optional preview
+The charts cover Relaycast, Sessions Pipeline (with the native History read
+API and ingest edge), the headless control-plane API (relaycontrol), Relay
+Dashboard, and custom-origin Desktop setup; RelayAuth is optional. Relayflows, durable actors and Relayfile are optional preview
 components, off by default. Billing, hosted (Nango) provider integrations and
 hosted fleet are out of scope; operator-configured integration OAuth apps
 (relay-cloud-api `integrations`, 0.2.3, in agent-relay 0.3.8) are a preview.
+
+(The standalone RelayHistory component referenced in the entries below was
+removed in agent-relay 0.7.0; History is now the native read API and ingest edge.)
 
 ## agent-relay 0.3.12 (2026-11-04): durable actors on AWS EKS
 

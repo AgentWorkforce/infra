@@ -49,6 +49,8 @@ export default defineLayeredAgent({
   ],
   relaySessions: { tokenParam: `/relaycast-agent-host/${stage}/relay-sessions-token-infra-ops` },
   repos: ["AgentWorkforce/infra"],
+  // New issues in the infra repo wake the lead, which DMs khaliq-gant (Khaliq, 2026-11-14).
+  issueWatch: { repos: ["AgentWorkforce/infra"], notify: "khaliq-gant" },
   relayDescription: "infra-ops layered lead: AWS, Cloudflare, GCP, PostHog and Azure operator for AgentWorkforce/infra",
   names: { platformPrefix: `/relaycast-agent-host/${stage}` },
   // The A2A card the lead publishes on the relay (set_relay_agent_card), so a

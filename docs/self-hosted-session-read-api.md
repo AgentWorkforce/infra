@@ -188,12 +188,11 @@ required.
 The Service is ClusterIP on port 80, targeting the configured container port
 (default 8080, allowed range 1024–65535 for the non-root container). The shared
 Deployment/Service name must be a letter-first DNS-1035 label. The container
-port restriction does not change the public origin port contract. No ingress
-or control backend is changed automatically. A future
-approved deployment can point relaycontrol at the Service FQDN, but only after
-its workspace list/search/events/catalog contract, upload path, reported usage
-and tenant isolation all pass together. The new read service does not silently
-delegate legacy History ingest/delivery routes.
+port restriction does not change the public origin port contract. The native
+profiles (`values-eks.yaml`, `values-gcp.yaml`) point relay-control's native
+backend at this Service (`services.sessionReadApiUrl`); see
+[self-hosted-no-relayauth.md](self-hosted-no-relayauth.md). Uploads go to the
+ingest edge, not the read service.
 
 Runtime blockers remain: qualified combined reader/writer image and schema,
 native PostgreSQL TLS and canonical-object binding proof, and authenticated

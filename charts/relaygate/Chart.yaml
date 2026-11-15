@@ -1,0 +1,21 @@
+apiVersion: v2
+name: relaygate
+type: application
+version: 0.1.1
+appVersion: "0.1.0"
+kubeVersion: ">=1.27.0-0"
+description: >-
+  Optional governance gate for Agent Relay: agents register into a group, every
+  request is checked against mode bits, and writes that cross a group boundary
+  or leave through an external stream (Slack, a knowledge base) are classified.
+annotations:
+  artifacthub.io/license: Apache-2.0
+  agentworkforce.dev/license-scope: "First-party chart code only; dependencies and images retain their own licenses."
+home: https://github.com/AgentWorkforce/relaygate
+keywords: [relaygate, governance, agent-relay]
+maintainers:
+  - name: AgentWorkforce
+    url: https://github.com/AgentWorkforce
+sources:
+  - https://github.com/AgentWorkforce/relaygate
+  - https://github.com/AgentWorkforce/infra/tree/main/charts/relaygate

@@ -42,7 +42,7 @@ Workload SGs are attached to nodes, not to individual Pods. Database/search ingr
 
 `actor_profile` matches `charts/agent-relay/values-eks-actors.yaml` and `charts/durable-actors/ci/eks-values.yaml`: `durable-actors/role=actor-host`, taint `durable-actors/actor-host=true:NoSchedule`, `Exists` toleration, explicit `placement.zone`, and empty runtimeClassName. The dedicated AL2023 actor group runs first-party Terse actors on the standard runtime; it neither installs gVisor nor supports claims of untrusted multi-tenant sandboxing or application HA. General nodes host the controllers. Actor storage/deployer/application bucket roles and credentials remain in the data/application layer. In Pippen the chart's reviewed control-plane credential mode must be explicit because nested AssumeRole may be forbidden.
 
-Target application acceptance remains relaycontrol, relay-webapp, sessions-pipeline in Lambda mode on AWS, relayhistory, Relaycast with Terse, optional Relayfile and auth dependencies. Foundation outputs alone do not prove any application or restore path.
+Target application acceptance remains relaycontrol, relay-webapp, sessions-pipeline in Lambda mode on AWS (including the native History read API and ingest edge), Relaycast with Terse, optional Relayfile and auth dependencies. Foundation outputs alone do not prove any application or restore path.
 
 ## AWS Load Balancer Controller
 

@@ -6,7 +6,7 @@ set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)
 CHART="$ROOT/charts/relaycast"
 V="$CHART/ci/postgres-values.yaml"
-DIGEST=sha256:84f59482cb82f3c50d38f45cfca7d004cffaa95652782dbfc93c179cc343ac59
+DIGEST=sha256:ec062ef901af15cf575b53a71d7eb09f2e6ab6e7c0d5be2da35339a275a5c6cc
 fail=0
 err() { echo "::error::$*"; fail=1; }
 render() { helm template ci "$CHART" --namespace ci -f "$V" "$@"; }
@@ -121,13 +121,39 @@ is "Postgres analytics CA" "$(yq "$pod.containers[0].env[] | select(.name == \"N
 is "Postgres explicit DB CA" "$(yq "$pod.containers[0].env[] | select(.name == \"RELAYCAST_DATABASE_CA_FILE\") | .value" <<<"$pgpod")" /etc/postgres-ca/ca.crt
 is "Postgres init CA stays separate" "$(yq "$pod.initContainers[0].env[] | select(.name == \"NODE_EXTRA_CA_CERTS\") | .value" <<<"$pgpod")" /etc/postgres-ca/ca.crt
 ! yq "$job" <<<"$pgcast" | grep -Eq 'RELAYCAST_TELEMETRY_|analytics-token|analytics-ca' || err "migration Job carries analytics"
-expect_refused "old PostgreSQL image" "immutable Relaycast image with collector support" "${analytics[@]}"
+expect_refused "old PostgreSQL image" "immutable Relaycast image with collector support" "${analytics[@]}" \
+  --set-string runtime.postgres.image.digest=sha256:84f59482cb82f3c50d38f45cfca7d004cffaa95652782dbfc93c179cc343ac59
 expect_refused "non-TLS collector" "HTTPS DNS endpoint" "${analytics[@]}" --set-string analytics.collectorUrl=http://collector.ci.svc:8080/v1/events
 expect_refused "collector userinfo" "HTTPS DNS endpoint" "${analytics[@]}" --set-string analytics.collectorUrl=https://user@collector.ci.svc:8443/v1/events
 expect_refused "bad collector port" "port must be" "${analytics[@]}" --set-string analytics.collectorUrl=https://collector.ci.svc:65536/v1/events
 expect_refused "reused credential secret" "separate from the Relaycast credential Secret" "${analytics[@]}" --set-string analytics.existingSecret=relaycast-secrets
 expect_refused "invalid collector identity" "stable opaque installation ID" "${analytics[@]}" --set-string analytics.deploymentId=bad.identity
 expect_refused "TLS override" "cannot override managed Relaycast analytics" "${analytics[@]}" --set-string "runtime.postgres.image.digest=$analytics_digest" --set-json 'extraEnv=[{"name":"NODE_TLS_REJECT_UNAUTHORIZED","value":"0"}]'
+
+
+# Failover hardening (relaycast#667/#668): keepalive sysctls, split probes, heap, zone.
+ka='.spec.template.spec.securityContext.sysctls // [] | map(.name + "=" + .value) | join(",")'
+is "keepalive sysctls" "$(dy "$ka")" "net.ipv4.tcp_keepalive_intvl=5,net.ipv4.tcp_keepalive_probes=3"
+is "no keepalive before 1.29" "$(render --kube-version 1.28.0 | yq "$dep" | yq "$ka")" ""
+is "keepalive off" "$(render --set runtime.postgres.tcpKeepalive.enabled=false | yq "$dep" | yq "$ka")" ""
+is "own sysctl kept" "$(render --set-json 'podSecurityContext.sysctls=[{"name":"net.ipv4.tcp_keepalive_probes","value":"4"}]' | yq "$dep" | yq "$ka")" "net.ipv4.tcp_keepalive_probes=4,net.ipv4.tcp_keepalive_intvl=5"
+probes='[.spec.template.spec.containers[0] | (.startupProbe.httpGet.path, .livenessProbe.httpGet.path, .readinessProbe.httpGet.path)] | join(",")'
+is "legacy probes" "$(dy "$probes")" "/health,/health,/health"
+is "split probes" "$(render --set healthProbes=split | yq "$dep" | yq "$probes")" "/health/live,/health/live,/health/ready"
+heap='.env[] | select(.name == "NODE_OPTIONS") | .value'
+is "init heap" "$(dy "$pod.initContainers[0] | $heap")" "--max-old-space-size=768"
+is "migrate heap" "$(jy ".spec.template.spec.containers[0] | $heap")" "--max-old-space-size=768"
+is "heap from 1536Mi" "$(render --set resources.limits.memory=1536Mi | yq "$dep" | yq "$pod.initContainers[0] | $heap")" "--max-old-space-size=1152"
+is "operator heap wins" "$(render --set-json 'extraEnv=[{"name":"NODE_OPTIONS","value":"--max-old-space-size=300"}]' | yq "$dep" | yq "[$pod.initContainers[0].env[] | select(.name == \"NODE_OPTIONS\")] | length")" 1
+is "no heap without a limit" "$(render --set resources.limits=null | yq "$dep" | yq "[$pod.initContainers[0].env[] | select(.name == \"NODE_OPTIONS\")] | length")" 0
+zone='.spec.template.spec.affinity.nodeAffinity.requiredDuringSchedulingIgnoredDuringExecution.nodeSelectorTerms[0].matchExpressions[0] | .key + "=" + .values[0]'
+is "zone pin" "$(render --set-string persistence.zone=us-west-2a | yq "$dep" | yq "$zone")" "topology.kubernetes.io/zone=us-west-2a"
+is "zone keeps podAntiAffinity" "$(render --set-string persistence.zone=us-west-2a --set-json 'affinity={"podAntiAffinity":{"preferredDuringSchedulingIgnoredDuringExecution":[]}}' | yq "$dep" | yq '.spec.template.spec.affinity | has("podAntiAffinity")')" true
+is "no zone, no affinity" "$(dy '.spec.template.spec | has("affinity")')" false
+expect_refused "probe typo" "healthProbes must be legacy or split" --set healthProbes=spilt
+expect_refused "zero keepalive interval" "intervalSeconds must be an integer from 1 to 32767" --set runtime.postgres.tcpKeepalive.intervalSeconds=0
+expect_refused "bad keepalive probes" "probes must be an integer from 1 to 127" --set runtime.postgres.tcpKeepalive.probes=200
+expect_refused "zone with nodeAffinity" "persistence.zone and affinity.nodeAffinity" --set-string persistence.zone=us-west-2a --set-json 'affinity={"nodeAffinity":{}}'
 
 [ "$fail" = 0 ] && echo "relaycast postgres and analytics render: ok"
 exit "$fail"

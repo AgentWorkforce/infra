@@ -43,11 +43,11 @@ It keeps Relaycast workspace observations and installation exceptions in
 separate scopes. Select the matching immutable collector image before
 registering a Relaycast producer.
 
-Chart 0.1.6 also accepts AA Control 0.5.16 source
+Chart 0.1.6 also accepts customer Control 0.5.16 source
 `83a57d382e00cfcd8a10a477d1ccfc06c6959c01`. Its collector, CLI and Control
 event catalog are unchanged from the reviewed `d1089f8d` source, including
 private-file recovery, brief events and the Relaycast vocabulary. The Kind
-recipe selects the published AA image at `sha256:0b9c5a077b49b31178cc669e7c1d532f39e64c840087ca41636bb84a6c62631c`.
+recipe selects the published customer image at `sha256:0b9c5a077b49b31178cc669e7c1d532f39e64c840087ca41636bb84a6c62631c`.
 The older `37aa934a` image predates brief events and refuses startup when
 a `session-brief` producer is registered. Do not enable that producer with
 the older image.

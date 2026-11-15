@@ -1,0 +1,18 @@
+{{- $image := .Values.control.image -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: relay-control
+spec:
+  template:
+    spec:
+      initContainers:
+        - name: wait-for-role
+          image: {{ .Values.waitForRole.image | quote }}
+      containers:
+        - name: control
+          {{- if $image.digest }}
+          image: "{{ $image.repository }}@{{ $image.digest }}"
+          {{- else }}
+          image: "{{ $image.repository }}:{{ $image.tag }}"
+          {{- end }}

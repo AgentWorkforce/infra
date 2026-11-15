@@ -14,7 +14,8 @@
 #                     control API
 #   api.<domain>      control API
 #   cast.<domain>     Relaycast
-#   history.<domain>  RelayHistory (only with EKS_ALB_HISTORY=true, the default)
+#   history.<domain>  native History: the Sessions read API and the ingest edge
+#                     (only with EKS_ALB_HISTORY=true, the default)
 #
 # TLS terminates at the ALB with the ACM certificate EKS_ALB_CERT_ARN (it must
 # cover all four names); port 80 redirects to 443. Health-check paths come
@@ -30,25 +31,22 @@
 # and cast catch-alls are ImplementationSpecific "/*" listed after it; a
 # Prefix "/" catch-all would win first.
 #
-# Native session ingest (off by default; EKS_ALB_INGEST=true, which needs
-# EKS_ALB_HISTORY=true) shares the history.<domain> origin, so it needs no new
-# name on the certificate. The four public ingest paths in
-# docs/self-hosted-native-ingest.md go to the ingest edge Service as Exact
-# paths, RelayHistory is no longer the host's default backend, and /internal is
-# denied as on api and cast. Without
-# EKS_ALB_HISTORY_LEGACY_SERVICE the ingest edge receives all of /v1/delivery
-# (delivery records stay on the read API), /v1/turns and /v1/onboarding;
-# the read API receives its read paths, and anything else on that host is a
-# fixed 404 at the edge (docs/self-hosted-no-relayauth.md). Exact paths match
-# any method: the ingest edge refuses the wrong one. Services without their own
-# health-check annotation use /healthz from an Ingress-level default, which a
-# Service annotation overrides; it is the one path both new backends serve.
-#
-# EKS_ALB_HISTORY_LEGACY_SERVICE (default empty, with EKS_ALB_INGEST=true) keeps
-# a standalone RelayHistory answering on that origin during a migration: the
-# read API receives only bearers carrying its own rth_at_read_/rth_rt_read_
-# prefixes, plus OPTIONS preflights on its CORS routes, and every other request
-# goes to the named Service. EKS_ALB_HISTORY_LEGACY_PORT defaults to 8080.
+# The history.<domain> origin routes only to native History (the standalone
+# RelayHistory server was removed). Native session ingest (EKS_ALB_INGEST,
+# default true whenever the history host is on and not read-only) shares that
+# origin, so it needs no new name on the certificate. The four public ingest
+# paths in docs/self-hosted-native-ingest.md go to the ingest edge Service as
+# Exact paths and /internal is denied as on api and cast. The ingest edge
+# receives all of /v1/delivery (delivery records stay on the read API),
+# /v1/turns and /v1/onboarding; the read API receives its read paths, and
+# anything else on that host is a fixed 404 at the edge
+# (docs/self-hosted-no-relayauth.md). Exact paths match any method: the ingest
+# edge refuses the wrong one. Services without their own health-check
+# annotation use /healthz from an Ingress-level default, which a Service
+# annotation overrides; it is the one path both backends serve.
+# EKS_ALB_HISTORY_READ_ONLY=true (with EKS_ALB_INGEST unset or false) publishes
+# only the read API on that host. EKS_ALB_HISTORY_LEGACY_SERVICE, which kept a
+# standalone RelayHistory behind the origin, is refused.
 #
 # Flows on relayfile-control (off by default; EKS_ALB_RELAYFILE_CONTROL=true)
 # route /api/v1/{flows,workers,workflows} on api.<domain> and the
@@ -69,16 +67,17 @@ CLASS="${EKS_INGRESS_CLASS:-alb}"
 DOMAIN="${EKS_ALB_DOMAIN:?EKS_ALB_DOMAIN=<base domain> is required}"
 CERT="${EKS_ALB_CERT_ARN:?EKS_ALB_CERT_ARN=<ACM certificate ARN> is required}"
 HISTORY="${EKS_ALB_HISTORY:-true}"
-INGEST="${EKS_ALB_INGEST:-false}"
 # Read API only on history.<domain>, for installs with no ingest edge yet. Upload
 # paths then answer the fixed 404 rather than a missing backend.
 HISTORY_READ_ONLY="${EKS_ALB_HISTORY_READ_ONLY:-false}"
+# The ingest edge is on whenever the history host is published and not read-only.
+INGEST_DEFAULT=false
+[[ "$HISTORY" == true && "$HISTORY_READ_ONLY" != true ]] && INGEST_DEFAULT=true
+INGEST="${EKS_ALB_INGEST:-$INGEST_DEFAULT}"
 INGEST_SVC="${EKS_ALB_INGEST_SERVICE:-agent-relay-ingest-edge}"
 INGEST_PORT="${EKS_ALB_INGEST_PORT:-80}"
 READ_API_SVC="${EKS_ALB_READ_API_SERVICE:-agent-relay-read-api}"
 READ_API_PORT="${EKS_ALB_READ_API_PORT:-80}"
-LEGACY_SVC="${EKS_ALB_HISTORY_LEGACY_SERVICE:-}"
-LEGACY_PORT="${EKS_ALB_HISTORY_LEGACY_PORT:-8080}"
 RELAYFILE_CONTROL="${EKS_ALB_RELAYFILE_CONTROL:-false}"
 RELAYFILE_CONTROL_SVC="${EKS_ALB_RELAYFILE_CONTROL_SERVICE:-relayfile-control}"
 RELAYFILE_CONTROL_PORT="${EKS_ALB_RELAYFILE_CONTROL_PORT:-3100}"
@@ -99,6 +98,12 @@ for service in "$CONTROL_SVC" "$WEBAPP_SVC"; do
 done
 [[ "$INGEST" == true || "$INGEST" == false ]] ||
   { printf '%s\n' 'EKS_ALB_INGEST must be true or false' >&2; exit 2; }
+[[ -z "${EKS_ALB_HISTORY_LEGACY_SERVICE:-}" ]] ||
+  { printf '%s\n' 'EKS_ALB_HISTORY_LEGACY_SERVICE was removed: the history host routes only to native History (read API and ingest edge)' >&2; exit 2; }
+if [[ "$HISTORY" == true && "$HISTORY_READ_ONLY" != true && "$INGEST" != true ]]; then
+  printf '%s\n' 'EKS_ALB_INGEST=false needs EKS_ALB_HISTORY_READ_ONLY=true: the history host has no standalone RelayHistory backend' >&2
+  exit 2
+fi
 [[ "$RELAYFILE_CONTROL" == true || "$RELAYFILE_CONTROL" == false ]] ||
   { printf '%s\n' 'EKS_ALB_RELAYFILE_CONTROL must be true or false' >&2; exit 2; }
 if [[ "$RELAYFILE_CONTROL" == true ]]; then
@@ -134,34 +139,11 @@ if [[ "$INGEST" == true ]]; then
   done
   INGEST_HEALTHCHECK=$'\n    alb.ingress.kubernetes.io/healthcheck-path: /healthz'
 fi
-LEGACY_ANNOTATIONS=""
-if [[ -n "$LEGACY_SVC" ]]; then
-  [[ "$INGEST" == true ]] ||
-    { printf '%s\n' 'EKS_ALB_HISTORY_LEGACY_SERVICE needs EKS_ALB_INGEST=true' >&2; exit 2; }
-  [[ ${#LEGACY_SVC} -le 63 && "$LEGACY_SVC" =~ ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$ ]] ||
-    { printf '%s\n' 'EKS_ALB_HISTORY_LEGACY_SERVICE must be a DNS label' >&2; exit 2; }
-  [[ "$LEGACY_PORT" =~ ^[1-9][0-9]{0,4}$ && "$LEGACY_PORT" -le 65535 ]] ||
-    { printf '%s\n' 'EKS_ALB_HISTORY_LEGACY_PORT must be 1-65535' >&2; exit 2; }
-  forward="{\"type\":\"forward\",\"forwardConfig\":{\"targetGroups\":[{\"serviceName\":\"${READ_API_SVC}\",\"servicePort\":${READ_API_PORT}}]}}"
-  LEGACY_ANNOTATIONS="
-    alb.ingress.kubernetes.io/actions.read-api-token: '${forward}'
-    alb.ingress.kubernetes.io/conditions.read-api-token: '[{\"field\":\"http-header\",\"httpHeaderConfig\":{\"httpHeaderName\":\"Authorization\",\"values\":[\"Bearer rth_at_read_*\",\"Bearer rth_rt_read_*\"]}}]'
-    alb.ingress.kubernetes.io/actions.read-api-cors: '${forward}'
-    alb.ingress.kubernetes.io/conditions.read-api-cors: '[{\"field\":\"http-request-method\",\"httpRequestMethodConfig\":{\"Values\":[\"OPTIONS\"]}}]'"
-fi
-
 deny() {
   printf '%s\n' \
     "          - path: $1" \
     "            pathType: $2" \
     "            backend: { service: { name: edge-deny, port: { name: use-annotation } } }"
-}
-
-action() { # path pathType action-name
-  printf '%s\n' \
-    "          - path: $1" \
-    "            pathType: $2" \
-    "            backend: { service: { name: $3, port: { name: use-annotation } } }"
 }
 
 route() { # path service port [pathType]
@@ -189,7 +171,7 @@ kind: Ingress
 metadata:
   name: ${NAME}
   namespace: ${NS}
-  annotations:${INGEST_HEALTHCHECK}${LEGACY_ANNOTATIONS}
+  annotations:${INGEST_HEALTHCHECK}
     alb.ingress.kubernetes.io/scheme: internet-facing
     alb.ingress.kubernetes.io/target-type: ip
     alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}, {"HTTPS": 443}]'
@@ -255,39 +237,25 @@ if [[ "$HISTORY" == true ]]; then
     deny /internal Prefix
     deny '"//internal*"' ImplementationSpecific
     deny '"/*"' ImplementationSpecific
-  elif [[ "$INGEST" == true ]]; then
+  else
     for path in /v1/delivery/batches /v1/turns/batches /v1/delivery/limits /v1/auth/token/refresh; do
       route "$path" "$INGEST_SVC" "$INGEST_PORT" Exact
     done
-    # With nothing else on the origin the ingest edge owns /v1/delivery/*,
-    # /v1/turns/* and /v1/onboarding/*, except delivery records, which the read
-    # API serves (relayhistory-pipeline docs/selfhost-composition.md section 2).
-    # The controller orders Exact before Prefix. A named legacy Service keeps
-    # these paths: it serves them today.
-    if [[ -z "$LEGACY_SVC" ]]; then
-      for path in /v1/delivery/records /v1/cli/login /v1/events /v1/auth/token/revoke; do
-        route "$path" "$READ_API_SVC" "$READ_API_PORT" Exact
-      done
-      route /v1/sessions "$READ_API_SVC" "$READ_API_PORT" Prefix
-      route /v1/digest "$READ_API_SVC" "$READ_API_PORT" Prefix
-      for path in /v1/delivery /v1/turns /v1/onboarding; do
-        route "$path" "$INGEST_SVC" "$INGEST_PORT" Prefix
-      done
-    fi
+    # The ingest edge owns /v1/delivery/*, /v1/turns/* and /v1/onboarding/*,
+    # except delivery records, which the read API serves (relayhistory-pipeline
+    # docs/selfhost-composition.md section 2). The controller orders Exact
+    # before Prefix.
+    for path in /v1/delivery/records /v1/cli/login /v1/events /v1/auth/token/revoke; do
+      route "$path" "$READ_API_SVC" "$READ_API_PORT" Exact
+    done
+    route /v1/sessions "$READ_API_SVC" "$READ_API_PORT" Prefix
+    route /v1/digest "$READ_API_SVC" "$READ_API_PORT" Prefix
+    for path in /v1/delivery /v1/turns /v1/onboarding; do
+      route "$path" "$INGEST_SVC" "$INGEST_PORT" Prefix
+    done
     deny /internal Prefix
     deny '"//internal*"' ImplementationSpecific
-    if [[ -n "$LEGACY_SVC" ]]; then
-      action /v1/sessions Prefix read-api-token
-      action /v1/sessions Prefix read-api-cors
-      action /v1/events Exact read-api-token
-      action /v1/events Exact read-api-cors
-      action /v1/auth/token/revoke Exact read-api-token
-      route '"/*"' "$LEGACY_SVC" "$LEGACY_PORT" ImplementationSpecific
-    else
-      # Everything not named above is a fixed 404 at the edge, probes included.
-      deny '"/*"' ImplementationSpecific
-    fi
-  else
-    route / relayhistory 8080
+    # Everything not named above is a fixed 404 at the edge, probes included.
+    deny '"/*"' ImplementationSpecific
   fi
 fi

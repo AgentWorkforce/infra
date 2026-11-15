@@ -1,16 +1,23 @@
-# Self-host without RelayAuth or standalone RelayHistory
+# Self-host without RelayAuth (native History)
 
-`relay-control` with `RELAYHISTORY_BACKEND=native` removes both legacy services
-from a self-hosted install: uploads go to the pipeline ingest edge and reads go
-through the read API, both on one public origin. It is off by default and does
-not change the hosted Cloud path.
+Self-hosted History is native: `relay-control` with `RELAYHISTORY_BACKEND=native`
+sends uploads to the pipeline ingest edge and reads through the Sessions read
+API, both on one public `history.<domain>` origin. No RelayAuth is needed. It
+does not change the hosted Cloud path.
+
+The standalone RelayHistory component was removed in agent-relay 0.7.0.
+`components.relayhistory: true` or a non-empty `relayhistory:` values block
+fails the render with a pointer to this page; remove both (a
+`components.relayhistory: false` left in site values is accepted and ignored).
 
 ## Chart
 
-Apply `-f charts/agent-relay/values-eks.yaml -f charts/agent-relay/values-eks-native.yaml`
-with the values marked REQUIRED OVERRIDE. Needed together:
+`values-eks.yaml` and `values-gcp.yaml` are native on their own; replace the
+values marked REQUIRED OVERRIDE. (`values-eks-native.yaml` and
+`values-gcp-native.yaml` are now empty compatibility overlays, so commands that
+still name them render identically.) The profiles set together:
 
-- `components.relayauth: false`, `components.relayhistory: false`
+- `components.relayauth: false`
 - `relay-control.services`: `relayauthEnabled: false`, `relayhistoryBackend: native`,
   `sessionReadApiUrl`, `sessionReadApiPublicUrl`; `relayhistoryUrl` and
   `relayhistoryPublicUrl` stay empty.
@@ -24,7 +31,8 @@ with the values marked REQUIRED OVERRIDE. Needed together:
   [native ingest](self-hosted-native-ingest.md) and
   [read API](self-hosted-session-read-api.md).
 
-The GKE edge (`gkeIngress`) still requires `components.relayhistory`.
+The GKE edge (`gkeIngress`) routes the history host to the read API and ingest
+edge Services.
 
 ## Images
 
@@ -42,28 +50,27 @@ pipeline migration 043910 must be applied for `sessionSelection`.
 
 ## Edge
 
-Run `scripts/selfhost/eks-alb-ingress.sh` with `EKS_ALB_INGEST=true` and without
-`EKS_ALB_HISTORY_LEGACY_SERVICE`. The ingest edge then receives `/v1/delivery/*`
+Run `scripts/selfhost/eks-alb-ingress.sh` (ingest routes are on by default). The ingest edge then receives `/v1/delivery/*`
 (except `GET /v1/delivery/records`), `/v1/turns/*`, `/v1/onboarding/*` and
 `POST /v1/auth/token/refresh`. The read API receives `POST /v1/cli/login`,
 `GET /v1/delivery/records`, `/v1/sessions*`, `/v1/events`, `/v1/digest/*` and
 `/v1/auth/token/revoke`. `/internal` and every other path on the history host,
 including `/healthz`, are a fixed 404 at the edge.
 
-## Removing the services
+## Upgrading an install that ran the standalone services
 
-Scale `relayauth` and `relayhistory` to zero only after sign-in, a Desktop upload
-and search have passed once with them still running.
-
-`helm uninstall` of the subcharts does not delete PVCs: delete `relayauth` and
-`relayhistory` data (and its Postgres database, if external) only after the
-proof passes; both can be restored by turning their components back on.
+Upgrading to agent-relay 0.7.0 removes the standalone History Deployment. Its
+sessions are not migrated to the pipeline. Helm does not delete PVCs or
+external databases: delete the old History and `relayauth` data only after
+sign-in, a Desktop upload and search pass on the native path. RelayAuth can be
+turned back on with `components.relayauth: true`; the standalone History server
+cannot.
 
 ## Proof
 
-`scripts/selfhost/e2e-eks-proof.sh --history-profile pipeline` runs every case
+`scripts/selfhost/e2e-eks-proof.sh` runs every case
 through the ingest edge and read API, replaces the RelayAuth checks in case 7 by
-ingest and read API token checks, and fails if the `relayauth` or `relayhistory`
+ingest and read API token checks, and fails if the `relayauth` or legacy History
 Deployments or their Control URLs still exist. Case 8 is SKIP (the courier path
 needs RelayAuth). The dashboard's list filters on `q`, `project`, `since` and
 `until` answer `501` on the read API and are not asserted; search goes through
@@ -73,5 +80,5 @@ needs RelayAuth). The dashboard's list filters on `q`, `project`, `since` and
 
 Relaycast with `credentials.authority=relayauth` needs RelayAuth; the chart
 refuses that combination. Self-hosted relayfile (off by default) is not covered.
-Deleting the standalone History data is not reversible; its sessions are not
-migrated to the pipeline.
+Deleting the former standalone History data is not reversible; its sessions
+are not migrated to the pipeline.

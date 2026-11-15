@@ -86,6 +86,13 @@ digest:
     writerDatabaseUrl:
       existingSecret: ""
       key: READ_API_DIGEST_NARRATIVE_DB_URL
+summaries:
+  # READ_API_LIST_SHORT_SUMMARY_ENABLED: GET /v1/sessions serves the opt-in
+  # includeShortSummary=recorded (each row's recorded short summary, at most
+  # 1000 characters, or null). relay-control's MCP list_session_summaries uses
+  # it; off, that tool gets 501 param_includeShortSummary. No SQL or
+  # credential change. The per-session brief summary is always served.
+  listShortSummary: false
 turns:
   # True only where no Neon source exists, so no legacy coverage marker is expected.
   assumeNoLegacy: false

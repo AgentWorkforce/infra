@@ -322,33 +322,19 @@ class NativeRecipeTests(unittest.TestCase):
     def test_actual_stack_up_refuses_before_docker_ready_unlink_and_pg_writes(self):
         from stack import Stack, StackError
         for profile in ("core", "addons"):
-            for surface in ("nativeConsumer", "sessionReadApi", "ingestEdge", "nativeRouting"):
+            for surface in (None, "nativeConsumer", "sessionReadApi", "ingestEdge", "nativeRouting"):
                 with self.subTest(profile=profile, surface=surface), tempfile.TemporaryDirectory() as td:
                     s = Stack.__new__(Stack)
                     s.profile = profile; s.state = Path(td); s.overrides = s.state / "values.json"
-                    s.overrides.write_text(json.dumps({"sessions-pipeline": {surface: {"enabled": True}}}))
+                    s.overrides.write_text(json.dumps({"sessions-pipeline": {surface: {"enabled": True}}} if surface else {}))
                     ready = s.state / "ready.json"; ready.write_text("owned-original-receipt")
                     events = []
                     s.docker = lambda **kw: events.append("docker_config_write")
                     s.postgres = lambda *args: events.append("postgres_write")
-                    with patch("stack.shutil.which", return_value="/bin/mock"):
-                        with self.assertRaisesRegex(ValueError, "native.*(?:requires|require).*native"):
-                            s.up()
+                    with self.assertRaisesRegex(StackError, "retired.*native core installer"):
+                        s.up()
                     self.assertEqual(events, [])
                     self.assertEqual(ready.read_text(), "owned-original-receipt")
-
-    def test_actual_legacy_stack_positive_reaches_original_docker_preflight(self):
-        from stack import Stack
-        with tempfile.TemporaryDirectory() as td:
-            s = Stack.__new__(Stack); s.profile = "core"; s.state = Path(td)
-            s.overrides = s.state / "values.json"; events = []
-            def docker(**kw):
-                events.append("original_docker_preflight")
-                raise RuntimeError("bounded_test_stop")
-            s.docker = docker
-            with patch("stack.shutil.which", return_value="/bin/mock"):
-                with self.assertRaisesRegex(RuntimeError, "bounded_test_stop"): s.up()
-            self.assertEqual(events, ["original_docker_preflight"])
 
     def test_official_sql_is_hash_bound_and_refuses_unqualified_includes(self):
         x = selected(); raw = {f: ("-- " + f + "\n").encode() for f in BOOTSTRAP}

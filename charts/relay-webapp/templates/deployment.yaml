@@ -74,6 +74,21 @@ spec:
             {{- if .Values.runtime.coordinationOverlapsEnabled }}
             - { name: DASHBOARD_COORDINATION_OVERLAPS_ENABLED, value: "true" }
             {{- end }}
+            {{- if not (kindIs "bool" .Values.runtime.sessionAgentNamesEnabled) }}
+            {{- fail "runtime.sessionAgentNamesEnabled must be a boolean" }}
+            {{- end }}
+            {{- if .Values.runtime.sessionAgentNamesEnabled }}
+            - { name: DASHBOARD_SESSION_AGENT_NAMES_ENABLED, value: "true" }
+            {{- end }}
+            {{- if not (kindIs "bool" .Values.runtime.sessionShortSummariesEnabled) }}
+            {{- fail "runtime.sessionShortSummariesEnabled must be a boolean" }}
+            {{- end }}
+            {{- if and .Values.runtime.sessionShortSummariesEnabled (not .Values.runtime.sessionReadApiEnabled) }}
+            {{- fail "runtime.sessionShortSummariesEnabled=true requires runtime.sessionReadApiEnabled=true" }}
+            {{- end }}
+            {{- if .Values.runtime.sessionShortSummariesEnabled }}
+            - { name: DASHBOARD_SESSION_SHORT_SUMMARIES_ENABLED, value: "true" }
+            {{- end }}
             {{- if not (kindIs "invalid" .Values.runtime.analyticsEnabled) }}
             {{- if not (kindIs "bool" .Values.runtime.analyticsEnabled) }}
             {{- fail "runtime.analyticsEnabled must be a boolean or null" }}
@@ -119,6 +134,9 @@ spec:
             defaultMode: 0444
             items:
               - { key: {{ . | quote }}, path: {{ . | quote }} }
+              {{- with include "relay-webapp.brandDashboardFile" $ }}
+              - { key: {{ . | quote }}, path: {{ . | quote }} }
+              {{- end }}
         {{- end }}
       {{- with .Values.nodeSelector }}
       nodeSelector: {{ toYaml . | nindent 8 }}

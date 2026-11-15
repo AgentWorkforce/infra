@@ -340,8 +340,15 @@ jobs:
               gh pr view "$pr_number" --repo "$GITHUB_REPOSITORY" \
                 --json body --jq '.body // ""' > "$RUNNER_TEMP/pr-body.md"
             else
-              printf 'Tracking PR for **agent-relay-%s**. Candidate pins are provenance-verified; acceptance and approval are separate release gates.\n' \
-                "$VERSION" > "$RUNNER_TEMP/pr-body.md"
+              # shellcheck disable=SC2016 # the backticks are literal Markdown
+              {
+                printf 'Tracking PR for **agent-relay-%s**. Candidate pins are provenance-verified; acceptance and approval are separate release gates.\n\n' "$VERSION"
+                printf '## After the release publishes: move the install guides to it\n\n'
+                printf -- '- [ ] infra `docs/azure-install/README.md` and `docs/gcp-install/` (release, tag commit, chart tgz)\n'
+                printf -- '- [ ] agentrelay.com `web/content/self-hosting/install-{aks,gke,eks}.md`, the image pins in `web/public/self-hosting/files/eks/values.yaml`, then `node web/scripts/selfhost-files.mjs write`\n'
+                printf -- '- [ ] relay-agent `npm run selfhost-docs:sync -- --ref <agentrelay.com main>` and `npm run build:knowledge`\n'
+                printf -- '- [ ] render each guide against the published assets (checksums OK, images match this release'"'"'s pins); say "render-only" unless it was installed\n'
+              } > "$RUNNER_TEMP/pr-body.md"
             fi
             python3 "$RUNNER_TEMP/update-release-candidate.py" render-body \
               --pins "$RUNNER_TEMP/latest-pins.json" \

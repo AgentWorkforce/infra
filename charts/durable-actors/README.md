@@ -38,7 +38,7 @@ When upgrading from the shared image configuration, replace `image.repository` a
 - The sandbox namespace defaults to `<release-namespace>-<release-name>`; use one unique sandbox namespace per installation.
 - gVisor, separate sandbox credentials, RBAC, and sandbox NetworkPolicy are included.
 
-A single controller can interrupt service during replacement; clients must reconnect WebSockets. Increase `replicaCount` for controller redundancy; more than one controller requires Redis (`redis.urlSecretKey`). Increase `actors.warm` to reduce cold starts. The warm count is per image/region and supports 0–256. It does not cap active actors. Node autoscaling and quotas must accommodate your active workload.
+A single controller can interrupt service during replacement; clients must reconnect WebSockets. Increase `replicaCount` for controller redundancy; more than one controller requires Redis (`redis.urlSecretKey`). `podDisruptionBudget.enabled` can protect a singleton from voluntary eviction (`maxUnavailable: 0`), or the chart automatically renders `maxUnavailable: 1` above one replica. `topologySpread.enabled` generates a workload-scoped spread constraint for the controller and pool manager. Neither setting makes a singleton highly available. Increase `actors.warm` to reduce cold starts. The warm count is per image/region and supports 0–256. It does not cap active actors. Node autoscaling and quotas must accommodate your active workload.
 
 ## Rapid writes
 

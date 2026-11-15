@@ -76,13 +76,27 @@ output "chart_values" {
         extraEnv = local.pipeline_extra_env
       }
     }
-    "relay-control" = {
+    "relay-control" = merge({
       postgresCa = {
         enabled   = true
         configMap = "cloud-sql-ca"
         key       = "ca.crt"
       }
-    }
+      }, [for _ in(local.desktop_feed_enabled ? [1] : []) : {
+        # Signed Desktop feed on GCS (relay-control 0.5.25+). If your values.yaml
+        # sets relay-control.extraEnv or serviceAccount.annotations, repeat these.
+        extraEnv = [
+          { name = "SELFHOST_DESKTOP_FEED_STORAGE", value = "gcs" },
+          { name = "SELFHOST_DESKTOP_FEED_GCS_BUCKET", value = module.desktop_feed_bucket[0].bucket_name },
+          { name = "SELFHOST_DESKTOP_FEED_GCS_PREFIX", value = "desktop-feed" },
+        ]
+        serviceAccount = {
+          annotations = {
+            "iam.gke.io/gcp-service-account"          = module.desktop_feed_bucket[0].google_service_account_email
+            "iam.gke.io/return-principal-id-as-email" = "true"
+          }
+        }
+    }]...)
     relaycast = {
       postgresCa = {
         enabled   = true
@@ -131,5 +145,26 @@ output "functions" {
     events_topic_id      = module.functions[0].events_topic_id
     dead_letter_topic_id = module.functions[0].dead_letter_topic_id
     secret_id            = module.functions[0].secret_id
+  } : null
+}
+
+output "image_mirror_root" {
+  description = "MIRROR_ROOT for install guide step 5 (null unless image_mirror_repository is set)."
+  value       = local.image_mirror_enabled ? "${var.region}-docker.pkg.dev/${var.project_id}/${var.image_mirror_repository}" : null
+}
+
+output "desktop_feed" {
+  description = "Values for relay-control's signed Desktop feed on GCS (null unless desktop_feed_bucket_name is set). Put env into relay-control.extraEnv and annotations into relay-control.serviceAccount.annotations; signing keys go through relay-control.desktopFeed.signingKeys."
+  value = local.desktop_feed_enabled ? {
+    service_account = module.desktop_feed_bucket[0].google_service_account_email
+    env = [
+      { name = "SELFHOST_DESKTOP_FEED_STORAGE", value = "gcs" },
+      { name = "SELFHOST_DESKTOP_FEED_GCS_BUCKET", value = module.desktop_feed_bucket[0].bucket_name },
+      { name = "SELFHOST_DESKTOP_FEED_GCS_PREFIX", value = "desktop-feed" },
+    ]
+    service_account_annotations = {
+      "iam.gke.io/gcp-service-account"          = module.desktop_feed_bucket[0].google_service_account_email
+      "iam.gke.io/return-principal-id-as-email" = "true"
+    }
   } : null
 }

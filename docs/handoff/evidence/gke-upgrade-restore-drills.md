@@ -1,5 +1,8 @@
 # GKE upgrade and backup/restore drills (2026-11-03)
 
+(The standalone RelayHistory component referenced here was removed in
+agent-relay 0.7.0; History is now the native read API and ingest edge.)
+
 Run in an isolated namespace and a dedicated Cloud SQL instance on the GKE
 reference cluster, using the customer profile (`charts/agent-relay/values-gcp.yaml`,
 all six components) plus a drill overlay for the drill's own database, bucket,

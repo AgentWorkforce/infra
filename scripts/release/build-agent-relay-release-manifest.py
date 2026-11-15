@@ -20,6 +20,11 @@ CHART_PATH = re.compile(r"^[A-Za-z0-9._/-]+$")
 VALUES_OVERLAY = "release-images.values.yaml"
 VALUES_OVERLAY_PROFILES = {"gcp", "eks"}
 APPROVED_IMAGE_STATUSES = {"approved", "customer-ready", "accepted-candidate"}
+# Source repositories renamed after a release shipped. Pins recorded before the
+# rename keep the old name; new candidates record the current one.
+RENAMED_SOURCE_REPOSITORIES = {
+    "AgentWorkforce/relay-web": {"AgentWorkforce/relay-webapp"},
+}
 RELEASE_CANDIDATE_COMPONENTS = {
     "relay-control": (
         "ghcr.io/agentworkforce/relay-control",
@@ -27,7 +32,7 @@ RELEASE_CANDIDATE_COMPONENTS = {
     ),
     "relay-webapp": (
         "ghcr.io/agentworkforce/relay-webapp",
-        "AgentWorkforce/relay-webapp",
+        "AgentWorkforce/relay-web",
     ),
     "sessions-pipeline": (
         "ghcr.io/agentworkforce/sessions-pipeline",
@@ -125,7 +130,10 @@ def apply_candidate_pins(
         image_repository, source_repository = RELEASE_CANDIDATE_COMPONENTS[component]
         if pin["repository"] != image_repository:
             fail(f"{path}: release candidate repository drift: {component}")
-        if pin["sourceRepository"] != source_repository:
+        accepted_sources = {source_repository} | RENAMED_SOURCE_REPOSITORIES.get(
+            source_repository, set()
+        )
+        if pin["sourceRepository"] not in accepted_sources:
             fail(f"{path}: release candidate source repository drift: {component}")
         if not COMMIT.fullmatch(pin["sourceRevision"]):
             fail(f"{path}: invalid release candidate source revision: {component}")
@@ -204,11 +212,18 @@ def build_values_overlay(manifest: dict[str, object]) -> str:
     relaycast_image = (
         "relaycast-eks-collector" if profile == "eks" else "relaycast"
     )
+    # The EKS application image may be the collector-qualified build, while
+    # the PostgreSQL migration/export path has its own reviewed pin. Never let
+    # the final release overlay overwrite runtime.postgres.image with the
+    # generic application image.
+    relaycast_postgres_image = (
+        "relaycast-postgres" if profile == "eks" else "relaycast"
+    )
     required = {
         relaycast_image,
+        relaycast_postgres_image,
         "relayauth",
         "sessions-pipeline",
-        "relayhistory",
         "relay-control",
         "relay-webapp",
         "sessions-migration-postgresql",
@@ -241,7 +256,7 @@ def build_values_overlay(manifest: dict[str, object]) -> str:
         "  runtime:",
         "    postgres:",
         "      image:",
-        *pair(relaycast_image, 8),
+        *pair(relaycast_postgres_image, 8),
         "relayauth:",
         "  image:",
         *pair("relayauth", 4),
@@ -285,9 +300,6 @@ def build_values_overlay(manifest: dict[str, object]) -> str:
         "  hoopdb:",
         "    cluster:",
         f"      imageName: {postgres_ref}",
-        "relayhistory:",
-        "  image:",
-        *pair("relayhistory", 4),
         "relay-control:",
         "  image:",
         *pair("relay-control", 4),

@@ -88,9 +88,40 @@ class NativeNoRelayauth(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         docs = [doc for doc in yaml.safe_load_all(result.stdout) if doc]
         deployments = {doc['metadata']['name']: doc for doc in docs if doc.get('kind') == 'Deployment'}
+        jobs = {doc['metadata']['name']: doc for doc in docs if doc.get('kind') == 'Job'}
+        pdbs = {doc['metadata']['name']: doc for doc in docs if doc.get('kind') == 'PodDisruptionBudget'}
         self.assertIn('relaycast', deployments)
         relaycast_pod = deployments['relaycast']['spec']['template']['spec']
+        self.assertEqual(
+            relaycast_pod['containers'][0]['image'],
+            'ghcr.io/agentworkforce/relaycast-actors-gateway@sha256:'
+            '8148aa62db3a387dbfc266a8baddcfce4adf90ae089c434d86eecf1aa24973e1',
+        )
+        deploy_job = next(job for name, job in jobs.items() if name.startswith('relaycast-actors-deploy-'))
+        self.assertEqual(
+            deploy_job['spec']['template']['spec']['containers'][0]['image'],
+            'ghcr.io/agentworkforce/relaycast-actors-deployer@sha256:'
+            '3a407c3138ff56ff14686031b40925ee2f843cfc690eaaf4469f5a518c57213d',
+        )
+        self.assertEqual(deployments['relaycast']['spec']['replicas'], 3)
         self.assertFalse(any('postgres' in volume['name'] for volume in relaycast_pod.get('volumes', [])))
+        self.assertEqual(pdbs['relaycast']['spec']['maxUnavailable'], 1)
+        self.assertEqual(
+            pdbs['relaycast']['spec']['selector']['matchLabels'],
+            {'app.kubernetes.io/name': 'relaycast', 'app.kubernetes.io/instance': 'proof'},
+        )
+        relaycast_spread = relaycast_pod['topologySpreadConstraints']
+        self.assertEqual(relaycast_spread, [{
+            'maxSkew': 1,
+            'topologyKey': 'topology.kubernetes.io/zone',
+            'whenUnsatisfiable': 'DoNotSchedule',
+            'labelSelector': {'matchLabels': {
+                'app.kubernetes.io/name': 'relaycast',
+                'app.kubernetes.io/instance': 'proof',
+            }},
+        }])
+        self.assertFalse(any(doc.get('kind') == 'PersistentVolumeClaim'
+                             and doc['metadata']['name'] == 'relaycast-data' for doc in docs))
         for name in ('relay-control', 'proof-ingest-edge'):
             self.assertIn(name, deployments)
             pod = deployments[name]['spec']['template']['spec']
@@ -109,6 +140,21 @@ class NativeNoRelayauth(unittest.TestCase):
             container = pod['containers'][0]
             self.assertIn({'name': 'postgres-ca', 'mountPath': '/etc/postgres-ca', 'readOnly': True}, container['volumeMounts'], name)
             self.assertIn({'name': 'SSL_CERT_FILE', 'value': '/etc/postgres-ca/ca.crt'}, container['env'], name)
+            self.assertEqual(container['resources'], {
+                'requests': {'cpu': '1', 'memory': '1Gi'},
+                'limits': {'memory': '2Gi'},
+            })
+            env = {item['name']: item.get('value') for item in container['env']}
+            self.assertEqual(env['DURABLE_ACTORS_SPARE_IDLE'], '3')
+            self.assertEqual(env['DURABLE_ACTORS_SPARE_MAX_STARTING'], '8')
+            self.assertEqual(env['DURABLE_ACTORS_HOST_MEMORY_MIB'], '1024')
+            self.assertEqual(pod['topologySpreadConstraints'], [{
+                'maxSkew': 1,
+                'topologyKey': 'topology.kubernetes.io/zone',
+                'whenUnsatisfiable': 'DoNotSchedule',
+                'labelSelector': {'matchLabels': {'app.kubernetes.io/name': name}},
+            }])
+        self.assertEqual(pdbs['proof-durable-actors']['spec']['maxUnavailable'], 0)
 
         # Standalone (eks-actors-install.sh, in-namespace Postgres) mounts no CA.
         result = subprocess.run([
@@ -132,6 +178,11 @@ class NativeNoRelayauth(unittest.TestCase):
         jobs = {doc['metadata']['name']: doc for doc in docs if doc.get('kind') == 'Job'}
         self.assertNotIn('relayauth', deployments)
         self.assertNotIn('relayhistory', deployments)
+        self.assertEqual(
+            deployments['relaycast']['spec']['template']['spec']['containers'][0]['image'],
+            'ghcr.io/agentworkforce/relaycast-self-host@sha256:'
+            'ec062ef901af15cf575b53a71d7eb09f2e6ab6e7c0d5be2da35339a275a5c6cc',
+        )
         for name in ('proof-read-api', 'proof-ingest-edge', 'proof-search-indexer'):
             self.assertIn(name, deployments)
 
@@ -283,7 +334,7 @@ class NativeNoRelayauth(unittest.TestCase):
         self.assertIn('agent-relay-read-api', services)
         self.assertEqual(
             deployments['relay-control']['spec']['template']['spec']['containers'][0]['image'],
-            'ghcr.io/agentworkforce/relay-control@sha256:0b9c5a077b49b31178cc669e7c1d532f39e64c840087ca41636bb84a6c62631c')
+            'ghcr.io/agentworkforce/relay-control@sha256:d1b6ca95fab240a9d41208d83de3b1f4245408b0765038762f1c419ee60f43bc')
         self.assertEqual(
             deployments['relay-webapp']['spec']['template']['spec']['containers'][0]['image'],
             'ghcr.io/agentworkforce/relay-webapp@sha256:da0cc80476eac734299c0c6ceb94e2bca7dae7913cce56a8ca8592cf086dd02e')
@@ -318,7 +369,7 @@ class NativeNoRelayauth(unittest.TestCase):
         webapp_deploy = next(doc for doc in docs if doc.get('kind') == 'Deployment' and doc['metadata']['name'] == 'relay-webapp')
         self.assertEqual(
             control_deploy['spec']['template']['spec']['containers'][0]['image'],
-            'ghcr.io/agentworkforce/relay-control@sha256:0b9c5a077b49b31178cc669e7c1d532f39e64c840087ca41636bb84a6c62631c')
+            'ghcr.io/agentworkforce/relay-control@sha256:d1b6ca95fab240a9d41208d83de3b1f4245408b0765038762f1c419ee60f43bc')
         self.assertEqual(
             webapp_deploy['spec']['template']['spec']['containers'][0]['image'],
             'ghcr.io/agentworkforce/relay-webapp@sha256:da0cc80476eac734299c0c6ceb94e2bca7dae7913cce56a8ca8592cf086dd02e')

@@ -1,4 +1,6 @@
-"""Exercise the real legacy up entry point before its first side effect."""
+"""The retired single-phase kind-up entry point refuses before any side effect."""
+import contextlib
+import io
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -6,38 +8,35 @@ import tempfile
 import unittest
 from unittest.mock import Mock, patch
 
-from native_network import refuse_legacy_bootstrap
-from stack import Stack
+import stack
+from stack import Stack, StackError
 
 
-class NativeBootstrapGuard(unittest.TestCase):
-    def test_all_native_selections_refuse_before_legacy_docker_or_ready_changes(self):
+class RetiredLegacyEntry(unittest.TestCase):
+    def test_native_and_disabled_selections_refuse_before_docker_or_ready_changes(self):
         for profile in ('core', 'addons'):
-            for slot in ('readApi', 'ingestEdge', 'nativeConsumer', 'nativeRouting'):
+            for slot in (None, 'readApi', 'ingestEdge', 'nativeConsumer', 'nativeRouting'):
                 with self.subTest(profile=profile, slot=slot), tempfile.TemporaryDirectory() as directory:
                     state=Path(directory);ready=state/'ready.json';ready.write_text('existing-receipt')
-                    values=state/'values.json';values.write_text(json.dumps({'sessions-pipeline':{slot:{'enabled':True}}}))
-                    stack=SimpleNamespace(profile=profile,state=state,values_args=Mock(return_value=['-f',values]),docker=Mock())
-                    with patch('stack.shutil.which',return_value='/owned/test-tool'):
-                        with self.assertRaisesRegex(ValueError,'legacy kind-up refused before'):
-                            Stack.up(stack)
-                    stack.docker.assert_not_called()
+                    values=state/'values.json';values.write_text(json.dumps({'sessions-pipeline':{slot:{'enabled':True}}} if slot else {}))
+                    local=SimpleNamespace(profile=profile,state=state,values_args=Mock(return_value=['-f',values]),
+                                          docker=Mock(),cmd=Mock(),k=Mock())
+                    with self.assertRaisesRegex(StackError,'retired with the standalone RelayHistory server'):
+                        Stack.up(local)
+                    for call in (local.docker,local.cmd,local.k,local.values_args):
+                        call.assert_not_called()
                     self.assertEqual(ready.read_text(),'existing-receipt')
 
-    def test_normal_disabled_selection_still_reaches_the_legacy_entry(self):
-        with tempfile.TemporaryDirectory() as directory:
-            values=Path(directory)/'values.json';values.write_text('{}')
-            stack=SimpleNamespace(values_args=Mock(return_value=['-f',values]),docker=Mock(side_effect=RuntimeError('legacy-entry-observed')))
-            with patch('stack.shutil.which',return_value='/owned/test-tool'):
-                with self.assertRaisesRegex(RuntimeError,'legacy-entry-observed'):
-                    Stack.up(stack)
-
-    def test_overlay_order_and_invalid_types_cannot_bypass_selection(self):
-        refuse_legacy_bootstrap([{'sessions-pipeline':{'readApi':{'enabled':True}}},{'sessions-pipeline':{'readApi':{'enabled':False}}}])
-        for invalid in ('true', 'false', 1, None):
-            with self.subTest(invalid=invalid):
-                with self.assertRaisesRegex(ValueError,'must be booleans'):
-                    refuse_legacy_bootstrap([{'sessions-pipeline':{'readApi':{'enabled':invalid}}}])
+    def test_retired_actions_refuse_before_creating_state(self):
+        for action in ('up', 'render', 'reconcile-names'):
+            with self.subTest(action=action), tempfile.TemporaryDirectory() as directory:
+                root=Path(directory);stderr=io.StringIO()
+                with patch.object(stack,'ROOT',root),patch('sys.argv',['stack.py',action,'--profile','core']),\
+                        patch.object(stack.Stack,'__init__',side_effect=AssertionError('state touched')),\
+                        contextlib.redirect_stderr(stderr):
+                    self.assertEqual(stack.main(),1)
+                self.assertIn('make local-up',stderr.getvalue())
+                self.assertEqual(list(root.iterdir()),[])
 
 
 if __name__=='__main__':unittest.main()

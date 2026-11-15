@@ -9,13 +9,17 @@ locals {
   kms_region      = split(":", var.sessions_kms_key_arn)[3]
   session_objects = "${var.sessions_bucket_arn}/${var.key_base}/*/v1/*"
   summary_objects = "${var.sessions_bucket_arn}/${var.key_base}/*/v1/*/summary/*"
+  # IAM * spans /, so session_objects also matches the upload inbox (unverified desktop uploads). The
+  # bucket's inbox wall denies it in the other account; this Deny keeps that true from this side too.
+  upload_inbox = "${var.sessions_bucket_arn}/${var.key_base}/.upload-inbox/*"
 }
 
 resource "aws_iam_role" "worker" {
   name                 = var.role_name
   path                 = var.role_path
   permissions_boundary = var.permissions_boundary_arn
-  # EKS Pod Identity tags the session with the cluster, namespace and
+  # EKS Pod Identity tags the session with the cluster (ARN, so a same-named
+  # cluster in another Region does not match), namespace and
   # ServiceAccount (the shape the cluster's EBS CSI role uses); only this
   # release's worker may assume the role.
   assume_role_policy = jsonencode({
@@ -26,6 +30,7 @@ resource "aws_iam_role" "worker" {
       Action    = ["sts:AssumeRole", "sts:TagSession"]
       Condition = {
         StringEquals = {
+          "aws:RequestTag/eks-cluster-arn"            = "arn:aws:eks:${var.region}:${var.account_id}:cluster/${var.eks_cluster_name}"
           "aws:RequestTag/eks-cluster-name"           = var.eks_cluster_name
           "aws:RequestTag/kubernetes-namespace"       = var.namespace
           "aws:RequestTag/kubernetes-service-account" = var.service_account
@@ -46,6 +51,7 @@ resource "aws_iam_role_policy" "worker" {
       { Sid = "ListForMissingKeySemantics", Effect = "Allow", Action = ["s3:ListBucket"], Resource = var.sessions_bucket_arn },
       { Sid = "ReadSessionObjects", Effect = "Allow", Action = ["s3:GetObject"], Resource = local.session_objects },
       { Sid = "WriteEncryptedSummaries", Effect = "Allow", Action = ["s3:PutObject"], Resource = local.summary_objects },
+      { Sid = "NoUploadInbox", Effect = "Deny", Action = ["s3:*"], Resource = local.upload_inbox },
       {
         Sid       = "SessionsKeyViaS3"
         Effect    = "Allow"

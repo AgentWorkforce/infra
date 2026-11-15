@@ -18,13 +18,13 @@ namespace, base domain, DNS authority, static IP, Cloud SQL databases and
 roles, GCS bucket, Artifact Registry repositories, image digests, Workload
 Identity service accounts, and existing Kubernetes Secret names.
 
-The required product scope is Relaycast, RelayAuth, Sessions Pipeline,
-RelayHistory, the headless control-plane API, Relay Dashboard, and Agent Relay
-Desktop using a custom deployment origin. Relayflows, Relayfile, billing,
+The required product scope is Relaycast, Sessions Pipeline (with the native
+History read API and ingest edge on the history host), the headless
+control-plane API, Relay Dashboard, and Agent Relay Desktop using a custom
+deployment origin. RelayAuth is not needed. Relayflows, Relayfile, billing,
 provider integrations, and hosted fleet are out of scope.
 
-Require a dedicated RelayHistory database and separate runtime/migration
-credentials. Never print secret values. Return the proposed resource inventory,
+Require separate runtime and migration credentials for every database. Never print secret values. Return the proposed resource inventory,
 customer values overrides, risks, and exact non-mutating validation commands.
 Stop before apply and ask for explicit approval.
 ```
@@ -72,7 +72,7 @@ Use the setting-up-self-hosted-agent-relay-gcp skill.
 Upload a uniquely marked real Desktop session through
 /v1/delivery/batches. Retry the identical batch and require the same durable
 receipt with one projection. Verify Dashboard list, search, and replay,
-cross-workspace denial, persistence after a RelayHistory restart, and public
+cross-workspace denial, persistence after a read API and ingest edge restart, and public
 TLS health.
 
 Before any Helm upgrade, run the pre-upgrade recovery gate from

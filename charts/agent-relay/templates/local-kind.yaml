@@ -1,7 +1,7 @@
 {{- $local := .Values.localKind | default dict -}}
 {{- if $local.enabled -}}
 {{- if ne (toString $local.allowLocalOnly) "true" }}{{ fail "localKind.enabled requires localKind.allowLocalOnly=true; this profile denies namespace-wide external egress and is for local kind only" }}{{ end -}}
-{{- range $name := list "relay-control" "relay-webapp" "relayhistory" "relaycast" "relayauth" "relayflows" "relayfile" -}}
+{{- range $name := list "relay-control" "relay-webapp" "relaycast" "relayauth" "relayflows" "relayfile" -}}
 {{- if dig "networkPolicy" "enabled" false (index $.Values $name | default dict) }}{{ fail (printf "localKind requires %s.networkPolicy.enabled=false: child egress policies can add external allows" $name) }}{{ end -}}
 {{- end -}}
 {{- $pipeline := index .Values "sessions-pipeline" | default dict -}}
@@ -14,14 +14,14 @@
 {{- if not (has $native (list "" "control" "serve")) }}{{ fail "localKind.nativePhase must be empty, control or serve" }}{{ end -}}
 {{- if $native -}}
 {{- $api := index .Values "relay-control" -}}
-{{- if or (ne $local.profile "core") .Values.components.durableActors .Values.components.relayhistory .Values.components.relayauth .Values.components.relayflows .Values.components.relayfile .Values.components.relayChief (not .Values.components.control) (not .Values.components.relaycast) (ne ($api.services.relayhistoryBackend | default "legacy") "native") }}{{ fail "complete native core requires native Control and Cast, with legacy History/RelayAuth and optional workloads off" }}{{ end -}}
+{{- if or (ne $local.profile "core") .Values.components.durableActors .Values.components.relayauth .Values.components.relayflows .Values.components.relayfile .Values.components.relayChief (not .Values.components.control) (not .Values.components.relaycast) (ne ($api.services.relayhistoryBackend | default "legacy") "native") }}{{ fail "complete native core requires native Control and Cast, with RelayAuth and optional workloads off" }}{{ end -}}
 {{- if eq $native "control" -}}
 {{- if or .Values.components.webapp .Values.components.sessionsPipeline }}{{ fail "native control bootstrap must not start the app or pipeline before the real Default workspace exists" }}{{ end -}}
 {{- else -}}
 {{- if or (not .Values.components.webapp) (not .Values.components.sessionsPipeline) (not (dig "nativeRouting" "enabled" false $pipeline)) (ne (dig "sessionReadApi" "auth" "mode" "" $pipeline) "self_issued") }}{{ fail "native serve requires app, pipeline, routing and the independent reader" }}{{ end -}}
 {{- end -}}
 {{- else -}}
-{{- if or .Values.components.durableActors (not .Values.components.control) (not .Values.components.webapp) (not .Values.components.sessionsPipeline) (not .Values.components.relayhistory) (not .Values.components.relaycast) }}{{ fail "local kind profiles require control, app, cast, history and sessions, without durable actors" }}{{ end -}}
+{{ fail "localKind requires localKind.nativePhase=control or serve: the single-phase kind profile ran the removed standalone RelayHistory server. Use make local-up (native core) or the native core installer (docs/native-kind-core-lifecycle.md)" }}
 {{- end -}}
 {{- $addons := eq $local.profile "addons" -}}
 {{- if or (ne $addons .Values.components.relayflows) (ne $addons .Values.components.relayfile) }}{{ fail "localKind.profile and components.relayflows/relayfile must agree" }}{{ end -}}

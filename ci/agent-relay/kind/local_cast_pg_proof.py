@@ -18,7 +18,8 @@ async function request(method,path,token,body){
  const response=await fetch(base+path,{method,headers:{authorization:'Bearer '+token,'content-type':'application/json'},body:body?JSON.stringify(body):undefined,signal:AbortSignal.timeout(10000)});
  if(!response.ok)throw Error('request_failed');return await response.json();
 }
-if(!process.env.RELAYCAST_DATABASE_URL_FILE||process.env.RELAYCAST_DB_PATH)throw Error('postgres_required');
+// A database URL selects Postgres even when the image's SQLite fallback is set.
+if(!process.env.RELAYCAST_DATABASE_URL_FILE)throw Error('postgres_required');
 const internal=fs.readFileSync('/run/secrets/relaycast/internal-secret','utf8').trim(),suffix=randomUUID().slice(0,8);
 const workspace=await request('POST','/internal/workspaces',internal,{name:'pg-proof-'+suffix});
 try{
@@ -66,7 +67,7 @@ def prove_owned(stack):
         "go-template={{if .data.token}}ready{{end}}").stdout.strip()
     if ready != "ready":
         raise StackError("Postgres companion collector credential is missing; run local-up before retrying")
-    from local_stack import AA_VALUES, CAST_PROOF_DEPLOYMENT, reference, image, pgurl
+    from local_stack import PROFILE_VALUES, CAST_PROOF_DEPLOYMENT, reference, image, pgurl
     c = json.loads((stack.state / "credentials.json").read_text())
     if not all(c.get(key) for key in ("relaycast_owner", "relaycast_runtime")):
         raise StackError("Postgres companion credentials are unavailable; no existing roles are adopted")
@@ -77,7 +78,7 @@ def prove_owned(stack):
     run_id = secrets.token_hex(16)
     release = "cast-pg-proof-" + run_id[:8]
     secret_name = release + "-credentials"
-    image_ref = reference(AA_VALUES["relaycast"]["image"])
+    image_ref = reference(PROFILE_VALUES["relaycast"]["image"])
     started = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
     directory = stack.state / "proofs"
     directory.mkdir(mode=0o700, exist_ok=True)

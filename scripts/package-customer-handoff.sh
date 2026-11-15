@@ -129,8 +129,6 @@ REQUIRED_FILES = (
     "charts/relayauth/values.yaml",
     "charts/relaycast/Chart.yaml",
     "charts/relaycast/values.yaml",
-    "charts/relayhistory/Chart.yaml",
-    "charts/relayhistory/values.yaml",
     "deps/PINS.md",
     "docs/conformance/README.md",
     "docs/conformance/adapter-contract.md",

@@ -1,0 +1,23 @@
+{
+  "name": "@agentworkforce/slack-relay",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Slack app for Agent Relay: a deterministic router + ledger, an orchestrator, and per-thread agents on the relay.",
+  "type": "module",
+  "engines": { "node": ">=24" },
+  "scripts": {
+    "start": "node src/main.ts",
+    "test": "node --test 'test/**/*.test.ts'",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@anthropic-ai/claude-code": "2.1.322",
+    "@anthropic-ai/sdk": "1.6.0",
+    "@relaycast/mcp": "12.8.0",
+    "@relaycast/sdk": "12.8.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "typescript": "5.9.3"
+  }
+}

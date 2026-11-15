@@ -70,7 +70,7 @@ class DownloadTests(unittest.TestCase):
             verify_download(self.directory)
 
     def test_another_profile_or_architecture_is_not_accepted(self):
-        self.dmg.rename(self.directory / "Desktop-m5lxqm2osk-macOS-arm64.dmg")
+        self.dmg.rename(self.directory / "Desktop-z4h8n2-macOS-arm64.dmg")
         with self.assertRaisesRegex(ValueError, "exactly one q7m2k9"):
             verify_download(self.directory)
 
