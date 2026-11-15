@@ -1,0 +1,18 @@
+image:
+  digest: sha256:c66696c51384707c2429a45405c9b2d9c4a3bf729dc5d93b2a8bd96b760e3719
+policy:
+  enrollmentKeys:
+    - { id: slack-bridge, gid: 22, sha256: "1111111111111111111111111111111111111111111111111111111111111111", namePrefix: "slack-" }
+  controlPrincipals:
+    - { match: { orgIds: ["org_example"], roles: [owner, admin] }, gid: 22 }
+    - { match: { orgIds: ["org_example"] }, gid: 11 }
+  sessionAggregates: { gids: [22] }
+proxy:
+  sessionsUrl: http://session-read-api:8080
+  sessionsCorsOrigins: [https://app.example.com, https://history.example.com]
+control:
+  introspectUrl: http://relay-control:8080/internal/v1/auth/introspect
+  sessionIngestAudience: https://history.example.com
+secrets:
+  relaycontrolIntrospectSecret: { name: relaygate-control, key: introspect-secret }
+  sessionsInternalSecret: { name: relaygate-sessions-internal, key: secret }

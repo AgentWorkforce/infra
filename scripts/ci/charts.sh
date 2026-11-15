@@ -943,29 +943,33 @@ for chart in "${charts[@]}"; do
         expect_render_failure "$chart" "$v" "split upstream without sessionsUrl" "need proxy.sessionsUrl" --set proxy.sessionsUrl=
         expect_render_failure "$chart" "$v" "sessionsHosts without split upstreams" "proxy.sessionsHosts needs proxy.sessionsUploadUrl and proxy.sessionsReadUrl" --set proxy.sessionsReadUrl=
         expect_render_failure "$chart" "$v" "sessionsHosts loop" "requests would loop back to relaygate" --set proxy.sessionsReadUrl=https://History.example.com:443
-        # Gate-only (global.relaygate.gateOnly.enabled): the Control-principal
-        # env and SESSIONS_INTERNAL_SECRET, and a refusal to render with a
-        # proxy or the mapping missing.
-        cp=(--set controlPrincipals.introspectUrl=http://relay-control/internal/v1/auth/introspect --set controlPrincipals.ingestAudience=https://history.example.com --set secrets.relaycontrolIntrospectSecret.name=control-introspect)
-        gate=(-f charts/relaygate/ci/proxy-values.yaml --set proxy.sessionsUploadUrl=http://session-ingest-api:8080 --set proxy.sessionsReadUrl=http://session-read-api:8080 --set 'proxy.sessionsHosts={history.example.com}' "${cp[@]}" --set global.relaygate.gateOnly.enabled=true)
-        out=$(render "$chart" "$v" "${gate[@]}") || err "$chart: gate-only did not render"
-        [ "$(env_value RELAYCONTROL_INTROSPECT_URL)" = http://relay-control/internal/v1/auth/introspect ] || err "$chart: RELAYCONTROL_INTROSPECT_URL not rendered"
+        v=charts/relaygate/ci/control-values.yaml
+        out=$(render "$chart" "$v")
+        [ "$(env_value RELAYCONTROL_INTROSPECT_URL)" = http://relay-control:8080/internal/v1/auth/introspect ] || err "$chart: RELAYCONTROL_INTROSPECT_URL not rendered"
         [ "$(env_value SESSION_INGEST_AUDIENCE)" = https://history.example.com ] || err "$chart: SESSION_INGEST_AUDIENCE not rendered"
-        grep -A1 -F -- '- name: RELAYCONTROL_INTROSPECT_SECRET' <<<"$out" | grep -Fq 'name: control-introspect' || err "$chart: RELAYCONTROL_INTROSPECT_SECRET not from the named Secret"
-        ! grep -q 'SESSIONS_INTERNAL_SECRET' <<<"$out" || err "$chart: SESSIONS_INTERNAL_SECRET must render only when named"
-        out=$(render "$chart" "$v" --set 'proxy.sessionsCorsOrigins={https://app.example.com,https://admin.example.com}')
-        [ "$(env_value SESSIONS_CORS_ORIGINS)" = https://app.example.com,https://admin.example.com ] || err "$chart: SESSIONS_CORS_ORIGINS not comma-joined"
-        expect_render_failure "$chart" "$v" "CORS origin with a path" "must be exact origins" --set 'proxy.sessionsCorsOrigins={https://app.example.com/}'
-        expect_render_failure "$chart" "$v" "CORS origins without Sessions" "proxy.sessionsCorsOrigins needs proxy.sessionsUrl" --set proxy.sessionsUrl= --set proxy.sessionsUploadUrl= --set proxy.sessionsReadUrl= --set proxy.sessionsHosts=null --set 'proxy.sessionsCorsOrigins={https://app.example.com}' --set secrets.sessionsToken.name=
-        out=$(render "$chart" "$v" "${gate[@]}" --set secrets.sessionsInternalSecret.name=reader-internal)
-        grep -A1 -F -- '- name: SESSIONS_INTERNAL_SECRET' <<<"$out" | grep -Fq 'name: reader-internal, key: READ_API_INTERNAL_SECRET' || err "$chart: SESSIONS_INTERNAL_SECRET not from the named Secret"
-        out=$(render "$chart" "$v" "${cp[@]}")
-        [ "$(env_value SESSION_INGEST_AUDIENCE)" = https://history.example.com ] || err "$chart: controlPrincipals must render without gate-only"
+        [ "$(env_value SESSIONS_CORS_ORIGINS)" = https://app.example.com,https://history.example.com ] || err "$chart: SESSIONS_CORS_ORIGINS not comma-joined"
+        grep -A1 -F -- '- name: RELAYCONTROL_INTROSPECT_SECRET' <<<"$out" | grep -Fq 'name: relaygate-control' || err "$chart: introspect secret not rendered"
+        grep -A1 -F -- '- name: SESSIONS_INTERNAL_SECRET' <<<"$out" | grep -Fq 'name: relaygate-sessions-internal' || err "$chart: sessions internal secret not rendered"
+        pol=$(yq 'select(.kind == "ConfigMap") | .data["policy.json"]' <<<"$out" | sed '/^---$/d')
+        [ "$(jq -c '[.controlPrincipals[] | [.match.orgIds, .match.roles, .gid]]' <<<"$pol")" = '[[["org_example"],["owner","admin"],22],[["org_example"],null,11]]' ] \
+          || err "$chart: policy.controlPrincipals rules not rendered as given"
+        [ "$(jq -c '.sessionAggregates.gids' <<<"$pol")" = '[22]' ] || err "$chart: policy.sessionAggregates.gids not rendered as given"
+        out=$(render "$chart" charts/relaygate/ci/proxy-values.yaml)
+        ! grep -Eq 'name: (RELAYCONTROL_INTROSPECT_URL|SESSION_INGEST_AUDIENCE|SESSIONS_CORS_ORIGINS|SESSIONS_INTERNAL_SECRET)$' <<<"$out" || err "$chart: unset Control settings rendered"
+        [ "$(yq 'select(.kind == "ConfigMap") | .data["policy.json"] | from_json | .controlPrincipals | length' <<<"$out" | sed '/^---$/d;/^$/d')" = 0 ] \
+          || err "$chart: default policy must not grant Control principals"
+        expect_render_failure "$chart" "$v" "Control principals without sessionsUrl" "need proxy.sessionsUrl" --set proxy.sessionsUrl=
+        expect_render_failure "$chart" "$v" "introspect without audience" "control.introspectUrl needs control.sessionIngestAudience" --set control.sessionIngestAudience=
+        expect_render_failure "$chart" "$v" "audience without introspectUrl" "need control.introspectUrl" --set control.introspectUrl= --set secrets.relaycontrolIntrospectSecret.name=
+        expect_render_failure "$chart" "$v" "introspect secret without introspectUrl" "need control.introspectUrl" --set control.introspectUrl= --set control.sessionIngestAudience=
+        expect_render_failure "$chart" "$v" "introspect without secret" "control.introspectUrl needs control.sessionIngestAudience and secrets.relaycontrolIntrospectSecret.name" --set secrets.relaycontrolIntrospectSecret.name=
+        # Gate-only (global.relaygate.gateOnly.enabled): refuses to render with
+        # a proxy, sessionsHosts or the Control mapping missing, or a renamed Service.
+        gate=(-f charts/relaygate/ci/proxy-values.yaml --set proxy.sessionsUploadUrl=http://session-ingest-api:8080 --set proxy.sessionsReadUrl=http://session-read-api:8080 --set 'proxy.sessionsHosts={history.example.com}' --set control.introspectUrl=http://relay-control:8080/internal/v1/auth/introspect --set control.sessionIngestAudience=https://history.example.com --set secrets.relaycontrolIntrospectSecret.name=control-introspect --set global.relaygate.gateOnly.enabled=true)
+        render "$chart" "$v" "${gate[@]}" >/dev/null || err "$chart: gate-only did not render"
         expect_render_failure "$chart" "$v" "gate-only without the Relaycast proxy" "global.relaygate.gateOnly.enabled needs proxy.relaycastUrl" "${gate[@]}" --set proxy.relaycastUrl=
         expect_render_failure "$chart" "$v" "gate-only without sessionsHosts" "global.relaygate.gateOnly.enabled needs proxy.relaycastUrl" "${gate[@]}" --set proxy.sessionsHosts=null
-        expect_render_failure "$chart" "$v" "gate-only without controlPrincipals" "needs controlPrincipals.introspectUrl" "${gate[@]}" --set controlPrincipals.introspectUrl= --set controlPrincipals.ingestAudience= --set secrets.relaycontrolIntrospectSecret.name=
-        expect_render_failure "$chart" "$v" "half controlPrincipals" "are set together" "${cp[@]}" --set secrets.relaycontrolIntrospectSecret.name=
-        expect_render_failure "$chart" "$v" "controlPrincipals bad path" "plus /internal/v1/auth/introspect" "${cp[@]}" --set controlPrincipals.introspectUrl=http://relay-control
+        expect_render_failure "$chart" "$v" "gate-only without the Control mapping" "global.relaygate.gateOnly.enabled needs control.introspectUrl" "${gate[@]}" --set control.introspectUrl= --set control.sessionIngestAudience= --set secrets.relaycontrolIntrospectSecret.name=
         expect_render_failure "$chart" "$v" "gate-only with a renamed Service" "set global.relaygate.gateOnly.serviceName" "${gate[@]}" --set fullnameOverride=gate
         render "$chart" "$v" "${gate[@]}" --set fullnameOverride=gate --set global.relaygate.gateOnly.serviceName=gate >/dev/null || err "$chart: gate-only with a matching serviceName must render"
         ;;
@@ -1038,11 +1042,12 @@ for chart in "${charts[@]}"; do
         expect_render_failure "$chart" "$g" "gate-only without the history host in sessionsHosts" "sessionsHosts must include history.gcp-proof.agentrelay.com" --set 'relaygate.proxy.sessionsHosts={other.example.com}'
         expect_render_failure "$chart" "$g" "gate-only without sessionsHosts" "global.relaygate.gateOnly.enabled needs proxy.relaycastUrl" --set relaygate.proxy.sessionsHosts=null
         expect_render_failure "$chart" "$g" "gate-only without the Relaycast proxy" "global.relaygate.gateOnly.enabled needs proxy.relaycastUrl" --set relaygate.proxy.relaycastUrl=
-        expect_render_failure "$chart" "$g" "gate-only introspecting elsewhere" "relaygate.controlPrincipals.introspectUrl=http://relay-control.ci.svc.cluster.local/internal/v1/auth/introspect" --set relaygate.controlPrincipals.introspectUrl=http://other.ci.svc.cluster.local/internal/v1/auth/introspect
+        expect_render_failure "$chart" "$g" "gate-only introspecting elsewhere" "relaygate.control.introspectUrl=http://relay-control.ci.svc.cluster.local/internal/v1/auth/introspect" --set relaygate.control.introspectUrl=http://other.ci.svc.cluster.local/internal/v1/auth/introspect
         expect_render_failure "$chart" "$g" "gate-only CORS drift" "relaygate.proxy.sessionsCorsOrigins must equal" --set 'relaygate.proxy.sessionsCorsOrigins={https://other.agentrelay.com}'
         expect_render_failure "$chart" "$g" "gate-only without CORS origins" "relaygate.proxy.sessionsCorsOrigins must equal" --set relaygate.proxy.sessionsCorsOrigins=null
         expect_render_failure "$chart" "$g" "gate-only another reader internal secret" "relaygate.secrets.sessionsInternalSecret must be the read API's internal secret" --set relaygate.secrets.sessionsInternalSecret.key=other
-        expect_render_failure "$chart" "$g" "gate-only wrong ingest audience" "controlPrincipals.ingestAudience must be the ingest origin" --set relaygate.controlPrincipals.ingestAudience=https://other.agentrelay.com
+        expect_render_failure "$chart" "$g" "gate-only without controlPrincipals rules" "requires relaygate.policy.controlPrincipals" --set relaygate.policy.controlPrincipals=null
+        expect_render_failure "$chart" "$g" "gate-only wrong ingest audience" "control.sessionIngestAudience must be the ingest origin" --set relaygate.control.sessionIngestAudience=https://other.agentrelay.com
         expect_render_failure "$chart" "$g" "gate-only another introspection Secret" "must be the ingest edge's Control introspection secret" --set relaygate.secrets.relaycontrolIntrospectSecret.name=other
         expect_render_failure "$chart" "$g" "gate-only audience Control does not accept" "introspection.audiences must include" --set 'relay-control.introspection.audiences={https://api.gcp-proof.agentrelay.com}'
         expect_render_failure "$chart" "$g" "gate-only without a Relaycast policy" "relaycast: global.relaygate.gateOnly.enabled requires networkPolicy.enabled=true" --set relaycast.networkPolicy.enabled=false

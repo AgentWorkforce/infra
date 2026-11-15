@@ -131,6 +131,38 @@ build 2: Slack-app agents register into the pit, create and join their channel,
 receive events over the proxied node WebSocket, and reply in threads with their
 `data` intact.
 
+## Control principals: desktop and dashboard on Sessions
+
+Some Sessions callers hold only relay-control credentials: the desktop app
+uploads with its device token and the dashboard reads with Control-issued read
+tokens. With `control.introspectUrl` (relaygate `sha256:c66696c5` or later) the
+gate accepts them on Sessions routes and maps each user to a group by policy:
+
+```yaml
+# relaygate-values.yaml, with the Sessions proxy on
+control:
+  introspectUrl: http://relay-control:8080/internal/v1/auth/introspect
+  sessionIngestAudience: https://history.example.com   # the ingest origin relay-control accepts
+proxy:
+  sessionsCorsOrigins: [https://app.example.com]       # match the read API's list
+secrets:
+  relaycontrolIntrospectSecret: { name: relaygate-control, key: introspect-secret }
+  sessionsInternalSecret: { name: relaygate-sessions-internal, key: secret }   # optional: checks mint calls
+policy:
+  controlPrincipals:            # first matching rule wins; no match is refused
+    - { match: { orgIds: ["<org>"], roles: [owner, admin] }, gid: 33 }
+    - { match: { orgIds: ["<org>"] }, gid: 11 }
+  sessionAggregates: { gids: [33] }   # who may read cross-session aggregates
+```
+
+Device tokens are introspected with relay-control (answers reused for up to
+15 s). Read tokens can't be introspected, so point relay-control's
+`SESSION_READ_API_URL` at `http://<release>-relaygate:8080/sessions`: relaygate
+forwards the mint calls unchanged and remembers which user each token belongs
+to. Each Control user acts as `ctl:<userId>` (the `ctl:` prefix is reserved) and
+their own credential still reaches Sessions. Uploads need `rth:sync`, reads
+`rth:read`. See relaygate `docs/contract.md`.
+
 ## Gate-only (one switch)
 
 The steps above narrow each policy by hand. In the agent-relay umbrella,
@@ -151,7 +183,7 @@ at `cast.<domain>`. Gate-only closes both.
   cluster that ignores NetworkPolicy the routing changes but nothing stops a pod
   calling Relaycast or Sessions directly.
 - **relaygate with Control-principal mapping ("PR B", relaygate#21, main
-  be42c916 or later).** Once
+  be42c916 or later, image `sha256:c66696c5`).** Once
   gate-only is on, people using the dashboard and the desktop app reach
   Sessions through relaygate too, with Control-issued tokens (`sh_at_` upload
   tokens, `rth_` read tokens), not `rg_` tokens, and Control's own mint,
@@ -161,8 +193,9 @@ at `cast.<domain>`. Gate-only closes both.
   dashboard session reads, desktop uploads and Control's session reads (MCP
   included).** The chart renders the settings; it cannot tell whether the
   image supports them.
-- **Policy rules for Control callers.** relaygate refuses every
-  Control-authenticated caller that no rule maps, so the policy needs:
+- **Policy rules for Control callers** ([Control principals](#control-principals-desktop-and-dashboard-on-sessions)).
+  relaygate refuses every Control-authenticated caller that no rule maps
+  (render fails with gate-only and no rules), so the policy needs:
   - `controlPrincipals`: rules matching on `orgIds`, `roles`, `emails` or
     `userIds`, each with a `gid`; the first match wins. The dashboard's read
     mint may not carry a role yet, so until it does, list admins by `emails`
@@ -198,9 +231,12 @@ relaygate:
     sessionsReadUrl: http://<read API Service>        # sessions-pipeline sessionReadApi (port 80)
     sessionsHosts: [history.example.com]              # the history host, served at the root
     sessionsCorsOrigins: [https://app.example.com]    # = sessions-pipeline.sessionReadApi.cors.allowedOrigins (the dashboard origin)
-  controlPrincipals:
+  control:
     introspectUrl: http://relay-control.<ns>.svc.cluster.local/internal/v1/auth/introspect
-    ingestAudience: https://history.example.com       # the public history origin (= ingestEdge.origin); Control already accepts it
+    sessionIngestAudience: https://history.example.com  # the public history origin (= ingestEdge.origin); Control already accepts it
+  policy:
+    controlPrincipals: [...]          # required with gate-only; see above
+    sessionAggregates: { gids: [<admin gid>] }
   secrets:
     relaycastWorkspaceKey: { name: relaygate-relaycast, key: workspace-key }
     relaygateSecret: { name: relaygate-seal, key: secret }
@@ -217,8 +253,8 @@ relaygate:
 proof shape. Rendering fails when gate-only is on and: relaygate, Relaycast or
 the Sessions reader and ingest edge are off; a proxy is unset; an upstream is
 not the in-cluster Service (a public host would loop back through the gate);
-`sessionsHosts` misses the history host; `controlPrincipals` is unset, does not
-point at the Control Service, uses another audience than the ingest origin, or
+`sessionsHosts` misses the history host; `policy.controlPrincipals` is empty;
+`control` is unset, does not point at the Control Service, uses another audience than the ingest origin, or
 another Secret than the ingest edge's; `sessionsInternalSecret` is set to
 another Secret than the reader's; `sessionsCorsOrigins` differs from the
 reader's `cors.allowedOrigins` (the dashboard reads Sessions through relaygate,

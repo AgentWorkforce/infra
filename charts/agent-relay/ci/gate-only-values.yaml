@@ -9,8 +9,22 @@ global:
       enabled: true
 relaygate:
   image:
-    digest: sha256:8c2adac447dcde224615e43f64ceb226dd6b3467bd80fe8ab99fde0a673284a7
+    digest: sha256:c66696c51384707c2429a45405c9b2d9c4a3bf729dc5d93b2a8bd96b760e3719
   policy:
+    # Control callers (dashboard, desktop): admins by email until the read
+    # mint carries a role; gid 33 reads every session and the aggregates.
+    groups:
+      - { gid: 11, name: local }
+      - { gid: 22, name: pit }
+      - { gid: 33, name: admins }
+    controlPrincipals:
+      - { match: { orgIds: [org_gcp_proof], emails: [platform-admin@example.com] }, gid: 33 }
+      - { match: { orgIds: [org_gcp_proof] }, gid: 11 }
+    sessionAggregates: { gids: [33] }
+    sessionDefaults:
+      - { gid: 11, mode: "660", acl: [{ gid: 22, perm: r }, { gid: 33, perm: r }] }
+      - { gid: 22, mode: "660", acl: [{ gid: 33, perm: r }] }
+      - { gid: 33, mode: "660" }
     enrollmentKeys:
       - { id: local, gid: 11, sha256: "2222222222222222222222222222222222222222222222222222222222222222", namePrefix: "local-" }
       - { id: pit, gid: 22, sha256: "1111111111111111111111111111111111111111111111111111111111111111", namePrefix: "pit-" }
@@ -23,9 +37,9 @@ relaygate:
     sessionsHosts: [history.gcp-proof.agentrelay.com]
     # = sessions-pipeline.sessionReadApi.cors.allowedOrigins (the dashboard origin).
     sessionsCorsOrigins: [https://gcp-proof.agentrelay.com]
-  controlPrincipals:
+  control:
     introspectUrl: http://relay-control.ci.svc.cluster.local/internal/v1/auth/introspect
-    ingestAudience: https://history.gcp-proof.agentrelay.com
+    sessionIngestAudience: https://history.gcp-proof.agentrelay.com
   secrets:
     relaycastWorkspaceKey: { name: relaygate-relaycast, key: workspace-key }
     relaygateSecret: { name: relaygate-seal, key: secret }

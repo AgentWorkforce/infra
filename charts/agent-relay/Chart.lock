@@ -34,6 +34,6 @@ dependencies:
   version: 0.3.3
 - name: relaygate
   repository: file://../relaygate
-  version: 0.1.3
-digest: sha256:0cad117fe6228e424f03f6c66093ab31d4967ed82fc89e90307dbce80c03758e
-generated: "2026-11-15T13:41:31.433543-08:00"
+  version: 0.1.4
+digest: sha256:6cd43b9a35ee7903f1aedb798465635d49668bdd73ca267e24f0aa2337ae4596
+generated: "2026-11-15T14:33:51.893257-08:00"

@@ -29,7 +29,7 @@ export default defineLayeredAgent({
   // a deliberate change of this id: a full deploy, dispatched with allow_restart.
   ami: "ami-08cf17e3856f70154",
   rootVolumeGiB: 150,
-  laneFiles: ["lead-prompt.md", "setup-lane.sh", "load-secrets-lane.sh"],
+  laneFiles: ["lead-prompt.md", "setup-lane.sh", "load-secrets-lane.sh", "broker.ref"],
   aptPackages: ["shellcheck", "yamllint"],
   // The host assumes layered-agent-admin-infra-ops-<stage> (AdministratorAccess,
   // made by the layered-agents platform deploy); setup-lane.sh makes it the
