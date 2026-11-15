@@ -75,9 +75,11 @@ fi
 #    (0700) holds the state, the audit log, file deliveries and the only AWS
 #    profile for the broker role, so the agent user can't edit the
 #    allowlist, claims or audit log;
-#  - the agent user may run exactly /usr/local/libexec/aws-cred-broker as
-#    credbroker (sudoers) and nothing else; /usr/local/bin/aws-cred-broker
-#    wraps that.
+#  - the agent user may run /usr/local/libexec/aws-cred-broker as credbroker
+#    (sudoers) only with the subcommands request, refuse, sweep and
+#    verify-audit, and nothing else; /usr/local/bin/aws-cred-broker wraps
+#    that. Not approve: the lead would be passing the approver's identity
+#    itself, so approvals stay off until the Relay listener verifies senders.
 BROKER_HOME=/var/lib/aws-cred-broker
 broker_ref=$(tr -d '[:space:]' < /opt/agent-host/broker.ref 2>/dev/null || true)
 if [ -n "${CRED_BROKER_ROLE_ARN:-}" ] && printf '%s' "$broker_ref" | grep -qxE '[0-9a-f]{40}'; then
@@ -94,10 +96,13 @@ if [ -n "${CRED_BROKER_ROLE_ARN:-}" ] && printf '%s' "$broker_ref" | grep -qxE '
     [ "$(git -C "$tmp/repo" rev-parse FETCH_HEAD)" = "$ref" ] || { rm -rf "$tmp"; return 1; }
     mkdir -p "$tmp/out"
     git -C "$tmp/repo" archive FETCH_HEAD agent/broker/src agent/broker/allowlist.json | tar -x -C "$tmp/out" || { rm -rf "$tmp"; return 1; }
-    install -d -m 0755 -o root -g root /opt/aws-cred-broker "$dest.new" "$dest.new/src" \
-      && install -m 0644 -o root -g root "$tmp/out/agent/broker/allowlist.json" "$dest.new/allowlist.json" \
-      && install -m 0644 -o root -g root "$tmp/out/agent/broker/src/"*.ts "$dest.new/src/" \
-      && rm -rf "$dest" && mv -T "$dest.new" "$dest" || { rm -rf "$tmp" "$dest.new"; return 1; }
+    if ! { install -d -m 0755 -o root -g root /opt/aws-cred-broker "$dest.new" "$dest.new/src" &&
+      install -m 0644 -o root -g root "$tmp/out/agent/broker/allowlist.json" "$dest.new/allowlist.json" &&
+      install -m 0644 -o root -g root "$tmp/out/agent/broker/src/"*.ts "$dest.new/src/" &&
+      rm -rf "$dest" && mv -T "$dest.new" "$dest"; }; then
+      rm -rf "$tmp" "$dest.new"
+      return 1
+    fi
     rm -rf "$tmp"
   }
   if install_broker "$broker_ref"; then
@@ -116,7 +121,8 @@ if [ -n "${CRED_BROKER_ROLE_ARN:-}" ] && printf '%s' "$broker_ref" | grep -qxE '
   install -m 0755 -o root -g root /usr/local/libexec/aws-cred-broker.new /usr/local/libexec/aws-cred-broker && rm -f /usr/local/libexec/aws-cred-broker.new
   printf '#!/bin/bash\nexec sudo -n -u credbroker /usr/local/libexec/aws-cred-broker "$@"\n' > /usr/local/bin/aws-cred-broker.new
   install -m 0755 -o root -g root /usr/local/bin/aws-cred-broker.new /usr/local/bin/aws-cred-broker && rm -f /usr/local/bin/aws-cred-broker.new
-  printf 'agent ALL=(credbroker) NOPASSWD: /usr/local/libexec/aws-cred-broker\n' > /etc/sudoers.d/aws-cred-broker.new
+  b=/usr/local/libexec/aws-cred-broker
+  printf 'agent ALL=(credbroker) NOPASSWD: %s request *, %s refuse *, %s sweep, %s verify-audit\n' "$b" "$b" "$b" "$b" > /etc/sudoers.d/aws-cred-broker.new
   if visudo -cf /etc/sudoers.d/aws-cred-broker.new >/dev/null; then
     install -m 0440 -o root -g root /etc/sudoers.d/aws-cred-broker.new /etc/sudoers.d/aws-cred-broker
   fi
