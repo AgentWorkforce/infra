@@ -93,23 +93,29 @@ kubectl get storageclass
 - the `addresses` line lists a Private Services Access range on your cluster's
   VPC;
 - one StorageClass is marked `(default)`;
-- the second `describe` line prints `ADVANCED_DATAPATH` (Dataplane V2) or ends
-  in `True` (the NetworkPolicy add-on). Either one makes the cluster enforce
-  NetworkPolicies.
+- the second `describe` line prints `ADVANCED_DATAPATH` (Dataplane V2), or it
+  ends in `True` (the NetworkPolicy add-on) and
+  `kubectl -n kube-system get daemonset calico-node` shows as many ready pods
+  as the cluster has nodes. The add-on enforces policies only on nodes
+  recreated after it was turned on.
 
 **Network policies must be enforced.** The chart's NetworkPolicies, and
 relaygate's rule that only the gate may reach Relaycast and Sessions, have no
 effect on a cluster that doesn't enforce them: GKE accepts the objects and
 ignores them. Dataplane V2 can only be chosen when a cluster is created. On an
-existing cluster without it, turn on the add-on, then enforcement:
+existing cluster without it, turn on the add-on, then enforcement. If the
+cluster already runs other workloads, check their policies first
+(`kubectl get networkpolicy -A`): policies that were ignored start to apply.
 
 ```sh
 gcloud container clusters update <cluster> --location <region> --update-addons=NetworkPolicy=ENABLED
 gcloud container clusters update <cluster> --location <region> --enable-network-policy
 ```
 
-The second command recreates every node pool's nodes, one at a time, so pods
-restart. Run it before you install, or in a maintenance window.
+The second command recreates every node pool's nodes, so pods restart. Each
+pool follows its own upgrade settings (`maxSurge`, `maxUnavailable`), which
+decide how many nodes restart at once. Check them first, and run the command
+before you install or in a maintenance window.
 
 **Every node pool must use the GKE metadata server** for Workload Identity:
 `gcloud container node-pools list --cluster <cluster> --location <region> --format='table(name,config.workloadMetadataConfig.mode)'`
