@@ -6986,7 +6986,7 @@ entries:
     default: off
     choices:
       - { value: off }
-      - { value: on, note: needs components.relaygate with both proxies (in-cluster upstreams), proxy.sessionsHosts with the history host, controlPrincipals with the ingest edge's introspection Secret, and slack-relay.relaygate.url with components.slackRelay }
+      - { value: on, note: "needs components.relaygate with both proxies (in-cluster upstreams), proxy.sessionsHosts with the history host, controlPrincipals with the ingest edge's introspection Secret, and slack-relay.relaygate.url with components.slackRelay" }
     verify: 'scripts/ci/charts.sh static agent-relay renders ci/gate-only-values.yaml with the cast and history routes on the relaygate edge Service and relaygate-only Relaycast, reader and ingest policies, refuses each misconfiguration, and renders the default identically with gate-only=false'
     sources:
       - "charts/agent-relay/values.yaml"
@@ -7006,7 +7006,7 @@ entries:
     default: off
     choices:
       - { value: off }
-      - { value: on, note: introspectUrl, ingestAudience and secrets.relaycontrolIntrospectSecret.name together }
+      - { value: on, note: "introspectUrl, ingestAudience and secrets.relaycontrolIntrospectSecret.name together" }
     secrets:
       - name: "<secrets.relaycontrolIntrospectSecret.name>"
         keys:

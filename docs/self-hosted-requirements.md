@@ -4418,7 +4418,7 @@ Off by default. With secrets.adminToken the gate serves POST /admin/v1/explain (
 Off by default; with it off every render is unchanged. global.relaygate.gateOnly.enabled routes the public cast and history hosts (gkeIngress, sessions-pipeline nativeRouting, relaycast ingress) to relaygate on exactly the routes it serves and denies the rest; Relaycast admits only relaygate, its migration Job and relaycast networkPolicy.gateOnlyFrom (Control and RelayAuth by default); the Sessions reader admits only relaygate, /internal included; the ingest edge admits only relaygate; Control's SESSION_READ_API_URL becomes http://<relaygate>:8080/sessions. Requires a cluster that enforces NetworkPolicy (GKE Dataplane V2 or the NetworkPolicy add-on) and a relaygate image with Control-principal mapping (relaygate PR B): until then dashboard session reads, desktop uploads and Control's session reads break. The policy needs controlPrincipals rules, sessionAggregates with an admin gid, and an admin group with r on every sessionDefault. Relaycast routes relaygate does not proxy (POST /v1/agents, /v1/ws, files, webhooks, group DMs, workspace admin, ...) and Sessions routes it does not serve (/v1/turns/batches, /v1/cli/login, /v1/digest, /v1/delivery/records, admission, token revoke) stop working for public clients. See docs/self-hosted-relaygate.md, "Gate-only".
 
 - Default: `off`
-- Choices: `off`; `on`: needs components.relaygate with both proxies (in-cluster upstreams)
+- Choices: `off`; `on`: needs components.relaygate with both proxies (in-cluster upstreams), proxy.sessionsHosts with the history host, controlPrincipals with the ingest edge's introspection Secret, and slack-relay.relaygate.url with components.slackRelay
 - Provided by: operator
 - Values: `global.relaygate.gateOnly.enabled`, `global.relaygate.gateOnly.serviceName`, `global.relaygate.gateOnly.servicePort`
 - Verify: scripts/ci/charts.sh static agent-relay renders ci/gate-only-values.yaml with the cast and history routes on the relaygate edge Service and relaygate-only Relaycast, reader and ingest policies, refuses each misconfiguration, and renders the default identically with gate-only=false
@@ -4433,7 +4433,7 @@ Off by default; with it off every render is unchanged. global.relaygate.gateOnly
 Off by default; required with gate-only. relaygate introspects Control-issued tokens (sh_at_ upload tokens for SESSION_INGEST_AUDIENCE, the public history origin; rth_ read tokens) at RELAYCONTROL_INTROSPECT_URL (http://relay-control.<ns>.svc.cluster.local/internal/v1/auth/introspect) with the ingest edge's introspection secret, and maps each person to a group by the policy's controlPrincipals rules (relaygate PR B; it refuses Control callers no rule maps). SESSIONS_INTERNAL_SECRET (recommended) is the read API's READ_API_INTERNAL_SECRET.
 
 - Default: `off`
-- Choices: `off`; `on`: introspectUrl
+- Choices: `off`; `on`: introspectUrl, ingestAudience and secrets.relaycontrolIntrospectSecret.name together
 - Provided by: operator
 - Values: `controlPrincipals.introspectUrl`, `controlPrincipals.ingestAudience`, `secrets.relaycontrolIntrospectSecret.*`, `secrets.sessionsInternalSecret.*`
 - Env: `RELAYCONTROL_INTROSPECT_URL`, `RELAYCONTROL_INTROSPECT_SECRET`, `SESSION_INGEST_AUDIENCE`, `SESSIONS_INTERNAL_SECRET`
