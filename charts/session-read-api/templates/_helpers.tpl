@@ -202,7 +202,8 @@ workspace is not on a static list, and its reads would answer 501. */ -}}
 {{- end -}}
 {{- end -}}
 {{- if $np.enabled -}}
-{{- if not $np.controlFrom }}{{ fail "session-read-api: networkPolicy.enabled=true requires networkPolicy.controlFrom naming the Control pods" }}{{ end -}}
+{{- /* Gate-only ignores controlFrom unless gateOnlyControlDirect keeps its rule. */ -}}
+{{- if and (not $np.controlFrom) (or (not (include "session-read-api.gateOnly" .)) $np.gateOnlyControlDirect) }}{{ fail (printf "session-read-api: networkPolicy.%s requires networkPolicy.controlFrom naming the Control pods" (ternary "gateOnlyControlDirect=true" "enabled=true" (not (empty (include "session-read-api.gateOnly" .))))) }}{{ end -}}
 {{- if and $c.ingress.enabled (not $np.publicFrom) }}{{ fail "session-read-api: ingress.enabled with networkPolicy.enabled requires networkPolicy.publicFrom, or the policy would block the ingress" }}{{ end -}}
 {{- end -}}
 {{- if not (kindIs "bool" $c.events.messageIds) }}{{ fail "session-read-api: events.messageIds must be a boolean" }}{{ end -}}

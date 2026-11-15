@@ -134,6 +134,19 @@ class NativeRouting(unittest.TestCase):
         self.assertEqual(len(policy["spec"]["ingress"]), 2)
         docs = self.render({**gate, "global": {"relaygate": {"gateOnly": {"enabled": True, "serviceName": "gate", "servicePort": 9000}}}})
         self.assertEqual({(p["backend"]["service"]["name"], p["backend"]["service"]["port"]["number"]) for p in self.ingress(docs)["spec"]["rules"][0]["http"]["paths"]}, {("gate", 9000)})
+        # Gate-only ignores controlFrom, so it may be empty, unless the escape hatch keeps its rule.
+        empty = {**gate, "sessionReadApi": {"networkPolicy": {"enabled": True, "controlFrom": [], "publicFrom": []}}}
+        values = fixture(); merge(values, empty); values["sessionReadApi"]["networkPolicy"]["controlFrom"] = []
+        with tempfile.TemporaryDirectory(prefix="native-routing-render-") as directory:
+            file = Path(directory) / "values.json"
+            file.write_text(json.dumps(values))
+            ok = subprocess.run(["helm", "template", "routing-test", str(ROOT / "charts/sessions-pipeline"), "-n", "ci", "-f", str(file)], text=True, capture_output=True)
+            self.assertEqual(ok.returncode, 0, ok.stderr)
+            values["sessionReadApi"]["networkPolicy"]["gateOnlyControlDirect"] = True
+            file.write_text(json.dumps(values))
+            bad = subprocess.run(["helm", "template", "routing-test", str(ROOT / "charts/sessions-pipeline"), "-n", "ci", "-f", str(file)], text=True, capture_output=True)
+            self.assertNotEqual(bad.returncode, 0)
+            self.assertIn("networkPolicy.gateOnlyControlDirect=true requires networkPolicy.controlFrom", bad.stderr)
         self.render({**gate, "ingestEdge": {"networkPolicy": {"enabled": False}}}, error="requires ingestEdge.networkPolicy.enabled=true")
         self.render({**gate, "sessionReadApi": {"networkPolicy": {"enabled": False}}}, error="requires networkPolicy.enabled=true")
 
