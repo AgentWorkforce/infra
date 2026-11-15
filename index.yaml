@@ -3178,6 +3178,34 @@ entries:
       artifacthub.io/license: Apache-2.0
     apiVersion: v2
     appVersion: 0.1.0
+    created: "2026-11-15T22:44:53.174007727Z"
+    description: 'Optional governance gate for Agent Relay: agents register into a
+      group, every request is checked against mode bits, and writes that cross a group
+      boundary or leave through an external stream (Slack, a knowledge base) are classified.'
+    digest: 03745509668495ac6c860e93beeea668ff31c964530950c60496a7b33d90ceb6
+    home: https://github.com/AgentWorkforce/relaygate
+    keywords:
+    - relaygate
+    - governance
+    - agent-relay
+    kubeVersion: '>=1.27.0-0'
+    maintainers:
+    - name: AgentWorkforce
+      url: https://github.com/AgentWorkforce
+    name: relaygate
+    sources:
+    - https://github.com/AgentWorkforce/relaygate
+    - https://github.com/AgentWorkforce/infra/tree/main/charts/relaygate
+    type: application
+    urls:
+    - https://github.com/AgentWorkforce/infra/releases/download/relaygate-0.1.3/relaygate-0.1.3.tgz
+    version: 0.1.3
+  - annotations:
+      agentworkforce.dev/license-scope: First-party chart code only; dependencies
+        and images retain their own licenses.
+      artifacthub.io/license: Apache-2.0
+    apiVersion: v2
+    appVersion: 0.1.0
     created: "2026-11-15T19:56:09.41866745Z"
     description: 'Optional governance gate for Agent Relay: agents register into a
       group, every request is checked against mode bits, and writes that cross a group
@@ -7057,4 +7085,4 @@ entries:
     urls:
     - https://github.com/AgentWorkforce/infra/releases/download/telemetry-collector-0.1.0/telemetry-collector-0.1.0.tgz
     version: 0.1.0
-generated: "2026-11-15T21:34:16.137807228Z"
+generated: "2026-11-15T22:44:53.174327097Z"
