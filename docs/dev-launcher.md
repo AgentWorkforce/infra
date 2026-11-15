@@ -120,9 +120,13 @@ AgentRelayProduct takeover marker. Close other Dev UI instances before startup.
 
 Ctrl-C stops this invocation's web servers, tunnels and Desktop UI. The backend
 watcher finishes any in-flight build and restores its original deployments,
-which can take several minutes. Containers, data, local OIDC settings and the
-launchd-managed Dev core remain available. Deliberate native-cluster removal
-uses `make local-down`.
+which can take several minutes. The launcher then pauses the cluster by stopping
+its kind node container and clearing that container's restart policy, so an
+idle cluster uses no CPU and Docker does not bring it back on its own; data, local OIDC
+settings and the launchd-managed Dev core are retained, and the next `./dev.sh`
+starts the node again and waits for its API server. Pass `--keep-running` to
+leave the cluster up on exit, and run `./dev.sh --stop` to pause one that was
+left running. Deliberate native-cluster removal uses `make local-down`.
 
 ## E2E verification
 

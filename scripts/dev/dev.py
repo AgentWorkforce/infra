@@ -30,6 +30,7 @@ REQUIRED = {
     "relayhistory-pipeline": ["docker/services.Dockerfile", "package.json"],
     "relaycast": ["Dockerfile", "package.json", "packages/engine/package.json"],
 }
+NODE = "agent-relay-local-control-plane"  # kind names the single node after the owned cluster.
 PORTS = dict(port=3100, nextPort=3102, dashboardPort=3103, controlPort=33100)
 
 
@@ -172,6 +173,67 @@ def ensure_docker(env, timeout=180):
     raise DevError(f"Docker Desktop did not become ready within {timeout}s. Check its window, then rerun dev.sh.")
 
 
+def node_state(env):
+    """running/exited/... for the owned local kind node; None when absent, foreign or Docker is down."""
+    try:
+        result = subprocess.run(["docker", "inspect", "--format", '{{.State.Status}} {{index .Config.Labels "io.x-k8s.kind.cluster"}}', NODE],
+                                capture_output=True, text=True, env=env, timeout=15)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    status, _, cluster = result.stdout.strip().partition(" ")
+    return status if result.returncode == 0 and cluster == NODE[:-len("-control-plane")] else None
+
+
+def pause_cluster(env):
+    """Stop the kind node so an idle cluster costs nothing; its data and images stay in the container.
+
+    kind's restart policy would bring the node back whenever Docker starts, so
+    it is cleared; resume_cluster starts the node explicitly instead.
+    """
+    state = node_state(env)
+    if state is None:
+        return False
+    subprocess.run(["docker", "update", "--restart", "no", NODE], capture_output=True, env=env)
+    if state != "running":
+        return False
+    say("Pausing the local cluster (data retained).")
+    result = subprocess.run(["docker", "stop", "--time", "60", NODE], capture_output=True, text=True, env=env)
+    if result.returncode:
+        say(f"Could not pause the cluster; stop it yourself with: docker stop {NODE}")
+        return False
+    return True
+
+
+def resume_cluster(env, timeout=240):
+    """Start a paused kind node and wait for its API server before the stack is verified or reapplied.
+
+    Docker may also restart the node itself when its daemon starts, so a
+    running node is not assumed ready either.
+    """
+    state = node_state(env)
+    if state is None:
+        return False
+    ready = ["docker", "exec", NODE, "kubectl", "--kubeconfig", "/etc/kubernetes/admin.conf", "get", "--raw", "/readyz"]
+    def api_ready():
+        with suppress(OSError, subprocess.TimeoutExpired):
+            return subprocess.run(ready, capture_output=True, env=env, timeout=15).returncode == 0
+        return False
+    if state == "running":
+        if api_ready():
+            return False
+        say("Waiting for the local cluster's API server.")
+    else:
+        say("Resuming the paused local cluster.")
+        if subprocess.run(["docker", "start", NODE], capture_output=True, env=env).returncode:
+            raise DevError(f"Could not start the paused cluster node {NODE}. Inspect it with: docker logs {NODE}")
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        time.sleep(2)
+        if api_ready():
+            return True
+    raise DevError(f"The local cluster's API server was not ready within {timeout}s. Inspect it with: docker logs {NODE}")
+
+
 def available_ports(config):
     errors = []
     for key in PORTS:
@@ -283,7 +345,7 @@ class Supervisor:
                 process.wait()
         for stream in self.logs:
             stream.close()
-        say("Stopped this launcher's web servers, tunnels and UI. Containers/data and Desktop background core are retained.")
+        say("Stopped this launcher's web servers, tunnels and UI. Cluster data and Desktop background core are retained.")
 
 
 def wait_http(url, supervisor, timeout=120):
@@ -420,6 +482,8 @@ def main():
     parser.add_argument("--no-desktop", action="store_true", help="Run web and containers only")
     parser.add_argument("--no-service-watch", action="store_true", help="Use the native stack's release images without backend source rebuilds")
     parser.add_argument("--reuse-containers", action="store_true", help="Verify and reuse the ready owned native local cluster")
+    parser.add_argument("--keep-running", action="store_true", help="Leave the cluster running on exit instead of pausing it")
+    parser.add_argument("--stop", action="store_true", help="Pause the local cluster left running by an earlier run, then exit")
     parser.add_argument("--proof", action="store_true", help="Show the native-stack acceptance command")
     args = parser.parse_args()
     if args.proof:
@@ -427,6 +491,16 @@ def main():
     args.config = args.config.expanduser().resolve()
     parent = ROOT.parent
     env = environment()
+    if args.stop:
+        STATE.mkdir(parents=True, exist_ok=True, mode=0o700)
+        with (STATE / "launcher.lock").open("w") as lock:
+            try:
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                raise DevError("A dev.sh is running in this checkout. Stop it with Ctrl-C; it pauses the cluster on exit.") from None
+            if not pause_cluster(env):
+                say("The local cluster is not running; nothing to pause.")
+        return 0
     errors = check_prerequisites(parent, env, not args.no_desktop and not args.proof)
     if not args.no_desktop and not args.proof and sys.platform == "darwin":
         executable = str(parent / "relay-desktop/out/dev/Agent Relay Dev.app/Contents/MacOS/RelayDesktop")
@@ -461,6 +535,7 @@ def main():
     signal.signal(signal.SIGTERM, interrupted)
     try:
         ensure_docker(env)
+        resume_cluster(env)
         python = ROOT / ".kind/venv/bin/python"
         if not python.exists():
             supervisor.run("python-venv", [sys.executable, "-m", "venv", python.parent.parent])
@@ -524,7 +599,14 @@ def main():
                 say(str(error) + " Fix the source and save to retry; the UI remains stopped.")
     finally:
         supervisor.close()
-        lock.close()
+        try:
+            if args.keep_running:
+                if node_state(env) == "running":
+                    say("Cluster left running (--keep-running). Pause it later with ./dev.sh --stop.")
+            elif pause_cluster(env):
+                say("Cluster paused. ./dev.sh resumes it; --reuse-containers is the fastest restart.")
+        finally:
+            lock.close()
 
 
 if __name__ == "__main__":

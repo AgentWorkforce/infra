@@ -152,6 +152,42 @@ class LauncherTests(unittest.TestCase):
                 dev.ensure_docker(other)
             run.assert_not_called()
 
+    def test_cluster_pause_and_resume_touch_only_the_owned_node(self):
+        env = {"PATH": "/usr/bin"}
+        ok = SimpleNamespace(returncode=0, stdout="")
+        with patch.object(dev, "node_state", return_value=None), patch.object(dev.subprocess, "run") as run:
+            self.assertFalse(dev.pause_cluster(env))
+            run.assert_not_called()
+        with patch.object(dev, "node_state", return_value="exited"), patch.object(dev.subprocess, "run", return_value=ok) as run:
+            self.assertFalse(dev.pause_cluster(env))  # Only keeps Docker from restarting it.
+            self.assertEqual([call.args[0][:2] for call in run.call_args_list], [["docker", "update"]])
+        with patch.object(dev, "node_state", return_value="running"), patch.object(dev.subprocess, "run", return_value=ok) as run:
+            self.assertTrue(dev.pause_cluster(env))
+            self.assertEqual(run.call_args_list[0].args[0], ["docker", "update", "--restart", "no", dev.NODE])
+            self.assertEqual(run.call_args.args[0][:2], ["docker", "stop"])
+            self.assertEqual(run.call_args.args[0][-1], dev.NODE)
+        with patch.object(dev, "node_state", return_value=None), patch.object(dev.subprocess, "run") as run:
+            self.assertFalse(dev.resume_cluster(env))
+            run.assert_not_called()
+        with patch.object(dev, "node_state", return_value="running"), patch.object(dev.subprocess, "run", return_value=ok) as run:
+            self.assertFalse(dev.resume_cluster(env))  # Already serving: nothing started.
+            self.assertEqual(run.call_args.args[0][:2], ["docker", "exec"])
+        down = SimpleNamespace(returncode=1, stdout="")
+        with patch.object(dev, "node_state", return_value="running"), patch.object(dev.time, "sleep"), \
+                patch.object(dev.subprocess, "run", side_effect=[down, down, ok]) as run:
+            self.assertTrue(dev.resume_cluster(env))  # Docker restarted the node; wait for its API.
+            self.assertTrue(all(call.args[0][:2] == ["docker", "exec"] for call in run.call_args_list))
+        with patch.object(dev, "node_state", return_value="exited"), patch.object(dev.time, "sleep"), \
+                patch.object(dev.subprocess, "run", return_value=ok) as run:
+            self.assertTrue(dev.resume_cluster(env))
+            self.assertEqual(run.call_args_list[0].args[0], ["docker", "start", dev.NODE])
+        foreign = SimpleNamespace(returncode=0, stdout="running some-other-cluster\n")
+        with patch.object(dev.subprocess, "run", return_value=foreign):
+            self.assertIsNone(dev.node_state(env))
+        owned = SimpleNamespace(returncode=0, stdout="running agent-relay-local\n")
+        with patch.object(dev.subprocess, "run", return_value=owned):
+            self.assertEqual(dev.node_state(env), "running")
+
     def test_snapshot_notices_deletion_but_ignores_build_cache(self):
         with tempfile.TemporaryDirectory() as directory:
             repo = Path(directory)
