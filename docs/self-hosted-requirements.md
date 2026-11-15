@@ -4384,7 +4384,7 @@ Off by default. With control.introspectUrl (and the Sessions proxy) the gate acc
 - Env: `RELAYCONTROL_INTROSPECT_URL`, `RELAYCONTROL_INTROSPECT_SECRET`, `SESSION_INGEST_AUDIENCE`, `SESSIONS_CORS_ORIGINS`, `SESSIONS_INTERNAL_SECRET`
 - Secret: `<secrets.relaycontrolIntrospectSecret.name>`; keys `secret` from `secrets.relaycontrolIntrospectSecret.key`. relay-control's introspection secret; only with control.introspectUrl
 - Secret: `<secrets.sessionsInternalSecret.name>`; keys `secret` from `secrets.sessionsInternalSecret.key`. optional; the read API's internal secret, to check mint calls
-- Verify: helm template fails with control.introspectUrl and no control.sessionIngestAudience or secrets.relaycontrolIntrospectSecret.name, and with any Control setting and no proxy.sessionsUrl
+- Verify: helm template fails with control.introspectUrl and no control.sessionIngestAudience or secrets.relaycontrolIntrospectSecret.name, with either of those and no control.introspectUrl, and with any Control setting and no proxy.sessionsUrl
 - Sources: [`charts/relaygate/values.yaml`](../charts/relaygate/values.yaml), [`charts/relaygate/templates/relaygate.yaml`](../charts/relaygate/templates/relaygate.yaml)
 
 #### opt.relaygate.admin-explain

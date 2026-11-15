@@ -6932,7 +6932,7 @@ entries:
         keys:
           - { key: secret, key_path: secrets.sessionsInternalSecret.key }
         note: optional; the read API's internal secret, to check mint calls
-    verify: helm template fails with control.introspectUrl and no control.sessionIngestAudience or secrets.relaycontrolIntrospectSecret.name, and with any Control setting and no proxy.sessionsUrl
+    verify: helm template fails with control.introspectUrl and no control.sessionIngestAudience or secrets.relaycontrolIntrospectSecret.name, with either of those and no control.introspectUrl, and with any Control setting and no proxy.sessionsUrl
     sources:
       - "charts/relaygate/values.yaml"
       - "charts/relaygate/templates/relaygate.yaml"

@@ -40,6 +40,9 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- if and (not (trim .Values.proxy.sessionsUrl)) (or .Values.proxy.sessionsCorsOrigins (trim .Values.control.introspectUrl) .Values.secrets.sessionsInternalSecret.name) }}
 {{- fail "relaygate: proxy.sessionsCorsOrigins, control.introspectUrl and secrets.sessionsInternalSecret need proxy.sessionsUrl" }}
 {{- end }}
+{{- if and (not (trim .Values.control.introspectUrl)) (or (trim .Values.control.sessionIngestAudience) .Values.secrets.relaycontrolIntrospectSecret.name) }}
+{{- fail "relaygate: control.sessionIngestAudience and secrets.relaycontrolIntrospectSecret need control.introspectUrl" }}
+{{- end }}
 {{- if and (trim .Values.control.introspectUrl) (or (not (trim .Values.control.sessionIngestAudience)) (not .Values.secrets.relaycontrolIntrospectSecret.name)) }}
 {{- fail "relaygate: control.introspectUrl needs control.sessionIngestAudience and secrets.relaycontrolIntrospectSecret.name" }}
 {{- end }}
