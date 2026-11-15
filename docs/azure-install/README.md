@@ -271,7 +271,9 @@ with `NAMESPACE=agent-relay`:
 
 - **16a** creates the `agent-relay-llm` Secret from stdin (never on a command
   line, never `kubectl apply`);
-- **16b** lists workspace IDs: `bash ../gcp-install/workspace-ids.sh <domain> agent-relay`;
+- **16b** lists workspace IDs: `bash ../gcp-install/workspace-ids.sh <domain> agent-relay <api hostname>`
+  (with Azure DNS labels the API hostname is your `__HOST_API__` value, not
+  `api.<domain>`);
 - **16c** edits `values.yaml` with one `yq` command (it reads `SERVICES_IMAGE`
   from step 4 above).
 
