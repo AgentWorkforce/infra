@@ -20,7 +20,7 @@ flowchart TB
     end
 
     subgraph RG["relaygate (opt-in)"]
-      gate["Gate<br/>register: enrollment key → group<br/>mode bits (owner/group/other rwx)<br/>classifier: rules + optional Claude<br/>audit log"]
+      gate["Gate<br/>register: enrollment key → group<br/>mode bits (owner/group/other rw) + ACLs<br/>classifier: rules + optional Claude<br/>audit log"]
     end
 
     cast["Relaycast<br/>channels, threads, DMs"]
@@ -32,7 +32,8 @@ flowchart TB
 
   people <-->|"messages in · answers out"| router
   router -->|"1 · ledger lookup, then deliver to the thread's agent"| gate
-  gate -.->|"proxy: relaygate build 2 (planned)<br/>until then agents reach Relaycast directly"| cast
+  gate -->|"proxy: Relaycast REST + node WebSocket"| cast
+  gate -.->|"proxy: Sessions (/sessions)"| sessions
   cast -->|"2 · wakes the agent"| host
   host -->|"3 · answer in its relay thread"| gate
   router -.->|"4 · /v1/check before every Slack post<br/>(withheld if denied)"| gate

@@ -27,8 +27,9 @@ relaygate:
 # Secrets are referenced, never created by this chart. Each entry names an
 # existing Secret and the key inside it.
 secrets:
-  # REQUIRED: a Relaycast workspace key (rk_live_...). Both roles register
-  # their relay agents with it.
+  # REQUIRED without relaygate.url: a Relaycast workspace key (rk_live_...).
+  # Both roles register their relay agents with it. With relaygate.url the
+  # roles register through the gate with relaygateEnrollmentKey instead.
   relaycastWorkspaceKey: { name: "", key: workspace-key }
   # REQUIRED: the Slack app's bot token (xoxb-). Router only.
   slackBotToken: { name: "", key: bot-token }
