@@ -468,6 +468,20 @@ topologySpreadConstraints: []
 # existingSecret.
 extraEnv: []
 
+# OPTIONAL: the signed Desktop feed's file signer (relay-control 0.5.24+,
+# docs/desktop-feed.md). Off unless existingSecret is set. Each profile's
+# Ed25519 private key (PKCS#8 PEM) is a key "<profile>.pem" in an existing
+# Secret you create (never in values). The keys are mounted read-only at
+# /var/run/desktop-feed/<profile>.pem (mode 0440, group 1000), and the chart
+# sets SELFHOST_DESKTOP_FEED_SIGNER=file and SELFHOST_DESKTOP_FEED_KEY_FILES.
+# Set the feed's storage and key label through extraEnv
+# (SELFHOST_DESKTOP_FEED_STORAGE, ..._KEY_LABEL and the storage settings).
+desktopFeed:
+  signingKeys:
+    existingSecret: ""
+    # Profile ids with a key in the Secret, e.g. [f6b9x4unfg].
+    profiles: []
+
 # OPTIONAL: a CA bundle that lets node-pg verify the Postgres server certificate
 # when the database uses a private CA, such as Amazon RDS. Off by default. When
 # on, the PEM bundle at key in the named existing ConfigMap or Secret (set
