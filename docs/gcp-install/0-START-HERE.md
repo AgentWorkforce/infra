@@ -79,6 +79,8 @@ gcloud container clusters get-credentials <cluster> --location <region>   # add 
 kubectl auth can-i '*' '*' --all-namespaces
 gcloud container clusters describe <cluster> --location <region> \
   --format='value(workloadIdentityConfig.workloadPool,addonsConfig.httpLoadBalancing.disabled)'
+gcloud container clusters describe <cluster> --location <region> \
+  --format='value(networkConfig.datapathProvider,networkPolicy.enabled)'
 gcloud compute addresses list --global --filter='purpose=VPC_PEERING' --format='value(name,network)'
 kubectl get storageclass
 ```
@@ -90,7 +92,24 @@ kubectl get storageclass
   (HTTP load balancing is not disabled);
 - the `addresses` line lists a Private Services Access range on your cluster's
   VPC;
-- one StorageClass is marked `(default)`.
+- one StorageClass is marked `(default)`;
+- the second `describe` line prints `ADVANCED_DATAPATH` (Dataplane V2) or ends
+  in `True` (the NetworkPolicy add-on). Either one makes the cluster enforce
+  NetworkPolicies.
+
+**Network policies must be enforced.** The chart's NetworkPolicies, and
+relaygate's rule that only the gate may reach Relaycast and Sessions, have no
+effect on a cluster that doesn't enforce them: GKE accepts the objects and
+ignores them. Dataplane V2 can only be chosen when a cluster is created. On an
+existing cluster without it, turn on the add-on, then enforcement:
+
+```sh
+gcloud container clusters update <cluster> --location <region> --update-addons=NetworkPolicy=ENABLED
+gcloud container clusters update <cluster> --location <region> --enable-network-policy
+```
+
+The second command recreates every node pool's nodes, one at a time, so pods
+restart. Run it before you install, or in a maintenance window.
 
 **Every node pool must use the GKE metadata server** for Workload Identity:
 `gcloud container node-pools list --cluster <cluster> --location <region> --format='table(name,config.workloadMetadataConfig.mode)'`
@@ -873,7 +892,7 @@ gcloud container clusters create agent-relay --location $R --num-nodes 1 \
   --addons HttpLoadBalancing,GcePersistentDiskCsiDriver --release-channel regular \
   --enable-private-nodes --master-ipv4-cidr 172.16.0.0/28 \
   --enable-master-authorized-networks --master-authorized-networks <your IP>/32 \
-  --enable-shielded-nodes
+  --enable-shielded-nodes --enable-dataplane-v2
 ```
 
 A regional cluster with `--num-nodes 1` gets one node in each of the region's
