@@ -265,7 +265,7 @@ def render() -> str:
                 "' <<<\"$pr\" >/dev/null \\\n"
                 '  || { echo "::error::#$PR_NUMBER is not a merged release/agent-relay-* pull request into main."; exit 1; }\n'
                 'gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/files?per_page=100" \\\n'
-                "  --jq '.[].filename' | grep -q '^releases/' \\\n"
+                "  --jq '.[].filename' | grep '^releases/' >/dev/null \\\n"
                 '  || { echo "::error::#$PR_NUMBER changes nothing under releases/."; exit 1; }\n'
             ),
         },
