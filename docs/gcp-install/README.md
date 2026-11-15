@@ -17,6 +17,7 @@ cluster, the GCP counterpart of the AWS EKS guide. Start with
 | `create-workload-identity.sh` | Optional: the Workload Identity grants with gcloud |
 | `managed-values-byo.sh` | Bring-your-own: builds `managed-values.json` from your resources |
 | `add-user.sh` | Add users with temporary passwords, without SMTP (step 15) |
+| `workspace-ids.sh` | List workspace IDs and names, for titles and summaries (step 16) |
 
 `cloud-sql-setup.sh` is the repository's `scripts/selfhost/cloud-sql-setup.sh`
 including the fix in AgentWorkforce/infra#276. Keep the two in sync.
