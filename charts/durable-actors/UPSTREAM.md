@@ -94,8 +94,8 @@ Patches to upstream files (report upstream; drop when fixed there):
     Defaults render byte-identical to upstream apart from the `helm.sh/chart`
     label (patch 11). Upstream proposal: TerseAI/durable-actors PRs (see
     relay-briefs actors-aws.md).
-11. `Chart.yaml`: `version` is `0.14.6-awf.3` (upstream `0.14.6`; `awf.1` carried
-    patches 1-10, `awf.2` adds patch 12, `awf.3` adds patch 13), so a packaged chart carrying the patches
+11. `Chart.yaml`: `version` is `0.14.6-awf.4` (upstream `0.14.6`; `awf.1` carried
+    patches 1-10, `awf.2` adds patch 12, `awf.3` adds patch 13, `awf.4` adds patch 14), so a packaged chart carrying the patches
     can never be mistaken for the upstream release.
     `appVersion` stays `0.14.6`. Reset the suffix when re-vendoring a release
     that contains these patches.
