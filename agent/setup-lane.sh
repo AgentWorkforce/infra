@@ -75,11 +75,14 @@ fi
 #    (0700) holds the state, the audit log, file deliveries and the only AWS
 #    profile for the broker role, so the agent user can't edit the
 #    allowlist, claims or audit log;
+#  - relay mode: the Relaycast observer token (RELAY_OBSERVER_TOKEN_PARAM,
+#    read-only) is written to a credbroker-only file, and the broker
+#    verifies every requester and approver against the Relay server itself.
+#    The lead passes only a message id (broker/src/relay.ts). Without the
+#    token the broker refuses everything (fail closed);
 #  - the agent user may run /usr/local/libexec/aws-cred-broker as credbroker
-#    (sudoers) only with the subcommands request, refuse, sweep and
-#    verify-audit, and nothing else; /usr/local/bin/aws-cred-broker wraps
-#    that. Not approve: the lead would be passing the approver's identity
-#    itself, so approvals stay off until the Relay listener verifies senders.
+#    (sudoers) only with request, decide, sweep and verify-audit, and nothing
+#    else; /usr/local/bin/aws-cred-broker wraps that.
 BROKER_HOME=/var/lib/aws-cred-broker
 broker_ref=$(tr -d '[:space:]' < /opt/agent-host/broker.ref 2>/dev/null || true)
 if [ -n "${CRED_BROKER_ROLE_ARN:-}" ] && printf '%s' "$broker_ref" | grep -qxE '[0-9a-f]{40}'; then
@@ -110,19 +113,32 @@ if [ -n "${CRED_BROKER_ROLE_ARN:-}" ] && printf '%s' "$broker_ref" | grep -qxE '
   else
     echo "setup-lane: could not install the credential broker at $broker_ref; keeping the current version" >&2
   fi
+  # The observer token, from SSM straight into a credbroker-only file: never
+  # printed, never on a command line, never in secrets.env. Refreshed on
+  # every lane setup (boot and each hot update).
+  if [ -n "${RELAY_OBSERVER_TOKEN_PARAM:-}" ]; then
+    tok_tmp=$(mktemp)
+    if aws ssm get-parameter --region "$AWS_REGION" --with-decryption --name "$RELAY_OBSERVER_TOKEN_PARAM" --query Parameter.Value --output text > "$tok_tmp" 2>/dev/null && [ -s "$tok_tmp" ]; then
+      install -m 0600 -o credbroker -g credbroker "$tok_tmp" "$BROKER_HOME/relay-observer-token"
+    else
+      echo "setup-lane: no Relay observer token; the credential broker refuses requests until it is set" >&2
+    fi
+    rm -f "$tok_tmp"
+  fi
   install -d -m 0755 -o root -g root /usr/local/libexec
   node_bin=$(command -v node)
   {
     printf '#!/bin/bash\n# Runs the AWS credential broker as credbroker (setup-lane.sh). Generated; do not edit.\nset -euo pipefail\n'
     printf 'export HOME=%s AWS_CONFIG_FILE=%s/.aws/config AWS_REGION=%s AWS_PAGER=\n' "$BROKER_HOME" "$BROKER_HOME" "$AWS_REGION"
     printf 'export BROKER_STATE_DIR=%s/state BROKER_DELIVERY_DIR=%s/creds BROKER_AWS_PROFILE=aws-cred-broker\n' "$BROKER_HOME" "$BROKER_HOME"
+    printf 'export BROKER_RELAY_TOKEN_FILE=%s/relay-observer-token BROKER_RELAY_API=https://cast.agentrelay.com BROKER_RELAY_NAME=%s\n' "$BROKER_HOME" "${RELAY_NAME:-layered-infra-ops}"
     printf 'exec %s --experimental-strip-types --no-warnings /opt/aws-cred-broker/current/src/cli.ts "$@"\n' "$node_bin"
   } > /usr/local/libexec/aws-cred-broker.new
   install -m 0755 -o root -g root /usr/local/libexec/aws-cred-broker.new /usr/local/libexec/aws-cred-broker && rm -f /usr/local/libexec/aws-cred-broker.new
   printf '#!/bin/bash\nexec sudo -n -u credbroker /usr/local/libexec/aws-cred-broker "$@"\n' > /usr/local/bin/aws-cred-broker.new
   install -m 0755 -o root -g root /usr/local/bin/aws-cred-broker.new /usr/local/bin/aws-cred-broker && rm -f /usr/local/bin/aws-cred-broker.new
   b=/usr/local/libexec/aws-cred-broker
-  printf 'agent ALL=(credbroker) NOPASSWD: %s request *, %s refuse *, %s sweep, %s verify-audit\n' "$b" "$b" "$b" "$b" > /etc/sudoers.d/aws-cred-broker.new
+  printf 'agent ALL=(credbroker) NOPASSWD: %s request *, %s decide *, %s sweep, %s verify-audit\n' "$b" "$b" "$b" "$b" > /etc/sudoers.d/aws-cred-broker.new
   if visudo -cf /etc/sudoers.d/aws-cred-broker.new >/dev/null; then
     install -m 0440 -o root -g root /etc/sudoers.d/aws-cred-broker.new /etc/sudoers.d/aws-cred-broker
   fi

@@ -51,6 +51,9 @@ export default defineLayeredAgent({
     { envVar: "AZURE_CLIENT_ID_PARAM", param: "azure-client-id", exportAs: "AZURE_CLIENT_ID" },
     { envVar: "AZURE_CLIENT_SECRET_PARAM", param: "azure-client-secret", exportAs: "AZURE_CLIENT_SECRET" },
     { envVar: "AZURE_SUBSCRIPTION_ID_PARAM", param: "azure-subscription-id", exportAs: "AZURE_SUBSCRIPTION_ID" },
+    // The credential broker's read-only Relaycast observer token: setup-lane.sh writes it to a
+    // file only credbroker reads (never secrets.env). Must match layered-agents infra/agents.ts.
+    { envVar: "RELAY_OBSERVER_TOKEN_PARAM", param: "relay-observer-token" },
   ],
   relaySessions: { tokenParam: `/relaycast-agent-host/${stage}/relay-sessions-token-infra-ops` },
   repos: ["AgentWorkforce/infra"],
