@@ -191,6 +191,11 @@ export class Ledger {
     this.#event("outbound", { ...key, agentName, detail: { slackTs } });
   }
 
+  /** An agent's answer that relaygate withheld from Slack: recorded, never sent. */
+  recordWithheld(key: ThreadKey, agentName: string, reason: string): void {
+    this.#event("outbound.withheld", { ...key, agentName, detail: { reason } });
+  }
+
   thread(key: ThreadKey): ThreadRow | null {
     const r = this.db
       .prepare("SELECT * FROM threads WHERE team = ? AND channel = ? AND thread_ts = ?")

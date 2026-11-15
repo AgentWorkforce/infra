@@ -28,6 +28,11 @@ components:
   # image.digest, relaycast.baseUrl and the secrets.* names are required.
   # See docs/self-hosted-slack-relay.md.
   slackRelay: false
+  # relaygate (charts/relaygate): the governance gate between agents and
+  # Relaycast/Sessions. Configure it under the relaygate key: image.digest
+  # and policy.enrollmentKeys are required. Opt-in; with it off nothing
+  # about the install changes. See AgentWorkforce/relaygate.
+  relaygate: false
 
 # Single-host mode (off when empty): the dashboard and the control API share
 # this one host. The dashboard is served at /, the API under /cloud/api,

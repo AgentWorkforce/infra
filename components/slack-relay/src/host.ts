@@ -11,6 +11,7 @@
 import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { isGateDenial } from "./gate.ts";
 import { sessionIdFor } from "./session-id.ts";
 import { dataOf, inboundOf, type InboundData, type RelayEventLike, type RelayMessageLike, type ReplyData } from "./protocol.ts";
 
@@ -80,6 +81,8 @@ export interface HostOptions {
   mcpConfig?: (agent: string, token: string) => Record<string, unknown> | null | Promise<Record<string, unknown> | null>;
   persona?: string;
   idleMs?: number;
+  /** Behind relaygate: a 403 on a reply is the gate's final denial, never retried. */
+  gated?: boolean;
   log?: (m: string) => void;
 }
 
@@ -103,6 +106,7 @@ export class AgentHost {
     this.#o = {
       persona: DEFAULT_PERSONA,
       idleMs: 15 * 60_000,
+      gated: false,
       log: () => {},
       ...o,
     } as HostConfig;
@@ -192,6 +196,11 @@ export class AgentHost {
     try {
       return await this.#dmTurn(name, dm);
     } catch (err) {
+      if (this.#o.gated && isGateDenial(err)) {
+        // relaygate refused the reply (e.g. a pit agent answering an outside agent): final, never retried.
+        this.#o.log(`${name}: reply to ${dm.from} denied by relaygate`);
+        return null;
+      }
       this.#handled.delete(dm.id);
       throw err;
     }

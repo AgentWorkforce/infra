@@ -1,0 +1,74 @@
+nameOverride: ""
+fullnameOverride: ""
+
+# REQUIRED: image.digest. Deployed by immutable digest only.
+image:
+  repository: ghcr.io/agentworkforce/relaygate
+  digest: ""
+  pullPolicy: IfNotPresent
+imagePullSecrets: []
+
+# The gate's policy (relaygate examples/policy.pit.json): groups, enrollment
+# keys (sha256 of each key only, never the key), stream defaults and
+# overrides, and the classifier. Rendered to a ConfigMap; relaygate reloads it
+# on change and keeps the last good one. Use existingConfigMap (key
+# policy.json) to manage it elsewhere.
+existingConfigMap: ""
+policy:
+  groups:
+    - { gid: 11, name: local }
+    - { gid: 22, name: pit }
+  # - { id: pit, gid: 22, sha256: "<sha256 of the pit enrollment key>" }
+  # - { id: slack-bridge, gid: 22, sha256: "<sha256>", namePrefix: "slack-" }
+  enrollmentKeys: []
+  streamDefaults:
+    - { prefix: "relaycast:inbox/", gid: 11, mode: "664" }
+    - { prefix: "slack:", gid: 22, mode: "660", classify: true }
+    - { prefix: "kb:", gid: 22, mode: "660", classify: true }
+  streamOverrides: []
+  classifier:
+    rules:
+      - { id: us-ssn, pattern: '\b\d{3}-\d{2}-\d{4}\b' }
+      - { id: prompt-injection, pattern: 'ignore (all )?(previous|prior) instructions' }
+    # The model classifier (Claude) judges what the rules can't. Needs
+    # secrets.anthropicApiKey when enabled.
+    model:
+      enabled: false
+      model: claude-opus-5-5
+      effort: low
+      timeoutMs: 8000
+      guidance: ""
+
+secrets:
+  # REQUIRED when policy.classifier.model.enabled: an Anthropic API key (use a
+  # zero-data-retention key where regulated data may be classified).
+  anthropicApiKey: { name: "", key: api-key }
+
+# Audit log and registrations (SQLite). One replica: the store is single-writer.
+persistence:
+  existingClaim: ""
+  storageClassName: ""
+  size: 1Gi
+
+service:
+  port: 8080
+
+resources:
+  requests: { cpu: 50m, memory: 128Mi }
+  limits: { cpu: "1", memory: 512Mi }
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  runAsGroup: 1000
+  fsGroup: 1000
+  seccompProfile: { type: RuntimeDefault }
+containerSecurityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities: { drop: [ALL] }
+
+podAnnotations: {}
+nodeSelector: {}
+tolerations: []
+affinity: {}

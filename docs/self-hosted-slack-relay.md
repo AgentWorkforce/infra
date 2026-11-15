@@ -168,6 +168,35 @@ that look like credentials, skips private channels unless
 `ingest.privateChannels`, and never touches channels shared outside the
 workspace.
 
+## Governance with relaygate (optional)
+
+[relaygate](https://github.com/AgentWorkforce/relaygate) (install: [self-hosted-relaygate.md](self-hosted-relaygate.md)) puts a permission
+gate between agents and Relaycast/Sessions: agents belong to a group (set at
+registration), every request is checked against mode bits, and anything that
+crosses a group boundary or leaves through Slack is classified first. It is
+opt-in:
+
+```yaml
+relaygate:
+  url: http://relaygate:8080
+secrets:
+  relaygateEnrollmentKey: { name: slack-relay-relaygate, key: enrollment-key }  # the pit group's key
+  agentIdentitySecret: { name: slack-relay-relaygate, key: identity-secret }
+```
+
+With it on:
+
+- every agent (router, host, one per thread) registers through relaygate with
+  the enrollment key, which decides its group, and gets its identity back after
+  a restart with a recovery proof derived from `agentIdentitySecret`;
+- all Relaycast traffic, including each agent's relay tools, goes through the
+  gate with the agent's `rg_` token. No pod holds a Relaycast credential;
+- every Slack post and every knowledge-base write is asked of relaygate first
+  (`/v1/check`). A denial is final: an agent's answer is withheld and the
+  thread is told; an unavailable gate is retried, then nothing is sent;
+- a DM reply relaygate denies (a pit agent answering an outside agent) is
+  dropped, not retried.
+
 ## Data boundaries and audit
 
 - **What leaves the cluster:** Slack API calls from the router only, and
