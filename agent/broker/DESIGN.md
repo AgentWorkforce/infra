@@ -200,8 +200,9 @@ layered-infra-ops applies `sandbox/` once this is merged to main (Khaliq,
 3. Check that `sandbox_scoped_role_arn` equals the allowlist's `roles.scoped`
    (a test already pins this).
 
-The broker can't use the role until the layered-agents host boundary allows
-`sts:AssumeRole` on `agent-cred-broker` (open question 2). Applying first is
+The broker can't use the role until the infra-ops host can assume it:
+AgentWorkforce/layered-agents#43 (approved by Khaliq, 2026-11-15) plus his
+platform deploy, then `credentialBroker: true` here. Applying first is
 harmless: nothing can assume the broker role until then.
 
 ## Running it (after the roles exist)
@@ -236,13 +237,13 @@ the approval tier only.
    prompt-injected lead could pass a wrong name. Should the broker run as a
    deterministic Relay listener, or check the message id against the relay
    API, before this goes live?
-2. **The broker account, the host boundary and sandbox access.** Which
-   account does layered-infra-ops run in? The host boundary in layered-agents
-   allows `sts:AssumeRole` only on the admin role today. It needs a statement
-   for `agent-cred-broker`, which is an IAM change in layered-agents.
-   Alternative: trust the admin role and chain from it. To apply the sandbox
-   side, infra-ops also needs a role in 805532413586 that trusts its admin
-   role.
+2. **The broker account and sandbox access.** Which account does
+   layered-infra-ops run in? To apply the sandbox side, infra-ops also needs a
+   role in 805532413586 that trusts its admin role. (The host boundary grant
+   is approved: AgentWorkforce/layered-agents#43, spec `credentialBroker`.
+   After it ships, this repo sets `credentialBroker: true` in
+   `agent/agent.config.ts` on 0.1.21, and setup-lane.sh writes the
+   `aws-cred-broker` profile from `CRED_BROKER_ROLE_ARN`.)
 3. **Prod accounts and the elevated roles.** Which account ids, and should
    each get an `agent-broker-elevated` role (what ceiling)? Until then, the
    approval tier refuses.
