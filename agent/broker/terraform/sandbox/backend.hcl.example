@@ -1,8 +1,12 @@
 # Copy to backend.hcl (gitignored) and run: terraform init -backend-config=backend.hcl
-# A versioned, private bucket in the broker account; state holds no secrets
-# (role names and policies only).
-bucket       = "<state bucket in the broker account>"
+# The bucket and role come from ../bootstrap-sandbox (its outputs state_bucket
+# and bootstrap_role_arn). State holds no secrets (role names and policies only).
+bucket       = "agent-cred-broker-tfstate-805532413586"
 key          = "aws-cred-broker/sandbox.tfstate"
 region       = "us-east-1"
 encrypt      = true
 use_lockfile = true
+assume_role = {
+  role_arn     = "arn:aws:iam::805532413586:role/layered-infra-ops-broker-tf"
+  session_name = "layered-infra-ops-cred-broker-tf-state"
+}
