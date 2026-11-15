@@ -37,6 +37,15 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- if and (not (trim .Values.proxy.sessionsUrl)) (or (trim .Values.proxy.sessionsUploadUrl) (trim .Values.proxy.sessionsReadUrl) .Values.proxy.sessionsHosts) }}
 {{- fail "relaygate: proxy.sessionsUploadUrl, sessionsReadUrl and sessionsHosts need proxy.sessionsUrl" }}
 {{- end }}
+{{- if and (not (trim .Values.proxy.sessionsUrl)) (or .Values.proxy.sessionsCorsOrigins (trim .Values.control.introspectUrl) .Values.secrets.sessionsInternalSecret.name) }}
+{{- fail "relaygate: proxy.sessionsCorsOrigins, control.introspectUrl and secrets.sessionsInternalSecret need proxy.sessionsUrl" }}
+{{- end }}
+{{- if and (not (trim .Values.control.introspectUrl)) (or (trim .Values.control.sessionIngestAudience) .Values.secrets.relaycontrolIntrospectSecret.name) }}
+{{- fail "relaygate: control.sessionIngestAudience and secrets.relaycontrolIntrospectSecret need control.introspectUrl" }}
+{{- end }}
+{{- if and (trim .Values.control.introspectUrl) (or (not (trim .Values.control.sessionIngestAudience)) (not .Values.secrets.relaycontrolIntrospectSecret.name)) }}
+{{- fail "relaygate: control.introspectUrl needs control.sessionIngestAudience and secrets.relaycontrolIntrospectSecret.name" }}
+{{- end }}
 {{- with .Values.proxy.sessionsHosts }}
 {{- if or (not (trim $.Values.proxy.sessionsUploadUrl)) (not (trim $.Values.proxy.sessionsReadUrl)) }}
 {{- fail "relaygate: proxy.sessionsHosts needs proxy.sessionsUploadUrl and proxy.sessionsReadUrl (the upstream Services, not the history origin that now points at relaygate)" }}

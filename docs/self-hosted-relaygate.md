@@ -122,3 +122,35 @@ to the pit with no local access; if you change the Slack app's
 build 2: Slack-app agents register into the pit, create and join their channel,
 receive events over the proxied node WebSocket, and reply in threads with their
 `data` intact.
+
+## Control principals: desktop and dashboard on Sessions
+
+Some Sessions callers hold only relay-control credentials: the desktop app
+uploads with its device token and the dashboard reads with Control-issued read
+tokens. With `control.introspectUrl` (relaygate `sha256:c66696c5` or later) the
+gate accepts them on Sessions routes and maps each user to a group by policy:
+
+```yaml
+# relaygate-values.yaml, with the Sessions proxy on
+control:
+  introspectUrl: http://relay-control:8080/internal/v1/auth/introspect
+  sessionIngestAudience: https://history.example.com   # the ingest origin relay-control accepts
+proxy:
+  sessionsCorsOrigins: [https://app.example.com]       # match the read API's list
+secrets:
+  relaycontrolIntrospectSecret: { name: relaygate-control, key: introspect-secret }
+  sessionsInternalSecret: { name: relaygate-sessions-internal, key: secret }   # optional: checks mint calls
+policy:
+  controlPrincipals:            # first matching rule wins; no match is refused
+    - { match: { orgIds: ["<org>"], roles: [owner, admin] }, gid: 33 }
+    - { match: { orgIds: ["<org>"] }, gid: 11 }
+  sessionAggregates: { gids: [33] }   # who may read cross-session aggregates
+```
+
+Device tokens are introspected with relay-control (answers reused for up to
+15 s). Read tokens can't be introspected, so point relay-control's
+`SESSION_READ_API_URL` at `http://<release>-relaygate:8080/sessions`: relaygate
+forwards the mint calls unchanged and remembers which user each token belongs
+to. Each Control user acts as `ctl:<userId>` (the `ctl:` prefix is reserved) and
+their own credential still reaches Sessions. Uploads need `rth:sync`, reads
+`rth:read`. See relaygate `docs/contract.md`.

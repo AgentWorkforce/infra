@@ -50,6 +50,18 @@ policy:
     - { gid: 11, mode: "660", acl: [{ gid: 22, perm: "r" }] }
     - { gid: 22, mode: "660" }
   sessionOverrides: []
+  # With control.introspectUrl (relaygate sha256:c66696c5 or later): relay-control
+  # users with no rg_ token (the desktop app's device token, dashboard read
+  # tokens) mapped to groups; first matching rule wins, no match is refused.
+  # match takes kinds (device, read), orgIds, workspaceIds, roles, userIds, emails.
+  # Empty by default: every Control principal is refused (older images ignore
+  # both keys). For example:
+  #   - { match: { orgIds: ["<org>"], roles: [owner, admin] }, gid: 33 }
+  #   - { match: { orgIds: ["<org>"] }, gid: 11 }
+  controlPrincipals: []
+  # Aggregate session reads (users, activity, digests) only for these groups,
+  # e.g. { gids: [33] }.
+  sessionAggregates: { gids: [] }
   # Groups that may never be granted access to another, whatever an ACL says:
   # - { gid: 44, never: [22] }
   ceilings: []
@@ -93,6 +105,23 @@ proxy:
   # sessionsReadUrl to the upstream Services directly (required; a listed host
   # can't be an upstream).
   sessionsHosts: []
+  # Optional: browser origins allowed to read Sessions directly (match the read
+  # API's list), so relaygate's own refusals carry CORS headers for them.
+  sessionsCorsOrigins: []
+
+# Control principals on Sessions routes (relaygate sha256:c66696c5 or later):
+# desktop device tokens are introspected with relay-control, and dashboard read
+# tokens are learned from relay-control's mint calls, which then go through
+# relaygate (point relay-control's SESSION_READ_API_URL at
+# http://<release>-relaygate:8080/sessions). Map them with
+# policy.controlPrincipals. Needs proxy.sessionsUrl and
+# secrets.relaycontrolIntrospectSecret.
+control:
+  # e.g. http://relay-control:8080/internal/v1/auth/introspect
+  introspectUrl: ""
+  # The audience device tokens are introspected for: the Sessions ingest origin
+  # relay-control accepts, e.g. https://history.example.com
+  sessionIngestAudience: ""
 
 secrets:
   # With proxy.relaycastUrl: the rk_live_ workspace key relaygate registers agents with upstream.
@@ -105,6 +134,11 @@ secrets:
   sessionsToken: { name: "", key: token }
   # Optional: enables POST /admin/v1/explain ("may X do op on Y, and why").
   adminToken: { name: "", key: token }
+  # With control.introspectUrl: relay-control's introspection secret.
+  relaycontrolIntrospectSecret: { name: "", key: secret }
+  # Optional, with the Sessions proxy: the read API's internal secret; relaygate
+  # then checks relay-control's read-token mint calls against it.
+  sessionsInternalSecret: { name: "", key: secret }
   # REQUIRED when policy.classifier.model.enabled: an Anthropic API key (use a
   # zero-data-retention key where regulated data may be classified).
   anthropicApiKey: { name: "", key: api-key }
