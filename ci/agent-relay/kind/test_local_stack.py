@@ -633,6 +633,7 @@ class LocalTests(unittest.TestCase):
         tenant = {"organizationId": "11111111-1111-4111-8111-111111111111", "workspaceId": "22222222-2222-4222-8222-222222222222"}
         values = stack.values("serve", tenant)
         self.assertEqual(values["sessions-pipeline"]["sessionReadApi"]["cors"]["allowedOrigins"], ["https://relay.kind.agentrelay.com"])
+        self.assertEqual(values["sessions-pipeline"]["sessionReadApi"]["completeSince"], "epoch")
         result = subprocess.run(["helm", "template", "agent-relay", "charts/agent-relay", "-n", "agent-relay", "-f", "-", "--is-upgrade"],
             cwd=ROOT, input=json.dumps(values), capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stderr)
