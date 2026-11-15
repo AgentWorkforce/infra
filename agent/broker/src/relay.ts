@@ -9,10 +9,17 @@
  *    can't pass as another agent by setting a display name;
  *  - what it says: the request JSON, or "approve <id> <digest>" /
  *    "refuse <id>", from the server's copy of the text;
- *  - that it is a direct message (dmch_ channel) and recent (15 minutes).
+ *  - that it was sent to the broker: Relaycast derives a DM's channel id from
+ *    the workspace and the two agents, "dmch_" + sha256(
+ *    "<workspace>:<lower agent id>:<higher agent id>")[0:24]. The broker
+ *    computes the channel between the sender and its own Relay identity
+ *    (BROKER_RELAY_NAME, layered-infra-ops) and accepts only that one, so a
+ *    message the observer token can read in any other conversation is refused;
+ *  - that it is recent (15 minutes).
  * The broker records every message id it has acted on, so one message can't
  * be replayed. Nothing the lead types reaches identity or the request.
  */
+import { createHash } from "node:crypto";
 import type { Principal } from "./policy.ts";
 
 export interface RelayMessage {
@@ -29,6 +36,13 @@ export interface RelayAgent {
   id: string;
   name: string;
   type: string;
+  workspaceId: string;
+}
+
+/** The one DM channel between two agents, as Relaycast derives it (engine/dm.ts deriveDmPairKey). */
+export function dmChannelId(workspaceId: string, agentA: string, agentB: string): string {
+  const [first, second] = [agentA, agentB].sort();
+  return `dmch_${createHash("sha256").update(`${workspaceId}:${first}:${second}`).digest("hex").slice(0, 24)}`;
 }
 
 export interface RelayApi {
@@ -48,7 +62,7 @@ export interface Verified {
 }
 
 /** The sender and text of one direct message, as the Relay server has them. Throws RelayVerificationError otherwise. */
-export async function verifiedMessage(api: RelayApi, messageId: string, now: Date): Promise<Verified> {
+export async function verifiedMessage(api: RelayApi, messageId: string, now: Date, brokerName: string): Promise<Verified> {
   if (!MESSAGE_ID_RE.test(messageId)) throw new RelayVerificationError(`bad Relay message id ${JSON.stringify(messageId)}`);
   const m = await api.message(messageId);
   if (!m) throw new RelayVerificationError(`Relay has no message ${messageId}`);
@@ -58,6 +72,10 @@ export async function verifiedMessage(api: RelayApi, messageId: string, now: Dat
   if (!(age >= -60_000 && age <= MESSAGE_MAX_AGE_MS)) throw new RelayVerificationError(`message ${messageId} is not from the last ${MESSAGE_MAX_AGE_MS / 60_000} minutes: send it again`);
   const agent = await api.agentByName(m.agentName);
   if (!agent || agent.id !== m.agentId) throw new RelayVerificationError("the message's sender doesn't resolve to its own agent record");
+  const broker = await api.agentByName(brokerName);
+  if (!broker || !broker.workspaceId) throw new RelayVerificationError(`the broker's Relay identity ${brokerName} isn't known to Relay`);
+  if (agent.id === broker.id) throw new RelayVerificationError("a message the broker sent itself doesn't count");
+  if (m.channelId !== dmChannelId(broker.workspaceId, agent.id, broker.id)) throw new RelayVerificationError(`the message wasn't sent to ${brokerName}: only a direct message to the broker counts`);
   const kind = agent.type === "human" ? "human" : agent.type === "agent" ? "agent" : undefined;
   if (!kind) throw new RelayVerificationError(`unknown Relay agent type ${JSON.stringify(agent.type)}`);
   return { principal: { name: agent.name, address: m.agentAddress ?? agent.name, kind }, text: m.text, messageId };
@@ -118,7 +136,7 @@ export function relaycastApi(baseUrl: string, token: string, fetchImpl: typeof f
       if (!name) return undefined;
       const d = await get(`/v1/agents/${encodeURIComponent(name)}`);
       if (!d) return undefined;
-      return { id: str(d.id), name: str(d.name), type: str(d.type) };
+      return { id: str(d.id), name: str(d.name), type: str(d.type), workspaceId: str(d.workspace_id) };
     },
   };
 }

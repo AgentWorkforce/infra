@@ -21,7 +21,8 @@
  *
  * Prints one JSON reply: safe to paste into a Relay message (no credential).
  * Env: BROKER_STATE_DIR, BROKER_DELIVERY_DIR, BROKER_ALLOWLIST, BROKER_AWS_PROFILE,
- * BROKER_RELAY_TOKEN_FILE, BROKER_RELAY_API (default https://cast.agentrelay.com).
+ * BROKER_RELAY_TOKEN_FILE, BROKER_RELAY_API (default https://cast.agentrelay.com),
+ * BROKER_RELAY_NAME (the broker's Relay identity; default layered-infra-ops).
  */
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
@@ -85,8 +86,9 @@ else if (cmd === "verify-audit") {
   if (!messageId) fail("relay mode: --message-id is required");
   if (!existsSync(tokenFile)) fail("relay mode: the Relay token file is missing, so the sender can't be verified; nothing was done");
   const api = relaycastApi(process.env.BROKER_RELAY_API ?? "https://cast.agentrelay.com", readFileSync(tokenFile, "utf8").trim());
-  if (cmd === "request") out = await broker.requestViaRelay(api, messageId);
-  else if (cmd === "decide") out = await broker.decideViaRelay(api, messageId);
+  const brokerName = process.env.BROKER_RELAY_NAME ?? "layered-infra-ops";
+  if (cmd === "request") out = await broker.requestViaRelay(api, messageId, brokerName);
+  else if (cmd === "decide") out = await broker.decideViaRelay(api, messageId, brokerName);
   else fail(`relay mode: ${cmd ?? "(none)"} is not a command; use request, decide, sweep or verify-audit`);
 } else if (cmd === "request") out = await broker.request(JSON.parse(readFileSync(0, "utf8")) as CredentialRequest, principal(), values["message-id"]);
 else if (cmd === "approve") out = await broker.approve(values["request-id"] ?? "", values.digest ?? "", principal(), values["message-id"]);

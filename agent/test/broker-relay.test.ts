@@ -13,17 +13,23 @@ import { join } from "node:path";
 import { Broker } from "../broker/src/broker.ts";
 import { defaultDeliverer } from "../broker/src/deliver.ts";
 import type { Allowlist } from "../broker/src/policy.ts";
-import { decisionFromText, relaycastApi, requestFromText, type RelayAgent, type RelayApi, type RelayMessage } from "../broker/src/relay.ts";
+import { decisionFromText, dmChannelId, relaycastApi, requestFromText, type RelayAgent, type RelayApi, type RelayMessage } from "../broker/src/relay.ts";
 import type { StsClient } from "../broker/src/sts.ts";
 
 const base = JSON.parse(readFileSync(new URL("../broker/allowlist.json", import.meta.url), "utf8")) as Allowlist;
 const allowlist: Allowlist = { ...base, accounts: { ...base.accounts, "111122223333": { label: "prod-test", tier: "prod", roles: { elevated: "arn:aws:iam::111122223333:role/agent-broker-elevated" } } } };
 const NOW = new Date("2026-11-15T22:00:00Z");
+const WS = "rw_test0001";
+const BROKER = "layered-infra-ops";
 const agents: Record<string, RelayAgent> = {
-  tersemigrationgrok: { id: "300000000000000001", name: "tersemigrationgrok", type: "agent" },
-  "khaliq-gant": { id: "229221621257396224", name: "khaliq-gant", type: "human" },
-  "impostor-agent": { id: "300000000000000009", name: "impostor-agent", type: "agent" },
+  tersemigrationgrok: { id: "300000000000000001", name: "tersemigrationgrok", type: "agent", workspaceId: WS },
+  "khaliq-gant": { id: "229221621257396224", name: "khaliq-gant", type: "human", workspaceId: WS },
+  "impostor-agent": { id: "300000000000000009", name: "impostor-agent", type: "agent", workspaceId: WS },
+  [BROKER]: { id: "246905220461514752", name: BROKER, type: "agent", workspaceId: WS },
+  "some-other-agent": { id: "300000000000000005", name: "some-other-agent", type: "agent", workspaceId: WS },
 };
+/** The DM channel between an agent and the broker. */
+const toBroker = (from: string) => dmChannelId(WS, agents[from]?.id ?? "999", agents[BROKER]!.id);
 const request = { account: "805532413586", purpose: "migration soak test queue", actions: ["sqs:CreateQueue", "sqs:SendMessage"], durationMinutes: 15, runTag: "terse-mig-42", delivery: { kind: "file" } };
 
 function fakeRelay(messages: RelayMessage[]): RelayApi {
@@ -43,7 +49,7 @@ const msg = (id: string, from: string, text: string, over: Partial<RelayMessage>
   agentName: from,
   agentAddress: `${from}@somewhere`,
   text,
-  channelId: "dmch_0123456789abcdef",
+  channelId: toBroker(from),
   createdAt: new Date(NOW.getTime() - 60_000).toISOString(),
   ...over,
 });
@@ -64,7 +70,7 @@ function setup() {
 
 test("a verified request: the requester and the request come from the Relay server", async () => {
   const { broker, calls } = setup();
-  const r = await broker.requestViaRelay(fakeRelay([msg("1000001", "tersemigrationgrok", JSON.stringify(request))]), "1000001");
+  const r = await broker.requestViaRelay(fakeRelay([msg("1000001", "tersemigrationgrok", JSON.stringify(request))]), "1000001", BROKER);
   assert.equal(r.outcome, "issued", r.reasons.join("; "));
   assert.equal(calls[0]!.sessionName, "tersemigrationgrok");
   const audit = readFileSync(broker.auditPath, "utf8");
@@ -76,7 +82,7 @@ test("a spoofed display name is refused: the sender is the message's agent_id, r
   const { broker, calls } = setup();
   // The message claims khaliq-gant's name but was sent by another agent.
   const spoof = msg("1000002", "khaliq-gant", JSON.stringify(request), { agentId: agents["impostor-agent"]!.id });
-  const r = await broker.requestViaRelay(fakeRelay([spoof]), "1000002");
+  const r = await broker.requestViaRelay(fakeRelay([spoof]), "1000002", BROKER);
   assert.equal(r.outcome, "denied");
   assert.match(r.reasons[0]!, /doesn't resolve to its own agent record/);
   assert.equal(calls.length, 0);
@@ -97,7 +103,7 @@ test("refused: channel posts, stale messages, unknown ids, bodies that aren't th
     ["not-a-number", /bad Relay message id/],
   ];
   for (const [id, re] of cases) {
-    const r = await broker.requestViaRelay(relay, id);
+    const r = await broker.requestViaRelay(relay, id, BROKER);
     assert.equal(r.outcome, "denied", id);
     assert.match(r.reasons.join("; "), re, id);
   }
@@ -108,17 +114,19 @@ test("refused: channel posts, stale messages, unknown ids, bodies that aren't th
 test("one message, one use: a replayed message id is refused", async () => {
   const { broker, calls } = setup();
   const relay = fakeRelay([msg("3000001", "tersemigrationgrok", JSON.stringify(request))]);
-  assert.equal((await broker.requestViaRelay(relay, "3000001")).outcome, "issued");
-  const again = await broker.requestViaRelay(relay, "3000001");
+  assert.equal((await broker.requestViaRelay(relay, "3000001", BROKER)).outcome, "issued");
+  const again = await broker.requestViaRelay(relay, "3000001", BROKER);
   assert.equal(again.outcome, "denied");
   assert.match(again.reasons[0]!, /already acted on/);
   assert.equal(calls.length, 1);
+  const lines = readFileSync(broker.auditPath, "utf8").trim().split("\n").map((l) => JSON.parse(l) as { kind: string; reasons?: string[] });
+  assert.ok(lines.at(-1)!.kind === "denied" && /already acted on/.test(lines.at(-1)!.reasons![0]!), "the replay attempt is audited");
 });
 
 test("approval over Relay: only the human approver's own message counts", async () => {
   const { broker, calls } = setup();
   const prodReq = { ...request, account: "111122223333", actions: ["sqs:SendMessage"] };
-  const pending = await broker.requestViaRelay(fakeRelay([msg("4000001", "tersemigrationgrok", JSON.stringify(prodReq))]), "4000001");
+  const pending = await broker.requestViaRelay(fakeRelay([msg("4000001", "tersemigrationgrok", JSON.stringify(prodReq))]), "4000001", BROKER);
   assert.equal(pending.outcome, "pending-approval");
   const approveText = `approve ${pending.requestId} ${pending.policyDigest!.slice(0, 16)}`;
   const relay = fakeRelay([
@@ -126,13 +134,31 @@ test("approval over Relay: only the human approver's own message counts", async 
     msg("4000003", "khaliq-gant", approveText, { agentId: agents["impostor-agent"]!.id }),
     msg("4000004", "khaliq-gant", approveText),
   ]);
-  assert.match((await broker.decideViaRelay(relay, "4000002")).reasons[0]!, /not an approver/, "an agent's approval never counts");
-  assert.match((await broker.decideViaRelay(relay, "4000003")).reasons[0]!, /doesn't resolve/, "nor one using Khaliq's display name");
+  assert.match((await broker.decideViaRelay(relay, "4000002", BROKER)).reasons[0]!, /not an approver/, "an agent's approval never counts");
+  assert.match((await broker.decideViaRelay(relay, "4000003", BROKER)).reasons[0]!, /doesn't resolve/, "nor one using Khaliq's display name");
   assert.equal(calls.length, 0);
-  const ok = await broker.decideViaRelay(relay, "4000004");
+  const ok = await broker.decideViaRelay(relay, "4000004", BROKER);
   assert.equal(ok.outcome, "issued", ok.reasons.join("; "));
   assert.match(ok.reasons.join("; "), /approved by khaliq-gant/);
   assert.equal(calls.length, 1);
+});
+
+test("only a DM to the broker counts: a DM between other agents, or the broker's own message, is refused", async () => {
+  const { broker, calls } = setup();
+  const elsewhere = msg("5000001", "khaliq-gant", JSON.stringify(request), { channelId: dmChannelId(WS, agents["khaliq-gant"]!.id, agents["some-other-agent"]!.id) });
+  const own = msg("5000002", BROKER, JSON.stringify(request), { channelId: dmChannelId(WS, agents[BROKER]!.id, agents[BROKER]!.id) });
+  const r1 = await broker.requestViaRelay(fakeRelay([elsewhere]), "5000001", BROKER);
+  assert.equal(r1.outcome, "denied");
+  assert.match(r1.reasons[0]!, /wasn't sent to layered-infra-ops/);
+  const r2 = await broker.requestViaRelay(fakeRelay([own]), "5000002", BROKER);
+  assert.match(r2.reasons[0]!, /broker sent itself/);
+  assert.equal(calls.length, 0);
+});
+
+test("the DM channel id is Relaycast's derivation (checked against a real conversation)", () => {
+  // khaliq-gant -> aws-cred-broker in workspace rw_7ccfea89, read from the live API on 2026-11-15.
+  assert.equal(dmChannelId("rw_7ccfea89", "247596298381238272", "229221621257396224"), "dmch_1af113fee2d2b2df06c1d44b");
+  assert.equal(dmChannelId("rw_7ccfea89", "229221621257396224", "247596298381238272"), "dmch_1af113fee2d2b2df06c1d44b", "order-free");
 });
 
 test("message text forms", () => {
@@ -152,12 +178,12 @@ test("the Relaycast client: bearer token, the documented routes, 404 is absent",
     if (url.endsWith("/v1/messages/42")) {
       return new Response(JSON.stringify({ ok: true, data: { id: "42", agent_id: "7", agent_name: "a-b", agent_address: "a-b@h", text: "hi", channel_id: "dmch_x", created_at: "2026-11-15T21:59:00.000Z" } }));
     }
-    if (url.endsWith("/v1/agents/a-b")) return new Response(JSON.stringify({ ok: true, data: { id: "7", name: "a-b", type: "agent" } }));
+    if (url.endsWith("/v1/agents/a-b")) return new Response(JSON.stringify({ ok: true, data: { id: "7", name: "a-b", type: "agent", workspace_id: "rw_x" } }));
     return new Response("{}", { status: 404 });
   }) as typeof fetch;
   const api = relaycastApi("https://cast.example/", "obs_token", fakeFetch);
   assert.deepEqual(await api.message("42"), { id: "42", agentId: "7", agentName: "a-b", agentAddress: "a-b@h", text: "hi", channelId: "dmch_x", createdAt: "2026-11-15T21:59:00.000Z" });
-  assert.deepEqual(await api.agentByName("a-b"), { id: "7", name: "a-b", type: "agent" });
+  assert.deepEqual(await api.agentByName("a-b"), { id: "7", name: "a-b", type: "agent", workspaceId: "rw_x" });
   assert.equal(await api.message("43"), undefined);
   assert.deepEqual(seen.map((s) => s.url), ["https://cast.example/v1/messages/42", "https://cast.example/v1/agents/a-b", "https://cast.example/v1/messages/43"]);
   assert.ok(seen.every((s) => s.auth === "Bearer obs_token"));

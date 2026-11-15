@@ -158,7 +158,11 @@ export class Broker {
   private useMessageOnce(messageId: string): string | undefined {
     const file = join(this.deps.stateDir, "used-messages.json");
     const used = readJson(file, {} as Record<string, string>);
-    if (used[messageId]) return `Relay message ${messageId} was already acted on (${used[messageId]}): send a new message`;
+    if (used[messageId]) {
+      const reason = `Relay message ${messageId} was already acted on (${used[messageId]}): send a new message`;
+      this.audit({ kind: "denied", requestId: "-", relayMessageId: messageId, reasons: [reason] });
+      return reason;
+    }
     const now = this.deps.now();
     const cutoff = now.getTime() - 86_400_000;
     const kept = Object.fromEntries(Object.entries(used).filter(([, at]) => Date.parse(at) > cutoff));
@@ -167,11 +171,11 @@ export class Broker {
   }
 
   /** A request whose requester and body come from the Relay server (relay.ts): the lead passes only the message id. */
-  async requestViaRelay(api: RelayApi, messageId: string): Promise<Reply> {
+  async requestViaRelay(api: RelayApi, messageId: string, brokerName: string): Promise<Reply> {
     let v: Verified;
     let req: CredentialRequest;
     try {
-      v = await verifiedMessage(api, messageId, this.deps.now());
+      v = await verifiedMessage(api, messageId, this.deps.now(), brokerName);
       req = requestFromText(v.text) as CredentialRequest;
     } catch (e) {
       return this.relayRefused(messageId, e as Error);
@@ -180,11 +184,11 @@ export class Broker {
   }
 
   /** An "approve <id> <digest>" or "refuse <id>" whose sender and text come from the Relay server. */
-  async decideViaRelay(api: RelayApi, messageId: string): Promise<Reply> {
+  async decideViaRelay(api: RelayApi, messageId: string, brokerName: string): Promise<Reply> {
     let v: Verified;
     let d: RelayDecision;
     try {
-      v = await verifiedMessage(api, messageId, this.deps.now());
+      v = await verifiedMessage(api, messageId, this.deps.now(), brokerName);
       d = decisionFromText(v.text);
     } catch (e) {
       return this.relayRefused(messageId, e as Error);
