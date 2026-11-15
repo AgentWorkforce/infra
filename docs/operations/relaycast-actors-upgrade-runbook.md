@@ -33,6 +33,13 @@ precondition. Plan mode (no `--apply`) only checks and prints.
       relay-control image with `relaycast-rekey` (relay-control #122).
 - [ ] Every image the cutover will run is mirrored into the install's
       registry by digest (the plan refuses otherwise).
+- [ ] The Relaycast image the install runs is listed under
+      `relaycast.runtime.durableActors.migration.compatibleEngineDigests` in
+      the actors values (the plan refuses otherwise, before anything stops):
+      the gateway imports only an export on its own engine schema. The
+      12.8.0-actors.2 gateway and deployer import from 12.8.0-pg.3, not from
+      12.10.0 (delivery confirmation added four columns); an install on
+      12.10.0 waits for an actors build from the same engine source.
 - [ ] AWS: one S3 bucket for actor state and Relaycast files; an actor node
       group labelled `durable-actors/role=actor-host`, tainted
       `durable-actors/actor-host=true:NoSchedule`, in one zone (=

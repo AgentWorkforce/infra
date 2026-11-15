@@ -19,10 +19,11 @@ the upgrader layers only the `relaycast` and `durable-actors` parts of
 off and moves Relayfile).
 
 The release must first deploy a PostgreSQL image containing the export side of
-the protocol. The EKS RDS-native profile pins `12.8.0-pg.3`, source
-`810f48ce` (relaycast #653, #657, #663, #664, #667 and #668), digest
-`sha256:cc2a79f02d39978fa04322b5a45497737ff137bc2a5db5615c7eee690030de83`,
-from attested publish run 43497501006. The upgrader deliberately requires the
+the protocol. The EKS RDS-native profile pins `12.10.0`, source
+`fd10195` (which carries the 12.8.0-pg.3 export path from relaycast #653,
+#657, #663, #664, #667 and #668), digest
+`sha256:ec062ef901af15cf575b53a71d7eb09f2e6ab6e7c0d5be2da35339a275a5c6cc`,
+from attested publish run 43671881371. The upgrader deliberately requires the
 target chart version to be live before either migration phase.
 
 ## Facts that shape the design
@@ -82,7 +83,16 @@ target chart version to be live before either migration phase.
 The table plan is derived from the engine schema in foreign-key order and
 fails for a table it cannot scope to one workspace. The actor's `begin`
 refuses an export whose per-table column lists differ from its own, so both
-sides must run the same engine schema.
+sides must run the same engine schema. That refusal comes in phase 5, after
+messaging has stopped, so the actors overlay declares the engine images its
+pinned gateway and deployer were built against
+(`relaycast.runtime.durableActors.migration.compatibleEngineDigests`) and the
+upgrader refuses a cutover from any other Relaycast image in plan mode, before
+anything stops. The published actors images (12.8.0-actors.2, relaycast
+997dbb28) predate delivery confirmation (relaycast#625: PostgreSQL migration
+0005, four columns on `deliveries` and `messages`): they import from
+12.8.0-pg.3 but not from 12.10.0. A cutover from 12.10.0 needs an actors build
+from the same engine source, pinned together with its digest in that list.
 
 ## Phases
 
@@ -145,6 +155,10 @@ Preconditions:
   `RELAYCAST_WORKSPACE_BOOTSTRAP_SECRET` (the Postgres runtime's
   `secretKeys.bootstrapSecret` is mapped to the gateway's
   `secretKeys.workspaceBootstrapSecret`);
+- the deployed Relaycast image is one of the engines the actors overlay lists
+  under `relaycast.runtime.durableActors.migration.compatibleEngineDigests`
+  (the pinned gateway imports only an export on its own engine schema and
+  refuses any other after messaging has stopped);
 - relay-control's encryption key unchanged since phase 1;
 - the target release includes relaycast#652 (actor raw reads such as
   `GET /v1/inbox` answered with tuples).

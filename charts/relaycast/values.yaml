@@ -6,11 +6,12 @@ replicaCount: 1
 
 image:
   repository: ghcr.io/agentworkforce/relaycast-self-host
-  # relaycast-self-host:12.7.0, built from relaycast main bf713d86 by the
-  # reviewed publish-container workflow (engine 12.7.0). Immutable
-  # multi-platform manifest (linux/amd64 and linux/arm64) with an SPDX SBOM,
-  # max-mode provenance and a GitHub build-provenance attestation.
-  digest: sha256:81274dca7ab58673383dc7a9c777f422f29606c7422e81b5ea15724770f1455e
+  # relaycast-self-host:12.10.0, relaycast main fd10195 (v12.10.0: #625
+  # delivery confirmation (SQLite migration 0081, PostgreSQL 0005), 0082 pending
+  # events settled retention, 0083/0084 strict spawn placement token and dispatch
+  # generation, #669/#670 S3 file store behind RELAYCAST_FILE_STORE, default
+  # local), publish run 43671881371. Multi-platform with GitHub build provenance.
+  digest: sha256:ec062ef901af15cf575b53a71d7eb09f2e6ab6e7c0d5be2da35339a275a5c6cc
   pullPolicy: IfNotPresent
 
 imagePullSecrets: []
@@ -47,11 +48,12 @@ runtime:
     # Used instead of image.* on this backend.
     image:
       repository: ghcr.io/agentworkforce/relaycast-self-host
-      # relaycast-self-host:12.8.0-pg.3, relaycast main 810f48ce (#653 full
-      # actor migration export, #657 PostgreSQL deadlock fix, #663, #664, #667
-      # failover recovery and /health/live + /health/ready, #668), publish run
-      # 43497501006. Multi-platform with GitHub build provenance.
-      digest: sha256:cc2a79f02d39978fa04322b5a45497737ff137bc2a5db5615c7eee690030de83
+      # relaycast-self-host:12.10.0, relaycast main fd10195 (v12.10.0: #625
+      # delivery confirmation (SQLite migration 0081, PostgreSQL 0005), 0082 pending
+      # events settled retention, 0083/0084 strict spawn placement token and dispatch
+      # generation, #669/#670 S3 file store behind RELAYCAST_FILE_STORE, default
+      # local), publish run 43671881371. Multi-platform with GitHub build provenance.
+      digest: sha256:ec062ef901af15cf575b53a71d7eb09f2e6ab6e7c0d5be2da35339a275a5c6cc
     # TCP keepalive sysctls on the server pod (net.ipv4.tcp_keepalive_intvl /
     # tcp_keepalive_probes, namespaced safe sysctls from Kubernetes 1.29). With
     # the engine's socket keepalive a half-open connection to a failed-over
