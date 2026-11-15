@@ -76,7 +76,10 @@ policy:
 proxy:
   # e.g. http://relaycast:8787 (needs secrets.relaycastWorkspaceKey and secrets.relaygateSecret)
   relaycastUrl: ""
-  # e.g. http://sessions-pipeline-api:8080 (needs secrets.sessionsToken)
+  # The one origin that serves both session reads and uploads: the
+  # sessions-pipeline nativeRouting.origin, e.g. https://history.example.com
+  # (reads and uploads are separate Services joined by nativeRouting; see
+  # docs/self-hosted-native-routing.md). Needs secrets.sessionsToken.
   sessionsUrl: ""
 
 secrets:

@@ -82,7 +82,7 @@ gate, by NetworkPolicy).
 # relaygate-values.yaml, in addition to the policy above
 proxy:
   relaycastUrl: http://relaycast:8787
-  sessionsUrl: http://sessions-pipeline-api:8080
+  sessionsUrl: https://history.example.com   # sessions-pipeline nativeRouting.origin (reads and uploads)
 secrets:
   relaycastWorkspaceKey: { name: relaygate-relaycast, key: workspace-key }  # rk_live_ key relaygate registers agents with upstream
   relaygateSecret: { name: relaygate-seal, key: secret }                   # >= 32 chars; keep it for the life of the PVC (seals upstream tokens)
@@ -103,6 +103,13 @@ networkPolicy:
     # plus every caller that must stay direct (relay-control, the ingress
     # controller if Relaycast is exposed, ...); anything not listed is cut off
 ```
+
+`proxy.sessionsUrl` must be one origin that routes both session reads and
+uploads. In the sessions-pipeline chart those are separate Services (the reader
+and the ingest edge); `nativeRouting` joins them under one HTTPS origin
+([self-hosted-native-routing.md](self-hosted-native-routing.md)), and that
+origin is the value to use. If it is served with a private CA, give relaygate
+that CA too.
 
 Then point clients at the gate: the Slack app sets `relaygate.url` (it registers
 through the gate and uses it as its Relaycast base URL), and session uploads use

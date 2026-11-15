@@ -6,7 +6,7 @@ policy:
     - { id: slack-bridge, gid: 22, sha256: "1111111111111111111111111111111111111111111111111111111111111111", namePrefix: "slack-" }
 proxy:
   relaycastUrl: http://relaycast:8787
-  sessionsUrl: http://sessions-pipeline-api:8080
+  sessionsUrl: https://history.example.com
 secrets:
   relaycastWorkspaceKey: { name: relaygate-relaycast, key: workspace-key }
   relaygateSecret: { name: relaygate-seal, key: secret }
