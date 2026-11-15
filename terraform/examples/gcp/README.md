@@ -129,3 +129,17 @@ Terraform or OpenTofu >= 1.11 (the Cloud SQL admin password is write-only).
 | postgres | Cloud SQL private IP, admin secret and URL template. connection\_name feeds CLOUD\_SQL\_CONNECTION\_NAME in the sessions worker and alleyoop extraEnv. |
 | search\_url | In-cluster OpenSearch URL (null unless enable\_search). |
 <!-- END_TF_DOCS -->
+
+## Optional: the signed Desktop feed on GCS
+
+Set `desktop_feed_bucket_name` to create a private bucket for relay-control's
+signed Desktop feed (relay-control 0.5.25+), a Google service account for
+relay-control with Workload Identity, and `roles/iam.serviceAccountTokenCreator`
+on itself so it can sign download URLs. Enable `iamcredentials.googleapis.com`
+on the project first. `output.desktop_feed` holds the three `extraEnv` entries
+for `relay-control.extraEnv` and the two annotations for
+`relay-control.serviceAccount.annotations`
+(`iam.gke.io/gcp-service-account` and `iam.gke.io/return-principal-id-as-email`).
+The feed's signing keys go through `relay-control.desktopFeed.signingKeys`.
+Off by default: an install without it plans no change.
+

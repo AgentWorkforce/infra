@@ -138,3 +138,19 @@ output "image_mirror_root" {
   description = "MIRROR_ROOT for install guide step 5 (null unless image_mirror_repository is set)."
   value       = local.image_mirror_enabled ? "${var.region}-docker.pkg.dev/${var.project_id}/${var.image_mirror_repository}" : null
 }
+
+output "desktop_feed" {
+  description = "Values for relay-control's signed Desktop feed on GCS (null unless desktop_feed_bucket_name is set). Put env into relay-control.extraEnv and annotations into relay-control.serviceAccount.annotations; signing keys go through relay-control.desktopFeed.signingKeys."
+  value = local.desktop_feed_enabled ? {
+    service_account = module.desktop_feed_bucket[0].google_service_account_email
+    env = [
+      { name = "SELFHOST_DESKTOP_FEED_STORAGE", value = "gcs" },
+      { name = "SELFHOST_DESKTOP_FEED_GCS_BUCKET", value = module.desktop_feed_bucket[0].bucket_name },
+      { name = "SELFHOST_DESKTOP_FEED_GCS_PREFIX", value = "desktop-feed" },
+    ]
+    service_account_annotations = {
+      "iam.gke.io/gcp-service-account"          = module.desktop_feed_bucket[0].google_service_account_email
+      "iam.gke.io/return-principal-id-as-email" = "true"
+    }
+  } : null
+}
