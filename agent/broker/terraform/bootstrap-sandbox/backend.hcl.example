@@ -1,0 +1,9 @@
+# Copy to backend.hcl (gitignored): terraform init -backend-config=backend.hcl
+# A human admin in 805532413586 (SSO profile) reads and writes this state;
+# the bootstrap role can't change itself.
+bucket       = "agent-cred-broker-tfstate-805532413586"
+key          = "aws-cred-broker/bootstrap.tfstate"
+region       = "us-east-1"
+encrypt      = true
+use_lockfile = true
+profile      = "<sandbox admin SSO profile>"

@@ -1,9 +1,14 @@
 # AWS credential broker (layered-infra-ops)
 
-Status: merged, not yet live. No role exists yet,
-`agent/lead-prompt.md` doesn't mention the broker, and these files aren't in
-the host's `laneFiles`. After merge, layered-infra-ops applies the Terraform
-(Khaliq, 2026-11-15; see [Applying the Terraform](#applying-the-terraform)).
+Status (2026-11-15):
+- **The AWS side is live**, applied with Khaliq's SSO on his go-ahead:
+  `agent-cred-broker` (500268966557), `agent-broker-sandbox-scoped`
+  (805532413586), and the bootstrap role and state bucket
+  (`terraform/bootstrap-sandbox`).
+- The infra-ops host boundary and host role allow
+  `sts:AssumeRole` on `agent-cred-broker` (layered-agents#43, `credentialBroker`).
+- Not yet live: the broker program itself. `agent/lead-prompt.md` doesn't
+  mention it, and these files aren't in the host's `laneFiles`.
 
 **Internal only.** This is AgentWorkforce's own tooling for its agents, kept
 in layered-infra-ops' lane (`agent/`), not part of the self-hosted product: no

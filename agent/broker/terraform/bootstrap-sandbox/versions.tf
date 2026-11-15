@@ -6,6 +6,8 @@ terraform {
       version = ">= 6.0, < 7.0"
     }
   }
-  # Local state for the first apply (the bucket doesn't exist yet). Afterwards,
-  # move it into the bucket it creates: see README.md, "After the first apply".
+  # Applied 2026-11-15. The state lives in the bucket this root created:
+  # terraform init -backend-config=backend.hcl (see backend.hcl.example).
+  # Tests run with -backend=false.
+  backend "s3" {}
 }
