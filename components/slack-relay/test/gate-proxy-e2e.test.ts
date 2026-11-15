@@ -40,6 +40,12 @@ test("pit channel (relaycast:channel/slack…): the pit posts and reads; local c
   const { sfx, pit, local } = await agents();
   const ch = `slack-${sfx}`;
   await ensureChannel(pit, ch, "pit only");
+  // A second pit agent watches the channel: the allowed path must deliver.
+  const watcher = (await connectAgent({ baseUrl: url!, workspaceKey: "", name: `slack-watch-${sfx}`, persona: "pit", proofSecret: "w".repeat(32), log: () => {}, gate: new RelaygateClient({ url: url!, enrollmentKey: bridgeKey! }) })).agent;
+  open.push(watcher as never);
+  await ensureChannel(watcher, ch, "pit only");
+  const pitEvents: string[] = [];
+  watcher.subscribe([ch], (raw: unknown) => { pitEvents.push(JSON.stringify(raw)); });
   const localEvents: string[] = [];
   await assert.rejects(local.channels.join(ch), denied, "local can't join a pit channel");
   local.subscribe([ch], (raw: unknown) => { localEvents.push(JSON.stringify(raw)); });
@@ -51,6 +57,7 @@ test("pit channel (relaycast:channel/slack…): the pit posts and reads; local c
   await assert.rejects(local.message(m.id), denied, "local can't fetch a pit message by id");
   await assert.rejects(local.send(ch, "sneaking in"), denied, "local can't post into the Slack routing channel");
   await sleep(2500);
+  assert.ok(pitEvents.some((e) => e.includes("pit-only note")), "a pit agent receives the channel's events over the proxied node WebSocket");
   assert.deepEqual(localEvents, [], "no pit channel events reach a local agent over the node WebSocket");
 });
 

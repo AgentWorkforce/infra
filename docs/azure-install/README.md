@@ -260,6 +260,35 @@ codes and verification are in the
 
 **Done when:** the Job completes and the workspace's Output page loads.
 
+### 11. Titles and summaries (optional, after first sign-in)
+
+Summaries are extractive by default (`BOB_COSTAS_MODEL: "off"`: no model, no
+data leaves the cluster). Model-written titles, briefs and summaries need an
+OpenAI Responses API key (or an OpenAI-compatible gateway) and a model, e.g.
+`gpt-5.6-luna`. Follow
+[step 16 of the GKE guide](../gcp-install/0-START-HERE.md#16-turn-on-titles-and-summaries-optional-after-first-sign-in)
+with `NAMESPACE=agent-relay`:
+
+- **16a** creates the `agent-relay-llm` Secret from stdin (never on a command
+  line, never `kubectl apply`);
+- **16b** lists workspace IDs: `bash ../gcp-install/workspace-ids.sh <domain> agent-relay <api hostname>`
+  (with Azure DNS labels the API hostname is your `__HOST_API__` value, not
+  `api.<domain>`);
+- **16c** edits `values.yaml` with one `yq` command (it reads `SERVICES_IMAGE`
+  from step 4 above).
+
+Then apply it with this guide's files:
+
+```sh
+helm upgrade agent-relay "$CHART" --namespace agent-relay \
+  -f release/agent-relay/values-eks.yaml -f values.yaml -f release-images.values.yaml --timeout 25m
+kubectl -n agent-relay rollout status deploy/agent-relay-worker-session-brief deploy/agent-relay-worker-session-summary-worker --timeout=10m
+```
+
+**Done when:** both rollouts finish and a new session shows a title and a
+summary in the dashboard. The GKE step lists the log lines that show model
+versus extractive summaries, the daily limits, and how to turn it off.
+
 ## What was not proven
 
 - Any release other than agent-relay-2026.11.0 (patched); `values.yaml` renders
@@ -270,5 +299,6 @@ codes and verification are in the
   internal load balancers.
 - Backup and restore, upgrades, HA (every stateful component is one replica on
   one Azure disk).
-- The desktop app, the dashboard, SSO, titles and summaries.
+- The desktop app, the dashboard, SSO, and titles and summaries with a live model
+  (the steps were checked on GKE; see step 11).
 - The Traefik edge keeps HTTP closed rather than redirecting it to HTTPS.

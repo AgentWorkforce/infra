@@ -224,7 +224,7 @@ sessions-pipeline:
       functionBoundaryMode: global-default-revoke
       waitForRole: { enabled: false, functionDefault: false }
     # Session titles and briefs. Needs a workspace ID, which exists only after
-    # first sign-in; turn it on afterwards.
+    # first sign-in; step 16 of 0-START-HERE.md turns it on.
     nativeBrief:
       enabled: false
       workspaceIds: []
@@ -237,7 +237,8 @@ sessions-pipeline:
       session-brief:
         enabled: false
       bob-costas:
-        # "off" writes extractive summaries only.
+        # "off": extractive summaries, no model. Step 16 of 0-START-HERE.md sets
+        # a model and its key here (this list replaces the chart default).
         env:
           - { name: BOB_COSTAS_MODEL, value: "off" }
 

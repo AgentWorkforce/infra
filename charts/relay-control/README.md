@@ -25,10 +25,10 @@ The image must contain the compiled `relay-control` package. The server runs
 built before the rename, set `server.args` and `migrations.args` to its
 `node_modules/@cloud/selfhost-api/dist/` paths.
 
-The default image is `ghcr.io/agentworkforce/relay-control` 0.5.0. The session
+The default image is `ghcr.io/agentworkforce/relay-control` 0.5.24. The session
 read handoff and MCP reads (`services.sessionReadApi*`,
-`secretKeys.sessionReadApiSecret`) need 0.5.1, which is not published yet; they
-stay off by default. `secretKeys.introspectSecret` and
+`secretKeys.sessionReadApiSecret`) need 0.5.1 or later, which this pin
+satisfies; they still stay off by default. `secretKeys.introspectSecret` and
 `introspection.audiences` wire token introspection.
 `services.relayhistoryBackend=native` (default `legacy`) is the install without
 RelayAuth and standalone RelayHistory: uploads go to the pipeline ingest edge and

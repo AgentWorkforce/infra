@@ -69,6 +69,9 @@ policy:
 # Build 2: relaygate proxies Relaycast (REST allowlist and /v1/node/ws) and
 # Sessions (at /sessions). Clients then use relaygate as their Relaycast base
 # URL (slack-relay: relaygate.url) and https://<gate>/sessions for Sessions.
+# To make the gate the only way into Relaycast, narrow Relaycast's own
+# NetworkPolicy (relaycast chart: networkPolicy.ingressFrom) to relaygate and
+# the callers that must stay direct; see docs/self-hosted-relaygate.md.
 # Empty: that proxy is off and relaygate only serves /v1/register and /v1/check.
 proxy:
   # e.g. http://relaycast:8787 (needs secrets.relaycastWorkspaceKey and secrets.relaygateSecret)
@@ -113,19 +116,6 @@ containerSecurityContext:
   allowPrivilegeEscalation: false
   readOnlyRootFilesystem: true
   capabilities: { drop: [ALL] }
-
-# Optional: make relaygate the only way into Relaycast. Creates a
-# NetworkPolicy on the pods matched by relaycastPodSelector that admits only
-# relaygate (and allowFrom, e.g. the Relaycast admin API's callers). Needs a
-# CNI that enforces NetworkPolicy.
-networkPolicy:
-  restrictRelaycast:
-    enabled: false
-    relaycastPodSelector: {}
-    # e.g. app.kubernetes.io/name: relaycast
-    port: 8787
-    allowFrom: []
-    # - podSelector: { matchLabels: { app.kubernetes.io/name: relay-control } }
 
 podAnnotations: {}
 nodeSelector: {}

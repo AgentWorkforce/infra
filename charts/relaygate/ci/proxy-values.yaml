@@ -12,7 +12,3 @@ secrets:
   relaygateSecret: { name: relaygate-seal, key: secret }
   sessionsToken: { name: relaygate-sessions, key: token }
   adminToken: { name: relaygate-admin, key: token }
-networkPolicy:
-  restrictRelaycast:
-    enabled: true
-    relaycastPodSelector: { matchLabels: { app.kubernetes.io/name: relaycast } }

@@ -37,9 +37,6 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- if and (trim .Values.proxy.sessionsUrl) (not .Values.secrets.sessionsToken.name) }}
 {{- fail "relaygate: proxy.sessionsUrl needs secrets.sessionsToken.name" }}
 {{- end }}
-{{- if and .Values.networkPolicy.restrictRelaycast.enabled (not .Values.networkPolicy.restrictRelaycast.relaycastPodSelector) }}
-{{- fail "relaygate: networkPolicy.restrictRelaycast needs relaycastPodSelector (an empty selector would match every pod)" }}
-{{- end }}
 {{- if not .Values.existingConfigMap }}
 {{- range .Values.policy.enrollmentKeys }}
 {{- if not (regexMatch "^[a-f0-9]{64}$" (.sha256 | default "")) }}

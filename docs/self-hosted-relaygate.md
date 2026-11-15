@@ -13,8 +13,8 @@ the umbrella, or its own release.
 > allowlist and `/v1/node/ws`) and Sessions (`/sessions`). Isolation holds only
 > when agents can reach Relaycast and Sessions **through relaygate alone**:
 > turn the proxies on (`proxy.relaycastUrl`, `proxy.sessionsUrl`) and
-> enforce it with `networkPolicy.restrictRelaycast` (and network policy on
-> Sessions), or keep regulated agents in their own install.
+> enforce it by narrowing Relaycast's and Sessions' own NetworkPolicies to the
+> gate (below), or keep regulated agents in their own install.
 
 ![Slack app and relaygate](diagrams/slack-relay-relaygate.png)
 
@@ -88,11 +88,20 @@ secrets:
   relaygateSecret: { name: relaygate-seal, key: secret }                   # >= 32 chars; keep it for the life of the PVC (seals upstream tokens)
   sessionsToken: { name: relaygate-sessions, key: token }                  # rth_st_ with rth:sync, rth:read
   adminToken: { name: relaygate-admin, key: token }                        # optional: POST /admin/v1/explain
+```
+
+Then close the direct path. NetworkPolicies are additive, so a policy that
+admits only the gate does nothing while Relaycast's own policy admits the whole
+namespace (its default). Narrow Relaycast's policy instead, in the relaycast
+values (or `relaycast:` in the umbrella):
+
+```yaml
 networkPolicy:
-  restrictRelaycast:
-    enabled: true
-    relaycastPodSelector: { matchLabels: { app.kubernetes.io/name: relaycast } }
-    allowFrom: []   # anything else that must reach Relaycast directly
+  enabled: true
+  ingressFrom:
+    - podSelector: { matchLabels: { app.kubernetes.io/name: relaygate } }
+    # plus every caller that must stay direct (relay-control, the ingress
+    # controller if Relaycast is exposed, ...); anything not listed is cut off
 ```
 
 Then point clients at the gate: the Slack app sets `relaygate.url` (it registers
