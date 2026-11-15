@@ -8,6 +8,7 @@ import { Ledger } from "../src/ledger.ts";
 import { DeterministicOrchestrator } from "../src/orchestrator.ts";
 import { Router } from "../src/router.ts";
 import { SlackIngest } from "../src/ingest.ts";
+import { McpToolError } from "../src/mcp.ts";
 
 interface FakeGate {
   server: Server;
@@ -131,14 +132,25 @@ test("ingest: a denied write is skipped, an allowed one goes through", async () 
     const gate = new RelaygateClient({ url: g.url, enrollmentKey: "ek_pit" });
     const writes: string[] = [];
     const ing = new SlackIngest({
-      brain: { callTool: async (name, a) => (writes.push(`${name}:${a.text ?? a.content}`), {}) },
+      brain: {
+        // The day's page doesn't exist yet: the first append fails, the page is created.
+        callTool: async (name, a) => {
+          if (name === "append_page" && !writes.some((w) => w.startsWith("put_page:"))) throw new McpToolError("page_not_found", name);
+          writes.push(`${name}:${a.text ?? a.content}`);
+          return {};
+        },
+      },
       beforeWrite: (slug, text) => checkWithRetry(gate, "rg_router", { op: "w", resource: { kind: "stream", id: kbStreamId("brain-write", slug) }, content: text }, [1]),
     });
     g.decide = (b) => (String(b.content).includes("secret plan") ? 403 : 200);
     await ing.add({ channel: "C1", channelName: "general", ts: "1794693736.0", user: "U1", text: "hello" });
     await assert.rejects(ing.add({ channel: "C1", channelName: "general", ts: "1794693737.0", user: "U1", text: "the secret plan" }), GateDenied);
     assert.equal(writes.length, 1);
+    assert.match(writes[0]!, /^put_page:# #general/, "the first message created the page");
     assert.match((g.checks.at(-1)!.body.resource as { id: string }).id, /^kb:brain-write\/slack\/general-c1\//);
+    // Every write went out exactly as checked.
+    const checked = g.checks.map((c) => String(c.body.content));
+    for (const w of writes) assert.ok(checked.includes(w.slice(w.indexOf(":") + 1)), `unchecked write: ${w}`);
   } finally {
     g.server.close();
   }

@@ -117,6 +117,8 @@ export class SlackIngest {
       // First message of the day in this channel: create the page with it.
       const day = slug.split("/").pop();
       const content = `# #${m.channelName}: ${day}\n\nSlack messages in #${m.channelName} (${m.channel}) on ${day}, ingested as they were posted.\n\n${line}\n`;
+      // relaygate's rule: what is written is exactly what was checked.
+      if (this.#beforeWrite) await this.#beforeWrite(slug, content);
       try {
         await this.#brain.callTool("put_page", { slug, content, request_id: requestId("create", m.channel, m.ts), ...source });
       } catch (e) {
