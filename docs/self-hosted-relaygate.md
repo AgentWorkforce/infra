@@ -88,7 +88,7 @@ secrets:
   relaycastWorkspaceKey: { name: relaygate-relaycast, key: workspace-key }  # rk_live_ key relaygate registers agents with upstream
   relaygateSecret: { name: relaygate-seal, key: secret }                   # >= 32 chars; keep it for the life of the PVC (seals upstream tokens)
   # sessionsToken: optional; the gate forwards each caller's own Sessions credential
-  adminToken: { name: relaygate-admin, key: token }                        # optional: POST /admin/v1/explain, GET /admin/v1/audit
+  adminToken: { name: relaygate-admin, key: token }                        # optional: admin explain, audit, sessions/adopt
 ```
 
 Then close the direct path. NetworkPolicies are additive, so a policy that
@@ -288,6 +288,23 @@ Escape hatches, each of which reopens a direct path for that caller only:
 `/internal`, so Control can then read `/v1` without the gate), and
 `sessions-pipeline.ingestEdge.networkPolicy.gateOnlyFrom` (e.g. Control for the
 operator session erase API, which the ingest edge otherwise no longer admits).
+
+### Existing sessions: adopt them once
+
+Sessions uploaded before relaygate was in front of Sessions have no relaygate
+owner, so they are invisible through the gate. At the switch, adopt them with
+the admin token (relaygate `sha256:c64d6d9b` or later), dry run first:
+
+```
+POST /admin/v1/sessions/adopt?dryRun=1
+Authorization: Bearer <admin token>
+{"readToken": "rth_st_read_...", "orgId": "<org>", "workspaceId": "<ws>"}
+```
+
+relaygate pages the read API's session list with that read service token and
+gives each unowned session to its uploader's Control principal
+(`ctl:<userId>`, mapped by `policy.controlPrincipals`). Check the report, then
+run it without `dryRun`. See relaygate `docs/gate-only.md`.
 
 ### Routes relaygate serves, and what gate-only therefore cuts off
 

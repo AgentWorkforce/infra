@@ -138,7 +138,8 @@ secrets:
   # Optional, with proxy.sessionsUrl: an rth_st_ service token with rth:sync
   # and rth:read, for callers that send no Sessions credential of their own.
   sessionsToken: { name: "", key: token }
-  # Optional: enables POST /admin/v1/explain ("may X do op on Y, and why").
+  # Optional: enables the admin endpoints: POST /admin/v1/explain ("may X do
+  # op on Y, and why"), GET /admin/v1/audit and POST /admin/v1/sessions/adopt.
   adminToken: { name: "", key: token }
   # With control.introspectUrl: relay-control's introspection secret.
   relaycontrolIntrospectSecret: { name: "", key: secret }
