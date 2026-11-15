@@ -2570,7 +2570,7 @@ compatibility:
       app_versions: { relaygate: 0.1.0 }
       images:
         relaygate: { repository: ghcr.io/agentworkforce/relaygate, digest_required: true }
-      notes: Policy defaults follow relaygate examples/policy.pit.json (every stream 660 plus explicit ACLs, per-key name prefixes, no catch-all inbox, ceilings); needs relaygate with ACL support (PR 5, sha256:0fedfe82 or later). Default-off in the agent-relay umbrella; ships no default digest.
+      notes: Policy defaults follow relaygate examples/policy.pit.json (every stream 660 plus explicit ACLs, per-key name prefixes, no catch-all inbox, ceilings); needs relaygate with ACL support (PR 5 or later; CI runs build 2, sha256:78e90479). Default-off in the agent-relay umbrella; ships no default digest.
     - id: relaygate-0.1.0
       status: planned
       charts: { relaygate: 0.1.0 }

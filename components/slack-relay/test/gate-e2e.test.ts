@@ -51,6 +51,12 @@ test("inbox ACLs: local agents may write into pit inboxes but not read them; the
   await assert.rejects(check(local.token, "r", `relaycast:inbox/slack-router-${sfx}`), denied);
   await check(pit.token, "r", `relaycast:inbox/local-laptop-${sfx}`);
   await assert.rejects(check(pit.token, "w", `relaycast:inbox/local-laptop-${sfx}`), denied);
+  // Channels: the longer pit- prefix wins over relaycast:channel/.
+  await check(local.token, "w", `relaycast:channel/pit-ops-${sfx}`);
+  await assert.rejects(check(local.token, "r", `relaycast:channel/pit-ops-${sfx}`), denied);
+  await check(pit.token, "r", `relaycast:channel/dev-${sfx}`);
+  await assert.rejects(check(pit.token, "w", `relaycast:channel/dev-${sfx}`), denied);
+  await check(local.token, "w", `relaycast:channel/dev-${sfx}`);
 });
 
 test("Slack egress: pit posts pass the classifier, PHI and injections are withheld, local agents can't post", { skip }, async () => {
