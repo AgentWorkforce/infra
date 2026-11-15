@@ -1,0 +1,13 @@
+{
+  "schema": 1,
+  "version": "2026.11.10",
+  "pins": {
+    "sessions-pipeline": {
+      "repository": "ghcr.io/agentworkforce/sessions-pipeline",
+      "digest": "sha256:b398c943d2cf8f1be263a9c4ba51298dbbaaf64fb97bff024ba659844e8f7c5e",
+      "sourceRepository": "AgentWorkforce/relayhistory-pipeline",
+      "sourceRevision": "1452b6acd70ea1c5f2cb7d842eba53962efa3467",
+      "publishRunId": 43741615157
+    }
+  }
+}
