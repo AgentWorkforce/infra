@@ -89,6 +89,19 @@ class S3Ledger(unittest.TestCase):
                 self.render(merge(s3, {"ingestEdge": {"s3TenantLimit": value}}),
                             fail="ingestEdge.s3TenantLimit must be a boolean")
 
+    def test_async_max_per_org(self):
+        s3 = merge(load(S3_FIXTURE), {"ingestEdge": {"s3TenantLimit": True, "admission": {"mode": "async", "concurrency": 16}}})
+        self.assertNotIn("INGEST_ASYNC_MAX_PER_ORG", self.ingest_env(self.render(s3)))
+        env = self.ingest_env(self.render(merge(s3, {"ingestEdge": {"admission": {"asyncMaxPerOrg": 16}}})))
+        self.assertEqual(env["INGEST_ASYNC_MAX_PER_ORG"]["value"], "16")
+        self.assertEqual(env["SELFHOST_ADMISSION_CONCURRENCY"]["value"], "16")
+        for value in (0, 17, "x", -1):
+            with self.subTest(value=value):
+                self.render(merge(s3, {"ingestEdge": {"admission": {"asyncMaxPerOrg": value}}}),
+                            fail="ingestEdge.admission.asyncMaxPerOrg must be an integer from 1 to admission.concurrency")
+        self.render(merge(s3, {"ingestEdge": {"s3TenantLimit": False, "admission": {"asyncMaxPerOrg": 4}}}),
+                    fail="ingestEdge.admission.asyncMaxPerOrg requires s3TenantLimit=true")
+
     def test_default_is_sql_and_byte_identical_when_explicit(self):
         base = load(SQL_FIXTURE)
         implicit = helm(base)

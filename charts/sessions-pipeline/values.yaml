@@ -547,6 +547,9 @@ ingestEdge:
     concurrency: 4
     scanIntervalMs: 15000
     maxAttempts: 20
+    # INGEST_ASYNC_MAX_PER_ORG: the async consumer's per-org cap with s3TenantLimit=true,
+    # 1..concurrency. Unset (default) renders nothing: the image uses max(1, concurrency/2).
+    asyncMaxPerOrg: null
   # Pipeline #515: scan .upload-inbox and promote into async admission.
   # Requires a published image implementing HISTORY_UPLOAD_DIRECT. The witness
   # must be the SAME Secret value used by Control's historyUpload.witness.
