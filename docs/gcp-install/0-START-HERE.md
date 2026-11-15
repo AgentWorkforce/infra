@@ -618,6 +618,11 @@ Good to know:
   install and 3 per session (`nativeBrief.globalDailyCap`, `sessionDailyCap`),
   for sessions in the listed workspaces only. A workspace added later needs its
   ID added here and the upgrade run again.
+  bob-costas model calls have their own caps, kept in memory per replica and
+  reset each UTC day: 5000 sessions per organization
+  (`BOB_COSTAS_BACKGROUND_DAILY_BUDGET`) and 20000 model attempts in all
+  (`BOB_COSTAS_GLOBAL_DAILY_CAP`). Past a cap, summaries fall back to
+  extractive.
 - **MCP `list_session_summaries`:** `values.yaml` already sets
   `sessions-pipeline.sessionReadApi.summaries.listShortSummary: true`; chart
   0.7.11 ignores it, and from chart 0.7.15 (AgentWorkforce/infra#346) it lets
