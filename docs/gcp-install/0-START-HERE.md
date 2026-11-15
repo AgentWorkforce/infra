@@ -776,6 +776,69 @@ equal to the `proven` in the plan line you kept, and `exit 0`.
 - **`exit 4`:** any other error; check `kubectl -n $NAMESPACE logs index-restamp`
   and run it again.
 
+## Removing the install
+
+Everything here is permanent: it deletes the database, the session data and
+the load balancer. Take a Cloud SQL export or backup first if you might need
+the data.
+
+```sh
+source settings.sh
+helm uninstall $HELM_RELEASE -n $NAMESPACE --wait --timeout 10m
+kubectl delete namespace $NAMESPACE --wait --timeout 15m
+```
+
+**Done when:** `kubectl get namespace $NAMESPACE` answers `NotFound`. This also
+removes the load balancer, its certificate and the Relaycast volume.
+
+Then the Google Cloud resources. Turn deletion protection off first: with it
+on, Cloud SQL, Memorystore and the Pub/Sub topics refuse to be deleted.
+
+```sh
+cd infra/terraform/examples/gcp
+sed -i.orig 's/^deletion_protection *= *true/deletion_protection  = false/' terraform.tfvars
+grep -n '^deletion_protection' terraform.tfvars
+terraform apply
+gcloud storage rm -r -a "gs://$SESSIONS_BUCKET/**"
+FEED="$(sed -n 's/^desktop_feed_bucket_name *= *"\(.*\)"/\1/p' terraform.tfvars)"
+[ -z "$FEED" ] || gcloud storage rm -r -a "gs://$FEED/**"
+terraform state list | grep -E '^module\.postgres\.google_sql_(database|user)\.' |
+  while read -r r; do terraform state rm "$r"; done
+terraform destroy
+cd -
+```
+
+- **Buckets:** they are versioned, so `-a` removes every object version;
+  Terraform won't delete a bucket that still holds any. The second `rm`
+  empties the desktop update feed bucket, and runs only if you set
+  `desktop_feed_bucket_name` in step 4.
+- **Databases and admin user:** `cloud-sql-setup.sh` gave the databases to
+  their own roles, so Terraform can't drop them, or the admin user who owns
+  them, one by one (`must be owner of database`, `role ... cannot be
+  dropped`). The `state rm` loop takes the three databases and the admin user
+  out of Terraform's state only; the instance deletion that follows removes
+  them with it. Run it only as part of this full teardown.
+
+**Done when:** `terraform destroy` reports `Destroy complete!` and
+`terraform -chdir=infra/terraform/examples/gcp state list | grep -v '^data\.'`
+prints nothing.
+
+Last, what Terraform didn't create:
+
+```sh
+gcloud compute addresses delete agent-relay-ingress --global
+gcloud artifacts repositories delete agent-relay-mirror --location $REGION
+```
+
+- The DNS owner deletes the four A records from step 6.
+- **Used `first-admin.sh` (step 15)?** Delete the password it stored, or it
+  will refuse to run for a new install in this project:
+  `gcloud secrets delete agent-relay-first-admin-password --project $GCP_PROJECT_ID`.
+- **Used vals with Secret Manager (step 10c)?** Delete its secrets:
+  `gcloud secrets list --filter='name~agent-relay--' --format='value(name)' | xargs -r -n1 gcloud secrets delete --quiet`.
+- Delete `~/.agent-relay-install` from wherever you copied it: the database
+  passwords in it no longer work.
+
 ## Starting from an empty project
 
 The steps above assume a GKE cluster in a VPC with Private Services Access. If
