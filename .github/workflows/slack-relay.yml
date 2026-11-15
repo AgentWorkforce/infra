@@ -57,14 +57,20 @@ jobs:
           h() { printf '%s' "$1" | sha256sum | cut -d' ' -f1; }
           jq -n --arg b "$(h "$bridge")" --arg l "$(h "$local")" '{
             groups: [{gid: 11, name: "local"}, {gid: 22, name: "pit"}],
-            enrollmentKeys: [{id: "local", gid: 11, sha256: $l}, {id: "slack-bridge", gid: 22, sha256: $b, namePrefix: "slack-"}],
-            streamDefaults: [{prefix: "relaycast:inbox/", gid: 11, mode: "664"}, {prefix: "slack:", gid: 22, mode: "660", classify: true}, {prefix: "kb:", gid: 22, mode: "660", classify: true}],
+            enrollmentKeys: [{id: "local", gid: 11, sha256: $l, namePrefix: "local-"}, {id: "slack-bridge", gid: 22, sha256: $b, namePrefix: "slack-"}],
+            streamDefaults: [
+              {prefix: "relaycast:inbox/local-", gid: 11, mode: "660", acl: [{gid: 22, perm: "r"}]},
+              {prefix: "relaycast:inbox/slack-", gid: 22, mode: "660", acl: [{gid: 11, perm: "w"}]},
+              {prefix: "slack:", gid: 22, mode: "660", classify: true},
+              {prefix: "kb:", gid: 22, mode: "660", classify: true}
+            ],
             streamOverrides: [],
+            ceilings: [],
             classifier: {rules: [{id: "us-ssn", pattern: "\\b\\d{3}-\\d{2}-\\d{4}\\b"}, {id: "prompt-injection", pattern: "ignore (all )?(previous|prior) instructions"}], model: {enabled: false}}
           }' > "$dir/policy.json"
           docker run -d --name relaygate -p 18090:8080 -v "$dir/policy.json:/policy/policy.json:ro" -v "$dir/data:/data" \
             -e RELAYGATE_POLICY=/policy/policy.json -e RELAYGATE_DB=/data/relaygate.db \
-            ghcr.io/agentworkforce/relaygate@sha256:c41ff07cd0b9b2ed6c13b9ba20272658024e3d0e59c6de16035a19d488cf61ca
+            ghcr.io/agentworkforce/relaygate@sha256:0fedfe828303bffd7f64807ee5451bb9129c5c4cb40f67cf47b6ffc702959f01
           for _ in $(seq 1 30); do curl -sf localhost:18090/readyz >/dev/null && break; sleep 1; done
           { echo "RELAYGATE_E2E_URL=http://localhost:18090"; echo "RELAYGATE_E2E_BRIDGE_KEY=$bridge"; echo "RELAYGATE_E2E_LOCAL_KEY=$local"; } >> "$GITHUB_ENV"
       - run: npm test

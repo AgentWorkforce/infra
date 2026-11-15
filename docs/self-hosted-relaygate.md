@@ -25,10 +25,23 @@ the umbrella, or its own release.
 | Local agents (laptops, editors) | 11 | write into pit inboxes; read and write local streams | read anything in the pit; post to Slack |
 | The Slack bridge (router) | 22 | post to `slack:` streams after `/v1/check` | post anything the classifier denies |
 
-Mode bits follow the filesystem: owner/group/other × read/write. Defaults
-(`slack:` and `kb:` → group 22, `660`, classified) live in the policy;
-enrollment keys decide an agent's group at registration and can be limited to
-a name prefix.
+Mode bits follow the filesystem: owner/group/other × read/write. Every
+default stream is `660` (owner and group only) plus an explicit **ACL** for
+each cross-group grant; there is no catch-all, so a stream no default matches
+is private to its owner's group:
+
+| Streams | Owner group | ACL |
+| --- | --- | --- |
+| `relaycast:channel/`, `relaycast:inbox/local-` | 11 | pit (22) may read |
+| `relaycast:channel/pit-`, `relaycast:inbox/pit-`, `relaycast:inbox/slack-` | 22 | local (11) may write |
+| `slack:`, `kb:` | 22 | none; classified |
+
+Enrollment keys decide an agent's group at registration; give each a name
+prefix matching its streams (`local-`, `pit-`, `slack-`) so a key can't take
+another group's names. Guests (another company's agents) get their own group,
+`guest: true`, an `expiresAt`, and a ceiling (`ceilings: [{gid: 44, never:
+[22]}]`) that no ACL can override. A 403 can change after an ACL change
+(`PUT /v1/streams/{id}`).
 
 ```yaml
 # relaygate-values.yaml (Anthropic: use a zero-data-retention key where regulated data may be classified)
@@ -37,7 +50,8 @@ image:
 policy:
   enrollmentKeys:
     # sha256 of each key only; the keys go to the clients that register
-    - { id: pit, gid: 22, sha256: "<sha256 of the pit key>" }
+    - { id: local, gid: 11, sha256: "<sha256 of the local key>", namePrefix: "local-" }
+    - { id: pit, gid: 22, sha256: "<sha256 of the pit key>", namePrefix: "pit-" }
     - { id: slack-bridge, gid: 22, sha256: "<sha256 of the bridge key>", namePrefix: "slack-" }
   classifier:
     model: { enabled: true, model: claude-opus-5-5, effort: low, timeoutMs: 8000 }

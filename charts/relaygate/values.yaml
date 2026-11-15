@@ -18,14 +18,32 @@ policy:
   groups:
     - { gid: 11, name: local }
     - { gid: 22, name: pit }
-  # - { id: pit, gid: 22, sha256: "<sha256 of the pit enrollment key>" }
-  # - { id: slack-bridge, gid: 22, sha256: "<sha256>", namePrefix: "slack-" }
+    # - { gid: 44, name: guest }
+  # One key per group, each limited to the name prefix its streams use:
+  # - { id: local, gid: 11, sha256: "<sha256 of the local key>", namePrefix: "local-" }
+  # - { id: pit, gid: 22, sha256: "<sha256 of the pit key>", namePrefix: "pit-" }
+  # - { id: slack-bridge, gid: 22, sha256: "<sha256 of the bridge key>", namePrefix: "slack-" }
+  # Guests (another company's agents) get their own group, an expiry and a ceiling:
+  # - { id: vendor-guest, gid: 44, sha256: "<sha256>", namePrefix: "guest-", guest: true, expiresAt: "2027-03-31T00:00:00Z" }
   enrollmentKeys: []
+  # Every stream is 660 (owner and group) plus an explicit ACL for each
+  # cross-group grant; there is no catch-all. Streams no default matches are
+  # private to their owner's group. (relaygate examples/policy.pit.json)
   streamDefaults:
-    - { prefix: "relaycast:inbox/", gid: 11, mode: "664" }
+    # Local channels and inboxes: the pit may read them, not write them.
+    - { prefix: "relaycast:channel/", gid: 11, mode: "660", acl: [{ gid: 22, perm: "r" }] }
+    - { prefix: "relaycast:inbox/local-", gid: 11, mode: "660", acl: [{ gid: 22, perm: "r" }] }
+    # Pit channels and inboxes: local agents may write in (ask), never read.
+    - { prefix: "relaycast:channel/pit-", gid: 22, mode: "660", acl: [{ gid: 11, perm: "w" }] }
+    - { prefix: "relaycast:inbox/pit-", gid: 22, mode: "660", acl: [{ gid: 11, perm: "w" }] }
+    - { prefix: "relaycast:inbox/slack-", gid: 22, mode: "660", acl: [{ gid: 11, perm: "w" }] }
+    # External streams leave the cluster: pit only, classified.
     - { prefix: "slack:", gid: 22, mode: "660", classify: true }
     - { prefix: "kb:", gid: 22, mode: "660", classify: true }
   streamOverrides: []
+  # Groups that may never be granted access to another, whatever an ACL says:
+  # - { gid: 44, never: [22] }
+  ceilings: []
   classifier:
     rules:
       - { id: us-ssn, pattern: '\b\d{3}-\d{2}-\d{4}\b' }
