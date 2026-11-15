@@ -2,7 +2,10 @@
 # List the installation's workspaces (ID and name), for turning on titles and
 # summaries ("Turn on titles and summaries" in 0-START-HERE.md).
 #
-#   bash workspace-ids.sh <app hostname> [namespace]
+#   bash workspace-ids.sh <app hostname> [namespace] [api hostname]
+#
+# The API hostname defaults to api.<app hostname>. Pass it when the API has a
+# hostname of its own (for example Azure DNS labels: __HOST_API__).
 #
 # Run after the first sign-in, with kubectl access to the install. It reads the
 # install's bootstrap token from the agent-relay-secrets Secret and sends it
@@ -10,9 +13,9 @@
 # then prints one line per workspace: its ID, then its name. Needs kubectl,
 # curl and jq.
 set -euo pipefail
-DOMAIN="${1:?usage: bash workspace-ids.sh <app hostname> [namespace]}"
+DOMAIN="${1:?usage: bash workspace-ids.sh <app hostname> [namespace] [api hostname]}"
 NS="${2:-${NAMESPACE:-agent-relay}}"
-API="https://api.$DOMAIN"
+API="https://${3:-api.$DOMAIN}"
 
 auth() {
   printf 'Authorization: Bearer '

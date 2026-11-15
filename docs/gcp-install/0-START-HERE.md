@@ -541,7 +541,13 @@ unset K
 ```
 
 **Done when:** it prints `secret/agent-relay-llm created`. To replace the key
-later, delete the Secret and run this again; don't use `kubectl apply`.
+later, delete the Secret, run this again, then restart both workers so they
+read the new key (they read it only at start, and an unchanged Helm upgrade
+doesn't restart them); don't use `kubectl apply`:
+
+```sh
+kubectl -n $NAMESPACE rollout restart deploy/agent-relay-worker-session-brief deploy/agent-relay-worker-session-summary-worker
+```
 
 **16b.** Find the workspace ID. Workspaces exist only after the first sign-in
 (step 15):
@@ -628,9 +634,23 @@ Good to know:
   0.7.11 ignores it, and from chart 0.7.15 (AgentWorkforce/infra#346) it lets
   MCP `list_session_summaries` return the recorded summaries.
 - **Turn it off:** set `nativeBrief.enabled` and `session-brief.enabled` back to
-  `false`, set the `bob-costas` list back to
-  `[{"name": "BOB_COSTAS_MODEL", "value": "off"}]`, run 16d again, then
-  `kubectl -n $NAMESPACE delete secret agent-relay-llm`.
+  `false`, remove `nativeBrief.baseUrl` if you set a gateway (the chart refuses
+  a `baseUrl` while the brief worker is off), and set the `bob-costas` list back
+  to `[{"name": "BOB_COSTAS_MODEL", "value": "off"}]`:
+
+  ```sh
+  yq -i '
+    .["sessions-pipeline"].worker.nativeBrief.enabled = false |
+    del(.["sessions-pipeline"].worker.nativeBrief.baseUrl) |
+    .["sessions-pipeline"].worker.components["session-brief"].enabled = false |
+    .["sessions-pipeline"].worker.components["bob-costas"].env = [{"name": "BOB_COSTAS_MODEL", "value": ("off" | . style="double")}]
+  ' values.yaml
+  ```
+
+  Run the `helm upgrade` from 16d, then wait for the summary worker only (the
+  upgrade removes the brief worker):
+  `kubectl -n $NAMESPACE rollout status deploy/agent-relay-worker-session-summary-worker --timeout=10m`.
+  Then `kubectl -n $NAMESPACE delete secret agent-relay-llm`.
 
 ## Next
 
