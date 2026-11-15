@@ -161,7 +161,7 @@ spec:
             defaultMode: 0440
             items:
               {{- range $p := .Values.desktopFeed.signingKeys.profiles }}
-              {{- if not (regexMatch "^[a-z0-9][a-z0-9-]{0,62}$" $p) }}
+              {{- if not (regexMatch "^[a-z0-9]{1,32}$" $p) }}
               {{- fail (printf "desktopFeed.signingKeys.profiles: %q is not a profile id" $p) }}
               {{- end }}
               - { key: {{ printf "%s.pem" $p | quote }}, path: {{ printf "%s.pem" $p | quote }} }

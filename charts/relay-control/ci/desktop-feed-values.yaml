@@ -33,4 +33,4 @@ encryption:
 desktopFeed:
   signingKeys:
     existingSecret: desktop-feed-keys
-    profiles: [example-profile]
+    profiles: [exampleprofile]
