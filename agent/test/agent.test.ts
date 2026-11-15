@@ -80,6 +80,9 @@ test("the credential broker ships pinned: broker.ref is one exact commit, instal
   assert.match(lane, /export BROKER_RELAY_TOKEN_FILE=%s\/relay-observer-token BROKER_RELAY_API=https:\/\/cast\.agentrelay\.com BROKER_RELAY_NAME=%s/);
   assert.match(lane, /--name "\$RELAY_OBSERVER_TOKEN_PARAM" --query Parameter\.Value --output text > "\$tok_tmp"/);
   assert.match(lane, /install -m 0600 -o credbroker -g credbroker "\$tok_tmp" "\$BROKER_HOME\/relay-observer-token"/);
+  // Fail closed on a failed upgrade: unless current is exactly the pin, the sudo rule is removed
+  // (an older broker that predates Relay verification is never reachable).
+  assert.match(lane, /readlink \/opt\/aws-cred-broker\/current 2>\/dev\/null\)" != "\/opt\/aws-cred-broker\/\$broker_ref" \]; then\n  rm -f \/etc\/sudoers\.d\/aws-cred-broker/);
   const token = agent.secrets.find((s) => s.envVar === "RELAY_OBSERVER_TOKEN_PARAM")!;
   assert.ok(token, "the observer token is a lane secret");
   assert.equal(token.exportAs, undefined, "never exported to secrets.env");

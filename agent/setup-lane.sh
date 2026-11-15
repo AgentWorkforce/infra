@@ -110,9 +110,18 @@ if [ -n "${CRED_BROKER_ROLE_ARN:-}" ] && printf '%s' "$broker_ref" | grep -qxE '
   }
   if install_broker "$broker_ref"; then
     ln -sfn "/opt/aws-cred-broker/$broker_ref" /opt/aws-cred-broker/current.new && mv -Tf /opt/aws-cred-broker/current.new /opt/aws-cred-broker/current
-  else
-    echo "setup-lane: could not install the credential broker at $broker_ref; keeping the current version" >&2
   fi
+fi
+# Fail closed: the wrapper, the token and the sudo rule are installed only
+# when "current" is exactly the pinned commit. If the pinned version couldn't
+# be installed (e.g. a fetch failed during an upgrade), an older broker that
+# predates Relay verification must not be reachable through the new
+# interface: the sudo rule is removed until a later lane setup succeeds.
+if [ -n "${CRED_BROKER_ROLE_ARN:-}" ] && printf '%s' "$broker_ref" | grep -qxE '[0-9a-f]{40}' \
+  && [ "$(readlink /opt/aws-cred-broker/current 2>/dev/null)" != "/opt/aws-cred-broker/$broker_ref" ]; then
+  rm -f /etc/sudoers.d/aws-cred-broker
+  echo "setup-lane: could not install the credential broker at $broker_ref; broker access is off until it installs" >&2
+elif [ -n "${CRED_BROKER_ROLE_ARN:-}" ] && printf '%s' "$broker_ref" | grep -qxE '[0-9a-f]{40}'; then
   # The observer token, from SSM straight into a credbroker-only file: never
   # printed, never on a command line, never in secrets.env. Refreshed on
   # every lane setup (boot and each hot update).
