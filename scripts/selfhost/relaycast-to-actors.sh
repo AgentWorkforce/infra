@@ -90,6 +90,7 @@ rta_check_cutover() {
   yq '{"relaycast": .relaycast, "durable-actors": .["durable-actors"]}' "$chart/values-eks-actors.yaml" > "$work/rta-actors-profile.yaml"
   rta_actor_files=(-f "$work/rta-actors-profile.yaml")
   for v in "${rta_actor_values[@]}"; do [ -f "$v" ] || die "actors values file not found: $v"; rta_actor_files+=(-f "$v"); done
+  $rta_resume || rta_check_engine_schema
   # Last, so nothing can change them: the install's Secret, keyring and
   # bootstrap secret (the routing tags and keyed workspace ids derive from
   # them), the retained data claim (files, export, rollback: see relaycast
@@ -110,6 +111,28 @@ EOF
   rta_actor_files+=(-f "$work/rta-pinned.yaml")
   rta_target_render > "$work/rta-target.yaml" || die "the actors values do not render"
   rta_target_checks
+}
+
+# The export's per-table column lists are the live engine's schema, and the
+# actor's `begin` refuses any other (409 import_schema_mismatch) in phase 5,
+# after messaging has stopped. Refuse here, before anything stops, unless the
+# actors values list the live Relaycast image among the engines their gateway
+# imports from (relaycast.runtime.durableActors.migration.compatibleEngineDigests;
+# a later values file replaces the list, as helm merges it).
+rta_check_engine_schema() {
+  local engine compat="" declared=false f key='.relaycast.runtime.durableActors.migration'
+  engine=$(rta_live .relaycast.runtime.postgres.image.digest); [ -n "$engine" ] || engine=$(rta_live .relaycast.image.digest)
+  [ -n "$engine" ] || die "could not read the deployed Relaycast image digest from the values of $release"
+  for f in "$work/rta-actors-profile.yaml" "${rta_actor_values[@]}"; do
+    [ "$(yq -N -r "$key | has(\"compatibleEngineDigests\")" "$f" 2>/dev/null)" = true ] || continue
+    declared=true; compat=$(yq -N -r "$key.compatibleEngineDigests[]" "$f")
+  done
+  if ! $declared || [ -z "$compat" ]; then
+    die "the actors values declare no $key.compatibleEngineDigests: the gateway imports only an export on its own engine schema and refuses any other after messaging has stopped; list the engine image(s) the pinned gateway and deployer were built against (values-eks-actors.yaml). Nothing was stopped"
+  fi
+  grep -qx "$engine" <<<"$compat" \
+    || die "the deployed Relaycast image ($engine) is not among the engines the pinned actors gateway imports from ($(tr '\n' ' ' <<<"$compat")): its export's column lists would be refused in the import phase, after messaging has stopped. Pin an actors build from the same engine source, or cut over from a listed engine. Nothing was stopped"
+  say "   the deployed Relaycast image is one the pinned actors gateway imports from"
 }
 
 rta_target_checks() {

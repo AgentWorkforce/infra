@@ -641,7 +641,12 @@ images:
         Relaycast actor-mode gateway with the reviewed full-copy migration,
         in-cluster socket origin, upload completion and fresh-delivery redrive
         guard (#653/#655/#656/#663). The image has no revision or license label;
-        the source revision is the publish run's head.
+        the source revision is the publish run's head. Built before delivery
+        confirmation (#625, PostgreSQL migration 0005): imports only from
+        engines on the 12.8.0-pg.3 schema, not from 12.10.0; the engines it
+        imports from are listed in values-eks-actors.yaml
+        (compatibleEngineDigests) and the upgrader checks the live engine
+        against that list before stopping anything.
     license:
       status: recorded
       spdx: Apache-2.0
@@ -685,7 +690,8 @@ images:
         Relaycast actor deploy Job (S3 artifact store), built from the same
         reviewed migration/runtime source as the gateway. The image has no
         revision or license label; the source revision is the publish run's
-        head.
+        head. Same engine schema as the gateway: imports from 12.8.0-pg.3, not
+        from 12.10.0 (see the gateway note).
     license:
       status: recorded
       spdx: Apache-2.0

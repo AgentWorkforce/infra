@@ -37,6 +37,7 @@ COMMIT=0123456789abcdef0123456789abcdef01234567
 REG=111111111111.dkr.ecr.us-east-1.amazonaws.com
 D1="sha256:$(printf 'a%.0s' {1..64})"; D2="sha256:$(printf 'b%.0s' {1..64})"
 D3="sha256:$(printf 'c%.0s' {1..64})"; D4="sha256:$(printf 'd%.0s' {1..64})"
+D5="sha256:$(printf 'e%.0s' {1..64})"  # the engine the fixture's actors gateway imports from
 SIGNER=AgentWorkforce/infra/.github/workflows/release-agent-relay.yml
 
 # $1 dir, $2 variant: ok | unpinned | swapped | chartver | no-rds-native
@@ -50,7 +51,10 @@ make_release() {
   if [ "$v" = chartver ]; then cv=9.9.9; fi
   printf 'name: agent-relay\nversion: "%s"\n' "$cv" > "$d/pkg/agent-relay/Chart.yaml"
   : > "$d/pkg/agent-relay/values-eks.yaml"; : > "$d/pkg/agent-relay/values-eks-native.yaml"
-  if [ "$v" != no-rds-native ]; then : > "$d/pkg/agent-relay/values-eks-rds-native.yaml"; : > "$d/pkg/agent-relay/values-eks-actors.yaml"; fi
+  if [ "$v" != no-rds-native ]; then
+    : > "$d/pkg/agent-relay/values-eks-rds-native.yaml"
+    printf 'relaycast:\n  runtime:\n    durableActors:\n      migration:\n        compatibleEngineDigests: ["%s"]\n' "$D5" > "$d/pkg/agent-relay/values-eks-actors.yaml"
+  fi
   tar -czf "$d/agent-relay-0.6.31.tgz" -C "$d/pkg" agent-relay; rm -rf "$d/pkg"
   ( cd "$d" && sha release-manifest.json release-images.values.yaml agent-relay-0.6.31.tgz > SHA256SUMS )
 }
@@ -468,12 +472,12 @@ pass "--rds-setup refuses a STATE_DIR readable beyond its owner"
 
 # 31. --relaycast-actors: opt-in, plan-mode guards that refuse before changing anything
 rds_args=(--version 2026.11.1 --registry "$REG" --profile eks-rds-native --values "$vals")
-live_pg='relaycast:
+live_pg="relaycast:
   existingSecret: relaycast-secrets
-  runtime: { backend: postgres }
+  runtime: { backend: postgres, postgres: { image: { digest: $D5 } } }
   credentials: { format: legacy }
 relay-control:
-  encryption: { keyId: k1 }'
+  encryption: { keyId: k1 }"
 secret() { mkdir -p "$root/secrets/$1"; printf '%s\n' "$3" > "$root/secrets/$1/$2.json"; }
 keyring() { secret agent-relay relaycast-secrets '{"data":{"credential-keyring":"eA==","internal-secret":"aQ==","file-signing-secret":"Zg==","workspace-bootstrap-secret":"Yg=="}}'; }
 make_release "$root/rel-ok" ok; setup_mocks "$root/rel-ok" ok
@@ -549,12 +553,23 @@ actor_env; sed -i.bak 's/keyId: k1/keyId: k2/' "$root/live-values.yaml"
 out=$(run_rds "${rds_args[@]}" --relaycast-actors cutover --actors-values "$vals" 2>&1) && fail "a changed relay-control encryption key was accepted"
 grep -q "encryption key changed" <<<"$out" || fail "encryption key change refused for the wrong reason: $out"
 sed -i.bak 's/keyId: k2/keyId: k1/' "$root/live-values.yaml"
+# The pinned actors import only from engines on their own schema: the live
+# engine must be listed, and the list must be declared (a later file replaces it).
+sed -i.bak "s/digest: $D5/digest: $D3/" "$root/live-values.yaml"
+out=$(run_rds "${rds_args[@]}" --relaycast-actors cutover --actors-values "$vals" 2>&1) && fail "an engine the pinned actors gateway cannot import from was accepted"
+grep -q 'not among the engines the pinned actors gateway imports from' <<<"$out" && grep -q "$D3" <<<"$out" || fail "engine schema mismatch refused for the wrong reason: $out"
+grep -q 'Nothing was stopped' <<<"$out" || fail "engine schema mismatch did not say nothing was stopped: $out"
+sed -i.bak "s/digest: $D3/digest: $D5/" "$root/live-values.yaml"
+printf 'relaycast:\n  runtime:\n    durableActors:\n      migration:\n        compatibleEngineDigests: []\n' > "$root/actors-no-compat.yaml"
+out=$(run_rds "${rds_args[@]}" --relaycast-actors cutover --actors-values "$vals" --actors-values "$root/actors-no-compat.yaml" 2>&1) && fail "actors values without a compatible-engine list were accepted"
+grep -q 'declare no .relaycast.runtime.durableActors.migration.compatibleEngineDigests' <<<"$out" || fail "undeclared engine list refused for the wrong reason: $out"
 out=$(run_rds "${rds_args[@]}" --relaycast-actors cutover --actors-values "$vals" 2>&1) || fail "a complete cutover plan failed: $out"
+grep -q 'one the pinned actors gateway imports from' <<<"$out" || fail "cutover plan did not report the engine schema check: $out"
 grep -q 'preconditions hold' <<<"$out" || fail "cutover plan did not report its preconditions: $out"
 grep 'helm .*template' "$root/log" | tail -1 | grep -q 'rta-actors-profile.yaml' || fail "cutover did not render the Relaycast-only actors overlay"
 grep 'helm .*template' "$root/log" | tail -1 | grep -q 'values-eks-actors.yaml' && fail "cutover layered the whole actors profile (it turns the suite off)"
 grep -Eq 'helm .* upgrade |kubectl .*(scale|apply|exec)' "$root/log" && fail "cutover plan mode changed the cluster"
-pass "cutover uses a Relaycast-only overlay and refuses CA, keyring, image, actor secret and encryption-key mismatches"
+pass "cutover uses a Relaycast-only overlay and refuses CA, keyring, image, engine schema, actor secret and encryption-key mismatches"
 
 # 33. credentials apply: a retry keeps the first switch time; the rekey run is recorded
 setup_mocks "$root/rel-ok" ok; printf '%s\n' "$live_pg" > "$root/live-values.yaml"; keyring; make_state

@@ -83,7 +83,16 @@ target chart version to be live before either migration phase.
 The table plan is derived from the engine schema in foreign-key order and
 fails for a table it cannot scope to one workspace. The actor's `begin`
 refuses an export whose per-table column lists differ from its own, so both
-sides must run the same engine schema.
+sides must run the same engine schema. That refusal comes in phase 5, after
+messaging has stopped, so the actors overlay declares the engine images its
+pinned gateway and deployer were built against
+(`relaycast.runtime.durableActors.migration.compatibleEngineDigests`) and the
+upgrader refuses a cutover from any other Relaycast image in plan mode, before
+anything stops. The published actors images (12.8.0-actors.2, relaycast
+997dbb28) predate delivery confirmation (relaycast#625: PostgreSQL migration
+0005, four columns on `deliveries` and `messages`): they import from
+12.8.0-pg.3 but not from 12.10.0. A cutover from 12.10.0 needs an actors build
+from the same engine source, pinned together with its digest in that list.
 
 ## Phases
 
@@ -146,6 +155,10 @@ Preconditions:
   `RELAYCAST_WORKSPACE_BOOTSTRAP_SECRET` (the Postgres runtime's
   `secretKeys.bootstrapSecret` is mapped to the gateway's
   `secretKeys.workspaceBootstrapSecret`);
+- the deployed Relaycast image is one of the engines the actors overlay lists
+  under `relaycast.runtime.durableActors.migration.compatibleEngineDigests`
+  (the pinned gateway imports only an export on its own engine schema and
+  refuses any other after messaging has stopped);
 - relay-control's encryption key unchanged since phase 1;
 - the target release includes relaycast#652 (actor raw reads such as
   `GET /v1/inbox` answered with tuples).
