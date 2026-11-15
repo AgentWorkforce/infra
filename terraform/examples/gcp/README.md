@@ -59,6 +59,7 @@ Terraform or OpenTofu >= 1.11 (the Cloud SQL admin password is write-only).
 
 | Name | Source | Version |
 | ---- | ------ | ------- |
+| desktop\_feed\_bucket | ../../modules/gcp/object-storage | n/a |
 | functions | ../../modules/gcp/functions | n/a |
 | postgres | ../../modules/gcp/postgres | n/a |
 | search | ../../modules/gcp/search | n/a |
@@ -68,6 +69,8 @@ Terraform or OpenTofu >= 1.11 (the Cloud SQL admin password is write-only).
 
 | Name | Type |
 | ---- | ---- |
+| [google_artifact_registry_repository.mirror](https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/artifact_registry_repository) | resource |
+| [google_artifact_registry_repository_iam_member.mirror_node_reader](https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/artifact_registry_repository_iam_member) | resource |
 | [google_dns_managed_zone.cloud_sql](https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/dns_managed_zone) | resource |
 | [google_dns_record_set.cloud_sql](https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/dns_record_set) | resource |
 | [google_pubsub_subscription.pipeline](https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/pubsub_subscription) | resource |
@@ -79,6 +82,7 @@ Terraform or OpenTofu >= 1.11 (the Cloud SQL admin password is write-only).
 | [google_pubsub_topic_iam_member.pipeline_publisher](https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/pubsub_topic_iam_member) | resource |
 | [google_pubsub_topic_iam_member.pubsub_dead_letter](https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/pubsub_topic_iam_member) | resource |
 | [google_redis_instance.pipeline](https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/redis_instance) | resource |
+| [google_service_account_iam_member.desktop_feed_sign_self](https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/service_account_iam_member) | resource |
 | [google_client_config.this](https://registry.terraform.io/providers/hashicorp/google/latest/docs/data-sources/client_config) | data source |
 | [google_container_cluster.this](https://registry.terraform.io/providers/hashicorp/google/latest/docs/data-sources/container_cluster) | data source |
 | [google_project.this](https://registry.terraform.io/providers/hashicorp/google/latest/docs/data-sources/project) | data source |
@@ -92,11 +96,15 @@ Terraform or OpenTofu >= 1.11 (the Cloud SQL admin password is write-only).
 | region | GCP region. | `string` | n/a | yes |
 | sessions\_bucket\_name | Globally unique GCS bucket name for session objects. | `string` | n/a | yes |
 | deletion\_protection | Prevent deletion of Cloud SQL, Memorystore and Pub/Sub data resources. Disable only for a disposable proof environment. | `bool` | `true` | no |
+| desktop\_feed\_bucket\_name | Globally unique bucket for relay-control's signed Desktop feed (SELFHOST\_DESKTOP\_FEED\_GCS\_BUCKET). Empty disables it. | `string` | `""` | no |
+| desktop\_feed\_service\_account\_id | account\_id of the Google service account relay-control uses for the Desktop feed bucket (6-30 characters). | `string` | `"agent-relay-control"` | no |
 | enable\_functions | Create the optional event-driven pipeline (Cloud Run functions). | `bool` | `false` | no |
 | enable\_search | Install the optional OpenSearch cluster on GKE. | `bool` | `false` | no |
 | gke\_cluster\_location | Its region or zone. | `string` | `null` | no |
 | gke\_cluster\_name | Existing GKE cluster that runs agent-relay (only for enable\_search). | `string` | `null` | no |
+| gke\_node\_service\_account | Email of the GKE node pool's service account, granted roles/artifactregistry.reader on the mirror. Empty: the project's default Compute Engine service account (a node pool whose serviceAccount is "default"). | `string` | `""` | no |
 | gke\_use\_private\_endpoint | Reach the control plane on its private endpoint. | `bool` | `true` | no |
+| image\_mirror\_repository | Artifact Registry repository for the release images (guide step 5), created in var.region. Empty: no repository and no grant. | `string` | `""` | no |
 | kms\_key\_name | CMEK key for Cloud SQL and the bucket (null: Google-managed). Grant the service agents on it first. | `string` | `null` | no |
 | labels | Labels for every resource that supports them. | `map(string)` | `{}` | no |
 | name | Name prefix for every resource. | `string` | `"agent-relay"` | no |
@@ -108,6 +116,7 @@ Terraform or OpenTofu >= 1.11 (the Cloud SQL admin password is write-only).
 | pipeline\_redis\_reserved\_ip\_range | Optional PSA allocated range name for Memorystore. null lets Google choose from the connection. | `string` | `null` | no |
 | pipeline\_redis\_version | Memorystore Redis version. | `string` | `"REDIS_7_2"` | no |
 | pipeline\_source\_archive | Function source zip in GCS. Required with enable\_functions. | ```object({ bucket = string object = string generation = optional(number) })``` | `null` | no |
+| relay\_control\_service\_account | relay-control's Kubernetes service account. charts/agent-relay/values-gcp.yaml sets fullnameOverride: relay-control, so it is relay-control. | `string` | `"relay-control"` | no |
 | release\_name | agent-relay Helm release name. | `string` | `"agent-relay"` | no |
 | search\_admin\_credentials\_secret\_name | Existing Secret (in the search namespace) with the OpenSearch admin username and password. | `string` | `"opensearch-admin"` | no |
 | search\_security\_config\_secret\_name | Existing Secret (in the search namespace) with the security plugin configuration. | `string` | `"opensearch-security-config"` | no |
@@ -119,8 +128,24 @@ Terraform or OpenTofu >= 1.11 (the Cloud SQL admin password is write-only).
 | Name | Description |
 | ---- | ----------- |
 | chart\_values | Complete non-secret managed-service overlay for values-gcp.yaml plus values-gcp-native.yaml. Save with: terraform output -json chart\_values > managed-values.json. |
+| desktop\_feed | Values for relay-control's signed Desktop feed on GCS (null unless desktop\_feed\_bucket\_name is set). Put env into relay-control.extraEnv and annotations into relay-control.serviceAccount.annotations; signing keys go through relay-control.desktopFeed.signingKeys. |
 | functions | Pipeline function, topics and secret (null unless enable\_functions). |
+| image\_mirror\_root | MIRROR\_ROOT for install guide step 5 (null unless image\_mirror\_repository is set). |
 | pipeline | Native Sessions pipeline values. The Redis CA is public certificate material, not a credential. |
 | postgres | Cloud SQL private IP, admin secret and URL template. connection\_name feeds CLOUD\_SQL\_CONNECTION\_NAME in the sessions worker and alleyoop extraEnv. |
 | search\_url | In-cluster OpenSearch URL (null unless enable\_search). |
 <!-- END_TF_DOCS -->
+
+## Optional: the signed Desktop feed on GCS
+
+Set `desktop_feed_bucket_name` to create a private bucket for relay-control's
+signed Desktop feed (relay-control 0.5.25+), a Google service account for
+relay-control with Workload Identity, and `roles/iam.serviceAccountTokenCreator`
+on itself so it can sign download URLs. Enable `iamcredentials.googleapis.com`
+on the project first. `output.desktop_feed` holds the three `extraEnv` entries
+for `relay-control.extraEnv` and the two annotations for
+`relay-control.serviceAccount.annotations`
+(`iam.gke.io/gcp-service-account` and `iam.gke.io/return-principal-id-as-email`).
+The feed's signing keys go through `relay-control.desktopFeed.signingKeys`.
+Off by default: an install without it plans no change.
+

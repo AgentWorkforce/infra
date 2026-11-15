@@ -34,12 +34,24 @@ resource "aws_iam_role" "history_upload" {
   max_session_duration = 3600
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
-    Statement = [{
-      Effect    = "Allow"
-      Principal = { AWS = var.history_upload.control_role_arn }
-      Action    = ["sts:AssumeRole", "sts:SetSourceIdentity", "sts:TagSession"]
-      Condition = { StringLike = { "sts:SourceIdentity" = "u_*" } }
-    }]
+    Statement = [
+      {
+        Sid       = "ControlWithUserSourceIdentity"
+        Effect    = "Allow"
+        Principal = { AWS = var.history_upload.control_role_arn }
+        Action    = ["sts:AssumeRole", "sts:SetSourceIdentity"]
+        Condition = { StringLike = { "sts:SourceIdentity" = "u_*" } }
+      },
+      {
+        # A Pod Identity session carries transitive session tags into the chained AssumeRole. Under the
+        # SourceIdentity condition above, TagSession is denied and Control answers 503
+        # upload_credentials_unavailable. TagSession alone never grants the role.
+        Sid       = "ControlTransitiveSessionTags"
+        Effect    = "Allow"
+        Principal = { AWS = var.history_upload.control_role_arn }
+        Action    = "sts:TagSession"
+      },
+    ]
   })
   tags = var.tags
   lifecycle {

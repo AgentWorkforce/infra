@@ -397,6 +397,16 @@ searchIndexer:
     region: us-east-1
     # Empty uses the AWS S3 endpoint for the region (Pod Identity credentials).
     endpoint: ""
+    # podIdentity: no keys; the AWS credential chain of the ServiceAccount.
+    # secret: static keys from existingSecret, for an S3-compatible endpoint
+    # (MinIO) where no pod identity exists, such as AKS. Needs endpoint.
+    # Left unset here so existing renders (and the content-addressed bootstrap
+    # Job name) do not change:
+    # credentials:
+    #   mode: secret
+    # existingSecret: <Secret name>
+    # accessKeyIdKey: access-key-id
+    # secretAccessKeyKey: secret-access-key
   # GCS readiness settings (Cloud SQL, Memorystore and Pub/Sub). Empty for S3.
   extraEnv: []
   postgres:
@@ -565,6 +575,10 @@ ingestEdge:
     databaseUrlKey: database-url
     introspectSecretKey: introspect-secret
   postgres:
+    # custom-ca (default): verify against caConfigMap/caKey, pinned by caSha256.
+    # supabase: the image's built-in Supabase CA; it also lets the role check
+    # accept Supabase's creator membership edge. Leave the CA fields empty.
+    tlsProfile: custom-ca
     # The server must already serve TLS under this CA, with matching DNS.
     caConfigMap: ""
     caKey: ca.crt

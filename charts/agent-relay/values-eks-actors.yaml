@@ -139,6 +139,19 @@ relaycast:
       # Dial actor sockets in-cluster: the actors' public URL is an internet
       # name the gateway may not reach from inside the VPC.
       socketOrigin: controlPlane
+      # Engine images the pinned gateway and deployer import from. The export's
+      # per-table column list is the engine's schema and the actor's `begin`
+      # refuses any other (409 import_schema_mismatch) in phase 5, after
+      # messaging has stopped; the upgrader refuses the cutover before anything
+      # stops unless the live Relaycast image is listed here. 12.8.0-actors.2
+      # (relaycast 997dbb28) predates delivery confirmation (SQLite 0081,
+      # PostgreSQL 0005, relaycast#625): it imports 12.8.0-pg.3 (810f48ce, the
+      # same schema) but not 12.10.0 (fd10195, four more columns on deliveries
+      # and messages). Extend this list only with an actors build whose source
+      # carries the same engine migrations as the image it imports from.
+      migration:
+        compatibleEngineDigests:
+          - sha256:cc2a79f02d39978fa04322b5a45497737ff137bc2a5db5615c7eee690030de83
       # Relaycast main after #653/#655/#656/#663; immutable digest and publish
       # run are recorded in docs/self-hosted-image-supply-chain.md.
       gateway:

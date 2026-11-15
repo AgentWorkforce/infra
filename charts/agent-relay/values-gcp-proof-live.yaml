@@ -10,9 +10,10 @@ relay-control:
   nameOverride: relay-cloud-api
   fullnameOverride: relay-cloud-api
   image:
-    # relay-control 0.5.0, df4b390; 0.5.1 is not published yet, so the session read handoff is inert on this pin.
+    # relay-control 0.5.24, edad6432 (publish run 43673082170). The session
+    # read handoff needs 0.5.1 or later and stays off unless enabled below.
     # The earlier 17bdc78 proof build was only in the private proof registry.
-    digest: sha256:d8c26d44dccb6dd21b7033288241a379e46ce5fbca69f276c4d4745001c3c3e2
+    digest: sha256:d1b6ca95fab240a9d41208d83de3b1f4245408b0765038762f1c419ee60f43bc
   resources:
     requests: { cpu: 25m, memory: 128Mi }
     limits: { memory: 512Mi }

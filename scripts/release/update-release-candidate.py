@@ -31,7 +31,7 @@ COMPONENTS = {
     },
     "relay-webapp": {
         "imageRepository": "ghcr.io/agentworkforce/relay-webapp",
-        "sourceRepository": "AgentWorkforce/relay-webapp",
+        "sourceRepository": "AgentWorkforce/relay-web",
         "signerWorkflow": ".github/workflows/container.yml",
     },
     "sessions-pipeline": {

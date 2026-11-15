@@ -1,0 +1,19 @@
+# Actors arm at relaycast main 10e93f94 (#652/#653/#655/#656) on infra main
+# a01566c3 (#274). Images: publish-actors-images run 43350514591
+# (tag 12.8.0-actors.1) (official, tag 12.8.0-actors.1); differs from the PG arm vintage a63961bd only by #657 (Postgres lock + 40P01 retry, not on the actor path).
+# DURABLE_ACTORS_SOCKET_ORIGIN (#655): the gateway dials actor sockets through
+# the in-cluster control-plane Service instead of durable-actors.publicUrl, so
+# realtime works without public DNS (replaces bench/relaycast/infra/actors-ingress.sh).
+relaycast:
+  extraEnv:
+    - {name: DURABLE_ACTORS_SOCKET_ORIGIN, value: "http://agent-relay-durable-actors.arm-actors.svc.cluster.local:7100"}
+  runtime:
+    durableActors:
+      gateway:
+        image:
+          repository: ghcr.io/agentworkforce/relaycast-actors-gateway
+          digest: sha256:5e1dc05084ee17c9b84b4146a0f875df5bed7aa73d50ec2fa05258fdbd122a4a
+      deployer:
+        image:
+          repository: ghcr.io/agentworkforce/relaycast-actors-deployer
+          digest: sha256:a78fe6d63508b77b2193bb26869c907bab3f0c23319b26e7ff3b55ebcae92a79

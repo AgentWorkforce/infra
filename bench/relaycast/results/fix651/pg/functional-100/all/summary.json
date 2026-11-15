@@ -1,0 +1,231 @@
+{
+ "arm": "pg",
+ "dir": "<results dir>",
+ "phases": [
+  {
+   "label": "f100-dm",
+   "kind": "dm",
+   "offeredRate": 50,
+   "startedAt": 1794511868954,
+   "endedAt": 1794512049007,
+   "issued": 8999
+  },
+  {
+   "label": "f100-chan",
+   "kind": "channel",
+   "offeredRate": 20,
+   "startedAt": 1794512049008,
+   "endedAt": 1794512268263,
+   "issued": 3599
+  },
+  {
+   "label": "f100-upload",
+   "kind": "upload",
+   "offeredRate": 5,
+   "startedAt": 1794512268264,
+   "endedAt": 1794512328566,
+   "issued": 299
+  }
+ ],
+ "routes": [
+  {
+   "arm": "pg",
+   "phase": "f100-dm",
+   "route": "POST /v1/dm",
+   "requests": 8999,
+   "ok": 8999,
+   "rps_ok": 49.98,
+   "err_rate": 0,
+   "r429": 0,
+   "r5xx": 0,
+   "net_err": 0,
+   "p50": 47.542,
+   "p95": 300.484,
+   "p99": 422.013,
+   "max": 534.5599999999395,
+   "corrected_p50": 47.873,
+   "corrected_p95": 298.408,
+   "corrected_p99": 422.013
+  },
+  {
+   "arm": "pg",
+   "phase": "f100-chan",
+   "route": "POST /v1/channels/:name/messages",
+   "requests": 3599,
+   "ok": 3599,
+   "rps_ok": 16.41,
+   "err_rate": 0,
+   "r429": 0,
+   "r5xx": 0,
+   "net_err": 0,
+   "p50": 5261.082,
+   "p95": 8029.775,
+   "p99": 8665.96,
+   "max": 10862.040999999968,
+   "corrected_p50": 7038.947,
+   "corrected_p95": 34663.839,
+   "corrected_p99": 39543.25
+  },
+  {
+   "arm": "pg",
+   "phase": "f100-upload",
+   "route": "POST /v1/files/upload",
+   "requests": 299,
+   "ok": 299,
+   "rps_ok": 4.96,
+   "err_rate": 0,
+   "r429": 0,
+   "r5xx": 0,
+   "net_err": 0,
+   "p50": 173.783,
+   "p95": 695.132,
+   "p99": 1553.325,
+   "max": 1591.8830000000307,
+   "corrected_p50": null,
+   "corrected_p95": null,
+   "corrected_p99": null
+  },
+  {
+   "arm": "pg",
+   "phase": "f100-upload",
+   "route": "PUT /_relayfiles",
+   "requests": 299,
+   "ok": 299,
+   "rps_ok": 4.96,
+   "err_rate": 0,
+   "r429": 0,
+   "r5xx": 0,
+   "net_err": 0,
+   "p50": 5.468,
+   "p95": 10.491,
+   "p99": 56.147,
+   "max": 98.46599999978207,
+   "corrected_p50": null,
+   "corrected_p95": null,
+   "corrected_p99": null
+  },
+  {
+   "arm": "pg",
+   "phase": "f100-upload",
+   "route": "POST /v1/files/:id/complete",
+   "requests": 299,
+   "ok": 299,
+   "rps_ok": 4.96,
+   "err_rate": 0,
+   "r429": 0,
+   "r5xx": 0,
+   "net_err": 0,
+   "p50": 331.105,
+   "p95": 844.026,
+   "p99": 1003.722,
+   "max": 1818.9160000000848,
+   "corrected_p50": null,
+   "corrected_p95": null,
+   "corrected_p99": null
+  },
+  {
+   "arm": "pg",
+   "phase": "f100-upload",
+   "route": "upload_total_raw",
+   "requests": 0,
+   "ok": 0,
+   "rps_ok": 0,
+   "err_rate": null,
+   "r429": 0,
+   "r5xx": 0,
+   "net_err": 0,
+   "p50": 519.559,
+   "p95": 1106.006,
+   "p99": 2576.405,
+   "max": 2904,
+   "corrected_p50": null,
+   "corrected_p95": null,
+   "corrected_p99": null
+  }
+ ],
+ "delivery": [
+  {
+   "arm": "pg",
+   "phase": "f100-dm",
+   "deliveries": 8999,
+   "deliveries_per_s": 49.98,
+   "p50": 52.025,
+   "p95": 357.338,
+   "p99": 501.861,
+   "p999": 584.534,
+   "max": 619
+  },
+  {
+   "arm": "pg",
+   "phase": "f100-chan",
+   "deliveries": 71980,
+   "deliveries_per_s": 328.29,
+   "p50": 8370.765,
+   "p95": 12003.303,
+   "p99": 13135.139,
+   "p999": 13692.932,
+   "max": 13949
+  }
+ ],
+ "integrity": [
+  {
+   "arm": "pg",
+   "phase": "f100-dm",
+   "expected": 8999,
+   "delivered": 8999,
+   "lost": 0,
+   "duplicate": 0,
+   "redelivered": 0,
+   "reordered": 0,
+   "unexpected": 0,
+   "truncated": 0
+  },
+  {
+   "arm": "pg",
+   "phase": "f100-chan",
+   "expected": 71980,
+   "delivered": 71980,
+   "lost": 0,
+   "duplicate": 0,
+   "redelivered": 0,
+   "reordered": 0,
+   "unexpected": 0,
+   "truncated": 0
+  }
+ ],
+ "sinks": [
+  {
+   "shard": 0,
+   "sockets": 80,
+   "connected": 80,
+   "drops": 0,
+   "connect": {
+    "n": 80,
+    "mean": 922.4,
+    "min": 424,
+    "p50": 996.789,
+    "p95": 1177.2,
+    "p99": 1210.296,
+    "p999": 1210.296,
+    "max": 1207
+   },
+   "reconnect": {
+    "n": 0,
+    "mean": null,
+    "min": null,
+    "p50": null,
+    "p95": null,
+    "p99": null,
+    "p999": null,
+    "max": null
+   },
+   "counters": {
+    "frame context.update": 14484,
+    "join 200": 100,
+    "deliver": 80979
+   },
+   "drain": [],
+   "rssBytes": 97996800
+  }
+ ]
+}

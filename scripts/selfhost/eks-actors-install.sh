@@ -216,8 +216,10 @@ cmd_prepull() {
   # The pull credential must not outlive this command, whether it succeeds or not.
   # shellcheck disable=SC2064
   trap "kubectl -n '$NS' delete daemonset/image-prepull secret/image-pull --ignore-not-found >/dev/null 2>&1; rm -f '$KUBECONFIG_FILE'" EXIT
+  # Delete and create, never apply: apply would copy the registry credential into a last-applied annotation.
+  kubectl -n "$NS" delete secret image-pull --ignore-not-found >/dev/null
   kubectl -n "$NS" create secret generic image-pull --type=kubernetes.io/dockerconfigjson \
-    --from-file=.dockerconfigjson="$config" --dry-run=client -o yaml | kubectl apply -f - >/dev/null
+    --from-file=.dockerconfigjson="$config" >/dev/null
   kubectl -n "$NS" label secret image-pull "${OWNER_LABEL}=owned" --overwrite >/dev/null
   local images; images="$(render \
     | grep -oE '(image|value): "?[a-z0-9.-]+\.[a-z]+/[^" ]+@sha256:[0-9a-f]{64}' \

@@ -1,0 +1,172 @@
+nameOverride: ""
+fullnameOverride: ""
+
+# REQUIRED: image.digest. Deployed by immutable digest only.
+image:
+  repository: ghcr.io/agentworkforce/slack-relay
+  digest: ""
+  pullPolicy: IfNotPresent
+imagePullSecrets: []
+
+# REQUIRED: the Relaycast origin both roles talk to, e.g. the in-cluster
+# Service http://relaycast:8787 when installed next to the agent-relay release.
+relaycast:
+  baseUrl: ""
+  # The relay channel that carries Slack threads; created on first start.
+  channel: slack
+
+# relaygate (opt-in): when url is set, every agent registers through the gate
+# with the group's enrollment key (secrets.relaygateEnrollmentKey) and all
+# Relaycast traffic goes through it; relaycast.baseUrl and the workspace key
+# are then unused. Slack posts and knowledge-base writes are checked with the
+# gate (/v1/check) before they go out, failing closed. Needs
+# secrets.agentIdentitySecret. See AgentWorkforce/relaygate.
+relaygate:
+  url: ""
+
+# Secrets are referenced, never created by this chart. Each entry names an
+# existing Secret and the key inside it.
+secrets:
+  # REQUIRED: a Relaycast workspace key (rk_live_...). Both roles register
+  # their relay agents with it.
+  relaycastWorkspaceKey: { name: "", key: workspace-key }
+  # REQUIRED: the Slack app's bot token (xoxb-). Router only.
+  slackBotToken: { name: "", key: bot-token }
+  # REQUIRED in socket mode: the app-level token (xapp-, connections:write). Router only.
+  slackAppToken: { name: "", key: app-token }
+  # REQUIRED in http mode: the app's signing secret. Router only.
+  slackSigningSecret: { name: "", key: signing-secret }
+  # REQUIRED for the host (agents run Claude Code). Optional for the router:
+  # without it the router uses one agent per thread instead of the orchestrator.
+  anthropicApiKey: { name: "", key: api-key }
+  # Optional: a stable secret the agents' relay identities are recovered with
+  # across restarts. Defaults to the workspace key. REQUIRED with relaygate.
+  agentIdentitySecret: { name: "", key: identity-secret }
+  # REQUIRED with relaygate.url: the enrollment key for the agents' group.
+  relaygateEnrollmentKey: { name: "", key: enrollment-key }
+
+slack:
+  # socket: outbound WebSocket to Slack, no ingress needed (default).
+  # http: Slack posts events to https://<host>/slack/events (set ingress).
+  mode: socket
+  # Slack channel IDs (C...) the app answers in. Empty answers in every
+  # channel the bot is invited to. Restrict this for a first rollout.
+  allowedChannels: []
+  # Answer direct messages to the bot.
+  allowDms: false
+  # Refuse channels shared outside the workspace (Slack Connect), for answers
+  # and ingest. Unknown sharing state counts as shared.
+  refuseSharedChannels: true
+
+# Remote MCP servers behind OAuth client credentials, e.g. a gbrain company
+# brain. Agents get the ones listed in host.mcpServers as tools (add
+# "mcp__<name>" to host.allowedTools); the router can ingest Slack into one.
+#   - name: brain
+#     url: https://brain.example.com/mcp
+#     tokenUrl: https://brain.example.com/token
+#     scope: read
+#     clientId: slack-agents
+#     clientSecret: { name: slack-relay-brain, key: read-client-secret }
+mcpServers: []
+
+# Continuous Slack ingest: every human message in the channels the app is in
+# (subject to slack.allowedChannels and the shared-channel refusal) is
+# appended, as it arrives, to slack/<channel>/<YYYY-MM-DD> in a knowledge base
+# over MCP (gbrain append_page/put_page; needs a write-scoped client).
+ingest:
+  enabled: false
+  # Name of an entry in mcpServers with write scope.
+  mcpServer: ""
+  # gbrain source the pages go to, e.g. "company".
+  sourceId: ""
+  pagePrefix: slack
+  # Also ingest private channels the app is in.
+  privateChannels: false
+  # Source for private channels (default: sourceId).
+  privateSourceId: ""
+  # Channel-name rules, first match wins, ahead of the private/default source:
+  # - { match: "^ops-(finance|legal)", sourceId: founders }
+  sourceRules: []
+  # The writer for each source other than sourceId. gbrain lets a remote client
+  # write only to its own write source, so each source needs its own
+  # write-scoped entry in mcpServers:
+  # { founders: brain-write-founders, slack-connect: brain-write-slack-connect }
+  sourceServers: {}
+
+router:
+  # The router's relay name; the host only acts on messages from it.
+  agentName: slack-router
+  # Orchestrator for threads no agent owns yet: "claude" (needs the Anthropic
+  # key) or "deterministic" (one agent per thread, no model call).
+  orchestrator: claude
+  orchestratorModel: claude-fable-5-2
+  # Prefix of agent names for new threads: <prefix>-<channel>-<thread ts>.
+  agentPrefix: slack
+  # Each Slack thread gets its own agent. The orchestrator may send a new
+  # thread to a pinned agent (knownAgents) instead; with this true it may
+  # also reuse an agent that already owns other threads.
+  allowAgentReuse: false
+  # Pinned agents the orchestrator may route to, e.g.
+  # - { name: company-brain, description: "Answers questions about the company" }
+  knownAgents: []
+  # Ledger marks an agent released after this long without activity.
+  idleReleaseMinutes: 30
+  persistence:
+    existingClaim: ""
+    storageClassName: ""
+    size: 1Gi
+  resources:
+    requests: { cpu: 50m, memory: 128Mi }
+    limits: { cpu: "1", memory: 512Mi }
+
+host:
+  agentName: slack-agent-host
+  # Model the per-thread agents run (Claude Code --model).
+  agentModel: claude-opus-5-5
+  # Appended to every agent's system prompt.
+  persona: "You are a helpful generalist working for the team. Be accurate and concise."
+  # Claude Code tools the agents may use without asking. Path rules are
+  # relative to the agent's own workdir, so an agent cannot read another
+  # agent's files, /proc or the pod's environment.
+  allowedTools: ["Read(./**)", "Glob(./**)", "Grep(./**)", mcp__relaycast]
+  # Always refused, even if allowed above.
+  disallowedTools: [Bash, WebFetch, WebSearch, "Read(//proc/**)"]
+  permissionMode: dontAsk
+  # Give each agent a Relaycast MCP bound to its own token (DMs, channels).
+  relaycastMcp: true
+  # Names from the top-level mcpServers list agents get as tools. Empty: every
+  # read-scoped one (write-scoped servers, e.g. ingest writers, only when named).
+  mcpServers: []
+  turnTimeoutSeconds: 600
+  # An agent leaves the relay after this long idle; the next message wakes it.
+  idleReleaseMinutes: 15
+  persistence:
+    storageClassName: ""
+    size: 10Gi
+  resources:
+    requests: { cpu: 250m, memory: 512Mi }
+    limits: { cpu: "2", memory: 4Gi }
+
+# Only used in slack.mode=http.
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  host: ""
+  tlsSecretName: ""
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  runAsGroup: 1000
+  fsGroup: 1000
+  seccompProfile: { type: RuntimeDefault }
+containerSecurityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities: { drop: [ALL] }
+
+podAnnotations: {}
+nodeSelector: {}
+tolerations: []
+affinity: {}

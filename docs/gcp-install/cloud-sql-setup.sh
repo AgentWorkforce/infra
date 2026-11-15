@@ -183,7 +183,9 @@ admin_url() { url postgresql "$CLOUD_SQL_ADMIN_USER" "$(admin_password)" "$1"; }
 write_credential_files() {
   write_file agent-relay-secrets database-migrations-url < <(url postgresql control_owner "$(pw control_owner)" relaycontrol)
   write_file agent-relay-secrets database-url < <(url postgresql control_api_runtime "$(pw control_api_runtime)" relaycontrol)
-  write_file agent-relay-secrets HOOPDB_URL < <(url postgresql sessions_pipeline_runtime "$(pw sessions_pipeline_runtime)" hoopdb)
+  # The session-brief worker (titles and summaries) requires the URL to name the
+  # CA file every HoopDb worker mounts at /etc/postgres-ca/ca.crt.
+  write_file agent-relay-secrets HOOPDB_URL < <(printf '%s&sslrootcert=/etc/postgres-ca/ca.crt' "$(url postgresql sessions_pipeline_runtime "$(pw sessions_pipeline_runtime)" hoopdb)")
   write_file agent-relay-secrets database-owner-url < <(url postgres relaycast_owner "$(pw relaycast_owner)" relaycast)
   write_file agent-relay-secrets database-runtime-url < <(url postgres relaycast_runtime "$(pw relaycast_runtime)" relaycast)
   write_file agent-relay-read-api RELAYHISTORY_READ_API_SECRET < <(json_url supabase_url "$(url postgresql bulls96_read_api "$(pw bulls96_read_api)" hoopdb)")

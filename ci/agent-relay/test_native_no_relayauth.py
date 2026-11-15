@@ -181,7 +181,7 @@ class NativeNoRelayauth(unittest.TestCase):
         self.assertEqual(
             deployments['relaycast']['spec']['template']['spec']['containers'][0]['image'],
             'ghcr.io/agentworkforce/relaycast-self-host@sha256:'
-            '1307bd845031a7466e65ebaf08bc8b826e2837d90f58c9b5a6a1d673c62dad93',
+            'ec062ef901af15cf575b53a71d7eb09f2e6ab6e7c0d5be2da35339a275a5c6cc',
         )
         for name in ('proof-read-api', 'proof-ingest-edge', 'proof-search-indexer'):
             self.assertIn(name, deployments)
@@ -334,7 +334,7 @@ class NativeNoRelayauth(unittest.TestCase):
         self.assertIn('agent-relay-read-api', services)
         self.assertEqual(
             deployments['relay-control']['spec']['template']['spec']['containers'][0]['image'],
-            'ghcr.io/agentworkforce/relay-control@sha256:0b9c5a077b49b31178cc669e7c1d532f39e64c840087ca41636bb84a6c62631c')
+            'ghcr.io/agentworkforce/relay-control@sha256:d1b6ca95fab240a9d41208d83de3b1f4245408b0765038762f1c419ee60f43bc')
         self.assertEqual(
             deployments['relay-webapp']['spec']['template']['spec']['containers'][0]['image'],
             'ghcr.io/agentworkforce/relay-webapp@sha256:da0cc80476eac734299c0c6ceb94e2bca7dae7913cce56a8ca8592cf086dd02e')
@@ -369,7 +369,7 @@ class NativeNoRelayauth(unittest.TestCase):
         webapp_deploy = next(doc for doc in docs if doc.get('kind') == 'Deployment' and doc['metadata']['name'] == 'relay-webapp')
         self.assertEqual(
             control_deploy['spec']['template']['spec']['containers'][0]['image'],
-            'ghcr.io/agentworkforce/relay-control@sha256:0b9c5a077b49b31178cc669e7c1d532f39e64c840087ca41636bb84a6c62631c')
+            'ghcr.io/agentworkforce/relay-control@sha256:d1b6ca95fab240a9d41208d83de3b1f4245408b0765038762f1c419ee60f43bc')
         self.assertEqual(
             webapp_deploy['spec']['template']['spec']['containers'][0]['image'],
             'ghcr.io/agentworkforce/relay-webapp@sha256:da0cc80476eac734299c0c6ceb94e2bca7dae7913cce56a8ca8592cf086dd02e')

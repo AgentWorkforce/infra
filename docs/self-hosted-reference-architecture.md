@@ -53,6 +53,8 @@ The self-hosted product is composed rather than monolithic.
 | Relayflows | Off | Durable, resumable, or scheduled multi-step workflow execution |
 | Relayfile/providers | Off; inclusion in the self-host product is unresolved | GitHub, Slack, and other provider write-backs |
 | Sessions Pipeline | Off | Session capture, durable storage, indexing, summaries, and evaluation |
+| Slack app (slack-relay) | Off | Slack threads routed to one long-running, resumable agent each on the relay; the router is the only Slack credential holder ([guide](self-hosted-slack-relay.md)) |
+| Governance (relaygate) | Off (`components.relaygate`) | Groups, mode bits and ACLs between agents and Relaycast/Sessions, enforced by proxying both; classifier (rules plus an optional Claude model) on cross-group and external writes; audit log ([guide](self-hosted-relaygate.md)) |
 | Observer/UI | Off | Human inspection and operations surfaces |
 
 An add-on may consume core APIs, but the core availability path must never

@@ -545,7 +545,7 @@
         "module.sessions_bucket.aws_eks_pod_identity_association.access[\"relay/agent-relay-dev/agent-relay-session-ingest-api\"]": "e3b5af87fea11b8c6663f524237cbc4d68dfbb41daa93210ba46591801aa8ba7",
         "module.sessions_bucket.aws_eks_pod_identity_association.access[\"relay/agent-relay-dev/agent-relay-worker\"]": "40c1b3de62c5ad7ef2a1e82bd592b769e4278ad547c5444871f33d084485312c",
         "module.sessions_bucket.aws_iam_role.access[0]": "1ae8a809687f02faa4d9819772a438a7b6f38bbac429d6fce4c80fb5e0a667c0",
-        "module.sessions_bucket.aws_iam_role.history_upload[0]": "28af6d438ecc3ecf51f9ad9a2cd4010a89d8d1b57e75cdc5c490e7a1c7f3eaed",
+        "module.sessions_bucket.aws_iam_role.history_upload[0]": "271116aa4dc38aa3982acda611706395c3808d5df43178dfd497e1d3a3151b3c",
         "module.sessions_bucket.aws_iam_role_policy.access[0]": "ad812540a941ffa94ec07dd6ebc6ff6fecb4139c742b60a2dfbc9cdbeecb6de2",
         "module.sessions_bucket.aws_iam_role_policy.history_upload[0]": "d8fe373ee92d1fcdff71037dc7f52e6dceb93bddd43083eb7ebb35e87e785724",
         "module.sessions_bucket.aws_iam_role_policy.history_upload_issuer[0]": "5d668ff6ac305c54ce6e869bdcb03ea939658b78854c7ce9a18621aa2bca52e1",

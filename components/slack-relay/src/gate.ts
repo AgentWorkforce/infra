@@ -1,0 +1,129 @@
+// relaygate client (opt-in). With a gate configured, every agent registers
+// through it with the gate's enrollment key and uses its rg_ token for all
+// Relaycast traffic (relaygate proxies Relaycast; the agents never hold a
+// Relaycast credential). Egress relaygate can't see (Slack posts, knowledge
+// base writes) is asked about first with /v1/check and sent only on "allow".
+// Contract: AgentWorkforce/relaygate docs/contract.md.
+
+export interface GateRegistration {
+  agentId: string;
+  gid: number;
+  token: string;
+}
+
+/** The gate refused (mode bits or classifier). Final: never retried. */
+export class GateDenied extends Error {
+  readonly code: string;
+  constructor(code: string, message = code) {
+    super(message);
+    this.code = code;
+  }
+}
+
+/** The gate couldn't decide (classifier down, upstream down). Retryable; never "allow". */
+export class GateUnavailable extends Error {}
+
+/**
+ * relaygate knows every stream (a Slack thread, a knowledge-base page) only by
+ * an opaque id its owner picks; it never parses it. The ids here are this
+ * component's: slack:<team>/<channel>/<thread_ts>, kb:<server>/<page slug>.
+ */
+export interface CheckResource {
+  kind: "stream";
+  id: string;
+}
+
+export const slackStreamId = (ref: { team: string; channel: string; thread_ts: string }) => `slack:${ref.team}/${ref.channel}/${ref.thread_ts}`;
+export const kbStreamId = (server: string, slug: string) => `kb:${server}/${slug}`;
+
+export interface CheckRequest {
+  op: "r" | "w";
+  resource: CheckResource;
+  content: string;
+}
+
+export class RelaygateClient {
+  readonly url: string;
+  readonly #enrollmentKey: string;
+  readonly #timeoutMs: number;
+
+  constructor(opts: { url: string; enrollmentKey: string; timeoutMs?: number }) {
+    this.url = opts.url.replace(/\/$/, "");
+    this.#enrollmentKey = opts.enrollmentKey;
+    // Above the gate's own classifier budget (8s by default), so a model check can finish.
+    this.#timeoutMs = opts.timeoutMs ?? 15_000;
+  }
+
+  /**
+   * Registers `name` in the enrollment key's group, or gets the same identity
+   * back (a new token, the old one revoked) with the recovery proof set at
+   * first registration.
+   */
+  async register(name: string, recovery: string): Promise<GateRegistration> {
+    let res: Response;
+    let body: { agent_id?: string; gid?: number; token?: string; error?: string };
+    try {
+      // The deadline covers the response body too, so a trickling gate can't hold registration.
+      const signal = AbortSignal.timeout(this.#timeoutMs);
+      res = await fetch(`${this.url}/v1/register`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${this.#enrollmentKey}`, "content-type": "application/json" },
+        body: JSON.stringify({ name, recovery }),
+        signal,
+      });
+      body = (await res.json().catch((e) => { if (signal.aborted) throw e; return {}; })) as typeof body;
+    } catch (err) {
+      throw new GateUnavailable(`relaygate register ${name}: ${(err as Error).message}`);
+    }
+    if (res.ok && body.token && body.agent_id) return { agentId: body.agent_id, gid: body.gid ?? -1, token: body.token };
+    if (res.status >= 500) throw new GateUnavailable(`relaygate register ${name}: ${res.status} ${body.error ?? ""}`.trim());
+    throw new GateDenied(body.error ?? `http_${res.status}`, `relaygate register ${name}: ${res.status} ${body.error ?? ""}`.trim());
+  }
+
+  /** Asks whether `token`'s principal may send this out. Resolves only on allow. */
+  async check(token: string, req: CheckRequest): Promise<void> {
+    let res: Response;
+    let body: { decision?: string; error?: string; reason?: string };
+    try {
+      const signal = AbortSignal.timeout(this.#timeoutMs);
+      res = await fetch(`${this.url}/v1/check`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+        body: JSON.stringify(req),
+        signal,
+      });
+      body = (await res.json().catch((e) => { if (signal.aborted) throw e; return {}; })) as typeof body;
+    } catch (err) {
+      // No answer in time (or at all) is never an allow.
+      throw new GateUnavailable(`relaygate check: ${(err as Error).message}`);
+    }
+    if (res.ok && body.decision === "allow") return;
+    if (res.status === 403 || (res.ok && body.decision === "deny")) {
+      throw new GateDenied(body.error ?? "relaygate_denied", `relaygate denied: ${body.error ?? body.reason ?? "deny"}`);
+    }
+    // 503 relaygate_unavailable, any other status, or an unexpected body: not an allow.
+    throw new GateUnavailable(`relaygate check: ${res.status} ${body.error ?? ""}`.trim());
+  }
+}
+
+/**
+ * A relaygate denial surfaced by the Relaycast SDK on a proxied call. The SDK
+ * doesn't keep relaygate's flat error body (it reports code "unauthorized" or
+ * "transport_error"), so behind a gate any 403 is the gate's final answer.
+ */
+export function isGateDenial(err: unknown): boolean {
+  const e = err as { status?: number; statusCode?: number };
+  return (e?.status ?? e?.statusCode) === 403;
+}
+
+/** Calls `check` and retries only while the gate is unavailable; a denial is final. */
+export async function checkWithRetry(gate: RelaygateClient, token: string, req: CheckRequest, delaysMs = [500, 2000, 5000]): Promise<void> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await gate.check(token, req);
+    } catch (err) {
+      if (err instanceof GateDenied || attempt >= delaysMs.length) throw err;
+      await new Promise((r) => setTimeout(r, delaysMs[attempt]));
+    }
+  }
+}

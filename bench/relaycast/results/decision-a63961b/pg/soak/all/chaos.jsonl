@@ -1,0 +1,5 @@
+{"action":"kill-relaycast","at":1794539167394}
+{"action":"kill-actor","at":1794540066216}
+{"action":"node-drain","at":1794540966819}
+{"action":"rds-failover","at":1794542165716}
+{"action":"manual-restart-after-rds-failover","at":1794593753000,"note":"relaycast never recovered from the 03:56 RDS failover; restarted by hand at end of soak"}

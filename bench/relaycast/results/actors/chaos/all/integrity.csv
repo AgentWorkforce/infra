@@ -1,0 +1,2 @@
+arm,phase,expected,delivered,lost,duplicate,redelivered,reordered,reordered_after_timeout,unexpected,truncated
+actors,ch-load,38442,38442,0,9,1044,0,0,12,0
