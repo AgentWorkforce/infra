@@ -8,7 +8,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { gunzipSync } from "node:zlib";
-import { AGENT_CARD_FILE, EC2_USER_DATA_ENCODED_LIMIT, RELAY_SESSIONS_KIT_FILES, WORKER_KIT_FILES, fileReader, hostRolePolicy, hostTemplate, renderAgentCard, userDataBase64 } from "@agentworkforce/layered-agent";
+import { AGENT_CARD_FILE, EC2_USER_DATA_ENCODED_LIMIT, ISSUE_WATCH_FILE, ISSUE_WATCH_KIT_FILES, RELAY_SESSIONS_KIT_FILES, renderIssueWatch, WORKER_KIT_FILES, fileReader, hostRolePolicy, hostTemplate, renderAgentCard, userDataBase64 } from "@agentworkforce/layered-agent";
 import agent from "../agent.config.ts";
 
 const read = fileReader(fileURLToPath(new URL("..", import.meta.url)));
@@ -18,10 +18,10 @@ test("user data: under EC2's limit, every kit and lane file, no secret values", 
   const encoded = userDataBase64(agent, read);
   assert.ok(encoded.length < EC2_USER_DATA_ENCODED_LIMIT - 500, `user data is ${encoded.length} bytes encoded`);
   const script = gunzipSync(Buffer.from(encoded, "base64")).toString("utf8");
-  const optional: readonly string[] = ["headless.py", "delegation.md", ...WORKER_KIT_FILES, ...RELAY_SESSIONS_KIT_FILES];
+  const optional: readonly string[] = ["headless.py", "delegation.md", ...WORKER_KIT_FILES, ...RELAY_SESSIONS_KIT_FILES, ...ISSUE_WATCH_KIT_FILES];
   for (const f of agent.files) {
     const shipped = script.includes(`cat > /opt/agent-host/${f.name} <<'`);
-    // The generated card file travels by hot update, never in user data.
+    // The generated card and issue-watch files travel by hot update, never in user data.
     assert.equal(shipped, !(f.source === "generated" || (f.source === "kit" && optional.includes(f.name))), f.name);
   }
   assert.doesNotMatch(script, /sk-ant-|ghp_|ghs_|gho_|BEGIN [A-Z ]*PRIVATE KEY|"private_key"/);
@@ -82,7 +82,15 @@ test("the A2A card: renders within the relay's limits, one skill per kind of wor
   assert.equal(card.documentation_url, "https://github.com/AgentWorkforce/infra");
   assert.match(card.version, /^[0-9a-f]{12}$/);
   assert.equal(agent.generated[AGENT_CARD_FILE], rendered);
-  assert.deepEqual(agent.files.filter((f) => f.source === "generated"), [{ name: AGENT_CARD_FILE, source: "generated" }]);
+  assert.deepEqual(agent.files.filter((f) => f.source === "generated"), [{ name: AGENT_CARD_FILE, source: "generated" }, { name: ISSUE_WATCH_FILE, source: "generated" }]);
   const script = gunzipSync(Buffer.from(userDataBase64(agent, read), "base64")).toString("utf8");
   assert.ok(!script.includes(`cat > /opt/agent-host/${AGENT_CARD_FILE}`), "the card never rides in user data");
+});
+
+test("new-issue watch: this repo, to khaliq-gant, generated and kept out of user data", () => {
+  assert.deepEqual(agent.input.issueWatch, { repos: ["AgentWorkforce/infra"], notify: "khaliq-gant" });
+  assert.equal(agent.generated[ISSUE_WATCH_FILE], renderIssueWatch(agent.input.issueWatch!));
+  assert.deepEqual(JSON.parse(agent.generated[ISSUE_WATCH_FILE]!).globs, ["/github/repos/AgentWorkforce/infra/issues/**"]);
+  const script = gunzipSync(Buffer.from(userDataBase64(agent, read), "base64")).toString("utf8");
+  assert.ok(!script.includes(`cat > /opt/agent-host/${ISSUE_WATCH_FILE}`), "the watch never rides in user data");
 });
