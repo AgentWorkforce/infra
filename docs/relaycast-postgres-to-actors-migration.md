@@ -19,10 +19,11 @@ the upgrader layers only the `relaycast` and `durable-actors` parts of
 off and moves Relayfile).
 
 The release must first deploy a PostgreSQL image containing the export side of
-the protocol. The EKS RDS-native profile pins `12.8.0-pg.3`, source
-`810f48ce` (relaycast #653, #657, #663, #664, #667 and #668), digest
-`sha256:cc2a79f02d39978fa04322b5a45497737ff137bc2a5db5615c7eee690030de83`,
-from attested publish run 43497501006. The upgrader deliberately requires the
+the protocol. The EKS RDS-native profile pins `12.10.0`, source
+`fd10195` (which carries the 12.8.0-pg.3 export path from relaycast #653,
+#657, #663, #664, #667 and #668), digest
+`sha256:ec062ef901af15cf575b53a71d7eb09f2e6ab6e7c0d5be2da35339a275a5c6cc`,
+from attested publish run 43671881371. The upgrader deliberately requires the
 target chart version to be live before either migration phase.
 
 ## Facts that shape the design
