@@ -30,7 +30,8 @@ components:
   slackRelay: false
   # relaygate (charts/relaygate): the governance gate between agents and
   # Relaycast/Sessions. Configure it under the relaygate key: image.digest
-  # and policy.enrollmentKeys are required. Opt-in; with it off nothing
+  # is required, and policy.enrollmentKeys needs at least one key before any
+  # agent can register (the chart doesn't enforce it). Opt-in; with it off nothing
   # about the install changes. See AgentWorkforce/relaygate.
   relaygate: false
 

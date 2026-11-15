@@ -71,10 +71,10 @@ SSNs, prompt injection). One replica: the audit log and registrations are
 SQLite on the gate's PVC.
 
 Clients: [slack-relay](self-hosted-slack-relay.md#governance-with-relaygate-optional)
-takes `relaygate.url` and the bridge key. Build 1 serves registration and
-`/v1/check`; the Relaycast/Sessions proxy follows, after which agents need no
-Relaycast credential at all (and Relaycast should accept traffic only from the
-gate, by NetworkPolicy).
+takes `relaygate.url` and the bridge key. With the proxy below, agents reach
+Relaycast and Sessions only through the gate and need no Relaycast credential
+of their own (Relaycast should then accept traffic only from the gate, by
+NetworkPolicy).
 
 ## Proxying Relaycast and Sessions (build 2)
 
@@ -87,7 +87,7 @@ secrets:
   relaycastWorkspaceKey: { name: relaygate-relaycast, key: workspace-key }  # rk_live_ key relaygate registers agents with upstream
   relaygateSecret: { name: relaygate-seal, key: secret }                   # >= 32 chars; keep it for the life of the PVC (seals upstream tokens)
   # sessionsToken: optional; the gate forwards each caller's own Sessions credential
-  adminToken: { name: relaygate-admin, key: token }                        # optional: POST /admin/v1/explain
+  adminToken: { name: relaygate-admin, key: token }                        # optional: POST /admin/v1/explain, GET /admin/v1/audit
 ```
 
 Then close the direct path. NetworkPolicies are additive, so a policy that

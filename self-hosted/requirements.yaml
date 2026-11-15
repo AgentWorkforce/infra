@@ -1572,9 +1572,22 @@ compatibility:
       images:
         relayauth: { repository: ghcr.io/agentworkforce/relayauth, digest: sha256:eb71daa28e30eb7305f666d0bccc5a4002e53e8a574e3c4c32163d907a1b71df }
       notes: superseded by 0.1.1.
-    - id: agent-relay-0.7.26
+    - id: agent-relay-0.7.27
       status: unreleased
       current: true
+      charts: { agent-relay: 0.7.27, relay-control: 0.4.18, relay-webapp: 0.2.6 }
+      app_versions: { agent-relay: 0.1.0, relay-control: 0.1.0, relay-webapp: 0.1.0 }
+      depends:
+        agent-relay: { relaycast: 0.3.14, relayauth: 0.1.5, sessions-pipeline: 0.8.36, relay-control: 0.4.18, relay-webapp: 0.2.6, relayflows: 0.2.5, durable-actors: 0.14.6-awf.4, relayfile: 0.2.2, telemetry-collector: 0.1.7, relay-chief: 0.1.0, slack-relay: 0.3.3, relaygate: 0.1.2 }
+      images:
+        relaycast: { repository: ghcr.io/agentworkforce/relaycast-self-host, digest: sha256:ec062ef901af15cf575b53a71d7eb09f2e6ab6e7c0d5be2da35339a275a5c6cc }
+        relaycast-postgres: { repository: ghcr.io/agentworkforce/relaycast-self-host, digest: sha256:ec062ef901af15cf575b53a71d7eb09f2e6ab6e7c0d5be2da35339a275a5c6cc }
+        sessions-pipeline-worker: { repository: ghcr.io/agentworkforce/sessions-pipeline, digest: sha256:77022c5b6a1d30f96f921d703eb27a1acada8ec273ad84aebdde24f8eddce305 }
+        relay-control: { repository: ghcr.io/agentworkforce/relay-control, digest: sha256:d1b6ca95fab240a9d41208d83de3b1f4245408b0765038762f1c419ee60f43bc }
+        relay-webapp: { repository: ghcr.io/agentworkforce/relay-webapp, digest: sha256:bd295ccb7d1323965dce890f19d0b7f857d706c00d7756f719c713763fdb49f3 }
+      notes: 'Carries 0.7.26. slack-relay 0.3.3 and a values comment on components.relaygate (comments only). Default renders differ only in the helm.sh/chart labels.'
+    - id: agent-relay-0.7.26
+      status: planned
       charts: { agent-relay: 0.7.26, relay-control: 0.4.18, relay-webapp: 0.2.6 }
       app_versions: { agent-relay: 0.1.0, relay-control: 0.1.0, relay-webapp: 0.1.0 }
       depends:
@@ -2776,9 +2789,16 @@ compatibility:
       images:
         relaygate: { repository: ghcr.io/agentworkforce/relaygate, digest_required: true }
       notes: First registered chart, rendered only; default-off in the agent-relay umbrella (components.relaygate). Build 1 of the server (registration, mode check, /v1/check, classifier, audit); the Relaycast/Sessions proxy follows. Ships no default digest.
-    - id: slack-relay-0.3.2
+    - id: slack-relay-0.3.3
       status: unreleased
       current: true
+      charts: { slack-relay: 0.3.3 }
+      app_versions: { slack-relay: 0.1.0 }
+      images:
+        slack-relay: { repository: ghcr.io/agentworkforce/slack-relay, digest_required: true }
+      notes: Carries 0.3.2. values.yaml comment only (relaycastWorkspaceKey is required only without relaygate.url); renders as 0.3.2 apart from the chart labels. Default-off in the agent-relay umbrella; ships no default digest.
+    - id: slack-relay-0.3.2
+      status: planned
       charts: { slack-relay: 0.3.2 }
       app_versions: { slack-relay: 0.1.0 }
       images:
@@ -6871,8 +6891,8 @@ entries:
 
   - id: opt.relaygate.admin-explain
     kind: option
-    title: relaygate admin explain endpoint
-    description: Off by default. With secrets.adminToken the gate serves POST /admin/v1/explain ("may this agent do this operation on this stream, and why"), authorized by that token.
+    title: relaygate admin endpoints (explain, audit)
+    description: Off by default. With secrets.adminToken the gate serves POST /admin/v1/explain ("may this agent do this operation on this stream or session, and why") and GET /admin/v1/audit (the audit log), authorized by that token. /readyz reports the loaded policy_version either way.
     chart: relaygate
     values: ["secrets.adminToken.*"]
     env: [RELAYGATE_ADMIN_TOKEN]
