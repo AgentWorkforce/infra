@@ -36,23 +36,31 @@ run "ceiling_denies_identity_untagged_foreign_and_retagging" {
     error_message = "the ceiling is denies only"
   }
   assert {
-    condition     = length(setintersection(toset(output.ceiling_policy.Statement[0].Action), toset(["iam:*", "sts:*", "organizations:*", "account:*", "identitystore:*", "cloudtrail:*"]))) == 6
+    condition     = length(setintersection(toset(output.ceiling_by_sid["DenyIdentityAccountAndAuditControl"].Action), toset(["iam:*", "sts:*", "organizations:*", "account:*", "identitystore:*", "cloudtrail:*"]))) == 6
     error_message = "no IAM, STS, org, account, identity or audit control"
   }
   assert {
-    condition     = output.ceiling_policy.Statement[1].Condition.Null["aws:PrincipalTag/agent-run"] == "true"
+    condition     = output.ceiling_by_sid["DenySessionsWithoutRunTag"].Condition.Null["aws:PrincipalTag/agent-run"] == "true"
     error_message = "a session without the run tag can do nothing"
   }
   assert {
-    condition     = output.ceiling_policy.Statement[2].Condition.StringNotEquals["aws:RequestTag/agent-run"] == "$${aws:PrincipalTag/agent-run}"
+    condition     = output.ceiling_by_sid["DenyCreatingWithAnotherRunsTag"].Condition.StringNotEquals["aws:RequestTag/agent-run"] == "$${aws:PrincipalTag/agent-run}"
     error_message = "nothing created with another run's tag"
   }
   assert {
-    condition     = output.ceiling_policy.Statement[5].Condition.StringNotEquals["aws:ResourceTag/agent-run"] == "$${aws:PrincipalTag/agent-run}" && contains(output.ceiling_policy.Statement[5].Action, "ec2:TerminateInstances")
+    condition     = contains(output.ceiling_by_sid["DenyRemovingTheRunTag"].Action, "sqs:UntagQueue") && !contains(output.ceiling_by_sid["DenyRemovingTheRunTag"].Action, "sqs:TagQueue")
+    error_message = "the run tag can never be removed; adding it is handled by name"
+  }
+  assert {
+    condition     = contains(output.ceiling_by_sid["DenyRunTagOnResourcesNotNamedForTheRun"].Action, "sqs:TagQueue") && contains(output.ceiling_by_sid["DenyRunTagOnResourcesNotNamedForTheRun"].NotResource, "arn:aws:sqs:*:*:$${aws:PrincipalTag/agent-run}-*")
+    error_message = "tag-on-create only on resources named for the session's own run"
+  }
+  assert {
+    condition     = output.ceiling_by_sid["DenyStopAndDeleteOutsideOwnRun"].Condition.StringNotEquals["aws:ResourceTag/agent-run"] == "$${aws:PrincipalTag/agent-run}" && contains(output.ceiling_by_sid["DenyStopAndDeleteOutsideOwnRun"].Action, "ec2:TerminateInstances")
     error_message = "stop and delete only on the session's own run"
   }
   assert {
-    condition     = output.ceiling_policy.Statement[6].Condition.StringNotEquals["aws:RequestedRegion"] == var.allowed_regions
+    condition     = output.ceiling_by_sid["DenyOutsideAllowedRegions"].Condition.StringNotEquals["aws:RequestedRegion"] == var.allowed_regions
     error_message = "allowed regions only"
   }
   assert {

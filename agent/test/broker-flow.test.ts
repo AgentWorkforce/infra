@@ -5,12 +5,13 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, statSync, existsSync, writeFileSync } from "node:fs";
+import { spawn } from "node:child_process";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, statSync, existsSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { verifyAudit } from "../broker/src/audit.ts";
-import { Broker } from "../broker/src/broker.ts";
-import { defaultDeliverer, onePasswordTemplate, type OpRunner } from "../broker/src/deliver.ts";
+import { appendAudit, verifyAudit } from "../broker/src/audit.ts";
+import { Broker, withLock } from "../broker/src/broker.ts";
+import { defaultDeliverer, onePasswordTemplate, type Deliverer, type OpRunner } from "../broker/src/deliver.ts";
 import type { Allowlist, CredentialRequest, Principal } from "../broker/src/policy.ts";
 import { assumeRoleArgs, type AssumeInput, type StsClient } from "../broker/src/sts.ts";
 
@@ -25,18 +26,19 @@ const TOKEN = "IQoJb3JpZ2luX2VjEFAKE" + "x".repeat(300);
 const requester: Principal = { name: "tersemigrationgrok", address: "tersemigrationgrok@linuyc-desktop", kind: "agent" };
 const khaliq: Principal = { name: "khaliq-gant", address: "khaliq-gant@finn-mac-mini", kind: "human" };
 
-function setup(start = new Date("2026-11-14T12:00:00Z")) {
+function setup(start = new Date("2026-11-14T12:00:00Z"), over: { sts?: StsClient; deliverer?: (base: Deliverer) => Deliverer } = {}) {
   const dir = mkdtempSync(join(tmpdir(), "broker-test-"));
   const calls: AssumeInput[] = [];
   let clock = start;
   let n = 0;
-  const sts: StsClient = {
+  const sts: StsClient = over.sts ?? {
     async assumeRole(input) {
       calls.push(input);
       return { accessKeyId: `ASIAFAKE${calls.length}`, secretAccessKey: SECRET, sessionToken: TOKEN, expiration: new Date(clock.getTime() + input.durationSeconds * 1000).toISOString() };
     },
   };
-  const broker = new Broker({ allowlist, stateDir: join(dir, "state"), sts, deliverer: defaultDeliverer(join(dir, "creds")), now: () => clock, newId: () => `cb-${(++n).toString(16).padStart(12, "0")}` });
+  const base = defaultDeliverer(join(dir, "creds"));
+  const broker = new Broker({ allowlist, stateDir: join(dir, "state"), sts, deliverer: over.deliverer ? over.deliverer(base) : base, now: () => clock, newId: () => `cb-${(++n).toString(16).padStart(12, "0")}` });
   return { dir, broker, calls, tick: (min: number) => (clock = new Date(clock.getTime() + min * 60_000)) };
 }
 
@@ -186,4 +188,99 @@ test("the STS call: session policy and tags on argv (not secret), the broker pro
   assert.deepEqual(args.slice(0, 4), ["sts", "assume-role", "--profile", "aws-cred-broker"]);
   assert.ok(args.includes("--source-identity"));
   assert.deepEqual(args.slice(-3), ["Key=broker-request-id,Value=cb-1", "Key=agent-run,Value=t1", "Key=agent,Value=a-b"]);
+});
+
+test("ordinary metadata is never mistaken for a credential: 40-char run tags, commit SHAs, long names", async () => {
+  const { broker } = setup();
+  const sha = "0123456789abcdef0123456789abcdef01234567";
+  const r = await broker.request(req({ runTag: "a".repeat(40), purpose: `soak test for commit ${sha} and ${"B".repeat(48)}` }), { ...requester, name: "x".repeat(60) });
+  assert.equal(r.outcome, "issued", r.reasons.join("; "));
+  assert.deepEqual(verifyAudit(broker.auditPath), []);
+});
+
+test("the audit writer still refuses credential fields and the exact minted values", () => {
+  const path = join(mkdtempSync(join(tmpdir(), "broker-audit-")), "audit.jsonl");
+  const now = new Date();
+  assert.throws(() => appendAudit(path, { kind: "issued", requestId: "cb-1", reasons: [SECRET] }, now, [SECRET, TOKEN]), /credential/);
+  assert.throws(() => appendAudit(path, { kind: "issued", requestId: "cb-1", ...({ SessionToken: "x" } as object) }, now), /credential/);
+  assert.doesNotThrow(() => appendAudit(path, { kind: "issued", requestId: "cb-1", reasons: ["a".repeat(64)] }, now, [SECRET, TOKEN]));
+});
+
+test("the lock: a live owner keeps it however long it runs; a dead owner's lock is taken over; only the owner releases", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "broker-lock-"));
+  // A live process (this one) holding the lock: a second run waits, then gives up, never steals it.
+  mkdirSync(join(dir, ".lock"));
+  writeFileSync(join(dir, ".lock", "owner"), `${process.pid} othertoken\n`);
+  await assert.rejects(withLock(dir, async () => "stolen", 300), /locked by another run/);
+  assert.equal(readFileSync(join(dir, ".lock", "owner"), "utf8"), `${process.pid} othertoken\n`, "untouched");
+  // The owner dies: its lock is taken over.
+  const child = spawn(process.execPath, ["-e", ""]);
+  await new Promise((r) => child.on("exit", r));
+  writeFileSync(join(dir, ".lock", "owner"), `${child.pid} deadtoken\n`);
+  assert.equal(await withLock(dir, async () => "ran", 2_000), "ran");
+  assert.ok(!existsSync(join(dir, ".lock")), "released after the run");
+  // A run whose lock was replaced under it does not remove the replacement.
+  await withLock(dir, async () => {
+    writeFileSync(join(dir, ".lock", "owner"), `${process.pid} someoneelse\n`);
+  });
+  assert.ok(existsSync(join(dir, ".lock")), "not ours any more, so left alone");
+});
+
+test("the run-tag claim and cleanup record are written before minting; a failed mint undoes both", async () => {
+  let seenRecord = false;
+  let stateDir = "";
+  const failing: StsClient = {
+    async assumeRole() {
+      seenRecord = readdirSync(join(stateDir, "issued")).length === 1 && JSON.parse(readFileSync(join(stateDir, "run-tags.json"), "utf8"))["terse-mig-42"] === "tersemigrationgrok";
+      throw new Error("sts assume-role failed: AccessDenied");
+    },
+  };
+  const { broker } = setup(undefined, { sts: failing });
+  stateDir = broker.deps.stateDir;
+  const r = await broker.request(req(), requester);
+  assert.equal(r.outcome, "error");
+  assert.ok(seenRecord, "both were on disk while STS ran");
+  assert.deepEqual(readdirSync(join(stateDir, "issued")), []);
+  assert.deepEqual(JSON.parse(readFileSync(join(stateDir, "run-tags.json"), "utf8")), {}, "claim rolled back");
+});
+
+test("a delivery that fails partway is removed; if removal fails too, sweep still finds it from the planned record", async () => {
+  // deliver writes the file, then throws (an op timeout after the item was created looks the same).
+  const partial = (base: Deliverer): Deliverer => ({
+    ...base,
+    async deliver(d, agent, id, creds) {
+      await base.deliver(d, agent, id, creds);
+      throw new Error("timed out");
+    },
+  });
+  const a = setup(undefined, { deliverer: partial });
+  const r = await a.broker.request(req(), requester);
+  assert.equal(r.outcome, "error");
+  const planned = join(a.dir, "creds", "tersemigrationgrok", `${r.requestId}.json`);
+  assert.ok(!existsSync(planned), "removed straight away");
+  assert.deepEqual(readdirSync(join(a.broker.deps.stateDir, "issued")), []);
+  noSecrets(readFileSync(a.broker.auditPath, "utf8"), "audit log");
+
+  let removeFails = true;
+  const stuck = (base: Deliverer): Deliverer => ({
+    ...partial(base),
+    async remove(ref) {
+      if (removeFails) throw new Error("op unavailable");
+      return base.remove(ref);
+    },
+  });
+  const b = setup(undefined, { deliverer: stuck });
+  const r2 = await b.broker.request(req(), requester);
+  assert.equal(r2.outcome, "error");
+  const path2 = join(b.dir, "creds", "tersemigrationgrok", `${r2.requestId}.json`);
+  assert.ok(existsSync(path2), "still there: removal failed");
+  removeFails = false;
+  b.tick(17);
+  assert.equal(await b.broker.sweep(), 1);
+  assert.ok(!existsSync(path2), "sweep removed it from the planned record");
+});
+
+test("1Password: the planned ref is the item title, so an item whose id was never returned can still be deleted", () => {
+  const d = defaultDeliverer(mkdtempSync(join(tmpdir(), "broker-op-")), async () => "");
+  assert.deepEqual(d.planned({ kind: "1password", vault: "agents" }, "tersemigrationgrok", "cb-000000000001"), { kind: "1password", ref: "op://agents/aws-broker-cb-000000000001" });
 });

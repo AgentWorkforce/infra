@@ -59,9 +59,16 @@ npm_pin wrangler "$WRANGLER_VERSION"
 npm_pin @posthog/cli "$POSTHOG_CLI_VERSION"
 
 # Written as the agent user: root never writes into a path the agent controls.
+# Profile aws-cred-broker (only when the env file names CRED_BROKER_ROLE_ARN,
+# i.e. credentialBroker is on): the credential broker's role, assumed straight
+# from the instance role (broker/src/sts.ts uses it).
 if [ -n "${AWS_ADMIN_ROLE_ARN:-}" ]; then
-  sudo -H -u agent env ROLE="$AWS_ADMIN_ROLE_ARN" REGION="$AWS_REGION" bash -c '
+  sudo -H -u agent env ROLE="$AWS_ADMIN_ROLE_ARN" BROKER="${CRED_BROKER_ROLE_ARN:-}" REGION="$AWS_REGION" bash -c '
     umask 077; mkdir -p ~/.aws
-    printf "[default]\nrole_arn = %s\ncredential_source = Ec2InstanceMetadata\nrole_session_name = layered-infra-ops\nregion = %s\n\n[profile instance]\nregion = %s\n" \
-      "$ROLE" "$REGION" "$REGION" > ~/.aws/config.new && mv -f ~/.aws/config.new ~/.aws/config'
+    {
+      printf "[default]\nrole_arn = %s\ncredential_source = Ec2InstanceMetadata\nrole_session_name = layered-infra-ops\nregion = %s\n\n[profile instance]\nregion = %s\n" \
+        "$ROLE" "$REGION" "$REGION"
+      [ -z "$BROKER" ] || printf "\n[profile aws-cred-broker]\nrole_arn = %s\ncredential_source = Ec2InstanceMetadata\nrole_session_name = layered-infra-ops-cred-broker\nregion = %s\n" \
+        "$BROKER" "$REGION"
+    } > ~/.aws/config.new && mv -f ~/.aws/config.new ~/.aws/config'
 fi
