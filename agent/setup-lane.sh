@@ -59,16 +59,76 @@ npm_pin wrangler "$WRANGLER_VERSION"
 npm_pin @posthog/cli "$POSTHOG_CLI_VERSION"
 
 # Written as the agent user: root never writes into a path the agent controls.
-# Profile aws-cred-broker (only when the env file names CRED_BROKER_ROLE_ARN,
-# i.e. credentialBroker is on): the credential broker's role, assumed straight
-# from the instance role (broker/src/sts.ts uses it).
 if [ -n "${AWS_ADMIN_ROLE_ARN:-}" ]; then
-  sudo -H -u agent env ROLE="$AWS_ADMIN_ROLE_ARN" BROKER="${CRED_BROKER_ROLE_ARN:-}" REGION="$AWS_REGION" bash -c '
+  sudo -H -u agent env ROLE="$AWS_ADMIN_ROLE_ARN" REGION="$AWS_REGION" bash -c '
     umask 077; mkdir -p ~/.aws
-    {
-      printf "[default]\nrole_arn = %s\ncredential_source = Ec2InstanceMetadata\nrole_session_name = layered-infra-ops\nregion = %s\n\n[profile instance]\nregion = %s\n" \
-        "$ROLE" "$REGION" "$REGION"
-      [ -z "$BROKER" ] || printf "\n[profile aws-cred-broker]\nrole_arn = %s\ncredential_source = Ec2InstanceMetadata\nrole_session_name = layered-infra-ops-cred-broker\nregion = %s\n" \
-        "$BROKER" "$REGION"
-    } > ~/.aws/config.new && mv -f ~/.aws/config.new ~/.aws/config'
+    printf "[default]\nrole_arn = %s\ncredential_source = Ec2InstanceMetadata\nrole_session_name = layered-infra-ops\nregion = %s\n\n[profile instance]\nregion = %s\n" \
+      "$ROLE" "$REGION" "$REGION" > ~/.aws/config.new && mv -f ~/.aws/config.new ~/.aws/config'
+fi
+
+# The AWS credential broker (agent/broker, DESIGN.md), when credentialBroker
+# is on (the env file names CRED_BROKER_ROLE_ARN) and broker.ref pins a commit:
+#  - code: exactly that commit of AgentWorkforce/infra, fetched by git (which
+#    checks every object against the commit hash), installed root-owned and
+#    read-only under /opt/aws-cred-broker/<sha>, "current" pointing at it;
+#  - runs as the system user credbroker. Its home /var/lib/aws-cred-broker
+#    (0700) holds the state, the audit log, file deliveries and the only AWS
+#    profile for the broker role, so the agent user can't edit the
+#    allowlist, claims or audit log;
+#  - the agent user may run /usr/local/libexec/aws-cred-broker as credbroker
+#    (sudoers) only with the subcommands request, refuse, sweep and
+#    verify-audit, and nothing else; /usr/local/bin/aws-cred-broker wraps
+#    that. Not approve: the lead would be passing the approver's identity
+#    itself, so approvals stay off until the Relay listener verifies senders.
+BROKER_HOME=/var/lib/aws-cred-broker
+broker_ref=$(tr -d '[:space:]' < /opt/agent-host/broker.ref 2>/dev/null || true)
+if [ -n "${CRED_BROKER_ROLE_ARN:-}" ] && printf '%s' "$broker_ref" | grep -qxE '[0-9a-f]{40}'; then
+  id credbroker >/dev/null 2>&1 || useradd --system --home-dir "$BROKER_HOME" --create-home --shell /usr/sbin/nologin credbroker
+  install -d -m 0700 -o credbroker -g credbroker "$BROKER_HOME" "$BROKER_HOME/state" "$BROKER_HOME/creds" "$BROKER_HOME/.aws"
+  # A failed fetch (GitHub down, a bad ref) never fails the rest of the lane
+  # setup: it is reported and the previously installed version stays current.
+  install_broker() {
+    local ref=$1 tmp dest="/opt/aws-cred-broker/$1"
+    [ -f "$dest/src/cli.ts" ] && return 0
+    tmp=$(mktemp -d)
+    git -c init.defaultBranch=main init -q "$tmp/repo" || { rm -rf "$tmp"; return 1; }
+    git -C "$tmp/repo" fetch -q --depth 1 https://github.com/AgentWorkforce/infra.git "$ref" || { rm -rf "$tmp"; return 1; }
+    [ "$(git -C "$tmp/repo" rev-parse FETCH_HEAD)" = "$ref" ] || { rm -rf "$tmp"; return 1; }
+    mkdir -p "$tmp/out"
+    git -C "$tmp/repo" archive FETCH_HEAD agent/broker/src agent/broker/allowlist.json | tar -x -C "$tmp/out" || { rm -rf "$tmp"; return 1; }
+    if ! { install -d -m 0755 -o root -g root /opt/aws-cred-broker "$dest.new" "$dest.new/src" &&
+      install -m 0644 -o root -g root "$tmp/out/agent/broker/allowlist.json" "$dest.new/allowlist.json" &&
+      install -m 0644 -o root -g root "$tmp/out/agent/broker/src/"*.ts "$dest.new/src/" &&
+      rm -rf "$dest" && mv -T "$dest.new" "$dest"; }; then
+      rm -rf "$tmp" "$dest.new"
+      return 1
+    fi
+    rm -rf "$tmp"
+  }
+  if install_broker "$broker_ref"; then
+    ln -sfn "/opt/aws-cred-broker/$broker_ref" /opt/aws-cred-broker/current.new && mv -Tf /opt/aws-cred-broker/current.new /opt/aws-cred-broker/current
+  else
+    echo "setup-lane: could not install the credential broker at $broker_ref; keeping the current version" >&2
+  fi
+  install -d -m 0755 -o root -g root /usr/local/libexec
+  node_bin=$(command -v node)
+  {
+    printf '#!/bin/bash\n# Runs the AWS credential broker as credbroker (setup-lane.sh). Generated; do not edit.\nset -euo pipefail\n'
+    printf 'export HOME=%s AWS_CONFIG_FILE=%s/.aws/config AWS_REGION=%s AWS_PAGER=\n' "$BROKER_HOME" "$BROKER_HOME" "$AWS_REGION"
+    printf 'export BROKER_STATE_DIR=%s/state BROKER_DELIVERY_DIR=%s/creds BROKER_AWS_PROFILE=aws-cred-broker\n' "$BROKER_HOME" "$BROKER_HOME"
+    printf 'exec %s --experimental-strip-types --no-warnings /opt/aws-cred-broker/current/src/cli.ts "$@"\n' "$node_bin"
+  } > /usr/local/libexec/aws-cred-broker.new
+  install -m 0755 -o root -g root /usr/local/libexec/aws-cred-broker.new /usr/local/libexec/aws-cred-broker && rm -f /usr/local/libexec/aws-cred-broker.new
+  printf '#!/bin/bash\nexec sudo -n -u credbroker /usr/local/libexec/aws-cred-broker "$@"\n' > /usr/local/bin/aws-cred-broker.new
+  install -m 0755 -o root -g root /usr/local/bin/aws-cred-broker.new /usr/local/bin/aws-cred-broker && rm -f /usr/local/bin/aws-cred-broker.new
+  b=/usr/local/libexec/aws-cred-broker
+  printf 'agent ALL=(credbroker) NOPASSWD: %s request *, %s refuse *, %s sweep, %s verify-audit\n' "$b" "$b" "$b" "$b" > /etc/sudoers.d/aws-cred-broker.new
+  if visudo -cf /etc/sudoers.d/aws-cred-broker.new >/dev/null; then
+    install -m 0440 -o root -g root /etc/sudoers.d/aws-cred-broker.new /etc/sudoers.d/aws-cred-broker
+  fi
+  rm -f /etc/sudoers.d/aws-cred-broker.new
+  sudo -H -u credbroker env ROLE="$CRED_BROKER_ROLE_ARN" REGION="$AWS_REGION" bash -c '
+    umask 077
+    printf "[profile aws-cred-broker]\nrole_arn = %s\ncredential_source = Ec2InstanceMetadata\nrole_session_name = layered-infra-ops-cred-broker\nregion = %s\n" \
+      "$ROLE" "$REGION" > ~/.aws/config.new && mv -f ~/.aws/config.new ~/.aws/config'
 fi

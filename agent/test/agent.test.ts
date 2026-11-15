@@ -55,6 +55,32 @@ test("with an account id: the host may assume exactly its admin role and the cre
   assert.equal(agent.input.credentialBroker, true);
 });
 
+test("the credential broker ships pinned: broker.ref is one exact commit, installed root-owned, run only as credbroker", () => {
+  assert.ok(agent.input.laneFiles.includes("broker.ref"));
+  const ref = readFileSync(new URL("../broker.ref", import.meta.url), "utf8");
+  assert.match(ref, /^[0-9a-f]{40}\n$/, "a full commit sha, nothing else");
+  const lane = readFileSync(new URL("../setup-lane.sh", import.meta.url), "utf8");
+  // Fetched by exact commit and checked: never a branch, never main.
+  assert.match(lane, /fetch -q --depth 1 https:\/\/github\.com\/AgentWorkforce\/infra\.git "\$ref"/);
+  assert.match(lane, /rev-parse FETCH_HEAD\)" = "\$ref" \]/);
+  assert.doesNotMatch(lane, /infra\.git (main|HEAD)\b/);
+  // Root-owned, read-only code; the agent user may run exactly the broker as credbroker.
+  assert.match(lane, /install -m 0644 -o root -g root "\$tmp\/out\/agent\/broker\/src\/"\*\.ts/);
+  assert.match(lane, /'agent ALL=\(credbroker\) NOPASSWD: %s request \*, %s refuse \*, %s sweep, %s verify-audit\\n'/);
+  const sudoers = lane.split("\n").find((l) => l.includes("NOPASSWD"))!;
+  assert.doesNotMatch(sudoers, /approve/, "approvals stay off until the Relay listener verifies senders");
+  assert.match(lane, /visudo -cf \/etc\/sudoers\.d\/aws-cred-broker\.new/);
+  // The broker role's profile belongs to credbroker, never the agent user.
+  const agentConfig = lane.slice(lane.indexOf('sudo -H -u agent env ROLE="$AWS_ADMIN_ROLE_ARN"'), lane.indexOf("# The AWS credential broker"));
+  assert.doesNotMatch(agentConfig, /aws-cred-broker|CRED_BROKER/);
+  assert.match(lane, /sudo -H -u credbroker env ROLE="\$CRED_BROKER_ROLE_ARN"/);
+  // The lead takes the requester from the Relay header and roster; approvals are off until the listener.
+  const prompt = readFileSync(new URL("../lead-prompt.md", import.meta.url), "utf8");
+  assert.match(prompt, /never from the\s+body/);
+  assert.match(prompt, /Approvals are off on this host/);
+  assert.doesNotMatch(prompt, /aws-cred-broker approve/);
+});
+
 test("no lane script passes a secret on a sudo command line (sudo logs it to the journal)", () => {
   for (const f of ["setup-lane.sh", "load-secrets-lane.sh"]) {
     const text = readFileSync(new URL(`../${f}`, import.meta.url), "utf8");
