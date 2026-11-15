@@ -19,9 +19,8 @@ slack:
   allowedChannels: [C0CHX8UK4CC]
   # DMs bypass allowedChannels; the proof answers only in its test channel.
   allowDms: false
-  # The test app predates the channels:read scope the check needs; off until
-  # the app is reinstalled from the current manifest.
-  refuseSharedChannels: false
+  # Refuse channels shared outside the workspace (needs channels:read).
+  refuseSharedChannels: true
 router:
   orchestrator: claude
   orchestratorModel: claude-fable-5-2
