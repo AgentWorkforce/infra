@@ -335,7 +335,11 @@ GRANT TEMP ON DATABASE relaycast TO relaycast_owner;""")
             "reference": PIPELINE, "readerLoginAdvertisesSync": False, "siteOrigin": SITE, "historyOrigin": HISTORY,
             "postgres": {"host": PGHOST}, "postgresCa": {"configMap": "local-ca", "key": "ca.crt", "sha256": self.ca_sha},
             "secretRefs": {n: {"name": "local-" + n.lower(), "key": k, "jsonField": j} for n, (k, j) in SECRET_KEYS.items()},
-            "lockerBucket": "locker", "keyRoot": "96bulls", "backendId": "local-postgres", "completeSince": self.credentials["createdAt"]}
+            "lockerBucket": "locker", "keyRoot": "96bulls", "backendId": "local-postgres",
+            # A fresh local store holds only its own ingest, so its history floor is
+            # epoch: a dated floor makes every harness that lacks a session answer 501
+            # history_floor_unknown_session, and the dashboard says it could not check.
+            "completeSince": "epoch"}
         selected["secretRefs"]["locker"]["name"] = "local-locker"
         base = yaml.safe_load((ROOT / "charts/agent-relay/values-kind-core.yaml").read_text())
         base["relay-webapp"]["image"] = image(WEBAPP)
