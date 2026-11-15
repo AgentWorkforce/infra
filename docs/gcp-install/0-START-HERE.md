@@ -74,7 +74,7 @@ gcloud auth login && gcloud auth application-default login
 gcloud config set project <project id>
 gcloud services enable container.googleapis.com sqladmin.googleapis.com servicenetworking.googleapis.com \
   redis.googleapis.com pubsub.googleapis.com secretmanager.googleapis.com dns.googleapis.com \
-  artifactregistry.googleapis.com compute.googleapis.com
+  artifactregistry.googleapis.com compute.googleapis.com iamcredentials.googleapis.com
 gcloud container clusters get-credentials <cluster> --location <region>   # add --internal-ip for a private endpoint
 kubectl auth can-i '*' '*' --all-namespaces
 gcloud container clusters describe <cluster> --location <region> \
@@ -127,6 +127,7 @@ network_self_link    = "projects/<project id>/global/networks/<cluster VPC>"
 sessions_bucket_name = "<globally unique bucket name, e.g. acme-agent-relay-sessions>"
 deletion_protection  = true
 image_mirror_repository = "agent-relay-mirror"   # step 5's registry, readable by the GKE nodes
+desktop_feed_bucket_name = "<globally unique bucket name, e.g. acme-agent-relay-desktop-feed>"   # the desktop app's update feed
 # gke_node_service_account = "<email>"   # only if the node pool has its own service account
 # kms_key_name = "projects/<p>/locations/<region>/keyRings/<ring>/cryptoKeys/<key>"   # optional CMEK
 labels = { app = "agent-relay" }
@@ -139,8 +140,18 @@ terraform output -json chart_values > ../../../../managed-values.json
 cd -
 ```
 
-**Done when:** the `grep` prints nothing, the plan shows `29 to add, 0 to
-change, 0 to destroy` (27 without `image_mirror_repository`), the apply completes, and `managed-values.json` exists.
+**Done when:** the `grep` prints nothing, the plan shows `34 to add, 0 to
+change, 0 to destroy` (5 fewer without `desktop_feed_bucket_name`, 2 fewer
+without `image_mirror_repository`), the apply completes, and `managed-values.json` exists.
+
+`desktop_feed_bucket_name` gives the desktop app a signed update feed in your
+project: a private bucket, and a service account relay-control uses to write
+releases there and sign download links. `managed-values.json` carries its
+settings into step 11; if your `values.yaml` sets `relay-control.extraEnv` or
+`relay-control.serviceAccount.annotations`, copy the feed entries from
+`terraform output desktop_feed` into them. It needs relay-control 0.5.25 or
+later, so it is used from the first release that pins it. Agent Relay sets up
+the feed's signing key with you when we build your branded desktop app.
 
 **Terraform state.** The example has no `backend` block, so the state stays in
 a local file. To keep it in Cloud Storage, create a private, versioned bucket

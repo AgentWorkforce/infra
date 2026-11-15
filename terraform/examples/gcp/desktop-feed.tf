@@ -12,7 +12,7 @@
 
 locals {
   desktop_feed_enabled = var.desktop_feed_bucket_name != ""
-  relay_control_ksa    = "${var.release_name}-relay-control"
+  relay_control_ksa    = var.relay_control_service_account
 }
 
 module "desktop_feed_bucket" {

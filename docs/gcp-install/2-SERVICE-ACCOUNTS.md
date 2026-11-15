@@ -58,6 +58,8 @@ name.
 | Pub/Sub topic `<name>-pipeline-dead-letter` | `roles/pubsub.publisher` | the Pub/Sub service agent `service-<project number>@gcp-sa-pubsub.iam.gserviceaccount.com` |
 | Pub/Sub subscription `<name>-pipeline` | `roles/pubsub.subscriber` | the same Pub/Sub service agent (needed for dead-lettering) |
 | Artifact Registry repository (your mirror; Terraform-made with `image_mirror_repository`) | `roles/artifactregistry.reader` | the GKE node service account |
+| Desktop feed bucket (`desktop_feed_bucket_name`) | `roles/storage.objectUser` | the Google service account `agent-relay-control@<project>.iam.gserviceaccount.com`, which `relay-control` uses through Workload Identity (`roles/iam.workloadIdentityUser`) |
+| That Google service account itself | `roles/iam.serviceAccountTokenCreator` | itself, so relay-control can sign download links (needs `iamcredentials.googleapis.com`) |
 | Secret Manager secret holding the Cloud SQL admin password | `roles/secretmanager.secretAccessor` | **the person running the install** (not a pod) |
 
 `agent-relay-alleyoop` isn't used by this install: its Deployment is off. The

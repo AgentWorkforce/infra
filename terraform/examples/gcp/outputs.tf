@@ -76,13 +76,27 @@ output "chart_values" {
         extraEnv = local.pipeline_extra_env
       }
     }
-    "relay-control" = {
+    "relay-control" = merge({
       postgresCa = {
         enabled   = true
         configMap = "cloud-sql-ca"
         key       = "ca.crt"
       }
-    }
+      }, [for _ in(local.desktop_feed_enabled ? [1] : []) : {
+        # Signed Desktop feed on GCS (relay-control 0.5.25+). If your values.yaml
+        # sets relay-control.extraEnv or serviceAccount.annotations, repeat these.
+        extraEnv = [
+          { name = "SELFHOST_DESKTOP_FEED_STORAGE", value = "gcs" },
+          { name = "SELFHOST_DESKTOP_FEED_GCS_BUCKET", value = module.desktop_feed_bucket[0].bucket_name },
+          { name = "SELFHOST_DESKTOP_FEED_GCS_PREFIX", value = "desktop-feed" },
+        ]
+        serviceAccount = {
+          annotations = {
+            "iam.gke.io/gcp-service-account"          = module.desktop_feed_bucket[0].google_service_account_email
+            "iam.gke.io/return-principal-id-as-email" = "true"
+          }
+        }
+    }]...)
     relaycast = {
       postgresCa = {
         enabled   = true

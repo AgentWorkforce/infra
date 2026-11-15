@@ -203,3 +203,9 @@ variable "desktop_feed_service_account_id" {
   type        = string
   default     = "agent-relay-control"
 }
+
+variable "relay_control_service_account" {
+  description = "relay-control's Kubernetes service account. charts/agent-relay/values-gcp.yaml sets fullnameOverride: relay-control, so it is relay-control."
+  type        = string
+  default     = "relay-control"
+}

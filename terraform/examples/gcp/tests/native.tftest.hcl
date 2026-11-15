@@ -127,7 +127,7 @@ run "desktop_feed_is_off_by_default" {
   command = plan
 
   assert {
-    condition     = length(module.desktop_feed_bucket) == 0 && length(google_service_account_iam_member.desktop_feed_sign_self) == 0 && output.desktop_feed == null
+    condition     = length(module.desktop_feed_bucket) == 0 && length(google_service_account_iam_member.desktop_feed_sign_self) == 0 && output.desktop_feed == null && !contains(keys(output.chart_values["relay-control"]), "extraEnv")
     error_message = "The Desktop feed bucket must be opt-in so existing installs plan no change."
   }
 }
@@ -150,5 +150,13 @@ run "desktop_feed_bucket_and_identity" {
   assert {
     condition     = output.desktop_feed.service_account_annotations["iam.gke.io/return-principal-id-as-email"] == "true" && output.desktop_feed.env[0].value == "gcs"
     error_message = "The output must carry both Workload Identity annotations and the gcs storage setting."
+  }
+  assert {
+    condition     = output.chart_values["relay-control"].serviceAccount.annotations["iam.gke.io/gcp-service-account"] == output.desktop_feed.service_account && length(output.chart_values["relay-control"].extraEnv) == 3
+    error_message = "managed-values.json must carry the feed env and KSA annotations for relay-control."
+  }
+  assert {
+    condition     = module.desktop_feed_bucket[0].google_service_account_email != null && contains(keys(output.chart_values["relay-control"]), "postgresCa")
+    error_message = "Enabling the feed must keep relay-control's Cloud SQL CA values."
   }
 }
