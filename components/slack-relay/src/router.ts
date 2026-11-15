@@ -169,6 +169,11 @@ export class Router {
     } catch (err) {
       if (!(err instanceof GateDenied)) throw err;
       // Withheld by policy: nothing of the answer leaves; the thread is told.
+      // The agent still finished its turn, so its status and session are kept.
+      this.#ledger.setAgentStatus(msg.agentName!, reply?.error ? "failed" : "active", {
+        ...(reply?.session_id ? { sessionId: reply.session_id } : {}),
+        ...(reply?.summary ? { summary: reply.summary } : {}),
+      });
       this.#ledger.recordWithheld(thread, msg.agentName!, err.code);
       this.#log(`relay ${msg.id} @${msg.agentName} withheld from slack ${thread.channel}:${thread.threadTs} (${err.code})`);
       await this.#post(thread, "That answer was withheld by policy.").catch(() => undefined);

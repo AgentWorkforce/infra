@@ -45,10 +45,13 @@ export interface CheckRequest {
 export class RelaygateClient {
   readonly url: string;
   readonly #enrollmentKey: string;
+  readonly #timeoutMs: number;
 
-  constructor(opts: { url: string; enrollmentKey: string }) {
+  constructor(opts: { url: string; enrollmentKey: string; timeoutMs?: number }) {
     this.url = opts.url.replace(/\/$/, "");
     this.#enrollmentKey = opts.enrollmentKey;
+    // Above the gate's own classifier budget (8s by default), so a model check can finish.
+    this.#timeoutMs = opts.timeoutMs ?? 15_000;
   }
 
   /**
@@ -57,12 +60,21 @@ export class RelaygateClient {
    * first registration.
    */
   async register(name: string, recovery: string): Promise<GateRegistration> {
-    const res = await fetch(`${this.url}/v1/register`, {
-      method: "POST",
-      headers: { authorization: `Bearer ${this.#enrollmentKey}`, "content-type": "application/json" },
-      body: JSON.stringify({ name, recovery }),
-    });
-    const body = (await res.json().catch(() => ({}))) as { agent_id?: string; gid?: number; token?: string; error?: string };
+    let res: Response;
+    let body: { agent_id?: string; gid?: number; token?: string; error?: string };
+    try {
+      // The deadline covers the response body too, so a trickling gate can't hold registration.
+      const signal = AbortSignal.timeout(this.#timeoutMs);
+      res = await fetch(`${this.url}/v1/register`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${this.#enrollmentKey}`, "content-type": "application/json" },
+        body: JSON.stringify({ name, recovery }),
+        signal,
+      });
+      body = (await res.json().catch((e) => { if (signal.aborted) throw e; return {}; })) as typeof body;
+    } catch (err) {
+      throw new GateUnavailable(`relaygate register ${name}: ${(err as Error).message}`);
+    }
     if (res.ok && body.token && body.agent_id) return { agentId: body.agent_id, gid: body.gid ?? -1, token: body.token };
     if (res.status >= 500) throw new GateUnavailable(`relaygate register ${name}: ${res.status} ${body.error ?? ""}`.trim());
     throw new GateDenied(body.error ?? `http_${res.status}`, `relaygate register ${name}: ${res.status} ${body.error ?? ""}`.trim());
@@ -71,16 +83,20 @@ export class RelaygateClient {
   /** Asks whether `token`'s principal may send this out. Resolves only on allow. */
   async check(token: string, req: CheckRequest): Promise<void> {
     let res: Response;
+    let body: { decision?: string; error?: string; reason?: string };
     try {
+      const signal = AbortSignal.timeout(this.#timeoutMs);
       res = await fetch(`${this.url}/v1/check`, {
         method: "POST",
         headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
         body: JSON.stringify(req),
+        signal,
       });
+      body = (await res.json().catch((e) => { if (signal.aborted) throw e; return {}; })) as typeof body;
     } catch (err) {
+      // No answer in time (or at all) is never an allow.
       throw new GateUnavailable(`relaygate check: ${(err as Error).message}`);
     }
-    const body = (await res.json().catch(() => ({}))) as { decision?: string; error?: string; reason?: string };
     if (res.ok && body.decision === "allow") return;
     if (res.status === 403 || (res.ok && body.decision === "deny")) {
       throw new GateDenied(body.error ?? "relaygate_denied", `relaygate denied: ${body.error ?? body.reason ?? "deny"}`);
@@ -90,11 +106,14 @@ export class RelaygateClient {
   }
 }
 
-/** A relaygate denial surfaced by the Relaycast SDK on a proxied call (403 relaygate_*). */
+/**
+ * A relaygate denial surfaced by the Relaycast SDK on a proxied call. The SDK
+ * doesn't keep relaygate's flat error body (it reports code "unauthorized" or
+ * "transport_error"), so behind a gate any 403 is the gate's final answer.
+ */
 export function isGateDenial(err: unknown): boolean {
-  const e = err as { status?: number; statusCode?: number; code?: string; message?: string };
-  const status = e?.status ?? e?.statusCode;
-  return status === 403 && /relaygate_/.test(`${e?.code ?? ""} ${e?.message ?? ""}`);
+  const e = err as { status?: number; statusCode?: number };
+  return (e?.status ?? e?.statusCode) === 403;
 }
 
 /** Calls `check` and retries only while the gate is unavailable; a denial is final. */

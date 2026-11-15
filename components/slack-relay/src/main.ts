@@ -268,6 +268,13 @@ async function runHost(): Promise<void> {
 
   const agentServers = oauthServersFromEnv(env)
     .filter((s) => !env.AGENT_MCP_SERVERS || env.AGENT_MCP_SERVERS.split(",").includes(s.name))
+    // Behind relaygate, agents only get read-scoped servers: their writes would
+    // go straight to the server and never be checked.
+    .filter((s) => {
+      const writes = /\bwrite\b/.test(s.scope ?? "");
+      if (gateUrl && writes) log(`agent MCP server ${s.name}: not given to agents (write scope bypasses relaygate)`);
+      return !(gateUrl && writes);
+    })
     .map((s) => [s, new TokenSource(s)] as const);
   if (agentServers.length) log(`agent MCP servers: ${agentServers.map(([s]) => s.name).join(", ")}`);
   const mcpEntry = env.RELAYCAST_MCP_ENTRY ?? join(dirname(fileURLToPath(import.meta.url)), "..", "node_modules", "@relaycast", "mcp", "dist", "stdio.js");
@@ -281,6 +288,7 @@ async function runHost(): Promise<void> {
     dataDir,
     persona: env.AGENT_PERSONA,
     idleMs: int("IDLE_RELEASE_MINUTES", 15) * 60_000,
+    gated: Boolean(gateUrl),
     log,
     getMessage: (id) => hostAgent.message(id) as never,
     connect: async (name) => {

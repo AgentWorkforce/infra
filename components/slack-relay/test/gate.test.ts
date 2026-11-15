@@ -155,3 +155,40 @@ test("ingest: a denied write is skipped, an allowed one goes through", async () 
     g.server.close();
   }
 });
+
+test("a gate that stalls is unavailable after the deadline, never an allow", async () => {
+  const server = createServer((_req, res) => {
+    res.writeHead(200, { "content-type": "application/json" });
+    res.write('{"decision":'); // ...and never finishes
+  });
+  await new Promise<void>((r) => server.listen(0, () => r()));
+  try {
+    const gate = new RelaygateClient({ url: `http://127.0.0.1:${(server.address() as { port: number }).port}`, enrollmentKey: "k", timeoutMs: 300 });
+    const started = Date.now();
+    await assert.rejects(gate.check("rg", { op: "w", resource: { kind: "stream", id: "slack:T/C/1" }, content: "x" }), GateUnavailable);
+    assert.ok(Date.now() - started < 3000);
+  } finally {
+    server.closeAllConnections();
+    server.close();
+  }
+});
+
+test("a withheld answer still records the agent's finished turn", async () => {
+  const ledger = new Ledger(":memory:");
+  const router = new Router({
+    ledger,
+    relay: { send: async () => ({ id: "p1" }), reply: async () => ({ id: "r1" }), message: async () => ({ id: "m1", data: { kind: "agent.reply", session_id: "s-1" } }) },
+    slack: { postMessage: async () => ({ ts: "1" }) },
+    orchestrator: new DeterministicOrchestrator(),
+    channel: "slack",
+    selfName: "router",
+    egress: async (_ref, text) => {
+      if (text !== "That answer was withheld by policy.") throw new GateDenied("relaygate_classified");
+    },
+  });
+  await router.fromSlack({ team: "T1", channel: "C1", threadTs: "5.1", ts: "5.1", user: "U1", text: "q", kind: "mention" });
+  const agent = ledger.thread({ team: "T1", channel: "C1", threadTs: "5.1" })!.agentName!;
+  assert.equal(await router.fromRelay({ type: "thread.reply", channel: "slack", parentId: "p1", message: { id: "m1", agentName: agent, text: "secret" } }), false);
+  assert.equal(ledger.agent(agent)?.status, "active");
+  assert.equal(ledger.agent(agent)?.sessionId, "s-1");
+});
