@@ -127,7 +127,7 @@ network_self_link    = "projects/<project id>/global/networks/<cluster VPC>"
 sessions_bucket_name = "<globally unique bucket name, e.g. acme-agent-relay-sessions>"
 deletion_protection  = true
 image_mirror_repository = "agent-relay-mirror"   # step 5's registry, readable by the GKE nodes
-desktop_feed_bucket_name = "<globally unique bucket name, e.g. acme-agent-relay-desktop-feed>"   # the desktop app's update feed
+# desktop_feed_bucket_name = "<globally unique, e.g. acme-agent-relay-desktop-feed>"   # agent-relay-2026.11.9 or later: the desktop app's update feed
 # gke_node_service_account = "<email>"   # only if the node pool has its own service account
 # kms_key_name = "projects/<p>/locations/<region>/keyRings/<ring>/cryptoKeys/<key>"   # optional CMEK
 labels = { app = "agent-relay" }
@@ -140,17 +140,17 @@ terraform output -json chart_values > ../../../../managed-values.json
 cd -
 ```
 
-**Done when:** the `grep` prints nothing, the plan shows `34 to add, 0 to
-change, 0 to destroy` (5 fewer without `desktop_feed_bucket_name`, 2 fewer
+**Done when:** the `grep` prints nothing, the plan shows `29 to add, 0 to
+change, 0 to destroy` (5 more with `desktop_feed_bucket_name`, 2 fewer
 without `image_mirror_repository`), the apply completes, and `managed-values.json` exists.
 
-`desktop_feed_bucket_name` gives the desktop app a signed update feed in your
-project: a private bucket, and a service account relay-control uses to write
+From agent-relay-2026.11.9, uncomment `desktop_feed_bucket_name`. It gives the
+desktop app a signed update feed in your project: a private bucket, and a service account relay-control uses to write
 releases there and sign download links. `managed-values.json` carries its
 settings into step 11; if your `values.yaml` sets `relay-control.extraEnv` or
 `relay-control.serviceAccount.annotations`, copy the feed entries from
-`terraform output desktop_feed` into them. It needs relay-control 0.5.25 or
-later, so it is used from the first release that pins it. Agent Relay sets up
+`terraform output desktop_feed` into them. Earlier releases have neither the
+Terraform input nor relay-control 0.5.25, so leave it commented. Agent Relay sets up
 the feed's signing key with you when we build your branded desktop app.
 
 **Terraform state.** The example has no `backend` block, so the state stays in

@@ -84,9 +84,11 @@ The person running 0-START-HERE.md needs, in the project:
 
 - to create the resources (step 4): Cloud SQL Admin, Storage Admin,
   Pub/Sub Admin, Cloud Memorystore Redis Admin, DNS Administrator (for the
-  private Cloud SQL zone), Secret Manager Admin, Compute Network Viewer, and
+  private Cloud SQL zone), Secret Manager Admin, Compute Network Viewer,
+  Service Account Admin (only with `desktop_feed_bucket_name`: it creates
+  relay-control's Google service account and its IAM bindings), and
   permission to set IAM policy on the resources above; or the project Owner
-  or Editor role;
+  role;
 - `roles/container.developer` (or admin) on the cluster, plus Kubernetes RBAC
   to create a namespace and cluster-scoped objects;
 - `roles/secretmanager.secretAccessor` on the Cloud SQL admin password secret
