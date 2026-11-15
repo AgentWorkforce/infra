@@ -34,8 +34,21 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- if and (trim .Values.proxy.relaycastUrl) (or (not .Values.secrets.relaycastWorkspaceKey.name) (not .Values.secrets.relaygateSecret.name)) }}
 {{- fail "relaygate: proxy.relaycastUrl needs secrets.relaycastWorkspaceKey.name and secrets.relaygateSecret.name" }}
 {{- end }}
-{{- if and (trim .Values.proxy.sessionsUrl) (not .Values.secrets.sessionsToken.name) }}
-{{- fail "relaygate: proxy.sessionsUrl needs secrets.sessionsToken.name" }}
+{{- if and (not (trim .Values.proxy.sessionsUrl)) (or (trim .Values.proxy.sessionsUploadUrl) (trim .Values.proxy.sessionsReadUrl) .Values.proxy.sessionsHosts) }}
+{{- fail "relaygate: proxy.sessionsUploadUrl, sessionsReadUrl and sessionsHosts need proxy.sessionsUrl" }}
+{{- end }}
+{{- with .Values.proxy.sessionsHosts }}
+{{- if or (not (trim $.Values.proxy.sessionsUploadUrl)) (not (trim $.Values.proxy.sessionsReadUrl)) }}
+{{- fail "relaygate: proxy.sessionsHosts needs proxy.sessionsUploadUrl and proxy.sessionsReadUrl (the upstream Services, not the history origin that now points at relaygate)" }}
+{{- end }}
+{{- range $u := list $.Values.proxy.sessionsUploadUrl $.Values.proxy.sessionsReadUrl }}
+{{- $h := first (splitList ":" (urlParse (trim $u)).host) | lower }}
+{{- range $.Values.proxy.sessionsHosts }}
+{{- if eq (lower .) $h }}
+{{- fail (printf "relaygate: proxy.sessionsHosts lists %s, which is also an upstream (%s); requests would loop back to relaygate" . $u) }}
+{{- end }}
+{{- end }}
+{{- end }}
 {{- end }}
 {{- if not .Values.existingConfigMap }}
 {{- range .Values.policy.enrollmentKeys }}

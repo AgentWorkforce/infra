@@ -87,8 +87,22 @@ spec:
             {{- with .Values.proxy.sessionsUrl | trim }}
             - name: SESSIONS_URL
               value: {{ . | quote }}
+            {{- with $.Values.proxy.sessionsUploadUrl | trim }}
+            - name: SESSIONS_UPLOAD_URL
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with $.Values.proxy.sessionsReadUrl | trim }}
+            - name: SESSIONS_READ_URL
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with $.Values.proxy.sessionsHosts }}
+            - name: SESSIONS_HOSTS
+              value: {{ join "," . | quote }}
+            {{- end }}
+            {{- if $.Values.secrets.sessionsToken.name }}
             - name: SESSIONS_TOKEN
               valueFrom: { secretKeyRef: { name: {{ $.Values.secrets.sessionsToken.name }}, key: {{ $.Values.secrets.sessionsToken.key }} } }
+            {{- end }}
             {{- end }}
             {{- if .Values.secrets.adminToken.name }}
             - name: RELAYGATE_ADMIN_TOKEN

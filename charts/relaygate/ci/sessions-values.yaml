@@ -1,0 +1,14 @@
+image:
+  digest: sha256:8c2adac447dcde224615e43f64ceb226dd6b3467bd80fe8ab99fde0a673284a7
+policy:
+  enrollmentKeys:
+    - { id: slack-bridge, gid: 22, sha256: "1111111111111111111111111111111111111111111111111111111111111111", namePrefix: "slack-" }
+# The history origin points at relaygate; uploads and reads go to the Services.
+proxy:
+  sessionsUrl: https://history.example.com
+  sessionsUploadUrl: http://session-ingest-api:8080
+  sessionsReadUrl: http://session-read-api:8080
+  sessionsHosts: [history.example.com, history.internal.example.com]
+secrets:
+  # Fallback for callers that send no Sessions credential.
+  sessionsToken: { name: relaygate-sessions, key: token }
