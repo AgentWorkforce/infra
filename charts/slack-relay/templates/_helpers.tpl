@@ -45,11 +45,20 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- if not (regexMatch "^sha256:[a-f0-9]{64}$" (.Values.image.digest | default "")) }}
 {{- fail "slack-relay: image.digest is required (sha256:<64 hex>)" }}
 {{- end }}
+{{- if .Values.relaygate.url }}
+{{- if not .Values.secrets.relaygateEnrollmentKey.name }}
+{{- fail "slack-relay: relaygate.url needs secrets.relaygateEnrollmentKey.name (the group's enrollment key)" }}
+{{- end }}
+{{- if not .Values.secrets.agentIdentitySecret.name }}
+{{- fail "slack-relay: relaygate.url needs secrets.agentIdentitySecret.name (agents recover their identity with it)" }}
+{{- end }}
+{{- else }}
 {{- if not .Values.relaycast.baseUrl }}
 {{- fail "slack-relay: relaycast.baseUrl is required" }}
 {{- end }}
 {{- if not .Values.secrets.relaycastWorkspaceKey.name }}
 {{- fail "slack-relay: secrets.relaycastWorkspaceKey.name is required" }}
+{{- end }}
 {{- end }}
 {{- if not .Values.secrets.slackBotToken.name }}
 {{- fail "slack-relay: secrets.slackBotToken.name is required" }}
@@ -113,13 +122,22 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 
 {{/* Env both roles share. */}}
 {{- define "slack-relay.commonEnv" -}}
+{{- if .Values.relaygate.url }}
+- name: RELAYGATE_URL
+  value: {{ .Values.relaygate.url | quote }}
+{{- else }}
 - name: RELAYCAST_BASE_URL
   value: {{ .Values.relaycast.baseUrl | quote }}
+{{- end }}
 - name: RELAY_CHANNEL
   value: {{ .Values.relaycast.channel | quote }}
 - name: ROUTER_AGENT_NAME
   value: {{ .Values.router.agentName | quote }}
+{{- if .Values.relaygate.url }}
+{{ include "slack-relay.secretEnv" (dict "env" "RELAYGATE_ENROLLMENT_KEY" "ref" .Values.secrets.relaygateEnrollmentKey) }}
+{{- else }}
 {{ include "slack-relay.secretEnv" (dict "env" "RELAYCAST_WORKSPACE_KEY" "ref" .Values.secrets.relaycastWorkspaceKey) }}
+{{- end }}
 {{- if .Values.secrets.agentIdentitySecret.name }}
 {{ include "slack-relay.secretEnv" (dict "env" "AGENT_IDENTITY_SECRET" "ref" .Values.secrets.agentIdentitySecret) }}
 {{- end }}

@@ -58,7 +58,19 @@ export class SlackIngest {
   readonly #log: (m: string) => void;
   readonly #chains = new Map<string, Promise<unknown>>();
 
-  constructor(opts: { brain: ToolCaller; sourceId?: string; privateSourceId?: string; rules?: SourceRule[]; prefix?: string; log?: (m: string) => void }) {
+  readonly #beforeWrite: ((slug: string, text: string) => Promise<void>) | undefined;
+
+  constructor(opts: {
+    brain: ToolCaller;
+    sourceId?: string;
+    privateSourceId?: string;
+    rules?: SourceRule[];
+    prefix?: string;
+    log?: (m: string) => void;
+    /** Asked before each write (relaygate /v1/check); rejects to skip it. */
+    beforeWrite?: (slug: string, text: string) => Promise<void>;
+  }) {
+    this.#beforeWrite = opts.beforeWrite;
     this.#brain = opts.brain;
     this.#sourceId = opts.sourceId || undefined;
     this.#privateSourceId = opts.privateSourceId || undefined;
@@ -95,6 +107,7 @@ export class SlackIngest {
 
   async #append(slug: string, m: IngestMessage): Promise<string> {
     const line = lineFor(m);
+    if (this.#beforeWrite) await this.#beforeWrite(slug, line);
     const sourceId = this.sourceFor(m.channelName, m.isPrivate === true);
     const source = sourceId ? { source_id: sourceId } : {};
     try {

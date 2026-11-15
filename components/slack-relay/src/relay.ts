@@ -5,6 +5,7 @@
 // token has to be stored.
 import { createHash, createHmac } from "node:crypto";
 import { RelayCast, type AgentClient } from "@relaycast/sdk";
+import type { RelaygateClient } from "./gate.ts";
 
 export function recoveryProof(secret: string, name: string): string {
   return createHmac("sha256", secret).update(`agent-relay-slack:${name}`).digest("hex");
@@ -26,9 +27,17 @@ export async function connectAgent(opts: {
   persona: string;
   proofSecret: string;
   log: (m: string) => void;
+  /** With relaygate: register through the gate (its enrollment key picks the group) and talk to Relaycast through it. */
+  gate?: RelaygateClient;
 }): Promise<{ relay: RelayCast; agent: AgentClient; token: string }> {
-  const relay = new RelayCast({ apiKey: opts.workspaceKey, baseUrl: opts.baseUrl });
   const proof = recoveryProof(opts.proofSecret, opts.name);
+  if (opts.gate) {
+    const reg = await opts.gate.register(opts.name, proof);
+    opts.log(`registered ${opts.name} through relaygate (gid ${reg.gid})`);
+    const relay = new RelayCast({ apiKey: reg.token, baseUrl: opts.gate.url });
+    return { relay, agent: relay.as(reg.token), token: reg.token };
+  }
+  const relay = new RelayCast({ apiKey: opts.workspaceKey, baseUrl: opts.baseUrl });
   let token: string;
   try {
     const created = await relay.agents.register({

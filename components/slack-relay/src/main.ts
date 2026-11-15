@@ -11,6 +11,7 @@ import { ClaudeOrchestrator, DeterministicOrchestrator, ThreadPolicy, type Known
 import type { RelayEventLike } from "./protocol.ts";
 import { connectAgent, ensureChannel } from "./relay.ts";
 import { Router } from "./router.ts";
+import { checkWithRetry, RelaygateClient } from "./gate.ts";
 import { McpClient, oauthServersFromEnv, TokenSource } from "./mcp.ts";
 import { SlackIngest, type SourceRule } from "./ingest.ts";
 import { channelMessageOf, ChannelDirectory, normalizeSlackEvent, SlackWeb, SocketModeClient, verifySlackSignature, type SlackEventEnvelope } from "./slack.ts";
@@ -30,7 +31,19 @@ function int(name: string, dflt: number): number {
   return Number.isFinite(v) && v > 0 ? v : dflt;
 }
 
-const relayBase = env.RELAYCAST_BASE_URL ?? "";
+// relaygate (opt-in): agents register through it and every Relaycast call goes
+// through it; the workspace key is then never needed (or present).
+const gateUrl = (env.RELAYGATE_URL ?? "").trim();
+const relayBase = gateUrl || (env.RELAYCAST_BASE_URL ?? "");
+function relaygate(): RelaygateClient | undefined {
+  return gateUrl ? new RelaygateClient({ url: gateUrl, enrollmentKey: secret("RELAYGATE_ENROLLMENT_KEY") }) : undefined;
+}
+/** The workspace key (direct mode) and the stable secret agent identities are recovered with. */
+function identity(): { workspaceKey: string; proofSecret: string } {
+  if (gateUrl) return { workspaceKey: "", proofSecret: secret("AGENT_IDENTITY_SECRET") };
+  const workspaceKey = secret("RELAYCAST_WORKSPACE_KEY");
+  return { workspaceKey, proofSecret: secret("AGENT_IDENTITY_SECRET", false) || workspaceKey };
+}
 const channel = (env.RELAY_CHANNEL ?? "slack").replace(/^#/, "");
 const routerName = env.ROUTER_AGENT_NAME ?? "slack-router";
 
@@ -63,8 +76,9 @@ function serve(port: number, h: Health): void {
 }
 
 async function runRouter(): Promise<void> {
-  const workspaceKey = secret("RELAYCAST_WORKSPACE_KEY");
-  const proofSecret = secret("AGENT_IDENTITY_SECRET", false) || workspaceKey;
+  const { workspaceKey, proofSecret } = identity();
+  const gate = relaygate();
+  if (gate) log(`relaygate: on (${gate.url})`);
   const botToken = secret("SLACK_BOT_TOKEN");
   const mode = (env.SLACK_MODE ?? "socket") as "socket" | "http";
   const allowed = new Set((env.SLACK_ALLOWED_CHANNELS ?? "").split(",").map((s) => s.trim()).filter(Boolean));
@@ -77,7 +91,7 @@ async function runRouter(): Promise<void> {
   const me = await slack.authTest();
   log(`slack bot ${me.userId} in team ${me.teamId}; mode ${mode}; channels ${allowed.size ? [...allowed].join(",") : "(any the bot is in)"}`);
 
-  const { agent } = await connectAgent({ baseUrl: relayBase, workspaceKey, name: routerName, persona: "Slack router", proofSecret, log });
+  const { agent, token: routerToken } = await connectAgent({ baseUrl: relayBase, workspaceKey, name: routerName, persona: "Slack router", proofSecret, log, gate });
   await ensureChannel(agent, channel, "Slack threads routed to agents");
 
   const known: KnownAgent[] = env.KNOWN_AGENTS_JSON ? (JSON.parse(env.KNOWN_AGENTS_JSON) as KnownAgent[]) : [];
@@ -90,7 +104,17 @@ async function runRouter(): Promise<void> {
   const orchestrator = new ThreadPolicy({ inner: model, known, allowReuse, prefix, log });
   log(`routing: one agent per thread${allowReuse ? " (reuse allowed)" : ""}; pinned agents: ${known.map((k) => k.name).join(", ") || "none"}`);
 
-  const router = new Router({ ledger, relay: agent, slack, orchestrator, channel, selfName: routerName, log });
+  const router = new Router({
+    ledger,
+    relay: agent,
+    slack,
+    orchestrator,
+    channel,
+    selfName: routerName,
+    log,
+    // Slack posts don't pass through relaygate, so each one is asked about first.
+    egress: gate ? (ref, text) => checkWithRetry(gate, routerToken, { op: "w", resource: { kind: "chat", slack: ref }, content: text }) : undefined,
+  });
 
   agent.subscribe([channel], (raw: unknown) => {
     void router.fromRelay(toEvent(raw as Record<string, unknown>)).catch((err) => log(`relay -> slack failed: ${(err as Error).message}`));
@@ -109,6 +133,10 @@ async function runRouter(): Promise<void> {
         rules: env.INGEST_SOURCE_RULES ? (JSON.parse(env.INGEST_SOURCE_RULES) as SourceRule[]) : [],
         prefix: env.INGEST_PAGE_PREFIX ?? "slack",
         log,
+        // Knowledge-base writes are egress relaygate can't see either.
+        beforeWrite: gate
+          ? (slug, text) => checkWithRetry(gate, routerToken, { op: "w", resource: { kind: "sink", sink: ingestServer.name, target: slug }, content: text })
+          : undefined,
       })
     : null;
   const ingestPrivate = env.INGEST_PRIVATE_CHANNELS === "true";
@@ -227,14 +255,15 @@ async function runRouter(): Promise<void> {
 }
 
 async function runHost(): Promise<void> {
-  const workspaceKey = secret("RELAYCAST_WORKSPACE_KEY");
-  const proofSecret = secret("AGENT_IDENTITY_SECRET", false) || workspaceKey;
+  const { workspaceKey, proofSecret } = identity();
+  const gate = relaygate();
+  if (gate) log(`relaygate: on (${gate.url})`);
   const anthropicKey = secret("ANTHROPIC_API_KEY");
   const dataDir = env.DATA_DIR ?? "/data";
   const hostName = env.HOST_AGENT_NAME ?? "slack-agent-host";
   mkdirSync(join(dataDir, "agents"), { recursive: true });
 
-  const { agent: hostAgent } = await connectAgent({ baseUrl: relayBase, workspaceKey, name: hostName, persona: "Hosts Slack thread agents", proofSecret, log });
+  const { agent: hostAgent } = await connectAgent({ baseUrl: relayBase, workspaceKey, name: hostName, persona: "Hosts Slack thread agents", proofSecret, log, gate });
   await ensureChannel(hostAgent, channel, "Slack threads routed to agents");
 
   const agentServers = oauthServersFromEnv(env)
@@ -255,7 +284,7 @@ async function runHost(): Promise<void> {
     log,
     getMessage: (id) => hostAgent.message(id) as never,
     connect: async (name) => {
-      const { agent, token } = await connectAgent({ baseUrl: relayBase, workspaceKey, name, persona: "Slack thread agent", proofSecret, log });
+      const { agent, token } = await connectAgent({ baseUrl: relayBase, workspaceKey, name, persona: "Slack thread agent", proofSecret, log, gate });
       await ensureChannel(agent, channel, "Slack threads routed to agents");
       return { client: agent, token };
     },
@@ -324,7 +353,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     process.exit(2);
   }
   if (!relayBase) {
-    console.error("RELAYCAST_BASE_URL is required");
+    console.error("RELAYCAST_BASE_URL (or RELAYGATE_URL) is required");
     process.exit(2);
   }
   run().catch((err) => {

@@ -15,6 +15,15 @@ relaycast:
   # The relay channel that carries Slack threads; created on first start.
   channel: slack
 
+# relaygate (opt-in): when url is set, every agent registers through the gate
+# with the group's enrollment key (secrets.relaygateEnrollmentKey) and all
+# Relaycast traffic goes through it; relaycast.baseUrl and the workspace key
+# are then unused. Slack posts and knowledge-base writes are checked with the
+# gate (/v1/check) before they go out, failing closed. Needs
+# secrets.agentIdentitySecret. See AgentWorkforce/relaygate.
+relaygate:
+  url: ""
+
 # Secrets are referenced, never created by this chart. Each entry names an
 # existing Secret and the key inside it.
 secrets:
@@ -31,8 +40,10 @@ secrets:
   # without it the router uses one agent per thread instead of the orchestrator.
   anthropicApiKey: { name: "", key: api-key }
   # Optional: a stable secret the agents' relay identities are recovered with
-  # across restarts. Defaults to the workspace key.
+  # across restarts. Defaults to the workspace key. REQUIRED with relaygate.
   agentIdentitySecret: { name: "", key: identity-secret }
+  # REQUIRED with relaygate.url: the enrollment key for the agents' group.
+  relaygateEnrollmentKey: { name: "", key: enrollment-key }
 
 slack:
   # socket: outbound WebSocket to Slack, no ingress needed (default).

@@ -11,6 +11,7 @@
 //                thread the ledger maps it to
 //
 // The orchestrator is the only model call here; everything else is a lookup.
+import { GateDenied } from "./gate.ts";
 import { sessionIdFor } from "./session-id.ts";
 import type { Ledger, ThreadKey } from "./ledger.ts";
 import type { Orchestrator } from "./orchestrator.ts";
@@ -34,6 +35,7 @@ export class Router {
   readonly #log: (m: string) => void;
   readonly #chains = new Map<string, Promise<unknown>>();
   readonly #retryDelaysMs: number[];
+  readonly #egress: ((ref: { team: string; channel: string; thread_ts: string }, text: string) => Promise<void>) | undefined;
 
   constructor(opts: {
     ledger: Ledger;
@@ -45,6 +47,11 @@ export class Router {
     log?: (m: string) => void;
     /** Waits between relay delivery attempts. */
     retryDelaysMs?: number[];
+    /**
+     * Asked before every Slack post (relaygate /v1/check). Resolves to post;
+     * rejects to withhold. Absent: posts go straight out.
+     */
+    egress?: (ref: { team: string; channel: string; thread_ts: string }, text: string) => Promise<void>;
   }) {
     this.#ledger = opts.ledger;
     this.#relay = opts.relay;
@@ -54,6 +61,7 @@ export class Router {
     this.#self = opts.selfName;
     this.#log = opts.log ?? (() => {});
     this.#retryDelaysMs = opts.retryDelaysMs ?? [500, 2000, 5000];
+    this.#egress = opts.egress;
   }
 
   /**
@@ -136,9 +144,7 @@ export class Router {
       // and say so in the thread rather than leave it unanswered.
       this.#ledger.forgetInbound(key, m.ts);
       this.#log(`relay delivery failed for ${m.channel}:${m.ts}: ${(err as Error).message}`);
-      await this.#slack
-        .postMessage({ channel: key.channel, threadTs: key.threadTs, text: "I couldn't reach the agent for this thread just now. Please send that again in a minute." })
-        .catch(() => undefined);
+      await this.#post(key, "I couldn't reach the agent for this thread just now. Please send that again in a minute.").catch(() => undefined);
       throw err;
     }
     this.#log(`slack ${m.kind} ${m.channel}:${m.ts} -> relay ${relayId} @${agentName}${resume ? " (resume)" : ""}`);
@@ -157,7 +163,17 @@ export class Router {
     if (thread.agentName && msg.agentName !== thread.agentName) return false;
     let reply = replyOf(dataOf(msg));
     if (!reply && this.#relay.message) reply = replyOf(dataOf(await this.#relay.message(msg.id).catch(() => undefined)));
-    const posted = await this.#slack.postMessage({ channel: thread.channel, threadTs: thread.threadTs, text: msg.text });
+    let posted: { ts?: string };
+    try {
+      posted = await this.#post(thread, msg.text);
+    } catch (err) {
+      if (!(err instanceof GateDenied)) throw err;
+      // Withheld by policy: nothing of the answer leaves; the thread is told.
+      this.#ledger.recordWithheld(thread, msg.agentName!, err.code);
+      this.#log(`relay ${msg.id} @${msg.agentName} withheld from slack ${thread.channel}:${thread.threadTs} (${err.code})`);
+      await this.#post(thread, "That answer was withheld by policy.").catch(() => undefined);
+      return false;
+    }
     this.#ledger.setAgentStatus(msg.agentName!, reply?.error ? "failed" : "active", {
       ...(reply?.session_id ? { sessionId: reply.session_id } : {}),
       ...(reply?.summary ? { summary: reply.summary } : {}),
@@ -165,6 +181,12 @@ export class Router {
     this.#ledger.recordOutbound(thread, msg.agentName!, posted.ts);
     this.#log(`relay ${msg.id} @${msg.agentName} -> slack ${thread.channel}:${thread.threadTs}`);
     return true;
+  }
+
+  /** Every Slack post goes through here: asked of relaygate first when one is configured. */
+  async #post(key: ThreadKey, text: string): Promise<{ ts?: string }> {
+    if (this.#egress) await this.#egress({ team: key.team, channel: key.channel, thread_ts: key.threadTs }, text);
+    return this.#slack.postMessage({ channel: key.channel, threadTs: key.threadTs, text });
   }
 
   /** Marks agents silent for `idleMs` as released; the next message wakes them. */

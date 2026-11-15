@@ -11,6 +11,7 @@
 import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { isGateDenial } from "./gate.ts";
 import { sessionIdFor } from "./session-id.ts";
 import { dataOf, inboundOf, type InboundData, type RelayEventLike, type RelayMessageLike, type ReplyData } from "./protocol.ts";
 
@@ -192,6 +193,11 @@ export class AgentHost {
     try {
       return await this.#dmTurn(name, dm);
     } catch (err) {
+      if (isGateDenial(err)) {
+        // relaygate refused the reply (e.g. a pit agent answering an outside agent): final, never retried.
+        this.#o.log(`${name}: reply to ${dm.from} denied by relaygate`);
+        return null;
+      }
       this.#handled.delete(dm.id);
       throw err;
     }
