@@ -213,17 +213,30 @@ function holder(dir: string) {
   const code = `const { withLock } = await import(${JSON.stringify(url)});
     await withLock(${JSON.stringify(dir)}, () => new Promise(() => { console.log("held"); setInterval(() => {}, 1000); }));`;
   const p = spawn(process.execPath, ["--input-type=module", "-e", code], { stdio: ["ignore", "pipe", "inherit"] });
-  const held = new Promise<void>((resolve) => p.stdout.on("data", (d: Buffer) => d.toString().includes("held") && resolve()));
-  return { p, held };
+  const exited = new Promise<void>((resolve) => p.on("exit", () => resolve()));
+  // Settles either way: "held", or the holder failing before it got there (error, exit, or 10 s).
+  const held = new Promise<void>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error("lock holder never reported held")), 10_000);
+    p.stdout.on("data", (d: Buffer) => d.toString().includes("held") && (clearTimeout(timer), resolve()));
+    p.on("error", (e) => (clearTimeout(timer), reject(e)));
+    p.on("exit", (code) => (clearTimeout(timer), reject(new Error(`lock holder exited (${code}) before holding`))));
+  });
+  const kill = async () => {
+    if (p.exitCode === null && p.signalCode === null) p.kill("SIGKILL");
+    await exited;
+  };
+  return { p, held, kill };
 }
 
 test("the lock: a live holder keeps it however long it runs; when it dies (even SIGKILL) the kernel releases it", async () => {
   const dir = mkdtempSync(join(tmpdir(), "broker-lock-"));
   const h = holder(dir);
-  await h.held;
-  await assert.rejects(withLock(dir, async () => "stolen", 300), /locked by another run/);
-  h.p.kill("SIGKILL");
-  await new Promise((r) => h.p.on("exit", r));
+  try {
+    await h.held;
+    await assert.rejects(withLock(dir, async () => "stolen", 300), /locked by another run/);
+  } finally {
+    await h.kill(); // never leave a live holder behind, even if an assertion failed
+  }
   assert.equal(await withLock(dir, async () => "ran", 5_000), "ran", "no stale lock to clean up");
   // Released after each run, and taken again straight away.
   assert.equal(await withLock(dir, async () => "again", 1_000), "again");
@@ -395,7 +408,12 @@ test("the lock: processes competing after a holder is killed never run at the sa
   const log = join(dir, "log");
   writeFileSync(log, "");
   const h = holder(dir);
-  await h.held;
+  try {
+    await h.held;
+  } catch (e) {
+    await h.kill();
+    throw e;
+  }
   const brokerUrl = new URL("../broker/src/broker.ts", import.meta.url).href;
   const child = (id: number) =>
     new Promise<number>((resolve) => {
@@ -411,7 +429,7 @@ test("the lock: processes competing after a holder is killed never run at the sa
       p.on("exit", (c) => resolve(c ?? 1));
     });
   const runs = [1, 2, 3, 4, 5, 6].map(child);
-  h.p.kill("SIGKILL");
+  await h.kill();
   const codes = await Promise.all(runs);
   assert.deepEqual(codes, [0, 0, 0, 0, 0, 0]);
   const lines = readFileSync(log, "utf8").trim().split("\n");
