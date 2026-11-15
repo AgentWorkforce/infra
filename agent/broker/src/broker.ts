@@ -19,6 +19,7 @@ import { join } from "node:path";
 import { appendAudit, type AuditEvent } from "./audit.ts";
 import type { Deliverer, DeliveryRef } from "./deliver.ts";
 import { withLock } from "./lock.ts";
+import { decisionFromText, RelayVerificationError, requestFromText, verifiedMessage, type Decision as RelayDecision, type RelayApi, type Verified } from "./relay.ts";
 import { approverCounts, decide, NAMESPACE_TAG_KEY, newNamespace, sessionName, type Allowlist, type CredentialRequest, type Decision, type Principal, type RunClaim, type SessionPolicy } from "./policy.ts";
 import type { StsClient } from "./sts.ts";
 
@@ -149,8 +150,62 @@ export class Broker {
     };
   }
 
-  request(req: CredentialRequest, requester: Principal, relayMessageId?: string): Promise<Reply> {
+  /**
+   * Marks a Relay message as acted on, once: a second use of the same message
+   * id returns the reason it is refused. Entries older than a day are pruned
+   * (verifiedMessage refuses messages older than 15 minutes anyway).
+   */
+  private useMessageOnce(messageId: string): string | undefined {
+    const file = join(this.deps.stateDir, "used-messages.json");
+    const used = readJson(file, {} as Record<string, string>);
+    if (used[messageId]) return `Relay message ${messageId} was already acted on (${used[messageId]}): send a new message`;
+    const now = this.deps.now();
+    const cutoff = now.getTime() - 86_400_000;
+    const kept = Object.fromEntries(Object.entries(used).filter(([, at]) => Date.parse(at) > cutoff));
+    writeJson(file, { ...kept, [messageId]: now.toISOString() });
+    return undefined;
+  }
+
+  /** A request whose requester and body come from the Relay server (relay.ts): the lead passes only the message id. */
+  async requestViaRelay(api: RelayApi, messageId: string): Promise<Reply> {
+    let v: Verified;
+    let req: CredentialRequest;
+    try {
+      v = await verifiedMessage(api, messageId, this.deps.now());
+      req = requestFromText(v.text) as CredentialRequest;
+    } catch (e) {
+      return this.relayRefused(messageId, e as Error);
+    }
+    return this.request(req, v.principal, messageId, true);
+  }
+
+  /** An "approve <id> <digest>" or "refuse <id>" whose sender and text come from the Relay server. */
+  async decideViaRelay(api: RelayApi, messageId: string): Promise<Reply> {
+    let v: Verified;
+    let d: RelayDecision;
+    try {
+      v = await verifiedMessage(api, messageId, this.deps.now());
+      d = decisionFromText(v.text);
+    } catch (e) {
+      return this.relayRefused(messageId, e as Error);
+    }
+    return d.verb === "approve" ? this.approve(d.requestId, d.digest, v.principal, messageId, true) : this.refuse(d.requestId, v.principal, messageId, true);
+  }
+
+  private async relayRefused(messageId: string, e: Error): Promise<Reply> {
+    const reason = e instanceof RelayVerificationError ? e.message : `could not verify the message with Relay: ${e.message}`;
     return withLock(this.deps.stateDir, async () => {
+      this.audit({ kind: "denied", requestId: "-", relayMessageId: messageId, reasons: [reason] });
+      return { requestId: "-", outcome: "denied", reasons: [reason] };
+    });
+  }
+
+  request(req: CredentialRequest, requester: Principal, relayMessageId?: string, once = false): Promise<Reply> {
+    return withLock(this.deps.stateDir, async () => {
+      if (once && relayMessageId) {
+        const used = this.useMessageOnce(relayMessageId);
+        if (used) return { requestId: "-", outcome: "denied", reasons: [used] };
+      }
       const requestId = this.deps.newId();
       let base: AuditEvent;
       try {
@@ -185,8 +240,12 @@ export class Broker {
     });
   }
 
-  approve(requestId: string, digestPrefix: string, approver: Principal, relayMessageId?: string): Promise<Reply> {
+  approve(requestId: string, digestPrefix: string, approver: Principal, relayMessageId?: string, once = false): Promise<Reply> {
     return withLock(this.deps.stateDir, async () => {
+      if (once && relayMessageId) {
+        const used = this.useMessageOnce(relayMessageId);
+        if (used) return { requestId, outcome: "error", reasons: [used] };
+      }
       const path = join(this.deps.stateDir, "pending", `${safeId(requestId)}.json`);
       const reject = (reason: string, p?: Pending): Reply => {
         this.audit({ kind: "approval-rejected", requestId, approver: { name: approver.name, address: approver.address, kind: approver.kind }, ...(relayMessageId ? { relayMessageId } : {}), ...(p ? { account: p.request.account } : {}), reasons: [reason] });
@@ -220,8 +279,12 @@ export class Broker {
     });
   }
 
-  refuse(requestId: string, by: Principal, relayMessageId?: string): Promise<Reply> {
+  refuse(requestId: string, by: Principal, relayMessageId?: string, once = false): Promise<Reply> {
     return withLock(this.deps.stateDir, async () => {
+      if (once && relayMessageId) {
+        const used = this.useMessageOnce(relayMessageId);
+        if (used) return { requestId, outcome: "error", reasons: [used] };
+      }
       const path = join(this.deps.stateDir, "pending", `${safeId(requestId)}.json`);
       if (!existsSync(path)) return { requestId, outcome: "error", reasons: ["no pending request with that id"] };
       const p = readJson<Pending>(path, undefined as unknown as Pending);

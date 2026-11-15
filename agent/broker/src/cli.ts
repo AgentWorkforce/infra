@@ -1,19 +1,29 @@
 #!/usr/bin/env node
 /**
  * The broker's command line, run by layered-infra-ops when a Relay message
- * asks for credentials. The requester (or approver) flags are filled from the
- * Relay envelope the message arrived in, never from the message body.
+ * asks for credentials.
  *
+ * Relay mode (the host: BROKER_RELAY_TOKEN_FILE is set). The lead passes only
+ * the Relay message id. The broker reads the message from Relaycast and takes
+ * the sender and the text from the server (relay.ts):
+ *   cli.ts request --message-id M     the message is the request JSON
+ *   cli.ts decide  --message-id M     the message is "approve <id> <digest>" or "refuse <id>"
+ *   cli.ts sweep
+ *   cli.ts verify-audit
+ * Identity flags (--from-*), stdin requests and the bare approve/refuse
+ * commands are refused in this mode.
+ *
+ * Local mode (no token file; tests and development only): the identity
+ * comes from the flags.
  *   cli.ts request  --from-name N --from-address A --from-kind agent|human [--message-id M] < request.json
  *   cli.ts approve  --request-id ID --digest HEX --from-name N --from-address A --from-kind human [--message-id M]
  *   cli.ts refuse   --request-id ID --from-name N --from-address A --from-kind K [--message-id M]
- *   cli.ts sweep
- *   cli.ts verify-audit
  *
  * Prints one JSON reply: safe to paste into a Relay message (no credential).
- * Env: BROKER_STATE_DIR, BROKER_DELIVERY_DIR, BROKER_ALLOWLIST, BROKER_AWS_PROFILE.
+ * Env: BROKER_STATE_DIR, BROKER_DELIVERY_DIR, BROKER_ALLOWLIST, BROKER_AWS_PROFILE,
+ * BROKER_RELAY_TOKEN_FILE, BROKER_RELAY_API (default https://cast.agentrelay.com).
  */
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { parseArgs } from "node:util";
@@ -22,6 +32,7 @@ import { verifyAudit } from "./audit.ts";
 import { Broker } from "./broker.ts";
 import { defaultDeliverer } from "./deliver.ts";
 import type { Allowlist, CredentialRequest, Principal } from "./policy.ts";
+import { relaycastApi } from "./relay.ts";
 import { awsCliSts } from "./sts.ts";
 
 const { positionals, values } = parseArgs({
@@ -36,17 +47,23 @@ const { positionals, values } = parseArgs({
   },
 });
 
+function fail(message: string): never {
+  process.stdout.write(JSON.stringify({ requestId: "-", outcome: "denied", reasons: [message] }, null, 2) + "\n");
+  process.exit(2);
+}
+
 function principal(): Principal {
   const name = values["from-name"];
   const address = values["from-address"];
   const kind = values["from-kind"];
-  if (!name || !address || (kind !== "agent" && kind !== "human")) throw new Error("--from-name, --from-address and --from-kind agent|human are required (from the Relay envelope)");
+  if (!name || !address || (kind !== "agent" && kind !== "human")) fail("--from-name, --from-address and --from-kind agent|human are required (local mode)");
   return { name, address, kind };
 }
 
 const stateDir = process.env.BROKER_STATE_DIR ?? join(homedir(), ".local", "state", "aws-cred-broker");
 const allowlistPath = process.env.BROKER_ALLOWLIST ?? fileURLToPath(new URL("../allowlist.json", import.meta.url));
 const allowlist = JSON.parse(readFileSync(allowlistPath, "utf8")) as Allowlist;
+const tokenFile = process.env.BROKER_RELAY_TOKEN_FILE;
 const broker = new Broker({
   allowlist,
   stateDir,
@@ -56,16 +73,26 @@ const broker = new Broker({
 
 const cmd = positionals[0];
 let out: unknown;
-if (cmd === "request") out = await broker.request(JSON.parse(readFileSync(0, "utf8")) as CredentialRequest, principal(), values["message-id"]);
-else if (cmd === "approve") out = await broker.approve(values["request-id"] ?? "", values.digest ?? "", principal(), values["message-id"]);
-else if (cmd === "refuse") out = await broker.refuse(values["request-id"] ?? "", principal(), values["message-id"]);
-else if (cmd === "sweep") out = { removed: await broker.sweep() };
+if (cmd === "sweep") out = { removed: await broker.sweep() };
 else if (cmd === "verify-audit") {
   const problems = verifyAudit(broker.auditPath);
   out = { ok: problems.length === 0, problems };
   if (problems.length) process.exitCode = 1;
-} else {
-  process.stderr.write("usage: cli.ts request|approve|refuse|sweep|verify-audit (see the header of this file)\n");
+} else if (tokenFile) {
+  // Relay mode: identity and text only from the Relay server.
+  if (values["from-name"] || values["from-address"] || values["from-kind"] || values["request-id"] || values.digest) fail("relay mode: pass only --message-id; the broker reads the sender and the text from Relay");
+  const messageId = values["message-id"];
+  if (!messageId) fail("relay mode: --message-id is required");
+  if (!existsSync(tokenFile)) fail("relay mode: the Relay token file is missing, so the sender can't be verified; nothing was done");
+  const api = relaycastApi(process.env.BROKER_RELAY_API ?? "https://cast.agentrelay.com", readFileSync(tokenFile, "utf8").trim());
+  if (cmd === "request") out = await broker.requestViaRelay(api, messageId);
+  else if (cmd === "decide") out = await broker.decideViaRelay(api, messageId);
+  else fail(`relay mode: ${cmd ?? "(none)"} is not a command; use request, decide, sweep or verify-audit`);
+} else if (cmd === "request") out = await broker.request(JSON.parse(readFileSync(0, "utf8")) as CredentialRequest, principal(), values["message-id"]);
+else if (cmd === "approve") out = await broker.approve(values["request-id"] ?? "", values.digest ?? "", principal(), values["message-id"]);
+else if (cmd === "refuse") out = await broker.refuse(values["request-id"] ?? "", principal(), values["message-id"]);
+else {
+  process.stderr.write("usage: cli.ts request|decide|approve|refuse|sweep|verify-audit (see the header of this file)\n");
   process.exit(2);
 }
 process.stdout.write(JSON.stringify(out, null, 2) + "\n");

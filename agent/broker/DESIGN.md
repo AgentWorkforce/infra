@@ -294,11 +294,25 @@ the approval tier only.
 
 ## Open questions for Khaliq
 
-1. **Requester identity.** The broker trusts the Relay envelope's sender.
-   Today the lead (an LLM) passes `--from-*` from the message header, so a
-   prompt-injected lead could pass a wrong name. Should the broker run as a
-   deterministic Relay listener, or check the message id against the relay
-   API, before this goes live?
+1. **Requester identity: decided, message-id verification**
+   (`src/relay.ts`). In relay mode, the lead passes the broker only the Relay
+   message id. The broker reads the message from Relaycast
+   (`GET /v1/messages/:id`) with a read-only observer token
+   (`messages:read`, `dms:read`, `agents:read`).
+   - It takes the request JSON, or `approve <id> <digest>` / `refuse <id>`,
+     from the server's copy of the text.
+   - It takes the sender from the message's `agent_id`, resolved to that
+     agent's record (`GET /v1/agents/:name`: name, and type `human` or
+     `agent`). The display name is only a lookup key and must resolve back to
+     the same `agent_id`, so a sender can't pass as Khaliq by setting one.
+   - It accepts only direct messages (`dmch_`) from the last 15 minutes, and
+     each message id once (`used-messages.json`).
+
+   The lead can't change who asked or what was asked. The most it can do is
+   withhold or delay a message id. A long-running listener with its own
+   Relay identity isn't needed: the desktop's session socket refuses
+   non-session processes, and the observer token gives the broker the same
+   server-side truth.
 2. **The broker account and sandbox access.** Which account does
    layered-infra-ops run in? To apply the sandbox side, infra-ops also needs a
    role in 805532413586 that trusts its admin role. (The host grant is done:
