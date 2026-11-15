@@ -5,7 +5,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { approverCounts, decide, globsIntersect, ownNamedResources, sessionName, SESSION_POLICY_MAX_CHARS, TAG_ACTIONS, UNTAG_ACTIONS, type Allowlist, type CredentialRequest, type Principal } from "../broker/src/policy.ts";
+import { approvalScope, approverCounts, decide, globsIntersect, ownNamedResources, RUN_TAG_RE, sessionName, SESSION_POLICY_MAX_CHARS, TAG_ACTIONS, UNTAG_ACTIONS, type Allowlist, type CredentialRequest, type Principal } from "../broker/src/policy.ts";
 
 const allowlist = JSON.parse(readFileSync(new URL("../broker/allowlist.json", import.meta.url), "utf8")) as Allowlist;
 const SANDBOX = "805532413586";
@@ -62,7 +62,7 @@ test("sandbox, own run tag, allowlisted actions: issued automatically, scoped to
   const by = (sid: string) => d.sessionPolicy.Statement.find((s) => s.Sid === sid)!;
   const create = by("SqsCreate");
   assert.deepEqual(create.Action, ["sqs:CreateQueue"]);
-  assert.equal(create.Resource, "arn:aws:sqs:*:*:terse-mig-42-*", "creates are named for the run");
+  assert.equal(create.Resource, "arn:aws:sqs:*:*:terse-mig-42--*", "creates are named for the run");
   assert.deepEqual(create.Condition, { StringEquals: { "aws:RequestTag/agent-run": "terse-mig-42" } });
   const own = by("OwnRunTagged");
   assert.deepEqual(own.Action, ["sqs:SendMessage", "sqs:DeleteQueue"]);
@@ -79,11 +79,11 @@ test("sandbox, own run tag, allowlisted actions: issued automatically, scoped to
 
 test("tagged creates carry their tag-on-create permission, only on resources named for the run", () => {
   const cases: [string, string[], string][] = [
-    ["sqs:CreateQueue", ["sqs:TagQueue"], "arn:aws:sqs:*:*:terse-mig-42-*"],
-    ["sns:CreateTopic", ["sns:TagResource"], "arn:aws:sns:*:*:terse-mig-42-*"],
-    ["logs:CreateLogGroup", ["logs:TagResource", "logs:TagLogGroup"], "arn:aws:logs:*:*:log-group:terse-mig-42-*"],
-    ["dynamodb:CreateTable", ["dynamodb:TagResource"], "arn:aws:dynamodb:*:*:table/terse-mig-42-*"],
-    ["secretsmanager:CreateSecret", ["secretsmanager:TagResource"], "arn:aws:secretsmanager:*:*:secret:terse-mig-42-*"],
+    ["sqs:CreateQueue", ["sqs:TagQueue"], "arn:aws:sqs:*:*:terse-mig-42--*"],
+    ["sns:CreateTopic", ["sns:TagResource"], "arn:aws:sns:*:*:terse-mig-42--*"],
+    ["logs:CreateLogGroup", ["logs:TagResource", "logs:TagLogGroup"], "arn:aws:logs:*:*:log-group:terse-mig-42--*"],
+    ["dynamodb:CreateTable", ["dynamodb:TagResource"], "arn:aws:dynamodb:*:*:table/terse-mig-42--*"],
+    ["secretsmanager:CreateSecret", ["secretsmanager:TagResource"], "arn:aws:secretsmanager:*:*:secret:terse-mig-42--*"],
   ];
   for (const [create, tags, resource] of cases) {
     const d = decide(req({ actions: [create] }), agent, allowlist);
@@ -100,6 +100,50 @@ test("tagged creates carry their tag-on-create permission, only on resources nam
     assert.ok(deny.NotResource!.includes(resource));
     assert.ok(!allows.some((s) => s.Action?.some((a) => /Untag|DeleteTags/.test(a))), "never an untag");
   }
+});
+
+test("run namespaces are disjoint: no run's names match another run's, even when one tag prefixes the other", () => {
+  const tags = ["foo", "foo-bar", "foo-bar-baz", "foob", "build", "build-other", "a1b", "a1b-2"];
+  for (const t of tags) assert.ok(RUN_TAG_RE.test(t), t);
+  for (const mine of tags) {
+    for (const theirs of tags) {
+      if (mine === theirs) continue;
+      for (const [pattern, theirName] of ownNamedResources(mine).map((p, i) => [p, ownNamedResources(theirs)[i]!.replace(/\*$/, "work").replaceAll("*", "x1")] as const)) {
+        assert.ok(!globsIntersect(pattern, theirName), `${mine}'s ${pattern} must not match ${theirs}'s ${theirName}`);
+      }
+    }
+    for (const [p, i] of ownNamedResources(mine).map((p, i) => [p, i] as const)) assert.ok(globsIntersect(p, ownNamedResources(mine)[i]!.replace(/\*$/, "work").replaceAll("*", "x1")), `${mine} owns its own names`);
+  }
+});
+
+test("a resource already carrying another run's tag can't be re-tagged by this session", () => {
+  const d = decide(req({ actions: ["sqs:CreateQueue", "sqs:TagQueue"] }), agent, allowlist);
+  assert.equal(d.outcome, "auto");
+  if (d.outcome !== "auto") return;
+  const g = d.sessionPolicy.Statement.find((s) => s.Sid === "DenyOverwritingAnotherRunsTag")!;
+  assert.deepEqual(g.Action, ["sqs:TagQueue"]);
+  assert.deepEqual(g.Condition, {
+    "ForAnyValue:StringEquals": { "aws:TagKeys": ["agent-run"] },
+    StringNotEquals: { "aws:ResourceTag/agent-run": "terse-mig-42" },
+    Null: { "aws:ResourceTag/agent-run": "false" },
+  });
+  assert.ok(JSON.stringify(d.sessionPolicy).length <= SESSION_POLICY_MAX_CHARS);
+});
+
+test("approval scoping by verb: only Create/Run are tagged creates; Put and other updates act on tagged resources", () => {
+  assert.equal(approvalScope("s3:CreateBucket"), "request-tag");
+  assert.equal(approvalScope("ec2:RunInstances"), "request-tag");
+  assert.equal(approvalScope("secretsmanager:PutResourcePolicy"), "resource-tag");
+  assert.equal(approvalScope("s3:PutObject"), "resource-tag");
+  assert.equal(approvalScope("ssm:PutParameter"), "resource-tag");
+  assert.equal(approvalScope("ec2:RegisterImage"), "resource-tag");
+  assert.equal(approvalScope("ec2:DescribeInstances"), "any");
+  const d = decide(req({ account: PROD, actions: ["secretsmanager:PutResourcePolicy"] }), agent, withProd);
+  assert.equal(d.outcome, "approval");
+  if (d.outcome !== "approval") return;
+  const s = d.sessionPolicy.Statement.find((x) => x.Sid === "ApprovedOnRunTagged")!;
+  assert.deepEqual(s.Action, ["secretsmanager:PutResourcePolicy"]);
+  assert.equal(s.Condition!.StringEquals!["aws:ResourceTag/agent-run"], "terse-mig-42");
 });
 
 test("the session guard and the role ceiling name the same tag actions and run-owned resources", () => {
@@ -137,6 +181,10 @@ test("refused outright: unknown account, never-issue actions, bad shape", () => 
     [{ durationMinutes: 61 }, /durationMinutes/],
     [{ durationMinutes: 720 }, /durationMinutes/],
     [{ runTag: "Has Spaces" }, /runTag/],
+    [{ runTag: "foo--bar" }, /runTag/],
+    [{ runTag: "foo-" }, /runTag/],
+    [{ runTag: "-foo" }, /runTag/],
+    [{ runTag: "ab" }, /runTag/],
     [{ purpose: "x" }, /purpose/],
     [{ regions: ["eu-west-1"] }, /not allowed in sandbox/],
     [{ regions: [] }, /at least one region/],

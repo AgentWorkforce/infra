@@ -69,16 +69,25 @@ So a delete is automatic only on the run's own resources.
 `logs:TagLogGroup`, and so on. Each create rule pulls in its tag rule
 (`impliedBy`). Outside EC2, IAM can't tell tagging at create time apart from
 tagging an existing resource. Those creates are therefore named for the run:
-the queue, topic, log group, table or secret must be called `<runTag>-…`, and
+the queue, topic, log group, table or secret must be called `<runTag>--…`, and
 the tag permission applies only to those names. A session can never put its
 run tag on an existing resource it didn't create, and so can't claim and then
 delete it. EC2 uses `ec2:CreateAction` (`ec2:CreateTags` only during
 RunInstances or CreateVolume).
 
+The `--` separator keeps every run's names disjoint. A run tag is lowercase
+words joined by single hyphens (no `--`, no leading or trailing hyphen), so
+run `foo`'s `foo--*` can never match run `foo-bar`'s `foo-bar--jobs`. With a
+single `-` it would, and run `foo` could re-tag and delete `foo-bar`'s
+queue. A test checks every pair of overlapping run tags. As a second layer,
+no session can overwrite a run tag a resource already carries
+(`DenyOverwritingAnotherRunsTag`, in the session policy and the ceiling).
+
 Each session policy also carries denies:
 - creating anything with another run's tag;
 - removing the run tag;
 - adding it anywhere except the run's own names;
+- overwriting another run's tag on a resource;
 - EC2 tagging after create;
 - regions outside the account's list (one `DenyOutsideRegions` statement).
 
@@ -126,10 +135,14 @@ A run tag is claimed by the first agent that receives credentials for it
 
 Before anything is minted, the broker writes the run-tag claim and a cleanup
 record holding the planned delivery: the file path, or the 1Password item
-title `aws-broker-<request id>`. A failed mint undoes both. A delivery that
-fails partway (e.g. `op` timing out after it created the item) is removed
-straight away. If that removal fails too, `sweep` finds the delivery from the
-planned record. Every `aws` and `op` call has a 30 s timeout.
+title `aws-broker-<request id>`. A failed write of either, or a failed mint,
+undoes both. A delivery that fails partway (e.g. `op` timing out after it
+created the item) is removed straight away. Once it is removed, nobody holds
+the credentials, so the claim this issue made is released too. If removal
+fails, `sweep` finds the delivery from the planned record, and the claim
+stays with the requester, the only agent who could read a leftover delivery.
+A claim that existed before the request is never released. Every `aws` and
+`op` call has a 30 s timeout.
 
 One broker run holds the state lock at a time. The lock records its owner's
 pid and a token. It is taken over only when that process is dead, never by
@@ -165,7 +178,8 @@ a 40-character run tag is ordinary metadata.
   organizations, account, SSO, identity store, CloudTrail, Config,
   GuardDuty, Security Hub, RAM and KMS key deletion or policy; any session
   without the run tag; creating with another run's tag; removing the run
-  tag; adding it except on resources named `${aws:PrincipalTag/agent-run}-…`;
+  tag; adding it except on resources named `${aws:PrincipalTag/agent-run}--…`;
+  overwriting another run's tag;
   EC2 tags after create; stop or delete outside
   `${aws:PrincipalTag/agent-run}`; regions outside the allowed list. These
   denies hold even if the policy engine has a bug. A test pins the

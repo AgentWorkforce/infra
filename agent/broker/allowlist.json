@@ -77,7 +77,7 @@
         "sqs:CreateQueue"
       ],
       "resources": [
-        "arn:aws:sqs:*:*:{runTag}-*"
+        "arn:aws:sqs:*:*:{runTag}--*"
       ]
     },
     {
@@ -87,7 +87,7 @@
         "sns:CreateTopic"
       ],
       "resources": [
-        "arn:aws:sns:*:*:{runTag}-*"
+        "arn:aws:sns:*:*:{runTag}--*"
       ]
     },
     {
@@ -97,7 +97,7 @@
         "logs:CreateLogGroup"
       ],
       "resources": [
-        "arn:aws:logs:*:*:log-group:{runTag}-*"
+        "arn:aws:logs:*:*:log-group:{runTag}--*"
       ]
     },
     {
@@ -107,7 +107,7 @@
         "dynamodb:CreateTable"
       ],
       "resources": [
-        "arn:aws:dynamodb:*:*:table/{runTag}-*"
+        "arn:aws:dynamodb:*:*:table/{runTag}--*"
       ]
     },
     {
@@ -117,7 +117,7 @@
         "secretsmanager:CreateSecret"
       ],
       "resources": [
-        "arn:aws:secretsmanager:*:*:secret:{runTag}-*"
+        "arn:aws:secretsmanager:*:*:secret:{runTag}--*"
       ]
     },
     {
@@ -130,7 +130,7 @@
         "sqs:CreateQueue"
       ],
       "resources": [
-        "arn:aws:sqs:*:*:{runTag}-*"
+        "arn:aws:sqs:*:*:{runTag}--*"
       ]
     },
     {
@@ -143,7 +143,7 @@
         "sns:CreateTopic"
       ],
       "resources": [
-        "arn:aws:sns:*:*:{runTag}-*"
+        "arn:aws:sns:*:*:{runTag}--*"
       ]
     },
     {
@@ -157,7 +157,7 @@
         "logs:CreateLogGroup"
       ],
       "resources": [
-        "arn:aws:logs:*:*:log-group:{runTag}-*"
+        "arn:aws:logs:*:*:log-group:{runTag}--*"
       ]
     },
     {
@@ -170,7 +170,7 @@
         "dynamodb:CreateTable"
       ],
       "resources": [
-        "arn:aws:dynamodb:*:*:table/{runTag}-*"
+        "arn:aws:dynamodb:*:*:table/{runTag}--*"
       ]
     },
     {
@@ -183,7 +183,7 @@
         "secretsmanager:CreateSecret"
       ],
       "resources": [
-        "arn:aws:secretsmanager:*:*:secret:{runTag}-*"
+        "arn:aws:secretsmanager:*:*:secret:{runTag}--*"
       ]
     },
     {

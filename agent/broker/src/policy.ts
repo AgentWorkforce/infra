@@ -88,7 +88,13 @@ export type Decision =
 export const SESSION_POLICY_MAX_CHARS = 2048;
 
 const ACCOUNT_RE = /^\d{12}$/;
-const RUN_TAG_RE = /^[a-z0-9][a-z0-9-]{2,62}$/;
+/**
+ * Run tags: lowercase words joined by single hyphens, 3 to 63 characters. No
+ * "--", no leading or trailing hyphen: a run's resource names are
+ * "<runTag>--…", so no run's names can ever be a prefix match for another
+ * run's (see ownNamedResources).
+ */
+export const RUN_TAG_RE = /^(?=.{3,63}$)[a-z0-9]+(-[a-z0-9]+)*$/;
 const ACTION_RE = /^[a-z0-9-]+:[A-Za-z0-9*]+$/;
 const ARN_RE = /^arn:aws[a-z-]*:[a-z0-9-]+:[a-z0-9-]*:(\d{12})?:[^\s]+$/;
 const REGION_RE = /^[a-z]{2}(-[a-z]+)+-\d$/;
@@ -124,7 +130,7 @@ export function validate(req: CredentialRequest, list: Allowlist): string[] {
   const problems: string[] = [];
   if (!ACCOUNT_RE.test(String(req.account))) problems.push("account must be a 12-digit AWS account id");
   if (typeof req.purpose !== "string" || req.purpose.trim().length < 8 || req.purpose.length > 500) problems.push("purpose must say what the credentials are for (8 to 500 characters)");
-  if (!RUN_TAG_RE.test(String(req.runTag))) problems.push("runTag must match ^[a-z0-9][a-z0-9-]{2,62}$");
+  if (!RUN_TAG_RE.test(String(req.runTag))) problems.push("runTag must be 3 to 63 lowercase letters and digits in words joined by single hyphens (no --)");
   if (!Array.isArray(req.actions) || req.actions.length === 0) problems.push("actions must list at least one service:Action");
   else {
     if (req.actions.length > 40) problems.push("at most 40 actions per request");
@@ -169,21 +175,25 @@ function sid(id: string): string {
 }
 
 /**
- * Resources a run owns by name: what it creates must be named "<runTag>-…".
+ * Resources a run owns by name: what it creates must be named "<runTag>--…".
  * Tag-on-create authorization (CreateQueue also checks sqs:TagQueue, and so
  * on) is granted only on these, so a session can never put its run tag on an
- * existing resource it didn't create: an untagged queue named otherwise, or
- * another run's. EC2 instead uses ec2:CreateAction (see ec2-tag-on-create).
+ * existing resource it didn't create. The "--" separator can't occur inside a
+ * run tag (RUN_TAG_RE), so run "foo"'s "foo--*" never matches run
+ * "foo-bar"'s "foo-bar--…": the namespaces are disjoint. As a second layer, no
+ * session may overwrite a run tag that is already another run's
+ * (DenyOverwritingAnotherRunsTag). EC2 instead uses ec2:CreateAction (see
+ * ec2-tag-on-create).
  * terraform/modules/scoped-role holds the same patterns with
  * ${aws:PrincipalTag/agent-run} in place of the run tag.
  */
 export function ownNamedResources(runTag: string): string[] {
   return [
-    `arn:aws:sqs:*:*:${runTag}-*`,
-    `arn:aws:sns:*:*:${runTag}-*`,
-    `arn:aws:logs:*:*:log-group:${runTag}-*`,
-    `arn:aws:dynamodb:*:*:table/${runTag}-*`,
-    `arn:aws:secretsmanager:*:*:secret:${runTag}-*`,
+    `arn:aws:sqs:*:*:${runTag}--*`,
+    `arn:aws:sns:*:*:${runTag}--*`,
+    `arn:aws:logs:*:*:log-group:${runTag}--*`,
+    `arn:aws:dynamodb:*:*:table/${runTag}--*`,
+    `arn:aws:secretsmanager:*:*:secret:${runTag}--*`,
   ];
 }
 
@@ -230,6 +240,13 @@ function allGuards(tagKey: string, runTag: string): PolicyStatement[] {
     },
     { Sid: "DenyRemovingRunTag", Effect: "Deny", Action: UNTAG_ACTIONS, Resource: "*", Condition: hasRunTag },
     { Sid: "DenyRunTagOnOthers", Effect: "Deny", Action: TAG_ACTIONS, NotResource: ownNamedResources(runTag), Condition: hasRunTag },
+    {
+      Sid: "DenyOverwritingAnotherRunsTag",
+      Effect: "Deny",
+      Action: [...TAG_ACTIONS, "ec2:CreateTags"],
+      Resource: "*",
+      Condition: { ...hasRunTag, StringNotEquals: { [`aws:ResourceTag/${tagKey}`]: runTag }, Null: { [`aws:ResourceTag/${tagKey}`]: "false" } },
+    },
     { Sid: "DenyEc2TagsAfterCreate", Effect: "Deny", Action: ["ec2:CreateTags"], Resource: "*", Condition: { Null: { "ec2:CreateAction": "true" } } },
   ];
 }
@@ -266,11 +283,17 @@ function autoStatements(req: CredentialRequest, list: Allowlist): { statements: 
   return { statements, unmatched: req.actions.filter((a) => !matched.has(a)) };
 }
 
-/** How an approved action that no auto rule covers is scoped under scope run-tag, by its verb. */
-function approvalScope(action: string): Scope {
+/**
+ * How an approved action that no auto rule covers is scoped under scope
+ * run-tag, by its verb. Only verbs that make a new resource (Create, Run) get
+ * the request-tag condition; Put, Update, Register and the rest act on
+ * existing resources (e.g. secretsmanager:PutResourcePolicy takes no tags), so
+ * they are scoped by the resource's tag.
+ */
+export function approvalScope(action: string): Scope {
   const verb = action.split(":")[1] ?? "";
   if (/^(Describe|List)/.test(verb)) return "any";
-  if (/^(Create|Run|Put|Import|Allocate|Register)/.test(verb)) return "request-tag";
+  if (/^(Create|Run)[A-Z*]/.test(verb)) return "request-tag";
   return "resource-tag";
 }
 

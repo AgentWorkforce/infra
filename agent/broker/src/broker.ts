@@ -100,12 +100,66 @@ function alive(pid: number): boolean {
  * was never written and the lock is old), never by age while its owner runs;
  * every external call it covers has a timeout (sts.ts, deliver.ts). A run
  * releases the lock only if the token is still its own.
+ *
+ * Taking over a dead lock is serialized by a second mutex (`.lock.recover`):
+ * only its holder may remove the lock, and it re-reads the owner while holding
+ * it. A dead owner's lock can't change hands meanwhile (its owner can't
+ * release it, and no one else may remove it), so a recoverer can never move a
+ * live lock that another waiter has just taken. A recover mutex left by a
+ * crashed recoverer is cleared once its pid is dead and it is 30 s old (a live
+ * one is held for milliseconds).
  */
 export async function withLock<T>(dir: string, fn: () => Promise<T>, waitMs = 60_000): Promise<T> {
   const lock = join(dir, ".lock");
   const owner = join(lock, "owner");
+  const recover = join(dir, ".lock.recover");
   const token = randomBytes(8).toString("hex");
   const deadline = Date.now() + waitMs;
+  const readOwner = (): string | undefined => {
+    try {
+      return readFileSync(owner, "utf8");
+    } catch {
+      return undefined;
+    }
+  };
+  const stale = (content: string | undefined): boolean => {
+    if (content === undefined) {
+      // mkdir'd but no owner yet: a crash between the two steps, or a run that is just starting.
+      try {
+        return Date.now() - statSync(lock).mtimeMs > 10_000;
+      } catch {
+        return false;
+      }
+    }
+    const pid = Number(content.split(" ")[0]);
+    return !Number.isInteger(pid) || pid <= 0 || !alive(pid);
+  };
+  const recoverStaleLock = () => {
+    try {
+      mkdirSync(recover);
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== "EEXIST") throw e;
+      try {
+        const pid = Number(readFileSync(join(recover, "pid"), "utf8"));
+        if (Date.now() - statSync(recover).mtimeMs > 30_000 && !(Number.isInteger(pid) && pid > 0 && alive(pid))) rmSync(recover, { recursive: true, force: true });
+      } catch {
+        // gone already, or just created: retry later
+      }
+      return;
+    }
+    try {
+      writeFileSync(join(recover, "pid"), `${process.pid}\n`, { mode: 0o600 });
+      if (stale(readOwner())) {
+        const grave = `${lock}.stale-${token}`;
+        renameSync(lock, grave);
+        rmSync(grave, { recursive: true, force: true });
+      }
+    } catch {
+      // the lock went away on its own: the next mkdir decides
+    } finally {
+      rmSync(recover, { recursive: true, force: true });
+    }
+  };
   for (;;) {
     try {
       mkdirSync(lock);
@@ -113,31 +167,9 @@ export async function withLock<T>(dir: string, fn: () => Promise<T>, waitMs = 60
       break;
     } catch (e) {
       if ((e as NodeJS.ErrnoException).code !== "EEXIST") throw e;
-      let stale = false;
-      try {
-        const pid = Number(readFileSync(owner, "utf8").split(" ")[0]);
-        stale = !Number.isInteger(pid) || pid <= 0 || !alive(pid);
-      } catch {
-        // mkdir'd but no owner yet: a crash between the two steps, or a run that is just starting.
-        try {
-          stale = Date.now() - statSync(lock).mtimeMs > 10_000;
-        } catch {
-          stale = false;
-        }
-      }
-      if (stale) {
-        // Take it over atomically: rename first, so two waiters can't both remove it.
-        const grave = `${lock}.stale-${token}`;
-        try {
-          renameSync(lock, grave);
-          rmSync(grave, { recursive: true, force: true });
-        } catch {
-          // someone else took it over first
-        }
-        continue;
-      }
+      if (stale(readOwner())) recoverStaleLock();
       if (Date.now() > deadline) throw new Error("broker: state is locked by another run");
-      await new Promise((r) => setTimeout(r, 50));
+      await new Promise((r) => setTimeout(r, 25));
     }
   }
   try {
@@ -297,14 +329,8 @@ export class Broker {
     const owners = this.runTags();
     const claimed = !owners[req.runTag];
     const issuedFile = join(this.deps.stateDir, "issued", `${requestId}.json`);
-    let planned: DeliveryRef;
-    try {
-      planned = this.deps.deliverer.planned(req.delivery, name, requestId);
-      if (claimed) writeJson(tagsFile, { ...owners, [req.runTag]: requester.name });
-      writeJson(issuedFile, { requestId, delivery: planned, expiration: new Date(this.deps.now().getTime() + durationSeconds * 1000 + 60_000).toISOString() } satisfies Issued);
-    } catch (e) {
-      return fail(`could not record the issue: ${(e as Error).message}`);
-    }
+    // Releases a claim this issue made (never one that existed before it), when
+    // nobody ends up holding credentials for the tag.
     const unclaim = () => {
       if (!claimed) return;
       try {
@@ -317,6 +343,17 @@ export class Broker {
         // a leftover claim only keeps the tag with the agent that asked for it
       }
     };
+    let planned: DeliveryRef;
+    try {
+      planned = this.deps.deliverer.planned(req.delivery, name, requestId);
+      if (claimed) writeJson(tagsFile, { ...owners, [req.runTag]: requester.name });
+      writeJson(issuedFile, { requestId, delivery: planned, expiration: new Date(this.deps.now().getTime() + durationSeconds * 1000 + 60_000).toISOString() } satisfies Issued);
+    } catch (e) {
+      // Nothing was minted: undo whatever of the two writes landed.
+      rmSync(issuedFile, { force: true });
+      unclaim();
+      return fail(`could not record the issue: ${(e as Error).message}`);
+    }
     let creds;
     try {
       creds = await this.deps.sts.assumeRole({ roleArn, sessionName: name, sourceIdentity: name, durationSeconds, policy: sessionPolicy, tags });
@@ -330,11 +367,14 @@ export class Broker {
     try {
       delivery = await this.deps.deliverer.deliver(req.delivery, name, requestId, creds);
     } catch (e) {
-      // Maybe partly written (e.g. op timed out after creating the item): try to remove it now; the
-      // planned record stays for sweep if that fails too. The credentials lapse at expiry.
+      // Maybe partly written (e.g. op timed out after creating the item): try to remove it now. Once
+      // it is gone nobody holds the credentials, so a claim this issue made is released too. If removal
+      // fails, the planned record stays for sweep and the claim stays with the requester (the only
+      // agent who could read a leftover delivery). The credentials lapse at expiry either way.
       try {
         await this.deps.deliverer.remove(planned);
         rmSync(issuedFile, { force: true });
+        unclaim();
       } catch {
         // sweep retries from the planned record
       }

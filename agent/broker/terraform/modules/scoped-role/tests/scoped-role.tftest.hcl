@@ -52,8 +52,21 @@ run "ceiling_denies_identity_untagged_foreign_and_retagging" {
     error_message = "the run tag can never be removed; adding it is handled by name"
   }
   assert {
-    condition     = contains(output.ceiling_by_sid["DenyRunTagOnResourcesNotNamedForTheRun"].Action, "sqs:TagQueue") && contains(output.ceiling_by_sid["DenyRunTagOnResourcesNotNamedForTheRun"].NotResource, "arn:aws:sqs:*:*:$${aws:PrincipalTag/agent-run}-*")
-    error_message = "tag-on-create only on resources named for the session's own run"
+    condition     = contains(output.ceiling_by_sid["DenyRunTagOnResourcesNotNamedForTheRun"].Action, "sqs:TagQueue") && contains(output.ceiling_by_sid["DenyRunTagOnResourcesNotNamedForTheRun"].NotResource, "arn:aws:sqs:*:*:$${aws:PrincipalTag/agent-run}--*")
+    error_message = "tag-on-create only on resources named <own run>--…"
+  }
+  assert {
+    condition     = alltrue([for r in output.ceiling_by_sid["DenyRunTagOnResourcesNotNamedForTheRun"].NotResource : endswith(r, "$${aws:PrincipalTag/agent-run}--*")])
+    error_message = "every run-owned name uses the -- separator, so no run's names overlap another's"
+  }
+  assert {
+    condition = (
+      contains(output.ceiling_by_sid["DenyOverwritingAnotherRunsTag"].Action, "sqs:TagQueue") &&
+      contains(output.ceiling_by_sid["DenyOverwritingAnotherRunsTag"].Action, "ec2:CreateTags") &&
+      output.ceiling_by_sid["DenyOverwritingAnotherRunsTag"].Condition.StringNotEquals["aws:ResourceTag/agent-run"] == "$${aws:PrincipalTag/agent-run}" &&
+      output.ceiling_by_sid["DenyOverwritingAnotherRunsTag"].Condition.Null["aws:ResourceTag/agent-run"] == "false"
+    )
+    error_message = "a resource already carrying another run's tag can't be re-tagged"
   }
   assert {
     condition     = output.ceiling_by_sid["DenyStopAndDeleteOutsideOwnRun"].Condition.StringNotEquals["aws:ResourceTag/agent-run"] == "$${aws:PrincipalTag/agent-run}" && contains(output.ceiling_by_sid["DenyStopAndDeleteOutsideOwnRun"].Action, "ec2:TerminateInstances")

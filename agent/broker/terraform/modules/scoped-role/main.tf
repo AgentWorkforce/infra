@@ -54,7 +54,7 @@ locals {
   }
 
   # Tag writes that add a key: with the run tag, only on resources the run
-  # owns by name (<run tag>-…), so tag-on-create works (CreateQueue also checks
+  # owns by name (<run tag>--…), so tag-on-create works (CreateQueue also checks
   # sqs:TagQueue, and so on) but an existing resource can't be claimed.
   # Must match broker/src/policy.ts TAG_ACTIONS and ownNamedResources.
   tag_actions = [
@@ -62,11 +62,11 @@ locals {
     "dynamodb:TagResource", "secretsmanager:TagResource",
   ]
   own_named_resources = [
-    "arn:aws:sqs:*:*:${local.own_run}-*",
-    "arn:aws:sns:*:*:${local.own_run}-*",
-    "arn:aws:logs:*:*:log-group:${local.own_run}-*",
-    "arn:aws:dynamodb:*:*:table/${local.own_run}-*",
-    "arn:aws:secretsmanager:*:*:secret:${local.own_run}-*",
+    "arn:aws:sqs:*:*:${local.own_run}--*",
+    "arn:aws:sns:*:*:${local.own_run}--*",
+    "arn:aws:logs:*:*:log-group:${local.own_run}--*",
+    "arn:aws:dynamodb:*:*:table/${local.own_run}--*",
+    "arn:aws:secretsmanager:*:*:secret:${local.own_run}--*",
   ]
   # Removing the run tag, or tagging through the generic API: never with the run tag. Matches UNTAG_ACTIONS.
   untag_actions = [
@@ -127,6 +127,19 @@ locals {
         Action      = local.tag_actions
         NotResource = local.own_named_resources
         Condition   = { "ForAnyValue:StringEquals" = { "aws:TagKeys" = [var.tag_key] } }
+      },
+      {
+        # Second layer under the disjoint "<run>--" names: a resource that
+        # already carries another run's tag can never be re-tagged to this one.
+        Sid      = "DenyOverwritingAnotherRunsTag"
+        Effect   = "Deny"
+        Action   = concat(local.tag_actions, ["ec2:CreateTags"])
+        Resource = "*"
+        Condition = {
+          "ForAnyValue:StringEquals" = { "aws:TagKeys" = [var.tag_key] }
+          StringNotEquals            = { "aws:ResourceTag/${var.tag_key}" = local.own_run }
+          Null                       = { "aws:ResourceTag/${var.tag_key}" = "false" }
+        }
       },
       {
         Sid       = "DenyEc2TagsAfterCreate"
