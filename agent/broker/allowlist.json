@@ -1,0 +1,141 @@
+{
+  "$comment": "AWS credential broker policy allowlist. Reviewed by Khaliq: a change here changes what agents can get without asking him. See broker/DESIGN.md.",
+  "version": 1,
+  "tagKey": "agent-run",
+  "humanApprovers": ["khaliq-gant"],
+  "duration": { "minMinutes": 15, "maxMinutes": 60, "autoMaxMinutes": 60 },
+  "approvalWindowMinutes": 30,
+  "accounts": {
+    "805532413586": {
+      "label": "sandbox",
+      "tier": "sandbox",
+      "regions": ["us-east-1", "us-west-2"],
+      "roles": {
+        "scoped": "arn:aws:iam::805532413586:role/agent-broker-sandbox-scoped"
+      }
+    }
+  },
+  "neverIssue": [
+    "organizations:*",
+    "account:*",
+    "billing:*",
+    "aws-portal:*",
+    "sts:*",
+    "iam:CreateAccessKey",
+    "iam:CreateLoginProfile",
+    "iam:UpdateLoginProfile"
+  ],
+  "approvalOnly": [
+    "iam:*",
+    "sso:*",
+    "sso-directory:*",
+    "identitystore:*",
+    "kms:ScheduleKeyDeletion",
+    "kms:PutKeyPolicy",
+    "cloudtrail:*",
+    "config:*",
+    "guardduty:*",
+    "ram:*"
+  ],
+  "autoRules": [
+    {
+      "id": "read-describe",
+      "scope": "any",
+      "actions": [
+        "ec2:DescribeInstances",
+        "ec2:DescribeVolumes",
+        "ec2:DescribeSecurityGroups",
+        "ec2:DescribeSubnets",
+        "ec2:DescribeVpcs",
+        "ec2:DescribeImages",
+        "ec2:DescribeTags",
+        "logs:DescribeLogGroups",
+        "logs:DescribeLogStreams",
+        "sqs:ListQueues",
+        "sns:ListTopics",
+        "dynamodb:ListTables",
+        "ssm:DescribeParameters",
+        "secretsmanager:ListSecrets",
+        "cloudwatch:GetMetricData",
+        "cloudwatch:ListMetrics",
+        "tag:GetResources"
+      ]
+    },
+    {
+      "id": "create-with-run-tag",
+      "scope": "request-tag",
+      "actions": [
+        "sqs:CreateQueue",
+        "sns:CreateTopic",
+        "logs:CreateLogGroup",
+        "dynamodb:CreateTable",
+        "secretsmanager:CreateSecret",
+        "ec2:CreateVolume"
+      ]
+    },
+    {
+      "id": "ec2-run-instances-tagged",
+      "scope": "request-tag",
+      "actions": ["ec2:RunInstances"],
+      "resources": [
+        "arn:aws:ec2:*:*:instance/*",
+        "arn:aws:ec2:*:*:volume/*",
+        "arn:aws:ec2:*:*:network-interface/*"
+      ]
+    },
+    {
+      "id": "ec2-run-instances-inputs",
+      "scope": "any",
+      "actions": ["ec2:RunInstances"],
+      "resources": [
+        "arn:aws:ec2:*::image/*",
+        "arn:aws:ec2:*:*:subnet/*",
+        "arn:aws:ec2:*:*:security-group/*",
+        "arn:aws:ec2:*:*:key-pair/*"
+      ]
+    },
+    {
+      "id": "ec2-tag-on-create",
+      "scope": "request-tag",
+      "actions": ["ec2:CreateTags"],
+      "condition": { "StringEquals": { "ec2:CreateAction": ["RunInstances", "CreateVolume"] } }
+    },
+    {
+      "id": "own-run-tagged",
+      "scope": "resource-tag",
+      "actions": [
+        "ec2:StartInstances",
+        "ec2:StopInstances",
+        "ec2:RebootInstances",
+        "ec2:TerminateInstances",
+        "ec2:AttachVolume",
+        "ec2:DetachVolume",
+        "ec2:DeleteVolume",
+        "sqs:SendMessage",
+        "sqs:ReceiveMessage",
+        "sqs:DeleteMessage",
+        "sqs:GetQueueAttributes",
+        "sqs:DeleteQueue",
+        "sns:Publish",
+        "sns:GetTopicAttributes",
+        "sns:DeleteTopic",
+        "logs:PutLogEvents",
+        "logs:CreateLogStream",
+        "logs:GetLogEvents",
+        "logs:DeleteLogGroup",
+        "dynamodb:GetItem",
+        "dynamodb:PutItem",
+        "dynamodb:UpdateItem",
+        "dynamodb:DeleteItem",
+        "dynamodb:Query",
+        "dynamodb:Scan",
+        "dynamodb:DescribeTable",
+        "dynamodb:DeleteTable",
+        "secretsmanager:GetSecretValue",
+        "secretsmanager:PutSecretValue",
+        "secretsmanager:DescribeSecret",
+        "secretsmanager:DeleteSecret"
+      ]
+    }
+  ]
+}

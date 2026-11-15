@@ -13,5 +13,5 @@
     "skipLibCheck": true,
     "types": ["node"]
   },
-  "include": ["agent.config.ts", "alchemy.run.ts", "test"]
+  "include": ["agent.config.ts", "alchemy.run.ts", "broker/src", "test"]
 }
