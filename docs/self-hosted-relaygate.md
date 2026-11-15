@@ -8,6 +8,13 @@ knowledge base) go through a **classifier** (rules, plus an optional Claude
 model). Denials never reach upstream. It is opt-in: `components.relaygate` in
 the umbrella, or its own release.
 
+> **Status: build 1.** Registration, mode checks, the classifier, `/v1/check`
+> and the audit log work today, so Slack posts and knowledge-base writes are
+> gated. The proxy in front of Relaycast and Sessions is build 2 and not yet
+> shipped: until it is, agents still reach Relaycast and Sessions directly and
+> relaygate does **not** isolate pit data from other agents. Don't rely on it
+> for that yet.
+
 ![Slack app and relaygate](diagrams/slack-relay-relaygate.png)
 
 ([SVG](diagrams/slack-relay-relaygate.svg) · source [slack-relay-relaygate.mmd](diagrams/slack-relay-relaygate.mmd) · one message end to end: [slack-relay-flow.png](diagrams/slack-relay-flow.png))
@@ -24,7 +31,7 @@ enrollment keys decide an agent's group at registration and can be limited to
 a name prefix.
 
 ```yaml
-# relaygate-values.yaml
+# relaygate-values.yaml (Anthropic: use a zero-data-retention key where regulated data may be classified)
 image:
   digest: sha256:<published digest>
 policy:

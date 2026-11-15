@@ -2,12 +2,14 @@
 %% Source of truth for slack-relay-flow.svg / .png. Render with
 %% @mermaid-js/mermaid-cli 11.4.2: mmdc -i slack-relay-flow.mmd -o slack-relay-flow.svg -b white
 %% and the same with -o slack-relay-flow.png -s 2.
+%% Steps 3-5 and 9-10 go through relaygate once its proxy (build 2) ships; until then
+%% and without relaygate, the router and host talk to Relaycast directly.
 %%{init: {"theme": "base", "themeVariables": {"fontSize": "15px", "lineColor": "#475569", "primaryTextColor": "#0f172a"}, "sequence": {"mirrorActors": false, "wrap": true, "width": 190}}}%%
 sequenceDiagram
   autonumber
   participant P as Person in Slack
   participant R as Router (ledger)
-  participant G as relaygate
+  participant G as relaygate (optional)
   participant C as Relaycast
   participant H as Agent host
   participant A as Thread's agent (Claude Code)
@@ -33,4 +35,5 @@ sequenceDiagram
     R->>R: record outbound.withheld
     R->>P: "That answer was withheld by policy."
   end
+  Note over G,C: proxy steps (3-5, 9-10): relaygate build 2, planned. Today agents reach Relaycast directly.
   Note over H,A: between messages the agent is idle, with no process running
