@@ -51,6 +51,12 @@ export function receiptState(r: unknown): string {
   return /"state"\s*:\s*"([a-z_]+)"/.exec(text)?.[1] ?? "";
 }
 
+/** The server has no get_write_request tool at all (JSON-RPC method/tool unknown). */
+export function noReceipts(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err);
+  return /-32601|unknown tool|tool not found|no such tool|method not found/i.test(msg);
+}
+
 /** A write gbrain accepted but hasn't applied yet (write_pending) is accepted: it is idempotent by request_id. */
 async function write(brain: ToolCaller, name: string, args: Record<string, unknown>): Promise<void> {
   try {
@@ -147,15 +153,19 @@ export class SlackIngest {
 
   /** True when this message's create request is on record (gbrain get_write_request). */
   async #created(brain: ToolCaller, m: IngestMessage): Promise<boolean> {
+    const id = requestId("create", m.channel, m.ts);
     try {
-      await brain.callTool("get_write_request", { request_id: requestId("create", m.channel, m.ts) });
-      return true;
+      await brain.callTool("get_write_request", { request_id: id });
     } catch {
       // not_found, a server without receipts (unknown tool) or a failed lookup:
       // treat it as not created and append. The append itself still fails loudly
       // if the server is unreachable; at worst a replayed first line repeats.
       return false;
     }
+    // Created by this message before (maybe still pending): its page must
+    // exist before anything after it is appended.
+    await this.#committed(brain, id);
+    return true;
   }
 
   async #append(slug: string, m: IngestMessage): Promise<string> {
@@ -198,14 +208,16 @@ export class SlackIngest {
   async #committed(brain: ToolCaller, id: string): Promise<void> {
     const deadline = Date.now() + this.#commitTimeoutMs;
     for (;;) {
-      let state = "";
+      let state = "pending";
       try {
-        state = receiptState(await brain.callTool("get_write_request", { request_id: id }));
+        // A receipt that reports no state at all: nothing to wait for.
+        state = receiptState(await brain.callTool("get_write_request", { request_id: id })) || "committed";
       } catch (err) {
-        // A server without receipts: nothing to wait for.
-        if (!(err instanceof McpToolError) || toolCode(err) !== "not_found") return;
+        // Only a server that has no receipt tool ends the wait; not_found
+        // (the receipt isn't visible yet) and transient failures keep polling.
+        if (noReceipts(err)) return;
       }
-      if (state === "committed" || state === "") return;
+      if (state === "committed") return;
       if (/conflict|failed|refused|rejected|cancel/.test(state)) throw new Error(`brain write ${id} ended ${state}`);
       if (Date.now() > deadline) throw new Error(`brain write ${id} still ${state} after ${this.#commitTimeoutMs} ms`);
       await new Promise((r) => setTimeout(r, this.#pollMs));

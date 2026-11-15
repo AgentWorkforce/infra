@@ -400,3 +400,34 @@ test("ingest against an async brain: write_pending is accepted, appends wait for
   assert.match(lines[1]!, /<@U2>: second/, "the second was appended after the create committed");
   assert.equal(receiptState({ structuredContent: { state: "committed" } }), "committed");
 });
+
+test("the create wait survives a receipt that isn't visible yet and transient lookup failures", async () => {
+  const { SlackIngest } = await import("../src/ingest.ts");
+  const { McpToolError } = await import("../src/mcp.ts");
+  const err = (code: string) => new McpToolError(JSON.stringify({ error: code, code }), "x");
+  const calls: string[] = [];
+  let lookups = 0;
+  let created = false;
+  const brain = {
+    async callTool(name: string, a: Record<string, unknown>) {
+      calls.push(name);
+      if (name === "get_write_request") {
+        if (!created) throw err("not_found"); // before put_page: not created by this message
+        lookups++;
+        if (lookups === 1) throw err("not_found"); // receipt not visible yet
+        if (lookups === 2) throw new Error("fetch failed"); // transient
+        return { content: [{ type: "text", text: JSON.stringify({ state: lookups < 4 ? "pending" : "committed" }) }] };
+      }
+      if (name === "append_page" && !created) throw err("page_not_found");
+      if (name === "put_page") { created = true; throw err("write_pending"); }
+      return {};
+    },
+  };
+  const ing = new SlackIngest({ brain, sourceId: "company", pollMs: 1 });
+  await ing.add({ channel: "C1", channelName: "general", ts: "1794693736.0", user: "U1", text: "first" });
+  assert.equal(lookups, 4, "kept polling through not_found and a transient failure until committed");
+  assert.equal(calls.filter((c) => c === "put_page").length, 1);
+  const { noReceipts } = await import("../src/ingest.ts");
+  assert.ok(noReceipts(new Error("MCP error -32601: Unknown tool: get_write_request")));
+  assert.ok(!noReceipts(err("not_found")));
+});
