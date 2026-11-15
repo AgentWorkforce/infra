@@ -14,7 +14,7 @@ registered, every shipped entry must exist in the charts, planned entries must
 not be referenced by any template, and the compatibility matrix must equal
 the pinned digests.
 
-Source of truth: [`self-hosted/requirements.yaml`](../self-hosted/requirements.yaml). 176 entries: 55 requirements (55 shipped, 0 planned), 121 options (120 shipped, 1 planned).
+Source of truth: [`self-hosted/requirements.yaml`](../self-hosted/requirements.yaml). 178 entries: 55 requirements (55 shipped, 0 planned), 123 options (122 shipped, 1 planned).
 
 ## Contents
 
@@ -148,7 +148,8 @@ Services image (sessions-pipeline-worker, alleyoop and the privileged SQL Jobs):
 | relayauth-0.1.2 | shipped | relayauth 0.1.2 | relayauth: `ghcr.io/agentworkforce/relayauth@sha256:c23c92d25fdf…` |  |  | License-annotation patch bump of 0.1.1. Superseded by 0.1.3. |
 | relayauth-0.1.1 | shipped | relayauth 0.1.1 | relayauth: `ghcr.io/agentworkforce/relayauth@sha256:c23c92d25fdf…` |  |  | relayauth 784582ef (machine-bound History assertion contract, relayauth #113). Superseded by 0.1.2. |
 | relayauth-0.1.0 | shipped | relayauth 0.1.0 | relayauth: `ghcr.io/agentworkforce/relayauth@sha256:eb71daa28e30…` |  |  | superseded by 0.1.1. |
-| agent-relay-0.7.20 | unreleased | agent-relay 0.7.20<br>relay-control 0.4.18<br>relay-webapp 0.2.5<br>(deps: relaycast 0.3.14, relayauth 0.1.5, sessions-pipeline 0.8.34, relay-control 0.4.18, relay-webapp 0.2.5, relayflows 0.2.5, durable-actors 0.14.6-awf.3, relayfile 0.2.2, telemetry-collector 0.1.7, relay-chief 0.1.0, slack-relay 0.3.2, relaygate 0.1.1) | relaycast: `ghcr.io/agentworkforce/relaycast-self-host@sha256:ec062ef901af…`<br>relaycast-postgres: `ghcr.io/agentworkforce/relaycast-self-host@sha256:ec062ef901af…`<br>sessions-pipeline-worker: `ghcr.io/agentworkforce/sessions-pipeline@sha256:77022c5b6a1d…`<br>relay-control: `ghcr.io/agentworkforce/relay-control@sha256:d1b6ca95fab2…`<br>relay-webapp: `ghcr.io/agentworkforce/relay-webapp@sha256:bd295ccb7d13…` |  |  | Carries 0.7.19 and slack-relay 0.3.2 (the GCP proof values pin the current image), still default-off (components.slackRelay). Default renders are unchanged apart from chart versions. |
+| agent-relay-0.7.21 | unreleased | agent-relay 0.7.21<br>relay-control 0.4.18<br>relay-webapp 0.2.6<br>(deps: relaycast 0.3.14, relayauth 0.1.5, sessions-pipeline 0.8.34, relay-control 0.4.18, relay-webapp 0.2.6, relayflows 0.2.5, durable-actors 0.14.6-awf.3, relayfile 0.2.2, telemetry-collector 0.1.7, relay-chief 0.1.0, slack-relay 0.3.2, relaygate 0.1.1) | relaycast: `ghcr.io/agentworkforce/relaycast-self-host@sha256:ec062ef901af…`<br>relaycast-postgres: `ghcr.io/agentworkforce/relaycast-self-host@sha256:ec062ef901af…`<br>sessions-pipeline-worker: `ghcr.io/agentworkforce/sessions-pipeline@sha256:77022c5b6a1d…`<br>relay-control: `ghcr.io/agentworkforce/relay-control@sha256:d1b6ca95fab2…`<br>relay-webapp: `ghcr.io/agentworkforce/relay-webapp@sha256:bd295ccb7d13…` |  |  | Carries 0.7.20 and relay-webapp 0.2.6: runtime.sessionAgentNamesEnabled (DASHBOARD_SESSION_AGENT_NAMES_ENABLED) and runtime.sessionShortSummariesEnabled (DASHBOARD_SESSION_SHORT_SUMMARIES_ENABLED, needs sessionReadApiEnabled and relay-web #143), both default false. Default renders are unchanged apart from chart versions. |
+| agent-relay-0.7.20 | **planned** | agent-relay 0.7.20<br>relay-control 0.4.18<br>relay-webapp 0.2.5<br>(deps: relaycast 0.3.14, relayauth 0.1.5, sessions-pipeline 0.8.34, relay-control 0.4.18, relay-webapp 0.2.5, relayflows 0.2.5, durable-actors 0.14.6-awf.3, relayfile 0.2.2, telemetry-collector 0.1.7, relay-chief 0.1.0, slack-relay 0.3.2, relaygate 0.1.1) | relaycast: `ghcr.io/agentworkforce/relaycast-self-host@sha256:ec062ef901af…`<br>relaycast-postgres: `ghcr.io/agentworkforce/relaycast-self-host@sha256:ec062ef901af…`<br>sessions-pipeline-worker: `ghcr.io/agentworkforce/sessions-pipeline@sha256:77022c5b6a1d…`<br>relay-control: `ghcr.io/agentworkforce/relay-control@sha256:d1b6ca95fab2…`<br>relay-webapp: `ghcr.io/agentworkforce/relay-webapp@sha256:bd295ccb7d13…` |  |  | Carries 0.7.19 and slack-relay 0.3.2 (the GCP proof values pin the current image), still default-off (components.slackRelay). Default renders are unchanged apart from chart versions. |
 | agent-relay-0.7.19 | **planned** | agent-relay 0.7.19<br>relay-control 0.4.18<br>relay-webapp 0.2.5<br>(deps: relaycast 0.3.14, relayauth 0.1.5, sessions-pipeline 0.8.34, relay-control 0.4.18, relay-webapp 0.2.5, relayflows 0.2.5, durable-actors 0.14.6-awf.3, relayfile 0.2.2, telemetry-collector 0.1.7, relay-chief 0.1.0, slack-relay 0.3.1, relaygate 0.1.1) | relaycast: `ghcr.io/agentworkforce/relaycast-self-host@sha256:ec062ef901af…`<br>relaycast-postgres: `ghcr.io/agentworkforce/relaycast-self-host@sha256:ec062ef901af…`<br>sessions-pipeline-worker: `ghcr.io/agentworkforce/sessions-pipeline@sha256:77022c5b6a1d…`<br>relay-control: `ghcr.io/agentworkforce/relay-control@sha256:d1b6ca95fab2…`<br>relay-webapp: `ghcr.io/agentworkforce/relay-webapp@sha256:bd295ccb7d13…` |  |  | Carries 0.7.18 and relaygate 0.1.1 (build 2 proxies, ACL policy defaults), still default-off (components.relaygate). Default renders are unchanged apart from chart versions. |
 | agent-relay-0.7.18 | **planned** | agent-relay 0.7.18<br>relay-control 0.4.18<br>relay-webapp 0.2.5<br>(deps: relaycast 0.3.14, relayauth 0.1.5, sessions-pipeline 0.8.34, relay-control 0.4.18, relay-webapp 0.2.5, relayflows 0.2.5, durable-actors 0.14.6-awf.3, relayfile 0.2.2, telemetry-collector 0.1.7, relay-chief 0.1.0, slack-relay 0.3.1, relaygate 0.1.0) | relaycast: `ghcr.io/agentworkforce/relaycast-self-host@sha256:ec062ef901af…`<br>relaycast-postgres: `ghcr.io/agentworkforce/relaycast-self-host@sha256:ec062ef901af…`<br>sessions-pipeline-worker: `ghcr.io/agentworkforce/sessions-pipeline@sha256:77022c5b6a1d…`<br>relay-control: `ghcr.io/agentworkforce/relay-control@sha256:d1b6ca95fab2…`<br>relay-webapp: `ghcr.io/agentworkforce/relay-webapp@sha256:bd295ccb7d13…` |  |  | Carries 0.7.17. relay-control 0.4.18 adds desktopFeed.signingKeys (off unless existingSecret is set): mounts each profile's Desktop feed Ed25519 key read-only and sets SELFHOST_DESKTOP_FEED_SIGNER=file and SELFHOST_DESKTOP_FEED_KEY_FILES. Default renders are unchanged apart from chart versions. |
 | agent-relay-0.7.17 | **planned** | agent-relay 0.7.17<br>relay-control 0.4.17<br>relay-webapp 0.2.5<br>(deps: relaycast 0.3.14, relayauth 0.1.5, sessions-pipeline 0.8.34, relay-control 0.4.17, relay-webapp 0.2.5, relayflows 0.2.5, durable-actors 0.14.6-awf.3, relayfile 0.2.2, telemetry-collector 0.1.7, relay-chief 0.1.0, slack-relay 0.3.1, relaygate 0.1.0) | relaycast: `ghcr.io/agentworkforce/relaycast-self-host@sha256:ec062ef901af…`<br>relaycast-postgres: `ghcr.io/agentworkforce/relaycast-self-host@sha256:ec062ef901af…`<br>sessions-pipeline-worker: `ghcr.io/agentworkforce/sessions-pipeline@sha256:77022c5b6a1d…`<br>relay-control: `ghcr.io/agentworkforce/relay-control@sha256:d1b6ca95fab2…`<br>relay-webapp: `ghcr.io/agentworkforce/relay-webapp@sha256:bd295ccb7d13…` |  |  | Carries 0.7.16 and moves to relaycast 0.3.14 (engine 12.10.0, sha256:ec062ef901af15cf575b53a71d7eb09f2e6ab6e7c0d5be2da35339a275a5c6cc, for the default, EKS, EKS RDS-native and GCP profiles) and relay-control 0.4.17 (Control 0.5.24, sha256:d1b6ca95fab240a9d41208d83de3b1f4245408b0765038762f1c419ee60f43bc, relay-control main edad6432, publish run 43673082170: #134 desktop enrollment keys/migration 0050, #136 Grok Bot wake-ups/0051, #137 sender receipts and grant-bound OAuth launches, #138 optional Ed25519 file feed signer). The telemetry-collector sidecar pin stays at 0.5.16 because that chart validates sourceRevision against its reviewed list. Renders differ only in the digests, the hash-named migration Jobs and chart labels. |
@@ -1015,6 +1016,8 @@ chart `relay-webapp` · values [`ci/default-values.yaml`](../charts/relay-webapp
 | shipped | [Hosted customer logo (sign-in page co-branding)](#opt-relay-webapp-branding-logo) | `none`, `inline SVG`, `existing ConfigMap (PNG)`, `existing ConfigMap with dashboardKey (co-brand: two PNGs)` | `none (no hosted logo)` | values `global.branding.logo.*` |
 | shipped | [Dashboard collector analytics runtime selection](#opt-relay-webapp-collector-analytics) | (no default), `true`, `false` | (no default) | values `runtime.analyticsEnabled`; env `DASHBOARD_ANALYTICS_ENABLED` |
 | shipped | [Dashboard coordination-overlaps view](#opt-relay-webapp-coordination-overlaps) | `false`, `true` | `false` | values `runtime.coordinationOverlapsEnabled`; env `DASHBOARD_COORDINATION_OVERLAPS_ENABLED` |
+| shipped | [Dashboard session list agent names](#opt-relay-webapp-session-agent-names) | `false`, `true` | `false` | values `runtime.sessionAgentNamesEnabled`; env `DASHBOARD_SESSION_AGENT_NAMES_ENABLED` |
+| shipped | [Dashboard session list short summaries](#opt-relay-webapp-session-short-summaries) | `false`, `true` | `false` | values `runtime.sessionShortSummariesEnabled`; env `DASHBOARD_SESSION_SHORT_SUMMARIES_ENABLED` |
 
 ### Profile: agent-relay
 
@@ -4648,6 +4651,46 @@ managed Postgres coordination-overlaps backend must also be available.
 - Values: `runtime.coordinationOverlapsEnabled`
 - Env: `DASHBOARD_COORDINATION_OVERLAPS_ENABLED`
 - Verify: Render no environment binding by default or for false; refuse non-booleans and true without runtime.sessionReadApiEnabled; render both quoted true bindings when selected; verify the compatible image makes no overlap request while off.
+- Sources: [`charts/relay-webapp/templates/deployment.yaml`](../charts/relay-webapp/templates/deployment.yaml), [`charts/relay-webapp/values.yaml`](../charts/relay-webapp/values.yaml), [`charts/relay-webapp/README.md`](../charts/relay-webapp/README.md)
+
+#### opt.relay-webapp.session-agent-names
+
+<a id="opt-relay-webapp-session-agent-names"></a>
+
+**Dashboard session list agent names** · shipped · chart `relay-webapp` · profiles relay-webapp
+
+Strict boolean, default false. True renders
+DASHBOARD_SESSION_AGENT_NAMES_ENABLED=true: the session list asks for
+includeAgentName=recorded and shows each session's recorded agent name in
+its caption. Control and the session reader must take that opt-in.
+
+- Default: `false`
+- Choices: `false`; `true`
+- Provided by: operator
+- Values: `runtime.sessionAgentNamesEnabled`
+- Env: `DASHBOARD_SESSION_AGENT_NAMES_ENABLED`
+- Verify: Render no environment binding by default or for false; refuse non-booleans; render a quoted true binding when selected.
+- Sources: [`charts/relay-webapp/templates/deployment.yaml`](../charts/relay-webapp/templates/deployment.yaml), [`charts/relay-webapp/values.yaml`](../charts/relay-webapp/values.yaml), [`charts/relay-webapp/README.md`](../charts/relay-webapp/README.md)
+
+#### opt.relay-webapp.session-short-summaries
+
+<a id="opt-relay-webapp-session-short-summaries"></a>
+
+**Dashboard session list short summaries** · shipped · chart `relay-webapp` · profiles relay-webapp
+
+Strict boolean, default false. True renders
+DASHBOARD_SESSION_SHORT_SUMMARIES_ENABLED=true: a relay-web #143 image asks
+the session reader for includeShortSummary=recorded and shows each
+session's recorded short summary under its title. Needs
+runtime.sessionReadApiEnabled and READ_API_LIST_SHORT_SUMMARY_ENABLED=true
+on the reader; never sent to Control.
+
+- Default: `false`
+- Choices: `false`; `true`
+- Provided by: operator
+- Values: `runtime.sessionShortSummariesEnabled`
+- Env: `DASHBOARD_SESSION_SHORT_SUMMARIES_ENABLED`
+- Verify: Render no environment binding by default or for false; refuse non-booleans and true without runtime.sessionReadApiEnabled; render a quoted true binding when selected.
 - Sources: [`charts/relay-webapp/templates/deployment.yaml`](../charts/relay-webapp/templates/deployment.yaml), [`charts/relay-webapp/values.yaml`](../charts/relay-webapp/values.yaml), [`charts/relay-webapp/README.md`](../charts/relay-webapp/README.md)
 
 #### opt.sessions-pipeline.native-routing
