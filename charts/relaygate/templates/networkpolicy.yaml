@@ -1,0 +1,24 @@
+{{- if .Values.networkPolicy.restrictRelaycast.enabled }}
+{{- $np := .Values.networkPolicy.restrictRelaycast }}
+# Relaycast admits only relaygate (and allowFrom): every agent goes through the gate.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "relaygate.fullname" . }}-relaycast-ingress
+  labels:
+    {{- include "relaygate.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    {{- toYaml $np.relaycastPodSelector | nindent 4 }}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "relaygate.selectorLabels" . | nindent 14 }}
+        {{- with $np.allowFrom }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      ports:
+        - { protocol: TCP, port: {{ $np.port }} }
+{{- end }}

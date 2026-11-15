@@ -14,7 +14,7 @@ registered, every shipped entry must exist in the charts, planned entries must
 not be referenced by any template, and the compatibility matrix must equal
 the pinned digests.
 
-Source of truth: [`self-hosted/requirements.yaml`](../self-hosted/requirements.yaml). 172 entries: 55 requirements (55 shipped, 0 planned), 117 options (116 shipped, 1 planned).
+Source of truth: [`self-hosted/requirements.yaml`](../self-hosted/requirements.yaml). 175 entries: 55 requirements (55 shipped, 0 planned), 120 options (119 shipped, 1 planned).
 
 ## Contents
 
@@ -246,7 +246,7 @@ Services image (sessions-pipeline-worker, alleyoop and the privileged SQL Jobs):
 | durable-actors-0.14.6-awf.1 | **planned** | durable-actors 0.14.6-awf.1 |  |  |  | Superseded before a chart tag by 0.14.6-awf.2. The vendored v0.14.6 chart plus UPSTREAM.md patch 10 (AWS: storage.provider s3, storage.s3.{region,actorCredentials,actorRoleArn,endpoint,forcePathStyle}, serviceAccount.annotations, sandbox.{runtimeClassName,nodeSelector,tolerations}, AWS availability zones in placement.zone) and patch 11 (the -awf.1 version suffix). The S3 values need a control-plane image from the AgentWorkforce durable-actors fork (selfhost/aws-s3, GHCR durable-actors-control-plane); upstream 0.14.6 images ignore them. GCS defaults render as the upstream chart apart from the helm.sh/chart label. Supersedes the never-released 0.14.6 row: Vendored TerseAI/durable-actors release chart v0.14.6 (tag commit 5f0a2d62, asset sha256 a489cd15...bee) with the local patches listed in charts/durable-actors/UPSTREAM.md (root global, invoke-only key, host idle timeout, pool-manager name length, zero-valued bounds, lowercase ingress host, schema patterns, README links). Never published by this repo; images pinned by upstream digest (charts/durable-actors/UPSTREAM.md). |
 | relayfile-0.1.1 | shipped | relayfile 0.1.1 | relayfile: `ghcr.io/agentworkforce/relayfile:0.1.0` |  |  | image by tag (Chart.appVersion), not digest. Superseded by 0.2.0. |
 | relay-chief-0.1.0 | unreleased | relay-chief 0.1.0 |  |  |  | First chart, rendered only. No Relay Chief image is published and the digest is operator-supplied until one exists. |
-| relaygate-0.1.1 | unreleased | relaygate 0.1.1 | relaygate: `ghcr.io/agentworkforce/relaygate@sha256:<required>` |  |  | Policy defaults follow relaygate examples/policy.pit.json (every stream 660 plus explicit ACLs, per-key name prefixes, no catch-all inbox, ceilings); needs relaygate with ACL support (PR 5 or later; CI runs build 2, sha256:78e90479). Default-off in the agent-relay umbrella; ships no default digest. |
+| relaygate-0.1.1 | unreleased | relaygate 0.1.1 | relaygate: `ghcr.io/agentworkforce/relaygate@sha256:<required>` |  |  | Build 2 support (opt-in Relaycast and Sessions proxies, sessionDefaults, admin explain, an optional NetworkPolicy so only relaygate reaches Relaycast) and policy defaults that follow relaygate examples/policy.pit.json (every stream 660 plus explicit ACLs, the Slack app channel pit-only, per-key name prefixes, no catch-all inbox, ceilings). Needs relaygate build 2 (sha256:78e90479 or later) for the proxies. Default-off in the agent-relay umbrella; ships no default digest. |
 | relaygate-0.1.0 | **planned** | relaygate 0.1.0 | relaygate: `ghcr.io/agentworkforce/relaygate@sha256:<required>` |  |  | First registered chart, rendered only; default-off in the agent-relay umbrella (components.relaygate). Build 1 of the server (registration, mode check, /v1/check, classifier, audit); the Relaycast/Sessions proxy follows. Ships no default digest. |
 | slack-relay-0.3.1 | unreleased | slack-relay 0.3.1 | slack-relay: `ghcr.io/agentworkforce/slack-relay@sha256:<required>` |  |  | Adds ingest.sourceServers (a write client per knowledge-base source), the src/backfill.ts history backfill, and form-encoded Slack Web API calls (read methods ignore JSON, so channel lookups failed). Default-off in the agent-relay umbrella; ships no default digest. |
 | slack-relay-0.3.0 | **planned** | slack-relay 0.3.0 | slack-relay: `ghcr.io/agentworkforce/slack-relay@sha256:<required>` |  |  | Adds opt-in relaygate (relaygate.url, secrets.relaygateEnrollmentKey); without it renders as 0.2.0 apart from the chart labels. Default-off in the agent-relay umbrella; ships no default digest. |
@@ -1144,6 +1144,9 @@ chart `relaygate` · values [`ci/default-values.yaml`](../charts/relaygate/ci/de
 | | option | choices | default here | maps to |
 | --- | --- | --- | --- | --- |
 | shipped | [relaygate model classifier](#opt-relaygate-model-classifier) | `rules-only`, `rules-and-model` | `rules-only` | values `policy.classifier.model.*`, `secrets.anthropicApiKey.*`; env `ANTHROPIC_API_KEY`; Secret `<secrets.anthropicApiKey.name>` keys `api-key` (only with the model classifier) |
+| shipped | [relaygate Relaycast proxy](#opt-relaygate-relaycast-proxy) | `off`, `on` | `off` | values `proxy.relaycastUrl`, `secrets.relaycastWorkspaceKey.*`, `secrets.relaygateSecret.*`, `networkPolicy.restrictRelaycast.*`; env `RELAYCAST_URL`, `RELAYCAST_WORKSPACE_KEY`, `RELAYGATE_SECRET`; Secret `<secrets.relaycastWorkspaceKey.name>` keys `workspace-key` (rk_live_ Relaycast workspace key; only with the proxy); Secret `<secrets.relaygateSecret.name>` keys `secret` (at least 32 characters; keep it for the life of the data PVC) |
+| shipped | [relaygate Sessions proxy](#opt-relaygate-sessions-proxy) | `off`, `on` | `off` | values `proxy.sessionsUrl`, `secrets.sessionsToken.*`, `policy.sessionDefaults`, `policy.sessionOverrides`; env `SESSIONS_URL`, `SESSIONS_TOKEN`; Secret `<secrets.sessionsToken.name>` keys `token` (rth_st_ service token; only with the Sessions proxy) |
+| shipped | [relaygate admin explain endpoint](#opt-relaygate-admin-explain) | `off`, `on` | `off` | values `secrets.adminToken.*`; env `RELAYGATE_ADMIN_TOKEN`; Secret `<secrets.adminToken.name>` keys `token` (at least 24 characters) |
 | shipped | [relaygate image pull Secrets](#opt-relaygate-image-pull-secrets) | `none`, `listed` | `none` | values `imagePullSecrets` |
 
 ### Profile: relaychief-control
@@ -4256,6 +4259,58 @@ Off by default (rules only). With policy.classifier.model.enabled a Claude model
 - Secret: `<secrets.anthropicApiKey.name>`; keys `api-key` from `secrets.anthropicApiKey.key`. only with the model classifier
 - Verify: helm template fails with model.enabled and no secrets.anthropicApiKey.name; the gate logs model_classifier true
 - Sources: [`charts/relaygate/values.yaml`](../charts/relaygate/values.yaml), [`charts/relaygate/templates/_helpers.tpl`](../charts/relaygate/templates/_helpers.tpl)
+
+#### opt.relaygate.relaycast-proxy
+
+<a id="opt-relaygate-relaycast-proxy"></a>
+
+**relaygate Relaycast proxy** · shipped · chart `relaygate` · profiles relaygate
+
+Off by default. With proxy.relaycastUrl the gate proxies Relaycast (a REST allowlist and the node WebSocket /v1/node/ws); clients use the gate as their Relaycast base URL with its rg_ token and never hold the workspace key. Needs the rk_live_ workspace key relaygate registers agents with upstream and a sealing secret (at least 32 characters, stable for the life of the PVC). networkPolicy.restrictRelaycast makes the gate the only way into Relaycast.
+
+- Default: `off`
+- Choices: `off`; `on`: needs secrets.relaycastWorkspaceKey.name and secrets.relaygateSecret.name
+- Provided by: operator
+- Values: `proxy.relaycastUrl`, `secrets.relaycastWorkspaceKey.*`, `secrets.relaygateSecret.*`, `networkPolicy.restrictRelaycast.*`
+- Env: `RELAYCAST_URL`, `RELAYCAST_WORKSPACE_KEY`, `RELAYGATE_SECRET`
+- Secret: `<secrets.relaycastWorkspaceKey.name>`; keys `workspace-key` from `secrets.relaycastWorkspaceKey.key`. rk_live_ Relaycast workspace key; only with the proxy
+- Secret: `<secrets.relaygateSecret.name>`; keys `secret` from `secrets.relaygateSecret.key`. at least 32 characters; keep it for the life of the data PVC
+- Verify: helm template fails with proxy.relaycastUrl and no workspace-key or sealing Secret; a Slack-app agent registers through the gate and receives events over /v1/node/ws
+- Sources: [`charts/relaygate/values.yaml`](../charts/relaygate/values.yaml), [`charts/relaygate/templates/relaygate.yaml`](../charts/relaygate/templates/relaygate.yaml), [`charts/relaygate/templates/networkpolicy.yaml`](../charts/relaygate/templates/networkpolicy.yaml), [`charts/relaygate/templates/_helpers.tpl`](../charts/relaygate/templates/_helpers.tpl)
+
+#### opt.relaygate.sessions-proxy
+
+<a id="opt-relaygate-sessions-proxy"></a>
+
+**relaygate Sessions proxy** · shipped · chart `relaygate` · profiles relaygate
+
+Off by default. With proxy.sessionsUrl the gate serves Sessions at /sessions, filtered by the policy's sessionDefaults and sessionOverrides; uploaders and readers use https://<gate>/sessions. Needs an rth_st_ service token with rth:sync and rth:read.
+
+- Default: `off`
+- Choices: `off`; `on`: needs secrets.sessionsToken.name
+- Provided by: operator
+- Values: `proxy.sessionsUrl`, `secrets.sessionsToken.*`, `policy.sessionDefaults`, `policy.sessionOverrides`
+- Env: `SESSIONS_URL`, `SESSIONS_TOKEN`
+- Secret: `<secrets.sessionsToken.name>`; keys `token` from `secrets.sessionsToken.key`. rth_st_ service token; only with the Sessions proxy
+- Verify: helm template fails with proxy.sessionsUrl and no secrets.sessionsToken.name
+- Sources: [`charts/relaygate/values.yaml`](../charts/relaygate/values.yaml), [`charts/relaygate/templates/relaygate.yaml`](../charts/relaygate/templates/relaygate.yaml)
+
+#### opt.relaygate.admin-explain
+
+<a id="opt-relaygate-admin-explain"></a>
+
+**relaygate admin explain endpoint** · shipped · chart `relaygate` · profiles relaygate
+
+Off by default. With secrets.adminToken the gate serves POST /admin/v1/explain ("may this agent do this operation on this stream, and why"), authorized by that token.
+
+- Default: `off`
+- Choices: `off`; `on`
+- Provided by: operator
+- Values: `secrets.adminToken.*`
+- Env: `RELAYGATE_ADMIN_TOKEN`
+- Secret: `<secrets.adminToken.name>`; keys `token` from `secrets.adminToken.key`. at least 24 characters
+- Verify: helm template renders RELAYGATE_ADMIN_TOKEN only when secrets.adminToken.name is set
+- Sources: [`charts/relaygate/values.yaml`](../charts/relaygate/values.yaml), [`charts/relaygate/templates/relaygate.yaml`](../charts/relaygate/templates/relaygate.yaml)
 
 #### opt.relaygate.image-pull-secrets
 

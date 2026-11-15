@@ -31,6 +31,15 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- if not (regexMatch "^sha256:[a-f0-9]{64}$" (.Values.image.digest | default "")) }}
 {{- fail "relaygate: image.digest is required (sha256:<64 hex>)" }}
 {{- end }}
+{{- if and (trim .Values.proxy.relaycastUrl) (or (not .Values.secrets.relaycastWorkspaceKey.name) (not .Values.secrets.relaygateSecret.name)) }}
+{{- fail "relaygate: proxy.relaycastUrl needs secrets.relaycastWorkspaceKey.name and secrets.relaygateSecret.name" }}
+{{- end }}
+{{- if and (trim .Values.proxy.sessionsUrl) (not .Values.secrets.sessionsToken.name) }}
+{{- fail "relaygate: proxy.sessionsUrl needs secrets.sessionsToken.name" }}
+{{- end }}
+{{- if and .Values.networkPolicy.restrictRelaycast.enabled (not .Values.networkPolicy.restrictRelaycast.relaycastPodSelector) }}
+{{- fail "relaygate: networkPolicy.restrictRelaycast needs relaycastPodSelector (an empty selector would match every pod)" }}
+{{- end }}
 {{- if not .Values.existingConfigMap }}
 {{- range .Values.policy.enrollmentKeys }}
 {{- if not (regexMatch "^[a-f0-9]{64}$" (.sha256 | default "")) }}

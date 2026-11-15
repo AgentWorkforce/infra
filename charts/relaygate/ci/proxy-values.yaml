@@ -1,0 +1,18 @@
+image:
+  digest: sha256:78e904798a5a79571b0ebcf406595aa340074446b6cfdbafa082f1f6ad8ca9b2
+policy:
+  enrollmentKeys:
+    - { id: local, gid: 11, sha256: "2222222222222222222222222222222222222222222222222222222222222222", namePrefix: "local-" }
+    - { id: slack-bridge, gid: 22, sha256: "1111111111111111111111111111111111111111111111111111111111111111", namePrefix: "slack-" }
+proxy:
+  relaycastUrl: http://relaycast:8787
+  sessionsUrl: http://sessions-pipeline-api:8080
+secrets:
+  relaycastWorkspaceKey: { name: relaygate-relaycast, key: workspace-key }
+  relaygateSecret: { name: relaygate-seal, key: secret }
+  sessionsToken: { name: relaygate-sessions, key: token }
+  adminToken: { name: relaygate-admin, key: token }
+networkPolicy:
+  restrictRelaycast:
+    enabled: true
+    relaycastPodSelector: { matchLabels: { app.kubernetes.io/name: relaycast } }

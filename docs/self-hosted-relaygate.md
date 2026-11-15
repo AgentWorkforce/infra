@@ -8,12 +8,13 @@ knowledge base) go through a **classifier** (rules, plus an optional Claude
 model). Denials never reach upstream. It is opt-in: `components.relaygate` in
 the umbrella, or its own release.
 
-> **Status: build 1.** Registration, mode checks, the classifier, `/v1/check`
-> and the audit log work today, so Slack posts and knowledge-base writes are
-> gated. The proxy in front of Relaycast and Sessions is build 2 and not yet
-> shipped: until it is, agents still reach Relaycast and Sessions directly and
-> relaygate does **not** isolate pit data from other agents. Don't rely on it
-> for that yet.
+> **Status: build 2.** Registration, mode checks and ACLs, the classifier,
+> `/v1/check` and the audit log, plus proxies in front of Relaycast (REST
+> allowlist and `/v1/node/ws`) and Sessions (`/sessions`). Isolation holds only
+> when agents can reach Relaycast and Sessions **through relaygate alone**:
+> turn the proxies on (`proxy.relaycastUrl`, `proxy.sessionsUrl`) and
+> enforce it with `networkPolicy.restrictRelaycast` (and network policy on
+> Sessions), or keep regulated agents in their own install.
 
 ![Slack app and relaygate](diagrams/slack-relay-relaygate.png)
 
@@ -74,3 +75,34 @@ takes `relaygate.url` and the bridge key. Build 1 serves registration and
 `/v1/check`; the Relaycast/Sessions proxy follows, after which agents need no
 Relaycast credential at all (and Relaycast should accept traffic only from the
 gate, by NetworkPolicy).
+
+## Proxying Relaycast and Sessions (build 2)
+
+```yaml
+# relaygate-values.yaml, in addition to the policy above
+proxy:
+  relaycastUrl: http://relaycast:8787
+  sessionsUrl: http://sessions-pipeline-api:8080
+secrets:
+  relaycastWorkspaceKey: { name: relaygate-relaycast, key: workspace-key }  # rk_live_ key relaygate registers agents with upstream
+  relaygateSecret: { name: relaygate-seal, key: secret }                   # >= 32 chars; keep it for the life of the PVC (seals upstream tokens)
+  sessionsToken: { name: relaygate-sessions, key: token }                  # rth_st_ with rth:sync, rth:read
+  adminToken: { name: relaygate-admin, key: token }                        # optional: POST /admin/v1/explain
+networkPolicy:
+  restrictRelaycast:
+    enabled: true
+    relaycastPodSelector: { matchLabels: { app.kubernetes.io/name: relaycast } }
+    allowFrom: []   # anything else that must reach Relaycast directly
+```
+
+Then point clients at the gate: the Slack app sets `relaygate.url` (it registers
+through the gate and uses it as its Relaycast base URL), and session uploads use
+`https://<gate>/sessions`. Agents get a relaygate `rg_` token, never the
+workspace key.
+
+The default policy gives the Slack app's routing channel (`relaycast:channel/slack`)
+to the pit with no local access; if you change the Slack app's
+`relaycast.channel`, add a matching stream default. Verified against relaygate
+build 2: Slack-app agents register into the pit, create and join their channel,
+receive events over the proxied node WebSocket, and reply in threads with their
+`data` intact.

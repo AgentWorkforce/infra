@@ -37,10 +37,19 @@ policy:
     - { prefix: "relaycast:channel/pit-", gid: 22, mode: "660", acl: [{ gid: 11, perm: "w" }] }
     - { prefix: "relaycast:inbox/pit-", gid: 22, mode: "660", acl: [{ gid: 11, perm: "w" }] }
     - { prefix: "relaycast:inbox/slack-", gid: 22, mode: "660", acl: [{ gid: 11, perm: "w" }] }
+    # The Slack app's routing channel (slack-relay relaycast.channel, default
+    # "slack"): pit only. Local agents reach thread agents by DM, not here.
+    - { prefix: "relaycast:channel/slack", gid: 22, mode: "660" }
     # External streams leave the cluster: pit only, classified.
     - { prefix: "slack:", gid: 22, mode: "660", classify: true }
     - { prefix: "kb:", gid: 22, mode: "660", classify: true }
   streamOverrides: []
+  # Sessions (with the Sessions proxy): local sessions readable by the pit,
+  # pit sessions private to the pit. Overrides can't change a session's group.
+  sessionDefaults:
+    - { gid: 11, mode: "660", acl: [{ gid: 22, perm: "r" }] }
+    - { gid: 22, mode: "660" }
+  sessionOverrides: []
   # Groups that may never be granted access to another, whatever an ACL says:
   # - { gid: 44, never: [22] }
   ceilings: []
@@ -57,7 +66,26 @@ policy:
       timeoutMs: 8000
       guidance: ""
 
+# Build 2: relaygate proxies Relaycast (REST allowlist and /v1/node/ws) and
+# Sessions (at /sessions). Clients then use relaygate as their Relaycast base
+# URL (slack-relay: relaygate.url) and https://<gate>/sessions for Sessions.
+# Empty: that proxy is off and relaygate only serves /v1/register and /v1/check.
+proxy:
+  # e.g. http://relaycast:8787 (needs secrets.relaycastWorkspaceKey and secrets.relaygateSecret)
+  relaycastUrl: ""
+  # e.g. http://sessions-pipeline-api:8080 (needs secrets.sessionsToken)
+  sessionsUrl: ""
+
 secrets:
+  # With proxy.relaycastUrl: the rk_live_ workspace key relaygate registers agents with upstream.
+  relaycastWorkspaceKey: { name: "", key: workspace-key }
+  # With proxy.relaycastUrl: at least 32 characters, stable for the life of the
+  # PVC (it seals the upstream agent and node tokens stored in /data).
+  relaygateSecret: { name: "", key: secret }
+  # With proxy.sessionsUrl: an rth_st_ service token with rth:sync and rth:read.
+  sessionsToken: { name: "", key: token }
+  # Optional: enables POST /admin/v1/explain ("may X do op on Y, and why").
+  adminToken: { name: "", key: token }
   # REQUIRED when policy.classifier.model.enabled: an Anthropic API key (use a
   # zero-data-retention key where regulated data may be classified).
   anthropicApiKey: { name: "", key: api-key }
@@ -85,6 +113,19 @@ containerSecurityContext:
   allowPrivilegeEscalation: false
   readOnlyRootFilesystem: true
   capabilities: { drop: [ALL] }
+
+# Optional: make relaygate the only way into Relaycast. Creates a
+# NetworkPolicy on the pods matched by relaycastPodSelector that admits only
+# relaygate (and allowFrom, e.g. the Relaycast admin API's callers). Needs a
+# CNI that enforces NetworkPolicy.
+networkPolicy:
+  restrictRelaycast:
+    enabled: false
+    relaycastPodSelector: {}
+    # e.g. app.kubernetes.io/name: relaycast
+    port: 8787
+    allowFrom: []
+    # - podSelector: { matchLabels: { app.kubernetes.io/name: relay-control } }
 
 podAnnotations: {}
 nodeSelector: {}

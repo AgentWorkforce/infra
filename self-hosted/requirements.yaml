@@ -2570,7 +2570,7 @@ compatibility:
       app_versions: { relaygate: 0.1.0 }
       images:
         relaygate: { repository: ghcr.io/agentworkforce/relaygate, digest_required: true }
-      notes: Policy defaults follow relaygate examples/policy.pit.json (every stream 660 plus explicit ACLs, per-key name prefixes, no catch-all inbox, ceilings); needs relaygate with ACL support (PR 5 or later; CI runs build 2, sha256:78e90479). Default-off in the agent-relay umbrella; ships no default digest.
+      notes: Build 2 support (opt-in Relaycast and Sessions proxies, sessionDefaults, admin explain, an optional NetworkPolicy so only relaygate reaches Relaycast) and policy defaults that follow relaygate examples/policy.pit.json (every stream 660 plus explicit ACLs, the Slack app channel pit-only, per-key name prefixes, no catch-all inbox, ceilings). Needs relaygate build 2 (sha256:78e90479 or later) for the proxies. Default-off in the agent-relay umbrella; ships no default digest.
     - id: relaygate-0.1.0
       status: planned
       charts: { relaygate: 0.1.0 }
@@ -6579,6 +6579,84 @@ entries:
     sources:
       - "charts/relaygate/values.yaml"
       - "charts/relaygate/templates/_helpers.tpl"
+
+  - id: opt.relaygate.relaycast-proxy
+    kind: option
+    title: relaygate Relaycast proxy
+    description: Off by default. With proxy.relaycastUrl the gate proxies Relaycast (a REST allowlist and the node WebSocket /v1/node/ws); clients use the gate as their Relaycast base URL with its rg_ token and never hold the workspace key. Needs the rk_live_ workspace key relaygate registers agents with upstream and a sealing secret (at least 32 characters, stable for the life of the PVC). networkPolicy.restrictRelaycast makes the gate the only way into Relaycast.
+    chart: relaygate
+    values: [proxy.relaycastUrl, "secrets.relaycastWorkspaceKey.*", "secrets.relaygateSecret.*", "networkPolicy.restrictRelaycast.*"]
+    env: [RELAYCAST_URL, RELAYCAST_WORKSPACE_KEY, RELAYGATE_SECRET]
+    profiles: [relaygate]
+    status: shipped
+    provided_by: operator
+    default: off
+    choices:
+      - { value: off }
+      - { value: on, note: needs secrets.relaycastWorkspaceKey.name and secrets.relaygateSecret.name }
+    secrets:
+      - name: "<secrets.relaycastWorkspaceKey.name>"
+        keys:
+          - { key: workspace-key, key_path: secrets.relaycastWorkspaceKey.key }
+        note: rk_live_ Relaycast workspace key; only with the proxy
+      - name: "<secrets.relaygateSecret.name>"
+        keys:
+          - { key: secret, key_path: secrets.relaygateSecret.key }
+        note: at least 32 characters; keep it for the life of the data PVC
+    verify: helm template fails with proxy.relaycastUrl and no workspace-key or sealing Secret; a Slack-app agent registers through the gate and receives events over /v1/node/ws
+    sources:
+      - "charts/relaygate/values.yaml"
+      - "charts/relaygate/templates/relaygate.yaml"
+      - "charts/relaygate/templates/networkpolicy.yaml"
+      - "charts/relaygate/templates/_helpers.tpl"
+
+  - id: opt.relaygate.sessions-proxy
+    kind: option
+    title: relaygate Sessions proxy
+    description: Off by default. With proxy.sessionsUrl the gate serves Sessions at /sessions, filtered by the policy's sessionDefaults and sessionOverrides; uploaders and readers use https://<gate>/sessions. Needs an rth_st_ service token with rth:sync and rth:read.
+    chart: relaygate
+    values: [proxy.sessionsUrl, "secrets.sessionsToken.*", "policy.sessionDefaults", "policy.sessionOverrides"]
+    env: [SESSIONS_URL, SESSIONS_TOKEN]
+    profiles: [relaygate]
+    status: shipped
+    provided_by: operator
+    default: off
+    choices:
+      - { value: off }
+      - { value: on, note: needs secrets.sessionsToken.name }
+    secrets:
+      - name: "<secrets.sessionsToken.name>"
+        keys:
+          - { key: token, key_path: secrets.sessionsToken.key }
+        note: rth_st_ service token; only with the Sessions proxy
+    verify: helm template fails with proxy.sessionsUrl and no secrets.sessionsToken.name
+    sources:
+      - "charts/relaygate/values.yaml"
+      - "charts/relaygate/templates/relaygate.yaml"
+
+  - id: opt.relaygate.admin-explain
+    kind: option
+    title: relaygate admin explain endpoint
+    description: Off by default. With secrets.adminToken the gate serves POST /admin/v1/explain ("may this agent do this operation on this stream, and why"), authorized by that token.
+    chart: relaygate
+    values: ["secrets.adminToken.*"]
+    env: [RELAYGATE_ADMIN_TOKEN]
+    profiles: [relaygate]
+    status: shipped
+    provided_by: operator
+    default: off
+    choices:
+      - { value: off }
+      - { value: on }
+    secrets:
+      - name: "<secrets.adminToken.name>"
+        keys:
+          - { key: token, key_path: secrets.adminToken.key }
+        note: at least 24 characters
+    verify: helm template renders RELAYGATE_ADMIN_TOKEN only when secrets.adminToken.name is set
+    sources:
+      - "charts/relaygate/values.yaml"
+      - "charts/relaygate/templates/relaygate.yaml"
 
   - id: opt.relaygate.image-pull-secrets
     kind: option
