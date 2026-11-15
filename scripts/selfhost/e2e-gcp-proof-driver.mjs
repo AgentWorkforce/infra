@@ -762,26 +762,23 @@ const today = () => new Date().toISOString().slice(0, 10);
 const isoEnvName = () => `E2E_ISO_${state.marker.toUpperCase()}`;
 
 // The deterministic smoke flow: two shell steps, no agents, marker in output.
+// Relayflow spec 0.1.0 (@relayflows/sdk SPEC_SCHEMA_VERSION): top-level
+// version/name/description/steps; steps take id/type/dependsOn/command.
 function smokeFlowSource(name) {
   return [
-    "version: '1.0'",
+    "version: '0.1.0'",
     `name: ${name}`,
     "description: e2e-gcp-proof deterministic smoke flow",
-    "swarm:",
-    "  pattern: pipeline",
-    "  timeoutMs: 120000",
-    "workflows:",
-    "  - name: main",
-    "    steps:",
-    "      - name: generate",
-    "        type: deterministic",
-    `        command: printf '${state.marker} step one\\nvalue=42\\n'`,
-    "        captureOutput: true",
-    "        failOnError: true",
-    "      - name: transform",
-    "        type: deterministic",
-    "        dependsOn: [generate]",
-    "        command: echo \"{{steps.generate.output}}\" | tr '[:lower:]' '[:upper:]'",
+    "steps:",
+    "  - id: generate",
+    "    type: deterministic",
+    `    command: printf '${state.marker} step one\\nvalue=42\\n'`,
+    "    timeoutMs: 120000",
+    "  - id: transform",
+    "    type: deterministic",
+    "    dependsOn: [generate]",
+    `    command: printf '${state.marker} step two\\n' | tr '[:lower:]' '[:upper:]'`,
+    "    timeoutMs: 120000",
     "",
   ].join("\n");
 }

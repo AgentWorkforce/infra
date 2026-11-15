@@ -46,11 +46,16 @@ relayhistory_health_path=${RELAYHISTORY_HEALTH_PATH:-/healthz}
 connect_timeout=${VERIFY_CONNECT_TIMEOUT:-10}
 max_time=${VERIFY_MAX_TIME:-30}
 dns_timeout=${VERIFY_DNS_TIMEOUT:-5}
+# Lookups through the system resolver retry: a transient resolver failure on
+# the machine running the check is not an install fault. Each attempt applies
+# the same public-address check; the last failure still fails the run.
+dns_attempts=${VERIFY_DNS_ATTEMPTS:-3}
+dns_retry_delay=${VERIFY_DNS_RETRY_DELAY:-2}
 tls_timeout=${VERIFY_TLS_TIMEOUT:-15}
 dns_resolver=${VERIFY_DNS_RESOLVER:-}
 ca_bundle=${VERIFY_CA_BUNDLE:-}
 
-for setting in connect_timeout max_time dns_timeout tls_timeout; do
+for setting in connect_timeout max_time dns_timeout tls_timeout dns_attempts dns_retry_delay; do
   value=${!setting}
   case "$value" in
     ''|*[!0-9]*) die "$setting must be a positive integer" ;;
@@ -170,8 +175,10 @@ print(",".join(addresses))
     ); then
       die "$label DNS is not public for $host"
     fi
-  elif ! addresses=$(
-    timeout "$dns_timeout" python3 -c '
+  else
+    local attempt=1
+    while ! addresses=$(
+      timeout "$dns_timeout" python3 -c '
 import ipaddress
 import socket
 import sys
@@ -196,8 +203,15 @@ if not addresses:
 
 print(",".join(addresses))
 ' "$host"
-  ); then
-    die "$label DNS lookup failed or returned a non-public address for $host"
+    ); do
+      if test "$attempt" -ge "$dns_attempts"; then
+        die "$label DNS lookup failed or returned a non-public address for $host (after $dns_attempts attempts)"
+      fi
+      printf 'verify-public: %s: DNS lookup for %s failed (attempt %d/%d); retrying in %ss\n' \
+        "$label" "$host" "$attempt" "$dns_attempts" "$dns_retry_delay" >&2
+      attempt=$((attempt + 1))
+      sleep "$dns_retry_delay"
+    done
   fi
 
   printf 'verify-public: %s: DNS %s -> %s\n' "$label" "$host" "$addresses"
