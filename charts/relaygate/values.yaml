@@ -116,6 +116,12 @@ proxy:
 # http://<release>-relaygate:8080/sessions). Map them with
 # policy.controlPrincipals. Needs proxy.sessionsUrl and
 # secrets.relaycontrolIntrospectSecret.
+#
+# Gate-only (global.relaygate.gateOnly.enabled, set in the agent-relay
+# umbrella) makes relaygate the only way into Relaycast and Sessions and needs
+# both proxies, proxy.sessionsHosts and this block; the umbrella derives
+# relay-control's SESSION_READ_API_URL. See docs/self-hosted-relaygate.md,
+# "Gate-only".
 control:
   # e.g. http://relay-control:8080/internal/v1/auth/introspect
   introspectUrl: ""

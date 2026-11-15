@@ -27,7 +27,36 @@ app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
 app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- end }}
 
+{{- define "relaygate.gateOnly" -}}
+{{- if dig "relaygate" "gateOnly" "enabled" false (.Values.global | default dict) }}true{{ end -}}
+{{- end }}
+
+{{- /* The gate's Service name every chart derives when global.relaygate.gateOnly.serviceName is empty. */ -}}
+{{- define "relaygate.gateOnly.defaultName" -}}
+{{- ternary .Release.Name (printf "%s-relaygate" .Release.Name) (contains "relaygate" .Release.Name) | trunc 63 | trimSuffix "-" -}}
+{{- end }}
+
 {{- define "relaygate.validate" -}}
+{{- if include "relaygate.gateOnly" . }}
+{{- /* Gate-only (global.relaygate.gateOnly.enabled, agent-relay umbrella):
+Relaycast and Sessions admit only relaygate, so a proxy or the Control
+mapping left off would cut clients off instead of gating them. */ -}}
+{{- $g := .Values.global.relaygate.gateOnly -}}
+{{- if or (not (trim .Values.proxy.relaycastUrl)) (not (trim .Values.proxy.sessionsUrl)) (not (trim .Values.proxy.sessionsUploadUrl)) (not (trim .Values.proxy.sessionsReadUrl)) (not .Values.proxy.sessionsHosts) }}
+{{- fail "relaygate: global.relaygate.gateOnly.enabled needs proxy.relaycastUrl, proxy.sessionsUrl, proxy.sessionsUploadUrl, proxy.sessionsReadUrl (the in-cluster Services) and proxy.sessionsHosts (the history host)" }}
+{{- end }}
+{{- if not (trim .Values.control.introspectUrl) }}
+{{- fail "relaygate: global.relaygate.gateOnly.enabled needs control.introspectUrl, control.sessionIngestAudience and secrets.relaycontrolIntrospectSecret (dashboard and desktop callers reach Sessions through relaygate)" }}
+{{- end }}
+{{- $want := dig "serviceName" "" $g | default (include "relaygate.gateOnly.defaultName" .) -}}
+{{- if ne $want (include "relaygate.fullname" .) }}
+{{- fail (printf "relaygate: the Service is %s but global.relaygate.gateOnly.serviceName resolves to %s; set global.relaygate.gateOnly.serviceName to the Service name" (include "relaygate.fullname" .) $want) }}
+{{- end }}
+{{- if ne (int (dig "servicePort" 8080 $g)) (int .Values.service.port) }}
+{{- fail "relaygate: global.relaygate.gateOnly.servicePort must equal service.port" }}
+{{- end }}
+{{- if .Values.nameOverride }}{{ fail "relaygate: nameOverride is unsupported with gate-only: the NetworkPolicies select app.kubernetes.io/name=relaygate" }}{{ end }}
+{{- end }}
 {{- if not (regexMatch "^sha256:[a-f0-9]{64}$" (.Values.image.digest | default "")) }}
 {{- fail "relaygate: image.digest is required (sha256:<64 hex>)" }}
 {{- end }}

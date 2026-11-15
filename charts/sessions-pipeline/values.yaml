@@ -637,6 +637,12 @@ ingestEdge:
   networkPolicy:
     enabled: false
     ingressFrom: []
+    # Gate-only (global.relaygate.gateOnly.enabled, set in the agent-relay
+    # umbrella): ingressFrom is ignored and only relaygate is admitted, plus
+    # these peers. Leave it empty unless a caller must bypass the gate, e.g.
+    # Control for the operator session erase API (operatorSessionErase.api),
+    # which then can also upload without relaygate.
+    gateOnlyFrom: []
   resources:
     requests: { cpu: 50m, memory: 128Mi }
     limits: { memory: 512Mi }
@@ -787,6 +793,10 @@ nativeConsumer:
     requests: { cpu: 50m, memory: 128Mi }
     limits: { memory: 768Mi }
 
+# With global.relaygate.gateOnly.enabled (set in the agent-relay umbrella), the
+# origin's routes relaygate serves go to the relaygate Service
+# (global.relaygate.gateOnly.serviceName, default <release>-relaygate) and the
+# rest are not routed; see docs/self-hosted-relaygate.md, "Gate-only".
 nativeRouting:
   enabled: false
   fullnameOverride: ""

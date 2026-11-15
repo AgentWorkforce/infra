@@ -15,7 +15,21 @@ spec:
     - Ingress
   ingress:
     - from:
-        {{- if .Values.networkPolicy.ingressFrom }}
+        {{- if include "relaycast.gateOnly" . }}
+        # Gate-only: relaygate, this chart's migration Job, and the direct
+        # server-side callers (networkPolicy.gateOnlyFrom). ingressFrom is ignored.
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: relaygate
+              app.kubernetes.io/instance: {{ .Release.Name }}
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: {{ include "relaycast.name" . }}-migration
+              app.kubernetes.io/instance: {{ .Release.Name }}
+        {{- with .Values.networkPolicy.gateOnlyFrom }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+        {{- else if .Values.networkPolicy.ingressFrom }}
         {{- toYaml .Values.networkPolicy.ingressFrom | nindent 8 }}
         {{- else }}
         - podSelector: {}

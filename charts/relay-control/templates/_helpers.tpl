@@ -244,7 +244,7 @@ telemetry.deployment is checked in validateRuntime before it is merged. */ -}}
 {{- if eq .Values.services.relayhistoryBackend "native" }}
 - { name: RELAYHISTORY_BACKEND, value: native }
 {{- end }}
-{{- with .Values.services.sessionReadApiUrl }}
+{{- with include "relay-control.sessionReadApiUrl" . }}
 - { name: SESSION_READ_API_URL, value: {{ . | quote }} }
 {{- end }}
 {{- with .Values.services.sessionReadApiPublicUrl }}
@@ -650,3 +650,18 @@ leave the certificate unverified while looking configured. */ -}}
 {{- if not (regexMatch "^[A-Za-z0-9._-]+$" (get $ca "key" | default "" | toString)) }}{{ fail "postgresCa.key must be a Kubernetes data key" }}{{ end -}}
 {{- end -}}
 {{- end -}}
+
+{{- /* SESSION_READ_API_URL. Gate-only (global.relaygate.gateOnly.enabled):
+relaygate's Sessions proxy (http://<relaygate>:<port>/sessions), so Control's mint, refresh and service-token
+calls and its server-side reads go through relaygate, which passes them to the
+read API unchanged. services.sessionReadApiUrl stays the read API Service
+(the handoff validation and the umbrella's checks still use it). */ -}}
+{{- define "relay-control.sessionReadApiUrl" -}}
+{{- $g := dig "relaygate" "gateOnly" dict (.Values.global | default dict) | default dict -}}
+{{- if and .Values.services.sessionReadApiUrl (dig "enabled" false $g) -}}
+{{- $gate := dig "serviceName" "" $g | default (ternary .Release.Name (printf "%s-relaygate" .Release.Name) (contains "relaygate" .Release.Name)) | trunc 63 | trimSuffix "-" -}}
+{{- printf "http://%s:%d/sessions" $gate (int (dig "servicePort" 8080 $g)) -}}
+{{- else -}}
+{{- .Values.services.sessionReadApiUrl -}}
+{{- end -}}
+{{- end }}

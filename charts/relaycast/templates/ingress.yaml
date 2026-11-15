@@ -27,6 +27,36 @@ spec:
     - host: {{ . | quote }}
       http:
         paths:
+          {{- if include "relaycast.gateOnly" $ }}
+          # Gate-only: only the routes relaygate proxies (Relaycast REST
+          # allowlist, registration and the node WebSocket) go to relaygate;
+          # everything else is denied at the edge.
+          {{- range $path := list "/v1/register" "/v1/check" "/v1/whoami" "/v1/agent" "/v1/agent/node-token" "/v1/node/ws" "/v1/search" "/v1/inbox" }}
+          - path: {{ $path }}
+            pathType: Exact
+            backend:
+              service:
+                name: {{ include "relaycast.gateService" $ }}
+                port:
+                  number: {{ dig "relaygate" "gateOnly" "servicePort" 8080 ($.Values.global | default dict) }}
+          {{- end }}
+          {{- range $path := list "/v1/agents" "/v1/channels" "/v1/messages" "/v1/dm" "/v1/streams" }}
+          - path: {{ $path }}
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "relaycast.gateService" $ }}
+                port:
+                  number: {{ dig "relaygate" "gateOnly" "servicePort" 8080 ($.Values.global | default dict) }}
+          {{- end }}
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ $deny }}
+                port:
+                  number: {{ $port }}
+          {{- else }}
           # Edge denials: these paths go to a Service with no endpoints, so the
           # controller answers 503 and the request never reaches Relaycast.
           # Exact and longer Prefix matches take precedence over "/".
@@ -58,6 +88,7 @@ spec:
                 name: {{ $fullname }}
                 port:
                   number: {{ $port }}
+          {{- end }}
     {{- end }}
 ---
 # Deliberately selects no pods: the edge-denied ingress paths resolve to no

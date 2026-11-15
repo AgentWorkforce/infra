@@ -51,6 +51,27 @@ global:
   # operator erase API and byte deletion remain separately default-off.
   operatorSessionErase:
     fenceEnforced: false
+  # Gate-only (off by default; nothing changes unless enabled): relaygate
+  # becomes the only way into Relaycast and Sessions. One switch, read by every
+  # chart involved: the public cast and history routes (gkeIngress,
+  # sessions-pipeline nativeRouting, relaycast ingress) point at relaygate;
+  # Relaycast, the Sessions reader and the ingest edge admit only relaygate
+  # (plus relaycast.networkPolicy.gateOnlyFrom, Control and RelayAuth by
+  # default); Control's SESSION_READ_API_URL becomes relaygate's sessions
+  # Service. Needs components.relaygate with both proxies, proxy.sessionsHosts
+  # and controlPrincipals set, a relaygate image with Control-principal mapping
+  # (dashboard and desktop users go through relaygate too) and a cluster that
+  # enforces NetworkPolicy. Rendering fails when any of that is missing. See
+  # docs/self-hosted-relaygate.md, "Gate-only".
+  relaygate:
+    gateOnly:
+      enabled: false
+      # The relaygate Service; empty derives <release>-relaygate (or the
+      # release name when it contains "relaygate"). Set it to match
+      # relaygate.fullnameOverride.
+      serviceName: ""
+      # relaygate.service.port.
+      servicePort: 8080
   # Optional customer logo for the sign-in page and dashboard. relay-webapp
   # serves it at <dashboard origin>/brand/<file> (no extra web server or
   # ingress route: / already reaches the dashboard), and relay-control sets

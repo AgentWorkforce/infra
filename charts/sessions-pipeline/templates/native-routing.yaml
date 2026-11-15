@@ -23,6 +23,23 @@ spec:
     - host: {{ $host | quote }}
       http:
         paths:
+          {{- if include "sessions-pipeline.gateOnly" . }}
+          {{- $gate := include "sessions-pipeline.gateService" . }}
+          {{- $gatePort := dig "relaygate" "gateOnly" "servicePort" 8080 (.Values.global | default dict) }}
+          # Gate-only: the Sessions routes relaygate serves at the root for this
+          # host (its proxy.sessionsHosts) go to relaygate, which forwards them
+          # to the reader and ingest Services. Nothing else is routed.
+          - path: /v1/sessions
+            pathType: Prefix
+            backend:
+              service: { name: {{ $gate }}, port: { number: {{ $gatePort }} } }
+          {{- range $path := list "/v1/events" "/v1/ingest" "/v1/delivery/batches" "/v1/delivery/limits" "/v1/auth/token/refresh" "/v1/onboarding/heartbeat" }}
+          - path: {{ $path }}
+            pathType: Exact
+            backend:
+              service: { name: {{ $gate }}, port: { number: {{ $gatePort }} } }
+          {{- end }}
+          {{- else }}
           # Specific Exact paths take precedence over the reader's /v1 Prefix.
           # Ingress selects paths only; native services enforce methods/auth.
           # An independent issuer's /internal handoff is never public.
@@ -54,4 +71,5 @@ spec:
             pathType: Exact
             backend:
               service: { name: {{ $ingest }}, port: { number: 80 } }
+          {{- end }}
 {{- end }}
