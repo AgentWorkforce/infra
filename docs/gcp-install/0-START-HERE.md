@@ -308,7 +308,7 @@ grep -n '__[A-Z_]*__' values.yaml
 ```
 
 **Done when:** the only line printed is `__LLM_MODEL__`. That one is set later,
-when you turn on titles and summaries.
+when you turn on titles and summaries (step 16).
 
 **Optional: co-branding.** The product stays Agent Relay; your logo goes beside
 it. The sign-in page shows your square mark under the Agent Relay lockup, and
@@ -515,6 +515,117 @@ It prints a temporary password for each user; they choose their own at first
 sign-in.
 
 **Done when:** the admin is signed in to the dashboard.
+
+## 16. Turn on titles and summaries (optional, after first sign-in)
+
+Two workers write what the dashboard shows for a session:
+
+- **Summaries (bob-costas)** run from the install on. By default
+  (`BOB_COSTAS_MODEL: "off"`) they are **extractive**: built from the session's
+  own text, with no model and no data leaving the cluster.
+- **Titles and briefs (session-brief)** need a model and are off until you turn
+  them on for named workspaces.
+
+This step turns on model-written titles, briefs and summaries. It needs an API
+key for the OpenAI Responses API, or an OpenAI-compatible gateway, and a model
+it serves. The examples use `gpt-5.6-luna`. Session text is sent to that
+endpoint.
+
+**16a.** Store the key in the cluster (it is not echoed, and never on a
+command line):
+
+```sh
+read -rs -p 'OpenAI API key: ' K; echo
+printf '%s' "$K" | kubectl -n $NAMESPACE create secret generic agent-relay-llm --from-file=OPENAI_API_KEY=/dev/stdin
+unset K
+```
+
+**Done when:** it prints `secret/agent-relay-llm created`. To replace the key
+later, delete the Secret and run this again; don't use `kubectl apply`.
+
+**16b.** Find the workspace ID. Workspaces exist only after the first sign-in
+(step 15):
+
+```sh
+bash workspace-ids.sh "$DOMAIN" "$NAMESPACE"
+```
+
+It prints one line per workspace: its ID, then its name (`Default` is the one
+created at install).
+
+**Done when:** you have the ID of each workspace that should get titles and
+summaries. List them explicitly: never use `*`.
+
+**16c.** Update `values.yaml`:
+
+```sh
+export WORKSPACE_ID=<workspace id from 16b> MODEL=gpt-5.6-luna
+yq -i '
+  .["sessions-pipeline"].worker.nativeBrief.enabled = true |
+  .["sessions-pipeline"].worker.nativeBrief.workspaceIds = [strenv(WORKSPACE_ID)] |
+  .["sessions-pipeline"].worker.nativeBrief.model = strenv(MODEL) |
+  .["sessions-pipeline"].worker.nativeBrief.image = {"repository": (strenv(SERVICES_IMAGE) | split("@")[0]), "digest": (strenv(SERVICES_IMAGE) | split("@")[1])} |
+  .["sessions-pipeline"].worker.components["session-brief"].enabled = true |
+  .["sessions-pipeline"].worker.components["bob-costas"].env = [
+    {"name": "BOB_COSTAS_MODEL", "value": strenv(MODEL)},
+    {"name": "OPENAI_API_KEY", "valueFrom": {"secretKeyRef": {"name": "agent-relay-llm", "key": "OPENAI_API_KEY"}}}
+  ]
+' values.yaml
+grep -n '__LLM_MODEL__' values.yaml
+```
+
+This replaces `__LLM_MODEL__` with your model. The brief worker runs the same
+services image as the rest of the release (`SERVICES_IMAGE` from step 7), named
+here because the release image overlay doesn't set it. The `bob-costas` list
+replaces the chart's default, so it holds only these two entries.
+
+- **More than one workspace:** set `workspaceIds` to
+  `[strenv(WORKSPACE_ID), "<another id>"]`.
+- **An OpenAI-compatible gateway** instead of OpenAI: also set
+  `.["sessions-pipeline"].worker.nativeBrief.baseUrl = "https://<gateway>/v1"`
+  and add `{"name": "OPENAI_BASE_URL", "value": "https://<gateway>/v1"}` to the
+  `bob-costas` list. Both call `<baseUrl>/responses`.
+
+**Done when:** the `grep` prints nothing.
+
+**16d.** Apply it, with the same files and order as step 11:
+
+```sh
+helm upgrade --install $HELM_RELEASE "$INSTALL_DIR/release/agent-relay-0.7.11.tgz" --namespace $NAMESPACE \
+  -f "$CHART/values-gcp.yaml" -f "$CHART/values-gcp-native.yaml" \
+  -f "$INSTALL_DIR/managed-values.json" -f "$INSTALL_DIR/values.yaml" \
+  -f "$INSTALL_DIR/release-images.values.yaml" --timeout 25m
+kubectl -n $NAMESPACE rollout status deploy/agent-relay-worker-session-brief deploy/agent-relay-worker-session-summary-worker --timeout=10m
+```
+
+**Done when:**
+
+- both rollouts finish (the brief worker is a new Deployment,
+  `agent-relay-worker-session-brief`);
+- a session uploaded after this shows a title and a summary in the dashboard;
+- `kubectl -n $NAMESPACE logs deploy/agent-relay-worker-session-summary-worker | grep 'bob costas model summary'`
+  shows `"outcome":"model"` with your model as `model_id` for that session.
+
+Good to know:
+
+- **Extractive is the fallback.** With `BOB_COSTAS_MODEL: "off"` (the default)
+  summaries are extractive (`bob costas summary` logs `model_id`
+  `extractive/v1`). With a model but no key, bob-costas still writes an
+  extractive summary and logs `bob costas model summary fallback` with
+  `"reason":"no_api_key"`. So does any failed model call, with
+  `"reason":"model_failed"`.
+- **Limits.** The brief worker writes at most 20 briefs a day across the
+  install and 3 per session (`nativeBrief.globalDailyCap`, `sessionDailyCap`),
+  for sessions in the listed workspaces only. A workspace added later needs its
+  ID added here and the upgrade run again.
+- **MCP `list_session_summaries`** needs
+  `sessions-pipeline.sessionReadApi.summaries.listShortSummary`, from chart
+  0.7.15 (AgentWorkforce/infra#346) onward. Chart 0.7.11 doesn't have it: don't
+  set it on this release.
+- **Turn it off:** set `nativeBrief.enabled` and `session-brief.enabled` back to
+  `false`, set the `bob-costas` list back to
+  `[{"name": "BOB_COSTAS_MODEL", "value": "off"}]`, run 16d again, then
+  `kubectl -n $NAMESPACE delete secret agent-relay-llm`.
 
 ## Next
 
