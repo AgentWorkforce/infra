@@ -1,5 +1,16 @@
 # Held actual-RDS application SQL fixture
 
+> **F1 is superseded (2026-11-15).** Don't run this proof; it gates nothing.
+> The RDS application path (one RDS instance, a separate database per service,
+> the pipeline on `hoopdb`) is covered by the shipped
+> `db_mode: rds, boundary: global-default-revoke` row in
+> `self-hosted/requirements.yaml` (profiles `external-rds`, `aws-rds-native`),
+> and was exercised live on RDS by the customer-pack upgrades to
+> agent-relay-2026.11.4 and 2026.11.6. Those runs applied the HoopDb migrations
+> and passed role validation, the 2026.11.6 one through the tagged
+> `selfhost-upgrade` Action with its own plan and apply roles. The fixture is
+> kept for reference only.
+
 This independent source fixture composes the actual AWS PostgreSQL/object-storage
 modules for a new disposable PostgreSQL17 instance, explicit snapshot/restore
 clone, versioned S3 bucket, empty runtime Secrets Manager container and temporary
@@ -244,7 +255,10 @@ stop is recorded on disk and blocks every later tool or AWS call, across process
 until `settle` proves the group gone. `backups` reruns safely while a retained backup is
 still being created.
 
-## F1 status: separate-database application path (refused)
+## F1 status: superseded (was: separate-database application path, refused)
+
+Superseded on 2026-11-15; see the note at the top. The section below records
+the fixture as it stood.
 
 The fixture consumes the `postgres-layout` contract with one logical database
 per service on one RDS instance (#107):
