@@ -79,8 +79,20 @@ proxy:
   # The one origin that serves both session reads and uploads: the
   # sessions-pipeline nativeRouting.origin, e.g. https://history.example.com
   # (reads and uploads are separate Services joined by nativeRouting; see
-  # docs/self-hosted-native-routing.md). Needs secrets.sessionsToken.
+  # docs/self-hosted-native-routing.md). The proxy forwards each caller's own
+  # Sessions credential (rg_ token in X-Relaygate-Token, the Sessions token in
+  # Authorization), so relaygate needs no Sessions token of its own.
   sessionsUrl: ""
+  # Optional: send uploads and reads to separate upstreams instead (each
+  # defaults to sessionsUrl), e.g. the in-cluster upload and read Services.
+  sessionsUploadUrl: ""
+  sessionsReadUrl: ""
+  # Optional: hosts served at the root instead of under /sessions, to point the
+  # history origin (nativeRouting.origin's host) at relaygate, e.g. [history.example.com].
+  # Then that origin reaches relaygate, so set sessionsUploadUrl and
+  # sessionsReadUrl to the upstream Services directly (required; a listed host
+  # can't be an upstream).
+  sessionsHosts: []
 
 secrets:
   # With proxy.relaycastUrl: the rk_live_ workspace key relaygate registers agents with upstream.
@@ -88,7 +100,8 @@ secrets:
   # With proxy.relaycastUrl: at least 32 characters, stable for the life of the
   # PVC (it seals the upstream agent and node tokens stored in /data).
   relaygateSecret: { name: "", key: secret }
-  # With proxy.sessionsUrl: an rth_st_ service token with rth:sync and rth:read.
+  # Optional, with proxy.sessionsUrl: an rth_st_ service token with rth:sync
+  # and rth:read, for callers that send no Sessions credential of their own.
   sessionsToken: { name: "", key: token }
   # Optional: enables POST /admin/v1/explain ("may X do op on Y, and why").
   adminToken: { name: "", key: token }

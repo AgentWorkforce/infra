@@ -1544,9 +1544,22 @@ compatibility:
       images:
         relayauth: { repository: ghcr.io/agentworkforce/relayauth, digest: sha256:eb71daa28e30eb7305f666d0bccc5a4002e53e8a574e3c4c32163d907a1b71df }
       notes: superseded by 0.1.1.
-    - id: agent-relay-0.7.24
+    - id: agent-relay-0.7.25
       status: unreleased
       current: true
+      charts: { agent-relay: 0.7.25, relay-control: 0.4.18, relay-webapp: 0.2.6 }
+      app_versions: { agent-relay: 0.1.0, relay-control: 0.1.0, relay-webapp: 0.1.0 }
+      depends:
+        agent-relay: { relaycast: 0.3.14, relayauth: 0.1.5, sessions-pipeline: 0.8.35, relay-control: 0.4.18, relay-webapp: 0.2.6, relayflows: 0.2.5, durable-actors: 0.14.6-awf.4, relayfile: 0.2.2, telemetry-collector: 0.1.7, relay-chief: 0.1.0, slack-relay: 0.3.2, relaygate: 0.1.2 }
+      images:
+        relaycast: { repository: ghcr.io/agentworkforce/relaycast-self-host, digest: sha256:ec062ef901af15cf575b53a71d7eb09f2e6ab6e7c0d5be2da35339a275a5c6cc }
+        relaycast-postgres: { repository: ghcr.io/agentworkforce/relaycast-self-host, digest: sha256:ec062ef901af15cf575b53a71d7eb09f2e6ab6e7c0d5be2da35339a275a5c6cc }
+        sessions-pipeline-worker: { repository: ghcr.io/agentworkforce/sessions-pipeline, digest: sha256:77022c5b6a1d30f96f921d703eb27a1acada8ec273ad84aebdde24f8eddce305 }
+        relay-control: { repository: ghcr.io/agentworkforce/relay-control, digest: sha256:d1b6ca95fab240a9d41208d83de3b1f4245408b0765038762f1c419ee60f43bc }
+        relay-webapp: { repository: ghcr.io/agentworkforce/relay-webapp, digest: sha256:bd295ccb7d1323965dce890f19d0b7f857d706c00d7756f719c713763fdb49f3 }
+      notes: 'Carries 0.7.24. relaygate 0.1.2 (Sessions proxy forwards the caller''s own credential; split upstreams and root hosts). Default renders differ only in the helm.sh/chart labels.'
+    - id: agent-relay-0.7.24
+      status: planned
       charts: { agent-relay: 0.7.24, relay-control: 0.4.18, relay-webapp: 0.2.6 }
       app_versions: { agent-relay: 0.1.0, relay-control: 0.1.0, relay-webapp: 0.1.0 }
       depends:
@@ -2700,9 +2713,16 @@ compatibility:
       charts: { relay-chief: 0.1.0 }
       app_versions: { relay-chief: 0.1.0 }
       notes: First chart, rendered only. No Relay Chief image is published and the digest is operator-supplied until one exists.
-    - id: relaygate-0.1.1
+    - id: relaygate-0.1.2
       status: unreleased
       current: true
+      charts: { relaygate: 0.1.2 }
+      app_versions: { relaygate: 0.1.0 }
+      images:
+        relaygate: { repository: ghcr.io/agentworkforce/relaygate, digest_required: true }
+      notes: Carries 0.1.1. The Sessions proxy forwards each caller's own Sessions credential, so secrets.sessionsToken is optional; adds proxy.sessionsUploadUrl, proxy.sessionsReadUrl and proxy.sessionsHosts (SESSIONS_UPLOAD_URL, SESSIONS_READ_URL, SESSIONS_HOSTS). Needs relaygate sha256:8c2adac4 (main 35c2a8f) or later for the passthrough and new settings. Ships no default digest.
+    - id: relaygate-0.1.1
+      status: planned
       charts: { relaygate: 0.1.1 }
       app_versions: { relaygate: 0.1.0 }
       images:
@@ -6787,23 +6807,23 @@ entries:
   - id: opt.relaygate.sessions-proxy
     kind: option
     title: relaygate Sessions proxy
-    description: Off by default. With proxy.sessionsUrl the gate serves Sessions at /sessions, filtered by the policy's sessionDefaults and sessionOverrides; uploaders and readers use https://<gate>/sessions. Needs an rth_st_ service token with rth:sync and rth:read.
+    description: Off by default. With proxy.sessionsUrl the gate serves Sessions at /sessions, filtered by the policy's sessionDefaults and sessionOverrides; uploaders and readers use https://<gate>/sessions. The gate forwards each caller's own Sessions credential (rg_ token in X-Relaygate-Token, the Sessions token in Authorization) and holds none; proxy.sessionsUploadUrl and proxy.sessionsReadUrl split the upstreams, and proxy.sessionsHosts serves the history origin's host at the root (then both split upstreams are required, so requests can't loop back to the gate).
     chart: relaygate
-    values: [proxy.sessionsUrl, "secrets.sessionsToken.*", "policy.sessionDefaults", "policy.sessionOverrides"]
-    env: [SESSIONS_URL, SESSIONS_TOKEN]
+    values: [proxy.sessionsUrl, proxy.sessionsUploadUrl, proxy.sessionsReadUrl, proxy.sessionsHosts, "secrets.sessionsToken.*", "policy.sessionDefaults", "policy.sessionOverrides"]
+    env: [SESSIONS_URL, SESSIONS_UPLOAD_URL, SESSIONS_READ_URL, SESSIONS_HOSTS, SESSIONS_TOKEN]
     profiles: [relaygate]
     status: shipped
     provided_by: operator
     default: off
     choices:
       - { value: off }
-      - { value: on, note: needs secrets.sessionsToken.name }
+      - { value: on, note: needs proxy.sessionsUrl; secrets.sessionsToken optional }
     secrets:
       - name: "<secrets.sessionsToken.name>"
         keys:
           - { key: token, key_path: secrets.sessionsToken.key }
-        note: rth_st_ service token; only with the Sessions proxy
-    verify: helm template fails with proxy.sessionsUrl and no secrets.sessionsToken.name
+        note: optional rth_st_ service token for callers that send no Sessions credential
+    verify: helm template fails with proxy.sessionsUploadUrl, sessionsReadUrl or sessionsHosts and no proxy.sessionsUrl, and with sessionsHosts unless both split upstreams are set and none is a listed host
     sources:
       - "charts/relaygate/values.yaml"
       - "charts/relaygate/templates/relaygate.yaml"

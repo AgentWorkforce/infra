@@ -86,7 +86,7 @@ proxy:
 secrets:
   relaycastWorkspaceKey: { name: relaygate-relaycast, key: workspace-key }  # rk_live_ key relaygate registers agents with upstream
   relaygateSecret: { name: relaygate-seal, key: secret }                   # >= 32 chars; keep it for the life of the PVC (seals upstream tokens)
-  sessionsToken: { name: relaygate-sessions, key: token }                  # rth_st_ with rth:sync, rth:read
+  # sessionsToken: optional; the gate forwards each caller's own Sessions credential
   adminToken: { name: relaygate-admin, key: token }                        # optional: POST /admin/v1/explain
 ```
 
