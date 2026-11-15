@@ -832,8 +832,24 @@ spec:
           npx --yes "agent-relay@\$AGENT_RELAY_VERSION" cloud worker register \\
             --token "\$(cat /var/run/e2e-worker/token)" --name "\$WORKER_NAME" --base-url "\$BASE_URL"
           echo "e2e-worker: registered"
-          exec npx --yes "agent-relay@\$AGENT_RELAY_VERSION" cloud worker start \\
-            --name "\$WORKER_NAME" --base-url "\$BASE_URL" --once
+          # relayflowd is a separate, version-matched package that neither
+          # agent-relay nor @relayflows/sdk declares: pin it to the exact SDK
+          # version agent-relay@V depends on (never latest) and put both in one
+          # npx tree so the SDK finds it.
+          SDKV="\$(npm view "agent-relay@\$AGENT_RELAY_VERSION" dependencies --json \\
+            | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>process.stdout.write(String(JSON.parse(s)["@relayflows/sdk"]||"")))')"
+          case "\$SDKV" in
+            [0-9]*.[0-9]*.[0-9]*) ;;
+            *) echo "e2e-worker: agent-relay@\$AGENT_RELAY_VERSION has no exact @relayflows/sdk pin (got '\$SDKV')" >&2; exit 3 ;;
+          esac
+          case "\$(uname -m)" in
+            x86_64) ARCH=x64 ;;
+            aarch64|arm64) ARCH=arm64 ;;
+            *) echo "e2e-worker: unsupported arch \$(uname -m)" >&2; exit 3 ;;
+          esac
+          echo "e2e-worker: relayflows runtime @relayflows/runtime-linux-\$ARCH@\$SDKV"
+          exec npx --yes -p "agent-relay@\$AGENT_RELAY_VERSION" -p "@relayflows/runtime-linux-\$ARCH@\$SDKV" \\
+            agent-relay cloud worker start --name "\$WORKER_NAME" --base-url "\$BASE_URL" --once
       env:
         - { name: AGENT_RELAY_VERSION, value: "$AGENT_RELAY_VERSION" }
         - { name: WORKER_NAME, value: "$3" }
