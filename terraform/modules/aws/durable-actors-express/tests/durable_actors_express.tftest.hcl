@@ -1,6 +1,6 @@
 mock_provider "aws" {
   mock_data "aws_caller_identity" {
-    defaults = { account_id = "111111111111" }
+    defaults = { account_id = "111111111111", arn = "arn:aws:sts::111111111111:assumed-role/terraform-apply/session" }
   }
   mock_data "aws_region" {
     defaults = { region = "us-west-2" }
@@ -10,6 +10,9 @@ mock_provider "aws" {
   }
   mock_data "aws_iam_role" {
     defaults = { arn = "arn:aws:iam::111111111111:role/actors-control-plane" }
+  }
+  mock_data "aws_iam_session_context" {
+    defaults = { issuer_arn = "arn:aws:iam::111111111111:role/terraform-apply" }
   }
   mock_data "aws_availability_zone" {
     defaults = { name = "us-west-2b" }
@@ -123,6 +126,13 @@ run "actor_role_is_assumable_only_by_the_control_plane" {
       "arn:aws:iam::111111111111:role/actors-actor-storage",
     )
     error_message = "The directory bucket policy must admit the actor role."
+  }
+  assert {
+    condition = contains(
+      jsondecode(aws_s3_bucket_policy.express.policy).Statement[0].Condition.ArnNotLike["aws:PrincipalArn"],
+      "arn:aws:iam::111111111111:role/terraform-apply",
+    )
+    error_message = "The directory bucket policy must admit the role applying the module, or later plans cannot read the bucket."
   }
 }
 

@@ -15,6 +15,12 @@ data "aws_iam_role" "control_plane" {
   name = var.control_plane_role_name
 }
 
+# The role applying this module. The directory bucket policy must admit it, or the next plan
+# cannot read the bucket (HeadBucket on a directory bucket needs a session) and drops it from state.
+data "aws_iam_session_context" "operator" {
+  arn = data.aws_caller_identity.current.arn
+}
+
 # Fails the plan when the zone ID does not exist in this region.
 data "aws_availability_zone" "express" {
   zone_id = var.express_az_id
@@ -55,8 +61,9 @@ resource "aws_s3_directory_bucket" "express" {
   }
 }
 
-# Only the control plane, the actor role (through per-actor STS sessions) and named operators may
-# open sessions on the Express bucket, whatever other identity policies in the account allow.
+# Only the control plane, the actor role (through per-actor STS sessions), the role applying this
+# module and named operators may open sessions on the Express bucket, whatever other identity
+# policies in the account allow.
 resource "aws_s3_bucket_policy" "express" {
   bucket = aws_s3_directory_bucket.express.bucket
   policy = jsonencode({
@@ -70,7 +77,7 @@ resource "aws_s3_bucket_policy" "express" {
       Condition = {
         ArnNotLike = {
           "aws:PrincipalArn" = concat(
-            [data.aws_iam_role.control_plane.arn, aws_iam_role.actor.arn],
+            [data.aws_iam_role.control_plane.arn, aws_iam_role.actor.arn, data.aws_iam_session_context.operator.issuer_arn],
             var.express_operator_principal_arns,
           )
         }
