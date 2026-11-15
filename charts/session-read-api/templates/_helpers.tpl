@@ -197,6 +197,7 @@ workspace is not on a static list, and its reads would answer 501. */ -}}
 {{- if and $c.ingress.enabled (not $np.publicFrom) }}{{ fail "session-read-api: ingress.enabled with networkPolicy.enabled requires networkPolicy.publicFrom, or the policy would block the ingress" }}{{ end -}}
 {{- end -}}
 {{- if not (kindIs "bool" $c.events.messageIds) }}{{ fail "session-read-api: events.messageIds must be a boolean" }}{{ end -}}
+{{- if and $c.summaries (not (kindIs "bool" $c.summaries.listShortSummary)) }}{{ fail "session-read-api: summaries.listShortSummary must be a boolean" }}{{ end -}}
 {{- if not (kindIs "bool" $c.coordinationOverlaps.enabled) }}{{ fail "session-read-api: coordinationOverlaps.enabled must be a boolean" }}{{ end -}}
 {{- if not (kindIs "bool" $c.output.enabled) }}{{ fail "session-read-api: output.enabled must be a boolean" }}{{ end -}}
 {{- if not (kindIs "bool" $c.digest.enabled) }}{{ fail "session-read-api: digest.enabled must be a boolean" }}{{ end -}}

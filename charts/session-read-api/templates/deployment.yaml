@@ -108,7 +108,7 @@ spec:
             {{- if $c.events.messageIds }}
             - { name: READ_API_EVENT_MESSAGE_IDS, value: "true" }
             {{- end }}
-            {{- if and $c.summaries $c.summaries.listShortSummary }}
+            {{- if and $c.summaries (eq $c.summaries.listShortSummary true) }}
             - { name: READ_API_LIST_SHORT_SUMMARY_ENABLED, value: "true" }
             {{- end }}
             - { name: ALLOW_IN_CLUSTER_HTTP, value: {{ $c.allowInClusterHttp | quote }} }
