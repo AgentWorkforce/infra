@@ -13,6 +13,13 @@
       "digest": "sha256:1b1caa40467d46fbcde35edb957adb57bcc2b95e43af7c32e8c86d0994847cb9",
       "sourceRepository": "AgentWorkforce/relay-web",
       "sourceRevision": "709d925f67e5b6d949bdc3e3385087e0b4796c04"
+    },
+    "sessions-pipeline": {
+      "repository": "ghcr.io/agentworkforce/sessions-pipeline",
+      "digest": "sha256:3d9c0a4dff67c92da30964857713e625f3f967bc2ff98851614a70adbb4fe3fe",
+      "sourceRepository": "AgentWorkforce/relayhistory-pipeline",
+      "sourceRevision": "02c8951d0ea0100c8ae2a2b93266b8c6d2635b1b",
+      "publishRunId": 43626590763
     }
   }
 }
