@@ -145,9 +145,10 @@ test("message text forms", () => {
 });
 
 test("the Relaycast client: bearer token, the documented routes, 404 is absent", async () => {
-  const seen: { url: string; auth: string | null }[] = [];
+  const seen: { url: string; auth: string | null; ua: string | null }[] = [];
   const fakeFetch = (async (url: string, init?: RequestInit) => {
-    seen.push({ url, auth: new Headers(init?.headers).get("Authorization") });
+    const h = new Headers(init?.headers);
+    seen.push({ url, auth: h.get("Authorization"), ua: h.get("User-Agent") });
     if (url.endsWith("/v1/messages/42")) {
       return new Response(JSON.stringify({ ok: true, data: { id: "42", agent_id: "7", agent_name: "a-b", agent_address: "a-b@h", text: "hi", channel_id: "dmch_x", created_at: "2026-11-15T21:59:00.000Z" } }));
     }
@@ -160,6 +161,8 @@ test("the Relaycast client: bearer token, the documented routes, 404 is absent",
   assert.equal(await api.message("43"), undefined);
   assert.deepEqual(seen.map((s) => s.url), ["https://cast.example/v1/messages/42", "https://cast.example/v1/agents/a-b", "https://cast.example/v1/messages/43"]);
   assert.ok(seen.every((s) => s.auth === "Bearer obs_token"));
+  // Cloudflare in front of cast.agentrelay.com rejects some default library User-Agents (error 1010).
+  assert.ok(seen.every((s) => s.ua?.startsWith("aws-cred-broker/")), "a named User-Agent on every call");
 });
 
 test("the CLI in relay mode takes only a message id: identity flags and a missing token are refused", () => {

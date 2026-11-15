@@ -87,10 +87,13 @@ export function decisionFromText(text: string): Decision {
   throw new RelayVerificationError('the message must be exactly "approve <request id> <digest>" or "refuse <request id>"');
 }
 
+/** A named client: the API edge rejects some default library User-Agents (Cloudflare 1010). */
+export const USER_AGENT = "aws-cred-broker/1 (AgentWorkforce layered-infra-ops)";
+
 /** Relaycast over HTTPS with a read-only observer token. 10 s per call. */
 export function relaycastApi(baseUrl: string, token: string, fetchImpl: typeof fetch = fetch): RelayApi {
   const get = async (path: string): Promise<Record<string, unknown> | undefined> => {
-    const res = await fetchImpl(`${baseUrl.replace(/\/$/, "")}${path}`, { headers: { Authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(10_000) });
+    const res = await fetchImpl(`${baseUrl.replace(/\/$/, "")}${path}`, { headers: { Authorization: `Bearer ${token}`, "User-Agent": USER_AGENT, Accept: "application/json" }, signal: AbortSignal.timeout(10_000) });
     if (res.status === 404) return undefined;
     if (!res.ok) throw new RelayVerificationError(`Relay API ${path.split("/").slice(0, 3).join("/")} returned ${res.status}`);
     const body = (await res.json()) as { data?: Record<string, unknown> };
