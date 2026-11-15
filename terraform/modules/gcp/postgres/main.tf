@@ -105,6 +105,11 @@ resource "google_sql_database" "this" {
   project  = var.project_id
   instance = google_sql_database_instance.this.name
   name     = each.value
+  # scripts/selfhost/cloud-sql-setup.sh hands these databases to their owner
+  # roles, so Cloud SQL refuses to drop them as the Terraform principal
+  # ("must be owner of database"). Destroying the instance removes them, so a
+  # destroy only forgets them here instead of failing.
+  deletion_policy = "ABANDON"
 }
 
 # ---------------------------------------------------------------------------
@@ -181,4 +186,7 @@ resource "google_sql_user" "admin" {
   type                = "BUILT_IN"
   password_wo         = ephemeral.random_password.admin[0].result
   password_wo_version = local.admin_password_generation
+  # Owns databases and roles after cloud-sql-setup.sh, so it cannot be dropped
+  # on its own; destroying the instance removes it (see google_sql_database).
+  deletion_policy = "ABANDON"
 }

@@ -776,6 +776,67 @@ equal to the `proven` in the plan line you kept, and `exit 0`.
 - **`exit 4`:** any other error; check `kubectl -n $NAMESPACE logs index-restamp`
   and run it again.
 
+## Removing the install
+
+Everything here is permanent: it deletes the database, the session data and
+the load balancer. Take a Cloud SQL export or backup first if you might need
+the data.
+
+```sh
+source settings.sh
+helm uninstall $HELM_RELEASE -n $NAMESPACE --wait --timeout 10m
+kubectl delete namespace $NAMESPACE --wait --timeout 15m
+```
+
+**Done when:** `kubectl get namespace $NAMESPACE` answers `NotFound`. This also
+removes the load balancer, its certificate and the Relaycast volume.
+
+Then the Google Cloud resources. Turn deletion protection off first: with it
+on, Cloud SQL, Memorystore and the Pub/Sub topics refuse to be deleted.
+
+```sh
+cd infra/terraform/examples/gcp
+sed -i.orig 's/^deletion_protection *= *true/deletion_protection  = false/' terraform.tfvars
+grep -n '^deletion_protection' terraform.tfvars
+terraform apply
+gcloud storage rm -r -a "gs://$SESSIONS_BUCKET/**"
+terraform destroy
+cd -
+```
+
+The bucket is versioned, so `-a` removes every object version; Terraform
+won't delete a bucket that still holds any.
+
+**Done when:** `terraform destroy` reports `Destroy complete!` and
+`terraform state list | grep -v '^data\.'` prints nothing.
+
+**`must be owner of database` or `role ... cannot be dropped`:** your infra
+checkout predates AgentWorkforce/infra#<PR> (every release up to and
+including 2026.11.6). `cloud-sql-setup.sh` gave the databases to their own
+roles, so Terraform can't drop them one by one. Deleting the instance removes
+them, so drop them from Terraform's state and destroy again:
+
+```sh
+cd infra/terraform/examples/gcp
+terraform state list | grep -E 'module\.postgres\.google_sql_(database|user)\.' |
+  while read -r r; do terraform state rm "$r"; done
+terraform destroy
+cd -
+```
+
+Last, what Terraform didn't create:
+
+```sh
+gcloud compute addresses delete agent-relay-ingress --global
+gcloud artifacts repositories delete agent-relay-mirror --location $REGION
+```
+
+- The DNS owner deletes the four A records from step 6.
+- **Used vals with Secret Manager (step 10c)?** Delete its secrets:
+  `gcloud secrets list --filter='name~agent-relay--' --format='value(name)' | xargs -r -n1 gcloud secrets delete --quiet`.
+- Delete `~/.agent-relay-install` from wherever you copied it: the database
+  passwords in it no longer work.
+
 ## Starting from an empty project
 
 The steps above assume a GKE cluster in a VPC with Private Services Access. If
