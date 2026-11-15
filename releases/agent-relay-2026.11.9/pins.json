@@ -10,9 +10,9 @@
     },
     "relay-webapp": {
       "repository": "ghcr.io/agentworkforce/relay-webapp",
-      "digest": "sha256:634dbf2c77b1670ab8c4c347022e0ea8b81077e1dff42cb46c59eb05584dca9c",
+      "digest": "sha256:90e4d4341165647ba79b4afd867a976018b6356af38cc1421f7a1ad677d9a26d",
       "sourceRepository": "AgentWorkforce/relay-web",
-      "sourceRevision": "d7d14f80c7104cc522672b4ea5e2277d343215a0"
+      "sourceRevision": "8d45f44ecb306e6e5e6b6720656b746c2b3fa843"
     },
     "sessions-pipeline": {
       "repository": "ghcr.io/agentworkforce/sessions-pipeline",
