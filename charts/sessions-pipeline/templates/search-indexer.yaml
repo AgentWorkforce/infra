@@ -26,6 +26,16 @@
 {{- $_ := required "searchIndexer.locker.existingSecret is required for static S3/MinIO credentials" $c.locker.existingSecret -}}
 {{- end -}}
 {{- if not (kindIs "slice" $c.extraEnv) }}{{ fail "searchIndexer.extraEnv must be a list" }}{{ end -}}
+{{- $limits := $c.limits | default dict -}}
+{{- if not (kindIs "map" $limits) }}{{ fail "searchIndexer.limits must be a map" }}{{ end -}}
+{{- with $limits.maxScopeBytes }}{{ if not (regexMatch "^[1-9][0-9]*(MiB|GiB)?$" (toString .)) }}{{ fail "searchIndexer.limits.maxScopeBytes must be bytes or a MiB/GiB size (64MiB..256MiB)" }}{{ end }}{{ end -}}
+{{- range $field, $bounds := dict "maxScopeEvents" (list 100000 1000000) "maxRows" (list 500000 1000000) -}}
+{{- $v := index $limits $field -}}
+{{- if $v -}}
+{{- if not (or (kindIs "int" $v) (kindIs "int64" $v) (kindIs "float64" $v)) }}{{ fail (printf "searchIndexer.limits.%s must be an integer" $field) }}{{ end -}}
+{{- if or (lt (int64 $v) (int64 (index $bounds 0))) (gt (int64 $v) (int64 (index $bounds 1))) (ne (float64 $v) (float64 (int64 $v))) }}{{ fail (printf "searchIndexer.limits.%s must be an integer from %v to %v" $field (index $bounds 0) (index $bounds 1)) }}{{ end -}}
+{{- end -}}
+{{- end -}}
 {{- $gcsNames := list "CLOUD_SQL_CONNECTION_NAME" "REDIS_HOST" "REDIS_PORT" "REDIS_AUTH_ENABLED" "REDIS_TRANSIT_ENCRYPTION" "REDIS_TLS_CA_PEM" "PUBSUB_TOPIC" "PUBSUB_SUBSCRIPTION" -}}
 {{- $seen := dict -}}
 {{- range $entry := $c.extraEnv -}}

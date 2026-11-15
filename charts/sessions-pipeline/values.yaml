@@ -407,6 +407,15 @@ searchIndexer:
     # existingSecret: <Secret name>
     # accessKeyIdKey: access-key-id
     # secretAccessKeyKey: secret-access-key
+  # Per-scope index limits (issue 610), consumer only. Unset keeps the image
+  # defaults (the lower bounds). Raise the indexer's memory limit with them.
+  limits:
+    # SEARCH_INDEX_MAX_SCOPE_BYTES: 64MiB..256MiB (bytes, or a MiB/GiB size).
+    maxScopeBytes: ""
+    # SEARCH_INDEX_MAX_SCOPE_EVENTS: 100000..1000000.
+    maxScopeEvents: null
+    # SEARCH_INDEX_MAX_ROWS: 500000..1000000.
+    maxRows: null
   # GCS readiness settings (Cloud SQL, Memorystore and Pub/Sub). Empty for S3.
   extraEnv: []
   postgres:
