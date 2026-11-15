@@ -1469,9 +1469,22 @@ compatibility:
       images:
         relayauth: { repository: ghcr.io/agentworkforce/relayauth, digest: sha256:eb71daa28e30eb7305f666d0bccc5a4002e53e8a574e3c4c32163d907a1b71df }
       notes: superseded by 0.1.1.
-    - id: agent-relay-0.7.14
+    - id: agent-relay-0.7.15
       status: unreleased
       current: true
+      charts: { agent-relay: 0.7.15, relay-control: 0.4.16, relay-webapp: 0.2.5 }
+      app_versions: { agent-relay: 0.1.0, relay-control: 0.1.0, relay-webapp: 0.1.0 }
+      depends:
+        agent-relay: { relaycast: 0.3.13, relayauth: 0.1.5, sessions-pipeline: 0.8.33, relay-control: 0.4.16, relay-webapp: 0.2.5, relayflows: 0.2.5, durable-actors: 0.14.6-awf.3, relayfile: 0.2.2, telemetry-collector: 0.1.7, relay-chief: 0.1.0, slack-relay: 0.3.1, relaygate: 0.1.0 }
+      images:
+        relaycast: { repository: ghcr.io/agentworkforce/relaycast-self-host, digest: sha256:ab9dd6781e68f09d5e2e686a17088f9ad533978ef13d974a47d6c212d8eedbde }
+        relaycast-postgres: { repository: ghcr.io/agentworkforce/relaycast-self-host, digest: sha256:cc2a79f02d39978fa04322b5a45497737ff137bc2a5db5615c7eee690030de83 }
+        sessions-pipeline-worker: { repository: ghcr.io/agentworkforce/sessions-pipeline, digest: sha256:77022c5b6a1d30f96f921d703eb27a1acada8ec273ad84aebdde24f8eddce305 }
+        relay-control: { repository: ghcr.io/agentworkforce/relay-control, digest: sha256:d8c26d44dccb6dd21b7033288241a379e46ce5fbca69f276c4d4745001c3c3e2 }
+        relay-webapp: { repository: ghcr.io/agentworkforce/relay-webapp, digest: sha256:bd295ccb7d1323965dce890f19d0b7f857d706c00d7756f719c713763fdb49f3 }
+      notes: 'slack-relay 0.3.1 (per-source ingest writers, Slack history backfill) stays default-off (components.slackRelay). With it off, every render differs only in the helm.sh/chart labels.'
+    - id: agent-relay-0.7.14
+      status: planned
       charts: { agent-relay: 0.7.14, relay-control: 0.4.16, relay-webapp: 0.2.5 }
       app_versions: { agent-relay: 0.1.0, relay-control: 0.1.0, relay-webapp: 0.1.0 }
       depends:
@@ -2498,9 +2511,16 @@ compatibility:
       images:
         relaygate: { repository: ghcr.io/agentworkforce/relaygate, digest_required: true }
       notes: First registered chart, rendered only; default-off in the agent-relay umbrella (components.relaygate). Build 1 of the server (registration, mode check, /v1/check, classifier, audit); the Relaycast/Sessions proxy follows. Ships no default digest.
-    - id: slack-relay-0.3.0
+    - id: slack-relay-0.3.1
       status: unreleased
       current: true
+      charts: { slack-relay: 0.3.1 }
+      app_versions: { slack-relay: 0.1.0 }
+      images:
+        slack-relay: { repository: ghcr.io/agentworkforce/slack-relay, digest_required: true }
+      notes: Adds ingest.sourceServers (a write client per knowledge-base source) and the src/backfill.ts history backfill; without sourceServers renders as 0.3.0 apart from the chart labels. Default-off in the agent-relay umbrella; ships no default digest.
+    - id: slack-relay-0.3.0
+      status: planned
       charts: { slack-relay: 0.3.0 }
       app_versions: { slack-relay: 0.1.0 }
       images:
@@ -6403,7 +6423,7 @@ entries:
     description: ingest.enabled appends every human message in the app's channels (subject to slack.allowedChannels and the shared-channel refusal) to <pagePrefix>/<channel>/<YYYY-MM-DD> in a knowledge base over MCP. ingest.mcpServer must name a write-scoped mcpServers entry. Bots and credential-looking messages are skipped; private channels only with ingest.privateChannels. Each channel's page source is the first ingest.sourceRules entry ({match, sourceId}, a channel-name regex) that matches, else ingest.privateSourceId for a private channel (default ingest.sourceId), else ingest.sourceId.
     chart: slack-relay
     values: [ingest.enabled, ingest.mcpServer, ingest.sourceId, ingest.pagePrefix, ingest.privateChannels, ingest.privateSourceId, ingest.sourceRules]
-    env: [INGEST_MCP_SERVER, INGEST_SOURCE_ID, INGEST_PAGE_PREFIX, INGEST_PRIVATE_CHANNELS, INGEST_PRIVATE_SOURCE_ID, INGEST_SOURCE_RULES]
+    env: [INGEST_MCP_SERVER, INGEST_SOURCE_ID, INGEST_PAGE_PREFIX, INGEST_PRIVATE_CHANNELS, INGEST_PRIVATE_SOURCE_ID, INGEST_SOURCE_RULES, INGEST_SOURCE_SERVERS]
     profiles: [slack-relay]
     status: shipped
     provided_by: operator

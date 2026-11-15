@@ -12,8 +12,8 @@ import type { RelayEventLike } from "./protocol.ts";
 import { connectAgent, ensureChannel } from "./relay.ts";
 import { Router } from "./router.ts";
 import { checkWithRetry, kbStreamId, RelaygateClient, slackStreamId } from "./gate.ts";
-import { McpClient, oauthServersFromEnv, TokenSource } from "./mcp.ts";
-import { SlackIngest, type SourceRule } from "./ingest.ts";
+import { oauthServersFromEnv, TokenSource } from "./mcp.ts";
+import { ingestFromEnv } from "./ingest-config.ts";
 import { channelMessageOf, ChannelDirectory, normalizeSlackEvent, SlackWeb, SocketModeClient, verifySlackSignature, type SlackEventEnvelope } from "./slack.ts";
 
 const env = process.env;
@@ -122,25 +122,16 @@ async function runRouter(): Promise<void> {
 
   const refuseShared = env.SLACK_REFUSE_SHARED_CHANNELS !== "false";
   // Continuous ingest of channel messages into a knowledge base over MCP.
-  const servers = oauthServersFromEnv(env);
-  const ingestServer = env.INGEST_MCP_SERVER ? servers.find((s) => s.name === env.INGEST_MCP_SERVER) : undefined;
-  if (env.INGEST_MCP_SERVER && !ingestServer) throw new Error(`INGEST_MCP_SERVER ${env.INGEST_MCP_SERVER} is not in MCP_OAUTH_SERVERS_JSON`);
-  const ingest = ingestServer
-    ? new SlackIngest({
-        brain: new McpClient(ingestServer),
-        sourceId: env.INGEST_SOURCE_ID,
-        privateSourceId: env.INGEST_PRIVATE_SOURCE_ID,
-        rules: env.INGEST_SOURCE_RULES ? (JSON.parse(env.INGEST_SOURCE_RULES) as SourceRule[]) : [],
-        prefix: env.INGEST_PAGE_PREFIX ?? "slack",
-        log,
-        // Knowledge-base writes are egress relaygate can't see either.
-        beforeWrite: gate
-          ? (slug, text) => checkWithRetry(gate, routerToken, { op: "w", resource: { kind: "stream", id: kbStreamId(ingestServer.name, slug) }, content: text })
-          : undefined,
-      })
-    : null;
-  const ingestPrivate = env.INGEST_PRIVATE_CHANNELS === "true";
-  log(`ingest: ${ingest ? `on -> ${ingestServer!.name}${env.INGEST_SOURCE_ID ? ` (source ${env.INGEST_SOURCE_ID})` : ""}${ingestPrivate ? ", private channels too" : ", public channels"}` : "off"}; shared channels ${refuseShared ? "refused" : "allowed"}`);
+  const ingestCfg = ingestFromEnv(env, {
+    log,
+    // Knowledge-base writes are egress relaygate can't see either.
+    beforeWrite: gate
+      ? (server, slug, text) => checkWithRetry(gate, routerToken, { op: "w", resource: { kind: "stream", id: kbStreamId(server, slug) }, content: text })
+      : undefined,
+  });
+  const ingest = ingestCfg?.ingest ?? null;
+  const ingestPrivate = ingestCfg?.privateChannels ?? false;
+  log(`ingest: ${ingestCfg ? ingestCfg.describe : "off"}; shared channels ${refuseShared ? "refused" : "allowed"}`);
 
   // Channels shared outside the workspace are refused for answers and ingest
   // (needs channels:read / groups:read). Fail closed when Slack can't say.

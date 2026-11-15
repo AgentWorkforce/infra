@@ -95,6 +95,13 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- if not $found }}
 {{- fail "slack-relay: ingest.mcpServer must name an entry in mcpServers" }}
 {{- end }}
+{{- range $source, $server := .Values.ingest.sourceServers }}
+{{- $ok := false }}
+{{- range $.Values.mcpServers }}{{- if eq .name $server }}{{- $ok = true }}{{- end }}{{- end }}
+{{- if not $ok }}
+{{- fail (printf "slack-relay: ingest.sourceServers.%s (%s) must name an entry in mcpServers" $source $server) }}
+{{- end }}
+{{- end }}
 {{- end }}
 {{- if and (eq .Values.slack.mode "http") (not .Values.ingress.enabled) }}
 {{- fail "slack-relay: http mode needs ingress.enabled so Slack can reach /slack/events" }}

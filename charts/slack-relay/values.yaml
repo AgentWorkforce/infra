@@ -87,6 +87,11 @@ ingest:
   # Channel-name rules, first match wins, ahead of the private/default source:
   # - { match: "^ops-(finance|legal)", sourceId: founders }
   sourceRules: []
+  # The writer for each source other than sourceId. gbrain lets a remote client
+  # write only to its own write source, so each source needs its own
+  # write-scoped entry in mcpServers:
+  # { founders: brain-write-founders, slack-connect: brain-write-slack-connect }
+  sourceServers: {}
 
 router:
   # The router's relay name; the host only acts on messages from it.

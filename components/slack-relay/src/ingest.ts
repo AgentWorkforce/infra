@@ -51,6 +51,7 @@ export interface SourceRule {
 
 export class SlackIngest {
   readonly #brain: ToolCaller;
+  readonly #brains: Map<string, ToolCaller>;
   readonly #sourceId: string | undefined;
   readonly #privateSourceId: string | undefined;
   readonly #rules: Array<{ re: RegExp; sourceId: string }>;
@@ -58,20 +59,27 @@ export class SlackIngest {
   readonly #log: (m: string) => void;
   readonly #chains = new Map<string, Promise<unknown>>();
 
-  readonly #beforeWrite: ((slug: string, text: string) => Promise<void>) | undefined;
+  readonly #beforeWrite: ((slug: string, text: string, sourceId: string | undefined) => Promise<void>) | undefined;
 
   constructor(opts: {
     brain: ToolCaller;
+    /**
+     * A writer per source. gbrain lets a remote client write only to its own
+     * write source, so each source other than the default needs its own
+     * client. A source with no entry here uses `brain`.
+     */
+    brains?: Record<string, ToolCaller>;
     sourceId?: string;
     privateSourceId?: string;
     rules?: SourceRule[];
     prefix?: string;
     log?: (m: string) => void;
     /** Asked before each write (relaygate /v1/check); rejects to skip it. */
-    beforeWrite?: (slug: string, text: string) => Promise<void>;
+    beforeWrite?: (slug: string, text: string, sourceId: string | undefined) => Promise<void>;
   }) {
     this.#beforeWrite = opts.beforeWrite;
     this.#brain = opts.brain;
+    this.#brains = new Map(Object.entries(opts.brains ?? {}));
     this.#sourceId = opts.sourceId || undefined;
     this.#privateSourceId = opts.privateSourceId || undefined;
     this.#rules = (opts.rules ?? []).map((r) => ({ re: new RegExp(r.match), sourceId: r.sourceId }));
@@ -107,24 +115,25 @@ export class SlackIngest {
 
   async #append(slug: string, m: IngestMessage): Promise<string> {
     const line = lineFor(m);
-    if (this.#beforeWrite) await this.#beforeWrite(slug, line);
     const sourceId = this.sourceFor(m.channelName, m.isPrivate === true);
+    if (this.#beforeWrite) await this.#beforeWrite(slug, line, sourceId);
     const source = sourceId ? { source_id: sourceId } : {};
+    const brain = (sourceId && this.#brains.get(sourceId)) || this.#brain;
     try {
-      await this.#brain.callTool("append_page", { slug, text: line, request_id: requestId("append", m.channel, m.ts), ...source });
+      await brain.callTool("append_page", { slug, text: line, request_id: requestId("append", m.channel, m.ts), ...source });
     } catch (err) {
       if (!(err instanceof McpToolError) || !/not.?found|no such page|does not exist|unknown page/i.test(err.message)) throw err;
       // First message of the day in this channel: create the page with it.
       const day = slug.split("/").pop();
       const content = `# #${m.channelName}: ${day}\n\nSlack messages in #${m.channelName} (${m.channel}) on ${day}, ingested as they were posted.\n\n${line}\n`;
       // relaygate's rule: what is written is exactly what was checked.
-      if (this.#beforeWrite) await this.#beforeWrite(slug, content);
+      if (this.#beforeWrite) await this.#beforeWrite(slug, content, sourceId);
       try {
-        await this.#brain.callTool("put_page", { slug, content, request_id: requestId("create", m.channel, m.ts), ...source });
+        await brain.callTool("put_page", { slug, content, request_id: requestId("create", m.channel, m.ts), ...source });
       } catch (e) {
         // Another writer created it first: append after all.
         if (!(e instanceof McpToolError)) throw e;
-        await this.#brain.callTool("append_page", { slug, text: line, request_id: requestId("append", m.channel, m.ts), ...source });
+        await brain.callTool("append_page", { slug, text: line, request_id: requestId("append", m.channel, m.ts), ...source });
       }
     }
     return slug;

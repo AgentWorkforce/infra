@@ -244,3 +244,70 @@ test("MCP SSE: multi-line data joins, notifications before the response are skip
   assert.deepEqual(parseRpcBody(sse, 5)?.result, { ok: 3 });
   assert.equal(parseRpcBody('data: {"jsonrpc":"2.0","method":"notifications/progress"}\n\n', 5), null, "a lone notification is not the response");
 });
+
+test("ingest writes each source through its own client; unmapped sources use the default", async () => {
+  const { ingestFromEnv } = await import("../src/ingest-config.ts");
+  const writes: Array<{ server: string; source: unknown }> = [];
+  const checked: string[] = [];
+  const cfg = ingestFromEnv(
+    {
+      MCP_OAUTH_SERVERS_JSON: JSON.stringify([
+        { name: "brain-write", url: "u", tokenUrl: "t", scope: "write", clientId: "a", clientSecretEnv: "S1" },
+        { name: "brain-founders", url: "u", tokenUrl: "t", scope: "write", clientId: "b", clientSecretEnv: "S2" },
+      ]),
+      S1: "x",
+      S2: "y",
+      INGEST_MCP_SERVER: "brain-write",
+      INGEST_SOURCE_ID: "company",
+      INGEST_PRIVATE_SOURCE_ID: "founders",
+      INGEST_PRIVATE_CHANNELS: "true",
+      INGEST_SOURCE_SERVERS: JSON.stringify({ founders: "brain-founders" }),
+      INGEST_SOURCE_RULES: JSON.stringify([{ match: "^ext-", sourceId: "slack-connect" }]),
+    },
+    {
+      log: () => {},
+      beforeWrite: async (server, slug) => void checked.push(`${server}:${slug}`),
+      client: (s) => ({ async callTool(_n: string, a: Record<string, unknown>) { writes.push({ server: s.name, source: a.source_id }); return {}; } }),
+    },
+  )!;
+  assert.match(cfg.describe, /founders -> brain-founders/);
+  await cfg.ingest.add({ channel: "C1", channelName: "general", ts: "1794693736.0", user: "U1", text: "hi" });
+  await cfg.ingest.add({ channel: "C2", channelName: "ops-board", isPrivate: true, ts: "1794693737.0", user: "U1", text: "secret plans" });
+  await cfg.ingest.add({ channel: "C3", channelName: "ext-acme", ts: "1794693738.0", user: "U1", text: "hello partner" });
+  assert.deepEqual(writes, [
+    { server: "brain-write", source: "company" },
+    { server: "brain-founders", source: "founders" },
+    { server: "brain-write", source: "slack-connect" }, // no writer mapped: the default (gbrain refuses it)
+  ]);
+  assert.equal(checked[1], "brain-founders:slack/ops-board-c2/2026-11-14");
+  assert.throws(
+    () => ingestFromEnv({ MCP_OAUTH_SERVERS_JSON: "[]", INGEST_MCP_SERVER: "nope" }, { log: () => {} }),
+    /INGEST_MCP_SERVER nope is not in MCP_OAUTH_SERVERS_JSON/,
+  );
+});
+
+test("backfill history: human messages and thread replies, oldest first, paged", async () => {
+  const { channelHistory } = await import("../src/backfill.ts");
+  const calls: string[] = [];
+  const slack = {
+    async call(method: string, body: Record<string, unknown>) {
+      calls.push(`${method}${body.cursor ? `@${body.cursor}` : ""}${body.oldest ? `>${body.oldest}` : ""}`);
+      if (method === "conversations.history" && !body.cursor) {
+        return { messages: [{ ts: "30.0", user: "U2", text: "latest" }, { ts: "20.0", user: "U1", text: "parent", reply_count: 2 }], response_metadata: { next_cursor: "p2" } };
+      }
+      if (method === "conversations.history") {
+        return { messages: [{ ts: "10.0", user: "UB", text: "from the app" }, { ts: "5.0", subtype: "channel_join", user: "U3", text: "joined" }, { ts: "4.0", bot_id: "B1", text: "bot" }] };
+      }
+      // conversations.replies: the parent first, then the replies.
+      return { messages: [{ ts: "20.0", user: "U1", text: "parent" }, { ts: "21.0", user: "U3", text: "reply", thread_ts: "20.0" }, { ts: "40.0", user: "U2", text: "late reply", thread_ts: "20.0" }] };
+    },
+  };
+  const got = await channelHistory(slack, "C1", "UB", "1.0");
+  assert.deepEqual(got.map((m) => [m.ts, m.text, m.threadTs ?? null]), [
+    ["20.0", "parent", null],
+    ["21.0", "reply", "20.0"],
+    ["30.0", "latest", null],
+    ["40.0", "late reply", "20.0"],
+  ]);
+  assert.deepEqual(calls, ["conversations.history>1.0", "conversations.replies>1.0", "conversations.history@p2>1.0"]);
+});

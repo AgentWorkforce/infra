@@ -161,11 +161,51 @@ ingest:
 ```
 
 Agents get a fresh OAuth token for each turn. Ingest appends every human
-message (top level and in threads) to `slack/<channel>/<YYYY-MM-DD>` as it
-arrives; it is idempotent per Slack message, skips bots, withholds messages
-that look like credentials, skips private channels unless
+message (top level and in threads) to `slack/<channel name>-<channel id>/<YYYY-MM-DD>`
+as it arrives; it is idempotent per Slack message, skips bots, withholds
+messages that look like credentials, skips private channels unless
 `ingest.privateChannels`, and never touches channels shared outside the
 workspace.
+
+### More than one source
+
+`ingest.sourceRules` and `ingest.privateSourceId` send some channels to other
+sources (e.g. `founders`). gbrain lets a remote client write only to its own
+write source, so give each extra source its own write-scoped client and map it:
+
+```yaml
+mcpServers:
+  # ...brain and brain-write as above, plus one per extra source:
+  - { name: brain-write-founders, url: https://brain.example.com/mcp, tokenUrl: https://brain.example.com/token,
+      scope: write, clientId: <founders client id>, clientSecret: { name: slack-relay-brain, key: write-founders-client-secret } }
+ingest:
+  sourceServers:
+    founders: brain-write-founders
+```
+
+A source with no entry is written through `ingest.mcpServer`, and gbrain
+refuses it (nothing is misfiled).
+
+### Backfill a channel's history
+
+Live ingest starts when the app joins a channel. To bring in what was said
+before, run the backfill with the router's environment, in the router pod or
+on its host:
+
+```sh
+kubectl exec -n agent-relay deploy/slack-relay-router -- \
+  node src/backfill.ts --channel C0123456789 [--channel ...] [--since 2026-01-01] [--dry-run]
+```
+
+It reads the channel's history and thread replies through the bot token
+(`channels:history`, `groups:history`) and writes them through the same
+ingest, oldest first, applying the same rules: the same pages and sources,
+shared channels refused, private ones only with `ingest.privateChannels`, and
+messages that look like credentials withheld. Every write is keyed by its
+Slack message, so a backfill can be re-run or overlap live ingest without
+duplicating a line. `--dry-run` reports counts and target sources without
+writing. With relaygate on, it registers as `<router name>-backfill` and every
+write is checked like live ingest.
 
 ## Governance with relaygate (optional)
 
