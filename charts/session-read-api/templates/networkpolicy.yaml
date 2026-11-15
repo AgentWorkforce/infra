@@ -13,6 +13,22 @@ spec:
       {{- include "session-read-api.selectorLabels" . | nindent 6 }}
   policyTypes: [Ingress]
   ingress:
+    {{- if include "session-read-api.gateOnly" . }}
+    # Gate-only: relaygate only, for /v1 and /internal (Control reaches
+    # /internal through relaygate). controlFrom and publicFrom are ignored.
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: relaygate
+              app.kubernetes.io/instance: {{ .Release.Name }}
+      ports: [{ port: http }]
+    {{- if .Values.networkPolicy.gateOnlyControlDirect }}
+    # Escape hatch (networkPolicy.gateOnlyControlDirect): Control directly.
+    - from:
+        {{- toYaml .Values.networkPolicy.controlFrom | nindent 8 }}
+      ports: [{ port: http }]
+    {{- end }}
+    {{- else }}
     # Control, the only caller of /internal/*.
     - from:
         {{- toYaml .Values.networkPolicy.controlFrom | nindent 8 }}
@@ -22,5 +38,6 @@ spec:
     - from:
         {{- toYaml . | nindent 8 }}
       ports: [{ port: http }]
+    {{- end }}
     {{- end }}
 {{- end }}

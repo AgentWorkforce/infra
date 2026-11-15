@@ -318,9 +318,15 @@ compatibility:
       status: shipped
       charts: { telemetry-collector: 0.1.0 }
       notes: 'Default-off umbrella analytics file collector. Requires accepted immutable collector and TLS-proxy images, producer and TLS Secrets and an exclusive persistent volume. Source rendering does not prove image entrypoint, TLS, durable acknowledgement, power-loss recovery or whole-application analytics coverage. The currently reviewed collector CLI registers relaycontrol events only.'
-    - id: session-read-api-0.2.14
+    - id: session-read-api-0.2.15
       status: unreleased
       current: true
+      charts: { session-read-api: 0.2.15 }
+      images:
+        session-read-api: { repository: ghcr.io/agentworkforce/96bulls-services, digest_required: true }
+      notes: 'With global.relaygate.gateOnly.enabled the NetworkPolicy admits only relaygate, for /v1 and /internal (controlFrom and publicFrom are ignored; networkPolicy.gateOnlyControlDirect keeps Control''s direct rule), and networkPolicy.enabled=false or ingress.enabled is refused. Default renders are unchanged apart from the chart version.'
+    - id: session-read-api-0.2.14
+      status: planned
       charts: { session-read-api: 0.2.14 }
       images:
         session-read-api: { repository: ghcr.io/agentworkforce/96bulls-services, digest_required: true }
@@ -401,9 +407,37 @@ compatibility:
       images:
         session-read-api: { repository: ghcr.io/agentworkforce/96bulls-services, digest_required: true }
       notes: 'Defaults READ_API_COMPLETE_SINCE to epoch for a new self-host store populated only by its own ingest. Partial legacy imports must retain an explicit real coverage floor matching the indexer. Image, auth, routing and enabled defaults are unchanged; this does not assert coverage for an imported store or qualify a runtime.'
-    - id: sessions-pipeline-0.8.36
+    - id: sessions-pipeline-0.8.37
       status: unreleased
       current: true
+      charts: { sessions-pipeline: 0.8.37, sessions-pipeline-worker: 0.7.10, session-ingest-api: 0.4.5, session-read-api: 0.2.15 }
+      depends:
+        sessions-pipeline: { worker: 0.7.10, alleyoop: 0.4.5, sessionReadApi: 0.2.15, hoopdb: 0.9.0, session-object-storage: 5.4.0, otel: 0.178.0 }
+      images:
+        sessions-pipeline-worker: { repository: agentworkforce/96bulls-services, digest: sha256:6f22ea17dff336e1431664542759fd27958649388b90a0b2f0881883caa7c6b2 }
+        session-ingest-api: { repository: agentworkforce/96bulls-services, digest: sha256:6f22ea17dff336e1431664542759fd27958649388b90a0b2f0881883caa7c6b2 }
+        session-read-api: { repository: ghcr.io/agentworkforce/96bulls-services, digest_required: true }
+      images_note: "Operator session erase values remain default-off and do not pin the 2026.11.2 candidate image. Runtime qualification is separate. Existing chart/profile image pins remain unchanged."
+      services:
+        source_commit: 7d7229bb31c121ecb98cd4e35c248fc2cf5669ad
+        migration_generation: eff8b3be46565b57ad8fa5e4a066dbb6d1fe608313d9c1680bfbcd484add259b
+      db_combos:
+        - { db_mode: selfhosted, boundary: global-default-revoke, hoopdb: cnpg, status: shipped, profiles: [selfhost-postgres, migration, aws-cnpg], notes: chart Jobs install the runtime role and the function default }
+        - { db_mode: selfhosted, boundary: global-default-revoke, hoopdb: external, status: shipped, profiles: [external-selfhosted], notes: operator runs the bootstrap files as a superuser }
+        - { db_mode: rds, boundary: global-default-revoke, hoopdb: external, status: shipped, profiles: [external-rds, aws-rds-native], notes: the RDS master runs the rds_*.sql bootstrap first }
+        - { db_mode: cloudsql, boundary: global-default-revoke, hoopdb: external, status: shipped, profiles: [gcp-cloudsql], notes: operator runs the Cloud SQL bootstrap files as the migration owner; roleBootstrap false }
+        - { db_mode: supabase, boundary: event-trigger, hoopdb: external, status: held, profiles: [external-supabase], notes: supabaseActivation.hold; migrate refuses until the reviewed event trigger is installed and --activation-check passes }
+        - { db_mode: supabase, boundary: null, hoopdb: external, status: fails closed, profiles: [aws-supabase], notes: renders; migrate refuses with function_boundary_unproven }
+        - { db_mode: local, boundary: null, hoopdb: any, status: dev only, profiles: [], notes: local stack only; never a self-host install }
+      sources:
+        - "charts/sessions-pipeline/Chart.yaml:4"
+        - "charts/sessions-pipeline/profiles/aws-rds-native.yaml"
+        - "ci/sessions-pipeline-profiles/matrix.sh"
+        - "charts/sessions-pipeline/templates/_scrub-engine.tpl:1"
+        - "ci/sessions-pipeline-scrub-engine/test_scrub_engine.py:1"
+      notes: 'Carries 0.8.36 and session-read-api 0.2.15. With global.relaygate.gateOnly.enabled the ingest edge NetworkPolicy admits only relaygate (plus ingestEdge.networkPolicy.gateOnlyFrom; disabled is refused) and nativeRouting sends only relaygate''s Sessions routes to the relaygate Service. Default renders differ only in the helm.sh/chart labels.'
+    - id: sessions-pipeline-0.8.36
+      status: planned
       charts: { sessions-pipeline: 0.8.36, sessions-pipeline-worker: 0.7.10, session-ingest-api: 0.4.5, session-read-api: 0.2.14 }
       depends:
         sessions-pipeline: { worker: 0.7.10, alleyoop: 0.4.5, sessionReadApi: 0.2.14, hoopdb: 0.9.0, session-object-storage: 5.4.0, otel: 0.178.0 }
@@ -1408,9 +1442,16 @@ compatibility:
       images_note: not built for the charts yet
       notes: 'Follow-up re-pin to sessions-pipeline main after #127 (session briefs, generation 5ed11913...). Needs new GHCR/ECR digests, ci/sessions-pipeline-search-worker-role/services-commit and services-generation, and the session-brief entries below shipped.'
       db_combos: []
-    - id: relaycast-0.3.14
+    - id: relaycast-0.3.15
       status: unreleased
       current: true
+      charts: { relaycast: 0.3.15 }
+      app_versions: { relaycast: 12.10.0 }
+      images:
+        relaycast: { repository: ghcr.io/agentworkforce/relaycast-self-host, digest: sha256:ec062ef901af15cf575b53a71d7eb09f2e6ab6e7c0d5be2da35339a275a5c6cc }
+      notes: 'Carries 0.3.14. With global.relaygate.gateOnly.enabled the NetworkPolicy ignores ingressFrom and admits relaygate, the migration Job and networkPolicy.gateOnlyFrom (relay-control and relayauth by default), the Ingress routes only relaygate''s Relaycast routes to the relaygate Service and denies the rest, and networkPolicy.enabled=false is refused. Default renders differ only in the helm.sh/chart label.'
+    - id: relaycast-0.3.14
+      status: planned
       charts: { relaycast: 0.3.14 }
       app_versions: { relaycast: 12.10.0 }
       images:
@@ -1572,9 +1613,22 @@ compatibility:
       images:
         relayauth: { repository: ghcr.io/agentworkforce/relayauth, digest: sha256:eb71daa28e30eb7305f666d0bccc5a4002e53e8a574e3c4c32163d907a1b71df }
       notes: superseded by 0.1.1.
-    - id: agent-relay-0.7.27
+    - id: agent-relay-0.7.28
       status: unreleased
       current: true
+      charts: { agent-relay: 0.7.28, relay-control: 0.4.19, relay-webapp: 0.2.6 }
+      app_versions: { agent-relay: 0.1.0, relay-control: 0.1.0, relay-webapp: 0.1.0 }
+      depends:
+        agent-relay: { relaycast: 0.3.15, relayauth: 0.1.5, sessions-pipeline: 0.8.37, relay-control: 0.4.19, relay-webapp: 0.2.6, relayflows: 0.2.5, durable-actors: 0.14.6-awf.4, relayfile: 0.2.2, telemetry-collector: 0.1.7, relay-chief: 0.1.0, slack-relay: 0.3.3, relaygate: 0.1.3 }
+      images:
+        relaycast: { repository: ghcr.io/agentworkforce/relaycast-self-host, digest: sha256:ec062ef901af15cf575b53a71d7eb09f2e6ab6e7c0d5be2da35339a275a5c6cc }
+        relaycast-postgres: { repository: ghcr.io/agentworkforce/relaycast-self-host, digest: sha256:ec062ef901af15cf575b53a71d7eb09f2e6ab6e7c0d5be2da35339a275a5c6cc }
+        sessions-pipeline-worker: { repository: ghcr.io/agentworkforce/sessions-pipeline, digest: sha256:77022c5b6a1d30f96f921d703eb27a1acada8ec273ad84aebdde24f8eddce305 }
+        relay-control: { repository: ghcr.io/agentworkforce/relay-control, digest: sha256:d1b6ca95fab240a9d41208d83de3b1f4245408b0765038762f1c419ee60f43bc }
+        relay-webapp: { repository: ghcr.io/agentworkforce/relay-webapp, digest: sha256:bd295ccb7d1323965dce890f19d0b7f857d706c00d7756f719c713763fdb49f3 }
+      notes: 'Carries 0.7.27. Opt-in global.relaygate.gateOnly.enabled (opt.relaygate.gate-only): relaygate becomes the only way into Relaycast and Sessions; relay-control 0.4.19 then sends SESSION_READ_API_URL through relaygate and admits it for introspection. Default renders differ only in the helm.sh/chart labels.'
+    - id: agent-relay-0.7.27
+      status: planned
       charts: { agent-relay: 0.7.27, relay-control: 0.4.18, relay-webapp: 0.2.6 }
       app_versions: { agent-relay: 0.1.0, relay-control: 0.1.0, relay-webapp: 0.1.0 }
       depends:
@@ -2767,9 +2821,16 @@ compatibility:
       charts: { relay-chief: 0.1.0 }
       app_versions: { relay-chief: 0.1.0 }
       notes: First chart, rendered only. No Relay Chief image is published and the digest is operator-supplied until one exists.
-    - id: relaygate-0.1.2
+    - id: relaygate-0.1.3
       status: unreleased
       current: true
+      charts: { relaygate: 0.1.3 }
+      app_versions: { relaygate: 0.1.0 }
+      images:
+        relaygate: { repository: ghcr.io/agentworkforce/relaygate, digest_required: true }
+      notes: Carries 0.1.2. Adds proxy.sessionsCorsOrigins (SESSIONS_CORS_ORIGINS) and controlPrincipals.introspectUrl and ingestAudience with secrets.relaycontrolIntrospectSecret (RELAYCONTROL_INTROSPECT_URL, RELAYCONTROL_INTROSPECT_SECRET, SESSION_INGEST_AUDIENCE) and secrets.sessionsInternalSecret (SESSIONS_INTERNAL_SECRET), for relaygate's Control-principal mapping (PR B); with global.relaygate.gateOnly.enabled it refuses to render without both proxies, proxy.sessionsHosts and controlPrincipals. Default renders differ only in the helm.sh/chart label.
+    - id: relaygate-0.1.2
+      status: planned
       charts: { relaygate: 0.1.2 }
       app_versions: { relaygate: 0.1.0 }
       images:
@@ -6868,10 +6929,10 @@ entries:
   - id: opt.relaygate.sessions-proxy
     kind: option
     title: relaygate Sessions proxy
-    description: Off by default. With proxy.sessionsUrl the gate serves Sessions at /sessions, filtered by the policy's sessionDefaults and sessionOverrides; uploaders and readers use https://<gate>/sessions. The gate forwards each caller's own Sessions credential (rg_ token in X-Relaygate-Token, the Sessions token in Authorization) and holds none; proxy.sessionsUploadUrl and proxy.sessionsReadUrl split the upstreams, and proxy.sessionsHosts serves the history origin's host at the root (then both split upstreams are required, so requests can't loop back to the gate).
+    description: Off by default. With proxy.sessionsUrl the gate serves Sessions at /sessions, filtered by the policy's sessionDefaults and sessionOverrides; uploaders and readers use https://<gate>/sessions. The gate forwards each caller's own Sessions credential (rg_ token in X-Relaygate-Token, the Sessions token in Authorization) and holds none; proxy.sessionsUploadUrl and proxy.sessionsReadUrl split the upstreams, and proxy.sessionsHosts serves the history origin's host at the root (then both split upstreams are required, so requests can't loop back to the gate). proxy.sessionsCorsOrigins (SESSIONS_CORS_ORIGINS) gives browser origins CORS headers, relaygate's own refusals included; set it to the read API's cors.allowedOrigins (gate-only refuses a mismatch).
     chart: relaygate
-    values: [proxy.sessionsUrl, proxy.sessionsUploadUrl, proxy.sessionsReadUrl, proxy.sessionsHosts, "secrets.sessionsToken.*", "policy.sessionDefaults", "policy.sessionOverrides"]
-    env: [SESSIONS_URL, SESSIONS_UPLOAD_URL, SESSIONS_READ_URL, SESSIONS_HOSTS, SESSIONS_TOKEN]
+    values: [proxy.sessionsUrl, proxy.sessionsUploadUrl, proxy.sessionsReadUrl, proxy.sessionsHosts, proxy.sessionsCorsOrigins, "secrets.sessionsToken.*", "policy.sessionDefaults", "policy.sessionOverrides"]
+    env: [SESSIONS_URL, SESSIONS_UPLOAD_URL, SESSIONS_READ_URL, SESSIONS_HOSTS, SESSIONS_CORS_ORIGINS, SESSIONS_TOKEN]
     profiles: [relaygate]
     status: shipped
     provided_by: operator
@@ -6912,6 +6973,110 @@ entries:
     sources:
       - "charts/relaygate/values.yaml"
       - "charts/relaygate/templates/relaygate.yaml"
+
+  - id: opt.agent-relay.relaygate-gate-only
+    kind: option
+    title: relaygate gate-only (the only way into Relaycast and Sessions)
+    description: 'Off by default; with it off every render is unchanged. global.relaygate.gateOnly.enabled routes the public cast and history hosts (gkeIngress, sessions-pipeline nativeRouting, relaycast ingress) to relaygate on exactly the routes it serves and denies the rest; Relaycast admits only relaygate, its migration Job and relaycast networkPolicy.gateOnlyFrom (Control and RelayAuth by default); the Sessions reader admits only relaygate, /internal included; the ingest edge admits only relaygate; Control''s SESSION_READ_API_URL becomes http://<relaygate>:8080/sessions. Requires a cluster that enforces NetworkPolicy (GKE Dataplane V2 or the NetworkPolicy add-on) and a relaygate image with Control-principal mapping (relaygate PR B): until then dashboard session reads, desktop uploads and Control''s session reads break. The policy needs controlPrincipals rules, sessionAggregates with an admin gid, and an admin group with r on every sessionDefault. Relaycast routes relaygate does not proxy (POST /v1/agents, /v1/ws, files, webhooks, group DMs, workspace admin, ...) and Sessions routes it does not serve (/v1/turns/batches, /v1/cli/login, /v1/digest, /v1/delivery/records, admission, token revoke) stop working for public clients. See docs/self-hosted-relaygate.md, "Gate-only".'
+    chart: agent-relay
+    values: [global.relaygate.gateOnly.enabled, global.relaygate.gateOnly.serviceName, global.relaygate.gateOnly.servicePort]
+    profiles: [relaygate]
+    status: shipped
+    provided_by: operator
+    default: off
+    choices:
+      - { value: off }
+      - { value: on, note: needs components.relaygate with both proxies (in-cluster upstreams), proxy.sessionsHosts with the history host, controlPrincipals with the ingest edge's introspection Secret, and slack-relay.relaygate.url with components.slackRelay }
+    verify: 'scripts/ci/charts.sh static agent-relay renders ci/gate-only-values.yaml with the cast and history routes on the relaygate edge Service and relaygate-only Relaycast, reader and ingest policies, refuses each misconfiguration, and renders the default identically with gate-only=false'
+    sources:
+      - "charts/agent-relay/values.yaml"
+      - "charts/agent-relay/templates/_helpers.tpl"
+      - "charts/agent-relay/templates/gke-ingress.yaml"
+
+  - id: opt.relaygate.control-principals
+    kind: option
+    title: relaygate Control-principal mapping
+    description: 'Off by default; required with gate-only. relaygate introspects Control-issued tokens (sh_at_ upload tokens for SESSION_INGEST_AUDIENCE, the public history origin; rth_ read tokens) at RELAYCONTROL_INTROSPECT_URL (http://relay-control.<ns>.svc.cluster.local/internal/v1/auth/introspect) with the ingest edge''s introspection secret, and maps each person to a group by the policy''s controlPrincipals rules (relaygate PR B; it refuses Control callers no rule maps). SESSIONS_INTERNAL_SECRET (recommended) is the read API''s READ_API_INTERNAL_SECRET.'
+    chart: relaygate
+    values: [controlPrincipals.introspectUrl, controlPrincipals.ingestAudience, "secrets.relaycontrolIntrospectSecret.*", "secrets.sessionsInternalSecret.*"]
+    env: [RELAYCONTROL_INTROSPECT_URL, RELAYCONTROL_INTROSPECT_SECRET, SESSION_INGEST_AUDIENCE, SESSIONS_INTERNAL_SECRET]
+    profiles: [relaygate]
+    status: shipped
+    provided_by: operator
+    default: off
+    choices:
+      - { value: off }
+      - { value: on, note: introspectUrl, ingestAudience and secrets.relaycontrolIntrospectSecret.name together }
+    secrets:
+      - name: "<secrets.relaycontrolIntrospectSecret.name>"
+        keys:
+          - { key: introspect-secret, key_path: secrets.relaycontrolIntrospectSecret.key }
+        note: the ingest edge's Control introspection secret (sessions-pipeline ingestEdge.config; relaycontrol-introspect-secret in the GKE profiles)
+      - name: "<secrets.sessionsInternalSecret.name>"
+        keys:
+          - { key: READ_API_INTERNAL_SECRET, key_path: secrets.sessionsInternalSecret.key }
+        note: optional, recommended with gate-only; the read API's internal secret
+    verify: helm template renders the three env vars together and SESSIONS_INTERNAL_SECRET only when named, refuses a partial or malformed controlPrincipals, and with gate-only refuses to render without it
+    sources:
+      - "charts/relaygate/values.yaml"
+      - "charts/relaygate/templates/relaygate.yaml"
+      - "charts/relaygate/templates/_helpers.tpl"
+
+  - id: opt.relaycast.gate-only-from
+    kind: option
+    title: Relaycast direct callers under relaygate gate-only
+    description: 'With global.relaygate.gateOnly.enabled the NetworkPolicy ignores networkPolicy.ingressFrom and admits relaygate, the chart''s migration Job and networkPolicy.gateOnlyFrom (default relay-control and relayauth pods, the server-side callers that use Relaycast directly). The Ingress then routes only relaygate''s Relaycast routes to the relaygate Service. Every peer added here bypasses relaygate.'
+    chart: relaycast
+    values: [networkPolicy.gateOnlyFrom]
+    profiles: [relaycast]
+    status: shipped
+    provided_by: operator
+    default: relay-control and relayauth
+    choices:
+      - { value: relay-control and relayauth }
+      - { value: listed }
+    verify: scripts/ci/charts.sh static relaycast renders the gate-only policy and Ingress and refuses gate-only with networkPolicy.enabled=false
+    sources:
+      - "charts/relaycast/values.yaml"
+      - "charts/relaycast/templates/networkpolicy.yaml"
+      - "charts/relaycast/templates/ingress.yaml"
+
+  - id: opt.session-read-api.gate-only-control-direct
+    kind: option
+    title: Sessions reader Control escape hatch under relaygate gate-only
+    description: 'With global.relaygate.gateOnly.enabled the reader admits only relaygate, for /v1 and /internal. networkPolicy.gateOnlyControlDirect=true keeps the controlFrom rule too; NetworkPolicy can''t limit it to /internal, so Control can then read /v1 without relaygate.'
+    chart: session-read-api
+    values: [networkPolicy.gateOnlyControlDirect]
+    profiles: [selfhost-postgres, migration, external-selfhosted, external-rds, aws-rds-native, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql]
+    status: shipped
+    provided_by: operator
+    default: false
+    choices:
+      - { value: false }
+      - { value: true }
+    verify: ci/sessions-pipeline-native-routing/test_native_routing.py renders a relaygate-only reader policy and the escape hatch
+    sources:
+      - "charts/session-read-api/values.yaml"
+      - "charts/session-read-api/templates/networkpolicy.yaml"
+
+  - id: opt.sessions-pipeline.ingest-gate-only-from
+    kind: option
+    title: Ingest edge direct callers under relaygate gate-only
+    description: 'With global.relaygate.gateOnly.enabled the ingest edge ignores networkPolicy.ingressFrom and admits only relaygate plus ingestEdge.networkPolicy.gateOnlyFrom (default empty; e.g. Control for the operator session erase API, which can then also upload around relaygate). nativeRouting then routes only relaygate''s Sessions routes to the relaygate Service.'
+    chart: sessions-pipeline
+    values: [ingestEdge.networkPolicy.gateOnlyFrom]
+    profiles: [selfhost-postgres, migration, external-selfhosted, external-rds, aws-rds-native, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql]
+    status: shipped
+    provided_by: operator
+    default: none
+    choices:
+      - { value: none }
+      - { value: listed }
+    verify: ci/sessions-pipeline-native-routing/test_native_routing.py renders the relaygate-only ingest policy and gate-only routes, and refuses gate-only with ingestEdge.networkPolicy.enabled=false
+    sources:
+      - "charts/sessions-pipeline/values.yaml"
+      - "charts/sessions-pipeline/templates/ingest-edge.yaml"
+      - "charts/sessions-pipeline/templates/native-routing.yaml"
 
   - id: opt.relaygate.image-pull-secrets
     kind: option

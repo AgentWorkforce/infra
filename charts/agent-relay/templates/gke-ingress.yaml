@@ -16,7 +16,11 @@
 {{- with dig "dashboardUrl" "" $cloudApi }}{{ $rootHost := dig "hosts" "root" "" $gke }}{{ $single := dig "singleHost" "host" "" ($.Values.global | default dict) }}{{ $want := $single | default $rootHost }}{{ if and $want (ne (trimSuffix ":443" (urlParse (toString .)).host) $want) }}{{ fail (printf "relay-control.dashboardUrl must be on the dashboard host https://%s/ (sign-in, OAuth and invite links land there)" $want) }}{{ end }}{{ end -}}
 {{- $loginPath := dig "runtime" "loginPath" "" $dashboard -}}
 {{- if and $loginPath (ne $loginPath "/login") }}{{ fail "gkeIngress routes /login to relay-control; relay-webapp.runtime.loginPath must be /login" }}{{ end -}}
-{{- $policyBackends := dict "relaycast" $relaycast "relay-control" $cloudApi "relay-webapp" $dashboard -}}
+{{- $gateOnly := include "agent-relay.gateOnly" . -}}
+{{- $policyBackends := dict "relay-control" $cloudApi "relay-webapp" $dashboard -}}
+{{- /* Gate-only: the load balancer reaches relaygate, not Relaycast or the
+native Sessions services, whose policies then admit relaygate alone. */ -}}
+{{- if not $gateOnly }}{{ $_ := set $policyBackends "relaycast" $relaycast }}{{ end -}}
 {{- if and (dig "hosts" "files" "" $gke) $components.relayfile }}
 {{- /* Relayfile behind the public files host gets the same GKE-only policy
 shape (hosts.files without components.relayfile fails further down). */ -}}
@@ -27,7 +31,7 @@ shape (hosts.files without components.relayfile fails further down). */ -}}
 {{- $ingestPolicy := dig "ingestEdge" "networkPolicy" (dict) $pipeline -}}
 {{- if not (dig "enabled" false $readerPolicy) }}{{ fail "native gkeIngress requires sessions-pipeline.sessionReadApi.networkPolicy.enabled=true" }}{{ end -}}
 {{- if not (dig "enabled" false $ingestPolicy) }}{{ fail "native gkeIngress requires sessions-pipeline.ingestEdge.networkPolicy.enabled=true" }}{{ end -}}
-{{- range $name, $peers := dict "sessionReadApi.networkPolicy.publicFrom" (dig "publicFrom" (list) $readerPolicy) "ingestEdge.networkPolicy.ingressFrom" (dig "ingressFrom" (list) $ingestPolicy) }}
+{{- range $name, $peers := ternary (dict) (dict "sessionReadApi.networkPolicy.publicFrom" (dig "publicFrom" (list) $readerPolicy) "ingestEdge.networkPolicy.ingressFrom" (dig "ingressFrom" (list) $ingestPolicy)) (not (empty $gateOnly)) }}
 {{- $hasGfePrimary := false -}}
 {{- $hasGfeSecondary := false -}}
 {{- range $peer := $peers }}
@@ -205,6 +209,49 @@ metadata:
 spec:
   timeoutSec: {{ $castTimeout }}
 ---
+{{- $gateEdge := printf "%s-gate" ($gkeName | trunc 58 | trimSuffix "-") -}}
+{{- if $gateOnly }}
+{{- /* Gate-only: relaygate behind the cast and history hosts. Its own
+Service carries no NEG annotation, so this edge Service (same pods) does,
+with a BackendConfig whose timeout keeps the proxied node WebSocket open
+(the cast timeout) and whose health check is relaygate's /healthz. */}}
+apiVersion: cloud.google.com/v1
+kind: BackendConfig
+metadata:
+  name: {{ $gateEdge }}
+  namespace: {{ .Release.Namespace | quote }}
+  labels:
+    app.kubernetes.io/name: agent-relay
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: gate-edge
+spec:
+  timeoutSec: {{ $castTimeout }}
+  healthCheck:
+    type: HTTP
+    requestPath: /healthz
+    port: 8080
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $gateEdge }}
+  namespace: {{ .Release.Namespace | quote }}
+  labels:
+    app.kubernetes.io/name: agent-relay
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: gate-edge
+  annotations:
+    cloud.google.com/neg: '{"ingress": true}'
+    cloud.google.com/backend-config: {{ printf "{\"default\": \"%s\"}" $gateEdge | squote }}
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: relaygate
+    app.kubernetes.io/instance: {{ .Release.Name }}
+  ports:
+    - { name: http, port: 8080, targetPort: http, protocol: TCP }
+---
+{{- end }}
 apiVersion: networking.gke.io/v1
 kind: ManagedCertificate
 metadata:
@@ -446,6 +493,29 @@ spec:
     - host: {{ $hostCast | quote }}
       http:
         paths:
+          {{- if $gateOnly }}
+          # Gate-only: the routes relaygate proxies (Relaycast REST allowlist,
+          # registration, the node WebSocket) go to relaygate; every other
+          # path is denied at the edge (docs/self-hosted-relaygate.md lists them).
+          {{- range $path := list "/v1/register" "/v1/check" "/v1/whoami" "/v1/agent" "/v1/agent/node-token" "/v1/node/ws" "/v1/search" "/v1/inbox" }}
+          - path: {{ $path }}
+            pathType: Exact
+            backend:
+              service: { name: {{ $gateEdge }}, port: { number: 8080 } }
+          {{- end }}
+          {{- range $path := list "/v1/agents" "/v1/channels" "/v1/messages" "/v1/dm" "/v1/streams" }}
+          - path: {{ $path }}
+            pathType: Prefix
+            backend:
+              service: { name: {{ $gateEdge }}, port: { number: 8080 } }
+          {{- end }}
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ printf "%s-cast-edge-deny" $gkeName | trunc 63 | trimSuffix "-" }}
+                port: { number: {{ $gke.backends.cast.servicePort }} }
+          {{- else }}
           - path: /internal
             pathType: Prefix
             backend:
@@ -470,9 +540,26 @@ spec:
               service:
                 name: {{ index $backendNames "cast" }}
                 port: { number: {{ $gke.backends.cast.servicePort }} }
+          {{- end }}
     - host: {{ $hostHistory | quote }}
       http:
         paths:
+          {{- if $gateOnly }}
+          # Gate-only: the Sessions routes relaygate serves at the root for
+          # this host (relaygate.proxy.sessionsHosts) go to relaygate, which
+          # forwards them to the reader and ingest Services; everything else
+          # falls through to deny.
+          - path: /v1/sessions
+            pathType: Prefix
+            backend:
+              service: { name: {{ $gateEdge }}, port: { number: 8080 } }
+          {{- range $path := list "/v1/events" "/v1/ingest" "/v1/delivery/batches" "/v1/delivery/limits" "/v1/auth/token/refresh" "/v1/onboarding/heartbeat" }}
+          - path: {{ $path }}
+            pathType: Exact
+            backend:
+              service: { name: {{ $gateEdge }}, port: { number: 8080 } }
+          {{- end }}
+          {{- else }}
           # Native upload endpoints. Exact routes win over the read paths and
           # the broader delivery/turns/onboarding prefixes below.
           {{- range $path := list "/v1/delivery/batches" "/v1/turns/batches" "/v1/delivery/limits" "/v1/auth/token/refresh" }}
@@ -504,6 +591,7 @@ spec:
             pathType: Prefix
             backend:
               service: { name: {{ $nativeIngestEdge }}, port: { number: 80 } }
+          {{- end }}
           {{- end }}
           - path: /
             pathType: Prefix

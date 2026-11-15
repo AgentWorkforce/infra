@@ -75,7 +75,19 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 /run/secrets/relaycast
 {{- end }}
 
+{{- define "relaycast.gateOnly" -}}
+{{- if dig "relaygate" "gateOnly" "enabled" false (.Values.global | default dict) }}true{{ end -}}
+{{- end }}
+
+{{- /* The relaygate Service public routes point at under gate-only. */ -}}
+{{- define "relaycast.gateService" -}}
+{{- dig "relaygate" "gateOnly" "serviceName" "" (.Values.global | default dict) | default (ternary .Release.Name (printf "%s-relaygate" .Release.Name) (contains "relaygate" .Release.Name)) | trunc 63 | trimSuffix "-" -}}
+{{- end }}
+
 {{- define "relaycast.validate" -}}
+{{- if include "relaycast.gateOnly" . }}
+{{- if not .Values.networkPolicy.enabled }}{{ fail "relaycast: global.relaygate.gateOnly.enabled requires networkPolicy.enabled=true; without it every pod can bypass relaygate" }}{{ end }}
+{{- end }}
 {{- if ne (int .Values.replicaCount) 1 }}
 {{- fail "replicaCount must be 1: Relaycast self-host stores SQLite and uploaded files on one persistent volume, and the postgres backend keeps realtime, presence and rate limits in-process (runtime.backend=durable-actors scales runtime.durableActors.gateway.replicaCount instead)" }}
 {{- end }}
@@ -188,7 +200,7 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- if and (not .Values.ingress.tls) (not .Values.ingress.externalTls) }}
 {{- fail "ingress.enabled=true requires ingress.tls (or ingress.externalTls=true when a load balancer in front of the controller terminates TLS)" }}
 {{- end }}
-{{- if and .Values.networkPolicy.enabled (not .Values.networkPolicy.ingressFrom) }}
+{{- if and .Values.networkPolicy.enabled (not .Values.networkPolicy.ingressFrom) (not (include "relaycast.gateOnly" .)) }}
 {{- fail "ingress with networkPolicy requires networkPolicy.ingressFrom (the ingress controller's namespace or pods)" }}
 {{- end }}
 {{- end }}

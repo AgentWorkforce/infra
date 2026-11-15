@@ -234,6 +234,14 @@ networkPolicy:
   # Peers that carry public /v1 traffic: the ingress controller's selectors, or
   # an ipBlock of the ALB subnets in IP target mode. Required with ingress.enabled.
   publicFrom: []
+  # Gate-only (global.relaygate.gateOnly.enabled, set in the agent-relay
+  # umbrella): controlFrom and publicFrom are ignored and only relaygate is
+  # admitted, for /v1 and for /internal (Control's SESSION_READ_API_URL then
+  # points at relaygate, which passes Control's calls through unchanged).
+  # Escape hatch: true keeps the controlFrom rule as well, for a Control that
+  # must still reach /internal directly. NetworkPolicy can't limit a peer to a
+  # path, so that Control can then also read /v1 without relaygate.
+  gateOnlyControlDirect: false
 
 # TLS CA mounts, adapter configuration and other upstream options. Credential
 # values belong in Secret key refs, not literal extraEnv values. LOCKER_BUCKET

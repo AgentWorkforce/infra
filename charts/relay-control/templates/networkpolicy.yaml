@@ -17,6 +17,13 @@ spec:
         {{- else }}
         - podSelector: {}
         {{- end }}
+        {{- if and .Values.networkPolicy.ingressFrom (dig "relaygate" "gateOnly" "enabled" false (.Values.global | default dict)) }}
+        # Gate-only: relaygate introspects dashboard and desktop tokens here.
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: relaygate
+              app.kubernetes.io/instance: {{ .Release.Name }}
+        {{- end }}
       ports: [{ port: http }]
   egress:
     {{- if .Values.networkPolicy.allowAllEgress }}

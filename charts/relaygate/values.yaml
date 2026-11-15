@@ -93,8 +93,45 @@ proxy:
   # sessionsReadUrl to the upstream Services directly (required; a listed host
   # can't be an upstream).
   sessionsHosts: []
+  # Optional: SESSIONS_CORS_ORIGINS, the browser origins relaygate answers with
+  # CORS headers on Sessions routes, including its own refusals (a 403 the
+  # dashboard can read). Set it to the read API's cors.allowedOrigins (the
+  # dashboard origin); with gate-only the agent-relay umbrella refuses to
+  # render when the two lists differ.
+  sessionsCorsOrigins: []
+
+# Control-authenticated callers (relaygate "PR B"): people using the dashboard
+# and the desktop app reach Sessions with Control-issued tokens (sh_at_ upload
+# tokens, rth_ read tokens), not rg_ tokens. relaygate introspects them at
+# Control and maps the person to a group (policy controlPrincipals). Required
+# when global.relaygate.gateOnly.enabled; needs a relaygate image with that
+# mapping. Each renders one env var:
+controlPrincipals:
+  # RELAYCONTROL_INTROSPECT_URL: the in-cluster Control introspection endpoint,
+  # e.g. http://relay-control.<ns>.svc.cluster.local/internal/v1/auth/introspect.
+  introspectUrl: ""
+  # SESSION_INGEST_AUDIENCE: the public history origin Control issues sh_at_
+  # upload tokens for (sessions-pipeline ingestEdge.origin), e.g.
+  # https://history.example.com. Control already accepts that audience.
+  ingestAudience: ""
+
+# Gate-only (global.relaygate.gateOnly.enabled, set in the agent-relay
+# umbrella): relaygate becomes the only way into Relaycast and Sessions, and
+# Control's SESSION_READ_API_URL becomes http://<fullname>:<port>/sessions.
+# Rendering then needs both proxies, proxy.sessionsHosts and controlPrincipals.
+# See docs/self-hosted-relaygate.md, "Gate-only".
 
 secrets:
+  # Required with controlPrincipals: Control's introspection secret
+  # (RELAYCONTROL_INTROSPECT_SECRET), the same Secret and key the Sessions
+  # ingest edge uses (sessions-pipeline ingestEdge.config.existingSecret and
+  # introspectSecretKey).
+  relaycontrolIntrospectSecret: { name: "", key: introspect-secret }
+  # Recommended with gate-only: the read API's READ_API_INTERNAL_SECRET
+  # (session-read-api auth.selfIssued.internalSecret), as
+  # SESSIONS_INTERNAL_SECRET, so relaygate can call the reader's /internal
+  # routes for Control. Needs proxy.sessionsUrl.
+  sessionsInternalSecret: { name: "", key: READ_API_INTERNAL_SECRET }
   # With proxy.relaycastUrl: the rk_live_ workspace key relaygate registers agents with upstream.
   relaycastWorkspaceKey: { name: "", key: workspace-key }
   # With proxy.relaycastUrl: at least 32 characters, stable for the life of the

@@ -48,9 +48,18 @@ explicit false, which must continue to conflict with the legacy true.
 {{- end }}
 
 {{- /* Everything that must refuse to render, in one place. Emits nothing. */ -}}
+{{- define "session-read-api.gateOnly" -}}
+{{- if dig "relaygate" "gateOnly" "enabled" false (.Values.global | default dict) }}true{{ end -}}
+{{- end -}}
+
 {{- define "session-read-api.validate" -}}
 {{- include "session-read-api.analytics.validate" .Values.analytics -}}
 {{- $c := .Values -}}
+{{- if include "session-read-api.gateOnly" . -}}
+{{- if not $c.networkPolicy.enabled }}{{ fail "session-read-api: global.relaygate.gateOnly.enabled requires networkPolicy.enabled=true; without it every pod can read sessions without relaygate" }}{{ end -}}
+{{- if $c.ingress.enabled }}{{ fail "session-read-api: global.relaygate.gateOnly.enabled routes the history host to relaygate; set ingress.enabled=false" }}{{ end -}}
+{{- if not (kindIs "bool" $c.networkPolicy.gateOnlyControlDirect) }}{{ fail "session-read-api: networkPolicy.gateOnlyControlDirect must be a boolean" }}{{ end -}}
+{{- end -}}
 {{- $erase := .Values.global.operatorSessionErase | default dict -}}
 {{- if not (kindIs "map" $erase) }}{{ fail "session-read-api: global.operatorSessionErase must be an object" }}{{ end -}}
 {{- if not (kindIs "bool" $erase.fenceEnforced) }}{{ fail "session-read-api: global.operatorSessionErase.fenceEnforced must be a boolean" }}{{ end -}}

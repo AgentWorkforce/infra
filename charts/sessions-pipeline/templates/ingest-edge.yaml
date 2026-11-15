@@ -29,7 +29,10 @@
 {{- if not (kindIs "bool" $c.allowInClusterHttp) }}{{ fail "ingestEdge.allowInClusterHttp must be a boolean" }}{{ end -}}
 {{- if hasKey $c "extraEnv" }}{{ fail "ingestEdge.extraEnv is not supported; use the managed configuration and Secret references" }}{{ end -}}
 {{- if not (kindIs "bool" $c.networkPolicy.enabled) }}{{ fail "ingestEdge.networkPolicy.enabled must be a boolean" }}{{ end -}}
-{{- if and $c.networkPolicy.enabled (or (not (kindIs "slice" $c.networkPolicy.ingressFrom)) (empty $c.networkPolicy.ingressFrom)) }}{{ fail "ingestEdge.networkPolicy.enabled=true requires networkPolicy.ingressFrom" }}{{ end -}}
+{{- $gateOnly := include "sessions-pipeline.gateOnly" . -}}
+{{- if and $gateOnly (not $c.networkPolicy.enabled) }}{{ fail "ingestEdge: global.relaygate.gateOnly.enabled requires ingestEdge.networkPolicy.enabled=true; without it every pod can upload without relaygate" }}{{ end -}}
+{{- if not (kindIs "slice" ($c.networkPolicy.gateOnlyFrom | default list)) }}{{ fail "ingestEdge.networkPolicy.gateOnlyFrom must be a list" }}{{ end -}}
+{{- if and $c.networkPolicy.enabled (not $gateOnly) (or (not (kindIs "slice" $c.networkPolicy.ingressFrom)) (empty $c.networkPolicy.ingressFrom)) }}{{ fail "ingestEdge.networkPolicy.enabled=true requires networkPolicy.ingressFrom" }}{{ end -}}
 {{- $name := default (printf "%s-ingest-edge" .Release.Name) $c.fullnameOverride -}}
 {{- if or (gt (len $name) 63) (not (regexMatch "^[a-z]([-a-z0-9]*[a-z0-9])?$" $name)) }}{{ fail "ingestEdge.fullnameOverride must be a DNS-1035 label of at most 63 characters" }}{{ end -}}
 {{- $repository := required "ingestEdge.image.repository is required" $c.image.repository -}}
@@ -341,7 +344,18 @@ spec:
   policyTypes: [Ingress]
   ingress:
     - from:
+        {{- if $gateOnly }}
+        # Gate-only: relaygate (and networkPolicy.gateOnlyFrom). ingressFrom is ignored.
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: relaygate
+              app.kubernetes.io/instance: {{ .Release.Name }}
+        {{- with $c.networkPolicy.gateOnlyFrom }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+        {{- else }}
         {{- toYaml $c.networkPolicy.ingressFrom | nindent 8 }}
+        {{- end }}
       ports: [{ port: http }]
 {{- end }}
 {{- end }}

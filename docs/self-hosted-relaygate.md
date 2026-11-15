@@ -14,7 +14,8 @@ the umbrella, or its own release.
 > when agents can reach Relaycast and Sessions **through relaygate alone**:
 > turn the proxies on (`proxy.relaycastUrl`, `proxy.sessionsUrl`) and
 > enforce it by narrowing Relaycast's and Sessions' own NetworkPolicies to the
-> gate (below), or keep regulated agents in their own install.
+> gate (below, or with one switch: [Gate-only](#gate-only-one-switch)), or keep
+> regulated agents in their own install.
 
 ![Slack app and relaygate](diagrams/slack-relay-relaygate.png)
 
@@ -104,6 +105,13 @@ networkPolicy:
     # controller if Relaycast is exposed, ...); anything not listed is cut off
 ```
 
+Sessions needs the same on both of its Services: the reader
+(`sessions-pipeline.sessionReadApi.networkPolicy.publicFrom`) and the ingest
+edge (`sessions-pipeline.ingestEdge.networkPolicy.ingressFrom`). An ingest
+policy that admits the install namespace lets any agent holding a Sessions
+upload credential upload around relaygate. [Gate-only](#gate-only-one-switch)
+sets all three from one switch.
+
 `proxy.sessionsUrl` must be one origin that routes both session reads and
 uploads. In the sessions-pipeline chart those are separate Services (the reader
 and the ingest edge); `nativeRouting` joins them under one HTTPS origin
@@ -122,3 +130,160 @@ to the pit with no local access; if you change the Slack app's
 build 2: Slack-app agents register into the pit, create and join their channel,
 receive events over the proxied node WebSocket, and reply in threads with their
 `data` intact.
+
+## Gate-only (one switch)
+
+The steps above narrow each policy by hand. In the agent-relay umbrella,
+`global.relaygate.gateOnly.enabled` does it from one switch, and helm refuses to
+render while any part of it is missing, rather than leaving a door open. It is
+off by default; with it off every render is unchanged.
+
+Why it exists: a workspace member can mint their own Sessions read token
+(`rth_at_read_`, from Control's `POST /api/v1/workspaces/<ws>/session-read/session`)
+and read a pit session directly at `https://history.<domain>/v1/sessions/<id>/events`.
+Through relaygate the same read is refused. Relaycast has the same direct path
+at `cast.<domain>`. Gate-only closes both.
+
+### Prerequisites
+
+- **A cluster that enforces NetworkPolicy.** On GKE that is Dataplane V2 or the
+  NetworkPolicy add-on (checked on the nodes, see the GCP install guide). On a
+  cluster that ignores NetworkPolicy the routing changes but nothing stops a pod
+  calling Relaycast or Sessions directly.
+- **relaygate with Control-principal mapping ("PR B", relaygate#21, main
+  be42c916 or later).** Once
+  gate-only is on, people using the dashboard and the desktop app reach
+  Sessions through relaygate too, with Control-issued tokens (`sh_at_` upload
+  tokens, `rth_` read tokens), not `rg_` tokens, and Control's own mint,
+  refresh, service-token and server-side read calls go through it. relaygate
+  introspects those tokens at Control and maps each person to a group. **Until
+  a relaygate image with that mapping is deployed, turning gate-only on breaks
+  dashboard session reads, desktop uploads and Control's session reads (MCP
+  included).** The chart renders the settings; it cannot tell whether the
+  image supports them.
+- **Policy rules for Control callers.** relaygate refuses every
+  Control-authenticated caller that no rule maps, so the policy needs:
+  - `controlPrincipals`: rules matching on `orgIds`, `roles`, `emails` or
+    `userIds`, each with a `gid`; the first match wins. The dashboard's read
+    mint may not carry a role yet, so until it does, list admins by `emails`
+    or `userIds` rather than `roles`;
+  - `sessionAggregates` naming an admin gid (the workspace-wide aggregate
+    reads);
+  - an admins group with `r` on every entry in `policy.sessionDefaults` (an
+    ACL `{gid: <admin>, perm: r}` on each), or the admin per-person view in
+    the dashboard comes back empty.
+
+  The `ctl:` principal namespace is reserved for these Control callers: don't
+  start an enrollment key id, agent name prefix or other policy name with it.
+- Sessions that never came through relaygate have no owner there and are
+  invisible through it, so history from before the switch disappears from
+  reads.
+
+### Values
+
+```yaml
+global:
+  relaygate:
+    gateOnly:
+      enabled: true
+      # serviceName: ""   # set it when relaygate.fullnameOverride is set
+      # servicePort: 8080 # relaygate.service.port
+components:
+  relaygate: true
+relaygate:
+  proxy:
+    relaycastUrl: http://relaycast:8787               # the relaycast Service
+    sessionsUrl: https://history.example.com          # the history origin
+    sessionsUploadUrl: http://<ingest edge Service>   # sessions-pipeline ingestEdge (port 80)
+    sessionsReadUrl: http://<read API Service>        # sessions-pipeline sessionReadApi (port 80)
+    sessionsHosts: [history.example.com]              # the history host, served at the root
+    sessionsCorsOrigins: [https://app.example.com]    # = sessions-pipeline.sessionReadApi.cors.allowedOrigins (the dashboard origin)
+  controlPrincipals:
+    introspectUrl: http://relay-control.<ns>.svc.cluster.local/internal/v1/auth/introspect
+    ingestAudience: https://history.example.com       # the public history origin (= ingestEdge.origin); Control already accepts it
+  secrets:
+    relaycastWorkspaceKey: { name: relaygate-relaycast, key: workspace-key }
+    relaygateSecret: { name: relaygate-seal, key: secret }
+    # The ingest edge's introspection secret: sessions-pipeline
+    # ingestEdge.config.existingSecret and introspectSecretKey.
+    relaycontrolIntrospectSecret: { name: <ingestEdge.config.existingSecret>, key: <ingestEdge.config.introspectSecretKey> }  # e.g. key relaycontrol-introspect-secret
+    # Recommended: the read API's READ_API_INTERNAL_SECRET (sessions-pipeline
+    # sessionReadApi.auth.selfIssued.internalSecret), as SESSIONS_INTERNAL_SECRET.
+    sessionsInternalSecret: { name: <internalSecret.existingSecret>, key: <internalSecret.key> }
+# With components.slackRelay: slack-relay.relaygate.url (the Slack app must register through the gate).
+```
+
+`charts/agent-relay/ci/gate-only-values.yaml` is a complete example on the GKE
+proof shape. Rendering fails when gate-only is on and: relaygate, Relaycast or
+the Sessions reader and ingest edge are off; a proxy is unset; an upstream is
+not the in-cluster Service (a public host would loop back through the gate);
+`sessionsHosts` misses the history host; `controlPrincipals` is unset, does not
+point at the Control Service, uses another audience than the ingest origin, or
+another Secret than the ingest edge's; `sessionsInternalSecret` is set to
+another Secret than the reader's; `sessionsCorsOrigins` differs from the
+reader's `cors.allowedOrigins` (the dashboard reads Sessions through relaygate,
+and relaygate's own 403s need the same CORS headers to reach it); Relaycast's, the reader's or the ingest
+edge's NetworkPolicy is disabled; the reader's own Ingress is enabled; the
+Slack app has no `relaygate.url`; or the relaygate Service name doesn't match.
+
+### What the switch changes
+
+| Where | Gate-only |
+| --- | --- |
+| `gkeIngress` cast host | relaygate's routes (below) go to a `<gkeIngress.name>-gate` edge Service on the relaygate pods (NEG, BackendConfig with the cast timeout and `/healthz`); everything else is denied at the edge |
+| `gkeIngress` history host | relaygate's Sessions routes go to the same edge Service; everything else is denied |
+| sessions-pipeline `nativeRouting` | relaygate's Sessions routes go to the relaygate Service; nothing else is routed |
+| relaycast `ingress` | relaygate's Relaycast routes go to the relaygate Service; everything else is denied |
+| relaycast NetworkPolicy | `ingressFrom` is ignored: relaygate, the chart's migration Job and `networkPolicy.gateOnlyFrom` (default: relay-control and relayauth) |
+| session-read-api NetworkPolicy | `controlFrom` and `publicFrom` are ignored: relaygate only, for `/v1` and `/internal` |
+| ingest edge NetworkPolicy | `ingressFrom` is ignored: relaygate only, plus `ingestEdge.networkPolicy.gateOnlyFrom` (default empty). Without gate-only, a policy that admits the install namespace (or any pod an agent runs in) lets an agent holding a Sessions upload credential upload around relaygate; narrowing Relaycast and the reader alone is not enough |
+| relay-control | `SESSION_READ_API_URL` becomes `http://<relaygate>:8080/sessions`, so Control's mint, refresh and service-token calls and its server-side reads go through relaygate, which passes them to the read API; `services.sessionReadApiUrl` stays the read API Service. Its NetworkPolicy (when it lists `ingressFrom`) also admits relaygate for introspection |
+| relaygate | renders `RELAYCONTROL_INTROSPECT_URL`, `RELAYCONTROL_INTROSPECT_SECRET`, `SESSION_INGEST_AUDIENCE`, `SESSIONS_CORS_ORIGINS` and, when named, `SESSIONS_INTERNAL_SECRET`; `SESSIONS_UPLOAD_URL`, `SESSIONS_READ_URL` and `SESSIONS_HOSTS` (the history host) come from `proxy` as before |
+
+relaygate introspects upload tokens for the public history origin, which
+Control already accepts (`relay-control.introspection.audiences`; render fails
+if a set list misses it), so Control needs no new audience. relaygate has no NetworkPolicy of its own, so
+its egress to Control is open; Control's policy admits it.
+
+Escape hatches, each of which reopens a direct path for that caller only:
+`relaycast.networkPolicy.gateOnlyFrom` (callers that must stay direct),
+`sessions-pipeline.sessionReadApi.networkPolicy.gateOnlyControlDirect: true`
+(keeps Control's direct rule on the reader; NetworkPolicy can't limit it to
+`/internal`, so Control can then read `/v1` without the gate), and
+`sessions-pipeline.ingestEdge.networkPolicy.gateOnlyFrom` (e.g. Control for the
+operator session erase API, which the ingest edge otherwise no longer admits).
+
+### Routes relaygate serves, and what gate-only therefore cuts off
+
+Cast host, to relaygate: `/v1/register`, `/v1/check`, `/v1/whoami`,
+`/v1/agent`, `/v1/agent/node-token`, `/v1/node/ws`, `/v1/search`, `/v1/inbox`
+(exact) and `/v1/agents`, `/v1/channels`, `/v1/messages`, `/v1/dm`,
+`/v1/streams` (prefix; relaygate refuses methods and sub-paths it doesn't
+proxy with `404 relaygate_route_not_proxied`). Every proxied route needs an
+`rg_` token.
+
+History host, to relaygate: `/v1/sessions` (prefix: list, `turns` uploads and
+the per-session views), `/v1/events`, `/v1/ingest`, `/v1/delivery/batches`,
+`/v1/delivery/limits`, `/v1/auth/token/refresh`, `/v1/onboarding/heartbeat`.
+
+Not proxied, so gate-only breaks them for public clients:
+
+- Relaycast: direct registration `POST /v1/agents` (use `/v1/register`),
+  `/v1/agents/spawn`, `/release`, `/presence`; the human/dashboard WebSocket
+  `/v1/ws`; group DMs (`/v1/dm/group`, `/v1/dm/conversations/all`); files
+  (`/v1/files`, `/v1/files/upload`); webhooks, subscriptions, triggers and
+  actions; `/v1/workspace*`, `/v1/nodes`, `/v1/routing/*`, `/v1/directory/*`,
+  `/v1/console/*`, `/v1/a2a/*`, `/v1/observer-tokens`, `/v1/skills/*`,
+  `/v1/certify*`, `/v1/route*`, `/v1/deliveries`, `/v1/activity`,
+  `/v1/agent/recovery-credential`; and anything outside `/v1` (health, MCP).
+  Clients holding a workspace key or Relaycast agent token (the CLI, Relay
+  Chief, relayflows workers, the desktop app's Relaycast connection) stop
+  working until they register through relaygate.
+- Sessions: `/v1/turns/batches`, `/v1/delivery/records`,
+  `/v1/delivery/admission` (async/drain admission), `/v1/cli/login`,
+  `/v1/auth/token/revoke`, `/v1/digest/*`, `/v1/sessions/users` and
+  `/activity` (aggregates, until relaygate's `sessionAggregates`), and the public
+  `/healthz`.
+- relaycast `runtime.backend: durable-actors`: actors fetch Relaycast's public
+  URL from their sandbox, which now reaches relaygate; gate-only is not verified
+  with that backend.

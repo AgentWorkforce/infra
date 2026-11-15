@@ -1,0 +1,44 @@
+# Gate-only (global.relaygate.gateOnly.enabled) on the GKE proof shape:
+# relaygate is the only way into Relaycast and Sessions. Layered on
+# values-gcp-proof.yaml by scripts/ci/charts.sh.
+components:
+  relaygate: true
+global:
+  relaygate:
+    gateOnly:
+      enabled: true
+relaygate:
+  image:
+    digest: sha256:8c2adac447dcde224615e43f64ceb226dd6b3467bd80fe8ab99fde0a673284a7
+  policy:
+    enrollmentKeys:
+      - { id: local, gid: 11, sha256: "2222222222222222222222222222222222222222222222222222222222222222", namePrefix: "local-" }
+      - { id: pit, gid: 22, sha256: "1111111111111111111111111111111111111111111111111111111111111111", namePrefix: "pit-" }
+  proxy:
+    relaycastUrl: http://relaycast:8787
+    sessionsUrl: https://history.gcp-proof.agentrelay.com
+    # The in-cluster Services, never the history host (which now reaches relaygate).
+    sessionsUploadUrl: http://agent-relay-ingest-edge
+    sessionsReadUrl: http://agent-relay-read-api
+    sessionsHosts: [history.gcp-proof.agentrelay.com]
+    # = sessions-pipeline.sessionReadApi.cors.allowedOrigins (the dashboard origin).
+    sessionsCorsOrigins: [https://gcp-proof.agentrelay.com]
+  controlPrincipals:
+    introspectUrl: http://relay-control.ci.svc.cluster.local/internal/v1/auth/introspect
+    ingestAudience: https://history.gcp-proof.agentrelay.com
+  secrets:
+    relaycastWorkspaceKey: { name: relaygate-relaycast, key: workspace-key }
+    relaygateSecret: { name: relaygate-seal, key: secret }
+    # The ingest edge's Control introspection secret (sessions-pipeline.ingestEdge.config).
+    relaycontrolIntrospectSecret: { name: agent-relay-gcp-proof, key: relaycontrol-introspect-secret }
+    # The read API's READ_API_INTERNAL_SECRET (sessionReadApi.auth.selfIssued.internalSecret).
+    sessionsInternalSecret: { name: agent-relay-gcp-proof, key: session-read-api-secret }
+# Render identities, as in gcp-proof-values.yaml.
+relay-control:
+  image:
+    digest: sha256:2222222222222222222222222222222222222222222222222222222222222222
+  encryption:
+    keyId: proof-1
+relay-webapp:
+  image:
+    digest: sha256:9bfc0c6b873411c7a0da60d746883bdef6aafd86a9b733c719500a603890b6fe
