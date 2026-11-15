@@ -14,7 +14,7 @@ import subprocess
 import sys
 import tempfile
 
-REPO = "AgentWorkforce/relay-desktop"
+REPO = "AgentWorkforce/relay-app"
 PROFILE = "q7m2k9"
 SITE = "https://relay.kind.agentrelay.com"
 TEAM = "QUJ7SA6X8X"

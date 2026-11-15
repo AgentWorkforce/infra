@@ -1,0 +1,21 @@
+{{- include "relaycast.validate" . }}
+{{- if include "relaycast.actors.enabled" . }}
+{{- $da := .Values.runtime.durableActors }}
+{{- $dev := eq (include "relaycast.actors.dev" .) "true" }}
+{{- $local := eq (toString $da.fileStore.driver) "local" }}
+{{- if and (not $dev) (not $local) (gt (int $da.gateway.replicaCount) 1) }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "relaycast.fullname" . }}
+  namespace: {{ .Release.Namespace | quote }}
+  labels:
+    {{- include "relaycast.labels" . | nindent 4 }}
+    agentworkforce.dev/relaycast-backend: durable-actors
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      {{- include "relaycast.selectorLabels" . | nindent 6 }}
+{{- end }}
+{{- end }}

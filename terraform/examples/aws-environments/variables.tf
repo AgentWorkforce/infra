@@ -45,40 +45,125 @@ variable "name_prefix" {
   }
 }
 
+variable "enable_database" {
+  description = "Create this environment's RDS/Aurora PostgreSQL (module.postgres). Default true: self-host keeps it. false is an opt-out for an environment whose databases live elsewhere: no database resource is created, private_subnet_ids/database_security_group_ids are not required (unless pipeline_runtime=lambda, which needs both modules), and the postgres verification/binding outputs are null. Turning it off on an existing environment plans the database's destruction; never do that without a reviewed migration."
+  type        = bool
+  default     = true
+  nullable    = false
+}
+
+variable "enable_search" {
+  description = "Create this environment's OpenSearch domain and its search-indexer/session-read roles and Pod Identity associations (module.search). Default true: self-host keeps it. false is an opt-out for an environment whose search lives elsewhere: no domain, search role or association is created; search_subnet_ids, search_security_group_ids and search_master_user_arn are not required; the search outputs are null. An existing protected domain refuses removal (prevent_destroy)."
+  type        = bool
+  default     = true
+  nullable    = false
+}
+
 variable "private_subnet_ids" {
-  description = "Existing private database subnets in at least two AZs. The foundation stack owns VPC/subnets/routes."
+  description = "Existing private database subnets in at least two AZs. The foundation stack owns VPC/subnets/routes. Required when enable_database or pipeline_runtime=lambda."
   type        = list(string)
+  default     = []
+  nullable    = false
   validation {
-    condition     = length(distinct(var.private_subnet_ids)) >= 2
+    condition     = !(var.enable_database || var.pipeline_runtime == "lambda") || length(distinct(var.private_subnet_ids)) >= 2
     error_message = "Supply at least two distinct private database subnet IDs."
   }
 }
 
 variable "database_security_group_ids" {
-  description = "Database security groups allowing PostgreSQL only from the approved application/proof runner."
+  description = "Database security groups allowing PostgreSQL only from the approved application/proof runner. Required when enable_database."
   type        = list(string)
+  default     = []
+  nullable    = false
 }
 
 variable "search_subnet_ids" {
-  description = "Existing private OpenSearch subnets, one per AZ. Production requires three."
+  description = "Existing private OpenSearch subnets, one per AZ. Production requires three. Required when enable_search."
   type        = list(string)
+  default     = []
+  nullable    = false
   validation {
-    condition     = length(var.search_subnet_ids) >= 1 && length(var.search_subnet_ids) <= 3 && length(distinct(var.search_subnet_ids)) == length(var.search_subnet_ids)
+    condition     = !var.enable_search || (length(var.search_subnet_ids) >= 1 && length(var.search_subnet_ids) <= 3 && length(distinct(var.search_subnet_ids)) == length(var.search_subnet_ids))
     error_message = "Supply one to three distinct OpenSearch subnet IDs, one per AZ."
   }
 }
 
 variable "search_security_group_ids" {
-  description = "Search security groups allowing HTTPS only from approved application/proof runner identities."
+  description = "Search security groups allowing HTTPS only from approved application/proof runner identities. Required when enable_search."
   type        = list(string)
+  default     = []
+  nullable    = false
 }
 
 variable "search_master_user_arn" {
-  description = "Existing environment-specific IAM administrator for OpenSearch role bootstrap. Never a runtime role."
+  description = "Existing environment-specific IAM administrator for OpenSearch role bootstrap. Never a runtime role. Required when enable_search."
   type        = string
+  default     = null
   validation {
-    condition     = can(regex("^arn:aws:iam::[0-9]{12}:role/.+$", var.search_master_user_arn))
+    condition     = !var.enable_search || can(regex("^arn:aws:iam::[0-9]{12}:role/.+$", var.search_master_user_arn))
     error_message = "search_master_user_arn must be an explicit AWS IAM administrator role ARN."
+  }
+}
+
+variable "sessions_bucket_name" {
+  description = "Override the sessions bucket name. null (default) keeps the computed <name_prefix>-<environment>-<account_id>-<region>-sessions. Only for an environment whose sessions bucket already exists under another name: this state then manages that bucket, so import it first (see the README) instead of letting Terraform try to create a duplicate."
+  type        = string
+  default     = null
+  validation {
+    condition     = var.sessions_bucket_name == null || can(regex("^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$", var.sessions_bucket_name))
+    error_message = "sessions_bucket_name must be a valid S3 bucket name (3-63 lowercase letters, digits, dots and hyphens)."
+  }
+}
+
+variable "sessions_bucket_import" {
+  description = "Adopt the EXISTING bucket named by sessions_bucket_name into this state with import blocks instead of creating it. Requires sessions_bucket_name. Imports the bucket and its public access block, ownership controls, encryption, versioning, lifecycle and policy (each by bucket name), except those in sessions_bucket_import_skip; the module's settings then apply as in-place updates. Default false: no import. Never point it at a bucket another tool manages (see the README)."
+  type        = bool
+  default     = false
+  nullable    = false
+  validation {
+    condition     = !var.sessions_bucket_import || var.sessions_bucket_name != null
+    error_message = "sessions_bucket_import requires sessions_bucket_name: the name of the existing bucket to adopt."
+  }
+  validation {
+    condition     = !var.sessions_bucket_import || !strcontains(coalesce(var.sessions_bucket_name, "-"), "aws-sessions-prod")
+    error_message = "Refusing to import the relayhistory-pipeline aws-sessions-prod bucket: it is Alchemy-managed and must not be adopted into this state."
+  }
+}
+
+variable "sessions_bucket_import_skip" {
+  description = "Bucket configuration resources to create instead of import when sessions_bucket_import is true, because the existing bucket has none (S3 returns no bucket policy or lifecycle configuration until one is set, and importing a missing one fails). Allowed: public_access_block, ownership_controls, server_side_encryption_configuration, versioning, lifecycle_configuration, policy. The bucket itself is always imported."
+  type        = set(string)
+  default     = []
+  nullable    = false
+  validation {
+    condition     = length(setsubtract(var.sessions_bucket_import_skip, ["public_access_block", "ownership_controls", "server_side_encryption_configuration", "versioning", "lifecycle_configuration", "policy"])) == 0
+    error_message = "sessions_bucket_import_skip may only name public_access_block, ownership_controls, server_side_encryption_configuration, versioning, lifecycle_configuration or policy."
+  }
+}
+
+variable "sessions_bucket_unmanaged" {
+  description = "With sessions_bucket_import, bucket configuration to leave exactly as it is on the existing bucket: \"policy\" and/or \"lifecycle_configuration\". Listed resources are neither imported, created nor replaced. An unmanaged policy gets no TLS denies from this state, and history_upload then plans only if the live policy already contains the upload inbox wall (see the README). Default [] manages both."
+  type        = set(string)
+  default     = []
+  nullable    = false
+  validation {
+    condition     = length(setsubtract(var.sessions_bucket_unmanaged, ["policy", "lifecycle_configuration"])) == 0
+    error_message = "sessions_bucket_unmanaged may only list policy and lifecycle_configuration."
+  }
+  validation {
+    condition     = length(var.sessions_bucket_unmanaged) == 0 || var.sessions_bucket_import
+    error_message = "sessions_bucket_unmanaged applies only to an adopted bucket (sessions_bucket_import = true); a bucket this state creates is fully managed."
+  }
+}
+
+variable "existing_pod_identity_service_accounts" {
+  description = "ServiceAccounts in this environment's namespace that already have an EKS Pod Identity association, which must already grant equivalent access. No association is created for them (EKS allows one per ServiceAccount). Applies to the sessions storage (<release>-worker, -alleyoop, -session-ingest-api) and search (<release>-search-indexer, -session-read) ServiceAccounts. Control and the history consumer cannot be listed: history_upload and desktop_feed authorize those exact roles. Default [] creates every association."
+  type        = set(string)
+  default     = []
+  nullable    = false
+  validation {
+    condition     = alltrue([for sa in var.existing_pod_identity_service_accounts : can(regex("^[a-z0-9]([-a-z0-9]*[a-z0-9])?$", sa))])
+    error_message = "existing_pod_identity_service_accounts must be Kubernetes ServiceAccount names."
   }
 }
 
@@ -335,6 +420,10 @@ variable "history_upload" {
     key_root                 = optional(string, "96bulls")
     control_service_account  = optional(string, "relay-control")
     consumer_service_account = string
+    # Optional S3 ledger re-arm sweeper (chart rearmSweeper, credentials.mode
+    # podIdentity). Its role may delete canonical object versions, so it must
+    # use its own ServiceAccount. Null creates nothing.
+    rearm_sweeper_service_account = optional(string)
   })
   default = null
   validation {
@@ -344,5 +433,13 @@ variable "history_upload" {
       var.history_upload.control_service_account != var.history_upload.consumer_service_account
     )
     error_message = "history_upload requires a valid key root and distinct Control/consumer ServiceAccounts."
+  }
+  validation {
+    condition = try(var.history_upload.rearm_sweeper_service_account, null) == null ? true : (
+      can(regex("^[a-z0-9]([-a-z0-9]*[a-z0-9])?$", var.history_upload.rearm_sweeper_service_account)) &&
+      !contains(concat([var.history_upload.control_service_account, var.history_upload.consumer_service_account, "default"],
+      [for sa in ["worker", "alleyoop", "session-ingest-api", "search-indexer", "session-read"] : "${var.release_name}-${sa}"]), var.history_upload.rearm_sweeper_service_account)
+    )
+    error_message = "history_upload.rearm_sweeper_service_account must be a dedicated ServiceAccount (not default, Control, the ingest consumer, a legacy storage account or a search account)."
   }
 }

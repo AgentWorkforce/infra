@@ -12,6 +12,7 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[2]
 FIXTURE = ROOT / "charts/sessions-pipeline/ci/read-api-values.yaml"
+LEGACY_READ_ASSUMPTIONS = ROOT / "ci/sessions-pipeline-read-api/fixtures/2026.11.0-pack-read-assumptions.yaml"
 
 
 class ReadApi(unittest.TestCase):
@@ -119,11 +120,102 @@ class ReadApi(unittest.TestCase):
                 self.assertNotIn(env_name, default_env)
                 selected = self.env_of(self.render(overlay={parent: {leaf: True}}))
                 self.assertEqual(selected[env_name]["value"], "true")
-                for invalid in ("true", 1, None):
+                for invalid in ("true", 1, [], {}):
                     self.assertIn(f"{parent}.{leaf} must be a boolean",
                                   self.render(overlay={parent: {leaf: invalid}}, fail=True))
-                self.assertIn("managed", self.render(overlay={"extraEnv": [{
-                    "name": env_name, "value": "true"}]}, fail=True))
+
+    def test_2026_11_0_legacy_read_assumptions_normalize_without_duplicate_env(self):
+        command = [
+            "helm", "template", "test", str(ROOT / "charts/agent-relay"), "-n", "agent-relay-ci", "--no-hooks",
+            "-f", str(ROOT / "charts/agent-relay/values-eks.yaml"),
+            "-f", str(ROOT / "charts/agent-relay/values-eks-rds-native.yaml"),
+            "-f", str(ROOT / "ci/agent-relay/eks-rds-native-site-values.yaml"),
+            "-f", str(LEGACY_READ_ASSUMPTIONS),
+            # The anonymized regression fixture intentionally copies only the
+            # two legacy pack keys, so disable the profile's unrelated canonical
+            # message-store assertion after its extraEnv list is replaced.
+            "--set", "sessions-pipeline.sessionReadApi.events.messageIds=false",
+        ]
+        umbrella = subprocess.run(command, capture_output=True, text=True)
+        self.assertEqual(umbrella.returncode, 0, umbrella.stderr)
+        deployment = next(d for d in yaml.safe_load_all(umbrella.stdout) if d and d.get("kind") == "Deployment" and
+                          d.get("metadata", {}).get("labels", {}).get("app.kubernetes.io/component") == "read-api")
+        entries = deployment["spec"]["template"]["spec"]["containers"][0]["env"]
+        for name in ("READ_API_TIMING_ASSUME_NO_TURNS", "READ_API_CANONICAL_PIN_LAGGING_POINTER"):
+            with self.subTest(name=name):
+                self.assertEqual([entry for entry in entries if entry["name"] == name], [{"name": name, "value": "true"}])
+
+        umbrella_notes = subprocess.run([
+            "helm", "install", "legacy-umbrella", str(ROOT / "charts/agent-relay"), "-n", "agent-relay-ci",
+            "--dry-run=client", "--no-hooks",
+            "-f", str(ROOT / "charts/agent-relay/values-eks.yaml"),
+            "-f", str(ROOT / "charts/agent-relay/values-eks-rds-native.yaml"),
+            "-f", str(ROOT / "ci/agent-relay/eks-rds-native-site-values.yaml"),
+            "-f", str(LEGACY_READ_ASSUMPTIONS),
+            "--set", "sessions-pipeline.sessionReadApi.events.messageIds=false",
+        ], capture_output=True, text=True)
+        self.assertEqual(umbrella_notes.returncode, 0, umbrella_notes.stderr)
+        self.assertIn("DEPRECATION:", umbrella_notes.stdout)
+        self.assertIn("sessions-pipeline.sessionReadApi.extraEnv", umbrella_notes.stdout)
+        self.assertIn("sessions-pipeline.sessionReadApi.timing.assumeNoTurns=true", umbrella_notes.stdout)
+        self.assertIn("sessions-pipeline.sessionReadApi.canonical.pinLaggingPointer=true", umbrella_notes.stdout)
+
+        legacy = yaml.safe_load(LEGACY_READ_ASSUMPTIONS.read_text())["sessions-pipeline"]["sessionReadApi"]
+        with tempfile.TemporaryDirectory(prefix="read-api-notes-") as directory:
+            overlay = Path(directory) / "legacy.yaml"
+            overlay.write_text(yaml.safe_dump({
+                "hoopdb": {"enabled": False},
+                "runtimeRole": {"bootstrapJob": {"enabled": False}},
+                "functionDefaultRevoke": {"bootstrapJob": {"enabled": False}},
+                "sessionReadApi": legacy,
+            }))
+            pipeline_notes = subprocess.run(
+                ["helm", "install", "legacy-pipeline", str(ROOT / "charts/sessions-pipeline"), "-n", "ci",
+                 "--dry-run=client", "-f", str(FIXTURE), "-f", str(overlay)],
+                capture_output=True,
+                text=True,
+            )
+            leaf_overlay = Path(directory) / "leaf.yaml"
+            leaf_overlay.write_text(yaml.safe_dump(legacy))
+            leaf_notes = subprocess.run(
+                ["helm", "install", "legacy-notes", str(ROOT / "charts/session-read-api"), "-n", "ci",
+                 "--dry-run=client", "-f", str(ROOT / "charts/session-read-api/ci/default-values.yaml"), "-f", str(leaf_overlay)],
+                capture_output=True,
+                text=True,
+            )
+        self.assertEqual(pipeline_notes.returncode, 0, pipeline_notes.stderr)
+        self.assertIn("DEPRECATION:", pipeline_notes.stdout)
+        self.assertIn("sessionReadApi.extraEnv", pipeline_notes.stdout)
+        self.assertIn("sessionReadApi.timing.assumeNoTurns=true", pipeline_notes.stdout)
+        self.assertIn("sessionReadApi.canonical.pinLaggingPointer=true", pipeline_notes.stdout)
+        self.assertEqual(leaf_notes.returncode, 0, leaf_notes.stderr)
+        self.assertIn("DEPRECATION:", leaf_notes.stdout)
+        self.assertIn("duplicate was dropped", leaf_notes.stdout)
+        self.assertIn("timing.assumeNoTurns=true", leaf_notes.stdout)
+        self.assertIn("canonical.pinLaggingPointer=true", leaf_notes.stdout)
+
+    def test_legacy_read_assumptions_accept_redundancy_but_refuse_conflicts(self):
+        names = {
+            "timing": ("assumeNoTurns", "READ_API_TIMING_ASSUME_NO_TURNS"),
+            "canonical": ("pinLaggingPointer", "READ_API_CANONICAL_PIN_LAGGING_POINTER"),
+        }
+        for parent, (leaf, env_name) in names.items():
+            legacy = {"name": env_name, "value": "true"}
+            for structured in (None, True):
+                with self.subTest(parent=parent, structured=structured):
+                    overlay = {"extraEnv": [legacy]}
+                    if structured is not None:
+                        overlay[parent] = {leaf: structured}
+                    env = self.env_of(self.render(overlay=overlay))
+                    self.assertEqual(env[env_name], {"name": env_name, "value": "true"})
+            conflict = self.render(overlay={parent: {leaf: False}, "extraEnv": [legacy]}, fail=True)
+            self.assertIn(f"{env_name}=true conflicts with {parent}.{leaf}=false", conflict)
+            for entry in ({"name": env_name, "value": "false"},
+                          {"name": env_name, "value": True},
+                          {"name": env_name, "valueFrom": {"secretKeyRef": {"name": "x", "key": "x"}}}):
+                with self.subTest(parent=parent, entry=entry):
+                    self.assertIn("only literal value \"true\" is compatible",
+                                  self.render(overlay={"extraEnv": [entry]}, fail=True))
 
     def self_issued(self, **changes):
         """The fixture in self_issued mode; each change is a dotted path set on a complete overlay."""
@@ -237,6 +329,14 @@ class ReadApi(unittest.TestCase):
         self.assertEqual(env["READ_API_EVENT_MESSAGE_IDS"]["value"], "true")
         self.assertIn("requires LOCKER_BUCKET", self.render(overlay={"events": {"messageIds": True}}, fail=True))
         self.assertIn("must be a boolean", self.render(overlay={"events": {"messageIds": "true"}}, fail=True))
+
+    def test_list_short_summary_is_a_dedicated_default_off_boolean(self):
+        self.assertNotIn("READ_API_LIST_SHORT_SUMMARY_ENABLED", self.env_of(self.render()))
+        env = self.env_of(self.render(overlay={"summaries": {"listShortSummary": True}}))
+        self.assertEqual(env["READ_API_LIST_SHORT_SUMMARY_ENABLED"]["value"], "true")
+        self.assertNotIn("READ_API_LIST_SHORT_SUMMARY_ENABLED", self.env_of(self.render(overlay={"summaries": {"listShortSummary": False}})))
+        for bad in ("false", "true"):
+            self.assertIn("summaries.listShortSummary must be a boolean", self.render(overlay={"summaries": {"listShortSummary": bad}}, fail=True))
 
     def test_coordination_overlaps_defaults_on_in_pipeline_with_postgres_backend(self):
         env = self.env_of(self.render())
@@ -461,16 +561,19 @@ class ReadApi(unittest.TestCase):
             "secretKeyRef": {"name": "custom", "key": "token"}}}]})
 
     def test_both_kind_profiles_keep_read_api_disabled(self):
-        for profile in ("core", "addons"):
-            with self.subTest(profile=profile):
-                command = ["helm", "template", "agent-relay", str(ROOT / "charts/agent-relay"), "-n", "agent-relay",
-                           "-f", str(ROOT / "charts/agent-relay/values-kind-core.yaml")]
-                if profile == "addons":
-                    command += ["-f", str(ROOT / "charts/agent-relay/values-kind-addons.yaml")]
-                result = subprocess.run(command, capture_output=True, text=True)
-                self.assertEqual(result.returncode, 0, result.stderr)
-                docs = [d for d in yaml.safe_load_all(result.stdout) if d]
-                self.assertFalse(any(d.get("metadata", {}).get("labels", {}).get("app.kubernetes.io/component") == "read-api" for d in docs))
+        # The kind base layer renders only through the native core composition.
+        # The control-only bootstrap phase starts no reader; serve runs only the
+        # native session-read-api, never a second (legacy readApi) reader.
+        import sys
+        sys.path.insert(0, str(ROOT / "ci/agent-relay/kind"))
+        import test_stack as kind_profiles
+        profiles = kind_profiles.Profiles()
+        for phase, expected in (("control", set()), ("serve", {"session-read-api"})):
+            with self.subTest(phase=phase):
+                docs = profiles.render(phase)
+                readers = {d["metadata"]["name"] for d in docs if d["kind"] == "Deployment" and
+                           d.get("metadata", {}).get("labels", {}).get("app.kubernetes.io/component") == "read-api"}
+                self.assertEqual(readers, expected)
 
     def test_enabled_is_internal_and_config_credentials_are_secret_refs(self):
         docs = self.render()
@@ -1031,8 +1134,8 @@ class IngestEdge(unittest.TestCase):
     def test_umbrella_default_off_and_enabled_slot_preserve_existing_specs(self):
         fixture = yaml.safe_load((ROOT / "charts/sessions-pipeline/ci/ingest-edge-values.yaml").read_text())
         command = ["helm", "template", "agent-relay", str(ROOT / "charts/agent-relay"),
-                   "-n", "agent-relay", "--is-upgrade", "-f", str(ROOT / "charts/agent-relay/values-kind-core.yaml"),
-                   "-f", str(ROOT / "charts/agent-relay/upgrade/kind-control-webapp-identities.yaml")]
+                   "-n", "agent-relay", "--is-upgrade", "-f", str(ROOT / "charts/agent-relay/values-eks.yaml"),
+                   "--set", "sessions-pipeline.worker.acknowledgeWorkloadRename=true"]
         before = subprocess.run(command, capture_output=True, text=True, timeout=30)
         self.assertEqual(before.returncode, 0, before.stderr)
         with tempfile.TemporaryDirectory(prefix="ingest-edge-umbrella-") as directory:

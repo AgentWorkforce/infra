@@ -27,7 +27,7 @@ locals {
   external_runtime_arns = var.existing_runtime_roles == null ? [] : compact(values(var.existing_runtime_roles))
   indexer_role_arn      = var.existing_runtime_roles == null ? module.search.indexer_role_arn : var.existing_runtime_roles.indexer_role_arn
   reader_role_arn       = var.existing_runtime_roles == null ? module.search.reader_role_arn : var.existing_runtime_roles.reader_role_arn
-  sessions_bucket_name  = "${local.name}-${var.account_id}-${var.region}-sessions"
+  sessions_bucket_name  = coalesce(var.sessions_bucket_name, "${local.name}-${var.account_id}-${var.region}-sessions")
   # The search indexer and session-read API read session objects from this
   # environment's own bucket, so grant it by default, with the key that
   # encrypts it (null: the AWS-managed aws/s3 key needs no key grant).
@@ -51,7 +51,7 @@ resource "terraform_data" "environment_contract" {
       error_message = "The AWS caller is in another account."
     }
     precondition {
-      condition = startswith(var.search_master_user_arn, "arn:aws:iam::${var.account_id}:role/") && !contains([
+      condition = !var.enable_search ? true : startswith(var.search_master_user_arn, "arn:aws:iam::${var.account_id}:role/") && !contains([
         "arn:aws:iam::${var.account_id}:role${local.role_path}${local.name}-search-indexer",
         "arn:aws:iam::${var.account_id}:role${local.role_path}${local.name}-search-reader",
         "arn:aws:iam::${var.account_id}:role${local.role_path}${local.name}-session-pipeline",
@@ -77,12 +77,32 @@ resource "terraform_data" "environment_contract" {
       error_message = "External runtime roles must be distinct same-account roles, separate from administration/storage; supply a pipeline role exactly when pipeline_runtime=lambda."
     }
     precondition {
-      condition     = !local.production || (var.deletion_protection && length(var.search_subnet_ids) == 3)
+      condition     = !local.production || ((!var.enable_database || var.deletion_protection) && (!var.enable_search || length(var.search_subnet_ids) == 3))
       error_message = "Production requires database deletion protection and three OpenSearch AZ subnets."
     }
     precondition {
-      condition     = var.postgres_engine_mode != "aurora" || (var.aurora_engine_version != null && var.database_instance_class != null)
+      condition     = !var.enable_database || var.postgres_engine_mode != "aurora" || (var.aurora_engine_version != null && var.database_instance_class != null)
       error_message = "Aurora requires an explicit engine version and compatible instance class."
+    }
+    precondition {
+      condition     = alltrue([for id in values(local.sessions_bucket_import_ids) : id == local.sessions_bucket_name]) && (length(local.sessions_bucket_import_ids) == 0 || contains(keys(local.sessions_bucket_import_ids), "bucket"))
+      error_message = "Sessions bucket imports must adopt the bucket itself and target only the configured sessions_bucket_name."
+    }
+    precondition {
+      condition = length(setintersection(var.existing_pod_identity_service_accounts, compact([
+        try(var.history_upload.control_service_account, null),
+        try(var.history_upload.consumer_service_account, null),
+        try(var.desktop_feed.service_account, null),
+      ]))) == 0
+      error_message = "existing_pod_identity_service_accounts cannot list the Control or history consumer ServiceAccount: history_upload and desktop_feed authorize (and the inbox wall admits) exactly the roles this state binds to them."
+    }
+    precondition {
+      condition     = var.pipeline_runtime != "lambda" || (var.enable_database && var.enable_search)
+      error_message = "Lambda mode indexes into this environment's OpenSearch and reads its PostgreSQL: it requires enable_database and enable_search."
+    }
+    precondition {
+      condition     = var.enable_search || (var.existing_runtime_roles == null && var.search_sessions_bucket_read == null)
+      error_message = "existing_runtime_roles and search_sessions_bucket_read configure search identities; leave them unset with enable_search = false."
     }
     precondition {
       condition     = var.pipeline_runtime != "lambda" || (var.lambda_package != null && length(var.function_security_group_ids) > 0)
@@ -124,6 +144,7 @@ module "postgres" {
   #checkov:skip=CKV_AWS_133:Every class profile sets backups (7/14/35 days); Checkov cannot resolve the dynamic map lookup. The live verifier checks the configured value.
   source = "../../modules/aws/postgres"
 
+  enabled                = var.enable_database
   name                   = "${local.name}-pg"
   database_name          = var.application_database_name
   engine_mode            = var.postgres_engine_mode
@@ -149,6 +170,7 @@ module "sessions_bucket" {
   bucket_name   = local.sessions_bucket_name
   kms_key_arn   = var.kms_key_arn
   force_destroy = false
+  unmanaged     = var.sessions_bucket_unmanaged
   access_role = {
     name                     = "${local.name}-sessions"
     path                     = local.role_path
@@ -157,7 +179,7 @@ module "sessions_bucket" {
       cluster_name    = var.eks_cluster_name
       namespace       = local.namespace
       service_account = "${var.release_name}-${sa}"
-    }]
+    } if !contains(var.existing_pod_identity_service_accounts, "${var.release_name}-${sa}")]
   }
   history_upload = local.history_upload_enabled ? {
     name                     = "${local.name}-desktop-upload"
@@ -165,7 +187,9 @@ module "sessions_bucket" {
     permissions_boundary_arn = local.boundary
     key_root                 = var.history_upload.key_root
     control_role_arn         = local.history_control_role_arn
-    consumer_role_arns       = [aws_iam_role.history_consumer[0].arn]
+    # With an unmanaged policy the wall is compared with the live policy at
+    # plan time, before the role exists: use its exact predicted ARN.
+    consumer_role_arns = [local.unmanaged_policy ? local.history_consumer_role_arn : aws_iam_role.history_consumer[0].arn]
   } : null
   tags = local.tags
 
@@ -176,6 +200,7 @@ module "search" {
   #checkov:skip=CKV_AWS_318:Dedicated masters are enabled for production; smaller development/staging classes intentionally omit them.
   source = "../../modules/aws/search"
 
+  enabled                       = var.enable_search
   domain_name                   = "${local.name}-search"
   engine_version                = var.search_engine_version
   subnet_ids                    = var.search_subnet_ids
@@ -192,8 +217,8 @@ module "search" {
     name_prefix              = "${local.name}-search"
     path                     = local.role_path
     permissions_boundary_arn = local.boundary
-    indexer_service_accounts = [{ cluster_name = var.eks_cluster_name, namespace = local.namespace, service_account = local.search_indexer_sa }]
-    reader_service_accounts  = [{ cluster_name = var.eks_cluster_name, namespace = local.namespace, service_account = local.search_reader_sa }]
+    indexer_service_accounts = [for sa in [local.search_indexer_sa] : { cluster_name = var.eks_cluster_name, namespace = local.namespace, service_account = sa } if !contains(var.existing_pod_identity_service_accounts, sa)]
+    reader_service_accounts  = [for sa in [local.search_reader_sa] : { cluster_name = var.eks_cluster_name, namespace = local.namespace, service_account = sa } if !contains(var.existing_pod_identity_service_accounts, sa)]
   }
   sessions_bucket_read      = local.search_sessions_bucket_read
   additional_principal_arns = distinct(concat(local.external_runtime_arns, var.pipeline_runtime == "lambda" ? [module.pipeline[0].execution_role_arn] : []))
@@ -274,6 +299,7 @@ module "chief_execution_node" {
 # contract. Each service keeps its own complete binding for a later split.
 module "postgres_layout" {
   source          = "../../modules/postgres-layout"
+  count           = var.enable_database ? 1 : 0
   host            = module.postgres.host
   port            = module.postgres.port
   database        = module.postgres.initial_database

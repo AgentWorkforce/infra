@@ -1,0 +1,126 @@
+nameOverride: ""
+fullnameOverride: ""
+
+# REQUIRED: image.digest. Deployed by immutable digest only.
+image:
+  repository: ghcr.io/agentworkforce/relaygate
+  digest: ""
+  pullPolicy: IfNotPresent
+imagePullSecrets: []
+
+# The gate's policy (relaygate examples/policy.pit.json): groups, enrollment
+# keys (sha256 of each key only, never the key), stream defaults and
+# overrides, and the classifier. Rendered to a ConfigMap; relaygate reloads it
+# on change and keeps the last good one. Use existingConfigMap (key
+# policy.json) to manage it elsewhere.
+existingConfigMap: ""
+policy:
+  groups:
+    - { gid: 11, name: local }
+    - { gid: 22, name: pit }
+    # - { gid: 44, name: guest }
+  # One key per group, each limited to the name prefix its streams use:
+  # - { id: local, gid: 11, sha256: "<sha256 of the local key>", namePrefix: "local-" }
+  # - { id: pit, gid: 22, sha256: "<sha256 of the pit key>", namePrefix: "pit-" }
+  # - { id: slack-bridge, gid: 22, sha256: "<sha256 of the bridge key>", namePrefix: "slack-" }
+  # Guests (another company's agents) get their own group, an expiry and a ceiling:
+  # - { id: vendor-guest, gid: 44, sha256: "<sha256>", namePrefix: "guest-", guest: true, expiresAt: "2027-03-31T00:00:00Z" }
+  enrollmentKeys: []
+  # Every stream is 660 (owner and group) plus an explicit ACL for each
+  # cross-group grant; there is no catch-all. Streams no default matches are
+  # private to their owner's group. (relaygate examples/policy.pit.json)
+  streamDefaults:
+    # Local channels and inboxes: the pit may read them, not write them.
+    - { prefix: "relaycast:channel/", gid: 11, mode: "660", acl: [{ gid: 22, perm: "r" }] }
+    - { prefix: "relaycast:inbox/local-", gid: 11, mode: "660", acl: [{ gid: 22, perm: "r" }] }
+    # Pit channels and inboxes: local agents may write in (ask), never read.
+    - { prefix: "relaycast:channel/pit-", gid: 22, mode: "660", acl: [{ gid: 11, perm: "w" }] }
+    - { prefix: "relaycast:inbox/pit-", gid: 22, mode: "660", acl: [{ gid: 11, perm: "w" }] }
+    - { prefix: "relaycast:inbox/slack-", gid: 22, mode: "660", acl: [{ gid: 11, perm: "w" }] }
+    # The Slack app's routing channel (slack-relay relaycast.channel, default
+    # "slack"): pit only. Local agents reach thread agents by DM, not here.
+    - { prefix: "relaycast:channel/slack", gid: 22, mode: "660" }
+    # External streams leave the cluster: pit only, classified.
+    - { prefix: "slack:", gid: 22, mode: "660", classify: true }
+    - { prefix: "kb:", gid: 22, mode: "660", classify: true }
+  streamOverrides: []
+  # Sessions (with the Sessions proxy): local sessions readable by the pit,
+  # pit sessions private to the pit. Overrides can't change a session's group.
+  sessionDefaults:
+    - { gid: 11, mode: "660", acl: [{ gid: 22, perm: "r" }] }
+    - { gid: 22, mode: "660" }
+  sessionOverrides: []
+  # Groups that may never be granted access to another, whatever an ACL says:
+  # - { gid: 44, never: [22] }
+  ceilings: []
+  classifier:
+    rules:
+      - { id: us-ssn, pattern: '\b\d{3}-\d{2}-\d{4}\b' }
+      - { id: prompt-injection, pattern: 'ignore (all )?(previous|prior) instructions' }
+    # The model classifier (Claude) judges what the rules can't. Needs
+    # secrets.anthropicApiKey when enabled.
+    model:
+      enabled: false
+      model: claude-opus-5-5
+      effort: low
+      timeoutMs: 8000
+      guidance: ""
+
+# Build 2: relaygate proxies Relaycast (REST allowlist and /v1/node/ws) and
+# Sessions (at /sessions). Clients then use relaygate as their Relaycast base
+# URL (slack-relay: relaygate.url) and https://<gate>/sessions for Sessions.
+# To make the gate the only way into Relaycast, narrow Relaycast's own
+# NetworkPolicy (relaycast chart: networkPolicy.ingressFrom) to relaygate and
+# the callers that must stay direct; see docs/self-hosted-relaygate.md.
+# Empty: that proxy is off and relaygate only serves /v1/register and /v1/check.
+proxy:
+  # e.g. http://relaycast:8787 (needs secrets.relaycastWorkspaceKey and secrets.relaygateSecret)
+  relaycastUrl: ""
+  # The one origin that serves both session reads and uploads: the
+  # sessions-pipeline nativeRouting.origin, e.g. https://history.example.com
+  # (reads and uploads are separate Services joined by nativeRouting; see
+  # docs/self-hosted-native-routing.md). Needs secrets.sessionsToken.
+  sessionsUrl: ""
+
+secrets:
+  # With proxy.relaycastUrl: the rk_live_ workspace key relaygate registers agents with upstream.
+  relaycastWorkspaceKey: { name: "", key: workspace-key }
+  # With proxy.relaycastUrl: at least 32 characters, stable for the life of the
+  # PVC (it seals the upstream agent and node tokens stored in /data).
+  relaygateSecret: { name: "", key: secret }
+  # With proxy.sessionsUrl: an rth_st_ service token with rth:sync and rth:read.
+  sessionsToken: { name: "", key: token }
+  # Optional: enables POST /admin/v1/explain ("may X do op on Y, and why").
+  adminToken: { name: "", key: token }
+  # REQUIRED when policy.classifier.model.enabled: an Anthropic API key (use a
+  # zero-data-retention key where regulated data may be classified).
+  anthropicApiKey: { name: "", key: api-key }
+
+# Audit log and registrations (SQLite). One replica: the store is single-writer.
+persistence:
+  existingClaim: ""
+  storageClassName: ""
+  size: 1Gi
+
+service:
+  port: 8080
+
+resources:
+  requests: { cpu: 50m, memory: 128Mi }
+  limits: { cpu: "1", memory: 512Mi }
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  runAsGroup: 1000
+  fsGroup: 1000
+  seccompProfile: { type: RuntimeDefault }
+containerSecurityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities: { drop: [ALL] }
+
+podAnnotations: {}
+nodeSelector: {}
+tolerations: []
+affinity: {}

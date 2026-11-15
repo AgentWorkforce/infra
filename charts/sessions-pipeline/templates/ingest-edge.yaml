@@ -2,6 +2,7 @@
 {{- $c := .Values.ingestEdge -}}
 {{- if not (kindIs "bool" $c.enabled) }}{{ fail "ingestEdge.enabled must be a boolean" }}{{ end -}}
 {{- if and (not (kindIs "invalid" $c.readerMaxRuleset)) (not (has (toString $c.readerMaxRuleset) (list "8" "9" "10"))) }}{{ fail "ingestEdge.readerMaxRuleset must be one of 8, 9, or 10" }}{{ end -}}
+{{- $ledger := include "sessions-pipeline.ingestEdge.ledger" . -}}
 {{- if $c.enabled -}}
 {{- if not (kindIs "bool" $c.claimLockBusy) }}{{ fail "ingestEdge.claimLockBusy must be a boolean" }}{{ end -}}
 {{- if not (kindIs "map" $c.admission) }}{{ fail "ingestEdge.admission must be an object" }}{{ end -}}
@@ -76,9 +77,17 @@
 {{- if not $podIdentity -}}
 {{- $storeSecret = required "ingestEdge.locker.existingSecret is required" $c.locker.existingSecret -}}
 {{- end -}}
-{{- $caMap := required "ingestEdge.postgres.caConfigMap is required" $c.postgres.caConfigMap -}}
-{{- $caHash := required "ingestEdge.postgres.caSha256 is required" $c.postgres.caSha256 -}}
+{{- $tls := $c.postgres.tlsProfile | default "custom-ca" -}}
+{{- if not (has $tls (list "supabase" "custom-ca")) }}{{ fail "ingestEdge.postgres.tlsProfile must be supabase or custom-ca" }}{{ end -}}
+{{- $caMap := "" -}}
+{{- $caHash := "" -}}
+{{- if eq $tls "custom-ca" -}}
+{{- $caMap = required "ingestEdge.postgres.caConfigMap is required" $c.postgres.caConfigMap -}}
+{{- $caHash = required "ingestEdge.postgres.caSha256 is required" $c.postgres.caSha256 -}}
 {{- if not (regexMatch "^[a-f0-9]{64}$" $caHash) }}{{ fail "ingestEdge.postgres.caSha256 must be 64 lowercase hex characters" }}{{ end -}}
+{{- else if or $c.postgres.caConfigMap $c.postgres.caSha256 -}}
+{{- fail "ingestEdge.postgres.tlsProfile=supabase pins the built-in Supabase CA; leave caConfigMap and caSha256 empty" -}}
+{{- end -}}
 {{- range $ref := compact (list $runtimeSecret $storeSecret $caMap) -}}
 {{- if or (gt (len $ref) 253) (not (regexMatch "^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?)*$" $ref)) }}{{ fail "ingestEdge Secret and ConfigMap names must be Kubernetes DNS subdomains" }}{{ end -}}
 {{- end -}}
@@ -174,6 +183,9 @@ spec:
             - { name: http, containerPort: {{ $c.port }}, protocol: TCP }
           env:
             {{- include "sessions-pipeline.analytics.env" $c.analytics | nindent 12 }}
+            {{- if or .Values.global.operatorSessionErase.fenceEnforced .Values.operatorSessionErase.api.enabled .Values.operatorSessionErase.bytes.enabled }}
+            {{- include "sessions-pipeline.operatorSessionErase.ingestEnv" . | nindent 12 }}
+            {{- end }}
             - { name: SERVICE, value: session-ingest }
             {{- include "sessions-pipeline.scrubEngine" (dict "root" . "localReader" $c.readerMaxRuleset "localName" "ingestEdge.readerMaxRuleset") | nindent 12 }}
             - { name: RELAYHISTORY_SELFHOST_INGEST, value: "true" }
@@ -186,9 +198,11 @@ spec:
             - name: RELAYHISTORY_INGEST_DATABASE_URL
               valueFrom:
                 secretKeyRef: { name: {{ $runtimeSecret | quote }}, key: {{ $c.config.databaseUrlKey | quote }} }
-            - { name: SESSION_POSTGRES_TLS_PROFILE, value: custom-ca }
+            - { name: SESSION_POSTGRES_TLS_PROFILE, value: {{ $tls | quote }} }
+            {{- if eq $tls "custom-ca" }}
             - { name: SESSION_POSTGRES_CA_FILE, value: /etc/session-ingest-postgres/ca.crt }
             - { name: SESSION_POSTGRES_CA_SHA256, value: {{ $caHash | quote }} }
+            {{- end }}
             - { name: RELAYHISTORY_INGEST_PG_POOL_MAX, value: {{ $c.postgres.poolMax | quote }} }
             - { name: ALLOW_IN_CLUSTER_HTTP, value: {{ $c.allowInClusterHttp | quote }} }
             - { name: LOCKER_PROVIDER, value: {{ $provider | quote }} }
@@ -212,6 +226,9 @@ spec:
             - { name: RELAYHISTORY_SELFHOST_HEARTBEAT_ACCEPT, value: "true" }
             {{- end }}
             - { name: INGEST_KEY_ROOT, value: {{ $c.keyRoot | quote }} }
+            {{- if eq $ledger "s3" }}
+            - { name: INGEST_LEDGER, value: "s3" }
+            {{- end }}
             - { name: INGEST_MAX_PER_USER, value: {{ $c.maxPerUser | quote }} }
             - { name: INGEST_MAX_PER_ORG, value: {{ $c.maxPerOrg | quote }} }
             {{- if $c.claimLockBusy }}
@@ -268,15 +285,19 @@ spec:
           volumeMounts:
             {{- include "sessions-pipeline.analytics.mount" $c.analytics | nindent 12 }}
             - { name: tmp, mountPath: /tmp }
+            {{- if eq $tls "custom-ca" }}
             - { name: postgres-ca, mountPath: /etc/session-ingest-postgres, readOnly: true }
+            {{- end }}
       volumes:
         {{- include "sessions-pipeline.analytics.volume" $c.analytics | nindent 8 }}
         - name: tmp
           emptyDir: { sizeLimit: 64Mi }
+        {{- if eq $tls "custom-ca" }}
         - name: postgres-ca
           configMap:
             name: {{ $caMap | quote }}
             items: [{ key: {{ $c.postgres.caKey | quote }}, path: ca.crt }]
+        {{- end }}
 ---
 apiVersion: v1
 kind: Service

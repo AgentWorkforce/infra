@@ -23,6 +23,19 @@ on:
         description: Full lowercase source commit
         required: true
         type: string
+      publish_run_id:
+        description: relayhistory-pipeline publish run; required only for sessions-pipeline
+        required: false
+        type: string
+      override_frozen:
+        description: Approver-only override for a FROZEN qualified candidate
+        required: false
+        default: false
+        type: boolean
+      override_reason:
+        description: Audit reason; required when override_frozen is true
+        required: false
+        type: string
   repository_dispatch:
     types: [component-published]
 
@@ -41,6 +54,9 @@ jobs:
       COMPONENT: ${{ github.event.inputs.component || github.event.client_payload.component }}
       DIGEST: ${{ github.event.inputs.digest || github.event.client_payload.digest }}
       SOURCE_SHA: ${{ github.event.inputs.source_sha || github.event.client_payload.source_sha }}
+      PUBLISH_RUN_ID: ${{ github.event.inputs.publish_run_id || github.event.client_payload.publish_run_id || github.event.client_payload.publishRunId || '' }}
+      OVERRIDE_FROZEN: ${{ inputs.override_frozen && 'true' || 'false' }}
+      OVERRIDE_REASON: ${{ github.event.inputs.override_reason || '' }}
     steps:
       # A GITHUB_TOKEN-authored push suppresses follow-on workflow events.
       # The scoped App token is therefore required for release-branch CI and
@@ -67,13 +83,15 @@ jobs:
         id: request
         shell: bash
         env:
-          GH_TOKEN: ${{ steps.pusher.outputs.token }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
           # The target release branch may predate this workflow. Carry the
           # reviewed default-branch implementation across the branch switch.
           install -m 0755 scripts/release/update-release-candidate.py \
             "$RUNNER_TEMP/update-release-candidate.py"
+          install -m 0755 scripts/release/verify-sessions-pipeline-sigstore.py \
+            "$RUNNER_TEMP/verify-sessions-pipeline-sigstore.py"
           python3 ci/agent-relay/test_release_candidate.py -v
           metadata="$(python3 "$RUNNER_TEMP/update-release-candidate.py" describe --component "$COMPONENT")"
           repository="$(jq -er '.imageRepository' <<<"$metadata")"
@@ -106,14 +124,67 @@ jobs:
             echo "::error::source_sha must be a full lowercase Git commit."
             exit 1
           fi
+          if [[ "$COMPONENT" == "sessions-pipeline" ]]; then
+            if [[ ! "$PUBLISH_RUN_ID" =~ ^[1-9][0-9]{0,19}$ ]]; then
+              echo "::error::sessions-pipeline requires a positive publish_run_id."
+              exit 1
+            fi
+          elif [[ -n "$PUBLISH_RUN_ID" ]]; then
+            echo "::error::publish_run_id applies only to sessions-pipeline."
+            exit 1
+          fi
 
           branch="release/agent-relay-$version"
+          frozen_path="releases/agent-relay-${version}/FROZEN"
+          is_frozen="$(python3 "$RUNNER_TEMP/update-release-candidate.py" \
+            check-frozen --path "$frozen_path")"
+          if git ls-remote --exit-code --heads origin "$branch" >/dev/null 2>&1; then
+            git fetch origin "$branch"
+            if git cat-file -e "FETCH_HEAD:${frozen_path}" 2>/dev/null; then
+              git show "FETCH_HEAD:${frozen_path}" > "$RUNNER_TEMP/remote-FROZEN"
+              python3 "$RUNNER_TEMP/update-release-candidate.py" \
+                check-frozen --path "$RUNNER_TEMP/remote-FROZEN" >/dev/null
+              is_frozen=true
+            fi
+          fi
+          allow_frozen=false
+          if [[ "$is_frozen" == "true" ]]; then
+            if [[ "$GITHUB_EVENT_NAME" != "workflow_dispatch" ]]; then
+              echo "::error::agent-relay-${version} is FROZEN as a qualified candidate; repository_dispatch cannot overwrite it."
+              exit 1
+            fi
+            if [[ "$OVERRIDE_FROZEN" != "true" ]]; then
+              echo "::error::agent-relay-${version} is FROZEN; manual dispatch requires override_frozen=true."
+              exit 1
+            fi
+            if [[ ${#OVERRIDE_REASON} -lt 10 || ${#OVERRIDE_REASON} -gt 200 \
+              || "$OVERRIDE_REASON" == *$'\n'* || "$OVERRIDE_REASON" == *$'\r'* \
+              || "$OVERRIDE_REASON" == *[![:print:]]* ]]; then
+              echo "::error::A printable single-line 10-200 character override_reason is required."
+              exit 1
+            fi
+            repository_permission="$(gh api \
+              "repos/$GITHUB_REPOSITORY/collaborators/$GITHUB_ACTOR/permission" \
+              --jq '.permission // "none"')"
+            case "$repository_permission" in
+              admin|write) ;;
+              *) echo "::error::FROZEN override requires an approver with repository push permission."; exit 1 ;;
+            esac
+            allow_frozen=true
+            echo "::notice::FROZEN candidate override by ${GITHUB_ACTOR}: ${OVERRIDE_REASON}"
+            printf 'FROZEN candidate override by `%s`: %s\n' \
+              "$GITHUB_ACTOR" "$OVERRIDE_REASON" >> "$GITHUB_STEP_SUMMARY"
+          elif [[ "$OVERRIDE_FROZEN" == "true" ]]; then
+            echo "::error::override_frozen is valid only for an existing FROZEN candidate."
+            exit 1
+          fi
           {
             echo "version=$version"
             echo "branch=$branch"
             echo "repository=$repository"
             echo "source_repository=$source_repository"
             echo "signer_workflow=$signer_workflow"
+            echo "allow_frozen=$allow_frozen"
           } >> "$GITHUB_OUTPUT"
 
       - name: Enforce image and scrubber policy
@@ -145,7 +216,13 @@ jobs:
           set -euo pipefail
           printf '%s' "$GH_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
 
-      - name: Verify GitHub build provenance
+      - name: Install Cosign for Sessions provenance
+        if: env.COMPONENT == 'sessions-pipeline'
+        uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
+        with:
+          cosign-release: v3.1.4
+
+      - name: Verify component build provenance
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.BULLS96_READ_TOKEN || secrets.GITHUB_TOKEN }}
@@ -154,26 +231,41 @@ jobs:
           SIGNER_WORKFLOW: ${{ steps.request.outputs.signer_workflow }}
         run: |
           set -euo pipefail
-          gh attestation verify "oci://${IMAGE_REPOSITORY}@${DIGEST}" \
-            --repo "$SOURCE_REPOSITORY" \
-            --signer-workflow "$SOURCE_REPOSITORY/$SIGNER_WORKFLOW" \
-            --source-digest "$SOURCE_SHA" \
-            --source-ref refs/heads/main \
-            --format json > "$RUNNER_TEMP/verified-attestation.json"
-          jq -e \
-            --arg repository "https://github.com/$SOURCE_REPOSITORY" \
-            --arg workflow "$SIGNER_WORKFLOW" '
-              length > 0 and all(.[].verificationResult.statement.predicate;
-                .buildDefinition.externalParameters.workflow.repository == $repository and
-                .buildDefinition.externalParameters.workflow.path == $workflow and
-                .buildDefinition.externalParameters.workflow.ref == "refs/heads/main")
-            ' "$RUNNER_TEMP/verified-attestation.json" >/dev/null
+          if [[ "$COMPONENT" == "sessions-pipeline" ]]; then
+            receipt_dir="$RUNNER_TEMP/sessions-pipeline-release-receipt"
+            mkdir "$receipt_dir"
+            gh run download "$PUBLISH_RUN_ID" \
+              --repo AgentWorkforce/relayhistory-pipeline \
+              --name release-receipt \
+              --dir "$receipt_dir"
+            python3 "$RUNNER_TEMP/verify-sessions-pipeline-sigstore.py" \
+              --receipt-dir "$receipt_dir" \
+              --digest "$DIGEST" \
+              --source-sha "$SOURCE_SHA" \
+              --publish-run-id "$PUBLISH_RUN_ID"
+          else
+            gh attestation verify "oci://${IMAGE_REPOSITORY}@${DIGEST}" \
+              --repo "$SOURCE_REPOSITORY" \
+              --signer-workflow "$SOURCE_REPOSITORY/$SIGNER_WORKFLOW" \
+              --source-digest "$SOURCE_SHA" \
+              --source-ref refs/heads/main \
+              --format json > "$RUNNER_TEMP/verified-attestation.json"
+            jq -e \
+              --arg repository "https://github.com/$SOURCE_REPOSITORY" \
+              --arg workflow "$SIGNER_WORKFLOW" '
+                length > 0 and all(.[].verificationResult.statement.predicate;
+                  .buildDefinition.externalParameters.workflow.repository == $repository and
+                  .buildDefinition.externalParameters.workflow.path == $workflow and
+                  .buildDefinition.externalParameters.workflow.ref == "refs/heads/main")
+              ' "$RUNNER_TEMP/verified-attestation.json" >/dev/null
+          fi
 
       - name: Reconcile and push candidate state
         shell: bash
         env:
           BRANCH: ${{ steps.request.outputs.branch }}
           VERSION: ${{ steps.request.outputs.version }}
+          ALLOW_FROZEN: ${{ steps.request.outputs.allow_frozen }}
         run: |
           set -euo pipefail
           git config user.name github-actions[bot]
@@ -196,11 +288,19 @@ jobs:
             else
               git checkout -B "$BRANCH" origin/main
             fi
-            python3 "$RUNNER_TEMP/update-release-candidate.py" update \
-              --version "$VERSION" \
-              --component "$COMPONENT" \
-              --digest "$DIGEST" \
+            update_args=(
+              --version "$VERSION"
+              --component "$COMPONENT"
+              --digest "$DIGEST"
               --source-sha "$SOURCE_SHA"
+            )
+            if [[ "$COMPONENT" == "sessions-pipeline" ]]; then
+              update_args+=(--publish-run-id "$PUBLISH_RUN_ID")
+            fi
+            if [[ "$ALLOW_FROZEN" == "true" ]]; then
+              update_args+=(--allow-frozen)
+            fi
+            python3 "$RUNNER_TEMP/update-release-candidate.py" update "${update_args[@]}"
             git add "releases/agent-relay-${VERSION}"
             if ! git diff --cached --quiet; then
               git commit -m "release(agent-relay): candidate ${COMPONENT} pin"
@@ -240,8 +340,15 @@ jobs:
               gh pr view "$pr_number" --repo "$GITHUB_REPOSITORY" \
                 --json body --jq '.body // ""' > "$RUNNER_TEMP/pr-body.md"
             else
-              printf 'Tracking PR for **agent-relay-%s**. Candidate pins are provenance-verified; acceptance and approval are separate release gates.\n' \
-                "$VERSION" > "$RUNNER_TEMP/pr-body.md"
+              # shellcheck disable=SC2016 # the backticks are literal Markdown
+              {
+                printf 'Tracking PR for **agent-relay-%s**. Candidate pins are provenance-verified; acceptance and approval are separate release gates.\n\n' "$VERSION"
+                printf '## After the release publishes: move the install guides to it\n\n'
+                printf -- '- [ ] infra `docs/azure-install/README.md` and `docs/gcp-install/` (release, tag commit, chart tgz)\n'
+                printf -- '- [ ] agentrelay.com `web/content/self-hosting/install-{aks,gke,eks}.md`, the image pins in `web/public/self-hosting/files/eks/values.yaml`, then `node web/scripts/selfhost-files.mjs write`\n'
+                printf -- '- [ ] relay-agent `npm run selfhost-docs:sync -- --ref <agentrelay.com main>` and `npm run build:knowledge`\n'
+                printf -- '- [ ] render each guide against the published assets (checksums OK, images match this release'"'"'s pins); say "render-only" unless it was installed\n'
+              } > "$RUNNER_TEMP/pr-body.md"
             fi
             python3 "$RUNNER_TEMP/update-release-candidate.py" render-body \
               --pins "$RUNNER_TEMP/latest-pins.json" \

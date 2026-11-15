@@ -39,7 +39,10 @@ behaviours apply to releases cut after they were added.
    - **Plan role (read-only)**, trusted for `repo:<org>/<repo>:ref:refs/heads/main`:
      `eks:DescribeCluster`, and an EKS access entry with read-only (view)
      access to the `agent-relay` namespace plus read of Helm release Secrets.
-     The plan job never writes to ECR, RDS or the cluster.
+     The plan job never writes to ECR, RDS or the cluster. With this role the
+     Sessions index census (a short-lived read-only pod) cannot run in plan, so
+     the plan says it is deferred; the apply job runs it before any snapshot,
+     image push or helm change, and refuses there with nothing changed.
    - **Apply role (write)**, trusted **only** for
      `repo:<org>/<repo>:environment:agent-relay-upgrade`, so it can be assumed
      only by a job your reviewers approved. It needs:
@@ -113,6 +116,15 @@ it feeds:
   Without it, `post` and `refresh-admin` cannot run, and the role passwords
   exist only in the Kubernetes Secrets. If the directory may have been
   exposed, rotate the database role passwords and the RDS admin password.
+
+## Relaycast to durable-actors (opt-in)
+
+Moving Relaycast from PostgreSQL to durable-actors runs through the same
+workflow, on the version already deployed, in two approved runs: first
+`relaycast-actors: credentials`, then (once the plan reports no legacy
+principals) `relaycast-actors: cutover` with `actors-values` naming your
+overrides for `values-eks-actors.yaml`. Messaging is down during the cutover.
+See [relaycast-postgres-to-actors-migration.md](relaycast-postgres-to-actors-migration.md).
 
 ## The workflow file
 

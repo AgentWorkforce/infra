@@ -58,7 +58,7 @@ render_all() { # root outdir
       $missing && continue
       # shellcheck disable=SC2086
       helm template $args --no-hooks \
-        | sed -E 's/^([[:space:]]*helm\.sh\/chart: "?)([a-z0-9-]+)-[0-9]+\.[0-9]+\.[0-9]+[^"[:space:]]*/\1\2-VERSION/' >"$out/$name.yaml"
+        | sed -E 's/^([[:space:]]*helm\.sh\/chart: "?)([A-Za-z0-9-]+)-[0-9]+\.[0-9]+\.[0-9]+[^"[:space:]]*/\1\2-VERSION/' >"$out/$name.yaml"
     done )
 }
 

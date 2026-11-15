@@ -111,7 +111,7 @@ def image(manifest: dict[str, Any]) -> dict[str, Any]:
 def add_hard_blocker(manifest: dict[str, Any]) -> None:
     manifest["status"] = "blocked"
     manifest["blockers"] = [
-        {"id": "IMG-BLOCK-TEST", "severity": "hard", "images": ["relayhistory"]}
+        {"id": "IMG-BLOCK-TEST", "severity": "hard", "images": ["relay-control"]}
     ]
 
 
@@ -144,26 +144,26 @@ def chart_default_drift(work: Path) -> None:
 
 def unrendered_manifest_image(manifest: dict[str, Any]) -> None:
     extra = json.loads(json.dumps(image(manifest)))
-    extra["id"] = "relayhistory-unused"
+    extra["id"] = "relay-control-unused"
     extra["current"]["repository"] = "registry.northwind.io/agent-relay/unused"
     manifest["images"].append(extra)
 
 
 def placeholder_values(values: dict[str, Any]) -> None:
-    values["relayhistory"]["image"][
+    values["control"]["image"][
         "repository"
-    ] = "us-central1-docker.pkg.dev/example-project/example-images/relayhistory"
+    ] = "us-central1-docker.pkg.dev/example-project/example-images/relay-control"
 
 
 def placeholder_manifest(manifest: dict[str, Any]) -> None:
     image(manifest)["current"][
         "repository"
-    ] = "us-central1-docker.pkg.dev/example-project/example-images/relayhistory"
+    ] = "us-central1-docker.pkg.dev/example-project/example-images/relay-control"
 
 
-def drop_relayhistory_license(evidence: dict[str, Any]) -> None:
+def drop_control_license(evidence: dict[str, Any]) -> None:
     evidence["licenses"]["firstParty"] = [
-        x for x in evidence["licenses"]["firstParty"] if x["id"] != "relayhistory"
+        x for x in evidence["licenses"]["firstParty"] if x["id"] != "relay-control"
     ]
 
 
@@ -187,7 +187,7 @@ CASES: list[tuple[str, str, Callable[[Path], None]]] = [
         "registry",
         manifest_case(
             lambda m: image(m)["current"].update(
-                repository="proof.registry.example.com/relayhistory"
+                repository="proof.registry.example.com/relay-control"
             )
         ),
     ),
@@ -196,7 +196,7 @@ CASES: list[tuple[str, str, Callable[[Path], None]]] = [
         "registry",
         manifest_case(
             lambda m: image(m)["current"].update(
-                repository="private.registry.example.com/relayhistory"
+                repository="private.registry.example.com/relay-control"
             )
         ),
     ),
@@ -217,7 +217,7 @@ CASES: list[tuple[str, str, Callable[[Path], None]]] = [
                 firstParty=[
                     x
                     for x in e["licenses"]["firstParty"]
-                    if x["id"] != "relayhistory"
+                    if x["id"] != "relay-control"
                 ]
             )
         ),
@@ -245,19 +245,12 @@ CASES: list[tuple[str, str, Callable[[Path], None]]] = [
             lambda m: image(m)["release"].update(publishesProvenance=False)
         ),
     ),
-    (
-        "stale RelayHistory migration count",
-        "relayhistory-migrations",
-        evidence_case(
-            lambda e: e["relayHistoryMigrations"].update(imageCount=23)
-        ),
-    ),
     ("non-test Helm hook", "helm-hooks", non_test_hook),
     (
         "mutable image tag",
         "mutable-image",
         values_case(
-            lambda v: v["relayhistory"]["image"].update(
+            lambda v: v["control"]["image"].update(
                 digest="", tag="latest"
             )
         ),
@@ -266,7 +259,7 @@ CASES: list[tuple[str, str, Callable[[Path], None]]] = [
         "values image differs from the manifest",
         "rendered-images",
         values_case(
-            lambda v: v["relayhistory"]["image"].update(
+            lambda v: v["control"]["image"].update(
                 repository="docker.io/attacker/unreviewed"
             )
         ),
@@ -288,7 +281,7 @@ CASES: list[tuple[str, str, Callable[[Path], None]]] = [
         "source-repository",
         compose(
             manifest_case(lambda m: image(m)["source"].update(repository="")),
-            evidence_case(drop_relayhistory_license),
+            evidence_case(drop_control_license),
         ),
     ),
     (
@@ -296,7 +289,7 @@ CASES: list[tuple[str, str, Callable[[Path], None]]] = [
         "source-repository",
         manifest_case(
             lambda m: image(m)["source"].update(
-                repository="https://github.com/attacker/relayhistory"
+                repository="https://github.com/attacker/relay-control"
             )
         ),
     ),

@@ -1,0 +1,141 @@
+"""Pinned local actor build; no command runs when the module is imported."""
+import json
+import re
+import hashlib
+import tarfile
+
+from stack import StackError, private_json
+from local_actor_recipe import recipe
+
+IMAGE_ID = re.compile(r"sha256:[0-9a-f]{64}")
+
+
+def checkout(stack, path, selected):
+    """Reuse only an exact, clean checkout from the pinned public repository."""
+    if path.is_symlink():
+        raise StackError("local actor source cache must not be a symlink")
+    if not path.exists():
+        stack.cmd(["git", "clone", "--no-checkout", "--filter=blob:none", "--", selected["repository"], path], timeout=600)
+        stack.cmd(["git", "-C", path, "checkout", "--detach", selected["revision"]], timeout=300)
+    if (stack.cmd(["git", "-C", path, "rev-parse", "HEAD"]).stdout.strip() != selected["revision"]
+            or stack.cmd(["git", "-C", path, "remote", "get-url", "origin"]).stdout.strip() != selected["repository"]
+            or stack.cmd(["git", "-C", path, "status", "--porcelain", "--untracked-files=all"]).stdout.strip()):
+        raise StackError("local actor source cache differs from its pinned revision; no checkout is overwritten")
+
+
+def inspect(stack, tag):
+    result = stack.cmd([*stack.docker_args, "image", "inspect", tag, "--format", "{{.Id}}"], check=False)
+    value = result.stdout.strip()
+    return value if result.returncode == 0 and IMAGE_ID.fullmatch(value) else None
+
+
+def build(stack, selected=None):
+    """Build upstream and its matching actor bundle; return explicit local image IDs."""
+    selected = recipe() if selected is None else selected
+    directory = stack.state / "actor-build"
+    directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+    receipt_path = directory / "images.json"
+    if receipt_path.is_symlink():
+        raise StackError("local actor build receipt must not be a symlink")
+    if receipt_path.exists():
+        try:
+            previous = json.loads(receipt_path.read_text())
+            if (previous.get("recipeSha256") == selected["recipeSha256"]
+                    and previous.get("runtimeImageId") == inspect(stack, selected["runtimeTag"])
+                    and previous.get("actorImageId") == inspect(stack, selected["actorTag"])
+                    and previous.get("runtimeImageId") is not None and previous.get("actorImageId") is not None):
+                return previous
+        except (OSError, ValueError):
+            pass
+    source_directory = directory / "sources"
+    source_directory.mkdir(mode=0o700, exist_ok=True)
+    for name in ("upstream", "relaycast"):
+        checkout(stack, source_directory / name, selected["source"][name])
+    upstream, relaycast = source_directory / "upstream", source_directory / "relaycast"
+    # Keep the source checkout exact. This sole Dockerfile transformation bounds
+    # Rust memory pressure on a laptop that may also run a viewing fixture.
+    dockerfile = (upstream / "Dockerfile").read_text()
+    marker = "FROM rust:1.91.0-bookworm AS builder\n"
+    if dockerfile.count(marker) != 1:
+        raise StackError("pinned upstream Rust build stage was not recognized")
+    runtime_dockerfile = directory / "upstream.Dockerfile"
+    if runtime_dockerfile.is_symlink():
+        raise StackError("local actor build Dockerfile must not be a symlink")
+    runtime_dockerfile.write_text(dockerfile.replace(marker, marker + "ARG CARGO_BUILD_JOBS=" + str(selected["source"]["upstream"]["cargoJobs"]) + "\n", 1))
+    package = json.loads((relaycast / "packages/actors-workspace/package.json").read_text())
+    if package.get("dependencies", {}).get("durable-actors") != selected["source"]["upstream"]["sdkVersion"]:
+        raise StackError("local actor SDK does not match the pinned upstream runtime")
+    runtime_id, actor_id = directory / "upstream.iid", directory / "actor.iid"
+    for path in (runtime_id, actor_id):
+        if path.is_symlink():
+            raise StackError("local actor image ID file must not be a symlink")
+    stack.cmd([*stack.docker_args, "build", "--builder", "default", "--target", "typescript", "--iidfile", runtime_id,
+        "--label", "org.opencontainers.image.revision=" + selected["source"]["upstream"]["revision"],
+        "-t", selected["runtimeTag"], "-f", runtime_dockerfile, upstream], timeout=3600)
+    stack.cmd([*stack.docker_args, "build", "--builder", "default", "--iidfile", actor_id,
+        "--build-arg", "DURABLE_ACTORS_TYPESCRIPT_IMAGE=" + selected["runtimeTag"],
+        "--label", "org.opencontainers.image.revision=" + selected["source"]["relaycast"]["revision"],
+        "--label", "dev.agentrelay.actor-recipe=" + selected["recipeSha256"],
+        "-t", selected["actorTag"], "-f", selected["dockerfile"], relaycast], timeout=1800)
+    built = {"kind": "local-source-build", "recipeSha256": selected["recipeSha256"],
+        "upstreamRevision": selected["source"]["upstream"]["revision"],
+        "relaycastRevision": selected["source"]["relaycast"]["revision"],
+        "gateway": selected["source"]["gateway"]["reference"],
+        "runtimeTag": selected["runtimeTag"], "runtimeImageId": inspect(stack, selected["runtimeTag"]),
+        "actorTag": selected["actorTag"], "actorImageId": inspect(stack, selected["actorTag"])}
+    if (not built["runtimeImageId"] or not built["actorImageId"]
+            or runtime_id.read_text().strip() != built["runtimeImageId"]
+            or actor_id.read_text().strip() != built["actorImageId"]):
+        raise StackError("built local actor image IDs did not match Docker inspection")
+    private_json(receipt_path, built)
+    print("Local actor build (image IDs, not published registry digests): " + json.dumps(built), flush=True)
+    return built
+
+
+def config_id(stack, built):
+    if IMAGE_ID.fullmatch(built.get("actorConfigId", "")):
+        return built["actorConfigId"]
+    # With Docker Desktop's containerd store, .Id / --iidfile can name an
+    # index, while CRI reports the image config digest. Bind both via the
+    # exact image export rather than equating those different identities.
+    archive = stack.state / "actor-build/actor-image.tar"
+    if archive.is_symlink():
+        raise StackError("actor export must not be a symlink")
+    try:
+        stack.cmd([*stack.docker_args, "image", "save", "-o", archive, built["actorTag"]], timeout=180)
+        with tarfile.open(archive) as saved:
+            manifest = json.load(saved.extractfile("manifest.json"))
+            if len(manifest) != 1:
+                raise StackError("actor export must contain one image")
+            member = saved.getmember(manifest[0]["Config"])
+            if not member.isfile() or member.size > 16 * 1024 * 1024:
+                raise StackError("actor export config is invalid")
+            digest = "sha256:" + hashlib.sha256(saved.extractfile(member).read()).hexdigest()
+        if inspect(stack, built["actorTag"]) != built["actorImageId"]:
+            raise StackError("local actor image changed during export")
+        built["actorConfigId"] = digest
+        return digest
+    finally:
+        archive.unlink(missing_ok=True)
+
+
+def load(stack, built):
+    expected_config = config_id(stack, built)
+    stack.cmd(["kind", "load", "docker-image", "--name", stack.name, built["actorTag"]], timeout=300)
+    # Bind the local Docker config ID to containerd's names on every owned node.
+    # Pod imageID can be the config ID or a repository digest, depending on CRI.
+    nodes = stack.cmd(["kind", "get", "nodes", "--name", stack.name]).stdout.splitlines()
+    if not nodes:
+        raise StackError("local actor image has no owned Kind nodes")
+    imported = {}
+    for node in nodes:
+        status = json.loads(stack.cmd([*stack.docker_args, "exec", node, "crictl", "inspecti", built["actorTag"]]).stdout)["status"]
+        if status.get("id") != expected_config:
+            raise StackError("Kind imported actor image differs from the local build")
+        digests = status.get("repoDigests", [])
+        if not isinstance(digests, list) or any(not isinstance(d, str) or not re.fullmatch(r"[^\s]+@sha256:[0-9a-f]{64}", d) for d in digests):
+            raise StackError("Kind actor repository digests are invalid")
+        imported[node] = {"imageId": status["id"], "repoDigests": digests}
+    built["kindImages"] = imported
+    private_json(stack.state / "actor-build/images.json", built)
+    print("Imported local actor image: " + json.dumps({key: built[key] for key in ("actorImageId", "actorConfigId", "kindImages")}), flush=True)

@@ -3,7 +3,7 @@ locals {
   major_version = split(".", var.engine_version)[0]
   family        = local.aurora ? "aurora-postgresql${local.major_version}" : "postgres${local.major_version}"
 
-  create_subnet_group = var.db_subnet_group_name == null
+  create_subnet_group = var.enabled && var.db_subnet_group_name == null
   subnet_group_name   = local.create_subnet_group ? aws_db_subnet_group.this[0].name : var.db_subnet_group_name
 
   # pg_trgm and vector are always allowed: RelayHistory runs CREATE EXTENSION for both.
@@ -17,7 +17,9 @@ locals {
 }
 
 # A unique final snapshot name per database lifetime, so destroying a
-# recreated database never collides with an earlier final snapshot.
+# recreated database never collides with an earlier final snapshot. Not gated
+# by `enabled`: it holds no AWS object, and keeping its address unchanged keeps
+# existing states plan-identical.
 resource "random_id" "final_snapshot" {
   keepers = {
     name        = var.name
@@ -47,7 +49,7 @@ resource "aws_db_subnet_group" "this" {
 # ---------------------------------------------------------------------------
 
 resource "aws_db_parameter_group" "this" {
-  count = local.aurora ? 0 : 1
+  count = var.enabled && !local.aurora ? 1 : 0
 
   name        = var.name
   family      = local.family
@@ -70,7 +72,7 @@ resource "aws_db_parameter_group" "this" {
 
 resource "aws_db_instance" "this" {
   #checkov:skip=CKV_AWS_118:Enhanced Monitoring needs a monitoring role; opt in with monitoring_interval and monitoring_role_arn.
-  count = local.aurora ? 0 : 1
+  count = var.enabled && !local.aurora ? 1 : 0
 
   identifier     = var.name
   engine         = "postgres"
@@ -134,7 +136,7 @@ resource "aws_db_instance" "this" {
 # ---------------------------------------------------------------------------
 
 resource "aws_rds_cluster_parameter_group" "this" {
-  count = local.aurora ? 1 : 0
+  count = var.enabled && local.aurora ? 1 : 0
 
   name        = var.name
   family      = local.family
@@ -158,7 +160,7 @@ resource "aws_rds_cluster_parameter_group" "this" {
 resource "aws_rds_cluster" "this" {
   #checkov:skip=CKV2_AWS_8:Automated backups and PITR are on; AWS Backup plans are an account-level choice.
   #checkov:skip=CKV2_AWS_27:Statement logging would log transcript-bearing SQL; opt in with parameters (log_statement).
-  count = local.aurora ? 1 : 0
+  count = var.enabled && local.aurora ? 1 : 0
 
   cluster_identifier = var.name
   engine             = "aurora-postgresql"
@@ -213,7 +215,7 @@ resource "aws_rds_cluster" "this" {
 
 resource "aws_rds_cluster_instance" "this" {
   #checkov:skip=CKV_AWS_118:Enhanced Monitoring needs a monitoring role; opt in with monitoring_interval and monitoring_role_arn.
-  count = local.aurora ? var.aurora_instance_count : 0
+  count = var.enabled && local.aurora ? var.aurora_instance_count : 0
 
   identifier         = "${var.name}-${count.index + 1}"
   cluster_identifier = aws_rds_cluster.this[0].id

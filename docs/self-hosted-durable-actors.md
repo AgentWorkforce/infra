@@ -128,6 +128,11 @@ Chart behaviour and validation:
   `relaycast-actors-dev`, the durable-actors TypeScript runtime plus the
   relaycast actor project and the full `durable-actors` npm package). The actor
   env is set on the sidecar.
+  Its `/data` uses an `emptyDir` by default. Set
+  `runtime.durableActors.devRuntime.existingClaim` to a separately provisioned
+  RWO PVC to retain actor state across local pod replacements. The gateway
+  remains a single-replica Recreate deployment; the dev runtime remains a local
+  development configuration. This does not migrate SQLite workspaces.
 
 Fresh-install backend: SQLite workspaces are not migrated and legacy
 credentials are refused; keep the SQLite release for existing workspaces.
@@ -299,6 +304,64 @@ pool), release `REL` in namespace `NS` (sandbox namespace `NS-REL`).
    `docker/actors-workspace.Dockerfile`).
    The durable-actors images are pinned by the vendored chart.
 
+## PostgreSQL TLS (Amazon RDS)
+
+The control plane and the pool manager connect to PostgreSQL with
+`tokio-postgres` + `native-tls`, which is OpenSSL on Linux. For every
+`sslmode` except `disable` it verifies the server chain and hostname, so
+`sslmode=require` behaves like libpq's `verify-full`. It accepts only
+`disable`, `prefer` and `require`, and ignores `sslrootcert`. Its roots come
+from the image's system bundle, which has no RDS CA, so RDS fails with "error
+performing TLS handshake" until the CA is added. Do not work around it with
+`rds.force_ssl=0` or `sslmode=disable`. Instead:
+
+1. Create the `rds-ca` ConfigMap (key `ca.crt`, the RDS
+   [global bundle](https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem));
+   `scripts/selfhost/rds-setup.sh` already does this for the RDS-native profile.
+2. Set the chart values. `values-eks-rds-native.yaml` sets them when
+   `values-eks-actors.yaml` is layered after it:
+
+   ```yaml
+   durable-actors:
+     postgresCa:
+       enabled: true
+       configMap: rds-ca   # or secret: <name>; exactly one
+       key: ca.crt
+   ```
+
+   An init container appends the CA to the image's system roots in an
+   in-memory volume `postgres-ca`, mounted read-only at
+   `/etc/postgres-ca/ca.crt` in both Deployments, and `SSL_CERT_FILE` points at
+   it (charts/durable-actors UPSTREAM.md patch 12). The system roots must stay:
+   `SSL_CERT_FILE` also replaces the roots of the rustls clients (GCS, S3/STS,
+   Redis). This works with the unmodified upstream image; no fork change is needed.
+3. Point `actors-credentials` key `postgres-url` at the RDS endpoint by its DNS
+   name (the certificate's name, not an IP):
+   `postgresql://<user>:<password>@<instance>.<id>.<region>.rds.amazonaws.com:5432/<db>?sslmode=require`.
+   Keep `rds.force_ssl=1`.
+
+The bundle is built at pod start, so rotating the CA needs a pod restart.
+
+### AWS Relaycast capacity and disruption defaults
+
+`values-eks-actors.yaml` is the EKS target for Relaycast after the full-copy
+PostgreSQL migration. Relaycast file bytes are in S3 and its gateway has no
+PVC. The target runs three stateless gateway replicas with a
+`maxUnavailable: 1` PodDisruptionBudget and release-scoped zone spread. The
+TerseAI actor hosts use 1024 MiB, three warm hosts and at most eight concurrent
+starts; the controller requests 1 CPU / 1 GiB and is limited to 2 GiB. These
+replace the 256 MiB upstream actor-host default, which was not stable under the
+production-shaped workload.
+
+The tested AWS target still has one durable-actors controller. Its PDB refuses
+voluntary eviction and topology spread constrains its placement, but neither
+turns a singleton into HA: node or AZ loss waits for rescheduling. More than
+one controller requires a tested Redis deployment and `redis.urlSecretKey`;
+do not raise `replicaCount` without it. Actor placement is also one configured
+availability zone in this TerseAI fork. Treat multi-controller Redis and
+multi-zone actor placement as separate prerequisites before making an
+AZ-survival claim.
+
 ## kind / local proof
 
 kind cannot run the upstream control plane (no GKE Sandbox, no GCS). The kind
@@ -320,9 +383,11 @@ runtime image ships only the actor host, not the compiler) and
 - Upstream has no invoke-only credential: Relaycast's gateway still holds a copy
   of the admin key (`invocationSecret.scope: admin`); Relayfile isolates it in
   the session broker. Socket grants (`find-websocket`) need the admin key.
-- No SQLite → actors migration tooling; actor mode is a fresh-install backend.
-- AWS EKS with S3 actor storage ships as a proof profile in agent-relay 0.3.12
-  (`values-eks-actors.yaml`, `scripts/selfhost/eks-actors-install.sh`). Other
+- No SQLite → actors migration tooling. PostgreSQL installs use the refusing,
+  full-copy workflow in
+  [relaycast-postgres-to-actors-migration.md](relaycast-postgres-to-actors-migration.md).
+- AWS EKS with S3 actor storage ships in `values-eks-actors.yaml`; the proof
+  harness remains `scripts/selfhost/eks-actors-install.sh`. Other
   non-GKE self-host (generic Kubernetes, MinIO actor storage) is an upstream gap.
 - Changing an installation's `storage.mode` or bucket identities needs a data
   migration; a values change alone does not move actor state.

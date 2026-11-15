@@ -4,7 +4,7 @@ output "environment" {
 }
 
 output "verification" {
-  description = "Non-secret input for the private-runner data-path verifier. Contains secret references, never secret values."
+  description = "Non-secret input for the private-runner data-path verifier. Contains secret references, never secret values. postgres is null with enable_database = false and search is null with enable_search = false."
   value = {
     environment       = var.environment
     environment_class = var.environment_class
@@ -13,7 +13,7 @@ output "verification" {
     region            = var.region
     namespace         = local.namespace
     pippen            = var.pippen
-    postgres = {
+    postgres = !var.enable_database ? null : {
       identifier            = "${local.name}-pg"
       master_username       = module.postgres.master_username
       host                  = module.postgres.host
@@ -30,7 +30,7 @@ output "verification" {
       prefix   = local.storage_prefix
       role_arn = module.sessions_bucket.access_role_arn
     }
-    search = {
+    search = !var.enable_search ? null : {
       url              = module.search.url
       domain_name      = module.search.domain_name
       domain_arn       = module.search.domain_arn
@@ -68,7 +68,6 @@ output "application_contract" {
       cloudApi         = true
       dashboard        = true
       sessionsPipeline = true
-      relayhistory     = false # History is a pipeline capability, not a standalone target server.
       relaycast        = true
       relayauth        = false # Target services authenticate through Control.
       durableActors    = false
@@ -81,12 +80,12 @@ output "application_contract" {
 }
 
 output "service_accounts" {
-  description = "Distinct environment-scoped workload bindings; the application chart must use these identities."
+  description = "Distinct environment-scoped workload bindings; the application chart must use these identities. indexer and reader are null with enable_search = false (no search Pod Identity associations exist)."
   value = {
     namespace = local.namespace
     storage   = ["${var.release_name}-worker", "${var.release_name}-alleyoop", "${var.release_name}-session-ingest-api"]
-    indexer   = local.search_indexer_sa
-    reader    = local.search_reader_sa
+    indexer   = var.enable_search ? local.search_indexer_sa : null
+    reader    = var.enable_search ? local.search_reader_sa : null
   }
 }
 
@@ -98,7 +97,7 @@ output "runtime_role_policy_json" {
       reader   = module.search.reader_policy_json
       pipeline = var.pipeline_runtime == "lambda" ? module.pipeline[0].execution_role_policy_json : null
     },
-    local.search_sessions_bucket_read == null ? {} : { sessions_read = module.search.sessions_read_policy_json },
+    local.search_sessions_bucket_read == null || !var.enable_search ? {} : { sessions_read = module.search.sessions_read_policy_json },
   )
 }
 
@@ -108,13 +107,13 @@ output "lambda_shared_environment" {
 }
 
 output "postgres_service_bindings" {
-  description = "Separate service databases and independent migration/runtime roles on the same RDS endpoint. Contains no credentials; reviewed database bootstrap, CONNECT/ACL isolation and runtime proof remain required. Optional-service bindings do not enable workloads."
-  value       = module.postgres_layout.bindings
+  description = "Separate service databases and independent migration/runtime roles on the same RDS endpoint. Contains no credentials; reviewed database bootstrap, CONNECT/ACL isolation and runtime proof remain required. Optional-service bindings do not enable workloads. null with enable_database = false."
+  value       = var.enable_database ? module.postgres_layout[0].bindings : null
 }
 
 output "postgres_topology" {
-  description = "Single-instance, separate-service-database target; application_sql_ready=false until actual service integration and managed-RDS validation are completed."
-  value       = module.postgres_layout.topology
+  description = "Single-instance, separate-service-database target; application_sql_ready=false until actual service integration and managed-RDS validation are completed. null with enable_database = false."
+  value       = var.enable_database ? module.postgres_layout[0].topology : null
 }
 
 output "chief_execution_node" {
@@ -141,11 +140,14 @@ output "desktop_feed" {
 
 output "history_upload" {
   description = "Direct upload wiring only; enablement needs compatible published Control/consumer images and the same witness Secret provisioned out of band. No secret values in Terraform."
-  value = local.history_upload_enabled ? {
+  value = local.history_upload_enabled ? merge({
     control_role_arn         = local.history_control_role_arn
     consumer_role_arn        = aws_iam_role.history_consumer[0].arn
     control_service_account  = var.history_upload.control_service_account
     consumer_service_account = var.history_upload.consumer_service_account
+    # Chart rearmSweeper.serviceAccountName (credentials.mode podIdentity); null when not requested.
+    rearm_sweeper_role_arn        = local.rearm_sweeper_enabled ? aws_iam_role.rearm_sweeper[0].arn : null
+    rearm_sweeper_service_account = local.rearm_sweeper_enabled ? var.history_upload.rearm_sweeper_service_account : null
     control_values = {
       historyUpload = {
         mode      = "off"
@@ -156,5 +158,8 @@ output "history_upload" {
         kmsKeyArn = var.kms_key_arn
       }
     }
-  } : null
+    }, local.unmanaged_policy ? {
+    # The unmanaged bucket policy must carry these (the plan refuses otherwise).
+    bucket_policy_statements_to_merge = module.sessions_bucket.bucket_policy_statements
+  } : {}) : null
 }

@@ -145,6 +145,7 @@ Offline validation separates native HCL history from classifier fixtures. Both p
 | ebs\_throughput | Provisioned throughput (MiB/s) for gp3 (null uses the baseline). | `number` | `null` | no |
 | ebs\_volume\_size | gp3 volume per data node in GiB. Size for the transcript text plus replicas plus ~25% headroom. | `number` | `200` | no |
 | ebs\_volume\_type | EBS volume type. | `string` | `"gp3"` | no |
+| enabled | Create the domain. false creates no AWS resource (for a stack whose search lives elsewhere): no domain, policy, log groups, workload roles or Pod Identity associations, and subnet\_ids, security\_group\_ids and master\_user\_arn are not required. Only the local creation\_mode marker remains in state. Default true; turning it off on an existing protected domain is refused by prevent\_destroy. | `bool` | `true` | no |
 | engine\_version | Engine version (OpenSearch\_X.Y). | `string` | `"OpenSearch_2.19"` | no |
 | instance\_count | Data nodes, a multiple of the subnet (AZ) count. null picks the smallest multiple that is at least 3 (3 for one or three AZs, 4 for two). | `number` | `null` | no |
 | instance\_type | Data node type. Memory-optimized (r7g) fits a full-text index of transcript events; use or1/or2 (OpenSearch Optimized) for heavy ingest. | `string` | `"r7g.large.search"` | no |
@@ -166,6 +167,7 @@ Offline validation separates native HCL history from classifier fixtures. Both p
 | dashboard\_endpoint | OpenSearch Dashboards host inside the VPC. |
 | domain\_arn | Domain ARN. |
 | domain\_name | Domain name. |
+| enabled | Whether the domain exists. false (enabled = false) creates no AWS resource and every domain, role and policy output is null or empty. |
 | endpoint | Private VPC HTTPS endpoint host (no scheme). https://<endpoint> is meant for the sessions pipeline's OpenSearch SearchIndexAdapter (no chart value). |
 | indexer\_policy\_json | The indexer's IAM policy, to attach to an existing role (EKS Pod Identity allows one role per ServiceAccount, so a pod that already has a role gets this policy on that role). |
 | indexer\_role\_arn | Indexer workload role (Pod Identity). Map it to an OpenSearch role with write permissions on the transcript indices (backend\_roles) using the master user. |

@@ -84,6 +84,9 @@ spec:
             {{- end }}
             {{- include "relay-control.runtimeEnv" . | nindent 12 }}
             {{- include "relay-control.secretEnv" . | nindent 12 }}
+            {{- if .Values.sessionErasureApi.enabled }}
+            {{- include "relay-control.sessionErasureApiEnv" . | nindent 12 }}
+            {{- end }}
             {{- if .Values.introspection.existingSecret }}
             - { name: RELAYCONTROL_INTROSPECT_SECRET_FILE, value: /var/run/agent-relay/introspection/secret }
             {{- end }}
@@ -98,6 +101,14 @@ spec:
             {{- end }}
             {{- if .Values.integrations }}
             {{- include "relay-control.integrationEnv" . | nindent 12 }}
+            {{- end }}
+            {{- if .Values.desktopFeed.signingKeys.existingSecret }}
+            {{- $keyFiles := dict }}
+            {{- range $p := .Values.desktopFeed.signingKeys.profiles }}
+            {{- $_ := set $keyFiles $p (printf "/var/run/desktop-feed/%s.pem" $p) }}
+            {{- end }}
+            - { name: SELFHOST_DESKTOP_FEED_SIGNER, value: file }
+            - { name: SELFHOST_DESKTOP_FEED_KEY_FILES, value: {{ toJson $keyFiles | quote }} }
             {{- end }}
             {{- with .Values.extraEnv }}
             {{- toYaml . | nindent 12 }}
@@ -123,6 +134,9 @@ spec:
             - { name: {{ printf "oauth-%s" $provider | quote }}, mountPath: {{ printf "/var/run/agent-relay/integrations/%s" $provider | quote }}, readOnly: true }
             {{- end }}
             - { name: tmp, mountPath: /tmp }
+            {{- if .Values.desktopFeed.signingKeys.existingSecret }}
+            - { name: desktop-feed-keys, mountPath: /var/run/desktop-feed, readOnly: true }
+            {{- end }}
             {{- if .Values.secretKeys.passwordPepper }}
             - { name: password-pepper, mountPath: /var/run/agent-relay/password-pepper, readOnly: true }
             {{- end }}
@@ -137,6 +151,22 @@ spec:
             {{- toYaml .Values.livenessProbe | nindent 12 }}
           resources: {{ toYaml .Values.resources | nindent 12 }}
       volumes:
+        {{- if .Values.desktopFeed.signingKeys.existingSecret }}
+        {{- if not .Values.desktopFeed.signingKeys.profiles }}
+        {{- fail "desktopFeed.signingKeys.profiles must list at least one profile when existingSecret is set" }}
+        {{- end }}
+        - name: desktop-feed-keys
+          secret:
+            secretName: {{ .Values.desktopFeed.signingKeys.existingSecret | quote }}
+            defaultMode: 0440
+            items:
+              {{- range $p := .Values.desktopFeed.signingKeys.profiles }}
+              {{- if not (regexMatch "^[a-z0-9]{1,32}$" $p) }}
+              {{- fail (printf "desktopFeed.signingKeys.profiles: %q is not a profile id" $p) }}
+              {{- end }}
+              - { key: {{ printf "%s.pem" $p | quote }}, path: {{ printf "%s.pem" $p | quote }} }
+              {{- end }}
+        {{- end }}
         {{- if ne .Values.historyUpload.mode "off" }}
         - name: history-upload
           secret:

@@ -23,10 +23,37 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 app.kubernetes.io/part-of: sessions-pipeline
 {{- end }}
 
+{{- /*
+Compatibility for the two native-read assumptions that the 2026.11.0
+customer pack still put in extraEnv. Return JSON because include returns text.
+The structured value is nullable so omitted can be distinguished from an
+explicit false, which must continue to conflict with the legacy true.
+*/ -}}
+{{- define "session-read-api.compatLegacyBool" -}}
+{{- $structuredSet := not (kindIs "invalid" .structured) -}}
+{{- if and $structuredSet (not (kindIs "bool" .structured)) }}{{ fail (printf "session-read-api: %s must be a boolean" .path) }}{{ end -}}
+{{- $enabled := false -}}
+{{- if and $structuredSet .structured }}{{ $enabled = true }}{{ end -}}
+{{- $legacy := false -}}
+{{- range $e := .extraEnv -}}
+{{- if eq (toString (get $e "name")) $.name -}}
+{{- if $legacy }}{{ fail (printf "session-read-api: extraEnv duplicates a managed or repeated variable: %s" $.name) }}{{ end -}}
+{{- $legacy = true -}}
+{{- if or (not (hasKey $e "value")) (hasKey $e "valueFrom") (not (kindIs "string" $e.value)) (ne $e.value "true") }}{{ fail (printf "session-read-api: deprecated extraEnv %s conflicts with %s; only literal value \"true\" is compatible" $.name $.path) }}{{ end -}}
+{{- if and $structuredSet (not $.structured) }}{{ fail (printf "session-read-api: deprecated extraEnv %s=true conflicts with %s=false" $.name $.path) }}{{ end -}}
+{{- $enabled = true -}}
+{{- end -}}
+{{- end -}}
+{{- dict "enabled" $enabled "legacy" $legacy | toJson -}}
+{{- end }}
+
 {{- /* Everything that must refuse to render, in one place. Emits nothing. */ -}}
 {{- define "session-read-api.validate" -}}
 {{- include "session-read-api.analytics.validate" .Values.analytics -}}
 {{- $c := .Values -}}
+{{- $erase := .Values.global.operatorSessionErase | default dict -}}
+{{- if not (kindIs "map" $erase) }}{{ fail "session-read-api: global.operatorSessionErase must be an object" }}{{ end -}}
+{{- if not (kindIs "bool" $erase.fenceEnforced) }}{{ fail "session-read-api: global.operatorSessionErase.fenceEnforced must be a boolean" }}{{ end -}}
 {{- $repository := required "session-read-api: image.repository is required" $c.image.repository -}}
 {{- $repositoryPattern := "^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\\.)+[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(:[0-9]{1,5})?/[a-z0-9]+(([._]|__|-+)[a-z0-9]+)*(/[a-z0-9]+(([._]|__|-+)[a-z0-9]+)*)*$" -}}
 {{- $registryHost := regexReplaceAll ":[0-9]+$" (first (splitList "/" $repository)) "" -}}
@@ -75,8 +102,8 @@ workspace is not on a static list, and its reads would answer 501. */ -}}
 {{- if and $c.search.opensearch.indexPrefix (not (regexMatch "^[a-z0-9][a-z0-9_-]{0,63}$" (toString $c.search.opensearch.indexPrefix))) }}{{ fail "session-read-api: search.opensearch.indexPrefix must be lowercase letters, digits, _ or -" }}{{ end -}}
 {{- end -}}
 {{- if not (kindIs "bool" $c.turns.assumeNoLegacy) }}{{ fail "session-read-api: turns.assumeNoLegacy must be a boolean" }}{{ end -}}
-{{- if not (kindIs "bool" $c.timing.assumeNoTurns) }}{{ fail "session-read-api: timing.assumeNoTurns must be a boolean" }}{{ end -}}
-{{- if not (kindIs "bool" $c.canonical.pinLaggingPointer) }}{{ fail "session-read-api: canonical.pinLaggingPointer must be a boolean" }}{{ end -}}
+{{- $timingCompat := include "session-read-api.compatLegacyBool" (dict "structured" $c.timing.assumeNoTurns "path" "timing.assumeNoTurns" "name" "READ_API_TIMING_ASSUME_NO_TURNS" "extraEnv" $c.extraEnv) | fromJson -}}
+{{- $canonicalCompat := include "session-read-api.compatLegacyBool" (dict "structured" $c.canonical.pinLaggingPointer "path" "canonical.pinLaggingPointer" "name" "READ_API_CANONICAL_PIN_LAGGING_POINTER" "extraEnv" $c.extraEnv) | fromJson -}}
 {{- if not (kindIs "bool" $c.serviceAccountCreate) }}{{ fail "session-read-api: serviceAccountCreate must be a boolean" }}{{ end -}}
 {{- if and $c.serviceAccountCreate (not $c.serviceAccountName) }}{{ fail "session-read-api: serviceAccountCreate requires serviceAccountName" }}{{ end -}}
 {{- /* Postgres TLS: always verified, against the image's pin or a mounted CA. */ -}}
@@ -170,6 +197,7 @@ workspace is not on a static list, and its reads would answer 501. */ -}}
 {{- if and $c.ingress.enabled (not $np.publicFrom) }}{{ fail "session-read-api: ingress.enabled with networkPolicy.enabled requires networkPolicy.publicFrom, or the policy would block the ingress" }}{{ end -}}
 {{- end -}}
 {{- if not (kindIs "bool" $c.events.messageIds) }}{{ fail "session-read-api: events.messageIds must be a boolean" }}{{ end -}}
+{{- if and $c.summaries (not (kindIs "bool" $c.summaries.listShortSummary)) }}{{ fail "session-read-api: summaries.listShortSummary must be a boolean" }}{{ end -}}
 {{- if not (kindIs "bool" $c.coordinationOverlaps.enabled) }}{{ fail "session-read-api: coordinationOverlaps.enabled must be a boolean" }}{{ end -}}
 {{- if not (kindIs "bool" $c.output.enabled) }}{{ fail "session-read-api: output.enabled must be a boolean" }}{{ end -}}
 {{- if not (kindIs "bool" $c.digest.enabled) }}{{ fail "session-read-api: digest.enabled must be a boolean" }}{{ end -}}
@@ -203,13 +231,15 @@ workspace is not on a static list, and its reads would answer 501. */ -}}
 {{- end -}}
 {{- end -}}
 {{- /* extraEnv: nothing managed above can be overridden or hidden here. */ -}}
-{{- $reserved := list "SERVICE" "SCRUB_ENGINE" "SCRUB_ENGINE_REQUIRED" "READER_MAX_RULESET" "RELAYHISTORY_SELFHOST_READ_API" "RELAYHISTORY_READ_API_PORT" "RELAYHISTORY_READ_API_SECRET" "READ_API_ORIGIN" "READ_API_AUTH_MODE" "READ_API_COMPLETE_SINCE" "READ_API_DIRECTORY_WORKSPACES" "READ_API_CORS_ALLOWED_ORIGINS" "RELAYHISTORY_SELFHOST_LOGIN_ADVERTISES_SYNC" "READ_API_TURNS_ASSUME_NO_LEGACY" "READ_API_TIMING_ASSUME_NO_TURNS" "READ_API_CANONICAL_PIN_LAGGING_POINTER" "READ_API_COORDINATION_OVERLAPS_ENABLED" "READ_API_COORDINATION_OVERLAPS_BACKEND" "READ_API_OUTPUT_ENABLED" "READ_API_OUTPUT_BACKEND" "READ_API_DIGEST_ENABLED" "READ_API_DIGEST_BACKEND" "READ_API_DIGEST_NARRATIVE_MODEL" "READ_API_DIGEST_NARRATIVE_DB_URL" "SEARCH_INDEX_POSTGRES_BACKEND_ID" "SEARCH_INDEX_OPENSEARCH_URL" "SEARCH_INDEX_OPENSEARCH_AUTH" "SEARCH_INDEX_OPENSEARCH_AWS_REGION" "SEARCH_INDEX_OPENSEARCH_INDEX_PREFIX" "READ_API_INTERNAL_SECRET" "READ_API_INTERNAL_SECRET_PREVIOUS" "READ_API_ACCESS_TOKEN_TTL_SECONDS" "READ_API_EVENT_MESSAGE_IDS" "SEARCH_INDEX_BACKEND" "ALLOW_IN_CLUSTER_HTTP" "RELAYAUTH_JWKS_URL" "RELAYAUTH_ISSUER" "RELAYHISTORY_ACCEPT_RELAYCONTROL_TOKENS" "RELAYCONTROL_INTROSPECT_URL" "RELAYCONTROL_INTROSPECT_SECRET" "SESSION_POSTGRES_TLS_PROFILE" "SESSION_POSTGRES_CA_FILE" "SESSION_POSTGRES_CA_SHA256" -}}
+{{- $reserved := list "SERVICE" "SCRUB_ENGINE" "SCRUB_ENGINE_REQUIRED" "READER_MAX_RULESET" "RELAYHISTORY_SELFHOST_READ_API" "RELAYHISTORY_READ_API_PORT" "RELAYHISTORY_READ_API_SECRET" "READ_API_ORIGIN" "READ_API_AUTH_MODE" "READ_API_COMPLETE_SINCE" "READ_API_DIRECTORY_WORKSPACES" "READ_API_CORS_ALLOWED_ORIGINS" "RELAYHISTORY_SELFHOST_LOGIN_ADVERTISES_SYNC" "READ_API_TURNS_ASSUME_NO_LEGACY" "READ_API_TIMING_ASSUME_NO_TURNS" "READ_API_CANONICAL_PIN_LAGGING_POINTER" "READ_API_COORDINATION_OVERLAPS_ENABLED" "READ_API_COORDINATION_OVERLAPS_BACKEND" "READ_API_OUTPUT_ENABLED" "READ_API_OUTPUT_BACKEND" "READ_API_DIGEST_ENABLED" "READ_API_DIGEST_BACKEND" "READ_API_DIGEST_NARRATIVE_MODEL" "READ_API_DIGEST_NARRATIVE_DB_URL" "SEARCH_INDEX_POSTGRES_BACKEND_ID" "SEARCH_INDEX_OPENSEARCH_URL" "SEARCH_INDEX_OPENSEARCH_AUTH" "SEARCH_INDEX_OPENSEARCH_AWS_REGION" "SEARCH_INDEX_OPENSEARCH_INDEX_PREFIX" "READ_API_INTERNAL_SECRET" "READ_API_INTERNAL_SECRET_PREVIOUS" "READ_API_ACCESS_TOKEN_TTL_SECONDS" "READ_API_EVENT_MESSAGE_IDS" "READ_API_LIST_SHORT_SUMMARY_ENABLED" "SEARCH_INDEX_BACKEND" "ALLOW_IN_CLUSTER_HTTP" "RELAYAUTH_JWKS_URL" "RELAYAUTH_ISSUER" "RELAYHISTORY_ACCEPT_RELAYCONTROL_TOKENS" "RELAYCONTROL_INTROSPECT_URL" "RELAYCONTROL_INTROSPECT_SECRET" "SESSION_POSTGRES_TLS_PROFILE" "SESSION_POSTGRES_CA_FILE" "SESSION_POSTGRES_CA_SHA256" -}}
 {{- if $narrative.model }}{{ $reserved = concat $reserved (list "OPENAI_API_KEY" "OPENAI_BASE_URL") }}{{ end -}}
 {{- $seen := dict -}}
 {{- $canonical := dict -}}
+{{- $legacyBoolNames := list "READ_API_TIMING_ASSUME_NO_TURNS" "READ_API_CANONICAL_PIN_LAGGING_POINTER" -}}
 {{- range $e := $c.extraEnv -}}
 {{- $envName := required "session-read-api: extraEnv entries require name" $e.name -}}
-{{- if or (has $envName $reserved) (hasKey $seen $envName) (hasPrefix "ANALYTICS_" $envName) (and $c.analytics.enabled (eq $envName "NODE_EXTRA_CA_CERTS")) }}{{ fail (printf "session-read-api: extraEnv duplicates a managed or repeated variable: %s" $envName) }}{{ end -}}
+{{- if eq $envName "SESSION_ERASE_FENCE_ENFORCED" }}{{ fail "session-read-api: extraEnv duplicates a managed or repeated variable: SESSION_ERASE_FENCE_ENFORCED" }}{{ end -}}
+{{- if or (and (has $envName $reserved) (not (has $envName $legacyBoolNames))) (hasKey $seen $envName) (hasPrefix "ANALYTICS_" $envName) (and $c.analytics.enabled (eq $envName "NODE_EXTRA_CA_CERTS")) }}{{ fail (printf "session-read-api: extraEnv duplicates a managed or repeated variable: %s" $envName) }}{{ end -}}
 {{- if not (regexMatch "^[A-Za-z_][A-Za-z0-9_]*$" $envName) }}{{ fail "session-read-api: extraEnv has an invalid variable name" }}{{ end -}}
 {{- if hasPrefix "CLICKHOUSE_" $envName }}{{ fail "session-read-api: the service reads no CLICKHOUSE_* environment; put ClickHouse in the read API Secret's clickhouse block" }}{{ end -}}
 {{- if eq (hasKey $e "value") (hasKey $e "valueFrom") }}{{ fail "session-read-api: extraEnv requires exactly one of value or valueFrom" }}{{ end -}}

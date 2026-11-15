@@ -3,6 +3,9 @@
 - { name: SERVICE, value: {{ .service }} }
 {{- include "sessions-pipeline.scrubEngine" (dict "root" .root "localReader" $c.readerMaxRuleset "localName" "searchIndexer.readerMaxRuleset") }}
 - { name: RELAYHISTORY_SELFHOST_PIPELINE_CONSUMER, value: "true" }
+{{- if eq .service "session-pipeline-consumer" }}
+{{- include "sessions-pipeline.operatorSessionErase.fenceEnv" .root }}
+{{- end }}
 {{- if .outputFacts }}
 - { name: RELAYHISTORY_SELFHOST_OUTPUT_FACTS, value: "true" }
 {{- end }}
@@ -30,6 +33,14 @@
 {{- with $c.locker.endpoint }}
 - { name: LOCKER_ENDPOINT, value: {{ . | quote }} }
 {{- end }}
+{{- if eq (dig "credentials" "mode" "podIdentity" $c.locker) "secret" }}
+- name: LOCKER_ACCESS_KEY_ID
+  valueFrom:
+    secretKeyRef: { name: {{ $c.locker.existingSecret | quote }}, key: {{ $c.locker.accessKeyIdKey | default "access-key-id" | quote }} }
+- name: LOCKER_SECRET_ACCESS_KEY
+  valueFrom:
+    secretKeyRef: { name: {{ $c.locker.existingSecret | quote }}, key: {{ $c.locker.secretAccessKeyKey | default "secret-access-key" | quote }} }
+{{- end }}
 {{- with $c.extraEnv }}
 {{- toYaml . | nindent 0 }}
 {{- end }}
@@ -41,18 +52,34 @@
 {{- end }}
 {{- end -}}
 {{- define "sessions-pipeline.searchIndexer.container" -}}
+{{- $root := . -}}
+{{- $bootstrapGuard := "" -}}
+{{- if hasKey . "root" -}}
+{{- $root = .root -}}
+{{- $bootstrapGuard = .bootstrapGuard -}}
+{{- end -}}
 securityContext:
   allowPrivilegeEscalation: false
   readOnlyRootFilesystem: true
   capabilities: { drop: [ALL] }
 volumeMounts:
   - { name: tmp, mountPath: /tmp }
-  {{- if eq .Values.searchIndexer.postgres.tlsProfile "custom-ca" }}
+  {{- if eq $root.Values.searchIndexer.postgres.tlsProfile "custom-ca" }}
   - { name: postgres-ca, mountPath: /etc/search-indexer-postgres, readOnly: true }
+  {{- end }}
+  {{- if $bootstrapGuard }}
+  # Keep the script below /app so Bun resolves the image's /app/node_modules.
+  - { name: bootstrap-guard, mountPath: /app/bootstrap-guard, readOnly: true }
   {{- end }}
 {{- end -}}
 {{- define "sessions-pipeline.searchIndexer.pod" -}}
-{{- $c := .Values.searchIndexer -}}
+{{- $root := . -}}
+{{- $bootstrapGuard := "" -}}
+{{- if hasKey . "root" -}}
+{{- $root = .root -}}
+{{- $bootstrapGuard = .bootstrapGuard -}}
+{{- end -}}
+{{- $c := $root.Values.searchIndexer -}}
 automountServiceAccountToken: false
 serviceAccountName: {{ $c.serviceAccount.name | quote }}
 {{- with $c.imagePullSecrets }}
@@ -86,5 +113,9 @@ volumes:
       name: {{ $c.postgres.caConfigMap | quote }}
       items:
         - { key: {{ $c.postgres.caKey | quote }}, path: ca.crt }
+  {{- end }}
+  {{- if $bootstrapGuard }}
+  - name: bootstrap-guard
+    configMap: { name: {{ $bootstrapGuard | quote }} }
   {{- end }}
 {{- end -}}

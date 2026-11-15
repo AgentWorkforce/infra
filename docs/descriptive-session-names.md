@@ -113,6 +113,9 @@ before rerunning the new recipe.
 
 ## Reconcile a completed local kind cutover
 
+> `reconcile-names`, `kind-up` and `kind-proof` were retired in agent-relay
+> 0.7.0 with the standalone RelayHistory server; this section is a record.
+
 `reconcile-names` is an explicit import of an already-completed operator
 cutover. It does not rename resources, stop workloads, apply migrations, change
 Secrets, move data, adopt a release, or turn a live UID into ownership authority.

@@ -118,10 +118,11 @@ the chart already sets, including duplicates inside extraEnv. */ -}}
   "SELFHOST_PASSWORD_PEPPER_FILE" "SELFHOST_SETUP_KEY_FILE" "SELFHOST_SIGNIN_METHODS" "SELFHOST_TRUSTED_PROXIES"
   "SELFHOST_MICROSOFT_CLIENT_ID" "SELFHOST_MICROSOFT_TENANT" "SELFHOST_MICROSOFT_REDIRECT_URL" "SELFHOST_MICROSOFT_CLIENT_SECRET_FILE"
   "SESSION_READ_API_URL" "SESSION_READ_API_PUBLIC_URL" "SESSION_READ_API_MCP_READS" "SELFHOST_INTROSPECT_AUDIENCES"
-  "RELAYHISTORY_BACKEND" -}}
+  "RELAYHISTORY_BACKEND" "SESSION_ERASE_API_URL" "SESSION_ERASE_API_SECRET" -}}
 {{- if not (kindIs "invalid" .Values.selectedFeatures) }}{{ $managed = append $managed "SELFHOST_FEATURES" }}{{ end -}}
 {{- if .Values.services.relayhistoryReadApiUrl }}{{ $managed = concat $managed (list "RELAYHISTORY_READ_API_URL" "RELAYHISTORY_READ_API_EVENTS") }}{{ end -}}
 {{- if (.Values.postgresCa | default dict).enabled }}{{ $managed = append $managed "NODE_EXTRA_CA_CERTS" }}{{ end -}}
+{{- if .Values.desktopFeed.signingKeys.existingSecret }}{{ $managed = concat $managed (list "SELFHOST_DESKTOP_FEED_SIGNER" "SELFHOST_DESKTOP_FEED_KEY_FILES") }}{{ end -}}
 {{- range $name := $managed }}{{ if hasSuffix "_FILE" $name }}{{ $managed = append $managed (trimSuffix "_FILE" $name) }}{{ end }}{{ end -}}
 {{- range $src := list (include "relay-control.runtimeEnv" .) (include "relay-control.secretEnv" .) -}}
 {{- range $item := $src | fromYamlArray }}{{ $managed = append $managed (toString $item.name) }}{{ end -}}
@@ -505,7 +506,7 @@ global.branding.logo at <dashboard origin>/brand/<file>. The file name rule
 matches relay-webapp.brandLogoFile. */ -}}
 {{- define "relay-control.brandLogoFile" -}}
 {{- $logo := dig "branding" "logo" dict (.Values.global | default dict) | default dict -}}
-{{- if not (kindIs "map" $logo) }}{{ fail "global.branding.logo must be a map with svg, existingConfigMap or key" }}{{ end -}}
+{{- if not (kindIs "map" $logo) }}{{ fail "global.branding.logo must be a map with svg, existingConfigMap, key or dashboardKey" }}{{ end -}}
 {{- if $logo.svg }}logo.svg{{ else if $logo.existingConfigMap }}{{ $logo.key | default "logo.png" }}{{ end -}}
 {{- end -}}
 {{- define "relay-control.loginLogoUrl" -}}

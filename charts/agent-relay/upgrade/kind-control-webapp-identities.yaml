@@ -11,9 +11,6 @@ relay-webapp:
   fullnameOverride: relay-app
   api:
     serviceName: relaycontrol
-relayhistory:
-  agentRelayCloud:
-    apiUrl: http://relaycontrol.agent-relay.svc.cluster.local
 # For addons, retain the original caller URL inside the existing command.
 # Supply your translated old relayflows block after this overlay; it must use
 # relaycontrol while that Service identity is retained.

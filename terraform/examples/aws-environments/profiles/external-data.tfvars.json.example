@@ -1,0 +1,8 @@
+{
+  "enable_database": false,
+  "enable_search": false,
+  "kms_key_arn": "REPLACE_WITH_SESSIONS_BUCKET_KMS_KEY_ARN",
+  "history_upload": {
+    "consumer_service_account": "REPLACE_WITH_INGEST_EDGE_SERVICE_ACCOUNT"
+  }
+}

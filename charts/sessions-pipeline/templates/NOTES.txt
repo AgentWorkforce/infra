@@ -2,6 +2,21 @@ sessions-pipeline {{ .Chart.Version }} in namespace {{ .Release.Namespace }}
 
 One sessions-pipeline release per namespace: dependency objects use fixed names
 (hoopdb, session-object-storage, otel-collector) so the app charts can reference them.
+{{- if .Values.global.operatorSessionErase.fenceEnforced }}
+
+Operator session erase fence is enforced on every runtime replica. Keep it
+enabled after erase jobs exist. See docs/operator-session-erase-upgrade.md.
+{{- end }}
+{{- $deprecatedReadEnv := list -}}
+{{- range $e := (.Values.sessionReadApi.extraEnv | default list) -}}
+{{- if has $e.name (list "READ_API_TIMING_ASSUME_NO_TURNS" "READ_API_CANONICAL_PIN_LAGGING_POINTER") -}}
+{{- $deprecatedReadEnv = append $deprecatedReadEnv $e.name -}}
+{{- end -}}
+{{- end -}}
+{{- if $deprecatedReadEnv }}
+
+DEPRECATION: {{ join ", " $deprecatedReadEnv }} in sessionReadApi.extraEnv was normalized and the duplicate was dropped. Before removing the legacy entry, preserve it with sessionReadApi.timing.assumeNoTurns=true for READ_API_TIMING_ASSUME_NO_TURNS or sessionReadApi.canonical.pinLaggingPointer=true for READ_API_CANONICAL_PIN_LAGGING_POINTER.
+{{- end }}
 {{- if .Values.hoopdb.enabled }}
 
 HoopDb: CloudNativePG Cluster "hoopdb" (needs the CloudNativePG operator).

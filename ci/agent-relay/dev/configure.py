@@ -11,7 +11,7 @@ SERVICES = {"session-ingest": "ingest", "session-read-api": "reader",
             "session-pipeline-consumer": "consumer", "session-brief": "brief"}
 IMAGES = {"selfhost-api": "control", "relay-control": "control", "relay-dashboard": "webapp",
           "relay-webapp": "webapp", "relaycast": "cast", "telemetry-collector": "collector",
-          "relaycast-self-host": "cast", "relayfile": "file", "relayflows": "flows"}
+          "relaycast-self-host": "cast", "relaycast-actors-gateway": "cast", "relayfile": "file", "relayflows": "flows"}
 REPOS = {"webapp": "relay-webapp", "control": "relay-control", "pipeline": "sessions-pipeline",
          "cast": "relaycast", "file": "relayfile", "flows": "relayflows"}
 REQUIRED = {"webapp", "control", "ingest", "reader", "consumer", "brief", "cast", "collector"}

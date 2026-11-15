@@ -194,3 +194,41 @@ run "parameter_count_capped" {
 
   expect_failures = [var.parameters]
 }
+
+run "disabled_creates_nothing" {
+  command = plan
+
+  variables {
+    enabled                = false
+    subnet_ids             = []
+    vpc_security_group_ids = []
+  }
+
+  assert {
+    condition = (
+      length(aws_db_subnet_group.this) + length(aws_db_parameter_group.this) + length(aws_db_instance.this) +
+      length(aws_rds_cluster_parameter_group.this) + length(aws_rds_cluster.this) + length(aws_rds_cluster_instance.this)
+    ) == 0
+    error_message = "enabled = false must create no AWS database resource."
+  }
+  assert {
+    condition     = !output.enabled && output.host == null && output.master_user_secret_arn == null && output.resource_arn == null && output.database_url_template == null && output.db_subnet_group_name == null && output.instance_identifier == null
+    error_message = "Every connection output must be null when the database is disabled."
+  }
+}
+
+run "disabled_aurora_creates_nothing" {
+  command = plan
+
+  variables {
+    enabled        = false
+    engine_mode    = "aurora"
+    engine_version = "17.5"
+    instance_class = "db.r7g.large"
+  }
+
+  assert {
+    condition     = length(aws_rds_cluster.this) + length(aws_rds_cluster_instance.this) + length(aws_rds_cluster_parameter_group.this) == 0 && output.cluster_identifier == null && output.reader_host == null
+    error_message = "A disabled Aurora configuration must create nothing."
+  }
+}

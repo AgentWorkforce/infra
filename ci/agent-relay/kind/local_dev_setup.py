@@ -8,7 +8,7 @@ import re
 import shutil
 import sys
 
-from local_stack import LocalStack, PIPELINE, CONTROL, WEBAPP, CAST
+from local_stack import LocalStack, PIPELINE, CONTROL, WEBAPP, CAST, CAST_BACKEND, ACTORS
 from stack import ROOT, private_json, StackError, run
 
 
@@ -50,6 +50,10 @@ def main():
         data = json.loads(stack.cmd([*stack.docker_args, "exec", node[0], "crictl", "inspecti", image], sensitive=True).stdout)
         labels = data.get("info", {}).get("imageSpec", {}).get("config", {}).get("Labels", {})
         revision = labels.get("org.opencontainers.image.revision", "")
+        # The qualified gateway publisher predates its OCI revision label.
+        # Its digest and matching source are explicitly bound in the recipe.
+        if not revision and group == "cast" and CAST_BACKEND == "durable-actors" and image == ACTORS["source"]["gateway"]["reference"]:
+            revision = ACTORS["source"]["relaycast"]["revision"]
         if not re.fullmatch(r"[a-f0-9]{40}", revision):
             raise StackError("deployed " + group + " image has no complete source revision label")
         path = ROOT.parent / directory
@@ -66,7 +70,8 @@ def main():
         elif not (path / ".git").exists():
             raise StackError("source path exists without Git metadata: " + str(path))
         # Existing developer checkouts and their changes are never switched.
-        sources[group] = str(path)
+        sources[group] = ({"path": str(path), "dockerfile": "docker/actors-gateway.Dockerfile"}
+                          if group == "cast" and CAST_BACKEND == "durable-actors" else str(path))
     source_file = ROOT / ".kind/dev/sources.json"
     source_file.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     private_json(source_file, sources)

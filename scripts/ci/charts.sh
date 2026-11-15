@@ -258,7 +258,7 @@ for chart in "${charts[@]}"; do
         for origin in https://history.example.com/x https://history.example.com:99999 https://history.example.com:8a https://user@history.example.com 'https://history..example.com' https://-history.example.com ftp://history.example.com; do
           expect_render_failure "$chart" "$v" "history origin $origin" "auth.historyOrigin must be a bare origin" --set "auth.historyOrigin=$origin"
         done
-        for origin in https://history.gcp-proof.agentrelay.com http://relayhistory.relayhistory.svc:8080; do
+        for origin in https://history.gcp-proof.agentrelay.com http://history.agent-relay.svc:8080; do
           render "$chart" "$v" --set "auth.historyOrigin=$origin" >/dev/null || err "$chart: valid auth.historyOrigin $origin rejected"
         done
         ;;
@@ -374,6 +374,13 @@ for chart in "${charts[@]}"; do
           || err "$chart: the actors gateway allows public workspace create"
         ! yq 'select(.kind == "PersistentVolumeClaim") | .metadata.name' <<<"$out" | grep -q . \
           || err "$chart: the actors gateway with an object file store renders a PVC"
+        [ "$(yq 'select(.kind == "PodDisruptionBudget") | .spec.maxUnavailable' <<<"$out" | sed '/^$/d')" = 1 ] \
+          || err "$chart: the multi-replica actors gateway must render a maxUnavailable=1 PDB"
+        [ "$(yq 'select(.kind == "PodDisruptionBudget") | .spec.selector.matchLabels["app.kubernetes.io/name"]' <<<"$out" | sed '/^$/d')" = relaycast ] \
+          || err "$chart: the actors gateway PDB selector must match the gateway"
+        spread=$(render "$chart" "$v" --set runtime.durableActors.gateway.topologySpread.enabled=true)
+        [ "$(yq 'select(.kind == "Deployment") | .spec.template.spec.topologySpreadConstraints[0].labelSelector.matchLabels["app.kubernetes.io/name"]' <<<"$spread" | sed '/^$/d')" = relaycast ] \
+          || err "$chart: generated gateway topology spread must match the release labels"
         # Keyed creates: the workspace bootstrap secret and proof policy (relaycast #622).
         expect_render_failure "$chart" "$v" "actors proof without bootstrap secret" "bootstrapProofRequired=true with runtime.backend=durable-actors requires secretKeys.workspaceBootstrapSecret" --set bootstrapProofRequired=true
         expect_render_failure "$chart" "$v" "actors proof not a bool" "bootstrapProofRequired must be true or false" --set-string bootstrapProofRequired=yes --set secretKeys.workspaceBootstrapSecret=wbs
@@ -412,6 +419,60 @@ for chart in "${charts[@]}"; do
           [ "$(gw_env "$c" RELAYCAST_WORKSPACE_BOOTSTRAP_PROOF_REQUIRED .value)" = true ] \
             || err "$chart: devRuntime $c must render RELAYCAST_WORKSPACE_BOOTSTRAP_PROOF_REQUIRED=true"
         done
+        # Postgres -> durable-actors migration steps (docs/relaycast-postgres-to-actors-migration.md).
+        mig=(--set migration.enabled=true --set migration.runId=run-ci-0001)
+        pg=charts/relaycast/ci/postgres-values.yaml
+        s3=charts/relaycast/ci/durable-actors-s3-values.yaml
+        expect_render_failure "$chart" "$pg" "migration step on the wrong backend" "migration.step=import runs after the cutover" "${mig[@]}" --set migration.step=import
+        expect_render_failure "$chart" "$s3" "export after the cutover" "migration.step=export runs on the PostgreSQL release" "${mig[@]}" --set migration.step=export
+        expect_render_failure "$chart" "$pg" "unknown migration step" "migration.step must be preflight, export, files, import, verify or open" "${mig[@]}" --set migration.step=copy
+        expect_render_failure "$chart" "$pg" "short migration run id" "migration.runId must be 8-64 URL-safe characters" --set migration.enabled=true --set migration.runId=x --set migration.step=export
+        expect_render_failure "$chart" "$pg" "non-numeric arSince" "migration.arSince must be epoch seconds" "${mig[@]}" --set migration.step=preflight --set migration.arSince=yesterday
+        expect_render_failure "$chart" "$pg" "preflight without arSince" "migration.arSince must be epoch seconds" "${mig[@]}" --set migration.step=preflight
+        expect_render_failure "$chart" "$pg" "preflight on a ReadWriteOncePod claim" "cannot share a ReadWriteOncePod" "${mig[@]}" --set migration.step=preflight --set migration.arSince=1 --set persistence.accessMode=ReadWriteOncePod
+        out=$(render "$chart" "$pg" "${mig[@]}" --set migration.step=preflight --set migration.arSince=1 --set migration.allowLegacy=true)
+        mj='select(.kind == "Job" and .metadata.labels["app.kubernetes.io/component"] == "migration-preflight")'
+        [ "$(yq "$mj | .spec.template.spec.affinity.podAffinity.requiredDuringSchedulingIgnoredDuringExecution[0].topologyKey" <<<"$out" | sed '/^$/d')" = kubernetes.io/hostname ] \
+          || err "$chart: the online preflight must run on the Relaycast pod's node (ReadWriteOnce claim)"
+        [ "$(yq "$mj | .spec.template.spec.containers[0].args | join(\" \")" <<<"$out" | sed '/^$/d')" = "migration-preflight --file-dir /data/relaycast-files --ar-since 1 --export-dir /data --allow-legacy" ] \
+          || err "$chart: migration preflight must check legacy credentials, files and export capacity"
+        [ "$(yq "$mj | .spec.template.spec.volumes[] | select(.name == \"secrets\") | .secret.items[].path" <<<"$out" | sed '/^$/d')" = database-runtime-url ] \
+          || err "$chart: migration preflight must mount only the runtime database URL"
+        ! yq 'select(.kind == "Job") | .metadata.name' <<<"$(render "$chart" "$pg")" | grep -q migration \
+          || err "$chart: migration Jobs must not render unless migration.enabled"
+        out=$(render "$chart" "$pg" "${mig[@]}" --set migration.step=export)
+        mj='select(.kind == "Job" and .metadata.labels["app.kubernetes.io/component"] == "migration-export")'
+        [ "$(yq "$mj | .spec.template.spec.containers[0].args | join(\" \")" <<<"$out" | sed '/^$/d')" = "export-for-actors --out /data/migration/run-ci-0001 --run-id run-ci-0001" ] \
+          || err "$chart: migration export must write to the data claim under the run id"
+        [ "$(yq "$mj | [.spec.template.spec.volumes[] | select(.name == \"secrets\") | .secret.items[].path] | join(\",\")" <<<"$out" | sed '/^$/d')" = database-runtime-url,internal-secret ] \
+          || err "$chart: migration export must mount only the runtime database URL and the internal secret (block sealing)"
+        [ "$(yq "$mj | .spec.template.spec.containers[0].env[] | select(.name == \"RELAYCAST_DATABASE_CA_FILE\") | .value" <<<"$out" | sed '/^$/d')" = /etc/postgres-ca/ca.crt ] \
+          || err "$chart: migration export must verify the database against the CA"
+        out=$(render "$chart" "$s3" "${mig[@]}" --set migration.step=files)
+        mj='select(.kind == "Job" and .metadata.labels["app.kubernetes.io/component"] == "migration-files")'
+        [ "$(yq "$mj | [.spec.template.spec.containers[0].env[].name] | join(\",\")" <<<"$out" | sed '/^$/d')" = "RELAYCAST_FILE_STORE,RELAYCAST_S3_BUCKET,RELAYCAST_S3_REGION,RELAYCAST_S3_PREFIX,RELAYCAST_S3_FORCE_PATH_STYLE,NODE_OPTIONS,RELAYCAST_INTERNAL_SECRET_FILE" ] \
+          || err "$chart: migration files must get the gateway's file store settings and no secrets"
+        [ "$(yq "$mj | .spec.template.spec.containers[0].env[] | select(.name == \"NODE_OPTIONS\") | .value" <<<"$out" | sed '/^$/d')" = --max-old-space-size=768 ] \
+          || err "$chart: migration Jobs must size the heap from the memory limit"
+        out=$(render "$chart" "$s3" "${mig[@]}" --set migration.step=files --set-json 'extraEnv=[{"name":"NODE_OPTIONS","value":"--max-old-space-size=300"}]')
+        [ "$(yq "$mj | [.spec.template.spec.containers[0].env[] | select(.name == \"NODE_OPTIONS\") | .value] | join(\",\")" <<<"$out" | sed '/^$/d')" = --max-old-space-size=300 ] \
+          || err "$chart: an operator NODE_OPTIONS must reach the migration Jobs, once"
+        [ "$(yq "$mj | .spec.template.spec.containers[0].volumeMounts[] | select(.name == \"data\") | .readOnly" <<<"$out" | sed '/^$/d')" = true ] \
+          || err "$chart: migration files must read the old files read-only"
+        ! yq 'select(.kind == "PersistentVolumeClaim") | .metadata.name' <<<"$(render "$chart" "$s3")" | grep -q . \
+          || err "$chart: durable-actors with s3 files must not render a data claim by default"
+        [ "$(yq 'select(.kind == "PersistentVolumeClaim") | .metadata.name' <<<"$(render "$chart" "$s3" --set persistence.retainForMigration=true)" | sed '/^$/d')" = ci-relaycast-data ] \
+          || err "$chart: persistence.retainForMigration must keep the previous backend's data claim"
+        gwout=$(render "$chart" "$s3" --set runtime.durableActors.socketOrigin=controlPlane)
+        cp_url=$(yq 'select(.kind == "Deployment") | .spec.template.spec.containers[0].env[] | select(.name == "DURABLE_ACTORS_CONTROL_PLANE_URL") | .value' <<<"$gwout" | sed '/^$/d')
+        [ -n "$cp_url" ] && [ "$(yq 'select(.kind == "Deployment") | .spec.template.spec.containers[0].env[] | select(.name == "DURABLE_ACTORS_SOCKET_ORIGIN") | .value' <<<"$gwout" | sed '/^$/d')" = "$cp_url" ] \
+          || err "$chart: socketOrigin=controlPlane must dial the in-cluster control plane"
+        ! yq 'select(.kind == "Deployment") | .spec.template.spec.containers[0].env[].name' <<<"$(render "$chart" "$s3")" | grep -qx DURABLE_ACTORS_SOCKET_ORIGIN \
+          || err "$chart: no socket origin unless runtime.durableActors.socketOrigin is set"
+        out=$(render "$chart" "$s3" "${mig[@]}" --set migration.step=import)
+        mj='select(.kind == "Job" and .metadata.labels["app.kubernetes.io/component"] == "migration-import")'
+        [ "$(yq "$mj | .spec.template.spec.containers[0].args[-1]" <<<"$out" | sed '/^$/d')" = "http://ci-relaycast.ci.svc:8787" ] \
+          || err "$chart: migration import must reach the gateway Service"
         ;;
       relayfile)
         v=charts/relayfile/ci/durable-actors-values.yaml
@@ -501,6 +562,14 @@ for chart in "${charts[@]}"; do
         [ "$(yq 'select(.kind == "Deployment") | .spec.template.spec.volumes[] | select(.name == "brand") | .configMap.items[0].key' <<<"$logo")" = "logo.png" ] \
           || err "$chart: existingConfigMap without key must serve logo.png"
         expect_render_failure "$chart" "$v" "unknown logo setting" "global.branding.logo.url is not a setting" --set global.branding.logo.url=https://x.example/logo.svg
+        # Co-branding: dashboardKey serves a second PNG from the same ConfigMap.
+        logo=$(render "$chart" "$v" --set global.branding.logo.existingConfigMap=relay-brand --set global.branding.logo.key=mark.png --set global.branding.logo.dashboardKey=cobrand.png)
+        [ "$(yq 'select(.kind == "Deployment") | .spec.template.spec.volumes[] | select(.name == "brand") | [.configMap.items[].path] | join(" ")' <<<"$logo" | grep -v '^---$' | grep .)" = "mark.png cobrand.png" ] \
+          || err "$chart: dashboardKey must project a second file beside key"
+        kubeconform -strict -summary -ignore-missing-schemas -kubernetes-version "${KUBE_VERSION:-1.33.0}" <<<"$logo" >/dev/null || err "$chart: co-brand logo render failed kubeconform"
+        expect_render_failure "$chart" "$v" "dashboardKey without a ConfigMap" "global.branding.logo.dashboardKey names a key in existingConfigMap" --set global.branding.logo.dashboardKey=cobrand.png
+        expect_render_failure "$chart" "$v" "dashboardKey type" "global.branding.logo.dashboardKey must be a file name" --set global.branding.logo.existingConfigMap=relay-brand --set global.branding.logo.dashboardKey=cobrand.svg
+        expect_render_failure "$chart" "$v" "dashboardKey equal to key" "dashboardKey must differ from key" --set global.branding.logo.existingConfigMap=relay-brand --set global.branding.logo.dashboardKey=logo.png
         ;;
       relay-control)
         v=charts/relay-control/ci/default-values.yaml
@@ -662,48 +731,6 @@ for chart in "${charts[@]}"; do
         [ -n "$(render "$chart" "$v" --set dashboardUrl=https://gcp-proof.agentrelay.com/ --set auth.oidc.issuer=http://dex:5556/dex --set auth.oidc.clientId=x --set secretKeys.oidcClientSecret=oidc-client-secret --set auth.oidc.allowHttpIssuer=true)" ] \
           || err "$chart: allowHttpIssuer=true must accept an in-cluster http issuer"
         ;;
-      relayhistory)
-        v=charts/relayhistory/ci/default-values.yaml
-        check_postgres_ca "$chart" "$v"
-        expect_render_failure "$chart" "$v" "postgresCa extraConfig override" "NODE_EXTRA_CA_CERTS is managed by structured chart values" --set postgresCa.enabled=true --set postgresCa.configMap=ca-bundle --set extraConfig.NODE_EXTRA_CA_CERTS=/x
-        expect_render_failure "$chart" "$v" "mutable image" "image.digest is required" --set image.digest=
-        expect_render_failure "$chart" "$v" "malformed digest" "image.digest must be sha256:<64 lowercase hex characters>" --set image.digest=sha256:abc
-        expect_render_failure "$chart" "$v" "missing database Secret" "database.existingSecret is required" --set database.existingSecret=
-        expect_render_failure "$chart" "$v" "missing origin" "relayauth.historyOrigin must be an HTTPS origin" --set relayauth.historyOrigin=
-        expect_render_failure "$chart" "$v" "plaintext origin" "relayauth.historyOrigin must be an HTTPS origin" --set relayauth.historyOrigin=http://history.example.com
-        expect_render_failure "$chart" "$v" "ingress without TLS" "ingress.enabled=true requires ingress.tls" --set-json 'ingress.tls=[]'
-        expect_render_failure "$chart" "$v" "drain without write hold" "migrations.drainForWriteHold requires migrations.allowWriteHold=true" --set migrations.drainForWriteHold=true
-        expect_render_failure "$chart" "$v" "drain without migrations" "migrations.drainForWriteHold requires migrations.enabled=true" --set migrations.drainForWriteHold=true --set migrations.allowWriteHold=true --set migrations.enabled=false
-        expect_render_failure "$chart" "$v" "replicaCount 0" "set migrations.drainForWriteHold=true instead" --set replicaCount=0
-        # Write-hold step 1 drains History to zero replicas and runs the Job with the hold;
-        # default and step 2 keep one replica and no hold.
-        wh=$(helm template ci "charts/$chart" -n ci --no-hooks -f "$v" --set migrations.allowWriteHold=true --set migrations.drainForWriteHold=true) \
-          || err "$chart: write-hold step 1 failed to render"
-        [ "$(yq 'select(.kind == "Deployment") | .spec.replicas' <<<"$wh")" = 0 ] || err "$chart: drainForWriteHold did not render replicas 0"
-        [ "$(yq 'select(.kind == "Job") | .spec.template.spec.containers[0].env[] | select(.name == "ALLOW_WRITE_HOLD") | .value' <<<"$wh")" = yes ] \
-          || err "$chart: write-hold step 1 Job does not take the write hold"
-        # The Job must not start migrating while a History pod still terminates:
-        # an init container polls the API for this release's History pods.
-        [ "$(yq 'select(.kind == "Job") | .spec.template.spec.initContainers[0].name' <<<"$wh")" = wait-for-history-drain ] \
-          || err "$chart: write-hold step 1 Job does not wait for History to drain"
-        [ "$(yq 'select(.kind == "Job") | .spec.template.spec.initContainers[0].env[] | select(.name == "HISTORY_SELECTOR") | .value' <<<"$wh")" = "app.kubernetes.io/name=relayhistory,app.kubernetes.io/instance=ci,app.kubernetes.io/component=history" ] \
-          || err "$chart: drain wait selector is not release-scoped"
-        [ "$(yq 'select(.kind == "Job") | .spec.template.spec.containers[0].volumeMounts[].name' <<<"$wh" | grep -c drain-wait-token || true)" = 0 ] \
-          || err "$chart: the migrate container must not mount the drain-wait token"
-        [ "$(yq 'select(.kind == "Role") | .rules[0].verbs | join(",")' <<<"$wh")" = list ] \
-          || err "$chart: drain-wait Role must only list pods"
-        expect_render_failure "$chart" "$v" "drain without API egress" "requires migrations.drainWaitApiServerEgress" --set migrations.drainForWriteHold=true --set migrations.allowWriteHold=true --set networkPolicy.allowAllEgress=false --set-json 'networkPolicy.additionalEgress=[{"to":[{"ipBlock":{"cidr":"10.0.0.5/32"}}]}]'
-        expect_render_failure "$chart" "$v" "fractional drain wait" "migrations.drainWaitSeconds must be a positive integer" --set migrations.drainWaitSeconds=1.5
-        expect_render_failure "$chart" "$v" "drain wait over the Job deadline" "migrations.drainWaitSeconds must be below migrations.activeDeadlineSeconds" --set migrations.drainForWriteHold=true --set migrations.allowWriteHold=true --set migrations.drainWaitSeconds=3600
-        expect_render_failure "$chart" "$v" "drain wait on the default ServiceAccount" "requires serviceAccount.name" --set migrations.drainForWriteHold=true --set migrations.allowWriteHold=true --set serviceAccount.create=false
-        [ "$(helm template ci "charts/$chart" -n ci --no-hooks -f "$v" --set migrations.allowWriteHold=true --set migrations.drainForWriteHold=true --set networkPolicy.allowAllEgress=false --set-json 'networkPolicy.additionalEgress=[{"to":[{"ipBlock":{"cidr":"10.0.0.5/32"}}]}]' --set-json 'migrations.drainWaitApiServerEgress=[{"ipBlock":{"cidr":"10.0.0.1/32"}}]' --set migrations.drainWaitApiServerPort=6443 | yq 'select(.kind == "NetworkPolicy" and (.metadata.name | test("migration$"))) | .spec.egress[-1].ports[0].port')" = 6443 ] \
-          || err "$chart: drainWaitApiServerPort is not rendered in the migration policy"
-        dflt=$(helm template ci "charts/$chart" -n ci --no-hooks -f "$v") || err "$chart: default render failed"
-        [ "$(yq 'select(.kind == "Role") | .metadata.name' <<<"$dflt")" = "" ] || err "$chart: default render must not grant pod list"
-        [ "$(yq 'select(.kind == "Deployment") | .spec.replicas' <<<"$dflt")" = 1 ] || err "$chart: default render is not one replica"
-        [ "$(yq 'select(.kind == "Job") | .spec.template.spec.containers[0].env[] | select(.name == "ALLOW_WRITE_HOLD") | .value' <<<"$dflt")" = no ] \
-          || err "$chart: default Job takes a write hold"
-        ;;
       relaychief-control)
         v=charts/relaychief-control/ci/default-values.yaml
         check_postgres_ca "$chart" "$v"
@@ -853,9 +880,53 @@ for chart in "${charts[@]}"; do
             || err "$chart: $name must come from the existing Secret"
         done
         ;;
+      durable-actors)
+        # Local patch 12 (UPSTREAM.md): postgresCa appends the Postgres server CA to the
+        # image's system roots (init container postgres-ca-bundle, volume postgres-ca)
+        # and points SSL_CERT_FILE at it in the control plane and the pool manager.
+        v=charts/durable-actors/ci/eks-values.yaml
+        off=$(render "$chart" "$v")
+        ! grep -Eq 'postgres-ca|SSL_CERT_FILE|initContainers' <<<"$off" || err "$chart: postgresCa off must render nothing"
+        for src in "configMap=rds-ca" "secret=rds-ca-secret"; do
+          on=$(render "$chart" "$v" --set postgresCa.enabled=true --set "postgresCa.$src" --set postgresCa.key=global-bundle.pem) || { err "$chart: postgresCa $src did not render"; continue; }
+          [ "$(yq 'select(.kind == "Deployment") | .metadata.name' <<<"$on" | grep -v '^---$' | sort | tr '\n' ' ')" = "ci-durable-actors ci-durable-actors-pool-manager " ] \
+            || err "$chart: expected the control-plane and pool-manager Deployments"
+          if [ "${src%%=*}" = configMap ]; then
+            source='.configMap.name == "rds-ca" and (.configMap.items | length) == 1 and .configMap.items[0].key == "global-bundle.pem" and .configMap.items[0].path == "ca.crt"'
+          else
+            source='.secret.secretName == "rds-ca-secret" and .secret.defaultMode == 0444 and (.secret.items | length) == 1 and .secret.items[0].key == "global-bundle.pem" and .secret.items[0].path == "ca.crt"'
+          fi
+          ok='([.spec.template.spec.volumes[] | select(.name == "postgres-ca-source" and '"$source"')] | length) == 1'
+          ok+=' and ([.spec.template.spec.volumes[] | select(.name == "postgres-ca" and .emptyDir.medium == "Memory")] | length) == 1'
+          ok+=' and ([.spec.template.spec.initContainers[] | select(.name == "postgres-ca-bundle" and (.command[-1] | contains("/etc/ssl/certs/ca-certificates.crt")) and (.command[-1] | contains("/etc/postgres-ca-source/ca.crt")) and .securityContext.readOnlyRootFilesystem == true)] | length) == 1'
+          ok+=' and .spec.template.spec.initContainers[0].image == .spec.template.spec.containers[0].image'
+          ok+=' and ([.spec.template.spec.containers[0].volumeMounts[] | select(.name == "postgres-ca" and .mountPath == "/etc/postgres-ca" and .readOnly == true)] | length) == 1'
+          ok+=' and ([.spec.template.spec.containers[0].volumeMounts[] | select(.name == "postgres-ca-source")] | length) == 0'
+          ok+=' and ([.spec.template.spec.containers[0].env[] | select(.name == "SSL_CERT_FILE" and .value == "/etc/postgres-ca/ca.crt")] | length) == 1'
+          missing=$(yq "select(.kind == \"Deployment\") | select(($ok) | not) | .metadata.name" <<<"$on" | grep -v '^---$' || true)
+          [ -z "$missing" ] || err "$chart: postgresCa $src did not reach: $missing"
+          kubeconform -strict -summary -ignore-missing-schemas -kubernetes-version "${KUBE_VERSION:-1.33.0}" <<<"$on" >/dev/null || err "$chart: postgresCa $src failed kubeconform"
+        done
+        expect_render_failure "$chart" "$v" "postgresCa without a source" "postgresCa.enabled=true requires exactly one of postgresCa.configMap or postgresCa.secret" --set postgresCa.enabled=true
+        expect_render_failure "$chart" "$v" "postgresCa with both sources" "postgresCa.enabled=true requires exactly one of postgresCa.configMap or postgresCa.secret" --set postgresCa.enabled=true --set postgresCa.configMap=a --set postgresCa.secret=b
+        expect_render_failure "$chart" "$v" "postgresCa source while disabled" "postgresCa.configMap and postgresCa.secret require postgresCa.enabled=true" --set postgresCa.configMap=rds-ca
+        expect_render_failure "$chart" "$v" "postgresCa non-boolean enabled" "/postgresCa/enabled" --set-string postgresCa.enabled=true
+        expect_render_failure "$chart" "$v" "postgresCa bad name" "/postgresCa/configMap" --set postgresCa.enabled=true --set postgresCa.configMap=Bad_Name
+        expect_render_failure "$chart" "$v" "postgresCa bad key" "/postgresCa/key" --set postgresCa.enabled=true --set postgresCa.configMap=rds-ca --set postgresCa.key=../x
+        resilient=$(render "$chart" "$v" --set podDisruptionBudget.enabled=true --set podDisruptionBudget.maxUnavailable=0 --set topologySpread.enabled=true)
+        [ "$(yq 'select(.kind == "PodDisruptionBudget") | .spec.maxUnavailable' <<<"$resilient" | sed '/^$/d')" = 0 ] \
+          || err "$chart: singleton control-plane PDB must preserve maxUnavailable=0"
+        missing=$(yq 'select(.kind == "Deployment") | select((.spec.template.spec.topologySpreadConstraints[0].labelSelector.matchLabels["app.kubernetes.io/name"] == .metadata.name) | not) | .metadata.name' <<<"$resilient" | grep -v '^---$' || true)
+        [ -z "$missing" ] || err "$chart: generated topology spread does not select its Deployment: $missing"
+        ;;
       agent-relay)
         v=charts/agent-relay/ci/gcp-proof-values.yaml
-        expect_render_failure "$chart" "$v" "missing History image" "image.digest is required" --set relayhistory.image.digest=
+        # The standalone RelayHistory component was removed; values that would
+        # have deployed it must fail instead of silently dropping History.
+        expect_render_failure "$chart" "$v" "removed relayhistory component" "components.relayhistory was removed" --set components.relayhistory=true
+        expect_render_failure "$chart" "$v" "removed relayhistory values" "the relayhistory values block was removed" --set relayhistory.image.digest=sha256:8fbda9bd89dd33994b6b3331fb403c38a25f04e6742050bd717e99661f3544ba
+        render "$chart" "$v" --set components.relayhistory=false >/dev/null || err "$chart: components.relayhistory=false must still render (ignored)"
+        expect_render_failure "$chart" "$v" "legacy Control History backend behind gkeIngress" "relay-control.services.relayhistoryBackend must be native" --set relay-control.services.relayhistoryBackend=legacy --set relay-control.services.relayhistoryUrl=http://history:8080 --set relay-control.services.relayhistoryPublicUrl=https://history.gcp-proof.agentrelay.com --set relay-control.services.sessionReadApiMcpReads=false
         expect_render_failure "$chart" "$v" "missing API image" "image.digest is required" --set relay-control.image.digest=
         expect_render_failure "$chart" "$v" "missing dashboard image" "image.digest is required" --set relay-webapp.image.digest=
         expect_render_failure "$chart" "$v" "dashboardUrl off the root host" "relay-control.dashboardUrl must be on the dashboard host" --set relay-control.dashboardUrl=https://elsewhere.agentrelay.com/
@@ -867,6 +938,16 @@ for chart in "${charts[@]}"; do
           || err "$chart: global.branding.logo must set relay-control's SELFHOST_LOGIN_LOGO_URL on the dashboard origin"
         [ "$(yq 'select(.kind == "Deployment") | .spec.template.spec.volumes[] | select(.name == "brand") | .configMap.name' <<<"$logo")" = "$(yq 'select(.kind == "ConfigMap" and (.data | has("logo.svg"))) | .metadata.name' <<<"$logo")" ] \
           || err "$chart: global.branding.logo must mount the chart's logo ConfigMap into relay-webapp"
+        # values-branding-example.yaml (co-branding) renders: the sign-in page
+        # links the customer mark, relay-webapp serves both PNGs, and the
+        # dashboard profile points at the combined logo.
+        cobrand=$(render "$chart" charts/agent-relay/ci/single-host-values.yaml -f charts/agent-relay/values-branding-example.yaml) || err "$chart: values-branding-example.yaml did not render"
+        [ "$(yq 'select(.kind == "Deployment") | .spec.template.spec.containers[0].env[] | select(.name == "SELFHOST_LOGIN_LOGO_URL") | .value' <<<"$cobrand")" = https://relay.gcp-proof.agentrelay.com/brand/mark.png ] \
+          || err "$chart: the co-brand example must link the sign-in mark on the dashboard origin"
+        [ "$(yq 'select(.kind == "Deployment") | .spec.template.spec.volumes[] | select(.name == "brand") | [.configMap.items[].path] | join(" ")' <<<"$cobrand" | grep -v '^---$' | grep .)" = "mark.png cobrand.png" ] \
+          || err "$chart: the co-brand example must serve mark.png and cobrand.png"
+        [ "$(yq 'select(.kind == "Deployment") | .spec.template.spec.containers[0].env[] | select(.name == "DASHBOARD_CUSTOMER_PROFILE") | .value' <<<"$cobrand" | jq -r '.logo + " " + (.productName // "unset")')" = "/brand/cobrand.png unset" ] \
+          || err "$chart: the co-brand example must keep the Agent Relay name and use the combined logo"
         expect_render_failure "$chart" charts/agent-relay/ci/single-host-values.yaml "hosted logo without the dashboard" "components.webapp=false" --set gkeIngress.enabled=false --set components.webapp=false --set-string 'global.branding.logo.svg=<svg/>'
         render "$chart" charts/agent-relay/ci/single-host-values.yaml --set gkeIngress.enabled=false --set components.webapp=false --set-string 'global.branding.logo.svg=<svg/>' --set relay-control.login.logoUrl=https://cdn.example.com/logo.svg >/dev/null \
           || err "$chart: components.webapp=false with relay-control.login.logoUrl must render"

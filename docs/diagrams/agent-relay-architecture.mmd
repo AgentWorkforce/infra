@@ -22,15 +22,15 @@ flowchart LR
     dash["relay-dashboard<br/>static SPA"]
     api["relay-cloud-api<br/>control plane: orgs, workspaces,<br/>device auth, flows + workers,<br/>admin env vars, provider connections,<br/>sessions API, telemetry"]
     cast["relaycast<br/>messaging (SQLite, single node)"]
-    hist["relayhistory<br/>session delivery, search, replay"]
     flows["relayflows (opt-in)<br/>standalone Job or cloudWorker"]
 
-    subgraph AUTH["relayauth"]
-      ra["relayauth<br/>scoped tokens + JWKS"]
+    subgraph AUTH["relayauth (optional)"]
+      ra["relayauth<br/>only for Relaycast relayauth credentials"]
     end
 
     subgraph SP["Sessions Pipeline"]
-      ingest["alleyoop ingest<br/>ClusterIP only"]
+      ingest["ingest edge<br/>session upload (history host)"]
+      hist["read API<br/>session list, search, replay (history host)"]
       workers["sessions-pipeline workers<br/>hoopdb-indexer · referee · bob-costas (summaries)"]
     end
   end
@@ -60,22 +60,21 @@ flowchart LR
   lb --> api
   lb --> cast
   lb --> hist
+  lb --> ingest
   lb -.-> gw
   lb -.-> da
   lb -.-> rf
-  api --> ra
   api --> cast
   api --> hist
-  hist --> ra
-  cast --> ra
+  ingest --> api
+  cast -.-> ra
   flows --> api
   ingest --> gcs
   ingest --> sql
-  ingest --> mq
   workers --> mq
-  ingest --> workers
   api --> sql
   hist --> sql
+  hist --> gcs
   workers --> sql
   workers --> gcs
   gw -.-> da
@@ -93,7 +92,8 @@ flowchart LR
   classDef external fill:#fdf2f8,stroke:#be185d,color:#500724,stroke-width:1.5px,stroke-dasharray:6 4
   class desktop,agents,browser client
   class lb,deny edge
-  class dash,api,cast,hist,flows,ra,ingest,workers core
+  class dash,api,cast,hist,flows,ingest,workers core
+  class ra preview
   class sql,gcs,wi,mq data
   class gw,da,pool,rf preview
   class ext external

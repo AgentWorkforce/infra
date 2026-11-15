@@ -293,6 +293,14 @@ class StagedPlanLifecycleTests(unittest.TestCase):
         self.assertFalse(self.applied())
         self.assertGreaterEqual(len(self.shows), 3)
 
+    def test_search_disabled_plan_is_recorded_and_applies(self):
+        self.plan_payload = _mode_fixtures.disabled_plan()
+        self.command("plan")
+        receipt = self.receipt()
+        self.assertEqual(receipt["search_mode_history"], "search-disabled")
+        self.command("apply", receipt["plan_sha256"])
+        self.assertTrue(self.applied())
+
     def test_show_side_effects_cannot_bypass_final_seals(self):
         for kind in ("plan", "source", "staged", "derived"):
             with self.subTest(kind=kind):

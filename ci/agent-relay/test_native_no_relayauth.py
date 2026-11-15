@@ -37,6 +37,135 @@ def control(overrides):
 
 
 class NativeNoRelayauth(unittest.TestCase):
+    def test_eks_rds_native_profile_is_idempotent_across_repeated_upgrades(self):
+        command = [
+            'helm', 'template', 'proof', 'charts/agent-relay', '-n', 'agent-relay-placeholder',
+            '--no-hooks', '--is-upgrade',
+            '-f', 'charts/agent-relay/values-eks.yaml',
+            '-f', 'charts/agent-relay/values-eks-rds-native.yaml',
+        ]
+        first = subprocess.run(command, cwd=ROOT, capture_output=True, text=True)
+        second = subprocess.run(command, cwd=ROOT, capture_output=True, text=True)
+        self.assertEqual(first.returncode, 0, first.stderr)
+        self.assertEqual(second.returncode, 0, second.stderr)
+        self.assertEqual(first.stdout, second.stdout)
+        values = yaml.safe_load((ROOT / 'charts/agent-relay/values-eks-rds-native.yaml').read_text())
+        self.assertIs(values['sessions-pipeline']['worker']['acknowledgeWorkloadRename'], True)
+
+    def test_eks_actors_profile_can_layer_on_rds_native(self):
+        # Replace only the documented customer placeholders. The three profile
+        # files themselves must compose without leaking Relaycast's RDS CA into
+        # its durable-actors backend.
+        actor_values = {
+            'durable-actors.publicUrl': 'https://actors.ci.invalid',
+            'durable-actors.placement.zone': 'us-west-2a',
+            'durable-actors.storage.bucket': 'ci-actors',
+            'durable-actors.storage.s3.region': 'us-west-2',
+            'durable-actors.storage.s3.actorRoleArn': 'arn:aws:iam::123456789012:role/ci-actors',
+            'relaycast.baseUrl': 'https://cast.ci.invalid',
+            'relaycast.existingSecret': 'relaycast-secrets',
+            'relaycast.runtime.durableActors.deployer.artifactBucket': 'ci-actors',
+            'relaycast.runtime.durableActors.deployer.artifactStore.s3.region': 'us-west-2',
+            'relaycast.runtime.durableActors.fileStore.bucket': 'ci-relaycast-files',
+            'relaycast.runtime.durableActors.fileStore.s3.region': 'us-west-2',
+            'relayfile.runtime.durableActors.deployer.artifactBucket': 'ci-actors',
+            'relayfile.runtime.durableActors.deployer.artifactStore.s3.region': 'us-west-2',
+            'relayfile.runtime.durableActors.blobStore.bucket': 'ci-relayfile-blobs',
+            'relayfile.runtime.durableActors.blobStore.s3.region': 'us-west-2',
+        }
+        helm_set = [
+            '--set', 'components.control=true',
+            '--set', 'components.sessionsPipeline=true',
+            *sum((['--set-string', f'{key}={value}'] for key, value in actor_values.items()), []),
+        ]
+        result = subprocess.run([
+            'helm', 'template', 'proof', 'charts/agent-relay', '-n', 'agent-relay-ci', '--no-hooks',
+            '-f', 'charts/agent-relay/values-eks.yaml',
+            '-f', 'charts/agent-relay/values-eks-rds-native.yaml',
+            '-f', 'charts/agent-relay/values-eks-actors.yaml',
+            *helm_set,
+        ], cwd=ROOT, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        docs = [doc for doc in yaml.safe_load_all(result.stdout) if doc]
+        deployments = {doc['metadata']['name']: doc for doc in docs if doc.get('kind') == 'Deployment'}
+        jobs = {doc['metadata']['name']: doc for doc in docs if doc.get('kind') == 'Job'}
+        pdbs = {doc['metadata']['name']: doc for doc in docs if doc.get('kind') == 'PodDisruptionBudget'}
+        self.assertIn('relaycast', deployments)
+        relaycast_pod = deployments['relaycast']['spec']['template']['spec']
+        self.assertEqual(
+            relaycast_pod['containers'][0]['image'],
+            'ghcr.io/agentworkforce/relaycast-actors-gateway@sha256:'
+            '8148aa62db3a387dbfc266a8baddcfce4adf90ae089c434d86eecf1aa24973e1',
+        )
+        deploy_job = next(job for name, job in jobs.items() if name.startswith('relaycast-actors-deploy-'))
+        self.assertEqual(
+            deploy_job['spec']['template']['spec']['containers'][0]['image'],
+            'ghcr.io/agentworkforce/relaycast-actors-deployer@sha256:'
+            '3a407c3138ff56ff14686031b40925ee2f843cfc690eaaf4469f5a518c57213d',
+        )
+        self.assertEqual(deployments['relaycast']['spec']['replicas'], 3)
+        self.assertFalse(any('postgres' in volume['name'] for volume in relaycast_pod.get('volumes', [])))
+        self.assertEqual(pdbs['relaycast']['spec']['maxUnavailable'], 1)
+        self.assertEqual(
+            pdbs['relaycast']['spec']['selector']['matchLabels'],
+            {'app.kubernetes.io/name': 'relaycast', 'app.kubernetes.io/instance': 'proof'},
+        )
+        relaycast_spread = relaycast_pod['topologySpreadConstraints']
+        self.assertEqual(relaycast_spread, [{
+            'maxSkew': 1,
+            'topologyKey': 'topology.kubernetes.io/zone',
+            'whenUnsatisfiable': 'DoNotSchedule',
+            'labelSelector': {'matchLabels': {
+                'app.kubernetes.io/name': 'relaycast',
+                'app.kubernetes.io/instance': 'proof',
+            }},
+        }])
+        self.assertFalse(any(doc.get('kind') == 'PersistentVolumeClaim'
+                             and doc['metadata']['name'] == 'relaycast-data' for doc in docs))
+        for name in ('relay-control', 'proof-ingest-edge'):
+            self.assertIn(name, deployments)
+            pod = deployments[name]['spec']['template']['spec']
+            postgres_ca = next(volume for volume in pod['volumes'] if volume['name'] == 'postgres-ca')
+            self.assertEqual(postgres_ca['configMap']['name'], 'rds-ca', name)
+        # The durable-actors control plane and pool manager verify RDS with the
+        # same bundle (charts/durable-actors UPSTREAM.md patch 12).
+        for name in ('proof-durable-actors', 'proof-durable-actors-pool-manager'):
+            self.assertIn(name, deployments)
+            pod = deployments[name]['spec']['template']['spec']
+            volumes = {volume['name']: volume for volume in pod['volumes']}
+            self.assertEqual(volumes['postgres-ca'].get('emptyDir', {}).get('medium'), 'Memory', name)
+            self.assertEqual(volumes['postgres-ca-source']['configMap'], {'name': 'rds-ca', 'items': [{'key': 'ca.crt', 'path': 'ca.crt'}]}, name)
+            self.assertEqual([c['name'] for c in pod['initContainers']], ['postgres-ca-bundle'], name)
+            self.assertIn('/etc/ssl/certs/ca-certificates.crt', pod['initContainers'][0]['command'][-1], name)
+            container = pod['containers'][0]
+            self.assertIn({'name': 'postgres-ca', 'mountPath': '/etc/postgres-ca', 'readOnly': True}, container['volumeMounts'], name)
+            self.assertIn({'name': 'SSL_CERT_FILE', 'value': '/etc/postgres-ca/ca.crt'}, container['env'], name)
+            self.assertEqual(container['resources'], {
+                'requests': {'cpu': '1', 'memory': '1Gi'},
+                'limits': {'memory': '2Gi'},
+            })
+            env = {item['name']: item.get('value') for item in container['env']}
+            self.assertEqual(env['DURABLE_ACTORS_SPARE_IDLE'], '3')
+            self.assertEqual(env['DURABLE_ACTORS_SPARE_MAX_STARTING'], '8')
+            self.assertEqual(env['DURABLE_ACTORS_HOST_MEMORY_MIB'], '1024')
+            self.assertEqual(pod['topologySpreadConstraints'], [{
+                'maxSkew': 1,
+                'topologyKey': 'topology.kubernetes.io/zone',
+                'whenUnsatisfiable': 'DoNotSchedule',
+                'labelSelector': {'matchLabels': {'app.kubernetes.io/name': name}},
+            }])
+        self.assertEqual(pdbs['proof-durable-actors']['spec']['maxUnavailable'], 0)
+
+        # Standalone (eks-actors-install.sh, in-namespace Postgres) mounts no CA.
+        result = subprocess.run([
+            'helm', 'template', 'proof', 'charts/agent-relay', '-n', 'agent-relay-ci', '--no-hooks',
+            '-f', 'charts/agent-relay/values-eks-actors.yaml',
+            *sum((['--set-string', f'{key}={value}'] for key, value in actor_values.items()), []),
+        ], cwd=ROOT, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn('postgres-ca', result.stdout)
+        self.assertNotIn('SSL_CERT_FILE', result.stdout)
+
     def test_eks_rds_native_profile_is_reader_first_and_customer_neutral(self):
         result = subprocess.run([
             'helm', 'template', 'proof', 'charts/agent-relay', '-n', 'agent-relay-placeholder', '--no-hooks',
@@ -49,6 +178,11 @@ class NativeNoRelayauth(unittest.TestCase):
         jobs = {doc['metadata']['name']: doc for doc in docs if doc.get('kind') == 'Job'}
         self.assertNotIn('relayauth', deployments)
         self.assertNotIn('relayhistory', deployments)
+        self.assertEqual(
+            deployments['relaycast']['spec']['template']['spec']['containers'][0]['image'],
+            'ghcr.io/agentworkforce/relaycast-self-host@sha256:'
+            'ec062ef901af15cf575b53a71d7eb09f2e6ab6e7c0d5be2da35339a275a5c6cc',
+        )
         for name in ('proof-read-api', 'proof-ingest-edge', 'proof-search-indexer'):
             self.assertIn(name, deployments)
 
@@ -200,7 +334,7 @@ class NativeNoRelayauth(unittest.TestCase):
         self.assertIn('agent-relay-read-api', services)
         self.assertEqual(
             deployments['relay-control']['spec']['template']['spec']['containers'][0]['image'],
-            'ghcr.io/agentworkforce/relay-control@sha256:0b9c5a077b49b31178cc669e7c1d532f39e64c840087ca41636bb84a6c62631c')
+            'ghcr.io/agentworkforce/relay-control@sha256:d1b6ca95fab240a9d41208d83de3b1f4245408b0765038762f1c419ee60f43bc')
         self.assertEqual(
             deployments['relay-webapp']['spec']['template']['spec']['containers'][0]['image'],
             'ghcr.io/agentworkforce/relay-webapp@sha256:da0cc80476eac734299c0c6ceb94e2bca7dae7913cce56a8ca8592cf086dd02e')
@@ -235,7 +369,7 @@ class NativeNoRelayauth(unittest.TestCase):
         webapp_deploy = next(doc for doc in docs if doc.get('kind') == 'Deployment' and doc['metadata']['name'] == 'relay-webapp')
         self.assertEqual(
             control_deploy['spec']['template']['spec']['containers'][0]['image'],
-            'ghcr.io/agentworkforce/relay-control@sha256:0b9c5a077b49b31178cc669e7c1d532f39e64c840087ca41636bb84a6c62631c')
+            'ghcr.io/agentworkforce/relay-control@sha256:d1b6ca95fab240a9d41208d83de3b1f4245408b0765038762f1c419ee60f43bc')
         self.assertEqual(
             webapp_deploy['spec']['template']['spec']['containers'][0]['image'],
             'ghcr.io/agentworkforce/relay-webapp@sha256:da0cc80476eac734299c0c6ceb94e2bca7dae7913cce56a8ca8592cf086dd02e')

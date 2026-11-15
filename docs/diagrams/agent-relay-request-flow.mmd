@@ -1,16 +1,17 @@
 %% Agent Relay self-hosted: the main request flows through the deployed suite.
 %% Source of truth for agent-relay-request-flow.svg / .png (mermaid-cli 11.4.2,
 %% -b white, PNG at -s 2). Client calls cross the GKE HTTPS load balancer.
-%% Service-to-service calls stay in-cluster: relay-cloud-api to relayhistory and
-%% relayauth, and relayhistory to relayauth for JWKS (the JWKS ingress is off).
+%% Service-to-service calls stay in-cluster: relay-cloud-api to the read API,
+%% and the ingest edge to relay-cloud-api for token introspection. History is
+%% native (read API + ingest edge on the history host); no RelayAuth.
 sequenceDiagram
   autonumber
   actor User as Team member (browser)
   participant Desktop as Agent Relay Desktop
   participant Dash as relay-dashboard<br/>(dashboard host)
   participant API as relay-cloud-api<br/>(api host, /cloud/api)
-  participant Auth as relayauth
-  participant Hist as relayhistory<br/>(history host)
+  participant Ingest as ingest edge<br/>(history host)
+  participant Hist as read API<br/>(history host)
   participant Cast as relaycast<br/>(cast host)
   participant Agent as CLI / SDK agent
   participant Peer as Peer agent
@@ -22,16 +23,15 @@ sequenceDiagram
     User->>Dash: open verification URL, sign in
     Dash->>API: approve device for org / workspace
     Desktop->>API: poll for the device token
-    API->>Auth: mint scoped tokens
-    API-->>Desktop: session + scoped Relaycast and RelayHistory credentials
+    API-->>Desktop: session + scoped Relaycast and History credentials
   end
 
   rect rgb(236, 253, 245)
-    Note over Desktop,Hist: 2. Session upload (durable delivery batches)
-    Desktop->>Hist: POST delivery batch (scoped token)
-    Hist->>Auth: verify token (JWKS)
-    Hist-->>Desktop: accepted (retries are idempotent)
-    Note right of Hist: stored in its own Postgres database
+    Note over Desktop,Ingest: 2. Session upload (durable delivery batches)
+    Desktop->>Ingest: POST delivery batch (scoped token)
+    Ingest->>API: introspect token
+    Ingest-->>Desktop: accepted (retries are idempotent)
+    Note right of Ingest: stored in the Sessions Pipeline (hoopdb + object storage)
   end
 
   rect rgb(240, 249, 255)

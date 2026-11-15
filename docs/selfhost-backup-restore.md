@@ -2,7 +2,8 @@
 
 This runbook covers the `agent-relay` `portable-single` suite:
 
-- PostgreSQL databases for the Sessions Pipeline (`hoopdb`), RelayHistory, and the control
+- PostgreSQL databases for the Sessions Pipeline (`hoopdb`, which also holds
+  native History: read API, ingest edge and search projection) and the control
   API;
 - Relaycast SQLite and uploaded files on its retained RWO PVC;
 - RelayAuth SQLite on its retained RWO PVC;
@@ -71,28 +72,6 @@ scripts/selfhost/pre-upgrade-check.sh \
 A successful gate does not make a migration reversible and does not authorize
 the upgrade. Keep the normal review and explicit mutation approval.
 
-### RelayHistory write-hold migrations
-
-A RelayHistory migration that needs a write hold cannot run in a single
-`helm upgrade`: its Job (`migrations.allowWriteHold=true`) refuses while any
-runtime-role session is connected, and Helm keeps the History Deployment at one
-replica. Do not scale the Deployment by hand (the next upgrade restores it while
-the Job may still be running). Use the two-step upgrade in
-[`charts/relayhistory/README.md`](../charts/relayhistory/README.md#write-hold-migrations-two-step-upgrade):
-
-1. `helm upgrade` with `relayhistory.migrations.allowWriteHold=true` and
-   `relayhistory.migrations.drainForWriteHold=true`. History renders with zero
-   replicas, and the migrate Job's init container waits until no History pod
-   of the release exists (terminating pods included) before migrating; it
-   needs API access (a chart-rendered Role that lists pods, plus
-   `relayhistory.migrations.drainWaitApiServerEgress` under restricted
-   egress). Wait for the migrate Job to complete. On failure, stop and follow
-   the safety rules above.
-2. `helm upgrade` with both flags back to `false`. History returns to one
-   replica.
-
-The recovery set for the gate above must be captured before step 1.
-
 ## Capture
 
 Capture a recovery set with `charts/agent-relay/scripts/gcp-recovery-backup.sh`.
@@ -157,7 +136,7 @@ export CLUSTER="customer-gke"
 export KUBERNETES_NAMESPACE="agent-relay"
 export HELM_RELEASE="agent-relay"
 export CLOUDSQL_INSTANCE="agent-relay-postgres"
-export CLOUDSQL_DATABASES="hoopdb,relayhistory,control_api"   # your database names
+export CLOUDSQL_DATABASES="hoopdb,control_api"   # your database names
 export GCS_SOURCE_BUCKET="customer-session-locker"
 export GCS_ARCHIVE_BUCKET="${PROJECT_ID}-agent-relay-backups"
 export SNAPSHOT_CLASS="approved-retain-snapshot-class"
@@ -307,7 +286,6 @@ are plain Kubernetes Jobs, not Helm hooks, so `--no-hooks` does not stop them;
 the overlay must disable them explicitly. The restored databases already carry
 the recorded schema, and the restored bucket already exists:
 
-- `relayhistory.migrations.enabled=false`;
 - `relay-control.migrations.enabled=false`;
 - `sessions-pipeline.worker.migrations.enabled=false`;
 - `sessions-pipeline.worker.lockerInit.enabled=false`;
@@ -318,16 +296,15 @@ the recorded schema, and the restored bucket already exists:
 - `relayauth.persistence.existingClaim` set to the restored RelayAuth PVC;
 - all database URLs pointing only to the restored instance;
 - Locker bucket pointing only to the restored bucket;
-- the recorded chart version and immutable image digests.
+- the recorded chart version and immutable image digests;
+- for a recorded chart before agent-relay 0.7.0 that still ran the standalone
+  RelayHistory, also `relayhistory.migrations.enabled=false`.
 
 For example, `isolated-restore-overlay.yaml` starts with:
 
 ```yaml
 gkeIngress:
   enabled: false
-relayhistory:
-  migrations:
-    enabled: false
 relay-control:
   migrations:
     enabled: false

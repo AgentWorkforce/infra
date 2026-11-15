@@ -11,7 +11,8 @@ MODE = 'trusted-proof-operator'
 CONTEXT_KEYS = set('agent_id account_id session_id region profile mode approval_id profile_expires_at approval_fingerprint source_commit plan_sha256 inputs_sha256 provider_lock_sha256 provider_binaries_sha256 artifact_sha256 backend_state_sha256'.split())
 UUID = r'[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}'
 DOMAIN = 'module.search.aws_opensearch_domain.disposable[0]'
-POLICY = 'module.search.aws_opensearch_domain_policy.this'
+# Indexed since modules/aws/search gained `enabled` (moved from .this).
+POLICY = 'module.search.aws_opensearch_domain_policy.this[0]'
 MARKER = 'module.search.terraform_data.creation_mode'
 ADDRESSES = {DOMAIN, POLICY, 'terraform_data.guard', MARKER}
 _MODE_SPEC = importlib.util.spec_from_file_location('search_creation_mode', Path(__file__).resolve().parents[3] / 'modules/aws/search/creation_mode.py')

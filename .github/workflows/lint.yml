@@ -137,6 +137,8 @@ jobs:
           python3 ci/agent-relay/test_retained_workloads.py -v
           python3 ci/agent-relay/kind/test_stack.py -v
           python3 ci/agent-relay/kind/test_local_stack.py -v
+          python3 ci/agent-relay/kind/test_local_actors.py -v
+          python3 ci/agent-relay/kind/test_local_cast_pg_proof.py -v
           python3 ci/agent-relay/kind/test_local_ca.py -v
           python3 ci/agent-relay/kind/test_local_hook_audit.py -v
           python3 ci/agent-relay/kind/test_ownership.py -v
@@ -161,6 +163,8 @@ jobs:
           python3 ci/sessions-pipeline-scrub-engine/test_scrub_engine.py -v
           python3 ci/pipeline-analytics/test_chart.py -v
           python3 ci/control-analytics/test_chart.py -v
+          python3 ci/operator-session-erase/test_chart.py -v
+          python3 ci/sessions-pipeline-s3-ledger/test_chart.py -v
           python3 ci/history-upload/test_chart.py -v
           python3 ci/sessions-pipeline-native-brief/test_native_brief.py -v
           python3 ci/agent-relay/kind/test_harness.py -v

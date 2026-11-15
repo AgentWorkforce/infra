@@ -37,3 +37,19 @@ if (!["async", "drain"].includes(mode) || !Number.isInteger(port) || port < 1024
     }).catch(fail);
 }
 {{- end -}}
+
+{{/* ingestEdge.ledger (pipeline decision 0005, INGEST_LEDGER): validated, and the binary's s3 startup refusals
+(pipeline selfhost-config.ts selfhostLedger) mirrored, so a refused combination never renders. Their state is
+SQL-only. INGEST_UPLOAD_CONSENT is never rendered and ingestEdge.extraEnv is refused, so upload consent is always off
+here. Included first by every template that depends on the ledger, so the same message wins whichever renders first.
+Returns sql or s3. */}}
+{{- define "sessions-pipeline.ingestEdge.ledger" -}}
+{{- $c := .Values.ingestEdge -}}
+{{- $ledger := $c.ledger | default "sql" -}}
+{{- if not (has $ledger (list "sql" "s3")) }}{{ fail "ingestEdge.ledger must be sql or s3" }}{{ end -}}
+{{- if and $c.enabled (eq $ledger "s3") -}}
+{{- if $c.sessionSelection }}{{ fail "ingestEdge.ledger=s3 refuses ingestEdge.sessionSelection=true (RELAYHISTORY_SELFHOST_SESSION_SELECTION): its state is SQL-only, and the binary refuses this combination at startup" }}{{ end -}}
+{{- if or .Values.global.operatorSessionErase.fenceEnforced .Values.operatorSessionErase.api.enabled .Values.operatorSessionErase.bytes.enabled }}{{ fail "ingestEdge.ledger=s3 refuses the operator session erase (global.operatorSessionErase.fenceEnforced, operatorSessionErase.api.enabled, operatorSessionErase.bytes.enabled): its state is SQL-only, and the binary refuses this combination at startup" }}{{ end -}}
+{{- end -}}
+{{- $ledger -}}
+{{- end -}}

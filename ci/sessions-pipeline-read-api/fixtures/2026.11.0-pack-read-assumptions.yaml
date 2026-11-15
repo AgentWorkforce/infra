@@ -1,0 +1,9 @@
+# Anonymized compatibility slice from the 2026.11.0 customer pack. Keep only
+# the two legacy settings needed to prove an in-place chart upgrade renders.
+sessions-pipeline:
+  sessionReadApi:
+    extraEnv:
+      - name: READ_API_CANONICAL_PIN_LAGGING_POINTER
+        value: "true"
+      - name: READ_API_TIMING_ASSUME_NO_TURNS
+        value: "true"

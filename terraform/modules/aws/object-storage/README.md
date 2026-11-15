@@ -78,6 +78,7 @@ See [self-host direct uploads](../../../../docs/selfhost-direct-uploads.md) for 
 | noncurrent\_version\_expiration\_days | Delete noncurrent object versions after this many days (0 keeps them forever). | `number` | `30` | no |
 | object\_lock\_enabled | Create the bucket with Object Lock enabled (cannot be changed later). | `bool` | `false` | no |
 | tags | Tags applied to every resource. | `map(string)` | `{}` | no |
+| unmanaged | Bucket configuration this module must leave alone on an existing bucket: "policy" and/or "lifecycle\_configuration". Listed resources are neither created, imported nor replaced; whatever the bucket already has stays. With "policy" the TLS denies, history\_upload's inbox wall and additional\_policy\_statements are NOT applied: bucket\_policy\_statements lists them for the operator, and the caller must verify them (aws-environments does). Default [] manages both. | `set(string)` | `[]` | no |
 | versioning\_enabled | Keep object versions (recovery from overwrites and deletes). | `bool` | `true` | no |
 
 ### Outputs
@@ -88,7 +89,9 @@ See [self-host direct uploads](../../../../docs/selfhost-direct-uploads.md) for 
 | access\_role\_name | Workload role name (null when access\_role is unset). |
 | bucket\_arn | Bucket ARN (for IAM policies and the functions module's S3 notification). |
 | bucket\_name | Bucket name. Feeds sessions-pipeline worker.locker.bucket and alleyoop.locker.bucket (provider s3, endpoint ""), or durable-actors storage.bucket and the relaycast/relayfile artifactBucket in values-eks-actors.yaml. |
+| bucket\_policy\_statements | Every statement this module puts in the bucket policy (TLS denies, history\_upload's inbox wall, additional\_policy\_statements), also when unmanaged includes "policy" and the policy is not applied. Merge them by hand into an unmanaged policy. |
 | bucket\_region | Bucket region. Feeds worker.locker.region / alleyoop.locker.region (or durable-actors storage.s3.region). |
 | history\_upload\_role\_arn | Write-only upload role for Control's SELFHOST\_HISTORY\_UPLOAD\_ROLE\_ARN (null when disabled). |
 | pod\_identity\_association\_ids | Pod Identity associations created, keyed by cluster/namespace/service-account. |
+| upload\_wall\_statements | history\_upload's bucket-policy denies (the upload inbox wall), empty without history\_upload. A caller with unmanaged "policy" must confirm the live policy contains them. |
 <!-- END_TF_DOCS -->

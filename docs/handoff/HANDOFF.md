@@ -36,7 +36,7 @@ Both archives unpack to one `agent-relay-customer-handoff/` directory:
 | Path | Contents |
 | --- | --- |
 | `charts/agent-relay/` | Umbrella chart source, with `values.yaml` and the structural `values-gcp.yaml` example |
-| `charts/relaycast/`, `charts/relayauth/`, `charts/sessions-pipeline/`, `charts/sessions-pipeline-worker/`, `charts/session-ingest-api/`, `charts/relayhistory/`, `charts/relay-cloud-api/`, `charts/relay-dashboard/`, `charts/relayflows/`, `charts/durable-actors/`, `charts/relayfile/` | Leaf chart sources the umbrella depends on (Relayflows opt-in; durable-actors and Relayfile preview) |
+| `charts/relaycast/`, `charts/relayauth/`, `charts/sessions-pipeline/`, `charts/sessions-pipeline-worker/`, `charts/session-ingest-api/`, `charts/relay-cloud-api/`, `charts/relay-dashboard/`, `charts/relayflows/`, `charts/durable-actors/`, `charts/relayfile/` | Leaf chart sources the umbrella depends on (Relayflows opt-in; durable-actors and Relayfile preview) |
 | `.agents/skills/setting-up-self-hosted-agent-relay-gcp/` | Setup, safety, preflight, deployment, Desktop, pre-upgrade, and public-verification skill |
 | `docs/` | Reference architecture, architecture and request-flow diagrams (`docs/diagrams/`), image supply chain, backup/restore runbook, conformance contract, and licenses |
 | `scripts/selfhost/`, `scripts/release/`, `scripts/conformance/` | Read-only verification, pre-upgrade gate, release validator, conformance tests, and the end-to-end harness (`e2e-gcp-proof.sh`) |
@@ -79,6 +79,9 @@ demonstrated:
 - Dashboard API search returned three sessions and replay returned four events;
 - all sessions and events remained readable after a RelayHistory restart.
 
+(That proof ran the standalone RelayHistory component, removed in agent-relay
+0.7.0; History is now the native read API and ingest edge.)
+
 ## Customer use
 
 Treat `charts/agent-relay/values-gcp.yaml` as a structural example, not
@@ -86,7 +89,6 @@ customer configuration. Follow the bundled skill to create a non-secret
 customer overlay and replace every example domain, project, bucket, registry,
 Secret reference, database role, and image digest.
 
-This is a `portable-single` deployment, not an HA claim. The RelayHistory image
-is an experimental build, and images in the internal proof registry are not a
-customer distribution channel. Publish approved images to the customer's
+This is a `portable-single` deployment, not an HA claim. Images in the
+internal proof registry are not a customer distribution channel. Publish approved images to the customer's
 authorized registry before installation.

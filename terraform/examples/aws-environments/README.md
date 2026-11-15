@@ -391,6 +391,190 @@ in the reviewed foundation/application installation. ServiceAccount outputs must
 chart component identities; creating Pod Identity associations alone grants no
 running workload the intended binding.
 
+## Opting out of the database or search
+
+Self-hosted installations keep the defaults: `enable_database = true` and
+`enable_search = true` create RDS and OpenSearch exactly as above. Both flags
+are opt-outs for an environment whose Control/history database and search
+already live elsewhere and that only needs this stack's sessions bucket and
+direct-upload (`history_upload`) wiring. Whether a given environment uses
+them is that environment owner's decision; nothing here enables them.
+
+| Flag | `false` removes | No longer required |
+|---|---|---|
+| `enable_database` | the RDS/Aurora instance and its subnet/parameter groups; `verification.postgres`, `postgres_service_bindings` and `postgres_topology` become null | `private_subnet_ids`, `database_security_group_ids` |
+| `enable_search` | the OpenSearch domain, its policy and log groups, the search-indexer/session-read roles and their Pod Identity associations; `verification.search` and `service_accounts.indexer`/`reader` become null, `runtime_role_policy_json` proposes no search policy | `search_subnet_ids`, `search_security_group_ids`, `search_master_user_arn` |
+
+Unchanged with either or both off: the sessions bucket and its
+worker/alleyoop/session-ingest-api storage bindings, `history_upload`,
+`desktop_feed` and `chief_execution_node`. `history_upload` needs only the
+sessions bucket and `kms_key_arn`. Three state-only objects (no AWS API object)
+remain so default states keep their addresses: the root contract, the postgres
+final-snapshot suffix and the search creation-mode marker. Refused combinations:
+`pipeline_runtime = "lambda"` needs both (it indexes into this OpenSearch and
+reads this PostgreSQL); `existing_runtime_roles` and an explicit
+`search_sessions_bucket_read` need `enable_search`. The runner admits a plan
+that creates no search object as `search-disabled`; a later enablement admits
+as the reviewed `fresh-retry`. `verify-aws-data.py` verifies the RDS/OpenSearch
+data path and does not apply to an opted-out environment.
+
+[`profiles/external-data.tfvars.json.example`](profiles/external-data.tfvars.json.example)
+is an additive fragment: merge it into an environment file and drop the
+database/search inputs listed above.
+
+**Do not turn a flag off on an environment that already has the resource.**
+That plans the destruction of the database or domain. The protected domain's
+`prevent_destroy` refuses it, and RDS deletion protection refuses the delete
+at apply, but neither is a migration. Opt out only on a state that never
+created them.
+
+### Sessions bucket name
+
+The sessions bucket is named `<name_prefix>-<environment>-<account_id>-<region>-sessions`
+(for example `agent-relay-prod-123456789012-us-west-2-sessions`). This state
+creates and owns it. If the environment's sessions bucket already exists, under
+that name or another, Terraform must not create a second one:
+
+1. Set `sessions_bucket_name` to the existing bucket's name when it differs
+   (default `null` keeps the computed name; a default install never sets it).
+2. Set `sessions_bucket_import = true` (see [Adopting an existing sessions
+   bucket](#adopting-an-existing-sessions-bucket)) so the first plan imports
+   the bucket and its configuration instead of creating them.
+3. Review the plan: the module enforces its own versioning, encryption,
+   public-access, ownership, lifecycle and bucket-policy settings, so any
+   difference from the existing bucket appears as an in-place update. A
+   create or replace of `aws_s3_bucket.this` means the import is missing.
+
+The override also flows to the storage role, the search read grant (when
+search is on), the Lambda pipeline and the `history_upload` bucket.
+
+### Adopting an existing sessions bucket
+
+> [!CAUTION]
+> **Never import the relayhistory-pipeline `aws-sessions-prod` bucket.** It is
+> managed by Alchemy, and adopting it here would give two tools ownership of
+> one bucket, with this state overwriting its policy, lifecycle and
+> encryption. The variable refuses any `sessions_bucket_name` containing
+> `aws-sessions-prod` while `sessions_bucket_import = true`. Only import a
+> bucket that this state is meant to own from now on.
+
+`sessions_bucket_import = true` (default `false`, which emits no import)
+requires `sessions_bucket_name` and adds `import` blocks
+(`import { for_each = ... }`, Terraform and OpenTofu >= 1.7; this root already
+requires >= 1.11). Every import ID is the bucket name:
+
+| Resource (`module.sessions_bucket.`) | Import ID | Why import | What the first plan does to it |
+|---|---|---|---|
+| `aws_s3_bucket.this` | `<bucket>` | CreateBucket on an existing name conflicts | Imported. Tags are updated in place to this environment's tags; `force_destroy = false` is state-only |
+| `aws_s3_bucket_public_access_block.this` | `<bucket>` | would otherwise plan as an extra create | Imported, then updated in place to block all four public-access settings |
+| `aws_s3_bucket_ownership_controls.this` | `<bucket>` | as above | Imported, then updated in place to `BucketOwnerEnforced`, which disables ACLs. Check that nothing relies on object ACLs |
+| `aws_s3_bucket_server_side_encryption_configuration.this` | `<bucket>` | as above | Imported, then updated in place to `aws:kms` with `kms_key_arn` (bucket key off while `history_upload` is set). Only new objects are affected |
+| `aws_s3_bucket_versioning.this` | `<bucket>` | as above | Imported, then updated in place to `Enabled`. Once enabled, a bucket can only be suspended, never unversioned |
+| `aws_s3_bucket_lifecycle_configuration.this` | `<bucket>` | as above | Imported, then **replaced in place as a whole**: abort incomplete uploads after 7 days and expire noncurrent versions after 30 days. Existing rules not in this module are removed |
+| `aws_s3_bucket_policy.this` | `<bucket>` | as above | Imported, then **replaced in place as a whole**: TLS-only plus the `history_upload` denies. Existing statements are dropped unless passed as module `additional_policy_statements` |
+
+Not managed here, so they are left untouched: access logging (`access_log_bucket`
+is unset), event notifications (only `pipeline_runtime = "lambda"` manages
+them), CORS, replication and object lock.
+
+S3 has no bucket policy or lifecycle configuration until one is set, and
+importing a missing one fails at plan. If the existing bucket lacks either, list
+it in `sessions_bucket_import_skip` (for example
+`["policy", "lifecycle_configuration"]`), and it plans as a create (an
+idempotent PUT, with no conflict) instead. Versioning and default encryption
+can always be read. The public access block and ownership controls exist on
+every bucket created since April 2023; skip them as well on an older bucket
+that never set them. The bucket itself is always imported.
+
+What the first plan shows besides the imports: `history_upload`'s Control,
+consumer and desktop-upload roles, policies and Pod Identity associations, the
+sessions storage role, and its `<release>-worker`, `<release>-alleyoop` and
+`<release>-session-ingest-api` Pod Identity associations, plus three state-only
+objects (root contract, postgres snapshot suffix, search mode marker). EKS
+allows one association per ServiceAccount, so if those ServiceAccounts are
+already bound to another role, those creates fail at apply. Check them first,
+and list the bound ones in `existing_pod_identity_service_accounts` (below).
+A correct plan has **0 to destroy** and nothing replaced. The mocked test
+`tests/check_sessions_bucket_import.py` asserts exactly that composition with
+both opt-outs.
+
+#### Leaving the existing policy or lifecycle unmanaged
+
+Importing replaces the whole bucket policy and lifecycle configuration in place.
+To keep either exactly as it is, list it in
+`sessions_bucket_unmanaged` (`["policy"]`, `["lifecycle_configuration"]` or
+both; default `[]` manages both and requires `sessions_bucket_import`). A listed
+resource is neither imported, created nor replaced, and nothing else in this
+state reads it. What you give up:
+
+- **Lifecycle:** no abort-incomplete-multipart rule and no noncurrent-version
+  expiry from this state. Keep equivalents in the existing configuration, or
+  versions and incomplete uploads accumulate.
+- **Policy:** no TLS-only denies (`DenyInsecureTransport`, `DenyTLSBelow12`)
+  from this state, and no `history_upload` **inbox wall**. The wall is two
+  bucket-policy denies: `UploadInboxConsumerOnly` (only the history consumer
+  role may read or delete `<key_root>/.upload-inbox/*`) and
+  `UploadInboxCreateOnly` (no overwriting `PutObject` there). Those are
+  currently the only upload denies in the policy.
+
+The wall cannot silently disappear. It also cannot move into IAM identity
+policies, because "every principal except the consumer" is not expressible
+there. Terraform also does not read, merge and rewrite the live policy: it
+would still own the whole document and race whoever else maintains it.
+Instead, with `history_upload` and an unmanaged policy, every plan reads the
+**live** bucket policy (`data.aws_s3_bucket_policy`, read-only). It refuses
+(`terraform_data.sessions_policy_wall`) unless every wall statement is
+already present, compared statement by statement after normalising AWS's
+collapsed one-item lists and key order. The refusal names the missing Sids
+and prints the exact statements to merge by hand. The consumer role ARN in
+them is the predicted `arn:aws:iam::<account>:role<path><name_prefix>-<environment>-history-consumer`,
+so the operator can merge before the role exists, and a postcondition checks
+the created role matches. After apply, `output.history_upload.bucket_policy_statements_to_merge`
+lists every statement this state would have managed, the TLS denies included.
+Because the check runs on every plan, a later removal of the wall is caught at
+the next plan, not before.
+
+#### ServiceAccounts that already have a Pod Identity association
+
+`existing_pod_identity_service_accounts` lists ServiceAccounts in the
+environment namespace that are already bound. No association is created for
+them. Applies to the storage (`<release>-worker`, `-alleyoop`,
+`-session-ingest-api`) and search (`<release>-search-indexer`,
+`-session-read`) ServiceAccounts. The roles and policies are still created,
+and `service_accounts` still names them. **The existing association's role
+must already grant equivalent access**: the storage role's bucket and KMS
+permissions, or the search role's domain and sessions-read permissions. Merge
+them from `runtime_role_policy_json` and the module's documented policy, or the
+workload fails at runtime. Control (`history_upload.control_service_account`,
+`desktop_feed.service_account`) and the history consumer cannot be listed: the
+issuer grant and the inbox wall authorize exactly the roles this state binds
+to them, so another role there would break uploads or be locked out of the
+inbox.
+
+For an environment such as agentrelay-prod that adopts its existing bucket
+with both opt-outs, merge something like the following into its private
+environment file. The bucket name, account and plan path are the environment
+owner's decisions:
+
+```json
+{
+  "enable_database": false,
+  "enable_search": false,
+  "sessions_bucket_name": "REPLACE_WITH_EXISTING_SESSIONS_BUCKET",
+  "sessions_bucket_import": true,
+  "sessions_bucket_import_skip": [],
+  "sessions_bucket_unmanaged": ["policy", "lifecycle_configuration"],
+  "existing_pod_identity_service_accounts": [],
+  "kms_key_arn": "REPLACE_WITH_THE_BUCKET_KMS_KEY_ARN",
+  "history_upload": { "consumer_service_account": "REPLACE_WITH_INGEST_EDGE_SERVICE_ACCOUNT" }
+}
+```
+
+Plan with the runner, review the imports and in-place updates above line by
+line, and apply only that reviewed plan. After the apply the import blocks are
+no-ops (the objects are in state), so `sessions_bucket_import` can stay `true`
+or be set back to `false`.
+
 ## Live verification
 
 Use an approved private Linux/macOS runner with refreshed AWS credentials, network access,
@@ -539,37 +723,41 @@ exact destroy inventory and recovery proof; do not remove state to bypass them.
 | ---- | ---- |
 | [aws_eks_pod_identity_association.history_consumer](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/eks_pod_identity_association) | resource |
 | [aws_eks_pod_identity_association.history_control](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/eks_pod_identity_association) | resource |
+| [aws_eks_pod_identity_association.rearm_sweeper](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/eks_pod_identity_association) | resource |
 | [aws_iam_role.history_consumer](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/iam_role) | resource |
 | [aws_iam_role.history_control](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/iam_role) | resource |
+| [aws_iam_role.rearm_sweeper](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/iam_role) | resource |
 | [aws_iam_role_policy.history_consumer](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/iam_role_policy) | resource |
+| [aws_iam_role_policy.rearm_sweeper](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/iam_role_policy) | resource |
 | [terraform_data.environment_contract](https://registry.terraform.io/providers/hashicorp/terraform/latest/docs/resources/data) | resource |
+| [terraform_data.sessions_policy_wall](https://registry.terraform.io/providers/hashicorp/terraform/latest/docs/resources/data) | resource |
 | [aws_caller_identity.current](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/caller_identity) | data source |
+| [aws_s3_bucket_policy.sessions_existing](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/s3_bucket_policy) | data source |
 
 ### Inputs
 
 | Name | Description | Type | Default | Required |
 | ---- | ----------- | ---- | ------- | :------: |
 | account\_id | Exact target AWS account. The provider refuses any other account. Use the allocated account from Pippen in sandbox mode. | `string` | n/a | yes |
-| database\_security\_group\_ids | Database security groups allowing PostgreSQL only from the approved application/proof runner. | `list(string)` | n/a | yes |
 | eks\_cluster\_name | Existing EKS cluster for Pod Identity; the foundation root owns the cluster. | `string` | n/a | yes |
 | environment | Unique environment slug, e.g. dev, staging, production or team-a. It scopes resource names, tags, the namespace and the verification prefix. | `string` | n/a | yes |
-| private\_subnet\_ids | Existing private database subnets in at least two AZs. The foundation stack owns VPC/subnets/routes. | `list(string)` | n/a | yes |
 | region | AWS region for this environment. | `string` | n/a | yes |
-| search\_master\_user\_arn | Existing environment-specific IAM administrator for OpenSearch role bootstrap. Never a runtime role. | `string` | n/a | yes |
-| search\_security\_group\_ids | Search security groups allowing HTTPS only from approved application/proof runner identities. | `list(string)` | n/a | yes |
-| search\_subnet\_ids | Existing private OpenSearch subnets, one per AZ. Production requires three. | `list(string)` | n/a | yes |
 | activate\_lambda | Reserved activation input. This per-service-database profile currently refuses true until schema/bootstrap/runtime support is qualified by a reviewed implementation change; provision inactive infrastructure meanwhile. | `bool` | `false` | no |
 | application\_database\_name | Initial Control database only, on the shared RDS instance. Other services use separate logical databases. Default preserves the existing identity. Changing this value on an existing RDS instance forces instance replacement; review the plan and an explicit data migration/restore before changing it. | `string` | `"relaycontrol"` | no |
 | aurora\_engine\_version | Explicit region-supported Aurora PostgreSQL 17 minor version when Aurora is selected. | `string` | `null` | no |
 | chief\_execution\_node | Optional dedicated Chief execution host (modules/aws/chief-execution-node). null creates nothing. Private installation values only; no credentials belong here. | ```object({ subnet_id = string relay_base_url = string instance_type = optional(string, "t3.medium") root_volume_size_gb = optional(number, 40) node_runtime = object({ url = string sha256 = string }) relay_node = object({ url = string sha256 = string }) harness = object({ npm_package = string version = string }) bridge = object({ repository = string commit = string }) repositories = list(string) })``` | `null` | no |
 | database\_instance\_class | Override the environment tier's instance class. Aurora needs an Aurora-supported class. | `string` | `null` | no |
+| database\_security\_group\_ids | Database security groups allowing PostgreSQL only from the approved application/proof runner. Required when enable\_database. | `list(string)` | `[]` | no |
 | deletion\_protection | Database API deletion protection. Production refuses false. Final snapshots and S3 versioning remain enabled. | `bool` | `true` | no |
 | desktop\_feed | Optional private Desktop feed for Relay Control (modules/aws/desktop-feed): one Ed25519 KMS signing key and alias per profile ID, a private bucket, and a Pod Identity role for Control's ServiceAccount. null creates nothing. Profile IDs (^[a-z0-9]{1,32}$) come from the private handoff. service\_account defaults to relay-control, the name every agent-relay profile overlay renders (relay-control.fullnameOverride). | ```object({ profiles = set(string) prefix = optional(string, "desktop-feed") service_account = optional(string, "relay-control") })``` | `null` | no |
+| enable\_database | Create this environment's RDS/Aurora PostgreSQL (module.postgres). Default true: self-host keeps it. false is an opt-out for an environment whose databases live elsewhere: no database resource is created, private\_subnet\_ids/database\_security\_group\_ids are not required (unless pipeline\_runtime=lambda, which needs both modules), and the postgres verification/binding outputs are null. Turning it off on an existing environment plans the database's destruction; never do that without a reviewed migration. | `bool` | `true` | no |
 | enable\_relayfile | Include Relayfile in the full-suite application contract; its actor identities/Secrets must be configured by the application layer. | `bool` | `false` | no |
+| enable\_search | Create this environment's OpenSearch domain and its search-indexer/session-read roles and Pod Identity associations (module.search). Default true: self-host keeps it. false is an opt-out for an environment whose search lives elsewhere: no domain, search role or association is created; search\_subnet\_ids, search\_security\_group\_ids and search\_master\_user\_arn are not required; the search outputs are null. An existing protected domain refuses removal (prevent\_destroy). | `bool` | `true` | no |
 | environment\_class | Sizing/protection tier; environment names remain independent of this classification. | `string` | `"development"` | no |
+| existing\_pod\_identity\_service\_accounts | ServiceAccounts in this environment's namespace that already have an EKS Pod Identity association, which must already grant equivalent access. No association is created for them (EKS allows one per ServiceAccount). Applies to the sessions storage (<release>-worker, -alleyoop, -session-ingest-api) and search (<release>-search-indexer, -session-read) ServiceAccounts. Control and the history consumer cannot be listed: history\_upload and desktop\_feed authorize those exact roles. Default [] creates every association. | `set(string)` | `[]` | no |
 | existing\_runtime\_roles | Operator-owned runtime identities. Null manages search/pipeline roles here. Otherwise supply both search roles and, only in Lambda mode, the pipeline role. Trust, policies, guards and EKS associations must already be verified outside this state. | ```object({ indexer_role_arn = string reader_role_arn = string pipeline_role_arn = optional(string) })``` | `null` | no |
 | function\_security\_group\_ids | Lambda security groups with private database/search access and egress to the required AWS services. | `list(string)` | `[]` | no |
-| history\_upload | Optional self-host direct uploads. Creates a write-only desktop role, a native ingest-edge consumer role, and a Control issuer binding (reuses desktop\_feed's binding). Does not activate Helm flags or create witness secrets. consumer\_service\_account must exactly match ingestEdge.serviceAccountName. | ```object({ key_root = optional(string, "96bulls") control_service_account = optional(string, "relay-control") consumer_service_account = string })``` | `null` | no |
+| history\_upload | Optional self-host direct uploads. Creates a write-only desktop role, a native ingest-edge consumer role, and a Control issuer binding (reuses desktop\_feed's binding). Does not activate Helm flags or create witness secrets. consumer\_service\_account must exactly match ingestEdge.serviceAccountName. | ```object({ key_root = optional(string, "96bulls") control_service_account = optional(string, "relay-control") consumer_service_account = string # Optional S3 ledger re-arm sweeper (chart rearmSweeper, credentials.mode # podIdentity). Its role may delete canonical object versions, so it must # use its own ServiceAccount. Null creates nothing. rearm_sweeper_service_account = optional(string) })``` | `null` | no |
 | kms\_key\_arn | Existing customer-managed key; null uses AWS-managed encryption keys. | `string` | `null` | no |
 | lambda\_package | Compatible pipeline artifact when pipeline\_runtime=lambda: exactly one immutable image, versioned S3 zip, or local zip with hash. No credential values. | ```object({ image_uri = optional(string) s3_bucket = optional(string) s3_key = optional(string) s3_object_version = optional(string) filename = optional(string) source_code_hash = optional(string) })``` | `null` | no |
 | lambda\_runtime\_bindings | Non-secret configuration for an independently verified private OpenSearch/Lambda artifact with its pinned public PostgreSQL CA at assets/postgres-ca.pem. Writer and reader must share these bindings. This is not artifact, bootstrap, FGAC or caller-transition proof. | ```object({ search_index = string state_backend_id = string complete_since = string postgres_ca_sha256 = string projection_schema = optional(string, "search_index") })``` | `null` | no |
@@ -578,12 +766,20 @@ exact destroy inventory and recovery proof; do not remove state to bypass them.
 | pipeline\_runtime | workers or lambda. Lambda requires its own compatible immutable handler artifact; application deployment must disable overlapping worker stages. | `string` | `"workers"` | no |
 | pippen | Pippen lease identity from sandbox status/exec. null for customer accounts. No credentials belong here. | ```object({ agent = string session_id = string })``` | `null` | no |
 | postgres\_engine\_mode | rds or aurora. Aurora requires an explicit full engine version and separate live validation. | `string` | `"rds"` | no |
+| private\_subnet\_ids | Existing private database subnets in at least two AZs. The foundation stack owns VPC/subnets/routes. Required when enable\_database or pipeline\_runtime=lambda. | `list(string)` | `[]` | no |
 | release\_name | Helm release name used in generated ServiceAccount names. | `string` | `"agent-relay"` | no |
 | search\_engine\_version | Region-supported OpenSearch engine version. | `string` | `"OpenSearch_2.19"` | no |
 | search\_instance\_type | Override the environment tier's OpenSearch data node type. | `string` | `null` | no |
+| search\_master\_user\_arn | Existing environment-specific IAM administrator for OpenSearch role bootstrap. Never a runtime role. Required when enable\_search. | `string` | `null` | no |
+| search\_security\_group\_ids | Search security groups allowing HTTPS only from approved application/proof runner identities. Required when enable\_search. | `list(string)` | `[]` | no |
 | search\_sessions\_bucket\_read | Optional explicit form of the default grant: exact ARNs of this environment's sessions bucket and, for a customer-managed key, its kms\_key\_arn (null for AWS-managed encryption). Any other bucket or key is refused. null uses the computed default. | ```object({ bucket_arn = string kms_key_arn = optional(string) })``` | `null` | no |
 | search\_sessions\_bucket\_read\_enabled | Grant the search indexer and session-read roles read-only access to this environment's sessions bucket and the kms\_key\_arn that encrypts it. Defaults on: without it the indexer fails with unauthorized and the read API lists no sessions. false omits the two inline policies (for example, for one apply that enrolls an unmarked search state first). | `bool` | `true` | no |
+| search\_subnet\_ids | Existing private OpenSearch subnets, one per AZ. Production requires three. Required when enable\_search. | `list(string)` | `[]` | no |
 | service\_database\_names | Existing or reviewed new database names for HoopDb, Relaycast and optional Relayfile on the same RDS instance. This metadata does not create or rename databases. Control uses application\_database\_name. | `map(string)` | ```{ "hoopdb": "hoopdb", "relaycast": "relaycast", "relayfile": "relayfile" }``` | no |
+| sessions\_bucket\_import | Adopt the EXISTING bucket named by sessions\_bucket\_name into this state with import blocks instead of creating it. Requires sessions\_bucket\_name. Imports the bucket and its public access block, ownership controls, encryption, versioning, lifecycle and policy (each by bucket name), except those in sessions\_bucket\_import\_skip; the module's settings then apply as in-place updates. Default false: no import. Never point it at a bucket another tool manages (see the README). | `bool` | `false` | no |
+| sessions\_bucket\_import\_skip | Bucket configuration resources to create instead of import when sessions\_bucket\_import is true, because the existing bucket has none (S3 returns no bucket policy or lifecycle configuration until one is set, and importing a missing one fails). Allowed: public\_access\_block, ownership\_controls, server\_side\_encryption\_configuration, versioning, lifecycle\_configuration, policy. The bucket itself is always imported. | `set(string)` | `[]` | no |
+| sessions\_bucket\_name | Override the sessions bucket name. null (default) keeps the computed <name\_prefix>-<environment>-<account\_id>-<region>-sessions. Only for an environment whose sessions bucket already exists under another name: this state then manages that bucket, so import it first (see the README) instead of letting Terraform try to create a duplicate. | `string` | `null` | no |
+| sessions\_bucket\_unmanaged | With sessions\_bucket\_import, bucket configuration to leave exactly as it is on the existing bucket: "policy" and/or "lifecycle\_configuration". Listed resources are neither imported, created nor replaced. An unmanaged policy gets no TLS denies from this state, and history\_upload then plans only if the live policy already contains the upload inbox wall (see the README). Default [] manages both. | `set(string)` | `[]` | no |
 | tags | Additional resource tags. Environment identity and Pippen conventions cannot be overridden. | `map(string)` | `{}` | no |
 
 ### Outputs
@@ -597,9 +793,9 @@ exact destroy inventory and recovery proof; do not remove state to bypass them.
 | history\_upload | Direct upload wiring only; enablement needs compatible published Control/consumer images and the same witness Secret provisioned out of band. No secret values in Terraform. |
 | lambda\_shared\_environment | Non-secret writer/reader bindings, or null until explicitly configured. Independently qualify the matching reader artifact, read-only DB identity, JWT settings, schema/FGAC bootstrap and worker retirement before activation. |
 | pipeline | Lambda runtime bindings, or null in worker mode. Populate the secret out of band and verify actual handler compatibility before activation. |
-| postgres\_service\_bindings | Separate service databases and independent migration/runtime roles on the same RDS endpoint. Contains no credentials; reviewed database bootstrap, CONNECT/ACL isolation and runtime proof remain required. Optional-service bindings do not enable workloads. |
-| postgres\_topology | Single-instance, separate-service-database target; application\_sql\_ready=false until actual service integration and managed-RDS validation are completed. |
+| postgres\_service\_bindings | Separate service databases and independent migration/runtime roles on the same RDS endpoint. Contains no credentials; reviewed database bootstrap, CONNECT/ACL isolation and runtime proof remain required. Optional-service bindings do not enable workloads. null with enable\_database = false. |
+| postgres\_topology | Single-instance, separate-service-database target; application\_sql\_ready=false until actual service integration and managed-RDS validation are completed. null with enable\_database = false. |
 | runtime\_role\_policy\_json | Proposed search and Lambda runtime permissions for operator review. External mode does not attach them or validate existing IAM configuration. Values may be unknown until service resources exist. |
-| service\_accounts | Distinct environment-scoped workload bindings; the application chart must use these identities. |
-| verification | Non-secret input for the private-runner data-path verifier. Contains secret references, never secret values. |
+| service\_accounts | Distinct environment-scoped workload bindings; the application chart must use these identities. indexer and reader are null with enable\_search = false (no search Pod Identity associations exist). |
+| verification | Non-secret input for the private-runner data-path verifier. Contains secret references, never secret values. postgres is null with enable\_database = false and search is null with enable\_search = false. |
 <!-- END_TF_DOCS -->

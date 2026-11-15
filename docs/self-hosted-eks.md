@@ -19,6 +19,12 @@ layout use `EKS_ALB_CONTROL_SERVICE=relay-cloud-api` and
 `EKS_ALB_WEBAPP_SERVICE=relay-dashboard`; these are also the historical installer
 defaults. Explicit overrides are forwarded to the generator.
 
+The 0.3.11 proof also ran RelayAuth and the standalone RelayHistory. The
+standalone RelayHistory was removed in agent-relay 0.7.0: the current
+`values-eks.yaml` is native History (Control's native backend, the Sessions
+read API and ingest edge on the history host, no RelayAuth); see
+[self-host without RelayAuth](self-hosted-no-relayauth.md).
+
 Scope: the core suite with Relaycast on SQLite and Relayfile off. For the
 separate AWS actor profile, see
 [durable actors](self-hosted-durable-actors.md).
@@ -31,7 +37,7 @@ Files:
 | [`scripts/selfhost/eks-alb-ingress.sh`](../scripts/selfhost/eks-alb-ingress.sh) | Prints the ALB Ingress (one ALB, four hosts, ACM TLS, edge denials). The chart ships only the GKE edge. |
 | [`scripts/selfhost/eks-proof-dns.sh`](../scripts/selfhost/eks-proof-dns.sh) | ACM certificate (request, wait, delete) and the DNS records (validation CNAMEs, host CNAMEs to the ALB) in the parent Cloudflare zone, removed by recorded id. |
 | [`scripts/selfhost/eks-proof-sandbox.sh`](../scripts/selfhost/eks-proof-sandbox.sh) | The proof substrate: VPC, EKS Auto Mode cluster, IAM roles, S3 bucket, Pod Identity, StorageClass/IngressClass. Pippen conventions. |
-| [`scripts/selfhost/eks-proof-install.sh`](../scripts/selfhost/eks-proof-install.sh) | CNPG operator, the control-API and RelayHistory Postgres, generated Secret, Helm install, Ingress, installation org, HoopDb role bootstrap, uninstall. |
+| `scripts/selfhost/eks-proof-install.sh` (removed in agent-relay 0.7.0; see git history) | The 0.3.x/0.4.x proof installer: CNPG operator, the control-API and RelayHistory Postgres, generated Secret, Helm install, Ingress, installation org, HoopDb role bootstrap, uninstall. It only installed published charts that shipped the standalone RelayHistory, so it was removed with that component. |
 | [`scripts/selfhost/e2e-eks-proof.sh`](../scripts/selfhost/e2e-eks-proof.sh) | The e2e: the GKE proof's 15 cases through the HTTPS edge (`e2e-gcp-proof.sh --edge alb --require-public`) plus EKS checks. |
 | [`scripts/selfhost/e2e-eks-proof-s3.ts`](../scripts/selfhost/e2e-eks-proof-s3.ts) | The Pod Identity to S3 round trip the e2e runs in the alleyoop pod. |
 
@@ -44,7 +50,7 @@ Files:
 | NEG annotations, BackendConfig | `alb.ingress.kubernetes.io/healthcheck-path` on each Service; ALB idle timeout 3600 s for WebSocket/SSE |
 | GKE Workload Identity | The pinned 0.3.11 proof uses `<release>-worker` and `<release>-alleyoop` (one IAM role with S3 access to the bucket). New descriptive-name charts use `<release>-session-ingest-api`; retain the actual legacy identity through a deliberate cutover. No IRSA/OIDC provider needed. |
 | GCS Locker bucket (`locker.provider: gcs`) | S3 bucket (`locker.provider: s3`, empty endpoint, `credentials.mode: podIdentity`) |
-| Cloud SQL (HoopDb, control API, RelayHistory) | HoopDb: the chart's in-cluster CloudNativePG cluster. Control API and RelayHistory: any PostgreSQL 17 (RelayHistory needs `vector` and `pg_trgm`); the proof used two more CNPG clusters. Production: RDS/Aurora PostgreSQL. |
+| Cloud SQL (HoopDb, control API) | HoopDb: the chart's in-cluster CloudNativePG cluster. Control API: any PostgreSQL 17 (the 0.3.11 proof used two more CNPG clusters, one for the control API and one for the since-removed RelayHistory). Production: RDS/Aurora PostgreSQL. |
 | Memorystore, Pub/Sub (GCS data-path env) | Not used: the services' S3 data path needs neither |
 | GCE load-balancer ranges in NetworkPolicy `ingressFrom` | The ALB's subnet CIDRs (the ALB in IP target mode reaches pods from its subnets). The proof's ALB shares the cluster's public subnets, so it used the VPC CIDR, which also admits any other VPC client |
 | Artifact Registry mirrors | Public GHCR images by digest; no pull secret |
@@ -60,6 +66,12 @@ DNS names and a certificate. The proof used four names under one domain:
 | `api.aws-proof.agentrelay.com` | `relay-cloud-api.publicUrl` |
 | `cast.aws-proof.agentrelay.com` | `relaycast.baseUrl`, `relay-cloud-api.services.relaycastPublicUrl` |
 | `history.aws-proof.agentrelay.com` | `relay-cloud-api.services.relayhistoryPublicUrl`, `relayhistory.relayauth.historyOrigin`, `sessions-pipeline.alleyoop.auth.historyOrigin` (all three byte-equal) |
+
+Those are the 0.3.11 keys. In the current native profile the history host is
+`relay-control.services.sessionReadApiPublicUrl`,
+`sessions-pipeline.sessionReadApi.origin`,
+`sessions-pipeline.ingestEdge.origin` and
+`sessions-pipeline.alleyoop.auth.historyOrigin` (all the same origin).
 
 Steps (any DNS provider; with Route 53 create the same records there):
 
@@ -98,7 +110,7 @@ image set.
 | relayauth | `ghcr.io/agentworkforce/relayauth@sha256:c23c92d2…` | chart pin |
 | relay-cloud-api (relay-control) | `ghcr.io/agentworkforce/selfhost-api@sha256:95c78777…` (relaycontrol 9b80b04, 0.3.0) | chart pin |
 | relay-dashboard (relay-webapp) | `ghcr.io/agentworkforce/relay-dashboard@sha256:c50005fc…` (relay-dashboard e5003d0) | chart pin |
-| relayhistory | `ghcr.io/agentworkforce/relayhistory@sha256:d3166bb14e1d6043426a4dd8cc05408b94574c8d79ad5fd6e789e0de00ab371b` (relayhistory-cloud 53c3333) | `values-eks.yaml` |
+| relayhistory | `ghcr.io/agentworkforce/relayhistory@sha256:d3166bb14e1d6043426a4dd8cc05408b94574c8d79ad5fd6e789e0de00ab371b` | `values-eks.yaml` at 0.3.11 |
 | worker, alleyoop, privileged SQL | `ghcr.io/agentworkforce/96bulls-services@sha256:070fe6fd46ecd1e1f9db32ff22379f6df9b9e6c4d48ede5312c8fb986a95f3a9` (sessions-pipeline f1c2672, with #204) | `values-eks.yaml` |
 | CNPG Postgres | `ghcr.io/cloudnative-pg/postgresql:17-standard-trixie@sha256:ed6923f9…` | chart pin |
 
@@ -168,6 +180,11 @@ EKS|PASS|eks.cnpg|control-api-pg, hoopdb, relayhistory-pg: Cluster in healthy st
 Inside a Pippen sandbox lease (`pippen sandbox up <agent>`), from this repo
 (`CF_API_TOKEN` is a DNS edit token for the parent zone, in the environment
 of the `cf-*` commands only):
+
+These are the 0.3.11 proof's commands, kept as a record. `eks-proof-install.sh`
+was removed in agent-relay 0.7.0; a current install uses `values-eks.yaml`
+(native History) or `values-eks-rds-native.yaml` with your own Secrets and
+`eks-alb-ingress.sh`.
 
 ```sh
 export EKS_PROOF_API_CIDR=<operator egress>/32

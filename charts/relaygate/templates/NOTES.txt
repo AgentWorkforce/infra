@@ -1,0 +1,5 @@
+relaygate is running at http://{{ include "relaygate.fullname" . }}:{{ .Values.service.port }}
+(model classifier {{ if .Values.policy.classifier.model.enabled }}on{{ else }}off{{ end }}).
+
+Point a client at it with that URL and an enrollment key whose sha256 is in
+policy.enrollmentKeys (e.g. slack-relay: relaygate.url + secrets.relaygateEnrollmentKey).

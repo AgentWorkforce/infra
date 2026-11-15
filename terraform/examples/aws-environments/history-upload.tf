@@ -41,6 +41,11 @@ resource "aws_iam_role" "history_consumer" {
   })
   tags = local.tags
   lifecycle {
+    # The unmanaged-policy wall check compares against this predicted ARN.
+    postcondition {
+      condition     = !local.unmanaged_policy || self.arn == local.history_consumer_role_arn
+      error_message = "The history consumer role ARN differs from the one the unmanaged bucket policy's inbox wall names."
+    }
     precondition {
       condition     = var.desktop_feed == null ? true : var.desktop_feed.service_account == var.history_upload.control_service_account
       error_message = "Desktop feed and history uploads must share the same Control ServiceAccount and Pod Identity role."

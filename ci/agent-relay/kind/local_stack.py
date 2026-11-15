@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from copy import deepcopy
 import base64
 import hashlib
+import importlib.util
 import errno
 from email import policy
 from email.parser import Parser
@@ -24,12 +25,13 @@ import yaml
 
 from stack import Stack, StackError, ROOT, NS, NODE, POSTGRES, private_json
 from native_core_values import compose
-from native_recipe import SECRET_KEYS
+from native_recipe import SECRET_KEYS, merge_values
 from local_host_setup import certificate_present, host_aliases_present, managed_cas
+from local_actors import recipe as actor_recipe, build as build_actors, load as load_actors
 
 LOCAL_VALUES = yaml.safe_load((ROOT / "ci/agent-relay/kind/local-values.yaml").read_text())
 DESKTOP_RELEASE_VALUES = yaml.safe_load((ROOT / "ci/agent-relay/kind/desktop-releases-values.yaml").read_text())
-AA_VALUES = yaml.safe_load((ROOT / "charts/agent-relay/values-eks.yaml").read_text())
+PROFILE_VALUES = yaml.safe_load((ROOT / "charts/agent-relay/values-eks.yaml").read_text())
 READER_VALUES = yaml.safe_load((ROOT / "charts/session-read-api/values.yaml").read_text())
 SCRUB_VALUES = yaml.safe_load((ROOT / "charts/agent-relay/values-scrub-wasm-bindgen.yaml").read_text())["global"]["scrubEngine"]
 
@@ -45,23 +47,65 @@ def desktop_releases_enabled(environ=None):
     return value == "1"
 
 
+def candidate_profile(base, root=None, environ=None):
+    """Select a checked-in release ledger before any local infrastructure changes."""
+    environ = os.environ if environ is None else environ
+    version = environ.get("LOCAL_RELEASE_CANDIDATE", "")
+    if not version:
+        return base
+    if not re.fullmatch(r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)", version):
+        raise StackError("LOCAL_RELEASE_CANDIDATE must be a strict stable version")
+    if desktop_releases_enabled(environ):
+        raise StackError("LOCAL_RELEASE_CANDIDATE cannot be combined with LOCAL_DESKTOP_RELEASES")
+    root = ROOT if root is None else root
+    directory = root / "releases" / ("agent-relay-" + version)
+    pins, values = directory / "pins.json", directory / "values.yaml"
+    if any(path.is_symlink() for path in (root / "releases", directory, pins, values)):
+        raise StackError("local candidate files must not be symlinks")
+    try:
+        spec = importlib.util.spec_from_file_location("local_release_candidate", ROOT / "scripts/release/update-release-candidate.py")
+        helper = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(helper)
+        ledger = helper.validate_candidate(pins, values, version)
+        if set(ledger["pins"]) != {"relay-control", "relay-webapp", "sessions-pipeline"}:
+            raise ValueError("incomplete candidate")
+        overlay = yaml.safe_load(values.read_text())
+    except (OSError, ValueError, KeyError, TypeError):
+        raise StackError("local candidate ledger/values validation failed") from None
+    return merge_values(base, overlay)
+
+
 def profile_images(experimental):
-    values = DESKTOP_RELEASE_VALUES if experimental else AA_VALUES
+    values = DESKTOP_RELEASE_VALUES if experimental else PROFILE_VALUES
     return tuple(reference(values[name]["image"]) for name in ("relay-control", "relay-webapp"))
 
 
 DESKTOP_RELEASES = desktop_releases_enabled()
-PIPELINE = reference(AA_VALUES["sessions-pipeline"]["worker"]["image"])
-if PIPELINE != reference(AA_VALUES["sessions-pipeline"]["alleyoop"]["image"]):
-    raise StackError("the AA profile must select one services-image generation")
+PROFILE_VALUES = candidate_profile(PROFILE_VALUES)
+
+
+def cast_backend(environ=None):
+    value = (os.environ if environ is None else environ).get("LOCAL_RELAYCAST_BACKEND", "durable-actors")
+    if value not in {"durable-actors", "postgres", "sqlite"}:
+        raise StackError("LOCAL_RELAYCAST_BACKEND must be durable-actors, postgres or sqlite")
+    return value
+
+
+CAST_BACKEND = cast_backend()
+ACTORS = actor_recipe()
+PIPELINE = reference(PROFILE_VALUES["sessions-pipeline"]["worker"]["image"])
+if PIPELINE != reference(PROFILE_VALUES["sessions-pipeline"]["alleyoop"]["image"]):
+    raise StackError("the customer profile must select one services-image generation")
 CONTROL, WEBAPP = profile_images(DESKTOP_RELEASES)
-CAST = reference(AA_VALUES["relaycast"]["image"])
+CAST = ACTORS["source"]["gateway"]["reference"] if CAST_BACKEND == "durable-actors" else reference(PROFILE_VALUES["relaycast"]["image"])
 MINIO = "cgr.dev/chainguard/minio@sha256:e70b2b1e74d79457f808710483bd726ff364529ca30736eaa15a6ab547d3a5a7"
 SITE = "https://relay.kind.agentrelay.com"
+GOOGLE_ISSUER = "https://accounts.google.com"
 HISTORY = "https://history.kind.agentrelay.com:8443"
 PGHOST = "postgres.agent-relay.svc.cluster.local"
 COLLECTOR_URL = "https://telemetry-collector.agent-relay.svc.cluster.local:8443/v1/events"
-TELEMETRY = {"control": "relaycontrol", "ingest": "session-ingest", "consumer": "session-pipeline-consumer", "reader": "session-read-api", "brief": "session-brief", "cast": "relaycast"}
+TELEMETRY = {"control": "relaycontrol", "ingest": "session-ingest", "consumer": "session-pipeline-consumer", "reader": "session-read-api", "brief": "session-brief", "cast": "relaycast", "cast-proof": "relaycast"}
+CAST_PROOF_DEPLOYMENT = "local-kind-postgres-proof"
 HOSTS = [PGHOST, "relay.kind.agentrelay.com", "cast.kind.agentrelay.com", "history.kind.agentrelay.com", "files.kind.agentrelay.com", "telemetry-collector.agent-relay.svc.cluster.local"]
 
 
@@ -160,6 +204,16 @@ class LocalStack(Stack):
             fn()
             private_json(path, phases + [name])
 
+    def chart_dependencies(self):
+        # A cached main install can retain an orphaned subchart package after
+        # its dependency is removed. Refresh the packages when the locked graph
+        # changes, without rerunning any completed database/bootstrap phases.
+        metadata = [ROOT / "charts" / chart / name
+                    for chart in ("agent-relay", "sessions-pipeline")
+                    for name in ("Chart.yaml", "Chart.lock")]
+        revision = hashlib.sha256(b"\0".join(path.read_bytes() for path in metadata)).hexdigest()
+        self.stage("chart-dependencies-" + revision, self.dependencies)
+
     def sql(self, database, text, variables=()):
         return self.psql(database, text, variables=variables, sensitive=True)
 
@@ -176,7 +230,7 @@ class LocalStack(Stack):
         environment = list(env or [])
         if image_ref == PIPELINE:
             if {e["name"] for e in environment} & {e["name"] for e in scrub_environment()}:
-                raise StackError("local services Jobs must use the managed AA scrub contract")
+                raise StackError("local services Jobs must use the managed customer scrub contract")
             environment.extend(scrub_environment())
         container = {"name": "run", "image": image_ref, "env": environment, "volumeMounts": mounts or [],
             "securityContext": {"allowPrivilegeEscalation": False, "capabilities": {"drop": ["ALL"]}}}
@@ -206,9 +260,21 @@ class LocalStack(Stack):
         self.k("rollout", "status", "statefulset/postgres", "--timeout=300s", timeout=330)
 
     def databases(self, c):
-        roles = ("hoop", "control_owner", "control_api_runtime")
+        # The isolated Postgres collector companion is available in every lane.
+        roles = ("hoop", "control_owner", "control_api_runtime", "relaycast_owner", "relaycast_runtime")
         self.sql("postgres", "\n".join("CREATE ROLE " + role + " LOGIN NOINHERIT PASSWORD '" + c[role] + "';" for role in roles) +
-            "\nCREATE DATABASE hoopdb OWNER hoop;\nCREATE DATABASE relaycontrol OWNER control_owner;")
+            "\nCREATE DATABASE hoopdb OWNER hoop;\nCREATE DATABASE relaycontrol OWNER control_owner;\nCREATE DATABASE relaycast;")
+        # Match the image's identity checks: the migration role owns only the
+        # schema, never the database; runtime has DML, no DDL or TEMP privilege.
+        self.sql("relaycast", """ALTER SCHEMA public OWNER TO relaycast_owner;
+REVOKE CREATE ON SCHEMA public FROM PUBLIC;
+GRANT USAGE ON SCHEMA public TO relaycast_runtime;
+ALTER DEFAULT PRIVILEGES FOR ROLE relaycast_owner IN SCHEMA public
+  GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO relaycast_runtime;
+ALTER DEFAULT PRIVILEGES FOR ROLE relaycast_owner IN SCHEMA public
+  GRANT SELECT, USAGE, UPDATE ON SEQUENCES TO relaycast_runtime;
+REVOKE TEMP, CREATE ON DATABASE relaycast FROM PUBLIC;
+GRANT TEMP ON DATABASE relaycast TO relaycast_owner;""")
         self.sql("hoopdb", "CREATE EXTENSION vector; CREATE EXTENSION pg_trgm; CREATE EXTENSION btree_gin;")
 
     def storage(self, c):
@@ -269,7 +335,11 @@ class LocalStack(Stack):
             "reference": PIPELINE, "readerLoginAdvertisesSync": False, "siteOrigin": SITE, "historyOrigin": HISTORY,
             "postgres": {"host": PGHOST}, "postgresCa": {"configMap": "local-ca", "key": "ca.crt", "sha256": self.ca_sha},
             "secretRefs": {n: {"name": "local-" + n.lower(), "key": k, "jsonField": j} for n, (k, j) in SECRET_KEYS.items()},
-            "lockerBucket": "locker", "keyRoot": "96bulls", "backendId": "local-postgres", "completeSince": self.credentials["createdAt"]}
+            "lockerBucket": "locker", "keyRoot": "96bulls", "backendId": "local-postgres",
+            # A fresh local store holds only its own ingest, so its history floor is
+            # epoch: a dated floor makes every harness that lacks a session answer 501
+            # history_floor_unknown_session, and the dashboard says it could not check.
+            "completeSince": "epoch"}
         selected["secretRefs"]["locker"]["name"] = "local-locker"
         base = yaml.safe_load((ROOT / "charts/agent-relay/values-kind-core.yaml").read_text())
         base["relay-webapp"]["image"] = image(WEBAPP)
@@ -278,16 +348,48 @@ class LocalStack(Stack):
         # configuration belongs in this local fixture.
         result["global"]["scrubEngine"] = deepcopy(SCRUB_VALUES)
         result["relaycast"]["image"] = image(CAST)
+        cast = result["relaycast"]
+        cast.setdefault("runtime", {})["backend"] = CAST_BACKEND
+        if CAST_BACKEND == "durable-actors":
+            repository, tag = ACTORS["actorTag"].rsplit(":", 1)
+            cast["runtime"]["durableActors"] = {
+                "gateway": {"image": image(CAST),
+                    "resources": {"requests": {"cpu": "100m", "memory": "128Mi"}, "limits": {"memory": "1Gi"}}},
+                "fileStore": {"driver": "local"},
+                "deployer": {"enabled": False},
+                "devRuntime": {"enabled": True, "acknowledgeNonProduction": True,
+                    "existingClaim": "local-relaycast-actors", "image": {"repository": repository, "tag": tag, "pullPolicy": "Never"},
+                    "resources": {"requests": {"cpu": "100m", "memory": "256Mi"}, "limits": {"memory": "2Gi"}}}}
+            cast["credentials"] = {"format": "ar", "authority": "self"}
+            cast["secretKeys"].update(credentialKeyring="credential-keyring", workspaceBootstrapSecret="workspace-bootstrap-secret")
+            cast["analytics"] = {"enabled": False}
+            cast["podSecurityContext"] = {"fsGroup": 10000}
+            built = getattr(self, "actor_build", None)
+            if built:
+                cast.setdefault("podAnnotations", {})["local.agentrelay.dev/actor-image-id"] = built["actorImageId"]
+        elif CAST_BACKEND == "postgres":
+            cast["runtime"]["postgres"] = {"image": image(CAST)}
+            cast["postgresCa"] = {"enabled": True, "configMap": "local-ca", "key": "ca.crt"}
         result["relay-webapp"]["image"] = image(WEBAPP)
         result["relay-webapp"]["runtime"]["coordinationOverlapsEnabled"] = False
         result["relay-webapp"]["customerProfile"]["desktop"]["siteUrl"] = SITE
         result["relay-control"]["image"] = image(CONTROL)
         # Usage and launch are Control APIs; they add no optional workload.
-        result["relay-control"]["selectedFeatures"] = list(AA_VALUES["relay-control"]["selectedFeatures"])
+        result["relay-control"]["selectedFeatures"] = list(PROFILE_VALUES["relay-control"]["selectedFeatures"])
         if DESKTOP_RELEASES:
             result["relay-control"].setdefault("extraEnv", []).append(env("SELFHOST_DESKTOP_RELEASES_REPO",
                 DESKTOP_RELEASE_VALUES["relay-control"]["desktopReleasesRepo"]))
         result["relay-control"]["auth"] = {"emailLink": {"enabled": True}}
+        oidc = self.google_oidc()
+        if oidc:
+            # Real Google sign-in through Control's OIDC (the same code path as
+            # Okta or Entra ID); the email link stays as the operator fallback.
+            result["relay-control"]["auth"]["oidc"] = {"issuer": GOOGLE_ISSUER, "clientId": oidc["client_id"],
+                "allowedDomains": oidc["allowed_domains"], "displayName": "Google"}
+            # allowedDomains only gates who may authenticate; joining the single
+            # organization without an invite is auth.autoJoinDomains.
+            result["relay-control"]["auth"]["autoJoinDomains"] = oidc["allowed_domains"]
+            result["relay-control"]["secretKeys"]["oidcClientSecret"] = "oidc-client-secret"
         result["relay-control"]["smtp"] = {"host": "local-mail.agent-relay.svc.cluster.local", "port": 1025, "security": "none", "from": "Local Relay <signin@kind.example>"}
         result["relay-control"]["services"]["publicHostAliases"] = [{"ip": self.edge_ip, "hostnames": ["relay.kind.agentrelay.com"]}]
         for slot in ("nativeConsumer", "ingestEdge", "sessionReadApi"):
@@ -307,7 +409,8 @@ class LocalStack(Stack):
             analytics = lambda name: {"enabled": True, "deploymentId": "local-kind", "collectorUrl": COLLECTOR_URL,
                 "existingSecret": "local-telemetry-" + name, "caConfigMap": "local-ca"}
             result["relay-control"]["analytics"] = {**analytics("control"), "profile": "development"}
-            result["relaycast"]["analytics"] = analytics("cast")
+            if CAST_BACKEND != "durable-actors":
+                result["relaycast"]["analytics"] = analytics("cast")
             for slot, producer in (("ingestEdge", "ingest"), ("nativeConsumer", "consumer"), ("sessionReadApi", "reader")):
                 result["sessions-pipeline"][slot]["analytics"] = analytics(producer)
             worker = result["sessions-pipeline"]["worker"]
@@ -335,7 +438,8 @@ class LocalStack(Stack):
             token = c["collector"] if name == "control" else c["collector_" + name]
             self.secret("local-telemetry-" + name, {"token": token})
             tokens[name] = token
-            producers.append({"name": "local-" + name, "component": component, "deployment_id": "local-kind",
+            producers.append({"name": "local-" + name, "component": component,
+                "deployment_id": CAST_PROOF_DEPLOYMENT if name == "cast-proof" else "local-kind",
                 "token_file": "/var/run/secrets/telemetry-producers/" + name})
         self.secret("local-telemetry-producers", {"producers.json": json.dumps(producers), **tokens})
         self.sql("hoopdb", "ALTER ROLE sessions_pipeline_runtime PASSWORD '" + c["sessions_pipeline_runtime"] + "';")
@@ -348,6 +452,43 @@ class LocalStack(Stack):
             self.apply(public_https_egress("local-control-github-releases-egress", {
                 "app.kubernetes.io/name": "relay-control", "app.kubernetes.io/instance": "agent-relay",
                 "app.kubernetes.io/component": "api"}))
+
+    def google_oidc(self):
+        """The Google OAuth client for local sign-in, or None (email link only)."""
+        state = getattr(self, "state", None)
+        path = state / "google-oidc.json" if state else None
+        if path is None or not path.exists():
+            return None
+        value = json.loads(path.read_text())
+        if not (isinstance(value.get("client_id"), str) and value["client_id"].endswith(".apps.googleusercontent.com")
+                and isinstance(value.get("client_secret"), str) and value["client_secret"]):
+            raise StackError(str(path) + " must hold a Google web client_id and client_secret")
+        value.setdefault("allowed_domains", ["agentrelay.com"])
+        return value
+
+    def google_oidc_egress(self):
+        selector = {"app.kubernetes.io/name": "relay-control", "app.kubernetes.io/instance": "agent-relay",
+            "app.kubernetes.io/component": "api"}
+        if self.google_oidc():
+            self.apply(public_https_egress("local-control-oidc-egress", selector))
+        else:
+            self.k("delete", "networkpolicy", "local-control-oidc-egress", "--ignore-not-found=true")
+
+    def install_google_oidc(self):
+        """Store a Google OAuth client (JSON on stdin) for this owned stack, then reconcile it."""
+        self.docker(require_space=False)
+        self.owned()
+        if sys.stdin.isatty():
+            raise StackError("pipe the client JSON on standard input; interactive entry would echo the secret")
+        raw = json.loads(sys.stdin.read())
+        domains = [d.strip() for d in os.environ.get("LOCAL_OIDC_ALLOWED_DOMAINS", "agentrelay.com").split(",") if d.strip()]
+        value = {"client_id": raw.get("client_id", ""), "client_secret": raw.get("client_secret", ""), "allowed_domains": domains}
+        private_json(self.state / "google-oidc.json", value)
+        self.google_oidc()  # validate before spending a reconcile
+        print("Google sign-in stored (0600; allowed domains: " + ", ".join(domains) + "). Reconciling the local stack...", flush=True)
+        self.up_local()
+        print("Register " + SITE + "/login/oidc/callback as an authorized redirect URI on that Google client, "
+            "then use 'Continue with Google' at " + SITE + "/login.")
 
     def configure_model(self, key=None):
         # Repeating local-up without an environment override preserves a key
@@ -382,12 +523,25 @@ class LocalStack(Stack):
         self.k("rollout", "status", "deployment/sessions-session-brief", "--timeout=180s", timeout=210)
         print("Local model key installed; brief worker ready. Search/summary acceptance must still be verified.")
 
-    def control(self, c):
-        self.secret("local-control-owner", {"database-migrations-url": pgurl("control_owner", c, "/etc/postgres-ca/ca.crt", "relaycontrol")})
+    def control_secret(self, c):
+        oidc = self.google_oidc()
         self.secret("local-control", {"database-url": pgurl("control_api_runtime", c, "/etc/postgres-ca/ca.crt", "relaycontrol"),
             "bootstrap-token": c["bootstrap"], "encryption-key": c["encryption"], "cast-secret": c["cast"],
-            "internal-token": c["internal"], "introspect-secret": c["introspection"], "reader-secret": c["readerIssuer"]})
-        self.secret("local-cast", {"internal-secret": c["cast"], "workspace-bootstrap-secret": c["castBootstrap"]})
+            "internal-token": c["internal"], "introspect-secret": c["introspection"], "reader-secret": c["readerIssuer"],
+            **({"oidc-client-secret": oidc["client_secret"]} if oidc else {})})
+
+    def control(self, c):
+        self.secret("local-control-owner", {"database-migrations-url": pgurl("control_owner", c, "/etc/postgres-ca/ca.crt", "relaycontrol")})
+        cast = {"internal-secret": c["cast"], "workspace-bootstrap-secret": c["castBootstrap"]}
+        if CAST_BACKEND == "durable-actors":
+            cast.update({"credential-keyring": json.dumps({"current": "a", "keys": {"a": c["castKeyring"]}}),
+                "file-signing-secret": c["castFiles"], "durable-actors-dev-secret": c["castActors"]})
+            self.apply({"apiVersion": "v1", "kind": "PersistentVolumeClaim", "metadata": {"name": "local-relaycast-actors", "namespace": NS},
+                "spec": {"accessModes": ["ReadWriteOnce"], "resources": {"requests": {"storage": "1Gi"}}}})
+        elif CAST_BACKEND == "postgres":
+            cast.update({"database-owner-url": pgurl("relaycast_owner", c, None, "relaycast"),
+                "database-runtime-url": pgurl("relaycast_runtime", c, None, "relaycast")})
+        self.secret("local-cast", cast)
         self.secret("local-introspection", {"introspect-secret": c["introspection"]})
         self.secret("local-readerissuer", {"internal-secret": c["readerIssuer"]})
         self.job("local-control-migrate", CONTROL, ["node", "/app/node_modules/relay-control/dist/migrate-cli.js"],
@@ -402,7 +556,7 @@ class LocalStack(Stack):
             try:
                 output = self.k("exec", "-i", pod, "--", "node", "-e", CONTROL_OBSERVER,
                     data=json.dumps({"bootstrapKey": "bootstrap-token", "historyOrigin": HISTORY, "organizationName": "Local development", "administratorEmail": "owner@kind.example",
-                        "selectedFeatures": AA_VALUES["relay-control"]["selectedFeatures"]}), sensitive=True).stdout
+                        "selectedFeatures": PROFILE_VALUES["relay-control"]["selectedFeatures"]}), sensitive=True).stdout
                 break
             except StackError:
                 # First-boot tenant provisioning finishes after the process's
@@ -573,6 +727,11 @@ WHERE p.oid=to_regprocedure('session_consumer_bootstrap_private.consumer_has_pas
         if capabilities != {"reader": True, "consumer": True}:
             raise StackError("the Kind profile's pinned services image lacks the native reader/consumer; update the source pin before local-up can install a complete core")
         self.cluster()
+        # Refuse a foreign/other-checkout fixture before spending time building.
+        built_actors = build_actors(self, ACTORS) if CAST_BACKEND == "durable-actors" else None
+        self.actor_build = built_actors
+        if built_actors:
+            load_actors(self, built_actors)
         self.stage("cni", self.cni)
         self.apply({"apiVersion": "v1", "kind": "Namespace", "metadata": {"name": NS}})
         from tls import create
@@ -586,10 +745,11 @@ WHERE p.oid=to_regprocedure('session_consumer_bootstrap_private.consumer_has_pas
             "createdAt": datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")}
         private_json(path, self.credentials)
         c = self.credentials
-        for key in ("collector", "sessions_pipeline_runtime", *("collector_" + name for name in TELEMETRY if name != "control")):
+        for key in ("collector", "sessions_pipeline_runtime", "castKeyring", "castFiles", "castActors", "relaycast_owner", "relaycast_runtime",
+                *("collector_" + name for name in TELEMETRY if name != "control")):
             c.setdefault(key, secrets.token_hex(32))
         private_json(path, c)
-        self.stage("chart-dependencies", self.dependencies)
+        self.chart_dependencies()
         from edge import install
         # Reconcile the edge on repeats too: the default leaf and its checksum
         # must follow TLS renewal rather than an old completed phase marker.
@@ -604,6 +764,10 @@ WHERE p.oid=to_regprocedure('session_consumer_bootstrap_private.consumer_has_pas
         self.prepare_pipeline_generation(pipeline_changed)
         self.mail()
         self.github_releases_egress()
+        self.google_oidc_egress()
+        # Configured credentials must exist before every rendered upgrade,
+        # even when first-install migrations/bootstrap are already complete.
+        self.control_secret(c)
         self.stage("control", lambda: self.control(c))
         self.sql("hoopdb", "ALTER ROLE hoop CREATEROLE;")
         try:
@@ -675,9 +839,12 @@ def check_selection(previous, selected):
 
 
 def selected_images():
-    return {"pipeline": PIPELINE, "control": CONTROL, "webapp": WEBAPP, "postgres": POSTGRES, "minio": MINIO,
+    result = {"pipeline": PIPELINE, "control": CONTROL, "webapp": WEBAPP, "postgres": POSTGRES, "minio": MINIO,
         "relaycast": CAST, "collector": reference(LOCAL_VALUES["telemetry-collector"]["image"]),
-        "collectorProxy": reference(LOCAL_VALUES["telemetry-collector"]["tlsProxy"]["image"])}
+        "collectorProxy": reference(LOCAL_VALUES["telemetry-collector"]["tlsProxy"]["image"]), "relaycastBackend": CAST_BACKEND}
+    if CAST_BACKEND == "durable-actors":
+        result["relaycastActors"] = ACTORS["actorTag"]
+    return result
 
 
 def read_model_key(stream):
@@ -695,7 +862,9 @@ def secret_env(name, secret, key):
 
 
 def pgurl(role, credentials, ca, database="hoopdb"):
-    return "postgresql://" + role + ":" + credentials[role] + "@" + PGHOST + ":5432/" + database + "?sslmode=verify-full&sslrootcert=" + ca
+    # Relaycast accepts only sslmode in the URL; its CA is a separate chart env.
+    return ("postgresql://" + role + ":" + credentials[role] + "@" + PGHOST + ":5432/" + database
+            + "?sslmode=verify-full" + ("&sslrootcert=" + ca if ca else ""))
 
 
 def locker_env():
@@ -706,8 +875,8 @@ def locker_env():
 
 def main():
     stack = LocalStack("core")
-    if sys.argv[1:] not in (["up"], ["login"], ["down"], ["llm-key"]):
-        raise SystemExit("usage: local_stack.py up|login|down|llm-key")
+    if sys.argv[1:] not in (["up"], ["login"], ["down"], ["llm-key"], ["google-oidc"], ["postgres-cast-proof"]):
+        raise SystemExit("usage: local_stack.py up|login|down|llm-key|google-oidc|postgres-cast-proof")
     try:
         if sys.argv[1] == "up":
             stack.up_local()
@@ -722,6 +891,11 @@ def main():
             stack.login_link(force=True)
         elif sys.argv[1] == "llm-key":
             stack.install_model_key()
+        elif sys.argv[1] == "google-oidc":
+            stack.install_google_oidc()
+        elif sys.argv[1] == "postgres-cast-proof":
+            from local_cast_pg_proof import prove
+            prove(stack)
         else:
             stack.down_local()
     except StackError as error:

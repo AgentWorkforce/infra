@@ -199,20 +199,13 @@ class Ownership(unittest.TestCase):
         self.assertFalse(list(self.local.state.glob("ownership-*")))
         self.assertFalse(any(c[:2] in (["kind", "delete"], ["kind", "create"]) for c in self.calls))
 
-    def test_up_refusal_preserves_original_recovery_anchor(self):
+    def test_retired_up_refuses_before_any_command_and_preserves_recovery_anchor(self):
         self.legacy_receipts()
-        # The up entry point now reads profile selections before its first
-        # runtime call. Supply a disabled native selection so this test still
-        # reaches the original independent ownership-refusal boundary.
-        charts = self.root / "charts/agent-relay"
-        charts.mkdir(parents=True)
-        (charts / "values.yaml").write_text("{}\n")
-        (charts / "values-kind-core.yaml").write_text("{}\n")
         ready = self.local.state / "ready.json"
         before = ready.read_bytes()
-        with patch.object(stack.shutil, "which", return_value="tool"):
-            with self.assertRaises(stack.StackError):
-                self.local.up()
+        with self.assertRaisesRegex(stack.StackError, "retired with the standalone RelayHistory server.*make local-up"):
+            self.local.up()
+        self.assertEqual(self.calls, [], "retired kind-up must refuse before any tool, Docker or cluster call")
         self.assertEqual(ready.read_bytes(), before)
         self.assertEqual(self.local.kubeconfig.read_text(), "original kubeconfig")
         self.local.recover(self.live_uid)

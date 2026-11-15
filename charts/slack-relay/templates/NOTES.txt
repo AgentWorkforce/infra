@@ -1,0 +1,12 @@
+slack-relay is running in {{ .Values.slack.mode }} mode.
+
+Router (Slack app + ledger): {{ include "slack-relay.fullname" . }}-router
+Agent host:                   {{ include "slack-relay.fullname" . }}-host
+Relay channel:                #{{ .Values.relaycast.channel }}
+
+Check the routing ledger (in-cluster only):
+  kubectl -n {{ .Release.Namespace }} port-forward deploy/{{ include "slack-relay.fullname" . }}-router 8080
+  curl localhost:8080/ledger/roster
+  curl localhost:8080/ledger/events
+
+Invite the bot to {{ if .Values.slack.allowedChannels }}{{ join ", " .Values.slack.allowedChannels }}{{ else }}a channel{{ end }} and @mention it.

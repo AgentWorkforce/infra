@@ -2,8 +2,10 @@
 import json
 import io
 import ipaddress
+import importlib.util
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -21,6 +23,151 @@ from stack import StackError
 
 
 class LocalTests(unittest.TestCase):
+    def test_dependency_graph_change_refreshes_packages_without_repeating_bootstrap(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            for chart in ("agent-relay", "sessions-pipeline"):
+                directory = root / "charts" / chart
+                directory.mkdir(parents=True)
+                for name in ("Chart.yaml", "Chart.lock"):
+                    (directory / name).write_text("old metadata\n")
+            stack = LocalStack.__new__(LocalStack)
+            stack.state = root / "state"; stack.state.mkdir()
+            completed = ["chart-dependencies", "databases", "control", "pipeline-schema"]
+            (stack.state / "phases.json").write_text(json.dumps(completed))
+            builds = []
+            stack.dependencies = lambda: builds.append("rebuilt")
+            with patch.object(local_stack, "ROOT", root):
+                stack.chart_dependencies()
+                stack.chart_dependencies()
+                self.assertEqual(builds, ["rebuilt"])
+                (root / "charts/agent-relay/Chart.lock").write_text("removed history dependency\n")
+                stack.chart_dependencies()
+                self.assertEqual(builds, ["rebuilt", "rebuilt"])
+            self.assertTrue(set(completed) <= set(json.loads((stack.state / "phases.json").read_text())))
+
+    def test_postgres_cast_identities_have_schema_ownership_and_dml_without_database_ownership(self):
+        queries = []
+        stack = object.__new__(LocalStack)
+        stack.sql = lambda database, sql: queries.append((database, sql))
+        stack.databases({key: "fixture-password" for key in (
+            "hoop", "control_owner", "control_api_runtime", "relaycast_owner", "relaycast_runtime")})
+        admin = queries[0][1]
+        self.assertIn("CREATE DATABASE relaycast;", admin)
+        self.assertNotIn("DATABASE relaycast OWNER", admin)
+        cast = next(sql for database, sql in queries if database == "relaycast")
+        for required in ("ALTER SCHEMA public OWNER TO relaycast_owner", "REVOKE CREATE ON SCHEMA public FROM PUBLIC",
+                "GRANT USAGE ON SCHEMA public TO relaycast_runtime", "GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO relaycast_runtime",
+                "GRANT SELECT, USAGE, UPDATE ON SEQUENCES TO relaycast_runtime", "REVOKE TEMP, CREATE ON DATABASE relaycast FROM PUBLIC",
+                "GRANT TEMP ON DATABASE relaycast TO relaycast_owner"):
+            self.assertIn(required, cast)
+        url = local_stack.pgurl("relaycast_runtime", {"relaycast_runtime": "fixture"}, None, "relaycast")
+        self.assertEqual(url.split("?", 1)[1], "sslmode=verify-full")
+
+    def test_actor_dev_state_can_use_an_existing_pvc_without_changing_default(self):
+        command = ["helm", "template", "ci", "charts/relaycast", "-n", "ci",
+            "-f", "charts/relaycast/ci/durable-actors-dev-values.yaml"]
+        for claim in ("", "local-relaycast-actors"):
+            with self.subTest(claim=claim):
+                result = subprocess.run(command + ["--set-string", "runtime.durableActors.devRuntime.existingClaim=" + claim],
+                    cwd=ROOT, text=True, capture_output=True, check=True)
+                deployment = next(d for d in yaml.safe_load_all(result.stdout) if d and d["kind"] == "Deployment")
+                self.assertEqual(deployment["spec"]["replicas"], 1)
+                self.assertEqual(deployment["spec"]["strategy"]["type"], "Recreate")
+                pod = deployment["spec"]["template"]["spec"]
+                state = next(v for v in pod["volumes"] if v["name"] == "dev-data")
+                self.assertEqual(state, {"name": "dev-data", **({"persistentVolumeClaim": {"claimName": claim}} if claim else {"emptyDir": {}})})
+                sidecar = next(c for c in pod["containers"] if c["name"] == "durable-actors-dev")
+                self.assertIn({"name": "dev-data", "mountPath": "/data"}, sidecar["volumeMounts"])
+        for override, expected in (("runtime.durableActors.devRuntime.existingClaim=true", "must be a string"),
+                ("runtime.durableActors.devRuntime.existingClaim=../other", "must name a Kubernetes PVC"),
+                ("runtime.durableActors.devRuntime.existingClaim=state,runtime.durableActors.devRuntime.enabled=false", "requires devRuntime.enabled=true")):
+            with self.subTest(override=override):
+                result = subprocess.run(command + ["--set", override], cwd=ROOT, text=True, capture_output=True)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(expected, result.stderr)
+
+    def candidate_fixture(self, root):
+        spec = importlib.util.spec_from_file_location("candidate_test_helper", ROOT / "scripts/release/update-release-candidate.py")
+        helper = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(helper)
+        ledger = {"schema": 1, "version": "2026.11.1", "pins": {
+            name: {"repository": entry["imageRepository"], "digest": "sha256:" + str(index) * 64,
+                "sourceRepository": entry["sourceRepository"], "sourceRevision": "b" * 40}
+            for index, (name, entry) in enumerate(helper.COMPONENTS.items(), 1)}}
+        ledger["pins"]["sessions-pipeline"]["publishRunId"] = 11111111111
+        directory = root / "releases/agent-relay-2026.11.1"
+        directory.mkdir(parents=True)
+        pins, values = directory / "pins.json", directory / "values.yaml"
+        pins.write_text(json.dumps(ledger))
+        values.write_text(helper.render_values(ledger))
+        return helper, ledger, pins, values
+
+    def test_candidate_selector_preserves_default_and_rejects_preview_mix(self):
+        base = {"unchanged": True}
+        self.assertIs(local_stack.candidate_profile(base, environ={}), base)
+        for version in ("../2026.11.1", "2026.11.1-beta.1", "02026.11.1", " 2026.11.1"):
+            with self.subTest(version=version), self.assertRaisesRegex(StackError, "strict stable"):
+                local_stack.candidate_profile(base, environ={"LOCAL_RELEASE_CANDIDATE": version})
+        with self.assertRaisesRegex(StackError, "cannot be combined"):
+            local_stack.candidate_profile(base, environ={"LOCAL_RELEASE_CANDIDATE": "2026.11.1", "LOCAL_DESKTOP_RELEASES": "1"})
+
+    def test_candidate_selector_refuses_missing_drifted_incomplete_and_redirected_inputs(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            environ = {"LOCAL_RELEASE_CANDIDATE": "2026.11.1"}
+            with self.assertRaisesRegex(StackError, "validation failed"):
+                local_stack.candidate_profile({}, root, environ)
+            helper, ledger, pins, values = self.candidate_fixture(root)
+            canonical = values.read_text()
+            values.write_text(canonical + "unexpected: true\n")
+            with self.assertRaisesRegex(StackError, "validation failed"):
+                local_stack.candidate_profile({}, root, environ)
+            values.write_text(canonical)
+            ledger["pins"].pop("relay-control")
+            pins.write_text(json.dumps(ledger))
+            values.write_text(helper.render_values(ledger))
+            with self.assertRaisesRegex(StackError, "validation failed"):
+                local_stack.candidate_profile({}, root, environ)
+            ledger["pins"]["relay-webapp"]["repository"] = "ghcr.io/unexpected/webapp"
+            pins.write_text(json.dumps(ledger))
+            with self.assertRaisesRegex(StackError, "validation failed"):
+                local_stack.candidate_profile({}, root, environ)
+            pins.unlink()
+            pins.symlink_to(values)
+            with self.assertRaisesRegex(StackError, "symlinks"):
+                local_stack.candidate_profile({}, root, environ)
+
+    def test_candidate_images_reach_real_native_render_without_preview_env_or_policy(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _, ledger, _, _ = self.candidate_fixture(root)
+            base = yaml.safe_load((ROOT / "charts/agent-relay/values-eks.yaml").read_text())
+            profile = local_stack.candidate_profile(base, root, {"LOCAL_RELEASE_CANDIDATE": "2026.11.1"})
+            self.assertNotEqual(profile["relay-control"]["image"], base["relay-control"]["image"])
+            self.assertEqual(profile["relay-control"]["selectedFeatures"], base["relay-control"]["selectedFeatures"])
+            references = {name: value["repository"] + "@" + value["digest"] for name, value in ledger["pins"].items()}
+            for name in ("ci/agent-relay/kind/local-values.yaml", "ci/agent-relay/kind/desktop-releases-values.yaml",
+                    "charts/agent-relay/values-eks.yaml", "charts/agent-relay/values-scrub-wasm-bindgen.yaml",
+                    "charts/session-read-api/values.yaml", "scripts/release/update-release-candidate.py",
+                    "ci/agent-relay/kind/relaycast-actors-source.json", "ci/agent-relay/kind/relaycast-actors-dev.Dockerfile"):
+                target = root / name
+                target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(ROOT / name, target)
+            program = "import sys,json;from pathlib import Path;sys.path.insert(0,'ci/agent-relay/kind');import stack;stack.ROOT=Path(sys.argv[1]);import local_stack as s;print(json.dumps(s.selected_images()))"
+            environ = {**os.environ, "LOCAL_RELEASE_CANDIDATE": "2026.11.1"}
+            environ.pop("LOCAL_DESKTOP_RELEASES", None)
+            process = subprocess.run([sys.executable, "-c", program, str(root)], cwd=ROOT, env=environ, capture_output=True, text=True, check=True)
+            actual = json.loads(process.stdout)
+            self.assertEqual([actual[key] for key in ("control", "webapp", "pipeline")],
+                [references[name] for name in ("relay-control", "relay-webapp", "sessions-pipeline")])
+            with patch.multiple(local_stack, PROFILE_VALUES=profile, DESKTOP_RELEASES=False,
+                    CONTROL=references["relay-control"], WEBAPP=references["relay-webapp"], PIPELINE=references["sessions-pipeline"]):
+                selected = selected_images()
+                self.assertEqual([selected[key] for key in ("control", "webapp", "pipeline")],
+                    [references[name] for name in ("relay-control", "relay-webapp", "sessions-pipeline")])
+                self.assert_final_render(experimental=False, profile=profile)
+
     def test_desktop_releases_opt_in_is_explicit_and_defaults_off(self):
         for environ in ({}, {"LOCAL_DESKTOP_RELEASES": ""}, {"LOCAL_DESKTOP_RELEASES": "0"}):
             self.assertFalse(local_stack.desktop_releases_enabled(environ))
@@ -339,12 +486,146 @@ class LocalTests(unittest.TestCase):
         with patch.multiple(local_stack, DESKTOP_RELEASES=False, CONTROL=control, WEBAPP=webapp):
             self.assert_final_render(experimental=False)
 
+    def test_google_oidc_renders_control_sign_in_and_egress_only_when_stored(self):
+        control, webapp = local_stack.profile_images(False)
+        with tempfile.TemporaryDirectory() as tmp, patch.multiple(local_stack, DESKTOP_RELEASES=False, CONTROL=control, WEBAPP=webapp):
+            stack = LocalStack.__new__(LocalStack)
+            stack.state = Path(tmp)
+            stack.ca_sha = "c" * 64
+            stack.edge_ip = "10.96.0.10"
+            stack.credentials = {"createdAt": "2026-11-11T00:00:00Z"}
+            tenant = {"organizationId": "11111111-1111-4111-8111-111111111111", "workspaceId": "22222222-2222-4222-8222-222222222222"}
+            self.assertIsNone(stack.google_oidc())
+            self.assertNotIn("oidc", stack.values("serve", tenant)["relay-control"]["auth"])
+            (stack.state / "google-oidc.json").write_text(json.dumps({"client_id": "1-x.apps.googleusercontent.com",
+                "client_secret": "not-a-real-secret", "allowed_domains": ["agentrelay.com"]}))
+            values = stack.values("serve", tenant)
+            self.assertEqual(values["relay-control"]["auth"]["oidc"]["issuer"], "https://accounts.google.com")
+            self.assertTrue(values["relay-control"]["auth"]["emailLink"]["enabled"])
+            result = subprocess.run(["helm", "template", "agent-relay", "charts/agent-relay", "-n", "agent-relay", "-f", "-", "--is-upgrade"],
+                cwd=ROOT, input=json.dumps(values), capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertNotIn("not-a-real-secret", result.stdout)
+            api = next(d for d in yaml.safe_load_all(result.stdout) if d and d["kind"] == "Deployment" and d["metadata"]["name"] == "relay-control")
+            names = {e["name"]: e.get("value") for c in api["spec"]["template"]["spec"]["containers"] for e in c.get("env", [])}
+            self.assertEqual(names["SELFHOST_OIDC_ISSUER"], "https://accounts.google.com")
+            self.assertEqual(names["SELFHOST_OIDC_ALLOWED_DOMAINS"], "agentrelay.com")
+            self.assertEqual(names["SELFHOST_AUTO_JOIN_DOMAINS"], "agentrelay.com")
+            self.assertIn("SELFHOST_OIDC_CLIENT_SECRET_FILE", names)
+            with patch.object(stack, "apply") as apply:
+                stack.google_oidc_egress()
+            selector = apply.call_args.args[0]["spec"]["podSelector"]["matchLabels"]
+            labels = api["spec"]["template"]["metadata"]["labels"]
+            self.assertTrue(all(labels.get(k) == v for k, v in selector.items()))
+            (stack.state / "google-oidc.json").write_text(json.dumps({"client_id": "not-google", "client_secret": "x"}))
+            with self.assertRaises(local_stack.StackError):
+                stack.google_oidc()
+
+    def test_google_oidc_secret_reconciles_when_control_bootstrap_is_cached(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            stack = LocalStack.__new__(LocalStack)
+            stack.state = Path(tmp)
+            stack.docker_args = ["docker"]
+            credentials = {key: "fixture-" + key for key in (
+                "control_api_runtime", "bootstrap", "encryption", "cast", "internal", "introspection", "readerIssuer")}
+            credentials["createdAt"] = "2026-11-13T00:00:00Z"
+            (stack.state / "credentials.json").write_text(json.dumps(credentials))
+            (stack.state / "tenant.json").write_text("{}")
+            for name in ("ca.crt", "tls.crt"):
+                (stack.state / name).write_text("fixture-certificate")
+            stored = stack.state / "google-oidc.json"
+            secrets = {}
+            stages = []
+            stack.secret = lambda name, data: secrets.update({name: data})
+            # Every bootstrap stage, especially control/migrations, is already
+            # complete on this existing fixture: no callback may run again.
+            stack.stage = lambda name, callback: stages.append(name)
+            stack.cmd = lambda *args, **kwargs: SimpleNamespace(stdout=json.dumps({"reader": True, "consumer": True}))
+            stack.k = lambda *args, **kwargs: SimpleNamespace(stdout="10.96.0.10")
+            stack.values = lambda *args: {}
+            for name in ("docker", "cluster", "apply", "chart_dependencies", "reload_leaf_consumer",
+                    "prepare_pipeline_generation", "mail", "github_releases_egress", "sql", "support_credentials", "login_link"):
+                setattr(stack, name, lambda *args, **kwargs: None)
+            expected_secret = {"value": None}
+            def helm(values):
+                data = secrets["local-control"]
+                self.assertEqual(data["bootstrap-token"], credentials["bootstrap"])
+                self.assertEqual(data["encryption-key"], credentials["encryption"])
+                self.assertEqual(data["reader-secret"], credentials["readerIssuer"])
+                self.assertIn("database-url", data)
+                if expected_secret["value"] is None:
+                    self.assertNotIn("oidc-client-secret", data)
+                else:
+                    self.assertEqual(data["oidc-client-secret"], expected_secret["value"])
+            stack.helm = helm
+            with patch.multiple(local_stack, CAST_BACKEND="sqlite"), patch("local_ca.prepare", return_value=False), \
+                    patch("tls.create"), patch("edge.install"), patch.object(stack, "control") as bootstrap:
+                for value in ("fake-google-secret-one", "fake-google-secret-two", None):
+                    with self.subTest(secret_present=value is not None):
+                        if value is None:
+                            stored.unlink()
+                        else:
+                            stored.write_text(json.dumps({"client_id": "1-x.apps.googleusercontent.com",
+                                "client_secret": value, "allowed_domains": ["agentrelay.com"]}))
+                        expected_secret["value"] = value
+                        stack.up_local()
+                bootstrap.assert_not_called()
+            self.assertEqual(stages.count("control"), 3)
+
     def test_opt_in_final_render_selects_downloads_images_env_and_policy(self):
         control, webapp = local_stack.profile_images(True)
         with patch.multiple(local_stack, DESKTOP_RELEASES=True, CONTROL=control, WEBAPP=webapp):
             self.assert_final_render(experimental=True)
 
-    def assert_final_render(self, experimental):
+    def test_cast_opt_outs_keep_the_collector_enabled_in_real_renders(self):
+        original = local_stack.reference(local_stack.PROFILE_VALUES["relaycast"]["image"])
+        for backend in ("postgres", "sqlite"):
+            with self.subTest(backend=backend), patch.multiple(local_stack, CAST_BACKEND=backend, CAST=original):
+                self.assert_final_render(experimental=False)
+
+    def test_postgres_companion_has_a_separate_registered_collector_credential(self):
+        stack = LocalStack.__new__(LocalStack)
+        stack.apply = lambda *args, **kwargs: None
+        secrets = {}
+        stack.secret = lambda name, data: secrets.update({name: data})
+        stack.sql = lambda *args: None
+        stack.configure_model = lambda: None
+        credentials = {"collector": "control-token", "sessions_pipeline_runtime": "runtime",
+            "locker": "locker", "encryption": "encryption",
+            **{"collector_" + name: name + "-token" for name in local_stack.TELEMETRY if name != "control"}}
+        stack.support_credentials(credentials)
+        registry = secrets["local-telemetry-producers"]
+        producers = {producer["name"]: producer for producer in json.loads(registry["producers.json"])}
+        main, proof = producers["local-cast"], producers["local-cast-proof"]
+        self.assertEqual(main["deployment_id"], "local-kind")
+        self.assertEqual(proof["deployment_id"], local_stack.CAST_PROOF_DEPLOYMENT)
+        self.assertEqual(proof["component"], "relaycast")
+        self.assertNotEqual(main["token_file"], proof["token_file"])
+        self.assertNotEqual(secrets["local-telemetry-cast"]["token"], secrets["local-telemetry-cast-proof"]["token"])
+        self.assertEqual(registry["cast-proof"], secrets["local-telemetry-cast-proof"]["token"])
+
+    def test_cast_backend_default_and_opt_outs_are_explicit(self):
+        self.assertEqual(local_stack.cast_backend({}), "durable-actors")
+        for name in ("durable-actors", "sqlite", "postgres"):
+            self.assertEqual(local_stack.cast_backend({"LOCAL_RELAYCAST_BACKEND": name}), name)
+        for name in ("", "actors", "false"):
+            with self.assertRaises(StackError):
+                local_stack.cast_backend({"LOCAL_RELAYCAST_BACKEND": name})
+
+    def test_foreign_cluster_is_refused_before_local_actor_build(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            stack = LocalStack.__new__(LocalStack)
+            stack.state = Path(tmp)
+            stack.docker_args = ["docker"]
+            stack.docker = lambda: None
+            stack.cmd = lambda *args, **kwargs: SimpleNamespace(stdout=json.dumps({"reader": True, "consumer": True}))
+            stack.cluster = lambda: (_ for _ in ()).throw(StackError("foreign cluster"))
+            with patch("local_ca.prepare", return_value=False), patch.object(local_stack, "build_actors") as build:
+                with self.assertRaisesRegex(StackError, "foreign cluster"):
+                    stack.up_local()
+            build.assert_not_called()
+
+    def assert_final_render(self, experimental, profile=None):
         stack = LocalStack.__new__(LocalStack)
         stack.ca_sha = "c" * 64
         stack.edge_ip = "10.96.0.10"
@@ -352,17 +633,25 @@ class LocalTests(unittest.TestCase):
         tenant = {"organizationId": "11111111-1111-4111-8111-111111111111", "workspaceId": "22222222-2222-4222-8222-222222222222"}
         values = stack.values("serve", tenant)
         self.assertEqual(values["sessions-pipeline"]["sessionReadApi"]["cors"]["allowedOrigins"], ["https://relay.kind.agentrelay.com"])
+        self.assertEqual(values["sessions-pipeline"]["sessionReadApi"]["completeSince"], "epoch")
         result = subprocess.run(["helm", "template", "agent-relay", "charts/agent-relay", "-n", "agent-relay", "-f", "-", "--is-upgrade"],
             cwd=ROOT, input=json.dumps(values), capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stderr)
         docs = [d for d in yaml.safe_load_all(result.stdout) if d]
-        self.assertFalse(any(d["kind"] in ("Secret", "Job") for d in docs))
+        self.assertFalse(any(d["kind"] == "Secret" for d in docs))
+        jobs = [d for d in docs if d["kind"] == "Job"]
+        if local_stack.CAST_BACKEND == "postgres":
+            self.assertEqual(len(jobs), 1)
+            self.assertIn("relaycast-migrate", jobs[0]["metadata"]["name"])
+        else:
+            self.assertEqual(jobs, [])
         active = [d for d in docs if d["kind"] == "Deployment" and d["spec"].get("replicas", 1) > 0]
         self.assertEqual({d["metadata"]["name"] for d in active}, {"relay-control", "relay-webapp", "relaycast", "session-native-ingest",
             "session-native-consumer", "session-read-api", "sessions-session-brief", "telemetry-collector"})
-        aa = yaml.safe_load((ROOT / "charts/agent-relay/values-eks.yaml").read_text())
-        release = {name: local_stack.reference(aa[name]["image"]) for name in ("relay-control", "relay-webapp", "relaycast")}
-        selected = local_stack.DESKTOP_RELEASE_VALUES if experimental else aa
+        pinned = profile if profile is not None else yaml.safe_load((ROOT / "charts/agent-relay/values-eks.yaml").read_text())
+        release = {name: local_stack.reference(pinned[name]["image"]) for name in ("relay-control", "relay-webapp", "relaycast")}
+        release["relaycast"] = local_stack.CAST
+        selected = local_stack.DESKTOP_RELEASE_VALUES if experimental else pinned
         for name in ("relay-control", "relay-webapp"):
             release[name] = local_stack.reference(selected[name]["image"])
         with patch.object(stack, "apply") as apply:
@@ -372,7 +661,7 @@ class LocalTests(unittest.TestCase):
         else:
             apply.assert_not_called()
             github_selector = None
-        release.update({name: local_stack.reference(aa["sessions-pipeline"]["worker"]["image"])
+        release.update({name: local_stack.reference(pinned["sessions-pipeline"]["worker"]["image"])
             for name in ("session-native-ingest", "session-native-consumer", "session-read-api", "sessions-session-brief")})
         for deployment in active:
             pod = deployment["spec"]["template"]["spec"]
@@ -388,7 +677,11 @@ class LocalTests(unittest.TestCase):
                 self.assertEqual(copy["image"], local_stack.WEBAPP)
                 self.assertEqual(dashboard["image"], copy["image"])
             for container in deployment["spec"]["template"]["spec"]["containers"]:
-                self.assertIn("@sha256:", container["image"])
+                if container["name"] == "durable-actors-dev":
+                    self.assertEqual(container["image"], local_stack.ACTORS["actorTag"])
+                    self.assertEqual(container["imagePullPolicy"], "Never")
+                else:
+                    self.assertIn("@sha256:", container["image"])
                 self.assertIn(container["image"], selected_images().values())
                 env = {e["name"]: e for e in container.get("env", [])}
                 if container["image"] == local_stack.PIPELINE:
@@ -425,12 +718,18 @@ class LocalTests(unittest.TestCase):
                     else:
                         self.assertNotIn("SELFHOST_DESKTOP_RELEASES_REPO", env)
                         for component in ("relay-control", "relay-webapp"):
-                            self.assertEqual(release[component], local_stack.reference(aa[component]["image"]))
+                            self.assertEqual(release[component], local_stack.reference(pinned[component]["image"]))
                     self.assertEqual(env["SELFHOST_ANALYTICS_DESTINATION"]["value"], "collector")
                     self.assertTrue(any(m["name"] == "analytics-producer" for m in container["volumeMounts"]))
                 if name == "relaycast":
-                    self.assertEqual(env["RELAYCAST_TELEMETRY_DESTINATION"]["value"], "collector")
-                    self.assertTrue(any(m["name"] == "analytics-token" for m in container["volumeMounts"]))
+                    if local_stack.CAST_BACKEND == "durable-actors":
+                        self.assertFalse(values["relaycast"]["analytics"]["enabled"])
+                        self.assertNotIn("RELAYCAST_TELEMETRY_DESTINATION", env)
+                        state = next(v for v in pod["volumes"] if v["name"] == "dev-data")
+                        self.assertEqual(state["persistentVolumeClaim"]["claimName"], "local-relaycast-actors")
+                    else:
+                        self.assertEqual(env["RELAYCAST_TELEMETRY_DESTINATION"]["value"], "collector")
+                        self.assertTrue(any(m["name"] == "analytics-token" for m in container["volumeMounts"]))
 
 
 if __name__ == "__main__":

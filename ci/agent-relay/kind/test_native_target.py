@@ -223,8 +223,9 @@ class Target(unittest.TestCase):
     def test_legacy_create_and_up_cannot_dispatch_for_native_instance(self):
         stack = self.real_stack()
         stack.cmd = lambda *a, **k: self.fail("legacy command must not dispatch")
-        for method in (stack.cluster, stack.up):
-            with self.assertRaisesRegex(StackError, "explicit native core"): method()
+        with self.assertRaisesRegex(StackError, "explicit native core"): stack.cluster()
+        # The single-phase up is retired for every stack, native instances included.
+        with self.assertRaisesRegex(StackError, "retired.*native core installer"): stack.up()
 
     def test_explicit_target_cannot_instantiate_a_foreign_factory_before_refusal(self):
         fixture = cli_tests.Cli(); fixture.setUp(); self.addCleanup(fixture.doCleanups)

@@ -52,7 +52,7 @@ module "postgres" {
 | Name | Description | Type | Default | Required |
 | ---- | ----------- | ---- | ------- | :------: |
 | name | Identifier for the instance or cluster and the prefix for its subnet and parameter groups. Lowercase letters, digits and hyphens. | `string` | n/a | yes |
-| vpc\_security\_group\_ids | Existing security groups for the database. Allow TCP 5432 only from the cluster nodes or pods that run agent-relay. The module never opens anything. | `list(string)` | n/a | yes |
+| vpc\_security\_group\_ids | Existing security groups for the database. Allow TCP 5432 only from the cluster nodes or pods that run agent-relay. The module never opens anything. Required when enabled; may be empty when enabled = false. | `list(string)` | n/a | yes |
 | allocated\_storage | RDS only: initial gp3 storage in GiB. | `number` | `100` | no |
 | allowed\_extensions | Value for the rds.allowed\_extensions parameter. null leaves the RDS default (every supported extension). When set, pg\_trgm and vector are always added, because RelayHistory needs them. | `list(string)` | `null` | no |
 | apply\_immediately | Apply modifications now instead of in the next maintenance window. | `bool` | `false` | no |
@@ -64,6 +64,7 @@ module "postgres" {
 | database\_name | Initial database created with the instance. Create the others (relaycontrol, relayhistory, hoopdb, ...) with the bootstrap SQL in the README. | `string` | `"relaycontrol"` | no |
 | db\_subnet\_group\_name | Existing DB subnet group to use instead of creating one from subnet\_ids. | `string` | `null` | no |
 | deletion\_protection | Refuse deletion through the API until turned off. | `bool` | `true` | no |
+| enabled | Create the database. false creates no AWS resource (for a stack whose database lives elsewhere) and every connection output is null. Default true; turning it off on an existing database plans its destruction, which deletion\_protection refuses. | `bool` | `true` | no |
 | enabled\_cloudwatch\_logs\_exports | Log types exported to CloudWatch Logs. | `list(string)` | ```[ "postgresql" ]``` | no |
 | engine\_mode | "rds" for RDS for PostgreSQL (one instance, optionally Multi-AZ) or "aurora" for an Aurora PostgreSQL cluster. | `string` | `"rds"` | no |
 | engine\_version | PostgreSQL engine version. RDS accepts a major version ("17") and picks the default minor; Aurora needs a full version (for example "17.5"). The agent-relay services are tested on PostgreSQL 17. | `string` | `"17"` | no |
@@ -96,6 +97,7 @@ module "postgres" {
 | cluster\_identifier | Aurora cluster identifier (null for RDS). |
 | database\_url\_template | Connection URL shape for the chart Secrets, with placeholders for role, password and database. sslmode=verify-full needs the RDS CA bundle in the trust store; sslmode=require is the minimum with force\_ssl. |
 | db\_subnet\_group\_name | DB subnet group in use. |
+| enabled | Whether the database exists. false (enabled = false) creates no AWS resource and every connection output is null. |
 | engine\_mode | "rds" or "aurora". |
 | host | Writer endpoint host name. The host part of every agent-relay database URL (relay-control database-url, relayhistory DATABASE\_URL, sessions-pipeline HOOPDB\_URL, durable-actors postgres-url). |
 | initial\_database | The database created with the instance. |

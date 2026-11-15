@@ -5,7 +5,8 @@
 # Each is rendered the way Alchemy installs (helm template --no-hooks) and
 # checked against the sessions-pipeline #99 migration contract. The checks cover:
 # - the app workloads and the migrate Job;
-# - the migrator profile env, exactly once and in migrate only;
+# - the migrator profile env, exactly once and in migrate only (HOOPDB_DB_MODE also
+#   once in each worker service container);
 # - HoopDb and Locker;
 # - the role/boundary bootstrap path. A fresh in-cluster cluster gets initdb
 #   plus the runtime-role and function-default Jobs. An existing cluster also
@@ -26,6 +27,8 @@ case $mode in static|dryrun) ;; *) echo "usage: $0 static|dryrun" >&2; exit 2 ;;
 fail=0
 err() { echo "::error::$*"; fail=1; }
 render() { helm template ci "$CHART" --namespace ci --no-hooks "$@"; }
+
+node --test "$ROOT/ci/sessions-pipeline-profiles/search-indexer-bootstrap-guard.test.mjs"
 
 # The inputs a shipped profile leaves to the operator (CI values files carry
 # their own).
@@ -51,6 +54,7 @@ MATRIX=(
   "ci/default-values.yaml|yes|yes|selfhosted|fresh"
   "ci/read-api-values.yaml|yes|yes|selfhosted|fresh"
   "ci/ingest-edge-values.yaml|yes|yes|selfhosted|fresh"
+  "ci/ingest-edge-s3-ledger-values.yaml|yes|yes|selfhosted|fresh"
   "ci/native-consumer-values.yaml|no|yes|selfhosted|native"
   "ci/search-indexer-values.yaml|yes|yes|selfhosted|fresh"
   "ci/kind-values.yaml|yes|yes|selfhosted|fresh"
@@ -203,7 +207,11 @@ for row in "${MATRIX[@]}"; do
   if [ "$shape" = native ]; then want=""; got=""; else got=$(profile_env); fi
   [ "$got" = "$want" ] || err "$label: migrate profile env is [$(tr '\n' ' ' <<<"$got")], want [$(tr '\n' ' ' <<<"$want")]"
   for n in $PROFILE_ENV HOOPDB_FUNCTION_BOUNDARY_APPROVED; do
-    c=$(yq -r "select(.metadata.labels.\"app.kubernetes.io/name\" != \"session-pipeline-consumer\") | [.. | select(type == \"!!map\" and .name == \"$n\" and has(\"value\"))] | length" <<<"$out" | awk '{s+=$1} END {print s+0}')
+    # HOOPDB_DB_MODE also reaches the worker chart's services (their live role gate binds
+    # it); the databaseMode assertions below cover those. Everything else: migrate only.
+    skip='false'
+    [ "$n" = HOOPDB_DB_MODE ] && skip='((.metadata.labels."helm.sh/chart" // "") | test("^worker-")) and .metadata.labels."app.kubernetes.io/component" != "hoopdb-migrate"'
+    c=$(yq -r "select(.metadata.labels.\"app.kubernetes.io/name\" != \"session-pipeline-consumer\" and ($skip | not)) | [.. | select(type == \"!!map\" and .name == \"$n\" and has(\"value\"))] | length" <<<"$out" | awk '{s+=$1} END {print s+0}')
     case $n in HOOPDB_FUNCTION_BOUNDARY_APPROVED) w=0 ;; *) w=$(grep -c "^$n=" <<<"$want" || true) ;; esac
     [ "$c" = "$w" ] || err "$label: $n rendered $c times, want $w (migrate only)"
   done
@@ -277,6 +285,38 @@ if [ "$mode" = static ]; then
   out=$(render -f "$CHART/profiles/aws-rds-native.yaml" -f "$CHART/ci/aws-rds-native-inputs.yaml") \
     || err "aws-rds-native: synthetic release overlay did not render"
 
+  # worker.migrations.allowBlockingIndexBuild: off renders no opt-in anywhere; on
+  # renders HOOPDB_ALLOW_BLOCKING_INDEX_BUILD=true in the migrate container only.
+  blocking_env() { yq -r '.. | select(tag == "!!map" and .name == "HOOPDB_ALLOW_BLOCKING_INDEX_BUILD") | .value' <<<"$1" | sed '/^$/d'; }
+  [ -z "$(blocking_env "$out")" ] || err "allowBlockingIndexBuild: the default render sets HOOPDB_ALLOW_BLOCKING_INDEX_BUILD"
+  bout=$(render -f "$CHART/profiles/aws-rds-native.yaml" -f "$CHART/ci/aws-rds-native-inputs.yaml" --set worker.migrations.allowBlockingIndexBuild=true) \
+    || err "allowBlockingIndexBuild=true did not render"
+  [ "$(blocking_env "$bout")" = true ] || err "allowBlockingIndexBuild=true: want exactly one HOOPDB_ALLOW_BLOCKING_INDEX_BUILD=true, got [$(blocking_env "$bout" | tr '\n' ' ')]"
+  [ "$(yq -r 'select(.kind == "Job" and .metadata.labels."app.kubernetes.io/component" == "hoopdb-migrate") | .spec.template.spec.containers[0].env[] | select(.name == "HOOPDB_ALLOW_BLOCKING_INDEX_BUILD") | .value' <<<"$bout")" = true ] \
+    || err "allowBlockingIndexBuild=true: the opt-in is not on the migrate container"
+  expect_fail "migrations.allowBlockingIndexBuild must be true or false" \
+    -f "$CHART/profiles/aws-rds-native.yaml" -f "$CHART/ci/aws-rds-native-inputs.yaml" --set-string worker.migrations.allowBlockingIndexBuild=yes
+  expect_fail "extraEnv must not set HOOPDB_ALLOW_BLOCKING_INDEX_BUILD" \
+    -f "$CHART/profiles/aws-rds-native.yaml" -f "$CHART/ci/aws-rds-native-inputs.yaml" \
+    --set 'worker.extraEnv[0].name=HOOPDB_ALLOW_BLOCKING_INDEX_BUILD' --set-string 'worker.extraEnv[0].value=true'
+
+  # worker.migrations.databaseMode reaches every service container (the live role gate
+  # binds it), exactly once each, also with migrations.enabled=false; unset renders none.
+  # One line per worker container: "<count>=<value>".
+  dbmode_lines() { yq -r 'select((.kind == "Deployment" or .kind == "Job") and ((.metadata.labels."helm.sh/chart" // "") | test("^worker-"))) | .spec.template.spec | ((.initContainers // []) + .containers)[] | (((.env // []) | map(select(.name == "HOOPDB_DB_MODE"))) as $e | ($e | length | tostring) + "=" + ($e[0].value // ""))' <<<"$1" | grep -E '^[0-9]+='; }
+  dbmode_once() { local l; l=$(dbmode_lines "$1"); [ -n "$l" ] && [ -z "$(grep -vx "1=$2" <<<"$l")" ]; }
+  dbmode_once "$out" rds \
+    || err "databaseMode: aws-rds-native worker containers must each carry HOOPDB_DB_MODE=rds once, got [$(dbmode_lines "$out" | tr '\n' ' ')]"
+  sout=$(render -f "$CHART/profiles/aws-rds-native.yaml" -f "$CHART/ci/aws-rds-native-inputs.yaml" --set worker.migrations.enabled=false --set worker.migrations.databaseMode=supabase) \
+    || err "databaseMode=supabase with migrations off did not render"
+  dbmode_once "$sout" supabase \
+    || err "databaseMode=supabase, migrations off: want HOOPDB_DB_MODE=supabase once per worker container, got [$(dbmode_lines "$sout" | tr '\n' ' ')]"
+  nout=$(render -f "$CHART/profiles/aws-rds-native.yaml" -f "$CHART/ci/aws-rds-native-inputs.yaml" --set worker.migrations.enabled=false --set-string worker.migrations.databaseMode=) \
+    || err "databaseMode unset with migrations off did not render"
+  [ -z "$(dbmode_lines "$nout" | grep -v '^0=$')" ] || err "databaseMode unset: HOOPDB_DB_MODE rendered [$(dbmode_lines "$nout" | tr '\n' ' ')]"
+  expect_fail "migrations.databaseMode must be local, selfhosted, cloudsql, supabase or rds" \
+    -f "$CHART/profiles/aws-rds-native.yaml" -f "$CHART/ci/aws-rds-native-inputs.yaml" --set worker.migrations.enabled=false --set worker.migrations.databaseMode=bogus
+
   expect_fail "releaseContract.unifiedServicesDigest must be a boolean" \
     -f "$CHART/profiles/aws-rds-native.yaml" -f "$CHART/ci/aws-rds-native-inputs.yaml" \
     --set-string releaseContract.unifiedServicesDigest=true
@@ -329,6 +369,31 @@ if [ "$mode" = static ]; then
   done
   [ "$(yq -r 'select(.kind == "Deployment" and .metadata.name == "ci-search-indexer") | .spec.template.spec.containers[0].env[] | select(.name == "RELAYHISTORY_SELFHOST_OUTPUT_FACTS") | .value' <<<"$out" | grep -v '^---$')" = true ] \
     || err "aws-rds-native: search indexer does not write output facts"
+  bootstrap_job=$(yq -r 'select(.kind == "Job" and .metadata.labels."app.kubernetes.io/component" == "search-indexer-bootstrap")' <<<"$out" | grep -v '^---$')
+  [ -n "$bootstrap_job" ] || err "aws-rds-native: search indexer bootstrap Job did not render"
+  [ "$(yq -r '.spec.backoffLimit' <<<"$bootstrap_job")" = 0 ] || err "aws-rds-native: bootstrap uses Kubernetes retries and can leave an Error Pod"
+  [ "$(yq -r '.spec.template.spec.restartPolicy' <<<"$bootstrap_job")" = Never ] || err "aws-rds-native: bootstrap restartPolicy changed"
+  [ "$(yq -r '.spec.template.spec.containers[0].args | join(" ")' <<<"$bootstrap_job")" = "exec bun run /app/bootstrap-guard/bootstrap-guard.mjs" ] \
+    || err "aws-rds-native: bootstrap does not run the catalog guard"
+  guard_name=$(yq -r '.spec.template.spec.volumes[] | select(.name == "bootstrap-guard") | .configMap.name' <<<"$bootstrap_job")
+  [ -n "$guard_name" ] || err "aws-rds-native: bootstrap guard ConfigMap volume missing"
+  guard=$(yq -r "select(.kind == \"ConfigMap\" and .metadata.name == \"$guard_name\") | .data.\"bootstrap-guard.mjs\"" <<<"$out" | grep -v '^---$')
+  grep -qF 'SELECT pg_advisory_lock(961996, 1)' <<<"$guard" || err "aws-rds-native: bootstrap does not share the Sessions migrator lock"
+  grep -qF 'SELECT pg_advisory_unlock(961996, 1)' <<<"$guard" || err "aws-rds-native: bootstrap does not release the Sessions migrator lock"
+  grep -qF "rolname='search_consumer_runtime'" <<<"$guard" || err "aws-rds-native: bootstrap does not wait for the post-migration runtime LOGIN"
+  grep -qF 'isRetryableCatalogRace(result.output)' <<<"$guard" || err "aws-rds-native: bootstrap catalog retry is not explicit"
+  bootstrap_env() { yq -r ".spec.template.spec.containers[0].env[] | select(.name == \"$1\") | .value" <<<"$bootstrap_job"; }
+  [ "$(bootstrap_env SEARCH_BOOTSTRAP_CATALOG_RETRY_MAX_ATTEMPTS)" = 3 ] || err "aws-rds-native: bootstrap retry attempts"
+  [ "$(bootstrap_env SEARCH_BOOTSTRAP_CATALOG_RETRY_DELAY_SECONDS)" = 2 ] || err "aws-rds-native: bootstrap retry delay"
+  [ "$(bootstrap_env SEARCH_BOOTSTRAP_WAIT_FOR_RUNTIME_ROLE_LOGIN)" = true ] || err "aws-rds-native: bootstrap does not wait for rds-setup post"
+  [ "$(bootstrap_env SEARCH_BOOTSTRAP_RUNTIME_ROLE_WAIT_SECONDS)" = 600 ] || err "aws-rds-native: bootstrap runtime-role wait"
+  [ "$(bootstrap_env SEARCH_BOOTSTRAP_RUNTIME_ROLE_POLL_SECONDS)" = 2 ] || err "aws-rds-native: bootstrap runtime-role poll"
+  expect_fail "searchIndexer.bootstrap.backoffLimit must be 0" \
+    -f "$CHART/profiles/aws-rds-native.yaml" -f "$CHART/ci/aws-rds-native-inputs.yaml" --set searchIndexer.bootstrap.backoffLimit=1
+  expect_fail "searchIndexer.bootstrap.catalogRetry.maxAttempts must be an integer from 1 through 10" \
+    -f "$CHART/profiles/aws-rds-native.yaml" -f "$CHART/ci/aws-rds-native-inputs.yaml" --set searchIndexer.bootstrap.catalogRetry.maxAttempts=0
+  expect_fail "searchIndexer.bootstrap.rolePollSeconds must not exceed roleWaitSeconds" \
+    -f "$CHART/profiles/aws-rds-native.yaml" -f "$CHART/ci/aws-rds-native-inputs.yaml" --set searchIndexer.bootstrap.roleWaitSeconds=1
   facts_jobs=$(yq -r 'select(.kind == "Job" and .metadata.labels."app.kubernetes.io/component" == "output-facts-bootstrap") | .metadata.name' <<<"$out" | grep -v '^---$' || true)
   [ -z "$facts_jobs" ] || err "aws-rds-native: the output facts bootstrap Job must stay an explicit operator step, rendered $facts_jobs"
   # Selected, the Job is deterministic, hook-free, owner-identity and changes name only with its spec or runId.
@@ -355,6 +420,36 @@ if [ "$mode" = static ]; then
   expect_fail "activeDeadlineSeconds must exceed deadlineSeconds" \
     -f "$CHART/profiles/aws-rds-native.yaml" -f "$CHART/ci/aws-rds-native-inputs.yaml" \
     --set searchIndexer.outputFacts.bootstrap.enabled=true --set searchIndexer.outputFacts.bootstrap.deadlineSeconds=9000
+  # Static Locker keys (S3-compatible store without workload identity, e.g. MinIO on AKS):
+  # opt-in, unset by default, and reaching the Deployment and both bootstrap Jobs.
+  [ -z "$(yq -r 'select(.metadata.name | test("^ci-search-indexer")) | .. | select(tag == "!!map") | select(.name == "LOCKER_ACCESS_KEY_ID" or .name == "LOCKER_SECRET_ACCESS_KEY") | .name' <<<"$out" | grep -v '^---$' || true)" ] \
+    || err "aws-rds-native: the search indexer renders static Locker keys by default"
+  static_keys=(-f "$CHART/profiles/aws-rds-native.yaml" -f "$CHART/ci/aws-rds-native-inputs.yaml"
+    --set searchIndexer.locker.credentials.mode=secret --set searchIndexer.locker.endpoint=http://minio.ci.svc:9000
+    --set searchIndexer.locker.existingSecret=ci-locker --set searchIndexer.outputFacts.bootstrap.enabled=true)
+  static_out=$(render "${static_keys[@]}") || err "aws-rds-native: static Locker keys do not render"
+  for sel in 'select(.kind == "Deployment" and .metadata.name == "ci-search-indexer")' \
+             'select(.kind == "Job" and .metadata.labels."app.kubernetes.io/component" == "output-facts-bootstrap")' \
+             'select(.kind == "Job" and (.metadata.name | test("^ci-search-indexer-bootstrap-[0-9a-f]{8}$")))'; do
+    for pair in LOCKER_ACCESS_KEY_ID=access-key-id LOCKER_SECRET_ACCESS_KEY=secret-access-key; do
+      ref=$(yq -r "$sel | .spec.template.spec.containers[0].env[] | select(.name == \"${pair%%=*}\") | .valueFrom.secretKeyRef | .name + \"/\" + .key" <<<"$static_out" | grep -v '^---$')
+      [ "$ref" = "ci-locker/${pair#*=}" ] || err "aws-rds-native: static Locker keys: ${pair%%=*} in $sel is '$ref', want ci-locker/${pair#*=}"
+    done
+  done
+  ref=$(render "${static_keys[@]}" --set searchIndexer.locker.accessKeyIdKey=rootUser --set searchIndexer.locker.secretAccessKeyKey=rootPassword \
+    | yq -r 'select(.kind == "Deployment" and .metadata.name == "ci-search-indexer") | .spec.template.spec.containers[0].env[] | select(.name | test("^LOCKER_(ACCESS_KEY_ID|SECRET_ACCESS_KEY)$")) | .valueFrom.secretKeyRef.key' | grep -v '^---$' | paste -sd, -)
+  [ "$ref" = rootUser,rootPassword ] || err "aws-rds-native: static Locker key names are not overridable ($ref)"
+  expect_fail "searchIndexer.locker.endpoint is required for static S3/MinIO credentials" \
+    -f "$CHART/profiles/aws-rds-native.yaml" -f "$CHART/ci/aws-rds-native-inputs.yaml" \
+    --set searchIndexer.locker.credentials.mode=secret --set searchIndexer.locker.existingSecret=ci-locker
+  expect_fail "searchIndexer.locker.existingSecret is required for static S3/MinIO credentials" \
+    -f "$CHART/profiles/aws-rds-native.yaml" -f "$CHART/ci/aws-rds-native-inputs.yaml" \
+    --set searchIndexer.locker.credentials.mode=secret --set searchIndexer.locker.endpoint=http://minio.ci.svc:9000
+  expect_fail "searchIndexer.locker.credentials.mode=secret is only supported with locker.provider=s3" \
+    -f "$CHART/profiles/aws-rds-native.yaml" -f "$CHART/ci/aws-rds-native-inputs.yaml" \
+    --set searchIndexer.locker.credentials.mode=secret --set searchIndexer.locker.provider=gcs --set searchIndexer.locker.existingSecret=ci-locker
+  expect_fail "searchIndexer.locker.credentials.mode must be secret or podIdentity" \
+    -f "$CHART/profiles/aws-rds-native.yaml" -f "$CHART/ci/aws-rds-native-inputs.yaml" --set searchIndexer.locker.credentials.mode=keys
   [ "$(yq -r 'select(.kind == "Deployment" and .metadata.name == "ci-ingest-edge") | .spec.template.spec.containers[0].env[] | select(.name == "RELAYCONTROL_INTROSPECT_URL") | .value' <<<"$out" | grep -v '^---$')" = http://ci-relay-control.ci.svc.cluster.local ] \
     || err "aws-rds-native: ingest edge does not use the release-overlay Control Service URL"
   [ "$(read_value SEARCH_INDEX_BACKEND)" = opensearch ] || err "aws-rds-native: read API does not select OpenSearch"

@@ -89,11 +89,10 @@ class ReleaseManifestTest(unittest.TestCase):
 
     def test_overlay_sets_all_services_surfaces_and_postgres_scalar(self):
         names = [
-            "relaycast",
+            "relaycast-postgres",
             "relaycast-eks-collector",
             "relayauth",
             "sessions-pipeline",
-            "relayhistory",
             "relay-control",
             "relay-webapp",
             "sessions-migration-postgresql",
@@ -116,10 +115,15 @@ class ReleaseManifestTest(unittest.TestCase):
             overlay.count(
                 "__IMAGE_MIRROR_ROOT__/ghcr.io/example/relaycast-eks-collector"
             ),
-            2,
+            1,
         )
-        self.assertNotIn(
-            "repository: __IMAGE_MIRROR_ROOT__/ghcr.io/example/relaycast\n",
+        self.assertIn(
+            "repository: __IMAGE_MIRROR_ROOT__/ghcr.io/example/relaycast-postgres\n",
+            overlay,
+        )
+        self.assertIn(
+            "runtime:\n    postgres:\n      image:\n"
+            "        repository: __IMAGE_MIRROR_ROOT__/ghcr.io/example/relaycast-postgres\n",
             overlay,
         )
         self.assertIn("# customer registry mirror root. Profile: eks.", overlay)
@@ -248,12 +252,113 @@ class ReleaseManifestTest(unittest.TestCase):
                     candidate_pins=pins,
                 )
 
+    def webapp_pin_fixture(self, source_repository):
+        with tempfile.TemporaryDirectory() as directory:
+            pins = pathlib.Path(directory) / "pins.json"
+            pins.write_text(
+                json.dumps(
+                    {
+                        "schema": 1,
+                        "version": "2026.11.0",
+                        "pins": {
+                            "relay-webapp": {
+                                "repository": "ghcr.io/agentworkforce/relay-webapp",
+                                "digest": DIGEST_B,
+                                "sourceRepository": source_repository,
+                                "sourceRevision": COMMIT,
+                            }
+                        },
+                    }
+                )
+                + "\n"
+            )
+            return self.build_fixture(
+                [f"ghcr.io/agentworkforce/relay-webapp@{DIGEST_B}"],
+                [
+                    "relay-webapp\tghcr.io/agentworkforce/relay-webapp\t"
+                    f"{DIGEST_A}\tapproved"
+                ],
+                candidate_pins=pins,
+            )
+
+    def test_webapp_pin_accepts_current_and_pre_rename_source(self):
+        for source in ("AgentWorkforce/relay-web", "AgentWorkforce/relay-webapp"):
+            with self.subTest(source=source):
+                manifest = self.webapp_pin_fixture(source)
+                self.assertEqual(
+                    manifest["images"][0]["ref"],
+                    f"ghcr.io/agentworkforce/relay-webapp@{DIGEST_B}",
+                )
+
+    def test_webapp_pin_rejects_other_source(self):
+        with self.assertRaisesRegex(ValueError, "source repository drift"):
+            self.webapp_pin_fixture("AgentWorkforce/relay-webapp-fork")
+
+    def test_sessions_candidate_pin_requires_publish_run_id(self):
+        with tempfile.TemporaryDirectory() as directory:
+            pins = pathlib.Path(directory) / "pins.json"
+            pin = {
+                "repository": "ghcr.io/agentworkforce/sessions-pipeline",
+                "digest": DIGEST_B,
+                "sourceRepository": "AgentWorkforce/relayhistory-pipeline",
+                "sourceRevision": COMMIT,
+                "publishRunId": 11111111111,
+            }
+            pins.write_text(
+                json.dumps(
+                    {
+                        "schema": 1,
+                        "version": "2026.11.0",
+                        "pins": {"sessions-pipeline": pin},
+                    }
+                )
+                + "\n"
+            )
+            manifest = self.build_fixture(
+                [f"ghcr.io/agentworkforce/sessions-pipeline@{DIGEST_B}"],
+                [
+                    "sessions-pipeline\tghcr.io/agentworkforce/sessions-pipeline\t"
+                    f"{DIGEST_A}\tapproved"
+                ],
+                candidate_pins=pins,
+            )
+            self.assertEqual(
+                manifest["images"],
+                [
+                    {
+                        "name": "sessions-pipeline",
+                        "ref": (
+                            "ghcr.io/agentworkforce/sessions-pipeline@" + DIGEST_B
+                        ),
+                    }
+                ],
+            )
+            del pin["publishRunId"]
+            pins.write_text(
+                json.dumps(
+                    {
+                        "schema": 1,
+                        "version": "2026.11.0",
+                        "pins": {"sessions-pipeline": pin},
+                    }
+                )
+                + "\n"
+            )
+            with self.assertRaisesRegex(ValueError, "malformed release candidate pin"):
+                self.build_fixture(
+                    [f"ghcr.io/agentworkforce/sessions-pipeline@{DIGEST_B}"],
+                    [
+                        "sessions-pipeline\tghcr.io/agentworkforce/sessions-pipeline\t"
+                        f"{DIGEST_A}\tapproved"
+                    ],
+                    candidate_pins=pins,
+                )
+
     def test_gcp_overlay_keeps_the_gcp_relaycast_image(self):
         names = [
             "relaycast",
             "relayauth",
             "sessions-pipeline",
-            "relayhistory",
             "relay-control",
             "relay-webapp",
             "sessions-migration-postgresql",

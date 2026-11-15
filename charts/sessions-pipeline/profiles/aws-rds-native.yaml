@@ -255,6 +255,9 @@ searchIndexer:
     caSha256: ""
   bootstrap:
     enabled: true
+    # rds-setup.sh post runs after the migrate Job and activates this LOGIN.
+    # Keep this first-install Job pending instead of failing before post.
+    waitForRuntimeRoleLogin: true
     existingSecret: search-indexer-owner
     key: RELAYHISTORY_PIPELINE_CONSUMER_SECRET
   # Writes commit/branch/file facts (migration 20261105045040) on every pass.

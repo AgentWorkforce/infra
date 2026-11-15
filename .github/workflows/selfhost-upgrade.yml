@@ -48,6 +48,12 @@ on:
       rds-host: { description: "rds-setup only: terraform output -raw database_host.", type: string, default: "" }
       rds-admin-secret-arn: { description: "rds-setup only: terraform output -raw database_admin_secret_arn (an ARN, not the secret).", type: string, default: "" }
       state-dir: { description: "rds-setup only: directory on the runner holding the files 'rds-setup.sh pre' wrote.", type: string, default: "" }
+      relaycast-actors:
+        description: "Opt-in Relaycast PostgreSQL -> durable-actors migration on the deployed chart version (eks-rds-native): empty (default), credentials or cutover. See docs/relaycast-postgres-to-actors-migration.md."
+        type: string
+        default: ""
+      actors-values: { description: "cutover only: newline-separated values files (overrides for values-eks-actors.yaml) in the caller repository.", type: string, default: "" }
+      reregister-legacy: { description: "cutover only: accept that holders of never-upgraded legacy Relaycast credentials re-register afterwards.", type: boolean, default: false }
       apply:
         description: "auto: apply (after approval) only when the rendered release changes; always; never."
         type: string
@@ -114,10 +120,20 @@ jobs:
           AWS_REGION: ${{ inputs.aws-region }}
         run: |
           set -euo pipefail
-          token=$(curl -sSf -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
-            "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=sts.amazonaws.com" | jq -r .value)
+          # Keep both bearer tokens out of argv (visible to other processes on a
+          # shared self-hosted runner): the request token goes to curl via a
+          # 0600 header file, the OIDC JWT to the AWS CLI via file://.
+          umask 077
+          oidc_dir=$(mktemp -d "$RUNNER_TEMP/oidc.XXXXXX")
+          trap 'rm -rf "$oidc_dir"' EXIT
+          printf 'Authorization: bearer %s\n' "$ACTIONS_ID_TOKEN_REQUEST_TOKEN" > "$oidc_dir/header"
+          curl -sSf -H "@$oidc_dir/header" \
+            "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=sts.amazonaws.com" \
+            | jq -ejr '.value | select(type == "string" and length > 0)' > "$oidc_dir/jwt" \
+            || { echo "::error::GitHub OIDC token response had no non-empty .value"; exit 1; }
           creds=$(aws sts assume-role-with-web-identity --role-arn "$ROLE_ARN" \
-            --role-session-name "agent-relay-upgrade-${GITHUB_RUN_ID}" --web-identity-token "$token" \
+            --role-session-name "agent-relay-upgrade-${GITHUB_RUN_ID}" \
+            --web-identity-token "file://$oidc_dir/jwt" \
             --duration-seconds 3600 --output json)
           for k in AccessKeyId:AWS_ACCESS_KEY_ID SecretAccessKey:AWS_SECRET_ACCESS_KEY SessionToken:AWS_SESSION_TOKEN; do
             v=$(jq -r ".Credentials.${k%%:*}" <<<"$creds"); echo "::add-mask::$v"; echo "${k##*:}=$v" >> "$GITHUB_ENV"
@@ -144,16 +160,28 @@ jobs:
           REL: ${{ inputs.release }}
           FIRST_INSTALL: ${{ inputs.first-install }}
           RDS_SETUP: ${{ inputs.rds-setup }}
+          RELAYCAST_ACTORS: ${{ inputs.relaycast-actors }}
+          # The cutover's plan reads the credentials phase's record from the same STATE_DIR.
+          STATE_DIR_INPUT: ${{ inputs.state-dir }}
+          ACTORS_VALUES: ${{ inputs.actors-values }}
+          REREGISTER_LEGACY: ${{ inputs.reregister-legacy }}
         run: |
           set -euo pipefail
+          if [ -n "$STATE_DIR_INPUT" ]; then export STATE_DIR="$STATE_DIR_INPUT"; fi
           args=(--version "$VERSION" --registry "$REGISTRY" --profile "$PROFILE" --namespace "$NS" --release "$REL")
           if [ "$FIRST_INSTALL" = true ]; then args+=(--first-install); fi
           if [ "$RDS_SETUP" = true ]; then args+=(--rds-setup); fi
           while IFS= read -r v; do [ -z "$v" ] || args+=(--values "site/$v"); done <<<"$VALUES"
+          if [ -n "$RELAYCAST_ACTORS" ]; then
+            args+=(--relaycast-actors "$RELAYCAST_ACTORS")
+            while IFS= read -r v; do [ -z "$v" ] || args+=(--actors-values "site/$v"); done <<<"$ACTORS_VALUES"
+            if [ "$REREGISTER_LEGACY" = true ]; then args+=(--reregister-legacy); fi
+          fi
           infra/scripts/selfhost/agent-relay-upgrade.sh "${args[@]}" | tee "$RUNNER_TEMP/plan.txt"
           # Any rendered-manifest difference (chart, values or images) counts; a
           # plan without the explicit no-change line is treated as a change.
-          if grep -qx 'plan: changes=false' "$RUNNER_TEMP/plan.txt"; then echo "changes=false" >> "$GITHUB_OUTPUT"; else echo "changes=true" >> "$GITHUB_OUTPUT"; fi
+          # A migration phase is always a change: auto must not skip it.
+          if [ -z "$RELAYCAST_ACTORS" ] && grep -qx 'plan: changes=false' "$RUNNER_TEMP/plan.txt"; then echo "changes=false" >> "$GITHUB_OUTPUT"; else echo "changes=true" >> "$GITHUB_OUTPUT"; fi
           { echo "## Agent Relay $VERSION plan"; echo '```'; cat "$RUNNER_TEMP/plan.txt"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
 
   apply:
@@ -189,6 +217,9 @@ jobs:
           DB: ${{ inputs.db-instance }}
           FIRST_INSTALL: ${{ inputs.first-install }}
           RDS_SETUP: ${{ inputs.rds-setup }}
+          RELAYCAST_ACTORS: ${{ inputs.relaycast-actors }}
+          ACTORS_VALUES: ${{ inputs.actors-values }}
+          REREGISTER_LEGACY: ${{ inputs.reregister-legacy }}
           # Read by rds-setup.sh from the environment; AWS_REGION comes from the credentials step.
           RDS_HOST: ${{ inputs.rds-host }}
           RDS_ADMIN_SECRET_ARN: ${{ inputs.rds-admin-secret-arn }}
@@ -200,5 +231,10 @@ jobs:
           if [ "$FIRST_INSTALL" = true ]; then args+=(--first-install); fi
           if [ "$RDS_SETUP" = true ]; then args+=(--rds-setup); fi
           while IFS= read -r v; do [ -z "$v" ] || args+=(--values "site/$v"); done <<<"$VALUES"
+          if [ -n "$RELAYCAST_ACTORS" ]; then
+            args+=(--relaycast-actors "$RELAYCAST_ACTORS")
+            while IFS= read -r v; do [ -z "$v" ] || args+=(--actors-values "site/$v"); done <<<"$ACTORS_VALUES"
+            if [ "$REREGISTER_LEGACY" = true ]; then args+=(--reregister-legacy); fi
+          fi
           infra/scripts/selfhost/agent-relay-upgrade.sh "${args[@]}" | tee "$RUNNER_TEMP/apply.txt"
           { echo "## Agent Relay $VERSION apply"; echo '```'; cat "$RUNNER_TEMP/apply.txt"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"

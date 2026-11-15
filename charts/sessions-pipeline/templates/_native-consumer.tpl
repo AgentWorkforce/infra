@@ -180,6 +180,7 @@
 - { name: NATIVE_CONSUMER_EXPECTED_PORT, value: {{ $c.postgres.port | quote }} }
 - { name: NATIVE_CONSUMER_PREFLIGHT_TIMEOUT_SECONDS, value: {{ $c.preflight.timeoutSeconds | quote }} }
 {{- if not .bootstrap }}
+{{- include "sessions-pipeline.operatorSessionErase.fenceEnv" .root }}
 - { name: WORKER_HEALTH_PORT, value: {{ $c.port | quote }} }
 - { name: CONSUMER_UNHEALTHY_FILE, value: /tmp/session-pipeline-consumer.unhealthy }
 - { name: LOCKER_PROVIDER, value: s3 }
