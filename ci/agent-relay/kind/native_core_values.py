@@ -100,6 +100,7 @@ def compose(base, selected, operator, phase, observed_tenant=None):
             "postgresCa": {"enabled": True, "configMap": selected["postgresCa"]["configMap"], "secret": "",
                 "key": selected["postgresCa"]["key"], "sha256": selected["postgresCa"]["sha256"]},
             "events": {"messageIds": True},
+            "summaries": {"listShortSummary": True},
             "directoryWorkspaces": actual["workspaceId"] if actual else PLANNING_WORKSPACE,
             "auth": {"mode": "self_issued", "relaycontrol": {"enabled": False, "url": "", "existingSecret": ""},
                 "selfIssued": {"internalSecret": {"existingSecret": refs["readerIssuer"]["name"], "key": refs["readerIssuer"]["key"]}}},
