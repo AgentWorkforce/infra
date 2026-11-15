@@ -63,8 +63,11 @@ def normalized_digest_ref(value: str) -> str:
     return f"{name}@{digest}"
 
 
-def load_inventory(path: pathlib.Path) -> dict[str, tuple[str, str]]:
-    by_ref: dict[str, tuple[str, str]] = {}
+def load_inventory(path: pathlib.Path) -> dict[str, list[tuple[str, str]]]:
+    """Inventory by digest ref. Several names may share one ref (for example
+    relaycast-postgres and relaycast-eks-collector on one Relaycast build);
+    each keeps its own name and approval, and every name stays unique."""
+    by_ref: dict[str, list[tuple[str, str]]] = {}
     names: set[str] = set()
     with path.open(encoding="utf-8") as stream:
         for line_number, raw in enumerate(stream, start=1):
@@ -83,10 +86,8 @@ def load_inventory(path: pathlib.Path) -> dict[str, tuple[str, str]]:
             ref = normalized_digest_ref(f"{repository}@{digest}")
             if name in names:
                 fail(f"{path}:{line_number}: duplicate image name: {name}")
-            if ref in by_ref:
-                fail(f"{path}:{line_number}: duplicate inventory ref: {ref}")
             names.add(name)
-            by_ref[ref] = (name, approval)
+            by_ref.setdefault(ref, []).append((name, approval))
     if not by_ref:
         fail(f"{path}: inventory is empty")
     return by_ref
@@ -109,8 +110,8 @@ def load_rendered_refs(path: pathlib.Path) -> list[str]:
 
 
 def apply_candidate_pins(
-    inventory: dict[str, tuple[str, str]], path: pathlib.Path, version: str
-) -> tuple[str, dict[str, tuple[str, str]]]:
+    inventory: dict[str, list[tuple[str, str]]], path: pathlib.Path, version: str
+) -> tuple[str, dict[str, list[tuple[str, str]]]]:
     data = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(data, dict) or set(data) != {"schema", "version", "pins"}:
         fail(f"{path}: malformed release candidate pins")
@@ -145,13 +146,13 @@ def apply_candidate_pins(
             fail(f"{path}: invalid sessions-pipeline publish run id")
         ref = normalized_digest_ref(f"{pin['repository']}@{pin['digest']}")
         inventory = {
-            existing_ref: entry
-            for existing_ref, entry in inventory.items()
-            if entry[0] != component
+            existing_ref: kept
+            for existing_ref, entries in inventory.items()
+            if (kept := [entry for entry in entries if entry[0] != component])
         }
         if ref in inventory:
             fail(f"{path}: release candidate image collides with another component")
-        inventory[ref] = (component, "accepted-candidate")
+        inventory[ref] = [(component, "accepted-candidate")]
     return hashlib.sha256(path.read_bytes()).hexdigest(), inventory
 
 
@@ -175,15 +176,15 @@ def build(args: argparse.Namespace) -> dict[str, object]:
         )
     images = []
     for ref in load_rendered_refs(args.images):
-        entry = inventory.get(ref)
-        if entry is None:
+        entries = inventory.get(ref)
+        if not entries:
             fail(f"rendered customer image is absent from the inventory: {ref}")
-        name, approval = entry
-        if approval not in APPROVED_IMAGE_STATUSES:
-            fail(
-                f"rendered customer image is not release-approved ({approval}): {ref}"
-            )
-        images.append({"name": name, "ref": ref})
+        for name, approval in entries:
+            if approval not in APPROVED_IMAGE_STATUSES:
+                fail(
+                    f"rendered customer image is not release-approved ({approval}): {ref}"
+                )
+            images.append({"name": name, "ref": ref})
     images.sort(key=lambda image: (image["name"], image["ref"]))
 
     manifest = {
