@@ -166,7 +166,7 @@ spec:
 {{- $bootstrapGuardName := printf "%s-bootstrap-guard-%s" ($name | trunc 35 | trimSuffix "-") ($bootstrapGuard | sha256sum | trunc 8) }}
 {{- /* The shared scrub contract renders into this Job outside $c. Keep it in
       the content address so each rollout phase creates a new immutable Job. */}}
-{{- $bootstrapInputs := dict "searchIndexer" (omit $c "outputFacts") "scrubEngine" (.Values.global.scrubEngine | default dict) "guardSha256" ($bootstrapGuard | sha256sum) }}
+{{- $bootstrapInputs := dict "searchIndexer" (omit $c "outputFacts" "limits") "scrubEngine" (.Values.global.scrubEngine | default dict) "guardSha256" ($bootstrapGuard | sha256sum) }}
 ---
 apiVersion: v1
 kind: ConfigMap
