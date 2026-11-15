@@ -118,10 +118,11 @@ export class SlackIngest {
     try {
       await brain.callTool("get_write_request", { request_id: requestId("create", m.channel, m.ts) });
       return true;
-    } catch (err) {
-      // not_found (or a server without receipts): not created by this message.
-      if (err instanceof McpToolError) return false;
-      throw err;
+    } catch {
+      // not_found, a server without receipts (unknown tool) or a failed lookup:
+      // treat it as not created and append. The append itself still fails loudly
+      // if the server is unreachable; at worst a replayed first line repeats.
+      return false;
     }
   }
 

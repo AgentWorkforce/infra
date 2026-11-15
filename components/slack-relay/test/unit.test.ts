@@ -336,3 +336,20 @@ test("backfill history: human messages and thread replies, oldest first, paged; 
   // History is read without the cutoff; replies only for threads active since it.
   assert.deepEqual(calls, ["conversations.history", "conversations.replies:20.0>15.0", "conversations.history@p2", "conversations.replies:6.0>15.0"]);
 });
+
+test("ingest still writes when the server has no receipt tool", async () => {
+  const { SlackIngest } = await import("../src/ingest.ts");
+  const writes: string[] = [];
+  const ing = new SlackIngest({
+    brain: {
+      async callTool(name: string) {
+        if (name === "get_write_request") throw new Error("MCP error -32601: unknown tool get_write_request");
+        writes.push(name);
+        return {};
+      },
+    },
+    sourceId: "company",
+  });
+  assert.ok(await ing.add({ channel: "C1", channelName: "general", ts: "1794693736.0", user: "U1", text: "hi" }));
+  assert.deepEqual(writes, ["append_page"]);
+});
