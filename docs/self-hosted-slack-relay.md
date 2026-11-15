@@ -222,7 +222,10 @@ opt-in:
 
 ```yaml
 relaygate:
-  url: http://relaygate:8080
+  # The gate's Service is <release>-relaygate (a release whose name already
+  # contains "relaygate" uses the release name): agent-relay-relaygate in the
+  # umbrella, relaygate for a standalone release named relaygate.
+  url: http://agent-relay-relaygate:8080
 secrets:
   relaygateEnrollmentKey: { name: slack-relay-relaygate, key: enrollment-key }  # the pit group's key
   agentIdentitySecret: { name: slack-relay-relaygate, key: identity-secret }
@@ -240,6 +243,18 @@ With it on:
   thread is told; an unavailable gate is retried, then nothing is sent;
 - a DM reply relaygate denies (a pit agent answering an outside agent) is
   dropped, not retried.
+
+Two things on the relaygate side make this work:
+
+- **The proxy is on** (`proxy.relaycastUrl` in the relaygate values), so the
+  gate can reach Relaycast for the agents, and Relaycast's own NetworkPolicy
+  admits only the gate (see [self-hosted-relaygate.md](self-hosted-relaygate.md)).
+- **The routing channel belongs to the pit.** The chart's default policy gives
+  `relaycast:channel/slack` to the pit, matching the default `relaycast.channel`
+  (`slack`). If your policy only grants a prefix such as `relaycast:channel/slack-`,
+  set `relaycast.channel` to match (e.g. `slack-pit`); otherwise the router
+  can't create its channel. Agent names start with `slack-`, so the bridge
+  enrollment key's `namePrefix` must be `slack-`.
 
 ## Data boundaries and audit
 
