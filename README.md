@@ -512,6 +512,11 @@ selection before modifying a fixture. Fresh/repeat runtime and real Desktop/UI
 acceptance remain separate qualifications; the native add-on adapter is not
 implemented yet.
 
+For application development with the sibling Next app, editable dashboard and
+Desktop hot reload, start with [`./dev.sh`](docs/dev-launcher.md). It checks
+required sibling repositories and local Google OAuth configuration before
+starting. Container readiness and full application E2E are reported separately.
+
 The local stack uses the existing `agent-relay` umbrella. Product names are
 **relaycontrol** (`relay-control` chart, `selfhost-api` image) and
 **relay-app** (`relay-webapp` chart/image). The deprecated Cloud repository
