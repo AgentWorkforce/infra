@@ -618,10 +618,10 @@ Good to know:
   install and 3 per session (`nativeBrief.globalDailyCap`, `sessionDailyCap`),
   for sessions in the listed workspaces only. A workspace added later needs its
   ID added here and the upgrade run again.
-- **MCP `list_session_summaries`** needs
-  `sessions-pipeline.sessionReadApi.summaries.listShortSummary`, from chart
-  0.7.15 (AgentWorkforce/infra#346) onward. Chart 0.7.11 doesn't have it: don't
-  set it on this release.
+- **MCP `list_session_summaries`:** `values.yaml` already sets
+  `sessions-pipeline.sessionReadApi.summaries.listShortSummary: true`; chart
+  0.7.11 ignores it, and from chart 0.7.15 (AgentWorkforce/infra#346) it lets
+  MCP `list_session_summaries` return the recorded summaries.
 - **Turn it off:** set `nativeBrief.enabled` and `session-brief.enabled` back to
   `false`, set the `bob-costas` list back to
   `[{"name": "BOB_COSTAS_MODEL", "value": "off"}]`, run 16d again, then
