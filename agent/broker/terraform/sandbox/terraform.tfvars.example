@@ -1,0 +1,6 @@
+# Copy to terraform.tfvars (gitignored) and fill in. No secrets here.
+broker_account_id    = "000000000000"
+broker_host_role_arn = "arn:aws:iam::000000000000:role/layered-agent-infra-ops-dev"
+sandbox_account_id   = "805532413586"
+broker_profile       = "your-admin-profile-in-the-broker-account"
+sandbox_profile      = "your-admin-profile-in-the-sandbox-account"
