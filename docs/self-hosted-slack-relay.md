@@ -222,8 +222,9 @@ opt-in:
 
 ```yaml
 relaygate:
-  # The gate's Service: <release>-relaygate in the umbrella (components.relaygate),
-  # or the release name of a standalone relaygate install.
+  # The gate's Service is <release>-relaygate (a release whose name already
+  # contains "relaygate" uses the release name): agent-relay-relaygate in the
+  # umbrella, relaygate for a standalone release named relaygate.
   url: http://agent-relay-relaygate:8080
 secrets:
   relaygateEnrollmentKey: { name: slack-relay-relaygate, key: enrollment-key }  # the pit group's key
