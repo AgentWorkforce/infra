@@ -7,8 +7,13 @@ Status (2026-11-15):
   (`terraform/bootstrap-sandbox`).
 - The infra-ops host boundary and host role allow
   `sts:AssumeRole` on `agent-cred-broker` (layered-agents#43, `credentialBroker`).
-- Not yet live: the broker program itself. `agent/lead-prompt.md` doesn't
-  mention it, and these files aren't in the host's `laneFiles`.
+- **The program ships to the host** (see [Running it](#running-it-after-the-roles-exist)):
+  `setup-lane.sh` installs `agent/broker` at the commit pinned in
+  `agent/broker.ref`. The lead runs it per `lead-prompt.md`, taking the
+  requester from the Relay header and roster (interim, until the Relay
+  listener in open question 1).
+- **Delivery still needs 1Password** (open question 4). A `file` delivery
+  is readable only by `credbroker` on the broker's host.
 
 **Internal only.** This is AgentWorkforce's own tooling for its agents, kept
 in layered-infra-ops' lane (`agent/`), not part of the self-hosted product: no
@@ -250,13 +255,27 @@ role until then.
 
 ## Running it (after the roles exist)
 
+On the layered-infra-ops host, `setup-lane.sh` (root, at boot and on every
+hot update):
+- fetches the commit in `agent/broker.ref` from GitHub by its exact sha
+  (git verifies the objects against it);
+- installs `agent/broker/src` and `allowlist.json` root-owned and read-only at
+  `/opt/aws-cred-broker/<sha>`, with `current` pointing at it;
+- runs the program as the system user `credbroker`. Its home,
+  `/var/lib/aws-cred-broker` (0700), holds the state, the audit log, the
+  file deliveries and the only `aws-cred-broker` profile;
+- lets the `agent` user run exactly `/usr/local/libexec/aws-cred-broker` as
+  `credbroker`, through sudoers. `/usr/local/bin/aws-cred-broker` wraps that.
+
+A failed fetch keeps the installed version. To ship a broker change, merge
+it, then set `broker.ref` to that merge commit in a second PR.
+
 ```bash
-# the broker host, as the agent user, once the roles exist:
-# ~/.aws/config: [profile aws-cred-broker] role_arn=<broker role>, credential_source=Ec2InstanceMetadata
-node broker/src/cli.ts request --from-name <sender> --from-address <sender address> --from-kind agent --message-id <id> < request.json
-node broker/src/cli.ts approve --request-id cb-… --digest <hex> --from-name khaliq-gant --from-address <addr> --from-kind human
-node broker/src/cli.ts sweep          # on a timer
-node broker/src/cli.ts verify-audit
+# as the agent user on the host:
+aws-cred-broker request --from-name <sender> --from-address <sender address> --from-kind agent --message-id <id> < request.json
+aws-cred-broker approve --request-id cb-… --digest <hex> --from-name khaliq-gant --from-address <addr> --from-kind human
+aws-cred-broker sweep          # at least hourly while requests are outstanding
+aws-cred-broker verify-audit
 ```
 
 ## Phase 2 (design only): signing proxy
