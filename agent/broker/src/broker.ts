@@ -5,20 +5,24 @@
  * request by a digest, single use and time-limited; only a human on the
  * allowlist's humanApprovers counts, never an agent.
  *
- * State lives in one directory (single writer, serialized by a lock):
+ * State lives in one directory (single writer, serialized by a kernel lock, lock.ts):
  *   pending/<id>.json   requests waiting for approval
  *   issued/<id>.json    delivery refs to remove after expiry (no credentials),
  *                       written before minting so a delivery is never untracked
- *   run-tags.json       run tag -> the agent that first got credentials for it
+ *   run-tags.json       run tag -> its claim: the agent that first got
+ *                       credentials for it and the namespace the broker gave it
  *   audit.jsonl         the hash-chained audit log
  */
 import { createHash, randomBytes } from "node:crypto";
-import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { appendAudit, type AuditEvent } from "./audit.ts";
 import type { Deliverer, DeliveryRef } from "./deliver.ts";
-import { approverCounts, decide, sessionName, type Allowlist, type CredentialRequest, type Decision, type Principal, type SessionPolicy } from "./policy.ts";
+import { withLock } from "./lock.ts";
+import { approverCounts, decide, NAMESPACE_TAG_KEY, newNamespace, sessionName, type Allowlist, type CredentialRequest, type Decision, type Principal, type RunClaim, type SessionPolicy } from "./policy.ts";
 import type { StsClient } from "./sts.ts";
+
+export { withLock };
 
 export interface BrokerDeps {
   allowlist: Allowlist;
@@ -27,6 +31,8 @@ export interface BrokerDeps {
   deliverer: Deliverer;
   now?: () => Date;
   newId?: () => string;
+  /** 8 hex characters for a new run namespace (random by default). */
+  newNamespaceSuffix?: () => string;
 }
 
 /** What the broker sends back over Relay. Never a credential: a pointer, the expiry and ids for CloudTrail. */
@@ -41,6 +47,8 @@ export interface Reply {
   expiration?: string;
   accessKeyId?: string;
   policyDigest?: string;
+  /** The run's namespace: name SQS queues, SNS topics, log groups, DynamoDB tables and secrets "<namespace>--…". */
+  namespace?: string;
   /** For pending-approval: the message the broker DMs to the approver, verbatim. */
   approvalPrompt?: string;
 }
@@ -56,12 +64,16 @@ interface Pending {
   digest: string;
   createdAt: string;
   reasons: string[];
+  /** The namespace the policy was built with (the run's claim, or the one it gets if issued). */
+  namespace: string;
 }
 
 interface Issued {
   requestId: string;
   delivery: DeliveryRef;
   expiration: string;
+  /** Set when a delivery failed: sweep releases this issue's new claim once it has removed the delivery. */
+  releaseClaim?: { runTag: string; owner: string };
 }
 
 const MIN_DIGEST_CHARS = 12;
@@ -85,109 +97,11 @@ function writeJson(path: string, value: unknown): void {
   renameSync(tmp, path);
 }
 
-function alive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (e) {
-    return (e as NodeJS.ErrnoException).code === "EPERM";
-  }
-}
-
-/**
- * One broker run at a time. The lock directory holds its owner's pid and a
- * random token. It is taken over only when that pid is dead (or the owner file
- * was never written and the lock is old), never by age while its owner runs;
- * every external call it covers has a timeout (sts.ts, deliver.ts). A run
- * releases the lock only if the token is still its own.
- *
- * Taking over a dead lock is serialized by a second mutex (`.lock.recover`):
- * only its holder may remove the lock, and it re-reads the owner while holding
- * it. A dead owner's lock can't change hands meanwhile (its owner can't
- * release it, and no one else may remove it), so a recoverer can never move a
- * live lock that another waiter has just taken. A recover mutex left by a
- * crashed recoverer is cleared once its pid is dead and it is 30 s old (a live
- * one is held for milliseconds).
- */
-export async function withLock<T>(dir: string, fn: () => Promise<T>, waitMs = 60_000): Promise<T> {
-  const lock = join(dir, ".lock");
-  const owner = join(lock, "owner");
-  const recover = join(dir, ".lock.recover");
-  const token = randomBytes(8).toString("hex");
-  const deadline = Date.now() + waitMs;
-  const readOwner = (): string | undefined => {
-    try {
-      return readFileSync(owner, "utf8");
-    } catch {
-      return undefined;
-    }
-  };
-  const stale = (content: string | undefined): boolean => {
-    if (content === undefined) {
-      // mkdir'd but no owner yet: a crash between the two steps, or a run that is just starting.
-      try {
-        return Date.now() - statSync(lock).mtimeMs > 10_000;
-      } catch {
-        return false;
-      }
-    }
-    const pid = Number(content.split(" ")[0]);
-    return !Number.isInteger(pid) || pid <= 0 || !alive(pid);
-  };
-  const recoverStaleLock = () => {
-    try {
-      mkdirSync(recover);
-    } catch (e) {
-      if ((e as NodeJS.ErrnoException).code !== "EEXIST") throw e;
-      try {
-        const pid = Number(readFileSync(join(recover, "pid"), "utf8"));
-        if (Date.now() - statSync(recover).mtimeMs > 30_000 && !(Number.isInteger(pid) && pid > 0 && alive(pid))) rmSync(recover, { recursive: true, force: true });
-      } catch {
-        // gone already, or just created: retry later
-      }
-      return;
-    }
-    try {
-      writeFileSync(join(recover, "pid"), `${process.pid}\n`, { mode: 0o600 });
-      if (stale(readOwner())) {
-        const grave = `${lock}.stale-${token}`;
-        renameSync(lock, grave);
-        rmSync(grave, { recursive: true, force: true });
-      }
-    } catch {
-      // the lock went away on its own: the next mkdir decides
-    } finally {
-      rmSync(recover, { recursive: true, force: true });
-    }
-  };
-  for (;;) {
-    try {
-      mkdirSync(lock);
-      writeFileSync(owner, `${process.pid} ${token}\n`, { mode: 0o600 });
-      break;
-    } catch (e) {
-      if ((e as NodeJS.ErrnoException).code !== "EEXIST") throw e;
-      if (stale(readOwner())) recoverStaleLock();
-      if (Date.now() > deadline) throw new Error("broker: state is locked by another run");
-      await new Promise((r) => setTimeout(r, 25));
-    }
-  }
-  try {
-    return await fn();
-  } finally {
-    try {
-      if (readFileSync(owner, "utf8").trim().endsWith(token)) rmSync(lock, { recursive: true, force: true });
-    } catch {
-      // already gone: nothing of ours to release
-    }
-  }
-}
-
 export class Broker {
   readonly deps: Required<BrokerDeps>;
 
   constructor(deps: BrokerDeps) {
-    this.deps = { now: () => new Date(), newId: newRequestId, ...deps };
+    this.deps = { now: () => new Date(), newId: newRequestId, newNamespaceSuffix: () => randomBytes(4).toString("hex"), ...deps };
     for (const d of ["", "pending", "issued", "consumed"]) mkdirSync(join(deps.stateDir, d), { recursive: true, mode: 0o700 });
   }
 
@@ -199,8 +113,26 @@ export class Broker {
     appendAudit(this.auditPath, event, this.deps.now(), forbidden);
   }
 
-  private runTags(): Record<string, string> {
-    return readJson(join(this.deps.stateDir, "run-tags.json"), {} as Record<string, string>);
+  private runTags(): Record<string, RunClaim> {
+    return readJson(join(this.deps.stateDir, "run-tags.json"), {} as Record<string, RunClaim>);
+  }
+
+  /** The run's claim, or for an unclaimed tag a fresh namespace (recorded only if credentials are issued). */
+  private runFor(runTag: string): { owner?: string; namespace: string } {
+    const claim = this.runTags()[runTag];
+    return claim ?? { namespace: newNamespace(String(runTag), this.deps.newNamespaceSuffix) };
+  }
+
+  private releaseClaim(runTag: string, owner: string): void {
+    try {
+      const now = this.runTags();
+      if (now[runTag]?.owner === owner) {
+        delete now[runTag];
+        writeJson(join(this.deps.stateDir, "run-tags.json"), now);
+      }
+    } catch {
+      // a leftover claim only keeps the tag with the agent that asked for it
+    }
   }
 
   private base(requestId: string, req: CredentialRequest, requester: Principal, relayMessageId?: string): AuditEvent {
@@ -228,9 +160,11 @@ export class Broker {
       }
       let decision: Decision;
       let name: string;
+      let run: { owner?: string; namespace: string } = { namespace: "" };
       try {
         name = sessionName(requester);
-        decision = decide(req, requester, this.deps.allowlist, this.runTags()[req.runTag]);
+        run = this.runFor(req.runTag);
+        decision = decide(req, requester, this.deps.allowlist, run);
       } catch (e) {
         decision = { outcome: "deny", reasons: [(e as Error).message] };
         name = "";
@@ -241,12 +175,12 @@ export class Broker {
       }
       const digest = requestDigest({ request: req, requester, roleArn: decision.roleArn, sessionPolicy: decision.sessionPolicy, durationSeconds: decision.durationSeconds });
       if (decision.outcome === "approval") {
-        const pending: Pending = { requestId, request: req, requester, ...(relayMessageId ? { relayMessageId } : {}), roleArn: decision.roleArn, sessionPolicy: decision.sessionPolicy, durationSeconds: decision.durationSeconds, digest, createdAt: this.deps.now().toISOString(), reasons: decision.reasons };
+        const pending: Pending = { requestId, request: req, requester, ...(relayMessageId ? { relayMessageId } : {}), roleArn: decision.roleArn, sessionPolicy: decision.sessionPolicy, durationSeconds: decision.durationSeconds, digest, createdAt: this.deps.now().toISOString(), reasons: decision.reasons, namespace: run.namespace };
         writeJson(join(this.deps.stateDir, "pending", `${requestId}.json`), pending);
         this.audit({ ...base, kind: "pending-approval", roleArn: decision.roleArn, sessionName: name, durationSeconds: decision.durationSeconds, policyDigest: digest, reasons: decision.reasons });
-        return { requestId, outcome: "pending-approval", reasons: decision.reasons, account: req.account, roleArn: decision.roleArn, sessionName: name, policyDigest: digest, approvalPrompt: approvalPrompt(pending, this.deps.allowlist) };
+        return { requestId, outcome: "pending-approval", reasons: decision.reasons, account: req.account, roleArn: decision.roleArn, sessionName: name, policyDigest: digest, namespace: run.namespace, approvalPrompt: approvalPrompt(pending, this.deps.allowlist) };
       }
-      return this.issue(requestId, req, requester, name, decision.roleArn, decision.sessionPolicy, decision.durationSeconds, digest, base, decision.reasons);
+      return this.issue(requestId, req, requester, name, run.namespace, decision.roleArn, decision.sessionPolicy, decision.durationSeconds, digest, base, decision.reasons);
     });
   }
 
@@ -269,7 +203,9 @@ export class Broker {
       const prefix = digestPrefix.trim().toLowerCase();
       if (prefix.length < MIN_DIGEST_CHARS || !p.digest.startsWith(prefix)) return reject(`digest does not match: approve with the first ${MIN_DIGEST_CHARS}+ characters of ${p.requestId}'s digest`, p);
       // Re-decide against today's allowlist: an approval never outlives a policy change.
-      const again = decide(p.request, p.requester, this.deps.allowlist, this.runTags()[p.request.runTag]);
+      // The run's claim if it has one by now (another agent may have claimed the tag meanwhile), else the namespace shown.
+      const run = this.runTags()[p.request.runTag] ?? { namespace: p.namespace };
+      const again = decide(p.request, p.requester, this.deps.allowlist, run);
       if (again.outcome === "deny") {
         renameSync(path, join(this.deps.stateDir, "consumed", `${p.requestId}.json`));
         return reject(`the allowlist now refuses this request: ${again.reasons.join("; ")}`, p);
@@ -279,7 +215,7 @@ export class Broker {
       renameSync(path, join(this.deps.stateDir, "consumed", `${p.requestId}.json`));
       const base = this.base(p.requestId, p.request, p.requester, p.relayMessageId);
       this.audit({ ...base, kind: "approved", approver: { name: approver.name, address: approver.address, kind: approver.kind }, ...(relayMessageId ? { relayMessageId } : {}), policyDigest: p.digest });
-      return this.issue(p.requestId, p.request, p.requester, sessionName(p.requester), p.roleArn, p.sessionPolicy, p.durationSeconds, p.digest, base, [...p.reasons, `approved by ${approver.name}`]);
+      return this.issue(p.requestId, p.request, p.requester, sessionName(p.requester), run.namespace, p.roleArn, p.sessionPolicy, p.durationSeconds, p.digest, base, [...p.reasons, `approved by ${approver.name}`]);
     });
   }
 
@@ -306,6 +242,7 @@ export class Broker {
         try {
           await this.deps.deliverer.remove(rec.delivery);
           rmSync(join(dir, f));
+          if (rec.releaseClaim) this.releaseClaim(rec.releaseClaim.runTag, rec.releaseClaim.owner);
           this.audit({ kind: "delivery-removed", requestId: rec.requestId, delivery: rec.delivery, expiration: rec.expiration });
           n++;
         } catch (e) {
@@ -316,38 +253,30 @@ export class Broker {
     });
   }
 
-  private async issue(requestId: string, req: CredentialRequest, requester: Principal, name: string, roleArn: string, sessionPolicy: SessionPolicy, durationSeconds: number, digest: string, base: AuditEvent, reasons: string[]): Promise<Reply> {
-    const tags = { "broker-request-id": requestId, [this.deps.allowlist.tagKey]: req.runTag, agent: name };
+  private async issue(requestId: string, req: CredentialRequest, requester: Principal, name: string, namespace: string, roleArn: string, sessionPolicy: SessionPolicy, durationSeconds: number, digest: string, base: AuditEvent, reasons: string[]): Promise<Reply> {
+    const tags = { "broker-request-id": requestId, [this.deps.allowlist.tagKey]: req.runTag, [NAMESPACE_TAG_KEY]: namespace, agent: name };
     const fail = (reason: string, extra: Partial<AuditEvent> = {}, forbidden: string[] = []): Reply => {
       this.audit({ ...base, kind: "error", roleArn, sessionName: name, ...extra, reasons: [reason] }, forbidden);
       return { requestId, outcome: "error", reasons: [reason] };
     };
     // Every state write that can fail happens before anything is minted: the
-    // run-tag claim and the cleanup record (with the planned delivery and the
-    // longest possible expiry), so sweep can always find and remove a delivery.
-    const tagsFile = join(this.deps.stateDir, "run-tags.json");
+    // run-tag claim (owner and namespace) and the cleanup record (with the
+    // planned delivery and the longest possible expiry), so sweep can always
+    // find and remove a delivery.
     const owners = this.runTags();
     const claimed = !owners[req.runTag];
+    if (!claimed && owners[req.runTag]!.namespace !== namespace) return fail("the run's namespace changed while deciding: send the request again");
     const issuedFile = join(this.deps.stateDir, "issued", `${requestId}.json`);
-    // Releases a claim this issue made (never one that existed before it), when
-    // nobody ends up holding credentials for the tag.
+    // Releases a claim this issue made (never one that existed before it), when nobody holds credentials for it.
     const unclaim = () => {
-      if (!claimed) return;
-      try {
-        const now = this.runTags();
-        if (now[req.runTag] === requester.name) {
-          delete now[req.runTag];
-          writeJson(tagsFile, now);
-        }
-      } catch {
-        // a leftover claim only keeps the tag with the agent that asked for it
-      }
+      if (claimed) this.releaseClaim(req.runTag, requester.name);
     };
+    const expiryBound = new Date(this.deps.now().getTime() + durationSeconds * 1000 + 60_000).toISOString();
     let planned: DeliveryRef;
     try {
       planned = this.deps.deliverer.planned(req.delivery, name, requestId);
-      if (claimed) writeJson(tagsFile, { ...owners, [req.runTag]: requester.name });
-      writeJson(issuedFile, { requestId, delivery: planned, expiration: new Date(this.deps.now().getTime() + durationSeconds * 1000 + 60_000).toISOString() } satisfies Issued);
+      if (claimed) writeJson(join(this.deps.stateDir, "run-tags.json"), { ...owners, [req.runTag]: { owner: requester.name, namespace } satisfies RunClaim });
+      writeJson(issuedFile, { requestId, delivery: planned, expiration: expiryBound } satisfies Issued);
     } catch (e) {
       // Nothing was minted: undo whatever of the two writes landed.
       rmSync(issuedFile, { force: true });
@@ -367,16 +296,20 @@ export class Broker {
     try {
       delivery = await this.deps.deliverer.deliver(req.delivery, name, requestId, creds);
     } catch (e) {
-      // Maybe partly written (e.g. op timed out after creating the item): try to remove it now. Once
-      // it is gone nobody holds the credentials, so a claim this issue made is released too. If removal
-      // fails, the planned record stays for sweep and the claim stays with the requester (the only
-      // agent who could read a leftover delivery). The credentials lapse at expiry either way.
+      // Maybe partly written. Try to remove it now. A file is removed for certain, so its record goes and a
+      // claim this issue made is released (nobody holds the credentials). A 1Password create that timed out
+      // may still commit after our delete, so its planned record stays: sweep deletes by the same title
+      // after expiry, and only then releases the claim. If removal fails, both stay for sweep.
       try {
         await this.deps.deliverer.remove(planned);
-        rmSync(issuedFile, { force: true });
-        unclaim();
+        if (planned.kind === "file") {
+          rmSync(issuedFile, { force: true });
+          unclaim();
+        } else if (claimed) {
+          writeJson(issuedFile, { requestId, delivery: planned, expiration: expiryBound, releaseClaim: { runTag: req.runTag, owner: requester.name } } satisfies Issued);
+        }
       } catch {
-        // sweep retries from the planned record
+        // sweep retries from the planned record; the claim stays with the requester meanwhile
       }
       return fail(`delivery failed: ${(e as Error).message}`, { accessKeyId: creds.accessKeyId, expiration: creds.expiration }, forbidden);
     }
@@ -386,7 +319,7 @@ export class Broker {
       // The planned record (same file path, or the 1Password item's title) still lets sweep remove it.
     }
     this.audit({ ...base, kind: "issued", roleArn, sessionName: name, durationSeconds, policyDigest: digest, accessKeyId: creds.accessKeyId, expiration: creds.expiration, delivery, reasons }, forbidden);
-    return { requestId, outcome: "issued", reasons, account: req.account, roleArn, sessionName: name, delivery, expiration: creds.expiration, accessKeyId: creds.accessKeyId, policyDigest: digest };
+    return { requestId, outcome: "issued", reasons, account: req.account, roleArn, sessionName: name, delivery, expiration: creds.expiration, accessKeyId: creds.accessKeyId, policyDigest: digest, namespace };
   }
 }
 
@@ -415,7 +348,7 @@ export function approvalPrompt(p: Pending, list: Allowlist): string {
     `Account: ${p.request.account} (${account?.label ?? "?"}, ${account?.tier ?? "?"}) via ${p.roleArn}`,
     `Purpose: ${p.request.purpose}`,
     `Actions: ${p.request.actions.join(", ")}`,
-    `Resources: ${(p.request.resources ?? ["*"]).join(", ")}  Scope: ${p.request.scope ?? "run-tag"} (${p.request.runTag})`,
+    `Resources: ${(p.request.resources ?? ["*"]).join(", ")}  Scope: ${p.request.scope ?? "run-tag"} (${p.request.runTag}, namespace ${p.namespace})`,
     `Duration: ${p.durationSeconds / 60} min. Why approval: ${p.reasons.join("; ")}`,
     "Grants (exactly what IAM will enforce):",
     ...p.sessionPolicy.Statement.filter((s) => s.Effect === "Allow").map((s) => `  - ${(s.Action ?? []).join(", ")} on ${[s.Resource ?? "*"].flat().join(", ")}${describeCondition(s.Condition)}`),

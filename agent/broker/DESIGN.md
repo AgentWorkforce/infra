@@ -23,8 +23,9 @@ and name the agent that asked:
   built from the request. STS intersects it with the target role's own
   policy, so the session can do no more than either allows.
 - **Traceable.** RoleSessionName and SourceIdentity are both the agent's
-  name. Session tags carry `broker-request-id`, `agent-run` (the run tag) and
-  `agent`. Every CloudTrail event names the agent and the request, and the
+  name. Session tags carry `broker-request-id`, `agent-run` (the run tag),
+  `agent-ns` (the run's namespace) and `agent`. Every CloudTrail event names
+  the agent and the request, and the
   broker's audit log maps the request to the Relay message it came from.
 
 ## Flow
@@ -68,20 +69,33 @@ So a delete is automatic only on the run's own resources.
 `sns:TagResource`, `logs:CreateLogGroup` needs `logs:TagResource` and
 `logs:TagLogGroup`, and so on. Each create rule pulls in its tag rule
 (`impliedBy`). Outside EC2, IAM can't tell tagging at create time apart from
-tagging an existing resource. Those creates are therefore named for the run:
-the queue, topic, log group, table or secret must be called `<runTag>--…`, and
-the tag permission applies only to those names. A session can never put its
-run tag on an existing resource it didn't create, and so can't claim and then
-delete it. EC2 uses `ec2:CreateAction` (`ec2:CreateTags` only during
-RunInstances or CreateVolume).
+tagging an existing resource. Those creates are therefore named for the run's
+**namespace**, and the tag permission applies only to those names.
 
-The `--` separator keeps every run's names disjoint. A run tag is lowercase
-words joined by single hyphens (no `--`, no leading or trailing hyphen), so
-run `foo`'s `foo--*` can never match run `foo-bar`'s `foo-bar--jobs`. With a
-single `-` it would, and run `foo` could re-tag and delete `foo-bar`'s
-queue. A test checks every pair of overlapping run tags. As a second layer,
-no session can overwrite a run tag a resource already carries
-(`DenyOverwritingAnotherRunsTag`, in the session policy and the ceiling).
+The namespace comes from the broker, not the requester. When a run tag is
+first claimed, the broker records a namespace `<runTag>-<8 random hex>`
+(e.g. `terse-mig-42-0a1b2c3d`) in `run-tags.json`. It returns the namespace
+in every reply and puts it on every session as the `agent-ns` tag. The run's
+queues, topics, log groups, tables and secrets must be named
+`<namespace>--…`. Tag-on-create is granted only there: by the session policy
+(`{ns}` in the allowlist), and by the ceiling
+(`${aws:PrincipalTag/agent-ns}--*`).
+- **No claiming existing resources.** Nobody can predict a namespace before
+  the broker picks it, so a resource that existed before the claim can't
+  carry one. An untagged queue someone named `foo--shared` is not run `foo`'s,
+  and a session can't tag it and then delete it. A name chosen by the
+  requester would not prove the run created the resource; the broker's
+  random part does.
+- **No overlap between runs.** Neither run tags nor the random part may
+  contain `--`, so no namespace's `<ns>--*` matches another's names, even
+  when one run tag prefixes another (`foo` vs `foo-bar`). A test checks every
+  pair.
+- **A second layer.** No session can overwrite a run tag a resource already
+  carries (`DenyOverwritingAnotherRunsTag`, in the session policy and the
+  ceiling).
+
+EC2 uses `ec2:CreateAction` instead (`ec2:CreateTags` only during
+RunInstances or CreateVolume).
 
 Each session policy also carries denies:
 - creating anything with another run's tag;
@@ -136,17 +150,23 @@ A run tag is claimed by the first agent that receives credentials for it
 Before anything is minted, the broker writes the run-tag claim and a cleanup
 record holding the planned delivery: the file path, or the 1Password item
 title `aws-broker-<request id>`. A failed write of either, or a failed mint,
-undoes both. A delivery that fails partway (e.g. `op` timing out after it
-created the item) is removed straight away. Once it is removed, nobody holds
-the credentials, so the claim this issue made is released too. If removal
-fails, `sweep` finds the delivery from the planned record, and the claim
-stays with the requester, the only agent who could read a leftover delivery.
+undoes both. A delivery that fails partway is removed straight away:
+- A file is removed for certain. Its record goes, and a claim this issue made
+  is released, because nobody holds the credentials.
+- An `op item create` that timed out may still commit after the delete. So
+  the planned record stays, `sweep` deletes by the same title after expiry,
+  and only then releases the claim.
+- If removal fails, both stay for `sweep`. The claim stays with the
+  requester, the only agent who could read a leftover delivery.
+
 A claim that existed before the request is never released. Every `aws` and
 `op` call has a 30 s timeout.
 
-One broker run holds the state lock at a time. The lock records its owner's
-pid and a token. It is taken over only when that process is dead, never by
-age, and a run releases only a lock that is still its own.
+One broker run holds the state at a time, under a kernel lock: `flock(1)`
+(util-linux) on `<state>/.lock`, held by a child that reads the broker's
+stdin. If the broker dies, however it dies, the pipe closes and the kernel
+drops the lock. So there is no stale lock to detect or take over, and no way
+for one run to remove another's.
 
 `sweep` removes deliveries whose credentials have expired. The Relay reply
 holds only the pointer, the expiry, the access key id (not a secret; it's how
@@ -173,12 +193,12 @@ a 40-character run tag is ordinary metadata.
   ARNs. Sessions last at most 1 h.
 - `modules/scoped-role`: `agent-broker-sandbox-scoped` in 805532413586. It
   trusts only the broker role, and only when the broker sets a `cb-*`
-  request id, the run and agent tags (and no other tag keys) and a source
+  request id, the run, namespace and agent tags (and no other tag keys) and a source
   identity. Its ceiling is PowerUserAccess plus denies: IAM, STS,
   organizations, account, SSO, identity store, CloudTrail, Config,
   GuardDuty, Security Hub, RAM and KMS key deletion or policy; any session
   without the run tag; creating with another run's tag; removing the run
-  tag; adding it except on resources named `${aws:PrincipalTag/agent-run}--…`;
+  tag; adding it except on resources named `${aws:PrincipalTag/agent-ns}--…`;
   overwriting another run's tag;
   EC2 tags after create; stop or delete outside
   `${aws:PrincipalTag/agent-run}`; regions outside the allowed list. These

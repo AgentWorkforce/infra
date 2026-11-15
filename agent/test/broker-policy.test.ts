@@ -5,7 +5,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { approvalScope, approverCounts, decide, globsIntersect, ownNamedResources, RUN_TAG_RE, sessionName, SESSION_POLICY_MAX_CHARS, TAG_ACTIONS, UNTAG_ACTIONS, type Allowlist, type CredentialRequest, type Principal } from "../broker/src/policy.ts";
+import { approvalScope, approverCounts, decide as decideWith, globsIntersect, ownNamedResources, RUN_NAMESPACE_RE, RUN_TAG_RE, sessionName, SESSION_POLICY_MAX_CHARS, TAG_ACTIONS, UNTAG_ACTIONS, type Allowlist, type CredentialRequest, type Principal } from "../broker/src/policy.ts";
 
 const allowlist = JSON.parse(readFileSync(new URL("../broker/allowlist.json", import.meta.url), "utf8")) as Allowlist;
 const SANDBOX = "805532413586";
@@ -19,6 +19,10 @@ const withProd: Allowlist = {
     [SANDBOX]: { ...allowlist.accounts[SANDBOX]!, roles: { ...allowlist.accounts[SANDBOX]!.roles, elevated: `arn:aws:iam::${SANDBOX}:role/agent-broker-sandbox-elevated` } },
   },
 };
+const SUFFIX = "0a1b2c3d";
+// The broker passes the run's claim (owner and namespace); a test's namespace is "<runTag>-0a1b2c3d".
+const decide = (r: CredentialRequest, p: Principal, l: Allowlist, owner?: string) => decideWith(r, p, l, { ...(owner ? { owner } : {}), namespace: `${r.runTag}-${SUFFIX}` });
+const NS = `terse-mig-42-${SUFFIX}`;
 const agent: Principal = { name: "tersemigrationgrok", address: "tersemigrationgrok@linuyc-desktop", kind: "agent" };
 
 const req = (over: Partial<CredentialRequest> = {}): CredentialRequest => ({
@@ -62,7 +66,7 @@ test("sandbox, own run tag, allowlisted actions: issued automatically, scoped to
   const by = (sid: string) => d.sessionPolicy.Statement.find((s) => s.Sid === sid)!;
   const create = by("SqsCreate");
   assert.deepEqual(create.Action, ["sqs:CreateQueue"]);
-  assert.equal(create.Resource, "arn:aws:sqs:*:*:terse-mig-42--*", "creates are named for the run");
+  assert.equal(create.Resource, "arn:aws:sqs:*:*:terse-mig-42-0a1b2c3d--*", "creates are named for the run");
   assert.deepEqual(create.Condition, { StringEquals: { "aws:RequestTag/agent-run": "terse-mig-42" } });
   const own = by("OwnRunTagged");
   assert.deepEqual(own.Action, ["sqs:SendMessage", "sqs:DeleteQueue"]);
@@ -79,11 +83,11 @@ test("sandbox, own run tag, allowlisted actions: issued automatically, scoped to
 
 test("tagged creates carry their tag-on-create permission, only on resources named for the run", () => {
   const cases: [string, string[], string][] = [
-    ["sqs:CreateQueue", ["sqs:TagQueue"], "arn:aws:sqs:*:*:terse-mig-42--*"],
-    ["sns:CreateTopic", ["sns:TagResource"], "arn:aws:sns:*:*:terse-mig-42--*"],
-    ["logs:CreateLogGroup", ["logs:TagResource", "logs:TagLogGroup"], "arn:aws:logs:*:*:log-group:terse-mig-42--*"],
-    ["dynamodb:CreateTable", ["dynamodb:TagResource"], "arn:aws:dynamodb:*:*:table/terse-mig-42--*"],
-    ["secretsmanager:CreateSecret", ["secretsmanager:TagResource"], "arn:aws:secretsmanager:*:*:secret:terse-mig-42--*"],
+    ["sqs:CreateQueue", ["sqs:TagQueue"], "arn:aws:sqs:*:*:terse-mig-42-0a1b2c3d--*"],
+    ["sns:CreateTopic", ["sns:TagResource"], "arn:aws:sns:*:*:terse-mig-42-0a1b2c3d--*"],
+    ["logs:CreateLogGroup", ["logs:TagResource", "logs:TagLogGroup"], "arn:aws:logs:*:*:log-group:terse-mig-42-0a1b2c3d--*"],
+    ["dynamodb:CreateTable", ["dynamodb:TagResource"], "arn:aws:dynamodb:*:*:table/terse-mig-42-0a1b2c3d--*"],
+    ["secretsmanager:CreateSecret", ["secretsmanager:TagResource"], "arn:aws:secretsmanager:*:*:secret:terse-mig-42-0a1b2c3d--*"],
   ];
   for (const [create, tags, resource] of cases) {
     const d = decide(req({ actions: [create] }), agent, allowlist);
@@ -105,14 +109,34 @@ test("tagged creates carry their tag-on-create permission, only on resources nam
 test("run namespaces are disjoint: no run's names match another run's, even when one tag prefixes the other", () => {
   const tags = ["foo", "foo-bar", "foo-bar-baz", "foob", "build", "build-other", "a1b", "a1b-2"];
   for (const t of tags) assert.ok(RUN_TAG_RE.test(t), t);
-  for (const mine of tags) {
-    for (const theirs of tags) {
+  // Namespaces as the broker makes them, including two runs whose random parts collide on a prefix.
+  const spaces = tags.flatMap((t) => [`${t}-${SUFFIX}`, `${t}-0a1b2c3e`]);
+  for (const ns of spaces) assert.ok(RUN_NAMESPACE_RE.test(ns), ns);
+  for (const mine of spaces) {
+    for (const theirs of spaces) {
       if (mine === theirs) continue;
       for (const [pattern, theirName] of ownNamedResources(mine).map((p, i) => [p, ownNamedResources(theirs)[i]!.replace(/\*$/, "work").replaceAll("*", "x1")] as const)) {
         assert.ok(!globsIntersect(pattern, theirName), `${mine}'s ${pattern} must not match ${theirs}'s ${theirName}`);
       }
     }
     for (const [p, i] of ownNamedResources(mine).map((p, i) => [p, i] as const)) assert.ok(globsIntersect(p, ownNamedResources(mine)[i]!.replace(/\*$/, "work").replaceAll("*", "x1")), `${mine} owns its own names`);
+  }
+});
+
+test("a name chosen before the claim never matches: tag-on-create applies only under the broker-assigned namespace", () => {
+  // An untagged queue someone made earlier, named as if it were run foo's.
+  for (const existing of ["arn:aws:sqs:us-east-1:805532413586:foo--shared", "arn:aws:sqs:us-east-1:805532413586:foo-shared"]) {
+    for (const pattern of ownNamedResources(`foo-${SUFFIX}`)) assert.ok(!globsIntersect(pattern, existing), `${pattern} vs ${existing}`);
+  }
+  const d = decide(req({ actions: ["sqs:CreateQueue"] }), agent, allowlist);
+  assert.equal(d.outcome, "auto");
+  if (d.outcome !== "auto") return;
+  assert.equal(d.sessionPolicy.Statement.find((s) => s.Sid === "SqsTagOnCreate")!.Resource, `arn:aws:sqs:*:*:${NS}--*`);
+  // The broker never decides with a namespace that isn't "<this run tag>-<8 hex>".
+  for (const namespace of ["terse-mig-42", "other-run-0a1b2c3d", "terse-mig-42--0a1b2c3d", "terse-mig-42-XYZ"]) {
+    const bad = decideWith(req(), agent, allowlist, { namespace });
+    assert.equal(bad.outcome, "deny", namespace);
+    assert.match(bad.reasons.join("; "), /bad run namespace/);
   }
 });
 
@@ -151,7 +175,7 @@ test("the session guard and the role ceiling name the same tag actions and run-o
   const block = (name: string) => /\[([^\]]*)\]/.exec(tf.slice(tf.indexOf(`${name} = [`)))![1]!.match(/"[^"]+"/g)!.map((x) => x.slice(1, -1));
   assert.deepEqual(block("tag_actions"), TAG_ACTIONS);
   assert.deepEqual(block("untag_actions"), UNTAG_ACTIONS);
-  assert.deepEqual(block("own_named_resources"), ownNamedResources("${local.own_run}"));
+  assert.deepEqual(block("own_named_resources"), ownNamedResources("${local.own_namespace}"));
 });
 
 test("ec2 RunInstances: tag required on what it creates, inputs (image, subnet, sg) untagged, CreateTags at launch implied", () => {

@@ -38,7 +38,7 @@ function setup(start = new Date("2026-11-14T12:00:00Z"), over: { sts?: StsClient
     },
   };
   const base = defaultDeliverer(join(dir, "creds"));
-  const broker = new Broker({ allowlist, stateDir: join(dir, "state"), sts, deliverer: over.deliverer ? over.deliverer(base) : base, now: () => clock, newId: () => `cb-${(++n).toString(16).padStart(12, "0")}` });
+  const broker = new Broker({ allowlist, stateDir: join(dir, "state"), sts, deliverer: over.deliverer ? over.deliverer(base) : base, now: () => clock, newId: () => `cb-${(++n).toString(16).padStart(12, "0")}`, newNamespaceSuffix: () => "0a1b2c3d" });
   return { dir, broker, calls, tick: (min: number) => (clock = new Date(clock.getTime() + min * 60_000)) };
 }
 
@@ -67,7 +67,8 @@ test("auto issue: STS gets the agent's name, tags and session policy; creds go t
   assert.equal(c.sessionName, "tersemigrationgrok");
   assert.equal(c.sourceIdentity, "tersemigrationgrok");
   assert.equal(c.durationSeconds, 900);
-  assert.deepEqual(c.tags, { "broker-request-id": r.requestId, "agent-run": "terse-mig-42", agent: "tersemigrationgrok" });
+  assert.deepEqual(c.tags, { "broker-request-id": r.requestId, "agent-run": "terse-mig-42", "agent-ns": "terse-mig-42-0a1b2c3d", agent: "tersemigrationgrok" });
+  assert.equal(r.namespace, "terse-mig-42-0a1b2c3d", "the reply tells the agent how to name what it creates");
   assert.equal(r.delivery!.kind, "file");
   assert.equal(statSync(r.delivery!.ref).mode & 0o777, 0o600);
   const file = JSON.parse(readFileSync(r.delivery!.ref, "utf8")) as Record<string, unknown>;
@@ -206,24 +207,26 @@ test("the audit writer still refuses credential fields and the exact minted valu
   assert.doesNotThrow(() => appendAudit(path, { kind: "issued", requestId: "cb-1", reasons: ["a".repeat(64)] }, now, [SECRET, TOKEN]));
 });
 
-test("the lock: a live owner keeps it however long it runs; a dead owner's lock is taken over; only the owner releases", async () => {
+/** A separate process that takes the broker lock, says "held", and keeps it until killed. */
+function holder(dir: string) {
+  const url = new URL("../broker/src/lock.ts", import.meta.url).href;
+  const code = `const { withLock } = await import(${JSON.stringify(url)});
+    await withLock(${JSON.stringify(dir)}, () => new Promise(() => { console.log("held"); setInterval(() => {}, 1000); }));`;
+  const p = spawn(process.execPath, ["--input-type=module", "-e", code], { stdio: ["ignore", "pipe", "inherit"] });
+  const held = new Promise<void>((resolve) => p.stdout.on("data", (d: Buffer) => d.toString().includes("held") && resolve()));
+  return { p, held };
+}
+
+test("the lock: a live holder keeps it however long it runs; when it dies (even SIGKILL) the kernel releases it", async () => {
   const dir = mkdtempSync(join(tmpdir(), "broker-lock-"));
-  // A live process (this one) holding the lock: a second run waits, then gives up, never steals it.
-  mkdirSync(join(dir, ".lock"));
-  writeFileSync(join(dir, ".lock", "owner"), `${process.pid} othertoken\n`);
+  const h = holder(dir);
+  await h.held;
   await assert.rejects(withLock(dir, async () => "stolen", 300), /locked by another run/);
-  assert.equal(readFileSync(join(dir, ".lock", "owner"), "utf8"), `${process.pid} othertoken\n`, "untouched");
-  // The owner dies: its lock is taken over.
-  const child = spawn(process.execPath, ["-e", ""]);
-  await new Promise((r) => child.on("exit", r));
-  writeFileSync(join(dir, ".lock", "owner"), `${child.pid} deadtoken\n`);
-  assert.equal(await withLock(dir, async () => "ran", 2_000), "ran");
-  assert.ok(!existsSync(join(dir, ".lock")), "released after the run");
-  // A run whose lock was replaced under it does not remove the replacement.
-  await withLock(dir, async () => {
-    writeFileSync(join(dir, ".lock", "owner"), `${process.pid} someoneelse\n`);
-  });
-  assert.ok(existsSync(join(dir, ".lock")), "not ours any more, so left alone");
+  h.p.kill("SIGKILL");
+  await new Promise((r) => h.p.on("exit", r));
+  assert.equal(await withLock(dir, async () => "ran", 5_000), "ran", "no stale lock to clean up");
+  // Released after each run, and taken again straight away.
+  assert.equal(await withLock(dir, async () => "again", 1_000), "again");
 });
 
 test("the run-tag claim and cleanup record are written before minting; a failed mint undoes both", async () => {
@@ -231,7 +234,7 @@ test("the run-tag claim and cleanup record are written before minting; a failed 
   let stateDir = "";
   const failing: StsClient = {
     async assumeRole() {
-      seenRecord = readdirSync(join(stateDir, "issued")).length === 1 && JSON.parse(readFileSync(join(stateDir, "run-tags.json"), "utf8"))["terse-mig-42"] === "tersemigrationgrok";
+      seenRecord = readdirSync(join(stateDir, "issued")).length === 1 && JSON.parse(readFileSync(join(stateDir, "run-tags.json"), "utf8"))["terse-mig-42"]?.owner === "tersemigrationgrok";
       throw new Error("sts assume-role failed: AccessDenied");
     },
   };
@@ -322,7 +325,7 @@ test("a failed delivery that was cleaned up releases the claim; one that couldn'
   });
   const b = setup(undefined, { deliverer: stuck });
   assert.equal((await b.broker.request(req(), requester)).outcome, "error");
-  assert.deepEqual(JSON.parse(readFileSync(join(b.broker.deps.stateDir, "run-tags.json"), "utf8")), { "terse-mig-42": "tersemigrationgrok" }, "kept: a leftover delivery may exist");
+  assert.deepEqual(JSON.parse(readFileSync(join(b.broker.deps.stateDir, "run-tags.json"), "utf8")), { "terse-mig-42": { owner: "tersemigrationgrok", namespace: "terse-mig-42-0a1b2c3d" } }, "kept: a leftover delivery may exist");
 });
 
 test("an existing claim is never released by a later failed issue", async () => {
@@ -337,17 +340,15 @@ test("an existing claim is never released by a later failed issue", async () => 
   assert.equal((await broker.request(req(), requester)).outcome, "issued");
   fail = true;
   assert.equal((await broker.request(req(), requester)).outcome, "error");
-  assert.deepEqual(JSON.parse(readFileSync(join(broker.deps.stateDir, "run-tags.json"), "utf8")), { "terse-mig-42": "tersemigrationgrok" });
+  assert.deepEqual(JSON.parse(readFileSync(join(broker.deps.stateDir, "run-tags.json"), "utf8")), { "terse-mig-42": { owner: "tersemigrationgrok", namespace: "terse-mig-42-0a1b2c3d" } });
 });
 
-test("the lock: competing processes recovering the same dead owner never run at the same time", async () => {
+test("the lock: processes competing after a holder is killed never run at the same time", async () => {
   const dir = mkdtempSync(join(tmpdir(), "broker-race-"));
   const log = join(dir, "log");
   writeFileSync(log, "");
-  const dead = spawn(process.execPath, ["-e", ""]);
-  await new Promise((r) => dead.on("exit", r));
-  mkdirSync(join(dir, ".lock"));
-  writeFileSync(join(dir, ".lock", "owner"), `${dead.pid} deadtoken\n`);
+  const h = holder(dir);
+  await h.held;
   const brokerUrl = new URL("../broker/src/broker.ts", import.meta.url).href;
   const child = (id: number) =>
     new Promise<number>((resolve) => {
@@ -362,7 +363,9 @@ test("the lock: competing processes recovering the same dead owner never run at 
       const p = spawn(process.execPath, ["--input-type=module", "-e", code], { stdio: "inherit" });
       p.on("exit", (c) => resolve(c ?? 1));
     });
-  const codes = await Promise.all([1, 2, 3, 4, 5, 6].map(child));
+  const runs = [1, 2, 3, 4, 5, 6].map(child);
+  h.p.kill("SIGKILL");
+  const codes = await Promise.all(runs);
   assert.deepEqual(codes, [0, 0, 0, 0, 0, 0]);
   const lines = readFileSync(log, "utf8").trim().split("\n");
   assert.equal(lines.length, 12);
@@ -370,5 +373,5 @@ test("the lock: competing processes recovering the same dead owner never run at 
     assert.match(lines[i]!, /^S\d$/, `entry ${i}: ${lines.join(" ")}`);
     assert.equal(lines[i + 1], `E${lines[i]!.slice(1)}`, `no overlap: ${lines.join(" ")}`);
   }
-  assert.ok(!existsSync(join(dir, ".lock")) && !existsSync(join(dir, ".lock.recover")), "both released");
+  assert.equal(await withLock(dir, async () => "free", 1_000), "free", "released after the last run");
 });
