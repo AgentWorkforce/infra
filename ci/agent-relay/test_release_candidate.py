@@ -608,6 +608,13 @@ class FastPathWorkflowTest(unittest.TestCase):
             for step in source["steps"]:
                 if "run" in step:
                     self.assertIn(step["run"], scripts, f"{name}: {step.get('name')}")
+        # Only a manual dispatch starts it, with read-only defaults, and no
+        # workflow-level concurrency group that a run awaiting approval holds.
+        self.assertEqual(list(workflow["on"]), ["workflow_dispatch"])
+        self.assertEqual(workflow["permissions"], {"contents": "read"})
+        self.assertNotIn("concurrency", workflow)
+        # Nothing saves a cache that normal CI or a release restores.
+        self.assertNotRegex(renderer.render(), r"actions/cache|rust-cache|cache:")
         # The umbrella publish keeps its GitHub-hosted signer identity.
         self.assertNotIn("attest-build-provenance", renderer.render())
 
