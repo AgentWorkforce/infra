@@ -33,7 +33,7 @@ dependencies:
     repository: file://../relay-control
     condition: components.control
   - name: relay-webapp
-    version: 0.2.5
+    version: 0.2.6
     repository: file://../relay-webapp
     condition: components.webapp
   - name: relayflows

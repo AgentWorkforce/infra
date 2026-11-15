@@ -31,6 +31,15 @@ runtime:
   # Default off even when the sessions-pipeline backend endpoint is enabled.
   # Requires a dashboard image containing relay-webapp #124.
   coordinationOverlapsEnabled: false
+  # DASHBOARD_SESSION_AGENT_NAMES_ENABLED: show each session's recorded agent
+  # name in the list caption (includeAgentName=recorded). Needs a Control and
+  # session reader that take the opt-in.
+  sessionAgentNamesEnabled: false
+  # DASHBOARD_SESSION_SHORT_SUMMARIES_ENABLED: show each session's recorded
+  # short summary under its title in the list (includeShortSummary=recorded,
+  # direct reader only). Needs sessionReadApiEnabled, a dashboard image with
+  # relay-web #143 and the reader's READ_API_LIST_SHORT_SUMMARY_ENABLED=true.
+  sessionShortSummariesEnabled: false
   # DASHBOARD_ANALYTICS_ENABLED: browser events use Control's collector proxy.
   # Null preserves the image default; explicit true/false is rendered faithfully.
   # Requires a compatible dashboard image and separately configured Control adapter.
