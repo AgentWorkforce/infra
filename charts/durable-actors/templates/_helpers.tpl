@@ -30,6 +30,16 @@
 {{- if .Values.storage.s3.actorRoleArn }}{{ fail "storage.s3.actorRoleArn applies only to storage.s3.actorCredentials=assume-role" }}{{ end -}}
 {{- else if empty .Values.storage.s3.actorRoleArn }}{{ fail "storage.s3.actorCredentials=assume-role requires storage.s3.actorRoleArn" }}{{ end -}}
 {{- if eq .Values.storage.mode "rapid" }}{{ fail "Rapid persistence requires storage.provider=gcs" }}{{ end -}}
+{{- /* Local patch 14: S3 Express state needs a regional checkpoint and regional artifacts. */ -}}
+{{- $checkpoint := .Values.storage.s3.checkpoint.bucket -}}
+{{- if hasSuffix "--x-s3" .Values.storage.bucket -}}
+{{- if empty $checkpoint }}{{ fail "storage.bucket is an S3 Express directory bucket (one Availability Zone); set storage.s3.checkpoint.bucket to a regional bucket" }}{{ end -}}
+{{- if or (empty .Values.storage.artifactBucket) (hasSuffix "--x-s3" .Values.storage.artifactBucket) }}{{ fail "storage.bucket is an S3 Express directory bucket; set storage.artifactBucket to a regional bucket (the actor deployers cannot upload to Express)" }}{{ end -}}
+{{- end -}}
+{{- if hasSuffix "--x-s3" $checkpoint }}{{ fail "storage.s3.checkpoint.bucket must be a regional bucket, not a directory bucket" }}{{ end -}}
+{{- if and (not (kindIs "invalid" .Values.storage.s3.checkpoint.maxLagMs)) (empty $checkpoint) }}{{ fail "storage.s3.checkpoint.maxLagMs requires storage.s3.checkpoint.bucket" }}{{ end -}}
+{{- else if .Values.storage.s3.checkpoint.bucket -}}
+{{- fail "storage.s3.checkpoint requires storage.provider=s3" -}}
 {{- end -}}
 {{- /* Local patch 12: a half-configured Postgres CA would look verified while it is not. */ -}}
 {{- with .Values.postgresCa -}}

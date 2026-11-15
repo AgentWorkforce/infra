@@ -32,6 +32,10 @@
           "maxLength": 63,
           "pattern": "^[a-z0-9][a-z0-9._-]+[a-z0-9]$"
         },
+        "artifactBucket": {
+          "type": "string",
+          "pattern": "^([a-z0-9][a-z0-9.-]{1,61}[a-z0-9])?$"
+        },
         "mode": {
           "type": "string",
           "enum": [
@@ -111,6 +115,23 @@
                 "assume-role",
                 "control-plane"
               ]
+            },
+            "checkpoint": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "bucket": {
+                  "type": "string",
+                  "pattern": "^([a-z0-9][a-z0-9.-]{1,61}[a-z0-9])?$"
+                },
+                "maxLagMs": {
+                  "type": [
+                    "integer",
+                    "null"
+                  ],
+                  "minimum": 1
+                }
+              }
             }
           }
         }

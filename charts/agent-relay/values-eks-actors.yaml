@@ -31,6 +31,15 @@
 #   s3:GetObject on <bucket>/durable-actors/v3/artifacts/*.
 # - The relaycast and relayfile ServiceAccounts: their file and blob buckets.
 #
+# S3 Express state (lower latency, one Availability Zone): apply
+# terraform/modules/aws/durable-actors-express and use its durable_actors_values
+# output. storage.bucket is then the <name>--<az id>--x-s3 directory bucket,
+# storage.artifactBucket and storage.s3.checkpoint.bucket are the regional
+# bucket (async copy; RPO = checkpoint lag), and placement.zone is the
+# Express zone. The deployers' artifactBucket stays the regional bucket. The
+# chart refuses an Express storage.bucket without both. Needs the fork image
+# with AgentWorkforce/durable-actors#4.
+#
 # Actor hosts run on the cluster's default runtime (runc), hardened (non-root,
 # read-only rootfs, seccomp RuntimeDefault, no capabilities, no ServiceAccount
 # token, no AWS identity, IMDS blocked by the NetworkPolicy), on a dedicated

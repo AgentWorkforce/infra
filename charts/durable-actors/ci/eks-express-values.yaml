@@ -1,0 +1,24 @@
+# CI fixture (not part of the upstream release): S3 Express state with a regional
+# checkpoint and artifact bucket (local patch 14). Placeholder identities.
+publicUrl: https://actors.example.com
+placement:
+  zone: us-west-2b
+storage:
+  provider: s3
+  bucket: example-actors--usw2-az1--x-s3
+  artifactBucket: example-actors-regional
+  s3:
+    region: us-west-2
+    actorRoleArn: arn:aws:iam::123456789012:role/example-actors-actor-storage
+    checkpoint:
+      bucket: example-actors-regional
+      maxLagMs: 5000
+serviceAccount:
+  annotations:
+    eks.amazonaws.com/role-arn: arn:aws:iam::123456789012:role/durable-actors-control-plane
+sandbox:
+  runtimeClassName: ""
+  nodeSelector:
+    durable-actors/role: actor-host
+  tolerations:
+    - {key: durable-actors/actor-host, operator: Exists, effect: NoSchedule}

@@ -103,10 +103,11 @@ and its actor-mode consumers (relaycast, relayfile).
 {{- if ne $adminKey "api-key" }}
 {{- fail (printf "%s.runtime.durableActors.adminKeySecret.key (%s) must be api-key: the control plane reads its admin api-key from credentialsSecret[api-key]" $name $adminKey) }}
 {{- end }}
-{{- $bucket := dig "storage" "bucket" "" $da -}}
+{{- /* durable-actors storage.artifactBucket (patch 14) overrides storage.bucket for code. */ -}}
+{{- $bucket := dig "storage" "artifactBucket" "" $da | default (dig "storage" "bucket" "" $da) -}}
 {{- $artifact := dig "deployer" "artifactBucket" "" $cfg -}}
 {{- if and (dig "deployer" "enabled" true $cfg) $artifact (ne $artifact $bucket) }}
-{{- fail (printf "%s.runtime.durableActors.deployer.artifactBucket (%s) must be durable-actors.storage.bucket (%s): the control plane reads compiled code only from its own bucket" $name $artifact $bucket) }}
+{{- fail (printf "%s.runtime.durableActors.deployer.artifactBucket (%s) must be durable-actors.storage.artifactBucket, or storage.bucket when unset (%s): the control plane reads compiled code only from that bucket" $name $artifact $bucket) }}
 {{- end }}
 {{- end }}
 {{- end }}
