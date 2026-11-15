@@ -11,7 +11,7 @@ import { ClaudeOrchestrator, DeterministicOrchestrator, ThreadPolicy, type Known
 import type { RelayEventLike } from "./protocol.ts";
 import { connectAgent, ensureChannel } from "./relay.ts";
 import { Router } from "./router.ts";
-import { checkWithRetry, RelaygateClient } from "./gate.ts";
+import { checkWithRetry, kbStreamId, RelaygateClient, slackStreamId } from "./gate.ts";
 import { McpClient, oauthServersFromEnv, TokenSource } from "./mcp.ts";
 import { SlackIngest, type SourceRule } from "./ingest.ts";
 import { channelMessageOf, ChannelDirectory, normalizeSlackEvent, SlackWeb, SocketModeClient, verifySlackSignature, type SlackEventEnvelope } from "./slack.ts";
@@ -113,7 +113,7 @@ async function runRouter(): Promise<void> {
     selfName: routerName,
     log,
     // Slack posts don't pass through relaygate, so each one is asked about first.
-    egress: gate ? (ref, text) => checkWithRetry(gate, routerToken, { op: "w", resource: { kind: "chat", slack: ref }, content: text }) : undefined,
+    egress: gate ? (ref, text) => checkWithRetry(gate, routerToken, { op: "w", resource: { kind: "stream", id: slackStreamId(ref) }, content: text }) : undefined,
   });
 
   agent.subscribe([channel], (raw: unknown) => {
@@ -135,7 +135,7 @@ async function runRouter(): Promise<void> {
         log,
         // Knowledge-base writes are egress relaygate can't see either.
         beforeWrite: gate
-          ? (slug, text) => checkWithRetry(gate, routerToken, { op: "w", resource: { kind: "sink", sink: ingestServer.name, target: slug }, content: text })
+          ? (slug, text) => checkWithRetry(gate, routerToken, { op: "w", resource: { kind: "stream", id: kbStreamId(ingestServer.name, slug) }, content: text })
           : undefined,
       })
     : null;

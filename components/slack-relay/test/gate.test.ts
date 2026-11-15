@@ -3,7 +3,7 @@
 import assert from "node:assert/strict";
 import { createServer, type Server } from "node:http";
 import { test } from "node:test";
-import { checkWithRetry, GateDenied, GateUnavailable, RelaygateClient } from "../src/gate.ts";
+import { checkWithRetry, GateDenied, GateUnavailable, kbStreamId, RelaygateClient, slackStreamId } from "../src/gate.ts";
 import { Ledger } from "../src/ledger.ts";
 import { DeterministicOrchestrator } from "../src/orchestrator.ts";
 import { Router } from "../src/router.ts";
@@ -78,7 +78,7 @@ test("check: allow resolves, deny is final, unavailable is retried then fails cl
   const g = await fakeGate();
   try {
     const gate = new RelaygateClient({ url: g.url, enrollmentKey: "ek_pit" });
-    const req = { op: "w" as const, resource: { kind: "chat" as const, slack: { team: "T", channel: "C", thread_ts: "1.1" } }, content: "hi" };
+    const req = { op: "w" as const, resource: { kind: "stream" as const, id: "slack:T/C/1.1" }, content: "hi" };
     await gate.check("rg_1", req);
     g.decide = () => 403;
     await assert.rejects(checkWithRetry(gate, "rg_1", req, [1, 1]), GateDenied);
@@ -105,7 +105,7 @@ test("router: every Slack post is checked; a withheld answer never reaches Slack
       orchestrator: new DeterministicOrchestrator(),
       channel: "slack",
       selfName: "router",
-      egress: (ref, text) => checkWithRetry(gate, "rg_router", { op: "w", resource: { kind: "chat", slack: ref }, content: text }, [1]),
+      egress: (ref, text) => checkWithRetry(gate, "rg_router", { op: "w", resource: { kind: "stream", id: slackStreamId(ref) }, content: text }, [1]),
     });
     await router.fromSlack({ team: "T1", channel: "C1", threadTs: "1.1", ts: "1.1", user: "U1", text: "hi", kind: "mention" });
     const agent = ledger.thread({ team: "T1", channel: "C1", threadTs: "1.1" })!.agentName!;
@@ -114,7 +114,7 @@ test("router: every Slack post is checked; a withheld answer never reaches Slack
     assert.equal(await reply("the weather is fine", "m1"), true);
     assert.deepEqual(posts, ["the weather is fine"]);
     assert.equal(g.checks.at(-1)!.body.content, "the weather is fine");
-    assert.deepEqual((g.checks.at(-1)!.body.resource as { slack: unknown }).slack, { team: "T1", channel: "C1", thread_ts: "1.1" });
+    assert.deepEqual(g.checks.at(-1)!.body.resource, { kind: "stream", id: "slack:T1/C1/1.1" });
 
     g.decide = (b) => (String(b.content).includes("SSN") ? 403 : 200);
     assert.equal(await reply("the patient's SSN is 123-45-6789", "m2"), false);
@@ -132,13 +132,13 @@ test("ingest: a denied write is skipped, an allowed one goes through", async () 
     const writes: string[] = [];
     const ing = new SlackIngest({
       brain: { callTool: async (name, a) => (writes.push(`${name}:${a.text ?? a.content}`), {}) },
-      beforeWrite: (slug, text) => checkWithRetry(gate, "rg_router", { op: "w", resource: { kind: "sink", sink: "brain-write", target: slug }, content: text }, [1]),
+      beforeWrite: (slug, text) => checkWithRetry(gate, "rg_router", { op: "w", resource: { kind: "stream", id: kbStreamId("brain-write", slug) }, content: text }, [1]),
     });
     g.decide = (b) => (String(b.content).includes("secret plan") ? 403 : 200);
     await ing.add({ channel: "C1", channelName: "general", ts: "1794693736.0", user: "U1", text: "hello" });
     await assert.rejects(ing.add({ channel: "C1", channelName: "general", ts: "1794693737.0", user: "U1", text: "the secret plan" }), GateDenied);
     assert.equal(writes.length, 1);
-    assert.equal((g.checks.at(-1)!.body.resource as { kind: string }).kind, "sink");
+    assert.match((g.checks.at(-1)!.body.resource as { id: string }).id, /^kb:brain-write\/slack\/general-c1\//);
   } finally {
     g.server.close();
   }

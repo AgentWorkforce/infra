@@ -23,9 +23,18 @@ export class GateDenied extends Error {
 /** The gate couldn't decide (classifier down, upstream down). Retryable; never "allow". */
 export class GateUnavailable extends Error {}
 
-export type CheckResource =
-  | { kind: "chat"; slack: { team: string; channel: string; thread_ts: string } }
-  | { kind: "sink"; sink: string; target: string };
+/**
+ * relaygate knows every stream (a Slack thread, a knowledge-base page) only by
+ * an opaque id its owner picks; it never parses it. The ids here are this
+ * component's: slack:<team>/<channel>/<thread_ts>, kb:<server>/<page slug>.
+ */
+export interface CheckResource {
+  kind: "stream";
+  id: string;
+}
+
+export const slackStreamId = (ref: { team: string; channel: string; thread_ts: string }) => `slack:${ref.team}/${ref.channel}/${ref.thread_ts}`;
+export const kbStreamId = (server: string, slug: string) => `kb:${server}/${slug}`;
 
 export interface CheckRequest {
   op: "r" | "w";
