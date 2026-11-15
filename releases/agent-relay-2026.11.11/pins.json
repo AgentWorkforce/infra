@@ -10,10 +10,10 @@
     },
     "sessions-pipeline": {
       "repository": "ghcr.io/agentworkforce/sessions-pipeline",
-      "digest": "sha256:b398c943d2cf8f1be263a9c4ba51298dbbaaf64fb97bff024ba659844e8f7c5e",
+      "digest": "sha256:5ce109633de52ef068fcc5062f12cb5a30a873fe1f1a92c6d414b5cc9086ae12",
       "sourceRepository": "AgentWorkforce/relayhistory-pipeline",
-      "sourceRevision": "1452b6acd70ea1c5f2cb7d842eba53962efa3467",
-      "publishRunId": 43741615157
+      "sourceRevision": "7496c835ce14f3654c8f1b70a8a85ad591439264",
+      "publishRunId": 43752261290
     }
   }
 }

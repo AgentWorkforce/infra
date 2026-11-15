@@ -5,46 +5,46 @@ sessions-pipeline:
   privilegedSql:
     sqlImage:
       repository: ghcr.io/agentworkforce/sessions-pipeline
-      digest: sha256:b398c943d2cf8f1be263a9c4ba51298dbbaaf64fb97bff024ba659844e8f7c5e
+      digest: sha256:5ce109633de52ef068fcc5062f12cb5a30a873fe1f1a92c6d414b5cc9086ae12
   searchWorkerRole:
     bootstrapJob:
       sqlImage:
         repository: ghcr.io/agentworkforce/sessions-pipeline
-        digest: sha256:b398c943d2cf8f1be263a9c4ba51298dbbaaf64fb97bff024ba659844e8f7c5e
+        digest: sha256:5ce109633de52ef068fcc5062f12cb5a30a873fe1f1a92c6d414b5cc9086ae12
   runtimeRole:
     bootstrapJob:
       sqlImage:
         repository: ghcr.io/agentworkforce/sessions-pipeline
-        digest: sha256:b398c943d2cf8f1be263a9c4ba51298dbbaaf64fb97bff024ba659844e8f7c5e
+        digest: sha256:5ce109633de52ef068fcc5062f12cb5a30a873fe1f1a92c6d414b5cc9086ae12
   functionDefaultRevoke:
     bootstrapJob:
       sqlImage:
         repository: ghcr.io/agentworkforce/sessions-pipeline
-        digest: sha256:b398c943d2cf8f1be263a9c4ba51298dbbaaf64fb97bff024ba659844e8f7c5e
+        digest: sha256:5ce109633de52ef068fcc5062f12cb5a30a873fe1f1a92c6d414b5cc9086ae12
   worker:
     image:
       repository: ghcr.io/agentworkforce/sessions-pipeline
-      digest: sha256:b398c943d2cf8f1be263a9c4ba51298dbbaaf64fb97bff024ba659844e8f7c5e
+      digest: sha256:5ce109633de52ef068fcc5062f12cb5a30a873fe1f1a92c6d414b5cc9086ae12
   alleyoop:
     image:
       repository: ghcr.io/agentworkforce/sessions-pipeline
-      digest: sha256:b398c943d2cf8f1be263a9c4ba51298dbbaaf64fb97bff024ba659844e8f7c5e
+      digest: sha256:5ce109633de52ef068fcc5062f12cb5a30a873fe1f1a92c6d414b5cc9086ae12
   sessionReadApi:
     image:
       repository: ghcr.io/agentworkforce/sessions-pipeline
-      digest: sha256:b398c943d2cf8f1be263a9c4ba51298dbbaaf64fb97bff024ba659844e8f7c5e
+      digest: sha256:5ce109633de52ef068fcc5062f12cb5a30a873fe1f1a92c6d414b5cc9086ae12
   searchIndexer:
     image:
       repository: ghcr.io/agentworkforce/sessions-pipeline
-      digest: sha256:b398c943d2cf8f1be263a9c4ba51298dbbaaf64fb97bff024ba659844e8f7c5e
+      digest: sha256:5ce109633de52ef068fcc5062f12cb5a30a873fe1f1a92c6d414b5cc9086ae12
   ingestEdge:
     image:
       repository: ghcr.io/agentworkforce/sessions-pipeline
-      digest: sha256:b398c943d2cf8f1be263a9c4ba51298dbbaaf64fb97bff024ba659844e8f7c5e
+      digest: sha256:5ce109633de52ef068fcc5062f12cb5a30a873fe1f1a92c6d414b5cc9086ae12
   nativeConsumer:
     image:
       repository: ghcr.io/agentworkforce/sessions-pipeline
-      digest: sha256:b398c943d2cf8f1be263a9c4ba51298dbbaaf64fb97bff024ba659844e8f7c5e
+      digest: sha256:5ce109633de52ef068fcc5062f12cb5a30a873fe1f1a92c6d414b5cc9086ae12
 relay-control:
   image:
     repository: ghcr.io/agentworkforce/relay-control
