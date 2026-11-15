@@ -88,6 +88,10 @@ spec:
             {{- if has $backend (list "postgres" "opensearch") }}
             - { name: SEARCH_INDEX_POSTGRES_BACKEND_ID, value: {{ $c.search.backendId | quote }} }
             {{- end }}
+            {{- with $c.search.partialSessions }}
+            {{- if not (has . (list "refuse" "skip")) }}{{ fail "search.partialSessions must be refuse or skip" }}{{ end }}
+            - { name: READ_API_SEARCH_PARTIAL_SESSIONS, value: {{ . | quote }} }
+            {{- end }}
             {{- if eq $backend "opensearch" }}
             - { name: SEARCH_INDEX_OPENSEARCH_URL, value: {{ $c.search.opensearch.url | quote }} }
             - { name: SEARCH_INDEX_OPENSEARCH_AUTH, value: sigv4 }

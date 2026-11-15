@@ -919,6 +919,21 @@ for chart in "${charts[@]}"; do
         missing=$(yq 'select(.kind == "Deployment") | select((.spec.template.spec.topologySpreadConstraints[0].labelSelector.matchLabels["app.kubernetes.io/name"] == .metadata.name) | not) | .metadata.name' <<<"$resilient" | grep -v '^---$' || true)
         [ -z "$missing" ] || err "$chart: generated topology spread does not select its Deployment: $missing"
         ;;
+      relaygate)
+        v=charts/relaygate/ci/sessions-values.yaml
+        out=$(render "$chart" "$v")
+        env_value() { yq "select(.kind == \"Deployment\") | .spec.template.spec.containers[0].env[] | select(.name == \"$1\") | .value" <<<"$out" | sed '/^---$/d;/^$/d'; }
+        [ "$(env_value SESSIONS_URL)" = https://history.example.com ] || err "$chart: SESSIONS_URL not rendered"
+        [ "$(env_value SESSIONS_UPLOAD_URL)" = http://session-ingest-api:8080 ] || err "$chart: SESSIONS_UPLOAD_URL not rendered"
+        [ "$(env_value SESSIONS_READ_URL)" = http://session-read-api:8080 ] || err "$chart: SESSIONS_READ_URL not rendered"
+        [ "$(env_value SESSIONS_HOSTS)" = history.example.com,history.internal.example.com ] || err "$chart: SESSIONS_HOSTS not comma-joined"
+        grep -A1 -F -- '- name: SESSIONS_TOKEN' <<<"$out" | grep -Fq 'name: relaygate-sessions' || err "$chart: named sessionsToken not rendered"
+        out=$(render "$chart" charts/relaygate/ci/proxy-values.yaml)
+        ! grep -Eq 'name: SESSIONS_(TOKEN|UPLOAD_URL|READ_URL|HOSTS)$' <<<"$out" || err "$chart: unset Sessions settings rendered"
+        expect_render_failure "$chart" "$v" "split upstream without sessionsUrl" "need proxy.sessionsUrl" --set proxy.sessionsUrl=
+        expect_render_failure "$chart" "$v" "sessionsHosts without split upstreams" "proxy.sessionsHosts needs proxy.sessionsUploadUrl and proxy.sessionsReadUrl" --set proxy.sessionsReadUrl=
+        expect_render_failure "$chart" "$v" "sessionsHosts loop" "requests would loop back to relaygate" --set proxy.sessionsReadUrl=https://History.example.com:443
+        ;;
       agent-relay)
         v=charts/agent-relay/ci/gcp-proof-values.yaml
         # The standalone RelayHistory component was removed; values that would
