@@ -48,3 +48,19 @@ jobs:
       - name: Shellcheck the lane scripts
         working-directory: agent
         run: shellcheck ./*.sh
+
+      # The credential broker's roles: plan-only tests with mocked providers
+      # (no AWS credentials, no state, no apply).
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: 1.16.7
+          terraform_wrapper: false
+
+      - name: Test the credential broker's Terraform
+        working-directory: agent/broker/terraform
+        run: |
+          terraform fmt -recursive -check .
+          for d in modules/broker-role modules/scoped-role sandbox; do
+            (cd "$d" && terraform init -backend=false -input=false && terraform validate && terraform test)
+          done

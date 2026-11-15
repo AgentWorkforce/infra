@@ -1,8 +1,14 @@
 # AWS credential broker (layered-infra-ops)
 
-Status: draft for Khaliq's review. Nothing here is applied or deployed: no
-role exists yet, `agent/lead-prompt.md` doesn't mention the broker, and these
-files aren't in the host's `laneFiles`.
+Status: merged, not yet live. No role exists yet,
+`agent/lead-prompt.md` doesn't mention the broker, and these files aren't in
+the host's `laneFiles`. After merge, layered-infra-ops applies the Terraform
+(Khaliq, 2026-11-15; see [Applying the Terraform](#applying-the-terraform)).
+
+**Internal only.** This is AgentWorkforce's own tooling for its agents, kept
+in layered-infra-ops' lane (`agent/`), not part of the self-hosted product: no
+chart, Terraform module under `terraform/` or install guide uses it, and a
+self-hosted customer has no reason to deploy it.
 
 ## Why
 
@@ -17,8 +23,9 @@ and name the agent that asked:
   built from the request. STS intersects it with the target role's own
   policy, so the session can do no more than either allows.
 - **Traceable.** RoleSessionName and SourceIdentity are both the agent's
-  name. Session tags carry `broker-request-id`, `agent-run` (the run tag) and
-  `agent`. Every CloudTrail event names the agent and the request, and the
+  name. Session tags carry `broker-request-id`, `agent-run` (the run tag),
+  `agent-ns` (the run's namespace) and `agent`. Every CloudTrail event names
+  the agent and the request, and the
   broker's audit log maps the request to the Relay message it came from.
 
 ## Flow
@@ -55,10 +62,54 @@ Auto rules (allowlist `autoRules`) have three scopes:
 - `request-tag`: creates must carry `agent-run=<runTag>` (`aws:RequestTag`);
 - `resource-tag`: use, stop and delete only on resources tagged `agent-run=<runTag>` (`aws:ResourceTag`).
 
-So a delete is automatic only on the run's own resources. Every session
-policy also denies creating anything with another run's tag, adding or
-removing the `agent-run` tag on an existing resource, and EC2 tagging except
-at create time.
+So a delete is automatic only on the run's own resources.
+
+**Tag-on-create.** AWS checks a second permission when a create carries tags:
+`sqs:CreateQueue` also needs `sqs:TagQueue`, `sns:CreateTopic` needs
+`sns:TagResource`, `logs:CreateLogGroup` needs `logs:TagResource` and
+`logs:TagLogGroup`, and so on. Each create rule pulls in its tag rule
+(`impliedBy`). Outside EC2, IAM can't tell tagging at create time apart from
+tagging an existing resource. Those creates are therefore named for the run's
+**namespace**, and the tag permission applies only to those names.
+
+The namespace comes from the broker, not the requester. When a run tag is
+first claimed, the broker records a namespace `<runTag>-<8 random hex>`
+(e.g. `terse-mig-42-0a1b2c3d`) in `run-tags.json`. It returns the namespace
+in every reply and puts it on every session as the `agent-ns` tag. The run's
+queues, topics, log groups, tables and secrets must be named
+`<namespace>--…`. Tag-on-create is granted only there: by the session policy
+(`{ns}` in the allowlist), and by the ceiling
+(`${aws:PrincipalTag/agent-ns}--*`).
+- **No claiming existing resources.** Nobody can predict a namespace before
+  the broker picks it, so a resource that existed before the claim can't
+  carry one. An untagged queue someone named `foo--shared` is not run `foo`'s,
+  and a session can't tag it and then delete it. A name chosen by the
+  requester would not prove the run created the resource; the broker's
+  random part does.
+- **No overlap between runs.** Neither run tags nor the random part may
+  contain `--`, so no namespace's `<ns>--*` matches another's names, even
+  when one run tag prefixes another (`foo` vs `foo-bar`). A test checks every
+  pair.
+- **A second layer.** No session can overwrite a run tag a resource already
+  carries (`DenyOverwritingAnotherRunsTag`, in the session policy and the
+  ceiling).
+
+EC2 uses `ec2:CreateAction` instead (`ec2:CreateTags` only during
+RunInstances or CreateVolume).
+
+Each session policy also carries denies:
+- creating anything with another run's tag;
+- removing the run tag;
+- adding it anywhere except the run's own names;
+- overwriting another run's tag on a resource;
+- EC2 tagging after create;
+- regions outside the account's list (one `DenyOutsideRegions` statement).
+
+A session policy only narrows, so the broker keeps only the deny actions the
+session also allows. That keeps it under STS's 2,048-character limit. A
+request too large for one policy (for example creates in five services at
+once) is refused with "split the request". The role's ceiling holds every
+deny in full.
 
 A run tag is claimed by the first agent that receives credentials for it
 (`run-tags.json`). A different agent asking for that tag needs approval.
@@ -74,6 +125,15 @@ A run tag is claimed by the first agent that receives credentials for it
 - An approval is single use and expires after `approvalWindowMinutes` (30).
   When it arrives, the broker decides the request again against the current
   allowlist. If the policy changed, the approval is void.
+- Each approved action gets the condition IAM can enforce for it. Under
+  scope `run-tag`, an action an auto rule covers keeps that rule's scope,
+  including tag-on-create. Otherwise the verb decides: Describe/List reads
+  are unconditioned (account-level reads have no tagged resource), creates
+  must carry the run tag, and everything else applies only to resources
+  carrying it. Under scope `account` there is no tag condition, only the
+  requested resources. The approval prompt lists every grant with its
+  condition, so Khaliq sees exactly what IAM will enforce, including which
+  grants are account-wide.
 - Approval-tier sessions use the account's `roles.elevated`. None exists yet,
   so approval-tier requests are refused up front rather than parked, and
   Khaliq isn't asked about something the broker can't issue.
@@ -87,6 +147,30 @@ A run tag is claimed by the first agent that receives credentials for it
   item template goes to `op item create` on stdin, never on argv. This is the
   cross-node path, for linuyc agents.
 
+Before anything is minted, the broker writes the run-tag claim and a cleanup
+record holding the planned delivery: the file path, or the 1Password item
+title `aws-broker-<request id>`. A failed write of either, or a failed mint,
+undoes both. A delivery that fails partway is removed straight away:
+- A file is removed for certain. Its record goes, and a claim this issue made
+  is released, because nobody holds the credentials.
+- An `op item create` that timed out may still commit after the delete. So
+  the planned record stays, `sweep` deletes by the same title after expiry,
+  and only then releases the claim.
+- If removal fails, both stay for `sweep`. The claim stays with the
+  requester, the only agent who could read a leftover delivery.
+
+A claim that existed before the request is never released. Once any
+credentials for a run are delivered, its claim is marked `delivered` and is
+permanent: a deferred release left by an earlier failed delivery can't free
+a run that has since been used (and whose resources carry its tag). Every
+`aws` and `op` call has a 30 s timeout.
+
+One broker run holds the state at a time, under a kernel lock: `flock(1)`
+(util-linux) on `<state>/.lock`, held by a child that reads the broker's
+stdin. If the broker dies, however it dies, the pipe closes and the kernel
+drops the lock. So there is no stale lock to detect or take over, and no way
+for one run to remove another's.
+
 `sweep` removes deliveries whose credentials have expired. The Relay reply
 holds only the pointer, the expiry, the access key id (not a secret; it's how
 CloudTrail is searched) and the digest.
@@ -98,8 +182,10 @@ pending-approval, approval-rejected, approved, refused, issued,
 delivery-removed, error. It records the requester and approver envelopes,
 the Relay message id, the account, role, session name, actions, digest,
 access key id and expiry. Lines are hash-chained (`prev`, `hash`) and
-checked with `cli.ts verify-audit`. The writer refuses any line that contains
-the issued secret or token, or looks like an STS secret.
+checked with `cli.ts verify-audit`. The writer refuses a line that has a
+credential field name, or that contains the exact secret or token just
+minted. It never judges a value by its shape, so a commit SHA in a purpose or
+a 40-character run tag is ordinary metadata.
 
 ## AWS side (Terraform, `broker/terraform`)
 
@@ -110,21 +196,54 @@ the issued secret or token, or looks like an STS secret.
   ARNs. Sessions last at most 1 h.
 - `modules/scoped-role`: `agent-broker-sandbox-scoped` in 805532413586. It
   trusts only the broker role, and only when the broker sets a `cb-*`
-  request id, the run and agent tags (and no other tag keys) and a source
+  request id, the run, namespace and agent tags (and no other tag keys) and a source
   identity. Its ceiling is PowerUserAccess plus denies: IAM, STS,
   organizations, account, SSO, identity store, CloudTrail, Config,
   GuardDuty, Security Hub, RAM and KMS key deletion or policy; any session
-  without the run tag; creating with another run's tag; moving the run tag;
+  without the run tag; creating with another run's tag; removing the run
+  tag; adding it except on resources named `${aws:PrincipalTag/agent-ns}--…`;
+  overwriting another run's tag;
   EC2 tags after create; stop or delete outside
   `${aws:PrincipalTag/agent-run}`; regions outside the allowed list. These
-  denies hold even if the policy engine has a bug.
-- `sandbox/`: the root that wires the two together across both accounts. It
-  has no backend and is applied by a human only.
+  denies hold even if the policy engine has a bug. A test pins the
+  ceiling's tag lists and names to `policy.ts`.
+- `sandbox/`: the root that wires the two together across both accounts, on
+  an S3 backend configured at init.
+
+Agent CI runs `terraform fmt`, `validate` and `test` (mocked providers, plan
+only) on all three.
 
 Credential chain: host instance role → `agent-cred-broker` → scoped role. Role
 chaining caps each hop at 1 h, which matches the 60-minute maximum.
 
-## Running it (after review)
+## Applying the Terraform
+
+layered-infra-ops applies `sandbox/` once this is merged to main (Khaliq,
+2026-11-15). It works from a main checkout, never a branch, and never from CI.
+
+1. Prerequisites:
+   - A versioned, private S3 state bucket in the broker account
+     (`backend.hcl` from `backend.hcl.example`).
+   - A way into 805532413586: a role there that trusts infra-ops' admin role
+     (`sandbox_assume_role_arn`), or a `sandbox_profile`.
+   - `terraform.tfvars` from `terraform.tfvars.example`, with the broker
+     account and the host role `layered-agent-infra-ops-<stage>`.
+2. `terraform init -backend-config=backend.hcl`, then
+   `terraform plan -out=broker.tfplan`. Post the plan summary to Khaliq: it
+   should show 2 roles, 2 inline policies and 1 attachment, all creates, and
+   nothing changed or destroyed. Then `terraform apply broker.tfplan`.
+   `allowed_account_ids` stops the run before any change if a profile points
+   at the wrong account.
+3. Check that `sandbox_scoped_role_arn` equals the allowlist's `roles.scoped`
+   (a test already pins this).
+
+The broker can't use the role until the infra-ops host can assume it. That
+needs `credentialBroker: true` (set here, live after a full Agent Deploy) and
+the layered-agents host boundary (layered-agents#43, live after Khaliq's
+platform deploy). Applying first is harmless: nothing can assume the broker
+role until then.
+
+## Running it (after the roles exist)
 
 ```bash
 # the broker host, as the agent user, once the roles exist:
@@ -156,11 +275,13 @@ the approval tier only.
    prompt-injected lead could pass a wrong name. Should the broker run as a
    deterministic Relay listener, or check the message id against the relay
    API, before this goes live?
-2. **The broker account and host role ARN.** Which account does
-   layered-infra-ops run in? The host boundary in layered-agents allows
-   `sts:AssumeRole` only on the admin role today. It needs a statement for
-   `agent-cred-broker`, which is an IAM change in layered-agents.
-   Alternative: trust the admin role and chain from it.
+2. **The broker account and sandbox access.** Which account does
+   layered-infra-ops run in? To apply the sandbox side, infra-ops also needs a
+   role in 805532413586 that trusts its admin role. (The host grant is done:
+   AgentWorkforce/layered-agents#43 added spec `credentialBroker` in 0.1.22,
+   `agent/agent.config.ts` sets it, and setup-lane.sh writes the
+   `aws-cred-broker` profile from `CRED_BROKER_ROLE_ARN`. The boundary goes
+   live with Khaliq's next layered-agents platform deploy.)
 3. **Prod accounts and the elevated roles.** Which account ids, and should
    each get an `agent-broker-elevated` role (what ceiling)? Until then, the
    approval tier refuses.

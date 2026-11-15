@@ -5,12 +5,13 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, statSync, existsSync, writeFileSync } from "node:fs";
+import { spawn } from "node:child_process";
+import { chmodSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, statSync, existsSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { verifyAudit } from "../broker/src/audit.ts";
-import { Broker } from "../broker/src/broker.ts";
-import { defaultDeliverer, onePasswordTemplate, type OpRunner } from "../broker/src/deliver.ts";
+import { appendAudit, verifyAudit } from "../broker/src/audit.ts";
+import { Broker, withLock } from "../broker/src/broker.ts";
+import { defaultDeliverer, onePasswordTemplate, type Deliverer, type OpRunner } from "../broker/src/deliver.ts";
 import type { Allowlist, CredentialRequest, Principal } from "../broker/src/policy.ts";
 import { assumeRoleArgs, type AssumeInput, type StsClient } from "../broker/src/sts.ts";
 
@@ -25,18 +26,19 @@ const TOKEN = "IQoJb3JpZ2luX2VjEFAKE" + "x".repeat(300);
 const requester: Principal = { name: "tersemigrationgrok", address: "tersemigrationgrok@linuyc-desktop", kind: "agent" };
 const khaliq: Principal = { name: "khaliq-gant", address: "khaliq-gant@finn-mac-mini", kind: "human" };
 
-function setup(start = new Date("2026-11-14T12:00:00Z")) {
+function setup(start = new Date("2026-11-14T12:00:00Z"), over: { sts?: StsClient; deliverer?: (base: Deliverer) => Deliverer } = {}) {
   const dir = mkdtempSync(join(tmpdir(), "broker-test-"));
   const calls: AssumeInput[] = [];
   let clock = start;
   let n = 0;
-  const sts: StsClient = {
+  const sts: StsClient = over.sts ?? {
     async assumeRole(input) {
       calls.push(input);
       return { accessKeyId: `ASIAFAKE${calls.length}`, secretAccessKey: SECRET, sessionToken: TOKEN, expiration: new Date(clock.getTime() + input.durationSeconds * 1000).toISOString() };
     },
   };
-  const broker = new Broker({ allowlist, stateDir: join(dir, "state"), sts, deliverer: defaultDeliverer(join(dir, "creds")), now: () => clock, newId: () => `cb-${(++n).toString(16).padStart(12, "0")}` });
+  const base = defaultDeliverer(join(dir, "creds"));
+  const broker = new Broker({ allowlist, stateDir: join(dir, "state"), sts, deliverer: over.deliverer ? over.deliverer(base) : base, now: () => clock, newId: () => `cb-${(++n).toString(16).padStart(12, "0")}`, newNamespaceSuffix: () => "0a1b2c3d" });
   return { dir, broker, calls, tick: (min: number) => (clock = new Date(clock.getTime() + min * 60_000)) };
 }
 
@@ -65,7 +67,8 @@ test("auto issue: STS gets the agent's name, tags and session policy; creds go t
   assert.equal(c.sessionName, "tersemigrationgrok");
   assert.equal(c.sourceIdentity, "tersemigrationgrok");
   assert.equal(c.durationSeconds, 900);
-  assert.deepEqual(c.tags, { "broker-request-id": r.requestId, "agent-run": "terse-mig-42", agent: "tersemigrationgrok" });
+  assert.deepEqual(c.tags, { "broker-request-id": r.requestId, "agent-run": "terse-mig-42", "agent-ns": "terse-mig-42-0a1b2c3d", agent: "tersemigrationgrok" });
+  assert.equal(r.namespace, "terse-mig-42-0a1b2c3d", "the reply tells the agent how to name what it creates");
   assert.equal(r.delivery!.kind, "file");
   assert.equal(statSync(r.delivery!.ref).mode & 0o777, 0o600);
   const file = JSON.parse(readFileSync(r.delivery!.ref, "utf8")) as Record<string, unknown>;
@@ -186,4 +189,254 @@ test("the STS call: session policy and tags on argv (not secret), the broker pro
   assert.deepEqual(args.slice(0, 4), ["sts", "assume-role", "--profile", "aws-cred-broker"]);
   assert.ok(args.includes("--source-identity"));
   assert.deepEqual(args.slice(-3), ["Key=broker-request-id,Value=cb-1", "Key=agent-run,Value=t1", "Key=agent,Value=a-b"]);
+});
+
+test("ordinary metadata is never mistaken for a credential: 40-char run tags, commit SHAs, long names", async () => {
+  const { broker } = setup();
+  const sha = "0123456789abcdef0123456789abcdef01234567";
+  const r = await broker.request(req({ runTag: "a".repeat(40), purpose: `soak test for commit ${sha} and ${"B".repeat(48)}` }), { ...requester, name: "x".repeat(60) });
+  assert.equal(r.outcome, "issued", r.reasons.join("; "));
+  assert.deepEqual(verifyAudit(broker.auditPath), []);
+});
+
+test("the audit writer still refuses credential fields and the exact minted values", () => {
+  const path = join(mkdtempSync(join(tmpdir(), "broker-audit-")), "audit.jsonl");
+  const now = new Date();
+  assert.throws(() => appendAudit(path, { kind: "issued", requestId: "cb-1", reasons: [SECRET] }, now, [SECRET, TOKEN]), /credential/);
+  assert.throws(() => appendAudit(path, { kind: "issued", requestId: "cb-1", ...({ SessionToken: "x" } as object) }, now), /credential/);
+  assert.doesNotThrow(() => appendAudit(path, { kind: "issued", requestId: "cb-1", reasons: ["a".repeat(64)] }, now, [SECRET, TOKEN]));
+});
+
+/** A separate process that takes the broker lock, says "held", and keeps it until killed. */
+function holder(dir: string) {
+  const url = new URL("../broker/src/lock.ts", import.meta.url).href;
+  const code = `const { withLock } = await import(${JSON.stringify(url)});
+    await withLock(${JSON.stringify(dir)}, () => new Promise(() => { console.log("held"); setInterval(() => {}, 1000); }));`;
+  const p = spawn(process.execPath, ["--input-type=module", "-e", code], { stdio: ["ignore", "pipe", "inherit"] });
+  const exited = new Promise<void>((resolve) => p.on("exit", () => resolve()));
+  // Settles either way: "held", or the holder failing before it got there (error, exit, or 10 s).
+  const held = new Promise<void>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error("lock holder never reported held")), 10_000);
+    p.stdout.on("data", (d: Buffer) => d.toString().includes("held") && (clearTimeout(timer), resolve()));
+    p.on("error", (e) => (clearTimeout(timer), reject(e)));
+    p.on("exit", (code) => (clearTimeout(timer), reject(new Error(`lock holder exited (${code}) before holding`))));
+  });
+  const kill = async () => {
+    if (p.exitCode === null && p.signalCode === null) p.kill("SIGKILL");
+    await exited;
+  };
+  return { p, held, kill };
+}
+
+test("the lock: a live holder keeps it however long it runs; when it dies (even SIGKILL) the kernel releases it", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "broker-lock-"));
+  const h = holder(dir);
+  try {
+    await h.held;
+    await assert.rejects(withLock(dir, async () => "stolen", 300), /locked by another run/);
+  } finally {
+    await h.kill(); // never leave a live holder behind, even if an assertion failed
+  }
+  assert.equal(await withLock(dir, async () => "ran", 5_000), "ran", "no stale lock to clean up");
+  // Released after each run, and taken again straight away.
+  assert.equal(await withLock(dir, async () => "again", 1_000), "again");
+});
+
+test("the run-tag claim and cleanup record are written before minting; a failed mint undoes both", async () => {
+  let seenRecord = false;
+  let stateDir = "";
+  const failing: StsClient = {
+    async assumeRole() {
+      seenRecord = readdirSync(join(stateDir, "issued")).length === 1 && JSON.parse(readFileSync(join(stateDir, "run-tags.json"), "utf8"))["terse-mig-42"]?.owner === "tersemigrationgrok";
+      throw new Error("sts assume-role failed: AccessDenied");
+    },
+  };
+  const { broker } = setup(undefined, { sts: failing });
+  stateDir = broker.deps.stateDir;
+  const r = await broker.request(req(), requester);
+  assert.equal(r.outcome, "error");
+  assert.ok(seenRecord, "both were on disk while STS ran");
+  assert.deepEqual(readdirSync(join(stateDir, "issued")), []);
+  assert.deepEqual(JSON.parse(readFileSync(join(stateDir, "run-tags.json"), "utf8")), {}, "claim rolled back");
+});
+
+test("a delivery that fails partway is removed; if removal fails too, sweep still finds it from the planned record", async () => {
+  // deliver writes the file, then throws (an op timeout after the item was created looks the same).
+  const partial = (base: Deliverer): Deliverer => ({
+    ...base,
+    async deliver(d, agent, id, creds) {
+      await base.deliver(d, agent, id, creds);
+      throw new Error("timed out");
+    },
+  });
+  const a = setup(undefined, { deliverer: partial });
+  const r = await a.broker.request(req(), requester);
+  assert.equal(r.outcome, "error");
+  const planned = join(a.dir, "creds", "tersemigrationgrok", `${r.requestId}.json`);
+  assert.ok(!existsSync(planned), "removed straight away");
+  assert.deepEqual(readdirSync(join(a.broker.deps.stateDir, "issued")), []);
+  noSecrets(readFileSync(a.broker.auditPath, "utf8"), "audit log");
+
+  let removeFails = true;
+  const stuck = (base: Deliverer): Deliverer => ({
+    ...partial(base),
+    async remove(ref) {
+      if (removeFails) throw new Error("op unavailable");
+      return base.remove(ref);
+    },
+  });
+  const b = setup(undefined, { deliverer: stuck });
+  const r2 = await b.broker.request(req(), requester);
+  assert.equal(r2.outcome, "error");
+  const path2 = join(b.dir, "creds", "tersemigrationgrok", `${r2.requestId}.json`);
+  assert.ok(existsSync(path2), "still there: removal failed");
+  removeFails = false;
+  b.tick(17);
+  assert.equal(await b.broker.sweep(), 1);
+  assert.ok(!existsSync(path2), "sweep removed it from the planned record");
+});
+
+test("1Password: the planned ref is the item title, so an item whose id was never returned can still be deleted", () => {
+  const d = defaultDeliverer(mkdtempSync(join(tmpdir(), "broker-op-")), async () => "");
+  assert.deepEqual(d.planned({ kind: "1password", vault: "agents" }, "tersemigrationgrok", "cb-000000000001"), { kind: "1password", ref: "op://agents/aws-broker-cb-000000000001" });
+});
+
+const other: Principal = { name: "other-agent", address: "other-agent@linuyc-desktop", kind: "agent" };
+
+test("a failed pre-mint write releases the claim: no credentials, so another agent can still take the tag", async () => {
+  const { broker, calls } = setup();
+  const issued = join(broker.deps.stateDir, "issued");
+  chmodSync(issued, 0o500); // run-tags.json lands, the cleanup record can't
+  try {
+    const r = await broker.request(req(), requester);
+    assert.equal(r.outcome, "error");
+    assert.match(r.reasons[0]!, /could not record the issue/);
+  } finally {
+    chmodSync(issued, 0o700);
+  }
+  assert.equal(calls.length, 0, "nothing minted");
+  assert.deepEqual(JSON.parse(readFileSync(join(broker.deps.stateDir, "run-tags.json"), "utf8")), {}, "claim rolled back");
+  assert.equal((await broker.request(req(), other)).outcome, "issued", "the tag is free for the next agent");
+});
+
+test("a failed delivery that was cleaned up releases the claim; one that couldn't be cleaned up keeps it with the requester", async () => {
+  const failing = (base: Deliverer): Deliverer => ({
+    ...base,
+    async deliver() {
+      throw new Error("vault unavailable");
+    },
+  });
+  const a = setup(undefined, { deliverer: failing });
+  assert.equal((await a.broker.request(req(), requester)).outcome, "error");
+  assert.deepEqual(JSON.parse(readFileSync(join(a.broker.deps.stateDir, "run-tags.json"), "utf8")), {});
+
+  const stuck = (base: Deliverer): Deliverer => ({
+    ...failing(base),
+    async remove() {
+      throw new Error("op unavailable");
+    },
+  });
+  const b = setup(undefined, { deliverer: stuck });
+  assert.equal((await b.broker.request(req(), requester)).outcome, "error");
+  assert.deepEqual(JSON.parse(readFileSync(join(b.broker.deps.stateDir, "run-tags.json"), "utf8")), { "terse-mig-42": { owner: "tersemigrationgrok", namespace: "terse-mig-42-0a1b2c3d" } }, "kept: a leftover delivery may exist");
+});
+
+test("an existing claim is never released by a later failed issue", async () => {
+  let fail = false;
+  const sts: StsClient = {
+    async assumeRole(input) {
+      if (fail) throw new Error("sts assume-role failed: Throttling");
+      return { accessKeyId: "ASIAFAKE1", secretAccessKey: SECRET, sessionToken: TOKEN, expiration: new Date(Date.now() + input.durationSeconds * 1000).toISOString() };
+    },
+  };
+  const { broker } = setup(undefined, { sts });
+  assert.equal((await broker.request(req(), requester)).outcome, "issued");
+  fail = true;
+  assert.equal((await broker.request(req(), requester)).outcome, "error");
+  assert.deepEqual(JSON.parse(readFileSync(join(broker.deps.stateDir, "run-tags.json"), "utf8")), { "terse-mig-42": { owner: "tersemigrationgrok", namespace: "terse-mig-42-0a1b2c3d", delivered: true } });
+});
+
+/** A fake 1Password deliverer: the first delivery times out (an op create that may still commit), later ones succeed. */
+function flakyVault() {
+  const state = { failNext: true, removed: [] as string[] };
+  const deliverer = (): Deliverer => ({
+    planned: (_d, _a, id) => ({ kind: "1password", ref: `op://agents/aws-broker-${id}` }),
+    async deliver(_d, _a, id) {
+      if (state.failNext) {
+        state.failNext = false;
+        throw new Error("op item create timed out");
+      }
+      return { kind: "1password", ref: `op://agents/item${id.slice(3)}` };
+    },
+    async remove(ref) {
+      state.removed.push(ref.ref);
+    },
+  });
+  return { state, deliverer };
+}
+
+const claims = (b: Broker) => JSON.parse(readFileSync(join(b.deps.stateDir, "run-tags.json"), "utf8")) as Record<string, unknown>;
+
+test("a timed-out 1Password delivery: the planned record stays and sweep releases the claim only after removing it", async () => {
+  const v = flakyVault();
+  const { broker, tick } = setup(undefined, { deliverer: v.deliverer });
+  const r = await broker.request(req({ delivery: { kind: "1password", vault: "agents" } }), requester);
+  assert.equal(r.outcome, "error");
+  assert.ok(claims(broker)["terse-mig-42"], "held while a late create might still land");
+  assert.equal(readdirSync(join(broker.deps.stateDir, "issued")).length, 1, "planned record kept for sweep");
+  tick(17);
+  assert.equal(await broker.sweep(), 1);
+  assert.ok(v.state.removed.includes(`op://agents/aws-broker-${r.requestId}`), "deleted again by title after expiry");
+  assert.deepEqual(claims(broker), {}, "released once nothing can hold credentials");
+});
+
+test("a successful retry makes the claim permanent: sweeping the earlier failed delivery never frees an active run", async () => {
+  const v = flakyVault();
+  const { broker, tick } = setup(undefined, { deliverer: v.deliverer });
+  const op = { kind: "1password" as const, vault: "agents" };
+  assert.equal((await broker.request(req({ delivery: op }), requester)).outcome, "error");
+  const ok = await broker.request(req({ delivery: op }), requester);
+  assert.equal(ok.outcome, "issued");
+  tick(17);
+  assert.equal(await broker.sweep(), 2);
+  assert.deepEqual(claims(broker), { "terse-mig-42": { owner: "tersemigrationgrok", namespace: "terse-mig-42-0a1b2c3d", delivered: true } });
+  assert.equal((await broker.request(req(), other)).outcome, "denied", "another agent still can't take the run");
+});
+
+test("the lock: processes competing after a holder is killed never run at the same time", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "broker-race-"));
+  const log = join(dir, "log");
+  writeFileSync(log, "");
+  const h = holder(dir);
+  try {
+    await h.held;
+  } catch (e) {
+    await h.kill();
+    throw e;
+  }
+  const brokerUrl = new URL("../broker/src/broker.ts", import.meta.url).href;
+  const child = (id: number) =>
+    new Promise<number>((resolve) => {
+      const code = `
+        import { appendFileSync } from "node:fs";
+        const { withLock } = await import(${JSON.stringify(brokerUrl)});
+        await withLock(${JSON.stringify(dir)}, async () => {
+          appendFileSync(${JSON.stringify(log)}, "S${id}\\n");
+          await new Promise((r) => setTimeout(r, 60));
+          appendFileSync(${JSON.stringify(log)}, "E${id}\\n");
+        }, 20000);`;
+      const p = spawn(process.execPath, ["--input-type=module", "-e", code], { stdio: "inherit" });
+      p.on("exit", (c) => resolve(c ?? 1));
+    });
+  const runs = [1, 2, 3, 4, 5, 6].map(child);
+  await h.kill();
+  const codes = await Promise.all(runs);
+  assert.deepEqual(codes, [0, 0, 0, 0, 0, 0]);
+  const lines = readFileSync(log, "utf8").trim().split("\n");
+  assert.equal(lines.length, 12);
+  for (let i = 0; i < lines.length; i += 2) {
+    assert.match(lines[i]!, /^S\d$/, `entry ${i}: ${lines.join(" ")}`);
+    assert.equal(lines[i + 1], `E${lines[i]!.slice(1)}`, `no overlap: ${lines.join(" ")}`);
+  }
+  assert.equal(await withLock(dir, async () => "free", 1_000), "free", "released after the last run");
 });

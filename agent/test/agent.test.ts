@@ -42,13 +42,17 @@ test("names, secrets and the admin role", () => {
   assert.deepEqual(agent.input.repos, ["AgentWorkforce/infra"]);
 });
 
-test("with an account id: the host may assume exactly its admin role, and the env file names it", async () => {
+test("with an account id: the host may assume exactly its admin role and the credential broker's role, and the env file names both", async () => {
   const { defineLayeredAgent } = await import("@agentworkforce/layered-agent");
   const a = defineLayeredAgent({ ...agent.input, accountId: ACCOUNT });
   const admin = `arn:aws:iam::${ACCOUNT}:role/layered-agent-admin-infra-ops-${a.input.stage}`;
+  const broker = `arn:aws:iam::${ACCOUNT}:role/agent-cred-broker`;
   const sts = hostRolePolicy(a, ACCOUNT).Statement.filter((s) => s.Action.some((x) => x.startsWith("sts:")));
-  assert.deepEqual(sts.map((s) => s.Resource), [[admin]]);
+  assert.deepEqual(sts.map((s) => s.Resource), [[admin], [broker]]);
+  assert.deepEqual(sts.map((s) => s.Action), [["sts:AssumeRole"], ["sts:AssumeRole"]]);
   assert.match(a.envFile, new RegExp(`^AWS_ADMIN_ROLE_ARN=${admin}$`, "m"));
+  assert.match(a.envFile, new RegExp(`^CRED_BROKER_ROLE_ARN=${broker}$`, "m"));
+  assert.equal(agent.input.credentialBroker, true);
 });
 
 test("no lane script passes a secret on a sudo command line (sudo logs it to the journal)", () => {

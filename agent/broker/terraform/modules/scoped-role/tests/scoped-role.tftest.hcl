@@ -12,16 +12,16 @@ run "trusts_only_the_broker_with_request_tags_and_source_identity" {
     error_message = "every trust statement names only the broker role"
   }
   assert {
-    condition     = output.trust_policy.Statement[0].Condition.Null == { "aws:RequestTag/agent-run" = "false", "aws:RequestTag/agent" = "false", "sts:SourceIdentity" = "false" }
-    error_message = "AssumeRole requires the run tag, agent tag and a source identity"
+    condition     = output.trust_policy.Statement[0].Condition.Null == { "aws:RequestTag/agent-run" = "false", "aws:RequestTag/agent-ns" = "false", "aws:RequestTag/agent" = "false", "sts:SourceIdentity" = "false" }
+    error_message = "AssumeRole requires the run tag, namespace tag, agent tag and a source identity"
   }
   assert {
     condition     = output.trust_policy.Statement[0].Condition.StringLike["aws:RequestTag/broker-request-id"] == "cb-*"
     error_message = "AssumeRole requires a broker request id"
   }
   assert {
-    condition     = output.trust_policy.Statement[1].Action == "sts:TagSession" && output.trust_policy.Statement[1].Condition["ForAllValues:StringEquals"]["aws:TagKeys"] == ["broker-request-id", "agent-run", "agent"]
-    error_message = "only the three broker session tags"
+    condition     = output.trust_policy.Statement[1].Action == "sts:TagSession" && output.trust_policy.Statement[1].Condition["ForAllValues:StringEquals"]["aws:TagKeys"] == ["broker-request-id", "agent-run", "agent-ns", "agent"]
+    error_message = "only the four broker session tags"
   }
   assert {
     condition     = aws_iam_role.scoped.assume_role_policy == jsonencode(output.trust_policy) && aws_iam_role.scoped.max_session_duration == 3600
@@ -36,23 +36,44 @@ run "ceiling_denies_identity_untagged_foreign_and_retagging" {
     error_message = "the ceiling is denies only"
   }
   assert {
-    condition     = length(setintersection(toset(output.ceiling_policy.Statement[0].Action), toset(["iam:*", "sts:*", "organizations:*", "account:*", "identitystore:*", "cloudtrail:*"]))) == 6
+    condition     = length(setintersection(toset(output.ceiling_by_sid["DenyIdentityAccountAndAuditControl"].Action), toset(["iam:*", "sts:*", "organizations:*", "account:*", "identitystore:*", "cloudtrail:*"]))) == 6
     error_message = "no IAM, STS, org, account, identity or audit control"
   }
   assert {
-    condition     = output.ceiling_policy.Statement[1].Condition.Null["aws:PrincipalTag/agent-run"] == "true"
+    condition     = output.ceiling_by_sid["DenySessionsWithoutRunTag"].Condition.Null["aws:PrincipalTag/agent-run"] == "true"
     error_message = "a session without the run tag can do nothing"
   }
   assert {
-    condition     = output.ceiling_policy.Statement[2].Condition.StringNotEquals["aws:RequestTag/agent-run"] == "$${aws:PrincipalTag/agent-run}"
+    condition     = output.ceiling_by_sid["DenyCreatingWithAnotherRunsTag"].Condition.StringNotEquals["aws:RequestTag/agent-run"] == "$${aws:PrincipalTag/agent-run}"
     error_message = "nothing created with another run's tag"
   }
   assert {
-    condition     = output.ceiling_policy.Statement[5].Condition.StringNotEquals["aws:ResourceTag/agent-run"] == "$${aws:PrincipalTag/agent-run}" && contains(output.ceiling_policy.Statement[5].Action, "ec2:TerminateInstances")
+    condition     = contains(output.ceiling_by_sid["DenyRemovingTheRunTag"].Action, "sqs:UntagQueue") && !contains(output.ceiling_by_sid["DenyRemovingTheRunTag"].Action, "sqs:TagQueue")
+    error_message = "the run tag can never be removed; adding it is handled by name"
+  }
+  assert {
+    condition     = contains(output.ceiling_by_sid["DenyRunTagOnResourcesNotNamedForTheRun"].Action, "sqs:TagQueue") && contains(output.ceiling_by_sid["DenyRunTagOnResourcesNotNamedForTheRun"].NotResource, "arn:aws:sqs:*:*:$${aws:PrincipalTag/agent-ns}--*")
+    error_message = "tag-on-create only on resources named <the run's broker-assigned namespace>--…"
+  }
+  assert {
+    condition     = alltrue([for r in output.ceiling_by_sid["DenyRunTagOnResourcesNotNamedForTheRun"].NotResource : endswith(r, "$${aws:PrincipalTag/agent-ns}--*")])
+    error_message = "every run-owned name uses the -- separator, so no run's names overlap another's"
+  }
+  assert {
+    condition = (
+      contains(output.ceiling_by_sid["DenyOverwritingAnotherRunsTag"].Action, "sqs:TagQueue") &&
+      contains(output.ceiling_by_sid["DenyOverwritingAnotherRunsTag"].Action, "ec2:CreateTags") &&
+      output.ceiling_by_sid["DenyOverwritingAnotherRunsTag"].Condition.StringNotEquals["aws:ResourceTag/agent-run"] == "$${aws:PrincipalTag/agent-run}" &&
+      output.ceiling_by_sid["DenyOverwritingAnotherRunsTag"].Condition.Null["aws:ResourceTag/agent-run"] == "false"
+    )
+    error_message = "a resource already carrying another run's tag can't be re-tagged"
+  }
+  assert {
+    condition     = output.ceiling_by_sid["DenyStopAndDeleteOutsideOwnRun"].Condition.StringNotEquals["aws:ResourceTag/agent-run"] == "$${aws:PrincipalTag/agent-run}" && contains(output.ceiling_by_sid["DenyStopAndDeleteOutsideOwnRun"].Action, "ec2:TerminateInstances")
     error_message = "stop and delete only on the session's own run"
   }
   assert {
-    condition     = output.ceiling_policy.Statement[6].Condition.StringNotEquals["aws:RequestedRegion"] == var.allowed_regions
+    condition     = output.ceiling_by_sid["DenyOutsideAllowedRegions"].Condition.StringNotEquals["aws:RequestedRegion"] == var.allowed_regions
     error_message = "allowed regions only"
   }
   assert {

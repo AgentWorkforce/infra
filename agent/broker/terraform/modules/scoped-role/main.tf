@@ -7,13 +7,17 @@
 #    names the agent and the request on every call);
 #  - no IAM, identity, organization, account, audit or STS control;
 #  - no session without the run tag; nothing created with another run's tag;
-#    the run tag can't be added, moved or removed after creation;
+#    the run tag can't be removed, can't overwrite another run's, and can be
+#    added only at create time (EC2) or on resources named for the run's
+#    broker-assigned namespace (other services' tag-on-create);
 #  - deletes and stops only on resources tagged with the session's own run;
 #  - only the allowed regions.
 
 locals {
-  session_tag_keys = ["broker-request-id", var.tag_key, "agent"]
+  # agent-ns: the run's broker-assigned namespace (broker/src/policy.ts RUN_NAMESPACE_RE).
+  session_tag_keys = ["broker-request-id", var.tag_key, "agent-ns", "agent"]
   own_run          = "$${aws:PrincipalTag/${var.tag_key}}"
+  own_namespace    = "$${aws:PrincipalTag/agent-ns}"
 
   trust_policy = {
     Version = "2012-10-17"
@@ -27,6 +31,7 @@ locals {
           StringLike = { "aws:RequestTag/broker-request-id" = "cb-*" }
           Null = {
             "aws:RequestTag/${var.tag_key}" = "false"
+            "aws:RequestTag/agent-ns"       = "false"
             "aws:RequestTag/agent"          = "false"
             "sts:SourceIdentity"            = "false"
           }
@@ -52,12 +57,27 @@ locals {
     ]
   }
 
-  retag_actions = [
+  # Tag writes that add a key: with the run tag, only on resources named
+  # "<the run's broker-assigned namespace>--…", so tag-on-create works
+  # (CreateQueue also checks sqs:TagQueue, and so on) but a resource that
+  # existed before the namespace did can't be claimed.
+  # Must match broker/src/policy.ts TAG_ACTIONS and ownNamedResources.
+  tag_actions = [
+    "sqs:TagQueue", "sns:TagResource", "logs:TagResource", "logs:TagLogGroup",
+    "dynamodb:TagResource", "secretsmanager:TagResource",
+  ]
+  own_named_resources = [
+    "arn:aws:sqs:*:*:${local.own_namespace}--*",
+    "arn:aws:sns:*:*:${local.own_namespace}--*",
+    "arn:aws:logs:*:*:log-group:${local.own_namespace}--*",
+    "arn:aws:dynamodb:*:*:table/${local.own_namespace}--*",
+    "arn:aws:secretsmanager:*:*:secret:${local.own_namespace}--*",
+  ]
+  # Removing the run tag, or tagging through the generic API: never with the run tag. Matches UNTAG_ACTIONS.
+  untag_actions = [
     "ec2:DeleteTags", "tag:TagResources", "tag:UntagResources",
-    "sqs:TagQueue", "sqs:UntagQueue", "sns:TagResource", "sns:UntagResource",
-    "logs:TagResource", "logs:UntagResource", "logs:TagLogGroup", "logs:UntagLogGroup",
-    "dynamodb:TagResource", "dynamodb:UntagResource",
-    "secretsmanager:TagResource", "secretsmanager:UntagResource",
+    "sqs:UntagQueue", "sns:UntagResource", "logs:UntagResource", "logs:UntagLogGroup",
+    "dynamodb:UntagResource", "secretsmanager:UntagResource",
   ]
 
   # Stop and delete class actions the broker can grant automatically: only on the session's own run.
@@ -100,11 +120,31 @@ locals {
         }
       },
       {
-        Sid       = "DenyMovingTheRunTag"
+        Sid       = "DenyRemovingTheRunTag"
         Effect    = "Deny"
-        Action    = local.retag_actions
+        Action    = local.untag_actions
         Resource  = "*"
         Condition = { "ForAnyValue:StringEquals" = { "aws:TagKeys" = [var.tag_key] } }
+      },
+      {
+        Sid         = "DenyRunTagOnResourcesNotNamedForTheRun"
+        Effect      = "Deny"
+        Action      = local.tag_actions
+        NotResource = local.own_named_resources
+        Condition   = { "ForAnyValue:StringEquals" = { "aws:TagKeys" = [var.tag_key] } }
+      },
+      {
+        # Second layer under the disjoint "<run>--" names: a resource that
+        # already carries another run's tag can never be re-tagged to this one.
+        Sid      = "DenyOverwritingAnotherRunsTag"
+        Effect   = "Deny"
+        Action   = concat(local.tag_actions, ["ec2:CreateTags"])
+        Resource = "*"
+        Condition = {
+          "ForAnyValue:StringEquals" = { "aws:TagKeys" = [var.tag_key] }
+          StringNotEquals            = { "aws:ResourceTag/${var.tag_key}" = local.own_run }
+          Null                       = { "aws:ResourceTag/${var.tag_key}" = "false" }
+        }
       },
       {
         Sid       = "DenyEc2TagsAfterCreate"

@@ -26,6 +26,8 @@ export interface DeliveryRef {
 }
 
 export interface Deliverer {
+  /** Where deliver() will put it, known before anything is written: recorded first, so sweep can always clean up. */
+  planned(d: Delivery, agent: string, requestId: string): DeliveryRef;
   deliver(d: Delivery, agent: string, requestId: string, creds: SessionCredentials): Promise<DeliveryRef>;
   remove(ref: DeliveryRef): Promise<void>;
 }
@@ -34,9 +36,12 @@ export function credentialProcessJson(c: SessionCredentials): string {
   return JSON.stringify({ Version: 1, AccessKeyId: c.accessKeyId, SecretAccessKey: c.secretAccessKey, SessionToken: c.sessionToken, Expiration: c.expiration }) + "\n";
 }
 
+/** The 1Password item title: also how a delivery is found and removed before its item id is known. */
+export const onePasswordTitle = (requestId: string) => `aws-broker-${requestId}`;
+
 export function onePasswordTemplate(agent: string, requestId: string, c: SessionCredentials): string {
   return JSON.stringify({
-    title: `aws-broker ${requestId}`,
+    title: onePasswordTitle(requestId),
     category: "API_CREDENTIAL",
     tags: ["aws-cred-broker", `agent:${agent}`],
     fields: [
@@ -51,12 +56,14 @@ export function onePasswordTemplate(agent: string, requestId: string, c: Session
 
 const SAFE = /^[\w.@=+,-]{1,64}$/;
 
+export const OP_TIMEOUT_MS = 30_000;
+
 export type OpRunner = (args: string[], stdin?: string) => Promise<string>;
 
 export function opCli(): OpRunner {
   return (args, stdin) =>
     new Promise((resolve, reject) => {
-      const child = execFile("op", args, { maxBuffer: 1 << 20 }, (err, stdout, stderr) => {
+      const child = execFile("op", args, { maxBuffer: 1 << 20, timeout: OP_TIMEOUT_MS, killSignal: "SIGKILL" }, (err, stdout, stderr) => {
         if (err) reject(new Error(`op ${args[0]} ${args[1]} failed: ${String(stderr).trim().split("\n").at(-1) ?? err.message}`));
         else resolve(stdout);
       });
@@ -65,14 +72,19 @@ export function opCli(): OpRunner {
 }
 
 export function defaultDeliverer(fileRoot: string, op: OpRunner = opCli()): Deliverer {
+  const filePath = (agent: string, requestId: string) => join(fileRoot, agent, `${requestId}.json`);
   return {
+    planned(d, agent, requestId) {
+      if (!SAFE.test(agent) || !SAFE.test(requestId)) throw new Error("delivery: unsafe agent or request id");
+      return d.kind === "file" ? { kind: "file", ref: filePath(agent, requestId) } : { kind: "1password", ref: `op://${d.vault}/${onePasswordTitle(requestId)}` };
+    },
     async deliver(d, agent, requestId, creds) {
       if (!SAFE.test(agent) || !SAFE.test(requestId)) throw new Error("delivery: unsafe agent or request id");
       if (d.kind === "file") {
         const dir = join(fileRoot, agent);
         mkdirSync(dir, { recursive: true, mode: 0o700 });
         chmodSync(dir, 0o700);
-        const path = join(dir, `${requestId}.json`);
+        const path = filePath(agent, requestId);
         const tmp = `${path}.tmp`;
         writeFileSync(tmp, credentialProcessJson(creds), { mode: 0o600, flag: "wx" });
         renameSync(tmp, path);
@@ -85,12 +97,18 @@ export function defaultDeliverer(fileRoot: string, op: OpRunner = opCli()): Deli
     },
     async remove(ref) {
       if (ref.kind === "file") {
-        if (existsSync(ref.ref)) rmSync(ref.ref);
+        for (const p of [ref.ref, `${ref.ref}.tmp`]) if (existsSync(p)) rmSync(p);
         return;
       }
       const m = /^op:\/\/([^/]+)\/([^/]+)$/.exec(ref.ref);
       if (!m) throw new Error(`delivery: bad 1Password ref ${ref.ref}`);
-      await op(["item", "delete", m[2]!, "--vault", m[1]!]);
+      try {
+        await op(["item", "delete", m[2]!, "--vault", m[1]!]);
+      } catch (e) {
+        // A planned ref whose item was never created: nothing to remove.
+        if (m[2]!.startsWith("aws-broker-") && /isn't an item|not found|no item/i.test((e as Error).message)) return;
+        throw e;
+      }
     },
   };
 }

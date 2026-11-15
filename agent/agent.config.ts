@@ -35,6 +35,11 @@ export default defineLayeredAgent({
   // made by the layered-agents platform deploy); setup-lane.sh makes it the
   // agent user's default AWS profile.
   awsAdmin: true,
+  // The host may also assume agent-cred-broker, the AWS credential broker's
+  // one long-lived role (broker/terraform); setup-lane.sh makes it the agent
+  // user's aws-cred-broker profile. Khaliq approved (2026-11-15). Must match
+  // layered-agents infra/agents.ts, which builds the boundary.
+  credentialBroker: true,
   secrets: [
     { envVar: "CLOUDFLARE_API_TOKEN_PARAM", param: "cloudflare-api-token", exportAs: "CLOUDFLARE_API_TOKEN" },
     { envVar: "CLOUDFLARE_ACCOUNT_ID_PARAM", param: "cloudflare-account-id", exportAs: "CLOUDFLARE_ACCOUNT_ID" },
