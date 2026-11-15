@@ -353,3 +353,11 @@ test("ingest still writes when the server has no receipt tool", async () => {
   assert.ok(await ing.add({ channel: "C1", channelName: "general", ts: "1794693736.0", user: "U1", text: "hi" }));
   assert.deepEqual(writes, ["append_page"]);
 });
+
+test("slack calls are form-encoded; pagination stops on a repeated cursor", async () => {
+  const { formBody } = await import("../src/slack.ts");
+  assert.equal(formBody({ channel: "C1", limit: 200, unfurl_links: false, skip: undefined }), "channel=C1&limit=200&unfurl_links=false");
+  const { paged } = await import("../src/backfill.ts");
+  const stuck = { async call() { return { messages: [{ ts: "1.0" }], response_metadata: { next_cursor: "same" } }; } };
+  await assert.rejects(async () => { for await (const _ of paged(stuck, "conversations.history", {}, "messages")) void _; }, /cursor did not advance/);
+});

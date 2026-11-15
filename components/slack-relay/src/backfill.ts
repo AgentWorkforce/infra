@@ -31,7 +31,9 @@ export async function* paged(slack: Pick<SlackWeb, "call">, method: string, body
   do {
     const r = await slack.call(method, { ...body, limit: 200, ...(cursor ? { cursor } : {}) });
     for (const item of (r[field] as Record<string, unknown>[] | undefined) ?? []) yield item;
-    cursor = String((r.response_metadata as { next_cursor?: string } | undefined)?.next_cursor ?? "");
+    const next = String((r.response_metadata as { next_cursor?: string } | undefined)?.next_cursor ?? "");
+    if (next && next === cursor) throw new Error(`slack ${method}: the cursor did not advance`);
+    cursor = next;
   } while (cursor);
 }
 
@@ -70,8 +72,10 @@ async function main(): Promise<void> {
   });
   const channels = values.channel ?? [];
   if (!channels.length) throw new Error("usage: backfill.ts --channel C0123456789 [--channel ...] [--since YYYY-MM-DD] [--dry-run]");
-  const oldest = values.since ? String(Date.parse(`${values.since}T00:00:00Z`) / 1000) : undefined;
-  if (oldest === "NaN") throw new Error(`--since ${values.since} is not a date (YYYY-MM-DD)`);
+  const since = values.since;
+  if (since !== undefined && !/^\d{4}-\d{2}-\d{2}$/.test(since)) throw new Error(`--since "${since}" is not a date (YYYY-MM-DD)`);
+  const oldest = since !== undefined ? String(Date.parse(`${since}T00:00:00Z`) / 1000) : undefined;
+  if (oldest === "NaN") throw new Error(`--since "${since}" is not a date (YYYY-MM-DD)`);
   const dryRun = values["dry-run"] === true;
 
   // relaygate (opt-in): the backfill registers as its own agent, so the
