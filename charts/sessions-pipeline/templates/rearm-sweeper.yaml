@@ -148,6 +148,10 @@ spec:
                 - { name: INGEST_REARM_SWEEPER_ENABLED, value: "true" }
                 - { name: INGEST_REARM_BUCKET, value: {{ $bucket | quote }} }
                 - { name: INGEST_REARM_REGION, value: {{ $region | quote }} }
+                {{- with ($c.ledgerBucket | default dict).bucket }}
+                - { name: INGEST_REARM_LEDGER_BUCKET, value: {{ . | quote }} }
+                - { name: INGEST_REARM_LEDGER_REGION, value: {{ ($c.ledgerBucket.region | default $c.locker.region) | quote }} }
+                {{- end }}
                 {{- with $endpoint }}
                 - { name: INGEST_REARM_ENDPOINT, value: {{ . | quote }} }
                 {{- end }}

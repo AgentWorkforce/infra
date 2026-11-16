@@ -11,6 +11,17 @@
 {{- if ne $ledger "s3" }}{{ fail "ingestEdge.ledgerParallel requires ingestEdge.ledger=s3" }}{{ end -}}
 {{- if or (not (regexMatch "^[0-9]+$" (toString $c.ledgerParallel))) (lt (int $c.ledgerParallel) 1) (gt (int $c.ledgerParallel) 64) }}{{ fail "ingestEdge.ledgerParallel must be an integer from 1 to 64" }}{{ end -}}
 {{- end -}}
+{{- $lb := $c.ledgerBucket | default dict -}}
+{{- if not (kindIs "map" $lb) }}{{ fail "ingestEdge.ledgerBucket must be an object" }}{{ end -}}
+{{- if $lb.bucket -}}
+{{- if ne $ledger "s3" }}{{ fail "ingestEdge.ledgerBucket requires ingestEdge.ledger=s3" }}{{ end -}}
+{{- if ne $c.locker.provider "s3" }}{{ fail "ingestEdge.ledgerBucket requires ingestEdge.locker.provider=s3" }}{{ end -}}
+{{- if or (not (kindIs "string" $lb.bucket)) (not (regexMatch "^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$" $lb.bucket)) }}{{ fail "ingestEdge.ledgerBucket.bucket must be an S3 bucket name" }}{{ end -}}
+{{- if eq $lb.bucket $c.locker.bucket }}{{ fail "ingestEdge.ledgerBucket.bucket must differ from ingestEdge.locker.bucket (leave it empty to keep the ledger there)" }}{{ end -}}
+{{- if and $lb.region (not (regexMatch "^[a-z0-9-]{1,63}$" (toString $lb.region))) }}{{ fail "ingestEdge.ledgerBucket.region must be a region name" }}{{ end -}}
+{{- else if $lb.region -}}
+{{- fail "ingestEdge.ledgerBucket.region requires ingestEdge.ledgerBucket.bucket" -}}
+{{- end -}}
 {{- if not (kindIs "map" $c.admission) }}{{ fail "ingestEdge.admission must be an object" }}{{ end -}}
 {{- $admission := $c.admission -}}
 {{- if or (not (kindIs "string" $admission.mode)) (not (has $admission.mode (list "sync" "async" "drain"))) }}{{ fail "ingestEdge.admission.mode must be sync, async or drain" }}{{ end -}}
@@ -249,6 +260,10 @@ spec:
             {{- end }}
             {{- if not (kindIs "invalid" $c.ledgerParallel) }}
             - { name: INGEST_LEDGER_PARALLEL, value: {{ $c.ledgerParallel | quote }} }
+            {{- end }}
+            {{- with ($c.ledgerBucket | default dict).bucket }}
+            - { name: INGEST_LEDGER_BUCKET, value: {{ . | quote }} }
+            - { name: INGEST_LEDGER_REGION, value: {{ ($c.ledgerBucket.region | default $c.locker.region) | quote }} }
             {{- end }}
             {{- end }}
             - { name: INGEST_MAX_PER_USER, value: {{ $c.maxPerUser | quote }} }

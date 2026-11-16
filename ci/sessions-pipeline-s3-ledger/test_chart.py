@@ -130,6 +130,31 @@ class S3Ledger(unittest.TestCase):
         self.render(merge(load(SQL_FIXTURE), {"ingestEdge": {"ledgerParallel": 8}}),
                     fail="ingestEdge.ledgerParallel requires ingestEdge.ledger=s3")
 
+    def test_ledger_bucket(self):
+        s3 = load(S3_FIXTURE)
+        env = self.ingest_env(self.render(s3))
+        self.assertNotIn("INGEST_LEDGER_BUCKET", env)
+        self.assertNotIn("INGEST_LEDGER_REGION", env)
+        self.assertEqual(helm(s3).stdout, helm(merge(s3, {"ingestEdge": {"ledgerBucket": {"bucket": "", "region": ""}}})).stdout)
+        moved = merge(s3, {"ingestEdge": {"ledgerBucket": {"bucket": "ci-ledger", "region": "us-west-2"}}})
+        env = self.ingest_env(self.render(moved))
+        self.assertEqual(env["INGEST_LEDGER_BUCKET"]["value"], "ci-ledger")
+        self.assertEqual(env["INGEST_LEDGER_REGION"]["value"], "us-west-2")
+        sweeper_env = lambda docs: {e["name"]: e.get("value") for e in self.cronjob(docs)["spec"]["jobTemplate"]["spec"]["template"]["spec"]["containers"][0]["env"]}
+        sw = sweeper_env(self.render(moved))
+        self.assertEqual((sw["INGEST_REARM_LEDGER_BUCKET"], sw["INGEST_REARM_LEDGER_REGION"]), ("ci-ledger", "us-west-2"))
+        self.assertNotIn("INGEST_REARM_LEDGER_BUCKET", sweeper_env(self.render(s3)))
+        default_region = self.ingest_env(self.render(merge(s3, {"ingestEdge": {"ledgerBucket": {"bucket": "ci-ledger"}}})))
+        self.assertEqual(default_region["INGEST_LEDGER_REGION"]["value"], self.ingest_env(self.render(s3))["LOCKER_REGION"]["value"])
+        self.render(merge(load(SQL_FIXTURE), {"ingestEdge": {"ledgerBucket": {"bucket": "ci-ledger"}}}),
+                    fail="ingestEdge.ledgerBucket requires ingestEdge.ledger=s3")
+        self.render(merge(s3, {"ingestEdge": {"ledgerBucket": {"bucket": s3["ingestEdge"]["locker"]["bucket"]}}}),
+                    fail="ingestEdge.ledgerBucket.bucket must differ from ingestEdge.locker.bucket")
+        self.render(merge(s3, {"ingestEdge": {"ledgerBucket": {"bucket": "Bad_Bucket"}}}),
+                    fail="ingestEdge.ledgerBucket.bucket must be an S3 bucket name")
+        self.render(merge(s3, {"ingestEdge": {"ledgerBucket": {"region": "us-west-2"}}}),
+                    fail="ingestEdge.ledgerBucket.region requires ingestEdge.ledgerBucket.bucket")
+
     def test_startup_failure_threshold(self):
         s3 = merge(load(S3_FIXTURE), {"ingestEdge": {"admission": {"mode": "async"}}})
         c = lambda docs: next(d for d in docs if d["kind"] == "Deployment" and d["metadata"]["name"] == "ci-ingest-edge")["spec"]["template"]["spec"]["containers"][0]

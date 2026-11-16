@@ -608,6 +608,18 @@ ingestEdge:
   # Unset (default) renders nothing (the image uses 32). Lower it when admissions x parallel
   # over-subscribes the process's sockets (fetch-level ledger_store_transient).
   ledgerParallel: null
+  # INGEST_LEDGER_BUCKET / INGEST_LEDGER_REGION (relayhistory-pipeline docs/ledger-relocation.md):
+  # the S3 ledger's own objects (each user's ledger/ and the ledger-home marker) in
+  # a separate bucket, e.g. one in the cluster's region; everything else, fences
+  # included, stays in locker.bucket. Requires ledger=s3, locker.provider=s3 and a
+  # services image with ledger-store.ts; same endpoint and credentials as locker.
+  # Empty bucket (default) renders nothing. Moving an existing ledger is an offline
+  # relocation (stop, copy, verify, switch the ledger-home marker), never just a
+  # values change: with this set, no claim admits until the marker names the bucket.
+  ledgerBucket:
+    bucket: ""
+    # Empty: locker.region.
+    region: ""
   fullnameOverride: ""
   image:
     repository: ghcr.io/agentworkforce/96bulls-services

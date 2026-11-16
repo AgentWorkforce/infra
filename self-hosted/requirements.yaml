@@ -407,9 +407,37 @@ compatibility:
       images:
         session-read-api: { repository: ghcr.io/agentworkforce/96bulls-services, digest_required: true }
       notes: 'Defaults READ_API_COMPLETE_SINCE to epoch for a new self-host store populated only by its own ingest. Partial legacy imports must retain an explicit real coverage floor matching the indexer. Image, auth, routing and enabled defaults are unchanged; this does not assert coverage for an imported store or qualify a runtime.'
-    - id: sessions-pipeline-0.8.43
+    - id: sessions-pipeline-0.8.44
       status: unreleased
       current: true
+      charts: { sessions-pipeline: 0.8.44, sessions-pipeline-worker: 0.7.10, session-ingest-api: 0.4.5, session-read-api: 0.2.15 }
+      depends:
+        sessions-pipeline: { worker: 0.7.10, alleyoop: 0.4.5, sessionReadApi: 0.2.15, hoopdb: 0.9.0, session-object-storage: 5.4.0, otel: 0.178.0 }
+      images:
+        sessions-pipeline-worker: { repository: agentworkforce/96bulls-services, digest: sha256:6f22ea17dff336e1431664542759fd27958649388b90a0b2f0881883caa7c6b2 }
+        session-ingest-api: { repository: agentworkforce/96bulls-services, digest: sha256:6f22ea17dff336e1431664542759fd27958649388b90a0b2f0881883caa7c6b2 }
+        session-read-api: { repository: ghcr.io/agentworkforce/96bulls-services, digest_required: true }
+      images_note: "Operator session erase values remain default-off and do not pin the 2026.11.2 candidate image. Runtime qualification is separate. Existing chart/profile image pins remain unchanged."
+      services:
+        source_commit: 7d7229bb31c121ecb98cd4e35c248fc2cf5669ad
+        migration_generation: eff8b3be46565b57ad8fa5e4a066dbb6d1fe608313d9c1680bfbcd484add259b
+      db_combos:
+        - { db_mode: selfhosted, boundary: global-default-revoke, hoopdb: cnpg, status: shipped, profiles: [selfhost-postgres, migration, aws-cnpg], notes: chart Jobs install the runtime role and the function default }
+        - { db_mode: selfhosted, boundary: global-default-revoke, hoopdb: external, status: shipped, profiles: [external-selfhosted], notes: operator runs the bootstrap files as a superuser }
+        - { db_mode: rds, boundary: global-default-revoke, hoopdb: external, status: shipped, profiles: [external-rds, aws-rds-native], notes: the RDS master runs the rds_*.sql bootstrap first }
+        - { db_mode: cloudsql, boundary: global-default-revoke, hoopdb: external, status: shipped, profiles: [gcp-cloudsql], notes: operator runs the Cloud SQL bootstrap files as the migration owner; roleBootstrap false }
+        - { db_mode: supabase, boundary: event-trigger, hoopdb: external, status: held, profiles: [external-supabase], notes: supabaseActivation.hold; migrate refuses until the reviewed event trigger is installed and --activation-check passes }
+        - { db_mode: supabase, boundary: null, hoopdb: external, status: fails closed, profiles: [aws-supabase], notes: renders; migrate refuses with function_boundary_unproven }
+        - { db_mode: local, boundary: null, hoopdb: any, status: dev only, profiles: [], notes: local stack only; never a self-host install }
+      sources:
+        - "charts/sessions-pipeline/Chart.yaml:4"
+        - "charts/sessions-pipeline/profiles/aws-rds-native.yaml"
+        - "ci/sessions-pipeline-profiles/matrix.sh"
+        - "charts/sessions-pipeline/templates/_scrub-engine.tpl:1"
+        - "ci/sessions-pipeline-scrub-engine/test_scrub_engine.py:1"
+      notes: 'Carries 0.8.43. Opt-in ingestEdge.ledgerBucket.{bucket,region} renders INGEST_LEDGER_BUCKET / INGEST_LEDGER_REGION on the ingest edge and INGEST_REARM_LEDGER_BUCKET / _REGION on the re-arm sweeper (requires ledger=s3 and locker.provider=s3; must differ from locker.bucket; region defaults to locker.region). Needs a services image with ledger-store.ts and an offline ledger relocation first (relayhistory-pipeline docs/ledger-relocation.md). Default renders are unchanged apart from the helm.sh/chart labels.'
+    - id: sessions-pipeline-0.8.43
+      status: planned
       charts: { sessions-pipeline: 0.8.43, sessions-pipeline-worker: 0.7.10, session-ingest-api: 0.4.5, session-read-api: 0.2.15 }
       depends:
         sessions-pipeline: { worker: 0.7.10, alleyoop: 0.4.5, sessionReadApi: 0.2.15, hoopdb: 0.9.0, session-object-storage: 5.4.0, otel: 0.178.0 }
@@ -1788,9 +1816,22 @@ compatibility:
       images:
         relayauth: { repository: ghcr.io/agentworkforce/relayauth, digest: sha256:eb71daa28e30eb7305f666d0bccc5a4002e53e8a574e3c4c32163d907a1b71df }
       notes: superseded by 0.1.1.
-    - id: agent-relay-0.7.40
+    - id: agent-relay-0.7.41
       status: unreleased
       current: true
+      charts: { agent-relay: 0.7.41, relay-control: 0.4.22, relay-webapp: 0.2.6 }
+      app_versions: { agent-relay: 0.1.0, relay-control: 0.1.0, relay-webapp: 0.1.0 }
+      depends:
+        agent-relay: { relaycast: 0.3.16, relayauth: 0.1.5, sessions-pipeline: 0.8.44, relay-control: 0.4.22, relay-webapp: 0.2.6, relayflows: 0.2.5, durable-actors: 0.14.6-awf.4, relayfile: 0.2.2, telemetry-collector: 0.1.7, relay-chief: 0.1.0, slack-relay: 0.3.3, relaygate: 0.1.8 }
+      images:
+        relaycast: { repository: ghcr.io/agentworkforce/relaycast-self-host, digest: sha256:ec062ef901af15cf575b53a71d7eb09f2e6ab6e7c0d5be2da35339a275a5c6cc }
+        relaycast-postgres: { repository: ghcr.io/agentworkforce/relaycast-self-host, digest: sha256:ec062ef901af15cf575b53a71d7eb09f2e6ab6e7c0d5be2da35339a275a5c6cc }
+        sessions-pipeline-worker: { repository: ghcr.io/agentworkforce/sessions-pipeline, digest: sha256:77022c5b6a1d30f96f921d703eb27a1acada8ec273ad84aebdde24f8eddce305 }
+        relay-control: { repository: ghcr.io/agentworkforce/relay-control, digest: sha256:d1b6ca95fab240a9d41208d83de3b1f4245408b0765038762f1c419ee60f43bc }
+        relay-webapp: { repository: ghcr.io/agentworkforce/relay-webapp, digest: sha256:bd295ccb7d1323965dce890f19d0b7f857d706c00d7756f719c713763fdb49f3 }
+      notes: 'Carries 0.7.40 and sessions-pipeline 0.8.44: opt-in ingestEdge.ledgerBucket. Default renders differ only in the helm.sh/chart labels.'
+    - id: agent-relay-0.7.40
+      status: planned
       charts: { agent-relay: 0.7.40, relay-control: 0.4.22, relay-webapp: 0.2.6 }
       app_versions: { agent-relay: 0.1.0, relay-control: 0.1.0, relay-webapp: 0.1.0 }
       depends:
@@ -8217,8 +8258,8 @@ entries:
       ingestEdge.sessionSelection or the operator session erase. The database
       stays required (controls mirror deletions to SQL).
     chart: sessions-pipeline
-    values: [ingestEdge.ledger, ingestEdge.ledgerParallel]
-    env: [INGEST_LEDGER, INGEST_LEDGER_PARALLEL]
+    values: [ingestEdge.ledger, ingestEdge.ledgerParallel, ingestEdge.ledgerBucket]
+    env: [INGEST_LEDGER, INGEST_LEDGER_PARALLEL, INGEST_LEDGER_BUCKET, INGEST_LEDGER_REGION]
     profiles: [selfhost-postgres, migration, external-selfhosted, external-rds, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql, aws-rds-native]
     status: shipped
     provided_by: operator
@@ -8257,7 +8298,7 @@ entries:
       needs a services image from pipeline 9be2ad8e or later). IRSA is refused.
     chart: sessions-pipeline
     values: [rearmSweeper.*]
-    env: [INGEST_REARM_SWEEPER_ENABLED, INGEST_REARM_BUCKET, INGEST_REARM_REGION, INGEST_REARM_ENDPOINT, INGEST_REARM_KEY_ROOT, INGEST_REARM_ORGS, INGEST_REARM_DRY_RUN, INGEST_REARM_CONCURRENCY, INGEST_REARM_MAX_MARKERS, INGEST_REARM_CREDENTIALS, INGEST_REARM_S3_ACCESS_KEY_ID_FILE, INGEST_REARM_S3_SECRET_ACCESS_KEY_FILE]
+    env: [INGEST_REARM_SWEEPER_ENABLED, INGEST_REARM_BUCKET, INGEST_REARM_REGION, INGEST_REARM_ENDPOINT, INGEST_REARM_KEY_ROOT, INGEST_REARM_ORGS, INGEST_REARM_DRY_RUN, INGEST_REARM_CONCURRENCY, INGEST_REARM_MAX_MARKERS, INGEST_REARM_CREDENTIALS, INGEST_REARM_S3_ACCESS_KEY_ID_FILE, INGEST_REARM_S3_SECRET_ACCESS_KEY_FILE, INGEST_REARM_LEDGER_BUCKET, INGEST_REARM_LEDGER_REGION]
     profiles: [selfhost-postgres, migration, external-selfhosted, external-rds, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql, aws-rds-native]
     status: shipped
     provided_by: operator
