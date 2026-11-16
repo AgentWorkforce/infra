@@ -28,6 +28,10 @@ run "ceiling_denies_identity_untagged_sessions_and_other_regions" {
     error_message = "no IAM, STS, org, audit or key-policy control"
   }
   assert {
+    condition     = length(setintersection(toset(output.ceiling_by_sid["DenyBrokerAuditLog"].Action), toset(["logs:DeleteLogGroup", "logs:DeleteLogStream", "logs:PutLogEvents", "logs:PutRetentionPolicy"]))) == 4 && output.ceiling_by_sid["DenyBrokerAuditLog"].Resource == ["arn:aws:logs:*:*:log-group:/aws-cred-broker/*"]
+    error_message = "no vended session may forge, delete or shorten the broker's audit log"
+  }
+  assert {
     condition     = output.ceiling_by_sid["DenySessionsWithoutBrokerTags"].Condition.Null["aws:PrincipalTag/broker-request-id"] == "true"
     error_message = "a session without the broker's request tag can do nothing"
   }

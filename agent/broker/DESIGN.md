@@ -255,13 +255,41 @@ credential field name, or that contains the exact secret or token just
 minted. It never judges a value by its shape, so a commit SHA in a purpose or
 a 40-character run tag is ordinary metadata.
 
+### Shipping to AWS (`src/ship.ts`)
+
+Every minute a systemd timer on the host (`aws-cred-broker-ship-audit`, as
+`credbroker`) runs `cli.ts ship-audit`. It copies the lines added since the
+last run to the CloudWatch Logs group `/aws-cred-broker/audit` in the
+broker's account (stream: the broker's Relay name), as the broker role.
+- Each line is sent verbatim (seq, prev and hash included), so the copy is
+  checked with the same chain rule as the local file.
+- Shipping is in order and at least once. A cursor
+  (`<state>/audit-shipped.json`, the last shipped seq and hash) moves only
+  after CloudWatch accepts a batch, so a crash at the wrong moment can send a
+  batch twice (same seq and hash, easy to drop), never skip one.
+- Nothing is sent if the local chain doesn't verify, or if the local line at
+  the cursor no longer has the hash that was shipped (the file was rewritten
+  after shipping). The run fails in the journal, and the CloudWatch copy is
+  the record of what the file said.
+- It runs under the state lock, so it never reads a half-written line.
+- The broker role may only `logs:CreateLogStream` and `logs:PutLogEvents` on
+  that group. Vended sessions in that account may not write, delete,
+  re-key, re-tag or shorten it (`DenyBrokerAuditLog` in the elevated role's
+  ceiling).
+- Limit: this protects the record from the sessions the broker hands out and
+  from losing the host. It doesn't protect it from the layered-infra-ops
+  host's own administrator role, which can delete the group. The same
+  trust-boundary caveat as the rest of this design.
+
 ## AWS side (Terraform, `broker/terraform`)
 
 - `modules/broker-role`: `agent-cred-broker` in the host's account. Its trust
   is the account root with `ArnEquals aws:PrincipalArn = <infra-ops host role>`,
   and nothing else. Its only permissions are `sts:AssumeRole`,
   `sts:TagSession` and `sts:SetSourceIdentity` on the exact target role
-  ARNs. Sessions last at most 1 h.
+  ARNs, plus appending to the audit log group. Sessions last at most 1 h.
+- `modules/audit-log`: the CloudWatch Logs group `/aws-cred-broker/audit`,
+  with two years of retention.
 - `modules/scoped-role`: `agent-broker-sandbox-scoped` in 805532413586. It
   trusts only the broker role, and only when the broker sets a `cb-*`
   request id, the run, namespace and agent tags (and no other tag keys) and a source
@@ -300,6 +328,11 @@ layered-infra-ops applies `sandbox/` once this is merged to main (Khaliq,
    `terraform plan -out=broker.tfplan`. Post the plan summary to Khaliq: it
    should show 2 roles, 2 inline policies and 1 attachment, all creates, and
    nothing changed or destroyed. Then `terraform apply broker.tfplan`.
+   Adding audit shipping to a live stack instead shows 1 log group created
+   and 2 inline policies changed in place (the broker role's
+   `vend-agent-sessions` gains `ShipAuditLog`, and the elevated role's
+   `broker-ceiling` gains `DenyBrokerAuditLog`), with nothing destroyed.
+   It's an IAM change: apply only with Khaliq's own OK.
    `allowed_account_ids` stops the run before any change if a profile points
    at the wrong account.
 3. Check that `sandbox_scoped_role_arn` equals the allowlist's `roles.scoped`
@@ -334,6 +367,7 @@ aws-cred-broker request --from-name <sender> --from-address <sender address> --f
 aws-cred-broker approve --request-id cb-… --digest <hex> --from-name khaliq-gant --from-address <addr> --from-kind human
 aws-cred-broker sweep          # at least hourly while requests are outstanding
 aws-cred-broker verify-audit
+aws-cred-broker ship-audit     # the timer runs it every minute; prints {ok, shipped, cursor, problems}
 ```
 
 ## Phase 2 (design only): signing proxy
