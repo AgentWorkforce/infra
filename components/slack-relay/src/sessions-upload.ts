@@ -173,7 +173,7 @@ export class SessionUploader {
         const rec = this.#record(`cc:${t.sessionId}:${ev.id}`, 1, "session_event", t.sessionId, {
           role: ev.role,
           text: ev.text,
-          ts_ms: ev.ts,
+          ts_ms: notLuhn(ev.ts),
           message_id: ev.id,
           ...(ev.model ? { model: ev.model } : {}),
         });
@@ -229,8 +229,8 @@ export class SessionUploader {
       title: `${t.agent} · ${where}`,
       cwd: t.workdir,
       ...(c.firstPrompt ? { first_prompt: c.firstPrompt } : {}),
-      first_activity_ms: c.firstMs ?? now,
-      last_activity_ms: c.lastMs ?? now,
+      first_activity_ms: notLuhn(c.firstMs ?? now),
+      last_activity_ms: notLuhn(c.lastMs ?? now),
       models_json: JSON.stringify(c.models ?? []),
     });
   }
@@ -325,6 +325,21 @@ interface Rec {
   session_id: string;
   operation: "upsert";
   payload: Record<string, unknown>;
+}
+
+/**
+ * Sessions' ingest nulls any number that passes the Luhn check (it could be a card number), about one timestamp in
+ * ten. Move such a timestamp by a millisecond or two so it survives (as relaygate's acceptance uploads do).
+ */
+export function notLuhn(ms: number): number {
+  const luhn = (n: number) =>
+    String(n)
+      .split("")
+      .reverse()
+      .map(Number)
+      .reduce((sum, d, i) => sum + (i % 2 ? (d * 2 > 9 ? d * 2 - 9 : d * 2) : d), 0) % 10 === 0;
+  while (luhn(ms)) ms += 1;
+  return ms;
 }
 
 /** The error code from a flat JSON error body (`{error: "..."}` or `{error: {code}}`), never the body itself. */

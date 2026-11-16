@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { AgentHost } from "../src/host.ts";
-import { accountId, EnrollmentCredential, eventOf, SessionUploader, transcriptPath } from "../src/sessions-upload.ts";
+import { accountId, EnrollmentCredential, eventOf, notLuhn, SessionUploader, transcriptPath } from "../src/sessions-upload.ts";
 
 interface Req {
   headers: IncomingHttpHeaders;
@@ -286,4 +286,13 @@ test("the host uploads after each turn and on rejoin, with the agent's own token
   await new Promise((r) => setImmediate(r));
   assert.equal(uploads.length, 2);
   assert.deepEqual(uploads[1], { agent: "slack-a", token: "rg_slack-a", sessionId: SID, workdir: join(dir, "agents", "slack-a") });
+});
+
+test("timestamps are kept clear of the Luhn check Sessions scrubs", () => {
+  // 1763000000000 + k: find one that passes Luhn, and check it is moved by the smallest step.
+  let ms = 1_763_000_000_000;
+  const luhn = (n: number) => String(n).split("").reverse().map(Number).reduce((s, d, i) => s + (i % 2 ? (d * 2 > 9 ? d * 2 - 9 : d * 2) : d), 0) % 10 === 0;
+  while (!luhn(ms)) ms++;
+  assert.ok(notLuhn(ms) > ms && notLuhn(ms) - ms < 10 && !luhn(notLuhn(ms)));
+  assert.equal(notLuhn(ms + 1), luhn(ms + 1) ? notLuhn(ms + 1) : ms + 1);
 });
