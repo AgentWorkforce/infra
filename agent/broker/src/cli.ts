@@ -25,7 +25,8 @@
  * Env: BROKER_STATE_DIR, BROKER_DELIVERY_DIR, BROKER_ALLOWLIST, BROKER_AWS_PROFILE,
  * BROKER_RELAY_TOKEN_FILE, BROKER_RELAY_API (default https://cast.agentrelay.com),
  * BROKER_RELAY_NAME (the broker's Relay identity; default layered-infra-ops),
- * BROKER_AUDIT_LOG_GROUP (CloudWatch group; unset: shipping off), BROKER_AUDIT_LOG_STREAM (default broker).
+ * BROKER_AUDIT_LOG_GROUP (CloudWatch group; unset: shipping off), BROKER_AUDIT_LOG_REGION (the group's
+ * region; default AWS_REGION), BROKER_AUDIT_LOG_STREAM (default broker).
  */
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
@@ -82,7 +83,9 @@ const auditGroup = process.env.BROKER_AUDIT_LOG_GROUP;
 async function ship(): Promise<ShipResult> {
   if (!auditGroup) return { ok: true, shipped: 0, problems: ["audit shipping is off (BROKER_AUDIT_LOG_GROUP is not set)"] };
   // Its own lock (ship.ts), never the state lock: a slow CloudWatch can't hold up a request.
-  const sink = awsCliLogs(auditGroup, process.env.BROKER_AUDIT_LOG_STREAM ?? "broker", shipDir(stateDir));
+  // The group's region (Terraform's), which needn't be the host's AWS_REGION.
+  const region = process.env.BROKER_AUDIT_LOG_REGION ?? process.env.AWS_REGION;
+  const sink = awsCliLogs(auditGroup, process.env.BROKER_AUDIT_LOG_STREAM ?? "broker", shipDir(stateDir), undefined, region);
   return shipAudit(broker.auditPath, stateDir, sink);
 }
 

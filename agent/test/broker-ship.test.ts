@@ -5,6 +5,7 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -162,6 +163,24 @@ test("the AWS CLI sink: the batch goes in a 0600 file it removes, never on stdin
   const sent = JSON.parse(readFileSync(join(dir, "sent"), "utf8").trim().split("\n")[0]!) as { logGroupName: string; logStreamName: string; logEvents: LogEvent[] };
   assert.deepEqual(sent, { logGroupName: "/aws-cred-broker/audit", logStreamName: "layered-infra-ops", logEvents: [{ timestamp: 1, message: '{"seq":1}' }] });
   assert.ok(!existsSync(join(dir, "state", "ship", "batch.json")), "the batch file is removed");
+});
+
+test("cli.ts ship-audit sends to BROKER_AUDIT_LOG_REGION, not the host's AWS_REGION", () => {
+  const dir = mkdtempSync(join(tmpdir(), "broker-ship-cli-"));
+  const bin = join(dir, "bin");
+  mkdirSync(bin);
+  writeFileSync(join(bin, "aws"), `#!/bin/sh\necho "$*" >> ${dir}/calls\necho '{}'\n`, { mode: 0o755 });
+  mkdirSync(join(dir, "state"));
+  appendAudit(join(dir, "state", "audit.jsonl"), { kind: "requested", requestId: "cb-0000000000b1" }, NOW);
+  const cli = new URL("../broker/src/cli.ts", import.meta.url).pathname;
+  const env: NodeJS.ProcessEnv = { ...process.env, PATH: `${bin}:${process.env.PATH}`, BROKER_STATE_DIR: join(dir, "state"), BROKER_DELIVERY_DIR: join(dir, "creds"), AWS_REGION: "us-west-2", BROKER_AUDIT_LOG_REGION: "us-east-1", BROKER_AUDIT_LOG_GROUP: "/aws-cred-broker/audit", BROKER_AUDIT_LOG_STREAM: "layered-infra-ops" };
+  delete env.BROKER_RELAY_TOKEN_FILE;
+  const out = JSON.parse(execFileSync(process.execPath, ["--no-warnings", cli, "ship-audit"], { env, encoding: "utf8" })) as { ok: boolean; shipped: number };
+  assert.deepEqual([out.ok, out.shipped], [true, 1]);
+  const calls = readFileSync(join(dir, "calls"), "utf8").trim().split("\n");
+  assert.equal(calls.length, 1);
+  assert.match(calls[0]!, /--region us-east-1\b/);
+  assert.doesNotMatch(calls[0]!, /us-west-2/);
 });
 
 test("no audit log yet: nothing to do; a corrupt cursor is reported, not trusted", async () => {

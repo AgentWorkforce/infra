@@ -67,6 +67,10 @@ run "wires_broker_to_its_roles_and_matches_the_allowlist" {
     error_message = "the group the host ships to"
   }
   assert {
+    condition     = strcontains(file("${path.module}/../../../setup-lane.sh"), "BROKER_AUDIT_LOG_REGION=${var.region}\n")
+    error_message = "setup-lane.sh ships to the region this creates the group in (not the host's own region)"
+  }
+  assert {
     condition     = output.broker_role_arn == "arn:aws:iam::500268966557:role/agent-cred-broker"
     error_message = "the broker role is in the broker account"
   }
