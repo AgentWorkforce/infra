@@ -118,6 +118,18 @@ class S3Ledger(unittest.TestCase):
                 self.render(merge(s3, {"ingestEdge": {"admission": {"probeTimeoutSeconds": value}}}),
                             fail="ingestEdge.admission.probeTimeoutSeconds must be an integer from 3 to 30")
 
+    def test_ledger_parallel(self):
+        s3 = load(S3_FIXTURE)
+        self.assertNotIn("INGEST_LEDGER_PARALLEL", self.ingest_env(self.render(s3)))
+        env = self.ingest_env(self.render(merge(s3, {"ingestEdge": {"ledgerParallel": 8}})))
+        self.assertEqual(env["INGEST_LEDGER_PARALLEL"]["value"], "8")
+        for value in (0, 65, "x"):
+            with self.subTest(value=value):
+                self.render(merge(s3, {"ingestEdge": {"ledgerParallel": value}}),
+                            fail="ingestEdge.ledgerParallel must be an integer from 1 to 64")
+        self.render(merge(load(SQL_FIXTURE), {"ingestEdge": {"ledgerParallel": 8}}),
+                    fail="ingestEdge.ledgerParallel requires ingestEdge.ledger=s3")
+
     def test_default_is_sql_and_byte_identical_when_explicit(self):
         base = load(SQL_FIXTURE)
         implicit = helm(base)
