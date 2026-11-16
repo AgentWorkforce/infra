@@ -258,7 +258,10 @@ node register-github-app.mts --org <org> --gcp-project <project>
    read (names only).
 
 The helper listens on `127.0.0.1` only and must finish within an hour (the
-code's lifetime). `--user` instead of `--org` registers the app on your own
+code's lifetime). The app keeps the helper's local address as its Setup URL,
+which GitHub uses only when the app is installed again; clear it on the app's
+General page if you like (editing the repository selection never goes
+there). `--user` instead of `--org` registers the app on your own
 account. `--github-url https://ghe.example.com` targets GitHub Enterprise
 Server. `--out-dir <dir>` writes the three values as `0600` files for any
 other secret manager. `--k8s-context` selects the kubectl context. Run

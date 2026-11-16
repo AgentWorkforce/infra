@@ -99,8 +99,10 @@ export function buildManifest(opts: { name: string; callback?: string }): Record
   m.name = opts.name;
   if (opts.callback) {
     m.redirect_url = `${opts.callback}/created`;
+    // Only the first install comes back here: the helper is gone afterwards,
+    // so later edits to the repository selection must not redirect to it.
     m.setup_url = `${opts.callback}/installed`;
-    m.setup_on_update = true;
+    m.setup_on_update = false;
   }
   return m;
 }

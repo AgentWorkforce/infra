@@ -45,6 +45,7 @@ test("the manifest asks for read-only contents and metadata, no webhook, private
   const cb = buildManifest({ name: "x", callback: "http://127.0.0.1:5000" });
   assert.equal(cb.redirect_url, "http://127.0.0.1:5000/created");
   assert.equal(cb.setup_url, "http://127.0.0.1:5000/installed");
+  assert.equal(cb.setup_on_update, false); // the helper is not there for later edits
   assert.throws(() => buildManifest({ name: "x".repeat(35) }), /34 characters/);
 });
 
