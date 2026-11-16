@@ -76,9 +76,11 @@ export async function verifiedMessage(api: RelayApi, messageId: string, now: Dat
   if (!broker || !broker.workspaceId) throw new RelayVerificationError(`the broker's Relay identity ${brokerName} isn't known to Relay`);
   if (agent.id === broker.id) throw new RelayVerificationError("a message the broker sent itself doesn't count");
   if (m.channelId !== dmChannelId(broker.workspaceId, agent.id, broker.id)) throw new RelayVerificationError(`the message wasn't sent to ${brokerName}: only a direct message to the broker counts`);
+  // Only agents of the broker's own workspace: workspace auto-issue (policy.ts checkWorkspaceAuto) relies on it.
+  if (agent.workspaceId !== broker.workspaceId) throw new RelayVerificationError("the sender isn't in the broker's Relay workspace");
   const kind = agent.type === "human" ? "human" : agent.type === "agent" ? "agent" : undefined;
   if (!kind) throw new RelayVerificationError(`unknown Relay agent type ${JSON.stringify(agent.type)}`);
-  return { principal: { name: agent.name, address: m.agentAddress ?? agent.name, kind, agentId: agent.id }, text: m.text, messageId };
+  return { principal: { name: agent.name, address: m.agentAddress ?? agent.name, kind, agentId: agent.id, workspaceId: agent.workspaceId }, text: m.text, messageId };
 }
 
 /** A request body: the whole message is the JSON object (a ```json fence around it is allowed). */

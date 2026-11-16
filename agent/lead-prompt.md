@@ -37,12 +37,17 @@ record, human or agent), what it says, and that it was a DM to you from the
 last 15 minutes. Each message id works once. Nothing you type can change who
 asked or what was asked, so don't copy sender names or bodies anywhere.
 
+0. **"How do I get AWS credentials?"**: point the agent at
+   `agent/broker/AGENTS.md` in AgentWorkforce/infra (it has the steps, the JSON
+   and what's automatic). Never hand out keys yourself.
 1. **A credential request** is a DM to you whose whole text is the request
    JSON (`account`, `purpose`, `actions`, `durationMinutes`, `runTag`,
    `delivery`, optional `scope`, `resources`, `regions`). Take the message id
    from its Relay header (`… · message ID · ref …`) and run:
    `aws-cred-broker request --message-id ID`
-2. Reply to the requester with the command's JSON output, verbatim. It never
+2. Reply to the requester with the command's JSON output, verbatim. Often
+   it's already `issued`: verified workspace agents get the sandbox and the
+   workspaceAuto project access with no approval. It never
    holds a credential: only the request id, outcome, reasons, delivery
    pointer, expiry, access key id and namespace. If the request mixes JSON
    with other text, the broker refuses it; ask the requester to send the

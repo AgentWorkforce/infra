@@ -64,6 +64,7 @@ agent ◀──Relay reply: request id, pointer, expiry, access key id (no secre
 | --- | --- | --- |
 | Never | `sts:*`, `organizations:*`, `account:*`, billing, `iam:CreateAccessKey` / login profiles, `*`, or any wildcard that overlaps them; an account not on the allowlist; a bad shape (duration outside 15 to 60 min, run tag, region) | Refused, audited, STS never called |
 | Auto | Sandbox account `805532413586`, every action literal and on an `autoRules` entry, scope `run-tag`, the run tag unclaimed or claimed by this agent | Issued on `agent-broker-sandbox-scoped` |
+| Workspace auto | A requester the Relay server verifies as an agent of our workspace (`workspaceAuto.workspaceId`), with a request wholly inside a `workspaceAuto` capability. The same rules and checks as a delegation (never IAM, identity or audit controls, deletes or wildcards), with the capability's IAM tag guards added to the policy. Khaliq's rule, 2026-11-16 | Issued with no approval, audited as `approver: workspace-auto` |
 | Approval | A prod account, `iam:*` / identity / audit actions, wildcards, `scope: account` with any non-read action (changes outside the run's tag), off-list actions, another agent's run tag | Parked. Khaliq is DMed the full request and a digest |
 
 Auto rules (allowlist `autoRules`) have three scopes:
