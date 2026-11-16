@@ -149,19 +149,26 @@ A run tag is claimed by the first agent that receives credentials for it
   Relay agent may approve a pending request, over the same verified path
   (its own DM to the broker, under 15 minutes old, each message id once),
   only if all of these hold:
+  - the Relay server resolves the sender to the `agentId` the delegation
+    pins, not just its name. A name can be re-registered by another
+    session; the new holder doesn't inherit the delegation, and re-pinning
+    is an allowlist change;
   - its delegation hasn't passed `expiresAt`, and `expiresAt` is at most 30
     days from now;
   - the requester named it (`"delegate": "<agent>"` in the request), and
-    isn't the delegate itself, and is on its `requesters` list if it has one;
+    isn't the delegate itself, and is on its `requesters` list (required: a
+    delegation without one is unsound);
   - one capability covers the account, the request's explicitly named
     regions, and every allowed action on every resource of the session
     policy the broker built. Read-only auto rules it lists may be on any
     resource. Everything else goes through a grant, on literal resources
     the grant names. Secrets match by name prefix ending in `/`, or by exact
-    name plus AWS's 6-character suffix. SSM grants match explicit instance
-    ids plus listed documents. When the request names the delegate, the
-    broker adds a deny on instances without the grant's tag, so the tag
-    scope is enforced by IAM and not by the delegate's judgment;
+    name plus AWS's 6-character suffix. SSM grants match only the literal
+    `instanceIds` they list, plus listed documents: `SendCommand` is a root
+    shell, which reaches the instance profile's credentials too, so each
+    listed instance's profile must stay minimal. As a second check, when the
+    request names the delegate, the broker adds an IAM deny on instances
+    without the grant's tag;
   - nothing is never-delegable: IAM, `approvalOnly`, `neverIssue`, deletes
     (Delete/Terminate/Remove/Purge/Destroy/Untag/Schedule…Deletion verbs),
     or wildcard actions or resources. A config that lists one is unsound and

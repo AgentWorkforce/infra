@@ -244,7 +244,7 @@ export class Broker {
         let approver: string | undefined;
         if (req.delegate) {
           // Say up front whether the named delegate can approve this, so the request goes to the right approver.
-          const check = req.delegate === requester.name ? { ok: false as const, reason: "a requester cannot approve its own request" } : checkDelegatedApproval(pending, { name: req.delegate, address: req.delegate, kind: "agent" }, this.deps.allowlist, this.deps.now());
+          const check = req.delegate === requester.name ? { ok: false as const, reason: "a requester cannot approve its own request" } : checkDelegatedApproval(pending, { name: req.delegate, address: req.delegate, kind: "agent", agentId: this.deps.allowlist.delegatedApprovers?.find((d) => d.agent === req.delegate)?.agentId }, this.deps.allowlist, this.deps.now());
           if (check.ok) approver = req.delegate;
           else reasons.push(check.reason);
         }

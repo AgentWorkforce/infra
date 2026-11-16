@@ -52,13 +52,19 @@ export interface Allowlist {
 export interface DelegatedApprover {
   /** The Relay agent's name, as the Relay server resolves the approval message's sender. */
   agent: string;
+  /**
+   * The Relay agent id the name must resolve to (Relaycast agent_id). A name
+   * can be re-registered by another session; the id can't, so a new holder of
+   * the name never inherits the delegation. Re-pinning is an allowlist change.
+   */
+  agentId: string;
   /** Hard expiry (ISO 8601, UTC). After it the delegate's approvals are refused. At most MAX_DELEGATION_DAYS ahead. */
   expiresAt: string;
   /** Who granted it, and why: for the reviewer and the audit log. */
   grantedBy: string;
   reason: string;
-  /** If set, only requests from these agents. */
-  requesters?: string[];
+  /** Required: only requests from these agents. A missing or empty list is a config error. */
+  requesters: string[];
   capabilities: DelegatedCapability[];
 }
 
@@ -80,7 +86,9 @@ export interface DelegatedGrant {
   secretPrefixes?: string[];
   /** Secrets Manager: exactly these secrets (the ARN is the name plus AWS's 6-character suffix). */
   secretNames?: string[];
-  /** SSM: only these instances, by tag. Enforced in IAM by a deny the broker adds when the request names the delegate. */
+  /** SSM: only these literal instance ids (required for ssm grants). */
+  instanceIds?: string[];
+  /** SSM: and only while they carry this tag. Enforced in IAM by a deny the broker adds when the request names the delegate. */
   instanceTag?: { key: string; value: string };
   /** SSM documents the session may use (AWS-owned or the account's own). */
   ssmDocuments?: string[];
@@ -91,6 +99,8 @@ export interface Principal {
   name: string;
   address: string;
   kind: "agent" | "human";
+  /** The Relay agent id, when the sender was verified with the Relay server (relay.ts). Delegated approval requires it. */
+  agentId?: string;
 }
 
 export interface CredentialRequest {
@@ -486,6 +496,9 @@ export function delegationConfigProblems(list: Allowlist): string[] {
     if (list.humanApprovers.includes(d.agent)) problems.push(`${who}: is a human approver already`);
     if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/.test(String(d.expiresAt)) || Number.isNaN(Date.parse(d.expiresAt))) problems.push(`${who}: expiresAt must be an ISO 8601 UTC time`);
     if (!list.humanApprovers.includes(d.grantedBy)) problems.push(`${who}: grantedBy must be a human approver`);
+    if (typeof d.agentId !== "string" || !/^[0-9]{6,32}$/.test(d.agentId)) problems.push(`${who}: agentId must be its Relay agent id`);
+    if (!Array.isArray(d.requesters) || d.requesters.length === 0) problems.push(`${who}: requesters must list the agents whose requests it may approve`);
+    else for (const r of d.requesters) if (typeof r !== "string" || !NAME_RE.test(r) || r === d.agent || list.humanApprovers.includes(r)) problems.push(`${who}: requester ${JSON.stringify(r)} must be another agent's Relay name`);
     if (!Array.isArray(d.capabilities) || d.capabilities.length === 0) problems.push(`${who}: no capabilities`);
     for (const c of d.capabilities ?? []) {
       const where = `${who} capability ${c.id}`;
@@ -506,9 +519,11 @@ export function delegationConfigProblems(list: Allowlist): string[] {
           if (why) problems.push(`${where} grant ${g.id}: ${why}, never delegable`);
         }
         const svc = new Set(g.actions.map((a) => a.split(":")[0]));
-        const kinds = [g.secretPrefixes || g.secretNames ? "secretsmanager" : undefined, g.instanceTag || g.ssmDocuments ? "ssm" : undefined].filter(Boolean);
+        const kinds = [g.secretPrefixes || g.secretNames ? "secretsmanager" : undefined, g.instanceTag || g.ssmDocuments || g.instanceIds ? "ssm" : undefined].filter(Boolean);
         if (kinds.length !== 1 || svc.size !== 1 || !svc.has(kinds[0]!)) problems.push(`${where} grant ${g.id}: a grant is secretsmanager actions on secrets, or ssm actions on tagged instances`);
         if (kinds[0] === "ssm" && !g.instanceTag) problems.push(`${where} grant ${g.id}: ssm needs instanceTag`);
+        if (kinds[0] === "ssm" && !g.instanceIds?.length) problems.push(`${where} grant ${g.id}: ssm needs literal instanceIds`);
+        for (const i of g.instanceIds ?? []) if (typeof i !== "string" || !INSTANCE_ID_RE.test(i)) problems.push(`${where} grant ${g.id}: ${JSON.stringify(i)} is not an instance id`);
         for (const n of [...(g.secretPrefixes ?? []), ...(g.secretNames ?? []), ...(g.ssmDocuments ?? []), ...(g.instanceTag ? [g.instanceTag.key, g.instanceTag.value] : [])]) {
           if (typeof n !== "string" || !NAME_RE.test(n)) problems.push(`${where} grant ${g.id}: ${JSON.stringify(n)} must be a literal name (no wildcards)`);
         }
@@ -550,7 +565,7 @@ export function grantCovers(g: DelegatedGrant, resource: string, account: string
   }
   if (g.instanceTag) {
     const inst = `arn:aws:ec2:${region}:${account}:instance/`;
-    if (resource.startsWith(inst)) return INSTANCE_ID_RE.test(resource.slice(inst.length));
+    if (resource.startsWith(inst)) return (g.instanceIds ?? []).includes(resource.slice(inst.length));
     return (g.ssmDocuments ?? []).some((doc) => resource === `arn:aws:ssm:${region}::document/${doc}` || resource === `arn:aws:ssm:${region}:${account}:document/${doc}`);
   }
   return false;
@@ -562,11 +577,11 @@ export type DelegatedCheck =
 
 /**
  * May this agent approve this pending request? Only if all of:
- * - it is a delegated approver, its delegation hasn't expired (and runs at
+ * - it is a delegated approver, verified by the Relay server as the agent id
+ *   the delegation pins, its delegation hasn't expired (and runs at
  *   most MAX_DELEGATION_DAYS from now), and the delegation config is sound;
  * - the requester named it (request.delegate), so the broker built the
- *   delegate's IAM guards into the policy, and is on its requesters list if
- *   it has one;
+ *   delegate's IAM guards into the policy, and is on its requesters list;
  * - one capability covers the account, the request's named regions, and
  *   every allowed action on every resource of the session policy: read-only
  *   auto-rule actions on anything, everything else only through a grant, on
@@ -578,6 +593,7 @@ export type DelegatedCheck =
 export function checkDelegatedApproval(p: { request: CredentialRequest; requester: Principal; sessionPolicy: SessionPolicy }, approver: Principal, list: Allowlist, now: Date): DelegatedCheck {
   const d = (list.delegatedApprovers ?? []).find((x) => x.agent === approver.name);
   if (!d) return { ok: false, reason: `${approver.name} (${approver.kind}) is not an approver: only a human on humanApprovers, or a delegate on delegatedApprovers, can approve` };
+  if (approver.agentId !== d.agentId) return { ok: false, reason: `${approver.name} is not the Relay agent the delegation names (agent id ${approver.agentId ?? "unverified"}, not ${d.agentId}): only ${list.humanApprovers.join(", ")} can approve` };
   const no = (reason: string): DelegatedCheck => ({ ok: false, reason: `${d.agent} can't approve this as a delegate: ${reason}; only ${list.humanApprovers.join(", ")} can` });
   const config = delegationConfigProblems(list);
   if (config.length) return no(`the delegation config is unsound (${config.join("; ")})`);
@@ -586,7 +602,7 @@ export function checkDelegatedApproval(p: { request: CredentialRequest; requeste
   if (expires - now.getTime() > MAX_DELEGATION_DAYS * 86_400_000) return no(`its delegation runs past ${MAX_DELEGATION_DAYS} days`);
   const req = p.request;
   if (req.delegate !== d.agent) return no(`the request didn't name ${d.agent} as its delegate`);
-  if (d.requesters && !d.requesters.includes(p.requester.name)) return no(`${p.requester.name} is not one of its requesters`);
+  if (!d.requesters?.includes(p.requester.name)) return no(`${p.requester.name} is not one of its requesters`);
   for (const a of req.actions) {
     const why = neverDelegable(a, list);
     if (why) return no(`${why}, never delegable`);

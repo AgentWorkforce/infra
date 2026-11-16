@@ -16,27 +16,30 @@ import { checkDelegatedApproval, decide, delegationConfigProblems, grantCovers, 
 import { dmChannelId, type RelayAgent, type RelayApi, type RelayMessage } from "../broker/src/relay.ts";
 import type { StsClient } from "../broker/src/sts.ts";
 
-const allowlist = JSON.parse(readFileSync(new URL("../broker/allowlist.json", import.meta.url), "utf8")) as Allowlist;
+const shipped = JSON.parse(readFileSync(new URL("../broker/allowlist.json", import.meta.url), "utf8")) as Allowlist;
 const HOSTS = "500268966557";
 const NOW = new Date("2026-11-15T22:00:00Z");
 const WS = "rw_test0001";
 const BROKER = "layered-infra-ops";
 const DELEGATE = "neon-exit-lead";
-const WORKER = "neon-exit-worker";
+const WORKER = "cloud-db-driver";
+const DELEGATE_ID = "300000000000000002";
 const agents: Record<string, RelayAgent> = {
   [WORKER]: { id: "300000000000000001", name: WORKER, type: "agent", workspaceId: WS },
-  [DELEGATE]: { id: "300000000000000002", name: DELEGATE, type: "agent", workspaceId: WS },
+  [DELEGATE]: { id: DELEGATE_ID, name: DELEGATE, type: "agent", workspaceId: WS },
   "khaliq-gant": { id: "229221621257396224", name: "khaliq-gant", type: "human", workspaceId: WS },
   "some-other-agent": { id: "300000000000000005", name: "some-other-agent", type: "agent", workspaceId: WS },
   [BROKER]: { id: "246905220461514752", name: BROKER, type: "agent", workspaceId: WS },
 };
+// The shipped entry, with the fake Relay's id for neon-exit-lead pinned (the shipped agentId is filled in at review).
+const allowlist: Allowlist = { ...shipped, delegatedApprovers: [{ ...shipped.delegatedApprovers![0]!, agentId: DELEGATE_ID }] };
 /** The broker's clock in the current test: messages are sent a minute before it. */
 let clock = NOW;
 const toBroker = (from: string) => dmChannelId(WS, agents[from]!.id, agents[BROKER]!.id);
 
 const SECRET = `arn:aws:secretsmanager:us-east-1:${HOSTS}:secret:neon-exit/database-url-AbC123`;
 const TOKEN_SECRET = `arn:aws:secretsmanager:us-east-1:${HOSTS}:secret:infra-ops/supabase-management-token-Xy9Zq1`;
-const INSTANCE = `arn:aws:ec2:us-east-1:${HOSTS}:instance/i-0123456789abcdef0`;
+const INSTANCE = `arn:aws:ec2:us-east-1:${HOSTS}:instance/i-0887caee00ca9029a`;
 const SHELL_DOC = "arn:aws:ssm:us-east-1::document/AWS-RunShellScript";
 
 const secretsReq = (over: Partial<CredentialRequest> = {}): CredentialRequest => ({
@@ -101,19 +104,59 @@ async function pend(broker: Broker, req: CredentialRequest, from = WORKER) {
 
 const withDelegate = (over: Partial<DelegatedApprover>): Allowlist => ({ ...allowlist, delegatedApprovers: [{ ...allowlist.delegatedApprovers![0]!, ...over }] });
 
-test("the shipped delegation: neon-exit-lead, expiring 2026-11-19, one capability in agent-hosts us-east-1, sound config", () => {
+test("the shipped delegation: neon-exit-lead, pinned by agent id, six requesters, one literal instance, expiring 2026-11-19", () => {
+  // Fails closed until the Relay agent id is filled in: the only config problem is the missing id.
+  assert.deepEqual(delegationConfigProblems(shipped), ["delegate neon-exit-lead: agentId must be its Relay agent id"]);
   assert.deepEqual(delegationConfigProblems(allowlist), []);
-  assert.deepEqual(allowlist.humanApprovers, ["khaliq-gant"], "Khaliq is still the only human approver");
-  const [d, ...rest] = allowlist.delegatedApprovers!;
+  assert.deepEqual(shipped.humanApprovers, ["khaliq-gant"], "Khaliq is still the only human approver");
+  const [d, ...rest] = shipped.delegatedApprovers!;
   assert.equal(rest.length, 0);
   assert.equal(d!.agent, DELEGATE);
   assert.equal(d!.expiresAt, "2026-11-19T00:00:00Z");
   assert.equal(d!.grantedBy, "khaliq-gant");
+  assert.deepEqual(d!.requesters, ["legacy-copy", "cloud-db-rehearsal", "cloud-db-driver", "cloud-db-driver-sites", "turns-gates", "sessions-edges"]);
+  assert.ok(!d!.requesters.some((r) => r.startsWith("neonexit-")), "reviewers and validators are never requesters");
   const [c] = d!.capabilities;
   assert.deepEqual(c!.accounts, [HOSTS]);
   assert.deepEqual(c!.regions, ["us-east-1"]);
   assert.deepEqual(c!.readOnlyRules, ["read-describe"]);
   assert.deepEqual(c!.grants.flatMap((g) => g.actions).sort(), ["secretsmanager:GetSecretValue", "secretsmanager:PutSecretValue", "ssm:SendCommand", "ssm:StartSession"]);
+  assert.deepEqual(c!.grants.find((g) => g.id === "neon-exit-ssm")!.instanceIds, ["i-0887caee00ca9029a"]);
+});
+
+test("the shipped config, as is, refuses every delegated approval (no agent id yet); Khaliq still approves", async () => {
+  const { broker, calls } = setup(shipped);
+  const { r, text } = await pend(broker, secretsReq());
+  assert.equal(r.approver, "khaliq-gant");
+  assert.match((await broker.decideViaRelay(fakeRelay([msg("1000002", DELEGATE, text)]), "1000002", BROKER)).reasons[0]!, /not the Relay agent the delegation names/);
+  assert.equal((await broker.decideViaRelay(fakeRelay([msg("1000003", "khaliq-gant", text)]), "1000003", BROKER)).outcome, "issued");
+  assert.equal(calls.length, 1);
+});
+
+test("the delegation is bound to the Relay agent id: a re-registered neon-exit-lead (new id) can't approve", async () => {
+  const { broker, calls } = setup();
+  const { text } = await pend(broker, secretsReq());
+  const original = agents[DELEGATE]!;
+  agents[DELEGATE] = { ...original, id: "300000000000000077" };
+  try {
+    const r = await broker.decideViaRelay(fakeRelay([msg("1000002", DELEGATE, text)]), "1000002", BROKER);
+    assert.equal(r.outcome, "error");
+    assert.match(r.reasons[0]!, /not the Relay agent the delegation names \(agent id 300000000000000077, not 300000000000000002\)/);
+  } finally {
+    agents[DELEGATE] = original;
+  }
+  assert.equal(calls.length, 0);
+  // Local mode (no Relay verification, so no agent id) never counts as the delegate either.
+  const local = await broker.approve("cb-000000000001", text.split(" ")[2]!, { name: DELEGATE, address: DELEGATE, kind: "agent" });
+  assert.match(local.reasons[0]!, /agent id unverified/);
+});
+
+test("requesters is required: a delegation without it, or with an empty list, is unsound", () => {
+  const { requesters: _, ...noList } = allowlist.delegatedApprovers![0]!;
+  assert.match(delegationConfigProblems({ ...allowlist, delegatedApprovers: [noList as DelegatedApprover] }).join("; "), /requesters must list/);
+  assert.match(delegationConfigProblems(withDelegate({ requesters: [] })).join("; "), /requesters must list/);
+  assert.match(delegationConfigProblems(withDelegate({ requesters: [DELEGATE] })).join("; "), /must be another agent/);
+  assert.match(delegationConfigProblems(withDelegate({ requesters: ["khaliq-gant"] })).join("; "), /must be another agent/);
 });
 
 test("happy path: a worker's request naming the delegate goes to it; its own DM approves; the audit names delegate, request, digest and capability", async () => {
@@ -186,6 +229,7 @@ test("out of scope: other actions, secrets, instances, documents, regions and ac
   }
   const ssmCases: [Partial<CredentialRequest>, RegExp][] = [
     [{ resources: [INSTANCE, "arn:aws:ssm:us-east-1::document/AWS-ApplyPatchBaseline"] }, /outside it/],
+    [{ resources: [`arn:aws:ec2:us-east-1:${HOSTS}:instance/i-0123456789abcdef0`, SHELL_DOC] }, /outside it/],
     [{ actions: ["ssm:StartAutomationExecution"] }, /outside it/],
   ];
   for (const [over, re] of ssmCases) {
@@ -216,15 +260,16 @@ test("wildcards, IAM and deletes are never delegable", async () => {
     assert.equal(calls.length, 0);
   }
   // A capability that lists any of them is unsound, which refuses every delegated approval.
-  const bad = withDelegate({ capabilities: [{ ...allowlist.delegatedApprovers![0]!.capabilities[0]!, grants: [{ id: "x", actions: ["iam:PutRolePolicy", "secretsmanager:DeleteSecret"], secretPrefixes: ["neon-exit/*"] }] }] });
+  const bad = withDelegate({ capabilities: [{ ...allowlist.delegatedApprovers![0]!.capabilities[0]!, grants: [{ id: "x", actions: ["iam:PutRolePolicy", "secretsmanager:DeleteSecret"], secretPrefixes: ["neon-exit/*"] }, { id: "y", actions: ["ssm:SendCommand"], instanceTag: { key: "project", value: "neon-exit" } }] }] });
   const problems = delegationConfigProblems(bad).join("; ");
   assert.match(problems, /iam:PutRolePolicy is IAM, never delegable/);
   assert.match(problems, /DeleteSecret deletes, never delegable/);
   assert.match(problems, /no wildcards/);
+  assert.match(problems, /ssm needs literal instanceIds/);
   const pending = decide(secretsReq(), { name: WORKER, address: WORKER, kind: "agent" }, bad, { namespace: "neon-exit-cutover-0a1b2c3d" });
   assert.equal(pending.outcome, "approval");
   if (pending.outcome !== "approval") return;
-  const c = checkDelegatedApproval({ request: secretsReq(), requester: { name: WORKER, address: WORKER, kind: "agent" }, sessionPolicy: pending.sessionPolicy }, { name: DELEGATE, address: DELEGATE, kind: "agent" }, bad, NOW);
+  const c = checkDelegatedApproval({ request: secretsReq(), requester: { name: WORKER, address: WORKER, kind: "agent" }, sessionPolicy: pending.sessionPolicy }, { name: DELEGATE, address: DELEGATE, kind: "agent", agentId: DELEGATE_ID }, bad, NOW);
   assert.ok(!c.ok && /config is unsound/.test(c.reason));
   assert.ok(!grantCovers({ id: "s", actions: [], secretPrefixes: ["neon-exit/"] }, `arn:aws:secretsmanager:us-east-1:${HOSTS}:secret:neon-exit/*`, HOSTS, "us-east-1"));
 });

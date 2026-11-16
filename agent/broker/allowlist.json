@@ -9,9 +9,19 @@
     {
       "$comment": "A standing delegation: this agent may approve requests that name it as delegate and fall entirely inside one capability, until expiresAt. Never delegable whatever is listed here: IAM, identity and audit controls, never-issue actions, deletes, wildcard actions or resources, accounts not on this allowlist. Every delegated approval is audited with the delegate, request id, digest and capability. See broker/DESIGN.md.",
       "agent": "neon-exit-lead",
+      "agentId": "",
+      "$agentIdComment": "Fill in before merge: neon-exit-lead's Relaycast agent_id (GET /v1/agents/neon-exit-lead with the broker's observer token). Until then the config is unsound and every delegated approval is refused.",
       "expiresAt": "2026-11-19T00:00:00Z",
       "grantedBy": "khaliq-gant",
       "reason": "Khaliq asked (2026-11-15) to let the neon-exit lead drive the Neon exit without blocking on him.",
+      "requesters": [
+        "legacy-copy",
+        "cloud-db-rehearsal",
+        "cloud-db-driver",
+        "cloud-db-driver-sites",
+        "turns-gates",
+        "sessions-edges"
+      ],
       "capabilities": [
         {
           "id": "neon-exit",
@@ -43,6 +53,9 @@
               "actions": [
                 "ssm:StartSession",
                 "ssm:SendCommand"
+              ],
+              "instanceIds": [
+                "i-0887caee00ca9029a"
               ],
               "instanceTag": {
                 "key": "project",

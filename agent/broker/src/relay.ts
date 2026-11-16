@@ -78,7 +78,7 @@ export async function verifiedMessage(api: RelayApi, messageId: string, now: Dat
   if (m.channelId !== dmChannelId(broker.workspaceId, agent.id, broker.id)) throw new RelayVerificationError(`the message wasn't sent to ${brokerName}: only a direct message to the broker counts`);
   const kind = agent.type === "human" ? "human" : agent.type === "agent" ? "agent" : undefined;
   if (!kind) throw new RelayVerificationError(`unknown Relay agent type ${JSON.stringify(agent.type)}`);
-  return { principal: { name: agent.name, address: m.agentAddress ?? agent.name, kind }, text: m.text, messageId };
+  return { principal: { name: agent.name, address: m.agentAddress ?? agent.name, kind, agentId: agent.id }, text: m.text, messageId };
 }
 
 /** A request body: the whole message is the JSON object (a ```json fence around it is allowed). */
