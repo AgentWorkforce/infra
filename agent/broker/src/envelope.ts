@@ -64,6 +64,10 @@ export function seal(plaintext: string, recipientPublicKeyB64: string, requestId
 
 export function open(env: Envelope, privateKeyRawB64: string, requestId: string): string {
   if (env.v !== 1 || env.alg !== "X25519-HKDF-SHA256-A256GCM") throw new Error("unknown envelope");
+  const iv = Buffer.from(env.iv, "base64");
+  const tag = Buffer.from(env.tag, "base64");
+  // Exactly a 12-byte nonce and a full 16-byte tag: a truncated tag would weaken authentication.
+  if (iv.length !== 12 || tag.length !== 16) throw new Error("envelope nonce must be 12 bytes and tag 16 bytes");
   const raw = Buffer.from(privateKeyRawB64, "base64");
   if (raw.length !== 32) throw new Error("private key must be 32 raw bytes, base64");
   const sk = createPrivateKey({ key: Buffer.concat([PKCS8_X25519_PREFIX, raw]), format: "der", type: "pkcs8" });
@@ -71,9 +75,9 @@ export function open(env: Envelope, privateKeyRawB64: string, requestId: string)
   const epkRaw = Buffer.from(env.epk, "base64");
   const epk = createPublicKey({ key: Buffer.concat([SPKI_X25519_PREFIX, epkRaw]), format: "der", type: "spki" });
   const shared = diffieHellman({ privateKey: sk, publicKey: epk });
-  const d = createDecipheriv("aes-256-gcm", key(shared, epkRaw, rawPublic(pk), requestId), Buffer.from(env.iv, "base64"));
+  const d = createDecipheriv("aes-256-gcm", key(shared, epkRaw, rawPublic(pk), requestId), iv, { authTagLength: 16 });
   d.setAAD(Buffer.from(requestId));
-  d.setAuthTag(Buffer.from(env.tag, "base64"));
+  d.setAuthTag(tag);
   return Buffer.concat([d.update(Buffer.from(env.ct, "base64")), d.final()]).toString("utf8");
 }
 

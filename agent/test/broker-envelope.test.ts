@@ -6,7 +6,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Broker } from "../broker/src/broker.ts";
@@ -60,20 +60,71 @@ test("a request with a malformed public key is refused", () => {
   }
 });
 
-test("client.ts: keygen prints a key, open writes a 0600 credential_process file and burns the key", () => {
-  const dir = mkdtempSync(join(tmpdir(), "broker-client-"));
+/** A fake aws CLI that answers sts get-caller-identity with ARN (and checks the credentials came in its environment). */
+function fakeAws(arn: string): string {
+  const bin = mkdtempSync(join(tmpdir(), "fake-aws-"));
+  const acct = arn.split(":")[4];
+  writeFileSync(join(bin, "aws"), `#!/bin/sh\n[ "$AWS_SECRET_ACCESS_KEY" = "${SECRET}" ] || { echo "no creds in env" >&2; exit 3; }\necho '{"Account":"${acct}","Arn":"${arn}"}'\n`);
+  chmodSync(join(bin, "aws"), 0o755);
+  return bin;
+}
+
+function client(dir: string, bin: string) {
   const cli = new URL("../broker/src/client.ts", import.meta.url).pathname;
-  const run = (args: string[], input?: string) => execFileSync(process.execPath, ["--no-warnings", cli, ...args, "--dir", dir], { encoding: "utf8", input, stdio: ["pipe", "pipe", "pipe"] });
-  const publicKey = run(["keygen", "--name", "neon-edges"]).trim();
+  return (args: string[], input?: string) => {
+    try {
+      return { ok: true, out: execFileSync(process.execPath, ["--no-warnings", cli, ...args, "--dir", dir], { encoding: "utf8", input, env: { ...process.env, PATH: `${bin}:${process.env.PATH}` }, stdio: ["pipe", "pipe", "pipe"] }) };
+    } catch (e) {
+      return { ok: false, out: String((e as { stderr: string }).stderr) };
+    }
+  };
+}
+
+const plaintext = JSON.stringify({ Version: 1, AccessKeyId: "ASIAFAKE", SecretAccessKey: SECRET, SessionToken: TOKEN, Expiration: "2026-11-16T00:00:00Z" });
+const replyFor = (publicKey: string, id = "cb-0123456789ab") => JSON.stringify({ requestId: id, outcome: "issued", expiration: "2026-11-16T00:00:00Z", delivery: { kind: "encrypted", ref: "inline", envelope: seal(plaintext, publicKey, id) } });
+
+test("client.ts: keygen, then open checks the credentials with AWS, writes a 0600 file once and burns the key", () => {
+  const dir = mkdtempSync(join(tmpdir(), "broker client "));
+  const run = client(dir, fakeAws("arn:aws:sts::500268966557:assumed-role/agent-broker-elevated/legacy-copy"));
+  const publicKey = run(["keygen", "--name", "neon-edges"]).out.trim();
   assert.equal(Buffer.from(publicKey, "base64").length, 32);
   assert.equal(statSync(join(dir, "keys", "neon-edges.key")).mode & 0o777, 0o600);
-  const plaintext = JSON.stringify({ Version: 1, AccessKeyId: "ASIAFAKE", SecretAccessKey: SECRET, SessionToken: TOKEN, Expiration: "2026-11-16T00:00:00Z" });
-  const reply = { requestId: "cb-0123456789ab", outcome: "issued", expiration: "2026-11-16T00:00:00Z", delivery: { kind: "encrypted", ref: "inline", envelope: seal(plaintext, publicKey, "cb-0123456789ab") } };
-  const out = run(["open", "--name", "neon-edges"], JSON.stringify(reply));
-  assert.ok(!out.includes(SECRET), "never prints a credential");
-  assert.match(out, /credential_process = cat .*cb-0123456789ab\.json/);
+  assert.match(run(["open", "--name", "neon-edges"], replyFor(publicKey)).out, /--account/, "the expected account is required");
+  const r = run(["open", "--name", "neon-edges", "--account", "500268966557"], replyFor(publicKey));
+  assert.ok(r.ok, r.out);
+  assert.ok(!r.out.includes(SECRET), "never prints a credential");
+  assert.match(r.out, /verified: arn:aws:sts::500268966557:assumed-role\/agent-broker-elevated\/legacy-copy/);
   const file = join(dir, "creds", "cb-0123456789ab.json");
+  assert.ok(r.out.includes(`credential_process = cat "${file}"`), "quoted: the directory has a space in it");
   assert.equal(statSync(file).mode & 0o777, 0o600);
   assert.equal(JSON.parse(readFileSync(file, "utf8")).SecretAccessKey, SECRET);
   assert.ok(!existsSync(join(dir, "keys", "neon-edges.key")), "single-use key deleted");
+});
+
+test("client.ts: credentials for another account or a non-broker role are refused and never saved", () => {
+  for (const arn of ["arn:aws:sts::999999999999:assumed-role/agent-broker-elevated/legacy-copy", "arn:aws:sts::500268966557:assumed-role/layered-agent-admin-infra-ops-dev/x"]) {
+    const dir = mkdtempSync(join(tmpdir(), "broker-client-"));
+    const run = client(dir, fakeAws(arn));
+    const publicKey = run(["keygen", "--name", "legacy"]).out.trim();
+    const r = run(["open", "--name", "legacy", "--account", "500268966557"], replyFor(publicKey));
+    assert.equal(r.ok, false, arn);
+    assert.match(r.out, /refused/);
+    assert.ok(!existsSync(join(dir, "creds", "cb-0123456789ab.json")), "not saved");
+  }
+});
+
+test("client.ts: an existing output file is never overwritten", () => {
+  const dir = mkdtempSync(join(tmpdir(), "broker-client-"));
+  const run = client(dir, fakeAws("arn:aws:sts::500268966557:assumed-role/agent-broker-elevated/x"));
+  mkdirSync(join(dir, "creds"), { recursive: true });
+  writeFileSync(join(dir, "creds", "cb-0123456789ab.json"), "old");
+  const publicKey = run(["keygen", "--name", "again"]).out.trim();
+  assert.equal(run(["open", "--name", "again", "--account", "500268966557"], replyFor(publicKey)).ok, false);
+  assert.equal(readFileSync(join(dir, "creds", "cb-0123456789ab.json"), "utf8"), "old");
+});
+
+test("a truncated GCM tag is refused", () => {
+  const kp = newKeyPair();
+  const env = seal("x", kp.publicKey, "cb-0123456789ab");
+  assert.throws(() => open({ ...env, tag: Buffer.from(env.tag, "base64").subarray(0, 4).toString("base64") }, kp.privateKey, "cb-0123456789ab"), /16 bytes/);
 });
