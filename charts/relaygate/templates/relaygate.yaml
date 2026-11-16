@@ -1,6 +1,8 @@
 {{- include "relaygate.validate" . }}
 {{- $full := include "relaygate.fullname" . }}
-{{- if not .Values.existingConfigMap }}
+{{- $pull := include "relaygate.controlPolicy.pull" . }}
+{{- /* With the policy pulled from relay-control there is no file and no ConfigMap. */ -}}
+{{- if and (not .Values.existingConfigMap) (not $pull) }}
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -49,7 +51,7 @@ spec:
       labels:
         {{- include "relaygate.selectorLabels" . | nindent 8 }}
       annotations:
-        {{- if not .Values.existingConfigMap }}
+        {{- if and (not .Values.existingConfigMap) (not $pull) }}
         checksum/policy: {{ .Values.policy | toJson | sha256sum }}
         {{- end }}
         {{- with .Values.podAnnotations }}
@@ -72,8 +74,16 @@ spec:
           env:
             - name: PORT
               value: "8080"
+            {{- if $pull }}
+            # The policy comes from relay-control (signed, versioned); no file.
+            - name: RELAYCONTROL_POLICY_URL
+              value: {{ include "relaygate.controlPolicy.url" . | quote }}
+            - name: RELAYCONTROL_POLICY_SECRET
+              valueFrom: { secretKeyRef: { name: {{ .Values.global.relaygate.controlPolicy.policySecret.name }}, key: {{ .Values.global.relaygate.controlPolicy.policySecret.key }} } }
+            {{- else }}
             - name: RELAYGATE_POLICY
               value: /policy/policy.json
+            {{- end }}
             - name: RELAYGATE_DB
               value: /data/relaygate.db
             {{- with .Values.proxy.relaycastUrl | trim }}
@@ -127,9 +137,9 @@ spec:
             - name: SESSIONS_PORT
               value: {{ include "relaygate.sessionsPort" . | quote }}
             {{- end }}
-            {{- if .Values.secrets.adminToken.name }}
+            {{- with include "relaygate.adminToken" . | fromJson }}
             - name: RELAYGATE_ADMIN_TOKEN
-              valueFrom: { secretKeyRef: { name: {{ .Values.secrets.adminToken.name }}, key: {{ .Values.secrets.adminToken.key }} } }
+              valueFrom: { secretKeyRef: { name: {{ .name }}, key: {{ .key }} } }
             {{- end }}
             {{- if .Values.secrets.anthropicApiKey.name }}
             - name: ANTHROPIC_API_KEY
@@ -152,13 +162,17 @@ spec:
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
           volumeMounts:
+            {{- if not $pull }}
             - { name: policy, mountPath: /policy, readOnly: true }
+            {{- end }}
             - { name: data, mountPath: /data }
             - { name: tmp, mountPath: /tmp }
       volumes:
+        {{- if not $pull }}
         - name: policy
           configMap:
             name: {{ .Values.existingConfigMap | default (printf "%s-policy" $full) }}
+        {{- end }}
         - name: data
           persistentVolumeClaim:
             claimName: {{ .Values.persistence.existingClaim | default (printf "%s-data" $full) }}
