@@ -154,6 +154,18 @@ resource "aws_instance" "runner" {
   vpc_security_group_ids      = [aws_security_group.this.id]
   iam_instance_profile        = aws_iam_instance_profile.runner.name
   associate_public_ip_address = false
+
+  # user_data installs packages over the NAT path; make sure the route, the
+  # association and the egress rules exist before the instance boots.
+  depends_on = [
+    aws_route.private_default,
+    aws_route_table_association.private,
+    aws_vpc_security_group_egress_rule.https,
+    aws_vpc_security_group_egress_rule.postgres,
+    aws_vpc_security_group_egress_rule.postgres_pooler,
+    aws_vpc_security_group_egress_rule.dns_udp,
+    aws_vpc_security_group_egress_rule.dns_tcp,
+  ]
   ebs_optimized               = true
   monitoring                  = false
   user_data_replace_on_change = true

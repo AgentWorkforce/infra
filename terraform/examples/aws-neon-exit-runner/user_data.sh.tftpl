@@ -16,9 +16,13 @@ for d in /dev/nvme*n1; do
   if nvme id-ctrl "$d" 2>/dev/null | grep -q 'Amazon EC2 NVMe Instance Storage'; then dev="$d"; break; fi
 done
 if [ -n "$dev" ]; then
-  blkid "$dev" >/dev/null 2>&1 || mkfs.xfs -f "$dev"
+  blkid "$dev" >/dev/null 2>&1 || mkfs.xfs -f -L scratch "$dev"
   mkdir -p /scratch
-  mount -o noatime "$dev" /scratch
+  # Label-based fstab entry so /scratch survives a reboot (nofail: the store is
+  # wiped on stop/start and a fresh instance store needs a new mkfs).
+  grep -q '^LABEL=scratch ' /etc/fstab || echo 'LABEL=scratch /scratch xfs defaults,noatime,nofail 0 2' >> /etc/fstab
+  systemctl daemon-reload
+  mount /scratch
   chmod 1777 /scratch
 fi
 
