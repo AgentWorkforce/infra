@@ -36,6 +36,20 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- ternary .Release.Name (printf "%s-relaygate" .Release.Name) (contains "relaygate" .Release.Name) | trunc 63 | trimSuffix "-" -}}
 {{- end }}
 
+{{- /* Gate-only: the internal Sessions listener (relaygate SESSIONS_PORT,
+relaygate #28 or later) serves Sessions at its root with relay-control's
+internal mint allowed. relay-control's SESSION_READ_API_URL must be an origin
+without a path, so Control uses http://<this>.<ns>.svc.cluster.local:<port>
+(relay-control.sessionReadApiUrl derives the same name and port from
+global.relaygate.gateOnly). Never on an Ingress or NEG. */ -}}
+{{- define "relaygate.sessionsServiceName" -}}
+{{- printf "%s-sessions" (include "relaygate.fullname" . | trunc 54 | trimSuffix "-") -}}
+{{- end }}
+
+{{- define "relaygate.sessionsPort" -}}
+{{- dig "relaygate" "gateOnly" "sessionsPort" 0 (.Values.global | default dict) | int -}}
+{{- end }}
+
 {{- define "relaygate.validate" -}}
 {{- if include "relaygate.gateOnly" . }}
 {{- /* Gate-only (global.relaygate.gateOnly.enabled, agent-relay umbrella):
@@ -54,6 +68,22 @@ mapping left off would cut clients off instead of gating them. */ -}}
 {{- end }}
 {{- if ne (int (dig "servicePort" 8080 $g)) (int .Values.service.port) }}
 {{- fail "relaygate: global.relaygate.gateOnly.servicePort must equal service.port" }}
+{{- end }}
+{{- $sp := int (include "relaygate.sessionsPort" .) -}}
+{{- /* The main listener always binds 8080 (PORT); service.port only remaps the Service. */ -}}
+{{- if or (lt $sp 1) (gt $sp 65535) (eq $sp 8080) }}
+{{- fail "relaygate: global.relaygate.gateOnly.enabled needs global.relaygate.gateOnly.sessionsPort (relaygate SESSIONS_PORT, e.g. 8081, not 8080, the main listener): relay-control reaches Sessions there at the root" }}
+{{- end }}
+{{- $peers := .Values.sessionsListener.controlFrom -}}
+{{- if or (not (kindIs "slice" $peers)) (empty $peers) }}
+{{- fail "relaygate: gate-only needs sessionsListener.controlFrom (the relay-control pods): an empty peer list would admit every source to the internal Sessions listener" }}
+{{- end }}
+{{- /* Every peer must select pods by label: no ipBlock, and no bare (or empty)
+namespaceSelector, which would admit every pod in the selected namespaces. */ -}}
+{{- range $peers }}
+{{- if or (not (kindIs "map" .)) (empty .) }}{{ fail "relaygate: sessionsListener.controlFrom entries must be NetworkPolicy peers with selectors; an empty peer admits every source" }}{{ end -}}
+{{- if hasKey . "ipBlock" }}{{ fail "relaygate: sessionsListener.controlFrom must select the relay-control pods by label, never an ipBlock" }}{{ end -}}
+{{- if and (empty (dig "podSelector" "matchLabels" dict .)) (empty (dig "podSelector" "matchExpressions" list .)) }}{{ fail "relaygate: sessionsListener.controlFrom podSelector entries must name the relay-control pods by label (a namespaceSelector alone admits every pod it selects)" }}{{ end -}}
 {{- end }}
 {{- if .Values.nameOverride }}{{ fail "relaygate: nameOverride is unsupported with gate-only: the NetworkPolicies select app.kubernetes.io/name=relaygate" }}{{ end }}
 {{- end }}
