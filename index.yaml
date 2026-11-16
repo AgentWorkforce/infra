@@ -1295,6 +1295,33 @@ entries:
       artifacthub.io/license: Apache-2.0
     apiVersion: v2
     appVersion: 0.1.0
+    created: "2026-11-16T01:01:22.827763302Z"
+    description: Self-hosted Agent Relay control-plane API for messaging and sessions
+    digest: 1b0247cdcad3a3109fce6ad2a452b8923e8837d1572bc301d90b52c9f60cb932
+    home: https://github.com/AgentWorkforce/relay-control
+    keywords:
+    - agent-relay
+    - control-plane
+    - api
+    - self-hosted
+    kubeVersion: '>=1.28.0-0'
+    maintainers:
+    - name: AgentWorkforce
+      url: https://github.com/AgentWorkforce
+    name: relay-control
+    sources:
+    - https://github.com/AgentWorkforce/relay-control
+    type: application
+    urls:
+    - https://github.com/AgentWorkforce/infra/releases/download/relay-control-0.4.20/relay-control-0.4.20.tgz
+    version: 0.4.20
+  - annotations:
+      agentworkforce.dev/license-scope: First-party chart code only; dependencies
+        and images retain their own licenses.
+      agentworkforce.dev/min-helm-version: 3.10.0
+      artifacthub.io/license: Apache-2.0
+    apiVersion: v2
+    appVersion: 0.1.0
     created: "2026-11-15T23:13:53.778806325Z"
     description: Self-hosted Agent Relay control-plane API for messaging and sessions
     digest: b84cbc7549873962b4bef676f9918397a28620d9621a09f29a107167737c5f69
@@ -7400,4 +7427,4 @@ entries:
     urls:
     - https://github.com/AgentWorkforce/infra/releases/download/telemetry-collector-0.1.0/telemetry-collector-0.1.0.tgz
     version: 0.1.0
-generated: "2026-11-16T00:38:14.589373435Z"
+generated: "2026-11-16T01:01:22.828146613Z"
