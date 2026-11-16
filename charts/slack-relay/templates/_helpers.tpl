@@ -60,6 +60,17 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- fail "slack-relay: secrets.relaycastWorkspaceKey.name is required" }}
 {{- end }}
 {{- end }}
+{{- if .Values.sessions.upload.enabled }}
+{{- if not (.Values.relaygate.url | default "" | trim) }}
+{{- fail "slack-relay: sessions.upload.enabled needs relaygate.url (sessions are uploaded as each agent through the gate)" }}
+{{- end }}
+{{- if or (not .Values.sessions.upload.orgId) (not .Values.sessions.upload.workspaceId) }}
+{{- fail "slack-relay: sessions.upload.enabled needs sessions.upload.orgId and sessions.upload.workspaceId" }}
+{{- end }}
+{{- if and .Values.sessions.upload.relayControlUrl (not .Values.secrets.sessionsEnrollmentKey.name) }}
+{{- fail "slack-relay: sessions.upload.relayControlUrl needs secrets.sessionsEnrollmentKey.name (a Desktop enrollment key)" }}
+{{- end }}
+{{- end }}
 {{- if not .Values.secrets.slackBotToken.name }}
 {{- fail "slack-relay: secrets.slackBotToken.name is required" }}
 {{- end }}

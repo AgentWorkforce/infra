@@ -1,0 +1,19 @@
+image:
+  digest: sha256:0000000000000000000000000000000000000000000000000000000000000000
+relaygate:
+  url: http://relaygate:8080
+sessions:
+  upload:
+    enabled: true
+    orgId: org-example
+    workspaceId: ws-example
+    relayControlUrl: http://relay-control
+secrets:
+  relaygateEnrollmentKey: { name: slack-relay-relaygate, key: enrollment-key }
+  agentIdentitySecret: { name: slack-relay-relaygate, key: identity-secret }
+  sessionsEnrollmentKey: { name: slack-relay-sessions, key: enrollment-key }
+  slackBotToken: { name: slack-relay-slack, key: bot-token }
+  slackAppToken: { name: slack-relay-slack, key: app-token }
+  anthropicApiKey: { name: slack-relay-anthropic, key: api-key }
+slack:
+  allowedChannels: [C0123456789]

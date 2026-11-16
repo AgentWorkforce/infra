@@ -90,6 +90,25 @@ spec:
               value: {{ join "," . | quote }}
             {{- end }}
             {{- include "slack-relay.secretEnv" (dict "env" "ANTHROPIC_API_KEY" "ref" .Values.secrets.anthropicApiKey) | nindent 12 }}
+            {{- with .Values.sessions.upload }}
+            {{- if .enabled }}
+            - name: SESSIONS_UPLOAD
+              value: "true"
+            - name: SESSIONS_ORG_ID
+              value: {{ .orgId | quote }}
+            - name: SESSIONS_WORKSPACE_ID
+              value: {{ .workspaceId | quote }}
+            {{- with .baseUrl }}
+            - name: SESSIONS_BASE_URL
+              value: {{ . | quote }}
+            {{- end }}
+            {{- if .relayControlUrl }}
+            - name: RELAY_CONTROL_URL
+              value: {{ .relayControlUrl | quote }}
+            {{- include "slack-relay.secretEnv" (dict "env" "SESSIONS_ENROLLMENT_KEY" "ref" $.Values.secrets.sessionsEnrollmentKey) | nindent 12 }}
+            {{- end }}
+            {{- end }}
+            {{- end }}
           ports:
             - { name: http, containerPort: 8080 }
           livenessProbe:
