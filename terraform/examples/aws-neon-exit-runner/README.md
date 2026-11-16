@@ -12,8 +12,11 @@ What it creates, in one account and region:
 - an empty Secrets Manager secret for the target database owner credential.
   Its value is written out of band (`aws secretsmanager put-secret-value`) by
   whoever holds it, never through this configuration or a chat channel;
-- an instance role with `AmazonSSMManagedInstanceCore` and read of that one
-  secret, and the instance profile;
+- an empty Secrets Manager secret for the Cloud copy connection URLs
+  (`neon-exit/cloud/copy-urls`), also written out of band. The runner fetches
+  it on the box, so no connection URL appears in SSM command history;
+- an instance role with `AmazonSSMManagedInstanceCore` and read of those two
+  secrets only, and the instance profile;
 - one `m6id.4xlarge` (16 vCPU, 64 GB, 950 GB NVMe) on Amazon Linux 2023,
   IMDSv2 only, encrypted root, with the NVMe mounted at `/scratch` and
   `postgresql17` client, `zstd`, `git`, `jq` and `nodejs22` installed.
