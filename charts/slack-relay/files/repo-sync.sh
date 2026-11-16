@@ -95,11 +95,11 @@ fresh_token() {
     log "GitHub App token failed: $(redact <"$work/token.err")"
     return 1
   fi
-  tok=${out%% *} until=${out##* }
+  tok=${out%% *} expires=${out##* }
   case $tok in '' | *[!A-Za-z0-9_.-]*) log "GitHub App token failed: unexpected output"; return 1 ;; esac
-  case $until in '' | *[!0-9]*) log "GitHub App token failed: unexpected output"; return 1 ;; esac
-  GITHUB_TOKEN=$tok token_until=$until
-  [ "$until" -gt $((now + limit + 60)) ] || log "GitHub App token expires in $((until - now)) s, less than REPOS_TIMEOUT_SECONDS + 60"
+  case $expires in '' | *[!0-9]*) log "GitHub App token failed: unexpected output"; return 1 ;; esac
+  GITHUB_TOKEN=$tok token_until=$expires
+  [ "$expires" -gt $((now + limit + 60)) ] || log "GitHub App token expires in $((expires - now)) s, less than REPOS_TIMEOUT_SECONDS + 60"
   return 0
 }
 
