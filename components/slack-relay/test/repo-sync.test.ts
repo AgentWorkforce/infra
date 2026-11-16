@@ -191,6 +191,33 @@ test("repo-sync.sh with no list syncs what the token can read and removes what i
     assert.equal(existsSync(join(root, "cache", "other", "two.git")), false);
     assert.ok(existsSync(join(root, "repos", "acme", "one", "one.txt")));
 
+    // Dot-prefixed repo names are ordinary repos: never taken for staging,
+    // and pruned like any other when access goes.
+    makeRemote(root, "acme/.github", { "dot.txt": "d\n" });
+    makeRemote(root, "acme/.one.sync", { "sync.txt": "s\n" });
+    makeRemote(root, "acme/.one.old", { "old.txt": "o\n" });
+    writeFileSync(listFile, "acme/.github\nacme/.one.old\nacme/.one.sync\nacme/one\n");
+    const dots = sync(root, discover);
+    assert.equal(dots.code, 0, dots.log);
+    // Update acme/one so it is swapped in again next to its dot-named peers.
+    const work = join(root, "work", "acme/one");
+    writeFileSync(join(work, "more.txt"), "m\n");
+    git(work, "add", ".");
+    git(work, "commit", "-qm", "more");
+    git(work, "push", "-q", join(root, "remote", "acme/one.git"), "main");
+    const swapped = sync(root, discover);
+    assert.equal(swapped.code, 0, swapped.log);
+    assert.match(swapped.log, /acme\/one \w+ updated/);
+    assert.ok(existsSync(join(root, "repos", "acme", "one", "more.txt")));
+    assert.ok(existsSync(join(root, "repos", "acme", ".github", "dot.txt")));
+    assert.ok(existsSync(join(root, "repos", "acme", ".one.sync", "sync.txt")));
+    assert.ok(existsSync(join(root, "repos", "acme", ".one.old", "old.txt")));
+    writeFileSync(listFile, "acme/one\n");
+    const undotted = sync(root, discover);
+    assert.equal(undotted.code, 0, undotted.log);
+    assert.match(undotted.log, /acme\/\.github removed/);
+    assert.deepEqual(readdirSync(join(root, "repos", "acme")), ["one"]);
+
     // A failed listing (GitHub down, token expired) removes nothing.
     const failed = sync(root, { REPOS_LIST: "", REPOS_LIST_CMD: "false" });
     assert.equal(failed.code, 1, failed.log);

@@ -88,11 +88,11 @@ sync_one() { # owner/name [ref]
     log "$label $sha unchanged"
     return 0
   fi
-  # Check out next to the destination (same filesystem) under a dot name, then
+  # Check out into $tmp (on the same volume, outside every owner/name), then
   # swap it in with two renames, so a reader sees the old tree or the new one.
-  stage=$dir/$owner/.$name.sync
-  rm -rf "$stage" "$dir/$owner/.$name.old"
-  mkdir -p "$stage" || return 1
+  stage=$tmp/stage old=$tmp/old
+  rm -rf "$stage" "$old"
+  mkdir -p "$stage" "$dir/$owner" || return 1
   if ! err=$(GIT_INDEX_FILE=$work/index gitc --git-dir="$bare" --work-tree="$stage" read-tree "$sha" 2>&1 &&
     GIT_INDEX_FILE=$work/index gitc --git-dir="$bare" --work-tree="$stage" checkout-index -a -f 2>&1); then
     log "$label: checkout failed: $(printf '%s\n' "$err" | redact)"
@@ -100,9 +100,9 @@ sync_one() { # owner/name [ref]
     return 1
   fi
   rm -f "$work/index"
-  [ -e "$dest" ] && mv "$dest" "$dir/$owner/.$name.old"
+  [ -e "$dest" ] && mv "$dest" "$old"
   mv "$stage" "$dest"
-  rm -rf "$dir/$owner/.$name.old"
+  rm -rf "$old"
   printf '%s\n' "$sha" >"$cache/$owner/$name.sha"
   # Shallow fetches pile up objects; keep the cache to the latest commit.
   gitc -C "$bare" update-ref refs/sync/head "$sha"
@@ -113,7 +113,9 @@ sync_one() { # owner/name [ref]
 
 # Removes checkouts (and their caches) of repos not in $1 (owner/name lines).
 prune() {
-  for d in "$dir"/*/*; do
+  # Repo names may start with a dot (.github); owners never do, so the
+  # staging dir ($tmp) is never taken for an owner.
+  for d in "$dir"/*/* "$dir"/*/.[!.]* "$dir"/*/..?*; do
     [ -d "$d" ] || continue
     rel=${d#"$dir"/}
     printf '%s\n' "$1" | grep -qxF "$rel" && continue
@@ -124,7 +126,11 @@ prune() {
   return 0
 }
 
+# Staging for checkouts: on the checkout volume so renames are atomic, under a
+# name no GitHub owner can have (owners never start with a dot).
+tmp=$dir/.repo-sync
 mkdir -p "$dir" "$cache" || exit 1
+rm -rf "$tmp"
 if [ -n "${REPOS_LIST:-}" ]; then
   log "syncing $(printf '%s\n' "$REPOS_LIST" | grep -c '[^[:space:]]') listed repo(s) from $base every $minutes min"
 else
