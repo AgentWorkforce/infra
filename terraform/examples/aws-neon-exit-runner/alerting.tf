@@ -33,13 +33,8 @@ resource "aws_sns_topic_subscription" "alerts" {
 
 # CloudWatch agent configuration, fetched by the agent on the runner through
 # the instance role (ssm:GetParameter on this one parameter).
-resource "aws_ssm_parameter" "cloudwatch_agent" {
-  #checkov:skip=CKV_AWS_337:The agent configuration names a file glob and a log group; nothing secret.
-  #checkov:skip=CKV2_AWS_34:The agent configuration names a file glob and a log group; nothing secret.
-  name        = "/${var.name}/cloudwatch-agent"
-  description = "CloudWatch agent configuration for the Neon exit runner (log shipping only)"
-  type        = "String"
-  value = jsonencode({
+locals {
+  cloudwatch_agent_config = jsonencode({
     agent = { region = var.region }
     logs = {
       logs_collected = {
@@ -54,7 +49,16 @@ resource "aws_ssm_parameter" "cloudwatch_agent" {
       }
     }
   })
-  tags = { Name = var.name }
+}
+
+resource "aws_ssm_parameter" "cloudwatch_agent" {
+  #checkov:skip=CKV_AWS_337:The agent configuration names a file glob and a log group; nothing secret.
+  #checkov:skip=CKV2_AWS_34:The agent configuration names a file glob and a log group; nothing secret.
+  name        = "/${var.name}/cloudwatch-agent"
+  description = "CloudWatch agent configuration for the Neon exit runner (log shipping only)"
+  type        = "String"
+  value       = local.cloudwatch_agent_config
+  tags        = { Name = var.name }
 }
 
 data "aws_iam_policy_document" "log_shipping" {
@@ -95,8 +99,9 @@ resource "aws_ssm_association" "cloudwatch_agent" {
   parameters = {
     commands = join("\n", [
       "set -euo pipefail",
-      "# cloudwatch-agent config ${sha256(aws_ssm_parameter.cloudwatch_agent.value)}",
-      "install -d -m 1777 '${var.runner_log_dir}'",
+      "# cloudwatch-agent config ${sha256(local.cloudwatch_agent_config)}",
+      "id '${var.runner_log_owner}' >/dev/null 2>&1 || useradd -m '${var.runner_log_owner}'",
+      "install -d -m 0750 -o '${var.runner_log_owner}' -g '${var.runner_log_owner}' '${var.runner_log_dir}'",
       "rpm -q amazon-cloudwatch-agent >/dev/null 2>&1 || dnf -y install amazon-cloudwatch-agent",
       "/opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl -a fetch-config -m ec2 -s -c 'ssm:${aws_ssm_parameter.cloudwatch_agent.name}'",
     ])
@@ -113,10 +118,11 @@ resource "aws_cloudwatch_log_metric_filter" "signal" {
   log_group_name = aws_cloudwatch_log_group.runner.name
 
   metric_transformation {
-    name      = each.key
-    namespace = var.metric_namespace
-    value     = "1"
-    unit      = "Count"
+    name          = each.key
+    namespace     = var.metric_namespace
+    value         = "1"
+    default_value = 0
+    unit          = "Count"
   }
 }
 
@@ -135,6 +141,47 @@ resource "aws_cloudwatch_metric_alarm" "signal" {
   treat_missing_data  = "notBreaching"
   actions_enabled     = true
   alarm_actions       = [aws_sns_topic.alerts.arn]
-  ok_actions          = [aws_sns_topic.alerts.arn]
-  tags                = { Name = "${var.name}-${each.key}" }
+  # No ok_actions: the metric is a count of matching lines, so the alarm
+  # returns to OK one minute after the last match. That is not "resolved";
+  # whoever is paged closes the incident after the runbook.
+  tags = { Name = "${var.name}-${each.key}" }
+}
+
+# Dead man: the eraser logs one "erasure sweep" summary line per sweep. When
+# that line stops arriving (eraser down, agent down, log path wrong), the
+# alarm pages. Missing data is breaching by design, so arm it
+# (heartbeat_enabled) only once the eraser runs continuously on the box.
+resource "aws_cloudwatch_log_metric_filter" "heartbeat" {
+  count = var.heartbeat_enabled ? 1 : 0
+
+  name           = "erasure_sweep"
+  pattern        = var.heartbeat_pattern
+  log_group_name = aws_cloudwatch_log_group.runner.name
+
+  metric_transformation {
+    name          = "erasure_sweep"
+    namespace     = var.metric_namespace
+    value         = "1"
+    default_value = 0
+    unit          = "Count"
+  }
+}
+
+resource "aws_cloudwatch_metric_alarm" "heartbeat" {
+  count = var.heartbeat_enabled ? 1 : 0
+
+  alarm_name          = "${var.name}-erasure-sweep-missing"
+  alarm_description   = "No \"erasure sweep\" summary line from neon-s3-erasure on the Neon exit runner for ${var.heartbeat_period_seconds * var.heartbeat_evaluation_periods} s: eraser, CloudWatch agent or log path is down."
+  namespace           = var.metric_namespace
+  metric_name         = "erasure_sweep"
+  statistic           = "Sum"
+  period              = var.heartbeat_period_seconds
+  evaluation_periods  = var.heartbeat_evaluation_periods
+  threshold           = 1
+  comparison_operator = "LessThanThreshold"
+  treat_missing_data  = "breaching"
+  actions_enabled     = true
+  alarm_actions       = [aws_sns_topic.alerts.arn]
+  ok_actions          = [aws_sns_topic.alerts.arn] # sweeps resumed: genuinely resolved
+  tags                = { Name = "${var.name}-erasure-sweep-missing" }
 }

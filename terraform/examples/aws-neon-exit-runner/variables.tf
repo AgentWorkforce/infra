@@ -108,11 +108,13 @@ variable "metric_namespace" {
 }
 
 variable "alert_signals" {
-  description = "Signals that page: metric name => CloudWatch Logs filter pattern on the JSON lines. One metric filter and one alarm (any match in a minute) per entry."
+  description = "Signals that page: metric name => CloudWatch Logs filter pattern on the eraser's JSON lines (every pattern must also require $.service = \"neon-s3-erasure\"). One metric filter and one alarm (any match in a minute) per entry."
   type        = map(string)
   default = {
-    legacy_fence_failed                        = "{ $.legacy_fence_sweep_failed_total > 0 }"
-    legacy_erasure_requires_supabase_authority = "{ $.error_code = \"legacy_erasure_requires_supabase_authority\" }"
+    # The @metric line carries legacyFenceFailed/value; the message lines are
+    # what the eraser on main logs today when a fence sweep fails.
+    legacy_fence_failed                        = "{ ($.service = \"neon-s3-erasure\") && ((($.legacyFenceFailed > 0) && ($.value > 0)) || ($.message = \"fence sweep failed\") || ($.message = \"live fence sweep failed\")) }"
+    legacy_erasure_requires_supabase_authority = "{ ($.service = \"neon-s3-erasure\") && ($.error_code = \"legacy_erasure_requires_supabase_authority\") }"
   }
   validation {
     condition     = alltrue([for k, v in var.alert_signals : can(regex("^[A-Za-z0-9_]{1,100}$", k)) && length(trimspace(v)) > 0])
@@ -135,4 +137,46 @@ variable "alert_endpoint" {
   type        = string
   default     = null
   sensitive   = true
+}
+
+variable "runner_log_owner" {
+  description = "User that owns runner_log_dir (0750). The eraser runs as this user; the CloudWatch agent reads as root."
+  type        = string
+  default     = "ssm-user"
+  validation {
+    condition     = can(regex("^[a-z_][a-z0-9_-]{0,31}$", var.runner_log_owner))
+    error_message = "runner_log_owner must be a plain Unix user name."
+  }
+}
+
+variable "heartbeat_enabled" {
+  description = "Create the dead-man alarm on the eraser's per-sweep summary line. Missing data is breaching, so enable only once the eraser runs continuously on the runner."
+  type        = bool
+  default     = true
+}
+
+variable "heartbeat_pattern" {
+  description = "Filter pattern for the eraser's per-sweep summary line."
+  type        = string
+  default     = "{ ($.service = \"neon-s3-erasure\") && ($.message = \"erasure sweep\") }"
+}
+
+variable "heartbeat_period_seconds" {
+  description = "Expected sweep cadence in seconds (the eraser's default is 600). One alarm period."
+  type        = number
+  default     = 600
+  validation {
+    condition     = var.heartbeat_period_seconds >= 60 && var.heartbeat_period_seconds % 60 == 0
+    error_message = "heartbeat_period_seconds must be a multiple of 60."
+  }
+}
+
+variable "heartbeat_evaluation_periods" {
+  description = "Consecutive periods without a sweep line before the dead-man alarm pages (2 x 600 s = 20 minutes by default)."
+  type        = number
+  default     = 2
+  validation {
+    condition     = var.heartbeat_evaluation_periods >= 1
+    error_message = "heartbeat_evaluation_periods must be at least 1."
+  }
 }

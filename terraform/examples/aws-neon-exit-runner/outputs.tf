@@ -64,8 +64,8 @@ output "runner_log_dir" {
 }
 
 output "alarm_names" {
-  description = "Alarms, one per alert_signals entry."
-  value       = [for a in aws_cloudwatch_metric_alarm.signal : a.alarm_name]
+  description = "Alarms: one per alert_signals entry, plus the dead-man alarm when heartbeat_enabled."
+  value       = concat([for a in aws_cloudwatch_metric_alarm.signal : a.alarm_name], [for a in aws_cloudwatch_metric_alarm.heartbeat : a.alarm_name])
 }
 
 output "cloudwatch_agent_association_id" {

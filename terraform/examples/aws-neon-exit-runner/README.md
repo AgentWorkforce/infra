@@ -38,18 +38,28 @@ the NAT gateway about $0.045 per hour plus $0.045 per GB processed.
 
 ## Alerting (`alerting.tf`)
 
-The exit tooling that runs on the box writes one JSON line per event. This
-scaffold turns two of those lines into pages:
+The eraser (`neon-s3-erasure` in relayhistory-pipeline) writes one JSON
+object per line to stdout, always with `service: "neon-s3-erasure"`. This
+scaffold turns those lines into pages:
 
 - a CloudWatch Logs group (`log_group_name`, default `/neon-exit/runner`) fed
   by the CloudWatch agent from every `*.log` under `runner_log_dir`
-  (default `/var/log/neon-exit`). Run the CLI as
-  `... | tee -a /var/log/neon-exit/erasure.log` so its stdout lands there;
-- one metric filter and one alarm per `alert_signals` entry. The defaults are
-  `legacy_fence_failed` (`legacy_fence_sweep_failed_total > 0`) and
+  (default `/var/log/neon-exit`, mode 0750, owned by `runner_log_owner`);
+- one metric filter and one alarm per `alert_signals` entry, every pattern
+  scoped to `$.service = "neon-s3-erasure"`. Defaults:
+  `legacy_fence_failed` (the `@metric` line with `legacyFenceFailed > 0` and
+  `value > 0`, or the `fence sweep failed` / `live fence sweep failed`
+  message lines the eraser on main logs today) and
   `legacy_erasure_requires_supabase_authority` (`error_code` equals that
-  string). Any match within a minute puts the alarm in ALARM; it returns to
-  OK on the next minute without a match, and both transitions notify;
+  string). Any match within a minute puts the alarm in ALARM and pages.
+  There are no OK notifications on these: the count metric drops back a
+  minute later, which is not "resolved"; close the page after the runbook;
+- a dead-man alarm (`heartbeat_enabled`) on the eraser's per-sweep
+  `erasure sweep` summary line: fewer than one line per
+  `heartbeat_period_seconds` (600, the eraser's default cadence) for
+  `heartbeat_evaluation_periods` (2) consecutive periods pages, and missing
+  data counts as breaching. It resolves (OK notification) when sweeps
+  resume. Arm it only once the eraser runs continuously on the box;
 - an SNS topic `<name>-alerts` that the alarms publish to. **Nobody is
   subscribed until `alert_endpoint` is set** (with `alert_protocol`, default
   `https` for a PagerDuty Events v2 CloudWatch integration URL). Until then
@@ -58,12 +68,43 @@ scaffold turns two of those lines into pages:
 The agent is installed on the running instance through a Systems Manager
 association (`AWS-RunShellScript`), not through `user_data`, so applying this
 does not replace the runner. The agent reads its configuration from the SSM
-parameter `/<name>/cloudwatch-agent` with the instance role. If the
-association run fails (check `aws ssm describe-association-executions`),
-re-run it:
+parameter `/<name>/cloudwatch-agent` with the instance role; a changed
+configuration re-runs the association. If a run fails (check
+`aws ssm describe-association-executions`), re-run it:
 
 ```sh
 aws ssm start-associations-once --association-ids "$(terraform output -raw cloudwatch_agent_association_id)"
+```
+
+### Running the eraser so it is watched
+
+Only files under `runner_log_dir` are shipped, so stdout must land there.
+stderr stays local (not JSON, never matches a filter):
+
+```sh
+S3X_BUCKET=... S3X_EXPECT_BUCKET=... bun run migration:neon-s3-erasure --execute \
+  2>>/var/log/neon-exit/erasure.stderr | tee -a /var/log/neon-exit/erasure.log
+```
+
+Delivery proof (canary). This line trips the
+`legacy_erasure_requires_supabase_authority` alarm on purpose, so the page
+that arrives proves agent, filter, alarm, topic and subscription end to end;
+`canary: true` marks it in the log:
+
+```sh
+printf '{"at":"%s","service":"neon-s3-erasure","message":"canary","canary":true,"error_code":"legacy_erasure_requires_supabase_authority"}\n' \
+  "$(date -u +%FT%TZ)" >> /var/log/neon-exit/canary.log
+# within ~2 minutes:
+aws logs filter-log-events --log-group-name /neon-exit/runner --filter-pattern '{ $.canary = true }' --query 'events[].message'
+aws cloudwatch describe-alarms --alarm-names neon-exit-runner-legacy_erasure_requires_supabase_authority --query 'MetricAlarms[].StateValue'
+```
+
+To check a pattern against a real line before changing `alert_signals`:
+
+```sh
+aws logs test-metric-filter \
+  --filter-pattern '{ ($.service = "neon-s3-erasure") && ($.message = "erasure sweep") }' \
+  --log-event-messages '{"at":"2026-11-16T07:00:05Z","service":"neon-s3-erasure","message":"erasure sweep","count":12}'
 ```
 
 <!-- BEGIN_TF_DOCS -->
@@ -85,7 +126,9 @@ aws ssm start-associations-once --association-ids "$(terraform output -raw cloud
 | Name | Type |
 | ---- | ---- |
 | [aws_cloudwatch_log_group.runner](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/cloudwatch_log_group) | resource |
+| [aws_cloudwatch_log_metric_filter.heartbeat](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/cloudwatch_log_metric_filter) | resource |
 | [aws_cloudwatch_log_metric_filter.signal](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/cloudwatch_log_metric_filter) | resource |
+| [aws_cloudwatch_metric_alarm.heartbeat](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/cloudwatch_metric_alarm) | resource |
 | [aws_cloudwatch_metric_alarm.signal](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/cloudwatch_metric_alarm) | resource |
 | [aws_eip.nat](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/eip) | resource |
 | [aws_iam_instance_profile.runner](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/iam_instance_profile) | resource |
@@ -126,11 +169,15 @@ aws ssm start-associations-once --association-ids "$(terraform output -raw cloud
 | vpc\_id | VPC that gets the private subnet and the NAT gateway. | `string` | n/a | yes |
 | alert\_endpoint | Where the ops topic delivers (URL, address or number for alert\_protocol). Unset: the topic exists, the alarms publish to it, and nobody is subscribed. | `string` | `null` | no |
 | alert\_protocol | SNS subscription protocol for the ops topic: https (a PagerDuty Events v2 CloudWatch integration URL or Slack workflow URL), email, email-json or sms. | `string` | `"https"` | no |
-| alert\_signals | Signals that page: metric name => CloudWatch Logs filter pattern on the JSON lines. One metric filter and one alarm (any match in a minute) per entry. | `map(string)` | ```{ "legacy_erasure_requires_supabase_authority": "{ $.error_code = \"legacy_erasure_requires_supabase_authority\" }", "legacy_fence_failed": "{ $.legacy_fence_sweep_failed_total > 0 }" }``` | no |
+| alert\_signals | Signals that page: metric name => CloudWatch Logs filter pattern on the eraser's JSON lines (every pattern must also require $.service = "neon-s3-erasure"). One metric filter and one alarm (any match in a minute) per entry. | `map(string)` | ```{ "legacy_erasure_requires_supabase_authority": "{ ($.service = \"neon-s3-erasure\") && ($.error_code = \"legacy_erasure_requires_supabase_authority\") }", "legacy_fence_failed": "{ ($.service = \"neon-s3-erasure\") && ((($.legacyFenceFailed > 0) && ($.value > 0)) || ($.message = \"fence sweep failed\") || ($.message = \"live fence sweep failed\")) }" }``` | no |
 | ami\_ssm\_parameter | SSM public parameter that resolves to the AMI. | `string` | `"/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64"` | no |
 | availability\_zone | AZ of the private subnet; the instance type must be offered there. | `string` | `"us-east-1a"` | no |
 | copy\_urls\_secret\_name | Secrets Manager name of the Cloud copy connection URLs. Created empty; written out of band and read on the runner. | `string` | `"neon-exit/cloud/copy-urls"` | no |
 | db\_owner\_secret\_name | Secrets Manager name of the target database owner credential. Created empty; the value is written out of band by whoever holds it. | `string` | `"neon-exit/relayhistory-legacy/postgres-owner"` | no |
+| heartbeat\_enabled | Create the dead-man alarm on the eraser's per-sweep summary line. Missing data is breaching, so enable only once the eraser runs continuously on the runner. | `bool` | `true` | no |
+| heartbeat\_evaluation\_periods | Consecutive periods without a sweep line before the dead-man alarm pages (2 x 600 s = 20 minutes by default). | `number` | `2` | no |
+| heartbeat\_pattern | Filter pattern for the eraser's per-sweep summary line. | `string` | `"{ ($.service = \"neon-s3-erasure\") && ($.message = \"erasure sweep\") }"` | no |
+| heartbeat\_period\_seconds | Expected sweep cadence in seconds (the eraser's default is 600). One alarm period. | `number` | `600` | no |
 | instance\_type | Instance type with local NVMe for the dump. | `string` | `"m6id.4xlarge"` | no |
 | log\_group\_name | CloudWatch Logs group that receives the runner's *.log files. | `string` | `"/neon-exit/runner"` | no |
 | log\_retention\_days | Days CloudWatch keeps the runner log. | `number` | `90` | no |
@@ -140,13 +187,14 @@ aws ssm start-associations-once --association-ids "$(terraform output -raw cloud
 | region | Region of the runner. us-east-1 keeps it next to the Neon and Supabase projects. | `string` | `"us-east-1"` | no |
 | root\_volume\_size\_gb | Root EBS volume size. The dump goes to the NVMe instance store at /scratch, not here. | `number` | `50` | no |
 | runner\_log\_dir | Directory on the runner whose *.log files the CloudWatch agent ships. Write the erasure CLI's structured stdout there (for example `| tee -a /var/log/neon-exit/erasure.log`). | `string` | `"/var/log/neon-exit"` | no |
+| runner\_log\_owner | User that owns runner\_log\_dir (0750). The eraser runs as this user; the CloudWatch agent reads as root. | `string` | `"ssm-user"` | no |
 | tags | Tags applied to every resource. | `map(string)` | ```{ "ephemeral": "true", "managed": "terraform", "project": "neon-exit" }``` | no |
 
 ### Outputs
 
 | Name | Description |
 | ---- | ----------- |
-| alarm\_names | Alarms, one per alert\_signals entry. |
+| alarm\_names | Alarms: one per alert\_signals entry, plus the dead-man alarm when heartbeat\_enabled. |
 | alerts\_topic\_arn | Ops SNS topic the alarms publish to; subscribe the pager here (or set alert\_endpoint). |
 | cloudwatch\_agent\_association\_id | SSM association that installs and configures the CloudWatch agent (re-run with aws ssm start-associations-once). |
 | copy\_urls\_secret\_arn | Secrets Manager ARN of the empty Cloud copy URLs secret. |
