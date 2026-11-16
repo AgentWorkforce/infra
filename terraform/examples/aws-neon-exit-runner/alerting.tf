@@ -79,7 +79,9 @@ resource "aws_iam_role_policy" "log_shipping" {
 
 # Install and start the agent on the running instance through Systems
 # Manager, so the instance is not replaced (user_data_replace_on_change).
-# A failed run is retried with
+# The hash of the agent configuration is part of the commands, so a changed
+# configuration changes the association and runs it again (the agent only
+# re-reads the parameter on fetch-config). A failed run is retried with
 #   aws ssm start-associations-once --association-ids <id>
 resource "aws_ssm_association" "cloudwatch_agent" {
   name             = "AWS-RunShellScript"
@@ -93,6 +95,7 @@ resource "aws_ssm_association" "cloudwatch_agent" {
   parameters = {
     commands = join("\n", [
       "set -euo pipefail",
+      "# cloudwatch-agent config ${sha256(aws_ssm_parameter.cloudwatch_agent.value)}",
       "install -d -m 1777 '${var.runner_log_dir}'",
       "rpm -q amazon-cloudwatch-agent >/dev/null 2>&1 || dnf -y install amazon-cloudwatch-agent",
       "/opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl -a fetch-config -m ec2 -s -c 'ssm:${aws_ssm_parameter.cloudwatch_agent.name}'",
