@@ -28,6 +28,7 @@ The EKS API stays private (or limited to operator addresses): GitHub runners nev
 <env>/deploy.json      releases, snapshot, health checks
 <env>/values/*.yaml    non-secret values; Secrets are referenced by name, never inlined
 <env>/allow-drop.txt   reviewed exceptions to the drop guard (optional)
+<env>/replace-orphans.txt  reviewed Jobs made outside Helm that the apply replaces (optional)
 <env>/plan-rbac.yaml   the module's plan_rbac_manifest output (re-applied by every apply)
 ```
 
@@ -102,6 +103,14 @@ approve). It rebuilds the bundle and refuses if the digest differs from the plan
 refuses if any release's revision moved since the reviewed plan, snapshots, applies `plan-rbac.yaml`, runs
 `helm upgrade --install --wait` per changed release, fails on any Job that failed during the upgrade (helm
 `--wait` does not), records the running images and chart versions, and checks every health URL for a 2xx.
+
+**Orphan Jobs.** `helm upgrade` refuses to adopt an object it renders when a same-named live object has no Helm
+ownership for the release, for example a hash-named bootstrap Job someone ran by hand. List such Jobs, after
+review, in `replace-orphans.txt` (`job <release> <namespace>/<name>  # why, who approved`). For a release with
+entries, the plan's dry run takes ownership (writing nothing) and then refuses unless every unowned live object
+it would take is a listed Job that has finished; the plan log names the Jobs the apply will replace. The apply
+deletes each one, only if it is still unowned and finished, right before that release's upgrade, which
+re-creates it. Remove the entries once applied.
 
 **rollback**: `helm rollback <release> <revision> --wait`, then the health checks. Also gated by the approval
 environment. The revision to return to is the "Live revision" column of the plan that preceded the apply.
