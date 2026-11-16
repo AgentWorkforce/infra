@@ -122,13 +122,17 @@ export function clamp(v: unknown, maxString: number, maxArray: number, depth = 0
   return v;
 }
 
-/** JSON of `v` within MAX_OUTPUT characters: strings and arrays are cut harder until it fits. */
-export function bounded(v: unknown, maxString = 2000, maxArray = 50): string {
-  for (let s = maxString, a = maxArray; ; s = Math.floor(s / 2), a = Math.max(1, Math.floor(a / 2))) {
-    const out = JSON.stringify(clamp(v, s, a), null, 1);
+/**
+ * JSON of `v` within MAX_OUTPUT characters. Only strings are cut harder until it fits: a page's items are never
+ * dropped (its cursor points past all of them, so a dropped item could never be read). A page that can't fit even
+ * with short strings is refused with a hint to ask for fewer items.
+ */
+export function bounded(v: unknown, maxString = 2000): string {
+  for (let s = maxString; s >= 20; s = Math.floor(s / 2)) {
+    const out = JSON.stringify(clamp(v, s, 100), null, 1);
     if (out.length <= MAX_OUTPUT) return out;
-    if (s <= 50 && a <= 1) return JSON.stringify({ error: "result too large to show; narrow the request (smaller limit)" });
   }
+  return JSON.stringify({ error: "result too large to show; ask again with a smaller limit" });
 }
 
 export interface SessionsToolsOptions {
