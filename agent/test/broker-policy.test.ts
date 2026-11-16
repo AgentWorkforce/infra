@@ -309,9 +309,12 @@ test("a runner request in the agent-hosts account: approval only, named resource
   if (d.outcome !== "approval") return;
   assert.equal(d.roleArn, "arn:aws:iam::500268966557:role/agent-broker-elevated");
   const by = (sid: string) => d.sessionPolicy.Statement.find((s) => s.Sid === sid)!;
-  // Commands and the secret write: only on the named runner, secret, document and sessions.
-  assert.deepEqual(by("ApprovedAccountWide").Action, ["secretsmanager:PutSecretValue", "ssm:StartSession", "ssm:SendCommand", "ssm:TerminateSession", "ssm:ResumeSession"]);
-  assert.deepEqual(by("ApprovedAccountWide").Resource, RES);
+  // The secret write only on the secret; the session and commands only on the runner, document and sessions: one statement per service.
+  assert.equal(by("ApprovedAccountWide"), undefined, "a mixed request has no single all-actions-on-all-resources statement");
+  assert.deepEqual(by("ApprovedAccountWideSecretsmanager").Action, ["secretsmanager:PutSecretValue"]);
+  assert.equal(by("ApprovedAccountWideSecretsmanager").Resource, RES[0]);
+  assert.deepEqual(by("ApprovedAccountWideSsm").Action, ["ssm:StartSession", "ssm:SendCommand", "ssm:TerminateSession", "ssm:ResumeSession"]);
+  assert.deepEqual(by("ApprovedAccountWideSsm").Resource, RES.slice(1));
   // The reads IAM authorizes only on "*": their own statement, so AWS doesn't refuse them.
   assert.deepEqual(by("ApprovedWithoutResourceLevelPermissions").Action, ["ssm:GetCommandInvocation", "ssm:ListCommandInvocations", "ssm:DescribeSessions"]);
   assert.equal(by("ApprovedWithoutResourceLevelPermissions").Resource, "*");

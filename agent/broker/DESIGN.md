@@ -142,9 +142,13 @@ A run tag is claimed by the first agent that receives credentials for it
   are unconditioned (account-level reads have no tagged resource), creates
   must carry the run tag, and everything else applies only to resources
   carrying it. Under scope `account` there is no tag condition, only the
-  requested resources. The approval prompt lists every grant with its
-  condition, so Khaliq sees exactly what IAM will enforce, including which
-  grants are account-wide.
+  requested resources, one statement per service: each action gets the
+  named resources its service can apply to (SSM actions also the EC2
+  instances), so a request that mixes a secret write with an SSM session
+  reads as what IAM will allow, and a delegate's check sees each action only
+  on its own resources. An action none of the resources fits keeps them all.
+  The approval prompt lists every grant with its condition, so Khaliq sees
+  exactly what IAM will enforce, including which grants are account-wide.
 - **Delegated approvers** (`delegatedApprovers`, Khaliq's call). A named
   Relay agent may approve a pending request, over the same verified path
   (its own DM to the broker, under 15 minutes old, each message id once),

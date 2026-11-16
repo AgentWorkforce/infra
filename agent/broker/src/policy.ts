@@ -422,13 +422,59 @@ export function isResourceWildcardOnly(action: string): boolean {
   return RESOURCE_WILDCARD_ONLY_LOWER.has(action.toLowerCase());
 }
 
+/** The service an action belongs to: the prefix before the colon, lowercased like IAM matches it. */
+function actionService(action: string): string {
+  return action.slice(0, action.indexOf(":")).toLowerCase();
+}
+
+/**
+ * Can an action of this service apply to this resource ARN? Same service, or
+ * an SSM action on an EC2 instance (StartSession, SendCommand and the like
+ * target instance ARNs). "*" and a malformed ARN fit everything, so a
+ * request that names no resources, or odd ones, keeps today's policy.
+ */
+export function resourceFitsService(resource: string, service: string): boolean {
+  const m = /^arn:[^:]*:([^:]*):[^:]*:[^:]*:(.*)$/.exec(resource);
+  if (!m) return true;
+  const [, svc, rest] = m;
+  if (svc!.toLowerCase() === service) return true;
+  return service === "ssm" && svc!.toLowerCase() === "ec2" && rest!.startsWith("instance/");
+}
+
+/**
+ * Approved account-wide: one statement per set of resources the requested
+ * actions can apply to. A request that mixes services (the secret write and
+ * the SSM session of a runner job) no longer yields one statement with every
+ * action on every resource: the secret write lands on the secrets, the SSM
+ * actions on the instance and documents. IAM would never match the cross
+ * pairs anyway, but the approval prompt now reads as what IAM allows, and a
+ * delegate's capability check (every action on every resource of its
+ * statement) sees each action only on the resources it can reach. An action
+ * none of the named resources fits keeps them all, as before.
+ */
+function accountWideStatements(actions: string[], resources: string[]): PolicyStatement[] {
+  const groups: { key: string; actions: string[]; resources: string[]; services: Set<string> }[] = [];
+  for (const a of actions) {
+    const service = actionService(a);
+    const fits = resources.filter((r) => resourceFitsService(r, service));
+    const own = fits.length ? fits : resources;
+    const key = JSON.stringify(own);
+    let g = groups.find((x) => x.key === key);
+    if (!g) groups.push((g = { key, actions: [], resources: own, services: new Set() }));
+    g.actions.push(a);
+    g.services.add(service);
+  }
+  if (groups.length === 1) return [statement("approved-account-wide", groups[0]!.actions, groups[0]!.resources, undefined)];
+  return groups.map((g) => statement(`approved-account-wide-${[...g.services].sort().join("-")}`, g.actions, g.resources, undefined));
+}
+
 function approvalStatements(req: CredentialRequest, list: Allowlist, namespace: string): PolicyStatement[] {
   const resources = req.resources?.length ? req.resources : ["*"];
   if (req.scope === "account") {
     const wildcardOnly = req.actions.filter(isResourceWildcardOnly);
     const named = req.actions.filter((a) => !isResourceWildcardOnly(a));
     return [
-      ...(named.length ? [statement("approved-account-wide", named, resources, undefined)] : []),
+      ...(named.length ? accountWideStatements(named, resources) : []),
       ...(wildcardOnly.length ? [statement("approved-without-resource-level-permissions", wildcardOnly, ["*"], undefined)] : []),
     ];
   }
