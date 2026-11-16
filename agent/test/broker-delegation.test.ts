@@ -105,8 +105,10 @@ async function pend(broker: Broker, req: CredentialRequest, from = WORKER) {
 const withDelegate = (over: Partial<DelegatedApprover>): Allowlist => ({ ...allowlist, delegatedApprovers: [{ ...allowlist.delegatedApprovers![0]!, ...over }] });
 
 test("the shipped delegation: neon-exit-lead, pinned by agent id, six requesters, one literal instance, expiring 2026-11-19", () => {
-  // Fails closed until the Relay agent id is filled in: the only config problem is the missing id.
-  assert.deepEqual(delegationConfigProblems(shipped), ["delegate neon-exit-lead: agentId must be its Relay agent id"]);
+  // Pinned to neon-exit-lead's Relaycast agent_id (read from cast.agentrelay.com with the broker's
+  // observer token, 2026-11-16; it matches its address neon-exit-lead@sf-mac-mini-247865646017380352).
+  assert.deepEqual(delegationConfigProblems(shipped), []);
+  assert.equal(shipped.delegatedApprovers![0]!.agentId, "247865646017380352");
   assert.deepEqual(delegationConfigProblems(allowlist), []);
   assert.deepEqual(shipped.humanApprovers, ["khaliq-gant"], "Khaliq is still the only human approver");
   const [d, ...rest] = shipped.delegatedApprovers!;
@@ -124,10 +126,10 @@ test("the shipped delegation: neon-exit-lead, pinned by agent id, six requesters
   assert.deepEqual(c!.grants.find((g) => g.id === "neon-exit-ssm")!.instanceIds, ["i-0887caee00ca9029a"]);
 });
 
-test("the shipped config, as is, refuses every delegated approval (no agent id yet); Khaliq still approves", async () => {
+test("the shipped config pins the real agent id: an agent with another id under the name neon-exit-lead can't approve; Khaliq still can", async () => {
+  // The fake Relay's neon-exit-lead has a different id from the shipped pin (247865646017380352).
   const { broker, calls } = setup(shipped);
-  const { r, text } = await pend(broker, secretsReq());
-  assert.equal(r.approver, "khaliq-gant");
+  const { text } = await pend(broker, secretsReq());
   assert.match((await broker.decideViaRelay(fakeRelay([msg("1000002", DELEGATE, text)]), "1000002", BROKER)).reasons[0]!, /not the Relay agent the delegation names/);
   assert.equal((await broker.decideViaRelay(fakeRelay([msg("1000003", "khaliq-gant", text)]), "1000003", BROKER)).outcome, "issued");
   assert.equal(calls.length, 1);
