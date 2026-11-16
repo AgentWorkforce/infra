@@ -1498,9 +1498,16 @@ compatibility:
       images_note: not built for the charts yet
       notes: 'Follow-up re-pin to sessions-pipeline main after #127 (session briefs, generation 5ed11913...). Needs new GHCR/ECR digests, ci/sessions-pipeline-search-worker-role/services-commit and services-generation, and the session-brief entries below shipped.'
       db_combos: []
-    - id: relaycast-0.3.15
+    - id: relaycast-0.3.16
       status: unreleased
       current: true
+      charts: { relaycast: 0.3.16 }
+      app_versions: { relaycast: 12.10.0 }
+      images:
+        relaycast: { repository: ghcr.io/agentworkforce/relaycast-self-host, digest: sha256:ec062ef901af15cf575b53a71d7eb09f2e6ab6e7c0d5be2da35339a275a5c6cc }
+      notes: 'Carries 0.3.15. Gate-only Ingress also routes /v1/deliveries (prefix; relaygate''s delivery queue, sha256:b2fcef80 or later) to relaygate. Default renders differ only in the helm.sh/chart label.'
+    - id: relaycast-0.3.15
+      status: planned
       charts: { relaycast: 0.3.15 }
       app_versions: { relaycast: 12.10.0 }
       images:
@@ -1669,9 +1676,22 @@ compatibility:
       images:
         relayauth: { repository: ghcr.io/agentworkforce/relayauth, digest: sha256:eb71daa28e30eb7305f666d0bccc5a4002e53e8a574e3c4c32163d907a1b71df }
       notes: superseded by 0.1.1.
-    - id: agent-relay-0.7.33
+    - id: agent-relay-0.7.34
       status: unreleased
       current: true
+      charts: { agent-relay: 0.7.34, relay-control: 0.4.20, relay-webapp: 0.2.6 }
+      app_versions: { agent-relay: 0.1.0, relay-control: 0.1.0, relay-webapp: 0.1.0 }
+      depends:
+        agent-relay: { relaycast: 0.3.16, relayauth: 0.1.5, sessions-pipeline: 0.8.39, relay-control: 0.4.20, relay-webapp: 0.2.6, relayflows: 0.2.5, durable-actors: 0.14.6-awf.4, relayfile: 0.2.2, telemetry-collector: 0.1.7, relay-chief: 0.1.0, slack-relay: 0.3.3, relaygate: 0.1.6 }
+      images:
+        relaycast: { repository: ghcr.io/agentworkforce/relaycast-self-host, digest: sha256:ec062ef901af15cf575b53a71d7eb09f2e6ab6e7c0d5be2da35339a275a5c6cc }
+        relaycast-postgres: { repository: ghcr.io/agentworkforce/relaycast-self-host, digest: sha256:ec062ef901af15cf575b53a71d7eb09f2e6ab6e7c0d5be2da35339a275a5c6cc }
+        sessions-pipeline-worker: { repository: ghcr.io/agentworkforce/sessions-pipeline, digest: sha256:77022c5b6a1d30f96f921d703eb27a1acada8ec273ad84aebdde24f8eddce305 }
+        relay-control: { repository: ghcr.io/agentworkforce/relay-control, digest: sha256:d1b6ca95fab240a9d41208d83de3b1f4245408b0765038762f1c419ee60f43bc }
+        relay-webapp: { repository: ghcr.io/agentworkforce/relay-webapp, digest: sha256:bd295ccb7d1323965dce890f19d0b7f857d706c00d7756f719c713763fdb49f3 }
+      notes: 'Carries 0.7.33. relaygate 0.1.6 (Control principals without the Sessions proxy; desktop enrolment docs); gate-only cast hosts (GKE ingress and the relaycast ingress) also send /v1/deliveries to relaygate; gate-only CI values pin relaygate sha256:b2fcef80. Default renders differ only in the helm.sh/chart labels.'
+    - id: agent-relay-0.7.33
+      status: planned
       charts: { agent-relay: 0.7.33, relay-control: 0.4.20, relay-webapp: 0.2.6 }
       app_versions: { agent-relay: 0.1.0, relay-control: 0.1.0, relay-webapp: 0.1.0 }
       depends:
@@ -2942,9 +2962,16 @@ compatibility:
       charts: { relay-chief: 0.1.0 }
       app_versions: { relay-chief: 0.1.0 }
       notes: First chart, rendered only. No Relay Chief image is published and the digest is operator-supplied until one exists.
-    - id: relaygate-0.1.5
+    - id: relaygate-0.1.6
       status: unreleased
       current: true
+      charts: { relaygate: 0.1.6 }
+      app_versions: { relaygate: 0.1.0 }
+      images:
+        relaygate: { repository: ghcr.io/agentworkforce/relaygate, digest_required: true }
+      notes: 'Carries 0.1.5. control.introspectUrl no longer needs proxy.sessionsUrl (desktop enrolment with a device token works without the Sessions proxy); its env renders outside the Sessions block. Comments for controlPrincipals namePrefix and reserved key ids. CI pins relaygate sha256:b2fcef80 (main 2e8368d, desktop enrolment). Ships no default digest.'
+    - id: relaygate-0.1.5
+      status: planned
       charts: { relaygate: 0.1.5 }
       app_versions: { relaygate: 0.1.0 }
       images:
@@ -7105,8 +7132,8 @@ entries:
 
   - id: opt.relaygate.control-principals
     kind: option
-    title: relaygate Control principals on Sessions
-    description: Off by default. With control.introspectUrl (and the Sessions proxy) the gate accepts relay-control credentials on Sessions routes, desktop device tokens (introspected) and dashboard read tokens (learned from relay-control's mint calls, which go through the gate when relay-control's SESSION_READ_API_URL points at <release>-relaygate:8080/sessions), and maps each user to a group with policy.controlPrincipals; policy.sessionAggregates names the groups that may read cross-session aggregates. Needs relaygate sha256:c66696c5 or later.
+    title: relaygate Control principals (desktop enrolment, Sessions)
+    description: Off by default. With control.introspectUrl the gate accepts relay-control credentials and maps each user to a group with policy.controlPrincipals (a rule may set namePrefix). Desktop device tokens are introspected; with relaygate sha256:b2fcef80 or later a desktop enrols its agents with its device token (POST /v1/register; rg_ tokens expiring within 24 h; key ids control and device:* reserved), with or without the Sessions proxy. On Sessions routes (proxy.sessionsUrl), dashboard read tokens are learned from relay-control's mint calls, which go through the gate when relay-control's SESSION_READ_API_URL points at <release>-relaygate:8080/sessions; policy.sessionAggregates names the groups that may read cross-session aggregates. Needs relaygate sha256:c66696c5 or later.
     chart: relaygate
     values: [control.introspectUrl, control.sessionIngestAudience, proxy.sessionsCorsOrigins, "secrets.relaycontrolIntrospectSecret.*", "secrets.sessionsInternalSecret.*", policy.controlPrincipals, policy.sessionAggregates]
     env: [RELAYCONTROL_INTROSPECT_URL, RELAYCONTROL_INTROSPECT_SECRET, SESSION_INGEST_AUDIENCE, SESSIONS_CORS_ORIGINS, SESSIONS_INTERNAL_SECRET]
@@ -7116,7 +7143,7 @@ entries:
     default: off
     choices:
       - { value: off }
-      - { value: on, note: needs proxy.sessionsUrl, control.sessionIngestAudience and secrets.relaycontrolIntrospectSecret }
+      - { value: on, note: needs control.sessionIngestAudience and secrets.relaycontrolIntrospectSecret }
     secrets:
       - name: "<secrets.relaycontrolIntrospectSecret.name>"
         keys:
@@ -7126,7 +7153,7 @@ entries:
         keys:
           - { key: secret, key_path: secrets.sessionsInternalSecret.key }
         note: optional; the read API's internal secret, to check mint calls
-    verify: helm template fails with control.introspectUrl and no control.sessionIngestAudience or secrets.relaycontrolIntrospectSecret.name, with either of those and no control.introspectUrl, and with any Control setting and no proxy.sessionsUrl
+    verify: helm template fails with control.introspectUrl and no control.sessionIngestAudience or secrets.relaycontrolIntrospectSecret.name, with either of those and no control.introspectUrl, and with proxy.sessionsCorsOrigins or secrets.sessionsInternalSecret and no proxy.sessionsUrl (Control principals themselves work without the Sessions proxy)
     sources:
       - "charts/relaygate/values.yaml"
       - "charts/relaygate/templates/relaygate.yaml"

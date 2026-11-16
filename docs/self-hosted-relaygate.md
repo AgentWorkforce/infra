@@ -131,7 +131,7 @@ build 2: Slack-app agents register into the pit, create and join their channel,
 receive events over the proxied node WebSocket, and reply in threads with their
 `data` intact.
 
-## Control principals: desktop and dashboard on Sessions
+## Control principals: desktop and dashboard
 
 Some Sessions callers hold only relay-control credentials: the desktop app
 uploads with its device token and the dashboard reads with Control-issued read
@@ -162,6 +162,21 @@ forwards the mint calls unchanged and remembers which user each token belongs
 to. Each Control user acts as `ctl:<userId>` (the `ctl:` prefix is reserved) and
 their own credential still reaches Sessions. Uploads need `rth:sync`, reads
 `rth:read`. See relaygate `docs/contract.md`.
+
+### Desktop enrolment
+
+With relaygate `sha256:b2fcef80` or later and `control.introspectUrl` set (the
+Sessions proxy is not needed for this), a person's desktop app enrols its
+agents at the gate with their relay-control device token instead of an
+enrollment key: `POST /v1/register` with `Authorization: Bearer sh_at_...`.
+The person is mapped through `policy.controlPrincipals` (a rule may set
+`namePrefix` to limit the names their desktop may enrol); the agent gets a
+`rg_` token that expires with the device token and at most 24 hours later, so a
+revoked device or a person removed from the org loses their agents within a
+day. Enrollment key ids `control` and `device:*` are reserved. relay-control
+tells the desktop where the gate is when `SELFHOST_RELAYGATE_PUBLIC_URL` is set
+(gate-only installs). The same image adds a delivery queue
+(`GET /v1/deliveries`, ack, fail, defer) filtered by what the agent may read.
 
 ## Gate-only (one switch)
 
@@ -312,7 +327,7 @@ run it without `dryRun`. See relaygate `docs/gate-only.md`.
 Cast host, to relaygate: `/v1/register`, `/v1/check`, `/v1/whoami`,
 `/v1/agent`, `/v1/agent/node-token`, `/v1/node/ws`, `/v1/search`, `/v1/inbox`
 (exact) and `/v1/agents`, `/v1/channels`, `/v1/messages`, `/v1/dm`,
-`/v1/streams` (prefix; relaygate refuses methods and sub-paths it doesn't
+`/v1/streams`, `/v1/deliveries` (prefix; relaygate refuses methods and sub-paths it doesn't
 proxy with `404 relaygate_route_not_proxied`). Every proxied route needs an
 `rg_` token.
 
