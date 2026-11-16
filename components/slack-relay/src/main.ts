@@ -17,6 +17,7 @@ import { ingestFromEnv } from "./ingest-config.ts";
 import { EnrollmentCredential, SessionUploader } from "./sessions-upload.ts";
 import { SessionReadCredential, SessionsReadProxy } from "./sessions-read.ts";
 import { sessionsMcpServer } from "./sessions-mcp.ts";
+import { agentsMcpServer, GATED_RELAYCAST_DENIED } from "./agents-mcp.ts";
 import { channelMessageOf, ChannelDirectory, normalizeSlackEvent, SlackWeb, SocketModeClient, verifySlackSignature, type SlackEventEnvelope } from "./slack.ts";
 
 const env = process.env;
@@ -351,6 +352,15 @@ async function runHost(): Promise<void> {
   if (readProxy && !tools.includes("mcp__sessions")) tools.push("mcp__sessions");
   const sessionsMcpEntry = join(dirname(fileURLToPath(import.meta.url)), "sessions-mcp.ts");
   const denied = (env.AGENT_DISALLOWED_TOOLS ?? "Bash WebFetch WebSearch Read(//proc/**)").split(/[\s,]+/).filter(Boolean);
+  // Behind relaygate there is no workspace key (relaygate holds it), so relaycast's agent.list and workspace tools
+  // can only fail. The agents see the relay's agents through relaygate as themselves instead (agents-mcp.ts).
+  const agentsTools = Boolean(gateUrl) && env.RELAYCAST_MCP !== "false" && env.RELAY_AGENTS_MCP !== "false";
+  const agentsMcpEntry = join(dirname(fileURLToPath(import.meta.url)), "agents-mcp.ts");
+  if (agentsTools) {
+    if (!tools.includes("mcp__relay_agents")) tools.push("mcp__relay_agents");
+    for (const t of GATED_RELAYCAST_DENIED) if (!denied.includes(t)) denied.push(t);
+    log("relay agents: on (mcp__relay_agents, through relaygate as each agent)");
+  }
   const uploader = sessionUploader(settings, dataDir, hostName);
   // Behind relaygate every DM answer is checked first, so an agent never even
   // attempts a write the gate hasn't allowed (its proxy checks the send again,
@@ -364,6 +374,7 @@ async function runHost(): Promise<void> {
     persona: env.AGENT_PERSONA,
     idleMs: int("IDLE_RELEASE_MINUTES", 15) * 60_000,
     gated: Boolean(gateUrl),
+    agentsTools,
     dmCheck: gate ? (token, to, content) => checkWithRetry(gate, token, { op: "w", resource: { kind: "stream", id: inboxStreamId(to) }, content }) : undefined,
     log,
     sessionUpload: uploader ? (u) => uploader.upload(u) : undefined,
@@ -385,6 +396,7 @@ async function runHost(): Promise<void> {
           env: { RELAY_BASE_URL: relayBase, RELAY_AGENT_TOKEN: token, RELAY_AGENT_NAME: name, RELAY_SKIP_BOOTSTRAP: "1", RELAYCAST_TELEMETRY_DISABLED: "1" },
         };
       }
+      if (agentsTools) mcpServers.relay_agents = agentsMcpServer({ entry: agentsMcpEntry, baseUrl: gateUrl, token });
       if (readProxy) {
         // Read-only Sessions tools as this agent. Only the proxy URL and the agent's own rg_ token go here: the
         // read credential stays in the host process.
