@@ -37,7 +37,9 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- end }}
 
 {{- define "relaygate.sessionsServiceName" -}}
-{{- printf "%s-sessions" (include "relaygate.fullname" .) | trunc 63 | trimSuffix "-" -}}
+{{- /* Truncate the base first so "-sessions" always survives (a 62- or
+63-character fullname must not collide with the main Service). */ -}}
+{{- printf "%s-sessions" (include "relaygate.fullname" . | trunc 54 | trimSuffix "-") -}}
 {{- end }}
 
 {{- define "relaygate.validate" -}}
@@ -49,7 +51,7 @@ mapping left off would cut clients off instead of gating them. */ -}}
 {{- if or (not (trim .Values.proxy.relaycastUrl)) (not (trim .Values.proxy.sessionsUrl)) (not (trim .Values.proxy.sessionsUploadUrl)) (not (trim .Values.proxy.sessionsReadUrl)) (not .Values.proxy.sessionsHosts) }}
 {{- fail "relaygate: global.relaygate.gateOnly.enabled needs proxy.relaycastUrl, proxy.sessionsUrl, proxy.sessionsUploadUrl, proxy.sessionsReadUrl (the in-cluster Services) and proxy.sessionsHosts (the history host)" }}
 {{- end }}
-{{- if ne (int .Values.proxy.sessionsPort) (int (dig "sessionsPort" 8081 $g)) }}
+{{- if or (le (int .Values.proxy.sessionsPort) 0) (ne (int .Values.proxy.sessionsPort) (int (dig "sessionsPort" 8081 $g))) }}
 {{- fail (printf "relaygate: global.relaygate.gateOnly.enabled needs proxy.sessionsPort = global.relaygate.gateOnly.sessionsPort (%d): relay-control's SESSION_READ_API_URL is that internal listener's bare origin" (int (dig "sessionsPort" 8081 $g))) }}
 {{- end }}
 {{- if not (trim .Values.control.introspectUrl) }}

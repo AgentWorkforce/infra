@@ -962,6 +962,11 @@ for chart in "${charts[@]}"; do
         out=$(render "$chart" "$v" --set proxy.sessionsPort=8081)
         [ "$(env_value SESSIONS_PORT)" = 8081 ] || err "$chart: SESSIONS_PORT not rendered"
         [ "$(yq 'select(.kind == "Service" and .metadata.name == "ci-relaygate-sessions") | .spec.ports[0].port' <<<"$out" | sed '/^---$/d;/^$/d')" = 8081 ] || err "$chart: <fullname>-sessions Service not rendered"
+        long=$(printf 'g%.0s' {1..63})
+        out=$(render "$chart" "$v" --set proxy.sessionsPort=8081 --set fullnameOverride=$long)
+        [ "$(yq 'select(.kind == "Service") | .metadata.name' <<<"$out" | sed '/^---$/d;/^$/d' | sort -u | wc -l | tr -d ' ')" = 2 ] \
+          || err "$chart: a 63-character fullname must still give two distinct Services"
+        yq 'select(.kind == "Service") | .metadata.name' <<<"$out" | grep -qx "$(printf 'g%.0s' {1..54})-sessions" || err "$chart: long fullname: the Sessions Service must keep its -sessions suffix"
         expect_render_failure "$chart" "$v" "sessionsPort 8080" "proxy.sessionsPort must be 0 (off) or a port other than 8080" --set proxy.sessionsPort=8080
         # Control principals alone (desktop enrolment): no Sessions proxy needed.
         out=$(render "$chart" "$v" --set proxy.sessionsUrl= --set-json 'proxy.sessionsCorsOrigins=[]' --set secrets.sessionsInternalSecret.name=)
@@ -974,6 +979,7 @@ for chart in "${charts[@]}"; do
         # Gate-only (global.relaygate.gateOnly.enabled): refuses to render with
         # a proxy, sessionsHosts or the Control mapping missing, or a renamed Service.
         gate=(-f charts/relaygate/ci/proxy-values.yaml --set proxy.sessionsUploadUrl=http://session-ingest-api:8080 --set proxy.sessionsReadUrl=http://session-read-api:8080 --set 'proxy.sessionsHosts={history.example.com}' --set control.introspectUrl=http://relay-control:8080/internal/v1/auth/introspect --set control.sessionIngestAudience=https://history.example.com --set secrets.relaycontrolIntrospectSecret.name=control-introspect --set proxy.sessionsPort=8081 --set global.relaygate.gateOnly.enabled=true)
+        expect_render_failure "$chart" "$v" "gate-only with the listener off on both sides" "needs proxy.sessionsPort = global.relaygate.gateOnly.sessionsPort" "${gate[@]}" --set proxy.sessionsPort=0 --set global.relaygate.gateOnly.sessionsPort=0
         render "$chart" "$v" "${gate[@]}" >/dev/null || err "$chart: gate-only did not render"
         expect_render_failure "$chart" "$v" "gate-only without the Relaycast proxy" "global.relaygate.gateOnly.enabled needs proxy.relaycastUrl" "${gate[@]}" --set proxy.relaycastUrl=
         expect_render_failure "$chart" "$v" "gate-only without sessionsHosts" "global.relaygate.gateOnly.enabled needs proxy.relaycastUrl" "${gate[@]}" --set proxy.sessionsHosts=null

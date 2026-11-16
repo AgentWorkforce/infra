@@ -661,7 +661,7 @@ read API unchanged. services.sessionReadApiUrl stays the read API Service
 {{- $g := dig "relaygate" "gateOnly" dict (.Values.global | default dict) | default dict -}}
 {{- if and .Values.services.sessionReadApiUrl (dig "enabled" false $g) -}}
 {{- $gate := dig "serviceName" "" $g | default (ternary .Release.Name (printf "%s-relaygate" .Release.Name) (contains "relaygate" .Release.Name)) | trunc 63 | trimSuffix "-" -}}
-{{- printf "http://%s:%d" (printf "%s-sessions" $gate | trunc 63 | trimSuffix "-") (int (dig "sessionsPort" 8081 $g)) -}}
+{{- printf "http://%s:%d" (printf "%s-sessions" ($gate | trunc 54 | trimSuffix "-")) (int (dig "sessionsPort" 8081 $g)) -}}
 {{- else -}}
 {{- .Values.services.sessionReadApiUrl -}}
 {{- end -}}

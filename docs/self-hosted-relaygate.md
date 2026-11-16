@@ -135,7 +135,9 @@ receive events over the proxied node WebSocket, and reply in threads with their
 
 Some Sessions callers hold only relay-control credentials: the desktop app
 uploads with its device token and the dashboard reads with Control-issued read
-tokens. With `control.introspectUrl` (relaygate `sha256:c66696c5` or later) the
+tokens. With `control.introspectUrl` (relaygate `sha256:c66696c5` or later;
+dashboard read tokens through relay-control need the internal Sessions
+listener, `sha256:0ca54cdd` or later) the
 gate accepts them on Sessions routes and maps each user to a group by policy:
 
 ```yaml
@@ -145,6 +147,8 @@ control:
   sessionIngestAudience: https://history.example.com   # the ingest origin relay-control accepts
 proxy:
   sessionsCorsOrigins: [https://app.example.com]       # match the read API's list
+  sessionsPort: 8081   # internal listener: point relay-control's SESSION_READ_API_URL
+                       # at http://<release>-relaygate-sessions:8081 (gate-only does it)
 secrets:
   relaycontrolIntrospectSecret: { name: relaygate-control, key: introspect-secret }
   sessionsInternalSecret: { name: relaygate-sessions-internal, key: secret }   # optional: checks mint calls
@@ -200,8 +204,8 @@ at `cast.<domain>`. Gate-only closes both.
   NetworkPolicy add-on (checked on the nodes, see the GCP install guide). On a
   cluster that ignores NetworkPolicy the routing changes but nothing stops a pod
   calling Relaycast or Sessions directly.
-- **relaygate with Control-principal mapping ("PR B", relaygate#21, main
-  be42c916 or later, image `sha256:c66696c5`).** Once
+- **relaygate with Control-principal mapping and the internal Sessions
+  listener (relaygate main 7ff94f0 or later, image `sha256:0ca54cdd`).** Once
   gate-only is on, people using the dashboard and the desktop app reach
   Sessions through relaygate too, with Control-issued tokens (`sh_at_` upload
   tokens, `rth_` read tokens), not `rg_` tokens, and Control's own mint,
@@ -249,6 +253,7 @@ relaygate:
     sessionsReadUrl: http://<read API Service>        # sessions-pipeline sessionReadApi (port 80)
     sessionsHosts: [history.example.com]              # the history host, served at the root
     sessionsCorsOrigins: [https://app.example.com]    # = sessions-pipeline.sessionReadApi.cors.allowedOrigins (the dashboard origin)
+    sessionsPort: 8081                                # = global.relaygate.gateOnly.sessionsPort; Control reads at http://<gate>-sessions:8081
   control:
     introspectUrl: http://relay-control.<ns>.svc.cluster.local/internal/v1/auth/introspect
     sessionIngestAudience: https://history.example.com  # the public history origin (= ingestEdge.origin); Control already accepts it
