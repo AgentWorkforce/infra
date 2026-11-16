@@ -296,3 +296,49 @@ test("timestamps are kept clear of the Luhn check Sessions scrubs", () => {
   assert.ok(notLuhn(ms) > ms && notLuhn(ms) - ms < 10 && !luhn(notLuhn(ms)));
   assert.equal(notLuhn(ms + 1), luhn(ms + 1) ? notLuhn(ms + 1) : ms + 1);
 });
+
+test("an unexpected error (cursor write fails) resolves as failed: no rejection, the queue keeps working", async () => {
+  const g = await fakeGate();
+  const s = setup();
+  writeFileSync(s.file, line("user", "q"));
+  const { up, logs } = uploader(g, s);
+  // A directory where the cursor's temp file goes: writing the cursor throws EISDIR.
+  mkdirSync(join(s.stateDir, `${SID}.json.tmp`), { recursive: true });
+  const unhandled: unknown[] = [];
+  const onUnhandled = (e: unknown) => void unhandled.push(e);
+  process.on("unhandledRejection", onUnhandled);
+  try {
+    assert.equal(await up.upload(target(s)), "failed");
+    await new Promise((r) => setTimeout(r, 20));
+    assert.deepEqual(unhandled, []);
+    assert.ok(logs.some((l) => l.includes("EISDIR")));
+    // The next upload for the same session still runs.
+    assert.equal(await up.upload(target(s)), "failed");
+    assert.equal(g.reqs.length, 2);
+  } finally {
+    process.off("unhandledRejection", onUnhandled);
+    g.server.close();
+  }
+});
+
+test("batches are measured in UTF-8 bytes, envelope and session record included", async () => {
+  const g = await fakeGate();
+  const s = setup();
+  // 20 messages of 3000 CJK characters: 9000 UTF-8 bytes each, but only 3000 UTF-16 units.
+  writeFileSync(s.file, Array.from({ length: 20 }, (_, i) => line(i % 2 ? "assistant" : "user", "汉".repeat(3000))).join(""));
+  const raw: number[] = [];
+  const fetchFn = (async (url: string, init: RequestInit) => {
+    raw.push(Buffer.byteLength(init.body as string, "utf8"));
+    return fetch(url, init);
+  }) as typeof fetch;
+  const maxBytes = 64 * 1024;
+  const { up } = uploader(g, s, { maxBytes, fetch: fetchFn });
+  try {
+    assert.equal(await up.upload(target(s)), "uploaded");
+    assert.ok(raw.length > 1);
+    for (const n of raw) assert.ok(n <= maxBytes, `request of ${n} bytes exceeds ${maxBytes}`);
+    assert.equal(g.reqs.flatMap((r) => r.body.batch.records.slice(1)).length, 20);
+  } finally {
+    g.server.close();
+  }
+});

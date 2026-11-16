@@ -99,6 +99,11 @@ interface Cursor {
 export type UploadResult = "uploaded" | "nothing" | "denied" | "missing" | "failed";
 
 const ORIGIN = "slack-relay";
+/**
+ * Bytes reserved per request for the envelope and the session record (title, cwd, a first prompt of at most 2000
+ * characters, so at most 8 KB in UTF-8). A single message is capped at MAX_TEXT characters (at most 256 KB).
+ */
+const BATCH_OVERHEAD = 16 * 1024;
 const MAX_TEXT = 64 * 1024;
 
 export class SessionUploader {
@@ -124,9 +129,16 @@ export class SessionUploader {
   /** Uploads whatever the session has past its cursor. Calls for one session run one at a time. */
   upload(t: UploadTarget): Promise<UploadResult> {
     const prev = this.#queues.get(t.sessionId) ?? Promise.resolve("nothing" as UploadResult);
-    const run = prev.catch(() => "failed" as UploadResult).then(() => this.#upload(t));
+    // Never rejects: an unexpected error (a full volume, an unreadable transcript) is logged and the upload is
+    // retried after the next turn, so the queue can't wedge and no rejection goes unhandled.
+    const run: Promise<UploadResult> = prev
+      .then(() => this.#upload(t))
+      .catch((err) => {
+        this.#o.log(`sessions: ${t.agent} upload of ${t.sessionId} failed (${(err as NodeJS.ErrnoException).code ?? (err as Error).name}); retried after the next turn`);
+        return "failed" as const;
+      });
     this.#queues.set(t.sessionId, run);
-    void run.finally(() => {
+    void run.then(() => {
       if (this.#queues.get(t.sessionId) === run) this.#queues.delete(t.sessionId);
     });
     return run;
@@ -162,7 +174,8 @@ export class SessionUploader {
     // Parse every new complete line; each batch ends at a line boundary so the cursor can move per batch.
     const pending: Array<{ records: Rec[]; next: number }> = [];
     let records: Rec[] = [];
-    let bytes = 0;
+    // The request size in UTF-8 bytes: every batch also carries the envelope and the session record.
+    let bytes = BATCH_OVERHEAD;
     for (const line of lines) {
       const ev = eventOf(line.text);
       if (ev) {
@@ -177,11 +190,11 @@ export class SessionUploader {
           message_id: ev.id,
           ...(ev.model ? { model: ev.model } : {}),
         });
-        const size = JSON.stringify(rec).length;
+        const size = Buffer.byteLength(JSON.stringify(rec), "utf8") + 1;
         if (records.length && (records.length + 1 >= this.#o.maxRecords || bytes + size > this.#o.maxBytes)) {
           pending.push({ records, next: line.start });
           records = [];
-          bytes = 0;
+          bytes = BATCH_OVERHEAD;
         }
         records.push(rec);
         bytes += size;

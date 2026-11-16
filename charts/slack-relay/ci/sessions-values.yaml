@@ -7,7 +7,7 @@ sessions:
     enabled: true
     orgId: org-example
     workspaceId: ws-example
-    relayControlUrl: http://relay-control:8080
+    relayControlUrl: http://relay-control
 secrets:
   relaygateEnrollmentKey: { name: slack-relay-relaygate, key: enrollment-key }
   agentIdentitySecret: { name: slack-relay-relaygate, key: identity-secret }

@@ -36,6 +36,21 @@ root_login=$(yq 'select(.kind == "Ingress" and .metadata.name == "agent-relay-gc
   .http.paths[] | select(.path == "/login") | .backend.service.name' <<<"$out")
 test "$root_login" = relay-control
 
+# Desktop calls the relay-node broker routes (POST /relay-node/v1/nodes, the
+# GET /relay-node/v1/ws node WebSocket) on the sign-in origin. relay-control
+# serves them only at the root path (no /cloud alias), so the root host must
+# send /relay-node to relay-control ahead of the dashboard catch-all, and the
+# api BackendConfig must keep the socket open past GCE's 30 s default.
+root_paths=$(yq 'select(.kind == "Ingress" and .metadata.name == "agent-relay-gcp-proof") |
+  .spec.rules[] | select(.host == "gcp-proof.agentrelay.com") |
+  .http.paths[] | .path + " " + .pathType + " " + .backend.service.name' <<<"$out")
+test "$root_paths" = "$(printf '%s\n' '/cloud/api Prefix relay-control' '/login Prefix relay-control' '/relay-node Prefix relay-control' '/ Prefix relay-webapp')" \
+  || { echo "unexpected routes on the root host: $root_paths" >&2; exit 1; }
+test "$(yq 'select(.kind == "BackendConfig" and .metadata.name == "agent-relay-gcp-proof-api") | .spec.timeoutSec' <<<"$out")" = 3600 \
+  || { echo "api BackendConfig must keep the relay-node WebSocket open (timeoutSec 3600)" >&2; exit 1; }
+test "$(yq 'select(.kind == "Service" and .metadata.name == "relay-control") | .metadata.annotations["cloud.google.com/backend-config"]' <<<"$out")" = '{"default":"agent-relay-gcp-proof-api"}' \
+  || { echo "relay-control Service must bind the api BackendConfig" >&2; exit 1; }
+
 api_backend=$(yq 'select(.kind == "Ingress" and .metadata.name == "agent-relay-gcp-proof") |
   .spec.rules[] | select(.host == "api.gcp-proof.agentrelay.com") |
   .http.paths[] | select(.path == "/") | .backend.service.name' <<<"$out")
@@ -809,7 +824,7 @@ sh_args=(-f charts/agent-relay/values-gcp-proof.yaml -f charts/agent-relay/ci/si
 sh_host=relay.gcp-proof.agentrelay.com
 sh_out=$(helm template proof charts/agent-relay -n agent-relay --no-hooks "${sh_args[@]}")
 sh_paths() { yq "select(.kind == \"Ingress\") | .spec.rules[] | select(.host == \"$1\") | .http.paths[] | .path + \" \" + .backend.service.name" <<<"$sh_out"; }
-test "$(sh_paths "$sh_host")" = "$(printf '%s\n' '/cloud/api relay-control' '/login relay-control' '/api relay-control' '/ relay-webapp')" \
+test "$(sh_paths "$sh_host")" = "$(printf '%s\n' '/cloud/api relay-control' '/login relay-control' '/relay-node relay-control' '/api relay-control' '/ relay-webapp')" \
   || sh_fail "unexpected routes on $sh_host: $(sh_paths "$sh_host")"
 test "$(yq 'select(.kind == "Ingress") | .spec.rules[].host' <<<"$sh_out" | sort | tr '\n' ' ')" = \
   "cast.gcp-proof.agentrelay.com history.gcp-proof.agentrelay.com $sh_host " || sh_fail "unexpected Ingress hosts (an api host must not render)"
@@ -854,8 +869,12 @@ expect_sh_failure "publicUrl is derived from global.singleHost.host" --set relay
 expect_sh_failure "runtime.publicUrl is derived from global.singleHost.host" --set relay-webapp.runtime.publicUrl=https://gcp-proof.agentrelay.com
 # Leaf charts on their own (non-GKE edge): the dashboard Ingress carries /api.
 leaf_sh=$(helm template ci charts/relay-webapp -n ci --no-hooks -f charts/relay-webapp/ci/single-host-values.yaml)
-test "$(yq 'select(.kind == "Ingress") | .spec.rules[] | .host + " " + ([.http.paths[].path] | join(","))' <<<"$leaf_sh")" = "$sh_host /cloud/api,/login,/api,/" \
+test "$(yq 'select(.kind == "Ingress") | .spec.rules[] | .host + " " + ([.http.paths[].path] | join(","))' <<<"$leaf_sh")" = "$sh_host /cloud/api,/login,/relay-node,/api,/" \
   || sh_fail "relay-webapp leaf Ingress in single-host mode"
+# The leaf Ingress outside single-host mode still sends /relay-node to Control.
+leaf_mh=$(helm template ci charts/relay-webapp -n ci --no-hooks -f charts/relay-webapp/ci/default-values.yaml)
+test "$(yq 'select(.kind == "Ingress") | .spec.rules[].http.paths[] | select(.path == "/relay-node") | .pathType + " " + .backend.service.name' <<<"$leaf_mh")" = "Prefix $(yq '.api.serviceName' charts/relay-webapp/ci/default-values.yaml)" \
+  || { echo "relay-webapp leaf Ingress must route /relay-node to relay-control" >&2; exit 1; }
 if out=$(helm template ci charts/relay-control -n ci --no-hooks -f charts/relay-control/ci/single-host-values.yaml --set ingress.enabled=true --set-json "ingress.hosts=[\"$sh_host\"]" --set ingress.externalTls=true 2>&1); then
   sh_fail "relay-control rendered its own Ingress in single-host mode"
 fi

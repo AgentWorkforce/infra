@@ -375,7 +375,7 @@ sessions:
     orgId: <relay-control organization id>
     workspaceId: <relay-control workspace id>
     # baseUrl defaults to <relaygate.url>/sessions (the gate's main port)
-    relayControlUrl: http://<release>-relay-control:8080
+    relayControlUrl: http://relay-control   # relay-control's Service (port 80)
 secrets:
   sessionsEnrollmentKey: { name: slack-relay-sessions, key: enrollment-key }
 ```

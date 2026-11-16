@@ -10,8 +10,9 @@
 #
 # One internet-facing ALB with host rules, the same layout as the GKE edge:
 #
-#   <domain>          dashboard, with /cloud/api and /login routed to the
-#                     control API
+#   <domain>          dashboard, with /cloud/api, /login and /relay-node
+#                     (relay-node broker routes and node WebSocket) routed to
+#                     the control API
 #   api.<domain>      control API
 #   cast.<domain>     Relaycast
 #   history.<domain>  native History: the Sessions read API and the ingest edge
@@ -193,16 +194,19 @@ flows_routes /cloud/api/v1
 if [[ -n "$CHIEF_SVC" ]]; then
   route /cloud/api "$CONTROL_SVC" 80 Exact
   route /login "$CONTROL_SVC" 80 Exact
+  route /relay-node "$CONTROL_SVC" 80 Exact
   for prefix in /cloud/api/v1 /api/v1; do
     route "\"$prefix/workspaces/*/chiefs\"" "$CHIEF_SVC" "$CHIEF_PORT" ImplementationSpecific
     route "\"$prefix/workspaces/*/chiefs/*\"" "$CHIEF_SVC" "$CHIEF_PORT" ImplementationSpecific
   done
   route '"/cloud/api/*"' "$CONTROL_SVC" 80 ImplementationSpecific
   route '"/login/*"' "$CONTROL_SVC" 80 ImplementationSpecific
+  route '"/relay-node/*"' "$CONTROL_SVC" 80 ImplementationSpecific
   route '"/*"' "$WEBAPP_SVC" 8080 ImplementationSpecific
 else
   route /cloud/api "$CONTROL_SVC" 80
   route /login "$CONTROL_SVC" 80
+  route /relay-node "$CONTROL_SVC" 80
   route / "$WEBAPP_SVC" 8080
 fi
 
