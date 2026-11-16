@@ -70,9 +70,15 @@ mapping left off would cut clients off instead of gating them. */ -}}
 {{- fail "relaygate: global.relaygate.gateOnly.servicePort must equal service.port" }}
 {{- end }}
 {{- $sp := int (include "relaygate.sessionsPort" .) -}}
-{{- if or (lt $sp 1) (gt $sp 65535) (eq $sp (int .Values.service.port)) }}
-{{- fail "relaygate: global.relaygate.gateOnly.enabled needs global.relaygate.gateOnly.sessionsPort (relaygate SESSIONS_PORT, e.g. 8081, not service.port): relay-control reaches Sessions there at the root" }}
+{{- /* The main listener always binds 8080 (PORT); service.port only remaps the Service. */ -}}
+{{- if or (lt $sp 1) (gt $sp 65535) (eq $sp 8080) }}
+{{- fail "relaygate: global.relaygate.gateOnly.enabled needs global.relaygate.gateOnly.sessionsPort (relaygate SESSIONS_PORT, e.g. 8081, not 8080, the main listener): relay-control reaches Sessions there at the root" }}
 {{- end }}
+{{- $peers := .Values.sessionsListener.controlFrom -}}
+{{- if or (not (kindIs "slice" $peers)) (empty $peers) }}
+{{- fail "relaygate: gate-only needs sessionsListener.controlFrom (the relay-control pods): an empty peer list would admit every source to the internal Sessions listener" }}
+{{- end }}
+{{- range $peers }}{{ if or (not (kindIs "map" .)) (empty .) }}{{ fail "relaygate: sessionsListener.controlFrom entries must be NetworkPolicy peers with selectors; an empty peer admits every source" }}{{ end }}{{ if and (hasKey . "podSelector") (empty (dig "podSelector" "matchLabels" dict .)) (empty (dig "podSelector" "matchExpressions" list .)) }}{{ fail "relaygate: sessionsListener.controlFrom podSelector entries must name the relay-control pods by label" }}{{ end }}{{ end }}
 {{- if .Values.nameOverride }}{{ fail "relaygate: nameOverride is unsupported with gate-only: the NetworkPolicies select app.kubernetes.io/name=relaygate" }}{{ end }}
 {{- end }}
 {{- if not (regexMatch "^sha256:[a-f0-9]{64}$" (.Values.image.digest | default "")) }}
@@ -84,8 +90,8 @@ mapping left off would cut clients off instead of gating them. */ -}}
 {{- if and (not (trim .Values.proxy.sessionsUrl)) (or (trim .Values.proxy.sessionsUploadUrl) (trim .Values.proxy.sessionsReadUrl) .Values.proxy.sessionsHosts) }}
 {{- fail "relaygate: proxy.sessionsUploadUrl, sessionsReadUrl and sessionsHosts need proxy.sessionsUrl" }}
 {{- end }}
-{{- if and (not (trim .Values.proxy.sessionsUrl)) (or .Values.proxy.sessionsCorsOrigins (trim .Values.control.introspectUrl) .Values.secrets.sessionsInternalSecret.name) }}
-{{- fail "relaygate: proxy.sessionsCorsOrigins, control.introspectUrl and secrets.sessionsInternalSecret need proxy.sessionsUrl" }}
+{{- if and (not (trim .Values.proxy.sessionsUrl)) (or .Values.proxy.sessionsCorsOrigins .Values.secrets.sessionsInternalSecret.name) }}
+{{- fail "relaygate: proxy.sessionsCorsOrigins and secrets.sessionsInternalSecret need proxy.sessionsUrl" }}
 {{- end }}
 {{- if and (not (trim .Values.control.introspectUrl)) (or (trim .Values.control.sessionIngestAudience) .Values.secrets.relaycontrolIntrospectSecret.name) }}
 {{- fail "relaygate: control.sessionIngestAudience and secrets.relaycontrolIntrospectSecret need control.introspectUrl" }}

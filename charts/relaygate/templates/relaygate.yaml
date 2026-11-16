@@ -107,18 +107,20 @@ spec:
             - name: SESSIONS_INTERNAL_SECRET
               valueFrom: { secretKeyRef: { name: {{ $.Values.secrets.sessionsInternalSecret.name }}, key: {{ $.Values.secrets.sessionsInternalSecret.key }} } }
             {{- end }}
-            {{- with $.Values.control.introspectUrl | trim }}
+            {{- if $.Values.secrets.sessionsToken.name }}
+            - name: SESSIONS_TOKEN
+              valueFrom: { secretKeyRef: { name: {{ $.Values.secrets.sessionsToken.name }}, key: {{ $.Values.secrets.sessionsToken.key }} } }
+            {{- end }}
+            {{- end }}
+            {{- /* Control principals: desktop enrolment (POST /v1/register with a device
+            token) and Control callers on Sessions. Independent of the proxies. */}}
+            {{- with .Values.control.introspectUrl | trim }}
             - name: RELAYCONTROL_INTROSPECT_URL
               value: {{ . | quote }}
             - name: RELAYCONTROL_INTROSPECT_SECRET
               valueFrom: { secretKeyRef: { name: {{ $.Values.secrets.relaycontrolIntrospectSecret.name }}, key: {{ $.Values.secrets.relaycontrolIntrospectSecret.key }} } }
             - name: SESSION_INGEST_AUDIENCE
               value: {{ $.Values.control.sessionIngestAudience | trim | quote }}
-            {{- end }}
-            {{- if $.Values.secrets.sessionsToken.name }}
-            - name: SESSIONS_TOKEN
-              valueFrom: { secretKeyRef: { name: {{ $.Values.secrets.sessionsToken.name }}, key: {{ $.Values.secrets.sessionsToken.key }} } }
-            {{- end }}
             {{- end }}
             {{- if include "relaygate.gateOnly" . }}
             # Gate-only: the internal Sessions listener (relaygate #28 or later).

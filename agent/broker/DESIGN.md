@@ -148,14 +148,27 @@ A run tag is claimed by the first agent that receives credentials for it
   so approval-tier requests are refused up front rather than parked, and
   Khaliq isn't asked about something the broker can't issue.
 
-## Delivery: never in a Relay message
+## Delivery: never in plaintext over Relay
 
+- `encrypted` (Khaliq's choice for cross-node requesters, 2026-11-15):
+  - **The key.** The requester runs `client.ts keygen` on its own machine, which
+    makes a one-time X25519 key pair, and sends the public key in the request
+    (`"delivery": {"kind": "encrypted", "publicKey": "…"}`).
+  - **The seal.** The broker uses an ephemeral X25519 key pair, HKDF-SHA256
+    (salt = both public keys, info = the request id) and AES-256-GCM, with
+    the request id as additional data.
+  - **The reply.** It carries the envelope. The lead relays ciphertext it
+    can't open. In relay mode the public key comes from the Relay server's
+    copy of the request, so a lead can't substitute its own.
+  - **Opening it.** `client.ts open` writes a 0600 `credential_process` file
+    and deletes the single-use key. Nothing is stored on the broker, and the
+    audit log and cleanup record hold only `{kind: encrypted, ref: inline}`.
 - `file`: a `credential_process` JSON file, mode 0600, under
-  `~/.aws-broker/creds/<agent>/<request-id>.json` on the broker's node, for
-  its own workers. Use it with `credential_process = cat <path>`.
+  `/var/lib/aws-cred-broker/creds/<agent>/<request-id>.json` on the broker's
+  node, readable only by `credbroker`.
 - `1password`: an API Credential item in a vault the requester can read. The
-  item template goes to `op item create` on stdin, never on argv. This is the
-  cross-node path, for linuyc agents.
+  item template goes to `op item create` on stdin, never on argv. It needs a
+  1Password service account on the host, which isn't set up.
 
 Before anything is minted, the broker writes the run-tag claim and a cleanup
 record holding the planned delivery: the file path, or the 1Password item

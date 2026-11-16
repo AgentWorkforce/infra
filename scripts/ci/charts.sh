@@ -488,7 +488,7 @@ for chart in "${charts[@]}"; do
         v=charts/relaycast/ci/default-values.yaml
         gate=(--set global.relaygate.gateOnly.enabled=true --set ingress.enabled=true --set 'ingress.hosts={relay.example.com}' --set ingress.externalTls=true --set 'networkPolicy.ingressFrom[0].podSelector.matchLabels.app=ingress')
         out=$(render "$chart" "$v" "${gate[@]}") || err "$chart: gate-only did not render"
-        [ "$(yq 'select(.kind == "Ingress") | [.spec.rules[0].http.paths[] | .path + ">" + .backend.service.name] | join(" ")' <<<"$out" | sed '/^---$/d;/^$/d')" = "/v1/register>ci-relaygate /v1/check>ci-relaygate /v1/whoami>ci-relaygate /v1/agent>ci-relaygate /v1/agent/node-token>ci-relaygate /v1/node/ws>ci-relaygate /v1/search>ci-relaygate /v1/inbox>ci-relaygate /v1/agents>ci-relaygate /v1/channels>ci-relaygate /v1/messages>ci-relaygate /v1/dm>ci-relaygate /v1/streams>ci-relaygate />ci-relaycast-deny" ] \
+        [ "$(yq 'select(.kind == "Ingress") | [.spec.rules[0].http.paths[] | .path + ">" + .backend.service.name] | join(" ")' <<<"$out" | sed '/^---$/d;/^$/d')" = "/v1/register>ci-relaygate /v1/check>ci-relaygate /v1/whoami>ci-relaygate /v1/agent>ci-relaygate /v1/agent/node-token>ci-relaygate /v1/node/ws>ci-relaygate /v1/search>ci-relaygate /v1/inbox>ci-relaygate /v1/agents>ci-relaygate /v1/channels>ci-relaygate /v1/messages>ci-relaygate /v1/dm>ci-relaygate /v1/streams>ci-relaygate /v1/deliveries>ci-relaygate />ci-relaycast-deny" ] \
           || err "$chart: gate-only Ingress must route only relaygate's paths to relaygate"
         [ "$(yq 'select(.kind == "NetworkPolicy") | [.spec.ingress[0].from[].podSelector.matchLabels["app.kubernetes.io/name"]] | join(" ")' <<<"$out" | sed '/^---$/d;/^$/d')" = "relaygate relaycast-migration relay-control relayauth" ] \
           || err "$chart: gate-only policy must admit relaygate, the migration Job and networkPolicy.gateOnlyFrom only"
@@ -968,7 +968,11 @@ for chart in "${charts[@]}"; do
         ! grep -Eq 'name: (RELAYCONTROL_INTROSPECT_URL|SESSION_INGEST_AUDIENCE|SESSIONS_CORS_ORIGINS|SESSIONS_INTERNAL_SECRET)$' <<<"$out" || err "$chart: unset Control settings rendered"
         [ "$(yq 'select(.kind == "ConfigMap") | .data["policy.json"] | from_json | .controlPrincipals | length' <<<"$out" | sed '/^---$/d;/^$/d')" = 0 ] \
           || err "$chart: default policy must not grant Control principals"
-        expect_render_failure "$chart" "$v" "Control principals without sessionsUrl" "need proxy.sessionsUrl" --set proxy.sessionsUrl=
+        expect_render_failure "$chart" "$v" "Sessions CORS/internal secret without sessionsUrl" "need proxy.sessionsUrl" --set proxy.sessionsUrl=
+        # Control principals alone (desktop enrolment): no Sessions proxy needed.
+        out=$(render "$chart" "$v" --set proxy.sessionsUrl= --set-json 'proxy.sessionsCorsOrigins=[]' --set secrets.sessionsInternalSecret.name=)
+        [ "$(env_value RELAYCONTROL_INTROSPECT_URL)" = http://relay-control:8080/internal/v1/auth/introspect ] || err "$chart: introspection must render without the Sessions proxy"
+        ! grep -Eq 'name: SESSIONS_URL$' <<<"$out" || err "$chart: SESSIONS_URL rendered with proxy.sessionsUrl empty"
         expect_render_failure "$chart" "$v" "introspect without audience" "control.introspectUrl needs control.sessionIngestAudience" --set control.sessionIngestAudience=
         expect_render_failure "$chart" "$v" "audience without introspectUrl" "need control.introspectUrl" --set control.introspectUrl= --set secrets.relaycontrolIntrospectSecret.name=
         expect_render_failure "$chart" "$v" "introspect secret without introspectUrl" "need control.introspectUrl" --set control.introspectUrl= --set control.sessionIngestAudience=
@@ -982,6 +986,14 @@ for chart in "${charts[@]}"; do
         expect_render_failure "$chart" "$v" "gate-only without the Control mapping" "global.relaygate.gateOnly.enabled needs control.introspectUrl" "${gate[@]}" --set control.introspectUrl= --set control.sessionIngestAudience= --set secrets.relaycontrolIntrospectSecret.name=
         expect_render_failure "$chart" "$v" "gate-only with a renamed Service" "set global.relaygate.gateOnly.serviceName" "${gate[@]}" --set fullnameOverride=gate
         expect_render_failure "$chart" "$v" "gate-only without the sessions port" "needs global.relaygate.gateOnly.sessionsPort" "${gate[@]}" --set global.relaygate.gateOnly.sessionsPort=0
+        # The main listener always binds 8080 (PORT); service.port only remaps the Service.
+        expect_render_failure "$chart" "$v" "gate-only sessions port on the main listener behind a remapped Service" "not 8080, the main listener" "${gate[@]}" --set service.port=80 --set global.relaygate.gateOnly.servicePort=80 --set global.relaygate.gateOnly.sessionsPort=8080
+        render "$chart" "$v" "${gate[@]}" --set service.port=8081 --set global.relaygate.gateOnly.servicePort=8081 --set global.relaygate.gateOnly.sessionsPort=8081 >/dev/null \
+          || err "$chart: a Service port equal to the sessions port is fine (the main listener is 8080)"
+        expect_render_failure "$chart" "$v" "gate-only with no listener peers" "an empty peer list would admit every source" "${gate[@]}" --set sessionsListener.controlFrom=null
+        expect_render_failure "$chart" "$v" "gate-only with an empty listener peer" "must be NetworkPolicy peers with selectors" "${gate[@]}" --set-json 'sessionsListener.controlFrom=[{}]'
+        expect_render_failure "$chart" "$v" "gate-only with an unlabelled listener peer" "must name the relay-control pods by label" "${gate[@]}" --set-json 'sessionsListener.controlFrom=[{"podSelector":{}}]'
+
         render "$chart" "$v" "${gate[@]}" --set fullnameOverride=gate --set global.relaygate.gateOnly.serviceName=gate >/dev/null || err "$chart: gate-only with a matching serviceName must render"
         ;;
       agent-relay)
@@ -1025,7 +1037,7 @@ for chart in "${charts[@]}"; do
         routes() { yq "select(.kind == \"Ingress\") | .spec.rules[] | select(.host == \"$1\") | .http.paths[] | .path + \" \" + .pathType + \" \" + .backend.service.name" <<<"$out" | sed '/^---$/d;/^$/d' | tr '\n' ';'; }
         gate=agent-relay-gcp-proof-gate deny=agent-relay-gcp-proof-cast-edge-deny
         want=""; for p in /v1/register /v1/check /v1/whoami /v1/agent /v1/agent/node-token /v1/node/ws /v1/search /v1/inbox; do want+="$p Exact $gate;"; done
-        for p in /v1/agents /v1/channels /v1/messages /v1/dm /v1/streams; do want+="$p Prefix $gate;"; done
+        for p in /v1/agents /v1/channels /v1/messages /v1/dm /v1/streams /v1/deliveries; do want+="$p Prefix $gate;"; done
         [ "$(routes cast.gcp-proof.agentrelay.com)" = "$want/ Prefix $deny;" ] || err "$chart: gate-only cast routes: $(routes cast.gcp-proof.agentrelay.com)"
         want="/v1/sessions Prefix $gate;"; for p in /v1/events /v1/ingest /v1/delivery/batches /v1/delivery/limits /v1/auth/token/refresh /v1/onboarding/heartbeat; do want+="$p Exact $gate;"; done
         [ "$(routes history.gcp-proof.agentrelay.com)" = "$want/ Prefix $deny;" ] || err "$chart: gate-only history routes: $(routes history.gcp-proof.agentrelay.com)"

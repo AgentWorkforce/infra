@@ -54,6 +54,9 @@ policy:
   # users with no rg_ token (the desktop app's device token, dashboard read
   # tokens) mapped to groups; first matching rule wins, no match is refused.
   # match takes kinds (device, read), orgIds, workspaceIds, roles, userIds, emails.
+  # A rule may set namePrefix (sha256:b2fcef80 or later) to limit the agent
+  # names that person's desktop may enrol. Enrollment key ids "control" and
+  # "device:*" are reserved, as are agent names starting "ctl:".
   # Empty by default: every Control principal is refused (older images ignore
   # both keys). For example:
   #   - { match: { orgIds: ["<org>"], roles: [owner, admin] }, gid: 33 }
@@ -109,12 +112,15 @@ proxy:
   # API's list), so relaygate's own refusals carry CORS headers for them.
   sessionsCorsOrigins: []
 
-# Control principals on Sessions routes (relaygate sha256:c66696c5 or later):
-# desktop device tokens are introspected with relay-control, and dashboard read
-# tokens are learned from relay-control's mint calls, which then go through
-# relaygate. relay-control's SESSION_READ_API_URL must be an origin (no
-# path); with gate-only it is the internal Sessions listener below. Map them with
-# policy.controlPrincipals. Needs proxy.sessionsUrl and
+# Control principals (relaygate sha256:c66696c5 or later): relay-control users
+# mapped to groups by policy.controlPrincipals. Desktop device tokens are
+# introspected with relay-control; with sha256:b2fcef80 or later a desktop
+# also enrols its agents with its device token (POST /v1/register, rg_ tokens
+# that expire within 24 h). On Sessions routes (with proxy.sessionsUrl),
+# dashboard read tokens are learned from relay-control's mint calls, which then
+# go through relaygate. relay-control's SESSION_READ_API_URL must be an
+# origin (no path); with gate-only it is the internal Sessions listener below.
+# Needs
 # secrets.relaycontrolIntrospectSecret.
 #
 # Gate-only (global.relaygate.gateOnly.enabled, set in the agent-relay
@@ -125,8 +131,8 @@ proxy:
 # later), a ClusterIP Service <fullname>-sessions on it (never on an Ingress
 # or NEG), and a NetworkPolicy that admits only sessionsListener.controlFrom
 # to it. relay-control's SESSION_READ_API_URL becomes
-# http://<fullname>-sessions.<ns>.svc.cluster.local:8081. See docs/self-hosted-relaygate.md,
-# "Gate-only".
+# http://<fullname>-sessions.<ns>.svc.cluster.local:8081. See
+# docs/self-hosted-relaygate.md, "Gate-only".
 control:
   # e.g. http://relay-control:8080/internal/v1/auth/introspect
   introspectUrl: ""
@@ -135,7 +141,8 @@ control:
   sessionIngestAudience: ""
 
 # Gate-only: the pods that may reach the internal Sessions listener (and its
-# internal mint). Nothing else is admitted to that port.
+# internal mint). Nothing else is admitted to that port. Must not be empty:
+# an empty NetworkPolicy peer list admits every source.
 sessionsListener:
   controlFrom:
     - podSelector: { matchLabels: { app.kubernetes.io/name: relay-control } }
