@@ -121,7 +121,7 @@ test("the shipped delegation: neon-exit-lead, pinned by agent id, six requesters
   const [c] = d!.capabilities;
   assert.deepEqual(c!.accounts, [HOSTS]);
   assert.deepEqual(c!.regions, ["us-east-1"]);
-  assert.deepEqual(c!.readOnlyRules, ["read-describe"]);
+  assert.deepEqual(c!.readOnlyRules, ["read-describe", "ssm-command-reads"]);
   assert.deepEqual(c!.grants.flatMap((g) => g.actions).sort(), ["secretsmanager:GetSecretValue", "secretsmanager:PutSecretValue", "ssm:SendCommand", "ssm:StartSession"]);
   assert.deepEqual(c!.grants.find((g) => g.id === "neon-exit-ssm")!.instanceIds, ["i-0887caee00ca9029a"]);
 });
@@ -362,4 +362,25 @@ test("a request without a delegate gets exactly the policy it got before this ch
   assert.deepEqual(withList, without);
   const named = decide(ssmReq(), requester, allowlist, run);
   assert.ok(named.outcome === "approval" && named.sessionPolicy.Statement.some((s) => s.Sid === "DelegateDenyUntaggedNeonExitSsm"), "naming the delegate only adds its deny");
+});
+
+test("the runner's hourly SSM request (sessions, commands and their output reads) is delegable; session wildcards are not", async () => {
+  const { broker, calls } = setup();
+  // legacy-copy's shape: SSM sessions and commands on the runner plus the command-output reads (no
+  // resource-level permissions, so on "*"). No TerminateSession/ResumeSession on session/*. The
+  // secret write is its own request: one grant must cover every resource in a statement.
+  const runnerReq = secretsReq({
+    purpose: "neon exit: drive the copy on the runner",
+    actions: ["ssm:StartSession", "ssm:SendCommand", "ssm:GetCommandInvocation", "ssm:ListCommandInvocations", "ssm:DescribeSessions"],
+    resources: [INSTANCE, SHELL_DOC, "arn:aws:ssm:us-east-1::document/SSM-SessionManagerRunShell"],
+    durationMinutes: 60,
+  });
+  const { r, text } = await pend(broker, runnerReq);
+  assert.equal(r.approver, DELEGATE, `routed to the delegate, not Khaliq: ${r.reasons.join("; ")}`);
+  const ok = await broker.decideViaRelay(fakeRelay([msg("1000002", DELEGATE, text)]), "1000002", BROKER);
+  assert.equal(ok.outcome, "issued", ok.reasons.join("; "));
+  assert.equal(calls.length, 1);
+  // With the session wildcard back in, it goes to Khaliq again.
+  const { r: wide } = await pend(setup().broker, secretsReq({ actions: ["ssm:TerminateSession"], resources: [`arn:aws:ssm:us-east-1:${HOSTS}:session/*`] }));
+  assert.equal(wide.approver, "khaliq-gant");
 });
