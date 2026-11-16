@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { AgentHost } from "../src/host.ts";
-import { accountId, EnrollmentCredential, eventOf, notLuhn, SessionUploader, transcriptPath } from "../src/sessions-upload.ts";
+import { accountId, EnrollmentCredential, eventOf, notLuhn, readLinesFrom, SessionUploader, transcriptPath } from "../src/sessions-upload.ts";
 
 interface Req {
   headers: IncomingHttpHeaders;
@@ -341,4 +341,38 @@ test("batches are measured in UTF-8 bytes, envelope and session record included"
   } finally {
     g.server.close();
   }
+});
+
+test("reads a bounded window: a backlog goes up window by window, one batch at a time", async () => {
+  const g = await fakeGate();
+  const s = setup();
+  const lines = Array.from({ length: 12 }, (_, i) => line(i % 2 ? "assistant" : "user", `w${i}`));
+  writeFileSync(s.file, lines.join(""));
+  // A window smaller than the file: it holds a few lines at a time.
+  const window = Buffer.byteLength(lines[0]!) * 3 + 10;
+  const { up } = uploader(g, s, { readBytes: window });
+  try {
+    assert.equal(await up.upload(target(s)), "uploaded");
+    assert.ok(g.reqs.length >= 4);
+    assert.deepEqual(g.reqs.flatMap((r) => r.body.batch.records.slice(1).map((x: any) => x.payload.text)), lines.map((_, i) => `w${i}`));
+    // The session record moves forward with each batch (newer revision wins).
+    const revs = g.reqs.map((r) => r.body.batch.records[0].revision);
+    assert.deepEqual([...revs].sort((a, b) => a - b), revs);
+  } finally {
+    g.server.close();
+  }
+});
+
+test("readLinesFrom grows the window for a line longer than it, and holds back a partial tail", () => {
+  const dir = mkdtempSync(join(tmpdir(), "sr-read-"));
+  const f = join(dir, "t.jsonl");
+  writeFileSync(f, "x".repeat(100) + "\nab\ncd");
+  const r = readLinesFrom(f, 0, 8);
+  // The window doubled until it held the long line whole (here, to the whole file).
+  assert.deepEqual(r.lines.map((l) => [l.text.length, l.start, l.end]), [[100, 0, 101], [2, 101, 104]]);
+  assert.equal(r.end, 104);
+  const r2 = readLinesFrom(f, 101, 8);
+  assert.deepEqual(r2.lines.map((l) => l.text), ["ab"]);
+  assert.equal(r2.end, 104);
+  assert.deepEqual(readLinesFrom(f, 104, 8).lines, []);
 });

@@ -80,6 +80,8 @@ export interface UploaderOptions {
   maxBytes?: number;
   /** Attempts per batch on 429/503/5xx/network errors before waiting for the next turn. */
   attempts?: number;
+  /** Transcript bytes read per pass (a longer single line is still read whole). */
+  readBytes?: number;
   /** Upper bound on any wait, whatever Retry-After says. */
   maxWaitMs?: number;
 }
@@ -119,6 +121,7 @@ export class SessionUploader {
       maxRecords: 200,
       maxBytes: 1_500_000,
       attempts: 4,
+      readBytes: 4 * 1024 * 1024,
       maxWaitMs: 5 * 60_000,
       ...o,
       baseUrl: o.baseUrl.replace(/\/$/, ""),
@@ -168,56 +171,51 @@ export class SessionUploader {
     if (t.slack && !cursor.slack) cursor.slack = t.slack;
     const file = transcriptPath(this.#o.home, t.workdir, t.sessionId);
     if (!file) return "missing";
-    const { lines, end } = readLinesFrom(file, cursor.offset);
-    if (!lines.length) return "nothing";
-
-    // Parse every new complete line; each batch ends at a line boundary so the cursor can move per batch.
-    const pending: Array<{ records: Rec[]; next: number }> = [];
-    let records: Rec[] = [];
-    // The request size in UTF-8 bytes: every batch also carries the envelope and the session record.
-    let bytes = BATCH_OVERHEAD;
-    for (const line of lines) {
-      const ev = eventOf(line.text);
-      if (ev) {
-        if (ev.role === "user" && !cursor.firstPrompt) cursor.firstPrompt = ev.text.slice(0, 2000);
-        cursor.firstMs = Math.min(cursor.firstMs ?? ev.ts, ev.ts);
-        cursor.lastMs = Math.max(cursor.lastMs ?? ev.ts, ev.ts);
-        if (ev.model && !(cursor.models ??= []).includes(ev.model)) cursor.models.push(ev.model);
-        const rec = this.#record(`cc:${t.sessionId}:${ev.id}`, 1, "session_event", t.sessionId, {
-          role: ev.role,
-          text: ev.text,
-          ts_ms: notLuhn(ev.ts),
-          message_id: ev.id,
-          ...(ev.model ? { model: ev.model } : {}),
-        });
-        const size = Buffer.byteLength(JSON.stringify(rec), "utf8") + 1;
-        if (records.length && (records.length + 1 >= this.#o.maxRecords || bytes + size > this.#o.maxBytes)) {
-          pending.push({ records, next: line.start });
-          records = [];
-          bytes = BATCH_OVERHEAD;
+    let result: UploadResult = "nothing";
+    // One batch at a time, from a bounded window of the transcript, so a large backlog never sits in memory whole.
+    for (;;) {
+      const { lines } = readLinesFrom(file, cursor.offset, this.#o.readBytes);
+      if (!lines.length) return result;
+      const next: Cursor = { ...cursor, models: [...(cursor.models ?? [])] };
+      const records: Rec[] = [];
+      // The request size in UTF-8 bytes: every batch also carries the envelope and the session record.
+      let bytes = BATCH_OVERHEAD;
+      for (const line of lines) {
+        const ev = eventOf(line.text);
+        if (ev) {
+          const rec = this.#record(`cc:${t.sessionId}:${ev.id}`, 1, "session_event", t.sessionId, {
+            role: ev.role,
+            text: ev.text,
+            ts_ms: notLuhn(ev.ts),
+            message_id: ev.id,
+            ...(ev.model ? { model: ev.model } : {}),
+          });
+          const size = Buffer.byteLength(JSON.stringify(rec), "utf8") + 1;
+          // The batch ends at a line boundary, so the cursor can move past exactly what was sent.
+          if (records.length && (records.length + 1 >= this.#o.maxRecords || bytes + size > this.#o.maxBytes)) break;
+          if (ev.role === "user" && !next.firstPrompt) next.firstPrompt = ev.text.slice(0, 2000);
+          next.firstMs = Math.min(next.firstMs ?? ev.ts, ev.ts);
+          next.lastMs = Math.max(next.lastMs ?? ev.ts, ev.ts);
+          if (ev.model && !next.models!.includes(ev.model)) next.models!.push(ev.model);
+          records.push(rec);
+          bytes += size;
         }
-        records.push(rec);
-        bytes += size;
+        next.offset = line.end;
       }
-    }
-    pending.push({ records, next: end });
-
-    for (const chunk of pending) {
-      // Every batch carries the session record, so the session exists (and its title, activity and first prompt
-      // are current) whichever batch lands first. Its revision is the last activity, so newer wins.
-      const all = [this.#sessionRecord(t, cursor), ...chunk.records];
-      const result = await this.#send(t, all);
-      if (result !== "ok") {
-        if (result === "denied") {
-          this.#writeCursor(t.sessionId, { ...this.#readCursor(t.sessionId), denied: true });
+      if (records.length) {
+        // Every batch carries the session record, so the session exists (with its title, activity and first prompt
+        // current) whichever batch lands first. Its revision is the last activity, so newer wins.
+        const sent = await this.#send(t, [this.#sessionRecord(t, next), ...records]);
+        if (sent === "denied") {
+          this.#writeCursor(t.sessionId, { ...cursor, denied: true });
           return "denied";
         }
-        return "failed";
+        if (sent !== "ok") return "failed";
+        result = "uploaded";
       }
-      cursor.offset = chunk.next;
+      Object.assign(cursor, next);
       this.#writeCursor(t.sessionId, cursor);
     }
-    return "uploaded";
   }
 
   #record(recordId: string, revision: number, kind: string, sessionId: string, payload: Record<string, unknown>): Rec {
@@ -367,22 +365,29 @@ function errorCode(text: string): string {
   }
 }
 
-/** Complete lines (ending in \n) from `offset`, with each line's start offset; `end` is past the last one. */
-export function readLinesFrom(file: string, offset: number): { lines: Array<{ text: string; start: number }>; end: number } {
+/**
+ * Complete lines (ending in \n) from `offset`, reading at most about `maxBytes` (more only when a single line is
+ * longer: the window grows until it holds one whole line). Each line has its start and the offset past its \n.
+ */
+export function readLinesFrom(file: string, offset: number, maxBytes = 4 * 1024 * 1024): { lines: Array<{ text: string; start: number; end: number }>; end: number } {
   const fd = openSync(file, "r");
   try {
     const size = fstatSync(fd).size;
-    if (offset >= size) return { lines: [], end: offset };
-    const buf = Buffer.alloc(size - offset);
-    readSync(fd, buf, 0, buf.length, offset);
-    const lines: Array<{ text: string; start: number }> = [];
-    let start = 0;
-    for (let i = 0; i < buf.length; i++) {
-      if (buf[i] !== 0x0a) continue;
-      lines.push({ text: buf.subarray(start, i).toString("utf8"), start: offset + start });
-      start = i + 1;
+    for (let window = maxBytes; ; window *= 2) {
+      if (offset >= size) return { lines: [], end: offset };
+      const len = Math.min(window, size - offset);
+      const buf = Buffer.alloc(len);
+      const got = readSync(fd, buf, 0, len, offset);
+      const lines: Array<{ text: string; start: number; end: number }> = [];
+      let start = 0;
+      for (let i = 0; i < got; i++) {
+        if (buf[i] !== 0x0a) continue;
+        lines.push({ text: buf.subarray(start, i).toString("utf8"), start: offset + start, end: offset + i + 1 });
+        start = i + 1;
+      }
+      // No complete line in the window: a longer line, or the tail Claude is still writing.
+      if (lines.length || offset + got >= size) return { lines, end: offset + start };
     }
-    return { lines, end: offset + start };
   } finally {
     closeSync(fd);
   }
