@@ -330,9 +330,32 @@ export function approvalScope(action: string): Scope {
  * resources carrying it). The approval prompt lists the statements, so no
  * isolation is claimed that IAM can't provide.
  */
+/**
+ * Actions IAM authorizes only on Resource "*" (no resource-level permissions):
+ * naming resources for them makes AWS refuse them. An approved account-wide
+ * session gets them in their own "*" statement, which the approval prompt
+ * shows as such, while every other action stays on the named resources.
+ */
+export const RESOURCE_WILDCARD_ONLY = new Set([
+  "ssm:GetCommandInvocation",
+  "ssm:ListCommandInvocations",
+  "ssm:ListCommands",
+  "ssm:DescribeSessions",
+  "ssm:DescribeInstanceInformation",
+  "ec2:DescribeInstances",
+  "secretsmanager:ListSecrets",
+]);
+
 function approvalStatements(req: CredentialRequest, list: Allowlist, namespace: string): PolicyStatement[] {
   const resources = req.resources?.length ? req.resources : ["*"];
-  if (req.scope === "account") return [statement("approved-account-wide", [...req.actions], resources, undefined)];
+  if (req.scope === "account") {
+    const wildcardOnly = req.actions.filter((a) => RESOURCE_WILDCARD_ONLY.has(a));
+    const named = req.actions.filter((a) => !RESOURCE_WILDCARD_ONLY.has(a));
+    return [
+      ...(named.length ? [statement("approved-account-wide", named, resources, undefined)] : []),
+      ...(wildcardOnly.length ? [statement("approved-without-resource-level-permissions", wildcardOnly, ["*"], undefined)] : []),
+    ];
+  }
   const auto = autoStatements(req, list, namespace);
   const groups: Record<Scope, string[]> = { any: [], "request-tag": [], "resource-tag": [] };
   for (const a of auto.unmatched) groups[approvalScope(a)].push(a);
