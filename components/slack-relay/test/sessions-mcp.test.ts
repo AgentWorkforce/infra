@@ -7,7 +7,7 @@ import { dirname, join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { handleRpc, MAX_OUTPUT, SessionsTools, sessionsMcpServer, TOOLS } from "../src/sessions-mcp.ts";
-import { SessionReadCredential, SessionsReadProxy } from "../src/sessions-read.ts";
+import { MemberDirectory, SessionReadCredential, SessionsReadProxy } from "../src/sessions-read.ts";
 import type { SessionsCredential } from "../src/sessions-upload.ts";
 
 const AGENT = "rg_agent_pit_token";
@@ -56,6 +56,7 @@ function control(): SessionsCredential & { invalidated: number } {
 }
 
 let minted = 0;
+let memberReads = 0;
 function controlAnswer(s: Seen, body: string): { status: number; body: unknown } {
   assert.equal(s.headers.authorization, "Bearer sh_at_uploader");
   if (s.path.endsWith("/session-read/session")) {
@@ -64,16 +65,25 @@ function controlAnswer(s: Seen, body: string): { status: number; body: unknown }
     return { status: 200, body: { accessToken: `rth_at_read_${minted}`, accessTokenExpiresAt: new Date(Date.now() + 15 * 60_000).toISOString(), refreshToken: "rth_rt_read_x", refreshTokenExpiresAt: new Date(Date.now() + 86_400_000).toISOString() } };
   }
   if (s.path.endsWith("/session-read/refresh")) return { status: 401, body: { error: "invalid_refresh_token" } };
+  if (s.path === "/api/v1/organizations/org-1/memberships") {
+    memberReads++;
+    return { status: 200, body: { memberships: [
+      { userId: "u-nt", email: "nt@example.com", name: "Nia Tran", role: "member" },
+      { userId: "u-ab", email: "ab@example.com", name: "Alex Brook", role: "admin" },
+    ] } };
+  }
   return { status: 404, body: {} };
 }
 
 async function setup(gate = gateAnswer) {
   minted = 0;
+  memberReads = 0;
   const g = await listen(gate);
   const ctl = await listen(controlAnswer);
   const logs: string[] = [];
   const credential = new SessionReadCredential({ controlUrl: ctl.url, workspaceId: "ws-1", control: control() });
-  const proxy = new SessionsReadProxy({ baseUrl: `${g.url}/sessions`, workspaceId: "ws-1", credential, isAgentToken: (t) => t === AGENT, log: (m) => logs.push(m) });
+  const members = new MemberDirectory({ controlUrl: ctl.url, orgId: "org-1", control: control() });
+  const proxy = new SessionsReadProxy({ baseUrl: `${g.url}/sessions`, workspaceId: "ws-1", credential, members, isAgentToken: (t) => t === AGENT, log: (m) => logs.push(m) });
   await proxy.listen();
   const tools = new SessionsTools({ proxyUrl: proxy.url, token: AGENT });
   const close = async () => {
@@ -196,15 +206,17 @@ test("a 401 from Sessions mints a new read token and retries once", async () => 
 
 test("output is bounded and long strings are cut", async () => {
   const big = "x".repeat(50_000);
+  const longCursor = `c${"k".repeat(3000)}`;
   const t = await setup((s) =>
-    s.path.endsWith("/events") ? { status: 200, body: { events: Array.from({ length: 50 }, (_, i) => ({ eventId: `e${i}`, content: big })), nextCursor: "n" } } : gateAnswer(s),
+    s.path.endsWith("/events") ? { status: 200, body: { events: Array.from({ length: 50 }, (_, i) => ({ eventId: `e${i}`, content: big })), nextCursor: longCursor } } : gateAnswer(s),
   );
   try {
     const r = await t.tools.call("get_session_turns", { session_id: "s1", limit: 50 });
     assert.ok(!r.isError);
     assert.ok(out(r).length <= MAX_OUTPUT, `output ${out(r).length} > ${MAX_OUTPUT}`);
     const j = JSON.parse(out(r));
-    assert.equal(j.next_cursor, "n", "the cursor survives the cut");
+    assert.equal(j.next_cursor, longCursor, "the cursor is passed back whole, never cut");
+    assert.equal(j.messages.length, 50, "no message of the page is dropped (the cursor is past all of them)");
     assert.match(JSON.stringify(j.messages), /\[cut\]/);
   } finally {
     await t.close();
@@ -304,5 +316,73 @@ test("the stdio server speaks MCP and lists the four read-only tools", async () 
   } finally {
     child.kill();
     await t.close();
+  }
+});
+
+/** Pages of sessions and search hits from two people, plus one id no member has. */
+function peopleGate(s: Seen): { status: number; body: unknown } {
+  const page = s.query.get("cursor") === "p2" ? 2 : 1;
+  if (s.path === "/sessions/v1/sessions") {
+    return page === 1
+      ? { status: 200, body: { sessions: [{ sessionId: "s1", userId: "u-ab" }, { sessionId: "s2", userId: "u-ghost" }], nextCursor: "p2" } }
+      : { status: 200, body: { sessions: [{ sessionId: "s3", userId: "u-nt" }, { sessionId: "s4", userId: "u-ab" }], nextCursor: null } };
+  }
+  if (s.path === "/sessions/v1/events") return { status: 200, body: { events: [{ eventId: "e1", sessionId: "s3", userId: "u-nt" }, { eventId: "e2", sessionId: "s1", userId: "u-ab" }], nextCursor: null } };
+  return gateAnswer(s);
+}
+
+test("sessions carry the person's name and email; unknown ids stay ids", async () => {
+  const t = await setup(peopleGate);
+  try {
+    const j = JSON.parse(out(await t.tools.call("list_sessions", {})));
+    assert.deepEqual(j.sessions.map((x: any) => x.user), [{ id: "u-ab", name: "Alex Brook", email: "ab@example.com" }, { id: "u-ghost" }]);
+    await t.tools.call("list_sessions", {});
+    await t.tools.call("search_sessions", { query: "x" });
+    assert.equal(memberReads, 1, "the member list is cached");
+    assert.ok(t.ctl.seen.every((s) => s.headers.authorization === "Bearer sh_at_uploader"));
+    assert.ok(!t.g.seen.some((s) => s.path.includes("members")), "member names come from relay-control, not through relaygate");
+  } finally {
+    await t.close();
+  }
+});
+
+test("list_sessions and search_sessions filter by a person: email local part, email, or part of a name", async () => {
+  const t = await setup(peopleGate);
+  try {
+    const nt = JSON.parse(out(await t.tools.call("list_sessions", { person: "nt" })));
+    assert.deepEqual(nt.sessions.map((x: any) => x.sessionId), ["s3"], "pages are read until a match (whole pages, so the cursor skips nothing)");
+    assert.equal(nt.next_cursor, null);
+    assert.deepEqual(nt.person, [{ id: "u-nt", name: "Nia Tran", email: "nt@example.com" }]);
+    const ab = JSON.parse(out(await t.tools.call("list_sessions", { person: "AB@example.com" })));
+    assert.deepEqual(ab.sessions.map((x: any) => x.sessionId), ["s1", "s4"]);
+    const byName = JSON.parse(out(await t.tools.call("search_sessions", { query: "deploy", person: "nia" })));
+    assert.deepEqual(byName.matches.map((x: any) => x.eventId), ["e1"]);
+    assert.equal(byName.matches[0].user.name, "Nia Tran");
+    const none = await t.tools.call("list_sessions", { person: "nobody" });
+    assert.equal(none.isError, true);
+    assert.match(out(none), /No workspace member matches/);
+  } finally {
+    await t.close();
+  }
+});
+
+test("member directory: cached for its TTL, refreshes the uploader session on 401, keeps the last list on failure", async () => {
+  let calls = 0;
+  let fail = false;
+  const ctl = await listen((s) => {
+    calls++;
+    if (s.headers.authorization === "Bearer sh_at_old") return { status: 401, body: {} };
+    if (fail) return { status: 500, body: {} };
+    return { status: 200, body: { memberships: [{ userId: "u1", email: "a@example.com", name: "A" }] } };
+  });
+  let bearer = "sh_at_old";
+  const dir = new MemberDirectory({ controlUrl: ctl.url, orgId: "org-1", control: { get: async () => bearer, invalidate: () => void (bearer = "sh_at_new") }, ttlMs: 0 });
+  try {
+    assert.deepEqual(await dir.list(), [{ id: "u1", name: "A", email: "a@example.com" }]);
+    assert.equal(calls, 2);
+    fail = true;
+    assert.deepEqual(await dir.list(), [{ id: "u1", name: "A", email: "a@example.com" }], "a failed refresh keeps the last list");
+  } finally {
+    ctl.server.close();
   }
 });

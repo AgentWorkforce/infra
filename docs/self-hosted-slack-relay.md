@@ -616,6 +616,15 @@ How it is governed:
   uploader user's own principal.
 - The upstream read API also scopes reads to the uploader user, so an agent
   sees at most what both the agent's group and that user may read.
+- Sessions show people, not user ids: the host lists the organization's
+  members (`GET /api/v1/organizations/<org>/memberships` at relay-control,
+  which any member may call, with the uploader user's session; cached ten
+  minutes) and each session and search hit carries `user: {id, name, email}`.
+  An id no member has stays a bare id. `list_sessions` and `search_sessions`
+  take `person`: a name or part of one, an email, or an email's local part.
+  The person filter runs in the host's tools, so it reads up to five pages
+  per call and stops at a page boundary. Agents see members' names and email
+  addresses.
 - Responses are bounded (24 000 characters per call, long messages cut), and
   the tool descriptions tell the model that transcript content is untrusted
   data.

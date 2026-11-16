@@ -15,7 +15,7 @@ import { checkWithRetry, inboxStreamId, kbStreamId, RelaygateClient, slackStream
 import { oauthServersFromEnv, TokenSource } from "./mcp.ts";
 import { ingestFromEnv } from "./ingest-config.ts";
 import { EnrollmentCredential, SessionUploader } from "./sessions-upload.ts";
-import { SessionReadCredential, SessionsReadProxy } from "./sessions-read.ts";
+import { MemberDirectory, SessionReadCredential, SessionsReadProxy } from "./sessions-read.ts";
 import { sessionsMcpServer } from "./sessions-mcp.ts";
 import { channelMessageOf, ChannelDirectory, normalizeSlackEvent, SlackWeb, SocketModeClient, verifySlackSignature, type SlackEventEnvelope } from "./slack.ts";
 
@@ -306,6 +306,7 @@ async function sessionsReadProxy(s: SessionsSettings | undefined, isAgentToken: 
     baseUrl: s.baseUrl,
     workspaceId: s.workspaceId,
     credential: new SessionReadCredential({ controlUrl: s.controlUrl, workspaceId: s.workspaceId, control: s.credential }),
+    members: new MemberDirectory({ controlUrl: s.controlUrl, orgId: s.orgId, control: s.credential }),
     isAgentToken,
     log,
   });
@@ -391,6 +392,11 @@ async function runHost(): Promise<void> {
         mcpServers.sessions = sessionsMcpServer({ entry: sessionsMcpEntry, proxyUrl: readProxy.url, token });
       }
       for (const [s, tokens] of agentServers) {
+        // The built-in sessions server keeps its name: an OAuth server can't replace it.
+        if (s.name === "sessions" && mcpServers.sessions) {
+          log(`agent MCP server ${s.name}: name taken by the built-in Sessions tools; skipped`);
+          continue;
+        }
         try {
           mcpServers[s.name] = { type: "http", url: s.url, headers: { Authorization: `Bearer ${await tokens.get()}` } };
         } catch (err) {
