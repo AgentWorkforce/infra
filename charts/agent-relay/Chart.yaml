@@ -63,6 +63,6 @@ dependencies:
     repository: file://../slack-relay
     condition: components.slackRelay
   - name: relaygate
-    version: 0.1.4
+    version: 0.1.5
     repository: file://../relaygate
     condition: components.relaygate
