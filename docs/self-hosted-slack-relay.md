@@ -290,9 +290,11 @@ kubectl -n agent-relay logs statefulset/slack-relay-host -c repo-sync
   to `host.allowedTools` (`//` is the filesystem root in Claude Code's
   permission rules). Each agent's own workdir stays its only other readable
   path: one agent still can't read another's files.
-- A refresh swaps each changed repository in with two renames, so a reader sees
-  the old tree or the new one. Between refreshes the copy can be up to
-  `refreshMinutes` behind.
+- A refresh checks a changed repository out beside `/repos` and swaps it in
+  with two renames, so the path is missing only for the instant between them;
+  if the new tree can't be moved in, the old one stays. Between refreshes the
+  copy can be up to `refreshMinutes` behind. A fetch or listing that stalls is
+  stopped after 10 minutes and retried on the next refresh.
 
 ### Where the token goes
 

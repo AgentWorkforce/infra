@@ -223,6 +223,13 @@ test("repo-sync.sh with no list syncs what the token can read and removes what i
     assert.equal(failed.code, 1, failed.log);
     assert.match(failed.log, /listing repos failed, keeping current checkouts/);
     assert.ok(existsSync(join(root, "repos", "acme", "one", "one.txt")));
+
+    // A stalled listing is cut off by REPOS_TIMEOUT_SECONDS, not waited on.
+    const started = Date.now();
+    const stalled = sync(root, { REPOS_LIST: "", REPOS_LIST_CMD: "sleep 30", REPOS_TIMEOUT_SECONDS: "1" });
+    assert.equal(stalled.code, 1, stalled.log);
+    assert.ok(Date.now() - started < 15_000, "the listing was not cut off");
+    assert.ok(existsSync(join(root, "repos", "acme", "one", "one.txt")));
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

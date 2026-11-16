@@ -26,6 +26,8 @@ cache=${REPOS_CACHE_DIR:-/var/cache/repo-sync}
 base=${REPOS_BASE_URL:-https://github.com}
 base=${base%/}
 minutes=${REPOS_REFRESH_MINUTES:-15}
+# A stalled fetch or listing must not hold up the whole pass.
+limit=${REPOS_TIMEOUT_SECONDS:-600}
 once=${REPOS_SYNC_ONCE:-}
 here=$(dirname "$0")
 list_cmd=${REPOS_LIST_CMD:-node --disable-warning=ExperimentalWarning $here/repo-list.mts --print}
@@ -33,6 +35,7 @@ list_cmd=${REPOS_LIST_CMD:-node --disable-warning=ExperimentalWarning $here/repo
 log() { echo "repo-sync: $*"; }
 
 case $minutes in '' | *[!0-9]* | 0) log "REPOS_REFRESH_MINUTES must be a positive integer"; exit 2 ;; esac
+case $limit in '' | *[!0-9]* | 0) log "REPOS_TIMEOUT_SECONDS must be a positive integer"; exit 2 ;; esac
 [ -n "${GITHUB_TOKEN:-}" ] || { log "GITHUB_TOKEN is not set"; exit 2; }
 
 # Git's own state (HOME, askpass helper) lives in a private temp dir; the
@@ -50,7 +53,9 @@ EOF
 chmod 700 "$askpass"
 export HOME="$work" GIT_ASKPASS="$askpass" GIT_TERMINAL_PROMPT=0 GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null
 # No credential helper may store what askpass returns.
-gitc() { git -c credential.helper= -c core.symlinks=false "$@"; }
+gitc() { git -c credential.helper= -c core.symlinks=false -c http.lowSpeedLimit=1000 -c http.lowSpeedTime=60 "$@"; }
+# Runs a command under the time limit (coreutils timeout; the image has it).
+limited() { if command -v timeout >/dev/null 2>&1; then timeout -k 10 "$limit" "$@"; else "$@"; fi; }
 
 # Git's first fatal/error line (else its last line), with the token masked
 # should it ever appear.
@@ -75,7 +80,7 @@ sync_one() { # owner/name [ref]
   label=$repo${ref:+@$ref}
   bare=$cache/$owner/$name.git
   [ -d "$bare" ] || gitc init -q --bare "$bare" || { log "$label: cannot create cache"; return 1; }
-  if ! err=$(gitc -C "$bare" fetch -q --depth 1 --no-tags "$base/$owner/$name.git" "${ref:-HEAD}" 2>&1); then
+  if ! err=$(limited git -c credential.helper= -c http.lowSpeedLimit=1000 -c http.lowSpeedTime=60 -C "$bare" fetch -q --depth 1 --no-tags "$base/$owner/$name.git" "${ref:-HEAD}" 2>&1); then
     log "$label: fetch failed: $(printf '%s\n' "$err" | redact)"
     return 1
   fi
@@ -89,7 +94,8 @@ sync_one() { # owner/name [ref]
     return 0
   fi
   # Check out into $tmp (on the same volume, outside every owner/name), then
-  # swap it in with two renames, so a reader sees the old tree or the new one.
+  # swap it in with two renames: the path is missing only between them, and
+  # the old tree is put back if the new one can't be moved in.
   stage=$tmp/stage old=$tmp/old
   rm -rf "$stage" "$old"
   mkdir -p "$stage" "$dir/$owner" || return 1
@@ -100,8 +106,17 @@ sync_one() { # owner/name [ref]
     return 1
   fi
   rm -f "$work/index"
-  [ -e "$dest" ] && mv "$dest" "$old"
-  mv "$stage" "$dest"
+  if [ -e "$dest" ] && ! mv "$dest" "$old"; then
+    log "$label: cannot move the old checkout aside"
+    rm -rf "$stage"
+    return 1
+  fi
+  if ! mv "$stage" "$dest"; then
+    log "$label: cannot publish the new checkout; keeping the old one"
+    [ -e "$old" ] && mv "$old" "$dest"
+    rm -rf "$stage"
+    return 1
+  fi
   rm -rf "$old"
   printf '%s\n' "$sha" >"$cache/$owner/$name.sha"
   # Shallow fetches pile up objects; keep the cache to the latest commit.
@@ -138,9 +153,10 @@ else
 fi
 while :; do
   ok=0 failed=0
+  # shellcheck disable=SC2086 # list_cmd is a command line, split on purpose
   if [ -n "${REPOS_LIST:-}" ]; then
     list=$REPOS_LIST listed=1
-  elif list=$($list_cmd 2>"$work/list.err"); then
+  elif list=$(limited $list_cmd 2>"$work/list.err"); then
     listed=1
     log "token can read $(printf '%s\n' "$list" | grep -c '[^[:space:]]') repo(s)"
   else
