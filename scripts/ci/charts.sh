@@ -1102,7 +1102,7 @@ for chart in "${charts[@]}"; do
         ! yq 'select(.kind == "Deployment" and .metadata.name == "ci-relaygate") | .spec.template.spec.volumes[] | select(.name == "policy") | .name' <<<"$cp2" | grep -q . || err "$chart: a pulling relaygate must not mount a policy volume"
         # Network paths: relaygate -> relay-control (Control admits relaygate) and
         # relay-control -> relaygate's admin API (relaygate's main port is open).
-        [[ " $(peers relay-control) " == *" relaygate "* ]] || err "$chart: relay-control must admit relaygate (policy pulls)"
+        [[ " $(out=$cp2 peers relay-control) " == *" relaygate "* ]] || err "$chart: relay-control must admit relaygate (policy pulls)"
         [ "$(yq 'select(.kind == "NetworkPolicy" and .metadata.name == "ci-relaygate") | [.spec.ingress[] | select(.ports[0].port == "http") | (.from // [] | length)] | join(",")' <<<"$cp2" | sed '/^---$/d;/^ *$/d')" = 0 ] \
           || err "$chart: relaygate's main port (the admin API) must admit relay-control"
         expect_render_failure "$chart" "$v" "control policy without gate-only" "global.relaygate.gateOnly.enabled" --set components.relaygate=true --set relaygate.image.digest=sha256:c66696c51384707c2429a45405c9b2d9c4a3bf729dc5d93b2a8bd96b760e3719 "${cp[@]}"
