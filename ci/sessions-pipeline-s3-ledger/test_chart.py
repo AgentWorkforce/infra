@@ -130,6 +130,18 @@ class S3Ledger(unittest.TestCase):
         self.render(merge(load(SQL_FIXTURE), {"ingestEdge": {"ledgerParallel": 8}}),
                     fail="ingestEdge.ledgerParallel requires ingestEdge.ledger=s3")
 
+    def test_startup_failure_threshold(self):
+        s3 = merge(load(S3_FIXTURE), {"ingestEdge": {"admission": {"mode": "async"}}})
+        c = lambda docs: next(d for d in docs if d["kind"] == "Deployment" and d["metadata"]["name"] == "ci-ingest-edge")["spec"]["template"]["spec"]["containers"][0]
+        self.assertEqual(c(self.render(s3))["startupProbe"]["failureThreshold"], 30)
+        tuned = c(self.render(merge(s3, {"ingestEdge": {"admission": {"startupFailureThreshold": 300}}})))
+        self.assertEqual(tuned["startupProbe"]["failureThreshold"], 300)
+        self.assertEqual(tuned["readinessProbe"], c(self.render(s3))["readinessProbe"])
+        for value in (29, 901, "x"):
+            with self.subTest(value=value):
+                self.render(merge(s3, {"ingestEdge": {"admission": {"startupFailureThreshold": value}}}),
+                            fail="ingestEdge.admission.startupFailureThreshold must be an integer from 30 to 900")
+
     def test_default_is_sql_and_byte_identical_when_explicit(self):
         base = load(SQL_FIXTURE)
         implicit = helm(base)
