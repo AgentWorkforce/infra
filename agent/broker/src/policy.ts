@@ -613,8 +613,18 @@ export function delegationConfigProblems(list: Allowlist): string[] {
 /** Problems with a set of capabilities (a delegation's or workspaceAuto's): one validator for both. */
 export function capabilityProblems(capabilities: DelegatedCapability[], list: Allowlist, who: string): string[] {
   const problems: string[] = [];
+  if (!Array.isArray(capabilities)) return [`${who}: capabilities must be a list`];
   for (const c of capabilities) {
-    const where = `${who} capability ${c.id}`;
+    const where = `${who} capability ${c?.id}`;
+    // Shape first: nothing below may throw on a malformed entry (a bad config falls back to approval).
+    if (!c || typeof c !== "object") { problems.push(`${where}: not an object`); continue; }
+    if (!Array.isArray(c.grants) || c.grants.some((g) => !g || typeof g !== "object" || !Array.isArray(g.actions) || g.actions.length === 0 || g.actions.some((a) => typeof a !== "string"))) {
+      problems.push(`${where}: grants must be a list, each with a non-empty list of actions`);
+      continue;
+    }
+    if ([c.accounts, c.regions, c.readOnlyRules].some((x) => x !== undefined && !Array.isArray(x))) { problems.push(`${where}: accounts, regions and readOnlyRules must be lists`); continue; }
+    const listy = (x: unknown) => x === undefined || (Array.isArray(x) && x.every((v) => typeof v === "string"));
+    if (c.grants.some((g) => ![g.secretPrefixes, g.secretNames, g.ssmDocuments, g.instanceIds].every(listy))) { problems.push(`${where}: grant fields must be lists of names`); continue; }
     for (const a of c.accounts ?? []) {
       const acct = list.accounts[a];
       if (!acct) problems.push(`${where}: account ${a} is not on the allowlist`);
@@ -660,8 +670,8 @@ export function delegateGuards(req: CredentialRequest, list: Allowlist): PolicyS
 /** The tag guards for a set of capabilities' SSM grants that this request's actions touch (Sid prefix per path). */
 export function capabilityGuards(req: CredentialRequest, capabilities: DelegatedCapability[], sidPrefix: string): PolicyStatement[] {
   const out: PolicyStatement[] = [];
-  for (const c of capabilities) for (const g of c.grants) {
-    if (!g.instanceTag) continue;
+  for (const c of capabilities ?? []) for (const g of c?.grants ?? []) {
+    if (!g?.instanceTag) continue;
     const actions = g.actions.filter((a) => req.actions.some((r) => r.toLowerCase() === a.toLowerCase()));
     if (!actions.length) continue;
     out.push({ Sid: sid(`${sidPrefix}-${g.id}`), Effect: "Deny", Action: actions, Resource: ["arn:aws:ec2:*:*:instance/*", "arn:aws:ssm:*:*:managed-instance/*"], Condition: { StringNotEquals: { [`ssm:resourceTag/${g.instanceTag.key}`]: g.instanceTag.value } } });
@@ -786,7 +796,7 @@ export type WorkspaceAutoCheck = { ok: true; capability: string; grants: string[
  * actions or resources), and the session policy, with the workspace tag
  * guards the caller added, falls entirely inside one capability.
  */
-export function checkWorkspaceAuto(p: { request: CredentialRequest; requester: Principal; sessionPolicy: SessionPolicy }, list: Allowlist): WorkspaceAutoCheck {
+export function checkWorkspaceAuto(p: { request: CredentialRequest; requester: Principal; sessionPolicy: SessionPolicy; runTagOwner?: string }, list: Allowlist): WorkspaceAutoCheck {
   const w = list.workspaceAuto;
   if (!w) return { ok: false, reason: "no workspace auto-issue is configured" };
   const no = (reason: string): WorkspaceAutoCheck => ({ ok: false, reason: `not issued automatically: ${reason}` });
@@ -794,8 +804,11 @@ export function checkWorkspaceAuto(p: { request: CredentialRequest; requester: P
   if (config.length) return no(`the workspaceAuto config is unsound (${config.join("; ")})`);
   if (!p.requester.agentId || !p.requester.workspaceId) return no("the requester wasn't verified with the Relay server");
   if (p.requester.workspaceId !== w.workspaceId) return no("the requester isn't in the workspace");
+  // Agents only (Khaliq's rule): a human in the workspace who isn't an approver still goes through approval.
+  if (p.requester.kind !== "agent") return no("only workspace agents get credentials without approval");
   const req = p.request;
   if (req.delegate) return no("the request names a delegate");
+  if (p.runTagOwner && p.runTagOwner !== p.requester.name) return no(`run tag ${req.runTag} belongs to ${p.runTagOwner}`);
   for (const a of req.actions) {
     const why = neverDelegable(a, list);
     if (why) return no(`${why}`);

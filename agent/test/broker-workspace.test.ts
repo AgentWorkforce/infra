@@ -136,3 +136,42 @@ test("an unsound workspaceAuto config turns auto-issue off; everything goes to a
   assert.match(r.reasons.join("; "), /config is unsound/);
   assert.equal(calls.length, 0);
 });
+
+test("review fixes: humans aren't auto-issued, another agent's run tag stays on approval, a malformed config falls back to approval", async () => {
+  // A verified human in the workspace (not an approver) goes through approval.
+  const human: RelayAgent = { id: "300000000000000013", name: "some-human", type: "human", workspaceId: WS };
+  agents["some-human"] = human;
+  {
+    const { broker, calls } = setup();
+    const r = await broker.requestViaRelay(relay([msg("7000006", "some-human", JSON.stringify(req()))]), "7000006", BROKER);
+    assert.equal(r.outcome, "pending-approval");
+    assert.match(r.reasons.join("; "), /only workspace agents/);
+    assert.equal(calls.length, 0);
+  }
+  // Two agents, one run tag: the second one is not auto-issued into the first one's run.
+  agents["second-agent"] = { id: "300000000000000014", name: "second-agent", type: "agent", workspaceId: WS };
+  {
+    const { broker, calls } = setup();
+    const first = await broker.requestViaRelay(relay([msg("7000007", AGENT, JSON.stringify(req()))]), "7000007", BROKER);
+    assert.equal(first.outcome, "issued", first.reasons.join("; "));
+    const second = await broker.requestViaRelay(relay([msg("7000008", "second-agent", JSON.stringify(req()))]), "7000008", BROKER);
+    assert.equal(second.outcome, "pending-approval");
+    assert.match(second.reasons.join("; "), /belongs to any-workspace-agent/);
+    assert.equal(calls.length, 1);
+  }
+  // Malformed nested config (a capability with no grants, a grant with no actions): no crash, approval.
+  for (const capabilities of [
+    [{ ...shipped.workspaceAuto!.capabilities[0]!, grants: undefined }],
+    [{ ...shipped.workspaceAuto!.capabilities[0]!, grants: [{ id: "x" }] }],
+    [{ ...shipped.workspaceAuto!.capabilities[0]!, grants: [{ ...shipped.workspaceAuto!.capabilities[0]!.grants[0]!, secretPrefixes: 7 }] }],
+    "nope",
+  ]) {
+    const bad = { ...shipped, workspaceAuto: { ...shipped.workspaceAuto!, capabilities } } as unknown as Allowlist;
+    assert.ok(workspaceAutoProblems(bad).length > 0, JSON.stringify(capabilities));
+    const { broker, calls } = setup(bad);
+    const r = await broker.requestViaRelay(relay([msg("7000009", AGENT, JSON.stringify(req()))]), "7000009", BROKER);
+    assert.equal(r.outcome, "pending-approval", JSON.stringify(capabilities));
+    assert.match(r.reasons.join("; "), /config is unsound/);
+    assert.equal(calls.length, 0);
+  }
+});

@@ -20,7 +20,7 @@ import { appendAudit, type AuditEvent } from "./audit.ts";
 import type { Deliverer, DeliveryRef } from "./deliver.ts";
 import { withLock } from "./lock.ts";
 import { decisionFromText, RelayVerificationError, requestFromText, verifiedMessage, type Decision as RelayDecision, type RelayApi, type Verified } from "./relay.ts";
-import { approverCounts, capabilityGuards, checkDelegatedApproval, checkWorkspaceAuto, SESSION_POLICY_MAX_CHARS, WORKSPACE_GUARD_PREFIX, decide, NAMESPACE_TAG_KEY, newNamespace, sessionName, type Allowlist, type CredentialRequest, type Decision, type Principal, type RunClaim, type SessionPolicy } from "./policy.ts";
+import { approverCounts, capabilityGuards, checkDelegatedApproval, checkWorkspaceAuto, SESSION_POLICY_MAX_CHARS, WORKSPACE_GUARD_PREFIX, workspaceAutoProblems, decide, NAMESPACE_TAG_KEY, newNamespace, sessionName, type Allowlist, type CredentialRequest, type Decision, type Principal, type RunClaim, type SessionPolicy } from "./policy.ts";
 import type { StsClient } from "./sts.ts";
 
 export { withLock };
@@ -243,8 +243,14 @@ export class Broker {
       let autoMiss: string | undefined;
       const wa = this.deps.allowlist.workspaceAuto;
       if (decision.outcome === "approval" && once && wa) {
-        const guarded: SessionPolicy = { ...decision.sessionPolicy, Statement: [...decision.sessionPolicy.Statement, ...capabilityGuards(req, wa.capabilities, WORKSPACE_GUARD_PREFIX)] };
-        const check = JSON.stringify(guarded).length > SESSION_POLICY_MAX_CHARS ? { ok: false as const, reason: "the guarded policy is over STS's size limit" } : checkWorkspaceAuto({ request: req, requester, sessionPolicy: guarded }, this.deps.allowlist);
+        // Validate the config before building anything from it: a malformed entry falls back to approval, never crashes.
+        const problems = workspaceAutoProblems(this.deps.allowlist);
+        const guarded: SessionPolicy = problems.length ? decision.sessionPolicy : { ...decision.sessionPolicy, Statement: [...decision.sessionPolicy.Statement, ...capabilityGuards(req, wa.capabilities, WORKSPACE_GUARD_PREFIX)] };
+        const check = problems.length
+          ? { ok: false as const, reason: `not issued automatically: the workspaceAuto config is unsound (${problems.join("; ")})` }
+          : JSON.stringify(guarded).length > SESSION_POLICY_MAX_CHARS
+            ? { ok: false as const, reason: "not issued automatically: the guarded policy is over STS's size limit" }
+            : checkWorkspaceAuto({ request: req, requester, sessionPolicy: guarded, ...(run.owner ? { runTagOwner: run.owner } : {}) }, this.deps.allowlist);
         if (check.ok) {
           const autoDigest = requestDigest({ request: req, requester, roleArn: decision.roleArn, sessionPolicy: guarded, durationSeconds: decision.durationSeconds });
           const why = `issued without approval: ${requester.name} is a verified agent of workspace ${wa.workspaceId} and the request is inside workspace capability ${check.capability} (${check.grants.join(", ")})`;
