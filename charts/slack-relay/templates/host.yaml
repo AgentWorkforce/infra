@@ -11,7 +11,7 @@
      nothing of another agent's workdir. */}}
 {{- $allowed = concat $allowed (list "Read(//repos/**)" "Glob(//repos/**)" "Grep(//repos/**)") }}
 {{- $names := list }}{{ range $repos }}{{ $names = append $names .repo }}{{ end }}
-{{- $which := ternary (printf "these GitHub repositories: %s" (join ", " $names)) "the team's GitHub repositories (Glob /repos/*/* lists them)" (gt (len $names) 0) }}
+{{- $which := ternary (printf "these GitHub repositories: %s" (join ", " $names)) "the team's GitHub repositories (Glob with path /repos finds their files)" (gt (len $names) 0) }}
 {{- $persona = printf "%s\n\nRead-only copies of %s are at /repos/<owner>/<name>, refreshed every %d minutes. Use Read, Glob and Grep with absolute paths under /repos to look at them. Right after a restart they can take a minute to appear." $persona $which (int .Values.repos.refreshMinutes) }}
 {{- end }}
 apiVersion: apps/v1
