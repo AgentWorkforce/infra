@@ -581,6 +581,10 @@ ingestEdge:
   # 09f6a70b). true renders INGEST_S3_TENANT_LIMIT=on: maxPerUser and maxPerOrg are then
   # enforced against the S3 ledger too. false (default) renders nothing.
   s3TenantLimit: false
+  # INGEST_LEDGER_PARALLEL: S3 ledger requests in flight per admission, 1..64; requires ledger=s3.
+  # Unset (default) renders nothing (the image uses 32). Lower it when admissions x parallel
+  # over-subscribes the process's sockets (fetch-level ledger_store_transient).
+  ledgerParallel: null
   fullnameOverride: ""
   image:
     repository: ghcr.io/agentworkforce/96bulls-services
