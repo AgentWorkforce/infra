@@ -86,6 +86,8 @@ spec:
               value: {{ .Values.host.turnTimeoutSeconds | quote }}
             - name: IDLE_RELEASE_MINUTES
               value: {{ .Values.host.idleReleaseMinutes | quote }}
+            - name: REPLY_TO_OUTSIDE
+              value: {{ .Values.host.replyToOutside | default false | quote }}
             - name: DATA_DIR
               value: /data
             {{- include "slack-relay.mcpEnv" . | nindent 12 }}

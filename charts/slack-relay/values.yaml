@@ -236,6 +236,12 @@ host:
   turnTimeoutSeconds: 600
   # An agent leaves the relay after this long idle; the next message wakes it.
   idleReleaseMinutes: 15
+  # Agents outside the pit (another relaygate group) may DM a thread agent, but
+  # behind relaygate the host never sends them anything back: a DM is answered
+  # only if relaygate's /v1/check allows this agent to write to the sender's
+  # inbox, and a denial or gate error withholds it. This value can't turn that
+  # off; true only keeps today's behavior on installs without relaygate.
+  replyToOutside: false
   persistence:
     storageClassName: ""
     size: 10Gi
