@@ -656,10 +656,13 @@ Good to know:
   extractive summary and logs `bob costas model summary fallback` with
   `"reason":"no_api_key"`. So does any failed model call, with
   `"reason":"model_failed"`.
-- **Limits.** The brief worker writes at most 20 briefs a day across the
-  install and 3 per session (`nativeBrief.globalDailyCap`, `sessionDailyCap`),
-  for sessions in the listed workspaces only. A workspace added later needs its
-  ID added here and the upgrade run again.
+- **Limits.** The brief worker writes at most 2000 briefs a day across the
+  install and 10 per session (`nativeBrief.globalDailyCap`, `sessionDailyCap`;
+  agent-relay 0.7.48 and later; 20 and 3 before), for sessions in the listed
+  workspaces only. They cap model spend: past a cap new briefs are
+  `rate_limited` and the dashboard shows "No summary yet" until the next UTC
+  day, so raise `globalDailyCap` above your sessions per day if that happens.
+  A workspace added later needs its ID added here and the upgrade run again.
   bob-costas model calls have their own caps, kept in memory per replica and
   reset each UTC day: 5000 sessions per organization
   (`BOB_COSTAS_BACKGROUND_DAILY_BUDGET`) and 20000 model attempts in all
