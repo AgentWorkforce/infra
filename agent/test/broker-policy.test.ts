@@ -259,8 +259,10 @@ test("approved run-tag sessions give each action the condition IAM can enforce f
   if (d.outcome !== "approval") return;
   const by = (sid: string) => d.sessionPolicy.Statement.find((s) => s.Sid === sid);
   // Account-level reads: no resource to carry a tag, so unconditioned (and listed as such in the prompt).
-  assert.deepEqual(by("ReadDescribe")!.Action, ["ec2:DescribeInstances"]);
-  assert.equal(by("ReadDescribe")!.Condition, undefined);
+  // ec2:DescribeInstances has no resource-level permissions, so it gets its own "*" statement.
+  assert.deepEqual(by("ReadDescribeAnyResource")!.Action, ["ec2:DescribeInstances"]);
+  assert.equal(by("ReadDescribeAnyResource")!.Resource, "*");
+  assert.equal(by("ReadDescribeAnyResource")!.Condition, undefined);
   // Creates the allowlist covers keep its name scope and tag-on-create; others must carry the run tag.
   assert.ok(by("SqsTagOnCreate"));
   assert.deepEqual(by("ApprovedCreatesWithRunTag")!.Action, ["s3:CreateBucket"]);

@@ -32,7 +32,8 @@
             "us-east-1"
           ],
           "readOnlyRules": [
-            "read-describe"
+            "read-describe",
+            "ssm-command-reads"
           ],
           "grants": [
             {
@@ -146,6 +147,18 @@
         "cloudwatch:ListMetrics",
         "tag:GetResources"
       ]
+    },
+    {
+      "id": "ssm-command-reads",
+      "scope": "any",
+      "actions": [
+        "ssm:GetCommandInvocation",
+        "ssm:ListCommandInvocations",
+        "ssm:ListCommands",
+        "ssm:DescribeSessions",
+        "ssm:DescribeInstanceInformation"
+      ],
+      "delegationOnly": true
     },
     {
       "id": "sqs-create",
