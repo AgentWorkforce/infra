@@ -72,6 +72,10 @@ spec:
             {{- end }}
             - { name: RELAYCAST_URL, value: {{ .Values.services.relaycastUrl | quote }} }
             - { name: RELAYCAST_PUBLIC_URL, value: {{ .Values.services.relaycastPublicUrl | quote }} }
+            {{- if dig "relaygate" "gateOnly" "enabled" false (.Values.global | default dict) }}
+            # Gate-only: the cast host is relaygate's public origin (same source as RELAYCAST_PUBLIC_URL).
+            - { name: SELFHOST_RELAYGATE_PUBLIC_URL, value: {{ .Values.services.relaycastPublicUrl | quote }} }
+            {{- end }}
             {{- if ne .Values.services.relayhistoryBackend "native" }}
             - { name: RELAYHISTORY_URL, value: {{ .Values.services.relayhistoryUrl | quote }} }
             - { name: RELAYHISTORY_PUBLIC_URL, value: {{ .Values.services.relayhistoryPublicUrl | quote }} }

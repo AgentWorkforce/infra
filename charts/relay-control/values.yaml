@@ -316,6 +316,11 @@ services:
   relayauthEnabled: true
   relayauthUrl: ""
   relaycastUrl: ""
+  # With global.relaygate.gateOnly.enabled (agent-relay umbrella) this is also
+  # SELFHOST_RELAYGATE_PUBLIC_URL: the cast host is relaygate's public origin,
+  # so /resolve returns urls.relaygateUrl and withholds the shared Relaycast
+  # key, and events-shim temp workspaces are refused (relay-control cc361ed or
+  # later). Unset when gate-only is off.
   relaycastPublicUrl: ""
   relayhistoryUrl: ""
   relayhistoryPublicUrl: ""
