@@ -46,6 +46,14 @@ module "broker_role" {
   account_id             = var.broker_account_id
   trusted_principal_arns = [var.broker_host_role_arn]
   target_role_arns       = [local.scoped_role_arn, local.agent_hosts_elevated_role_arn]
+  audit_log_group_arn    = module.audit_log.arn
+}
+
+# The audit log's copy in CloudWatch, in the broker's account and region (the
+# host ships to it every minute: broker/src/ship.ts, setup-lane.sh).
+module "audit_log" {
+  source    = "../modules/audit-log"
+  providers = { aws = aws.broker }
 }
 
 module "sandbox_scoped_role" {

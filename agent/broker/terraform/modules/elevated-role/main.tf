@@ -9,6 +9,7 @@
 #  - PowerUserAccess minus every IAM, identity, organization, account, audit,
 #    STS and key-policy control, so no approved session can grant itself
 #    more, hide its tracks or touch identities;
+#  - no change to the broker's audit log group (/aws-cred-broker/*);
 #  - only the allowed regions.
 # Unlike the sandbox's scoped role there are no run-tag denies: approved
 # sessions act on the existing, untagged resources Khaliq named.
@@ -72,6 +73,19 @@ locals {
           "kms:ScheduleKeyDeletion", "kms:PutKeyPolicy", "kms:CreateGrant",
         ]
         Resource = "*"
+      },
+      {
+        # The broker's own audit log (modules/audit-log): no vended session may
+        # write, delete, re-key, re-tag or shorten it. Reading stays allowed.
+        Sid    = "DenyBrokerAuditLog"
+        Effect = "Deny"
+        Action = [
+          "logs:DeleteLogGroup", "logs:DeleteLogStream", "logs:CreateLogStream", "logs:PutLogEvents",
+          "logs:PutRetentionPolicy", "logs:DeleteRetentionPolicy", "logs:AssociateKmsKey", "logs:DisassociateKmsKey",
+          "logs:PutDataProtectionPolicy", "logs:DeleteDataProtectionPolicy", "logs:TagResource", "logs:UntagResource",
+          "logs:TagLogGroup", "logs:UntagLogGroup", "logs:PutSubscriptionFilter", "logs:DeleteSubscriptionFilter",
+        ]
+        Resource = ["arn:aws:logs:*:*:log-group:/aws-cred-broker/*"]
       },
       {
         Sid       = "DenySessionsWithoutBrokerTags"
