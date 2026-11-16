@@ -1,5 +1,19 @@
 {{- include "slack-relay.validate" . }}
 {{- $full := include "slack-relay.fullname" . }}
+{{- $repos := list }}
+{{- $reposOn := .Values.repos.enabled }}
+{{- if $reposOn }}{{ $repos = include "slack-relay.repos" . | fromJsonArray }}{{ end }}
+{{- $allowed := .Values.host.allowedTools }}
+{{- $persona := .Values.host.persona }}
+{{- if $reposOn }}
+{{- /* Absolute-path rules ("//" is the filesystem root in Claude Code's
+     permission syntax) for the shared read-only checkouts; agents still see
+     nothing of another agent's workdir. */}}
+{{- $allowed = concat $allowed (list "Read(//repos/**)" "Glob(//repos/**)" "Grep(//repos/**)") }}
+{{- $names := list }}{{ range $repos }}{{ $names = append $names .repo }}{{ end }}
+{{- $which := ternary (printf "these GitHub repositories: %s" (join ", " $names)) "the team's GitHub repositories (Glob with path /repos finds their files)" (gt (len $names) 0) }}
+{{- $persona = printf "%s\n\nRead-only copies of %s are at /repos/<owner>/<name>, refreshed every %d minutes. Use Read, Glob and Grep with absolute paths under /repos to look at them. Right after a restart they can take a minute to appear." $persona $which (int .Values.repos.refreshMinutes) }}
+{{- end }}
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
@@ -21,9 +35,14 @@ spec:
       labels:
         {{- include "slack-relay.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: host
-      {{- with .Values.podAnnotations }}
+      {{- if or .Values.podAnnotations $reposOn }}
       annotations:
+        {{- with .Values.podAnnotations }}
         {{- toYaml . | nindent 8 }}
+        {{- end }}
+        {{- if $reposOn }}
+        checksum/repo-sync: {{ print (.Files.Get "files/repo-sync.sh") (.Files.Get "files/repo-list.mts") | sha256sum }}
+        {{- end }}
       {{- end }}
     spec:
       automountServiceAccountToken: false
@@ -50,9 +69,9 @@ spec:
             - name: AGENT_MODEL
               value: {{ .Values.host.agentModel | quote }}
             - name: AGENT_PERSONA
-              value: {{ .Values.host.persona | quote }}
+              value: {{ $persona | quote }}
             - name: AGENT_ALLOWED_TOOLS
-              value: {{ join " " .Values.host.allowedTools | quote }}
+              value: {{ join " " $allowed | quote }}
             - name: AGENT_DISALLOWED_TOOLS
               value: {{ join " " .Values.host.disallowedTools | quote }}
             - name: AGENT_PERMISSION_MODE
@@ -103,9 +122,58 @@ spec:
           volumeMounts:
             - { name: sessions, mountPath: /data }
             - { name: tmp, mountPath: /tmp }
+            {{- if $reposOn }}
+            - { name: repos, mountPath: /repos, readOnly: true }
+            {{- end }}
+        {{- if $reposOn }}
+        # Keeps /repos current. The GitHub token is in this container's
+        # environment only; the host container and the agents never get it.
+        - name: repo-sync
+          image: {{ include "slack-relay.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: [/usr/bin/tini, --, /bin/sh, /etc/repo-sync/repo-sync.sh]
+          securityContext:
+            {{- toYaml .Values.containerSecurityContext | nindent 12 }}
+          env:
+            - name: REPOS_DIR
+              value: /repos
+            - name: REPOS_CACHE_DIR
+              value: /var/cache/repo-sync
+            - name: REPOS_BASE_URL
+              value: {{ include "slack-relay.reposBaseUrl" . | quote }}
+            - name: REPOS_API_URL
+              value: {{ include "slack-relay.reposApiUrl" . | quote }}
+            - name: REPOS_REFRESH_MINUTES
+              value: {{ int .Values.repos.refreshMinutes | quote }}
+            - name: REPOS_LIST
+              {{- $lines := list }}{{ range $repos }}{{ $lines = append $lines (trim (printf "%s %s" .repo .ref)) }}{{ end }}
+              value: {{ join "\n" $lines | quote }}
+            {{- include "slack-relay.secretEnv" (dict "env" "GITHUB_TOKEN" "ref" .Values.repos.token) | nindent 12 }}
+          resources:
+            {{- toYaml .Values.repos.resources | nindent 12 }}
+          volumeMounts:
+            - { name: repos, mountPath: /repos }
+            - { name: repos-cache, mountPath: /var/cache/repo-sync }
+            - { name: repo-sync-tmp, mountPath: /tmp }
+            - { name: repo-sync-script, mountPath: /etc/repo-sync, readOnly: true }
+        {{- end }}
       volumes:
         - name: tmp
           emptyDir: {}
+        {{- if $reposOn }}
+        - name: repos
+          emptyDir:
+            {{- with .Values.repos.sizeLimit }}
+            sizeLimit: {{ . }}
+            {{- end }}
+        - name: repos-cache
+          emptyDir: {}
+        - name: repo-sync-tmp
+          emptyDir: {}
+        - name: repo-sync-script
+          configMap:
+            name: {{ $full }}-repo-sync
+        {{- end }}
       {{- with .Values.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}
@@ -150,3 +218,18 @@ spec:
     app.kubernetes.io/component: host
   ports:
     - { name: http, port: 8080, targetPort: http }
+{{- if $reposOn }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $full }}-repo-sync
+  labels:
+    {{- include "slack-relay.labels" . | nindent 4 }}
+    app.kubernetes.io/component: host
+data:
+  repo-sync.sh: |
+    {{- .Files.Get "files/repo-sync.sh" | nindent 4 }}
+  repo-list.mts: |
+    {{- .Files.Get "files/repo-list.mts" | nindent 4 }}
+{{- end }}

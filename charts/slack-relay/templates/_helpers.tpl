@@ -120,6 +120,62 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- if not (has .Values.router.orchestrator (list "claude" "deterministic")) }}
 {{- fail "slack-relay: router.orchestrator must be claude or deterministic" }}
 {{- end }}
+{{- if .Values.repos.enabled }}
+{{- if not .Values.repos.token.name }}
+{{- fail "slack-relay: repos.enabled needs repos.token.name (a Secret with a read-only GitHub token)" }}
+{{- end }}
+{{- $seen := dict }}
+{{- range (include "slack-relay.repos" . | fromJsonArray) }}
+{{- if or (not (regexMatch "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$" .repo)) (regexMatch "(^|/)\\.\\.?(/|$)" .repo) }}
+{{- fail (printf "slack-relay: repos.list entry %q must be owner/name" .repo) }}
+{{- end }}
+{{- if and .ref (or (not (regexMatch "^[A-Za-z0-9._/-]+$" .ref)) (hasPrefix "-" .ref) (contains ".." .ref)) }}
+{{- fail (printf "slack-relay: repos.list ref %q for %s must be a branch, tag or commit" .ref .repo) }}
+{{- end }}
+{{- if hasKey $seen (lower .repo) }}
+{{- fail (printf "slack-relay: repos.list names %s more than once (one ref per repo)" .repo) }}
+{{- end }}
+{{- $_ := set $seen (lower .repo) true }}
+{{- end }}
+{{- if not (regexMatch "^(https?://)?[A-Za-z0-9.-]+(:[0-9]+)?(/[A-Za-z0-9._~/-]*)?$" (.Values.repos.host | default "")) }}
+{{- fail "slack-relay: repos.host must be a host name or base URL without credentials, e.g. github.com or https://ghe.example.com" }}
+{{- end }}
+{{- if not (regexMatch "^(https?://[A-Za-z0-9.-]+(:[0-9]+)?(/[A-Za-z0-9._~/-]*)?)?$" (.Values.repos.apiUrl | default "")) }}
+{{- fail "slack-relay: repos.apiUrl must be an http(s) URL without credentials, e.g. https://ghe.example.com/api/v3" }}
+{{- end }}
+{{- $m := .Values.repos.refreshMinutes }}
+{{- if not (and (or (kindIs "int" $m) (kindIs "int64" $m) (kindIs "float64" $m)) (ge (float64 $m) 1.0) (eq (float64 (int $m)) (float64 $m))) }}
+{{- fail "slack-relay: repos.refreshMinutes must be a whole number of minutes, at least 1" }}
+{{- end }}
+{{- end }}
+{{- end }}
+
+{{/* repos.list as JSON [{repo, ref}], strings and maps alike. */}}
+{{- define "slack-relay.repos" -}}
+{{- $out := list }}
+{{- range .Values.repos.list }}
+{{- if kindIs "string" . }}
+{{- $out = append $out (dict "repo" . "ref" "") }}
+{{- else }}
+{{- $out = append $out (dict "repo" (.repo | default "" | toString) "ref" (.ref | default "" | toString)) }}
+{{- end }}
+{{- end }}
+{{- $out | toJson }}
+{{- end }}
+
+{{/* Clone base URL from repos.host: a bare host gets https://. */}}
+{{- define "slack-relay.reposBaseUrl" -}}
+{{- $h := .Values.repos.host | default "github.com" | trimSuffix "/" }}
+{{- if contains "://" $h }}{{ $h }}{{ else }}{{ printf "https://%s" $h }}{{ end }}
+{{- end }}
+
+{{/* GitHub API base for listing repos: api.github.com, or <base>/api/v3 on GHE. */}}
+{{- define "slack-relay.reposApiUrl" -}}
+{{- $base := include "slack-relay.reposBaseUrl" . }}
+{{- if .Values.repos.apiUrl }}{{ .Values.repos.apiUrl | trimSuffix "/" }}
+{{- else if eq $base "https://github.com" }}https://api.github.com
+{{- else }}{{ printf "%s/api/v3" $base }}
+{{- end }}
 {{- end }}
 
 {{/* OAuth MCP servers: the JSON list (no secrets) plus one secret env per server. */}}
