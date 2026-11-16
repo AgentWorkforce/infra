@@ -416,6 +416,21 @@ searchIndexer:
     maxScopeEvents: null
     # SEARCH_INDEX_MAX_ROWS: 500000..1000000.
     maxRows: null
+  # Streaming reconcile (issue 610 Phase 2), consumer only, default off. On, a
+  # scope above the limits is indexed in passes instead of recorded as partial.
+  # Refused with outputFacts.enabled (the facts need one whole read). A scope
+  # streams only when four times its size fits BOTH budgets; at their defaults
+  # (4x the limits) every streamed scope is still refused and the consumer warns
+  # at startup, so raise the budget(s) the scope exceeds. Memory stays as for
+  # the limits (one chunk plus about 1 KB per record, ~0.5 GB at the 2M cap).
+  streaming:
+    # SEARCH_INDEX_STREAMING_ENABLED, rendered only when true.
+    enabled: false
+    # SEARCH_INDEX_STREAM_MAX_READ_BYTES: 4x limits.maxScopeBytes..2GiB (bytes,
+    # or a MiB/GiB size). Empty keeps the default (4x the limit).
+    maxReadBytes: ""
+    # SEARCH_INDEX_STREAM_MAX_READ_EVENTS: 4x limits.maxScopeEvents..2000000.
+    maxReadEvents: null
   # GCS readiness settings (Cloud SQL, Memorystore and Pub/Sub). Empty for S3.
   extraEnv: []
   postgres:

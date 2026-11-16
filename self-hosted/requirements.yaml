@@ -407,9 +407,37 @@ compatibility:
       images:
         session-read-api: { repository: ghcr.io/agentworkforce/96bulls-services, digest_required: true }
       notes: 'Defaults READ_API_COMPLETE_SINCE to epoch for a new self-host store populated only by its own ingest. Partial legacy imports must retain an explicit real coverage floor matching the indexer. Image, auth, routing and enabled defaults are unchanged; this does not assert coverage for an imported store or qualify a runtime.'
-    - id: sessions-pipeline-0.8.41
+    - id: sessions-pipeline-0.8.42
       status: unreleased
       current: true
+      charts: { sessions-pipeline: 0.8.42, sessions-pipeline-worker: 0.7.10, session-ingest-api: 0.4.5, session-read-api: 0.2.15 }
+      depends:
+        sessions-pipeline: { worker: 0.7.10, alleyoop: 0.4.5, sessionReadApi: 0.2.15, hoopdb: 0.9.0, session-object-storage: 5.4.0, otel: 0.178.0 }
+      images:
+        sessions-pipeline-worker: { repository: agentworkforce/96bulls-services, digest: sha256:6f22ea17dff336e1431664542759fd27958649388b90a0b2f0881883caa7c6b2 }
+        session-ingest-api: { repository: agentworkforce/96bulls-services, digest: sha256:6f22ea17dff336e1431664542759fd27958649388b90a0b2f0881883caa7c6b2 }
+        session-read-api: { repository: ghcr.io/agentworkforce/96bulls-services, digest_required: true }
+      images_note: "Operator session erase values remain default-off and do not pin the 2026.11.2 candidate image. Runtime qualification is separate. Existing chart/profile image pins remain unchanged."
+      services:
+        source_commit: 7d7229bb31c121ecb98cd4e35c248fc2cf5669ad
+        migration_generation: eff8b3be46565b57ad8fa5e4a066dbb6d1fe608313d9c1680bfbcd484add259b
+      db_combos:
+        - { db_mode: selfhosted, boundary: global-default-revoke, hoopdb: cnpg, status: shipped, profiles: [selfhost-postgres, migration, aws-cnpg], notes: chart Jobs install the runtime role and the function default }
+        - { db_mode: selfhosted, boundary: global-default-revoke, hoopdb: external, status: shipped, profiles: [external-selfhosted], notes: operator runs the bootstrap files as a superuser }
+        - { db_mode: rds, boundary: global-default-revoke, hoopdb: external, status: shipped, profiles: [external-rds, aws-rds-native], notes: the RDS master runs the rds_*.sql bootstrap first }
+        - { db_mode: cloudsql, boundary: global-default-revoke, hoopdb: external, status: shipped, profiles: [gcp-cloudsql], notes: operator runs the Cloud SQL bootstrap files as the migration owner; roleBootstrap false }
+        - { db_mode: supabase, boundary: event-trigger, hoopdb: external, status: held, profiles: [external-supabase], notes: supabaseActivation.hold; migrate refuses until the reviewed event trigger is installed and --activation-check passes }
+        - { db_mode: supabase, boundary: null, hoopdb: external, status: fails closed, profiles: [aws-supabase], notes: renders; migrate refuses with function_boundary_unproven }
+        - { db_mode: local, boundary: null, hoopdb: any, status: dev only, profiles: [], notes: local stack only; never a self-host install }
+      sources:
+        - "charts/sessions-pipeline/Chart.yaml:4"
+        - "charts/sessions-pipeline/profiles/aws-rds-native.yaml"
+        - "ci/sessions-pipeline-profiles/matrix.sh"
+        - "charts/sessions-pipeline/templates/_scrub-engine.tpl:1"
+        - "ci/sessions-pipeline-scrub-engine/test_scrub_engine.py:1"
+      notes: 'Carries 0.8.41 and adds the default-off searchIndexer.streaming.{enabled,maxReadBytes,maxReadEvents} on the consumer only (issue 610 Phase 2: SEARCH_INDEX_STREAMING_ENABLED=true only when enabled, SEARCH_INDEX_STREAM_MAX_READ_BYTES 4x limits.maxScopeBytes..2GiB, SEARCH_INDEX_STREAM_MAX_READ_EVENTS 4x limits.maxScopeEvents..2000000); streaming with outputFacts.enabled is refused at render. Bootstrap Job names do not move. Default renders differ only in the helm.sh/chart labels.'
+    - id: sessions-pipeline-0.8.41
+      status: planned
       charts: { sessions-pipeline: 0.8.41, sessions-pipeline-worker: 0.7.10, session-ingest-api: 0.4.5, session-read-api: 0.2.15 }
       depends:
         sessions-pipeline: { worker: 0.7.10, alleyoop: 0.4.5, sessionReadApi: 0.2.15, hoopdb: 0.9.0, session-object-storage: 5.4.0, otel: 0.178.0 }
@@ -1732,9 +1760,22 @@ compatibility:
       images:
         relayauth: { repository: ghcr.io/agentworkforce/relayauth, digest: sha256:eb71daa28e30eb7305f666d0bccc5a4002e53e8a574e3c4c32163d907a1b71df }
       notes: superseded by 0.1.1.
-    - id: agent-relay-0.7.37
+    - id: agent-relay-0.7.38
       status: unreleased
       current: true
+      charts: { agent-relay: 0.7.38, relay-control: 0.4.21, relay-webapp: 0.2.6 }
+      app_versions: { agent-relay: 0.1.0, relay-control: 0.1.0, relay-webapp: 0.1.0 }
+      depends:
+        agent-relay: { relaycast: 0.3.16, relayauth: 0.1.5, sessions-pipeline: 0.8.42, relay-control: 0.4.21, relay-webapp: 0.2.6, relayflows: 0.2.5, durable-actors: 0.14.6-awf.4, relayfile: 0.2.2, telemetry-collector: 0.1.7, relay-chief: 0.1.0, slack-relay: 0.3.3, relaygate: 0.1.7 }
+      images:
+        relaycast: { repository: ghcr.io/agentworkforce/relaycast-self-host, digest: sha256:ec062ef901af15cf575b53a71d7eb09f2e6ab6e7c0d5be2da35339a275a5c6cc }
+        relaycast-postgres: { repository: ghcr.io/agentworkforce/relaycast-self-host, digest: sha256:ec062ef901af15cf575b53a71d7eb09f2e6ab6e7c0d5be2da35339a275a5c6cc }
+        sessions-pipeline-worker: { repository: ghcr.io/agentworkforce/sessions-pipeline, digest: sha256:77022c5b6a1d30f96f921d703eb27a1acada8ec273ad84aebdde24f8eddce305 }
+        relay-control: { repository: ghcr.io/agentworkforce/relay-control, digest: sha256:d1b6ca95fab240a9d41208d83de3b1f4245408b0765038762f1c419ee60f43bc }
+        relay-webapp: { repository: ghcr.io/agentworkforce/relay-webapp, digest: sha256:bd295ccb7d1323965dce890f19d0b7f857d706c00d7756f719c713763fdb49f3 }
+      notes: 'Carries 0.7.37 and sessions-pipeline 0.8.42: opt-in searchIndexer.streaming (issue 610 Phase 2 streaming reconcile), off by default. Default renders differ only in the helm.sh/chart labels.'
+    - id: agent-relay-0.7.37
+      status: planned
       charts: { agent-relay: 0.7.37, relay-control: 0.4.21, relay-webapp: 0.2.6 }
       app_versions: { agent-relay: 0.1.0, relay-control: 0.1.0, relay-webapp: 0.1.0 }
       depends:
@@ -7886,6 +7927,28 @@ entries:
     choices: [{ value: null }]
     verify: Render none of the three by default; render each only on the session-pipeline-consumer Deployment when set; refuse bytes outside a byte or MiB/GiB size, and events or rows outside 100000..1000000 and 500000..1000000.
     sources: [charts/sessions-pipeline/templates/_search-indexer.tpl, charts/sessions-pipeline/templates/search-indexer.yaml, charts/sessions-pipeline/values.yaml]
+
+  - id: opt.sessions-pipeline.search-index-streaming
+    kind: option
+    title: Search index streaming reconcile
+    description: |
+      Off by default. On, a session above the search index limits is indexed in
+      passes instead of recorded as partial (issue 610 Phase 2). A scope streams
+      only when four times its size fits both read budgets; at their defaults
+      (four times the limits) every streamed scope is still refused and the
+      consumer warns at startup, so raise the budget the scope exceeds. Cannot be
+      combined with searchIndexer.outputFacts.enabled. Indexer memory stays as for
+      the limits (one chunk plus about 1 KB per record, about 0.5 GB at the 2M cap).
+    chart: sessions-pipeline
+    values: [searchIndexer.streaming.enabled, searchIndexer.streaming.maxReadBytes, searchIndexer.streaming.maxReadEvents]
+    env: [SEARCH_INDEX_STREAMING_ENABLED, SEARCH_INDEX_STREAM_MAX_READ_BYTES, SEARCH_INDEX_STREAM_MAX_READ_EVENTS]
+    profiles: [selfhost-postgres, migration, external-selfhosted, external-rds, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql, aws-rds-native]
+    status: shipped
+    provided_by: operator
+    default: false
+    choices: [{ value: false }, { value: true }]
+    verify: Render none of the three by default or for false; render them only on the session-pipeline-consumer Deployment when enabled; refuse budgets without enabled, enabled with outputFacts.enabled, bytes outside 4x limits.maxScopeBytes..2GiB and events outside 4x limits.maxScopeEvents..2000000; bootstrap Job names do not move.
+    sources: [charts/sessions-pipeline/templates/_search-indexer.tpl, charts/sessions-pipeline/templates/search-indexer.yaml, charts/sessions-pipeline/values.yaml, ci/agent-relay/test_search_streaming.py]
 
   - id: opt.session-read-api.search-partial-sessions
     kind: option
