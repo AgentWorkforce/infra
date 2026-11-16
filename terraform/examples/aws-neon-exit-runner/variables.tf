@@ -150,9 +150,9 @@ variable "runner_log_owner" {
 }
 
 variable "heartbeat_enabled" {
-  description = "Create the dead-man alarm on the eraser's per-sweep summary line. Missing data is breaching, so enable only once the eraser runs continuously on the runner."
+  description = "Create the dead-man alarm on the eraser's per-sweep summary line. Missing data is breaching, so leave it false until the apply that starts the eraser on the runner; an alarm created earlier sits in ALARM and the first real outage after subscribing never transitions, so never pages."
   type        = bool
-  default     = true
+  default     = false
 }
 
 variable "heartbeat_pattern" {
@@ -172,11 +172,21 @@ variable "heartbeat_period_seconds" {
 }
 
 variable "heartbeat_evaluation_periods" {
-  description = "Consecutive periods without a sweep line before the dead-man alarm pages (2 x 600 s = 20 minutes by default)."
+  description = "Periods the dead-man alarm looks back over. With the defaults (3 periods, 2 breaching) it pages after 20 to 30 minutes without a sweep line, and one slow sweep that straddles a bucket does not page."
   type        = number
-  default     = 2
+  default     = 3
   validation {
     condition     = var.heartbeat_evaluation_periods >= 1
     error_message = "heartbeat_evaluation_periods must be at least 1."
+  }
+}
+
+variable "heartbeat_datapoints_to_alarm" {
+  description = "Periods without a sweep line, out of heartbeat_evaluation_periods, that put the dead-man alarm in ALARM."
+  type        = number
+  default     = 2
+  validation {
+    condition     = var.heartbeat_datapoints_to_alarm >= 1 && var.heartbeat_datapoints_to_alarm <= var.heartbeat_evaluation_periods
+    error_message = "heartbeat_datapoints_to_alarm must be between 1 and heartbeat_evaluation_periods."
   }
 }

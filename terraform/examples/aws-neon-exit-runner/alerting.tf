@@ -148,9 +148,13 @@ resource "aws_cloudwatch_metric_alarm" "signal" {
 }
 
 # Dead man: the eraser logs one "erasure sweep" summary line per sweep. When
-# that line stops arriving (eraser down, agent down, log path wrong), the
-# alarm pages. Missing data is breaching by design, so arm it
-# (heartbeat_enabled) only once the eraser runs continuously on the box.
+# that line stops arriving (eraser down, agent down, log path wrong, or the
+# privacy authority not ready, which writes no summary), the alarm pages.
+# Missing data is breaching by design, so heartbeat_enabled is false until
+# the apply that starts the eraser: created earlier it would sit in ALARM,
+# and an alarm that never transitions never pages. Sweeps are 600 s or more
+# apart (sweep and drain time push some summaries past one bucket), hence
+# 2 breaching datapoints out of 3 rather than 2 of 2.
 resource "aws_cloudwatch_log_metric_filter" "heartbeat" {
   count = var.heartbeat_enabled ? 1 : 0
 
@@ -171,12 +175,13 @@ resource "aws_cloudwatch_metric_alarm" "heartbeat" {
   count = var.heartbeat_enabled ? 1 : 0
 
   alarm_name          = "${var.name}-erasure-sweep-missing"
-  alarm_description   = "No \"erasure sweep\" summary line from neon-s3-erasure on the Neon exit runner for ${var.heartbeat_period_seconds * var.heartbeat_evaluation_periods} s: eraser, CloudWatch agent or log path is down."
+  alarm_description   = "No \"erasure sweep\" summary line from neon-s3-erasure on the Neon exit runner in ${var.heartbeat_datapoints_to_alarm} of the last ${var.heartbeat_evaluation_periods} x ${var.heartbeat_period_seconds} s: eraser, CloudWatch agent or log path is down, or the privacy authority is not ready."
   namespace           = var.metric_namespace
   metric_name         = "erasure_sweep"
   statistic           = "Sum"
   period              = var.heartbeat_period_seconds
   evaluation_periods  = var.heartbeat_evaluation_periods
+  datapoints_to_alarm = var.heartbeat_datapoints_to_alarm
   threshold           = 1
   comparison_operator = "LessThanThreshold"
   treat_missing_data  = "breaching"

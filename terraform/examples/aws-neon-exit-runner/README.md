@@ -54,12 +54,16 @@ scaffold turns those lines into pages:
   string). Any match within a minute puts the alarm in ALARM and pages.
   There are no OK notifications on these: the count metric drops back a
   minute later, which is not "resolved"; close the page after the runbook;
-- a dead-man alarm (`heartbeat_enabled`) on the eraser's per-sweep
-  `erasure sweep` summary line: fewer than one line per
-  `heartbeat_period_seconds` (600, the eraser's default cadence) for
-  `heartbeat_evaluation_periods` (2) consecutive periods pages, and missing
-  data counts as breaching. It resolves (OK notification) when sweeps
-  resume. Arm it only once the eraser runs continuously on the box;
+- a dead-man alarm (`heartbeat_enabled`, **default false**) on the eraser's
+  per-sweep `erasure sweep` summary line: fewer than one line per
+  `heartbeat_period_seconds` (600, the eraser's cadence) in 2 of the last 3
+  periods pages, so 20 to 30 minutes after the last sweep; missing data
+  counts as breaching. It resolves (OK notification) when sweeps resume.
+  Set `heartbeat_enabled = true` in the same apply that starts the eraser,
+  not before: created while nothing runs it sits in ALARM, and an alarm
+  that never transitions never pages. A Supabase privacy authority that is
+  not ready (`sweep refused: privacy authority not ready`) writes no summary
+  line, so it is caught only by this alarm, after those 20 to 30 minutes;
 - an SNS topic `<name>-alerts` that the alarms publish to. **Nobody is
   subscribed until `alert_endpoint` is set** (with `alert_protocol`, default
   `https` for a PagerDuty Events v2 CloudWatch integration URL). Until then
@@ -174,8 +178,9 @@ aws logs test-metric-filter \
 | availability\_zone | AZ of the private subnet; the instance type must be offered there. | `string` | `"us-east-1a"` | no |
 | copy\_urls\_secret\_name | Secrets Manager name of the Cloud copy connection URLs. Created empty; written out of band and read on the runner. | `string` | `"neon-exit/cloud/copy-urls"` | no |
 | db\_owner\_secret\_name | Secrets Manager name of the target database owner credential. Created empty; the value is written out of band by whoever holds it. | `string` | `"neon-exit/relayhistory-legacy/postgres-owner"` | no |
-| heartbeat\_enabled | Create the dead-man alarm on the eraser's per-sweep summary line. Missing data is breaching, so enable only once the eraser runs continuously on the runner. | `bool` | `true` | no |
-| heartbeat\_evaluation\_periods | Consecutive periods without a sweep line before the dead-man alarm pages (2 x 600 s = 20 minutes by default). | `number` | `2` | no |
+| heartbeat\_datapoints\_to\_alarm | Periods without a sweep line, out of heartbeat\_evaluation\_periods, that put the dead-man alarm in ALARM. | `number` | `2` | no |
+| heartbeat\_enabled | Create the dead-man alarm on the eraser's per-sweep summary line. Missing data is breaching, so leave it false until the apply that starts the eraser on the runner; an alarm created earlier sits in ALARM and the first real outage after subscribing never transitions, so never pages. | `bool` | `false` | no |
+| heartbeat\_evaluation\_periods | Periods the dead-man alarm looks back over. With the defaults (3 periods, 2 breaching) it pages after 20 to 30 minutes without a sweep line, and one slow sweep that straddles a bucket does not page. | `number` | `3` | no |
 | heartbeat\_pattern | Filter pattern for the eraser's per-sweep summary line. | `string` | `"{ ($.service = \"neon-s3-erasure\") && ($.message = \"erasure sweep\") }"` | no |
 | heartbeat\_period\_seconds | Expected sweep cadence in seconds (the eraser's default is 600). One alarm period. | `number` | `600` | no |
 | instance\_type | Instance type with local NVMe for the dump. | `string` | `"m6id.4xlarge"` | no |
