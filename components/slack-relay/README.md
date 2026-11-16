@@ -35,3 +35,7 @@ RELAYCAST_E2E_URL=http://localhost:8787 RELAYCAST_E2E_KEY=$KEY npm test
 
 `manifest/` holds the Slack app manifest the customer creates the app from,
 and `render-manifest.py` to name it and pick socket or http mode.
+It also holds the read-only GitHub App manifest for `repos.app` and
+`register-github-app.mts`, which registers the app from it, stores the app ID,
+private key and installation ID (Kubernetes Secret, Secret Manager or files)
+and verifies them (docs/self-hosted-slack-relay.md, "GitHub repos").
