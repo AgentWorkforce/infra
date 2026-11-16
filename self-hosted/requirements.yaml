@@ -3426,7 +3426,7 @@ entries:
       aws-rds-native: { worker.locker.credentials.mode: podIdentity, alleyoop.locker.credentials.mode: podIdentity, worker.serviceAccount.name: agent-relay-worker, alleyoop.serviceAccount.name: agent-relay-session-ingest-api, sessionReadApi.serviceAccountName: agent-relay-session-read, ingestEdge.serviceAccountName: agent-relay-session-ingest-api, searchIndexer.serviceAccount.name: agent-relay-search-indexer }
     verify: aws eks list-pod-identity-associations --cluster-name <c> includes every enabled workload ServiceAccount; the worker, ingest edge and search indexer reach only their required bucket/index resources
     sources:
-      - "README.md:152"
+      - "docs/repository-guide.md:152"
       - "charts/sessions-pipeline-worker/values.yaml:60"
       - "charts/sessions-pipeline-worker/templates/_env.tpl:77"
 
@@ -3469,7 +3469,7 @@ entries:
         note: type kubernetes.io/dockerconfigjson with read access to ghcr.io/agentworkforce/96bulls-services
     verify: kubectl get secret <pull secret> -o jsonpath='{.type}' is kubernetes.io/dockerconfigjson; pods are not ImagePullBackOff
     sources:
-      - "README.md:128"
+      - "docs/repository-guide.md:128"
       - "charts/sessions-pipeline/values.yaml:24"
       - "charts/sessions-pipeline/templates/_privileged-sql-job.tpl:92"
 
@@ -3536,7 +3536,7 @@ entries:
           - { key: SUMMARY_MASTER_KEYS, key_path: worker.summaryEncryption.key }
     verify: kubectl exec deploy/<release>-worker-bob-costas -- test -r /var/run/secrets/sessions-pipeline/summary-master-keys; the Secret key parses as <id>:<64 hex>
     sources:
-      - "README.md:143"
+      - "docs/repository-guide.md:143"
       - "charts/sessions-pipeline-worker/values.yaml:45"
       - "charts/sessions-pipeline-worker/templates/_env.tpl:102"
       - "charts/sessions-pipeline-worker/templates/_env.tpl:30"
@@ -3899,7 +3899,7 @@ entries:
       - "charts/sessions-pipeline/values.yaml:131"
       - "charts/sessions-pipeline/values.yaml:218"
       - "charts/sessions-pipeline/templates/search-worker-role-bootstrap.yaml:7"
-      - "README.md:259"
+      - "docs/repository-guide.md:259"
       - "sessions-pipeline@7d7229b:supabase/bootstrap/session_directory_search_worker.sql:1"
       - "sessions-pipeline@7d7229b:runbooks/session-directory-search-worker-bootstrap.md:1"
 
@@ -4071,7 +4071,7 @@ entries:
     sources:
       - "charts/sessions-pipeline-worker/values.yaml:106"
       - "charts/sessions-pipeline-worker/templates/_env.tpl:193"
-      - "README.md:167"
+      - "docs/repository-guide.md:167"
       - "sessions-pipeline@7d7229b:src/hoopdb/migrate.ts:117"
 
   - id: opt.sessions-pipeline.function-boundary-mode
@@ -5405,7 +5405,7 @@ entries:
     verify: helm status relaycast; curl <baseUrl>/health
     sources:
       - "docs/self-hosted-reference-architecture.md:11"
-      - "README.md:71"
+      - "docs/repository-guide.md:71"
 
   - id: opt.relaycast.service-backend-config
     kind: option
@@ -5485,7 +5485,7 @@ entries:
       - "charts/relaycast/values.yaml:47"
       - "charts/relaycast/templates/deployment.yaml:61"
       - "charts/relaycast/templates/_helpers.tpl:103"
-      - "README.md:62"
+      - "docs/repository-guide.md:62"
 
   - id: req.relaycast.base-url
     kind: requirement

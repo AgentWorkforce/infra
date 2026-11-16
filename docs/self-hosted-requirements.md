@@ -1489,7 +1489,7 @@ Terraform owns bucket creation and versioning when lockerInit is disabled.
 - Provided by: stack
 - Values: `worker.locker.credentials.mode`, `alleyoop.locker.credentials.mode`, `worker.serviceAccount.annotations`, `alleyoop.serviceAccount.annotations`, `worker.serviceAccount.name`, `alleyoop.serviceAccount.name`, `sessionReadApi.serviceAccountName`, `ingestEdge.serviceAccountName`, `searchIndexer.serviceAccount.name`
 - Verify: aws eks list-pod-identity-associations --cluster-name <c> includes every enabled workload ServiceAccount; the worker, ingest edge and search indexer reach only their required bucket/index resources
-- Sources: [`README.md:152`](../README.md#L152), [`charts/sessions-pipeline-worker/values.yaml:60`](../charts/sessions-pipeline-worker/values.yaml#L60), [`charts/sessions-pipeline-worker/templates/_env.tpl:77`](../charts/sessions-pipeline-worker/templates/_env.tpl#L77)
+- Sources: [`docs/repository-guide.md:152`](../docs/repository-guide.md#L152), [`charts/sessions-pipeline-worker/values.yaml:60`](../charts/sessions-pipeline-worker/values.yaml#L60), [`charts/sessions-pipeline-worker/templates/_env.tpl:77`](../charts/sessions-pipeline-worker/templates/_env.tpl#L77)
 
 #### req.k8s.external-secrets-operator
 
@@ -1521,7 +1521,7 @@ The ECR path (EKS node role) needs none.
 - Values: `worker.imagePullSecrets`, `alleyoop.imagePullSecrets`
 - Secret: `<pull secret>`. type kubernetes.io/dockerconfigjson with read access to ghcr.io/agentworkforce/96bulls-services
 - Verify: kubectl get secret <pull secret> -o jsonpath='{.type}' is kubernetes.io/dockerconfigjson; pods are not ImagePullBackOff
-- Sources: [`README.md:128`](../README.md#L128), [`charts/sessions-pipeline/values.yaml:24`](../charts/sessions-pipeline/values.yaml#L24), [`charts/sessions-pipeline/templates/_privileged-sql-job.tpl:92`](../charts/sessions-pipeline/templates/_privileged-sql-job.tpl#L92)
+- Sources: [`docs/repository-guide.md:128`](../docs/repository-guide.md#L128), [`charts/sessions-pipeline/values.yaml:24`](../charts/sessions-pipeline/values.yaml#L24), [`charts/sessions-pipeline/templates/_privileged-sql-job.tpl:92`](../charts/sessions-pipeline/templates/_privileged-sql-job.tpl#L92)
 
 #### req.secret.locker-credentials
 
@@ -1559,7 +1559,7 @@ worker.existingSecret; pod-identity installs with no shared Secret must set it.
 - Env: `SUMMARY_MASTER_KEYS_FILE`, `SUMMARY_MASTER_KEYS`
 - Secret: `sessions-pipeline-locker` (default), `96bulls-runtime` (aws-cnpg), `sessions-pipeline-summary` (aws-supabase), `96bulls-gcp` (gcp-cloudsql), `agent-relay-secrets` (aws-rds-native) from `worker.summaryEncryption.existingSecret` then `worker.existingSecret`; keys `SUMMARY_MASTER_KEYS` from `worker.summaryEncryption.key`
 - Verify: kubectl exec deploy/<release>-worker-bob-costas -- test -r /var/run/secrets/sessions-pipeline/summary-master-keys; the Secret key parses as <id>:<64 hex>
-- Sources: [`README.md:143`](../README.md#L143), [`charts/sessions-pipeline-worker/values.yaml:45`](../charts/sessions-pipeline-worker/values.yaml#L45), [`charts/sessions-pipeline-worker/templates/_env.tpl:102`](../charts/sessions-pipeline-worker/templates/_env.tpl#L102), [`charts/sessions-pipeline-worker/templates/_env.tpl:30`](../charts/sessions-pipeline-worker/templates/_env.tpl#L30), `sessions-pipeline@7d7229b:src/shared/keyring.ts:17`
+- Sources: [`docs/repository-guide.md:143`](../docs/repository-guide.md#L143), [`charts/sessions-pipeline-worker/values.yaml:45`](../charts/sessions-pipeline-worker/values.yaml#L45), [`charts/sessions-pipeline-worker/templates/_env.tpl:102`](../charts/sessions-pipeline-worker/templates/_env.tpl#L102), [`charts/sessions-pipeline-worker/templates/_env.tpl:30`](../charts/sessions-pipeline-worker/templates/_env.tpl#L30), `sessions-pipeline@7d7229b:src/shared/keyring.ts:17`
 
 #### req.secret.hoopdb-url
 
@@ -1692,7 +1692,7 @@ databases from the operator (Supabase uses the transactional _supabase wrapper).
 - Provided by: default: chart, external-selfhosted: operator, external-rds: operator, aws-rds-native: operator, external-supabase: operator, aws-supabase: operator, gcp-cloudsql: operator
 - Values: `hoopdb.cluster.initdb.postInitApplicationSQL`, `searchWorkerRole.bootstrapJob.enabled`, `searchWorkerRole.bootstrapJob.sqlPath`, `worker.migrations.waitForRole.role`
 - Verify: default: psql "$HOOPDB_URL" -Atc "select rolcanlogin, rolconfig from pg_roles where rolname='session_directory_search_worker'" is f\|{statement_timeout=2s} / external-selfhosted: run supabase/bootstrap/session_directory_search_worker.sql as a superuser; then the same query / external-rds: the master runs supabase/bootstrap/rds_migration_roles.sql; then, with uselibpqcompat=true removed from the URL (psql rejects it), the same query / aws-rds-native: the master runs supabase/bootstrap/rds_migration_roles.sql; then, with uselibpqcompat=true removed from the URL (psql rejects it), the same query / external-supabase: run supabase/bootstrap/session_directory_search_worker_supabase.sql as postgres; then the same query / gcp-cloudsql: run supabase/bootstrap/session_directory_search_worker.sql as the migration owner; then the same query
-- Sources: [`charts/sessions-pipeline/values.yaml:131`](../charts/sessions-pipeline/values.yaml#L131), [`charts/sessions-pipeline/values.yaml:218`](../charts/sessions-pipeline/values.yaml#L218), [`charts/sessions-pipeline/templates/search-worker-role-bootstrap.yaml:7`](../charts/sessions-pipeline/templates/search-worker-role-bootstrap.yaml#L7), [`README.md:259`](../README.md#L259), `sessions-pipeline@7d7229b:supabase/bootstrap/session_directory_search_worker.sql:1`, `sessions-pipeline@7d7229b:runbooks/session-directory-search-worker-bootstrap.md:1`
+- Sources: [`charts/sessions-pipeline/values.yaml:131`](../charts/sessions-pipeline/values.yaml#L131), [`charts/sessions-pipeline/values.yaml:218`](../charts/sessions-pipeline/values.yaml#L218), [`charts/sessions-pipeline/templates/search-worker-role-bootstrap.yaml:7`](../charts/sessions-pipeline/templates/search-worker-role-bootstrap.yaml#L7), [`docs/repository-guide.md:259`](../docs/repository-guide.md#L259), `sessions-pipeline@7d7229b:supabase/bootstrap/session_directory_search_worker.sql:1`, `sessions-pipeline@7d7229b:runbooks/session-directory-search-worker-bootstrap.md:1`
 
 #### req.db.runtime-role
 
@@ -1848,7 +1848,7 @@ wire ar_ credentials (see opt.relaycast.credential-authority).
 - Env: `RELAYCAST_INTERNAL_SECRET_FILE`, `RELAYCAST_WORKSPACE_BOOTSTRAP_SECRET_FILE`, `RELAYCAST_CREDENTIAL_KEYRING_FILE`, `RELAYCAST_RELAYAUTH_TOKEN_FILE`
 - Secret: `<existingSecret, e.g. relaycast-secrets>` from `existingSecret`; keys `internal-secret` from `secretKeys.internalSecret`; `workspace-bootstrap-secret` from `secretKeys.bootstrapSecret`; `<operator-chosen, no default>` from `secretKeys.credentialKeyring` (optional: required when credentials.authority=self (the ar_ tag keyring)); `<operator-chosen, no default>` from `secretKeys.relayauthToken` (optional: required when credentials.authority=relayauth or credentials.relayauth.url is set (the RelayAuth token))
 - Verify: kubectl -n relaycast get secret relaycast-secrets -o jsonpath='{.data}' has internal-secret and workspace-bootstrap-secret, plus the secretKeys.credentialKeyring key when credentials.authority=self or the secretKeys.relayauthToken key when credentials.authority=relayauth; helm template fails with "existingSecret is required", or the matching credentials error, otherwise
-- Sources: [`charts/relaycast/values.yaml:47`](../charts/relaycast/values.yaml#L47), [`charts/relaycast/templates/deployment.yaml:61`](../charts/relaycast/templates/deployment.yaml#L61), [`charts/relaycast/templates/_helpers.tpl:103`](../charts/relaycast/templates/_helpers.tpl#L103), [`README.md:62`](../README.md#L62)
+- Sources: [`charts/relaycast/values.yaml:47`](../charts/relaycast/values.yaml#L47), [`charts/relaycast/templates/deployment.yaml:61`](../charts/relaycast/templates/deployment.yaml#L61), [`charts/relaycast/templates/_helpers.tpl:103`](../charts/relaycast/templates/_helpers.tpl#L103), [`docs/repository-guide.md:62`](../docs/repository-guide.md#L62)
 
 #### req.relaycast.base-url
 
@@ -2544,7 +2544,7 @@ selfhosted.
 - Values: `worker.migrations.databaseMode`
 - Env: `HOOPDB_DB_MODE`
 - Verify: the migrate Job env has exactly one HOOPDB_DB_MODE (ci/sessions-pipeline-profiles/matrix.sh asserts the profile env)
-- Sources: [`charts/sessions-pipeline-worker/values.yaml:106`](../charts/sessions-pipeline-worker/values.yaml#L106), [`charts/sessions-pipeline-worker/templates/_env.tpl:193`](../charts/sessions-pipeline-worker/templates/_env.tpl#L193), [`README.md:167`](../README.md#L167), `sessions-pipeline@7d7229b:src/hoopdb/migrate.ts:117`
+- Sources: [`charts/sessions-pipeline-worker/values.yaml:106`](../charts/sessions-pipeline-worker/values.yaml#L106), [`charts/sessions-pipeline-worker/templates/_env.tpl:193`](../charts/sessions-pipeline-worker/templates/_env.tpl#L193), [`docs/repository-guide.md:167`](../docs/repository-guide.md#L167), `sessions-pipeline@7d7229b:src/hoopdb/migrate.ts:117`
 
 #### opt.sessions-pipeline.function-boundary-mode
 
@@ -3488,7 +3488,7 @@ Relaycast is the required core of the self-hosted product; add-ons consume it an
 - Choices: `installed`
 - Provided by: operator
 - Verify: helm status relaycast; curl <baseUrl>/health
-- Sources: [`docs/self-hosted-reference-architecture.md:11`](../docs/self-hosted-reference-architecture.md#L11), [`README.md:71`](../README.md#L71)
+- Sources: [`docs/self-hosted-reference-architecture.md:11`](../docs/self-hosted-reference-architecture.md#L11), [`docs/repository-guide.md:71`](../docs/repository-guide.md#L71)
 
 #### opt.relaycast.service-backend-config
 
