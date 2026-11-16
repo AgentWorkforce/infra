@@ -219,6 +219,38 @@ for chart in "${charts[@]}"; do
   done
   if [ "$mode" = static ]; then
     case $chart in
+      slack-relay)
+        # repos: the GitHub token reaches only the repo-sync sidecar; the host
+        # mounts /repos read-only and its agents get only Read/Glob/Grep on it.
+        v=charts/slack-relay/ci/repos-values.yaml
+        repos_out=$(render "$chart" "$v") || { err "$chart: repos render failed"; continue; }
+        repos_out=$(yq 'select(.kind == "StatefulSet")' <<<"$repos_out")
+        sts='.'
+        [ "$(yq "[.spec.template.spec.containers[] | select(.env | any_c(.name == \"GITHUB_TOKEN\")) | .name] | join(\",\")" <<<"$repos_out")" = repo-sync ] \
+          || err "$chart: GITHUB_TOKEN must be in the repo-sync container only"
+        [ "$(yq "$sts | .spec.template.spec.containers[] | select(.name == \"host\") | .volumeMounts[] | select(.name == \"repos\") | .readOnly" <<<"$repos_out")" = true ] \
+          || err "$chart: the host must mount /repos read-only"
+        [ "$(yq "$sts | .spec.template.spec.containers[] | select(.name == \"host\") | .env[] | select(.name == \"AGENT_ALLOWED_TOOLS\") | .value" <<<"$repos_out")" = 'Read(./**) Glob(./**) Grep(./**) mcp__relaycast Read(//repos/**) Glob(//repos/**) Grep(//repos/**)' ] \
+          || err "$chart: repos must add exactly Read/Glob/Grep on //repos/** to the agents' tools"
+        [ "$(yq "$sts | .spec.template.spec.containers[] | select(.name == \"repo-sync\") | .env[] | select(.name == \"REPOS_LIST\") | .value" <<<"$repos_out")" = $'example-org/api\nexample-org/web release/2026' ] \
+          || err "$chart: REPOS_LIST must list each repo with its ref"
+        ! grep -q 'repo-sync\|/repos' <<<"$(render "$chart" charts/slack-relay/ci/default-values.yaml)" \
+          || err "$chart: repos off must render no sidecar or mount"
+        expect_render_failure "$chart" "$v" "repos without a token" "repos.enabled needs repos.token.name" --set repos.token.name=
+        # An empty list syncs every repo the token can read, via the API.
+        all_out=$(render "$chart" "$v" --set-json 'repos.list=[]' | yq 'select(.kind == "StatefulSet") | .spec.template.spec.containers[] | select(.name == "repo-sync") | .env[] | select(.name == "REPOS_LIST" or .name == "REPOS_API_URL") | .name + "=" + .value')
+        [ "$all_out" = $'REPOS_API_URL=https://api.github.com\nREPOS_LIST=' ] || err "$chart: an empty repos.list must render an empty REPOS_LIST and the github.com API: $all_out"
+        expect_render_failure "$chart" "$v" "repo path traversal" "must be owner/name" --set-json 'repos.list=["../etc"]'
+        expect_render_failure "$chart" "$v" "repo listed twice" "more than once" --set-json 'repos.list=["a/b",{"repo":"A/b","ref":"dev"}]'
+        expect_render_failure "$chart" "$v" "repo option-like ref" "must be a branch, tag or commit" --set-json 'repos.list=[{"repo":"a/b","ref":"--upload-pack=x"}]'
+        expect_render_failure "$chart" "$v" "repos host with credentials" "repos.host must be a host name or base URL" --set repos.host=https://user:pw@ghe.example.com
+        expect_render_failure "$chart" "$v" "repos zero refresh" "repos.refreshMinutes must be a whole number" --set repos.refreshMinutes=0
+        ghe_out=$(render "$chart" "$v" --set repos.host=https://ghe.example.com/)
+        grep -q 'value: "https://ghe.example.com"' <<<"$ghe_out" || err "$chart: a GHE base URL must render as REPOS_BASE_URL"
+        grep -q 'value: "https://ghe.example.com/api/v3"' <<<"$ghe_out" || err "$chart: a GHE host must list repos through <base>/api/v3"
+        render "$chart" "$v" | yq 'select(.kind == "ConfigMap") | .data | keys | sort | join(",")' | grep -qx 'repo-list.mts,repo-sync.sh' \
+          || err "$chart: the repo-sync ConfigMap must carry repo-sync.sh and repo-list.mts"
+        ;;
       sessions-pipeline-worker)
         v=charts/sessions-pipeline-worker/ci/pod-identity-values.yaml
         check_postgres_ca "$chart" "$v"

@@ -2,7 +2,7 @@ apiVersion: v2
 name: agent-relay
 description: Self-hosted Agent Relay messaging and sessions suite
 type: application
-version: 0.7.41
+version: 0.7.42
 appVersion: "0.1.0"
 kubeVersion: ">=1.28.0-0"
 annotations:
@@ -59,7 +59,7 @@ dependencies:
     repository: file://../relay-chief
     condition: components.relayChief
   - name: slack-relay
-    version: 0.3.3
+    version: 0.3.4
     repository: file://../slack-relay
     condition: components.slackRelay
   - name: relaygate
