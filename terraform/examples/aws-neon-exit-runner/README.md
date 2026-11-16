@@ -49,7 +49,9 @@ scaffold turns those lines into pages:
   scoped to `$.service = "neon-s3-erasure"`. Defaults:
   `legacy_fence_failed` (the `@metric` line with `legacyFenceFailed > 0` and
   `value > 0`, or the `fence sweep failed` / `live fence sweep failed`
-  message lines the eraser on main logs today) and
+  message lines the eraser on main logs today; `value` is reserved for the
+  `@metric` line, so summary and progress lines that carry a non-zero
+  `legacyFenceFailed` counter without `value` do not page) and
   `legacy_erasure_requires_supabase_authority` (`error_code` equals that
   string). Any match within a minute puts the alarm in ALARM and pages.
   There are no OK notifications on these: the count metric drops back a
