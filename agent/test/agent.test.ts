@@ -70,6 +70,9 @@ test("the credential broker ships pinned: broker.ref is one exact commit, instal
   assert.match(lane, /'agent ALL=\(credbroker\) NOPASSWD: %s request \*, %s decide \*, %s whois \*, %s sweep, %s verify-audit, %s ship-audit\\n'/);
   // Audit shipping: a credbroker-only timer, the group Terraform grants, off whenever the sudo rule is.
   assert.match(lane, /^BROKER_AUDIT_LOG_GROUP=\/aws-cred-broker\/audit$/m);
+  // The group's region, not the host's (the host runs in us-west-2; Terraform made the group in us-east-1).
+  assert.match(lane, /^BROKER_AUDIT_LOG_REGION=us-east-1$/m);
+  assert.match(lane, /export BROKER_AUDIT_LOG_GROUP=%s BROKER_AUDIT_LOG_REGION=%s /);
   assert.match(lane, /User=credbroker\\nGroup=credbroker\\nExecStart=\/usr\/local\/libexec\/aws-cred-broker ship-audit/);
   assert.match(lane, /rm -f \/etc\/sudoers\.d\/aws-cred-broker\n  systemctl disable --now aws-cred-broker-ship-audit\.timer/);
   const sudoers = lane.split("\n").find((l) => l.includes("NOPASSWD"))!;

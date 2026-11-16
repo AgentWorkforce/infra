@@ -84,8 +84,10 @@ fi
 #    (sudoers) only with request, decide, whois (read-only Relay lookup of
 #    an agent id), sweep, verify-audit and ship-audit, and nothing else; /usr/local/bin/aws-cred-broker wraps that.
 BROKER_HOME=/var/lib/aws-cred-broker
-# Must match broker/terraform/modules/audit-log (the group the broker role may write).
+# Must match broker/terraform/sandbox (the group the broker role may write, and
+# its region: var.region, not this host's region).
 BROKER_AUDIT_LOG_GROUP=/aws-cred-broker/audit
+BROKER_AUDIT_LOG_REGION=us-east-1
 broker_ref=$(tr -d '[:space:]' < /opt/agent-host/broker.ref 2>/dev/null || true)
 if [ -n "${CRED_BROKER_ROLE_ARN:-}" ] && printf '%s' "$broker_ref" | grep -qxE '[0-9a-f]{40}'; then
   id credbroker >/dev/null 2>&1 || useradd --system --home-dir "$BROKER_HOME" --create-home --shell /usr/sbin/nologin credbroker
@@ -144,7 +146,7 @@ elif [ -n "${CRED_BROKER_ROLE_ARN:-}" ] && printf '%s' "$broker_ref" | grep -qxE
     printf 'export HOME=%s AWS_CONFIG_FILE=%s/.aws/config AWS_REGION=%s AWS_PAGER=\n' "$BROKER_HOME" "$BROKER_HOME" "$AWS_REGION"
     printf 'export BROKER_STATE_DIR=%s/state BROKER_DELIVERY_DIR=%s/creds BROKER_AWS_PROFILE=aws-cred-broker\n' "$BROKER_HOME" "$BROKER_HOME"
     printf 'export BROKER_RELAY_TOKEN_FILE=%s/relay-observer-token BROKER_RELAY_API=https://cast.agentrelay.com BROKER_RELAY_NAME=%s\n' "$BROKER_HOME" "${RELAY_NAME:-layered-infra-ops}"
-    printf 'export BROKER_AUDIT_LOG_GROUP=%s BROKER_AUDIT_LOG_STREAM=%s\n' "$BROKER_AUDIT_LOG_GROUP" "${RELAY_NAME:-layered-infra-ops}"
+    printf 'export BROKER_AUDIT_LOG_GROUP=%s BROKER_AUDIT_LOG_REGION=%s BROKER_AUDIT_LOG_STREAM=%s\n' "$BROKER_AUDIT_LOG_GROUP" "$BROKER_AUDIT_LOG_REGION" "${RELAY_NAME:-layered-infra-ops}"
     printf 'exec %s --experimental-strip-types --no-warnings /opt/aws-cred-broker/current/src/cli.ts "$@"\n' "$node_bin"
   } > /usr/local/libexec/aws-cred-broker.new
   install -m 0755 -o root -g root /usr/local/libexec/aws-cred-broker.new /usr/local/libexec/aws-cred-broker && rm -f /usr/local/libexec/aws-cred-broker.new
