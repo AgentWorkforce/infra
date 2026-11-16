@@ -71,6 +71,14 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- fail "slack-relay: sessions.upload.relayControlUrl needs secrets.sessionsEnrollmentKey.name (a Desktop enrollment key)" }}
 {{- end }}
 {{- end }}
+{{- if .Values.sessions.mcp.enabled }}
+{{- if not (.Values.relaygate.url | default "" | trim) }}
+{{- fail "slack-relay: sessions.mcp.enabled needs relaygate.url (agents read sessions as themselves through the gate)" }}
+{{- end }}
+{{- if or (not .Values.sessions.upload.orgId) (not .Values.sessions.upload.workspaceId) (not .Values.sessions.upload.relayControlUrl) (not .Values.secrets.sessionsEnrollmentKey.name) }}
+{{- fail "slack-relay: sessions.mcp.enabled needs sessions.upload.orgId, workspaceId, relayControlUrl and secrets.sessionsEnrollmentKey.name (read credentials are minted as the uploader user)" }}
+{{- end }}
+{{- end }}
 {{- if not .Values.secrets.slackBotToken.name }}
 {{- fail "slack-relay: secrets.slackBotToken.name is required" }}
 {{- end }}
