@@ -15,7 +15,7 @@ import { checkWithRetry, kbStreamId, RelaygateClient, slackStreamId } from "./ga
 import { oauthServersFromEnv, TokenSource } from "./mcp.ts";
 import { ingestFromEnv } from "./ingest-config.ts";
 import { EnrollmentCredential, SessionUploader } from "./sessions-upload.ts";
-import { SessionReadCredential, SessionsReadProxy } from "./sessions-read.ts";
+import { MemberDirectory, SessionReadCredential, SessionsReadProxy } from "./sessions-read.ts";
 import { sessionsMcpServer } from "./sessions-mcp.ts";
 import { channelMessageOf, ChannelDirectory, normalizeSlackEvent, SlackWeb, SocketModeClient, verifySlackSignature, type SlackEventEnvelope } from "./slack.ts";
 
@@ -306,6 +306,7 @@ async function sessionsReadProxy(s: SessionsSettings | undefined, isAgentToken: 
     baseUrl: s.baseUrl,
     workspaceId: s.workspaceId,
     credential: new SessionReadCredential({ controlUrl: s.controlUrl, workspaceId: s.workspaceId, control: s.credential }),
+    members: new MemberDirectory({ controlUrl: s.controlUrl, orgId: s.orgId, control: s.credential }),
     isAgentToken,
     log,
   });

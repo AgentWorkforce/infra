@@ -3301,7 +3301,7 @@ compatibility:
       app_versions: { slack-relay: 0.1.0 }
       images:
         slack-relay: { repository: ghcr.io/agentworkforce/slack-relay, digest_required: true }
-      notes: 'Carries 0.3.7. sessions.mcp tools never drop items of a page to fit the output cap (the cursor points past all of them); only strings are cut, and a page that still does not fit asks for a smaller limit. An OAuth MCP server named sessions no longer replaces the built-in Sessions tools. Default renders differ only in the chart labels. Default-off in the agent-relay umbrella; ships no default digest.'
+      notes: 'Carries 0.3.7. sessions.mcp tools never drop items of a page to fit the output cap (the cursor points past all of them); only strings are cut, and a page that still does not fit asks for a smaller limit. An OAuth MCP server named sessions no longer replaces the built-in Sessions tools. Sessions carry user {id, name, email} from relay-control organization memberships (cached ten minutes) and list_sessions/search_sessions filter by person. Default renders differ only in the chart labels. Default-off in the agent-relay umbrella; ships no default digest.'
     - id: slack-relay-0.3.7
       status: planned
       charts: { slack-relay: 0.3.7 }

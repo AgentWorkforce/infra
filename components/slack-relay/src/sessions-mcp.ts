@@ -25,12 +25,13 @@ interface Tool {
 export const TOOLS: Tool[] = [
   {
     name: "list_sessions",
-    description: `List Agent Relay sessions (Claude Code and other agent transcripts) you are allowed to read, newest first. Filter with q (text in the title or first prompt). Pages: pass next_cursor back as cursor. A page can come back short (sessions you may not read are left out). ${UNTRUSTED}`,
+    description: `List Agent Relay sessions (Claude Code and other agent transcripts) you are allowed to read, newest first; each carries user: {id, name, email} for the person it belongs to (just the id when unknown). Filter with q (text in the title or first prompt) or person. Pages: pass next_cursor back as cursor. A page can come back short (sessions you may not read are left out). ${UNTRUSTED}`,
     inputSchema: {
       type: "object",
       additionalProperties: false,
       properties: {
         q: { type: "string", maxLength: MAX_QUERY, description: "Text to filter sessions by." },
+        person: { type: "string", maxLength: 200, description: "Only this person's sessions: a name (or part of one), an email, or an email's local part (e.g. \"nt\" for nt@example.com)." },
         limit: { type: "integer", minimum: 1, maximum: 50, default: 20 },
         cursor: { type: "string", maxLength: MAX_CURSOR, description: "next_cursor from the previous page." },
       },
@@ -62,13 +63,14 @@ export const TOOLS: Tool[] = [
   },
   {
     name: "search_sessions",
-    description: `Full-text search over the transcripts you are allowed to read; returns matching messages with their session ids, newest first. Use get_session_turns to read around a match. ${UNTRUSTED}`,
+    description: `Full-text search over the transcripts you are allowed to read; returns matching messages with their session ids and user, newest first; person narrows it to one person's sessions. Use get_session_turns to read around a match. ${UNTRUSTED}`,
     inputSchema: {
       type: "object",
       additionalProperties: false,
       required: ["query"],
       properties: {
         query: { type: "string", minLength: 1, maxLength: MAX_QUERY },
+        person: { type: "string", maxLength: 200, description: "Only this person's sessions: a name (or part of one), an email, or an email's local part (e.g. \"nt\" for nt@example.com)." },
         limit: { type: "integer", minimum: 1, maximum: 25, default: 10 },
         cursor: { type: "string", maxLength: MAX_CURSOR },
       },
@@ -128,8 +130,11 @@ export function clamp(v: unknown, maxString: number, maxArray: number, depth = 0
  * with short strings is refused with a hint to ask for fewer items.
  */
 export function bounded(v: unknown, maxString = 2000): string {
+  // The cursor is opaque: it is passed back whole, never cut.
+  const { next_cursor: cursor, ...rest } = (v && typeof v === "object" && !Array.isArray(v) ? v : { value: v }) as Record<string, unknown>;
   for (let s = maxString; s >= 20; s = Math.floor(s / 2)) {
-    const out = JSON.stringify(clamp(v, s, 100), null, 1);
+    const body = clamp(rest, s, 100) as Record<string, unknown>;
+    const out = JSON.stringify(cursor === undefined ? body : { ...body, next_cursor: cursor }, null, 1);
     if (out.length <= MAX_OUTPUT) return out;
   }
   return JSON.stringify({ error: "result too large to show; ask again with a smaller limit" });
@@ -142,9 +147,45 @@ export interface SessionsToolsOptions {
   fetch?: typeof fetch;
 }
 
+export interface Member {
+  id: string;
+  name?: string | null;
+  email?: string | null;
+}
+
+/** Each object with a string userId gets `user: {id, name, email}` (just the id for someone the directory doesn't know). */
+export function withUsers<T>(items: T[], members: Map<string, Member>): T[] {
+  return items.map((it) => {
+    if (!it || typeof it !== "object") return it;
+    const o = it as Record<string, unknown>;
+    const id = typeof o.userId === "string" ? o.userId : typeof o.user_id === "string" ? o.user_id : undefined;
+    if (!id) return it;
+    const m = members.get(id);
+    return { ...o, user: m ? { id, name: m.name ?? null, email: m.email ?? null } : { id } } as T;
+  });
+}
+
+/** The member ids a person filter names: an exact id or email, an email's local part, or part of a name (any case). */
+export function personIds(person: string, members: Iterable<Member>): Set<string> {
+  const p = person.trim().toLowerCase().replace(/^@/, "");
+  const ids = new Set<string>();
+  if (!p) return ids;
+  for (const m of members) {
+    const email = (m.email ?? "").toLowerCase();
+    const name = (m.name ?? "").toLowerCase();
+    if (m.id.toLowerCase() === p || email === p || email.split("@")[0] === p || (name && name.includes(p))) ids.add(m.id);
+  }
+  return ids;
+}
+
+/** Pages read per call when filtering by person (the filter runs here, so a page can match nothing). */
+const PERSON_PAGES = 5;
+const MEMBERS_TTL_MS = 10 * 60_000;
+
 /** Calls the tools against the host's read proxy. */
 export class SessionsTools {
   readonly #o: Required<SessionsToolsOptions>;
+  #members: { at: number; byId: Map<string, Member> } | null = null;
 
   constructor(o: SessionsToolsOptions) {
     this.#o = { fetch: globalThis.fetch, ...o, proxyUrl: o.proxyUrl.replace(/\/$/, "") };
@@ -154,13 +195,14 @@ export class SessionsTools {
     try {
       switch (name) {
         case "list_sessions": {
-          const p = new URLSearchParams({ limit: String(int(args.limit, 20, 50)) });
+          const limit = int(args.limit, 20, 50);
           const q = str(args.q, "q", MAX_QUERY);
+          const person = str(args.person, "person", 200);
           const cursor = str(args.cursor, "cursor", MAX_CURSOR);
-          if (q) p.set("q", q);
-          if (cursor) p.set("cursor", cursor);
-          const page = await this.#get(`/v1/sessions?${p}`);
-          return text(bounded({ sessions: page?.sessions ?? [], next_cursor: page?.nextCursor ?? null }, 500));
+          const members = await this.#directory();
+          const ids = person ? this.#personIds(person, members) : null;
+          const r = await this.#pages("/v1/sessions", "sessions", { limit: String(ids ? 50 : limit), ...(q ? { q } : {}) }, cursor, ids, limit);
+          return text(bounded({ ...(person ? { person: [...ids!].map((id) => members.get(id)) } : {}), sessions: withUsers(r.items, members), next_cursor: r.cursor }, 500));
         }
         case "get_session": {
           const id = encodeURIComponent(sessionId(args.session_id));
@@ -170,7 +212,8 @@ export class SessionsTools {
             if (err instanceof ReadError && [404, 501].includes(err.status)) return null;
             throw err;
           });
-          return text(bounded({ metadata, brief }, 4000));
+          const members = await this.#directory();
+          return text(bounded({ metadata: withUsers([metadata], members)[0], brief }, 4000));
         }
         case "get_session_turns": {
           const id = sessionId(args.session_id);
@@ -182,11 +225,13 @@ export class SessionsTools {
         }
         case "search_sessions": {
           const query = str(args.query, "query", MAX_QUERY, true)!;
-          const p = new URLSearchParams({ q: query, limit: String(int(args.limit, 10, 25)), order: "desc", maxContent: "600" });
+          const limit = int(args.limit, 10, 25);
+          const person = str(args.person, "person", 200);
           const cursor = str(args.cursor, "cursor", MAX_CURSOR);
-          if (cursor) p.set("cursor", cursor);
-          const page = await this.#get(`/v1/events?${p}`);
-          return text(bounded({ matches: page?.events ?? [], next_cursor: page?.nextCursor ?? null }, 600));
+          const members = await this.#directory();
+          const ids = person ? this.#personIds(person, members) : null;
+          const r = await this.#pages("/v1/events", "events", { q: query, limit: String(ids ? 25 : limit), order: "desc", maxContent: "600" }, cursor, ids, limit);
+          return text(bounded({ matches: withUsers(r.items, members), next_cursor: r.cursor }, 600));
         }
         default:
           return text(`unknown tool ${name}`, true);
@@ -196,6 +241,47 @@ export class SessionsTools {
       if (err instanceof ReadError) return text(err.message, true);
       return text("Sessions are unavailable right now; try again later.", true);
     }
+  }
+
+  /**
+   * Reads a list route; with a person filter, whole pages are read (up to PERSON_PAGES) and their matching items
+   * kept, stopping at a page boundary so the cursor never skips anything.
+   */
+  async #pages(path: string, key: string, params: Record<string, string>, cursor: string | undefined, ids: Set<string> | null, limit: number): Promise<{ items: unknown[]; cursor: string | null }> {
+    const items: unknown[] = [];
+    let next: string | null = cursor ?? null;
+    for (let n = 0; n < (ids ? PERSON_PAGES : 1); n++) {
+      const p = new URLSearchParams(params);
+      if (next) p.set("cursor", next);
+      const page = await this.#get(`${path}?${p}`);
+      const got: unknown[] = Array.isArray(page?.[key]) ? page[key] : [];
+      items.push(...(ids ? got.filter((it) => ids.has(String((it as Record<string, unknown>)?.userId ?? (it as Record<string, unknown>)?.user_id ?? ""))) : got));
+      next = typeof page?.nextCursor === "string" && page.nextCursor ? page.nextCursor : null;
+      if (!next || items.length >= limit) break;
+    }
+    return { items, cursor: next };
+  }
+
+  #personIds(person: string, members: Map<string, Member>): Set<string> {
+    const ids = personIds(person, members.values());
+    if (!ids.size) {
+      throw new ToolError(members.size ? `No workspace member matches "${person}".` : "Member names are unavailable right now, so sessions can't be filtered by person.");
+    }
+    return ids;
+  }
+
+  /** The workspace's members (id, name, email) from the host, cached; empty if the host can't say. */
+  async #directory(): Promise<Map<string, Member>> {
+    if (this.#members && Date.now() - this.#members.at < MEMBERS_TTL_MS) return this.#members.byId;
+    let list: Member[] = [];
+    try {
+      const j = await this.#get("/members");
+      list = (Array.isArray(j?.members) ? j.members : []).filter((m: Member) => typeof m?.id === "string");
+    } catch {
+      return this.#members?.byId ?? new Map();
+    }
+    this.#members = { at: Date.now(), byId: new Map(list.map((m) => [m.id, { id: m.id, name: m.name ?? null, email: m.email ?? null }])) };
+    return this.#members.byId;
   }
 
   async #get(path: string): Promise<any> {
