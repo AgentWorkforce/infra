@@ -1,8 +1,10 @@
 // Lists every repository a GitHub token can read, for repo-sync.sh when
 // repos.list is empty: `node repo-list.mts --print` writes one owner/name per
-// line. With a fine-grained token, that is the token's repository selection.
+// line. With a fine-grained token, that is the token's repository selection
+// (GET /user/repos); with a GitHub App installation token (REPOS_AUTH=app),
+// the repositories the installation was granted (GET /installation/repositories).
 //
-// Reads GITHUB_TOKEN and REPOS_API_URL (https://api.github.com, or
+// Reads GITHUB_TOKEN, REPOS_AUTH and REPOS_API_URL (https://api.github.com, or
 // https://<ghe-host>/api/v3) from the environment. The token goes only in the
 // Authorization header to REPOS_API_URL's origin, never to stdout or stderr.
 // Runs on Node's type stripping: erasable TypeScript only, no dependencies.
@@ -25,10 +27,15 @@ export function nextLink(link: string | null, api: string): string | null {
   return null;
 }
 
-/** Every owner/name the token can read (GET /user/repos, all pages), sorted. */
-export async function listRepos(api: string, token: string, fetchImpl: Fetch = fetch): Promise<string[]> {
+/**
+ * Every owner/name the token can read, all pages, sorted: GET /user/repos for
+ * a user's token, GET /installation/repositories for an app installation's.
+ */
+export async function listRepos(api: string, token: string, fetchImpl: Fetch = fetch, auth: "token" | "app" = "token"): Promise<string[]> {
   const base = api.replace(/\/+$/, "");
-  let url: string | null = `${base}/user/repos?per_page=100&affiliation=owner,collaborator,organization_member`;
+  const path = auth === "app" ? "/installation/repositories" : "/user/repos";
+  let url: string | null =
+    auth === "app" ? `${base}${path}?per_page=100` : `${base}${path}?per_page=100&affiliation=owner,collaborator,organization_member`;
   const names = new Set<string>();
   for (let page = 1; url; page++) {
     if (page > MAX_PAGES) throw new Error(`more than ${MAX_PAGES} pages of repositories`);
@@ -40,9 +47,11 @@ export async function listRepos(api: string, token: string, fetchImpl: Fetch = f
         "user-agent": "slack-relay-repo-sync",
       },
     });
-    if (!res.ok) throw new Error(`GET /user/repos page ${page}: HTTP ${res.status}`);
-    const body: unknown = await res.json();
-    if (!Array.isArray(body)) throw new Error(`GET /user/repos page ${page}: not a list`);
+    if (!res.ok) throw new Error(`GET ${path} page ${page}: HTTP ${res.status}`);
+    const json: unknown = await res.json();
+    // The installation endpoint wraps the list: { total_count, repositories }.
+    const body = auth === "app" ? (json as { repositories?: unknown } | null)?.repositories : json;
+    if (!Array.isArray(body)) throw new Error(`GET ${path} page ${page}: not a list`);
     for (const r of body as Array<{ full_name?: unknown }>) {
       if (typeof r?.full_name === "string" && NAME.test(r.full_name) && !/(^|\/)\.\.?(\/|$)/.test(r.full_name)) names.add(r.full_name);
     }
@@ -56,7 +65,7 @@ if (process.argv.includes("--print")) {
   const api = process.env.REPOS_API_URL || "https://api.github.com";
   try {
     if (!token) throw new Error("GITHUB_TOKEN is not set");
-    const names = await listRepos(api, token);
+    const names = await listRepos(api, token, fetch, process.env.REPOS_AUTH === "app" ? "app" : "token");
     process.stdout.write(names.map((n) => `${n}\n`).join(""));
   } catch (err) {
     process.stderr.write(`${(err as Error).message.split(token || "\0").join("***")}\n`);
