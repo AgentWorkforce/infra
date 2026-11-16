@@ -416,6 +416,26 @@ searchIndexer:
     maxScopeEvents: null
     # SEARCH_INDEX_MAX_ROWS: 500000..1000000.
     maxRows: null
+  # Streaming reconcile (issue 610 Phase 2), consumer only. On, a scope above
+  # the limits is indexed in passes instead of recorded as partial.
+  # enabled is tri-state: null (default) renders nothing and keeps the image
+  # default; true renders "true"; false renders "false" explicitly (an image
+  # whose default is on needs the explicit "false" to turn it off).
+  # true together with outputFacts.enabled is refused (the consumer refuses it).
+  # A scope streams only when four times its size fits BOTH budgets; at their
+  # defaults every streamed scope is still refused and the consumer warns at
+  # startup, so raise the budget(s) the scope exceeds. Memory: up to one 512 MiB
+  # scope plus about 1 KB per record read; raise the indexer's memory limit by
+  # about 0.5 GB where streaming is on, or set enabled: false.
+  streaming:
+    # SEARCH_INDEX_STREAMING_ENABLED: null | true | false.
+    enabled: null
+    # SEARCH_INDEX_STREAM_MAX_READ_BYTES: 4x limits.maxScopeBytes..2GiB (bytes,
+    # or a MiB/GiB size), rendered only when set. Images that default streaming
+    # on validate it at startup even when enabled is null.
+    maxReadBytes: ""
+    # SEARCH_INDEX_STREAM_MAX_READ_EVENTS: 4x limits.maxScopeEvents..2000000.
+    maxReadEvents: null
   # GCS readiness settings (Cloud SQL, Memorystore and Pub/Sub). Empty for S3.
   extraEnv: []
   postgres:
