@@ -46,6 +46,8 @@ from a stable secret, so no agent tokens are stored.
 - A Slack workspace where you can create apps.
 - Outbound HTTPS from the namespace to `slack.com`, `wss-*.slack.com` (Socket
   Mode) and `api.anthropic.com`. No inbound traffic is needed in Socket Mode.
+  With [GitHub repos](#github-repos-optional) on, also `github.com` and
+  `api.github.com` (or your GitHub Enterprise host).
 
 ## 1. Create the Slack app
 
@@ -212,6 +214,108 @@ duplicating a line. `--dry-run` reports counts and target sources without
 writing. With relaygate on, it registers as `<router name>-backfill` and every
 write is checked like live ingest.
 
+## GitHub repos (optional)
+
+Let the agents read your code. A `repo-sync` sidecar in the agent host pod
+keeps a read-only copy of each repository at `/repos/<owner>/<name>`, and the
+agents get `Read`, `Glob` and `Grep` on `/repos`. They still have no shell, and
+they never see the GitHub token.
+
+### 1. Create a read-only token
+
+Use a fine-grained personal access token (GitHub → Settings → Developer
+settings → Personal access tokens → Fine-grained tokens):
+
+- **Resource owner:** the organization (or user) that owns the repositories.
+  An organization may have to approve the token.
+- **Expiration:** set one (e.g. 90 days) and put the renewal in your calendar.
+  When it expires, syncing stops and the agents keep the last copies.
+- **Repository access:** *Only select repositories*, and pick the ones the
+  agents may read.
+- **Permissions:** Repository → **Contents: Read-only** (Metadata: Read-only
+  is added automatically). Nothing else.
+
+With a fine-grained token, its repository selection is the only list you need
+to keep: leave `repos.list` empty and the sidecar syncs every repository the
+token can read, re-listed on every refresh. A repository you add to the token
+appears on the next refresh; one you remove is deleted from `/repos` on the
+next refresh. Avoid a classic token or *All repositories*: the agents would
+then get every repository the account can read.
+
+On GitHub Enterprise Server, create the same token there and set `repos.host`.
+
+### 2. Create the Secret
+
+```sh
+kubectl -n agent-relay create secret generic slack-relay-github --from-literal=token="$GITHUB_TOKEN"
+```
+
+### 3. Turn it on
+
+```yaml
+repos:
+  enabled: true
+  token: { name: slack-relay-github, key: token }
+  # Empty: every repo the token can read. Or pin a list (and refs):
+  # list:
+  #   - example-org/api                                  # default branch
+  #   - { repo: example-org/web, ref: release/2026 }      # branch, tag or commit
+  list: []
+  refreshMinutes: 15
+  # host: ghe.example.com        # GitHub Enterprise Server (or https://ghe.example.com)
+  # apiUrl: ""                   # default https://api.github.com, or <host>/api/v3 on GHE
+  # sizeLimit: 5Gi               # cap on the checkouts; the pod is evicted past it
+```
+
+`helm upgrade` restarts the host pod. The first sync runs at start; the
+sidecar logs one line per repository with its commit:
+
+```sh
+kubectl -n agent-relay logs statefulset/slack-relay-host -c repo-sync
+# repo-sync: token can read 2 repo(s)
+# repo-sync: example-org/api 3f2c... updated
+# repo-sync: example-org/web@release/2026 9a41... updated
+```
+
+### What the agents see
+
+- `/repos/<owner>/<name>`: the files at the synced commit, mounted read-only.
+  No `.git` directory (no history), no submodules, no Git LFS content (LFS
+  files are pointer files), and symlinks inside a repository are plain files
+  holding the link target, so a repository can't point an agent elsewhere.
+- Their system prompt says where the repositories are (and lists them when
+  `repos.list` is set). They read them with absolute paths, e.g.
+  `Grep` in `/repos/example-org/api`.
+- The chart adds `Read(//repos/**)`, `Glob(//repos/**)` and `Grep(//repos/**)`
+  to `host.allowedTools` (`//` is the filesystem root in Claude Code's
+  permission rules). Each agent's own workdir stays its only other readable
+  path: one agent still can't read another's files.
+- A refresh checks a changed repository out beside `/repos` and swaps it in
+  with two renames, so the path is missing only for the instant between them;
+  if the new tree can't be moved in, the old one stays. Between refreshes the
+  copy can be up to `refreshMinutes` behind. A fetch or listing that stalls is
+  stopped after 10 minutes and retried on the next refresh.
+
+### Where the token goes
+
+- Only into the `repo-sync` container's environment, from your Secret. The host
+  container, and so the agents, never get it, and containers in a pod don't
+  share a process namespace, so `/proc` can't reach it either.
+- Git gets it through `GIT_ASKPASS`, which reads it from that environment. It
+  is never put in a clone URL, a remote, a git config or a credential store.
+  The bare caches the sidecar fetches into have no remote and live on a volume
+  the host doesn't mount; the checkouts have no `.git`.
+- Listing repositories (`repos.list` empty) calls `GET /user/repos` with the
+  token in the `Authorization` header, on the API origin only.
+- Logs carry repository names, refs and commit SHAs, never the token; a git
+  error line is masked should it ever contain it.
+
+### Network
+
+Allow outbound HTTPS from the namespace to `github.com` and `api.github.com`
+(or your GitHub Enterprise host). `api.github.com` is only needed when
+`repos.list` is empty.
+
 ## Governance with relaygate (optional)
 
 [relaygate](https://github.com/AgentWorkforce/relaygate) (install: [self-hosted-relaygate.md](self-hosted-relaygate.md)) puts a permission
@@ -260,6 +364,8 @@ Two things on the relaygate side make this work:
 
 - **What leaves the cluster:** Slack API calls from the router only, and
   Anthropic API calls from the router (orchestrator) and the host (agents).
+  With `repos` on, the `repo-sync` sidecar fetches from GitHub (and lists the
+  token's repositories when `repos.list` is empty); nothing is pushed.
   Agents have no Slack credentials and post only through the relay.
 - **Agent tools:** by default `Read`, `Glob` and `Grep` scoped to the agent's
   own workdir (`./**`), plus the relay tools. No shell, no web fetch/search,
@@ -273,7 +379,8 @@ Two things on the relaygate side make this work:
   The agents' full Claude sessions are JSONL files on the host volume
   (`/data/home/.claude/projects/...`).
 - For a hard egress boundary, add a NetworkPolicy or a firewall egress rule
-  that allows only Relaycast, Slack and Anthropic from this namespace.
+  that allows only Relaycast, Slack and Anthropic (and GitHub, with `repos`)
+  from this namespace.
 
 ## Values reference
 
@@ -292,6 +399,11 @@ See `charts/slack-relay/values.yaml`. The ones you're most likely to change:
 | `host.allowedTools` | `[Read(./**), Glob(./**), Grep(./**), mcp__relaycast]` | Scoped to the agent's workdir. |
 | `host.disallowedTools` | `[Bash, WebFetch, WebSearch, Read(//proc/**)]` | Always refused. |
 | `host.idleReleaseMinutes` | `15` | |
+| `repos.enabled` | `false` | Read-only GitHub repositories at `/repos` for the agents. |
+| `repos.token` | `{ name: "", key: token }` | Secret with a read-only GitHub token; only the sidecar gets it. |
+| `repos.list` | `[]` (every repo the token can read) | `owner/name` or `{ repo, ref }`. |
+| `repos.refreshMinutes` | `15` | |
+| `repos.host` | `github.com` | GitHub Enterprise Server host or base URL. |
 
 ## Limits of this version
 

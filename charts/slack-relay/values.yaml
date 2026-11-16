@@ -94,6 +94,38 @@ ingest:
   # { founders: brain-write-founders, slack-connect: brain-write-slack-connect }
   sourceServers: {}
 
+# Read-only GitHub repositories for the agents (opt-in). A sidecar in the host
+# pod shallow-fetches each repo every refreshMinutes with a GitHub token and
+# checks it out at /repos/<owner>/<name>, which the host mounts read-only;
+# agents get Read/Glob/Grep on /repos and nothing else new. The token is only
+# in the sidecar's environment: never in a URL, a git config, a log line, the
+# checkouts (they have no .git) or the agents' environment. Agents keep no
+# Bash. Needs egress from the namespace to the GitHub host.
+repos:
+  enabled: false
+  # REQUIRED when enabled: an existing Secret with a GitHub token. Use a
+  # fine-grained personal access token limited to the listed repositories,
+  # with read-only Contents and Metadata permissions and an expiry.
+  token: { name: "", key: token }
+  # Repositories to check out: "owner/name" (the default branch), or
+  # { repo: owner/name, ref: <branch, tag or commit> }. Empty: every repo the
+  # token can read (GET /user/repos), listed again on every refresh, so with a
+  # fine-grained token its repository selection is the only list to keep.
+  # Checkouts of repos no longer listed (or no longer readable) are removed.
+  list: []
+  refreshMinutes: 15
+  # github.com, or a GitHub Enterprise Server host (ghe.example.com) or base
+  # URL (https://ghe.example.com). Clones use <base>/<owner>/<name>.git.
+  host: github.com
+  # API base for listing repos when list is empty. Default: api.github.com
+  # for github.com, <host base>/api/v3 for GitHub Enterprise Server.
+  apiUrl: ""
+  # Caps the checkouts' emptyDir; the pod is evicted past it.
+  sizeLimit: 5Gi
+  resources:
+    requests: { cpu: 10m, memory: 64Mi }
+    limits: { cpu: 500m, memory: 512Mi }
+
 router:
   # The router's relay name; the host only acts on messages from it.
   agentName: slack-router

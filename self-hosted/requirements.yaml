@@ -1788,9 +1788,22 @@ compatibility:
       images:
         relayauth: { repository: ghcr.io/agentworkforce/relayauth, digest: sha256:eb71daa28e30eb7305f666d0bccc5a4002e53e8a574e3c4c32163d907a1b71df }
       notes: superseded by 0.1.1.
-    - id: agent-relay-0.7.40
+    - id: agent-relay-0.7.41
       status: unreleased
       current: true
+      charts: { agent-relay: 0.7.41, relay-control: 0.4.22, relay-webapp: 0.2.6 }
+      app_versions: { agent-relay: 0.1.0, relay-control: 0.1.0, relay-webapp: 0.1.0 }
+      depends:
+        agent-relay: { relaycast: 0.3.16, relayauth: 0.1.5, sessions-pipeline: 0.8.43, relay-control: 0.4.22, relay-webapp: 0.2.6, relayflows: 0.2.5, durable-actors: 0.14.6-awf.4, relayfile: 0.2.2, telemetry-collector: 0.1.7, relay-chief: 0.1.0, slack-relay: 0.3.4, relaygate: 0.1.8 }
+      images:
+        relaycast: { repository: ghcr.io/agentworkforce/relaycast-self-host, digest: sha256:ec062ef901af15cf575b53a71d7eb09f2e6ab6e7c0d5be2da35339a275a5c6cc }
+        relaycast-postgres: { repository: ghcr.io/agentworkforce/relaycast-self-host, digest: sha256:ec062ef901af15cf575b53a71d7eb09f2e6ab6e7c0d5be2da35339a275a5c6cc }
+        sessions-pipeline-worker: { repository: ghcr.io/agentworkforce/sessions-pipeline, digest: sha256:77022c5b6a1d30f96f921d703eb27a1acada8ec273ad84aebdde24f8eddce305 }
+        relay-control: { repository: ghcr.io/agentworkforce/relay-control, digest: sha256:d1b6ca95fab240a9d41208d83de3b1f4245408b0765038762f1c419ee60f43bc }
+        relay-webapp: { repository: ghcr.io/agentworkforce/relay-webapp, digest: sha256:bd295ccb7d1323965dce890f19d0b7f857d706c00d7756f719c713763fdb49f3 }
+      notes: 'Carries 0.7.40 and slack-relay 0.3.4: opt-in repos (read-only GitHub repositories for the agents through a repo-sync sidecar), still default-off (components.slackRelay). Default renders differ only in the helm.sh/chart labels.'
+    - id: agent-relay-0.7.40
+      status: planned
       charts: { agent-relay: 0.7.40, relay-control: 0.4.22, relay-webapp: 0.2.6 }
       app_versions: { agent-relay: 0.1.0, relay-control: 0.1.0, relay-webapp: 0.1.0 }
       depends:
@@ -3216,9 +3229,16 @@ compatibility:
       images:
         relaygate: { repository: ghcr.io/agentworkforce/relaygate, digest_required: true }
       notes: First registered chart, rendered only; default-off in the agent-relay umbrella (components.relaygate). Build 1 of the server (registration, mode check, /v1/check, classifier, audit); the Relaycast/Sessions proxy follows. Ships no default digest.
-    - id: slack-relay-0.3.3
+    - id: slack-relay-0.3.4
       status: unreleased
       current: true
+      charts: { slack-relay: 0.3.4 }
+      app_versions: { slack-relay: 0.1.0 }
+      images:
+        slack-relay: { repository: ghcr.io/agentworkforce/slack-relay, digest_required: true }
+      notes: 'Carries 0.3.3. Opt-in repos: a repo-sync sidecar (same image, script from a ConfigMap) keeps read-only shallow checkouts of repos.list, or of every repo the token can read when the list is empty, at /repos; the host mounts it read-only and agents get Read/Glob/Grep on //repos/**. The GitHub token (repos.token) is only in the sidecar. Default renders differ only in the chart labels. Default-off in the agent-relay umbrella; ships no default digest.'
+    - id: slack-relay-0.3.3
+      status: shipped
       charts: { slack-relay: 0.3.3 }
       app_versions: { slack-relay: 0.1.0 }
       images:
@@ -3328,6 +3348,8 @@ internal_env:
   - { name: ROLE, chart: slack-relay, why: selects the router or host entry point of the one slack-relay image; fixed per workload }
   - { name: LEDGER_PATH, chart: slack-relay, why: fixed /data/ledger.sqlite on the router's ledger PVC }
   - { name: DATA_DIR, chart: slack-relay, why: fixed /data on the agent host's sessions volume }
+  - { name: REPOS_DIR, chart: slack-relay, why: "fixed /repos, the repo-sync sidecar's checkout volume (mounted read-only in the host)" }
+  - { name: REPOS_CACHE_DIR, chart: slack-relay, why: "fixed /var/cache/repo-sync, the sidecar-only volume of bare git caches" }
   - { name: RELAYGATE_POLICY, chart: relaygate, why: fixed /policy/policy.json, the mounted policy ConfigMap }
   - { name: RELAYGATE_DB, chart: relaygate, why: fixed /data/relaygate.db on the gate's PVC }
   - { name: SERVICE, chart: [sessions-pipeline-worker, session-ingest-api], why: selects the entry point of the one services image }
@@ -7164,6 +7186,34 @@ entries:
       - "charts/slack-relay/values.yaml:106-131"
       - "charts/slack-relay/templates/host.yaml:44-73"
       - "docs/self-hosted-slack-relay.md:169-186"
+
+  - id: opt.slack-relay.repos
+    kind: option
+    title: Slack relay read-only GitHub repositories
+    description: 'Opt-in. repos.enabled adds a repo-sync sidecar to the agent host pod that shallow-fetches repos.list (owner/name or {repo, ref}), or every repository the token can read when the list is empty (GET /user/repos, re-listed every refresh; repos no longer listed are removed), every repos.refreshMinutes into /repos/<owner>/<name> without .git. The host mounts /repos read-only and agents get Read, Glob and Grep on //repos/** only. The GitHub token (a fine-grained, read-only Contents token is recommended) is only in the sidecar''s environment and reaches git through GIT_ASKPASS. repos.host and repos.apiUrl select GitHub Enterprise Server. Needs egress to github.com and api.github.com (or the GHE host).'
+    chart: slack-relay
+    values: ["repos.*"]
+    env: [GITHUB_TOKEN, REPOS_BASE_URL, REPOS_API_URL, REPOS_REFRESH_MINUTES, REPOS_LIST]
+    profiles: [slack-relay]
+    status: shipped
+    provided_by: operator
+    default: "false"
+    choices:
+      - { value: "false" }
+      - { value: listed, note: repos.list pins the repositories (and refs) }
+      - { value: token selection, note: repos.list empty; the token's repository access is the list }
+    secrets:
+      - name: "<repos.token.name>"
+        keys:
+          - { key: token, key_path: repos.token.key }
+        note: only with repos.enabled
+    verify: 'helm template with repos.enabled renders GITHUB_TOKEN only in the repo-sync container, the host''s /repos mount readOnly and Read/Glob/Grep(//repos/**) in AGENT_ALLOWED_TOOLS; it fails without repos.token.name; the sidecar logs "repo-sync: <owner>/<name> <sha> updated"'
+    sources:
+      - "charts/slack-relay/values.yaml"
+      - "charts/slack-relay/templates/host.yaml"
+      - "charts/slack-relay/files/repo-sync.sh"
+      - "charts/slack-relay/files/repo-list.mts"
+      - "docs/self-hosted-slack-relay.md"
 
   - id: opt.slack-relay.mcp-servers
     kind: option

@@ -6,7 +6,7 @@ name: slack-relay
 
 on:
   pull_request:
-    paths: ["components/slack-relay/**", "charts/relaygate/**", ".github/workflows/slack-relay.yml"]
+    paths: ["components/slack-relay/**", "charts/slack-relay/files/**", "charts/relaygate/**", ".github/workflows/slack-relay.yml"]
   push:
     branches: [main]
     paths: ["components/slack-relay/**", ".github/workflows/slack-relay.yml"]
