@@ -192,6 +192,30 @@ test("happy path, SSM: only on instances tagged project=neon-exit, enforced by a
   assert.deepEqual(guard.Condition, { StringNotEquals: { "ssm:resourceTag/project": "neon-exit" } });
 });
 
+test("a mixed request (secret write plus SSM session) delegates: each service's actions land only on its own resources, so neither is \"outside\" the capability", async () => {
+  const { broker, calls, audit } = setup();
+  const mixed = secretsReq({ actions: ["secretsmanager:PutSecretValue", "ssm:StartSession", "ssm:SendCommand"], resources: [SECRET, TOKEN_SECRET, INSTANCE, SHELL_DOC] });
+  const { r, text } = await pend(broker, mixed);
+  assert.equal(r.approver, DELEGATE, r.reasons.join("; "));
+  assert.match(r.approvalPrompt!, /secretsmanager:PutSecretValue on arn:aws:secretsmanager:[^\n]*\n[^\n]*ssm:StartSession, ssm:SendCommand on arn:aws:ec2:/, "the prompt shows each service on its own resources");
+  const ok = await broker.decideViaRelay(fakeRelay([msg("1000002", DELEGATE, text)]), "1000002", BROKER);
+  assert.equal(ok.outcome, "issued", ok.reasons.join("; "));
+  assert.equal(calls[0]!.sessionName, WORKER);
+  const policy = (calls[0] as unknown as { policy: { Statement: { Sid: string; Action?: string[]; Resource?: string | string[] }[] } }).policy;
+  const by = (sid: string) => policy.Statement.find((s) => s.Sid === sid);
+  assert.equal(by("ApprovedAccountWide"), undefined);
+  assert.deepEqual(by("ApprovedAccountWideSecretsmanager")!.Action, ["secretsmanager:PutSecretValue"]);
+  assert.deepEqual(by("ApprovedAccountWideSecretsmanager")!.Resource, [SECRET, TOKEN_SECRET]);
+  assert.deepEqual(by("ApprovedAccountWideSsm")!.Action, ["ssm:StartSession", "ssm:SendCommand"]);
+  assert.deepEqual(by("ApprovedAccountWideSsm")!.Resource, [INSTANCE, SHELL_DOC]);
+  assert.deepEqual(audit().find((l) => l.kind === "approved")!.delegation!.grants, ["neon-exit-secrets", "neon-exit-ssm"]);
+  // Still refused when one service's resources leave the capability: the split narrows statements, never the check.
+  const other = `arn:aws:secretsmanager:us-east-1:${HOSTS}:secret:relaycast/database-url-AbC123`;
+  const out = await pend(setup().broker, secretsReq({ actions: ["secretsmanager:PutSecretValue", "ssm:StartSession"], resources: [other, INSTANCE, SHELL_DOC] }));
+  assert.equal(out.r.approver, "khaliq-gant");
+  assert.match(out.r.reasons.join("; "), /PutSecretValue on arn:aws:secretsmanager:[^;]*relaycast\/database-url-AbC123 is outside it/);
+});
+
 test("an expired delegate is refused, and so is a delegation set to run past 30 days", async () => {
   const late = setup(allowlist, new Date("2026-11-19T00:00:00Z"));
   const { text } = await pend(late.broker, secretsReq());
