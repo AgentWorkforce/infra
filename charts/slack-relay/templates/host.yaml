@@ -5,6 +5,9 @@
 {{- $reposApp := and $reposOn ((.Values.repos.app | default dict).privateKey | default dict).name }}
 {{- if $reposOn }}{{ $repos = include "slack-relay.repos" . | fromJsonArray }}{{ end }}
 {{- $allowed := .Values.host.allowedTools }}
+{{- if and .Values.sessions.mcp.enabled (not (has "mcp__sessions" $allowed)) }}
+{{- $allowed = append $allowed "mcp__sessions" }}
+{{- end }}
 {{- $persona := .Values.host.persona }}
 {{- if $reposOn }}
 {{- /* Absolute-path rules ("//" is the filesystem root in Claude Code's
@@ -94,9 +97,15 @@ spec:
             {{- end }}
             {{- include "slack-relay.secretEnv" (dict "env" "ANTHROPIC_API_KEY" "ref" .Values.secrets.anthropicApiKey) | nindent 12 }}
             {{- with .Values.sessions.upload }}
+            {{- if or .enabled $.Values.sessions.mcp.enabled }}
             {{- if .enabled }}
             - name: SESSIONS_UPLOAD
               value: "true"
+            {{- end }}
+            {{- if $.Values.sessions.mcp.enabled }}
+            - name: SESSIONS_MCP
+              value: "true"
+            {{- end }}
             - name: SESSIONS_ORG_ID
               value: {{ .orgId | quote }}
             - name: SESSIONS_WORKSPACE_ID

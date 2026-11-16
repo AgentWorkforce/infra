@@ -528,6 +528,65 @@ secrets:
   main port. relaygate's internal `SESSIONS_PORT` listener is only for
   relay-control.
 
+### Agent session reads (optional)
+
+With `sessions.mcp.enabled: true` (and `relaygate.url`), each per-thread agent
+gets read-only Sessions tools as `mcp__sessions__*`: `list_sessions` (q,
+limit, cursor), `get_session` (metadata and brief), `get_session_turns`
+(paged messages) and `search_sessions` (transcript search). It reuses the
+upload settings: `sessions.upload.orgId`, `workspaceId`, `relayControlUrl`
+(and `baseUrl` if set) and `secrets.sessionsEnrollmentKey`, which are required
+even with upload off. The uploader user needs `rth:read` in the workspace
+(a Desktop enrollment session has it).
+
+```yaml
+sessions:
+  upload:
+    orgId: <org id>
+    workspaceId: <workspace id>
+    relayControlUrl: http://relay-control
+  mcp:
+    enabled: true
+secrets:
+  sessionsEnrollmentKey: { name: slack-relay-sessions, key: enrollment-key }
+```
+
+How it is governed:
+
+- Every read goes to relaygate's Sessions proxy (`GET /sessions/v1/...`) with
+  the agent's own `rg_` token in `X-Relaygate-Token`. relaygate takes that as
+  the principal, so it decides as the agent (its group, the pit): lists and
+  search are filtered to sessions the agent may read, and a single session
+  needs `r` on it. A refusal (403) is reported to the agent as "not
+  permitted" and never retried.
+- The Sessions read credential is a short-lived read token the host mints at
+  relay-control as the uploader user (`POST /api/v1/workspaces/<ws>/session-read/session`,
+  refreshed before it expires) and keeps in memory. The agent's MCP server
+  holds no credential: it calls a loopback proxy in the host with the agent's
+  `rg_` token, and the host adds the read token. Nothing the agent can read
+  (its `.mcp.json`, the MCP server's environment) contains it. This matters:
+  presented to relaygate without an `rg_` token, the read token would be the
+  uploader user's own principal.
+- The upstream read API also scopes reads to the uploader user, so an agent
+  sees at most what both the agent's group and that user may read.
+- Responses are bounded (24 000 characters per call, long messages cut), and
+  the tool descriptions tell the model that transcript content is untrusted
+  data.
+
+What pit agents can read under a typical policy (people's and Desktop
+uploads in a local group, say gid 11 with `sessionDefaults` `660` and
+`acl: [{gid: 22, perm: r}]`; the pit gid 22 with `660`):
+
+- can read: sessions owned by the pit (22), including other pit agents'
+  sessions, and sessions owned by the local group (11), through its `22:r`
+  ACL entry;
+- cannot read: sessions of any group without a read entry for 22 (people-
+  or admin-only groups, guests), sessions a `sessionOverrides` entry or a
+  ceiling takes away from 22, and sessions that never came through relaygate
+  (no owner: invisible through it), such as uploads made straight to
+  Sessions before relaygate was in the path. Aggregate views (`/v1/sessions/users`,
+  activity, digests) are not proxied at all.
+
 ## Data boundaries and audit
 
 - **What leaves the cluster:** Slack API calls from the router only, and

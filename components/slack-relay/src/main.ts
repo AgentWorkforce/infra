@@ -15,6 +15,8 @@ import { checkWithRetry, inboxStreamId, kbStreamId, RelaygateClient, slackStream
 import { oauthServersFromEnv, TokenSource } from "./mcp.ts";
 import { ingestFromEnv } from "./ingest-config.ts";
 import { EnrollmentCredential, SessionUploader } from "./sessions-upload.ts";
+import { SessionReadCredential, SessionsReadProxy } from "./sessions-read.ts";
+import { sessionsMcpServer } from "./sessions-mcp.ts";
 import { channelMessageOf, ChannelDirectory, normalizeSlackEvent, SlackWeb, SocketModeClient, verifySlackSignature, type SlackEventEnvelope } from "./slack.ts";
 
 const env = process.env;
@@ -246,20 +248,27 @@ async function runRouter(): Promise<void> {
   });
 }
 
-/**
- * Session upload (opt-in, relaygate only): each agent's Claude session goes to relaygate's Sessions proxy with the
- * agent's rg_ token, so the agent owns it and it takes the agent's group. The Sessions credential is either the
- * host's own (a Desktop enrollment key exchanged at relay-control) or relaygate's SESSIONS_TOKEN.
- */
-function sessionUploader(dataDir: string, hostName: string): SessionUploader | undefined {
-  if (env.SESSIONS_UPLOAD !== "true") return undefined;
+/** What session upload and session reads share: the Sessions proxy, the account, and the uploader user's session. */
+interface SessionsSettings {
+  baseUrl: string;
+  orgId: string;
+  workspaceId: string;
+  controlUrl: string;
+  /** The uploader user's relay-control session (from a Desktop enrollment key); one instance, so refreshes never race. */
+  credential?: EnrollmentCredential;
+}
+
+function sessionsSettings(dataDir: string, hostName: string): SessionsSettings | undefined {
+  const upload = env.SESSIONS_UPLOAD === "true";
+  const reads = env.SESSIONS_MCP === "true";
+  if (!upload && !reads) return undefined;
   if (!gateUrl) {
-    log("sessions: upload needs relaygate (RELAYGATE_URL); off");
+    log("sessions: upload and agent reads need relaygate (RELAYGATE_URL); off");
     return undefined;
   }
   const orgId = (env.SESSIONS_ORG_ID ?? "").trim();
   const workspaceId = (env.SESSIONS_WORKSPACE_ID ?? "").trim();
-  if (!orgId || !workspaceId) throw new Error("SESSIONS_UPLOAD needs SESSIONS_ORG_ID and SESSIONS_WORKSPACE_ID");
+  if (!orgId || !workspaceId) throw new Error("SESSIONS_UPLOAD and SESSIONS_MCP need SESSIONS_ORG_ID and SESSIONS_WORKSPACE_ID");
   const baseUrl = (env.SESSIONS_BASE_URL ?? "").trim() || `${gateUrl.replace(/\/$/, "")}/sessions`;
   const controlUrl = (env.RELAY_CONTROL_URL ?? "").trim();
   const credential = controlUrl
@@ -271,8 +280,38 @@ function sessionUploader(dataDir: string, hostName: string): SessionUploader | u
         hostName,
       })
     : undefined;
-  log(`sessions: upload on (${baseUrl}; credential: ${credential ? "host enrollment" : "relaygate SESSIONS_TOKEN"})`);
-  return new SessionUploader({ baseUrl, stateDir: join(dataDir, "sessions-upload", "cursors"), home: join(dataDir, "home"), orgId, workspaceId, credential, instance: hostName, log });
+  return { baseUrl, orgId, workspaceId, controlUrl, credential };
+}
+
+/**
+ * Session upload (opt-in, relaygate only): each agent's Claude session goes to relaygate's Sessions proxy with the
+ * agent's rg_ token, so the agent owns it and it takes the agent's group. The Sessions credential is either the
+ * host's own (a Desktop enrollment key exchanged at relay-control) or relaygate's SESSIONS_TOKEN.
+ */
+function sessionUploader(s: SessionsSettings | undefined, dataDir: string, hostName: string): SessionUploader | undefined {
+  if (!s || env.SESSIONS_UPLOAD !== "true") return undefined;
+  log(`sessions: upload on (${s.baseUrl}; credential: ${s.credential ? "host enrollment" : "relaygate SESSIONS_TOKEN"})`);
+  return new SessionUploader({ baseUrl: s.baseUrl, stateDir: join(dataDir, "sessions-upload", "cursors"), home: join(dataDir, "home"), orgId: s.orgId, workspaceId: s.workspaceId, credential: s.credential, instance: hostName, log });
+}
+
+/**
+ * Agent session reads (opt-in, relaygate only): a loopback proxy that adds a read credential minted for the uploader
+ * user and forwards each agent's reads to relaygate with the agent's own rg_ token, so relaygate decides as the
+ * agent. The credential never reaches an agent (sessions-read.ts).
+ */
+async function sessionsReadProxy(s: SessionsSettings | undefined, isAgentToken: (t: string) => boolean): Promise<SessionsReadProxy | undefined> {
+  if (!s || env.SESSIONS_MCP !== "true") return undefined;
+  if (!s.credential) throw new Error("SESSIONS_MCP needs RELAY_CONTROL_URL and SESSIONS_ENROLLMENT_KEY (read credentials are minted as the uploader user)");
+  const proxy = new SessionsReadProxy({
+    baseUrl: s.baseUrl,
+    workspaceId: s.workspaceId,
+    credential: new SessionReadCredential({ controlUrl: s.controlUrl, workspaceId: s.workspaceId, control: s.credential }),
+    isAgentToken,
+    log,
+  });
+  await proxy.listen();
+  log(`sessions: agent reads on (mcp__sessions, through ${s.baseUrl})`);
+  return proxy;
 }
 
 async function runHost(): Promise<void> {
@@ -305,8 +344,14 @@ async function runHost(): Promise<void> {
   // Path-scoped: an agent reads only its own workdir (./**). With dontAsk,
   // anything else (other agents' workdirs, /proc, env) is refused.
   const tools = (env.AGENT_ALLOWED_TOOLS ?? "Read(./**) Glob(./**) Grep(./**) mcp__relaycast").split(/[\s,]+/).filter(Boolean);
+  const settings = sessionsSettings(dataDir, hostName);
+  // The rg_ token each hosted agent holds now: only these may read through the proxy.
+  const agentTokens = new Map<string, string>();
+  const readProxy = await sessionsReadProxy(settings, (t) => [...agentTokens.values()].includes(t));
+  if (readProxy && !tools.includes("mcp__sessions")) tools.push("mcp__sessions");
+  const sessionsMcpEntry = join(dirname(fileURLToPath(import.meta.url)), "sessions-mcp.ts");
   const denied = (env.AGENT_DISALLOWED_TOOLS ?? "Bash WebFetch WebSearch Read(//proc/**)").split(/[\s,]+/).filter(Boolean);
-  const uploader = sessionUploader(dataDir, hostName);
+  const uploader = sessionUploader(settings, dataDir, hostName);
   // Behind relaygate every DM answer is checked first, so an agent never tries
   // to write to a sender outside its group (relaygate's proxy would refuse it
   // too; this holds even if the policy doesn't). REPLY_TO_OUTSIDE can't turn
@@ -326,6 +371,7 @@ async function runHost(): Promise<void> {
     connect: async (name) => {
       const { agent, token } = await connectAgent({ baseUrl: relayBase, workspaceKey, name, persona: "Slack thread agent", proofSecret, log, gate });
       await ensureChannel(agent, channel, "Slack threads routed to agents");
+      agentTokens.set(name, token);
       return { client: agent, token };
     },
     // Relay tools bound to the agent's own token, plus any OAuth MCP servers
@@ -338,6 +384,11 @@ async function runHost(): Promise<void> {
           args: [mcpEntry],
           env: { RELAY_BASE_URL: relayBase, RELAY_AGENT_TOKEN: token, RELAY_AGENT_NAME: name, RELAY_SKIP_BOOTSTRAP: "1", RELAYCAST_TELEMETRY_DISABLED: "1" },
         };
+      }
+      if (readProxy) {
+        // Read-only Sessions tools as this agent. Only the proxy URL and the agent's own rg_ token go here: the
+        // read credential stays in the host process.
+        mcpServers.sessions = sessionsMcpServer({ entry: sessionsMcpEntry, proxyUrl: readProxy.url, token });
       }
       for (const [s, tokens] of agentServers) {
         try {
