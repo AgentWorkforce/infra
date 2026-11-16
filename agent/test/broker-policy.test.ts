@@ -282,36 +282,48 @@ test("approved account-wide sessions: the requested resources, no tag condition,
   assert.deepEqual(guard.Action, ["sqs:TagQueue"], "only the guard actions the session could otherwise use");
 });
 
-test("legacy-copy's runner request in the agent-hosts account: approval only, exactly its resources, at most 60 minutes", () => {
-  const legacy = (over: Partial<CredentialRequest> = {}): CredentialRequest => ({
+test("a runner request in the agent-hosts account: approval only, named resources, wildcard-only reads apart, at most 60 minutes", () => {
+  // Fake identifiers (CONTRIBUTING.md): the shape of legacy-copy's request.
+  const RES = [
+    "arn:aws:secretsmanager:us-east-1:500268966557:secret:example/runner-secret-AbCdEf",
+    "arn:aws:ec2:us-east-1:500268966557:instance/i-0123456789abcdef0",
+    "arn:aws:ssm:us-east-1::document/AWS-RunShellScript",
+    "arn:aws:ssm:us-east-1:500268966557:session/*",
+  ];
+  const runner = (over: Partial<CredentialRequest> = {}): CredentialRequest => ({
     account: "500268966557",
-    purpose: "Neon exit: drive the frozen relayhistory sessions copy on the runner over SSM",
+    purpose: "drive a copy job on the runner over SSM",
     actions: ["secretsmanager:PutSecretValue", "ssm:StartSession", "ssm:SendCommand", "ssm:GetCommandInvocation", "ssm:ListCommandInvocations", "ssm:TerminateSession", "ssm:DescribeSessions", "ssm:ResumeSession"],
     durationMinutes: 60,
-    runTag: "neon-exit-legacy-copy-20261115",
+    runTag: "example-runner-copy",
     scope: "account",
-    resources: [
-      "arn:aws:secretsmanager:us-east-1:500268966557:secret:neon-exit/relayhistory-legacy/postgres-owner-x1jvZ6",
-      "arn:aws:ec2:us-east-1:500268966557:instance/i-0887caee00ca9029a",
-      "arn:aws:ssm:us-east-1::document/SSM-SessionManagerRunShell",
-      "arn:aws:ssm:us-east-1::document/AWS-RunShellScript",
-      "arn:aws:ssm:us-east-1:500268966557:session/*",
-    ],
+    resources: RES,
     regions: ["us-east-1"],
     delivery: { kind: "encrypted", publicKey: Buffer.alloc(32, 9).toString("base64") },
     ...over,
   });
-  const d = decide(legacy(), agent, allowlist);
+  const d = decide(runner(), agent, allowlist);
   assert.equal(d.outcome, "approval", d.reasons.join("; "));
   if (d.outcome !== "approval") return;
   assert.equal(d.roleArn, "arn:aws:iam::500268966557:role/agent-broker-elevated");
-  const allow = d.sessionPolicy.Statement.filter((s) => s.Effect === "Allow");
-  assert.equal(allow.length, 1);
-  assert.deepEqual(allow[0]!.Resource, legacy().resources, "exactly the named runner, secret, documents and sessions");
-  assert.deepEqual(d.sessionPolicy.Statement.find((s) => s.Sid === "DenyOutsideRegions")!.Condition, { StringNotEquals: { "aws:RequestedRegion": ["us-east-1"] } });
+  const by = (sid: string) => d.sessionPolicy.Statement.find((s) => s.Sid === sid)!;
+  // Commands and the secret write: only on the named runner, secret, document and sessions.
+  assert.deepEqual(by("ApprovedAccountWide").Action, ["secretsmanager:PutSecretValue", "ssm:StartSession", "ssm:SendCommand", "ssm:TerminateSession", "ssm:ResumeSession"]);
+  assert.deepEqual(by("ApprovedAccountWide").Resource, RES);
+  // The reads IAM authorizes only on "*": their own statement, so AWS doesn't refuse them.
+  assert.deepEqual(by("ApprovedWithoutResourceLevelPermissions").Action, ["ssm:GetCommandInvocation", "ssm:ListCommandInvocations", "ssm:DescribeSessions"]);
+  assert.equal(by("ApprovedWithoutResourceLevelPermissions").Resource, "*");
+  assert.deepEqual(by("DenyOutsideRegions").Condition, { StringNotEquals: { "aws:RequestedRegion": ["us-east-1"] } });
   assert.match(d.reasons.join("; "), /agent-hosts is a prod account/);
-  assert.equal(decide(legacy({ durationMinutes: 720 }), agent, allowlist).outcome, "deny", "12 h is refused: at most 60 minutes per request");
-  assert.equal(decide(legacy({ actions: ["iam:PassRole"] }), agent, allowlist).outcome, "approval", "IAM still only by approval, and capped by the role's ceiling");
+  assert.equal(decide(runner({ durationMinutes: 720 }), agent, allowlist).outcome, "deny", "12 h is refused: at most 60 minutes per request");
+  // IAM matches actions case-insensitively, so a differently capitalised read still lands on "*".
+  const mixed = decide(runner({ actions: ["ssm:SendCommand", "ssm:getcommandinvocation", "ssm:DESCRIBESESSIONS"] }), agent, allowlist);
+  assert.equal(mixed.outcome, "approval", mixed.reasons.join("; "));
+  if (mixed.outcome !== "approval") return;
+  const mixedBy = (sid: string) => mixed.sessionPolicy.Statement.find((s) => s.Sid === sid)!;
+  assert.deepEqual(mixedBy("ApprovedAccountWide").Action, ["ssm:SendCommand"]);
+  assert.deepEqual(mixedBy("ApprovedWithoutResourceLevelPermissions").Action, ["ssm:getcommandinvocation", "ssm:DESCRIBESESSIONS"]);
+  assert.equal(mixedBy("ApprovedWithoutResourceLevelPermissions").Resource, "*");
 });
 
 test("only a human on the list approves; an agent never does, whatever its name", () => {
