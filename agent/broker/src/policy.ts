@@ -20,6 +20,12 @@ export interface AutoRule {
   impliedBy?: string[];
   /** Extra IAM condition merged into the rule's statement. */
   condition?: Record<string, Record<string, string | string[]>>;
+  /**
+   * Never issued automatically: only inside an approved or delegated request
+   * (a capability's readOnlyRules can name it). For reads that would expose
+   * other runs' data if any agent could get them on their own.
+   */
+  delegationOnly?: boolean;
 }
 
 export interface AccountPolicy {
@@ -349,18 +355,24 @@ function ruleResources(rule: AutoRule, req: CredentialRequest, namespace: string
   return rule.resources.map((r) => r.replaceAll("{ns}", namespace));
 }
 
-function autoStatements(req: CredentialRequest, list: Allowlist, namespace: string): { statements: PolicyStatement[]; unmatched: string[] } {
+function autoStatements(req: CredentialRequest, list: Allowlist, namespace: string, automatic = false): { statements: PolicyStatement[]; unmatched: string[] } {
   const statements: PolicyStatement[] = [];
   const matched = new Set<string>();
   const lower = new Map(req.actions.map((a) => [a.toLowerCase(), a]));
   const requested = (a: string) => lower.has(a.toLowerCase());
   for (const rule of list.autoRules) {
+    if (automatic && rule.delegationOnly) continue;
     const direct = rule.actions.filter(requested).map((a) => lower.get(a.toLowerCase())!);
     const implied = rule.impliedBy?.some(requested) ?? false;
     if (!direct.length && !implied) continue;
     direct.forEach((a) => matched.add(a));
     const acts = implied ? [...new Set([...direct, ...rule.actions])] : direct;
-    statements.push(statement(rule.id, acts, ruleResources(rule, req, namespace), scopeCondition(rule.scope, list, req.runTag, rule.condition)));
+    const cond = scopeCondition(rule.scope, list, req.runTag, rule.condition);
+    // Actions IAM authorizes only on "*" never take a rule's inherited (named) resources: AWS would refuse them.
+    const wildcardOnly = rule.resources === undefined ? acts.filter(isResourceWildcardOnly) : [];
+    const rest = acts.filter((a) => !wildcardOnly.includes(a));
+    if (rest.length) statements.push(statement(rule.id, rest, ruleResources(rule, req, namespace), cond));
+    if (wildcardOnly.length) statements.push(statement(`${rule.id} any resource`, wildcardOnly, ["*"], cond));
   }
   return { statements, unmatched: req.actions.filter((a) => !matched.has(a)) };
 }
@@ -457,7 +469,7 @@ export function decide(req: CredentialRequest, requester: Principal, list: Allow
   if (req.durationMinutes > list.duration.autoMaxMinutes) needs.push(`${req.durationMinutes} minutes is over the ${list.duration.autoMaxMinutes}-minute auto limit`);
   if (runTagOwner && runTagOwner !== requester.name) needs.push(`run tag ${req.runTag} belongs to ${runTagOwner}`);
 
-  const auto = autoStatements(req, list, namespace);
+  const auto = autoStatements(req, list, namespace, true);
   const accountWide = (req.scope ?? "run-tag") === "account";
   if (accountWide) {
     const readOnly = auto.unmatched.length === 0 && list.autoRules.filter((r) => r.scope !== "any").every((r) => !r.actions.some((x) => req.actions.some((a) => a.toLowerCase() === x.toLowerCase())));

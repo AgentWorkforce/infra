@@ -384,3 +384,19 @@ test("the runner's hourly SSM request (sessions, commands and their output reads
   const { r: wide } = await pend(setup().broker, secretsReq({ actions: ["ssm:TerminateSession"], resources: [`arn:aws:ssm:us-east-1:${HOSTS}:session/*`] }));
   assert.equal(wide.approver, "khaliq-gant");
 });
+
+test("ssm-command-reads is delegation-only (never automatic, even in the sandbox) and always on \"*\"", async () => {
+  const rule = shipped.autoRules.find((r) => r.id === "ssm-command-reads")!;
+  assert.equal(rule.delegationOnly, true);
+  // Sandbox: no automatic issue of other runs' command output.
+  const sandboxReq: CredentialRequest = { account: "805532413586", purpose: "read command output in the sandbox", actions: ["ssm:GetCommandInvocation"], durationMinutes: 15, runTag: "some-run", delivery: { kind: "file" } };
+  const d = decide(sandboxReq, { name: WORKER, address: WORKER, kind: "agent" }, shipped, { namespace: "some-run-0a1b2c3d" });
+  assert.notEqual(d.outcome, "auto");
+  // Delegated, default run-tag scope, with named resources: the reads still land on "*".
+  const { broker } = setup();
+  const req = secretsReq({ scope: undefined, actions: ["ssm:SendCommand", "ssm:GetCommandInvocation"], resources: [INSTANCE, SHELL_DOC] });
+  const { r } = await pend(broker, req);
+  const pending = JSON.parse(readFileSync(join(broker.deps.stateDir, "pending", `${r.requestId}.json`), "utf8")) as { sessionPolicy: { Statement: { Sid: string; Action?: string[]; Resource?: string | string[] }[] } };
+  const reads = pending.sessionPolicy.Statement.find((s) => s.Action?.includes("ssm:GetCommandInvocation"))!;
+  assert.equal(reads.Resource, "*");
+});

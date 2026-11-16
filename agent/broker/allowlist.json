@@ -157,7 +157,8 @@
         "ssm:ListCommands",
         "ssm:DescribeSessions",
         "ssm:DescribeInstanceInformation"
-      ]
+      ],
+      "delegationOnly": true
     },
     {
       "id": "sqs-create",
