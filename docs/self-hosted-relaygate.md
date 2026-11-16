@@ -168,6 +168,26 @@ to. Each Control user acts as `ctl:<userId>` (the `ctl:` prefix is reserved) and
 their own credential still reaches Sessions. Uploads need `rth:sync`, reads
 `rth:read`. See relaygate `docs/contract.md`.
 
+### Group badges in the dashboard
+
+To show a group's label on its sessions in the dashboard (a small badge on
+session rows and the session header, and a Group filter), give the group a
+label in the policy. With relaygate#39, relay-control#204 and relay-web#148 or
+later:
+
+```yaml
+# relaygate-values.yaml (or the Control-owned policy under Settings, Gate)
+policy:
+  groupLabels:
+    "22": { label: pit }   # key: gid in decimal; label: 1-24 letters, digits, space, . _ -
+```
+
+No group has a label by default. A label is display only: it grants nothing.
+relaygate adds `relaygate: {gid, label}` only to sessions the reader may already
+read, never names the owner, and drops any such key that comes from Sessions
+itself. The chart renders `policy` verbatim, so there is no other knob. See
+relaygate `docs/contract.md`, "Group labels".
+
 ### Desktop enrolment
 
 With relaygate `sha256:b2fcef80` or later and `control.introspectUrl` set (the
