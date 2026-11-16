@@ -28,7 +28,8 @@
 {{- if or (not $upload.witness.existingSecret) (not (regexMatch "^[A-Za-z0-9._-]+$" $upload.witness.key)) }}{{ fail "ingestEdge.uploadDirect.witness needs an existingSecret and data key" }}{{ end -}}
 {{- if and (eq $upload.mode "allowlist") (empty $upload.allowlist) }}{{ fail "ingestEdge.uploadDirect.allowlist is required in allowlist mode" }}{{ end -}}
 {{- range $entry := $upload.allowlist }}{{ if not (regexMatch "^(org|ws):[A-Za-z0-9_-][A-Za-z0-9._-]{0,127}$" $entry) }}{{ fail "ingestEdge.uploadDirect.allowlist entries must be org:<id> or ws:<id>" }}{{ end }}{{ end -}}
-{{- if or (not (regexMatch "^[0-9]+$" (toString $upload.scanBatch))) (lt (int $upload.scanBatch) 1) (gt (int $upload.scanBatch) 100) }}{{ fail "ingestEdge.uploadDirect.scanBatch must be 1..100" }}{{ end -}}
+{{- if or (not (regexMatch "^[0-9]+$" (toString $upload.scanBatch))) (lt (int $upload.scanBatch) 1) (gt (int $upload.scanBatch) 2000) }}{{ fail "ingestEdge.uploadDirect.scanBatch must be 1..2000" }}{{ end -}}
+{{- if and (not (kindIs "invalid" $upload.promoteConcurrency)) (or (not (regexMatch "^[0-9]+$" (toString $upload.promoteConcurrency))) (lt (int $upload.promoteConcurrency) 1) (gt (int $upload.promoteConcurrency) 64)) }}{{ fail "ingestEdge.uploadDirect.promoteConcurrency must be 1..64" }}{{ end -}}
 {{- end -}}
 {{- if not (kindIs "bool" $c.allowInClusterHttp) }}{{ fail "ingestEdge.allowInClusterHttp must be a boolean" }}{{ end -}}
 {{- if hasKey $c "extraEnv" }}{{ fail "ingestEdge.extraEnv is not supported; use the managed configuration and Secret references" }}{{ end -}}
@@ -259,6 +260,9 @@ spec:
             - { name: HISTORY_UPLOAD_DIRECT, value: {{ $upload.mode | quote }} }
             - { name: HISTORY_UPLOAD_DIRECT_ALLOWLIST, value: {{ join "," $upload.allowlist | quote }} }
             - { name: SELFHOST_UPLOAD_SCAN_BATCH, value: {{ $upload.scanBatch | quote }} }
+            {{- if not (kindIs "invalid" $upload.promoteConcurrency) }}
+            - { name: SELFHOST_UPLOAD_PROMOTE_CONCURRENCY, value: {{ $upload.promoteConcurrency | quote }} }
+            {{- end }}
             - name: UPLOAD_WITNESS_KEY
               valueFrom:
                 secretKeyRef: { name: {{ $upload.witness.existingSecret | quote }}, key: {{ $upload.witness.key | quote }} }
