@@ -30,7 +30,7 @@ One message, end to end:
 | --- | --- | --- |
 | Router | Deployment, 1 replica, PVC | Holds the Slack connection. Records every message in the **ledger**: threads, the people in them, agents, and an append-only event log. Routes by ledger lookup and asks the orchestrator only about threads nobody owns yet. It is the only component with Slack credentials. |
 | Orchestrator | in the router | Each Slack thread gets its own agent; that is enforced in code. A Claude model (default `claude-fable-5-2`) that sees every agent, its status, what it's working on and whose threads it holds, decides only whether a new thread goes to a pinned agent (`router.knownAgents`) instead. With no pinned agents it isn't called. `router.allowAgentReuse: true` lets it also hand a thread to an agent that already owns others. |
-| Agent host | StatefulSet, 1 replica, PVC | Runs the per-thread agents with headless Claude Code (default `claude-opus-5-5`). Each agent is its own relay identity with its own workdir and Claude session on the volume. It runs no process between messages: the host keeps only each agent's relay connection, like a node, and a routed Slack message or a direct message on the relay (from a person or another agent) wakes the agent and resumes its session. A DM is answered by DM; an agent's automatic answer to another agent's DM gets no reply back, so agents can't loop. It has no Slack credentials. |
+| Agent host | StatefulSet, 1 replica, PVC | Runs the per-thread agents with headless Claude Code (default `claude-opus-5-5`). Each agent is its own relay identity with its own workdir and Claude session on the volume. It runs no process between messages: the host keeps only each agent's relay connection, like a node, and a routed Slack message or a direct message on the relay (from a person or another agent) wakes the agent and resumes its session. A DM is answered by DM; an agent's automatic answer to another agent's DM gets no reply back, so agents can't loop. Behind relaygate a DM from outside the pit gets no answer at all (see "Messages from outside the pit"). It has no Slack credentials. |
 
 Restarts are safe. The ledger and the sessions live on volumes. Agents
 re-register on the relay under the same name with a recovery proof derived
@@ -415,8 +415,8 @@ With it on:
 - every Slack post and every knowledge-base write is asked of relaygate first
   (`/v1/check`). A denial is final: an agent's answer is withheld and the
   thread is told; an unavailable gate is retried, then nothing is sent;
-- a DM reply relaygate denies (a pit agent answering an outside agent) is
-  dropped, not retried.
+- a DM is answered only if relaygate allows it: see "Messages from outside
+  the pit" below.
 
 Two things on the relaygate side make this work:
 
@@ -429,6 +429,44 @@ Two things on the relaygate side make this work:
   set `relaycast.channel` to match (e.g. `slack-pit`); otherwise the router
   can't create its channel. Agent names start with `slack-`, so the bridge
   enrollment key's `namePrefix` must be `slack-`.
+
+### Messages from outside the pit
+
+Agents outside the pit (for example people's local agents in another group)
+may DM a Slack thread agent, if the policy lets them write to its inbox. The
+agent takes the message in, but nothing ever goes back to them:
+
+- **The turn runs.** The agent reads the DM in its own session, and the
+  session uploads as usual. It can still act inside the pit with its tools.
+- **No reply is attempted.** Before answering any DM, the host asks relaygate
+  `POST /v1/check` with the agent's own `rg_` token, `op: "w"` on the
+  sender's inbox (`relaycast:inbox/<sender>`): once before the turn, and again
+  with the exact answer text just before it is sent. It sends only on
+  `allow`. A denial, an unknown recipient or a gate that doesn't answer (after
+  retries) withholds the reply, and the host logs
+  `<agent>: reply withheld: recipient outside group (<sender>; denied | gate unavailable)`,
+  names only, never message text.
+- **The agent knows.** Behind relaygate every agent's system prompt says that
+  outside senders can't be answered, and a DM from one says so in the prompt,
+  so the agent doesn't promise a reply.
+- **Automatic answers.** An agent's automatic answer to another agent's DM is
+  never answered, inside the pit or out.
+
+relaygate's policy already refuses pit-to-outside writes (the pit can't write
+out). The host check is defence in depth: a policy mistake that allowed the
+write through the proxy still couldn't leak, because the host never sends
+unless the same check says yes. The check is only as wide as the policy, so
+keep outside inboxes (`relaycast:inbox/<prefix>`) unwritable by the pit.
+
+What the agent sends on its own with its relay tools (`mcp__relaycast`: a DM,
+a channel post) goes through relaygate's proxy with its own `rg_` token, so
+the same mode bits refuse a write into an outside inbox or channel. The host
+adds nothing there. The Slack thread answers go to the pit's routing channel,
+which outside groups can't read under the default policy.
+
+`host.replyToOutside` (default `false`) can't turn any of this off: behind
+relaygate it is ignored (the host logs that). Without relaygate there are no
+groups, and DMs are answered as before.
 
 ### Session upload (optional)
 
@@ -529,6 +567,7 @@ See `charts/slack-relay/values.yaml`. The ones you're most likely to change:
 | `host.allowedTools` | `[Read(./**), Glob(./**), Grep(./**), mcp__relaycast]` | Scoped to the agent's workdir. |
 | `host.disallowedTools` | `[Bash, WebFetch, WebSearch, Read(//proc/**)]` | Always refused. |
 | `host.idleReleaseMinutes` | `15` | |
+| `host.replyToOutside` | `false` | Behind relaygate ignored: a DM is answered only if `/v1/check` allows it. Without relaygate, DMs are answered as before. |
 | `repos.enabled` | `false` | Read-only GitHub repositories at `/repos` for the agents. |
 | `repos.app.privateKey` | `{ name: "", key: private-key }` | Secret with the GitHub App's private key (and, by default, `app-id` and `installation-id`); only the sidecar mounts it. Recommended. |
 | `repos.app.appId` / `repos.app.installationId` | `""` | Override the Secret's `app-id` / `installation-id` keys (`repos.app.appIdKey`, `repos.app.installationIdKey`). |
