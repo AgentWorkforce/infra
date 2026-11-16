@@ -1074,6 +1074,9 @@ for chart in "${charts[@]}"; do
         [ "$(render "$chart" "$v")" = "$(render "$chart" "$v" --set global.relaygate.gateOnly.enabled=false)" ] || err "$chart: gate-only=false must render the default"
         ! yq 'select(.kind == "NetworkPolicy" or .kind == "Ingress") | .. | select(. == "relaygate" or . == "agent-relay-gcp-proof-gate")' <<<"$(render "$chart" "$v")" | grep -q . || err "$chart: the default render must not route to or admit relaygate"
         expect_render_failure "$chart" "$g" "gate-only without relaygate" "requires components.relaygate" --set components.relaygate=false
+        expect_render_failure "$chart" "$g" "gate-only with a renamed Control" "relaygate.sessionsListener.controlFrom must select relay-control's pods" --set relay-control.nameOverride=relay-cloud-api
+        render "$chart" "$g" --set relay-control.nameOverride=relay-cloud-api --set-json 'relaygate.sessionsListener.controlFrom=[{"podSelector":{"matchLabels":{"app.kubernetes.io/name":"relay-cloud-api"}}}]' --set-json 'relaycast.networkPolicy.gateOnlyFrom=[{"podSelector":{"matchLabels":{"app.kubernetes.io/name":"relay-cloud-api"}}}]' >/dev/null \
+          || err "$chart: gate-only with a renamed Control and matching peers must render"
         expect_render_failure "$chart" "$g" "gate-only without the sessions port" "needs global.relaygate.gateOnly.sessionsPort" --set global.relaygate.gateOnly.sessionsPort=0
         expect_render_failure "$chart" "$g" "gate-only sessions port on the main port" "needs global.relaygate.gateOnly.sessionsPort" --set global.relaygate.gateOnly.sessionsPort=8080
         expect_render_failure "$chart" "$g" "gate-only with relaycastPublicUrl off the cast host" "requires relay-control.services.relaycastPublicUrl=https://cast.gcp-proof.agentrelay.com" --set relay-control.services.relaycastPublicUrl=https://relay.gcp-proof.agentrelay.com
