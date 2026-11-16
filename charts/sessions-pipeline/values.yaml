@@ -550,6 +550,10 @@ ingestEdge:
     # INGEST_ASYNC_MAX_PER_ORG: the async consumer's per-org cap with s3TenantLimit=true,
     # 1..concurrency. Unset (default) renders nothing: the image uses max(1, concurrency/2).
     asyncMaxPerOrg: null
+    # Async/drain startup and readiness exec probes: timeoutSeconds, 3..30. The probe's own /readyz fetch
+    # aborts 1 s earlier. Unset keeps 3 s and the 1500 ms fetch. Raise it when long upload scans
+    # (large uploadDirect.scanBatch) make /readyz slow, so a busy single replica stays in the Service.
+    probeTimeoutSeconds: null
   # Pipeline #515: scan .upload-inbox and promote into async admission.
   # Requires a published image implementing HISTORY_UPLOAD_DIRECT. The witness
   # must be the SAME Secret value used by Control's historyUpload.witness.
