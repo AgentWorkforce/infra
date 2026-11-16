@@ -196,3 +196,12 @@ podAnnotations: {}
 nodeSelector: {}
 tolerations: []
 affinity: {}
+
+# Set in the agent-relay umbrella (these are only the key defaults): the
+# Secrets relaygate and relay-control share for a Control-owned policy
+# (global.relaygate.controlPolicy; see docs/self-hosted-relaygate.md).
+global:
+  relaygate:
+    controlPolicy:
+      adminToken: { key: token }
+      policySecret: { key: secret }

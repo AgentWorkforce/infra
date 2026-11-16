@@ -34,6 +34,13 @@ global:
       svg: ""
       existingConfigMap: ""
       key: ""
+  # Only the key defaults: the Secrets relay-control and relaygate share for a
+  # Control-owned relaygate policy, set on the umbrella
+  # (global.relaygate.controlPolicy; see docs/self-hosted-relaygate.md).
+  relaygate:
+    controlPolicy:
+      adminToken: { key: token }
+      policySecret: { key: secret }
 existingSecret: ""
 # null preserves existing extraEnv selection; [] explicitly selects core only.
 # Managed names: flows, relayfile, chief, usage, launch, usage_people. No

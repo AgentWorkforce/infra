@@ -18,6 +18,7 @@
 {{- include "agent-relay.validateNativeHistory" . }}
 {{- include "agent-relay.validateOperatorSessionErase" . }}
 {{- include "agent-relay.validateGateOnly" . }}
+{{- include "agent-relay.validateControlPolicy" . }}
 {{- end }}
 
 {{- define "agent-relay.gateOnly" -}}
@@ -253,4 +254,20 @@ durable-actors: the control plane refuses a publicUrl with a path and issues act
 {{- end }}
 {{- end }}
 {{- end }}
+{{- end }}
+
+{{- /* Control-owned relaygate policy: relaygate and relay-control read the
+shared Secrets from global.relaygate.controlPolicy; this checks what a parent
+can't derive for its children: the Control Service relaygate pulls from. */ -}}
+{{- define "agent-relay.validateControlPolicy" -}}
+{{- $cp := dig "relaygate" "controlPolicy" dict (.Values.global | default dict) | default dict -}}
+{{- if dig "enabled" false $cp -}}
+{{- if not (include "agent-relay.gateOnly" .) }}{{ fail "global.relaygate.controlPolicy.enabled requires global.relaygate.gateOnly.enabled: relay-control manages relaygate's policy only on gate-only installs" }}{{ end -}}
+{{- if not (dig "control" true (.Values.components | default dict)) }}{{ fail "global.relaygate.controlPolicy.enabled requires components.control" }}{{ end -}}
+{{- $control := index .Values "relay-control" | default dict -}}
+{{- $controlService := dig "fullnameOverride" "" $control | default (printf "%s-%s" .Release.Name (dig "nameOverride" "" $control | default "relay-control")) | trunc 63 | trimSuffix "-" -}}
+{{- $want := dig "controlServiceName" "" $cp | default (printf "%s-relay-control" .Release.Name | trunc 63 | trimSuffix "-") -}}
+{{- if ne $want $controlService }}{{ fail (printf "global.relaygate.controlPolicy.controlServiceName must be the relay-control Service %s (relaygate pulls the policy from it)" $controlService) }}{{ end -}}
+{{- if ne (int (dig "controlServicePort" 80 $cp)) (int (dig "service" "port" 80 $control)) }}{{ fail (printf "global.relaygate.controlPolicy.controlServicePort must equal relay-control.service.port (%v)" (dig "service" "port" 80 $control)) }}{{ end -}}
+{{- end -}}
 {{- end }}

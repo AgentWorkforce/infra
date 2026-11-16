@@ -78,6 +78,30 @@ global:
       # relay-control may reach, and relay-control's SESSION_READ_API_URL.
       # Never routed publicly. Required with gate-only.
       sessionsPort: 8081
+    # Control-owned policy (off by default; needs gate-only, relaygate main at
+    # R1/R2 or later and a relay-control image with C1). Two steps, so
+    # relaygate never starts with no policy:
+    #   1. enabled: relay-control manages the policy (SELFHOST_RELAYGATE_ADMIN_URL,
+    #      _ADMIN_TOKEN, _POLICY_SECRET); relaygate still reads its ConfigMap.
+    #      Import that ConfigMap into Control once (Settings, Gate; owner only).
+    #   2. pull: relaygate pulls the signed policy from relay-control
+    #      (RELAYCONTROL_POLICY_URL, _SECRET); its file and ConfigMap are dropped.
+    # See docs/self-hosted-relaygate.md, "Control-owned policy".
+    controlPolicy:
+      enabled: false
+      pull: false
+      # Shared by relaygate (RELAYGATE_ADMIN_TOKEN, at least 24 characters) and
+      # relay-control (SELFHOST_RELAYGATE_ADMIN_TOKEN).
+      adminToken: { name: "", key: token }
+      # Shared by relaygate (RELAYCONTROL_POLICY_SECRET) and relay-control
+      # (SELFHOST_RELAYGATE_POLICY_SECRET); at least 32 characters, not the
+      # introspection secret.
+      policySecret: { name: "", key: secret }
+      # relay-control's Service and port, for relaygate's
+      # RELAYCONTROL_POLICY_URL. Empty derives <release>-relay-control; set it
+      # when relay-control.fullnameOverride is set (the chart checks).
+      controlServiceName: ""
+      controlServicePort: 80
   # Optional customer logo for the sign-in page and dashboard. relay-webapp
   # serves it at <dashboard origin>/brand/<file> (no extra web server or
   # ingress route: / already reaches the dashboard), and relay-control sets

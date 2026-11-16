@@ -39,7 +39,7 @@ render() { # chart valuesfile [extra helm args]
 # Every such env it is rendered with must be a bare http(s) origin.
 check_control_origins() { # label rendered-manifests
   local bad
-  bad=$(yq 'select(.kind == "Deployment" and (.spec.template.spec.containers[0].env // [] | map(.name) | contains(["RELAYCAST_URL"]))) | .spec.template.spec.containers[0].env[] | select(.name == "SELFHOST_PUBLIC_URL" or .name == "RELAYCAST_URL" or .name == "RELAYCAST_PUBLIC_URL" or .name == "RELAYHISTORY_URL" or .name == "SESSION_READ_API_URL" or .name == "SESSION_READ_API_PUBLIC_URL" or .name == "SESSION_ERASE_API_URL" or .name == "SELFHOST_RELAYGATE_PUBLIC_URL" or .name == "SELFHOST_CUSTOMER_SUPPORT_URL") | select(has("value") and .value != "") | select(.value | test("^https?://[^/?#@]+/?$") | not) | .name + "=" + .value' <<<"$2" | sed '/^---$/d;/^$/d')
+  bad=$(yq 'select(.kind == "Deployment" and (.spec.template.spec.containers[0].env // [] | map(.name) | contains(["RELAYCAST_URL"]))) | .spec.template.spec.containers[0].env[] | select(.name == "SELFHOST_PUBLIC_URL" or .name == "RELAYCAST_URL" or .name == "RELAYCAST_PUBLIC_URL" or .name == "RELAYHISTORY_URL" or .name == "SESSION_READ_API_URL" or .name == "SESSION_READ_API_PUBLIC_URL" or .name == "SESSION_ERASE_API_URL" or .name == "SELFHOST_RELAYGATE_PUBLIC_URL" or .name == "SELFHOST_RELAYGATE_ADMIN_URL" or .name == "SELFHOST_CUSTOMER_SUPPORT_URL") | select(has("value") and .value != "") | select(.value | test("^https?://[^/?#@]+/?$") | not) | .name + "=" + .value' <<<"$2" | sed '/^---$/d;/^$/d')
   [ -z "$bad" ] || err "$1: relay-control URL env must be a bare origin (Control refuses a path): $bad"
 }
 
@@ -1076,6 +1076,40 @@ for chart in "${charts[@]}"; do
         [ "$(render "$chart" "$v")" = "$(render "$chart" "$v" --set global.relaygate.gateOnly.enabled=false)" ] || err "$chart: gate-only=false must render the default"
         ! yq 'select(.kind == "NetworkPolicy" or .kind == "Ingress") | .. | select(. == "relaygate" or . == "agent-relay-gcp-proof-gate")' <<<"$(render "$chart" "$v")" | grep -q . || err "$chart: the default render must not route to or admit relaygate"
         expect_render_failure "$chart" "$g" "gate-only without relaygate" "requires components.relaygate" --set components.relaygate=false
+        # Control-owned policy (global.relaygate.controlPolicy): step 1 gives
+        # relay-control relaygate's admin origin and the shared Secrets while
+        # relaygate keeps its ConfigMap (to import); step 2 makes relaygate pull
+        # the signed policy from relay-control and drops the file.
+        cp=(--set global.relaygate.controlPolicy.enabled=true --set global.relaygate.controlPolicy.adminToken.name=relaygate-admin --set global.relaygate.controlPolicy.policySecret.name=relaygate-policy --set global.relaygate.controlPolicy.controlServiceName=relay-control)
+        gate_env() { yq "select(.kind == \"Deployment\" and .metadata.name == \"$1\") | .spec.template.spec.containers[0].env[] | select(.name == \"$2\") | (.value // (.valueFrom.secretKeyRef.name + \"/\" + .valueFrom.secretKeyRef.key))" <<<"$3" | sed '/^---$/d;/^ *$/d'; }
+        cp1=$(render "$chart" "$g" "${cp[@]}") || err "$chart: control policy step 1 did not render"
+        check_control_origins "$chart (control policy)" "$cp1"
+        [ "$(gate_env relay-control SELFHOST_RELAYGATE_ADMIN_URL "$cp1")" = http://ci-relaygate.ci.svc.cluster.local:8080 ] || err "$chart: SELFHOST_RELAYGATE_ADMIN_URL must be relaygate's in-cluster origin"
+        [ "$(gate_env relay-control SELFHOST_RELAYGATE_ADMIN_TOKEN "$cp1")" = relaygate-admin/token ] && [ "$(gate_env ci-relaygate RELAYGATE_ADMIN_TOKEN "$cp1")" = relaygate-admin/token ] \
+          || err "$chart: relay-control and relaygate must share the admin token Secret"
+        [ "$(gate_env relay-control SELFHOST_RELAYGATE_POLICY_SECRET "$cp1")" = relaygate-policy/secret ] || err "$chart: SELFHOST_RELAYGATE_POLICY_SECRET must come from controlPolicy.policySecret"
+        [ "$(gate_env ci-relaygate RELAYGATE_POLICY "$cp1")" = /policy/policy.json ] && yq 'select(.kind == "ConfigMap" and .metadata.name == "ci-relaygate-policy") | .metadata.name' <<<"$cp1" | grep -q . \
+          || err "$chart: control policy step 1 must keep relaygate's policy file and ConfigMap (the import source)"
+        [ -z "$(gate_env ci-relaygate RELAYCONTROL_POLICY_URL "$cp1")" ] || err "$chart: relaygate must not pull before controlPolicy.pull"
+        cp2=$(render "$chart" "$g" "${cp[@]}" --set global.relaygate.controlPolicy.pull=true) || err "$chart: control policy step 2 did not render"
+        check_control_origins "$chart (control policy pull)" "$cp2"
+        [ "$(gate_env ci-relaygate RELAYCONTROL_POLICY_URL "$cp2")" = http://relay-control.ci.svc.cluster.local:80/internal/v1/relaygate/policy ] || err "$chart: RELAYCONTROL_POLICY_URL must be relay-control's internal policy route"
+        [ "$(gate_env ci-relaygate RELAYCONTROL_POLICY_SECRET "$cp2")" = "$(gate_env relay-control SELFHOST_RELAYGATE_POLICY_SECRET "$cp2")" ] || err "$chart: relaygate and relay-control must share the policy secret"
+        [ -z "$(gate_env ci-relaygate RELAYGATE_POLICY "$cp2")" ] || err "$chart: a pulling relaygate must not render RELAYGATE_POLICY"
+        ! yq 'select(.kind == "ConfigMap" and .metadata.name == "ci-relaygate-policy") | .metadata.name' <<<"$cp2" | grep -q . || err "$chart: a pulling relaygate must not render the policy ConfigMap"
+        ! yq 'select(.kind == "Deployment" and .metadata.name == "ci-relaygate") | .spec.template.spec.volumes[] | select(.name == "policy") | .name' <<<"$cp2" | grep -q . || err "$chart: a pulling relaygate must not mount a policy volume"
+        # Network paths: relaygate -> relay-control (Control admits relaygate) and
+        # relay-control -> relaygate's admin API (relaygate's main port is open).
+        [[ " $(peers relay-control) " == *" relaygate "* ]] || err "$chart: relay-control must admit relaygate (policy pulls)"
+        [ "$(yq 'select(.kind == "NetworkPolicy" and .metadata.name == "ci-relaygate") | [.spec.ingress[] | select(.ports[0].port == "http") | (.from // [] | length)] | join(",")' <<<"$cp2" | sed '/^---$/d;/^ *$/d')" = 0 ] \
+          || err "$chart: relaygate's main port (the admin API) must admit relay-control"
+        expect_render_failure "$chart" "$v" "control policy without gate-only" "global.relaygate.gateOnly.enabled" --set components.relaygate=true --set relaygate.image.digest=sha256:c66696c51384707c2429a45405c9b2d9c4a3bf729dc5d93b2a8bd96b760e3719 "${cp[@]}"
+        expect_render_failure "$chart" "$g" "control policy without the shared Secrets" "needs controlPolicy.adminToken and controlPolicy.policySecret" "${cp[@]}" --set global.relaygate.controlPolicy.policySecret.name=
+        expect_render_failure "$chart" "$g" "control policy pull without enabled" "controlPolicy.pull needs controlPolicy.enabled" --set global.relaygate.controlPolicy.pull=true
+        expect_render_failure "$chart" "$g" "control policy with the wrong Control Service" "controlServiceName must be the relay-control Service relay-control" "${cp[@]}" --set global.relaygate.controlPolicy.controlServiceName=
+        expect_render_failure "$chart" "$g" "control policy with the wrong Control port" "controlServicePort must equal relay-control.service.port" "${cp[@]}" --set global.relaygate.controlPolicy.controlServicePort=8080
+        expect_render_failure "$chart" "$g" "control policy secret reused as the introspection secret" "must be a different secret from the introspection secret" "${cp[@]}" --set global.relaygate.controlPolicy.policySecret.name=agent-relay-gcp-proof --set global.relaygate.controlPolicy.policySecret.key=relaycontrol-introspect-secret
+        expect_render_failure "$chart" "$g" "control policy with a second admin token" "RELAYGATE_ADMIN_TOKEN comes from controlPolicy.adminToken" "${cp[@]}" --set relaygate.secrets.adminToken.name=other-admin
         expect_render_failure "$chart" "$g" "gate-only with a renamed Control" "relaygate.sessionsListener.controlFrom must select relay-control's pods" --set relay-control.nameOverride=relay-cloud-api
         render "$chart" "$g" --set relay-control.nameOverride=relay-cloud-api --set-json 'relaygate.sessionsListener.controlFrom=[{"podSelector":{"matchLabels":{"app.kubernetes.io/name":"relay-cloud-api"}}}]' --set-json 'relaycast.networkPolicy.gateOnlyFrom=[{"podSelector":{"matchLabels":{"app.kubernetes.io/name":"relay-cloud-api"}}}]' >/dev/null \
           || err "$chart: gate-only with a renamed Control and matching peers must render"

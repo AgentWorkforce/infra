@@ -50,7 +50,51 @@ global.relaygate.gateOnly). Never on an Ingress or NEG. */ -}}
 {{- dig "relaygate" "gateOnly" "sessionsPort" 0 (.Values.global | default dict) | int -}}
 {{- end }}
 
+{{- /* Control-owned policy (global.relaygate.controlPolicy, agent-relay umbrella).
+enabled: relay-control manages the policy (it gets relaygate's admin URL and
+token and the policy secret); relaygate still reads its file, so the operator
+can import it into Control. pull: relaygate then pulls it from relay-control
+and the file and ConfigMap go away. */ -}}
+{{- define "relaygate.controlPolicy" -}}
+{{- dig "relaygate" "controlPolicy" dict (.Values.global | default dict) | default dict | toJson -}}
+{{- end }}
+
+{{- define "relaygate.controlPolicy.pull" -}}
+{{- $cp := include "relaygate.controlPolicy" . | fromJson -}}
+{{- if and (dig "enabled" false $cp) (dig "pull" false $cp) }}true{{ end -}}
+{{- end }}
+
+{{- /* relay-control's in-cluster policy route (relaygate docs/design/control-owned-policy.md). */ -}}
+{{- define "relaygate.controlPolicy.url" -}}
+{{- $cp := include "relaygate.controlPolicy" . | fromJson -}}
+{{- $svc := dig "controlServiceName" "" $cp | default (printf "%s-relay-control" .Release.Name | trunc 63 | trimSuffix "-") -}}
+{{- printf "http://%s.%s.svc.cluster.local:%d/internal/v1/relaygate/policy" $svc .Release.Namespace (int (dig "controlServicePort" 80 $cp)) -}}
+{{- end }}
+
+{{- /* RELAYGATE_ADMIN_TOKEN: the shared controlPolicy.adminToken when enabled
+(relay-control uses the same Secret), else secrets.adminToken. */ -}}
+{{- define "relaygate.adminToken" -}}
+{{- $cp := include "relaygate.controlPolicy" . | fromJson -}}
+{{- if dig "enabled" false $cp -}}
+{{- dig "adminToken" dict $cp | toJson -}}
+{{- else if .Values.secrets.adminToken.name -}}
+{{- .Values.secrets.adminToken | toJson -}}
+{{- else -}}
+{{- "{}" -}}
+{{- end -}}
+{{- end }}
+
 {{- define "relaygate.validate" -}}
+{{- $cp := include "relaygate.controlPolicy" . | fromJson -}}
+{{- if dig "enabled" false $cp }}
+{{- if not (include "relaygate.gateOnly" .) }}{{ fail "relaygate: global.relaygate.controlPolicy.enabled needs global.relaygate.gateOnly.enabled (relay-control manages the policy only on gate-only installs)" }}{{ end }}
+{{- if or (not (dig "adminToken" "name" "" $cp)) (not (dig "adminToken" "key" "" $cp)) (not (dig "policySecret" "name" "" $cp)) (not (dig "policySecret" "key" "" $cp)) }}{{ fail "relaygate: global.relaygate.controlPolicy.enabled needs controlPolicy.adminToken and controlPolicy.policySecret ({name, key}): relaygate and relay-control share both" }}{{ end }}
+{{- if and .Values.secrets.adminToken.name (or (ne .Values.secrets.adminToken.name $cp.adminToken.name) (ne .Values.secrets.adminToken.key $cp.adminToken.key)) }}{{ fail "relaygate: with global.relaygate.controlPolicy.enabled, RELAYGATE_ADMIN_TOKEN comes from controlPolicy.adminToken; leave secrets.adminToken empty or set it to the same Secret" }}{{ end }}
+{{- if and (dig "policySecret" "name" "" $cp) (eq (dig "policySecret" "name" "" $cp) .Values.secrets.relaycontrolIntrospectSecret.name) (eq (dig "policySecret" "key" "" $cp) .Values.secrets.relaycontrolIntrospectSecret.key) }}{{ fail "relaygate: controlPolicy.policySecret must be a different secret from the introspection secret" }}{{ end }}
+{{- else if dig "pull" false $cp }}
+{{- fail "relaygate: global.relaygate.controlPolicy.pull needs controlPolicy.enabled" }}
+{{- end }}
+{{- if and (include "relaygate.controlPolicy.pull" .) .Values.existingConfigMap }}{{ fail "relaygate: global.relaygate.controlPolicy.pull pulls the policy from relay-control; existingConfigMap would be ignored, so leave it empty" }}{{ end }}
 {{- if include "relaygate.gateOnly" . }}
 {{- /* Gate-only (global.relaygate.gateOnly.enabled, agent-relay umbrella):
 Relaycast and Sessions admit only relaygate, so a proxy or the Control

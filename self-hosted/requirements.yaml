@@ -1732,9 +1732,22 @@ compatibility:
       images:
         relayauth: { repository: ghcr.io/agentworkforce/relayauth, digest: sha256:eb71daa28e30eb7305f666d0bccc5a4002e53e8a574e3c4c32163d907a1b71df }
       notes: superseded by 0.1.1.
-    - id: agent-relay-0.7.37
+    - id: agent-relay-0.7.39
       status: unreleased
       current: true
+      charts: { agent-relay: 0.7.39, relay-control: 0.4.22, relay-webapp: 0.2.6 }
+      app_versions: { agent-relay: 0.1.0, relay-control: 0.1.0, relay-webapp: 0.1.0 }
+      depends:
+        agent-relay: { relaycast: 0.3.16, relayauth: 0.1.5, sessions-pipeline: 0.8.41, relay-control: 0.4.22, relay-webapp: 0.2.6, relayflows: 0.2.5, durable-actors: 0.14.6-awf.4, relayfile: 0.2.2, telemetry-collector: 0.1.7, relay-chief: 0.1.0, slack-relay: 0.3.3, relaygate: 0.1.8 }
+      images:
+        relaycast: { repository: ghcr.io/agentworkforce/relaycast-self-host, digest: sha256:ec062ef901af15cf575b53a71d7eb09f2e6ab6e7c0d5be2da35339a275a5c6cc }
+        relaycast-postgres: { repository: ghcr.io/agentworkforce/relaycast-self-host, digest: sha256:ec062ef901af15cf575b53a71d7eb09f2e6ab6e7c0d5be2da35339a275a5c6cc }
+        sessions-pipeline-worker: { repository: ghcr.io/agentworkforce/sessions-pipeline, digest: sha256:77022c5b6a1d30f96f921d703eb27a1acada8ec273ad84aebdde24f8eddce305 }
+        relay-control: { repository: ghcr.io/agentworkforce/relay-control, digest: sha256:d1b6ca95fab240a9d41208d83de3b1f4245408b0765038762f1c419ee60f43bc }
+        relay-webapp: { repository: ghcr.io/agentworkforce/relay-webapp, digest: sha256:bd295ccb7d1323965dce890f19d0b7f857d706c00d7756f719c713763fdb49f3 }
+      notes: 'Carries 0.7.37 (0.7.38 is claimed by an open PR). Opt-in global.relaygate.controlPolicy (opt.agent-relay.relaygate-control-policy): relay-control 0.4.22 gets SELFHOST_RELAYGATE_ADMIN_URL, _ADMIN_TOKEN and _POLICY_SECRET (needs a relay-control image with C1), and relaygate 0.1.8 can pull its policy from relay-control. Default renders differ only in the helm.sh/chart labels.'
+    - id: agent-relay-0.7.37
+      status: planned
       charts: { agent-relay: 0.7.37, relay-control: 0.4.21, relay-webapp: 0.2.6 }
       app_versions: { agent-relay: 0.1.0, relay-control: 0.1.0, relay-webapp: 0.1.0 }
       depends:
@@ -3057,9 +3070,16 @@ compatibility:
       charts: { relay-chief: 0.1.0 }
       app_versions: { relay-chief: 0.1.0 }
       notes: First chart, rendered only. No Relay Chief image is published and the digest is operator-supplied until one exists.
-    - id: relaygate-0.1.7
+    - id: relaygate-0.1.8
       status: unreleased
       current: true
+      charts: { relaygate: 0.1.8 }
+      app_versions: { relaygate: 0.1.0 }
+      images:
+        relaygate: { repository: ghcr.io/agentworkforce/relaygate, digest_required: true }
+      notes: 'Carries 0.1.7. global.relaygate.controlPolicy: RELAYGATE_ADMIN_TOKEN from the shared adminToken Secret; with pull, RELAYCONTROL_POLICY_URL (relay-control /internal/v1/relaygate/policy) and RELAYCONTROL_POLICY_SECRET instead of RELAYGATE_POLICY, the ConfigMap and its volume. Needs relaygate main at R1/R2 (#33, #34) or later. Default renders differ only in the helm.sh/chart label.'
+    - id: relaygate-0.1.7
+      status: planned
       charts: { relaygate: 0.1.7 }
       app_versions: { relaygate: 0.1.0 }
       images:
@@ -7358,6 +7378,77 @@ entries:
       - "charts/sessions-pipeline/values.yaml"
       - "charts/sessions-pipeline/templates/ingest-edge.yaml"
       - "charts/sessions-pipeline/templates/native-routing.yaml"
+
+  - id: opt.agent-relay.relaygate-control-policy
+    kind: option
+    title: relaygate policy owned by relay-control
+    description: 'Off by default; needs gate-only, relaygate main at R1/R2 or later and a relay-control image with C1. global.relaygate.controlPolicy.enabled gives relay-control SELFHOST_RELAYGATE_ADMIN_URL (relaygate''s in-cluster origin), SELFHOST_RELAYGATE_ADMIN_TOKEN and SELFHOST_RELAYGATE_POLICY_SECRET, and relaygate RELAYGATE_ADMIN_TOKEN from the same adminToken Secret, while relaygate keeps its ConfigMap so the operator can import it into Control once. controlPolicy.pull then makes relaygate pull the signed policy (RELAYCONTROL_POLICY_URL = http://<relay-control>.<ns>.svc.cluster.local:<port>/internal/v1/relaygate/policy, RELAYCONTROL_POLICY_SECRET) and drops RELAYGATE_POLICY, the ConfigMap and its volume. Both Secrets come from this one place. Render fails when half-configured.'
+    chart: agent-relay
+    values: [global.relaygate.controlPolicy.enabled, global.relaygate.controlPolicy.pull, "global.relaygate.controlPolicy.adminToken.*", "global.relaygate.controlPolicy.policySecret.*", global.relaygate.controlPolicy.controlServiceName, global.relaygate.controlPolicy.controlServicePort]
+    profiles: [relaygate]
+    status: shipped
+    provided_by: operator
+    default: off
+    choices:
+      - { value: off }
+      - { value: enabled, note: "relay-control manages the policy; relaygate still reads its ConfigMap (import it)" }
+      - { value: pull, note: "relaygate pulls from relay-control; no policy file or ConfigMap" }
+    verify: 'scripts/ci/charts.sh static agent-relay renders both steps (shared Secrets, the admin origin and policy route, no RELAYGATE_POLICY, ConfigMap or volume when pulling), checks every relay-control URL env is a bare origin, and refuses each half-configuration'
+    sources:
+      - "charts/agent-relay/values.yaml"
+      - "charts/agent-relay/templates/_helpers.tpl"
+      - "charts/relaygate/templates/relaygate.yaml"
+      - "charts/relaygate/templates/_helpers.tpl"
+      - "charts/relay-control/templates/deployment.yaml"
+      - "charts/relay-control/templates/_helpers.tpl"
+
+  - id: opt.relay-control.relaygate-control-policy
+    kind: option
+    title: relay-control manages relaygate's policy
+    description: 'With global.relaygate.controlPolicy.enabled (agent-relay umbrella, gate-only) relay-control calls relaygate''s admin API at SELFHOST_RELAYGATE_ADMIN_URL (http://<relaygate>.<ns>.svc.cluster.local:8080, a bare origin) with SELFHOST_RELAYGATE_ADMIN_TOKEN and signs the policy it serves relaygate with SELFHOST_RELAYGATE_POLICY_SECRET; both Secrets are the ones relaygate uses. Needs a relay-control image with C1.'
+    chart: relay-control
+    values: [global.relaygate.controlPolicy.adminToken.name, global.relaygate.controlPolicy.policySecret.name]
+    env: [SELFHOST_RELAYGATE_ADMIN_URL, SELFHOST_RELAYGATE_ADMIN_TOKEN, SELFHOST_RELAYGATE_POLICY_SECRET]
+    profiles: [relay-control, agent-relay]
+    status: shipped
+    provided_by: operator
+    default: off
+    choices: [{ value: off }, { value: on, note: global.relaygate.controlPolicy.enabled }]
+    secrets:
+      - name: "<relaygate admin token Secret>"
+        name_paths: ["relay-control:global.relaygate.controlPolicy.adminToken.name"]
+        keys:
+          - { key: token, key_path: "relay-control:global.relaygate.controlPolicy.adminToken.key" }
+      - name: "<relaygate policy Secret>"
+        name_paths: ["relay-control:global.relaygate.controlPolicy.policySecret.name"]
+        keys:
+          - { key: secret, key_path: "relay-control:global.relaygate.controlPolicy.policySecret.key" }
+    verify: scripts/ci/charts.sh static agent-relay renders the three envs from the shared Secrets with a bare-origin admin URL
+    sources:
+      - charts/relay-control/templates/deployment.yaml
+      - charts/relay-control/templates/_helpers.tpl
+
+  - id: opt.relaygate.control-policy-pull
+    kind: option
+    title: relaygate pulls its policy from relay-control
+    description: 'With global.relaygate.controlPolicy.pull (agent-relay umbrella) relaygate pulls the signed policy from RELAYCONTROL_POLICY_URL (relay-control /internal/v1/relaygate/policy) with RELAYCONTROL_POLICY_SECRET instead of reading RELAYGATE_POLICY; the chart renders no policy ConfigMap or volume. Needs relaygate main at R1/R2 or later.'
+    chart: relaygate
+    values: [global.relaygate.controlPolicy.policySecret.name]
+    env: [RELAYCONTROL_POLICY_URL, RELAYCONTROL_POLICY_SECRET]
+    profiles: [relaygate]
+    status: shipped
+    provided_by: operator
+    default: off
+    choices: [{ value: off }, { value: on, note: global.relaygate.controlPolicy.pull }]
+    secrets:
+      - name: "<relaygate policy Secret>"
+        name_paths: ["relaygate:global.relaygate.controlPolicy.policySecret.name"]
+        keys:
+          - { key: secret, key_path: "relaygate:global.relaygate.controlPolicy.policySecret.key" }
+    verify: scripts/ci/charts.sh static agent-relay renders the pull env and no RELAYGATE_POLICY, ConfigMap or policy volume
+    sources:
+      - charts/relaygate/templates/relaygate.yaml
+      - charts/relaygate/templates/_helpers.tpl
 
   - id: opt.relaygate.sessions-listener
     kind: option
