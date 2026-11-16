@@ -78,7 +78,13 @@ mapping left off would cut clients off instead of gating them. */ -}}
 {{- if or (not (kindIs "slice" $peers)) (empty $peers) }}
 {{- fail "relaygate: gate-only needs sessionsListener.controlFrom (the relay-control pods): an empty peer list would admit every source to the internal Sessions listener" }}
 {{- end }}
-{{- range $peers }}{{ if or (not (kindIs "map" .)) (empty .) }}{{ fail "relaygate: sessionsListener.controlFrom entries must be NetworkPolicy peers with selectors; an empty peer admits every source" }}{{ end }}{{ if and (hasKey . "podSelector") (empty (dig "podSelector" "matchLabels" dict .)) (empty (dig "podSelector" "matchExpressions" list .)) }}{{ fail "relaygate: sessionsListener.controlFrom podSelector entries must name the relay-control pods by label" }}{{ end }}{{ end }}
+{{- /* Every peer must select pods by label: no ipBlock, and no bare (or empty)
+namespaceSelector, which would admit every pod in the selected namespaces. */ -}}
+{{- range $peers }}
+{{- if or (not (kindIs "map" .)) (empty .) }}{{ fail "relaygate: sessionsListener.controlFrom entries must be NetworkPolicy peers with selectors; an empty peer admits every source" }}{{ end -}}
+{{- if hasKey . "ipBlock" }}{{ fail "relaygate: sessionsListener.controlFrom must select the relay-control pods by label, never an ipBlock" }}{{ end -}}
+{{- if and (empty (dig "podSelector" "matchLabels" dict .)) (empty (dig "podSelector" "matchExpressions" list .)) }}{{ fail "relaygate: sessionsListener.controlFrom podSelector entries must name the relay-control pods by label (a namespaceSelector alone admits every pod it selects)" }}{{ end -}}
+{{- end }}
 {{- if .Values.nameOverride }}{{ fail "relaygate: nameOverride is unsupported with gate-only: the NetworkPolicies select app.kubernetes.io/name=relaygate" }}{{ end }}
 {{- end }}
 {{- if not (regexMatch "^sha256:[a-f0-9]{64}$" (.Values.image.digest | default "")) }}

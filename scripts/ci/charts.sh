@@ -993,6 +993,8 @@ for chart in "${charts[@]}"; do
         expect_render_failure "$chart" "$v" "gate-only with no listener peers" "an empty peer list would admit every source" "${gate[@]}" --set sessionsListener.controlFrom=null
         expect_render_failure "$chart" "$v" "gate-only with an empty listener peer" "must be NetworkPolicy peers with selectors" "${gate[@]}" --set-json 'sessionsListener.controlFrom=[{}]'
         expect_render_failure "$chart" "$v" "gate-only with an unlabelled listener peer" "must name the relay-control pods by label" "${gate[@]}" --set-json 'sessionsListener.controlFrom=[{"podSelector":{}}]'
+        expect_render_failure "$chart" "$v" "gate-only with an all-namespaces listener peer" "must name the relay-control pods by label" "${gate[@]}" --set-json 'sessionsListener.controlFrom=[{"namespaceSelector":{}}]'
+        expect_render_failure "$chart" "$v" "gate-only with an ipBlock listener peer" "never an ipBlock" "${gate[@]}" --set-json 'sessionsListener.controlFrom=[{"ipBlock":{"cidr":"0.0.0.0/0"}}]'
 
         render "$chart" "$v" "${gate[@]}" --set fullnameOverride=gate --set global.relaygate.gateOnly.serviceName=gate >/dev/null || err "$chart: gate-only with a matching serviceName must render"
         ;;

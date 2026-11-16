@@ -51,7 +51,7 @@ of set a second time. Desktop and the CLI log in against that same origin. */ -}
 {{- /* Control's config refuses a path on these service URLs, and crash-loops;
 check what is rendered, including the gate-only SESSION_READ_API_URL. */ -}}
 {{- if and .Values.services.sessionReadApiUrl (dig "relaygate" "gateOnly" "enabled" false (.Values.global | default dict)) (lt (int (dig "relaygate" "gateOnly" "sessionsPort" 0 (.Values.global | default dict))) 1) }}{{ fail "relay-control: global.relaygate.gateOnly.enabled needs global.relaygate.gateOnly.sessionsPort (relaygate's internal Sessions listener, SESSION_READ_API_URL)" }}{{ end -}}
-{{- with include "relay-control.sessionReadApiUrl" . }}{{ if not (regexMatch "^https?://[^/?#@]+$" .) }}{{ fail (printf "relay-control: SESSION_READ_API_URL would be %s; it must be an http(s) origin with no path, credentials, query or fragment" .) }}{{ end }}{{ end -}}
+{{- with include "relay-control.sessionReadApiUrl" . }}{{ if not (regexMatch "^https?://[^/?#@]+/?$" .) }}{{ fail (printf "relay-control: SESSION_READ_API_URL would be %s; it must be an http(s) origin with no path, credentials, query or fragment" .) }}{{ end }}{{ end -}}
 {{- include "relay-control.historyUpload.validate" . -}}
 {{- include "relay-control.validateAdapters" . -}}
 {{- $image := include "relay-control.image" . -}}
