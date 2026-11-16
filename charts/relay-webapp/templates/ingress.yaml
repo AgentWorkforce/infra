@@ -39,6 +39,16 @@ spec:
                 name: {{ .Values.api.serviceName }}
                 port:
                   number: {{ .Values.api.servicePort }}
+          # relay-node broker routes (/relay-node/v1/*, including the
+          # GET /relay-node/v1/ws node WebSocket) are served only at the root
+          # path, never under the API alias. Desktop calls them on this origin.
+          - path: /relay-node
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ .Values.api.serviceName }}
+                port:
+                  number: {{ .Values.api.servicePort }}
           {{- if include "relay-webapp.singleHost" . }}
           # Single-host mode: flows workers and the integrations OAuth
           # callback use <publicUrl>/api/v1/... on this host.

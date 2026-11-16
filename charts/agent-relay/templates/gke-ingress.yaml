@@ -67,7 +67,7 @@ shape (hosts.files without components.relayfile fails further down). */ -}}
 {{- $hostHistory := dig "hosts" "history" "" $gke -}}
 {{- /* Single-host mode (global.singleHost.host): the dashboard and the control
 API share one host, the root host. The API is routed there under /cloud/api,
-/login and /api (flows workers and the integrations OAuth callback use
+/login, /relay-node and /api (flows workers and the integrations OAuth callback use
 <publicUrl>/api/v1/...), so there is no api host. Relaycast and Relay History
 need app changes before they can live under a path prefix, so they keep their
 own hosts (README: Single-host mode). No service on the single host needs a
@@ -75,7 +75,7 @@ path rewrite, so the GCE Ingress (with its BackendConfigs) still fits. */ -}}
 {{- $singleHost := dig "singleHost" "host" "" (.Values.global | default dict) -}}
 {{- if $singleHost }}
 {{- if and $hostRoot (ne $hostRoot $singleHost) }}{{ fail (printf "gkeIngress.hosts.root is global.singleHost.host (%s) in single-host mode; leave it empty" $singleHost) }}{{ end -}}
-{{- if $hostApi }}{{ fail "gkeIngress.hosts.api must be empty in single-host mode: the control API is served on global.singleHost.host under /cloud/api, /login and /api" }}{{ end -}}
+{{- if $hostApi }}{{ fail "gkeIngress.hosts.api must be empty in single-host mode: the control API is served on global.singleHost.host under /cloud/api, /login, /relay-node and /api" }}{{ end -}}
 {{- $hostRoot = $singleHost -}}
 {{- range $name, $host := dict "cast" $hostCast "history" $hostHistory }}
 {{- $service := ternary "relaycast" "history" (eq $name "cast") -}}
@@ -148,7 +148,8 @@ explicit backends.<name>.serviceName must equal that derived name. */ -}}
 {{- $childPort := dig "service" "port" 0 (index $child 1) -}}
 {{- if and $childPort (ne (int $childPort) (int (dig "servicePort" 0 $backend))) }}{{ fail (printf "gkeIngress.backends.%s.servicePort must equal %s.service.port (%v)" $name (index $child 0) $childPort) }}{{ end -}}
 {{- end }}
-{{- /* The flows worker queue is a long-lived SSE stream through the api
+{{- /* The flows worker queue (a long-lived SSE stream) and the relay-node
+socket (GET /relay-node/v1/ws, a long-lived WebSocket) go through the api
 backend. GCE's default 30s backend timeout cuts every response at 30s, so
 the api Service gets a BackendConfig with a longer timeout, bound through the
 Service's cloud.google.com/backend-config annotation. relay-control renders
@@ -158,7 +159,7 @@ derived from gkeIngress.name. The name is truncated to 59 characters before
 -api is appended, so the <name>-api contract holds for long names. */ -}}
 {{- $apiBackendConfig := printf "%s-api" ($gkeName | trunc 59 | trimSuffix "-") -}}
 {{- $apiTimeout := int (dig "backends" "api" "timeoutSec" 0 $gke) -}}
-{{- if lt $apiTimeout 60 }}{{ fail "gkeIngress.backends.api.timeoutSec must be at least 60: the flows worker queue SSE stream needs a backend timeout above GCE's 30s default" }}{{ end -}}
+{{- if lt $apiTimeout 60 }}{{ fail "gkeIngress.backends.api.timeoutSec must be at least 60: the flows worker queue SSE stream and the relay-node WebSocket need a backend timeout above GCE's 30s default" }}{{ end -}}
 {{- if gt $apiTimeout 86400 }}{{ fail "gkeIngress.backends.api.timeoutSec must be at most 86400" }}{{ end -}}
 {{- $queuePing := dig "flows" "queuePingMs" "" $cloudApi | toString | default "20000" -}}
 {{- if and (regexMatch "^[0-9]+$" $queuePing) (ge (int64 $queuePing) (mul $apiTimeout 1000)) }}{{ fail "relay-control.flows.queuePingMs must be below gkeIngress.backends.api.timeoutSec" }}{{ end -}}
@@ -448,6 +449,17 @@ spec:
                 name: {{ index $backendNames "api" }}
                 port: { number: {{ $gke.backends.api.servicePort }} }
           - path: /login
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ index $backendNames "api" }}
+                port: { number: {{ $gke.backends.api.servicePort }} }
+          # relay-node broker routes (POST /relay-node/v1/nodes, the
+          # GET /relay-node/v1/ws node socket, ...) are served only at the
+          # root path, never under /cloud. Desktop uses this sign-in origin as
+          # its control_url, so they must reach relay-control here, not the
+          # dashboard. The api BackendConfig timeout keeps the socket open.
+          - path: /relay-node
             pathType: Prefix
             backend:
               service:

@@ -1043,6 +1043,12 @@ for chart in "${charts[@]}"; do
         [ "$(routes cast.gcp-proof.agentrelay.com)" = "$want/ Prefix $deny;" ] || err "$chart: gate-only cast routes: $(routes cast.gcp-proof.agentrelay.com)"
         want="/v1/sessions Prefix $gate;"; for p in /v1/events /v1/ingest /v1/delivery/batches /v1/delivery/limits /v1/auth/token/refresh /v1/onboarding/heartbeat; do want+="$p Exact $gate;"; done
         [ "$(routes history.gcp-proof.agentrelay.com)" = "$want/ Prefix $deny;" ] || err "$chart: gate-only history routes: $(routes history.gcp-proof.agentrelay.com)"
+        # Desktop on a gate-only install uses the sign-in origin as control_url
+        # and opens GET /relay-node/v1/ws there; relay-control serves the
+        # relay-node routes only at the root path, so the root host must send
+        # /relay-node to relay-control, not the dashboard.
+        [ "$(routes gcp-proof.agentrelay.com)" = "/cloud/api Prefix relay-control;/login Prefix relay-control;/relay-node Prefix relay-control;/ Prefix relay-webapp;" ] \
+          || err "$chart: gate-only root routes must send /relay-node to relay-control: $(routes gcp-proof.agentrelay.com)"
         [ "$(yq "select(.kind == \"Service\" and .metadata.name == \"$gate\") | .spec.selector[\"app.kubernetes.io/name\"] + \" \" + .metadata.annotations[\"cloud.google.com/backend-config\"]" <<<"$out" | sed '/^---$/d;/^$/d')" = "relaygate {\"default\": \"$gate\"}" ] || err "$chart: gate edge Service must select relaygate with its BackendConfig"
         [ "$(yq "select(.kind == \"BackendConfig\" and .metadata.name == \"$gate\") | .spec.healthCheck.requestPath + \" \" + (.spec.timeoutSec | tostring)" <<<"$out" | sed '/^---$/d;/^$/d')" = "/healthz 3600" ] || err "$chart: gate edge BackendConfig must check /healthz with the cast timeout"
         peers() { yq "select(.kind == \"NetworkPolicy\" and .metadata.name == \"$1\") | [.spec.ingress[].from[] | (.podSelector.matchLabels[\"app.kubernetes.io/name\"] // .ipBlock.cidr // \"any\")] | join(\" \")" <<<"$out" | sed '/^---$/d;/^$/d'; }

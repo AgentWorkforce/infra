@@ -124,6 +124,14 @@ class Profiles(unittest.TestCase):
         self.assertIn("complete native core", self.render(extra=["--set", "localKind.profile=addons"], ok=False))
         self.assertIn("must be core or addons", self.render(extra=["--set", "localKind.profile=unknown"], ok=False))
 
+    def test_dashboard_ingress_routes_relay_node_to_control(self):
+        # Desktop opens GET /relay-node/v1/ws on the sign-in origin; it must
+        # reach relay-control, never the dashboard catch-all.
+        docs = self.render()
+        dashboard = next(d for d in docs if d["kind"] == "Ingress" and d["metadata"]["name"] == "relay-webapp")
+        paths = {p["path"]: (p["pathType"], p["backend"]["service"]["name"]) for p in dashboard["spec"]["rules"][0]["http"]["paths"]}
+        self.assertEqual(paths["/relay-node"], ("Prefix", "relay-control"))
+
     def test_local_scope_guard_and_configurable_api_ingress(self):
         self.assertIn("allowLocalOnly", self.render(extra=["--set", "localKind.allowLocalOnly=false"], ok=False))
         self.assertIn("ingress.enabled=true", self.render(extra=["--set", "relay-webapp.ingress.enabled=false"], ok=False))
