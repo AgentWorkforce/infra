@@ -40,6 +40,8 @@ export interface AuditEvent {
   expiration?: string;
   delivery?: { kind: string; ref: string };
   reasons?: string[];
+  /** On an approval by a delegated approver: who, under which capability and grants, until when. */
+  delegation?: { delegate: string; capability: string; grants: string[]; expiresAt: string };
 }
 
 export interface AuditLine extends AuditEvent {

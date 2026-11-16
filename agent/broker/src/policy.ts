@@ -39,6 +39,51 @@ export interface Allowlist {
   neverIssue: string[];
   approvalOnly: string[];
   autoRules: AutoRule[];
+  /** Agents Khaliq lets approve a narrow slice of requests until a hard expiry. Absent: only humanApprovers approve. */
+  delegatedApprovers?: DelegatedApprover[];
+}
+
+/**
+ * A standing delegation: one Relay agent may approve pending requests that
+ * fall entirely inside one of its capabilities, until expiresAt. Checked
+ * against the session policy the broker built (what IAM will enforce), never
+ * against the request's prose. See checkDelegatedApproval.
+ */
+export interface DelegatedApprover {
+  /** The Relay agent's name, as the Relay server resolves the approval message's sender. */
+  agent: string;
+  /** Hard expiry (ISO 8601, UTC). After it the delegate's approvals are refused. At most MAX_DELEGATION_DAYS ahead. */
+  expiresAt: string;
+  /** Who granted it, and why: for the reviewer and the audit log. */
+  grantedBy: string;
+  reason: string;
+  /** If set, only requests from these agents. */
+  requesters?: string[];
+  capabilities: DelegatedCapability[];
+}
+
+export interface DelegatedCapability {
+  id: string;
+  /** Accounts (each must also be on the allowlist). */
+  accounts: string[];
+  /** The request must name its regions, all of them here. */
+  regions: string[];
+  /** Auto rules (scope "any", read verbs only) whose actions the delegate may approve on any resource. */
+  readOnlyRules?: string[];
+  grants: DelegatedGrant[];
+}
+
+export interface DelegatedGrant {
+  id: string;
+  actions: string[];
+  /** Secrets Manager: secrets whose name starts with one of these (e.g. "neon-exit/"). */
+  secretPrefixes?: string[];
+  /** Secrets Manager: exactly these secrets (the ARN is the name plus AWS's 6-character suffix). */
+  secretNames?: string[];
+  /** SSM: only these instances, by tag. Enforced in IAM by a deny the broker adds when the request names the delegate. */
+  instanceTag?: { key: string; value: string };
+  /** SSM documents the session may use (AWS-owned or the account's own). */
+  ssmDocuments?: string[];
 }
 
 /** Who asked, from the Relay envelope the message arrived in: never from the request body. */
@@ -60,6 +105,8 @@ export interface CredentialRequest {
   resources?: string[];
   regions?: string[];
   delivery: Delivery;
+  /** A delegated approver (allowlist delegatedApprovers) the requester asks to approve this instead of Khaliq. */
+  delegate?: string;
 }
 
 export type Delivery = { kind: "file" } | { kind: "1password"; vault: string } | { kind: "encrypted"; publicKey: string };
@@ -171,6 +218,7 @@ export function validate(req: CredentialRequest, list: Allowlist): string[] {
   if (!del || (del.kind !== "file" && del.kind !== "1password" && del.kind !== "encrypted")) problems.push("delivery.kind must be encrypted, file or 1password");
   else if (del.kind === "1password" && (typeof del.vault !== "string" || !/^[\w .-]{1,64}$/.test(del.vault))) problems.push("delivery.vault must name a 1Password vault");
   else if (del.kind === "encrypted" && !isPublicKey((del as { publicKey?: unknown }).publicKey)) problems.push("delivery.publicKey must be a base64 32-byte X25519 key (client.ts keygen)");
+  if (req.delegate !== undefined && (typeof req.delegate !== "string" || !(list.delegatedApprovers ?? []).some((d) => d.agent === req.delegate))) problems.push(`delegate ${JSON.stringify(req.delegate)} is not a delegated approver on the allowlist`);
   return problems;
 }
 
@@ -387,7 +435,7 @@ export function decide(req: CredentialRequest, requester: Principal, list: Allow
   if (needs.length === 0) needs.push(`${account.label} has no scoped role for automatic issue`);
   if (!account.roles.elevated) return { outcome: "deny", reasons: [...needs, `${account.label} has no approval-tier role configured, so this cannot be issued even with approval`] };
   const allows = approvalStatements(req, list, namespace);
-  const policy: SessionPolicy = { Version: "2012-10-17", Statement: [...allows, ...guardStatements(list.tagKey, req.runTag, namespace, allows), ...regionStatement(regions)] };
+  const policy: SessionPolicy = { Version: "2012-10-17", Statement: [...allows, ...guardStatements(list.tagKey, req.runTag, namespace, allows), ...regionStatement(regions), ...delegateGuards(req, list)] };
   const size = JSON.stringify(policy).length;
   if (size > SESSION_POLICY_MAX_CHARS) return { outcome: "deny", reasons: [`session policy is ${size} characters, over AWS's ${SESSION_POLICY_MAX_CHARS}: split the request`] };
   return { outcome: "approval", roleArn: account.roles.elevated, sessionPolicy: policy, durationSeconds, reasons: needs };
@@ -401,4 +449,179 @@ export function newNamespace(runTag: string, random: () => string): string {
 /** Is this principal one whose approval counts? Humans on the list only; an agent never. */
 export function approverCounts(p: Principal, list: Allowlist): boolean {
   return p.kind === "human" && list.humanApprovers.includes(p.name);
+}
+
+// ---------------------------------------------------------------------------
+// Delegated approvers
+
+/** The longest a delegation may run from the moment it is used: a longer expiresAt is refused as misconfigured. */
+export const MAX_DELEGATION_DAYS = 30;
+
+/** Never delegable, whatever a capability says: IAM and identity, audit controls, never-issue, deletes, and wildcards. */
+export const DELETE_VERB_RE = /^(Delete|Terminate|Remove|Purge|Destroy|Untag|Schedule\w*Deletion)/;
+
+export function neverDelegable(action: string, list: Allowlist): string | undefined {
+  if (/[*?]/.test(action)) return `${action} is a wildcard`;
+  if (globsIntersect(action, "iam:*")) return `${action} is IAM`;
+  if (list.neverIssue.some((n) => globsIntersect(action, n))) return `${action} is never issued`;
+  if (list.approvalOnly.some((n) => globsIntersect(action, n))) return `${action} is an identity or audit control`;
+  if (DELETE_VERB_RE.test(action.split(":")[1] ?? "")) return `${action} deletes`;
+  return undefined;
+}
+
+const READ_VERB_RE = /^(Describe|List|Get)[A-Z]/;
+const SECRET_SUFFIX_RE = /^-[A-Za-z0-9]{6}$/;
+const INSTANCE_ID_RE = /^i-[0-9a-f]{8,17}$/;
+const NAME_RE = /^[A-Za-z0-9/_+=.@-]+$/;
+
+/** Problems with the delegation config itself. Any problem refuses every delegated approval (Khaliq's are unaffected). */
+export function delegationConfigProblems(list: Allowlist): string[] {
+  const problems: string[] = [];
+  const seen = new Set<string>();
+  for (const d of list.delegatedApprovers ?? []) {
+    const who = `delegate ${d.agent}`;
+    if (typeof d.agent !== "string" || !NAME_RE.test(d.agent)) problems.push(`${who}: agent must be a Relay agent name`);
+    if (seen.has(d.agent)) problems.push(`${who}: listed twice`);
+    seen.add(d.agent);
+    if (list.humanApprovers.includes(d.agent)) problems.push(`${who}: is a human approver already`);
+    if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/.test(String(d.expiresAt)) || Number.isNaN(Date.parse(d.expiresAt))) problems.push(`${who}: expiresAt must be an ISO 8601 UTC time`);
+    if (!list.humanApprovers.includes(d.grantedBy)) problems.push(`${who}: grantedBy must be a human approver`);
+    if (!Array.isArray(d.capabilities) || d.capabilities.length === 0) problems.push(`${who}: no capabilities`);
+    for (const c of d.capabilities ?? []) {
+      const where = `${who} capability ${c.id}`;
+      for (const a of c.accounts ?? []) {
+        const acct = list.accounts[a];
+        if (!acct) problems.push(`${where}: account ${a} is not on the allowlist`);
+        else for (const r of c.regions ?? []) if (acct.regions && !acct.regions.includes(r)) problems.push(`${where}: region ${r} is not allowed in ${a}`);
+      }
+      if (!c.accounts?.length || !c.regions?.length) problems.push(`${where}: must name accounts and regions`);
+      for (const id of c.readOnlyRules ?? []) {
+        const rule = list.autoRules.find((r) => r.id === id);
+        if (!rule) problems.push(`${where}: no auto rule ${id}`);
+        else if (rule.scope !== "any" || rule.resources !== undefined || rule.actions.some((a) => !READ_VERB_RE.test(a.split(":")[1] ?? "") || neverDelegable(a, list))) problems.push(`${where}: auto rule ${id} is not read-only`);
+      }
+      for (const g of c.grants ?? []) {
+        for (const a of g.actions) {
+          const why = neverDelegable(a, list);
+          if (why) problems.push(`${where} grant ${g.id}: ${why}, never delegable`);
+        }
+        const svc = new Set(g.actions.map((a) => a.split(":")[0]));
+        const kinds = [g.secretPrefixes || g.secretNames ? "secretsmanager" : undefined, g.instanceTag || g.ssmDocuments ? "ssm" : undefined].filter(Boolean);
+        if (kinds.length !== 1 || svc.size !== 1 || !svc.has(kinds[0]!)) problems.push(`${where} grant ${g.id}: a grant is secretsmanager actions on secrets, or ssm actions on tagged instances`);
+        if (kinds[0] === "ssm" && !g.instanceTag) problems.push(`${where} grant ${g.id}: ssm needs instanceTag`);
+        for (const n of [...(g.secretPrefixes ?? []), ...(g.secretNames ?? []), ...(g.ssmDocuments ?? []), ...(g.instanceTag ? [g.instanceTag.key, g.instanceTag.value] : [])]) {
+          if (typeof n !== "string" || !NAME_RE.test(n)) problems.push(`${where} grant ${g.id}: ${JSON.stringify(n)} must be a literal name (no wildcards)`);
+        }
+        for (const pfx of g.secretPrefixes ?? []) if (!pfx.endsWith("/")) problems.push(`${where} grant ${g.id}: secret prefix ${pfx} must end with "/"`);
+      }
+    }
+  }
+  return problems;
+}
+
+/**
+ * Denies the broker adds when a request names a delegate: for each SSM grant
+ * the request touches, instances without the grant's tag are denied in IAM,
+ * so the tag scope doesn't rest on the delegate's judgment. Denies only
+ * narrow, so Khaliq can still approve such a request.
+ */
+export function delegateGuards(req: CredentialRequest, list: Allowlist): PolicyStatement[] {
+  const d = (list.delegatedApprovers ?? []).find((x) => x.agent === req.delegate);
+  if (!d) return [];
+  const out: PolicyStatement[] = [];
+  for (const c of d.capabilities) for (const g of c.grants) {
+    if (!g.instanceTag) continue;
+    const actions = g.actions.filter((a) => req.actions.some((r) => r.toLowerCase() === a.toLowerCase()));
+    if (!actions.length) continue;
+    out.push({ Sid: sid(`delegate-deny-untagged-${g.id}`), Effect: "Deny", Action: actions, Resource: ["arn:aws:ec2:*:*:instance/*", "arn:aws:ssm:*:*:managed-instance/*"], Condition: { StringNotEquals: { [`ssm:resourceTag/${g.instanceTag.key}`]: g.instanceTag.value } } });
+  }
+  return out;
+}
+
+/** Does the grant cover this resource ARN (a literal: no wildcard ever matches)? */
+export function grantCovers(g: DelegatedGrant, resource: string, account: string, region: string): boolean {
+  if (/[*?]/.test(resource)) return false;
+  if (g.secretPrefixes || g.secretNames) {
+    const head = `arn:aws:secretsmanager:${region}:${account}:secret:`;
+    if (!resource.startsWith(head)) return false;
+    const name = resource.slice(head.length);
+    if ((g.secretPrefixes ?? []).some((p) => name.startsWith(p) && name.length > p.length && NAME_RE.test(name))) return true;
+    return (g.secretNames ?? []).some((n) => name.startsWith(n) && SECRET_SUFFIX_RE.test(name.slice(n.length)));
+  }
+  if (g.instanceTag) {
+    const inst = `arn:aws:ec2:${region}:${account}:instance/`;
+    if (resource.startsWith(inst)) return INSTANCE_ID_RE.test(resource.slice(inst.length));
+    return (g.ssmDocuments ?? []).some((doc) => resource === `arn:aws:ssm:${region}::document/${doc}` || resource === `arn:aws:ssm:${region}:${account}:document/${doc}`);
+  }
+  return false;
+}
+
+export type DelegatedCheck =
+  | { ok: true; delegate: DelegatedApprover; capability: string; grants: string[] }
+  | { ok: false; reason: string };
+
+/**
+ * May this agent approve this pending request? Only if all of:
+ * - it is a delegated approver, its delegation hasn't expired (and runs at
+ *   most MAX_DELEGATION_DAYS from now), and the delegation config is sound;
+ * - the requester named it (request.delegate), so the broker built the
+ *   delegate's IAM guards into the policy, and is on its requesters list if
+ *   it has one;
+ * - one capability covers the account, the request's named regions, and
+ *   every allowed action on every resource of the session policy: read-only
+ *   auto-rule actions on anything, everything else only through a grant, on
+ *   literal resources the grant names;
+ * - nothing is never-delegable (IAM, identity and audit controls, deletes,
+ *   wildcard actions or resources).
+ * The caller still refuses self-approval, checks the digest and re-decides.
+ */
+export function checkDelegatedApproval(p: { request: CredentialRequest; requester: Principal; sessionPolicy: SessionPolicy }, approver: Principal, list: Allowlist, now: Date): DelegatedCheck {
+  const d = (list.delegatedApprovers ?? []).find((x) => x.agent === approver.name);
+  if (!d) return { ok: false, reason: `${approver.name} (${approver.kind}) is not an approver: only a human on humanApprovers, or a delegate on delegatedApprovers, can approve` };
+  const no = (reason: string): DelegatedCheck => ({ ok: false, reason: `${d.agent} can't approve this as a delegate: ${reason}; only ${list.humanApprovers.join(", ")} can` });
+  const config = delegationConfigProblems(list);
+  if (config.length) return no(`the delegation config is unsound (${config.join("; ")})`);
+  const expires = Date.parse(d.expiresAt);
+  if (!(now.getTime() < expires)) return no(`its delegation expired at ${d.expiresAt}`);
+  if (expires - now.getTime() > MAX_DELEGATION_DAYS * 86_400_000) return no(`its delegation runs past ${MAX_DELEGATION_DAYS} days`);
+  const req = p.request;
+  if (req.delegate !== d.agent) return no(`the request didn't name ${d.agent} as its delegate`);
+  if (d.requesters && !d.requesters.includes(p.requester.name)) return no(`${p.requester.name} is not one of its requesters`);
+  for (const a of req.actions) {
+    const why = neverDelegable(a, list);
+    if (why) return no(`${why}, never delegable`);
+  }
+  for (const r of req.resources ?? []) if (/[*?]/.test(r)) return no(`resource ${r} is a wildcard, never delegable`);
+  const account = String(req.account);
+  if (!list.accounts[account]) return no(`account ${account} is not on the allowlist`);
+  const misses: string[] = [];
+  for (const c of d.capabilities) {
+    const miss = (m: string) => misses.push(`${c.id}: ${m}`);
+    if (!c.accounts.includes(account)) { miss(`account ${account} is not in it`); continue; }
+    if (!req.regions?.length) { miss(`the request must name its regions (${c.regions.join(", ")})`); continue; }
+    const offRegion = req.regions.filter((r) => !c.regions.includes(r));
+    if (offRegion.length) { miss(`regions ${offRegion.join(", ")} are not in it`); continue; }
+    const reads = new Set(list.autoRules.filter((r) => (c.readOnlyRules ?? []).includes(r.id)).flatMap((r) => r.actions.map((a) => a.toLowerCase())));
+    const used = new Set<string>();
+    let bad: string | undefined;
+    for (const s of p.sessionPolicy.Statement) {
+      if (s.Effect !== "Allow") continue;
+      if (s.NotAction || s.NotResource || !s.Action) { bad = `statement ${s.Sid} isn't a plain allow`; break; }
+      const resources = [s.Resource ?? "*"].flat();
+      for (const a of s.Action) {
+        if (reads.has(a.toLowerCase())) { used.add("read-only"); continue; }
+        const grant = c.grants.find((g) => g.actions.some((x) => x.toLowerCase() === a.toLowerCase()) && resources.every((r) => req.regions!.some((reg) => grantCovers(g, r, account, reg))));
+        if (!grant) { bad = `${a} on ${resources.join(", ")} is outside it`; break; }
+        used.add(grant.id);
+      }
+      if (bad) break;
+    }
+    if (bad) { miss(bad); continue; }
+    // The IAM guards for tag-scoped grants must be in the policy as the broker builds them.
+    const want = delegateGuards(req, list);
+    const have = p.sessionPolicy.Statement.filter((s) => s.Sid.startsWith("DelegateDenyUntagged"));
+    if (JSON.stringify(want) !== JSON.stringify(have)) { miss("the policy lacks the delegate's tag guard"); continue; }
+    return { ok: true, delegate: d, capability: c.id, grants: [...used].sort() };
+  }
+  return no(misses.join("; ") || "it has no capabilities");
 }

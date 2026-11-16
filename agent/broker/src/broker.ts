@@ -20,7 +20,7 @@ import { appendAudit, type AuditEvent } from "./audit.ts";
 import type { Deliverer, DeliveryRef } from "./deliver.ts";
 import { withLock } from "./lock.ts";
 import { decisionFromText, RelayVerificationError, requestFromText, verifiedMessage, type Decision as RelayDecision, type RelayApi, type Verified } from "./relay.ts";
-import { approverCounts, decide, NAMESPACE_TAG_KEY, newNamespace, sessionName, type Allowlist, type CredentialRequest, type Decision, type Principal, type RunClaim, type SessionPolicy } from "./policy.ts";
+import { approverCounts, checkDelegatedApproval, decide, NAMESPACE_TAG_KEY, newNamespace, sessionName, type Allowlist, type CredentialRequest, type Decision, type Principal, type RunClaim, type SessionPolicy } from "./policy.ts";
 import type { StsClient } from "./sts.ts";
 
 export { withLock };
@@ -52,6 +52,8 @@ export interface Reply {
   namespace?: string;
   /** For pending-approval: the message the broker DMs to the approver, verbatim. */
   approvalPrompt?: string;
+  /** For pending-approval: who to send approvalPrompt to (the named delegate when it can approve this, else Khaliq). */
+  approver?: string;
 }
 
 interface Pending {
@@ -238,7 +240,15 @@ export class Broker {
         const pending: Pending = { requestId, request: req, requester, ...(relayMessageId ? { relayMessageId } : {}), roleArn: decision.roleArn, sessionPolicy: decision.sessionPolicy, durationSeconds: decision.durationSeconds, digest, createdAt: this.deps.now().toISOString(), reasons: decision.reasons, namespace: run.namespace };
         writeJson(join(this.deps.stateDir, "pending", `${requestId}.json`), pending);
         this.audit({ ...base, kind: "pending-approval", roleArn: decision.roleArn, sessionName: name, durationSeconds: decision.durationSeconds, policyDigest: digest, reasons: decision.reasons });
-        return { requestId, outcome: "pending-approval", reasons: decision.reasons, account: req.account, roleArn: decision.roleArn, sessionName: name, policyDigest: digest, namespace: run.namespace, approvalPrompt: approvalPrompt(pending, this.deps.allowlist) };
+        const reasons = [...decision.reasons];
+        let approver: string | undefined;
+        if (req.delegate) {
+          // Say up front whether the named delegate can approve this, so the request goes to the right approver.
+          const check = req.delegate === requester.name ? { ok: false as const, reason: "a requester cannot approve its own request" } : checkDelegatedApproval(pending, { name: req.delegate, address: req.delegate, kind: "agent" }, this.deps.allowlist, this.deps.now());
+          if (check.ok) approver = req.delegate;
+          else reasons.push(check.reason);
+        }
+        return { requestId, outcome: "pending-approval", reasons, account: req.account, roleArn: decision.roleArn, sessionName: name, policyDigest: digest, namespace: run.namespace, approver: approver ?? this.deps.allowlist.humanApprovers[0]!, approvalPrompt: approvalPrompt(pending, this.deps.allowlist, approver) };
       }
       return this.issue(requestId, req, requester, name, run.namespace, decision.roleArn, decision.sessionPolicy, decision.durationSeconds, digest, base, decision.reasons);
     });
@@ -257,7 +267,15 @@ export class Broker {
       };
       if (!existsSync(path)) return reject("no pending request with that id (already decided, expired or never existed)");
       const p = readJson<Pending>(path, undefined as unknown as Pending);
-      if (!approverCounts(approver, this.deps.allowlist)) return reject(`${approver.name} (${approver.kind}) is not an approver: only a human on humanApprovers can approve`, p);
+      // A human on humanApprovers exactly as before; otherwise only a delegate, inside its capability, before its expiry.
+      let delegation: AuditEvent["delegation"];
+      if (!approverCounts(approver, this.deps.allowlist)) {
+        if (!(this.deps.allowlist.delegatedApprovers ?? []).some((d) => d.agent === approver.name)) return reject(`${approver.name} (${approver.kind}) is not an approver: only a human on humanApprovers can approve`, p);
+        if (approver.name === p.requester.name) return reject("a requester cannot approve its own request", p);
+        const check = checkDelegatedApproval(p, approver, this.deps.allowlist, this.deps.now());
+        if (!check.ok) return reject(check.reason, p);
+        delegation = { delegate: check.delegate.agent, capability: check.capability, grants: check.grants, expiresAt: check.delegate.expiresAt };
+      }
       if (approver.name === p.requester.name) return reject("a requester cannot approve its own request", p);
       const ageMin = (this.deps.now().getTime() - Date.parse(p.createdAt)) / 60_000;
       if (ageMin > this.deps.allowlist.approvalWindowMinutes) {
@@ -276,10 +294,16 @@ export class Broker {
       }
       const digestNow = requestDigest({ request: p.request, requester: p.requester, roleArn: again.roleArn, sessionPolicy: again.sessionPolicy, durationSeconds: again.durationSeconds });
       if (digestNow !== p.digest) return reject("the request's policy changed since it was shown to you: ask the requester to send it again", p);
+      // A delegate approves what the broker would build today, not only what it was shown.
+      if (delegation) {
+        const recheck = checkDelegatedApproval({ request: p.request, requester: p.requester, sessionPolicy: again.sessionPolicy }, approver, this.deps.allowlist, this.deps.now());
+        if (!recheck.ok) return reject(recheck.reason, p);
+      }
       renameSync(path, join(this.deps.stateDir, "consumed", `${p.requestId}.json`));
       const base = this.base(p.requestId, p.request, p.requester, p.relayMessageId);
-      this.audit({ ...base, kind: "approved", approver: { name: approver.name, address: approver.address, kind: approver.kind }, ...(relayMessageId ? { relayMessageId } : {}), policyDigest: p.digest });
-      return this.issue(p.requestId, p.request, p.requester, sessionName(p.requester), run.namespace, p.roleArn, p.sessionPolicy, p.durationSeconds, p.digest, base, [...p.reasons, `approved by ${approver.name}`]);
+      this.audit({ ...base, kind: "approved", approver: { name: approver.name, address: approver.address, kind: approver.kind }, ...(relayMessageId ? { relayMessageId } : {}), policyDigest: p.digest, ...(delegation ? { delegation } : {}) });
+      const by = delegation ? `approved by ${approver.name} (delegated by ${this.deps.allowlist.delegatedApprovers!.find((d) => d.agent === approver.name)!.grantedBy}, capability ${delegation.capability}, until ${delegation.expiresAt})` : `approved by ${approver.name}`;
+      return this.issue(p.requestId, p.request, p.requester, sessionName(p.requester), run.namespace, p.roleArn, p.sessionPolicy, p.durationSeconds, p.digest, base, [...p.reasons, by]);
     });
   }
 
@@ -418,10 +442,12 @@ function describeCondition(c: SessionPolicy["Statement"][number]["Condition"]): 
   return parts.length ? ` (${parts.join("; ")})` : " (account-wide, no tag condition)";
 }
 
-export function approvalPrompt(p: Pending, list: Allowlist): string {
+export function approvalPrompt(p: Pending, list: Allowlist, delegate?: string): string {
   const account = list.accounts[p.request.account];
+  const d = delegate ? list.delegatedApprovers?.find((x) => x.agent === delegate) : undefined;
   return [
     `AWS credential request ${p.requestId} needs your approval.`,
+    ...(d ? [`You may approve it as a delegate of ${d.grantedBy} until ${d.expiresAt}, only inside your capability. Approve only what you asked for; refuse anything you didn't.`] : []),
     `From: ${p.requester.name} (${p.requester.address})`,
     `Account: ${p.request.account} (${account?.label ?? "?"}, ${account?.tier ?? "?"}) via ${p.roleArn}`,
     `Purpose: ${p.request.purpose}`,

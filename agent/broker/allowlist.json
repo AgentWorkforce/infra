@@ -5,6 +5,59 @@
   "humanApprovers": [
     "khaliq-gant"
   ],
+  "delegatedApprovers": [
+    {
+      "$comment": "A standing delegation: this agent may approve requests that name it as delegate and fall entirely inside one capability, until expiresAt. Never delegable whatever is listed here: IAM, identity and audit controls, never-issue actions, deletes, wildcard actions or resources, accounts not on this allowlist. Every delegated approval is audited with the delegate, request id, digest and capability. See broker/DESIGN.md.",
+      "agent": "neon-exit-lead",
+      "expiresAt": "2026-11-19T00:00:00Z",
+      "grantedBy": "khaliq-gant",
+      "reason": "Khaliq asked (2026-11-15) to let the neon-exit lead drive the Neon exit without blocking on him.",
+      "capabilities": [
+        {
+          "id": "neon-exit",
+          "accounts": [
+            "500268966557"
+          ],
+          "regions": [
+            "us-east-1"
+          ],
+          "readOnlyRules": [
+            "read-describe"
+          ],
+          "grants": [
+            {
+              "id": "neon-exit-secrets",
+              "actions": [
+                "secretsmanager:GetSecretValue",
+                "secretsmanager:PutSecretValue"
+              ],
+              "secretPrefixes": [
+                "neon-exit/"
+              ],
+              "secretNames": [
+                "infra-ops/supabase-management-token"
+              ]
+            },
+            {
+              "id": "neon-exit-ssm",
+              "actions": [
+                "ssm:StartSession",
+                "ssm:SendCommand"
+              ],
+              "instanceTag": {
+                "key": "project",
+                "value": "neon-exit"
+              },
+              "ssmDocuments": [
+                "AWS-RunShellScript",
+                "SSM-SessionManagerRunShell"
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ],
   "duration": {
     "minMinutes": 15,
     "maxMinutes": 60,
