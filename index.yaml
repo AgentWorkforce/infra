@@ -1295,6 +1295,33 @@ entries:
       artifacthub.io/license: Apache-2.0
     apiVersion: v2
     appVersion: 0.1.0
+    created: "2026-11-16T05:41:58.293752976Z"
+    description: Self-hosted Agent Relay control-plane API for messaging and sessions
+    digest: fd5fefdfaa134bfe296aaac54c851f7c89f0a242a2c6c4a1ced04b59127fa2f8
+    home: https://github.com/AgentWorkforce/relay-control
+    keywords:
+    - agent-relay
+    - control-plane
+    - api
+    - self-hosted
+    kubeVersion: '>=1.28.0-0'
+    maintainers:
+    - name: AgentWorkforce
+      url: https://github.com/AgentWorkforce
+    name: relay-control
+    sources:
+    - https://github.com/AgentWorkforce/relay-control
+    type: application
+    urls:
+    - https://github.com/AgentWorkforce/infra/releases/download/relay-control-0.4.22/relay-control-0.4.22.tgz
+    version: 0.4.22
+  - annotations:
+      agentworkforce.dev/license-scope: First-party chart code only; dependencies
+        and images retain their own licenses.
+      agentworkforce.dev/min-helm-version: 3.10.0
+      artifacthub.io/license: Apache-2.0
+    apiVersion: v2
+    appVersion: 0.1.0
     created: "2026-11-16T02:18:36.384967207Z"
     description: Self-hosted Agent Relay control-plane API for messaging and sessions
     digest: 4566cd6df9923d98b4749d1433d6aca182c77f13b7ecdf83a7ca6d8f0fcd64fe
@@ -3309,6 +3336,34 @@ entries:
     - https://github.com/AgentWorkforce/helm-charts/releases/download/relayflows-0.1.0/relayflows-0.1.0.tgz
     version: 0.1.0
   relaygate:
+  - annotations:
+      agentworkforce.dev/license-scope: First-party chart code only; dependencies
+        and images retain their own licenses.
+      artifacthub.io/license: Apache-2.0
+    apiVersion: v2
+    appVersion: 0.1.0
+    created: "2026-11-16T05:41:58.544252257Z"
+    description: 'Optional governance gate for Agent Relay: agents register into a
+      group, every request is checked against mode bits, and writes that cross a group
+      boundary or leave through an external stream (Slack, a knowledge base) are classified.'
+    digest: 3491d4973fdf8eb3c80935b2b6f05c292ee0b8bb2cf3bc9a13b79e940e7675c8
+    home: https://github.com/AgentWorkforce/relaygate
+    keywords:
+    - relaygate
+    - governance
+    - agent-relay
+    kubeVersion: '>=1.27.0-0'
+    maintainers:
+    - name: AgentWorkforce
+      url: https://github.com/AgentWorkforce
+    name: relaygate
+    sources:
+    - https://github.com/AgentWorkforce/relaygate
+    - https://github.com/AgentWorkforce/infra/tree/main/charts/relaygate
+    type: application
+    urls:
+    - https://github.com/AgentWorkforce/infra/releases/download/relaygate-0.1.8/relaygate-0.1.8.tgz
+    version: 0.1.8
   - annotations:
       agentworkforce.dev/license-scope: First-party chart code only; dependencies
         and images retain their own licenses.
@@ -7715,4 +7770,4 @@ entries:
     urls:
     - https://github.com/AgentWorkforce/infra/releases/download/telemetry-collector-0.1.0/telemetry-collector-0.1.0.tgz
     version: 0.1.0
-generated: "2026-11-16T05:28:45.488906919Z"
+generated: "2026-11-16T05:41:58.544514297Z"
