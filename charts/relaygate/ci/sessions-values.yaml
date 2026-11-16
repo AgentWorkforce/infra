@@ -1,5 +1,5 @@
 image:
-  digest: sha256:b2fcef804f86252c6013a94ea27580269dc00a3acc69d5fadc58f24565517d9f
+  digest: sha256:0ca54cddf43b4771fade43d06d280405574ea77280eb0fde392fdb90ee29e248
 policy:
   enrollmentKeys:
     - { id: slack-bridge, gid: 22, sha256: "1111111111111111111111111111111111111111111111111111111111111111", namePrefix: "slack-" }
