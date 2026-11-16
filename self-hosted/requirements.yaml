@@ -435,7 +435,7 @@ compatibility:
         - "ci/sessions-pipeline-profiles/matrix.sh"
         - "charts/sessions-pipeline/templates/_scrub-engine.tpl:1"
         - "ci/sessions-pipeline-scrub-engine/test_scrub_engine.py:1"
-      notes: 'Carries 0.8.43. Opt-in ingestEdge.ledgerBucket.{bucket,region} renders INGEST_LEDGER_BUCKET / INGEST_LEDGER_REGION on the ingest edge and INGEST_REARM_LEDGER_BUCKET / _REGION on the re-arm sweeper (requires ledger=s3 and locker.provider=s3; must differ from locker.bucket; region defaults to locker.region). Needs a services image with ledger-store.ts and an offline ledger relocation first (relayhistory-pipeline docs/ledger-relocation.md). Default renders are unchanged apart from the helm.sh/chart labels.'
+      notes: 'Carries 0.8.43. Opt-in ingestEdge.ledgerHomeGuard renders INGEST_LEDGER_HOME_GUARD=on (the relocation fork guard on the Locker bucket); opt-in ingestEdge.ledgerBucket.{bucket,region} renders INGEST_LEDGER_BUCKET / INGEST_LEDGER_REGION on the ingest edge and INGEST_REARM_LEDGER_BUCKET / _REGION on the re-arm sweeper (requires ledger=s3 and locker.provider=s3; must differ from locker.bucket; region defaults to locker.region). Needs a services image with ledger-store.ts and an offline ledger relocation first (relayhistory-pipeline docs/ledger-relocation.md). Default renders are unchanged apart from the helm.sh/chart labels.'
     - id: sessions-pipeline-0.8.43
       status: planned
       charts: { sessions-pipeline: 0.8.43, sessions-pipeline-worker: 0.7.10, session-ingest-api: 0.4.5, session-read-api: 0.2.15 }
@@ -8258,8 +8258,8 @@ entries:
       ingestEdge.sessionSelection or the operator session erase. The database
       stays required (controls mirror deletions to SQL).
     chart: sessions-pipeline
-    values: [ingestEdge.ledger, ingestEdge.ledgerParallel, ingestEdge.ledgerBucket]
-    env: [INGEST_LEDGER, INGEST_LEDGER_PARALLEL, INGEST_LEDGER_BUCKET, INGEST_LEDGER_REGION]
+    values: [ingestEdge.ledger, ingestEdge.ledgerParallel, ingestEdge.ledgerBucket, ingestEdge.ledgerHomeGuard]
+    env: [INGEST_LEDGER, INGEST_LEDGER_PARALLEL, INGEST_LEDGER_BUCKET, INGEST_LEDGER_REGION, INGEST_LEDGER_HOME_GUARD]
     profiles: [selfhost-postgres, migration, external-selfhosted, external-rds, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql, aws-rds-native]
     status: shipped
     provided_by: operator

@@ -154,6 +154,9 @@ class S3Ledger(unittest.TestCase):
                     fail="ingestEdge.ledgerBucket.bucket must be an S3 bucket name")
         self.render(merge(s3, {"ingestEdge": {"ledgerBucket": {"region": "us-west-2"}}}),
                     fail="ingestEdge.ledgerBucket.region requires ingestEdge.ledgerBucket.bucket")
+        self.assertNotIn("INGEST_LEDGER_HOME_GUARD", self.ingest_env(self.render(s3)))
+        self.assertEqual(self.ingest_env(self.render(merge(s3, {"ingestEdge": {"ledgerHomeGuard": True}})))["INGEST_LEDGER_HOME_GUARD"]["value"], "on")
+        self.render(merge(load(SQL_FIXTURE), {"ingestEdge": {"ledgerHomeGuard": True}}), fail="ingestEdge.ledgerHomeGuard requires ingestEdge.ledger=s3")
 
     def test_startup_failure_threshold(self):
         s3 = merge(load(S3_FIXTURE), {"ingestEdge": {"admission": {"mode": "async"}}})

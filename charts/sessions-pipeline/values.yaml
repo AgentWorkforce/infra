@@ -616,6 +616,11 @@ ingestEdge:
   # Empty bucket (default) renders nothing. Moving an existing ledger is an offline
   # relocation (stop, copy, verify, switch the ledger-home marker), never just a
   # values change: with this set, no claim admits until the marker names the bucket.
+  # INGEST_LEDGER_HOME_GUARD=on: every claim also reads the ledger-home marker in
+  # locker.bucket and refuses when it names another bucket (a relocated ledger).
+  # Requires ledger=s3. false (default) renders nothing. Turn it on before a
+  # relocation starts (relayhistory-pipeline docs/ledger-relocation.md step 0).
+  ledgerHomeGuard: false
   ledgerBucket:
     bucket: ""
     # Empty: locker.region.
