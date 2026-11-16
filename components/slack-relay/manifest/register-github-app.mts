@@ -271,6 +271,7 @@ export function register(o: RegisterOptions): Promise<{ appId: string; slug: str
   const state = randomBytes(16).toString("hex");
   let creds: Credentials | null = null;
   let app: Conversion | null = null;
+  let stored = false; // the app ID and key reached every store
   let busy = false;
 
   return new Promise((resolve, reject) => {
@@ -298,23 +299,30 @@ export function register(o: RegisterOptions): Promise<{ appId: string; slug: str
         }
         if (url.pathname === "/created") {
           if (url.searchParams.get("state") !== state) return send(res, 400, page("Wrong state", "<p>This page was not opened by this registration. Start again.</p>"));
-          if (app || busy) return send(res, 409, page("Already registered", "<p>The app was already created; install it from the terminal's link.</p>"));
+          if (stored || busy) return send(res, 409, page("Already registered", "<p>The app was already created; install it from the terminal's link.</p>"));
           busy = true;
-          app = await exchangeCode(o.api, url.searchParams.get("code") ?? "", fetchImpl);
-          creds = { appId: app.appId, privateKey: app.privateKey };
+          // The code is one-shot: convert once, then keep the key in memory
+          // until every store has it, so a failed store can be retried by
+          // reloading this page.
+          if (!app) {
+            app = await exchangeCode(o.api, url.searchParams.get("code") ?? "", fetchImpl);
+            creds = { appId: app.appId, privateKey: app.privateKey };
+            log(`created GitHub App ${app.name} (ID ${app.appId})`);
+          }
           for (const s of o.stores) {
-            await s.put(creds);
+            await s.put(creds!);
             log(`stored the app ID and private key: ${s.label}`);
           }
+          stored = true;
           busy = false;
           const install = installUrl(o.github, app);
-          log(`created GitHub App ${app.name} (ID ${app.appId}). Install it on the repositories' owner: ${install}`);
+          log(`install the app on the repositories' owner: ${install}`);
           o.open?.(install);
           res.writeHead(303, { location: install, "cache-control": "no-store" });
           return res.end();
         }
         if (url.pathname === "/installed") {
-          if (!app || !creds) return send(res, 409, page("Not yet", "<p>Create the app first.</p>"));
+          if (!app || !creds || !stored) return send(res, 409, page("Not yet", "<p>Create the app (and store its key) first.</p>"));
           const id = url.searchParams.get("installation_id") ?? "";
           if (!/^[0-9]{1,20}$/.test(id)) return send(res, 400, page("No installation", "<p>GitHub sent no installation ID.</p>"));
           // An installation ID from the browser is unauthenticated: it is
@@ -336,6 +344,11 @@ export function register(o: RegisterOptions): Promise<{ appId: string; slug: str
         // Messages never carry the key, the JWT or a token (see github-app.mts).
         const msg = (err as Error).message;
         log(`error: ${msg}`);
+        if (url.pathname === "/created" && app && !stored) {
+          // Converted but not stored: the key exists only in this process.
+          log("the app's key is held in memory: fix the store and reload the page to retry (stopping the helper loses it; you can then generate a new key on the app's page)");
+          return send(res, 500, page("Storing the credentials failed", `<p>${esc(msg)}</p><p>The app was created and its key is held by the helper. Fix the problem (see the terminal) and <a href="">reload this page</a> to try again. Don't stop the helper.</p>`));
+        }
         send(res, 500, page("Something went wrong", `<p>${esc(msg)}</p><p>See the terminal.</p>`));
         if (url.pathname === "/created") finish(err as Error);
       }
@@ -361,16 +374,21 @@ function openBrowser(url: string): void {
   }
 }
 
-function valuesHint(stores: Store[]): string {
+/** The Helm values for what was registered: the Secret's name and, off github.com, the GitHub host. */
+export function valuesHint(o: { secret: string; github: string; api: string; secretManager: boolean }): string {
+  const ghe = new URL(o.github).host !== "github.com";
+  const defaultApi = apiBase(o.github);
   return [
     "",
-    "Helm values (the chart reads app-id, private-key and installation-id from this Secret):",
+    `Helm values (the chart reads app-id, private-key and installation-id from the Secret ${o.secret}):`,
     "  repos:",
     "    enabled: true",
+    ...(ghe ? [`    host: ${o.github}`] : []),
+    ...(o.api !== defaultApi ? [`    apiUrl: ${o.api}`] : []),
     "    app:",
-    "      privateKey: { name: slack-relay-github-app, key: private-key }",
-    ...(stores.some((s) => s.label.startsWith("Secret Manager"))
-      ? ["", "From Secret Manager, sync the three secrets into a Kubernetes Secret slack-relay-github-app", "with keys app-id, private-key and installation-id (e.g. with External Secrets)."]
+    `      privateKey: { name: ${o.secret}, key: private-key }`,
+    ...(o.secretManager
+      ? ["", `From Secret Manager, sync the three secrets into a Kubernetes Secret ${o.secret}`, "with keys app-id, private-key and installation-id (e.g. with External Secrets)."]
       : []),
   ].join("\n");
 }
@@ -420,7 +438,11 @@ async function main(argv: string[]): Promise<void> {
   if (stores.length === 0) throw new Error("say where to store the credentials: --k8s-namespace, --gcp-project and/or --out-dir");
   if (cmd === "exchange") {
     const app = await exchangeCode(api, a.code ?? "");
-    for (const s of stores) await s.put({ appId: app.appId, privateKey: app.privateKey });
+    try {
+      for (const s of stores) await s.put({ appId: app.appId, privateKey: app.privateKey });
+    } catch (err) {
+      throw new Error(`${(err as Error).message}. The app (ID ${app.appId}) exists but its key was not stored and the code is used: generate a new private key on the app's page (${installUrl(github, app).replace(/\/installations\/new$/, "")})`);
+    }
     process.stderr.write(`created GitHub App ${app.name} (ID ${app.appId}); stored in ${stores.map((s) => s.label).join("; ")}\nInstall it: ${installUrl(github, app)}\n`);
     return;
   }
@@ -428,7 +450,7 @@ async function main(argv: string[]): Promise<void> {
   const port = Number(a.port);
   if (!Number.isInteger(port) || port < 0 || port > 65535) throw new Error("--port must be a port number");
   const done = await register({ github, api, org: a.org!, name: a.name!, stores, port, open: a["no-open"] ? undefined : openBrowser });
-  process.stderr.write(`\nDone: app ${done.slug} (ID ${done.appId}), installation ${done.installationId}, ${done.repos.length} repositories.\n${valuesHint(stores)}\n`);
+  process.stderr.write(`\nDone: app ${done.slug} (ID ${done.appId}), installation ${done.installationId}, ${done.repos.length} repositories.\n${valuesHint({ secret: a["k8s-secret"]!, github, api, secretManager: Boolean(a["gcp-project"]) })}\n`);
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {

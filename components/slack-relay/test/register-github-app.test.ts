@@ -23,6 +23,7 @@ import {
   type Credentials,
   type Runner,
   type Store,
+  valuesHint,
 } from "../manifest/register-github-app.mts";
 
 const { privateKey: PEM } = generateKeyPairSync("rsa", {
@@ -249,4 +250,58 @@ test("register: browser → GitHub → /created → stores → install → /inst
   } finally {
     gh.server.close();
   }
+});
+
+test("register: a failed store keeps the key in memory and a reload retries without converting again", async () => {
+  const gh = fakeGitHub();
+  await new Promise<void>((r) => gh.server.listen(0, "127.0.0.1", r));
+  let attempts = 0;
+  const puts: Credentials[] = [];
+  const flaky: Store = {
+    label: "flaky",
+    put: async (c) => {
+      if (++attempts === 1) throw new Error("kubectl: connection refused");
+      puts.push({ ...c });
+    },
+  };
+  const logs: string[] = [];
+  try {
+    const api = `http://127.0.0.1:${(gh.server.address() as { port: number }).port}`;
+    let base = "";
+    let listening!: () => void;
+    const ready = new Promise<void>((r) => (listening = r));
+    const done = register({ github: "https://github.com", api, org: "example-org", name: "x", stores: [flaky], log: (l) => void logs.push(l), onListening: (b) => ((base = b), listening()) });
+    await ready;
+    const action = /action="([^"]+)"/.exec(await (await fetch(`${base}/`)).text())![1]!.replace(/&amp;/g, "&");
+    const created = `${base}/created?code=good-code&state=${new URL(action).searchParams.get("state")}`;
+
+    const failed = await fetch(created, { redirect: "manual" });
+    assert.equal(failed.status, 500);
+    assert.match(await failed.text(), /reload this page/);
+    assert.equal((await fetch(`${base}/installed?installation_id=77`)).status, 409); // not stored yet
+    const retried = await fetch(created, { redirect: "manual" });
+    assert.equal(retried.status, 303);
+    assert.deepEqual(puts, [{ appId: "4242", privateKey: PEM }]);
+    assert.equal(gh.seen.filter((l) => l.includes("/conversions")).length, 1, "the one-shot code is converted once");
+
+    assert.equal((await fetch(`${base}/installed?installation_id=77`)).status, 200);
+    assert.equal((await done).installationId, "77");
+    assert.ok(logs.some((l) => /held in memory/.test(l)));
+    for (const l of logs) assert.ok(!l.includes(KEY_LINE), l);
+  } finally {
+    gh.server.close();
+  }
+});
+
+test("valuesHint names the Secret that was written and the GitHub Enterprise host", () => {
+  const plain = valuesHint({ secret: "slack-relay-github-app", github: "https://github.com", api: "https://api.github.com", secretManager: false });
+  assert.match(plain, /privateKey: \{ name: slack-relay-github-app, key: private-key \}/);
+  assert.ok(!/host:|apiUrl:|Secret Manager/.test(plain));
+  const ghe = valuesHint({ secret: "team-repos", github: "https://ghe.example.com", api: "https://ghe.example.com/api/v3", secretManager: true });
+  assert.match(ghe, /host: https:\/\/ghe\.example\.com\n/);
+  assert.ok(!ghe.includes("apiUrl:")); // the chart derives <host>/api/v3
+  assert.match(ghe, /privateKey: \{ name: team-repos, key: private-key \}/);
+  assert.match(ghe, /Kubernetes Secret team-repos/);
+  const custom = valuesHint({ secret: "s", github: "https://ghe.example.com", api: "https://api.ghe.example.com", secretManager: false });
+  assert.match(custom, /apiUrl: https:\/\/api\.ghe\.example\.com/);
 });
