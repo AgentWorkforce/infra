@@ -105,6 +105,22 @@ export function decisionFromText(text: string): Decision {
   throw new RelayVerificationError('the message must be exactly "approve <request id> <digest>" or "refuse <request id>"');
 }
 
+/** Relay agent names: what whois accepts (no path or query characters reach the API). */
+const AGENT_NAME_RE = /^[A-Za-z0-9][A-Za-z0-9._@-]{0,127}$/;
+
+/**
+ * Read-only lookup of one agent's Relay identity, for pinning a delegated
+ * approver's agentId: only the name, agent id and type. Never the workspace,
+ * the token, or anything else the record holds.
+ */
+export async function whois(api: RelayApi, name: string): Promise<{ name: string; agentId: string; type: string }> {
+  if (!AGENT_NAME_RE.test(name)) throw new RelayVerificationError(`bad Relay agent name ${JSON.stringify(name)}`);
+  const a = await api.agentByName(name);
+  if (!a || !a.id) throw new RelayVerificationError(`Relay has no agent ${name}`);
+  if (a.name !== name) throw new RelayVerificationError(`Relay returned a different agent for ${name}`);
+  return { name: a.name, agentId: a.id, type: a.type };
+}
+
 /** A named client: the API edge rejects some default library User-Agents (Cloudflare 1010). */
 export const USER_AGENT = "aws-cred-broker/1 (AgentWorkforce layered-infra-ops)";
 

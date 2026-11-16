@@ -152,7 +152,11 @@ A run tag is claimed by the first agent that receives credentials for it
   - the Relay server resolves the sender to the `agentId` the delegation
     pins, not just its name. A name can be re-registered by another
     session; the new holder doesn't inherit the delegation, and re-pinning
-    is an allowlist change;
+    is an allowlist change. The id comes from `aws-cred-broker whois --name
+    <agent>` on the broker's host: a read-only Relay lookup with the
+    broker's observer token that prints only the name, agent id and type,
+    and writes no state or audit line. Until `agentId` is set, the config
+    is unsound and every delegated approval is refused;
   - its delegation hasn't passed `expiresAt`, and `expiresAt` is at most 30
     days from now;
   - the requester named it (`"delegate": "<agent>"` in the request), and

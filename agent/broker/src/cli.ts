@@ -10,6 +10,7 @@
  *   cli.ts decide  --message-id M     the message is "approve <id> <digest>" or "refuse <id>"
  *   cli.ts sweep
  *   cli.ts verify-audit
+ *   cli.ts whois   --name N          read-only: N's Relay agent id and type (to pin delegatedApprovers[].agentId)
  * Identity flags (--from-*), stdin requests and the bare approve/refuse
  * commands are refused in this mode.
  *
@@ -33,7 +34,7 @@ import { verifyAudit } from "./audit.ts";
 import { Broker } from "./broker.ts";
 import { defaultDeliverer } from "./deliver.ts";
 import type { Allowlist, CredentialRequest, Principal } from "./policy.ts";
-import { relaycastApi } from "./relay.ts";
+import { relaycastApi, RelayVerificationError, whois } from "./relay.ts";
 import { awsCliSts } from "./sts.ts";
 
 const { positionals, values } = parseArgs({
@@ -45,6 +46,7 @@ const { positionals, values } = parseArgs({
     "message-id": { type: "string" },
     "request-id": { type: "string" },
     digest: { type: "string" },
+    name: { type: "string" },
   },
 });
 
@@ -82,6 +84,21 @@ else if (cmd === "verify-audit") {
 } else if (tokenFile) {
   // Relay mode: identity and text only from the Relay server.
   if (values["from-name"] || values["from-address"] || values["from-kind"] || values["request-id"] || values.digest) fail("relay mode: pass only --message-id; the broker reads the sender and the text from Relay");
+  if (cmd === "whois") {
+    // Read-only: no state, no audit, no message; prints the name, agent id and type only.
+    if (values["message-id"]) fail("whois takes only --name");
+    const name = values.name;
+    if (!name) fail("whois: --name is required");
+    if (!existsSync(tokenFile)) fail("relay mode: the Relay token file is missing; nothing was done");
+    const api = relaycastApi(process.env.BROKER_RELAY_API ?? "https://cast.agentrelay.com", readFileSync(tokenFile, "utf8").trim());
+    try {
+      process.stdout.write(JSON.stringify(await whois(api, name), null, 2) + "\n");
+    } catch (e) {
+      fail(e instanceof RelayVerificationError ? e.message : `whois: ${(e as Error).message}`);
+    }
+    process.exit(0);
+  }
+  if (values.name) fail("--name is only for whois");
   const messageId = values["message-id"];
   if (!messageId) fail("relay mode: --message-id is required");
   if (!existsSync(tokenFile)) fail("relay mode: the Relay token file is missing, so the sender can't be verified; nothing was done");
@@ -89,8 +106,9 @@ else if (cmd === "verify-audit") {
   const brokerName = process.env.BROKER_RELAY_NAME ?? "layered-infra-ops";
   if (cmd === "request") out = await broker.requestViaRelay(api, messageId, brokerName);
   else if (cmd === "decide") out = await broker.decideViaRelay(api, messageId, brokerName);
-  else fail(`relay mode: ${cmd ?? "(none)"} is not a command; use request, decide, sweep or verify-audit`);
-} else if (cmd === "request") out = await broker.request(JSON.parse(readFileSync(0, "utf8")) as CredentialRequest, principal(), values["message-id"]);
+  else fail(`relay mode: ${cmd ?? "(none)"} is not a command; use request, decide, whois, sweep or verify-audit`);
+} else if (cmd === "whois") fail("whois needs relay mode (BROKER_RELAY_TOKEN_FILE)");
+else if (cmd === "request") out = await broker.request(JSON.parse(readFileSync(0, "utf8")) as CredentialRequest, principal(), values["message-id"]);
 else if (cmd === "approve") out = await broker.approve(values["request-id"] ?? "", values.digest ?? "", principal(), values["message-id"]);
 else if (cmd === "refuse") out = await broker.refuse(values["request-id"] ?? "", principal(), values["message-id"]);
 else {

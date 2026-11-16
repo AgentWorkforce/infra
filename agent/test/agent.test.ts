@@ -67,7 +67,7 @@ test("the credential broker ships pinned: broker.ref is one exact commit, instal
   // Root-owned, read-only code; the agent user may run exactly the broker as credbroker.
   assert.match(lane, /install -m 0644 -o root -g root "\$tmp\/out\/agent\/broker\/src\/"\*\.ts/);
   // Relay mode only: request and decide take a message id; no bare approve/refuse, no identity flags.
-  assert.match(lane, /'agent ALL=\(credbroker\) NOPASSWD: %s request \*, %s decide \*, %s sweep, %s verify-audit\\n'/);
+  assert.match(lane, /'agent ALL=\(credbroker\) NOPASSWD: %s request \*, %s decide \*, %s whois \*, %s sweep, %s verify-audit\\n'/);
   const sudoers = lane.split("\n").find((l) => l.includes("NOPASSWD"))!;
   assert.doesNotMatch(sudoers, /approve|refuse/, "decisions only through decide, verified against Relay");
   assert.match(lane, /visudo -cf \/etc\/sudoers\.d\/aws-cred-broker\.new/);
