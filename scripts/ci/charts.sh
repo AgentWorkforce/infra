@@ -1027,6 +1027,10 @@ for chart in "${charts[@]}"; do
         [[ " $(peers relay-control) " == *" relaygate "* ]] || err "$chart: gate-only Control must admit relaygate (introspection)"
         [ "$(yq 'select(.kind == "Deployment" and .metadata.name == "relay-control") | .spec.template.spec.containers[0].env[] | select(.name == "SESSION_READ_API_URL") | .value' <<<"$out")" = http://ci-relaygate:8080/sessions ] \
           || err "$chart: gate-only SESSION_READ_API_URL must be relaygate's Sessions proxy"
+        ctl_env() { yq "select(.kind == \"Deployment\" and .metadata.name == \"relay-control\") | .spec.template.spec.containers[0].env[] | select(.name == \"$1\") | .value" <<<"$2" | sed '/^---$/d;/^$/d'; }
+        [ "$(ctl_env SELFHOST_RELAYGATE_PUBLIC_URL "$out")" = https://cast.gcp-proof.agentrelay.com ] && [ "$(ctl_env SELFHOST_RELAYGATE_PUBLIC_URL "$out")" = "$(ctl_env RELAYCAST_PUBLIC_URL "$out")" ] \
+          || err "$chart: gate-only SELFHOST_RELAYGATE_PUBLIC_URL must be the cast host, equal to RELAYCAST_PUBLIC_URL"
+        [ -z "$(ctl_env SELFHOST_RELAYGATE_PUBLIC_URL "$(render "$chart" "$v")")" ] || err "$chart: SELFHOST_RELAYGATE_PUBLIC_URL must be unset without gate-only"
         grep -A1 -F -- '- name: SESSIONS_INTERNAL_SECRET' <<<"$out" | grep -Fq 'name: agent-relay-gcp-proof, key: session-read-api-secret' || err "$chart: gate-only SESSIONS_INTERNAL_SECRET must be the reader's internal secret"
         [ "$(yq 'select(.kind == "Deployment" and .metadata.name == "ci-relaygate") | .spec.template.spec.containers[0].env[] | select(.name == "SESSIONS_CORS_ORIGINS") | .value' <<<"$out")" = "$(yq 'select(.kind == "Deployment" and .metadata.name == "agent-relay-read-api") | .spec.template.spec.containers[0].env[] | select(.name == "READ_API_CORS_ALLOWED_ORIGINS") | .value' <<<"$out")" ] \
           || err "$chart: gate-only SESSIONS_CORS_ORIGINS must equal the reader's READ_API_CORS_ALLOWED_ORIGINS"
@@ -1035,6 +1039,7 @@ for chart in "${charts[@]}"; do
         [ "$(render "$chart" "$v")" = "$(render "$chart" "$v" --set global.relaygate.gateOnly.enabled=false)" ] || err "$chart: gate-only=false must render the default"
         ! yq 'select(.kind == "NetworkPolicy" or .kind == "Ingress") | .. | select(. == "relaygate" or . == "agent-relay-gcp-proof-gate")' <<<"$(render "$chart" "$v")" | grep -q . || err "$chart: the default render must not route to or admit relaygate"
         expect_render_failure "$chart" "$g" "gate-only without relaygate" "requires components.relaygate" --set components.relaygate=false
+        expect_render_failure "$chart" "$g" "gate-only with relaycastPublicUrl off the cast host" "requires relay-control.services.relaycastPublicUrl=https://cast.gcp-proof.agentrelay.com" --set relay-control.services.relaycastPublicUrl=https://relay.gcp-proof.agentrelay.com
         expect_render_failure "$chart" "$g" "gate-only Relaycast upstream on the public host" "relaygate.proxy.relaycastUrl to be the relaycast Service" --set relaygate.proxy.relaycastUrl=https://cast.gcp-proof.agentrelay.com
         expect_render_failure "$chart" "$g" "gate-only reader upstream not the reader Service" "relaygate.proxy.sessionsReadUrl to be the Sessions reader Service" --set relaygate.proxy.sessionsReadUrl=http://other-read
         expect_render_failure "$chart" "$g" "gate-only upload upstream not the ingest Service" "relaygate.proxy.sessionsUploadUrl to be the ingest edge Service" --set relaygate.proxy.sessionsUploadUrl=http://agent-relay-read-api
