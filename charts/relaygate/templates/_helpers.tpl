@@ -66,8 +66,8 @@ mapping left off would cut clients off instead of gating them. */ -}}
 {{- if and (not (trim .Values.proxy.sessionsUrl)) (or (trim .Values.proxy.sessionsUploadUrl) (trim .Values.proxy.sessionsReadUrl) .Values.proxy.sessionsHosts) }}
 {{- fail "relaygate: proxy.sessionsUploadUrl, sessionsReadUrl and sessionsHosts need proxy.sessionsUrl" }}
 {{- end }}
-{{- if and (not (trim .Values.proxy.sessionsUrl)) (or .Values.proxy.sessionsCorsOrigins (trim .Values.control.introspectUrl) .Values.secrets.sessionsInternalSecret.name) }}
-{{- fail "relaygate: proxy.sessionsCorsOrigins, control.introspectUrl and secrets.sessionsInternalSecret need proxy.sessionsUrl" }}
+{{- if and (not (trim .Values.proxy.sessionsUrl)) (or .Values.proxy.sessionsCorsOrigins .Values.secrets.sessionsInternalSecret.name) }}
+{{- fail "relaygate: proxy.sessionsCorsOrigins and secrets.sessionsInternalSecret need proxy.sessionsUrl" }}
 {{- end }}
 {{- if and (not (trim .Values.control.introspectUrl)) (or (trim .Values.control.sessionIngestAudience) .Values.secrets.relaycontrolIntrospectSecret.name) }}
 {{- fail "relaygate: control.sessionIngestAudience and secrets.relaycontrolIntrospectSecret need control.introspectUrl" }}
