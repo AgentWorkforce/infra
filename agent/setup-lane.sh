@@ -81,8 +81,8 @@ fi
 #    The lead passes only a message id (broker/src/relay.ts). Without the
 #    token the broker refuses everything (fail closed);
 #  - the agent user may run /usr/local/libexec/aws-cred-broker as credbroker
-#    (sudoers) only with request, decide, sweep and verify-audit, and nothing
-#    else; /usr/local/bin/aws-cred-broker wraps that.
+#    (sudoers) only with request, decide, whois (read-only Relay lookup of
+#    an agent id), sweep and verify-audit, and nothing else; /usr/local/bin/aws-cred-broker wraps that.
 BROKER_HOME=/var/lib/aws-cred-broker
 broker_ref=$(tr -d '[:space:]' < /opt/agent-host/broker.ref 2>/dev/null || true)
 if [ -n "${CRED_BROKER_ROLE_ARN:-}" ] && printf '%s' "$broker_ref" | grep -qxE '[0-9a-f]{40}'; then
@@ -147,7 +147,7 @@ elif [ -n "${CRED_BROKER_ROLE_ARN:-}" ] && printf '%s' "$broker_ref" | grep -qxE
   printf '#!/bin/bash\nexec sudo -n -u credbroker /usr/local/libexec/aws-cred-broker "$@"\n' > /usr/local/bin/aws-cred-broker.new
   install -m 0755 -o root -g root /usr/local/bin/aws-cred-broker.new /usr/local/bin/aws-cred-broker && rm -f /usr/local/bin/aws-cred-broker.new
   b=/usr/local/libexec/aws-cred-broker
-  printf 'agent ALL=(credbroker) NOPASSWD: %s request *, %s decide *, %s sweep, %s verify-audit\n' "$b" "$b" "$b" "$b" > /etc/sudoers.d/aws-cred-broker.new
+  printf 'agent ALL=(credbroker) NOPASSWD: %s request *, %s decide *, %s whois *, %s sweep, %s verify-audit\n' "$b" "$b" "$b" "$b" "$b" > /etc/sudoers.d/aws-cred-broker.new
   if visudo -cf /etc/sudoers.d/aws-cred-broker.new >/dev/null; then
     install -m 0440 -o root -g root /etc/sudoers.d/aws-cred-broker.new /etc/sudoers.d/aws-cred-broker
   fi
