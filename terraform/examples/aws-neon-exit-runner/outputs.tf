@@ -29,18 +29,46 @@ output "copy_urls_secret_name" {
 }
 
 output "private_subnet_id" {
-  value = aws_subnet.private.id
+  description = "Private subnet the runner sits in."
+  value       = aws_subnet.private.id
 }
 
 output "nat_gateway_id" {
-  value = aws_nat_gateway.this.id
+  description = "NAT gateway that carries the runner's egress."
+  value       = aws_nat_gateway.this.id
 }
 
 output "security_group_id" {
-  value = aws_security_group.this.id
+  description = "Runner security group (no ingress)."
+  value       = aws_security_group.this.id
 }
 
 output "ssm_session_command" {
   description = "Shell on the runner for a principal allowed ssm:StartSession on it."
   value       = "aws ssm start-session --region ${var.region} --target ${aws_instance.runner.id}"
+}
+
+output "alerts_topic_arn" {
+  description = "Ops SNS topic the alarms publish to; subscribe the pager here (or set alert_endpoint)."
+  value       = aws_sns_topic.alerts.arn
+}
+
+output "log_group_name" {
+  description = "CloudWatch Logs group that receives the runner's *.log files."
+  value       = aws_cloudwatch_log_group.runner.name
+}
+
+output "runner_log_dir" {
+  description = "Directory on the runner whose *.log files are shipped."
+  value       = var.runner_log_dir
+}
+
+output "alarm_names" {
+  description = "Alarms, one per alert_signals entry."
+  value       = [for a in aws_cloudwatch_metric_alarm.signal : a.alarm_name]
+}
+
+output "cloudwatch_agent_association_id" {
+  description = "SSM association that installs and configures the CloudWatch agent (re-run with aws ssm start-associations-once)."
+  value       = aws_ssm_association.cloudwatch_agent.association_id
 }

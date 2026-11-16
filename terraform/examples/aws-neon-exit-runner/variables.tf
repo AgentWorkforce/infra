@@ -76,3 +76,63 @@ variable "tags" {
     ephemeral = "true"
   }
 }
+
+# --- alerting (alerting.tf) -------------------------------------------------
+
+variable "log_group_name" {
+  description = "CloudWatch Logs group that receives the runner's *.log files."
+  type        = string
+  default     = "/neon-exit/runner"
+}
+
+variable "log_retention_days" {
+  description = "Days CloudWatch keeps the runner log."
+  type        = number
+  default     = 90
+}
+
+variable "runner_log_dir" {
+  description = "Directory on the runner whose *.log files the CloudWatch agent ships. Write the erasure CLI's structured stdout there (for example `| tee -a /var/log/neon-exit/erasure.log`)."
+  type        = string
+  default     = "/var/log/neon-exit"
+  validation {
+    condition     = can(regex("^/[A-Za-z0-9_./-]+$", var.runner_log_dir)) && !endswith(var.runner_log_dir, "/")
+    error_message = "runner_log_dir must be an absolute path without a trailing slash."
+  }
+}
+
+variable "metric_namespace" {
+  description = "CloudWatch metric namespace for the signals extracted from the log."
+  type        = string
+  default     = "neon-exit"
+}
+
+variable "alert_signals" {
+  description = "Signals that page: metric name => CloudWatch Logs filter pattern on the JSON lines. One metric filter and one alarm (any match in a minute) per entry."
+  type        = map(string)
+  default = {
+    legacy_fence_failed                        = "{ $.legacy_fence_sweep_failed_total > 0 }"
+    legacy_erasure_requires_supabase_authority = "{ $.error_code = \"legacy_erasure_requires_supabase_authority\" }"
+  }
+  validation {
+    condition     = alltrue([for k, v in var.alert_signals : can(regex("^[A-Za-z0-9_]{1,100}$", k)) && length(trimspace(v)) > 0])
+    error_message = "alert_signals keys are metric names ([A-Za-z0-9_]) and values are non-empty filter patterns."
+  }
+}
+
+variable "alert_protocol" {
+  description = "SNS subscription protocol for the ops topic: https (a PagerDuty Events v2 CloudWatch integration URL or Slack workflow URL), email, email-json or sms."
+  type        = string
+  default     = "https"
+  validation {
+    condition     = contains(["https", "email", "email-json", "sms"], var.alert_protocol)
+    error_message = "alert_protocol must be one of https, email, email-json, sms."
+  }
+}
+
+variable "alert_endpoint" {
+  description = "Where the ops topic delivers (URL, address or number for alert_protocol). Unset: the topic exists, the alarms publish to it, and nobody is subscribed."
+  type        = string
+  default     = null
+  sensitive   = true
+}
