@@ -221,7 +221,76 @@ keeps a read-only copy of each repository at `/repos/<owner>/<name>`, and the
 agents get `Read`, `Glob` and `Grep` on `/repos`. They still have no shell, and
 they never see the GitHub token.
 
-### 1. Create a read-only token
+Two ways to give the sidecar access: a **GitHub App** (recommended: no
+personal token to renew, short-lived tokens, the installation's repository
+selection is the list) or a fine-grained personal access token.
+
+### 1. Register a GitHub App (recommended)
+
+You need to be an **owner of the GitHub organization** that owns the
+repositories (or, for personal repositories, that account).
+
+1. **Create the app.** Organization → Settings → Developer settings → GitHub
+   Apps → **New GitHub App** (on github.com:
+   `https://github.com/organizations/<org>/settings/apps/new`):
+   - **GitHub App name:** anything, e.g. `<org> agent repos`.
+   - **Homepage URL:** any URL, e.g. your intranet or this page.
+   - **Webhook:** untick **Active**. The sidecar receives no webhooks.
+   - **Repository permissions:** **Contents: Read-only** and **Metadata:
+     Read-only**. Nothing else; no organization or account permissions, no
+     events.
+   - **Where can this GitHub App be installed?** *Only on this account*.
+2. **Note the App ID** at the top of the app's General page.
+3. **Generate a private key** (General → Private keys → *Generate a private
+   key*). GitHub downloads a `.pem` file; that file is the credential, keep it
+   in your secret manager and delete the download afterwards.
+4. **Install the app** (the app's page → *Install App* → your organization):
+   choose *Only select repositories* and pick the ones the agents may read.
+   After installing, the URL ends in `/installations/<id>`: that number is
+   the **installation ID**.
+
+The installation's repository selection is the only list you need to keep:
+leave `repos.list` empty and the sidecar syncs every repository the
+installation can read (`GET /installation/repositories`), re-listed on every
+refresh. Add a repository to the installation and it appears on the next
+refresh; remove one and it is deleted from `/repos` on the next refresh.
+
+On GitHub Enterprise Server, create the app the same way on your server and
+set `repos.host`.
+
+Create the Secret, from your secret manager or the downloaded key:
+
+```sh
+kubectl -n agent-relay create secret generic slack-relay-github-app \
+  --from-literal=app-id=<app id> \
+  --from-literal=installation-id=<installation id> \
+  --from-file=private-key=./<app-name>.<date>.private-key.pem
+```
+
+Turn it on:
+
+```yaml
+repos:
+  enabled: true
+  app:
+    # app-id, installation-id and private-key all come from this Secret.
+    # appId / installationId set here instead override the Secret's keys.
+    privateKey: { name: slack-relay-github-app, key: private-key }
+  list: []          # empty: every repo the installation can read
+  refreshMinutes: 15
+  # host: ghe.example.com        # GitHub Enterprise Server (or https://ghe.example.com)
+  # apiUrl: ""                   # default https://api.github.com, or <host>/api/v3 on GHE
+  # sizeLimit: 5Gi               # cap on the checkouts; the pod is evicted past it
+```
+
+The sidecar signs a JWT (RS256, valid 10 minutes) with the private key,
+exchanges it for an installation token limited to `contents:read` and
+`metadata:read` (`POST /app/installations/<id>/access_tokens`), and asks for
+a new one before the hour-long token gets close to expiring.
+
+Set exactly one of `repos.app.privateKey.name` and `repos.token.name`.
+
+### Or: a fine-grained personal access token
 
 Use a fine-grained personal access token (GitHub → Settings → Developer
 settings → Personal access tokens → Fine-grained tokens):
@@ -237,20 +306,15 @@ settings → Personal access tokens → Fine-grained tokens):
 
 With a fine-grained token, its repository selection is the only list you need
 to keep: leave `repos.list` empty and the sidecar syncs every repository the
-token can read, re-listed on every refresh. A repository you add to the token
-appears on the next refresh; one you remove is deleted from `/repos` on the
-next refresh. Avoid a classic token or *All repositories*: the agents would
-then get every repository the account can read.
+token can read, re-listed on every refresh. Avoid a classic token or *All
+repositories*: the agents would then get every repository the account can
+read.
 
 On GitHub Enterprise Server, create the same token there and set `repos.host`.
-
-### 2. Create the Secret
 
 ```sh
 kubectl -n agent-relay create secret generic slack-relay-github --from-literal=token="$GITHUB_TOKEN"
 ```
-
-### 3. Turn it on
 
 ```yaml
 repos:
@@ -262,17 +326,16 @@ repos:
   #   - { repo: example-org/web, ref: release/2026 }      # branch, tag or commit
   list: []
   refreshMinutes: 15
-  # host: ghe.example.com        # GitHub Enterprise Server (or https://ghe.example.com)
-  # apiUrl: ""                   # default https://api.github.com, or <host>/api/v3 on GHE
-  # sizeLimit: 5Gi               # cap on the checkouts; the pod is evicted past it
 ```
+
+### Check it
 
 `helm upgrade` restarts the host pod. The first sync runs at start; the
 sidecar logs one line per repository with its commit:
 
 ```sh
 kubectl -n agent-relay logs statefulset/slack-relay-host -c repo-sync
-# repo-sync: token can read 2 repo(s)
+# repo-sync: GitHub App installation can read 2 repo(s)   (or: token can read ...)
 # repo-sync: example-org/api 3f2c... updated
 # repo-sync: example-org/web@release/2026 9a41... updated
 ```
@@ -296,25 +359,32 @@ kubectl -n agent-relay logs statefulset/slack-relay-host -c repo-sync
   copy can be up to `refreshMinutes` behind. A fetch or listing that stalls is
   stopped after 10 minutes and retried on the next refresh.
 
-### Where the token goes
+### Where the token and the app key go
 
-- Only into the `repo-sync` container's environment, from your Secret. The host
+- The GitHub App's private key is a Secret volume mounted only in the
+  `repo-sync` container (not in its environment, so git never sees it); the
+  installation tokens minted from it live only in that container's shell and
+  expire within the hour. The rest of this section applies to them as to a
+  personal token.
+- A personal token goes only into the `repo-sync` container's environment, from your Secret. The host
   container, and so the agents, never get it, and containers in a pod don't
   share a process namespace, so `/proc` can't reach it either.
 - Git gets it through `GIT_ASKPASS`, which reads it from that environment. It
   is never put in a clone URL, a remote, a git config or a credential store.
   The bare caches the sidecar fetches into have no remote and live on a volume
   the host doesn't mount; the checkouts have no `.git`.
-- Listing repositories (`repos.list` empty) calls `GET /user/repos` with the
-  token in the `Authorization` header, on the API origin only.
-- Logs carry repository names, refs and commit SHAs, never the token; a git
+- Listing repositories (`repos.list` empty) calls `GET /user/repos` (or
+  `GET /installation/repositories` for an app) with the token in the
+  `Authorization` header, on the API origin only.
+- Logs carry repository names, refs and commit SHAs, never the token, the
+  JWT or the key; a git
   error line is masked should it ever contain it.
 
 ### Network
 
 Allow outbound HTTPS from the namespace to `github.com` and `api.github.com`
-(or your GitHub Enterprise host). `api.github.com` is only needed when
-`repos.list` is empty.
+(or your GitHub Enterprise host). `api.github.com` is needed for a GitHub App
+(token exchange) and whenever `repos.list` is empty.
 
 ## Governance with relaygate (optional)
 
@@ -460,8 +530,10 @@ See `charts/slack-relay/values.yaml`. The ones you're most likely to change:
 | `host.disallowedTools` | `[Bash, WebFetch, WebSearch, Read(//proc/**)]` | Always refused. |
 | `host.idleReleaseMinutes` | `15` | |
 | `repos.enabled` | `false` | Read-only GitHub repositories at `/repos` for the agents. |
-| `repos.token` | `{ name: "", key: token }` | Secret with a read-only GitHub token; only the sidecar gets it. |
-| `repos.list` | `[]` (every repo the token can read) | `owner/name` or `{ repo, ref }`. |
+| `repos.app.privateKey` | `{ name: "", key: private-key }` | Secret with the GitHub App's private key (and, by default, `app-id` and `installation-id`); only the sidecar mounts it. Recommended. |
+| `repos.app.appId` / `repos.app.installationId` | `""` | Override the Secret's `app-id` / `installation-id` keys (`repos.app.appIdKey`, `repos.app.installationIdKey`). |
+| `repos.token` | `{ name: "", key: token }` | Or: Secret with a read-only GitHub token; only the sidecar gets it. |
+| `repos.list` | `[]` (every repo the app installation or token can read) | `owner/name` or `{ repo, ref }`. |
 | `repos.refreshMinutes` | `15` | |
 | `repos.host` | `github.com` | GitHub Enterprise Server host or base URL. |
 | `sessions.upload.enabled` | `false` | Upload each agent's Claude session as the agent (needs relaygate). |

@@ -121,8 +121,25 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- fail "slack-relay: router.orchestrator must be claude or deterministic" }}
 {{- end }}
 {{- if .Values.repos.enabled }}
-{{- if not .Values.repos.token.name }}
-{{- fail "slack-relay: repos.enabled needs repos.token.name (a Secret with a read-only GitHub token)" }}
+{{- $app := .Values.repos.app | default dict }}
+{{- $appKey := ($app.privateKey | default dict).name }}
+{{- if and $appKey .Values.repos.token.name }}
+{{- fail "slack-relay: set one of repos.app.privateKey.name and repos.token.name, not both" }}
+{{- end }}
+{{- if not (or $appKey .Values.repos.token.name) }}
+{{- fail "slack-relay: repos.enabled needs repos.app.privateKey.name (a GitHub App, recommended) or repos.token.name (a Secret with a read-only GitHub token)" }}
+{{- end }}
+{{- if $appKey }}
+{{- $id := include "slack-relay.reposAppId" . }}
+{{- if not (or (regexMatch "^([0-9]+|Iv[0-9A-Za-z.]+)$" $id) (and (eq $id "") $app.appIdKey)) }}
+{{- fail "slack-relay: repos.app.appId must be the GitHub App's numeric ID or client ID (or empty with repos.app.appIdKey)" }}
+{{- end }}
+{{- if not (regexMatch "^[0-9]*$" (include "slack-relay.reposInstallationId" .)) }}
+{{- fail "slack-relay: repos.app.installationId must be a number" }}
+{{- end }}
+{{- if not ($app.privateKey.key | default "") }}
+{{- fail "slack-relay: repos.app.privateKey.key is required" }}
+{{- end }}
 {{- end }}
 {{- $seen := dict }}
 {{- range (include "slack-relay.repos" . | fromJsonArray) }}
@@ -148,6 +165,16 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- fail "slack-relay: repos.refreshMinutes must be a whole number of minutes, at least 1" }}
 {{- end }}
 {{- end }}
+{{- end }}
+
+{{/* repos.app.appId / installationId as strings (YAML numbers render as floats otherwise). */}}
+{{- define "slack-relay.reposAppId" -}}
+{{- $v := (.Values.repos.app | default dict).appId | default "" }}
+{{- if or (kindIs "float64" $v) (kindIs "int64" $v) (kindIs "int" $v) }}{{ int64 $v }}{{ else }}{{ $v | toString | trim }}{{ end }}
+{{- end }}
+{{- define "slack-relay.reposInstallationId" -}}
+{{- $v := (.Values.repos.app | default dict).installationId | default "" }}
+{{- if or (kindIs "float64" $v) (kindIs "int64" $v) (kindIs "int" $v) }}{{ int64 $v }}{{ else }}{{ $v | toString | trim }}{{ end }}
 {{- end }}
 
 {{/* repos.list as JSON [{repo, ref}], strings and maps alike. */}}

@@ -8,13 +8,20 @@
 #
 # The token (GITHUB_TOKEN) reaches git only through GIT_ASKPASS, which reads it
 # from this container's environment. It is never put in a URL, a remote, a git
-# config or a log line. The checkouts have no .git directory at all, and the
+# config or a log line.
+#
+# REPOS_AUTH=app (repos.app): there is no fixed token. REPOS_TOKEN_CMD
+# (github-app.mts, from the GitHub App's private key in a file only this
+# container mounts) mints an installation token for each pass and again before
+# it gets within REPOS_TIMEOUT_SECONDS + 60 s of its one-hour expiry; it is
+# kept in this shell's environment only, like a fixed token. The checkouts have no .git directory at all, and the
 # cache has no remotes: the URL is given on each fetch's command line.
 #
 # REPOS_LIST: one repo per line, "owner/name" or "owner/name ref" (a branch,
 # tag or commit; default: the repo's default branch). Empty: every repo the
-# token can read, listed again on each pass by REPOS_LIST_CMD (repo-list.mts,
-# GET /user/repos), so newly granted repos appear on the next pass.
+# token can read, listed again on each pass by REPOS_LIST_CMD (repo-list.mts:
+# GET /user/repos, or GET /installation/repositories for an app), so newly
+# granted repos appear on the next pass.
 #
 # After a pass with a good list, checkouts of repos no longer listed (access
 # revoked, or dropped from REPOS_LIST) are removed. A repo that fails to fetch
@@ -31,12 +38,19 @@ limit=${REPOS_TIMEOUT_SECONDS:-600}
 once=${REPOS_SYNC_ONCE:-}
 here=$(dirname "$0")
 list_cmd=${REPOS_LIST_CMD:-node --disable-warning=ExperimentalWarning $here/repo-list.mts --print}
+auth=${REPOS_AUTH:-token}
+token_cmd=${REPOS_TOKEN_CMD:-node --disable-warning=ExperimentalWarning $here/github-app.mts token}
 
 log() { echo "repo-sync: $*"; }
 
 case $minutes in '' | *[!0-9]* | 0) log "REPOS_REFRESH_MINUTES must be a positive integer"; exit 2 ;; esac
 case $limit in '' | *[!0-9]* | 0) log "REPOS_TIMEOUT_SECONDS must be a positive integer"; exit 2 ;; esac
-[ -n "${GITHUB_TOKEN:-}" ] || { log "GITHUB_TOKEN is not set"; exit 2; }
+case $auth in
+  token) [ -n "${GITHUB_TOKEN:-}" ] || { log "GITHUB_TOKEN is not set"; exit 2; } ;;
+  app) GITHUB_TOKEN= ;;
+  *) log "REPOS_AUTH must be token or app"; exit 2 ;;
+esac
+export GITHUB_TOKEN
 
 # Git's own state (HOME, askpass helper) lives in a private temp dir; the
 # askpass helper holds no secret, it prints the token from the environment.
@@ -67,6 +81,28 @@ redact() {
     END { print (first != "" ? first : last) }'
 }
 
+# App mode: a fresh installation token whenever the current one could expire
+# before the next fetch or listing ends. Fixed-token mode: nothing to do.
+token_until=0
+fresh_token() {
+  [ "$auth" = app ] || return 0
+  now=$(date +%s)
+  [ "$now" -lt $((token_until - limit - 60)) ] && return 0
+  # Command substitution: the token stays in this shell, never on disk or in
+  # a log; errors from the minter carry no secret.
+  # shellcheck disable=SC2086 # token_cmd is a command line, split on purpose
+  if ! out=$(limited $token_cmd 2>"$work/token.err"); then
+    log "GitHub App token failed: $(redact <"$work/token.err")"
+    return 1
+  fi
+  tok=${out%% *} until=${out##* }
+  case $tok in '' | *[!A-Za-z0-9_.-]*) log "GitHub App token failed: unexpected output"; return 1 ;; esac
+  case $until in '' | *[!0-9]*) log "GitHub App token failed: unexpected output"; return 1 ;; esac
+  GITHUB_TOKEN=$tok token_until=$until
+  [ "$until" -gt $((now + limit + 60)) ] || log "GitHub App token expires in $((until - now)) s, less than REPOS_TIMEOUT_SECONDS + 60"
+  return 0
+}
+
 valid_part() { case $1 in '' | . | .. | *[!A-Za-z0-9._-]*) return 1 ;; esac; }
 
 sync_one() { # owner/name [ref]
@@ -78,6 +114,7 @@ sync_one() { # owner/name [ref]
   fi
   case $ref in -* | *..* | *[!A-Za-z0-9._/-]*) log "$repo: bad ref; skipped"; return 1 ;; esac
   label=$repo${ref:+@$ref}
+  fresh_token || { log "$label: no GitHub token; skipped"; return 1; }
   bare=$cache/$owner/$name.git
   [ -d "$bare" ] || gitc init -q --bare "$bare" || { log "$label: cannot create cache"; return 1; }
   if ! err=$(limited git -c credential.helper= -c http.lowSpeedLimit=1000 -c http.lowSpeedTime=60 -C "$bare" fetch -q --depth 1 --no-tags "$base/$owner/$name.git" "${ref:-HEAD}" 2>&1); then
@@ -146,19 +183,25 @@ prune() {
 tmp=$dir/.repo-sync
 mkdir -p "$dir" "$cache" || exit 1
 rm -rf "$tmp"
+who=token
+[ "$auth" = app ] && who="GitHub App installation"
 if [ -n "${REPOS_LIST:-}" ]; then
-  log "syncing $(printf '%s\n' "$REPOS_LIST" | grep -c '[^[:space:]]') listed repo(s) from $base every $minutes min"
+  log "syncing $(printf '%s\n' "$REPOS_LIST" | grep -c '[^[:space:]]') listed repo(s) from $base every $minutes min with the $who"
 else
-  log "syncing every repo the token can read from $base every $minutes min"
+  log "syncing every repo the $who can read from $base every $minutes min"
 fi
 while :; do
   ok=0 failed=0
   # shellcheck disable=SC2086 # list_cmd is a command line, split on purpose
   if [ -n "${REPOS_LIST:-}" ]; then
     list=$REPOS_LIST listed=1
+  elif ! fresh_token; then
+    listed=
+    log "no GitHub token, keeping current checkouts"
+    failed=1
   elif list=$(limited $list_cmd 2>"$work/list.err"); then
     listed=1
-    log "token can read $(printf '%s\n' "$list" | grep -c '[^[:space:]]') repo(s)"
+    log "$who can read $(printf '%s\n' "$list" | grep -c '[^[:space:]]') repo(s)"
   else
     listed=
     log "listing repos failed, keeping current checkouts: $(redact <"$work/list.err")"

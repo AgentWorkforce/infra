@@ -236,7 +236,7 @@ for chart in "${charts[@]}"; do
           || err "$chart: REPOS_LIST must list each repo with its ref"
         ! grep -q 'repo-sync\|/repos' <<<"$(render "$chart" charts/slack-relay/ci/default-values.yaml)" \
           || err "$chart: repos off must render no sidecar or mount"
-        expect_render_failure "$chart" "$v" "repos without a token" "repos.enabled needs repos.token.name" --set repos.token.name=
+        expect_render_failure "$chart" "$v" "repos without a token" "repos.enabled needs repos.app.privateKey.name" --set repos.token.name=
         # An empty list syncs every repo the token can read, via the API.
         all_out=$(render "$chart" "$v" --set-json 'repos.list=[]' | yq 'select(.kind == "StatefulSet") | .spec.template.spec.containers[] | select(.name == "repo-sync") | .env[] | select(.name == "REPOS_LIST" or .name == "REPOS_API_URL") | .name + "=" + .value')
         [ "$all_out" = $'REPOS_API_URL=https://api.github.com\nREPOS_LIST=' ] || err "$chart: an empty repos.list must render an empty REPOS_LIST and the github.com API: $all_out"
@@ -248,8 +248,25 @@ for chart in "${charts[@]}"; do
         ghe_out=$(render "$chart" "$v" --set repos.host=https://ghe.example.com/)
         grep -q 'value: "https://ghe.example.com"' <<<"$ghe_out" || err "$chart: a GHE base URL must render as REPOS_BASE_URL"
         grep -q 'value: "https://ghe.example.com/api/v3"' <<<"$ghe_out" || err "$chart: a GHE host must list repos through <base>/api/v3"
-        render "$chart" "$v" | yq 'select(.kind == "ConfigMap") | .data | keys | sort | join(",")' | grep -qx 'repo-list.mts,repo-sync.sh' \
-          || err "$chart: the repo-sync ConfigMap must carry repo-sync.sh and repo-list.mts"
+        # repos.app: the GitHub App's private key is a Secret volume only the
+        # repo-sync sidecar mounts; no container gets GITHUB_TOKEN from a Secret.
+        av=charts/slack-relay/ci/repos-app-values.yaml
+        app_out=$(render "$chart" "$av" | yq 'select(.kind == "StatefulSet") | .spec.template.spec') || { err "$chart: repos app render failed"; continue; }
+        [ "$(yq '[.containers[] | select(.volumeMounts | any_c(.name == "repo-sync-app-key")) | .name] | join(",")' <<<"$app_out")" = repo-sync ] \
+          || err "$chart: only repo-sync may mount the GitHub App private key"
+        [ "$(yq '.volumes[] | select(.name == "repo-sync-app-key") | .secret.secretName + "/" + .secret.items[0].key' <<<"$app_out")" = slack-relay-github-app/private-key ] \
+          || err "$chart: the app key volume must come from repos.app.privateKey"
+        [ "$(yq '[.containers[] | .env[]? | select(.name == "GITHUB_TOKEN")] | length' <<<"$app_out")" = 0 ] \
+          || err "$chart: app mode must not render GITHUB_TOKEN"
+        [ "$(yq '.containers[] | select(.name == "repo-sync") | .env[] | select(.name == "REPOS_AUTH" or .name == "GITHUB_APP_ID" or .name == "GITHUB_APP_INSTALLATION_ID") | .name + "=" + (.value // (.valueFrom.secretKeyRef.name + ":" + .valueFrom.secretKeyRef.key))' <<<"$app_out")" = $'REPOS_AUTH=app\nGITHUB_APP_ID=slack-relay-github-app:app-id\nGITHUB_APP_INSTALLATION_ID=slack-relay-github-app:installation-id' ] \
+          || err "$chart: app mode must read the app and installation IDs from the helper's Secret by default"
+        ids_out=$(render "$chart" "$av" --set repos.app.appId=1234567 --set repos.app.installationId=98765432 | yq 'select(.kind == "StatefulSet") | .spec.template.spec.containers[] | select(.name == "repo-sync") | .env[] | select(.name == "GITHUB_APP_ID" or .name == "GITHUB_APP_INSTALLATION_ID") | .value')
+        [ "$ids_out" = $'1234567\n98765432' ] || err "$chart: numeric app and installation IDs must render as integers: $ids_out"
+        expect_render_failure "$chart" "$av" "repos with both app and token" "not both" --set repos.token.name=slack-relay-github
+        expect_render_failure "$chart" "$av" "repos app bad installation id" "installationId must be a number" --set repos.app.installationId=abc
+        expect_render_failure "$chart" "$av" "repos app bad app id" "appId must be the GitHub App" --set repos.app.appId=not-an-id
+        render "$chart" "$v" | yq 'select(.kind == "ConfigMap") | .data | keys | sort | join(",")' | grep -qx 'github-app.mts,repo-list.mts,repo-sync.sh' \
+          || err "$chart: the repo-sync ConfigMap must carry repo-sync.sh, repo-list.mts and github-app.mts"
         ;;
       sessions-pipeline-worker)
         v=charts/sessions-pipeline-worker/ci/pod-identity-values.yaml
