@@ -22,6 +22,17 @@
       "roles": {
         "scoped": "arn:aws:iam::805532413586:role/agent-broker-sandbox-scoped"
       }
+    },
+    "500268966557": {
+      "label": "agent-hosts",
+      "tier": "prod",
+      "regions": [
+        "us-east-1",
+        "us-west-2"
+      ],
+      "roles": {
+        "elevated": "arn:aws:iam::500268966557:role/agent-broker-elevated"
+      }
     }
   },
   "neverIssue": [

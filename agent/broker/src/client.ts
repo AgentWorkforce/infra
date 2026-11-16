@@ -75,6 +75,7 @@ if (positionals[0] === "keygen") {
       encoding: "utf8",
       env: { PATH: process.env.PATH ?? "/usr/bin:/bin", HOME: process.env.HOME ?? "", AWS_ACCESS_KEY_ID: doc.AccessKeyId ?? "", AWS_SECRET_ACCESS_KEY: doc.SecretAccessKey ?? "", AWS_SESSION_TOKEN: doc.SessionToken ?? "", AWS_REGION: "us-east-1", AWS_PAGER: "", AWS_CONFIG_FILE: "/dev/null", AWS_SHARED_CREDENTIALS_FILE: "/dev/null" },
       stdio: ["ignore", "pipe", "pipe"],
+      timeout: 20_000,
     }),
   ) as { Account?: string; Arn?: string };
   if (identity.Account !== account || !new RegExp(`^arn:aws:sts::${account}:assumed-role/agent-broker-[\\w+=,.@-]+/`).test(identity.Arn ?? "")) {

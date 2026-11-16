@@ -35,11 +35,15 @@ const req = (over: Partial<CredentialRequest> = {}): CredentialRequest => ({
   ...over,
 });
 
-test("the shipped allowlist: sandbox only, Khaliq the only approver, 15 to 60 minutes", () => {
-  assert.deepEqual(Object.keys(allowlist.accounts), [SANDBOX]);
+test("the shipped allowlist: auto only in the sandbox, the agent-hosts account approval-only, Khaliq the only approver, 15 to 60 minutes", () => {
+  assert.deepEqual(Object.keys(allowlist.accounts), [SANDBOX, "500268966557"]);
   assert.equal(allowlist.accounts[SANDBOX]!.tier, "sandbox");
   assert.equal(allowlist.accounts[SANDBOX]!.roles.scoped, `arn:aws:iam::${SANDBOX}:role/agent-broker-sandbox-scoped`);
-  assert.equal(allowlist.accounts[SANDBOX]!.roles.elevated, undefined, "no approval-tier role until Khaliq creates one");
+  assert.equal(allowlist.accounts[SANDBOX]!.roles.elevated, undefined, "no approval-tier role in the sandbox");
+  // The broker's own account (the agent hosts'): no automatic issue at all, only Khaliq-approved sessions.
+  const hosts = allowlist.accounts["500268966557"]!;
+  assert.equal(hosts.tier, "prod");
+  assert.deepEqual(hosts.roles, { elevated: "arn:aws:iam::500268966557:role/agent-broker-elevated" });
   assert.deepEqual(allowlist.humanApprovers, ["khaliq-gant"]);
   assert.deepEqual(allowlist.duration, { minMinutes: 15, maxMinutes: 60, autoMaxMinutes: 60 });
   for (const r of allowlist.autoRules) for (const a of r.actions) {
@@ -276,6 +280,38 @@ test("approved account-wide sessions: the requested resources, no tag condition,
   assert.equal(w.Condition, undefined);
   const guard = wide.sessionPolicy.Statement.find((s) => s.Sid === "DenyRunTagOnOthers")!;
   assert.deepEqual(guard.Action, ["sqs:TagQueue"], "only the guard actions the session could otherwise use");
+});
+
+test("legacy-copy's runner request in the agent-hosts account: approval only, exactly its resources, at most 60 minutes", () => {
+  const legacy = (over: Partial<CredentialRequest> = {}): CredentialRequest => ({
+    account: "500268966557",
+    purpose: "Neon exit: drive the frozen relayhistory sessions copy on the runner over SSM",
+    actions: ["secretsmanager:PutSecretValue", "ssm:StartSession", "ssm:SendCommand", "ssm:GetCommandInvocation", "ssm:ListCommandInvocations", "ssm:TerminateSession", "ssm:DescribeSessions", "ssm:ResumeSession"],
+    durationMinutes: 60,
+    runTag: "neon-exit-legacy-copy-20261115",
+    scope: "account",
+    resources: [
+      "arn:aws:secretsmanager:us-east-1:500268966557:secret:neon-exit/relayhistory-legacy/postgres-owner-x1jvZ6",
+      "arn:aws:ec2:us-east-1:500268966557:instance/i-0887caee00ca9029a",
+      "arn:aws:ssm:us-east-1::document/SSM-SessionManagerRunShell",
+      "arn:aws:ssm:us-east-1::document/AWS-RunShellScript",
+      "arn:aws:ssm:us-east-1:500268966557:session/*",
+    ],
+    regions: ["us-east-1"],
+    delivery: { kind: "encrypted", publicKey: Buffer.alloc(32, 9).toString("base64") },
+    ...over,
+  });
+  const d = decide(legacy(), agent, allowlist);
+  assert.equal(d.outcome, "approval", d.reasons.join("; "));
+  if (d.outcome !== "approval") return;
+  assert.equal(d.roleArn, "arn:aws:iam::500268966557:role/agent-broker-elevated");
+  const allow = d.sessionPolicy.Statement.filter((s) => s.Effect === "Allow");
+  assert.equal(allow.length, 1);
+  assert.deepEqual(allow[0]!.Resource, legacy().resources, "exactly the named runner, secret, documents and sessions");
+  assert.deepEqual(d.sessionPolicy.Statement.find((s) => s.Sid === "DenyOutsideRegions")!.Condition, { StringNotEquals: { "aws:RequestedRegion": ["us-east-1"] } });
+  assert.match(d.reasons.join("; "), /agent-hosts is a prod account/);
+  assert.equal(decide(legacy({ durationMinutes: 720 }), agent, allowlist).outcome, "deny", "12 h is refused: at most 60 minutes per request");
+  assert.equal(decide(legacy({ actions: ["iam:PassRole"] }), agent, allowlist).outcome, "approval", "IAM still only by approval, and capped by the role's ceiling");
 });
 
 test("only a human on the list approves; an agent never does, whatever its name", () => {
