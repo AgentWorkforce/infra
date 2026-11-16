@@ -1077,6 +1077,8 @@ for chart in "${charts[@]}"; do
         expect_render_failure "$chart" "$g" "gate-only with a renamed Control" "relaygate.sessionsListener.controlFrom must select relay-control's pods" --set relay-control.nameOverride=relay-cloud-api
         render "$chart" "$g" --set relay-control.nameOverride=relay-cloud-api --set-json 'relaygate.sessionsListener.controlFrom=[{"podSelector":{"matchLabels":{"app.kubernetes.io/name":"relay-cloud-api"}}}]' --set-json 'relaycast.networkPolicy.gateOnlyFrom=[{"podSelector":{"matchLabels":{"app.kubernetes.io/name":"relay-cloud-api"}}}]' >/dev/null \
           || err "$chart: gate-only with a renamed Control and matching peers must render"
+        render "$chart" "$g" --set-json 'relaygate.sessionsListener.controlFrom=[{"podSelector":{"matchExpressions":[{"key":"app.kubernetes.io/name","operator":"In","values":["relay-control"]}]}}]' >/dev/null \
+          || err "$chart: gate-only peers selecting Control by matchExpressions must render"
         expect_render_failure "$chart" "$g" "gate-only without the sessions port" "needs global.relaygate.gateOnly.sessionsPort" --set global.relaygate.gateOnly.sessionsPort=0
         expect_render_failure "$chart" "$g" "gate-only sessions port on the main port" "needs global.relaygate.gateOnly.sessionsPort" --set global.relaygate.gateOnly.sessionsPort=8080
         expect_render_failure "$chart" "$g" "gate-only with relaycastPublicUrl off the cast host" "requires relay-control.services.relaycastPublicUrl=https://cast.gcp-proof.agentrelay.com" --set relay-control.services.relaycastPublicUrl=https://relay.gcp-proof.agentrelay.com

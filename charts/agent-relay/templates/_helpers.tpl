@@ -72,8 +72,11 @@ listener) and Relaycast under gate-only. */ -}}
 {{- $controlName := dig "nameOverride" "" $control | default "relay-control" -}}
 {{- range $want := list (list "relaygate.sessionsListener.controlFrom" (dig "sessionsListener" "controlFrom" (list (dict "podSelector" (dict "matchLabels" (dict "app.kubernetes.io/name" "relay-control")))) $gate)) (list "relaycast.networkPolicy.gateOnlyFrom" (dig "networkPolicy" "gateOnlyFrom" (list (dict "podSelector" (dict "matchLabels" (dict "app.kubernetes.io/name" "relay-control")))) $relaycast)) }}
 {{- $found := false -}}
-{{- range $peer := index $want 1 }}{{ if eq (dig "podSelector" "matchLabels" "app.kubernetes.io/name" "" $peer) $controlName }}{{ $found = true }}{{ end }}{{ end -}}
-{{- if not $found }}{{ fail (printf "global.relaygate.gateOnly.enabled: %s must select relay-control's pods (podSelector matchLabels app.kubernetes.io/name: %s, from relay-control.nameOverride)" (index $want 0) $controlName) }}{{ end -}}
+{{- range $peer := index $want 1 }}
+{{- if eq (dig "podSelector" "matchLabels" "app.kubernetes.io/name" "" $peer) $controlName }}{{ $found = true }}{{ end -}}
+{{- range $e := dig "podSelector" "matchExpressions" (list) $peer }}{{ if and (eq (dig "key" "" $e) "app.kubernetes.io/name") (eq (dig "operator" "" $e) "In") (has $controlName (dig "values" (list) $e)) }}{{ $found = true }}{{ end }}{{ end -}}
+{{- end -}}
+{{- if not $found }}{{ fail (printf "global.relaygate.gateOnly.enabled: %s must select relay-control's pods (app.kubernetes.io/name %s in podSelector matchLabels, or a matchExpressions In; from relay-control.nameOverride)" (index $want 0) $controlName) }}{{ end -}}
 {{- end }}
 {{- $cp := dig "control" dict $gate -}}
 {{- if and (not (dig "existingConfigMap" "" $gate)) (not (dig "policy" "controlPrincipals" (list) $gate)) }}{{ fail "global.relaygate.gateOnly.enabled requires relaygate.policy.controlPrincipals: relaygate refuses every dashboard and desktop caller no rule maps (docs/self-hosted-relaygate.md, Gate-only)" }}{{ end -}}
