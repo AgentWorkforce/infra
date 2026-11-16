@@ -157,7 +157,10 @@ policy:
 
 Device tokens are introspected with relay-control (answers reused for up to
 15 s). Read tokens can't be introspected, so point relay-control's
-`SESSION_READ_API_URL` at `http://<release>-relaygate:8080/sessions`: relaygate
+`SESSION_READ_API_URL` at relaygate's internal Sessions listener, a bare origin
+(`proxy.sessionsPort`, Service `<release>-relaygate-sessions`, relaygate
+`sha256:0ca54cdd` or later; relay-control accepts no path, and relaygate refuses
+the mint calls on public hosts): relaygate
 forwards the mint calls unchanged and remembers which user each token belongs
 to. Each Control user acts as `ctl:<userId>` (the `ctl:` prefix is reserved) and
 their own credential still reaches Sessions. Uploads need `rth:sync`, reads
@@ -288,7 +291,7 @@ Slack app has no `relaygate.url`; or the relaygate Service name doesn't match.
 | relaycast NetworkPolicy | `ingressFrom` is ignored: relaygate, the chart's migration Job and `networkPolicy.gateOnlyFrom` (default: relay-control and relayauth) |
 | session-read-api NetworkPolicy | `controlFrom` and `publicFrom` are ignored: relaygate only, for `/v1` and `/internal` |
 | ingest edge NetworkPolicy | `ingressFrom` is ignored: relaygate only, plus `ingestEdge.networkPolicy.gateOnlyFrom` (default empty). Without gate-only, a policy that admits the install namespace (or any pod an agent runs in) lets an agent holding a Sessions upload credential upload around relaygate; narrowing Relaycast and the reader alone is not enough |
-| relay-control | `SESSION_READ_API_URL` becomes `http://<relaygate>:8080/sessions`, so Control's mint, refresh and service-token calls and its server-side reads go through relaygate, which passes them to the read API; `services.sessionReadApiUrl` stays the read API Service. Its NetworkPolicy (when it lists `ingressFrom`) also admits relaygate for introspection |
+| relay-control | `SESSION_READ_API_URL` becomes relaygate's internal Sessions listener, `http://<relaygate>-sessions:<global.relaygate.gateOnly.sessionsPort>` (default 8081; set `relaygate.proxy.sessionsPort` to match), so Control's mint, refresh and service-token calls and its server-side reads go through relaygate, which passes them to the read API; `services.sessionReadApiUrl` stays the read API Service. Its NetworkPolicy (when it lists `ingressFrom`) also admits relaygate for introspection |
 | relay-control (discovery) | `SELFHOST_RELAYGATE_PUBLIC_URL` is set from `relay-control.services.relaycastPublicUrl`, the cast host (`https://cast.<domain>`), which gate-only routes to relaygate, so it always equals `RELAYCAST_PUBLIC_URL` (render fails if that isn't `https://<gkeIngress.hosts.cast>`). `/resolve` then returns `urls.relaygateUrl` and withholds the shared Relaycast key, and events-shim temp workspaces are refused. **Needs a relay-control image at cc361ed or later**; older images ignore it and keep handing out the shared key. Unset when gate-only is off |
 | relaygate | renders `RELAYCONTROL_INTROSPECT_URL`, `RELAYCONTROL_INTROSPECT_SECRET`, `SESSION_INGEST_AUDIENCE`, `SESSIONS_CORS_ORIGINS` and, when named, `SESSIONS_INTERNAL_SECRET`; `SESSIONS_UPLOAD_URL`, `SESSIONS_READ_URL` and `SESSIONS_HOSTS` (the history host) come from `proxy` as before |
 

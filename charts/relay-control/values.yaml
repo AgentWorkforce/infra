@@ -335,8 +335,8 @@ services:
   # image with it is 0.5.1). Set together with secretKeys.sessionReadApiSecret,
   # or leave all three empty. Internal HTTP(S) origin of the read API Service.
   # With global.relaygate.gateOnly.enabled (agent-relay umbrella) Control's
-  # SESSION_READ_API_URL is relaygate's Sessions proxy instead
-  # (http://<relaygate>:8080/sessions), which passes
+  # SESSION_READ_API_URL is relaygate's internal Sessions listener instead
+  # (http://<relaygate>-sessions:<gateOnly.sessionsPort>), which passes
   # Control's calls to this Service; keep this set to the read API.
   sessionReadApiUrl: ""
   # Bare public HTTPS origin of the read API, returned to clients.

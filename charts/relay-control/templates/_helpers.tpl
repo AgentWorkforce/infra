@@ -652,7 +652,8 @@ leave the certificate unverified while looking configured. */ -}}
 {{- end -}}
 
 {{- /* SESSION_READ_API_URL. Gate-only (global.relaygate.gateOnly.enabled):
-relaygate's Sessions proxy (http://<relaygate>:<port>/sessions), so Control's mint, refresh and service-token
+relaygate's internal Sessions listener, a bare origin
+(http://<relaygate>-sessions:<global.relaygate.gateOnly.sessionsPort>), so Control's mint, refresh and service-token
 calls and its server-side reads go through relaygate, which passes them to the
 read API unchanged. services.sessionReadApiUrl stays the read API Service
 (the handoff validation and the umbrella's checks still use it). */ -}}
@@ -660,7 +661,7 @@ read API unchanged. services.sessionReadApiUrl stays the read API Service
 {{- $g := dig "relaygate" "gateOnly" dict (.Values.global | default dict) | default dict -}}
 {{- if and .Values.services.sessionReadApiUrl (dig "enabled" false $g) -}}
 {{- $gate := dig "serviceName" "" $g | default (ternary .Release.Name (printf "%s-relaygate" .Release.Name) (contains "relaygate" .Release.Name)) | trunc 63 | trimSuffix "-" -}}
-{{- printf "http://%s:%d/sessions" $gate (int (dig "servicePort" 8080 $g)) -}}
+{{- printf "http://%s:%d" (printf "%s-sessions" $gate | trunc 63 | trimSuffix "-") (int (dig "sessionsPort" 8081 $g)) -}}
 {{- else -}}
 {{- .Values.services.sessionReadApiUrl -}}
 {{- end -}}

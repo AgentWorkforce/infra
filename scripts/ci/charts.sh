@@ -959,6 +959,10 @@ for chart in "${charts[@]}"; do
         [ "$(yq 'select(.kind == "ConfigMap") | .data["policy.json"] | from_json | .controlPrincipals | length' <<<"$out" | sed '/^---$/d;/^$/d')" = 0 ] \
           || err "$chart: default policy must not grant Control principals"
         expect_render_failure "$chart" "$v" "Sessions CORS/internal secret without sessionsUrl" "need proxy.sessionsUrl" --set proxy.sessionsUrl=
+        out=$(render "$chart" "$v" --set proxy.sessionsPort=8081)
+        [ "$(env_value SESSIONS_PORT)" = 8081 ] || err "$chart: SESSIONS_PORT not rendered"
+        [ "$(yq 'select(.kind == "Service" and .metadata.name == "ci-relaygate-sessions") | .spec.ports[0].port' <<<"$out" | sed '/^---$/d;/^$/d')" = 8081 ] || err "$chart: <fullname>-sessions Service not rendered"
+        expect_render_failure "$chart" "$v" "sessionsPort 8080" "proxy.sessionsPort must be 0 (off) or a port other than 8080" --set proxy.sessionsPort=8080
         # Control principals alone (desktop enrolment): no Sessions proxy needed.
         out=$(render "$chart" "$v" --set proxy.sessionsUrl= --set-json 'proxy.sessionsCorsOrigins=[]' --set secrets.sessionsInternalSecret.name=)
         [ "$(env_value RELAYCONTROL_INTROSPECT_URL)" = http://relay-control:8080/internal/v1/auth/introspect ] || err "$chart: introspection must render without the Sessions proxy"
@@ -969,7 +973,7 @@ for chart in "${charts[@]}"; do
         expect_render_failure "$chart" "$v" "introspect without secret" "control.introspectUrl needs control.sessionIngestAudience and secrets.relaycontrolIntrospectSecret.name" --set secrets.relaycontrolIntrospectSecret.name=
         # Gate-only (global.relaygate.gateOnly.enabled): refuses to render with
         # a proxy, sessionsHosts or the Control mapping missing, or a renamed Service.
-        gate=(-f charts/relaygate/ci/proxy-values.yaml --set proxy.sessionsUploadUrl=http://session-ingest-api:8080 --set proxy.sessionsReadUrl=http://session-read-api:8080 --set 'proxy.sessionsHosts={history.example.com}' --set control.introspectUrl=http://relay-control:8080/internal/v1/auth/introspect --set control.sessionIngestAudience=https://history.example.com --set secrets.relaycontrolIntrospectSecret.name=control-introspect --set global.relaygate.gateOnly.enabled=true)
+        gate=(-f charts/relaygate/ci/proxy-values.yaml --set proxy.sessionsUploadUrl=http://session-ingest-api:8080 --set proxy.sessionsReadUrl=http://session-read-api:8080 --set 'proxy.sessionsHosts={history.example.com}' --set control.introspectUrl=http://relay-control:8080/internal/v1/auth/introspect --set control.sessionIngestAudience=https://history.example.com --set secrets.relaycontrolIntrospectSecret.name=control-introspect --set proxy.sessionsPort=8081 --set global.relaygate.gateOnly.enabled=true)
         render "$chart" "$v" "${gate[@]}" >/dev/null || err "$chart: gate-only did not render"
         expect_render_failure "$chart" "$v" "gate-only without the Relaycast proxy" "global.relaygate.gateOnly.enabled needs proxy.relaycastUrl" "${gate[@]}" --set proxy.relaycastUrl=
         expect_render_failure "$chart" "$v" "gate-only without sessionsHosts" "global.relaygate.gateOnly.enabled needs proxy.relaycastUrl" "${gate[@]}" --set proxy.sessionsHosts=null
@@ -1029,8 +1033,13 @@ for chart in "${charts[@]}"; do
         [ "$(peers agent-relay-read-api)" = relaygate ] || err "$chart: gate-only reader peers: $(peers agent-relay-read-api)"
         [ "$(peers agent-relay-ingest-edge)" = relaygate ] || err "$chart: gate-only ingest peers: $(peers agent-relay-ingest-edge)"
         [[ " $(peers relay-control) " == *" relaygate "* ]] || err "$chart: gate-only Control must admit relaygate (introspection)"
-        [ "$(yq 'select(.kind == "Deployment" and .metadata.name == "relay-control") | .spec.template.spec.containers[0].env[] | select(.name == "SESSION_READ_API_URL") | .value' <<<"$out")" = http://ci-relaygate:8080/sessions ] \
-          || err "$chart: gate-only SESSION_READ_API_URL must be relaygate's Sessions proxy"
+        [ "$(yq 'select(.kind == "Deployment" and .metadata.name == "relay-control") | .spec.template.spec.containers[0].env[] | select(.name == "SESSION_READ_API_URL") | .value' <<<"$out")" = http://ci-relaygate-sessions:8081 ] \
+          || err "$chart: gate-only SESSION_READ_API_URL must be relaygate's internal Sessions listener (bare origin)"
+        [ "$(yq 'select(.kind == "Service" and .metadata.name == "ci-relaygate-sessions") | .spec.type + " " + (.spec.ports[0].port | tostring)' <<<"$out" | sed '/^---$/d;/^$/d')" = "ClusterIP 8081" ] \
+          || err "$chart: gate-only needs the ClusterIP Service ci-relaygate-sessions on 8081"
+        ! yq 'select(.kind == "Ingress") | .. | select(has("service")) | .service.name' <<<"$out" | grep -qx 'ci-relaygate-sessions' \
+          || err "$chart: the internal Sessions Service must never be routed from an ingress"
+        expect_render_failure "$chart" "$g" "gate-only without the Sessions listener" "needs proxy.sessionsPort = global.relaygate.gateOnly.sessionsPort" --set relaygate.proxy.sessionsPort=0
         ctl_env() { yq "select(.kind == \"Deployment\" and .metadata.name == \"relay-control\") | .spec.template.spec.containers[0].env[] | select(.name == \"$1\") | .value" <<<"$2" | sed '/^---$/d;/^$/d'; }
         [ "$(ctl_env SELFHOST_RELAYGATE_PUBLIC_URL "$out")" = https://cast.gcp-proof.agentrelay.com ] && [ "$(ctl_env SELFHOST_RELAYGATE_PUBLIC_URL "$out")" = "$(ctl_env RELAYCAST_PUBLIC_URL "$out")" ] \
           || err "$chart: gate-only SELFHOST_RELAYGATE_PUBLIC_URL must be the cast host, equal to RELAYCAST_PUBLIC_URL"

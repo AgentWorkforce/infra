@@ -108,6 +108,13 @@ proxy:
   # sessionsReadUrl to the upstream Services directly (required; a listed host
   # can't be an upstream).
   sessionsHosts: []
+  # Optional (relaygate sha256:0ca54cdd or later): an internal listener that
+  # serves Sessions at its root, for relay-control's bare-origin
+  # SESSION_READ_API_URL (relay-control's mint calls are allowed there, never
+  # on a public host). Renders SESSIONS_PORT, a container port and the
+  # ClusterIP Service <fullname>-sessions. Never route it from an ingress.
+  # 0 = off. Gate-only requires it (global.relaygate.gateOnly.sessionsPort).
+  sessionsPort: 0
   # Optional: browser origins allowed to read Sessions directly (match the read
   # API's list), so relaygate's own refusals carry CORS headers for them.
   sessionsCorsOrigins: []
@@ -118,8 +125,9 @@ proxy:
 # also enrols its agents with its device token (POST /v1/register, rg_ tokens
 # that expire within 24 h). On Sessions routes (with proxy.sessionsUrl),
 # dashboard read tokens are learned from relay-control's mint calls, which then
-# go through relaygate (point relay-control's SESSION_READ_API_URL at
-# http://<release>-relaygate:8080/sessions). Needs
+# go through relaygate (point relay-control's SESSION_READ_API_URL at the
+# internal listener's bare origin, http://<release>-relaygate-sessions:<proxy.sessionsPort>;
+# gate-only does this). Needs
 # secrets.relaycontrolIntrospectSecret.
 #
 # Gate-only (global.relaygate.gateOnly.enabled, set in the agent-relay

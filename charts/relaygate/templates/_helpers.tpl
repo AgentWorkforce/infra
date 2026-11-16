@@ -36,6 +36,10 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- ternary .Release.Name (printf "%s-relaygate" .Release.Name) (contains "relaygate" .Release.Name) | trunc 63 | trimSuffix "-" -}}
 {{- end }}
 
+{{- define "relaygate.sessionsServiceName" -}}
+{{- printf "%s-sessions" (include "relaygate.fullname" .) | trunc 63 | trimSuffix "-" -}}
+{{- end }}
+
 {{- define "relaygate.validate" -}}
 {{- if include "relaygate.gateOnly" . }}
 {{- /* Gate-only (global.relaygate.gateOnly.enabled, agent-relay umbrella):
@@ -44,6 +48,9 @@ mapping left off would cut clients off instead of gating them. */ -}}
 {{- $g := .Values.global.relaygate.gateOnly -}}
 {{- if or (not (trim .Values.proxy.relaycastUrl)) (not (trim .Values.proxy.sessionsUrl)) (not (trim .Values.proxy.sessionsUploadUrl)) (not (trim .Values.proxy.sessionsReadUrl)) (not .Values.proxy.sessionsHosts) }}
 {{- fail "relaygate: global.relaygate.gateOnly.enabled needs proxy.relaycastUrl, proxy.sessionsUrl, proxy.sessionsUploadUrl, proxy.sessionsReadUrl (the in-cluster Services) and proxy.sessionsHosts (the history host)" }}
+{{- end }}
+{{- if ne (int .Values.proxy.sessionsPort) (int (dig "sessionsPort" 8081 $g)) }}
+{{- fail (printf "relaygate: global.relaygate.gateOnly.enabled needs proxy.sessionsPort = global.relaygate.gateOnly.sessionsPort (%d): relay-control's SESSION_READ_API_URL is that internal listener's bare origin" (int (dig "sessionsPort" 8081 $g))) }}
 {{- end }}
 {{- if not (trim .Values.control.introspectUrl) }}
 {{- fail "relaygate: global.relaygate.gateOnly.enabled needs control.introspectUrl, control.sessionIngestAudience and secrets.relaycontrolIntrospectSecret (dashboard and desktop callers reach Sessions through relaygate)" }}
@@ -66,8 +73,12 @@ mapping left off would cut clients off instead of gating them. */ -}}
 {{- if and (not (trim .Values.proxy.sessionsUrl)) (or (trim .Values.proxy.sessionsUploadUrl) (trim .Values.proxy.sessionsReadUrl) .Values.proxy.sessionsHosts) }}
 {{- fail "relaygate: proxy.sessionsUploadUrl, sessionsReadUrl and sessionsHosts need proxy.sessionsUrl" }}
 {{- end }}
-{{- if and (not (trim .Values.proxy.sessionsUrl)) (or .Values.proxy.sessionsCorsOrigins .Values.secrets.sessionsInternalSecret.name) }}
-{{- fail "relaygate: proxy.sessionsCorsOrigins and secrets.sessionsInternalSecret need proxy.sessionsUrl" }}
+{{- $sp := int .Values.proxy.sessionsPort }}
+{{- if or (lt $sp 0) (gt $sp 65535) (eq $sp 8080) }}
+{{- fail "relaygate: proxy.sessionsPort must be 0 (off) or a port other than 8080 (the main listener)" }}
+{{- end }}
+{{- if and (not (trim .Values.proxy.sessionsUrl)) (or .Values.proxy.sessionsCorsOrigins .Values.secrets.sessionsInternalSecret.name (gt $sp 0)) }}
+{{- fail "relaygate: proxy.sessionsCorsOrigins, proxy.sessionsPort and secrets.sessionsInternalSecret need proxy.sessionsUrl" }}
 {{- end }}
 {{- if and (not (trim .Values.control.introspectUrl)) (or (trim .Values.control.sessionIngestAudience) .Values.secrets.relaycontrolIntrospectSecret.name) }}
 {{- fail "relaygate: control.sessionIngestAudience and secrets.relaycontrolIntrospectSecret need control.introspectUrl" }}

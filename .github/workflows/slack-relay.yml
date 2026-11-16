@@ -82,7 +82,7 @@ jobs:
             -e RELAYCAST_URL=http://host.docker.internal:8787 \
             -v "$dir/policy.json:/policy/policy.json:ro" -v "$dir/data:/data" \
             -e RELAYGATE_POLICY=/policy/policy.json -e RELAYGATE_DB=/data/relaygate.db \
-            ghcr.io/agentworkforce/relaygate@sha256:b2fcef804f86252c6013a94ea27580269dc00a3acc69d5fadc58f24565517d9f
+            ghcr.io/agentworkforce/relaygate@sha256:0ca54cddf43b4771fade43d06d280405574ea77280eb0fde392fdb90ee29e248
           rm -f "$dir/env"
           for _ in $(seq 1 30); do curl -sf localhost:18090/readyz >/dev/null && break; sleep 1; done
           { echo "RELAYGATE_E2E_URL=http://localhost:18090"; echo "RELAYGATE_E2E_BRIDGE_KEY=$bridge"; echo "RELAYGATE_E2E_LOCAL_KEY=$local"; echo "RELAYGATE_E2E_PROXY=1"; } >> "$GITHUB_ENV"

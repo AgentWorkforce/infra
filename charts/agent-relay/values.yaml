@@ -72,6 +72,9 @@ global:
       serviceName: ""
       # relaygate.service.port.
       servicePort: 8080
+      # relaygate.proxy.sessionsPort: the internal Sessions listener
+      # (<serviceName>-sessions) relay-control's SESSION_READ_API_URL points at.
+      sessionsPort: 8081
   # Optional customer logo for the sign-in page and dashboard. relay-webapp
   # serves it at <dashboard origin>/brand/<file> (no extra web server or
   # ingress route: / already reaches the dashboard), and relay-control sets

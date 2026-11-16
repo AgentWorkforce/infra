@@ -1704,9 +1704,22 @@ compatibility:
       images:
         relayauth: { repository: ghcr.io/agentworkforce/relayauth, digest: sha256:eb71daa28e30eb7305f666d0bccc5a4002e53e8a574e3c4c32163d907a1b71df }
       notes: superseded by 0.1.1.
-    - id: agent-relay-0.7.35
+    - id: agent-relay-0.7.36
       status: unreleased
       current: true
+      charts: { agent-relay: 0.7.36, relay-control: 0.4.21, relay-webapp: 0.2.6 }
+      app_versions: { agent-relay: 0.1.0, relay-control: 0.1.0, relay-webapp: 0.1.0 }
+      depends:
+        agent-relay: { relaycast: 0.3.16, relayauth: 0.1.5, sessions-pipeline: 0.8.40, relay-control: 0.4.21, relay-webapp: 0.2.6, relayflows: 0.2.5, durable-actors: 0.14.6-awf.4, relayfile: 0.2.2, telemetry-collector: 0.1.7, relay-chief: 0.1.0, slack-relay: 0.3.3, relaygate: 0.1.7 }
+      images:
+        relaycast: { repository: ghcr.io/agentworkforce/relaycast-self-host, digest: sha256:ec062ef901af15cf575b53a71d7eb09f2e6ab6e7c0d5be2da35339a275a5c6cc }
+        relaycast-postgres: { repository: ghcr.io/agentworkforce/relaycast-self-host, digest: sha256:ec062ef901af15cf575b53a71d7eb09f2e6ab6e7c0d5be2da35339a275a5c6cc }
+        sessions-pipeline-worker: { repository: ghcr.io/agentworkforce/sessions-pipeline, digest: sha256:77022c5b6a1d30f96f921d703eb27a1acada8ec273ad84aebdde24f8eddce305 }
+        relay-control: { repository: ghcr.io/agentworkforce/relay-control, digest: sha256:d1b6ca95fab240a9d41208d83de3b1f4245408b0765038762f1c419ee60f43bc }
+        relay-webapp: { repository: ghcr.io/agentworkforce/relay-webapp, digest: sha256:bd295ccb7d1323965dce890f19d0b7f857d706c00d7756f719c713763fdb49f3 }
+      notes: 'Carries 0.7.35. Gate-only: global.relaygate.gateOnly.sessionsPort (default 8081); relay-control 0.4.21 points SESSION_READ_API_URL at relaygate 0.1.7''s internal <gate>-sessions listener as a bare origin (relay-control refused <gate>:8080/sessions, it accepts an origin only). Gate-only CI values pin relaygate sha256:0ca54cdd. Default renders differ only in the helm.sh/chart labels.'
+    - id: agent-relay-0.7.35
+      status: planned
       charts: { agent-relay: 0.7.35, relay-control: 0.4.20, relay-webapp: 0.2.6 }
       app_versions: { agent-relay: 0.1.0, relay-control: 0.1.0, relay-webapp: 0.1.0 }
       depends:
@@ -3003,9 +3016,16 @@ compatibility:
       charts: { relay-chief: 0.1.0 }
       app_versions: { relay-chief: 0.1.0 }
       notes: First chart, rendered only. No Relay Chief image is published and the digest is operator-supplied until one exists.
-    - id: relaygate-0.1.6
+    - id: relaygate-0.1.7
       status: unreleased
       current: true
+      charts: { relaygate: 0.1.7 }
+      app_versions: { relaygate: 0.1.0 }
+      images:
+        relaygate: { repository: ghcr.io/agentworkforce/relaygate, digest_required: true }
+      notes: 'Carries 0.1.6. proxy.sessionsPort (relaygate sha256:0ca54cdd or later): SESSIONS_PORT, a container port and the ClusterIP Service <fullname>-sessions, the internal listener relay-control''s bare-origin SESSION_READ_API_URL points at; gate-only requires it to equal global.relaygate.gateOnly.sessionsPort. CI pins relaygate sha256:0ca54cdd (main 7ff94f0). Ships no default digest.'
+    - id: relaygate-0.1.6
+      status: planned
       charts: { relaygate: 0.1.6 }
       app_versions: { relaygate: 0.1.0 }
       images:
@@ -7152,8 +7172,8 @@ entries:
     title: relaygate Sessions proxy
     description: Off by default. With proxy.sessionsUrl the gate serves Sessions at /sessions, filtered by the policy's sessionDefaults and sessionOverrides; uploaders and readers use https://<gate>/sessions. The gate forwards each caller's own Sessions credential (rg_ token in X-Relaygate-Token, the Sessions token in Authorization) and holds none; proxy.sessionsUploadUrl and proxy.sessionsReadUrl split the upstreams, and proxy.sessionsHosts serves the history origin's host at the root (then both split upstreams are required, so requests can't loop back to the gate).
     chart: relaygate
-    values: [proxy.sessionsUrl, proxy.sessionsUploadUrl, proxy.sessionsReadUrl, proxy.sessionsHosts, "secrets.sessionsToken.*", "policy.sessionDefaults", "policy.sessionOverrides"]
-    env: [SESSIONS_URL, SESSIONS_UPLOAD_URL, SESSIONS_READ_URL, SESSIONS_HOSTS, SESSIONS_TOKEN]
+    values: [proxy.sessionsUrl, proxy.sessionsUploadUrl, proxy.sessionsReadUrl, proxy.sessionsHosts, proxy.sessionsPort, "secrets.sessionsToken.*", "policy.sessionDefaults", "policy.sessionOverrides"]
+    env: [SESSIONS_URL, SESSIONS_UPLOAD_URL, SESSIONS_READ_URL, SESSIONS_HOSTS, SESSIONS_PORT, SESSIONS_TOKEN]
     profiles: [relaygate]
     status: shipped
     provided_by: operator
@@ -7174,7 +7194,7 @@ entries:
   - id: opt.relaygate.control-principals
     kind: option
     title: relaygate Control principals (desktop enrolment, Sessions)
-    description: Off by default. With control.introspectUrl the gate accepts relay-control credentials and maps each user to a group with policy.controlPrincipals (a rule may set namePrefix). Desktop device tokens are introspected; with relaygate sha256:b2fcef80 or later a desktop enrols its agents with its device token (POST /v1/register; rg_ tokens expiring within 24 h; key ids control and device:* reserved), with or without the Sessions proxy. On Sessions routes (proxy.sessionsUrl), dashboard read tokens are learned from relay-control's mint calls, which go through the gate when relay-control's SESSION_READ_API_URL points at <release>-relaygate:8080/sessions; policy.sessionAggregates names the groups that may read cross-session aggregates. Needs relaygate sha256:c66696c5 or later.
+    description: Off by default. With control.introspectUrl the gate accepts relay-control credentials and maps each user to a group with policy.controlPrincipals (a rule may set namePrefix). Desktop device tokens are introspected; with relaygate sha256:b2fcef80 or later a desktop enrols its agents with its device token (POST /v1/register; rg_ tokens expiring within 24 h; key ids control and device:* reserved), with or without the Sessions proxy. On Sessions routes (proxy.sessionsUrl), dashboard read tokens are learned from relay-control's mint calls, which go through the gate when relay-control's SESSION_READ_API_URL points at the internal listener <release>-relaygate-sessions:<proxy.sessionsPort> (a bare origin); policy.sessionAggregates names the groups that may read cross-session aggregates. Needs relaygate sha256:c66696c5 or later.
     chart: relaygate
     values: [control.introspectUrl, control.sessionIngestAudience, proxy.sessionsCorsOrigins, "secrets.relaycontrolIntrospectSecret.*", "secrets.sessionsInternalSecret.*", policy.controlPrincipals, policy.sessionAggregates]
     env: [RELAYCONTROL_INTROSPECT_URL, RELAYCONTROL_INTROSPECT_SECRET, SESSION_INGEST_AUDIENCE, SESSIONS_CORS_ORIGINS, SESSIONS_INTERNAL_SECRET]
@@ -7226,9 +7246,9 @@ entries:
   - id: opt.agent-relay.relaygate-gate-only
     kind: option
     title: relaygate gate-only (the only way into Relaycast and Sessions)
-    description: 'Off by default; with it off every render is unchanged. global.relaygate.gateOnly.enabled routes the public cast and history hosts (gkeIngress, sessions-pipeline nativeRouting, relaycast ingress) to relaygate on exactly the routes it serves and denies the rest; Relaycast admits only relaygate, its migration Job and relaycast networkPolicy.gateOnlyFrom (Control and RelayAuth by default); the Sessions reader admits only relaygate, /internal included; the ingest edge admits only relaygate; Control''s SESSION_READ_API_URL becomes http://<relaygate>:8080/sessions. Requires a cluster that enforces NetworkPolicy (GKE Dataplane V2 or the NetworkPolicy add-on) and a relaygate image with Control-principal mapping (relaygate PR B): until then dashboard session reads, desktop uploads and Control''s session reads break. The policy needs controlPrincipals rules, sessionAggregates with an admin gid, and an admin group with r on every sessionDefault. Relaycast routes relaygate does not proxy (POST /v1/agents, /v1/ws, files, webhooks, group DMs, workspace admin, ...) and Sessions routes it does not serve (/v1/turns/batches, /v1/cli/login, /v1/digest, /v1/delivery/records, admission, token revoke) stop working for public clients. See docs/self-hosted-relaygate.md, "Gate-only".'
+    description: 'Off by default; with it off every render is unchanged. global.relaygate.gateOnly.enabled routes the public cast and history hosts (gkeIngress, sessions-pipeline nativeRouting, relaycast ingress) to relaygate on exactly the routes it serves and denies the rest; Relaycast admits only relaygate, its migration Job and relaycast networkPolicy.gateOnlyFrom (Control and RelayAuth by default); the Sessions reader admits only relaygate, /internal included; the ingest edge admits only relaygate; Control''s SESSION_READ_API_URL becomes relaygate''s internal Sessions listener, http://<relaygate>-sessions:<global.relaygate.gateOnly.sessionsPort> (relaygate.proxy.sessionsPort must match; relaygate sha256:0ca54cdd or later). Requires a cluster that enforces NetworkPolicy (GKE Dataplane V2 or the NetworkPolicy add-on) and a relaygate image with Control-principal mapping (relaygate PR B): until then dashboard session reads, desktop uploads and Control''s session reads break. The policy needs controlPrincipals rules, sessionAggregates with an admin gid, and an admin group with r on every sessionDefault. Relaycast routes relaygate does not proxy (POST /v1/agents, /v1/ws, files, webhooks, group DMs, workspace admin, ...) and Sessions routes it does not serve (/v1/turns/batches, /v1/cli/login, /v1/digest, /v1/delivery/records, admission, token revoke) stop working for public clients. See docs/self-hosted-relaygate.md, "Gate-only".'
     chart: agent-relay
-    values: [global.relaygate.gateOnly.enabled, global.relaygate.gateOnly.serviceName, global.relaygate.gateOnly.servicePort]
+    values: [global.relaygate.gateOnly.enabled, global.relaygate.gateOnly.serviceName, global.relaygate.gateOnly.servicePort, global.relaygate.gateOnly.sessionsPort]
     profiles: [relaygate]
     status: shipped
     provided_by: operator

@@ -99,6 +99,10 @@ spec:
             - name: SESSIONS_HOSTS
               value: {{ join "," . | quote }}
             {{- end }}
+            {{- with int $.Values.proxy.sessionsPort }}
+            - name: SESSIONS_PORT
+              value: {{ . | quote }}
+            {{- end }}
             {{- with $.Values.proxy.sessionsCorsOrigins }}
             - name: SESSIONS_CORS_ORIGINS
               value: {{ join "," . | quote }}
@@ -135,6 +139,9 @@ spec:
             {{- end }}
           ports:
             - { name: http, containerPort: 8080 }
+            {{- if and (trim .Values.proxy.sessionsUrl) (gt (int .Values.proxy.sessionsPort) 0) }}
+            - { name: sessions, containerPort: {{ int .Values.proxy.sessionsPort }} }
+            {{- end }}
           livenessProbe:
             httpGet: { path: /healthz, port: http }
             periodSeconds: 20
@@ -180,3 +187,20 @@ spec:
     {{- include "relaygate.selectorLabels" . | nindent 4 }}
   ports:
     - { name: http, port: {{ .Values.service.port }}, targetPort: http }
+{{- if and (trim .Values.proxy.sessionsUrl) (gt (int .Values.proxy.sessionsPort) 0) }}
+---
+# Internal only: relay-control's bare-origin SESSION_READ_API_URL. Never
+# route this Service from an ingress.
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "relaygate.sessionsServiceName" . }}
+  labels:
+    {{- include "relaygate.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "relaygate.selectorLabels" . | nindent 4 }}
+  ports:
+    - { name: sessions, port: {{ int .Values.proxy.sessionsPort }}, targetPort: sessions }
+{{- end }}
