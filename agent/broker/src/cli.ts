@@ -37,9 +37,8 @@ import { Broker } from "./broker.ts";
 import { defaultDeliverer } from "./deliver.ts";
 import type { Allowlist, CredentialRequest, Principal } from "./policy.ts";
 import { relaycastApi, RelayVerificationError, whois } from "./relay.ts";
-import { awsCliLogs, shipAudit, type ShipResult } from "./ship.ts";
+import { awsCliLogs, shipAudit, shipDir, type ShipResult } from "./ship.ts";
 import { awsCliSts } from "./sts.ts";
-import { withLock } from "./lock.ts";
 
 const { positionals, values } = parseArgs({
   allowPositionals: true,
@@ -82,8 +81,9 @@ const broker = new Broker({
 const auditGroup = process.env.BROKER_AUDIT_LOG_GROUP;
 async function ship(): Promise<ShipResult> {
   if (!auditGroup) return { ok: true, shipped: 0, problems: ["audit shipping is off (BROKER_AUDIT_LOG_GROUP is not set)"] };
-  const sink = awsCliLogs(auditGroup, process.env.BROKER_AUDIT_LOG_STREAM ?? "broker");
-  return withLock(stateDir, () => shipAudit(broker.auditPath, stateDir, sink));
+  // Its own lock (ship.ts), never the state lock: a slow CloudWatch can't hold up a request.
+  const sink = awsCliLogs(auditGroup, process.env.BROKER_AUDIT_LOG_STREAM ?? "broker", shipDir(stateDir));
+  return shipAudit(broker.auditPath, stateDir, sink);
 }
 
 const cmd = positionals[0];

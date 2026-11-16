@@ -264,14 +264,23 @@ broker's account (stream: the broker's Relay name), as the broker role.
 - Each line is sent verbatim (seq, prev and hash included), so the copy is
   checked with the same chain rule as the local file.
 - Shipping is in order and at least once. A cursor
-  (`<state>/audit-shipped.json`, the last shipped seq and hash) moves only
+  (`<state>/ship/cursor.json`, the last shipped seq and hash) moves only
   after CloudWatch accepts a batch, so a crash at the wrong moment can send a
   batch twice (same seq and hash, easy to drop), never skip one.
 - Nothing is sent if the local chain doesn't verify, or if the local line at
   the cursor no longer has the hash that was shipped (the file was rewritten
   after shipping). The run fails in the journal, and the CloudWatch copy is
   the record of what the file said.
-- It runs under the state lock, so it never reads a half-written line.
+- It never takes the state lock, so a slow CloudWatch never holds up a
+  request. It reads the file once and ships only whole lines (a line still
+  being appended has no newline yet). Shipping runs have their own lock.
+- Every audit line is bounded before it's hashed: strings at 2,000
+  characters and lists at 100 items, each saying how much was cut. So a line
+  never reaches CloudWatch's 256 KiB event limit. An older line over the
+  limit ships as a stub (seq, prev, hash, size, sha256), so shipping never
+  stalls and the chain's links stay checkable.
+- The AWS CLI gets each batch from a 0600 file in `<state>/ship`, removed
+  after the call, and never on a command line.
 - The broker role may only `logs:CreateLogStream` and `logs:PutLogEvents` on
   that group. Vended sessions in that account may not write, delete,
   re-key, re-tag or shorten it (`DenyBrokerAuditLog` in the elevated role's

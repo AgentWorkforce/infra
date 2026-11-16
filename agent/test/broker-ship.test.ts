@@ -5,11 +5,13 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { appendAudit, type AuditLine } from "../broker/src/audit.ts";
-import { cursorPath, MAX_BATCH_EVENTS, shipAudit, type LogEvent, type LogSink } from "../broker/src/ship.ts";
+import { appendAudit, MAX_AUDIT_LIST, verifyAudit, type AuditLine } from "../broker/src/audit.ts";
+import { withLock } from "../broker/src/lock.ts";
+import { awsCliLogs, cursorPath, MAX_BATCH_EVENTS, MAX_EVENT_BYTES, shipAudit, type LogEvent, type LogSink } from "../broker/src/ship.ts";
 
 const NOW = new Date("2026-11-16T12:00:00Z");
 
@@ -86,6 +88,82 @@ test("an edited local log ships nothing: a broken chain, or a line rewritten aft
   }
 });
 
+test("review fixes: a half-written last line waits, the state lock isn't needed, an oversized old line ships as a stub", async () => {
+  // A line still being appended (no newline yet) isn't shipped and isn't a broken chain.
+  {
+    const { dir, audit, batches, sink } = setup(2);
+    appendFileSync(audit, '{"seq":3,"ts":"2026-11-16T12:00:00.000Z","pr');
+    const r = await shipAudit(audit, dir, sink, () => NOW);
+    assert.deepEqual([r.ok, r.shipped, r.cursor!.seq], [true, 2, 2]);
+    assert.equal(batches.flat().length, 2);
+  }
+  // Shipping runs while a request holds the broker's state lock.
+  {
+    const { dir, audit, sink } = setup(1);
+    const r = await withLock(dir, () => shipAudit(audit, dir, sink, () => NOW), 5_000);
+    assert.equal(r.ok, true);
+  }
+  // A line over CloudWatch's limit (written before lines were bounded) goes as a stub and the cursor moves on.
+  {
+    const { dir, audit, batches, sink } = setup(1);
+    const prevLine = JSON.parse(readFileSync(audit, "utf8").trim()) as AuditLine;
+    const body = { seq: 2, ts: NOW.toISOString(), prev: prevLine.hash, kind: "denied", requestId: "cb-0000000000aa", reasons: Array.from({ length: 12_000 }, () => "resources: an entry is empty") };
+    const hash = createHash("sha256").update(body.prev).update("\n").update(JSON.stringify(body)).digest("hex");
+    appendFileSync(audit, JSON.stringify({ ...body, hash }) + "\n");
+    appendAudit(audit, { kind: "requested", requestId: "cb-0000000000ab" }, NOW);
+    const r = await shipAudit(audit, dir, sink, () => NOW);
+    assert.deepEqual([r.ok, r.shipped, r.cursor!.seq], [true, 3, 3]);
+    const stub = JSON.parse(batches.flat()[1]!.message) as { seq: number; hash: string; oversized: { bytes: number; sha256: string } };
+    assert.deepEqual([stub.seq, stub.hash], [2, hash]);
+    assert.ok(stub.oversized.bytes > MAX_EVENT_BYTES);
+    assert.ok(batches.flat().every((e) => Buffer.byteLength(e.message) <= MAX_EVENT_BYTES));
+  }
+});
+
+test("new audit lines are bounded before hashing: 10,000 reasons can't make a line CloudWatch rejects", () => {
+  const dir = mkdtempSync(join(tmpdir(), "broker-ship-"));
+  const line = appendAudit(join(dir, "audit.jsonl"), { kind: "denied", requestId: "cb-0000000000ac", purpose: "x".repeat(50_000), reasons: Array.from({ length: 10_000 }, () => "resources: an entry is empty") }, NOW);
+  assert.equal(line.reasons!.length, MAX_AUDIT_LIST + 1);
+  assert.match(line.reasons!.at(-1)!, /9900 more/);
+  assert.match(line.purpose!, /48000 more characters/);
+  assert.ok(Buffer.byteLength(JSON.stringify(line)) < 64 * 1024);
+  assert.deepEqual(verifyAudit(join(dir, "audit.jsonl")), [], "the chain covers the bounded line");
+});
+
+test("the AWS CLI sink: the batch goes in a 0600 file it removes, never on stdin or a command line; a missing stream is created", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "broker-ship-"));
+  const bin = join(dir, "bin");
+  mkdirSync(bin);
+  // A fake aws: logs its arguments, copies the --cli-input-json file, and says the stream is missing once.
+  const fake = [
+    "#!/bin/sh",
+    `echo "$*" >> ${dir}/calls`,
+    'for a in "$@"; do case "$a" in file://*) f=${a#file://}; stat -c %a "$f" >> ' + dir + "/modes; cat \"$f\" >> " + dir + "/sent; echo >> " + dir + "/sent;; esac; done",
+    `if [ "$2" = put-log-events ] && [ ! -f ${dir}/created ]; then echo "An error occurred (ResourceNotFoundException) when calling the PutLogEvents operation" >&2; exit 254; fi`,
+    `if [ "$2" = create-log-stream ]; then touch ${dir}/created; fi`,
+    "echo '{}'",
+  ].join("\n");
+  writeFileSync(join(bin, "aws"), fake + "\n", { mode: 0o755 });
+  const oldPath = process.env.PATH;
+  process.env.PATH = `${bin}:${oldPath}`;
+  try {
+    const shipTo = join(dir, "state", "ship");
+    mkdirSync(shipTo, { recursive: true });
+    await awsCliLogs("/aws-cred-broker/audit", "layered-infra-ops", shipTo, "aws-cred-broker", "us-east-1").put([{ timestamp: 1, message: '{"seq":1}' }]);
+  } finally {
+    process.env.PATH = oldPath;
+  }
+  const calls = readFileSync(join(dir, "calls"), "utf8").trim().split("\n");
+  assert.equal(calls.length, 3, "put, create stream, put again");
+  assert.match(calls[0]!, /^logs put-log-events --cli-input-json file:\/\/\S+\/ship\/batch\.json --profile aws-cred-broker --region us-east-1/);
+  assert.match(calls[1]!, /^logs create-log-stream --log-group-name \/aws-cred-broker\/audit --log-stream-name layered-infra-ops/);
+  assert.ok(calls.every((c) => !c.includes('"seq"')), "events never on a command line");
+  assert.deepEqual(readFileSync(join(dir, "modes"), "utf8").trim().split("\n"), ["600", "600"]);
+  const sent = JSON.parse(readFileSync(join(dir, "sent"), "utf8").trim().split("\n")[0]!) as { logGroupName: string; logStreamName: string; logEvents: LogEvent[] };
+  assert.deepEqual(sent, { logGroupName: "/aws-cred-broker/audit", logStreamName: "layered-infra-ops", logEvents: [{ timestamp: 1, message: '{"seq":1}' }] });
+  assert.ok(!existsSync(join(dir, "state", "ship", "batch.json")), "the batch file is removed");
+});
+
 test("no audit log yet: nothing to do; a corrupt cursor is reported, not trusted", async () => {
   const dir = mkdtempSync(join(tmpdir(), "broker-ship-"));
   const sink: LogSink = { async put() { throw new Error("must not be called"); } };
@@ -93,5 +171,5 @@ test("no audit log yet: nothing to do; a corrupt cursor is reported, not trusted
   writeFileSync(cursorPath(dir), JSON.stringify({ seq: 0, hash: "nope" }));
   const r = await shipAudit(join(dir, "audit.jsonl"), dir, sink);
   assert.equal(r.ok, false);
-  assert.match(r.problems[0]!, /not a valid cursor/);
+  assert.match(r.problems[0]!, /cursor is not valid/);
 });
