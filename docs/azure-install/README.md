@@ -289,6 +289,51 @@ kubectl -n agent-relay rollout status deploy/agent-relay-worker-session-brief de
 summary in the dashboard. The GKE step lists the log lines that show model
 versus extractive summaries, the daily limits, and how to turn it off.
 
+### 12. Large sessions: search index limits (optional)
+
+By default the search indexer indexes a session whole only up to 64 MiB and
+100,000 events. A larger session is recorded as partial. A workspace search that
+would include it then answers 501 `session_partial`, unless the read API is set
+to skip partial sessions. These settings need **agent-relay-2026.11.11 or
+later** (chart 0.7.25+); release 2026.11.5, which this guide installs, does not
+render them, so upgrade first.
+
+All are unset by default, and the chart refuses out-of-range values when it
+renders. Merge into `values.yaml`:
+
+```yaml
+sessions-pipeline:
+  searchIndexer:
+    limits:
+      maxScopeBytes: 256MiB    # SEARCH_INDEX_MAX_SCOPE_BYTES: 64MiB..256MiB
+      maxScopeEvents: 1000000  # SEARCH_INDEX_MAX_SCOPE_EVENTS: 100000..1000000
+      maxRows: 1000000         # SEARCH_INDEX_MAX_ROWS: 500000..1000000
+    resources:
+      limits:
+        memory: 3Gi            # raise with the limits; the indexer holds a scope in memory several times over
+  sessionReadApi:
+    search:
+      partialSessions: skip    # READ_API_SEARCH_PARTIAL_SESSIONS: refuse (image default) or skip
+```
+
+- **The limits** apply to the `session-pipeline-consumer` Deployment only. The
+  consumer re-sends partial sessions on every reconcile tick, so sessions that
+  were partial are indexed whole after the upgrade without a manual re-index.
+- **`partialSessions: skip`** makes a search that would include a still-partial
+  session answer 200, marked incomplete with the `X-Sessions-Read-Incomplete`
+  header, and leaves that session's rows out.
+- Set only what you need: raise `maxScopeBytes` for sessions with large tool
+  outputs, `maxScopeEvents` for very long sessions.
+
+```sh
+helm upgrade agent-relay "$CHART" --namespace agent-relay \
+  -f release/agent-relay/values-eks.yaml -f values.yaml -f release-images.values.yaml --timeout 25m
+kubectl -n agent-relay rollout status deploy/agent-relay-search-indexer --timeout=10m
+```
+
+**Done when:** the rollout finishes, and a workspace search that answered 501
+`session_partial` answers 200.
+
 ## What was not proven
 
 - Any release other than agent-relay-2026.11.0 (patched); `values.yaml` renders
