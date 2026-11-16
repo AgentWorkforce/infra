@@ -36,6 +36,20 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- ternary .Release.Name (printf "%s-relaygate" .Release.Name) (contains "relaygate" .Release.Name) | trunc 63 | trimSuffix "-" -}}
 {{- end }}
 
+{{- /* Gate-only: the internal Sessions listener (relaygate SESSIONS_PORT,
+relaygate #28 or later) serves Sessions at its root with relay-control's
+internal mint allowed. relay-control's SESSION_READ_API_URL must be an origin
+without a path, so Control uses http://<this>.<ns>.svc.cluster.local:<port>
+(relay-control.sessionReadApiUrl derives the same name and port from
+global.relaygate.gateOnly). Never on an Ingress or NEG. */ -}}
+{{- define "relaygate.sessionsServiceName" -}}
+{{- printf "%s-sessions" (include "relaygate.fullname" . | trunc 54 | trimSuffix "-") -}}
+{{- end }}
+
+{{- define "relaygate.sessionsPort" -}}
+{{- dig "relaygate" "gateOnly" "sessionsPort" 0 (.Values.global | default dict) | int -}}
+{{- end }}
+
 {{- define "relaygate.validate" -}}
 {{- if include "relaygate.gateOnly" . }}
 {{- /* Gate-only (global.relaygate.gateOnly.enabled, agent-relay umbrella):
@@ -54,6 +68,10 @@ mapping left off would cut clients off instead of gating them. */ -}}
 {{- end }}
 {{- if ne (int (dig "servicePort" 8080 $g)) (int .Values.service.port) }}
 {{- fail "relaygate: global.relaygate.gateOnly.servicePort must equal service.port" }}
+{{- end }}
+{{- $sp := int (include "relaygate.sessionsPort" .) -}}
+{{- if or (lt $sp 1) (gt $sp 65535) (eq $sp (int .Values.service.port)) }}
+{{- fail "relaygate: global.relaygate.gateOnly.enabled needs global.relaygate.gateOnly.sessionsPort (relaygate SESSIONS_PORT, e.g. 8081, not service.port): relay-control reaches Sessions there at the root" }}
 {{- end }}
 {{- if .Values.nameOverride }}{{ fail "relaygate: nameOverride is unsupported with gate-only: the NetworkPolicies select app.kubernetes.io/name=relaygate" }}{{ end }}
 {{- end }}

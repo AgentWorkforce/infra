@@ -48,6 +48,10 @@ of set a second time. Desktop and the CLI log in against that same origin. */ -}
 {{- end -}}
 {{- end -}}
 {{- define "relay-control.validate" -}}
+{{- /* Control's config refuses a path on these service URLs, and crash-loops;
+check what is rendered, including the gate-only SESSION_READ_API_URL. */ -}}
+{{- if and .Values.services.sessionReadApiUrl (dig "relaygate" "gateOnly" "enabled" false (.Values.global | default dict)) (lt (int (dig "relaygate" "gateOnly" "sessionsPort" 0 (.Values.global | default dict))) 1) }}{{ fail "relay-control: global.relaygate.gateOnly.enabled needs global.relaygate.gateOnly.sessionsPort (relaygate's internal Sessions listener, SESSION_READ_API_URL)" }}{{ end -}}
+{{- with include "relay-control.sessionReadApiUrl" . }}{{ if not (regexMatch "^https?://[^/?#@]+$" .) }}{{ fail (printf "relay-control: SESSION_READ_API_URL would be %s; it must be an http(s) origin with no path, credentials, query or fragment" .) }}{{ end }}{{ end -}}
 {{- include "relay-control.historyUpload.validate" . -}}
 {{- include "relay-control.validateAdapters" . -}}
 {{- $image := include "relay-control.image" . -}}
@@ -652,7 +656,8 @@ leave the certificate unverified while looking configured. */ -}}
 {{- end -}}
 
 {{- /* SESSION_READ_API_URL. Gate-only (global.relaygate.gateOnly.enabled):
-relaygate's Sessions proxy (http://<relaygate>:<port>/sessions), so Control's mint, refresh and service-token
+relaygate's internal Sessions listener (http://<relaygate>-sessions.<ns>.svc.cluster.local:<sessionsPort>,
+an origin: Control refuses a path; relaygate serves Sessions at that port's root), so Control's mint, refresh and service-token
 calls and its server-side reads go through relaygate, which passes them to the
 read API unchanged. services.sessionReadApiUrl stays the read API Service
 (the handoff validation and the umbrella's checks still use it). */ -}}
@@ -660,7 +665,7 @@ read API unchanged. services.sessionReadApiUrl stays the read API Service
 {{- $g := dig "relaygate" "gateOnly" dict (.Values.global | default dict) | default dict -}}
 {{- if and .Values.services.sessionReadApiUrl (dig "enabled" false $g) -}}
 {{- $gate := dig "serviceName" "" $g | default (ternary .Release.Name (printf "%s-relaygate" .Release.Name) (contains "relaygate" .Release.Name)) | trunc 63 | trimSuffix "-" -}}
-{{- printf "http://%s:%d/sessions" $gate (int (dig "servicePort" 8080 $g)) -}}
+{{- printf "http://%s-sessions.%s.svc.cluster.local:%d" ($gate | trunc 54 | trimSuffix "-") .Release.Namespace (int (dig "sessionsPort" 0 $g)) -}}
 {{- else -}}
 {{- .Values.services.sessionReadApiUrl -}}
 {{- end -}}

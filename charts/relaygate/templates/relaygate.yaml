@@ -120,6 +120,11 @@ spec:
               valueFrom: { secretKeyRef: { name: {{ $.Values.secrets.sessionsToken.name }}, key: {{ $.Values.secrets.sessionsToken.key }} } }
             {{- end }}
             {{- end }}
+            {{- if include "relaygate.gateOnly" . }}
+            # Gate-only: the internal Sessions listener (relaygate #28 or later).
+            - name: SESSIONS_PORT
+              value: {{ include "relaygate.sessionsPort" . | quote }}
+            {{- end }}
             {{- if .Values.secrets.adminToken.name }}
             - name: RELAYGATE_ADMIN_TOKEN
               valueFrom: { secretKeyRef: { name: {{ .Values.secrets.adminToken.name }}, key: {{ .Values.secrets.adminToken.key }} } }
@@ -133,6 +138,9 @@ spec:
             {{- end }}
           ports:
             - { name: http, containerPort: 8080 }
+            {{- if include "relaygate.gateOnly" . }}
+            - { name: sessions, containerPort: {{ include "relaygate.sessionsPort" . }} }
+            {{- end }}
           livenessProbe:
             httpGet: { path: /healthz, port: http }
             periodSeconds: 20
@@ -178,3 +186,42 @@ spec:
     {{- include "relaygate.selectorLabels" . | nindent 4 }}
   ports:
     - { name: http, port: {{ .Values.service.port }}, targetPort: http }
+{{- if include "relaygate.gateOnly" . }}
+---
+# Gate-only: relaygate's internal Sessions listener (SESSIONS_PORT), for
+# relay-control's SESSION_READ_API_URL (an origin, no path). Internal only:
+# never put this Service on an Ingress, HTTPRoute or NEG.
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "relaygate.sessionsServiceName" . }}
+  labels:
+    {{- include "relaygate.labels" . | nindent 4 }}
+    app.kubernetes.io/component: sessions
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "relaygate.selectorLabels" . | nindent 4 }}
+  ports:
+    - { name: sessions, port: {{ include "relaygate.sessionsPort" . }}, targetPort: sessions }
+---
+# Gate-only: anyone may reach the main port (agents, the load balancer,
+# ingress controllers); only relay-control may reach the internal Sessions
+# listener, where its internal mint is allowed.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ $full }}
+  labels:
+    {{- include "relaygate.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "relaygate.selectorLabels" . | nindent 6 }}
+  policyTypes: [Ingress]
+  ingress:
+    - ports: [{ port: http, protocol: TCP }]
+    - from:
+        {{- toYaml .Values.sessionsListener.controlFrom | nindent 8 }}
+      ports: [{ port: sessions, protocol: TCP }]
+{{- end }}

@@ -34,6 +34,15 @@ render() { # chart valuesfile [extra helm args]
   helm template ci "charts/$chart" --namespace ci --no-hooks --include-crds "${args[@]}" "$@"
 }
 
+# relay-control refuses (and crash-loops on) a service URL with a path,
+# credentials, query or fragment (relay-control src/config.ts serviceUrl).
+# Every such env it is rendered with must be a bare http(s) origin.
+check_control_origins() { # label rendered-manifests
+  local bad
+  bad=$(yq 'select(.kind == "Deployment" and (.spec.template.spec.containers[0].env // [] | map(.name) | contains(["RELAYCAST_URL"]))) | .spec.template.spec.containers[0].env[] | select(.name == "SELFHOST_PUBLIC_URL" or .name == "RELAYCAST_URL" or .name == "RELAYCAST_PUBLIC_URL" or .name == "RELAYHISTORY_URL" or .name == "SESSION_READ_API_URL" or .name == "SESSION_READ_API_PUBLIC_URL" or .name == "SESSION_ERASE_API_URL" or .name == "SELFHOST_RELAYGATE_PUBLIC_URL" or .name == "SELFHOST_CUSTOMER_SUPPORT_URL") | select(has("value") and .value != "") | select(.value | test("^https?://[^/?#@]+/?$") | not) | .name + "=" + .value' <<<"$2" | sed '/^---$/d;/^$/d')
+  [ -z "$bad" ] || err "$1: relay-control URL env must be a bare origin (Control refuses a path): $bad"
+}
+
 expect_render_failure() { # chart valuesfile label expected-error [extra helm args]
   local chart=$1 v=$2 label=$3 expected=$4 output; shift 4
   echo "--- static: $chart (reject $label)"
@@ -114,6 +123,7 @@ for chart in "${charts[@]}"; do
         fi
         helm lint --strict "charts/$chart" "${args[@]}" >/dev/null || { helm lint --strict "charts/$chart" "${args[@]}"; err "$label: helm lint --strict failed"; continue; }
         out=$(render "$chart" "$v") || { err "$label: render failed"; continue; }
+        case $chart in relay-control|agent-relay) check_control_origins "$label" "$out" ;; esac
         if [[ "$v" == *numeric-extra-env-values.yaml ]]; then
           count_quoted_env() {
             local name=$1 value=$2
@@ -965,12 +975,13 @@ for chart in "${charts[@]}"; do
         expect_render_failure "$chart" "$v" "introspect without secret" "control.introspectUrl needs control.sessionIngestAudience and secrets.relaycontrolIntrospectSecret.name" --set secrets.relaycontrolIntrospectSecret.name=
         # Gate-only (global.relaygate.gateOnly.enabled): refuses to render with
         # a proxy, sessionsHosts or the Control mapping missing, or a renamed Service.
-        gate=(-f charts/relaygate/ci/proxy-values.yaml --set proxy.sessionsUploadUrl=http://session-ingest-api:8080 --set proxy.sessionsReadUrl=http://session-read-api:8080 --set 'proxy.sessionsHosts={history.example.com}' --set control.introspectUrl=http://relay-control:8080/internal/v1/auth/introspect --set control.sessionIngestAudience=https://history.example.com --set secrets.relaycontrolIntrospectSecret.name=control-introspect --set global.relaygate.gateOnly.enabled=true)
+        gate=(-f charts/relaygate/ci/proxy-values.yaml --set proxy.sessionsUploadUrl=http://session-ingest-api:8080 --set proxy.sessionsReadUrl=http://session-read-api:8080 --set 'proxy.sessionsHosts={history.example.com}' --set control.introspectUrl=http://relay-control:8080/internal/v1/auth/introspect --set control.sessionIngestAudience=https://history.example.com --set secrets.relaycontrolIntrospectSecret.name=control-introspect --set global.relaygate.gateOnly.enabled=true --set global.relaygate.gateOnly.sessionsPort=8081)
         render "$chart" "$v" "${gate[@]}" >/dev/null || err "$chart: gate-only did not render"
         expect_render_failure "$chart" "$v" "gate-only without the Relaycast proxy" "global.relaygate.gateOnly.enabled needs proxy.relaycastUrl" "${gate[@]}" --set proxy.relaycastUrl=
         expect_render_failure "$chart" "$v" "gate-only without sessionsHosts" "global.relaygate.gateOnly.enabled needs proxy.relaycastUrl" "${gate[@]}" --set proxy.sessionsHosts=null
         expect_render_failure "$chart" "$v" "gate-only without the Control mapping" "global.relaygate.gateOnly.enabled needs control.introspectUrl" "${gate[@]}" --set control.introspectUrl= --set control.sessionIngestAudience= --set secrets.relaycontrolIntrospectSecret.name=
         expect_render_failure "$chart" "$v" "gate-only with a renamed Service" "set global.relaygate.gateOnly.serviceName" "${gate[@]}" --set fullnameOverride=gate
+        expect_render_failure "$chart" "$v" "gate-only without the sessions port" "needs global.relaygate.gateOnly.sessionsPort" "${gate[@]}" --set global.relaygate.gateOnly.sessionsPort=0
         render "$chart" "$v" "${gate[@]}" --set fullnameOverride=gate --set global.relaygate.gateOnly.serviceName=gate >/dev/null || err "$chart: gate-only with a matching serviceName must render"
         ;;
       agent-relay)
@@ -1025,8 +1036,20 @@ for chart in "${charts[@]}"; do
         [ "$(peers agent-relay-read-api)" = relaygate ] || err "$chart: gate-only reader peers: $(peers agent-relay-read-api)"
         [ "$(peers agent-relay-ingest-edge)" = relaygate ] || err "$chart: gate-only ingest peers: $(peers agent-relay-ingest-edge)"
         [[ " $(peers relay-control) " == *" relaygate "* ]] || err "$chart: gate-only Control must admit relaygate (introspection)"
-        [ "$(yq 'select(.kind == "Deployment" and .metadata.name == "relay-control") | .spec.template.spec.containers[0].env[] | select(.name == "SESSION_READ_API_URL") | .value' <<<"$out")" = http://ci-relaygate:8080/sessions ] \
-          || err "$chart: gate-only SESSION_READ_API_URL must be relaygate's Sessions proxy"
+        check_control_origins "$chart (gate-only)" "$out"
+        [ "$(yq 'select(.kind == "Deployment" and .metadata.name == "relay-control") | .spec.template.spec.containers[0].env[] | select(.name == "SESSION_READ_API_URL") | .value' <<<"$out")" = http://ci-relaygate-sessions.ci.svc.cluster.local:8081 ] \
+          || err "$chart: gate-only SESSION_READ_API_URL must be relaygate's internal Sessions listener origin"
+        # relaygate's internal Sessions listener: SESSIONS_PORT and its port,
+        # a ClusterIP Service on it that no Ingress, HTTPRoute or NEG uses, and a
+        # policy that admits only relay-control to it.
+        [ "$(yq 'select(.kind == "Deployment" and .metadata.name == "ci-relaygate") | .spec.template.spec.containers[0] | ([.env[] | select(.name == "SESSIONS_PORT") | .value] | join(",")) + " " + ([.ports[] | select(.name == "sessions") | .containerPort | tostring] | join(","))' <<<"$out" | sed '/^---$/d;/^ *$/d')" = "8081 8081" ] \
+          || err "$chart: gate-only relaygate must render SESSIONS_PORT=8081 and containerPort 8081"
+        [ "$(yq 'select(.kind == "Service" and .metadata.name == "ci-relaygate-sessions") | .spec.type + " " + ([.spec.ports[] | (.port | tostring) + ">" + .targetPort] | join(",")) + " " + (.metadata.annotations["cloud.google.com/neg"] // "no-neg")' <<<"$out" | sed '/^---$/d;/^$/d')" = "ClusterIP 8081>sessions no-neg" ] \
+          || err "$chart: gate-only sessions Service must be a ClusterIP on 8081 with no NEG"
+        ! yq 'select(.kind == "Ingress" or .kind == "HTTPRoute") | .. | select(. == "ci-relaygate-sessions" or . == 8081)' <<<"$out" | grep -q . || err "$chart: no Ingress or HTTPRoute may reach relaygate's internal Sessions listener"
+        ! yq 'select(.kind == "Service" and .metadata.annotations["cloud.google.com/neg"] != null and .spec.selector["app.kubernetes.io/name"] == "relaygate") | .spec.ports[] | select(.port == 8081 or .targetPort == "sessions" or .targetPort == 8081) | .port' <<<"$out" | grep -q . || err "$chart: no NEG Service may expose relaygate's internal Sessions listener"
+        [ "$(yq 'select(.kind == "NetworkPolicy" and .metadata.name == "ci-relaygate") | [.spec.ingress[] | ((.ports[0].port | tostring) + ":" + ([(.from // [])[] | .podSelector.matchLabels["app.kubernetes.io/name"]] | join("+") | sub("^$"; "any")))] | join(" ")' <<<"$out" | sed '/^---$/d;/^$/d')" = "http:any sessions:relay-control" ] \
+          || err "$chart: gate-only relaygate policy must admit only relay-control to the sessions port"
         ctl_env() { yq "select(.kind == \"Deployment\" and .metadata.name == \"relay-control\") | .spec.template.spec.containers[0].env[] | select(.name == \"$1\") | .value" <<<"$2" | sed '/^---$/d;/^$/d'; }
         [ "$(ctl_env SELFHOST_RELAYGATE_PUBLIC_URL "$out")" = https://cast.gcp-proof.agentrelay.com ] && [ "$(ctl_env SELFHOST_RELAYGATE_PUBLIC_URL "$out")" = "$(ctl_env RELAYCAST_PUBLIC_URL "$out")" ] \
           || err "$chart: gate-only SELFHOST_RELAYGATE_PUBLIC_URL must be the cast host, equal to RELAYCAST_PUBLIC_URL"
@@ -1039,6 +1062,8 @@ for chart in "${charts[@]}"; do
         [ "$(render "$chart" "$v")" = "$(render "$chart" "$v" --set global.relaygate.gateOnly.enabled=false)" ] || err "$chart: gate-only=false must render the default"
         ! yq 'select(.kind == "NetworkPolicy" or .kind == "Ingress") | .. | select(. == "relaygate" or . == "agent-relay-gcp-proof-gate")' <<<"$(render "$chart" "$v")" | grep -q . || err "$chart: the default render must not route to or admit relaygate"
         expect_render_failure "$chart" "$g" "gate-only without relaygate" "requires components.relaygate" --set components.relaygate=false
+        expect_render_failure "$chart" "$g" "gate-only without the sessions port" "needs global.relaygate.gateOnly.sessionsPort" --set global.relaygate.gateOnly.sessionsPort=0
+        expect_render_failure "$chart" "$g" "gate-only sessions port on the main port" "needs global.relaygate.gateOnly.sessionsPort" --set global.relaygate.gateOnly.sessionsPort=8080
         expect_render_failure "$chart" "$g" "gate-only with relaycastPublicUrl off the cast host" "requires relay-control.services.relaycastPublicUrl=https://cast.gcp-proof.agentrelay.com" --set relay-control.services.relaycastPublicUrl=https://relay.gcp-proof.agentrelay.com
         expect_render_failure "$chart" "$g" "gate-only Relaycast upstream on the public host" "relaygate.proxy.relaycastUrl to be the relaycast Service" --set relaygate.proxy.relaycastUrl=https://cast.gcp-proof.agentrelay.com
         expect_render_failure "$chart" "$g" "gate-only reader upstream not the reader Service" "relaygate.proxy.sessionsReadUrl to be the Sessions reader Service" --set relaygate.proxy.sessionsReadUrl=http://other-read
