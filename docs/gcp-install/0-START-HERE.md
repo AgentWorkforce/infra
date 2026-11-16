@@ -688,6 +688,124 @@ Good to know:
   `kubectl -n $NAMESPACE rollout status deploy/agent-relay-worker-session-summary-worker --timeout=10m`.
   Then `kubectl -n $NAMESPACE delete secret agent-relay-llm`.
 
+## 17. Turn on agent search (once, after first sign-in)
+
+Searching Sessions for `@<agent name>` answers "The session agent index isn't
+ready yet" (`501 agent_filter_not_ready` from the API) until this one-time
+activation runs. It checks that every session's agent names are indexed, then
+marks the index ready; later sessions are indexed as they arrive. Run it once
+the first session has uploaded, or on a brand-new install with
+`--fresh-install` (below).
+
+**17a. Get the script and plan (read-only).** It runs in a pod in the
+cluster as the migration owner: the URL comes from `HOOPDB_MIGRATION_URL` in
+`agent-relay-secrets` and never reaches your shell. The script isn't in the
+services image, so this fetches it from the commit the image was built from:
+
+```sh
+REV="$(crane config "ghcr.io/agentworkforce/sessions-pipeline@${SERVICES_IMAGE#*@}" | jq -r '.config.Labels["org.opencontainers.image.revision"]')"
+curl -fsSL -o catalog-activation.ts "https://raw.githubusercontent.com/AgentWorkforce/relayhistory-pipeline/$REV/scripts/native-agent-catalog-activation.ts"
+kubectl -n $NAMESPACE create configmap agent-catalog-activation --from-file=catalog-activation.ts --dry-run=client -o yaml | kubectl apply -f -
+catalog() {  # catalog --plan | catalog --apply <fingerprint>
+  [ -n "$NAMESPACE" ] && [ -n "$SERVICES_IMAGE" ] || { echo "missing settings: run 'source settings.sh' (step 7) first"; return 1; }
+  ARGS="$(printf ', "%s"' "$@")"
+  kubectl -n $NAMESPACE delete pod agent-catalog --ignore-not-found
+  kubectl -n $NAMESPACE apply -f - <<YAML
+apiVersion: v1
+kind: Pod
+metadata: { name: agent-catalog }
+spec:
+  restartPolicy: Never
+  automountServiceAccountToken: false
+  securityContext: { runAsNonRoot: true, runAsUser: 1000, runAsGroup: 1000, fsGroup: 1000, seccompProfile: { type: RuntimeDefault } }
+  volumes:
+    - { name: tmp, emptyDir: { sizeLimit: 64Mi } }
+    - { name: ca, configMap: { name: cloud-sql-ca } }
+    - { name: script, configMap: { name: agent-catalog-activation } }
+  containers:
+    - name: catalog
+      image: $SERVICES_IMAGE
+      workingDir: /app
+      command: [bun, /app/scripts/native-agent-catalog-activation.ts$ARGS]
+      env:
+        - { name: HOOPDB_DB_MODE, value: selfhosted }
+        - { name: HOOPDB_URL, valueFrom: { secretKeyRef: { name: agent-relay-secrets, key: HOOPDB_MIGRATION_URL } } }
+        - { name: NODE_EXTRA_CA_CERTS, value: /etc/catalog-ca/ca.crt }
+        - { name: HOME, value: /tmp }
+      securityContext: { allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: { drop: [ALL] } }
+      volumeMounts:
+        - { name: tmp, mountPath: /tmp }
+        - { name: ca, mountPath: /etc/catalog-ca, readOnly: true }
+        - { name: script, mountPath: /app/scripts/native-agent-catalog-activation.ts, subPath: catalog-activation.ts, readOnly: true }
+YAML
+  t=0
+  until p="$(kubectl -n $NAMESPACE get pod agent-catalog -o jsonpath='{.status.phase}')"; [ "$p" = Succeeded ] || [ "$p" = Failed ]; do
+    sleep 3; t=$((t + 3))
+    [ $t -lt 300 ] || { echo "agent-catalog still $p after 5 min"; kubectl -n $NAMESPACE describe pod agent-catalog | tail -20; return 1; }
+  done
+  kubectl -n $NAMESPACE logs agent-catalog | tail -1
+  kubectl -n $NAMESPACE get pod agent-catalog -o jsonpath='exit {.status.containerStatuses[0].state.terminated.exitCode}{"\n"}'
+}
+catalog --plan
+```
+
+**Done when:** one JSON line, then `exit 0` or `exit 2`. The plan is read-only
+and safe to run any time. Its line shows `"eligible"` and a 64-character
+`fingerprint`; `"eligible":false` with only `unprojected` above 0 is fine at
+this point.
+
+**17b. Pause uploads, plan, apply, resume (about a minute).** Apply only
+works on a plan made while nothing writes, so stop uploads, give the indexer a
+minute to catch up, then stop it too:
+
+```sh
+IE="$(kubectl -n $NAMESPACE get deploy agent-relay-ingest-edge -o jsonpath='{.spec.replicas}')"
+SI="$(kubectl -n $NAMESPACE get deploy agent-relay-search-indexer -o jsonpath='{.spec.replicas}')"
+kubectl -n $NAMESPACE scale deploy/agent-relay-ingest-edge --replicas=0
+sleep 60
+kubectl -n $NAMESPACE scale deploy/agent-relay-search-indexer --replicas=0
+catalog --plan
+```
+
+Check the plan shows `"eligible":true`, then apply that plan's fingerprint and
+resume:
+
+```sh
+catalog --apply <fingerprint from the plan above>
+kubectl -n $NAMESPACE scale deploy/agent-relay-search-indexer --replicas=$SI
+kubectl -n $NAMESPACE scale deploy/agent-relay-ingest-edge --replicas=$IE
+kubectl -n $NAMESPACE rollout status deploy/agent-relay-search-indexer deploy/agent-relay-ingest-edge --timeout=10m
+kubectl -n $NAMESPACE delete pod/agent-catalog configmap/agent-catalog-activation
+```
+
+**Done when:** the plan shows `"eligible":true`, the apply shows
+`"activated":true` and `exit 0`, both rollouts finish, and searching Sessions
+for `@<agent name>` lists sessions (or none) instead of "The session agent
+index isn't ready yet".
+
+- **Brand-new install, no sessions yet:** the plan shows `"liveRows":0` and
+  `"eligible":false`. Either upload a session first, or add `--fresh-install`
+  as the last argument to both: `catalog --plan --fresh-install`, then
+  `catalog --apply <fingerprint> --fresh-install`. Use it only on an install
+  that has never had a session, deleted ones included; anywhere else the plan
+  stays ineligible.
+- **It briefly pauses writers.** Uploads are refused while
+  `agent-relay-ingest-edge` is at 0, and the apply itself locks the session
+  index (it waits at most 1 second for those locks). Expect about a minute.
+  Run it at a quiet time, and before anyone deletes a session.
+- **`unprojected` above 0 in the paused plan:** the indexer hadn't caught up.
+  Scale `agent-relay-search-indexer` back to `$SI`, wait a minute, and repeat
+  from its `--replicas=0` line.
+- **`native_catalog_plan_changed`:** something wrote between plan and apply.
+  Plan again and apply the new fingerprint.
+- **`native_catalog_operation_failed` with `exit 1` from apply:** usually a
+  writer still held the locks. Nothing was written; check both Deployments are
+  at 0 and run the same `catalog --apply` again.
+- **`native_catalog_schema_validation_required`:** the pod couldn't reach the
+  database, or the migrations (step 12) haven't finished.
+- **Any other count above 0** (for example `unknownUsers`): resume writers and
+  send us the JSON line.
+
 ## Next
 
 - **Before people start:** in the dashboard, under Settings › Policies, set
