@@ -1,0 +1,15 @@
+{
+  "name": "Agent Relay repos",
+  "url": "https://github.com/AgentWorkforce/infra/blob/main/docs/self-hosted-slack-relay.md",
+  "description": "Read-only access for your self-hosted Agent Relay Slack agents: keeps read-only copies of the repositories you select for the agents to read. Cannot write, open pull requests or receive webhooks.",
+  "public": false,
+  "hook_attributes": {
+    "url": "https://github.com/AgentWorkforce/infra/blob/main/docs/self-hosted-slack-relay.md",
+    "active": false
+  },
+  "default_permissions": {
+    "contents": "read",
+    "metadata": "read"
+  },
+  "default_events": []
+}

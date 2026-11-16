@@ -230,6 +230,49 @@ selection is the list) or a fine-grained personal access token.
 You need to be an **owner of the GitHub organization** that owns the
 repositories (or, for personal repositories, that account).
 
+#### With the registration helper
+
+On a machine with a browser, Node 22.18 or later, a checkout of this
+repository, and `kubectl` pointed at the cluster (or `gcloud` signed in to
+the project):
+
+```sh
+cd components/slack-relay/manifest
+# Kubernetes Secret agent-relay/slack-relay-github-app (app-id, private-key, installation-id):
+node register-github-app.mts --org <org> --k8s-namespace agent-relay
+# or Google Secret Manager (github-app-id, github-app-private-key, github-app-installation-id):
+node register-github-app.mts --org <org> --gcp-project <project>
+```
+
+1. Your browser opens GitHub's *Create GitHub App* page with the app
+   filled in from [`github-app-manifest.json`](../components/slack-relay/manifest/github-app-manifest.json):
+   Contents and Metadata read-only, no webhook, private. Pick a name (or pass
+   `--name`) and click **Create GitHub App**.
+2. GitHub sends you back to the helper with a one-time code. The helper
+   exchanges it (`POST /app-manifests/<code>/conversions`) for the app ID and
+   private key and writes them to the store. It never prints them.
+3. The browser moves on to the app's install page. Choose *Only select
+   repositories*, pick the ones the agents may read, and click **Install**.
+4. GitHub sends you back with the installation ID. The helper mints a token
+   for that installation, stores the ID, and lists the repositories it can
+   read (names only).
+
+The helper listens on `127.0.0.1` only and must finish within an hour (the
+code's lifetime). The app keeps the helper's local address as its Setup URL,
+which GitHub uses only when the app is installed again; clear it on the app's
+General page if you like (editing the repository selection never goes
+there). `--user` instead of `--org` registers the app on your own
+account. `--github-url https://ghe.example.com` targets GitHub Enterprise
+Server. `--out-dir <dir>` writes the three values as `0600` files for any
+other secret manager. `--k8s-context` selects the kubectl context. Run
+`node register-github-app.mts --help` for the rest.
+
+With Secret Manager, sync the three secrets into a Kubernetes Secret
+`slack-relay-github-app` with keys `app-id`, `private-key` and
+`installation-id` (e.g. with External Secrets), then set the values below.
+
+#### By hand
+
 1. **Create the app.** Organization → Settings → Developer settings → GitHub
    Apps → **New GitHub App** (on github.com:
    `https://github.com/organizations/<org>/settings/apps/new`):
@@ -258,7 +301,7 @@ refresh; remove one and it is deleted from `/repos` on the next refresh.
 On GitHub Enterprise Server, create the app the same way on your server and
 set `repos.host`.
 
-Create the Secret, from your secret manager or the downloaded key:
+Create the Secret (the helper has already done this), from your secret manager or the downloaded key:
 
 ```sh
 kubectl -n agent-relay create secret generic slack-relay-github-app \
