@@ -1092,6 +1092,8 @@ for chart in "${charts[@]}"; do
           || err "$chart: control policy step 1 must keep relaygate's policy file and ConfigMap (the import source)"
         [ -z "$(gate_env ci-relaygate RELAYCONTROL_POLICY_URL "$cp1")" ] || err "$chart: relaygate must not pull before controlPolicy.pull"
         cp2=$(render "$chart" "$g" "${cp[@]}" --set global.relaygate.controlPolicy.pull=true) || err "$chart: control policy step 2 did not render"
+        render "$chart" "$g" "${cp[@]}" --set global.relaygate.controlPolicy.pull=true --set relaygate.policy.controlPrincipals=null >/dev/null \
+          || err "$chart: a pulling relaygate must not need inline policy rules (the policy is in relay-control)"
         check_control_origins "$chart (control policy pull)" "$cp2"
         [ "$(gate_env ci-relaygate RELAYCONTROL_POLICY_URL "$cp2")" = http://relay-control.ci.svc.cluster.local:80/internal/v1/relaygate/policy ] || err "$chart: RELAYCONTROL_POLICY_URL must be relay-control's internal policy route"
         [ "$(gate_env ci-relaygate RELAYCONTROL_POLICY_SECRET "$cp2")" = "$(gate_env relay-control SELFHOST_RELAYGATE_POLICY_SECRET "$cp2")" ] || err "$chart: relaygate and relay-control must share the policy secret"

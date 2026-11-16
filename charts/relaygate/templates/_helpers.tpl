@@ -162,7 +162,9 @@ namespaceSelector, which would admit every pod in the selected namespaces. */ -}
 {{- end }}
 {{- end }}
 {{- end }}
-{{- if not .Values.existingConfigMap }}
+{{- /* The inline policy is checked only when relaygate reads it (not with
+existingConfigMap, nor when it pulls its policy from relay-control). */ -}}
+{{- if and (not .Values.existingConfigMap) (not (include "relaygate.controlPolicy.pull" .)) }}
 {{- range .Values.policy.enrollmentKeys }}
 {{- if not (regexMatch "^[a-f0-9]{64}$" (.sha256 | default "")) }}
 {{- fail (printf "relaygate: enrollmentKeys[%s].sha256 must be the 64-hex sha256 of the key, never the key itself" (.id | default "?")) }}
