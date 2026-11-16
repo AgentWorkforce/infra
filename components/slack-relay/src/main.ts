@@ -14,6 +14,7 @@ import { Router } from "./router.ts";
 import { checkWithRetry, kbStreamId, RelaygateClient, slackStreamId } from "./gate.ts";
 import { oauthServersFromEnv, TokenSource } from "./mcp.ts";
 import { ingestFromEnv } from "./ingest-config.ts";
+import { EnrollmentCredential, SessionUploader } from "./sessions-upload.ts";
 import { channelMessageOf, ChannelDirectory, normalizeSlackEvent, SlackWeb, SocketModeClient, verifySlackSignature, type SlackEventEnvelope } from "./slack.ts";
 
 const env = process.env;
@@ -245,6 +246,35 @@ async function runRouter(): Promise<void> {
   });
 }
 
+/**
+ * Session upload (opt-in, relaygate only): each agent's Claude session goes to relaygate's Sessions proxy with the
+ * agent's rg_ token, so the agent owns it and it takes the agent's group. The Sessions credential is either the
+ * host's own (a Desktop enrollment key exchanged at relay-control) or relaygate's SESSIONS_TOKEN.
+ */
+function sessionUploader(dataDir: string, hostName: string): SessionUploader | undefined {
+  if (env.SESSIONS_UPLOAD !== "true") return undefined;
+  if (!gateUrl) {
+    log("sessions: upload needs relaygate (RELAYGATE_URL); off");
+    return undefined;
+  }
+  const orgId = (env.SESSIONS_ORG_ID ?? "").trim();
+  const workspaceId = (env.SESSIONS_WORKSPACE_ID ?? "").trim();
+  if (!orgId || !workspaceId) throw new Error("SESSIONS_UPLOAD needs SESSIONS_ORG_ID and SESSIONS_WORKSPACE_ID");
+  const baseUrl = (env.SESSIONS_BASE_URL ?? "").trim() || `${gateUrl.replace(/\/$/, "")}/sessions`;
+  const controlUrl = (env.RELAY_CONTROL_URL ?? "").trim();
+  const credential = controlUrl
+    ? new EnrollmentCredential({
+        controlUrl,
+        // Read when needed: once exchanged, the stored session is used and the key may be gone.
+        enrollmentKey: () => secret("SESSIONS_ENROLLMENT_KEY", false),
+        stateFile: join(dataDir, "sessions-upload", ".credential.json"),
+        hostName,
+      })
+    : undefined;
+  log(`sessions: upload on (${baseUrl}; credential: ${credential ? "host enrollment" : "relaygate SESSIONS_TOKEN"})`);
+  return new SessionUploader({ baseUrl, stateDir: join(dataDir, "sessions-upload", "cursors"), home: join(dataDir, "home"), orgId, workspaceId, credential, instance: hostName, log });
+}
+
 async function runHost(): Promise<void> {
   const { workspaceKey, proofSecret } = identity();
   const gate = relaygate();
@@ -276,6 +306,7 @@ async function runHost(): Promise<void> {
   // anything else (other agents' workdirs, /proc, env) is refused.
   const tools = (env.AGENT_ALLOWED_TOOLS ?? "Read(./**) Glob(./**) Grep(./**) mcp__relaycast").split(/[\s,]+/).filter(Boolean);
   const denied = (env.AGENT_DISALLOWED_TOOLS ?? "Bash WebFetch WebSearch Read(//proc/**)").split(/[\s,]+/).filter(Boolean);
+  const uploader = sessionUploader(dataDir, hostName);
   const host = new AgentHost({
     routerName,
     channel,
@@ -284,6 +315,7 @@ async function runHost(): Promise<void> {
     idleMs: int("IDLE_RELEASE_MINUTES", 15) * 60_000,
     gated: Boolean(gateUrl),
     log,
+    sessionUpload: uploader ? (u) => uploader.upload(u) : undefined,
     getMessage: (id) => hostAgent.message(id) as never,
     connect: async (name) => {
       const { agent, token } = await connectAgent({ baseUrl: relayBase, workspaceKey, name, persona: "Slack thread agent", proofSecret, log, gate });

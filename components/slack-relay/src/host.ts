@@ -83,10 +83,15 @@ export interface HostOptions {
   idleMs?: number;
   /** Behind relaygate: a 403 on a reply is the gate's final denial, never retried. */
   gated?: boolean;
+  /**
+   * Called after each turn (and for every known agent on rejoin) so the agent's Claude session can be uploaded
+   * as the agent. Fire and forget: it never delays or fails a turn.
+   */
+  sessionUpload?: (u: { agent: string; token: string; sessionId: string; workdir: string; slack?: { channel: string; thread_ts: string } }) => Promise<unknown>;
   log?: (m: string) => void;
 }
 
-type HostConfig = Required<Omit<HostOptions, "mcpConfig" | "getMessage">> & Pick<HostOptions, "mcpConfig" | "getMessage">;
+type HostConfig = Required<Omit<HostOptions, "mcpConfig" | "getMessage" | "sessionUpload">> & Pick<HostOptions, "mcpConfig" | "getMessage" | "sessionUpload">;
 
 interface Live {
   session: AgentSession;
@@ -156,17 +161,19 @@ export class AgentHost {
     const names = existsSync(dir) ? readdirSync(dir, { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => d.name) : [];
     const failed: string[] = [];
     for (const name of names) {
-      await this.#wake(name).catch((err) => {
-        failed.push(name);
-        this.#o.log(`rejoin ${name} failed: ${(err as Error).message}; retrying`);
-      });
+      await this.#wake(name)
+        .then((live) => this.#uploadStarted(name, live))
+        .catch((err) => {
+          failed.push(name);
+          this.#o.log(`rejoin ${name} failed: ${(err as Error).message}; retrying`);
+        });
     }
     // Keep retrying the ones that failed, so their DMs reach them eventually.
     for (let delay = 30_000; failed.length; delay = Math.min(delay * 2, 30 * 60_000)) {
       await new Promise((r) => setTimeout(r, delay).unref());
       for (const name of [...failed]) {
         try {
-          await this.#wake(name);
+          this.#uploadStarted(name, await this.#wake(name));
           failed.splice(failed.indexOf(name), 1);
         } catch {
           // next round
@@ -240,6 +247,7 @@ export class AgentHost {
           mcpConfigPath: await this.#mcpPath(name, workdir, live),
         });
         if (!result.error) writeFileSync(marker, result.sessionId);
+        this.#upload({ agent: name, token: live.session.token, sessionId: result.sessionId, workdir });
         if (isAnswer || !live.session.client.dm) return null;
         await live.session.client.dm(dm.from, result.text, { data: { kind: DM_REPLY, session_id: result.sessionId } });
         this.#o.log(`${name} answered a DM from ${dm.from}`);
@@ -251,6 +259,23 @@ export class AgentHost {
     });
     live.queue = run;
     return run;
+  }
+
+  /** Uploads what an agent's session has past its cursor (after a restart), if it has one. */
+  #uploadStarted(name: string, live: Live): void {
+    const workdir = join(this.#o.dataDir, "agents", name);
+    const marker = join(workdir, ".session-started");
+    if (!this.#o.sessionUpload || !existsSync(marker)) return;
+    const sessionId = readFileSync(marker, "utf8").trim();
+    if (sessionId) this.#upload({ agent: name, token: live.session.token, sessionId, workdir });
+  }
+
+  #upload(u: Parameters<NonNullable<HostOptions["sessionUpload"]>>[0]): void {
+    const up = this.#o.sessionUpload;
+    if (!up) return;
+    void Promise.resolve()
+      .then(() => up(u))
+      .catch((err) => this.#o.log(`${u.agent}: session upload failed: ${(err as Error).message}`));
   }
 
   async #mcpPath(name: string, workdir: string, live: Live): Promise<string | null> {
@@ -305,6 +330,7 @@ export class AgentHost {
         mcpConfigPath,
       });
       if (!result.error) writeFileSync(join(workdir, ".session-started"), result.sessionId);
+      this.#upload({ agent: name, token: live.session.token, sessionId: result.sessionId, workdir, slack: { channel: inbound.slack.channel, thread_ts: inbound.slack.thread_ts } });
       const data: ReplyData = {
         kind: "agent.reply",
         session_id: result.sessionId,

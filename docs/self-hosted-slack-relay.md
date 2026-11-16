@@ -256,6 +256,66 @@ Two things on the relaygate side make this work:
   can't create its channel. Agent names start with `slack-`, so the bridge
   enrollment key's `namePrefix` must be `slack-`.
 
+### Session upload (optional)
+
+With relaygate on, the host can upload every agent's Claude Code session to
+Agent Relay Sessions, so each Slack thread's agent shows up in the dashboard
+like a Desktop session (title `<agent> · Slack <channel id> thread <thread ts>`,
+first prompt, every user and assistant message; tool calls appear by name).
+The ids go in the title. The thread's text goes in the session itself.
+
+```yaml
+sessions:
+  upload:
+    enabled: true
+    orgId: <relay-control organization id>
+    workspaceId: <relay-control workspace id>
+    # baseUrl defaults to <relaygate.url>/sessions (the gate's main port)
+    relayControlUrl: http://<release>-relay-control:8080
+secrets:
+  sessionsEnrollmentKey: { name: slack-relay-sessions, key: enrollment-key }
+```
+
+- **Ownership.** Each upload carries the agent's own `rg_` token, so relaygate
+  makes the agent the session's owner, in the agent's group (the pit, gid 22).
+  Who can read it comes from the relaygate policy's `sessionDefaults` for that
+  group. For example, `{"gid": 22, "mode": "660", "acl": [{"gid": 11, "perm": "w"}, {"gid": 33, "perm": "r"}]}`
+  lets the pit and the groups in the ACL read it. A per-session
+  `sessionOverrides` entry shares one session more widely.
+- **When.** The upload runs after every turn (thread message or DM), and at
+  startup for every known agent. Only complete transcript lines past a
+  per-session cursor on the host volume (`/data/sessions-upload/cursors`) are
+  sent, in native delivery batches (`POST <sessions>/v1/delivery/batches`).
+  Batch ids are derived from their content, so a retry is an exact replay.
+  429 and 503 wait for `Retry-After`. Other 5xx and network errors back off,
+  and after a few attempts the upload waits for the next turn. A relaygate
+  denial (403 `relaygate_*`) is final for that session. Transcript text and
+  tokens are never logged.
+- **The Sessions credential.** Sessions' ingest edge accepts only a
+  relay-control user session with `rth:sync`. Workspace API tokens are
+  refused, and an access token lasts 24 hours. So the host holds its own
+  credential. An organization owner or admin mints a Desktop enrollment key for
+  the user the sessions are uploaded as (`POST /api/v1/workspaces/<id>/deployment-api-tokens`,
+  `{"purpose": "desktop-enrollment", "email": "<uploader>", "label": "slack-relay"}`)
+  and stores it in the Secret. The host exchanges it once
+  (`/api/v1/auth/enrollment/token`), keeps the session in
+  `/data/sessions-upload/.credential.json` and refreshes it. Each upload then
+  sends `X-Relaygate-Token: <agent rg_>` and `Authorization: Bearer <session>`,
+  and relaygate forwards the credential unchanged. The key works only once and
+  expires in at most 30 days. Exchange it soon after minting, and keep the
+  volume: if the stored session is lost or revoked, mint a new key.
+  Sessions records that user as the uploader. relaygate records the agent as
+  the owner.
+- **Without `relayControlUrl`**, uploads send the `rg_` token in
+  `Authorization` and relaygate uses its own `SESSIONS_TOKEN`. With
+  `SESSIONS_TOKEN` unset, relaygate answers `401 relaygate_unauthenticated`.
+  `SESSIONS_INTERNAL_SECRET` is not used for uploads. A `SESSIONS_TOKEN` would
+  have to be such a 24-hour user session, so use the enrollment key.
+- **relaygate side:** the Sessions proxy must be on (`SESSIONS_URL`, or
+  `SESSIONS_UPLOAD_URL` pointing at the ingest edge). slack-relay calls the gate's
+  main port. relaygate's internal `SESSIONS_PORT` listener is only for
+  relay-control.
+
 ## Data boundaries and audit
 
 - **What leaves the cluster:** Slack API calls from the router only, and
@@ -292,6 +352,10 @@ See `charts/slack-relay/values.yaml`. The ones you're most likely to change:
 | `host.allowedTools` | `[Read(./**), Glob(./**), Grep(./**), mcp__relaycast]` | Scoped to the agent's workdir. |
 | `host.disallowedTools` | `[Bash, WebFetch, WebSearch, Read(//proc/**)]` | Always refused. |
 | `host.idleReleaseMinutes` | `15` | |
+| `sessions.upload.enabled` | `false` | Upload each agent's Claude session as the agent (needs relaygate). |
+| `sessions.upload.baseUrl` | `<relaygate.url>/sessions` | relaygate's Sessions proxy. |
+| `sessions.upload.orgId` / `workspaceId` | none | The relay-control org and workspace the sessions belong to. |
+| `sessions.upload.relayControlUrl` | none | Where the host exchanges and refreshes its Sessions credential (with `secrets.sessionsEnrollmentKey`). |
 
 ## Limits of this version
 
