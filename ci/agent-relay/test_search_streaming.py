@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Render checks for issue-610 Phase 2 streaming reconcile: off by default, consumer only, refusals."""
+"""Render checks for issue-610 Phase 2 streaming reconcile: tri-state enabled, consumer only, refusals."""
 import unittest
 
 from test_search_limits import env, render
@@ -15,20 +15,34 @@ def bootstrap_names(stdout):
 
 
 class SearchStreaming(unittest.TestCase):
-    def test_off_by_default(self):
+    def test_unset_by_default(self):
         result = render()
         self.assertEqual(result.returncode, 0, result.stderr)
         for name in NAMES:
             self.assertNotIn(name, result.stdout)
 
-    def test_enabled_renders_on_the_consumer_only(self):
-        result = render({'searchIndexer': {'streaming': {'enabled': True}}})
+    def test_true_and_false_render_explicitly_on_the_consumer_only(self):
+        for value, rendered in ((True, 'true'), (False, 'false')):
+            with self.subTest(enabled=value):
+                result = render({'searchIndexer': {'streaming': {'enabled': value}}})
+                self.assertEqual(result.returncode, 0, result.stderr)
+                consumer = env(result.stdout, CONSUMER)
+                self.assertEqual(consumer['SEARCH_INDEX_STREAMING_ENABLED'], rendered)
+                self.assertNotIn('SEARCH_INDEX_STREAM_MAX_READ_BYTES', consumer)
+                self.assertEqual(result.stdout.count('SEARCH_INDEX_STREAMING_ENABLED'), 1)
+
+    def test_budgets_render_without_enabled(self):
+        result = render({'searchIndexer': {'streaming': {'maxReadBytes': '1GiB', 'maxReadEvents': 800000}}})
         self.assertEqual(result.returncode, 0, result.stderr)
         consumer = env(result.stdout, CONSUMER)
-        self.assertEqual(consumer['SEARCH_INDEX_STREAMING_ENABLED'], 'true')
-        self.assertNotIn('SEARCH_INDEX_STREAM_MAX_READ_BYTES', consumer)
-        self.assertNotIn('SEARCH_INDEX_STREAM_MAX_READ_EVENTS', consumer)
-        self.assertEqual(result.stdout.count('SEARCH_INDEX_STREAMING_ENABLED'), 1)
+        self.assertNotIn('SEARCH_INDEX_STREAMING_ENABLED', consumer)
+        self.assertEqual(consumer['SEARCH_INDEX_STREAM_MAX_READ_BYTES'], '1GiB')
+        self.assertEqual(consumer['SEARCH_INDEX_STREAM_MAX_READ_EVENTS'], '800000')
+
+    def test_output_facts_with_unset_streaming_renders(self):
+        result = render({'searchIndexer': {'outputFacts': {'enabled': True}}})
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn('SEARCH_INDEX_STREAMING_ENABLED', result.stdout)
 
     def test_budgets_render_when_set(self):
         result = render({'searchIndexer': {
@@ -48,8 +62,9 @@ class SearchStreaming(unittest.TestCase):
 
     def test_invalid_values_are_refused(self):
         cases = [
-            ({'streaming': {'enabled': 'yes'}}, 'searchIndexer.streaming.enabled must be a boolean'),
-            ({'streaming': {'maxReadBytes': '1GiB'}}, 'need searchIndexer.streaming.enabled=true'),
+            ({'streaming': {'enabled': 'yes'}}, 'searchIndexer.streaming.enabled must be null, true or false'),
+            ({'streaming': {'enabled': False, 'maxReadBytes': '1GiB'}}, 'have no effect with searchIndexer.streaming.enabled=false'),
+            ({'streaming': {'maxReadEvents': 100}}, 'maxReadEvents must be an integer from 400000'),
             ({'streaming': {'enabled': True}, 'outputFacts': {'enabled': True}}, 'cannot be combined with searchIndexer.outputFacts.enabled=true'),
             ({'streaming': {'enabled': True, 'maxReadBytes': '10TB'}}, 'maxReadBytes must be bytes or a MiB/GiB size'),
             ({'streaming': {'enabled': True, 'maxReadBytes': '3GiB'}}, 'maxReadBytes must be from 256MiB'),

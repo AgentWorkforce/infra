@@ -38,10 +38,11 @@
 {{- end -}}
 {{- $streaming := $c.streaming | default dict -}}
 {{- if not (kindIs "map" $streaming) }}{{ fail "searchIndexer.streaming must be a map" }}{{ end -}}
-{{- if not (kindIs "bool" ($streaming.enabled | default false)) }}{{ fail "searchIndexer.streaming.enabled must be a boolean" }}{{ end -}}
-{{- if and (not $streaming.enabled) (or $streaming.maxReadBytes $streaming.maxReadEvents) }}{{ fail "searchIndexer.streaming.maxReadBytes and maxReadEvents need searchIndexer.streaming.enabled=true" }}{{ end -}}
-{{- if and $streaming.enabled (dig "outputFacts" "enabled" false $c) }}{{ fail "searchIndexer.streaming.enabled=true cannot be combined with searchIndexer.outputFacts.enabled=true (the consumer refuses to start)" }}{{ end -}}
-{{- if $streaming.enabled -}}
+{{- $streamingOn := $streaming.enabled -}}
+{{- if not (or (kindIs "invalid" $streamingOn) (kindIs "bool" $streamingOn)) }}{{ fail "searchIndexer.streaming.enabled must be null, true or false" }}{{ end -}}
+{{- if and (kindIs "bool" $streamingOn) (not $streamingOn) (or $streaming.maxReadBytes $streaming.maxReadEvents) }}{{ fail "searchIndexer.streaming.maxReadBytes and maxReadEvents have no effect with searchIndexer.streaming.enabled=false; unset them" }}{{ end -}}
+{{- if and (eq $streamingOn true) (dig "outputFacts" "enabled" false $c) }}{{ fail "searchIndexer.streaming.enabled=true cannot be combined with searchIndexer.outputFacts.enabled=true (the consumer refuses to start)" }}{{ end -}}
+{{- if or $streaming.maxReadBytes $streaming.maxReadEvents -}}
 {{- $mib := 1048576 -}}
 {{- $scopeBytes := mul 64 $mib -}}
 {{- with $limits.maxScopeBytes -}}

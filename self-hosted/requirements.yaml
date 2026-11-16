@@ -435,7 +435,7 @@ compatibility:
         - "ci/sessions-pipeline-profiles/matrix.sh"
         - "charts/sessions-pipeline/templates/_scrub-engine.tpl:1"
         - "ci/sessions-pipeline-scrub-engine/test_scrub_engine.py:1"
-      notes: 'Carries 0.8.41 and adds the default-off searchIndexer.streaming.{enabled,maxReadBytes,maxReadEvents} on the consumer only (issue 610 Phase 2: SEARCH_INDEX_STREAMING_ENABLED=true only when enabled, SEARCH_INDEX_STREAM_MAX_READ_BYTES 4x limits.maxScopeBytes..2GiB, SEARCH_INDEX_STREAM_MAX_READ_EVENTS 4x limits.maxScopeEvents..2000000); streaming with outputFacts.enabled is refused at render. Bootstrap Job names do not move. Default renders differ only in the helm.sh/chart labels.'
+      notes: 'Carries 0.8.41 and adds searchIndexer.streaming.{enabled,maxReadBytes,maxReadEvents} on the consumer only (issue 610 Phase 2: enabled is tri-state, unset by default, and renders SEARCH_INDEX_STREAMING_ENABLED "true" or "false" explicitly when set; SEARCH_INDEX_STREAM_MAX_READ_BYTES 4x limits.maxScopeBytes..2GiB, SEARCH_INDEX_STREAM_MAX_READ_EVENTS 4x limits.maxScopeEvents..2000000); streaming with outputFacts.enabled is refused at render. Bootstrap Job names do not move. Default renders differ only in the helm.sh/chart labels.'
     - id: sessions-pipeline-0.8.41
       status: planned
       charts: { sessions-pipeline: 0.8.41, sessions-pipeline-worker: 0.7.10, session-ingest-api: 0.4.5, session-read-api: 0.2.15 }
@@ -1773,7 +1773,7 @@ compatibility:
         sessions-pipeline-worker: { repository: ghcr.io/agentworkforce/sessions-pipeline, digest: sha256:77022c5b6a1d30f96f921d703eb27a1acada8ec273ad84aebdde24f8eddce305 }
         relay-control: { repository: ghcr.io/agentworkforce/relay-control, digest: sha256:d1b6ca95fab240a9d41208d83de3b1f4245408b0765038762f1c419ee60f43bc }
         relay-webapp: { repository: ghcr.io/agentworkforce/relay-webapp, digest: sha256:bd295ccb7d1323965dce890f19d0b7f857d706c00d7756f719c713763fdb49f3 }
-      notes: 'Carries 0.7.37 and sessions-pipeline 0.8.42: opt-in searchIndexer.streaming (issue 610 Phase 2 streaming reconcile), off by default. Default renders differ only in the helm.sh/chart labels.'
+      notes: 'Carries 0.7.37 and sessions-pipeline 0.8.42: searchIndexer.streaming (issue 610 Phase 2 streaming reconcile), tri-state and unset by default. Default renders differ only in the helm.sh/chart labels.'
     - id: agent-relay-0.7.37
       status: planned
       charts: { agent-relay: 0.7.37, relay-control: 0.4.21, relay-webapp: 0.2.6 }
@@ -7932,22 +7932,26 @@ entries:
     kind: option
     title: Search index streaming reconcile
     description: |
-      Off by default. On, a session above the search index limits is indexed in
-      passes instead of recorded as partial (issue 610 Phase 2). A scope streams
-      only when four times its size fits both read budgets; at their defaults
-      (four times the limits) every streamed scope is still refused and the
-      consumer warns at startup, so raise the budget the scope exceeds. Cannot be
-      combined with searchIndexer.outputFacts.enabled. Indexer memory stays as for
-      the limits (one chunk plus about 1 KB per record, about 0.5 GB at the 2M cap).
+      Tri-state, unset by default (the image default applies). When on, a session
+      above the search index limits is indexed in passes instead of recorded as
+      partial (issue 610 Phase 2). true or false renders an explicit value; false
+      is never dropped, because an image whose default is on needs it to turn
+      streaming off. A scope streams only when four times its size fits both read
+      budgets; at their defaults every streamed scope is still refused and the
+      consumer warns at startup, so raise the budget the scope exceeds. true with
+      searchIndexer.outputFacts.enabled is refused. Streaming holds up to one
+      512 MiB scope plus about 1 KB per record: raise the indexer's memory limit
+      by about 0.5 GB where it is on, or set false. Images that default streaming
+      on validate the budgets at startup even when enabled is unset.
     chart: sessions-pipeline
     values: [searchIndexer.streaming.enabled, searchIndexer.streaming.maxReadBytes, searchIndexer.streaming.maxReadEvents]
     env: [SEARCH_INDEX_STREAMING_ENABLED, SEARCH_INDEX_STREAM_MAX_READ_BYTES, SEARCH_INDEX_STREAM_MAX_READ_EVENTS]
     profiles: [selfhost-postgres, migration, external-selfhosted, external-rds, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql, aws-rds-native]
     status: shipped
     provided_by: operator
-    default: false
-    choices: [{ value: false }, { value: true }]
-    verify: Render none of the three by default or for false; render them only on the session-pipeline-consumer Deployment when enabled; refuse budgets without enabled, enabled with outputFacts.enabled, bytes outside 4x limits.maxScopeBytes..2GiB and events outside 4x limits.maxScopeEvents..2000000; bootstrap Job names do not move.
+    default: null
+    choices: [{ value: null }, { value: true }, { value: false }]
+    verify: Render no streaming variable by default; render SEARCH_INDEX_STREAMING_ENABLED "true" or "false" explicitly when set, on the session-pipeline-consumer Deployment only; render each budget only when set; refuse a non-boolean enabled, budgets with enabled=false, enabled=true with outputFacts.enabled, bytes outside 4x limits.maxScopeBytes..2GiB and events outside 4x limits.maxScopeEvents..2000000; bootstrap Job names do not move.
     sources: [charts/sessions-pipeline/templates/_search-indexer.tpl, charts/sessions-pipeline/templates/search-indexer.yaml, charts/sessions-pipeline/values.yaml, ci/agent-relay/test_search_streaming.py]
 
   - id: opt.session-read-api.search-partial-sessions
