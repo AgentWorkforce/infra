@@ -114,6 +114,26 @@ class Names(unittest.TestCase):
         bad = render({'EKS_ALB_RELAYFILE_CONTROL': 'yes'})
         self.assertEqual(bad.returncode, 2)
 
+    def test_eks_alb_routes_relay_node_to_control_on_the_sign_in_host(self):
+        # Desktop calls /relay-node/v1/* (node enrolment and the node
+        # WebSocket) on the sign-in origin; relay-control serves it only at the
+        # root path, so the apex must not fall through to the dashboard.
+        base = {**os.environ, 'EKS_ALB_DOMAIN': 'relay.example.com', 'EKS_ALB_CERT_ARN': 'arn:aws:acm:test'}
+        for extra, want in (({}, [('/relay-node', 'Prefix')]),
+                            ({'EKS_ALB_CHIEF_SERVICE': 'relaychief-control'},
+                             [('/relay-node', 'Exact'), ('/relay-node/*', 'ImplementationSpecific')])):
+            with self.subTest(extra=extra):
+                result = subprocess.run(['bash', 'scripts/selfhost/eks-alb-ingress.sh', 'ns'], cwd=ROOT,
+                                        env={**base, **extra}, capture_output=True, text=True)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                doc = yaml.safe_load(result.stdout)
+                apex = next(r for r in doc['spec']['rules'] if r['host'] == 'relay.example.com')['http']['paths']
+                got = [(p['path'], p['pathType']) for p in apex
+                       if p['path'].startswith('/relay-node') and p['backend']['service']['name'] == 'relay-control']
+                self.assertEqual(got, want)
+                self.assertEqual(doc['metadata']['annotations']['alb.ingress.kubernetes.io/load-balancer-attributes'],
+                                 'idle_timeout.timeout_seconds=3600')
+
     def test_eks_alb_history_routes_are_native_and_exact(self):
         base = {**os.environ, 'EKS_ALB_DOMAIN': 'relay.example.com', 'EKS_ALB_CERT_ARN': 'arn:aws:acm:test'}
         render = lambda extra: subprocess.run(['bash', 'scripts/selfhost/eks-alb-ingress.sh', 'ns'], cwd=ROOT,

@@ -238,8 +238,11 @@ One umbrella GKE Ingress reserves a global static address
 four hosts, and enables HTTP-to-HTTPS redirect through a FrontendConfig.
 For a base domain `relay.example.com`:
 
-- `relay.example.com`: `/cloud/api` and `/login` to the control API,
-  then `/` to the dashboard
+- `relay.example.com`: `/cloud/api`, `/login` and `/relay-node` to the
+  control API, then `/` to the dashboard. `/relay-node/v1/*` (Desktop node
+  enrolment and the `GET /relay-node/v1/ws` node WebSocket) is served only at
+  the root path, never under `/cloud`, and Desktop calls it on this sign-in
+  origin.
 - `api.relay.example.com`: the same control-plane API Service
 - `cast.relay.example.com`: Relaycast
 - `history.relay.example.com`: native History (ingest edge for upload
@@ -343,8 +346,8 @@ helm template agent-relay . -n agent-relay -f values-gcp.yaml -f values-single-h
 
 For `global.singleHost.host: relay.example.com`:
 
-- `relay.example.com`: `/cloud/api`, `/login` and `/api` to the control API,
-  then `/` to the dashboard. `/api` carries the flows worker endpoints and the
+- `relay.example.com`: `/cloud/api`, `/login`, `/relay-node` and `/api` to
+  the control API, then `/` to the dashboard. `/api` carries the flows worker endpoints and the
   integrations OAuth callback, which relaycontrol hands out as
   `<publicUrl>/api/v1/...`; it is not routed in the default mode, where the
   api host serves them.
@@ -361,12 +364,13 @@ them is set to something else. `gkeIngress.hosts.root`
 must be empty (or equal the host) and `gkeIngress.hosts.api` must be empty.
 `relay-control.dashboardUrl` can stay empty: its default, `publicUrl + "/"`,
 is the dashboard in this mode. Without the GKE Ingress, enable the
-`relay-webapp` leaf Ingress: it routes the same four paths on the derived
+`relay-webapp` leaf Ingress: it routes the same five paths on the derived
 host. `relay-control.ingress.enabled` must stay `false`.
 
-The api BackendConfig (flows worker queue SSE timeout) still binds the
-relay-control Service, so it covers `/cloud/api` and `/api` on the single
-host; the cast BackendConfig (WebSocket timeout) and the edge-deny routes on the
+The api BackendConfig (flows worker queue SSE and relay-node WebSocket
+timeout, `gkeIngress.backends.api.timeoutSec`, default 3600) still binds the
+relay-control Service, so it covers `/cloud/api`, `/relay-node` and `/api` on
+the single host; the cast BackendConfig (WebSocket timeout) and the edge-deny routes on the
 cast host are unchanged. With `global.singleHost.host` empty, every default
 render is byte-identical to the previous release apart from the
 `helm.sh/chart` labels; `ci/agent-relay/subdomain-golden.sh` checks it in CI
@@ -377,7 +381,7 @@ and `ci/agent-relay/subdomain-golden.sh diff origin/main` shows any change.
 | Service | Under a path prefix on the single host | Why |
 | --- | --- | --- |
 | relay-webapp | Works as is, at `/` | Assets are built for `/`; it calls only same-origin `/cloud/api`. |
-| relaycontrol (relay-control) | Works as is, at `/cloud/api`, `/login`, `/api` | It serves those paths natively (`/cloud/api/v1/*` aliases `/api/v1/*`), so nothing is stripped. `publicUrl` is the single host. `/internal` is not routed. |
+| relaycontrol (relay-control) | Works as is, at `/cloud/api`, `/login`, `/relay-node`, `/api` | It serves those paths natively (`/cloud/api/v1/*` aliases `/api/v1/*`; `/relay-node/v1/*` has no `/cloud` alias), so nothing is stripped. `publicUrl` is the single host. `/internal` is not routed. |
 | Relaycast | Needs an app change; stays on its own host | The relaycast-self-host entrypoint refuses a `--base-url` with a path. The TypeScript SDK joins with `new URL('/v1/...', base)`, which drops `/cast`. relaycontrol (`RELAYCAST_PUBLIC_URL`) and Desktop (`validated_base_url`, which silently falls back to `cast.agentrelay.com`) refuse a path-prefixed URL. The A2A, inbound-hook and relayfile-inbound URLs are built from the request origin. Prefix stripping alone fixes none of these. |
 | History (read API and ingest edge) | Needs an app change; stays on its own host | The History origin (`sessionReadApiPublicUrl`) is a bare-origin token audience and the base URL relaycontrol hands clients, and relaycontrol and Desktop refuse a path. |
 | Relayfile | Needs an app change; stays on its own host | The server and actors gateway would work behind prefix stripping, but the mount and `listen` clients build WebSocket URLs by replacing the path, which drops `/files`. |
