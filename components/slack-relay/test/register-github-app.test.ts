@@ -2,7 +2,7 @@
 // App registration, against a fake GitHub and fake stores.
 import assert from "node:assert/strict";
 import { generateKeyPairSync } from "node:crypto";
-import { mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -151,6 +151,18 @@ test("dirStore writes 0600 files", async () => {
     assert.equal(readFileSync(join(dir, "out", "private-key"), "utf8"), PEM);
     assert.equal(readFileSync(join(dir, "out", "installation-id"), "utf8"), "77");
     for (const f of ["app-id", "private-key", "installation-id"]) assert.equal(statSync(join(dir, "out", f)).mode & 0o777, 0o600);
+
+    // A pre-existing world-readable key file is replaced (new inode), not written into.
+    const old = join(dir, "old");
+    mkdirSync(old);
+    writeFileSync(join(old, "private-key"), "OLD", { mode: 0o644 });
+    const before = statSync(join(old, "private-key")).ino;
+    await dirStore(old).put(CREDS);
+    const after = statSync(join(old, "private-key"));
+    assert.notEqual(after.ino, before);
+    assert.equal(after.mode & 0o777, 0o600);
+    assert.equal(readFileSync(join(old, "private-key"), "utf8"), PEM);
+    assert.deepEqual(readdirSync(old).sort(), ["app-id", "installation-id", "private-key"]); // no temp files left
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

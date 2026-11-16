@@ -34,7 +34,7 @@
 
 import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { chmodSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { dirname, join } from "node:path";
 import { parseArgs } from "node:util";
@@ -223,9 +223,18 @@ export function dirStore(dir: string): Store {
     label: `files in ${dir}`,
     async put(c) {
       mkdirSync(dir, { recursive: true, mode: 0o700 });
+      // A fresh owner-only file renamed into place: an existing (perhaps
+      // readable, perhaps open) file is replaced, never written into.
       const write = (f: string, v: string) => {
-        writeFileSync(join(dir, f), v, { mode: 0o600 });
-        chmodSync(join(dir, f), 0o600);
+        const tmp = join(dir, `.${f}.${randomBytes(6).toString("hex")}.tmp`);
+        try {
+          writeFileSync(tmp, v, { mode: 0o600, flag: "wx" });
+          chmodSync(tmp, 0o600); // in case of a umask wider than the mode
+          renameSync(tmp, join(dir, f));
+        } catch (err) {
+          rmSync(tmp, { force: true });
+          throw err;
+        }
       };
       write("app-id", c.appId);
       write("private-key", c.privateKey);
