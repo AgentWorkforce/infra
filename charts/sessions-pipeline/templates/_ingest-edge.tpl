@@ -17,6 +17,15 @@
 
 {{/* An older image can ignore a new environment variable. Require the real
 admission-consumer response before routing async/drain traffic to the Pod. */}}
+{{/* Async probe timing: admission.probeTimeoutSeconds (unset keeps 3 s and the 1500 ms fetch). */}}
+{{- define "sessions-pipeline.ingestEdge.probeTimeoutSeconds" -}}
+{{- $t := .Values.ingestEdge.admission.probeTimeoutSeconds -}}
+{{- if kindIs "invalid" $t }}3{{ else }}{{ int $t }}{{ end -}}
+{{- end -}}
+{{- define "sessions-pipeline.ingestEdge.probeFetchMs" -}}
+{{- $t := .Values.ingestEdge.admission.probeTimeoutSeconds -}}
+{{- if kindIs "invalid" $t }}1500{{ else }}{{ mul (sub (int $t) 1) 1000 }}{{ end -}}
+{{- end -}}
 {{- define "sessions-pipeline.ingestEdge.admissionProbe" -}}
 const fail = () => { process.exitCode = 1; };
 const port = Number(process.env.RELAYHISTORY_INGEST_PORT);
@@ -25,7 +34,7 @@ const count = v => Number.isSafeInteger(v) && v >= 0;
 if (!["async", "drain"].includes(mode) || !Number.isInteger(port) || port < 1024 || port > 65535) {
   fail();
 } else {
-  fetch(`http://127.0.0.1:${port}/readyz`, { redirect: "error", signal: AbortSignal.timeout(1500) })
+  fetch(`http://127.0.0.1:${port}/readyz`, { redirect: "error", signal: AbortSignal.timeout({{ include "sessions-pipeline.ingestEdge.probeFetchMs" . }}) })
     .then(async response => {
       if (!response.ok) return fail();
       const body = await response.json();

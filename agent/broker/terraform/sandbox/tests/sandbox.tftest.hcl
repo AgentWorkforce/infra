@@ -4,7 +4,12 @@ mock_provider "aws" {
   override_resource {
     target          = module.broker_role.aws_iam_role.broker
     override_during = plan
-    values          = { arn = "arn:aws:iam::111122223333:role/agent-cred-broker" }
+    values          = { arn = "arn:aws:iam::500268966557:role/agent-cred-broker" }
+  }
+  override_resource {
+    target          = module.agent_hosts_elevated_role.aws_iam_role.elevated
+    override_during = plan
+    values          = { arn = "arn:aws:iam::500268966557:role/agent-broker-elevated" }
   }
 }
 
@@ -18,18 +23,26 @@ mock_provider "aws" {
 }
 
 variables {
-  broker_account_id    = "111122223333"
-  broker_host_role_arn = "arn:aws:iam::111122223333:role/layered-agent-infra-ops-dev"
+  broker_account_id    = "500268966557"
+  broker_host_role_arn = "arn:aws:iam::500268966557:role/layered-agent-infra-ops-dev"
 }
 
-run "wires_broker_to_scoped_role_and_matches_the_allowlist" {
+run "wires_broker_to_its_roles_and_matches_the_allowlist" {
   command = plan
   assert {
     condition     = output.sandbox_scoped_role_arn == jsondecode(file("${path.module}/../../allowlist.json")).accounts["805532413586"].roles.scoped
     error_message = "the allowlist's scoped role is the one this creates"
   }
   assert {
-    condition     = output.broker_role_arn == "arn:aws:iam::111122223333:role/agent-cred-broker"
+    condition     = output.agent_hosts_elevated_role_arn == jsondecode(file("${path.module}/../../allowlist.json")).accounts["500268966557"].roles.elevated
+    error_message = "the allowlist's elevated role for the broker account is the one this creates"
+  }
+  assert {
+    condition     = jsondecode(file("${path.module}/../../allowlist.json")).accounts["500268966557"].tier == "prod"
+    error_message = "the broker account is approval-tier only: no automatic issue"
+  }
+  assert {
+    condition     = output.broker_role_arn == "arn:aws:iam::500268966557:role/agent-cred-broker"
     error_message = "the broker role is in the broker account"
   }
   assert {
