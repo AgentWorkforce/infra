@@ -62,7 +62,7 @@ export interface CredentialRequest {
   delivery: Delivery;
 }
 
-export type Delivery = { kind: "file" } | { kind: "1password"; vault: string };
+export type Delivery = { kind: "file" } | { kind: "1password"; vault: string } | { kind: "encrypted"; publicKey: string };
 
 export interface PolicyStatement {
   Sid: string;
@@ -86,6 +86,8 @@ export type Decision =
 
 /** AWS's limit on an inline session policy, in characters of its JSON. */
 export const SESSION_POLICY_MAX_CHARS = 2048;
+
+import { isPublicKey } from "./envelope.ts";
 
 const ACCOUNT_RE = /^\d{12}$/;
 /**
@@ -166,8 +168,9 @@ export function validate(req: CredentialRequest, list: Allowlist): string[] {
   if (req.regions !== undefined && (!Array.isArray(req.regions) || req.regions.length === 0)) problems.push("regions, when given, must list at least one region");
   for (const r of req.regions ?? []) if (typeof r !== "string" || !REGION_RE.test(r)) problems.push(`region ${JSON.stringify(r)} is not a region`);
   const del = req.delivery as { kind?: string; vault?: string } | undefined;
-  if (!del || (del.kind !== "file" && del.kind !== "1password")) problems.push("delivery.kind must be file or 1password");
+  if (!del || (del.kind !== "file" && del.kind !== "1password" && del.kind !== "encrypted")) problems.push("delivery.kind must be encrypted, file or 1password");
   else if (del.kind === "1password" && (typeof del.vault !== "string" || !/^[\w .-]{1,64}$/.test(del.vault))) problems.push("delivery.vault must name a 1Password vault");
+  else if (del.kind === "encrypted" && !isPublicKey((del as { publicKey?: unknown }).publicKey)) problems.push("delivery.publicKey must be a base64 32-byte X25519 key (client.ts keygen)");
   return problems;
 }
 

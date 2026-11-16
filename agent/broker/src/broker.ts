@@ -382,7 +382,7 @@ export class Broker {
       return fail(`delivery failed: ${(e as Error).message}`, { accessKeyId: creds.accessKeyId, expiration: creds.expiration }, forbidden);
     }
     try {
-      writeJson(issuedFile, { requestId, delivery, expiration: creds.expiration } satisfies Issued);
+      writeJson(issuedFile, { requestId, delivery: { kind: delivery.kind, ref: delivery.ref }, expiration: creds.expiration } satisfies Issued);
     } catch {
       // The planned record (same file path, or the 1Password item's title) still lets sweep remove it.
     }
@@ -395,7 +395,8 @@ export class Broker {
     } catch {
       // Unmarked, a later sweep could release the claim; the issue itself already succeeded.
     }
-    this.audit({ ...base, kind: "issued", roleArn, sessionName: name, durationSeconds, policyDigest: digest, accessKeyId: creds.accessKeyId, expiration: creds.expiration, delivery, reasons }, forbidden);
+    // The audit keeps where it went, never the envelope itself.
+    this.audit({ ...base, kind: "issued", roleArn, sessionName: name, durationSeconds, policyDigest: digest, accessKeyId: creds.accessKeyId, expiration: creds.expiration, delivery: { kind: delivery.kind, ref: delivery.ref }, reasons }, forbidden);
     return { requestId, outcome: "issued", reasons, account: req.account, roleArn, sessionName: name, delivery, expiration: creds.expiration, accessKeyId: creds.accessKeyId, policyDigest: digest, namespace };
   }
 }
