@@ -557,7 +557,12 @@ ingestEdge:
     mode: "off" # off | allowlist | on
     # Consumer allowlist uses org:<id>/ws:<id>, unlike Control's user ID list.
     allowlist: []
+    # 1..2000. Images before the upload-promote fix (relayhistory-pipeline
+    # review/claude-upload-promote-expiry) accept only 1..100 and refuse startup above it.
     scanBatch: 16
+    # SELFHOST_UPLOAD_PROMOTE_CONCURRENCY, 1..64; unset renders nothing (the image defaults to 8).
+    # Needs an image with the upload-promote fix.
+    promoteConcurrency: null
     witness:
       existingSecret: ""
       key: upload-witness-key
