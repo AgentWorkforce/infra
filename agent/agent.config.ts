@@ -104,6 +104,17 @@ export default defineLayeredAgent({
         ],
       },
       {
+        id: "aws-credentials",
+        name: "Short-lived AWS credentials for agents",
+        description:
+          "The AWS credential broker: DM me a request whose whole text is the JSON in agent/broker/AGENTS.md (AgentWorkforce/infra) and I return 15-60 minute credentials sealed to your own key. Workspace agents get the sandbox and neon-exit project access with no approval; anything else waits for Khaliq. Never send or ask for plaintext keys over Relay.",
+        tags: ["aws", "credentials", "broker"],
+        examples: [
+          "30 minutes of read access to the neon-exit/runner secret in 500268966557 (us-east-1), encrypted to my key",
+          "How do I get AWS credentials for the sandbox without SSO?",
+        ],
+      },
+      {
         id: "rotate-credentials",
         name: "Rotate credentials",
         description:

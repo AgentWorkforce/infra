@@ -47,6 +47,22 @@ export interface Allowlist {
   autoRules: AutoRule[];
   /** Agents Khaliq lets approve a narrow slice of requests until a hard expiry. Absent: only humanApprovers approve. */
   delegatedApprovers?: DelegatedApprover[];
+  /**
+   * Issued without any approval to any agent the Relay server verifies as a
+   * member of this workspace, when the request falls entirely inside one of
+   * these capabilities (the same rules and checks as a delegation). Absent:
+   * nothing beyond the sandbox's auto rules is issued without approval.
+   */
+  workspaceAuto?: WorkspaceAuto;
+}
+
+/** Khaliq's standing rule (2026-11-16): verified workspace agents get a narrow set of credentials without asking him. */
+export interface WorkspaceAuto {
+  /** The Relaycast workspace id (the broker's own). A sender in any other workspace never qualifies. */
+  workspaceId: string;
+  grantedBy: string;
+  reason: string;
+  capabilities: DelegatedCapability[];
 }
 
 /**
@@ -107,6 +123,8 @@ export interface Principal {
   kind: "agent" | "human";
   /** The Relay agent id, when the sender was verified with the Relay server (relay.ts). Delegated approval requires it. */
   agentId?: string;
+  /** The sender's Relaycast workspace, when verified with the Relay server. Workspace auto-issue requires it. */
+  workspaceId?: string;
 }
 
 export interface CredentialRequest {
@@ -587,35 +605,52 @@ export function delegationConfigProblems(list: Allowlist): string[] {
     if (!Array.isArray(d.requesters) || d.requesters.length === 0) problems.push(`${who}: requesters must list the agents whose requests it may approve`);
     else for (const r of d.requesters) if (typeof r !== "string" || !NAME_RE.test(r) || r === d.agent || list.humanApprovers.includes(r)) problems.push(`${who}: requester ${JSON.stringify(r)} must be another agent's Relay name`);
     if (!Array.isArray(d.capabilities) || d.capabilities.length === 0) problems.push(`${who}: no capabilities`);
-    for (const c of d.capabilities ?? []) {
-      const where = `${who} capability ${c.id}`;
-      for (const a of c.accounts ?? []) {
-        const acct = list.accounts[a];
-        if (!acct) problems.push(`${where}: account ${a} is not on the allowlist`);
-        else for (const r of c.regions ?? []) if (acct.regions && !acct.regions.includes(r)) problems.push(`${where}: region ${r} is not allowed in ${a}`);
+    problems.push(...capabilityProblems(d.capabilities ?? [], list, who));
+  }
+  return problems;
+}
+
+/** Problems with a set of capabilities (a delegation's or workspaceAuto's): one validator for both. */
+export function capabilityProblems(capabilities: DelegatedCapability[], list: Allowlist, who: string): string[] {
+  const problems: string[] = [];
+  if (!Array.isArray(capabilities)) return [`${who}: capabilities must be a list`];
+  for (const c of capabilities) {
+    const where = `${who} capability ${c?.id}`;
+    // Shape first: nothing below may throw on a malformed entry (a bad config falls back to approval).
+    if (!c || typeof c !== "object") { problems.push(`${where}: not an object`); continue; }
+    if (!Array.isArray(c.grants) || c.grants.some((g) => !g || typeof g !== "object" || !Array.isArray(g.actions) || g.actions.length === 0 || g.actions.some((a) => typeof a !== "string"))) {
+      problems.push(`${where}: grants must be a list, each with a non-empty list of actions`);
+      continue;
+    }
+    if ([c.accounts, c.regions, c.readOnlyRules].some((x) => x !== undefined && !Array.isArray(x))) { problems.push(`${where}: accounts, regions and readOnlyRules must be lists`); continue; }
+    const listy = (x: unknown) => x === undefined || (Array.isArray(x) && x.every((v) => typeof v === "string"));
+    if (c.grants.some((g) => ![g.secretPrefixes, g.secretNames, g.ssmDocuments, g.instanceIds].every(listy))) { problems.push(`${where}: grant fields must be lists of names`); continue; }
+    for (const a of c.accounts ?? []) {
+      const acct = list.accounts[a];
+      if (!acct) problems.push(`${where}: account ${a} is not on the allowlist`);
+      else for (const r of c.regions ?? []) if (acct.regions && !acct.regions.includes(r)) problems.push(`${where}: region ${r} is not allowed in ${a}`);
+    }
+    if (!c.accounts?.length || !c.regions?.length) problems.push(`${where}: must name accounts and regions`);
+    for (const id of c.readOnlyRules ?? []) {
+      const rule = list.autoRules.find((r) => r.id === id);
+      if (!rule) problems.push(`${where}: no auto rule ${id}`);
+      else if (rule.scope !== "any" || rule.resources !== undefined || rule.actions.some((a) => !READ_VERB_RE.test(a.split(":")[1] ?? "") || neverDelegable(a, list))) problems.push(`${where}: auto rule ${id} is not read-only`);
+    }
+    for (const g of c.grants ?? []) {
+      for (const a of g.actions) {
+        const why = neverDelegable(a, list);
+        if (why) problems.push(`${where} grant ${g.id}: ${why}, never delegable`);
       }
-      if (!c.accounts?.length || !c.regions?.length) problems.push(`${where}: must name accounts and regions`);
-      for (const id of c.readOnlyRules ?? []) {
-        const rule = list.autoRules.find((r) => r.id === id);
-        if (!rule) problems.push(`${where}: no auto rule ${id}`);
-        else if (rule.scope !== "any" || rule.resources !== undefined || rule.actions.some((a) => !READ_VERB_RE.test(a.split(":")[1] ?? "") || neverDelegable(a, list))) problems.push(`${where}: auto rule ${id} is not read-only`);
+      const svc = new Set(g.actions.map((a) => a.split(":")[0]));
+      const kinds = [g.secretPrefixes || g.secretNames ? "secretsmanager" : undefined, g.instanceTag || g.ssmDocuments || g.instanceIds ? "ssm" : undefined].filter(Boolean);
+      if (kinds.length !== 1 || svc.size !== 1 || !svc.has(kinds[0]!)) problems.push(`${where} grant ${g.id}: a grant is secretsmanager actions on secrets, or ssm actions on tagged instances`);
+      if (kinds[0] === "ssm" && !g.instanceTag) problems.push(`${where} grant ${g.id}: ssm needs instanceTag`);
+      if (kinds[0] === "ssm" && !g.instanceIds?.length) problems.push(`${where} grant ${g.id}: ssm needs literal instanceIds`);
+      for (const i of g.instanceIds ?? []) if (typeof i !== "string" || !INSTANCE_ID_RE.test(i)) problems.push(`${where} grant ${g.id}: ${JSON.stringify(i)} is not an instance id`);
+      for (const n of [...(g.secretPrefixes ?? []), ...(g.secretNames ?? []), ...(g.ssmDocuments ?? []), ...(g.instanceTag ? [g.instanceTag.key, g.instanceTag.value] : [])]) {
+        if (typeof n !== "string" || !NAME_RE.test(n)) problems.push(`${where} grant ${g.id}: ${JSON.stringify(n)} must be a literal name (no wildcards)`);
       }
-      for (const g of c.grants ?? []) {
-        for (const a of g.actions) {
-          const why = neverDelegable(a, list);
-          if (why) problems.push(`${where} grant ${g.id}: ${why}, never delegable`);
-        }
-        const svc = new Set(g.actions.map((a) => a.split(":")[0]));
-        const kinds = [g.secretPrefixes || g.secretNames ? "secretsmanager" : undefined, g.instanceTag || g.ssmDocuments || g.instanceIds ? "ssm" : undefined].filter(Boolean);
-        if (kinds.length !== 1 || svc.size !== 1 || !svc.has(kinds[0]!)) problems.push(`${where} grant ${g.id}: a grant is secretsmanager actions on secrets, or ssm actions on tagged instances`);
-        if (kinds[0] === "ssm" && !g.instanceTag) problems.push(`${where} grant ${g.id}: ssm needs instanceTag`);
-        if (kinds[0] === "ssm" && !g.instanceIds?.length) problems.push(`${where} grant ${g.id}: ssm needs literal instanceIds`);
-        for (const i of g.instanceIds ?? []) if (typeof i !== "string" || !INSTANCE_ID_RE.test(i)) problems.push(`${where} grant ${g.id}: ${JSON.stringify(i)} is not an instance id`);
-        for (const n of [...(g.secretPrefixes ?? []), ...(g.secretNames ?? []), ...(g.ssmDocuments ?? []), ...(g.instanceTag ? [g.instanceTag.key, g.instanceTag.value] : [])]) {
-          if (typeof n !== "string" || !NAME_RE.test(n)) problems.push(`${where} grant ${g.id}: ${JSON.stringify(n)} must be a literal name (no wildcards)`);
-        }
-        for (const pfx of g.secretPrefixes ?? []) if (!pfx.endsWith("/")) problems.push(`${where} grant ${g.id}: secret prefix ${pfx} must end with "/"`);
-      }
+      for (const pfx of g.secretPrefixes ?? []) if (!pfx.endsWith("/")) problems.push(`${where} grant ${g.id}: secret prefix ${pfx} must end with "/"`);
     }
   }
   return problems;
@@ -629,16 +664,23 @@ export function delegationConfigProblems(list: Allowlist): string[] {
  */
 export function delegateGuards(req: CredentialRequest, list: Allowlist): PolicyStatement[] {
   const d = (list.delegatedApprovers ?? []).find((x) => x.agent === req.delegate);
-  if (!d) return [];
+  return d ? capabilityGuards(req, d.capabilities, "delegate-deny-untagged") : [];
+}
+
+/** The tag guards for a set of capabilities' SSM grants that this request's actions touch (Sid prefix per path). */
+export function capabilityGuards(req: CredentialRequest, capabilities: DelegatedCapability[], sidPrefix: string): PolicyStatement[] {
   const out: PolicyStatement[] = [];
-  for (const c of d.capabilities) for (const g of c.grants) {
-    if (!g.instanceTag) continue;
+  for (const c of capabilities ?? []) for (const g of c?.grants ?? []) {
+    if (!g?.instanceTag) continue;
     const actions = g.actions.filter((a) => req.actions.some((r) => r.toLowerCase() === a.toLowerCase()));
     if (!actions.length) continue;
-    out.push({ Sid: sid(`delegate-deny-untagged-${g.id}`), Effect: "Deny", Action: actions, Resource: ["arn:aws:ec2:*:*:instance/*", "arn:aws:ssm:*:*:managed-instance/*"], Condition: { StringNotEquals: { [`ssm:resourceTag/${g.instanceTag.key}`]: g.instanceTag.value } } });
+    out.push({ Sid: sid(`${sidPrefix}-${g.id}`), Effect: "Deny", Action: actions, Resource: ["arn:aws:ec2:*:*:instance/*", "arn:aws:ssm:*:*:managed-instance/*"], Condition: { StringNotEquals: { [`ssm:resourceTag/${g.instanceTag.key}`]: g.instanceTag.value } } });
   }
   return out;
 }
+
+/** Workspace auto-issue's tag guards, which the broker adds to the policy it checks and issues. */
+export const WORKSPACE_GUARD_PREFIX = "workspace-deny-untagged";
 
 /** Does the grant cover this resource ARN (a literal: no wildcard ever matches)? */
 export function grantCovers(g: DelegatedGrant, resource: string, account: string, region: string): boolean {
@@ -697,8 +739,24 @@ export function checkDelegatedApproval(p: { request: CredentialRequest; requeste
   for (const r of req.resources ?? []) if (/[*?]/.test(r)) return no(`resource ${r} is a wildcard, never delegable`);
   const account = String(req.account);
   if (!list.accounts[account]) return no(`account ${account} is not on the allowlist`);
+  const fit = fitsCapabilities(p, d.capabilities, list, delegateGuards(req, list), "DelegateDenyUntagged");
+  if (fit.ok) return { ok: true, delegate: d, capability: fit.capability, grants: fit.grants };
+  return no(fit.reason);
+}
+
+/**
+ * Does the session policy fall entirely inside one of these capabilities? The
+ * account and the request's named regions are in it; every allowed action on
+ * every resource of each statement is a read-only rule action or covered by
+ * a grant on literal resources; and the policy carries exactly the tag
+ * guards wanted (by Sid prefix). Shared by delegated approval and workspace
+ * auto-issue, so both run the same checks.
+ */
+export function fitsCapabilities(p: { request: CredentialRequest; sessionPolicy: SessionPolicy }, capabilities: DelegatedCapability[], list: Allowlist, wantGuards: PolicyStatement[], guardSidPrefix: string): { ok: true; capability: string; grants: string[] } | { ok: false; reason: string } {
+  const req = p.request;
+  const account = String(req.account);
   const misses: string[] = [];
-  for (const c of d.capabilities) {
+  for (const c of capabilities) {
     const miss = (m: string) => misses.push(`${c.id}: ${m}`);
     if (!c.accounts.includes(account)) { miss(`account ${account} is not in it`); continue; }
     if (!req.regions?.length) { miss(`the request must name its regions (${c.regions.join(", ")})`); continue; }
@@ -721,10 +779,54 @@ export function checkDelegatedApproval(p: { request: CredentialRequest; requeste
     }
     if (bad) { miss(bad); continue; }
     // The IAM guards for tag-scoped grants must be in the policy as the broker builds them.
-    const want = delegateGuards(req, list);
-    const have = p.sessionPolicy.Statement.filter((s) => s.Sid.startsWith("DelegateDenyUntagged"));
-    if (JSON.stringify(want) !== JSON.stringify(have)) { miss("the policy lacks the delegate's tag guard"); continue; }
-    return { ok: true, delegate: d, capability: c.id, grants: [...used].sort() };
+    const have = p.sessionPolicy.Statement.filter((s) => s.Sid.startsWith(guardSidPrefix));
+    if (JSON.stringify(wantGuards) !== JSON.stringify(have)) { miss("the policy lacks the capability's tag guard"); continue; }
+    return { ok: true, capability: c.id, grants: [...used].sort() };
   }
-  return no(misses.join("; ") || "it has no capabilities");
+  return { ok: false, reason: misses.join("; ") || "no capabilities" };
+}
+
+export type WorkspaceAutoCheck = { ok: true; capability: string; grants: string[] } | { ok: false; reason: string };
+
+/**
+ * May this request be issued with no approval at all (workspaceAuto)? Only if
+ * the requester was verified by the Relay server (agent id and workspace) as
+ * a member of the configured workspace, the config is sound, nothing in it is
+ * never-delegable (IAM, identity and audit controls, deletes, wildcard
+ * actions or resources), and the session policy, with the workspace tag
+ * guards the caller added, falls entirely inside one capability.
+ */
+export function checkWorkspaceAuto(p: { request: CredentialRequest; requester: Principal; sessionPolicy: SessionPolicy; runTagOwner?: string }, list: Allowlist): WorkspaceAutoCheck {
+  const w = list.workspaceAuto;
+  if (!w) return { ok: false, reason: "no workspace auto-issue is configured" };
+  const no = (reason: string): WorkspaceAutoCheck => ({ ok: false, reason: `not issued automatically: ${reason}` });
+  const config = workspaceAutoProblems(list);
+  if (config.length) return no(`the workspaceAuto config is unsound (${config.join("; ")})`);
+  if (!p.requester.agentId || !p.requester.workspaceId) return no("the requester wasn't verified with the Relay server");
+  if (p.requester.workspaceId !== w.workspaceId) return no("the requester isn't in the workspace");
+  // Agents only (Khaliq's rule): a human in the workspace who isn't an approver still goes through approval.
+  if (p.requester.kind !== "agent") return no("only workspace agents get credentials without approval");
+  const req = p.request;
+  if (req.delegate) return no("the request names a delegate");
+  if (p.runTagOwner && p.runTagOwner !== p.requester.name) return no(`run tag ${req.runTag} belongs to ${p.runTagOwner}`);
+  for (const a of req.actions) {
+    const why = neverDelegable(a, list);
+    if (why) return no(`${why}`);
+  }
+  for (const r of req.resources ?? []) if (/[*?]/.test(r)) return no(`resource ${r} is a wildcard`);
+  if (!list.accounts[String(req.account)]) return no(`account ${req.account} is not on the allowlist`);
+  const fit = fitsCapabilities(p, w.capabilities, list, capabilityGuards(req, w.capabilities, WORKSPACE_GUARD_PREFIX), sid(WORKSPACE_GUARD_PREFIX));
+  return fit.ok ? fit : no(fit.reason);
+}
+
+/** Problems with workspaceAuto itself. Any problem turns workspace auto-issue off (requests go to approval). */
+export function workspaceAutoProblems(list: Allowlist): string[] {
+  const w = list.workspaceAuto;
+  if (!w) return [];
+  const problems: string[] = [];
+  if (typeof w.workspaceId !== "string" || !/^rw_[0-9a-z]{4,32}$/.test(w.workspaceId)) problems.push("workspaceAuto: workspaceId must be a Relaycast workspace id (rw_…)");
+  if (!list.humanApprovers.includes(w.grantedBy)) problems.push("workspaceAuto: grantedBy must be a human approver");
+  if (!Array.isArray(w.capabilities) || w.capabilities.length === 0) problems.push("workspaceAuto: no capabilities");
+  problems.push(...capabilityProblems(w.capabilities ?? [], list, "workspaceAuto"));
+  return problems;
 }

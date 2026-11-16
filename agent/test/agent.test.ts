@@ -90,6 +90,11 @@ test("the credential broker ships pinned: broker.ref is one exact commit, instal
   const prompt = readFileSync(new URL("../lead-prompt.md", import.meta.url), "utf8");
   assert.match(prompt, /aws-cred-broker request --message-id ID/);
   assert.match(prompt, /aws-cred-broker decide --message-id ID/);
+  // Every agent's how-to exists and the card points at it.
+  const howto = readFileSync(new URL("../broker/AGENTS.md", import.meta.url), "utf8");
+  assert.match(howto, /client\.ts keygen --name/);
+  assert.match(howto, /DM `layered-infra-ops`/);
+  assert.match(agent.input.card!.skills.find((s) => s.id === "aws-credentials")!.description, /agent\/broker\/AGENTS\.md/);
   assert.doesNotMatch(prompt, /--from-name|--from-kind|aws-cred-broker approve/);
 });
 
@@ -112,6 +117,7 @@ test("the A2A card: renders within the relay's limits, one skill per kind of wor
     "provision-cloud-resources",
     "cloudflare-dns-and-workers",
     "terraform-helm-changes",
+    "aws-credentials",
     "rotate-credentials",
     "posthog-setup",
     "investigate-infrastructure",

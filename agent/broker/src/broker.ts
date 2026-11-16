@@ -20,7 +20,7 @@ import { appendAudit, type AuditEvent } from "./audit.ts";
 import type { Deliverer, DeliveryRef } from "./deliver.ts";
 import { withLock } from "./lock.ts";
 import { decisionFromText, RelayVerificationError, requestFromText, verifiedMessage, type Decision as RelayDecision, type RelayApi, type Verified } from "./relay.ts";
-import { approverCounts, checkDelegatedApproval, decide, NAMESPACE_TAG_KEY, newNamespace, sessionName, type Allowlist, type CredentialRequest, type Decision, type Principal, type RunClaim, type SessionPolicy } from "./policy.ts";
+import { approverCounts, capabilityGuards, checkDelegatedApproval, checkWorkspaceAuto, SESSION_POLICY_MAX_CHARS, WORKSPACE_GUARD_PREFIX, workspaceAutoProblems, decide, NAMESPACE_TAG_KEY, newNamespace, sessionName, type Allowlist, type CredentialRequest, type Decision, type Principal, type RunClaim, type SessionPolicy } from "./policy.ts";
 import type { StsClient } from "./sts.ts";
 
 export { withLock };
@@ -236,11 +236,34 @@ export class Broker {
         return { requestId, outcome: "denied", reasons: decision.reasons, account: String(req.account) };
       }
       const digest = requestDigest({ request: req, requester, roleArn: decision.roleArn, sessionPolicy: decision.sessionPolicy, durationSeconds: decision.durationSeconds });
+      // Workspace auto-issue (Khaliq, 2026-11-16): a requester the Relay server verified as an agent of
+      // our workspace, asking for something entirely inside a workspaceAuto capability, needs no
+      // approval. Relay mode only (once), so the identity never comes from the lead. The policy gets
+      // the capability's IAM tag guards before the check, and is issued exactly as checked.
+      let autoMiss: string | undefined;
+      const wa = this.deps.allowlist.workspaceAuto;
+      if (decision.outcome === "approval" && once && wa) {
+        // Validate the config before building anything from it: a malformed entry falls back to approval, never crashes.
+        const problems = workspaceAutoProblems(this.deps.allowlist);
+        const guarded: SessionPolicy = problems.length ? decision.sessionPolicy : { ...decision.sessionPolicy, Statement: [...decision.sessionPolicy.Statement, ...capabilityGuards(req, wa.capabilities, WORKSPACE_GUARD_PREFIX)] };
+        const check = problems.length
+          ? { ok: false as const, reason: `not issued automatically: the workspaceAuto config is unsound (${problems.join("; ")})` }
+          : JSON.stringify(guarded).length > SESSION_POLICY_MAX_CHARS
+            ? { ok: false as const, reason: "not issued automatically: the guarded policy is over STS's size limit" }
+            : checkWorkspaceAuto({ request: req, requester, sessionPolicy: guarded, ...(run.owner ? { runTagOwner: run.owner } : {}) }, this.deps.allowlist);
+        if (check.ok) {
+          const autoDigest = requestDigest({ request: req, requester, roleArn: decision.roleArn, sessionPolicy: guarded, durationSeconds: decision.durationSeconds });
+          const why = `issued without approval: ${requester.name} is a verified agent of workspace ${wa.workspaceId} and the request is inside workspace capability ${check.capability} (${check.grants.join(", ")})`;
+          this.audit({ ...base, kind: "approved", approver: { name: "workspace-auto", address: wa.workspaceId, kind: "policy" }, policyDigest: autoDigest, reasons: [why] });
+          return this.issue(requestId, req, requester, name, run.namespace, decision.roleArn, guarded, decision.durationSeconds, autoDigest, base, [...decision.reasons, why]);
+        }
+        autoMiss = check.reason;
+      }
       if (decision.outcome === "approval") {
         const pending: Pending = { requestId, request: req, requester, ...(relayMessageId ? { relayMessageId } : {}), roleArn: decision.roleArn, sessionPolicy: decision.sessionPolicy, durationSeconds: decision.durationSeconds, digest, createdAt: this.deps.now().toISOString(), reasons: decision.reasons, namespace: run.namespace };
         writeJson(join(this.deps.stateDir, "pending", `${requestId}.json`), pending);
         this.audit({ ...base, kind: "pending-approval", roleArn: decision.roleArn, sessionName: name, durationSeconds: decision.durationSeconds, policyDigest: digest, reasons: decision.reasons });
-        const reasons = [...decision.reasons];
+        const reasons = [...decision.reasons, ...(autoMiss ? [autoMiss] : [])];
         let approver: string | undefined;
         if (req.delegate) {
           // Say up front whether the named delegate can approve this, so the request goes to the right approver.
