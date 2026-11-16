@@ -36,4 +36,4 @@ dependencies:
   repository: file://../relaygate
   version: 0.1.9
 digest: sha256:2528e3b23ca1d452cc6b2ecce93297ac5ee65e3098099c92296f44a47b1841fa
-generated: "2026-11-16T15:24:44.887343-08:00"
+generated: "2026-11-16T15:44:15.784767-08:00"

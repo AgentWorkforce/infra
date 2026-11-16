@@ -124,7 +124,7 @@ export class AgentsTools {
           );
           const page = matching.slice(offset, offset + Math.min(limit, MAX_PAGE)).map(entry);
           const next = offset + page.length < matching.length ? offset + page.length : null;
-          return text(bounded({ total: matching.length, offset, agents: page, next_offset: next }, 300, MAX_PAGE));
+          return text(bounded({ total: matching.length, offset, agents: page, next_offset: next }, 300));
         }
         case "get_agent": {
           const n = args.name;

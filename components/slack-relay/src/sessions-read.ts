@@ -94,6 +94,64 @@ export class SessionReadCredential {
   }
 }
 
+/**
+ * The organization's members (id, name, email) from relay-control, so sessions show people, not user ids:
+ * GET /api/v1/organizations/<org>/memberships, which any member may call (the uploader user's sh_at_). Cached for
+ * `ttlMs`; a failed refresh keeps the last list.
+ */
+export class MemberDirectory {
+  readonly #controlUrl: string;
+  readonly #orgId: string;
+  readonly #control: SessionsCredential;
+  readonly #fetch: typeof fetch;
+  readonly #ttlMs: number;
+  #cache: { at: number; members: Array<{ id: string; name: string | null; email: string | null }> } | null = null;
+  #pending: Promise<Array<{ id: string; name: string | null; email: string | null }>> | null = null;
+
+  constructor(o: { controlUrl: string; orgId: string; control: SessionsCredential; fetch?: typeof fetch; ttlMs?: number }) {
+    this.#controlUrl = o.controlUrl.replace(/\/$/, "");
+    this.#orgId = o.orgId;
+    this.#control = o.control;
+    this.#fetch = o.fetch ?? globalThis.fetch;
+    this.#ttlMs = o.ttlMs ?? 10 * 60_000;
+  }
+
+  list(): Promise<Array<{ id: string; name: string | null; email: string | null }>> {
+    if (this.#cache && Date.now() - this.#cache.at < this.#ttlMs) return Promise.resolve(this.#cache.members);
+    this.#pending ??= this.#load()
+      .catch((err) => {
+        if (this.#cache) return this.#cache.members;
+        throw err;
+      })
+      .finally(() => (this.#pending = null));
+    return this.#pending;
+  }
+
+  async #load(retried = false): Promise<Array<{ id: string; name: string | null; email: string | null }>> {
+    const bearer = await this.#control.get();
+    if (!bearer) throw new CredentialError("no uploader session to list members with");
+    const res = await this.#fetch(`${this.#controlUrl}/api/v1/organizations/${encodeURIComponent(this.#orgId)}/memberships`, {
+      headers: { authorization: `Bearer ${bearer}` },
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (res.status === 401 && !retried) {
+      await res.body?.cancel().catch(() => undefined);
+      this.#control.invalidate();
+      return this.#load(true);
+    }
+    if (!res.ok) {
+      await res.body?.cancel().catch(() => undefined);
+      throw new CredentialError(`relay-control memberships ${res.status}`);
+    }
+    const j = (await res.json()) as { memberships?: Array<Record<string, unknown>> };
+    const members = (j.memberships ?? []).flatMap((m) =>
+      typeof m.userId === "string" ? [{ id: m.userId, name: typeof m.name === "string" ? m.name : null, email: typeof m.email === "string" ? m.email : null }] : [],
+    );
+    this.#cache = { at: Date.now(), members };
+    return members;
+  }
+}
+
 /** The relaygate read routes the proxy forwards (contract "Session uploads"); anything else is refused. */
 const SESSION_ID = "[A-Za-z0-9._:-]{1,200}";
 const ROUTES = [
@@ -110,6 +168,8 @@ export interface ReadProxyOptions {
   credential: Pick<SessionReadCredential, "get" | "invalidate">;
   /** True when `token` is the rg_ token of an agent this host runs. */
   isAgentToken: (token: string) => boolean;
+  /** Who the workspace's user ids are (GET /members); without it, /members answers an empty list. */
+  members?: Pick<MemberDirectory, "list">;
   fetch?: typeof fetch;
   log?: (m: string) => void;
 }
@@ -119,7 +179,7 @@ export interface ReadProxyOptions {
  * agent's own rg_ token, which is forwarded as X-Relaygate-Token next to the host's read credential.
  */
 export class SessionsReadProxy {
-  readonly #o: Required<ReadProxyOptions>;
+  readonly #o: Required<Omit<ReadProxyOptions, "members">> & Pick<ReadProxyOptions, "members">;
   #server: Server | null = null;
   url = "";
 
@@ -152,6 +212,14 @@ export class SessionsReadProxy {
     if (!token || !this.#o.isAgentToken(token)) return send(401, { error: "unknown_agent" });
     if (req.method !== "GET") return send(405, { error: "read_only" });
     const u = new URL(req.url ?? "/", "http://proxy");
+    if (u.pathname === "/members") {
+      try {
+        return send(200, { members: (await this.#o.members?.list()) ?? [] });
+      } catch (err) {
+        this.#o.log(`sessions read: member names unavailable (${(err as Error).message})`);
+        return send(503, { error: "members_unavailable" });
+      }
+    }
     if (!ROUTES.some((r) => r.test(u.pathname))) return send(404, { error: "route_not_proxied" });
     // The workspace is the host's, never the caller's.
     u.searchParams.set("workspace", this.#o.workspaceId);

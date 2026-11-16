@@ -1801,7 +1801,20 @@ compatibility:
         sessions-pipeline-worker: { repository: ghcr.io/agentworkforce/sessions-pipeline, digest: sha256:77022c5b6a1d30f96f921d703eb27a1acada8ec273ad84aebdde24f8eddce305 }
         relay-control: { repository: ghcr.io/agentworkforce/relay-control, digest: sha256:d1b6ca95fab240a9d41208d83de3b1f4245408b0765038762f1c419ee60f43bc }
         relay-webapp: { repository: ghcr.io/agentworkforce/relay-webapp, digest: sha256:bd295ccb7d1323965dce890f19d0b7f857d706c00d7756f719c713763fdb49f3 }
-      notes: 'Carries 0.7.46 and slack-relay 0.3.10, relaygate 0.1.9: behind relaygate the Slack thread agents see every agent on the relay that the policy shows them (mcp__relay_agents list_agents and get_agent, read-only, as each agent), and the default policy shows the pit every agent (relaycast:agent/ r for gid 22; visibility only, needs relaygate with the agent directory). Still default-off (components.slackRelay, components.relaygate). Default renders gain RELAY_AGENTS_MCP and the relaycast:agent/ policy default, plus the helm.sh/chart labels.'
+      notes: 'Carries 0.7.47 and slack-relay 0.3.10, relaygate 0.1.9: behind relaygate the Slack thread agents see every agent on the relay that the policy shows them (mcp__relay_agents list_agents and get_agent, read-only, as each agent), and the default policy shows the pit every agent (relaycast:agent/ r for gid 22; visibility only, needs relaygate with the agent directory). Still default-off (components.slackRelay, components.relaygate). Default renders gain RELAY_AGENTS_MCP and the relaycast:agent/ policy default, plus the helm.sh/chart labels.'
+    - id: agent-relay-0.7.47
+      status: planned
+      charts: { agent-relay: 0.7.47, relay-control: 0.4.22, relay-webapp: 0.2.7 }
+      app_versions: { agent-relay: 0.1.0, relay-control: 0.1.0, relay-webapp: 0.1.0 }
+      depends:
+        agent-relay: { relaycast: 0.3.16, relayauth: 0.1.5, sessions-pipeline: 0.8.43, relay-control: 0.4.22, relay-webapp: 0.2.7, relayflows: 0.2.5, durable-actors: 0.14.6-awf.4, relayfile: 0.2.2, telemetry-collector: 0.1.7, relay-chief: 0.1.0, slack-relay: 0.3.9, relaygate: 0.1.8 }
+      images:
+        relaycast: { repository: ghcr.io/agentworkforce/relaycast-self-host, digest: sha256:ec062ef901af15cf575b53a71d7eb09f2e6ab6e7c0d5be2da35339a275a5c6cc }
+        relaycast-postgres: { repository: ghcr.io/agentworkforce/relaycast-self-host, digest: sha256:ec062ef901af15cf575b53a71d7eb09f2e6ab6e7c0d5be2da35339a275a5c6cc }
+        sessions-pipeline-worker: { repository: ghcr.io/agentworkforce/sessions-pipeline, digest: sha256:77022c5b6a1d30f96f921d703eb27a1acada8ec273ad84aebdde24f8eddce305 }
+        relay-control: { repository: ghcr.io/agentworkforce/relay-control, digest: sha256:d1b6ca95fab240a9d41208d83de3b1f4245408b0765038762f1c419ee60f43bc }
+        relay-webapp: { repository: ghcr.io/agentworkforce/relay-webapp, digest: sha256:bd295ccb7d1323965dce890f19d0b7f857d706c00d7756f719c713763fdb49f3 }
+      notes: 'Carries 0.7.46 and slack-relay 0.3.9: sessions.mcp paging fix (no items dropped to fit the output cap) and the built-in sessions MCP name kept, still default-off (components.slackRelay). Default renders differ only in the helm.sh/chart labels.'
     - id: agent-relay-0.7.46
       status: planned
       charts: { agent-relay: 0.7.46, relay-control: 0.4.22, relay-webapp: 0.2.7 }
@@ -3321,7 +3334,14 @@ compatibility:
       app_versions: { slack-relay: 0.1.0 }
       images:
         slack-relay: { repository: ghcr.io/agentworkforce/slack-relay, digest_required: true }
-      notes: 'Carries 0.3.8. Behind relaygate each agent gets mcp__relay_agents (list_agents, get_agent): read-only calls to relaygate GET /v1/agents and /v1/agents/:name with the agent''s own rg_ token, so it sees every agent the policy shows it. Relaycast''s agent.list and workspace tools, which need a workspace key no gated agent has, are refused. The system prompt says the agent sees all agents, messages only its own group, and never cites a workspace key. New host.relayAgentsMcp (RELAY_AGENTS_MCP, default true). Needs an image with src/agents-mcp.ts. Default-off in the agent-relay umbrella; ships no default digest.'
+      notes: 'Carries 0.3.9. Behind relaygate each agent gets mcp__relay_agents (list_agents with paging and a name/persona filter, get_agent): read-only calls to relaygate GET /v1/agents and /v1/agents/:name with the agent''s own rg_ token, so it sees every agent the policy shows it. Relaycast''s agent.list and workspace tools, which need a workspace key no gated agent has, are refused. The system prompt says the agent sees all agents, messages only its own group, and never cites a workspace key. New host.relayAgentsMcp (RELAY_AGENTS_MCP, default true). Needs an image with src/agents-mcp.ts. Default-off in the agent-relay umbrella; ships no default digest.'
+    - id: slack-relay-0.3.9
+      status: planned
+      charts: { slack-relay: 0.3.9 }
+      app_versions: { slack-relay: 0.1.0 }
+      images:
+        slack-relay: { repository: ghcr.io/agentworkforce/slack-relay, digest_required: true }
+      notes: 'Carries 0.3.8. sessions.mcp tools never drop items of a page to fit the output cap (the cursor points past all of them); only strings are cut, and a page that still does not fit asks for a smaller limit. An OAuth MCP server named sessions no longer replaces the built-in Sessions tools. Sessions carry user {id, name, email} from relay-control organization memberships (cached ten minutes) and list_sessions/search_sessions filter by person. Default renders differ only in the chart labels. Default-off in the agent-relay umbrella; ships no default digest.'
     - id: slack-relay-0.3.8
       status: planned
       charts: { slack-relay: 0.3.8 }
