@@ -167,14 +167,14 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- end }}
 {{- end }}
 
-{{/* repos.app.appId / installationId as strings (YAML numbers render as floats otherwise). */}}
+{{/* repos.app.appId / installationId as strings (YAML numbers render as floats otherwise); a fractional number stays as written, so validation refuses it. */}}
 {{- define "slack-relay.reposAppId" -}}
 {{- $v := (.Values.repos.app | default dict).appId | default "" }}
-{{- if or (kindIs "float64" $v) (kindIs "int64" $v) (kindIs "int" $v) }}{{ int64 $v }}{{ else }}{{ $v | toString | trim }}{{ end }}
+{{- if or (kindIs "int64" $v) (kindIs "int" $v) (and (kindIs "float64" $v) (eq (float64 (int64 $v)) $v)) }}{{ int64 $v }}{{ else }}{{ $v | toString | trim }}{{ end }}
 {{- end }}
 {{- define "slack-relay.reposInstallationId" -}}
 {{- $v := (.Values.repos.app | default dict).installationId | default "" }}
-{{- if or (kindIs "float64" $v) (kindIs "int64" $v) (kindIs "int" $v) }}{{ int64 $v }}{{ else }}{{ $v | toString | trim }}{{ end }}
+{{- if or (kindIs "int64" $v) (kindIs "int" $v) (and (kindIs "float64" $v) (eq (float64 (int64 $v)) $v)) }}{{ int64 $v }}{{ else }}{{ $v | toString | trim }}{{ end }}
 {{- end }}
 
 {{/* repos.list as JSON [{repo, ref}], strings and maps alike. */}}

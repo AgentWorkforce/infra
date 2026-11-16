@@ -265,6 +265,8 @@ for chart in "${charts[@]}"; do
         expect_render_failure "$chart" "$av" "repos with both app and token" "not both" --set repos.token.name=slack-relay-github
         expect_render_failure "$chart" "$av" "repos app bad installation id" "installationId must be a number" --set repos.app.installationId=abc
         expect_render_failure "$chart" "$av" "repos app bad app id" "appId must be the GitHub App" --set repos.app.appId=not-an-id
+        expect_render_failure "$chart" "$av" "repos app fractional installation id" "installationId must be a number" --set-json repos.app.installationId=42.9
+        expect_render_failure "$chart" "$av" "repos app fractional app id" "appId must be the GitHub App" --set-json repos.app.appId=1234567.5
         render "$chart" "$v" | yq 'select(.kind == "ConfigMap") | .data | keys | sort | join(",")' | grep -qx 'github-app.mts,repo-list.mts,repo-sync.sh' \
           || err "$chart: the repo-sync ConfigMap must carry repo-sync.sh, repo-list.mts and github-app.mts"
         ;;
