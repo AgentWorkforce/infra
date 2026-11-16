@@ -364,5 +364,56 @@
         "secretsmanager:DeleteSecret"
       ]
     }
-  ]
+  ],
+  "workspaceAuto": {
+    "$comment": "Issued with NO approval to any agent the Relay server verifies as a member of this workspace, when the request falls wholly inside one capability (same checks as a delegation: never IAM, identity or audit controls, deletes, wildcards). Khaliq chose this scope (2026-11-16, option A). Widening it is an allowlist PR. See broker/AGENTS.md.",
+    "workspaceId": "rw_7ccfea89",
+    "grantedBy": "khaliq-gant",
+    "reason": "Khaliq (2026-11-16): workspace agents shouldn't need his approval for routine project access.",
+    "capabilities": [
+      {
+        "id": "project-neon-exit",
+        "accounts": [
+          "500268966557"
+        ],
+        "regions": [
+          "us-east-1"
+        ],
+        "readOnlyRules": [
+          "read-describe",
+          "ssm-command-reads"
+        ],
+        "grants": [
+          {
+            "id": "neon-exit-secrets",
+            "actions": [
+              "secretsmanager:GetSecretValue",
+              "secretsmanager:PutSecretValue"
+            ],
+            "secretPrefixes": [
+              "neon-exit/"
+            ]
+          },
+          {
+            "id": "neon-exit-ssm",
+            "actions": [
+              "ssm:StartSession",
+              "ssm:SendCommand"
+            ],
+            "instanceIds": [
+              "i-0887caee00ca9029a"
+            ],
+            "instanceTag": {
+              "key": "project",
+              "value": "neon-exit"
+            },
+            "ssmDocuments": [
+              "AWS-RunShellScript",
+              "SSM-SessionManagerRunShell"
+            ]
+          }
+        ]
+      }
+    ]
+  }
 }
