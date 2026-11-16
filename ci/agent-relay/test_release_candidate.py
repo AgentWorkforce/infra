@@ -603,6 +603,7 @@ class FastPathWorkflowTest(unittest.TestCase):
         }
         for name, job in renderer.load("lint.yml")["jobs"].items():
             sources[f"lint-{name}"] = job
+        sources["slack-relay-test"] = renderer.load("slack-relay.yml")["jobs"]["test"]
         for name, source in sources.items():
             scripts = [step["run"] for step in jobs[name]["steps"] if "run" in step]
             for step in source["steps"]:
@@ -617,6 +618,31 @@ class FastPathWorkflowTest(unittest.TestCase):
         self.assertNotRegex(renderer.render(), r"actions/cache|rust-cache|cache:")
         # The umbrella publish keeps its GitHub-hosted signer identity.
         self.assertNotIn("attest-build-provenance", renderer.render())
+
+    def test_fast_path_slack_relay_image_never_moves_main(self):
+        renderer = self.load_renderer()
+        workflow = yaml.safe_load(renderer.render())
+        stage = workflow["on"]["workflow_dispatch"]["inputs"]["stage"]
+        self.assertIn("slack-relay-image", stage["options"])
+        image = workflow["jobs"]["slack-relay-image"]
+        self.assertEqual(image["needs"], ["gate", "slack-relay-test"])
+        self.assertEqual(workflow["jobs"]["slack-relay-test"]["needs"], ["gate"])
+        steps = {step.get("name"): step for step in image["steps"]}
+        tags = steps["Tags"]["run"]
+        self.assertIn(":fast-$SHA,", tags)
+        self.assertIn(":sha-${SHA:0:7}", tags)
+        tag_line = next(line for line in tags.splitlines() if "tags=" in line)
+        self.assertNotRegex(tag_line, r":(main|latest)\b")
+        build = steps["Build and push"]["with"]
+        self.assertIs(build["push"], True)
+        source = renderer.load("slack-relay.yml")["jobs"]["image"]
+        source_build = next(s for s in source["steps"] if "build-push-action" in s.get("uses", ""))
+        for key in ("context", "platforms", "provenance", "sbom"):
+            self.assertEqual(build[key], source_build["with"][key], key)
+        self.assertIn("$GITHUB_STEP_SUMMARY", steps["Digest"]["run"])
+        for step in image["steps"]:
+            if str(step.get("uses", "")).startswith("actions/checkout@"):
+                self.assertEqual(step["with"]["ref"], "${{ needs.gate.outputs.sha }}")
 
 
 if __name__ == "__main__":
