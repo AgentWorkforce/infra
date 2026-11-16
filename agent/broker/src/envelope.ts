@@ -28,14 +28,17 @@ const PKCS8_X25519_PREFIX = Buffer.from("302e020100300506032b656e04220420", "hex
 
 /** A requester's public key: 32 raw bytes, base64 (what client.ts keygen prints). */
 export function parsePublicKey(b64: string): KeyObject {
+  // A string only: Buffer.from(array) would read an array as bytes, not base64.
+  if (typeof b64 !== "string") throw new Error("publicKey must be a base64 string");
   const raw = Buffer.from(b64, "base64");
   if (raw.length !== 32 || raw.toString("base64") !== b64) throw new Error("publicKey must be a base64 32-byte X25519 key");
   return createPublicKey({ key: Buffer.concat([SPKI_X25519_PREFIX, raw]), format: "der", type: "spki" });
 }
 
 export const isPublicKey = (b64: unknown): boolean => {
+  if (typeof b64 !== "string") return false;
   try {
-    parsePublicKey(String(b64));
+    parsePublicKey(b64);
     return true;
   } catch {
     return false;

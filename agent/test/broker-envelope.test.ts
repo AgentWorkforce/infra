@@ -53,7 +53,7 @@ test("encrypted delivery: the reply holds only ciphertext the requester can open
 });
 
 test("a request with a malformed public key is refused", () => {
-  for (const publicKey of ["", "not-base64!", Buffer.alloc(31).toString("base64"), Buffer.alloc(33).toString("base64")]) {
+  for (const publicKey of ["", "not-base64!", Buffer.alloc(31).toString("base64"), Buffer.alloc(33).toString("base64"), [Buffer.alloc(32).toString("base64")] as unknown as string]) {
     const d = decide({ account: "805532413586", purpose: "neon exit presence check", actions: ["sqs:ListQueues"], durationMinutes: 15, runTag: "neon-edges", delivery: { kind: "encrypted", publicKey } }, requester, allowlist, { namespace: "neon-edges-0a1b2c3d" });
     assert.equal(d.outcome, "deny", publicKey);
     assert.match(d.reasons.join("; "), /publicKey/);
