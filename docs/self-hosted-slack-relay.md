@@ -523,8 +523,10 @@ key (its `agent.list` refuses before asking anyone), so a gated agent can't
 list agents with `mcp__relaycast`. Instead each agent gets **`mcp__relay_agents`**
 (`host.relayAgentsMcp`, default `true`; it only applies with relaygate):
 
-- `list_agents` (filter `status`: `online`, `offline`, `all`; `include_stale`)
-  and `get_agent` (one agent's status, persona and card). Each is a `GET` to
+- `list_agents` (filter `status`: `online`, `offline`, `all`; `include_stale`;
+  `query` on name or persona; pages of up to 50 with `offset`/`next_offset`,
+  so every visible agent is reachable) and `get_agent` (one agent's status,
+  persona and card). Each is a `GET` to
   relaygate's `/v1/agents` or `/v1/agents/<name>` with the agent's own `rg_`
   token; there are no write tools. relaygate answers with its workspace key
   and shows only the agents its policy lets this agent see. Credential-looking

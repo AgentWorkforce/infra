@@ -9,6 +9,10 @@ import { createInterface } from "node:readline";
 import { bounded } from "./sessions-mcp.ts";
 
 const NAME = /^[A-Za-z0-9._:@-]{1,128}$/;
+const DEFAULT_PAGE = 25;
+const MAX_PAGE = 50;
+/** A list entry's persona is cut here; get_agent shows it whole. Keeps a full page under MAX_OUTPUT. */
+const PERSONA_IN_LIST = 200;
 /** Fields that are never shown to the agent, whatever the upstream sends. */
 const SECRET_KEY = /token|secret|password|api[_-]?key|credential/i;
 
@@ -24,13 +28,16 @@ interface Tool {
 export const TOOLS: Tool[] = [
   {
     name: "list_agents",
-    description: `List the agents on the relay: name, type, status (online/offline), persona and card (skills, metadata). ${SCOPE}`,
+    description: `List the agents on the relay, one page at a time: name, type, status (online/offline), a short persona and when each was last seen. Filter with query (text in the name or persona); pass next_offset back as offset for the next page. Read one agent's full card (skills, metadata) with get_agent. ${SCOPE}`,
     inputSchema: {
       type: "object",
       additionalProperties: false,
       properties: {
         status: { type: "string", enum: ["online", "offline", "all"], description: "Only online or offline agents (default all)." },
         include_stale: { type: "boolean", description: "Also list agents last seen more than seven days ago." },
+        query: { type: "string", maxLength: 200, description: "Only agents whose name or persona contains this text (case-insensitive)." },
+        limit: { type: "integer", minimum: 1, maximum: MAX_PAGE, default: DEFAULT_PAGE },
+        offset: { type: "integer", minimum: 0, default: 0, description: "next_offset from the previous page." },
       },
     },
   },
@@ -67,6 +74,14 @@ export function scrub(v: unknown, depth = 0): unknown {
   return v;
 }
 
+/** A list entry: who the agent is and whether it's around. Names are never cut. */
+function entry(a: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = { name: a.name };
+  for (const k of ["type", "status", "last_seen", "last_seen_at", "lastSeen"]) if (a[k] !== undefined && typeof a[k] !== "object") out[k] = a[k];
+  if (typeof a.persona === "string") out.persona = a.persona.length > PERSONA_IN_LIST ? `${a.persona.slice(0, PERSONA_IN_LIST)}…` : a.persona;
+  return out;
+}
+
 export interface AgentsToolsOptions {
   /** relaygate's base URL. */
   baseUrl: string;
@@ -95,9 +110,21 @@ export class AgentsTools {
             if (typeof args.include_stale !== "boolean") throw new ToolError("include_stale must be true or false");
             p.set("include_stale", args.include_stale ? "1" : "0");
           }
+          const query = args.query === undefined || args.query === "" ? "" : args.query;
+          if (typeof query !== "string" || query.length > 200) throw new ToolError("query must be a string of at most 200 characters");
+          const limit = args.limit === undefined ? DEFAULT_PAGE : Number(args.limit);
+          if (!Number.isInteger(limit) || limit < 1) throw new ToolError(`limit must be a whole number from 1 to ${MAX_PAGE}`);
+          const offset = args.offset === undefined ? 0 : Number(args.offset);
+          if (!Number.isInteger(offset) || offset < 0) throw new ToolError("offset must be a whole number from 0");
           const agents = await this.#get(`/v1/agents?${p}`);
-          const list = Array.isArray(agents) ? agents : [];
-          return text(bounded({ count: list.length, agents: scrub(list) }, 500, 200));
+          if (!Array.isArray(agents)) throw new ReadError("relaygate answered with something that isn't an agent list.");
+          const q = query.toLowerCase();
+          const matching = (agents as Array<Record<string, unknown>>).filter(
+            (a) => !q || [a.name, a.persona].some((v) => typeof v === "string" && v.toLowerCase().includes(q)),
+          );
+          const page = matching.slice(offset, offset + Math.min(limit, MAX_PAGE)).map(entry);
+          const next = offset + page.length < matching.length ? offset + page.length : null;
+          return text(bounded({ total: matching.length, offset, agents: page, next_offset: next }, 300, MAX_PAGE));
         }
         case "get_agent": {
           const n = args.name;
@@ -121,10 +148,15 @@ export class AgentsTools {
     } catch {
       throw new ReadError("The agent list is unavailable right now; try again later.");
     }
-    const body = await res.text().catch(() => "");
     if (!res.ok) throw new ReadError(messageFor(res.status));
+    let body: string;
     try {
-      const parsed = body ? JSON.parse(body) : null;
+      body = await res.text();
+    } catch {
+      throw new ReadError("The agent list is unavailable right now; try again later.");
+    }
+    try {
+      const parsed = JSON.parse(body);
       return parsed && typeof parsed === "object" && "data" in parsed ? (parsed as { data: unknown }).data : parsed;
     } catch {
       throw new ReadError("relaygate answered with something that isn't JSON.");

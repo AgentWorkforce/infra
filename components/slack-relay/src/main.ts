@@ -354,7 +354,7 @@ async function runHost(): Promise<void> {
   const denied = (env.AGENT_DISALLOWED_TOOLS ?? "Bash WebFetch WebSearch Read(//proc/**)").split(/[\s,]+/).filter(Boolean);
   // Behind relaygate there is no workspace key (relaygate holds it), so relaycast's agent.list and workspace tools
   // can only fail. The agents see the relay's agents through relaygate as themselves instead (agents-mcp.ts).
-  const agentsTools = Boolean(gateUrl) && env.RELAYCAST_MCP !== "false" && env.RELAY_AGENTS_MCP !== "false";
+  const agentsTools = Boolean(gateUrl) && env.RELAY_AGENTS_MCP !== "false";
   const agentsMcpEntry = join(dirname(fileURLToPath(import.meta.url)), "agents-mcp.ts");
   if (agentsTools) {
     if (!tools.includes("mcp__relay_agents")) tools.push("mcp__relay_agents");

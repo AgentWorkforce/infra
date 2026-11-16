@@ -53,12 +53,16 @@ test("list_agents asks relaygate as the agent and shows every agent it returns, 
     const all = await tools.call("list_agents", {});
     assert.equal(all.isError, undefined);
     const out = body(all);
-    assert.equal(out.count, 2);
+    assert.equal(out.total, 2);
+    assert.equal(out.next_offset, null);
     assert.deepEqual(out.agents.map((a: any) => a.name), ["slack-c1-t1", "editor-dana"]);
-    assert.deepEqual(out.agents[0].metadata, { card: { skills: ["triage"] } });
-    assert.equal(out.agents[1].token, undefined);
-    assert.deepEqual(out.agents[1].metadata, { cwd: "/w" });
+    // A list entry is who and whether around; the card (metadata) is get_agent's.
+    assert.deepEqual(out.agents[1], { name: "editor-dana", type: "agent", status: "offline", persona: "Dana's editor" });
     assert.ok(!JSON.stringify(out).includes("at_live_"));
+    const card = body(await tools.call("get_agent", { name: "editor-dana" })).agent;
+    assert.equal(card.token, undefined);
+    assert.deepEqual(card.metadata, { cwd: "/w" });
+    assert.deepEqual(body(await tools.call("get_agent", { name: "slack-c1-t1" })).agent.metadata, { card: { skills: ["triage"] } });
 
     const online = body(await tools.call("list_agents", { status: "online", include_stale: true }));
     assert.deepEqual(online.agents.map((a: any) => a.name), ["slack-c1-t1"]);
@@ -72,6 +76,40 @@ test("list_agents asks relaygate as the agent and shows every agent it returns, 
   } finally {
     await g.close();
   }
+});
+
+test("list_agents pages through a large directory and filters by name or persona; every agent is reachable", async () => {
+  const many = Array.from({ length: 120 }, (_, i) => ({ name: `local-agent-${String(i).padStart(3, "0")}`, status: "online", persona: `${"x".repeat(900)} #${i}` }));
+  const fetchFn = (async () => new Response(JSON.stringify({ ok: true, data: many }), { status: 200 })) as typeof fetch;
+  const tools = new AgentsTools({ baseUrl: "http://gate", token: AGENT, fetch: fetchFn });
+  const seen: string[] = [];
+  let offset: number | null = 0;
+  for (let pages = 0; offset !== null && pages < 10; pages++) {
+    const page = body(await tools.call("list_agents", { limit: 50, offset }));
+    assert.equal(page.total, 120);
+    for (const a of page.agents) {
+      assert.ok(a.persona.length <= 201, "personas are cut in the list");
+      seen.push(a.name);
+    }
+    offset = page.next_offset;
+  }
+  assert.equal(new Set(seen).size, 120);
+  const found = body(await tools.call("list_agents", { query: "AGENT-119" }));
+  assert.deepEqual(found.agents.map((a: any) => a.name), ["local-agent-119"]);
+  assert.equal((await tools.call("list_agents", { limit: 0 })).isError, true);
+  assert.equal((await tools.call("list_agents", { offset: -1 })).isError, true);
+});
+
+test("a 200 whose body can't be read or parsed is an error, not an empty directory", async () => {
+  const broken = (async () => {
+    const r = new Response("{}", { status: 200 });
+    Object.defineProperty(r, "text", { value: () => Promise.reject(new Error("reset")) });
+    return r;
+  }) as unknown as typeof fetch;
+  const r1 = await new AgentsTools({ baseUrl: "http://gate", token: AGENT, fetch: broken }).call("list_agents");
+  assert.equal(r1.isError, true);
+  const empty = (async () => new Response("", { status: 200 })) as typeof fetch;
+  assert.equal((await new AgentsTools({ baseUrl: "http://gate", token: AGENT, fetch: empty }).call("get_agent", { name: "x" })).isError, true);
 });
 
 test("get_agent returns one card; hidden or unknown agents and bad input are plain errors", async () => {
@@ -122,7 +160,7 @@ test("over stdio, as Claude Code runs it", async () => {
       { jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "list_agents", arguments: {} } },
     ], 2);
     assert.equal(replies.get(1).result.serverInfo.name, "relay_agents");
-    assert.equal(JSON.parse(replies.get(2).result.content[0].text).count, 2);
+    assert.equal(JSON.parse(replies.get(2).result.content[0].text).total, 2);
   } finally {
     child.kill();
     await g.close();
