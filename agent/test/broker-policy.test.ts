@@ -316,6 +316,14 @@ test("a runner request in the agent-hosts account: approval only, named resource
   assert.deepEqual(by("DenyOutsideRegions").Condition, { StringNotEquals: { "aws:RequestedRegion": ["us-east-1"] } });
   assert.match(d.reasons.join("; "), /agent-hosts is a prod account/);
   assert.equal(decide(runner({ durationMinutes: 720 }), agent, allowlist).outcome, "deny", "12 h is refused: at most 60 minutes per request");
+  // IAM matches actions case-insensitively, so a differently capitalised read still lands on "*".
+  const mixed = decide(runner({ actions: ["ssm:SendCommand", "ssm:getcommandinvocation", "ssm:DESCRIBESESSIONS"] }), agent, allowlist);
+  assert.equal(mixed.outcome, "approval", mixed.reasons.join("; "));
+  if (mixed.outcome !== "approval") return;
+  const mixedBy = (sid: string) => mixed.sessionPolicy.Statement.find((s) => s.Sid === sid)!;
+  assert.deepEqual(mixedBy("ApprovedAccountWide").Action, ["ssm:SendCommand"]);
+  assert.deepEqual(mixedBy("ApprovedWithoutResourceLevelPermissions").Action, ["ssm:getcommandinvocation", "ssm:DESCRIBESESSIONS"]);
+  assert.equal(mixedBy("ApprovedWithoutResourceLevelPermissions").Resource, "*");
 });
 
 test("only a human on the list approves; an agent never does, whatever its name", () => {

@@ -345,12 +345,18 @@ export const RESOURCE_WILDCARD_ONLY = new Set([
   "ec2:DescribeInstances",
   "secretsmanager:ListSecrets",
 ]);
+const RESOURCE_WILDCARD_ONLY_LOWER = new Set([...RESOURCE_WILDCARD_ONLY].map((a) => a.toLowerCase()));
+
+/** Case-insensitive, like IAM action matching and the auto-rule lookup. */
+export function isResourceWildcardOnly(action: string): boolean {
+  return RESOURCE_WILDCARD_ONLY_LOWER.has(action.toLowerCase());
+}
 
 function approvalStatements(req: CredentialRequest, list: Allowlist, namespace: string): PolicyStatement[] {
   const resources = req.resources?.length ? req.resources : ["*"];
   if (req.scope === "account") {
-    const wildcardOnly = req.actions.filter((a) => RESOURCE_WILDCARD_ONLY.has(a));
-    const named = req.actions.filter((a) => !RESOURCE_WILDCARD_ONLY.has(a));
+    const wildcardOnly = req.actions.filter(isResourceWildcardOnly);
+    const named = req.actions.filter((a) => !isResourceWildcardOnly(a));
     return [
       ...(named.length ? [statement("approved-account-wide", named, resources, undefined)] : []),
       ...(wildcardOnly.length ? [statement("approved-without-resource-level-permissions", wildcardOnly, ["*"], undefined)] : []),
