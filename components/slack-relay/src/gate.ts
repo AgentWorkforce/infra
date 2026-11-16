@@ -35,6 +35,8 @@ export interface CheckResource {
 
 export const slackStreamId = (ref: { team: string; channel: string; thread_ts: string }) => `slack:${ref.team}/${ref.channel}/${ref.thread_ts}`;
 export const kbStreamId = (server: string, slug: string) => `kb:${server}/${slug}`;
+/** An agent's Relaycast DM inbox, as relaygate names it: a DM to `agent` is a write to this stream. */
+export const inboxStreamId = (agent: string) => `relaycast:inbox/${agent}`;
 
 export interface CheckRequest {
   op: "r" | "w";

@@ -11,7 +11,7 @@ import { ClaudeOrchestrator, DeterministicOrchestrator, ThreadPolicy, type Known
 import type { RelayEventLike } from "./protocol.ts";
 import { connectAgent, ensureChannel } from "./relay.ts";
 import { Router } from "./router.ts";
-import { checkWithRetry, kbStreamId, RelaygateClient, slackStreamId } from "./gate.ts";
+import { checkWithRetry, inboxStreamId, kbStreamId, RelaygateClient, slackStreamId } from "./gate.ts";
 import { oauthServersFromEnv, TokenSource } from "./mcp.ts";
 import { ingestFromEnv } from "./ingest-config.ts";
 import { EnrollmentCredential, SessionUploader } from "./sessions-upload.ts";
@@ -352,6 +352,11 @@ async function runHost(): Promise<void> {
   const sessionsMcpEntry = join(dirname(fileURLToPath(import.meta.url)), "sessions-mcp.ts");
   const denied = (env.AGENT_DISALLOWED_TOOLS ?? "Bash WebFetch WebSearch Read(//proc/**)").split(/[\s,]+/).filter(Boolean);
   const uploader = sessionUploader(settings, dataDir, hostName);
+  // Behind relaygate every DM answer is checked first, so an agent never even
+  // attempts a write the gate hasn't allowed (its proxy checks the send again,
+  // against the same policy). REPLY_TO_OUTSIDE can't turn that off: it only
+  // means something without relaygate, where there are no groups.
+  if (gate && env.REPLY_TO_OUTSIDE === "true") log("host.replyToOutside ignored: behind relaygate a DM is answered only if the gate allows it");
   const host = new AgentHost({
     routerName,
     channel,
@@ -359,6 +364,7 @@ async function runHost(): Promise<void> {
     persona: env.AGENT_PERSONA,
     idleMs: int("IDLE_RELEASE_MINUTES", 15) * 60_000,
     gated: Boolean(gateUrl),
+    dmCheck: gate ? (token, to, content) => checkWithRetry(gate, token, { op: "w", resource: { kind: "stream", id: inboxStreamId(to) }, content }) : undefined,
     log,
     sessionUpload: uploader ? (u) => uploader.upload(u) : undefined,
     getMessage: (id) => hostAgent.message(id) as never,

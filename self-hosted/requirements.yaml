@@ -1788,9 +1788,22 @@ compatibility:
       images:
         relayauth: { repository: ghcr.io/agentworkforce/relayauth, digest: sha256:eb71daa28e30eb7305f666d0bccc5a4002e53e8a574e3c4c32163d907a1b71df }
       notes: superseded by 0.1.1.
-    - id: agent-relay-0.7.45
+    - id: agent-relay-0.7.46
       status: unreleased
       current: true
+      charts: { agent-relay: 0.7.46, relay-control: 0.4.22, relay-webapp: 0.2.7 }
+      app_versions: { agent-relay: 0.1.0, relay-control: 0.1.0, relay-webapp: 0.1.0 }
+      depends:
+        agent-relay: { relaycast: 0.3.16, relayauth: 0.1.5, sessions-pipeline: 0.8.43, relay-control: 0.4.22, relay-webapp: 0.2.7, relayflows: 0.2.5, durable-actors: 0.14.6-awf.4, relayfile: 0.2.2, telemetry-collector: 0.1.7, relay-chief: 0.1.0, slack-relay: 0.3.8, relaygate: 0.1.8 }
+      images:
+        relaycast: { repository: ghcr.io/agentworkforce/relaycast-self-host, digest: sha256:ec062ef901af15cf575b53a71d7eb09f2e6ab6e7c0d5be2da35339a275a5c6cc }
+        relaycast-postgres: { repository: ghcr.io/agentworkforce/relaycast-self-host, digest: sha256:ec062ef901af15cf575b53a71d7eb09f2e6ab6e7c0d5be2da35339a275a5c6cc }
+        sessions-pipeline-worker: { repository: ghcr.io/agentworkforce/sessions-pipeline, digest: sha256:77022c5b6a1d30f96f921d703eb27a1acada8ec273ad84aebdde24f8eddce305 }
+        relay-control: { repository: ghcr.io/agentworkforce/relay-control, digest: sha256:d1b6ca95fab240a9d41208d83de3b1f4245408b0765038762f1c419ee60f43bc }
+        relay-webapp: { repository: ghcr.io/agentworkforce/relay-webapp, digest: sha256:bd295ccb7d1323965dce890f19d0b7f857d706c00d7756f719c713763fdb49f3 }
+      notes: 'Carries 0.7.45 and slack-relay 0.3.8: behind relaygate a Slack thread agent never answers a DM from outside its group (the host asks /v1/check first and fails closed), still default-off (components.slackRelay). Default renders differ only in the helm.sh/chart labels.'
+    - id: agent-relay-0.7.45
+      status: planned
       charts: { agent-relay: 0.7.45, relay-control: 0.4.22, relay-webapp: 0.2.7 }
       app_versions: { agent-relay: 0.1.0, relay-control: 0.1.0, relay-webapp: 0.1.0 }
       depends:
@@ -3281,9 +3294,16 @@ compatibility:
       images:
         relaygate: { repository: ghcr.io/agentworkforce/relaygate, digest_required: true }
       notes: First registered chart, rendered only; default-off in the agent-relay umbrella (components.relaygate). Build 1 of the server (registration, mode check, /v1/check, classifier, audit); the Relaycast/Sessions proxy follows. Ships no default digest.
-    - id: slack-relay-0.3.7
+    - id: slack-relay-0.3.8
       status: unreleased
       current: true
+      charts: { slack-relay: 0.3.8 }
+      app_versions: { slack-relay: 0.1.0 }
+      images:
+        slack-relay: { repository: ghcr.io/agentworkforce/slack-relay, digest_required: true }
+      notes: 'Carries 0.3.7. Behind relaygate the agent host answers a DM only after /v1/check allows the agent to write the exact answer to the sender''s inbox (relaycast:inbox/<sender>); a denial, an unknown recipient or a gate error withholds it (logged as reply withheld: recipient outside group). The turn still runs and uploads, and the agent is told it can''t answer outside-group senders. New host.replyToOutside (REPLY_TO_OUTSIDE, default false) only applies without relaygate. Default renders gain the REPLY_TO_OUTSIDE env. Default-off in the agent-relay umbrella; ships no default digest.'
+    - id: slack-relay-0.3.7
+      status: planned
       charts: { slack-relay: 0.3.7 }
       app_versions: { slack-relay: 0.1.0 }
       images:
@@ -7243,10 +7263,10 @@ entries:
   - id: opt.slack-relay.agents
     kind: option
     title: Slack relay agent model, persona and tools
-    description: The agent host runs each thread's agent with headless Claude Code (host.agentModel, default claude-opus-5-5) and appends host.persona to its system prompt. By default agents get Read, Glob and Grep scoped to their own workdir plus the relay tools; Bash, WebFetch, WebSearch and /proc are always refused and permissionMode dontAsk refuses anything else. Each tool added to host.allowedTools is a new way for data to leave.
+    description: The agent host runs each thread's agent with headless Claude Code (host.agentModel, default claude-opus-5-5) and appends host.persona to its system prompt. By default agents get Read, Glob and Grep scoped to their own workdir plus the relay tools; Bash, WebFetch, WebSearch and /proc are always refused and permissionMode dontAsk refuses anything else. Each tool added to host.allowedTools is a new way for data to leave. Behind relaygate an agent never answers a DM from outside its group (the host checks the sender's inbox with /v1/check first and fails closed); host.replyToOutside only applies without relaygate.
     chart: slack-relay
-    values: [host.agentName, host.agentModel, host.persona, host.allowedTools, host.disallowedTools, host.permissionMode, host.relaycastMcp, host.turnTimeoutSeconds, host.idleReleaseMinutes, host.resources]
-    env: [HOST_AGENT_NAME, AGENT_MODEL, AGENT_PERSONA, AGENT_ALLOWED_TOOLS, AGENT_DISALLOWED_TOOLS, AGENT_PERMISSION_MODE, RELAYCAST_MCP, TURN_TIMEOUT_SECONDS, IDLE_RELEASE_MINUTES]
+    values: [host.agentName, host.agentModel, host.persona, host.allowedTools, host.disallowedTools, host.permissionMode, host.relaycastMcp, host.turnTimeoutSeconds, host.idleReleaseMinutes, host.replyToOutside, host.resources]
+    env: [HOST_AGENT_NAME, AGENT_MODEL, AGENT_PERSONA, AGENT_ALLOWED_TOOLS, AGENT_DISALLOWED_TOOLS, AGENT_PERMISSION_MODE, RELAYCAST_MCP, TURN_TIMEOUT_SECONDS, IDLE_RELEASE_MINUTES, REPLY_TO_OUTSIDE]
     profiles: [slack-relay]
     status: shipped
     provided_by: operator
