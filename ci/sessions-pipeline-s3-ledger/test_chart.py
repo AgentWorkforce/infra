@@ -102,6 +102,22 @@ class S3Ledger(unittest.TestCase):
         self.render(merge(s3, {"ingestEdge": {"s3TenantLimit": False, "admission": {"asyncMaxPerOrg": 4}}}),
                     fail="ingestEdge.admission.asyncMaxPerOrg requires s3TenantLimit=true")
 
+    def test_probe_timeout_seconds(self):
+        s3 = merge(load(S3_FIXTURE), {"ingestEdge": {"admission": {"mode": "async"}}})
+        c = lambda docs: next(d for d in docs if d["kind"] == "Deployment" and d["metadata"]["name"] == "ci-ingest-edge")["spec"]["template"]["spec"]["containers"][0]
+        default = c(self.render(s3))
+        self.assertEqual(default["readinessProbe"]["timeoutSeconds"], 3)
+        self.assertIn("AbortSignal.timeout(1500)", default["readinessProbe"]["exec"]["command"][2])
+        tuned = c(self.render(merge(s3, {"ingestEdge": {"admission": {"probeTimeoutSeconds": 10}}})))
+        for probe in ("startupProbe", "readinessProbe"):
+            self.assertEqual(tuned[probe]["timeoutSeconds"], 10)
+            self.assertIn("AbortSignal.timeout(9000)", tuned[probe]["exec"]["command"][2])
+        self.assertEqual(tuned["livenessProbe"], default["livenessProbe"])
+        for value in (2, 31, "x"):
+            with self.subTest(value=value):
+                self.render(merge(s3, {"ingestEdge": {"admission": {"probeTimeoutSeconds": value}}}),
+                            fail="ingestEdge.admission.probeTimeoutSeconds must be an integer from 3 to 30")
+
     def test_default_is_sql_and_byte_identical_when_explicit(self):
         base = load(SQL_FIXTURE)
         implicit = helm(base)
